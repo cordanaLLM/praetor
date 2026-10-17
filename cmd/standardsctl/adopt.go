@@ -57,11 +57,15 @@ func splitCommaList(value string) []string {
 	return items
 }
 
+// adoptCollaborators counts the collaborators with write access adoption asks the forge about
+// (adopt.AdoptOptions.Collaborators, #1075); TestMain clears it so no test reaches the forge.
+var adoptCollaborators adopt.CollaboratorCounter = adopt.GitHubWriteCollaborators
+
 func runAdopt(args []string) error {
 	fs := flag.NewFlagSet("adopt", flag.ContinueOnError)
 	profile := fs.String("profile", "", "Primary repository profile (auto-detected if empty)")
 	facets := fs.String("facets", "", "Comma-separated facets written when adoption creates .standards.yaml "+
-		"(default when omitted: "+strings.Join(config.DefaultFacets(), ",")+"); an existing .standards.yaml keeps the facets it declares, "+
+		"(default when omitted: "+config.DescribeDefaultFacets()+"); an existing .standards.yaml keeps the facets it declares, "+
 		"change them with praetorctl profile set --facets")
 	dryRun := fs.Bool("dry-run", false, "Simulate adoption without writing files")
 	force := fs.Bool("force", false, adopt.ForceContract+". --force needs --lock-source-root, --dry-run included")
@@ -88,6 +92,7 @@ func runAdopt(args []string) error {
 		return err
 	}
 
+	// The options every adopted repository shares; --all-missing passes exactly these.
 	opts := newCommandAdoptOptions(resolvedLockSource, *dryRun, *force)
 	baselineFlags.apply(&opts)
 	if *allMissing {
@@ -118,8 +123,8 @@ func runAdopt(args []string) error {
 }
 
 func newCommandAdoptOptions(source string, dryRun, force bool) adopt.AdoptOptions {
-	return adopt.AdoptOptions{LockSourceRoot: source, DryRun: dryRun, Force: force,
-		DecisionMCPReconcile: adoptclients.ReconcileAsDecided}
+	return adopt.AdoptOptions{LockSourceRoot: source, DryRun: dryRun, Force: force, Engine: runningBuild(),
+		Collaborators: adoptCollaborators, DecisionMCPReconcile: adoptclients.ReconcileAsDecided}
 }
 
 // adoptBaselineFlags holds adopt's baseline flags. --record-baseline records a first baseline and

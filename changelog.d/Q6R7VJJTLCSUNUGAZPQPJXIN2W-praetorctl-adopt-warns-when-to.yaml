@@ -1,0 +1,3 @@
+type: fixed
+title: praetorctl adopt warns when tools/go/go.mod pins the audit engine at another build than the one adopting, naming the pinned version, the running engine and the go get command that moves the pin, since CI's audit with the old engine refuses the refreshed files
+issue: '#1054'

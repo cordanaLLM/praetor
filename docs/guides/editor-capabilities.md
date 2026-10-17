@@ -405,9 +405,10 @@ the separate [client bootstrap](client-bootstrap.md) and
 ### Adoption and onboarding
 
 `praetorctl adopt` resolves an existing editor file with the rule `editors generate`
-uses, `editor.ResolveExisting` in `internal/editor/editor.go`, with one difference: it
-never overwrites an editor file, because no audit gate verifies one (#502). The
-adoption side is `internal/adopt/editor_files.go`. The editors step runs after the
+uses, `editor.ResolveExisting` in `internal/editor/editor.go`. Because no audit gate
+verifies an editor file, adoption keeps differing files, except that it refreshes a
+recorded, unedited earlier JetBrains inspection profile. The adoption side is
+`internal/adopt/editor_files.go`. The editors step runs after the
 Makefile step (`adoptSteps` in `internal/adopt/adopt.go`), so a first adoption's
 editor files already offer the `verify-all` target it scaffolds, and a re-run finds
 them unchanged:
@@ -415,11 +416,18 @@ them unchanged:
 | Existing file | Plain run | `--force` |
 | :--- | :--- | :--- |
 | identical (CRLF line endings included), or JSON holding every managed value | verified | verified |
+| unedited earlier Praetor JetBrains inspection profile | refreshed to current output; report says `Refreshed an unedited earlier` | refreshed to current output; report says `Refreshed an unedited earlier` |
 | developer-owned and different | preserved | preserved |
 | JSON missing managed values | kept; the warning names each one as a JSON Pointer, such as `"/standards.sentinel.headroomMB"` | merged: every adopter key and list entry stays, the managed values are added, and the report lists a `merge` |
 | `.vscode` JSON missing managed values and carrying comments or a trailing comma | kept; the warning names the values to add by hand | kept, with the same warning: a merge would lose the comments |
 | JSON adoption cannot merge: a duplicate key, a conflicting managed value, or outside `.vscode` a comment or a trailing comma | kept, with a warning naming the reason and the fix | kept, with a warning; adoption continues |
 | any other file that differs, such as `lua/standards.lua` | kept, with a warning and the line delta regenerating would apply | kept, with a warning |
+
+The JetBrains refresh recognizes only recorded generator output. Its digest fixtures
+cover every distinct profile shipped from the first release through #476, including
+the `app-service` and `native-gpu-systems` variants; a hand edit keeps the existing
+file unverified. Current profile output is recorded too, so the boundary test fails
+when the generator changes without a matching fixture and digest.
 
 A merge re-indents the file with two spaces and sorts its keys. Its report entry
 carries the line delta and the backup location that every adoption overwrite records

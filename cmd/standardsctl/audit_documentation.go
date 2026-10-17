@@ -490,7 +490,7 @@ func auditDocumentationScratchIgnores(ctx context.Context, rootDir string, decli
 		if err != nil {
 			return err
 		}
-		roots = adopt.PrivateScratchRoots(rootDir, ignore, false)
+		roots = adopt.PrivateScratchRoots(ctx, rootDir, ignore, false)
 	}
 	probes := scratchIgnoreProbes(roots)
 	ignored, err := util.GitIgnoredPaths(ctx, rootDir, probes, true)
@@ -516,7 +516,7 @@ func declinedScratchRoots(ctx context.Context, rootDir string) []string {
 	if err != nil {
 		return adopt.EveryPrivateScratchRoot()
 	}
-	return adopt.PrivateScratchRoots(rootDir, string(ignore), true)
+	return adopt.PrivateScratchRoots(ctx, rootDir, string(ignore), true)
 }
 
 // scratchIgnoreProbes returns one path inside each private scratch root.
@@ -539,7 +539,7 @@ func auditManagedGitIgnoreBlock(ctx context.Context, rootDir string) (string, er
 	if ignoreLineErr != nil {
 		return "", fmt.Errorf("[FAIL] .gitignore documentation privacy rules have invalid line endings: %w", ignoreLineErr)
 	}
-	match, ok := adopt.LookupManagedGitIgnoreTail(rootDir, normalized)
+	match, ok := adopt.LookupManagedGitIgnoreTail(ctx, rootDir, normalized)
 	if !ok {
 		return "", fmt.Errorf("[FAIL] .gitignore must end with the canonical Praetor private-artifact block")
 	}

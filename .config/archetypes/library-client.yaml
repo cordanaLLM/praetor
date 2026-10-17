@@ -27,7 +27,13 @@ linters:
   - "golangci-lint"
   - "semgrep"
   - "gitleaks"
+  - "clippy"
 
 devcontainer_features:
-  - "ghcr.io/devcontainers/features/go:1"
   - "ghcr.io/devcontainers/features/common-utils:2"
+
+devcontainer_features_by_language:
+  go:
+    - "ghcr.io/devcontainers/features/go:1"
+  rust:
+    - "ghcr.io/devcontainers/features/rust:1"

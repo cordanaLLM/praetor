@@ -161,6 +161,7 @@ list by `TestFlavorTable_MatchesTheBuiltinFlavors` in `internal/flavor/flavor_ta
 | `infra-k8s` | `container-image` | `Chart.yaml`, `kustomization.yaml` or `helmfile.yaml` at the root |
 | `python-ml` | `app-service` | a machine-learning dependency in `pyproject.toml` or `requirements.txt` |
 | `native-gpu-systems` | `native-gpu-systems` | `meson.build` (root, `core/` or `libvmaf/`) or `CMakeLists.txt` |
+| `rust-library` | `library-client` | Declared `library-client` on a Cargo crate or workspace with library targets and no published binary target; a helper package with `publish = false` or `publish = []`, its own or inherited from `[workspace.package]`, may contain binaries. Without that declaration a Cargo repository classifies as `native-gpu-systems` and keeps `rust-systems` |
 | `rust-systems` | `native-gpu-systems` | `Cargo.toml` |
 | `frontend-svelte` | `app-service` | `package.json` with `svelte.config.js`, `src/routes` or `vite.config.ts` |
 | `typescript-node` | `app-service` | `package.json` without `svelte.config.js` or `src/routes` |
@@ -198,6 +199,14 @@ a Go library.
   describe the tooling rather than the product. The Packer marker is a glob and matches only regular
   files: an empty `packer/`, or one holding only a README, is not a forge. See
   [archetype authoring](archetype-authoring.md#the-os-image-flavor-a-forge-is-what-it-builds).
+- A repository with two kinds of infrastructure as code, from Terraform (`*.tf`), Ansible
+  (`ansible.cfg` or `roles/*/tasks/main.yml`), Helm (`Chart.yaml` or `helmfile.yaml`) and
+  Kustomize (`kustomization.yaml`), each looked for at the root and up to three directories below
+  it, gets the `gitops-infra` profile ahead of `os-image`. A cluster repository that keeps one
+  Packer template for its node image is classified by what it deploys, and one kind alone, such as
+  an image forge's Terraform test environment, decides nothing (`TestByMarkers_Positive_ClusterRepositoryIsGitOps`
+  in `internal/classify/gitops_test.go`). `gitops-infra` has no flavor, so flavor detection reports
+  not applicable for it.
 - `agentic-autonomous` never auto-detects and must be selected by name. Its markers — `.agents/` and
   `.paperclip/harness.json` — are both written by adoption itself, so detecting on them describes
   the governance tool rather than the repository.

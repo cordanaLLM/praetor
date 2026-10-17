@@ -6,9 +6,11 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -115,6 +117,7 @@ class CheckpointTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="praetor-checkpoint-")
         self.root = Path(self.temp.name)
+        self.external_paths = []
         git(self.root, "init", "-q", "-b", "main")
         git(self.root, "config", "user.name", "Checkpoint Test")
         git(self.root, "config", "user.email", "checkpoint@example.test")
@@ -125,12 +128,215 @@ class CheckpointTests(unittest.TestCase):
         git(self.root, "switch", "-q", "-c", "checkpoint/test")
 
     def tearDown(self):
+        for path in self.external_paths:
+            shutil.rmtree(path, ignore_errors=True)
         self.temp.cleanup()
 
     def write_config(self, value=None):
         path = self.root / ".config" / "agent"
         path.mkdir(parents=True, exist_ok=True)
         (path / "checkpoint.json").write_text(json.dumps(value or CONFIG))
+
+    def add_linked_worktree(self, branch="checkpoint/orphan"):
+        path = self.root.parent / (self.root.name + "-linked-worktree")
+        self.external_paths.append(path)
+        git(self.root, "worktree", "add", "-q", "-b", branch, str(path), "HEAD")
+        return path
+
+    def observe_worktrees(self, *, open_prs=None, fail_gh=False):
+        original = checkpoint._run
+        calls = []
+
+        def fake(argv, root, **kwargs):
+            calls.append(argv)
+            if argv[:3] == ["gh", "pr", "list"]:
+                if fail_gh:
+                    raise checkpoint.CheckpointError("fake gh unavailable")
+                return json.dumps(open_prs or []).encode()
+            return original(argv, root, **kwargs)
+
+        with mock.patch.object(checkpoint, "_run", side_effect=fake):
+            result = checkpoint.inspect_checkpoint(self.root, "stop")
+        return result, calls
+
+    def test_stop_linked_public_change_blocks_and_names_worktree(self):
+        path = self.add_linked_worktree()
+        (path / "public.txt").write_text("unfinished\n")
+        result, _ = self.observe_worktrees()
+        self.assertTrue(result["due"])
+        # git reports the worktree by its resolved path: /private/var/... for macOS's /var/...
+        expected = str(path.resolve())
+        self.assertTrue(any(expected in action for action in result["actions"]))
+        self.assertEqual(result["unfinished_worktrees"][0]["path"], expected)
+
+    def test_stop_linked_public_change_is_detected_when_head_is_remote_clean(self):
+        bare = self.root.parent / (self.root.name + "-remote.git")
+        self.external_paths.append(bare)
+        git(self.root, "init", "--bare", "-q", str(bare))
+        git(self.root, "remote", "add", "origin", str(bare))
+        git(self.root, "push", "-q", "-u", "origin", "main")
+        path = self.add_linked_worktree()
+        git(path, "fetch", "-q", "origin")
+        (path / "public.txt").write_text("unfinished\n")
+        result, _ = self.observe_worktrees()
+        self.assertTrue(result["due"])
+        self.assertEqual(result["unfinished_worktrees"][0]["reasons"], ["1 public change(s)"])
+
+    def test_stop_open_line_names_branch(self):
+        path = self.add_linked_worktree()
+        (path / "public.txt").write_text("unfinished\n")
+        state = self.root / ".workingdir" / "OPEN.md"
+        state.parent.mkdir(parents=True)
+        state.write_text("ORPHAN: checkpoint/orphan\n")
+        result, _ = self.observe_worktrees()
+        self.assertFalse(result["due"])
+        self.assertEqual(result.get("unfinished_worktrees", []), [])
+
+    def test_stop_open_line_names_directory_or_whole_path(self):
+        path = self.add_linked_worktree()
+        (path / "public.txt").write_text("unfinished\n")
+        state = self.root / ".workingdir" / "OPEN.md"
+        state.parent.mkdir(parents=True)
+        for token in (path.name, str(path)):
+            state.write_text(f"ORPHAN: {token}\n")
+            result, _ = self.observe_worktrees()
+            self.assertFalse(result["due"], token)
+
+    def test_open_longer_token_does_not_name_branch(self):
+        path = self.add_linked_worktree()
+        (path / "public.txt").write_text("unfinished\n")
+        state = self.root / ".workingdir" / "OPEN.md"
+        state.parent.mkdir(parents=True)
+        state.write_text("ORPHAN: prefix-checkpoint/orphan-suffix\n")
+        result, _ = self.observe_worktrees()
+        self.assertTrue(result["due"])
+
+    def test_stop_open_line_names_key_value_and_path_forms(self):
+        # The inventory lines write "branch=<branch>" and a path under the dev root; a sentence
+        # may end with the name. Each form names the worktree (engine-orphan-inventory-triage).
+        path = self.add_linked_worktree()
+        (path / "public.txt").write_text("unfinished\n")
+        state = self.root / ".workingdir" / "OPEN.md"
+        state.parent.mkdir(parents=True)
+        for line in (
+            "- [ ] ORPHAN-20261017 dev/other branch=checkpoint/orphan head=abc",
+            f"- [ ] ORPHAN-20261017 dev/repo/worktrees/{path.name} branch=x",
+            f"see worktrees/{path.name}.",
+        ):
+            state.write_text(line + "\n")
+            result, _ = self.observe_worktrees()
+            self.assertFalse(result["due"], line)
+
+    def test_open_extended_or_dotted_name_does_not_name_worktree(self):
+        path = self.add_linked_worktree()
+        (path / "public.txt").write_text("unfinished\n")
+        state = self.root / ".workingdir" / "OPEN.md"
+        state.parent.mkdir(parents=True)
+        for line in (f"{path.name}.old", f"{path.name}x", f"old-{path.name}", "branch=checkpoint/orphan2"):
+            state.write_text(line + "\n")
+            result, _ = self.observe_worktrees()
+            self.assertTrue(result["due"], line)
+
+    def test_stop_branch_whose_change_landed_by_squash_is_not_due(self):
+        # A train or squash merge lands the change under another commit: the branch keeps commits
+        # on no remote and has no pull request of its own head, yet nothing of it is unfinished.
+        bare = self.root.parent / (self.root.name + "-remote.git")
+        self.external_paths.append(bare)
+        git(self.root, "init", "--bare", "-q", str(bare))
+        git(self.root, "remote", "add", "origin", str(bare))
+        git(self.root, "push", "-q", "-u", "origin", "main")
+        path = self.add_linked_worktree()
+        (path / "new.txt").write_text("landed\n")
+        git(path, "add", "new.txt")
+        git(path, "commit", "-q", "-m", "unit")
+        result, _ = self.observe_worktrees()
+        self.assertTrue(result["due"], "before the squash lands")
+        git(self.root, "switch", "-q", "main")
+        (self.root / "new.txt").write_text("landed\n")
+        git(self.root, "add", "new.txt")
+        git(self.root, "commit", "-q", "-m", "train (unit)")
+        git(self.root, "push", "-q", "origin", "main")
+        git(self.root, "switch", "-q", "checkpoint/test")
+        git(path, "fetch", "-q", "origin")
+        result, _ = self.observe_worktrees()
+        self.assertEqual(result.get("unfinished_worktrees", []), [])
+        (path / "new.txt").write_text("changed after landing\n")
+        result, _ = self.observe_worktrees()
+        self.assertTrue(result["due"], "a public change after the landing is still unfinished")
+
+    def test_stop_worktree_commit_without_remote_blocks(self):
+        path = self.add_linked_worktree()
+        (path / "new.txt").write_text("commit\n")
+        git(path, "add", "new.txt")
+        git(path, "commit", "-q", "-m", "unpublished")
+        result, _ = self.observe_worktrees()
+        self.assertTrue(result["due"])
+        self.assertIn("commit", " ".join(result["unfinished_worktrees"][0]["reasons"]))
+
+    def test_stop_pushed_ahead_branch_without_pr_blocks_but_merged_pr_passes(self):
+        bare = self.root.parent / (self.root.name + "-remote.git")
+        self.external_paths.append(bare)
+        git(self.root, "init", "--bare", "-q", str(bare))
+        git(self.root, "remote", "add", "origin", str(bare))
+        git(self.root, "push", "-q", "-u", "origin", "main")
+        path = self.add_linked_worktree()
+        (path / "new.txt").write_text("commit\n")
+        git(path, "add", "new.txt")
+        git(path, "commit", "-q", "-m", "published")
+        git(path, "push", "-q", "-u", "origin", "checkpoint/orphan")
+        git(path, "fetch", "-q", "origin")
+        result, _ = self.observe_worktrees()
+        self.assertTrue(result["due"])
+        for state in ("OPEN", "MERGED"):
+            result, _ = self.observe_worktrees(
+                open_prs=[{"headRefName": "checkpoint/orphan", "state": state}]
+            )
+            self.assertFalse(result["due"], state)
+
+    def test_stop_worktree_gh_failure_is_unverified_unfinished(self):
+        bare = self.root.parent / (self.root.name + "-remote.git")
+        self.external_paths.append(bare)
+        git(self.root, "init", "--bare", "-q", str(bare))
+        git(self.root, "remote", "add", "origin", str(bare))
+        git(self.root, "push", "-q", "-u", "origin", "main")
+        path = self.add_linked_worktree()
+        (path / "new.txt").write_text("commit\n")
+        git(path, "add", "new.txt")
+        git(path, "commit", "-q", "-m", "published")
+        git(path, "push", "-q", "-u", "origin", "checkpoint/orphan")
+        git(path, "fetch", "-q", "origin")
+        result, _ = self.observe_worktrees(fail_gh=True)
+        self.assertTrue(result["due"])
+        self.assertIn("pull request state not verified", " ".join(result["unfinished_worktrees"][0]["reasons"]))
+
+    def test_stop_old_worktree_admin_is_not_judged(self):
+        path = self.add_linked_worktree()
+        (path / "public.txt").write_text("unfinished\n")
+        gitdir = Path(git(path, "rev-parse", "--absolute-git-dir").stdout.decode().strip())
+        old = time.time() - checkpoint.WORKTREE_ACTIVITY_WINDOW - 10
+        for item in (gitdir / "HEAD", gitdir / "index", gitdir / "logs" / "HEAD", gitdir):
+            if item.exists():
+                os.utime(item, (old, old))
+        result, _ = self.observe_worktrees()
+        self.assertFalse(result["due"])
+
+    def test_stop_clean_remote_equal_worktree_is_not_due_and_root_is_omitted(self):
+        bare = self.root.parent / (self.root.name + "-remote.git")
+        self.external_paths.append(bare)
+        git(self.root, "init", "--bare", "-q", str(bare))
+        git(self.root, "remote", "add", "origin", str(bare))
+        git(self.root, "push", "-q", "-u", "origin", "main")
+        path = self.add_linked_worktree()
+        git(path, "push", "-q", "-u", "origin", "checkpoint/orphan")
+        git(path, "fetch", "-q", "origin")
+        result, calls = self.observe_worktrees()
+        self.assertFalse(result["due"])
+        self.assertEqual(result.get("unfinished_worktrees", []), [])
+        self.assertFalse(any(call[:2] == ["gh", "pr"] for call in calls))
+        (self.root / "root-change.txt").write_text("root work\n")
+        result, _ = self.observe_worktrees()
+        reported = [str(Path(item["path"]).resolve()) for item in result.get("unfinished_worktrees", [])]
+        self.assertNotIn(str(self.root.resolve()), reported)
 
     def test_missing_config_is_explicitly_disabled(self):
         (self.root / ".config" / "agent" / "checkpoint.json").unlink()
@@ -961,6 +1167,61 @@ class CheckedPolicyRead(PolicyRoot):
         self.policy.unlink()
         self.assertIsNone(checkpoint._policy_bytes_checked(self.root))
         self.assertIsNone(checkpoint._policy_bytes_checked(self.root / "absent"))
+
+
+# The top-level modules the minimal Python of the devcontainer (python3-minimal 3.14.4, image of
+# 2026-10-17) imports, measured inside that image. The checkpoint bundle runs there on adoption,
+# so a stdlib module it lacks (concurrent.futures and queue are two) fails every adopter's hook.
+MINIMAL_PYTHON_MODULES = frozenset(
+    "argparse ast contextlib errno hashlib json math os pathlib re selectors shutil signal stat"
+    " subprocess sys tempfile threading time typing urllib".split()
+)
+
+
+class MinimalPythonBundle(unittest.TestCase):
+    """The checkpoint bundle imports only modules python3-minimal provides, and runs its checks
+    in parallel without concurrent.futures."""
+
+    def bundle_imports(self, name):
+        import ast
+
+        tree = ast.parse((Path(__file__).parent / name).read_text())
+        found = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                found |= {alias.name.split(".")[0] for alias in node.names}
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                found.add(node.module.split(".")[0])
+        return found - {"checkpoint", "common"}
+
+    def test_bundle_imports_only_minimal_python_modules(self):
+        for name in ("checkpoint.py", "common.py"):
+            with self.subTest(name=name):
+                extra = self.bundle_imports(name) - MINIMAL_PYTHON_MODULES
+                self.assertFalse(extra, f"{name} imports modules python3-minimal lacks: {sorted(extra)}")
+
+    def test_ordered_map_keeps_order_and_bounds_threads(self):
+        seen = []
+        lock = __import__("threading").Lock()
+
+        def double(value):
+            with lock:
+                seen.append(__import__("threading").current_thread().name)
+            return value * 2
+
+        items = list(range(25))
+        self.assertEqual(checkpoint._ordered_map(double, items), [value * 2 for value in items])
+        self.assertLessEqual(len(set(seen)), checkpoint.WORKTREE_CHECK_WORKERS)
+        self.assertEqual(checkpoint._ordered_map(double, []), [])
+
+    def test_ordered_map_raises_the_first_failure(self):
+        def fail_on_three(value):
+            if value == 3:
+                raise ValueError("three")
+            return value
+
+        with self.assertRaisesRegex(ValueError, "three"):
+            checkpoint._ordered_map(fail_on_three, list(range(6)))
 
 
 class ThreadedBoundedOutput(unittest.TestCase):

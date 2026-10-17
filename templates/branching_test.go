@@ -28,7 +28,8 @@ const hostedGateVariant = "default"
 // hostedGateYAMLTemplates are the CI workflow templates that render the hosted gate shape and
 // read no repository fact; the Node CI body renders it too and is a branching template.
 var hostedGateYAMLTemplates = []string{
-	"flutter/ci-flutter.yml.tmpl", "go/ci-go.yml.tmpl", "jvm/ci-jvm.yml.tmpl", "rust/ci-rust.yml.tmpl",
+	"flutter/ci-flutter.yml.tmpl", "go/ci-go.yml.tmpl", "jvm/ci-jvm.yml.tmpl",
+	"rust/ci-rust-library.yml.tmpl", "rust/ci-rust.yml.tmpl",
 }
 
 // branchingVariant is one Context a branching template renders against, and the file name its

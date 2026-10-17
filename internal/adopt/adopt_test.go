@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -978,8 +979,8 @@ func TestAdopt_Boundary_EmptyRepoPathDefaults(t *testing.T) {
 	if rep.Archetype != "template-seed" {
 		t.Fatalf("expected template-seed archetype for empty dir, got: %s", rep.Archetype)
 	}
-	if len(rep.Facets) != 4 {
-		t.Fatalf("expected 4 default facets, got: %d", len(rep.Facets))
+	if want := config.DefaultFacetsFor("template-seed"); !slices.Equal(rep.Facets, want) {
+		t.Fatalf("expected the template-seed default facets %v, got: %v", want, rep.Facets)
 	}
 }
 
@@ -1200,8 +1201,9 @@ func TestAdopt_UnresolvedIdentityCompletesWithoutGuessing(t *testing.T) {
 	initTestGit(t, repo)
 	readme := "# Orphan\n"
 	mustWrite(t, filepath.Join(repo, readmeFile), readme)
+	// docs:seo-portal, whose badges need the identity, is no template-seed default (#1075).
 	report, err := Adopt(t.Context(), AdoptOptions{Path: repo, SkipGitValidation: true, SkipHookActivation: true,
-		LockSourceRoot: newAdoptLockSource(t)})
+		LockSourceRoot: newAdoptLockSource(t), Facets: config.DefaultFacets()})
 	if err != nil {
 		t.Fatalf("adoption without an identity failed: %v", err)
 	}
@@ -1314,7 +1316,8 @@ func TestAdopt_RerunCompletesOnceIdentityIsSet(t *testing.T) {
 	mustWrite(t, filepath.Join(repo, readmeFile), readme)
 	source := newAdoptLockSource(t)
 	writeCheckpointBundle(t, source)
-	opts := AdoptOptions{Path: repo, SkipGitValidation: true, SkipHookActivation: true, LockSourceRoot: source}
+	// docs:seo-portal, whose badges need the identity, is no template-seed default (#1075).
+	opts := AdoptOptions{Path: repo, SkipGitValidation: true, SkipHookActivation: true, LockSourceRoot: source, Facets: config.DefaultFacets()}
 	first, err := Adopt(t.Context(), opts)
 	if err != nil {
 		t.Fatalf("first adoption failed: %v", err)

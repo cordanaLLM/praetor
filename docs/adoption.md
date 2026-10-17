@@ -82,8 +82,12 @@ exception, no Paperclip harness, agent definitions or git hooks, so use adoption
 that must audit clean.
 
 `--facets` names the facets adoption writes when it creates `.standards.yaml`. Omitted, adoption
-writes `security:high`, `api:public-contract`, `docs:seo-portal` and `agent:sandboxed`
-(`config.DefaultFacets` in `internal/config/facets.go`). An existing `.standards.yaml` keeps the
+writes the defaults of the detected profile (`config.DefaultFacetsFor` in
+`internal/config/facets.go`): `security:high` and `agent:sandboxed` for every profile,
+`api:public-contract` only for `framework`, `library-client` and `web-package`, which publish an
+API, and `docs:seo-portal` only for `pages-site`, `framework` and `library-client`, which publish
+documentation (`TestDefaultFacetsFor_3D`). A `gitops-infra` cluster repository gets neither an API
+gate over its tool modules nor a documentation portal it has no site for. An existing `.standards.yaml` keeps the
 facets it declares, none or an empty list included, and adoption ignores `--facets` for it
 (`TestManifestForLock_FacetsScaffoldOnlyANewManifest_3D` in `internal/adopt/paths_read_test.go`).
 `adopt --help` says both (`TestAdoptHelpStatesTheDefaultFacets` in
@@ -104,11 +108,9 @@ read from the pinned catalog (`config.EffectivePolicy.FacetEffects` in
 `internal/config/facet_effects.go`). For an empty repository adopted as `template-seed`:
 
 ```text
-Facets:             [security:high api:public-contract docs:seo-portal agent:sandboxed]
-  default facets: --facets was omitted, so adoption declares security:high, api:public-contract, docs:seo-portal, agent:sandboxed in the .standards.yaml it creates
+Facets:             [security:high agent:sandboxed]
+  default facets: --facets was omitted, so adoption declares the defaults of profile template-seed, security:high, agent:sandboxed, in the .standards.yaml it creates
   security:high raises over template-seed alone: branch_protection.required_approving_reviewers 1 -> 2, branch_protection.require_signed_commits false -> true, supply_chain.slsa_level 1 -> 3, supply_chain.enforce_cosign false -> true, supply_chain.require_sbom false -> true
-  api:public-contract raises over template-seed alone: branch_protection.required_approving_reviewers 1 -> 2, branch_protection.require_signed_commits false -> true
-  docs:seo-portal raises over template-seed alone: no branch-protection or supply-chain setting
   agent:sandboxed raises over template-seed alone: no branch-protection or supply-chain setting
   choose other facets with --facets=<id>,... on a first adoption, or afterwards with praetorctl profile set --facets=<id>,... --lock-source-root=<praetor checkout> (--facets= declares none)
 ```
@@ -357,7 +359,15 @@ requires (`TestSync_Remote_KeepsLiveLeafChecksAndAddsTheAggregate` in
 `praetorctl plan --remote` to read the result back.
 
 A repository with one maintainer declares `review_mode: single_maintainer` under
-`overrides.branch_protection` ([review policy](guides/review-policy.md)). Adoption, `sync` and the audit
+`overrides.branch_protection` ([review policy](guides/review-policy.md)). A first adoption on a
+GitHub origin writes it itself when `GITHUB_TOKEN` or `GH_TOKEN` is set and the forge lists exactly
+one collaborator with write access, who could not approve their own pull request; the
+`.standards.yaml` entry of the report says so (`TestSoloMaintainer_Positive_OneWriter` in
+`internal/adopt/review_mode_test.go`). Adoption reads the token from those variables only, never
+from the gh session. Without a token, on another forge, or when the forge cannot answer, the entry
+says approvals may exceed approvers instead, and a re-adoption warns the same way. A re-adoption of
+a one-writer repository whose manifest lacks the review mode warns and names the declaration to
+add, because adoption never rewrites `.standards.yaml` (`TestWarnUnsatisfiableReview_Boundary`). Adoption, `sync` and the audit
 render the ruleset from the same effective policy, so the file adoption writes, with zero
 approvals, no code-owner review, the repository admin role as a pull-request bypass actor and the
 aggregate as the only required check, is the one the audit accepts
@@ -708,6 +718,28 @@ The groups with behavior of their own:
     earlier adoption wrote, and `lefthook.yml` migrates to the rendering without the job
     (`internal/adopt/reuse_decline_test.go`).
 
+### The audit engine pin on a re-adoption
+
+A re-adoption writes the managed files of the engine that runs it. A repository whose CI runs
+the audit engine it pins in `tools/go/go.mod` (a `tool github.com/cordanaLLM/praetor/cmd/standardsctl`
+directive and a `require` of the engine module) keeps that pin: adoption does not edit the tools
+module or its `go.sum`. When the pin names another build than the running engine, adoption warns
+with the file, the pinned version, the running engine and the command that moves the pin in the
+same change, `go get -modfile=tools/go/go.mod github.com/cordanaLLM/praetor@<engine>`. Without it,
+CI's audit with the old engine refuses the refreshed files as differing from its locked assets
+(`reportStaleEnginePin` in `internal/adopt/engine_pin.go`, `TestReportStaleEnginePin_Positive_OlderPinIsReported`).
+A pin or an engine that identifies no build is not compared.
+
+### Exceptions on a re-adoption
+
+A re-adoption keeps the manifest it finds, but it records the dated exceptions a first adoption
+records, in the same `exceptions` list. When the release workflows fall short of the supply chain
+the policy declares and the manifest holds no `HISS-11` entry, as a manifest an older engine wrote
+does not, the run adds the entry a first adoption adds and warns that it did. An entry the
+manifest already declares, renewed or narrowed by hand, stands. The `declared-linters` entries for
+declared linters no workflow runs are recorded the same way (`syncDeclaredLintersExceptions` and
+`withSupplyChainException` in `internal/adopt`, `TestAdopt_Readoption_RecordsTheSupplyChainGap`).
+
 ### The baseline on a re-adoption
 
 Adoption records `.standards-baseline.json` once. A repository that already has the file keeps it
@@ -807,7 +839,7 @@ Three rules hold on every run, `--force` or not:
 | | `.github/rulesets/main.json` | kept with a warning; the rendering current before the run is refreshed | replaced while the policy enforces linear history or signed commits, kept under any other policy (`TestReconcileBranchRuleset_Boundary_ForceReplacesOnlyWhilePolicyRequiresIt`) |
 | | the `.devcontainer/` bundle | an existing `devcontainer.json` keeps the bundle as it is, with a warning | regenerated; each image the bundle records is kept or refreshed, and reported (`prepareAdoptDevContainer` in `internal/adopt/devcontainer.go`, `TestReconcileDevContainer_Positive_ForcedEditIsReplacedWithBackup`) |
 | | the documentation gate block in the `Makefile`, the managed block at the end of `.gitattributes` | an edited block fails the run | the block is restored (`TestReconcileDocumentationMakefile_Boundary_DeltaListsOnlyInBlockLines`, `TestReconcileMakefile_Positive_ForceRestoresEditedBlockOnAppendPath`, `TestReconcileGitAttributes_Positive_EditedBlockReplacedUnderForce`) |
-| Audit-locked, recompiled every run | vendor context files such as `CLAUDE.md`, persona copies under `.claude/agents/`, register skill copies under `.claude/skills/`, plugin copies | compiled from `AGENTS.md` and the canonical personas and skills; a hand edit is replaced | the same (`TestAdopt_Positive_HandEditedVendorFileOnPlainRunReplacedWithBackup`) |
+| Audit-locked, recompiled every run | vendor context files such as `CLAUDE.md`, persona copies under `.claude/agents/`, register skill copies under `.claude/skills/`, plugin copies | compiled from `AGENTS.md` and the canonical personas and skills; before a vendor context file is recompiled, the text it holds that `AGENTS.md` lacks is folded into `AGENTS.md` below its instructions (a file a person wrote whole, an edited projection only its added lines), so the new projection carries it; the old file is backed up | the same (`TestAdopt_Positive_HandEditedVendorFileOnPlainRunReplacedWithBackup`, `TestFoldAuthoredVendorContext_Positive_KeepsAuthoredText`) |
 | Managed block, every run | the `.gitignore` and `.prettierignore` tail blocks, the README governance block, the Renovate rule for the managed files, the text register block in `AGENTS.md` | Praetor's block or rule is written; every line outside it is kept | the same |
 | Merged | agent hook settings: `.claude/settings.json`, `.gemini/settings.json`, `.codex/hooks.json` | missing Praetor handlers are merged in; every other entry is kept | the same (`TestReconcileAgentHooks_Positive_MergesPreservingForeignContent`) |
 | | editor JSON: `.vscode/*.json`, `.zed/*.json`, `.fleet/*.json`, `standards.sublime-project` | kept; the warning names the missing managed values | merged, every repository key kept; a file adoption cannot merge is kept with a warning (`TestAdopt_Positive_ForceMergesEditorJSONKeepingAdopterKeys`) |

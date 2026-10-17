@@ -41,7 +41,9 @@ var rustCrate = map[string]string{"Cargo.toml": "[package]\nname = \"widget\"\nv
 // flavorPrerequisites holds, per flavor, the files a repository needs before flavor apply
 // writes every template (TemplateItem.Resolve). A flavor absent here scaffolds everything
 // into an empty repository.
-var flavorPrerequisites = map[string]map[string]string{"typescript-node": npmProject, "rust-systems": rustCrate}
+var flavorPrerequisites = map[string]map[string]string{
+	"typescript-node": npmProject, "rust-systems": rustCrate, "rust-library": rustCrate,
+}
 
 // flavorRepo returns a fresh repository holding the flavor's prerequisites. A requirement
 // may ask Git what the repository commits (nodeCIRequirement does), so a flavor with

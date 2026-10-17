@@ -32,41 +32,72 @@ func jsonObject(raw []byte) (map[string]jsontext.Value, error) {
 }
 
 func mergeJSON(ctx context.Context, registry Registry, client Client, existing []byte) ([]byte, error) {
-	root := make(map[string]jsontext.Value)
-	if len(existing) != 0 {
-		if err := clientjson.Validate(ctx, existing); err != nil {
-			return nil, err
-		}
-		var err error
-		root, err = jsonObject(existing)
-		if err != nil {
-			return nil, err
-		}
+	root, err := jsonRoot(ctx, existing)
+	if err != nil {
+		return nil, err
 	}
 	key := "mcpServers"
 	if client == OpenCodeV1 || client == Kilo {
 		key = "mcp"
 	}
-	servers := make(map[string]jsontext.Value)
-	if raw, ok := root[key]; ok {
-		var err error
-		servers, err = jsonObject(raw)
-		if err != nil {
-			return nil, err
-		}
+	servers, err := jsonMember(root, key)
+	if err != nil {
+		return nil, err
 	}
 	changed, err := mergeJSONServers(registry, client, servers)
 	if err != nil {
 		return nil, err
 	}
-	if !changed {
+	schemaAdded := ensureOpenCodeSchema(root, client)
+	if !changed && !schemaAdded {
 		return bytes.Clone(existing), nil
 	}
-	root[key], err = marshalJSON(servers)
-	if err != nil {
-		return nil, err
+	if changed {
+		root[key], err = marshalJSON(servers)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return marshalJSON(root)
+}
+
+// jsonRoot validates existing and decodes it as the configuration's root object; an empty file is
+// an empty root.
+func jsonRoot(ctx context.Context, existing []byte) (map[string]jsontext.Value, error) {
+	if len(existing) == 0 {
+		return make(map[string]jsontext.Value), nil
+	}
+	if err := clientjson.Validate(ctx, existing); err != nil {
+		return nil, err
+	}
+	return jsonObject(existing)
+}
+
+// jsonMember decodes root's member key as an object, or returns an empty one when root has none.
+func jsonMember(root map[string]jsontext.Value, key string) (map[string]jsontext.Value, error) {
+	raw, ok := root[key]
+	if !ok {
+		return make(map[string]jsontext.Value), nil
+	}
+	return jsonObject(raw)
+}
+
+// openCodeSchema is the schema opencode writes into a loaded opencode.json that names none
+// (opencode v1.18.7, packages/opencode/src/config/config.ts, loadConfig): a file adoption wrote
+// without it turned dirty on opencode's first run (ledger engine-opencode-template-schema-20261017).
+const openCodeSchema = `"https://opencode.ai/config.json"`
+
+// ensureOpenCodeSchema adds openCodeSchema to an OpenCode configuration that names no schema and
+// reports whether it did; a schema the file already names is kept.
+func ensureOpenCodeSchema(root map[string]jsontext.Value, client Client) bool {
+	if client != OpenCodeV1 {
+		return false
+	}
+	if _, ok := root["$schema"]; ok {
+		return false
+	}
+	root["$schema"] = jsontext.Value(openCodeSchema)
+	return true
 }
 
 func mergeClaudeLocal(ctx context.Context, registry Registry, project string, existing []byte) ([]byte, error) {

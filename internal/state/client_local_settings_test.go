@@ -114,10 +114,10 @@ func TestInspectStateClientLocalSettings_Boundary(t *testing.T) {
 	fixtureGit(t, dir, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "v3 ignore")
 
 	// Boundary condition 1: a v3 block still verifies.
-	if !adopt.HasManagedGitIgnoreTail(dir, v3Block) {
+	if !adopt.HasManagedGitIgnoreTail(t.Context(), dir, v3Block) {
 		t.Fatal("v3 block must verify via HasManagedGitIgnoreTail")
 	}
-	match, ok := adopt.LookupManagedGitIgnoreTail(dir, v3Block)
+	match, ok := adopt.LookupManagedGitIgnoreTail(t.Context(), dir, v3Block)
 	if !ok || !match.Matched || match.Version != "v3" || match.Current {
 		t.Fatalf("v3 block lookup: ok=%v match=%+v, want Matched=true Version=v3 Current=false", ok, match)
 	}
@@ -138,7 +138,7 @@ func TestInspectStateClientLocalSettings_Boundary(t *testing.T) {
 	if !strings.HasSuffix(upgradedText, adopt.ManagedGitIgnoreBlock()) {
 		t.Fatalf("upgraded .gitignore does not end with canonical v4 block:\n%s", upgradedText)
 	}
-	matchAfter, okAfter := adopt.LookupManagedGitIgnoreTail(dir, upgradedText)
+	matchAfter, okAfter := adopt.LookupManagedGitIgnoreTail(t.Context(), dir, upgradedText)
 	if !okAfter || !matchAfter.Matched || matchAfter.Version != "v4" || !matchAfter.Current {
 		t.Fatalf("upgraded block lookup: ok=%v match=%+v, want Matched=true Version=v4 Current=true", okAfter, matchAfter)
 	}

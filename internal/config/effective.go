@@ -64,6 +64,7 @@ type PolicyLayer struct {
 // layers imposing each declared backlog cap value, keyed backlog.caps.<category>.max or
 // .action; it is nil while no layer declares a cap.
 type EffectivePolicy struct {
+	Root             string              `json:"-"`
 	Manifest         *Manifest           `json:"-"`
 	Policy           ResolvedPolicy      `json:"policy"`
 	Operator         *OperatorSettings   `json:"operator,omitempty"`

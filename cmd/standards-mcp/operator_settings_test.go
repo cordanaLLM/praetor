@@ -15,6 +15,7 @@ import (
 // settings or framework environment variable applies unless a test sets one.
 func TestMain(m *testing.M) {
 	installManifestPath = func() (string, error) { return "", nil }
+	adoptCollaborators = nil
 	for _, name := range []string{config.FleetConfigEnv, config.WorkstationConfigEnv, needs.FrameworkDirEnv} {
 		if err := os.Unsetenv(name); err != nil {
 			fmt.Fprintf(os.Stderr, "isolate %s: %v\n", name, err)

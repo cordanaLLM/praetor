@@ -56,11 +56,11 @@ func mustLeave(t *testing.T, deadline time.Time, want time.Duration) {
 	}
 }
 
-// Positive: a 12m race-stage bound reaches the pipeline as a 12m + allowance run deadline. The
+// Positive: a 25m race-stage bound reaches the pipeline as a 25m + allowance run deadline. The
 // fixed five-minute run deadline made every bound above it unreachable (#314).
 func TestGateRun_Positive_RunDeadlineFollowsTheStageBound(t *testing.T) {
 	seen := stubPipeline(t)
-	t.Setenv(gating.TestStageTimeoutEnv, "12m")
+	t.Setenv(gating.TestStageTimeoutEnv, "25m")
 
 	out, err := captureStdout(t, func() error {
 		return dispatchCommand("gate", []string{"run", "--path=" + t.TempDir()})
@@ -68,9 +68,9 @@ func TestGateRun_Positive_RunDeadlineFollowsTheStageBound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("gate run: %v", err)
 	}
-	want := 12*time.Minute + gating.OtherStagesAllowance
+	want := 25*time.Minute + gating.OtherStagesAllowance
 	mustLeave(t, *seen, want)
-	mustContain(t, out, "Run Deadline: "+want.String(), "12m0s race stage bound")
+	mustContain(t, out, "Run Deadline: "+want.String(), "25m0s race stage bound")
 }
 
 // Negative: an unusable value neither removes the run deadline nor shrinks it; it falls back to
@@ -91,11 +91,11 @@ func TestGateRun_Negative_InvalidStageBoundKeepsTheDefaultRunDeadline(t *testing
 func TestAgentContext_3D(t *testing.T) {
 	// Positive: the gatekeeper takes the gate run's derived deadline.
 	seen := stubPipeline(t)
-	t.Setenv(gating.TestStageTimeoutEnv, "12m")
+	t.Setenv(gating.TestStageTimeoutEnv, "25m")
 	if _, err := captureStdout(t, func() error { return dispatchAgentTask("praetor-gatekeeper", nil) }); err != nil {
 		t.Fatalf("gatekeeper: %v", err)
 	}
-	mustLeave(t, *seen, 12*time.Minute+gating.OtherStagesAllowance)
+	mustLeave(t, *seen, 25*time.Minute+gating.OtherStagesAllowance)
 
 	// Boundary: the ceiling is the longest run the gatekeeper can be given.
 	t.Setenv(gating.TestStageTimeoutEnv, "31m")
@@ -117,12 +117,12 @@ func TestGateDeadline_3D(t *testing.T) {
 		seconds                int64
 	}{
 		// Positive: unset reports the default bound plus the allowance, with no note.
-		{"unset", "", "3m0s", "", int64((gating.TestStageTimeout + gating.OtherStagesAllowance).Seconds())},
+		{"unset", "", "20m0s", "", int64((gating.TestStageTimeout + gating.OtherStagesAllowance).Seconds())},
 		// Boundary: the exact ceiling, and one step past it, which clamps and says so.
 		{"exact ceiling", "30m", "30m0s", "raised", int64((gating.MaxTestStageTimeout + gating.OtherStagesAllowance).Seconds())},
 		{"over ceiling", "31m", "30m0s", "clamped", int64((gating.MaxTestStageTimeout + gating.OtherStagesAllowance).Seconds())},
 		// Negative: an unparseable value falls back to the default and says why.
-		{"invalid", "soon", "3m0s", "not a duration", int64((gating.TestStageTimeout + gating.OtherStagesAllowance).Seconds())},
+		{"invalid", "soon", "20m0s", "not a duration", int64((gating.TestStageTimeout + gating.OtherStagesAllowance).Seconds())},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -151,7 +151,7 @@ func TestGateDeadline_3D(t *testing.T) {
 	if err != nil {
 		t.Fatalf("gate deadline: %v", err)
 	}
-	mustContain(t, out, "Run Deadline: 8m0s (3m0s race stage bound + 5m0s for the other stages)")
+	mustContain(t, out, "Run Deadline: 25m0s (20m0s race stage bound + 5m0s for the other stages)")
 	_, err = captureStdout(t, func() error { return dispatchCommand("gate", []string{"deadline", "extra"}) })
 	mustErrContain(t, err, "no positional arguments")
 }
@@ -219,13 +219,13 @@ func TestGateDeadline_RepositorySized_3D(t *testing.T) {
 // Positive: `gate run` over a mixed repository hands the pipeline the two-suite deadline.
 func TestGateRun_Positive_MixedRepositoryRunDeadline(t *testing.T) {
 	seen := stubPipeline(t)
-	t.Setenv(gating.TestStageTimeoutEnv, "12m")
+	t.Setenv(gating.TestStageTimeoutEnv, "25m")
 	repo := writeMarkers(t, "go.mod", gating.CargoLockFile)
 	out, err := captureStdout(t, func() error { return dispatchCommand("gate", []string{"run", "--path=" + repo}) })
 	if err != nil {
 		t.Fatalf("gate run: %v", err)
 	}
-	want := 2*12*time.Minute + gating.OtherStagesAllowance + gating.CargoStagesAllowance
+	want := 2*25*time.Minute + gating.OtherStagesAllowance + gating.CargoStagesAllowance
 	mustLeave(t, *seen, want)
-	mustContain(t, out, "Run Deadline: "+want.String(), "2 test suites at a 12m0s stage bound each")
+	mustContain(t, out, "Run Deadline: "+want.String(), "2 test suites at a 25m0s stage bound each")
 }

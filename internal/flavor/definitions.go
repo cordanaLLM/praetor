@@ -29,6 +29,7 @@ func builtinFlavorList() []Flavor {
 		&InfraK8sFlavor{},
 		&PythonMLFlavor{},
 		&NativeGPUSystemsFlavor{},
+		&RustLibraryFlavor{},
 		&RustSystemsFlavor{},
 		&FrontendSvelteFlavor{},
 		&TypeScriptNodeFlavor{},
@@ -122,9 +123,10 @@ func (f *GoServiceFlavor) RequiredToolchains() []ToolchainItem {
 
 type GoLibraryFlavor struct{}
 
-func (f *GoLibraryFlavor) Name() string        { return "go-library" }
-func (f *GoLibraryFlavor) Description() string { return "Go Core Library, SDK, or Engine" }
-func (f *GoLibraryFlavor) HISSProfile() string { return "framework" }
+func (f *GoLibraryFlavor) Name() string             { return "go-library" }
+func (f *GoLibraryFlavor) Description() string      { return "Go Core Library, SDK, or Engine" }
+func (f *GoLibraryFlavor) HISSProfile() string      { return "framework" }
+func (f *GoLibraryFlavor) AlsoImplements() []string { return []string{"library-client"} }
 
 func (f *GoLibraryFlavor) Detect(repoPath string) bool {
 	hasMod := CheckFileExists(filepath.Join(repoPath, "go.mod"))
@@ -463,7 +465,38 @@ func (f *AgenticAutonomousFlavor) RequiredToolchains() []ToolchainItem {
 	}
 }
 
-// --- 8. Rust Systems Flavor ---
+// rustLibraryFlavorName is the flavor's public identifier, held in one place so a rename is a
+// one-line change (#67).
+const rustLibraryFlavorName = "rust-library"
+
+// --- Rust Library Flavor ---
+
+// RustLibraryFlavor implements library-client for Cargo workspaces of library crates. A Cargo
+// repository reaches it by declaring library-client: classification by markers maps Cargo.toml to
+// native-gpu-systems, whose repositories keep rust-systems, so no existing adopter changes flavor.
+type RustLibraryFlavor struct{}
+
+func (f *RustLibraryFlavor) Name() string        { return rustLibraryFlavorName }
+func (f *RustLibraryFlavor) Description() string { return "Rust Library Crates and Workspaces" }
+func (f *RustLibraryFlavor) HISSProfile() string { return "library-client" }
+
+func (f *RustLibraryFlavor) Detect(repoPath string) bool {
+	return rustLibraryOnly(repoPath)
+}
+
+func (f *RustLibraryFlavor) RequiredTemplates() []TemplateItem {
+	return rustLibraryTemplates()
+}
+
+func (f *RustLibraryFlavor) RequiredSettings() []SettingItem {
+	return rustLibrarySettings()
+}
+
+func (f *RustLibraryFlavor) RequiredToolchains() []ToolchainItem {
+	return rustLibraryToolchains()
+}
+
+// --- Rust Systems Flavor ---
 
 type RustSystemsFlavor struct{}
 

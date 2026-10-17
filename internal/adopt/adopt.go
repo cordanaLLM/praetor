@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/classify"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -86,12 +87,20 @@ type AdoptOptions struct {
 	SkipHookActivation bool `json:"skip_hook_activation,omitempty"`
 	// LockSourceRoot selects the verified Praetor bundle used for new lock pins.
 	LockSourceRoot string `json:"lock_source_root,omitempty"`
+	// Engine is the build identity of the engine running the adoption (buildid). A tools module
+	// that pins another engine for CI's audit is reported (reportStaleEnginePin); an unidentified
+	// engine skips that check.
+	Engine buildid.Identity `json:"-"`
 	// VerificationLimits raises the bounds of metadata discovery for this run: a non-zero field
 	// overrides the bound the manifest's verification section declares, or the default
 	// (ResolveVerificationLimits).
 	VerificationLimits *VerificationLimits `json:"verification_limits,omitempty"`
 	// DecisionMCPReconcile supplies the shared project MCP merger for CLI and MCP adoption.
 	DecisionMCPReconcile func(context.Context, string, bool) ([]ActionDetail, error) `json:"-"`
+	// Collaborators counts the accounts with write access, so a first adoption of a repository
+	// with one writer declares the single-maintainer review mode and a re-adoption warns when its
+	// manifest lacks it (soloMaintainer, #1075). Nil leaves the review mode unexamined.
+	Collaborators CollaboratorCounter `json:"-"`
 }
 
 // ActionDetail describes a specific planned or executed action on a target file.
@@ -192,6 +201,15 @@ type adoptSession struct {
 		resolved bool
 		entry    *config.Exception
 	}
+	// review is whether the repository has exactly one collaborator with write access, and the
+	// report note saying so (soloMaintainer), resolved once per run (#1075).
+	review struct {
+		resolved bool
+		solo     bool
+		note     string
+	}
+	// collaborators counts the accounts with write access (AdoptOptions.Collaborators).
+	collaborators CollaboratorCounter
 	// registerSkills is what the agent-harness step installs, resolved once per run
 	// (registerSkillSources) so the preflight, the Paperclip harness the manifest step binds, the
 	// register block and the install agree on it (#235).
@@ -200,6 +218,9 @@ type adoptSession struct {
 	// comes to (planDryRunWrite, planDryRunRemoval), so a later step previews against the tree
 	// the run leaves rather than the one on disk.
 	dryRunWrites map[string][]byte
+	// fold is AGENTS.md with the vendor context text foldAuthoredVendorContext folded into it,
+	// which the agent-harness step writes (#1073); nil when nothing was folded.
+	fold *agentsFold
 	// rulesetBaseline is the policy and the workflows of the repository as this adoption found
 	// it, read before any step writes (readRulesetBaseline); nil without a ruleset on disk.
 	rulesetBaseline *forge.RulesetBaseline
@@ -269,14 +290,15 @@ func prepareAdoption(ctx context.Context, opts AdoptOptions) (*AdoptReport, *ado
 	declared, unreadable := declaredManifest(ctx, normPath)
 	decision := resolveArchetype(normPath, opts.Profile, manifestProfiles(declared))
 	report := newAdoptionReport(normPath, opts, decision)
-	report.Facets, report.FacetOrigin = adoptionFacets(declared, unreadable, opts.Facets)
-	warnIgnoredFacets(report, opts, declared)
 	verification, err := resolveVerificationPlanWithLimits(ctx, normPath, ResolveVerificationLimits(declared.DeclaredVerification(), opts.VerificationLimits))
 	if err != nil {
 		report.Errors = append(report.Errors, err.Error())
 		return report, nil, fmt.Errorf("resolve project verification: %w", err)
 	}
 	report.Archetype = adoptionArchetype(decision, verification)
+	// After the archetype: the default facets are the archetype's (#1075).
+	report.Facets, report.FacetOrigin = adoptionFacets(declared, unreadable, opts.Facets, report.Archetype)
+	warnIgnoredFacets(report, opts, declared)
 	report.Verification = verification
 	s := newAdoptSession(normPath, opts, report, declared)
 	if err := s.resolveIdentity(ctx); err != nil {
@@ -300,16 +322,17 @@ func newAdoptSession(repoPath string, opts AdoptOptions, report *AdoptReport, de
 		report.addWarning("%s", undocumented)
 	}
 	return &adoptSession{
-		repoPath:     repoPath,
-		arch:         report.Archetype,
-		facets:       report.Facets,
-		opts:         opts,
-		report:       report,
-		verification: report.Verification,
-		declined:     manifestDeclines(declared),
-		cleanupGoto:  cleanupGoto,
-		exceptions:   harnessExceptions(cleanupGoto),
-		backupStamp:  newBackupStamp(),
+		repoPath:      repoPath,
+		arch:          report.Archetype,
+		facets:        report.Facets,
+		opts:          opts,
+		report:        report,
+		collaborators: opts.Collaborators,
+		verification:  report.Verification,
+		declined:      manifestDeclines(declared),
+		cleanupGoto:   cleanupGoto,
+		exceptions:    harnessExceptions(cleanupGoto),
+		backupStamp:   newBackupStamp(),
 	}
 }
 
@@ -532,6 +555,9 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 		}
 	}
 	reportIgnoredWrites(ctx, s)
+	if err := reportStaleEnginePin(ctx, s); err != nil {
+		return err
+	}
 	verifyAgentContext(ctx, s, declined)
 	return nil
 }
@@ -700,6 +726,9 @@ func createAdoptionManifest(ctx context.Context, s *adoptSession, full string) e
 	if len(manifest.Exceptions) > 0 {
 		note += supplyChainExceptionNote(manifest.Exceptions[0])
 	}
+	if _, review := s.soloMaintainer(ctx); review != "" {
+		note += "; " + review
+	}
 	s.report.recordCreated(manifestFile, note)
 	return nil
 }
@@ -712,6 +741,9 @@ func reconcileExistingManifest(ctx context.Context, s *adoptSession, full string
 	plan, changed, err := planExistingManifest(ctx, s, full, data)
 	if err != nil {
 		return err
+	}
+	if declared, err := config.DecodeManifest(data); err == nil {
+		s.warnUnsatisfiableReview(ctx, declared)
 	}
 	if changed && !s.opts.DryRun {
 		if err := contextopt.ReplaceSnapshot(ctx, full, plan.data,

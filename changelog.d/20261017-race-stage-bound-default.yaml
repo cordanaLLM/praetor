@@ -1,0 +1,4 @@
+type: changed
+title: Raise the race stage's default bound from 3 to 20 minutes, sized from full race runs measured on a loaded workstation, so ordinary pushes no longer need PRAETOR_TEST_STAGE_TIMEOUT raised by hand; an override under the default is now announced as lowered instead of raised
+issue: "#1419"
+breaking: false

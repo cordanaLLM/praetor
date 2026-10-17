@@ -198,6 +198,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditPreMigrationTracking(rootDir) },
 		func() error { return auditAgentDefinitions(ctx, manifest, rootDir) },
 		func() error { return auditGitHooks(ctx, manifest, rootDir) },
+		func() error { return auditCheckpointBundle(ctx, rootDir) },
 		func() error { return auditBacklogCaps(ctx, rootDir, opts.effective) },
 		func() error { return auditModelCatalog(ctx, rootDir, time.Now()) },
 		func() error { return auditLiveForge(ctx, manifest, rootDir, &opts.effective.Policy, opts.offline) },
@@ -801,6 +802,18 @@ func auditGitHooks(ctx context.Context, manifest *config.Manifest, rootDir strin
 		return err
 	}
 	fmt.Println(line)
+	return nil
+}
+
+// auditCheckpointBundle prints a warning for each checkpoint bundle file an earlier Praetor
+// release left in the repository (adopt.AuditCheckpointBundle, #239). A stale copy is not a
+// failure: a plain adopt run refreshes it.
+func auditCheckpointBundle(ctx context.Context, rootDir string) error {
+	lines, err := adopt.AuditCheckpointBundle(ctx, rootDir)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Checkpoint bundle audit failed: %w", err)
+	}
+	printLines(lines)
 	return nil
 }
 

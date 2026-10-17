@@ -30,7 +30,7 @@ client gets the form its own documentation or shipped source supports:
 | :-- | :-- | :-- | :-- |
 | Claude Code | `"command": "python3"`, `"args": ["-B", "${CLAUDE_PROJECT_DIR}/.config/agent/hooks/<script>.py"]` | Exec form: spawned directly, no shell, `${CLAUDE_PROJECT_DIR}` substituted into each element. The process runs in the session's current directory, which a Bash `cd` can move anywhere. | `${CLAUDE_PROJECT_DIR}` is "the project root where the session started" ([hooks reference](https://code.claude.com/docs/en/hooks)). Needs Claude Code 2.1.139 or later, the release that added the `args` field ([CHANGELOG](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)); the installed 2.1.259 build has it and the substitution. An older client ignores `args` and runs bare `python3`, which reads the payload as Python source, exits 1 and so blocks nothing. |
 | Gemini CLI | `python3 -B .config/agent/hooks/<script>.py` | `bash -c` on Linux and macOS, PowerShell on Windows, in the workspace root. | Gemini reads project settings only from `.gemini/settings.json` in the directory it starts in ([hooks guide](https://geminicli.com/docs/hooks/)) and spawns every hook with that directory as `cwd`, the value it also exports as `GEMINI_PROJECT_DIR` (`packages/core/src/hooks/hookRunner.ts`, checked against the installed 0.50.0 bundle). The relative path needs no quoting in either shell. |
-| Codex | `python3 -B "$(git rev-parse --show-toplevel)/.config/agent/hooks/<script>.py"` | `$SHELL -lc` (else `/bin/sh`) on Linux and macOS, `%COMSPEC% /C` on Windows, in the session cwd (`codex-rs/hooks/src/engine/command_runner.rs`). | Codex exports no project-root variable. Its [hooks docs](https://learn.chatgpt.com/docs/hooks) recommend resolving from the Git root, because a session may start in a subdirectory. |
+| Codex | `python3 -B "$(git rev-parse --show-toplevel)/.config/agent/hooks/<script>.py"`; on Windows `commandWindows`: `(for /f "delims=" %r in ('git rev-parse --show-toplevel') do @python3 -B "%r/.config/agent/hooks/<script>.py") \|\| exit 2` | `$SHELL -lc` (else `/bin/sh`) on Linux and macOS, `%COMSPEC% /C` with `commandWindows` (else `command`) on Windows, in the session cwd (`codex-rs/hooks/src/engine/command_runner.rs`, `codex-rs/config/src/hook_config.rs`). | Codex exports no project-root variable. Its [hooks docs](https://learn.chatgpt.com/docs/hooks) recommend resolving from the Git root, because a session may start in a subdirectory. `for /f` is cmd.exe's form of the same lookup; `\|\| exit 2` blocks when no Git root is found, as the missing script does under `sh`. |
 
 What this means in practice:
 
@@ -80,12 +80,11 @@ What this means in practice:
   `test_registered_hooks_fail_closed_before_the_client_timeout_when_git_stalls` runs the
   Claude registrations against a Git that never answers.
 - **Gemini and Codex keep a fixed session directory**, so no drift is possible there.
-- **Windows.** The Claude and Gemini registrations need no POSIX shell. The Codex one cannot
-  run under `cmd.exe`, which has no `$( )`. Its `commandWindows` override stays unset rather
-  than shipping a form no test here can run. The self-tests skip the Codex cases on Windows
-  and say why. The gap closes when the registrations move to `praetorctl hook codex <event>`,
-  one executable call that `cmd /c` runs. All three registrations still name `python3`
-  themselves (#209). The Lefthook jobs they reach do not: those start the first of `python3`,
+- **Windows.** No registration needs a POSIX shell. Claude and Gemini need none at all; Codex
+  runs its `commandWindows` override through `cmd.exe`, which has no `$( )`, so that form looks
+  the Git root up with `for /f`. The self-tests run each Codex registration the way Codex does
+  on the host, `%COMSPEC% /C "<commandWindows>"` on Windows, and fail rather than skip there
+  (#209). All three registrations still name `python3` themselves. The Lefthook jobs they reach do not: those start the first of `python3`,
   `python` and `py -3` that proves itself Python 3
   ([the interpreter the hooks run](git-hooks.md#the-interpreter-the-hooks-run)).
 - **The batch-scope hook judges nothing before a checkpoint is due.**

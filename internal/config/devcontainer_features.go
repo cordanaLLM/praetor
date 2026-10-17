@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -33,7 +35,7 @@ func ResolveDevContainerFeatures(ctx context.Context, policy *EffectivePolicy) (
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		artifactFeatures, count, err := decodeArtifactFeatures(ctx, policy.CatalogArtifacts[i])
+		artifactFeatures, count, err := decodeArtifactFeatures(ctx, policy.CatalogArtifacts[i], policy.Root)
 		if err != nil {
 			return nil, err
 		}
@@ -62,13 +64,54 @@ func mergeDevContainerFeatures(features map[string]DevContainerFeature, addition
 	return nil
 }
 
-func decodeArtifactFeatures(ctx context.Context, artifact PolicyArtifact) ([]DevContainerFeature, int, error) {
+func decodeArtifactFeatures(ctx context.Context, artifact PolicyArtifact, root string) ([]DevContainerFeature, int, error) {
 	archetype, err := decodeArchetype(ctx, artifact.RelativePath, artifact.Content)
 	if err != nil {
 		return nil, 0, fmt.Errorf("decode selected catalog feature source %s: %w", artifact.RelativePath, err)
 	}
 	features := archetype.Controls.DevFeatures
+	for _, language := range []string{"go", "rust"} {
+		if languageManifestExists(root, language) {
+			features = append(features, archetype.DevFeaturesByLanguage[language]...)
+		}
+	}
 	return features, len(features), nil
+}
+
+func languageManifestExists(root, language string) bool {
+	if root == "" {
+		return false
+	}
+	manifest := "Cargo.toml"
+	if language == "go" {
+		manifest = "go.mod"
+	}
+	return util.FileExists(filepath.Join(root, manifest))
+}
+
+func decodeLanguageFeatureMap(member *yaml.Node) (map[string][]DevContainerFeature, error) {
+	if member == nil {
+		return nil, nil
+	}
+	if member.Kind != yaml.MappingNode || len(member.Content)%2 != 0 {
+		return nil, errors.New("devcontainer_features_by_language must be a mapping")
+	}
+	if len(member.Content) > 4 {
+		return nil, errors.New("devcontainer_features_by_language supports at most go and rust")
+	}
+	result := make(map[string][]DevContainerFeature, len(member.Content)/2)
+	for i := 0; i < len(member.Content); i += 2 {
+		language := member.Content[i].Value
+		if member.Content[i].Kind != yaml.ScalarNode || (language != "go" && language != "rust") {
+			return nil, fmt.Errorf("devcontainer_features_by_language[%d] has unsupported language", i/2)
+		}
+		features, err := decodeFeatureSequence(member.Content[i+1])
+		if err != nil {
+			return nil, fmt.Errorf("devcontainer_features_by_language.%s: %w", language, err)
+		}
+		result[language] = features
+	}
+	return result, nil
 }
 
 // decodeFeatureSequence decodes an archetype's devcontainer_features; nil is an omitted key.

@@ -117,8 +117,8 @@ func TestCatalog_Negative_EveryDeclaredValidatorJudgesItsShape(t *testing.T) {
 			}
 		}
 	}
-	if dialects[strictjson.JSONC] != 8 || dialects[strictjson.StrictJSON] == 0 {
-		t.Errorf("the sweep judged %d JSONC and %d strict JSON settings, want the 8 .vscode/settings.json entries and at least one strict one",
+	if dialects[strictjson.JSONC] != 9 || dialects[strictjson.StrictJSON] == 0 {
+		t.Errorf("the sweep judged %d JSONC and %d strict JSON settings, want the 9 .vscode/settings.json entries and at least one strict one",
 			dialects[strictjson.JSONC], dialects[strictjson.StrictJSON])
 	}
 }

@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -20,13 +22,14 @@ const (
 )
 
 // tryLockSnapshotDirectory makes one attempt to claim the directory root pins by creating
-// directoryClaimName, and reports busy while the name exists. The claim records this
+// directoryClaimName, and reports busy while the name exists or, on Windows, while its
+// deletion by the previous holder is still pending (#827). The claim records this
 // process's id, so a waiting writer can name the holder. A writer that was interrupted leaves
 // its claim behind for review, and LockDirectory then fails after its budget naming that
 // process; removing the claim once that process is gone frees the directory.
 func tryLockSnapshotDirectory(root *os.Root) (release func() error, busy bool, err error) {
 	file, err := root.OpenFile(directoryClaimName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, fs.ErrExist) {
+	if util.LockFileContended(err, runtime.GOOS) {
 		return nil, true, nil
 	}
 	if err != nil {

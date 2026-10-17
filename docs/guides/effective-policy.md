@@ -33,6 +33,9 @@ unwraps are resolved and sealed into the digest; no gate reads them yet, and the
 coverage manifest records both as `unconsumed`
 ([Every key names its consumer](archetype-authoring.md#every-key-names-its-consumer)).
 The linter list is read by the audit's declared-linters gate ([Declared linters](#declared-linters)).
+Dev Container feature resolution reads the exact pinned catalog artifacts and selects
+language-scoped features from the repository root's `go.mod` and `Cargo.toml`; mixed-language
+repositories receive both feature lists ([archetype authoring](archetype-authoring.md#devcontainer-features)).
 
 Public adoption loops resolve their policy during the dry run, then independently
 scan the original source under that policy before applying changes. Applied

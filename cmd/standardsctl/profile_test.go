@@ -205,13 +205,13 @@ func TestCheckDeclarationGates_3D(t *testing.T) {
 }
 
 // TestAdoptHelpStatesTheDefaultFacets (#596): adopt --help names the facets adoption writes when
-// it creates .standards.yaml, the set config.DefaultFacets holds when --facets is omitted, says
+// it creates .standards.yaml, the per-archetype set config.DefaultFacetsFor declares when --facets is omitted (#1075), says
 // an existing manifest keeps the facets it declares (manifestForLock), and where to change them
 // (positive); --help still exits 0 (boundary); the flag keeps an empty default, so the text is
 // the one that states it in prose (negative: no flag default).
 func TestAdoptHelpStatesTheDefaultFacets(t *testing.T) {
 	code, out := praetorctl(t, "adopt", "--help")
-	want := "default when omitted: " + strings.Join(config.DefaultFacets(), ",")
+	want := "default when omitted: " + config.DescribeDefaultFacets()
 	for _, phrase := range []string{want, "when adoption creates .standards.yaml", "an existing .standards.yaml keeps the facets it declares",
 		"praetorctl profile set --facets"} {
 		if code != 0 || !strings.Contains(out, phrase) {

@@ -498,6 +498,11 @@ full outcome table shared with the CLI.
 `standards_adopt` and `praetorctl adopt` render one outcome and one set of
 governance pillar lines, both derived from the adoption report
 (`AdoptReport.Outcome` and `AdoptReport.Pillars` in `internal/adopt/report.go`).
+Both also pass the same forge collaborator counter (`adoptCollaborators` in
+`cmd/standards-mcp/tools_adoption.go`): with `GITHUB_TOKEN` or `GH_TOKEN` in the server's
+environment, a first adoption of a GitHub origin with exactly one writer declares
+`review_mode: single_maintainer`, as the [adoption guide](../adoption.md) describes; without
+a token the server reaches no forge.
 A dry run that recorded an error is reported `[INCOMPLETE]`, not
 `[SIMULATED (DRY RUN)]`, and a pillar whose step warned, failed (by returning an
 error or by recording one), was declined or never ran names that status instead

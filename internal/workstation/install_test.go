@@ -188,11 +188,11 @@ func TestRestoreFromBackup_Boundary_TribunusctlAsRecorded(t *testing.T) {
 			if !prior {
 				dropRecordedBinary(t, opts, "tribunusctl")
 			}
-			states, err := inspectTargets(opts.BinDir)
+			states, err := inspectTargets(opts.GOOS, opts.BinDir)
 			if err != nil {
 				t.Fatal(err)
 			}
-			backupDir, err := backupTargets(opts.BinDir, states)
+			backupDir, err := backupTargets(opts.GOOS, opts.BinDir, states)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -425,5 +425,34 @@ func TestInstallRecordsSettingsDocuments(t *testing.T) {
 	if result.Manifest.Settings.Fleet == nil || result.Manifest.Settings.Fleet.Path != settingsPath ||
 		result.Manifest.Settings.Fleet.SHA256 != digestBytes(body) {
 		t.Fatalf("fleet settings not recorded as expected: %+v", result.Manifest.Settings.Fleet)
+	}
+}
+
+// Positive (#208): on Windows every binary is placed with the .exe suffix Windows needs to
+// execute it, and each legacy alias is a copy of its binary, not a symlink, which Windows
+// creates only with Developer Mode or elevation. A second install replaces all of them.
+func TestInstall_Positive_WindowsPlacesExecutableNames(t *testing.T) {
+	opts := testOptions(t, fakeBuild("v1"))
+	opts.GOOS = goosWindows
+	ctx := context.Background()
+	for _, tag := range []string{"v1", "v2"} {
+		opts.Build = fakeBuild(tag)
+		if _, err := Install(ctx, opts); err != nil {
+			t.Fatalf("install %s: %v", tag, err)
+		}
+		for _, name := range binaryNames {
+			assertContent(t, filepath.Join(opts.BinDir, name+".exe"), tag+":"+name)
+			if _, err := os.Lstat(filepath.Join(opts.BinDir, name)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("%s placed without .exe: %v", name, err)
+			}
+			for _, alias := range targetsOf(name)[1:] {
+				path := filepath.Join(opts.BinDir, alias+".exe")
+				info, err := os.Lstat(path)
+				if err != nil || !info.Mode().IsRegular() {
+					t.Fatalf("alias %s.exe is not a regular file: %v %v", alias, info, err)
+				}
+				assertContent(t, path, tag+":"+name)
+			}
+		}
 	}
 }

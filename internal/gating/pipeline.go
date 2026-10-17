@@ -46,7 +46,11 @@ const (
 	GosecConfigFile = ".gosec.json"
 	// TestStageTimeout is the default bound on the race-detector test stage. The effective
 	// value comes from testStageTimeout, which lets an operator raise it within a ceiling.
-	TestStageTimeout = 180 * time.Second
+	// It is sized from measured runs (#1419): on a workstation at load 45 to 60 a full race
+	// run took 9 to 10 minutes for the engine and 4 to 7 minutes for adopters, and the old
+	// 3-minute default refused ordinary pushes there. Twenty minutes is about twice the slowest
+	// measured run and two thirds of the ceiling, so an operator can still raise it.
+	TestStageTimeout = 20 * time.Minute
 	// MaxTestStageTimeout caps what the environment may ask for. HISS-02 requires an upper
 	// bound on the stage, not that the bound be unreachable, so the override is clamped
 	// rather than trusted.
@@ -893,7 +897,20 @@ func testStageTimeout(raw string) (time.Duration, string) {
 		return MaxTestStageTimeout, fmt.Sprintf("%s=%s exceeds the %s ceiling; clamped",
 			TestStageTimeoutEnv, parsed, MaxTestStageTimeout)
 	}
-	return parsed, fmt.Sprintf("race stage bound raised to %s by %s", parsed, TestStageTimeoutEnv)
+	return parsed, fmt.Sprintf("race stage bound %s to %s by %s", boundChange(parsed), parsed, TestStageTimeoutEnv)
+}
+
+// boundChange names how an accepted override moves the race stage's bound from the default, so a
+// value under the default is not announced as a raise.
+func boundChange(bound time.Duration) string {
+	switch {
+	case bound > TestStageTimeout:
+		return "raised"
+	case bound < TestStageTimeout:
+		return "lowered"
+	default:
+		return "set"
+	}
 }
 
 // removeWorktree tears down the isolated test worktree. It keeps the caller's context

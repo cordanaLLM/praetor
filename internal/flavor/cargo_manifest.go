@@ -11,14 +11,32 @@ import (
 )
 
 type cargoManifest struct {
-	hasPackage        bool
-	edition           string
-	inherits          bool
-	workspaceEdition  string
-	members, exclude  []string
-	invalid           string
-	warnings          string
-	lintsInherit      bool
+	// hasPackage reports a [package] table: the manifest describes a crate.
+	hasPackage bool
+	// hasLibraryTarget and hasBinaryTarget record explicit lib and bin target tables.
+	hasLibraryTarget bool
+	hasBinaryTarget  bool
+	// unpublished records a [package] that is never published (publish = false or []), and
+	// publishInherits one that takes publish from [workspace.package] (publish.workspace = true).
+	unpublished, publishInherits bool
+	// workspaceUnpublished records publish = false or [] in [workspace.package].
+	workspaceUnpublished bool
+	// edition is the well-formed edition (rustEdition) [package] declares, "" for none.
+	edition string
+	// inherits reports that [package] takes the edition [workspace.package] declares, as
+	// edition.workspace = true or edition = { workspace = true }.
+	inherits bool
+	// workspaceEdition is the well-formed edition [workspace.package] declares, "" for none.
+	workspaceEdition string
+	// members and exclude are the path lists [workspace] declares.
+	members, exclude []string
+	// invalid says why a members or exclude value could not be read, "" when both could.
+	invalid string
+	// warnings is the level [lints.rust] gives the warnings lint group, "" for none, and
+	// lintsInherit reports [lints] workspace = true, which takes [workspace.lints] instead.
+	warnings     string
+	lintsInherit bool
+	// workspaceWarnings is the level [workspace.lints.rust] gives the warnings lint group.
 	workspaceWarnings string
 }
 
@@ -26,10 +44,13 @@ type cargoManifestDocument struct {
 	Package   *cargoPackageDocument   `toml:"package"`
 	Workspace *cargoWorkspaceDocument `toml:"workspace"`
 	Lints     cargoLintsDocument      `toml:"lints"`
+	Lib       any                     `toml:"lib"`
+	Bin       any                     `toml:"bin"`
 }
 
 type cargoPackageDocument struct {
 	Edition any `toml:"edition"`
+	Publish any `toml:"publish"`
 }
 
 type cargoWorkspaceDocument struct {
@@ -52,14 +73,19 @@ func parseCargoManifest(name string, data []byte) (cargoManifest, error) {
 	if err := util.DecodeTOML(name, data, &document); err != nil {
 		return cargoManifest{}, err
 	}
-	manifest := cargoManifest{hasPackage: document.Package != nil}
+	manifest := cargoManifest{
+		hasPackage: document.Package != nil, hasLibraryTarget: document.Lib != nil,
+		hasBinaryTarget: document.Bin != nil,
+	}
 	if document.Package != nil {
 		manifest.edition, manifest.inherits = cargoEdition(document.Package.Edition)
+		manifest.unpublished, manifest.publishInherits = cargoPublish(document.Package.Publish)
 	}
 	manifest.warnings = cargoLintLevel(document.Lints.Rust.Warnings)
 	manifest.lintsInherit = cargoBool(document.Lints.Workspace)
 	if workspace := document.Workspace; workspace != nil {
 		manifest.workspaceEdition, _ = cargoEdition(workspace.Package.Edition)
+		manifest.workspaceUnpublished, _ = cargoPublish(workspace.Package.Publish)
 		manifest.workspaceWarnings = cargoLintLevel(workspace.Lints.Rust.Warnings)
 		manifest.members, manifest.invalid = cargoStringList(workspace.Members, "workspace.members", name)
 		if manifest.invalid == "" {
@@ -87,6 +113,27 @@ func cargoStringList(value any, key, name string) ([]string, string) {
 		result = append(result, text)
 	}
 	return result, ""
+}
+
+// cargoPublish reads a publish value: whether it forbids publishing (false, or an empty registry
+// list), and whether it is Cargo's workspace inheritance table. A missing value publishes.
+func cargoPublish(value any) (unpublished, inherits bool) {
+	switch publish := value.(type) {
+	case bool:
+		return !publish, false
+	case []any:
+		return len(publish) == 0, false
+	case map[string]any:
+		return false, cargoBool(publish["workspace"])
+	default:
+		return false, false
+	}
+}
+
+// unpublishedIn reports whether the crate is never published, by its own publish value or by the
+// one it inherits from workspace's [workspace.package].
+func (m cargoManifest) unpublishedIn(workspace cargoManifest) bool {
+	return m.unpublished || (m.publishInherits && workspace.workspaceUnpublished)
 }
 
 // cargoEdition extracts a literal edition or Cargo's workspace inheritance table.

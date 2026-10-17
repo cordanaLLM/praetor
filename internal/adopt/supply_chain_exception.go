@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -78,6 +79,24 @@ func PlannedReleaseWorkflow(ctx context.Context, root string) (string, error) {
 		return "", nil
 	}
 	return supplyChainGap{Measured: measured}.releaseWorkflow(), nil
+}
+
+// withSupplyChainException returns exceptions with the HISS-11 entry a first adoption records
+// (supplyChainException) appended, and that entry, when exceptions declares no HISS-11 entry and
+// the release workflows fall short of the declared supply chain. A re-adoption over a manifest an
+// older engine wrote used to record nothing and report success over a tree its next audit
+// refused (#1069). An entry the manifest already declares, renewed or narrowed by hand, stands.
+func (s *adoptSession) withSupplyChainException(ctx context.Context, exceptions []config.Exception) ([]config.Exception, *config.Exception) {
+	for i := 0; i < len(exceptions) && i < config.MaxExceptions; i++ {
+		if exceptions[i].Rule == config.ExceptionRuleSupplyChain {
+			return exceptions, nil
+		}
+	}
+	entry := s.supplyChainException(ctx)
+	if entry == nil {
+		return exceptions, nil
+	}
+	return append(slices.Clone(exceptions), *entry), entry
 }
 
 // supplyChainExceptionNote is what the manifest's report line says about the entry it declares.

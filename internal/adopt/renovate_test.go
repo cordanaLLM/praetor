@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/clientjson"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
@@ -166,7 +167,7 @@ func TestRenovateIgnorePositiveDeclaresManagedFilesOnce(t *testing.T) {
 func TestRenovateIgnoreNegativeCreatesNoConfiguration(t *testing.T) {
 	repo := newTestRepo(t, "renovate-none")
 	mustWrite(t, filepath.Join(repo, packageJSONFile), `{"name": "widgets"}`+"\n")
-	report, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo})
+	report, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo, Facets: config.DefaultFacets()})
 	if err != nil {
 		t.Fatalf("adopt: %v", err)
 	}
@@ -197,7 +198,7 @@ func TestRenovateIgnoreBoundaryReportsUneditableConfiguration(t *testing.T) {
 			repo := newTestRepo(t, "renovate-boundary")
 			path := filepath.Join(repo, filepath.FromSlash(tc.rel))
 			mustWrite(t, path, tc.content)
-			opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo}
+			opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo, Facets: config.DefaultFacets()}
 			for run := 0; run < 2; run++ {
 				report, err := Adopt(t.Context(), opts)
 				if err != nil {
@@ -231,7 +232,7 @@ func TestRenovateIgnoreBoundaryReportsUneditableConfiguration(t *testing.T) {
 func uninspectableRenovateReport(t *testing.T, repo, rel string) {
 	t.Helper()
 	mustWrite(t, filepath.Join(repo, readmeFile), "# Demo\n")
-	report, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo})
+	report, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo, Facets: config.DefaultFacets()})
 	if err != nil {
 		t.Fatalf("an uninspectable %s failed adoption: %v", rel, err)
 	}

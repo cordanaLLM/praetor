@@ -50,13 +50,13 @@ func TestLegacyScratch_Positive_RetiredRootStaysVisible(t *testing.T) {
 	if again := reconcileIgnore(t, root); again != retired || legacyIgnored(t, root) {
 		t.Fatalf("adoption restored the retired rule:\n%s", again)
 	}
-	if !HasManagedGitIgnoreTail(root, retired) {
+	if !HasManagedGitIgnoreTail(t.Context(), root, retired) {
 		t.Fatal("audit still demands the retired rule in the managed block")
 	}
-	if roots := PrivateScratchRoots(root, retired, false); !slices.Equal(roots, []string{state.WorkingDirName}) {
+	if roots := PrivateScratchRoots(t.Context(), root, retired, false); !slices.Equal(roots, []string{state.WorkingDirName}) {
 		t.Fatalf("audit probes %v after retirement, want the working directory alone", roots)
 	}
-	if roots := PrivateScratchRoots(root, "/.workingdir/\n", true); !slices.Equal(roots, []string{state.WorkingDirName}) {
+	if roots := PrivateScratchRoots(t.Context(), root, "/.workingdir/\n", true); !slices.Equal(roots, []string{state.WorkingDirName}) {
 		t.Fatalf("declined audit probes %v, want the working directory alone", roots)
 	}
 }
@@ -71,16 +71,16 @@ func TestLegacyScratch_Negative_DefaultAndPresentRootAreIgnored(t *testing.T) {
 	if got != adoptGitIgnoreSeed+"\n"+ManagedGitIgnoreBlock() || !legacyIgnored(t, root) {
 		t.Fatalf("a fresh adoption left %s visible to Git:\n%s", state.LegacyWorkingDirName, got)
 	}
-	if roots := PrivateScratchRoots(root, got, false); !slices.Equal(roots, EveryPrivateScratchRoot()) {
+	if roots := PrivateScratchRoots(t.Context(), root, got, false); !slices.Equal(roots, EveryPrivateScratchRoot()) {
 		t.Fatalf("audit probes %v after a fresh adoption, want both roots", roots)
 	}
 	mustWrite(t, filepath.Join(root, state.LegacyWorkingDirName, "OPEN.md"), "private\n")
 	withoutRule := strings.Replace(got, legacyScratchIgnore+"\n", "", 1)
-	if HasManagedGitIgnoreTail(root, withoutRule) {
+	if HasManagedGitIgnoreTail(t.Context(), root, withoutRule) {
 		t.Fatal("audit accepts a block without the rule while the root is present")
 	}
 	for _, declined := range []bool{false, true} {
-		if roots := PrivateScratchRoots(root, withoutRule, declined); !slices.Equal(roots, EveryPrivateScratchRoot()) {
+		if roots := PrivateScratchRoots(t.Context(), root, withoutRule, declined); !slices.Equal(roots, EveryPrivateScratchRoot()) {
 			t.Fatalf("declined=%t: audit probes %v while the root is present, want both roots", declined, roots)
 		}
 	}
@@ -147,19 +147,19 @@ func TestLegacyScratch_Boundary_RetiredBlockKeepsConfigNegation(t *testing.T) {
 	root := t.TempDir()
 	retired, negated := RetiredLegacyScratchBlock(), renderManagedGitIgnore(false, true)
 	for _, block := range []string{retired, negated} {
-		if merged, err := mergeGitIgnoreRules(block, false, false); err != nil || merged != block {
+		if merged, err := mergeGitIgnoreRules(block, false, false, false); err != nil || merged != block {
 			t.Fatalf("a merge changed the retired block:\n%s\n%v", merged, err)
 		}
-		if !HasManagedGitIgnoreTail(root, block) {
+		if !HasManagedGitIgnoreTail(t.Context(), root, block) {
 			t.Fatalf("audit refused the retired block:\n%s", block)
 		}
 	}
-	if merged, err := mergeGitIgnoreRules(negated, true, false); err != nil || merged != renderManagedGitIgnore(true, true) {
+	if merged, err := mergeGitIgnoreRules(negated, true, false, false); err != nil || merged != renderManagedGitIgnore(true, true) {
 		t.Fatalf("a present root did not restore the rule beside the negation:\n%s\n%v", merged, err)
 	}
 	mustWrite(t, filepath.Join(root, state.LegacyWorkingDirName), "")
 	for _, block := range []string{retired, negated} {
-		if HasManagedGitIgnoreTail(root, block) {
+		if HasManagedGitIgnoreTail(t.Context(), root, block) {
 			t.Fatalf("audit accepted a retired block while the root is present:\n%s", block)
 		}
 	}
@@ -213,5 +213,91 @@ func TestLegacyScratch_Boundary_DanglingLinkIsPresent(t *testing.T) {
 	}
 	if !legacyScratchPresent(root) || !keepsLegacyScratch(RetiredLegacyScratchBlock(), legacyScratchPresent(root), false) {
 		t.Fatal("a dangling link named .workingdir2 dropped the rule")
+	}
+}
+
+// trackedLegacyRepo returns a repository whose HEAD tracks a file below the legacy scratch root
+// and whose .gitignore holds ignore, committed through plumbing (commitAll).
+func trackedLegacyRepo(t *testing.T, name, ignore string, track bool) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), name)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initTestGit(t, root)
+	mustWrite(t, filepath.Join(root, state.LegacyWorkingDirName, "PLAN.md"), "# plan\n")
+	mustWrite(t, filepath.Join(root, gitIgnoreFile), ignore)
+	if track {
+		commitAll(t, root)
+	}
+	return root
+}
+
+// Positive (#1072): while HEAD tracks a file below .workingdir2, or the repository's own rules
+// un-ignore it, the managed block leaves the rule out, audit probes the working directory alone,
+// new files there stay visible to Git, and the report says why.
+func TestLegacyScratch_Positive_OwnedRootStaysVisible(t *testing.T) {
+	requireGit(t)
+	for name, c := range map[string]struct {
+		ignore string
+		track  bool
+		reason string
+	}{
+		"tracked": {"/build/\n", true, "git tracks files below it"},
+		"negated": {state.LegacyWorkingDirName + "/*\n!" + state.LegacyWorkingDirName + "/**/*.md\n", false, ".gitignore un-ignores it with !"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := trackedLegacyRepo(t, "legacy-owned-"+name, c.ignore, c.track)
+			s := &adoptSession{repoPath: root, report: &AdoptReport{}, opts: AdoptOptions{Path: root}}
+			if err := reconcileGitIgnore(t.Context(), s); err != nil {
+				t.Fatal(err)
+			}
+			got := mustRead(t, filepath.Join(root, gitIgnoreFile))
+			newPlan := state.LegacyWorkingDirName + "/NEW-PLAN.md"
+			ignored, err := util.GitIgnoredPaths(t.Context(), root, []string{newPlan}, true)
+			if err != nil || strings.Contains(got, legacyScratchIgnore+"\n") || slices.Contains(ignored, newPlan) {
+				t.Fatalf("the block hides a new %s (%v):\n%s", newPlan, err, got)
+			}
+			if roots := PrivateScratchRoots(t.Context(), root, got, false); !slices.Equal(roots, []string{state.WorkingDirName}) || !HasManagedGitIgnoreTail(t.Context(), root, got) {
+				t.Fatalf("audit probes %v or refuses the block", roots)
+			}
+			if detail := actionDetail(s.report, gitIgnoreFile, actionAppend); !strings.Contains(detail, "left "+legacyScratchIgnore+" out of the block because "+c.reason) {
+				t.Fatalf("report detail %q does not say why the rule is withheld", detail)
+			}
+		})
+	}
+}
+
+// Negative: a present root that is neither tracked nor un-ignored keeps the rule, and so does a
+// negation of another path or a tracked file outside the root.
+func TestLegacyScratch_Negative_UnownedRootKeepsTheRule(t *testing.T) {
+	requireGit(t)
+	for name, ignore := range map[string]string{"present only": "/build/\n", "other negation": "build/*\n!build/keep.md\n"} {
+		root := trackedLegacyRepo(t, "legacy-unowned", ignore, false)
+		mustWrite(t, filepath.Join(root, "docs", "README.md"), "tracked\n")
+		if got := reconcileIgnore(t, root); !strings.Contains(got, legacyScratchIgnore+"\n") || !legacyIgnored(t, root) {
+			t.Fatalf("%s: the rule was withheld for a root the repository does not keep:\n%s", name, got)
+		}
+	}
+}
+
+// Boundary: a negation names the root with or without a leading slash or **/, and a sibling whose
+// name only starts with the root's is another directory; owned is decided before presence.
+func TestLegacyScratch_Boundary_NegationNamesTheRoot(t *testing.T) {
+	name := state.LegacyWorkingDirName
+	for rule, want := range map[string]bool{
+		"!" + name: true, "!/" + name + "/": true, "!**/" + name + "/x.md": true, "!" + name + "/**/*.md": true,
+		"!" + name + "-archive/**": false, name + "/keep.md": false, "#!" + name: false, "!": false,
+	} {
+		if got := negatesLegacyScratch(rule); got != want {
+			t.Errorf("negatesLegacyScratch(%q) = %v, want %v", rule, got, want)
+		}
+	}
+	root := t.TempDir()
+	if owned, _ := legacyScratchOwned(t.Context(), root, "!"+name+"-archive/**\n"); owned {
+		t.Error("a sibling negation counts as owning the root")
+	}
+	if keepsLegacyScratchIn(t.Context(), root, "!"+name+"/a.md\n"+legacyScratchIgnore+"\n", false) {
+		t.Error("the exact rule kept the root ignored although the repository un-ignores it")
 	}
 }

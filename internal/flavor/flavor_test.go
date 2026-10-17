@@ -220,6 +220,7 @@ func TestListFlavors_CompleteRegistry(t *testing.T) {
 		"python-ml":          false,
 		"infra-k8s":          false,
 		"agentic-autonomous": false,
+		"rust-library":       false,
 		"rust-systems":       false,
 		"typescript-node":    false,
 		"jvm-service":        false,

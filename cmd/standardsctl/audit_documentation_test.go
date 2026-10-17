@@ -382,12 +382,20 @@ func TestAuditDocumentationGateDeclineBoundary(t *testing.T) {
 
 // Negative: declining git-ignore hands the file to the operator, not the privacy invariant.
 // Every scratch root adoption would protect must still be effectively ignored: .workingdir
-// always, .workingdir2 while it is on disk or the file carries the rule adoption wrote.
+// always, .workingdir2 while it is on disk or the file carries the rule adoption wrote. A
+// negation of .workingdir2 is the repository keeping that root in Git (#1072), so audit leaves
+// it to the repository, as adoption does.
 func TestAuditDocumentationGateGitIgnoreDeclineKeepsScratchPrivacy(t *testing.T) {
+	negated := documentationAuditFixture(t)
+	writeFixtureFile(t, negated, ".gitignore", "/.workingdir/\n/.workingdir2/\n!/.workingdir2/\n!/.workingdir2/**\n")
+	if err := docGate(t.Context(), declinedDocumentationManifest([]string{"git-ignore"}, "docs:seo-portal"), negated); err != nil &&
+		strings.Contains(err.Error(), "effectively exclude") {
+		t.Fatalf("audit demands a .workingdir2 the repository un-ignores: %v", err)
+	}
 	for name, ignore := range map[string]string{
-		"missing second root": "/.workingdir/\n",
-		"later negation":      "/.workingdir/\n/.workingdir2/\n!/.workingdir2/\n!/.workingdir2/**\n",
-		"absent":              "",
+		"missing second root":                     "/.workingdir/\n",
+		"later negation of the working directory": "/.workingdir/\n!/.workingdir/\n",
+		"absent": "",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := documentationAuditFixture(t)

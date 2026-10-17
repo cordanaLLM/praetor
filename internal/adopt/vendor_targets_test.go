@@ -7,16 +7,18 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 const vendorContextFile = "CLAUDE.md"
 
-// adoptedRepo runs a first plain adoption of a new repository and returns its path and the
-// catalog source it was adopted from.
+// adoptedRepo runs a first plain adoption of a new repository with the full facet surface,
+// which no single archetype defaults to (#1075), and returns its path and the catalog source it
+// was adopted from.
 func adoptedRepo(t *testing.T, name string) (repoPath, source string) {
 	t.Helper()
 	repoPath, source = newTestRepo(t, name), newAdoptLockSource(t)
-	if _, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: source, Path: repoPath}); err != nil {
+	if _, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: source, Path: repoPath, Facets: config.DefaultFacets()}); err != nil {
 		t.Fatalf("first adoption: %v", err)
 	}
 	return repoPath, source
@@ -44,32 +46,45 @@ func backupNamedIn(t *testing.T, repoPath, detail string) string {
 	return filepath.Join(repoPath, filepath.FromSlash(rel))
 }
 
-// Positive: a hand-edited CLAUDE.md is replaced on a plain run, since audit demands its exact
-// bytes, and the edit is kept under the backup root; the dry run before it plans that replace
-// and writes neither the file nor a backup. The other vendor files are only synchronized.
+// Positive: a hand-edited CLAUDE.md is rewritten on a plain run, since audit demands its exact
+// bytes, but its edit is folded into AGENTS.md first (#1073), so the new projection carries the
+// edit and the backup is not its only copy; the dry run before it plans that and writes neither
+// file nor a backup. The other vendor files are only synchronized.
 func TestAdopt_Positive_HandEditedVendorFileOnPlainRunReplacedWithBackup(t *testing.T) {
+	const note = "Local note an operator added by hand."
 	repoPath, source := adoptedRepo(t, "vendor-edit")
 	full := filepath.Join(repoPath, vendorContextFile)
-	projection := mustRead(t, full)
-	edited := projection + "Local note an operator added by hand.\n"
+	agents := mustRead(t, filepath.Join(repoPath, agentsFile))
+	edited := mustRead(t, full) + note + "\n"
 	mustWrite(t, full, edited)
 
 	preview := readoptWith(t, repoPath, source, AdoptOptions{DryRun: true})
 	planned := replacedEntry(t, preview, vendorContextFile)
-	if mustRead(t, full) != edited || fileExists(backupNamedIn(t, repoPath, planned.Details)) {
-		t.Fatal("dry run wrote the vendor file or its backup")
+	if mustRead(t, full) != edited || mustRead(t, filepath.Join(repoPath, agentsFile)) != agents ||
+		fileExists(backupNamedIn(t, repoPath, planned.Details)) {
+		t.Fatal("dry run wrote the vendor file, AGENTS.md or a backup")
 	}
 
 	rep := readoptWith(t, repoPath, source, AdoptOptions{})
 	entry := replacedEntry(t, rep, vendorContextFile)
-	if !strings.Contains(entry.Details, `(-1/+0 lines, removed "Local note an operator added by hand.")`) {
-		t.Fatalf("replace detail %q", entry.Details)
+	if strings.Contains(entry.Details, "removed") {
+		t.Fatalf("replace detail %q drops a line", entry.Details)
 	}
 	if got := mustRead(t, backupNamedIn(t, repoPath, entry.Details)); got != edited {
 		t.Fatalf("backup = %q, want the hand-edited file", got)
 	}
-	if mustRead(t, full) != projection || len(rep.Replaced()) != 1 {
-		t.Fatalf("vendor file not restored, or other files replaced: %+v", rep.Replaced())
+	if !strings.Contains(mustRead(t, filepath.Join(repoPath, agentsFile)), note) || !strings.Contains(mustRead(t, full), note) {
+		t.Fatal("the hand edit was not folded into AGENTS.md and its new projection")
+	}
+	// AGENTS.md is written once by the harness step, as a replacement whose backup holds the
+	// bytes the run found; only it and the vendor file are replaced.
+	folded := replacedEntry(t, rep, agentsFile)
+	if !hasWarningContaining(rep, vendorContextFile+" held text "+agentsFile+" lacked") || len(rep.Replaced()) != 2 ||
+		!strings.Contains(folded.Details, "vendor context text folded") {
+		t.Fatalf("fold not reported, or other files replaced: %v %+v", rep.Warnings, rep.Replaced())
+	}
+	if got := mustRead(t, backupNamedIn(t, repoPath, folded.Details)); got != agents {
+		t.Fatalf("AGENTS.md backup = %q, want the bytes the run found", got)
 	}
 }
 

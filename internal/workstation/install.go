@@ -107,7 +107,7 @@ func validateInstallOptions(opts Options) (Options, error) {
 // install builds from a prepared source and places the binaries. A scratch clone that cannot
 // be removed afterwards is reported in the returned error beside the result.
 func install(ctx context.Context, opts Options) (result Result, err error) {
-	states, err := inspectTargets(opts.BinDir)
+	states, err := inspectTargets(opts.GOOS, opts.BinDir)
 	if err != nil {
 		return Result{}, err
 	}
@@ -118,7 +118,7 @@ func install(ctx context.Context, opts Options) (result Result, err error) {
 	defer func() { err = errors.Join(err, source.cleanup()) }()
 	var backupDir string
 	if !allAbsent(states) {
-		if backupDir, err = backupTargets(opts.BinDir, states); err != nil {
+		if backupDir, err = backupTargets(opts.GOOS, opts.BinDir, states); err != nil {
 			return Result{}, err
 		}
 	}
@@ -155,10 +155,11 @@ func placeAll(ctx context.Context, opts Options, source string, states map[strin
 	return digests, nil
 }
 
-// placeOne builds one binary from source, hashes it and swaps it in plus its alias symlink
-// when it has one.
+// placeOne builds one binary from source, hashes it and swaps it in plus its alias when it
+// has one: a symlink to the binary, or on Windows a copy of it, since Windows creates a
+// symlink only with Developer Mode or elevation (#208).
 func placeOne(ctx context.Context, opts Options, source, name, buildDir string, states map[string]targetState) (string, error) {
-	built := filepath.Join(buildDir, name)
+	built := filepath.Join(buildDir, targetFileName(opts.GOOS, name))
 	if err := opts.Build(ctx, source, name, built); err != nil {
 		return "", fmt.Errorf("workstation: build %s: %w", name, err)
 	}
@@ -180,6 +181,9 @@ func placeOne(ctx context.Context, opts Options, source, name, buildDir string, 
 		return digest, nil
 	}
 	if err := stageAndSwap(opts.GOOS, opts.BinDir, alias, func(path string) error {
+		if opts.GOOS == goosWindows {
+			return copyFileMode(built, path, mode)
+		}
 		return os.Symlink(name, path)
 	}); err != nil {
 		return "", err

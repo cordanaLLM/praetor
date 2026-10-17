@@ -34,16 +34,17 @@ type targetState struct {
 	mode   os.FileMode
 }
 
-// inspectTargets classifies every binary and alias path in binDir, refusing before
-// anything is touched if any of them is a foreign target (ErrForeignTarget).
-func inspectTargets(binDir string) (map[string]targetState, error) {
+// inspectTargets classifies every binary and alias path in binDir, by its file name on goos
+// (targetFileName), refusing before anything is touched if any of them is a foreign target
+// (ErrForeignTarget).
+func inspectTargets(goos, binDir string) (map[string]targetState, error) {
 	states := make(map[string]targetState, len(allTargetNames()))
 	for _, name := range allTargetNames() {
 		expected := ""
 		if primary, ok := primaryFor(name); ok {
-			expected = primary
+			expected = targetFileName(goos, primary)
 		}
-		state, err := inspectTarget(filepath.Join(binDir, name), expected)
+		state, err := inspectTarget(filepath.Join(binDir, targetFileName(goos, name)), expected)
 		if err != nil {
 			return nil, err
 		}
@@ -87,7 +88,7 @@ func inspectSymlink(path, expected string) (targetState, error) {
 // failed swap can be restored. It copies rather than moves, matching
 // scripts/dev_install.py's prepare_backup: a failure during backup itself leaves every
 // target untouched. Call it only when at least one target is not targetAbsent.
-func backupTargets(binDir string, states map[string]targetState) (backupDir string, err error) {
+func backupTargets(goos, binDir string, states map[string]targetState) (backupDir string, err error) {
 	backupDir, err = os.MkdirTemp(binDir, ".praetor-workstation-backup-")
 	if err != nil {
 		return "", fmt.Errorf("workstation: create backup directory: %w", err)
@@ -97,7 +98,8 @@ func backupTargets(binDir string, states map[string]targetState) (backupDir stri
 		if state.kind == targetAbsent {
 			continue
 		}
-		if err := copyTarget(filepath.Join(binDir, name), filepath.Join(backupDir, name), state); err != nil {
+		file := targetFileName(goos, name)
+		if err := copyTarget(filepath.Join(binDir, file), filepath.Join(backupDir, file), state); err != nil {
 			return backupDir, err
 		}
 	}
@@ -142,9 +144,10 @@ func copyFileMode(source, destination string, mode os.FileMode) (err error) {
 }
 
 // stageAndSwap writes into a same-directory temporary entry (via write) and then swaps it
-// into destinationName under binDir. Staging beside the destination keeps the final rename
-// on one filesystem, so it is atomic.
+// into the target destinationName under binDir, under its file name on goos (targetFileName).
+// Staging beside the destination keeps the final rename on one filesystem, so it is atomic.
 func stageAndSwap(goos, binDir, destinationName string, write func(path string) error) error {
+	destinationName = targetFileName(goos, destinationName)
 	stageDir, err := os.MkdirTemp(binDir, ".praetor-workstation-place-")
 	if err != nil {
 		return fmt.Errorf("workstation: create staging directory: %w", err)
@@ -211,7 +214,7 @@ func restoreFromBackup(goos, binDir, backupDir string, states map[string]targetS
 }
 
 func restoreOne(goos, binDir, backupDir, name string, state targetState) error {
-	destination := filepath.Join(binDir, name)
+	destination := filepath.Join(binDir, targetFileName(goos, name))
 	if state.kind == targetAbsent {
 		if err := os.Remove(destination); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("workstation: remove %s: %w", destination, err)
@@ -219,7 +222,7 @@ func restoreOne(goos, binDir, backupDir, name string, state targetState) error {
 		return nil
 	}
 	return stageAndSwap(goos, binDir, name, func(path string) error {
-		return copyTarget(filepath.Join(backupDir, name), path, state)
+		return copyTarget(filepath.Join(backupDir, targetFileName(goos, name)), path, state)
 	})
 }
 

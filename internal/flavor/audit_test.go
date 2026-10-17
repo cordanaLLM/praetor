@@ -144,6 +144,7 @@ var settingsGapTolerance = map[string]int{
 	"os-image":           0,
 	"python-ml":          0,
 	"rust-systems":       1,
+	"rust-library":       1,
 	"typescript-node":    1,
 }
 
