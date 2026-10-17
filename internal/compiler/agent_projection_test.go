@@ -196,7 +196,8 @@ func TestVerifyAgentProjections_Negative_HandEditedTools(t *testing.T) {
 	if err := os.WriteFile(claudeCopy, []byte(edited), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := VerifyAgentProjections(t.Context(), root); !errors.Is(err, ErrAgentProjectionDrift) || !strings.Contains(err.Error(), claudeCopy[len(root)+1:]) {
+	// The verifier names the projection by its slash path on every platform.
+	if _, err := VerifyAgentProjections(t.Context(), root); !errors.Is(err, ErrAgentProjectionDrift) || !strings.Contains(err.Error(), ".claude/agents/reviewer.md") {
 		t.Fatalf("VerifyAgentProjections() = %v, want tool-list drift", err)
 	}
 }
