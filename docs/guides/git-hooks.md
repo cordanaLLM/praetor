@@ -126,7 +126,7 @@ every file and requires yamllint to reject each one, so the rule is proven to be
 | `pre-commit`, `pre-merge-commit` | Audit the live private ledger, then check the exact index for whitespace, conflict markers, Python/JSON syntax, YAML, shell, workflow and Docker lint; Go formatting and vet on changed packages; verify affected generated agent instructions. |
 | `prepare-commit-msg` | Add an instructional comment to a fresh empty message. |
 | `commit-msg` | Verify the live state synchronization after Lefthook restores partially staged worktree files, then apply the commit message policy (`praetorctl forge check-message`: a conventional subject, Git merge/revert subjects accepted, the HISS-14 `Migration:` footer on a breaking change, and an offline warning for ambiguous closing references; explicit pull request URLs require `Closes-own: <reference>`) and require a DCO sign-off. |
-| `pre-push` | Audit and verify live state before inspecting each actual pushed commit. `checkpoint/*` destinations run file checks, affected Go builds and race tests. Other destinations also require lint, security, vulnerability, governance, flavor and signed-receipt gates. |
+| `pre-push` | Audit and verify live state before inspecting each actual pushed commit. Run `standardsctl forge refactor-check --base=<base> --head=<head>` over the pushed range for the REF-02 assertion lock. `checkpoint/*` destinations run file checks, affected Go builds and race tests. Other destinations also require lint, security, vulnerability, governance, flavor and signed-receipt gates. |
 | `post-commit` | Synchronize and read back the private state for the new commit, then print the dedupe cadence reminder when due. Sync failures are reported. |
 | `post-checkout`, `post-merge`, `post-rewrite` | Warm changed module dependencies in an isolated clone, rebuild the local CLI for source changes, verify affected agent outputs, report governance changes. `post-merge` then runs `praetorctl workstation install --if-stale`, which rebuilds a lagging engine install from this checkout on the update branch and otherwise skips silently ([refresh a lagging install](workstation-update.md#refresh-a-lagging-install)). File-only checkouts do nothing. |
 | `pre-rebase` | Check the hook environment before replay begins. |
@@ -712,6 +712,7 @@ pull request (`.github/workflows/ci.yml`, the two steps after the documentation 
 | `commit-msg`: the HISS-14 `Migration:` footer on a breaking change | the same command | `TestForgeCheckCommits_EnforcesBreakingMigrationFooter` |
 | `commit-msg`: closing keywords (`close`, `fix`, `resolve` and their forms, as GitHub lists them) are resolved in CI; issues pass, pull requests opened by the checked pull request author pass, and pull requests opened by anyone else fail unless a `Closes-own: <reference>` line marks the closure as intended. Offline, `#N` and `owner/repo#N` warn because only CI can resolve them; `/pull/` and `/pulls/` URLs fail immediately. | the same command; `praetorctl forge validate-pr` applies the same function to the pull request body | `TestClosingKeywords_OnlineResolution` |
 | `commit-msg`: the DCO sign-off | `scripts/dco_check.sh` in `.github/workflows/compliance.yml` | `scripts/test_dco_check.py` |
+| `refactor:` commits: REF-02 refuses changed assertion lines or removed test functions; REF-01 runs touched Go package tests at that commit | pre-push runs `praetorctl forge refactor-check --base=<base> --head=<head>` without test execution; CI runs the same range with `--run-tests` | `TestForgeRefactorCheck_*` |
 | `pre-commit`: whitespace errors and conflict markers (`git diff --cached --check`) | `python3 -B .config/lefthook/scripts/hooks.py commits origin/<base>`, which runs `git log --check` over the range | `CommitRange` in `.config/lefthook/scripts/test_hooks.py` |
 | `pre-commit` and `pre-push`: private `.workingdir` content | the same stage, through `check_private_history` | `CommitRange` |
 
@@ -721,6 +722,15 @@ message file Git hands it, which first drops what Git removes before it records 
 lines that start with `#`, and the scissors line with everything after it. A message file over
 1 MiB, or of more than 100000 lines before the scissors line, is refused, not checked in part
 (`TestCleanCommitMessage_Boundary_LineBound`).
+
+`standardsctl forge refactor-check` uses the same Conventional Commits subject parser as
+`AnalyzeCommit` to select `refactor:` commits. REF-02 checks changed `*_test.go` hunks for
+`t.Error`, `t.Errorf`, `t.Fatal`, `t.Fatalf`, `assert.*`, `require.*`, and `cmp.Diff` lines, and
+refuses removed `Test*` functions. A pure test-file rename passes. REF-01 runs `go test` for
+packages touched by each refactor commit in a temporary worktree of that commit, bounded by a
+20-minute test timeout; an unavailable or failing test command fails the gate. Pre-push omits
+suite execution to keep the local range check fast. CI runs it with `--run-tests` on pull-request
+ranges. REF-03 public API invariance remains covered by the engine API compatibility gate.
 
 These checks are not re-run per commit:
 

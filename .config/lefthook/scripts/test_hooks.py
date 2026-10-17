@@ -1067,6 +1067,25 @@ print("fixture hook self-tests passed")
         prepare_message(str(message), "2")
         self.assertEqual(message.read_text(), "fix: already written\n")
 
+    def test_refactor_range_uses_exact_base_or_single_root(self):
+        with mock.patch("hooks.cli") as run_cli:
+            hooks.check_refactor_range("base-sha", "head-sha")
+        run_cli.assert_called_once_with([
+            "forge", "refactor-check", "--base=base-sha", "--head=head-sha",
+        ])
+        with mock.patch("hooks.git", return_value=b"root-sha\n") as read_roots, \
+                mock.patch("hooks.cli") as run_cli:
+            hooks.check_refactor_range(None, "head-sha")
+        read_roots.assert_called_once_with("rev-list", "--max-parents=0", "--max-count=2", "head-sha")
+        run_cli.assert_called_once_with([
+            "forge", "refactor-check", "--base=root-sha", "--head=head-sha", "--include-base",
+        ])
+        with mock.patch("hooks.git", return_value=b"root-a\nroot-b\n"), \
+                mock.patch("hooks.cli") as run_cli:
+            with self.assertRaisesRegex(HookError, "one repository root"):
+                hooks.check_refactor_range(None, "head-sha")
+        run_cli.assert_not_called()
+
     def test_real_push_initial_docs_update_new_branch_and_deletion(self):
         remote = Path(self.temp.name) / "remote.git"
         command(self.repo, "git", "init", "--bare", "-q", str(remote))
@@ -1107,13 +1126,16 @@ print("fixture hook self-tests passed")
             # committed bytes, not let core.autocrlf rewrite its isolated snapshot.
             with mock.patch.dict(os.environ, AUTOCRLF_ENV), \
                     mock.patch("hooks.sys.stdin", io.StringIO(protocol)), \
-                    mock.patch("hooks.source_checks", return_value=False) as check:
+                    mock.patch("hooks.source_checks", return_value=False) as check, \
+                    mock.patch("hooks.check_refactor_range") as refactors:
                 pre_push("origin")
                 self.assertEqual(check.call_args.kwargs, {"base": base})
                 self.assertEqual(check.call_args.args[1], ["README.md"])
+                refactors.assert_called_once_with(base, head)
             with mock.patch.dict(os.environ, AUTOCRLF_ENV), \
                     mock.patch("hooks.sys.stdin", io.StringIO(protocol.replace(base, "f" * 40))), \
-                    mock.patch("hooks.source_checks", return_value=False) as check:
+                    mock.patch("hooks.source_checks", return_value=False) as check, \
+                    mock.patch("hooks.check_refactor_range"):
                 pre_push("origin")
                 self.assertIsNone(check.call_args.kwargs["base"])
                 self.assertIn("lefthook.yml", check.call_args.args[1])
@@ -1172,6 +1194,7 @@ print("fixture hook self-tests passed")
             os.chdir(self.repo)
             # Only the destination determines policy; the local branch is irrelevant.
             with mock.patch("hooks.sys.stdin", io.StringIO(strict)), \
+                    mock.patch("hooks.check_refactor_range"), \
                     mock.patch("hooks.checkpoint_checks") as wip, \
                     mock.patch("hooks.source_checks", return_value=False) as full:
                 pre_push("origin")
@@ -1182,12 +1205,14 @@ print("fixture hook self-tests passed")
             for protocol in (checkpoint + strict, checkpoint + checkpoint + strict, strict + checkpoint):
                 with self.subTest(protocol=protocol), \
                         mock.patch("hooks.sys.stdin", io.StringIO(protocol)), \
+                        mock.patch("hooks.check_refactor_range"), \
                         mock.patch("hooks.source_checks", side_effect=HookError("strict release rejected")) as full:
                     with self.assertRaisesRegex(HookError, "strict release rejected"):
                         pre_push("origin")
                     full.assert_called_once()
             # File checks are mandatory before either mode's source checks.
             with mock.patch("hooks.sys.stdin", io.StringIO(checkpoint)), \
+                    mock.patch("hooks.check_refactor_range"), \
                     mock.patch("hooks.file_checks", side_effect=HookError("invalid snapshot syntax")), \
                     mock.patch("hooks.checkpoint_checks") as wip:
                 with self.assertRaisesRegex(HookError, "invalid snapshot syntax"):

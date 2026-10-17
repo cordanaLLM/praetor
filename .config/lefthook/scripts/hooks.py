@@ -177,6 +177,7 @@ def pre_push(remote):
         # scope. One line here is the difference between a five-minute diagnosis and an hour.
         print(f"Push scope: {len(names)} file(s) versus "
               f"{base[:12] if base else 'the full tree'}")
+        check_refactor_range(base, head)
         if not names:
             continue
         check_pushed_snapshot(head, base, mode, names)
@@ -184,6 +185,22 @@ def pre_push(remote):
             print(f"WIP checkpoint: {destination}; local file/build/race checks passed. "
                   "Full CI diagnostics remain required; no release receipt issued.")
         print(f"Push: {head[:12]} checked ({len(names)} changed paths)")
+
+
+def check_refactor_range(base, head):
+    """Run the assertion lock over the exact outgoing commit range."""
+    if not base:
+        roots = git("rev-list", "--max-parents=0", "--max-count=2", head).decode().splitlines()
+        if len(roots) != 1:
+            raise HookError("refactor check needs one repository root when pushed-range base is unknown")
+        base = roots[0]
+        include_base = True
+    else:
+        include_base = False
+    if include_base:
+        cli(["forge", "refactor-check", f"--base={base}", f"--head={head}", "--include-base"])
+    else:
+        cli(["forge", "refactor-check", f"--base={base}", f"--head={head}"])
 
 
 def check_commits(base):
