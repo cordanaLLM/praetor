@@ -77,13 +77,13 @@ func TestServerExitStatusPassesOnlyTheServerStatus(t *testing.T) {
 	}
 	err := fmt.Errorf("run decided-mcp: %w", command.Run())
 	var stderr bytes.Buffer
-	if got := commandExitCode(&stderr, serverExitStatus(err)); got != 23 || stderr.Len() != 0 {
+	if got := commandExitCode(&stderr, childExitStatus(err)); got != 23 || stderr.Len() != 0 {
 		t.Fatalf("server exit = %d, stderr %q; want 23 and no text", got, stderr.String())
 	}
 	if got := commandExitCode(&stderr, err); got != 1 || !strings.Contains(stderr.String(), "run decided-mcp") {
 		t.Fatalf("wrapped child elsewhere = %d, stderr %q; want 1 with the error text", got, stderr.String())
 	}
-	if serverExitStatus(nil) != nil {
+	if childExitStatus(nil) != nil {
 		t.Fatal("a clean server exit became an error")
 	}
 }

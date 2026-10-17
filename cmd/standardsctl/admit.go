@@ -10,7 +10,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/admission"
@@ -55,7 +54,7 @@ func runAdmit(args []string) error {
 	}
 	stepCtx, stepCancel := context.WithTimeout(ctx, opts.timeout)
 	defer stepCancel()
-	return admitExit(admission.Run(stepCtx, admission.DefaultStep(opts.label, opts.argv, opts.limits)))
+	return childExitStatus(admission.Run(stepCtx, admission.DefaultStep(opts.label, opts.argv, opts.limits)))
 }
 
 // parseAdmit reads the flags and the command after `--`; everything past `--` is the command,
@@ -93,14 +92,4 @@ func parseAdmit(args []string) (admitOptions, error) {
 		opts.label = argv[0]
 	}
 	return opts, opts.limits.Check()
-}
-
-// admitExit turns the step's own exit status into praetorctl's, so `admit -- false` exits 1 and
-// a killed step exits as the shell reports it.
-func admitExit(err error) error {
-	var exit *exec.ExitError
-	if errors.As(err, &exit) && exit.ExitCode() > 0 {
-		return exitStatusError{code: exit.ExitCode()}
-	}
-	return err
 }
