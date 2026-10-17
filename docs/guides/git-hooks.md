@@ -748,7 +748,12 @@ in its own line endings. An edited one is kept, `--force` included, with a warni
 Beside a `lefthook.yml` that extends the canonical policy, the interceptor and the checkpoint
 scripts belong to that vendored bundle and are never refreshed
 (`TestReconcileEvasionHook_Boundary_VendoredPriorKeptAndUnreadableUnverified`,
-`TestReconcileCheckpointBundle_Boundary_VendoredPriorScriptKept`). Adoption reconciles
+`TestReconcileCheckpointBundle_Boundary_VendoredPriorScriptKept`,
+`TestAdopt_Boundary_CanonicalLefthookKeepsEarlierCheckpoint`). Beside any other kept
+`lefthook.yml`, the checkpoint row above applies, except that an edited copy leaves every bundle
+file as it is without failing the lifecycle, since the kept file may run its own scripts. The
+audit then names the edited file in its warning instead of a plain adopt run, which would not
+refresh the bundle. Adoption reconciles
 `.config/lefthook/engine.sh` and `.config/praetor/engine.mk` independently of whether `lefthook.yml`
 is written (#1172): a repository whose own hook file is kept still receives the launcher and Makefile include
 to resolve its pinned engine, without overwriting or activating its hook file. Earlier releases renamed a
