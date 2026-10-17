@@ -27,22 +27,84 @@ func adoptWithSource(t *testing.T, repoPath, source string, force bool) *AdoptRe
 	return rep
 }
 
-// Positive (#502): lefthook.yml is classified before the checkpoint bundle is installed. Beside
-// a kept configuration only absent checkpoint files are written, --force included: an unedited
-// earlier checkpoint.py is not refreshed, since the kept configuration may run it, and the
-// missing common.py is installed.
-func TestAdopt_Positive_KeptLefthookGetsOnlyAbsentCheckpointFiles(t *testing.T) {
-	repoPath := newTestRepo(t, "kept-lefthook-checkpoint")
+// shippedCheckpointLockSource is newAdoptLockSource carrying the checkpoint bundle this
+// repository ships, so the texts adoption installs are the ones audit calls current.
+func shippedCheckpointLockSource(t *testing.T) string {
+	t.Helper()
+	source := newAdoptLockSource(t)
+	for _, rel := range checkpointBundle {
+		mustWrite(t, filepath.Join(source, filepath.FromSlash(rel)), shippedCheckpointText(t, rel))
+	}
+	return source
+}
+
+// Positive (#502, engine-adopt-keep-evaluator-refresh): lefthook.yml is classified before the
+// checkpoint bundle is installed. Beside a kept configuration that does not extend the canonical
+// policy, unedited earlier Praetor evaluators are refreshed as one unit and the absent launcher
+// is installed, with and without --force, so the audit has no earlier evaluator left to report.
+func TestAdopt_Positive_KeptLefthookRefreshesEarlierCheckpointBundle(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		repoPath := newTestRepo(t, "kept-lefthook-checkpoint")
+		mustWrite(t, filepath.Join(repoPath, lefthookFile), preparationLefthook)
+		mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(checkpointScript)), firstPriorCheckpointText(t, checkpointScript))
+		mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(checkpointCommon)), firstPriorCheckpointText(t, checkpointCommon))
+		rep := adoptWithSource(t, repoPath, shippedCheckpointLockSource(t), force)
+		assertLefthookKept(t, repoPath, rep, preparationLefthook)
+		for _, rel := range checkpointBundle {
+			if got := mustRead(t, filepath.Join(repoPath, filepath.FromSlash(rel))); got != shippedCheckpointText(t, rel) {
+				t.Fatalf("force=%v: %s is not this release's text beside a kept lefthook.yml", force, rel)
+			}
+		}
+		if lines := auditCheckpointLines(t, repoPath); len(lines) != 0 {
+			t.Fatalf("force=%v: audit still reports an earlier evaluator: %q", force, lines)
+		}
+	}
+}
+
+// Negative: when a bundle file beside a kept configuration holds an edited copy, the
+// configuration runs scripts of its own: no existing file is refreshed, --force included, only
+// the absent launcher is installed, the run reports no issue, and the audit line for the
+// earlier checkpoint.py names the edited file instead of a plain adopt run.
+func TestAdopt_Negative_KeptLefthookKeepsBundleBesideEditedCopy(t *testing.T) {
+	repoPath := newTestRepo(t, "kept-lefthook-edited-checkpoint")
 	mustWrite(t, filepath.Join(repoPath, lefthookFile), preparationLefthook)
 	prior := firstPriorCheckpointText(t, checkpointScript)
+	edited := firstPriorCheckpointText(t, checkpointCommon) + "# local edit\n"
 	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(checkpointScript)), prior)
-	rep := adoptWithSource(t, repoPath, checkpointLockSource(t), true)
+	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(checkpointCommon)), edited)
+	rep := adoptWithSource(t, repoPath, shippedCheckpointLockSource(t), true)
 	assertLefthookKept(t, repoPath, rep, preparationLefthook)
 	if got := mustRead(t, filepath.Join(repoPath, filepath.FromSlash(checkpointScript))); got != prior {
-		t.Fatal("checkpoint.py was refreshed beside a kept lefthook.yml")
+		t.Fatal("checkpoint.py was refreshed beside an edited common.py")
 	}
-	if got := mustRead(t, filepath.Join(repoPath, filepath.FromSlash(checkpointCommon))); !strings.Contains(got, "HookError") {
-		t.Fatalf("the absent common.py was not installed: %q", got)
+	if got := mustRead(t, filepath.Join(repoPath, filepath.FromSlash(checkpointCommon))); got != edited {
+		t.Fatal("the edited common.py was replaced")
+	}
+	if got := mustRead(t, filepath.Join(repoPath, filepath.FromSlash(checkpointLauncher))); got != shippedCheckpointText(t, checkpointLauncher) {
+		t.Fatal("the absent launcher was not installed")
+	}
+	lines := auditCheckpointLines(t, repoPath)
+	if len(lines) != 1 || !strings.Contains(lines[0], checkpointCommon+" holds an edited copy") || strings.Contains(lines[0], "no --force needed") {
+		t.Fatalf("want one line naming the edited %s, not a plain adopt run: %q", checkpointCommon, lines)
+	}
+}
+
+// Boundary: a kept configuration that extends the canonical policy vendors its bundle (BUG-858):
+// an unedited earlier checkpoint.py stays as it is, and the audit stays quiet.
+func TestAdopt_Boundary_CanonicalLefthookKeepsEarlierCheckpoint(t *testing.T) {
+	repoPath := newTestRepo(t, "canonical-lefthook-checkpoint")
+	canonical := "extends:\n  - " + canonicalLefthookPolicy + "\n"
+	mustWrite(t, filepath.Join(repoPath, lefthookFile), canonical)
+	prior := firstPriorCheckpointText(t, checkpointScript)
+	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(checkpointScript)), prior)
+	if _, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: shippedCheckpointLockSource(t), Path: repoPath}); err != nil {
+		t.Fatalf("Adopt: %v", err)
+	}
+	if got := mustRead(t, filepath.Join(repoPath, filepath.FromSlash(checkpointScript))); got != prior {
+		t.Fatal("checkpoint.py was refreshed beside the canonical policy")
+	}
+	if lines := auditCheckpointLines(t, repoPath); len(lines) != 0 {
+		t.Fatalf("a vendored bundle is reported: %q", lines)
 	}
 }
 
