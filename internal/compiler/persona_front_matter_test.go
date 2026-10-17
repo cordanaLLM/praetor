@@ -46,3 +46,63 @@ func TestCheckPersonaFrontMatter(t *testing.T) {
 		t.Fatal("a persona that cannot be read was not an error")
 	}
 }
+
+// Positive (#1426): the tier goes in as the last front matter line, in the text's own line
+// endings, and nothing else changes; the result declares the tier and lacks nothing.
+func TestAddPersonaModelTier_Positive_LastFrontMatterLine(t *testing.T) {
+	text := "---\nname: p\ndescription: 'Persona.'\nmainAgent: true\n---\n\n# p\n\n"
+	want := "---\nname: p\ndescription: 'Persona.'\nmainAgent: true\nmodel: pro\n---\n\n# p\n\n"
+	for style, pair := range map[string][2]string{
+		"lf":   {text, want},
+		"crlf": {strings.ReplaceAll(text, "\n", "\r\n"), strings.ReplaceAll(want, "\n", "\r\n")},
+	} {
+		if !PersonaLacksModelTier([]byte(pair[0])) {
+			t.Fatalf("%s: a persona without model is not reported", style)
+		}
+		got, ok := AddPersonaModelTier([]byte(pair[0]), PersonaModelPro)
+		if !ok || string(got) != pair[1] {
+			t.Fatalf("%s: AddPersonaModelTier = %q, %v; want %q", style, got, ok, pair[1])
+		}
+		if tier, err := PersonaModelTier(got); err != nil || tier != PersonaModelPro || PersonaLacksModelTier(got) {
+			t.Fatalf("%s: the result declares %q (%v)", style, tier, err)
+		}
+	}
+}
+
+// Negative: a text without front matter, with one that never closes, or with mixed line endings
+// has no place for the line that keeps the rest intact, so nothing is returned; a persona that
+// declares any model value, an invalid one included, or lacks another key, is not reported as
+// lacking only its tier.
+func TestAddPersonaModelTier_Negative_NoPlaceOrNotOnlyTheTier(t *testing.T) {
+	for name, text := range map[string]string{
+		"no front matter": "# p\n",
+		"unclosed":        "---\nname: p\ndescription: d\n",
+		"mixed endings":   "---\r\nname: p\ndescription: d\r\n---\n",
+	} {
+		if got, ok := AddPersonaModelTier([]byte(text), PersonaModelPro); ok || got != nil {
+			t.Errorf("%s: AddPersonaModelTier = %q, %v; want nothing", name, got, ok)
+		}
+	}
+	for name, text := range map[string]string{
+		"invalid tier":        "---\nname: p\ndescription: d\nmodel: opus\n---\n",
+		"empty tier":          "---\nname: p\ndescription: d\nmodel: \"\"\n---\n",
+		"missing description": "---\nname: p\n---\n",
+		"no front matter":     "# p\n",
+	} {
+		if PersonaLacksModelTier([]byte(text)) {
+			t.Errorf("%s: reported as lacking only its model tier", name)
+		}
+	}
+}
+
+// Boundary: PersonaModelTier reads each allowed tier and refuses a template without one.
+func TestPersonaModelTier_Boundary_AllowedTiersOnly(t *testing.T) {
+	for _, tier := range []string{PersonaModelFlash, PersonaModelPro} {
+		if got, err := PersonaModelTier([]byte("---\nname: p\ndescription: d\nmodel: " + tier + "\n---\n")); err != nil || got != tier {
+			t.Fatalf("tier %s: got %q, %v", tier, got, err)
+		}
+	}
+	if _, err := PersonaModelTier([]byte("---\nname: p\ndescription: d\n---\n")); err == nil {
+		t.Fatal("a persona without a tier returned one")
+	}
+}

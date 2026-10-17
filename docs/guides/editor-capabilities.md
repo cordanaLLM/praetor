@@ -88,6 +88,21 @@ front matter (`model: flash` or `model: pro`). Missing keys, `inherit`, or any o
 values are refused by `compile-context`, `compile-context --verify`, and `audit` with an
 error naming the file and the allowed values (`flash, pro`).
 
+Each refusal of a persona that declares no tier names its remedy
+(`adopt.PersonaModelTierRemedy`):
+
+- an unedited copy of an earlier generated persona (`repo-auditor.md`, `repo-gatekeeper.md`):
+  a plain `praetorctl adopt` replaces it with the current template;
+- a generated persona the repository edited: a plain `praetorctl adopt` adds its template's
+  tier (`pro` for the auditor, `flash` for the gatekeeper) as the last front matter line, in
+  the file's own line endings, and keeps every other byte;
+- a persona the repository wrote itself, or one declaring a value outside the tiers: the
+  `model` line by hand.
+
+`TestAdopt_Positive_EditedPersonaGainsModelTier`,
+`TestAdopt_Negative_InvalidOrOwnPersonaTierLeftAlone` and
+`TestAuditAgentDefinitions_Negative_ModelTierNamesTheRemedy` cover the three cases.
+
 - `flash`: tier for mechanical runs, fuzzing, dogfooding, and packaging.
 - `pro`: tier for review and complex reasoning.
 
