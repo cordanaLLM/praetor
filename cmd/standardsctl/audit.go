@@ -445,6 +445,13 @@ func auditAgentProjections(ctx context.Context, rootDir string) error {
 	if verified > 0 {
 		fmt.Printf("[PASS] Agent persona projections verified (%d copies identical to .agents/agents).\n", verified)
 	}
+	gaps, err := compiler.PersonaToolPermissionGaps(ctx, rootDir)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Agent tool permission audit failed: %w", err)
+	}
+	for i := range gaps {
+		fmt.Printf("[GAP] Agent tool permissions: %s.\n", gaps[i])
+	}
 	skills, err := compiler.VerifyClientSkills(ctx, rootDir)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Register skill projections out of sync: %w", err)

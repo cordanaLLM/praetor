@@ -564,6 +564,29 @@ intended.
 `compiler.CompileContextProjections` for a write (`internal/compiler/projection.go`).
 A tool call and the CLI therefore check and write the same things:
 
+Canonical personas in `.agents/agents/*.md` may declare an optional `tools` list.
+Its closed engine vocabulary is `read`, `search`, `edit`, `shell`, `web`, and
+`task`; omitted `tools` keeps the current projection unchanged. Unknown, duplicate,
+or empty lists fail with the persona path and allowed vocabulary. The compiler
+translates those classes in `internal/compiler/agent_tools.go`:
+
+| Client | Native projection | Tool names or permission keys | Checked source/version (2026-10-17) |
+| --- | --- | --- | --- |
+| Claude Code | `.claude/agents/*.md` | `Read`; `Grep`, `Glob`; `Edit`, `Write`, `NotebookEdit`; `Bash`; `WebFetch`, `WebSearch`; `Agent`, `TaskCreate`, `TaskGet`, `TaskList`, `TaskUpdate`, `TaskStop` | Installed Claude Code 2.1.302; [subagent reference](https://code.claude.com/docs/en/sub-agents) |
+| GitHub Copilot | `.github/agents/*.md` | `read`; `search`; `edit`; `execute`; `web`; `agent`, `todo` | [Custom agents configuration](https://docs.github.com/en/copilot/reference/custom-agents-configuration), checked 2026-10-17 |
+| Gemini CLI | `.gemini/agents/*.md` | `read_file`, `read_many_files`; `grep_search`, `glob`, `list_directory`; `write_file`, `replace`; `run_shell_command`; `web_fetch`, `google_web_search`; `invoke_agent` | [Subagents](https://github.com/google-gemini/gemini-cli/blob/main/docs/core/subagents.md), `main` checked 2026-10-17; Gemini CLI executable is not installed in this environment |
+| Codex | `.codex/agents/*.md` | No per-agent tool allow-list. Projection removes the canonical `tools` field, inserts a gap comment, and audit reports each affected persona. | Installed Codex CLI 0.162.1; [subagent reference](https://learn.chatgpt.com/docs/agent-configuration/subagents), checked 2026-10-17 |
+| OpenCode | `.opencode/agents/*.md` | `permission` map: default `"*": deny`; allow `read`; `grep`, `glob`, `list`; `edit`; `bash`; `webfetch`, `websearch`; `task` for the corresponding classes | Installed OpenCode 1.18.7; [agent permissions](https://opencode.ai/docs/agents/) |
+| Antigravity | No verified persona-file projection | No per-agent tool mapping verified; no Antigravity persona directory is registered by `internal/agentcontext/render.go` | Installed desktop app 2.23.0; [Antigravity CLI transition announcement](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/), 2026-05-19. That announcement confirms subagents but does not define a persona file schema. |
+
+Claude, Copilot, and Gemini rows are emitted as native `tools` allow-lists.
+OpenCode’s mapping is implemented for its documented front matter format but
+OpenCode is not yet a registered `agent_clients` projection. Codex and
+Antigravity gaps are explicit: a persona declaration does not claim enforcement
+for those clients. The Codex projected Markdown file retains a visible HTML
+comment because current Codex custom agents use standalone TOML files; the
+existing Codex projection is not a verified native agent-file format.
+
 - A write compiles the vendor files and the canonical read-only context
   projection (`AGENTS.readonly.md`), then copies every persona under
   `.agents/agents` into each selected client's persona directory and, when
