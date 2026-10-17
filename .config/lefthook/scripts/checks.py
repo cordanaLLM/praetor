@@ -177,6 +177,26 @@ def lint_commands(directory, files):
     return commands
 
 
+GOLANGCI_TOOL_PACKAGES = {
+    "github.com/golangci/golangci-lint/v2/cmd/golangci-lint",
+    "github.com/golangci/golangci-lint/cmd/golangci-lint",
+}
+
+
+def golangci_lint_command(directory, packages):
+    """Run the declared golangci-lint tool module, refusing an unpinned fallback."""
+    for modfile in ("tools/lint/go.mod", "tools/go/go.mod"):
+        if not (directory / modfile).is_file():
+            continue
+        listed = run(["go", "list", f"-modfile={modfile}", "tool"], cwd=directory,
+                     env=clean_env())
+        tools = {line.strip() for line in listed.decode("utf-8").splitlines()}
+        if tools & GOLANGCI_TOOL_PACKAGES:
+            return ["go", "tool", f"-modfile={modfile}", "golangci-lint", "run", *packages]
+    raise HookError("golangci-lint has no pinned tool directive; add a pinned tool to "
+                    "tools/lint/go.mod (preferred) or tools/go/go.mod before pushing Go changes")
+
+
 # The harness self-tests a change to the hook policy runs. The first three travel with the
 # policy; the scripts/ suites exist only where the snapshot carries them.
 SELF_TESTS = (".config/lefthook/scripts/test_hooks.py",
@@ -334,13 +354,13 @@ def source_checks(directory, names, gate="all", base=None):
     print("Go scope: " + ", ".join(packages))
     local = local_package_patterns(directory, packages) if gate in {"all", "lint", "sec"} else []
     commands = {"test": ["go", "test", "-race", "-count=1", "-timeout=5m", *packages],
-                "lint": ["go", "run", "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest",
-                         "run", *local],
                 "sec": ["gosec", "-conf", ".gosec.json", *local],
                 # The Go vulnerability gate (internal/govuln), the one implementation gate run's
                 # security stage and make vuln run. It judges the build of the whole module, so
                 # it scans every package: a module-level finding has no package to scope by.
                 "vuln": [*CLI, "security", "govuln", "--path=.", "--", *GOVULN_SCANNER]}
+    if gate in {"all", "lint"}:
+        commands["lint"] = golangci_lint_command(directory, local)
     selected = list(commands.values()) if gate == "all" else [commands[gate]]
     if full_gate:
         # gate run already enforces full race tests, gosec and vulnerability checks.

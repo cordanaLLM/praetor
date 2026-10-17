@@ -125,7 +125,7 @@ func (f *GoServiceFlavor) RequiredToolchains() []ToolchainItem {
 		{Binary: "go", Purpose: "Go Compiler & Toolchain", InstallGuide: "https://golang.org/dl/"},
 		{Binary: "govulncheck", Purpose: "Go vulnerability detection", InstallGuide: "go install golang.org/x/vuln/cmd/govulncheck@latest"},
 		{Binary: "gosec", Purpose: "Go AST security scanner", InstallGuide: GosecInstallGuide},
-		{Binary: "golangci-lint", Purpose: "Go unified linter", InstallGuide: "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run"},
+		{Binary: "golangci-lint", Purpose: "Go unified linter", InstallGuide: "go tool -modfile=tools/lint/go.mod golangci-lint run"},
 	}
 }
 

@@ -26,7 +26,7 @@ from common import (HookError, MANAGED_PROCESS_ENV, MAX_PROCESS_ENV_ENTRIES,
 from checks import (go_packages, source_checks, governance_commands, context_changed,
                     audit_scope, local_package_patterns, checkpoint_checks,
                     semgrep_commands, is_fixture, is_chart_template, file_checks, gofmt_check,
-                    lint_commands, self_test_commands,
+                    lint_commands, golangci_lint_command, self_test_commands,
                     run_full_gate, gate_timeout, FIXTURE_DIRECTORY, GATE_LAUNCH_MARGIN,
                     GATE_QUERY_TIMEOUT, SEMGREP_LANGUAGE_EXTENSIONS, SEMGREP_SUFFIXES)
 import hooks
@@ -2140,6 +2140,9 @@ class ScopeAndGuard(unittest.TestCase):
             (root / "go.mod").write_text("module example.test/scopes\n\ngo 1.27\n")
             (root / ".golangci.yml").write_text(
                 'version: "2"\nlinters:\n  default: none\n  enable: [errcheck]\n')
+            (root / "tools/lint").mkdir(parents=True)
+            shutil.copyfile(ROOT / "tools/lint/go.mod", root / "tools/lint/go.mod")
+            shutil.copyfile(ROOT / "tools/lint/go.sum", root / "tools/lint/go.sum")
             (root / "core").mkdir()
             (root / "core/core.go").write_text("package core\nfunc Value() int { return 1 }\n")
             consumer = root / "consumer.go"
@@ -2226,7 +2229,10 @@ class ScopeAndGuard(unittest.TestCase):
         Plain govulncheck over the affected packages failed only on a called symbol and judged
         no OpenVEX statement, a second vulnerability check that could drift from the gate.
         """
-        root = Path(tempfile.gettempdir())
+        root = Path(tempfile.mkdtemp(prefix="praetor-vuln-gate-test-"))
+        self.addCleanup(shutil.rmtree, root)
+        (root / "tools/lint").mkdir(parents=True)
+        (root / "tools/lint/go.mod").write_text("module lint\n")
         gate = ["go", "run", "./cmd/standardsctl", "security", "govuln", "--path=.", "--",
                 "govulncheck"]
         for gate_name, governance in (("vuln", []), ("all", [["go", "run", "./cmd/standardsctl",
@@ -2236,6 +2242,8 @@ class ScopeAndGuard(unittest.TestCase):
                     mock.patch("checks.governance_commands", return_value=governance), \
                     mock.patch("checks.semgrep_commands", return_value=[]), \
                     mock.patch("checks.local_package_patterns", return_value=["./core"]), \
+                    mock.patch("checks.run", return_value=(
+                        b"github.com/golangci/golangci-lint/v2/cmd/golangci-lint\n")), \
                     mock.patch("checks.parallel") as jobs:
                 self.assertFalse(source_checks(root, ["core/core.go"], gate_name))
                 commands = jobs.call_args_list[-1].args[0]
@@ -2646,6 +2654,40 @@ class ToolFloors(unittest.TestCase):
         self.assertEqual([tool for tool in floors if tool not in floored], [UNFLOORED])
         for tool, floor in floored.items():
             self.assertRegex(floor, r"^\d+\.\d+\.\d+$", tool)
+
+    def test_golangci_lint_uses_lint_module_pin_first(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "tools/lint").mkdir(parents=True)
+            (root / "tools/lint/go.mod").write_text("module lint\n")
+            (root / "tools/go").mkdir(parents=True)
+            (root / "tools/go/go.mod").write_text("module tools\n")
+            with mock.patch("checks.run", return_value=b"github.com/golangci/golangci-lint/v2/cmd/golangci-lint\n") as run:
+                command = golangci_lint_command(root, ["./..."])
+        self.assertEqual(command, ["go", "tool", "-modfile=tools/lint/go.mod",
+                                   "golangci-lint", "run", "./..."])
+        self.assertEqual(run.call_args.args[0], ["go", "list", "-modfile=tools/lint/go.mod", "tool"])
+
+    def test_golangci_lint_uses_go_module_pin_when_lint_module_lacks_tool(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "tools/lint").mkdir(parents=True)
+            (root / "tools/lint/go.mod").write_text("module lint\n")
+            (root / "tools/go").mkdir(parents=True)
+            (root / "tools/go/go.mod").write_text("module tools\n")
+            answers = [b"unrelated/tool\n", b"github.com/golangci/golangci-lint/v2/cmd/golangci-lint\n"]
+            with mock.patch("checks.run", side_effect=answers):
+                command = golangci_lint_command(root, ["./pkg"])
+        self.assertEqual(command, ["go", "tool", "-modfile=tools/go/go.mod",
+                                   "golangci-lint", "run", "./pkg"])
+
+    def test_golangci_lint_without_pin_fails_with_remedy(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with mock.patch("checks.run") as run:
+                with self.assertRaisesRegex(HookError, r"golangci-lint.*tools/lint/go.mod"):
+                    golangci_lint_command(root, ["./..."])
+            run.assert_not_called()
 
     def test_floor_lines_parse_with_comments_and_blanks(self):
         text = "# header\n\nshellcheck>=0.11.0  # trailing\n  yamllint>=1.38\r\nhadolint\n"

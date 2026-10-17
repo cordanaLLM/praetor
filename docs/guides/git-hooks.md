@@ -10,8 +10,11 @@ Install `yamllint`, `shellcheck`, `actionlint` and `hadolint`
 when editing their file types; applicable checks fail if their tool is missing
 or older than its floor ([linter version floors](#linter-version-floors)).
 Strict source pushes also require `gosec`, `govulncheck` and `semgrep`. Golangci-lint runs
-from source using the existing repository `@latest` policy. `tools/go/go.mod` pins `gosec`,
-`govulncheck` and `gitleaks` as tool directives, which Renovate keeps current: `make sec`,
+from the pinned `tools/lint/go.mod` tool directive when present, or from a matching directive
+in `tools/go/go.mod`. The hook refuses Go pushes when neither module pins it; add a golangci-lint
+tool directive to `tools/lint/go.mod` before pushing. Adoption does not currently create that pin.
+`tools/go/go.mod` pins `gosec`, `govulncheck` and `gitleaks` as tool directives, which Renovate
+keeps current: `make sec`,
 `make vuln` and `make secrets` run exactly those versions through `go tool -modfile` (`make vuln`
 hands govulncheck to `praetorctl security govuln`, the
 [Go vulnerability gate](adoption-verification.md#go-vulnerabilities-and-the-openvex-document)), and
