@@ -188,19 +188,16 @@ def pre_push(remote):
 
 
 def check_refactor_range(base, head):
-    """Run the assertion lock over the exact outgoing commit range."""
+    """Run the REF-02 assertion lock over the exact outgoing commit range.
+
+    Without a pushed-range base the range would be the whole history, whose old refactor
+    commits this push did not make, so the check is skipped with that reason; CI checks the
+    pull request range against its base either way.
+    """
     if not base:
-        roots = git("rev-list", "--max-parents=0", "--max-count=2", head).decode().splitlines()
-        if len(roots) != 1:
-            raise HookError("refactor check needs one repository root when pushed-range base is unknown")
-        base = roots[0]
-        include_base = True
-    else:
-        include_base = False
-    if include_base:
-        cli(["forge", "refactor-check", f"--base={base}", f"--head={head}", "--include-base"])
-    else:
-        cli(["forge", "refactor-check", f"--base={base}", f"--head={head}"])
+        print("Refactor check: skipped, no pushed-range base; CI checks pull request range")
+        return
+    cli(["forge", "refactor-check", f"--base={base}", f"--head={head}"])
 
 
 def check_commits(base):

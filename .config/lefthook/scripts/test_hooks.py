@@ -1067,24 +1067,18 @@ print("fixture hook self-tests passed")
         prepare_message(str(message), "2")
         self.assertEqual(message.read_text(), "fix: already written\n")
 
-    def test_refactor_range_uses_exact_base_or_single_root(self):
+    def test_refactor_range_uses_exact_base_or_skips_without_one(self):
         with mock.patch("hooks.cli") as run_cli:
             hooks.check_refactor_range("base-sha", "head-sha")
         run_cli.assert_called_once_with([
             "forge", "refactor-check", "--base=base-sha", "--head=head-sha",
         ])
-        with mock.patch("hooks.git", return_value=b"root-sha\n") as read_roots, \
-                mock.patch("hooks.cli") as run_cli:
-            hooks.check_refactor_range(None, "head-sha")
-        read_roots.assert_called_once_with("rev-list", "--max-parents=0", "--max-count=2", "head-sha")
-        run_cli.assert_called_once_with([
-            "forge", "refactor-check", "--base=root-sha", "--head=head-sha", "--include-base",
-        ])
-        with mock.patch("hooks.git", return_value=b"root-a\nroot-b\n"), \
-                mock.patch("hooks.cli") as run_cli:
-            with self.assertRaisesRegex(HookError, "one repository root"):
-                hooks.check_refactor_range(None, "head-sha")
-        run_cli.assert_not_called()
+        for base in (None, ""):
+            with self.subTest(base=base), mock.patch("hooks.cli") as run_cli, \
+                    mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                hooks.check_refactor_range(base, "head-sha")
+            run_cli.assert_not_called()
+            self.assertIn("Refactor check: skipped, no pushed-range base", out.getvalue())
 
     def test_real_push_initial_docs_update_new_branch_and_deletion(self):
         remote = Path(self.temp.name) / "remote.git"
