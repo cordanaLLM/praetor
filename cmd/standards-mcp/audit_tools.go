@@ -68,7 +68,7 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 		passed++
 	}
 
-	report.Template("\nsummary: MCP audit gates; passed: %d/%d; repository: %s/%s; coverage: manifest, lockfile pins and digests, HISS ratchet, context sync, agent source caveman lint, branch protection, labels, supply chain, workflow triggers, build warnings, hooks. "+
+	report.Template("\nsummary: MCP audit gates; passed: %d/%d; repository: %s/%s; coverage: manifest, lockfile pins and digests, HISS ratchet, context sync, agent source caveman lint, branch protection, labels, supply chain, workflow triggers, build warnings, release token, hooks. "+
 		"next: run 'praetorctl audit' for full CLI gate set: paperclip harness, runner matrix, hook activation, backlog caps.",
 		passed+1, len(gates)+1, manifest.Repository.Owner, manifest.Repository.Name)
 	return mcpComposedTextResult(report.Text())
@@ -111,6 +111,8 @@ func (s *Server) auditGates(p auditPaths, effective *config.EffectivePolicy) []a
 		},
 		// The CLI audit's HISS-10 build-warnings gate (#816).
 		func(ctx context.Context) (string, error) { return auditBuildWarnings(ctx, s.rootDir, manifest) },
+		// The CLI audit's release-token gate.
+		func(ctx context.Context) (string, error) { return auditReleaseToken(ctx, s.rootDir, manifest) },
 		func(ctx context.Context) (string, error) { return auditHookConfig(ctx, manifest, s.rootDir) },
 	}
 }
@@ -119,6 +121,13 @@ func (s *Server) auditGates(p auditPaths, effective *config.EffectivePolicy) []a
 // manifest's HISS-10 exceptions (#816).
 func auditBuildWarnings(ctx context.Context, root string, manifest *config.Manifest) (string, error) {
 	return adopt.AuditBuildWarnings(ctx, adopt.BuildWarningsOptions{
+		Root: root, Exceptions: manifest.Exceptions, Today: time.Now(),
+	})
+}
+
+// auditReleaseToken runs the CLI audit's release-token gate over root with the manifest's exceptions.
+func auditReleaseToken(ctx context.Context, root string, manifest *config.Manifest) (string, error) {
+	return adopt.AuditReleaseToken(ctx, adopt.ReleaseTokenOptions{
 		Root: root, Exceptions: manifest.Exceptions, Today: time.Now(),
 	})
 }
