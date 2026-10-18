@@ -238,17 +238,9 @@ linters:
         linters:
           - gocyclo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^cmd/standards-mcp/transport_test\.go$
-        linters:
-          - noctx
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^cmd/standardsctl/adopt_baseline_flags_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^cmd/standardsctl/adopt_figures_e2e_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^cmd/standardsctl/adopt_figures_e2e_test\.go$
         linters:
@@ -314,14 +306,6 @@ linters:
         linters:
           - gocognit
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^cmd/standardsctl/audit_reuse_headers_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^cmd/standardsctl/audit_reuse_headers_test\.go$
-        linters:
-          - noctx
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^cmd/standardsctl/audit_reuse_test\.go$
         linters:
           - gocyclo
@@ -378,14 +362,6 @@ linters:
         linters:
           - gocyclo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^cmd/standardsctl/decisions_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^cmd/standardsctl/decisions_test\.go$
-        linters:
-          - noctx
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^cmd/standardsctl/devcontainer_bootstrap_test\.go$
         linters:
           - gocognit
@@ -438,21 +414,9 @@ linters:
         linters:
           - gocyclo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^cmd/standardsctl/flavors_overflow_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^cmd/standardsctl/forge_claims_migrate_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^cmd/standardsctl/forge_commits_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^cmd/standardsctl/gate_receipt_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^cmd/standardsctl/gate_receipt_test\.go$
         linters:
@@ -461,14 +425,6 @@ linters:
       - path: ^cmd/standardsctl/gate_receipt_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^cmd/standardsctl/git_only_path_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^cmd/standardsctl/git_only_path_test\.go$
-        linters:
-          - noctx
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^cmd/standardsctl/hook_test\.go$
         linters:
@@ -518,14 +474,6 @@ linters:
         linters:
           - gocyclo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^cmd/standardsctl/security_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^cmd/standardsctl/signal_unix_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^cmd/standardsctl/signal_unix_test\.go$
         linters:
           - gocognit
@@ -533,10 +481,6 @@ linters:
       - path: ^cmd/standardsctl/signal_unix_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^cmd/standardsctl/signal_unix_test\.go$
-        linters:
-          - noctx
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^cmd/standardsctl/skills_test\.go$
         linters:
@@ -606,14 +550,6 @@ linters:
         linters:
           - gocyclo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/adopt/actionlint_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/adopt/adopt_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/adopt/adopt_test\.go$
         linters:
           - funlen
@@ -625,10 +561,6 @@ linters:
       - path: ^internal/adopt/adopt_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/adopt/adopt_test\.go$
-        linters:
-          - noctx
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/adopt/agent_hooks_preflight_test\.go$
         linters:
@@ -678,25 +610,13 @@ linters:
         linters:
           - gocyclo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/adopt/checkpoint_launcher_gitenv_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/adopt/checkpoint_launcher_test\.go$
         linters:
           - gocyclo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/adopt/checkpoint_test\.go$
         linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/adopt/checkpoint_test\.go$
-        linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/adopt/cli_name_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/adopt/client_selection_test\.go$
         linters:
@@ -736,10 +656,6 @@ linters:
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/adopt/emitted_hooks_test\.go$
         linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/adopt/emitted_hooks_test\.go$
-        linters:
           - gocognit
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/adopt/emitted_hooks_test\.go$
@@ -749,14 +665,6 @@ linters:
       - path: ^internal/adopt/engine_launcher_prior_test\.go$
         linters:
           - gocognit
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/adopt/engine_launcher_shfmt_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/adopt/engine_launcher_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/adopt/engine_makefile_test\.go$
         linters:
@@ -769,10 +677,6 @@ linters:
       - path: ^internal/adopt/engine_makefile_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/adopt/evasion_hook_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/adopt/evasion_prior_test\.go$
         linters:
@@ -890,10 +794,6 @@ linters:
         linters:
           - gocyclo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/adopt/makefile_include_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/adopt/managed_asset_lint_prior_test\.go$
         linters:
           - gocognit
@@ -926,10 +826,6 @@ linters:
         linters:
           - gocyclo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/adopt/precommit_config_audit_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/adopt/private_ignore_test\.go$
         linters:
           - gocognit
@@ -941,10 +837,6 @@ linters:
       - path: ^internal/adopt/readme_governance_test\.go$
         linters:
           - gocognit
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/adopt/register_skills_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/adopt/register_skills_test\.go$
         linters:
@@ -972,19 +864,7 @@ linters:
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/adopt/reuse_decline_test\.go$
         linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/adopt/reuse_decline_test\.go$
-        linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/adopt/reuse_decline_test\.go$
-        linters:
-          - noctx
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/adopt/reuse_gate_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/adopt/reuse_gate_test\.go$
         linters:
@@ -1037,10 +917,6 @@ linters:
       - path: ^internal/adopt/verification_makefile_target_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/adopt/verification_node_alias_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/adopt/verification_pillar_test\.go$
         linters:
@@ -1228,10 +1104,6 @@ linters:
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/cavemansource/extract_test\.go$
         linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/cavemansource/extract_test\.go$
-        linters:
           - funlen
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/cavemansource/extract_test\.go$
@@ -1325,10 +1197,6 @@ linters:
       - path: ^internal/compiler/register_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/compiler/skill_commands_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/compiler/skill_commands_test\.go$
         linters:
@@ -1486,10 +1354,6 @@ linters:
         linters:
           - gocognit
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/container/health_test\.go$
-        linters:
-          - noctx
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/contextopt/binary_snapshot_test\.go$
         linters:
           - gocyclo
@@ -1542,10 +1406,6 @@ linters:
         linters:
           - funlen
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/deploychart/chart_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/devcontainer/bootstrap_bump_test\.go$
         linters:
           - gocognit
@@ -1569,10 +1429,6 @@ linters:
       - path: ^internal/devcontainer/bootstrap_integrity_test\.go$
         linters:
           - gocognit
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/devcontainer/bootstrap_pipefail_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/devcontainer/bootstrap_plan_test\.go$
         linters:
@@ -1681,10 +1537,6 @@ linters:
       - path: ^internal/dogfood/public_policy_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/dogfood/public_snapshot_limits_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/dogfood/public_snapshot_limits_test\.go$
         linters:
@@ -1806,10 +1658,6 @@ linters:
         linters:
           - gocognit
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/flavor/dockerfile_build_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/flavor/emitted_content_test\.go$
         linters:
           - gocognit
@@ -1825,10 +1673,6 @@ linters:
       - path: ^internal/flavor/golangci_pin_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/flavor/jvm_ci_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/flavor/node_ci_test\.go$
         linters:
@@ -1848,19 +1692,11 @@ linters:
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/flavor/security_workflow_test\.go$
         linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/flavor/security_workflow_test\.go$
-        linters:
           - gocognit
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/flavor/security_workflow_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/flavor/security_workflow_test\.go$
-        linters:
-          - noctx
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/flavor/settings_audit_test\.go$
         linters:
@@ -1885,10 +1721,6 @@ linters:
       - path: ^internal/forge/actions_state_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/forge/adopt_action_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/forge/adopt_action_test\.go$
         linters:
@@ -1945,10 +1777,6 @@ linters:
       - path: ^internal/forge/github_http_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/forge/github_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/forge/github_test\.go$
         linters:
@@ -2038,10 +1866,6 @@ linters:
         linters:
           - gocyclo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/gating/cargo_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/gating/deadline_test\.go$
         linters:
           - gocognit
@@ -2065,10 +1889,6 @@ linters:
       - path: ^internal/gating/devcontainer_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/gating/gating_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/gating/gating_test\.go$
         linters:
@@ -2098,10 +1918,6 @@ linters:
         linters:
           - gocyclo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/gc/gc_contract_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/gc/gc_test\.go$
         linters:
           - gocognit
@@ -2114,10 +1930,6 @@ linters:
         linters:
           - gocyclo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/generated/fixture_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/generated/regenerate_test\.go$
         linters:
           - gocyclo
@@ -2129,10 +1941,6 @@ linters:
       - path: ^internal/harvester/bundle_test\.go$
         linters:
           - gocognit
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/harvester/bundle_umask_unix_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/harvester/canonical_git_path_test\.go$
         linters:
@@ -2180,10 +1988,6 @@ linters:
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/harvester/repository_inventory_test\.go$
         linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/harvester/repository_inventory_test\.go$
-        linters:
           - funlen
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/harvester/repository_inventory_test\.go$
@@ -2193,10 +1997,6 @@ linters:
       - path: ^internal/harvester/repository_inventory_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/harvester/repository_inventory_test\.go$
-        linters:
-          - noctx
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/harvester/repository_submodule_safety_test\.go$
         linters:
@@ -2242,10 +2042,6 @@ linters:
         linters:
           - gocyclo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/hindsight/hindsight_test\.go$
-        linters:
-          - noctx
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/hiss/anchor_test\.go$
         linters:
           - gocognit
@@ -2289,10 +2085,6 @@ linters:
       - path: ^internal/hiss/recursion_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/hiss/rules_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/hisscatalog/catalog_test\.go$
         linters:
@@ -2404,10 +2196,6 @@ linters:
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/needs/framework_export_test\.go$
         linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/needs/framework_export_test\.go$
-        linters:
           - gocognit
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/needs/framework_export_test\.go$
@@ -2461,10 +2249,6 @@ linters:
       - path: ^internal/needs/report_header_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/needs/repository_name_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/needs/repository_name_test\.go$
         linters:
@@ -2604,27 +2388,11 @@ linters:
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/readmegovernance/links_test\.go$
         linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/readmegovernance/links_test\.go$
-        linters:
           - gocognit
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/readmegovernance/links_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/release/release_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/release/release_test\.go$
-        linters:
-          - noctx
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/repairrun/go_toolchain_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/repairrun/provider_helper_test\.go$
         linters:
@@ -2774,22 +2542,6 @@ linters:
         linters:
           - gocyclo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/stress/fixture_isolation_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/stress/fixture_isolation_test\.go$
-        linters:
-          - noctx
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/stress/stress_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/stress/stress_test\.go$
-        linters:
-          - noctx
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/supplychain/content_test\.go$
         linters:
           - gocyclo
@@ -2822,25 +2574,9 @@ linters:
         linters:
           - gocyclo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/supplychain/reuse_lint_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/supplychain/reuse_lint_test\.go$
-        linters:
-          - noctx
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/supplychain/reuse_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/supplychain/root_license_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/supplychain/sbom_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/supplychain/supplychain_test\.go$
         linters:
@@ -2866,14 +2602,6 @@ linters:
         linters:
           - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/testsupport/executable_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/testsupport/gitenv_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/testsupport/gitenv_test\.go$
         linters:
           - gocognit
@@ -2893,10 +2621,6 @@ linters:
       - path: ^internal/tidycoverage/coverage_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/topology/checkout_repository_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/topology/topology_test\.go$
         linters:
@@ -2976,10 +2700,6 @@ linters:
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/worktree/worktree_test\.go$
         linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/worktree/worktree_test\.go$
-        linters:
           - funlen
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/worktree/worktree_test\.go$
@@ -2990,10 +2710,6 @@ linters:
         linters:
           - gocyclo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/worktree/worktree_test\.go$
-        linters:
-          - noctx
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^templates/hostedgate_test\.go$
         linters:
           - gocognit
@@ -3001,14 +2717,6 @@ linters:
       - path: ^templates/hostedgate_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^tools/apicompat/alias_test\.go$
-        linters:
-          - forbidigo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^tools/apicompat/alias_test\.go$
-        linters:
-          - noctx
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^tools/apicompat/assets_test\.go$
         linters:
@@ -3021,10 +2729,6 @@ linters:
       - path: ^tools/apicompat/checker_pin_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^tools/apicompat/gate_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^tools/apicompat/modules_test\.go$
         linters:
@@ -3049,10 +2753,6 @@ linters:
       - path: ^tools/markdownlint/assets_test\.go$
         linters:
           - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^tribunus/cmd/tribunusctl/main_test\.go$
-        linters:
-          - forbidigo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^tribunus/cmd/tribunusctl/sync_test\.go$
         linters:
