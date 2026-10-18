@@ -239,6 +239,14 @@ func TestGosecOutput_ZeroIssuesYieldsZeroInfractions(t *testing.T) {
 	}
 }
 
+// stubScannerLookPath answers gosec and govulncheck by name and resolves every other program on PATH.
+func stubScannerLookPath(name string) (string, error) {
+	if name == "gosec" || name == "govulncheck" {
+		return name, nil
+	}
+	return exec.LookPath(name)
+}
+
 func TestGosecOutput_MalformedReport_FailsStageWithError(t *testing.T) {
 	dir := t.TempDir()
 	malformed := `[main.go:34] - G204: Audit use of command execution`
@@ -250,17 +258,22 @@ func TestGosecOutput_MalformedReport_FailsStageWithError(t *testing.T) {
 		t.Fatalf("expected error to name stage %q, got: %v", stageSecurity, parseErr)
 	}
 
+	// The stage half is hermetic: the two scanners are stubs, so the case runs where neither
+	// is installed (the pre-push gate's worktree has no govulncheck on PATH).
 	dir = setupGosecPlantedRepo(t)
 	rep := &PipelineReport{Stages: make([]StageResult, 0, maxStages)}
 	cfg := &stageConfig{
 		repoDir:         dir,
 		dryRun:          false,
-		lookPath:        exec.LookPath,
+		lookPath:        stubScannerLookPath,
 		rep:             rep,
 		moduleDiscovery: apiassets.TrackedModuleFiles,
 		run: func(ctx context.Context, cmdDir, name string, args ...string) (string, error) {
-			if name == "gosec" {
+			switch name {
+			case "gosec":
 				return malformed, exec.ErrNotFound
+			case "govulncheck":
+				return cleanGovulnStream, nil
 			}
 			return util.RunCommand(ctx, cmdDir, name, args...)
 		},
