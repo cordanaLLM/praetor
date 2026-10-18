@@ -150,7 +150,11 @@ exceptions:
 `LoadManifest` refuses a malformed entry, and the gate applies the same validator,
 `config.ValidateExceptions` in `internal/config/exceptions.go`
 (`TestValidateExceptionsNegative`, `TestValidateExceptionsBoundary`). An expired entry is still
-a valid declaration: the gate treats it as missing and fails on its files. An entry that
+a valid declaration: the gate treats it as missing and fails on its files. The audit's last step
+also fails every expired entry, whatever its rule, so an entry its own gate never refuses (a
+backlog cap under its cap, a reported-only rule such as HISS-18) cannot stay expired, and
+`praetorctl exceptions` exits 1 while any entry has expired (`auditExpiredExceptions` in
+`cmd/standardsctl/audit_exceptions.go`; `TestAudit_ExpiredBacklogCapEntryFailsTheAudit`). An entry that
 excuses no unit every lane leaves unread, because a lane now reads the file or the file is gone,
 is stale and fails until it is removed (`TestCheck_Negative_ExpiredAndStaleExceptions`).
 

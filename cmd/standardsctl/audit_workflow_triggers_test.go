@@ -45,8 +45,10 @@ func TestAuditWorkflowTriggers_CLI(t *testing.T) {
 	}
 	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+entry(today.AddDate(0, 0, -1)))
 	out, err = f.audit(t)
-	if err != nil {
-		t.Fatalf("audit failed on an expired entry: %v\nOutput: %s", err, out)
+	// The finding stays reported, not enforced; the expired entry itself fails the audit's last step,
+	// as an expired entry of every rule does.
+	if err == nil || !strings.Contains(err.Error(), "[FAIL] Exceptions: the exceptions entry (rule HISS-18, .github/workflows/everywhere.yml) expired on") {
+		t.Fatalf("audit must fail on the expired entry by name: %v\nOutput: %s", err, out)
 	}
 	mustContain(t, out, "[WARN] Workflow triggers (HISS-18): the exceptions entry (rule HISS-18, .github/workflows/everywhere.yml) expired on",
 		"[WARN] Workflow triggers (HISS-18): .github/workflows/everywhere.yml:1: push runs on every branch and tag")

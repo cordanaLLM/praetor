@@ -208,6 +208,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditBacklogCaps(ctx, rootDir, opts.effective) },
 		func() error { return auditModelCatalog(ctx, rootDir, time.Now()) },
 		func() error { return auditLiveForge(ctx, manifest, rootDir, &opts.effective.Policy, opts.offline) },
+		func() error { return auditExpiredExceptions(manifest, time.Now()) },
 	}
 
 	for i := 0; i < len(gates) && i < maxAuditGates; i++ {

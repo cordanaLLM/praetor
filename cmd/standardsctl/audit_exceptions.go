@@ -105,6 +105,38 @@ func auditExceptionsExpiry(ctx context.Context, manifest *config.Manifest, rootD
 	return auditExceptionTargets(ctx, manifest.Exceptions, rootDir, today)
 }
 
+// auditExpiredExceptions fails every entry that expired before today, whatever its rule. It runs
+// after every gate, so a gate that owns a rule reports its own finding for the entry first; an
+// entry no gate refuses (a backlog cap under its cap, a reported-only rule) still fails here.
+func auditExpiredExceptions(manifest *config.Manifest, today time.Time) error {
+	if manifest == nil {
+		return nil
+	}
+	failures := expiredExceptionLines(manifest.Exceptions, today)
+	if len(failures) > 0 {
+		return errors.New(strings.Join(failures, "\n"))
+	}
+	return nil
+}
+
+// expiredExceptionLines returns a [FAIL] line per entry that expired before today, whatever its
+// rule (config.ExpiredExceptions): no rule relies on its own gate alone to refuse an expired entry.
+func expiredExceptionLines(entries []config.Exception, today time.Time) []string {
+	expired := config.ExpiredExceptions(entries, today)
+	lines := make([]string, 0, len(expired))
+	for index := 0; index < len(expired); index++ {
+		entry := expired[index]
+		when := "has no valid expiry date"
+		if daysLeft, err := entry.DaysLeft(today); err == nil {
+			when = fmt.Sprintf("expired on %s (%d days ago)", entry.Expires, -daysLeft)
+		}
+		lines = append(lines, fmt.Sprintf("[FAIL] %s: the exceptions entry (rule %s, %s) %s; an expired exception "+
+			"excuses nothing, whatever its rule: renew it with a new expiry and reason, or remove it and fix what it "+
+			"excused.", exceptionsGate, entry.Rule, entry.Target(), when))
+	}
+	return lines
+}
+
 // warnExceptionsExpiring prints a warning for each entry expiring within
 // its warning window (entry.WarningDays()).
 func warnExceptionsExpiring(entries []config.Exception, today time.Time) {

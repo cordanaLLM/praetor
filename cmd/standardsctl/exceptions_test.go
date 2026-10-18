@@ -22,7 +22,11 @@ func writeExceptionsManifest(t *testing.T, entries ...config.Exception) string {
 	var sb strings.Builder
 	sb.WriteString("version: 1\nexceptions:\n")
 	for _, e := range entries {
-		fmt.Fprintf(&sb, "  - rule: %q\n    path: %q\n", e.Rule, e.Path)
+		if e.Tool != "" {
+			fmt.Fprintf(&sb, "  - rule: %q\n    tool: %q\n", e.Rule, e.Tool)
+		} else {
+			fmt.Fprintf(&sb, "  - rule: %q\n    path: %q\n", e.Rule, e.Path)
+		}
 		if e.Function != "" {
 			fmt.Fprintf(&sb, "    function: %q\n", e.Function)
 		}
@@ -55,6 +59,27 @@ func TestExceptionsList_Positive_ListsEntries(t *testing.T) {
 		"rule: clang-tidy-coverage, path: src/win.c, reason: Windows only (30 days left)",
 		"rule: HISS-02, path: src/browser.go, function: NewBrowser, reason: browser lifetime (30 days left)",
 	)
+}
+
+// The listing exits 1 when any entry has expired, whatever its rule, and names the first one; an
+// entry expiring today still holds.
+func TestExceptionsList_FailsOnAnExpiredEntry(t *testing.T) {
+	manifest := writeExceptionsManifest(t,
+		config.Exception{Rule: config.ExceptionRuleBacklogCapsForgeAlerts, Tool: "backlog", Reason: "alerts triaged", Expires: "2026-10-28"})
+	for _, tc := range []struct {
+		today   string
+		failing bool
+	}{{"2026-10-28", false}, {"2026-10-29", true}} {
+		out, err := captureStdout(t, func() error {
+			return dispatchCommand("exceptions", []string{"list", "--config=" + manifest, "--today=" + tc.today})
+		})
+		if (err != nil) != tc.failing || (err != nil && !strings.Contains(err.Error(), "1 exceptions entries expired (first: rule backlog.caps.forge_alerts, backlog, expires 2026-10-28)")) {
+			t.Errorf("today %s: error %v, want failing %v", tc.today, err, tc.failing)
+		}
+		if !strings.Contains(out, "rule: backlog.caps.forge_alerts") {
+			t.Errorf("today %s: the entry is still listed before the failure: %s", tc.today, out)
+		}
+	}
 }
 
 func TestExceptionsList_Positive_FiltersByExpiringWithin(t *testing.T) {
