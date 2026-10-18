@@ -208,9 +208,16 @@ jobs:
         shell: bash
         run: |
           adopt=$(go list ./internal/adopt)
+          cli=$(go list ./cmd/standardsctl)
+          # cmd/standardsctl took 1583, 1997 and 2043 s on Windows in the three green runs before
+          # 452c74e3c, whose run 39155177618 passed the 30-minute bound with no test hanging (1181 s of
+          # test time in run 39143445406). Its tests run in two halves, each under the same bound:
+          # -run takes the audit tests and the B-D tests (638 s of the 1181), -skip the rest, so
+          # every test runs exactly once (internal/forge TestPortability_LongestPackageRunsInHalves).
+          cli_half='^Test(Aud|[B-D])'
           # A read loop, not mapfile: macOS runners ship bash 3.2, which has no mapfile.
           packages=()
-          while IFS= read -r package; do packages+=("$package"); done < <(go list ./... | grep -vxF "$adopt")
+          while IFS= read -r package; do packages+=("$package"); done < <(go list ./... | grep -vxF -e "$adopt" -e "$cli")
           json="$RUNNER_TEMP/go-test-$RUNNER_OS.json"
           : > "$json"
           show() {
@@ -230,6 +237,10 @@ jobs:
           show "$RUNNER_TEMP/run-1.json"
           go test -json -timeout 30m "$adopt" > "$RUNNER_TEMP/run-2.json" 2>&1 || status=$?
           show "$RUNNER_TEMP/run-2.json"
+          go test -json -timeout 30m -run "$cli_half" "$cli" > "$RUNNER_TEMP/run-3.json" 2>&1 || status=$?
+          show "$RUNNER_TEMP/run-3.json"
+          go test -json -timeout 30m -skip "$cli_half" "$cli" > "$RUNNER_TEMP/run-4.json" 2>&1 || status=$?
+          show "$RUNNER_TEMP/run-4.json"
           exit "$status"
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}

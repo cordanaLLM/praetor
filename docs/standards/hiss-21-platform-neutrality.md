@@ -541,6 +541,16 @@ minutes. By October 2026 the Windows leg took 55 to 80 minutes (go test 41 to 63
 self-tests 12 to 13), and a slow runner was cancelled at 75 minutes in its last step with every
 step green, so the job limit is now 120 minutes (#729).
 
+**`cmd/standardsctl` in two halves (2026-10-19).** The package ran in the step's main `go test`
+under the same 30-minute bound as every other package, and outgrew it on Windows with no test
+hanging: it took 1583, 1997 and 2043 s on the three green runs before main 452c74e3c, whose run
+panicked at 30 minutes (1181 s of test time, the audit tests alone 412 s). The step now leaves it
+out of the main run and runs it twice under the same bound, `-run '^Test(Aud|[B-D])'` and `-skip`
+with the same pattern, so every test runs exactly once and the bound stays.
+`TestPortability_LongestPackageRunsInHalves` in `internal/forge/portability_halves_test.go` holds
+the step to that shape and refuses planted steps without the `-skip` half, with the package still
+in the main run, or with a raised timeout on one half.
+
 **A deadline from the outer timeout (#831).** The eight minutes then ran out on macOS, where
 adopt alone took 341 to 557 s, so the identity suite timed out at random. A fixed count only
 moves that cliff, so the nested run's deadline now comes from the outer `go test -timeout`
