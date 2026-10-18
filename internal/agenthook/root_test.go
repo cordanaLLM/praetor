@@ -62,6 +62,64 @@ func TestResolveRootFailures(t *testing.T) {
 	}
 }
 
+func TestResolveRootReadsEveryWorkspace(t *testing.T) {
+	governed := repository(t, true)
+	plain := repository(t, false)
+	other := repository(t, false)
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	elsewhere, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name       string
+		workspaces []string
+		want       string
+	}{
+		// AGY 1.4.2 sends each --add-dir folder first and the folder it runs in last.
+		{"a folder outside any repository before the governed one", []string{outside, governed}, governed},
+		{"a governed repository wins over an earlier plain one", []string{plain, governed}, governed},
+		{"without a governed one the first repository", []string{outside, plain, other}, plain},
+		{"empty entries are skipped", []string{"", outside, "", governed}, governed},
+		{"no repository at all", []string{outside, elsewhere}, ""},
+	} {
+		got, err := ResolveRoot(context.Background(), tc.workspaces, elsewhere)
+		if err != nil || (tc.want == "" && got != "") || (tc.want != "" && !util.SameDirectory(got, tc.want)) {
+			t.Errorf("%s: %q %v, want %q", tc.name, got, err, tc.want)
+		}
+	}
+}
+
+func TestResolveRootFailsClosedOnAnyWorkspace(t *testing.T) {
+	governed := repository(t, true)
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, workspaces := range map[string][]string{
+		"a relative later entry":                  {outside, "relative"},
+		"a missing entry before the governed one": {outside, filepath.Join(outside, "missing"), governed},
+	} {
+		if got, err := ResolveRoot(context.Background(), workspaces, governed); err == nil || got != "" {
+			t.Errorf("%s resolved to %q", name, got)
+		}
+	}
+	bound := make([]string, maxWorkspaces)
+	for i := 0; i < len(bound); i++ {
+		bound[i] = outside
+	}
+	bound[len(bound)-1] = governed
+	if got, err := ResolveRoot(context.Background(), bound, outside); err != nil || !util.SameDirectory(got, governed) {
+		t.Errorf("%d workspaces: %q %v", maxWorkspaces, got, err)
+	}
+	if got, err := ResolveRoot(context.Background(), append(bound, outside), outside); err == nil || got != "" {
+		t.Errorf("%d workspaces resolved to %q", maxWorkspaces+1, got)
+	}
+}
+
 func TestGoverned(t *testing.T) {
 	if !Governed(repository(t, true)) {
 		t.Error("manifest at the root is not governed")
