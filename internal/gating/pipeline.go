@@ -577,17 +577,9 @@ func runGoSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 // the stage message empty, as before the gate judged findings; advisories a statement covers are
 // named, so the signed stage output records each waiver.
 func runGoSecurityModule(ctx context.Context, cfg *stageConfig, module goModule) (string, error) {
-	listing, err := cfg.run(ctx, module.dir, "go", "list", "-f", "{{.Dir}}", "./...")
-	if err != nil {
-		return "", fmt.Errorf("list Go packages in %s: %w: %s", module.dir, err, strings.TrimSpace(listing))
-	}
-	count := modulePackageCount(listing)
-	if count == 0 {
-		return NoPackagesNote + ": govulncheck and gosec not run", nil
-	}
-	packages, err := resolveSecurityPackages(module.dir, listing)
-	if err != nil {
-		return "", err
+	packages, skipNote, err := resolveModulePackages(ctx, cfg, module.dir)
+	if err != nil || skipNote != "" {
+		return skipNote, err
 	}
 	vulnerability, err := runGoVulnerabilityGate(ctx, cfg, module)
 	if err != nil {
@@ -597,10 +589,73 @@ func runGoSecurityModule(ctx context.Context, cfg *stageConfig, module goModule)
 	if err != nil {
 		return "", err
 	}
-	if out, err := cfg.run(ctx, module.dir, "gosec", append([]string{"-conf", conf}, packages...)...); err != nil {
-		return "", fmt.Errorf("gosec found security infractions in %s: %w: %s", module.dir, err, out)
+	gosecMsg, err := runGosecScan(ctx, cfg, module.dir, conf, packages)
+	if err != nil {
+		return "", err
 	}
-	return vulnerability, nil
+	return combineSecurityMessages(vulnerability, gosecMsg), nil
+}
+
+func resolveModulePackages(ctx context.Context, cfg *stageConfig, moduleDir string) ([]string, string, error) {
+	listing, err := cfg.run(ctx, moduleDir, "go", "list", "-f", "{{.Dir}}", "./...")
+	if err != nil {
+		return nil, "", fmt.Errorf("list Go packages in %s: %w: %s", moduleDir, err, strings.TrimSpace(listing))
+	}
+	if modulePackageCount(listing) == 0 {
+		return nil, NoPackagesNote + ": govulncheck and gosec not run", nil
+	}
+	packages, err := resolveSecurityPackages(moduleDir, listing)
+	if err != nil {
+		return nil, "", err
+	}
+	return packages, "", nil
+}
+
+func runGosecScan(ctx context.Context, cfg *stageConfig, moduleDir, conf string, packages []string) (string, error) {
+	args := append([]string{"-fmt=json", "-conf", conf}, packages...)
+	out, err := cfg.run(ctx, moduleDir, "gosec", args...)
+	if err == nil && len(strings.TrimSpace(out)) == 0 {
+		return "", nil
+	}
+	return handleGosecModuleOutput(cfg, moduleDir, out, err)
+}
+
+func combineSecurityMessages(vulnerability, gosecMsg string) string {
+	if vulnerability != "" && gosecMsg != "" {
+		return vulnerability + "; " + gosecMsg
+	}
+	if gosecMsg != "" {
+		return gosecMsg
+	}
+	return vulnerability
+}
+
+func handleGosecModuleOutput(cfg *stageConfig, moduleDir, out string, runErr error) (string, error) {
+	findings, parseErr := parseGosecOutput(cfg.repoDir, moduleDir, out)
+	if parseErr != nil {
+		return "", parseErr
+	}
+	if runErr == nil {
+		return "", nil
+	}
+	if len(findings) == 0 {
+		return "", fmt.Errorf("%s: gosec found security infractions in %s: %w: %s", stageSecurity, moduleDir, runErr, out)
+	}
+	return evaluateGosecModuleRatchet(cfg.repoDir, moduleDir, cfg.modules, findings, runErr)
+}
+
+func evaluateGosecModuleRatchet(repoDir, moduleDir string, allModules []goModule, findings []baseline.Infraction, origErr error) (string, error) {
+	base, err := baseline.LoadBaseline(filepath.Join(repoDir, GosecBaselineFile))
+	if err != nil {
+		return "", fmt.Errorf("load gosec baseline for %s: %w", moduleDir, err)
+	}
+	moduleBase := filterBaselineForModule(base, repoDir, moduleDir, allModules)
+	ratchet := baseline.EvaluateRatchet(moduleBase, findings, nil)
+	if !ratchet.Passed {
+		return "", fmt.Errorf("gosec found security infractions in %s: %w: %s",
+			moduleDir, origErr, ratchet.Summary())
+	}
+	return fmt.Sprintf("%d gosec infractions within %d baselined limit", ratchet.CurrentCount, moduleBase.TotalInfractions), nil
 }
 
 func runGoVulnerabilityGate(ctx context.Context, cfg *stageConfig, module goModule) (string, error) {

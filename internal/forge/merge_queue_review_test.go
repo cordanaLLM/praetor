@@ -76,7 +76,7 @@ func TestMergeRulesetKeepsLiveMergeQueueParameters(t *testing.T) {
 	live := map[string]any{"rules": []any{queueRuleOf(map[string]any{
 		"check_response_timeout_minutes": 15, "merge_method": "REBASE", "max_entries_to_build": 2,
 	})}}
-	merged, lowered, err := mergeRuleset(live, desired)
+	merged, lowered, _, err := mergeRuleset(live, desired)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestMergeRulesetKeepsLiveMergeQueueParameters(t *testing.T) {
 	if len(lowered) != 0 {
 		t.Fatalf("lowered = %v, want none", lowered)
 	}
-	fresh, _, err := mergeRuleset(map[string]any{"rules": []any{}}, desired)
+	fresh, _, _, err := mergeRuleset(map[string]any{"rules": []any{}}, desired)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestMergeRulesetUnionsLiveCodeScanningTools(t *testing.T) {
 			"code_scanning_tools": []any{scanningTool("CodeQL", "errors")}}}}}
 	other := map[string]any{"rules": []any{map[string]any{"type": "code_scanning", "parameters": map[string]any{
 		"code_scanning_tools": []any{scanningTool("Semgrep", "all")}}}}}
-	merged, _, err := mergeRuleset(other, desired)
+	merged, _, _, err := mergeRuleset(other, desired)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestMergeRulesetUnionsLiveCodeScanningTools(t *testing.T) {
 	}
 	strict := map[string]any{"rules": []any{map[string]any{"type": "code_scanning", "parameters": map[string]any{
 		"code_scanning_tools": []any{scanningTool("CodeQL", "all")}}}}}
-	merged, _, err = mergeRuleset(strict, desired)
+	merged, _, _, err = mergeRuleset(strict, desired)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +286,7 @@ func TestMergeQueueDropsCodeQLDefaultSetupContexts(t *testing.T) {
 			map[string]any{"context": "CodeQL / Analyze (go)"}, map[string]any{"context": "Legacy Gate"},
 		},
 	}}}}
-	merged, _, err := mergeRuleset(live, desired)
+	merged, _, _, err := mergeRuleset(live, desired)
 	if err != nil {
 		t.Fatal(err)
 	}

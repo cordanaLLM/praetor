@@ -52,6 +52,7 @@ var documentationFixturePaths = []string{
 	"tools/figures/mkdocs_hook.py",
 	"tools/figures/astro.mjs",
 	"tools/figures/serve.mjs",
+	"tools/figures/eslint.figures.mjs",
 	"tools/figures/README.md",
 }
 
@@ -575,7 +576,7 @@ func TestRenovateManagedPaths_IncludesAllScaffoldedFilesAndReuseGate(t *testing.
 	}
 
 	rendered := managed[0].MatchFileNames
-	want := append(withBundleFixturePaths(renovateManagedFixturePaths), reuseWorkflowFile)
+	want := append(withBundleFixturePaths(renovateManagedFixturePaths), reuseWorkflowFile, reuseRequirementsFile)
 	if !slices.Equal(rendered, want) {
 		t.Fatalf("rendered Renovate rule mismatch:\ngot:  %v\nwant: %v", rendered, want)
 	}

@@ -44,7 +44,8 @@ func yamllintReport(t *testing.T, binary, config string, data []byte) string {
 	path := writeFixture(t, t.TempDir(), "contract.yaml", string(data))
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, binary, "--strict", "-f", "parsable", "-d", config, path).CombinedOutput()
+	res, err := util.RunCommandBytes(ctx, "", binary, util.MaxCommandOutputBytes, "--strict", "-f", "parsable", "-d", config, path)
+	out := append(res.Stdout, res.Stderr...)
 	var exit *exec.ExitError
 	switch {
 	case err == nil:

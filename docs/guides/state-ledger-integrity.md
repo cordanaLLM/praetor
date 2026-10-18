@@ -524,6 +524,18 @@ The `BUGS.md` rows and prose that carried no v1 metadata were byte-identical aft
 migration, and an independent decode of every original v1 comment matched its
 sidecar record.
 
+## Linked worktrees
+
+Every state command resolves the state folder in one place, `ResolveWorkingDir` in
+[`internal/state/resolve.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/state/resolve.go):
+the directory's own `.workingdir` when it is a real folder; else, in a linked worktree (`git
+worktree add`), the main worktree's `.workingdir`, found as the parent of git's common directory;
+else the error a checkout without a ledger always gave. The command names the folder it uses
+(`state: using the main worktree's .workingdir at <path>`), and `state sync` records the git state
+of the worktree it runs in, not the main one. The ledger is never copied or linked into the
+worktree: a symbolic link for `.workingdir` fails the audit by name, because git's ignore rule for
+a directory does not cover a link of that name.
+
 ## Persistence and failure handling
 
 Initialization and snapshots reuse the confined directory and file operations in

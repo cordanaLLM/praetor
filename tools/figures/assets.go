@@ -34,7 +34,7 @@ const (
 	// own runtimes.
 	PlayerDirectory = Directory + "/player"
 	// MaxAssets bounds all asset iteration: the inventory's exact size.
-	MaxAssets = 18
+	MaxAssets = 19
 	// SpecDirectory and OutputDirectory hold a repository's figure specs and their committed
 	// outputs: SPEC_DIR and OUT_DIR in checks.mjs, which assets_test.go holds to these values.
 	SpecDirectory   = "docs/figures"
@@ -79,6 +79,7 @@ var assetNames = [...]string{
 	"mkdocs_hook.py",
 	"astro.mjs",
 	"serve.mjs",
+	"eslint.figures.mjs",
 	"README.md",
 }
 
@@ -160,9 +161,11 @@ var priorDigests = map[string]string{
 	// Player bundle and license inventory before React 19.3.1 (#1363).
 	"2db2e3bfda05a3776f165530a519b6c4a5def717b4dd4192484f8d86076a4a94": Directory + "/player/player.js",
 	"c2eed2e1431851ddca033c197728664db21fc82d766e465c44f210b949d57a18": Directory + "/player/THIRD-PARTY-LICENSES.txt",
+	// README.md before documenting the emitted ESLint configuration for figure assets.
+	"15f75d9348ee456c9d78594307df374ebcc24427fdf435e920a54c4e5461cbfa": Directory + "/README.md",
 }
 
-//go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts player/loader.js player/player.js player/THIRD-PARTY-LICENSES.txt figures.css mkdocs_hook.py astro.mjs serve.mjs README.md
+//go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts player/loader.js player/player.js player/THIRD-PARTY-LICENSES.txt figures.css mkdocs_hook.py astro.mjs serve.mjs eslint.figures.mjs README.md
 var assets embed.FS
 
 // FS returns the embedded asset tree. It is read-only; Read is the bounded accessor.

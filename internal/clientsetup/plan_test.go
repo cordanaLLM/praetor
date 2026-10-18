@@ -97,6 +97,9 @@ func validateClientShape(t *testing.T, p *Plan) {
 		if err := yaml.Unmarshal(p.Content, &got); err != nil {
 			t.Fatal(err)
 		}
+		if !bytes.HasPrefix(p.Content, []byte("---\n")) {
+			t.Fatalf("missing document start in Continue configuration: %s", p.Content)
+		}
 		if got.Schema != "v1" || got.Version == "" || got.Name == "" || len(got.Servers) != 1 || got.Servers[0].Command != testRegistry().Servers[0].Command {
 			t.Fatalf("bad Continue document: %s", p.Content)
 		}
@@ -197,6 +200,49 @@ func TestYAMLMergePreservesCommentsAndOtherServers(t *testing.T) {
 		if !bytes.Contains(p.Content, []byte(text)) {
 			t.Fatalf("lost %q in %s", text, p.Content)
 		}
+	}
+}
+
+func TestYAMLDocumentStart(t *testing.T) {
+	// New file gets "---" document start.
+	newPlan, err := BuildPlan(t.Context(), testRegistry(), Continue, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(newPlan.Content, []byte("---\n")) {
+		t.Fatalf("new file missing document start: %s", newPlan.Content)
+	}
+	if bytes.Count(newPlan.Content, []byte("---")) != 1 {
+		t.Fatalf("new file has unexpected document marker count: %s", newPlan.Content)
+	}
+
+	// Merged file without "---" gets "---" once.
+	withoutStart := []byte("name: Custom\nversion: 1.0.0\nschema: v1\nmcpServers:\n  - name: other\n    command: /other\n")
+	mergedFromWithout, err := BuildPlan(t.Context(), testRegistry(), Continue, withoutStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(mergedFromWithout.Content, []byte("---\n")) {
+		t.Fatalf("merged file missing document start: %s", mergedFromWithout.Content)
+	}
+	if bytes.Count(mergedFromWithout.Content, []byte("---")) != 1 {
+		t.Fatalf("merged file has unexpected document marker count: %s", mergedFromWithout.Content)
+	}
+
+	// Merged file already having "---" keeps a single "---" (not doubled) and content otherwise unchanged.
+	withStart := []byte("---\nname: Custom\nversion: 1.0.0\nschema: v1\nmcpServers:\n  - name: other\n    command: /other\n")
+	mergedFromWith, err := BuildPlan(t.Context(), testRegistry(), Continue, withStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(mergedFromWith.Content, []byte("---\n")) {
+		t.Fatalf("merged file missing document start: %s", mergedFromWith.Content)
+	}
+	if bytes.Count(mergedFromWith.Content, []byte("---")) != 1 {
+		t.Fatalf("merged file doubled document start: %s", mergedFromWith.Content)
+	}
+	if !bytes.Equal(mergedFromWith.Content, mergedFromWithout.Content) {
+		t.Fatalf("content differs between starting with/without document start:\nwith: %s\nwithout: %s", mergedFromWith.Content, mergedFromWithout.Content)
 	}
 }
 

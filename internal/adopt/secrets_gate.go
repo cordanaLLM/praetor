@@ -1,0 +1,122 @@
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+//
+// SPDX-License-Identifier: EUPL-1.2
+
+package adopt
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
+	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
+	secretsassets "github.com/cordanaLLM/praetor/tools/secrets"
+	"github.com/cordanaLLM/praetor/tools/secrets/rules"
+)
+
+// SecurityWorkflowPath is the relative path of the security scan workflow.
+const SecurityWorkflowPath = ".github/workflows/security.yml"
+
+// reconcileSecretsGate reconciles the standalone secrets gate program under tools/secrets
+// and renders any HISS-12 secrets exceptions from .standards.yaml into the workflow step.
+func reconcileSecretsGate(ctx context.Context, s *adoptSession) error {
+	tracksGo, err := apiassets.TracksModule(ctx, s.repoPath)
+	if err != nil {
+		return err
+	}
+	if !tracksGo {
+		return nil
+	}
+	if err := s.scaffoldSecretsGateAssets(ctx); err != nil {
+		return err
+	}
+	return s.renderSecretsExceptions(ctx)
+}
+
+func (s *adoptSession) scaffoldSecretsGateAssets(ctx context.Context) error {
+	names := secretsassets.Names()
+	for i := 0; i < len(names) && i < secretsassets.MaxAssets; i++ {
+		data, err := secretsassets.Read(names[i])
+		if err != nil {
+			return err
+		}
+		rel := filepath.ToSlash(filepath.Join(secretsassets.Directory, names[i]))
+		if _, err := s.scaffoldFile(ctx, scaffold{
+			rel: rel, perm: filePerm, content: data, auditLocked: true,
+			created:  "Scaffolded locked secrets gate program",
+			verified: "Existing secrets gate program preserved; audit verifies canonical text",
+		}); err != nil {
+			return fmt.Errorf("reconcile %s: %w", rel, err)
+		}
+	}
+	return nil
+}
+
+func (s *adoptSession) renderSecretsExceptions(ctx context.Context) error {
+	full, err := repoFile(s.repoPath, SecurityWorkflowPath)
+	if err != nil {
+		return err
+	}
+	actual, exists, err := contextopt.ObserveSnapshot(ctx, full)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	plain, ok := secretsassets.StripSettings(string(actual))
+	if !ok {
+		plain = string(actual)
+	}
+	raw, err := s.secretsExceptions(ctx)
+	if err != nil {
+		return err
+	}
+	rendered, err := secretsassets.RenderWorkflow(plain, makeSecretsEntries(raw))
+	if err != nil {
+		return err
+	}
+	if rendered == string(actual) {
+		return nil
+	}
+	return s.applySecretsExceptionsWorkflow(full, actual, rendered)
+}
+
+func (s *adoptSession) secretsExceptions(ctx context.Context) ([]config.Exception, error) {
+	if s.policy != nil && s.policy.Manifest != nil {
+		return config.ExceptionsFor(s.policy.Manifest.Exceptions, config.ExceptionRuleSecrets), nil
+	}
+	return config.LoadExceptionsFor(ctx, s.repoPath, config.ExceptionRuleSecrets)
+}
+
+func makeSecretsEntries(raw []config.Exception) []rules.Entry {
+	var entries []rules.Entry
+	for i := 0; i < len(raw) && i < rules.MaxJudgedEntries; i++ {
+		entries = append(entries, rules.Entry{
+			Path:        raw[i].Path,
+			RuleID:      raw[i].Tool,
+			Fingerprint: raw[i].Fingerprint,
+			Reason:      raw[i].Reason,
+			Expires:     raw[i].Expires,
+			Category:    raw[i].Category,
+			Entered:     raw[i].Entered,
+		})
+	}
+	return entries
+}
+
+func (s *adoptSession) applySecretsExceptionsWorkflow(full string, actual []byte, rendered string) error {
+	_, crlf := util.NormalizeLineEndings(string(actual))
+	content := []byte(util.RestoreLineEndings(rendered, crlf))
+	if !s.opts.DryRun {
+		if err := writeRepoFile(full, content, filePerm); err != nil {
+			return fmt.Errorf("write %s: %w", SecurityWorkflowPath, err)
+		}
+	}
+	s.planDryRunWrite(SecurityWorkflowPath, content)
+	s.report.recordReconciled(SecurityWorkflowPath, "Rendered SECRETS_EXCEPTIONS into secrets gate step")
+	return nil
+}

@@ -48,7 +48,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - run: gitleaks detect --verbose
+      - run: gitleaks detect --no-banner --redact --config .gitleaks.toml --log-opts="--full-history --all -m"
 `)
 	out, err := AuditDeclaredLinters(ctx, DeclaredLintersOptions{
 		RootDir: root, Policy: singleLinterPolicy("security:high", "gitleaks"), Today: testToday,
@@ -88,7 +88,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - run: docker run --rm -v $(pwd):/path ghcr.io/gitleaks/gitleaks:latest detect
+      - run: docker run --rm -v $(pwd):/path ghcr.io/gitleaks/gitleaks:latest detect --log-opts="--full-history --all -m"
 `)
 	out, err := AuditDeclaredLinters(ctx, DeclaredLintersOptions{
 		RootDir: root, Policy: singleLinterPolicy("security:high", "gitleaks"), Today: testToday,
@@ -278,7 +278,7 @@ func TestAuditDeclaredLinters_ExceptionsLifecycle(t *testing.T) {
 
 	t.Run("stale exception fails until removed", func(t *testing.T) {
 		root := t.TempDir()
-		writeLinterFixtureFile(t, root, ".github/workflows/ci.yml", "name: CI\non: push\njobs:\n  b:\n    runs-on: u\n    steps:\n      - run: gitleaks detect\n")
+		writeLinterFixtureFile(t, root, ".github/workflows/ci.yml", "name: CI\non: push\njobs:\n  b:\n    runs-on: u\n    steps:\n      - run: gitleaks detect --log-opts=\"--full-history --all -m\"\n")
 		exceptions := []config.Exception{
 			{Rule: config.ExceptionRuleDeclaredLinters, Tool: "gitleaks", Reason: "already run", Expires: "2026-11-01"},
 		}
@@ -396,7 +396,7 @@ func TestAuditDeclaredLinters_GoRunners(t *testing.T) {
 	cases := []struct {
 		name, tool, runCmd, markerFile string
 	}{
-		{"go tool with modfile", "gitleaks", "go tool -modfile=tools/go/go.mod gitleaks detect", ""},
+		{"go tool with modfile", "gitleaks", "go tool -modfile=tools/go/go.mod gitleaks detect --log-opts=\"--full-history --all -m\"", ""},
 		{"go run versioned", "golangci-lint", "go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.60.0 run", "main.go"},
 	}
 	for _, tc := range cases {
@@ -541,4 +541,89 @@ func TestAuditDeclaredLinters_UnknownLinterRequired(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "trivy") {
 		t.Fatalf("expected unknown linter trivy to fail in empty directory, got: %v", err)
 	}
+}
+
+// 20. 3D tests for gitleaks history scan log options:
+// - Positive: gitleaks history scan with -m in --log-opts passes.
+// - Negative: gitleaks history scan without -m fails naming workflow file and step.
+// - Boundary: gitleaks with --no-git is not a history scan and does not fail for missing -m.
+const (
+	gitleaksWorkflowPositive = `name: Security
+on: push
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run gitleaks
+        run: gitleaks detect --no-banner --redact --config .gitleaks.toml --log-opts="--full-history --all -m"
+`
+	gitleaksWorkflowNoLogOpts = `name: Security
+on: push
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run gitleaks
+        run: gitleaks detect --verbose
+`
+	gitleaksWorkflowMissingM = `name: Security
+on: push
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gitleaks detect --log-opts="--full-history --all"
+`
+	gitleaksWorkflowNoGit = `name: Security
+on: push
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run gitleaks
+        run: gitleaks detect --no-git
+`
+)
+
+func auditGitleaksWorkflow(t *testing.T, policy *config.EffectivePolicy, workflowYAML string) (string, error) {
+	t.Helper()
+	root := t.TempDir()
+	writeLinterFixtureFile(t, root, ".github/workflows/security.yml", workflowYAML)
+	return AuditDeclaredLinters(t.Context(), DeclaredLintersOptions{
+		RootDir: root, Policy: policy, Today: testToday,
+	})
+}
+
+func TestAuditDeclaredLinters_GitleaksHistoryScan_3D(t *testing.T) {
+	policy := singleLinterPolicy("security:high", "gitleaks")
+
+	t.Run("positive history scan with minus-m passes", func(t *testing.T) {
+		out, err := auditGitleaksWorkflow(t, policy, gitleaksWorkflowPositive)
+		if err != nil || !strings.Contains(out, "[PASS]") {
+			t.Fatalf("expected pass with -m, got err: %v, out: %s", err, out)
+		}
+	})
+
+	t.Run("negative history scan without log-opts fails", func(t *testing.T) {
+		_, err := auditGitleaksWorkflow(t, policy, gitleaksWorkflowNoLogOpts)
+		wantErr := `[FAIL] Declared linters: .github/workflows/security.yml (step "Run gitleaks"): gitleaks history scan runs without -m in its log options`
+		if err == nil || err.Error() != wantErr {
+			t.Fatalf("expected exact error %q, got: %v", wantErr, err)
+		}
+	})
+
+	t.Run("negative history scan with log-opts lacking minus-m fails", func(t *testing.T) {
+		_, err := auditGitleaksWorkflow(t, policy, gitleaksWorkflowMissingM)
+		wantErr := `[FAIL] Declared linters: .github/workflows/security.yml (step 1): gitleaks history scan runs without -m in its log options`
+		if err == nil || err.Error() != wantErr {
+			t.Fatalf("expected exact error %q, got: %v", wantErr, err)
+		}
+	})
+
+	t.Run("boundary no-git scan is not history scan", func(t *testing.T) {
+		out, err := auditGitleaksWorkflow(t, policy, gitleaksWorkflowNoGit)
+		if err != nil || !strings.Contains(out, "[PASS]") {
+			t.Fatalf("expected --no-git to pass, got err: %v, out: %s", err, out)
+		}
+	})
 }

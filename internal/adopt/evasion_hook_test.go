@@ -58,17 +58,18 @@ type interceptorModule struct {
 // loadInterceptorModule loads the emitted script as a module, without running main.
 func loadInterceptorModule(t *testing.T, python, script string) interceptorModule {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), interceptorWallClock)
+	ctx, cancel := context.WithTimeout(t.Context(), interceptorWallClock)
 	defer cancel()
 	const program = "import json, runpy, sys; module = runpy.run_path(sys.argv[1]); " +
 		"print(json.dumps({name: module[name] for name in sys.argv[2:]}))"
 	names := []string{"RULES", "READ_ONLY_EXEMPT", "READ_ONLY_WORDS", "READ_ONLY_VETO"}
-	out, err := exec.CommandContext(ctx, python, append([]string{"-B", "-c", program, script}, names...)...).Output() //nolint:gosec // fixed interpreter and test script
+	args := append([]string{"-B", "-c", program, script}, names...)
+	res, err := util.RunCommandBytes(ctx, "", python, util.MaxCommandOutputBytes, args...)
 	if err != nil {
 		t.Fatalf("load the emitted script as a module: %v", err)
 	}
 	var module interceptorModule
-	if err := json.Unmarshal(out, &module); err != nil {
+	if err := json.Unmarshal(res.Stdout, &module); err != nil {
 		t.Fatalf("decode the emitted script's module values: %v", err)
 	}
 	return module
@@ -191,25 +192,30 @@ const interceptorWallClock = 30 * time.Second
 // as LF text.
 func runInterceptorOutput(t *testing.T, python, script string, stdin []byte, extra []string, args ...string) (int, string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), interceptorWallClock)
+	ctx, cancel := context.WithTimeout(t.Context(), interceptorWallClock)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, python, append([]string{"-B", script}, args...)...) //nolint:gosec // fixed interpreter and test script
-	cmd.Stdin = bytes.NewReader(stdin)
-	cmd.Env = append([]string{"PATH=" + os.Getenv("PATH"), "SYSTEMROOT=" + os.Getenv("SYSTEMROOT")}, extra...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	err := cmd.Run()
+	envCtx, err := util.WithCommandEnvironment(ctx, append([]string{"PATH=" + os.Getenv("PATH"), "SYSTEMROOT=" + os.Getenv("SYSTEMROOT")}, extra...))
+	if err != nil {
+		t.Fatalf("environment: %v", err)
+	}
+	stdinCtx, err := util.WithCommandStdin(envCtx, stdin)
+	if err != nil {
+		t.Fatalf("stdin: %v", err)
+	}
+	cmdArgs := append([]string{"-B", script}, args...)
+	res, err := util.RunCommandBytes(stdinCtx, "", python, util.MaxCommandOutputBytes, cmdArgs...)
+	stderr := res.Stderr
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		if strings.Contains(stderr.String(), "Traceback") {
-			t.Errorf("interceptor crashed instead of refusing: %s", stderr.String())
+		if strings.Contains(string(stderr), "Traceback") {
+			t.Errorf("interceptor crashed instead of refusing: %s", string(stderr))
 		}
-		return exitErr.ExitCode(), interceptorStderr(t, stderr.Bytes())
+		return exitErr.ExitCode(), interceptorStderr(t, stderr)
 	}
 	if err != nil {
 		t.Fatalf("run interceptor: %v", err)
 	}
-	return 0, interceptorStderr(t, stderr.Bytes())
+	return 0, interceptorStderr(t, stderr)
 }
 
 // interceptorStderr reads the interceptor's stderr as text (testsupport.PythonText): CPython
@@ -396,17 +402,19 @@ func measureScanCosts(t *testing.T, python, script string, commands []string, ru
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*interceptorWallClock)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*interceptorWallClock)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, python, "-B", "-c", scanCostProbe, script) //nolint:gosec // fixed interpreter, program and test script
-	cmd.Stdin = bytes.NewReader(input)
-	out, err := cmd.Output()
+	stdinCtx, err := util.WithCommandStdin(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := util.RunCommandBytes(stdinCtx, "", python, util.MaxCommandOutputBytes, "-B", "-c", scanCostProbe, script)
 	if err != nil {
 		t.Fatalf("measure the interceptor's scan costs: %v", err)
 	}
 	var costs scanCosts
-	if err := json.Unmarshal(out, &costs); err != nil || costs.Pass <= 0 || len(costs.Costs) != len(commands) {
-		t.Fatalf("scan cost probe output %q: %v", out, err)
+	if err := json.Unmarshal(res.Stdout, &costs); err != nil || costs.Pass <= 0 || len(costs.Costs) != len(commands) {
+		t.Fatalf("scan cost probe output %q: %v", string(res.Stdout), err)
 	}
 	return costs
 }

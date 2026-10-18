@@ -5,11 +5,12 @@ package harvester
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestBundlePreservesUmask(t *testing.T) {
@@ -31,11 +32,14 @@ func TestBundlePreservesUmask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, executable, "-test.run=^TestBundlePreservesUmask$", "-test.count=1")
-	command.Env = append(os.Environ(), "PRAETOR_TEST_BUNDLE_UMASK_ROOT="+root)
-	if output, err := command.CombinedOutput(); err != nil {
+	cmdEnv := append(os.Environ(), "PRAETOR_TEST_BUNDLE_UMASK_ROOT="+root)
+	cmdCtx, envErr := util.WithCommandEnvironment(ctx, cmdEnv)
+	if envErr != nil {
+		t.Fatal(envErr)
+	}
+	if output, err := util.RunCommand(cmdCtx, "", executable, "-test.run=^TestBundlePreservesUmask$", "-test.count=1"); err != nil {
 		t.Fatalf("umask child failed: %v: %s", err, output)
 	}
 	for _, relative := range []string{"manifest.json", "agent-configs/mcp_config.json"} {

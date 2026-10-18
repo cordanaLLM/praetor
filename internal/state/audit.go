@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // StateAuditReport details the integrity and hygiene of the .workingdir state.
@@ -31,10 +30,10 @@ func AuditWorkingDir(rootPath string) (*StateAuditReport, error) {
 
 // AuditWorkingDirContext is AuditWorkingDir under the caller's cancellation.
 func AuditWorkingDirContext(ctx context.Context, rootPath string) (*StateAuditReport, error) {
-	wDir := filepath.Join(rootPath, WorkingDirName)
+	wDir := filepath.Join(ledgerRoot(ctx, rootPath), WorkingDirName)
 	rep := &StateAuditReport{
 		Valid:            true,
-		WorkingDirExists: util.DirExists(wDir),
+		WorkingDirExists: isRealDir(wDir),
 		MissingFiles:     make([]string, 0),
 		Violations:       make([]string, 0),
 	}

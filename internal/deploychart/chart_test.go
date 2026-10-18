@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -63,15 +64,12 @@ func runHelm(t *testing.T, argv ...string) (stdout, stderr []byte, err error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), renderTimeout)
 	defer cancel()
-	var errOut bytes.Buffer
-	cmd := exec.CommandContext(ctx, "helm", argv...)
-	cmd.Stderr = &errOut
-	out, err := cmd.Output()
+	res, err := util.RunCommandBytes(ctx, "", "helm", util.MaxCommandOutputBytes, argv...)
 	if ctx.Err() != nil {
 		// A killed helm exits 1 with nothing on stderr; say that the bound fired.
 		err = fmt.Errorf("helm did not finish within %s: %w", renderTimeout, errors.Join(err, ctx.Err()))
 	}
-	return out, errOut.Bytes(), err
+	return res.Stdout, res.Stderr, err
 }
 
 // helm runs one helm command and returns its stdout, failing the test with

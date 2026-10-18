@@ -131,7 +131,7 @@ func LedgerPresent(ctx context.Context, rootPath string) (present bool, err erro
 	if ctx == nil {
 		return false, errors.New("ledger inspection requires a context")
 	}
-	working, absent, err := openWorkingDirReadRoot(ctx, rootPath)
+	working, absent, err := openWorkingDirReadRoot(ctx, ledgerRoot(ctx, rootPath))
 	switch {
 	case errors.Is(err, errWorkingDirNotDirectory):
 		return false, nil

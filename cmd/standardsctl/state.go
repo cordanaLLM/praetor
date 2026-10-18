@@ -14,7 +14,6 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/state"
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // stateCommandTimeout bounds one state subcommand's ledger reads and writes and the
@@ -88,6 +87,36 @@ func stateDir(dirFlag string, rest []string, index int) string {
 		return rest[index]
 	}
 	return "."
+}
+
+// resolveStateDir resolves the state folder for dir, announcing when the main worktree's
+// .workingdir is used in a linked worktree.
+func resolveStateDir(ctx context.Context, dir string) (state.StateLocation, error) {
+	loc, err := state.ResolveWorkingDir(ctx, dir)
+	if err != nil {
+		return state.StateLocation{}, err
+	}
+	if loc.Notice() != "" {
+		fmt.Println(loc.Notice())
+	}
+	return loc, nil
+}
+
+// resolveNotice announces when a linked worktree uses the main worktree's .workingdir.
+func resolveNotice(ctx context.Context, dir string) state.StateLocation {
+	loc, err := state.ResolveWorkingDir(ctx, dir)
+	if err == nil && loc.Notice() != "" {
+		fmt.Println(loc.Notice())
+	}
+	return loc
+}
+
+// resolvedWorkingDir returns the resolved working directory or falls back to dir/.workingdir.
+func resolvedWorkingDir(loc state.StateLocation, fallbackDir string) string {
+	if loc.WorkingDir != "" {
+		return loc.WorkingDir
+	}
+	return filepath.Join(fallbackDir, state.WorkingDirName)
 }
 
 // stateInitFlags registers the flags of `state init`. The usage string is the
@@ -273,15 +302,21 @@ func runStateSync(args []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
 	defer cancel()
+	loc, resolveErr := resolveStateDir(ctx, dir)
 	if *verify {
 		if *logMsg != "" {
 			return fmt.Errorf("state sync --verify does not accept --log")
 		}
+		if resolveErr != nil {
+			return fmt.Errorf("state sync --verify: %w", resolveErr)
+		}
 		return state.VerifyStateSync(ctx, dir)
 	}
 
-	if err := seedIgnoredLedger(ctx, dir); err != nil {
-		return fmt.Errorf("state sync failed: %w", err)
+	if resolveErr != nil || !loc.IsLinked {
+		if err := seedIgnoredLedger(ctx, dir); err != nil {
+			return fmt.Errorf("state sync failed: %w", err)
+		}
 	}
 	snap, err := state.SyncState(ctx, dir, *logMsg)
 	if err != nil {
@@ -310,13 +345,12 @@ func runStateStatus(args []string) error {
 	}
 	dir := stateDir(dirFlag, rest, 0)
 
-	if !util.DirExists(filepath.Join(dir, state.WorkingDirName)) {
-		return fmt.Errorf("state status: %s/ does not exist in %s (run 'praetorctl state init %s' first)",
-			state.WorkingDirName, dir, dir)
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
 	defer cancel()
+
+	if _, err := resolveStateDir(ctx, dir); err != nil {
+		return fmt.Errorf("state status: %w", err)
+	}
 
 	snap, err := inspectState(ctx, dir)
 	if err != nil {
@@ -341,9 +375,11 @@ func runStateCompact(args []string) error {
 	if err != nil {
 		return err
 	}
+	dir := stateDir(dirFlag, rest, 0)
 	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
 	defer cancel()
-	report, err := state.CompactState(ctx, stateDir(dirFlag, rest, 0))
+	resolveNotice(ctx, dir)
+	report, err := state.CompactState(ctx, dir)
 	if err != nil {
 		return fmt.Errorf("state compact failed: %w", err)
 	}
@@ -361,9 +397,11 @@ func runStateMigrateBugs(args []string) error {
 	if err != nil {
 		return err
 	}
+	dir := stateDir(dirFlag, rest, 0)
 	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
 	defer cancel()
-	report, err := state.MigrateBugMetadata(ctx, stateDir(dirFlag, rest, 0))
+	resolveNotice(ctx, dir)
+	report, err := state.MigrateBugMetadata(ctx, dir)
 	if err != nil {
 		return fmt.Errorf("state migrate-bugs failed: %w", err)
 	}
@@ -399,6 +437,9 @@ func runStateAudit(args []string) error {
 		return err
 	}
 	dir := stateDir(dirFlag, rest, 0)
+	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
+	defer cancel()
+	resolveNotice(ctx, dir)
 
 	report, err := state.AuditWorkingDir(dir)
 	if err != nil {
@@ -472,6 +513,7 @@ func runStateBugAdd(args []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
 	defer cancel()
+	resolveNotice(ctx, *dir)
 	return withLedgerIgnore(ctx, *dir, func() error {
 		entry, err := state.AddBug(*dir, state.BugEntry{
 			Title:    *title,
@@ -490,6 +532,9 @@ func runStateBugAdd(args []string) error {
 }
 
 func runStateBugList(dir string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
+	defer cancel()
+	resolveNotice(ctx, dir)
 	bugs, err := state.ListBugs(dir, "all")
 	if err != nil {
 		return err
@@ -518,6 +563,7 @@ func runStateBugResolve(args []string) error {
 	dir := stateDir(dirFlag, rest, 2)
 	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
 	defer cancel()
+	resolveNotice(ctx, dir)
 	return withLedgerIgnore(ctx, dir, func() error {
 		if err := state.ResolveBug(dir, id, res); err != nil {
 			return err
@@ -575,6 +621,7 @@ func runStateQuestionAdd(args []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
 	defer cancel()
+	resolveNotice(ctx, *dir)
 	return withLedgerIgnore(ctx, *dir, func() error {
 		entry, err := state.AddQuestion(*dir, state.QuestionEntry{
 			Question: *prompt,
@@ -591,6 +638,9 @@ func runStateQuestionAdd(args []string) error {
 }
 
 func runStateQuestionList(dir string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
+	defer cancel()
+	resolveNotice(ctx, dir)
 	qs, err := state.ListQuestions(dir, "all")
 	if err != nil {
 		return err
@@ -623,6 +673,9 @@ func runStateQuestionDecide(args []string) error {
 	id := rest[0]
 	dec := rest[1]
 	dir := stateDir(dirFlag, rest, 2)
+	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
+	defer cancel()
+	resolveNotice(ctx, dir)
 	if err := state.DecideQuestion(dir, id, dec); err != nil {
 		return err
 	}
@@ -676,11 +729,12 @@ func runTaskAdd(args []string) error {
 	dir := stateDir(dirFlag, rest, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
 	defer cancel()
+	loc := resolveNotice(ctx, dir)
 	return withLedgerIgnore(ctx, dir, func() error {
 		if err := state.AddTask(dir, desc); err != nil {
 			return err
 		}
-		fmt.Printf("[PASS] Task added to %s: %s\n", filepath.Join(dir, state.WorkingDirName, "OPEN.md"), desc)
+		fmt.Printf("[PASS] Task added to %s: %s\n", filepath.Join(resolvedWorkingDir(loc, dir), "OPEN.md"), desc)
 		return nil
 	})
 }
@@ -695,10 +749,13 @@ func runTaskComplete(args []string) error {
 	}
 	selector := rest[0]
 	dir := stateDir(dirFlag, rest, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
+	defer cancel()
+	loc := resolveNotice(ctx, dir)
 	if err := state.CompleteTask(dir, selector); err != nil {
 		return err
 	}
-	fmt.Printf("[PASS] Task marked completed in %s: %s\n", filepath.Join(dir, state.WorkingDirName, "OPEN.md"), selector)
+	fmt.Printf("[PASS] Task marked completed in %s: %s\n", filepath.Join(resolvedWorkingDir(loc, dir), "OPEN.md"), selector)
 	return nil
 }
 
@@ -708,11 +765,14 @@ func runTaskList(args []string) error {
 		return err
 	}
 	dir := stateDir(dirFlag, rest, 0)
+	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
+	defer cancel()
+	loc := resolveNotice(ctx, dir)
 	tasks, err := state.ListTasks(dir)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("=== Tasks in %s: %d total ===\n", filepath.Join(dir, state.WorkingDirName, "OPEN.md"), len(tasks))
+	fmt.Printf("=== Tasks in %s: %d total ===\n", filepath.Join(resolvedWorkingDir(loc, dir), "OPEN.md"), len(tasks))
 	for _, t := range tasks {
 		status := "[ ]"
 		if t.Completed {
@@ -731,6 +791,7 @@ func runTaskArchive(args []string) error {
 	dir := stateDir(dirFlag, rest, 0)
 	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
 	defer cancel()
+	resolveNotice(ctx, dir)
 	// Outside a Git worktree, or before the first commit, there is no commit to name and the
 	// archive keeps its "local" stamp; a Git read that fails is an error, not that stamp.
 	commitSHA, err := state.RecordedCommit(ctx, dir)

@@ -146,140 +146,61 @@ func TestAudit_ExceptionsExpiryWarning_Integration(t *testing.T) {
 	}
 }
 
+func runCategoryWarningCase(t *testing.T, root string, today time.Time, entry config.Exception, wantContain, noWarnMsg string) {
+	t.Helper()
+	out, err := captureStdout(t, func() error {
+		return auditExceptionsExpiry(context.Background(), &config.Manifest{Exceptions: []config.Exception{entry}}, root, today)
+	})
+	if err != nil {
+		t.Fatalf("auditExceptionsExpiry failed: %v", err)
+	}
+	if wantContain != "" {
+		mustContain(t, out, wantContain)
+	}
+	if noWarnMsg != "" && strings.Contains(out, "[WARN] Exceptions:") {
+		t.Errorf(noWarnMsg, out)
+	}
+}
+
 func TestAuditExceptionsExpiry_CategoryWarningWindows_3D(t *testing.T) {
 	today := time.Date(2026, time.October, 10, 0, 0, 0, 0, time.UTC)
 	root := exceptionTargetRoot(t, "cat-c-fresh.yml", "cat-c-5.yml", "cat-c-6.yml", "cat-d-3.yml",
 		"cat-b-fresh.yml", "cat-b-1.yml", "uncat-14.yml")
+	expiresD := today.AddDate(0, 0, 3).Format(config.ExceptionDateLayout)
 
 	t.Run("category C entered today does not warn", func(t *testing.T) {
-		entry := config.Exception{
-			Rule:     "HISS-11",
-			Path:     "cat-c-fresh.yml",
-			Category: "C",
-			Entered:  "2026-10-10",
-			Expires:  "2026-10-20",
-			Reason:   "fresh category C",
-		}
-		out, err := captureStdout(t, func() error {
-			return auditExceptionsExpiry(context.Background(), &config.Manifest{Exceptions: []config.Exception{entry}}, root, today)
-		})
-		if err != nil {
-			t.Fatalf("auditExceptionsExpiry failed: %v", err)
-		}
-		if strings.Contains(out, "[WARN] Exceptions:") {
-			t.Errorf("expected no warning for fresh category C entry, got: %s", out)
-		}
+		runCategoryWarningCase(t, root, today, config.Exception{
+			Rule: "HISS-11", Path: "cat-c-fresh.yml", Category: "C", Entered: "2026-10-10", Expires: "2026-10-20", Reason: "fresh category C",
+		}, "", "expected no warning for fresh category C entry, got: %s")
 	})
-
 	t.Run("category C with 5 days left warns", func(t *testing.T) {
-		entry := config.Exception{
-			Rule:     "HISS-11",
-			Path:     "cat-c-5.yml",
-			Category: "C",
-			Entered:  "2026-10-05",
-			Expires:  "2026-10-15",
-			Reason:   "category C 5 days left",
-		}
-		out, err := captureStdout(t, func() error {
-			return auditExceptionsExpiry(context.Background(), &config.Manifest{Exceptions: []config.Exception{entry}}, root, today)
-		})
-		if err != nil {
-			t.Fatalf("auditExceptionsExpiry failed: %v", err)
-		}
-		mustContain(t, out, "(rule HISS-11, cat-c-5.yml) expires on 2026-10-15 (5 days left): category C 5 days left")
+		runCategoryWarningCase(t, root, today, config.Exception{
+			Rule: "HISS-11", Path: "cat-c-5.yml", Category: "C", Entered: "2026-10-05", Expires: "2026-10-15", Reason: "category C 5 days left",
+		}, "(rule HISS-11, cat-c-5.yml) expires on 2026-10-15 (5 days left): category C 5 days left", "")
 	})
-
 	t.Run("category C with 6 days left does not warn", func(t *testing.T) {
-		entry := config.Exception{
-			Rule:     "HISS-11",
-			Path:     "cat-c-6.yml",
-			Category: "C",
-			Entered:  "2026-10-06",
-			Expires:  "2026-10-16",
-			Reason:   "category C 6 days left",
-		}
-		out, err := captureStdout(t, func() error {
-			return auditExceptionsExpiry(context.Background(), &config.Manifest{Exceptions: []config.Exception{entry}}, root, today)
-		})
-		if err != nil {
-			t.Fatalf("auditExceptionsExpiry failed: %v", err)
-		}
-		if strings.Contains(out, "[WARN] Exceptions:") {
-			t.Errorf("expected no warning for category C entry with 6 days left, got: %s", out)
-		}
+		runCategoryWarningCase(t, root, today, config.Exception{
+			Rule: "HISS-11", Path: "cat-c-6.yml", Category: "C", Entered: "2026-10-06", Expires: "2026-10-16", Reason: "category C 6 days left",
+		}, "", "expected no warning for category C entry with 6 days left, got: %s")
 	})
-
 	t.Run("category D with 3 days left warns", func(t *testing.T) {
-		enteredD := today.AddDate(0, 0, -117).Format(config.ExceptionDateLayout)
-		expiresD := today.AddDate(0, 0, 3).Format(config.ExceptionDateLayout)
-		entry := config.Exception{
-			Rule:     "HISS-11",
-			Path:     "cat-d-3.yml",
-			Category: "D",
-			Entered:  enteredD,
-			Expires:  expiresD,
-			Reason:   "category D 3 days left",
-		}
-		out, err := captureStdout(t, func() error {
-			return auditExceptionsExpiry(context.Background(), &config.Manifest{Exceptions: []config.Exception{entry}}, root, today)
-		})
-		if err != nil {
-			t.Fatalf("auditExceptionsExpiry failed: %v", err)
-		}
-		mustContain(t, out, fmt.Sprintf("(rule HISS-11, cat-d-3.yml) expires on %s (3 days left): category D 3 days left", expiresD))
+		runCategoryWarningCase(t, root, today, config.Exception{
+			Rule: "HISS-11", Path: "cat-d-3.yml", Category: "D", Entered: today.AddDate(0, 0, -117).Format(config.ExceptionDateLayout), Expires: expiresD, Reason: "category D 3 days left",
+		}, fmt.Sprintf("(rule HISS-11, cat-d-3.yml) expires on %s (3 days left): category D 3 days left", expiresD), "")
 	})
-
 	t.Run("category B entered today does not warn", func(t *testing.T) {
-		entry := config.Exception{
-			Rule:     "HISS-11",
-			Path:     "cat-b-fresh.yml",
-			Category: "B",
-			Entered:  "2026-10-10",
-			Expires:  "2026-10-13",
-			Reason:   "fresh category B",
-		}
-		out, err := captureStdout(t, func() error {
-			return auditExceptionsExpiry(context.Background(), &config.Manifest{Exceptions: []config.Exception{entry}}, root, today)
-		})
-		if err != nil {
-			t.Fatalf("auditExceptionsExpiry failed: %v", err)
-		}
-		if strings.Contains(out, "[WARN] Exceptions:") {
-			t.Errorf("expected no warning for fresh category B entry, got: %s", out)
-		}
+		runCategoryWarningCase(t, root, today, config.Exception{
+			Rule: "HISS-11", Path: "cat-b-fresh.yml", Category: "B", Entered: "2026-10-10", Expires: "2026-10-13", Reason: "fresh category B",
+		}, "", "expected no warning for fresh category B entry, got: %s")
 	})
-
 	t.Run("category B with 1 day left warns", func(t *testing.T) {
-		entry := config.Exception{
-			Rule:     "HISS-11",
-			Path:     "cat-b-1.yml",
-			Category: "B",
-			Entered:  "2026-10-08",
-			Expires:  "2026-10-11",
-			Reason:   "category B 1 day left",
-		}
-		out, err := captureStdout(t, func() error {
-			return auditExceptionsExpiry(context.Background(), &config.Manifest{Exceptions: []config.Exception{entry}}, root, today)
-		})
-		if err != nil {
-			t.Fatalf("auditExceptionsExpiry failed: %v", err)
-		}
-		mustContain(t, out, "(rule HISS-11, cat-b-1.yml) expires on 2026-10-11 (1 day left): category B 1 day left")
+		runCategoryWarningCase(t, root, today, config.Exception{
+			Rule: "HISS-11", Path: "cat-b-1.yml", Category: "B", Entered: "2026-10-08", Expires: "2026-10-11", Reason: "category B 1 day left",
+		}, "(rule HISS-11, cat-b-1.yml) expires on 2026-10-11 (1 day left): category B 1 day left", "")
 	})
-
 	t.Run("uncategorized with 14 days left warns", func(t *testing.T) {
-		entry := config.Exception{
-			Rule:    "HISS-11",
-			Path:    "uncat-14.yml",
-			Expires: "2026-10-24",
-			Reason:  "uncategorized 14 days left",
-		}
-		out, err := captureStdout(t, func() error {
-			return auditExceptionsExpiry(context.Background(), &config.Manifest{Exceptions: []config.Exception{entry}}, root, today)
-		})
-		if err != nil {
-			t.Fatalf("auditExceptionsExpiry failed: %v", err)
-		}
-		mustContain(t, out, "(rule HISS-11, uncat-14.yml) expires on 2026-10-24 (14 days left): uncategorized 14 days left")
+		runCategoryWarningCase(t, root, today, config.Exception{
+			Rule: "HISS-11", Path: "uncat-14.yml", Expires: "2026-10-24", Reason: "uncategorized 14 days left",
+		}, "(rule HISS-11, uncat-14.yml) expires on 2026-10-24 (14 days left): uncategorized 14 days left", "")
 	})
 }

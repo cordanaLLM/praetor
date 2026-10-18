@@ -7,6 +7,7 @@ package flavor_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"os/exec"
@@ -34,11 +35,13 @@ go 1.27
 
 tool (
 	github.com/securego/gosec/v2/cmd/gosec
+	github.com/zricethezav/gitleaks/v8
 	golang.org/x/vuln/cmd/govulncheck
 )
 
 require (
 	github.com/securego/gosec/v2 v2.29.0
+	github.com/zricethezav/gitleaks/v8 v8.30.1
 	golang.org/x/tools v0.50.0
 	golang.org/x/vuln v1.8.0
 )
@@ -120,10 +123,12 @@ func TestSecurityWorkflow_Positive_HostedGateAndPinnedInstalls(t *testing.T) {
 		"go mod init scanners",
 		"go get golang.org/x/vuln@" + templates.GoSecurityGovulnVersion,
 		"go get github.com/securego/gosec/v2@" + templates.GoSecurityGosecVersion,
+		"go get github.com/zricethezav/gitleaks/v8@" + templates.GoSecurityGitleaksVersion,
 		"go get golang.org/x/tools@" + templates.GoSecurityXToolsVersion,
 		"go mod download all",
 		"go install golang.org/x/vuln/cmd/govulncheck",
 		"go install github.com/securego/gosec/v2/cmd/gosec",
+		"go install github.com/zricethezav/gitleaks/v8",
 	} {
 		if !strings.Contains(fallback, want) {
 			t.Errorf("fallback install lacks %q:\n%s", want, fallback)
@@ -132,9 +137,19 @@ func TestSecurityWorkflow_Positive_HostedGateAndPinnedInstalls(t *testing.T) {
 	toolModule := strings.TrimSpace(securityStep(t, renderedSecurityWorkflow(t, true), "Install Tools").Run)
 	wantToolModule := "m=tools/go/go.mod\n" +
 		"go install -modfile=\"$m\" golang.org/x/vuln/cmd/govulncheck\n" +
-		"go install -modfile=\"$m\" github.com/securego/gosec/v2/cmd/gosec"
+		"go install -modfile=\"$m\" github.com/securego/gosec/v2/cmd/gosec\n" +
+		"go install -modfile=\"$m\" github.com/zricethezav/gitleaks/v8"
 	if toolModule != wantToolModule {
 		t.Errorf("tools-module install = %q, want %q", toolModule, wantToolModule)
+	}
+	checkoutWith := securityStep(t, body, "Checkout source").With
+	if got := fmt.Sprint(checkoutWith["fetch-depth"]); got != "0" {
+		t.Errorf("Checkout source fetch-depth = %v, want 0", got)
+	}
+	gitleaksRun := securityStep(t, body, "Run gitleaks").Run
+	wantGitleaks := "go run -tags=secretsgate ./tools/secrets/gate"
+	if gitleaksRun != wantGitleaks {
+		t.Errorf("Run gitleaks = %q, want %q", gitleaksRun, wantGitleaks)
 	}
 }
 
@@ -289,9 +304,10 @@ func TestGoSecurityVersionsMatchToolsModule(t *testing.T) {
 		versions[requirement.Path] = requirement.Version
 	}
 	for module, want := range map[string]string{
-		"golang.org/x/vuln":            templates.GoSecurityGovulnVersion,
-		"github.com/securego/gosec/v2": templates.GoSecurityGosecVersion,
-		"golang.org/x/tools":           templates.GoSecurityXToolsVersion,
+		"golang.org/x/vuln":                  templates.GoSecurityGovulnVersion,
+		"github.com/securego/gosec/v2":       templates.GoSecurityGosecVersion,
+		"golang.org/x/tools":                 templates.GoSecurityXToolsVersion,
+		"github.com/zricethezav/gitleaks/v8": templates.GoSecurityGitleaksVersion,
 	} {
 		if got := versions[module]; got != want {
 			t.Errorf("%s in tools/go/go.mod = %q, fallback constant = %q; update the templates.GoSecurity*Version constants when Renovate updates tools/go/go.mod", module, got, want)
@@ -304,9 +320,9 @@ func TestSecurityWorkflow_Boundary_Go1272FallbackScanners(t *testing.T) {
 	if err != nil {
 		t.Skipf("Go toolchain absent: %v", err)
 	}
-	version, err := exec.Command(goBinary, "env", "GOVERSION").Output()
-	if err != nil || strings.TrimSpace(string(version)) != "go1.27.2" {
-		t.Skipf("Go 1.27.2 absent: GOVERSION=%q, error=%v", strings.TrimSpace(string(version)), err)
+	version, err := util.RunCommand(t.Context(), "", goBinary, "env", "GOVERSION")
+	if err != nil || strings.TrimSpace(version) != "go1.27.2" {
+		t.Skipf("Go 1.27.2 absent: GOVERSION=%q, error=%v", strings.TrimSpace(version), err)
 	}
 	body := renderedSecurityWorkflow(t, false)
 	install := strings.TrimSpace(securityStep(t, body, "Install Tools").Run)
@@ -497,14 +513,17 @@ func assertGosecFindsG101(t *testing.T, ctx context.Context, binDir string) {
 }
 
 func runSecurityCommand(ctx context.Context, dir, binDir, name string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOBIN="+binDir, "GOFLAGS=-p=10", "GOTOOLCHAIN=local", "GOWORK=off", "RUNNER_TEMP="+filepath.Join(dir, "runner"))
-	output, err := cmd.CombinedOutput()
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return string(output), ctx.Err()
+	cmdEnv := append(os.Environ(), "GOBIN="+binDir, "GOFLAGS=-p=10", "GOTOOLCHAIN=local", "GOWORK=off", "RUNNER_TEMP="+filepath.Join(dir, "runner"))
+	cmdCtx, err := util.WithCommandEnvironment(ctx, cmdEnv)
+	if err != nil {
+		return "", err
 	}
-	return string(output), err
+	res, runErr := util.RunCommandBytes(cmdCtx, dir, name, util.MaxCommandOutputBytes, args...)
+	output := string(append(res.Stdout, res.Stderr...))
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return output, ctx.Err()
+	}
+	return output, runErr
 }
 
 func isNetworkFailure(output string) bool {

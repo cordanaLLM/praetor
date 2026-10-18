@@ -1,0 +1,4 @@
+type: changed
+title: "The audit judges every linters.exclusions.rules entry of a declared linter as a dated exception (category, expiry, issue), the engine's test files lose their lint tier, and per-file exceptions are generated from a lint run with praetorctl linters exceptions"
+issue: "1388"
+breaking: true

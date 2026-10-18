@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // previousBlock is the block the renderer before #506 wrote for State{BaselineKnown: true}:
@@ -209,10 +211,9 @@ func buildPortal(t *testing.T, mkdocs, readme string) (string, error) {
 	ctx, cancel := context.WithTimeout(t.Context(), mkdocsBuildTimeout)
 	defer cancel()
 	// --strict without -q: quiet mode hides the warnings strict mode counts.
-	cmd := exec.CommandContext(ctx, mkdocs, "build", "--strict", "--config-file", filepath.Join(root, "mkdocs.yml"),
+	res, err := util.RunCommandBytes(ctx, "", mkdocs, util.MaxCommandOutputBytes, "build", "--strict", "--config-file", filepath.Join(root, "mkdocs.yml"),
 		"--site-dir", filepath.Join(root, "site"))
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	return string(append(res.Stdout, res.Stderr...)), err
 }
 
 // Positive and negative against the real consumer: a strict MkDocs build of a portal whose

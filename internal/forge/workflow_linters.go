@@ -229,6 +229,11 @@ func checkGoRunner(args []string, toolLower string) bool {
 		target := firstGoTarget(args[1:])
 		clean := cleanRunnerSpec(target)
 		cleanLower := strings.ToLower(clean)
+		cleanTrim := strings.TrimPrefix(cleanLower, "./")
+		cleanTrim = strings.TrimSuffix(cleanTrim, "/")
+		if toolLower == "gitleaks" && (cleanTrim == "tools/secrets/gate" || strings.HasPrefix(cleanTrim, "tools/secrets/gate/")) {
+			return true
+		}
 		return cleanLower == toolLower || strings.HasSuffix(cleanLower, "/"+toolLower)
 	}
 	return false

@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -156,7 +158,7 @@ func auditDocumentationGate(ctx context.Context, manifest *config.Manifest, root
 		return fmt.Errorf("[FAIL] Resolve managed asset families: %w", err)
 	}
 	if !documentationEnabled {
-		return auditDocumentationGateDisabled(ctx, rootDir, declines, families)
+		return auditDocumentationGateDisabled(ctx, manifest, rootDir, declines, families)
 	}
 	count, err := auditDocumentationAssets(ctx, rootDir)
 	if err != nil {
@@ -173,6 +175,9 @@ func auditDocumentationGate(ctx context.Context, manifest *config.Manifest, root
 	}
 	fmt.Printf("[PASS] Locked documentation gate verified (%d assets, %s).\n", count, declines.summary())
 	auditVendoredLicenses(ctx, rootDir, adopt.DocumentationFamilies())
+	if err := adopt.AuditCodespell(ctx, rootDir, manifest.Exceptions, time.Now()); err != nil {
+		return err
+	}
 	if manifest.Documentation != nil {
 		fmt.Printf("[PASS] Documentation gate settings from .standards.yaml: %s.\n", documentationSettingsSummary(manifest.Documentation))
 	}
@@ -193,7 +198,7 @@ func documentationSettingsSummary(policy *config.DocumentationPolicy) string {
 }
 
 func auditDocumentationGateDisabled(
-	ctx context.Context, rootDir string, declines documentationDeclines, families []managedasset.Family,
+	ctx context.Context, manifest *config.Manifest, rootDir string, declines documentationDeclines, families []managedasset.Family,
 ) error {
 	if err := auditDisabledDocumentationAssets(ctx, rootDir); err != nil {
 		return err
@@ -211,13 +216,16 @@ func auditDocumentationGateDisabled(
 			return err
 		}
 	}
-	if declines.formatter {
-		return nil
+	if !declines.formatter {
+		if err := adopt.VerifyFormatterIgnore(ctx, rootDir, families); err != nil {
+			return fmt.Errorf("[FAIL] Disabled documentation formatter inventory is stale: %w", err)
+		}
 	}
-	if err := adopt.VerifyFormatterIgnore(ctx, rootDir, families); err != nil {
-		return fmt.Errorf("[FAIL] Disabled documentation formatter inventory is stale: %w", err)
+	var exceptions []config.Exception
+	if manifest != nil {
+		exceptions = manifest.Exceptions
 	}
-	return nil
+	return adopt.AuditCodespell(ctx, rootDir, exceptions, time.Now())
 }
 
 func auditDisabledDocumentationAssets(ctx context.Context, rootDir string) error {
@@ -491,6 +499,12 @@ func auditDocumentationScratchIgnores(ctx context.Context, rootDir string, decli
 			return err
 		}
 		roots = adopt.PrivateScratchRoots(ctx, rootDir, ignore, false)
+	}
+	for _, root := range roots {
+		info, err := os.Lstat(filepath.Join(rootDir, root))
+		if err == nil && info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("[FAIL] %s is a symbolic link: the directory rule /%s/ does not ignore a link, so git would add it; remove the link (state commands in a linked worktree use the main worktree's %s by themselves)", root, root, root)
+		}
 	}
 	probes := scratchIgnoreProbes(roots)
 	ignored, err := util.GitIgnoredPaths(ctx, rootDir, probes, true)

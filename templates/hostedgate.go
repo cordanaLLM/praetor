@@ -36,6 +36,7 @@ const (
 	hostedGateManifestStepIfFunc = "hostedGateManifestStepIf"
 	securityGovulnVersionFunc    = "securityGovulnVersion"
 	securityGosecVersionFunc     = "securityGosecVersion"
+	securityGitleaksVersionFunc  = "securityGitleaksVersion"
 	securityXToolsVersionFunc    = "securityXToolsVersion"
 )
 
@@ -50,5 +51,6 @@ var templateFuncs = template.FuncMap{
 	hostedGateManifestStepIfFunc: func() string { return ghworkflow.HostedGateManifestStepIf },
 	securityGovulnVersionFunc:    func() string { return GoSecurityGovulnVersion },
 	securityGosecVersionFunc:     func() string { return GoSecurityGosecVersion },
+	securityGitleaksVersionFunc:  func() string { return GoSecurityGitleaksVersion },
 	securityXToolsVersionFunc:    func() string { return GoSecurityXToolsVersion },
 }

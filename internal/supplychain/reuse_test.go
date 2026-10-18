@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -169,7 +171,8 @@ func reuseToolLint(t *testing.T, fixture string) (output string, passed bool) {
 			t.Fatal(err)
 		}
 	}
-	out, err := exec.CommandContext(t.Context(), reusePath, "--root", root, "lint").CombinedOutput()
+	res, err := util.RunCommandBytes(t.Context(), "", reusePath, util.MaxCommandOutputBytes, "--root", root, "lint")
+	out := append(res.Stdout, res.Stderr...)
 	return string(out), err == nil
 }
 

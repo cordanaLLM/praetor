@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -360,13 +361,12 @@ func (h aliasTestHarness) run(t *testing.T, dir string, env []string, args ...st
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), gateRunTimeout)
 	defer cancel()
-	command := exec.CommandContext(ctx, h.gate, append([]string{"-checker=" + h.checker}, args...)...)
-	command.Dir = dir
-	command.Env = append(slices.Clone(h.env), env...)
-	var stdout, stderr strings.Builder
-	command.Stdout, command.Stderr = &stdout, &stderr
-	err := command.Run()
-	run := gateRun{stdout: stdout.String(), stderr: stderr.String()}
+	cmdCtx, err := util.WithCommandEnvironment(ctx, append(slices.Clone(h.env), env...))
+	if err != nil {
+		t.Fatalf("command environment: %v", err)
+	}
+	res, err := util.RunCommandBytes(cmdCtx, dir, h.gate, util.MaxCommandOutputBytes, append([]string{"-checker=" + h.checker}, args...)...)
+	run := gateRun{stdout: string(res.Stdout), stderr: string(res.Stderr)}
 	var exit *exec.ExitError
 	switch {
 	case err == nil:
@@ -378,6 +378,21 @@ func (h aliasTestHarness) run(t *testing.T, dir string, env []string, args ...st
 	return run
 }
 
+func (h aliasTestHarness) git(t *testing.T, repo string, args ...string) {
+	t.Helper()
+	cmdCtx, err := util.WithCommandEnvironment(t.Context(), h.env)
+	if err != nil {
+		t.Fatalf("git env: %v", err)
+	}
+	if out, err := util.RunGit(cmdCtx, "", append([]string{"-C", repo}, args...)...); err != nil {
+		action := args[0]
+		if action == "add" {
+			action = "git add"
+		}
+		t.Fatalf("%s: %v\n%s", action, err, out)
+	}
+}
+
 func cloneAliasFixture(t *testing.T) string {
 	t.Helper()
 	bundlePath, err := filepath.Abs(filepath.Join("testdata", "alias.bundle"))
@@ -385,9 +400,8 @@ func cloneAliasFixture(t *testing.T) string {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	cmd := exec.Command("git", "clone", "--quiet", bundlePath, dir)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("clone bundle: %v\n%s", err, string(out))
+	if out, err := util.RunGit(t.Context(), "", "clone", "--quiet", bundlePath, dir); err != nil {
+		t.Fatalf("clone bundle: %v\n%s", err, out)
 	}
 	return dir
 }
@@ -422,11 +436,7 @@ func TestGate_Negative_AliasTargetGainsMethodRejected(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "core", "storage", "storage.go"), []byte(gained), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("git", "-C", repo, "commit", "-a", "-m", "target gains method")
-	cmd.Env = h.env // hermetic: the push gate has no global git identity
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("commit: %v\n%s", err, string(out))
-	}
+	h.git(t, repo, "commit", "-a", "-m", "target gains method")
 	run := h.run(t, repo, nil, "-base=v1.0.0", "-policy=reject")
 	if run.status != gateExitRejected {
 		t.Fatalf("status = %d, want %d (stdout: %s, stderr: %s)", run.status, gateExitRejected, run.stdout, run.stderr)
@@ -448,11 +458,7 @@ func TestGate_Negative_AliasTargetLosesMethodRejected(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "core", "storage", "storage.go"), []byte(lost), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("git", "-C", repo, "commit", "-a", "-m", "target loses method")
-	cmd.Env = h.env // hermetic: the push gate has no global git identity
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("commit: %v\n%s", err, string(out))
-	}
+	h.git(t, repo, "commit", "-a", "-m", "target loses method")
 	run := h.run(t, repo, nil, "-base=v1.0.0", "-policy=reject")
 	if run.status != gateExitRejected {
 		t.Fatalf("status = %d, want %d (stdout: %s, stderr: %s)", run.status, gateExitRejected, run.stdout, run.stderr)
@@ -471,16 +477,8 @@ func TestGate_Negative_FunctionParameterReallyChangedRejected(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "apidiff-stub"), []byte(stub), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("git", "-C", repo, "add", "apidiff-stub")
-	cmd.Env = h.env // hermetic: the push gate has no global git identity
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git add: %v\n%s", err, string(out))
-	}
-	cmd = exec.Command("git", "-C", repo, "commit", "-m", "apidiff-stub")
-	cmd.Env = h.env // hermetic: the push gate has no global git identity
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("commit: %v\n%s", err, string(out))
-	}
+	h.git(t, repo, "add", "apidiff-stub")
+	h.git(t, repo, "commit", "-m", "apidiff-stub")
 	run := h.run(t, repo, nil, "-base=v1.0.0", "-policy=reject")
 	if run.status != gateExitRejected {
 		t.Fatalf("status = %d, want %d (stdout: %s, stderr: %s)", run.status, gateExitRejected, run.stdout, run.stderr)
@@ -502,16 +500,8 @@ func TestGate_Negative_RemovedExportedNameRejected(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "apidiff-stub"), []byte(stub), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("git", "-C", repo, "add", "apidiff-stub")
-	cmd.Env = h.env // hermetic: the push gate has no global git identity
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git add: %v\n%s", err, string(out))
-	}
-	cmd = exec.Command("git", "-C", repo, "commit", "-m", "apidiff-stub")
-	cmd.Env = h.env // hermetic: the push gate has no global git identity
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("commit: %v\n%s", err, string(out))
-	}
+	h.git(t, repo, "add", "apidiff-stub")
+	h.git(t, repo, "commit", "-m", "apidiff-stub")
 	run := h.run(t, repo, nil, "-base=v1.0.0", "-policy=reject")
 	if run.status != gateExitRejected {
 		t.Fatalf("status = %d, want %d (stdout: %s, stderr: %s)", run.status, gateExitRejected, run.stdout, run.stderr)

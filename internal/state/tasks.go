@@ -62,7 +62,7 @@ func ListBacklogTasksContext(ctx context.Context, rootPath string) ([]TaskItem, 
 
 // listLedgerTasks reads one task ledger of the working directory; an absent ledger holds no row.
 func listLedgerTasks(ctx context.Context, rootPath, name string) ([]TaskItem, error) {
-	content, err := contextopt.ReadSnapshot(ctx, filepath.Join(rootPath, WorkingDirName, name))
+	content, err := contextopt.ReadSnapshot(ctx, filepath.Join(ledgerRoot(ctx, rootPath), WorkingDirName, name))
 	if errors.Is(err, os.ErrNotExist) {
 		return []TaskItem{}, nil
 	}
@@ -100,11 +100,12 @@ func AddTask(rootPath, description string) error {
 		return fmt.Errorf("task description cannot be empty")
 	}
 
-	if err := InitWorkingDirContext(ctx, rootPath); err != nil {
+	lRoot := ledgerRoot(ctx, rootPath)
+	if err := InitWorkingDirContext(ctx, lRoot); err != nil {
 		return err
 	}
 
-	openFile := filepath.Join(rootPath, WorkingDirName, "OPEN.md")
+	openFile := filepath.Join(lRoot, WorkingDirName, "OPEN.md")
 	content, err := contextopt.ReadSnapshot(ctx, openFile)
 	if err != nil {
 		return fmt.Errorf("read OPEN.md: %w", err)
@@ -136,7 +137,7 @@ func CompleteTask(rootPath, selector string) error {
 		return fmt.Errorf("task selector cannot be empty")
 	}
 
-	openFile := filepath.Join(rootPath, WorkingDirName, "OPEN.md")
+	openFile := filepath.Join(ledgerRoot(ctx, rootPath), WorkingDirName, "OPEN.md")
 	content, err := contextopt.ReadSnapshot(ctx, openFile)
 	if err != nil {
 		return fmt.Errorf("read OPEN.md: %w", err)
@@ -161,7 +162,7 @@ func CompleteTask(rootPath, selector string) error {
 func ArchiveCompletedTasks(rootPath, commitSHA string) (int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	openFile := filepath.Join(rootPath, WorkingDirName, "OPEN.md")
+	openFile := filepath.Join(ledgerRoot(ctx, rootPath), WorkingDirName, "OPEN.md")
 	content, err := contextopt.ReadSnapshot(ctx, openFile)
 	if errors.Is(err, os.ErrNotExist) {
 		return 0, nil
@@ -216,7 +217,7 @@ func splitCompletedTasks(content string) (remaining, completed []string, err err
 }
 
 func appendCompletedTasks(ctx context.Context, rootPath, commitSHA string, completedTasks []string) error {
-	backlogFile := filepath.Join(rootPath, WorkingDirName, "BACKLOG.md")
+	backlogFile := filepath.Join(ledgerRoot(ctx, rootPath), WorkingDirName, "BACKLOG.md")
 	backlogContent, err := contextopt.ReadSnapshot(ctx, backlogFile)
 	expected := append([]byte{}, backlogContent...)
 	exists := !errors.Is(err, os.ErrNotExist)

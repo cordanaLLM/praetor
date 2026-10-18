@@ -120,15 +120,7 @@ func RenderWorkflow(plain string, settings Settings) (string, error) {
 // settings it carries. An edited step or line, or any other deviation, returns false, so only
 // Praetor's own output is recognised. Text that carries no settings returns itself with ok.
 func StripSettings(text string) (plain string, ok bool) {
-	settings, plain, ok := readSettings(text)
-	if !ok {
-		return "", false
-	}
-	again, err := RenderWorkflow(plain, settings)
-	if err != nil || again != text {
-		return "", false
-	}
-	return plain, true
+	return ghworkflow.StripRendering(text, readSettings, RenderWorkflow)
 }
 
 // readSettings cuts the install step and the exceptions env lines out of text and parses what

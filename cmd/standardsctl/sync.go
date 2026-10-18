@@ -290,8 +290,9 @@ func reconcileRemoteRuleset(ctx context.Context, gh *forge.GitHubDriver, rootDir
 		return err
 	}
 	fmt.Printf("  [SYNC] Reconciling branch protection ruleset on GitHub for %s...\n", repository)
-	lowered, err := gh.ReconcileProtectionReport(ctx, in.branch, in.policy)
+	lowered, kept, err := gh.ReconcileProtectionReport(ctx, in.branch, in.policy)
 	printLoweredParameters(forge.RepositoryRulesetName, lowered)
+	printKeptParameters(forge.RepositoryRulesetName, kept)
 	if err != nil {
 		return err
 	}
@@ -342,8 +343,9 @@ func reconcileRemoteMergeQueue(ctx context.Context, gh *forge.GitHubDriver, in r
 	}
 	fmt.Printf("  [SYNC] Reconciling merge queue ruleset %q on GitHub for %s (%s only)...\n",
 		forge.MergeQueueRulesetName, gh.Owner+"/"+gh.Repo, in.branch)
-	lowered, err := gh.ReconcileMergeQueue(ctx, in.branch, in.policy)
+	lowered, kept, err := gh.ReconcileMergeQueue(ctx, in.branch, in.policy)
 	printLoweredParameters(forge.MergeQueueRulesetName, lowered)
+	printKeptParameters(forge.MergeQueueRulesetName, kept)
 	return err
 }
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -193,6 +194,46 @@ func recordBaseline(path string, previous *baseline.Baseline, opts baseline.Reco
 	if next.IncreaseRationale != "" {
 		fmt.Printf("[WARN] Debt increased deliberately; recorded rationale: %s\n", next.IncreaseRationale)
 	}
+	return recordGosecBaseline(ctx, filepath.Dir(path), opts)
+}
+
+func recordGosecBaseline(ctx context.Context, repoDir string, opts baseline.RecordOptions) error {
+	gosecFindings, hasGo, err := gating.ScanGosec(ctx, repoDir)
+	if err != nil {
+		return fmt.Errorf("scan gosec infractions: %w", err)
+	}
+	if !hasGo {
+		return nil
+	}
+	gosecPath := filepath.Join(repoDir, gating.GosecBaselineFile)
+	prevGosec, err := baseline.LoadBaseline(gosecPath)
+	if err != nil {
+		return fmt.Errorf("load gosec baseline: %w", err)
+	}
+	if prevGosec.Absent && len(gosecFindings) == 0 {
+		return nil
+	}
+	nextGosec, err := baseline.Record(prevGosec, gosecFindings, opts)
+	if err != nil {
+		return fmt.Errorf("refusing to record %s: %w (pass --allow-increase --reason=<why> to record a deliberate increase)", gosecPath, err)
+	}
+	return saveGosecBaseline(gosecPath, prevGosec, nextGosec)
+}
+
+func saveGosecBaseline(gosecPath string, prev, next *baseline.Baseline) error {
+	if !prev.Absent && prev.SameDebt(next) && prev.CommitSHA == next.CommitSHA {
+		fmt.Printf("Gosec baseline unchanged: %s (Total: %d infractions, previously %d); kept the recorded file\n",
+			gosecPath, next.TotalInfractions, prev.Count())
+		return nil
+	}
+	if err := baseline.SaveBaseline(gosecPath, next); err != nil {
+		return fmt.Errorf("failed to save gosec baseline: %w", err)
+	}
+	fmt.Printf("Gosec baseline successfully updated: %s (Total: %d infractions, previously %d)\n",
+		gosecPath, next.TotalInfractions, prev.Count())
+	if next.IncreaseRationale != "" {
+		fmt.Printf("[WARN] Gosec debt increased deliberately; recorded rationale: %s\n", next.IncreaseRationale)
+	}
 	return nil
 }
 
@@ -221,5 +262,25 @@ func printBaseline(path string, b *baseline.Baseline) {
 	if b.TotalInfractions == 0 {
 		fmt.Println("Zero technical debt recorded in this baseline.")
 	}
+	printGosecBaselineIfPresent(filepath.Dir(path), repo)
 	fmt.Println("This is the stored snapshot, not a live scan; run 'praetorctl baseline --verify' or 'praetorctl audit' to check the repository.")
+}
+
+func printGosecBaselineIfPresent(repoDir, repo string) {
+	gosecPath := filepath.Join(repoDir, gating.GosecBaselineFile)
+	gosecBase, err := baseline.LoadBaseline(gosecPath)
+	if err != nil || gosecBase.Absent {
+		return
+	}
+	fmt.Printf("\n=== %s Gosec Technical Debt Baseline ===\n", repo)
+	fmt.Printf("File: %s | Total Infractions: %d\n", gosecPath, gosecBase.TotalInfractions)
+	if gosecBase.IncreaseRationale != "" {
+		fmt.Printf("Recorded increase rationale: %s\n", gosecBase.IncreaseRationale)
+	}
+	for i, inf := range gosecBase.Infractions {
+		fmt.Printf("  #%d [%s] %s:%d (%s) - %s\n", i+1, inf.RuleID, inf.FilePath, inf.LineNumber, inf.Anchor, inf.Message)
+	}
+	if gosecBase.TotalInfractions == 0 {
+		fmt.Println("Zero gosec technical debt recorded in this baseline.")
+	}
 }

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
@@ -109,16 +110,21 @@ func reuseJobTools(t *testing.T) (shell, dir string) {
 // runs it, and returns its exit code and output.
 func runReuseLine(t *testing.T, shell, root, path string) (int, string) {
 	t.Helper()
-	cmd := exec.CommandContext(t.Context(), shell, "-c", reuseLintCommand())
-	cmd.Dir = root
 	environ := util.FilterEnvironment(os.Environ(), func(name string) bool { return name == "PATH" })
-	cmd.Env = append(environ, "PATH="+path)
-	output, err := cmd.CombinedOutput()
+	ctx, err := util.WithCommandEnvironment(t.Context(), append(environ, "PATH="+path))
+	if err != nil {
+		t.Fatalf("environment: %v", err)
+	}
+	res, err := util.RunCommandBytes(ctx, root, shell, util.MaxCommandOutputBytes, "-c", reuseLintCommand())
+	output := append(res.Stdout, res.Stderr...)
 	var exit *exec.ExitError
 	if err != nil && !errors.As(err, &exit) {
 		t.Fatalf("run the reuse-lint line: %v", err)
 	}
-	return cmd.ProcessState.ExitCode(), string(output)
+	if exit != nil {
+		return exit.ExitCode(), string(output)
+	}
+	return 0, string(output)
 }
 
 // The reuse-lint line is run, not only compared, against a stub reuse. Positive: at the pinned
@@ -164,8 +170,8 @@ func TestReuseLintCommand_Negative_UnlabelledFileFailsTheJob(t *testing.T) {
 	if err != nil || runtime.GOOS == "windows" {
 		t.Skip("the reuse-lint line is POSIX sh; lefthook runs it through Git's sh on Windows, which this host need not provide")
 	}
-	version, err := exec.CommandContext(t.Context(), "reuse", "--version").Output()
-	if err != nil || !strings.Contains(string(version), "version "+supplychain.ReuseMajor()+".") {
+	version, err := util.RunCommand(t.Context(), "", "reuse", "--version")
+	if err != nil || !strings.Contains(version, "version "+supplychain.ReuseMajor()+".") {
 		t.Skipf("reuse %s.x is not installed (%v); TestReuseLintCommand_RunsTheLintAtThePinnedMajor covers the line with a stub",
 			supplychain.ReuseMajor(), err)
 	}
@@ -569,8 +575,8 @@ func assertUsesPins(t *testing.T, rendering string) {
 	if err != nil {
 		t.Fatalf("ScanActionUses(rendering): %v", err)
 	}
-	if len(uses) != 2 {
-		t.Fatalf("rendering has %d action uses, want 2", len(uses))
+	if len(uses) != 1 {
+		t.Fatalf("rendering has %d action uses, want 1", len(uses))
 	}
 	for _, use := range uses {
 		assertValidActionUse(t, use)
@@ -582,8 +588,67 @@ func assertUsesPins(t *testing.T, rendering string) {
 	if uses[0].Pin.Action != "actions/checkout" || uses[0].Ref != wantCheckout {
 		t.Errorf("checkout action = %q, want %q", uses[0].Ref, wantCheckout)
 	}
-	if uses[1].Pin.Action != supplychain.ReuseAction || uses[1].Ref != supplychain.ReuseActionPinnedRef() {
-		t.Errorf("reuse action = %q, want %q", uses[1].Ref, supplychain.ReuseActionPinnedRef())
+	if !strings.Contains(rendering, "--require-hashes -r .config/reuse/requirements.txt") {
+		t.Error("rendering does not install .config/reuse/requirements.txt with --require-hashes")
+	}
+	if !strings.Contains(rendering, "bin/reuse\" lint") {
+		t.Error("rendering does not run reuse lint")
+	}
+}
+
+// isContainerActionRef reports whether ref or action names a container action:
+// a docker:// URI, a known container action like fsfe/reuse-action (which builds
+// from a moving container tag), or a local action running with using: docker.
+func isContainerActionRef(ref, action string) bool {
+	trimmed := strings.TrimSpace(ref)
+	if strings.HasPrefix(trimmed, "docker://") {
+		return true
+	}
+	if action == supplychain.ReuseAction || strings.HasPrefix(trimmed, supplychain.ReuseAction+"@") {
+		return true
+	}
+	if strings.HasPrefix(trimmed, "./") || strings.HasPrefix(trimmed, "../") {
+		for _, name := range []string{"action.yml", "action.yaml"} {
+			data, err := os.ReadFile(filepath.Join(filepath.FromSlash(trimmed), name))
+			if err == nil {
+				content := string(data)
+				if strings.Contains(content, "using: docker") ||
+					strings.Contains(content, "using: 'docker'") ||
+					strings.Contains(content, "using: \"docker\"") {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func assertNoContainerActions(t *testing.T, name, workflow string) {
+	t.Helper()
+	_, uses, err := util.ScanActionUses(workflow, managedasset.MaxWorkflowLines)
+	if err != nil {
+		t.Fatalf("%s: ScanActionUses: %v", name, err)
+	}
+	for i := 0; i < len(uses) && i < managedasset.MaxWorkflowLines; i++ {
+		use := uses[i]
+		if isContainerActionRef(use.Ref, use.Pin.Action) {
+			t.Errorf("%s line %d: prohibited container action in emitted workflow: %s", name, use.Line+1, use.Ref)
+		}
+	}
+}
+
+// Positive: all emitted workflows refuse container actions (docker:// or fsfe/reuse-action).
+// Negative: main's rendered reuse.yml with fsfe/reuse-action reports a container action.
+func TestEmittedWorkflows_RefuseContainerActions(t *testing.T) {
+	rendering := mustReuseWorkflow(t, forge.FallbackDefaultBranch)
+	assertNoContainerActions(t, reuseWorkflowFile+" (rendered)", rendering)
+
+	emittedPath := filepath.Join(emittedFixtureRoot, filepath.FromSlash(reuseWorkflowFile))
+	assertNoContainerActions(t, emittedPath, mustRead(t, emittedPath))
+
+	workflows := emittedWorkflows(t)
+	for i := 0; i < len(workflows) && i < 256; i++ {
+		assertNoContainerActions(t, workflows[i].Path, workflows[i].Content)
 	}
 }
 
@@ -749,5 +814,113 @@ func TestAdopt_MixedLineEndingsReuseWorkflow_PreservedUnverified(t *testing.T) {
 	}
 	if !strings.Contains(reuseGateDetails(adoptRep), "Existing file preserved unverified") {
 		t.Errorf("Adopt report details do not mention 'Existing file preserved unverified': %s", reuseGateDetails(adoptRep))
+	}
+}
+
+// Positive: the embedded reuseRequirementsTxt matches the committed
+// .config/reuse/requirements.txt byte-for-byte.
+func TestReuseRequirementsLockMatchesCommitted(t *testing.T) {
+	committed, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(reuseRequirementsFile)))
+	if err != nil {
+		t.Fatalf("read committed %s: %v", reuseRequirementsFile, err)
+	}
+	if string(committed) != reuseRequirementsTxt {
+		t.Errorf("embedded reuseRequirementsTxt does not match committed %s", reuseRequirementsFile)
+	}
+}
+
+// Boundary: the committed lock checks out with LF on every platform, so the byte comparison
+// above holds on a Windows CRLF checkout too (.gitattributes pins it; a CRLF checkout failed
+// it in CI run 39116010306). Skipped, with the reason, where git cannot answer.
+func TestReuseRequirementsLockCheckoutIsLF(t *testing.T) {
+	res, err := util.RunGitProbe(t.Context(), filepath.Join("..", ".."), 4096, "check-attr", "eol", "--", reuseRequirementsFile)
+	if err != nil {
+		t.Skipf("git check-attr cannot run here: %v", err)
+	}
+	if got := strings.TrimSpace(string(res.Stdout)); !strings.HasSuffix(got, ": eol: lf") {
+		t.Fatalf("%s checks out as %q; .gitattributes pins it to LF", reuseRequirementsFile, got)
+	}
+}
+
+// Boundary: an adopter holding main's prior digest-pinned reuse.yml (reuse-action-v6-digest-pins.yml)
+// is refreshed to the containerless hash-pinned rendering on a plain adopt.
+func TestAdopt_RefreshesMainsPriorDigestPinnedReuseWorkflow(t *testing.T) {
+	repoPath := newTestRepo(t, "refresh-main-prior-reuse-gate")
+	mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+	mustWrite(t, filepath.Join(repoPath, supplychain.ReuseFile), "version = 1\n")
+	priorText := mustRead(t, filepath.Join("testdata", "reuse-workflow", "reuse-action-v6-digest-pins.yml"))
+	workflowPath := filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))
+	mustWrite(t, workflowPath, priorText)
+
+	rep := adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
+	got := mustRead(t, workflowPath)
+	want := mustReuseWorkflow(t, forge.FallbackDefaultBranch)
+	if got != want {
+		t.Fatalf("refreshed gate differs from current rendering:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+	if hasAction(rep, reuseWorkflowFile, actionReplace) {
+		t.Errorf("want a refresh without --force, got actionReplace: %+v", rep.ActionDetails)
+	}
+	if !strings.Contains(reuseGateDetails(rep), "Refreshed") {
+		t.Errorf("report details do not mention Refreshed: %s", reuseGateDetails(rep))
+	}
+	reqPath := filepath.Join(repoPath, filepath.FromSlash(reuseRequirementsFile))
+	if !fileExists(reqPath) {
+		t.Errorf("expected %s to be scaffolded beside refreshed workflow", reuseRequirementsFile)
+	}
+}
+
+// Positive (#1327): when the adopter already declares its own REUSE lint job in another workflow,
+// adopt does not emit a second job (reuse.yml) and the branch ruleset does not collide.
+func TestAdopt_AdopterWithExistingReuseJob_NoSecondJobEmitted(t *testing.T) {
+	repoPath := newTestRepo(t, "adopter-existing-reuse-job")
+	mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+	mustWrite(t, filepath.Join(repoPath, supplychain.ReuseFile), "version = 1\n")
+	ciWorkflow := "name: CI\non: [push, pull_request]\njobs:\n  compliance:\n    name: REUSE lint\n" +
+		"    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - run: reuse lint\n"
+	ciPath := filepath.Join(repoPath, ".github", "workflows", "ci.yml")
+	mustWrite(t, ciPath, ciWorkflow)
+
+	rep, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
+	if err != nil {
+		t.Fatalf("Adopt: %v", err)
+	}
+	reusePath := filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))
+	if fileExists(reusePath) {
+		t.Errorf("expected %s not to be emitted when repo declares existing REUSE job", reuseWorkflowFile)
+	}
+	for i := 0; i < len(rep.ActionDetails) && i < 1000; i++ {
+		detail := rep.ActionDetails[i]
+		if detail.Path == reuseWorkflowFile && detail.Action != actionRemove {
+			t.Errorf("unexpected action on %s: %+v", reuseWorkflowFile, detail)
+		}
+	}
+	_, _, err = forge.RenderRulesetForRepository(t.Context(), repoPath, config.BranchProtectionPolicy{}, nil)
+	if err != nil {
+		t.Errorf("RenderRulesetForRepository failed with duplicate or invalid checks: %v", err)
+	}
+}
+
+// Positive: a temp repository with valid REUSE setup passes reuse lint using the local reuse tool.
+func TestEmittedReuseSteps_RunLocallyInTempRepo(t *testing.T) {
+	if _, err := exec.LookPath("reuse"); err != nil {
+		t.Skip("reuse tool not installed locally")
+	}
+	repoPath := newTestRepo(t, "temp-reuse-repo")
+	licDir := filepath.Join(repoPath, "LICENSES")
+	if err := os.MkdirAll(licDir, 0o755); err != nil {
+		t.Fatalf("mkdir LICENSES: %v", err)
+	}
+	mitText := "SPDX-FileCopyrightText: 2026 lusoris\nSPDX-License-Identifier: MIT\n\nMIT License Text\n"
+	mustWrite(t, filepath.Join(licDir, "MIT.txt"), mitText)
+	tomlText := "version = 1\nSPDX-PackageName = \"test-pkg\"\nSPDX-PackageDownloadLocation = \"git://example.com/repo\"\n"
+	mustWrite(t, filepath.Join(repoPath, "REUSE.toml"), tomlText)
+	mainText := "// SPDX-FileCopyrightText: 2026 lusoris\n// SPDX-License-Identifier: MIT\n\npackage main\n"
+	mustWrite(t, filepath.Join(repoPath, "main.go"), mainText)
+
+	res, err := util.RunCommandBytes(t.Context(), repoPath, "reuse", util.MaxCommandOutputBytes, "lint")
+	output := append(res.Stdout, res.Stderr...)
+	if err != nil {
+		t.Fatalf("reuse lint failed on temp repo: %v\nOutput:\n%s", err, string(output))
 	}
 }

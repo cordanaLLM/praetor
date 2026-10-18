@@ -282,6 +282,11 @@ func Evaluate(ctx context.Context, root string, policy *config.EffectivePolicy) 
 	if ctx == nil || root == "" {
 		return nil, errors.New("backlog cap evaluation requires a context and a repository root")
 	}
+	loc, err := state.ResolveWorkingDir(ctx, root)
+	workingDir := filepath.Join(root, state.WorkingDirName)
+	if err == nil {
+		workingDir = loc.WorkingDir
+	}
 	report := &Report{}
 	if policy == nil {
 		return report, nil
@@ -310,7 +315,7 @@ func Evaluate(ctx context.Context, root string, policy *config.EffectivePolicy) 
 		if !ok {
 			return nil, fmt.Errorf("count backlog category %s: no counter is registered for it", names[i])
 		}
-		category := evaluateCategory(ctx, root, names[i], entry, reader)
+		category := evaluateCategory(ctx, root, names[i], entry, reader, workingDir)
 		category.MaxBy, category.ActionBy = policy.BacklogSources(names[i])
 		category.ApplyExceptions(allExceptions, report.Today)
 		report.Categories = append(report.Categories, category)
@@ -320,12 +325,12 @@ func Evaluate(ctx context.Context, root string, policy *config.EffectivePolicy) 
 
 // evaluateCategory counts one category with its reader. A category it cannot count carries
 // the reason instead of an error, so the caller reports it beside the others.
-func evaluateCategory(ctx context.Context, root, name string, entry config.BacklogCap, reader counter) Category {
+func evaluateCategory(ctx context.Context, root, name string, entry config.BacklogCap, reader counter, workingDir string) Category {
 	category := Category{Name: name, Cap: entry, Ledgers: slices.Clone(reader.ledgers), Reason: reader.reason}
 	if reader.count == nil {
 		return category
 	}
-	absent, err := absentLedgers(root, reader.ledgers)
+	absent, err := absentLedgers(workingDir, reader.ledgers)
 	if err != nil {
 		category.Reason = err.Error()
 		return category
@@ -347,11 +352,11 @@ func evaluateCategory(ctx context.Context, root, name string, entry config.Backl
 	return category
 }
 
-// absentLedgers lists the ledgers that do not exist under root.
-func absentLedgers(root string, ledgers []string) ([]string, error) {
+// absentLedgers lists the ledgers that do not exist under workingDir.
+func absentLedgers(workingDir string, ledgers []string) ([]string, error) {
 	var absent []string
 	for _, ledger := range ledgers {
-		present, err := ledgerPresent(root, ledger)
+		present, err := ledgerPresent(workingDir, ledger)
 		if err != nil {
 			return nil, err
 		}
@@ -372,8 +377,15 @@ func absentReason(absent []string) string {
 
 // ledgerPresent reports whether the ledger file exists. A ledger reader treats a missing file
 // as empty, so the category is not counted when one is missing rather than counted as zero.
-func ledgerPresent(root, rel string) (bool, error) {
-	_, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel)))
+func ledgerPresent(workingDir, rel string) (bool, error) {
+	cleanRel := filepath.FromSlash(rel)
+	prefix := state.WorkingDirName + string(filepath.Separator)
+	if strings.HasPrefix(cleanRel, prefix) {
+		cleanRel = strings.TrimPrefix(cleanRel, prefix)
+	} else if cleanRel == state.WorkingDirName {
+		cleanRel = ""
+	}
+	_, err := os.Lstat(filepath.Join(workingDir, cleanRel))
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}

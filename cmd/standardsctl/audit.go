@@ -20,6 +20,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
 	"github.com/cordanaLLM/praetor/internal/runner"
+	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -66,7 +67,8 @@ type auditOptions struct {
 	// maxStale is the --max-stale-baseline-entries bound: the audit fails when more baseline
 	// entries than this match nothing in the tree (#349). Negative, the default, sets no bound,
 	// and stale entries are reported without failing, so a tree that passed keeps passing.
-	maxStale int
+	maxStale  int
+	linterLog string
 }
 
 func runAudit(args []string) error {
@@ -112,6 +114,7 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 	offline := fs.Bool("offline", false, offlineFlagUsage)
 	maxStale := fs.Int(maxStaleFlag, 0,
 		"Fail when more than N baseline entries match nothing in the tree; unset, stale entries are reported and the audit passes")
+	linterLog := fs.String("linter-log", "", "Path to golangci-lint log output for stale exclusion checks")
 	var policy config.EffectiveOptions
 	registerPolicySourceFlags(fs, &policy, "audited root")
 	limitFlags := registerVerificationLimitFlags(fs)
@@ -142,6 +145,7 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 		verification:    limitFlags.limits(),
 		maxStale:        staleBound,
 		policy:          policy,
+		linterLog:       *linterLog,
 	}, nil
 }
 
@@ -191,11 +195,12 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditWorkflowTriggers(ctx, manifest, rootDir) },
 		func() error { return auditTestTimeouts(ctx, manifest, rootDir) },
 		func() error { return auditBuildWarnings(ctx, manifest, rootDir) },
-		func() error { return auditDeclaredLinters(ctx, manifest, rootDir, opts.effective) },
+		func() error { return auditDeclaredLinters(ctx, manifest, rootDir, opts.effective, opts.linterLog) },
 		func() error { return auditPaperclipHarness(ctx, manifest, opts) },
 		func() error { return auditCavemanConfiguredSources(ctx, manifest, rootDir) },
 		func() error { return auditRunnerMatrix(ctx, manifest, rootDir) },
-		func() error { return auditPreMigrationTracking(rootDir) },
+		func() error { return auditPinnedFixturesEOL(ctx, manifest, rootDir) },
+		func() error { return auditPreMigrationTracking(ctx, rootDir) },
 		func() error { return auditAgentDefinitions(ctx, manifest, rootDir) },
 		func() error { return auditGitHooks(ctx, manifest, rootDir) },
 		func() error { return auditCheckpointBundle(ctx, rootDir) },
@@ -722,10 +727,23 @@ func auditRunnerMatrix(ctx context.Context, manifest *config.Manifest, rootDir s
 	return nil
 }
 
-func auditPreMigrationTracking(rootDir string) error {
+// auditPinnedFixturesEOL runs the HISS-21 pinned fixture gate (forge.AuditPinnedFixturesEOL):
+// a pinned text fixture without an eol rule or -text in .gitattributes fails the audit.
+func auditPinnedFixturesEOL(ctx context.Context, manifest *config.Manifest, rootDir string) error {
+	out, err := forge.AuditPinnedFixturesEOL(ctx, forge.PinnedFixtureEOLOptions{
+		Root: rootDir, Exceptions: manifest.Exceptions, Today: time.Now(),
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Println(out)
+	return nil
+}
+
+func auditPreMigrationTracking(ctx context.Context, rootDir string) error {
 	// The epic lives in the local working directory; the repository root is only the
 	// legacy location. Checking just the root silently skipped the whole gate.
-	epicPath := resolvePreMigrationEpic(rootDir)
+	epicPath := resolvePreMigrationEpic(ctx, rootDir)
 	if epicPath != "" {
 		// #nosec G304 -- epicPath is one of two fixed locations under the audited root.
 		content, err := os.ReadFile(epicPath)
@@ -760,9 +778,13 @@ func auditPreMigrationTracking(rootDir string) error {
 // resolvePreMigrationEpic returns the pre-migration epic path, preferring the working
 // directory location over the legacy repository-root one. It returns "" when neither
 // exists.
-func resolvePreMigrationEpic(rootDir string) string {
+func resolvePreMigrationEpic(ctx context.Context, rootDir string) string {
+	workingDir := filepath.Join(rootDir, state.WorkingDirName)
+	if loc, err := state.ResolveWorkingDir(ctx, rootDir); err == nil {
+		workingDir = loc.WorkingDir
+	}
 	candidates := []string{
-		filepath.Join(rootDir, ".workingdir", preMigrationEpicFile),
+		filepath.Join(workingDir, preMigrationEpicFile),
 		filepath.Join(rootDir, preMigrationEpicFile),
 	}
 	for _, candidate := range candidates {

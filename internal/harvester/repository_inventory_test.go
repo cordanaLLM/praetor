@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -279,9 +278,9 @@ func initTestRepository(t *testing.T, path string) {
 }
 
 func runTestGit(t testing.TB, dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Env = testsupport.HermeticGitEnv(t)
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	cmdCtx, envErr := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if envErr != nil {
+		return "", envErr
+	}
+	return util.RunGit(cmdCtx, dir, args...)
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // figureCommandTimeout bounds one run of the figure engine (HISS-02).
@@ -63,20 +64,19 @@ func runFigureEngine(t *testing.T, node, root, command string) (int, string) {
 // exit code and combined output.
 func runProcess(t *testing.T, dir, name string, arguments ...string) (int, string) {
 	t.Helper()
+	t.Setenv("GOCOVERDIR", t.TempDir())
 	ctx, cancel := context.WithTimeout(t.Context(), figureCommandTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, name, arguments...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOCOVERDIR="+t.TempDir())
-	out, err := cmd.CombinedOutput()
+	res, err := util.RunCommandBytes(ctx, dir, name, util.MaxCommandOutputBytes, arguments...)
+	out := string(res.Stdout) + string(res.Stderr)
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		return exitErr.ExitCode(), string(out)
+		return exitErr.ExitCode(), out
 	}
 	if err != nil {
 		t.Fatalf("%s %s: %v", name, strings.Join(arguments, " "), err)
 	}
-	return 0, string(out)
+	return 0, out
 }
 
 // adoptProcessRun selects TestAdoptProcessHelper in the re-executed test binary.

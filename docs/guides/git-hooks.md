@@ -18,7 +18,11 @@ keeps current: `make sec`,
 `make vuln` and `make secrets` run exactly those versions through `go tool -modfile` (`make vuln`
 hands govulncheck to `praetorctl security govuln`, the
 [Go vulnerability gate](adoption-verification.md#go-vulnerabilities-and-the-openvex-document)), and
-`go install -modfile=tools/go/go.mod golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec`
+`make secrets` hands gitleaks to `praetorctl security secrets` reading merge commits via `--log-opts="--full-history --all -m"`.
+In hosted CI, the secrets history scan runs as an emitted standalone gate:
+`go run -tags=secretsgate ./tools/secrets/gate`
+which executes the pinned gitleaks detector with `--log-opts="--full-history --all -m"`, reads HISS-12 exception entries from the `SECRETS_EXCEPTIONS` environment variable (a JSON list rendered by adopt from `.standards.yaml`), and judges findings with the shared rules package, exiting with status 3 on any finding not excused or any stale or expired entry.
+`go install -modfile=tools/go/go.mod golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec github.com/zricethezav/gitleaks/v8`
 puts the same versions on `PATH` for the hooks.
 
 `make verify-all` also runs `make semgrep-test`, which checks the real matcher on

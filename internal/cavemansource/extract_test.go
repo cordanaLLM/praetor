@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func sourceInput(path string, format config.RegisterSourceFormat, selector string) config.RegisterSourceInput {
@@ -31,6 +31,16 @@ func writeSourceFile(t *testing.T, root, path, body string) {
 	if err := os.WriteFile(abs, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func compileGoFixture(t *testing.T, root string) (string, error) {
+	t.Helper()
+	cmdEnv := append(os.Environ(), "GOWORK=off", "GOPROXY=off", "GOSUMDB=off")
+	cmdCtx, err := util.WithCommandEnvironment(t.Context(), cmdEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return util.RunCommand(cmdCtx, root, "go", "test", "./...")
 }
 
 func installSourceGitIndex(t *testing.T, data []byte) {
@@ -411,12 +421,7 @@ func exercise(Safe func() mcpGovernedText) *mcp.ToolResult {
 	return mcpComposedTextResult(Safe())
 }
 `)
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-	defer cancel()
-	command := exec.CommandContext(ctx, "go", "test", "./...")
-	command.Dir = root
-	command.Env = append(os.Environ(), "GOWORK=off", "GOPROXY=off", "GOSUMDB=off")
-	if output, err := command.CombinedOutput(); err != nil {
+	if output, err := compileGoFixture(t, root); err != nil {
 		t.Fatalf("compile cross-file object-identity fixture: %v\n%s", err, output)
 	}
 	if _, err := ExtractInputs(t.Context(), root, []config.RegisterSourceInput{input}); err == nil ||
@@ -444,12 +449,7 @@ func output() *mcp.ToolResult { return sharedResult }
 import "encoding/json"
 func mutate(payload []byte) { _ = json.Unmarshal(payload, sharedResult) }
 `)
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-	defer cancel()
-	command := exec.CommandContext(ctx, "go", "test", "./...")
-	command.Dir = root
-	command.Env = append(os.Environ(), "GOWORK=off", "GOPROXY=off", "GOSUMDB=off")
-	if output, err := command.CombinedOutput(); err != nil {
+	if output, err := compileGoFixture(t, root); err != nil {
 		t.Fatalf("compile cross-file result mutation fixture: %v\n%s", err, output)
 	}
 	input := sourceInput("mcp", config.SourceFormatGo, "mcp.outputs")
@@ -939,12 +939,7 @@ func Safe() Text { return Text("This sentence is hidden from Caveman.") }
 	for index, fixture := range fixtures {
 		writeSourceFile(t, root, fmt.Sprintf("case-%02d/main.go", index), fixture.source)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-	defer cancel()
-	command := exec.CommandContext(ctx, "go", "test", "./...")
-	command.Dir = root
-	command.Env = append(os.Environ(), "GOWORK=off", "GOPROXY=off", "GOSUMDB=off")
-	if output, err := command.CombinedOutput(); err != nil {
+	if output, err := compileGoFixture(t, root); err != nil {
 		t.Fatalf("compile adversarial Go fixtures: %v\n%s", err, output)
 	}
 }

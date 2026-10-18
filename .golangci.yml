@@ -10,6 +10,7 @@ version: "2"
 run:
   timeout: 10m
   tests: true
+  relative-path-mode: gitroot
   # tools/apicompat/gate/main.go builds only under this tag, which keeps the gate program out of
   # ./... patterns; with the tag on, main.go is built and its placeholder.go (the opposite
   # constraint, which ./... reaches without the tag) is not, so no file is linted twice.
@@ -114,6 +115,7 @@ linters:
           msg: direct syscall execution replaces or forks the process outside the audited exec boundary (HISS-08)
 
   exclusions:
+    warn-unused: true
     generated: lax
     rules:
       # internal/util owns the audited exec wrapper that everything else must use.
@@ -126,16 +128,2648 @@ linters:
       - path: tools/apicompat/gate/
         linters:
           - forbidigo
-      # Tests build sandboxed git and PATH fixtures, and table-driven 3D tests are long
-      # by construction; the complexity caps target production control flow.
-      - path: _test\.go
+      # praetor:generated-exceptions begin (praetorctl linters exceptions; never edit by hand)
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-lsp/fuzz_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-lsp/fuzz_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-lsp/server_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-lsp/server_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/audit_branch_ruleset_test\.go$
         linters:
           - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/audit_branch_ruleset_test\.go$
+        linters:
           - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/audit_branch_ruleset_test\.go$
+        linters:
           - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/runtime_output_oracle_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/runtime_output_oracle_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/runtime_output_oracle_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/runtime_text_coverage_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/runtime_text_coverage_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/server_path_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/server_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/server_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/server_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/tools_adoption_replaced_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/tools_adoption_source_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/tools_context_optimize_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/tools_discovery_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/tools_discovery_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/tools_dogfood_discovery_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/tools_dogfood_public_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/tools_dogfood_repair_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/tools_planning_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/tools_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-mcp/transport_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/adopt_baseline_flags_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/adopt_figures_e2e_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/adopt_figures_e2e_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/adopt_lock_source_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/artifact_io_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/audit_api_system_packages_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/audit_cmd_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/audit_decline_contract_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/audit_documentation_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/audit_documentation_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/audit_exceptions_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/audit_figures_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/audit_hosted_gate_branch_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/audit_hosted_gate_branch_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/audit_linters_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/audit_mutants_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/audit_policy_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/audit_reuse_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/baseline_cmd_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/caveman_baseline_listing_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/caveman_baseline_listing_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/caveman_baseline_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/caveman_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/ci_cmd_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/client_permissions_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/client_permissions_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/client_permissions_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/clients_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/clients_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/context_optimize_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/context_optimize_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/devcontainer_bootstrap_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/devcontainer_bootstrap_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/devcontainer_checkout_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/devcontainer_source_root_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/devroot_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/docs_readme_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/dogfood_discover_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/dogfood_discover_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/dogfood_repair_run_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/dogfood_repairs_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/flagargs_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/flagargs_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/flavors_cli_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/forge_claims_migrate_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/gate_receipt_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/gate_receipt_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/hook_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/issue_labels_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/issue_labels_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/models_route_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/needs_check_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/planning_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/planning_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/profile_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/profile_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/provenance_cli_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/radar_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/sbom_notices_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/signal_unix_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/signal_unix_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/skills_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/standardsctl_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/standardsctl_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/standardsctl_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/state_bootstrap_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/state_ignore_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/state_ignore_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/state_ledger_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/sync_adoption_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/sync_adoption_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/sync_plan_init_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/sync_plan_init_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/sync_plan_init_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/sync_validation_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/vscode_jsonc_cli_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standardsctl/vscode_jsonc_cli_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/absent_harness_rebind_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/adopt_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/adopt_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/adopt_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/agent_hooks_preflight_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/agent_hooks_preflight_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/agent_hooks_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/agent_surface_preflight_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/api_compat_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/baseline_identity_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/baseline_pending_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/baseline_pending_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/baseline_readopt_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/baseline_readopt_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/build_warnings_audit_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/build_warnings_audit_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/checkpoint_launcher_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/checkpoint_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/client_selection_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/client_selection_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/context_verify_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/decline_contract_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/documentation_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/editor_files_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/editor_files_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/editor_jsonc_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/editor_jsonc_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/emitted_hooks_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/emitted_hooks_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/engine_launcher_prior_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/engine_makefile_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/engine_makefile_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/engine_makefile_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/evasion_prior_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/figure_family_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/gitattributes_devcontainer_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/gitignore_history_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/gitignore_nested_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/gitignore_nested_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/gitignore_privacy_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/gitignore_privacy_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/gitignore_privacy_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/gitignore_rules_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/gitignore_rules_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/harness_budget_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/harness_budget_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/harness_ci_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/harness_golden_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/harness_refresh_facts_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/harness_register_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/harness_register_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/harness_truth_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/hooks_gomod_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/hooks_gomod_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/hooks_path_audit_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/ignored_writes_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/lefthook_audit_offline_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/lefthook_gate_admit_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/lefthook_govuln_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/lefthook_govuln_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/lefthook_identity_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/linters_exception_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/managed_asset_lint_prior_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/managed_family_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/managed_family_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/plugin_projection_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/plugin_projection_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/policy_catalog_decline_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/policy_report_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/policy_report_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/private_ignore_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/private_ignore_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/readme_governance_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/register_skills_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/renovate_devcontainer_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/renovate_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/renovate_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/replace_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/report_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/reuse_decline_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/reuse_gate_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/reuse_gate_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/reuse_gate_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/review_mode_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/review_mode_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/ruleset_audit_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/ruleset_audit_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/ruleset_audit_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/ruleset_merge_queue_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/ruleset_refresh_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/vendor_targets_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/verification_makefile_target_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/verification_makefile_target_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/verification_pillar_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/verification_pillar_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/verification_pillar_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/verification_scaffold_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/verification_scaffold_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/verification_zig_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adopt/workflow_branch_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/adr/shipped_records_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/agentcontext/readonly_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/agentcontext/readonly_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/agentcontext/render_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/agenthook/agent_brief_authority_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/agenthook/clock_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/agenthook/clock_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/agenthook/correlation_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/agenthook/dispatch_gate_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/agenthook/dispatch_gate_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/agenthook/first_word_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/agenthook/hook_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/agenthook/policy_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/agenthook/policy_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/agenthook/readonly_dispatch_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/agenthook/record_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/agenthook/registrations_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/agenthook/stop_question_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/backlogcap/backlogcap_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/baseline/key_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/baseline/record_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/baseline/record_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/builder/execution_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/bump/actions_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/bump/actions_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/bump/bump_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/bump/canary_evidence_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/bump/canary_patch_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/bump/catalog_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/bump/manifest_io_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/bump/manifest_io_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/bump/scan_actions_pinned_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/bump/scan_actions_verify_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/bump/scan_actions_verify_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/bump/scan_inventory_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/bump/update_gomod_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/caveman/check_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/caveman/contract_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/caveman/contract_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/cavemansource/extract_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/cavemansource/extract_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/changelog/fuzz_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/changelog/fuzz_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/changelog/placeholder_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/cifilter/changed_files_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/cifilter/cifilter_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/clientjson/hooks_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/clientschema/clientschema_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/clientsetup/agy_permissions_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/clientsetup/agy_permissions_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/clientsetup/agy_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/clientsetup/capabilities_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/clientsetup/capabilities_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/clientsetup/plan_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/clientsetup/plan_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/compiler/agents_plan_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/compiler/client_skills_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/compiler/diagnostic_skill_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/compiler/output_paths_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/compiler/output_paths_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/compiler/projection_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/compiler/register_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/compiler/register_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/compiler/skill_commands_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/compiler/skill_commands_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/compiler/skill_projection_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/compiler/surface_check_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/compiler/surface_check_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/actions_policy_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/archetype_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/backlog_caps_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/devcontainer_policy_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/docs_surfaces_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/documentation_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/effective_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/exceptions_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/forge_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/gate_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/generated_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/generated_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/generated_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/hiss_exceptions_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/hiss_exceptions_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/install_manifest_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/lock_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/lockbuild_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/lockbuild_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/mcp_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/operator_framework_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/planning_archetype_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/radar_policy_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/register_authority_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/register_emission_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/register_sources_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/register_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/register_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/repository_policy_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/skills_policy_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/strict_manifest_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/strict_manifest_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/config/verification_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/container/health_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/contextopt/binary_snapshot_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/contextopt/create_root_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/contextopt/create_root_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/contextopt/directory_fsync_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/contextopt/directory_fsync_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/contextopt/directory_lock_process_test\.go$
+        linters:
           - forbidigo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/contextopt/directory_lock_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/contextopt/observe_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/contextopt/optimizer_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/contextopt/optimizer_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/contextopt/optimizer_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/contextopt/write_in_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dedupe/dedupe_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/devcontainer/bootstrap_bump_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/devcontainer/bootstrap_closure_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/devcontainer/bootstrap_closure_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/devcontainer/bootstrap_digest_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/devcontainer/bootstrap_freshness_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/devcontainer/bootstrap_integrity_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/devcontainer/bootstrap_plan_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/devcontainer/bootstrap_prior_family_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/devcontainer/bootstrap_recorded_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/devcontainer/bootstrap_source_error_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/devcontainer/bootstrap_source_error_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/devcontainer/bootstrap_source_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/devcontainer/bootstrap_source_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/devcontainer/cli_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/devcontainer/devcontainer_schema_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/devcontainer/devcontainer_schema_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/devcontainer/devcontainer_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/devcontainer/reviewed_images_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/devcontainer/runtime_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/devsync/devsync_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/docdistill/docdistill_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/docdistill/docdistill_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/docdistill/docdistill_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/docsref/drift_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/discovery_observe_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/discovery_run_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/discovery_run_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/dogfood_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/fixture_template_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/fixture_template_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/public_existing_baseline_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/public_policy_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/public_policy_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/public_snapshot_limits_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/public_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/repair_io_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/repair_policy_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/repair_register_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/repair_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/schedule_lock_unix_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/schedule_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/schedule_transcript_store_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/schedule_transcript_store_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/suite_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/dogfood/suite_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/editor/editor_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/editor/editor_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/editor/editor_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/editor/json_integrity_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/editor/jsonc_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/editor/jsonc_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/editor/pinned_io_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/editor/plan_render_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/editor/selection_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/editor/write_in_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/efficiency/collector_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/efficiency/collector_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/efficiency/collector_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/efficiency/costledger/costledger_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/efficiency/costledger/costledger_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/flavor/catalog_settings_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/flavor/catalog_settings_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/flavor/dart_lints_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/flavor/emitted_content_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/flavor/emitted_content_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/flavor/golangci_pin_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/flavor/golangci_pin_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/flavor/node_ci_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/flavor/node_ci_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/flavor/rustfmt_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/flavor/rustfmt_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/flavor/security_workflow_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/flavor/security_workflow_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/flavor/settings_audit_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/flavor/settings_audit_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/flavor/settings_audit_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/flavor/template_content_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/flavor/template_content_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/actions_state_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/adopt_action_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/adopt_action_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/branch_protection_eval_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/branch_protection_live_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/build_warnings_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/claim_identity_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/claim_identity_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/claim_identity_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/claim_migrate_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/claim_migrate_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/claim_migrate_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/forge_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/forge_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/github_http_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/github_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/issue_batch_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/issue_body_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/live_ruleset_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/merge_queue_review_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/planning_sync_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/project_graphql_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/repo_metadata_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/ruleset_merge_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/workflow_guard_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/workflow_linters_package_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/workflow_linters_package_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/workflow_linters_package_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/workflow_linters_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/workflow_permissions_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/workflow_reusable_contexts_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/forge/workflow_run_health_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/funding/funding_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/funding/funding_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/gating/admit_unsupported_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/gating/admit_unsupported_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/gating/cargo_path_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/gating/deadline_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/gating/deadline_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/gating/devcontainer_runtime_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/gating/devcontainer_start_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/gating/devcontainer_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/gating/devcontainer_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/gating/gating_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/gating/gating_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/gating/modules_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/gating/modules_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/gating/race_bound_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/gating/security_scope_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/gating/security_scope_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/gc/gc_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/gc/gc_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/generated/check_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/generated/regenerate_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/generated/runner_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/bundle_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/canonical_git_path_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/canonical_git_path_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/drift_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/drift_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/harvester_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/harvester_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/harvester_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/memory_bounds_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/onboard_safety_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/redact_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/repository_inventory_safety_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/repository_inventory_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/repository_inventory_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/repository_inventory_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/repository_submodule_safety_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/skills_completeness_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/transcript_claude_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/transcript_claude_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/transcript_ingest_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/transcript_open_unix_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/harvester/transcript_safety_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/hindsight/cache_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/hindsight/distiller_integrity_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/hindsight/distiller_integrity_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/hindsight/distiller_warnings_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/hiss/anchor_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/hiss/attribution_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/hiss/complexity_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/hiss/complexity_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/hiss/complexity_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/hiss/engine_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/hiss/fuzz_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/hiss/go_callgraph_layout_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/hiss/go_io_callee_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/hiss/hiss_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/hiss/recursion_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/hisscatalog/catalog_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/hisscoverage/titles_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/lockdown/keys_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/lockdown/lockdown_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/lockdown/lockdown_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/managedasset/family_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/managedasset/family_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/managedasset/renovate_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/managedasset/renovate_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/managedasset/workflow_branch_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/managedasset/workflow_branch_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/mcp/offload_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/milestone/close_guard_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/milestone/milestone_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/milestone/milestone_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/milestone/remote_sync_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/analyzer_rust_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/analyzer_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/demand_alias_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/demand_alias_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/discovery_subproject_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/discovery_subproject_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/epic_scope_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/epic_scope_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/epic_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/extract_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/framework_contract_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/framework_export_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/framework_export_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/framework_source_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/harvester_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/library_relationships_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/library_relationships_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/migrate_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/migration_evidence_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/migration_evidence_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/migration_self_target_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/migration_self_target_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/needs_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/non_goals_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/report_header_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/repository_name_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/requests_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/row_framework_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/targets_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/unconfigured_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/needs/zon_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/operationalsync/identity_windows_replay_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/operationalsync/identity_windows_replay_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/operationalsync/init_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/operationalsync/overlay_regression_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/operationalsync/sync_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/paperclip/drift_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/paperclip/forge_rows_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/paperclip/paperclip_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/paperclip/paperclip_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/paperclip/paperclip_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/paperclip/prior_facts_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/paperclip/prior_facts_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/paperclip/receipt_contract_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/paperclip/register_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/paperclip/rules_markdown_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/planning/compile_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/planning/experiment_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/planning/experiment_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/planning/experiment_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/posixmode/posixmode_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/posixmode/posixmode_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/promptopt/optimizer_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/radar/collect_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/radar/collect_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/radar/feed_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/radar/registry_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/radar/registry_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/radar/window_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/readmegovernance/links_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/readmegovernance/links_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/repairrun/provider_helper_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/repairrun/provider_helper_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/repairrun/provider_response_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/repairrun/provider_response_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/repairrun/provider_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/repairrun/provider_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/repairrun/register_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/repairrun/register_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/repairrun/register_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/repairrun/run_linux_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/repairrun/run_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/repairrun/workspace_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/router/config_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/router/outcomes_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/router/reservation_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/router/reservation_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/router/router_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/runner/runner_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/sentinel/sentinel_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/seo/fuzz_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/state/bootstrap_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/state/bootstrap_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/state/bugs_adversarial_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/state/bugs_integrity_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/state/bugs_integrity_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/state/bugs_integrity_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/state/bugs_meta_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/state/bugs_migrate_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/state/bugs_store_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/state/client_local_settings_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/state/client_local_settings_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/state/questions_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/state/state_compact_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/state/state_integrity_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/state/state_rotate_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/state/task_select_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/state/tasks_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/supplychain/content_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/supplychain/content_uki_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/supplychain/content_uki_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/supplychain/credits_entries_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/supplychain/image_pins_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/supplychain/notices_render_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/supplychain/notices_render_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/supplychain/notices_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/supplychain/root_license_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/supplychain/supplychain_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/supplychain/supplychain_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/supplychain/supplychain_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/supplychain/upstream_credits_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/supplychain/upstream_credits_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/testsupport/commandcut_test\.go$
+        linters:
+          - forbidigo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/testsupport/gitenv_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/testsupport/gitenv_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/testsupport/goenv_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/testsupport/golden_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/tidycoverage/coverage_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/topology/topology_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/util/action_pin_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/util/command_bytes_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/util/command_bytes_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/util/command_group_signal_unix_test\.go$
+        linters:
           - noctx
-
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/util/command_interrupt_unix_test\.go$
+        linters:
+          - noctx
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/util/git_ignore_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/util/git_origin_head_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/util/git_worktree_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/util/makefile_target_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/util/markdown_fence_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/util/marked_block_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/util/secure_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/util/secure_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/util/util_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/workstation/install_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/workstation/install_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/workstation/source_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/workstation/status_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/worktree/worktree_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/worktree/worktree_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^internal/worktree/worktree_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^templates/hostedgate_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^templates/hostedgate_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^tools/apicompat/assets_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^tools/apicompat/assets_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^tools/apicompat/checker_pin_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^tools/apicompat/modules_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^tools/apicompat/render_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^tools/figures/assets_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^tools/markdownlint/assets_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^tools/markdownlint/assets_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^tools/markdownlint/assets_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^tribunus/cmd/tribunusctl/sync_test\.go$
+        linters:
+          - funlen
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^tribunus/cmd/tribunusctl/sync_test\.go$
+        linters:
+          - gocyclo
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^tribunus/internal/sources/claudelocal/store_test\.go$
+        linters:
+          - gocognit
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^tribunus/internal/sources/claudelocal/store_test\.go$
+        linters:
+          - gocyclo
+      # praetor:generated-exceptions end
 formatters:
   enable:
     - gofmt

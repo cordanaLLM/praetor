@@ -58,6 +58,9 @@ func reconcileDocumentationGate(ctx context.Context, s *adoptSession) error {
 			return err
 		}
 	}
+	if err := reconcileCodespell(ctx, s); err != nil {
+		return err
+	}
 	return reconcileManagedAttributes(ctx, s, true)
 }
 
@@ -84,6 +87,9 @@ func removeDocumentationGate(ctx context.Context, s *adoptSession) error {
 		return err
 	}
 	if err := removeManagedFamilies(ctx, s, DocumentationFamilies()); err != nil {
+		return err
+	}
+	if err := reconcileCodespell(ctx, s); err != nil {
 		return err
 	}
 	return reconcileManagedAttributes(ctx, s, false)

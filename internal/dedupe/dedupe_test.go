@@ -378,6 +378,148 @@ func TestScanRepo_Boundary_CloneFloorAfterRenaming(t *testing.T) {
 	}
 }
 
+// Copies differing only in import aliasing must match as a single duplicate group.
+func TestScanRepo_Positive_ImportAliasMatchesClone(t *testing.T) {
+	fileA := `package p
+
+import "example.com/lib/retry"
+
+func DoRetries(x int) int {
+	retry.Backoff(x)
+	retry.Backoff(x + 1)
+	retry.Backoff(x + 2)
+	return x
+}
+`
+	fileB := `package p
+
+import rt "example.com/lib/retry"
+
+func ExecuteRetries(v int) int {
+	rt.Backoff(v)
+	rt.Backoff(v + 1)
+	rt.Backoff(v + 2)
+	return v
+}
+`
+	report := scanSources(t, map[string]string{
+		"a.go": fileA,
+		"b.go": fileB,
+	})
+	if len(report.Duplicates) != 1 || len(report.Duplicates[0].Locations) != 2 {
+		t.Fatalf("expected 1 duplicate group with 2 locations, got %+v", report.Duplicates)
+	}
+	if report.Passed {
+		t.Error("a clone group must fail the scan")
+	}
+}
+
+// The same alias name bound to two different import paths must stay distinct.
+func TestScanRepo_Negative_DistinctImportPathsStayDistinct(t *testing.T) {
+	fileA := `package p
+
+import rt "example.com/lib/retry"
+
+func DoRetries(x int) int {
+	rt.Backoff(x)
+	rt.Backoff(x + 1)
+	rt.Backoff(x + 2)
+	return x
+}
+`
+	fileB := `package p
+
+import rt "example.com/other/retry"
+
+func ExecuteRetries(v int) int {
+	rt.Backoff(v)
+	rt.Backoff(v + 1)
+	rt.Backoff(v + 2)
+	return v
+}
+`
+	report := scanSources(t, map[string]string{
+		"a.go": fileA,
+		"b.go": fileB,
+	})
+	if len(report.Duplicates) != 0 {
+		t.Fatalf("different import paths must not produce duplicate groups: %+v", report.Duplicates)
+	}
+	if !report.Passed {
+		t.Errorf("clean scan without duplicates must pass, got report: %+v", report)
+	}
+}
+
+// A local variable shadowing an import package name must not be rewritten as an import selector.
+func TestScanRepo_Boundary_ShadowedImportPackageName(t *testing.T) {
+	qualified := `package p
+
+import "example.com/lib/retry"
+
+func WorkA(x int) int {
+	retry.Backoff(x)
+	retry.Backoff(x + 1)
+	retry.Backoff(x + 2)
+	return x
+}
+`
+	shadowed := `package p
+
+import "example.com/lib/retry"
+
+type Client struct{}
+
+func (c Client) Backoff(int) {}
+
+func WorkB(retry Client, x int) int {
+	retry.Backoff(x)
+	retry.Backoff(x + 1)
+	retry.Backoff(x + 2)
+	return x
+}
+`
+	report := scanSources(t, map[string]string{
+		"a.go": qualified,
+		"b.go": shadowed,
+	})
+	if len(report.Duplicates) != 0 {
+		t.Fatalf("shadowed import must not match package import: %+v", report.Duplicates)
+	}
+}
+
+// Dot imports bind into the file block without a selector and remain unchanged.
+func TestScanRepo_Boundary_DotImportUnchanged(t *testing.T) {
+	dotA := `package p
+
+import . "example.com/lib/retry"
+
+func DotWorkA(x int) int {
+	Backoff(x)
+	Backoff(x + 1)
+	Backoff(x + 2)
+	return x
+}
+`
+	dotB := `package p
+
+import . "example.com/lib/retry"
+
+func DotWorkB(y int) int {
+	Backoff(y)
+	Backoff(y + 1)
+	Backoff(y + 2)
+	return y
+}
+`
+	report := scanSources(t, map[string]string{
+		"a.go": dotA,
+		"b.go": dotB,
+	})
+	if len(report.Duplicates) != 1 || len(report.Duplicates[0].Locations) != 2 {
+		t.Fatalf("dot import copies must match each other, got %+v", report.Duplicates)
+	}
+}
+
 func TestCadence_PositiveAndBoundary(t *testing.T) {
 	tmp := t.TempDir()
 	ctx := context.Background()

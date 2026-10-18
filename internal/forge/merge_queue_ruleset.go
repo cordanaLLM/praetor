@@ -46,20 +46,20 @@ func RenderMergeQueueRuleset(branch string, policy config.BranchProtectionPolicy
 // into the live one and updated in place, read back, and returned with the parameters the merge
 // lowered. The union merge keeps every ref the live ruleset includes, so a wildcard an operator
 // added stays and the audit reports it (MergeQueueRulesetFindings).
-func (g *GitHubDriver) ReconcileMergeQueue(ctx context.Context, branch string, policy *config.BranchProtectionPolicy) ([]LoweredParameter, error) {
+func (g *GitHubDriver) ReconcileMergeQueue(ctx context.Context, branch string, policy *config.BranchProtectionPolicy) ([]LoweredParameter, []KeptParameter, error) {
 	if err := g.Authenticate(ctx); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if policy == nil {
-		return nil, errors.New("reconcile merge queue: policy cannot be nil")
+		return nil, nil, errors.New("reconcile merge queue: policy cannot be nil")
 	}
 	desired, err := RenderMergeQueueRuleset(branch, *policy)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	listPath, err := g.repoPath("rulesets")
 	if err != nil {
-		return nil, fmt.Errorf("reconcile merge queue for %s: %w", branch, err)
+		return nil, nil, fmt.Errorf("reconcile merge queue for %s: %w", branch, err)
 	}
 	return g.convergeRuleset(ctx, branch, listPath, MergeQueueRulesetName, desired)
 }

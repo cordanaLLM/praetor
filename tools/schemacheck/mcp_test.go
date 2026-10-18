@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const mcpSchemaPath = "mcp/schema.json"
@@ -66,38 +67,42 @@ func buildServer(ctx context.Context, t *testing.T) string {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	build := exec.CommandContext(ctx, "go", "build", "-o", binary, "./cmd/standards-mcp")
-	build.Dir = repoRoot
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build standards-mcp: %v\n%s", err, out)
+	res, err := util.RunCommandBytes(ctx, repoRoot, "go", util.MaxCommandOutputBytes, "build", "-o", binary, "./cmd/standards-mcp")
+	if err != nil {
+		t.Fatalf("build standards-mcp: %v\n%s%s", err, res.Stdout, res.Stderr)
 	}
 	return binary
 }
 
-// startServer starts the binary over stdio pipes and stops it when the test ends.
+// startServer starts the binary over stdio pipes and stops it when the test ends. It runs
+// through util.RunCommandStream in a goroutine: the test writes requests into one pipe and
+// reads responses from the other. The cleanup closes the request pipe and the response reader
+// before it cancels, so neither stream copy can block the command's return.
 func startServer(ctx context.Context, t *testing.T, binary string) (io.WriteCloser, io.Reader) {
 	t.Helper()
-	server := exec.CommandContext(ctx, binary, "-root", t.TempDir())
-	stdin, err := server.StdinPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	stdout, err := server.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := server.Start(); err != nil {
-		t.Fatal(err)
-	}
+	root := t.TempDir()
+	requestsIn, requestsOut := io.Pipe()
+	responsesIn, responsesOut := io.Pipe()
+	serverCtx, stop := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() {
+		_, err := util.RunCommandStream(serverCtx, "", binary, requestsIn, responsesOut, util.MaxCommandOutputBytes, "-root", root)
+		responsesOut.CloseWithError(err)
+		done <- err
+	}()
 	t.Cleanup(func() {
-		if err := server.Process.Kill(); err != nil {
-			t.Logf("kill standards-mcp: %v", err)
+		if err := requestsOut.Close(); err != nil {
+			t.Logf("close standards-mcp requests: %v", err)
 		}
-		if err := server.Wait(); err != nil {
-			t.Logf("standards-mcp ended after the kill: %v", err) // a killed process reports a signal
+		if err := responsesIn.Close(); err != nil {
+			t.Logf("close standards-mcp responses: %v", err)
+		}
+		stop()
+		if err := <-done; err != nil {
+			t.Logf("standards-mcp ended after the stop: %v", err) // a stopped process reports a signal
 		}
 	})
-	return stdin, stdout
+	return requestsOut, responsesIn
 }
 
 // session drives standards-mcp over stdio and returns the raw response lines in request order.

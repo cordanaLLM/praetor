@@ -234,12 +234,12 @@ func TestResolvePreMigrationEpic_3D(t *testing.T) {
 	if err := os.WriteFile(rootEpic, []byte("legacy"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if got := resolvePreMigrationEpic(dir); got != wdEpic {
+	if got := resolvePreMigrationEpic(t.Context(), dir); got != wdEpic {
 		t.Errorf("resolvePreMigrationEpic = %q, want %q", got, wdEpic)
 	}
 
 	// Negative: nothing anywhere.
-	if got := resolvePreMigrationEpic(t.TempDir()); got != "" {
+	if got := resolvePreMigrationEpic(t.Context(), t.TempDir()); got != "" {
 		t.Errorf("expected an empty path when no epic exists, got %q", got)
 	}
 
@@ -249,7 +249,7 @@ func TestResolvePreMigrationEpic_3D(t *testing.T) {
 	if err := os.WriteFile(legacyPath, []byte("legacy"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if got := resolvePreMigrationEpic(legacyOnly); got != legacyPath {
+	if got := resolvePreMigrationEpic(t.Context(), legacyOnly); got != legacyPath {
 		t.Errorf("resolvePreMigrationEpic = %q, want %q", got, legacyPath)
 	}
 }
@@ -264,7 +264,7 @@ func TestAuditPreMigrationTracking_Negative_IncompleteEpic(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".workingdir", preMigrationEpicFile), []byte(body), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	err := auditPreMigrationTracking(dir)
+	err := auditPreMigrationTracking(t.Context(), dir)
 	if err == nil || !strings.Contains(err.Error(), "[TASK 4/5]") {
 		t.Errorf("expected a missing-stage failure, got %v", err)
 	}

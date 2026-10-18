@@ -131,13 +131,12 @@ func (h gateHarness) run(t *testing.T, dir string, env []string, args ...string)
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), gateRunTimeout)
 	defer cancel()
-	command := exec.CommandContext(ctx, h.gate, append([]string{"-checker=" + h.checker}, args...)...)
-	command.Dir = dir
-	command.Env = append(slices.Clone(h.env), env...)
-	var stdout, stderr strings.Builder
-	command.Stdout, command.Stderr = &stdout, &stderr
-	err := command.Run()
-	run := gateRun{stdout: stdout.String(), stderr: stderr.String()}
+	cmdCtx, err := util.WithCommandEnvironment(ctx, append(slices.Clone(h.env), env...))
+	if err != nil {
+		t.Fatalf("command environment: %v", err)
+	}
+	res, err := util.RunCommandBytes(cmdCtx, dir, h.gate, util.MaxCommandOutputBytes, append([]string{"-checker=" + h.checker}, args...)...)
+	run := gateRun{stdout: string(res.Stdout), stderr: string(res.Stderr)}
 	var exit *exec.ExitError
 	switch {
 	case err == nil:

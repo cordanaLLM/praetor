@@ -186,3 +186,69 @@ func TestAnchor_PackagePassFindingsAreAnchoredBySymbol(t *testing.T) {
 		t.Fatalf("a finding without anchor or symbol must keep the line key, got anchor %q key %q", unnamed[0].Anchor, key)
 	}
 }
+
+func TestAnchorGoSource_3D(t *testing.T) {
+	src := []byte(`package main
+
+type Service struct{}
+
+func (s *Service) Exec(cmd string) {
+	_ = cmd
+}
+
+func Standalone() {
+	println("hi")
+}
+
+var top = 1
+`)
+
+	// Positive: method and standalone functions
+	if got := AnchorGoSource(src, 6); got != "fn:Service.Exec" {
+		t.Errorf("line 6 (method) anchor = %q, want %q", got, "fn:Service.Exec")
+	}
+	if got := AnchorGoSource(src, 10); got != "fn:Standalone" {
+		t.Errorf("line 10 (func) anchor = %q, want %q", got, "fn:Standalone")
+	}
+
+	// Boundary: file-level var outside function uses text anchor
+	if got := AnchorGoSource(src, 13); !strings.HasPrefix(got, "text:") {
+		t.Errorf("line 13 (top-level) anchor = %q, want text:<hash>", got)
+	}
+
+	// Negative: invalid line or missing file
+	if got := AnchorGoSource(src, 0); got != "file" {
+		t.Errorf("line 0 anchor = %q, want %q", got, "file")
+	}
+	if got := AnchorGoSource(src, 999); got != "file" {
+		t.Errorf("line 999 anchor = %q, want %q", got, "file")
+	}
+	if got := AnchorGoSource(nil, 1); got != "file" {
+		t.Errorf("nil source anchor = %q, want %q", got, "file")
+	}
+}
+
+func TestAnchorGoSource_IdenticalToHISSAnchor(t *testing.T) {
+	src := `package main
+
+type Widget struct{}
+
+func (w *Widget) DoWork() {
+	panic("method panic")
+}
+
+func Other() {
+	panic("func panic")
+}
+`
+	rep := scanFixtureFile(t, "widget.go", src)
+	if len(rep.Violations) < 2 {
+		t.Fatalf("expected at least 2 violations, got %d", len(rep.Violations))
+	}
+	for _, v := range rep.Violations {
+		gosecAnchor := AnchorGoSource([]byte(src), v.LineNumber)
+		if v.Anchor != gosecAnchor {
+			t.Fatalf("at line %d (%s): hiss anchor %q != gosec anchor %q", v.LineNumber, v.Symbol, v.Anchor, gosecAnchor)
+		}
+	}
+}

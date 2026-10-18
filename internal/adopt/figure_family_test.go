@@ -40,6 +40,7 @@ const originMainFigurePlayerPlan = `
 tools/figures/core.mjs
 tools/figures/checks.mjs
 tools/figures/build.mjs
+tools/figures/eslint.figures.mjs
 tools/figures/types.ts
 tools/figures/third_party/interfig/vendor.json
 tools/figures/third_party/interfig/VENDOR.md

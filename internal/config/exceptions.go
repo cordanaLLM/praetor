@@ -18,6 +18,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/tools/secrets/rules"
 )
 
 // ExceptionRuleClangTidyCoverage is the rule of the clang-tidy translation-unit coverage gate
@@ -67,6 +68,11 @@ const ExceptionRuleReuseAnnotationOrder = "reuse-annotation-order"
 // generator's repeated output.
 const ExceptionRuleDedupe = "HISS-19"
 
+// ExceptionRuleSecrets is the rule of the HISS-12 secret scan gate (internal/secretscan): an entry
+// excuses one file by path and one gitleaks rule id by tool, with an optional fingerprint pinning
+// one finding.
+const ExceptionRuleSecrets = "HISS-12"
+
 // ExceptionRuleDeclaredLinters is the rule of the declared-linters gate
 // (internal/adopt.AuditDeclaredLinters): an entry excuses one declared linter
 // that is not run by any CI workflow, naming the tool by tool.
@@ -90,12 +96,19 @@ const ExceptionRuleBacklogCapsQuestions = "backlog.caps.questions"
 // ExceptionRuleBacklogCapsForgeAlerts is the rule of the forge alerts backlog cap gate.
 const ExceptionRuleBacklogCapsForgeAlerts = "backlog.caps.forge_alerts"
 
+// ExceptionRulePlatformNeutrality is the rule of the HISS-21 platform neutrality gate.
+const ExceptionRulePlatformNeutrality = "HISS-21"
+
+// ExceptionRuleCodespell is the rule of the codespell exception gate.
+const ExceptionRuleCodespell = "codespell"
+
 // exceptionRules lists rules an exceptions entry may name. HISS IDs come from the single HISS
 // registry; the other entries are the non-HISS gates that read this list.
 var exceptionRules = append(hisscatalog.RuleIDs(),
 	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits,
 	ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder, ExceptionRuleDeclaredLinters, ExceptionRuleTestTimeout, ExceptionRuleMutants,
 	ExceptionRuleBacklogCapsDefects, ExceptionRuleBacklogCapsTasks, ExceptionRuleBacklogCapsQuestions, ExceptionRuleBacklogCapsForgeAlerts,
+	ExceptionRuleCodespell,
 )
 
 // workflowRuleExamples maps each rule whose entries name one workflow file by path to the
@@ -136,15 +149,16 @@ const globCharacters = "*?[]\\"
 // entry; an expired entry excuses nothing, so the gate fails on its files as if the entry were
 // missing (AGENTS.md rule 14).
 type Exception struct {
-	Rule     string `yaml:"rule"`
-	Path     string `yaml:"path,omitempty"`
-	Glob     string `yaml:"glob,omitempty"`
-	Function string `yaml:"function,omitempty"`
-	Tool     string `yaml:"tool,omitempty"`
-	Reason   string `yaml:"reason"`
-	Expires  string `yaml:"expires"`
-	Category string `yaml:"category,omitempty"`
-	Entered  string `yaml:"entered,omitempty"`
+	Rule        string `yaml:"rule"`
+	Path        string `yaml:"path,omitempty"`
+	Glob        string `yaml:"glob,omitempty"`
+	Function    string `yaml:"function,omitempty"`
+	Tool        string `yaml:"tool,omitempty"`
+	Fingerprint string `yaml:"fingerprint,omitempty"`
+	Reason      string `yaml:"reason"`
+	Expires     string `yaml:"expires"`
+	Category    string `yaml:"category,omitempty"`
+	Entered     string `yaml:"entered,omitempty"`
 }
 
 // Target returns the path, glob or tool the entry names.
@@ -194,6 +208,21 @@ func (e Exception) MatchesAny(files []string) bool {
 		}
 	}
 	return false
+}
+
+// MatchesSecret reports whether the exception excuses finding: its rule must be HISS-12,
+// its path must match findingPath, its tool must match ruleID, and if its fingerprint
+// is set, it must match fingerprint.
+func (e Exception) MatchesSecret(findingPath, ruleID, fingerprint string) bool {
+	if e.Rule != ExceptionRuleSecrets {
+		return false
+	}
+	entry := rules.Entry{
+		Path:        e.Path,
+		RuleID:      e.Tool,
+		Fingerprint: e.Fingerprint,
+	}
+	return entry.MatchesFinding(findingPath, ruleID, fingerprint)
 }
 
 // ExceptionDay returns the calendar day of t, in t's location, as midnight UTC: the form an
@@ -300,13 +329,13 @@ func ValidateExceptions(entries []Exception, today time.Time) error {
 	if len(entries) > MaxExceptions {
 		return fmt.Errorf("exceptions has %d entries; maximum is %d", len(entries), MaxExceptions)
 	}
-	seen := make(map[[5]string]int, len(entries))
+	seen := make(map[[6]string]int, len(entries))
 	for index := 0; index < len(entries) && index < MaxExceptions; index++ {
 		entry := entries[index]
 		if problem := entry.problem(today); problem != "" {
 			return fmt.Errorf("exceptions[%d] %s", index, problem)
 		}
-		key := [5]string{entry.Rule, entry.Path, entry.Glob, entry.Function, entry.Tool}
+		key := [6]string{entry.Rule, entry.Path, entry.Glob, entry.Function, entry.Tool, entry.Fingerprint}
 		if first, repeated := seen[key]; repeated {
 			return fmt.Errorf("exceptions[%d] repeats exceptions[%d] (rule %s, %s)", index, first, entry.Rule, entry.Target())
 		}
@@ -333,6 +362,9 @@ func (e Exception) problem(today time.Time) string {
 		return problem
 	}
 	if problem := e.dedupeTargetProblem(); problem != "" {
+		return problem
+	}
+	if problem := e.codespellProblem(); problem != "" {
 		return problem
 	}
 	if problem := e.functionProblem(); problem != "" {
@@ -365,40 +397,17 @@ func uncategorizedExceptionExpiryProblem(e Exception, today time.Time) string {
 }
 
 func categorizedExceptionExpiryProblem(e Exception, today time.Time) string {
-	days, valid := exceptionCategoryDays(e.Category)
-	if !valid {
-		return fmt.Sprintf("category %q must be A, B, C or D", e.Category)
-	}
-	entered, err := time.Parse(ExceptionDateLayout, e.Entered)
-	if err != nil {
-		return fmt.Sprintf("entered %q must be a YYYY-MM-DD date when category is set", e.Entered)
-	}
-	want := entered.AddDate(0, 0, days).Format(ExceptionDateLayout)
-	if e.Category != "A" && e.Expires != want {
-		return fmt.Sprintf("category %s requires expires %s (entered %s + %d days)", e.Category, want, e.Entered, days)
-	}
-	if e.Category == "A" {
-		return exceptionExpiryProblem(e.Expires, today)
-	}
-	if _, err := time.Parse(ExceptionDateLayout, e.Expires); err != nil {
-		return fmt.Sprintf("expires %q must be a YYYY-MM-DD date", e.Expires)
-	}
-	return ""
+	return rules.CategoryExpiryProblem(e.Category, e.Entered, e.Expires, today)
 }
 
-func exceptionCategoryDays(category string) (int, bool) {
-	switch category {
-	case "A":
-		return MaxExceptionDays, true
-	case "B":
-		return 3, true
-	case "C":
-		return 10, true
-	case "D":
-		return 120, true
-	default:
-		return 0, false
-	}
+// ExceptionCategoryDays returns the days allowed for category, and whether the category is valid.
+func ExceptionCategoryDays(category string) (int, bool) {
+	return rules.CategoryDays(category)
+}
+
+// Problem reports why e is refused as an exception entry, or "".
+func (e Exception) Problem(today time.Time) string {
+	return e.problem(today)
 }
 
 func (e Exception) functionProblem() string {
@@ -430,10 +439,17 @@ func (e Exception) targetProblem() string {
 	if IsBacklogCapRule(e.Rule) {
 		return e.backlogCapTargetProblem()
 	}
+	if e.Rule == ExceptionRuleSecrets {
+		return e.secretsTargetProblem()
+	}
 	if e.Tool != "" {
 		return fmt.Sprintf("rule %s must not set tool", e.Rule)
 	}
 	return e.pathOrGlobTargetProblem()
+}
+
+func (e Exception) secretsTargetProblem() string {
+	return rules.ValidateHISS12Target(e.Path, e.Tool, e.Fingerprint, e.Glob)
 }
 
 func (e Exception) backlogCapTargetProblem() string {
@@ -495,6 +511,20 @@ func (e Exception) dedupeTargetProblem() string {
 	return ""
 }
 
+// codespellProblem requires a codespell entry to name one file by path and declare a category.
+func (e Exception) codespellProblem() string {
+	if e.Rule != ExceptionRuleCodespell {
+		return ""
+	}
+	if e.Category == "" {
+		return "rule codespell requires a category"
+	}
+	if e.Path == "" || e.Glob != "" {
+		return "rule codespell must name one file by path, not a glob"
+	}
+	return ""
+}
+
 // workflowTargetProblem requires an entry of a rule in workflowRuleExamples to name one
 // workflow document directly in .github/workflows by path: the release workflow the HISS-11
 // supply-chain gate measured, or the workflow holding the build lanes a HISS-10 entry excuses.
@@ -522,15 +552,7 @@ func exceptionReasonProblem(reason string) string {
 
 // exceptionExpiryProblem requires a YYYY-MM-DD date at most MaxExceptionDays after today.
 func exceptionExpiryProblem(expires string, today time.Time) string {
-	date, err := time.Parse(ExceptionDateLayout, expires)
-	if err != nil {
-		return fmt.Sprintf("expires %q must be a YYYY-MM-DD date", expires)
-	}
-	if latest := ExceptionDay(today).AddDate(0, 0, MaxExceptionDays); date.After(latest) {
-		return fmt.Sprintf("expires %s is more than %d days after today; the latest date allowed is %s",
-			expires, MaxExceptionDays, latest.Format(ExceptionDateLayout))
-	}
-	return ""
+	return rules.ExpiryProblem(expires, today)
 }
 
 // DaysLeft returns how many calendar days remain until e expires, judged against today:
@@ -576,7 +598,7 @@ func (e Exception) WarningDays() int {
 		interval := max(0, int(expires.Sub(entered).Hours()/24)) // an expiry before entry warns for 0 days, never less
 		return min(ExceptionExpiryWarningDays, interval/2)
 	}
-	interval, ok := exceptionCategoryDays(e.Category)
+	interval, ok := rules.CategoryDays(e.Category)
 	if !ok {
 		return ExceptionExpiryWarningDays
 	}

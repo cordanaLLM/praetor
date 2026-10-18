@@ -874,17 +874,6 @@ entries:
       - ".github/workflows/release-binaries.yml"
     packages:
       - "action:docker/setup-buildx-action"
-  - name: "fsfe/reuse-action"
-    url: "https://github.com/fsfe/reuse-action"
-    section: "actions"
-    kind: "action"
-    relation: "used by CI"
-    license: "GPL-3.0-or-later"
-    use: "Workflows: runs the REUSE check"
-    paths:
-      - ".github/workflows/compliance.yml"
-    packages:
-      - "action:fsfe/reuse-action"
   - name: "goreleaser/goreleaser-action"
     url: "https://github.com/goreleaser/goreleaser-action"
     section: "actions"
@@ -1777,11 +1766,16 @@ entries:
     section: "tooling"
     kind: "tool"
     relation: "used by CI"
-    license: "GPL-3.0-or-later"
-    use: "License compliance check, run by the reuse-action"
+    license: "Apache-2.0 AND CC0-1.0 AND CC-BY-SA-4.0 AND GPL-3.0-or-later"
+    notice: "the license expression of the PyPI release"
+    use: "License compliance check (reuse lint), installed from a hash-pinned lock in CI and in the emitted REUSE workflow"
     paths:
       - "REUSE.toml"
+      - ".config/reuse/requirements.in"
+      - ".config/reuse/requirements.txt"
       - ".github/workflows/compliance.yml"
+    packages:
+      - "pypi:reuse"
   - name: "Chromium"
     url: "https://www.chromium.org"
     section: "tooling"

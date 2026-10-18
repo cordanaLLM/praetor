@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/clientid"
 )
@@ -43,6 +44,8 @@ type Plan struct {
 	SourceSHA256    string     `json:"source_sha256"`
 	RegistrySHA256  string     `json:"registry_sha256,omitempty"`
 	Content         []byte     `json:"-"`
+	SidecarPath     string     `json:"-"`
+	SidecarContent  []byte     `json:"-"`
 	Commands        [][]string `json:"commands,omitempty"`
 	Documentation   string     `json:"documentation"`
 	Changed         bool       `json:"changed"`
@@ -55,13 +58,16 @@ type Plan struct {
 
 type adapter struct{ mode, path, export, documentation string }
 
+// ContinueConfigFile is the repository-relative path to Continue's MCP configuration.
+const ContinueConfigFile = ".continue/mcpServers/praetor.yaml"
+
 var adapters = map[Client]adapter{
 	Codex:       {"native", "", "codex-mcp.toml", "https://developers.openai.com/codex/mcp/"},
 	Claude:      {"merge", ".mcp.json", "claude-mcp.json", "https://code.claude.com/docs/en/mcp"},
 	ClaudeLocal: {"merge", "", "claude-local.json", "https://code.claude.com/docs/en/mcp"},
 	Gemini:      {"merge", ".gemini/settings.json", "gemini-settings.json", "https://geminicli.com/docs/tools/mcp-server/"},
 	OpenCodeV1:  {"merge", "opencode.json", "opencode-v1.json", "https://opencode.ai/docs/mcp-servers/"},
-	Continue:    {"merge", ".continue/mcpServers/praetor.yaml", "continue-mcp.yaml", "https://docs.continue.dev/customize/deep-dives/mcp"},
+	Continue:    {"merge", ContinueConfigFile, "continue-mcp.yaml", "https://docs.continue.dev/customize/deep-dives/mcp"},
 	Cline:       {"export", "", "cline-mcp.json", "https://docs.cline.bot/mcp/mcp-overview"},
 	Kilo:        {"export", "", "kilo-mcp.json", "https://kilo.ai/docs/automate/mcp/using-in-kilo-code"},
 	AGY:         {"merge", ".agents/mcp_config.json", "agy-mcp_config.json", "https://antigravity.google/docs/plugins"},
@@ -143,6 +149,10 @@ func buildPlanValidated(ctx context.Context, registry Registry, client Client, e
 	}
 	p := &Plan{Client: client, Mode: spec.mode, RelativePath: spec.path, ExportName: spec.export,
 		Documentation: spec.documentation, SourceSHA256: digest(existing), RegistrySHA256: digest(registryBytes)}
+	if spec.path != "" && strings.HasSuffix(spec.path, ".json") {
+		p.SidecarPath = SidecarPath(spec.path)
+		p.SidecarContent = []byte(LicenseSidecar)
+	}
 	if err := renderPlan(ctx, registry, existing, p); err != nil {
 		return nil, err
 	}

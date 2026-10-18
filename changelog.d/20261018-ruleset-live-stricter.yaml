@@ -1,0 +1,2 @@
+type: fixed
+title: "The live branch-protection audit passes a live rule set that is stricter than declared (a merge-method subset, extra approval or last-push approval on live) and still fails a looser one"

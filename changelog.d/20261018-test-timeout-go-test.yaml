@@ -1,0 +1,2 @@
+type: fixed
+title: "The test-timeout gate reads only the -timeout value of a go test command, so values such as docker run --memory 64m on a line with a timeout flag no longer fail it"

@@ -81,6 +81,7 @@ func startLockHolder(t *testing.T, dir string) *lockHolder {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), lockHolderLifetime)
+	// Raw exec: tests directory locking concurrently; background child requires interactive pipes and outlives startLockHolder.
 	cmd := exec.CommandContext(ctx, executable, "-test.run=^TestDirectoryLockHolderProcess$", "-test.count=1", "--", lockHolderRole, dir)
 	cmd.Env = append(os.Environ(), "GOCOVERDIR="+t.TempDir())
 	holder := &lockHolder{cmd: cmd, stderr: &bytes.Buffer{}, cancel: cancel}

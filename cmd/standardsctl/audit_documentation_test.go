@@ -734,3 +734,35 @@ func TestAuditDocumentationGateManagedGitIgnoreBlockHistory(t *testing.T) {
 		}
 	})
 }
+
+func TestAuditDocumentationScratchIgnores_SymlinkRefused(t *testing.T) {
+	manifest := &config.Manifest{Facets: []string{"docs:seo-portal"}}
+	t.Run("symlinked .workingdir fails with clear notice without exit 128", func(t *testing.T) {
+		root := documentationAuditFixture(t)
+		target := t.TempDir()
+		if err := os.Symlink(target, filepath.Join(root, ".workingdir")); err != nil {
+			t.Fatal(err)
+		}
+		err := docGate(t.Context(), manifest, root)
+		if err == nil {
+			t.Fatal("expected failure on symlinked .workingdir")
+		}
+		want := "[FAIL] .workingdir is a symbolic link: the directory rule /.workingdir/ does not ignore a link, so git would add it; remove the link (state commands in a linked worktree use the main worktree's .workingdir by themselves)"
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("want error containing %q, got: %v", want, err)
+		}
+		if strings.Contains(err.Error(), "exit status 128") {
+			t.Fatalf("error must not contain 'exit status 128': %v", err)
+		}
+	})
+
+	t.Run("real .workingdir directory passes as today", func(t *testing.T) {
+		root := documentationAuditFixture(t)
+		if err := os.MkdirAll(filepath.Join(root, ".workingdir"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := docGate(t.Context(), manifest, root); err != nil {
+			t.Fatalf("real directory failed: %v", err)
+		}
+	})
+}

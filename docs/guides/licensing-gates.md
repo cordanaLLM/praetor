@@ -24,14 +24,24 @@ A newer push to a pull request cancels its older `reuse.yml` run, and the workfl
 
 The `reuse.yml` workflow also triggers on `merge_group`, so its check reports for a merge group when the repository declares a merge queue ([Merge queue](../adoption.md#merge-queue)). An unedited copy of the earlier text without the trigger refreshes without `--force` for a repository whose default branch is `main`; for another default branch it needs `--force`.
 
-Adoption writes two jobs, both at the one REUSE pin, `supplychain.ReuseActionVersion` in
-[`internal/supplychain/reuse_lint.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/supplychain/reuse_lint.go):
+Adoption writes two jobs:
 
-- `.github/workflows/reuse.yml`, whose **REUSE lint** job runs `fsfe/reuse-action` within
-  `timeout-minutes: 10` and becomes a required status check of the branch ruleset adoption
-  renders. Both `actions/checkout` and `fsfe/reuse-action` are pinned by full commit SHA with a
-  version comment (`supplychain.ReuseActionPinnedRef` and the checkout pin from
-  `tools/markdownlint/assets.go`, HISS-11), satisfying strict SHA-pinning organization policies.
+- `.github/workflows/reuse.yml`, whose **REUSE lint** job installs reuse from the hash-pinned
+  lock `.config/reuse/requirements.txt` (compiled from `.config/reuse/requirements.in`, reuse
+  6.2.0, kept current by the same Renovate pip-compile rule as the hook-lint lock) with
+  `pip install --require-hashes` into a virtual environment and runs `reuse lint`, within
+  `timeout-minutes: 10`. No container action runs and no image is pulled from Docker Hub, whose
+  pull failures once failed an adopter's required check (#1128); `TestEmittedWorkflows_RefuseContainerActions`
+  refuses a container action in any emitted workflow, and `TestReuseRequirementsLockMatchesCommitted`
+  keeps the emitted lock equal to the engine's. The job becomes a required status check of the
+  branch ruleset adoption renders. `actions/checkout` is pinned by full commit SHA with a version
+  comment (the checkout pin from `tools/markdownlint/assets.go`, HISS-11).
+  Where another workflow of the repository already runs a REUSE lint job (a job named `reuse` or
+  `REUSE lint`, a step running `reuse lint`, or `fsfe/reuse-action`), adoption writes no
+  `reuse.yml`, so no required check runs twice (#1327,
+  `TestAdopt_AdopterWithExistingReuseJob_NoSecondJobEmitted`). The previous rendering, which ran
+  `fsfe/reuse-action`, is recorded, so an adopter that holds it unedited is refreshed on a plain
+  adoption (`TestAdopt_RefreshesMainsPriorDigestPinnedReuseWorkflow`).
   It has the hosted gate shape every emitted gate shares
   (`internal/ghworkflow/hostedgate.go`): it runs on pull request activity and on a push to the
   default branch that ruleset protects, its first step fails a draft run by design (on `bash`,
@@ -43,8 +53,9 @@ Adoption writes two jobs, both at the one REUSE pin, `supplychain.ReuseActionVer
   installed, skips with the reason where reuse is not installed, and fails, naming the pin, on
   another reuse major.
 
-`praetorctl bump` expects the same tag, and praetor's own Compliance workflow runs it
-(`TestReuseActionPinMatchesRegistryAndEngine` in `internal/bump/release_pins_test.go`).
+Praetor's own Compliance workflow installs the same lock the same way. The `reuse-lint` hook job
+names the reuse release line by `supplychain.ReuseActionVersion`, and `praetorctl bump` expects
+the same tag (`TestReuseActionPinMatchesRegistryAndEngine` in `internal/bump/release_pins_test.go`).
 
 The workflow follows the root on every adoption. Praetor's unedited rendering, for the current
 default branch or another one, is refreshed to the current default branch without `--force`.

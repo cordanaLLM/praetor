@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 type skillCommand struct {
@@ -130,12 +132,16 @@ const skillHelpTimeout = 60 * time.Second
 func runSkillHelp(tool string, args []string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), skillHelpTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, tool, args...)
-	cmd.Env = append(os.Environ(), "DOTNET_NOLOGO=1", "DOTNET_CLI_TELEMETRY_OPTOUT=1",
+	cmdEnv := append(os.Environ(), "DOTNET_NOLOGO=1", "DOTNET_CLI_TELEMETRY_OPTOUT=1",
 		"DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1", "DOTNET_GENERATE_ASPNET_CERTIFICATE=false")
-	output, err := cmd.CombinedOutput()
+	cmdCtx, err := util.WithCommandEnvironment(ctx, cmdEnv)
 	if err != nil {
-		return "", fmt.Errorf("run %s %s: %w: %s", tool, strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+		return "", err
+	}
+	res, runErr := util.RunCommandBytes(cmdCtx, "", tool, util.MaxCommandOutputBytes, args...)
+	output := append(res.Stdout, res.Stderr...)
+	if runErr != nil {
+		return "", fmt.Errorf("run %s %s: %w: %s", tool, strings.Join(args, " "), runErr, strings.TrimSpace(string(output)))
 	}
 	return string(output), nil
 }

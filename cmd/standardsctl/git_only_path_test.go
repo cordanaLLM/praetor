@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // maxGitCandidates bounds the git executables gitOnlyPath considers (HISS-02).
@@ -96,9 +98,12 @@ func gitRunsAlone(bin, candidate string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), gitProbeTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, link, "--version")
-	cmd.Env = append(withoutPath(os.Environ()), "PATH="+bin)
-	out, err := cmd.CombinedOutput()
+	envCtx, err := util.WithCommandEnvironment(ctx, append(withoutPath(os.Environ()), "PATH="+bin))
+	if err != nil {
+		return fmt.Errorf("git environment: %w", err)
+	}
+	res, err := util.RunCommandBytes(envCtx, "", link, util.MaxCommandOutputBytes, "--version")
+	out := append(res.Stdout, res.Stderr...)
 	if err != nil {
 		return fmt.Errorf("git --version from an isolated PATH: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
@@ -126,8 +131,8 @@ func TestGitOnlyPath_Positive_LeavesARunningGitAndNoGh(t *testing.T) {
 	if err != nil {
 		t.Fatalf("no git on the isolated PATH: %v", err)
 	}
-	out, err := exec.Command(git, "--version").CombinedOutput()
-	if err != nil || !strings.HasPrefix(string(out), "git version ") {
+	out, err := util.RunCommand(t.Context(), "", git, "--version")
+	if err != nil || !strings.HasPrefix(out, "git version ") {
 		t.Fatalf("the isolated git does not run: %v (%s)", err, out)
 	}
 	if gh, err := exec.LookPath("gh"); err == nil {

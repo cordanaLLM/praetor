@@ -25,6 +25,8 @@ func TestFixtureCommandError_Positive_NamesTheBoundThatCutTheCommand(t *testing.
 	ctx, cancel := context.WithTimeout(context.Background(), bound)
 	defer cancel()
 	start := time.Now()
+	// Raw exec on purpose: FixtureCommandError classifies the bare *exec.ExitError of a context kill;
+	// util.RunCommand wraps that error and signals the process group, which is not the case under test.
 	out, runErr := exec.CommandContext(ctx, "git", slowGit...).CombinedOutput()
 	err := FixtureCommandError(ctx, bound, time.Since(start), runErr)
 	if err == nil || !strings.Contains(err.Error(), "cut by the 300ms fixture bound after ") {
@@ -41,6 +43,8 @@ func TestFixtureCommandError_Negative_KeepsGitsOwnFailure(t *testing.T) {
 	requireGit(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
+	// Raw exec on purpose: the case is that FixtureCommandError leaves git's own bare error unchanged,
+	// which util's diagnostic wrapping would already have changed.
 	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "refs/heads/does-not-exist")
 	cmd.Dir = t.TempDir()
 	cmd.Env = HermeticGitEnv(t)

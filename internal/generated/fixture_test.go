@@ -97,15 +97,17 @@ func (f *fixture) read(t *testing.T, rel string) string {
 // git runs one fixture git command under the hermetic environment.
 func (f *fixture) git(t *testing.T, args ...string) string {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir, cmd.Env = f.dir, f.env
-	out, err := cmd.CombinedOutput()
+	cmdCtx, envErr := util.WithCommandEnvironment(ctx, f.env)
+	if envErr != nil {
+		t.Fatal(envErr)
+	}
+	out, err := util.RunGit(cmdCtx, f.dir, args...)
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
-	return string(out)
+	return out
 }
 
 // branch starts a branch from main, applies files (a nil value removes the file) and commits.

@@ -35,11 +35,14 @@ func runTool(t *testing.T, name, dir string, env []string, args ...string) (stri
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), fixtureGitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	cmd.Env = env
-	out, err := cmd.CombinedOutput()
-	return strings.TrimSpace(string(out)), err
+	// The environment under test reaches the child unchanged: util passes a WithCommandEnvironment
+	// list as given, without the git-variable filter it applies to the ambient environment.
+	ctx, err := util.WithCommandEnvironment(ctx, env)
+	if err != nil {
+		return "", err
+	}
+	res, err := util.RunCommandBytes(ctx, dir, name, util.MaxCommandOutputBytes, args...)
+	return strings.TrimSpace(string(res.Stdout) + string(res.Stderr)), err
 }
 
 // hostileGitEnvironment makes the process environment carry what a developer or an

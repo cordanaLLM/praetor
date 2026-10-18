@@ -135,6 +135,15 @@ func printLoweredParameters(ruleset string, lowered []forge.LoweredParameter) {
 	}
 }
 
+// printKeptParameters names each rendered parameter a ruleset write kept from a stricter
+// live value instead of overwriting it with the declared one (forge.GitHubDriver.ReconcileProtectionReport).
+func printKeptParameters(ruleset string, kept []forge.KeptParameter) {
+	for i := 0; i < len(kept); i++ {
+		fmt.Printf("  [KEPT] Ruleset %q rule %s: %s stays %v on GitHub, stricter than the declared %v\n",
+			ruleset, kept[i].Rule, kept[i].Parameter, kept[i].Live, kept[i].Declared)
+	}
+}
+
 // formatProtectionFinding renders one compared property as a report line.
 func formatProtectionFinding(finding forge.ProtectionFinding) string {
 	return protectionTags[finding.Verdict] + " " + describeProtectionFinding(finding)

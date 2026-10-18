@@ -1,0 +1,2 @@
+type: fixed
+title: "State commands run in a linked worktree read and write the main worktree's ledger"

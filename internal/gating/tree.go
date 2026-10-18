@@ -17,6 +17,9 @@ const (
 	// BaselineFile is the HISS debt baseline the HISS stage ratchets against. It raises the
 	// number of violations the stage admits, so the gate trusts it only as HEAD carries it.
 	BaselineFile = ".standards-baseline.json"
+	// GosecBaselineFile is the legacy technical debt baseline the Security and SCA stage ratchets
+	// against for gosec findings.
+	GosecBaselineFile = ".gosec-baseline.json"
 	// TreePreconditionStage names the stage a run that could mint a receipt records when it
 	// refuses a working tree that does not match HEAD.
 	TreePreconditionStage = "Clean Tree Precondition"
@@ -34,6 +37,9 @@ var ErrUncleanTree = errors.New("the gate certifies only a working tree that mat
 // file. A manifest that does not load names no document here; the security stage fails on it.
 func subtractiveInputs(repoDir string) []string {
 	inputs := []string{BaselineFile, GosecConfigFile}
+	if util.FileExists(filepath.Join(repoDir, GosecBaselineFile)) {
+		inputs = append(inputs, GosecBaselineFile)
+	}
 	if vex, err := config.RepositoryGoVEXPath(repoDir); err == nil {
 		inputs = append(inputs, vex)
 	}

@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/adr"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestDecisionsExportCommandWritesRepositoryCorpus(t *testing.T) {
@@ -69,13 +69,13 @@ func TestDecisionsPinCheckCommandCorrectBinaryExitZero(t *testing.T) {
 // Positive: decisions serve exits with decided-mcp's own status and adds no text. Negative:
 // another command that wraps a failed child keeps exit 1 and its error text.
 func TestServerExitStatusPassesOnlyTheServerStatus(t *testing.T) {
-	var command *exec.Cmd
+	var runErr error
 	if runtime.GOOS == "windows" {
-		command = exec.Command("cmd", "/c", "exit 23")
+		_, runErr = util.RunCommand(t.Context(), "", "cmd", "/c", "exit 23")
 	} else {
-		command = exec.Command("/bin/sh", "-c", "exit 23")
+		_, runErr = util.RunCommand(t.Context(), "", "/bin/sh", "-c", "exit 23")
 	}
-	err := fmt.Errorf("run decided-mcp: %w", command.Run())
+	err := fmt.Errorf("run decided-mcp: %w", runErr)
 	var stderr bytes.Buffer
 	if got := commandExitCode(&stderr, childExitStatus(err)); got != 23 || stderr.Len() != 0 {
 		t.Fatalf("server exit = %d, stderr %q; want 23 and no text", got, stderr.String())

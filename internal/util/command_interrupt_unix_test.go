@@ -130,6 +130,7 @@ func startInterruptHelper(t *testing.T, mode, script string, extraEnv ...string)
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
+	// Raw exec: tests interrupt signal forwarding directly; routing through util would be circular and context-cancel would kill helper prematurely.
 	helper := exec.Command(binary, interruptHelperRun)
 	helper.Env = append(os.Environ(), "PRAETOR_COMMAND_INTERRUPT_TEST="+mode,
 		"PRAETOR_COMMAND_INTERRUPT_DIR="+dir, "PRAETOR_COMMAND_INTERRUPT_SCRIPT="+script,

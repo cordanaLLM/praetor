@@ -3,12 +3,14 @@ package main
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/gating"
 )
 
 // runBaselineCmd dispatches the baseline command for the fixture with extra flags.
@@ -311,4 +313,44 @@ func TestParseBaselineMode_Boundary_TerminatorKeepsFlagShapedTokenPositional(t *
 	if mode.record {
 		t.Error("a --record token after the terminator must not bind")
 	}
+}
+
+func TestBaselineRecord_Gosec_Positive(t *testing.T) {
+	if _, err := exec.LookPath("gosec"); err != nil {
+		t.Skip("gosec not installed")
+	}
+	f := newAuditFixture(t)
+	writeFixtureFile(t, f.dir, "go.mod", "module example.com/widget\n\ngo 1.22\n")
+	writeFixtureFile(t, f.dir, gating.GosecConfigFile, "{\n  \"global\": {\n    \"exclude\": \"\"\n  }\n}\n")
+	writeFixtureFile(t, f.dir, "vuln.go", `package widgets
+
+import "os/exec"
+
+func runVuln(arg string) error {
+	return exec.Command("sh", "-c", arg).Run()
+}
+`)
+	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "add", "."); err != nil {
+		t.Fatalf("git add: %v (%s)", err, out)
+	}
+
+	out, err := runBaselineCmd(t, f, "--record", "--allow-increase", "--reason=legacy gosec debt")
+	if err != nil {
+		t.Fatalf("record with gosec: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Gosec baseline successfully updated", "Total: 1 infractions, previously 0")
+
+	gosecBase, err := baseline.LoadBaseline(filepath.Join(f.dir, gating.GosecBaselineFile))
+	if err != nil {
+		t.Fatalf("load gosec baseline: %v", err)
+	}
+	if gosecBase.TotalInfractions != 1 || gosecBase.Infractions[0].RuleID != "G204" {
+		t.Fatalf("unexpected gosec baseline: %+v", gosecBase)
+	}
+
+	inspectOut, err := runBaselineCmd(t, f)
+	if err != nil {
+		t.Fatalf("inspect baseline: %v", err)
+	}
+	mustContain(t, inspectOut, "Gosec Technical Debt Baseline", "G204", "vuln.go")
 }

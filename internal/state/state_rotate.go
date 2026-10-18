@@ -103,7 +103,7 @@ func firstKeptEntry(size int, starts []int) int {
 // directory and returns that name. The name is claimed exclusively: an existing file is
 // never replaced, so archived history is only ever added, never overwritten or deleted.
 func archiveStateHistory(ctx context.Context, rootPath, archived string, now time.Time) (name string, err error) {
-	root, err := contextopt.OpenDirectoryIn(ctx, rootPath, WorkingDirName)
+	root, err := contextopt.OpenDirectoryIn(ctx, ledgerRoot(ctx, rootPath), WorkingDirName)
 	if err != nil {
 		return "", fmt.Errorf("open %s for the STATE.md history archive: %w", WorkingDirName, err)
 	}

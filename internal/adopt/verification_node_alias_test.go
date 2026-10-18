@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Tests for #1264: a test-recipe script that only runs the other one is not run a second time.
@@ -136,11 +138,10 @@ func TestNodeAlias_PlantedStubRunsTheSuiteOnce(t *testing.T) {
 
 func runPlannedCommand(t *testing.T, root string, command []string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
-	cmd.Dir = root
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("%v: %v\n%s", command, err, out)
+	res, err := util.RunCommandBytes(ctx, root, command[0], util.MaxCommandOutputBytes, command[1:]...)
+	if err != nil {
+		t.Fatalf("%v: %v\n%s", command, err, string(append(res.Stdout, res.Stderr...)))
 	}
 }

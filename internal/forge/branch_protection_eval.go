@@ -439,14 +439,34 @@ func evaluateUnenforcedPRParams(allowedMethods []string, extraApproval *bool) []
 	return findings
 }
 
+// isSubset reports whether every key in sub is also in super.
+func isSubset(sub, super map[string]bool) bool {
+	i := 0
+	for k := range sub {
+		if i >= maxPRParams {
+			break
+		}
+		i++
+		if !super[k] {
+			return false
+		}
+	}
+	return true
+}
+
 // compareRenderedPRParams compares parameters rendered by praetorctl with live values.
 func compareRenderedPRParams(allowedMethods []string, extraApproval *bool, liveParams map[string]any, label string) []ProtectionFinding {
 	var findings []ProtectionFinding
 	if len(allowedMethods) > 0 {
 		declaredSet := toSet(allowedMethods)
 		liveSet := extractStringSet(liveParams["allowed_merge_methods"])
-		verdict := ProtectionEnforced
-		if !maps.Equal(declaredSet, liveSet) {
+		var verdict ProtectionVerdict
+		switch {
+		case maps.Equal(declaredSet, liveSet):
+			verdict = ProtectionEnforced
+		case pullRequestParameterStricter("allowed_merge_methods", liveParams["allowed_merge_methods"], allowedMethods):
+			verdict = ProtectionStricter
+		default:
 			verdict = ProtectionDrift
 		}
 		findings = append(findings, ProtectionFinding{
@@ -460,8 +480,13 @@ func compareRenderedPRParams(allowedMethods []string, extraApproval *bool, liveP
 	if extraApproval != nil {
 		declared := *extraApproval
 		live := toBool(liveParams["require_extra_approval_for_unattributed_changes"])
-		verdict := ProtectionEnforced
-		if declared != live {
+		var verdict ProtectionVerdict
+		switch {
+		case declared == live:
+			verdict = ProtectionEnforced
+		case pullRequestParameterStricter("require_extra_approval_for_unattributed_changes", live, declared):
+			verdict = ProtectionStricter
+		default:
 			verdict = ProtectionDrift
 		}
 		findings = append(findings, ProtectionFinding{
@@ -480,13 +505,13 @@ func compareRenderedPRParams(allowedMethods []string, extraApproval *bool, liveP
 // required_review_thread_resolution: true) against live values.
 func compareStaticPRParams(liveParams map[string]any, label string) []ProtectionFinding {
 	var findings []ProtectionFinding
-	if toBool(liveParams["require_last_push_approval"]) {
+	if pullRequestParameterStricter("require_last_push_approval", liveParams["require_last_push_approval"], false) {
 		findings = append(findings, ProtectionFinding{
 			Property:   "require_last_push_approval",
 			Declared:   "false",
 			Live:       "true",
 			EnforcedBy: []string{label},
-			Verdict:    ProtectionDrift,
+			Verdict:    ProtectionStricter,
 		})
 	}
 	if raw, ok := liveParams["required_review_thread_resolution"]; ok && !toBool(raw) {
@@ -499,6 +524,23 @@ func compareStaticPRParams(liveParams map[string]any, label string) []Protection
 		})
 	}
 	return findings
+}
+
+// liveOnlyParamVerdict classifies a live parameter absent from the render: stricter if live
+// tightens beyond forge defaults, drift otherwise.
+func liveOnlyParamVerdict(key string, val any) ProtectionVerdict {
+	switch key {
+	case "allowed_merge_methods":
+		defaultSet := []string{"merge", "squash", "rebase"}
+		if pullRequestParameterStricter(key, val, defaultSet) {
+			return ProtectionStricter
+		}
+	case "require_extra_approval_for_unattributed_changes":
+		if pullRequestParameterStricter(key, val, false) {
+			return ProtectionStricter
+		}
+	}
+	return ProtectionDrift
 }
 
 // compareLiveOnlyPRParams checks live parameters not carried by the render against forge defaults.
@@ -523,7 +565,7 @@ func compareLiveOnlyPRParams(allowedMethods []string, extraApproval *bool, liveP
 			Declared:   declaredDefault(key),
 			Live:       formatLiveValue(key, val),
 			EnforcedBy: []string{label},
-			Verdict:    ProtectionDrift,
+			Verdict:    liveOnlyParamVerdict(key, val),
 		})
 	}
 	return findings

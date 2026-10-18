@@ -49,8 +49,13 @@ func SyncState(ctx context.Context, rootPath string, sessionSummary string) (*St
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if _, err := InitWorkingDirIfAbsentContext(ctx, rootPath); err != nil {
-		return nil, err
+	if _, err := ResolveWorkingDir(ctx, rootPath); err != nil {
+		if _, initErr := InitWorkingDirIfAbsentContext(ctx, rootPath); initErr != nil {
+			return nil, initErr
+		}
+		if _, err := ResolveWorkingDir(ctx, rootPath); err != nil {
+			return nil, err
+		}
 	}
 
 	snap, err := InspectState(ctx, rootPath)
@@ -60,11 +65,12 @@ func SyncState(ctx context.Context, rootPath string, sessionSummary string) (*St
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	snap.StateHash, err = stateBinding(ctx, rootPath, snap)
+	lRoot := ledgerRoot(ctx, rootPath)
+	snap.StateHash, err = stateBinding(ctx, lRoot, snap)
 	if err != nil {
 		return nil, err
 	}
-	if err := appendStateLog(ctx, rootPath, snap, sessionSummary); err != nil {
+	if err := appendStateLog(ctx, lRoot, snap, sessionSummary); err != nil {
 		return snap, err
 	}
 	return snap, VerifyStateSync(ctx, rootPath)
@@ -84,7 +90,7 @@ func InspectState(ctx context.Context, rootPath string) (*StateSnapshot, error) 
 	if err := populateGitSnapshot(ctx, rootPath, snap); err != nil {
 		return nil, err
 	}
-	if err := populateLedgerSnapshot(ctx, rootPath, snap); err != nil {
+	if err := populateLedgerSnapshot(ctx, ledgerRoot(ctx, rootPath), snap); err != nil {
 		return nil, err
 	}
 	return snap, nil
@@ -154,7 +160,8 @@ func populateLedgerSnapshot(ctx context.Context, rootPath string, snap *StateSna
 }
 
 func appendStateLog(ctx context.Context, rootPath string, snap *StateSnapshot, summary string) error {
-	stateFile := filepath.Join(rootPath, WorkingDirName, "STATE.md")
+	lRoot := ledgerRoot(ctx, rootPath)
+	stateFile := filepath.Join(lRoot, WorkingDirName, "STATE.md")
 	content, err := contextopt.ReadSnapshot(ctx, stateFile)
 	if err != nil {
 		return fmt.Errorf("read STATE.md before append: %w", err)
@@ -162,7 +169,7 @@ func appendStateLog(ctx context.Context, rootPath string, snap *StateSnapshot, s
 	if size := len(entryFromSnapshot(snap, summary).render()); size > maxStateEntryBytes {
 		return fmt.Errorf("STATE.md entry is %d bytes, above the %d-byte bound for one entry; shorten the --log text", size, maxStateEntryBytes)
 	}
-	base, summary, err := rotateStateHistory(ctx, rootPath, supersededBase(content), snap, summary)
+	base, summary, err := rotateStateHistory(ctx, lRoot, supersededBase(content), snap, summary)
 	if err != nil {
 		return err
 	}

@@ -35,8 +35,8 @@ The policy is the one such a repository gets without configuring anything, per l
   plus the codes of #845 (S, RUF, PERF, ASYNC, C90) at the template's line length on
   Python 3.12, and `ruff format --check`. ruff's formatter reproduces black's, so the one
   formatting policy (black's default width) is checked by both tools; flake8 and E501 are
-  limits, not formats. The hook sources are formatted by black alone and keep their
-  long-standing scope.
+  limits, not formats. The hook sources are formatted by black alone, checked by flake8,
+  and held to ruff's PLR rules (adopter ignore of PLR0913 and PLR2004 applied).
 - YAML: yamllint in strict mode with its defaults.
 - Go: gofmt, gofumpt and `go vet` on each package directory alone, with no build tag.
 - Shell: shellcheck at its defaults.
@@ -85,7 +85,7 @@ GO_PINNED_TOOLS = ("gofumpt",)
 # compare, and required (not skipped) where PRAETOR_HOOK_LINT_BIN is set.
 SYSTEM_TOOLS = ("go", "gofmt", "shellcheck")
 # Lint names whose executable is not their own name.
-EXECUTABLE = {"ruff-check": "ruff", "ruff-format": "ruff", "go-vet": "go"}
+EXECUTABLE = {"ruff-check": "ruff", "ruff-format": "ruff", "ruff-plr": "ruff", "go-vet": "go"}
 # One lint run over a handful of small files; a hung tool must fail, not hang the gate.
 LINT_TIMEOUT_SECONDS = 120
 # Building and running the export compiles the registry's packages once.
@@ -93,6 +93,8 @@ EXPORT_TIMEOUT_SECONDS = 600
 MAX_REGISTRY_ASSETS = 4096
 FLAKE8_MAX_LINE = 100
 YAMLLINT_MAX_LINE = 80
+# Hook scripts use inline literals and multi-argument utilities (ignored by adopters, e.g. imago).
+RUFF_HOOK_PLR_IGNORE = ("PLR0913", "PLR2004")
 # black's default width, which ruff's formatter reproduces.
 BLACK_LINE_LENGTH = 88
 # The Python release every managed script must run on (#845).
@@ -311,6 +313,8 @@ class LintCase(unittest.TestCase):
                             "--target-version", RUFF_TARGET, "--select", rules, *paths]],
             "ruff-format": [[executable, "format", *ruff[1:], "--check",
                              "--line-length", str(width), *paths]],
+            "ruff-plr": [[executable, "check", *ruff[1:], "--select", "PLR",
+                          "--ignore", ",".join(RUFF_HOOK_PLR_IGNORE), *paths]],
             "gofmt": [[executable, "-l", "."]],
             "gofumpt": [[executable, "-l", "."]],
             "go-vet": [[executable, "vet", f"./{directory}"] for directory in go_package_dirs(paths)],
@@ -385,6 +389,9 @@ class EmittedSourcesTest(LintCase):
 
     def test_shellcheck_accepts_the_engine_launcher(self):
         self.assertLintPasses("shellcheck", self.hooks(("engine.sh",)))
+
+    def test_ruff_plr_accepts_hook_python(self):
+        self.assertLintPasses("ruff-plr", self.hooks((".py",)))
 
 
 class ManagedAssetsTest(LintCase):
@@ -490,6 +497,12 @@ class PolicyFixtureTest(LintCase):
         self.assertLintPasses("ruff-format", {"wrapped.py": wrapped})
         fits = "value = foo(\n    1\n)\n"
         self.assertLintFails("ruff-format", {"fits.py": fits}, "would be reformatted")
+
+    def test_ruff_plr_rejects_too_many_returns(self):
+        source = ("def f(x):\n" +
+                  "".join(f"    if x == {i}: return {i}\n" for i in range(7)) +
+                  "    return -1\n")
+        self.assertLintFails("ruff-plr", {"returns.py": source}, "PLR0911")
 
     def test_gofmt_rejects_unformatted_go(self):
         self.assertLintPasses("gofmt", {"ok/main.go": "package main\n\nfunc main() {\n\tprintln(1)\n}\n"})
@@ -661,7 +674,7 @@ class ResolutionTest(unittest.TestCase):
         self.assertTrue(required)
 
     def test_lint_names_map_to_their_executables(self):
-        for name in ("ruff-check", "ruff-format"):
+        for name in ("ruff-check", "ruff-format", "ruff-plr"):
             self.assertEqual(EXECUTABLE[name], "ruff")
         self.assertEqual(EXECUTABLE["go-vet"], "go")
 

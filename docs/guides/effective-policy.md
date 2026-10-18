@@ -90,6 +90,91 @@ and drops one once a workflow runs the linter
 (`internal/adopt/linters_exception.go`, `TestAdopt_DeclaredLintersExceptionsFreshAdoption`,
 `TestAdopt_DeclaredLintersReAdoptDropsWhenWorkflowAdded`).
 
+### Per-file linter exclusions
+
+When a repository configures exclusions for declared linters in `.golangci.yml` or
+`.golangci.yaml` (`linters.exclusions.rules[]`), each rule must carry a category and expiry
+comment directly above the list item or trailing on its first line (`internal/adopt/linters_exclusion.go`,
+`TestAuditDeclaredLinters_Exclusion_Passing`):
+
+```yaml
+linters:
+  exclusions:
+    warn-unused: true
+    rules:
+      # category C, entered 2026-10-18, expires 2026-10-28, #133
+      - path: internal/util/
+        linters:
+          - gocyclo
+```
+
+Comment format: `category <A|B|C|D>, [entered YYYY-MM-DD, ]expires YYYY-MM-DD, #<issue number>`.
+The validation reuses exception category bounds (`internal/config/exceptions.go`): category A allows up
+to 90 days, B allows 3 days, C allows 10 days, and D allows 120 days. A rule without the comment,
+with an invalid date or category, with an expired date, or exceeding its category interval fails the audit
+naming the file, line, linters, path, and failure reason (`TestAuditDeclaredLinters_Exclusion_Planted_MissingComment`,
+`TestAuditDeclaredLinters_Exclusion_Planted_ExpiredRule`,
+`TestAuditDeclaredLinters_Exclusion_Planted_CategoryCExceededInterval`). Rules targeting linters not
+declared for the repository are ignored (`TestAuditDeclaredLinters_Exclusion_Boundary_UndeclaredLinterIgnored`).
+
+When golangci-lint configuration is stored in `.golangci.toml` or `.golangci.json`, exclusions cannot
+be inspected with YAML comment preservation; the audit reports `[SKIP] Declared linters: exclusions not read (format)`
+as a named gap rather than silently passing (`TestAuditDeclaredLinters_Exclusion_Boundary_TomlConfigGap`).
+
+When `praetorctl audit` is invoked with `--linter-log <path>` pointing to a golangci-lint log output
+(stderr), the audit verifies that every exclusion rule matches at least one finding. The configuration
+must enable `linters.exclusions.warn-unused: true` so golangci-lint logs rules that skipped nothing
+(`Skipped 0 issues by rules: [...]`). Rules that match no finding fail with `matches no finding: remove it`
+(`TestAuditDeclaredLinters_Exclusion_Planted_StaleRule`).
+The log must come from a run over the whole repository (`./...`): a run over some packages logs
+`Skipped 0 issues` for every rule whose file lies outside them, and each would read as stale.
+Without a log, the audit records the gap with `[SKIP] Declared linters: stale check not run: no lint log given`.
+When `linters.exclusions.warn-unused` is not true, the audit records the gap with
+`[SKIP] Declared linters: stale check not possible: linters.exclusions.warn-unused is off`.
+
+#### Generated test exceptions block and ratchet
+
+When replacing file-class exclusions (such as `_test\.go`) with granular, dated per-file exceptions,
+`praetorctl linters exceptions` generates and ratchets an anchored exceptions block inside
+`linters.exclusions.rules[]` (`internal/adopt/linters_generated_exceptions.go`,
+`TestGenerateExceptions_FormatAndOrder_Positive`, `TestGenerateExceptions_Ratchet_Positive_LowerCountRenews`):
+
+```yaml
+linters:
+  exclusions:
+    rules:
+      # hand rules stay outside the block
+      - path: internal/util/
+        linters:
+          - forbidigo
+      # praetor:generated-exceptions begin (praetorctl linters exceptions; never edit by hand)
+      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      - path: ^cmd/standards-lsp/fuzz_test\.go$
+        linters:
+          - gocognit
+      # praetor:generated-exceptions end
+```
+
+The block is bounded by comment markers `# praetor:generated-exceptions begin (praetorctl linters exceptions; never edit by hand)`
+and `# praetor:generated-exceptions end`. Each rule targets exactly one `(file, linter)` pair with an anchored regular expression
+(`^<QuoteMeta>$`) sorted by file path then linter name, carrying category C (10-day limit) and issue provenance (#1030).
+
+Two commands drive generation and ratcheting:
+
+1. `praetorctl linters exceptions strip-config --out <path>`: writes `.golangci.yml` without the generated block and
+   with `run.relative-path-mode: gitroot`, allowing an unconstrained lint run to report all findings hidden by the block
+   (`TestStripGolangciConfig_3D`).
+2. `praetorctl linters exceptions generate --report <report.json> --issue <N> [--category C] [--today YYYY-MM-DD] [--write]`:
+   reads a golangci-lint v2 JSON report and applies ratchet invariants (`TestGenerateExceptions_Ratchet_Positive_LowerCountRenews`,
+   `TestGenerateExceptions_Ratchet_Negative_NewFindingRefused`, `TestGenerateExceptions_Ratchet_Negative_ExpiredRefused`):
+   - **New finding**: a pair present in the report but absent from the block causes exit 3 (`new finding in <file> (<linter>): fix it, a generated exception never grows`).
+   - **Decreased count**: clean pairs drop out, and all remaining pairs renew their entered and expiry dates.
+   - **Unchanged count, active entries**: no changes written, exits 0 (`unchanged: N entries live until <date>`).
+   - **Unchanged count, expired entry**: refusal with exit 3 (`count did not drop: N recorded, M measured; renewal needs a lower count`).
+
+The workflow is automated via the repository target `make lint-exceptions` (`Makefile`), which strips configuration to
+a temporary directory, executes the pinned `golangci-lint run` to generate the JSON report, and runs `praetorctl linters exceptions generate --write --issue 1030`.
+
 ## Sources and strictness
 
 Resolution uses these sources in a fixed order:

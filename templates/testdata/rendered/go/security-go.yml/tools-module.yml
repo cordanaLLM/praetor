@@ -36,6 +36,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Setup Go
         if: github.event.pull_request.draft != true
         uses: actions/setup-go@v7
@@ -77,9 +78,13 @@ jobs:
           m=tools/go/go.mod
           go install -modfile="$m" golang.org/x/vuln/cmd/govulncheck
           go install -modfile="$m" github.com/securego/gosec/v2/cmd/gosec
+          go install -modfile="$m" github.com/zricethezav/gitleaks/v8
       - name: Run govulncheck
         if: github.event.pull_request.draft != true
         run: govulncheck ./...
       - name: Run gosec
         if: github.event.pull_request.draft != true
         run: gosec -conf .gosec.json ./...
+      - name: Run gitleaks
+        if: github.event.pull_request.draft != true
+        run: go run -tags=secretsgate ./tools/secrets/gate

@@ -18,6 +18,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -55,10 +56,13 @@ func stageAdoptPaths(t *testing.T, dir string, paths ...string) {
 	gitPath := requireGit(t)
 	args := []string{"-C", dir, "add", "--"}
 	args = append(args, paths...)
-	cmd := exec.Command(gitPath, args...)
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("stage adopted paths: %v (%s)", err, output)
+	ctx, err := util.WithCommandEnvironment(t.Context(), append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := util.RunCommandBytes(ctx, "", gitPath, util.MaxCommandOutputBytes, args...)
+	if err != nil {
+		t.Fatalf("stage adopted paths: %v (%s)", err, string(append(res.Stdout, res.Stderr...)))
 	}
 }
 

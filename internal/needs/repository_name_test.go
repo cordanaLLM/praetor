@@ -11,6 +11,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // repositoryNameFixtures writes one repository per analyzer that names a repository after
@@ -172,9 +173,12 @@ func identityCheckout(t *testing.T, dir, remote, manifest string) func(string, .
 		t.Helper()
 		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, "git", append([]string{"-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false"}, args...)...)
-		cmd.Dir, cmd.Env = in, env
-		if out, err := cmd.CombinedOutput(); err != nil {
+		cmdCtx, envErr := util.WithCommandEnvironment(ctx, env)
+		if envErr != nil {
+			t.Fatal(envErr)
+		}
+		gitArgs := append([]string{"-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false"}, args...)
+		if out, err := util.RunGit(cmdCtx, in, gitArgs...); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}

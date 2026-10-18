@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -43,12 +44,18 @@ func mergeYAML(ctx context.Context, registry Registry, existing []byte) ([]byte,
 	if err = errors.Join(err, encoder.Close()); err != nil {
 		return nil, errors.New("could not encode Continue configuration")
 	}
-	return output.Bytes(), nil
+	return util.EnsureYAMLDocumentStart(output.Bytes()), nil
 }
+
+const yamlSPDXHeader = LicenseFileCopyrightText + "\n#\n" + LicenseIdentifier
 
 func readYAML(ctx context.Context, raw []byte) (*yaml.Node, error) {
 	if len(raw) == 0 {
-		return &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}, nil
+		return &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{
+			Kind:        yaml.MappingNode,
+			Tag:         "!!map",
+			HeadComment: yamlSPDXHeader,
+		}}}, nil
 	}
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
 	var document yaml.Node

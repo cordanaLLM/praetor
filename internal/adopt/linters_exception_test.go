@@ -79,7 +79,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - run: gitleaks detect --verbose
+      - run: gitleaks detect --verbose --log-opts="--full-history --all -m"
 `)
 
 	source := newLintersLockSource(t)
@@ -133,7 +133,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - run: gitleaks detect --verbose
+      - run: gitleaks detect --verbose --log-opts="--full-history --all -m"
 `)
 	adoptWithSource(t, repoPath, source, true)
 	afterExceptions := readDeclaredLinterExceptions(t, repoPath)

@@ -64,14 +64,14 @@ func TestMergeRuleset_Boundary_MalformedAndOversizedLiveRulesets(t *testing.T) {
 		"required_status_checks is not an array": `{"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":"CI"}}]}`,
 		"exceeds 256 entries":                    `{"conditions":{"ref_name":{"include":[` + strings.Repeat(`"r",`, maxRulesetRefs) + `"r"]}}}`,
 	} {
-		if _, _, err := mergeRuleset(mustJSONObject(t, live), desired); err == nil || !strings.Contains(err.Error(), needle) {
+		if _, _, _, err := mergeRuleset(mustJSONObject(t, live), desired); err == nil || !strings.Contains(err.Error(), needle) {
 			t.Errorf("want error containing %q, got %v", needle, err)
 		}
 	}
 	// An empty live ruleset merges to the desired document itself.
-	merged, lowered, err := mergeRuleset(map[string]any{}, desired)
-	if err != nil || len(lowered) != 0 {
-		t.Fatalf("empty live ruleset: %v, lowered %v", err, lowered)
+	merged, lowered, kept, err := mergeRuleset(map[string]any{}, desired)
+	if err != nil || len(lowered) != 0 || len(kept) != 0 {
+		t.Fatalf("empty live ruleset: %v, lowered %v, kept %v", err, lowered, kept)
 	}
 	if err := rulesetConverged(merged, desired); err != nil {
 		t.Fatalf("merge of an empty live ruleset does not converge: %v", err)
@@ -84,11 +84,11 @@ func reviewRuleset(t *testing.T, params string) map[string]any {
 	return mustJSONObject(t, `{"name":"p","target":"branch","enforcement":"active","rules":[{"type":"pull_request","parameters":`+params+`}]}`)
 }
 
-// mergedReviewParameters merges desired into live and returns the pull_request parameters and
-// the parameters the merge lowered, each as rule.parameter=live->declared.
-func mergedReviewParameters(t *testing.T, live, desired map[string]any) (map[string]any, []string) {
+// mergedReviewParameters merges desired into live and returns the pull_request parameters,
+// the lowered parameters, and the kept parameters.
+func mergedReviewParameters(t *testing.T, live, desired map[string]any) (map[string]any, []string, []string) {
 	t.Helper()
-	merged, lowered, err := mergeRuleset(live, desired)
+	merged, lowered, kept, err := mergeRuleset(live, desired)
 	if err != nil {
 		t.Fatalf("merge: %v", err)
 	}
@@ -104,31 +104,39 @@ func mergedReviewParameters(t *testing.T, live, desired map[string]any) (map[str
 	for _, p := range lowered {
 		names = append(names, fmt.Sprintf("%s.%s=%v->%v", p.Rule, p.Parameter, p.Live, p.Declared))
 	}
-	return params, names
+	keptNames := make([]string, 0, len(kept))
+	for _, p := range kept {
+		keptNames = append(keptNames, fmt.Sprintf("%s.%s=%v->%v", p.Rule, p.Parameter, p.Live, p.Declared))
+	}
+	return params, names, keptNames
 }
 
 // Positive: a declared relaxation applies, and each live setting stricter than the rendered one
-// is reported as lowered, so a merge never lowers a review setting silently (#154).
+// is reported as lowered, while kept stricter settings stay and are reported as kept.
 func TestMergeRuleset_Positive_AppliesAndReportsLoweredParameters(t *testing.T) {
 	live := reviewRuleset(t, `{"required_approving_review_count":3,"dismiss_stale_reviews_on_push":true,
 	 "require_code_owner_review":true,"require_last_push_approval":true,"required_review_thread_resolution":true}`)
 	desired := reviewRuleset(t, `{"required_approving_review_count":0,"dismiss_stale_reviews_on_push":false,
 	 "require_code_owner_review":false,"require_last_push_approval":false,"required_review_thread_resolution":true}`)
-	params, lowered := mergedReviewParameters(t, live, desired)
+	params, lowered, kept := mergedReviewParameters(t, live, desired)
 	for key, want := range map[string]string{
 		"required_approving_review_count": "0", "dismiss_stale_reviews_on_push": "false",
-		"require_code_owner_review": "false", "require_last_push_approval": "false", "required_review_thread_resolution": "true",
+		"require_code_owner_review": "false", "require_last_push_approval": "true", "required_review_thread_resolution": "true",
 	} {
 		if got := fmt.Sprint(params[key]); got != want {
-			t.Errorf("%s = %s, want the declared %s", key, got, want)
+			t.Errorf("%s = %s, want %s", key, got, want)
 		}
 	}
-	want := []string{
+	wantLowered := []string{
 		"pull_request.required_approving_review_count=3->0", "pull_request.dismiss_stale_reviews_on_push=true->false",
-		"pull_request.require_code_owner_review=true->false", "pull_request.require_last_push_approval=true->false",
+		"pull_request.require_code_owner_review=true->false",
 	}
-	if fmt.Sprint(lowered) != fmt.Sprint(want) {
-		t.Errorf("lowered = %v, want %v", lowered, want)
+	if fmt.Sprint(lowered) != fmt.Sprint(wantLowered) {
+		t.Errorf("lowered = %v, want %v", lowered, wantLowered)
+	}
+	wantKept := []string{"pull_request.require_last_push_approval=true->false"}
+	if fmt.Sprint(kept) != fmt.Sprint(wantKept) {
+		t.Errorf("kept = %v, want %v", kept, wantKept)
 	}
 }
 
@@ -138,7 +146,7 @@ func TestMergeRuleset_Positive_AppliesAndReportsLoweredParameters(t *testing.T) 
 func TestMergeRuleset_Negative_TighteningLowersNothing(t *testing.T) {
 	live := reviewRuleset(t, `{"required_approving_review_count":0,"dismiss_stale_reviews_on_push":false,"require_code_owner_review":"yes"}`)
 	desired := reviewRuleset(t, `{"required_approving_review_count":2,"dismiss_stale_reviews_on_push":true,"require_code_owner_review":false}`)
-	params, lowered := mergedReviewParameters(t, live, desired)
+	params, lowered, kept := mergedReviewParameters(t, live, desired)
 	for key, want := range map[string]string{
 		"required_approving_review_count": "2", "dismiss_stale_reviews_on_push": "true", "require_code_owner_review": "false",
 	} {
@@ -146,8 +154,8 @@ func TestMergeRuleset_Negative_TighteningLowersNothing(t *testing.T) {
 			t.Errorf("%s = %s, want the rendered %s", key, got, want)
 		}
 	}
-	if len(lowered) != 0 {
-		t.Errorf("tightening a ruleset lowered %v", lowered)
+	if len(lowered) != 0 || len(kept) != 0 {
+		t.Errorf("tightening a ruleset lowered %v, kept %v", lowered, kept)
 	}
 }
 
@@ -157,14 +165,14 @@ func TestMergeRuleset_Negative_TighteningLowersNothing(t *testing.T) {
 func TestMergeRuleset_Boundary_EqualAbsentAndUnorderedParameters(t *testing.T) {
 	live := reviewRuleset(t, `{"required_approving_review_count":1.5,"require_code_owner_review":true,"allowed_merge_methods":["squash"]}`)
 	desired := reviewRuleset(t, `{"required_approving_review_count":1,"require_code_owner_review":true,"dismiss_stale_reviews_on_push":false}`)
-	params, lowered := mergedReviewParameters(t, live, desired)
+	params, lowered, kept := mergedReviewParameters(t, live, desired)
 	if fmt.Sprint(params["required_approving_review_count"]) != "1" || fmt.Sprint(params["allowed_merge_methods"]) != "[squash]" ||
-		fmt.Sprint(params["dismiss_stale_reviews_on_push"]) != "false" || len(lowered) != 0 {
-		t.Errorf("merged parameters = %v, lowered %v", params, lowered)
+		fmt.Sprint(params["dismiss_stale_reviews_on_push"]) != "false" || len(lowered) != 0 || len(kept) != 0 {
+		t.Errorf("merged parameters = %v, lowered %v, kept %v", params, lowered, kept)
 	}
 	checks := mustJSONObject(t, `{"rules":[{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"required_status_checks":[]}}]}`)
 	relaxed := mustJSONObject(t, strings.Replace(convergedWant, `"strict_required_status_checks_policy":true`, `"strict_required_status_checks_policy":false`, 1))
-	merged, checkLowered, err := mergeRuleset(checks, relaxed)
+	merged, checkLowered, _, err := mergeRuleset(checks, relaxed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,16 +192,19 @@ func TestMergeRuleset_Boundary_EqualAbsentAndUnorderedParameters(t *testing.T) {
 	}
 }
 
-// Positive: require_extra_approval_for_unattributed_changes lowered from true to false is reported.
-func TestMergeRuleset_Positive_ExtraApprovalLoweredIsReported(t *testing.T) {
+// Positive: require_extra_approval_for_unattributed_changes live true over desired false is kept and reported.
+func TestMergeRuleset_Positive_ExtraApprovalKeptIsReported(t *testing.T) {
 	live := reviewRuleset(t, `{"require_extra_approval_for_unattributed_changes":true}`)
 	desired := reviewRuleset(t, `{"require_extra_approval_for_unattributed_changes":false}`)
-	params, lowered := mergedReviewParameters(t, live, desired)
-	if got := fmt.Sprint(params["require_extra_approval_for_unattributed_changes"]); got != "false" {
-		t.Fatalf("expected false, got %s", got)
+	params, lowered, kept := mergedReviewParameters(t, live, desired)
+	if got := fmt.Sprint(params["require_extra_approval_for_unattributed_changes"]); got != "true" {
+		t.Fatalf("expected true, got %s", got)
+	}
+	if len(lowered) != 0 {
+		t.Fatalf("expected no lowered parameters, got %v", lowered)
 	}
 	want := []string{"pull_request.require_extra_approval_for_unattributed_changes=true->false"}
-	if !slices.Equal(lowered, want) {
-		t.Fatalf("lowered = %v, want %v", lowered, want)
+	if !slices.Equal(kept, want) {
+		t.Fatalf("kept = %v, want %v", kept, want)
 	}
 }

@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -24,10 +23,15 @@ const testTimeoutGate = "test-timeout"
 const testTimeoutBoundMinutes = 30
 
 var (
-	// timeoutWord marks a line that sets a timeout, in any case (an environment name is upper case).
-	timeoutWord = regexp.MustCompile(`(?i)timeout`)
-	// minutesLiteral is a duration in minutes, such as 30m; a job's timeout-minutes carries no unit.
-	minutesLiteral = regexp.MustCompile(`\b(\d+)m\b`)
+	// goTestCommand matches a go command invoking the test subcommand.
+	goTestCommand = regexp.MustCompile(`\bgo(?:\.exe)?\s+[^;&|]*\btest\b`)
+	// goTimeoutFlag matches a -timeout or --timeout flag on a command line.
+	goTimeoutFlag = regexp.MustCompile(`(?:^|[\s;&|])--?timeout(?:=|\s+)["']?([^"'\s;&|]+)["']?`)
+)
+
+const (
+	maxTimeoutWorkflowLines = 20000
+	maxMatchesPerLine       = 16
 )
 
 // TestTimeoutOptions is what AuditTestTimeouts reads: the repository root, the manifest's
@@ -76,17 +80,42 @@ func AuditTestTimeouts(ctx context.Context, opts TestTimeoutOptions) (string, er
 	return strings.Join(append(excepted, "[PASS] test-timeout"), "\n"), nil
 }
 
-// longTimeouts returns one line per minutes value above the bound on a line that sets a timeout.
-func longTimeouts(rel, text string) []string {
+// checkGoTestTimeouts checks a go test command line for -timeout flags.
+func checkGoTestTimeouts(rel string, n int, line string) []string {
+	if !goTestCommand.MatchString(line) {
+		return nil
+	}
+	matches := goTimeoutFlag.FindAllStringSubmatch(line, maxMatchesPerLine)
+	if len(matches) == 0 {
+		return nil
+	}
 	var out []string
-	for n, line := range strings.Split(text, "\n") {
-		if !timeoutWord.MatchString(line) {
+	for i := 0; i < len(matches) && i < maxMatchesPerLine; i++ {
+		raw := matches[i][1]
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			out = append(out, fmt.Sprintf("[FAIL] %s: %s:%d sets %s, an unreadable timeout", testTimeoutGate, rel, n+1, raw))
 			continue
 		}
-		for _, match := range minutesLiteral.FindAllStringSubmatch(line, -1) {
-			if minutes, err := strconv.Atoi(match[1]); err == nil && minutes > testTimeoutBoundMinutes {
-				out = append(out, fmt.Sprintf("[FAIL] %s: %s:%d sets %s, above the %dm bound", testTimeoutGate, rel, n+1, match[0], testTimeoutBoundMinutes))
-			}
+		if d > time.Duration(testTimeoutBoundMinutes)*time.Minute {
+			out = append(out, fmt.Sprintf("[FAIL] %s: %s:%d sets %s, above the %dm bound", testTimeoutGate, rel, n+1, raw, testTimeoutBoundMinutes))
+		}
+	}
+	return out
+}
+
+// longTimeouts returns one line per go test -timeout above the bound or unreadable in rel; a job's
+// timeout-minutes is not this gate's subject (decision engine-timeout-audit-scope-20261018).
+func longTimeouts(rel, text string) []string {
+	if !goTestCommand.MatchString(text) {
+		return nil
+	}
+	lines := strings.Split(text, "\n")
+	var out []string
+	for n := 0; n < len(lines) && n < maxTimeoutWorkflowLines; n++ {
+		line := lines[n]
+		if goFindings := checkGoTestTimeouts(rel, n, line); len(goFindings) > 0 {
+			out = append(out, goFindings...)
 		}
 	}
 	return out

@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Secret Scan
-        run: gitleaks detect --verbose
+        run: gitleaks detect --verbose --log-opts="--full-history --all -m"
 `)
 	out, err = f.audit(t)
 	if err != nil {

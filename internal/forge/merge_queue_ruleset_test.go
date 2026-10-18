@@ -93,7 +93,7 @@ func TestMergeQueueRulesetFindings(t *testing.T) {
 // branch alone, named apart from the main ruleset (which it never touches).
 func TestGitHubDriver_ReconcileMergeQueue_Positive_CreatesTheQueueRuleset(t *testing.T) {
 	gh, fake := rulesetForge(t, &rulesetServer{existing: []map[string]any{{"id": 3, "name": RepositoryRulesetName}}})
-	if _, err := gh.ReconcileMergeQueue(context.Background(), "main", &config.BranchProtectionPolicy{MergeQueue: true}); err != nil {
+	if _, _, err := gh.ReconcileMergeQueue(context.Background(), "main", &config.BranchProtectionPolicy{MergeQueue: true}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	create := fake.requests[1]
@@ -108,7 +108,7 @@ func TestGitHubDriver_ReconcileMergeQueue_Positive_CreatesTheQueueRuleset(t *tes
 
 func TestGitHubDriver_ReconcileMergeQueue_Negative_NilPolicy(t *testing.T) {
 	gh, _ := rulesetForge(t, &rulesetServer{})
-	if _, err := gh.ReconcileMergeQueue(context.Background(), "main", nil); err == nil {
+	if _, _, err := gh.ReconcileMergeQueue(context.Background(), "main", nil); err == nil {
 		t.Fatal("a nil policy reconciled")
 	}
 }
@@ -120,7 +120,7 @@ func TestGitHubDriver_ReconcileMergeQueue_Boundary_LiveWildcardSurvivesTheMerge(
 		"conditions": map[string]any{"ref_name": map[string]any{"include": []any{"refs/heads/main", "refs/heads/lts-*"}, "exclude": []any{}}},
 		"rules":      []any{map[string]any{"type": MergeQueueRule, "parameters": map[string]any{"merge_method": "MERGE"}}}}
 	gh, fake := rulesetForge(t, &rulesetServer{existing: []map[string]any{live}})
-	if _, err := gh.ReconcileMergeQueue(context.Background(), "main", &config.BranchProtectionPolicy{MergeQueue: true}); err != nil {
+	if _, _, err := gh.ReconcileMergeQueue(context.Background(), "main", &config.BranchProtectionPolicy{MergeQueue: true}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	if put := fake.requests[2]; put.Method != http.MethodPut || !strings.Contains(put.Raw, "refs/heads/lts-*") ||

@@ -202,6 +202,18 @@ func TestValidateExceptionsCategories(t *testing.T) {
 	}
 }
 
+func TestException_Problem(t *testing.T) {
+	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
+	base := Exception{Rule: ExceptionRuleDeclaredLinters, Tool: "exclusion", Reason: "#133", Category: "C", Entered: "2026-10-10", Expires: "2026-10-20"}
+	if prob := base.Problem(today); prob != "" {
+		t.Fatalf("expected valid category C to pass, got: %s", prob)
+	}
+	base.Expires = "2026-10-25"
+	if prob := base.Problem(today); !strings.Contains(prob, "category C requires expires 2026-10-20") {
+		t.Fatalf("expected category C interval failure, got: %s", prob)
+	}
+}
+
 func TestValidateExceptions_HISSRulesAndFunctionScope(t *testing.T) {
 	for _, rule := range hisscatalog.RuleIDs() {
 		entry := Exception{Rule: rule, Path: "src/a.go", Reason: "by design", Expires: "2026-12-31"}
@@ -212,6 +224,9 @@ func TestValidateExceptions_HISSRulesAndFunctionScope(t *testing.T) {
 			entry.Path = ".github/workflows/release.yml"
 		case ExceptionRuleDedupe:
 			entry.Path = "src/a.go"
+		case ExceptionRuleSecrets:
+			entry.Path = "src/a.go"
+			entry.Tool = "generic-api-key"
 		}
 		if err := ValidateExceptions([]Exception{entry}, exceptionsToday); err != nil {
 			t.Errorf("registered HISS rule %s refused: %v", rule, err)
@@ -683,68 +698,194 @@ func TestExceptionMatchesAny(t *testing.T) {
 // WarningDays (HISS-15 3D). Positive: categorized and uncategorized entries with valid
 // dates. Negative: unparsable dates and unknown categories. Boundary: interval halving
 // truncation (B: 3 -> 1) and clamping to ExceptionExpiryWarningDays (14).
+var warningDaysCases = []struct {
+	name     string
+	entry    Exception
+	wantDays int
+}{
+	{
+		name:     "none",
+		entry:    Exception{Rule: "HISS-11", Expires: "2026-10-24"},
+		wantDays: 14,
+	},
+	{
+		name:     "category B",
+		entry:    Exception{Rule: "HISS-11", Category: "B", Entered: "2026-10-01", Expires: "2026-10-04"},
+		wantDays: 1,
+	},
+	{
+		name:     "category C",
+		entry:    Exception{Rule: "HISS-11", Category: "C", Entered: "2026-10-01", Expires: "2026-10-11"},
+		wantDays: 5,
+	},
+	{
+		name:     "category D",
+		entry:    Exception{Rule: "HISS-11", Category: "D", Entered: "2026-10-01", Expires: "2027-01-29"},
+		wantDays: 14,
+	},
+	{
+		name:     "category A entered 2026-10-01 expires 2026-10-11",
+		entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "2026-10-01", Expires: "2026-10-11"},
+		wantDays: 5,
+	},
+	{
+		name:     "category A entered 2026-10-01 expires 2026-12-30",
+		entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "2026-10-01", Expires: "2026-12-30"},
+		wantDays: 14,
+	},
+	{
+		name:     "category A unparsable entered",
+		entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "bad-date", Expires: "2026-10-11"},
+		wantDays: 14,
+	},
+	{
+		name:     "category A unparsable expires",
+		entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "2026-10-01", Expires: "bad-date"},
+		wantDays: 14,
+	},
+	{
+		name:     "category A expires before entered",
+		entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "2026-10-11", Expires: "2026-10-01"},
+		wantDays: 0,
+	},
+	{
+		name:     "unknown category",
+		entry:    Exception{Rule: "HISS-11", Category: "Z", Entered: "2026-10-01", Expires: "2026-10-11"},
+		wantDays: 14,
+	},
+}
+
 func TestException_WarningDays_3D(t *testing.T) {
-	cases := []struct {
-		name     string
-		entry    Exception
-		wantDays int
-	}{
-		{
-			name:     "none",
-			entry:    Exception{Rule: "HISS-11", Expires: "2026-10-24"},
-			wantDays: 14,
-		},
-		{
-			name:     "category B",
-			entry:    Exception{Rule: "HISS-11", Category: "B", Entered: "2026-10-01", Expires: "2026-10-04"},
-			wantDays: 1,
-		},
-		{
-			name:     "category C",
-			entry:    Exception{Rule: "HISS-11", Category: "C", Entered: "2026-10-01", Expires: "2026-10-11"},
-			wantDays: 5,
-		},
-		{
-			name:     "category D",
-			entry:    Exception{Rule: "HISS-11", Category: "D", Entered: "2026-10-01", Expires: "2027-01-29"},
-			wantDays: 14,
-		},
-		{
-			name:     "category A entered 2026-10-01 expires 2026-10-11",
-			entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "2026-10-01", Expires: "2026-10-11"},
-			wantDays: 5,
-		},
-		{
-			name:     "category A entered 2026-10-01 expires 2026-12-30",
-			entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "2026-10-01", Expires: "2026-12-30"},
-			wantDays: 14,
-		},
-		{
-			name:     "category A unparsable entered",
-			entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "bad-date", Expires: "2026-10-11"},
-			wantDays: 14,
-		},
-		{
-			name:     "category A unparsable expires",
-			entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "2026-10-01", Expires: "bad-date"},
-			wantDays: 14,
-		},
-		{
-			name:     "category A expires before entered",
-			entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "2026-10-11", Expires: "2026-10-01"},
-			wantDays: 0,
-		},
-		{
-			name:     "unknown category",
-			entry:    Exception{Rule: "HISS-11", Category: "Z", Entered: "2026-10-01", Expires: "2026-10-11"},
-			wantDays: 14,
-		},
-	}
-	for _, tc := range cases {
+	for _, tc := range warningDaysCases {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := tc.entry.WarningDays(); got != tc.wantDays {
 				t.Errorf("WarningDays() = %d, want %d", got, tc.wantDays)
 			}
 		})
+	}
+}
+
+func TestExceptionRuleSecrets_3D(t *testing.T) {
+	valid := Exception{
+		Rule:    ExceptionRuleSecrets,
+		Path:    "settings.py",
+		Tool:    "generic-api-key",
+		Expires: "2026-12-31",
+		Reason:  "legacy test token",
+	}
+	if err := ValidateExceptions([]Exception{valid}, exceptionsToday); err != nil {
+		t.Fatalf("positive: valid HISS-12 exception failed: %v", err)
+	}
+
+	withFp := valid
+	withFp.Fingerprint = "abcd1234abcd1234:settings.py:generic-api-key:10"
+	if err := ValidateExceptions([]Exception{withFp}, exceptionsToday); err != nil {
+		t.Fatalf("positive: HISS-12 exception with fingerprint failed: %v", err)
+	}
+
+	negatives := map[string]func(*Exception){
+		"glob refused":       func(e *Exception) { e.Glob = "*.py"; e.Path = "" },
+		"missing path":       func(e *Exception) { e.Path = "" },
+		"missing tool":       func(e *Exception) { e.Tool = "" },
+		"whitespace in tool": func(e *Exception) { e.Tool = "generic api key" },
+		"whitespace in fp":   func(e *Exception) { e.Fingerprint = "bad fp here" },
+		"invalid path glob":  func(e *Exception) { e.Path = "dir/*.py" },
+		"path traversal":     func(e *Exception) { e.Path = "../settings.py" },
+	}
+	for name, edit := range negatives {
+		bad := valid
+		edit(&bad)
+		if err := ValidateExceptions([]Exception{bad}, exceptionsToday); err == nil {
+			t.Errorf("negative: %s: want error, got nil", name)
+		}
+	}
+
+	boundaryFp := valid
+	boundaryFp.Fingerprint = strings.Repeat("a", 512)
+	if err := ValidateExceptions([]Exception{boundaryFp}, exceptionsToday); err != nil {
+		t.Fatalf("boundary: 512-byte fingerprint want nil, got %v", err)
+	}
+	boundaryFp.Fingerprint = strings.Repeat("a", 513)
+	if err := ValidateExceptions([]Exception{boundaryFp}, exceptionsToday); err == nil {
+		t.Fatal("boundary: 513-byte fingerprint want error, got nil")
+	}
+}
+
+func TestExceptionMatchesSecret_3D(t *testing.T) {
+	entry := Exception{
+		Rule:        ExceptionRuleSecrets,
+		Path:        "pkg/secrets.go",
+		Tool:        "generic-api-key",
+		Fingerprint: "11112222:pkg/secrets.go:generic-api-key:42",
+	}
+
+	if !entry.MatchesSecret("pkg/secrets.go", "generic-api-key", "11112222:pkg/secrets.go:generic-api-key:42") {
+		t.Errorf("positive: exact match failed")
+	}
+
+	noFp := entry
+	noFp.Fingerprint = ""
+	if !noFp.MatchesSecret("pkg/secrets.go", "generic-api-key", "99998888:pkg/secrets.go:generic-api-key:99") {
+		t.Errorf("positive: path and rule match with any fingerprint failed")
+	}
+
+	if entry.MatchesSecret("other/file.go", "generic-api-key", "11112222:pkg/secrets.go:generic-api-key:42") {
+		t.Errorf("negative: path mismatch must not match")
+	}
+	if entry.MatchesSecret("pkg/secrets.go", "aws-access-key", "11112222:pkg/secrets.go:generic-api-key:42") {
+		t.Errorf("negative: rule mismatch must not match")
+	}
+	if entry.MatchesSecret("pkg/secrets.go", "generic-api-key", "different:fp") {
+		t.Errorf("negative: fingerprint mismatch must not match")
+	}
+
+	wrongRule := entry
+	wrongRule.Rule = ExceptionRuleCredits
+	if wrongRule.MatchesSecret("pkg/secrets.go", "generic-api-key", "11112222:pkg/secrets.go:generic-api-key:42") {
+		t.Errorf("negative: non-HISS-12 rule must not match")
+	}
+}
+
+// Positive: a codespell entry naming one file with category C, entered today and expiring today+10
+// passes. Negative: a glob, a missing category, a tool and an invalid expiry are refused. Boundary:
+// category A with expiry up to 90 days passes.
+func TestValidateExceptionsCodespell(t *testing.T) {
+	today := exceptionsToday
+	valid := Exception{
+		Rule:     ExceptionRuleCodespell,
+		Path:     "tools/figures/player/player.js",
+		Reason:   "minified third-party interfig bundle",
+		Category: "C",
+		Entered:  today.Format(ExceptionDateLayout),
+		Expires:  today.AddDate(0, 0, 10).Format(ExceptionDateLayout),
+	}
+	if err := ValidateExceptions([]Exception{valid}, today); err != nil {
+		t.Fatalf("valid codespell exception refused: %v", err)
+	}
+
+	globbed := valid
+	globbed.Path = ""
+	globbed.Glob = "tools/figures/player/*.js"
+	if err := ValidateExceptions([]Exception{globbed}, today); err == nil || !strings.Contains(err.Error(), "must name one file by path, not a glob") {
+		t.Fatalf("globbed codespell exception accepted: %v", err)
+	}
+
+	noCat := valid
+	noCat.Category = ""
+	noCat.Entered = ""
+	if err := ValidateExceptions([]Exception{noCat}, today); err == nil || !strings.Contains(err.Error(), "rule codespell requires a category") {
+		t.Fatalf("uncategorized codespell exception accepted: %v", err)
+	}
+
+	withTool := valid
+	withTool.Tool = "codespell"
+	if err := ValidateExceptions([]Exception{withTool}, today); err == nil || !strings.Contains(err.Error(), "must not set tool") {
+		t.Fatalf("codespell exception with tool accepted: %v", err)
+	}
+
+	badExpiry := valid
+	badExpiry.Expires = today.AddDate(0, 0, 15).Format(ExceptionDateLayout)
+	if err := ValidateExceptions([]Exception{badExpiry}, today); err == nil || !strings.Contains(err.Error(), "requires expires") {
+		t.Fatalf("codespell exception with bad expiry accepted: %v", err)
 	}
 }

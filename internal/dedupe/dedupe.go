@@ -257,6 +257,8 @@ func scanGoFile(ctx context.Context, fset *token.FileSet, path, relPath string, 
 		collectAdopterGitStarts(fset, node, relPath, adopterStarts)
 	}
 
+	imports := fileImports(node)
+
 	for _, decl := range node.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if !ok || fn.Body == nil || len(fn.Body.List) < minCloneStatements {
@@ -264,7 +266,7 @@ func scanGoFile(ctx context.Context, fset *token.FileSet, path, relPath string, 
 		}
 		report.TotalFuncsScanned++
 
-		hashKey, lines, err := cloneKey(fset, fn)
+		hashKey, lines, err := cloneKey(fset, fn, imports)
 		if err != nil {
 			return fmt.Errorf("print dedupe source %s: %w", relPath, err)
 		}
@@ -294,8 +296,8 @@ const (
 	minCloneLines      = 5
 )
 
-// cloneKey hashes a function body with its locals renamed canonically, returning the key and
-// the printed body's line count.
+// cloneKey hashes a function body with its locals renamed canonically and its imported
+// package selectors normalized, returning the key and the printed body's line count.
 //
 // The key used to be the printed body text, so renaming one local variable in a copied
 // function produced a different hash and the pair stopped being a clone group: the cheapest
@@ -303,10 +305,13 @@ const (
 // renamed before printing, numbered in the order the body first uses them, so two bodies that
 // differ only in what their locals are called print identically, while a body that uses a
 // different local in the same place still differs. Numbering by use rather than declaration
-// keeps an unused receiver or parameter from shifting every later name. The renamed body is
-// only hashed, never shown.
-func cloneKey(fset *token.FileSet, fn *ast.FuncDecl) (string, int, error) {
-	renameLocals(fn.Body, localNames(fn))
+// keeps an unused receiver or parameter from shifting every later name. Imported package
+// identifiers on the left of selector expressions are normalised to the import path so that
+// an import alias does not hide a copy. The renamed body is only hashed, never shown.
+func cloneKey(fset *token.FileSet, fn *ast.FuncDecl, imports map[string]string) (string, int, error) {
+	locals := localNames(fn)
+	normalizeImportSelectors(fn.Body, imports, locals)
+	renameLocals(fn.Body, locals)
 	var buf strings.Builder
 	if err := printer.Fprint(&buf, fset, fn.Body); err != nil {
 		return "", 0, err
@@ -411,6 +416,55 @@ func placeholder(assigned map[string]string, name string) string {
 	canonical := "$" + strconv.Itoa(len(assigned))
 	assigned[name] = canonical
 	return canonical
+}
+
+// normalizeImportSelectors replaces package identifiers on the left of selector expressions
+// with their import path, unless the identifier is shadowed by a local variable or parameter.
+func normalizeImportSelectors(body *ast.BlockStmt, imports map[string]string, locals map[string]bool) {
+	if body == nil || len(imports) == 0 {
+		return
+	}
+	ast.Inspect(body, func(n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		xIdent, ok := sel.X.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		if importPath, ok := imports[xIdent.Name]; ok && !locals[xIdent.Name] {
+			xIdent.Name = importPath
+		}
+		return true
+	})
+}
+
+const maxFileImports = 4096
+
+// fileImports maps the package identifiers a file's selector expressions use to their import paths.
+// Unaliased imports map by their default package name, aliased imports map by their alias.
+// Blank and dot imports are omitted because they bind no selector prefix.
+func fileImports(file *ast.File) map[string]string {
+	if file == nil {
+		return nil
+	}
+	specs := util.GoImportSpecs(file)
+	if len(specs) == 0 {
+		return nil
+	}
+	imports := make(map[string]string, len(specs))
+	for i := 0; i < len(specs) && i < maxFileImports; i++ {
+		spec := specs[i]
+		name := spec.Name
+		if name == "" {
+			name = hiss.DefaultImportName(spec.Path)
+		}
+		if name != "" && name != "_" && name != "." {
+			imports[name] = spec.Path
+		}
+	}
+	return imports
 }
 
 func checkUtilitySprawl(fset *token.FileSet, node *ast.File, relPath string, report *DedupeReport) {

@@ -59,9 +59,7 @@ func TestPrepareRelease_Negative_InvalidSemVer(t *testing.T) {
 func TestPrepareRelease_Negative_DirtyWorkingTree(t *testing.T) {
 	tmpDir := t.TempDir()
 	// Init git repo
-	cmd := exec.Command("git", "init")
-	cmd.Dir = tmpDir
-	if err := cmd.Run(); err != nil {
+	if _, err := util.RunGit(t.Context(), tmpDir, "init"); err != nil {
 		t.Fatal(err)
 	}
 

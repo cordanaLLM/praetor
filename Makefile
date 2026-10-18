@@ -154,6 +154,13 @@ lint: fmt-check
 	go vet -tags=apicompatgate ./tools/apicompat/gate/
 	$(GO_LINT_TOOL) golangci-lint run
 
+lint-exceptions:
+	@tmpdir=$$(mktemp -d); \
+	trap 'rm -rf "$$tmpdir"' EXIT; \
+	go run ./cmd/standardsctl linters exceptions strip-config --out="$$tmpdir/.golangci.yml" || exit 1; \
+	$(GO_LINT_TOOL) golangci-lint run --config="$$tmpdir/.golangci.yml" --issues-exit-code=0 --output.json.path="$$tmpdir/report.json" ./... || exit 1; \
+	go run ./cmd/standardsctl linters exceptions generate --report="$$tmpdir/report.json" --issue=1030 --write
+
 # golangci-lint is pinned in its own module, tools/lint/go.mod, which Renovate keeps current; `go
 # tool` builds exactly that version, whatever is on PATH. It ran as @latest before, and an
 # upstream release turned main red with no change here (ledger engine-golangci-latest-pin-1335).
@@ -171,7 +178,7 @@ GO_SECURITY_TOOL := go tool -modfile=$(CURDIR)/tools/go/go.mod
 # just the working tree, which is what the axiom actually claims. Measured on this
 # repository: 234 commits, 23 MB, 2.5s, zero findings -- cheap enough to be unconditional.
 secrets:
-	$(GO_SECURITY_TOOL) gitleaks detect --no-banner --redact --config .gitleaks.toml
+	go run ./cmd/standardsctl security secrets -- $(GO_SECURITY_TOOL) gitleaks
 
 # The Go vulnerability gate (internal/govuln) runs the pinned govulncheck at symbol level and judges
 # each uncalled advisory against security/vex/go.openvex.json, as gate run and CI do.

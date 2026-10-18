@@ -59,16 +59,9 @@ func scanGoSource(data []byte, rel string, rep *ScanReport, opts ScanOptions) {
 // literal bound at package level is not a declaration; a finding inside one is anchored by its
 // line's text.
 func (g *goScanner) noteFunctions(file *ast.File) {
-	for i := 0; i < len(file.Decls); i++ {
-		fn, ok := file.Decls[i].(*ast.FuncDecl)
-		if !ok || fn.Name == nil {
-			continue
-		}
-		owner := ""
-		if fn.Recv != nil && len(fn.Recv.List) > 0 {
-			owner, _ = ReceiverTypeName(fn.Recv.List[0].Type)
-		}
-		noteFunction(g.rep, qualifiedName(owner, fn.Name.Name), g.line(fn.Pos()), g.line(fn.End()))
+	functions := extractGoFunctions(g.fset, file)
+	for i := 0; i < len(functions); i++ {
+		noteFunction(g.rep, functions[i].name, functions[i].start, functions[i].end)
 	}
 }
 

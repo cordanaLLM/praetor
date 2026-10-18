@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,12 +23,13 @@ func setupTestGitRepo(t *testing.T) string {
 	dir := t.TempDir()
 
 	runCmd := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = testsupport.HermeticGitEnv(t)
-		out, err := cmd.CombinedOutput()
+		cmdCtx, envErr := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+		if envErr != nil {
+			t.Fatal(envErr)
+		}
+		out, err := util.RunGit(cmdCtx, dir, args...)
 		if err != nil {
-			t.Fatalf("git %s failed: %v, output: %s", strings.Join(args, " "), err, string(out))
+			t.Fatalf("git %s failed: %v, output: %s", strings.Join(args, " "), err, out)
 		}
 	}
 
@@ -51,14 +51,15 @@ func setupTestGitRepo(t *testing.T) string {
 
 func runInDir(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Env = testsupport.HermeticGitEnv(t)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git in %s failed (%s): %v, output: %s", dir, strings.Join(args, " "), err, string(out))
+	cmdCtx, envErr := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if envErr != nil {
+		t.Fatal(envErr)
 	}
-	return string(out)
+	out, err := util.RunGit(cmdCtx, dir, args...)
+	if err != nil {
+		t.Fatalf("git in %s failed (%s): %v, output: %s", dir, strings.Join(args, " "), err, out)
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -81,7 +82,7 @@ func TestWorktree_Positive_LifecycleAndIsolation(t *testing.T) {
 	}
 
 	verifyIsolation(t, wtA, wtB)
-	verifyListAndRemoval(t, mgr, ctx, wtA, wtB)
+	verifyListAndRemoval(t, mgr, wtA, wtB)
 }
 
 func verifyIsolation(t *testing.T, wtA, wtB *Worktree) {
@@ -107,8 +108,8 @@ func verifyIsolation(t *testing.T, wtA, wtB *Worktree) {
 	}
 }
 
-func verifyListAndRemoval(t *testing.T, mgr *Manager, ctx context.Context, wtA, wtB *Worktree) {
-	list, err := mgr.List(ctx)
+func verifyListAndRemoval(t *testing.T, mgr *Manager, wtA, wtB *Worktree) {
+	list, err := mgr.List(t.Context())
 	if err != nil || len(list) < 3 {
 		t.Fatalf("failed listing worktrees: err=%v len=%d", err, len(list))
 	}
@@ -126,7 +127,7 @@ func verifyListAndRemoval(t *testing.T, mgr *Manager, ctx context.Context, wtA, 
 		t.Errorf("expected both tasks in list: alpha=%v beta=%v", foundAlpha, foundBeta)
 	}
 
-	if err := mgr.Remove(ctx, "task-alpha", false); err != nil {
+	if err := mgr.Remove(t.Context(), "task-alpha", false); err != nil {
 		t.Fatalf("expected clean Remove on task-alpha to succeed: %v", err)
 	}
 	if _, err := os.Stat(wtA.Path); !os.IsNotExist(err) {
@@ -136,7 +137,7 @@ func verifyListAndRemoval(t *testing.T, mgr *Manager, ctx context.Context, wtA, 
 		t.Errorf("expected safe removal to preserve branch %s", wtA.Branch)
 	}
 
-	if err := mgr.Remove(ctx, "task-beta", true); err != nil {
+	if err := mgr.Remove(t.Context(), "task-beta", true); err != nil {
 		t.Fatalf("expected Remove(force=true) on task-beta to succeed: %v", err)
 	}
 	if _, err := os.Stat(wtB.Path); !os.IsNotExist(err) {
@@ -615,9 +616,7 @@ func TestWorktree_Positive_DirtyWorktreeForceRemoval(t *testing.T) {
 	if _, err := os.Stat(wt.Path); !os.IsNotExist(err) {
 		t.Errorf("worktree directory should be deleted after force Remove")
 	}
-	cmd := exec.Command("git", "rev-parse", "--verify", "wt/task-dirty")
-	cmd.Dir = repoDir
-	if cmd.Run() == nil {
+	if _, err := util.RunGit(t.Context(), repoDir, "rev-parse", "--verify", "wt/task-dirty"); err == nil {
 		t.Errorf("force removal should delete managed branch wt/task-dirty")
 	}
 }
@@ -733,7 +732,7 @@ func TestWorktree_Positive_LockedWorktree(t *testing.T) {
 	if _, err := os.Stat(wt.Path); !os.IsNotExist(err) {
 		t.Fatalf("locked worktree directory should be gone after forced removal, stat error: %v", err)
 	}
-	if exec.Command("git", "-C", repoDir, "rev-parse", "--verify", "--quiet", wt.Branch).Run() == nil {
+	if _, err := util.RunGit(t.Context(), repoDir, "rev-parse", "--verify", "--quiet", wt.Branch); err == nil {
 		t.Fatalf("forced removal of a locked worktree should delete branch %s", wt.Branch)
 	}
 }
@@ -917,7 +916,7 @@ func TestWorktree_Negative_ForceRemovalOfVanishedWorktreeStillDeletesBranch(t *t
 	if err == nil || !strings.Contains(err.Error(), "failed removing worktree") {
 		t.Fatalf("the failed worktree removal must be reported, got %v", err)
 	}
-	if exec.Command("git", "-C", repoDir, "rev-parse", "--verify", "--quiet", wt.Branch).Run() == nil {
+	if _, err := util.RunGit(t.Context(), repoDir, "rev-parse", "--verify", "--quiet", wt.Branch); err == nil {
 		t.Fatalf("branch %s must be deleted even though worktree removal failed", wt.Branch)
 	}
 
@@ -986,7 +985,8 @@ func TestWorktree_Positive_PruneSweepsMergedOrphanBranches(t *testing.T) {
 		t.Fatalf("prune: %v", err)
 	}
 	exists := func(branch string) bool {
-		return exec.Command("git", "-C", repoDir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch).Run() == nil
+		_, err := util.RunGit(t.Context(), repoDir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
+		return err == nil
 	}
 	if exists(merged.Branch) {
 		t.Errorf("merged orphan branch %s must be swept", merged.Branch)
