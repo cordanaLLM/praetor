@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -42,9 +44,8 @@ func runReuseLint(t *testing.T, root string) (string, bool) {
 	if err != nil {
 		t.Skip("reuse is not installed on PATH: skipping reuse lint verification")
 	}
-	cmd := exec.CommandContext(t.Context(), reusePath, "--root", root, "lint")
-	out, err := cmd.CombinedOutput()
-	return string(out), err == nil
+	res, err := util.RunCommandBytes(t.Context(), root, reusePath, util.MaxCommandOutputBytes, "--root", root, "lint")
+	return string(res.Stdout) + string(res.Stderr), err == nil
 }
 
 // Planted: verify that the files main's clientsetup writes (without comments or sidecars)
