@@ -890,10 +890,6 @@ linters:
         linters:
           - gocyclo
       # category C, entered 2026-10-18, expires 2026-10-28, #1030
-      - path: ^internal/adopt/linters_generated_exceptions_test\.go$
-        linters:
-          - gocyclo
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
       - path: ^internal/adopt/makefile_include_test\.go$
         linters:
           - forbidigo

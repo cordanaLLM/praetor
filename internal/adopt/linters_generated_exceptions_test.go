@@ -420,7 +420,8 @@ func TestGenerateExceptions_PlantedGocycloNewFinding(t *testing.T) {
 	}
 }
 
-func TestGenerateExceptions_SameLineDifferentLintersYieldsTwoPairs(t *testing.T) {
+func writeSameLineTestFiles(t *testing.T) (string, string) {
+	t.Helper()
 	cfgContent := sampleConfigContent("", "")
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, ".golangci.yml")
@@ -437,17 +438,43 @@ func TestGenerateExceptions_SameLineDifferentLintersYieldsTwoPairs(t *testing.T)
 	if err := os.WriteFile(repPath, []byte(repJSON), 0o600); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
+	return cfgPath, repPath
+}
 
-	pairs, err := readReportPairs(repPath, cfgPath)
-	if err != nil {
-		t.Fatalf("readReportPairs failed: %v", err)
-	}
+func assertSameLineReportPairs(t *testing.T, pairs []LinterPair) {
+	t.Helper()
 	if len(pairs) != 2 {
 		t.Fatalf("expected 2 pairs from same-line report, got %d: %v", len(pairs), pairs)
 	}
 	if pairs[0].Linter != "gocognit" || pairs[1].Linter != "gocyclo" {
 		t.Fatalf("expected gocognit and gocyclo pairs, got: %v", pairs)
 	}
+}
+
+func assertSameLineGeneratedConfig(t *testing.T, cfgPath string) {
+	t.Helper()
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	outContent := string(data)
+	if !strings.Contains(outContent, "gocognit") || !strings.Contains(outContent, "gocyclo") {
+		t.Fatalf("expected both rules in generated block:\n%s", outContent)
+	}
+	// Count occurrences of path rule
+	if strings.Count(outContent, "^internal/pkg/foo\\.go$") != 2 {
+		t.Fatalf("expected 2 rules for internal/pkg/foo.go, got:\n%s", outContent)
+	}
+}
+
+func TestGenerateExceptions_SameLineDifferentLintersYieldsTwoPairs(t *testing.T) {
+	cfgPath, repPath := writeSameLineTestFiles(t)
+
+	pairs, err := readReportPairs(repPath, cfgPath)
+	if err != nil {
+		t.Fatalf("readReportPairs failed: %v", err)
+	}
+	assertSameLineReportPairs(t, pairs)
 
 	var stdout bytes.Buffer
 	res, err := GenerateExceptions(GenerateExceptionsOptions{
@@ -466,18 +493,7 @@ func TestGenerateExceptions_SameLineDifferentLintersYieldsTwoPairs(t *testing.T)
 		t.Fatalf("unexpected result: code=%d written=%v count=%d", res.ExitCode, res.Written, res.Count)
 	}
 
-	data, err := os.ReadFile(cfgPath)
-	if err != nil {
-		t.Fatalf("read config: %v", err)
-	}
-	outContent := string(data)
-	if !strings.Contains(outContent, "gocognit") || !strings.Contains(outContent, "gocyclo") {
-		t.Fatalf("expected both rules in generated block:\n%s", outContent)
-	}
-	// Count occurrences of path rule
-	if strings.Count(outContent, "^internal/pkg/foo\\.go$") != 2 {
-		t.Fatalf("expected 2 rules for internal/pkg/foo.go, got:\n%s", outContent)
-	}
+	assertSameLineGeneratedConfig(t, cfgPath)
 }
 
 func pushSequenceChildren(stack []*yaml.Node, node *yaml.Node) []*yaml.Node {
