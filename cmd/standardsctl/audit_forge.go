@@ -288,6 +288,12 @@ func liveProtectionVerdict(target protectionTarget, live *forge.LiveBranchProtec
 			drift = append(drift, "  "+describeProtectionFinding(finding))
 		}
 	}
+	for _, finding := range findings {
+		if finding.Verdict == forge.ProtectionStricter {
+			fmt.Printf("[PASS] Live branch protection of %s: live is stricter than declared: %s declared %s, live %s\n",
+				target.branch, finding.Property, finding.Declared, finding.Live)
+		}
+	}
 	if len(drift) == 0 {
 		fmt.Printf("[PASS] Live branch protection of %s compared with the forge: GitHub enforces every declared property (%s).\n",
 			target.branch, describeMechanisms(live))

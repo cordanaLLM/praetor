@@ -757,3 +757,30 @@ func TestAuditLiveBranchProtection_MergeQueueWiring(t *testing.T) {
 		t.Fatalf("a branch without a queue failed: %v\n%s", err, out)
 	}
 }
+
+// Positive: live squash-only with declared merge+squash+rebase, and extra approval live true
+// with declared false pass the audit reporting the two stricter lines.
+func TestAuditLiveBranchProtection_Positive_StricterBranchProtectionPasses(t *testing.T) {
+	livePol := declaredProtection(false)
+	livePol.AllowedMergeMethods = []string{"squash"}
+	enabled := true
+	livePol.RequireExtraApprovalForUnattributedChanges = &enabled
+
+	stub := &forgeStub{rulesets: liveRuleset(t, livePol, []string{"CI"}, "active")}
+	f := protectedFixture(t, false, "", stub)
+
+	policy := config.DefaultPolicy()
+	policy.BranchProtection.AllowedMergeMethods = []string{"merge", "squash", "rebase"}
+	disabled := false
+	policy.BranchProtection.RequireExtraApprovalForUnattributedChanges = &disabled
+
+	out, err := liveProtectionAudit(t, f, policy)
+	if err != nil {
+		t.Fatalf("stricter live protection failed the audit: %v\n%s", err, out)
+	}
+	mustContain(t, out,
+		"[PASS] Live branch protection of main: live is stricter than declared: allowed_merge_methods declared [merge, squash, rebase], live [squash]",
+		"[PASS] Live branch protection of main: live is stricter than declared: require_extra_approval_for_unattributed_changes declared false, live true",
+		`[PASS] Live branch protection of main compared with the forge: GitHub enforces every declared property (protected by ruleset "praetor-main-protection" #1).`,
+	)
+}

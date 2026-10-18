@@ -300,9 +300,9 @@ func TestEvaluateBranchProtection_Positive_DeclaredAllowedMergeMethodsMatchesLiv
 	}
 }
 
-// Negative: planted live-only require_extra_approval_for_unattributed_changes true with
-// nothing declared fails with a finding naming it.
-func TestEvaluateBranchProtection_Negative_LiveOnlyExtraApprovalFails(t *testing.T) {
+// Positive: planted live-only require_extra_approval_for_unattributed_changes true with
+// nothing declared passes as stricter finding, not drift.
+func TestEvaluateBranchProtection_Positive_LiveOnlyExtraApprovalStricter(t *testing.T) {
 	policy := declaredHighSecurity()
 	live := matchingRuleset(t)
 	live.Rules[4] = liveRule(t, "pull_request", 7, map[string]any{
@@ -315,11 +315,11 @@ func TestEvaluateBranchProtection_Negative_LiveOnlyExtraApprovalFails(t *testing
 		t.Fatal(err)
 	}
 	drifted := ProtectionDrifts(findings)
-	if !slices.Contains(drifted, "require_extra_approval_for_unattributed_changes") {
-		t.Fatalf("expected drift on require_extra_approval_for_unattributed_changes, got: %v", drifted)
+	if slices.Contains(drifted, "require_extra_approval_for_unattributed_changes") {
+		t.Fatalf("unexpected drift on require_extra_approval_for_unattributed_changes, got: %v", drifted)
 	}
 	finding := findingOf(t, findings, "require_extra_approval_for_unattributed_changes")
-	if finding.Verdict != ProtectionDrift || finding.Live != "true" || finding.Declared != "false" {
+	if finding.Verdict != ProtectionStricter || finding.Live != "true" || finding.Declared != "false" {
 		t.Fatalf("unexpected finding: %+v", finding)
 	}
 }
@@ -366,5 +366,63 @@ func TestEvaluateBranchProtection_Boundary_LiveDefaultsWithNothingDeclaredPass(t
 	}
 	if drifted := ProtectionDrifts(findings); len(drifted) != 0 {
 		t.Fatalf("expected no drift on defaults, got: %v", drifted)
+	}
+}
+
+// Positive: live squash-only with declared merge+squash+rebase, and extra approval live true
+// with declared false pass as stricter findings, not drift.
+func TestEvaluateBranchProtection_Positive_StricterMergeMethodsAndExtraApproval(t *testing.T) {
+	policy := declaredHighSecurity()
+	policy.AllowedMergeMethods = []string{"merge", "squash", "rebase"}
+	disabled := false
+	policy.RequireExtraApprovalForUnattributedChanges = &disabled
+	live := matchingRuleset(t)
+	live.Rules[4] = liveRule(t, "pull_request", 7, map[string]any{
+		"required_approving_review_count": 2, "dismiss_stale_reviews_on_push": true, "require_code_owner_review": true,
+		"require_last_push_approval": false, "required_review_thread_resolution": true,
+		"allowed_merge_methods":                           []string{"squash"},
+		"require_extra_approval_for_unattributed_changes": true,
+	})
+	findings, err := EvaluateBranchProtection(policy, []string{"CI"}, live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	methods := findingOf(t, findings, "allowed_merge_methods")
+	if methods.Verdict != ProtectionStricter || methods.Declared != "[merge, squash, rebase]" || methods.Live != "[squash]" {
+		t.Errorf("allowed_merge_methods finding = %+v, want stricter", methods)
+	}
+	extra := findingOf(t, findings, "require_extra_approval_for_unattributed_changes")
+	if extra.Verdict != ProtectionStricter || extra.Declared != "false" || extra.Live != "true" {
+		t.Errorf("require_extra_approval finding = %+v, want stricter", extra)
+	}
+	if drifted := ProtectionDrifts(findings); len(drifted) != 0 {
+		t.Fatalf("expected no drift on stricter settings, got: %v", drifted)
+	}
+}
+
+// Negative: live allows rebase while declared squash-only fails (looser); extra approval live
+// false with declared true fails.
+func TestEvaluateBranchProtection_Negative_LooserMergeMethodsAndExtraApproval(t *testing.T) {
+	policy := declaredHighSecurity()
+	policy.AllowedMergeMethods = []string{"squash"}
+	enabled := true
+	policy.RequireExtraApprovalForUnattributedChanges = &enabled
+	live := matchingRuleset(t)
+	live.Rules[4] = liveRule(t, "pull_request", 7, map[string]any{
+		"required_approving_review_count": 2, "dismiss_stale_reviews_on_push": true, "require_code_owner_review": true,
+		"require_last_push_approval": false, "required_review_thread_resolution": true,
+		"allowed_merge_methods":                           []string{"rebase"},
+		"require_extra_approval_for_unattributed_changes": false,
+	})
+	findings, err := EvaluateBranchProtection(policy, []string{"CI"}, live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drifted := ProtectionDrifts(findings)
+	if !slices.Contains(drifted, "allowed_merge_methods") {
+		t.Errorf("expected drift on allowed_merge_methods, got: %v", drifted)
+	}
+	if !slices.Contains(drifted, "require_extra_approval_for_unattributed_changes") {
+		t.Errorf("expected drift on require_extra_approval_for_unattributed_changes, got: %v", drifted)
 	}
 }

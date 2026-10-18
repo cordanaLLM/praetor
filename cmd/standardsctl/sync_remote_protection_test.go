@@ -140,6 +140,38 @@ func TestSync_Remote_ReadsBackBranchProtection_Boundary(t *testing.T) {
 	}
 }
 
+// Boundary: sync --remote with a declaration looser than live refuses to lower status checks
+// and unrendered rules, preserving them without calling the live forge.
+func TestSync_Remote_Boundary_LooserDeclarationRefusesToLower(t *testing.T) {
+	stub := &forgeStub{
+		rulesets: map[int]map[string]any{1: {
+			"id": 1, "name": "praetor-main-protection", "target": "branch", "enforcement": "active",
+			"conditions": map[string]any{"ref_name": map[string]any{"include": []any{"refs/heads/main"}, "exclude": []any{}}},
+			"rules": []any{
+				map[string]any{"type": "required_signatures"},
+				map[string]any{"type": "required_status_checks", "parameters": map[string]any{
+					"required_status_checks": []any{
+						map[string]any{"context": "CI"},
+						map[string]any{"context": "integration"},
+					},
+				}},
+			},
+		}},
+	}
+	f, endpoint := remoteProtectionFixture(t, stub)
+	out, err := runSyncCmd(t, "--config="+f.manifestPath, "--remote", "--token=ghp_x", "--endpoint="+endpoint)
+	if err != nil {
+		t.Fatalf("remote sync: %v\n%s", err, out)
+	}
+	stored := stub.storedRuleset(t, 1)
+	if !strings.Contains(stored, `"context":"integration"`) {
+		t.Fatalf("sync --remote lowered status checks by removing integration: %s", stored)
+	}
+	if !strings.Contains(stored, `"required_signatures"`) {
+		t.Fatalf("sync --remote lowered rules by removing required_signatures: %s", stored)
+	}
+}
+
 // plan --remote compares the live branch protection with the declared policy and only reads.
 //
 // Positive: after a sync the branch enforces every declared property, and plan writes nothing.
