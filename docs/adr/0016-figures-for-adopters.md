@@ -17,6 +17,10 @@ number, so a later edit to the cited record cannot silently stale the citation. 
 is cited by symbol, workflow step or make target where it has one. The few remaining `path:line`
 references point into commit 54812c7d.
 
+Amended by [ADR-0018](0018-forge-drivers-repaired-in-place.md) on 2026-10-18: the root module's
+dependency policy that "Constraints" and decision 3 cite from ADR-0008 ("keeps exactly
+`gopkg.in/yaml.v3`") reads as ADR-0018 decision 4 states; ADR-0008 is superseded.
+
 ## Context
 
 ADR-0015 built an interactive figure engine for praetor's own site and left adopters to a separate

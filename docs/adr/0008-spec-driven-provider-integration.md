@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Superseded by [ADR-0018](0018-forge-drivers-repaired-in-place.md)
 
 ## Context
 

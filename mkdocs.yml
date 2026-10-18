@@ -210,6 +210,8 @@ nav:
           - ADR-0014 Operator-Neutral Defaults: adr/0014-operator-neutral-defaults.md
           - ADR-0015 Interactive Figures from Vendored interfig: adr/0015-interactive-figures-from-vendored-interfig.md
           - ADR-0016 Interactive Figures for Adopters: adr/0016-figures-for-adopters.md
+          - ADR-0017 Generated Artefacts in Pull Requests: adr/0017-generated-artefacts-in-pull-requests.md
+          - ADR-0018 Forge Drivers Repaired in Place: adr/0018-forge-drivers-repaired-in-place.md
   - Reference:
       - API & CLI Reference: wiki/API-Reference.md
       - Wiki Portal: wiki/Home.md
