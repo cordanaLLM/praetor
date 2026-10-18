@@ -8,7 +8,6 @@ package flavor_test
 // Gradle never decides a case.
 
 import (
-	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -18,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -128,13 +128,12 @@ func runJVMStep(t *testing.T, shell, step, repo, path string) (stdout, stderr st
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), jvmStepTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, shell, "-c", step)
-	cmd.Dir = repo
-	cmd.Env = []string{"PATH=" + path}
-	var out, errOut bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errOut
-	err = cmd.Run()
-	return out.String(), errOut.String(), err
+	cmdCtx, envErr := util.WithCommandEnvironment(ctx, []string{"PATH=" + path})
+	if envErr != nil {
+		t.Fatal(envErr)
+	}
+	res, runErr := util.RunCommandBytes(cmdCtx, repo, shell, util.MaxCommandOutputBytes, "-c", step)
+	return string(res.Stdout), string(res.Stderr), runErr
 }
 
 // jvmShell returns sh, or skips where the step's shell and file modes cannot be reproduced.

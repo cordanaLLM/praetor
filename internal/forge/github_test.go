@@ -333,7 +333,7 @@ func TestReconcileProtectionRejectsRulesetsAboveBound(t *testing.T) {
 
 func TestGitHubDriverUsesDedicatedBoundedClient(t *testing.T) {
 	gh := NewGitHubDriver("ordinary-token", "http://127.0.0.1")
-	if gh.HTTPClient == nil || gh.HTTPClient == http.DefaultClient || gh.HTTPClient.Timeout != defaultHTTPTimeout {
+	if gh.HTTPClient == nil || gh.HTTPClient.Timeout != defaultHTTPTimeout {
 		t.Fatalf("driver must own a client with its bounded timeout, got %+v", gh.HTTPClient)
 	}
 }

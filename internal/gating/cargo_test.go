@@ -460,9 +460,8 @@ func skipWithoutCargo(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "cargo", "clippy", "--version")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Skipf("cargo clippy not available: %v (%s)", err, strings.TrimSpace(string(out)))
+	if out, err := util.RunCommand(ctx, "", "cargo", "clippy", "--version"); err != nil {
+		t.Skipf("cargo clippy not available: %v (%s)", err, out)
 	}
 }
 
@@ -485,11 +484,13 @@ func runOutsideCargoTest(t *testing.T, repo, target string) (string, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "cargo", "test", "--locked", "--offline")
-	cmd.Dir = repo
-	cmd.Env = append(os.Environ(), cargoTargetDirEnv+"="+target)
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	cmdEnv := append(os.Environ(), cargoTargetDirEnv+"="+target)
+	cmdCtx, err := util.WithCommandEnvironment(ctx, cmdEnv)
+	if err != nil {
+		return "", err
+	}
+	res, runErr := util.RunCommandBytes(cmdCtx, repo, "cargo", util.MaxCommandOutputBytes, "test", "--locked", "--offline")
+	return string(append(res.Stdout, res.Stderr...)), runErr
 }
 
 // Negative: an absolute CARGO_TARGET_DIR builds into a gate-owned directory below it,

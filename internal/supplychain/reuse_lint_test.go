@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -17,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Positive: the pin reads as the action at its tag and the reuse major that tag runs, and
@@ -118,9 +118,11 @@ func TestReuseDeclared_3D(t *testing.T) {
 func gitRoot(t *testing.T, files map[string]string) string {
 	t.Helper()
 	root := licensedRoot(t, files)
-	command := exec.Command("git", "init", "-q", root)
-	command.Env = testsupport.HermeticGitEnv(t)
-	if out, err := command.CombinedOutput(); err != nil {
+	cmdCtx, envErr := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if envErr != nil {
+		t.Fatal(envErr)
+	}
+	if out, err := util.RunGit(cmdCtx, root, "init", "-q"); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
 	return root

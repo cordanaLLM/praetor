@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const echoArgs = `package main
@@ -43,10 +45,10 @@ func TestBuildExecutable_Positive_ResolvableByBareName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("shim not resolvable by bare name: %v", err)
 	}
-	output, err := exec.CommandContext(t.Context(), resolved, "a b", "c").Output()
+	res, err := util.RunCommandBytes(t.Context(), "", resolved, util.MaxCommandOutputBytes, "a b", "c")
 	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 3 || string(output) != "a b|c" {
-		t.Fatalf("shim did not run its program: output=%q err=%v", output, err)
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 3 || string(res.Stdout) != "a b|c" {
+		t.Fatalf("shim did not run its program: output=%q err=%v", res.Stdout, err)
 	}
 }
 

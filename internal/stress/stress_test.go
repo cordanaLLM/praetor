@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/internal/worktree"
 )
 
@@ -100,20 +100,20 @@ func TestProperty_ASTMergeOrthogonalIndependence(t *testing.T) {
 // machine rather than the code under test.
 func setupTestGitRepo(t *testing.T, dir string) {
 	t.Helper()
-	env := testsupport.HermeticGitEnv(t)
+	cmdCtx, envErr := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if envErr != nil {
+		t.Fatal(envErr)
+	}
 	cmds := [][]string{
-		{"git", "init"},
-		{"git", "config", "user.name", "Test"},
-		{"git", "config", "user.email", "test@example.com"},
-		{"git", "commit", "--allow-empty", "-m", "init"},
+		{"init"},
+		{"config", "user.name", "Test"},
+		{"config", "user.email", "test@example.com"},
+		{"commit", "--allow-empty", "-m", "init"},
 	}
 	for _, c := range cmds {
-		cmd := exec.Command(c[0], c[1:]...)
-		cmd.Dir = dir
-		cmd.Env = env
-		out, err := cmd.CombinedOutput()
+		out, err := util.RunGit(cmdCtx, dir, c...)
 		if err != nil {
-			t.Fatalf("failed setup cmd %v: %v: %s", c, err, strings.TrimSpace(string(out)))
+			t.Fatalf("failed setup cmd %v: %v: %s", append([]string{"git"}, c...), err, strings.TrimSpace(out))
 		}
 	}
 }

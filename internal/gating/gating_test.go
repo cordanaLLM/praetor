@@ -142,14 +142,16 @@ func newHermeticGitRepo(t *testing.T) string {
 		{"add", "README.md"},
 		{"commit", "-q", "-m", "fixture"},
 	} {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = dir
-		cmd.Env = env
-		out, err := cmd.CombinedOutput()
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+		cmdCtx, envErr := util.WithCommandEnvironment(ctx, env)
+		if envErr != nil {
+			cancel()
+			t.Fatal(envErr)
+		}
+		out, err := util.RunGit(cmdCtx, dir, args...)
 		cancel()
 		if err != nil {
-			t.Skipf("git %v failed in sandbox: %v (%s)", args, err, string(out))
+			t.Skipf("git %v failed in sandbox: %v (%s)", args, err, out)
 		}
 	}
 	return dir

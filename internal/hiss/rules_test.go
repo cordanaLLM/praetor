@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // TestScanGoIgnoresCommentsAndAssertions pins the HISS-07 discard rule against two shapes
@@ -38,8 +40,7 @@ func initGitRepo(t *testing.T, dir string) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("git unavailable: %v", err)
 	}
-	cmd := exec.CommandContext(t.Context(), "git", "-C", dir, "init", "-q")
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := util.RunGit(t.Context(), dir, "init", "-q"); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
 }

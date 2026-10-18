@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestNormalizeSnapshotLimitsDefaultsAndBounds(t *testing.T) {
@@ -77,7 +79,7 @@ func TestSnapshotReportsCancellationAndFIFO(t *testing.T) {
 	if _, err := exec.LookPath("mkfifo"); err != nil {
 		t.Skipf("mkfifo unavailable: %v", err)
 	}
-	if err := exec.CommandContext(t.Context(), "mkfifo", fifo).Run(); err != nil {
+	if _, err := util.RunCommand(t.Context(), "", "mkfifo", fifo); err != nil {
 		t.Skipf("FIFO unavailable: %v", err)
 	}
 	// A successful mkfifo is not a FIFO everywhere. Git for Windows ships an MSYS mkfifo that

@@ -1,10 +1,13 @@
 package stress
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // hostileGlobalConfig writes a global git configuration that breaks committing: signing is
@@ -36,7 +39,7 @@ func TestSetupTestGitRepo_Negative_SurvivesAHostileGlobalConfig(t *testing.T) {
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 
 	inherited := t.TempDir()
-	if out, err := commitWithInheritedEnv(inherited); err == nil {
+	if out, err := commitWithInheritedEnv(t.Context(), inherited); err == nil {
 		t.Fatalf("the fixture config must break an inherited-environment commit, it succeeded: %s", out)
 	}
 
@@ -49,18 +52,16 @@ func TestSetupTestGitRepo_Negative_SurvivesAHostileGlobalConfig(t *testing.T) {
 
 // commitWithInheritedEnv deliberately exercises the inherited environment (without testsupport.HermeticGitEnv)
 // to verify that hostile ambient global git configurations break unisolated fixture commits.
-func commitWithInheritedEnv(dir string) (string, error) {
+func commitWithInheritedEnv(ctx context.Context, dir string) (string, error) {
 	for _, args := range [][]string{
 		{"init"},
 		{"config", "user.name", "Test"},
 		{"config", "user.email", "test@example.com"},
 		{"commit", "--allow-empty", "-m", "init"},
 	} {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		out, err := cmd.CombinedOutput()
+		out, err := util.RunGit(ctx, dir, args...)
 		if err != nil {
-			return string(out), err
+			return out, err
 		}
 	}
 	return "", nil

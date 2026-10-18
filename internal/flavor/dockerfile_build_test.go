@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // BUG-581 is "docker build . fails", so the builder stage's RUN is executed here rather than
@@ -92,11 +94,14 @@ func runBuilder(t *testing.T, shell, script, module, mainPackage string) (built 
 	script = strings.ReplaceAll(script, "-o /bin/app", "-o '"+binary+"'")
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, shell, "-c", script)
-	cmd.Dir = module
-	cmd.Env = append(os.Environ(), "MAIN_PACKAGE="+mainPackage, "GOWORK=off", "GOFLAGS=", "GOTOOLCHAIN=local")
-	out, err := cmd.CombinedOutput()
-	if _, statErr := os.Stat(binary); err == nil && statErr == nil {
+	cmdEnv := append(os.Environ(), "MAIN_PACKAGE="+mainPackage, "GOWORK=off", "GOFLAGS=", "GOTOOLCHAIN=local")
+	cmdCtx, err := util.WithCommandEnvironment(ctx, cmdEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, runErr := util.RunCommandBytes(cmdCtx, module, shell, util.MaxCommandOutputBytes, "-c", script)
+	out := append(res.Stdout, res.Stderr...)
+	if _, statErr := os.Stat(binary); runErr == nil && statErr == nil {
 		return true, string(out)
 	}
 	return false, string(out)

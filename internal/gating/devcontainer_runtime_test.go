@@ -201,6 +201,7 @@ func TestPraetorsOwnDevcontainerRunsTheGoStages(t *testing.T) {
 // (devcontainer.FindRuntime), or the reason the test cannot run here.
 func realRuntime(t *testing.T) (devcontainer.Runtime, string) {
 	t.Helper()
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
 	rt, err := devcontainer.FindRuntime(t.Context(), t.TempDir(), hostMachine())
 	if err != nil {
 		return devcontainer.Runtime{}, err.Error()

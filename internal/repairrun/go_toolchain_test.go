@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // realGoToolchain returns the go binary this test process can run and the GOROOT that binary
@@ -22,7 +24,7 @@ func realGoToolchain(t *testing.T) (string, string) {
 	if err != nil {
 		t.Skipf("go is not on PATH here: %v", err)
 	}
-	data, err := exec.CommandContext(t.Context(), goPath, "env", "GOROOT").Output()
+	data, err := util.RunCommand(t.Context(), "", goPath, "env", "GOROOT")
 	if err != nil {
 		t.Fatalf("go env GOROOT: %v", err)
 	}
@@ -30,7 +32,7 @@ func realGoToolchain(t *testing.T) (string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolvedRoot, err := filepath.EvalSymlinks(strings.TrimSpace(string(data)))
+	resolvedRoot, err := filepath.EvalSymlinks(strings.TrimSpace(data))
 	if err != nil {
 		t.Fatal(err)
 	}

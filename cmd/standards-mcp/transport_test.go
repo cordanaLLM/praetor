@@ -323,7 +323,7 @@ func TestTransportWireClassificationsPreserveExactBytes(t *testing.T) {
 	}
 
 	health := httptest.NewRecorder()
-	srv.handleHealth(health, httptest.NewRequest(http.MethodGet, "http://localhost/health", nil))
+	srv.handleHealth(health, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://localhost/health", nil))
 	if got, want := health.Body.String(), `{"status":"ok","server":"standards-mcp","version":"v1.0.0-test"}`; got != want {
 		t.Errorf("health wire bytes = %q, want %q", got, want)
 	}
@@ -344,7 +344,7 @@ func TestTransportWireClassificationsPreserveExactBytes(t *testing.T) {
 	}
 
 	method := httptest.NewRecorder()
-	srv.httpHandler().ServeHTTP(method, httptest.NewRequest(http.MethodGet, "http://localhost/", nil))
+	srv.httpHandler().ServeHTTP(method, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://localhost/", nil))
 	if got, want := method.Body.String(), "Method Not Allowed\n"; got != want {
 		t.Errorf("static HTTP error bytes = %q, want %q", got, want)
 	}
@@ -354,7 +354,7 @@ func TestTransportWireClassificationsPreserveExactBytes(t *testing.T) {
 		}
 	}
 	dynamic := httptest.NewRecorder()
-	srv.handleSSEEndpoint(t.Context())(dynamic, httptest.NewRequest(http.MethodGet, "http://localhost/sse", nil))
+	srv.handleSSEEndpoint(t.Context())(dynamic, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://localhost/sse", nil))
 	if got, want := dynamic.Body.String(), ErrSSESessionLimit.Error()+"\n"; got != want {
 		t.Errorf("dynamic HTTP error bytes = %q, want %q", got, want)
 	}

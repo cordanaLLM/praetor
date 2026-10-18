@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // repositoryOf resolves path's checkout repository or fails the test.
@@ -156,11 +157,14 @@ func TestResolveCheckoutRepositoryMatchesRealGit(t *testing.T) {
 	env := testsupport.HermeticGitEnv(t)
 	git := func(dir string, args ...string) {
 		t.Helper()
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, "git", append([]string{"-c", "protocol.file.allow=always", "-c", "init.defaultBranch=main"}, args...)...)
-		cmd.Dir, cmd.Env = dir, env
-		if out, err := cmd.CombinedOutput(); err != nil {
+		cmdCtx, envErr := util.WithCommandEnvironment(ctx, env)
+		if envErr != nil {
+			t.Fatal(envErr)
+		}
+		gitArgs := append([]string{"-c", "protocol.file.allow=always", "-c", "init.defaultBranch=main"}, args...)
+		if out, err := util.RunGit(cmdCtx, dir, gitArgs...); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}

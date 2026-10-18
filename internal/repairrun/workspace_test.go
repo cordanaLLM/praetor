@@ -74,8 +74,12 @@ func TestASTRejectsGoTestFramingAndNewCalls(t *testing.T) {
 func requireVerificationRuntime(t *testing.T) {
 	t.Helper()
 	for _, path := range []string{"/usr/bin/bwrap", "/usr/bin/systemd-run", "/usr/bin/prlimit", "/run/user/" + strconv.Itoa(os.Getuid()) + "/bus"} {
-		if _, err := os.Stat(path); err != nil {
+		info, err := os.Stat(path)
+		if err != nil {
 			t.Skipf("real verification integration requires local runtime: %v", err)
+		}
+		if path == "/run/user/"+strconv.Itoa(os.Getuid())+"/bus" && info.Mode().Type() != os.ModeSocket {
+			t.Skipf("real verification integration requires active systemd user bus socket: %v", info.Mode())
 		}
 	}
 }

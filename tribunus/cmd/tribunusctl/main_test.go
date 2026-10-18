@@ -3,16 +3,18 @@ package main
 import (
 	"bytes"
 	"context"
-	"os/exec"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestHelpOutputFramesTribunusAsGraphRouter(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
-	output, err := exec.CommandContext(ctx, "go", "run", ".", "--help").CombinedOutput()
+	res, err := util.RunCommandBytes(ctx, "", "go", util.MaxCommandOutputBytes, "run", ".", "--help")
+	output := append(res.Stdout, res.Stderr...)
 	if err != nil {
 		t.Fatalf("tribunusctl --help: %v\n%s", err, output)
 	}

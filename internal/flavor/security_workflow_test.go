@@ -320,9 +320,9 @@ func TestSecurityWorkflow_Boundary_Go1272FallbackScanners(t *testing.T) {
 	if err != nil {
 		t.Skipf("Go toolchain absent: %v", err)
 	}
-	version, err := exec.Command(goBinary, "env", "GOVERSION").Output()
-	if err != nil || strings.TrimSpace(string(version)) != "go1.27.2" {
-		t.Skipf("Go 1.27.2 absent: GOVERSION=%q, error=%v", strings.TrimSpace(string(version)), err)
+	version, err := util.RunCommand(t.Context(), "", goBinary, "env", "GOVERSION")
+	if err != nil || strings.TrimSpace(version) != "go1.27.2" {
+		t.Skipf("Go 1.27.2 absent: GOVERSION=%q, error=%v", strings.TrimSpace(version), err)
 	}
 	body := renderedSecurityWorkflow(t, false)
 	install := strings.TrimSpace(securityStep(t, body, "Install Tools").Run)
@@ -513,14 +513,17 @@ func assertGosecFindsG101(t *testing.T, ctx context.Context, binDir string) {
 }
 
 func runSecurityCommand(ctx context.Context, dir, binDir, name string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOBIN="+binDir, "GOFLAGS=-p=10", "GOTOOLCHAIN=local", "GOWORK=off", "RUNNER_TEMP="+filepath.Join(dir, "runner"))
-	output, err := cmd.CombinedOutput()
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return string(output), ctx.Err()
+	cmdEnv := append(os.Environ(), "GOBIN="+binDir, "GOFLAGS=-p=10", "GOTOOLCHAIN=local", "GOWORK=off", "RUNNER_TEMP="+filepath.Join(dir, "runner"))
+	cmdCtx, err := util.WithCommandEnvironment(ctx, cmdEnv)
+	if err != nil {
+		return "", err
 	}
-	return string(output), err
+	res, runErr := util.RunCommandBytes(cmdCtx, dir, name, util.MaxCommandOutputBytes, args...)
+	output := string(append(res.Stdout, res.Stderr...))
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return output, ctx.Err()
+	}
+	return output, runErr
 }
 
 func isNetworkFailure(output string) bool {

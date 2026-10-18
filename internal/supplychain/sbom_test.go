@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // fixtureGitTimeout bounds one fixture git command (HISS-02).
@@ -30,10 +31,11 @@ func fixtureGit(t *testing.T, dir string, env []string, args ...string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), fixtureGitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = dir
-	cmd.Env = env
-	if out, err := cmd.CombinedOutput(); err != nil {
+	cmdCtx, envErr := util.WithCommandEnvironment(ctx, env)
+	if envErr != nil {
+		t.Fatal(envErr)
+	}
+	if out, err := util.RunGit(cmdCtx, dir, args...); err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }

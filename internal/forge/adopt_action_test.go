@@ -14,6 +14,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -263,10 +264,13 @@ func executeShellBody(t *testing.T, body, stub string, extra func(binDir, temp s
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), adoptStepTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, shell, "-c", body)
-	cmd.Dir = work
-	cmd.Env = append(env, extra(binDir, temp)...)
-	combined, runErr := cmd.CombinedOutput()
+	cmdEnv := append(env, extra(binDir, temp)...)
+	cmdCtx, err := util.WithCommandEnvironment(ctx, cmdEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, runErr := util.RunCommandBytes(cmdCtx, work, shell, util.MaxCommandOutputBytes, "-c", body)
+	combined := append(res.Stdout, res.Stderr...)
 	return stepOutcome{
 		exitCode: exitCodeOf(t, runErr), outputs: parseStepOutputs(t, outputFile),
 		invocations: readInvocations(t, log), workDir: work, runnerTemp: temp,

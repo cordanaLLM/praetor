@@ -125,10 +125,11 @@ func hadolintFindings(t *testing.T, bin, dockerfile string) []string {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, bin, "--no-fail", "--no-color", "--format", "json", path).Output()
+	res, err := util.RunCommandBytes(ctx, "", bin, util.MaxCommandOutputBytes, "--no-fail", "--no-color", "--format", "json", path)
 	if err != nil {
 		t.Fatalf("hadolint on %s: %v", path, err)
 	}
+	out := res.Stdout
 	var findings []struct {
 		Code string `json:"code"`
 	}
