@@ -130,6 +130,20 @@ test("signalTree negative: non-ESRCH error reports signal error message", () => 
   }
 });
 
+test("signalTree negative: a fallback kill that returns false reports the group error", () => {
+  try {
+    signalSeam.processKill = () => {
+      const err = new Error("group kill failed: EPERM");
+      (err as NodeJS.ErrnoException).code = "EPERM";
+      throw err;
+    };
+    const fakeChild = { pid: 999999, kill: () => false } as unknown as ChildProcess;
+    assert.equal(signalTree(fakeChild, "SIGKILL"), "group kill failed: EPERM");
+  } finally {
+    signalSeam.processKill = undefined;
+  }
+});
+
 test("signalTree boundary: pid undefined or pid <= 1 sends no signal and reports no error", () => {
   const noopChild = (pid: number | undefined) => ({
     pid,
