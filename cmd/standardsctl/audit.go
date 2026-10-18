@@ -67,7 +67,8 @@ type auditOptions struct {
 	// maxStale is the --max-stale-baseline-entries bound: the audit fails when more baseline
 	// entries than this match nothing in the tree (#349). Negative, the default, sets no bound,
 	// and stale entries are reported without failing, so a tree that passed keeps passing.
-	maxStale int
+	maxStale  int
+	linterLog string
 }
 
 func runAudit(args []string) error {
@@ -113,6 +114,7 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 	offline := fs.Bool("offline", false, offlineFlagUsage)
 	maxStale := fs.Int(maxStaleFlag, 0,
 		"Fail when more than N baseline entries match nothing in the tree; unset, stale entries are reported and the audit passes")
+	linterLog := fs.String("linter-log", "", "Path to golangci-lint log output for stale exclusion checks")
 	var policy config.EffectiveOptions
 	registerPolicySourceFlags(fs, &policy, "audited root")
 	limitFlags := registerVerificationLimitFlags(fs)
@@ -143,6 +145,7 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 		verification:    limitFlags.limits(),
 		maxStale:        staleBound,
 		policy:          policy,
+		linterLog:       *linterLog,
 	}, nil
 }
 
@@ -192,7 +195,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditWorkflowTriggers(ctx, manifest, rootDir) },
 		func() error { return auditTestTimeouts(ctx, manifest, rootDir) },
 		func() error { return auditBuildWarnings(ctx, manifest, rootDir) },
-		func() error { return auditDeclaredLinters(ctx, manifest, rootDir, opts.effective) },
+		func() error { return auditDeclaredLinters(ctx, manifest, rootDir, opts.effective, opts.linterLog) },
 		func() error { return auditPaperclipHarness(ctx, manifest, opts) },
 		func() error { return auditCavemanConfiguredSources(ctx, manifest, rootDir) },
 		func() error { return auditRunnerMatrix(ctx, manifest, rootDir) },

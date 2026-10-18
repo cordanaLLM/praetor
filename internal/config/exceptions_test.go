@@ -202,6 +202,18 @@ func TestValidateExceptionsCategories(t *testing.T) {
 	}
 }
 
+func TestException_Problem(t *testing.T) {
+	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
+	base := Exception{Rule: ExceptionRuleDeclaredLinters, Tool: "exclusion", Reason: "#133", Category: "C", Entered: "2026-10-10", Expires: "2026-10-20"}
+	if prob := base.Problem(today); prob != "" {
+		t.Fatalf("expected valid category C to pass, got: %s", prob)
+	}
+	base.Expires = "2026-10-25"
+	if prob := base.Problem(today); !strings.Contains(prob, "category C requires expires 2026-10-20") {
+		t.Fatalf("expected category C interval failure, got: %s", prob)
+	}
+}
+
 func TestValidateExceptions_HISSRulesAndFunctionScope(t *testing.T) {
 	for _, rule := range hisscatalog.RuleIDs() {
 		entry := Exception{Rule: rule, Path: "src/a.go", Reason: "by design", Expires: "2026-12-31"}

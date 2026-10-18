@@ -15,16 +15,17 @@ import (
 
 // auditDeclaredLinters verifies that every linter declared by the resolved policy's
 // profiles or facets is run by at least one CI workflow under .github/workflows (#1289).
-func auditDeclaredLinters(ctx context.Context, manifest *config.Manifest, rootDir string, effective *config.EffectivePolicy) error {
+func auditDeclaredLinters(ctx context.Context, manifest *config.Manifest, rootDir string, effective *config.EffectivePolicy, logPath string) error {
 	var exceptions []config.Exception
 	if manifest != nil {
 		exceptions = manifest.Exceptions
 	}
 	line, err := adopt.AuditDeclaredLinters(ctx, adopt.DeclaredLintersOptions{
-		RootDir:    rootDir,
-		Policy:     effective,
-		Exceptions: exceptions,
-		Today:      time.Now(),
+		RootDir:     rootDir,
+		Policy:      effective,
+		Exceptions:  exceptions,
+		Today:       time.Now(),
+		LintLogPath: logPath,
 	})
 	if line != "" {
 		fmt.Println(line)

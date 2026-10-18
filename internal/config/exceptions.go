@@ -400,6 +400,16 @@ func categorizedExceptionExpiryProblem(e Exception, today time.Time) string {
 	return rules.CategoryExpiryProblem(e.Category, e.Entered, e.Expires, today)
 }
 
+// ExceptionCategoryDays returns the days allowed for category, and whether the category is valid.
+func ExceptionCategoryDays(category string) (int, bool) {
+	return exceptionCategoryDays(category)
+}
+
+// Problem reports why e is refused as an exception entry, or "".
+func (e Exception) Problem(today time.Time) string {
+	return e.problem(today)
+}
+
 func (e Exception) functionProblem() string {
 	if e.Function == "" {
 		return ""

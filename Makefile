@@ -154,6 +154,13 @@ lint: fmt-check
 	go vet -tags=apicompatgate ./tools/apicompat/gate/
 	$(GO_LINT_TOOL) golangci-lint run
 
+lint-exceptions:
+	@tmpdir=$$(mktemp -d); \
+	trap 'rm -rf "$$tmpdir"' EXIT; \
+	go run ./cmd/standardsctl linters exceptions strip-config --out="$$tmpdir/.golangci.yml" || exit 1; \
+	$(GO_LINT_TOOL) golangci-lint run --config="$$tmpdir/.golangci.yml" --issues-exit-code=0 --output.json.path="$$tmpdir/report.json" ./... || exit 1; \
+	go run ./cmd/standardsctl linters exceptions generate --report="$$tmpdir/report.json" --issue=1030 --write
+
 # golangci-lint is pinned in its own module, tools/lint/go.mod, which Renovate keeps current; `go
 # tool` builds exactly that version, whatever is on PATH. It ran as @latest before, and an
 # upstream release turned main red with no change here (ledger engine-golangci-latest-pin-1335).

@@ -32,12 +32,13 @@ const maxArtifactWalkEntries = 50000
 
 // DeclaredLintersOptions is what AuditDeclaredLinters reads: the repository root,
 // the effective policy, the manifest's exceptions list (rule "declared-linters"),
-// and the day entries' expiry is judged against.
+// the day entries' expiry is judged against, and an optional golangci-lint log output.
 type DeclaredLintersOptions struct {
-	RootDir    string
-	Policy     *config.EffectivePolicy
-	Exceptions []config.Exception
-	Today      time.Time
+	RootDir     string
+	Policy      *config.EffectivePolicy
+	Exceptions  []config.Exception
+	Today       time.Time
+	LintLogPath string
 }
 
 func prepareDeclaredLintersAudit(ctx context.Context, opts DeclaredLintersOptions) (time.Time, []config.Exception, []config.DeclaredLinter, error) {
@@ -62,9 +63,16 @@ func prepareDeclaredLintersAudit(ctx context.Context, opts DeclaredLintersOption
 	return today, entries, declared, nil
 }
 
-func finalizeDeclaredLintersAudit(judged declaredLintersJudgement, applicableCount int, skipLines []string) (string, error) {
+func finalizeDeclaredLintersAudit(judged declaredLintersJudgement, applicableCount int, skipLines []string, exclusionFailures []string) (string, error) {
+	var errLines []string
 	if len(judged.unexcused) > 0 || len(judged.stale) > 0 {
-		return strings.Join(skipLines, "\n"), errors.New(judged.failure())
+		errLines = append(errLines, judged.failure())
+	}
+	if len(exclusionFailures) > 0 {
+		errLines = append(errLines, strings.Join(exclusionFailures, "\n"))
+	}
+	if len(errLines) > 0 {
+		return strings.Join(skipLines, "\n"), errors.New(strings.Join(errLines, "\n"))
 	}
 	passMsg := judged.pass(applicableCount)
 	if len(skipLines) > 0 {
@@ -108,7 +116,14 @@ func AuditDeclaredLinters(ctx context.Context, opts DeclaredLintersOptions) (str
 	}
 
 	judged := judgeDeclaredLinters(missing, entries, today)
-	return finalizeDeclaredLintersAudit(judged, len(applicable), skipLines)
+
+	exclSkip, exclFailures, err := auditDeclaredLinterExclusions(opts, declared, today)
+	if err != nil {
+		return strings.Join(skipLines, "\n"), err
+	}
+	skipLines = append(skipLines, exclSkip...)
+
+	return finalizeDeclaredLintersAudit(judged, len(applicable), skipLines, exclFailures)
 }
 
 func hasDeclaredLinter(declared []config.DeclaredLinter, name string) bool {

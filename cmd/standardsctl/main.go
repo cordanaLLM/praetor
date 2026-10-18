@@ -100,6 +100,7 @@ func printCoreCommands() {
 	fmt.Println("  hindsight          Manage local zero-token memory cache and sync with Hindsight server")
 	fmt.Println("  state              Manage .workingdir/ session state, bugs ledger, and questions")
 	fmt.Println("  exceptions         List or inspect declared exceptions")
+	fmt.Println("  linters            Manage generated .golangci.yml exclusion rules (strip-config, generate)")
 	fmt.Println("  dedupe             Scan for AST clones, utility sprawl, and cadence enforcement")
 	fmt.Println("  efficiency         Measure and report efficiency ledger across landed pull requests (alias: efficiency-ledger)")
 	fmt.Println("  hiss               Inspect and verify declared HISS enforcement evidence")
@@ -253,6 +254,7 @@ func coreCommandTable() map[string]commandFunc {
 		"hindsight":                runHindsight,
 		"state":                    runState,
 		"exceptions":               runExceptions,
+		"linters":                  runLinters,
 		"dedupe":                   runDedupe,
 		"hiss":                     runHiss,
 		"rules":                    runRules,
