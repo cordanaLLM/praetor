@@ -900,7 +900,11 @@ push rather than running the gate under a guessed bound. The deadline itself is 
 When that bound expires, or Ctrl-C interrupts the push, the hook stops the gate before it kills
 it. `stop_process_group` in [`common.py`](https://github.com/cordanaLLM/praetor/blob/main/.config/lefthook/scripts/common.py) sends the
 child's process group SIGTERM (SIGINT for Ctrl-C), waits up to `STOP_GRACE` (10 seconds) for every
-member to exit, and only then sends SIGKILL; a second Ctrl-C during the wait kills at once. The
+member to exit, and only then sends SIGKILL; a second Ctrl-C during the wait kills at once. A
+group id of 1 or less, a non-integer (a test double's pid reads as 1) or the hook's own group is
+never signalled: `os.killpg(1, sig)` is `kill(-1, sig)` and reaches every process the user owns
+(cordanaLLM/praetor#1437); `_signal_group` refuses it, and HISS-08 reports any such call left
+unbounded in an adopter's code. The
 CLI runs each git and go command in a process group of its own and forwards a catchable signal to
 those groups, waiting up to 5 seconds for them (`internal/util/command_interrupt_unix.go`), so git
 removes its index lock and nothing is left running. `gate run` forwards SIGINT, SIGTERM and SIGHUP
