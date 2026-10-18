@@ -160,6 +160,7 @@ and `# praetor:generated-exceptions end`. Each rule targets exactly one `(file, 
 (`^<QuoteMeta>$`) sorted by file path then linter name, carrying category C (10-day limit) and issue provenance (#1030).
 
 Two commands drive generation and ratcheting:
+
 1. `praetorctl linters exceptions strip-config --out <path>`: writes `.golangci.yml` without the generated block and
    with `run.relative-path-mode: gitroot`, allowing an unconstrained lint run to report all findings hidden by the block
    (`TestStripGolangciConfig_3D`).
@@ -173,7 +174,6 @@ Two commands drive generation and ratcheting:
 
 The workflow is automated via the repository target `make lint-exceptions` (`Makefile`), which strips configuration to
 a temporary directory, executes the pinned `golangci-lint run` to generate the JSON report, and runs `praetorctl linters exceptions generate --write --issue 1030`.
-
 
 ## Sources and strictness
 
