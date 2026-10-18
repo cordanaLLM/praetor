@@ -198,7 +198,6 @@ whose use names a template.
 | [Azure/setup-helm](https://github.com/Azure/setup-helm) | Workflows: installs Helm | action, used by CI | MIT |
 | [docker/login-action](https://github.com/docker/login-action) | Workflows | action, used by CI | Apache-2.0 |
 | [docker/setup-buildx-action](https://github.com/docker/setup-buildx-action) | Workflows | action, used by CI | Apache-2.0 |
-| [fsfe/reuse-action](https://github.com/fsfe/reuse-action) | Workflows: runs the REUSE check | action, used by CI | GPL-3.0-or-later |
 | [goreleaser/goreleaser-action](https://github.com/goreleaser/goreleaser-action) | Workflows | action, used by CI | MIT |
 | [oven-sh/setup-bun](https://github.com/oven-sh/setup-bun) | Node CI template | action, integrated | MIT |
 | [sigstore/cosign-installer](https://github.com/sigstore/cosign-installer) | Workflows: installs Cosign | action, used by CI | Apache-2.0 |
@@ -305,7 +304,7 @@ outside a manifest. None of them ships in the binaries.
 | [Syft](https://github.com/anchore/syft) | SBOM generation | tool, used by CI | Apache-2.0 |
 | [Helm](https://github.com/helm/helm) | Lints, packages and pushes the chart in `deploy/helm/praetor` during a release | tool, used by CI | Apache-2.0 |
 | [Renovate](https://github.com/renovatebot/renovate) | Dependency update proposals; `renovate.json` extends its built-in presets `config:recommended`, `:dependencyDashboard`, `:semanticCommits` and `:maintainLockFilesWeekly`, and CI installs it to validate the configuration | tool, used by CI | AGPL-3.0-only |
-| [REUSE](https://reuse.software) | License compliance check, run by the reuse-action | tool, used by CI | GPL-3.0-or-later |
+| [REUSE](https://reuse.software) | License compliance check (reuse lint), installed from a hash-pinned lock in CI and in the emitted REUSE workflow | tool, used by CI | Apache-2.0 AND CC0-1.0 AND CC-BY-SA-4.0 AND GPL-3.0-or-later, the license expression of the PyPI release |
 | [Chromium](https://www.chromium.org) | The browser Playwright downloads in CI to render and check the documentation figures | tool, used by CI | BSD-3-Clause, © 2015 The Chromium Authors |
 | [Probity](https://github.com/nizos/probity) | Optional test-first edit guard for AI coding assistants | tool, used by CI | MIT |
 
