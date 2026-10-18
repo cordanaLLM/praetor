@@ -166,3 +166,33 @@ func TestAuditTidyCoverage_Boundary_UnbuiltCompileDatabaseSkips(t *testing.T) {
 		t.Fatalf("audit after a build must judge coverage = %v\n%s", err, out)
 	}
 }
+
+// Positive: `ci tidy-coverage` passes when data_paths are declared and names skipped data units.
+func TestRunCITidyCoverage_Positive_DataPaths(t *testing.T) {
+	manifest := "version: 1\nclang_tidy:\n  lanes:\n    - name: \"cpu\"\n      compile_database: \"build/compile_commands.json\"\n  data_paths:\n    - \"tests/data\"\n"
+	root := tidyCoverageRepo(t, map[string]string{
+		"src/a.c":               "int a;\n",
+		"tests/data/sample.hip": "int s;\n",
+		".standards.yaml":       manifest,
+	})
+	writeTidyCoverageDatabase(t, root, "src/a.c")
+	out, err := captureStdout(t, func() error { return runCITidyCoverage(t.Context(), []string{"--dir=" + root}) })
+	want := "[PASS] clang-tidy translation-unit coverage: all 1 tracked translation units read by a lane (cpu: 1) or excused by a live exception (0), 1 under declared data paths."
+	if err != nil || !strings.Contains(out, want) {
+		t.Fatalf("ci tidy-coverage = %v\n%s\nwant:\n%s", err, out, want)
+	}
+}
+
+// Boundary: when every tracked unit lies under declared data_paths, the gate skips and says so.
+func TestRunCITidyCoverage_Boundary_SkipWhenAllUnitsAreData(t *testing.T) {
+	manifest := "version: 1\nclang_tidy:\n  lanes:\n    - name: \"cpu\"\n      compile_database: \"build/compile_commands.json\"\n  data_paths:\n    - \"tests/data\"\n"
+	root := tidyCoverageRepo(t, map[string]string{
+		"tests/data/sample.hip": "int s;\n",
+		".standards.yaml":       manifest,
+	})
+	out, err := captureStdout(t, func() error { return runCITidyCoverage(t.Context(), []string{"--dir=" + root}) })
+	want := "[SKIP] clang-tidy translation-unit coverage not checked: every tracked translation unit lies under a declared data path."
+	if err != nil || !strings.Contains(out, want) {
+		t.Fatalf("ci tidy-coverage = %v\n%s\nwant:\n%s", err, out, want)
+	}
+}

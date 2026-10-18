@@ -76,8 +76,12 @@ func checkTidyCoverage(ctx context.Context, manifest *config.Manifest, rootDir s
 		return fmt.Errorf("[FAIL] clang-tidy translation-unit coverage: %d problem(s) over %d tracked translation units%s",
 			len(report.Findings), report.Units, tidyCoverageHint(manifest))
 	}
-	fmt.Printf("[PASS] clang-tidy translation-unit coverage: all %d tracked translation units read by a lane (%s) or excused by a live exception (%d).\n",
-		report.Units, laneSummary(report.Lanes), len(report.Excepted))
+	var dataSuffix string
+	if report.DataUnits > 0 {
+		dataSuffix = fmt.Sprintf(", %d under declared data paths", report.DataUnits)
+	}
+	fmt.Printf("[PASS] clang-tidy translation-unit coverage: all %d tracked translation units read by a lane (%s) or excused by a live exception (%d)%s.\n",
+		report.Units, laneSummary(report.Lanes), len(report.Excepted), dataSuffix)
 	return nil
 }
 

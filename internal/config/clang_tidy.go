@@ -7,10 +7,14 @@ package config
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // MaxClangTidyLanes bounds the lanes one manifest declares (HISS-02).
 const MaxClangTidyLanes = 64
+
+// MaxClangTidyDataPaths bounds the data paths one manifest declares (HISS-02).
+const MaxClangTidyDataPaths = 64
 
 // ClangTidyPolicy is the manifest's clang_tidy section: the lanes in which the repository runs
 // clang-tidy. The translation-unit coverage gate (internal/tidycoverage) fails on every
@@ -18,6 +22,8 @@ const MaxClangTidyLanes = 64
 // exceptions entry excuses. It is repository-only, like DocsSurfaces.
 type ClangTidyPolicy struct {
 	Lanes []ClangTidyLane `yaml:"lanes"`
+	// DataPaths lists repository-relative directories whose files are data, not translation units.
+	DataPaths []string `yaml:"data_paths,omitempty"`
 }
 
 // ClangTidyLane is one clang-tidy lane and what it reads: either the compile database its
@@ -40,8 +46,9 @@ func (l ClangTidyLane) Source() string {
 
 // ValidateClangTidy refuses a clang_tidy section the coverage gate could not apply as written:
 // no lanes or more than MaxClangTidyLanes, a missing, oversized or repeated lane name, a lane
-// naming both or neither of compile_database and files, or a path that is not one clean
-// repository-relative file. A nil section declares no lane.
+// naming both or neither of compile_database and files, a path that is not one clean
+// repository-relative file, or invalid data_paths (more than MaxClangTidyDataPaths, not a clean
+// repository-relative path, trailing slash, '..', or repeated). A nil section declares no lane.
 func ValidateClangTidy(policy *ClangTidyPolicy) error {
 	if policy == nil {
 		return nil
@@ -62,6 +69,26 @@ func ValidateClangTidy(policy *ClangTidyPolicy) error {
 			return fmt.Errorf("clang_tidy.lanes[%d] repeats the name %q of clang_tidy.lanes[%d]", index, lane.Name, first)
 		}
 		names[lane.Name] = index
+	}
+	return validateDataPaths(policy.DataPaths)
+}
+
+// validateDataPaths checks that every declared data path is a clean repository-relative path
+// without trailing slash or '..', with no repeats, bounded by MaxClangTidyDataPaths.
+func validateDataPaths(paths []string) error {
+	if len(paths) > MaxClangTidyDataPaths {
+		return fmt.Errorf("clang_tidy.data_paths has %d paths; maximum is %d", len(paths), MaxClangTidyDataPaths)
+	}
+	seen := make(map[string]int, len(paths))
+	for index := 0; index < len(paths) && index < MaxClangTidyDataPaths; index++ {
+		p := paths[index]
+		if strings.HasSuffix(p, "/") || strings.Contains(p, "..") || !ValidRepositoryPath(p) {
+			return fmt.Errorf("clang_tidy.data_paths[%d] path %q must be a clean repository-relative path without trailing slash or '..'", index, p)
+		}
+		if first, repeated := seen[p]; repeated {
+			return fmt.Errorf("clang_tidy.data_paths[%d] repeats the path %q of clang_tidy.data_paths[%d]", index, p, first)
+		}
+		seen[p] = index
 	}
 	return nil
 }

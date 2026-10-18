@@ -424,6 +424,52 @@ func TestValidateClangTidyNegativeAndBoundary(t *testing.T) {
 	}
 }
 
+// Positive: valid data paths pass and decode from manifest. Negative: trailing slash, ..,
+// absolute, repeated and 65 entries are refused.
+func TestValidateClangTidyDataPaths(t *testing.T) {
+	baseLane := ClangTidyLane{Name: "cpu", CompileDatabase: "build/compile_commands.json"}
+	valid := &ClangTidyPolicy{
+		Lanes:     []ClangTidyLane{baseLane},
+		DataPaths: []string{"tests/data", "fixtures/sample"},
+	}
+	if err := ValidateClangTidy(valid); err != nil {
+		t.Fatalf("valid data paths refused: %v", err)
+	}
+
+	cases := map[string]struct {
+		paths []string
+		want  string
+	}{
+		"trailing slash": {[]string{"tests/data/"}, "without trailing slash or '..'"},
+		"parent path":    {[]string{"tests/../data"}, "without trailing slash or '..'"},
+		"dotdot prefix":  {[]string{"../data"}, "without trailing slash or '..'"},
+		"absolute path":  {[]string{"/tests/data"}, "without trailing slash or '..'"},
+		"repeated path":  {[]string{"tests/data", "tests/data"}, "repeats the path \"tests/data\""},
+	}
+	for name, tc := range cases {
+		policy := &ClangTidyPolicy{Lanes: []ClangTidyLane{baseLane}, DataPaths: tc.paths}
+		if err := ValidateClangTidy(policy); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: ValidateClangTidy = %v, want error containing %q", name, err, tc.want)
+		}
+	}
+
+	paths := make([]string, MaxClangTidyDataPaths+1)
+	for index := range paths {
+		paths[index] = fmt.Sprintf("data/path-%d", index)
+	}
+	if err := ValidateClangTidy(&ClangTidyPolicy{Lanes: []ClangTidyLane{baseLane}, DataPaths: paths[:MaxClangTidyDataPaths]}); err != nil {
+		t.Fatalf("%d data paths refused: %v", MaxClangTidyDataPaths, err)
+	}
+	if err := ValidateClangTidy(&ClangTidyPolicy{Lanes: []ClangTidyLane{baseLane}, DataPaths: paths}); err == nil || !strings.Contains(err.Error(), "maximum is 64") {
+		t.Fatalf("%d data paths accepted: %v", len(paths), err)
+	}
+
+	m, err := LoadManifest(writeManifest(t, "version: 1\nclang_tidy:\n  lanes:\n    - name: \"cpu\"\n      compile_database: \"b.json\"\n  data_paths:\n    - \"tests/data\"\n"))
+	if err != nil || len(m.ClangTidy.DataPaths) != 1 || m.ClangTidy.DataPaths[0] != "tests/data" {
+		t.Fatalf("LoadManifest data_paths = %v, %+v", err, m.ClangTidy)
+	}
+}
+
 // The root-license-notice and reuse-annotation-order rules name one root file per entry.
 // Positive: an entry naming a root file by path validates and decodes from the manifest.
 // Negative: a glob, or a path below the root, is refused, naming the rule. Boundary: the same
