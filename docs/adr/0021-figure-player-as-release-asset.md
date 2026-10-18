@@ -46,11 +46,13 @@ operational rule 14):
    returns the hex SHA-256 digest of those bytes, and
    `standardsctl figures pack --out <file>` writes the archive and prints
    `<sha256>  figures-player.tar.gz`.
-4. **Release asset publication.** `.github/workflows/release-binaries.yml` runs
-   `standardsctl figures pack --out dist/figures-player.tar.gz` before
-   publishing a release, includes `figures-player.tar.gz` in `SHA256SUMS`,
-   verifies its checksum, signs and attests it alongside the binary archives,
-   and uploads it to the GitHub release.
+4. **Release asset publication.** A `before` hook in `.goreleaser.yaml` runs
+   `standardsctl figures pack --out .release-extra/figures-player.tar.gz`;
+   GoReleaser's `checksum.extra_files` and `release.extra_files` put the archive
+   into the signed `checksums.txt` and upload it with the binary archives, so the
+   checksums signature covers it. `.github/workflows/release-binaries.yml` copies
+   it into `dist/` for the provenance steps, which attest and verify every
+   checksummed file.
 5. **Adopter lock file (`tools/figures/player.lock.json`).** In adopter
    repositories (every repository where the engine-only
    `tools/figures/bundle.mjs` is absent), `praetorctl adopt` writes
@@ -76,14 +78,16 @@ operational rule 14):
    - When `release` is empty, it logs one warning line
      (`figures: engine pin <...> has no release; figures render as SVG (no interactive player)`)
      and publishes no player files.
-   - When `release` is set, it downloads
+   - When `player.lock.json` is missing, it logs the same warning, naming the
+     missing file and `praetorctl adopt` as the command that writes it.
+   - When `release` is set, it downloads, over https only,
      `https://github.com/<repository>/releases/download/<release>/figures-player.tar.gz`
      with a 30-second timeout and `MAX_FILE_BYTES` ceiling, verifies that its
      SHA-256 matches `sha256` in `player.lock.json` (raising an error naming
      both digests on mismatch), extracts only `loader.js`, `player.js`, and
      `THIRD-PARTY-LICENSES.txt` (refusing any other member, absolute path, `..`
      segment, or non-regular entry), and publishes them under
-     `assets/figures/player/`.
+     `assets/javascripts/figures/`.
    - When the download fails (such as HTTP 404 or network unavailability), it
      logs the same single SVG fallback warning rather than failing the site
      build.

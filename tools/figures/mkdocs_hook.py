@@ -238,8 +238,10 @@ def release_archive_url(lock: dict, release: str, asset: str) -> str:
     repository = str(lock.get("repository") or "").strip()
     if not repository or repository == CANONICAL_REPOSITORY:
         base = CANONICAL_REPOSITORY_URL.rstrip("/")
-    elif repository.startswith(("https://", "http://")):
+    elif repository.startswith("https://"):
         base = repository.rstrip("/")
+    elif "://" in repository:
+        raise CheckError(f"the player archive is fetched over https only, not {repository!r}")
     else:
         base = f"https://github.com/{repository.strip('/')}"
     return f"{base}/releases/download/{release}/{asset}"
@@ -247,8 +249,8 @@ def release_archive_url(lock: dict, release: str, asset: str) -> str:
 
 def download_player_archive(url: str) -> bytes:
     """Fetch the release archive with a timeout and size cap."""
-    if not url.startswith(("https://", "http://")):
-        raise CheckError(f"unsupported URL scheme in {url!r}")
+    if not url.startswith("https://"):
+        raise CheckError(f"the player archive is fetched over https only, not {url!r}")
     with urlopen(url, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:  # noqa: S310
         raw = response.read(MAX_FILE_BYTES + 1)
     if len(raw) > MAX_FILE_BYTES:
@@ -317,6 +319,7 @@ def extract_player_archive(raw: bytes) -> list[tuple[str, Path]]:
 def locked_player_files(lock_file: Path) -> list[tuple[str, Path]]:
     """Resolve player files from player.lock.json, or warn and return none for SVG fallback."""
     if not lock_file.is_file():
+        log.warning(SVG_FALLBACK_WARNING, f"unknown ({lock_file.name} is missing; praetorctl adopt writes it)")
         return []
     lock = read_player_lock(lock_file)
     release = str(lock.get("release") or "").strip()
