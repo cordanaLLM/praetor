@@ -335,35 +335,37 @@ func writeRemadeFixtureFiles(t *testing.T, dir string, files map[string]string) 
 //	bwrap --dev-bind / / --ro-bind /usr/bin/dash /bin/sh go test -v -run TestRemadeIncludeCasesMatchGNUMake ./internal/adopt
 //
 // Skipped on this host because neither dash nor busybox is installed (/bin/sh -> bash).
+func runGNUMakeRemadeCase(t *testing.T, gnuMake, getDir string, tc remadeCase) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeRemadeFixtureFiles(t, dir, tc.files2(trackedGenMk))
+	mustWrite(t, filepath.Join(dir, "Makefile"), tc.makefile)
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(filepath.Join(dir, "gen.mk"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	envCtx, err := util.WithCommandEnvironment(ctx, append(os.Environ(), "LC_ALL=C", "MAKEFLAGS=", "PATH="+getDir+string(os.PathListSeparator)+os.Getenv("PATH")))
+	if err != nil {
+		t.Fatalf("environment: %v", err)
+	}
+	res, err := util.RunCommandBytes(envCtx, dir, gnuMake, util.MaxCommandOutputBytes, "-s", "docs-lint")
+	out := append(res.Stdout, res.Stderr...)
+	if err != nil {
+		if strings.Contains(tc.makefile, "other: gen.mk.sh") && strings.Contains(string(out), "gen.mk.sh") {
+			return string(out)
+		}
+		t.Fatalf("%s: running %s: %v\n%s", tc.name, gnuMake, err, out)
+	}
+	return string(out)
+}
+
 func TestRemadeIncludeCasesMatchGNUMake(t *testing.T) {
 	gnuMake := testsupport.GNUMake(t)
 	testsupport.RequireGNUMakeShell(t, "cat", "chmod", "cp")
 	getDir := t.TempDir()
 	writeStub(t, getDir, "get", `for a in "$@"; do case "$a" in *s.*) base=$(basename "$a"); cp "$a" "${base#s.}";; esac; done`+"\n")
-	run := func(tc remadeCase) string {
-		dir := t.TempDir()
-		writeRemadeFixtureFiles(t, dir, tc.files2(trackedGenMk))
-		mustWrite(t, filepath.Join(dir, "Makefile"), tc.makefile)
-		old := time.Now().Add(-time.Hour)
-		if err := os.Chtimes(filepath.Join(dir, "gen.mk"), old, old); err != nil {
-			t.Fatal(err)
-		}
-		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-		defer cancel()
-		envCtx, err := util.WithCommandEnvironment(ctx, append(os.Environ(), "LC_ALL=C", "MAKEFLAGS=", "PATH="+getDir+string(os.PathListSeparator)+os.Getenv("PATH")))
-		if err != nil {
-			t.Fatalf("environment: %v", err)
-		}
-		res, err := util.RunCommandBytes(envCtx, dir, gnuMake, util.MaxCommandOutputBytes, "-s", "docs-lint")
-		out := append(res.Stdout, res.Stderr...)
-		if err != nil {
-			if strings.Contains(tc.makefile, "other: gen.mk.sh") && strings.Contains(string(out), "gen.mk.sh") {
-				return string(out)
-			}
-			t.Fatalf("%s: running %s: %v\n%s", tc.name, gnuMake, err, out)
-		}
-		return string(out)
-	}
 	for _, tc := range remadeCases {
 		if runtime.GOOS == "windows" && tc.name == "makefile target remade" {
 			// HISS-21 stated skip: on the Windows runner GNU Make read the tracked text instead of
@@ -373,12 +375,12 @@ func TestRemadeIncludeCasesMatchGNUMake(t *testing.T) {
 			t.Logf("%s: replay skipped on windows: GNU Make there does not restart after remaking its own makefile", tc.name)
 			continue
 		}
-		if out := run(tc); strings.Contains(out, "tracked") {
+		if out := runGNUMakeRemadeCase(t, gnuMake, getDir, tc); strings.Contains(out, "tracked") {
 			t.Errorf("%s: Make read the tracked text, so the case proves nothing: %q", tc.name, out)
 		}
 	}
 	safe := remadeCase{"no source", "include gen.mk\nother: x\n\t@true\n", nil}
-	if out := run(safe); !strings.Contains(out, "tracked") {
+	if out := runGNUMakeRemadeCase(t, gnuMake, getDir, safe); !strings.Contains(out, "tracked") {
 		t.Errorf("safe control: Make did not read the tracked text: %q", out)
 	}
 }

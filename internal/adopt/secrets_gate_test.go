@@ -40,19 +40,7 @@ func TestSecretsGate_AssetsEmitted(t *testing.T) {
 	}
 }
 
-func TestSecretsGate_RenderWorkflow_3D(t *testing.T) {
-	root := newTestRepo(t, "secrets-gate-workflow")
-	trackGoModule(t, root, "go.mod")
-
-	s := familySession(t, false)
-	s.repoPath = root
-
-	// Write plain security workflow
-	wfDir := filepath.Join(root, ".github", "workflows")
-	if err := os.MkdirAll(wfDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	plainWorkflow := `name: Security Scan
+const plainSecurityWorkflow = `name: Security Scan
 jobs:
   vulncheck:
     runs-on: ubuntu-26.04
@@ -60,11 +48,8 @@ jobs:
       - name: Run Secrets Scan (gitleaks)
         run: go run -tags=secretsgate ./tools/secrets/gate
 `
-	secFile := filepath.Join(wfDir, "security.yml")
-	mustWrite(t, secFile, plainWorkflow)
 
-	// Declare HISS-12 exception in .standards.yaml
-	manifest := `version: 1
+const hiss12ExceptionManifest = `version: 1
 exceptions:
   - rule: HISS-12
     path: creds.py
@@ -72,7 +57,27 @@ exceptions:
     reason: planted test waiver
     expires: "2026-11-01"
 `
-	mustWrite(t, filepath.Join(root, ".standards.yaml"), manifest)
+
+func setupSecretsGateWorkflowFixture(t *testing.T) (*adoptSession, string, string) {
+	t.Helper()
+	root := newTestRepo(t, "secrets-gate-workflow")
+	trackGoModule(t, root, "go.mod")
+
+	s := familySession(t, false)
+	s.repoPath = root
+
+	wfDir := filepath.Join(root, ".github", "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secFile := filepath.Join(wfDir, "security.yml")
+	mustWrite(t, secFile, plainSecurityWorkflow)
+	mustWrite(t, filepath.Join(root, ".standards.yaml"), hiss12ExceptionManifest)
+	return s, root, secFile
+}
+
+func TestSecretsGate_RenderWorkflow_3D(t *testing.T) {
+	s, root, secFile := setupSecretsGateWorkflowFixture(t)
 
 	// 1. First run renders SECRETS_EXCEPTIONS
 	if err := reconcileSecretsGate(t.Context(), s); err != nil {
@@ -103,7 +108,7 @@ exceptions:
 	if strings.Contains(stripped, "SECRETS_EXCEPTIONS:") {
 		t.Fatalf("workflow still contains SECRETS_EXCEPTIONS after manifest removal:\n%s", stripped)
 	}
-	if stripped != plainWorkflow {
+	if stripped != plainSecurityWorkflow {
 		t.Fatalf("workflow did not restore to plain:\n%s", stripped)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestReconcileAsDecidedGoldenAndIdempotent(t *testing.T) {
@@ -168,7 +169,8 @@ func TestReconcileAsDecidedStrictREUSELintsCleanAndPreservesSidecar(t *testing.T
 		t.Fatalf("preservation of adopter sidecar was not reported: %+v", actions)
 	}
 
-	out, err := exec.CommandContext(t.Context(), reusePath, "--root", repo, "lint").CombinedOutput()
+	res, err := util.RunCommandBytes(t.Context(), repo, reusePath, util.MaxCommandOutputBytes, "--root", repo, "lint")
+	out := append(res.Stdout, res.Stderr...)
 	if err != nil {
 		t.Fatalf("reuse lint failed on adopted repository:\n%s", string(out))
 	}

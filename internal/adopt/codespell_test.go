@@ -67,7 +67,8 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 	return captured, runErr
 }
 
-func TestCodespell_AdopterReconciliationAndAudit(t *testing.T) {
+func setupCodespellFixture(t *testing.T) (string, time.Time, *adoptSession, string) {
+	t.Helper()
 	repo := t.TempDir()
 	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
 	playerPath := "tools/figures/player/player.js"
@@ -97,15 +98,6 @@ func TestCodespell_AdopterReconciliationAndAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	liveException := config.Exception{
-		Rule:     config.ExceptionRuleCodespell,
-		Path:     playerPath,
-		Category: "C",
-		Reason:   "minified third-party interfig bundle",
-		Entered:  "2026-10-18",
-		Expires:  "2026-10-28",
-	}
-
 	manifestContent := `version: 1
 facets:
   - docs:seo-portal
@@ -127,6 +119,13 @@ exceptions:
 		opts:     AdoptOptions{Path: repo},
 		report:   &AdoptReport{},
 	}
+	return repo, today, s, findCodespellBinary(t)
+}
+
+func assertCodespellLiveReconciled(t *testing.T, repo string, today time.Time, s *adoptSession, codespellBin string) {
+	t.Helper()
+	playerPath := "tools/figures/player/player.js"
+	codespellrcPath := filepath.Join(repo, ".codespellrc")
 
 	// 1. Reconcile with live exception
 	if err := reconcileCodespell(t.Context(), s); err != nil {
@@ -149,6 +148,14 @@ exceptions:
 	}
 
 	// 2. Audit with live exception passes and lists expiry
+	liveException := config.Exception{
+		Rule:     config.ExceptionRuleCodespell,
+		Path:     playerPath,
+		Category: "C",
+		Reason:   "minified third-party interfig bundle",
+		Entered:  "2026-10-18",
+		Expires:  "2026-10-28",
+	}
 	out, err := captureStdout(t, func() error {
 		return AuditCodespell(t.Context(), repo, []config.Exception{liveException}, today)
 	})
@@ -160,12 +167,17 @@ exceptions:
 	}
 
 	// 3. Codespell binary execution with skip passes
-	codespellBin := findCodespellBinary(t)
 	if codespellBin != "" {
 		if runOut, runErr := runCodespell(t, codespellBin, repo); runErr != nil {
 			t.Fatalf("codespell with skip failed unexpectedly (%v):\n%s", runErr, string(runOut))
 		}
 	}
+}
+
+func assertCodespellExpired(t *testing.T, repo string, s *adoptSession, codespellBin string) config.Exception {
+	t.Helper()
+	playerPath := "tools/figures/player/player.js"
+	codespellrcPath := filepath.Join(repo, ".codespellrc")
 
 	// 4. Expired exception: adopt removes skip and codespell fails
 	expiredException := config.Exception{
@@ -209,6 +221,12 @@ exceptions:
 			t.Fatalf("codespell unexpectedly passed when player.js was unskipped:\n%s", string(runOut))
 		}
 	}
+	return expiredException
+}
+
+func assertCodespellAuditAndPlanted(t *testing.T, repo string, today time.Time, expiredException config.Exception, codespellBin string) {
+	t.Helper()
+	codespellrcPath := filepath.Join(repo, ".codespellrc")
 
 	// 5. Audit fails when skip names player.js without a live entry
 	// Manually restore skip in .codespellrc while manifest has expired entry
@@ -241,6 +259,13 @@ exceptions:
 			t.Fatalf("codespell did not report planted misspelling:\n%s", string(plantedOut))
 		}
 	}
+}
+
+func TestCodespell_AdopterReconciliationAndAudit(t *testing.T) {
+	repo, today, s, codespellBin := setupCodespellFixture(t)
+	assertCodespellLiveReconciled(t, repo, today, s, codespellBin)
+	expiredException := assertCodespellExpired(t, repo, s, codespellBin)
+	assertCodespellAuditAndPlanted(t, repo, today, expiredException, codespellBin)
 }
 
 func TestCodespell_Formats_SetupCfg_And_Pyproject(t *testing.T) {

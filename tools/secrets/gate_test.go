@@ -60,74 +60,57 @@ func TestGate_PlantedMergeOnly_3D(t *testing.T) {
 	}
 }
 
+func runGateLifecycleCase(t *testing.T, entries []rules.Entry) (string, int) {
+	t.Helper()
+	dir, _ := secrets.BuildOrdinaryLeakRepo(t)
+	var exceptionsJSON string
+	if entries != nil {
+		data, err := json.Marshal(entries)
+		if err != nil {
+			t.Fatal(err)
+		}
+		exceptionsJSON = string(data)
+	}
+	return runGateCLI(t, dir, exceptionsJSON)
+}
+
 func TestGate_ExceptionsLifecycle_3D(t *testing.T) {
 	if _, err := exec.LookPath("gitleaks"); err != nil {
 		t.Skip("gitleaks not installed on PATH")
 	}
 
 	t.Run("unexcused token is refused", func(t *testing.T) {
-		dir, _ := secrets.BuildOrdinaryLeakRepo(t)
-		out, exitCode := runGateCLI(t, dir, "")
+		out, exitCode := runGateLifecycleCase(t, nil)
 		if exitCode != 3 {
 			t.Fatalf("expected exit code 3 on unexcused token, got %d: %s", exitCode, out)
 		}
 	})
 
 	t.Run("dated entry excuses its finding", func(t *testing.T) {
-		dir, _ := secrets.BuildOrdinaryLeakRepo(t)
 		entries := []rules.Entry{
-			{
-				Path:    "creds.py",
-				RuleID:  "generic-api-key",
-				Expires: "2026-11-01",
-				Reason:  "dated test waiver",
-			},
+			{Path: "creds.py", RuleID: "generic-api-key", Expires: "2026-11-01", Reason: "dated test waiver"},
 		}
-		data, err := json.Marshal(entries)
-		if err != nil {
-			t.Fatal(err)
-		}
-		out, exitCode := runGateCLI(t, dir, string(data))
+		out, exitCode := runGateLifecycleCase(t, entries)
 		if exitCode != 0 {
 			t.Fatalf("expected exit code 0 for dated entry, got %d: %s", exitCode, out)
 		}
 	})
 
 	t.Run("expired entry fails", func(t *testing.T) {
-		dir, _ := secrets.BuildOrdinaryLeakRepo(t)
 		entries := []rules.Entry{
-			{
-				Path:    "creds.py",
-				RuleID:  "generic-api-key",
-				Expires: "2026-10-01",
-				Reason:  "expired test waiver",
-			},
+			{Path: "creds.py", RuleID: "generic-api-key", Expires: "2026-10-01", Reason: "expired test waiver"},
 		}
-		data, err := json.Marshal(entries)
-		if err != nil {
-			t.Fatal(err)
-		}
-		out, exitCode := runGateCLI(t, dir, string(data))
+		out, exitCode := runGateLifecycleCase(t, entries)
 		if exitCode != 3 {
 			t.Fatalf("expected exit code 3 for expired entry, got %d: %s", exitCode, out)
 		}
 	})
 
 	t.Run("stale entry fails", func(t *testing.T) {
-		dir, _ := secrets.BuildOrdinaryLeakRepo(t)
 		entries := []rules.Entry{
-			{
-				Path:    "other.py",
-				RuleID:  "generic-api-key",
-				Expires: "2026-11-01",
-				Reason:  "stale waiver for other file",
-			},
+			{Path: "other.py", RuleID: "generic-api-key", Expires: "2026-11-01", Reason: "stale waiver for other file"},
 		}
-		data, err := json.Marshal(entries)
-		if err != nil {
-			t.Fatal(err)
-		}
-		out, exitCode := runGateCLI(t, dir, string(data))
+		out, exitCode := runGateLifecycleCase(t, entries)
 		if exitCode != 3 {
 			t.Fatalf("expected exit code 3 for stale entry, got %d: %s", exitCode, out)
 		}
