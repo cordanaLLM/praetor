@@ -32,7 +32,17 @@ const (
 	maxTestFileReadBytes    = 4 * 1024 * 1024
 	maxFixtureFileReadBytes = 8 * 1024 * 1024
 	maxAttrOutputBytes      = 8 * 1024 * 1024
-	pinnedFixturesTimeout   = 60 * time.Second
+)
+
+var (
+	// pinnedFixturesTimeout bounds each git call of the check (RunGitProbeWithin), not the
+	// check as a whole: one deadline over the file scan and the calls let a slow scan on a
+	// loaded runner spend the budget, and git check-attr then failed with nothing wrong in
+	// the attributes (#1456). A variable so a test can shorten it.
+	pinnedFixturesTimeout = 60 * time.Second
+	// afterFixtureScan runs between the fixture scan and git check-attr; a test plants a slow
+	// scan through it.
+	afterFixtureScan = func() {}
 )
 
 var (
@@ -63,8 +73,6 @@ func AuditPinnedFixturesEOL(ctx context.Context, opts PinnedFixtureEOLOptions) (
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(ctx, pinnedFixturesTimeout)
-	defer cancel()
 
 	tracked, err := listTrackedFiles(ctx, opts.Root)
 	if err != nil {
@@ -83,6 +91,7 @@ func AuditPinnedFixturesEOL(ctx context.Context, opts PinnedFixtureEOLOptions) (
 	if len(pinned) == 0 {
 		return "[PASS] " + pinnedFixturesGate, nil
 	}
+	afterFixtureScan()
 
 	unpassed, err := checkAttributes(ctx, opts.Root, pinned)
 	if err != nil {

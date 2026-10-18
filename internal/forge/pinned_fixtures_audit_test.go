@@ -72,6 +72,24 @@ func TestAuditPinnedFixturesEOL_Negative_PlantedRed(t *testing.T) {
 	}
 }
 
+// A scan slower than the per-call budget leaves git check-attr its own budget (#1456): the
+// planted red fixture is still reported as a finding, not as a deadline error.
+func TestAuditPinnedFixturesEOL_Boundary_SlowScanKeepsTheCallBudget(t *testing.T) {
+	sum := sha256.Sum256([]byte(srtSample))
+	root := initPinnedRepo(t, map[string]string{
+		"testdata/sub.srt": srtSample,
+		"sub_test.go":      fmt.Sprintf("package main\n\nconst expectedSHA = %q\n", hex.EncodeToString(sum[:])),
+	})
+	savedTimeout, savedHook := pinnedFixturesTimeout, afterFixtureScan
+	t.Cleanup(func() { pinnedFixturesTimeout, afterFixtureScan = savedTimeout, savedHook })
+	pinnedFixturesTimeout = 2 * time.Second
+	afterFixtureScan = func() { time.Sleep(3 * time.Second) }
+	_, err := auditPinned(t, root)
+	if err == nil || strings.Contains(err.Error(), "deadline") || !strings.Contains(err.Error(), "testdata/sub.srt") {
+		t.Fatalf("a slow scan must leave check-attr its budget and report the finding, got %v", err)
+	}
+}
+
 // Positive green: the same with *.srt -text in .gitattributes passes.
 func TestAuditPinnedFixturesEOL_Positive_DashText(t *testing.T) {
 	sum := sha256.Sum256([]byte(srtSample))
