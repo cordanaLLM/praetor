@@ -9,8 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
+	"slices"
+	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -18,6 +21,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/util"
+	figureassets "github.com/cordanaLLM/praetor/tools/figures"
 )
 
 // Adoption's side of the managed asset family registry (internal/managedasset): emitting a
@@ -48,8 +52,11 @@ func reconcileManagedFamily(ctx context.Context, s *adoptSession, family managed
 	if err != nil {
 		return err
 	}
-	if err := reconcileFamilyAssets(ctx, s, family); err != nil {
+	if err := reconcileManagedFamilyAssets(ctx, s, family); err != nil {
 		return err
+	}
+	if err := reconcileFigurePlayerLock(ctx, s, family); err != nil {
+		return fmt.Errorf("reconcile %s: %w", figureassets.PlayerLockFile, err)
 	}
 	if err := applyMovedFamilyAssets(ctx, s, family, moved); err != nil {
 		return err
@@ -62,11 +69,13 @@ func reconcileManagedFamily(ctx context.Context, s *adoptSession, family managed
 		created:  "Scaffolded required " + family.WorkflowNoun,
 		verified: "Existing " + family.WorkflowNoun + " preserved; audit verifies canonical text",
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
-// reconcileFamilyAssets writes each asset declared in the family up to MaxAssets.
-func reconcileFamilyAssets(ctx context.Context, s *adoptSession, family managedasset.Family) error {
+func reconcileManagedFamilyAssets(ctx context.Context, s *adoptSession, family managedasset.Family) error {
 	names := family.Names()
 	for index := 0; index < len(names) && index < family.MaxAssets; index++ {
 		data, err := family.Read(names[index])
@@ -85,6 +94,51 @@ func reconcileFamilyAssets(ctx context.Context, s *adoptSession, family manageda
 	return nil
 }
 
+func reconcileFigurePlayerLock(ctx context.Context, s *adoptSession, family managedasset.Family) error {
+	if family.Directory != figureassets.Directory || IsFigureEngineRepository(s.repoPath) {
+		return nil
+	}
+	release, err := figurePlayerRelease(ctx, s.repoPath, s.opts.Engine)
+	if err != nil {
+		return err
+	}
+	content, err := figureassets.RenderPlayerLock(release)
+	if err != nil {
+		return err
+	}
+	sc := scaffold{
+		rel:         figureassets.PlayerLockFile,
+		perm:        filePerm,
+		content:     content,
+		auditLocked: true,
+		created:     "Scaffolded locked " + family.AssetNoun,
+		verified:    "Existing " + family.AssetNoun + " preserved; audit verifies canonical text",
+	}
+	full, err := repoFile(s.repoPath, sc.rel)
+	if err != nil {
+		return err
+	}
+	actual, exists, err := contextopt.ObserveSnapshot(ctx, full)
+	if err != nil {
+		return err
+	}
+	if exists {
+		equivalent, compareErr := util.CanonicalTextEquivalent(actual, sc.content)
+		if compareErr != nil {
+			return fmt.Errorf("%s has invalid line endings: %w", sc.rel, compareErr)
+		}
+		if equivalent {
+			s.report.recordReconciled(sc.rel, sc.verified)
+			return nil
+		}
+		if known, crlf := figureassets.IsPraetorPlayerLock(actual); known {
+			return s.replacePriorText(ctx, full, actual, crlf, sc, refreshedFamilyDetail)
+		}
+	}
+	_, err = s.scaffoldFile(ctx, sc)
+	return err
+}
+
 // movedFamilyAsset is a release-owned path retired by an asset-family migration. Its snapshot
 // keeps a concurrent edit from being deleted after the replacement player was written.
 type movedFamilyAsset struct {
@@ -96,7 +150,11 @@ type movedFamilyAsset struct {
 // and reported, never made a removal error: this migration changes location, not ownership.
 func planMovedFamilyAssets(ctx context.Context, s *adoptSession, family managedasset.Family) ([]movedFamilyAsset, error) {
 	planned := make([]movedFamilyAsset, 0, len(family.Moved))
-	for rel := range family.Moved {
+	engineRepo := family.Directory == figureassets.Directory && IsFigureEngineRepository(s.repoPath)
+	for _, rel := range slices.Sorted(maps.Keys(family.Moved)) {
+		if engineRepo && strings.HasPrefix(rel, figureassets.PlayerDirectory+"/") {
+			continue
+		}
 		full, err := repoFile(s.repoPath, rel)
 		if err != nil {
 			return nil, err
@@ -129,18 +187,31 @@ func applyMovedFamilyAssets(ctx context.Context, s *adoptSession, family managed
 		s.planDryRunRemoval(asset.rel)
 		s.report.recordReconciledAs(asset.rel, actionRemove, "Moved release-owned "+family.AssetNoun+" to the current player directory")
 	}
-	for rel := range family.Moved {
+	return removeEmptyMovedDirs(s, family)
+}
+
+func removeEmptyMovedDirs(s *adoptSession, family managedasset.Family) error {
+	if s.opts.DryRun {
+		return nil
+	}
+	engineRepo := family.Directory == figureassets.Directory && IsFigureEngineRepository(s.repoPath)
+	seenDirs := make(map[string]bool)
+	for _, rel := range slices.Sorted(maps.Keys(family.Moved)) {
+		if engineRepo && strings.HasPrefix(rel, figureassets.PlayerDirectory+"/") {
+			continue
+		}
 		dir := path.Dir(rel)
+		if seenDirs[dir] {
+			continue
+		}
+		seenDirs[dir] = true
 		full, err := repoFile(s.repoPath, dir)
 		if err != nil {
 			return err
 		}
-		if !s.opts.DryRun {
-			if err := os.Remove(full); err != nil && !errors.Is(err, fs.ErrNotExist) && !util.DirectoryNotEmpty(err) {
-				return fmt.Errorf("remove empty retired %s directory %s: %w", family.Kind, dir, err)
-			}
+		if err := os.Remove(full); err != nil && !errors.Is(err, fs.ErrNotExist) && !util.DirectoryNotEmpty(err) {
+			return fmt.Errorf("remove empty retired %s directory %s: %w", family.Kind, dir, err)
 		}
-		break
 	}
 	return nil
 }
@@ -357,33 +428,75 @@ func planManagedFamilyRemovals(ctx context.Context, s *adoptSession, family mana
 	paths := family.ManagedPaths()
 	removals := make([]managedRemoval, 0, len(paths))
 	for index := 0; index < len(paths) && index <= family.MaxAssets; index++ {
-		rel := paths[index]
-		full, err := repoFile(s.repoPath, rel)
+		removal, ok, err := planManagedFileRemoval(ctx, s, family, paths[index])
 		if err != nil {
 			return nil, err
 		}
-		expected, _, err := family.Canonical(rel)
-		if err != nil {
-			return nil, err
+		if ok {
+			removals = append(removals, removal)
 		}
-		actual, exists, err := contextopt.ObserveSnapshot(ctx, full)
-		if err != nil {
-			return nil, fmt.Errorf("inspect disabled %s asset %s: %w", family.Kind, rel, err)
-		}
-		if !exists {
-			continue
-		}
-		equivalent, compareErr := util.CanonicalTextEquivalent(actual, expected)
-		if compareErr != nil {
-			return nil, fmt.Errorf("refusing to remove %s asset %s with invalid line endings: %w",
-				family.Kind, rel, compareErr)
-		}
-		if !equivalent && !family.PriorText(rel, actual) {
-			return nil, fmt.Errorf("refusing to remove drifted %s asset %s", family.Kind, rel)
-		}
-		removals = append(removals, managedRemoval{rel: rel, full: full, expected: actual, family: family})
+	}
+	lockRemoval, ok, err := planFigurePlayerLockRemoval(ctx, s, family)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		removals = append(removals, lockRemoval)
 	}
 	return removals, nil
+}
+
+func planManagedFileRemoval(ctx context.Context, s *adoptSession, family managedasset.Family, rel string) (managedRemoval, bool, error) {
+	full, err := repoFile(s.repoPath, rel)
+	if err != nil {
+		return managedRemoval{}, false, err
+	}
+	expected, _, err := family.Canonical(rel)
+	if err != nil {
+		return managedRemoval{}, false, err
+	}
+	actual, exists, err := contextopt.ObserveSnapshot(ctx, full)
+	if err != nil {
+		return managedRemoval{}, false, fmt.Errorf("inspect disabled %s asset %s: %w", family.Kind, rel, err)
+	}
+	if !exists {
+		return managedRemoval{}, false, nil
+	}
+	equivalent, compareErr := util.CanonicalTextEquivalent(actual, expected)
+	if compareErr != nil {
+		return managedRemoval{}, false, fmt.Errorf("refusing to remove %s asset %s with invalid line endings: %w",
+			family.Kind, rel, compareErr)
+	}
+	if !equivalent && !family.PriorText(rel, actual) {
+		return managedRemoval{}, false, fmt.Errorf("refusing to remove drifted %s asset %s", family.Kind, rel)
+	}
+	return managedRemoval{rel: rel, full: full, expected: actual, family: family}, true, nil
+}
+
+func planFigurePlayerLockRemoval(ctx context.Context, s *adoptSession, family managedasset.Family) (managedRemoval, bool, error) {
+	if family.Directory != figureassets.Directory || IsFigureEngineRepository(s.repoPath) {
+		return managedRemoval{}, false, nil
+	}
+	rel := figureassets.PlayerLockFile
+	full, err := repoFile(s.repoPath, rel)
+	if err != nil {
+		return managedRemoval{}, false, err
+	}
+	actual, exists, err := contextopt.ObserveSnapshot(ctx, full)
+	if err != nil {
+		return managedRemoval{}, false, fmt.Errorf("inspect disabled %s asset %s: %w", family.Kind, rel, err)
+	}
+	if !exists {
+		return managedRemoval{}, false, nil
+	}
+	if _, _, compareErr := util.NormalizeLineEndingsStrict(string(actual)); compareErr != nil {
+		return managedRemoval{}, false, fmt.Errorf("refusing to remove %s asset %s with invalid line endings: %w",
+			family.Kind, rel, compareErr)
+	}
+	if known, _ := figureassets.IsPraetorPlayerLock(actual); !known {
+		return managedRemoval{}, false, fmt.Errorf("refusing to remove drifted %s asset %s", family.Kind, rel)
+	}
+	return managedRemoval{rel: rel, full: full, expected: actual, family: family}, true, nil
 }
 
 func applyManagedFamilyRemovals(ctx context.Context, s *adoptSession, removals []managedRemoval) error {

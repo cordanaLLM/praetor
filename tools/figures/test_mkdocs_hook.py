@@ -8,12 +8,16 @@ tools/figures/checks.test.mjs."""
 
 import ast
 import contextlib
+import gzip
+import hashlib
 import io
 import json
 import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.error import HTTPError
 
 FIGURES = Path(__file__).resolve().parent
 ROOT = FIGURES.parents[1]
@@ -386,6 +390,230 @@ class Hook(unittest.TestCase):
             f"{mkdocs_hook.LOADER_URI}: docs_dir already holds this path",
             "\n".join(logs.output),
         )
+
+    @staticmethod
+    def make_player_archive(entries=None):
+        if entries is None:
+            entries = [
+                ("loader.js", (FIGURES / "player/loader.js").read_bytes()),
+                ("player.js", (FIGURES / "player/player.js").read_bytes()),
+                (
+                    "THIRD-PARTY-LICENSES.txt",
+                    (FIGURES / "player/THIRD-PARTY-LICENSES.txt").read_bytes(),
+                ),
+            ]
+        tar_buf = io.BytesIO()
+        with tarfile.open(fileobj=tar_buf, mode="w") as archive:
+            for name, payload in entries:
+                info = tarfile.TarInfo(name=name)
+                info.size = len(payload)
+                info.mode = 0o644
+                info.mtime = 0
+                archive.addfile(info, io.BytesIO(payload))
+        gz_buf = io.BytesIO()
+        with gzip.GzipFile(filename="", mode="wb", fileobj=gz_buf, mtime=0) as gz:
+            gz.write(tar_buf.getvalue())
+        raw = gz_buf.getvalue()
+        return raw, hashlib.sha256(raw).hexdigest()
+
+    def use_absent_local_player(self, directory: Path) -> Path:
+        original_player = mkdocs_hook.PLAYER_DIR
+        original_lock = mkdocs_hook.LOCK_FILE
+        self.addCleanup(setattr, mkdocs_hook, "PLAYER_DIR", original_player)
+        self.addCleanup(setattr, mkdocs_hook, "LOCK_FILE", original_lock)
+        mkdocs_hook.PLAYER_DIR = directory / "absent-player"
+        lock_file = directory / "player.lock.json"
+        mkdocs_hook.LOCK_FILE = lock_file
+        return lock_file
+
+    def test_lock_with_empty_release_warns_and_publishes_no_player(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock_file = self.use_absent_local_player(Path(directory))
+            write(
+                lock_file,
+                json.dumps(
+                    {
+                        "asset": "figures-player.tar.gz",
+                        "sha256": "0" * 64,
+                        "release": "",
+                    }
+                ),
+            )
+            with self.assertLogs(
+                "mkdocs.plugins.praetor_figures", level="WARNING"
+            ) as logs:
+                published = mkdocs_hook.published_files()
+            self.assertEqual(published, [(mkdocs_hook.CSS_URI, mkdocs_hook.CSS_FILE)])
+            self.assertEqual(len(logs.output), 1)
+            self.assertIn(
+                "figures: engine pin unreleased has no release; "
+                "figures render as SVG (no interactive player)",
+                logs.output[0],
+            )
+
+    @staticmethod
+    def fake_response(payload: bytes):
+        class FakeResponse(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                self.close()
+
+        return FakeResponse(payload)
+
+    def test_lock_fetches_verifies_and_extracts_good_archive(self):
+        raw, digest = self.make_player_archive()
+        seen_urls = []
+        with tempfile.TemporaryDirectory() as directory:
+            lock_file = self.use_absent_local_player(Path(directory))
+            original_urlopen = mkdocs_hook.urlopen
+            self.addCleanup(setattr, mkdocs_hook, "urlopen", original_urlopen)
+            mkdocs_hook.urlopen = lambda url, timeout=0: (
+                seen_urls.append((url, timeout)) or self.fake_response(raw)
+            )
+            write(
+                lock_file,
+                json.dumps(
+                    {
+                        "asset": "figures-player.tar.gz",
+                        "sha256": digest,
+                        "release": "v1.4.0",
+                    }
+                ),
+            )
+            published = mkdocs_hook.published_files()
+            self.assertEqual(
+                seen_urls,
+                [
+                    (
+                        "https://github.com/cordanaLLM/praetor/releases/download/v1.4.0/figures-player.tar.gz",
+                        30,
+                    )
+                ],
+            )
+            self.assertEqual(
+                [uri for uri, _ in published],
+                [
+                    mkdocs_hook.CSS_URI,
+                    "assets/javascripts/figures/THIRD-PARTY-LICENSES.txt",
+                    "assets/javascripts/figures/loader.js",
+                    "assets/javascripts/figures/player.js",
+                ],
+            )
+            for _, source in published[1:]:
+                self.assertEqual(
+                    source.read_bytes(), (FIGURES / "player" / source.name).read_bytes()
+                )
+            write(
+                lock_file,
+                json.dumps(
+                    {
+                        "asset": "figures-player.tar.gz",
+                        "sha256": digest,
+                        "release": "v1.4.0",
+                        "repository": "adopter/praetor-fork",
+                    }
+                ),
+            )
+            mkdocs_hook.published_files()
+            self.assertEqual(
+                seen_urls[-1][0],
+                "https://github.com/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz",
+            )
+
+    def test_lock_refuses_archive_with_one_changed_byte(self):
+        raw, digest = self.make_player_archive()
+        corrupted = bytes([raw[0] ^ 0xFF]) + raw[1:]
+        corrupted_digest = hashlib.sha256(corrupted).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            lock_file = self.use_absent_local_player(Path(directory))
+            original_urlopen = mkdocs_hook.urlopen
+            self.addCleanup(setattr, mkdocs_hook, "urlopen", original_urlopen)
+            mkdocs_hook.urlopen = lambda url, timeout=0: self.fake_response(corrupted)
+            write(
+                lock_file,
+                json.dumps(
+                    {
+                        "asset": "figures-player.tar.gz",
+                        "sha256": digest,
+                        "release": "v1.4.0",
+                    }
+                ),
+            )
+            with self.assertRaises(mkdocs_hook.CheckError) as raised:
+                mkdocs_hook.published_files()
+            message = str(raised.exception)
+            self.assertIn(digest, message)
+            self.assertIn(corrupted_digest, message)
+
+    def test_lock_refuses_archive_with_extra_or_unsafe_member(self):
+        base_entries = [
+            ("loader.js", b"loader"),
+            ("player.js", b"player"),
+            ("THIRD-PARTY-LICENSES.txt", b"licenses"),
+        ]
+        bad_cases = [
+            [*base_entries, ("extra.js", b"extra")],
+            [("../x", b"escape"), *base_entries[1:]],
+            [("/loader.js", b"abs"), *base_entries[1:]],
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            lock_file = self.use_absent_local_player(Path(directory))
+            original_urlopen = mkdocs_hook.urlopen
+            self.addCleanup(setattr, mkdocs_hook, "urlopen", original_urlopen)
+            for entries in bad_cases:
+                raw, digest = self.make_player_archive(entries)
+                mkdocs_hook.urlopen = lambda url, timeout=0, data=raw: (
+                    self.fake_response(data)
+                )
+                write(
+                    lock_file,
+                    json.dumps(
+                        {
+                            "asset": "figures-player.tar.gz",
+                            "sha256": digest,
+                            "release": "v1.4.0",
+                        }
+                    ),
+                )
+                with (
+                    self.subTest(entries=[name for name, _ in entries]),
+                    self.assertRaises(mkdocs_hook.CheckError),
+                ):
+                    mkdocs_hook.published_files()
+
+    def test_lock_404_download_error_warns_and_publishes_no_player(self):
+        def raise_404(url, timeout=0):
+            raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+
+        with tempfile.TemporaryDirectory() as directory:
+            lock_file = self.use_absent_local_player(Path(directory))
+            original_urlopen = mkdocs_hook.urlopen
+            self.addCleanup(setattr, mkdocs_hook, "urlopen", original_urlopen)
+            mkdocs_hook.urlopen = raise_404
+            write(
+                lock_file,
+                json.dumps(
+                    {
+                        "asset": "figures-player.tar.gz",
+                        "sha256": "a" * 64,
+                        "release": "v1.4.0",
+                    }
+                ),
+            )
+            with self.assertLogs(
+                "mkdocs.plugins.praetor_figures", level="WARNING"
+            ) as logs:
+                published = mkdocs_hook.published_files()
+            self.assertEqual(published, [(mkdocs_hook.CSS_URI, mkdocs_hook.CSS_FILE)])
+            self.assertEqual(len(logs.output), 1)
+            self.assertIn("v1.4.0", logs.output[0])
+            self.assertIn("404", logs.output[0])
+            self.assertIn(
+                "has no release; figures render as SVG (no interactive player)",
+                logs.output[0],
+            )
 
 
 if __name__ == "__main__":

@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
+	figureassets "github.com/cordanaLLM/praetor/tools/figures"
 	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 )
 
@@ -17,6 +19,34 @@ const (
 	// DocumentationStatusContext is the check name reconciled into branch protection.
 	DocumentationStatusContext = markdownassets.StatusContext
 )
+
+// IsFigureEngineRepository reports whether repoPath is the canonical figure engine repository,
+// identified by its repository-only player bundler (tools/figures/bundle.mjs).
+func IsFigureEngineRepository(repoPath string) bool {
+	full, err := repoFile(repoPath, figureassets.BundleScriptFile)
+	return err == nil && fileExists(full)
+}
+
+func figurePlayerRelease(ctx context.Context, repoPath string, engine buildid.Identity) (string, error) {
+	if engine.Release != "" {
+		return engine.Release, nil
+	}
+	if engine.Revision != "" {
+		return "", nil
+	}
+	data, exists, err := contextopt.ObserveSnapshotIn(ctx, repoPath, toolsModuleFile)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", toolsModuleFile, err)
+	}
+	if !exists {
+		return "", nil
+	}
+	pinned, ok := pinnedEngineVersion(data)
+	if !ok {
+		return "", nil
+	}
+	return buildid.FromModuleVersion(pinned).Release, nil
+}
 
 // DocumentationEnabled reports whether the validated manifest facet inventory
 // declares documentation governance.

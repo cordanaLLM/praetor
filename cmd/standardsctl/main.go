@@ -139,6 +139,7 @@ func printFleetCommands() {
 	fmt.Println("  serve              Run cloud-native container daemon with HTTP health probes")
 	fmt.Println("  sbom               Generate a CycloneDX 1.5 SBOM of a Go module (go.mod only); sbom notices regenerates THIRD-PARTY-NOTICES.md")
 	fmt.Println("  provenance         Generate an unsigned SLSA v1.0 provenance statement for an artifact file")
+	fmt.Println("  figures            Pack the embedded figure player bundle into figures-player.tar.gz")
 	fmt.Println("  needs              Declare and report repository capabilities and demand to the target framework")
 	fmt.Println("  issue              Reconcile cross-repo dependencies and unblock ready tasks")
 	fmt.Println("  wishes             Read and apply private repository wishes and polls")
@@ -298,6 +299,7 @@ func fleetCommandTable() map[string]commandFunc {
 		"serve":       runServe,
 		"sbom":        runSBOM,
 		"provenance":  runProvenance,
+		"figures":     runFigures,
 		"needs":       runNeeds,
 		"issue":       runIssue,
 		"wishes":      runWishes,

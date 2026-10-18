@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — 2026-09-28 (proposed 2026-09-27; updated 2026-09-28 with two further operator decisions).
+Accepted — 2026-09-28 (proposed 2026-09-27; updated 2026-09-28 with two further operator decisions). Section 2 superseded by [ADR-0021](0021-figure-player-as-release-asset.md).
 
 Superseding note (#1356): the committed player now lives at `tools/figures/player/`; historical
 references below describe the former `dist/` location.
