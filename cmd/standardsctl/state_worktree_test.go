@@ -5,6 +5,7 @@
 package main
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -63,10 +64,7 @@ func TestStateStatus_LinkedWorktreeWithoutWorkingDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("state status failed: %v\n%s", err, out)
 	}
-	wantNotice := "state: using the main worktree's .workingdir at " + filepath.Join(mainRepo, ".workingdir")
-	if !strings.Contains(out, wantNotice) {
-		t.Fatalf("output missing notice %q:\n%s", wantNotice, out)
-	}
+	requireNoticeNames(t, out, filepath.Join(mainRepo, ".workingdir"))
 	if !strings.Contains(out, "1 open, 0 completed") {
 		t.Fatalf("expected planted task count in output:\n%s", out)
 	}
@@ -180,10 +178,7 @@ func TestStateSync_LinkedWorktree(t *testing.T) {
 		t.Fatalf("state sync failed: %v\n%s", err, out)
 	}
 
-	wantNotice := "state: using the main worktree's .workingdir at " + filepath.Join(mainRepo, ".workingdir")
-	if !strings.Contains(out, wantNotice) {
-		t.Fatalf("state sync output missing notice %q:\n%s", wantNotice, out)
-	}
+	requireNoticeNames(t, out, filepath.Join(mainRepo, ".workingdir"))
 
 	verifyOut, err := captureStdout(t, func() error {
 		return dispatchCommand("state", []string{"sync", "--verify", linkedWT})
@@ -195,5 +190,57 @@ func TestStateSync_LinkedWorktree(t *testing.T) {
 	stateContent := readFixtureFile(t, mainRepo, ".workingdir/STATE.md")
 	if !strings.Contains(stateContent, "on `feature/wt`") {
 		t.Fatalf("main ledger STATE.md does not name worktree branch:\n%s", stateContent)
+	}
+}
+
+// noticeDir returns the directory the main-worktree notice in out names, or "" when out holds none.
+func noticeDir(out string) string {
+	const prefix = "state: using the main worktree's .workingdir at "
+	for _, line := range strings.Split(out, "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), prefix); ok {
+			return rest
+		}
+	}
+	return ""
+}
+
+// sameDir reports whether two paths name one directory on disk. git reports resolved paths
+// (/private/var on macOS, long names on Windows) where t.TempDir() hands out the spelling the
+// platform's temporary folder has, so the notice is compared by directory, not by string.
+func sameDir(a, b string) bool {
+	ai, errA := os.Stat(a)
+	bi, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(ai, bi)
+}
+
+// requireNoticeNames fails t unless out holds the main-worktree notice and it names want.
+func requireNoticeNames(t *testing.T, out, want string) {
+	t.Helper()
+	if got := noticeDir(out); got == "" || !sameDir(got, want) {
+		t.Fatalf("output missing notice naming %s (got %q):\n%s", want, got, out)
+	}
+}
+
+// Boundary: a notice spelling the same directory another way (here with a .. step, on macOS
+// /private/var for /var) passes; a notice naming another directory, or none, fails.
+func TestNoticeNames_SameDirectoryOtherSpelling(t *testing.T) {
+	root := t.TempDir()
+	want := filepath.Join(root, "main", ".workingdir")
+	other := filepath.Join(root, "other", ".workingdir")
+	for _, dir := range []string{want, other} {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	notice := func(dir string) string { return "x\nstate: using the main worktree's .workingdir at " + dir + "\ny\n" }
+	respelled := root + string(filepath.Separator) + "other" + string(filepath.Separator) + ".." + string(filepath.Separator) + "main" + string(filepath.Separator) + ".workingdir"
+	if got := noticeDir(notice(respelled)); got != respelled || !sameDir(got, want) {
+		t.Fatalf("a respelled path to the same directory must pass: %q", got)
+	}
+	if sameDir(noticeDir(notice(other)), want) {
+		t.Fatal("a notice naming another directory must fail")
+	}
+	if noticeDir("no notice here\n") != "" {
+		t.Fatal("output without the notice must name no directory")
 	}
 }
