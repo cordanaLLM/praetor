@@ -492,9 +492,22 @@ func calleeWork(jobs map[string]workflowJob) draftHandling {
 	return result
 }
 
+// reportsSuccessOnDraft reports whether a job with handling h reports success on a draft without
+// running its work there: a failed first step forgiven by continue-on-error, a condition skip or a
+// skip by a held need.
+func reportsSuccessOnDraft(h draftHandling) bool {
+	return h == draftAdvisoryStop || h == draftConditionSkip || h == draftNeedSkip
+}
+
 // draftProblem says what a job with decision d does wrong on a draft, or returns "" for a job
 // that is held back on a draft without passing it or runs nothing there.
 func draftProblem(d jobDecision, job *workflowJob) string {
+	if advisoryJob(job.ContinueOnError) && reportsSuccessOnDraft(d.handling) {
+		// An optional job reports no required check: continue-on-error keeps it out of the required
+		// contexts (requiredJob), so its success on a draft lets nothing merge. Stopping or skipping the
+		// draft is then the shape that runs no work there (Aegis-OS #351); running it still counts.
+		return ""
+	}
 	switch d.handling {
 	case draftNeedSkip:
 		return fmt.Sprintf("may be skipped on a draft because it needs %s, which is held back on one: unless the job's "+

@@ -1,0 +1,2 @@
+type: fixed
+title: 'HISS-18 accepts an optional job (continue-on-error) that stops or skips a draft: no required check reads it'
