@@ -244,8 +244,9 @@ class RPCClientTests(unittest.TestCase):
                 self.assertFalse((root / "lock").exists())
             finally:
                 with contextlib.suppress(ProcessLookupError):
-                    os.killpg(command, signal.SIGKILL)
-                    self.fail("the command outlived the server")
+                    if command > 1 and command != os.getpgrp():
+                        os.killpg(command, signal.SIGKILL)
+                        self.fail("the command outlived the server")
             self.assertEqual(client._process.returncode, 128 + signal.SIGTERM)
 
     def test_close_kills_a_server_that_ignores_sigterm(self):

@@ -19,8 +19,12 @@ const (
 	// maxBootstrapParts caps the base64 frames of one archive. Every consumer reads this
 	// constant: framing, the Dockerfile COPY lines, spec validation and companion reads.
 	// Part names are zero-padded to three digits, so the image's `cat *.b64` joins them in
-	// order for any cap up to 1000. It was 4 until #501; a spec recorded then stays valid.
-	maxBootstrapParts  = 8
+	// order for any cap up to 1000. It was 4 until #501 and 8 until 2026-10-18, when the
+	// engine's own Go closure reached 80% of eight frames (the headroom test's threshold):
+	// the capture already drops tests and testdata and keeps only the packages the build
+	// reads, so the cap moves rather than the code. A spec recorded under an earlier cap
+	// stays valid, and a bundle still uses only as many parts as its archive needs.
+	maxBootstrapParts  = 12
 	bootstrapPartBytes = 512 * 1024
 	// bootstrapBound bounds preparing, planning and publishing one bundle (HISS-02). It is not the
 	// context optimizer's 30-second contextopt.MaxDuration: preparing snapshots the whole build

@@ -142,11 +142,11 @@ func TestBootstrapMarkdownAssetsNeverAdmitTestSurface(t *testing.T) {
 	}
 }
 
-// TestBootstrapArchiveFitsAtTheFrameCap pins the one frame-capacity bound at eight 512 KiB
-// frames (#501): an archive whose base64 form fills them exactly is accepted and framed, one
+// TestBootstrapArchiveFitsAtTheFrameCap pins the one frame-capacity bound at twelve 512 KiB
+// frames (eight from #501, twelve since 2026-10-18): an archive whose base64 form fills them exactly is accepted and framed, one
 // byte more is not, and the refusal states the cap from the constants.
 func TestBootstrapArchiveFitsAtTheFrameCap(t *testing.T) {
-	capacity := 8 * 512 * 1024
+	capacity := 12 * 512 * 1024
 	atCap := base64.StdEncoding.DecodedLen(capacity)
 	if base64.StdEncoding.EncodedLen(atCap) != capacity {
 		t.Fatalf("fixture is not at the cap: %d encodes to %d", atCap, base64.StdEncoding.EncodedLen(atCap))
@@ -155,10 +155,10 @@ func TestBootstrapArchiveFitsAtTheFrameCap(t *testing.T) {
 		t.Fatalf("archive exactly at the cap refused: %v", err)
 	}
 	parts, err := frameBootstrapArchive(make([]byte, atCap))
-	if err != nil || len(parts) != 8 || len(parts[7].Content) != bootstrapPartBytes {
-		t.Fatalf("archive exactly at the cap did not fill eight frames: %d parts, %v", len(parts), err)
+	if err != nil || len(parts) != 12 || len(parts[11].Content) != bootstrapPartBytes {
+		t.Fatalf("archive exactly at the cap did not fill twelve frames: %d parts, %v", len(parts), err)
 	}
-	want := "8 bounded archive frames of 524288 bytes hold 4194304"
+	want := "12 bounded archive frames of 524288 bytes hold 6291456"
 	for _, size := range []int{atCap + 1, 0, -1} {
 		err := checkBootstrapArchiveFits(size)
 		if err == nil || !strings.Contains(err.Error(), want) {

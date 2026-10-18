@@ -392,31 +392,39 @@ rules:
           list. Other unsafe native primitives are not decided.
       - language: python
         state: partial
-        mechanism: internal/hiss rules.go hasBannedCall
+        mechanism: internal/hiss rules.go hasBannedCall and python_signal.go
         rationale: >-
-          eval and exec are refused as bare calls. A method of the same name reached through
-          a selector is not a builtin and is not reported. Dynamic import and compile are not
-          decided.
+          eval and exec are refused as bare calls. killpg (with any qualifier) and os.kill
+          or kill whose first argument starts with '-' are reported unless the target is bounded
+          above 1 by an earlier guard in the same scope or delivers probe signal 0. A method of
+          the same name reached through a selector is not reported. Dynamic import, compile,
+          signals through a function value or an alias assigned by getattr, and multiline
+          calls such as os.killpg with arguments on following lines are held as gaps.
       - language: go
-        state: unsupported
-        mechanism: none in internal/hiss; forbidigo in golangci-lint fences the primitives
+        state: partial
+        mechanism: internal/hiss go_ast.go checkSignalCall
         rationale: >-
-          The scanner carries no HISS-08 case for Go. plugin.Open, os.StartProcess and the
-          syscall exec family are refused by forbidigo in the same gate, so the fixtures are
-          held as gaps for the scanner rather than as coverage it does not have.
+          syscall.Kill and unix.Kill are reported when the target is not bounded above 1 by an
+          earlier guard in the enclosing function. Probe signal 0, <expr>.Process.Pid, Getpid(),
+          and identifiers derived solely from them are exempt. plugin.Open, os.StartProcess,
+          the syscall exec family, and signals through a function value such as g.kill(-pid, sig)
+          are held as gaps.
       - language: javascript
         state: partial
-        mechanism: internal/hiss script.go checkInvariants (hasCall and scriptImpliedEval)
+        mechanism: internal/hiss script.go checkInvariants (hasCall, scriptImpliedEval, checkScriptSignals)
         rationale: >-
           eval, the Function constructor and setTimeout or setInterval given a string are reported
-          as calls. A method named eval, a call through a selector (interpreter.eval), $eval and
-          the words inside literals are not. Indirect eval through an alias is held as a gap.
+          as calls. process.kill whose first argument starts with '-' is reported unless guarded
+          earlier or delivering probe signal 0. A method named eval, a call through a selector
+          (interpreter.eval), $eval and words inside literals are not. Indirect eval and signals
+          through a function value are held as gaps.
       - language: typescript
         state: partial
-        mechanism: internal/hiss script.go checkInvariants (hasCall and scriptImpliedEval)
+        mechanism: internal/hiss script.go checkInvariants (hasCall, scriptImpliedEval, checkScriptSignals)
         rationale: >-
-          The JavaScript calls are reported; a typed interpreter's eval method is not. The
-          indirect (0, eval)(code) is held as a gap.
+          The JavaScript calls and process.kill with a negative target are reported; a typed
+          interpreter's eval method is not. Probe signal 0 and earlier guards are exempt. The
+          indirect (0, eval)(code) and signals through a function value are held as gaps.
       - language: svelte
         state: partial
         mechanism: internal/hiss script.go checkInvariants over the script blocks

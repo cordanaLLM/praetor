@@ -717,6 +717,7 @@ type pythonFunc struct {
 	outerBinds uint64
 	// relayed holds this scope's calls to enclosing functions, passed outward when it closes.
 	relayed []relayedCall
+	guards  []string
 }
 
 // pythonScanner carries the cross-line state of one Python file.
@@ -730,8 +731,9 @@ type pythonScanner struct {
 	// depth is the bracket depth left open by earlier lines.
 	depth int
 	// abort and joiner place each line against the HISS-07 abort policy.
-	abort  pythonAbortScope
-	joiner pythonLineJoiner
+	abort        pythonAbortScope
+	joiner       pythonLineJoiner
+	moduleGuards []string
 }
 
 // scanPythonLines tracks a stack of open functions so that nested defs do not end
@@ -780,6 +782,8 @@ func (s *pythonScanner) observe(idx int, line string) {
 	}
 	s.lastCode = idx + 1
 	s.observeCalls(code, colon, idx+1)
+	s.observePythonGuards(code)
+	s.observePythonSignals(code, idx+1)
 }
 
 // lineIndent returns the width of line's leading spaces and tabs.

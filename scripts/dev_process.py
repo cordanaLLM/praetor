@@ -12,6 +12,13 @@ import subprocess
 STOP_GRACE = 10
 
 
+def _signal_group(pid, sig):
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1 or pid == os.getpgrp():
+        return
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(pid, sig)
+
+
 def stop_process_group(process, grace=None):
     """SIGTERM the process group ``process`` leads; SIGKILL it if ``process`` outlasts ``grace``.
 
@@ -26,10 +33,7 @@ def stop_process_group(process, grace=None):
     and also wait for the rest of the group; these scripts start the praetor binary itself,
     which exits only after its commands.
     """
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
+    _signal_group(process.pid, signal.SIGTERM)
     try:
         process.wait(timeout=STOP_GRACE if grace is None else grace)
     except subprocess.TimeoutExpired:
@@ -40,5 +44,4 @@ def stop_process_group(process, grace=None):
 
 
 def _kill_group(process):
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(process.pid, signal.SIGKILL)
+    _signal_group(process.pid, signal.SIGKILL)

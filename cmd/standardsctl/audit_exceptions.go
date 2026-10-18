@@ -94,7 +94,7 @@ func unusedHISSException(entries []config.Exception, rules map[string]struct{}, 
 }
 
 // auditExceptionsExpiry warns when any declared exception in the manifest expires within
-// config.ExceptionExpiryWarningDays (14 days) of today (Issue #798), and fails every entry whose
+// its warning window (entry.WarningDays(), up to 14 days) of today (Issue #798), and fails every entry whose
 // path or glob names no file in the repository at rootDir, the same way a gate fails an expired
 // entry (#1259): a stale entry would otherwise outlive the file it was written for.
 func auditExceptionsExpiry(ctx context.Context, manifest *config.Manifest, rootDir string, today time.Time) error {
@@ -106,11 +106,11 @@ func auditExceptionsExpiry(ctx context.Context, manifest *config.Manifest, rootD
 }
 
 // warnExceptionsExpiring prints a warning for each entry expiring within
-// config.ExceptionExpiryWarningDays.
+// its warning window (entry.WarningDays()).
 func warnExceptionsExpiring(entries []config.Exception, today time.Time) {
 	for index := 0; index < len(entries) && index < config.MaxExceptions; index++ {
 		entry := entries[index]
-		if entry.ExpiringWithin(today, config.ExceptionExpiryWarningDays) {
+		if entry.ExpiringWithin(today, entry.WarningDays()) {
 			daysLeft, err := entry.DaysLeft(today)
 			if err != nil {
 				continue

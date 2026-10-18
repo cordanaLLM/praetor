@@ -54,6 +54,9 @@ var processGroups = groupSignaller{kill: syscall.Kill, polls: groupGonePolls, de
 // orphans (#558). A live member this process may not signal answers EPERM as well, so the
 // error stands unless the group then disappears.
 func (g groupSignaller) signal(pid int, sig syscall.Signal) error {
+	if pid <= 1 || pid == syscall.Getpgrp() {
+		return fmt.Errorf("refusing to signal process group %d: a group id of 1 or less, or this process's own group, reaches processes the command never started", pid)
+	}
 	err := g.kill(-pid, sig)
 	if errors.Is(err, syscall.ESRCH) || (errors.Is(err, syscall.EPERM) && g.gone(pid)) {
 		return os.ErrProcessDone

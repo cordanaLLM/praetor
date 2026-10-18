@@ -149,8 +149,9 @@ var catalog = []Rule{
 		Directive: []Clause{
 			{Text: "zero dynamic code execution (`eval` / `exec`)"},
 			{Languages: LanguageC, Text: "zero banned libc (`gets` / `strcpy` / `sprintf`)"},
+			{Text: "a process signal's target is bounded above 1 (`killpg`, `kill(-pid)`, Go `syscall.Kill`)"},
 		},
-		Adoption: auditCheck(LanguageC|LanguagePython, "C banned calls, Python `eval` / `exec`; Go unchecked"),
+		Adoption: auditCheck(LanguageC|LanguagePython|LanguageGo, "C banned calls, Python `eval` / `exec`, Go `syscall.Kill` / `unix.Kill`"),
 	},
 	{
 		ID:            "HISS-09",

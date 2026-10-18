@@ -189,6 +189,7 @@ type scriptScanner struct {
 	// unbalanced records a closing brace with nothing open, which means the structure was
 	// misread and the file is declined.
 	unbalanced bool
+	guards     []string
 }
 
 // observe feeds one physical line.
@@ -378,7 +379,32 @@ func (s *scriptScanner) checkInvariants(code string, lineNum int, defined string
 	if scriptImpliedEval.MatchString(code) {
 		recordViolation(s.rep, "HISS-08", s.rel, lineNum, "", "setTimeout or setInterval given a string evaluates it as code")
 	}
+	s.checkScriptSignals(code, lineNum)
 	s.checkErrors(code, lineNum)
+}
+
+func (s *scriptScanner) checkScriptSignals(code string, lineNum int) {
+	for _, g := range extractAllGuards(code) {
+		s.guards = appendUniqueGuard(s.guards, g)
+	}
+	call := "process.kill"
+	at := strings.Index(code, call)
+	for i := 0; i < len(code) && at >= 0; i++ {
+		if at == 0 || !isIdentByte(code[at-1]) {
+			if target, sig, ok := parseNegativeSignalCall(code, at, call); ok {
+				if sig != "0" && !containsGuard(s.guards, target) {
+					recordViolation(s.rep, "HISS-08", s.rel, lineNum, "",
+						fmt.Sprintf("Signal call process.kill with target %s must be guarded; add guard: if (%s <= 1) ...",
+							target, target))
+				}
+			}
+		}
+		next := strings.Index(code[at+1:], call)
+		if next < 0 {
+			break
+		}
+		at = at + 1 + next
+	}
 }
 
 // checkErrors reports the HISS-07 forms: a swallowed error and an abort outside the entry point.

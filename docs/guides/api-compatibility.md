@@ -264,7 +264,11 @@ binary you built.
    module turned into an alias is matched the same way (#1411;
    `TestGate_Positive_CrossModuleIdenticalAliasAccepted`,
    `TestGate_Negative_CrossModuleAliasKeepsRealChangeRejected`,
-   `TestGate_Boundary_CrossModuleAliasesDoNotChangeUnrelatedTarget`).
+   `TestGate_Boundary_CrossModuleAliasesDoNotChangeUnrelatedTarget`). Each module's own files are
+   the ones whose longest owning module directory is that module: the root module's scan leaves
+   nested modules' files out, so a nested module's alias never vetoes an unrelated root signature
+   (#1421; `TestGate_Positive_NestedModuleAliasesDoNotPolluteRoot`,
+   `TestGate_Boundary_SiblingPrefixNotMaskedByNestedModule`).
 5. **Root vendor directory.** go-apidiff loads every module with `-mod=vendor` when the
    repository root holds a `vendor` directory, and with `-mod=readonly` otherwise (`getPackages`
    in its `pkg/diff/run.go`). The go command vendors a nested module from that module's own

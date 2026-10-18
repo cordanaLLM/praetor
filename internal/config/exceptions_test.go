@@ -679,3 +679,72 @@ func TestExceptionMatchesAny(t *testing.T) {
 		}
 	}
 }
+
+// WarningDays (HISS-15 3D). Positive: categorized and uncategorized entries with valid
+// dates. Negative: unparsable dates and unknown categories. Boundary: interval halving
+// truncation (B: 3 -> 1) and clamping to ExceptionExpiryWarningDays (14).
+func TestException_WarningDays_3D(t *testing.T) {
+	cases := []struct {
+		name     string
+		entry    Exception
+		wantDays int
+	}{
+		{
+			name:     "none",
+			entry:    Exception{Rule: "HISS-11", Expires: "2026-10-24"},
+			wantDays: 14,
+		},
+		{
+			name:     "category B",
+			entry:    Exception{Rule: "HISS-11", Category: "B", Entered: "2026-10-01", Expires: "2026-10-04"},
+			wantDays: 1,
+		},
+		{
+			name:     "category C",
+			entry:    Exception{Rule: "HISS-11", Category: "C", Entered: "2026-10-01", Expires: "2026-10-11"},
+			wantDays: 5,
+		},
+		{
+			name:     "category D",
+			entry:    Exception{Rule: "HISS-11", Category: "D", Entered: "2026-10-01", Expires: "2027-01-29"},
+			wantDays: 14,
+		},
+		{
+			name:     "category A entered 2026-10-01 expires 2026-10-11",
+			entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "2026-10-01", Expires: "2026-10-11"},
+			wantDays: 5,
+		},
+		{
+			name:     "category A entered 2026-10-01 expires 2026-12-30",
+			entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "2026-10-01", Expires: "2026-12-30"},
+			wantDays: 14,
+		},
+		{
+			name:     "category A unparsable entered",
+			entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "bad-date", Expires: "2026-10-11"},
+			wantDays: 14,
+		},
+		{
+			name:     "category A unparsable expires",
+			entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "2026-10-01", Expires: "bad-date"},
+			wantDays: 14,
+		},
+		{
+			name:     "category A expires before entered",
+			entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "2026-10-11", Expires: "2026-10-01"},
+			wantDays: 0,
+		},
+		{
+			name:     "unknown category",
+			entry:    Exception{Rule: "HISS-11", Category: "Z", Entered: "2026-10-01", Expires: "2026-10-11"},
+			wantDays: 14,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.entry.WarningDays(); got != tc.wantDays {
+				t.Errorf("WarningDays() = %d, want %d", got, tc.wantDays)
+			}
+		})
+	}
+}
