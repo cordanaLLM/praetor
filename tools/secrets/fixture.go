@@ -29,7 +29,7 @@ func loadRecipeConfig() (recipeConfig, error) {
 		filepath.Join("..", "..", "tools", "secrets", "testdata", "recipe.json"),
 		filepath.Join("testdata", "recipe.json"),
 	} {
-		data, err := os.ReadFile(p)
+		data, err := util.ReadFileLimited(p, maxRulesSourceBytes)
 		if err == nil {
 			var cfg recipeConfig
 			if jsonErr := json.Unmarshal(data, &cfg); jsonErr == nil {

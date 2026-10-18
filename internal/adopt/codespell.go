@@ -15,7 +15,13 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
+
+// maxCodespellConfigBytes bounds an adopter's setup.cfg, .codespellrc or pyproject.toml read
+// for its codespell section (HISS-02).
+const maxCodespellConfigBytes = 4 << 20
 
 const (
 	maxCodespellLines = 4096
@@ -48,14 +54,14 @@ func DetectCodespellConfig(repoPath string) (CodespellConfig, error) {
 	}
 	cfgPath := filepath.Join(repoPath, "setup.cfg")
 	if fileExists(cfgPath) {
-		data, err := os.ReadFile(cfgPath)
+		data, err := util.ReadFileLimited(cfgPath, maxCodespellConfigBytes)
 		if err == nil && hasIniCodespellSection(string(data)) {
 			return CodespellConfig{Type: ConfigTypeSetupCfg, RelPath: "setup.cfg", FullPath: cfgPath}, nil
 		}
 	}
 	tomlPath := filepath.Join(repoPath, "pyproject.toml")
 	if fileExists(tomlPath) {
-		data, err := os.ReadFile(tomlPath)
+		data, err := util.ReadFileLimited(tomlPath, maxCodespellConfigBytes)
 		if err == nil && hasTomlCodespellSection(string(data)) {
 			return CodespellConfig{Type: ConfigTypePyprojectToml, RelPath: "pyproject.toml", FullPath: tomlPath}, nil
 		}
@@ -390,7 +396,7 @@ func reconcileCodespell(ctx context.Context, s *adoptSession) error {
 	if !slices.Equal(ParseCodespellSkip(string(data), cfg.Type), nextSkips) {
 		updated := UpdateCodespellSkip(string(data), cfg.Type, nextSkips)
 		if !s.opts.DryRun {
-			if err := os.WriteFile(cfg.FullPath, []byte(updated), 0644); err != nil {
+			if err := util.WriteFileAtomic(cfg.FullPath, []byte(updated), 0o644); err != nil {
 				return fmt.Errorf("write %s: %w", cfg.RelPath, err)
 			}
 		}

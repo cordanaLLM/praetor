@@ -11,7 +11,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
+
+// maxRulesSourceBytes bounds the rules source the generator reads (HISS-02).
+const maxRulesSourceBytes = 4 << 20
 
 const (
 	// RulesSourcePath is the repository-relative path to the rules source file.
@@ -49,7 +54,7 @@ func GenerateRulesGen(source []byte) ([]byte, error) {
 // WriteRulesGen reads rules.go from repoRoot, generates rules_gen.go, and writes it.
 func WriteRulesGen(repoRoot string) error {
 	srcPath := filepath.Join(repoRoot, RulesSourcePath)
-	data, err := os.ReadFile(srcPath)
+	data, err := util.ReadFileLimited(srcPath, maxRulesSourceBytes)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", srcPath, err)
 	}

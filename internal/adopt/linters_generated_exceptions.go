@@ -21,7 +21,16 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
+
+// maxLintConfigBytes bounds the golangci-lint configuration the generator reads (HISS-02); the
+// engine's own, generated exceptions included, is about 100 KiB.
+const maxLintConfigBytes = 8 << 20
+
+// maxLintReportBytes bounds the JSON report of a full lint run the generator reads.
+const maxLintReportBytes = 256 << 20
 
 const (
 	// GeneratedExceptionsBegin marks the start of the generated exclusion rules block.
@@ -100,7 +109,7 @@ func StripGolangciConfig(configPath, outPath string) error {
 	if configPath == "" {
 		configPath = ".golangci.yml"
 	}
-	data, err := os.ReadFile(configPath)
+	data, err := util.ReadFileLimited(configPath, maxLintConfigBytes)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", configPath, err)
 	}
@@ -290,7 +299,7 @@ func marshalYAMLNode(node *yaml.Node) ([]byte, error) {
 }
 
 func readEnabledLinters(configPath string) map[string]bool {
-	data, err := os.ReadFile(configPath)
+	data, err := util.ReadFileLimited(configPath, maxLintConfigBytes)
 	if err != nil {
 		return nil
 	}
@@ -324,7 +333,7 @@ func cleanIssueFilename(name string) string {
 }
 
 func readReportPairs(reportPath, configPath string) ([]LinterPair, error) {
-	data, err := os.ReadFile(reportPath)
+	data, err := util.ReadFileLimited(reportPath, maxLintReportBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read report %s: %w", reportPath, err)
 	}
@@ -415,7 +424,7 @@ func locateGeneratedBlock(lines []string) (int, int) {
 }
 
 func readExistingGeneratedBlock(configPath string) ([]recordedExceptionRule, int, int, error) {
-	data, err := os.ReadFile(configPath)
+	data, err := util.ReadFileLimited(configPath, maxLintConfigBytes)
 	if err != nil {
 		return nil, -1, -1, fmt.Errorf("read %s: %w", configPath, err)
 	}
@@ -521,7 +530,7 @@ func findRulesInsertionIndex(lines []string) int {
 }
 
 func writeGeneratedBlockToFile(configPath, block string, beginLine, endLine int) error {
-	data, err := os.ReadFile(configPath)
+	data, err := util.ReadFileLimited(configPath, maxLintConfigBytes)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", configPath, err)
 	}
@@ -542,7 +551,7 @@ func writeGeneratedBlockToFile(configPath, block string, beginLine, endLine int)
 	if err := yaml.Unmarshal([]byte(result), &node); err != nil {
 		return fmt.Errorf("result config is not valid YAML: %w", err)
 	}
-	return os.WriteFile(configPath, []byte(result), 0o600)
+	return util.WriteFileAtomic(configPath, []byte(result), 0o644)
 }
 
 func resolveGenerateDefaults(opts *GenerateExceptionsOptions) (string, time.Time, error) {

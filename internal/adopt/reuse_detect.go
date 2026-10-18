@@ -13,7 +13,12 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"go.yaml.in/yaml/v3"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
+
+// maxReuseWorkflowBytes bounds one workflow file read for an existing REUSE lint job (HISS-02).
+const maxReuseWorkflowBytes = 4 << 20
 
 // isReuseLintJob reports whether id or job represents a REUSE lint job:
 // named REUSE lint, REUSE, or running reuse lint / fsfe/reuse-action (#1327).
@@ -69,7 +74,7 @@ func workflowFileDeclaresReuseJob(workflowDir string, entry os.DirEntry) (bool, 
 		return false, nil
 	}
 	path := filepath.Join(workflowDir, entry.Name())
-	data, err := os.ReadFile(path)
+	data, err := util.ReadFileLimited(path, maxReuseWorkflowBytes)
 	if err != nil {
 		return false, fmt.Errorf("read %s: %w", path, err)
 	}

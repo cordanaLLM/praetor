@@ -15,7 +15,12 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/tools/secrets/rules"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
+
+// maxReportBytes bounds the gitleaks JSON report the scan reads (HISS-02).
+const maxReportBytes = 256 << 20
 
 const (
 	// ScanTimeout bounds one gitleaks run (HISS-02).
@@ -129,7 +134,7 @@ func runGitleaks(ctx context.Context, opts Options) ([]Finding, error) {
 	defer cancel()
 
 	out, runErr := opts.Run(scanCtx, opts.Dir, cmdName, cmdArgs...)
-	data, readErr := os.ReadFile(reportPath)
+	data, readErr := util.ReadFileLimited(reportPath, maxReportBytes)
 	if readErr != nil {
 		if runErr != nil {
 			return nil, fmt.Errorf("gitleaks scan failed: %w: %s", runErr, out)

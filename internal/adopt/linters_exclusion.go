@@ -15,6 +15,8 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -269,7 +271,7 @@ func filterDeclaredExclusionRules(rules []golangciExclusionRule, declared []conf
 }
 
 func checkStaleExclusionRules(rules []golangciExclusionRule, logPath string) ([]string, error) {
-	data, err := os.ReadFile(logPath)
+	data, err := util.ReadFileLimited(logPath, maxLintReportBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read lint log %s: %w", logPath, err)
 	}
