@@ -32,7 +32,7 @@ jobs:
   analyze:
     name: CodeQL (${{ matrix.language }})
     runs-on: ubuntu-26.04
-    timeout-minutes: 15
+    timeout-minutes: 60  # the Go extraction reads the whole module
     permissions:
       contents: read
       security-events: write  # the findings go to the forge's code scanning
