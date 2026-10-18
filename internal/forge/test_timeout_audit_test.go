@@ -14,12 +14,11 @@ import (
 
 var timeoutsToday = time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
 
-const boundWorkflow = "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    timeout-minutes: 90\n" +
+const boundWorkflow = "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n" +
 	"    steps:\n      - run: go test -timeout 30m ./...\n"
 
-const longWorkflow = "on: push\njobs:\n  test:\n    runs-on: windows-latest\n    env:\n" +
-	"      ADOPT_TEST_TIMEOUT: ${{ runner.os == 'Windows' && '60m' || '30m' }}\n" +
-	"    steps:\n      - run: go test -timeout \"$ADOPT_TEST_TIMEOUT\" ./internal/adopt\n"
+const longWorkflow = "on: push\njobs:\n  test:\n    runs-on: windows-latest\n" +
+	"    steps:\n      - run: go test -timeout 60m ./internal/adopt\n"
 
 // Negative: a 60m timeout with no exceptions entry fails and names the workflow, the line and the value.
 func TestAuditTestTimeouts_Negative_LongTimeoutWithoutEntry(t *testing.T) {
@@ -68,11 +67,62 @@ func auditTimeouts(t *testing.T, root string, entries ...config.Exception) (stri
 	return AuditTestTimeouts(t.Context(), TestTimeoutOptions{Root: root, Exceptions: entries, Today: timeoutsToday})
 }
 
-// Positive: a workflow within the bound passes without an entry, and a job's timeout-minutes
-// (a number without a unit) is not read as a test timeout.
+// Positive: a workflow within the bound passes without an entry.
 func TestAuditTestTimeouts_Positive_WithinTheBound(t *testing.T) {
 	out, err := auditTimeouts(t, triggerRepository(t, map[string]string{"ci.yml": boundWorkflow}))
 	if err != nil || !strings.Contains(out, "[PASS]") {
 		t.Fatalf("AuditTestTimeouts = %q, %v; want a pass", out, err)
+	}
+}
+
+// Positive: a step with docker memory limits is ignored even when --stop-timeout is present.
+func TestAuditTestTimeouts_Positive_DockerMemoryIgnored(t *testing.T) {
+	wf := "on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: docker run --memory 64m --memory-swap 64m --stop-timeout 5 image\n      - run: go test ./...\n"
+	out, err := auditTimeouts(t, triggerRepository(t, map[string]string{"ci.yml": wf}))
+	if err != nil {
+		t.Fatalf("AuditTestTimeouts = %q, %v; want docker memory ignored", out, err)
+	}
+}
+
+// Negative: go test with timeouts above the bound are flagged, including combinations like 1h5m.
+func TestAuditTestTimeouts_Negative_GoTestLongTimeouts(t *testing.T) {
+	wf1 := "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test -timeout 64m ./...\n"
+	_, err1 := auditTimeouts(t, triggerRepository(t, map[string]string{"ci.yml": wf1}))
+	if err1 == nil || !strings.Contains(err1.Error(), "64m") {
+		t.Fatalf("err1 = %v; want 64m flagged", err1)
+	}
+
+	wf2 := "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test ./... -timeout=1h5m\n"
+	_, err2 := auditTimeouts(t, triggerRepository(t, map[string]string{"ci.yml": wf2}))
+	if err2 == nil || !strings.Contains(err2.Error(), "1h5m") {
+		t.Fatalf("err2 = %v; want 1h5m flagged", err2)
+	}
+}
+
+// Boundary: go test with exactly 30m timeout passes.
+func TestAuditTestTimeouts_Boundary_GoTestBoundPasses(t *testing.T) {
+	wf := "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test -timeout 30m ./...\n"
+	out, err := auditTimeouts(t, triggerRepository(t, map[string]string{"ci.yml": wf}))
+	if err != nil || !strings.Contains(out, "[PASS]") {
+		t.Fatalf("AuditTestTimeouts = %q, %v; want 30m to pass", out, err)
+	}
+}
+
+// Boundary: a job's timeout-minutes is not this gate's subject (decision
+// engine-timeout-audit-scope-20261018): 45 passes, as on the gate before the fix.
+func TestAuditTestTimeouts_TimeoutMinutesNotJudged(t *testing.T) {
+	wfLong := "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    timeout-minutes: 45\n    steps:\n      - run: go test ./...\n"
+	out, err := auditTimeouts(t, triggerRepository(t, map[string]string{"ci.yml": wfLong}))
+	if err != nil || !strings.Contains(out, "[PASS]") {
+		t.Fatalf("AuditTestTimeouts = %q, %v; want timeout-minutes: 45 left to a job-timeout gate", out, err)
+	}
+}
+
+// Negative: an unparsable duration such as -timeout 5x is reported as unreadable.
+func TestAuditTestTimeouts_Negative_UnreadableTimeout(t *testing.T) {
+	wf := "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test -timeout 5x ./...\n"
+	_, err := auditTimeouts(t, triggerRepository(t, map[string]string{"ci.yml": wf}))
+	if err == nil || !strings.Contains(err.Error(), "unreadable") || !strings.Contains(err.Error(), "5x") {
+		t.Fatalf("err = %v; want unreadable timeout 5x reported", err)
 	}
 }
