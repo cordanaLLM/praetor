@@ -874,6 +874,17 @@ entries:
       - ".github/workflows/release-binaries.yml"
     packages:
       - "action:docker/setup-buildx-action"
+  - name: "github/codeql-action"
+    url: "https://github.com/github/codeql-action"
+    section: "actions"
+    kind: "action"
+    relation: "used by CI"
+    license: "MIT"
+    use: "Workflows: CodeQL code scanning"
+    paths:
+      - ".github/workflows/codeql.yml"
+    packages:
+      - "action:github/codeql-action"
   - name: "goreleaser/goreleaser-action"
     url: "https://github.com/goreleaser/goreleaser-action"
     section: "actions"

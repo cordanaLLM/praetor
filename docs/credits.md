@@ -198,6 +198,7 @@ whose use names a template.
 | [Azure/setup-helm](https://github.com/Azure/setup-helm) | Workflows: installs Helm | action, used by CI | MIT |
 | [docker/login-action](https://github.com/docker/login-action) | Workflows | action, used by CI | Apache-2.0 |
 | [docker/setup-buildx-action](https://github.com/docker/setup-buildx-action) | Workflows | action, used by CI | Apache-2.0 |
+| [github/codeql-action](https://github.com/github/codeql-action) | Workflows: CodeQL code scanning | action, used by CI | MIT |
 | [goreleaser/goreleaser-action](https://github.com/goreleaser/goreleaser-action) | Workflows | action, used by CI | MIT |
 | [oven-sh/setup-bun](https://github.com/oven-sh/setup-bun) | Node CI template | action, integrated | MIT |
 | [sigstore/cosign-installer](https://github.com/sigstore/cosign-installer) | Workflows: installs Cosign | action, used by CI | Apache-2.0 |
