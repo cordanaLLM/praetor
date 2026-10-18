@@ -294,6 +294,7 @@ outside a manifest. None of them ships in the binaries.
 | [Gitleaks](https://github.com/gitleaks/gitleaks) | Secret scan, a tool of `tools/go/go.mod` | tool, used by CI | MIT |
 | [govulncheck](https://go.googlesource.com/vuln) | Go vulnerability scan, a tool of `tools/go/go.mod` | tool, used by CI | BSD-3-Clause, © The Go Authors |
 | [gofumpt](https://github.com/mvdan/gofumpt) | Format-checks the Go managed assets adoption copies, a tool of `tools/go/go.mod` | tool, used by CI | BSD-3-Clause, © 2019, Daniel Martí |
+| [shfmt](https://github.com/mvdan/sh) | Checks that every shell script adoption emits keeps the layout shfmt -i 2 -ci writes, a tool of `tools/go/go.mod` | tool, used by CI | BSD-3-Clause, © 2016, Daniel Martí |
 | [Semgrep](https://semgrep.dev) | Static analysis rules | tool, used by CI | LGPL-2.1-or-later, the license expression of the PyPI release |
 | [Black](https://github.com/psf/black) | Formats the hook sources adoption copies (`.config/hook-lint/requirements.in`) | tool, used by CI | MIT |
 | [Flake8](https://github.com/PyCQA/flake8) | Lints the hook sources adoption copies | tool, used by CI | MIT |

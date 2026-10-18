@@ -1,0 +1,2 @@
+type: fixed
+title: The interpreter launcher praetorctl adopt writes is laid out as shfmt -i 2 -ci writes it, and a test runs the pinned shfmt over every emitted shell script

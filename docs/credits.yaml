@@ -1646,6 +1646,18 @@ entries:
       - "tools/go/go.mod"
     packages:
       - "go:mvdan.cc/gofumpt"
+  - name: "shfmt"
+    url: "https://github.com/mvdan/sh"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "BSD-3-Clause"
+    notice: "© 2016, Daniel Martí"
+    use: "Checks that every shell script adoption emits keeps the layout shfmt -i 2 -ci writes, a tool of `tools/go/go.mod`"
+    paths:
+      - "tools/go/go.mod"
+    packages:
+      - "go:mvdan.cc/sh/v3/cmd/shfmt"
   - name: "Semgrep"
     url: "https://semgrep.dev"
     section: "tooling"

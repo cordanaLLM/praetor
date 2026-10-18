@@ -34,7 +34,8 @@ const (
 // launcherCandidate matches one candidate line of the launcher: the words it proves and the
 // words it then starts. Every line of the launcher ends in a comment sign, so a CRLF checkout
 // of it still runs.
-var launcherCandidate = regexp.MustCompile(`^if proven (.+); then exec (.+) "\$@"; fi #$`)
+// The guard sits in the column shfmt -i 2 -ci aligns it to, one space or more away.
+var launcherCandidate = regexp.MustCompile(`^if proven (.+); then exec (.+) "\$@"; fi +#$`)
 
 func engineText(t *testing.T, relative string) string {
 	t.Helper()
