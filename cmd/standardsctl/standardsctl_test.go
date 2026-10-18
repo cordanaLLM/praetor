@@ -1099,8 +1099,8 @@ func TestDefaultDevRoot_NeverReturnsAForeignPath(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected an error without a usable home directory, got %q", root)
 	}
-	if strings.Contains(err.Error(), "/home/kilian") {
-		t.Errorf("error still references a workstation-specific path: %v", err)
+	if strings.Contains(err.Error(), "/home/") {
+		t.Errorf("error references a hard-coded home path: %v", err)
 	}
 
 	// Positive: an explicit value always wins over the default.
@@ -1401,7 +1401,7 @@ func TestDispatchCommand_HarvestFleetOutput(t *testing.T) {
 	if !strings.Contains(out, filepath.FromSlash(harvester.FleetTopologyFile)) {
 		t.Errorf("expected the report to name the expected configuration path, got:\n%s", out)
 	}
-	for _, name := range []string{"watershed", "northlight", "thedesknook", "home-zeus", "xe-telemetry"} {
+	for _, name := range []string{"watershed", "northlight", "thedesknook", "xe-telemetry"} {
 		if strings.Contains(out, name) {
 			t.Errorf("harvest fleet disclosed the private repository %q:\n%s", name, out)
 		}

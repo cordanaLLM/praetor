@@ -23,9 +23,9 @@ import (
 
 func findCodespellBinary(t *testing.T) string {
 	t.Helper()
-	candidates := []string{
-		"codespell",
-		"/home/kilian/.local/bin/codespell",
+	candidates := []string{"codespell"}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, ".local", "bin", "codespell"))
 	}
 	for _, c := range candidates {
 		if path, err := exec.LookPath(c); err == nil {
