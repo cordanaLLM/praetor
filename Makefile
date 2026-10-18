@@ -101,7 +101,7 @@ vuln: vuln-nested
 lint-nested:
 	for module in $(NESTED_GO_MODULES); do \
 		go -C $$module vet ./... && \
-		go -C $$module run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run --config $(CURDIR)/.golangci.yml || exit 1; \
+		go -C $$module tool -modfile=$(CURDIR)/tools/lint/go.mod golangci-lint run --config $(CURDIR)/.golangci.yml || exit 1; \
 	done
 
 sec-nested:

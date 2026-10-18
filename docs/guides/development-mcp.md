@@ -468,6 +468,15 @@ fails too (`TestServerAuditTestTimeoutsLikeTheCLI` in
 `cmd/standards-mcp/audit_test_timeouts_test.go`). The audit summary counts it, so a clean
 fixture reads `passed: 12/12`.
 
+The job-timeout gate runs right beside it (`forge.AuditJobTimeouts`): every job that runs steps
+declares `timeout-minutes`. A reusable workflow call (`uses:` at job level) cannot carry it and
+is exempt; an expression value (`${{ ... }}`) is reported as not judged, by name. The gate has two paths:
+the static path warns on any declared value above 120 minutes; when the forge is readable, the
+measured path reads up to the latest 3 successful runs on the default branch and warns on a
+declared value below 1.25 x slowest run S (cancel risk) or above max(30, 4 x S) (runaway),
+falling back to the static path for jobs without measurements. During warn-only rollout, findings
+emit `[WARN]` lines and the gate passes, silenced by a dated `job-timeout` exception.
+
 The context gate inside `standards_audit` also runs the cache-stability check
 (`compiler.VerifyStableContext`, called from `auditContextSync` in
 `cmd/standards-mcp/audit_tools.go`), the same one `praetorctl audit` and

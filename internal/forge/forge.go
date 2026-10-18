@@ -57,6 +57,8 @@ type ActionsReader interface {
 	// WorkflowRunHistory returns the latest completed runs of workflow, a file name under
 	// .github/workflows, on branch, and whether the workflow has run anywhere at all.
 	WorkflowRunHistory(ctx context.Context, workflow, branch string) (WorkflowRunHistory, error)
+	// WorkflowRunJobs returns the jobs of a workflow run, bounded.
+	WorkflowRunJobs(ctx context.Context, runID int64) ([]WorkflowJobRecord, error)
 }
 
 // Forge provides a decoupled, vendor-neutral abstraction across Git hosting providers.

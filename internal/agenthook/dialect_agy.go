@@ -205,8 +205,10 @@ func agyFillCommon(canonical *Canonical, common agyCommon) {
 	if common.ConversationID != nil {
 		canonical.ConversationID = *common.ConversationID
 	}
-	if len(common.WorkspacePaths) > 0 && common.WorkspacePaths[0] != "" {
-		canonical.Workspaces = []string{common.WorkspacePaths[0]}
+	// Every entry is kept: AGY lists each --add-dir folder before the folder it runs in, so
+	// the governed repository can be a later entry (ResolveRoot reads them all).
+	if len(common.WorkspacePaths) > 0 {
+		canonical.Workspaces = append([]string(nil), common.WorkspacePaths...)
 	}
 }
 

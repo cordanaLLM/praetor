@@ -237,3 +237,53 @@ func TestWorkflowRunHistory_Boundary_SecondQuestionWindowAndEscaping(t *testing.
 		t.Fatalf("escaped path = %s, want %s", fake.requests[0].Escaped, want)
 	}
 }
+
+// Positive: WorkflowRunJobs reads the run's jobs through GET .../actions/runs/{runID}/jobs.
+func TestWorkflowRunJobs_Positive(t *testing.T) {
+	jobs := []map[string]any{
+		{"name": "test", "started_at": "2026-10-18T00:00:00Z", "completed_at": "2026-10-18T00:10:00Z", "conclusion": "success"},
+	}
+	body := map[string]any{"total_count": 1, "jobs": jobs}
+	gh, fake := runsForge(t, respond(t, http.StatusOK, body))
+	got, err := gh.WorkflowRunJobs(t.Context(), 42)
+	if err != nil {
+		t.Fatalf("WorkflowRunJobs error: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "test" || got[0].Conclusion != "success" {
+		t.Fatalf("WorkflowRunJobs = %+v", got)
+	}
+	if want := "/repos/acme/widgets/actions/runs/42/jobs"; fake.requests[0].Path != want {
+		t.Errorf("path = %s, want %s", fake.requests[0].Path, want)
+	}
+}
+
+// Negative: invalid run ID returns an error; 404 maps to ErrActionsNotReadable.
+func TestWorkflowRunJobs_Negative(t *testing.T) {
+	gh, _ := runsForge(t, respond(t, http.StatusNotFound, nil))
+	if _, err := gh.WorkflowRunJobs(t.Context(), 0); err == nil {
+		t.Errorf("zero runID must return error")
+	}
+	if _, err := gh.WorkflowRunJobs(t.Context(), -5); err == nil {
+		t.Errorf("negative runID must return error")
+	}
+	if _, err := gh.WorkflowRunJobs(t.Context(), 99); !errors.Is(err, ErrActionsNotReadable) {
+		t.Errorf("404 must map to ErrActionsNotReadable, got %v", err)
+	}
+}
+
+// Boundary: more jobs than maxWorkflowRunJobs is truncated to the bound.
+func TestWorkflowRunJobs_Boundary_MaxJobsLimit(t *testing.T) {
+	jobs := make([]map[string]any, maxWorkflowRunJobs+10)
+	for i := range jobs {
+		jobs[i] = map[string]any{"name": fmt.Sprintf("job-%d", i), "conclusion": "success"}
+	}
+	body := map[string]any{"total_count": len(jobs), "jobs": jobs}
+	gh, _ := runsForge(t, respond(t, http.StatusOK, body))
+	got, err := gh.WorkflowRunJobs(t.Context(), 1)
+	if err != nil {
+		t.Fatalf("WorkflowRunJobs error: %v", err)
+	}
+	if len(got) != maxWorkflowRunJobs {
+		t.Errorf("jobs length = %d, want %d", len(got), maxWorkflowRunJobs)
+	}
+}

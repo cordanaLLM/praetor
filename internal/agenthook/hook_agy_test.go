@@ -151,6 +151,30 @@ func TestRunAgyUnknownEventIsRejected(t *testing.T) {
 	}
 }
 
+// AGY 1.4.2 names each --add-dir folder before the folder it runs in. A lane job that added
+// an outcome folder outside any repository skipped the dispatch guard for the governed
+// worktree behind it (measured 2026-10-18 through agy-run.sh: a brief without task: started).
+func TestRunAgyGuardsTheGovernedWorkspaceBehindAnAddedFolder(t *testing.T) {
+	root := repository(t, true)
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatch := func(workspaces ...string) []byte {
+		return commandPayload(t, map[string]any{"conversationId": "session", "workspacePaths": workspaces,
+			"toolCall": map[string]any{"name": "invoke_subagent", "args": map[string]any{
+				"Subagents": []map[string]any{{"Prompt": "say hi", "TypeName": "self", "Role": "smoke"}}}}})
+	}
+	response := runAgentHook(t, root, t.TempDir(), "agy", EventPreDispatch, dispatch(outside, root))
+	if agyStdoutAllows(t, string(EventPreDispatch), response) || !strings.Contains(string(response.Stdout), "brief task field is missing") {
+		t.Errorf("brief without task: allowed behind an added folder: %+v", response)
+	}
+	response = runAgentHook(t, root, t.TempDir(), "agy", EventPreDispatch, dispatch(outside))
+	if !agyStdoutAllows(t, string(EventPreDispatch), response) || string(response.Stderr) != "praetor hook: no repository, skipped\n" {
+		t.Errorf("a payload naming no repository is a stated skip: %+v", response)
+	}
+}
+
 func TestRunAgySkipsUngovernedWorkspacesWithAReason(t *testing.T) {
 	plain := repository(t, false)
 	response := serve(t, "agy", "pre-tool", plain, commandPayload(t, map[string]any{

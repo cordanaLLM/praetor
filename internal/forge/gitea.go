@@ -115,6 +115,13 @@ func (gt *GiteaDriver) WorkflowRunHistory(ctx context.Context, workflow, branch 
 	return WorkflowRunHistory{}, gt.unsupported("WorkflowRunHistory")
 }
 
+func (gt *GiteaDriver) WorkflowRunJobs(ctx context.Context, runID int64) ([]WorkflowJobRecord, error) {
+	if err := gt.Authenticate(ctx); err != nil {
+		return nil, err
+	}
+	return nil, gt.unsupported("WorkflowRunJobs")
+}
+
 func (gt *GiteaDriver) ListMergedPullRequests(ctx context.Context, _ MergedPullRequestQuery) (MergedPullRequestList, error) {
 	if err := gt.Authenticate(ctx); err != nil {
 		return MergedPullRequestList{}, err

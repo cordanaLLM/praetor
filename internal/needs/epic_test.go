@@ -87,6 +87,10 @@ func (f *fakeForge) WorkflowRunHistory(context.Context, string, string) (forge.W
 	return forge.WorkflowRunHistory{}, forge.ErrNotImplemented
 }
 
+func (f *fakeForge) WorkflowRunJobs(context.Context, int64) ([]forge.WorkflowJobRecord, error) {
+	return nil, forge.ErrNotImplemented
+}
+
 func (f *fakeForge) ListMergedPullRequests(context.Context, forge.MergedPullRequestQuery) (forge.MergedPullRequestList, error) {
 	return forge.MergedPullRequestList{}, forge.ErrNotImplemented
 }

@@ -196,6 +196,10 @@ func (r *recordingForge) WorkflowRunHistory(context.Context, string, string) (Wo
 	return WorkflowRunHistory{}, ErrNotImplemented
 }
 
+func (r *recordingForge) WorkflowRunJobs(context.Context, int64) ([]WorkflowJobRecord, error) {
+	return nil, ErrNotImplemented
+}
+
 func (r *recordingForge) EditIssueBody(context.Context, int, string) error {
 	return ErrNotImplemented
 }

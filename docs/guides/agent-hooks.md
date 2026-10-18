@@ -1020,9 +1020,13 @@ public payload contract does not expose that body.
 
 <!-- praetor:docs-references:on -->
 
-Every payload carries `conversationId` and `workspacePaths` (an array; the entrypoint
-uses element 0 and falls back to the process working directory when the array is empty
-or absent, the same rule as `cwd` for the other four dialects).
+Every payload carries `conversationId` and `workspacePaths` (an array). The entrypoint
+reads every entry, at most 16: the first governed repository among them is the one it
+evaluates, else the first repository, and it falls back to the process working directory
+when the array is empty or absent, the same rule as `cwd` for the other four dialects.
+AGY 1.4.2 lists each `--add-dir` folder before the folder it runs in, so the governed
+checkout can be a later entry (`ResolveRoot`, `internal/agenthook/root.go`); a later
+entry that is a relative path or that git cannot read fails closed.
 
 **`PreToolUse`** — gate, block or audit a tool call before it runs:
 

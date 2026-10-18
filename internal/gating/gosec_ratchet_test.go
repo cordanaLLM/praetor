@@ -2,17 +2,56 @@ package gating
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
 )
+
+const gosecBuildTimeout = 2 * time.Minute
+
+// pinnedGosecBuilt is the temporary folder the pinned gosec was built into, removed by TestMain after the tests.
+var pinnedGosecBuilt string
+
+var cachedPinnedGosecDir = sync.OnceValues(func() (string, error) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		return "", fmt.Errorf("resolve repository root: %w", err)
+	}
+	toolsMod := filepath.Join(repoRoot, "tools", "go", "go.mod")
+	binDir, err := os.MkdirTemp("", "praetor-pinned-gosec-*")
+	if err != nil {
+		return "", fmt.Errorf("create gosec directory: %w", err)
+	}
+	pinnedGosecBuilt = binDir
+	outBinary := filepath.Join(binDir, testsupport.ExecutableName("gosec"))
+	ctx, cancel := context.WithTimeout(context.Background(), gosecBuildTimeout)
+	defer cancel()
+	res, err := util.RunCommandBytes(ctx, repoRoot, "go", util.MaxCommandOutputBytes,
+		"build", "-modfile="+toolsMod, "-o", outBinary, "github.com/securego/gosec/v2/cmd/gosec")
+	if err != nil {
+		return "", util.CommandDiagnostic(fmt.Errorf("build pinned gosec: %w", err), res.Stderr)
+	}
+	return binDir, nil
+})
+
+func pinnedGosecDir(t *testing.T) string {
+	t.Helper()
+	dir, err := cachedPinnedGosecDir()
+	if err != nil {
+		t.Fatalf("pinned gosec unavailable: %v", err)
+	}
+	return dir
+}
 
 // setupGosecPlantedRepo creates a hermetic git repo with a Go module and one planted G204 finding.
 func setupGosecPlantedRepo(t *testing.T) string {
@@ -48,20 +87,27 @@ func main() {
 	return dir
 }
 
-func TestGosecRatchet_PlantedFinding_FailsOnMain(t *testing.T) {
-	if _, err := exec.LookPath("gosec"); err != nil {
-		t.Skip("gosec not installed")
-	}
-	dir := setupGosecPlantedRepo(t)
-	rep := &PipelineReport{Stages: make([]StageResult, 0, maxStages)}
-	cfg := &stageConfig{
+func gosecRatchetStageConfig(dir string, rep *PipelineReport) *stageConfig {
+	return &stageConfig{
 		repoDir:         dir,
 		dryRun:          false,
-		run:             util.RunCommand,
-		lookPath:        exec.LookPath,
+		lookPath:        stubScannerLookPath,
 		rep:             rep,
 		moduleDiscovery: apiassets.TrackedModuleFiles,
+		run: func(ctx context.Context, cmdDir, name string, args ...string) (string, error) {
+			if name == "govulncheck" {
+				return cleanGovulnStream, nil
+			}
+			return util.RunCommand(ctx, cmdDir, name, args...)
+		},
 	}
+}
+
+func TestGosecRatchet_PlantedFinding_FailsOnMain(t *testing.T) {
+	t.Setenv("PATH", pinnedGosecDir(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	dir := setupGosecPlantedRepo(t)
+	rep := &PipelineReport{Stages: make([]StageResult, 0, maxStages)}
+	cfg := gosecRatchetStageConfig(dir, rep)
 
 	_, err := runSecurityStage(context.Background(), cfg)
 	if err == nil {
@@ -74,9 +120,7 @@ func TestGosecRatchet_PlantedFinding_FailsOnMain(t *testing.T) {
 }
 
 func TestGosecRatchet_PassesAfterRecordingBaseline(t *testing.T) {
-	if _, err := exec.LookPath("gosec"); err != nil {
-		t.Skip("gosec not installed")
-	}
+	t.Setenv("PATH", pinnedGosecDir(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	dir := setupGosecPlantedRepo(t)
 	findings, hasGo, err := ScanGosec(t.Context(), dir)
 	if err != nil || !hasGo || len(findings) == 0 {
@@ -94,14 +138,7 @@ func TestGosecRatchet_PassesAfterRecordingBaseline(t *testing.T) {
 	}
 
 	rep := &PipelineReport{Stages: make([]StageResult, 0, maxStages)}
-	cfg := &stageConfig{
-		repoDir:         dir,
-		dryRun:          false,
-		run:             util.RunCommand,
-		lookPath:        exec.LookPath,
-		rep:             rep,
-		moduleDiscovery: apiassets.TrackedModuleFiles,
-	}
+	cfg := gosecRatchetStageConfig(dir, rep)
 
 	msg, err := runSecurityStage(context.Background(), cfg)
 	if err != nil {
@@ -113,9 +150,7 @@ func TestGosecRatchet_PassesAfterRecordingBaseline(t *testing.T) {
 }
 
 func TestGosecRatchet_GrowthFailsWithNewOneNamed(t *testing.T) {
-	if _, err := exec.LookPath("gosec"); err != nil {
-		t.Skip("gosec not installed")
-	}
+	t.Setenv("PATH", pinnedGosecDir(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	dir := setupGosecPlantedRepo(t)
 	findings, _, err := ScanGosec(t.Context(), dir)
 	if err != nil || len(findings) == 0 {
@@ -142,14 +177,7 @@ func runExtra(arg string) error {
 `)
 
 	rep := &PipelineReport{Stages: make([]StageResult, 0, maxStages)}
-	cfg := &stageConfig{
-		repoDir:         dir,
-		dryRun:          false,
-		run:             util.RunCommand,
-		lookPath:        exec.LookPath,
-		rep:             rep,
-		moduleDiscovery: apiassets.TrackedModuleFiles,
-	}
+	cfg := gosecRatchetStageConfig(dir, rep)
 
 	_, err = runSecurityStage(context.Background(), cfg)
 	if err == nil {
@@ -161,9 +189,7 @@ func runExtra(arg string) error {
 }
 
 func TestGosecRatchet_RemovalLeavesStageGreenAndRecordShrinksBaseline(t *testing.T) {
-	if _, err := exec.LookPath("gosec"); err != nil {
-		t.Skip("gosec not installed")
-	}
+	t.Setenv("PATH", pinnedGosecDir(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	dir := setupGosecPlantedRepo(t)
 	findings, _, err := ScanGosec(t.Context(), dir)
 	if err != nil || len(findings) == 0 {
@@ -186,14 +212,7 @@ func main() {}
 `)
 
 	rep := &PipelineReport{Stages: make([]StageResult, 0, maxStages)}
-	cfg := &stageConfig{
-		repoDir:         dir,
-		dryRun:          false,
-		run:             util.RunCommand,
-		lookPath:        exec.LookPath,
-		rep:             rep,
-		moduleDiscovery: apiassets.TrackedModuleFiles,
-	}
+	cfg := gosecRatchetStageConfig(dir, rep)
 
 	if _, err := runSecurityStage(context.Background(), cfg); err != nil {
 		t.Fatalf("expected stage to be green after removing infraction, got: %v", err)

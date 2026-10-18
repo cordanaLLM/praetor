@@ -1,0 +1,3 @@
+type: fixed
+title: The agent hook reads every workspace a payload names, so a folder outside any repository listed first no longer skips the guard for the governed checkout behind it
+issue: '#1446'

@@ -48,7 +48,14 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "gating test setup: %v\n", err)
 		os.Exit(1)
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	// The pinned gosec the ratchet tests build (gosec_ratchet_test.go) is about 70 MB per run.
+	if pinnedGosecBuilt != "" {
+		if err := os.RemoveAll(pinnedGosecBuilt); err != nil {
+			fmt.Fprintf(os.Stderr, "gating test cleanup: %v\n", err)
+		}
+	}
+	os.Exit(code)
 }
 
 // containerCall is one command a fake runtime ran inside a container.
