@@ -451,6 +451,25 @@ class Hook(unittest.TestCase):
                 logs.output[0],
             )
 
+    def test_missing_lock_warns_and_publishes_no_player(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.use_absent_local_player(Path(directory))
+            with self.assertLogs(
+                "mkdocs.plugins.praetor_figures", level="WARNING"
+            ) as logs:
+                published = mkdocs_hook.published_files()
+            self.assertEqual(published, [(mkdocs_hook.CSS_URI, mkdocs_hook.CSS_FILE)])
+            self.assertEqual(len(logs.output), 1)
+            self.assertIn("player.lock.json is missing", logs.output[0])
+
+    def test_lock_repository_over_plain_http_is_refused(self):
+        with self.assertRaises(mkdocs_hook.CheckError):
+            mkdocs_hook.release_archive_url(
+                {"repository": "http://example.test/fork"}, "v1.0.0", "figures-player.tar.gz"
+            )
+        with self.assertRaises(mkdocs_hook.CheckError):
+            mkdocs_hook.download_player_archive("http://example.test/figures-player.tar.gz")
+
     @staticmethod
     def fake_response(payload: bytes):
         class FakeResponse(io.BytesIO):

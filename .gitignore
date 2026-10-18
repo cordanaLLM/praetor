@@ -85,3 +85,6 @@ all_github_repos.json
 /.claude/settings.local.json
 /.standards-receipt.json
 # END praetor private artifacts
+
+# The figure player archive GoReleaser's before hook packs for a release (.goreleaser.yaml).
+/.release-extra/
