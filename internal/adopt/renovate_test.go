@@ -52,6 +52,7 @@ var documentationFixturePaths = []string{
 	"tools/figures/mkdocs_hook.py",
 	"tools/figures/astro.mjs",
 	"tools/figures/serve.mjs",
+	"tools/figures/eslint.figures.mjs",
 	"tools/figures/README.md",
 }
 

@@ -437,6 +437,9 @@ func preMoveBootstrapFamily(family managedasset.Family) (bootstrapAssetFamily, b
 	oldAssetPaths := make([]string, 0, len(names))
 	for index := 0; index < len(names) && index < family.MaxAssets; index++ {
 		name := names[index]
+		if name == "eslint.figures.mjs" {
+			continue
+		}
 		if oldRel, ok := movedBase[path.Base(name)]; ok {
 			oldNames = append(oldNames, oldRel)
 			oldAssetPaths = append(oldAssetPaths, family.Directory+"/"+oldRel)

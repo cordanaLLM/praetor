@@ -99,12 +99,16 @@ const ExceptionRuleBacklogCapsForgeAlerts = "backlog.caps.forge_alerts"
 // ExceptionRulePlatformNeutrality is the rule of the HISS-21 platform neutrality gate.
 const ExceptionRulePlatformNeutrality = "HISS-21"
 
+// ExceptionRuleCodespell is the rule of the codespell exception gate.
+const ExceptionRuleCodespell = "codespell"
+
 // exceptionRules lists rules an exceptions entry may name. HISS IDs come from the single HISS
 // registry; the other entries are the non-HISS gates that read this list.
 var exceptionRules = append(hisscatalog.RuleIDs(),
 	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits,
 	ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder, ExceptionRuleDeclaredLinters, ExceptionRuleTestTimeout, ExceptionRuleMutants,
 	ExceptionRuleBacklogCapsDefects, ExceptionRuleBacklogCapsTasks, ExceptionRuleBacklogCapsQuestions, ExceptionRuleBacklogCapsForgeAlerts,
+	ExceptionRuleCodespell,
 )
 
 // workflowRuleExamples maps each rule whose entries name one workflow file by path to the
@@ -360,6 +364,9 @@ func (e Exception) problem(today time.Time) string {
 	if problem := e.dedupeTargetProblem(); problem != "" {
 		return problem
 	}
+	if problem := e.codespellProblem(); problem != "" {
+		return problem
+	}
 	if problem := e.functionProblem(); problem != "" {
 		return problem
 	}
@@ -490,6 +497,20 @@ func (e Exception) rootLicenseTargetProblem() string {
 func (e Exception) dedupeTargetProblem() string {
 	if e.Rule == ExceptionRuleDedupe && e.Glob != "" {
 		return "rule " + e.Rule + " must name one repository file by path, one entry per file"
+	}
+	return ""
+}
+
+// codespellProblem requires a codespell entry to name one file by path and declare a category.
+func (e Exception) codespellProblem() string {
+	if e.Rule != ExceptionRuleCodespell {
+		return ""
+	}
+	if e.Category == "" {
+		return "rule codespell requires a category"
+	}
+	if e.Path == "" || e.Glob != "" {
+		return "rule codespell must name one file by path, not a glob"
 	}
 	return ""
 }

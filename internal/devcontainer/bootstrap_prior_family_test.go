@@ -73,6 +73,9 @@ func figurePreMoveFixtureFiles(t *testing.T) []bootstrapSourceFile {
 		{Name: figureFamily.Source, Data: preMoveAssetsGo},
 	}
 	for _, assetRel := range figureFamily.Names() {
+		if assetRel == "eslint.figures.mjs" {
+			continue
+		}
 		data, err := figureFamily.Read(assetRel)
 		if err != nil {
 			t.Fatalf("read %s: %v", assetRel, err)

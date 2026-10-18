@@ -32,6 +32,7 @@ import (
 var repositoryOnly = []string{
 	"assets.go",
 	"assets_test.go",
+	"eslint_test.go",
 	"package.json",
 	"package-lock.json",
 	"tsconfig.json",

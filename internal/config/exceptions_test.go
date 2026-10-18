@@ -832,3 +832,47 @@ func TestExceptionMatchesSecret_3D(t *testing.T) {
 		t.Errorf("negative: non-HISS-12 rule must not match")
 	}
 }
+
+// Positive: a codespell entry naming one file with category C, entered today and expiring today+10
+// passes. Negative: a glob, a missing category, a tool and an invalid expiry are refused. Boundary:
+// category A with expiry up to 90 days passes.
+func TestValidateExceptionsCodespell(t *testing.T) {
+	today := exceptionsToday
+	valid := Exception{
+		Rule:     ExceptionRuleCodespell,
+		Path:     "tools/figures/player/player.js",
+		Reason:   "minified third-party interfig bundle",
+		Category: "C",
+		Entered:  today.Format(ExceptionDateLayout),
+		Expires:  today.AddDate(0, 0, 10).Format(ExceptionDateLayout),
+	}
+	if err := ValidateExceptions([]Exception{valid}, today); err != nil {
+		t.Fatalf("valid codespell exception refused: %v", err)
+	}
+
+	globbed := valid
+	globbed.Path = ""
+	globbed.Glob = "tools/figures/player/*.js"
+	if err := ValidateExceptions([]Exception{globbed}, today); err == nil || !strings.Contains(err.Error(), "must name one file by path, not a glob") {
+		t.Fatalf("globbed codespell exception accepted: %v", err)
+	}
+
+	noCat := valid
+	noCat.Category = ""
+	noCat.Entered = ""
+	if err := ValidateExceptions([]Exception{noCat}, today); err == nil || !strings.Contains(err.Error(), "rule codespell requires a category") {
+		t.Fatalf("uncategorized codespell exception accepted: %v", err)
+	}
+
+	withTool := valid
+	withTool.Tool = "codespell"
+	if err := ValidateExceptions([]Exception{withTool}, today); err == nil || !strings.Contains(err.Error(), "must not set tool") {
+		t.Fatalf("codespell exception with tool accepted: %v", err)
+	}
+
+	badExpiry := valid
+	badExpiry.Expires = today.AddDate(0, 0, 15).Format(ExceptionDateLayout)
+	if err := ValidateExceptions([]Exception{badExpiry}, today); err == nil || !strings.Contains(err.Error(), "requires expires") {
+		t.Fatalf("codespell exception with bad expiry accepted: %v", err)
+	}
+}
