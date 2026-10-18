@@ -39,6 +39,7 @@ type LiveWorkflowPermissions struct {
 
 // WorkflowRunRecord is one workflow run as the forge lists it.
 type WorkflowRunRecord struct {
+	ID         int64  `json:"id"`
 	Number     int    `json:"run_number"`
 	Event      string `json:"event"`
 	HeadBranch string `json:"head_branch"`
@@ -202,4 +203,50 @@ func wrapRunsError(workflow string, err error) error {
 		return nil
 	}
 	return fmt.Errorf("read runs of %s: %w", workflow, err)
+}
+
+// maxWorkflowRunJobs bounds the jobs read from one workflow run (HISS-02).
+const maxWorkflowRunJobs = 100
+
+// WorkflowJobRecord is one job run within a workflow run.
+type WorkflowJobRecord struct {
+	Name        string `json:"name"`
+	StartedAt   string `json:"started_at"`
+	CompletedAt string `json:"completed_at"`
+	Conclusion  string `json:"conclusion"`
+}
+
+// workflowJobsPage is one page of GET .../actions/runs/{runID}/jobs.
+type workflowJobsPage struct {
+	TotalCount int                 `json:"total_count"`
+	Jobs       []WorkflowJobRecord `json:"jobs"`
+}
+
+// WorkflowRunJobs reads GET /repos/{owner}/{repo}/actions/runs/{runID}/jobs, bounded by
+// maxWorkflowRunJobs, returning the jobs of the run.
+func (g *GitHubDriver) WorkflowRunJobs(ctx context.Context, runID int64) ([]WorkflowJobRecord, error) {
+	if runID <= 0 {
+		return nil, errors.New("read run jobs: runID must be positive")
+	}
+	ctx, cancel := context.WithTimeout(ctx, defaultHTTPTimeout)
+	defer cancel()
+	base, err := g.repoPath(fmt.Sprintf("actions/runs/%d/jobs?per_page=%d", runID, maxWorkflowRunJobs))
+	if err != nil {
+		return nil, err
+	}
+	body, status, err := g.sendRequest(ctx, http.MethodGet, base, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := actionsReadStatus(status, body); err != nil {
+		return nil, err
+	}
+	var page workflowJobsPage
+	if err := json.Unmarshal(body, &page); err != nil {
+		return nil, fmt.Errorf("decode run jobs: %w", err)
+	}
+	if len(page.Jobs) > maxWorkflowRunJobs {
+		page.Jobs = page.Jobs[:maxWorkflowRunJobs]
+	}
+	return page.Jobs, nil
 }

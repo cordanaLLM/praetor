@@ -83,6 +83,7 @@ type Job struct {
 	RunsOn          yaml.Node      `yaml:"runs-on"`
 	Defaults        Defaults       `yaml:"defaults"`
 	Container       yaml.Node      `yaml:"container"`
+	TimeoutMinutes  yaml.Node      `yaml:"timeout-minutes"`
 }
 
 // Step is the step subset the Go cache audit and the portability checks decide on, plus the id

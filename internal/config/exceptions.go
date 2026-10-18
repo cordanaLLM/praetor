@@ -81,6 +81,9 @@ const ExceptionRuleDeclaredLinters = "declared-linters"
 // ExceptionRuleTestTimeout names the test-timeout rule.
 const ExceptionRuleTestTimeout = "test-timeout"
 
+// ExceptionRuleJobTimeout names the job-timeout rule.
+const ExceptionRuleJobTimeout = "job-timeout"
+
 // ExceptionRuleMutants is the rule for tracked mutation-tool configuration exclusions.
 const ExceptionRuleMutants = "mutants"
 
@@ -106,7 +109,7 @@ const ExceptionRuleCodespell = "codespell"
 // registry; the other entries are the non-HISS gates that read this list.
 var exceptionRules = append(hisscatalog.RuleIDs(),
 	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits,
-	ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder, ExceptionRuleDeclaredLinters, ExceptionRuleTestTimeout, ExceptionRuleMutants,
+	ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder, ExceptionRuleDeclaredLinters, ExceptionRuleTestTimeout, ExceptionRuleJobTimeout, ExceptionRuleMutants,
 	ExceptionRuleBacklogCapsDefects, ExceptionRuleBacklogCapsTasks, ExceptionRuleBacklogCapsQuestions, ExceptionRuleBacklogCapsForgeAlerts,
 	ExceptionRuleCodespell,
 )
@@ -118,6 +121,7 @@ var workflowRuleExamples = map[string]string{
 	ExceptionRuleBuildWarnings:    "ci.yml",
 	ExceptionRuleWorkflowTriggers: "release.yml",
 	ExceptionRuleTestTimeout:      "portability.yml",
+	ExceptionRuleJobTimeout:       "ci.yml",
 }
 
 // Bounds of the exceptions list (HISS-02).

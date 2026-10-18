@@ -35,6 +35,10 @@ func (s *stubActionsReader) WorkflowRunHistory(_ context.Context, workflow, bran
 	return s.histories[workflow], nil
 }
 
+func (s *stubActionsReader) WorkflowRunJobs(context.Context, int64) ([]WorkflowJobRecord, error) {
+	return nil, ErrNotImplemented
+}
+
 // completedRuns builds completed runs on main, newest first, one per conclusion, numbered
 // downwards from len(conclusions).
 func completedRuns(conclusions ...string) WorkflowRunHistory {

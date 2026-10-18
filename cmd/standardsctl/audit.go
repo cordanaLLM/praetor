@@ -194,6 +194,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		},
 		func() error { return auditWorkflowTriggers(ctx, manifest, rootDir) },
 		func() error { return auditTestTimeouts(ctx, manifest, rootDir) },
+		func() error { return auditJobTimeouts(ctx, manifest, rootDir, opts.offline) },
 		func() error { return auditBuildWarnings(ctx, manifest, rootDir) },
 		func() error { return auditDeclaredLinters(ctx, manifest, rootDir, opts.effective, opts.linterLog) },
 		func() error { return auditPaperclipHarness(ctx, manifest, opts) },
@@ -576,6 +577,32 @@ func auditTestTimeouts(ctx context.Context, manifest *config.Manifest, rootDir s
 		return err
 	}
 	fmt.Println(out)
+	return nil
+}
+
+// auditJobTimeouts runs the job-timeout gate (forge.AuditJobTimeouts): every job running steps
+// declares timeout-minutes; findings warn and the gate passes.
+func auditJobTimeouts(ctx context.Context, manifest *config.Manifest, rootDir string, offline bool) error {
+	branch, branchErr := forge.RepositoryDefaultBranch(ctx, rootDir, manifest)
+	live := openActionsForge(ctx, rootDir, manifest.Repository, offline)
+	offlineReason := live.notMade
+	if live.reader != nil && branchErr != nil && offlineReason == "" {
+		offlineReason = fmt.Sprintf("could not determine repository default branch: %v", branchErr)
+	}
+	out, err := forge.AuditJobTimeouts(ctx, forge.JobTimeoutOptions{
+		Root:          rootDir,
+		Exceptions:    manifest.Exceptions,
+		Today:         time.Now(),
+		Reader:        live.reader,
+		OfflineReason: offlineReason,
+		Branch:        branch,
+	})
+	if err != nil {
+		return err
+	}
+	if out != "" {
+		fmt.Println(out)
+	}
 	return nil
 }
 

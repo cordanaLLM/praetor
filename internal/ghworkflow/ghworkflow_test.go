@@ -303,3 +303,21 @@ func TestJob_With(t *testing.T) {
 		t.Fatalf("job with = %v, want sub", got)
 	}
 }
+
+// Positive: literal integer timeout-minutes. Negative: missing. Boundary: expression value.
+func TestJob_TimeoutMinutes(t *testing.T) {
+	doc := "on: push\njobs:\n  a:\n    timeout-minutes: 60\n  b:\n    runs-on: ubuntu-latest\n  c:\n    timeout-minutes: ${{ inputs.timeout }}\n"
+	spec, err := Parse([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := spec.Jobs["a"].TimeoutMinutes.Value; got != "60" {
+		t.Errorf("job a timeout-minutes = %q, want 60", got)
+	}
+	if got := spec.Jobs["b"].TimeoutMinutes.Kind; got != 0 {
+		t.Errorf("job b timeout-minutes kind = %v, want 0", got)
+	}
+	if got := spec.Jobs["c"].TimeoutMinutes.Value; got != "${{ inputs.timeout }}" {
+		t.Errorf("job c timeout-minutes = %q, want expression", got)
+	}
+}
