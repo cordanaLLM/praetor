@@ -1,0 +1,2 @@
+type: fixed
+title: The declared-verification stage no longer links Python virtualenvs (.venv, venv) into its worktree, so a recipe that runs python -m venv passes

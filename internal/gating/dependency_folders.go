@@ -34,8 +34,10 @@ var maxSearchIterations = 100000
 var symlinkFunc = os.Symlink
 
 // dependencyFolderAllowList lists the base names of folders that may be linked into the stage worktree.
-// It is an allow-list, never a deny-list.
-var dependencyFolderAllowList = [...]string{"node_modules", ".venv", "venv"}
+// It is an allow-list, never a deny-list. Python virtualenvs (.venv, venv) are not on it: python -m venv refuses a
+// symbolic link at its target ("Unable to create directory", plurano/horistes 2026-10-18), and a virtualenv embeds
+// the absolute path it was built at, so a stage builds its own.
+var dependencyFolderAllowList = [...]string{"node_modules"}
 
 func isAllowedDependencyFolder(base string) bool {
 	for i := 0; i < len(dependencyFolderAllowList); i++ {
