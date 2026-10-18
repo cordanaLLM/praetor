@@ -29,6 +29,7 @@ func TestGolangciPinCheckCurrentSources(t *testing.T) {
 	paths := []string{
 		".config/lefthook/scripts/checks.py",
 		"internal/flavor/definitions.go",
+		"Makefile", // lint-nested ran golangci-lint@latest for tools/schemacheck until 2026-10-18
 	}
 	for _, directory := range []string{"templates", "docs/guides"} {
 		err := filepath.WalkDir(filepath.Join(root, directory), func(path string, entry os.DirEntry, err error) error {
