@@ -921,6 +921,18 @@ WGSL, Metal) are code as well, and a shader under `docs/` follows the same
 section of the [HISS specification](../standards/hiss-spec.md) lists every
 code kind and the test directories.
 
+### Codespell skips for emitted files
+
+The figure player bundle Praetor emits holds minified third-party identifiers that codespell
+reads as misspellings. An adopter excuses such a file with a `codespell` exception
+(`config.ExceptionRuleCodespell`: one file, a category, an expiry) instead of a hand-written
+skip. Adoption keeps the adopter's own codespell skip list (`.codespellrc`, `setup.cfg` or
+`pyproject.toml`) in step with the live entries for engine-emitted files: a live entry adds the
+path, an expired or removed one takes it out, and adopter-owned skip entries are never touched;
+the same reconciliation runs when the documentation facet is removed. The audit fails a skip that
+names an emitted file without a live entry and lists each live entry with its expiry
+(`internal/adopt/codespell.go`).
+
 ## Site build and diagrams
 
 The published site is built from the root `mkdocs.yml` by
