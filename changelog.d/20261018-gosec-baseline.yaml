@@ -1,0 +1,2 @@
+type: added
+title: "The Security and SCA stage ratchets gosec findings against .gosec-baseline.json, which praetorctl baseline --record writes with the HISS baseline, so recorded findings pass and a new one fails by name"

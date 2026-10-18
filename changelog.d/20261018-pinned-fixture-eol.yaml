@@ -1,0 +1,2 @@
+type: added
+title: "The audit fails a byte-pinned text fixture that has no eol rule or -text attribute in .gitattributes (HISS-21)"
