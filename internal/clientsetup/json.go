@@ -12,11 +12,15 @@ import (
 	"github.com/cordanaLLM/praetor/internal/clientjson"
 )
 
+// REUSE-IgnoreStart: the two tags below are what emitted files carry, not this file's licence.
+
 // LicenseFileCopyrightText is the canonical copyright notice Praetor uses for emitted files.
 const LicenseFileCopyrightText = "SPDX-FileCopyrightText: 2026 Lusoris <lusoris@proton.me>"
 
 // LicenseIdentifier is the canonical SPDX licence identifier Praetor uses for emitted files.
 const LicenseIdentifier = "SPDX-License-Identifier: EUPL-1.2"
+
+// REUSE-IgnoreEnd
 
 // LicenseSidecar is the canonical content of a REUSE .license sidecar for emitted JSON files.
 const LicenseSidecar = LicenseFileCopyrightText + "\n\n" + LicenseIdentifier + "\n"
