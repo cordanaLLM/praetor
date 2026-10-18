@@ -402,7 +402,7 @@ func categorizedExceptionExpiryProblem(e Exception, today time.Time) string {
 
 // ExceptionCategoryDays returns the days allowed for category, and whether the category is valid.
 func ExceptionCategoryDays(category string) (int, bool) {
-	return exceptionCategoryDays(category)
+	return rules.CategoryDays(category)
 }
 
 // Problem reports why e is refused as an exception entry, or "".
