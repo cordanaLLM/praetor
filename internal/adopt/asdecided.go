@@ -14,7 +14,7 @@ func reconcileAsDecided(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return fmt.Errorf("reconcile AsDecided project MCP servers: %w", err)
 	}
-	for i := 0; i < len(actions) && i < 8; i++ {
+	for i := 0; i < len(actions) && i < 16; i++ {
 		action := actions[i]
 		s.report.ActionDetails = append(s.report.ActionDetails, action)
 		switch action.Action {

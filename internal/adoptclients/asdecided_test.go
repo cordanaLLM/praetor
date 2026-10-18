@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -137,4 +138,38 @@ func decisionTestFiles(t *testing.T, root string) map[string][]byte {
 		files[path] = data
 	}
 	return files
+}
+
+// Positive: ReconcileAsDecided in a strict REUSE repository writes sidecars and headers
+// that pass reuse lint, while preserving an existing adopter-owned sidecar (#1342).
+func TestReconcileAsDecidedStrictREUSELintsCleanAndPreservesSidecar(t *testing.T) {
+	reusePath, err := exec.LookPath("reuse")
+	if err != nil {
+		t.Skip("reuse is not installed on PATH: skipping reuse lint verification")
+	}
+	repo := t.TempDir()
+	writeDecisionTestFile(t, repo, "REUSE.toml", "version = 1\n\n[[annotations]]\npath = [\"LICENSES/**\", \"docs/**\", \".standards/**\"]\nSPDX-FileCopyrightText = \"2026 Example <example@example.com>\"\nSPDX-License-Identifier = \"EUPL-1.2\"\n")
+	writeDecisionTestFile(t, repo, "LICENSES/EUPL-1.2.txt", "EUPL-1.2 license\n")
+	writeDecisionTestFile(t, repo, "LICENSES/MIT.txt", "MIT license\n")
+	writeDecisionTestFile(t, repo, "docs/adr/0001-choice.md", "# Choice\n\nDecision\n")
+
+	adopterSidecar := "SPDX-FileCopyrightText: 2024 Adopter Inc\n\nSPDX-License-Identifier: MIT\n"
+	writeDecisionTestFile(t, repo, ".mcp.json.license", adopterSidecar)
+
+	actions, err := ReconcileAsDecided(t.Context(), repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := readDecisionTestFile(t, repo, ".mcp.json.license"); got != adopterSidecar {
+		t.Fatalf(".mcp.json.license was overwritten: got %q, want %q", got, adopterSidecar)
+	}
+	if !strings.Contains(actionDetailText(actions, ".mcp.json.license"), "Adopter-owned") {
+		t.Fatalf("preservation of adopter sidecar was not reported: %+v", actions)
+	}
+
+	out, err := exec.CommandContext(t.Context(), reusePath, "--root", repo, "lint").CombinedOutput()
+	if err != nil {
+		t.Fatalf("reuse lint failed on adopted repository:\n%s", string(out))
+	}
 }

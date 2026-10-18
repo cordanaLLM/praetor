@@ -12,6 +12,34 @@ import (
 	"github.com/cordanaLLM/praetor/internal/clientjson"
 )
 
+// LicenseFileCopyrightText is the canonical copyright notice Praetor uses for emitted files.
+const LicenseFileCopyrightText = "SPDX-FileCopyrightText: 2026 Lusoris <lusoris@proton.me>"
+
+// LicenseIdentifier is the canonical SPDX licence identifier Praetor uses for emitted files.
+const LicenseIdentifier = "SPDX-License-Identifier: EUPL-1.2"
+
+// LicenseSidecar is the canonical content of a REUSE .license sidecar for emitted JSON files.
+const LicenseSidecar = LicenseFileCopyrightText + "\n\n" + LicenseIdentifier + "\n"
+
+// SidecarPath returns the REUSE sidecar path for a configuration file.
+func SidecarPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	return path + ".license"
+}
+
+// IsAdopterOwnedSidecar reports whether data contains licence or copyright information
+// other than the engine's canonical licence sidecar.
+func IsAdopterOwnedSidecar(data []byte) bool {
+	normalized := bytes.ReplaceAll(bytes.TrimSpace(data), []byte("\r\n"), []byte("\n"))
+	if len(normalized) == 0 {
+		return false
+	}
+	canonical := bytes.ReplaceAll(bytes.TrimSpace([]byte(LicenseSidecar)), []byte("\r\n"), []byte("\n"))
+	return !bytes.Equal(normalized, canonical)
+}
+
 func marshalJSON(value any) ([]byte, error) {
 	raw, err := json.Marshal(value, json.Deterministic(true), jsontext.WithIndent("  "))
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/clientid"
 )
@@ -43,6 +44,8 @@ type Plan struct {
 	SourceSHA256    string     `json:"source_sha256"`
 	RegistrySHA256  string     `json:"registry_sha256,omitempty"`
 	Content         []byte     `json:"-"`
+	SidecarPath     string     `json:"-"`
+	SidecarContent  []byte     `json:"-"`
 	Commands        [][]string `json:"commands,omitempty"`
 	Documentation   string     `json:"documentation"`
 	Changed         bool       `json:"changed"`
@@ -146,6 +149,10 @@ func buildPlanValidated(ctx context.Context, registry Registry, client Client, e
 	}
 	p := &Plan{Client: client, Mode: spec.mode, RelativePath: spec.path, ExportName: spec.export,
 		Documentation: spec.documentation, SourceSHA256: digest(existing), RegistrySHA256: digest(registryBytes)}
+	if spec.path != "" && strings.HasSuffix(spec.path, ".json") {
+		p.SidecarPath = SidecarPath(spec.path)
+		p.SidecarContent = []byte(LicenseSidecar)
+	}
 	if err := renderPlan(ctx, registry, existing, p); err != nil {
 		return nil, err
 	}
