@@ -342,6 +342,27 @@ func (s *Service) Run() {
 	}
 }
 
+// Negative (#1453): with a relative repository root (the pre-push hook's --path=.) and gosec's absolute file
+// paths, a finding is keyed by its path relative to the root, the same key as under an absolute root; an absolute
+// key matched no baseline recorded in another checkout.
+func TestGosecOutput_RelativeRoot_KeysByRepositoryRelativePath(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "tooling", "main.go"), "package main\n\nfunc main() {\n\tprintln(\"x\")\n}\n")
+	report := fmt.Sprintf(`{"Issues": [{"rule_id": "G115", "file": %q, "line": "4", "details": "d"}]}`,
+		filepath.Join(dir, "tooling", "main.go"))
+	t.Chdir(dir)
+	for _, root := range []string{".", dir} {
+		module := filepath.Join(root, "tooling")
+		got, err := parseGosecOutput(root, module, report)
+		if err != nil {
+			t.Fatalf("root %q: parseGosecOutput failed: %v", root, err)
+		}
+		if len(got) != 1 || got[0].FilePath != "tooling/main.go" {
+			t.Fatalf("root %q: file path %q, want tooling/main.go", root, got[0].FilePath)
+		}
+	}
+}
+
 func TestGosecOutput_InvalidLine_ReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "main.go"), "package main\n")
