@@ -15,16 +15,17 @@ This directory documents all significant architectural and design decisions gove
 | **[ADR-0005](0005-cloudnative-oci-distroless-containers.md)** | Cloud-Native OCI Distroless Containerization | **Superseded** by [ADR-0012](0012-current-delivery-runner-and-pipeline-state.md) | 2026-09-05 |
 | **[ADR-0006](0006-hierarchical-multi-tier-runner-matrix.md)** | Hierarchical Multi-Tier Runner Matrix | **Superseded** by [ADR-0012](0012-current-delivery-runner-and-pipeline-state.md) | 2026-09-06 |
 | **[ADR-0007](0007-universal-frameworks-org-and-demand-deduplication.md)** | Universal Frameworks Hub & Demand Deduplication | **Superseded** by [ADR-0014](0014-operator-neutral-defaults.md) | 2026-09-07 |
-| **[ADR-0008](0008-spec-driven-provider-integration.md)** | Spec-Driven Provider Integration | **Proposed** | 2026-09-12 |
-| **[ADR-0009](0009-structural-unification.md)** | Structural Unification Before Further Fix Waves | **Proposed** | 2026-09-12 |
+| **[ADR-0008](0008-spec-driven-provider-integration.md)** | Spec-Driven Provider Integration | **Superseded** by [ADR-0018](0018-forge-drivers-repaired-in-place.md) | 2026-09-12 |
+| **[ADR-0009](0009-structural-unification.md)** | Structural Unification Before Further Fix Waves | **Accepted** | 2026-09-12 |
 | **[ADR-0010](0010-text-register-per-task.md)** | Text Register per Audience and Task Class | **Accepted** | 2026-09-17 |
 | **[ADR-0011](0011-agent-client-wrapping-and-operational-rollout.md)** | One Hook Entrypoint, Plugin-First Client Wrapping, and a Governed Operational Rollout | **Accepted** | 2026-09-27 |
 | **[ADR-0012](0012-current-delivery-runner-and-pipeline-state.md)** | Context Compilation, Gating, Delivery and Runner Routing as They Stand | **Accepted**; decision 4 **Superseded** by [ADR-0013](0013-container-image-and-helm-chart-delivery.md) | 2026-09-26 |
 | **[ADR-0013](0013-container-image-and-helm-chart-delivery.md)** | Container Image and Helm Chart Delivery | **Accepted** | 2026-09-26 |
 | **[ADR-0014](0014-operator-neutral-defaults.md)** | Operator-Neutral Defaults: Deployment Data Becomes Operator Configuration | **Accepted** | 2026-09-27 |
 | **[ADR-0015](0015-interactive-figures-from-vendored-interfig.md)** | Interactive Documentation Figures from Vendored interfig | **Accepted**; amended by [ADR-0016](0016-figures-for-adopters.md) | 2026-09-27 |
-| **[ADR-0016](0016-figures-for-adopters.md)** | Interactive Figures for Adopters Through a Managed Engine Family | **Accepted** | 2026-09-27 |
+| **[ADR-0016](0016-figures-for-adopters.md)** | Interactive Figures for Adopters Through a Managed Engine Family | **Accepted**; amended by [ADR-0018](0018-forge-drivers-repaired-in-place.md) | 2026-09-27 |
 | **[ADR-0017](0017-generated-artefacts-in-pull-requests.md)** | Generated Artefacts in Pull Requests | **Accepted** | 2026-10-01 |
+| **[ADR-0018](0018-forge-drivers-repaired-in-place.md)** | Forge Drivers Repaired in Place Instead of a Spec-Driven Provider Engine | **Accepted** | 2026-10-18 |
 
 ---
 
