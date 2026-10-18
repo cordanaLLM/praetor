@@ -42,7 +42,7 @@ func CompactState(ctx context.Context, rootPath string) (*CompactReport, error) 
 	if ctx == nil {
 		return nil, errors.New("state compaction requires a context")
 	}
-	stateFile := filepath.Join(rootPath, WorkingDirName, "STATE.md")
+	stateFile := filepath.Join(ledgerRoot(ctx, rootPath), WorkingDirName, "STATE.md")
 	content, err := contextopt.ReadSnapshot(ctx, stateFile)
 	if err != nil {
 		return nil, fmt.Errorf("read STATE.md: %w", err)
@@ -74,11 +74,12 @@ func certifyStateRewrite(ctx context.Context, rootPath string, expected []byte, 
 	if err != nil {
 		return 0, err
 	}
-	snap.StateHash, err = stateBinding(ctx, rootPath, snap)
+	lRoot := ledgerRoot(ctx, rootPath)
+	snap.StateHash, err = stateBinding(ctx, lRoot, snap)
 	if err != nil {
 		return 0, err
 	}
-	stateFile := filepath.Join(rootPath, WorkingDirName, "STATE.md")
+	stateFile := filepath.Join(lRoot, WorkingDirName, "STATE.md")
 	return writeStateEntry(ctx, stateFile, expected, base, snap, summary)
 }
 

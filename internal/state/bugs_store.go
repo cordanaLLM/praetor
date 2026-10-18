@@ -32,7 +32,7 @@ type ledgerFiles struct {
 
 // Reads reuse the same bounded, no-symlink snapshot contract as ingestion.
 func readBugFiles(ctx context.Context, rootPath string) (files ledgerFiles, err error) {
-	root, absent, err := openWorkingDirReadRoot(ctx, rootPath)
+	root, absent, err := openWorkingDirReadRoot(ctx, ledgerRoot(ctx, rootPath))
 	if err != nil {
 		return files, fmt.Errorf("open bug ledger directory: %w", err)
 	}
@@ -116,10 +116,11 @@ func updateBugLedger(rootPath string, change func(*bugDocument) (string, error))
 // new ledger text and may update doc.meta; both are validated together before
 // anything is written.
 func updateBugLedgerContext(ctx context.Context, rootPath string, change func(*bugDocument) (string, error)) (err error) {
-	if err := InitWorkingDirContext(ctx, rootPath); err != nil {
+	lRoot := ledgerRoot(ctx, rootPath)
+	if err := InitWorkingDirContext(ctx, lRoot); err != nil {
 		return err
 	}
-	root, err := contextopt.OpenDirectoryIn(ctx, rootPath, WorkingDirName)
+	root, err := contextopt.OpenDirectoryIn(ctx, lRoot, WorkingDirName)
 	if err != nil {
 		return err
 	}

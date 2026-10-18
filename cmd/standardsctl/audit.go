@@ -20,6 +20,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
 	"github.com/cordanaLLM/praetor/internal/runner"
+	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -196,7 +197,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditCavemanConfiguredSources(ctx, manifest, rootDir) },
 		func() error { return auditRunnerMatrix(ctx, manifest, rootDir) },
 		func() error { return auditPinnedFixturesEOL(ctx, manifest, rootDir) },
-		func() error { return auditPreMigrationTracking(rootDir) },
+		func() error { return auditPreMigrationTracking(ctx, rootDir) },
 		func() error { return auditAgentDefinitions(ctx, manifest, rootDir) },
 		func() error { return auditGitHooks(ctx, manifest, rootDir) },
 		func() error { return auditCheckpointBundle(ctx, rootDir) },
@@ -736,10 +737,10 @@ func auditPinnedFixturesEOL(ctx context.Context, manifest *config.Manifest, root
 	return nil
 }
 
-func auditPreMigrationTracking(rootDir string) error {
+func auditPreMigrationTracking(ctx context.Context, rootDir string) error {
 	// The epic lives in the local working directory; the repository root is only the
 	// legacy location. Checking just the root silently skipped the whole gate.
-	epicPath := resolvePreMigrationEpic(rootDir)
+	epicPath := resolvePreMigrationEpic(ctx, rootDir)
 	if epicPath != "" {
 		// #nosec G304 -- epicPath is one of two fixed locations under the audited root.
 		content, err := os.ReadFile(epicPath)
@@ -774,9 +775,13 @@ func auditPreMigrationTracking(rootDir string) error {
 // resolvePreMigrationEpic returns the pre-migration epic path, preferring the working
 // directory location over the legacy repository-root one. It returns "" when neither
 // exists.
-func resolvePreMigrationEpic(rootDir string) string {
+func resolvePreMigrationEpic(ctx context.Context, rootDir string) string {
+	workingDir := filepath.Join(rootDir, state.WorkingDirName)
+	if loc, err := state.ResolveWorkingDir(ctx, rootDir); err == nil {
+		workingDir = loc.WorkingDir
+	}
 	candidates := []string{
-		filepath.Join(rootDir, ".workingdir", preMigrationEpicFile),
+		filepath.Join(workingDir, preMigrationEpicFile),
 		filepath.Join(rootDir, preMigrationEpicFile),
 	}
 	for _, candidate := range candidates {

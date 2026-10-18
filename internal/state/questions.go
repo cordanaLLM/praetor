@@ -51,7 +51,8 @@ var (
 func AddQuestion(rootPath string, q QuestionEntry) (*QuestionEntry, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := InitWorkingDirContext(ctx, rootPath); err != nil {
+	lRoot := ledgerRoot(ctx, rootPath)
+	if err := InitWorkingDirContext(ctx, lRoot); err != nil {
 		return nil, err
 	}
 	files, existing, err := loadQuestions(ctx, rootPath)
@@ -136,7 +137,7 @@ func DecideQuestion(rootPath string, id string, answer string) error {
 func loadQuestions(ctx context.Context, rootPath string) (ledgerFiles, []QuestionEntry, error) {
 	var files ledgerFiles
 	var err error
-	dir := filepath.Join(rootPath, WorkingDirName)
+	dir := filepath.Join(ledgerRoot(ctx, rootPath), WorkingDirName)
 	files.ledger, files.ledgerExists, err = contextopt.ObserveSnapshot(ctx, filepath.Join(dir, questionLedgerName))
 	if err != nil {
 		return files, nil, fmt.Errorf("read %s: %w", questionLedgerName, err)
@@ -169,7 +170,7 @@ func saveQuestions(ctx context.Context, rootPath string, files ledgerFiles, qs [
 	if err != nil {
 		return err
 	}
-	dir := filepath.Join(rootPath, WorkingDirName)
+	dir := filepath.Join(ledgerRoot(ctx, rootPath), WorkingDirName)
 	if !files.metaExists || !bytes.Equal(meta, files.meta) {
 		options := contextopt.ReplaceOptions{Expected: files.meta, Exists: files.metaExists, Mode: 0o600}
 		if err := contextopt.ReplaceSnapshot(ctx, filepath.Join(dir, questionMetaName), meta, options); err != nil {

@@ -43,7 +43,7 @@ var syncMarker = regexp.MustCompile(`\n<!-- praetor-state:v1 sha256:([a-f0-9]{64
 // It never initializes, repairs or writes a ledger. Historical entries without
 // a binding must be superseded by an explicit successful SyncState call.
 func VerifyStateSync(ctx context.Context, rootPath string) error {
-	content, err := contextopt.ReadSnapshot(ctx, filepath.Join(rootPath, WorkingDirName, "STATE.md"))
+	content, err := contextopt.ReadSnapshot(ctx, filepath.Join(ledgerRoot(ctx, rootPath), WorkingDirName, "STATE.md"))
 	if err != nil {
 		return fmt.Errorf("read state synchronization: %w", err)
 	}
@@ -61,7 +61,7 @@ func verifyStateContent(ctx context.Context, rootPath string, content []byte) er
 	if err != nil {
 		return err
 	}
-	binding, err := stateBinding(ctx, rootPath, snap)
+	binding, err := stateBinding(ctx, ledgerRoot(ctx, rootPath), snap)
 	if err != nil {
 		return err
 	}
@@ -110,8 +110,12 @@ func stateBinding(ctx context.Context, rootPath string, snap *StateSnapshot) (st
 		}
 		parts = append(parts, sidecar...)
 	}
+	gitRoot := snap.RepoPath
+	if gitRoot == "" {
+		gitRoot = root
+	}
 	if snap.GitState == "available" || snap.GitState == "unborn" {
-		gitParts, err := stateGitBinding(ctx, root, snap.GitState)
+		gitParts, err := stateGitBinding(ctx, gitRoot, snap.GitState)
 		if err != nil {
 			return "", err
 		}

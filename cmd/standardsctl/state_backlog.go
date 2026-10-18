@@ -74,6 +74,7 @@ func runStateBatch(args []string) error {
 	dir := stateDir(dirFlag, rest, 0)
 	ctx, cancel := context.WithTimeout(rootContext(), stateCommandTimeout)
 	defer cancel()
+	resolveNotice(ctx, dir)
 	report, notice, err := evaluateBacklogCaps(ctx, dir, policy)
 	if err != nil {
 		return fmt.Errorf("state batch failed: %w", err)
@@ -110,6 +111,7 @@ func runStateBugKind(args []string) error {
 	id, kind, dir := rest[0], rest[1], stateDir(dirFlag, rest, 2)
 	ctx, cancel := context.WithTimeout(rootContext(), stateCommandTimeout)
 	defer cancel()
+	resolveNotice(ctx, dir)
 	return withLedgerIgnore(ctx, dir, func() error {
 		if err := state.SetBugKind(dir, id, kind); err != nil {
 			return err

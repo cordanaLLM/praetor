@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -491,6 +492,12 @@ func auditDocumentationScratchIgnores(ctx context.Context, rootDir string, decli
 			return err
 		}
 		roots = adopt.PrivateScratchRoots(ctx, rootDir, ignore, false)
+	}
+	for _, root := range roots {
+		info, err := os.Lstat(filepath.Join(rootDir, root))
+		if err == nil && info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("[FAIL] %s is a symbolic link: the directory rule /%s/ does not ignore a link, so git would add it; remove the link (state commands in a linked worktree use the main worktree's %s by themselves)", root, root, root)
+		}
 	}
 	probes := scratchIgnoreProbes(roots)
 	ignored, err := util.GitIgnoredPaths(ctx, rootDir, probes, true)

@@ -17,6 +17,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/bugledger"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/state"
 )
 
 // BatchDir is the repository-relative directory batch files are written to. It lies inside the
@@ -58,6 +59,10 @@ func WriteBatches(ctx context.Context, root string, report *Report, date string)
 	if ctx == nil || root == "" || report == nil {
 		return nil, errors.New("writing backlog batches requires a context, a repository root and a report")
 	}
+	loc, err := state.ResolveWorkingDir(ctx, root)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := time.Parse(time.DateOnly, date); err != nil {
 		return nil, fmt.Errorf("batch date %q must be YYYY-MM-DD", date)
 	}
@@ -69,7 +74,8 @@ func WriteBatches(ctx context.Context, root string, report *Report, date string)
 		}
 		rel := BatchPath(category.Name, date)
 		data := []byte(renderBatch(root, category, date))
-		if err := contextopt.WriteSnapshotIn(ctx, root, filepath.FromSlash(rel), data, batchFileMode); err != nil {
+		relInWorkingDir := filepath.Join("batches", category.Name+"-"+date+".md")
+		if err := contextopt.WriteSnapshotIn(ctx, loc.WorkingDir, relInWorkingDir, data, batchFileMode); err != nil {
 			return written, fmt.Errorf("write %s: %w", rel, err)
 		}
 		written = append(written, rel)

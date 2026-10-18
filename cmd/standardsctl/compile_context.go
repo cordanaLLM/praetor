@@ -24,7 +24,7 @@ func runCompileContext(args []string) error {
 	verify := fs.Bool("verify", false, "Verify target files match AGENTS.md without modifying them")
 	stable := fs.Bool("verify-stable", false, "Check that AGENTS.md renders to identical bytes under different clocks and visit orders and that its head band holds no volatile text")
 	source := fs.String("source", "AGENTS.md", "Path to canonical AGENTS.md file")
-	targetDir := fs.String("target-dir", ".", "Root directory to write/verify target vendor files")
+	outDir := fs.String("target-dir", ".", "Root directory to write/verify target vendor files")
 
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
@@ -41,17 +41,17 @@ func runCompileContext(args []string) error {
 		return compiler.VerifyStableContext(ctx, os.Stdout, tr, *source)
 	}
 	if *verify {
-		return compiler.VerifyCompiledContext(ctx, os.Stdout, tr, *source, *targetDir)
+		return compiler.VerifyCompiledContext(ctx, os.Stdout, tr, *source, *outDir)
 	}
 	// A client wrapper runs this write at every session start with whatever praetorctl is
 	// installed; an install older than the engine checkout rewrote the register block and every
 	// vendor file with its own stale text (BUG-1004). Verification never writes, so only the
 	// write is refused.
-	if err := workstation.CheckBuildCurrent(ctx, *targetDir, engineBuild()); err != nil {
+	if err := workstation.CheckBuildCurrent(ctx, *outDir, engineBuild()); err != nil {
 		return fmt.Errorf("compile-context wrote nothing: %w", err)
 	}
 	// The text register block sends agent evidence to the register policy's evidence directory
 	// (config.RegisterPolicy.EvidenceDir, register.evidence.dir) beside the source; Git
 	// has to ignore it before the rule is rendered (BUG-604).
-	return adopt.CompileAgentContext(ctx, os.Stdout, tr, *source, *targetDir)
+	return adopt.CompileAgentContext(ctx, os.Stdout, tr, *source, *outDir)
 }
