@@ -1,0 +1,2 @@
+type: fixed
+title: The VS Code runner reports a signal it could not deliver instead of swallowing the error
