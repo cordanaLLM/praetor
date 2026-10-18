@@ -90,6 +90,9 @@ const ExceptionRuleBacklogCapsQuestions = "backlog.caps.questions"
 // ExceptionRuleBacklogCapsForgeAlerts is the rule of the forge alerts backlog cap gate.
 const ExceptionRuleBacklogCapsForgeAlerts = "backlog.caps.forge_alerts"
 
+// ExceptionRulePlatformNeutrality is the rule of the HISS-21 platform neutrality gate.
+const ExceptionRulePlatformNeutrality = "HISS-21"
+
 // exceptionRules lists rules an exceptions entry may name. HISS IDs come from the single HISS
 // registry; the other entries are the non-HISS gates that read this list.
 var exceptionRules = append(hisscatalog.RuleIDs(),

@@ -55,6 +55,7 @@ reason and states where the coverage is recovered.
 - A binary path built without a host-appropriate extension (`EXE_SUFFIX` in the `Makefile`).
 - A gate stage assuming a language toolchain is present rather than detecting it (#78, #81).
 - An assertion comparing LF bytes against output that may be CRLF.
+- A pinned text fixture without an eol rule in `.gitattributes`. An audit check flags any tracked fixture whose sha256 or path is pinned by a tracked test if `.gitattributes` gives it neither an explicit eol rule (`eol=lf` or `eol=crlf`) nor unset text (`-text`, `binary`). Fix by adding `<path> -text` or `*.srt eol=lf`.
 - A template emitted by `adopt` that only builds on the platform that generated it.
 
 ## Enforcement in this repository

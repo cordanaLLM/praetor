@@ -195,6 +195,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditPaperclipHarness(ctx, manifest, opts) },
 		func() error { return auditCavemanConfiguredSources(ctx, manifest, rootDir) },
 		func() error { return auditRunnerMatrix(ctx, manifest, rootDir) },
+		func() error { return auditPinnedFixturesEOL(ctx, manifest, rootDir) },
 		func() error { return auditPreMigrationTracking(rootDir) },
 		func() error { return auditAgentDefinitions(ctx, manifest, rootDir) },
 		func() error { return auditGitHooks(ctx, manifest, rootDir) },
@@ -719,6 +720,19 @@ func auditRunnerMatrix(ctx context.Context, manifest *config.Manifest, rootDir s
 		}
 	}
 	fmt.Println("[PASS] External runner matrix & ARC platform routing policies verified.")
+	return nil
+}
+
+// auditPinnedFixturesEOL runs the HISS-21 pinned fixture gate (forge.AuditPinnedFixturesEOL):
+// a pinned text fixture without an eol rule or -text in .gitattributes fails the audit.
+func auditPinnedFixturesEOL(ctx context.Context, manifest *config.Manifest, rootDir string) error {
+	out, err := forge.AuditPinnedFixturesEOL(ctx, forge.PinnedFixtureEOLOptions{
+		Root: rootDir, Exceptions: manifest.Exceptions, Today: time.Now(),
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Println(out)
 	return nil
 }
 

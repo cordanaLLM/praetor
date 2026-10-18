@@ -136,6 +136,14 @@ tools/apicompat/testdata/prior/** text eol=lf
 editors/neovim/lua/standards.lua text eol=lf
 editors/jetbrains/inspectionProfiles/standards.xml text eol=lf
 
+# Pinned test fixtures must keep LF endings so autocrlf on Windows does not change their bytes (HISS-21).
+cmd/standardsctl/testdata/** text eol=lf
+internal/compiler/testdata/** text eol=lf
+internal/devcontainer/testdata/** text eol=lf
+internal/managedasset/testdata/shipped/** text eol=lf
+internal/planning/testdata/** text eol=lf
+.config/hiss/testdata/** text eol=lf
+
 # The CRLF fixtures assert that the line-based matchers are not silenced by a Windows
 # checkout. Two attributes are needed and they defend different things.
 #
