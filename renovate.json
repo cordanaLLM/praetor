@@ -115,7 +115,8 @@
   "pip-compile": {
     "managerFilePatterns": [
       "/^docs/presets/mkdocs/requirements\\.txt$/",
-      "/^\\.config/hook-lint/requirements\\.txt$/"
+      "/^\\.config/hook-lint/requirements\\.txt$/",
+      "/^\\.config/reuse/requirements\\.txt$/"
     ]
   },
   "packageRules": [
@@ -214,13 +215,13 @@
     {
       "description": "Hook lint toolchain: requirements.txt is the hashed lock the pip-compile manager compiles from requirements.in, so pip_requirements must not rewrite it on its own.",
       "matchManagers": ["pip_requirements"],
-      "matchFileNames": [".config/hook-lint/requirements.txt"],
+      "matchFileNames": [".config/hook-lint/requirements.txt", ".config/reuse/requirements.txt"],
       "enabled": false
     },
     {
       "description": "Hook lint toolchain: black, flake8 and yamllint pins move together, the hashed lock is recompiled, and CI installs it with --require-hashes for make hooks-lint and the portability job's yamllint.",
       "matchManagers": ["pip-compile"],
-      "matchFileNames": [".config/hook-lint/**"],
+      "matchFileNames": [".config/hook-lint/**", ".config/reuse/**"],
       "groupName": "hook lint toolchain"
     },
     {

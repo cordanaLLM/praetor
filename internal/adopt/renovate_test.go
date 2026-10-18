@@ -576,7 +576,7 @@ func TestRenovateManagedPaths_IncludesAllScaffoldedFilesAndReuseGate(t *testing.
 	}
 
 	rendered := managed[0].MatchFileNames
-	want := append(withBundleFixturePaths(renovateManagedFixturePaths), reuseWorkflowFile)
+	want := append(withBundleFixturePaths(renovateManagedFixturePaths), reuseWorkflowFile, reuseRequirementsFile)
 	if !slices.Equal(rendered, want) {
 		t.Fatalf("rendered Renovate rule mismatch:\ngot:  %v\nwant: %v", rendered, want)
 	}

@@ -156,17 +156,19 @@ func TestReuseActionPinMatchesRegistryAndEngine(t *testing.T) {
 
 func assertEngineRunsReusePin(t *testing.T, actions []ActionCandidate) {
 	t.Helper()
-	engine := 0
 	for _, a := range actions {
 		if a.Action == supplychain.ReuseAction {
-			engine++
 			if a.CurrentVersion != supplychain.ReuseActionVersion {
 				t.Errorf("%s pins %s@%s, not the REUSE pin %s", a.WorkflowFile, a.Action, a.CurrentVersion, supplychain.ReuseActionVersion)
 			}
 		}
 	}
-	if engine == 0 {
-		t.Error("no engine workflow runs the REUSE action; praetor's own CI must run reuse lint")
+	compliance, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "compliance.yml"))
+	if err != nil {
+		t.Fatalf("read compliance.yml: %v", err)
+	}
+	if !strings.Contains(string(compliance), "bin/reuse\" lint") && !strings.Contains(string(compliance), "reuse lint") {
+		t.Error("praetor's own CI must run reuse lint")
 	}
 }
 

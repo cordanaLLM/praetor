@@ -44,6 +44,7 @@ const (
 // itself (reuseRenderingBranch). testdata/reuse-workflow reproduces each digest
 // (reuse_gate_test.go).
 var priorReuseWorkflowDigests = map[string]string{
+	"544d1a325cf241e5f03e4024176f5e46d50a555e5b82fa99976b1fa1cc600e7d": "reuse 6.x hash-pinned requirements.txt in venv, checkout pinned by commit digest, hosted gate shape",
 	"2401b69ff8a083d79517191e2c5ed6f7ecee4cea7d90f4b7ae07f98c41e91c82": "reuse-action v6 and checkout pinned by commit digest, hosted gate shape with merge_group and concurrency group",
 	"c8b2b85f7d8f3be75dc21737409a7583e159adca329ba91c9578f180ccf17b25": "reuse-action v6, checkout v7, hosted gate shape, default branch main, 10-minute timeout",
 	"8edae714aaca03bb34c9069cf294950a566f65d92b5c076be3dee6c98537d210": "reuse-action v6, checkout v7, hosted gate shape with the draft step on bash, default branch main, 10-minute timeout",
@@ -113,8 +114,11 @@ func renderReuseWorkflowWithRef(ref, branch string) string {
 		"        with:\n" +
 		"          persist-credentials: false\n" +
 		"      - name: reuse lint" + ghworkflow.HostedGateStepIf + "\n" +
-		"        # yamllint disable-line rule:line-length\n" +
-		"        uses: " + supplychain.ReuseActionPinnedRef() + "\n"
+		"        run: |\n" +
+		"          python3 -m venv \"$RUNNER_TEMP/praetor-reuse\"\n" +
+		"          \"$RUNNER_TEMP/praetor-reuse/bin/python\" -m pip install \\\n" +
+		"            --require-hashes -r .config/reuse/requirements.txt\n" +
+		"          \"$RUNNER_TEMP/praetor-reuse/bin/reuse\" lint\n"
 }
 
 // reuseWorkflow renders the hosted REUSE gate for the repository's default branch, the branch
@@ -177,25 +181,42 @@ func reuseDefaultBranch(ctx context.Context, repoPath string) (string, error) {
 // (removeReuseGate). An existing gate holding an earlier Praetor rendering, or the current one for
 // another default branch, is refreshed; any other file there is the repository's and is kept,
 // --force included, with a warning.
-func reconcileReuseGate(ctx context.Context, s *adoptSession) error {
-	applies, err := s.reuseGateApplies(ctx)
+// decideReuseRemoval resolves the reason the hosted REUSE gate is removed.
+func (s *adoptSession) decideReuseRemoval(ctx context.Context) (reuseRemoval, error) {
+	if declined, err := ArtifactDeclined(s.declined, reuseGateStep); err != nil {
+		return reuseNotDeclared, fmt.Errorf("check declined artifacts: %w", err)
+	} else if declined {
+		return reuseGateDeclined, nil
+	}
+	declared, err := supplychain.ReuseDeclared(ctx, s.repoPath)
+	if err != nil {
+		return reuseNotDeclared, fmt.Errorf("check REUSE declared: %w", err)
+	}
+	if declared {
+		return reuseJobDeclared, nil
+	}
+	return reuseNotDeclared, nil
+}
+
+func (s *adoptSession) reconcileInactiveReuseGate(ctx context.Context) error {
+	notice, err := supplychain.ReuseHeadersOnlyNotice(ctx, s.repoPath)
+	if err != nil {
+		return fmt.Errorf("decide the hosted REUSE gate: %w", err)
+	}
+	if notice != "" {
+		s.report.addWarning("%s", notice)
+	}
+	reason, err := s.decideReuseRemoval(ctx)
 	if err != nil {
 		return err
 	}
-	if !applies {
-		notice, err := supplychain.ReuseHeadersOnlyNotice(ctx, s.repoPath)
-		if err != nil {
-			return fmt.Errorf("decide the hosted REUSE gate: %w", err)
-		}
-		if notice != "" {
-			s.report.addWarning("%s", notice)
-		}
-		return s.removeReuseGate(ctx, reuseNotDeclared)
-	}
-	branch, err := reuseDefaultBranch(ctx, s.repoPath)
-	if err != nil {
+	if err := s.removeReuseGate(ctx, reason); err != nil {
 		return err
 	}
+	return s.removeReuseRequirements(ctx)
+}
+
+func (s *adoptSession) scaffoldActiveReuseGate(ctx context.Context, branch string) error {
 	prior, err := s.reusePriorDigests(ctx)
 	if err != nil {
 		return err
@@ -208,12 +229,38 @@ func reconcileReuseGate(ctx context.Context, s *adoptSession) error {
 		rel:       reuseWorkflowFile,
 		perm:      filePerm,
 		content:   []byte(workflow),
-		created:   "Scaffolded the hosted REUSE gate: reuse lint at " + supplychain.ReuseActionRef() + " on " + branch,
+		created:   "Scaffolded the hosted REUSE gate: reuse lint on " + branch,
 		verified:  "Existing hosted REUSE gate verified present",
 		prior:     prior,
 		refreshed: "Refreshed an unedited earlier Praetor REUSE gate to the current rendering for " + branch,
 	})
+	if err != nil {
+		return err
+	}
+	_, err = s.scaffoldFile(ctx, scaffold{
+		rel:       reuseRequirementsFile,
+		perm:      filePerm,
+		content:   []byte(reuseRequirementsTxt),
+		created:   "Scaffolded the REUSE requirements lock: reuse==6.2.0 hash-pinned",
+		verified:  "Existing REUSE requirements lock verified present",
+		refreshed: "Refreshed the REUSE requirements lock",
+	})
 	return err
+}
+
+func reconcileReuseGate(ctx context.Context, s *adoptSession) error {
+	applies, err := s.reuseGateApplies(ctx)
+	if err != nil {
+		return err
+	}
+	if !applies {
+		return s.reconcileInactiveReuseGate(ctx)
+	}
+	branch, err := reuseDefaultBranch(ctx, s.repoPath)
+	if err != nil {
+		return err
+	}
+	return s.scaffoldActiveReuseGate(ctx, branch)
 }
 
 // reusePriorDigests is the earlier-text set of the hosted REUSE gate scaffold (scaffold.prior):
@@ -250,6 +297,8 @@ const (
 	reuseNotDeclared reuseRemoval = iota
 	// reuseGateDeclined: adoption.decline names reuseGateStep.
 	reuseGateDeclined
+	// reuseJobDeclared: the repository already declares its own REUSE lint job (#1327).
+	reuseJobDeclared
 )
 
 // reuseGateApplies reports whether this run emits the REUSE gate, the hosted workflow and the
@@ -269,7 +318,14 @@ func (s *adoptSession) reuseGateApplies(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("decide the REUSE gate: %w", err)
 	}
-	return declared, nil
+	if !declared {
+		return false, nil
+	}
+	existing, err := adopterDeclaresReuseJob(ctx, s.repoPath)
+	if err != nil {
+		return false, fmt.Errorf("check existing REUSE jobs: %w", err)
+	}
+	return !existing, nil
 }
 
 // removeDeclinedReuseGate is what a declined reuse-gate step does (declinedRemovals): it removes
@@ -284,6 +340,38 @@ func removeDeclinedReuseGate(ctx context.Context, s *adoptSession) error {
 // (isReuseRendering) and the root no longer declares REUSE, where reuse lint fails every tree so
 // the gate, a required check of the ruleset derived from it, would block every pull request, or the
 // manifest declines the step (reason). The removal is bound to the bytes read, so a file edited in
+// between is kept. An edited gate is the repository's: kept, with a warning naming why it would
+// have gone. A dry run records the removal it would make.
+func (s *adoptSession) warnKeptUnrenderedReuseGate(reason reuseRemoval) {
+	switch reason {
+	case reuseGateDeclined:
+		s.report.addWarning("%s kept: adoption.decline names %s, but the file is edited, so adoption does not remove it: "+
+			"remove it yourself, or drop %s from adoption.decline", reuseWorkflowFile, reuseGateStep, reuseGateStep)
+	case reuseJobDeclared:
+		// Repo declares its own job; edited reuse.yml kept without warning.
+	case reuseNotDeclared:
+		s.report.addWarning("%s kept: the root carries no %s, so its REUSE lint job fails every run and, while the "+
+			"branch ruleset requires it, every pull request; it is edited, so adoption does not remove it: remove it, or add %s",
+			reuseWorkflowFile, supplychain.ReuseDeclarationFiles(), supplychain.ReuseFile)
+	}
+}
+
+func reuseRemovalDetail(reason reuseRemoval) string {
+	switch reason {
+	case reuseGateDeclined:
+		return "Removed the hosted REUSE gate: adoption.decline names " + reuseGateStep
+	case reuseJobDeclared:
+		return "Removed the hosted REUSE gate: the repository already declares its own REUSE lint job"
+	default:
+		return "Removed the hosted REUSE gate: the root carries no " + supplychain.ReuseDeclarationFiles() +
+			", so reuse lint would fail every pull request"
+	}
+}
+
+// removeReuseGate is what an inactive hosted REUSE gate does: it removes Praetor's unedited
+// rendering (isReuseRendering) and the root no longer declares REUSE, where reuse lint fails every tree so
+// keeping the check would break every PR. The gap between an earlier rendering and the current one is
+// crossed by an adopt run (migrateReuseSwitch); until then, a gate holding a text this binary knows in
 // between is kept. An edited gate is the repository's: kept, with a warning naming why it would
 // have gone. A dry run records the removal it would make.
 func (s *adoptSession) removeReuseGate(ctx context.Context, reason reuseRemoval) error {
@@ -302,15 +390,8 @@ func (s *adoptSession) removeReuseGate(ctx context.Context, reason reuseRemoval)
 	if err != nil {
 		return fmt.Errorf("inspect %s: %w", reuseWorkflowFile, err)
 	}
-	if !rendering && reason == reuseGateDeclined {
-		s.report.addWarning("%s kept: adoption.decline names %s, but the file is edited, so adoption does not remove it: "+
-			"remove it yourself, or drop %s from adoption.decline", reuseWorkflowFile, reuseGateStep, reuseGateStep)
-		return nil
-	}
 	if !rendering {
-		s.report.addWarning("%s kept: the root carries no %s, so its REUSE lint job fails every run and, while the "+
-			"branch ruleset requires it, every pull request; it is edited, so adoption does not remove it: remove it, or add %s",
-			reuseWorkflowFile, supplychain.ReuseDeclarationFiles(), supplychain.ReuseFile)
+		s.warnKeptUnrenderedReuseGate(reason)
 		return nil
 	}
 	if !s.opts.DryRun {
@@ -319,12 +400,31 @@ func (s *adoptSession) removeReuseGate(ctx context.Context, reason reuseRemoval)
 		}
 	}
 	s.planDryRunRemoval(reuseWorkflowFile)
-	detail := "Removed the hosted REUSE gate: the root carries no " + supplychain.ReuseDeclarationFiles() +
-		", so reuse lint would fail every pull request"
-	if reason == reuseGateDeclined {
-		detail = "Removed the hosted REUSE gate: adoption.decline names " + reuseGateStep
+	s.report.recordReconciledAs(reuseWorkflowFile, actionRemove, reuseRemovalDetail(reason))
+	return nil
+}
+
+// removeReuseRequirements removes the managed REUSE requirements lock when it matches
+// reuseRequirementsTxt and the REUSE gate does not apply.
+func (s *adoptSession) removeReuseRequirements(ctx context.Context) error {
+	full, err := repoFile(s.repoPath, reuseRequirementsFile)
+	if err != nil {
+		return err
 	}
-	s.report.recordReconciledAs(reuseWorkflowFile, actionRemove, detail)
+	actual, exists, err := contextopt.ObserveSnapshot(ctx, full)
+	if err != nil || !exists {
+		return err
+	}
+	if string(actual) != reuseRequirementsTxt {
+		return nil
+	}
+	if !s.opts.DryRun {
+		if err := contextopt.RemoveSnapshot(ctx, full, actual); err != nil {
+			return fmt.Errorf("remove %s: %w", reuseRequirementsFile, err)
+		}
+	}
+	s.planDryRunRemoval(reuseRequirementsFile)
+	s.report.recordReconciledAs(reuseRequirementsFile, actionRemove, "Removed the REUSE requirements lock: REUSE gate is not active")
 	return nil
 }
 
@@ -391,7 +491,16 @@ func reuseManagedPaths(ctx context.Context, s *adoptSession) ([]string, error) {
 			return nil, nil
 		}
 	}
-	return []string{reuseWorkflowFile}, nil
+	managed := []string{reuseWorkflowFile}
+	reqData, reqExists, err := observeAdoptionInput(ctx, s, reuseRequirementsFile)
+	if err != nil {
+		_, err = uninspectableReason(ctx, err)
+		return nil, err
+	}
+	if !reqExists || string(reqData) == reuseRequirementsTxt {
+		managed = append(managed, reuseRequirementsFile)
+	}
+	return managed, nil
 }
 
 // migrateReuseSwitch writes target's rendering over existing when existing is the current
