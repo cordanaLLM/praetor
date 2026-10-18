@@ -78,7 +78,7 @@ func TestAuditDocumentationGateNegative(t *testing.T) {
 			writeFixtureFile(t, root, "tools/figures/build.mjs", "// operator edit\n")
 		},
 		"missing figure engine asset": func(t *testing.T, root string) {
-			if err := os.Remove(filepath.Join(root, "tools", "figures", "player", "player.js")); err != nil {
+			if err := os.Remove(filepath.Join(root, "tools", "figures", "figures.css")); err != nil {
 				t.Fatal(err)
 			}
 		},

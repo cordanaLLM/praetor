@@ -2,7 +2,7 @@
 report-error refusing to adopt the Figure engine family over tools/figures/build.mjs: the file predates adoption and differs from the Praetor asset; move it aside, then rerun adopt
 error refusing to adopt the Figure engine family over tools/figures/build.mjs: the file predates adoption and differs from the Praetor asset; move it aside, then rerun adopt
 file tools/figures/build.mjs sha256:97e6549ca5f114c81faa69757a0b3af4186cd692986c8c3b6af2f32c9bdbf2e4
-file tools/figures/player/player.js absent
+file tools/figures/player.lock.json absent
 file tools/figures/third_party/interfig/upstream/LICENSE absent
 file tools/figures/README.md absent
 file .gitattributes "* text=auto\n"
@@ -10,29 +10,29 @@ file .gitattributes "* text=auto\n"
 report-error refusing to adopt the Figure engine family over tools/figures/build.mjs: the file predates adoption and differs from the Praetor asset; move it aside, then rerun adopt
 error refusing to adopt the Figure engine family over tools/figures/build.mjs: the file predates adoption and differs from the Praetor asset; move it aside, then rerun adopt
 file tools/figures/build.mjs sha256:97e6549ca5f114c81faa69757a0b3af4186cd692986c8c3b6af2f32c9bdbf2e4
-file tools/figures/player/player.js absent
+file tools/figures/player.lock.json absent
 file tools/figures/third_party/interfig/upstream/LICENSE absent
 file tools/figures/README.md absent
 file .gitattributes "* text=auto\n"
 == unmanaged file under tools/figures
 action create tools/figures/build.mjs :: Scaffolded locked figure engine asset
 action create tools/figures/third_party/interfig/upstream/LICENSE :: Scaffolded locked figure engine asset
-action create tools/figures/player/player.js :: Scaffolded locked figure engine asset
 action create tools/figures/README.md :: Scaffolded locked figure engine asset
+action create tools/figures/player.lock.json :: Scaffolded locked figure engine asset
 action create .gitattributes :: Created the managed attribute block that keeps the files audit compares byte for byte unconverted
 file tools/figures/build.mjs sha256:e4efaac427bc5ea716b2871c3e7f84366c8954a29e6d71e73a696753b592dfbd
-file tools/figures/player/player.js sha256:5e0f6d26e888c954ed2983ffe66d7fe8d68c1069b1489212ad6fc32477a52646
+file tools/figures/player.lock.json sha256:49a6183f22f233769a39c7b500d508f07ed2c7231c264f6f459dc25de77507ad
 file tools/figures/third_party/interfig/upstream/LICENSE sha256:01fde0bedf83bdc185065d7af524a61690efe576a67f922eaff3a1280c17b63a
 file tools/figures/README.md sha256:8aa976bb6c60cb167e100b5256002559d86373951d0f6d9435b9750a6bf64ec7
 file .gitattributes "# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/Dockerfile.praetor text eol=lf\ntools/figures/** text eol=lf\ndocs/figures/*.ts text eol=lf\ndocs/assets/figures/* text eol=lf\ntools/figures/third_party/interfig/upstream/** -text\n# END praetor managed attributes\n"
 == disable over a drifted figure asset
 action remove tools/figures/build.mjs :: Removed canonical documentation asset because docs:seo-portal is disabled
 action remove tools/figures/third_party/interfig/upstream/LICENSE :: Removed canonical documentation asset because docs:seo-portal is disabled
-action remove tools/figures/player/player.js :: Removed canonical documentation asset because docs:seo-portal is disabled
 action remove tools/figures/README.md :: Removed canonical documentation asset because docs:seo-portal is disabled
+action remove tools/figures/player.lock.json :: Removed canonical documentation asset because docs:seo-portal is disabled
 action append .gitattributes :: Preserved existing rules and refreshed the managed attribute block at the tail to the rules of this run
 file tools/figures/build.mjs absent
-file tools/figures/player/player.js absent
+file tools/figures/player.lock.json absent
 file tools/figures/third_party/interfig/upstream/LICENSE absent
 file tools/figures/README.md absent
 file .gitattributes "# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/Dockerfile.praetor text eol=lf\n# END praetor managed attributes\n"
