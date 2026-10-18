@@ -725,6 +725,25 @@ def _worktree_unpublished_count(path):
     return _rev_list_count(path, "--remotes")
 
 
+def _worktree_pr_needed(path, cfg, reasons):
+    """Check unpublished commits and base ahead; append reasons and return needs_pr."""
+    try:
+        count = _worktree_unpublished_count(path)
+    except (CheckpointError, ValueError, OSError) as error:
+        reasons.append(f"commit state not verified ({error})")
+        return False
+    if count:
+        reasons.append(f"{count} commit(s) not on any remote")
+        return False
+    if not cfg.get("enabled") or not cfg.get("repository"):
+        return False
+    try:
+        return _worktree_base_ahead(path, cfg)
+    except (CheckpointError, ValueError, OSError) as error:
+        reasons.append(f"pull request state not verified ({error})")
+        return False
+
+
 def _judge_worktree(root, cfg, entry, path, deadline):
     """Return one worktree's unfinished reasons and whether its PR needs checking."""
     if time.monotonic() >= deadline:
@@ -736,21 +755,8 @@ def _judge_worktree(root, cfg, entry, path, deadline):
     reasons = _public_change_reason(path)
     if not reasons and _landed(path, cfg):
         return entry, [], False
-    try:
-        count = _worktree_unpublished_count(path)
-    except (CheckpointError, ValueError, OSError) as error:
-        reasons.append(f"commit state not verified ({error})")
-        return entry, reasons, False
-    if count:
-        reasons.append(f"{count} commit(s) not on any remote")
-        return entry, reasons, False
-    if not cfg.get("enabled") or not cfg.get("repository"):
-        return entry, reasons, False
-    try:
-        return entry, reasons, _worktree_base_ahead(path, cfg)
-    except (CheckpointError, ValueError, OSError) as error:
-        reasons.append(f"pull request state not verified ({error})")
-        return entry, reasons, False
+    needs_pr = _worktree_pr_needed(path, cfg, reasons)
+    return entry, reasons, needs_pr
 
 
 def _ordered_map(fn, items):
@@ -1339,7 +1345,7 @@ def _empty_result(include_paths):
     return result
 
 
-def _observe_worktree(root, cfg, event, include_paths, result, require_branch=True):
+def _observe_worktree(root, cfg, event, include_paths, result, *, require_branch=True):
     result["enabled"] = True
     result["review_status"] = (
         "not_observed" if cfg.get("require_checks", False) else "not_requested"
