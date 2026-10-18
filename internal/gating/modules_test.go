@@ -3,6 +3,7 @@ package gating
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,6 +110,23 @@ func TestGoStages_Positive_EmptyModuleSkipsSecurityAndRace(t *testing.T) {
 	}
 	if msg, err := runGoTests(t.Context(), cfg); err != nil || !strings.Contains(msg, NoPackagesNote) {
 		t.Fatalf("empty race module = %q, %v", msg, err)
+	}
+}
+
+// Boundary (#1465): a repository of 72 tracked modules, golusoris/goenvoy's count, is read in full.
+func TestGoModules_Boundary_SeventyTwoModulesAreRead(t *testing.T) {
+	dir := t.TempDir()
+	cfg, _ := newTestConfig(t, dir, false)
+	cfg.moduleDiscovery = func(context.Context, string) ([]string, error) {
+		files := make([]string, 72)
+		for i := range files {
+			files[i] = fmt.Sprintf("module/m%02d/go.mod", i)
+		}
+		return files, nil
+	}
+	modules, err := cfg.goModules(t.Context())
+	if err != nil || len(modules) != 72 {
+		t.Fatalf("72 tracked modules: got %d, %v", len(modules), err)
 	}
 }
 

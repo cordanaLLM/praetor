@@ -1,0 +1,2 @@
+type: fixed
+title: The Go stages, the go vet hook and govulncheck read up to 256 tracked modules; 64 refused a 72-module library
