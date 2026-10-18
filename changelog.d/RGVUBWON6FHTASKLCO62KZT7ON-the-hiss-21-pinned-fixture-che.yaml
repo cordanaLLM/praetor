@@ -1,0 +1,3 @@
+type: fixed
+title: The HISS-21 pinned-fixture check bounds each git call, not the whole check, so a slow file scan on a loaded runner no longer makes git check-attr fail
+issue: '#1456'
