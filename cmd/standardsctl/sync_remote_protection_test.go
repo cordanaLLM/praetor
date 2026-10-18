@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // remoteProtectionFixture is a sync fixture for acme/widgets with its origin on
@@ -113,13 +114,13 @@ func TestSync_Remote_ReadsBackBranchProtection_Boundary(t *testing.T) {
 	mustContain(t, out,
 		"before this sync: protected by "+ruleset+", branch protection",
 		`[LOWERED] Ruleset "praetor-main-protection" rule pull_request: required_approving_review_count was 3 on GitHub, now 1 as declared`,
-		`[LOWERED] Ruleset "praetor-main-protection" rule pull_request: require_last_push_approval was true on GitHub, now false as declared`,
+		`[KEPT] Ruleset "praetor-main-protection" rule pull_request: require_last_push_approval stays true on GitHub, stricter than the declared false`,
 		"[OK] Approving reviews: declared 1, live 1 by "+ruleset,
 		"[STRICTER] Signed commits: declared not required, live required by "+ruleset,
 		"[OK] Linear history: declared required, live required by "+ruleset+", branch protection",
 		`Settings marked [STRICTER] exceed the declared policy. sync --remote lowers each parameter it renders into ruleset "praetor-main-protection"`)
 	stored := stub.storedRuleset(t, 1)
-	for _, want := range []string{`"required_approving_review_count":1`, `"require_last_push_approval":false`, `"required_signatures"`} {
+	for _, want := range []string{`"required_approving_review_count":1`, `"require_last_push_approval":true`, `"required_signatures"`} {
 		if !strings.Contains(stored, want) {
 			t.Errorf("the stored ruleset lacks %s: %s", want, stored)
 		}
@@ -237,5 +238,127 @@ func TestPlan_Remote_ComparesLiveBranchProtection_Negative(t *testing.T) {
 	mustErrContain(t, err, "foreign repository")
 	if got := stub.requestCount(); got != requests {
 		t.Fatalf("a refused plan --remote reached the forge with %d requests", got-requests)
+	}
+}
+
+// Positive: sync --remote keeps live squash-only merges, extra approval and last-push approval
+// when the declaration is looser, reporting each as [KEPT], and audit after sync passes.
+func TestSync_Remote_Positive_KeepsStricterMergeMethodsAndExtraApproval(t *testing.T) {
+	live := map[string]any{
+		"id": 1, "name": "praetor-main-protection", "target": "branch", "enforcement": "active",
+		"conditions": map[string]any{"ref_name": map[string]any{"include": []any{"refs/heads/main"}, "exclude": []any{}}},
+		"rules": []any{
+			map[string]any{"type": "pull_request", "parameters": map[string]any{
+				"required_approving_review_count":                 1,
+				"dismiss_stale_reviews_on_push":                   true,
+				"require_code_owner_review":                       false,
+				"require_last_push_approval":                      true,
+				"required_review_thread_resolution":               true,
+				"allowed_merge_methods":                           []any{"squash"},
+				"require_extra_approval_for_unattributed_changes": true,
+			}},
+		},
+	}
+	stub := &forgeStub{rulesets: map[int]map[string]any{1: live}}
+	f, endpoint := remoteProtectionFixture(t, stub)
+	pointLiveChecksAt(t, endpoint)
+	policy := config.DefaultPolicy()
+	policy.BranchProtection.AllowedMergeMethods = []string{"merge", "squash", "rebase"}
+	disabled := false
+	policy.BranchProtection.RequireExtraApprovalForUnattributedChanges = &disabled
+	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+
+		"overrides:\n  branch_protection:\n    allowed_merge_methods:\n      - merge\n      - squash\n      - rebase\n    require_extra_approval_for_unattributed_changes: false\n")
+	if err := synthesizeRuleset(f.dir, "main", policy.BranchProtection, nil); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runSyncCmd(t, "--config="+f.manifestPath, "--remote", "--token=ghp_x", "--endpoint="+endpoint)
+	if err != nil {
+		t.Fatalf("remote sync: %v\n%s", err, out)
+	}
+	mustContain(t, out,
+		`[KEPT] Ruleset "praetor-main-protection" rule pull_request: allowed_merge_methods stays [squash] on GitHub, stricter than the declared [merge squash rebase]`,
+		`[KEPT] Ruleset "praetor-main-protection" rule pull_request: require_extra_approval_for_unattributed_changes stays true on GitHub, stricter than the declared false`,
+		`[KEPT] Ruleset "praetor-main-protection" rule pull_request: require_last_push_approval stays true on GitHub, stricter than the declared false`)
+	stored := stub.storedRuleset(t, 1)
+	for _, want := range []string{`"allowed_merge_methods":["squash"]`, `"require_extra_approval_for_unattributed_changes":true`, `"require_last_push_approval":true`} {
+		if !strings.Contains(stored, want) {
+			t.Errorf("stored ruleset lacks %s: %s", want, stored)
+		}
+	}
+	auditOut, err := liveProtectionAudit(t, f, policy)
+	if err != nil {
+		t.Fatalf("audit after sync: %v\n%s", err, auditOut)
+	}
+	if strings.Contains(auditOut, "[FAIL]") || strings.Contains(auditOut, "[DRIFT]") {
+		t.Errorf("audit after sync reported drift:\n%s", auditOut)
+	}
+}
+
+// Positive: sync --remote with review_mode single_maintainer (0 reviews declared) against live 1
+// lowers the review count and reports it as [LOWERED].
+func TestSync_Remote_Positive_ReviewCountStillLowered(t *testing.T) {
+	live := map[string]any{
+		"id": 1, "name": "praetor-main-protection", "target": "branch", "enforcement": "active",
+		"conditions": map[string]any{"ref_name": map[string]any{"include": []any{"refs/heads/main"}, "exclude": []any{}}},
+		"rules": []any{
+			map[string]any{"type": "pull_request", "parameters": map[string]any{
+				"required_approving_review_count": 1,
+			}},
+		},
+	}
+	stub := &forgeStub{rulesets: map[int]map[string]any{1: live}}
+	f, endpoint := remoteProtectionFixture(t, stub)
+	policy := config.DefaultPolicy().BranchProtection
+	policy.ReviewMode = config.BranchReviewModeSingleMaintainer
+	policy.RequiredApprovingReviewers = 0
+	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+
+		"overrides:\n  branch_protection:\n    review_mode: single_maintainer\n")
+	if err := synthesizeRuleset(f.dir, "main", policy, nil); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runSyncCmd(t, "--config="+f.manifestPath, "--remote", "--token=ghp_x", "--endpoint="+endpoint)
+	if err != nil {
+		t.Fatalf("remote sync: %v\n%s", err, out)
+	}
+	mustContain(t, out,
+		`[LOWERED] Ruleset "praetor-main-protection" rule pull_request: required_approving_review_count was 1 on GitHub, now 0 as declared`)
+	stored := stub.storedRuleset(t, 1)
+	if !strings.Contains(stored, `"required_approving_review_count":0`) {
+		t.Errorf("stored ruleset did not lower review count: %s", stored)
+	}
+}
+
+// Positive: sync --remote with live merge+squash+rebase and declared squash-only tightens
+// allowed_merge_methods to squash-only without a kept or lowered report.
+func TestSync_Remote_Positive_LooserLiveMergeMethodsTightened(t *testing.T) {
+	live := map[string]any{
+		"id": 1, "name": "praetor-main-protection", "target": "branch", "enforcement": "active",
+		"conditions": map[string]any{"ref_name": map[string]any{"include": []any{"refs/heads/main"}, "exclude": []any{}}},
+		"rules": []any{
+			map[string]any{"type": "pull_request", "parameters": map[string]any{
+				"required_approving_review_count": 1,
+				"allowed_merge_methods":           []any{"merge", "squash", "rebase"},
+			}},
+		},
+	}
+	stub := &forgeStub{rulesets: map[int]map[string]any{1: live}}
+	f, endpoint := remoteProtectionFixture(t, stub)
+	policy := config.DefaultPolicy().BranchProtection
+	policy.AllowedMergeMethods = []string{"squash"}
+	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+
+		"overrides:\n  branch_protection:\n    allowed_merge_methods:\n      - squash\n")
+	if err := synthesizeRuleset(f.dir, "main", policy, nil); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runSyncCmd(t, "--config="+f.manifestPath, "--remote", "--token=ghp_x", "--endpoint="+endpoint)
+	if err != nil {
+		t.Fatalf("remote sync: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "[KEPT]") || strings.Contains(out, "[LOWERED]") {
+		t.Errorf("tightening allowed_merge_methods must not report kept or lowered:\n%s", out)
+	}
+	stored := stub.storedRuleset(t, 1)
+	if !strings.Contains(stored, `"allowed_merge_methods":["squash"]`) {
+		t.Errorf("stored ruleset lacked tightened squash-only methods: %s", stored)
 	}
 }

@@ -1,0 +1,3 @@
+type: changed
+title: "sync --remote keeps a stricter live merge-method set, extra-approval and last-push-approval setting and reports it as [KEPT]"
+breaking: false

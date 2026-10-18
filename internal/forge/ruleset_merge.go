@@ -44,27 +44,28 @@ func normalizeRuleset(doc map[string]any) (map[string]any, error) {
 // mergeRuleset overlays the desired praetor ruleset onto the live one without narrowing
 // it. Name, target, enforcement and every parameter praetor renders come from desired, a
 // relaxation the policy declares included, and each rendered parameter whose live value was
-// stricter is returned as lowered (loweredParameters) for sync --remote to report. The live
-// ruleset keeps its bypass actors, other conditions, every ref it includes, every status check
-// context it requires (less the CodeQL default setup contexts a merge group never reports, when
-// desired carries a code_scanning rule), and every rule and rule parameter praetor does not render. Removing
-// any of those from a live ruleset is a deliberate manual change.
-func mergeRuleset(live, desired map[string]any) (map[string]any, []LoweredParameter, error) {
+// stricter is returned as lowered (loweredParameters) or kept (keptParameters) for sync
+// --remote to report. The live ruleset keeps its bypass actors, other conditions, every ref
+// it includes, every status check context it requires (less the CodeQL default setup contexts
+// a merge group never reports, when desired carries a code_scanning rule), and every rule and
+// rule parameter praetor does not render. Removing any of those from a live ruleset is a
+// deliberate manual change.
+func mergeRuleset(live, desired map[string]any) (map[string]any, []LoweredParameter, []KeptParameter, error) {
 	merged := map[string]any{"name": desired["name"], "target": desired["target"], "enforcement": desired["enforcement"]}
 	if actors, present := live["bypass_actors"]; present {
 		merged["bypass_actors"] = actors
 	}
 	conditions, err := mergeConditions(live["conditions"], desired["conditions"])
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	merged["conditions"] = conditions
-	rules, lowered, err := mergeRules(live["rules"], desired["rules"])
+	rules, lowered, kept, err := mergeRules(live["rules"], desired["rules"])
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	merged["rules"] = rules
-	return merged, lowered, nil
+	return merged, lowered, kept, nil
 }
 
 // mergeConditions unions the ref_name includes and drops desired refs from the excludes,
@@ -106,19 +107,19 @@ func mergeConditions(liveRaw, desiredRaw any) (map[string]any, error) {
 
 // mergeRules merges each desired rule into the live rule of the same type and keeps every
 // other live rule, in the live order after the desired ones. It also returns the rendered
-// parameters the merge lowered.
-func mergeRules(liveRaw, desiredRaw any) ([]any, []LoweredParameter, error) {
+// parameters the merge lowered and those whose stricter live values were kept.
+func mergeRules(liveRaw, desiredRaw any) ([]any, []LoweredParameter, []KeptParameter, error) {
 	live, err := objectList(liveRaw, "rules", maxRulesetRules)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	desired, err := objectList(desiredRaw, "rules", maxRulesetRules)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	merged, err := mergeDesiredRules(live, desired)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	for i := 0; i < len(live) && i < maxRulesetRules; i++ {
 		if !merged.consumed[i] {
@@ -129,24 +130,28 @@ func mergeRules(liveRaw, desiredRaw any) ([]any, []LoweredParameter, error) {
 		dropDefaultSetupChecks(merged.rules)
 	}
 	if len(merged.rules) > maxRulesetRules {
-		return nil, nil, fmt.Errorf("merged ruleset exceeds %d rules", maxRulesetRules)
+		return nil, nil, nil, fmt.Errorf("merged ruleset exceeds %d rules", maxRulesetRules)
 	}
-	return merged.rules, merged.lowered, nil
+	return merged.rules, merged.lowered, merged.kept, nil
 }
 
 // desiredRulesMerge is what mergeDesiredRules returns: the desired rules, each merged into the
 // first live rule of its type, the indexes of the live rules consumed that way, and the
-// rendered parameters those merges lowered.
+// rendered parameters those merges lowered or kept.
 type desiredRulesMerge struct {
 	rules    []any
 	consumed map[int]bool
 	lowered  []LoweredParameter
+	kept     []KeptParameter
 }
 
 // mergeDesiredRules merges each desired rule into the first live rule of its type.
 func mergeDesiredRules(live, desired []map[string]any) (desiredRulesMerge, error) {
 	firstLive := firstRuleIndex(live)
-	merged := desiredRulesMerge{rules: make([]any, 0, len(live)+len(desired)), consumed: make(map[int]bool, len(desired))}
+	merged := desiredRulesMerge{
+		rules:    make([]any, 0, len(live)+len(desired)),
+		consumed: make(map[int]bool, len(desired)),
+	}
 	for i := 0; i < len(desired) && i < maxRulesetRules; i++ {
 		ruleType, isString := desired[i]["type"].(string)
 		if !isString {
@@ -157,39 +162,41 @@ func mergeDesiredRules(live, desired []map[string]any) (desiredRulesMerge, error
 			merged.rules = append(merged.rules, desired[i])
 			continue
 		}
-		rule, lowered, err := mergeRule(live[index], desired[i], ruleType)
+		rule, lowered, kept, err := mergeRule(live[index], desired[i], ruleType)
 		if err != nil {
 			return desiredRulesMerge{}, err
 		}
 		merged.consumed[index] = true
 		merged.rules = append(merged.rules, rule)
 		merged.lowered = append(merged.lowered, lowered...)
+		merged.kept = append(merged.kept, kept...)
 	}
 	return merged, nil
 }
 
 // mergeRule keeps the live rule's own keys and parameters and overlays the desired ones. It
-// returns the desired parameters that lowered a stricter live value (loweredParameters).
-func mergeRule(live, desired map[string]any, ruleType string) (map[string]any, []LoweredParameter, error) {
+// returns the desired parameters that lowered a stricter live value (loweredParameters) and
+// the parameters whose stricter live value was kept (keptParameters).
+func mergeRule(live, desired map[string]any, ruleType string) (map[string]any, []LoweredParameter, []KeptParameter, error) {
 	liveParams, err := optionalObject(live["parameters"], ruleType+".parameters")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	desiredParams, err := optionalObject(desired["parameters"], ruleType+".parameters")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	rule := make(map[string]any, len(live))
 	maps.Copy(rule, live)
 	if len(liveParams) == 0 && len(desiredParams) == 0 {
-		return rule, nil, nil
+		return rule, nil, nil, nil
 	}
 	params, err := mergeRuleParameters(ruleType, liveParams, desiredParams)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	rule["parameters"] = params
-	return rule, loweredParameters(ruleType, liveParams, desiredParams), nil
+	return rule, loweredParameters(ruleType, liveParams, desiredParams), keptParameters(ruleType, liveParams, desiredParams), nil
 }
 
 // mergeRuleParameters merges the desired parameters of a rule over the live ones. Most rules take
@@ -216,6 +223,9 @@ func mergeRuleParameters(ruleType string, liveParams, desiredParams map[string]a
 	}
 	maps.Copy(params, liveParams)
 	maps.Copy(params, desiredParams)
+	if ruleType == "pull_request" {
+		keepStricterPullRequestParameters(params, liveParams, desiredParams)
+	}
 	if ruleType == statusChecksParameter {
 		checks, err := unionStatusChecks(liveParams[statusChecksParameter], desiredParams[statusChecksParameter])
 		if err != nil {
@@ -275,6 +285,123 @@ type LoweredParameter struct {
 	Declared any
 }
 
+// KeptParameter is a rendered ruleset parameter whose live value was stricter than the
+// declared one and that a merge kept as the live value instead of overwriting it with the
+// declared value (decision engine-ruleset-sync-lowering-20261018 c).
+type KeptParameter struct {
+	// Rule is the ruleset rule type the parameter belongs to, such as pull_request.
+	Rule string
+	// Parameter is the rule parameter, such as allowed_merge_methods.
+	Parameter string
+	// Live is the value the live ruleset carried before the write and kept in the write.
+	Live any
+	// Declared is the value the resolved policy declared.
+	Declared any
+}
+
+// pullRequestParameterRule defines strictness evaluation and sync retention policy
+// for one pull_request parameter.
+type pullRequestParameterRule struct {
+	// Kept reports whether a stricter live value is kept on GitHub by sync --remote.
+	Kept bool
+	// Stricter reports whether live tightens the rule beyond desired.
+	Stricter func(live, desired any) bool
+}
+
+// mergeMethodsStricter reports whether live allowed merge methods are a non-empty
+// subset of desired without being equal to desired.
+func mergeMethodsStricter(live, desired any) bool {
+	liveSet := extractStringSet(live)
+	desiredSet := extractStringSet(desired)
+	return len(liveSet) > 0 && isSubset(liveSet, desiredSet) && !maps.Equal(liveSet, desiredSet)
+}
+
+// boolParamStricter reports whether live boolean tightens beyond desired (true over false).
+func boolParamStricter(live, desired any) bool {
+	return parameterStricter(toBool(live), toBool(desired))
+}
+
+// pullRequestParameterRules declares strictness evaluation and sync retention per
+// pull_request parameter.
+var pullRequestParameterRules = map[string]pullRequestParameterRule{
+	"allowed_merge_methods": {
+		Kept:     true,
+		Stricter: mergeMethodsStricter,
+	},
+	"require_extra_approval_for_unattributed_changes": {
+		Kept:     true,
+		Stricter: boolParamStricter,
+	},
+	"require_last_push_approval": {
+		Kept:     true,
+		Stricter: boolParamStricter,
+	},
+	"required_approving_review_count": {
+		Kept:     false,
+		Stricter: parameterStricter,
+	},
+	"dismiss_stale_reviews_on_push": {
+		Kept:     false,
+		Stricter: parameterStricter,
+	},
+	"require_code_owner_review": {
+		Kept:     false,
+		Stricter: parameterStricter,
+	},
+	"required_review_thread_resolution": {
+		Kept:     false,
+		Stricter: parameterStricter,
+	},
+}
+
+// keptParametersOrder defines the deterministic order in which kept parameters are evaluated and reported.
+var keptParametersOrder = []string{
+	"allowed_merge_methods",
+	"require_extra_approval_for_unattributed_changes",
+	"require_last_push_approval",
+}
+
+// pullRequestParameterStricter reports whether live tightens parameter beyond desired.
+func pullRequestParameterStricter(param string, live, desired any) bool {
+	rule, ok := pullRequestParameterRules[param]
+	if !ok || rule.Stricter == nil {
+		return false
+	}
+	return rule.Stricter(live, desired)
+}
+
+// pullRequestParameterKept reports whether a stricter live value for parameter is kept by sync --remote.
+func pullRequestParameterKept(param string) bool {
+	rule, ok := pullRequestParameterRules[param]
+	return ok && rule.Kept
+}
+
+// keepStricterPullRequestParameters writes back each live value keptParameters keeps.
+func keepStricterPullRequestParameters(params, live, desired map[string]any) {
+	kept := keptParameters("pull_request", live, desired)
+	for i := 0; i < len(kept) && i < maxPRParams; i++ {
+		params[kept[i].Parameter] = kept[i].Live
+	}
+}
+
+// keptParameters returns each pull_request parameter whose stricter live value is kept rather
+// than overwritten by the desired ruleset, in keptParametersOrder.
+func keptParameters(ruleType string, live, desired map[string]any) []KeptParameter {
+	if ruleType != "pull_request" {
+		return nil
+	}
+	var kept []KeptParameter
+	for i := 0; i < len(keptParametersOrder) && i < maxPRParams; i++ {
+		key := keptParametersOrder[i]
+		liveValue, inLive := live[key]
+		desiredValue, inDesired := desired[key]
+		if inLive && inDesired && pullRequestParameterKept(key) && pullRequestParameterStricter(key, liveValue, desiredValue) {
+			kept = append(kept, KeptParameter{Rule: ruleType, Parameter: key, Live: liveValue, Declared: desiredValue})
+		}
+	}
+	return kept
+}
+
 // stricterParameters are the rendered rule parameters that only tighten a rule as they grow:
 // a count that is stricter when higher, and requirements that are stricter when true. Each
 // belongs to the pull_request or required_status_checks rule, and their names do not recur in
@@ -283,10 +410,8 @@ var stricterParameters = []string{
 	"required_approving_review_count",
 	"dismiss_stale_reviews_on_push",
 	"require_code_owner_review",
-	"require_last_push_approval",
 	"required_review_thread_resolution",
 	"strict_required_status_checks_policy",
-	"require_extra_approval_for_unattributed_changes",
 }
 
 // loweredParameters returns each parameter of stricterParameters whose live value is stricter
@@ -296,6 +421,9 @@ func loweredParameters(ruleType string, live, desired map[string]any) []LoweredP
 	var lowered []LoweredParameter
 	for i := 0; i < len(stricterParameters); i++ {
 		key := stricterParameters[i]
+		if pullRequestParameterKept(key) {
+			continue
+		}
 		liveValue, inLive := live[key]
 		desiredValue, inDesired := desired[key]
 		if inLive && inDesired && parameterStricter(liveValue, desiredValue) {
@@ -434,6 +562,16 @@ func refsConverged(got, want map[string]any) error {
 	return nil
 }
 
+func paramValueConverged(ruleType, key string, gotVal, wantVal any) bool {
+	if reflect.DeepEqual(gotVal, wantVal) {
+		return true
+	}
+	if key == "allowed_merge_methods" && maps.Equal(extractStringSet(gotVal), extractStringSet(wantVal)) {
+		return true
+	}
+	return ruleType == "pull_request" && pullRequestParameterKept(key) && pullRequestParameterStricter(key, gotVal, wantVal)
+}
+
 func parametersConverged(ruleType string, gotRaw, wantRaw any) error {
 	got, err := optionalObject(gotRaw, ruleType+".parameters")
 	if err != nil {
@@ -443,14 +581,19 @@ func parametersConverged(ruleType string, gotRaw, wantRaw any) error {
 	if err != nil {
 		return err
 	}
+	i := 0
 	for key, value := range want {
+		if i >= maxPRParams {
+			break
+		}
+		i++
 		if ruleType == statusChecksParameter && key == statusChecksParameter {
 			if err := statusChecksConverged(got[key], value); err != nil {
 				return err
 			}
 			continue
 		}
-		if !reflect.DeepEqual(got[key], value) {
+		if !paramValueConverged(ruleType, key, got[key], value) {
 			return fmt.Errorf("ruleset readback rule %q parameter %q is %v, want %v", ruleType, key, got[key], value)
 		}
 	}

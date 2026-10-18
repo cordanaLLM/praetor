@@ -464,7 +464,7 @@ func compareRenderedPRParams(allowedMethods []string, extraApproval *bool, liveP
 		switch {
 		case maps.Equal(declaredSet, liveSet):
 			verdict = ProtectionEnforced
-		case len(liveSet) > 0 && isSubset(liveSet, declaredSet):
+		case pullRequestParameterStricter("allowed_merge_methods", liveParams["allowed_merge_methods"], allowedMethods):
 			verdict = ProtectionStricter
 		default:
 			verdict = ProtectionDrift
@@ -484,7 +484,7 @@ func compareRenderedPRParams(allowedMethods []string, extraApproval *bool, liveP
 		switch {
 		case declared == live:
 			verdict = ProtectionEnforced
-		case parameterStricter(live, declared):
+		case pullRequestParameterStricter("require_extra_approval_for_unattributed_changes", live, declared):
 			verdict = ProtectionStricter
 		default:
 			verdict = ProtectionDrift
@@ -505,7 +505,7 @@ func compareRenderedPRParams(allowedMethods []string, extraApproval *bool, liveP
 // required_review_thread_resolution: true) against live values.
 func compareStaticPRParams(liveParams map[string]any, label string) []ProtectionFinding {
 	var findings []ProtectionFinding
-	if toBool(liveParams["require_last_push_approval"]) {
+	if pullRequestParameterStricter("require_last_push_approval", liveParams["require_last_push_approval"], false) {
 		findings = append(findings, ProtectionFinding{
 			Property:   "require_last_push_approval",
 			Declared:   "false",
@@ -531,13 +531,12 @@ func compareStaticPRParams(liveParams map[string]any, label string) []Protection
 func liveOnlyParamVerdict(key string, val any) ProtectionVerdict {
 	switch key {
 	case "allowed_merge_methods":
-		defaultSet := map[string]bool{"merge": true, "squash": true, "rebase": true}
-		liveSet := extractStringSet(val)
-		if len(liveSet) > 0 && isSubset(liveSet, defaultSet) {
+		defaultSet := []string{"merge", "squash", "rebase"}
+		if pullRequestParameterStricter(key, val, defaultSet) {
 			return ProtectionStricter
 		}
 	case "require_extra_approval_for_unattributed_changes":
-		if parameterStricter(toBool(val), false) {
+		if pullRequestParameterStricter(key, val, false) {
 			return ProtectionStricter
 		}
 	}

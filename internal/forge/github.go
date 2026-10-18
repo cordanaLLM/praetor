@@ -326,7 +326,7 @@ func (g *GitHubDriver) protectedRefs(branch string) []string {
 // lowered. A caller that reports what changed, as sync --remote does, calls
 // ReconcileProtectionReport.
 func (g *GitHubDriver) ReconcileProtection(ctx context.Context, branch string, policy *config.BranchProtectionPolicy) error {
-	_, err := g.ReconcileProtectionReport(ctx, branch, policy)
+	_, _, err := g.ReconcileProtectionReport(ctx, branch, policy)
 	return err
 }
 
@@ -339,34 +339,34 @@ func (g *GitHubDriver) ReconcileProtection(ctx context.Context, branch string, p
 // stricter is returned, so the caller names every setting the write lowered; it is returned
 // with the readback error too, since the write happened. ReadBranchProtection reads what the
 // branch then enforces, from every ruleset and the legacy protection object alike.
-func (g *GitHubDriver) ReconcileProtectionReport(ctx context.Context, branch string, policy *config.BranchProtectionPolicy) ([]LoweredParameter, error) {
+func (g *GitHubDriver) ReconcileProtectionReport(ctx context.Context, branch string, policy *config.BranchProtectionPolicy) ([]LoweredParameter, []KeptParameter, error) {
 	listPath, name, desired, err := g.desiredProtection(ctx, branch, policy)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	return g.convergeRuleset(ctx, branch, listPath, name, desired)
 }
 
 // convergeRuleset writes the desired ruleset named name (a new one, or the live one of that name
 // merged and updated in place), reads it back and requires that it converged. It returns the
-// parameters the merge lowered, with the readback error too, since the write happened.
-func (g *GitHubDriver) convergeRuleset(ctx context.Context, branch, listPath, name string, desired map[string]any) ([]LoweredParameter, error) {
+// parameters the merge lowered and kept, with the readback error too, since the write happened.
+func (g *GitHubDriver) convergeRuleset(ctx context.Context, branch, listPath, name string, desired map[string]any) ([]LoweredParameter, []KeptParameter, error) {
 	id, err := g.findRulesetID(ctx, listPath, name)
 	if err != nil {
-		return nil, fmt.Errorf("reconcile branch protection for %s: %w", branch, err)
+		return nil, nil, fmt.Errorf("reconcile branch protection for %s: %w", branch, err)
 	}
 	written, err := g.writeRuleset(ctx, listPath, id, desired)
 	if err != nil {
-		return nil, fmt.Errorf("reconcile ruleset %q for %s: %w", name, branch, err)
+		return nil, nil, fmt.Errorf("reconcile ruleset %q for %s: %w", name, branch, err)
 	}
 	readback, err := g.getRuleset(ctx, listPath, written.id)
 	if err != nil {
-		return written.lowered, fmt.Errorf("read back ruleset %q: %w", name, err)
+		return written.lowered, written.kept, fmt.Errorf("read back ruleset %q: %w", name, err)
 	}
 	if err := rulesetConverged(readback, written.want); err != nil {
-		return written.lowered, fmt.Errorf("ruleset %q did not converge: %w", name, err)
+		return written.lowered, written.kept, fmt.Errorf("ruleset %q did not converge: %w", name, err)
 	}
-	return written.lowered, nil
+	return written.lowered, written.kept, nil
 }
 
 // desiredProtection checks the inputs of a protection reconcile and returns the ruleset
@@ -396,11 +396,12 @@ func (g *GitHubDriver) desiredProtection(ctx context.Context, branch string, pol
 }
 
 // rulesetWrite is what writeRuleset wrote: the ruleset id, the document the readback must
-// match, and the rendered parameters the merge lowered on the live ruleset.
+// match, and the rendered parameters the merge lowered or kept on the live ruleset.
 type rulesetWrite struct {
 	id      int
 	want    map[string]any
 	lowered []LoweredParameter
+	kept    []KeptParameter
 }
 
 // writeRuleset creates the desired ruleset when id is 0, and otherwise merges it into the
@@ -423,14 +424,14 @@ func (g *GitHubDriver) writeRuleset(ctx context.Context, listPath string, id int
 	if err != nil {
 		return rulesetWrite{}, fmt.Errorf("read live ruleset: %w", err)
 	}
-	merged, lowered, err := mergeRuleset(live, desired)
+	merged, lowered, kept, err := mergeRuleset(live, desired)
 	if err != nil {
 		return rulesetWrite{}, fmt.Errorf("merge live ruleset: %w", err)
 	}
 	if _, err := g.sendRuleset(ctx, http.MethodPut, fmt.Sprintf("%s/%d", listPath, id), merged, http.StatusOK); err != nil {
 		return rulesetWrite{}, err
 	}
-	return rulesetWrite{id: id, want: merged, lowered: lowered}, nil
+	return rulesetWrite{id: id, want: merged, lowered: lowered, kept: kept}, nil
 }
 
 // sendRuleset writes a ruleset document and requires the given success status.

@@ -662,11 +662,15 @@ standardsctl sync --remote --forge-host=ghe.example.com \
   (`TestSync_Remote_KeepsLiveLeafChecksAndAddsTheAggregate`). A ruleset sync creates carries the
   bypass actor `review_mode: single_maintainer` declares ([review policy](review-policy.md)). An existing ruleset is read, merged, updated and read back. The
   merge sets every parameter praetor renders from policy, a declared relaxation such as
-  `review_mode: single_maintainer` included. Each parameter whose live value was stricter (a
-  higher approving review count, or stale-review dismissal, code-owner review, last-push
-  approval, thread resolution or the up-to-date check policy switched on) is printed on a
-  `[LOWERED]` line that names the rule, the parameter, the live value and the declared one, so no
-  hosted setting drops silently. The merge keeps
+  `review_mode: single_maintainer` included. For three parameters where the audit accepts a stricter
+  live value (`allowed_merge_methods` when live is a non-empty subset of declared, and
+  `require_extra_approval_for_unattributed_changes` and `require_last_push_approval` when live is true
+  over declared false), the merge keeps the stricter live value on GitHub and prints a `[KEPT]` line
+  that names the rule, parameter, live value that stays, and declared value. Every other rendered
+  parameter whose live value was stricter (a higher approving review count, or stale-review dismissal,
+  code-owner review, thread resolution or the up-to-date check policy switched on) applies as declared
+  and is printed on a `[LOWERED]` line that names the rule, the parameter, the live value and the
+  declared one, so no hosted setting drops silently. The merge keeps
   everything else: extra refs, bypass actors, other rules and parameters, and required checks
   praetor does not list. A protected ref is removed from the excludes. The command fails unless
   the readback includes everything written (`internal/forge/ruleset_merge.go`,
