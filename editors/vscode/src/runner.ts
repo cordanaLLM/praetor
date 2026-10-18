@@ -34,8 +34,8 @@ export function signalTree(child: ChildProcess, signal: NodeJS.Signals = "SIGTER
   } catch (groupErr) {
     if (isEsrch(groupErr)) return undefined;
     try {
-      child.kill(signal);
-      return undefined;
+      // child.kill reports an undelivered signal by returning false, not by throwing
+      return child.kill(signal) ? undefined : errorMessage(groupErr);
     } catch (fallbackErr) {
       if (isEsrch(fallbackErr)) return undefined;
       return errorMessage(fallbackErr);
