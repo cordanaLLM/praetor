@@ -10,7 +10,6 @@ import (
 	"errors"
 	"flag"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -72,11 +71,9 @@ func seedTrackedGovulnModule(t *testing.T, dir string) {
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.test/security\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	env := testsupport.HermeticGitEnv(t)
 	for _, args := range [][]string{{"init", "-q"}, {"add", "--", "go.mod"}} {
-		cmd := exec.CommandContext(t.Context(), "git", args...)
-		cmd.Dir = dir
-		cmd.Env = testsupport.HermeticGitEnv(t)
-		if out, err := cmd.CombinedOutput(); err != nil {
+		if out, err := runFixtureGit(t, dir, env, args...); err != nil {
 			t.Fatalf("git %v: %v (%s)", args, err, out)
 		}
 	}

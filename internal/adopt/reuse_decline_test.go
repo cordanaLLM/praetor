@@ -5,8 +5,6 @@
 package adopt
 
 import (
-	"context"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -15,6 +13,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // thirdPartyLicenses is the layout #1244 measured in an adopter: LICENSES/ holds the texts of
@@ -176,12 +175,14 @@ func TestReuseGate_Boundary_RealRepositoryKeepsAndHeaderOnlyIsNamed(t *testing.T
 		supplychain.LicensesDir + "/MIT.txt": "MIT License\n",
 		"main.go":                            "// SPDX-License-Identifier: MIT\npackage main\n",
 	})
-	command := exec.Command("git", "init", "-q", headers.repoPath)
-	command.Env = testsupport.HermeticGitEnv(t)
-	if out, err := command.CombinedOutput(); err != nil {
+	gitCtx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := util.RunGit(gitCtx, headers.repoPath, "init", "-q"); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
-	if err := reconcileReuseGate(context.Background(), headers); err != nil {
+	if err := reconcileReuseGate(t.Context(), headers); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.ContainsFunc(headers.report.Warnings, func(w string) bool {

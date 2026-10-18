@@ -208,16 +208,21 @@ func TestLefthookPythonCommandRunsTheHookThroughTheLauncher(t *testing.T) {
 		root := t.TempDir()
 		mustWrite(t, filepath.Join(root, filepath.FromSlash(checkpointLauncher)), launcherText)
 		mustWrite(t, filepath.Join(root, "hook.py"), "import sys\nsys.exit(int(sys.argv[1]))\n")
-		cmd := exec.CommandContext(t.Context(), shell, "-c", line)
-		cmd.Dir = root
 		environ := util.FilterEnvironment(os.Environ(), func(name string) bool { return name == "PATH" })
-		cmd.Env = append(append(environ, "PATH="+path), setting...)
-		output, err := cmd.CombinedOutput()
+		ctx, envErr := util.WithCommandEnvironment(t.Context(), append(append(environ, "PATH="+path), setting...))
+		if envErr != nil {
+			t.Fatalf("environment: %v", envErr)
+		}
+		res, err := util.RunCommandBytes(ctx, root, shell, util.MaxCommandOutputBytes, "-c", line)
+		output := append(res.Stdout, res.Stderr...)
 		var exit *exec.ExitError
 		if err != nil && !errors.As(err, &exit) {
 			t.Fatalf("run the generated line: %v", err)
 		}
-		return cmd.ProcessState.ExitCode(), string(output)
+		if exit != nil {
+			return exit.ExitCode(), string(output)
+		}
+		return 0, string(output)
 	}
 	// The line starts sh by name and the launcher starts the interpreter by name, so PATH holds
 	// the directories of both and nothing else.

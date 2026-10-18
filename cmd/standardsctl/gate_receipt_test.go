@@ -84,11 +84,13 @@ const fixtureGitBound = 20 * time.Second
 func runFixtureGitWithin(bound time.Duration, dir string, env []string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), bound)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = dir
-	cmd.Env = env
+	envCtx, err := util.WithCommandEnvironment(ctx, env)
+	if err != nil {
+		return "", err
+	}
 	start := time.Now()
-	out, err := cmd.CombinedOutput()
+	res, err := util.RunCommandBytes(envCtx, dir, "git", util.MaxCommandOutputBytes, args...)
+	out := append(res.Stdout, res.Stderr...)
 	return string(out), testsupport.FixtureCommandError(ctx, bound, time.Since(start), err)
 }
 

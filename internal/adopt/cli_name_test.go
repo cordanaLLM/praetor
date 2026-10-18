@@ -135,16 +135,18 @@ func runHookLineEnv(t *testing.T, shellPath, line, stubDir, workDir string, env 
 	if !fileExists(launcher) {
 		mustWrite(t, launcher, engineLauncherScript)
 	}
-	cmd := exec.CommandContext(t.Context(), shellPath, "-c", line)
-	cmd.Dir = workDir
-	cmd.Env = append([]string{"PATH=" + stubDir + string(os.PathListSeparator) + hookToolbox(t)}, env...)
-	out, err := cmd.CombinedOutput()
+	ctx, envErr := util.WithCommandEnvironment(t.Context(), append([]string{"PATH=" + stubDir + string(os.PathListSeparator) + hookToolbox(t)}, env...))
+	if envErr != nil {
+		t.Fatalf("environment: %v", envErr)
+	}
+	res, err := util.RunCommandBytes(ctx, workDir, shellPath, util.MaxCommandOutputBytes, "-c", line)
+	out := string(append(res.Stdout, res.Stderr...))
 	var exitErr *exec.ExitError
 	switch {
 	case err == nil:
-		return string(out), 0
+		return out, 0
 	case errors.As(err, &exitErr):
-		return string(out), exitErr.ExitCode()
+		return out, exitErr.ExitCode()
 	default:
 		t.Fatalf("run %s: %v", shellPath, err)
 		return "", -1

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // TestAuditGitHookConfig_Positive_PreCommitFramework (#175): without lefthook.yml, a framework
@@ -116,11 +118,13 @@ func runInstaller(t *testing.T, root, toolPath string, args []string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, toolPath, args...)
-	cmd.Dir = root
 	home := t.TempDir()
-	cmd.Env = append(os.Environ(), "HOME="+home, "USERPROFILE="+home, "PRE_COMMIT_HOME="+filepath.Join(home, "pre-commit"))
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("%s %v: %v (%s)", filepath.Base(toolPath), args, err, out)
+	envCtx, err := util.WithCommandEnvironment(ctx, append(os.Environ(), "HOME="+home, "USERPROFILE="+home, "PRE_COMMIT_HOME="+filepath.Join(home, "pre-commit")))
+	if err != nil {
+		t.Fatalf("environment: %v", err)
+	}
+	res, err := util.RunCommandBytes(envCtx, root, toolPath, util.MaxCommandOutputBytes, args...)
+	if err != nil {
+		t.Fatalf("%s %v: %v (%s)", filepath.Base(toolPath), args, err, string(append(res.Stdout, res.Stderr...)))
 	}
 }

@@ -492,8 +492,8 @@ func TestEngineLauncher_Boundary_NoSleepSurvivesInstall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pgrep is required: %v", err)
 	}
-	pgrepOut, pgrepErr := exec.CommandContext(t.Context(), pgrep, "-g", strconv.Itoa(currentProcessGroup()), "-f", "sleep 299").Output()
-	if pgrepErr == nil && len(strings.TrimSpace(string(pgrepOut))) > 0 {
+	pgrepOut, pgrepErr := util.RunCommand(t.Context(), "", pgrep, "-g", strconv.Itoa(currentProcessGroup()), "-f", "sleep 299")
+	if pgrepErr == nil && len(strings.TrimSpace(pgrepOut)) > 0 {
 		t.Fatalf("orphaned sleep process survived install: %s", pgrepOut)
 	}
 }

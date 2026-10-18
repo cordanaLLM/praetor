@@ -110,16 +110,21 @@ func reuseJobTools(t *testing.T) (shell, dir string) {
 // runs it, and returns its exit code and output.
 func runReuseLine(t *testing.T, shell, root, path string) (int, string) {
 	t.Helper()
-	cmd := exec.CommandContext(t.Context(), shell, "-c", reuseLintCommand())
-	cmd.Dir = root
 	environ := util.FilterEnvironment(os.Environ(), func(name string) bool { return name == "PATH" })
-	cmd.Env = append(environ, "PATH="+path)
-	output, err := cmd.CombinedOutput()
+	ctx, err := util.WithCommandEnvironment(t.Context(), append(environ, "PATH="+path))
+	if err != nil {
+		t.Fatalf("environment: %v", err)
+	}
+	res, err := util.RunCommandBytes(ctx, root, shell, util.MaxCommandOutputBytes, "-c", reuseLintCommand())
+	output := append(res.Stdout, res.Stderr...)
 	var exit *exec.ExitError
 	if err != nil && !errors.As(err, &exit) {
 		t.Fatalf("run the reuse-lint line: %v", err)
 	}
-	return cmd.ProcessState.ExitCode(), string(output)
+	if exit != nil {
+		return exit.ExitCode(), string(output)
+	}
+	return 0, string(output)
 }
 
 // The reuse-lint line is run, not only compared, against a stub reuse. Positive: at the pinned
@@ -165,8 +170,8 @@ func TestReuseLintCommand_Negative_UnlabelledFileFailsTheJob(t *testing.T) {
 	if err != nil || runtime.GOOS == "windows" {
 		t.Skip("the reuse-lint line is POSIX sh; lefthook runs it through Git's sh on Windows, which this host need not provide")
 	}
-	version, err := exec.CommandContext(t.Context(), "reuse", "--version").Output()
-	if err != nil || !strings.Contains(string(version), "version "+supplychain.ReuseMajor()+".") {
+	version, err := util.RunCommand(t.Context(), "", "reuse", "--version")
+	if err != nil || !strings.Contains(version, "version "+supplychain.ReuseMajor()+".") {
 		t.Skipf("reuse %s.x is not installed (%v); TestReuseLintCommand_RunsTheLintAtThePinnedMajor covers the line with a stub",
 			supplychain.ReuseMajor(), err)
 	}

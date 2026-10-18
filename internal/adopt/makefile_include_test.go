@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -351,10 +350,12 @@ func TestRemadeIncludeCasesMatchGNUMake(t *testing.T) {
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, gnuMake, "-s", "docs-lint")
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "LC_ALL=C", "MAKEFLAGS=", "PATH="+getDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-		out, err := cmd.CombinedOutput()
+		envCtx, err := util.WithCommandEnvironment(ctx, append(os.Environ(), "LC_ALL=C", "MAKEFLAGS=", "PATH="+getDir+string(os.PathListSeparator)+os.Getenv("PATH")))
+		if err != nil {
+			t.Fatalf("environment: %v", err)
+		}
+		res, err := util.RunCommandBytes(envCtx, dir, gnuMake, util.MaxCommandOutputBytes, "-s", "docs-lint")
+		out := append(res.Stdout, res.Stderr...)
 		if err != nil {
 			if strings.Contains(tc.makefile, "other: gen.mk.sh") && strings.Contains(string(out), "gen.mk.sh") {
 				return string(out)

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // shfmtLauncherArgs are the settings adopters format shell with (#1282): two-space indent and
@@ -29,9 +31,11 @@ func shfmtExit(t *testing.T, text string) (int, string) {
 	}
 	path := filepath.Join(t.TempDir(), "engine.sh")
 	mustWrite(t, path, text)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, shfmt, append(append([]string{}, shfmtLauncherArgs...), path)...).CombinedOutput()
+	args := append(append([]string{}, shfmtLauncherArgs...), path)
+	res, err := util.RunCommandBytes(ctx, "", shfmt, util.MaxCommandOutputBytes, args...)
+	out := append(res.Stdout, res.Stderr...)
 	var exit *exec.ExitError
 	switch {
 	case err == nil:

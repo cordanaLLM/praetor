@@ -634,9 +634,9 @@ func reuseLintSkills(t *testing.T, reuse, repoPath, extraRel string) error {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, reuse, "--root", root, "lint").CombinedOutput()
+	res, err := util.RunCommandBytes(ctx, "", reuse, util.MaxCommandOutputBytes, "--root", root, "lint")
 	if err != nil {
-		return fmt.Errorf("reuse lint: %w\n%s", err, out)
+		return fmt.Errorf("reuse lint: %w\n%s", err, string(append(res.Stdout, res.Stderr...)))
 	}
 	return nil
 }

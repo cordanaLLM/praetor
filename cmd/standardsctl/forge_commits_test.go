@@ -3,11 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // The HISS-14 commit gate is only real if the command exists and refuses bad input.
@@ -85,12 +86,19 @@ func importCommitRange(t *testing.T, count int) string {
 		input.WriteString("\n")
 	}
 	input.WriteString("done\n")
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "fast-import", "--quiet")
-	cmd.Dir, cmd.Env, cmd.Stdin = dir, env, strings.NewReader(input.String())
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("import commit fixture: %v (%s)", err, out)
+	envCtx, err := util.WithCommandEnvironment(ctx, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdinCtx, err := util.WithCommandStdin(envCtx, []byte(input.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := util.RunCommandBytes(stdinCtx, dir, "git", util.MaxCommandOutputBytes, "fast-import", "--quiet")
+	if err != nil {
+		t.Fatalf("import commit fixture: %v (%s)", err, string(append(res.Stdout, res.Stderr...)))
 	}
 	return dir
 }

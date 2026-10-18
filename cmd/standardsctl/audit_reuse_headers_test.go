@@ -6,7 +6,6 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -27,9 +26,7 @@ func headerAuditRoot(t *testing.T, files map[string]string) string {
 			t.Fatal(err)
 		}
 	}
-	command := exec.Command("git", "init", "-q", root)
-	command.Env = testsupport.HermeticGitEnv(t)
-	if out, err := command.CombinedOutput(); err != nil {
+	if out, err := runFixtureGit(t, root, testsupport.HermeticGitEnv(t), "init", "-q"); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
 	return root

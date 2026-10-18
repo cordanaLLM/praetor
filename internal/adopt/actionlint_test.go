@@ -18,6 +18,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/templates"
 	"go.yaml.in/yaml/v3"
 )
@@ -591,8 +592,6 @@ func runActionlint(t *testing.T, bin, repo, workflow string) (string, error) {
 	mustWrite(t, filepath.Join(repo, rel), workflow)
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "-no-color", "-oneline", "-shellcheck=", "-pyflakes=", rel)
-	cmd.Dir = repo
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	res, err := util.RunCommandBytes(ctx, repo, bin, util.MaxCommandOutputBytes, "-no-color", "-oneline", "-shellcheck=", "-pyflakes=", rel)
+	return string(append(res.Stdout, res.Stderr...)), err
 }

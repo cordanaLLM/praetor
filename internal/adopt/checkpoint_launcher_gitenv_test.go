@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func initGitTestRepo(t *testing.T, dir string) string {
@@ -30,25 +31,27 @@ func initGitTestRepo(t *testing.T, dir string) string {
 
 func gitRunCmd(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.CommandContext(t.Context(), "git", args...)
-	cmd.Dir = dir
-	cmd.Env = testsupport.HermeticGitEnv(t)
-	out, err := cmd.CombinedOutput()
+	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
 	if err != nil {
-		t.Fatalf("git %s in %s: %v\n%s", strings.Join(args, " "), dir, err, string(out))
+		t.Fatal(err)
+	}
+	res, err := util.RunCommandBytes(ctx, dir, "git", util.MaxCommandOutputBytes, args...)
+	if err != nil {
+		t.Fatalf("git %s in %s: %v\n%s", strings.Join(args, " "), dir, err, string(append(res.Stdout, res.Stderr...)))
 	}
 }
 
 func gitOutCmd(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.CommandContext(t.Context(), "git", args...)
-	cmd.Dir = dir
-	cmd.Env = testsupport.HermeticGitEnv(t)
-	out, err := cmd.CombinedOutput()
+	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
 	if err != nil {
-		t.Fatalf("git %s in %s: %v\n%s", strings.Join(args, " "), dir, err, string(out))
+		t.Fatal(err)
 	}
-	return strings.TrimSpace(string(out))
+	out, err := util.RunCommand(ctx, dir, "git", args...)
+	if err != nil {
+		t.Fatalf("git %s in %s: %v\n%s", strings.Join(args, " "), dir, err, out)
+	}
+	return strings.TrimSpace(out)
 }
 
 func writeGitEnvTestScript(t *testing.T, dir string) string {
@@ -76,9 +79,7 @@ func testLauncherDropsGitEnv(t *testing.T, shell, launcherPath string) {
 	initGitTestRepo(t, tempRepo)
 	scriptPath := writeGitEnvTestScript(t, t.TempDir())
 
-	cmd := exec.CommandContext(t.Context(), shell, launcherPath, scriptPath, tempRepo)
-	cmd.Dir = tempRepo
-	cmd.Env = append(testsupport.HermeticGitEnv(t),
+	env := append(testsupport.HermeticGitEnv(t),
 		"GIT_DIR="+filepath.Join(origRepo, ".git"),
 		"GIT_WORK_TREE="+origRepo,
 		"GIT_INDEX_FILE="+filepath.Join(origRepo, ".git", "index"),
@@ -86,7 +87,12 @@ func testLauncherDropsGitEnv(t *testing.T, shell, launcherPath string) {
 		"GIT_OBJECT_DIRECTORY="+filepath.Join(origRepo, ".git", "objects"),
 		"GIT_ALTERNATE_OBJECT_DIRECTORIES="+filepath.Join(origRepo, ".git", "objects"),
 	)
-	out, err := cmd.CombinedOutput()
+	ctx, envErr := util.WithCommandEnvironment(t.Context(), env)
+	if envErr != nil {
+		t.Fatalf("environment: %v", envErr)
+	}
+	res, err := util.RunCommandBytes(ctx, tempRepo, shell, util.MaxCommandOutputBytes, launcherPath, scriptPath, tempRepo)
+	out := append(res.Stdout, res.Stderr...)
 	if err != nil {
 		t.Fatalf("launcher execution failed: %v\n%s", err, string(out))
 	}
@@ -109,9 +115,7 @@ func testLauncherKeepIndexPreservesIndex(t *testing.T, shell, launcherPath strin
 	scriptPath := writeGitEnvTestScript(t, t.TempDir())
 
 	keepIndexLock := filepath.Join(origRepo, ".git", "custom.index.lock")
-	cmd := exec.CommandContext(t.Context(), shell, launcherPath, "--keep-index", scriptPath, tempRepo)
-	cmd.Dir = tempRepo
-	cmd.Env = append(testsupport.HermeticGitEnv(t),
+	env := append(testsupport.HermeticGitEnv(t),
 		"GIT_DIR="+filepath.Join(origRepo, ".git"),
 		"GIT_WORK_TREE="+origRepo,
 		"GIT_INDEX_FILE="+keepIndexLock,
@@ -119,7 +123,12 @@ func testLauncherKeepIndexPreservesIndex(t *testing.T, shell, launcherPath strin
 		"GIT_OBJECT_DIRECTORY="+filepath.Join(origRepo, ".git", "objects"),
 		"GIT_ALTERNATE_OBJECT_DIRECTORIES="+filepath.Join(origRepo, ".git", "objects"),
 	)
-	out, err := cmd.CombinedOutput()
+	ctx, envErr := util.WithCommandEnvironment(t.Context(), env)
+	if envErr != nil {
+		t.Fatalf("environment: %v", envErr)
+	}
+	res, err := util.RunCommandBytes(ctx, tempRepo, shell, util.MaxCommandOutputBytes, launcherPath, "--keep-index", scriptPath, tempRepo)
+	out := append(res.Stdout, res.Stderr...)
 	if err != nil {
 		t.Fatalf("launcher execution with --keep-index failed: %v\n%s", err, string(out))
 	}

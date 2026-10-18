@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // checkpointFixtureTexts are stand-in texts for every file of the checkpoint bundle.
@@ -147,10 +149,13 @@ func TestAdoptCheckpointBundleRunsActualEvaluator(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(session.repoPath, ".git", "HEAD"), []byte("ref: refs/heads/checkpoint/fixture\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.CommandContext(t.Context(), python, "-B", filepath.FromSlash(checkpointScript), "--event", "tool", "--json", "--marker")
-	cmd.Dir = session.repoPath
-	cmd.Env = withoutDetachedJobEnv(os.Environ())
-	raw, err := cmd.CombinedOutput()
+	ctx, err := util.WithCommandEnvironment(t.Context(), withoutDetachedJobEnv(os.Environ()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := util.RunCommandBytes(ctx, session.repoPath, python, util.MaxCommandOutputBytes,
+		"-B", filepath.FromSlash(checkpointScript), "--event", "tool", "--json", "--marker")
+	raw := append(res.Stdout, res.Stderr...)
 	if err != nil {
 		t.Fatalf("actual checkpoint evaluator failed: %v (%s)", err, raw)
 	}

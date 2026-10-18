@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // tagNonSemverNoise points count lightweight tags at HEAD in one git process. Each name
@@ -22,12 +23,19 @@ func tagNonSemverNoise(t *testing.T, dir string, env []string, count int) {
 	for i := 1; i <= count; i++ {
 		fmt.Fprintf(&input, "create refs/tags/v-nonsemver-%05d %s\n", i, head)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "update-ref", "--stdin")
-	cmd.Dir, cmd.Env, cmd.Stdin = dir, env, strings.NewReader(input.String())
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("create tag noise: %v (%s)", err, out)
+	envCtx, err := util.WithCommandEnvironment(ctx, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdinCtx, err := util.WithCommandStdin(envCtx, []byte(input.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := util.RunCommandBytes(stdinCtx, dir, "git", util.MaxCommandOutputBytes, "update-ref", "--stdin")
+	if err != nil {
+		t.Fatalf("create tag noise: %v (%s)", err, string(append(res.Stdout, res.Stderr...)))
 	}
 }
 

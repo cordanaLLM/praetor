@@ -65,7 +65,8 @@ func TestMain_Positive_InterruptReachesRunningCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	helper := exec.Command(binary, signalProcessRun)
+	//nolint:forbidigo,nolintlint // raw command fixture: tests process-group signal forwarding of praetorctl itself
+	helper := exec.CommandContext(t.Context(), binary, signalProcessRun)
 	helper.Env = append(os.Environ(),
 		"PATH="+stubs+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"PRAETOR_SIGNAL_PROCESS_TEST=ci filter --dir "+repo, "GOCOVERDIR="+t.TempDir())
@@ -177,11 +178,8 @@ func newHermeticGateRepo(t *testing.T) string {
 	dir := t.TempDir()
 	env := testsupport.HermeticGitEnv(t)
 	runGit := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = env
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v in %s: %v\n%s", args, dir, err, string(out))
+		if out, err := runFixtureGit(t, dir, env, args...); err != nil {
+			t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
 		}
 	}
 	runGit("init", "-q", "-b", "main")
@@ -233,9 +231,11 @@ func startGateRunHelper(t *testing.T, ignoreHangup bool, extraEnv ...string) *ga
 		catchHangupForExec()
 	}
 	h := &gateRunHelper{repo: newHermeticGateRepo(t), ready: filepath.Join(t.TempDir(), "ready"), done: make(chan struct{})}
-	h.cmd = exec.Command(binary, signalProcessRun)
+	//nolint:forbidigo,nolintlint // raw command fixture: tests process-group signal handling of gate run
+	h.cmd = exec.CommandContext(t.Context(), binary, signalProcessRun)
 	if ignoreHangup {
-		h.cmd = exec.Command("sh", "-c", `trap '' HUP; exec "$0" "$@"`, binary, signalProcessRun)
+		//nolint:forbidigo,nolintlint // raw command fixture: tests process-group SIGHUP trap propagation of gate run
+		h.cmd = exec.CommandContext(t.Context(), "sh", "-c", `trap '' HUP; exec "$0" "$@"`, binary, signalProcessRun)
 	}
 	h.cmd.Env = append(os.Environ(),
 		"PATH="+stubs+string(os.PathListSeparator)+os.Getenv("PATH"),
@@ -305,11 +305,11 @@ func (h *gateRunHelper) isolatedWorktrees(t *testing.T) (dirs []os.DirEntry, bra
 	if err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
-	out, err := exec.Command("git", "-C", h.repo, "branch", "--list", "wt/*").CombinedOutput()
+	out, err := runFixtureGit(t, h.repo, testsupport.HermeticGitEnv(t), "branch", "--list", "wt/*")
 	if err != nil {
 		t.Fatalf("git branch --list: %v\n%s", err, out)
 	}
-	return dirs, strings.TrimSpace(string(out))
+	return dirs, strings.TrimSpace(out)
 }
 
 // requireIsolatedWorktree fails unless the race stage's worktree and branch exist.
