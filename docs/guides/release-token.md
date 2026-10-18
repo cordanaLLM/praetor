@@ -58,7 +58,7 @@ Every workflow document under `.github/workflows` is parsed and checked:
 A failure names each workflow, job, step, and line where known:
 
 ```text
-[FAIL] Release token: .github/workflows/release.yml:14: job release, step "release-please": token is ${{ github.token }} or ${{ secrets.GITHUB_TOKEN }}.
+[FAIL] Release token: .github/workflows/release.yml:14: job release, step "release-please": takes the workflow token (github.token or secrets.GITHUB_TOKEN), which starts no checks on its release pull request.
 [FAIL] Release token: no live exceptions entry declares the steps above; give each a token from an actions/create-github-app-token step (docs/guides/release-token.md), or, for a step that cannot yet, declare its workflow in the exceptions list of .standards.yaml (rule release-token, path .github/workflows/<workflow>, category C, a reason, and an expiry at most 10 days ahead).
 ```
 

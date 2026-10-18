@@ -101,7 +101,7 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
 `,
-		wantProblem: "token missing (release-please then uses github.token)",
+		wantProblem: problemNoToken,
 	},
 	{
 		name: "token missing in with map",
@@ -114,7 +114,7 @@ jobs:
         with:
           release-type: node
 `,
-		wantProblem: "token missing (release-please then uses github.token)",
+		wantProblem: problemNoToken,
 	},
 	{
 		name: "token is github.token",
@@ -127,7 +127,7 @@ jobs:
         with:
           token: ${{ github.token }}
 `,
-		wantProblem: "token is ${{ github.token }} or ${{ secrets.GITHUB_TOKEN }}",
+		wantProblem: problemWorkflowToken,
 	},
 	{
 		name: "token is secrets.GITHUB_TOKEN",
@@ -140,10 +140,10 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 `,
-		wantProblem: "token is ${{ github.token }} or ${{ secrets.GITHUB_TOKEN }}",
+		wantProblem: problemWorkflowToken,
 	},
 	{
-		name: "token from a step that is not create-github-app-token",
+		name: "token from a step that is not create-github-app-token (checkout)",
 		content: `
 jobs:
   release:
@@ -155,7 +155,7 @@ jobs:
         with:
           token: ${{ steps.checkout-step.outputs.token }}
 `,
-		wantProblem: "token from a step that is not create-github-app-token, or from a later step",
+		wantProblem: problemNotAppToken,
 	},
 	{
 		name: "token from a later step",
@@ -173,7 +173,7 @@ jobs:
           client-id: ${{ vars.CLIENT_ID }}
           private-key: ${{ secrets.KEY }}
 `,
-		wantProblem: "token from a step that is not create-github-app-token, or from a later step",
+		wantProblem: problemNoEarlierStep,
 	},
 	{
 		name: "fallback || in token",
@@ -191,7 +191,7 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token || github.token }}
 `,
-		wantProblem: "fallback ||",
+		wantProblem: problemFallback,
 	},
 	{
 		name: "app-token step conditional",
@@ -210,7 +210,7 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
 `,
-		wantProblem: "app-token step conditional or continue-on-error",
+		wantProblem: problemSkippable,
 	},
 	{
 		name: "app-token step continue-on-error",
@@ -229,7 +229,7 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
 `,
-		wantProblem: "app-token step conditional or continue-on-error",
+		wantProblem: problemSkippable,
 	},
 	{
 		name: "private-key not a secrets expression literal",
@@ -247,7 +247,7 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
 `,
-		wantProblem: "private-key not a secrets expression",
+		wantProblem: problemKeyNotSecret,
 	},
 	{
 		name: "private-key not a secrets expression env",
@@ -265,10 +265,10 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
 `,
-		wantProblem: "private-key not a secrets expression",
+		wantProblem: problemKeyNotSecret,
 	},
 	{
-		name: "app-token step lacks client-id or app-id",
+		name: problemNoAppID,
 		content: `
 jobs:
   release:
@@ -282,7 +282,7 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
 `,
-		wantProblem: "app-token step lacks client-id or app-id",
+		wantProblem: problemNoAppID,
 	},
 }
 
@@ -378,7 +378,7 @@ jobs:
 	if len(findings) == 0 {
 		t.Fatal("expected finding for cross-job token step reference, got none")
 	}
-	wantProblem := "token from a step that is not create-github-app-token, or from a later step"
+	wantProblem := problemNoEarlierStep
 	if !strings.Contains(findings[0].Problem, wantProblem) {
 		t.Errorf("finding[0].Problem = %q; want %q", findings[0].Problem, wantProblem)
 	}
@@ -450,7 +450,7 @@ jobs:
 	if len(findings) != 1 {
 		t.Fatalf("findings count = %d; want 1", len(findings))
 	}
-	if !strings.Contains(findings[0].Problem, "token missing") {
-		t.Errorf("finding Problem = %q; want token missing", findings[0].Problem)
+	if !strings.Contains(findings[0].Problem, problemNoToken) {
+		t.Errorf("finding Problem = %q; want %q", findings[0].Problem, problemNoToken)
 	}
 }

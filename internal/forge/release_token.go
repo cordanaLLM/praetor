@@ -15,6 +15,19 @@ import (
 // releaseTokensTimeout bounds one MeasureReleaseTokens call (HISS-02).
 const releaseTokensTimeout = 30 * time.Second
 
+// The findings of a release-please step, one per way its token can fail to start the release pull request's checks.
+const (
+	problemNoToken       = "sets no token, so release-please uses the workflow token, which starts no checks on its release pull request"
+	problemWorkflowToken = "takes the workflow token (github.token or secrets.GITHUB_TOKEN), which starts no checks on its release pull request"
+	problemFallback      = "falls back with || to another token; a missing app token must fail the run"
+	problemNotStepToken  = "takes its token from no steps.<id>.outputs.token of an actions/create-github-app-token step"
+	problemNoEarlierStep = "names a token step that no earlier step of the job is"
+	problemNotAppToken   = "names a token step that is not actions/create-github-app-token"
+	problemSkippable     = "its token step has if: or continue-on-error, so a skipped or forgiven step leaves the token empty"
+	problemKeyNotSecret  = "its token step takes private-key from no single ${{ secrets.NAME }}, so a missing key would not stop the run"
+	problemNoAppID       = "its token step sets neither client-id nor app-id"
+)
+
 // ReleaseTokenFinding describes one violation of the release-token gate.
 type ReleaseTokenFinding struct {
 	// Workflow is the workflow's path under .github/workflows.
@@ -164,58 +177,52 @@ func isAppTokenStep(uses string) bool {
 	return strings.HasPrefix(strings.TrimSpace(uses), "actions/create-github-app-token@")
 }
 
-// parseRawToken extracts and sanitizes with.token, checking for presence and fallback operators.
-func parseRawToken(with map[string]any) (string, string) {
-	if with == nil {
-		return "", "token missing (release-please then uses github.token)"
+// expressionBody is the inside of value when value is one closed ${{ }} expression (ghworkflow.UnwrapExpression).
+func expressionBody(value any) (string, bool) {
+	text := strings.TrimSpace(fmt.Sprint(value))
+	if !strings.HasPrefix(text, "${{") {
+		return "", false
 	}
-	rawToken, exists := with["token"]
-	if !exists || rawToken == nil {
-		return "", "token missing (release-please then uses github.token)"
-	}
-	tokenStr := strings.TrimSpace(fmt.Sprint(rawToken))
-	if tokenStr == "" {
-		return "", "token missing (release-please then uses github.token)"
-	}
-	if strings.Contains(tokenStr, "||") {
-		return "", "fallback ||"
-	}
-	return tokenStr, ""
+	body, closed := ghworkflow.UnwrapExpression(text)
+	return body, closed && !strings.Contains(body, "${{") && !strings.Contains(body, "}}")
 }
 
-// parseTokenBody inspects the inner text of a ${{ ... }} expression.
-func parseTokenBody(body string) (string, string) {
-	if strings.Contains(body, "${{") || strings.Contains(body, "}}") {
-		return "", "token from a step that is not create-github-app-token, or from a later step"
+// validateTokenExpression reads with.token: the id of the step whose token output it names, or a problem.
+func validateTokenExpression(with map[string]any) (string, string) {
+	token, problem := tokenText(with)
+	if problem != "" {
+		return "", problem
 	}
-	if body == "github.token" || body == "secrets.GITHUB_TOKEN" {
-		return "", "token is ${{ github.token }} or ${{ secrets.GITHUB_TOKEN }}"
+	body, ok := expressionBody(token)
+	if !ok {
+		return "", problemNotStepToken
 	}
-	if !strings.HasPrefix(body, "steps.") || !strings.HasSuffix(body, ".outputs.token") {
-		return "", "token from a step that is not create-github-app-token, or from a later step"
+	return stepOutputID(body)
+}
+
+// tokenText is with.token as written, or the problem a missing, fallback or workflow token has.
+func tokenText(with map[string]any) (string, string) {
+	raw, ok := with["token"]
+	token := strings.TrimSpace(fmt.Sprint(raw))
+	switch {
+	case !ok || raw == nil || token == "":
+		return "", problemNoToken
+	case strings.Contains(token, "||"):
+		return "", problemFallback
+	case strings.Contains(token, "github.token") || strings.Contains(token, "GITHUB_TOKEN"):
+		return "", problemWorkflowToken
 	}
-	stepID := strings.TrimSuffix(strings.TrimPrefix(body, "steps."), ".outputs.token")
-	if stepID == "" || strings.ContainsAny(stepID, " \t\r\n.|&()[]'\"") {
-		return "", "token from a step that is not create-github-app-token, or from a later step"
+	return token, ""
+}
+
+// stepOutputID is the step id of an expression body steps.<id>.outputs.token, or problemNotStepToken.
+func stepOutputID(body string) (string, string) {
+	stepID, isStep := strings.CutPrefix(body, "steps.")
+	stepID, isOutput := strings.CutSuffix(stepID, ".outputs.token")
+	if !isStep || !isOutput || stepID == "" || strings.ContainsAny(stepID, " \t\r\n.|&()[]'\"") {
+		return "", problemNotStepToken
 	}
 	return stepID, ""
-}
-
-// validateTokenExpression parses and verifies with.token, returning the referenced step ID or a problem.
-func validateTokenExpression(with map[string]any) (string, string) {
-	tokenStr, errProblem := parseRawToken(with)
-	if errProblem != "" {
-		return "", errProblem
-	}
-	inner, hasOpen := strings.CutPrefix(tokenStr, "${{")
-	body, hasClose := strings.CutSuffix(inner, "}}")
-	if !hasOpen || !hasClose {
-		if strings.Contains(tokenStr, "github.token") || strings.Contains(tokenStr, "GITHUB_TOKEN") {
-			return "", "token is ${{ github.token }} or ${{ secrets.GITHUB_TOKEN }}"
-		}
-		return "", "token from a step that is not create-github-app-token, or from a later step"
-	}
-	return parseTokenBody(strings.TrimSpace(body))
 }
 
 // findAppTokenStep looks up stepID in earlier steps of the same job.
@@ -223,53 +230,34 @@ func findAppTokenStep(steps []ghworkflow.Step, currentIdx int, stepID string) (*
 	for k := 0; k < currentIdx && k < len(steps); k++ {
 		if steps[k].ID == stepID {
 			if !isAppTokenStep(steps[k].Uses) {
-				return nil, "token from a step that is not create-github-app-token, or from a later step"
+				return nil, fmt.Sprintf("%s (%s runs %s)", problemNotAppToken, stepID, strings.TrimSpace(steps[k].Uses))
 			}
 			return &steps[k], ""
 		}
 	}
-	return nil, "token from a step that is not create-github-app-token, or from a later step"
+	return nil, fmt.Sprintf("%s (%s)", problemNoEarlierStep, stepID)
 }
 
 // validateAppTokenStep verifies an actions/create-github-app-token step.
 func validateAppTokenStep(step *ghworkflow.Step) []string {
 	var problems []string
 	if strings.TrimSpace(step.If) != "" || strings.TrimSpace(step.ContinueOnError) != "" {
-		problems = append(problems, "app-token step conditional or continue-on-error")
+		problems = append(problems, problemSkippable)
 	}
 	if !isValidSecretsExpression(step.With) {
-		problems = append(problems, "private-key not a secrets expression")
+		problems = append(problems, problemKeyNotSecret)
 	}
 	if !hasAppOrClientID(step.With) {
-		problems = append(problems, "app-token step lacks client-id or app-id")
+		problems = append(problems, problemNoAppID)
 	}
 	return problems
 }
 
 // isValidSecretsExpression checks if with.private-key is a single ${{ secrets.<NAME> }} expression.
 func isValidSecretsExpression(with map[string]any) bool {
-	if with == nil {
-		return false
-	}
-	raw, exists := with["private-key"]
-	if !exists || raw == nil {
-		return false
-	}
-	val := strings.TrimSpace(fmt.Sprint(raw))
-	inner, hasOpen := strings.CutPrefix(val, "${{")
-	body, hasClose := strings.CutSuffix(inner, "}}")
-	if !hasOpen || !hasClose {
-		return false
-	}
-	body = strings.TrimSpace(body)
-	if strings.Contains(body, "${{") || strings.Contains(body, "}}") || strings.Contains(body, "||") {
-		return false
-	}
-	if !strings.HasPrefix(body, "secrets.") {
-		return false
-	}
-	name := strings.TrimPrefix(body, "secrets.")
-	return name != "" && !strings.ContainsAny(name, " \t\r\n.|&()[]'\"")
+	body, ok := expressionBody(with["private-key"])
+	name, isSecret := strings.CutPrefix(body, "secrets.")
+	return ok && isSecret && name != "" && !strings.ContainsAny(name, " \t\r\n.|&()[]'\"")
 }
 
 // hasAppOrClientID reports whether client-id or app-id is set to a non-empty value.
@@ -286,7 +274,6 @@ func hasAppOrClientID(with map[string]any) bool {
 	return false
 }
 
-// stepLineNumber finds the 1-based line number for a step in the workflow YAML document.
 // stepJobNode returns the mapping node for jobID under doc.
 func stepJobNode(doc *yaml.Node, jobID string) *yaml.Node {
 	if doc == nil || doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {

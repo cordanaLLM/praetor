@@ -237,8 +237,8 @@ func TestAuditReleaseToken_FailsWithoutExceptions(t *testing.T) {
 	if !strings.Contains(err.Error(), "[FAIL] Release token:") {
 		t.Errorf("error = %q; want [FAIL] Release token:", err.Error())
 	}
-	if !strings.Contains(err.Error(), "token is ${{ github.token }} or ${{ secrets.GITHUB_TOKEN }}") {
-		t.Errorf("error = %q; want token is ${{ github.token }} or ${{ secrets.GITHUB_TOKEN }}", err.Error())
+	if !strings.Contains(err.Error(), "takes the workflow token (github.token or secrets.GITHUB_TOKEN)") {
+		t.Errorf("error = %q; want the workflow-token finding", err.Error())
 	}
 }
 
