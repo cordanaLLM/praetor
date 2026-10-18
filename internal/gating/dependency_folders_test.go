@@ -148,8 +148,9 @@ func TestRunGatedPipeline_Negative_VirtualenvRecipeWithIgnoredVenvInCheckout(t *
 	if _, err := util.RunCommand(t.Context(), "", python, "-m", "venv", "--help"); err != nil {
 		t.Skipf("python3 has no venv module, so the recipe under test cannot run: %v", err)
 	}
-	// --without-pip: the refusal under test is venv's own, so the recipe needs no ensurepip.
-	dir := createIgnoredDependencyRepo(t, python+" -m venv --without-pip .venv && test ! -L .venv")
+	// --without-pip: the refusal under test is venv's own, so the recipe needs no ensurepip. The
+	// recipe runs under sh, which reads a Windows path's backslashes as escapes: forward slashes.
+	dir := createIgnoredDependencyRepo(t, filepath.ToSlash(python)+" -m venv --without-pip .venv && test ! -L .venv")
 	writeFile(t, filepath.Join(dir, ".venv", "pyvenv.cfg"), "home = /checkout-only\n")
 
 	rep := gatedRun(t, dir, RunOptions{AdmitUnsupported: true})
