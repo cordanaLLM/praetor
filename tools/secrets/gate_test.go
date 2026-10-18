@@ -13,16 +13,21 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/util"
+
 	"github.com/cordanaLLM/praetor/tools/secrets"
 	"github.com/cordanaLLM/praetor/tools/secrets/rules"
 )
 
 func runGateCLI(t *testing.T, dir string, envExceptions string) (string, int) {
 	t.Helper()
-	cmd := exec.Command("go", "run", "-tags=secretsgate", "./tools/secrets/gate", "-path="+dir)
-	cmd.Dir = filepath.Join("..", "..")
-	cmd.Env = append(os.Environ(), "SECRETS_EXCEPTIONS="+envExceptions)
-	out, err := cmd.CombinedOutput()
+	ctx, err := util.WithCommandEnvironment(t.Context(), append(os.Environ(), "SECRETS_EXCEPTIONS="+envExceptions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := util.RunCommandBytes(ctx, filepath.Join("..", ".."), "go", util.MaxCommandOutputBytes,
+		"run", "-tags=secretsgate", "./tools/secrets/gate", "-path="+dir)
+	out := append(res.Stdout, res.Stderr...)
 	exitCode := 0
 	if err != nil {
 		var exitErr *exec.ExitError
