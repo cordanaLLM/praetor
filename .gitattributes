@@ -57,6 +57,11 @@ internal/devcontainer/testdata/prior-release-bundle/* text eol=lf
 # three files would report drift on every Windows tree, so they keep LF like *.go.
 go.mod text eol=lf
 go.sum text eol=lf
+
+# The REUSE requirements lock is compared byte for byte with the copy adoption emits
+# (internal/adopt/reuse_requirements.go, an LF Go string); a CRLF checkout on Windows
+# failed TestReuseRequirementsLockMatchesCommitted (train H CI run 39116010306).
+.config/reuse/requirements.txt text eol=lf
 LICENSE text eol=lf
 
 # tools/markdownlint assets are embedded into the adopter binary. Keep Praetor's source

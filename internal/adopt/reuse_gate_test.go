@@ -829,6 +829,19 @@ func TestReuseRequirementsLockMatchesCommitted(t *testing.T) {
 	}
 }
 
+// Boundary: the committed lock checks out with LF on every platform, so the byte comparison
+// above holds on a Windows CRLF checkout too (.gitattributes pins it; a CRLF checkout failed
+// it in CI run 39116010306). Skipped, with the reason, where git cannot answer.
+func TestReuseRequirementsLockCheckoutIsLF(t *testing.T) {
+	res, err := util.RunGitProbe(t.Context(), filepath.Join("..", ".."), 4096, "check-attr", "eol", "--", reuseRequirementsFile)
+	if err != nil {
+		t.Skipf("git check-attr cannot run here: %v", err)
+	}
+	if got := strings.TrimSpace(string(res.Stdout)); !strings.HasSuffix(got, ": eol: lf") {
+		t.Fatalf("%s checks out as %q; .gitattributes pins it to LF", reuseRequirementsFile, got)
+	}
+}
+
 // Boundary: an adopter holding main's prior digest-pinned reuse.yml (reuse-action-v6-digest-pins.yml)
 // is refreshed to the containerless hash-pinned rendering on a plain adopt.
 func TestAdopt_RefreshesMainsPriorDigestPinnedReuseWorkflow(t *testing.T) {
