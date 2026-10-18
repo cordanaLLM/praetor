@@ -3,19 +3,12 @@
 ---
 # Code scanning: CodeQL analyses the Go, Python, and workflow code of this
 # repository and uploads findings to the forge's code scanning. The job is no
-# part of the verification gate and no required check; it runs on a pull
-# request that changes what it analyses, on main, once a week, and by hand.
+# part of the verification gate and no required check; it runs on main, once
+# a week, and by hand. It does not run on pull requests: uploading findings
+# needs security-events: write, which no job a pull request starts may hold.
 name: Code scanning
 
 'on':
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - "**/*.go"
-      - "**/*.py"
-      - .github/workflows/**
-      - go.mod
-      - go.sum
   push:
     branches: [main]
   schedule:
@@ -31,6 +24,7 @@ concurrency:
 jobs:
   analyze:
     name: CodeQL (${{ matrix.language }})
+    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
     runs-on: ubuntu-26.04
     timeout-minutes: 60  # the Go extraction reads the whole module
     permissions:
@@ -47,19 +41,6 @@ jobs:
           - language: python
             build-mode: none
     steps:
-      - name: Stop on a draft pull request
-        if: github.event.pull_request.draft == true
-        shell: bash
-        env:
-          TITLE: Gate not run on a draft
-          MESSAGE: >-
-            The gate did not run because the pull request is a draft.
-            It runs when the pull request is marked ready for review.
-        run: |
-          echo "::error title=$TITLE::$MESSAGE"
-          echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
-          exit 1
-
       - name: Checkout Source Code
         # yamllint disable-line rule:line-length
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -74,6 +55,13 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+
+      - name: Restore Go Module And Build Caches
+        if: matrix.language == 'go'
+        uses: ./.github/actions/go-cache
+        with:
+          job: codeql
+          go-version: ${{ steps.setup-go.outputs.go-version }}
 
       - name: Initialize CodeQL
         # yamllint disable-line rule:line-length
