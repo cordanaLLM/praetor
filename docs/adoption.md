@@ -941,7 +941,9 @@ Loaded remotely, the action has no `.git`, so a forced run first checks out prae
 
   A backward `goto`, a jump to a label inside a nested block, a second label, another name and
   a computed `goto` all stay findings (`TestCleanupGoto_Negative_OtherGotosStillFail`). The scan
-  reads a `goto` or a label only where it opens a line, as it always has. `praetorctl audit`, the
+  finds a `goto` anywhere in a statement, `if (rc) goto out;` included, but not in a string or a
+  comment (`TestCleanupGoto_Negative_OneLineGotoIsAGoto`); it reads a label only where it opens a
+  line. In a macro body it reads a `goto` only where a line of the body starts with it. `praetorctl audit`, the
   gate's HISS stage, `praetorctl baseline`, the MCP audit, public-repository verification and
   adoption's legacy-debt scan all read the declaration through
   `config.Manifest.CleanupGotoException`, so they judge the same tree the same way
