@@ -1,0 +1,3 @@
+type: fixed
+title: The gosec ratchet keys a finding by its repository-relative path when the gate or baseline --record runs with a relative root
+issue: '#1453'
