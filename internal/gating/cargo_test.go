@@ -143,7 +143,7 @@ func TestToolchainStages_Positive_GoPathUnchanged(t *testing.T) {
 		stagePrefetch: {Status: StagePassed}, stageSecurity: {Status: StagePassed}, stageTests: {Status: StagePassed},
 	})
 	want := []string{"go mod verify", "go mod download", "go list -f {{.Dir}} ./...", "govulncheck -scan symbol -format json ./...",
-		"gosec -conf " + GosecConfigFile + " .", "go list -find -f {{.ImportPath}} ./...",
+		"gosec -fmt=json -conf " + GosecConfigFile + " .", "go list -find -f {{.ImportPath}} ./...",
 		"go test -race -timeout " + EnvRunBudget(repo, false).StageBound.String() + " ./..."}
 	if lines := commandLines(*recorded); !slices.Equal(lines, want) {
 		t.Fatalf("commands = %q, want %q", lines, want)

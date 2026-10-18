@@ -3,6 +3,9 @@ package hiss
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"strings"
 )
 
@@ -143,4 +146,43 @@ func lineAnchor(lines []string, line int) string {
 	}
 	sum := sha256.Sum256([]byte(strings.Join(strings.Fields(lines[line-1]), "")))
 	return anchorText + hex.EncodeToString(sum[:])[:textAnchorHexLen]
+}
+
+// extractGoFunctions locates functions and methods in a parsed Go file using
+// the same extraction logic that the HISS Go scanner uses.
+func extractGoFunctions(fset *token.FileSet, file *ast.File) []funcSpan {
+	if file == nil || fset == nil {
+		return nil
+	}
+	var functions []funcSpan
+	for i := 0; i < len(file.Decls) && i < maxNotedFunctions; i++ {
+		fn, ok := file.Decls[i].(*ast.FuncDecl)
+		if !ok || fn.Name == nil {
+			continue
+		}
+		owner := ""
+		if fn.Recv != nil && len(fn.Recv.List) > 0 {
+			owner, _ = ReceiverTypeName(fn.Recv.List[0].Type)
+		}
+		functions = appendFunction(functions, qualifiedName(owner, fn.Name.Name), fset.Position(fn.Pos()).Line, fset.Position(fn.End()).Line)
+	}
+	return functions
+}
+
+// AnchorGoSource returns the findingAnchor result for a finding at line in Go source data.
+func AnchorGoSource(data []byte, line int) string {
+	if len(data) == 0 {
+		return anchorFile
+	}
+	lines := strings.Split(string(data), "\n")
+	if line < 1 || line > len(lines) {
+		return anchorFile
+	}
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "", data, parser.SkipObjectResolution)
+	if err != nil {
+		return lineAnchor(lines, line)
+	}
+	functions := extractGoFunctions(fset, file)
+	return findingAnchor(functions, lines, line, "")
 }
