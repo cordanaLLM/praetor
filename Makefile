@@ -171,7 +171,7 @@ GO_SECURITY_TOOL := go tool -modfile=$(CURDIR)/tools/go/go.mod
 # just the working tree, which is what the axiom actually claims. Measured on this
 # repository: 234 commits, 23 MB, 2.5s, zero findings -- cheap enough to be unconditional.
 secrets:
-	$(GO_SECURITY_TOOL) gitleaks detect --no-banner --redact --config .gitleaks.toml
+	go run ./cmd/standardsctl security secrets -- $(GO_SECURITY_TOOL) gitleaks
 
 # The Go vulnerability gate (internal/govuln) runs the pinned govulncheck at symbol level and judges
 # each uncalled advisory against security/vex/go.openvex.json, as gate run and CI do.

@@ -14,10 +14,12 @@ import (
 )
 
 const (
-	govulnModule      = "golang.org/x/vuln"
-	govulnToolPackage = govulnModule + "/cmd/govulncheck"
-	gosecModule       = "github.com/securego/gosec/v2"
-	gosecToolPackage  = gosecModule + "/cmd/gosec"
+	govulnModule        = "golang.org/x/vuln"
+	govulnToolPackage   = govulnModule + "/cmd/govulncheck"
+	gosecModule         = "github.com/securego/gosec/v2"
+	gosecToolPackage    = gosecModule + "/cmd/gosec"
+	gitleaksModule      = "github.com/zricethezav/gitleaks/v8"
+	gitleaksToolPackage = gitleaksModule
 )
 
 // GosecInstallGuide is the one install advice for a missing gosec (flavor tool lists, the gate's
@@ -30,7 +32,7 @@ const GosecInstallGuide = "go install -modfile=" + gomanifest.ToolModuleFile + "
 	" or later; a bare go install of gosec builds an x/tools too old for the go1.27.2 export data)"
 
 // securityWorkflowFacts selects the install form for the Security Scan workflow. A tools
-// module that declares both scanners remains the adopter's version source; every other repository
+// module that declares all scanners remains the adopter's version source; every other repository
 // gets the template's pinned throwaway module, including the common case with no tools module.
 func securityWorkflowFacts(ctx context.Context, repoPath string) (templates.Context, string) {
 	facts := templates.Context{}
@@ -46,5 +48,6 @@ func securityWorkflowFacts(ctx context.Context, repoPath string) (templates.Cont
 
 func declaresSecurityScanners(data []byte) bool {
 	return gomanifest.DeclaresTool(data, govulnModule, govulnToolPackage) &&
-		gomanifest.DeclaresTool(data, gosecModule, gosecToolPackage)
+		gomanifest.DeclaresTool(data, gosecModule, gosecToolPackage) &&
+		gomanifest.DeclaresTool(data, gitleaksModule, gitleaksToolPackage)
 }

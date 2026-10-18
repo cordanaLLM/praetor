@@ -384,3 +384,64 @@ func TestAdoptWorkflow_Negative_PassesResolvedGoVersionToAction(t *testing.T) {
 		t.Fatalf("mutant with one input dropped: missing %q; want exactly one call reported", missing)
 	}
 }
+
+func TestSecuritySecrets_Negative_FindingExitsThree(t *testing.T) {
+	dir := t.TempDir()
+	reportJSON := `[{"RuleID":"generic-api-key","File":"creds.py","StartLine":1,"Commit":"1122334455667788990011223344556677889900","Fingerprint":"fp1"}]`
+	run := func(_ context.Context, _ string, _ string, args ...string) (string, error) {
+		for i := 0; i < len(args); i++ {
+			if args[i] == "--report-path" && i+1 < len(args) {
+				if writeErr := os.WriteFile(args[i+1], []byte(reportJSON), 0o600); writeErr != nil {
+					return "", writeErr
+				}
+			}
+		}
+		return "", errors.New("exit status 1")
+	}
+	var stdout, stderr bytes.Buffer
+	err := dispatchSecurity([]string{"secrets", "--path=" + dir}, run, &stdout, &stderr)
+	if exitCode(err) != secretsFindingExit {
+		t.Fatalf("exit = %d, want %d (secretsFindingExit)\nstderr: %s", exitCode(err), secretsFindingExit, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "1122334455667788990011223344556677889900") || !strings.Contains(stderr.String(), "generic-api-key") {
+		t.Errorf("stderr does not report finding: %s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "secrets: FAIL: 1 blocking secret finding(s)") {
+		t.Errorf("stderr does not report FAIL summary: %s", stderr.String())
+	}
+}
+
+func TestSecuritySecrets_Positive_CleanPasses(t *testing.T) {
+	dir := t.TempDir()
+	run := func(_ context.Context, _ string, _ string, args ...string) (string, error) {
+		for i := 0; i < len(args); i++ {
+			if args[i] == "--report-path" && i+1 < len(args) {
+				if writeErr := os.WriteFile(args[i+1], []byte("[]"), 0o600); writeErr != nil {
+					return "", writeErr
+				}
+			}
+		}
+		return "", nil
+	}
+	var stdout, stderr bytes.Buffer
+	err := dispatchSecurity([]string{"secrets", "--path=" + dir}, run, &stdout, &stderr)
+	if err != nil || exitCode(err) != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr: %s", exitCode(err), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "secrets: PASS: zero secret findings in history") {
+		t.Errorf("stdout does not report PASS summary: %s", stdout.String())
+	}
+}
+
+func TestSecuritySecrets_Negative_UsageErrorExitsTwo(t *testing.T) {
+	cases := map[string][]string{
+		"unknown flag": {"secrets", "--bogus-flag"},
+	}
+	for name, args := range cases {
+		var stdout, stderr bytes.Buffer
+		err := dispatchSecurity(args, nil, &stdout, &stderr)
+		if exitCode(err) != secretsIncompleteExit || !strings.Contains(stderr.String(), "secrets: no verdict") {
+			t.Errorf("%s: exit %d, want %d, stderr: %s", name, exitCode(err), secretsIncompleteExit, stderr.String())
+		}
+	}
+}

@@ -173,8 +173,11 @@ Every dependency manifest must be cryptographically pinned:
 
 Zero credentials in Git history:
 
-- Automated secret detection (`make secrets` / `gitleaks`) scans repository history inside `verify-all`.
+- Automated secret detection (`make secrets` / `praetorctl security secrets`) scans full repository history inside `verify-all`.
+- History scans must inspect merge commits using `--log-opts="--full-history --all -m"` because default `git log -p` omits patches for merge commits.
 - API keys, private certificates, and credentials must never be committed.
+- Secret scan exemptions must be declared in `.standards.yaml` with `rule: HISS-12`, target `path`, `tool` (the gitleaks rule id, e.g. `generic-api-key`), optional finding `fingerprint`, mandatory ISO-8601 `expires` date, and rationale in `reason`.
+- An expired exemption excuses nothing; an exemption that excuses no findings fails the gate ("excuses no finding: remove it"). Undated exemption files such as `.gitleaksignore` are prohibited.
 
 ### HISS-13: Monotonic Debt Ratchet
 

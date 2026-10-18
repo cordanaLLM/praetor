@@ -22,6 +22,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/templates"
+	secretsassets "github.com/cordanaLLM/praetor/tools/secrets"
 )
 
 const (
@@ -507,6 +508,8 @@ func bootstrapAssetFamilies() ([]bootstrapAssetFamily, error) {
 		name: "client schemas", source: clientschema.SourceFile, directive: clientschema.EmbedDirective, assets: clientschema.AssetPaths(),
 	}, bootstrapAssetFamily{
 		name: "reviewed images", source: reviewedImagesSource, directive: priorImagesDirective, assets: []string{PriorImagesFile},
+	}, bootstrapAssetFamily{
+		name: "secrets gate", source: secretsassets.SourceFile, directive: secretsassets.EmbedDirective, assets: secretsassets.AssetPaths(),
 	}), nil
 }
 

@@ -101,8 +101,41 @@ func AuditDeclaredLinters(ctx context.Context, opts DeclaredLintersOptions) (str
 		return strings.Join(skipLines, "\n"), fmt.Errorf("[FAIL] %s: cannot inspect workflows: %w", declaredLintersGate, err)
 	}
 
+	if hasDeclaredLinter(declared, "gitleaks") {
+		if err := checkGitleaksWorkflowLogOpts(ctx, opts.RootDir); err != nil {
+			return strings.Join(skipLines, "\n"), err
+		}
+	}
+
 	judged := judgeDeclaredLinters(missing, entries, today)
 	return finalizeDeclaredLintersAudit(judged, len(applicable), skipLines)
+}
+
+func hasDeclaredLinter(declared []config.DeclaredLinter, name string) bool {
+	lower := strings.ToLower(name)
+	for i := 0; i < len(declared); i++ {
+		if strings.ToLower(declared[i].Name) == lower {
+			return true
+		}
+	}
+	return false
+}
+
+func checkGitleaksWorkflowLogOpts(ctx context.Context, rootDir string) error {
+	fault, err := forge.FindGitleaksHistoryScanWithoutMinusM(ctx, rootDir)
+	if err != nil {
+		return fmt.Errorf("[FAIL] %s: cannot inspect workflows: %w", declaredLintersGate, err)
+	}
+	if fault != nil {
+		stepLabel := fault.StepName
+		if stepLabel != "" {
+			stepLabel = fmt.Sprintf("step %q", stepLabel)
+		} else {
+			stepLabel = fmt.Sprintf("step %d", fault.StepIndex)
+		}
+		return fmt.Errorf("[FAIL] %s: %s (%s): gitleaks history scan runs without -m in its log options", declaredLintersGate, fault.WorkflowPath, stepLabel)
+	}
+	return nil
 }
 
 func handleEmptyDeclared(entries []config.Exception) (string, error) {

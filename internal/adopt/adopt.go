@@ -1208,6 +1208,9 @@ func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {
 		Details: "Initialized canonical session state ledger and bug/question journals",
 	})
 	s.applyDetectedFlavor(ctx)
+	if err := reconcileSecretsGate(ctx, s); err != nil {
+		return err
+	}
 	return s.reconcileDeclaredLintersExceptions(ctx)
 }
 

@@ -17,24 +17,26 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/govuln"
+	"github.com/cordanaLLM/praetor/internal/secretscan"
 	"github.com/cordanaLLM/praetor/internal/util"
 	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
 )
 
 const (
 	// securityUsage is the security command's synopsis.
-	securityUsage = "usage: praetorctl security govuln [--path=.] [-- scanner command...]"
+	securityUsage = "usage: praetorctl security <govuln|secrets> [--path=.] [-- scanner command...]"
 	// govulnFindingExit is the exit status of a scan with an advisory that fails the gate.
 	govulnFindingExit = 1
 	// govulnIncompleteExit is the exit status of a scan, an OpenVEX document or a command line
 	// that gave no verdict: never 0, and distinct from a finding.
 	govulnIncompleteExit = 2
+	// secretsFindingExit is the exit status of a secret scan finding that is not excused.
+	secretsFindingExit = 3
+	// secretsIncompleteExit is the exit status of an incomplete secret scan or invalid options.
+	secretsIncompleteExit = 2
 )
 
-// runSecurity is `praetorctl security govuln`: the Go vulnerability gate (internal/govuln). It is
-// the one implementation the gate run's security stage, the pre-push job adoption writes and
-// this repository's security workflow run; the CLI exists so the hook and the workflow call the
-// same code the gate stage calls instead of a second script.
+// runSecurity is `praetorctl security`: the security gates (govuln, secrets).
 func runSecurity(args []string) error {
 	return dispatchSecurity(args, util.RunCommand, os.Stdout, os.Stderr)
 }
@@ -42,10 +44,17 @@ func runSecurity(args []string) error {
 // dispatchSecurity runs the security subcommand args name. A missing or unknown one is a usage
 // error, which exits 2 like every command line the gate cannot run (securityUsageError).
 func dispatchSecurity(args []string, run govuln.Runner, stdout, stderr io.Writer) error {
-	if len(args) == 0 || args[0] != "govuln" {
-		return securityUsageError(stderr, errors.New("the security command runs one subcommand, govuln"))
+	if len(args) == 0 {
+		return securityUsageError(stderr, errors.New("the security command runs govuln or secrets"))
 	}
-	return runSecurityGovuln(args[1:], run, stdout, stderr)
+	switch args[0] {
+	case "govuln":
+		return runSecurityGovuln(args[1:], run, stdout, stderr)
+	case "secrets":
+		return runSecuritySecrets(args[1:], run, stdout, stderr)
+	default:
+		return securityUsageError(stderr, fmt.Errorf("unknown security subcommand %q", args[0]))
+	}
 }
 
 // securityUsageError reports a command line the gate cannot run on stderr, with the synopsis, and
@@ -56,7 +65,69 @@ func securityUsageError(stderr io.Writer, err error) error {
 	if errors.Is(err, flag.ErrHelp) {
 		return err
 	}
-	return writeWithStatus(stderr, "govuln: no verdict: "+err.Error()+"\n"+securityUsage+"\n", govulnIncompleteExit)
+	return writeWithStatus(stderr, "security: no verdict: "+err.Error()+"\n"+securityUsage+"\n", govulnIncompleteExit)
+}
+
+// runSecuritySecrets scans history with gitleaks, reading merge commits and judging findings against
+// HISS-12 exceptions. It exits 3 on an unexcused finding and 2 on an incomplete scan.
+func runSecuritySecrets(args []string, run govuln.Runner, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("security secrets", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	repoPath := fs.String("path", ".", "Root of the repository to scan; its .standards.yaml names the exceptions")
+	configPath := fs.String("config", "", "Path to .gitleaks.toml configuration (default is <path>/.gitleaks.toml)")
+	scanner, err := parseInterspersed(fs, args)
+	if err != nil {
+		return securitySecretsUsageError(stderr, err)
+	}
+	ctx, cancel := commandContext(secretscan.ScanTimeout + time.Minute)
+	defer cancel()
+	report, err := secretscan.Check(ctx, secretscan.Options{
+		Dir:        *repoPath,
+		ConfigPath: *configPath,
+		Scanner:    scanner,
+		Run:        secretscan.Runner(run),
+	})
+	if err != nil {
+		return writeWithStatus(stderr, fmt.Sprintf("secrets: no verdict: %v\n", err), secretsIncompleteExit)
+	}
+	return reportSecrets(report, stdout, stderr)
+}
+
+func securitySecretsUsageError(stderr io.Writer, err error) error {
+	if errors.Is(err, flag.ErrHelp) {
+		return err
+	}
+	return writeWithStatus(stderr, "secrets: no verdict: "+err.Error()+"\n"+securityUsage+"\n", secretsIncompleteExit)
+}
+
+func reportSecrets(report *secretscan.Report, stdout, stderr io.Writer) error {
+	for i := 0; i < len(report.Allowed); i++ {
+		f := report.Allowed[i]
+		msg := fmt.Sprintf("secrets: allowed: commit %s: %s:%d [%s] (%s)\n", f.Commit, f.File, f.StartLine, f.RuleID, f.Fingerprint)
+		if writeErr := writeWithStatus(stdout, msg, 0); writeErr != nil {
+			return writeErr
+		}
+	}
+	if report.Failed() {
+		for i := 0; i < len(report.Blocking); i++ {
+			f := report.Blocking[i]
+			msg := fmt.Sprintf("secrets: finding: commit %s: %s:%d [%s] (%s)\n", f.Commit, f.File, f.StartLine, f.RuleID, f.Fingerprint)
+			if writeErr := writeWithStatus(stderr, msg, 0); writeErr != nil {
+				return writeErr
+			}
+		}
+		for i := 0; i < len(report.Unused); i++ {
+			e := report.Unused[i]
+			msg := fmt.Sprintf("secrets: exceptions entry (rule %s, %s, tool %s): excuses no finding: remove it\n", e.Rule, e.Path, e.Tool)
+			if writeErr := writeWithStatus(stderr, msg, 0); writeErr != nil {
+				return writeErr
+			}
+		}
+		msg := fmt.Sprintf("secrets: FAIL: %s\n", report.Summary())
+		return writeWithStatus(stderr, msg, secretsFindingExit)
+	}
+	msg := fmt.Sprintf("secrets: PASS: %s\n", report.Summary())
+	return writeWithStatus(stdout, msg, 0)
 }
 
 // runSecurityGovuln scans the module at --path with the scanner command after "--" (govulncheck

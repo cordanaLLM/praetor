@@ -7,6 +7,7 @@ package flavor_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"os/exec"
@@ -34,11 +35,13 @@ go 1.27
 
 tool (
 	github.com/securego/gosec/v2/cmd/gosec
+	github.com/zricethezav/gitleaks/v8
 	golang.org/x/vuln/cmd/govulncheck
 )
 
 require (
 	github.com/securego/gosec/v2 v2.29.0
+	github.com/zricethezav/gitleaks/v8 v8.30.1
 	golang.org/x/tools v0.50.0
 	golang.org/x/vuln v1.8.0
 )
@@ -120,10 +123,12 @@ func TestSecurityWorkflow_Positive_HostedGateAndPinnedInstalls(t *testing.T) {
 		"go mod init scanners",
 		"go get golang.org/x/vuln@" + templates.GoSecurityGovulnVersion,
 		"go get github.com/securego/gosec/v2@" + templates.GoSecurityGosecVersion,
+		"go get github.com/zricethezav/gitleaks/v8@" + templates.GoSecurityGitleaksVersion,
 		"go get golang.org/x/tools@" + templates.GoSecurityXToolsVersion,
 		"go mod download all",
 		"go install golang.org/x/vuln/cmd/govulncheck",
 		"go install github.com/securego/gosec/v2/cmd/gosec",
+		"go install github.com/zricethezav/gitleaks/v8",
 	} {
 		if !strings.Contains(fallback, want) {
 			t.Errorf("fallback install lacks %q:\n%s", want, fallback)
@@ -132,9 +137,19 @@ func TestSecurityWorkflow_Positive_HostedGateAndPinnedInstalls(t *testing.T) {
 	toolModule := strings.TrimSpace(securityStep(t, renderedSecurityWorkflow(t, true), "Install Tools").Run)
 	wantToolModule := "m=tools/go/go.mod\n" +
 		"go install -modfile=\"$m\" golang.org/x/vuln/cmd/govulncheck\n" +
-		"go install -modfile=\"$m\" github.com/securego/gosec/v2/cmd/gosec"
+		"go install -modfile=\"$m\" github.com/securego/gosec/v2/cmd/gosec\n" +
+		"go install -modfile=\"$m\" github.com/zricethezav/gitleaks/v8"
 	if toolModule != wantToolModule {
 		t.Errorf("tools-module install = %q, want %q", toolModule, wantToolModule)
+	}
+	checkoutWith := securityStep(t, body, "Checkout source").With
+	if got := fmt.Sprint(checkoutWith["fetch-depth"]); got != "0" {
+		t.Errorf("Checkout source fetch-depth = %v, want 0", got)
+	}
+	gitleaksRun := securityStep(t, body, "Run gitleaks").Run
+	wantGitleaks := "go run -tags=secretsgate ./tools/secrets/gate"
+	if gitleaksRun != wantGitleaks {
+		t.Errorf("Run gitleaks = %q, want %q", gitleaksRun, wantGitleaks)
 	}
 }
 
@@ -289,9 +304,10 @@ func TestGoSecurityVersionsMatchToolsModule(t *testing.T) {
 		versions[requirement.Path] = requirement.Version
 	}
 	for module, want := range map[string]string{
-		"golang.org/x/vuln":            templates.GoSecurityGovulnVersion,
-		"github.com/securego/gosec/v2": templates.GoSecurityGosecVersion,
-		"golang.org/x/tools":           templates.GoSecurityXToolsVersion,
+		"golang.org/x/vuln":                  templates.GoSecurityGovulnVersion,
+		"github.com/securego/gosec/v2":       templates.GoSecurityGosecVersion,
+		"golang.org/x/tools":                 templates.GoSecurityXToolsVersion,
+		"github.com/zricethezav/gitleaks/v8": templates.GoSecurityGitleaksVersion,
 	} {
 		if got := versions[module]; got != want {
 			t.Errorf("%s in tools/go/go.mod = %q, fallback constant = %q; update the templates.GoSecurity*Version constants when Renovate updates tools/go/go.mod", module, got, want)

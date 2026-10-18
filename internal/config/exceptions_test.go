@@ -212,6 +212,9 @@ func TestValidateExceptions_HISSRulesAndFunctionScope(t *testing.T) {
 			entry.Path = ".github/workflows/release.yml"
 		case ExceptionRuleDedupe:
 			entry.Path = "src/a.go"
+		case ExceptionRuleSecrets:
+			entry.Path = "src/a.go"
+			entry.Tool = "generic-api-key"
 		}
 		if err := ValidateExceptions([]Exception{entry}, exceptionsToday); err != nil {
 			t.Errorf("registered HISS rule %s refused: %v", rule, err)
@@ -746,5 +749,86 @@ func TestException_WarningDays_3D(t *testing.T) {
 				t.Errorf("WarningDays() = %d, want %d", got, tc.wantDays)
 			}
 		})
+	}
+}
+
+func TestExceptionRuleSecrets_3D(t *testing.T) {
+	valid := Exception{
+		Rule:    ExceptionRuleSecrets,
+		Path:    "settings.py",
+		Tool:    "generic-api-key",
+		Expires: "2026-12-31",
+		Reason:  "legacy test token",
+	}
+	if err := ValidateExceptions([]Exception{valid}, exceptionsToday); err != nil {
+		t.Fatalf("positive: valid HISS-12 exception failed: %v", err)
+	}
+
+	withFp := valid
+	withFp.Fingerprint = "abcd1234abcd1234:settings.py:generic-api-key:10"
+	if err := ValidateExceptions([]Exception{withFp}, exceptionsToday); err != nil {
+		t.Fatalf("positive: HISS-12 exception with fingerprint failed: %v", err)
+	}
+
+	negatives := map[string]func(*Exception){
+		"glob refused":       func(e *Exception) { e.Glob = "*.py"; e.Path = "" },
+		"missing path":       func(e *Exception) { e.Path = "" },
+		"missing tool":       func(e *Exception) { e.Tool = "" },
+		"whitespace in tool": func(e *Exception) { e.Tool = "generic api key" },
+		"whitespace in fp":   func(e *Exception) { e.Fingerprint = "bad fp here" },
+		"invalid path glob":  func(e *Exception) { e.Path = "dir/*.py" },
+		"path traversal":     func(e *Exception) { e.Path = "../settings.py" },
+	}
+	for name, edit := range negatives {
+		bad := valid
+		edit(&bad)
+		if err := ValidateExceptions([]Exception{bad}, exceptionsToday); err == nil {
+			t.Errorf("negative: %s: want error, got nil", name)
+		}
+	}
+
+	boundaryFp := valid
+	boundaryFp.Fingerprint = strings.Repeat("a", 512)
+	if err := ValidateExceptions([]Exception{boundaryFp}, exceptionsToday); err != nil {
+		t.Fatalf("boundary: 512-byte fingerprint want nil, got %v", err)
+	}
+	boundaryFp.Fingerprint = strings.Repeat("a", 513)
+	if err := ValidateExceptions([]Exception{boundaryFp}, exceptionsToday); err == nil {
+		t.Fatal("boundary: 513-byte fingerprint want error, got nil")
+	}
+}
+
+func TestExceptionMatchesSecret_3D(t *testing.T) {
+	entry := Exception{
+		Rule:        ExceptionRuleSecrets,
+		Path:        "pkg/secrets.go",
+		Tool:        "generic-api-key",
+		Fingerprint: "11112222:pkg/secrets.go:generic-api-key:42",
+	}
+
+	if !entry.MatchesSecret("pkg/secrets.go", "generic-api-key", "11112222:pkg/secrets.go:generic-api-key:42") {
+		t.Errorf("positive: exact match failed")
+	}
+
+	noFp := entry
+	noFp.Fingerprint = ""
+	if !noFp.MatchesSecret("pkg/secrets.go", "generic-api-key", "99998888:pkg/secrets.go:generic-api-key:99") {
+		t.Errorf("positive: path and rule match with any fingerprint failed")
+	}
+
+	if entry.MatchesSecret("other/file.go", "generic-api-key", "11112222:pkg/secrets.go:generic-api-key:42") {
+		t.Errorf("negative: path mismatch must not match")
+	}
+	if entry.MatchesSecret("pkg/secrets.go", "aws-access-key", "11112222:pkg/secrets.go:generic-api-key:42") {
+		t.Errorf("negative: rule mismatch must not match")
+	}
+	if entry.MatchesSecret("pkg/secrets.go", "generic-api-key", "different:fp") {
+		t.Errorf("negative: fingerprint mismatch must not match")
+	}
+
+	wrongRule := entry
+	wrongRule.Rule = ExceptionRuleCredits
+	if wrongRule.MatchesSecret("pkg/secrets.go", "generic-api-key", "11112222:pkg/secrets.go:generic-api-key:42") {
+		t.Errorf("negative: non-HISS-12 rule must not match")
 	}
 }

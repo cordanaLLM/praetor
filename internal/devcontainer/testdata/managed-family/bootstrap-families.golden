@@ -11,6 +11,8 @@ family "client schemas" source "internal/clientschema/clientschema.go" directive
   assets ["internal/clientschema/upstream/manifest.json"]
 family "reviewed images" source "internal/devcontainer/reviewed_images.go" directive "//go:embed prior-images.json"
   assets ["internal/devcontainer/prior-images.json"]
+family "secrets gate" source "tools/secrets/assets.go" directive "//go:embed gate/main.go gate/rules_gen.go gate/placeholder.go"
+  assets ["tools/secrets/gate/main.go" "tools/secrets/gate/rules_gen.go" "tools/secrets/gate/placeholder.go"]
 asset tools/markdownlint/verify.mjs true <nil>
 name tools/markdownlint/verify.mjs <nil>
 asset tools/markdownlint/package-lock.json true <nil>
