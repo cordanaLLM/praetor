@@ -101,6 +101,12 @@ func TestAuditExceptionsExpiry_3D(t *testing.T) {
 	if err != nil {
 		t.Fatalf("auditExceptionsExpiry negative failed: %v", err)
 	}
+	// The last audit step fails the expired entry by name, and leaves the future one alone.
+	expiredErr := auditExpiredExceptions(manifestNeg, today)
+	if expiredErr == nil || !strings.Contains(expiredErr.Error(), "(rule HISS-11, expired.yml) expired on 2026-10-09 (1 days ago)") ||
+		strings.Contains(expiredErr.Error(), "future.yml") {
+		t.Fatalf("an expired entry must fail the last audit step by name, a future one not: %v", expiredErr)
+	}
 	if strings.Contains(out, "[WARN] Exceptions:") {
 		t.Errorf("expected no warning for expired or distant entries, got: %s", out)
 	}
@@ -111,6 +117,51 @@ func TestAuditExceptionsExpiry_3D(t *testing.T) {
 	})
 	if err != nil || out != "" {
 		t.Errorf("nil manifest want (empty, nil), got (%q, %v)", out, err)
+	}
+}
+
+// An expired entry fails whatever its rule (exceptions never tiers): a backlog cap entry is judged
+// by its gate only when the cap is exceeded, so an expired one under the cap passed with rc 0.
+func TestAuditExceptionsExpiry_FailsAnExpiredEntryOfEveryRule(t *testing.T) {
+	today := time.Date(2026, time.October, 29, 0, 0, 0, 0, time.UTC)
+	if auditExpiredExceptions(nil, today) != nil {
+		t.Fatal("no manifest, nothing to fail")
+	}
+	for _, tc := range []struct {
+		name    string
+		entry   config.Exception
+		failing bool
+	}{
+		{"an expired backlog cap entry", config.Exception{Rule: config.ExceptionRuleBacklogCapsForgeAlerts, Tool: "backlog", Reason: "alerts triaged", Expires: "2026-10-28"}, true},
+		{"a backlog cap entry expiring today still holds", config.Exception{Rule: config.ExceptionRuleBacklogCapsForgeAlerts, Tool: "backlog", Reason: "alerts triaged", Expires: "2026-10-29"}, false},
+		{"an expired declared-linters entry", config.Exception{Rule: "declared-linters", Tool: "yamllint", Reason: "rules pending", Expires: "2026-10-01"}, true},
+		{"a live path entry", config.Exception{Rule: "HISS-11", Path: "lint.yml", Reason: "pending", Expires: "2026-11-20"}, false},
+	} {
+		err := auditExpiredExceptions(&config.Manifest{Exceptions: []config.Exception{tc.entry}}, today)
+		named := err != nil && strings.Contains(err.Error(), "(rule "+tc.entry.Rule+", "+tc.entry.Target()+") expired on "+tc.entry.Expires)
+		if named != tc.failing || (err != nil) != tc.failing {
+			t.Errorf("%s: failing %v, want %v (%v)", tc.name, err != nil, tc.failing, err)
+		}
+	}
+}
+
+// The full audit exits non-zero on an expired backlog cap entry although the cap is not exceeded
+// (planted first against the engine before this change: rc 0), and passes the same entry while live.
+func TestAudit_ExpiredBacklogCapEntryFailsTheAudit(t *testing.T) {
+	f := newAuditFixture(t)
+	today := config.ExceptionDay(time.Now())
+	entry := func(expires time.Time) string {
+		return "exceptions:\n  - rule: \"backlog.caps.forge_alerts\"\n    tool: \"backlog\"\n" +
+			"    reason: \"alerts triaged in the weekly sweep\"\n    expires: \"" + expires.Format(config.ExceptionDateLayout) + "\"\n"
+	}
+	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+entry(today.AddDate(0, 0, -1)))
+	out, err := f.audit(t)
+	if err == nil || !strings.Contains(err.Error(), "(rule backlog.caps.forge_alerts, backlog) expired on") {
+		t.Fatalf("an expired backlog cap entry must fail the audit: %v\nOutput: %s", err, out)
+	}
+	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+entry(today.AddDate(0, 0, 20)))
+	if out, err = f.audit(t); err != nil {
+		t.Fatalf("a live backlog cap entry must pass: %v\nOutput: %s", err, out)
 	}
 }
 

@@ -82,7 +82,18 @@ func handleExceptionsList(manifestPath string, expiringWithin *int, today time.T
 	for index := 0; index < len(matching) && index < config.MaxExceptions; index++ {
 		printExceptionEntry(matching[index], today)
 	}
-	return nil
+	return expiredExceptionsError(manifest.Exceptions, today)
+}
+
+// expiredExceptionsError fails the listing when any declared entry has expired, listed or not:
+// an expired exception fails like a missing one, so the command that shows it exits 1.
+func expiredExceptionsError(entries []config.Exception, today time.Time) error {
+	expired := config.ExpiredExceptions(entries, today)
+	if len(expired) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%d exceptions entries expired (first: rule %s, %s, expires %s); an expired exception "+
+		"excuses nothing: renew or remove it", len(expired), expired[0].Rule, expired[0].Target(), expired[0].Expires)
 }
 
 // printExceptionEntry prints one exceptions entry with rule, path, reason, and days left.

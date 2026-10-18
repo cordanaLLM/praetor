@@ -328,7 +328,8 @@ func BacklogExceptionFor(entries []Exception, category string, today time.Time) 
 // path that is not one clean repository-relative file, a glob outside the StyleExclusionProblem
 // rules, an empty or multi-line reason, an expires value that is no YYYY-MM-DD date or lies more
 // than MaxExceptionDays after today, and a repeated entry. An expired entry is valid: the gate
-// that owns its rule fails on its files instead.
+// that owns its rule fails on its files instead, and the audit's last step fails every expired
+// entry whatever its rule (ExpiredExceptions).
 func ValidateExceptions(entries []Exception, today time.Time) error {
 	if len(entries) > MaxExceptions {
 		return fmt.Errorf("exceptions has %d entries; maximum is %d", len(entries), MaxExceptions)
@@ -621,6 +622,21 @@ func FormatDaysLeft(days int) string {
 	default:
 		return fmt.Sprintf("expired %d days ago (%d days left)", -days, days)
 	}
+}
+
+// ExpiredExceptions returns the entries that stopped holding before today, whatever their rule.
+// An expired exception fails like a missing one: a gate that judges its own rule's entries only
+// when a finding needs them leaves an expired entry standing while its finding is absent (an
+// expired backlog.caps.forge_alerts entry under the cap passed the audit with rc 0, measured on an
+// adopter 2026-10-18), so the audit and praetorctl exceptions fail every expired entry themselves.
+func ExpiredExceptions(entries []Exception, today time.Time) []Exception {
+	var expired []Exception
+	for index := 0; index < len(entries) && index < MaxExceptions; index++ {
+		if entries[index].Expired(today) {
+			expired = append(expired, entries[index])
+		}
+	}
+	return expired
 }
 
 // FilterExceptionsExpiringWithin returns the entries of entries whose expiry is at or before

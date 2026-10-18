@@ -1,0 +1,2 @@
+type: fixed
+title: An expired exceptions entry fails the audit and praetorctl exceptions whatever its rule, so a backlog cap entry under its cap or a reported-only rule's entry cannot stay expired
