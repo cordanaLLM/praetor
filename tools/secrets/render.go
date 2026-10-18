@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/tools/secrets/rules"
 )
 
@@ -65,15 +66,7 @@ func RenderWorkflow(plain string, entries []rules.Entry) (string, error) {
 
 // StripSettings returns the plain workflow text behind a rendering, removing SECRETS_EXCEPTIONS.
 func StripSettings(text string) (plain string, ok bool) {
-	entries, plain, ok := readSettings(text)
-	if !ok {
-		return "", false
-	}
-	again, err := RenderWorkflow(plain, entries)
-	if err != nil || again != text {
-		return "", false
-	}
-	return plain, true
+	return ghworkflow.StripRendering(text, readSettings, RenderWorkflow)
 }
 
 func readSettings(text string) ([]rules.Entry, string, bool) {

@@ -600,30 +600,15 @@ func GenerateExceptions(opts GenerateExceptionsOptions) (GenerateResult, error) 
 		return GenerateResult{ExitCode: 1, Message: err.Error()}, err
 	}
 	if len(recorded) == 0 {
-		return handleFirstRunGenerate(opts, measured, category, today, beginLine, endLine)
+		return writeGeneratedBlock(opts, measured, category, today, beginLine, endLine)
 	}
 	verdict := evaluateRatchet(recorded, measured, today)
 	return handleRatchetVerdict(opts, recorded, measured, verdict, category, today, beginLine, endLine)
 }
 
-func handleFirstRunGenerate(opts GenerateExceptionsOptions, measured []LinterPair, category string, today time.Time, beginLine, endLine int) (GenerateResult, error) {
-	block, err := formatGeneratedBlock(measured, category, today, opts.Issue)
-	if err != nil {
-		return GenerateResult{ExitCode: 1, Message: err.Error()}, err
-	}
-	if opts.Write {
-		if err := writeGeneratedBlockToFile(opts.ConfigPath, block, beginLine, endLine); err != nil {
-			return GenerateResult{ExitCode: 1, Message: err.Error()}, err
-		}
-		return GenerateResult{ExitCode: 0, Written: true, Count: len(measured)}, nil
-	}
-	if err := emitResult(opts.Stdout, block); err != nil {
-		return GenerateResult{ExitCode: 1, Message: err.Error()}, err
-	}
-	return GenerateResult{ExitCode: 0, Written: false, Count: len(measured)}, nil
-}
-
-func handleRatchetRenew(opts GenerateExceptionsOptions, measured []LinterPair, category string, today time.Time, beginLine, endLine int) (GenerateResult, error) {
+// writeGeneratedBlock renders the generated block for measured and writes it into the
+// configuration, or prints it without --write; the first run and a renewal share it.
+func writeGeneratedBlock(opts GenerateExceptionsOptions, measured []LinterPair, category string, today time.Time, beginLine, endLine int) (GenerateResult, error) {
 	block, err := formatGeneratedBlock(measured, category, today, opts.Issue)
 	if err != nil {
 		return GenerateResult{ExitCode: 1, Message: err.Error()}, err
@@ -650,7 +635,7 @@ func handleRatchetVerdict(opts GenerateExceptionsOptions, recorded []recordedExc
 		}
 		return GenerateResult{ExitCode: 3, Message: msg}, nil
 	case ratchetRenew:
-		return handleRatchetRenew(opts, measured, category, today, beginLine, endLine)
+		return writeGeneratedBlock(opts, measured, category, today, beginLine, endLine)
 	case ratchetUnchanged:
 		msg := fmt.Sprintf("unchanged: %d entries live until %s", len(recorded), verdict.EarliestExpiry)
 		if err := emitResult(opts.Stdout, msg); err != nil {
