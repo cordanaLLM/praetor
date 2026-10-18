@@ -22,6 +22,8 @@ into it (BUG-782). This gate covers:
   .github/actionlint.yaml adoption creates (internal/adopt/actionlint.go), linted from their
   committed renderings under test_emitted_hook_lint.RENDERED, which
   TestEmittedHookFixturesMatchTheRendering keeps equal to the renderings;
+- every client-setup YAML configuration the engine emits (.continue/mcpServers/praetor.yaml),
+  rendered through its own code path (internal/clientsetup/export);
 - every YAML body flavor apply scaffolds, and adoption through it: each .yml or .yaml
   template under templates/ (templates/embed.go), and each template internal/flavor checks
   with a YAML validator whatever its name (.clang-format and .clang-tidy, which clang reads as
@@ -39,6 +41,8 @@ editing this list.
 """
 
 import re
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -57,6 +61,10 @@ RENDERINGS = (
     ("internal/adopt/actionlint.go", "actionlintConfigFile"),
     ("internal/adopt/reuse_gate.go", "reuseWorkflowFile"),
 )
+# The Go constant naming the Continue MCP configuration file, and the file declaring it.
+CONTINUE_CONFIG = ("internal/clientsetup/plan.go", "ContinueConfigFile")
+# The package whose output is every emitted client-setup YAML file, one path per line.
+CLIENT_SETUP_EXPORT = "./internal/clientsetup/export"
 # The Go constants naming the embedded template directory and its go:embed pattern, and the
 # file declaring them.
 TEMPLATES = ("templates/embed.go", "Directory", "Pattern")
@@ -156,6 +164,40 @@ def template_files():
     return files
 
 
+_CLIENT_SETUP_CACHE = None
+
+
+def client_setup_files():
+    """Return {path: text} of every client-setup YAML configuration the engine emits."""
+    global _CLIENT_SETUP_CACHE
+    if _CLIENT_SETUP_CACHE is not None:
+        return _CLIENT_SETUP_CACHE
+    go = shutil.which("go")
+    if not go:
+        raise AssertionError("go binary not found on PATH")
+    with tempfile.TemporaryDirectory() as tmp:
+        result = subprocess.run(
+            [go, "run", CLIENT_SETUP_EXPORT, tmp],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise AssertionError(
+                f"{CLIENT_SETUP_EXPORT} failed ({result.returncode}):\n"
+                f"{result.stdout}{result.stderr}"
+            )
+        paths = result.stdout.split()
+        if not paths:
+            raise AssertionError(f"{CLIENT_SETUP_EXPORT} produced no paths")
+        _CLIENT_SETUP_CACHE = {
+            rel: (Path(tmp) / rel).read_text(encoding="utf-8") for rel in paths
+        }
+        return _CLIENT_SETUP_CACHE
+
+
 def emitted_files():
     """Return {path: text} of every emitted YAML file this gate lints."""
     files = {}
@@ -165,6 +207,7 @@ def emitted_files():
     files.update(catalog_files())
     files.update(rendering_files())
     files.update(template_files())
+    files.update(client_setup_files())
     return files
 
 
@@ -178,6 +221,7 @@ class EmittedYamlTest(LintCase):
             + len(catalog_files())
             + len(RENDERINGS)
             + len(template_files())
+            + len(client_setup_files())
         )
         self.assertEqual(len(files), expected)
         self.assertLintPasses("yamllint", files)
@@ -195,11 +239,13 @@ class SourceTest(unittest.TestCase):
 
     def test_emitted_files_come_from_go_constants(self):
         files = emitted_files()
+        continue_path = go_constant(*CONTINUE_CONFIG)
         for path in (
             ".config/labels.yaml",
             ".config/archetypes/framework.yaml",
             ".config/archetypes/facets/security-high.yaml",
             ".standards.yaml",
+            continue_path,
             "templates/go/ci-go.yml/default.yml",
             "templates/go/.golangci.yml",
             "templates/native/.clang-format",

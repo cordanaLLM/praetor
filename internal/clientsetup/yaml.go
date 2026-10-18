@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -43,7 +44,7 @@ func mergeYAML(ctx context.Context, registry Registry, existing []byte) ([]byte,
 	if err = errors.Join(err, encoder.Close()); err != nil {
 		return nil, errors.New("could not encode Continue configuration")
 	}
-	return output.Bytes(), nil
+	return util.EnsureYAMLDocumentStart(output.Bytes()), nil
 }
 
 func readYAML(ctx context.Context, raw []byte) (*yaml.Node, error) {

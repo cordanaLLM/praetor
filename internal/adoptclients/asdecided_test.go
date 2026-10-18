@@ -27,7 +27,7 @@ func TestReconcileAsDecidedGoldenAndIdempotent(t *testing.T) {
 		".mcp.json":                         "{\n  \"mcpServers\": {\n    \"asdecided\": {\n      \"args\": [\n        \"decisions\",\n        \"serve\"\n      ],\n      \"command\": \"praetorctl\",\n      \"type\": \"stdio\"\n    },\n    \"praetor-dev\": {\n      \"command\": \"praetor-dev\",\n      \"args\": []\n    }\n  }\n}\n",
 		".gemini/settings.json":             "{\n  \"mcpServers\": {\n    \"asdecided\": {\n      \"args\": [\n        \"decisions\",\n        \"serve\"\n      ],\n      \"command\": \"praetorctl\"\n    },\n    \"praetor-dev\": {\n      \"command\": \"praetor-dev\",\n      \"args\": []\n    }\n  },\n  \"theme\": \"dark\"\n}\n",
 		"opencode.json":                     "{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"mcp\": {\n    \"asdecided\": {\n      \"command\": [\n        \"praetorctl\",\n        \"decisions\",\n        \"serve\"\n      ],\n      \"type\": \"local\"\n    },\n    \"praetor-dev\": {\n      \"type\": \"local\",\n      \"command\": [\n        \"praetor-dev\"\n      ]\n    }\n  }\n}\n",
-		".continue/mcpServers/praetor.yaml": "name: Praetor MCP\nversion: 1.0.0\nschema: v1\nmcpServers:\n  - name: praetor-dev\n    command: praetor-dev\n    args: []\n  - name: asdecided\n    command: praetorctl\n    args:\n      - decisions\n      - serve\n",
+		".continue/mcpServers/praetor.yaml": "---\nname: Praetor MCP\nversion: 1.0.0\nschema: v1\nmcpServers:\n  - name: praetor-dev\n    command: praetor-dev\n    args: []\n  - name: asdecided\n    command: praetorctl\n    args:\n      - decisions\n      - serve\n",
 	}
 	for path, want := range wants {
 		if string(files[path]) != want {

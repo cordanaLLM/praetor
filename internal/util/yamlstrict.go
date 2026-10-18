@@ -33,11 +33,23 @@ func DecodeYAMLStrict(data []byte, out any) error {
 	return DecodeYAMLDocument(data, out, YAMLDocumentOptions{KnownFields: true})
 }
 
-// yamlDocumentStart opens every document EncodeYAMLDocument renders.
-const yamlDocumentStart = "---\n"
+// YAMLDocumentStart opens every document EncodeYAMLDocument renders.
+const YAMLDocumentStart = "---\n"
 
 // yamlIndent is the indentation of every level EncodeYAMLDocument renders.
 const yamlIndent = 2
+
+// EnsureYAMLDocumentStart prefixes raw with a leading "---" document start if it does not
+// already begin with one, keeping the rest byte-identical.
+func EnsureYAMLDocumentStart(raw []byte) []byte {
+	if bytes.HasPrefix(raw, []byte("---")) && (len(raw) == 3 || raw[3] == '\n' || raw[3] == '\r' || raw[3] == ' ' || raw[3] == '\t') {
+		return raw
+	}
+	var buffer bytes.Buffer
+	buffer.WriteString(YAMLDocumentStart)
+	buffer.Write(raw)
+	return buffer.Bytes()
+}
 
 // EncodeYAMLDocument renders value as one YAML document that yamllint's default and relaxed
 // rule sets accept: it opens with the "---" document start, every mapping and sequence level
@@ -47,7 +59,7 @@ const yamlIndent = 2
 // fails the indentation rule of the repository it is committed to.
 func EncodeYAMLDocument(value any) ([]byte, error) {
 	var buffer bytes.Buffer
-	buffer.WriteString(yamlDocumentStart)
+	buffer.WriteString(YAMLDocumentStart)
 	encoder := yaml.NewEncoder(&buffer)
 	encoder.SetIndent(yamlIndent)
 	if err := errors.Join(encoder.Encode(value), encoder.Close()); err != nil {
