@@ -5,7 +5,7 @@
 // Package admission holds a heavy step (a build, a test suite, a gate, a landing, a local-model
 // job, a background session start) until the host can take it, then runs it in its own memory-
 // limited systemd scope, so the out-of-memory daemon reclaims from the step instead of from the
-// IDE scope every agent session runs in (#1131). Memory, swap and load are read through
+// editor's scope every agent session runs in (#1131). Memory, swap and load are read through
 // internal/sentinel; the policy refuses on a failed reading, and a platform that offers no
 // reading is admitted with that said, never silently.
 package admission
