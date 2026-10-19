@@ -1,0 +1,2 @@
+type: fixed
+title: linters exceptions generate inserts its block into linters.exclusions.rules, found by YAML structure, not into the first rules key of the file

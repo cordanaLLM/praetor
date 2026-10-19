@@ -172,6 +172,11 @@ Two commands drive generation and ratcheting:
    - **Unchanged count, active entries**: no changes written, exits 0 (`unchanged: N entries live until <date>`).
    - **Unchanged count, expired entry**: refusal with exit 3 (`count did not drop: N recorded, M measured; renewal needs a lower count`).
 
+   A configuration without the generated block takes it at the end of `linters.exclusions.rules`, whose key the
+   generator finds by YAML structure: an earlier `rules:` key of another mapping, such as
+   `linters.settings.revive.rules`, is left alone, and a configuration that is not YAML is refused
+   (`TestGenerateExceptions_Positive_InsertsIntoExclusionRules`, `TestFindRulesInsertionIndex_Negative_InvalidYAML`).
+
 The workflow is automated via the repository target `make lint-exceptions` (`Makefile`), which strips configuration to
 a temporary directory, executes the pinned `golangci-lint run` to generate the JSON report, and runs `praetorctl linters exceptions generate --write --issue 1030`.
 
