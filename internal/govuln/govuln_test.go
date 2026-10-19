@@ -175,3 +175,91 @@ func TestCheck_Negative_AbsentClaimAndExpiredStatementFail(t *testing.T) {
 	report, err = check(t, expired, "module")
 	mustFail(t, report, err, "was last reviewed 2026-07-01, more than 90 days ago")
 }
+
+// modfileCase is one test case for resolveScannerModfile.
+type modfileCase struct {
+	name  string
+	words []string
+	want  []string
+}
+
+func modfileRewriteCases(root string) []modfileCase {
+	expected := filepath.Join(root, "tools", "go", "go.mod")
+	absPath := filepath.Join(string(filepath.Separator), "abs", "tools", "go.mod")
+	return []modfileCase{
+		{"modfile equals form", []string{"go", "tool", "-modfile=tools/go/go.mod", "govulncheck"}, []string{"go", "tool", "-modfile=" + expected, "govulncheck"}},
+		{"modfile two-word form", []string{"go", "tool", "-modfile", "tools/go/go.mod", "govulncheck"}, []string{"go", "tool", "-modfile", expected, "govulncheck"}},
+		{"double-dash modfile equals form", []string{"go", "tool", "--modfile=tools/go/go.mod", "govulncheck"}, []string{"go", "tool", "--modfile=" + expected, "govulncheck"}},
+		{"double-dash modfile two-word form", []string{"go", "tool", "--modfile", "tools/go/go.mod", "govulncheck"}, []string{"go", "tool", "--modfile", expected, "govulncheck"}},
+		{"absolute path equals form kept", []string{"go", "tool", "-modfile=" + absPath, "govulncheck"}, []string{"go", "tool", "-modfile=" + absPath, "govulncheck"}},
+		{"absolute path two-word form kept", []string{"go", "tool", "-modfile", absPath, "govulncheck"}, []string{"go", "tool", "-modfile", absPath, "govulncheck"}},
+		{"no modfile unchanged", []string{"go", "tool", "govulncheck"}, []string{"go", "tool", "govulncheck"}},
+		{"trailing modfile left as is", []string{"go", "tool", "-modfile"}, []string{"go", "tool", "-modfile"}},
+		{"trailing double-dash modfile left as is", []string{"go", "tool", "--modfile"}, []string{"go", "tool", "--modfile"}},
+	}
+}
+
+// Positive: resolveScannerModfile resolves relative -modfile flags against the repository root,
+// preserving absolute paths, non-modfile words, and incomplete flags.
+func TestGovuln_Positive_ScannerModfileRewrite(t *testing.T) {
+	root := filepath.Join(string(filepath.Separator), "repo")
+	for _, tc := range modfileRewriteCases(root) {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveScannerModfile(tc.words, root)
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("resolveScannerModfile(%q) = %q, want %q", tc.words, got, tc.want)
+			}
+		})
+	}
+}
+
+// Positive: Check runs the scanner with -modfile resolved against VEXRoot when Dir is a submodule.
+func TestCheck_GovulnSubmoduleAbsoluteModfile(t *testing.T) {
+	root := t.TempDir()
+	sub := filepath.Join(root, "sub")
+	if err := os.MkdirAll(sub, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	vexPath := filepath.Join(root, "security", "vex", "go.openvex.json")
+	if err := os.MkdirAll(filepath.Dir(vexPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	vex := vexDoc(notAffected("GO-2022-1059", "vulnerable_code_not_present", ""))
+	if err := os.WriteFile(vexPath, []byte(vex), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	subVexPath := filepath.Join(sub, "security", "vex", "go.openvex.json")
+	if err := os.MkdirAll(filepath.Dir(subVexPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(subVexPath, []byte(vex), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls []call
+	run := stubRunner(fixture(t, "module"), nil, &calls)
+	scanner := []string{"go", "tool", "-modfile=tools/go/go.mod", "govulncheck"}
+	report, err := Check(t.Context(), Options{
+		Dir:     sub,
+		VEXRoot: root,
+		Scanner: scanner,
+		Run:     run,
+		Now:     func() time.Time { return testNow },
+	})
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if report.Failed() {
+		t.Fatalf("report failed: %v", report.Lines(false))
+	}
+	if len(calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(calls))
+	}
+	wantModfile := "-modfile=" + filepath.Join(root, "tools", "go", "go.mod")
+	if !slices.Contains(calls[0].args, wantModfile) {
+		t.Fatalf("args = %q, want containing %q", calls[0].args, wantModfile)
+	}
+	if slices.Contains(calls[0].args, "-modfile=tools/go/go.mod") {
+		t.Fatalf("args still contains relative modfile: %q", calls[0].args)
+	}
+}

@@ -115,7 +115,8 @@ func TestCheck_Boundary_ScannerCommandAndDeclaredDocument(t *testing.T) {
 	scanner := []string{"go", "tool", "-modfile=tools/go/go.mod", "govulncheck"}
 	report, err := Check(t.Context(), Options{Dir: dir, Scanner: scanner, Run: stubRunner(fixture(t, "module"), nil, &calls), Now: func() time.Time { return testNow }})
 	mustPass(t, report, err, 1)
-	want := append(slices.Clone(scanner[1:]), ScanArgs()...)
+	wantScanner := resolveScannerModfile(scanner, dir)
+	want := append(slices.Clone(wantScanner[1:]), ScanArgs()...)
 	if len(calls) != 1 || calls[0].name != "go" || !slices.Equal(calls[0].args, want) || report.VEXPath != "vex.json" {
 		t.Fatalf("calls %+v, document %q", calls, report.VEXPath)
 	}

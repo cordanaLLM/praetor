@@ -1,0 +1,2 @@
+type: fixed
+title: security govuln reads a relative -modfile from the repository root in every module

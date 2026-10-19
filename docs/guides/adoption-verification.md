@@ -945,6 +945,8 @@ praetorctl security govuln                      # govulncheck from PATH, module 
 praetorctl security govuln --path=svc -- go tool -modfile=tools/go/go.mod govulncheck   # a pinned scanner
 ```
 
+A relative `-modfile` (such as `-modfile=tools/go/go.mod`) is read from the repository root across every module, so submodules do not require a separate tools module.
+
 The gate runs `govulncheck -scan symbol -format json ./...` and judges each advisory by its deepest
 finding:
 

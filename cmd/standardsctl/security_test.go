@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -91,13 +92,14 @@ func exitCode(err error) int {
 // Negative: a called vulnerable symbol exits 1 and names the call on stderr, and the scanner
 // command after "--" runs with the symbol-scan arguments appended.
 func TestSecurityGovuln_Negative_CalledSymbolExitsOne(t *testing.T) {
+	dir := t.TempDir()
 	stdout, stderr, commands, err := govulnCLI(t, govulnStream(t, "symbol"), nil,
-		"--path", t.TempDir(), "--", "go", "tool", "-modfile=tools/go/go.mod", "govulncheck")
+		"--path", dir, "--", "go", "tool", "-modfile=tools/go/go.mod", "govulncheck")
 	if exitCode(err) != govulnFindingExit || !strings.Contains(stderr, "golang.org/x/text/language.ParseAcceptLanguage is called") ||
 		!strings.Contains(stderr, "govuln: FAIL: govulncheck v1.8.0, symbol scan: 1 advisories present, 1 failing") {
 		t.Fatalf("exit %d, stdout %q, stderr %q", exitCode(err), stdout, stderr)
 	}
-	want := "go tool -modfile=tools/go/go.mod govulncheck " + strings.Join(govuln.ScanArgs(), " ")
+	want := "go tool -modfile=" + filepath.Join(dir, "tools", "go", "go.mod") + " govulncheck " + strings.Join(govuln.ScanArgs(), " ")
 	if !slices.Equal(commands, []string{"go list -find -f {{.ImportPath}} ./...", want}) {
 		t.Fatalf("commands = %q, want %q", commands, want)
 	}
@@ -151,6 +153,92 @@ func TestSecurityGovuln_Positive_EmptyModuleSkips(t *testing.T) {
 	}
 	if !slices.Equal(commands, []string{"go list -find -f {{.ImportPath}} ./..."}) {
 		t.Fatalf("commands = %q", commands)
+	}
+}
+
+func seedTrackedMultiModule(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.test/root\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	subDir := filepath.Join(dir, "sub")
+	if err := os.MkdirAll(subDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(subDir, "go.mod"), []byte("module example.test/root/sub\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	toolsDir := filepath.Join(dir, "tools", "go")
+	if err := os.MkdirAll(toolsDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(toolsDir, "go.mod"), []byte("module example.test/tools\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := testsupport.HermeticGitEnv(t)
+	for _, args := range [][]string{{"init", "-q"}, {"add", "--", "go.mod", "sub/go.mod"}} {
+		if out, err := runFixtureGit(t, dir, env, args...); err != nil {
+			t.Fatalf("git %v: %v (%s)", args, err, out)
+		}
+	}
+}
+
+func seedVEXDocument(t *testing.T, dir string) {
+	t.Helper()
+	yesterday := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339)
+	vex := `{"@context": "https://openvex.dev/ns/v0.2.0", "@id": "https://example.com/vex", "author": "Example", ` +
+		`"timestamp": "` + yesterday + `", "version": 1, "statements": [{"vulnerability": {"name": "GO-2022-1059"}, ` +
+		`"status": "not_affected", "justification": "vulnerable_code_not_present", "impact_statement": "No package built."}]}`
+	for _, sub := range []string{"", "sub"} {
+		path := filepath.Join(dir, sub, "security", "vex", "go.openvex.json")
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(vex), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func extractScannerModfile(args []string) string {
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "-modfile=") || strings.HasPrefix(args[i], "--modfile=") {
+			return strings.TrimPrefix(strings.TrimPrefix(args[i], "--modfile="), "-modfile=")
+		}
+	}
+	return ""
+}
+
+func multiModuleStubRunner(t *testing.T) govuln.Runner {
+	return func(_ context.Context, runDir, name string, args ...string) (string, error) {
+		if name == "go" && len(args) == 5 && args[0] == "list" && args[1] == "-find" {
+			return "example.test/pkg\n", nil
+		}
+		target := extractScannerModfile(args)
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(runDir, target)
+		}
+		if _, err := os.Stat(target); err != nil {
+			return "", fmt.Errorf("modfile %s does not exist: %w", target, err)
+		}
+		return govulnStream(t, "module"), nil
+	}
+}
+
+// Positive: in a multi-module repository, scanner -modfile resolves against the repository root
+// so both the root module and submodules get a verdict.
+func TestSecurityGovuln_Positive_MultiModuleModfileRoot(t *testing.T) {
+	dir := t.TempDir()
+	seedTrackedMultiModule(t, dir)
+	seedVEXDocument(t, dir)
+	var stdout, stderr bytes.Buffer
+	args := []string{"--path=" + dir, "--", "go", "tool", "-modfile=tools/go/go.mod", "govulncheck"}
+	err := runSecurityGovuln(args, multiModuleStubRunner(t), &stdout, &stderr)
+	if err != nil || stderr.Len() != 0 {
+		t.Fatalf("err %v, stdout %q, stderr %q", err, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "module: go.mod") || !strings.Contains(stdout.String(), "module: sub/go.mod") {
+		t.Fatalf("stdout = %q, want both modules reported", stdout.String())
 	}
 }
 
