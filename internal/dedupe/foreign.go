@@ -319,6 +319,9 @@ func mergeDuplicatePairs(duplicates []rawJscpdDuplicate, roots []rootMapping, is
 	groups := make([]DuplicateGroup, 0, len(components))
 	for _, comp := range components {
 		g := buildDuplicateGroup(comp, roots, isCrossRoot)
+		if len(g.Locations) < 2 {
+			continue
+		}
 		groups = append(groups, g)
 	}
 	sortDuplicateGroups(groups)
@@ -348,6 +351,9 @@ func buildDuplicateGroup(dups []rawJscpdDuplicate, roots []rootMapping, isCrossR
 		loc2 := resolveFileLocation(d.SecondFile, roots, isCrossRoot)
 		key1 := fmt.Sprintf("%s\x00%s\x00%d", loc1.Root, loc1.Path, loc1.Line)
 		key2 := fmt.Sprintf("%s\x00%s\x00%d", loc2.Root, loc2.Path, loc2.Line)
+		if key1 == key2 {
+			continue
+		}
 		locMap[key1] = loc1
 		locMap[key2] = loc2
 	}
@@ -436,7 +442,7 @@ func filterDuplicateGroups(groups []DuplicateGroup, mainRoot string, isCrossRoot
 	}
 	filtered := make([]DuplicateGroup, 0, len(groups))
 	for i := 0; i < len(groups) && i < maxDuplicatePairs; i++ {
-		if shouldKeepGroup(groups[i], mainRoot) {
+		if len(groups[i].Locations) >= 2 && shouldKeepGroup(groups[i], mainRoot) {
 			filtered = append(filtered, groups[i])
 		}
 	}

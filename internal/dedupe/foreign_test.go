@@ -447,6 +447,77 @@ func TestForeignScan_Boundary_AcrossWithMainRootOnlyBehavesLikeNoAcross(t *testi
 	}
 }
 
+func TestForeignScan_Boundary_SelfPairYieldsNoGroup(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "main.go", "package main\n")
+	sveltePath := filepath.Join("apps", "docs", "src", "routes", "+page.svelte")
+	writeFile(t, root, sveltePath, "<h1>docs</h1>\n")
+
+	canned := fmt.Sprintf(`{
+  "duplicates": [
+    {
+      "format": "html",
+      "lines": 119,
+      "tokens": 50,
+      "firstFile": {"name": %q, "start": 1, "end": 119},
+      "secondFile": {"name": %q, "start": 1, "end": 119}
+    }
+  ]
+}`, filepath.Join(root, sveltePath), filepath.Join(root, sveltePath))
+
+	t.Setenv("PRAETOR_TEST_FAKE_JSCPD", "1")
+	t.Setenv("PRAETOR_JSCPD_BIN", os.Args[0])
+	t.Setenv("PRAETOR_TEST_FAKE_JSCPD_REPORT_CONTENT", canned)
+
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{RepoPath: root})
+	if err != nil {
+		t.Fatalf("ScanRepoWithOptions: %v", err)
+	}
+	if len(report.ForeignDuplicates) != 0 {
+		t.Fatalf("ForeignDuplicates count = %d, want 0", len(report.ForeignDuplicates))
+	}
+}
+
+func TestForeignScan_Boundary_SameFileDifferentLinesYieldsTwoLocations(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "main.go", "package main\n")
+	writeFile(t, root, "app.py", "def run(): pass\ndef exec(): pass\n")
+
+	canned := fmt.Sprintf(`{
+  "duplicates": [
+    {
+      "format": "python",
+      "lines": 10,
+      "tokens": 50,
+      "firstFile": {"name": %q, "start": 1, "end": 10},
+      "secondFile": {"name": %q, "start": 20, "end": 30}
+    }
+  ]
+}`, filepath.Join(root, "app.py"), filepath.Join(root, "app.py"))
+
+	t.Setenv("PRAETOR_TEST_FAKE_JSCPD", "1")
+	t.Setenv("PRAETOR_JSCPD_BIN", os.Args[0])
+	t.Setenv("PRAETOR_TEST_FAKE_JSCPD_REPORT_CONTENT", canned)
+
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{RepoPath: root})
+	if err != nil {
+		t.Fatalf("ScanRepoWithOptions: %v", err)
+	}
+	if len(report.ForeignDuplicates) != 1 {
+		t.Fatalf("ForeignDuplicates count = %d, want 1", len(report.ForeignDuplicates))
+	}
+	group := report.ForeignDuplicates[0]
+	if len(group.Locations) != 2 {
+		t.Fatalf("group.Locations count = %d, want 2", len(group.Locations))
+	}
+	if group.Locations[0].Path != "app.py" || group.Locations[1].Path != "app.py" {
+		t.Fatalf("group.Locations paths = %+v, want [app.py, app.py]", group.Locations)
+	}
+	if group.Locations[0].Line != 1 || group.Locations[1].Line != 20 {
+		t.Fatalf("group.Locations lines = [%d, %d], want [1, 20]", group.Locations[0].Line, group.Locations[1].Line)
+	}
+}
+
 const (
 	realCFixture = `
 int compute_complex_math(int alpha, int beta, int gamma, int delta) {
