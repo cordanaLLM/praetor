@@ -150,11 +150,12 @@ func (j releaseTokenJudgement) unexcusedLines() []string {
 // pass formats the success report including any declared exemptions.
 func (j releaseTokenJudgement) pass() string {
 	var b strings.Builder
+	takingSteps := j.totalSteps - len(j.excused)
 	stepWord := "step takes"
-	if j.totalSteps != 1 {
+	if takingSteps != 1 {
 		stepWord = "steps take"
 	}
-	fmt.Fprintf(&b, "[PASS] %s: %d release-please %s token from a GitHub App token step", releaseTokenGate, j.totalSteps, stepWord)
+	fmt.Fprintf(&b, "[PASS] %s: %d release-please %s token from a GitHub App token step", releaseTokenGate, takingSteps, stepWord)
 	if len(j.excused) > 0 {
 		fmt.Fprintf(&b, "; %d excepted:", len(j.excused))
 		j.writeExcused(&b)

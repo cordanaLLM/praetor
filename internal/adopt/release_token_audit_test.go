@@ -37,6 +37,50 @@ jobs:
           token: ${{ github.token }}
 `
 
+const twoFailingStepsReleaseWorkflow = `
+jobs:
+  release-a:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ github.token }}
+  release-b:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ github.token }}
+`
+
+const twoPassingStepsReleaseWorkflow = `
+jobs:
+  release-a:
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Mint the release token a
+        id: app-token-a
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ steps.app-token-a.outputs.token }}
+  release-b:
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Mint the release token b
+        id: app-token-b
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ steps.app-token-b.outputs.token }}
+`
+
 func releaseTokenEntry(path, entered, expires string, category string) config.Exception {
 	return config.Exception{
 		Rule:     config.ExceptionRuleReleaseToken,
@@ -251,5 +295,67 @@ func TestAuditReleaseToken_NilContext(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "the audit requires a context") {
 		t.Errorf("error = %q; want requires a context", err.Error())
+	}
+}
+
+// TestAuditReleaseToken_PassCount_BothExcepted tests 2 steps both excepted yielding 0 taking steps.
+func TestAuditReleaseToken_PassCount_BothExcepted(t *testing.T) {
+	root := supplyChainRepo(t, map[string]string{
+		".github/workflows/release.yml": twoFailingStepsReleaseWorkflow,
+	})
+	entry := releaseTokenEntry(".github/workflows/release.yml", "2026-10-12", "2026-10-22", "C")
+	out, err := AuditReleaseToken(context.Background(), ReleaseTokenOptions{
+		Root:       root,
+		Exceptions: []config.Exception{entry},
+		Today:      releaseTokenToday,
+	})
+	if err != nil {
+		t.Fatalf("AuditReleaseToken = %v; want pass", err)
+	}
+	want := "0 release-please steps take token from a GitHub App token step; 2 excepted:"
+	if !strings.Contains(out, want) {
+		t.Errorf("output = %q; want %q", out, want)
+	}
+}
+
+// TestAuditReleaseToken_PassCount_PartialExcepted tests 3 steps with 1 excepted yielding 2 taking steps.
+func TestAuditReleaseToken_PassCount_PartialExcepted(t *testing.T) {
+	root := supplyChainRepo(t, map[string]string{
+		".github/workflows/release.yml": twoPassingStepsReleaseWorkflow,
+		".github/workflows/legacy.yml":  failingReleaseWorkflow,
+	})
+	entry := releaseTokenEntry(".github/workflows/legacy.yml", "2026-10-12", "2026-10-22", "C")
+	out, err := AuditReleaseToken(context.Background(), ReleaseTokenOptions{
+		Root:       root,
+		Exceptions: []config.Exception{entry},
+		Today:      releaseTokenToday,
+	})
+	if err != nil {
+		t.Fatalf("AuditReleaseToken = %v; want pass", err)
+	}
+	want := "2 release-please steps take token from a GitHub App token step; 1 excepted:"
+	if !strings.Contains(out, want) {
+		t.Errorf("output = %q; want %q", out, want)
+	}
+}
+
+// TestAuditReleaseToken_PassCount_SingularBoundary tests 1 step none excepted yielding singular wording without excepted suffix.
+func TestAuditReleaseToken_PassCount_SingularBoundary(t *testing.T) {
+	root := supplyChainRepo(t, map[string]string{
+		".github/workflows/release.yml": passingReleaseWorkflow,
+	})
+	out, err := AuditReleaseToken(context.Background(), ReleaseTokenOptions{
+		Root:  root,
+		Today: releaseTokenToday,
+	})
+	if err != nil {
+		t.Fatalf("AuditReleaseToken = %v; want pass", err)
+	}
+	want := "[PASS] Release token: 1 release-please step takes token from a GitHub App token step."
+	if !strings.Contains(out, want) {
+		t.Errorf("output = %q; want %q", out, want)
+	}
+	if strings.Contains(out, "excepted:") {
+		t.Errorf("output = %q; want no excepted section", out)
 	}
 }

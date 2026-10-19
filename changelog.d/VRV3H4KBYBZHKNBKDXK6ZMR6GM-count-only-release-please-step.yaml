@@ -1,0 +1,2 @@
+type: fixed
+title: Count only release-please steps taking GitHub App tokens in the release token audit PASS report.
