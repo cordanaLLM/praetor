@@ -969,6 +969,19 @@ func TestAdopt_PluranoRendersLicenceCaller(t *testing.T) {
 			if slices.Contains(managed, reuseWorkflowFile) {
 				t.Errorf("reuseManagedPaths should not include %s for plurano: got %v", reuseWorkflowFile, managed)
 			}
+
+			// The plurano licence caller renders into the repository ruleset with "Licence / REUSE lint".
+			_, contexts, err := forge.RenderRulesetForRepository(t.Context(), repoPath, config.DefaultPolicy().BranchProtection, nil)
+			if err != nil {
+				t.Fatalf("RenderRulesetForRepository: %v", err)
+			}
+			if !slices.Contains(contexts, "Licence / REUSE lint") {
+				t.Errorf("contexts %v do not contain Licence / REUSE lint", contexts)
+			}
+			s.policy = &config.EffectivePolicy{Policy: *config.DefaultPolicy()}
+			if err := reconcileBranchRuleset(t.Context(), s); err != nil {
+				t.Fatalf("reconcileBranchRuleset: %v", err)
+			}
 		})
 	}
 }

@@ -25,7 +25,47 @@ const (
 	reusableContextSeparator = " / "
 	maxExprTokens            = 64
 	maxExprStack             = 32
+	// PluranoHoristesLicenceAction is the reusable workflow path called in plurano-owned repositories.
+	PluranoHoristesLicenceAction = "plurano/horistes/.github/workflows/licence.yml"
+	// PluranoHoristesLicenceWorkflowSHA is the commit SHA of plurano/horistes .github/workflows/licence.yml
+	// pinned in the hosted REUSE gate for plurano-owned repositories (read 2026-10-19).
+	PluranoHoristesLicenceWorkflowSHA = "5a2700ef8898bc377f0f9d13d5c95abf54f0fa4c"
+	// PluranoHoristesLicencePinDate names when PluranoHoristesLicenceWorkflowSHA was read.
+	PluranoHoristesLicencePinDate = "2026-10-19"
 )
+
+// pinnedReusableWorkflow is a known external reusable workflow the engine pins.
+type pinnedReusableWorkflow struct {
+	sha  string
+	yaml string
+}
+
+// horistesLicenceWorkflowYAML is the workflow specification of plurano/horistes .github/workflows/licence.yml
+// at PluranoHoristesLicenceWorkflowSHA. It declares one job with a name expression evaluating root input.
+const horistesLicenceWorkflowYAML = "on:\n  workflow_call:\n    inputs:\n      root:\n        default: .\n" +
+	"jobs:\n  lint:\n    name: ${{ inputs.root == '.' && 'REUSE lint' || format('REUSE lint ({0})', inputs.root) }}\n"
+
+// knownPinnedExternalWorkflows maps external workflow action paths to their pinned specification.
+var knownPinnedExternalWorkflows = map[string]pinnedReusableWorkflow{
+	PluranoHoristesLicenceAction: {
+		sha:  PluranoHoristesLicenceWorkflowSHA,
+		yaml: horistesLicenceWorkflowYAML,
+	},
+}
+
+// Is40HexSHA reports whether s is exactly 40 lowercase hexadecimal characters.
+func Is40HexSHA(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
 
 // calledWorkflows holds the repository's workflow documents by file name, so a job that calls
 // a reusable workflow of this repository (localWorkflowPrefix) reads the jobs it runs. Each
@@ -46,16 +86,14 @@ func newCalledWorkflows(files []workflowFile) calledWorkflows {
 }
 
 // spec returns the reusable workflow uses names, which job, the calling job, calls. A workflow
-// of another repository is refused: its jobs, and with them the contexts the forge reports,
-// cannot be read here, and a required check context that no run reports blocks the branch
-// permanently. So is a local name that is no workflow of this repository declaring
-// workflow_call.
+// of another repository is refused unless it matches a known external reusable workflow the engine
+// pins at the pinned commit SHA. So is a local name that is no workflow of this repository
+// declaring workflow_call.
 func (c calledWorkflows) spec(job, uses string) (*workflowSpec, error) {
-	name, local := strings.CutPrefix(strings.TrimSpace(uses), localWorkflowPrefix)
+	trimmed := strings.TrimSpace(uses)
+	name, local := strings.CutPrefix(trimmed, localWorkflowPrefix)
 	if !local {
-		return nil, fmt.Errorf("job %q calls the reusable workflow %s of another repository; its jobs, and so the "+
-			"check contexts \"<job> / <called job>\" the forge reports for it, cannot be read here, and a required "+
-			"check context that no run reports blocks the branch permanently", job, uses)
+		return c.externalSpec(job, trimmed)
 	}
 	if spec, ok := c.parsed[name]; ok {
 		return spec, nil
@@ -78,6 +116,37 @@ func (c calledWorkflows) spec(job, uses string) (*workflowSpec, error) {
 	}
 	c.parsed[name] = &spec
 	return &spec, nil
+}
+
+// externalSpec resolves an external reusable workflow against the engine's pinned table.
+func (c calledWorkflows) externalSpec(job, uses string) (*workflowSpec, error) {
+	action, rest, hasAt := strings.Cut(uses, "@")
+	ref, _, _ := strings.Cut(rest, "#")
+	action = strings.TrimSpace(action)
+	ref = strings.TrimSpace(ref)
+
+	entry, known := knownPinnedExternalWorkflows[action]
+	if known && hasAt {
+		if ref == entry.sha {
+			if spec, ok := c.parsed[uses]; ok {
+				return spec, nil
+			}
+			var spec workflowSpec
+			if err := yaml.Unmarshal([]byte(entry.yaml), &spec); err != nil {
+				return nil, fmt.Errorf("job %q calls %s: parse: %w", job, uses, err)
+			}
+			c.parsed[uses] = &spec
+			return &spec, nil
+		}
+		if Is40HexSHA(ref) {
+			return nil, fmt.Errorf("job %q calls the reusable workflow %s at %s; only the pinned commit %s is supported "+
+				"(renovate bumps the engine constant first)", job, action, ref, entry.sha)
+		}
+	}
+
+	return nil, fmt.Errorf("job %q calls the reusable workflow %s of another repository; its jobs, and so the "+
+		"check contexts \"<job> / <called job>\" the forge reports for it, cannot be read here, and a required "+
+		"check context that no run reports blocks the branch permanently", job, uses)
 }
 
 // reusableCall is one call still to expand: the contexts of the job that makes it, the
