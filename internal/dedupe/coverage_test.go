@@ -20,6 +20,7 @@ import (
 const polyglotGoSource = "package tooling\n\nfunc Add(a, b int) int {\n\treturn a + b\n}\n"
 
 func TestScanRepo_Positive_PolyglotVerdictIsPartial(t *testing.T) {
+	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
 	dir := t.TempDir()
 	writeFile(t, dir, "tooling/add.go", polyglotGoSource)
 	writeFile(t, dir, "crates/core/src/lib.rs", "pub fn add() {}\n")
@@ -45,6 +46,7 @@ func TestScanRepo_Positive_PolyglotVerdictIsPartial(t *testing.T) {
 // A Go tool beside a JVM and JavaScript tree was still reported as a plain pass while the
 // language table knew only nine languages: every language the scan cannot read has to count.
 func TestScanRepo_Positive_JVMAndModuleSourcesMakeTheVerdictPartial(t *testing.T) {
+	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
 	dir := t.TempDir()
 	writeFile(t, dir, "tooling/add.go", polyglotGoSource)
 	writeFile(t, dir, "java/A.java", "class A {}\n")
@@ -62,6 +64,34 @@ func TestScanRepo_Positive_JVMAndModuleSourcesMakeTheVerdictPartial(t *testing.T
 	want := map[string]int{"java": 1, "kotlin": 1, "javascript": 1, "csharp": 1}
 	if !maps.Equal(report.Unscanned, want) {
 		t.Fatalf("Unscanned = %v, want %v", report.Unscanned, want)
+	}
+}
+
+func TestScanRepo_Positive_ForeignScannedLeavesVerdictPartial(t *testing.T) {
+	if os.Getenv("PRAETOR_JSCPD_BIN") == "" {
+		t.Setenv("PRAETOR_TEST_FAKE_JSCPD", "1")
+		t.Setenv("PRAETOR_JSCPD_BIN", os.Args[0])
+		t.Setenv("PRAETOR_TEST_FAKE_JSCPD_REPORT_CONTENT", `{"duplicates":[]}`)
+	}
+	dir := t.TempDir()
+	writeFile(t, dir, "tooling/add.go", polyglotGoSource)
+	writeFile(t, dir, "crates/core/native/shim.c", "int shim(void) { return 0; }\n")
+
+	report, err := dedupe.ScanRepoContext(t.Context(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Applicable || !report.Passed || !report.Partial {
+		t.Fatalf("expected applicable passed partial verdict, got: %+v", report)
+	}
+	if want := map[string]int{"c": 1}; !maps.Equal(report.Unscanned, want) {
+		t.Fatalf("Unscanned = %v, want %v", report.Unscanned, want)
+	}
+	if want := map[string]int{"c": 1}; !maps.Equal(report.ForeignScanned, want) {
+		t.Fatalf("ForeignScanned = %v, want %v", report.ForeignScanned, want)
+	}
+	if report.ForeignScanner == "" {
+		t.Fatalf("ForeignScanner is empty, want jscpd active")
 	}
 }
 
@@ -85,6 +115,7 @@ func TestScanRepo_Negative_GoOnlyRepositoryIsNotPartial(t *testing.T) {
 // its languages without a verdict, and a tracked file deleted from the working tree is not
 // counted.
 func TestScanRepo_Boundary_UnscannedScopeFollowsTheGoScope(t *testing.T) {
+	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
 	dir := t.TempDir()
 	writeFile(t, dir, "src/app.ts", "export const a = 1;\n")
 	writeFile(t, dir, "src/view.svelte", "<p>hi</p>\n")

@@ -6,7 +6,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -47,7 +50,18 @@ func printDedupeUsage() {
 
 // dedupeScanSynopsis is the argument form of `dedupe scan`, shared by the dedupe usage and
 // the scan's own -h output so the two cannot drift apart.
-const dedupeScanSynopsis = "scan [--path=.] [--json] [dir]"
+const dedupeScanSynopsis = "scan [--path=.] [--across=DIR] [--json] [dir]"
+
+type stringSliceFlag []string
+
+func (s *stringSliceFlag) String() string {
+	return strings.Join(*s, ", ")
+}
+
+func (s *stringSliceFlag) Set(val string) error {
+	*s = append(*s, val)
+	return nil
+}
 
 // runDedupeScan parses its arguments through parseInterspersed, so a flag is a flag wherever
 // it stands: `--json .` and `. --json` both print JSON, an unknown flag is rejected, and
@@ -56,6 +70,8 @@ func runDedupeScan(args []string) error {
 	fs := flag.NewFlagSet("dedupe scan", flag.ContinueOnError)
 	pathFlag := fs.String("path", ".", "Repository root to scan (a positional dir takes precedence)")
 	asJSON := fs.Bool("json", false, "Print the report as JSON")
+	var acrossFlags stringSliceFlag
+	fs.Var(&acrossFlags, "across", "Additional root directory to include in foreign clone detection (repeatable)")
 	var usageErr error
 	fs.Usage = func() {
 		_, usageErr = fmt.Fprintln(fs.Output(), "Usage: praetorctl dedupe "+dedupeScanSynopsis)
@@ -75,7 +91,12 @@ func runDedupeScan(args []string) error {
 	}
 	dir := positionalAt(positional, 0, *pathFlag)
 
-	report, err := dedupe.ScanRepo(dir)
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
+	defer cancel()
+	report, err := dedupe.ScanRepoWithOptions(ctx, dedupe.ScanOptions{
+		RepoPath:    dir,
+		AcrossRoots: acrossFlags,
+	})
 	if err != nil {
 		return fmt.Errorf("dedupe scan failed: %w", err)
 	}
@@ -104,7 +125,14 @@ func printDedupeReport(dir string, report *dedupe.DedupeReport) error {
 		// has no verdict to give; printing one would certify a tree it never opened.
 		fmt.Println("  Not applicable: no Go sources found; this detector reads Go only.")
 		printUnscannedLanguages(report)
-		fmt.Println("  Clone detection for other languages is not implemented.")
+		if report.ForeignScanner != "" {
+			fmt.Printf("  Foreign Scanner:   %s (reported, not gated)\n", report.ForeignScanner)
+		} else if report.ForeignSkipped != "" {
+			fmt.Printf("  Foreign Scanner:   skipped (%s)\n", report.ForeignSkipped)
+		} else {
+			fmt.Println("  Clone detection for other languages is not implemented.")
+		}
+		printForeignDuplicates(report)
 		if len(report.StaleExceptions) > 0 {
 			printStaleExceptions(report.StaleExceptions)
 			return dedupeVerdict(report)
@@ -122,12 +150,46 @@ func printDedupeReport(dir string, report *dedupe.DedupeReport) error {
 	} else {
 		fmt.Printf("  Passed:            %v\n", report.Passed)
 	}
+	if report.ForeignScanner != "" {
+		fmt.Printf("  Foreign Scanner:   %s (reported, not gated)\n", report.ForeignScanner)
+	} else if report.ForeignSkipped != "" {
+		fmt.Printf("  Foreign Scanner:   skipped (%s)\n", report.ForeignSkipped)
+	}
 
 	printDuplicateBlocks(report.Duplicates)
 	printExceptedBlocks(report.Excepted)
+	printForeignDuplicates(report)
 	printSprawlInfractions(report.SprawlItems)
 	printStaleExceptions(report.StaleExceptions)
 	return dedupeVerdict(report)
+}
+
+func printForeignDuplicates(report *dedupe.DedupeReport) {
+	if len(report.ForeignDuplicates) == 0 {
+		return
+	}
+	langCounts := make(map[string]int)
+	for i := 0; i < len(report.ForeignDuplicates); i++ {
+		langCounts[report.ForeignDuplicates[i].Language]++
+	}
+	fmt.Printf("\nForeign Duplicate Blocks (%d, reported, not gated):\n", len(report.ForeignDuplicates))
+	for _, lang := range slices.Sorted(maps.Keys(langCounts)) {
+		unit := "groups"
+		if langCounts[lang] == 1 {
+			unit = "group"
+		}
+		fmt.Printf("  %s: %d %s\n", lang, langCounts[lang], unit)
+	}
+	for i, d := range report.ForeignDuplicates {
+		fmt.Printf("  [%d] %s, %d lines (hash: %s):\n", i+1, d.Language, d.LOC, d.Hash)
+		for _, loc := range d.Locations {
+			if loc.Root != "" {
+				fmt.Printf("      - %s:%d (root: %s)\n", loc.Path, loc.Line, loc.Root)
+			} else {
+				fmt.Printf("      - %s:%d\n", loc.Path, loc.Line)
+			}
+		}
+	}
 }
 
 func printDuplicateBlocks(duplicates []dedupe.DuplicateGroup) {

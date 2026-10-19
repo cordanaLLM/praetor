@@ -26,11 +26,15 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// JscpdVersion is the pinned jscpd version required for foreign clone detection.
+const JscpdVersion = "5.4.1"
+
 // FileLocation points to a file and line number.
 type FileLocation struct {
 	Path     string `json:"path"`
 	Line     int    `json:"line"`
-	FuncName string `json:"func_name"`
+	FuncName string `json:"func_name,omitempty"`
+	Root     string `json:"root,omitempty"`
 	Expired  string `json:"expired,omitempty"`
 }
 
@@ -43,6 +47,7 @@ type ExceptionEntry struct {
 
 // DuplicateGroup contains instances of duplicated code.
 type DuplicateGroup struct {
+	Language   string           `json:"language,omitempty"`
 	Hash       string           `json:"hash"`
 	LOC        int              `json:"loc"`
 	Locations  []FileLocation   `json:"locations"`
@@ -78,6 +83,16 @@ type DedupeReport struct {
 	// Partial reports a verdict that covers the Go sources only while the repository also
 	// holds source listed in Unscanned.
 	Partial bool `json:"partial"`
+
+	// ForeignDuplicates holds duplicate groups discovered by the foreign scanner (jscpd).
+	// Foreign duplicate groups are reported, not gated (they do not alter CleanlinessScore or Passed).
+	ForeignDuplicates []DuplicateGroup `json:"foreign_duplicates,omitempty"`
+	// ForeignScanner records the name and version of the foreign scanner when executed.
+	ForeignScanner string `json:"foreign_scanner,omitempty"`
+	// ForeignSkipped records why the foreign scan was skipped, if applicable.
+	ForeignSkipped string `json:"foreign_skipped,omitempty"`
+	// ForeignScanned counts source files per language scanned by the foreign scanner (reported, not gated).
+	ForeignScanned map[string]int `json:"foreign_scanned,omitempty"`
 }
 
 // UnscannedLanguages returns the languages in Unscanned, sorted, so a report lists them in
@@ -95,6 +110,8 @@ func (r *DedupeReport) UnscannedLanguages() []string {
 type ScanOptions struct {
 	// RepoPath is the root of the repository to scan.
 	RepoPath string
+	// AcrossRoots are additional repository roots to scan for cross-root clones.
+	AcrossRoots []string
 	// Exceptions are HISS-19 exception entries. If nil, they are loaded from .standards.yaml in RepoPath.
 	Exceptions []config.Exception
 	// Today is the date against which exception expiry is judged. If zero, time.Now() is used.
@@ -103,7 +120,7 @@ type ScanOptions struct {
 
 // ScanRepo scans a repository for function-level clones and utility sprawl.
 func ScanRepo(repoPath string) (*DedupeReport, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
 	defer cancel()
 	return ScanRepoContext(ctx, repoPath)
 }
@@ -133,17 +150,9 @@ func ScanRepoWithOptions(ctx context.Context, opts ScanOptions) (*DedupeReport, 
 		return nil, errors.New("dedupe scan requires a context")
 	}
 	repoPath, today := normalizeScanOptions(opts)
-	exceptions := opts.Exceptions
-	if exceptions == nil {
-		var err error
-		exceptions, err = config.LoadExceptionsFor(ctx, repoPath, config.ExceptionRuleDedupe)
-		if err != nil {
-			return nil, fmt.Errorf("load HISS-19 exceptions: %w", err)
-		}
-	}
-	exceptions = config.ExceptionsFor(exceptions, config.ExceptionRuleDedupe)
-	if err := ValidateExceptions(ctx, repoPath, exceptions, today); err != nil {
-		return nil, fmt.Errorf("validate dedupe exceptions: %w", err)
+	exceptions, err := resolveScanExceptions(ctx, repoPath, opts.Exceptions, today)
+	if err != nil {
+		return nil, err
 	}
 
 	scope, err := sourceFiles(ctx, repoPath)
@@ -183,7 +192,26 @@ func ScanRepoWithOptions(ctx context.Context, opts ScanOptions) (*DedupeReport, 
 
 	collectDuplicates(funcHashMap, funcLocMap, exceptions, today, report)
 	calculateScore(report)
+	if err := scanForeign(ctx, repoPath, opts.AcrossRoots, scope, report); err != nil {
+		return nil, fmt.Errorf("scan foreign duplicates: %w", err)
+	}
 	return report, nil
+}
+
+func resolveScanExceptions(ctx context.Context, repoPath string, explicit []config.Exception, today time.Time) ([]config.Exception, error) {
+	exceptions := explicit
+	if exceptions == nil {
+		var err error
+		exceptions, err = config.LoadExceptionsFor(ctx, repoPath, config.ExceptionRuleDedupe)
+		if err != nil {
+			return nil, fmt.Errorf("load HISS-19 exceptions: %w", err)
+		}
+	}
+	exceptions = config.ExceptionsFor(exceptions, config.ExceptionRuleDedupe)
+	if err := ValidateExceptions(ctx, repoPath, exceptions, today); err != nil {
+		return nil, fmt.Errorf("validate dedupe exceptions: %w", err)
+	}
+	return exceptions, nil
 }
 
 // ValidateExceptions validates the HISS-19 exceptions against the repository at repoPath:

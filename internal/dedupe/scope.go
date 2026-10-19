@@ -23,25 +23,44 @@ const (
 // goLanguage is util.SourceLanguage's name for Go, the one language this detector reads.
 const goLanguage = "go"
 
-// sourceScope is the scan's inventory: the Go sources it reads and, per language, how many
-// source files of the repository it cannot read. The count is what lets a report say that a
-// verdict over eight Go files says nothing about eighty Rust files beside them (#161).
+// sourceScope is the scan's inventory: the Go sources it reads, the foreign sources it
+// delegates to jscpd, and, per language, how many source files of the repository it
+// found. The count is what lets a report say that a verdict over eight Go files says nothing
+// about eighty Rust files beside them (#161).
 type sourceScope struct {
-	goFiles   []string
-	unscanned map[string]int
+	goFiles      []string
+	foreignFiles []string
+	unscanned    map[string]int
+}
+
+func isWorkflowYAML(path string) bool {
+	clean := filepath.ToSlash(path)
+	ext := strings.ToLower(filepath.Ext(clean))
+	if ext != ".yml" && ext != ".yaml" {
+		return false
+	}
+	return strings.HasPrefix(clean, ".github/workflows/") ||
+		strings.Contains(clean, "/.github/workflows/") ||
+		strings.HasPrefix(clean, "workflows/") ||
+		strings.Contains(clean, "/workflows/") ||
+		strings.HasSuffix(clean, "workflow.yaml") ||
+		strings.HasSuffix(clean, "workflow.yml")
 }
 
 // sourceLanguageOf classifies one repository-relative path: goLanguage for Go production
-// source (util.IsGoNonTestSource), another util.SourceLanguage name for source this detector
-// cannot read, "" for everything else. Go's test surface (util.IsGoTestSurface: _test.go
-// files and testdata trees) is "" in every language, so a fixture corpus is neither scanned
-// nor reported.
+// source (util.IsGoNonTestSource), "yaml" for workflow definitions, another util.SourceLanguage
+// name for source this detector cannot read natively, "" for everything else. Go's test surface
+// (util.IsGoTestSurface: _test.go files and testdata trees) is "" in every language, so a
+// fixture corpus is neither scanned nor reported.
 func sourceLanguageOf(path string) string {
 	if util.IsGoNonTestSource(path) {
 		return goLanguage
 	}
 	if util.IsGoTestSurface(path) {
 		return ""
+	}
+	if isWorkflowYAML(path) {
+		return "yaml"
 	}
 	if language := util.SourceLanguage(path); language != goLanguage {
 		return language
@@ -94,6 +113,7 @@ func (s *sourceScope) add(language, path string) {
 		s.unscanned = make(map[string]int)
 	}
 	s.unscanned[language]++
+	s.foreignFiles = append(s.foreignFiles, path)
 }
 
 // sourceFiles inventories the source this repository owns.
@@ -151,8 +171,7 @@ func gitSourceFiles(ctx context.Context, repoPath string) (sourceScope, error) {
 			scope.add(language, path)
 		}
 	}
-	slices.Sort(scope.goFiles)
-	scope.goFiles = slices.Compact(scope.goFiles)
+	finalizeScope(&scope)
 	return scope, nil
 }
 
@@ -169,6 +188,31 @@ func worktreeFilePresent(repoPath, path string) (bool, error) {
 	return err == nil, err
 }
 
+func finalizeScope(scope *sourceScope) {
+	slices.Sort(scope.goFiles)
+	scope.goFiles = slices.Compact(scope.goFiles)
+	slices.Sort(scope.foreignFiles)
+	scope.foreignFiles = slices.Compact(scope.foreignFiles)
+}
+
+func processDirEntry(repoPath, path string, entry fs.DirEntry, scope *sourceScope) error {
+	if entry.IsDir() {
+		if path != repoPath && shouldSkipDir(entry.Name()) {
+			return filepath.SkipDir
+		}
+		return nil
+	}
+	rel, err := filepath.Rel(repoPath, path)
+	if err != nil {
+		return err
+	}
+	rel = filepath.ToSlash(rel)
+	if language := sourceLanguageOf(rel); language != "" {
+		scope.add(language, rel)
+	}
+	return nil
+}
+
 func directorySourceFiles(ctx context.Context, repoPath string) (sourceScope, error) {
 	var scope sourceScope
 	visited := 0
@@ -183,21 +227,10 @@ func directorySourceFiles(ctx context.Context, repoPath string) (sourceScope, er
 		if visited > maxScopeEntries {
 			return fmt.Errorf("dedupe directory scope exceeds %d entries", maxScopeEntries)
 		}
-		if entry.IsDir() {
-			if path != repoPath && shouldSkipDir(entry.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		rel, err := filepath.Rel(repoPath, path)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		if language := sourceLanguageOf(rel); language != "" {
-			scope.add(language, rel)
-		}
-		return nil
+		return processDirEntry(repoPath, path, entry, &scope)
 	})
+	if err == nil {
+		finalizeScope(&scope)
+	}
 	return scope, err
 }
