@@ -1225,9 +1225,11 @@ runs `make verify-all`:
   mtime of each entry, bounded to at most 250,000 entries; exceeding fails closed) and checked again
   after. If any entry differs, the stage fails and names the folder because verification wrote into
   the checkout's dependencies. The symlinks are removed with the stage worktree; the checkout's folders
-  are never deleted. Where the stage worktree still lacks required dependencies, a real failure of
+  are never deleted. A build that replaced a link with a real folder (`npm ci` does) leaves a folder
+  the stage made: it is removed when it resolves inside the stage worktree, and a folder or link whose
+  directory resolves outside it is refused, never followed. Where the stage worktree still lacks required dependencies, a real failure of
   `make verify-all` still fails the stage.
-- **Bound:** defaults to the race stage's default (`180s`), or can be declared in `.standards.yaml` via
+- **Bound:** defaults to the race stage's default (`20m`), or can be declared in `.standards.yaml` via
   `gate: declared_verify_timeout: <duration>` (e.g. `20m`, Go duration, positive and at most 30 minutes;
   values above 30m or non-positive are refused naming the key, value, and ceiling).
   `PRAETOR_TEST_STAGE_TIMEOUT` overrides the declared value when set. The whole-run deadline
