@@ -532,8 +532,11 @@ A newer push to a pull request cancels its older **Documentation Governance** ru
 `praetor-docs.yml` also triggers on `merge_group`, so **Documentation Governance** reports for a merge group when the repository declares a merge queue ([Merge queue](../adoption.md#merge-queue)); an unedited copy without the trigger refreshes without `--force`.
 
 Repositories declaring the `docs:seo-portal` facet receive the five canonical
-assets under `tools/markdownlint/`, the figure engine's 18 files under
-`tools/figures/` ([figures guide](figures.md#in-adopting-repositories)),
+assets under `tools/markdownlint/`, the figure engine's 16 files under
+`tools/figures/` ([figures guide](figures.md#in-adopting-repositories)) and
+`player.lock.json` beside them, which names the engine release whose
+`figures-player.tar.gz` the docs build fetches and verifies (the player bundle
+itself stays out of adopter trees, ADR-0019),
 `docs-lint` and `docs-figures` prerequisites on `verify-all`, a managed block at
 the end of `.gitattributes` that keeps the engine, the figure specs and their
 outputs at LF, and `.github/workflows/praetor-docs.yml`, whose one job runs the
@@ -868,7 +871,8 @@ removing the `docs:seo-portal` facet is the one switch that converges every
 documentation surface.
 
 Praetor's DevContainer bootstrap snapshot explicitly carries the embedded assets
-of both families, the five Markdown gate files and the 18 figure engine files.
+of both families, the five Markdown gate files, the 16 figure engine files and the
+three player files the release archive is packed from.
 The adopted CLI therefore emits the same locked gate when it is built
 inside a generated development container; undeclared `go:embed` inputs remain a
 bootstrap error.
