@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/admission"
+	"github.com/cordanaLLM/praetor/internal/sentinel"
 )
 
 const (
@@ -76,6 +77,11 @@ func resolveRaceScope(ctx context.Context, cfg *stageConfig) (raceScopeConfig, e
 	if os.Getenv(GateScopeEnv) == "off" {
 		return raceScopeConfig{useScope: false, reason: GateScopeEnv + "=off", limits: limits}, nil
 	}
+	// In a devcontainer the race tests run through the container's runner, where no systemd-run
+	// exists; the host probe below would answer for the wrong machine.
+	if cfg.container != nil {
+		return raceScopeConfig{useScope: false, reason: "the race tests run in the devcontainer, outside the caller's session scope", limits: limits}, nil
+	}
 	ok, why := cfg.scopesAvailableFunc()(ctx)
 	if !ok {
 		return raceScopeConfig{useScope: false, reason: why, limits: limits}, nil
@@ -83,8 +89,27 @@ func resolveRaceScope(ctx context.Context, cfg *stageConfig) (raceScopeConfig, e
 	return raceScopeConfig{useScope: true, limits: limits}, nil
 }
 
-func waitRaceAdmission(ctx context.Context, cfg *stageConfig) error {
+// racePolicy is the fleet's admission policy capped by the host it reads: at most a quarter of
+// the host's memory must be available and at most half of its swap free. The fleet bounds (12
+// GiB, 15 GiB) hold on a host large enough for them; on a smaller host or a CI runner with a few
+// GiB of swap a fixed bound would hold the stage until its deadline on every run.
+func racePolicy(stats sentinel.HostStats) admission.Policy {
 	policy := admission.DefaultPolicy()
+	if stats.RAMTotalBytes > 0 {
+		policy.MinAvailableBytes = min(policy.MinAvailableBytes, stats.RAMTotalBytes/4)
+	}
+	if stats.SwapMeasured {
+		policy.MinSwapFreeBytes = min(policy.MinSwapFreeBytes, stats.SwapTotalBytes/2)
+	}
+	return policy
+}
+
+func waitRaceAdmission(ctx context.Context, cfg *stageConfig) error {
+	first, err := cfg.hostReaderFunc()()
+	if err != nil {
+		return fmt.Errorf("admission race: read the host: %w", err)
+	}
+	policy := racePolicy(first)
 	maxWait := TestStageTimeout
 	if deadline, ok := ctx.Deadline(); ok {
 		if left := time.Until(deadline); left > 0 {

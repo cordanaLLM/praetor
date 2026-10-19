@@ -145,7 +145,7 @@ func TestRaceStageScope_Boundary_AdmissionHoldTwoReadingsThenAdmits(t *testing.T
 	heldCount := 0
 	cfg.hostReader = func() (sentinel.HostStats, error) {
 		heldCount++
-		if heldCount <= 2 {
+		if heldCount <= 3 { // the first reading sizes the policy (racePolicy), the next two are held
 			return sentinel.HostStats{
 				RAMTotalBytes: 64 * (1 << 30),
 				RAMFreeBytes:  8 * (1 << 30),
@@ -241,5 +241,65 @@ func TestRaceStageScope_Live_ScopeSurvivesParentLimit(t *testing.T) {
 	outScoped, errScoped := util.RunCommand(ctx, "", "systemd-run", parentScopedArgs...)
 	if errScoped != nil {
 		t.Fatalf("expected child wrapped via ScopeArgs inside parent to exit 0, got err=%v, out=%s", errScoped, outScoped)
+	}
+}
+
+// Negative: in a devcontainer the stage never wraps the tests in systemd-run, even where the host
+// offers scopes, and says why.
+func TestRaceStageScope_Negative_DevcontainerRunsUnscoped(t *testing.T) {
+	cfg := &stageConfig{container: &devcontainerExec{}}
+	cfg.scopesAvailable = func(context.Context) (bool, string) { return true, "" }
+	got, err := resolveRaceScope(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("resolveRaceScope: %v", err)
+	}
+	if got.useScope || !strings.Contains(got.reason, "devcontainer") {
+		t.Fatalf("scope %+v; want unscoped naming the devcontainer", got)
+	}
+}
+
+// Boundary: the admission bounds follow the host. A small host or a runner with little swap is
+// judged against a quarter of its memory and half of its swap; a large host keeps the fleet's
+// 12 GiB and 15 GiB.
+func TestRaceStageScope_Boundary_PolicyFollowsTheHost(t *testing.T) {
+	const gib = uint64(1) << 30
+	small := racePolicy(sentinel.HostStats{RAMTotalBytes: 8 * gib, SwapMeasured: true, SwapTotalBytes: 4 * gib})
+	if small.MinAvailableBytes != 2*gib || small.MinSwapFreeBytes != 2*gib {
+		t.Fatalf("8 GiB host with 4 GiB swap: policy %+v; want 2 GiB available and 2 GiB swap free", small)
+	}
+	if v := admission.Judge(sentinel.HostStats{RAMTotalBytes: 8 * gib, RAMFreeBytes: 3 * gib, SwapMeasured: true, SwapTotalBytes: 4 * gib, SwapFreeBytes: 3 * gib}, small); !v.Admit {
+		t.Fatalf("a small host with 3 GiB free was held: %s", v.Reason)
+	}
+	large := racePolicy(sentinel.HostStats{RAMTotalBytes: 128 * gib, SwapMeasured: true, SwapTotalBytes: 96 * gib})
+	if large.MinAvailableBytes != 12*gib || large.MinSwapFreeBytes != 15*gib {
+		t.Fatalf("128 GiB host: policy %+v; want the fleet's 12 GiB and 15 GiB", large)
+	}
+	if v := admission.Judge(sentinel.HostStats{RAMTotalBytes: 128 * gib, RAMFreeBytes: 10 * gib, SwapMeasured: true, SwapTotalBytes: 96 * gib, SwapFreeBytes: 90 * gib}, large); v.Admit {
+		t.Fatal("a large host with 10 GiB available was admitted")
+	}
+	if noSwap := racePolicy(sentinel.HostStats{RAMTotalBytes: 16 * gib, SwapMeasured: true}); noSwap.MinSwapFreeBytes != 0 {
+		t.Fatalf("a host without swap must not wait for swap: %+v", noSwap)
+	}
+}
+
+// Positive: the stage judges a small host by its own size and runs the tests at once, without one
+// held reading; a fixed 12 GiB bound would hold it until the deadline.
+func TestRaceStageScope_Positive_SmallHostIsAdmitted(t *testing.T) {
+	repoDir := newHermeticGitRepo(t)
+	seedGoModule(t, repoDir)
+	cfg, _ := newTestConfig(t, repoDir, false)
+	const gib = uint64(1) << 30
+	cfg.hostReader = func() (sentinel.HostStats, error) {
+		return sentinel.HostStats{RAMTotalBytes: 8 * gib, RAMFreeBytes: 3 * gib, SwapMeasured: true, SwapTotalBytes: 4 * gib, SwapFreeBytes: 3 * gib}, nil
+	}
+	var logBuf bytes.Buffer
+	cfg.admissionLog = &logBuf
+	cfg.admissionPoll = time.Millisecond
+	cfg.admissionSleep = func(context.Context, time.Duration) error { return errors.New("held: the small host was not admitted") }
+	if _, err := runGoTests(t.Context(), cfg); err != nil {
+		t.Fatalf("runGoTests: %v (log %q)", err, logBuf.String())
+	}
+	if strings.Contains(logBuf.String(), "admission wait") {
+		t.Fatalf("a small host was held: %s", logBuf.String())
 	}
 }

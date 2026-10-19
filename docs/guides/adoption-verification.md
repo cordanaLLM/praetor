@@ -865,7 +865,11 @@ caller's session. Defaults are `MemoryHigh=16G`, `MemoryMax=20G`, and `MemorySwa
 customizable via `PRAETOR_GATE_SCOPE_MEMORY_HIGH`, `PRAETOR_GATE_SCOPE_MEMORY_MAX`, and
 `PRAETOR_GATE_SCOPE_SWAP_MAX`. An operator can set `PRAETOR_GATE_SCOPE=off` to run unscoped. On
 platforms where user scopes are unavailable (such as macOS or Windows), the tests run directly and
-the stage message reports `race tests ran unscoped: <reason>`. The signed stage reason contains one
+the stage message reports `race tests ran unscoped: <reason>`; inside the devcontainer the tests
+run unscoped too, since its runner has no `systemd-run`. Before the first module the stage waits
+until the host has at least 12 GiB available and 15 GiB swap free, capped at a quarter of its memory
+and half of its swap, so a small host or a CI runner with little swap is not held until the
+deadline; each held reading prints one line. The signed stage reason contains one
 result and elapsed time per module, and a failure names the module directory. A root-only
 repository keeps the existing stage behavior with the root module name (`go.mod`) added to the
 result.
