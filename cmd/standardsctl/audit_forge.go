@@ -39,11 +39,19 @@ var (
 	resolveActionsToken = func(ctx context.Context) string { return util.ResolveAuthTokenContext(ctx, "") }
 )
 
+// visibilityReader reads what visibility the repository has on the forge: forge.GitHubDriver,
+// or a stand-in in tests.
+type visibilityReader interface {
+	RepositoryVisibility(ctx context.Context) (string, error)
+}
+
 // actionsForge is the live forge reader of one audit or plan run, or why there is none: the
-// Actions reads and the branch protection read go through the same driver.
+// Actions reads, the branch protection read and the repository visibility read go through the
+// same driver.
 type actionsForge struct {
 	reader     forge.ActionsReader
 	protection protectionReader
+	visibility visibilityReader
 	notMade    string
 }
 
@@ -67,7 +75,7 @@ func openActionsForge(ctx context.Context, rootDir string, repo config.Repositor
 	}
 	driver := forge.NewGitHubDriver(token, actionsForgeEndpoint)
 	driver.SetRepository(repo.Owner, repo.Name)
-	return actionsForge{reader: driver, protection: driver}
+	return actionsForge{reader: driver, protection: driver, visibility: driver}
 }
 
 // readActionsPermissions compares declared with the live workflow permissions, or returns why
@@ -86,18 +94,20 @@ func readActionsPermissions(ctx context.Context, declared config.ActionsPolicy, 
 // auditLiveForge is the audit gate that reads the forge (#611, #612, #159). The live workflow
 // permissions are compared with overrides.actions and fail the audit on drift. Each
 // workflow's recent runs on the default branch are reported, and never fail it: the operator
-// chose read-and-report for them. The branch protection the default branch enforces is compared
-// with the declared policy and fails the audit on drift (auditLiveBranchProtection). Every check
-// runs whatever an earlier one found, and the failures are joined, so one drift never hides
-// another. A check the forge did not answer is named as not made, never passed. sync --remote
-// reconciles the branch protection and neither Actions setting.
+// chose read-and-report for them. The repository visibility is compared with repository.visibility
+// and fails the audit on drift (auditRepositoryVisibility). The branch protection the default
+// branch enforces is compared with the declared policy and fails the audit on drift
+// (auditLiveBranchProtection). Every check runs whatever an earlier one found, and the failures
+// are joined, so one drift never hides another. A check the forge did not answer is named as not
+// made, never passed. sync --remote reconciles the branch protection and neither Actions setting.
 func auditLiveForge(ctx context.Context, manifest *config.Manifest, rootDir string, policy *config.ResolvedPolicy, offline bool) error {
 	ctx, cancel := context.WithTimeout(ctx, actionsForgeTimeout)
 	defer cancel()
 	live := openActionsForge(ctx, rootDir, manifest.Repository, offline)
 	permissions := auditActionsPermissions(ctx, manifest.Overrides.Actions, live)
+	visibility := auditRepositoryVisibility(ctx, manifest.Repository, live)
 	auditWorkflowRuns(ctx, manifest, rootDir, live)
-	return errors.Join(permissions, auditLiveBranchProtection(ctx, manifest, rootDir, policy, live))
+	return errors.Join(permissions, visibility, auditLiveBranchProtection(ctx, manifest, rootDir, policy, live))
 }
 
 // auditLiveBranchProtection compares the branch protection the default branch enforces on the
@@ -318,6 +328,31 @@ func auditActionsPermissions(ctx context.Context, declared *config.ActionsPolicy
 	default:
 		fmt.Printf("[PASS] Actions workflow permissions compared with the forge: %s.\n", finding.Detail)
 	}
+	return nil
+}
+
+// auditRepositoryVisibility compares the declared repository visibility with what the forge
+// reports, or reports why the comparison was not made. Drift fails the audit and changing
+// visibility is left to the operator.
+func auditRepositoryVisibility(ctx context.Context, repo config.RepositoryMetadata, live actionsForge) error {
+	if strings.TrimSpace(repo.Visibility) == "" {
+		fmt.Println("[INFO] Repository visibility not compared with the forge: repository.visibility declares none.")
+		return nil
+	}
+	if live.visibility == nil {
+		fmt.Printf("[SKIP] Repository visibility not compared with the forge: %s\n", live.notMade)
+		return nil
+	}
+	liveVisibility, err := live.visibility.RepositoryVisibility(ctx)
+	if err != nil {
+		fmt.Printf("[SKIP] Repository visibility not compared with the forge: %v\n", err)
+		return nil
+	}
+	drift := forge.VisibilityDrift(repo.Visibility, liveVisibility)
+	if drift != "" {
+		return fmt.Errorf("[FAIL] Repository visibility compared with the forge: %s; changing visibility is the operator's decision", drift)
+	}
+	fmt.Printf("[PASS] Repository visibility compared with the forge: GitHub reports %s.\n", liveVisibility)
 	return nil
 }
 

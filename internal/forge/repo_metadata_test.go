@@ -315,3 +315,58 @@ func TestValidateRepositoryTopics(t *testing.T) {
 		t.Error("21 topics were accepted")
 	}
 }
+
+// Positive, negative and boundary: VisibilityDrift reports drift when declared differs from live,
+// ignores case, and returns empty when they match or nothing is declared.
+func TestVisibilityDrift(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		declared string
+		live     string
+		want     string
+	}{
+		{"matches_public", "public", "public", ""},
+		{"matches_private", "private", "private", ""},
+		{"matches_case_insensitive", "Public", "public", ""},
+		{"matches_case_insensitive_rev", "private", "Private", ""},
+		{"matches_trimmed", "  public  ", "public", ""},
+		{"undeclared_empty", "", "public", ""},
+		{"undeclared_whitespace", "   ", "public", ""},
+		{"drift_private_to_public", "private", "public", "manifest declares private, GitHub reports public"},
+		{"drift_public_to_private", "public", "private", "manifest declares public, GitHub reports private"},
+		{"drift_no_live_visibility", "private", "", "manifest declares private, GitHub reports no visibility"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := VisibilityDrift(tc.declared, tc.live)
+			if got != tc.want {
+				t.Errorf("VisibilityDrift(%q, %q) = %q, want %q", tc.declared, tc.live, got, tc.want)
+			}
+		})
+	}
+}
+
+// Positive, negative and boundary: RepositoryVisibility reads the live visibility, refuses an empty token,
+// and reports a failing forge read.
+func TestGitHubDriver_RepositoryVisibility(t *testing.T) {
+	gh, _, _ := newMetadataForge(t, map[string]any{"visibility": "private"}, nil)
+	got, err := gh.RepositoryVisibility(context.Background())
+	if err != nil {
+		t.Fatalf("read visibility: %v", err)
+	}
+	if got != "private" {
+		t.Fatalf("visibility = %q, want %q", got, "private")
+	}
+
+	// Boundary: unauthenticated driver fails before reading.
+	unauth := NewGitHubDriver("", gh.Endpoint)
+	unauth.SetRepository("acme", "widgets")
+	if _, err := unauth.RepositoryVisibility(context.Background()); err == nil {
+		t.Fatal("expected authentication error on empty token, got nil")
+	}
+
+	// Negative: failing forge read reports status.
+	failing, _, _ := newMetadataForge(t, nil, map[string]int{http.MethodGet: http.StatusInternalServerError})
+	if _, err := failing.RepositoryVisibility(context.Background()); err == nil {
+		t.Fatal("expected error on 500 response, got nil")
+	}
+}

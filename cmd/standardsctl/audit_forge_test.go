@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -63,6 +64,16 @@ func pointLiveChecksAt(t *testing.T, url string) {
 
 func (s *actionsStub) answer(path string) (int, any) {
 	switch {
+	case path == "/repos/acme/widgets":
+		if s.repoStatus != 0 {
+			return s.repoStatus, s.repo
+		}
+		if s.repo != nil {
+			if vis, ok := s.repo["visibility"]; ok {
+				return http.StatusOK, map[string]any{"visibility": vis}
+			}
+		}
+		return http.StatusOK, map[string]any{"visibility": "public"}
 	case path == "/repos/acme/widgets/actions/permissions/workflow":
 		return orOK(s.repoStatus), s.repo
 	case path == "/orgs/acme/actions/permissions/workflow":
@@ -783,4 +794,118 @@ func TestAuditLiveBranchProtection_Positive_StricterBranchProtectionPasses(t *te
 		"[PASS] Live branch protection of main: live is stricter than declared: require_extra_approval_for_unattributed_changes declared false, live true",
 		`[PASS] Live branch protection of main compared with the forge: GitHub enforces every declared property (protected by ruleset "praetor-main-protection" #1).`,
 	)
+}
+
+// visibilityFixture prepares an audit fixture with a GitHub origin and the given declared
+// visibility ("" strips repository.visibility), pointed at stub.
+func visibilityFixture(t *testing.T, declared string, stub *forgeStub) *auditFixture {
+	t.Helper()
+	f := newAuditFixture(t)
+	f.addGitHubOrigin(t)
+	manifest := fixtureManifest("acme", "widgets", false)
+	manifest = strings.Replace(manifest, "register:\n", "adoption:\n  decline:\n    - branch-ruleset\nregister:\n", 1)
+	if declared == "" {
+		manifest = strings.Replace(manifest, "  visibility: \"public\"\n", "", 1)
+	} else if declared != "public" {
+		manifest = strings.Replace(manifest, `visibility: "public"`, fmt.Sprintf(`visibility: %q`, declared), 1)
+	}
+	writeFixtureFile(t, f.dir, ".standards.yaml", manifest)
+	gitCommitAll(t, f.dir, f.gitEnv, "update visibility manifest")
+	if stub != nil {
+		server := httptest.NewServer(stub.handler())
+		t.Cleanup(server.Close)
+		pointLiveChecksAt(t, server.URL)
+	}
+	return f
+}
+
+// Positive: a repository whose declared visibility matches what GitHub reports passes the audit,
+// both public-public and private-private (HISS-20 both directions).
+func TestAuditRepositoryVisibility_Positive_MatchingPasses(t *testing.T) {
+	for _, vis := range []string{"public", "private"} {
+		t.Run(vis, func(t *testing.T) {
+			stub := &forgeStub{repo: map[string]any{"visibility": vis, "topics": []any{}}}
+			f := visibilityFixture(t, vis, stub)
+			out, err := f.audit(t)
+			if err != nil {
+				t.Fatalf("matching %s visibility failed the audit: %v\n%s", vis, err, out)
+			}
+			mustContain(t, out, fmt.Sprintf("[PASS] Repository visibility compared with the forge: GitHub reports %s.", vis))
+		})
+	}
+}
+
+// Negative: declared visibility differing from what GitHub reports fails the audit, both
+// declared private with forge public and declared public with forge private (HISS-20 both directions),
+// naming both and noting that changing visibility is the operator's decision.
+func TestAuditRepositoryVisibility_Negative_DriftFails(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		declared string
+		live     string
+	}{
+		{"declared_private_forge_public", "private", "public"},
+		{"declared_public_forge_private", "public", "private"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &forgeStub{repo: map[string]any{"visibility": tc.live, "topics": []any{}}}
+			f := visibilityFixture(t, tc.declared, stub)
+			_, err := f.audit(t)
+			if err == nil {
+				t.Fatalf("%s: expected audit failure on visibility drift, got nil", tc.name)
+			}
+			want := fmt.Sprintf("[FAIL] Repository visibility compared with the forge: manifest declares %s, GitHub reports %s; changing visibility is the operator's decision",
+				tc.declared, tc.live)
+			mustErrContain(t, err, want)
+		})
+	}
+}
+
+// Boundary: a manifest that declares no repository.visibility is reported as not compared and passes.
+func TestAuditRepositoryVisibility_Boundary_UndeclaredIsInfo(t *testing.T) {
+	stub := &forgeStub{repo: map[string]any{"visibility": "public", "topics": []any{}}}
+	f := visibilityFixture(t, "", stub)
+	out, err := f.audit(t)
+	if err != nil {
+		t.Fatalf("an undeclared visibility failed the audit: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[INFO] Repository visibility not compared with the forge: repository.visibility declares none.")
+	if strings.Contains(out, "[PASS] Repository visibility") || strings.Contains(out, "[FAIL] Repository visibility") {
+		t.Fatalf("undeclared visibility reported pass or fail:\n%s", out)
+	}
+}
+
+// Boundary: case-insensitive match (e.g. Public vs public, private vs Private) passes the audit.
+func TestAuditRepositoryVisibility_Boundary_CaseInsensitivePasses(t *testing.T) {
+	for _, tc := range []struct {
+		declared string
+		live     string
+	}{
+		{"Public", "public"},
+		{"private", "Private"},
+	} {
+		t.Run(tc.declared+"_vs_"+tc.live, func(t *testing.T) {
+			stub := &forgeStub{repo: map[string]any{"visibility": tc.live, "topics": []any{}}}
+			f := visibilityFixture(t, tc.declared, stub)
+			out, err := f.audit(t)
+			if err != nil {
+				t.Fatalf("case-insensitive match %s vs %s failed: %v\n%s", tc.declared, tc.live, err, out)
+			}
+			mustContain(t, out, fmt.Sprintf("[PASS] Repository visibility compared with the forge: GitHub reports %s.", tc.live))
+		})
+	}
+}
+
+// Boundary: a forge read error skips the visibility check with the documented treatment and does not fail the audit.
+func TestAuditRepositoryVisibility_Boundary_ForgeReadErrorSkips(t *testing.T) {
+	stub := &forgeStub{repoStatus: http.StatusInternalServerError}
+	f := visibilityFixture(t, "public", stub)
+	out, err := f.audit(t)
+	if err != nil {
+		t.Fatalf("a forge read error failed the audit: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[SKIP] Repository visibility not compared with the forge: ")
+	if strings.Contains(out, "[PASS] Repository visibility") || strings.Contains(out, "[FAIL] Repository visibility") {
+		t.Fatalf("a forge read error reported pass or fail:\n%s", out)
+	}
 }

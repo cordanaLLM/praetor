@@ -270,6 +270,7 @@ type forgeStub struct {
 	reads           []string
 	requests        int
 	writeStatus     int
+	repoStatus      int
 	rulesets        map[int]map[string]any
 	labels          map[string]map[string]any
 	repo            map[string]any
@@ -459,6 +460,10 @@ func (s *forgeStub) serveLabel(w http.ResponseWriter, method, rest string, body 
 // serveRepository answers the repository object (GET), a repository update (PATCH) and a
 // topic replacement (PUT .../topics).
 func (s *forgeStub) serveRepository(w http.ResponseWriter, method string, body map[string]any) {
+	if s.repoStatus >= http.StatusMultipleChoices {
+		stubRespond(w, s.repoStatus, map[string]any{"message": "stub rejection"})
+		return
+	}
 	switch method {
 	case http.MethodGet:
 		stubRespond(w, http.StatusOK, s.repo)
