@@ -55,6 +55,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"39138445b6927bde92db48182781070d48fed84daa8417e555bec744015606e9": "defer the checkpoint inside a detached job that cannot publish",
 		"2c08cd616a4a2d53bcbdc2a4e3bb8a4fc235a718dd0913c53d95f9943b53eb6c": "stop checkpoint finds recent unnamed worktrees",
 		"d3b85026905c9006b1ddd063550d673db0fd0e46639a499943f8934b79b89192": "checkpoint evaluator passes ruff PLR rules",
+		"eaa665c54b1441721d9d8a063265b61f26680e77b517377af407cdd18d59b4bd": "stop checkpoint counts session-owned worktrees and ignores gate scratch",
 	},
 	checkpointCommon: {
 		"61ccf1481d43073ca29aab6c6e6b78cc6f5cb4a86bf1e7603b8b0e01d02f71a9": "platform promotion (#14)",

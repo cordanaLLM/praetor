@@ -83,17 +83,25 @@ When provided, `require_checks` must be true. Praetor enables it and names its
 standards, compliance and security gates. Local-only repositories perform no
 remote check requests.
 
-On stop, the evaluator also checks linked worktrees whose Git admin directory,
-`HEAD`, index, or `logs/HEAD` changed in the last 24 hours. That window stands in
-for work created or changed during the session because the hook has no session
-start time. The checkout running the hook is excluded. Recent unnamed worktrees
-with public changes, commits not on a remote, or a pushed advance without an open
-or merged PR keep the stop checkpoint due, unless the worktree is clean and its
-net change since its merge base is already in the remote base (its reversed patch
-applies to a temporary index of the base): a branch landed through a squash or a
-train is finished without a pull request of its own head. If checkpoint
-publication is disabled or has no configured repository, PR state is skipped and
-reported.
+On stop, the evaluator checks linked worktrees. The native adapter writes an
+ownership record on tool events (`PostToolUse`, `AfterTool`) into
+`<git common dir>/praetor-checkpoint/sessions/<sha256(session_id)[:16]>.json`,
+recording worktrees whose resolved paths are named as whole paths or entered via
+`EnterWorktree`. On `Stop` and `AfterAgent`, the adapter passes `PRAETOR_CHECKPOINT_SESSION`
+so only worktrees owned by the stopping session are judged. Gate scratch worktrees
+under `.standards/worktrees/` belong to their gate run and never block a stop
+checkpoint. When the session environment variable is absent or no readable session
+record exists (such as during manual stop runs or for clients without a session
+id), the evaluator falls back to judging linked worktrees with Git admin-file
+activity in the last 24 hours, and reports `worktree ownership unknown: judged by
+recent activity` on each finding. The checkout running the hook is excluded.
+Recent unnamed worktrees with public changes, commits not on a remote, or a
+pushed advance without an open or merged PR keep the stop checkpoint due, unless
+the worktree is clean and its net change since its merge base is already in the
+remote base (its reversed patch applies to a temporary index of the base): a branch
+landed through a squash or a train is finished without a pull request of its own
+head. If checkpoint publication is disabled or has no configured repository, PR
+state is skipped and reported.
 
 To keep a worktree visible without blocking this turn, name it in
 `.workingdir/OPEN.md` by its branch name, directory basename, or full path. A

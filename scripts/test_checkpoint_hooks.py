@@ -306,9 +306,10 @@ class NativeLefthook(unittest.TestCase):
                            cwd=root, text=True, capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def linked_worktree(self, location):
+    def linked_worktree(self, location, branch=None):
         """A linked worktree of the fixture with the CLI and the ledger a new worktree needs."""
-        self.git("worktree", "add", "-q", "-b", "checkpoint/" + location.parent.name, str(location))
+        branch_name = branch if branch is not None else ("checkpoint/" + location.parent.name)
+        self.git("worktree", "add", "-q", "-b", branch_name, str(location))
         (location / "bin").mkdir()
         os.link(self.binary, location / PRAETORCTL)
         self.state("init", location)
@@ -356,6 +357,7 @@ class NativeLefthook(unittest.TestCase):
             cwd = self.root / "nested path with spaces"
             cwd.mkdir(exist_ok=True)
         argv, directory, extra = self.registered_process(settings, action, cwd, project)
+        extra["XDG_CONFIG_HOME"] = str(self.root / ".config")
         return run_child(argv, cwd=directory, env={**os.environ, **extra, **(env or {})},
                          input=json.dumps(payload), text=True,
                          capture_output=True, timeout=60, check=False)
@@ -919,6 +921,66 @@ class NativeLefthook(unittest.TestCase):
         self.assertNotIn("public_paths", result)
         scoped = SCOPE.inspect_checkpoint(self.root, "tool", include_paths=True)
         self.assertEqual(scoped["public_paths"], ["README.md"])
+
+    def test_adapter_records_worktree_touched_by_bash_and_edit_not_prefix(self):
+        w_a = self.linked_worktree(self.root / ".claude/worktrees/agent-a", branch="checkpoint/agent-a")
+        w_ab = self.linked_worktree(self.root / ".claude/worktrees/agent-ab", branch="checkpoint/agent-ab")
+        session_id = "test-session-1234"
+        session_hash = ADAPTER.session_hash_for(session_id)
+        sessions_dir = self.root / ".git" / "praetor-checkpoint" / "sessions"
+        record_file = sessions_dir / f"{session_hash}.json"
+
+        # 1. Payload without session id writes no record
+        payload_no_session = {
+            "hook_event_name": "PostToolUse",
+            "cwd": str(self.root),
+            "tool_name": "Bash",
+            "tool_input": {"command": f"cd {w_a} && ls"},
+        }
+        self.invoke(payload_no_session)
+        self.assertFalse(record_file.exists())
+
+        # 2. Bash command naming w_ab: records w_ab, but NOT w_a (prefix sharing rejected)
+        payload_ab = {
+            "hook_event_name": "PostToolUse",
+            "session_id": session_id,
+            "cwd": str(self.root),
+            "tool_name": "Bash",
+            "tool_input": {"command": f"cd {w_ab} && ls"},
+        }
+        self.invoke(payload_ab)
+        self.assertTrue(record_file.exists())
+        data = json.loads(record_file.read_text())
+        self.assertIn(str(w_ab.resolve()), data)
+        self.assertNotIn(str(w_a.resolve()), data)
+        raw_text = record_file.read_text()
+        self.assertNotIn(session_id, raw_text)
+        self.assertNotIn(session_id, str(record_file))
+
+        # 3. Edit tool with file_path under w_a: records w_a
+        payload_a_edit = {
+            "hook_event_name": "PostToolUse",
+            "session_id": session_id,
+            "cwd": str(self.root),
+            "tool_name": "Edit",
+            "tool_input": {"file_path": str(w_a / "sub" / "file.txt")},
+        }
+        self.invoke(payload_a_edit)
+        data = json.loads(record_file.read_text())
+        self.assertIn(str(w_a.resolve()), data)
+        self.assertIn(str(w_ab.resolve()), data)
+
+    def test_adapter_record_bounds_max_worktrees(self):
+        session_id = "test-session-bound"
+        session_hash = ADAPTER.session_hash_for(session_id)
+        sessions_dir = self.root / ".git" / "praetor-checkpoint" / "sessions"
+        record_file = sessions_dir / f"{session_hash}.json"
+        many_paths = {f"/path/to/worktree-{i:04d}" for i in range(ADAPTER.MAX_WORKTREES + 50)}
+        ADAPTER._write_session_record(sessions_dir, record_file, many_paths)
+        data = json.loads(record_file.read_text())
+        self.assertLessEqual(len(data), ADAPTER.MAX_WORKTREES)
+        self.assertEqual(len(data), ADAPTER.MAX_WORKTREES)
+        self.assertEqual(data, sorted(data))
 
 
 if __name__ == "__main__":
