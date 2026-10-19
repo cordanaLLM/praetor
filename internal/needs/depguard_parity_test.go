@@ -342,7 +342,9 @@ import (
 
 func runOracleCommand(ctx context.Context, repoRoot, dir string, enableOnly bool) ([]byte, error) {
 	toolsMod := filepath.Join(repoRoot, "tools", "lint", "go.mod")
-	args := []string{"tool", "-modfile=" + toolsMod, "golangci-lint", "run"}
+	// golangci-lint refuses to start while another instance on the host holds its lock ("parallel golangci-lint is
+	// running"); a parity case must not fail because some other build lints at the same time.
+	args := []string{"tool", "-modfile=" + toolsMod, "golangci-lint", "run", "--allow-parallel-runners"}
 	if enableOnly {
 		args = append(args, "--enable-only", "depguard")
 	}
