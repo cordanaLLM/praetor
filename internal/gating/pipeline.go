@@ -476,7 +476,7 @@ func executeStage(ctx context.Context, s stage, cfg *stageConfig) error {
 }
 
 // runPrefetchStage verifies the standards lockfiles, then prefetches each language's
-// dependencies: the Go modules, and the Cargo crates where a Cargo.lock pins them (withOtherLanguages).
+// dependencies: the Go modules, and Cargo and Node where their lockfiles pin them (withOtherLanguages).
 func runPrefetchStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	if err := VerifyLockfiles(cfg.repoDir); err != nil {
 		return "", err
@@ -484,6 +484,7 @@ func runPrefetchStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	msg, err := runGoPrefetch(ctx, cfg)
 	return withOtherLanguages(ctx, cfg, languagePart{language: languageGo, msg: msg, err: err},
 		nonGoPart{language: languageCargo, present: hasCargo, run: runCargoPrefetch},
+		nonGoPart{language: languageNode, present: hasNode, run: runNodePrefetch},
 	)
 }
 
@@ -580,11 +581,12 @@ func hissScanOptions(ctx context.Context, cfg *stageConfig) (hiss.ScanOptions, s
 }
 
 // runSecurityStage runs each language's scanners: govulncheck and gosec for Go, and cargo audit
-// where a Cargo.lock is present (withOtherLanguages).
+// and Node audit where their lockfiles are present (withOtherLanguages).
 func runSecurityStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	msg, err := runGoSecurity(ctx, cfg)
 	return withOtherLanguages(ctx, cfg, languagePart{language: languageGo, msg: msg, err: err},
 		nonGoPart{language: languageCargo, present: hasCargo, run: runCargoSecurity},
+		nonGoPart{language: languageNode, present: hasNode, run: runNodeSecurity},
 	)
 }
 
@@ -796,11 +798,12 @@ func invalidSettingsClause(rep *flavor.FlavorAuditReport) string {
 }
 
 // runTestStage runs each language's test suite against HEAD in an isolated worktree: the Go
-// race detector, and cargo test and cargo clippy where a Cargo.lock is present (withOtherLanguages).
+// race detector, and Cargo and Node suites where their lockfiles are present (withOtherLanguages).
 func runTestStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	msg, err := runGoTests(ctx, cfg)
 	return withOtherLanguages(ctx, cfg, languagePart{language: languageGo, msg: msg, err: err},
 		nonGoPart{language: languageCargo, present: hasCargo, run: runCargoTests},
+		nonGoPart{language: languageNode, present: hasNode, run: runNodeTests},
 	)
 }
 

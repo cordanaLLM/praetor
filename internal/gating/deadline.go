@@ -32,6 +32,10 @@ const OtherStagesAllowance = 5 * time.Minute
 // covers. Without it the two Cargo commands could spend the whole allowance on their own.
 const CargoStagesAllowance = DefaultPrefetchTimeout + CargoAuditTimeout
 
+// NodeStagesAllowance is what a package.json with a single lockfile adds to OtherStagesAllowance:
+// the bounds prefetch install and audit run under.
+const NodeStagesAllowance = DefaultPrefetchTimeout + NodeAuditTimeout
+
 // errStageBoundFired is the cause the race stage's own context carries when its bound fires. It
 // is what lets the stage blame its bound only when that bound, and not its caller, stopped it.
 var errStageBoundFired = errors.New("race stage bound fired")
@@ -127,20 +131,20 @@ func resolveRepoRunBudget(ctx context.Context, raw, repoDir string) (RunBudget, 
 		return budget, err
 	}
 	hasCargo := util.FileExists(filepath.Join(repoDir, CargoLockFile))
-	if count == 0 && !hasCargo {
+	hasNode := hasSingleNodeLockfile(repoDir)
+	if count == 0 && !hasCargo && !hasNode {
 		return applyDeclaredVerifyBudget(budget, raw, declaredTimeout), nil
 	}
-	if !hasCargo {
-		if count > 0 {
-			budget.Suites = count
-		}
-		return budget, nil
+	suites := count
+	if hasCargo {
+		budget.Allowance += CargoStagesAllowance
+		suites++
 	}
-	budget.Allowance += CargoStagesAllowance
-	if count > 0 {
-		budget.Suites = count
-		budget.Suites++
+	if hasNode {
+		budget.Allowance += NodeStagesAllowance
+		suites++
 	}
+	budget.Suites = max(suites, 1)
 	return budget, nil
 }
 

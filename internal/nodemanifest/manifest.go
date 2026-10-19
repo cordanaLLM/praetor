@@ -17,10 +17,11 @@ const MaxManifestBytes = 1 << 20
 // maxManifestDepth bounds the nesting of a package.json ParseManifest accepts (HISS-02).
 const maxManifestDepth = 64
 
-// Manifest is the part of one package.json the dependency readers use: its name and its four
-// direct dependency groups, each mapping a package name to the version range it declares.
+// Manifest is the part of one package.json the dependency readers use: its name, its scripts,
+// and its four direct dependency groups, each mapping a package name to the version range it declares.
 type Manifest struct {
 	Name                 string            `json:"name"`
+	Scripts              map[string]string `json:"scripts,omitempty"`
 	Dependencies         map[string]string `json:"dependencies"`
 	DevDependencies      map[string]string `json:"devDependencies"`
 	PeerDependencies     map[string]string `json:"peerDependencies"`

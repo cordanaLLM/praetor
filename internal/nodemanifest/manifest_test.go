@@ -11,8 +11,8 @@ import (
 	"github.com/cordanaLLM/praetor/internal/strictjson"
 )
 
-// Positive: the name and all four dependency groups are read, in npm's order, and a member the
-// struct does not name (scripts) is ignored.
+// Positive: the name, scripts, and all four dependency groups are read, in npm's order, and an
+// unmapped member is ignored.
 func TestParseManifest_Positive_ReadsNameAndGroups(t *testing.T) {
 	manifest, err := ParseManifest([]byte(`{"name":"site","scripts":{"build":"astro build"},` +
 		`"dependencies":{"astro":"^7.3.6"},"devDependencies":{"typescript":"~5.9.0"},` +
@@ -22,6 +22,9 @@ func TestParseManifest_Positive_ReadsNameAndGroups(t *testing.T) {
 	}
 	if manifest.Name != "site" {
 		t.Errorf("name = %q", manifest.Name)
+	}
+	if manifest.Scripts["build"] != "astro build" {
+		t.Errorf("scripts[build] = %q, want astro build", manifest.Scripts["build"])
 	}
 	want := []string{"astro", "typescript", "react", "fsevents"}
 	groups := manifest.Groups()

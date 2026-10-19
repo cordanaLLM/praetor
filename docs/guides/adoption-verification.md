@@ -945,6 +945,23 @@ stand-in `cargo` with `testsupport.BuildExecutable`, puts it first on `PATH`, an
 through the production runner: all commands passing mints a receipt that verifies and leaves the
 build output in the shared directory after the worktree is gone, and a clippy failure mints none.
 
+### Node repositories (npm, pnpm, Yarn)
+
+Where the repository root holds `package.json` plus exactly one supported lockfile (`package-lock.json` for npm, `pnpm-lock.yaml` for pnpm, or `yarn.lock` for Yarn), the toolchain stages run Node alongside Go and Cargo, or instead of them ([`internal/gating/node.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/node.go)):
+
+| Stage | npm | pnpm | Yarn Classic (v1) | Yarn Berry (v2+) | Runs in | Bound |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| Prefetch & Lockfiles | `npm ci --ignore-scripts` | `pnpm install --frozen-lockfile --ignore-scripts` | `yarn install --frozen-lockfile --ignore-scripts` | `yarn install --immutable --mode=skip-build` | the repository | `DefaultPrefetchTimeout`, 60 s |
+| Security & SCA Scan | `npm audit --audit-level=high --json` | `pnpm audit --audit-level=high --json` | `yarn audit --level=high --json` | `yarn npm audit --severity=high --json` | the repository | `NodeAuditTimeout`, 3 min |
+| Race-Detector Tests | `npm run test`, then `npm run lint` | `pnpm run test`, then `pnpm run lint` | `yarn run test`, then `yarn run lint` | `yarn run test`, then `yarn run lint` | the isolated worktree | a race stage bound of its own |
+
+- **Detection:** The Node part is present when the repository root holds `package.json` plus exactly one lockfile: `package-lock.json`, `pnpm-lock.yaml`, or `yarn.lock`. A `package.json` without a lockfile or with multiple lockfiles fails stating the files.
+- **Prefetch:** Installs strictly from the lockfile without running lifecycle scripts. Exact flags are taken from installed tool help (`--ignore-scripts`, `--frozen-lockfile`, `--immutable`, `--mode=skip-build`). Yarn version is detected via `yarn --version` to distinguish Classic (v1) from Berry (v2+).
+- **Security:** Runs the manager's audit command at a severity threshold of `high`, failing on findings or unparseable errors. An audit that needs network access and fails is reported as a network failure, not passed.
+- **Tests:** Runs the `test` script when declared, then the `lint` script when declared, in an isolated worktree with `node_modules` linked from the checkout via `findDependencyFolders` and cleaned up after execution.
+- **What is not applicable:** When `package.json` declares neither a `test` nor a `lint` script, the test stage is not applicable, stated as `no test or lint script declared in package.json: Node tests skipped`, and Node does not count as verified (refusing a receipt unless another language verifies). When `package.json` has no lockfile, toolchain stages do not run and `--admit-unsupported` admits the repository without a receipt.
+- A missing manager binary skips the stage with an install hint and never passes.
+
 ### Go vulnerabilities and the OpenVEX document
 
 The security stage runs the Go vulnerability gate before gosec
@@ -1729,9 +1746,9 @@ The deadline is sized to the repository `--path` names (`ResolveRepoRunBudget` i
 
 | Tracked toolchain state | Test suites, one bound each | Allowance for the other stages |
 | :--- | :--- | :--- |
-| N discoverable `go.mod` files, no `Cargo.lock` | N (at least 1 for the deadline calculation) | 5 min |
-| `Cargo.lock`, no discoverable `go.mod` | 1 | 5 min + 1 min `cargo fetch` + 3 min `cargo audit` = 9 min |
-| N discoverable `go.mod` files and `Cargo.lock` | N + 1 | 9 min |
+| N discoverable `go.mod` files, no `Cargo.lock` and no Node lockfile | N (at least 1 for the deadline calculation) | 5 min |
+| `Cargo.lock` or Node lockfile, no discoverable `go.mod` | 1 | 5 min + 1 min prefetch + 3 min audit = 9 min |
+| N discoverable `go.mod` files, `Cargo.lock`, and/or Node lockfile | N + non-Go suites | 5 min + 4 min per present non-Go language |
 
 A mixed repository with one Go module therefore gets 2 × 20 + 9 = 49 minutes by default. Sized for one suite, the run
 deadline let the Go suite and the Cargo commands spend the time the Cargo suite needed, and no value

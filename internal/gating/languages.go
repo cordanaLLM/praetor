@@ -22,6 +22,7 @@ import (
 const (
 	languageGo    = "go"
 	languageCargo = "cargo"
+	languageNode  = "node"
 	// supportedLanguages names them with their markers for the refusal message.
 	supportedLanguages = "Go (go.mod) and Cargo (Cargo.lock)"
 	// AdmitUnsupportedFlag names the `gate run` flag (RunOptions.AdmitUnsupported) the pre-push
@@ -108,6 +109,11 @@ func (c *stageConfig) noteVerified(part languagePart) {
 	if part.err == nil && !slices.Contains(c.verified, part.language) {
 		c.verified = append(c.verified, part.language)
 	}
+}
+
+// unverifyLanguage removes language from verified so an unverified test stage earns no receipt.
+func (c *stageConfig) unverifyLanguage(language string) {
+	c.verified = slices.DeleteFunc(c.verified, func(l string) bool { return l == language })
 }
 
 // nonGoPart is one non-Go language's share of a toolchain stage.
@@ -227,7 +233,7 @@ func requireVerification(ctx context.Context, cfg *stageConfig) error {
 }
 
 // holdsToolchainMarker reports whether the repository root holds the marker of a language whose
-// toolchain the gate runs: go.mod for Go, Cargo.lock for Cargo.
+// toolchain the gate runs: go.mod for Go, Cargo.lock for Cargo, package.json with exactly one lockfile for Node.
 func holdsToolchainMarker(ctx context.Context, cfg *stageConfig) (bool, error) {
 	if ctx == nil && !cfg.modulesDiscovered {
 		return false, fmt.Errorf("%w: marker check has no discovery context", ErrModuleDiscoveryMissing)
@@ -236,16 +242,19 @@ func holdsToolchainMarker(ctx context.Context, cfg *stageConfig) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return len(modules) > 0 || util.FileExists(filepath.Join(cfg.repoDir, CargoLockFile)), nil
+	return len(modules) > 0 || util.FileExists(filepath.Join(cfg.repoDir, CargoLockFile)) || hasSingleNodeLockfile(cfg.repoDir), nil
 }
 
 // nothingVerifiedError names why nothing ran: a Cargo.lock whose stages could not run here, the
 // languages at the repository root the gate runs no toolchain for, or that it recognises none.
 func nothingVerifiedError(cfg *stageConfig) error {
 	repoDir := cfg.repoDir
-	notes := make([]string, 0, 2)
+	notes := make([]string, 0, 3)
 	if util.FileExists(filepath.Join(repoDir, CargoLockFile)) {
 		notes = append(notes, "Cargo.lock is present, but no Cargo stage ran here; each stage's reason says why")
+	}
+	if hasSingleNodeLockfile(repoDir) {
+		notes = append(notes, "package.json and its lockfile are present, but no Node stage ran here; each stage's reason says why")
 	}
 	if unsupported := unsupportedLanguages(repoDir); len(unsupported) > 0 {
 		notes = append(notes, "unsupported languages at the repository root: "+strings.Join(unsupported, ", "))
@@ -262,11 +271,12 @@ func nothingVerifiedError(cfg *stageConfig) error {
 // once and with the files that identified it, in the table's order.
 func unsupportedLanguages(repoDir string) []string {
 	hasLock := util.FileExists(filepath.Join(repoDir, CargoLockFile))
+	hasSingleNode := hasSingleNodeLockfile(repoDir)
 	order := make([]string, 0, len(unsupportedMarkers))
 	files := make(map[string][]string, len(unsupportedMarkers))
 	for i := 0; i < len(unsupportedMarkers); i++ {
 		marker := unsupportedMarkers[i]
-		if (hasLock && marker.file == "Cargo.toml") || !util.FileExists(filepath.Join(repoDir, marker.file)) {
+		if (hasLock && marker.file == "Cargo.toml") || (hasSingleNode && marker.file == "package.json") || !util.FileExists(filepath.Join(repoDir, marker.file)) {
 			continue
 		}
 		if _, seen := files[marker.language]; !seen {
