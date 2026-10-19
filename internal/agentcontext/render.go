@@ -2,6 +2,7 @@ package agentcontext
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -324,6 +325,10 @@ func (t *Transpiler) renderTargets(targets []vendorTarget, body func(section str
 	for _, i := range t.Env.order(len(targets)) {
 		target := targets[i]
 		text := target.prefix + generatedHeader + body(target.section)
+		depth := strings.Count(target.path, "/")
+		if depth > 0 {
+			text = rewriteRelativeLinks(text, depth)
+		}
 		count := countLines(text)
 		if count > t.MaxLines {
 			return nil, fmt.Errorf("target file %s exceeds max line budget (%d > %d)", target.path, count, t.MaxLines)
@@ -423,3 +428,120 @@ func ProjectionFrame(path string) string {
 }
 
 const cursorFrontmatter = "---\ndescription: Canonical agent instructions\nglobs: \"*\"\nalwaysApply: true\n---\n\n"
+
+const (
+	maxSpansPerLine = 256
+	maxLinksPerLine = 256
+)
+
+var (
+	urlSchemeRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
+	refDefRe    = regexp.MustCompile(`^([ \t]*\[[^\]]+\]:[ \t]+)(\S+)(.*)$`)
+)
+
+// rewriteRelativeLinks prefixes repository-relative Markdown links and reference definitions
+// by the target directory depth so they resolve correctly in subdirectory targets (#129).
+func rewriteRelativeLinks(text string, depth int) string {
+	if depth <= 0 {
+		return text
+	}
+	prefix := strings.Repeat("../", depth)
+	lines := strings.Split(text, "\n")
+	var fence util.MarkdownFence
+	for i := 0; i < len(lines) && i < maxCanonicalLines; i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if fence.Inside(trimmed) {
+			continue
+		}
+		if sub := refDefRe.FindStringSubmatch(lines[i]); len(sub) == 4 {
+			newDest := rewriteDestination(sub[2], prefix)
+			lines[i] = sub[1] + newDest + sub[3]
+			continue
+		}
+		lines[i] = rewriteInlineLinks(lines[i], prefix)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// rewriteInlineLinks finds inline links and images on line outside code spans and rewrites their destinations.
+func rewriteInlineLinks(line, prefix string) string {
+	spans := util.MarkdownCodeSpans(line, maxSpansPerLine)
+	matches := util.MarkdownLinkRe.FindAllStringSubmatchIndex(line, -1)
+	if len(matches) == 0 {
+		return line
+	}
+	limit := len(matches)
+	if limit > maxLinksPerLine {
+		limit = maxLinksPerLine
+	}
+	for i := limit - 1; i >= 0; i-- {
+		m := matches[i]
+		if isInsideCodeSpan(m[0], m[1], spans) {
+			continue
+		}
+		rawDest := line[m[4]:m[5]]
+		rewritten := rewriteInlineDest(rawDest, prefix)
+		if rewritten != rawDest {
+			line = line[:m[4]] + rewritten + line[m[5]:]
+		}
+	}
+	return line
+}
+
+// rewriteInlineDest parses the destination component from raw destination text (which may
+// include an optional title in quotes) and applies prefix if relative.
+func rewriteInlineDest(raw, prefix string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return raw
+	}
+	leading := raw[:len(raw)-len(strings.TrimLeft(raw, " \t\r\n"))]
+	trailing := raw[len(strings.TrimRight(raw, " \t\r\n")):]
+	var dest, rest string
+	if strings.HasPrefix(trimmed, "<") {
+		closing := strings.IndexByte(trimmed, '>')
+		if closing != -1 {
+			dest = trimmed[:closing+1]
+			rest = trimmed[closing+1:]
+		} else {
+			dest = trimmed
+		}
+	} else if idx := strings.IndexAny(trimmed, " \t"); idx != -1 {
+		dest = trimmed[:idx]
+		rest = trimmed[idx:]
+	} else {
+		dest = trimmed
+	}
+	return leading + rewriteDestination(dest, prefix) + rest + trailing
+}
+
+// rewriteDestination prefixes a single destination if relative to the repository root.
+// Destinations starting with #, /, or a URL scheme remain unchanged.
+func rewriteDestination(dest, prefix string) string {
+	if dest == "" {
+		return ""
+	}
+	raw := dest
+	hasAngle := strings.HasPrefix(raw, "<") && strings.HasSuffix(raw, ">") && len(raw) >= 2
+	if hasAngle {
+		raw = raw[1 : len(raw)-1]
+	}
+	if raw == "" || strings.HasPrefix(raw, "#") || strings.HasPrefix(raw, "/") || urlSchemeRe.MatchString(raw) {
+		return dest
+	}
+	rewritten := prefix + raw
+	if hasAngle {
+		return "<" + rewritten + ">"
+	}
+	return rewritten
+}
+
+// isInsideCodeSpan reports whether start..end falls entirely within any inline code span.
+func isInsideCodeSpan(start, end int, spans []util.MarkdownCodeSpan) bool {
+	for i := 0; i < len(spans) && i < maxSpansPerLine; i++ {
+		if spans[i].Start <= start && end <= spans[i].End {
+			return true
+		}
+	}
+	return false
+}
