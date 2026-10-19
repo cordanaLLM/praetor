@@ -247,11 +247,11 @@ and a fork's checkout is judged at its own umbrella path.
 `praetorctl needs scan --write` writes `.needs.yaml` scored against the operator's
 framework targets (see [Framework targets](#framework-targets)); with none configured it
 records the classification only, without a `framework` line, readiness basis
-`not-configured`. Nothing else regenerates it,
-`compile-context` included. `needs scan --check` scans the same way,
-writes nothing, and fails when the committed file differs from what `--write` would write
-now, printing the committed lines a fresh scan drops (`- committed:<line>`) and the lines
-it adds (`+ generated:<line>`):
+`not-configured`. A write refuses to drop a recorded framework when none is configured.
+Nothing else regenerates it, `compile-context` included. `needs scan --check` scans the
+same way, writes nothing, and fails when the committed file differs from what `--write`
+would write now, printing the committed lines a fresh scan drops (`- committed:<line>`)
+and the lines it adds (`+ generated:<line>`):
 
 ```bash
 praetorctl needs scan --write   # refresh .needs.yaml

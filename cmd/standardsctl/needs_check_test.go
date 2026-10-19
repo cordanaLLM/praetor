@@ -144,3 +144,59 @@ func TestNeedsScanCheckExcludesWrite(t *testing.T) {
 		t.Fatalf("a manifest was written despite the refusal: %v", statErr)
 	}
 }
+
+// A committed manifest naming a framework: scanned with no framework configured and --write,
+// exits non-zero and the file is byte for byte unchanged; with a settings document selecting
+// one it writes; --check also fails naming the remedy.
+func TestNeedsScanWrite_3D_RefusesDroppedFramework(t *testing.T) {
+	repo := newNeedsRepo(t)
+	settingsDoc := acmeWorkstation(t)
+	writeWithSettings := func() error {
+		_, err := captureStdout(t, func() error {
+			return dispatchCommand("needs", []string{"scan", "--write", "--path=" + repo, "--workstation-config=" + settingsDoc})
+		})
+		return err
+	}
+	if err := writeWithSettings(); err != nil {
+		t.Fatalf("first write with settings: %v", err)
+	}
+
+	manifestPath := filepath.Join(repo, needs.NeedsManifestName)
+	initialData, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(initialData), "framework: example.com/acme/kit") {
+		t.Fatalf("initial manifest does not name framework:\n%s", initialData)
+	}
+
+	// Negative: scanned with no framework configured and --write -> exits non-zero, file byte for byte unchanged.
+	t.Setenv("PRAETOR_WORKSTATION_CONFIG", "")
+	t.Setenv("PRAETOR_FLEET_CONFIG", "")
+	_, writeErr := captureStdout(t, func() error {
+		return dispatchCommand("needs", []string{"scan", "--write", "--path=" + repo, "--manifest="})
+	})
+	if writeErr == nil {
+		t.Fatal("expected non-zero exit when writing unconfigured over committed framework")
+	}
+	if !errors.Is(writeErr, needs.ErrFrameworkNotConfigured) {
+		t.Fatalf("expected error wrapping ErrFrameworkNotConfigured, got %v", writeErr)
+	}
+	requireBytes(t, manifestPath, initialData)
+
+	// Negative (--check): --check fails and names the remedy.
+	_, checkErr := captureStdout(t, func() error {
+		return dispatchCommand("needs", []string{"scan", "--check", "--path=" + repo, "--manifest="})
+	})
+	if checkErr == nil {
+		t.Fatal("expected --check to fail on drift")
+	}
+	if !strings.Contains(checkErr.Error(), "set framework.targets.<language> in the workstation or fleet settings") {
+		t.Fatalf("check error %q does not name the remedy", checkErr.Error())
+	}
+
+	// Positive: with a settings document selecting one, it writes.
+	if err := writeWithSettings(); err != nil {
+		t.Fatalf("write with settings selecting framework: %v", err)
+	}
+}
