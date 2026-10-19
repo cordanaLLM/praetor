@@ -411,15 +411,26 @@ func (s *adoptSession) reusePriorDigests(ctx context.Context) (map[string]string
 		}
 	}
 	if isPluranoOwner(s.repoOwner()) {
-		if branch, err := reuseDefaultBranch(ctx, s.repoPath); err == nil {
-			if copied, err := reuseWorkflow(branch); err == nil {
-				if digest, _, err := util.CanonicalTextDigest([]byte(copied)); err == nil {
-					prior[digest] = "copied REUSE gate for default branch " + branch
-				}
-			}
+		if digest, branch, ok := copiedReuseDigest(ctx, s.repoPath); ok {
+			prior[digest] = "copied REUSE gate for default branch " + branch
 		}
 	}
 	return prior, nil
+}
+
+// copiedReuseDigest identifies the older copied gate rendering when its default
+// branch, workflow, and canonical digest can all be resolved.
+func copiedReuseDigest(ctx context.Context, repoPath string) (string, string, bool) {
+	branch, err := reuseDefaultBranch(ctx, repoPath)
+	if err != nil {
+		return "", "", false
+	}
+	copied, err := reuseWorkflow(branch)
+	if err != nil {
+		return "", "", false
+	}
+	digest, _, err := util.CanonicalTextDigest([]byte(copied))
+	return digest, branch, err == nil
 }
 
 // reuseRemoval is why adoption removes the hosted REUSE gate: the root no longer declares REUSE,

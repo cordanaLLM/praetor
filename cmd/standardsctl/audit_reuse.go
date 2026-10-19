@@ -12,19 +12,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 )
 
-// auditLicensing runs the licensing gates (docs/guides/licensing-gates.md): the REUSE.toml
-// annotation order (auditReuseRecords) and the one root licence (auditRootLicense). Both run,
-// and both verdicts are printed, before the first failure is returned. A repository labelling its
-// files the REUSE way by headers alone is named (auditReuseHeadersOnly).
+// auditLicensing runs the licensing gates (docs/guides/licensing-gates.md): REUSE.toml
+// annotation order, one root licence, and the plurano caller. It reports header-only
+// REUSE labelling too. All checks run before their errors are joined.
 func auditLicensing(ctx context.Context, manifest *config.Manifest, rootDir string, today time.Time) error {
 	return errors.Join(auditReuseRecords(ctx, manifest, rootDir, today), auditRootLicense(ctx, manifest, rootDir, today),
-		auditReuseHeadersOnly(ctx, rootDir))
+		auditReuseHeadersOnly(ctx, rootDir), adopt.AuditPluranoLicenceCaller(ctx, rootDir, manifest.Repository.Owner))
 }
 
 // auditReuseHeadersOnly warns, with supplychain.ReuseHeadersOnlyNotice, about a repository that
