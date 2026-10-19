@@ -555,11 +555,14 @@ in the main run, or with a raised timeout on one half.
 gating tests that build the pinned gosec (2-minute bound) and the flavor test that installs the
 fallback scanners (4-minute bound) downloaded the modules `tools/go/go.mod` pins inside those
 bounds: a `go.sum` change had given the module cache a new key, and the modules reached the cache
-only with "Install Security Scanner", after the tests. "Download Pinned Tool Modules" now runs
+only with "Install Security Scanner", after the tests. "Download Pinned Tool Modules" then ran
 `go mod download -modfile=tools/go/go.mod` in bash before "Test Every Package" on every leg.
+Main 4ae64cb27's macOS leg then ran out of the same bounds compiling the scanners while the other
+test binaries ran, so the step, now "Download And Build Pinned Tools", also builds govulncheck,
+gosec and gitleaks from `tools/go/go.mod` outside any bound, and the tests meet a warm build cache.
 `TestPortability_ToolModulesDownloadBeforeTests` in
 `internal/forge/portability_tool_modules_test.go` holds that order and refuses a missing step, a
-download after the tests, another command and the default shell.
+download after the tests, another command, the default shell and a step without the build.
 
 **A deadline from the outer timeout (#831).** The eight minutes then ran out on macOS, where
 adopt alone took 341 to 557 s, so the identity suite timed out at random. A fixed count only

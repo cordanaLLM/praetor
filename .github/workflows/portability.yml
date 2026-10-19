@@ -186,11 +186,15 @@ jobs:
       # the tests: once a go.sum change gave the cache a new key, main c565cba50's macOS leg
       # downloaded them inside those bounds and both tests ran out of time. Downloading them
       # before the tests keeps the bounds about the build. bash keeps the dotted -modfile value
-      # one argument on Windows (see "Install Security Scanner").
-      - name: Download Pinned Tool Modules
+      # one argument on Windows (see "Install Security Scanner"). Main 4ae64cb27's macOS leg then
+      # ran out of the same bounds compiling the scanners while the other test binaries ran;
+      # building them here, outside any bound, leaves the tests a build cache to hit.
+      - name: Download And Build Pinned Tools
         if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         shell: bash
-        run: go mod download -modfile=tools/go/go.mod
+        run: |
+          go mod download -modfile=tools/go/go.mod
+          go build -modfile=tools/go/go.mod -o "$RUNNER_TEMP/pinned-tools/" golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec github.com/zricethezav/gitleaks/v8
 
       # Not -race here. The race detector needs a host C toolchain, and whether one exists
       # on each runner image is exactly the kind of thing this matrix is meant to discover
