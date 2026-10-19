@@ -5,14 +5,15 @@ Claude Code runs this at SessionStart. Outside a cloud session (CLAUDE_CODE_REMO
 In a cloud VM, which has neither tool, the before-tool guards and the stop checkpoint fail closed; this installs the
 lefthook pin from tools/lefthook/go.mod, the module CI installs it from, and builds praetorctl from ./cmd/standardsctl
 of this checkout, as the Makefile does, into a directory on the agent's PATH. Both builds run with -mod=readonly, so
-every module is verified against a go.sum this checkout holds and none needs the checksum database, which a cloud VM
-that clones from GitHub cannot reach (measured 2026-10-19: "sum.golang.org forbidden"). The bootstrap refuses to run
-while checksum verification is switched off. It never disables a hook: a step that fails is reported and the guards
-stay closed.
+every module is verified against a go.sum this checkout holds. The Go toolchain switch is the one download that
+still needs sum.golang.org and storage.googleapis.com; a failed step names each host the session's network refused
+(measured 2026-10-19: a VM with go1.24.7 and both hosts refused). The bootstrap refuses to run while checksum
+verification is switched off. It never disables a hook: a step that fails is reported and the guards stay closed.
 """
 
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -32,6 +33,8 @@ BOOTSTRAP_BUDGET = 3 * ENV_TIMEOUT + INSTALL_TIMEOUT + BUILD_TIMEOUT + STATE_TIM
 BOOTSTRAP_STOP = 10
 BOOTSTRAP_LIMIT = 560
 TARGETS = (Path("/usr/local/bin"), Path.home() / ".local" / "bin")
+# How a go command reports a host the session's egress proxy refused (measured 2026-10-19 in a cloud VM).
+REFUSED = re.compile(r'Get "https://([^/":]+)[^"]*": Forbidden')
 
 
 def target_dir(path_value):
@@ -58,6 +61,11 @@ def verification_off():
     return go_env("GOSUMDB") == "off" or bool(go_env("GONOSUMDB")) or bool(go_env("GOINSECURE"))
 
 
+def refused_hosts(text):
+    """The hosts a go command was refused, each once, in order of first mention."""
+    return list(dict.fromkeys(REFUSED.findall(text)))
+
+
 def run_step(name, command, timeout):
     """Run one named step in the checkout; "" on success, else one line naming the failure."""
     try:
@@ -66,7 +74,10 @@ def run_step(name, command, timeout):
         return f"{name} failed: {error}"
     if result.returncode == 0:
         return ""
-    return f"{name} exit {result.returncode}: {result.stderr.strip()[-300:]}"
+    hosts = refused_hosts(result.stderr)
+    # Named before the stderr tail, which a long signed download URL can fill.
+    refused = f" (the network refuses {', '.join(hosts)}; allow it in the cloud environment)" if hosts else ""
+    return f"{name} exit {result.returncode}{refused}: {result.stderr.strip()[-300:]}"
 
 
 def provision(bindir):
