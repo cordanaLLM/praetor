@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/gating"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // runBaselineCmd dispatches the baseline command for the fixture with extra flags.
@@ -315,32 +315,36 @@ func TestParseBaselineMode_Boundary_TerminatorKeepsFlagShapedTokenPositional(t *
 	}
 }
 
+const fixtureGosecVuln = `package widgets
+
+import (
+	"context"
+	"os/exec"
+)
+
+func runVuln(ctx context.Context, arg string) error {
+	return exec.CommandContext(ctx, "sh", "-c", arg).Run()
+}
+`
+
 func TestBaselineRecord_Gosec_Positive(t *testing.T) {
-	if _, err := exec.LookPath("gosec"); err != nil {
-		t.Skip("gosec not installed")
-	}
+	t.Setenv("PATH", testsupport.PinnedGosecDir(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	f := newAuditFixture(t)
 	writeFixtureFile(t, f.dir, "go.mod", "module example.com/widget\n\ngo 1.22\n")
 	writeFixtureFile(t, f.dir, gating.GosecConfigFile, "{\n  \"global\": {\n    \"exclude\": \"\"\n  }\n}\n")
-	writeFixtureFile(t, f.dir, "vuln.go", `package widgets
-
-import "os/exec"
-
-func runVuln(arg string) error {
-	return exec.Command("sh", "-c", arg).Run()
-}
-`)
+	writeFixtureFile(t, f.dir, "vuln.go", fixtureGosecVuln)
 	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "add", "."); err != nil {
 		t.Fatalf("git add: %v (%s)", err, out)
 	}
 
-	out, err := runBaselineCmd(t, f, "--record", "--allow-increase", "--reason=legacy gosec debt")
+	out, err := runBaselineCmd(t, f, "--record", "--allow-gosec-increase", "--gosec-reason=legacy gosec debt")
 	if err != nil {
 		t.Fatalf("record with gosec: %v\n%s", err, out)
 	}
 	mustContain(t, out, "Gosec baseline successfully updated", "Total: 1 infractions, previously 0")
 
-	gosecBase, err := baseline.LoadBaseline(filepath.Join(f.dir, gating.GosecBaselineFile))
+	gosecPath := filepath.Join(f.dir, gating.GosecBaselineFile)
+	gosecBase, err := baseline.LoadBaseline(gosecPath)
 	if err != nil {
 		t.Fatalf("load gosec baseline: %v", err)
 	}
@@ -348,9 +352,122 @@ func runVuln(arg string) error {
 		t.Fatalf("unexpected gosec baseline: %+v", gosecBase)
 	}
 
-	inspectOut, err := runBaselineCmd(t, f)
-	if err != nil {
-		t.Fatalf("inspect baseline: %v", err)
+	// Remove finding from code, commit, and re-record while HISS debt is unchanged (shrinks gosec to 0).
+	if err := os.Remove(filepath.Join(f.dir, "vuln.go")); err != nil {
+		t.Fatal(err)
 	}
-	mustContain(t, inspectOut, "Gosec Technical Debt Baseline", "G204", "vuln.go")
+	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "add", "."); err != nil {
+		t.Fatalf("git add: %v (%s)", err, out)
+	}
+	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "commit", "-m", "remove vuln"); err != nil {
+		t.Fatalf("git commit: %v (%s)", err, out)
+	}
+
+	out, err = runBaselineCmd(t, f, "--record")
+	if err != nil {
+		t.Fatalf("record gosec decrease: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Baseline unchanged", "kept the recorded file",
+		"Gosec baseline successfully updated", "Total: 0 infractions, previously 1")
+
+	gosecBase, err = baseline.LoadBaseline(gosecPath)
+	if err != nil {
+		t.Fatalf("load shrunk gosec baseline: %v", err)
+	}
+	if gosecBase.TotalInfractions != 0 {
+		t.Fatalf("expected gosec baseline to shrink to 0, got %d", gosecBase.TotalInfractions)
+	}
+}
+
+func TestBaselineRecord_Gosec_Negative(t *testing.T) {
+	t.Setenv("PATH", testsupport.PinnedGosecDir(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	f := newAuditFixture(t)
+	writeFixtureFile(t, f.dir, "go.mod", "module example.com/widget\n\ngo 1.22\n")
+	writeFixtureFile(t, f.dir, gating.GosecConfigFile, "{\n  \"global\": {\n    \"exclude\": \"\"\n  }\n}\n")
+	writeFixtureFile(t, f.dir, "vuln.go", fixtureGosecVuln)
+	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "add", "."); err != nil {
+		t.Fatalf("git add: %v (%s)", err, out)
+	}
+
+	gosecPath := filepath.Join(f.dir, gating.GosecBaselineFile)
+
+	// Gosec increase with only --allow-increase --reason=x is refused; error names --allow-gosec-increase.
+	_, err := runBaselineCmd(t, f, "--record", "--allow-increase", "--reason=hiss debt only")
+	if err == nil {
+		t.Fatal("expected error when gosec increases without --allow-gosec-increase")
+	}
+	mustErrContain(t, err, "--allow-gosec-increase")
+	if _, statErr := os.Stat(gosecPath); !os.IsNotExist(statErr) {
+		t.Fatalf("refused record must not write gosec baseline: %v", statErr)
+	}
+
+	// --gosec-reason without --allow-gosec-increase is refused.
+	_, err = runBaselineCmd(t, f, "--record", "--gosec-reason=rationale without flag")
+	if err == nil {
+		t.Fatal("expected error with --gosec-reason but no --allow-gosec-increase")
+	}
+	mustErrContain(t, err, "--allow-gosec-increase")
+	if _, statErr := os.Stat(gosecPath); !os.IsNotExist(statErr) {
+		t.Fatalf("refused record must not write gosec baseline: %v", statErr)
+	}
+
+	// --verify is read-only and refuses --gosec-reason.
+	_, err = runBaselineCmd(t, f, "--verify", "--gosec-reason=x")
+	mustErrContain(t, err, "read-only")
+
+	// --verify is read-only and refuses --allow-gosec-increase.
+	_, err = runBaselineCmd(t, f, "--verify", "--allow-gosec-increase")
+	mustErrContain(t, err, "read-only")
+}
+
+func TestBaselineRecord_Gosec_Boundary_UnchangedDebtKeepsBothFiles(t *testing.T) {
+	t.Setenv("PATH", testsupport.PinnedGosecDir(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	f := newAuditFixture(t)
+	writeFixtureFile(t, f.dir, "go.mod", "module example.com/widget\n\ngo 1.22\n")
+	writeFixtureFile(t, f.dir, gating.GosecConfigFile, "{\n  \"global\": {\n    \"exclude\": \"\"\n  }\n}\n")
+	writeFixtureFile(t, f.dir, "vuln.go", fixtureGosecVuln)
+	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "add", "."); err != nil {
+		t.Fatalf("git add: %v (%s)", err, out)
+	}
+	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "commit", "-m", "add vuln"); err != nil {
+		t.Fatalf("git commit: %v (%s)", err, out)
+	}
+
+	out, err := runBaselineCmd(t, f, "--record", "--allow-gosec-increase", "--gosec-reason=initial gosec debt")
+	if err != nil {
+		t.Fatalf("record initial: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Gosec baseline successfully updated")
+
+	gosecPath := filepath.Join(f.dir, gating.GosecBaselineFile)
+	hissData, err := os.ReadFile(f.baselinePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gosecData, err := os.ReadFile(gosecPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-record with unchanged HISS and unchanged gosec debt.
+	out, err = runBaselineCmd(t, f, "--record")
+	if err != nil {
+		t.Fatalf("record unchanged: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Baseline unchanged", "kept the recorded file", "Gosec baseline unchanged")
+
+	hissAfter, err := os.ReadFile(f.baselinePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(hissAfter) != string(hissData) {
+		t.Error("HISS baseline was rewritten despite unchanged debt")
+	}
+	gosecAfter, err := os.ReadFile(gosecPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gosecAfter) != string(gosecData) {
+		t.Error("gosec baseline was rewritten despite unchanged debt")
+	}
 }

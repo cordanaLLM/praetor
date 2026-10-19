@@ -31,7 +31,9 @@ func TestScanConsumersRejectTruncationBeforeRatchetOrBaselineWrite(t *testing.T)
 	if !errors.Is(err, hiss.ErrScanTruncated) {
 		t.Fatalf("audit must reject capped scan before evaluating ratchet: %v", err)
 	}
-	err = recordBaseline(path, previous, baseline.RecordOptions{AllowIncrease: true, Rationale: "test cannot authorize incomplete scan"})
+	err = recordBaseline(path, previous,
+		baseline.RecordOptions{AllowIncrease: true, Rationale: "test cannot authorize incomplete scan"},
+		baseline.RecordOptions{})
 	if !errors.Is(err, hiss.ErrScanTruncated) {
 		t.Fatalf("record must reject capped scan even with increase authorized: %v", err)
 	}
@@ -56,7 +58,7 @@ func TestRecordBaselineRejectsASTDepthTruncationWithoutWriting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := recordBaseline(path, previous, baseline.RecordOptions{}); !errors.Is(err, hiss.ErrScanTruncated) {
+	if err := recordBaseline(path, previous, baseline.RecordOptions{}, baseline.RecordOptions{}); !errors.Is(err, hiss.ErrScanTruncated) {
 		t.Fatalf("hidden violations must not be certified as zero debt: %v", err)
 	}
 	after, err := os.ReadFile(path)

@@ -1,0 +1,2 @@
+type: fixed
+title: baseline --record ratchets the gosec baseline when HISS debt is unchanged, and a gosec increase needs its own reason

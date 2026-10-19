@@ -1461,7 +1461,8 @@ violations the baseline records at other lines` and names the plain re-record, `
 baseline --record`: the count did not rise, so it needs no `--allow-increase`. Every other
 rejection reads `HISS invariant violations the baseline does not record` and names the deliberate
 re-record, `praetorctl baseline --record --allow-increase --reason=<why>`, for the findings a
-changed check or an untraced cause explains. Matching ignores line numbers, so when one file holds
+changed check or an untraced cause explains (raising `.gosec-baseline.json` similarly requires
+`--allow-gosec-increase --gosec-reason=<why>`). Matching ignores line numbers, so when one file holds
 several identical findings, the count per class is exact but which line gets `(new)` follows scan
 order.
 The verdict never changes: HISS-13 still refuses the higher count
