@@ -1,0 +1,2 @@
+type: fixed
+title: 'Test runs and killed hooks no longer leave temporary directories behind: the isolated test home keeps the Go caches where they were and removes read-only parts, helper processes reuse it, and a new hook snapshot sweeps the ones killed hooks left'
