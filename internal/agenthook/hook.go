@@ -50,7 +50,7 @@ func Run(ctx context.Context, in Invocation) Response {
 	if !known {
 		return usageResponse(fmt.Errorf("%w: no dialect for %s", ErrUnsupported, row.Client))
 	}
-	ctx, cancel := context.WithTimeout(ctx, budgetFor(row.Event))
+	ctx, cancel := context.WithTimeout(ctx, budgetForRow(row))
 	defer cancel()
 	if dir := recordDirOf(in.Getenv); dir != "" {
 		return recordAndAllow(ctx, dir, row, dialect, in)

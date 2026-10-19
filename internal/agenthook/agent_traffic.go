@@ -145,10 +145,15 @@ func evaluateAgentBriefs(ctx context.Context, row Registration, canonical Canoni
 	if verdict := evaluateBriefClaims(ctx, canonical.Briefs, in.IssueClaims); verdict.Outcome != Allow {
 		return verdict
 	}
+	offload := evaluateClaudeLaneOffload(ctx, row.Client, authority.offload, canonical.Briefs[0], in.Getenv)
+	if offload.Outcome != Allow {
+		return offload
+	}
 	verdict, prompt, err := readOnlyDelivery(ctx, row.Client, root, canonical)
 	if err != nil {
 		return trafficDenied(err)
 	}
+	verdict.Notice = appendLaneNotice(verdict.Notice, offload.Notice)
 	if row.Client == "claude" {
 		if err := reserveClaudeDispatch(ctx, canonical, in, root, resolution, prompt); err != nil {
 			return trafficDenied(err)
@@ -236,14 +241,15 @@ func returnNotJudged(err error) Verdict {
 type briefAuthority struct {
 	register config.RegisterAuthority
 	labels   []string
+	offload  *router.OffloadConfig
 }
 
 func loadBriefAuthority(ctx context.Context, root string) (briefAuthority, error) {
-	register, labels, err := config.LoadRegisterTaskAuthority(ctx, root)
+	register, labels, offload, err := config.LoadRegisterDispatchAuthority(ctx, root)
 	if err != nil {
 		return briefAuthority{}, fmt.Errorf("load register policy: %w", err)
 	}
-	return briefAuthority{register: register, labels: labels}, nil
+	return briefAuthority{register: register, labels: labels, offload: offload}, nil
 }
 
 // validateAgentBrief resolves the brief's task through the digest-bound register

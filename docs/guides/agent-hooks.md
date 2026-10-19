@@ -157,7 +157,7 @@ described under [Rollout](#rollout-engine-skew-never-blocks-a-client).
 | `claude` | `pre-edit` | `PreToolUse` | `^(Edit\|Write)$` | 15 s | `praetorctl hook claude pre-edit` |
 | `claude` | `post-tool` | `PostToolUse` | none | 60 s | `praetorctl hook claude post-tool` |
 | `claude` | `stop` | `Stop` | none | 90 s | `praetorctl hook claude stop` |
-| `claude` | `pre-dispatch` | `PreToolUse` | `^Agent$` | 15 s | `praetorctl hook claude pre-dispatch` |
+| `claude` | `pre-dispatch` | `PreToolUse` | `^Agent$` | 35 s | `praetorctl hook claude pre-dispatch` |
 | `claude` | `dispatch-receipt` | `PostToolUse` | `^Agent$` | 15 s | `praetorctl hook claude dispatch-receipt` |
 | `claude` | `dispatch-abort` | `PostToolUseFailure` | `^Agent$` | 15 s | `praetorctl hook claude dispatch-abort` |
 | `claude` | `dispatch-abort` | `PermissionDenied` | `^Agent$` | 15 s | `praetorctl hook claude dispatch-abort` |
@@ -310,6 +310,33 @@ issues and a `session:` line names the session that must hold them; `pre-dispatc
 issue another live session claims, an unclaimed one and one whose claim it cannot read
 ([issue claims](issue-claims.md), `internal/agenthook/dispatch_claims.go`). A brief that names
 no issue skips the check.
+
+## Routing implementation briefs off the Claude lane
+
+Repositories can opt selected routing task labels into a lane picker in
+`.config/models/routing.yaml`:
+
+```yaml
+offload:
+  labels: [feature_implementation, multi_file_refactors, unit_test_suites, ci_debugging]
+```
+
+Each label must occur in a tier's `target_tasks`. An absent `offload` block leaves dispatch
+unchanged. The rule applies only to Claude's `pre-dispatch` hook, after brief validation and
+before the hook reserves a dispatch correlation.
+
+Set `PRAETOR_LANE_PICKER` to an absolute executable path. Without that variable, the hook
+reads the first line of `$XDG_CONFIG_HOME/praetor/lane-picker`; when `XDG_CONFIG_HOME` is
+unset, it reads `~/.config/praetor/lane-picker`. The file contains the absolute executable
+path. An absent file leaves dispatch unchanged. The environment variable takes precedence.
+
+The hook runs `[path, "pick", task_label]` directly, with closed stdin, a 20-second deadline
+and a 64 KiB stdout cap. Exit 0 means an off-Claude lane has room: stdout's first line must
+be `<lane> <instruction>`. Exit 3 keeps the dispatch on Claude. Other exits, timeouts,
+missing executables and unreadable output allow the dispatch with a notice:
+`lane picker unavailable: <cause>; dispatch stays on the Claude lane`. A successful pick
+denies the Claude dispatch with `[ROUTED] task <label> runs on <lane>, not the Claude lane:
+<instruction> (lane picker <path>)`; the session can use the named lane and instruction.
 
 Claude's pre-tool hook stores only the resolved register row, never the prompt. Its
 post-tool receipt atomically binds that row to the native agent id. The private bounded

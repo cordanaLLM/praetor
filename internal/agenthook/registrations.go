@@ -152,7 +152,7 @@ var registrationTable = []Registration{
 	{Client: "claude", Event: EventPreEdit, NativeEvent: "PreToolUse", Matcher: "^(Edit|Write)$", Timeout: 15 * time.Second},
 	{Client: "claude", Event: EventPostTool, NativeEvent: "PostToolUse", Timeout: 60 * time.Second},
 	{Client: "claude", Event: EventStop, NativeEvent: "Stop", Timeout: stopTimeout},
-	{Client: "claude", Event: EventPreDispatch, NativeEvent: "PreToolUse", Matcher: "^Agent$", Timeout: 15 * time.Second},
+	{Client: "claude", Event: EventPreDispatch, NativeEvent: "PreToolUse", Matcher: "^Agent$", Timeout: 35 * time.Second},
 	{Client: "claude", Event: EventDispatchReceipt, NativeEvent: "PostToolUse", Matcher: "^Agent$", Timeout: 15 * time.Second},
 	{Client: "claude", Event: EventDispatchAbort, NativeEvent: "PostToolUseFailure", Matcher: "^Agent$", Timeout: 15 * time.Second},
 	{Client: "claude", Event: EventDispatchAbort, NativeEvent: "PermissionDenied", Matcher: "^Agent$", Timeout: 15 * time.Second},
