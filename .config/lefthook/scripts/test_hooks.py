@@ -1236,6 +1236,31 @@ print("fixture hook self-tests passed")
         self.assertNotEqual(self.hook("post-rewrite", data=b"bad\n").returncode, 0)
 
 
+class SnapshotSweep(unittest.TestCase):
+    """A snapshot directory a killed hook left behind (0.6-0.7 GB each, 2026-10-19) is removed by the
+    next snapshot once it is older than SNAPSHOT_STALE_S; fresh ones and other names stay."""
+
+    def test_stale_snapshot_removed_fresh_and_foreign_kept(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stale, fresh, other = root / "praetor-hook-old", root / "praetor-hook-new", root / "other-old"
+            for directory in (stale, fresh, other):
+                (directory / "objects").mkdir(parents=True)
+                (directory / "objects" / "pack").write_bytes(b"x")
+            (stale / "objects").chmod(0o555)  # read-only like a packed object store
+            now = time.time()
+            for directory in (stale, other):
+                os.utime(directory, (now - common.SNAPSHOT_STALE_S - 60,) * 2)
+            removed = common.sweep_stale_snapshots(root, now)
+            self.assertEqual(removed, 1)
+            self.assertFalse(stale.exists(), "a stale snapshot must be removed, read-only parts included")
+            self.assertTrue(fresh.exists() and other.exists(), "a fresh snapshot and another name stay")
+
+    def test_sweep_of_an_empty_root_removes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(common.sweep_stale_snapshots(tmp), 0)
+
+
 class ScopeAndGuard(unittest.TestCase):
     def test_command_closes_inherited_stdin_and_preserves_payload(self):
         completed = subprocess.CompletedProcess([], 0, b"", b"")
