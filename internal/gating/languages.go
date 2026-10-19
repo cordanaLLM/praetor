@@ -24,7 +24,7 @@ const (
 	languageCargo = "cargo"
 	languageNode  = "node"
 	// supportedLanguages names them with their markers for the refusal message.
-	supportedLanguages = "Go (go.mod) and Cargo (Cargo.lock)"
+	supportedLanguages = "Go (go.mod), Cargo (Cargo.lock) and Node (package.json with package-lock.json, pnpm-lock.yaml or yarn.lock)"
 	// AdmitUnsupportedFlag names the `gate run` flag (RunOptions.AdmitUnsupported) the pre-push
 	// hook adoption renders passes (internal/adopt/hooks.go), so a rename changes both.
 	AdmitUnsupportedFlag = "admit-unsupported"

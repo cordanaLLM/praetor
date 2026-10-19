@@ -80,18 +80,15 @@ func TestToolchainStages_Positive_NpmRepositoryRunsNpm(t *testing.T) {
 	want := []string{
 		"npm ci --ignore-scripts",
 		"npm audit --audit-level=high --json",
+		"npm ci --ignore-scripts",
 		"npm run test",
 		"npm run lint",
 	}
 	if lines := commandLines(*recorded); !slices.Equal(lines, want) {
 		t.Fatalf("commands = %q, want %q", lines, want)
 	}
-	for i, c := range *recorded {
-		inWorktree := strings.Contains(c.dir, "worktrees")
-		if (i >= 2) != inWorktree || (i < 2 && c.dir != repo) {
-			t.Errorf("%s %v ran in %s; prefetch and audit belong in the repository, tests in the worktree", c.name, c.args, c.dir)
-		}
-	}
+	assertNpmStageLocations(t, *recorded, repo)
+	assertInstallPrecedesTest(t, *recorded, repo)
 	if !slices.Equal(cfg.verified, []string{languageNode}) {
 		t.Errorf("verified languages = %q, want [node]", cfg.verified)
 	}
@@ -117,6 +114,7 @@ func TestToolchainStages_Positive_PnpmRepositoryRunsPnpm(t *testing.T) {
 	want := []string{
 		"pnpm install --frozen-lockfile --ignore-scripts",
 		"pnpm audit --audit-level=high --json",
+		"pnpm install --frozen-lockfile --ignore-scripts",
 		"pnpm run test",
 		"pnpm run lint",
 	}
@@ -153,6 +151,8 @@ func TestToolchainStages_Positive_YarnClassicRepositoryRunsYarn(t *testing.T) {
 		"yarn install --frozen-lockfile --ignore-scripts",
 		"yarn --version",
 		"yarn audit --level=high --json",
+		"yarn --version",
+		"yarn install --frozen-lockfile --ignore-scripts",
 		"yarn run test",
 		"yarn run lint",
 	}
@@ -189,6 +189,8 @@ func TestToolchainStages_Positive_YarnBerryRepositoryRunsYarn(t *testing.T) {
 		"yarn install --immutable --mode=skip-build",
 		"yarn --version",
 		"yarn npm audit --severity=high --json",
+		"yarn --version",
+		"yarn install --immutable --mode=skip-build",
 		"yarn run test",
 		"yarn run lint",
 	}
@@ -391,6 +393,7 @@ func TestToolchainStages_Boundary_OnlyTestScriptRuns(t *testing.T) {
 	want := []string{
 		"npm ci --ignore-scripts",
 		"npm audit --audit-level=high --json",
+		"npm ci --ignore-scripts",
 		"npm run test",
 	}
 	if lines := commandLines(*recorded); !slices.Equal(lines, want) {
@@ -417,6 +420,7 @@ func TestToolchainStages_Boundary_OnlyLintScriptRuns(t *testing.T) {
 	want := []string{
 		"npm ci --ignore-scripts",
 		"npm audit --audit-level=high --json",
+		"npm ci --ignore-scripts",
 		"npm run lint",
 	}
 	if lines := commandLines(*recorded); !slices.Equal(lines, want) {
@@ -440,5 +444,168 @@ func TestToolchainStages_Boundary_DryRunSkipsNode(t *testing.T) {
 	})
 	if len(*recorded) != 0 {
 		t.Fatalf("dry run invoked commands: %+v", *recorded)
+	}
+}
+
+func assertNpmStageLocations(t *testing.T, recorded []recordedCommand, repo string) {
+	t.Helper()
+	for i, c := range recorded {
+		inWorktree := strings.Contains(c.dir, "worktrees")
+		if i == 1 {
+			if inWorktree || c.dir != repo {
+				t.Errorf("%s %v ran in %s; audit belongs in repository", c.name, c.args, c.dir)
+			}
+		} else if !inWorktree || c.dir == repo {
+			t.Errorf("%s %v ran in %s; prefetch install and tests belong in stage worktree", c.name, c.args, c.dir)
+		}
+	}
+}
+
+func isNpmCi(c recordedCommand) bool {
+	return c.name == "npm" && len(c.args) > 0 && c.args[0] == "ci"
+}
+
+func isNpmTest(c recordedCommand) bool {
+	return c.name == "npm" && len(c.args) >= 2 && c.args[0] == "run" && c.args[1] == "test"
+}
+
+func validInstallOrder(testIdx, runIdx int) bool {
+	return testIdx != -1 && runIdx != -1 && testIdx < runIdx
+}
+
+func assertInstallPrecedesTest(t *testing.T, recorded []recordedCommand, repo string) {
+	t.Helper()
+	var installDirs []string
+	testInstallIdx, runTestIdx := -1, -1
+	for i, c := range recorded {
+		if isNpmCi(c) {
+			installDirs = append(installDirs, c.dir)
+			if i > 0 {
+				testInstallIdx = i
+			}
+		}
+		if isNpmTest(c) {
+			runTestIdx = i
+		}
+	}
+	if len(installDirs) < 2 {
+		t.Fatalf("expected at least 2 install commands (prefetch and test), got %d", len(installDirs))
+	}
+	for _, dir := range installDirs {
+		if dir == repo {
+			t.Errorf("install command ran in repoDir %s, must run in stage worktree", dir)
+		}
+	}
+	if !validInstallOrder(testInstallIdx, runTestIdx) {
+		t.Errorf("test install (index %d) must precede run test (index %d)", testInstallIdx, runTestIdx)
+	}
+}
+
+// Negative: install commands must run in stage worktree, and test install must precede run test.
+func TestToolchainStages_InstallRunsInWorktreeAndPrecedesRunTest(t *testing.T) {
+	repo := newHermeticGitRepo(t)
+	seedNodeWorkspace(t, repo, "package-lock.json", map[string]string{
+		"test": "vitest run",
+	})
+	cfg, recorded := newTestConfig(t, repo, false)
+	if _, err := runPrefetchStage(t.Context(), cfg); err != nil {
+		t.Fatalf("prefetch failed: %v", err)
+	}
+	if _, err := runTestStage(t.Context(), cfg); err != nil {
+		t.Fatalf("test stage failed: %v", err)
+	}
+	assertInstallPrecedesTest(t, *recorded, repo)
+}
+
+// Negative: failing yarn --version refuses to guess classic and fails the part.
+func TestToolchainStages_Negative_YarnVersionFailureRefused(t *testing.T) {
+	repo := newHermeticGitRepo(t)
+	seedNodeWorkspace(t, repo, "yarn.lock", map[string]string{"test": "jest"})
+	cfg, recorded := newTestConfig(t, repo, false)
+	cfg.run = nodeTestRunner(recorded, map[string]commandResponse{
+		"yarn --version": {out: "", err: errors.New("exit status 1")},
+	})
+	_, err := runPrefetchStage(t.Context(), cfg)
+	if err == nil {
+		t.Fatalf("prefetch passed despite failing yarn --version")
+	}
+	if !strings.Contains(err.Error(), "cannot tell the Yarn major version:") {
+		t.Errorf("want error stating cannot tell Yarn major version, got: %v", err)
+	}
+}
+
+// Negative: unparsable yarn --version refuses to guess classic and fails the part.
+func TestToolchainStages_Negative_YarnVersionUnparsableRefused(t *testing.T) {
+	repo := newHermeticGitRepo(t)
+	seedNodeWorkspace(t, repo, "yarn.lock", map[string]string{"test": "jest"})
+	cfg, recorded := newTestConfig(t, repo, false)
+	cfg.run = nodeTestRunner(recorded, map[string]commandResponse{
+		"yarn --version": {out: "not-a-valid-version\n"},
+	})
+	_, err := runPrefetchStage(t.Context(), cfg)
+	if err == nil {
+		t.Fatalf("prefetch passed despite unparsable yarn --version")
+	}
+	if !strings.Contains(err.Error(), "cannot tell the Yarn major version:") {
+		t.Errorf("want error stating cannot tell Yarn major version, got: %v", err)
+	}
+}
+
+// Positive: supportedLanguages names Node with its markers in nothing-verified refusal.
+func TestSupportedLanguages_NamesNodeWithMarkers(t *testing.T) {
+	repo := newHermeticGitRepo(t)
+	cfg, _ := newTestConfig(t, repo, false)
+	cfg.rep.WorktreeClean = true
+	_, err := runReceiptStage(t.Context(), cfg)
+	if err == nil || !errors.Is(err, ErrNothingVerified) {
+		t.Fatalf("want ErrNothingVerified, got %v", err)
+	}
+	wantMarker := "Node (package.json with package-lock.json, pnpm-lock.yaml or yarn.lock)"
+	if !strings.Contains(err.Error(), wantMarker) {
+		t.Errorf("refusal message does not name Node with its markers:\ngot:  %s\nwant: %s", err.Error(), wantMarker)
+	}
+}
+
+// Negative: audit error containing 'offline' word is not mistaken for a network error.
+func TestToolchainStages_Negative_AuditOfflineTextNotNetworkError(t *testing.T) {
+	repo := newHermeticGitRepo(t)
+	seedNodeWorkspace(t, repo, "package-lock.json", map[string]string{"test": "vitest"})
+	cfg, recorded := newTestConfig(t, repo, false)
+	cfg.run = nodeTestRunner(recorded, map[string]commandResponse{
+		"npm audit --audit-level=high --json": {
+			out: "vulnerability found in offline-cache package",
+			err: errors.New("exit status 1"),
+		},
+	})
+	_, err := runSecurityStage(t.Context(), cfg)
+	if err == nil {
+		t.Fatalf("security passed despite audit failure")
+	}
+	if strings.Contains(err.Error(), "requires network access but failed") {
+		t.Errorf("audit failure with 'offline' text was incorrectly classified as network error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "npm audit --audit-level=high --json failed:") {
+		t.Errorf("want command failure message, got: %v", err)
+	}
+}
+
+// Negative: Yarn Berry audit non-zero exit code fails the security stage.
+func TestToolchainStages_Negative_YarnBerryAuditNonZeroFailsSecurity(t *testing.T) {
+	repo := newHermeticGitRepo(t)
+	seedNodeWorkspace(t, repo, "yarn.lock", map[string]string{"test": "jest"})
+	cfg, recorded := newTestConfig(t, repo, false)
+	cfg.run = nodeTestRunner(recorded, map[string]commandResponse{
+		"yarn --version": {out: "4.1.0\n"},
+		"yarn npm audit --severity=high --json": {
+			out: `{"value":"dummy advisory","children":{}}`,
+			err: errors.New("exit status 1"),
+		},
+	})
+	_, err := runSecurityStage(t.Context(), cfg)
+	if err == nil {
+		t.Fatalf("security passed despite berry audit exiting non-zero")
+	}
+	if !strings.Contains(err.Error(), "yarn npm audit --severity=high --json failed: exit status 1") {
+		t.Errorf("want command failure on berry non-zero exit, got: %v", err)
 	}
 }

@@ -7,10 +7,10 @@ package gating
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -112,26 +112,24 @@ func requireNodeManager(cfg *stageConfig, manager string) error {
 	return nil
 }
 
-func nodeFailure(ctx, cmdCtx context.Context, what string, bound time.Duration, out string, err error) error {
-	excerpt := util.TruncateExcerpt(out, maxNodeOutputBytes)
-	if cmdCtx.Err() != nil && ctx.Err() == nil {
-		return fmt.Errorf("%s did not finish within its %s bound, so this is not a finding: %w: %s",
-			what, bound, err, excerpt)
-	}
-	return fmt.Errorf("%s failed: %w: %s", what, err, excerpt)
-}
-
-func isYarnClassic(ctx context.Context, cfg *stageConfig) bool {
+func isYarnClassic(ctx context.Context, cfg *stageConfig) (bool, error) {
 	qCtx, cancel := context.WithTimeout(ctx, GitQueryTimeout)
 	defer cancel()
 	out, err := cfg.run(qCtx, cfg.repoDir, "yarn", "--version")
 	if err != nil {
-		return true
+		return false, fmt.Errorf("cannot tell the Yarn major version: %w", err)
 	}
-	return strings.HasPrefix(strings.TrimSpace(out), "1.")
+	v := strings.TrimSpace(out)
+	v = strings.TrimPrefix(v, "v")
+	majorStr, _, _ := strings.Cut(v, ".")
+	major, err := strconv.Atoi(majorStr)
+	if err != nil || major < 1 {
+		return false, fmt.Errorf("cannot tell the Yarn major version: unrecognised version output %q", strings.TrimSpace(out))
+	}
+	return major == 1, nil
 }
 
-// nodePrefetchArgs returns the prefetch arguments for manager.
+// nodeInstallArgs returns the install arguments for manager.
 //
 // The exact flags are read from each manager's own CLI help:
 //
@@ -146,14 +144,14 @@ func isYarnClassic(ctx context.Context, cfg *stageConfig) bool {
 //	yarn install --help (v2+ Berry):
 //	  --immutable: "Abort with an error exit code if the lockfile was to be modified"
 //	  --mode=skip-build: "skip-build will not run the build scripts at all"
-func nodePrefetchArgs(ctx context.Context, cfg *stageConfig, manager string) []string {
+func nodeInstallArgs(manager string, yarnClassic bool) []string {
 	switch manager {
 	case nodeManagerNpm:
 		return []string{"ci", "--ignore-scripts"}
 	case nodeManagerPnpm:
 		return []string{"install", "--frozen-lockfile", "--ignore-scripts"}
 	case nodeManagerYarn:
-		if isYarnClassic(ctx, cfg) {
+		if yarnClassic {
 			return []string{"install", "--frozen-lockfile", "--ignore-scripts"}
 		}
 		return []string{"install", "--immutable", "--mode=skip-build"}
@@ -162,7 +160,7 @@ func nodePrefetchArgs(ctx context.Context, cfg *stageConfig, manager string) []s
 	}
 }
 
-// runNodePrefetch is the prefetch stage's Node part: installs locked dependencies without lifecycle scripts.
+// runNodePrefetch is the prefetch stage's Node part: installs locked dependencies without lifecycle scripts in an isolated worktree.
 func runNodePrefetch(ctx context.Context, cfg *stageConfig) (string, error) {
 	manager, _, err := resolveNodeManager(cfg.repoDir)
 	if err != nil {
@@ -174,13 +172,25 @@ func runNodePrefetch(ctx context.Context, cfg *stageConfig) (string, error) {
 	if reqErr := requireNodeManager(cfg, manager); reqErr != nil {
 		return "", reqErr
 	}
-	args := nodePrefetchArgs(ctx, cfg, manager)
-	pCtx, cancel := context.WithTimeout(ctx, DefaultPrefetchTimeout)
-	defer cancel()
+	var classic bool
+	if manager == nodeManagerYarn {
+		var yarnErr error
+		classic, yarnErr = isYarnClassic(ctx, cfg)
+		if yarnErr != nil {
+			return "", yarnErr
+		}
+	}
+	args := nodeInstallArgs(manager, classic)
 	what := manager + " " + strings.Join(args, " ")
-	out, runErr := cfg.run(pCtx, cfg.repoDir, manager, args...)
-	if runErr != nil {
-		return "", nodeFailure(ctx, pCtx, what, DefaultPrefetchTimeout, out, runErr)
+	err = inStageWorktree(ctx, cfg, DefaultPrefetchTimeout, func(tCtx context.Context, dir string) error {
+		out, runErr := cfg.run(tCtx, dir, manager, args...)
+		if runErr != nil {
+			return commandFailure(ctx, tCtx, what, DefaultPrefetchTimeout, out, maxNodeOutputBytes, runErr)
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
 	}
 	return what + " passed", nil
 }
@@ -201,14 +211,14 @@ func runNodePrefetch(ctx context.Context, cfg *stageConfig) (string, error) {
 //	yarn npm audit --help (v2+ Berry):
 //	  --severity: "Minimal severity requested for packages to be displayed"
 //	  --json: "Format the output as an NDJSON stream"
-func nodeAuditArgs(ctx context.Context, cfg *stageConfig, manager string) []string {
+func nodeAuditArgs(manager string, yarnClassic bool) []string {
 	switch manager {
 	case nodeManagerNpm:
 		return []string{"audit", "--audit-level=high", "--json"}
 	case nodeManagerPnpm:
 		return []string{"audit", "--audit-level=high", "--json"}
 	case nodeManagerYarn:
-		if isYarnClassic(ctx, cfg) {
+		if yarnClassic {
 			return []string{"audit", "--level=high", "--json"}
 		}
 		return []string{"npm", "audit", "--severity=high", "--json"}
@@ -236,7 +246,6 @@ func isNetworkFailure(out string, err error) bool {
 		"network access required",
 		"request to http",
 		"failed to fetch",
-		"offline",
 	}
 	for i := 0; i < len(markers); i++ {
 		if strings.Contains(combined, markers[i]) {
@@ -279,6 +288,9 @@ func checkNpmAuditFindings(trimmed string) (string, bool) {
 	return "", false
 }
 
+// checkYarnAuditFindings parses Yarn Classic's NDJSON audit stream for auditSummary records.
+// Yarn Berry's `yarn npm audit --json` output is not the classic auditSummary stream, so
+// checkYarnAuditFindings sees no finding there and the verdict rests on the exit code alone.
 func checkYarnAuditFindings(trimmed string) (string, bool) {
 	lines := strings.Split(trimmed, "\n")
 	for i := 0; i < len(lines); i++ {
@@ -312,6 +324,20 @@ func checkAuditOutputFindings(manager, out string) (string, bool) {
 	return "", false
 }
 
+func handleAuditError(ctx, aCtx context.Context, manager, what, out string, runErr error) error {
+	if aCtx.Err() != nil && ctx.Err() == nil {
+		return commandFailure(ctx, aCtx, what, NodeAuditTimeout, out, maxNodeOutputBytes, runErr)
+	}
+	excerpt := util.TruncateExcerpt(out, maxNodeOutputBytes)
+	if isNetworkFailure(out, runErr) {
+		return fmt.Errorf("%s audit requires network access but failed: %w: %s", manager, runErr, excerpt)
+	}
+	if summary, hasFindings := checkAuditOutputFindings(manager, out); hasFindings {
+		return fmt.Errorf("%s found vulnerabilities: %s", what, summary)
+	}
+	return fmt.Errorf("%s failed: %w: %s", what, runErr, excerpt)
+}
+
 // runNodeSecurity is the security stage's Node part: runs package manager audit at severity high.
 func runNodeSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 	manager, _, err := resolveNodeManager(cfg.repoDir)
@@ -324,28 +350,26 @@ func runNodeSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 	if reqErr := requireNodeManager(cfg, manager); reqErr != nil {
 		return "", reqErr
 	}
-	args := nodeAuditArgs(ctx, cfg, manager)
+	var classic bool
+	if manager == nodeManagerYarn {
+		var yarnErr error
+		classic, yarnErr = isYarnClassic(ctx, cfg)
+		if yarnErr != nil {
+			return "", yarnErr
+		}
+	}
+	args := nodeAuditArgs(manager, classic)
 	aCtx, cancel := context.WithTimeout(ctx, NodeAuditTimeout)
 	defer cancel()
 	what := manager + " " + strings.Join(args, " ")
 	out, runErr := cfg.run(aCtx, cfg.repoDir, manager, args...)
-	if runErr == nil {
-		if summary, hasFindings := checkAuditOutputFindings(manager, out); hasFindings {
-			return "", fmt.Errorf("%s found vulnerabilities: %s", what, summary)
-		}
-		return manager + " audit passed", nil
-	}
-	if aCtx.Err() != nil && ctx.Err() == nil {
-		return "", nodeFailure(ctx, aCtx, what, NodeAuditTimeout, out, runErr)
-	}
-	excerpt := util.TruncateExcerpt(out, maxNodeOutputBytes)
-	if isNetworkFailure(out, runErr) {
-		return "", fmt.Errorf("%s audit requires network access but failed: %w: %s", manager, runErr, excerpt)
+	if runErr != nil {
+		return "", handleAuditError(ctx, aCtx, manager, what, out, runErr)
 	}
 	if summary, hasFindings := checkAuditOutputFindings(manager, out); hasFindings {
 		return "", fmt.Errorf("%s found vulnerabilities: %s", what, summary)
 	}
-	return "", fmt.Errorf("%s failed: %w: %s", what, runErr, excerpt)
+	return manager + " audit passed", nil
 }
 
 func parseNodeManifest(repoDir string) (nodemanifest.Manifest, error) {
@@ -374,20 +398,16 @@ func runNodeScript(tCtx context.Context, cfg *stageConfig, bound time.Duration, 
 	return fmt.Errorf("%s failed in %s: %s (%w)", what, dir, excerpt, err)
 }
 
-func runNodeWorktreeScripts(tCtx context.Context, cfg *stageConfig, bound time.Duration, dir, manager string, hasTest, hasLint bool) (retErr error) {
-	folders, findErr := findDependencyFolders(tCtx, cfg.repoDir, dir)
-	if findErr != nil {
-		return findErr
-	}
-	_, cleanup, linkErr := linkDependencyFolders(cfg.repoDir, dir, folders)
-	if linkErr != nil {
-		return linkErr
-	}
-	defer func() {
-		if cleanErr := cleanup(); cleanErr != nil {
-			retErr = errors.Join(retErr, cleanErr)
+func runNodeWorktreeScripts(tCtx context.Context, cfg *stageConfig, bound time.Duration, dir, manager string, installArgs []string, hasTest, hasLint bool) error {
+	installWhat := manager + " " + strings.Join(installArgs, " ")
+	out, err := cfg.run(tCtx, dir, manager, installArgs...)
+	if err != nil {
+		excerpt := util.TruncateExcerpt(out, maxNodeOutputBytes)
+		if cutErr := cutError(tCtx, installWhat, bound, dir, fmt.Sprintf("%s [%v]", excerpt, err)); cutErr != nil {
+			return cutErr
 		}
-	}()
+		return fmt.Errorf("%s failed in %s: %s (%w)", installWhat, dir, excerpt, err)
+	}
 	if hasTest {
 		if runErr := runNodeScript(tCtx, cfg, bound, dir, manager, "test"); runErr != nil {
 			return runErr
@@ -451,8 +471,17 @@ func runNodeTests(ctx context.Context, cfg *stageConfig) (string, error) {
 		return "", err
 	}
 	bound := budget.StageBound
+	var classic bool
+	if manager == nodeManagerYarn {
+		var yarnErr error
+		classic, yarnErr = isYarnClassic(ctx, cfg)
+		if yarnErr != nil {
+			return "", yarnErr
+		}
+	}
+	installArgs := nodeInstallArgs(manager, classic)
 	err = inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
-		return runNodeWorktreeScripts(tCtx, cfg, bound, dir, manager, hasTest, hasLint)
+		return runNodeWorktreeScripts(tCtx, cfg, bound, dir, manager, installArgs, hasTest, hasLint)
 	})
 	if err != nil {
 		return "", err

@@ -518,3 +518,21 @@ func TestRunCargoTests_Negative_OperatorTargetDirKeepsCheckoutBinaries(t *testin
 		t.Fatalf("folder %s missing or not a directory: %v", gateDebug, err)
 	}
 }
+
+// Positive: commandFailure truncates output and distinguishes bounds cuts from command errors.
+func TestCommandFailure_FormatsErrorAndTruncates(t *testing.T) {
+	ctx := t.Context()
+	cmdCtx, cancel := context.WithCancel(ctx)
+	cancel() // cancel cmdCtx while ctx is live
+
+	timeoutErr := commandFailure(ctx, cmdCtx, "tool step", 5*time.Second, "output text", 20, errors.New("signal: killed"))
+	if !strings.Contains(timeoutErr.Error(), "tool step did not finish within its 5s bound, so this is not a finding:") {
+		t.Errorf("want timeout failure message, got: %v", timeoutErr)
+	}
+
+	liveCmdCtx := t.Context()
+	regErr := commandFailure(ctx, liveCmdCtx, "tool step", 5*time.Second, "abcdefghijklmnopqrstuvwxyz", 10, errors.New("exit status 1"))
+	if !strings.Contains(regErr.Error(), "tool step failed: exit status 1: abcdefghij") {
+		t.Errorf("want truncated regular error message, got: %v", regErr)
+	}
+}
