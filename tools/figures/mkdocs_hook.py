@@ -324,7 +324,9 @@ def locked_player_files(lock_file: Path) -> list[tuple[str, Path]]:
     lock = read_player_lock(lock_file)
     release = str(lock.get("release") or "").strip()
     if not release:
-        log.warning(SVG_FALLBACK_WARNING, "unreleased")
+        # An unreleased pin is the expected state until the engine's first release carries the
+        # archive, so the substitution is stated at INFO: a warning would fail every strict build.
+        log.info(SVG_FALLBACK_WARNING, "unreleased")
         return []
     asset = str(lock.get("asset") or PLAYER_ARCHIVE).strip()
     url = release_archive_url(lock, release, asset)
@@ -342,7 +344,9 @@ def published_files() -> list[tuple[str, Path]]:
 
     In the engine repository player/ sits beside the hook; in an adopted repository
     player.lock.json names the release archive to fetch and verify. When no release is
-    available, the site renders every figure as its SVG and logs one warning.
+    available, the site renders every figure as its SVG and logs one line: INFO for a pin
+    without a release, a warning (which fails a strict build) for a missing lock or a failed
+    download.
     """
     if PLAYER_DIR.is_dir():
         names = sorted(path.name for path in PLAYER_DIR.iterdir() if path.is_file())

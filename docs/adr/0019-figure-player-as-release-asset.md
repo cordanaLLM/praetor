@@ -75,11 +75,14 @@ operational rule 14):
    publishes `tools/figures/player/` directly when that directory exists on
    disk (the engine repository). Otherwise it reads
    `tools/figures/player.lock.json`:
-   - When `release` is empty, it logs one warning line
+   - When `release` is empty, it logs one INFO line
      (`figures: engine pin <...> has no release; figures render as SVG (no interactive player)`)
-     and publishes no player files.
-   - When `player.lock.json` is missing, it logs the same warning, naming the
-     missing file and `praetorctl adopt` as the command that writes it.
+     and publishes no player files. An unreleased pin is the expected state
+     until the first engine release carries the archive, so the line is not a
+     warning: `mkdocs build --strict` fails on any warning.
+   - When `player.lock.json` is missing, it logs the same line as a warning,
+     naming the missing file and `praetorctl adopt` as the command that writes
+     it; a strict build fails on it.
    - When `release` is set, it downloads, over https only,
      `https://github.com/<repository>/releases/download/<release>/figures-player.tar.gz`
      with a 30-second timeout and `MAX_FILE_BYTES` ceiling, verifies that its
@@ -89,8 +92,8 @@ operational rule 14):
      segment, or non-regular entry), and publishes them under
      `assets/javascripts/figures/`.
    - When the download fails (such as HTTP 404 or network unavailability), it
-     logs the same single SVG fallback warning rather than failing the site
-     build.
+     logs the same line as a warning: a non-strict build renders SVG figures,
+     a strict build fails and names the cause.
 7. **Audit refusal and `codespell` cleanup.** `standardsctl audit` fails the
    documentation gate in any non-engine repository that still carries
    `tools/figures/player/player.js`, `loader.js`, or
@@ -112,9 +115,10 @@ operational rule 14):
 ### Negative / Trade-offs
 
 - Adopter documentation builds render figures as static SVGs (with one stated
-  warning line) until the first engine release that carries
-  `figures-player.tar.gz`, when pinned to an unreleased engine commit, or when
-  building without network access to GitHub releases.
+  INFO line) until the first engine release that carries
+  `figures-player.tar.gz`, or while pinned to an unreleased engine commit. A
+  strict build without network access to GitHub releases fails on the download
+  warning.
 
 ### Neutral
 
