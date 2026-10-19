@@ -387,8 +387,12 @@ func fileImports() map[string][]string {
 	}
 }
 
+// oracleBuildBound covers the first `go tool` run, which builds the pinned linter from the
+// module cache; a probe bound of seconds skipped the parity test on every cold runner.
+const oracleBuildBound = 5 * time.Minute
+
 func verifyOracleRunnable(t *testing.T, repoRoot string) {
-	checkCtx, checkCancel := context.WithTimeout(t.Context(), 5*time.Second)
+	checkCtx, checkCancel := context.WithTimeout(t.Context(), oracleBuildBound)
 	defer checkCancel()
 	toolsMod := filepath.Join(repoRoot, "tools", "lint", "go.mod")
 	out, err := util.RunCommand(checkCtx, repoRoot, "go", "tool", "-modfile="+toolsMod, "golangci-lint", "version")
@@ -424,7 +428,9 @@ func runSingleParityCase(t *testing.T, tc parityCase, repoRoot, fixtureDir strin
 		t.Fatalf("oracle execution timed out: %v", runCtx.Err())
 	}
 	if err != nil && !strings.Contains(string(out), "issues") && !strings.Contains(string(out), "depguard") {
-		t.Skipf("pinned tool returned unexpected execution error: %v\noutput: %s", err, string(out))
+		// The probe proved the linter runs, so an error here is a broken fixture or configuration,
+		// never a reason to skip.
+		t.Fatalf("pinned linter failed on case %s: %v\noutput: %s", tc.name, err, string(out))
 	}
 
 	oracleReported := parseOracleOutput(out)
