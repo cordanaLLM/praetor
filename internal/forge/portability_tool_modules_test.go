@@ -10,9 +10,12 @@ import (
 )
 
 const (
-	toolModulesStep = "- name: Download Pinned Tool Modules"
+	toolModulesStep = "- name: Download And Build Pinned Tools"
 	testPackageStep = "- name: Test Every Package"
-	toolModulesRun  = "run: go mod download -modfile=tools/go/go.mod"
+	toolModulesRun  = "go mod download -modfile=tools/go/go.mod"
+	// toolBuildRun builds the scanners the tests build or install, so their bounds meet a warm
+	// build cache (main 4ae64cb27's macOS leg compiled them inside the bounds and timed out).
+	toolBuildRun = `go build -modfile=tools/go/go.mod -o "$RUNNER_TEMP/pinned-tools/" golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec github.com/zricethezav/gitleaks/v8`
 )
 
 // toolModulesFirstProblem reports how the matrix departs from downloading the pinned tool
@@ -31,11 +34,15 @@ func toolModulesFirstProblem(workflow string) string {
 	if !strings.Contains(step, toolModulesRun) || !strings.Contains(step, "shell: bash") {
 		return "the download step does not run " + toolModulesRun + " in bash"
 	}
+	if !strings.Contains(step, toolBuildRun) {
+		return "the step does not build the pinned scanners before the tests"
+	}
 	return ""
 }
 
-// Positive (main c565cba50, macOS leg): the pinned tool modules are in the module cache before
-// the tests that build the pinned gosec and install the fallback scanners under short bounds.
+// Positive (main c565cba50 and 4ae64cb27, macOS leg): the pinned tool modules are in the module
+// cache and the scanners in the build cache before the tests that build the pinned gosec and
+// install the fallback scanners under short bounds.
 func TestPortability_ToolModulesDownloadBeforeTests(t *testing.T) {
 	if problem := toolModulesFirstProblem(readPortability(t)); problem != "" {
 		t.Fatalf("%s: %s", portabilityWorkflow, problem)
@@ -49,7 +56,8 @@ func TestPortability_Negative_PlantedToolModuleStepsAreRefused(t *testing.T) {
 	planted := map[string]string{
 		"no step":       strings.Replace(workflow, toolModulesStep, "- name: Download Something Else", 1),
 		"after tests":   strings.Replace(strings.Replace(workflow, testPackageStep, "- name: TMP", 1), toolModulesStep, testPackageStep, 1),
-		"other command": strings.Replace(workflow, toolModulesRun, "run: go mod download", 1),
+		"other command": strings.Replace(workflow, toolModulesRun, "go mod download", 1),
+		"no build":      strings.Replace(workflow, toolBuildRun, "true", 1),
 		"default shell": strings.Replace(workflow, toolModulesStep+"\n        if: ${{ !cancelled() && github.event.pull_request.draft != true }}\n        shell: bash", toolModulesStep+"\n        if: ${{ !cancelled() && github.event.pull_request.draft != true }}", 1),
 	}
 	for name, text := range planted {
