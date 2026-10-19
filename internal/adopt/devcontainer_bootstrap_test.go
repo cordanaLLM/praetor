@@ -18,6 +18,8 @@ func adoptBootstrapSource(t *testing.T) string {
 	for name, content := range map[string]string{
 		"go.mod": "module github.com/cordanaLLM/praetor\n\ngo 1.27\n", "go.sum": "", "LICENSE": "Synthetic test license\n",
 		"cmd/standardsctl/main.go": "package main\nfunc main() {}\n",
+		// The bundle installs the golangci-lint the source root's tools module pins.
+		"tools/lint/go.mod": "module github.com/cordanaLLM/praetor/tools/lint\n\ngo 1.27\n\nrequire github.com/golangci/golangci-lint/v2 v2.15.0 // indirect\n",
 	} {
 		mustWrite(t, filepath.Join(root, name), content)
 	}
