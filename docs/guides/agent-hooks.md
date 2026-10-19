@@ -99,6 +99,38 @@ What this means in practice:
   `test_registered_file_guard_matches_the_checkout_by_identity_not_spelling` in
   `scripts/test_checkpoint_hooks.py`).
 
+## Claude Code cloud sessions
+
+A Claude Code cloud session runs in a fresh VM that ships neither `lefthook` nor `praetorctl`
+([cloud environments](https://code.claude.com/docs/en/cloud-environments)). Without them the
+Python adapters above fail closed and refuse every Bash, Edit and Write call. That is safe, but
+the session can do nothing. `.config/agent/hooks/cloud_bootstrap.py` closes the gap at
+`SessionStart` (matcher `startup|resume`, exec form, timeout 600 s). It is registered for
+Claude Code only, since only Claude Code runs cloud sessions:
+
+- It does nothing unless `CLAUDE_CODE_REMOTE` is `true`, the variable the cloud VM sets and a
+  local session never does.
+- It installs the `lefthook` pin the CI uses (`go install github.com/evilmartians/lefthook/v2@v2.1.14`),
+  builds `praetorctl` from `./cmd/standardsctl` as the Makefile does, and runs
+  `praetorctl state init --if-absent .`, so the stop checkpoint finds a ledger in the fresh
+  clone. Both binaries go into the first writable directory on `PATH` (`/usr/local/bin`, else
+  `~/.local/bin`).
+- Every module is verified against `go.sum` and the checksum database; the bootstrap refuses to
+  install while `GOSUMDB` is `off` or `GONOSUMDB`/`GOINSECURE` is set.
+- It never disables a hook. A failed step is named in the one status line the session sees
+  (`Praetor cloud session bootstrap: ...`), and the guards stay closed.
+
+Measured on 2026-10-19 with a cloud session on this repository: the bootstrap reported `ready`,
+both tools were on the VM's `PATH`, every pre-tool guard ran (exit 0), and no permission prompt
+appeared with `--permission-mode auto`. `scripts/test_cloud_bootstrap.py` covers the remote-only
+gate, the pins, the checksum refusal, a failed build and the registration;
+`scripts/test_checkpoint_hooks.py` checks its time budget against the registration.
+
+A session starts from GitHub, with a remote it can push to, only when the Claude GitHub App
+reaches the repository; otherwise the CLI uploads a bundle without a remote. Adopted
+repositories do not yet receive the bootstrap, and their bare `praetorctl hook claude pre-tool`
+row fails open without `praetorctl` (cordanaLLM/praetor#1478).
+
 ## Command line and support matrix
 
 ```text
