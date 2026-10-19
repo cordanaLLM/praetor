@@ -309,7 +309,7 @@ func resolvesInside(root, path string) (bool, error) {
 	}
 	rel, err := filepath.Rel(realRoot, realPath)
 	if err != nil {
-		return false, nil
+		return false, fmt.Errorf("relate %s to the stage worktree %s: %w", realPath, realRoot, err)
 	}
 	return rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)), nil
 }
