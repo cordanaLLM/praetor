@@ -76,6 +76,9 @@ all_github_repos.json
 /deploy/arc/
 /deploy/k8s/
 
+# The figure player archive GoReleaser's before hook packs for a release (.goreleaser.yaml).
+/.release-extra/
+
 # BEGIN praetor private artifacts (praetorctl adopt)
 .workingdir/
 .workingdir2/
@@ -85,6 +88,3 @@ all_github_repos.json
 /.claude/settings.local.json
 /.standards-receipt.json
 # END praetor private artifacts
-
-# The figure player archive GoReleaser's before hook packs for a release (.goreleaser.yaml).
-/.release-extra/
