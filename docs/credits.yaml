@@ -1570,11 +1570,14 @@ entries:
     kind: "tool"
     relation: "used by CI"
     license: "MIT"
-    use: "Git hooks; CI installs it with go install"
+    use: "Git hooks; CI and the cloud session bootstrap build the tool of `tools/lefthook/go.mod`"
     paths:
       - "lefthook.yml"
       - ".github/workflows/ci.yml"
+      - "tools/lefthook/go.mod"
+      - ".config/agent/hooks/cloud_bootstrap.py"
     packages:
+      - "go:github.com/evilmartians/lefthook/v2"
       - "download:github.com/evilmartians/lefthook"
     match:
       - "lefthook"

@@ -32,11 +32,11 @@ class CloudBootstrap(unittest.TestCase):
     def run_bootstrap(self, which, steps=None, env=REMOTE, gosum="https://sum.golang.org"):
         commands = []
 
-        def step(command, _timeout, _extra):
+        def step(name, command, _timeout):
             commands.append(command)
             if steps is not None:
-                return steps(command, which)
-            which.installed.add("lefthook" if command[1] == "install" else "praetorctl")
+                return steps(name, which)
+            which.installed.add(name.split()[0])
             return ""
         values = {"GOSUMDB": gosum, "GONOSUMDB": "", "GOINSECURE": ""}
         with mock.patch.object(BOOTSTRAP.shutil, "which", which), \
@@ -56,10 +56,22 @@ class CloudBootstrap(unittest.TestCase):
     def test_installs_the_pins_and_initializes_the_ledger(self):
         line, commands = self.run_bootstrap(Which())
         self.assertEqual(line, "ready in /usr/local/bin")
-        self.assertEqual(commands[0], ["go", "install", BOOTSTRAP.LEFTHOOK])
-        self.assertEqual(commands[1], ["go", "build", "-o", "/usr/local/bin/praetorctl", "./cmd/standardsctl"])
+        self.assertEqual(commands[0], ["go", "build", "-C", "tools/lefthook", "-mod=readonly", "-o",
+                                       "/usr/local/bin/lefthook", "github.com/evilmartians/lefthook/v2"])
+        self.assertEqual(commands[1], ["go", "build", "-mod=readonly", "-o", "/usr/local/bin/praetorctl",
+                                       "./cmd/standardsctl"])
         self.assertEqual(commands[2], ["/usr/local/bin/praetorctl", "state", "init", "--if-absent", "."])
-        self.assertIn("lefthook/v2@v2.1.14", BOOTSTRAP.LEFTHOOK)
+
+    def test_lefthook_pin_is_the_module_ci_installs_from(self):
+        module = (ROOT / BOOTSTRAP.LEFTHOOK_MODULE / "go.mod").read_text(encoding="utf-8")
+        self.assertIn(f"tool {BOOTSTRAP.LEFTHOOK}\n", module)
+        self.assertIn(f"\t{BOOTSTRAP.LEFTHOOK} v2.1.14 ", module)
+        gosum = (ROOT / BOOTSTRAP.LEFTHOOK_MODULE / "go.sum").read_text(encoding="utf-8")
+        self.assertIn(f"{BOOTSTRAP.LEFTHOOK} v2.1.14 h1:", gosum, "go.sum, not the checksum database, verifies it")
+        for workflow in ("ci.yml", "portability.yml"):
+            text = (ROOT / ".github/workflows" / workflow).read_text(encoding="utf-8")
+            self.assertIn(f"go install -C {BOOTSTRAP.LEFTHOOK_MODULE} {BOOTSTRAP.LEFTHOOK}\n", text, workflow)
+            self.assertNotIn(f"{BOOTSTRAP.LEFTHOOK}@", text, f"{workflow} keeps a second lefthook pin")
 
     def test_tools_present_skip_the_installs(self):
         line, commands = self.run_bootstrap(Which({"lefthook", "praetorctl"}))
@@ -72,14 +84,14 @@ class CloudBootstrap(unittest.TestCase):
         self.assertEqual(commands, [], "nothing is installed unverified")
 
     def test_negative_failed_build_keeps_the_hooks_closed(self):
-        def steps(command, which):
-            if command[1] == "install":
+        def steps(name, which):
+            if name == "lefthook build":
                 which.installed.add("lefthook")
                 return ""
-            return "go build exit 1: compile error"
+            return "praetorctl build exit 1: compile error"
         line, commands = self.run_bootstrap(Which(), steps=steps)
         self.assertIn("missing praetorctl; the engine hooks stay closed", line)
-        self.assertIn("go build exit 1", line)
+        self.assertIn("praetorctl build exit 1", line)
         self.assertNotIn("state", [c[1] for c in commands], "no ledger step without praetorctl")
 
     def test_negative_no_go_toolchain(self):

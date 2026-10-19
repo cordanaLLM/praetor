@@ -3,10 +3,12 @@
 
 Claude Code runs this at SessionStart. Outside a cloud session (CLAUDE_CODE_REMOTE is not "true") it does nothing.
 In a cloud VM, which has neither tool, the before-tool guards and the stop checkpoint fail closed; this installs the
-lefthook pin the CI uses and builds praetorctl from ./cmd/standardsctl of this checkout, as the Makefile does, into
-a directory on the agent's PATH. Both go commands verify every module against go.sum and the checksum database, and
-the bootstrap refuses to run while that verification is switched off. It never disables a hook: a step that fails
-is reported and the guards stay closed.
+lefthook pin from tools/lefthook/go.mod, the module CI installs it from, and builds praetorctl from ./cmd/standardsctl
+of this checkout, as the Makefile does, into a directory on the agent's PATH. Both builds run with -mod=readonly, so
+every module is verified against a go.sum this checkout holds and none needs the checksum database, which a cloud VM
+that clones from GitHub cannot reach (measured 2026-10-19: "sum.golang.org forbidden"). The bootstrap refuses to run
+while checksum verification is switched off. It never disables a hook: a step that fails is reported and the guards
+stay closed.
 """
 
 import os
@@ -16,8 +18,9 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-# The pin .github/workflows/ci.yml installs.
-LEFTHOOK = "github.com/evilmartians/lefthook/v2@v2.1.14"
+# The module that pins lefthook, and the package it builds; .github/workflows/ci.yml installs from the same module.
+LEFTHOOK_MODULE = "tools/lefthook"
+LEFTHOOK = "github.com/evilmartians/lefthook/v2"
 # Claude Code registers this hook with a 600 s timeout (.claude/settings.json). The steps below share
 # BOOTSTRAP_BUDGET, a step that overruns is killed within BOOTSTRAP_STOP, and BOOTSTRAP_LIMIT stays under the
 # registration; scripts/test_checkpoint_hooks.py checks this arithmetic against the registration.
@@ -55,26 +58,27 @@ def verification_off():
     return go_env("GOSUMDB") == "off" or bool(go_env("GONOSUMDB")) or bool(go_env("GOINSECURE"))
 
 
-def run_step(command, timeout, extra_env):
-    """Run one step in the checkout; "" on success, else one line naming the failure."""
+def run_step(name, command, timeout):
+    """Run one named step in the checkout; "" on success, else one line naming the failure."""
     try:
-        result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=timeout, check=False,
-                                env={**os.environ, **extra_env})
+        result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=timeout, check=False)
     except (OSError, subprocess.TimeoutExpired) as error:
-        return f"{' '.join(command[:2])} failed: {error}"
+        return f"{name} failed: {error}"
     if result.returncode == 0:
         return ""
-    return f"{' '.join(command[:2])} exit {result.returncode}: {result.stderr.strip()[-300:]}"
+    return f"{name} exit {result.returncode}: {result.stderr.strip()[-300:]}"
 
 
 def provision(bindir):
-    """Install whichever tool is missing; the failure lines of the steps that ran."""
+    """Build whichever tool is missing; the failure lines of the steps that ran."""
     failures = []
     if shutil.which("lefthook") is None:
-        failures.append(run_step(["go", "install", LEFTHOOK], INSTALL_TIMEOUT, {"GOBIN": str(bindir)}))
+        failures.append(run_step("lefthook build", ["go", "build", "-C", LEFTHOOK_MODULE, "-mod=readonly", "-o",
+                                                    str(bindir / "lefthook"), LEFTHOOK], INSTALL_TIMEOUT))
     if shutil.which("praetorctl") is None:
-        failures.append(run_step(["go", "build", "-o", str(bindir / "praetorctl"), "./cmd/standardsctl"],
-                                 BUILD_TIMEOUT, {}))
+        failures.append(run_step("praetorctl build", ["go", "build", "-mod=readonly", "-o",
+                                                      str(bindir / "praetorctl"), "./cmd/standardsctl"],
+                                 BUILD_TIMEOUT))
     return [line for line in failures if line]
 
 
@@ -95,7 +99,8 @@ def bootstrap(environ):
     if not missing:
         # A fresh clone has no private state ledger, and the stop checkpoint refuses an unverified one (measured
         # 2026-10-19: "lstat .workingdir: no such file"); --if-absent never repairs a partial ledger.
-        failures.append(run_step([found["praetorctl"], "state", "init", "--if-absent", "."], STATE_TIMEOUT, {}))
+        failures.append(run_step("state init", [found["praetorctl"], "state", "init", "--if-absent", "."],
+                                 STATE_TIMEOUT))
     state = "ready" if not missing else "missing " + ", ".join(missing) + "; the engine hooks stay closed"
     return "; ".join([f"{state} in {bindir}", *[line for line in failures if line]])
 
