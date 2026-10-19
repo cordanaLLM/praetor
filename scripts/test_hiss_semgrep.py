@@ -2,7 +2,6 @@
 """Live Semgrep regressions for the HISS invariant rules."""
 
 import json
-import os
 import re
 import subprocess
 import tempfile
@@ -12,25 +11,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RULES = ROOT / ".config" / "semgrep" / "hiss-invariants.yml"
 VERSION_PROBE_TIMEOUT_SECONDS = 20
-
-
-def _ensure_semgrep_env():
-    semgrep_dir = Path.home() / ".semgrep"
-    needs_fallback = (
-        ("SEMGREP_SETTINGS_FILE" not in os.environ or "SEMGREP_LOG_FILE" not in os.environ)
-        and (
-            (semgrep_dir.exists() and not os.access(semgrep_dir, os.W_OK))
-            or (not semgrep_dir.exists() and not os.access(Path.home(), os.W_OK))
-        )
-    )
-    if needs_fallback:
-        fallback_dir = Path(tempfile.gettempdir()) / "praetor-semgrep"
-        fallback_dir.mkdir(parents=True, exist_ok=True)
-        os.environ.setdefault("SEMGREP_SETTINGS_FILE", str(fallback_dir / "settings.yaml"))
-        os.environ.setdefault("SEMGREP_LOG_FILE", str(fallback_dir / "semgrep.log"))
-
-
-_ensure_semgrep_env()
 
 
 def pinned_version():
@@ -133,6 +113,7 @@ def tracked_figure_scripts() -> list[Path]:
         cwd=ROOT,
         capture_output=True,
         text=True,
+        timeout=30,
         check=True,
     )
     paths = [ROOT / line.strip() for line in result.stdout.splitlines() if line.strip()]
