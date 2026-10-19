@@ -1,0 +1,110 @@
+{
+ "version": 1,
+ "generated_at": "2026-01-15T09:30:00Z",
+ "sessions": [
+  {
+   "repo": "example/alpha",
+   "state": "active",
+   "kind": "session",
+   "pid": 4000,
+   "gb": 0.4,
+   "idle_min": 0,
+   "latest": "REPORT example-1: synthetic line"
+  },
+  {
+   "repo": "example/beta",
+   "state": "quiet",
+   "kind": "session",
+   "pid": 4001,
+   "gb": 0.5,
+   "idle_min": 4,
+   "latest": "REPORT example-2: synthetic line"
+  },
+  {
+   "repo": "example/gamma",
+   "state": "not running",
+   "kind": "session",
+   "pid": 4002,
+   "gb": 0.6,
+   "idle_min": 8,
+   "latest": "REPORT example-3: synthetic line"
+  },
+  {
+   "repo": "example/delta",
+   "state": "active",
+   "kind": "session",
+   "pid": 4003,
+   "gb": 0.7,
+   "idle_min": 12,
+   "latest": "REPORT example-4: synthetic line"
+  },
+  {
+   "repo": "example/epsilon",
+   "state": "quiet",
+   "kind": "session",
+   "pid": 4004,
+   "gb": 0.8,
+   "idle_min": 16,
+   "latest": "REPORT example-5: synthetic line"
+  },
+  {
+   "repo": "example/zeta",
+   "state": "not running",
+   "kind": "session",
+   "pid": 4005,
+   "gb": 0.9,
+   "idle_min": 20,
+   "latest": "REPORT example-6: synthetic line"
+  },
+  {
+   "repo": "example/eta",
+   "state": "active",
+   "kind": "session",
+   "pid": 4006,
+   "gb": 1.0,
+   "idle_min": 24,
+   "latest": "REPORT example-7: synthetic line"
+  },
+  {
+   "repo": "example/theta",
+   "state": "quiet",
+   "kind": "session",
+   "pid": 4007,
+   "gb": 1.1,
+   "idle_min": 28,
+   "latest": "REPORT example-8: synthetic line"
+  }
+ ],
+ "decisions": [
+  {
+   "id": "example-decision-1",
+   "kind": "DECISION",
+   "at": "2026-01-15T09:30:00Z",
+   "from": "session-alpha"
+  },
+  {
+   "id": "example-decision-2",
+   "kind": "ASK",
+   "at": "2026-01-15T09:30:00Z",
+   "from": "session-beta"
+  },
+  {
+   "id": "example-decision-3",
+   "kind": "DECISION",
+   "at": "2026-01-15T09:30:00Z",
+   "from": "session-gamma"
+  },
+  {
+   "id": "example-decision-4",
+   "kind": "ASK",
+   "at": "2026-01-15T09:30:00Z",
+   "from": "session-delta"
+  }
+ ],
+ "holds": [
+  {
+   "id": "example-hold-1",
+   "since": "2026-01-15T09:30:00Z"
+  }
+ ]
+}
