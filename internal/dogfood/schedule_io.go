@@ -47,20 +47,37 @@ func readScheduleFile(ctx context.Context, root *os.Root, name string, limit int
 	if err != nil {
 		return nil, err
 	}
-	if !os.SameFile(before, opened) || !opened.Mode().IsRegular() {
-		return nil, errors.New("schedule input changed during open")
+	if err := checkScheduleFileOpened(before, opened); err != nil {
+		return nil, err
 	}
-	data, err = io.ReadAll(io.LimitReader(file, limit+1))
+	data, err = readBoundedScheduleFile(file, limit)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkPublicFileStable(root, name, file, before, len(data)); err != nil {
+		return nil, err
+	}
+	return data, ctx.Err()
+}
+
+// checkScheduleFileOpened verifies that the opened file matches the before-lstat file info.
+func checkScheduleFileOpened(before, opened os.FileInfo) error {
+	if !os.SameFile(before, opened) || !opened.Mode().IsRegular() {
+		return errors.New("schedule input changed during open")
+	}
+	return nil
+}
+
+// readBoundedScheduleFile reads bounded data from file and checks limit.
+func readBoundedScheduleFile(r io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
 	if err != nil {
 		return nil, err
 	}
 	if int64(len(data)) > limit {
 		return nil, errors.New("schedule input exceeded byte bound")
 	}
-	if err := checkPublicFileStable(root, name, file, before, len(data)); err != nil {
-		return nil, err
-	}
-	return data, ctx.Err()
+	return data, nil
 }
 
 func openScheduleState(ctx context.Context, path string, create bool) (*os.Root, error) {
@@ -150,8 +167,8 @@ func readScheduleState(ctx context.Context, root *os.Root) (*scheduleState, erro
 }
 
 func validateScheduleState(state *scheduleState, dir string) error {
-	if state.Version != 1 || state.Attempts < 0 || state.Attempts > 1024 || state.ConsecutiveFailures < 0 || state.ConsecutiveFailures > state.Attempts || state.PrunedThrough < 0 || state.PrunedThrough > state.Attempts {
-		return errors.New("invalid schedule state counters")
+	if err := validateScheduleCounters(state); err != nil {
+		return err
 	}
 	if state.Attempts == 0 {
 		if state.LastAttempt != nil || state.ConsecutiveFailures != 0 {
@@ -160,6 +177,14 @@ func validateScheduleState(state *scheduleState, dir string) error {
 		return nil
 	}
 	return validateScheduleAttempt(state, dir)
+}
+
+// validateScheduleCounters verifies version and numeric attempt boundaries.
+func validateScheduleCounters(state *scheduleState) error {
+	if state.Version != 1 || state.Attempts < 0 || state.Attempts > 1024 || state.ConsecutiveFailures < 0 || state.ConsecutiveFailures > state.Attempts || state.PrunedThrough < 0 || state.PrunedThrough > state.Attempts {
+		return errors.New("invalid schedule state counters")
+	}
+	return nil
 }
 
 func validateScheduleAttempt(state *scheduleState, dir string) error {
@@ -181,10 +206,15 @@ func validateScheduleAttemptStatus(state *scheduleState) error {
 	if a.FinishedAt.IsZero() || a.FinishedAt.Before(a.StartedAt) {
 		return errors.New("invalid schedule attempt time")
 	}
-	if a.Status == "verified" && state.ConsecutiveFailures == 0 {
+	return validateFinishedScheduleAttempt(a.Status, state.ConsecutiveFailures)
+}
+
+// validateFinishedScheduleAttempt checks status and failure consistency of a completed attempt.
+func validateFinishedScheduleAttempt(status string, failures int) error {
+	if status == "verified" && failures == 0 {
 		return nil
 	}
-	if (a.Status == "failed" || a.Status == "interrupted") && state.ConsecutiveFailures > 0 {
+	if (status == "failed" || status == "interrupted") && failures > 0 {
 		return nil
 	}
 	return errors.New("invalid schedule attempt status")
@@ -297,13 +327,23 @@ func (u *scheduleUsage) addEntry(root *os.Root, dir, name string) error {
 			return err
 		}
 	}
-	if run := topLevelRun(dir, name); run != "" {
-		u.runEntries[run]++
-		u.runBytes[run] += info.Size()
-	}
+	u.recordTopLevelRun(dir, name, info.Size())
 	if info.IsDir() {
 		u.dirs = append(u.dirs, rel)
 	}
+	return validateRetainedFileMode(info)
+}
+
+// recordTopLevelRun tallies entries and bytes under top-level runs.
+func (u *scheduleUsage) recordTopLevelRun(dir, name string, size int64) {
+	if run := topLevelRun(dir, name); run != "" {
+		u.runEntries[run]++
+		u.runBytes[run] += size
+	}
+}
+
+// validateRetainedFileMode ensures the entry is a directory, regular file, or symlink.
+func validateRetainedFileMode(info os.FileInfo) error {
 	if !info.IsDir() && !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
 		return errors.New("unexpected special file in retained evidence")
 	}

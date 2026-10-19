@@ -71,14 +71,27 @@ func decodeSuiteConfig(fields map[string]json.RawMessage) (*SuiteConfig, error) 
 	if err := json.Unmarshal(fields["public_repositories"], &config.PublicRepositories); err != nil {
 		return nil, err
 	}
-	var transcripts []json.RawMessage
-	if err := json.Unmarshal(fields["transcripts"], &transcripts); err != nil {
-		return nil, err
-	}
-	if config.PublicRepositories == nil || transcripts == nil || len(transcripts) > MaxSuiteCases {
+	if config.PublicRepositories == nil {
 		return nil, errors.New("suite lists must be arrays with at most eight transcript cases")
 	}
-	for i := 0; i < len(transcripts); i++ {
+	config.Transcripts, err = decodeSuiteTranscripts(fields["transcripts"])
+	if err != nil {
+		return nil, err
+	}
+	return &config, nil
+}
+
+// decodeSuiteTranscripts validates transcript case objects and unmarshals each item.
+func decodeSuiteTranscripts(raw json.RawMessage) ([]SuiteTranscript, error) {
+	var transcripts []json.RawMessage
+	if err := json.Unmarshal(raw, &transcripts); err != nil {
+		return nil, err
+	}
+	if transcripts == nil || len(transcripts) > MaxSuiteCases {
+		return nil, errors.New("suite lists must be arrays with at most eight transcript cases")
+	}
+	cases := make([]SuiteTranscript, 0, len(transcripts))
+	for i := 0; i < len(transcripts) && i < MaxSuiteCases; i++ {
 		if _, err := suiteObject(transcripts[i], []string{"id", "source_path", "sha256", "format"}); err != nil {
 			return nil, err
 		}
@@ -86,9 +99,9 @@ func decodeSuiteConfig(fields map[string]json.RawMessage) (*SuiteConfig, error) 
 		if err := json.Unmarshal(transcripts[i], &source); err != nil {
 			return nil, err
 		}
-		config.Transcripts = append(config.Transcripts, source)
+		cases = append(cases, source)
 	}
-	return &config, nil
+	return cases, nil
 }
 
 // Decode each fixed object explicitly: struct decoding alone accepts duplicate and

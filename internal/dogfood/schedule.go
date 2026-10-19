@@ -74,16 +74,16 @@ func scheduleTickWithinRoot(ctx context.Context, path, inputRoot string, execute
 			report.Verified = false
 		}
 	}()
-	root, err := openScheduleState(ctx, snapshot.config.StateDir, execute)
-	if errors.Is(err, os.ErrNotExist) && !execute {
-		return report, nil
-	}
+	root, err := openScheduleRoot(ctx, snapshot.config.StateDir, execute)
 	if err != nil {
 		return report, err
 	}
+	if root == nil {
+		return report, nil
+	}
 	defer func() { err = errors.Join(err, root.Close()) }()
-	release, busy, err := lockSchedule(root, execute)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	release, busy, err := acquireScheduleLock(root, execute)
+	if err != nil {
 		return report, err
 	}
 	if release != nil {
@@ -94,6 +94,24 @@ func scheduleTickWithinRoot(ctx context.Context, path, inputRoot string, execute
 		return report, nil
 	}
 	return report, inspectScheduleSession(ctx, snapshot, report, root, release != nil, execute, now, runner)
+}
+
+// openScheduleRoot opens the state directory, returning nil when nonexistent on dry run.
+func openScheduleRoot(ctx context.Context, stateDir string, execute bool) (*os.Root, error) {
+	root, err := openScheduleState(ctx, stateDir, execute)
+	if errors.Is(err, os.ErrNotExist) && !execute {
+		return nil, nil
+	}
+	return root, err
+}
+
+// acquireScheduleLock attempts to lock schedule root, ignoring ErrNotExist.
+func acquireScheduleLock(root *os.Root, execute bool) (func() error, bool, error) {
+	release, busy, err := lockSchedule(root, execute)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, false, err
+	}
+	return release, busy, nil
 }
 
 func inspectScheduleSession(ctx context.Context, snapshot *scheduleSnapshot, report *ScheduleReport, root *os.Root, locked, execute bool, now func() time.Time, runner scheduleRunner) error {
@@ -165,18 +183,10 @@ func (s *scheduleSession) refreshReport() {
 }
 
 func (s *scheduleSession) decision(entries int) string {
+	if s.isResourceBlocked(entries) {
+		return "resource_blocked"
+	}
 	c, last := s.snapshot.config, s.state.LastAttempt
-	if entries > maxScheduleEntries {
-		s.report.Reason = fmt.Sprintf("retained evidence exceeds %d entries", maxScheduleEntries)
-		return "resource_blocked"
-	}
-	blocked := s.report.RetainedRuns >= c.MaxRuns
-	if c.Retention == "prune-oldest" {
-		blocked = s.report.RetainedRuns > c.MaxRuns
-	}
-	if blocked || s.report.RetainedBytes >= c.MaxBytes {
-		return "resource_blocked"
-	}
 	if last == nil {
 		return "due"
 	}
@@ -196,6 +206,20 @@ func (s *scheduleSession) decision(entries int) string {
 		return "cooldown"
 	}
 	return "due"
+}
+
+// isResourceBlocked checks whether retained runs or bytes exceed configured limits.
+func (s *scheduleSession) isResourceBlocked(entries int) bool {
+	if entries > maxScheduleEntries {
+		s.report.Reason = fmt.Sprintf("retained evidence exceeds %d entries", maxScheduleEntries)
+		return true
+	}
+	c := s.snapshot.config
+	blocked := s.report.RetainedRuns >= c.MaxRuns
+	if c.Retention == "prune-oldest" {
+		blocked = s.report.RetainedRuns > c.MaxRuns
+	}
+	return blocked || s.report.RetainedBytes >= c.MaxBytes
 }
 
 func (s *scheduleSession) pruneOldest(ctx context.Context, usage *scheduleUsage, execute bool) error {

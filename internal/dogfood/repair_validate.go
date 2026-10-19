@@ -305,19 +305,33 @@ func validateRepairPublicScan(scan *hiss.ScanReport) error {
 	if err := scan.Coverage.Validate(); err != nil {
 		return fmt.Errorf("public scan coverage: %w", err)
 	}
+	counts, err := countRepairPublicViolations(scan.Violations)
+	if err != nil {
+		return err
+	}
+	return validateRepairScanBreakdown(scan.Breakdown, counts)
+}
+
+// countRepairPublicViolations validates violation identities and tallies occurrences per rule.
+func countRepairPublicViolations(violations []hiss.InvariantViolation) (map[string]int, error) {
 	counts := make(map[string]int)
-	for i := 0; i < len(scan.Violations) && i < hiss.MaxInfractionsCap; i++ {
-		entry := scan.Violations[i]
+	for i := 0; i < len(violations) && i < hiss.MaxInfractionsCap; i++ {
+		entry := violations[i]
 		if entry.RuleID == "" || entry.LineNumber <= 0 || !repairPublicRelativePath(entry.FilePath) {
-			return errors.New("public scan contains an invalid violation identity")
+			return nil, errors.New("public scan contains an invalid violation identity")
 		}
 		counts[entry.RuleID]++
 	}
-	if len(counts) != len(scan.Breakdown) {
+	return counts, nil
+}
+
+// validateRepairScanBreakdown verifies that scan breakdown matches tabulated rule counts.
+func validateRepairScanBreakdown(breakdown, counts map[string]int) error {
+	if len(counts) != len(breakdown) {
 		return errors.New("public scan breakdown contradicts its entries")
 	}
 	for rule, count := range counts {
-		if scan.Breakdown[rule] != count {
+		if breakdown[rule] != count {
 			return errors.New("public scan breakdown contradicts its entries")
 		}
 	}
