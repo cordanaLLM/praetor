@@ -161,7 +161,7 @@ func writeLibraryRelationship(output *strings.Builder, dependency DependencyDema
 	switch dependency.Status {
 	case StatusGap:
 		marker = "✗"
-	case StatusNonGoal:
+	case StatusNonGoal, StatusDeclinedByPolicy:
 		marker = "○"
 	}
 	fmt.Fprintf(output, "  %s %-35s -> %s\n", marker, dependency.Package, libraryRelationshipDescription(dependency))
@@ -194,6 +194,9 @@ func libraryRelationshipDescription(dependency DependencyDemand) string {
 	}
 	if dependency.Status == StatusNonGoal {
 		return fmt.Sprintf("framework non-goal (resolved); capability=%s; no replacement planned", dependency.Capability)
+	}
+	if dependency.Status == StatusDeclinedByPolicy {
+		return fmt.Sprintf("declined by policy: %s", dependency.FrameworkReplacement)
 	}
 	if dependency.Status == StatusNative {
 		return "native; no replacement required"

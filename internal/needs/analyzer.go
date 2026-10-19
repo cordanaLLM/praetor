@@ -128,7 +128,7 @@ func RowFramework(registry *AnalyzerRegistry, row *RepoNeeds, selected *Framewor
 
 // reconcileDeclared maps the demands of one analysed project onto the packages its
 // language's contract declares, when one is loaded.
-func (r *AnalyzerRegistry) reconcileDeclared(language string, repoNeeds *RepoNeeds) {
+func (r *AnalyzerRegistry) reconcileDeclared(ctx context.Context, language string, repoNeeds *RepoNeeds) {
 	r.mu.RLock()
 	index := r.contracts[language]
 	r.mu.RUnlock()
@@ -141,6 +141,7 @@ func (r *AnalyzerRegistry) reconcileDeclared(language string, repoNeeds *RepoNee
 	if language == "go" {
 		reconcileStandardImports(index, repoNeeds)
 	}
+	applyDepguardPolicy(ctx, repoNeeds)
 	calculateReadiness(repoNeeds)
 }
 
@@ -209,14 +210,14 @@ func (r *AnalyzerRegistry) AnalyzePolyglot(ctx context.Context, repoPath string)
 	if err != nil {
 		return nil, fmt.Errorf("primary analyzer %s failed: %w", matched[0].Language(), err)
 	}
-	r.reconcileDeclared(matched[0].Language(), primaryNeeds)
+	r.reconcileDeclared(ctx, matched[0].Language(), primaryNeeds)
 
 	for i := 1; i < len(matched); i++ {
 		secNeeds, sErr := matched[i].Analyze(ctx, repoPath, targets[matched[i].Language()])
 		if sErr != nil {
 			return nil, fmt.Errorf("secondary analyzer %s failed: %w", matched[i].Language(), sErr)
 		}
-		r.reconcileDeclared(matched[i].Language(), secNeeds)
+		r.reconcileDeclared(ctx, matched[i].Language(), secNeeds)
 		mergeRepoNeeds(primaryNeeds, secNeeds)
 	}
 

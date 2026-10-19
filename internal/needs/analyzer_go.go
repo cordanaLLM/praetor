@@ -46,7 +46,7 @@ func (a *GoAnalyzer) Analyze(ctx context.Context, repoPath string, target Target
 	// prefix (a directory called "go" would swallow every golang.org/x import).
 	repoName, fallback := projectRepositoryName(module.modulePath, repoPath)
 
-	astImports, err := scanASTImports(ctx, repoPath, module.modulePath, module.ignore)
+	astImports, files, err := scanASTImportsFiles(ctx, repoPath, module.modulePath, module.ignore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan AST imports: %w", err)
 	}
@@ -63,6 +63,8 @@ func (a *GoAnalyzer) Analyze(ctx context.Context, repoPath string, target Target
 		Capabilities:       CapabilityDeclaration{Required: make([]CapabilityKey, 0), Optional: make([]CapabilityKey, 0)},
 		Dependencies:       make([]DependencyDemand, 0),
 		UpdatedAt:          time.Now().UTC(),
+		Path:               repoPath,
+		Files:              files,
 	}
 
 	buildDependencyDemands(module.directDeps, astImports, repoNeeds)

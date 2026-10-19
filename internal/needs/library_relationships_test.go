@@ -267,7 +267,7 @@ func TestLibraryRelationshipUnknownFoundationCannotClaimRetention(t *testing.T) 
 		FrameworkReplacement: "example.com/unverified/replacement",
 		Relationship:         &LibraryRelationship{Kind: RelationshipFoundation, Basis: FrameworkSourceObserved},
 	}}}
-	applyFrameworkCoverage(index, report, nil)
+	applyFrameworkCoverage(t.Context(), index, report, nil)
 	dep := report.Dependencies[0]
 	if dep.Status != StatusGap || dep.Relationship == nil || dep.Relationship.Basis != "unverified" || dep.FrameworkReplacement != "" {
 		t.Fatalf("caller-supplied relationship bypassed catalog reconciliation: %+v", dep)

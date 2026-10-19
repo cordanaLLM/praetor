@@ -307,6 +307,12 @@ leaderboard (`TestFrameworkNonGoalLiftsReadiness_3D`,
 `TestAggregateReportsFrameworkNonGoals_3D`). A framework selected by its contract alone,
 without a checkout, declares no non-goals.
 
+When the repository's `.golangci.yml` declares a depguard rule whose `deny` list
+matches a proposed framework replacement (or whose `list-mode: strict` with an
+`allow` list such as `$gostd` denies it), the demand is reported with status
+`declined-by-policy` marked `○` rather than a swap candidate. Its note names the
+depguard rule and the denied prefix. It is not counted as a gap in readiness.
+
 A declaration the code contradicts is false and fails:
 
 - `needs scan --check` and `needs scan --write` fail with `ErrNonGoalContradicted` when

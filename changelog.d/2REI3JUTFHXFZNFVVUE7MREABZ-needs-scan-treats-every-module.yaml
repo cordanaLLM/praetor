@@ -1,0 +1,2 @@
+type: fixed
+title: needs scan treats every module of the same checkout as its own, and reports a swap the repository's depguard policy forbids as declined by policy

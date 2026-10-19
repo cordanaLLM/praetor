@@ -76,7 +76,7 @@ func TestFrameworkNonGoalLiftsReadiness_3D(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	applyFrameworkCoverage(plainIndex, lifted, nil)
+	applyFrameworkCoverage(t.Context(), plainIndex, lifted, nil)
 	if pgx := relationshipDemand(t, lifted, "github.com/jackc/pgx/v5"); pgx.Status != StatusGap || lifted.Readiness.NonGoalDeps != 0 {
 		t.Fatalf("re-scored pgx = %+v, readiness %+v", pgx, lifted.Readiness)
 	}

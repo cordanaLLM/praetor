@@ -99,7 +99,7 @@ func scanRepoWithFramework(ctx context.Context, repoPath string, framework *Fram
 	if err != nil {
 		return nil, nil, err
 	}
-	applyFrameworkCoverage(framework, report, registry)
+	applyFrameworkCoverage(ctx, framework, report, registry)
 	return report, repo, nil
 }
 
@@ -236,7 +236,17 @@ const maxImportScanEntries = 1000000
 // scanASTImports extracts third-party imports and selected catalog stdlib imports from the
 // module at rootDir, skipping the directories its go.mod ignore directives name.
 func scanASTImports(ctx context.Context, rootDir, modulePath string, ignore gomanifest.IgnoreSet) (map[string]struct{}, error) {
-	return scanASTImportsBounded(ctx, rootDir, modulePath, ignore, maxImportScanEntries)
+	imports, _, err := scanASTImportsFiles(ctx, rootDir, modulePath, ignore)
+	return imports, err
+}
+
+// scanASTImportsFiles extracts third-party imports and returns the visited Go files.
+func scanASTImportsFiles(ctx context.Context, rootDir, modulePath string, ignore gomanifest.IgnoreSet) (map[string]struct{}, []string, error) {
+	scan := newImportScan(ctx, rootDir, modulePath, ignore, maxImportScanEntries)
+	if err := scan.walk(); err != nil {
+		return nil, nil, err
+	}
+	return scan.imports, scan.files, nil
 }
 
 // scanASTImportsBounded is scanASTImports with the entry bound as a parameter, so the
@@ -280,6 +290,7 @@ type importScan struct {
 	visited    int
 	fset       *token.FileSet
 	imports    map[string]struct{}
+	files      []string
 	// onFile, when set, receives every scannable Go file instead of the import collection:
 	// the umbrella-import inspection (umbrella.go) walks the same sources this way.
 	onFile func(path string)
@@ -302,6 +313,9 @@ func (s *importScan) visit(path string, info os.FileInfo, walkErr error) error {
 	}
 	if !isScannableGoFile(info) {
 		return nil
+	}
+	if rel, err := filepath.Rel(s.root, path); err == nil {
+		s.files = append(s.files, rel)
 	}
 	if s.onFile != nil {
 		s.onFile(path)
@@ -614,6 +628,8 @@ func calculateReadiness(repoNeeds *RepoNeeds) {
 			nonGoal++
 		case StatusGap:
 			gap++
+		case StatusDeclinedByPolicy:
+			// Declined by policy: not counted as a gap in readiness.
 		}
 	}
 

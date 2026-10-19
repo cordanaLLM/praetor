@@ -32,6 +32,9 @@ const (
 	// StatusNonGoal marks a demand whose capability the framework it is scored against
 	// declares a non-goal (NonGoal): resolved by the declared alternative, never a gap.
 	StatusNonGoal CapabilityStatus = "non_goal"
+	// StatusDeclinedByPolicy marks a proposed replacement candidate that repository
+	// dependency policy (such as depguard in .golangci.yml) forbids.
+	StatusDeclinedByPolicy CapabilityStatus = "declined-by-policy"
 )
 
 // LibraryRelationshipKind distinguishes retained libraries from migration candidates.
@@ -150,6 +153,8 @@ type RepoNeeds struct {
 	UmbrellaImports []UmbrellaFinding `json:"umbrella_imports,omitempty" yaml:"-"`
 	// Imports holds the raw Go import paths observed during AST analysis.
 	Imports []string `json:"imports,omitempty" yaml:"-"`
+	// Files holds the relative Go source file paths observed during AST analysis.
+	Files []string `json:"files,omitempty" yaml:"-"`
 	// ProjectImports maps each Go project directory (relative to repo root) to its observed imports.
 	ProjectImports map[string][]string `json:"project_imports,omitempty" yaml:"-"`
 }

@@ -7,7 +7,6 @@ package adopt
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -71,29 +70,6 @@ func (r golangciExclusionRule) String() string {
 		parts = append(parts, fmt.Sprintf("Linters: %q", strings.Join(r.linters, ", ")))
 	}
 	return strings.Join(parts, ", ")
-}
-
-type golangciConfigFile struct {
-	path   string
-	name   string
-	format string
-}
-
-func locateGolangciConfig(rootDir string) (*golangciConfigFile, error) {
-	for _, name := range []string{".golangci.yml", ".golangci.yaml"} {
-		p := filepath.Join(rootDir, name)
-		if _, err := os.Stat(p); err == nil {
-			return &golangciConfigFile{path: p, name: name, format: "yaml"}, nil
-		}
-	}
-	for _, name := range []string{".golangci.toml", ".golangci.json"} {
-		p := filepath.Join(rootDir, name)
-		if _, err := os.Stat(p); err == nil {
-			ext := strings.TrimPrefix(filepath.Ext(name), ".")
-			return &golangciConfigFile{path: p, name: name, format: ext}, nil
-		}
-	}
-	return nil, nil
 }
 
 func parseExclusionComment(comment string) (bool, config.Exception) {
@@ -227,19 +203,19 @@ func parseExclusionsNode(fileName string, node *yaml.Node) *golangciExclusionCon
 	return &golangciExclusionConfig{rules: rules, warnUnused: warnUnused}
 }
 
-func readGolangciExclusionConfig(cfg *golangciConfigFile) (*golangciExclusionConfig, error) {
-	data, err := os.ReadFile(cfg.path)
+func readGolangciExclusionConfig(cfg *config.GolangciConfigFile) (*golangciExclusionConfig, error) {
+	data, err := os.ReadFile(cfg.Path)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", cfg.name, err)
+		return nil, fmt.Errorf("read %s: %w", cfg.Name, err)
 	}
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", cfg.name, err)
+		return nil, fmt.Errorf("parse %s: %w", cfg.Name, err)
 	}
 	if len(root.Content) == 0 {
 		return &golangciExclusionConfig{}, nil
 	}
-	return parseExclusionsNode(cfg.name, findExclusionsMapping(root.Content[0])), nil
+	return parseExclusionsNode(cfg.Name, findExclusionsMapping(root.Content[0])), nil
 }
 
 func hasAnyDeclaredLinter(linters []string, declaredMap map[string]bool) bool {
@@ -339,14 +315,14 @@ func auditStaleExclusions(rules []golangciExclusionRule, warnUnused bool, logPat
 }
 
 func auditDeclaredLinterExclusions(opts DeclaredLintersOptions, declared []config.DeclaredLinter, today time.Time) ([]string, []string, error) {
-	cfg, err := locateGolangciConfig(opts.RootDir)
+	cfg, err := config.LocateGolangciConfig(opts.RootDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("[FAIL] %s: %w", declaredLintersGate, err)
 	}
 	if cfg == nil {
 		return nil, nil, nil
 	}
-	if cfg.format != "yaml" {
+	if cfg.Format != "yaml" {
 		return []string{"[SKIP] " + declaredLintersGate + ": exclusions not read (format)"}, nil, nil
 	}
 	parsedCfg, err := readGolangciExclusionConfig(cfg)
