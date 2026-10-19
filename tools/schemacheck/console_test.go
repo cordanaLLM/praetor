@@ -2,6 +2,7 @@ package schemacheck
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -56,8 +57,8 @@ func TestConsoleSchemaRefusesPlantedFaults(t *testing.T) {
 		def, field string
 		plant      func(map[string]any)
 	}{
-		{"cards", "/cards/0/state", func(d map[string]any) { card(d)["state"] = "soon" }},
-		{"cards", "/cards/0", func(d map[string]any) { card(d)["owner_email"] = "x" }},
+		{"cards", "/cards/0/state", func(d map[string]any) { card(t, d)["state"] = "soon" }},
+		{"cards", "/cards/0", func(d map[string]any) { card(t, d)["owner_email"] = "x" }},
 		{"graph", "/version", func(d map[string]any) { d["version"] = 2 }},
 		{"status", "/generated_at", func(d map[string]any) { d["generated_at"] = "yesterday" }},
 	}
@@ -65,8 +66,8 @@ func TestConsoleSchemaRefusesPlantedFaults(t *testing.T) {
 		doc := consoleFixture(t, tc.def)
 		tc.plant(doc)
 		err := consoleDefinition(t, tc.def).ValidateValue(doc)
-		violations, ok := err.(*Violations)
-		if !ok || !violations.Names(tc.field) {
+		var violations *Violations
+		if !errors.As(err, &violations) || !violations.Names(tc.field) {
 			t.Errorf("%s: planted fault at %s not named: %v", tc.def, tc.field, err)
 		}
 	}
@@ -90,6 +91,15 @@ func TestConsoleSchemaBoundaries(t *testing.T) {
 	}
 }
 
-func card(doc map[string]any) map[string]any {
-	return doc["cards"].([]any)[0].(map[string]any)
+func card(t *testing.T, doc map[string]any) map[string]any {
+	t.Helper()
+	cards, ok := doc["cards"].([]any)
+	if !ok || len(cards) == 0 {
+		t.Fatalf("fixture cards is not a non-empty list: %v", doc["cards"])
+	}
+	first, ok := cards[0].(map[string]any)
+	if !ok {
+		t.Fatalf("fixture card 0 is not an object: %v", cards[0])
+	}
+	return first
 }
