@@ -225,6 +225,12 @@ func auditManifestAndLockfile(ctx context.Context, opts *auditOptions) (*config.
 	if err != nil {
 		return nil, fmt.Errorf("[FAIL] Manifest audit failed: %w", err)
 	}
+	// The effective policy decodes the manifest without its validators, so "Manifest verified"
+	// printed over a manifest a later step refused (an exception entry with a wrong expiry or an
+	// unknown category). The step runs every manifest validator on the bytes it read.
+	if _, err := config.ParseManifest(opts.manifestPath, manifestBytes); err != nil {
+		return nil, fmt.Errorf("[FAIL] Manifest audit failed: %w", err)
+	}
 	lockPath := filepath.Join(opts.rootDir, ".standards.lock")
 	lockBytes, err := contextopt.ReadSnapshot(ctx, lockPath)
 	if err != nil {

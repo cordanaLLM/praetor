@@ -1,0 +1,2 @@
+type: fixed
+title: audit's manifest step fails on a refused exception entry instead of printing PASS
