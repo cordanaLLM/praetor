@@ -401,6 +401,7 @@ import sys
 MAX_INPUT_BYTES = {{MAX_INPUT_BYTES}}
 MAX_SCAN_CHARS = {{MAX_SCAN_CHARS}}
 MAX_SCAN_LINE_CHARS = {{MAX_SCAN_LINE_CHARS}}
+MAX_REASON_BYTES = {{MAX_REASON_BYTES}}
 BLOCK_EXIT = 2
 
 {{REFUSALS}}
@@ -520,7 +521,10 @@ def check_command(command):
     for pattern, refusal in RULES:
         text = judged if pattern in READ_ONLY_EXEMPT else command
         if search(pattern, text):
-            raise Blocked(refusal + pattern)
+            reason = (
+                (refusal + pattern).encode()[:MAX_REASON_BYTES].decode(errors="ignore")
+            )
+            raise Blocked(reason)
 
 
 def main():
@@ -608,6 +612,7 @@ func buildBlockEvasionPY() string {
 		"{{MAX_INPUT_BYTES}}", strconv.Itoa(agenthook.MaxInputBytes),
 		"{{MAX_SCAN_CHARS}}", strconv.Itoa(agenthook.MaxScanChars),
 		"{{MAX_SCAN_LINE_CHARS}}", strconv.Itoa(agenthook.MaxScanLineChars),
+		"{{MAX_REASON_BYTES}}", strconv.Itoa(agenthook.MaxReasonBytes),
 		"{{REFUSALS}}", refusals.String(),
 		"{{RULES}}", rules.String(),
 		"{{READ_ONLY_EXEMPT_PATTERNS}}", exemptPatterns.String(),
@@ -888,6 +893,7 @@ var priorEvasionHookDigests = map[string]string{
 	"526ccd7bd6ec2070ed8dc8dfb97a9f9857de99e9c49ae6359c15b5a88fc47273": "dev root ends in either path separator (#200)",
 	"b8937e971450935197b92af4ff3b05adba551939fd90212b142030c8ba85ee06": "SPDX-License-Identifier line behind the shebang (#1281)",
 	"682a8ed3eea87a45a9d6f4b9b5ddc68a1363a2cbeec0dca407cc50a6bee647dd": "current rendering after main changes and SPDX header",
+	"d3dcb48d31aed45db876298e355fe4a815c688d1cac59ff4ec90b7d5b42cd669": "privilege escalation refusal and bounded diagnostics",
 }
 
 // reconcileEvasionHook scaffolds the interceptor. It is generated, not audit-verified, so an

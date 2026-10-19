@@ -27,7 +27,7 @@ func TestCapabilitiesInventory(t *testing.T) {
 				t.Fatalf("agy merge adapter not declared: %+v", item)
 			}
 			if item.Lifecycle.State != "unsupported" || len(item.Lifecycle.DefinitionPaths) != 0 {
-				t.Fatalf("agy lifecycle claimed, but no tracked file registers agy pre-tool or stop: %+v", item)
+				t.Fatalf("agy full lifecycle claimed, but no tracked file registers checkpoint or stop: %+v", item)
 			}
 			if item.BriefCapture.State != "adapter-defined" || !slices.Equal(item.BriefCapture.DefinitionPaths, []string{".agents/plugins/praetor/hooks.json"}) ||
 				item.ReturnCapture.State != "unenforceable" || item.RegisterGate.State != "unenforceable" {

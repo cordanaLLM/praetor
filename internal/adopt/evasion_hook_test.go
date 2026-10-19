@@ -593,6 +593,7 @@ func TestEmittedInterceptorRefusesInTheEngineWords(t *testing.T) {
 		want  string
 	}{
 		{"evasion flag", payload("git push --no-verify"), nil, builtin.Command("git push --no-verify").Reason + "\n"},
+		{"privilege refusal bounded", payload("sudo -n true"), nil, builtin.Command("sudo -n true").Reason + "\n"},
 		{"dev root", payload("praetorctl adopt /srv/dev"), nil, builtin.Command("praetorctl adopt /srv/dev").Reason + "\n"},
 		{"scan bound exceeded", payload(strings.Repeat("x", agenthook.MaxScanLineChars+1)), nil, agenthook.ScanBoundRefusal() + "\n"},
 		{"scan bound exactly", payload(strings.Repeat("x", agenthook.MaxScanLineChars)), nil, ""},

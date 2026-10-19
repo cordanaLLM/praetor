@@ -78,9 +78,9 @@ type CapabilityReport struct {
 
 // lifecycleDefinitions are the tracked files that register a client's tool guard,
 // checkpoint and stop rows: the native hook files of agenthook's registration table, the same
-// files adoption registers the pre-tool row in. AGY has none: its plugin registers only the
-// subagent brief row, so its lifecycle stays unsupported although the engine serves agy
-// pre-tool and stop.
+// files adoption registers the pre-tool row in. AGY registers the command guard and
+// subagent brief row, but no checkpoint or stop hook, so its full lifecycle stays
+// unsupported although the engine serves agy stop.
 var lifecycleDefinitions = nativeHookDefinitions(Codex, Claude, Gemini)
 
 func nativeHookDefinitions(clients ...Client) map[Client][]string {

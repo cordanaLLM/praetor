@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/agenthook"
 	"github.com/cordanaLLM/praetor/internal/classify"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
@@ -27,6 +28,34 @@ func hookSession(t *testing.T, dryRun bool) *adoptSession {
 		report:      newAdoptionReport(repoDir, opts, classify.Result{Archetype: "app-service"}),
 		opts:        opts,
 		backupStamp: testBackupStamp,
+	}
+}
+
+// Every native registration adoption renders reaches the engine policy; the
+// emitted Python interceptor independently replays the same privilege fixtures.
+func TestReconcileAgentHooks_PrivilegePolicyPerClient(t *testing.T) {
+	s := hookSession(t, false)
+	if err := reconcileAgentHooks(t.Context(), s); err != nil {
+		t.Fatal(err)
+	}
+	for _, client := range []string{"claude", "gemini", "codex"} {
+		row, err := agenthook.ParseArguments(client, "pre-tool")
+		if err != nil {
+			t.Fatal(err)
+		}
+		file, ok := agenthook.NativeHookFile(client)
+		if !ok {
+			t.Fatalf("%s native hook file missing", client)
+		}
+		requireHandler(t, []byte(mustRead(t, hookPath(s, file.Path))), row.NativeEvent, row.Matcher,
+			row.Command(), float64(row.Timeout/file.TimeoutUnit))
+		policy, err := agenthook.NewPolicy(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := policy.Command("sudo -n true"); got.Outcome != agenthook.Deny {
+			t.Fatalf("%s registered engine permits privilege escalation: %+v", client, got)
+		}
 	}
 }
 

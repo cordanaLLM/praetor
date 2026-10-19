@@ -204,6 +204,7 @@ var builtinEvasion = []string{
 	lineThroughFirstWord(ghWords...) + ghAPIPullsTail,
 	lineThroughFirstWord(ghWords...) + ghGraphQLTail,
 	lineThroughFirstWord(httpFetchWords...) + httpMergeTail,
+	privilegeCommandRule(),
 }
 
 // readOnlyExemptRules are the built-in rules that judge the command without the words of
@@ -295,8 +296,8 @@ type BuiltinRule struct {
 }
 
 // RefusalPrefix is the refusal a match of the rule prints ahead of its Source: the whole
-// deny reason is RefusalPrefix() + Source. It is empty for an invariant without built-in
-// wording.
+// deny reason is RefusalPrefix() + Source, bounded to MaxReasonBytes. It is empty
+// for an invariant without built-in wording.
 func (r BuiltinRule) RefusalPrefix() string {
 	message, ok := builtinMessages[r.Invariant]
 	if !ok {
@@ -370,7 +371,7 @@ func (p *Policy) Command(command string) Verdict {
 			text = judged
 		}
 		if rule.pattern.MatchString(text) {
-			return Verdict{Outcome: Deny, Reason: rule.prefix + rule.source}
+			return Verdict{Outcome: Deny, Reason: boundReason(rule.prefix + rule.source)}
 		}
 	}
 	if p.admission != nil {
