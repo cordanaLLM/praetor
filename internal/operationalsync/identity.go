@@ -8,13 +8,22 @@ import (
 	"strings"
 )
 
-func remoteIdentity(raw string) (string, error) {
+// parseGitHubRemote parses raw into a URL and verifies it is a credential-free GitHub URL.
+func parseGitHubRemote(raw string) (*url.URL, error) {
 	if strings.HasPrefix(raw, "git@github.com:") {
 		raw = "https://github.com/" + strings.TrimPrefix(raw, "git@github.com:")
 	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Host != "github.com" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return "", errors.New("remote must be a credential-free GitHub HTTPS or git@github.com URL")
+		return nil, errors.New("remote must be a credential-free GitHub HTTPS or git@github.com URL")
+	}
+	return u, nil
+}
+
+func remoteIdentity(raw string) (string, error) {
+	u, err := parseGitHubRemote(raw)
+	if err != nil {
+		return "", err
 	}
 	parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(u.Path, "/"), ".git"), "/")
 	if len(parts) != 2 || !identityPart.MatchString(parts[0]) || !identityPart.MatchString(parts[1]) {

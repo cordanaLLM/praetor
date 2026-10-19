@@ -114,6 +114,23 @@ func RecallLocalFactsWithError(repoPath, query string, category FactCategory) ([
 	return RecallLocalFactsContext(ctx, repoPath, query, category)
 }
 
+// factMatchesQuery reports whether a memory fact matches the given lowercase query.
+func factMatchesQuery(f MemoryFact, lowerQuery string) bool {
+	if lowerQuery == "" {
+		return true
+	}
+	if strings.Contains(strings.ToLower(f.Subject), lowerQuery) ||
+		strings.Contains(strings.ToLower(f.Statement), lowerQuery) {
+		return true
+	}
+	for _, tag := range f.Tags {
+		if strings.Contains(strings.ToLower(tag), lowerQuery) {
+			return true
+		}
+	}
+	return false
+}
+
 // RecallLocalFactsContext preserves caller cancellation and incomplete-cache failures.
 func RecallLocalFactsContext(ctx context.Context, repoPath, query string, category FactCategory) ([]MemoryFact, error) {
 	facts, err := LoadLocalCacheContext(ctx, repoPath)
@@ -128,24 +145,8 @@ func RecallLocalFactsContext(ctx context.Context, repoPath, query string, catego
 		if category != "" && f.Category != category {
 			continue
 		}
-
-		if lowerQuery == "" {
+		if factMatchesQuery(f, lowerQuery) {
 			matches = append(matches, f)
-			continue
-		}
-
-		// Check subject, statement, or tags match
-		if strings.Contains(strings.ToLower(f.Subject), lowerQuery) ||
-			strings.Contains(strings.ToLower(f.Statement), lowerQuery) {
-			matches = append(matches, f)
-			continue
-		}
-
-		for _, tag := range f.Tags {
-			if strings.Contains(strings.ToLower(tag), lowerQuery) {
-				matches = append(matches, f)
-				break
-			}
 		}
 	}
 

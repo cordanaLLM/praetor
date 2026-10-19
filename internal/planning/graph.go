@@ -37,26 +37,35 @@ func validateReferences(kind string, nodes []graphNode, known map[string]bool) e
 	return nil
 }
 
+// sortGraphNodes orders graph nodes deterministically by rank and id.
+func sortGraphNodes(nodes []graphNode) {
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].rank < nodes[j].rank || nodes[i].rank == nodes[j].rank && nodes[i].id < nodes[j].id
+	})
+}
+
+// nextGraphNode finds the next unvisited node whose dependencies are all satisfied.
+func nextGraphNode(nodes []graphNode, emitted map[string]bool) string {
+	for _, node := range nodes {
+		if !emitted[node.id] && dependenciesEmitted(node.dependencies, emitted) {
+			return node.id
+		}
+	}
+	return ""
+}
+
 func graphOrder(ctx context.Context, kind string, nodes []graphNode, maximum int) ([]string, error) {
 	if len(nodes) == 0 || len(nodes) > maximum {
 		return nil, fmt.Errorf("%s graph requires 1..%d nodes", kind, maximum)
 	}
-	sort.Slice(nodes, func(i, j int) bool {
-		return nodes[i].rank < nodes[j].rank || nodes[i].rank == nodes[j].rank && nodes[i].id < nodes[j].id
-	})
+	sortGraphNodes(nodes)
 	emitted := make(map[string]bool, len(nodes))
 	order := make([]string, 0, len(nodes))
 	for position := 0; position < len(nodes); position++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		chosen := ""
-		for _, node := range nodes {
-			if !emitted[node.id] && dependenciesEmitted(node.dependencies, emitted) {
-				chosen = node.id
-				break
-			}
-		}
+		chosen := nextGraphNode(nodes, emitted)
 		if chosen == "" {
 			return nil, fmt.Errorf("%s dependency cycle", kind)
 		}

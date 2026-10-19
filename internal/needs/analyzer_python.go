@@ -178,6 +178,27 @@ type pyprojectDocument struct {
 	} `toml:"tool"`
 }
 
+// parsePyprojectPoetry reads all Poetry sections from a pyproject.toml document.
+func parsePyprojectPoetry(path string, doc *pyprojectDocument, deps map[string]string) error {
+	poetry := doc.Tool.Poetry
+	if err := parsePoetryDependencies(poetry.Dependencies, deps); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	if err := parsePoetryDependencies(poetry.DevDependencies, deps); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	groups := slices.Sorted(maps.Keys(poetry.Group))
+	if len(groups) > MaxScannedLines {
+		return fmt.Errorf("%s Poetry groups exceed %d", path, MaxScannedLines)
+	}
+	for _, group := range groups {
+		if err := parsePoetryDependencies(poetry.Group[group].Dependencies, deps); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+	}
+	return nil
+}
+
 // parsePyprojectFile reads standard dependency arrays and Poetry dependency tables.
 func parsePyprojectFile(path string, deps map[string]string) error {
 	data, err := readManifest(path)
@@ -197,22 +218,7 @@ func parsePyprojectFile(path string, deps map[string]string) error {
 	if err := parsePythonListGroups(document.DependencyGroups, deps); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
-	if err := parsePoetryDependencies(document.Tool.Poetry.Dependencies, deps); err != nil {
-		return fmt.Errorf("%s: %w", path, err)
-	}
-	if err := parsePoetryDependencies(document.Tool.Poetry.DevDependencies, deps); err != nil {
-		return fmt.Errorf("%s: %w", path, err)
-	}
-	groups := slices.Sorted(maps.Keys(document.Tool.Poetry.Group))
-	if len(groups) > MaxScannedLines {
-		return fmt.Errorf("%s Poetry groups exceed %d", path, MaxScannedLines)
-	}
-	for _, group := range groups {
-		if err := parsePoetryDependencies(document.Tool.Poetry.Group[group].Dependencies, deps); err != nil {
-			return fmt.Errorf("%s: %w", path, err)
-		}
-	}
-	return nil
+	return parsePyprojectPoetry(path, &document, deps)
 }
 
 // parsePythonListGroups reads bounded named requirement lists.

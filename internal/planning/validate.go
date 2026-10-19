@@ -86,6 +86,14 @@ func validateProject(project Project) error {
 	return nil
 }
 
+// isValidSource checks that source fields and provenance satisfy planning schema bounds.
+func isValidSource(source Source, allowed map[string]bool) bool {
+	if !validID(source.ID) || !allowed[source.Kind] || !validText(source.Locator) || !validText(source.Revision) {
+		return false
+	}
+	return validSHA256(source.SHA256) && source.Provenance == "caller_asserted" && !source.Verified
+}
+
 func validateSources(ctx context.Context, list []Source) (map[string]Source, error) {
 	allowed := map[string]bool{"research": true, "wish": true, "planning": true,
 		"backfeed": true, "finding": true, "manager-demand": true}
@@ -94,8 +102,7 @@ func validateSources(ctx context.Context, list []Source) (map[string]Source, err
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if !validID(source.ID) || !allowed[source.Kind] || !validText(source.Locator) || !validText(source.Revision) ||
-			!validSHA256(source.SHA256) || source.Provenance != "caller_asserted" || source.Verified {
+		if !isValidSource(source, allowed) {
 			return nil, fmt.Errorf("source %q requires bounded caller-asserted unverified provenance", source.ID)
 		}
 		if _, exists := seen[source.ID]; exists {

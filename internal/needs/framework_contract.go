@@ -124,7 +124,8 @@ func parseFrameworkContract(raw []byte, module string) (*frameworkContract, erro
 	return &contract, nil
 }
 
-func (c *frameworkContract) validate(module string) error {
+// validateHeader checks schema version, framework name, and size bounds.
+func (c *frameworkContract) validateHeader(module string) error {
 	if c.Version != contractSchemaVersion {
 		return fmt.Errorf("unsupported schema version %d (want %d)", c.Version, contractSchemaVersion)
 	}
@@ -134,6 +135,26 @@ func (c *frameworkContract) validate(module string) error {
 	if len(c.Modules) > maxContractModules || len(c.Packages) > maxFrameworkPackages {
 		return fmt.Errorf("exceeds %d modules or %d packages", maxContractModules, maxFrameworkPackages)
 	}
+	return nil
+}
+
+// validatePackages validates each package in the contract and records seen names.
+func (c *frameworkContract) validatePackages(modules map[string]bool, seen map[string]bool) error {
+	for i := range c.Packages {
+		if err := c.Packages[i].validate(c.Framework, modules, seen); err != nil {
+			return err
+		}
+		if err := c.Packages[i].validateNames(c.ecosystem()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *frameworkContract) validate(module string) error {
+	if err := c.validateHeader(module); err != nil {
+		return err
+	}
 	if err := c.validateEcosystem(); err != nil {
 		return err
 	}
@@ -142,13 +163,8 @@ func (c *frameworkContract) validate(module string) error {
 		return err
 	}
 	seen := make(map[string]bool, len(c.Packages))
-	for i := range c.Packages {
-		if err := c.Packages[i].validate(c.Framework, modules, seen); err != nil {
-			return err
-		}
-		if err := c.Packages[i].validateNames(c.ecosystem()); err != nil {
-			return err
-		}
+	if err := c.validatePackages(modules, seen); err != nil {
+		return err
 	}
 	return validateUmbrellas(c.Umbrellas, c.ecosystem(), c.Framework, seen)
 }

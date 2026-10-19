@@ -370,28 +370,18 @@ func asciiLetter(c byte) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
-func grammarWords(field string) []string {
-	field = compatibilityFold(field)
-	words := []string{grammarWord(field)}
-	if _, banned := grammarTerms[words[0]]; banned {
-		return words
-	}
-	if _, banned := grammarContractions[words[0]]; banned {
-		return words
-	}
-	joined := strings.Map(func(char rune) rune {
+// stripSeparatorsAndMarks strips separator and mark runes from field.
+func stripSeparatorsAndMarks(field string) string {
+	return strings.Map(func(char rune) rune {
 		if grammarSeparator(char) || unicode.IsMark(char) {
 			return -1
 		}
 		return char
 	}, field)
-	if word := grammarWord(joined); word != "" && word != words[0] {
-		words = append(words, word)
-	}
-	parts := strings.FieldsFunc(field, grammarSeparator)
-	if slashJoinedTechnicalToken(field, parts) {
-		return words
-	}
+}
+
+// appendPartWords appends distinct non-empty grammar words from parts to words.
+func appendPartWords(words []string, parts []string) []string {
 	for _, part := range parts {
 		word := grammarWord(part)
 		if word != "" && word != words[0] {
@@ -401,12 +391,40 @@ func grammarWords(field string) []string {
 	return words
 }
 
-func grammarSeparator(char rune) bool {
-	char = compatibilityRune(char)
+func grammarWords(field string) []string {
+	field = compatibilityFold(field)
+	words := []string{grammarWord(field)}
+	if _, banned := grammarTerms[words[0]]; banned {
+		return words
+	}
+	if _, banned := grammarContractions[words[0]]; banned {
+		return words
+	}
+	joined := stripSeparatorsAndMarks(field)
+	if word := grammarWord(joined); word != "" && word != words[0] {
+		words = append(words, word)
+	}
+	parts := strings.FieldsFunc(field, grammarSeparator)
+	if slashJoinedTechnicalToken(field, parts) {
+		return words
+	}
+	return appendPartWords(words, parts)
+}
+
+// asciiGrammarSeparator reports whether an ASCII character is a grammar separator.
+func asciiGrammarSeparator(char rune) bool {
+	if char < '!' || char > '~' {
+		return false
+	}
 	digit := char >= '0' && char <= '9'
 	upper := char >= 'A' && char <= 'Z'
 	lower := char >= 'a' && char <= 'z'
-	if char >= '!' && char <= '~' && !digit && !upper && !lower {
+	return !digit && !upper && !lower
+}
+
+func grammarSeparator(char rune) bool {
+	char = compatibilityRune(char)
+	if asciiGrammarSeparator(char) {
 		return true
 	}
 	return char > unicode.MaxASCII && (unicode.IsPunct(char) || unicode.IsSymbol(char))
@@ -575,6 +593,38 @@ func shapeFor(kind MessageKind) (messageShape, bool) {
 	}
 }
 
+// checkLineShape checks the field constraints of a single message line.
+func checkLineShape(found *findings, ln line, firstField string, seen map[string]int, firstChecked *bool) {
+	if !shapeContent(ln) {
+		return
+	}
+	lintable := maskQuoted(proseOf(ln))
+	fields := schemaFields(lintable)
+	field := schemaFieldAtStart(lintable)
+	if !*firstChecked {
+		checkFirstField(found, ln.num, field, firstField)
+		*firstChecked = true
+	}
+	if len(fields) > 1 {
+		found.add(ln.num, RuleMessageShape, "one schema field per line")
+	}
+	if field != "" {
+		seen[field]++
+		if seen[field] > 1 {
+			found.add(ln.num, RuleMessageShape, "duplicate "+field+" field")
+		}
+	}
+}
+
+// checkRequiredFields ensures all required fields are present in seen.
+func checkRequiredFields(found *findings, required []string, seen map[string]int) {
+	for _, field := range required {
+		if seen[field] == 0 {
+			found.add(0, RuleMessageShape, "missing "+field+" field")
+		}
+	}
+}
+
 func checkMessageShape(found *findings, lines []line, kind MessageKind) {
 	shape, enforced := shapeFor(kind)
 	if !enforced {
@@ -583,31 +633,9 @@ func checkMessageShape(found *findings, lines []line, kind MessageKind) {
 	seen := map[string]int{}
 	firstChecked := false
 	for _, ln := range lines {
-		if !shapeContent(ln) {
-			continue
-		}
-		lintable := maskQuoted(proseOf(ln))
-		fields := schemaFields(lintable)
-		field := schemaFieldAtStart(lintable)
-		if !firstChecked {
-			checkFirstField(found, ln.num, field, shape.first)
-			firstChecked = true
-		}
-		if len(fields) > 1 {
-			found.add(ln.num, RuleMessageShape, "one schema field per line")
-		}
-		if field != "" {
-			seen[field]++
-			if seen[field] > 1 {
-				found.add(ln.num, RuleMessageShape, "duplicate "+field+" field")
-			}
-		}
+		checkLineShape(found, ln, shape.first, seen, &firstChecked)
 	}
-	for _, field := range shape.required {
-		if seen[field] == 0 {
-			found.add(0, RuleMessageShape, "missing "+field+" field")
-		}
-	}
+	checkRequiredFields(found, shape.required, seen)
 }
 
 func shapeContent(ln line) bool {

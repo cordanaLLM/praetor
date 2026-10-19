@@ -39,6 +39,37 @@ func NewClient(cfg ClientConfig) *Client {
 	}
 }
 
+// buildIngestRequest constructs the HTTP request for ingesting a memory fact.
+func (c *Client) buildIngestRequest(ctx context.Context, bankID string, fact MemoryFact) (*http.Request, error) {
+	payload := HindsightDocument{
+		DocumentID: fmt.Sprintf("fact-%s", fact.ID),
+		Content:    fmt.Sprintf("[%s] %s: %s (Evidence: %s)", fact.Category, fact.Subject, fact.Statement, fact.Evidence),
+		Context:    fmt.Sprintf("praetor-intelligence/%s", fact.Category),
+		Tags:       fact.Tags,
+		Metadata: map[string]string{
+			"category": string(fact.Category),
+			"subject":  fact.Subject,
+			"evidence": fact.Evidence,
+		},
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal document: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/v1/default/banks/%s/document-transfer", c.config.BaseURL, bankID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.config.Token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.config.Token))
+	}
+	return req, nil
+}
+
 // IngestFact transmits an atomic fact as a Hindsight document.
 func (c *Client) IngestFact(ctx context.Context, bankID string, fact MemoryFact) (resultErr error) {
 	if c.config.OfflineOnly {
@@ -54,31 +85,9 @@ func (c *Client) IngestFact(ctx context.Context, bankID string, fact MemoryFact)
 		return ctx.Err()
 	}
 
-	payload := HindsightDocument{
-		DocumentID: fmt.Sprintf("fact-%s", fact.ID),
-		Content:    fmt.Sprintf("[%s] %s: %s (Evidence: %s)", fact.Category, fact.Subject, fact.Statement, fact.Evidence),
-		Context:    fmt.Sprintf("praetor-intelligence/%s", fact.Category),
-		Tags:       fact.Tags,
-		Metadata: map[string]string{
-			"category": string(fact.Category),
-			"subject":  fact.Subject,
-			"evidence": fact.Evidence,
-		},
-	}
-
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal document: %w", err)
-	}
-
-	url := fmt.Sprintf("%s/v1/default/banks/%s/document-transfer", c.config.BaseURL, bankID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
+	req, err := c.buildIngestRequest(ctx, bankID, fact)
 	if err != nil {
 		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.config.Token != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.config.Token))
 	}
 
 	resp, err := c.httpClient.Do(req)
