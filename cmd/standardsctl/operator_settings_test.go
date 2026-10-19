@@ -41,6 +41,9 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 	cleanup()
+	if err := testsupport.CleanupPinnedGosec(); err != nil {
+		fmt.Fprintf(os.Stderr, "cleanup pinned gosec: %v\n", err)
+	}
 	os.Exit(code)
 }
 

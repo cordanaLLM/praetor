@@ -77,6 +77,8 @@ type Report struct {
 	Skipped string
 	// Units counts the tracked translation units.
 	Units int
+	// DataUnits counts the units skipped as data.
+	DataUnits int
 	// Lanes is what each declared lane read, in declaration order.
 	Lanes []Lane
 	// Excepted lists the units a live exception excuses.
@@ -92,19 +94,28 @@ func (r Report) Passed() bool {
 
 // Check runs the gate. An error means the gate could not run: a declaration that is invalid,
 // a git listing that failed, or a lane whose input cannot be read. A skipped run returns a
-// Report whose Skipped names the reason: no unit is tracked, or, with SkipUnbuilt, a lane's
-// compile database is not written yet. Findings are in the Report.
+// Report whose Skipped names the reason: no unit is tracked, every unit lies under a declared
+// data path, or, with SkipUnbuilt, a lane's compile database is not written yet. Findings are
+// in the Report.
 func Check(ctx context.Context, opts Options) (Report, error) {
 	if err := errors.Join(config.ValidateClangTidy(opts.Policy), config.ValidateExceptions(opts.Exceptions, opts.Today)); err != nil {
 		return Report{}, fmt.Errorf("clang-tidy coverage declarations: %w", err)
 	}
-	units, err := trackedUnits(ctx, opts.Root)
+	allUnits, err := trackedUnits(ctx, opts.Root)
 	if err != nil {
 		return Report{}, err
 	}
-	if len(units) == 0 {
+	if len(allUnits) == 0 {
 		return Report{Skipped: fmt.Sprintf("the repository tracks no %s translation unit (%s)",
 			unitLanguages, strings.Join(unitSuffixes, " "))}, nil
+	}
+	var dataPaths []string
+	if opts.Policy != nil {
+		dataPaths = opts.Policy.DataPaths
+	}
+	units, dataUnits, findings := partitionUnits(allUnits, dataPaths)
+	if len(units) == 0 && len(findings) == 0 {
+		return Report{Skipped: "every tracked translation unit lies under a declared data path", DataUnits: dataUnits}, nil
 	}
 	reading, err := readLanes(ctx, opts, units)
 	if err != nil {
@@ -114,9 +125,50 @@ func Check(ctx context.Context, opts Options) (Report, error) {
 		return Report{Skipped: fmt.Sprintf("no compile database written in this checkout for lane %s; "+
 			"praetorctl ci tidy-coverage judges coverage where a build writes it", strings.Join(reading.unbuilt, ", "))}, nil
 	}
-	report := Report{Units: len(units), Lanes: reading.lanes}
+	report := Report{Units: len(units), DataUnits: dataUnits, Lanes: reading.lanes, Findings: findings}
 	judge(&report, units, reading.read, config.ExceptionsFor(opts.Exceptions, Rule), opts.Today)
 	return report, nil
+}
+
+// isUnderDataPath reports whether rel is equal to dataPath or is located under dataPath (with a '/' separator).
+func isUnderDataPath(rel, dataPath string) bool {
+	return rel == dataPath || strings.HasPrefix(rel, dataPath+"/")
+}
+
+// partitionUnits drops tracked units that lie under a declared data path and returns the
+// translation units, the count of units skipped as data, and findings for declared data paths
+// under which no tracked unit lies (HISS-02).
+func partitionUnits(allUnits []string, dataPaths []string) ([]string, int, []string) {
+	if len(dataPaths) == 0 {
+		return allUnits, 0, nil
+	}
+	matched := make([]bool, len(dataPaths))
+	units := make([]string, 0, len(allUnits))
+	var dataCount int
+	for u := 0; u < len(allUnits) && u < maxTrackedFiles; u++ {
+		unit := allUnits[u]
+		isData := false
+		for d := 0; d < len(dataPaths) && d < config.MaxClangTidyDataPaths; d++ {
+			if isUnderDataPath(unit, dataPaths[d]) {
+				matched[d] = true
+				isData = true
+			}
+		}
+		if isData {
+			dataCount++
+		} else {
+			units = append(units, unit)
+		}
+	}
+	var findings []string
+	for d := 0; d < len(dataPaths) && d < config.MaxClangTidyDataPaths; d++ {
+		if !matched[d] {
+			findings = append(findings, fmt.Sprintf(
+				"data path %s holds no tracked translation unit; remove it from clang_tidy.data_paths",
+				dataPaths[d]))
+		}
+	}
+	return units, dataCount, findings
 }
 
 // trackedUnits lists the translation units git tracks below root, sorted.

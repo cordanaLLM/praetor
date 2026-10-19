@@ -61,9 +61,10 @@ agent_clients: [claude, codex]
 | `gemini` | `.gemini/GEMINI.md` | `.gemini/agents` |
 | `codex` | `.codex/rules.md` | `.codex/agents` |
 
-The registry is `vendorTargets` in `internal/agentcontext/render.go`. The compiler
-reads the key from the manifest beside `AGENTS.md`, the one that already governs the
-[text register](text-register.md) block, so `compile-context`, `compile-context
+The registry is `vendorTargets` in `internal/agentcontext/render.go`. Repository-relative
+links are rewritten for subdirectory targets by prefixing `../` per directory depth.
+The compiler reads the key from the manifest beside `AGENTS.md`, the one that already
+governs the [text register](text-register.md) block, so `compile-context`, `compile-context
 --verify`, `praetorctl audit`, adoption, onboarding and the MCP
 `standards_compile_context` tool agree on which projections exist. Persona copies are
 resolved by `compiler.SelectPersonaDirs` from the manifest at the root the personas are

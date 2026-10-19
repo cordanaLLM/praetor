@@ -258,14 +258,60 @@ func fingerprintsEqual(a, b folderFingerprint) bool {
 	return true
 }
 
-func cleanupSymlinks(created []string) error {
+func cleanupSymlinks(stageWorktreeDir string, created []string) error {
 	var errs error
 	for i := len(created) - 1; i >= 0; i-- {
-		if err := os.Remove(created[i]); err != nil && !errors.Is(err, os.ErrNotExist) {
-			errs = errors.Join(errs, fmt.Errorf("remove dependency symlink %s: %w", created[i], err))
-		}
+		errs = errors.Join(errs, cleanupLinkedFolder(stageWorktreeDir, created[i]))
 	}
 	return errs
+}
+
+// cleanupLinkedFolder removes one linked dependency folder from the stage worktree. A link is
+// unlinked, never followed. A build that replaced it with a real directory (npm ci removes the
+// link and installs afresh) leaves a directory the stage made: it is removed when it resolves
+// inside the stage worktree and refused otherwise. Its parent must resolve inside too, so a
+// directory replaced by a link to elsewhere never lets the cleanup remove anything there.
+func cleanupLinkedFolder(stageWorktreeDir, path string) error {
+	if inside, err := resolvesInside(stageWorktreeDir, filepath.Dir(path)); err != nil || !inside {
+		return errors.Join(err, fmt.Errorf("refusing to remove dependency folder %s: its directory resolves outside the stage worktree %s", path, stageWorktreeDir))
+	}
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect dependency folder %s: %w", path, err)
+	}
+	if !info.IsDir() {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove dependency symlink %s: %w", path, err)
+		}
+		return nil
+	}
+	if inside, err := resolvesInside(stageWorktreeDir, path); err != nil || !inside {
+		return errors.Join(err, fmt.Errorf("refusing to remove dependency folder %s: it resolves outside the stage worktree %s", path, stageWorktreeDir))
+	}
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("remove replaced dependency folder %s: %w", path, err)
+	}
+	return nil
+}
+
+// resolvesInside reports whether path, its links resolved, lies inside root, its links resolved.
+func resolvesInside(root, path string) (bool, error) {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false, fmt.Errorf("resolve stage worktree %s: %w", root, err)
+	}
+	realPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false, fmt.Errorf("resolve %s: %w", path, err)
+	}
+	rel, err := filepath.Rel(realRoot, realPath)
+	if err != nil {
+		return false, fmt.Errorf("relate %s to the stage worktree %s: %w", realPath, realRoot, err)
+	}
+	return rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)), nil
 }
 
 func isSymlinkPermissionError(err error) bool {
@@ -300,7 +346,7 @@ func linkDependencyFolders(repoDir, stageWorktreeDir string, folders []string) (
 	for _, rel := range folders {
 		dst, err := linkOneFolder(repoDir, stageWorktreeDir, rel)
 		if err != nil {
-			cleanErr := cleanupSymlinks(created)
+			cleanErr := cleanupSymlinks(stageWorktreeDir, created)
 			return nil, nil, errors.Join(err, cleanErr)
 		}
 		created = append(created, dst)
@@ -308,7 +354,7 @@ func linkDependencyFolders(repoDir, stageWorktreeDir string, folders []string) (
 	if len(folders) > 0 {
 		fmt.Printf("linked dependency folders: %s\n", strings.Join(folders, ", "))
 	}
-	return created, func() error { return cleanupSymlinks(created) }, nil
+	return created, func() error { return cleanupSymlinks(stageWorktreeDir, created) }, nil
 }
 
 // executeDeclaredVerify manages dependency linking, pre/post fingerprint checks, and make verify-all execution.

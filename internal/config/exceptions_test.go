@@ -254,8 +254,19 @@ func TestValidateExceptions_HISSRulesAndFunctionScope(t *testing.T) {
 // refused with the rule named. Boundary: the target check binds only those rules, so a
 // clang-tidy-coverage entry for a C file stays valid beside them.
 func TestValidateExceptionsWorkflowTarget(t *testing.T) {
-	for _, rule := range []string{ExceptionRuleSupplyChain, ExceptionRuleBuildWarnings, ExceptionRuleWorkflowTriggers, ExceptionRuleTestTimeout, ExceptionRuleJobTimeout} {
+	for _, rule := range []string{ExceptionRuleSupplyChain, ExceptionRuleBuildWarnings, ExceptionRuleWorkflowTriggers, ExceptionRuleTestTimeout, ExceptionRuleJobTimeout, ExceptionRuleReleaseToken} {
 		t.Run(rule, func(t *testing.T) { validateWorkflowTarget(t, rule) })
+	}
+}
+
+// A release-token entry must name one workflow file: an entry naming a script is refused with the
+// workflow-target message, which names release.yml as the example.
+func TestValidateExceptionsReleaseTokenNamesAWorkflow(t *testing.T) {
+	entry := Exception{Rule: ExceptionRuleReleaseToken, Path: "scripts/release.sh", Reason: "custom release", Expires: "2026-12-31"}
+	err := ValidateExceptions([]Exception{entry}, exceptionsToday)
+	want := "rule release-token must name one workflow file directly in .github/workflows by path, such as .github/workflows/release.yml"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("ValidateExceptions = %v; want %q", err, want)
 	}
 }
 
@@ -421,6 +432,52 @@ func TestValidateClangTidyNegativeAndBoundary(t *testing.T) {
 	}
 	if _, err := LoadManifest(writeManifest(t, "version: 1\nclang_tidy:\n  lanes:\n    - name: \"cpu\"\n      database: \"b.json\"\n")); err == nil {
 		t.Fatal("LoadManifest accepted an unknown lane key")
+	}
+}
+
+// Positive: valid data paths pass and decode from manifest. Negative: trailing slash, ..,
+// absolute, repeated and 65 entries are refused.
+func TestValidateClangTidyDataPaths(t *testing.T) {
+	baseLane := ClangTidyLane{Name: "cpu", CompileDatabase: "build/compile_commands.json"}
+	valid := &ClangTidyPolicy{
+		Lanes:     []ClangTidyLane{baseLane},
+		DataPaths: []string{"tests/data", "fixtures/sample"},
+	}
+	if err := ValidateClangTidy(valid); err != nil {
+		t.Fatalf("valid data paths refused: %v", err)
+	}
+
+	cases := map[string]struct {
+		paths []string
+		want  string
+	}{
+		"trailing slash": {[]string{"tests/data/"}, "without trailing slash or '..'"},
+		"parent path":    {[]string{"tests/../data"}, "without trailing slash or '..'"},
+		"dotdot prefix":  {[]string{"../data"}, "without trailing slash or '..'"},
+		"absolute path":  {[]string{"/tests/data"}, "without trailing slash or '..'"},
+		"repeated path":  {[]string{"tests/data", "tests/data"}, "repeats the path \"tests/data\""},
+	}
+	for name, tc := range cases {
+		policy := &ClangTidyPolicy{Lanes: []ClangTidyLane{baseLane}, DataPaths: tc.paths}
+		if err := ValidateClangTidy(policy); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: ValidateClangTidy = %v, want error containing %q", name, err, tc.want)
+		}
+	}
+
+	paths := make([]string, MaxClangTidyDataPaths+1)
+	for index := range paths {
+		paths[index] = fmt.Sprintf("data/path-%d", index)
+	}
+	if err := ValidateClangTidy(&ClangTidyPolicy{Lanes: []ClangTidyLane{baseLane}, DataPaths: paths[:MaxClangTidyDataPaths]}); err != nil {
+		t.Fatalf("%d data paths refused: %v", MaxClangTidyDataPaths, err)
+	}
+	if err := ValidateClangTidy(&ClangTidyPolicy{Lanes: []ClangTidyLane{baseLane}, DataPaths: paths}); err == nil || !strings.Contains(err.Error(), "maximum is 64") {
+		t.Fatalf("%d data paths accepted: %v", len(paths), err)
+	}
+
+	m, err := LoadManifest(writeManifest(t, "version: 1\nclang_tidy:\n  lanes:\n    - name: \"cpu\"\n      compile_database: \"b.json\"\n  data_paths:\n    - \"tests/data\"\n"))
+	if err != nil || len(m.ClangTidy.DataPaths) != 1 || m.ClangTidy.DataPaths[0] != "tests/data" {
+		t.Fatalf("LoadManifest data_paths = %v, %+v", err, m.ClangTidy)
 	}
 }
 

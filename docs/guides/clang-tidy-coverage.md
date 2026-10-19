@@ -191,12 +191,27 @@ or renew the debt before the owning gate fails upon expiry:
 [WARN] Exceptions: the exceptions entry (rule HISS-11, .github/workflows/rel.yml) expires on 2026-10-24 (14 days left): Level 2 builder
 ```
 
+## Data paths
+
+When a repository tracks test data files with translation-unit suffixes (for example, `.hip` sample inputs a parser reads, never compiled), declare their repository-relative directories under `clang_tidy.data_paths`:
+
+```yaml
+clang_tidy:
+  lanes:
+    - name: "cpu"
+      compile_database: "build/compile_commands.json"
+  data_paths:
+    - "tests/data"
+```
+
+Use `data_paths` for files that are never compiled as translation units. The declared paths form an explicit allow-list: tracked files lying under a declared path are skipped as data, and the gate reports how many it skipped. Like the exceptions list, it fails on stale configuration: any declared data path under which no tracked translation unit lies is reported as a finding (`data path X holds no tracked translation unit; remove it from clang_tidy.data_paths`). If every tracked unit in the repository lies under declared data paths, the gate skips with `every tracked translation unit lies under a declared data path`.
+
 ## Reading the output
 
-A pass names what each lane read:
+A pass names what each lane read, including any skipped data units:
 
 ```text
-[PASS] clang-tidy translation-unit coverage: all 120 tracked translation units read by a lane (cpu: 98, metal: 14) or excused by a live exception (8).
+[PASS] clang-tidy translation-unit coverage: all 120 tracked translation units read by a lane (cpu: 98, metal: 14) or excused by a live exception (8), 5 under declared data paths.
 ```
 
 A failure lists one line per file or entry before the summary:
@@ -205,6 +220,7 @@ A failure lists one line per file or entry before the summary:
   - src/planted.cc: read by no clang-tidy lane and named by no exceptions entry
   - src/win32/getopt.c: read by no clang-tidy lane; its exception expired on 2026-10-05
   - exceptions entry src/gone.c (clang-tidy-coverage): excuses no translation unit that every lane leaves unread; remove the entry
+  - data path tests/empty holds no tracked translation unit; remove it from clang_tidy.data_paths
 ```
 
 A gate that cannot run reports

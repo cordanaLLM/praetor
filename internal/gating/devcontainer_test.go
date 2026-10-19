@@ -49,11 +49,9 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	code := m.Run()
-	// The pinned gosec the ratchet tests build (gosec_ratchet_test.go) is about 70 MB per run.
-	if pinnedGosecBuilt != "" {
-		if err := os.RemoveAll(pinnedGosecBuilt); err != nil {
-			fmt.Fprintf(os.Stderr, "gating test cleanup: %v\n", err)
-		}
+	// The pinned gosec the ratchet tests build is about 70 MB per run.
+	if err := testsupport.CleanupPinnedGosec(); err != nil {
+		fmt.Fprintf(os.Stderr, "gating test cleanup: %v\n", err)
 	}
 	os.Exit(code)
 }

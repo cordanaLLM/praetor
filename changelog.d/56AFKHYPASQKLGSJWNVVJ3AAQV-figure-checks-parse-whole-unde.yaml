@@ -1,0 +1,2 @@
+type: fixed
+title: 'figure checks parse whole under semgrep: the marker pattern is built with new RegExp'

@@ -1,0 +1,2 @@
+type: added
+title: 'clang-tidy coverage: declared data paths hold no translation units'

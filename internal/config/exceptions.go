@@ -78,6 +78,11 @@ const ExceptionRuleSecrets = "HISS-12"
 // that is not run by any CI workflow, naming the tool by tool.
 const ExceptionRuleDeclaredLinters = "declared-linters"
 
+// ExceptionRuleReleaseToken is the rule of the release-token gate
+// (internal/adopt.AuditReleaseToken): an entry excuses one workflow
+// whose release-please step does not take its token from a GitHub App token step.
+const ExceptionRuleReleaseToken = "release-token"
+
 // ExceptionRuleTestTimeout names the test-timeout rule.
 const ExceptionRuleTestTimeout = "test-timeout"
 
@@ -109,7 +114,7 @@ const ExceptionRuleCodespell = "codespell"
 // registry; the other entries are the non-HISS gates that read this list.
 var exceptionRules = append(hisscatalog.RuleIDs(),
 	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits,
-	ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder, ExceptionRuleDeclaredLinters, ExceptionRuleTestTimeout, ExceptionRuleJobTimeout, ExceptionRuleMutants,
+	ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder, ExceptionRuleDeclaredLinters, ExceptionRuleReleaseToken, ExceptionRuleTestTimeout, ExceptionRuleJobTimeout, ExceptionRuleMutants,
 	ExceptionRuleBacklogCapsDefects, ExceptionRuleBacklogCapsTasks, ExceptionRuleBacklogCapsQuestions, ExceptionRuleBacklogCapsForgeAlerts,
 	ExceptionRuleCodespell,
 )
@@ -122,6 +127,7 @@ var workflowRuleExamples = map[string]string{
 	ExceptionRuleWorkflowTriggers: "release.yml",
 	ExceptionRuleTestTimeout:      "portability.yml",
 	ExceptionRuleJobTimeout:       "ci.yml",
+	ExceptionRuleReleaseToken:     "release.yml",
 }
 
 // Bounds of the exceptions list (HISS-02).

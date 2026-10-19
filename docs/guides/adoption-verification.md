@@ -945,6 +945,8 @@ praetorctl security govuln                      # govulncheck from PATH, module 
 praetorctl security govuln --path=svc -- go tool -modfile=tools/go/go.mod govulncheck   # a pinned scanner
 ```
 
+A relative `-modfile` (such as `-modfile=tools/go/go.mod`) is read from the repository root across every module, so submodules do not require a separate tools module.
+
 The gate runs `govulncheck -scan symbol -format json ./...` and judges each advisory by its deepest
 finding:
 
@@ -1223,9 +1225,11 @@ runs `make verify-all`:
   mtime of each entry, bounded to at most 250,000 entries; exceeding fails closed) and checked again
   after. If any entry differs, the stage fails and names the folder because verification wrote into
   the checkout's dependencies. The symlinks are removed with the stage worktree; the checkout's folders
-  are never deleted. Where the stage worktree still lacks required dependencies, a real failure of
+  are never deleted. A build that replaced a link with a real folder (`npm ci` does) leaves a folder
+  the stage made: it is removed when it resolves inside the stage worktree, and a folder or link whose
+  directory resolves outside it is refused, never followed. Where the stage worktree still lacks required dependencies, a real failure of
   `make verify-all` still fails the stage.
-- **Bound:** defaults to the race stage's default (`180s`), or can be declared in `.standards.yaml` via
+- **Bound:** defaults to the race stage's default (`20m`), or can be declared in `.standards.yaml` via
   `gate: declared_verify_timeout: <duration>` (e.g. `20m`, Go duration, positive and at most 30 minutes;
   values above 30m or non-positive are refused naming the key, value, and ceiling).
   `PRAETOR_TEST_STAGE_TIMEOUT` overrides the declared value when set. The whole-run deadline
@@ -1459,7 +1463,8 @@ violations the baseline records at other lines` and names the plain re-record, `
 baseline --record`: the count did not rise, so it needs no `--allow-increase`. Every other
 rejection reads `HISS invariant violations the baseline does not record` and names the deliberate
 re-record, `praetorctl baseline --record --allow-increase --reason=<why>`, for the findings a
-changed check or an untraced cause explains. Matching ignores line numbers, so when one file holds
+changed check or an untraced cause explains (raising `.gosec-baseline.json` similarly requires
+`--allow-gosec-increase --gosec-reason=<why>`). Matching ignores line numbers, so when one file holds
 several identical findings, the count per class is exact but which line gets `(new)` follows scan
 order.
 The verdict never changes: HISS-13 still refuses the higher count

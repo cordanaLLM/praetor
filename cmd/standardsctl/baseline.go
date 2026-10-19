@@ -25,12 +25,14 @@ var errBaselineMissing = errors.New("no baseline file to verify")
 
 // baselineMode is the parsed baseline invocation.
 type baselineMode struct {
-	path          string
-	record        bool
-	verify        bool
-	allowIncrease bool
-	reason        string
-	allViolations bool
+	path               string
+	record             bool
+	verify             bool
+	allowIncrease      bool
+	reason             string
+	allowGosecIncrease bool
+	gosecReason        string
+	allViolations      bool
 }
 
 func runBaseline(args []string) error {
@@ -45,8 +47,9 @@ func runBaseline(args []string) error {
 
 	switch {
 	case mode.record:
-		opts := baseline.RecordOptions{AllowIncrease: mode.allowIncrease, Rationale: mode.reason}
-		return recordBaseline(mode.path, b, opts)
+		hissOpts := baseline.RecordOptions{AllowIncrease: mode.allowIncrease, Rationale: mode.reason}
+		gosecOpts := baseline.RecordOptions{AllowIncrease: mode.allowGosecIncrease, Rationale: mode.gosecReason}
+		return recordBaseline(mode.path, b, hissOpts, gosecOpts)
 	case mode.verify:
 		return verifyBaseline(mode.path, b, mode.allViolations)
 	}
@@ -63,6 +66,8 @@ func parseBaselineMode(args []string) (baselineMode, error) {
 		"Rescan read-only and fail when the repository carries an infraction the baseline does not record or more than it records; never writes the file")
 	fs.BoolVar(&mode.allowIncrease, "allow-increase", false, "Permit --record to raise the infraction count (HISS-13 exception); requires --reason")
 	fs.StringVar(&mode.reason, "reason", "", "Rationale stored in the baseline when --allow-increase raises the count")
+	fs.BoolVar(&mode.allowGosecIncrease, "allow-gosec-increase", false, "Permit --record to raise the gosec infraction count; requires --gosec-reason")
+	fs.StringVar(&mode.gosecReason, "gosec-reason", "", "Rationale stored in the gosec baseline when --allow-gosec-increase raises the count")
 	fs.BoolVar(&mode.allViolations, "all-violations", false,
 		"With --verify, list every violation of a rejection instead of the first three per class")
 
@@ -73,8 +78,8 @@ func parseBaselineMode(args []string) (baselineMode, error) {
 	if len(positional) > 0 {
 		return mode, fmt.Errorf("baseline accepts no positional arguments, got %q", positional)
 	}
-	if mode.verify && (mode.record || mode.allowIncrease || mode.reason != "") {
-		return mode, errors.New("--verify is read-only and cannot be combined with --record, --allow-increase or --reason")
+	if mode.verify && (mode.record || mode.allowIncrease || mode.reason != "" || mode.allowGosecIncrease || mode.gosecReason != "") {
+		return mode, errors.New("--verify is read-only and cannot be combined with --record, --allow-increase, --reason, --allow-gosec-increase or --gosec-reason")
 	}
 	if mode.allViolations && !mode.verify {
 		return mode, errors.New("--all-violations lists a --verify rejection; pass it together with --verify")
@@ -158,7 +163,7 @@ func baselineIdentity(ctx context.Context, dir string) (repository, commit strin
 
 // recordBaseline rescans the repository around the baseline and replaces the snapshot,
 // refusing to raise the count unless the operator allowed it with a rationale.
-func recordBaseline(path string, previous *baseline.Baseline, opts baseline.RecordOptions) error {
+func recordBaseline(path string, previous *baseline.Baseline, hissOpts, gosecOpts baseline.RecordOptions) error {
 	ctx, cancel := context.WithTimeout(context.Background(), baselineScanTimeout)
 	defer cancel()
 
@@ -167,12 +172,14 @@ func recordBaseline(path string, previous *baseline.Baseline, opts baseline.Reco
 		return fmt.Errorf("refusing to record %s: %w", path, err)
 	}
 
-	opts.Repository, opts.CommitSHA, err = baselineIdentity(ctx, filepath.Dir(path))
+	repo, commit, err := baselineIdentity(ctx, filepath.Dir(path))
 	if err != nil {
 		return fmt.Errorf("refusing to record %s: %w", path, err)
 	}
+	hissOpts.Repository, hissOpts.CommitSHA = repo, commit
+	gosecOpts.Repository, gosecOpts.CommitSHA = repo, commit
 
-	next, err := baseline.Record(previous, current, opts)
+	next, err := baseline.Record(previous, current, hissOpts)
 	if err != nil {
 		return fmt.Errorf("refusing to record %s: %w (pass --allow-increase --reason=<why> to record a deliberate increase)", path, err)
 	}
@@ -184,17 +191,16 @@ func recordBaseline(path string, previous *baseline.Baseline, opts baseline.Reco
 	if !previous.Absent && previous.SameDebt(next) && previous.CommitSHA == next.CommitSHA {
 		fmt.Printf("Baseline unchanged: %s (Total: %d infractions, previously %d); kept the recorded file\n",
 			path, next.TotalInfractions, previous.Count())
-		return nil
+	} else {
+		if err := baseline.SaveBaseline(path, next); err != nil {
+			return fmt.Errorf("failed to save baseline: %w", err)
+		}
+		fmt.Printf("Baseline successfully updated: %s (Total: %d infractions, previously %d)\n", path, next.TotalInfractions, previous.Count())
+		if next.IncreaseRationale != "" {
+			fmt.Printf("[WARN] Debt increased deliberately; recorded rationale: %s\n", next.IncreaseRationale)
+		}
 	}
-	if err := baseline.SaveBaseline(path, next); err != nil {
-		return fmt.Errorf("failed to save baseline: %w", err)
-	}
-
-	fmt.Printf("Baseline successfully updated: %s (Total: %d infractions, previously %d)\n", path, next.TotalInfractions, previous.Count())
-	if next.IncreaseRationale != "" {
-		fmt.Printf("[WARN] Debt increased deliberately; recorded rationale: %s\n", next.IncreaseRationale)
-	}
-	return recordGosecBaseline(ctx, filepath.Dir(path), opts)
+	return recordGosecBaseline(ctx, filepath.Dir(path), gosecOpts)
 }
 
 func recordGosecBaseline(ctx context.Context, repoDir string, opts baseline.RecordOptions) error {
@@ -215,7 +221,7 @@ func recordGosecBaseline(ctx context.Context, repoDir string, opts baseline.Reco
 	}
 	nextGosec, err := baseline.Record(prevGosec, gosecFindings, opts)
 	if err != nil {
-		return fmt.Errorf("refusing to record %s: %w (pass --allow-increase --reason=<why> to record a deliberate increase)", gosecPath, err)
+		return fmt.Errorf("refusing to record %s: %w (pass --allow-gosec-increase --gosec-reason=<why> to record a deliberate increase)", gosecPath, err)
 	}
 	return saveGosecBaseline(gosecPath, prevGosec, nextGosec)
 }

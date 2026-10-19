@@ -455,6 +455,12 @@ C, C++, Rust or Go code without its toolchain's warnings-as-errors form, and ski
 with no such lane ([Build-warnings gate](build-warnings.md),
 `TestServerAuditRunsTheBuildWarningsGate`).
 
+The release-token gate is the CLI's own too (`adopt.AuditReleaseToken`, run with the manifest's
+exceptions list): it fails a release-please step that takes its token from anything but an earlier,
+unconditional GitHub App token step of the same job, and skips a repository with no release-please
+step ([Release token gate](release-token.md), `TestServerAuditRunsTheReleaseTokenGate` in
+`cmd/standards-mcp/audit_policy_test.go`).
+
 The HISS-18 workflow trigger check is the CLI's own as well (`forge.AuditWorkflowTriggers`, run
 with the manifest's exceptions list). Its findings are `[WARN]` lines and the gate still passes;
 only a workflow it cannot read or a malformed `HISS-18` exceptions entry fails it

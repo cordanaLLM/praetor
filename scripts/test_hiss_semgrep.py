@@ -97,6 +97,86 @@ def rules_at(findings, rule):
     return [item["line"] for item in findings if item["rule"] == rule]
 
 
+LOCAL_PARSE_RULE = """\
+rules:
+  - id: parse-figure-mjs
+    pattern: const $X = $Y
+    message: parse probe
+    languages: [javascript]
+    severity: INFO
+"""
+
+
+def tracked_figure_scripts() -> list[Path]:
+    result = subprocess.run(
+        ["git", "ls-files", "tools/figures/*.mjs"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    paths = [ROOT / line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if not paths:
+        raise AssertionError("no tracked tools/figures/*.mjs files found")
+    return sorted(paths)
+
+
+def scan_figure_parse_errors(paths: list[Path]) -> list[tuple[str, str, int | None, str]]:
+    with tempfile.TemporaryDirectory(prefix="praetor-semgrep-parse-") as directory:
+        rule_file = Path(directory) / "parse-probe.yml"
+        rule_file.write_text(LOCAL_PARSE_RULE, encoding="utf-8")
+        command = [
+            "semgrep", "scan",
+            "--config", str(rule_file),
+            "--metrics=off",
+            "--disable-version-check",
+            "--no-git-ignore",
+            "--json",
+            *[str(p) for p in paths],
+        ]
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+            cwd=ROOT,
+        )
+        if result.returncode not in (0, 1):
+            raise AssertionError(f"semgrep scan failed ({result.returncode}): {result.stderr}")
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise AssertionError(f"semgrep returned non-JSON output: {result.stdout!r}") from error
+
+        errors = []
+        for err in payload.get("errors", []):
+            err_type = err.get("type")
+            type_name = str(err_type[0]) if isinstance(err_type, list) and err_type else str(err_type or "")
+            path = err.get("path") or ""
+            line = None
+            spans = err.get("spans") or []
+            if spans and isinstance(spans[0], dict) and "start" in spans[0]:
+                line = spans[0]["start"].get("line")
+                if not path:
+                    path = spans[0].get("file", "")
+            elif isinstance(err_type, list) and len(err_type) > 1 and isinstance(err_type[1], list) and err_type[1]:
+                line = err_type[1][0].get("start", {}).get("line")
+                if not path:
+                    path = err_type[1][0].get("path", "")
+            message = err.get("message") or ""
+            lower = type_name.lower()
+            if "partialparsing" in lower or "syntax" in lower or "parse" in lower:
+                rel_path = path
+                try:
+                    rel_path = str(Path(path).resolve().relative_to(ROOT))
+                except Exception:
+                    pass
+                errors.append((type_name, rel_path, line, message))
+        return errors
+
+
 class SemgrepVersionProbeTest(unittest.TestCase):
     def test_matching_version_passes_with_scan_sized_timeout(self):
         calls = []
@@ -197,6 +277,27 @@ class HissSemgrepRegression(unittest.TestCase):
             )
             self.assertEqual(
                 rules_at(scan(bounded, language), "hiss-08-banned-c-memory"), []
+            )
+
+    def test_tracked_figure_scripts_parse_cleanly_under_semgrep(self):
+        scripts = tracked_figure_scripts()
+        errors = scan_figure_parse_errors(scripts)
+        if errors:
+            details = ", ".join(f"{t} at {p}:{line}" for t, p, line, _ in errors)
+            self.fail(f"semgrep reported parse errors in tracked figure scripts: {details}")
+
+    def test_semgrep_parse_check_fails_on_planted_regex_literal(self):
+        with tempfile.TemporaryDirectory(prefix="praetor-figure-parse-") as directory:
+            fixture = Path(directory) / "planted.mjs"
+            fixture.write_text(
+                "const MAX_ENTRIES = 131_072;\n"
+                "const MARKER = /<!-- figure:([a-z0-9-]+) -->\\n([\\s\\S]*?)<!-- \\/figure -->/g;\n",
+                encoding="utf-8",
+            )
+            errors = scan_figure_parse_errors([fixture])
+            self.assertTrue(
+                any(err[0] == "PartialParsing" for err in errors),
+                f"expected PartialParsing error on planted regex literal fixture, got: {errors}",
             )
 
 

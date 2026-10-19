@@ -28,6 +28,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -102,15 +103,22 @@ func Check(ctx context.Context, opts Options) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	root := opts.VEXRoot
+	if root == "" {
+		root = opts.Dir
+	}
+	// The hook passes no --path, so the root is often "."; joined with it a relative -modfile
+	// stays relative and still misses in every submodule.
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("govuln: resolve the repository root %s: %w", root, err)
+	}
+	scanner = resolveScannerModfile(scanner, absRoot)
 	now := time.Now
 	if opts.Now != nil {
 		now = opts.Now
 	}
-	vexRoot := opts.VEXRoot
-	if vexRoot == "" {
-		vexRoot = opts.Dir
-	}
-	vexPath, err := config.RepositoryGoVEXPath(vexRoot)
+	vexPath, err := config.RepositoryGoVEXPath(root)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s does not say which document to read: %w", ErrInvalidVEX, config.ManifestFileName, err)
 	}
@@ -124,6 +132,35 @@ func Check(ctx context.Context, opts Options) (*Report, error) {
 		return nil, err
 	}
 	return judge(scan, vex, now()), nil
+}
+
+// resolveScannerModfile resolves repository-relative path words of the scanner command against
+// the repository root: the scanner runs in each module's directory; the hook names the tools module
+// from the repository root.
+func resolveScannerModfile(words []string, root string) []string {
+	result := slices.Clone(words)
+	for i := 0; i < len(result) && i < maxScannerWords; i++ {
+		word := result[i]
+		switch {
+		case strings.HasPrefix(word, "-modfile="):
+			result[i] = "-modfile=" + resolveModfilePath(root, strings.TrimPrefix(word, "-modfile="))
+		case strings.HasPrefix(word, "--modfile="):
+			result[i] = "--modfile=" + resolveModfilePath(root, strings.TrimPrefix(word, "--modfile="))
+		case word == "-modfile" || word == "--modfile":
+			if i+1 < len(result) {
+				result[i+1] = resolveModfilePath(root, result[i+1])
+				i++
+			}
+		}
+	}
+	return result
+}
+
+func resolveModfilePath(root, path string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(root, filepath.FromSlash(path))
 }
 
 // scannerCommand returns the scanner command, DefaultScanner when none is given.

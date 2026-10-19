@@ -14,7 +14,7 @@ Session start: `python3 scripts/dev_mcp.py probe`; verify source identity.
 - MCP-facing change -> exercise through real tool; temporary roots; mutation = write + readback.
 - Discovery alone insufficient. Report errors, stubs, unverified behavior explicitly, then continue code tests.
 - Native servers snapshot source at startup -> after edits reconnect or fresh `call`/`probe`.
-- Guide: [development MCP guide](docs/guides/development-mcp.md).
+- Guide: [development MCP guide](../../docs/guides/development-mcp.md).
 
 Before concluding any turn:
 ```bash
@@ -77,7 +77,7 @@ make verify-all
     - Turn start: `praetorctl state status` (9 lines) + open tasks in `.workingdir/OPEN.md`. Never read whole `.workingdir/STATE.md` at turn start (~45k tokens); look up one entry only when decision needs it.
     - During work: `praetorctl state task add "<desc>"`; progress `praetorctl state task complete "<selector>"`; archive `praetorctl state task archive`.
     - Turn end: `praetorctl state sync .` (records working tree status, dirty count, open tasks, cryptographic state hash into `STATE.md`).
-    - Checkpoint cadence: `lefthook run agent-checkpoint-tool` between work chunks; `lefthook run agent-checkpoint-stop` before finishing. Due result -> act: review owned public changes, verify, commit with sign-off, push through normal hooks, create or reuse draft PR for pushed branch. Policy, blockers, local-only repos, client activation: [checkpoint workflow](docs/guides/checkpoint-cadence.md). Publication needs session or configured authorization; this repo's checkpoint workflow = authorized.
+    - Checkpoint cadence: `lefthook run agent-checkpoint-tool` between work chunks; `lefthook run agent-checkpoint-stop` before finishing. Due result -> act: review owned public changes, verify, commit with sign-off, push through normal hooks, create or reuse draft PR for pushed branch. Policy, blockers, local-only repos, client activation: [checkpoint workflow](../../docs/guides/checkpoint-cadence.md). Publication needs session or configured authorization; this repo's checkpoint workflow = authorized.
 
 11. **Diff-aware CI efficiency (HISS-18).** CI pipelines MUST evaluate git diffs via `standardsctl ci filter`, run targeted gates. Pure docs or session-state changes MUST skip heavy race detectors + security suites; invariant integrity kept.
 

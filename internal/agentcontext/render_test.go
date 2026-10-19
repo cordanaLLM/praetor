@@ -380,3 +380,98 @@ func TestIsContextPath_Boundary(t *testing.T) {
 		}
 	}
 }
+
+// TestCompileContent_RelativeLinks_Positive pins positive link rewriting for subdirectory targets (#129).
+func TestCompileContent_RelativeLinks_Positive(t *testing.T) {
+	source := "# Harness\n[a](docs/x.md)\n![i](img/p.png \"t\")\n[r]: notes/y.md\n"
+	result, err := NewTranspiler().CompileContent(source)
+	if err != nil {
+		t.Fatalf("CompileContent failed: %v", err)
+	}
+	var copilotContent, claudeContent string
+	for _, f := range result.Files {
+		switch f.RelativePath {
+		case ".github/copilot-instructions.md":
+			copilotContent = f.Content
+		case "CLAUDE.md":
+			claudeContent = f.Content
+		}
+	}
+	if copilotContent == "" || claudeContent == "" {
+		t.Fatalf("missing copilot or claude file in compile result")
+	}
+	for _, want := range []string{"[a](../docs/x.md)", `![i](../img/p.png "t")`, "[r]: ../notes/y.md"} {
+		if !strings.Contains(copilotContent, want) {
+			t.Errorf("copilot-instructions.md missing %q, got:\n%s", want, copilotContent)
+		}
+	}
+	for _, want := range []string{"[a](docs/x.md)", `![i](img/p.png "t")`, "[r]: notes/y.md"} {
+		if !strings.Contains(claudeContent, want) {
+			t.Errorf("CLAUDE.md missing %q, got:\n%s", want, claudeContent)
+		}
+	}
+}
+
+// TestCompileContent_RelativeLinks_Negative pins non-rewritten links for anchors, URLs, and code spans (#129).
+func TestCompileContent_RelativeLinks_Negative(t *testing.T) {
+	source := strings.Join([]string{
+		"# Harness",
+		"[anchor](#anchor)",
+		"[web](https://x/y)",
+		"[mail](mailto:a@b)",
+		"[abs](/abs)",
+		"```",
+		"[fenced](docs/fenced.md)",
+		"```",
+		"`[inline](docs/inline.md)`",
+		"[^1]: docs/footnote.md is a footnote, not a link",
+		"",
+	}, "\n")
+	result, err := NewTranspiler().CompileContent(source)
+	if err != nil {
+		t.Fatalf("CompileContent failed: %v", err)
+	}
+	unchanged := []string{
+		"[anchor](#anchor)",
+		"[web](https://x/y)",
+		"[mail](mailto:a@b)",
+		"[abs](/abs)",
+		"[fenced](docs/fenced.md)",
+		"`[inline](docs/inline.md)`",
+		"[^1]: docs/footnote.md is a footnote, not a link",
+	}
+	for _, f := range result.Files {
+		for _, want := range unchanged {
+			if !strings.Contains(f.Content, want) {
+				t.Errorf("%s missing unchanged link %q", f.RelativePath, want)
+			}
+		}
+	}
+}
+
+// TestCompileContent_RelativeLinks_Boundary pins depth-2 rewriting and empty destinations (#129).
+func TestCompileContent_RelativeLinks_Boundary(t *testing.T) {
+	text := "[doc](docs/guide.md)\n"
+	if got, want := rewriteRelativeLinks(text, 2), "[doc](../../docs/guide.md)\n"; got != want {
+		t.Errorf("rewriteRelativeLinks depth 2 = %q, want %q", got, want)
+	}
+	source := "# Harness\n[doc](docs/guide.md)\n[]()\n"
+	result, err := NewTranspiler().CompileContent(source)
+	if err != nil {
+		t.Fatalf("CompileContent failed: %v", err)
+	}
+	var cursorContent string
+	for _, f := range result.Files {
+		if f.RelativePath == ".cursor/rules/hiss-invariants.mdc" {
+			cursorContent = f.Content
+		}
+	}
+	if !strings.Contains(cursorContent, "[doc](../../docs/guide.md)") {
+		t.Errorf("cursor target missing depth 2 link, got:\n%s", cursorContent)
+	}
+	for _, f := range result.Files {
+		if !strings.Contains(f.Content, "[]()") {
+			t.Errorf("%s missing empty destination link []()", f.RelativePath)
+		}
+	}
+}

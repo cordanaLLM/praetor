@@ -1,0 +1,3 @@
+type: fixed
+title: compile-context rewrites repository-relative links for vendor targets in subdirectories
+issue: '#129'

@@ -7,9 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
@@ -17,40 +15,9 @@ import (
 	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
 )
 
-const gosecBuildTimeout = 2 * time.Minute
-
-// pinnedGosecBuilt is the temporary folder the pinned gosec was built into, removed by TestMain after the tests.
-var pinnedGosecBuilt string
-
-var cachedPinnedGosecDir = sync.OnceValues(func() (string, error) {
-	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		return "", fmt.Errorf("resolve repository root: %w", err)
-	}
-	toolsMod := filepath.Join(repoRoot, "tools", "go", "go.mod")
-	binDir, err := os.MkdirTemp("", "praetor-pinned-gosec-*")
-	if err != nil {
-		return "", fmt.Errorf("create gosec directory: %w", err)
-	}
-	pinnedGosecBuilt = binDir
-	outBinary := filepath.Join(binDir, testsupport.ExecutableName("gosec"))
-	ctx, cancel := context.WithTimeout(context.Background(), gosecBuildTimeout)
-	defer cancel()
-	res, err := util.RunCommandBytes(ctx, repoRoot, "go", util.MaxCommandOutputBytes,
-		"build", "-modfile="+toolsMod, "-o", outBinary, "github.com/securego/gosec/v2/cmd/gosec")
-	if err != nil {
-		return "", util.CommandDiagnostic(fmt.Errorf("build pinned gosec: %w", err), res.Stderr)
-	}
-	return binDir, nil
-})
-
 func pinnedGosecDir(t *testing.T) string {
 	t.Helper()
-	dir, err := cachedPinnedGosecDir()
-	if err != nil {
-		t.Fatalf("pinned gosec unavailable: %v", err)
-	}
-	return dir
+	return testsupport.PinnedGosecDir(t)
 }
 
 // setupGosecPlantedRepo creates a hermetic git repo with a Go module and one planted G204 finding.

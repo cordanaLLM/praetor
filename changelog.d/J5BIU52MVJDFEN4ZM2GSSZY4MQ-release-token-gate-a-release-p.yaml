@@ -1,0 +1,2 @@
+type: added
+title: 'Release token gate: a release-please step takes its token from a GitHub App token step'

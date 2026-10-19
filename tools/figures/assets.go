@@ -163,6 +163,8 @@ var priorDigests = map[string]string{
 	"c2eed2e1431851ddca033c197728664db21fc82d766e465c44f210b949d57a18": Directory + "/player/THIRD-PARTY-LICENSES.txt",
 	// README.md before documenting the emitted ESLint configuration for figure assets.
 	"15f75d9348ee456c9d78594307df374ebcc24427fdf435e920a54c4e5461cbfa": Directory + "/README.md",
+	// checks.mjs before the marker pattern was built with new RegExp to parse whole under Semgrep.
+	"42aeec6906cd60ec2b1ee6cdde24ad312f37abca46a6e71a3016e05786f2919a": Directory + "/checks.mjs",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts player/loader.js player/player.js player/THIRD-PARTY-LICENSES.txt figures.css mkdocs_hook.py astro.mjs serve.mjs eslint.figures.mjs README.md

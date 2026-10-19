@@ -268,3 +268,76 @@ func jsonString(t *testing.T, value string) string {
 	}
 	return string(data)
 }
+
+// Positive: a unit under declared data_paths is skipped as data (DataUnits 1, no finding)
+// while an unexcused unit under src/ with no lane still fails.
+func TestCheck_DataPaths_PlantedDataDir(t *testing.T) {
+	root := fixtureRepo(t, map[string]string{
+		"src/a.c":               "int a;\n",
+		"src/real.hip":          "int real;\n",
+		"tests/data/sample.hip": "int sample;\n",
+	})
+	writeCompileDatabase(t, root, "src/a.c")
+	policy := &config.ClangTidyPolicy{
+		Lanes:     []config.ClangTidyLane{cpuLane},
+		DataPaths: []string{"tests/data"},
+	}
+	report, err := Check(t.Context(), Options{Root: root, Policy: policy, Today: today})
+	if err != nil {
+		t.Fatalf("Check = %v", err)
+	}
+	if report.DataUnits != 1 || report.Units != 2 {
+		t.Fatalf("report counts = %+v, want DataUnits 1, Units 2", report)
+	}
+	want := "src/real.hip: read by no clang-tidy lane and named by no exceptions entry"
+	if findingsText(report) != want {
+		t.Fatalf("findings:\n%s\nwant:\n%s", findingsText(report), want)
+	}
+}
+
+// Negative and boundary: database/x.hip is not under data, and a declared data path holding
+// no tracked unit is a finding.
+func TestCheck_DataPaths_BoundaryNotUnderAndEmpty(t *testing.T) {
+	root := fixtureRepo(t, map[string]string{
+		"src/a.c":        "int a;\n",
+		"database/x.hip": "int db;\n",
+	})
+	writeCompileDatabase(t, root, "src/a.c")
+	policy := &config.ClangTidyPolicy{
+		Lanes:     []config.ClangTidyLane{cpuLane},
+		DataPaths: []string{"data"},
+	}
+	report, err := Check(t.Context(), Options{Root: root, Policy: policy, Today: today})
+	if err != nil {
+		t.Fatalf("Check = %v", err)
+	}
+	if report.DataUnits != 0 || report.Units != 2 {
+		t.Fatalf("report counts = %+v, want DataUnits 0, Units 2", report)
+	}
+	want := []string{
+		"data path data holds no tracked translation unit; remove it from clang_tidy.data_paths",
+		"database/x.hip: read by no clang-tidy lane and named by no exceptions entry",
+	}
+	if findingsText(report) != strings.Join(want, "\n") {
+		t.Fatalf("findings:\n%s\nwant:\n%s", findingsText(report), strings.Join(want, "\n"))
+	}
+}
+
+// Boundary: when every tracked unit lies under a declared data path, the gate skips with the reason.
+func TestCheck_DataPaths_SkipWhenAllUnitsAreData(t *testing.T) {
+	root := fixtureRepo(t, map[string]string{
+		"tests/data/sample.hip": "int sample;\n",
+	})
+	policy := &config.ClangTidyPolicy{
+		Lanes:     []config.ClangTidyLane{cpuLane},
+		DataPaths: []string{"tests/data"},
+	}
+	report, err := Check(t.Context(), Options{Root: root, Policy: policy, Today: today})
+	if err != nil {
+		t.Fatalf("Check = %v", err)
+	}
+	wantSkip := "every tracked translation unit lies under a declared data path"
+	if report.Skipped != wantSkip || !report.Passed() || report.DataUnits != 1 || report.Units != 0 {
+		t.Fatalf("report = %+v, want Skipped %q", report, wantSkip)
+	}
+}
