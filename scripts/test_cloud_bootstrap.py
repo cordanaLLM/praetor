@@ -13,7 +13,7 @@ SCRIPT = Path(".config/agent/hooks/cloud_bootstrap.py")
 SPEC = importlib.util.spec_from_file_location("cloud_bootstrap", ROOT / SCRIPT)
 BOOTSTRAP = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BOOTSTRAP)
-REMOTE = {"CLAUDE_CODE_REMOTE": "true", "PATH": "/usr/local/bin:/usr/bin"}
+REMOTE = {"CLAUDE_CODE_REMOTE": "true", "PATH": os.pathsep.join(["/usr/local/bin", "/usr/bin"])}
 
 
 class Which:
@@ -116,7 +116,7 @@ class CloudBootstrap(unittest.TestCase):
     def test_boundary_install_directory_must_be_on_path_and_writable(self):
         with mock.patch.object(BOOTSTRAP.os, "access", lambda _p, _m: True), \
                 mock.patch.object(Path, "is_dir", lambda self: True):
-            self.assertEqual(BOOTSTRAP.target_dir("/usr/local/bin:/usr/bin"), Path("/usr/local/bin"))
+            self.assertEqual(BOOTSTRAP.target_dir(os.pathsep.join(["/usr/local/bin", "/usr/bin"])), Path("/usr/local/bin"))
             self.assertIsNone(BOOTSTRAP.target_dir("/usr/bin"), "a directory off PATH is never used")
             self.assertIsNone(BOOTSTRAP.target_dir(""))
         with mock.patch.object(BOOTSTRAP.os, "access", lambda _p, _m: False), \
