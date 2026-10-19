@@ -247,7 +247,8 @@ func TestReusableCallContexts_JobNameExpression(t *testing.T) {
 	}
 }
 
-// Positive, Negative, Boundary: pinned external reusable workflow (plurano/horistes licence).
+// Positive: the pinned external licence caller contributes its status context,
+// including a root input, to planned workflows and the rendered ruleset.
 func TestReusableCallContexts_PinnedExternalWorkflow(t *testing.T) {
 	callerContent := "on:\n  pull_request:\njobs:\n  licence:\n    name: Licence\n" +
 		"    uses: " + PluranoHoristesLicenceAction + "@" + PluranoHoristesLicenceWorkflowSHA + "  # " + PluranoHoristesLicencePinDate + "\n"
@@ -287,11 +288,14 @@ func TestReusableCallContexts_PinnedExternalWorkflow(t *testing.T) {
 			t.Fatalf("caller with root %q = %v, want %v", sub, got, want)
 		}
 	}
+}
 
-	// Negative: an unknown external reusable workflow -> still refused with today's refusal.
+// Negative: unknown external workflows and a different horistes SHA are refused.
+func TestReusableCallContexts_PinnedExternalWorkflowRejectsOtherSources(t *testing.T) {
+	// An unknown external reusable workflow keeps its existing refusal.
 	unknownCaller := "on:\n  pull_request:\njobs:\n  licence:\n    name: Licence\n" +
 		"    uses: other/repo/.github/workflows/check.yml@v1\n"
-	_, err = reusableContexts(t, map[string]string{"reuse.yml": unknownCaller})
+	_, err := reusableContexts(t, map[string]string{"reuse.yml": unknownCaller})
 	wantUnknown := `calls the reusable workflow other/repo/.github/workflows/check.yml@v1 of another repository`
 	if err == nil || !strings.Contains(err.Error(), wantUnknown) {
 		t.Fatalf("unknown external workflow err = %v, want containing %q", err, wantUnknown)
@@ -305,8 +309,10 @@ func TestReusableCallContexts_PinnedExternalWorkflow(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "move the engine pin (forge.PluranoHoristesLicenceWorkflowSHA) first") {
 		t.Fatalf("horistes at another SHA: err = %v, want engine pin instruction", err)
 	}
+}
 
-	// Boundary: caller with root: "." explicitly passed evaluates to default name.
+// Boundary: a caller passing root "." explicitly keeps the default status name.
+func TestReusableCallContexts_PinnedExternalWorkflowExplicitRoot(t *testing.T) {
 	callerExplicitDot := "on:\n  pull_request:\njobs:\n  licence:\n    name: Licence\n" +
 		"    uses: " + PluranoHoristesLicenceAction + "@" + PluranoHoristesLicenceWorkflowSHA + "\n" +
 		"    with:\n      root: .\n"

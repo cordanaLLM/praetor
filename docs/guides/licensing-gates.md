@@ -57,9 +57,14 @@ Adoption writes two jobs:
   `TestAdopt_PluranoAcceptsBumpedSHA`, `TestAdopt_PluranoRefusesNonSHACaller` in
   `internal/adopt/reuse_gate_test.go`). A plurano repository holding an unedited copy of the older standalone
   workflow is refreshed to the caller on adoption (`TestAdopt_PluranoRefreshesCopiedReuseWorkflow`);
+
 - a `reuse-lint` pre-commit job in `lefthook.yml` that runs `reuse lint` where reuse 6.x is
   installed, skips with the reason where reuse is not installed, and fails, naming the pin, on
   another reuse major.
+
+For a plurano-owned repository with `.github/workflows/reuse.yml`, `praetorctl audit` requires its
+sole job to call `plurano/horistes/.github/workflows/licence.yml` at a full commit SHA. It reports
+a copied gate or a tag, branch, or short SHA pin with `praetorctl adopt` as the repair.
 
 Praetor's own Compliance workflow installs the same lock the same way. The `reuse-lint` hook job
 names the reuse release line by `supplychain.ReuseActionVersion`, and `praetorctl bump` expects
