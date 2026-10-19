@@ -439,12 +439,15 @@ class Hook(unittest.TestCase):
                     }
                 ),
             )
+            with self.assertNoLogs("mkdocs.plugins.praetor_figures", level="WARNING"):
+                mkdocs_hook.published_files()
             with self.assertLogs(
-                "mkdocs.plugins.praetor_figures", level="WARNING"
+                "mkdocs.plugins.praetor_figures", level="INFO"
             ) as logs:
                 published = mkdocs_hook.published_files()
             self.assertEqual(published, [(mkdocs_hook.CSS_URI, mkdocs_hook.CSS_FILE)])
             self.assertEqual(len(logs.output), 1)
+            self.assertTrue(logs.output[0].startswith("INFO:"), logs.output[0])
             self.assertIn(
                 "figures: engine pin unreleased has no release; "
                 "figures render as SVG (no interactive player)",
