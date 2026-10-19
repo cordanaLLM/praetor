@@ -1821,6 +1821,20 @@ entries:
     use: "Optional test-first edit guard for AI coding assistants"
     paths:
       - "probity.config.ts"
+  - name: "jscpd"
+    url: "https://github.com/kucherenko/jscpd"
+    detail: "5.4.1"
+    section: "tooling"
+    kind: "tool"
+    relation: "integrated"
+    license: "MIT"
+    notice: "© 2013–2024 Andrey Kucherenko"
+    use: "Copy/paste detector for foreign code deduplication in C, C++, CUDA, Python, Rust, shell, and YAML"
+    paths:
+      - "tools/jscpd/package.json"
+      - "tools/jscpd/package-lock.json"
+    packages:
+      - "npm:jscpd"
   - name: "esbuild"
     url: "https://github.com/evanw/esbuild"
     section: "development"

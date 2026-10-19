@@ -440,3 +440,22 @@ func TestRunDedupeScan_Negative_StaleExceptionForNonGoFileFails(t *testing.T) {
 	)
 	mustErrContain(t, err, "1 stale exception(s)")
 }
+
+func TestRunDedupeScan_Positive_AcrossFlag(t *testing.T) {
+	dir1 := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
+	dir2 := dedupeFixtureDir(t, "README.md", "# other root\n")
+
+	out, err := captureStdout(t, func() error {
+		return runDedupeScan([]string{"--across", dir2, "--json", dir1})
+	})
+	if err != nil {
+		t.Fatalf("runDedupeScan with --across failed: %v", err)
+	}
+	var report dedupe.DedupeReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("parse JSON report: %v\n%s", err, out)
+	}
+	if !report.Passed {
+		t.Errorf("expected clean pass, got report: %+v", report)
+	}
+}
