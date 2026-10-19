@@ -36,12 +36,12 @@ const (
 	// reuseGateStep is the adoption step that writes it, the name adoption.decline takes.
 	reuseGateStep = "reuse-gate"
 	// pluranoHoristesLicenceAction is the reusable workflow path called in plurano-owned repositories.
-	pluranoHoristesLicenceAction = "plurano/horistes/.github/workflows/licence.yml"
+	pluranoHoristesLicenceAction = forge.PluranoHoristesLicenceAction
 	// pluranoHoristesLicenceWorkflowSHA is the commit SHA of plurano/horistes .github/workflows/licence.yml
 	// pinned in the hosted REUSE gate for plurano-owned repositories (read 2026-10-19).
-	pluranoHoristesLicenceWorkflowSHA = "5a2700ef8898bc377f0f9d13d5c95abf54f0fa4c"
+	pluranoHoristesLicenceWorkflowSHA = forge.PluranoHoristesLicenceWorkflowSHA
 	// pluranoHoristesLicencePinDate names when pluranoHoristesLicenceWorkflowSHA was read.
-	pluranoHoristesLicencePinDate = "2026-10-19"
+	pluranoHoristesLicencePinDate = forge.PluranoHoristesLicencePinDate
 	// pluranoOrgName is the organization name whose repositories use the reusable workflow caller.
 	pluranoOrgName = "plurano"
 )
@@ -152,16 +152,7 @@ func isPluranoOwner(owner string) bool {
 
 // is40HexSHA reports whether s is exactly 40 lowercase hexadecimal characters.
 func is40HexSHA(s string) bool {
-	if len(s) != 40 {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
+	return forge.Is40HexSHA(s)
 }
 
 // renderPluranoLicenceWorkflow renders the hosted REUSE gate as a reusable workflow caller
@@ -172,8 +163,8 @@ func renderPluranoLicenceWorkflow(branch, sha string) string {
 		ghworkflow.HostedGatePushBranchesPrefix+branch+"']", 1)
 	return "---\n" +
 		"# REUSE licensing gate, written by praetorctl adopt because the repository\n" +
-		"# carries REUSE.toml or LICENSES/. It runs reuse lint at the release line the\n" +
-		"# reuse-lint pre-commit job of lefthook.yml requires.\n" +
+		"# carries REUSE.toml or LICENSES/. It calls plurano/horistes' licence workflow\n" +
+		"# at the pinned commit.\n" +
 		"name: REUSE\n" +
 		"\n" +
 		on +
