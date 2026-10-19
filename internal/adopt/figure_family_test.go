@@ -15,22 +15,24 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/classify"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	figureassets "github.com/cordanaLLM/praetor/tools/figures"
 )
 
 // The figure engine joined docs:seo-portal as the second managed asset family
-// (docs/adr/0016-figures-for-adopters.md, section 5). These tests pin what adoption writes,
-// refuses and removes for it through the registry, the .gitattributes block its hashed files
-// need, and the docs-figures target of the managed Makefile block.
+// (docs/adr/0016-figures-for-adopters.md, section 5; docs/adr/0019-figure-player-as-release-asset.md).
+// These tests pin what adoption writes, refuses and removes for it through the registry, the
+// .gitattributes block its hashed files need, and the docs-figures target of the managed Makefile
+// block.
 
 // figureFamilyGoldenPaths are the figure paths a golden records, spelled out rather than read
-// from the code under test: the wrapper, the player, the vendored license, the guide, and the
-// attribute file.
+// from the code under test: the wrapper, the player lock, the vendored license, the guide, and
+// the attribute file.
 var figureFamilyGoldenPaths = []string{
 	"tools/figures/build.mjs",
-	"tools/figures/player/player.js",
+	"tools/figures/player.lock.json",
 	"tools/figures/third_party/interfig/upstream/LICENSE",
 	"tools/figures/README.md",
 	".gitattributes",
@@ -115,20 +117,23 @@ func TestFigureFamilyForeignFilesGolden(t *testing.T) {
 	testsupport.AssertGolden(t, filepath.Join("testdata", "managed-family", "figure-foreign.golden"), golden.sb.String())
 }
 
-// Positive, negative and boundary: every released loader moves, a dist/ ignore rule does not
-// hide the new player, and an edited retired player stays.
+// Positive, negative and boundary: every released loader under dist/ or player/ is retired and
+// removed, player.lock.json is written with the engine release or empty tag, an edited retired
+// player stays, and the engine repository itself keeps its local player without writing a lock.
 func TestFigurePlayerDirectoryMigration(t *testing.T) {
-	newerLoader, err := figureassets.Read("player/loader.js")
+	newerLoader, err := figureassets.ReadPlayer("player/loader.js")
 	if err != nil {
 		t.Fatal(err)
 	}
-	newerRoot, newerReport := migrateFigurePlayer(t, "newer-loader", newerLoader, true)
+	newerRoot, newerReport := migrateFigurePlayer(t, "newer-loader", "dist", newerLoader, true)
 	assertMovedFigurePlayer(t, newerRoot, newerReport)
+	playerRoot, playerReport := migrateFigurePlayer(t, "player-dir", "player", newerLoader, false)
+	assertMovedFigurePlayer(t, playerRoot, playerReport)
 	olderLoader := []byte(mustRead(t, filepath.Join("testdata", "managed-family", "loader.c9bf497702.js")))
 	if got := fmt.Sprintf("%x", sha256.Sum256(olderLoader)); got != "9c741950900a175696e47248c2acd258cb1bb8703f84221d18a0a21146d340fb" {
 		t.Fatalf("older loader digest = %s", got)
 	}
-	olderRoot, olderReport := migrateFigurePlayer(t, "older-loader", olderLoader, false)
+	olderRoot, olderReport := migrateFigurePlayer(t, "older-loader", "dist", olderLoader, false)
 	assertMovedFigurePlayer(t, olderRoot, olderReport)
 	if got := movedFigurePlayerPaths(olderReport); !slices.Equal(got, movedFigurePlayerPaths(newerReport)) {
 		t.Fatalf("older loader migration paths = %v, want newer paths %v", got, movedFigurePlayerPaths(newerReport))
@@ -137,24 +142,55 @@ func TestFigurePlayerDirectoryMigration(t *testing.T) {
 	if _, err := Adopt(t.Context(), goldenAdoptOptions(t, edited)); err != nil {
 		t.Fatal(err)
 	}
-	data, err := figureassets.Read("player/player.js")
+	data, err := figureassets.ReadPlayer("player/player.js")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(edited, filepath.FromSlash(figureassets.PlayerDirectory+"/player.js"))); err != nil {
-		t.Fatal(err)
-	}
-	mustWrite(t, filepath.Join(edited, "tools", "figures", "dist", "player.js"), string(data)+"// edited\n")
+	mustWrite(t, filepath.Join(edited, "tools", "figures", "player", "player.js"), string(data)+"// edited\n")
 	report, err := Adopt(t.Context(), goldenAdoptOptions(t, edited))
 	if err != nil || !strings.Contains(strings.Join(report.Warnings, "\n"), "Kept edited retired figure engine asset") {
 		t.Fatalf("edited retired player = %v, %v", report, err)
 	}
-	if _, err := os.Stat(filepath.Join(edited, "tools", "figures", "dist", "player.js")); err != nil {
+	if _, err := os.Stat(filepath.Join(edited, "tools", "figures", "player", "player.js")); err != nil {
 		t.Fatalf("edited retired player was deleted: %v", err)
+	}
+	assertFigurePlayerLockReleaseAndEngineSkip(t)
+}
+
+func assertFigurePlayerLockReleaseAndEngineSkip(t *testing.T) {
+	t.Helper()
+	root := newTestRepo(t, "figure-player-lock-release")
+	opts := goldenAdoptOptions(t, root)
+	opts.Engine = buildid.Identity{Release: "v1.4.0"}
+	if _, err := Adopt(t.Context(), opts); err != nil {
+		t.Fatal(err)
+	}
+	wantLock, err := figureassets.RenderPlayerLock("v1.4.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRead(t, filepath.Join(root, filepath.FromSlash(figureassets.PlayerLockFile))); got != string(wantLock) {
+		t.Fatalf("lock = %q, want %q", got, string(wantLock))
+	}
+	engineRepo := newTestRepo(t, "figure-player-engine-self")
+	mustWrite(t, filepath.Join(engineRepo, filepath.FromSlash(figureassets.BundleScriptFile)), "// bundler\n")
+	loaderData, err := figureassets.ReadPlayer("player/loader.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(engineRepo, "tools", "figures", "player", "loader.js"), string(loaderData))
+	if _, err := Adopt(t.Context(), goldenAdoptOptions(t, engineRepo)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(engineRepo, filepath.FromSlash(figureassets.PlayerLockFile))); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("engine repository wrote player.lock.json: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(engineRepo, "tools", "figures", "player", "loader.js")); err != nil {
+		t.Fatalf("engine repository deleted its own player/loader.js: %v", err)
 	}
 }
 
-func migrateFigurePlayer(t *testing.T, name string, loader []byte, ignored bool) (string, *AdoptReport) {
+func migrateFigurePlayer(t *testing.T, name, subDir string, loader []byte, ignored bool) (string, *AdoptReport) {
 	t.Helper()
 	root := newTestRepo(t, "figure-player-migration-"+name)
 	opts := goldenAdoptOptions(t, root)
@@ -162,18 +198,15 @@ func migrateFigurePlayer(t *testing.T, name string, loader []byte, ignored bool)
 		t.Fatal(err)
 	}
 	for _, asset := range []string{"loader.js", "player.js", "THIRD-PARTY-LICENSES.txt"} {
-		if err := os.Remove(filepath.Join(root, filepath.FromSlash(figureassets.PlayerDirectory+"/"+asset))); err != nil {
-			t.Fatal(err)
-		}
 		data := loader
 		if asset != "loader.js" {
 			var err error
-			data, err = figureassets.Read("player/" + asset)
+			data, err = figureassets.ReadPlayer("player/" + asset)
 			if err != nil {
 				t.Fatal(err)
 			}
 		}
-		mustWrite(t, filepath.Join(root, "tools", "figures", "dist", asset), string(data))
+		mustWrite(t, filepath.Join(root, "tools", "figures", subDir, asset), string(data))
 	}
 	if ignored {
 		mustWrite(t, filepath.Join(root, ".gitignore"), "dist/\n")
@@ -187,24 +220,27 @@ func migrateFigurePlayer(t *testing.T, name string, loader []byte, ignored bool)
 
 func assertMovedFigurePlayer(t *testing.T, root string, report *AdoptReport) {
 	t.Helper()
-	for _, name := range []string{"loader.js", "player.js", "THIRD-PARTY-LICENSES.txt"} {
-		if _, err := os.Stat(filepath.Join(root, "tools", "figures", "dist", name)); !errors.Is(err, fs.ErrNotExist) {
-			t.Fatalf("retired %s remains: %v", name, err)
+	for _, subDir := range []string{"dist", "player"} {
+		for _, name := range []string{"loader.js", "player.js", "THIRD-PARTY-LICENSES.txt"} {
+			if _, err := os.Stat(filepath.Join(root, "tools", "figures", subDir, name)); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("retired %s/%s remains: %v", subDir, name, err)
+			}
 		}
-		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(figureassets.PlayerDirectory+"/"+name))); err != nil {
-			t.Fatalf("current %s missing: %v", name, err)
+		if _, err := os.Stat(filepath.Join(root, "tools", "figures", subDir)); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("empty retired %s directory remains: %v", subDir, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(root, "tools", "figures", "dist")); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("empty retired directory remains: %v", err)
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(figureassets.PlayerLockFile))); err != nil {
+		t.Fatalf("player.lock.json missing: %v", err)
 	}
 	if len(report.Errors) != 0 {
-		t.Fatalf("dist/ ignored the new player: %v", report.Errors)
+		t.Fatalf("adoption reported errors: %v", report.Errors)
 	}
 }
 
 // TestFigurePlayerFreshPlanChangesOnlyDirectory holds the no-ignore fresh plan against the
-// origin/main plan: every figure path remains, except dist/ maps to player/.
+// origin/main plan: every figure path remains, except the three bundle files are replaced by
+// tools/figures/player.lock.json.
 func TestFigurePlayerFreshPlanChangesOnlyDirectory(t *testing.T) {
 	root := newTestRepo(t, "figure-player-fresh-plan")
 	if _, err := os.Stat(filepath.Join(root, ".gitignore")); !errors.Is(err, fs.ErrNotExist) {
@@ -217,11 +253,18 @@ func TestFigurePlayerFreshPlanChangesOnlyDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := figurePaths(report.CreatedFiles)
-	want := strings.Fields(strings.NewReplacer("/dist/", "/player/").Replace(originMainFigurePlayerPlan))
+	var want []string
+	for _, p := range strings.Fields(originMainFigurePlayerPlan) {
+		if strings.HasPrefix(p, "tools/figures/dist/") {
+			continue
+		}
+		want = append(want, p)
+	}
+	want = append(want, figureassets.PlayerLockFile)
 	slices.Sort(got)
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
-		t.Fatalf("fresh figure plan = %v, want origin/main paths with only dist -> player mapped: %v", got, want)
+		t.Fatalf("fresh figure plan = %v, want %v", got, want)
 	}
 }
 
@@ -245,7 +288,7 @@ func TestFigurePlayerDisabledFacetLeavesNoPath(t *testing.T) {
 func movedFigurePlayerPaths(report *AdoptReport) []string {
 	paths := make([]string, 0, 3)
 	for _, detail := range report.ActionDetails {
-		if detail.Action == actionRemove && strings.HasPrefix(detail.Path, "tools/figures/dist/") {
+		if detail.Action == actionRemove && (strings.HasPrefix(detail.Path, "tools/figures/dist/") || strings.HasPrefix(detail.Path, "tools/figures/player/")) {
 			paths = append(paths, detail.Path)
 		}
 	}

@@ -34,7 +34,7 @@ const (
 	// own runtimes.
 	PlayerDirectory = Directory + "/player"
 	// MaxAssets bounds all asset iteration: the inventory's exact size.
-	MaxAssets = 19
+	MaxAssets = 16
 	// SpecDirectory and OutputDirectory hold a repository's figure specs and their committed
 	// outputs: SPEC_DIR and OUT_DIR in checks.mjs, which assets_test.go holds to these values.
 	SpecDirectory   = "docs/figures"
@@ -60,7 +60,7 @@ func Attributes() []string {
 }
 
 // assetNames is the inventory in emission order: render and check, the vendored render source,
-// the committed player and the stylesheet, the site generators, then the authoring guide.
+// the stylesheet, the site generators, the ESLint gate config, then the authoring guide.
 var assetNames = [...]string{
 	"core.mjs",
 	"checks.mjs",
@@ -72,9 +72,6 @@ var assetNames = [...]string{
 	"third_party/interfig/upstream/src/svg.ts",
 	"third_party/interfig/upstream/src/geometry.ts",
 	"third_party/interfig/upstream/src/model.ts",
-	"player/loader.js",
-	"player/player.js",
-	"player/THIRD-PARTY-LICENSES.txt",
 	"figures.css",
 	"mkdocs_hook.py",
 	"astro.mjs",
@@ -83,19 +80,35 @@ var assetNames = [...]string{
 	"README.md",
 }
 
-// priorPlayerDigests records the three bundle texts releases wrote under dist before #1356.
-// Adoption removes only these unedited files after it has installed PlayerDirectory; any other
-// dist file belongs to the adopter and is kept. Keys are legacy paths, values are canonical
-// text digests, so CRLF checkouts remain recognisable through util.LookupCanonicalText.
+// priorPlayerDigests records the bundle texts releases wrote under dist before #1356 and under
+// player before ADR-0019 retired the committed adopter bundle. Adoption removes only these
+// unedited files; any other file belongs to the adopter and is kept. Keys are legacy paths,
+// values are canonical text digests, so CRLF checkouts remain recognisable through
+// util.LookupCanonicalText.
 var priorPlayerDigests = map[string]map[string]string{
 	Directory + "/dist/loader.js": {
+		"9c741950900a175696e47248c2acd258cb1bb8703f84221d18a0a21146d340fb": "figure player before #1356",
 		"abd878ebc16730be4fe5aef0316230f079825a5723b461bcde48c87e770d8b53": "figure player before #1356",
 	},
 	Directory + "/dist/player.js": {
 		"2db2e3bfda05a3776f165530a519b6c4a5def717b4dd4192484f8d86076a4a94": "figure player before #1356",
+		"5e0f6d26e888c954ed2983ffe66d7fe8d68c1069b1489212ad6fc32477a52646": "figure player before #1356",
 	},
 	Directory + "/dist/THIRD-PARTY-LICENSES.txt": {
 		"c2eed2e1431851ddca033c197728664db21fc82d766e465c44f210b949d57a18": "figure player before #1356",
+		"fe156b1f350ef8779088bc9c73f37609d6266d8f2f04a29995d1586b0451cf9d": "figure player before #1356",
+	},
+	Directory + "/player/loader.js": {
+		"9c741950900a175696e47248c2acd258cb1bb8703f84221d18a0a21146d340fb": "figure player before ADR-0019",
+		"abd878ebc16730be4fe5aef0316230f079825a5723b461bcde48c87e770d8b53": "figure player before ADR-0019",
+	},
+	Directory + "/player/player.js": {
+		"2db2e3bfda05a3776f165530a519b6c4a5def717b4dd4192484f8d86076a4a94": "figure player before React 19.3.1 (#1363)",
+		"5e0f6d26e888c954ed2983ffe66d7fe8d68c1069b1489212ad6fc32477a52646": "figure player before ADR-0019",
+	},
+	Directory + "/player/THIRD-PARTY-LICENSES.txt": {
+		"c2eed2e1431851ddca033c197728664db21fc82d766e465c44f210b949d57a18": "figure player licenses before React 19.3.1 (#1363)",
+		"fe156b1f350ef8779088bc9c73f37609d6266d8f2f04a29995d1586b0451cf9d": "figure player licenses before ADR-0019",
 	},
 }
 
@@ -158,16 +171,18 @@ var priorDigests = map[string]string{
 	// mkdocs_hook.py while a docstring line exceeded the 100 columns adopters' flake8 allows.
 	"c9c20ae005cabdf8e10d683f31e2e5159552b8f901995bec855184d22aeaf460": Directory + "/mkdocs_hook.py",
 	"c2cfffd51d9773c3f894eee3a55993786c6c778117ea5dfd0c24ac42d1753044": Directory + "/mkdocs_hook.py",
-	// Player bundle and license inventory before React 19.3.1 (#1363).
-	"2db2e3bfda05a3776f165530a519b6c4a5def717b4dd4192484f8d86076a4a94": Directory + "/player/player.js",
-	"c2eed2e1431851ddca033c197728664db21fc82d766e465c44f210b949d57a18": Directory + "/player/THIRD-PARTY-LICENSES.txt",
 	// README.md before documenting the emitted ESLint configuration for figure assets.
 	"15f75d9348ee456c9d78594307df374ebcc24427fdf435e920a54c4e5461cbfa": Directory + "/README.md",
 	// checks.mjs before the marker pattern was built with new RegExp to parse whole under Semgrep.
 	"42aeec6906cd60ec2b1ee6cdde24ad312f37abca46a6e71a3016e05786f2919a": Directory + "/checks.mjs",
+	// checks.mjs before a site without a released player (ADR-0019) needed no loader.
+	"c52f169e426695c14b2af587bcc253d46d8612a352a2ef77e6f0a84229ce84a9": Directory + "/checks.mjs",
+	// mkdocs_hook.py before ADR-0019 fetched figures-player.tar.gz for adopters without a local
+	// tools/figures/player directory.
+	"40577f164ab56013875f3736d1436ba44a703b1c8b82a73235e7f65ecba8e227": Directory + "/mkdocs_hook.py",
 }
 
-//go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts player/loader.js player/player.js player/THIRD-PARTY-LICENSES.txt figures.css mkdocs_hook.py astro.mjs serve.mjs eslint.figures.mjs README.md
+//go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts figures.css mkdocs_hook.py astro.mjs serve.mjs eslint.figures.mjs README.md
 var assets embed.FS
 
 // FS returns the embedded asset tree. It is read-only; Read is the bounded accessor.

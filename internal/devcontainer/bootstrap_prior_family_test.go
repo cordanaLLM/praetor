@@ -7,12 +7,14 @@ package devcontainer
 import (
 	"bytes"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/managedasset"
+	figureassets "github.com/cordanaLLM/praetor/tools/figures"
 )
 
 func findFigureFamily(t *testing.T) managedasset.Family {
@@ -80,12 +82,14 @@ func figurePreMoveFixtureFiles(t *testing.T) []bootstrapSourceFile {
 		if err != nil {
 			t.Fatalf("read %s: %v", assetRel, err)
 		}
-		repoPath := figureFamily.AssetPath(assetRel)
-		if strings.HasPrefix(assetRel, "player/") {
-			distRel := "dist/" + strings.TrimPrefix(assetRel, "player/")
-			repoPath = figureFamily.Directory + "/" + distRel
+		files = append(files, bootstrapSourceFile{Name: figureFamily.AssetPath(assetRel), Data: data})
+	}
+	for _, playerRel := range figureassets.PlayerNames() {
+		data, err := figureassets.ReadPlayer(playerRel)
+		if err != nil {
+			t.Fatalf("read player %s: %v", playerRel, err)
 		}
-		files = append(files, bootstrapSourceFile{Name: repoPath, Data: data})
+		files = append(files, bootstrapSourceFile{Name: figureFamily.Directory + "/dist/" + path.Base(playerRel), Data: data})
 	}
 	return files
 }

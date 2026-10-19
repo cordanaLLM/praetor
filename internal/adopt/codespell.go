@@ -401,9 +401,6 @@ func reconcileCodespell(ctx context.Context, s *adoptSession) error {
 			}
 		}
 	}
-	if enabled, err := documentationEnabledForSession(s); err == nil && enabled {
-		maybeProposeCodespellExceptions(s, cfg.RelPath, manifestExceptions, today)
-	}
 	return nil
 }
 
@@ -477,39 +474,6 @@ func hasNormalizedSkip(skips []string, target string) bool {
 		}
 	}
 	return false
-}
-
-func maybeProposeCodespellExceptions(s *adoptSession, relConfig string, exceptions []config.Exception, today time.Time) {
-	live := make(map[string]bool)
-	for _, e := range config.ExceptionsFor(exceptions, config.ExceptionRuleCodespell) {
-		if !e.Expired(today) {
-			clean := normalizeCodespellPath(e.Path)
-			live[clean] = true
-		}
-	}
-	const playerPath = "tools/figures/player/player.js"
-	const loaderPath = "tools/figures/player/loader.js"
-	if live[playerPath] && live[loaderPath] {
-		return
-	}
-	todayStr := today.Format("2006-01-02")
-	expiresStr := today.AddDate(0, 0, 10).Format("2006-01-02")
-	proposed := fmt.Sprintf("codespell config detected (%s); to exempt minified figure player bundles, declare in .standards.yaml:\n"+
-		"exceptions:\n"+
-		"  - rule: codespell\n"+
-		"    path: %s\n"+
-		"    category: C\n"+
-		"    reason: minified third-party interfig bundle\n"+
-		"    entered: %s\n"+
-		"    expires: %s\n"+
-		"  - rule: codespell\n"+
-		"    path: %s\n"+
-		"    category: C\n"+
-		"    reason: minified third-party interfig bundle\n"+
-		"    entered: %s\n"+
-		"    expires: %s", relConfig, playerPath, todayStr, expiresStr, loaderPath, todayStr, expiresStr)
-	fmt.Println(proposed)
-	s.report.addWarning("%s", proposed)
 }
 
 // AuditCodespell verifies that codespell skips contain only authorized engine-emitted files.

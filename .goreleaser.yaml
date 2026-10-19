@@ -7,6 +7,10 @@ project_name: standards
 before:
   hooks:
     - go mod tidy
+    # The figure player archive adopters' documentation builds fetch (docs/adr/0019): the one
+    # deterministic packer, so the bytes match the digest the engine writes into an adopter's
+    # tools/figures/player.lock.json. checksum and release below carry it like an archive.
+    - go run ./cmd/standardsctl figures pack --out .release-extra/figures-player.tar.gz
 
 builds:
   # The binary ships as praetorctl because that is the name every governed repository
@@ -181,6 +185,9 @@ docker_signs:
 
 checksum:
   name_template: "checksums.txt"
+  # The signed checksums bundle covers the figure player archive too.
+  extra_files:
+    - glob: ./.release-extra/figures-player.tar.gz
 
 # The release stays a draft until .github/workflows/release-binaries.yml has attached the
 # signed provenance and verified both bundles; that job then publishes it. Publishing here
@@ -189,6 +196,8 @@ checksum:
 release:
   draft: true
   replace_existing_draft: true
+  extra_files:
+    - glob: ./.release-extra/figures-player.tar.gz
 
 snapshot:
   version_template: "{{ incpatch .Version }}-snapshot"

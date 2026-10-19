@@ -126,6 +126,12 @@ jobs:
             --bundle dist/checksums.txt.sigstore.json \
             dist/checksums.txt
 
+      # GoReleaser packed, checksummed and uploaded the figure player archive (.goreleaser.yaml
+      # before.hooks, checksum and release extra_files); the provenance steps read every
+      # checksummed file from dist/, so it is copied there.
+      - name: Stage The Figure Player Archive For Provenance
+        run: cp .release-extra/figures-player.tar.gz dist/
+
       - name: Generate SLSA Provenance Over Every Checksummed File
         run: |
           go run ./cmd/standardsctl provenance \
