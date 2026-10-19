@@ -399,6 +399,9 @@ A subagent launch brief has no fallback. Text without a task label resolves to
 `invoke_agent` or AGY `invoke_subagent` brief without a `task:` field is denied, and so is a
 label the routing vocabulary does not declare. The hook resolves the register from that
 label ([subagent text register gate](agent-hooks.md#subagent-text-register-gate)).
+The same label can route a Claude dispatch to another lane: when `routing.yaml` lists it
+under `offload`, the hook asks the operator's lane picker first, from the same routing snapshot
+([routing implementation briefs off the Claude lane](agent-hooks.md#routing-implementation-briefs-off-the-claude-lane)).
 A brief may additionally specify `readonly: true` (or `read-only: true`) to request the
 canonical read-only context projection (`AGENTS.readonly.md`), which strips mutating
 turn-end instructions and ledger mutating commands. How each client delivers it, and that
