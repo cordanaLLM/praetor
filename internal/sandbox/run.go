@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -30,12 +31,14 @@ func (e *UnavailableError) Unwrap() error { return e.Cause }
 
 func (e *UnavailableError) Is(target error) bool { return target == ErrUnavailable }
 
-// Runner's zero value uses the host OS, PATH lookup and a real user-manager
-// probe. Injection supports deterministic failure tests without executing agents.
+// Runner's zero value uses the host OS, PATH lookup, a user-manager probe and a
+// bubblewrap namespace probe. Injection supports deterministic failure tests
+// without executing agents.
 type Runner struct {
 	GOOS             string
 	Lookup           func(string) (string, error)
 	CheckUserManager func(context.Context) error
+	ProbeBwrap       func(context.Context) error
 }
 
 // Command validates the workspace and runtime before returning a contained argv.
@@ -68,7 +71,52 @@ func (r Runner) Command(ctx context.Context, spec Spec) (Invocation, error) {
 	if err := check(ctx); err != nil {
 		return Invocation{}, &UnavailableError{Facility: "systemd user manager", Cause: err}
 	}
+	probe := r.ProbeBwrap
+	if probe == nil {
+		probe = func(ctx context.Context) error {
+			return r.probeBwrap(ctx, binaries.Bwrap)
+		}
+	}
+	if err := probe(ctx); err != nil {
+		return Invocation{}, &UnavailableError{Facility: "bwrap", Cause: err}
+	}
 	return invocation, nil
+}
+
+const maxExecutionStderrBytes = 4096
+
+type tailWriter struct {
+	limit int
+	buf   []byte
+}
+
+func (w *tailWriter) Write(p []byte) (int, error) {
+	if w.limit <= 0 {
+		return len(p), nil
+	}
+	if len(p) >= w.limit {
+		w.buf = append(w.buf[:0], p[len(p)-w.limit:]...)
+		return len(p), nil
+	}
+	overflow := len(w.buf) + len(p) - w.limit
+	if overflow > 0 {
+		copy(w.buf, w.buf[overflow:])
+		w.buf = w.buf[:len(w.buf)-overflow]
+	}
+	w.buf = append(w.buf, p...)
+	return len(p), nil
+}
+
+func (w *tailWriter) String() string {
+	return string(w.buf)
+}
+
+func executionError(err error, stderr string) error {
+	diagnostic := strings.TrimSpace(stderr)
+	if diagnostic != "" {
+		return fmt.Errorf("sandbox execution: %w: %s", err, diagnostic)
+	}
+	return fmt.Errorf("sandbox execution: %w", err)
 }
 
 // Run executes only Command's sandbox invocation through the audited exec boundary.
@@ -87,8 +135,13 @@ func (r Runner) Run(ctx context.Context, spec Spec, stdin io.Reader, stdout, std
 	if err != nil {
 		return fmt.Errorf("sandbox manager environment: %w", err)
 	}
-	if err := util.RunCommandPassthrough(ctx, "", invocation.Path, stdin, stdout, stderr, invocation.Args...); err != nil {
-		return fmt.Errorf("sandbox execution: %w", err)
+	tail := &tailWriter{limit: maxExecutionStderrBytes}
+	combinedStderr := io.Writer(tail)
+	if stderr != nil {
+		combinedStderr = io.MultiWriter(stderr, tail)
+	}
+	if err := util.RunCommandPassthrough(ctx, "", invocation.Path, stdin, stdout, combinedStderr, invocation.Args...); err != nil {
+		return executionError(err, tail.String())
 	}
 	return nil
 }
@@ -149,6 +202,29 @@ func (r Runner) checkManager(ctx context.Context) error {
 	_, err = util.RunCommandBytes(ctx, "", systemctl, 4096, "--user", "show", "--property=Version", "--value")
 	if err != nil {
 		return fmt.Errorf("cannot contact user manager: %w", err)
+	}
+	return nil
+}
+
+func (r Runner) probeBwrap(ctx context.Context, bwrap string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	probeTarget := "/usr/bin/true"
+	if _, err := os.Stat(probeTarget); err != nil {
+		probeTarget = "/bin/true"
+	}
+	result, err := util.RunCommandBytes(ctx, "", bwrap, 4096,
+		"--unshare-all", "--die-with-parent",
+		"--ro-bind", "/usr", "/usr",
+		"--symlink", "usr/bin", "/bin",
+		"--symlink", "usr/lib", "/lib",
+		"--symlink", "usr/lib", "/lib64",
+		"--proc", "/proc",
+		"--dev", "/dev",
+		probeTarget,
+	)
+	if err != nil {
+		return util.CommandDiagnostic(err, result.Stderr)
 	}
 	return nil
 }
