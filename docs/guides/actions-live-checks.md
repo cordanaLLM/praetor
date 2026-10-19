@@ -1,11 +1,12 @@
 # Live Actions checks
 
-`praetorctl audit` judges a repository on its files, and three GitHub facts are not in any file:
-the repository's workflow permissions setting, whether its workflows actually run and pass, and
-the branch protection GitHub enforces on the default branch. When the audit can reach the forge,
-it reads all three and compares them with what the manifest declares. Nothing is written:
-`praetorctl sync --remote` reconciles the branch protection
-([Branch protection](#branch-protection)) and neither Actions setting yet.
+`praetorctl audit` judges a repository on its files, and four GitHub facts are not in any file:
+the repository's workflow permissions setting, whether its workflows actually run and pass,
+the repository's visibility, and the branch protection GitHub enforces on the default branch.
+When the audit can reach the forge, it reads all four and compares them with what the manifest
+declares. Nothing is written: `praetorctl sync --remote` reconciles the branch protection
+([Branch protection](#branch-protection)) and repository metadata, while repository visibility
+stays the operator's decision.
 
 ## Quick start
 
@@ -25,10 +26,11 @@ token available:
 praetorctl audit
 ```
 
-The last lines of the audit report the three checks:
+The last lines of the audit report the four checks:
 
 ```text
 [PASS] Actions workflow permissions compared with the forge: live workflow permissions match the declaration.
+[PASS] Repository visibility compared with the forge: GitHub reports public.
 [PASS] Workflow runs on main read from the forge: 12 workflows checked, none failing or never run (adopt.yml, ci.yml, ...).
 [PASS] Live branch protection of main compared with the forge: GitHub enforces every declared property (protected by ruleset "praetor-main-protection" #7).
 ```
@@ -100,6 +102,25 @@ A manifest without `overrides.actions` is not failed, and the audit does not ask
 about it. A declared block must set `default_workflow_permissions` to `read` or `write`; any other
 value is a manifest error (`internal/config/actions_policy.go`,
 `TestActionsPolicy_Negative_MalformedDeclarationsFail`).
+
+## Repository visibility
+
+With `repository.visibility` declared in `.standards.yaml`, the audit reads the repository object from
+GitHub (`GitHubDriver.RepositoryVisibility` in `internal/forge/repo_metadata.go`) and compares it with
+the declared value (`forge.VisibilityDrift`). Drift fails the audit:
+
+| Outcome | Line |
+| :--- | :--- |
+| Live visibility matches declared | `[PASS] Repository visibility compared with the forge: GitHub reports <visibility>.` |
+| Live visibility differs from declared | `[FAIL] Repository visibility compared with the forge: manifest declares <declared>, GitHub reports <live>; changing visibility is the operator's decision` |
+| No `repository.visibility` declared | `[INFO] Repository visibility not compared with the forge: repository.visibility declares none.` |
+| Refused or unreadable | `[SKIP] Repository visibility not compared with the forge: <reason>` |
+
+A manifest without `repository.visibility` is not failed, and reports as not compared (`TestAuditRepositoryVisibility_Boundary_UndeclaredIsInfo`).
+A case-insensitive match (such as `Public` matching `public`) passes (`TestAuditRepositoryVisibility_Boundary_CaseInsensitivePasses`).
+When declared visibility differs from what GitHub reports, the audit fails (`TestAuditRepositoryVisibility_Negative_DriftFails`).
+`praetorctl sync --remote` reconciles other repository metadata (description, homepage, topics) but never changes repository visibility:
+making a repository public or private remains the operator's decision.
 
 ## Workflow runs
 
