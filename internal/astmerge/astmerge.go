@@ -246,23 +246,32 @@ func resolve3Way(base, ours, theirs *ParsedAST) (*MergeResult, error) {
 	}, nil
 }
 
+// resolveUncontestedPackage picks the package name when one side matches base or is added without base.
+func resolveUncontestedPackage(base, ours, theirs string) (string, bool) {
+	if base == "" {
+		if ours != "" && theirs == "" {
+			return ours, true
+		}
+		if theirs != "" && ours == "" {
+			return theirs, true
+		}
+		return "", false
+	}
+	if ours == base && theirs != "" {
+		return theirs, true
+	}
+	if theirs == base && ours != "" {
+		return ours, true
+	}
+	return "", false
+}
+
 func resolvePackageName(base, ours, theirs string) (string, *Conflict) {
 	if ours == theirs {
 		return ours, nil
 	}
-	if ours == base && theirs != "" {
-		return theirs, nil
-	}
-	if theirs == base && ours != "" {
-		return ours, nil
-	}
-	if base == "" {
-		if ours != "" && theirs == "" {
-			return ours, nil
-		}
-		if theirs != "" && ours == "" {
-			return theirs, nil
-		}
+	if name, ok := resolveUncontestedPackage(base, ours, theirs); ok {
+		return name, nil
 	}
 
 	return ours, &Conflict{

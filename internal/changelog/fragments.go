@@ -186,6 +186,18 @@ func decodeFragment(raw []byte) (Fragment, error) {
 	return fragment, nil
 }
 
+// parseIssueValueNode validates and extracts the scalar issue value from a YAML node.
+func parseIssueValueNode(value *yaml.Node) (string, bool, error) {
+	switch {
+	case value.Kind == yaml.ScalarNode && (value.Tag == "!!str" || value.Tag == "!!int"):
+		return value.Value, true, nil
+	case value.Kind == yaml.ScalarNode && value.Tag == "!!null":
+		return "", false, errors.New(`issue cannot be empty; quote it, for example issue: "#502" (an unquoted #502 is a YAML comment)`)
+	default:
+		return "", false, fmt.Errorf("invalid issue %q: write digits, optionally prefixed by one #, or a comma-separated list of them", value.Value)
+	}
+}
+
 // fragmentIssueScalar returns the issue value as written and whether the key is present.
 // A quoted string and an unquoted integer both count, so issue: 502 decodes as it did
 // before; an empty value is refused with a hint, because an unquoted #502 is a YAML
@@ -203,15 +215,7 @@ func fragmentIssueScalar(raw []byte) (string, bool, error) {
 		if fields[index].Value != "issue" {
 			continue
 		}
-		value := fields[index+1]
-		switch {
-		case value.Kind == yaml.ScalarNode && (value.Tag == "!!str" || value.Tag == "!!int"):
-			return value.Value, true, nil
-		case value.Kind == yaml.ScalarNode && value.Tag == "!!null":
-			return "", false, errors.New(`issue cannot be empty; quote it, for example issue: "#502" (an unquoted #502 is a YAML comment)`)
-		default:
-			return "", false, fmt.Errorf("invalid issue %q: write digits, optionally prefixed by one #, or a comma-separated list of them", value.Value)
-		}
+		return parseIssueValueNode(fields[index+1])
 	}
 	return "", false, nil
 }

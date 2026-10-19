@@ -29,6 +29,21 @@ func (s *Server) runPublicDogfood(ctx context.Context, args map[string]any) *mcp
 	return mcpTextResult(string(data), mcpTextStructuredJSON)
 }
 
+// parsePublicRepos parses and bounds the public_repos comma-separated argument.
+func parsePublicRepos(args map[string]any) ([]string, error) {
+	repos, err := argString(args, "public_repos")
+	if err != nil {
+		return nil, err
+	}
+	if len(repos) > 32768 {
+		return nil, fmt.Errorf("public_repos exceeds 32768 bytes")
+	}
+	if repos == "" {
+		return nil, nil
+	}
+	return strings.Split(repos, ","), nil
+}
+
 func (s *Server) parsePublicDogfood(args map[string]any) (dogfood.PublicLoopOptions, error) {
 	var opts dogfood.PublicLoopOptions
 	if !s.opts.AllowRemoteBenchmarks {
@@ -49,15 +64,9 @@ func (s *Server) parsePublicDogfood(args map[string]any) (dogfood.PublicLoopOpti
 	if opts.ArtifactDir, err = s.resolveOptionalPath(args, "artifact_dir"); err != nil {
 		return opts, err
 	}
-	repos, err := argString(args, "public_repos")
+	opts.Repositories, err = parsePublicRepos(args)
 	if err != nil {
 		return opts, err
-	}
-	if len(repos) > 32768 {
-		return opts, fmt.Errorf("public_repos exceeds 32768 bytes")
-	}
-	if repos != "" {
-		opts.Repositories = strings.Split(repos, ",")
 	}
 	dryRun, err := argBool(args, "dry_run", true)
 	if err != nil {

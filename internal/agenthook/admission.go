@@ -185,6 +185,20 @@ func skipPrelude(words []string) int {
 	return i
 }
 
+// advanceOptionWord checks for options or terminator and advances the index if a value is consumed.
+func advanceOptionWord(word string, j int, spec wrapperSpec) (newJ int, done bool, isOpt bool) {
+	if word == "--" {
+		return j, true, true
+	}
+	if strings.HasPrefix(word, "-") && len(word) > 1 {
+		if slices.Contains(spec.values, word) {
+			j++
+		}
+		return j, false, true
+	}
+	return j, false, false
+}
+
 // commandAfter returns the index of the command a wrapper at index i runs: past its options,
 // the values they take, assignments and its positional words.
 func commandAfter(words []string, i int, spec wrapperSpec) int {
@@ -192,13 +206,14 @@ func commandAfter(words []string, i int, spec wrapperSpec) int {
 	j := i + 1
 	for ; j < len(words) && j < admissionMaxWords; j++ {
 		word := words[j]
-		switch {
-		case word == "--" && !optionsDone:
-			optionsDone = true
-		case strings.HasPrefix(word, "-") && len(word) > 1 && !optionsDone:
-			if slices.Contains(spec.values, word) {
-				j++
+		if !optionsDone {
+			var isOpt bool
+			j, optionsDone, isOpt = advanceOptionWord(word, j, spec)
+			if isOpt {
+				continue
 			}
+		}
+		switch {
 		case assignmentWord.MatchString(word):
 		case positional > 0:
 			positional--

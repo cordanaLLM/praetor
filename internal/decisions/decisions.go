@@ -131,6 +131,21 @@ func collectExportReport(ctx context.Context, repo string) (report Report, err e
 	return report, nil
 }
 
+// readExportedRecord reads and transforms one ADR entry if it is a valid decision document.
+func readExportedRecord(ctx context.Context, source *os.Root, name string) (*exportedRecord, error) {
+	if name == "README.md" || name == "0000-template.md" {
+		return nil, nil
+	}
+	data, readErr := contextopt.ReadRootSnapshot(ctx, source, name)
+	if readErr != nil {
+		return nil, fmt.Errorf("read %s/%s: %w", adr.RecordDirectory, name, readErr)
+	}
+	if len(data) > MaxRecordBytes {
+		return nil, fmt.Errorf("%s/%s exceeds %d bytes", adr.RecordDirectory, name, MaxRecordBytes)
+	}
+	return &exportedRecord{name: "adr-" + strings.TrimSuffix(name, ".md") + ".md", content: []byte(Transform(string(data)))}, nil
+}
+
 func exportRecords(ctx context.Context, repo, outDir string) (err error) {
 	source, err := contextopt.OpenDirectoryIn(ctx, repo, adr.RecordDirectory)
 	if errors.Is(err, os.ErrNotExist) {
@@ -146,20 +161,17 @@ func exportRecords(ctx context.Context, repo, outDir string) (err error) {
 	}
 	records := make([]exportedRecord, 0, len(names))
 	for i := 0; i < len(names) && i < maxScanEntries; i++ {
-		if names[i] == "README.md" || names[i] == "0000-template.md" {
+		record, readErr := readExportedRecord(ctx, source, names[i])
+		if readErr != nil {
+			return readErr
+		}
+		if record == nil {
 			continue
 		}
 		if len(records) >= MaxRecords {
 			return fmt.Errorf("ADR records exceed %d", MaxRecords)
 		}
-		data, readErr := contextopt.ReadRootSnapshot(ctx, source, names[i])
-		if readErr != nil {
-			return fmt.Errorf("read %s/%s: %w", adr.RecordDirectory, names[i], readErr)
-		}
-		if len(data) > MaxRecordBytes {
-			return fmt.Errorf("%s/%s exceeds %d bytes", adr.RecordDirectory, names[i], MaxRecordBytes)
-		}
-		records = append(records, exportedRecord{name: "adr-" + strings.TrimSuffix(names[i], ".md") + ".md", content: []byte(Transform(string(data)))})
+		records = append(records, *record)
 	}
 	return rebuildCorpus(ctx, outDir, records)
 }

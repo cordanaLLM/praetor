@@ -30,6 +30,25 @@ type Report struct {
 	Findings  []Finding
 }
 
+// loadLedgerRows reads and parses the bug ledger rows, returning nil if the ledger does not exist.
+func loadLedgerRows(ctx context.Context, repoPath string) ([]Row, error) {
+	data, err := readLedger(ctx, repoPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	rows, err := Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, ErrNoRows
+	}
+	return rows, nil
+}
+
 // Audit checks every open row whose location names a Go file and line, and reports the rows
 // whose location no longer resolves.
 //
@@ -42,19 +61,12 @@ func Audit(ctx context.Context, repoPath string) (*Report, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	data, err := readLedger(ctx, repoPath)
-	if errors.Is(err, os.ErrNotExist) {
+	rows, err := loadLedgerRows(ctx, repoPath)
+	if err != nil {
+		return nil, err
+	}
+	if rows == nil {
 		return &Report{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	rows, err := Parse(data)
-	if err != nil {
-		return nil, err
-	}
-	if len(rows) == 0 {
-		return nil, ErrNoRows
 	}
 	report := &Report{Rows: len(rows)}
 	for i := 0; i < len(rows) && i < maxLedgerRows; i++ {

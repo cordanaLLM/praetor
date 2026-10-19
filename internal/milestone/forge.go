@@ -120,27 +120,36 @@ func fetchRemoteMilestones(ctx context.Context, owner, repo, tok, endpoint strin
 		owner, repo, maxMilestonePages)
 }
 
-// milestoneRequest performs one bounded forge request: it sends payload as JSON when it
-// is non-nil, rejects a non-2xx status with a bounded excerpt of the error body, and
-// decodes at most maxAPIResponseBytes of the response into out. action names the
-// operation in every error.
-func milestoneRequest(ctx context.Context, client *http.Client, method, url, tok string, payload, out any, action string) (err error) {
+// buildMilestoneRequest constructs an HTTP request with authentication and optional JSON body.
+func buildMilestoneRequest(ctx context.Context, method, url, tok string, payload any, action string) (*http.Request, error) {
 	var body io.Reader
 	if payload != nil {
 		encoded, encodeErr := json.Marshal(payload)
 		if encodeErr != nil {
-			return fmt.Errorf("%s: encode payload: %w", action, encodeErr)
+			return nil, fmt.Errorf("%s: encode payload: %w", action, encodeErr)
 		}
 		body = bytes.NewReader(encoded)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
-		return fmt.Errorf("%s: build request: %w", action, err)
+		return nil, fmt.Errorf("%s: build request: %w", action, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	return req, nil
+}
+
+// milestoneRequest performs one bounded forge request: it sends payload as JSON when it
+// is non-nil, rejects a non-2xx status with a bounded excerpt of the error body, and
+// decodes at most maxAPIResponseBytes of the response into out. action names the
+// operation in every error.
+func milestoneRequest(ctx context.Context, client *http.Client, method, url, tok string, payload, out any, action string) (err error) {
+	req, err := buildMilestoneRequest(ctx, method, url, tok, payload, action)
+	if err != nil {
+		return err
 	}
 
 	resp, err := client.Do(req)

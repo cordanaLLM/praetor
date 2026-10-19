@@ -279,12 +279,20 @@ func validStatus(s string) bool {
 	return map[string]bool{"proposed": true, "accepted": true, "planned": true, "implemented": true, "declined": true}[s]
 }
 
-func validateLedger(l *Ledger) error {
+// validateLedgerHeader validates schema version, revision, policy, and configured collection bounds.
+func validateLedgerHeader(l *Ledger) error {
 	if l.SchemaVersion != SchemaVersion || l.Revision == 0 || validatePolicy(l.Policy) != nil || l.CurrentBallots == nil {
 		return errors.New("invalid wish ledger schema, revision or policy")
 	}
 	if len(l.Wishes) > l.Policy.MaxWishes || len(l.Polls) > l.Policy.MaxPolls || len(l.CurrentBallots) > l.Policy.MaxVoters {
 		return errors.New("wish ledger exceeds configured limits")
+	}
+	return nil
+}
+
+func validateLedger(l *Ledger) error {
+	if err := validateLedgerHeader(l); err != nil {
+		return err
 	}
 	wishes, err := validateWishes(l.Wishes)
 	if err != nil {
