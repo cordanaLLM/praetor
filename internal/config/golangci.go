@@ -86,15 +86,19 @@ type DepguardRuleConfig struct {
 // UnmarshalYAML decodes DepguardRuleConfig supporting both list and mapping forms of deny.
 func (r *DepguardRuleConfig) UnmarshalYAML(value *yaml.Node) error {
 	var raw struct {
-		ListMode string    `yaml:"list-mode"`
-		Files    []string  `yaml:"files"`
-		Allow    []string  `yaml:"allow"`
-		Deny     yaml.Node `yaml:"deny"`
+		ListMode      string    `yaml:"list-mode"`
+		ListModeSnake string    `yaml:"list_mode"`
+		Files         []string  `yaml:"files"`
+		Allow         []string  `yaml:"allow"`
+		Deny          yaml.Node `yaml:"deny"`
 	}
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
 	r.ListMode = raw.ListMode
+	if r.ListMode == "" {
+		r.ListMode = raw.ListModeSnake
+	}
 	r.Files = raw.Files
 	r.Allow = raw.Allow
 	r.Deny = decodeDenyNode(&raw.Deny)
@@ -144,9 +148,29 @@ func decodeDenyMapping(items []*yaml.Node) []DepguardDenyEntry {
 	return entries
 }
 
-// DepguardSettings holds rules declared in .golangci.yml.
+// DepguardSettings holds rules declared in .golangci.yml and whether depguard is enabled.
 type DepguardSettings struct {
-	Rules map[string]DepguardRuleConfig `yaml:"rules"`
+	Enabled bool                          `yaml:"-"`
+	Rules   map[string]DepguardRuleConfig `yaml:"rules"`
+}
+
+// IsDepguardEnabled determines whether depguard is enabled based on linters.enable,
+// linters.default, and linters.disable.
+func IsDepguardEnabled(enable []string, defaultMode string, disable []string) bool {
+	for _, e := range enable {
+		if strings.EqualFold(strings.TrimSpace(e), "depguard") {
+			return true
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(defaultMode), "all") {
+		for _, d := range disable {
+			if strings.EqualFold(strings.TrimSpace(d), "depguard") {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // LoadDepguardSettings reads .golangci.yml and returns the parsed depguard settings.
@@ -169,9 +193,11 @@ func LoadDepguardSettings(ctx context.Context, path string) (*DepguardSettings, 
 		return nil, fmt.Errorf("parse golangci config %s: %w", path, err)
 	}
 
-	settings := &DepguardSettings{Rules: make(map[string]DepguardRuleConfig)}
 	var raw struct {
 		Linters struct {
+			Default  string   `yaml:"default"`
+			Enable   []string `yaml:"enable"`
+			Disable  []string `yaml:"disable"`
 			Settings struct {
 				Depguard DepguardSettings `yaml:"depguard"`
 			} `yaml:"settings"`
@@ -181,7 +207,13 @@ func LoadDepguardSettings(ctx context.Context, path string) (*DepguardSettings, 
 		} `yaml:"linters-settings"`
 	}
 	if err := root.Decode(&raw); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode golangci config %s: %w", path, err)
+	}
+
+	enabled := IsDepguardEnabled(raw.Linters.Enable, raw.Linters.Default, raw.Linters.Disable)
+	settings := &DepguardSettings{
+		Enabled: enabled,
+		Rules:   make(map[string]DepguardRuleConfig),
 	}
 	for k, v := range raw.Linters.Settings.Depguard.Rules {
 		settings.Rules[k] = v
