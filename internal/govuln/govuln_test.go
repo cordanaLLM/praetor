@@ -183,9 +183,10 @@ type modfileCase struct {
 	want  []string
 }
 
-func modfileRewriteCases(root string) []modfileCase {
+// modfileRewriteCases takes root and absPath from t.TempDir: a path built from the
+// separator alone carries no volume on Windows, where filepath.IsAbs reads it as relative.
+func modfileRewriteCases(root, absPath string) []modfileCase {
 	expected := filepath.Join(root, "tools", "go", "go.mod")
-	absPath := filepath.Join(string(filepath.Separator), "abs", "tools", "go.mod")
 	return []modfileCase{
 		{"modfile equals form", []string{"go", "tool", "-modfile=tools/go/go.mod", "govulncheck"}, []string{"go", "tool", "-modfile=" + expected, "govulncheck"}},
 		{"modfile two-word form", []string{"go", "tool", "-modfile", "tools/go/go.mod", "govulncheck"}, []string{"go", "tool", "-modfile", expected, "govulncheck"}},
@@ -202,8 +203,9 @@ func modfileRewriteCases(root string) []modfileCase {
 // Positive: resolveScannerModfile resolves relative -modfile flags against the repository root,
 // preserving absolute paths, non-modfile words, and incomplete flags.
 func TestGovuln_Positive_ScannerModfileRewrite(t *testing.T) {
-	root := filepath.Join(string(filepath.Separator), "repo")
-	for _, tc := range modfileRewriteCases(root) {
+	root := t.TempDir()
+	absPath := filepath.Join(t.TempDir(), "abs", "tools", "go.mod")
+	for _, tc := range modfileRewriteCases(root, absPath) {
 		t.Run(tc.name, func(t *testing.T) {
 			got := resolveScannerModfile(tc.words, root)
 			if !slices.Equal(got, tc.want) {
