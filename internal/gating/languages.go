@@ -15,9 +15,10 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// The languages whose own toolchain the prefetch, security and test stages run. A language
-// counts as present when its marker is at the repository root: go.mod for Go, Cargo.lock for
-// Cargo, which is also what its commands hold the build to (--locked).
+// The languages whose own toolchain the prefetch, security and test stages run. Go counts as
+// present when git tracks a go.mod the gate discovers anywhere in the repository (goModules,
+// apiassets.TrackedModuleFiles), the root's own or only nested ones; Cargo when a Cargo.lock is
+// at the repository root, which is also what its commands hold the build to (--locked).
 const (
 	languageGo    = "go"
 	languageCargo = "cargo"
@@ -36,10 +37,11 @@ type RunOptions struct {
 	// DryRun runs only the read-only stages and mints no receipt.
 	DryRun bool
 	// AdmitUnsupported admits, without a receipt, a run in which no toolchain stage ran because
-	// the repository root holds neither a go.mod nor a Cargo.lock: the receipt stage is recorded
-	// as not applicable and names the languages the gate runs no toolchain for, instead of
-	// rejecting the run. A root holding either marker is refused as before when nothing ran for
-	// it, so a Go or Cargo repository whose toolchain stages could not run still fails. The
+	// git tracks no go.mod the gate discovers and the root holds no Cargo.lock
+	// (holdsToolchainMarker): the receipt stage is recorded as not applicable and names the
+	// languages the gate runs no toolchain for, instead of rejecting the run. A repository
+	// holding either marker is refused as before when nothing ran for it, so a Go or Cargo
+	// repository whose toolchain stages could not run still fails. The
 	// pre-push hook adoption renders passes it, so a repository in a language the gate has no
 	// runner for (Meson, CMake, npm, Python) is not refused on every push (#648); a caller that
 	// needs a receipt, such as CI or the gatekeeper, leaves it unset.
