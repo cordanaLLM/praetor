@@ -101,7 +101,7 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
 `,
-		wantProblem: problemNoToken,
+		wantProblem: problemUnset,
 	},
 	{
 		name: "token missing in with map",
@@ -114,7 +114,7 @@ jobs:
         with:
           release-type: node
 `,
-		wantProblem: problemNoToken,
+		wantProblem: problemUnset,
 	},
 	{
 		name: "token is github.token",
@@ -127,7 +127,7 @@ jobs:
         with:
           token: ${{ github.token }}
 `,
-		wantProblem: problemWorkflowToken,
+		wantProblem: problemWorkflowGrant,
 	},
 	{
 		name: "token is secrets.GITHUB_TOKEN",
@@ -140,7 +140,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 `,
-		wantProblem: problemWorkflowToken,
+		wantProblem: problemWorkflowGrant,
 	},
 	{
 		name: "token from a step that is not create-github-app-token (checkout)",
@@ -155,7 +155,7 @@ jobs:
         with:
           token: ${{ steps.checkout-step.outputs.token }}
 `,
-		wantProblem: problemNotAppToken,
+		wantProblem: problemNotAppStep,
 	},
 	{
 		name: "token from a later step",
@@ -247,7 +247,7 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
 `,
-		wantProblem: problemKeyNotSecret,
+		wantProblem: problemKeyNotStored,
 	},
 	{
 		name: "private-key not a secrets expression env",
@@ -265,7 +265,7 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
 `,
-		wantProblem: problemKeyNotSecret,
+		wantProblem: problemKeyNotStored,
 	},
 	{
 		name: problemNoAppID,
@@ -450,7 +450,7 @@ jobs:
 	if len(findings) != 1 {
 		t.Fatalf("findings count = %d; want 1", len(findings))
 	}
-	if !strings.Contains(findings[0].Problem, problemNoToken) {
-		t.Errorf("finding Problem = %q; want %q", findings[0].Problem, problemNoToken)
+	if !strings.Contains(findings[0].Problem, problemUnset) {
+		t.Errorf("finding Problem = %q; want %q", findings[0].Problem, problemUnset)
 	}
 }

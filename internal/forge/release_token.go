@@ -17,14 +17,14 @@ const releaseTokensTimeout = 30 * time.Second
 
 // The findings of a release-please step, one per way its token can fail to start the release pull request's checks.
 const (
-	problemNoToken       = "sets no token, so release-please uses the workflow token, which starts no checks on its release pull request"
-	problemWorkflowToken = "takes the workflow token (github.token or secrets.GITHUB_TOKEN), which starts no checks on its release pull request"
+	problemUnset         = "sets no token, so release-please uses the workflow token, which starts no checks on its release pull request"
+	problemWorkflowGrant = "takes the workflow token (github.token or secrets.GITHUB_TOKEN), which starts no checks on its release pull request"
 	problemFallback      = "falls back with || to another token; a missing app token must fail the run"
-	problemNotStepToken  = "takes its token from no steps.<id>.outputs.token of an actions/create-github-app-token step"
+	problemNotStepOutput = "takes its token from no steps.<id>.outputs.token of an actions/create-github-app-token step"
 	problemNoEarlierStep = "names a token step that no earlier step of the job is"
-	problemNotAppToken   = "names a token step that is not actions/create-github-app-token"
+	problemNotAppStep    = "names a token step that is not actions/create-github-app-token"
 	problemSkippable     = "its token step has if: or continue-on-error, so a skipped or forgiven step leaves the token empty"
-	problemKeyNotSecret  = "its token step takes private-key from no single ${{ secrets.NAME }}, so a missing key would not stop the run"
+	problemKeyNotStored  = "its token step takes private-key from no single ${{ secrets.NAME }}, so a missing key would not stop the run"
 	problemNoAppID       = "its token step sets neither client-id nor app-id"
 )
 
@@ -195,7 +195,7 @@ func validateTokenExpression(with map[string]any) (string, string) {
 	}
 	body, ok := expressionBody(token)
 	if !ok {
-		return "", problemNotStepToken
+		return "", problemNotStepOutput
 	}
 	return stepOutputID(body)
 }
@@ -206,21 +206,21 @@ func tokenText(with map[string]any) (string, string) {
 	token := strings.TrimSpace(fmt.Sprint(raw))
 	switch {
 	case !ok || raw == nil || token == "":
-		return "", problemNoToken
+		return "", problemUnset
 	case strings.Contains(token, "||"):
 		return "", problemFallback
 	case strings.Contains(token, "github.token") || strings.Contains(token, "GITHUB_TOKEN"):
-		return "", problemWorkflowToken
+		return "", problemWorkflowGrant
 	}
 	return token, ""
 }
 
-// stepOutputID is the step id of an expression body steps.<id>.outputs.token, or problemNotStepToken.
+// stepOutputID is the step id of an expression body steps.<id>.outputs.token, or problemNotStepOutput.
 func stepOutputID(body string) (string, string) {
 	stepID, isStep := strings.CutPrefix(body, "steps.")
 	stepID, isOutput := strings.CutSuffix(stepID, ".outputs.token")
 	if !isStep || !isOutput || stepID == "" || strings.ContainsAny(stepID, " \t\r\n.|&()[]'\"") {
-		return "", problemNotStepToken
+		return "", problemNotStepOutput
 	}
 	return stepID, ""
 }
@@ -230,7 +230,7 @@ func findAppTokenStep(steps []ghworkflow.Step, currentIdx int, stepID string) (*
 	for k := 0; k < currentIdx && k < len(steps); k++ {
 		if steps[k].ID == stepID {
 			if !isAppTokenStep(steps[k].Uses) {
-				return nil, fmt.Sprintf("%s (%s runs %s)", problemNotAppToken, stepID, strings.TrimSpace(steps[k].Uses))
+				return nil, fmt.Sprintf("%s (%s runs %s)", problemNotAppStep, stepID, strings.TrimSpace(steps[k].Uses))
 			}
 			return &steps[k], ""
 		}
@@ -245,7 +245,7 @@ func validateAppTokenStep(step *ghworkflow.Step) []string {
 		problems = append(problems, problemSkippable)
 	}
 	if !isValidSecretsExpression(step.With) {
-		problems = append(problems, problemKeyNotSecret)
+		problems = append(problems, problemKeyNotStored)
 	}
 	if !hasAppOrClientID(step.With) {
 		problems = append(problems, problemNoAppID)
