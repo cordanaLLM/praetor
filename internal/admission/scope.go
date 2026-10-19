@@ -44,14 +44,18 @@ func (l Limits) Check() error {
 	return nil
 }
 
-// unitName is the transient scope's name: the label with anything outside [A-Za-z0-9_-]
+// UnitName is the transient scope's name: the label with anything outside [A-Za-z0-9_-]
 // replaced, and the start time, so two steps with one label never share a unit.
-func unitName(label string, now time.Time) string {
+func UnitName(label string, now time.Time) string {
 	safe := unsafeUnit.ReplaceAllString(label, "-")
 	if len(safe) > 48 {
 		safe = safe[:48]
 	}
 	return fmt.Sprintf("admit-%s-%s", safe, now.Format("20060102-150405.000000"))
+}
+
+func unitName(label string, now time.Time) string {
+	return UnitName(label, now)
 }
 
 // ScopeArgs is the systemd-run argv that runs argv in its own user scope under l. The scope is

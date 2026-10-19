@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/admission"
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -19,6 +21,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/govuln"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
+	"github.com/cordanaLLM/praetor/internal/sentinel"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/internal/worktree"
 	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
@@ -257,6 +260,46 @@ type stageConfig struct {
 	modules           []goModule
 	modulesDiscovered bool
 	moduleDiscovery   func(context.Context, string) ([]string, error)
+	scopesAvailable   func(context.Context) (bool, string)
+	hostReader        func() (sentinel.HostStats, error)
+	admissionSleep    func(context.Context, time.Duration) error
+	admissionLog      io.Writer
+	admissionPoll     time.Duration
+}
+
+func (c *stageConfig) scopesAvailableFunc() func(context.Context) (bool, string) {
+	if c.scopesAvailable != nil {
+		return c.scopesAvailable
+	}
+	return admission.ScopesAvailable
+}
+
+func (c *stageConfig) hostReaderFunc() func() (sentinel.HostStats, error) {
+	if c.hostReader != nil {
+		return c.hostReader
+	}
+	return admission.HostReader(c.repoDir)
+}
+
+func (c *stageConfig) admissionSleepFunc() func(context.Context, time.Duration) error {
+	if c.admissionSleep != nil {
+		return c.admissionSleep
+	}
+	return admission.SleepContext
+}
+
+func (c *stageConfig) admissionLogWriter() io.Writer {
+	if c.admissionLog != nil {
+		return c.admissionLog
+	}
+	return os.Stderr
+}
+
+func (c *stageConfig) admissionPollDuration() time.Duration {
+	if c.admissionPoll > 0 {
+		return c.admissionPoll
+	}
+	return 5 * time.Second
 }
 
 // newStageConfig builds a stage configuration backed by the real toolchain.
@@ -273,6 +316,11 @@ func newStageConfig(repoDir string, dryRun bool, rep *PipelineReport) *stageConf
 		goarch:          runtime.GOARCH,
 		fetch:           devcontainer.HTTPFetch,
 		moduleDiscovery: apiassets.TrackedModuleFiles,
+		scopesAvailable: admission.ScopesAvailable,
+		hostReader:      admission.HostReader(repoDir),
+		admissionSleep:  admission.SleepContext,
+		admissionLog:    os.Stderr,
+		admissionPoll:   5 * time.Second,
 	}
 }
 
@@ -784,7 +832,18 @@ func runGoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 				"CI runs this leg on Linux with cgo", absent))
 	}
 
-	results, err := runGoModules(ctx, cfg, runGoTestModule)
+	scopeCfg, err := resolveRaceScope(ctx, cfg)
+	if err != nil {
+		return "", err
+	}
+
+	if err := waitRaceAdmission(ctx, cfg); err != nil {
+		return "", err
+	}
+
+	results, err := runGoModules(ctx, cfg, func(mCtx context.Context, mCfg *stageConfig, module goModule) (string, error) {
+		return runGoTestModule(mCtx, mCfg, module, scopeCfg)
+	})
 	if err != nil {
 		return "", err
 	}
@@ -794,7 +853,7 @@ func runGoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 	return moduleResultsMessage(results), nil
 }
 
-func runGoTestModule(ctx context.Context, cfg *stageConfig, module goModule) (string, error) {
+func runGoTestModule(ctx context.Context, cfg *stageConfig, module goModule, scopeCfg raceScopeConfig) (string, error) {
 	budget, err := stageBudget(ctx, cfg.repoDir)
 	if err != nil {
 		return "", err
@@ -802,6 +861,7 @@ func runGoTestModule(ctx context.Context, cfg *stageConfig, module goModule) (st
 	bound := budget.StageBound
 	run := cfg.goToolchain().run
 	note := budget.Note
+	var scopeMsg string
 	err = inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
 		moduleDir := filepath.Join(dir, filepath.Dir(filepath.FromSlash(module.file)))
 		count, listErr := ModulePackageCount(tCtx, run, moduleDir)
@@ -812,7 +872,9 @@ func runGoTestModule(ctx context.Context, cfg *stageConfig, module goModule) (st
 			note = NoPackagesNote + ": race tests not run"
 			return nil
 		}
-		out, testErr := run(tCtx, moduleDir, "go", "test", "-race", "-timeout", bound.String(), "./...")
+		cmdName, cmdArgs, msg := raceTestCommand(module, bound, scopeCfg)
+		scopeMsg = msg
+		out, testErr := run(tCtx, moduleDir, cmdName, cmdArgs...)
 		if testErr == nil {
 			return nil
 		}
@@ -824,6 +886,12 @@ func runGoTestModule(ctx context.Context, cfg *stageConfig, module goModule) (st
 	})
 	if err != nil {
 		return "", err
+	}
+	if note != "" && scopeMsg != "" {
+		return note + "; " + scopeMsg, nil
+	}
+	if scopeMsg != "" {
+		return scopeMsg, nil
 	}
 	return note, nil
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/govuln"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
+	"github.com/cordanaLLM/praetor/internal/sentinel"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -102,6 +103,10 @@ func newTestConfig(t *testing.T, repoDir string, dryRun bool) (*stageConfig, *[]
 				return []string{"go.mod"}, nil
 			}
 			return nil, nil
+		},
+		scopesAvailable: func(context.Context) (bool, string) { return false, "test harness does not start user scopes" },
+		hostReader: func() (sentinel.HostStats, error) {
+			return sentinel.HostStats{RAMTotalBytes: 64 * (1 << 30), RAMFreeBytes: 32 * (1 << 30), SwapMeasured: true, SwapFreeBytes: 32 * (1 << 30)}, nil
 		},
 	}, recorded
 }

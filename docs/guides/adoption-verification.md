@@ -858,10 +858,17 @@ modules`; it is never silently truncated.
 
 Each stage visits modules in discovery order. Prefetch runs `go mod verify` and `go mod download`,
 security runs symbol-level `govulncheck` against the repository-root OpenVEX document and `gosec`,
-and the race stage runs `go test -race ./...` in an isolated worktree for each module. The signed
-stage reason contains one result and elapsed time per module, and a failure names the module
-directory. A root-only repository keeps the existing stage behavior with the root module name
-(`go.mod`) added to the result.
+and the race stage runs `go test -race ./...` in an isolated worktree for each module. Each
+module's race suite runs in its own memory-bounded user scope (`systemd-run --user --scope`) when
+scopes are available, so the out-of-memory daemon reclaims from the step rather than from the
+caller's session. Defaults are `MemoryHigh=16G`, `MemoryMax=20G`, and `MemorySwapMax=4G`,
+customizable via `PRAETOR_GATE_SCOPE_MEMORY_HIGH`, `PRAETOR_GATE_SCOPE_MEMORY_MAX`, and
+`PRAETOR_GATE_SCOPE_SWAP_MAX`. An operator can set `PRAETOR_GATE_SCOPE=off` to run unscoped. On
+platforms where user scopes are unavailable (such as macOS or Windows), the tests run directly and
+the stage message reports `race tests ran unscoped: <reason>`. The signed stage reason contains one
+result and elapsed time per module, and a failure names the module directory. A root-only
+repository keeps the existing stage behavior with the root module name (`go.mod`) added to the
+result.
 
 The same discovery rule is used by the CLI entry points. `praetorctl go vet` runs `go vet ./...`
 once in every tracked module; `praetorctl security govuln` does the corresponding vulnerability
