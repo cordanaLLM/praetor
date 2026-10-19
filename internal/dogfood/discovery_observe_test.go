@@ -73,7 +73,9 @@ func TestObserveCapabilitiesNativeMesonAndGPUExtensions(t *testing.T) {
 	}{
 		"hiss:native":       {"available", 3},
 		"hiss:cuda-headers": {"unsupported", 1},
-		"hiss:apple-native": {"unsupported", 2},
+		// HISS scans Objective-C++ (.mm), so the rule reports the .metal file alone: an available
+		// context never masks an unsupported one.
+		"hiss:apple-native": {"unsupported", 1},
 		"hiss:shaders":      {"unsupported", 2},
 		"needs:native":      {"available", 1},
 	} {
