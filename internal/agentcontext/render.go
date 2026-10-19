@@ -436,7 +436,8 @@ const (
 
 var (
 	urlSchemeRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
-	refDefRe    = regexp.MustCompile(`^([ \t]*\[[^\]]+\]:[ \t]+)(\S+)(.*)$`)
+	// refDefRe matches a link reference definition; a footnote definition ([^1]: text) names no link.
+	refDefRe = regexp.MustCompile(`^([ \t]*\[[^\]^][^\]]*\]:[ \t]+)(\S+)(.*)$`)
 )
 
 // rewriteRelativeLinks prefixes repository-relative Markdown links and reference definitions

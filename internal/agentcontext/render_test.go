@@ -424,6 +424,7 @@ func TestCompileContent_RelativeLinks_Negative(t *testing.T) {
 		"[fenced](docs/fenced.md)",
 		"```",
 		"`[inline](docs/inline.md)`",
+		"[^1]: docs/footnote.md is a footnote, not a link",
 		"",
 	}, "\n")
 	result, err := NewTranspiler().CompileContent(source)
@@ -437,6 +438,7 @@ func TestCompileContent_RelativeLinks_Negative(t *testing.T) {
 		"[abs](/abs)",
 		"[fenced](docs/fenced.md)",
 		"`[inline](docs/inline.md)`",
+		"[^1]: docs/footnote.md is a footnote, not a link",
 	}
 	for _, f := range result.Files {
 		for _, want := range unchanged {
