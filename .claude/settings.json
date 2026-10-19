@@ -164,6 +164,22 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "-B",
+              "${CLAUDE_PROJECT_DIR}/.config/agent/hooks/cloud_bootstrap.py"
+            ],
+            "timeout": 600
+          }
+        ]
+      }
     ]
   }
 }

@@ -21,6 +21,9 @@ SPEC.loader.exec_module(ADAPTER)
 GUARD_SPEC = importlib.util.spec_from_file_location("command_guard_adapter", ROOT / ".config/agent/hooks/command_guard.py")
 GUARD = importlib.util.module_from_spec(GUARD_SPEC)
 GUARD_SPEC.loader.exec_module(GUARD)
+BOOTSTRAP_SPEC = importlib.util.spec_from_file_location("cloud_bootstrap", ROOT / ".config/agent/hooks/cloud_bootstrap.py")
+BOOTSTRAP = importlib.util.module_from_spec(BOOTSTRAP_SPEC)
+BOOTSTRAP_SPEC.loader.exec_module(BOOTSTRAP)
 SCOPE_SPEC = importlib.util.spec_from_file_location("checkpoint_scope", ROOT / ".config/lefthook/scripts/checkpoint_scope.py")
 SCOPE = importlib.util.module_from_spec(SCOPE_SPEC)
 SCOPE_SPEC.loader.exec_module(SCOPE)
@@ -53,6 +56,7 @@ BUDGETS = {
     "checkpoint_scope.py": (GUARD.GUARD_BUDGET, GUARD.GUARD_STOP, GUARD.GUARD_LIMIT),
     "codex_pre_tool.py": (GUARD.GUARD_BUDGET, GUARD.GUARD_STOP, GUARD.GUARD_LIMIT),
     "checkpoint.py": (ADAPTER.HOOK_BUDGET, ADAPTER.HOOK_STOP, ADAPTER.HOOK_LIMIT),
+    "cloud_bootstrap.py": (BOOTSTRAP.BOOTSTRAP_BUDGET, BOOTSTRAP.BOOTSTRAP_STOP, BOOTSTRAP.BOOTSTRAP_LIMIT),
 }
 # Seconds per unit of each client's `timeout` field: Claude Code and Codex write seconds, Gemini
 # CLI milliseconds (see docs/guides/agent-hooks.md).
@@ -409,8 +413,9 @@ class NativeLefthook(unittest.TestCase):
         gemini = json.loads((ROOT / ".gemini/settings.json").read_text())["hooks"]
         claude_actions = adapter_actions(claude)
         gemini_actions = adapter_actions(gemini)
-        # Stop is an engine row now (praetor_hook.py ... stop), no longer a Python adapter.
-        self.assertEqual(len(claude_actions), 3)
+        # Stop is an engine row now (praetor_hook.py ... stop), no longer a Python adapter. Claude alone also
+        # registers the cloud session bootstrap at SessionStart.
+        self.assertEqual(len(claude_actions), 4)
         self.assertEqual(len(gemini_actions), 3)
         for action in claude_actions:
             self.assertEqual(action["command"], "python3")
