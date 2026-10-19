@@ -20,6 +20,11 @@ func cliBootstrapSource(t *testing.T) string {
 	} {
 		writeFixtureFile(t, root, name, content)
 	}
+	if data, err := os.ReadFile(filepath.Join("..", "..", "tools", "lint", "go.mod")); err == nil {
+		writeFixtureFile(t, root, "tools/lint/go.mod", string(data))
+	} else if data, err := os.ReadFile(filepath.Join("tools", "lint", "go.mod")); err == nil {
+		writeFixtureFile(t, root, "tools/lint/go.mod", string(data))
+	}
 	if _, err := util.RunCommandBytes(t.Context(), root, "git", 4096, "init", "-q"); err != nil {
 		t.Fatal(err)
 	}

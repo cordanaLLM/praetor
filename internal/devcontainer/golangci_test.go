@@ -5,6 +5,7 @@
 package devcontainer
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -146,4 +147,72 @@ func findArtifact(artifacts []BootstrapArtifact, name string) *BootstrapArtifact
 		}
 	}
 	return nil
+}
+
+// Negative: a source root lacking tools/lint/go.mod fails immediately, naming the path,
+// and never falls back to the process working directory.
+func TestGolangciLintMissingModFailsNamingPath(t *testing.T) {
+	emptyRoot := t.TempDir()
+	_, err := readPinnedGolangciLint(emptyRoot)
+	if err == nil {
+		t.Fatal("readPinnedGolangciLint unexpectedly succeeded without tools/lint/go.mod in source root")
+	}
+	wantPath := filepath.Join(emptyRoot, "tools/lint/go.mod")
+	if !strings.Contains(err.Error(), wantPath) {
+		t.Fatalf("error %q does not name missing path %q", err.Error(), wantPath)
+	}
+}
+
+// Positive: a recorded bundle matching an earlier rendering (dockerfileUnpiped) without the
+// lint step verifies as before without special-casing its digest list.
+func TestEarlierRenderingWithoutLintStepVerifiesAsBefore(t *testing.T) {
+	root := bootstrapSourceFixture(t)
+	bundle, err := PrepareBundle(t.Context(), "adopted/app", []string{"framework"}, nil, BootstrapOptions{SourceRoot: root})
+	if err != nil {
+		t.Fatalf("PrepareBundle failed: %v", err)
+	}
+	// Simulate an earlier recorded bundle: rendered with dockerfileUnpiped, no GolangciLintVersion in spec.
+	spec := *bundle.Spec()
+	spec.GolangciLintVersion = ""
+	spec.ArchiveSHA256 = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	unpipedDocker := renderBootstrapDockerfileAs(&spec, dockerfileUnpiped)
+	spec.DockerfileSHA256 = bootstrapDigest([]byte(unpipedDocker))
+
+	err = verifyLintToolInstall(bundle.Config, []byte(unpipedDocker), &spec)
+	if err != nil {
+		t.Fatalf("verifyLintToolInstall refused earlier rendering: %v", err)
+	}
+}
+
+// Negative (planted): verifyLintToolInstall requires the exact pinned install line rendered for
+// spec.GolangciLintVersion and the copy line into /usr/local/bin. A Dockerfile that contains
+// the tool words but another version, or that lacks the copy line, must be refused.
+func TestGolangciLintPlantedDockerfileRefused(t *testing.T) {
+	root := bootstrapSourceFixture(t)
+	bundle, err := PrepareBundle(t.Context(), "adopted/app", []string{"framework"}, nil, BootstrapOptions{SourceRoot: root})
+	if err != nil {
+		t.Fatalf("PrepareBundle failed: %v", err)
+	}
+
+	dc := bundle.Config
+	dockerfile := findArtifact(bundle.Artifacts, bootstrapDockerfile)
+	if dockerfile == nil {
+		t.Fatal("bootstrap Dockerfile not found")
+	}
+
+	// 1. Planted wrong version in Dockerfile (still contains "golangci-lint" and "/usr/local/bin/golangci-lint")
+	wrongVersionDocker := strings.ReplaceAll(string(dockerfile.Content), bundle.Spec().GolangciLintVersion, "v1.99.0")
+	err = verifyLintToolInstall(dc, []byte(wrongVersionDocker), bundle.Spec())
+	if err == nil || !strings.Contains(err.Error(), "does not install golangci-lint") {
+		t.Fatalf("verifyLintToolInstall accepted planted wrong version: %v", err)
+	}
+
+	// 2. Planted missing copy line (remove COPY line, but keep "/usr/local/bin/golangci-lint" in comment)
+	noCopyDocker := strings.ReplaceAll(string(dockerfile.Content),
+		"COPY --from=praetor_build --chmod=0555 /out/golangci-lint /usr/local/bin/golangci-lint",
+		"# comment mentions /usr/local/bin/golangci-lint but does not copy")
+	err = verifyLintToolInstall(dc, []byte(noCopyDocker), bundle.Spec())
+	if err == nil || !strings.Contains(err.Error(), "does not install golangci-lint") {
+		t.Fatalf("verifyLintToolInstall accepted planted missing copy line: %v", err)
+	}
 }
