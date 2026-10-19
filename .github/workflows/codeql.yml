@@ -1,0 +1,77 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+# SPDX-License-Identifier: EUPL-1.2
+---
+# Code scanning: CodeQL analyses the Go, Python, and workflow code of this
+# repository and uploads findings to the forge's code scanning. The job is no
+# part of the verification gate and no required check; it runs on main, once
+# a week, and by hand. It does not run on pull requests: uploading findings
+# needs security-events: write, which no job a pull request starts may hold.
+name: Code scanning
+
+'on':
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 3 * * 2"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: CodeQL (${{ matrix.language }})
+    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60  # the Go extraction reads the whole module
+    permissions:
+      contents: read
+      security-events: write  # the findings go to the forge's code scanning
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          - language: go
+            build-mode: autobuild
+          - language: python
+            build-mode: none
+    steps:
+      - name: Checkout Source Code
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go Toolchain
+        if: matrix.language == 'go'
+        id: setup-go
+        # yamllint disable-line rule:line-length
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Restore Go Module And Build Caches
+        if: matrix.language == 'go'
+        uses: ./.github/actions/go-cache
+        with:
+          job: codeql
+          go-version: ${{ steps.setup-go.outputs.go-version }}
+
+      - name: Initialize CodeQL
+        # yamllint disable-line rule:line-length
+        uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee  # v4.39.0
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Perform CodeQL Analysis
+        # yamllint disable-line rule:line-length
+        uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee  # v4.39.0
+        with:
+          category: "/language:${{ matrix.language }}"

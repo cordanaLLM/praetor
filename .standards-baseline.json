@@ -1,25 +1,8 @@
 {
   "version": 1,
-  "generated_at": "2026-10-03T12:48:23Z",
+  "generated_at": "2026-10-18T16:03:52Z",
   "repository": "cordanaLLM/praetor",
-  "commit_sha": "edae7899e11cc387de41d8566386e0d6468884f2",
-  "total_infractions": 2,
-  "infractions": [
-    {
-      "rule_id": "HISS-07",
-      "file_path": "editors/vscode/src/runner.ts",
-      "line_number": 11,
-      "message": "Empty catch block swallows the error; handle, rethrow or wrap it",
-      "anchor": "fn:killTree",
-      "fingerprint": "editors/vscode/src/runner.ts:HISS-07:fn:killTree#1"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "editors/vscode/src/runner.ts",
-      "line_number": 12,
-      "message": "Empty catch block swallows the error; handle, rethrow or wrap it",
-      "anchor": "fn:killHard",
-      "fingerprint": "editors/vscode/src/runner.ts:HISS-07:fn:killHard#1"
-    }
-  ]
+  "commit_sha": "019b879ec69178570f53b97a113f67d62629e4c1",
+  "total_infractions": 0,
+  "infractions": []
 }

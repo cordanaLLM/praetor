@@ -3036,16 +3036,18 @@ class HookInterpreter(unittest.TestCase):
 
     def test_the_launcher_and_the_policy_declare_one_candidate_list(self):
         launcher = (ROOT / LAUNCHER).read_text(encoding="utf-8")
-        lines = re.findall(r'^if proven (.+); then exec (.+) "\$@"; fi #$', launcher, re.M)
+        # The guards sit in the column shfmt -i 2 -ci aligns them to, one space or more away.
+        lines = re.findall(r'^if proven (.+); then exec (.+) "\$@"; fi +#$', launcher, re.M)
         self.assertEqual([tuple(proved.split()) for proved, _ in lines],
                          list(toolchain.PYTHON_CANDIDATES))
         # A candidate is started exactly as it was proven, and nothing else is started.
         self.assertEqual([proved for proved, _ in lines], [started for _, started in lines])
         self.assertEqual(len(re.findall(r"\bexec\b", launcher)), len(lines))
-        self.assertIn(f"\nprobe='{toolchain.PYTHON_PROBE}' #\n", launcher)
+        quoted_probe = re.escape("'" + toolchain.PYTHON_PROBE + "'")
+        self.assertRegex(launcher, rf"\nprobe={quoted_probe} +#\n")
         major, minor = toolchain.PYTHON_FLOOR.split(".")
         self.assertEqual(major, "3")
-        self.assertIn(f"\nfloor={minor} #\n", launcher)
+        self.assertRegex(launcher, rf"\nfloor={minor} +#\n")
 
     def test_a_crlf_checkout_of_the_launcher_runs_the_hook(self):
         # Adoption writes the launcher into repositories whose checkout may convert it

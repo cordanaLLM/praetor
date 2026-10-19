@@ -7,10 +7,13 @@ package gating
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func skipIfWindowsSymlinksRefused(t *testing.T, rep *PipelineReport) {
@@ -130,6 +133,33 @@ func TestRunGatedPipeline_Boundary_FolderNotOnAllowListIsNotLinked(t *testing.T)
 	}
 	if !recipeStatus.MatchString(got.Message) {
 		t.Errorf("reason %q does not name recipe status", got.Message)
+	}
+}
+
+// Negative (plurano/horistes, 2026-10-18): a recipe that creates its virtualenv with python -m venv passes with a
+// git-ignored .venv in the checkout. A linked .venv made venv refuse the path ("Unable to create directory"), since
+// venv will not build over a symbolic link; a virtualenv also embeds absolute paths, so the stage builds its own.
+func TestRunGatedPipeline_Negative_VirtualenvRecipeWithIgnoredVenvInCheckout(t *testing.T) {
+	requireMake(t)
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not on PATH: the recipe under test is python3 -m venv")
+	}
+	if _, err := util.RunCommand(t.Context(), "", python, "-m", "venv", "--help"); err != nil {
+		t.Skipf("python3 has no venv module, so the recipe under test cannot run: %v", err)
+	}
+	// --without-pip: the refusal under test is venv's own, so the recipe needs no ensurepip. The
+	// recipe runs under sh, which reads a Windows path's backslashes as escapes: forward slashes.
+	dir := createIgnoredDependencyRepo(t, filepath.ToSlash(python)+" -m venv --without-pip .venv && test ! -L .venv")
+	writeFile(t, filepath.Join(dir, ".venv", "pyvenv.cfg"), "home = /checkout-only\n")
+
+	rep := gatedRun(t, dir, RunOptions{AdmitUnsupported: true})
+	got := stageNamed(t, rep, stageDeclaredVerify)
+	if rep.Status != StatusAdmitted || got.Status != StagePassed {
+		t.Fatalf("status %s, stage %s %q; want admitted: the stage builds its own virtualenv", rep.Status, got.Status, got.Message)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, ".venv", "pyvenv.cfg")); err != nil || string(data) != "home = /checkout-only\n" {
+		t.Fatalf("the checkout's .venv changed: %q, %v", data, err)
 	}
 }
 

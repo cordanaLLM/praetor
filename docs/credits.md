@@ -198,6 +198,7 @@ whose use names a template.
 | [Azure/setup-helm](https://github.com/Azure/setup-helm) | Workflows: installs Helm | action, used by CI | MIT |
 | [docker/login-action](https://github.com/docker/login-action) | Workflows | action, used by CI | Apache-2.0 |
 | [docker/setup-buildx-action](https://github.com/docker/setup-buildx-action) | Workflows | action, used by CI | Apache-2.0 |
+| [github/codeql-action](https://github.com/github/codeql-action) | Workflows: CodeQL code scanning | action, used by CI | MIT |
 | [goreleaser/goreleaser-action](https://github.com/goreleaser/goreleaser-action) | Workflows | action, used by CI | MIT |
 | [oven-sh/setup-bun](https://github.com/oven-sh/setup-bun) | Node CI template | action, integrated | MIT |
 | [sigstore/cosign-installer](https://github.com/sigstore/cosign-installer) | Workflows: installs Cosign | action, used by CI | Apache-2.0 |
@@ -294,6 +295,7 @@ outside a manifest. None of them ships in the binaries.
 | [Gitleaks](https://github.com/gitleaks/gitleaks) | Secret scan, a tool of `tools/go/go.mod` | tool, used by CI | MIT |
 | [govulncheck](https://go.googlesource.com/vuln) | Go vulnerability scan, a tool of `tools/go/go.mod` | tool, used by CI | BSD-3-Clause, © The Go Authors |
 | [gofumpt](https://github.com/mvdan/gofumpt) | Format-checks the Go managed assets adoption copies, a tool of `tools/go/go.mod` | tool, used by CI | BSD-3-Clause, © 2019, Daniel Martí |
+| [shfmt](https://github.com/mvdan/sh) | Checks that every shell script adoption emits keeps the layout shfmt -i 2 -ci writes, a tool of `tools/go/go.mod` | tool, used by CI | BSD-3-Clause, © 2016, Daniel Martí |
 | [Semgrep](https://semgrep.dev) | Static analysis rules | tool, used by CI | LGPL-2.1-or-later, the license expression of the PyPI release |
 | [Black](https://github.com/psf/black) | Formats the hook sources adoption copies (`.config/hook-lint/requirements.in`) | tool, used by CI | MIT |
 | [Flake8](https://github.com/PyCQA/flake8) | Lints the hook sources adoption copies | tool, used by CI | MIT |

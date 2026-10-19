@@ -16,9 +16,11 @@ import (
 )
 
 const (
-	// MaxTrackedModules bounds consumers that run a complete Go toolchain once per module.
-	// The API compatibility gate has its own larger revision-comparison bound.
-	MaxTrackedModules = 64
+	// MaxTrackedModules bounds consumers that run a complete Go toolchain once per module (the
+	// gate's Go stages, the go vet hook, govulncheck). 64 refused golusoris/goenvoy, a library of
+	// 72 modules (#1465); the bound is a hard ceiling far above that, still below the API
+	// compatibility gate's own revision-comparison bound (512).
+	MaxTrackedModules = 256
 	// maxModuleListingBytes bounds the go.mod listing TrackedModuleFiles reads (HISS-02): room
 	// for tens of thousands of module paths, far past the gate's own bound on compared modules.
 	maxModuleListingBytes = 1 << 22

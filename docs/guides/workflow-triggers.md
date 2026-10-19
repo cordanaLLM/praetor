@@ -23,7 +23,6 @@ Each finding names the workflow file, the line of the trigger or job, and what s
 | `push` with a `branches` pattern made of asterisks alone, such as `'**'` or `'*'` | `'**'` matches every branch name, and `'*'` every branch name without a slash. | same |
 | A job a `pull_request` run starts whose first step is not the draft step | A draft runs the whole job, and runs it again on every push to the draft. | same |
 | A job whose condition reads `github.event.pull_request.draft` | GitHub reports a job its condition skipped as successful, and a required check accepts that, so a draft marked ready can merge on the skip. The one exception is the opt-in draft skip, accepted behind a proven aggregate ([below](#the-opt-in-draft-skip)). | same |
-| A job that stops a draft in its first step but sets `continue-on-error` | The failed draft reports success, which a required check accepts. | same |
 | A job that needs a job held back on a draft, whatever its condition and its own first step | GitHub skips a job whose need failed or was skipped unless its condition runs it after one, and reports the skip as successful, which a required check accepts, so a draft passes the job without its work; its own draft step never runs. The check does not read the status functions in the condition ([Limits](#limits)). Each job of a chain is reported, naming the need that holds it back. | `TestAuditWorkflowTriggers_JobsSkippedThroughNeeds`, `TestAuditWorkflowTriggers_NeedSkipWhateverTheCondition`, `TestAuditWorkflowTriggers_NeedsChainAtTheJobBound` |
 | Jobs whose `needs` form a cycle, or need a job on one | No order runs them, so the check cannot say what they do on a draft. One finding names them all, on the line of the first of them. | `TestAuditWorkflowTriggers_ReportsNeedsCycle` |
 | A `pull_request` trigger whose jobs stop on a draft but that does not list `ready_for_review` in `types` | Marking the draft ready starts no run, so its failed check stands until the next push. | same |
@@ -43,6 +42,13 @@ script and so prints no annotation; a draft step without it is reported like a m
 The check reads that step through `ghworkflow.DraftStepFault`, the
 function the hosted gate check uses, so the audit and the emitter cannot disagree
 (`TestAuditWorkflowTriggers_EngineWorkflowsPass`, `TestDraftStepFault`).
+
+An optional job passes too. A job with `continue-on-error: true` is no required check:
+`requiredJob` in `internal/forge/workflow_checks.go` leaves it out of the required contexts, so
+its success on a draft lets nothing merge. Such a job may stop a draft in its first step, or skip
+it with the job condition, and is no finding; it is still one when it runs its work on a draft
+(`TestAuditWorkflowTriggers_Positive_OptionalJobMayStopOrSkipADraft`). A code scanning job that
+must not block a merge takes this shape.
 
 Each job that does work begins with the draft step itself rather than needing another job that
 does. A job also passes when:

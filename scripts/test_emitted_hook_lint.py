@@ -39,16 +39,17 @@ The policy is the one such a repository gets without configuring anything, per l
   and held to ruff's PLR rules (adopter ignore of PLR0913 and PLR2004 applied).
 - YAML: yamllint in strict mode with its defaults.
 - Go: gofmt, gofumpt and `go vet` on each package directory alone, with no build tag.
-- Shell: shellcheck at its defaults.
+- Shell: shellcheck at its defaults, and shfmt -d with the layout every emitted script keeps
+  (SHFMT_LAYOUT: shfmt -i 2 -ci aligns the carriage-return guards of adjacent lines, #1282).
 
 Each file is linted from a copy in an empty temporary directory and each tool is told to ignore
 configuration files, so no project or user configuration can loosen the check.
 
-The Python and YAML tools come from the hash-locked lock and gofumpt from tools/go/go.mod, the
-one version source for Go tools:
+The Python and YAML tools come from the hash-locked lock and gofumpt and shfmt from
+tools/go/go.mod, the one version source for Go tools:
 
     python3 -m pip install --require-hashes -r .config/hook-lint/requirements.txt
-    GOBIN=<dir> go install -modfile=tools/go/go.mod mvdan.cc/gofumpt
+    GOBIN=<dir> go install -modfile=tools/go/go.mod mvdan.cc/gofumpt mvdan.cc/sh/v3/cmd/shfmt
 
 go, gofmt and shellcheck are taken from PATH, since they come with the toolchain and the runner
 image. A test skips, naming the reason, when its tool is missing or is not the pinned version,
@@ -80,7 +81,7 @@ TOOL_DIR_ENV = "PRAETOR_HOOK_LINT_BIN"
 # Tools pinned in the hash-locked lock, and the Go tool pinned in tools/go/go.mod. Both are
 # looked up in PRAETOR_HOOK_LINT_BIN where it is set, and their version must be the pin.
 TOOLS = ("black", "flake8", "yamllint", "ruff")
-GO_PINNED_TOOLS = ("gofumpt",)
+GO_PINNED_TOOLS = ("gofumpt", "shfmt")
 # Tools that come with the platform or the Go toolchain: taken from PATH, with no pin to
 # compare, and required (not skipped) where PRAETOR_HOOK_LINT_BIN is set.
 SYSTEM_TOOLS = ("go", "gofmt", "shellcheck")
@@ -115,6 +116,7 @@ RENDERED = "internal/adopt/testdata/emitted"
 EMITTED_CONSTANTS = (
     ("internal/adopt/checkpoint.go", "checkpointScript", ""),
     ("internal/adopt/checkpoint.go", "checkpointCommon", ""),
+    ("internal/adopt/checkpoint.go", "checkpointLauncher", ""),
     ("internal/adopt/lefthook_identity.go", "canonicalLefthookPolicy", ""),
     ("internal/adopt/hooks.go", "lefthookFile", RENDERED),
     ("internal/adopt/hooks.go", "evasionHookFile", RENDERED),
@@ -160,7 +162,13 @@ def pinned_versions(text):
     return pins
 
 
-GO_TOOL_MODULES = {"gofumpt": "mvdan.cc/gofumpt"}
+GO_TOOL_MODULES = {"gofumpt": "mvdan.cc/gofumpt", "shfmt": "mvdan.cc/sh/v3"}
+# The package go install builds where it is not the module root.
+GO_TOOL_PACKAGES = {"shfmt": "mvdan.cc/sh/v3/cmd/shfmt"}
+# The layout of every emitted shell script: shfmt -i 2 -ci, which aligns the trailing
+# carriage-return guards of adjacent lines into one column (#1282), so an adopter's formatter
+# leaves the file alone.
+SHFMT_LAYOUT = ("-i", "2", "-ci")
 
 
 def go_tool_pins(text):
@@ -220,7 +228,7 @@ def probe_version(executable):
 def install_hint(name):
     """Return the command that installs the pinned tool `name`."""
     if name in GO_PINNED_TOOLS:
-        return "GOBIN=<dir> go install -modfile=tools/go/go.mod " + GO_TOOL_MODULES[name]
+        return "GOBIN=<dir> go install -modfile=tools/go/go.mod " + GO_TOOL_PACKAGES.get(name, GO_TOOL_MODULES[name])
     if name in SYSTEM_TOOLS:
         return "your platform's package manager or the Go toolchain"
     lock = LOCK.relative_to(ROOT).as_posix()
@@ -319,6 +327,7 @@ class LintCase(unittest.TestCase):
             "gofumpt": [[executable, "-l", "."]],
             "go-vet": [[executable, "vet", f"./{directory}"] for directory in go_package_dirs(paths)],
             "shellcheck": [[executable, *paths]],
+            "shfmt": [[executable, "-d", *SHFMT_LAYOUT, *paths]],
         }
         return commands[name]
 
@@ -389,6 +398,11 @@ class EmittedSourcesTest(LintCase):
 
     def test_shellcheck_accepts_the_engine_launcher(self):
         self.assertLintPasses("shellcheck", self.hooks(("engine.sh",)))
+
+    def test_shfmt_accepts_every_emitted_shell_script(self):
+        files = self.hooks((".sh",))
+        self.assertEqual(sorted(files), [".config/lefthook/engine.sh", ".config/lefthook/python.sh"])
+        self.assertLintPasses("shfmt", files)
 
     def test_ruff_plr_accepts_hook_python(self):
         self.assertLintPasses("ruff-plr", self.hooks((".py",)))
@@ -566,6 +580,15 @@ class RenderedTemplateTest(LintCase):
         self.assertIsNotNone(line)
         planted = text[: line.end()] + "  ls $pin #\n" + text[line.end():]
         self.assertLintFails("shellcheck", {path: planted}, "SC2086")
+
+    def test_shfmt_rejects_a_misaligned_guard_in_the_interpreter_launcher(self):
+        files = only(hook_files(), ("python.sh",))
+        path, text = next(iter(files.items()))
+        # Adjacent guards share one column; one guard moved out of it is drift shfmt reports.
+        line = re.search(r"^floor=10 +#\n", text, re.MULTILINE)
+        self.assertIsNotNone(line)
+        planted = text[: line.start()] + "floor=10 #\n" + text[line.end():]
+        self.assertLintFails("shfmt", {path: planted}, "floor=10")
 
     def test_flake8_rejects_a_long_line_in_the_rendered_interceptor(self):
         files = only(hook_files(), ("block_evasion.py",))

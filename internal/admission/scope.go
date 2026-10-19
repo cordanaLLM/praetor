@@ -19,8 +19,8 @@ import (
 
 // Limits are the memory bounds of a step's scope, in systemd's notation (8G, 512M). MemoryMax
 // alone does not contain a step: above it the kernel swaps the step out, so a step could still
-// fill the host's swap, the pressure that made systemd-oomd kill the IDE scope (2026-10-09,
-// 2026-10-17). MemorySwapMax bounds that too; "0" keeps the step out of swap.
+// fill the host's swap, the pressure under which the out-of-memory daemon kills the editor's scope
+// with every session in it. MemorySwapMax bounds that too; "0" keeps the step out of swap.
 type Limits struct {
 	MemoryHigh    string
 	MemoryMax     string

@@ -16,9 +16,10 @@ import (
 
 func findNodeModulesPath(t *testing.T) string {
 	t.Helper()
-	candidates := []string{
-		"/home/kilian/dev/golusoris/sveltesentio/node_modules",
-		filepath.Join("..", "..", "node_modules"),
+	// PRAETOR_FIGURES_NODE_MODULES names a node_modules folder outside the checkout that holds eslint.
+	candidates := []string{filepath.Join("..", "..", "node_modules")}
+	if dir := os.Getenv("PRAETOR_FIGURES_NODE_MODULES"); dir != "" {
+		candidates = append([]string{dir}, candidates...)
 	}
 	for _, c := range candidates {
 		if fi, err := os.Stat(c); err == nil && fi.IsDir() {

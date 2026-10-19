@@ -3,7 +3,7 @@
 // projects directory.
 //
 // Session logs are JSON Lines under ~/.claude/projects/**/*.jsonl. Two line
-// shapes matter (field names verified against the logs on kcromm,
+// shapes matter (field names verified against local session logs,
 // 2026-10-13; values not read):
 //
 //	{"type":"assistant","timestamp":"...","requestId":"...","sessionId":"...","agentId":"...",

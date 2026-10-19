@@ -123,13 +123,23 @@ func parseGosecLine(raw string) (int, error) {
 	return first, nil
 }
 
+// resolveIssuePaths keys a gosec finding by its path relative to the repository root. gosec reports absolute paths,
+// and Rel of an absolute path against a relative root (the pre-push hook's --path=.) kept it absolute, so the key held
+// one checkout's location and matched no baseline recorded elsewhere (#1453): both sides are made absolute first.
 func resolveIssuePaths(repoDir, moduleDir, file string) (relPath, absPath string) {
 	if filepath.IsAbs(file) {
 		absPath = filepath.Clean(file)
 	} else {
 		absPath = filepath.Clean(filepath.Join(moduleDir, file))
 	}
-	rel, err := filepath.Rel(repoDir, absPath)
+	if abs, err := filepath.Abs(absPath); err == nil {
+		absPath = abs
+	}
+	root, err := filepath.Abs(repoDir)
+	if err != nil {
+		root = repoDir
+	}
+	rel, err := filepath.Rel(root, absPath)
 	if err != nil {
 		rel = file
 	}

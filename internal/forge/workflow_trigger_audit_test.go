@@ -87,6 +87,28 @@ func TestAuditWorkflowTriggers_Positive_HostedGateShapePasses(t *testing.T) {
 	}
 }
 
+// Positive (Aegis-OS #351): an optional job, kept out of the required contexts by continue-on-error,
+// that stops a draft in its first step or skips it by condition runs no work there and lets nothing
+// merge on a draft, so it passes; requiredJob leaves the same job out of the required checks.
+func TestAuditWorkflowTriggers_Positive_OptionalJobMayStopOrSkipADraft(t *testing.T) {
+	optional := strings.Replace(hostedGateWorkflow, "    name: Gate\n", "    name: Gate\n    continue-on-error: true\n", 1)
+	skipping := strings.Replace(string(draftWorkflow(ghworkflow.HostedGateNotDraft, "      - run: make gate\n")),
+		"    name: Gate\n", "    name: Gate\n    continue-on-error: true\n", 1)
+	for name, doc := range map[string]string{"stop": optional, "skip": skipping} {
+		if !strings.Contains(doc, "continue-on-error: true") {
+			t.Fatalf("%s: the fixture lost its continue-on-error line:\n%s", name, doc)
+		}
+		out := auditTriggers(t, triggerRepository(t, map[string]string{"x.yml": doc}))
+		if strings.Contains(out, "[WARN]") || !strings.HasPrefix(out, "[PASS] Workflow triggers (HISS-18)") {
+			t.Errorf("%s: an optional job that holds a draft back is no finding:\n%s", name, out)
+		}
+		job := workflowJob{ContinueOnError: "true", If: ghworkflow.HostedGateNotDraft}
+		if requiredJob(&job, "o/r") {
+			t.Errorf("%s: an optional job became a required check", name)
+		}
+	}
+}
+
 // Negative (#817): each wasted run is reported as a [WARN] line naming the file, the line and the
 // trigger or job, followed by the verdict, which passes: an unfiltered push in each of its three
 // shapes, a push with only a paths or a branches-ignore filter, a branches pattern of asterisks,
@@ -115,8 +137,8 @@ func TestAuditWorkflowTriggers_Negative_ReportsEachWastedRun(t *testing.T) {
 		},
 		"runs on draft": {"on: pull_request\njobs:\n  test:\n" + job,
 			`x.yml:3: pull_request job test runs on a draft pull request: its first step is not the draft step "Stop on a draft pull request"`},
-		"advisory stop": {strings.Replace(hostedGateWorkflow, "    name: Gate\n", "    name: Gate\n    continue-on-error: true\n", 1),
-			"x.yml:8: pull_request job gate stops a draft in its first step but continues on error"},
+		"advisory runs on draft": {"on: pull_request\njobs:\n  scan:\n    continue-on-error: true\n" + job,
+			`x.yml:3: pull_request job scan runs on a draft pull request: its first step is not the draft step "Stop on a draft pull request"`},
 		"not ready": {strings.Replace(hostedGateWorkflow, ", ready_for_review]", "]", 1),
 			"x.yml:2: pull_request stops a draft in its jobs but does not run on ready_for_review"},
 		"remote callee": {prTypes + "  call:\n    uses: acme/ci/.github/workflows/gate.yml@v1\n",

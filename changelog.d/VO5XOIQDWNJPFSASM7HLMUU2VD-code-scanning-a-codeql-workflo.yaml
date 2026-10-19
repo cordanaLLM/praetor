@@ -1,0 +1,2 @@
+type: added
+title: 'Code scanning: a CodeQL workflow analyses the Go, Python and workflow code and uploads the findings'

@@ -102,6 +102,9 @@ type nativeGotos struct {
 	rep     *ScanReport
 	allow   CleanupGoto
 	pending []gotoSite
+	// continued reports that the previous line was a preprocessor directive ending in a
+	// backslash, so this line still belongs to it (nativeDirective).
+	continued bool
 	// labels counts the labels the open function defines; label, labelLine and labelDepth
 	// describe the first, the only one cleanupGotoAllowed can accept.
 	labels     int
@@ -110,17 +113,40 @@ type nativeGotos struct {
 	labelDepth int
 }
 
+// nativeGoto matches the goto keyword wherever a statement puts it: on a line of its own, after a
+// condition (`if (rc) goto out;`), after else or a case label, or second on a line. The code is
+// stripped first, so a goto in a string or a comment is no match.
+var nativeGoto = regexp.MustCompile(`\bgoto\b`)
+
+// maxGotosPerLine bounds the gotos one line is searched for (HISS-02).
+const maxGotosPerLine = 64
+
 // observe feeds one line of stripped code. inBody reports whether the line starts inside a
 // function body, and depth is the brace depth there, 1 directly in the body.
 func (g *nativeGotos) observe(code string, lineNum int, inBody bool, depth int) {
 	trimmed := strings.TrimSpace(code)
-	if rest, ok := strings.CutPrefix(trimmed, "goto "); ok {
-		g.jump(gotoTarget(rest), lineNum, inBody)
+	if g.nativeDirective(trimmed) {
+		if rest, ok := strings.CutPrefix(trimmed, "goto"); ok && nativeGoto.MatchString(trimmed) {
+			g.jump(gotoTarget(rest), lineNum, inBody)
+		}
 		return
+	}
+	for _, loc := range nativeGoto.FindAllStringIndex(trimmed, maxGotosPerLine) {
+		g.jump(gotoTarget(trimmed[loc[1]:]), lineNum, inBody)
 	}
 	if inBody {
 		g.mark(trimmed, lineNum, depth)
 	}
+}
+
+// nativeDirective reports whether trimmed belongs to a preprocessor directive: a line starting
+// with #, or one that a directive's trailing backslash continues. A macro body is no statement,
+// so a goto in it is reported only where a line of the body starts with it, as before; the jump
+// it expands to sits in the functions that use the macro.
+func (g *nativeGotos) nativeDirective(trimmed string) bool {
+	in := g.continued || strings.HasPrefix(trimmed, "#")
+	g.continued = in && strings.HasSuffix(trimmed, `\`)
+	return in
 }
 
 // gotoTarget is the operand of a `goto`: the label, or for a computed goto the expression.

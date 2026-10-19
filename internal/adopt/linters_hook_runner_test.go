@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	// hookCIWorkflow runs the hook runner the way lusoris/home-zeus does (#1313).
+	// hookCIWorkflow runs the hook runner the way an adopter's hook-runner CI job does (#1313).
 	hookCIWorkflow = "on: pull_request\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - run: %s\n"
 	// gitleaksPreCommit is a .pre-commit-config.yaml whose remote gitleaks hook runs at the
 	// default stage, beside a yamllint hook.

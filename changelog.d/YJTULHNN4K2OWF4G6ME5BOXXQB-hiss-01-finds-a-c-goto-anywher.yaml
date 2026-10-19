@@ -1,0 +1,2 @@
+type: fixed
+title: HISS-01 finds a C goto anywhere in a statement, such as if (rc) goto out;, not only on a line of its own

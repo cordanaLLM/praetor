@@ -689,7 +689,8 @@ the entry, and names the expired entry:
 
 A gated category back within its cap still fails on an expired entry, naming it, until the entry
 is removed. An entry for a category with action `batch` or `report` excuses nothing, because
-those actions never fail the audit.
+those actions never fail the audit; once expired, it still fails the audit's last step, which
+fails every expired entry whatever its rule, until it is renewed or removed.
 
 ## Selecting a shared or private configuration
 

@@ -93,7 +93,8 @@ func TestCleanupGoto_Negative_OtherGotosStillFail(t *testing.T) {
 		{"backward", cSource("int f(void) {", "out:", "    work();", "    goto out;", "}"), []int{4}},
 		{"label in nested block", cSource("int f(int n) {", "    goto out;", "    if (n) {", "out:", "        n = 0;", "    }", "    return n;", "}"), []int{2}},
 		{"jump within nested block", cSource("int f(int n) {", "    if (n) {", "        goto out;", "out:", "        n = 0;", "    }", "    return n;", "}"), []int{3}},
-		{"two labels", cSource("int f(int n) {", "    if (n) goto a;", "    goto err;", "    goto out;", "err:", "    n = 1;", "out:", "    return n;", "}"), []int{3, 4}},
+		{"two labels", cSource("int f(int n) {", "    if (n) goto a;", "    goto err;", "    goto out;", "err:", "    n = 1;", "out:", "    return n;", "}"), []int{2, 3, 4}},
+		{"one-line backward", cSource("int f(int n) {", "out:", "    n--;", "    if (n) goto out;", "    return n;", "}"), []int{4}},
 		{"undeclared name", cSource("int f(void) {", "    goto done;", "done:", "    return 0;", "}"), []int{2}},
 		{"label in other function", cSource("int f(void) {", "    goto out;", "    return 1;", "}", "int g(void) {", "out:", "    return 0;", "}"), []int{2}},
 		{"computed goto", cSource("int f(void *p) {", "    goto *p;", "out:", "    return 0;", "}"), []int{2}},
@@ -103,6 +104,60 @@ func TestCleanupGoto_Negative_OtherGotosStillFail(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := gotoFindings(t, tc.src, cleanupGoto); !slices.Equal(got, tc.want) {
+				t.Fatalf("HISS-01 at %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// oneLineGotos holds a goto after a condition, after else, after a case label and two on one line,
+// forward to the sole cleanup label: the shapes a scan that read only a line starting with goto
+// missed (pelorus, engine pin 2d23b29: `if (c) goto L;` passed, `goto L;` on its own line failed).
+var oneLineGotos = cSource(
+	"int f(int n) {",                                // 1
+	"    if (n < 0) goto out;",                      // 2
+	"    if (n) n--; else goto out;",                // 3
+	"    switch (n) { case 1: goto out; }",          // 4
+	"    if (n > 9) { n = 0; goto out; }",           // 5
+	"    if (n > 5) goto out; if (n > 4) goto out;", // 6
+	"out:",          // 7
+	"    return n;", // 8
+	"}",             // 9
+)
+
+// TestCleanupGoto_Negative_OneLineGotoIsAGoto: a goto anywhere in a statement is reported without
+// the exception, once per goto, and judged like any other goto under it.
+func TestCleanupGoto_Negative_OneLineGotoIsAGoto(t *testing.T) {
+	if got := gotoFindings(t, oneLineGotos, CleanupGoto{}); !slices.Equal(got, []int{2, 3, 4, 5, 6, 6}) {
+		t.Fatalf("undeclared exception: HISS-01 at %v, want [2 3 4 5 6 6]", got)
+	}
+	if got := gotoFindings(t, oneLineGotos, cleanupGoto); len(got) != 0 {
+		t.Fatalf("forward one-line cleanup gotos reported at %v under the exception", got)
+	}
+	backward := cSource("int f(int n) {", "fail:", "    if (n--) goto fail;", "    return n;", "}")
+	if got := gotoFindings(t, backward, cleanupGoto); !slices.Equal(got, []int{3}) {
+		t.Fatalf("one-line backward goto: HISS-01 at %v under the exception, want [3]", got)
+	}
+}
+
+// TestCleanupGoto_Boundary_GotoOutsideCode: a goto in a string, a character run, a block or line
+// comment, or inside a longer identifier is no goto; a macro body keeps the line-start rule.
+func TestCleanupGoto_Boundary_GotoOutsideCode(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want []int
+	}{
+		{"string and comments", cSource("int f(void) {", `    puts("if (x) goto out;");`, "    /* if (x) goto out; */",
+			"    return 0; // if (x) goto out;", "}"), nil},
+		{"identifiers", cSource("int f(void) {", "    int goto_count = my_goto(1);", "    return goto_count;", "}"), nil},
+		{"macro body", cSource("#define BAIL(x) if (x) goto out", "#define LONG(x) do { \\", "    if (x) goto out; \\", "} while (0)"), nil},
+		{"macro line starting with goto", cSource("#define BAIL \\", "    goto out"), []int{2}},
+		{"statement after a macro", cSource("#define ONE 1", "int f(int n) {", "    if (n) goto out;", "out:", "    return n;", "}"), []int{3}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := gotoFindings(t, tc.src, CleanupGoto{}); !slices.Equal(got, tc.want) {
 				t.Fatalf("HISS-01 at %v, want %v", got, tc.want)
 			}
 		})

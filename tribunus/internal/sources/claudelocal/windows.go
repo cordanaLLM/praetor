@@ -12,7 +12,7 @@ import (
 // windowKinds maps a rateLimitType prefix to its window length. A type with
 // a suffix (seven_day_opus) is a per-model sub-limit: only usage of models
 // whose id names that family counts toward it. five_hour is the type seen in
-// the logs on kcromm; seven_day and its suffixed forms follow the same
+// local session logs; seven_day and its suffixed forms follow the same
 // naming and are not yet observed there.
 var windowKinds = []struct {
 	prefix string

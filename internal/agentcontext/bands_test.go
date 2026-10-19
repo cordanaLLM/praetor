@@ -331,7 +331,7 @@ func TestScanVolatile_BoundaryTrim(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"=/home/kilian", "/home/kilian"},
+		{"=/home/user", "/home/user"},
 		{"(/home/u/x)", "/home/u/x"},
 		{"`/Users/me/x`", "/Users/me/x"},
 	} {
