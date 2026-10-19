@@ -30,6 +30,11 @@ func indexArchetypesWithSnapshots(ctx context.Context, root, dir string, snapsho
 	if err != nil {
 		return nil, err
 	}
+	return indexArchetypeFiles(ctx, root, dir, names, snapshots)
+}
+
+// indexArchetypeFiles populates the archetype index mapping ID to path.
+func indexArchetypeFiles(ctx context.Context, root, dir string, names []string, snapshots map[string][]byte) (map[string]string, error) {
 	index := make(map[string]string, len(names))
 	for i := 0; i < len(names) && i < maxLockEntries; i++ {
 		path, err := confinedArchetypePath(root, dir, names[i])
@@ -71,15 +76,8 @@ func readArchetypeEntries(ctx context.Context, path string) (entries []os.DirEnt
 
 func prospectiveArchetypeNames(dir string, entries []os.DirEntry, snapshots map[string][]byte) ([]string, error) {
 	names := make(map[string]bool, len(entries))
-	for i := 0; i < len(entries) && i < maxArchetypeDirectoryEntries; i++ {
-		entry := entries[i]
-		_, replaced := snapshots[filepath.Join(dir, entry.Name())]
-		if replaced && !entry.Type().IsRegular() {
-			return nil, fmt.Errorf("catalog replacement must target a regular file: %s", entry.Name())
-		}
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".yaml") {
-			names[entry.Name()] = true
-		}
+	if err := recordEntryArchetypeNames(dir, entries, snapshots, names); err != nil {
+		return nil, err
 	}
 	for path := range snapshots {
 		if filepath.Dir(path) == dir {
@@ -95,6 +93,21 @@ func prospectiveArchetypeNames(dir string, entries []os.DirEntry, snapshots map[
 	}
 	sort.Strings(result)
 	return result, nil
+}
+
+// recordEntryArchetypeNames validates and collects YAML archetype file names from directory entries.
+func recordEntryArchetypeNames(dir string, entries []os.DirEntry, snapshots map[string][]byte, names map[string]bool) error {
+	for i := 0; i < len(entries) && i < maxArchetypeDirectoryEntries; i++ {
+		entry := entries[i]
+		_, replaced := snapshots[filepath.Join(dir, entry.Name())]
+		if replaced && !entry.Type().IsRegular() {
+			return fmt.Errorf("catalog replacement must target a regular file: %s", entry.Name())
+		}
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".yaml") {
+			names[entry.Name()] = true
+		}
+	}
+	return nil
 }
 
 func validateProspectiveEntryCount(dir string, entries []os.DirEntry, snapshots map[string][]byte) error {

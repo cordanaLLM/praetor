@@ -51,15 +51,9 @@ func acceptTranscriptToken(stack []transcriptJSONFrame, token json.Token) ([]tra
 	if len(stack) > 0 {
 		frame := &stack[len(stack)-1]
 		if frame.object && frame.keyExpected {
-			key, ok := token.(string)
-			if !ok {
-				return nil, fmt.Errorf("JSON object key is not a string")
+			if err := acceptObjectKey(frame, token); err != nil {
+				return nil, err
 			}
-			if _, duplicate := frame.keys[key]; duplicate {
-				return nil, fmt.Errorf("duplicate JSON object key")
-			}
-			frame.keys[key] = struct{}{}
-			frame.keyExpected = false
 			return stack, nil
 		}
 		frame.keyExpected = frame.object
@@ -67,11 +61,34 @@ func acceptTranscriptToken(stack []transcriptJSONFrame, token json.Token) ([]tra
 	if !isDelimiter {
 		return stack, nil
 	}
+	return pushTranscriptFrame(stack, delimiter)
+}
+
+// acceptObjectKey validates and records a string key for the active JSON object frame.
+func acceptObjectKey(frame *transcriptJSONFrame, token json.Token) error {
+	key, ok := token.(string)
+	if !ok {
+		return fmt.Errorf("JSON object key is not a string")
+	}
+	if _, duplicate := frame.keys[key]; duplicate {
+		return fmt.Errorf("duplicate JSON object key")
+	}
+	frame.keys[key] = struct{}{}
+	frame.keyExpected = false
+	return nil
+}
+
+// pushTranscriptFrame validates depth limit and pushes an array or object frame.
+func pushTranscriptFrame(stack []transcriptJSONFrame, delimiter json.Delim) ([]transcriptJSONFrame, error) {
 	if len(stack) >= transcriptJSONDepthLimit {
 		return nil, fmt.Errorf("transcript JSON nesting bound exceeded")
 	}
-	stack = append(stack, transcriptJSONFrame{object: delimiter == '{', keyExpected: delimiter == '{', keys: make(map[string]struct{})})
-	return stack, nil
+	isObject := delimiter == '{'
+	return append(stack, transcriptJSONFrame{
+		object:      isObject,
+		keyExpected: isObject,
+		keys:        make(map[string]struct{}),
+	}), nil
 }
 
 // Struct decoding folds JSON field names; require canonical envelope spellings.

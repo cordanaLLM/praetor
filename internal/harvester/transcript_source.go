@@ -24,11 +24,21 @@ func selectTranscript(path, format string) (string, error) {
 	}
 	base := filepath.Base(absolute)
 	if format == TranscriptFormatClaudeCode {
-		if filepath.Ext(base) != ".jsonl" {
-			return "", fmt.Errorf("claude Code source must have a .jsonl extension")
-		}
-		return absolute, rejectBundleLinks(absolute)
+		return selectClaudeTranscript(absolute, base)
 	}
+	return selectAntigravityTranscript(absolute, base)
+}
+
+// selectClaudeTranscript validates and returns the path for Claude Code transcripts.
+func selectClaudeTranscript(absolute, base string) (string, error) {
+	if filepath.Ext(base) != ".jsonl" {
+		return "", fmt.Errorf("claude Code source must have a .jsonl extension")
+	}
+	return absolute, rejectBundleLinks(absolute)
+}
+
+// selectAntigravityTranscript resolves Antigravity transcript.jsonl or transcript_full.jsonl.
+func selectAntigravityTranscript(absolute, base string) (string, error) {
 	if base != "transcript.jsonl" && base != "transcript_full.jsonl" {
 		return "", fmt.Errorf("unsupported transcript format: expected Antigravity transcript[_full].jsonl")
 	}

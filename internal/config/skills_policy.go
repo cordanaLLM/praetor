@@ -108,10 +108,20 @@ func ValidRepoLocation(repo string) bool {
 	if strings.ContainsAny(repo, "\r\n\t\x00") {
 		return false
 	}
+	return validRepoURL(repo) || validRepoPath(repo)
+}
+
+// validRepoURL reports whether repo is a parseable URL with a supported scheme.
+func validRepoURL(repo string) bool {
 	if strings.HasPrefix(repo, "https://") || strings.HasPrefix(repo, "http://") || strings.HasPrefix(repo, "file://") {
 		_, err := url.Parse(repo)
 		return err == nil
 	}
+	return false
+}
+
+// validRepoPath reports whether repo is an absolute or relative directory path.
+func validRepoPath(repo string) bool {
 	if strings.HasPrefix(repo, "/") || filepath.IsAbs(repo) {
 		return true
 	}
