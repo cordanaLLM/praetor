@@ -18,7 +18,7 @@ import (
 )
 
 // The Cargo parts of the toolchain stages. Each runs only where a Cargo.lock is present
-// (withCargo), through the stage's command runner and lookPath seams like the Go commands, and
+// (withOtherLanguages), through the stage's command runner and lookPath seams like the Go commands, and
 // none runs in a dry run: cargo fetch and cargo audit write caches and reach the network, and the
 // test commands execute repository code.
 

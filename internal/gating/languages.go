@@ -110,35 +110,62 @@ func (c *stageConfig) noteVerified(part languagePart) {
 	}
 }
 
-// withCargo completes a toolchain stage whose Go part has already run, by running its Cargo
-// part where a Cargo.lock is present.
+// nonGoPart is one non-Go language's share of a toolchain stage.
+type nonGoPart struct {
+	language string
+	present  func(repoDir string) bool
+	run      func(context.Context, *stageConfig) (string, error)
+}
+
+// hasCargo reports whether the repository root holds a committed Cargo.lock.
+func hasCargo(repoDir string) bool {
+	return util.FileExists(filepath.Join(repoDir, CargoLockFile))
+}
+
+// withOtherLanguages completes a toolchain stage whose Go part has already run, by running each
+// present non-Go language part in order (Cargo, then Node).
 //
-// Without a Cargo.lock it returns the Go part exactly as the stage returned it before Cargo
-// support, message and verdict alike, so a Go repository's stage lines and signed output are
-// unchanged. A Go part that failed stops the stage before Cargo runs, as any failure stops the
-// pipeline. Otherwise each present language contributes a "language: outcome" clause to the
+// When no non-Go language is present it returns the Go part exactly as the stage returned it before
+// multi-language support, message and verdict alike, so a Go repository's stage lines and signed output
+// are unchanged. A Go part that failed stops the stage before other languages run, as any failure
+// stops the pipeline. Otherwise each present language contributes a "language: outcome" clause to the
 // stage's reason (combineParts), which is how the signed stage output records what ran for which
 // language.
-func withCargo(ctx context.Context, cfg *stageConfig, goPart languagePart,
-	cargo func(context.Context, *stageConfig) (string, error)) (string, error) {
+func withOtherLanguages(ctx context.Context, cfg *stageConfig, goPart languagePart, parts ...nonGoPart) (string, error) {
 	cfg.noteVerified(goPart)
+	if isFailure(goPart.err) {
+		return goPart.msg, goPart.err
+	}
 	modules, err := cfg.goModules(ctx)
 	if err != nil {
 		return "", err
 	}
-	if !util.FileExists(filepath.Join(cfg.repoDir, CargoLockFile)) || isFailure(goPart.err) {
+
+	ranParts := make([]languagePart, 0, len(parts)+1)
+	if len(modules) > 0 {
+		ranParts = append(ranParts, goPart)
+	}
+
+	nonGoRan := 0
+	for i := 0; i < len(parts); i++ {
+		part := parts[i]
+		if !part.present(cfg.repoDir) {
+			continue
+		}
+		msg, runErr := part.run(ctx, cfg)
+		if isFailure(runErr) {
+			return "", fmt.Errorf("%s: %w", part.language, runErr)
+		}
+		p := languagePart{language: part.language, msg: msg, err: runErr}
+		cfg.noteVerified(p)
+		ranParts = append(ranParts, p)
+		nonGoRan++
+	}
+
+	if nonGoRan == 0 {
 		return goPart.msg, goPart.err
 	}
-	msg, err := cargo(ctx, cfg)
-	if isFailure(err) {
-		return "", fmt.Errorf("%s: %w", languageCargo, err)
-	}
-	cargoPart := languagePart{language: languageCargo, msg: msg, err: err}
-	cfg.noteVerified(cargoPart)
-	if len(modules) == 0 {
-		return combineParts(cargoPart)
-	}
-	return combineParts(goPart, cargoPart)
+	return combineParts(ranParts...)
 }
 
 // combineParts folds the parts of the languages a repository holds into one stage verdict, none

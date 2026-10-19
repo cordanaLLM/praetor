@@ -476,13 +476,15 @@ func executeStage(ctx context.Context, s stage, cfg *stageConfig) error {
 }
 
 // runPrefetchStage verifies the standards lockfiles, then prefetches each language's
-// dependencies: the Go modules, and the Cargo crates where a Cargo.lock pins them (withCargo).
+// dependencies: the Go modules, and the Cargo crates where a Cargo.lock pins them (withOtherLanguages).
 func runPrefetchStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	if err := VerifyLockfiles(cfg.repoDir); err != nil {
 		return "", err
 	}
 	msg, err := runGoPrefetch(ctx, cfg)
-	return withCargo(ctx, cfg, languagePart{language: languageGo, msg: msg, err: err}, runCargoPrefetch)
+	return withOtherLanguages(ctx, cfg, languagePart{language: languageGo, msg: msg, err: err},
+		nonGoPart{language: languageCargo, present: hasCargo, run: runCargoPrefetch},
+	)
 }
 
 // runGoPrefetch is the prefetch stage's Go part: go mod verify and go mod download.
@@ -578,10 +580,12 @@ func hissScanOptions(ctx context.Context, cfg *stageConfig) (hiss.ScanOptions, s
 }
 
 // runSecurityStage runs each language's scanners: govulncheck and gosec for Go, and cargo audit
-// where a Cargo.lock is present (withCargo).
+// where a Cargo.lock is present (withOtherLanguages).
 func runSecurityStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	msg, err := runGoSecurity(ctx, cfg)
-	return withCargo(ctx, cfg, languagePart{language: languageGo, msg: msg, err: err}, runCargoSecurity)
+	return withOtherLanguages(ctx, cfg, languagePart{language: languageGo, msg: msg, err: err},
+		nonGoPart{language: languageCargo, present: hasCargo, run: runCargoSecurity},
+	)
 }
 
 // runGoSecurity runs the Go vulnerability gate and gosec. A missing scanner fails the stage: a
@@ -792,10 +796,12 @@ func invalidSettingsClause(rep *flavor.FlavorAuditReport) string {
 }
 
 // runTestStage runs each language's test suite against HEAD in an isolated worktree: the Go
-// race detector, and cargo test and cargo clippy where a Cargo.lock is present (withCargo).
+// race detector, and cargo test and cargo clippy where a Cargo.lock is present (withOtherLanguages).
 func runTestStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	msg, err := runGoTests(ctx, cfg)
-	return withCargo(ctx, cfg, languagePart{language: languageGo, msg: msg, err: err}, runCargoTests)
+	return withOtherLanguages(ctx, cfg, languagePart{language: languageGo, msg: msg, err: err},
+		nonGoPart{language: languageCargo, present: hasCargo, run: runCargoTests},
+	)
 }
 
 // runGoTests runs the race detector against HEAD in an isolated worktree. A worktree that
