@@ -35,7 +35,7 @@
           {
             "type": "command",
             "command": "python3 -B \"${CLAUDE_PROJECT_DIR}/.config/agent/hooks/praetor_hook.py\" claude pre-dispatch",
-            "timeout": 15
+            "timeout": 35
           }
         ]
       },

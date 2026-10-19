@@ -198,7 +198,7 @@ func TestTrackedCommandProblemsRejectsRowsTheEngineLacks(t *testing.T) {
 	}
 	launch := func(root, pair string) string { return `python3 -B "` + root + "/" + launcherScript + `" ` + pair }
 	claude := func(pair string) string { return launch("${CLAUDE_PROJECT_DIR}", pair) }
-	valid := group("^Agent$", claude("claude pre-dispatch"), 15)
+	valid := group("^Agent$", claude("claude pre-dispatch"), 35)
 	for name, tc := range map[string]struct {
 		native string
 		group  nativeGroup
@@ -215,7 +215,7 @@ func TestTrackedCommandProblemsRejectsRowsTheEngineLacks(t *testing.T) {
 		"other client's row":            {"PreToolUse", group("^Agent$", claude("codex pre-dispatch"), 15), 1},
 		"wrong native event":            {"PostToolUse", valid, 1},
 		"wrong matcher":                 {"PreToolUse", group("^Task$", claude("claude pre-dispatch"), 15), 1},
-		"wrong timeout":                 {"PreToolUse", group("^Agent$", claude("claude pre-dispatch"), 16), 1},
+		"wrong timeout":                 {"PreToolUse", group("^Agent$", claude("claude pre-dispatch"), 15), 1},
 		"extra argument":                {"PreToolUse", group("^Agent$", claude("claude pre-dispatch --x"), 15), 1},
 		"missing event":                 {"PreToolUse", group("^Agent$", claude("claude"), 15), 1},
 	} {

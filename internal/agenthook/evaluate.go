@@ -20,8 +20,16 @@ const (
 	stopCheckpointBudget = 30 * time.Second
 	environmentBudget    = 5 * time.Second
 	dispatchBudget       = 10 * time.Second
+	claudeDispatchBudget = 25 * time.Second
 	returnBudget         = 30 * time.Second
 )
+
+func budgetForRow(row Registration) time.Duration {
+	if row.Client == "claude" && row.Event == EventPreDispatch {
+		return claudeDispatchBudget
+	}
+	return budgetFor(row.Event)
+}
 
 // budgetFor is the outer context deadline Run applies before evaluate reads anything.
 func budgetFor(event Event) time.Duration {
