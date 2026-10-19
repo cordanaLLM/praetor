@@ -41,7 +41,7 @@ func realGoToolchain(t *testing.T) (string, string) {
 
 // skipWithoutPosixLinks skips where the fixture cannot be built: creating a symlink needs
 // Developer Mode or elevation on Windows, and a shebang script is not executable there. The
-// function under test only feeds the Linux bubblewrap sandbox (verificationArguments), so the
+// function under test only feeds the Linux bubblewrap sandbox (verificationSpec), so the
 // Linux and macOS legs carry the coverage.
 func skipWithoutPosixLinks(t *testing.T) {
 	t.Helper()

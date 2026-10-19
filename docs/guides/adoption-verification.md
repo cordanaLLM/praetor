@@ -1363,6 +1363,40 @@ Any other argument after the persona is refused.
 [`cmd/standardsctl/agent_help_test.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/agent_help_test.go)
 counts pipeline calls for every help spelling and position.
 
+### Run one command in the agent sandbox
+
+`praetorctl agent sandbox [--workspace DIR] [--read-only] -- COMMAND [ARGS...]`
+mounts the selected host directory (the current directory by default) at `/workspace`
+and runs the command there. The workspace is writable unless `--read-only` is set.
+Arguments after `--`, including `--help`, belong to the command.
+
+The Linux profile in `internal/sandbox` is shared with repair verification. It uses
+bubblewrap namespaces, a read-only `/usr`, a private `/proc` and `/dev`, and a
+1 GiB temporary `/tmp`. Networking is disabled, including host loopback. Egress
+is reserved for a follow-up; no host-network or pasta mode is available. The
+command starts with a clean environment; the CLI passes no host variables.
+Use an absolute executable path, for example:
+
+```bash
+praetorctl agent sandbox --workspace . -- /usr/bin/true
+praetorctl agent sandbox --workspace . --read-only -- /usr/bin/ls /workspace
+```
+
+A systemd user scope limits memory to 4 GiB with no swap, tasks to 128, and CPU
+to 200%. `prlimit` additionally bounds address space to 4 GiB, CPU time to
+120 seconds, file size to 256 MiB, and open files to 256. The CLI has a five-minute
+execution deadline. Its exit status preserves the contained command's exit status.
+Missing `bwrap`, `systemd-run`, `prlimit` or a reachable user manager is an error;
+macOS and Windows report that Linux is required. No command runs uncontained.
+The manager probe also requires `systemctl` on PATH.
+
+`internal/sandbox/spec_test.go` pins the original repair profile's full argument
+list. `internal/sandbox/run_test.go` checks missing runtimes, a marker command
+that must never start, and real containment when Linux and the user manager are
+available; otherwise the integration test states its skip reason.
+`cmd/standardsctl/agent_sandbox_test.go` covers parsing, command help arguments,
+unavailability and exit status propagation.
+
 ### A receipt certifies only a working tree that matches HEAD
 
 The scan stages read the working tree, while the receipt names a commit. `gate run` without

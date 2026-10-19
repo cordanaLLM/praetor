@@ -19,13 +19,14 @@ import (
 )
 
 // agentUsage describes the agent command-line syntax.
-const agentUsage = "usage: praetorctl agent <list|run <agent-name>>"
+const agentUsage = "usage: praetorctl agent <list|run <agent-name>|sandbox [--workspace DIR] [--read-only] -- COMMAND [ARGS...]>"
 
 // printAgentUsage answers a help probe of the agent command.
 func printAgentUsage() {
 	fmt.Println(agentUsage)
 	fmt.Println("Agent helpers take no arguments; 'praetorctl agent list' names them.")
 	fmt.Println("'praetorctl agent run praetor-gatekeeper' runs the full gate, the same pipeline as 'praetorctl gate run'.")
+	fmt.Println("'praetorctl agent sandbox' runs one command in a Linux sandbox; unavailable isolation is an error.")
 }
 
 // runAgent dispatches the agent subcommands: list and run. A help token anywhere in args
@@ -33,6 +34,9 @@ func printAgentUsage() {
 // helper starts, so a `--help` probe of `agent run praetor-gatekeeper` never reaches the
 // gating pipeline and exits 0 like `gate --help` (BUG-790).
 func runAgent(args []string) error {
+	if len(args) > 0 && args[0] == "sandbox" {
+		return runAgentSandbox(args[1:])
+	}
 	if slices.ContainsFunc(args, isHelpToken) {
 		printAgentUsage()
 		return flag.ErrHelp
@@ -48,7 +52,7 @@ func runAgent(args []string) error {
 		return dispatchAgentTask(args[1], args[2:])
 	}
 
-	return fmt.Errorf("unknown agent subcommand: %s (available: list, run)", args[0])
+	return fmt.Errorf("unknown agent subcommand: %s (available: list, run, sandbox)", args[0])
 }
 
 // agentHelper is one helper 'agent run' can run: its name and its implementation.
