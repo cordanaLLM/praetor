@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -374,7 +373,7 @@ func runNodeSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 
 func parseNodeManifest(repoDir string) (nodemanifest.Manifest, error) {
 	manifestPath := filepath.Join(repoDir, PackageJsonFile)
-	data, err := os.ReadFile(manifestPath)
+	data, err := util.ReadFileLimited(manifestPath, nodemanifest.MaxManifestBytes)
 	if err != nil {
 		return nodemanifest.Manifest{}, fmt.Errorf("read %s: %w", PackageJsonFile, err)
 	}
