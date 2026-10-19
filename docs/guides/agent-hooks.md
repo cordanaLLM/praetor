@@ -110,19 +110,24 @@ Claude Code only, since only Claude Code runs cloud sessions:
 
 - It does nothing unless `CLAUDE_CODE_REMOTE` is `true`, the variable the cloud VM sets and a
   local session never does.
-- It installs the `lefthook` pin the CI uses (`go install github.com/evilmartians/lefthook/v2@v2.1.14`),
-  builds `praetorctl` from `./cmd/standardsctl` as the Makefile does, and runs
+- It builds `lefthook` from `tools/lefthook/go.mod`, the module CI installs it from, builds
+  `praetorctl` from `./cmd/standardsctl` as the Makefile does, and runs
   `praetorctl state init --if-absent .`, so the stop checkpoint finds a ledger in the fresh
   clone. Both binaries go into the first writable directory on `PATH` (`/usr/local/bin`, else
   `~/.local/bin`).
-- Every module is verified against `go.sum` and the checksum database; the bootstrap refuses to
-  install while `GOSUMDB` is `off` or `GONOSUMDB`/`GOINSECURE` is set.
+- Both builds run with `-mod=readonly`: every module is verified against a `go.sum` in the
+  checkout, so neither build asks the checksum database. A cloud session that clones from GitHub
+  cannot reach `sum.golang.org`, and `go install <module>@<version>` failed there for that
+  reason. The bootstrap still refuses to build while `GOSUMDB` is `off` or
+  `GONOSUMDB`/`GOINSECURE` is set.
 - It never disables a hook. A failed step is named in the one status line the session sees
   (`Praetor cloud session bootstrap: ...`), and the guards stay closed.
 
-Measured on 2026-10-19 with a cloud session on this repository: the bootstrap reported `ready`,
-both tools were on the VM's `PATH`, every pre-tool guard ran (exit 0), and no permission prompt
-appeared with `--permission-mode auto`. `scripts/test_cloud_bootstrap.py` covers the remote-only
+Measured on 2026-10-19 with a cloud session started from a bundle of this repository: the
+bootstrap reported `ready`, both tools were on the VM's `PATH`, every pre-tool guard ran
+(exit 0), and no permission prompt appeared with `--permission-mode auto`. A later session cloned
+from GitHub failed the former `go install` on the checksum database, which led to the
+`tools/lefthook` build. `scripts/test_cloud_bootstrap.py` covers the remote-only
 gate, the pins, the checksum refusal, a failed build and the registration;
 `scripts/test_checkpoint_hooks.py` checks its time budget against the registration.
 
