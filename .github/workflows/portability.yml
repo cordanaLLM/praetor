@@ -180,6 +180,18 @@ jobs:
         if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         run: go vet ./...
 
+      # The gating and flavor tests build the pinned gosec and install the fallback scanners
+      # from the versions tools/go/go.mod pins, under a 2-minute and a 4-minute bound. Those
+      # modules reached the module cache only with "Install Security Scanner", which runs after
+      # the tests: once a go.sum change gave the cache a new key, main c565cba50's macOS leg
+      # downloaded them inside those bounds and both tests ran out of time. Downloading them
+      # before the tests keeps the bounds about the build. bash keeps the dotted -modfile value
+      # one argument on Windows (see "Install Security Scanner").
+      - name: Download Pinned Tool Modules
+        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        shell: bash
+        run: go mod download -modfile=tools/go/go.mod
+
       # Not -race here. The race detector needs a host C toolchain, and whether one exists
       # on each runner image is exactly the kind of thing this matrix is meant to discover
       # rather than assume. The Linux race legs already run in the main CI gate, so nothing
