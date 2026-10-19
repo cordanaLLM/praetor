@@ -67,7 +67,7 @@ type wrapperSpec struct {
 var admissionWrappers = map[string]wrapperSpec{
 	"chrt":    {positional: 1},
 	"command": {},
-	"doas":    {values: []string{"-u", "-C"}},
+	"builtin": {},
 	"env":     {values: []string{"-u", "--unset", "-C", "--chdir"}},
 	"exec":    {values: []string{"-a"}},
 	"flock":   {values: []string{"-w", "--timeout", "-E", "--conflict-exit-code"}, positional: 1},
@@ -76,7 +76,6 @@ var admissionWrappers = map[string]wrapperSpec{
 	"nohup":   {},
 	"setsid":  {},
 	"stdbuf":  {values: []string{"-i", "-o", "-e"}},
-	"sudo":    {values: []string{"-u", "--user", "-g", "--group", "-h", "--host", "-C", "--close-from", "-D", "--chdir", "-p", "--prompt", "-U", "--other-user"}},
 	"systemd-run": {values: []string{"-p", "--property", "-u", "--unit", "-E", "--setenv", "--slice", "-M", "--machine", "-H", "--host",
 		"--uid", "--gid", "--nice", "--working-directory", "--description"}},
 	"taskset": {positional: 1},
@@ -136,32 +135,35 @@ func (c *admissionCheck) judge(command string) Verdict {
 		return Verdict{Outcome: Deny, Reason: refusal("HISS", fmt.Sprintf("heavy-step check: over %d simple commands; split command", admissionMaxSegments))}
 	}
 	for index := 0; index < len(segments) && index < admissionMaxSegments; index++ {
-		if shape, label, heavy := c.segment(strings.Fields(segments[index])); heavy {
-			return Verdict{Outcome: Deny, Reason: admissionRefusal(shape, label)}
+		if reason := c.segment(strings.Fields(segments[index])); reason != "" {
+			return Verdict{Outcome: Deny, Reason: reason}
 		}
 	}
 	return Verdict{Outcome: Allow}
 }
 
 // segment reports whether one simple command is a heavy step, looking through the wrappers
-// before it, and returns the matched shape and a step label.
-func (c *admissionCheck) segment(words []string) (string, string, bool) {
+// before it, or a privilege escalator, and returns the refusal.
+func (c *admissionCheck) segment(words []string) string {
 	words = words[:min(len(words), admissionMaxWords)]
 	i := skipPrelude(words)
 	for depth := 0; i < len(words) && depth < admissionMaxWrappers; depth++ {
 		// `praetorctl admit -- <step>` passes here: praetorctl is neither a shape nor a wrapper,
 		// so the step after it is admit's argument, not a command of this segment.
 		name := commandName(words[i])
+		if privilegeInvocationPattern.MatchString(strings.Join(append([]string{name}, words[i+1:]...), " ")) {
+			return refusal("HISS", evasionMessage+"; privilege escalation prohibited: "+name)
+		}
 		if shape, ok := c.shape(name, words[i+1:]); ok {
-			return shape, stepLabel(name, shape, words[i+1:]), true
+			return admissionRefusal(shape, stepLabel(name, shape, words[i+1:]))
 		}
 		spec, wrapper := admissionWrappers[name]
 		if !wrapper {
-			return "", "", false
+			return ""
 		}
 		i = commandAfter(words, i, spec)
 	}
-	return "", "", false
+	return ""
 }
 
 // shape returns the matched part of the first shape the command matches.

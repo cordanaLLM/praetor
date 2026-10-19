@@ -1,0 +1,2 @@
+type: security
+title: Refuse privilege escalation commands across supported agent before-tool hooks

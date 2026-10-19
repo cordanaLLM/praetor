@@ -1,4 +1,18 @@
 {
+  "praetor-command-policy": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -B praetor_hook.py agy pre-tool",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
   "praetor-subagent-register": {
     "PreToolUse": [
       {

@@ -42,7 +42,7 @@ lifecycle configuration and runtime qualification are separate:
 | Continue | merge `.continue/mcpServers/praetor.yaml` | not implemented | Projection and conflict tests only |
 | Cline | export JSON | not implemented | Export and conflict tests only |
 | Kilo | export JSON | not implemented | Export and conflict tests only |
-| AGY | native command/export | not registered | Lifecycle `unsupported`: the engine serves `agy pre-tool` and `agy stop`, but no tracked file registers them. Subagent text: `.agents/plugins/praetor/hooks.json` gates `invoke_subagent` briefs; public payload has no return body, so return capture and complete register enforcement are unenforceable |
+| AGY | native command/export | command guard registered; checkpoint/stop absent | Lifecycle `unsupported`: `.agents/plugins/praetor/hooks.json` registers `agy pre-tool`; no tracked file registers checkpoint or `agy stop`. Subagent text: `.agents/plugins/praetor/hooks.json` gates `invoke_subagent` briefs; public payload has no return body, so return capture and complete register enforcement are unenforceable |
 
 All three native adapters invoke the shared `command_guard.py` and
 `checkpoint.py`; Codex reaches the guard through its compatibility wrapper. The command
