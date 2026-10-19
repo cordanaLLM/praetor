@@ -951,14 +951,14 @@ Where the repository root holds `package.json` plus exactly one supported lockfi
 
 | Stage | npm | pnpm | Yarn Classic (v1) | Yarn Berry (v2+) | Runs in | Bound |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| Prefetch & Lockfiles | `npm ci --ignore-scripts` | `pnpm install --frozen-lockfile --ignore-scripts` | `yarn install --frozen-lockfile --ignore-scripts` | `yarn install --immutable --mode=skip-build` | the repository | `DefaultPrefetchTimeout`, 60 s |
+| Prefetch & Lockfiles | `npm ci --ignore-scripts` | `pnpm install --frozen-lockfile --ignore-scripts` | `yarn install --frozen-lockfile --ignore-scripts` | `yarn install --immutable --mode=skip-build` | an isolated worktree | `DefaultPrefetchTimeout`, 60 s |
 | Security & SCA Scan | `npm audit --audit-level=high --json` | `pnpm audit --audit-level=high --json` | `yarn audit --level=high --json` | `yarn npm audit --severity=high --json` | the repository | `NodeAuditTimeout`, 3 min |
 | Race-Detector Tests | `npm run test`, then `npm run lint` | `pnpm run test`, then `pnpm run lint` | `yarn run test`, then `yarn run lint` | `yarn run test`, then `yarn run lint` | the isolated worktree | a race stage bound of its own |
 
 - **Detection:** The Node part is present when the repository root holds `package.json` plus exactly one lockfile: `package-lock.json`, `pnpm-lock.yaml`, or `yarn.lock`. A `package.json` without a lockfile or with multiple lockfiles fails stating the files.
-- **Prefetch:** Installs strictly from the lockfile without running lifecycle scripts. Exact flags are taken from installed tool help (`--ignore-scripts`, `--frozen-lockfile`, `--immutable`, `--mode=skip-build`). Yarn version is detected via `yarn --version` to distinguish Classic (v1) from Berry (v2+).
+- **Prefetch:** Installs strictly from the lockfile without running lifecycle scripts, in a worktree of its own, so the developer's checkout and its `node_modules` stay untouched; the run fills the package manager's shared cache. Exact flags are taken from installed tool help (`--ignore-scripts`, `--frozen-lockfile`, `--immutable`, `--mode=skip-build`). Yarn version is detected via `yarn --version` to distinguish Classic (v1) from Berry (v2+); a version the gate cannot read fails the part instead of guessing.
 - **Security:** Runs the manager's audit command at a severity threshold of `high`, failing on findings or unparseable errors. An audit that needs network access and fails is reported as a network failure, not passed.
-- **Tests:** Runs the `test` script when declared, then the `lint` script when declared, in an isolated worktree with `node_modules` linked from the checkout via `findDependencyFolders` and cleaned up after execution.
+- **Tests:** In an isolated worktree, installs from the lockfile again (without lifecycle scripts, from the shared cache), then runs the `test` script when declared and the `lint` script when declared. The checkout's own `node_modules` is never linked in: it may hold other versions than the lockfile pins.
 - **What is not applicable:** When `package.json` declares neither a `test` nor a `lint` script, the test stage is not applicable, stated as `no test or lint script declared in package.json: Node tests skipped`, and Node does not count as verified (refusing a receipt unless another language verifies). When `package.json` has no lockfile, toolchain stages do not run and `--admit-unsupported` admits the repository without a receipt.
 - A missing manager binary skips the stage with an install hint and never passes.
 
