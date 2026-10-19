@@ -241,7 +241,9 @@ def release_archive_url(lock: dict, release: str, asset: str) -> str:
     elif repository.startswith("https://"):
         base = repository.rstrip("/")
     elif "://" in repository:
-        raise CheckError(f"the player archive is fetched over https only, not {repository!r}")
+        raise CheckError(
+            f"the player archive is fetched over https only, not {repository!r}"
+        )
     else:
         base = f"https://github.com/{repository.strip('/')}"
     return f"{base}/releases/download/{release}/{asset}"
@@ -319,7 +321,8 @@ def extract_player_archive(raw: bytes) -> list[tuple[str, Path]]:
 def locked_player_files(lock_file: Path) -> list[tuple[str, Path]]:
     """Resolve player files from player.lock.json, or warn and return none for SVG fallback."""
     if not lock_file.is_file():
-        log.warning(SVG_FALLBACK_WARNING, f"unknown ({lock_file.name} is missing; praetorctl adopt writes it)")
+        missing = f"unknown ({lock_file.name} is missing; praetorctl adopt writes it)"
+        log.warning(SVG_FALLBACK_WARNING, missing)
         return []
     lock = read_player_lock(lock_file)
     release = str(lock.get("release") or "").strip()
