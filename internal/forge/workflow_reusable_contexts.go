@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -40,10 +41,22 @@ type pinnedReusableWorkflow struct {
 	yaml string
 }
 
-// horistesLicenceWorkflowYAML is the workflow specification of plurano/horistes .github/workflows/licence.yml
-// at PluranoHoristesLicenceWorkflowSHA. It declares one job with a name expression evaluating root input.
-const horistesLicenceWorkflowYAML = "on:\n  workflow_call:\n    inputs:\n      root:\n        default: .\n" +
-	"jobs:\n  lint:\n    name: ${{ inputs.root == '.' && 'REUSE lint' || format('REUSE lint ({0})', inputs.root) }}\n"
+// horistesLicenceWorkflowYAML mirrors plurano/horistes .github/workflows/licence.yml at
+// PluranoHoristesLicenceWorkflowSHA (read 2026-10-19), limited to inputs and the job name
+// needed to compute check contexts.
+const horistesLicenceWorkflowYAML = `on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: ubuntu-26.04
+      root:
+        type: string
+        default: .
+jobs:
+  reuse:
+    name: ${{ inputs.root == '.' && 'REUSE lint' || format('REUSE lint ({0})', inputs.root) }}
+`
 
 // knownPinnedExternalWorkflows maps external workflow action paths to their pinned specification.
 var knownPinnedExternalWorkflows = map[string]pinnedReusableWorkflow{
@@ -51,20 +64,6 @@ var knownPinnedExternalWorkflows = map[string]pinnedReusableWorkflow{
 		sha:  PluranoHoristesLicenceWorkflowSHA,
 		yaml: horistesLicenceWorkflowYAML,
 	},
-}
-
-// Is40HexSHA reports whether s is exactly 40 lowercase hexadecimal characters.
-func Is40HexSHA(s string) bool {
-	if len(s) != 40 {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
 }
 
 // calledWorkflows holds the repository's workflow documents by file name, so a job that calls
@@ -120,14 +119,10 @@ func (c calledWorkflows) spec(job, uses string) (*workflowSpec, error) {
 
 // externalSpec resolves an external reusable workflow against the engine's pinned table.
 func (c calledWorkflows) externalSpec(job, uses string) (*workflowSpec, error) {
-	action, rest, hasAt := strings.Cut(uses, "@")
-	ref, _, _ := strings.Cut(rest, "#")
-	action = strings.TrimSpace(action)
-	ref = strings.TrimSpace(ref)
-
-	entry, known := knownPinnedExternalWorkflows[action]
-	if known && hasAt {
-		if ref == entry.sha {
+	pin, pinned := util.ParseSHAPin(uses)
+	entry, known := knownPinnedExternalWorkflows[pin.Action]
+	if known && pinned {
+		if pin.SHA == entry.sha {
 			if spec, ok := c.parsed[uses]; ok {
 				return spec, nil
 			}
@@ -138,10 +133,8 @@ func (c calledWorkflows) externalSpec(job, uses string) (*workflowSpec, error) {
 			c.parsed[uses] = &spec
 			return &spec, nil
 		}
-		if Is40HexSHA(ref) {
-			return nil, fmt.Errorf("job %q calls the reusable workflow %s at %s; only the pinned commit %s is supported "+
-				"(renovate bumps the engine constant first)", job, action, ref, entry.sha)
-		}
+		return nil, fmt.Errorf("job %q calls the reusable workflow %s at %s; only the pinned commit %s is supported "+
+			"(move the engine pin (forge.PluranoHoristesLicenceWorkflowSHA) first)", job, pin.Action, pin.SHA, entry.sha)
 	}
 
 	return nil, fmt.Errorf("job %q calls the reusable workflow %s of another repository; its jobs, and so the "+
