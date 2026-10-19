@@ -693,6 +693,15 @@ func isSudoValOption(opt string) bool {
 	return false
 }
 
+// isTimeValOption reports whether a time option takes a following value argument.
+func isTimeValOption(opt string) bool {
+	switch opt {
+	case "-f", "--format", "-o", "--output":
+		return true
+	}
+	return false
+}
+
 func unwrapTime(args []string) ([]string, bool) {
 	for i := 0; i < len(args) && i < maxRunScriptFields; i++ {
 		arg := args[i]
@@ -703,7 +712,7 @@ func unwrapTime(args []string) ([]string, bool) {
 			return nil, false
 		}
 		if strings.HasPrefix(arg, "-") {
-			if (arg == "-f" || arg == "--format" || arg == "-o" || arg == "--output") && i+1 < len(args) {
+			if isTimeValOption(arg) && i+1 < len(args) {
 				i++
 			}
 			continue

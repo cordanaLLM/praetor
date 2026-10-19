@@ -360,7 +360,7 @@ func matchPattern(pattern, filePath string) bool {
 	}
 
 	dirRule := strings.HasSuffix(pat, "/")
-	anchored := strings.HasPrefix(pat, "/") || strings.Contains(strings.TrimSuffix(pat, "/"), "/")
+	anchored := isPatternAnchored(pat)
 	patSegs := strings.Split(strings.Trim(pat, "/"), "/")
 	pathSegs := strings.Split(cleanPath, "/")
 	if len(pathSegs) > MaxPathSegments || len(patSegs) > MaxPathSegments {
@@ -370,6 +370,16 @@ func matchPattern(pattern, filePath string) bool {
 	if anchored {
 		return matchFrom(patSegs, pathSegs, dirRule)
 	}
+	return matchUnanchored(patSegs, pathSegs, dirRule)
+}
+
+// isPatternAnchored reports whether a pattern is anchored to the root.
+func isPatternAnchored(pat string) bool {
+	return strings.HasPrefix(pat, "/") || strings.Contains(strings.TrimSuffix(pat, "/"), "/")
+}
+
+// matchUnanchored searches for a match starting at any segment offset.
+func matchUnanchored(patSegs, pathSegs []string, dirRule bool) bool {
 	for start := 0; start < len(pathSegs); start++ {
 		if matchFrom(patSegs, pathSegs[start:], dirRule) {
 			return true

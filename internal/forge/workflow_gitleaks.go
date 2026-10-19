@@ -137,20 +137,31 @@ func isGitleaksProgram(prog string) bool {
 	return prog == "gitleaks" || strings.HasSuffix(prog, "/gitleaks")
 }
 
+// containerDoubleDashArgs extracts remaining arguments after `-- <image>`.
+func containerDoubleDashArgs(rest []string, i int) ([]string, bool) {
+	if i+1 < len(rest) && containerImageMatches(rest[i+1], "gitleaks") {
+		return rest[i+2:], true
+	}
+	return nil, false
+}
+
+// advanceDockerOption advances the index past a Docker option and any separate value argument.
+func advanceDockerOption(rest []string, i int) int {
+	if !strings.Contains(rest[i], "=") && isDockerValOption(rest[i]) && i+1 < len(rest) {
+		return i + 1
+	}
+	return i
+}
+
 func containerGitleaksArgs(args []string) ([]string, bool) {
 	rest := argsAfterWord(args, "run")
 	for i := 0; i < len(rest) && i < maxRunScriptFields; i++ {
 		arg := rest[i]
 		if arg == "--" {
-			if i+1 < len(rest) && containerImageMatches(rest[i+1], "gitleaks") {
-				return rest[i+2:], true
-			}
-			return nil, false
+			return containerDoubleDashArgs(rest, i)
 		}
 		if strings.HasPrefix(arg, "-") {
-			if !strings.Contains(arg, "=") && isDockerValOption(arg) && i+1 < len(rest) {
-				i++
-			}
+			i = advanceDockerOption(rest, i)
 			continue
 		}
 		if containerImageMatches(arg, "gitleaks") {
@@ -161,16 +172,27 @@ func containerGitleaksArgs(args []string) ([]string, bool) {
 	return nil, false
 }
 
+// isGoRunOrTool reports whether the arguments begin with a "run" or "tool" subcommand.
+func isGoRunOrTool(args []string) bool {
+	return len(args) > 0 && (args[0] == "run" || args[0] == "tool")
+}
+
+// advanceGoFlag advances the index past a Go flag and any separate value argument.
+func advanceGoFlag(args []string, i int) int {
+	if !strings.Contains(args[i], "=") && isGoFlagWithValue(args[i]) && i+1 < len(args) {
+		return i + 1
+	}
+	return i
+}
+
 func goRunGitleaksArgs(args []string) ([]string, bool) {
-	if len(args) == 0 || (args[0] != "run" && args[0] != "tool") {
+	if !isGoRunOrTool(args) {
 		return nil, false
 	}
 	for i := 1; i < len(args) && i < maxRunScriptFields; i++ {
 		arg := args[i]
 		if strings.HasPrefix(arg, "-") {
-			if !strings.Contains(arg, "=") && isGoFlagWithValue(arg) && i+1 < len(args) {
-				i++
-			}
+			i = advanceGoFlag(args, i)
 			continue
 		}
 		if clean := cleanRunnerSpec(arg); strings.Contains(clean, "gitleaks") {
@@ -195,24 +217,39 @@ func isGitleaksDetect(args []string) bool {
 	return hasDetect
 }
 
+// extractLogOptsValue retrieves the value of a --log-opts flag and advances the index if needed.
+func extractLogOptsValue(args []string, i int) (string, int) {
+	arg := args[i]
+	if arg == "--log-opts" && i+1 < len(args) {
+		return args[i+1], i + 1
+	}
+	if strings.HasPrefix(arg, "--log-opts=") {
+		return strings.TrimPrefix(arg, "--log-opts="), i
+	}
+	return "", i
+}
+
+// logOptsContainsMinusM reports whether the log options string includes a "-m" flag.
+func logOptsContainsMinusM(val string) bool {
+	if val == "" {
+		return false
+	}
+	clean := strings.Trim(val, "\"'")
+	fields := strings.Fields(clean)
+	for f := 0; f < len(fields) && f < maxRunScriptFields; f++ {
+		if fields[f] == "-m" {
+			return true
+		}
+	}
+	return false
+}
+
 func hasMinusMInLogOpts(args []string) bool {
 	for i := 0; i < len(args) && i < maxRunScriptFields; i++ {
-		arg := args[i]
-		var val string
-		if arg == "--log-opts" && i+1 < len(args) {
-			val = args[i+1]
-			i++
-		} else if strings.HasPrefix(arg, "--log-opts=") {
-			val = strings.TrimPrefix(arg, "--log-opts=")
-		}
-		if val != "" {
-			clean := strings.Trim(val, "\"'")
-			fields := strings.Fields(clean)
-			for f := 0; f < len(fields) && f < maxRunScriptFields; f++ {
-				if fields[f] == "-m" {
-					return true
-				}
-			}
+		val, nextI := extractLogOptsValue(args, i)
+		i = nextI
+		if logOptsContainsMinusM(val) {
+			return true
 		}
 	}
 	return false

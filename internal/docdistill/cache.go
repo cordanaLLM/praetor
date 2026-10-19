@@ -242,16 +242,7 @@ func SyncRepositoryDocs(ctx context.Context, repoPath string, opts DistillOption
 	syncCtx, cancel := syncContext(ctx, opts.Timeout)
 	defer cancel()
 
-	bound := opts.MaxPackages
-	if bound <= 0 {
-		bound = maxSyncPackages
-	}
-	limit := len(refs)
-	truncated := false
-	if limit > bound {
-		limit = bound
-		truncated = true
-	}
+	limit, truncated := syncLimit(len(refs), opts.MaxPackages)
 
 	for i := 0; i < limit; i++ {
 		if syncCtx.Err() != nil {
@@ -276,6 +267,18 @@ func SyncRepositoryDocs(ctx context.Context, repoPath string, opts DistillOption
 		return cat, fmt.Errorf("%w: synced %d of %d declared dependencies", ErrSyncTruncated, limit, len(refs))
 	}
 	return cat, nil
+}
+
+// syncLimit computes the initial iteration limit and whether the refs list was capped.
+func syncLimit(total, max int) (int, bool) {
+	bound := max
+	if bound <= 0 {
+		bound = maxSyncPackages
+	}
+	if total > bound {
+		return bound, true
+	}
+	return total, false
 }
 
 // stoppedByBound reports whether a harvest failed because the sync deadline elapsed or

@@ -80,6 +80,11 @@ func harvestGoModule(ctx context.Context, repoPath string, ref PackageRef, offli
 	if cacheErr == nil && content != "" {
 		return content, nil
 	}
+	return fallbackGoDocumentation(ctx, ref, offline, commandErr, cacheErr)
+}
+
+// fallbackGoDocumentation fetches remote documentation from GitHub or returns an unavailable error.
+func fallbackGoDocumentation(ctx context.Context, ref PackageRef, offline bool, commandErr, cacheErr error) (string, error) {
 	if !offline && strings.HasPrefix(ref.Name, "github.com/") {
 		content, err := githubGoDocumentation(ctx, ref)
 		if err == nil {
@@ -132,16 +137,7 @@ func harvestGitHubAction(ctx context.Context, ref PackageRef, offline bool) (str
 	repo := parts[1]
 
 	if !offline {
-		// Fetch action.yml or action.yaml first for exact input/output interface
-		actionURL := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/action.yml", owner, repo, ref.Version)
-		actionYAML, err := fetchURLWithTimeout(ctx, actionURL)
-		if err != nil {
-			actionURL = fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/action.yaml", owner, repo, ref.Version)
-			actionYAML, err = fetchURLWithTimeout(ctx, actionURL)
-			if err != nil {
-				actionYAML = ""
-			}
-		}
+		actionYAML := fetchActionYAML(ctx, owner, repo, ref.Version)
 
 		readmeURL := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/README.md", owner, repo, ref.Version)
 		readmeMD, err := fetchURLWithTimeout(ctx, readmeURL)
@@ -149,19 +145,42 @@ func harvestGitHubAction(ctx context.Context, ref PackageRef, offline bool) (str
 			readmeMD = ""
 		}
 
-		combined := fmt.Sprintf("# GitHub Action: %s@%s\n\n", ref.Name, ref.Version)
-		if actionYAML != "" {
-			combined += fmt.Sprintf("## action.yml Interface:\n```yaml\n%s\n```\n\n", actionYAML)
-		}
-		if readmeMD != "" {
-			combined += fmt.Sprintf("## Documentation:\n%s\n", readmeMD)
-		}
-		if actionYAML != "" || readmeMD != "" {
+		if combined := formatActionDocs(ref, actionYAML, readmeMD); combined != "" {
 			return combined, nil
 		}
 	}
 
 	return "", fmt.Errorf("action documentation unavailable for %s@%s", ref.Name, ref.Version)
+}
+
+// fetchActionYAML retrieves action.yml or action.yaml from raw.githubusercontent.com.
+func fetchActionYAML(ctx context.Context, owner, repo, version string) string {
+	actionURL := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/action.yml", owner, repo, version)
+	actionYAML, err := fetchURLWithTimeout(ctx, actionURL)
+	if err == nil {
+		return actionYAML
+	}
+	actionURL = fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/action.yaml", owner, repo, version)
+	actionYAML, err = fetchURLWithTimeout(ctx, actionURL)
+	if err == nil {
+		return actionYAML
+	}
+	return ""
+}
+
+// formatActionDocs combines action interface and readme documentation into markdown.
+func formatActionDocs(ref PackageRef, actionYAML, readmeMD string) string {
+	if actionYAML == "" && readmeMD == "" {
+		return ""
+	}
+	combined := fmt.Sprintf("# GitHub Action: %s@%s\n\n", ref.Name, ref.Version)
+	if actionYAML != "" {
+		combined += fmt.Sprintf("## action.yml Interface:\n```yaml\n%s\n```\n\n", actionYAML)
+	}
+	if readmeMD != "" {
+		combined += fmt.Sprintf("## Documentation:\n%s\n", readmeMD)
+	}
+	return combined
 }
 
 // harvestNodePackage reads the package README from the repository's
