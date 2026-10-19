@@ -216,8 +216,17 @@ Praetor's own:
 - A container with Go tooling sets `go.toolsManagement.autoUpdate` to `false`,
   the Go extension's own default, so the extension does not update its tools
   after creation behind a pinned Go feature and golangci-lint version.
+  The generated DevContainer installs `golangci-lint` at the version pinned in
+  `tools/lint/go.mod` outside the Go feature (`ghcr.io/devcontainers/features/go:1`).
+  Because the Go feature installs linters only inside its `installGoTools` block,
+  configuring `installGoTools: false` on the Go feature (or leaving options default)
+  retains the pinned `golangci-lint` executable in `/usr/local/bin/golangci-lint`.
+  Editor settings configure `go.lintTool: golangci-lint` and `go.lintOnSave: package`;
+  a generated container configuring `go.lintTool: golangci-lint` without
+  installing the tool or using an unpinned version (`latest`) is refused by
+  `devcontainer verify`.
 
-Tests: `internal/devcontainer/feature_defaults_test.go`.
+Tests: `internal/devcontainer/feature_defaults_test.go`, `internal/devcontainer/golangci_test.go`.
 
 ## Moving a reviewed default image
 

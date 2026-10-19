@@ -1,0 +1,2 @@
+type: fixed
+title: the generated Dev Container installs the pinned golangci-lint outside the Go feature, so installGoTools false keeps the lint tool

@@ -68,15 +68,16 @@ type BootstrapOptions struct {
 // BootstrapSpec records generation inputs, not a claim of build or execution.
 // Its digests are integrity checks, not signatures or source authentication.
 type BootstrapSpec struct {
-	Version          int    `json:"version"`
-	State            string `json:"state"`
-	Reason           string `json:"reason,omitempty"`
-	BuilderImage     string `json:"builderImage,omitempty"`
-	BaseImage        string `json:"baseImage"`
-	SourceSHA256     string `json:"sourceSHA256,omitempty"`
-	ArchiveSHA256    string `json:"archiveSHA256,omitempty"`
-	ArchiveParts     int    `json:"archiveParts,omitempty"`
-	DockerfileSHA256 string `json:"dockerfileSHA256,omitempty"`
+	Version             int    `json:"version"`
+	State               string `json:"state"`
+	Reason              string `json:"reason,omitempty"`
+	BuilderImage        string `json:"builderImage,omitempty"`
+	BaseImage           string `json:"baseImage"`
+	GolangciLintVersion string `json:"golangciLintVersion,omitempty"`
+	SourceSHA256        string `json:"sourceSHA256,omitempty"`
+	ArchiveSHA256       string `json:"archiveSHA256,omitempty"`
+	ArchiveParts        int    `json:"archiveParts,omitempty"`
+	DockerfileSHA256    string `json:"dockerfileSHA256,omitempty"`
 }
 
 type PraetorCustomization struct {
@@ -174,6 +175,13 @@ func (b *Bundle) prepareSource(ctx context.Context, files []bootstrapSourceFile,
 	if err != nil {
 		return err
 	}
+	if hasGoLintTool(b.Config) {
+		version, err := readPinnedGolangciLint(options.SourceRoot)
+		if err != nil {
+			return err
+		}
+		spec.GolangciLintVersion = version
+	}
 	spec.State = BootstrapReady
 	spec.Reason = ""
 	spec.BuilderImage = options.BuilderImage
@@ -254,6 +262,9 @@ func validateBootstrapSpecFrom(spec *BootstrapSpec, oldest dockerfileRendering) 
 	if spec.State != BootstrapReady || spec.Reason != "" {
 		return errors.New("invalid bootstrap state")
 	}
+	if spec.GolangciLintVersion != "" && !isValidLintVersion(spec.GolangciLintVersion) {
+		return errors.New("unpinned or invalid golangci-lint version")
+	}
 	return validateReadyBootstrap(spec, oldest)
 }
 
@@ -306,7 +317,18 @@ func renderBootstrapDockerfileAs(spec *BootstrapSpec, rendering dockerfileRender
 	s.WriteString(bootstrapArchiveSteps(strings.TrimPrefix(spec.ArchiveSHA256, "sha256:"), rendering))
 	s.WriteString("ENV GOTOOLCHAIN=local CGO_ENABLED=0 GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org\nRUN sha256sum go.mod go.sum > /tmp/praetor-modules.sha256 && /usr/local/go/bin/go mod download && /usr/local/go/bin/go mod verify && sha256sum -c /tmp/praetor-modules.sha256\n")
 	s.WriteString("RUN /usr/local/go/bin/go build -mod=readonly -trimpath -buildvcs=false -o /out/praetorctl ./" + bootstrapBuildPackage + "\n")
-	fmt.Fprintf(&s, "FROM %s\nCOPY --from=praetor_build --chmod=0444 /praetor-source/LICENSE /usr/local/share/praetor/LICENSE\nCOPY --from=praetor_build --chmod=0555 /out/praetorctl /usr/local/bin/praetorctl\nCOPY --from=praetor_build --chmod=0555 /out/praetorctl /usr/local/bin/standardsctl\nUSER vscode\n", spec.BaseImage)
+	if spec.GolangciLintVersion != "" {
+		// Pinned golangci-lint installed outside the Go feature so installGoTools: false retains it.
+		// The install verifies what it installs via go install with the Go module checksum database on (GOSUMDB=sum.golang.org).
+		s.WriteString("# Pinned golangci-lint installed outside the Go feature so installGoTools: false retains it.\n")
+		s.WriteString("# Verification: go install verifies against module checksum database (GOSUMDB=sum.golang.org).\n")
+		fmt.Fprintf(&s, "RUN GOBIN=/out /usr/local/go/bin/go install -trimpath %s/cmd/golangci-lint@%s\n", golangciModulePath, spec.GolangciLintVersion)
+	}
+	fmt.Fprintf(&s, "FROM %s\nCOPY --from=praetor_build --chmod=0444 /praetor-source/LICENSE /usr/local/share/praetor/LICENSE\nCOPY --from=praetor_build --chmod=0555 /out/praetorctl /usr/local/bin/praetorctl\nCOPY --from=praetor_build --chmod=0555 /out/praetorctl /usr/local/bin/standardsctl\n", spec.BaseImage)
+	if spec.GolangciLintVersion != "" {
+		s.WriteString("COPY --from=praetor_build --chmod=0555 /out/golangci-lint /usr/local/bin/golangci-lint\n")
+	}
+	s.WriteString("USER vscode\n")
 	return s.String()
 }
 
@@ -328,7 +350,7 @@ func bootstrapArchiveSteps(sum string, rendering dockerfileRendering) string {
 }
 
 func validateUnavailableBootstrap(spec *BootstrapSpec) error {
-	if spec.Reason == "" || len(spec.Reason) > 512 || spec.BuilderImage != "" || spec.SourceSHA256 != "" || spec.ArchiveSHA256 != "" || spec.ArchiveParts != 0 || spec.DockerfileSHA256 != "" {
+	if spec.Reason == "" || len(spec.Reason) > 512 || spec.BuilderImage != "" || spec.SourceSHA256 != "" || spec.ArchiveSHA256 != "" || spec.ArchiveParts != 0 || spec.DockerfileSHA256 != "" || spec.GolangciLintVersion != "" {
 		return errors.New("invalid unavailable bootstrap metadata")
 	}
 	return nil

@@ -70,6 +70,11 @@ func bootstrapSourceFixture(t *testing.T) string {
 	writeBootstrapFile(t, root, "go.sum", "")
 	writeBootstrapFile(t, root, "LICENSE", "Synthetic test license\n")
 	writeBootstrapFile(t, root, "cmd/standardsctl/main.go", "package main\nfunc main() {}\n")
+	if data, err := os.ReadFile(filepath.Join("..", "..", lintModRelative)); err == nil {
+		writeBootstrapFile(t, root, lintModRelative, string(data))
+	} else if data, err := os.ReadFile(lintModRelative); err == nil {
+		writeBootstrapFile(t, root, lintModRelative, string(data))
+	}
 	if _, err := runSourceGit(t.Context(), root, "init", "-q"); err != nil {
 		t.Fatal(err)
 	}
