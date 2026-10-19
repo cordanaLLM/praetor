@@ -500,33 +500,48 @@ func formatGeneratedBlock(pairs []LinterPair, category string, today time.Time, 
 	return b.String(), nil
 }
 
-func findRulesInsertionIndex(lines []string) int {
-	rulesIdx := -1
-	rulesIndent := 0
-	for i := 0; i < len(lines) && i < maxGolangciLines; i++ {
-		line := lines[i]
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "rules:" {
-			rulesIdx = i
-			rulesIndent = len(line) - len(strings.TrimLeft(line, " "))
-			break
-		}
+// findRulesInsertionIndex returns the line after the last line of linters.exclusions.rules,
+// whose key it finds by YAML structure: the first `rules:` line of the file may belong to another
+// mapping, such as linters.settings.revive.rules. A configuration without the exclusion list
+// takes the block at its end; one that is not YAML is an error.
+func findRulesInsertionIndex(lines []string) (int, error) {
+	rulesIdx, err := exclusionRulesKeyLine(strings.Join(lines, "\n"))
+	if err != nil || rulesIdx < 0 || rulesIdx >= len(lines) {
+		return len(lines), err
 	}
-	if rulesIdx == -1 {
-		return len(lines)
-	}
+	rulesIndent := len(lines[rulesIdx]) - len(strings.TrimLeft(lines[rulesIdx], " "))
 	for i := rulesIdx + 1; i < len(lines) && i < maxGolangciLines; i++ {
 		line := lines[i]
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		currIndent := len(line) - len(strings.TrimLeft(line, " "))
-		if currIndent <= rulesIndent {
-			return i
+		if len(line)-len(strings.TrimLeft(line, " ")) <= rulesIndent {
+			return i, nil
 		}
 	}
-	return len(lines)
+	return len(lines), nil
+}
+
+// exclusionRulesKeyLine returns the zero-based line of the `rules` key of linters.exclusions in
+// content, -1 when the configuration has none.
+func exclusionRulesKeyLine(content string) (int, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(content), &doc); err != nil {
+		return -1, fmt.Errorf("parse golangci-lint configuration: %w", err)
+	}
+	if len(doc.Content) == 0 {
+		return -1, nil
+	}
+	exclusions := findExclusionsMapping(doc.Content[0])
+	if exclusions == nil {
+		return -1, nil
+	}
+	for i := 0; i+1 < len(exclusions.Content) && i < maxYamlMappingKeys; i += 2 {
+		if exclusions.Content[i].Value == "rules" {
+			return exclusions.Content[i].Line - 1, nil
+		}
+	}
+	return -1, nil
 }
 
 func writeGeneratedBlockToFile(configPath, block string, beginLine, endLine int) error {
@@ -541,7 +556,10 @@ func writeGeneratedBlockToFile(configPath, block string, beginLine, endLine int)
 		newLines = append(newLines, block)
 		newLines = append(newLines, lines[endLine+1:]...)
 	} else {
-		insertIdx := findRulesInsertionIndex(lines)
+		insertIdx, err := findRulesInsertionIndex(lines)
+		if err != nil {
+			return fmt.Errorf("find linters.exclusions.rules in %s: %w", configPath, err)
+		}
 		newLines = append(newLines, lines[:insertIdx]...)
 		newLines = append(newLines, block)
 		newLines = append(newLines, lines[insertIdx:]...)
