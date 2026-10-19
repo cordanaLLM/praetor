@@ -7,8 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/sandbox"
 )
 
 // TestResult records scoped execution, not original private-corpus verification.
@@ -22,16 +23,15 @@ type TestResult struct {
 }
 
 func verifyWorkspace(ctx context.Context, cfg Config, candidate string) (*TestResult, []byte, error) {
-	args, err := verificationArguments(ctx, cfg, candidate)
+	spec, err := verificationSpec(ctx, cfg, candidate)
 	if err != nil {
 		return nil, nil, err
 	}
-	limited := append([]string{"--user", "--scope", "--quiet", "--collect", "--expand-environment=no", "--property=MemoryMax=4G", "--property=MemorySwapMax=0", "--property=TasksMax=128", "--property=CPUQuota=200%", "/usr/bin/prlimit", "--as=4294967296", "--cpu=120", "--fsize=268435456", "--nofile=256", "--", "/usr/bin/bwrap"}, args...)
-	env, err := verificationEnvironment()
+	invocation, err := (sandbox.Runner{}).Command(ctx, spec)
 	if err != nil {
 		return nil, nil, err
 	}
-	data, runErr := command(ctx, "", env, maxLogBytes, "/usr/bin/systemd-run", limited...)
+	data, runErr := command(ctx, "", invocation.Environment, maxLogBytes, invocation.Path, invocation.Args...)
 	result := &TestResult{Passed: runErr == nil, ExitCode: 0, LogSHA256: bytesSHA(data), LogBytes: len(data), Packages: cfg.TestPackages}
 	result.Tests, err = testOutcomes(data)
 	if err != nil {
@@ -56,29 +56,24 @@ func verifyWorkspace(ctx context.Context, cfg Config, candidate string) (*TestRe
 	return result, data, nil
 }
 
-func verificationArguments(ctx context.Context, cfg Config, candidate string) ([]string, error) {
-	if runtime.GOOS != "linux" {
-		return nil, errors.New("repair verification requires Linux bubblewrap")
-	}
+func verificationSpec(ctx context.Context, cfg Config, candidate string) (sandbox.Spec, error) {
 	goPath, root, err := goToolchainRoot(ctx)
 	if err != nil {
-		return nil, err
+		return sandbox.Spec{}, err
 	}
 	cache, err := moduleCache(ctx)
 	if err != nil {
-		return nil, err
+		return sandbox.Spec{}, err
 	}
-	// The sandbox binds "/usr" plus the resolved toolchain root read-only, rather than
-	// assuming go lives inside "/usr": actions/setup-go installs to a hosted tool cache
-	// (e.g. /opt/hostedtoolcache/go/<version>/x64), not to /usr/bin/go, and a hardcoded
-	// /usr/bin/go silently downgraded to a stale distro Go -- or none at all -- once a CI
-	// image actually exercised this real-bubblewrap path (praetor#376).
-	args := []string{"--unshare-all", "--die-with-parent", "--new-session", "--clearenv", "--ro-bind", "/usr", "/usr", "--symlink", "usr/bin", "/bin", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib", "/lib64", "--proc", "/proc", "--dev", "/dev", "--size", "1073741824", "--tmpfs", "/tmp", "--dir", "/home", "--ro-bind", candidate, "/workspace", "--ro-bind", cache, "/deps", "--ro-bind", root, root, "--chdir", "/workspace"}
-	for _, entry := range [][2]string{{"HOME", "/home"}, {"PATH", "/usr/bin:/bin"}, {"TMPDIR", "/tmp"}, {"GOCACHE", "/tmp/go-cache"}, {"GOMODCACHE", "/deps"}, {"GOPATH", "/tmp/go"}, {"GOPROXY", "off"}, {"GOSUMDB", "off"}, {"GOTOOLCHAIN", "local"}, {"GOTELEMETRY", "off"}, {"GOMAXPROCS", "2"}, {"CGO_ENABLED", "0"}} {
-		args = append(args, "--setenv", entry[0], entry[1])
-	}
-	args = append(args, "--", goPath, "test", "-json", "-count=1", "-mod=readonly", "-p=2", "-timeout=60s")
-	return append(args, cfg.TestPackages...), nil
+	spec := sandbox.Spec{Workspace: candidate, ReadOnly: true,
+		ReadOnlyBinds: []sandbox.Bind{{Source: cache, Target: "/deps"}, {Source: root, Target: root}},
+		Environment: []sandbox.Variable{{Name: "HOME", Value: "/home"}, {Name: "PATH", Value: "/usr/bin:/bin"},
+			{Name: "TMPDIR", Value: "/tmp"}, {Name: "GOCACHE", Value: "/tmp/go-cache"}, {Name: "GOMODCACHE", Value: "/deps"},
+			{Name: "GOPATH", Value: "/tmp/go"}, {Name: "GOPROXY", Value: "off"}, {Name: "GOSUMDB", Value: "off"},
+			{Name: "GOTOOLCHAIN", Value: "local"}, {Name: "GOTELEMETRY", Value: "off"}, {Name: "GOMAXPROCS", Value: "2"}, {Name: "CGO_ENABLED", Value: "0"}},
+		Command: []string{goPath, "test", "-json", "-count=1", "-mod=readonly", "-p=2", "-timeout=60s"}}
+	spec.Command = append(spec.Command, cfg.TestPackages...)
+	return spec, nil
 }
 
 // goToolchainRoot resolves the go binary from PATH (goBinary) and its GOROOT, so the sandbox

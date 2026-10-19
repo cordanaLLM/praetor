@@ -9,12 +9,14 @@ package repairrun
 import (
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/sandbox"
 )
 
 // Off Linux, os.Getuid is -1 and there is no /run/user, so the verification environment says
 // the feature is unsupported instead of naming /run/user/-1 (#132).
 func TestVerificationEnvironment_Negative_UnsupportedOffLinux(t *testing.T) {
-	env, err := verificationEnvironment()
+	env, err := sandbox.ManagerEnvironment()
 	if err == nil || !strings.Contains(err.Error(), "requires Linux") {
 		t.Fatalf("verification environment off Linux = %q, %v; want an unsupported error", env, err)
 	}
