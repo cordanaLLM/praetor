@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // Part 1: A requirement is the repository's own when its module path is declared by a go.mod
@@ -100,6 +101,7 @@ func TestOwnModulesInCheckout_Boundary(t *testing.T) {
 
 // Negative: a discovered module whose go.mod cannot be read fails the scan.
 func TestOwnModulesInCheckout_UnreadableModuleFailsScan(t *testing.T) {
+	testsupport.SkipIfFileModeUnenforced(t)
 	root := t.TempDir()
 	writeFixture(t, root, ".git/HEAD", "ref: refs/heads/main\n")
 	writeFixture(t, root, "a/go.mod", "module example.com/r/a\n\ngo 1.24\n")

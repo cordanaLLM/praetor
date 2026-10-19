@@ -12,7 +12,7 @@ verification is switched off. It never disables a hook: a step that fails is rep
 """
 
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shutil
 import subprocess
@@ -104,6 +104,7 @@ def bootstrap(environ):
     bindir = target_dir(environ.get("PATH", ""))
     if bindir is None:
         return "no writable install directory on PATH; the engine hooks stay closed"
+    bindir = PurePosixPath(bindir.as_posix())
     failures = provision(bindir)
     found = {name: shutil.which(name) for name in ("lefthook", "praetorctl")}
     missing = [name for name, path in found.items() if path is None]
