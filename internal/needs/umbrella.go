@@ -195,7 +195,7 @@ func umbrellaCandidates(framework *FrameworkIndex) map[string]*FrameworkUmbrella
 // framework's own modules import it natively and are never judged.
 func inspectProjectUmbrellas(ctx context.Context, dir, project string, framework *FrameworkIndex,
 	candidates map[string]*FrameworkUmbrella, cache *moduleGraphCache) ([]UmbrellaFinding, error) {
-	module, err := parseGoMod(filepath.Join(dir, "go.mod"))
+	module, err := parseGoMod(ctx, filepath.Join(dir, "go.mod"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse go.mod of %s: %w", project, err)
 	}

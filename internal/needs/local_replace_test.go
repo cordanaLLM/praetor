@@ -41,7 +41,7 @@ func setupLocalReplaceTestFiles(t *testing.T) string {
 // not replaced, stays (nested test-only modules such as tools/schemacheck require this module).
 func TestParseGoMod_LocalReplaceIsNotAThirdPartyDependency(t *testing.T) {
 	path := setupLocalReplaceTestFiles(t)
-	parsed, err := parseGoMod(path)
+	parsed, err := parseGoMod(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}

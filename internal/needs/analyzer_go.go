@@ -36,7 +36,7 @@ func (a *GoAnalyzer) Analyze(ctx context.Context, repoPath string, target Target
 		return nil, ctx.Err()
 	}
 
-	module, err := parseGoMod(filepath.Join(repoPath, "go.mod"))
+	module, err := parseGoMod(ctx, filepath.Join(repoPath, "go.mod"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse go.mod: %w", err)
 	}

@@ -538,6 +538,13 @@ declares stays a third-party demand without a version
 `TestCargoWorkspaceMembersAreFirstParty_3D` in
 `internal/needs/analyzer_rust_test.go`).
 
+A Go requirement is the repository's own when its module path is declared by a
+`go.mod` inside the same checkout: `go.work` `use` members when `go.work`
+exists, or a bounded walk of discovered `go.mod` files, beside local `replace`
+directives. A sibling module required by version is first-party and dropped from
+third-party demands (`TestOwnModulesInCheckout_Positive`,
+`TestOwnModulesInCheckout_GoWork`).
+
 A Zig build is a native project: the native analyzer detects `build.zig` or
 `build.zig.zon` beside `meson.build` and `CMakeLists.txt`, and reports the
 language `zig` for it (`c`, `cpp` and `cuda` only for meson or CMake). A Cargo

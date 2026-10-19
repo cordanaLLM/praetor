@@ -294,7 +294,7 @@ func TestLoadExistingDeclarationsNegativeMalformedYAML(t *testing.T) {
 // goModFields parses path and returns the module path, go version and direct
 // dependencies, the fields the go.mod reader tests below check.
 func goModFields(path string) (string, string, map[string]string, error) {
-	module, err := parseGoMod(path)
+	module, err := parseGoMod(context.Background(), path)
 	if err != nil {
 		return "", "", nil, err
 	}

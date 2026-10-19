@@ -27,133 +27,12 @@ type goModuleJSON struct {
 // DiscoverGoModules finds directories containing go.mod, returning no partial result.
 // Deprecated: use DiscoverGoModulesChecked to distinguish an empty tree from a read failure.
 func DiscoverGoModules(ctx context.Context, repoPath string) []string {
-	modules, err := DiscoverGoModulesChecked(ctx, repoPath)
-	if err != nil {
-		return nil
-	}
-	return modules
+	return gomanifest.DiscoverGoModules(ctx, repoPath)
 }
 
 // DiscoverGoModulesChecked finds bounded modules and reports incomplete discovery.
 func DiscoverGoModulesChecked(ctx context.Context, repoPath string) ([]string, error) {
-	dirs, err := parseGoWork(ctx, filepath.Join(repoPath, "go.work"))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-	modules, err := existingGoModules(repoPath, dirs)
-	if err != nil || len(modules) > 0 {
-		return modules, err
-	}
-	rootModule, err := existingGoModules(repoPath, []string{"."})
-	if err != nil || len(rootModule) > 0 {
-		return rootModule, err
-	}
-	return walkGoModules(repoPath)
-}
-
-func existingGoModules(repoPath string, dirs []string) ([]string, error) {
-	if len(dirs) > MaxDiscoveredModules {
-		return nil, fmt.Errorf("module discovery exceeds %d directories", MaxDiscoveredModules)
-	}
-	var modules []string
-	for _, dir := range dirs {
-		path, err := util.ConfinePath(repoPath, filepath.Join(dir, "go.mod"))
-		if err != nil {
-			return nil, err
-		}
-		info, err := os.Stat(path)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return nil, fmt.Errorf("inspect module: %w", err)
-		}
-		if !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("module manifest must be regular: %s", path)
-		}
-		modules = append(modules, dir)
-	}
-	return modules, nil
-}
-
-type goModuleWalker struct {
-	repoPath string
-	modules  []string
-	visited  int
-}
-
-func walkGoModules(repoPath string) ([]string, error) {
-	walker := goModuleWalker{repoPath: repoPath}
-	if err := filepath.WalkDir(repoPath, walker.visit); err != nil {
-		return nil, fmt.Errorf("discover Go modules: %w", err)
-	}
-	return walker.modules, nil
-}
-
-func (walker *goModuleWalker) visit(path string, entry os.DirEntry, walkErr error) error {
-	if walkErr != nil {
-		return walkErr
-	}
-	walker.visited++
-	if walker.visited > 100000 {
-		return fmt.Errorf("module discovery exceeds 100000 entries")
-	}
-	if !entry.IsDir() {
-		return nil
-	}
-	rel, err := filepath.Rel(walker.repoPath, path)
-	if err != nil {
-		return err
-	}
-	if rel == "." {
-		return nil
-	}
-	if skipModuleDirectory(rel, entry.Name()) {
-		return filepath.SkipDir
-	}
-	found, err := existingGoModules(walker.repoPath, []string{rel})
-	if err != nil {
-		return err
-	}
-	walker.modules = append(walker.modules, found...)
-	if len(walker.modules) > MaxDiscoveredModules {
-		return fmt.Errorf("module discovery exceeds %d directories", MaxDiscoveredModules)
-	}
-	return nil
-}
-
-func skipModuleDirectory(rel, name string) bool {
-	return strings.Count(rel, string(filepath.Separator)) > 2 || strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules"
-}
-
-func parseGoWork(ctx context.Context, path string) ([]string, error) {
-	var dirs []string
-	data, err := readManifest(ctx, filepath.Dir(path), filepath.Base(path))
-	if err != nil {
-		return nil, err
-	}
-
-	inUseBlock := false
-	for _, line := range strings.Split(string(data), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "use (") {
-			inUseBlock = true
-			continue
-		}
-		if inUseBlock && trimmed == ")" {
-			inUseBlock = false
-			continue
-		}
-		if inUseBlock && trimmed != "" && !strings.HasPrefix(trimmed, "//") {
-			clean := strings.Trim(trimmed, `"' `)
-			dirs = append(dirs, filepath.Clean(clean))
-		} else if strings.HasPrefix(trimmed, "use ") {
-			clean := strings.TrimPrefix(trimmed, "use ")
-			clean = strings.Trim(clean, `"' `)
-			dirs = append(dirs, filepath.Clean(clean))
-		}
-	}
-	return dirs, nil
+	return gomanifest.DiscoverGoModulesChecked(ctx, repoPath)
 }
 
 // ScanGoDependencies returns the dependency inventory of every Go module in repoPath: one
@@ -249,7 +128,7 @@ const MaxManifestLines = 100000
 
 // MaxDiscoveredModules is the scalar upper bound (HISS-02) on the modules a single
 // lookup walks.
-const MaxDiscoveredModules = 1024
+const MaxDiscoveredModules = gomanifest.MaxDiscoveredModules
 
 // ErrPackageNotRequired reports that a package is not required by any go.mod in the tree.
 var ErrPackageNotRequired = errors.New("package not required by any go.mod")
