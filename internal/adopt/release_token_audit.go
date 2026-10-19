@@ -15,11 +15,11 @@ import (
 // releaseTokenGate names the gate on every line it prints.
 const releaseTokenGate = "Release token"
 
-// releaseTokenScope is what every verdict states about the evidence behind it.
-const releaseTokenScope = "Read from the workflow files under .github/workflows; no release pull request was checked on the forge."
+// releaseGateEvidence is what every verdict states about the evidence behind it.
+const releaseGateEvidence = "Read from the workflow files under .github/workflows; no release pull request was checked on the forge."
 
-// releaseTokenGuide is the document explaining the passing shape and exceptions.
-const releaseTokenGuide = "docs/guides/release-token.md"
+// releaseGateGuide is the document explaining the passing shape and exceptions.
+const releaseGateGuide = "docs/guides/release-token.md"
 
 // maxReleaseTokenFindings bounds the findings one verdict lists (HISS-02); the rest are counted.
 const maxReleaseTokenFindings = 60
@@ -144,7 +144,7 @@ func (j releaseTokenJudgement) unexcusedLines() []string {
 	return append(lines, fmt.Sprintf("[FAIL] %s: no live exceptions entry declares the steps above; give each a token from an "+
 		"actions/create-github-app-token step (%s), or, for a step that cannot yet, declare its workflow in the exceptions "+
 		"list of .standards.yaml (rule %s, path %s/<workflow>, category C, a reason, and an expiry at most %d days ahead).",
-		releaseTokenGate, releaseTokenGuide, config.ExceptionRuleReleaseToken, ghworkflow.Dir, days))
+		releaseTokenGate, releaseGateGuide, config.ExceptionRuleReleaseToken, ghworkflow.Dir, days))
 }
 
 // pass formats the success report including any declared exemptions.
@@ -161,7 +161,7 @@ func (j releaseTokenJudgement) pass() string {
 	} else {
 		b.WriteString(".")
 	}
-	b.WriteString("\n" + releaseTokenScope)
+	b.WriteString("\n" + releaseGateEvidence)
 	return b.String()
 }
 
