@@ -3,9 +3,10 @@
 
 Claude Code runs this at SessionStart. Outside a cloud session (CLAUDE_CODE_REMOTE is not "true") it does nothing.
 In a cloud VM, which has neither tool, the before-tool guards and the stop checkpoint fail closed; this installs the
-lefthook pin the CI uses and builds praetorctl from this checkout into a directory on the agent's PATH. Both go
-commands verify every module against go.sum and the checksum database, and the bootstrap refuses to run while that
-verification is switched off. It never disables a hook: a step that fails is reported and the guards stay closed.
+lefthook pin the CI uses and builds praetorctl from ./cmd/standardsctl of this checkout, as the Makefile does, into
+a directory on the agent's PATH. Both go commands verify every module against go.sum and the checksum database, and
+the bootstrap refuses to run while that verification is switched off. It never disables a hook: a step that fails
+is reported and the guards stay closed.
 """
 
 import os
@@ -71,7 +72,7 @@ def provision(bindir):
     if shutil.which("lefthook") is None:
         failures.append(run_step(["go", "install", LEFTHOOK], INSTALL_TIMEOUT, {"GOBIN": str(bindir)}))
     if shutil.which("praetorctl") is None:
-        failures.append(run_step(["go", "build", "-o", str(bindir / "praetorctl"), "./cmd/praetorctl"],
+        failures.append(run_step(["go", "build", "-o", str(bindir / "praetorctl"), "./cmd/standardsctl"],
                                  BUILD_TIMEOUT, {}))
     return [line for line in failures if line]
 
