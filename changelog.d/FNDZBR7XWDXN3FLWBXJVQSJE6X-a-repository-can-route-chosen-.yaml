@@ -1,0 +1,2 @@
+type: added
+title: 'A repository can route chosen task labels off the Claude lane: an `offload` block in `.config/models/routing.yaml` names the labels, and the Claude pre-dispatch hook asks an operator-configured lane picker, which can deny the dispatch with a `[ROUTED]` reason naming the lane to use; without a picker nothing changes'
