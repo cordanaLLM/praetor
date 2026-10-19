@@ -776,18 +776,11 @@ type lefthookTarget struct {
 func (s *adoptSession) writeLefthookConfig(ctx context.Context, target lefthookTarget, existing []byte, prior bool) (bool, error) {
 	current := buildLefthookYAMLFor(target.shape, target.checkpoint)
 	match := matchCurrentLefthook(existing, target.shape)
-	switch {
-	case prior:
+	if prior {
 		return true, s.migrateLefthookConfig(current, "Migrated an earlier Praetor-generated Lefthook configuration to the current template")
-	case match.found && !match.checkpoint && target.checkpoint:
-		return true, s.migrateLefthookConfig(current, "Added the checkpoint lifecycle jobs to the Praetor-generated Lefthook configuration")
-	case match.found && match.checkpoint && !target.checkpoint:
-		s.report.recordReconciled(lefthookFile, "Existing Praetor-generated Lefthook configuration kept with its checkpoint "+
-			"lifecycle jobs; this run did not install the checkpoint lifecycle")
-		return false, nil
-	case match.found && !match.exact && s.opts.Force:
-		return true, s.migrateLefthookConfig(current, "Rewrote a line-ending checkout of the current Praetor-generated "+
-			"Lefthook configuration with its LF bytes, the only bytes hook activation trusts")
+	}
+	if handled, written, err := s.handleLefthookMatch(current, match, target.checkpoint); handled {
+		return written, err
 	}
 	state, err := s.scaffoldFile(ctx, scaffold{
 		rel:      lefthookFile,
@@ -797,6 +790,26 @@ func (s *adoptSession) writeLefthookConfig(ctx context.Context, target lefthookT
 		verified: "Existing Lefthook configuration verified present",
 	})
 	return state == scaffoldWritten, err
+}
+
+// handleLefthookMatch processes existing Lefthook configuration matching target shape.
+func (s *adoptSession) handleLefthookMatch(current string, match lefthookMatch, targetCheckpoint bool) (handled bool, written bool, err error) {
+	if !match.found {
+		return false, false, nil
+	}
+	if !match.checkpoint && targetCheckpoint {
+		return true, true, s.migrateLefthookConfig(current, "Added the checkpoint lifecycle jobs to the Praetor-generated Lefthook configuration")
+	}
+	if match.checkpoint && !targetCheckpoint {
+		s.report.recordReconciled(lefthookFile, "Existing Praetor-generated Lefthook configuration kept with its checkpoint "+
+			"lifecycle jobs; this run did not install the checkpoint lifecycle")
+		return true, false, nil
+	}
+	if !match.exact && s.opts.Force {
+		return true, true, s.migrateLefthookConfig(current, "Rewrote a line-ending checkout of the current Praetor-generated "+
+			"Lefthook configuration with its LF bytes, the only bytes hook activation trusts")
+	}
+	return false, false, nil
 }
 
 // migrateLefthookConfig writes current, the rendering's own LF bytes, over a Praetor text at

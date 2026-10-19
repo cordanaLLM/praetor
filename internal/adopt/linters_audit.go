@@ -330,9 +330,8 @@ func linterRequirementFor(name string) (linterRequirement, bool) {
 }
 
 func isGoLinter(lower string) bool {
-	if lower == "golangci-lint" || lower == "govet" || lower == "go vet" ||
-		lower == "staticcheck" || lower == "errcheck" || lower == "gosec" ||
-		lower == "gocyclo" || lower == "gocognit" {
+	switch lower {
+	case "golangci-lint", "govet", "go vet", "staticcheck", "errcheck", "gosec", "gocyclo", "gocognit":
 		return true
 	}
 	for i := 0; i < len(forge.AllGolangciLinters); i++ {
@@ -355,18 +354,28 @@ func loadRepoLinterInputs(ctx context.Context, rootDir string) (repoLinterInputs
 	return in, nil
 }
 
-func initInputsFromPlanAndDedupe(ctx context.Context, rootDir string, in *repoLinterInputs) {
+// initInputsFromPlan populates language flags observed in the verification plan.
+func initInputsFromPlan(ctx context.Context, rootDir string, in *repoLinterInputs) {
 	if plan, err := ObserveVerificationPlanWithLimits(ctx, rootDir, nil); err == nil && plan != nil {
 		langs := planLanguages(plan)
 		in.hasGoSources = in.hasGoSources || (langs&hisscatalog.LanguageGo != 0)
 		in.hasCargoToml = in.hasCargoToml || (langs&hisscatalog.LanguageRust != 0)
 		in.hasCSources = in.hasCSources || (langs&hisscatalog.LanguageC != 0)
 	}
+}
+
+// initInputsFromDedupe populates language flags detected by dedupe source counts.
+func initInputsFromDedupe(ctx context.Context, rootDir string, in *repoLinterInputs) {
 	if counts, err := dedupe.SourceLanguageCounts(ctx, rootDir); err == nil && counts != nil {
 		in.hasGoSources = in.hasGoSources || (counts["go"] > 0)
 		in.hasCSources = in.hasCSources || (counts["c"]+counts["cpp"] > 0)
 		in.hasShellScripts = in.hasShellScripts || (counts["shell"]+counts["zsh"]+counts["ksh"] > 0)
 	}
+}
+
+func initInputsFromPlanAndDedupe(ctx context.Context, rootDir string, in *repoLinterInputs) {
+	initInputsFromPlan(ctx, rootDir, in)
+	initInputsFromDedupe(ctx, rootDir, in)
 }
 
 func scanLinterArtifacts(ctx context.Context, rootDir string, in *repoLinterInputs) error {

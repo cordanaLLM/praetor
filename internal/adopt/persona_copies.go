@@ -211,14 +211,7 @@ func preflightPersonaBackupRoot(ctx context.Context, s *adoptSession) error {
 		return err
 	}
 	if err != nil {
-		prior, legacyErr := priorLegacyAgentSurfaces(ctx, s.repoPath)
-		if legacyErr != nil {
-			return legacyErr
-		}
-		if len(prior) == 0 {
-			return err
-		}
-		return preflightLegacyPersonaBackupRoot(ctx, s.repoPath, prior)
+		return preflightModelTierPersonaBackup(ctx, s.repoPath, err)
 	}
 	targets, err := observeVendorTargets(ctx, s.repoPath, files)
 	if err != nil {
@@ -231,6 +224,18 @@ func preflightPersonaBackupRoot(ctx context.Context, s *adoptSession) error {
 		}
 	}
 	return nil
+}
+
+// preflightModelTierPersonaBackup handles preflight check when plannedAgentSurfaces fails with ErrPersonaModelTier.
+func preflightModelTierPersonaBackup(ctx context.Context, repoPath string, origErr error) error {
+	prior, legacyErr := priorLegacyAgentSurfaces(ctx, repoPath)
+	if legacyErr != nil {
+		return legacyErr
+	}
+	if len(prior) == 0 {
+		return origErr
+	}
+	return preflightLegacyPersonaBackupRoot(ctx, repoPath, prior)
 }
 
 // preflightLegacyPersonaBackupRoot checks whether any legacy persona copy was hand-edited.

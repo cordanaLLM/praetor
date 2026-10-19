@@ -41,6 +41,17 @@ func (a *admission) execute(ctx context.Context, state *os.Root, generate genera
 	}
 	e := execution{admission: a, root: root, generate: generate, verify: verify}
 	runErr := e.work(ctx)
+	a.finishReport(ctx, runErr)
+	if err := writeJSON(root, "result.json", a.report); err != nil {
+		a.report.CandidateVerified = false
+		a.report.Status = "failed"
+		return errors.Join(runErr, err)
+	}
+	return errors.Join(runErr, syncDirectory(root))
+}
+
+// finishReport updates execution report status and failure categories after work completes.
+func (a *admission) finishReport(ctx context.Context, runErr error) {
 	if runErr != nil && a.report.CandidateVerified {
 		a.report.CandidateVerified = false
 		a.report.Status = "failed"
@@ -52,12 +63,6 @@ func (a *admission) execute(ctx context.Context, state *os.Root, generate genera
 		a.report.Status, a.report.ErrorCategory = "timeout", "execution_deadline"
 		a.report.CandidateVerified = false
 	}
-	if err := writeJSON(root, "result.json", a.report); err != nil {
-		a.report.CandidateVerified = false
-		a.report.Status = "failed"
-		return errors.Join(runErr, err)
-	}
-	return errors.Join(runErr, syncDirectory(root))
 }
 
 func (e *execution) work(ctx context.Context) (err error) {

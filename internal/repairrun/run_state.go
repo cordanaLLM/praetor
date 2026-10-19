@@ -57,19 +57,12 @@ func openState(path string, create bool) (*os.Root, error) {
 func (a *admission) selectJob(ctx context.Context, root *os.Root) error {
 	eligible := false
 	for index := 0; index < len(a.plan.Jobs) && index < 8; index++ {
-		job := &a.plan.Jobs[index]
-		key := bytesSHA([]byte(a.settings.config.SourceSHA + ":" + a.settings.digest + ":" + job.UntrustedEvidence.Kind + ":" + job.UntrustedEvidence.CaseID + ":" + job.UntrustedEvidence.InputSHA256))
-		state := JobStatus{CaseID: job.UntrustedEvidence.CaseID, ExecutionKey: key, Status: "blocked"}
-		if job.Status == "review_required" && job.Route != nil && job.Route.Model.ID == a.settings.config.Provider.Model {
+		state, isEligible, err := a.inspectJob(ctx, root, &a.plan.Jobs[index])
+		if err != nil {
+			return err
+		}
+		if isEligible {
 			eligible = true
-			status, err := consumedStatus(ctx, root, key, *job)
-			if err != nil {
-				return err
-			}
-			state.Status = status
-			if status == "ready" && a.selected == nil {
-				a.choose(job, key)
-			}
 		}
 		a.report.Jobs = append(a.report.Jobs, state)
 	}
@@ -77,6 +70,24 @@ func (a *admission) selectJob(ctx context.Context, root *os.Root) error {
 		a.report.Status, a.report.Consumed = "consumed", true
 	}
 	return nil
+}
+
+// inspectJob evaluates admission and eligibility for a single planned repair job.
+func (a *admission) inspectJob(ctx context.Context, root *os.Root, job *dogfood.RepairJob) (JobStatus, bool, error) {
+	key := bytesSHA([]byte(a.settings.config.SourceSHA + ":" + a.settings.digest + ":" + job.UntrustedEvidence.Kind + ":" + job.UntrustedEvidence.CaseID + ":" + job.UntrustedEvidence.InputSHA256))
+	state := JobStatus{CaseID: job.UntrustedEvidence.CaseID, ExecutionKey: key, Status: "blocked"}
+	if job.Status == "review_required" && job.Route != nil && job.Route.Model.ID == a.settings.config.Provider.Model {
+		status, err := consumedStatus(ctx, root, key, *job)
+		if err != nil {
+			return JobStatus{}, false, err
+		}
+		state.Status = status
+		if status == "ready" && a.selected == nil {
+			a.choose(job, key)
+		}
+		return state, true, nil
+	}
+	return state, false, nil
 }
 
 func (a *admission) choose(job *dogfood.RepairJob, key string) {

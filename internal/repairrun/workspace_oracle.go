@@ -116,17 +116,31 @@ func sameTestsPassed(before, after []TestOutcome) bool {
 	return true
 }
 
+// validOutcomeKey reports whether the test package and name form a valid ascending key.
+func validOutcomeKey(test TestOutcome, previous string) (string, bool) {
+	key := test.Package + ":" + test.Name
+	if test.Package == "" || test.Name == "" || len(key) > 2049 || key <= previous {
+		return "", false
+	}
+	return key, true
+}
+
+// validOutcomeStatus reports whether status is one of "pass", "fail", or "skip".
+func validOutcomeStatus(status string) bool {
+	return status == "pass" || status == "fail" || status == "skip"
+}
+
 func validTestSet(tests []TestOutcome) bool {
 	if len(tests) == 0 || len(tests) > 16384 {
 		return false
 	}
 	previous := ""
 	for _, test := range tests {
-		key := test.Package + ":" + test.Name
-		if test.Package == "" || test.Name == "" || len(key) > 2049 || key <= previous {
+		key, ok := validOutcomeKey(test, previous)
+		if !ok {
 			return false
 		}
-		if test.Status != "pass" && test.Status != "fail" && test.Status != "skip" {
+		if !validOutcomeStatus(test.Status) {
 			return false
 		}
 		previous = key
