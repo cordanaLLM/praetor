@@ -73,6 +73,20 @@ class CloudBootstrap(unittest.TestCase):
             self.assertIn(f"go install -C {BOOTSTRAP.LEFTHOOK_MODULE} {BOOTSTRAP.LEFTHOOK}\n", text, workflow)
             self.assertNotIn(f"{BOOTSTRAP.LEFTHOOK}@", text, f"{workflow} keeps a second lefthook pin")
 
+    def test_refused_hosts_are_named(self):
+        stderr = ('go: verifying module: Get "https://sum.golang.org/lookup/x@v1": Forbidden\n'
+                  'go: Get "https://storage.googleapis.com/proxy-golang-org-prod/a.zip?X-Sig=abc": Forbidden\n'
+                  'go: Get "https://sum.golang.org/lookup/y@v2": Forbidden\n')
+        self.assertEqual(BOOTSTRAP.refused_hosts(stderr), ["sum.golang.org", "storage.googleapis.com"])
+        self.assertEqual(BOOTSTRAP.refused_hosts('go: Get "https://proxy.golang.org/x": dial tcp: timeout'), [],
+                         "only a refusal names a host")
+        self.assertEqual(BOOTSTRAP.refused_hosts(""), [])
+        result = mock.Mock(returncode=1, stderr=stderr + "x" * 400)
+        with mock.patch.object(BOOTSTRAP.subprocess, "run", lambda *_a, **_k: result):
+            line = BOOTSTRAP.run_step("praetorctl build", ["go", "build"], 1)
+        self.assertTrue(line.startswith("praetorctl build exit 1 (the network refuses sum.golang.org, "
+                                        "storage.googleapis.com; allow it in the cloud environment): "), line)
+
     def test_tools_present_skip_the_installs(self):
         line, commands = self.run_bootstrap(Which({"lefthook", "praetorctl"}))
         self.assertEqual(line, "ready in /usr/local/bin")

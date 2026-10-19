@@ -115,11 +115,16 @@ Claude Code only, since only Claude Code runs cloud sessions:
   `praetorctl state init --if-absent .`, so the stop checkpoint finds a ledger in the fresh
   clone. Both binaries go into the first writable directory on `PATH` (`/usr/local/bin`, else
   `~/.local/bin`).
-- Both builds run with `-mod=readonly`: every module is verified against a `go.sum` in the
-  checkout, so neither build asks the checksum database. A cloud session that clones from GitHub
-  cannot reach `sum.golang.org`, and `go install <module>@<version>` failed there for that
-  reason. The bootstrap still refuses to build while `GOSUMDB` is `off` or
+- Both builds run with `-mod=readonly`, so every module is verified against a `go.sum` in the
+  checkout. The bootstrap still refuses to build while `GOSUMDB` is `off` or
   `GONOSUMDB`/`GOINSECURE` is set.
+- The cloud environment must allow `sum.golang.org` and `storage.googleapis.com`. The VM's Go
+  is older than this repository's `toolchain` line, and `go` fetches the newer toolchain through
+  a redirect to `storage.googleapis.com` and verifies it against `sum.golang.org`. Measured on
+  2026-10-19: a VM with `go1.24.7` whose egress proxy refused both hosts, although the
+  [default allowed domains](https://code.claude.com/docs/en/cloud-environments#default-allowed-domains)
+  list them. A failed step names each refused host
+  (`the network refuses <host>; allow it in the cloud environment`).
 - It never disables a hook. A failed step is named in the one status line the session sees
   (`Praetor cloud session bootstrap: ...`), and the guards stay closed.
 
