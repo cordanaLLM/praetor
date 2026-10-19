@@ -302,8 +302,8 @@ func TestReusableCallContexts_PinnedExternalWorkflow(t *testing.T) {
 	otherSHACaller := "on:\n  pull_request:\njobs:\n  licence:\n    name: Licence\n" +
 		"    uses: " + PluranoHoristesLicenceAction + "@" + otherSHA + "\n"
 	_, err = reusableContexts(t, map[string]string{"reuse.yml": otherSHACaller})
-	if err == nil || !strings.Contains(err.Error(), PluranoHoristesLicenceWorkflowSHA) {
-		t.Fatalf("horistes at another SHA: err = %v, want containing pin %q", err, PluranoHoristesLicenceWorkflowSHA)
+	if err == nil || !strings.Contains(err.Error(), "move the engine pin (forge.PluranoHoristesLicenceWorkflowSHA) first") {
+		t.Fatalf("horistes at another SHA: err = %v, want engine pin instruction", err)
 	}
 
 	// Boundary: caller with root: "." explicitly passed evaluates to default name.
@@ -313,6 +313,41 @@ func TestReusableCallContexts_PinnedExternalWorkflow(t *testing.T) {
 	got, err := reusableContexts(t, map[string]string{"reuse.yml": callerExplicitDot})
 	if err != nil || !slices.Equal(got, []string{"Licence / REUSE lint"}) {
 		t.Fatalf("caller with root . = %v, err %v", got, err)
+	}
+}
+
+// Positive: the pinned external specification carries the upstream job id and input defaults.
+func TestPinnedHoristesLicenceSpec(t *testing.T) {
+	called := newCalledWorkflows(nil)
+	spec, err := called.spec("licence", PluranoHoristesLicenceAction+"@"+PluranoHoristesLicenceWorkflowSHA)
+	if err != nil {
+		t.Fatalf("pinned specification: %v", err)
+	}
+	if len(spec.Jobs) != 1 || spec.Jobs["reuse"].Name !=
+		"${{ inputs.root == '.' && 'REUSE lint' || format('REUSE lint ({0})', inputs.root) }}" {
+		t.Fatalf("pinned jobs = %+v, want only reuse with upstream name", spec.Jobs)
+	}
+	defaults := workflowCallDefaults(spec)
+	if len(defaults) != 2 || defaults["runner"].text != "ubuntu-26.04" || defaults["root"].text != "." {
+		t.Fatalf("pinned input defaults = %+v", defaults)
+	}
+}
+
+// Negative and boundary: malformed pins and a path without @ retain the other-repository refusal.
+func TestPinnedHoristesLicenceSpec_RefusesInvalidPin(t *testing.T) {
+	for _, ref := range []string{
+		PluranoHoristesLicenceAction + "@" + strings.ToUpper(PluranoHoristesLicenceWorkflowSHA),
+		PluranoHoristesLicenceAction + "@" + PluranoHoristesLicenceWorkflowSHA[:39],
+		PluranoHoristesLicenceAction,
+	} {
+		t.Run(ref, func(t *testing.T) {
+			caller := "on:\n  pull_request:\njobs:\n  licence:\n    name: Licence\n    uses: " + ref + "\n"
+			_, err := reusableContexts(t, map[string]string{"reuse.yml": caller})
+			want := "calls the reusable workflow " + ref + " of another repository"
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("invalid pin: err = %v, want containing %q", err, want)
+			}
+		})
 	}
 }
 

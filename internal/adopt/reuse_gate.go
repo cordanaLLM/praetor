@@ -150,11 +150,6 @@ func isPluranoOwner(owner string) bool {
 	return strings.EqualFold(strings.TrimSpace(owner), pluranoOrgName)
 }
 
-// is40HexSHA reports whether s is exactly 40 lowercase hexadecimal characters.
-func is40HexSHA(s string) bool {
-	return forge.Is40HexSHA(s)
-}
-
 // renderPluranoLicenceWorkflow renders the hosted REUSE gate as a reusable workflow caller
 // of plurano/horistes/.github/workflows/licence.yml for the given default branch and commit SHA.
 func renderPluranoLicenceWorkflow(branch, sha string) string {
@@ -202,7 +197,7 @@ func normalisePluranoCaller(workflow string) (string, bool, error) {
 		found = true
 		ref, _, _ := strings.Cut(rest, "#")
 		ref = strings.TrimSpace(ref)
-		if !hasAt || !is40HexSHA(ref) {
+		if !hasAt || !forge.IsFullCommitSHA(ref) {
 			return "", false, fmt.Errorf("plurano licence caller %s: reference %q is not a 40-hex commit SHA", reuseWorkflowFile, val)
 		}
 		lines[i] = "    uses: " + pluranoHoristesLicenceAction + "@" + pluranoHoristesLicenceWorkflowSHA + "  # " + pluranoHoristesLicencePinDate
