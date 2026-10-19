@@ -551,6 +551,16 @@ with the same pattern, so every test runs exactly once and the bound stays.
 the step to that shape and refuses planted steps without the `-skip` half, with the package still
 in the main run, or with a raised timeout on one half.
 
+**Pinned tool modules before the tests (2026-10-19).** Main c565cba50's macOS leg failed when the
+gating tests that build the pinned gosec (2-minute bound) and the flavor test that installs the
+fallback scanners (4-minute bound) downloaded the modules `tools/go/go.mod` pins inside those
+bounds: a `go.sum` change had given the module cache a new key, and the modules reached the cache
+only with "Install Security Scanner", after the tests. "Download Pinned Tool Modules" now runs
+`go mod download -modfile=tools/go/go.mod` in bash before "Test Every Package" on every leg.
+`TestPortability_ToolModulesDownloadBeforeTests` in
+`internal/forge/portability_tool_modules_test.go` holds that order and refuses a missing step, a
+download after the tests, another command and the default shell.
+
 **A deadline from the outer timeout (#831).** The eight minutes then ran out on macOS, where
 adopt alone took 341 to 557 s, so the identity suite timed out at random. A fixed count only
 moves that cliff, so the nested run's deadline now comes from the outer `go test -timeout`
