@@ -175,6 +175,8 @@ var priorDigests = map[string]string{
 	"15f75d9348ee456c9d78594307df374ebcc24427fdf435e920a54c4e5461cbfa": Directory + "/README.md",
 	// checks.mjs before the marker pattern was built with new RegExp to parse whole under Semgrep.
 	"42aeec6906cd60ec2b1ee6cdde24ad312f37abca46a6e71a3016e05786f2919a": Directory + "/checks.mjs",
+	// checks.mjs before a site without a released player (ADR-0021) needed no loader.
+	"c52f169e426695c14b2af587bcc253d46d8612a352a2ef77e6f0a84229ce84a9": Directory + "/checks.mjs",
 	// mkdocs_hook.py before ADR-0021 fetched figures-player.tar.gz for adopters without a local
 	// tools/figures/player directory.
 	"40577f164ab56013875f3736d1436ba44a703b1c8b82a73235e7f65ecba8e227": Directory + "/mkdocs_hook.py",

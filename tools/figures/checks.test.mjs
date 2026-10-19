@@ -388,6 +388,19 @@ test('site: absolute image URLs, a missing loader and a loader without its playe
     'but no player.js sits beside it for the loader to import']);
 }));
 
+test('site: an unreleased player lock needs no loader, a released one and a local player still do', () => withTempDir((dir) => {
+  const fixture = figureSite(dir);
+  write(fixture.page, fillSlots(META, '../assets/figures'));
+  const lock = join(dir, 'tools/figures/player.lock.json');
+  write(lock, JSON.stringify({ asset: 'figures-player.tar.gz', sha256: '0'.repeat(64), release: '' }));
+  assert.deepEqual(fixture.check().errors, [], 'an unreleased pin renders SVG figures by design');
+  write(lock, JSON.stringify({ asset: 'figures-player.tar.gz', sha256: '0'.repeat(64), release: 'v1.2.3' }));
+  assert.equal(fixture.check().errors.length, 1, 'a released pin must publish the loader');
+  write(lock, JSON.stringify({ asset: 'figures-player.tar.gz', sha256: '0'.repeat(64), release: '' }));
+  write(join(dir, 'tools/figures/player/loader.js'), '');
+  assert.equal(fixture.check().errors.length, 1, 'a repository with its own player must load it');
+}));
+
 test('site: every figure image must embed the props the player mounts, the static one included', () => withTempDir((dir) => {
   const fixture = figureSite(dir);
   // The registry the player once read is gone: nothing names a figure beside the loader.
