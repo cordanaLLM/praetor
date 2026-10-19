@@ -16,7 +16,12 @@ import (
 
 func manifestRepoWithTimeout(t *testing.T, timeout string) string {
 	t.Helper()
-	dir := committedAdmitRepo(t, "pyproject.toml")
+	return commitDeclaredTimeout(t, committedAdmitRepo(t, "pyproject.toml"), timeout)
+}
+
+// commitDeclaredTimeout commits a manifest declaring timeout as the declared-verification bound.
+func commitDeclaredTimeout(t *testing.T, dir, timeout string) string {
+	t.Helper()
 	content := fmt.Sprintf("version: 1\nrepository:\n  owner: fixture\n  name: fixture\nprofiles:\n  - pages-site\ngate:\n  declared_verify_timeout: %s\n", timeout)
 	writeFile(t, filepath.Join(dir, ".standards.yaml"), content)
 	treeGit(t, dir, "add", "--", ".standards.yaml")
@@ -92,5 +97,39 @@ func TestResolveRepoRunBudget_Boundary_EnvironmentOverridesDeclaredValue(t *test
 	}
 	if budget.BoundOrigin != "environment" {
 		t.Errorf("budget.BoundOrigin = %q, want %q", budget.BoundOrigin, "environment")
+	}
+}
+
+// slowDeclaredVerifyRepo is a committed Python root whose verify-all sleeps for three seconds and
+// whose manifest declares timeout as the declared-verification bound.
+func slowDeclaredVerifyRepo(t *testing.T, timeout string) string {
+	t.Helper()
+	return commitDeclaredTimeout(t, declaredVerifyRepo(t, "@sleep 3"), timeout)
+}
+
+// Negative (order engine-gate-declared-verification-deadline-20261018): a verification slower
+// than the bound the repository declares is cut off, and the reason names the bound and where it
+// came from.
+func TestRunGatedPipeline_Negative_SlowVerifyOverDeclaredBoundFails(t *testing.T) {
+	requireMake(t)
+	t.Setenv(TestStageTimeoutEnv, "")
+	rep := gatedRun(t, slowDeclaredVerifyRepo(t, "1s"), RunOptions{AdmitUnsupported: true})
+	got := stageNamed(t, rep, stageDeclaredVerify)
+	if rep.Status != StatusRejected || got.Status != StageFailed {
+		t.Fatalf("status %s, stage %s %q; want rejected at the declared verification", rep.Status, got.Status, got.Message)
+	}
+	if !strings.Contains(got.Message, "did not finish within 1s (.standards.yaml)") {
+		t.Errorf("reason %q does not name the declared bound", got.Message)
+	}
+}
+
+// Positive: the same verification under a longer declared bound passes.
+func TestRunGatedPipeline_Positive_SlowVerifyUnderDeclaredBoundPasses(t *testing.T) {
+	requireMake(t)
+	t.Setenv(TestStageTimeoutEnv, "")
+	rep := gatedRun(t, slowDeclaredVerifyRepo(t, "30s"), RunOptions{AdmitUnsupported: true})
+	got := stageNamed(t, rep, stageDeclaredVerify)
+	if got.Status != StagePassed || got.Message != "make verify-all exited 0" {
+		t.Fatalf("stage %s %q; want passed under the declared 30s bound", got.Status, got.Message)
 	}
 }
