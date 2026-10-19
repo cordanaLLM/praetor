@@ -25,6 +25,10 @@ const (
 
 	// GateScopeEnv overrides or disables scope execution for the race stage (set to "off").
 	GateScopeEnv = "PRAETOR_GATE_SCOPE"
+	// GateAdmissionEnv set to "off" skips the race stage's wait for host memory, swap and load.
+	// The wait only delays the stage, it never decides it, so skipping it changes no verdict; the
+	// stage log says it was skipped.
+	GateAdmissionEnv = "PRAETOR_GATE_ADMISSION"
 	// GateScopeMemoryHighEnv overrides DefaultRaceScopeMemoryHigh.
 	GateScopeMemoryHighEnv = "PRAETOR_GATE_SCOPE_MEMORY_HIGH"
 	// GateScopeMemoryMaxEnv overrides DefaultRaceScopeMemoryMax.
@@ -105,6 +109,12 @@ func racePolicy(stats sentinel.HostStats) admission.Policy {
 }
 
 func waitRaceAdmission(ctx context.Context, cfg *stageConfig) error {
+	if os.Getenv(GateAdmissionEnv) == "off" {
+		if _, err := fmt.Fprintf(cfg.admissionLogWriter(), "admission race: skipped (%s=off)\n", GateAdmissionEnv); err != nil {
+			return fmt.Errorf("admission race: write the log: %w", err)
+		}
+		return nil
+	}
 	first, err := cfg.hostReaderFunc()()
 	if err != nil {
 		return fmt.Errorf("admission race: read the host: %w", err)

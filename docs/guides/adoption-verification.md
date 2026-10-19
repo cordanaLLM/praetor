@@ -863,7 +863,7 @@ module's race suite runs in its own memory-bounded user scope (`systemd-run --us
 scopes are available, so the out-of-memory daemon reclaims from the step rather than from the
 caller's session. Defaults are `MemoryHigh=16G`, `MemoryMax=20G`, and `MemorySwapMax=4G`,
 customizable via `PRAETOR_GATE_SCOPE_MEMORY_HIGH`, `PRAETOR_GATE_SCOPE_MEMORY_MAX`, and
-`PRAETOR_GATE_SCOPE_SWAP_MAX`. An operator can set `PRAETOR_GATE_SCOPE=off` to run unscoped. On
+`PRAETOR_GATE_SCOPE_SWAP_MAX`. An operator can set `PRAETOR_GATE_SCOPE=off` to run unscoped. `PRAETOR_GATE_ADMISSION=off` skips the race stage's wait for host memory, swap and load; the wait only delays the stage and never decides it, and the stage log says it was skipped (the gate's own signal tests set it, because a busy runner held the wait past their timing). On
 platforms where user scopes are unavailable (such as macOS or Windows), the tests run directly and
 the stage message reports `race tests ran unscoped: <reason>`; inside the devcontainer the tests
 run unscoped too, since its runner has no `systemd-run`. Before the first module the stage waits

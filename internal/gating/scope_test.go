@@ -303,3 +303,40 @@ func TestRaceStageScope_Positive_SmallHostIsAdmitted(t *testing.T) {
 		t.Fatalf("a small host was held: %s", logBuf.String())
 	}
 }
+
+// TestRaceStageScope_Positive_AdmissionOffSkipsTheWait: PRAETOR_GATE_ADMISSION=off reads no host
+// and says so; unset, a held reading still waits (TestRaceStageScope_Boundary_AdmissionHold...).
+func TestRaceStageScope_Positive_AdmissionOffSkipsTheWait(t *testing.T) {
+	t.Setenv(GateAdmissionEnv, "off")
+	repoDir := newHermeticGitRepo(t)
+	cfg, _ := newTestConfig(t, repoDir, false)
+	reads := 0
+	cfg.hostReader = func() (sentinel.HostStats, error) {
+		reads++
+		return sentinel.HostStats{RAMTotalBytes: 64 << 30, RAMFreeBytes: 1 << 30, CPULoadMeasured: true, CPULoad1Min: 99}, nil
+	}
+	var logBuf bytes.Buffer
+	cfg.admissionLog = &logBuf
+	if err := waitRaceAdmission(t.Context(), cfg); err != nil {
+		t.Fatalf("admission off must not wait or fail: %v", err)
+	}
+	if reads != 0 || !strings.Contains(logBuf.String(), "skipped (PRAETOR_GATE_ADMISSION=off)") {
+		t.Fatalf("reads=%d log=%q: the switch must skip the host read and say so", reads, logBuf.String())
+	}
+}
+
+// TestRaceStageScope_Negative_AdmissionOtherValueStillWaits: any value but "off" keeps the wait.
+func TestRaceStageScope_Negative_AdmissionOtherValueStillWaits(t *testing.T) {
+	t.Setenv(GateAdmissionEnv, "0")
+	repoDir := newHermeticGitRepo(t)
+	cfg, _ := newTestConfig(t, repoDir, false)
+	reads := 0
+	cfg.hostReader = func() (sentinel.HostStats, error) {
+		reads++
+		return sentinel.HostStats{RAMTotalBytes: 64 << 30, RAMFreeBytes: 20 << 30, SwapMeasured: true, SwapFreeBytes: 20 << 30}, nil
+	}
+	cfg.admissionLog = &bytes.Buffer{}
+	if err := waitRaceAdmission(t.Context(), cfg); err != nil || reads == 0 {
+		t.Fatalf("err=%v reads=%d: a value other than off must read the host", err, reads)
+	}
+}
