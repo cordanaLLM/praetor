@@ -1,0 +1,2 @@
+type: fixed
+title: the test-timeout gate reads a reusable workflow's -timeout=${{ inputs.<id> }} through the input's workflow_call default

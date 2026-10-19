@@ -472,7 +472,10 @@ that sets a timeout above the 30-minute per-package bound fails the audit unless
 `test-timeout` exceptions entry names the workflow; an expired entry or one that excuses nothing
 fails too (`TestServerAuditTestTimeoutsLikeTheCLI` in
 `cmd/standards-mcp/audit_test_timeouts_test.go`). The audit summary counts it, so a clean
-fixture reads `passed: 12/12`.
+fixture reads `passed: 12/12`. A reusable workflow's `-timeout=${{ inputs.<id> }}` is judged by
+that input's `workflow_call` default; an input without a literal default, or a default that is no
+duration, is an unreadable timeout and fails (`TestAuditTestTimeouts_Positive_InputDefaultWithinBound`,
+`TestAuditTestTimeouts_Negative_InputDefaultAboveBound` in `internal/forge/test_timeout_audit_test.go`).
 
 The job-timeout gate runs right beside it (`forge.AuditJobTimeouts`): every job that runs steps
 declares `timeout-minutes`. A reusable workflow call (`uses:` at job level) cannot carry it and
