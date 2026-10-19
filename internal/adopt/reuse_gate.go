@@ -35,6 +35,15 @@ const (
 	reuseWorkflowFile = ".github/workflows/reuse.yml"
 	// reuseGateStep is the adoption step that writes it, the name adoption.decline takes.
 	reuseGateStep = "reuse-gate"
+	// pluranoHoristesLicenceAction is the reusable workflow path called in plurano-owned repositories.
+	pluranoHoristesLicenceAction = "plurano/horistes/.github/workflows/licence.yml"
+	// pluranoHoristesLicenceWorkflowSHA is the commit SHA of plurano/horistes .github/workflows/licence.yml
+	// pinned in the hosted REUSE gate for plurano-owned repositories (read 2026-10-19).
+	pluranoHoristesLicenceWorkflowSHA = "5a2700ef8898bc377f0f9d13d5c95abf54f0fa4c"
+	// pluranoHoristesLicencePinDate names when pluranoHoristesLicenceWorkflowSHA was read.
+	pluranoHoristesLicencePinDate = "2026-10-19"
+	// pluranoOrgName is the organization name whose repositories use the reusable workflow caller.
+	pluranoOrgName = "plurano"
 )
 
 // priorReuseWorkflowDigests are the digests (priorRendering) of every hosted REUSE gate a Praetor
@@ -136,14 +145,102 @@ func reuseWorkflow(branch string) (string, error) {
 	return renderReuseWorkflowWithRef(ref, branch), nil
 }
 
+// isPluranoOwner reports whether owner is "plurano" (case-insensitive).
+func isPluranoOwner(owner string) bool {
+	return strings.EqualFold(strings.TrimSpace(owner), pluranoOrgName)
+}
+
+// is40HexSHA reports whether s is exactly 40 lowercase hexadecimal characters.
+func is40HexSHA(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// renderPluranoLicenceWorkflow renders the hosted REUSE gate as a reusable workflow caller
+// of plurano/horistes/.github/workflows/licence.yml for the given default branch and commit SHA.
+func renderPluranoLicenceWorkflow(branch, sha string) string {
+	on := strings.Replace(ghworkflow.HostedGateOn,
+		ghworkflow.HostedGatePushBranchesPrefix+ghworkflow.HostedGateDefaultBranch+"']",
+		ghworkflow.HostedGatePushBranchesPrefix+branch+"']", 1)
+	return "---\n" +
+		"# REUSE licensing gate, written by praetorctl adopt because the repository\n" +
+		"# carries REUSE.toml or LICENSES/. It runs reuse lint at the release line the\n" +
+		"# reuse-lint pre-commit job of lefthook.yml requires.\n" +
+		"name: REUSE\n" +
+		"\n" +
+		on +
+		ghworkflow.HostedGateConcurrency +
+		"\n" +
+		"permissions:\n" +
+		"  contents: read\n" +
+		"\n" +
+		"jobs:\n" +
+		"  licence:\n" +
+		"    name: Licence\n" +
+		"    uses: " + pluranoHoristesLicenceAction + "@" + sha + "  # " + pluranoHoristesLicencePinDate + "\n"
+}
+
+// normalisePluranoCaller normalises any 40-hex commit SHA in a plurano licence caller workflow
+// to pluranoHoristesLicenceWorkflowSHA and its canonical pin date comment for digest comparison.
+// It returns the normalised text and whether a plurano licence caller was found.
+// If the caller uses a non-40-hex ref (a tag, a branch, or a short SHA), it returns an error.
+func normalisePluranoCaller(workflow string) (string, bool, error) {
+	lines := strings.Split(strings.ReplaceAll(workflow, "\r\n", "\n"), "\n")
+	if len(lines) > managedasset.MaxWorkflowLines {
+		return "", false, fmt.Errorf("workflow exceeds %d lines", managedasset.MaxWorkflowLines)
+	}
+	found := false
+	for i := 0; i < len(lines); i++ {
+		val, ok := util.ActionUsesValue(lines[i])
+		if !ok {
+			continue
+		}
+		cleanVal := strings.Trim(val, `"'`)
+		action, rest, hasAt := strings.Cut(cleanVal, "@")
+		if strings.TrimSpace(action) != pluranoHoristesLicenceAction {
+			continue
+		}
+		found = true
+		ref, _, _ := strings.Cut(rest, "#")
+		ref = strings.TrimSpace(ref)
+		if !hasAt || !is40HexSHA(ref) {
+			return "", false, fmt.Errorf("plurano licence caller %s: reference %q is not a 40-hex commit SHA", reuseWorkflowFile, val)
+		}
+		lines[i] = "    uses: " + pluranoHoristesLicenceAction + "@" + pluranoHoristesLicenceWorkflowSHA + "  # " + pluranoHoristesLicencePinDate
+	}
+	if !found {
+		return "", false, nil
+	}
+	return strings.Join(lines, "\n"), true, nil
+}
+
 // reuseRenderingBranch returns the default branch data is the hosted REUSE gate rendered for
-// (reuseWorkflow), in one consistent line-ending style, and whether data is such a rendering:
-// Praetor's unedited output, for the current default branch or another one, such as before the
-// branch was renamed.
+// (reuseWorkflow or renderPluranoLicenceWorkflow), in one consistent line-ending style, and whether
+// data is such a rendering: Praetor's unedited output, for the current default branch or another one,
+// such as before the branch was renamed.
 func reuseRenderingBranch(data []byte) (string, bool, error) {
 	_, rest, found := strings.Cut(string(data), ghworkflow.HostedGatePushBranchesPrefix)
 	branch, _, closed := strings.Cut(rest, "']")
 	if !found || !closed || !config.ValidBranchName(branch) {
+		return "", false, nil
+	}
+	normalised, isCaller, err := normalisePluranoCaller(string(data))
+	if err != nil {
+		return "", false, err
+	}
+	if isCaller {
+		expected := renderPluranoLicenceWorkflow(branch, pluranoHoristesLicenceWorkflowSHA)
+		if equal, err := util.CanonicalTextEquivalent([]byte(normalised), []byte(expected)); err == nil && equal {
+			return branch, true, nil
+		}
 		return "", false, nil
 	}
 	expected, err := reuseWorkflow(branch)
@@ -216,14 +313,56 @@ func (s *adoptSession) reconcileInactiveReuseGate(ctx context.Context) error {
 	return s.removeReuseRequirements(ctx)
 }
 
+func (s *adoptSession) repoOwner() string {
+	if s.identity.owner != "" {
+		return s.identity.owner
+	}
+	if s.policy != nil && s.policy.Manifest != nil {
+		return s.policy.Manifest.Repository.Owner
+	}
+	return ""
+}
+
+func (s *adoptSession) reuseWorkflow(branch string) (string, error) {
+	if isPluranoOwner(s.repoOwner()) {
+		return renderPluranoLicenceWorkflow(branch, pluranoHoristesLicenceWorkflowSHA), nil
+	}
+	return reuseWorkflow(branch)
+}
+
+func (s *adoptSession) activePluranoWorkflow(ctx context.Context, branch, defaultWorkflow string) (string, error) {
+	existing, exists, err := contextopt.ObserveSnapshotIn(ctx, s.repoPath, reuseWorkflowFile)
+	if err != nil || !exists {
+		return defaultWorkflow, err
+	}
+	normalised, isCaller, err := normalisePluranoCaller(string(existing))
+	if err != nil {
+		return "", err
+	}
+	if !isCaller {
+		return defaultWorkflow, nil
+	}
+	expected := renderPluranoLicenceWorkflow(branch, pluranoHoristesLicenceWorkflowSHA)
+	if equal, err := util.CanonicalTextEquivalent([]byte(normalised), []byte(expected)); err == nil && equal {
+		return string(existing), nil
+	}
+	return defaultWorkflow, nil
+}
+
 func (s *adoptSession) scaffoldActiveReuseGate(ctx context.Context, branch string) error {
 	prior, err := s.reusePriorDigests(ctx)
 	if err != nil {
 		return err
 	}
-	workflow, err := reuseWorkflow(branch)
+	workflow, err := s.reuseWorkflow(branch)
 	if err != nil {
 		return err
+	}
+	if isPluranoOwner(s.repoOwner()) {
+		workflow, err = s.activePluranoWorkflow(ctx, branch, workflow)
+		if err != nil {
+			return err
+		}
 	}
 	_, err = s.scaffoldFile(ctx, scaffold{
 		rel:       reuseWorkflowFile,
@@ -283,6 +422,15 @@ func (s *adoptSession) reusePriorDigests(ctx context.Context) (map[string]string
 				return nil, fmt.Errorf("digest %s: %w", reuseWorkflowFile, err)
 			}
 			prior[digest] = "the current rendering for default branch " + branch
+		}
+	}
+	if isPluranoOwner(s.repoOwner()) {
+		if branch, err := reuseDefaultBranch(ctx, s.repoPath); err == nil {
+			if copied, err := reuseWorkflow(branch); err == nil {
+				if digest, _, err := util.CanonicalTextDigest([]byte(copied)); err == nil {
+					prior[digest] = "copied REUSE gate for default branch " + branch
+				}
+			}
 		}
 	}
 	return prior, nil
@@ -459,7 +607,7 @@ func (s *adoptSession) plannedReuseWorkflow(ctx context.Context) ([]flavor.Plann
 	if !allowed {
 		return nil, nil
 	}
-	workflow, err := reuseWorkflow(branch)
+	workflow, err := s.reuseWorkflow(branch)
 	if err != nil {
 		return nil, err
 	}
@@ -471,27 +619,31 @@ func (s *adoptSession) plannedReuseWorkflow(ctx context.Context) ([]flavor.Plann
 // adoption includes it in the Renovate packageRules entry that disables updates on
 // Praetor-managed files. --force does not count: it regenerates only audit-locked scaffolds,
 // and the REUSE gate is not one, so an edited or adopter-owned copy is kept and stays
-// under the adopter's Renovate.
+// under the adopter's Renovate. For plurano-owned repositories, the caller is not managed so
+// Renovate's github-actions manager updates its commit pin.
 func reuseManagedPaths(ctx context.Context, s *adoptSession) ([]string, error) {
 	applies, err := s.reuseGateApplies(ctx)
 	if err != nil || !applies {
 		return nil, err
 	}
-	data, exists, err := observeAdoptionInput(ctx, s, reuseWorkflowFile)
-	if err != nil {
-		_, err = uninspectableReason(ctx, err)
-		return nil, err
-	}
-	if exists {
-		rendering, err := isReuseRendering(data)
+	var managed []string
+	if !isPluranoOwner(s.repoOwner()) {
+		data, exists, err := observeAdoptionInput(ctx, s, reuseWorkflowFile)
 		if err != nil {
+			_, err = uninspectableReason(ctx, err)
 			return nil, err
 		}
-		if !rendering {
-			return nil, nil
+		if exists {
+			rendering, err := isReuseRendering(data)
+			if err != nil {
+				return nil, err
+			}
+			if !rendering {
+				return nil, nil
+			}
 		}
+		managed = append(managed, reuseWorkflowFile)
 	}
-	managed := []string{reuseWorkflowFile}
 	reqData, reqExists, err := observeAdoptionInput(ctx, s, reuseRequirementsFile)
 	if err != nil {
 		_, err = uninspectableReason(ctx, err)
