@@ -603,13 +603,18 @@ def sweep_stale_snapshots(root=None, now=None):
     for entry in sorted(root.glob(SNAPSHOT_PREFIX + "*"))[:MAX_STALE_SNAPSHOTS]:
         with contextlib.suppress(OSError):
             info = entry.lstat()
-            if (not stat.S_ISDIR(info.st_mode) or now - info.st_mtime < SNAPSHOT_STALE_S
-                    or (hasattr(os, "getuid") and info.st_uid != os.getuid())):
+            if (
+                not stat.S_ISDIR(info.st_mode)
+                or now - info.st_mtime < SNAPSHOT_STALE_S
+                or (hasattr(os, "getuid") and info.st_uid != os.getuid())
+            ):
                 continue
             if sys.version_info >= (3, 12):
                 shutil.rmtree(entry, onexc=_writable_retry)
             else:  # Python 3.10 and 3.11 (the hooks' floor) name the callback onerror
-                shutil.rmtree(entry, onerror=_writable_retry)  # pylint: disable=deprecated-argument
+                shutil.rmtree(
+                    entry, onerror=_writable_retry
+                )  # pylint: disable=deprecated-argument
             removed += 1
     return removed
 
