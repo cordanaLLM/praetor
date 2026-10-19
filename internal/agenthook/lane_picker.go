@@ -18,10 +18,13 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// pickerOutputLimit caps the picker's stdout, pickerConfigLimit the lane-picker file, and
+// pickerTimeout the picker run; claudeDispatchBudget leaves room for it inside the hook budget.
 const pickerOutputLimit = 64 << 10
 const pickerConfigLimit = 4096
 const pickerTimeout = 20 * time.Second
 
+// evaluateClaudeLaneOffload applies the offload rule to Claude dispatches only; every other client is allowed.
 func evaluateClaudeLaneOffload(ctx context.Context, client string, rule *router.OffloadConfig, brief string, getenv func(string) string) Verdict {
 	if client != "claude" {
 		return Verdict{Outcome: Allow}
@@ -29,6 +32,7 @@ func evaluateClaudeLaneOffload(ctx context.Context, client string, rule *router.
 	return evaluateLaneOffload(ctx, rule, brief, getenv)
 }
 
+// appendLaneNotice joins the picker's notice to the delivery notice with "; ".
 func appendLaneNotice(existing, additional string) string {
 	if additional == "" {
 		return existing
@@ -39,6 +43,8 @@ func appendLaneNotice(existing, additional string) string {
 	return existing + "; " + additional
 }
 
+// evaluateLaneOffload denies a dispatch whose brief task is an offload label when the configured picker names
+// a lane off Claude. No rule, another label, no picker or exit 3 allow it; a failing picker allows it with a notice.
 func evaluateLaneOffload(ctx context.Context, rule *router.OffloadConfig, brief string, getenv func(string) string) Verdict {
 	if rule == nil {
 		return Verdict{Outcome: Allow}
@@ -65,10 +71,13 @@ func evaluateLaneOffload(ctx context.Context, rule *router.OffloadConfig, brief 
 		label, lane, instruction, path)}
 }
 
+// pickerUnavailable keeps the dispatch on Claude and names the cause, so the fallback is never silent.
 func pickerUnavailable(err error) Verdict {
 	return Verdict{Outcome: Allow, Notice: "lane picker unavailable: " + err.Error() + "; dispatch stays on the Claude lane"}
 }
 
+// lanePickerPath returns the picker path from PRAETOR_LANE_PICKER, else from the first line of
+// $XDG_CONFIG_HOME/praetor/lane-picker (default ~/.config); configured is false when neither exists.
 func lanePickerPath(getenv func(string) string) (string, bool, error) {
 	if getenv == nil {
 		return "", false, nil
@@ -96,6 +105,7 @@ func lanePickerPath(getenv func(string) string) (string, bool, error) {
 	return strings.TrimSpace(line), true, nil
 }
 
+// runLanePicker runs `<path> pick <label>` and returns the lane and instruction, or keep=true on exit 3.
 func runLanePicker(ctx context.Context, path, label string) (string, string, bool, error) {
 	if !filepath.IsAbs(path) || strings.IndexFunc(path, unicode.IsControl) >= 0 {
 		return "", "", false, errors.New("picker path must be absolute and printable")
@@ -121,6 +131,7 @@ func runLanePicker(ctx context.Context, path, label string) (string, string, boo
 	return lane, instruction, false, nil
 }
 
+// parsePickerOutput reads `<lane> <instruction>` from the first stdout line and refuses the Claude lane itself.
 func parsePickerOutput(data []byte) (string, string, error) {
 	line, _, _ := strings.Cut(string(data), "\n")
 	line = strings.TrimSuffix(line, "\r")
