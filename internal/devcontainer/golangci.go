@@ -6,11 +6,12 @@ package devcontainer
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -20,20 +21,15 @@ const (
 )
 
 func readLintModBytes(sourceRoot string) ([]byte, error) {
-	paths := []string{
-		filepath.Join(sourceRoot, lintModRelative),
-		lintModRelative,
-		filepath.Join("..", "..", lintModRelative),
+	confined, err := util.ConfinePath(sourceRoot, lintModRelative)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", filepath.Join(sourceRoot, lintModRelative), err)
 	}
-	for i := 0; i < len(paths) && i < MaxLoopLimit; i++ {
-		if paths[i] == "" {
-			continue
-		}
-		if data, err := os.ReadFile(paths[i]); err == nil {
-			return data, nil
-		}
+	data, err := util.ReadFileLimited(confined, contextopt.MaxSourceBytes)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", confined, err)
 	}
-	return nil, errors.New("cannot locate " + lintModRelative)
+	return data, nil
 }
 
 func findPinnedGolangciVersion(requires []gomanifest.Requirement) (string, error) {
@@ -70,29 +66,39 @@ func hasGoLintTool(dc *DevContainer) bool {
 	return ok && tool == "golangci-lint"
 }
 
-// verifyLintToolInstall checks that a bootstrap Dockerfile installs golangci-lint pinned
-// when settings configure it, and refuses unpinned installations (@latest).
-func verifyLintToolInstall(dc *DevContainer, dockerfile []byte, spec *BootstrapSpec) error {
-	text := string(dockerfile)
+func checkUnpinnedLint(text string, spec *BootstrapSpec) error {
 	if strings.Contains(text, "golangci-lint@latest") {
 		return errors.New("bootstrap Dockerfile contains unpinned golangci-lint@latest install step; version must be pinned")
 	}
 	if spec != nil && (spec.GolangciLintVersion == "latest" || strings.HasSuffix(spec.GolangciLintVersion, "@latest")) {
 		return errors.New("bootstrap spec contains unpinned golangci-lint version: latest")
 	}
-	if hasGoLintTool(dc) {
-		if spec == nil || spec.GolangciLintVersion != "" || !isPriorReleaseBundle(spec) {
-			if !strings.Contains(text, "golangci-lint") || !strings.Contains(text, "/usr/local/bin/golangci-lint") {
-				return errors.New("devcontainer settings declare go.lintTool: golangci-lint but bootstrap Dockerfile does not install golangci-lint")
-			}
-		}
+	return nil
+}
+
+func verifyRequiredLintInstall(text string, spec *BootstrapSpec) error {
+	if spec == nil || spec.GolangciLintVersion == "" || !isValidLintVersion(spec.GolangciLintVersion) {
+		return errors.New("devcontainer settings declare go.lintTool: golangci-lint but bootstrap spec does not pin a valid golangci-lint version")
+	}
+	wantInstall := fmt.Sprintf("RUN GOBIN=/out /usr/local/go/bin/go install -trimpath %s/cmd/golangci-lint@%s", golangciModulePath, spec.GolangciLintVersion)
+	wantCopy := "COPY --from=praetor_build --chmod=0555 /out/golangci-lint /usr/local/bin/golangci-lint"
+	if !strings.Contains(text, wantInstall) || !strings.Contains(text, wantCopy) {
+		return errors.New("devcontainer settings declare go.lintTool: golangci-lint but bootstrap Dockerfile does not install golangci-lint")
 	}
 	return nil
 }
 
-// isPriorReleaseBundle identifies the grandfathered prior-release test fixture recorded before #1474.
-func isPriorReleaseBundle(spec *BootstrapSpec) bool {
-	return spec != nil && spec.ArchiveSHA256 == "sha256:dfd17a047fd33db9ddad68f2b7cf0b3adafa47fe6f266c79f447d8617481b9ed"
+// verifyLintToolInstall checks that a bootstrap Dockerfile installs golangci-lint pinned
+// when settings configure it, and refuses unpinned installations (@latest).
+func verifyLintToolInstall(dc *DevContainer, dockerfile []byte, spec *BootstrapSpec) error {
+	text := string(dockerfile)
+	if err := checkUnpinnedLint(text, spec); err != nil {
+		return err
+	}
+	if !hasGoLintTool(dc) || recordsEarlierDockerfileRendering(spec) {
+		return nil
+	}
+	return verifyRequiredLintInstall(text, spec)
 }
 
 func isValidVersionChar(ch byte) bool {

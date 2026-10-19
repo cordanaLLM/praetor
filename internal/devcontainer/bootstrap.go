@@ -235,8 +235,10 @@ const (
 	dockerfilePiped dockerfileRendering = iota
 	// dockerfileUnpiped writes each intermediate to a file, so every command's status counts.
 	dockerfileUnpiped
+	// dockerfilePinnedLint installs the pinned golangci-lint in the builder stage outside the Go feature.
+	dockerfilePinnedLint
 	// dockerfileCurrent is the rendering generation writes and verification requires.
-	dockerfileCurrent = dockerfileUnpiped
+	dockerfileCurrent = dockerfilePinnedLint
 	// oldestDockerfileRendering is the earliest rendering a recorded specification may carry.
 	oldestDockerfileRendering = dockerfilePiped
 )
@@ -297,6 +299,20 @@ func recordsDockerfileRendering(spec *BootstrapSpec, oldest dockerfileRendering)
 	return false
 }
 
+// recordsEarlierDockerfileRendering reports whether spec was recorded with a Dockerfile
+// rendering earlier than dockerfileCurrent (such as dockerfileUnpiped or dockerfilePiped).
+func recordsEarlierDockerfileRendering(spec *BootstrapSpec) bool {
+	if spec == nil || spec.GolangciLintVersion != "" {
+		return false
+	}
+	for rendering := dockerfileCurrent - 1; rendering >= oldestDockerfileRendering && rendering >= 0; rendering-- {
+		if bootstrapDigest([]byte(renderBootstrapDockerfileAs(spec, rendering))) == spec.DockerfileSHA256 {
+			return true
+		}
+	}
+	return false
+}
+
 // renderBootstrapDockerfile builds praetorctl alone (bootstrapBuildPackage) and installs it
 // under its praetorctl and standardsctl names: the postCreateCommand compiles agent context
 // and runs the gates, and needs nothing else. A workstation install places more
@@ -317,7 +333,7 @@ func renderBootstrapDockerfileAs(spec *BootstrapSpec, rendering dockerfileRender
 	s.WriteString(bootstrapArchiveSteps(strings.TrimPrefix(spec.ArchiveSHA256, "sha256:"), rendering))
 	s.WriteString("ENV GOTOOLCHAIN=local CGO_ENABLED=0 GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org\nRUN sha256sum go.mod go.sum > /tmp/praetor-modules.sha256 && /usr/local/go/bin/go mod download && /usr/local/go/bin/go mod verify && sha256sum -c /tmp/praetor-modules.sha256\n")
 	s.WriteString("RUN /usr/local/go/bin/go build -mod=readonly -trimpath -buildvcs=false -o /out/praetorctl ./" + bootstrapBuildPackage + "\n")
-	if spec.GolangciLintVersion != "" {
+	if rendering >= dockerfilePinnedLint && spec.GolangciLintVersion != "" {
 		// Pinned golangci-lint installed outside the Go feature so installGoTools: false retains it.
 		// The install verifies what it installs via go install with the Go module checksum database on (GOSUMDB=sum.golang.org).
 		s.WriteString("# Pinned golangci-lint installed outside the Go feature so installGoTools: false retains it.\n")
@@ -325,7 +341,7 @@ func renderBootstrapDockerfileAs(spec *BootstrapSpec, rendering dockerfileRender
 		fmt.Fprintf(&s, "RUN GOBIN=/out /usr/local/go/bin/go install -trimpath %s/cmd/golangci-lint@%s\n", golangciModulePath, spec.GolangciLintVersion)
 	}
 	fmt.Fprintf(&s, "FROM %s\nCOPY --from=praetor_build --chmod=0444 /praetor-source/LICENSE /usr/local/share/praetor/LICENSE\nCOPY --from=praetor_build --chmod=0555 /out/praetorctl /usr/local/bin/praetorctl\nCOPY --from=praetor_build --chmod=0555 /out/praetorctl /usr/local/bin/standardsctl\n", spec.BaseImage)
-	if spec.GolangciLintVersion != "" {
+	if rendering >= dockerfilePinnedLint && spec.GolangciLintVersion != "" {
 		s.WriteString("COPY --from=praetor_build --chmod=0555 /out/golangci-lint /usr/local/bin/golangci-lint\n")
 	}
 	s.WriteString("USER vscode\n")
