@@ -176,7 +176,7 @@ func checkoutOwnModules(ctx context.Context, root string) (map[string]bool, erro
 		modPath := filepath.Join(root, modules[i], "go.mod")
 		modData, readErr := readManifest(modPath)
 		if readErr != nil {
-			continue
+			return nil, readErr
 		}
 		if module := gomanifest.ParseManifest(modData).Module; module != "" {
 			own[module] = true

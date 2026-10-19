@@ -5,6 +5,7 @@ package needs
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -94,5 +95,28 @@ func TestOwnModulesInCheckout_Boundary(t *testing.T) {
 	boundStr := strconv.Itoa(gomanifest.MaxDiscoveredModules)
 	if !strings.Contains(err.Error(), boundStr) {
 		t.Fatalf("error %q does not name the bound %s", err.Error(), boundStr)
+	}
+}
+
+// Negative: a discovered module whose go.mod cannot be read fails the scan.
+func TestOwnModulesInCheckout_UnreadableModuleFailsScan(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, ".git/HEAD", "ref: refs/heads/main\n")
+	writeFixture(t, root, "a/go.mod", "module example.com/r/a\n\ngo 1.24\n")
+	writeFixture(t, root, "b/go.mod", "module example.com/r/b\n\ngo 1.24\n\nrequire github.com/x/y v1.0.0\n")
+
+	modA := filepath.Join(root, "a", "go.mod")
+	if err := os.Chmod(modA, 0000); err != nil {
+		t.Skipf("cannot chmod 0000: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(modA, 0644); err != nil {
+			t.Logf("cleanup chmod %s: %v", modA, err)
+		}
+	})
+
+	_, err := NewGoAnalyzer().Analyze(t.Context(), filepath.Join(root, "b"), Target{})
+	if err == nil {
+		t.Fatal("expected unreadable discovered module to fail the scan, got nil error")
 	}
 }
