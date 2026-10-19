@@ -38,32 +38,35 @@ func runGoVet() error {
 	}
 	failures := make([]string, 0, len(modules))
 	for index := 0; index < len(modules) && index < apiassets.MaxTrackedModules; index++ {
-		module := modules[index]
-		start := time.Now()
-		ctx, cancel := commandContext(gating.TestStageTimeout)
-		dir := filepath.Join(".", filepath.Dir(filepath.FromSlash(module)))
-		count, listErr := gating.ModulePackageCount(ctx, util.RunCommand, dir)
-		if listErr == nil && count == 0 {
-			cancel()
-			fmt.Printf("go vet %s: %s, skipped\n", module, gating.NoPackagesNote)
-			continue
+		if failure := vetOneModule(modules[index]); failure != "" {
+			failures = append(failures, failure)
 		}
-		if listErr != nil {
-			cancel()
-			failures = append(failures, fmt.Sprintf("%s: %v", module, listErr))
-			continue
-		}
-		out, runErr := util.RunCommand(ctx, dir, "go", "vet", "./...")
-		cancel()
-		if runErr != nil {
-			failures = append(failures, fmt.Sprintf("%s: %s (%v): %s", module, runErr,
-				time.Since(start).Round(time.Millisecond), strings.TrimSpace(out)))
-			continue
-		}
-		fmt.Printf("go vet %s: passed (%v)\n", module, time.Since(start).Round(time.Millisecond))
 	}
 	if len(failures) > 0 {
 		return fmt.Errorf("go vet failed:\n%s", strings.Join(failures, "\n"))
 	}
 	return nil
+}
+
+// vetOneModule runs go vet on a single tracked module and returns any failure description.
+func vetOneModule(module string) string {
+	start := time.Now()
+	ctx, cancel := commandContext(gating.TestStageTimeout)
+	defer cancel()
+	dir := filepath.Join(".", filepath.Dir(filepath.FromSlash(module)))
+	count, listErr := gating.ModulePackageCount(ctx, util.RunCommand, dir)
+	if listErr == nil && count == 0 {
+		fmt.Printf("go vet %s: %s, skipped\n", module, gating.NoPackagesNote)
+		return ""
+	}
+	if listErr != nil {
+		return fmt.Sprintf("%s: %v", module, listErr)
+	}
+	out, runErr := util.RunCommand(ctx, dir, "go", "vet", "./...")
+	if runErr != nil {
+		return fmt.Sprintf("%s: %s (%v): %s", module, runErr,
+			time.Since(start).Round(time.Millisecond), strings.TrimSpace(out))
+	}
+	fmt.Printf("go vet %s: passed (%v)\n", module, time.Since(start).Round(time.Millisecond))
+	return ""
 }

@@ -228,18 +228,32 @@ func runGateVerify(args []string) error {
 	if err != nil {
 		return fmt.Errorf("[FAIL] %w", err)
 	}
+	if err := verifyReceiptBindings(*path, resolvedReceipt, rf, pinned, supplied); err != nil {
+		return err
+	}
+
+	printVerifiedReceipt(resolvedReceipt, rf, pinned, supplied)
+	return nil
+}
+
+// verifyReceiptBindings checks the cryptographic signature and bindings of the receipt file.
+func verifyReceiptBindings(repoPath, resolvedReceipt string, rf *lockdown.ReceiptFile, pinned []byte, supplied string) error {
 	if err := lockdown.VerifyPinnedReceiptFile(rf, pinned); err != nil {
 		return fmt.Errorf("[FAIL] receipt %s is not valid: %w", resolvedReceipt, err)
 	}
-	if err := verifyReceiptCommit(*path, rf.CommitSHA); err != nil {
+	if err := verifyReceiptCommit(repoPath, rf.CommitSHA); err != nil {
 		return err
 	}
 	if supplied != "" {
-		if err := verifyReceiptRepository(*path, rf.Repository); err != nil {
+		if err := verifyReceiptRepository(repoPath, rf.Repository); err != nil {
 			return err
 		}
 	}
+	return nil
+}
 
+// printVerifiedReceipt prints the summary of a verified gate receipt.
+func printVerifiedReceipt(resolvedReceipt string, rf *lockdown.ReceiptFile, pinned []byte, supplied string) {
 	fmt.Printf("[PASS] Exit-0 receipt %s verified.\n", resolvedReceipt)
 	fmt.Printf("       Command:    %s\n", rf.Command)
 	fmt.Printf("       Repository: %s\n", rf.Repository)
@@ -247,10 +261,9 @@ func runGateVerify(args []string) error {
 	fmt.Printf("       Execution:  %s\n", certifiedExecution(rf.GateOutput))
 	if supplied != "" {
 		fmt.Printf("       Signed by supplied key %s\n", hex.EncodeToString(pinned))
-		return nil
+		return
 	}
 	fmt.Printf("       Signed by pinned key %s\n", hex.EncodeToString(pinned))
-	return nil
 }
 
 // certifiedExecution renders where a verified receipt says the toolchain stages ran: the fields of

@@ -507,7 +507,16 @@ func runHarvestIngest(ctx context.Context, args []string) error {
 		return fmt.Errorf("failed ingesting bundle: %w", err)
 	}
 
-	fmt.Printf("=== Ingesting Bundle from %s (DryRun: %v) ===\n", rep.WorkstationName, *dryRun)
+	printHarvestIngestReport(rep, *dryRun)
+	if !rep.ValidIntegrity {
+		return fmt.Errorf("bundle %s failed manifest integrity verification (%d rejected records)", *bundleDir, len(rep.RejectedRecords))
+	}
+	return nil
+}
+
+// printHarvestIngestReport prints the summary, warnings, and rejected records of an ingest report.
+func printHarvestIngestReport(rep *harvester.IngestReport, dryRun bool) {
+	fmt.Printf("=== Ingesting Bundle from %s (DryRun: %v) ===\n", rep.WorkstationName, dryRun)
 	fmt.Printf("Novel Skills to Ingest (%d):\n", len(rep.NovelSkills))
 	for _, s := range rep.NovelSkills {
 		fmt.Printf("  - [NEW] %s\n", s)
@@ -526,8 +535,4 @@ func runHarvestIngest(ctx context.Context, args []string) error {
 		}
 		fmt.Printf("  [REJECTED] %s\n", rejected)
 	}
-	if !rep.ValidIntegrity {
-		return fmt.Errorf("bundle %s failed manifest integrity verification (%d rejected records)", *bundleDir, len(rep.RejectedRecords))
-	}
-	return nil
 }

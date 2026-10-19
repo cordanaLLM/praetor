@@ -150,6 +150,11 @@ func runFlavorAudit(args []string) error {
 		return fmt.Errorf("flavor audit failed: %w%s", err, explicitFlavorHint(err))
 	}
 
+	return evaluateFlavorReports(dir, reports)
+}
+
+// evaluateFlavorReports prints each report and returns an error if any report failed.
+func evaluateFlavorReports(dir string, reports []*flavor.FlavorAuditReport) error {
 	var failed []string
 	for _, report := range reports {
 		printFlavorAuditReport(dir, report)
