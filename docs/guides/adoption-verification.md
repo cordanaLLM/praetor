@@ -2262,11 +2262,13 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     C/C++ clauses. The verification walk records the file names it already visits, under the
     same `--verification-max-*` bounds, and the plan lists them as `source_languages: ["c"]` in
     the JSON report, also when a build marker declares the language too. Every extension the
-    audit's native scan reads (`.c`, `.cpp`, `.cc`, `.cxx`, `.hpp`, `.cu`, `.hip`, in any case;
+    audit's native scan reads (`.c`, `.cpp`, `.cc`, `.cxx`, `.hpp`, `.cu`, `.hip`, `.mm`, in any case;
     `hiss.IsNativeExtension`) makes the repository C/C++, the same files the scan runs the
-    `goto` and banned-libc checks on. A `.h` file does too, unless an Objective-C source (`.m`,
-    `.mm`) sits beside it: `.h` is Objective-C's header as well, and the audit does not scan
-    Objective-C. Files under a directory the scan ignores (`vendor`, `third_party`, `testdata`,
+    `goto` and banned-libc checks on; `.mm` is read by the C/C++ rules, while `.m` stays unscanned
+    and is listed under Not Scanned as `objective-c` where a marker shows the repository is
+    Objective-C. A `.h` file does too, unless an Objective-C source (`.m`) sits beside it: `.h`
+    is Objective-C's header as well, and the audit does not scan Objective-C. Files under a
+    directory the scan ignores (`vendor`, `third_party`, `testdata`,
     build output, and the Zig trees `zig-pkg`, `zig-out` and `.zig-cache`;
     `hiss.ShouldIgnorePath`) never count. In a work tree a file must also be one
     git reports as the repository's own: tracked, or untracked and not ignored

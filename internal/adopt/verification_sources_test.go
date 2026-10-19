@@ -20,7 +20,7 @@ import (
 // C++, and every source the audit's native scan reads selects it. Positive: a `.c`, a C++, CUDA
 // or HIP source, in any case (GCC's capital `.C` included, which the scan folds to `.c`), a header
 // beside C++, and a header with no other source (a header-only library) are C/C++. Negative: a
-// `.h` beside an Objective-C or Objective-C++ source is theirs, Objective-C alone is not C/C++,
+// `.h` beside an Objective-C source (`.m`) is theirs, Objective-C alone is not C/C++,
 // and neither is a repository with no such file. Boundary: C-family spellings the scan has no
 // dispatch for (`.hh`, `.hxx`, `.cuh`) count for nothing, a `.c` beside Objective-C still counts,
 // and sources under a directory the audit ignores count for nothing, so a vendored Objective-C
@@ -40,7 +40,8 @@ func TestCSourceObservationDecidesC(t *testing.T) {
 		"upper-case extension":        {[]string{"src/LEGACY.CPP"}, true},
 		"gcc capital C":               {[]string{"src/widget.C", "src/widget.h"}, true},
 		"header beside objective-c":   {[]string{"src/view.m", "src/view.h"}, false},
-		"header beside objective-c++": {[]string{"src/view.mm", "src/view.h"}, false},
+		"header beside objective-c++": {[]string{"src/view.mm", "src/view.h"}, true},
+		"objective-c++ alone":         {[]string{"src/view.mm"}, true},
 		"objective-c alone":           {[]string{"src/view.m"}, false},
 		"no c-family source":          {[]string{"main.go", "README.md", "Makefile"}, false},
 		"nothing":                     {nil, false},

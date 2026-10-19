@@ -32,15 +32,14 @@ const (
 // cSourceKindOf classifies ext in any case, as the audit's scan folds it. Every extension the
 // native scanner reads (hiss.IsNativeExtension, the files HISS-01's `goto` and HISS-08's
 // banned-libc checks cover) is C/C++, except `.h`, the header Objective-C shares. Objective-C
-// (`.m`) and Objective-C++ (`.mm`) sources, which the audit does not scan, are recorded only so
-// they can claim a `.h`.
+// (`.m`) sources, which the audit does not scan, are recorded only so they can claim a `.h`.
 func cSourceKindOf(ext string) cSourceKind {
 	switch lower := strings.ToLower(ext); {
 	case lower == ".h":
 		return cSourceHeader
 	case hiss.IsNativeExtension(lower):
 		return cSourceNative
-	case lower == ".m" || lower == ".mm":
+	case lower == ".m":
 		return cSourceObjC
 	default:
 		return cSourceNone

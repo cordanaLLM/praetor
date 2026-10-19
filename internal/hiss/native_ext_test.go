@@ -34,7 +34,7 @@ func TestSupportsExtension_RejectsUndispatchedKinds(t *testing.T) {
 // Boundary: every C-family extension is accepted, in either case, because Scan lowercases
 // the extension before dispatch and SupportsExtension answers from the same table.
 func TestSupportsExtension_CFamilyIsCaseInsensitive(t *testing.T) {
-	for _, ext := range []string{".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".cu", ".hip", ".HH", ".Cpp"} {
+	for _, ext := range []string{".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".cu", ".hip", ".mm", ".HH", ".Cpp", ".MM"} {
 		if !SupportsExtension(ext) {
 			t.Errorf("%q is a native C-family extension but SupportsExtension rejected it", ext)
 		}

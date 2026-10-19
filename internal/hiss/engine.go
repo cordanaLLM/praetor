@@ -226,12 +226,16 @@ func (w *scanWalker) readFailed(rel string, idx int, err error) error {
 	return nil
 }
 
-// finish runs every package pass over the files its scanner examined.
+// finish runs every package pass over the files its scanner examined, and labels unscanned
+// .m files as objective-c when an Objective-C marker was seen during traversal.
 func (w *scanWalker) finish() {
 	for i := 0; i < len(languageScanners); i++ {
 		if p, ok := languageScanners[i].(packageScanner); ok && len(w.packages[i]) > 0 {
 			p.finish(w.ctx, w.rep, w.root, w.packages[i])
 		}
+	}
+	if w.objcMarker && w.unscannedM > 0 {
+		w.rep.Coverage.recordUnscannedObjectiveC(w.unscannedM)
 	}
 }
 
@@ -253,7 +257,7 @@ func (goLanguage) finish(ctx context.Context, rep *ScanReport, root string, path
 	resolveIOProofs(ctx, rep, root, paths)
 }
 
-// nativeLanguage reads C, C++, CUDA and HIP line by line (rules.go scanNativeLines).
+// nativeLanguage reads C, C++, Objective-C++, CUDA and HIP line by line (rules.go scanNativeLines).
 type nativeLanguage struct{}
 
 func (nativeLanguage) handles(ext string) bool { return isNativeExt(ext) }
