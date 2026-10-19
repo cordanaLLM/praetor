@@ -107,7 +107,13 @@ func Check(ctx context.Context, opts Options) (*Report, error) {
 	if root == "" {
 		root = opts.Dir
 	}
-	scanner = resolveScannerModfile(scanner, root)
+	// The hook passes no --path, so the root is often "."; joined with it a relative -modfile
+	// stays relative and still misses in every submodule.
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("govuln: resolve the repository root %s: %w", root, err)
+	}
+	scanner = resolveScannerModfile(scanner, absRoot)
 	now := time.Now
 	if opts.Now != nil {
 		now = opts.Now

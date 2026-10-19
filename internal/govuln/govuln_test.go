@@ -263,3 +263,37 @@ func TestCheck_GovulnSubmoduleAbsoluteModfile(t *testing.T) {
 		t.Fatalf("args still contains relative modfile: %q", calls[0].args)
 	}
 }
+
+// Boundary: a relative repository root (the hook's default --path=.) still yields an absolute
+// -modfile, so a submodule run finds the tools module.
+func TestCheck_Boundary_RelativeRootYieldsAbsoluteModfile(t *testing.T) {
+	root := t.TempDir()
+	sub := filepath.Join(root, "sub")
+	vex := vexDoc(notAffected("GO-2022-1059", "vulnerable_code_not_present", ""))
+	for _, dir := range []string{root, sub} {
+		vexPath := filepath.Join(dir, "security", "vex", "go.openvex.json")
+		if err := os.MkdirAll(filepath.Dir(vexPath), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(vexPath, []byte(vex), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stream := fixture(t, "module") // read before the working directory leaves the package
+	t.Chdir(root)
+	abs, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls []call
+	run := stubRunner(stream, nil, &calls)
+	_, err = Check(t.Context(), Options{Dir: "sub", VEXRoot: ".", Run: run, Now: func() time.Time { return testNow },
+		Scanner: []string{"go", "tool", "-modfile=tools/go/go.mod", "govulncheck"}})
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	want := "-modfile=" + filepath.Join(abs, "tools", "go", "go.mod")
+	if len(calls) != 1 || !slices.Contains(calls[0].args, want) {
+		t.Fatalf("calls = %+v, want one scanner run with %q", calls, want)
+	}
+}
