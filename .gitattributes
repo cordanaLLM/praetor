@@ -199,6 +199,10 @@ cmd/standards-mcp/testdata/*.golden.json text eol=lf
 # conversion, and no whitespace check on an upstream file that ends in a blank line.
 internal/clientschema/upstream/** -text -whitespace
 
+# The console fixtures are validated byte for byte by tools/schemacheck/console_test.go and regenerated
+# by generate.py; a CRLF checkout would change them on Windows trees.
+console/fixtures/* text eol=lf
+
 # BEGIN praetor managed attributes (praetorctl adopt)
 # praetorctl audit hashes these files; keep their checkout bytes the same on every platform.
 .devcontainer/Dockerfile.praetor text eol=lf
