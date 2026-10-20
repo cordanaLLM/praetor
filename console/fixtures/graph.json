@@ -1,0 +1,731 @@
+{
+ "version": 1,
+ "generated_at": "2026-01-15T09:30:00Z",
+ "totals": {
+  "waiting": {
+   "nodes": 7,
+   "units": 21.0
+  },
+  "active": {
+   "nodes": 12,
+   "units": 36.0
+  },
+  "ready": {
+   "nodes": 60,
+   "units": 180.0
+  },
+  "blocked": {
+   "nodes": 20,
+   "units": 60.0
+  },
+  "done": {
+   "nodes": 41,
+   "units": 123.0
+  }
+ },
+ "quick_wins": [
+  {
+   "kind": "node",
+   "id": "N1",
+   "title": "Review the storage quota",
+   "gain": 1,
+   "effort": 1,
+   "clarity": "clear",
+   "reason": "synthetic",
+   "model": "example-model",
+   "repo": "example/alpha"
+  },
+  {
+   "kind": "steering",
+   "id": "N2",
+   "title": "Merge the test matrix",
+   "gain": 2,
+   "effort": 3,
+   "clarity": "partial",
+   "reason": "synthetic",
+   "model": "example-model",
+   "repo": "example/beta"
+  },
+  {
+   "kind": "research",
+   "id": "N3",
+   "title": "Approve the API token scope",
+   "gain": 3,
+   "effort": 5,
+   "clarity": "clear",
+   "reason": "synthetic",
+   "model": "example-model",
+   "repo": "example/gamma"
+  },
+  {
+   "kind": "node",
+   "id": "N4",
+   "title": "Rotate the backup schedule",
+   "gain": 4,
+   "effort": 2,
+   "clarity": "partial",
+   "reason": "synthetic",
+   "model": "example-model",
+   "repo": "example/delta"
+  },
+  {
+   "kind": "steering",
+   "id": "N5",
+   "title": "Answer the docs build",
+   "gain": 5,
+   "effort": 4,
+   "clarity": "clear",
+   "reason": "synthetic",
+   "model": "example-model",
+   "repo": "example/epsilon"
+  },
+  {
+   "kind": "research",
+   "id": "N6",
+   "title": "Check the licence notice",
+   "gain": 1,
+   "effort": 1,
+   "clarity": "partial",
+   "reason": "synthetic",
+   "model": "example-model",
+   "repo": "example/zeta"
+  },
+  {
+   "kind": "node",
+   "id": "N7",
+   "title": "Renew the release notes",
+   "gain": 2,
+   "effort": 3,
+   "clarity": "clear",
+   "reason": "synthetic",
+   "model": "example-model",
+   "repo": "example/eta"
+  },
+  {
+   "kind": "steering",
+   "id": "N8",
+   "title": "Confirm the dependency update",
+   "gain": 3,
+   "effort": 5,
+   "clarity": "partial",
+   "reason": "synthetic",
+   "model": "example-model",
+   "repo": "example/theta"
+  },
+  {
+   "kind": "research",
+   "id": "N9",
+   "title": "Review the storage quota",
+   "gain": 4,
+   "effort": 2,
+   "clarity": "clear",
+   "reason": "synthetic",
+   "model": "example-model",
+   "repo": "example/alpha"
+  },
+  {
+   "kind": "node",
+   "id": "N10",
+   "title": "Merge the test matrix",
+   "gain": 5,
+   "effort": 4,
+   "clarity": "partial",
+   "reason": "synthetic",
+   "model": "example-model",
+   "repo": "example/beta"
+  },
+  {
+   "kind": "steering",
+   "id": "N11",
+   "title": "Approve the API token scope",
+   "gain": 1,
+   "effort": 1,
+   "clarity": "clear",
+   "reason": "synthetic",
+   "model": "example-model",
+   "repo": "example/gamma"
+  },
+  {
+   "kind": "research",
+   "id": "N12",
+   "title": "Rotate the backup schedule",
+   "gain": 2,
+   "effort": 3,
+   "clarity": "partial",
+   "reason": "synthetic",
+   "model": "example-model",
+   "repo": "example/delta"
+  },
+  {
+   "kind": "node",
+   "id": "N13",
+   "title": "Answer the docs build",
+   "gain": 3,
+   "effort": 5,
+   "clarity": "clear",
+   "reason": "synthetic",
+   "model": "example-model",
+   "repo": "example/epsilon"
+  },
+  {
+   "kind": "steering",
+   "id": "N14",
+   "title": "Check the licence notice",
+   "gain": 4,
+   "effort": 2,
+   "clarity": "partial",
+   "reason": "synthetic",
+   "model": "example-model",
+   "repo": "example/zeta"
+  },
+  {
+   "kind": "research",
+   "id": "N15",
+   "title": "Renew the release notes",
+   "gain": 5,
+   "effort": 4,
+   "clarity": "clear",
+   "reason": "synthetic",
+   "model": "example-model",
+   "repo": "example/eta"
+  },
+  {
+   "kind": "node",
+   "id": "N16",
+   "title": "Confirm the dependency update",
+   "gain": 1,
+   "effort": 1,
+   "clarity": "partial",
+   "reason": "synthetic",
+   "model": "example-model",
+   "repo": "example/theta"
+  },
+  {
+   "kind": "steering",
+   "id": "N17",
+   "title": "Review the storage quota",
+   "gain": 2,
+   "effort": 3,
+   "clarity": "clear",
+   "reason": "synthetic",
+   "model": "example-model",
+   "repo": "example/alpha"
+  },
+  {
+   "kind": "research",
+   "id": "N18",
+   "title": "Merge the test matrix",
+   "gain": 3,
+   "effort": 5,
+   "clarity": "partial",
+   "reason": "synthetic",
+   "model": "example-model",
+   "repo": "example/beta"
+  },
+  {
+   "kind": "node",
+   "id": "N19",
+   "title": "Approve the API token scope",
+   "gain": 4,
+   "effort": 2,
+   "clarity": "clear",
+   "reason": "synthetic",
+   "model": "example-model",
+   "repo": "example/gamma"
+  },
+  {
+   "kind": "steering",
+   "id": "N20",
+   "title": "Rotate the backup schedule",
+   "gain": 5,
+   "effort": 4,
+   "clarity": "partial",
+   "reason": "synthetic",
+   "model": "example-model",
+   "repo": "example/delta"
+  }
+ ],
+ "unestimated": 5,
+ "frontier": [
+  {
+   "id": "N1",
+   "title": "Merge the release notes",
+   "status": "ready",
+   "score": 10.0,
+   "goal": "A",
+   "class": "survival"
+  },
+  {
+   "id": "N2",
+   "title": "Approve the dependency update",
+   "status": "active",
+   "score": 9.87,
+   "goal": "B",
+   "class": "continuity"
+  },
+  {
+   "id": "N3",
+   "title": "Rotate the storage quota",
+   "status": "blocked",
+   "score": 9.74,
+   "goal": "C",
+   "class": "growth"
+  },
+  {
+   "id": "N4",
+   "title": "Answer the test matrix",
+   "status": "waiting",
+   "score": 9.61,
+   "goal": "D",
+   "class": "survival"
+  },
+  {
+   "id": "N5",
+   "title": "Check the API token scope",
+   "status": "ready",
+   "score": 9.48,
+   "goal": "E",
+   "class": "continuity"
+  },
+  {
+   "id": "N6",
+   "title": "Renew the backup schedule",
+   "status": "active",
+   "score": 9.35,
+   "goal": "A",
+   "class": "growth"
+  },
+  {
+   "id": "N7",
+   "title": "Confirm the docs build",
+   "status": "blocked",
+   "score": 9.22,
+   "goal": "B",
+   "class": "survival"
+  },
+  {
+   "id": "N8",
+   "title": "Review the licence notice",
+   "status": "waiting",
+   "score": 9.09,
+   "goal": "C",
+   "class": "continuity"
+  },
+  {
+   "id": "N9",
+   "title": "Merge the release notes",
+   "status": "ready",
+   "score": 8.96,
+   "goal": "D",
+   "class": "growth"
+  },
+  {
+   "id": "N10",
+   "title": "Approve the dependency update",
+   "status": "active",
+   "score": 8.83,
+   "goal": "E",
+   "class": "survival"
+  },
+  {
+   "id": "N11",
+   "title": "Rotate the storage quota",
+   "status": "blocked",
+   "score": 8.7,
+   "goal": "A",
+   "class": "continuity"
+  },
+  {
+   "id": "N12",
+   "title": "Answer the test matrix",
+   "status": "waiting",
+   "score": 8.57,
+   "goal": "B",
+   "class": "growth"
+  },
+  {
+   "id": "N13",
+   "title": "Check the API token scope",
+   "status": "ready",
+   "score": 8.44,
+   "goal": "C",
+   "class": "survival"
+  },
+  {
+   "id": "N14",
+   "title": "Renew the backup schedule",
+   "status": "active",
+   "score": 8.31,
+   "goal": "D",
+   "class": "continuity"
+  },
+  {
+   "id": "N15",
+   "title": "Confirm the docs build",
+   "status": "blocked",
+   "score": 8.18,
+   "goal": "E",
+   "class": "growth"
+  },
+  {
+   "id": "N16",
+   "title": "Review the licence notice",
+   "status": "waiting",
+   "score": 8.05,
+   "goal": "A",
+   "class": "survival"
+  },
+  {
+   "id": "N17",
+   "title": "Merge the release notes",
+   "status": "ready",
+   "score": 7.92,
+   "goal": "B",
+   "class": "continuity"
+  },
+  {
+   "id": "N18",
+   "title": "Approve the dependency update",
+   "status": "active",
+   "score": 7.79,
+   "goal": "C",
+   "class": "growth"
+  },
+  {
+   "id": "N19",
+   "title": "Rotate the storage quota",
+   "status": "blocked",
+   "score": 7.66,
+   "goal": "D",
+   "class": "survival"
+  },
+  {
+   "id": "N20",
+   "title": "Answer the test matrix",
+   "status": "waiting",
+   "score": 7.53,
+   "goal": "E",
+   "class": "continuity"
+  },
+  {
+   "id": "N21",
+   "title": "Check the API token scope",
+   "status": "ready",
+   "score": 7.4,
+   "goal": "A",
+   "class": "growth"
+  },
+  {
+   "id": "N22",
+   "title": "Renew the backup schedule",
+   "status": "active",
+   "score": 7.27,
+   "goal": "B",
+   "class": "survival"
+  },
+  {
+   "id": "N23",
+   "title": "Confirm the docs build",
+   "status": "blocked",
+   "score": 7.14,
+   "goal": "C",
+   "class": "continuity"
+  },
+  {
+   "id": "N24",
+   "title": "Review the licence notice",
+   "status": "waiting",
+   "score": 7.01,
+   "goal": "D",
+   "class": "growth"
+  },
+  {
+   "id": "N25",
+   "title": "Merge the release notes",
+   "status": "ready",
+   "score": 6.88,
+   "goal": "E",
+   "class": "survival"
+  },
+  {
+   "id": "N26",
+   "title": "Approve the dependency update",
+   "status": "active",
+   "score": 6.75,
+   "goal": "A",
+   "class": "continuity"
+  },
+  {
+   "id": "N27",
+   "title": "Rotate the storage quota",
+   "status": "blocked",
+   "score": 6.62,
+   "goal": "B",
+   "class": "growth"
+  },
+  {
+   "id": "N28",
+   "title": "Answer the test matrix",
+   "status": "waiting",
+   "score": 6.49,
+   "goal": "C",
+   "class": "survival"
+  },
+  {
+   "id": "N29",
+   "title": "Check the API token scope",
+   "status": "ready",
+   "score": 6.36,
+   "goal": "D",
+   "class": "continuity"
+  },
+  {
+   "id": "N30",
+   "title": "Renew the backup schedule",
+   "status": "active",
+   "score": 6.23,
+   "goal": "E",
+   "class": "growth"
+  },
+  {
+   "id": "N31",
+   "title": "Confirm the docs build",
+   "status": "blocked",
+   "score": 6.1,
+   "goal": "A",
+   "class": "survival"
+  },
+  {
+   "id": "N32",
+   "title": "Review the licence notice",
+   "status": "waiting",
+   "score": 5.97,
+   "goal": "B",
+   "class": "continuity"
+  },
+  {
+   "id": "N33",
+   "title": "Merge the release notes",
+   "status": "ready",
+   "score": 5.84,
+   "goal": "C",
+   "class": "growth"
+  },
+  {
+   "id": "N34",
+   "title": "Approve the dependency update",
+   "status": "active",
+   "score": 5.71,
+   "goal": "D",
+   "class": "survival"
+  },
+  {
+   "id": "N35",
+   "title": "Rotate the storage quota",
+   "status": "blocked",
+   "score": 5.58,
+   "goal": "E",
+   "class": "continuity"
+  },
+  {
+   "id": "N36",
+   "title": "Answer the test matrix",
+   "status": "waiting",
+   "score": 5.45,
+   "goal": "A",
+   "class": "growth"
+  },
+  {
+   "id": "N37",
+   "title": "Check the API token scope",
+   "status": "ready",
+   "score": 5.32,
+   "goal": "B",
+   "class": "survival"
+  },
+  {
+   "id": "N38",
+   "title": "Renew the backup schedule",
+   "status": "active",
+   "score": 5.19,
+   "goal": "C",
+   "class": "continuity"
+  },
+  {
+   "id": "N39",
+   "title": "Confirm the docs build",
+   "status": "blocked",
+   "score": 5.06,
+   "goal": "D",
+   "class": "growth"
+  },
+  {
+   "id": "N40",
+   "title": "Review the licence notice",
+   "status": "waiting",
+   "score": 4.93,
+   "goal": "E",
+   "class": "survival"
+  },
+  {
+   "id": "N41",
+   "title": "Merge the release notes",
+   "status": "ready",
+   "score": 4.8,
+   "goal": "A",
+   "class": "continuity"
+  },
+  {
+   "id": "N42",
+   "title": "Approve the dependency update",
+   "status": "active",
+   "score": 4.67,
+   "goal": "B",
+   "class": "growth"
+  },
+  {
+   "id": "N43",
+   "title": "Rotate the storage quota",
+   "status": "blocked",
+   "score": 4.54,
+   "goal": "C",
+   "class": "survival"
+  },
+  {
+   "id": "N44",
+   "title": "Answer the test matrix",
+   "status": "waiting",
+   "score": 4.41,
+   "goal": "D",
+   "class": "continuity"
+  },
+  {
+   "id": "N45",
+   "title": "Check the API token scope",
+   "status": "ready",
+   "score": 4.28,
+   "goal": "E",
+   "class": "growth"
+  },
+  {
+   "id": "N46",
+   "title": "Renew the backup schedule",
+   "status": "active",
+   "score": 4.15,
+   "goal": "A",
+   "class": "survival"
+  },
+  {
+   "id": "N47",
+   "title": "Confirm the docs build",
+   "status": "blocked",
+   "score": 4.02,
+   "goal": "B",
+   "class": "continuity"
+  },
+  {
+   "id": "N48",
+   "title": "Review the licence notice",
+   "status": "waiting",
+   "score": 3.89,
+   "goal": "C",
+   "class": "growth"
+  },
+  {
+   "id": "N49",
+   "title": "Merge the release notes",
+   "status": "ready",
+   "score": 3.76,
+   "goal": "D",
+   "class": "survival"
+  },
+  {
+   "id": "N50",
+   "title": "Approve the dependency update",
+   "status": "active",
+   "score": 3.63,
+   "goal": "E",
+   "class": "continuity"
+  },
+  {
+   "id": "N51",
+   "title": "Rotate the storage quota",
+   "status": "blocked",
+   "score": 3.5,
+   "goal": "A",
+   "class": "growth"
+  },
+  {
+   "id": "N52",
+   "title": "Answer the test matrix",
+   "status": "waiting",
+   "score": 3.37,
+   "goal": "B",
+   "class": "survival"
+  },
+  {
+   "id": "N53",
+   "title": "Check the API token scope",
+   "status": "ready",
+   "score": 3.24,
+   "goal": "C",
+   "class": "continuity"
+  },
+  {
+   "id": "N54",
+   "title": "Renew the backup schedule",
+   "status": "active",
+   "score": 3.11,
+   "goal": "D",
+   "class": "growth"
+  },
+  {
+   "id": "N55",
+   "title": "Confirm the docs build",
+   "status": "blocked",
+   "score": 2.98,
+   "goal": "E",
+   "class": "survival"
+  },
+  {
+   "id": "N56",
+   "title": "Review the licence notice",
+   "status": "waiting",
+   "score": 2.85,
+   "goal": "A",
+   "class": "continuity"
+  },
+  {
+   "id": "N57",
+   "title": "Merge the release notes",
+   "status": "ready",
+   "score": 2.72,
+   "goal": "B",
+   "class": "growth"
+  },
+  {
+   "id": "N58",
+   "title": "Approve the dependency update",
+   "status": "active",
+   "score": 2.59,
+   "goal": "C",
+   "class": "survival"
+  },
+  {
+   "id": "N59",
+   "title": "Rotate the storage quota",
+   "status": "blocked",
+   "score": 2.46,
+   "goal": "D",
+   "class": "continuity"
+  },
+  {
+   "id": "N60",
+   "title": "Answer the test matrix",
+   "status": "waiting",
+   "score": 2.33,
+   "goal": "E",
+   "class": "growth"
+  }
+ ]
+}

@@ -1,0 +1,378 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cordanaLLM/praetor/console/console.schema.json",
+  "title": "Console data, version 1",
+  "description": "The three data files the console reads beside its index.html: cards.json, graph.json and status.json. The producing side validates each file against its $defs entry before it publishes it; the console reads nothing else.",
+  "$defs": {
+    "head": {
+      "type": "object",
+      "required": [
+        "version",
+        "generated_at"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "generated_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ$"
+        }
+      }
+    },
+    "cards": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/head"
+        }
+      ],
+      "type": "object",
+      "required": [
+        "version",
+        "generated_at",
+        "cards"
+      ],
+      "unevaluatedProperties": false,
+      "properties": {
+        "cards": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "title",
+              "state",
+              "where",
+              "act",
+              "say"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "now",
+                  "wait",
+                  "later"
+                ]
+              },
+              "where": {
+                "enum": [
+                  "anywhere",
+                  "controller",
+                  "office",
+                  "home"
+                ]
+              },
+              "act": {
+                "type": "string",
+                "minLength": 1
+              },
+              "cmd": {
+                "type": "string"
+              },
+              "link": {
+                "type": "string"
+              },
+              "say": {
+                "type": "string",
+                "minLength": 1
+              },
+              "detail": {
+                "type": "string"
+              },
+              "why_now": {
+                "type": "string"
+              },
+              "consequence_if_skipped": {
+                "type": "string"
+              },
+              "est_minutes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 480
+              },
+              "source": {
+                "type": "string"
+              },
+              "probe_kind": {
+                "enum": [
+                  "path",
+                  "command",
+                  "repo_secret",
+                  "pr_merged",
+                  "operator-word"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "graph": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/head"
+        }
+      ],
+      "type": "object",
+      "required": [
+        "version",
+        "generated_at",
+        "totals",
+        "quick_wins",
+        "unestimated",
+        "frontier"
+      ],
+      "unevaluatedProperties": false,
+      "properties": {
+        "totals": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "waiting": {
+              "$ref": "#/$defs/count"
+            },
+            "active": {
+              "$ref": "#/$defs/count"
+            },
+            "ready": {
+              "$ref": "#/$defs/count"
+            },
+            "blocked": {
+              "$ref": "#/$defs/count"
+            },
+            "done": {
+              "$ref": "#/$defs/count"
+            }
+          }
+        },
+        "quick_wins": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "id",
+              "gain",
+              "effort",
+              "title"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "node",
+                  "steering",
+                  "research"
+                ]
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string"
+              },
+              "gain": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5
+              },
+              "effort": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5
+              },
+              "clarity": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "repo": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "unestimated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "frontier": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "title",
+              "status",
+              "score"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "score": {
+                "type": "number"
+              },
+              "goal": {
+                "type": "string"
+              },
+              "class": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "count": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nodes",
+        "units"
+      ],
+      "properties": {
+        "nodes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "units": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "status": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/head"
+        }
+      ],
+      "type": "object",
+      "required": [
+        "version",
+        "generated_at",
+        "sessions",
+        "decisions",
+        "holds"
+      ],
+      "unevaluatedProperties": false,
+      "properties": {
+        "sessions": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "repo",
+              "state"
+            ],
+            "properties": {
+              "repo": {
+                "type": "string",
+                "minLength": 1
+              },
+              "state": {
+                "enum": [
+                  "active",
+                  "quiet",
+                  "not running"
+                ]
+              },
+              "kind": {
+                "type": "string"
+              },
+              "pid": {
+                "type": "integer"
+              },
+              "gb": {
+                "type": "number"
+              },
+              "idle_min": {
+                "type": "integer"
+              },
+              "latest": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "decisions": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "enum": [
+                  "DECISION",
+                  "ASK"
+                ]
+              },
+              "at": {
+                "type": "string"
+              },
+              "from": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "holds": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "since": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
