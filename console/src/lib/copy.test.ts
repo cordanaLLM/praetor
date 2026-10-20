@@ -40,7 +40,11 @@ test('the copy button copies its text and announces the result', async () => {
 });
 
 test('the copy button says when copying failed', async () => {
-	render(CopyButton, { text: '', label: 'Copy command for C2', copy: async () => 'failed' as const });
+	render(CopyButton, {
+		text: '',
+		label: 'Copy command for C2',
+		copy: async () => 'failed' as const
+	});
 	await fireEvent.click(screen.getByRole('button', { name: 'Copy command for C2' }));
 	expect(await screen.findByText(/Copy failed/)).toBeTruthy();
 });

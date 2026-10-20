@@ -11,7 +11,9 @@ import { safeStorage } from './view/storage.ts';
 import { ViewState } from './view/state.svelte.ts';
 
 function toggleOf(container: HTMLElement, id: string): HTMLButtonElement {
-	const button = container.querySelector<HTMLButtonElement>(`[data-card-id="${id}"] button[aria-expanded]`);
+	const button = container.querySelector<HTMLButtonElement>(
+		`[data-card-id="${id}"] button[aria-expanded]`
+	);
 	if (!button) throw new Error(`no card ${id}`);
 	return button;
 }
@@ -20,7 +22,14 @@ function nextVersion(): CardsFile {
 	const next = fixture('cards');
 	next.generated_at = '2026-01-15T10:30:00Z';
 	next.cards = next.cards.map((c) => ({ ...c, say: `${c.say} (updated)` }));
-	next.cards.push({ id: 'C999', title: 'A card that arrived live', state: 'now', where: 'home', act: 'look', say: 'seen' });
+	next.cards.push({
+		id: 'C999',
+		title: 'A card that arrived live',
+		state: 'now',
+		where: 'home',
+		act: 'look',
+		say: 'seen'
+	});
 	return next;
 }
 
@@ -43,7 +52,9 @@ test('expanded cards, filters and the tab survive a live data update', async () 
 	const after = toggleOf(container, 'C1');
 	expect(after).toBe(before); // same DOM node: nothing was re-created
 	expect(after.getAttribute('aria-expanded')).toBe('true');
-	expect(container.querySelector('[data-card-id="C1"] .say')?.textContent).toContain('review done (updated)');
+	expect(container.querySelector('[data-card-id="C1"] .say')?.textContent).toContain(
+		'review done (updated)'
+	);
 	expect(view.tab).toBe('now');
 	expect(view.filters.cardWhere).toBe('anywhere');
 	expect((screen.getByLabelText('Place') as HTMLSelectElement).value).toBe('anywhere');

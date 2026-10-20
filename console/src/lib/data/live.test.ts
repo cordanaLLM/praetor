@@ -6,7 +6,8 @@ type Handler = (event: unknown) => void;
 function fakeSource() {
 	const handlers = new Map<string, Handler[]>();
 	const source = {
-		addEventListener: (type: string, h: Handler) => handlers.set(type, [...(handlers.get(type) ?? []), h]),
+		addEventListener: (type: string, h: Handler) =>
+			handlers.set(type, [...(handlers.get(type) ?? []), h]),
 		removeEventListener: () => {},
 		close: vi.fn(),
 		emit: (type: string, event: unknown = {}) => handlers.get(type)?.forEach((h) => h(event))

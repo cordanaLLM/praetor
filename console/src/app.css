@@ -1,77 +1,58 @@
-/*
- * Console styles. Tailwind 4 resolves the utility classes the @sveltesentio/ui components carry
- * (bg-primary, ring-ring, ...) against the semantic tokens below; console components use the
- * same tokens through plain CSS.
- *
- * Tokens: provisional neutral values in the shadcn naming @sveltesentio/ui expects. The brief
- * asks for the Aegis-OS concordia tokens; see README.md "Design tokens" for why they are not
- * here yet. The 3 px focus ring is the one the brief names.
+/* SPDX-FileCopyrightText: 2026 Lusoris <lusoris@proton.me>
+ * SPDX-License-Identifier: EUPL-1.2
+ * Semantic aliases for Concordia and the component library.
  */
 @import 'tailwindcss';
+@import './concordia-tokens.css';
 @source '../node_modules/@sveltesentio/ui/src';
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-@theme {
-	--color-background: oklch(0.985 0.004 250);
-	--color-foreground: oklch(0.22 0.02 255);
-	--color-card: oklch(1 0 0);
-	--color-card-foreground: oklch(0.22 0.02 255);
-	--color-popover: oklch(1 0 0);
-	--color-popover-foreground: oklch(0.22 0.02 255);
-	--color-primary: oklch(0.47 0.13 258);
-	--color-primary-foreground: oklch(0.99 0 0);
-	--color-secondary: oklch(0.95 0.01 255);
-	--color-secondary-foreground: oklch(0.25 0.02 255);
-	--color-muted: oklch(0.955 0.008 255);
-	--color-muted-foreground: oklch(0.46 0.02 255);
-	--color-accent: oklch(0.93 0.02 258);
-	--color-accent-foreground: oklch(0.22 0.02 255);
-	--color-destructive: oklch(0.5 0.19 27);
-	--color-destructive-foreground: oklch(0.99 0 0);
-	--color-border: oklch(0.88 0.012 255);
-	--color-input: oklch(0.6 0.02 255);
-	--color-ring: oklch(0.5 0.16 258);
-	--color-ok: oklch(0.45 0.12 150);
-	--color-warn: oklch(0.47 0.12 70);
-	--color-idle: oklch(0.46 0.02 255);
-	--color-bar: oklch(0.55 0.13 258);
-
-	--font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-	--font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
-	--radius-card: 0.75rem;
-	--space-1: 0.25rem;
-	--space-2: 0.5rem;
-	--space-3: 0.75rem;
-	--space-4: 1rem;
-	--space-6: 1.5rem;
-	--focus-ring-width: 3px;
+@theme static {
+	--color-background: var(--concordia-color-surface);
+	--color-foreground: var(--concordia-color-text);
+	--color-card: var(--concordia-color-surface);
+	--color-card-foreground: var(--concordia-color-text);
+	--color-popover: var(--concordia-color-surface);
+	--color-popover-foreground: var(--concordia-color-text);
+	--color-primary: var(--concordia-color-accent);
+	--color-primary-foreground: var(--concordia-color-on-accent);
+	--color-secondary: var(--concordia-color-surface-raised);
+	--color-secondary-foreground: var(--concordia-color-text);
+	--color-muted: var(--concordia-color-surface-raised);
+	--color-muted-foreground: var(--concordia-color-text-muted);
+	--color-accent: var(--concordia-color-surface-raised);
+	--color-accent-foreground: var(--concordia-color-text);
+	--color-destructive: var(--concordia-color-accent);
+	--color-destructive-foreground: var(--concordia-color-on-accent);
+	--color-border: var(--concordia-color-border);
+	--color-input: var(--concordia-color-border);
+	--color-ring: var(--concordia-color-focus-ring);
+	--color-ok: var(--concordia-color-accent);
+	--color-warn: var(--concordia-color-text);
+	--color-idle: var(--concordia-color-text-muted);
+	--color-bar: var(--concordia-color-accent);
+	--font-sans: var(--concordia-font-family);
+	--font-mono: ui-monospace, monospace;
+	--radius-card: var(--concordia-radius);
+	--space-1: calc(var(--concordia-space-1) / 2);
+	--space-2: var(--concordia-space-1);
+	--space-3: calc(var(--concordia-space-1) + var(--concordia-space-1) / 2);
+	--space-4: var(--concordia-space-2);
+	--space-6: var(--concordia-space-3);
+	--focus-ring-width: var(--concordia-focus-ring-width);
 }
 
-.dark {
-	--color-background: oklch(0.17 0.014 255);
-	--color-foreground: oklch(0.95 0.006 255);
-	--color-card: oklch(0.215 0.016 255);
-	--color-card-foreground: oklch(0.95 0.006 255);
-	--color-popover: oklch(0.23 0.016 255);
-	--color-popover-foreground: oklch(0.95 0.006 255);
-	--color-primary: oklch(0.8 0.1 258);
-	--color-primary-foreground: oklch(0.2 0.03 258);
-	--color-secondary: oklch(0.27 0.016 255);
-	--color-secondary-foreground: oklch(0.95 0.006 255);
-	--color-muted: oklch(0.25 0.014 255);
-	--color-muted-foreground: oklch(0.76 0.02 255);
-	--color-accent: oklch(0.3 0.03 258);
-	--color-accent-foreground: oklch(0.96 0.006 255);
-	--color-destructive: oklch(0.75 0.14 25);
-	--color-destructive-foreground: oklch(0.2 0.03 25);
-	--color-border: oklch(0.33 0.016 255);
-	--color-input: oklch(0.55 0.02 255);
-	--color-ring: oklch(0.78 0.12 258);
-	--color-ok: oklch(0.8 0.13 150);
-	--color-warn: oklch(0.82 0.12 75);
-	--color-idle: oklch(0.76 0.02 255);
-	--color-bar: oklch(0.72 0.11 258);
+/* Dark adaptation: override the upstream semantic palette, keep its type/space/ring. */
+:root.dark {
+	--concordia-color-surface: #1b1f24;
+	--concordia-color-surface-raised: #282f38;
+	--concordia-color-text: #ffffff;
+	--concordia-color-text-muted: #c3cad4;
+	--concordia-color-accent: #9bc4ff;
+	--concordia-color-on-accent: #1b1f24;
+	--concordia-color-border: #9ca3af;
+	--concordia-color-focus-ring: #9bc4ff;
 }
 
 @layer base {
@@ -85,12 +66,13 @@
 	body {
 		margin: 0;
 		min-height: 100dvh;
-		line-height: 1.5;
+		line-height: var(--concordia-line-height);
+		font-size: var(--concordia-font-size);
 	}
 
 	:focus-visible {
 		outline: var(--focus-ring-width) solid var(--color-ring);
-		outline-offset: 2px;
+		outline-offset: var(--concordia-focus-ring-offset);
 	}
 
 	a {
@@ -112,7 +94,7 @@
 	--ui-accent: var(--color-accent);
 	--ui-border: var(--color-border);
 	--ui-radius: var(--radius-card);
-	--ui-min-target-size: 24px;
+	--ui-min-target-size: var(--concordia-target-min);
 }
 
 .ssentio-cmd__backdrop {
@@ -135,9 +117,16 @@
 	*,
 	*::before,
 	*::after {
-		animation-duration: 0.01ms !important;
+		animation: none !important;
 		animation-iteration-count: 1 !important;
-		transition-duration: 0.01ms !important;
+		transition: none !important;
 		scroll-behavior: auto !important;
 	}
+}
+
+/* Library utilities suppress outlines; restore Concordia's full 3 px ring. */
+:root :focus-visible {
+	outline: var(--concordia-focus-ring-width) solid var(--concordia-color-focus-ring);
+	outline-offset: var(--concordia-focus-ring-offset);
+	box-shadow: none;
 }

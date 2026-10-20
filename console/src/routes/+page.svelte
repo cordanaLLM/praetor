@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
+	import { focusableElements, nextTrapTarget } from '@sveltesentio/ui/dialog';
 	import { replaceState } from '$app/navigation';
 	import CommandPalette from '@sveltesentio/ui/cmd/palette';
 	import Input from '@sveltesentio/ui/input/component';
@@ -89,7 +90,15 @@
 		setMode(order[(order.indexOf(mode) + 1) % order.length] ?? 'system');
 	}
 
+	function trapPalette(event: KeyboardEvent): void {
+		const panel = document.querySelector('.ssentio-cmd__panel');
+		if (!panel) return;
+		event.preventDefault();
+		nextTrapTarget(focusableElements(panel), document.activeElement, event.shiftKey)?.focus();
+	}
+
 	function onKeydown(event: KeyboardEvent): void {
+		if (paletteOpen && event.key === 'Tab') return trapPalette(event);
 		const n = Number(event.key);
 		if (!event.altKey || event.ctrlKey || event.metaKey || !(n >= 1 && n <= TABS.length))
 			return;
@@ -100,6 +109,8 @@
 	$effect(() => {
 		if (paletteOpen) {
 			returnFocus = document.activeElement as HTMLElement | null;
+			// The library's autofocus attribute does not focus dynamically inserted inputs.
+			void tick().then(() => document.getElementById('ssentio-cmd-input')?.focus());
 		} else if (returnFocus) {
 			const target = returnFocus;
 			returnFocus = null;
@@ -192,6 +203,7 @@
 	</div>
 </main>
 
+<label for="ssentio-cmd-input" class="sr-only">Search commands</label>
 <CommandPalette
 	{registry}
 	bind:open={paletteOpen}
@@ -218,8 +230,7 @@
 		position: sticky;
 		top: 0;
 		z-index: 10;
-		background: color-mix(in oklch, var(--color-background) 92%, transparent);
-		backdrop-filter: blur(8px);
+		background: var(--color-background);
 		border-bottom: 1px solid var(--color-border);
 		padding: var(--space-3) var(--space-4) var(--space-1);
 	}

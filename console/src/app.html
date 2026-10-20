@@ -12,7 +12,10 @@
 				var mode = 'system';
 				try {
 					mode = localStorage.getItem('praetor-console:theme') || 'system';
-				} catch (e) {}
+				} catch (e) {
+					// Blocked storage: follow the system preference for this visit.
+					mode = 'system';
+				}
 				var dark =
 					mode === 'dark' ||
 					(mode !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);

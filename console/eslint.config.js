@@ -23,7 +23,16 @@ const navigation = {
 };
 
 export default ts.config(
-	{ ignores: ['node_modules/', '.svelte-kit/', 'build/', 'test-results/', 'playwright-report/'] },
+	{
+		ignores: [
+			'node_modules/',
+			'.svelte-kit/',
+			'build/',
+			'test-results/',
+			'playwright-report/',
+			'build-planted/'
+		]
+	},
 	js.configs.recommended,
 	...ts.configs.recommended,
 	...svelte.configs.recommended,

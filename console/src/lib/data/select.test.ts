@@ -1,7 +1,14 @@
 import { expect, test } from 'vitest';
 import { fixture } from '../../test/fixtures.ts';
 import { DEFAULT_FILTERS } from '../view/state.svelte.ts';
-import { filterCards, filterDecisions, filterFrontier, groupCards, keyed, matches } from './select.ts';
+import {
+	filterCards,
+	filterDecisions,
+	filterFrontier,
+	groupCards,
+	keyed,
+	matches
+} from './select.ts';
 
 test('search needs every term, in any field, ignoring case', () => {
 	expect(matches('release NOTES', 'Review the release notes')).toBe(true);
@@ -41,6 +48,10 @@ test('the frontier is in rank order', () => {
 });
 
 test('repeated ids get distinct keys', () => {
-	expect(keyed([{ id: 'x' }, { id: 'y' }, { id: 'x' }], (v) => v.id).map((k) => k.key)).toEqual(['x', 'y', 'x#2']);
+	expect(keyed([{ id: 'x' }, { id: 'y' }, { id: 'x' }], (v) => v.id).map((k) => k.key)).toEqual([
+		'x',
+		'y',
+		'x#2'
+	]);
 	expect(keyed([], (v: { id: string }) => v.id)).toEqual([]);
 });

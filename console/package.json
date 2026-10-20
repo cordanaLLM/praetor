@@ -13,7 +13,7 @@
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",
-		"preview": "vite preview",
+		"preview": "vite preview --config vite.preview.config.ts",
 		"fixtures:copy": "node scripts/copy-fixtures.mjs build",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
 		"lint": "prettier --check . && eslint --max-warnings=0 .",

@@ -52,7 +52,9 @@ test('an older, slower answer never overwrites a newer one', async () => {
 });
 
 test('one bad file leaves the other files untouched', async () => {
-	const data = new ConsoleData({ fetchImpl: stubFetch({ cards: {}, graph: { status: 404 }, status: {} }) });
+	const data = new ConsoleData({
+		fetchImpl: stubFetch({ cards: {}, graph: { status: 404 }, status: {} })
+	});
 	await data.refresh();
 	expect(data.cards.error).toBeUndefined();
 	expect(data.status.error).toBeUndefined();

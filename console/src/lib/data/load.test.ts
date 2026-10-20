@@ -13,7 +13,10 @@ test('every committed fixture loads and passes the schema', async () => {
 
 test('an HTTP error names the file and the status', async () => {
 	const result = await loadFile('cards', { fetchImpl: stubFetch({ cards: { status: 503 } }) });
-	expect(result).toEqual({ ok: false, error: { kind: 'http', message: 'cards.json answered HTTP 503' } });
+	expect(result).toEqual({
+		ok: false,
+		error: { kind: 'http', message: 'cards.json answered HTTP 503' }
+	});
 });
 
 test('a network failure is reported, not thrown', async () => {
@@ -31,7 +34,9 @@ test('a file that never answers times out', async () => {
 });
 
 test('text that is not JSON is a parse error', async () => {
-	const result = await loadFile('cards', { fetchImpl: stubFetch({ cards: { raw: '{"version": 1,' } }) });
+	const result = await loadFile('cards', {
+		fetchImpl: stubFetch({ cards: { raw: '{"version": 1,' } })
+	});
 	expect(result.ok).toBe(false);
 	if (!result.ok) expect(result.error.kind).toBe('parse');
 });
@@ -61,7 +66,10 @@ test('boundaries: empty lists pass, one past maxItems fails', () => {
 	const empty = { ...fixture('cards'), cards: [] };
 	expect(validateFile('cards', empty)).toEqual([]);
 	const card = fixture('cards').cards[0];
-	const full = { ...empty, cards: Array.from({ length: 500 }, (_, i) => ({ ...card, id: `C${i}` })) };
+	const full = {
+		...empty,
+		cards: Array.from({ length: 500 }, (_, i) => ({ ...card, id: `C${i}` }))
+	};
 	expect(validateFile('cards', full)).toEqual([]);
 	const over = { ...full, cards: [...full.cards, card] };
 	expect(validateFile('cards', over).map((p) => p.path)).toContain('/cards');

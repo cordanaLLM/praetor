@@ -9,10 +9,18 @@ export function fixture<K extends DataFile>(name: K): FileShapes[K] {
 	return JSON.parse(readFileSync(path.join(dir, `${name}.json`), 'utf8')) as FileShapes[K];
 }
 
-export type Reply = { status?: number; body?: unknown; raw?: string; error?: Error; hang?: boolean };
+export type Reply = {
+	status?: number;
+	body?: unknown;
+	raw?: string;
+	error?: Error;
+	hang?: boolean;
+};
 
 /** fetch stand-in: answers each data file from `replies` (a value or a function of the call count). */
-export function stubFetch(replies: Partial<Record<DataFile, Reply | ((n: number) => Reply)>>): typeof fetch {
+export function stubFetch(
+	replies: Partial<Record<DataFile, Reply | ((n: number) => Reply)>>
+): typeof fetch {
 	const calls: Record<string, number> = {};
 	return (async (input: RequestInfo | URL, init?: RequestInit) => {
 		const name = /(cards|graph|status)\.json/.exec(String(input))?.[1] as DataFile;
@@ -22,7 +30,9 @@ export function stubFetch(replies: Partial<Record<DataFile, Reply | ((n: number)
 		if (reply.error) throw reply.error;
 		if (reply.hang) {
 			return new Promise((_, reject) =>
-				init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+				init?.signal?.addEventListener('abort', () =>
+					reject(new DOMException('aborted', 'AbortError'))
+				)
 			);
 		}
 		const text = reply.raw ?? JSON.stringify(reply.body ?? fixture(name));

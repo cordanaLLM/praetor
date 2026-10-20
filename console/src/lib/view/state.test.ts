@@ -9,7 +9,10 @@ function memory(): SafeStorage & { map: Map<string, string> } {
 
 test('the URL wins over local storage, which wins over defaults', () => {
 	const storage = memory();
-	storage.set(STORAGE_KEY, JSON.stringify({ tab: 'fleet', filters: { q: 'stored' }, expanded: ['C2'] }));
+	storage.set(
+		STORAGE_KEY,
+		JSON.stringify({ tab: 'fleet', filters: { q: 'stored' }, expanded: ['C2'] })
+	);
 	const view = new ViewState({ storage });
 	view.restore(new URLSearchParams('tab=graph&q=from-url&class=build'));
 	expect(view.tab).toBe('graph');
@@ -75,7 +78,15 @@ test('a storage that throws on every call still lets the view work', () => {
 	view.toggleExpanded('C1');
 	expect(view.tab).toBe('fleet');
 	expect(view.isExpanded('C1')).toBe(true);
-	const quota = safeStorage(() => ({ getItem: () => null, setItem: () => { throw new Error('quota'); } }) as unknown as Storage);
+	const quota = safeStorage(
+		() =>
+			({
+				getItem: () => null,
+				setItem: () => {
+					throw new Error('quota');
+				}
+			}) as unknown as Storage
+	);
 	expect(() => quota.set('k', 'v')).not.toThrow();
 	expect(quota.get('k')).toBeNull();
 });

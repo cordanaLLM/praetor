@@ -1,0 +1,97 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Lusoris <lusoris@proton.me>
+ * SPDX-License-Identifier: EUPL-1.2
+ *
+ * Upstream: cordanaLLM/Aegis-OS ui/concordia-tokens/concordia-tokens.css
+ * Commit: 5f8e9a23933f9a612c5c1b1c1324250c9b3c0606
+ *
+ * P12 Concordia base tokens (milestone M04).
+ *
+ * Every colour, stroke, focus-ring and motion value is a custom property on
+ * :root (D76), so a theme -- the optional heads-up theme included -- overrides
+ * a token and never needs a second token source. The rules below this block
+ * consume tokens only; tools/test_a11y.py fails when a colour, stroke or motion
+ * property here is given a literal value instead of a var().
+ *
+ * D16: the focus ring is 3px wide; the boundary test holds it to a 2px floor
+ * and a 3:1 contrast against the colour it is drawn on.
+ * D17: design tokens without a monolithic CSS library.
+ */
+
+:root {
+	/* Colour. Contrast against --concordia-color-surface (#ffffff), WCAG 2.2
+     relative luminance: text 16.56:1, muted text 7.56:1, accent and focus ring
+     6.44:1, border 4.83:1; on-accent text on the accent 6.44:1. */
+	--concordia-color-surface: #ffffff;
+	--concordia-color-surface-raised: #f3f4f6;
+	--concordia-color-text: #1b1f24;
+	--concordia-color-text-muted: #4b5563;
+	--concordia-color-accent: #0a58ca;
+	--concordia-color-on-accent: #ffffff;
+	--concordia-color-border: #6b7280;
+	--concordia-color-focus-ring: #0a58ca;
+
+	/* Stroke. */
+	--concordia-stroke-width: 1px;
+	--concordia-stroke-style: solid;
+	--concordia-focus-ring-width: 3px;
+	--concordia-focus-ring-style: solid;
+	--concordia-focus-ring-offset: 2px;
+
+	/* Motion. */
+	--concordia-motion-duration: 150ms;
+	--concordia-motion-easing: cubic-bezier(0.2, 0, 0, 1);
+
+	/* Typography, space and targets, in rem so 200% text scaling reflows. */
+	--concordia-font-family: system-ui, sans-serif;
+	--concordia-font-size: 1rem;
+	--concordia-line-height: 1.5;
+	--concordia-space-1: 0.5rem;
+	--concordia-space-2: 1rem;
+	--concordia-space-3: 1.5rem;
+	--concordia-radius: 0.375rem;
+	--concordia-target-min: 2.75rem;
+	--concordia-measure: 40rem;
+}
+
+/* The desktop's reduced-motion preference sets the motion tokens to zero. */
+@media (prefers-reduced-motion: reduce) {
+	:root {
+		--concordia-motion-duration: 0ms;
+	}
+}
+
+/* Forced colours: the ring and borders take the system colours. */
+@media (forced-colors: active) {
+	:root {
+		--concordia-color-focus-ring: Highlight;
+		--concordia-color-border: CanvasText;
+	}
+}
+
+body {
+	margin: 0;
+	background-color: var(--concordia-color-surface);
+	color: var(--concordia-color-text);
+	font-family: var(--concordia-font-family);
+	font-size: var(--concordia-font-size);
+	line-height: var(--concordia-line-height);
+}
+
+:focus-visible {
+	outline: var(--concordia-focus-ring-width) var(--concordia-focus-ring-style)
+		var(--concordia-color-focus-ring);
+	outline-offset: var(--concordia-focus-ring-offset);
+}
+
+/* Visually hidden, still in the accessibility tree. */
+.concordia-sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}

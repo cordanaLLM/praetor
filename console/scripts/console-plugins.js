@@ -1,10 +1,12 @@
+// SPDX-FileCopyrightText: 2026 Lusoris <lusoris@proton.me>
+// SPDX-License-Identifier: EUPL-1.2
 // Vite plugins for the console build.
 //
 // consoleSchema: compiles console.schema.json into standalone validators at build time
 // (Ajv 2020-12, the draft the schema declares), so the browser checks every data file
 // against the same schema the Go tests use without shipping a schema compiler.
 //
-// fixtureData: in `vite dev` and `vite preview` only, serves cards.json, graph.json and
+// fixtureData: in `vite dev` only, serves cards.json, graph.json and
 // status.json from fixtures/ (or CONSOLE_FIXTURES_DIR, for files made with
 // fixtures/generate.py). A production build carries no data; the deployment puts the three
 // files beside index.html.
@@ -80,9 +82,6 @@ export function fixtureData() {
 	return {
 		name: 'console-fixture-data',
 		configureServer(server) {
-			server.middlewares.use(fixtureMiddleware());
-		},
-		configurePreviewServer(server) {
 			server.middlewares.use(fixtureMiddleware());
 		}
 	};
