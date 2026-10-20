@@ -184,11 +184,14 @@ func TestModelCapacityArbiter_FallbackCascade(t *testing.T) {
 			},
 		},
 		Governance: GovernancePolicy{
+			QuotaReadingMaxAge:         DefaultQuotaReadingMaxAge,
 			ExhaustionThresholdPercent: 80.0,
 		},
 	}
 
 	tracker := NewLimitTracker()
+	tracker.RecordUsage("primary-frontier", 0, 0)
+	tracker.RecordUsage("backup-midweight", 0, 0)
 	arbiter := NewModelCapacityArbiter(cfg, tracker)
 
 	// Step 1: When primary model has available capacity, it is selected
@@ -219,11 +222,14 @@ func TestModelCapacityArbiter_OrthogonalAuditor(t *testing.T) {
 			},
 		},
 		Governance: GovernancePolicy{
-			OrthogonalAuditRequired: true,
+			QuotaReadingMaxAge:         DefaultQuotaReadingMaxAge,
+			OrthogonalAuditRequired:    true,
+			ExhaustionThresholdPercent: 80,
 		},
 	}
 
 	arbiter := NewModelCapacityArbiter(cfg, nil)
+	arbiter.Tracker.RecordUsage("gemini-pro", 0, 0)
 
 	// Author is Anthropic -> Auditor must be Google
 	auditor, err := arbiter.SelectOrthogonalAuditor(FamilyAnthropic, "heavy-frontier")

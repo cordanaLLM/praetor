@@ -440,6 +440,7 @@ func seedCatalog() *RoutingConfig {
 		Governance: GovernancePolicy{
 			MaxConcurrentSameModel:     2,
 			ExhaustionThresholdPercent: 80.0,
+			QuotaReadingMaxAge:         DefaultQuotaReadingMaxAge,
 			OrthogonalAuditRequired:    true,
 		},
 	}

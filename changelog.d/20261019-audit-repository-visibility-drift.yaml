@@ -1,0 +1,2 @@
+type: added
+title: "The audit fails on repository visibility drift between .standards.yaml and the forge, leaving visibility changes to the operator"

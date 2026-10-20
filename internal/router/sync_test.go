@@ -20,7 +20,7 @@ func syncModel(id string, source ModelSource) ModelDescriptor {
 }
 
 func syncFixture(tiers map[string]Tier) *RoutingConfig {
-	return &RoutingConfig{Version: 1, Tiers: tiers, Governance: GovernancePolicy{ExhaustionThresholdPercent: 80}}
+	return &RoutingConfig{Version: 1, Tiers: tiers, Governance: GovernancePolicy{ExhaustionThresholdPercent: 80, QuotaReadingMaxAge: DefaultQuotaReadingMaxAge}}
 }
 
 // writeSyncCatalog writes cfg as the catalog a sync starts from and returns its path.
@@ -264,7 +264,7 @@ func TestSyncCatalogKeepsDeclaredGovernanceAndTierMetadata(t *testing.T) {
 			"heavy-frontier": {Description: "operator text", TargetTasks: []string{"custom_task"}, FallbackTier: "nano"},
 			"nano":           {Description: "", TargetTasks: []string{}, FallbackTier: ""},
 		})
-		fixture.Governance = GovernancePolicy{MaxConcurrentSameModel: 5, ExhaustionThresholdPercent: 60, OrthogonalAuditRequired: false}
+		fixture.Governance = GovernancePolicy{QuotaReadingMaxAge: 2 * time.Minute, MaxConcurrentSameModel: 5, ExhaustionThresholdPercent: 60, OrthogonalAuditRequired: false}
 		path := writeSyncCatalog(t, fixture)
 		if _, err := syncCatalog(context.Background(), path, SyncOptions{Prune: prune}, nil); err != nil {
 			t.Fatalf("prune=%v: %v", prune, err)
@@ -332,7 +332,7 @@ func TestSyncCatalogFillsOnlyUndeclaredSettings(t *testing.T) {
 	}
 	cfg := loadSynced(t, path)
 	defaults := seedCatalog()
-	want := GovernancePolicy{MaxConcurrentSameModel: defaults.Governance.MaxConcurrentSameModel, ExhaustionThresholdPercent: 55, OrthogonalAuditRequired: defaults.Governance.OrthogonalAuditRequired}
+	want := GovernancePolicy{QuotaReadingMaxAge: DefaultQuotaReadingMaxAge, MaxConcurrentSameModel: defaults.Governance.MaxConcurrentSameModel, ExhaustionThresholdPercent: 55, OrthogonalAuditRequired: defaults.Governance.OrthogonalAuditRequired}
 	if cfg.Governance != want {
 		t.Fatalf("governance %+v, want %+v", cfg.Governance, want)
 	}

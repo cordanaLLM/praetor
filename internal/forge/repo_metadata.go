@@ -69,7 +69,7 @@ func (g *GitHubDriver) ReconcileRepositoryMetadata(ctx context.Context, declared
 	if err != nil {
 		return nil, err
 	}
-	report := &RepositoryMetadataReport{VisibilityDrift: visibilityDrift(declared.Visibility, live.Visibility)}
+	report := &RepositoryMetadataReport{VisibilityDrift: VisibilityDrift(declared.Visibility, live.Visibility)}
 	if report.Updated, err = g.patchRepositoryFields(ctx, declared, live); err != nil {
 		return report, err
 	}
@@ -143,9 +143,9 @@ func isTopicByte(c byte) bool {
 	return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'
 }
 
-// visibilityDrift describes a declared visibility the repository does not have, or returns ""
+// VisibilityDrift describes a declared visibility the repository does not have, or returns ""
 // when they agree or nothing is declared.
-func visibilityDrift(declared, live string) string {
+func VisibilityDrift(declared, live string) string {
 	want := strings.ToLower(strings.TrimSpace(declared))
 	if want == "" || strings.EqualFold(want, live) {
 		return ""
@@ -154,6 +154,18 @@ func visibilityDrift(declared, live string) string {
 		live = "no visibility"
 	}
 	return fmt.Sprintf("manifest declares %s, GitHub reports %s", want, live)
+}
+
+// RepositoryVisibility reads the repository object from GitHub and returns its visibility.
+func (g *GitHubDriver) RepositoryVisibility(ctx context.Context) (string, error) {
+	if err := g.Authenticate(ctx); err != nil {
+		return "", err
+	}
+	live, err := g.getRepositoryMetadata(ctx)
+	if err != nil {
+		return "", err
+	}
+	return live.Visibility, nil
 }
 
 // getRepositoryMetadata reads the repository object.

@@ -11,7 +11,7 @@ import (
 )
 
 // UsageSnapshot is explicitly supplied observation data, not live provider polling.
-// Counters remain as supplied; neither freshness nor rolling-window expiry is inferred.
+// Counters remain as supplied; rolling-window expiry is not inferred.
 type UsageSnapshot struct {
 	Version    int                   `json:"version"`
 	CapturedAt time.Time             `json:"captured_at"`
@@ -110,7 +110,7 @@ func usageObject(node *yaml.Node, limit int) (map[string]*yaml.Node, error) {
 
 func decodeModelUsage(node *yaml.Node) (ModelUsage, error) {
 	var usage ModelUsage
-	fields, err := usageObject(node, 5)
+	fields, err := usageObject(node, 6)
 	if err != nil {
 		return usage, err
 	}
@@ -138,7 +138,7 @@ func validateUsageField(key string, value *yaml.Node) error {
 		if value.Tag == "!!int" || value.Tag == "!!float" {
 			return nil
 		}
-	case "last_429_time":
+	case "last_429_time", "observed_at":
 		if value.Tag == "!!str" {
 			if _, err := time.Parse(time.RFC3339Nano, value.Value); err == nil {
 				return nil
@@ -169,6 +169,9 @@ func TrackerFromSnapshot(cfg *RoutingConfig, snapshot *UsageSnapshot) (*LimitTra
 			return nil, fmt.Errorf("usage snapshot names unconfigured model %s", id)
 		}
 		copy := usage
+		if copy.ObservedAt.IsZero() {
+			copy.ObservedAt = snapshot.CapturedAt
+		}
 		tracker.usage[id] = &copy
 	}
 	return tracker, nil

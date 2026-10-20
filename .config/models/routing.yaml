@@ -264,3 +264,4 @@ governance:
     max_concurrent_same_model: 2
     exhaustion_threshold_percent: 80
     orthogonal_audit_required: true
+    quota_reading_max_age: 10m0s
