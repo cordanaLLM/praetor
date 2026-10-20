@@ -49,10 +49,11 @@ func emittedInterceptor(t *testing.T) (string, string) {
 // back from the adjacent literals the layout splits long values into: RULES as (pattern,
 // refusal) pairs and the read-only exemption.
 type interceptorModule struct {
-	Rules  [][2]string `json:"RULES"`
-	Exempt []string    `json:"READ_ONLY_EXEMPT"`
-	Words  string      `json:"READ_ONLY_WORDS"`
-	Veto   string      `json:"READ_ONLY_VETO"`
+	Rules      [][2]string         `json:"RULES"`
+	Prefilters map[string][]string `json:"RULE_PREFILTERS"`
+	Exempt     []string            `json:"READ_ONLY_EXEMPT"`
+	Words      string              `json:"READ_ONLY_WORDS"`
+	Veto       string              `json:"READ_ONLY_VETO"`
 }
 
 // loadInterceptorModule loads the emitted script as a module, without running main.
@@ -61,8 +62,9 @@ func loadInterceptorModule(t *testing.T, python, script string) interceptorModul
 	ctx, cancel := context.WithTimeout(t.Context(), interceptorWallClock)
 	defer cancel()
 	const program = "import json, runpy, sys; module = runpy.run_path(sys.argv[1]); " +
+		`module.setdefault("RULE_PREFILTERS", {}); ` +
 		"print(json.dumps({name: module[name] for name in sys.argv[2:]}))"
-	names := []string{"RULES", "READ_ONLY_EXEMPT", "READ_ONLY_WORDS", "READ_ONLY_VETO"}
+	names := []string{"RULES", "READ_ONLY_EXEMPT", "READ_ONLY_WORDS", "READ_ONLY_VETO", "RULE_PREFILTERS"}
 	args := append([]string{"-B", "-c", program, script}, names...)
 	res, err := util.RunCommandBytes(ctx, "", python, util.MaxCommandOutputBytes, args...)
 	if err != nil {
@@ -79,6 +81,26 @@ func loadInterceptorModule(t *testing.T, python, script string) interceptorModul
 func interceptorRules(t *testing.T, python, script string) [][2]string {
 	t.Helper()
 	return loadInterceptorModule(t, python, script).Rules
+}
+
+// The emitted interceptor carries every declared prefilter from the Go policy
+// without changing any pattern or refusal in the previous unfiltered rendering.
+func TestInterceptorPrefiltersMatchTheGoPolicy(t *testing.T) {
+	python, script := emittedInterceptor(t)
+	want := map[string][]string{}
+	for _, rule := range agenthook.BuiltinRules() {
+		if len(rule.RequiredAny) > 0 {
+			want[rule.Source] = rule.RequiredAny
+		}
+	}
+	current := loadInterceptorModule(t, python, script)
+	previous := renderedModule(t, python, string(readFixtureDir(t, priorEvasionFixtures)["unfiltered-privilege.block_evasion.py"]))
+	if !reflect.DeepEqual(current.Rules, previous.Rules) {
+		t.Fatal("prefilter changed the rule text or refusals")
+	}
+	if !reflect.DeepEqual(current.Prefilters, want) || len(current.Prefilters) == 0 {
+		t.Errorf("prefilters %v, want %v", current.Prefilters, want)
+	}
 }
 
 // wrappedListItems returns the lines of the named list in a rendered interceptor that are not
@@ -528,13 +550,14 @@ func TestEmittedInterceptorScanBounds(t *testing.T) {
 	}
 }
 
-// plantedInterceptor returns the rendered interceptor with pattern added as its first rule.
+// plantedInterceptor adds pattern after declarations have bound the prefilter keys,
+// so inserting the plant does not change which real rule each prefilter belongs to.
 func plantedInterceptor(t *testing.T, pattern string) string {
 	t.Helper()
 	rendered := buildBlockEvasionPY()
-	planted := strings.Replace(rendered, "RULES = [\n", "RULES = [\n    (r\""+pattern+"\", HISS_REFUSAL),\n", 1)
+	planted := strings.Replace(rendered, "\nclass Blocked(Exception):", "\nRULES.insert(0, (r\""+pattern+"\", HISS_REFUSAL))\n\nclass Blocked(Exception):", 1)
 	if planted == rendered {
-		t.Fatal("the rendered interceptor has no RULES list to plant a rule in")
+		t.Fatal("the rendered interceptor has no Blocked class before which to plant a rule")
 	}
 	return planted
 }
@@ -560,7 +583,16 @@ func TestScanPassBudgetRefusesPlantedSuperlinearMatchers(t *testing.T) {
 		shape := shapes[tc.shape]
 		costs := measureScanCosts(t, python, script, []string{shape.command}, 1)
 		findings := scanBudgetFindings([]scanShape{shape}, costs)
-		t.Logf("%s on %s: %.1f passes", tc.name, tc.shape, costs.passes(0))
+		t.Logf("%s on %s: %.1f passes (plant %.4f s, pass %.6f s)", tc.name, tc.shape, costs.passes(0), costs.Costs[0][0], costs.Pass)
+		// Plant the original execution path too: removing only the prefilter
+		// inflates the benign denominator and hides matcher work from the budget.
+		unfiltered := filepath.Join(t.TempDir(), "unfiltered_block_evasion.py")
+		mustWrite(t, unfiltered, plantedInterceptor(t, tc.pattern)+"\nRULE_PREFILTERS.clear()\n")
+		old := measureScanCosts(t, python, unfiltered, []string{shape.command}, 1)
+		t.Logf("without prefilter: %s on %s: %.1f passes (plant %.4f s, pass %.6f s)", tc.name, tc.shape, old.passes(0), old.Costs[0][0], old.Pass)
+		if int(old.Costs[0][1]) != shape.want {
+			t.Errorf("unfiltered control changed the verdict: %v", old.Costs[0])
+		}
 		if len(findings) != 1 || !strings.Contains(findings[0], "over the budget") {
 			t.Errorf("%s: the budget did not refuse the planted rule on %s: %q", tc.name, tc.shape, findings)
 		}

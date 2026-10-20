@@ -24,10 +24,17 @@ const (
 	// A separate double-quote branch reaches substitutions that actually execute.
 	privilegeDoubleText = `(?:[^\x22\\]|\\(?s:.))*`
 	privilegeData       = `(?:[^\x22\x27\\]|\\(?s:.)|\x27[^\x27]*\x27|\x22` + privilegeDoubleText + `\x22)*`
-	// su without a command remains an interactive invocation, outside this rule.
-	privilegeInvocation = `(?:(?:sudo|doas|pkexec|run0)` + privilegeEnd +
-		`|su(?:` + shellBlank + privilegeWord + `)*` + shellBlank + `(?:-c[^ \t\n;&|()\x60]*|--command(?:=[^ \t\n;&|()\x60]*)?)` + privilegeEnd + `)`
 )
+
+// privilegeNames also declares the text rule's necessary-literal prefilter. su
+// needs a command option; the other names refuse any invocation.
+var privilegeNames = []string{"sudo", "doas", "pkexec", "run0", "su"}
+
+// su without a command remains an interactive invocation, outside this rule.
+var privilegeInvocation = `(?:(?:` + strings.Join(privilegeNames[:4], `|`) + `)` + privilegeEnd +
+	`|su(?:` + shellBlank + privilegeWord + `)*` + shellBlank + `(?:-c[^ \t\n;&|()\x60]*|--command(?:=[^ \t\n;&|()\x60]*)?)` + privilegeEnd + `)`
+
+var privilegeCommandSource = privilegeCommandRule()
 
 var privilegeInvocationPattern = regexp.MustCompile(`^` + privilegeInvocation)
 

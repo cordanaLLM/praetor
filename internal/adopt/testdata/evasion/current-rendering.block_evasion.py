@@ -368,6 +368,11 @@ RULES = [
     ),
 ]
 
+RULE_PREFILTERS = {
+    RULES[14][0]: ("sudo", "doas", "pkexec", "run0", "su"),
+}
+
+
 # The RULES judged without the words of read-only commands chained after a commit. Each
 # pattern has a name of its own: wrapped inside the list, it would read as two items with
 # the comma between them forgotten.
@@ -470,6 +475,9 @@ GIT_OPTION_RUN_JOIN = r")*\s+("
 
 def search(pattern, text):
     """re.search(pattern, text) is not None, with the git option-run rule in linear time."""
+    literals = RULE_PREFILTERS.get(pattern, ())
+    if literals and not any(literal in text for literal in literals):
+        return False
     head, join, tail = pattern.partition(GIT_OPTION_RUN_JOIN)
     if not join or not head.startswith(GIT_OPTION_RUN_HEAD):
         return re.search(pattern, text) is not None

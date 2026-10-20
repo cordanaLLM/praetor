@@ -17,6 +17,7 @@ type denyRule struct {
 	source         string
 	prefix         string
 	readOnlyExempt bool
+	requiredAny    []string
 }
 
 // pythonSpace is what `\s` matches in Python's `re` on text. RE2's `\s` is ASCII only and
@@ -31,6 +32,7 @@ func builtinRule(rule BuiltinRule, message string) denyRule {
 		source:         rule.Source,
 		prefix:         rulePrefix(rule.Invariant, message),
 		readOnlyExempt: rule.ReadOnlyExempt,
+		requiredAny:    slices.Clone(rule.RequiredAny),
 	}
 }
 
@@ -204,7 +206,7 @@ var builtinEvasion = []string{
 	lineThroughFirstWord(ghWords...) + ghAPIPullsTail,
 	lineThroughFirstWord(ghWords...) + ghGraphQLTail,
 	lineThroughFirstWord(httpFetchWords...) + httpMergeTail,
-	privilegeCommandRule(),
+	privilegeCommandSource,
 }
 
 // readOnlyExemptRules are the built-in rules that judge the command without the words of
@@ -293,6 +295,9 @@ type BuiltinRule struct {
 	Source         string
 	Invariant      string
 	ReadOnlyExempt bool
+	// RequiredAny skips the regex unless at least one literal occurs in its input.
+	// Empty means no prefilter. Every regex match must contain one listed literal.
+	RequiredAny []string
 }
 
 // RefusalPrefix is the refusal a match of the rule prints ahead of its Source: the whole
@@ -311,7 +316,11 @@ func (r BuiltinRule) RefusalPrefix() string {
 func BuiltinRules() []BuiltinRule {
 	rules := make([]BuiltinRule, 0, len(builtinEvasion)+1)
 	for _, source := range builtinEvasion {
-		rules = append(rules, BuiltinRule{Source: source, Invariant: "HISS", ReadOnlyExempt: slices.Contains(readOnlyExemptRules, source)})
+		rule := BuiltinRule{Source: source, Invariant: "HISS", ReadOnlyExempt: slices.Contains(readOnlyExemptRules, source)}
+		if source == privilegeCommandSource {
+			rule.RequiredAny = slices.Clone(privilegeNames)
+		}
+		rules = append(rules, rule)
 	}
 	return append(rules, BuiltinRule{Source: builtinDevRoot, Invariant: "DEV-01"})
 }
@@ -370,7 +379,7 @@ func (p *Policy) Command(command string) Verdict {
 		if rule.readOnlyExempt {
 			text = judged
 		}
-		if rule.pattern.MatchString(text) {
+		if containsRequiredLiteral(text, rule.requiredAny) && rule.pattern.MatchString(text) {
 			return Verdict{Outcome: Deny, Reason: boundReason(rule.prefix + rule.source)}
 		}
 	}
@@ -378,6 +387,19 @@ func (p *Policy) Command(command string) Verdict {
 		return p.admission.judge(command)
 	}
 	return Verdict{Outcome: Allow}
+}
+
+// containsRequiredLiteral applies the declared prefilter without interpreting literals as regexes.
+func containsRequiredLiteral(text string, literals []string) bool {
+	if len(literals) == 0 {
+		return true
+	}
+	for _, literal := range literals {
+		if strings.Contains(text, literal) {
+			return true
+		}
+	}
+	return false
 }
 
 // lefthookDisableValues are the LEFTHOOK values that make Lefthook skip every hook. Lefthook
