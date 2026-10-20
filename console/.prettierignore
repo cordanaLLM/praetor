@@ -1,0 +1,10 @@
+node_modules/
+.svelte-kit/
+build/
+test-results/
+playwright-report/
+screenshots/
+pnpm-lock.yaml
+fixtures/
+console.schema.json
+BRIEF.md
