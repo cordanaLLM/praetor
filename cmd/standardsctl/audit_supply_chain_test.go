@@ -107,9 +107,11 @@ func fixtureStatus(t *testing.T, root string, env []string) string {
 // entry the audit fails and names the entry it would accept. Boundary: a profile declaring Level
 // 0 under a facet that raises no supply-chain control has no gap, so adoption records no entry and the audit still passes.
 func TestAdoptThenAuditDeclaresTheSupplyChainGap(t *testing.T) {
+	before := time.Now()
 	root, adopted := adoptedGoRepository(t)
-	expires := config.ExceptionDay(time.Now()).AddDate(0, 0, config.MaxExceptionDays).Format(config.ExceptionDateLayout)
-	mustContain(t, adopted, "exceptions: recorded rule HISS-11 for .github/workflows/release.yml until "+expires)
+	after := time.Now()
+	expires := matchExpiry(t, adopted, "exceptions: recorded rule HISS-11 for .github/workflows/release.yml until ",
+		expiryDays(before, after, config.MaxExceptionDays))
 	manifestPath := filepath.Join(root, ".standards.yaml")
 	audit := func() (string, error) {
 		return captureStdout(t, func() error { return dispatchCommand("audit", []string{"--config=" + manifestPath, "--offline"}) })
