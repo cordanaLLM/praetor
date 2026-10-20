@@ -181,20 +181,30 @@ func TestRefreshWithUnchangedUpstreamLeavesTheManifestByteIdentical(t *testing.T
 
 // bumpPin moves the pin of the gemini source in the manifest text of dir, the way a Renovate
 // branch does, and leaves the digests and the digest pin as they were.
-func bumpPin(t *testing.T, dir string) {
+func bumpPin(t *testing.T, dir string) string {
 	t.Helper()
 	path := filepath.Join(dir, clientschema.ManifestFile)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bumped := strings.Replace(string(raw), `"pin": "v0.63.0"`, `"pin": "v0.64.0"`, 1)
+	manifest, err := clientschema.ParseManifest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gemini, ok := manifest.Source("gemini-settings")
+	if !ok {
+		t.Fatal("the gemini source was not found")
+	}
+	bumpedPin := gemini.Pin + "-bumped"
+	bumped := strings.Replace(string(raw), `"pin": "`+gemini.Pin+`"`, `"pin": "`+bumpedPin+`"`, 1)
 	if bumped == string(raw) {
-		t.Fatal("the gemini pin was not found")
+		t.Fatal("the gemini pin was not replaced")
 	}
 	if err := os.WriteFile(path, []byte(bumped), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	return bumpedPin
 }
 
 func fakeFetcher(t *testing.T, bumped, vendored *clientschema.Manifest) Fetcher {
@@ -217,14 +227,14 @@ func assertBumpedPinRefused(t *testing.T, raw []byte) {
 	}
 }
 
-func assertRefreshedPin(t *testing.T, raw []byte) {
+func assertRefreshedPin(t *testing.T, raw []byte, wantPin string) {
 	t.Helper()
 	refreshed, err := clientschema.ParseManifest(raw)
 	if err != nil {
 		t.Fatalf("refreshed manifest is refused: %v", err)
 	}
-	if gemini, _ := refreshed.Source("gemini-settings"); gemini.Pin != "v0.64.0" || gemini.DigestPin != "v0.64.0" {
-		t.Fatalf("gemini pin %q, digest pin %q, want both v0.64.0", gemini.Pin, gemini.DigestPin)
+	if gemini, _ := refreshed.Source("gemini-settings"); gemini.Pin != wantPin || gemini.DigestPin != wantPin {
+		t.Fatalf("gemini pin %q, digest pin %q, want both %s", gemini.Pin, gemini.DigestPin, wantPin)
 	}
 }
 
@@ -233,7 +243,7 @@ func assertRefreshedPin(t *testing.T, raw []byte) {
 // which fetches at the new pin and records it, after which the strict check accepts the manifest.
 func TestRefreshAcceptsABumpedPinAndRecordsIt(t *testing.T) {
 	dir := copyVendor(t)
-	bumpPin(t, dir)
+	bumpedPin := bumpPin(t, dir)
 	manifestPath := filepath.Join(dir, clientschema.ManifestFile)
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -253,7 +263,7 @@ func TestRefreshAcceptsABumpedPinAndRecordsIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertRefreshedPin(t, raw)
+	assertRefreshedPin(t, raw, bumpedPin)
 }
 
 // vendoredFile returns the manifest entry of the vendored copy at path.
