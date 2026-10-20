@@ -128,19 +128,18 @@ func resolveGovernedRoot(ctx context.Context, canonical Canonical, in Invocation
 	switch {
 	case err != nil:
 		return "", Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] " + err.Error()}, false
-	case root == "" && !judgedWithoutRepository(canonical, in):
+	case root == "" && !judgedEverywhere(canonical, in):
 		return "", Verdict{Outcome: Skip, Reason: "no repository"}, false
-	case !Governed(root) && !AppliesEverywhere(in.Settings):
+	case !Governed(root) && !judgedEverywhere(canonical, in):
 		return "", Verdict{Outcome: Skip, Reason: "workspace not governed"}, false
 	}
 	return root, Verdict{}, true
 }
 
-// judgedWithoutRepository reports a pre-tool command under hooks.scope: all whose workspace is
-// no repository. The command policy reads the command text only, so it runs with an empty root:
-// the scope covers every workspace, and a shell outside any repository is one. Every other event
-// needs a repository root and keeps the "no repository" skip.
-func judgedWithoutRepository(canonical Canonical, in Invocation) bool {
+// judgedEverywhere reports a pre-tool command under hooks.scope: all whose workspace is
+// ungoverned or no repository. Scope all extends only the pre-tool command policy, to a
+// workspace that is ungoverned or no repository; every other event keeps its skip there.
+func judgedEverywhere(canonical Canonical, in Invocation) bool {
 	return AppliesEverywhere(in.Settings) && canonical.Event == EventPreTool && canonical.Command != ""
 }
 

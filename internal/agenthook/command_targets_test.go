@@ -124,6 +124,28 @@ func TestScopeAllJudgesACommandOutsideAnyRepository(t *testing.T) {
 	}
 }
 
+func TestScopeAllInUngovernedRepository(t *testing.T) {
+	plain := repository(t, false)
+	all := Invocation{WorkDir: plain, Settings: config.HookSettings{Scope: config.HookScopeAll}}
+	command := Canonical{Event: EventPreTool, Command: "git push --no-verify"}
+	if root, _, ok := resolveGovernedRoot(t.Context(), command, all); !ok || root != plain {
+		t.Fatalf("scope all must judge a pre-tool command in an ungoverned repository: %q %v; want %q", root, ok, plain)
+	}
+	for name, tc := range map[string]struct {
+		canonical Canonical
+		in        Invocation
+	}{
+		"stop event":      {Canonical{Event: EventStop}, all},
+		"edit event":      {Canonical{Event: EventPreEdit, Command: "x"}, all},
+		"no command text": {Canonical{Event: EventPreTool}, all},
+		"governed scope":  {command, Invocation{WorkDir: plain}},
+	} {
+		if _, verdict, ok := resolveGovernedRoot(t.Context(), tc.canonical, tc.in); ok || verdict.Reason != "workspace not governed" {
+			t.Fatalf("%s: want the workspace not governed skip, got %+v %v", name, verdict, ok)
+		}
+	}
+}
+
 func TestCommandTargetsEmptyCommand(t *testing.T) {
 	plain := repository(t, false)
 	root, verdict, ok := resolveGovernedRoot(t.Context(), Canonical{}, Invocation{WorkDir: plain})
@@ -225,7 +247,7 @@ func TestCommandTargetsIgnoreUnresolvableDirectories(t *testing.T) {
 
 func TestCommandTargetsPreserveWorkspacePrecedence(t *testing.T) {
 	governed, plain := repository(t, true), repository(t, false)
-	canonical := Canonical{Workspaces: []string{governed}, Command: strings.Repeat("cd missing;", 17)}
+	canonical := Canonical{Event: EventPreTool, Workspaces: []string{governed}, Command: strings.Repeat("cd missing;", 17)}
 	if root, _, ok := resolveGovernedRoot(t.Context(), canonical, Invocation{WorkDir: plain}); !ok || root != governed {
 		t.Fatalf("governed payload must win: %q %v", root, ok)
 	}

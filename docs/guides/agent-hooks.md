@@ -252,7 +252,9 @@ guard by one byte. `TestRegistrationTableMatchesTheTrackedClientFiles` and
 6. **Governed.** The root holds `.standards.yaml`. Anything else is skipped with a reason,
    unless `hooks.scope` is set to `all`: that setting makes the command policy run in an
    ungoverned workspace too, instead of skipping it
-   (`agenthook.AppliesEverywhere`, `internal/agenthook/evaluate.go`). The default,
+   (`agenthook.AppliesEverywhere`, `internal/agenthook/evaluate.go`). `hooks.scope: all`
+   applies to pre-tool commands only; pre-edit, post-tool, stop and the other events keep
+   the skip in an ungoverned workspace. The default,
    `governed`, is the behavior described in the rest of this step.
 
    Before skipping, command events also check static directory targets: Git's `-C`,
@@ -264,7 +266,7 @@ guard by one byte. `TestRegistrationTableMatchesTheTrackedClientFiles` and
    expansions, missing targets and target probe errors are ignored; more than 16 directory
    operands fails closed (`internal/agenthook/command_targets.go`). Under `hooks.scope: all`
    a `pre-tool` command outside any repository is judged too, since the command policy
-   reads only the command text (`judgedWithoutRepository`).
+   reads only the command text (`judgedEverywhere`).
 7. **Judge.** The process environment first, then the command policy.
 8. **Encode.** The verdict in the client's dialect.
 
@@ -529,9 +531,9 @@ stays.
 | workspace relative, missing, or Git cannot answer | exit 2 | exit 1 |
 | no repository, no governed command target | exit 0, `praetor hook: no repository, skipped` on stderr | same, and no marker |
 | no repository, `hooks.scope: all`, `pre-tool` with a command | policy still evaluated (see below) | same |
-| repository without `.standards.yaml`, `hooks.scope: governed` (default), no governed command target | exit 0, `praetor hook: workspace not governed, skipped` on stderr | same, and no marker |
+| repository without `.standards.yaml`, `hooks.scope: governed` (default) or other events under `hooks.scope: all`, no governed command target | exit 0, `praetor hook: workspace not governed, skipped` on stderr | same, and no marker |
 | ungoverned workspace or no repository, the command acts in a governed repository (step 6) | policy evaluated as in that repository | same |
-| repository without `.standards.yaml`, `hooks.scope: all` | policy still evaluated (see below) | same |
+| repository without `.standards.yaml`, `hooks.scope: all`, `pre-tool` with a command | policy still evaluated (see below) | same |
 | environment check fails | exit 2 | exit 1 |
 | command matches a policy rule | exit 2, `[BLOCKED BY <rule>] …` on stderr | exit 1, same text |
 | allowed | exit 0, both streams empty | exit 0, `PRAETOR_COMMAND_POLICY_OK` on stdout for `pre-tool`, nothing for `environment` |
