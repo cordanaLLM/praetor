@@ -76,7 +76,7 @@ func checkTranscriptReportFormats(t *testing.T, report *Report) {
 	if err := RenderJSON(report, &data); err != nil {
 		t.Fatal(err)
 	}
-	for _, text := range []string{"UNATTRIBUTED TRANSCRIPT USAGE", "100/150 tokens", "no response joined", "transcript worktree creations=2"} {
+	for _, text := range []string{"UNATTRIBUTED TRANSCRIPT USAGE", "100/150 tokens", "worktree never resolved", "transcript worktree creations=2"} {
 		if !strings.Contains(table.String(), text) {
 			t.Errorf("table missing %q", text)
 		}

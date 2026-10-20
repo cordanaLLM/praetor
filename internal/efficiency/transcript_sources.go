@@ -52,9 +52,19 @@ func (c *Collector) applyTranscriptCoverage(unit *UnitReport, stats *BranchTrans
 	if unit.FrontierTokensNum != nil {
 		return
 	}
-	reason := "no response joined the pull request head branch"
+	reason := transcriptMeasurementReason(stats)
 	if src.owners[unit.HeadBranch] != unit.PullRequestNumber {
 		reason = "reused head branch belongs to the latest merged pull request"
 	}
 	unit.TokenMeasurementReason = reason
+}
+
+func transcriptMeasurementReason(stats *BranchTranscriptStats) string {
+	if stats != nil && stats.AmbiguousResponses > 0 {
+		return "ambiguous: responses named this branch only together with other branches; usage counted in the unattributed share"
+	}
+	if stats == nil || !stats.WorktreeResolved {
+		return "worktree never resolved: neither a live worktree nor a recorded creation resolved the pull request head branch; no transcript response named a path under its worktrees"
+	}
+	return "no transcript response joined the pull request head branch via gitBranch or an unambiguous worktree path"
 }

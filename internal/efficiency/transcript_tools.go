@@ -158,24 +158,49 @@ func creationArgs(words []string) (root, branch string) {
 		return "", ""
 	}
 	words = words[2:]
-	if creationBranchFlag(words) {
-		branch, words = strings.Trim(words[1], "\"'"), words[2:]
-	}
-	if len(words) == 0 || strings.HasPrefix(words[0], "-") {
+	words, branch, detached := creationOptions(words)
+	if len(words) == 0 || strings.ContainsAny(words[0], ";&|\n()") {
 		return "", ""
 	}
 	root = strings.Trim(words[0], "\"'")
+	if detached {
+		return root, ""
+	}
 	if branch == "" && len(words) > 1 && !strings.ContainsAny(words[1], ";&|\n()") {
 		branch = strings.Trim(words[1], "\"'")
 	}
 	return root, branch
 }
 
-func creationBranchFlag(words []string) bool {
-	if len(words) < 3 {
-		return false
+// Only allow-listed options establish a creation; unknown flags never become paths.
+func creationOptions(words []string) (remaining []string, branch string, detached bool) {
+	for i := 0; i < len(words); i++ {
+		word := strings.Trim(words[i], "\"'")
+		if word == "--" {
+			return words[i+1:], branch, detached
+		}
+		if !strings.HasPrefix(word, "-") {
+			return words[i:], branch, detached
+		}
+		switch word {
+		case "-b", "-B", "--orphan":
+			if i+1 >= len(words) {
+				return nil, "", false
+			}
+			i++
+			branch = strings.Trim(words[i], "\"'")
+			if strings.HasPrefix(branch, "-") || !literalBranch(branch) {
+				return nil, "", false
+			}
+		case "--detach", "-d":
+			detached = true
+		case "-q", "--quiet", "-f", "--force", "--lock", "--no-checkout", "--checkout", "--track", "--no-track", "--guess-remote":
+			// Value-less options; the path follows the last option.
+		default:
+			return nil, "", false
+		}
 	}
-	return words[0] == "-b" || words[0] == "-B"
+	return nil, "", false
 }
 
 func (j *transcriptJoin) creation(words []string, cwd string) error {

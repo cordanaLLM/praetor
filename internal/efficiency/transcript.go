@@ -35,6 +35,8 @@ type BranchTranscriptStats struct {
 	LocalRequests       int
 	TotalRequests       int
 	Unattributed        TranscriptShare
+	WorktreeResolved    bool
+	AmbiguousResponses  int
 	seenResponses       map[string]usageSnapshot
 }
 

@@ -152,8 +152,11 @@ and the bound named; nothing is cut off silently.
      directory boundary, so `/w/a` does not match `/w/ab`.
    - Root-to-branch evidence comes first from `git worktree list --porcelain` under `--path`,
      using the shared worktree reader, then from Bash inputs recording
-     `git worktree add [-b|-B <branch>] <path> [<commit-ish>]` or
-     `git worktree add <path> <branch>`. This retains removed worktrees. A missing branch,
+     `git worktree add [<options>] <path> [<commit-ish>]`. Before the path, the reader skips
+     `-q`/`--quiet`, `-f`/`--force`, `--lock`, `--checkout`/`--no-checkout`,
+     `--track`/`--no-track` and `--guess-remote`, and takes the branch value of
+     `-b`, `-B` or `--orphan`. `--` ends option parsing; an unknown option rejects the
+     creation. `--detach`/`-d` records the root without a branch. This retains removed worktrees. A missing branch,
      conflicting recorded branches, or a commit expression leaves the root unresolved;
      live branch evidence takes precedence. Recorded creations are considered across all
      files, regardless of line order. An unavailable live source is named under Notes.
@@ -166,7 +169,10 @@ and the bound named; nothing is cut off silently.
    Branches join to pull requests **only by exact head-branch match**, through the existing
    branch-owner join. When a head branch name was reused, the sessions belong to the pull
    request merged last. Table and JSON output carry the token measurement reason for an
-   unmeasured pull request and `transcript_coverage`: total responses/tokens and unattributed
+   unmeasured pull request: **worktree never resolved** when neither live worktrees nor
+   recorded creations resolved its branch; **ambiguous** when responses named its worktrees
+   only together with other branches; otherwise no transcript response joined the resolved
+   branch. Ambiguous usage stays unattributed. The `transcript_coverage` field carries total responses/tokens and unattributed
    responses/tokens. Tokens in this coverage include input, cache creation, cache read and
    output for every model, rather than only frontier usage. A unit's denominator is its
    attributed usage plus unattributed usage in sessions mentioning its branch. Such unresolved

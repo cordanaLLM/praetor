@@ -184,6 +184,9 @@ func (r *transcriptReader) attribute(response *transcriptResponse, session *sess
 	}
 	for candidate := range branches {
 		session.branches[candidate] = true
+		if branch == "" && len(branches) > 1 {
+			r.branchStats(candidate).AmbiguousResponses += response.stats.TotalRequests
+		}
 	}
 	r.notes.Coverage.add(&response.stats, branch == "")
 	if branch == "" {
@@ -199,6 +202,11 @@ func (r *transcriptReader) finish() {
 		return
 	}
 	j := r.join
+	for _, branch := range j.roots {
+		if branch != "" {
+			r.branchStats(branch).WorktreeResolved = true
+		}
+	}
 	sessions := make(map[string]*sessionAttribution)
 	for _, response := range j.responses {
 		session := sessions[response.session]
