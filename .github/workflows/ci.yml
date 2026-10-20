@@ -49,8 +49,12 @@ jobs:
     # ceiling (main run 35516836823), at 26-29 minutes on six consecutive pull requests a slow
     # runner cancelled a clean change at the 30-minute one (#729), and in October 2026 its last
     # four green runs took 41.5 to 44.8 minutes against the 45-minute one (run 39072397323).
-    # 60 is 1.34 times the slowest green run, until the job is made faster or split (#729).
-    timeout-minutes: 60
+    # A pull request adds the per-commit refactor check (REF-01/02 with --run-tests), about 19 s
+    # per commit: on the 49-commit engine train of 2026-10-19 it took 15.5 minutes, the job's
+    # green run took 53.2 minutes and three runs hit the 60-minute ceiling (run 39358925324),
+    # while main's runs took 36 to 49 minutes. 75 is 1.34 times the slowest green run (71.3 ->
+    # 75), until the job is made faster or the per-commit checks are split out (#729).
+    timeout-minutes: 75
 
     steps:
       # The hosted gate's draft step, as ghworkflow.HostedGateDraftStep renders it: on a draft the
