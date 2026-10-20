@@ -4,7 +4,7 @@ import { DEFAULT_FILTERS, STORAGE_KEY, toQuery, ViewState } from './state.svelte
 
 function memory(): SafeStorage & { map: Map<string, string> } {
 	const map = new Map<string, string>();
-	return { map, get: (k) => map.get(k) ?? null, set: (k, v) => void map.set(k, v) };
+	return { map, get: (k) => map.get(k) ?? null, set: (k, v) => Boolean(map.set(k, v)) };
 }
 
 test('the URL wins over local storage, which wins over defaults', () => {

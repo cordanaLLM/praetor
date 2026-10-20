@@ -3,7 +3,8 @@
 
 export interface SafeStorage {
 	get(key: string): string | null;
-	set(key: string, value: string): void;
+	/** Whether the value was stored; false when storage is absent or refused the write. */
+	set(key: string, value: string): boolean;
 }
 
 export function safeStorage(source: () => Storage | null | undefined): SafeStorage {
@@ -17,9 +18,12 @@ export function safeStorage(source: () => Storage | null | undefined): SafeStora
 		},
 		set(key, value) {
 			try {
-				source()?.setItem(key, value);
+				const store = source();
+				store?.setItem(key, value);
+				return Boolean(store);
 			} catch {
 				// Storage refused the write; the URL still carries the view.
+				return false;
 			}
 		}
 	};

@@ -30,8 +30,13 @@ export async function copyText(
 			await clipboard.writeText(text);
 			return 'copied';
 		} catch {
-			// Fall through to the legacy path.
+			// The asynchronous clipboard refused (permission, insecure context): the legacy path decides.
+			return legacyOutcome(text, doc);
 		}
 	}
+	return legacyOutcome(text, doc);
+}
+
+function legacyOutcome(text: string, doc: Document | undefined): CopyOutcome {
 	return doc && legacyCopy(text, doc) ? 'copied' : 'failed';
 }
