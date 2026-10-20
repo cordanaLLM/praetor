@@ -1879,6 +1879,20 @@ class ScopeAndGuard(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertLess(elapsed, GUARD_TIMING_BOUND)
 
+    def test_guard_privilege_prefilter_skips_regex_without_a_literal(self):
+        guard = self.guard_module()
+        pattern = guard.BLOCKED_PATTERNS[-1]
+        with mock.patch.object(guard.re, "search", side_effect=AssertionError("regex ran")):
+            self.assertFalse(guard.search(pattern, "x" * guard.MAX_SCAN_CHARS))
+        for name in ("sudo", "doas", "pkexec", "run0", "su"):
+            with self.subTest(name=name):
+                with mock.patch.object(guard.re, "search", return_value=True) as search:
+                    self.assertTrue(guard.search(pattern, "echo " + name))
+                    search.assert_called_once_with(pattern, "echo " + name)
+        with mock.patch.object(guard.re, "search", return_value=True) as search:
+            self.assertTrue(guard.search("custom", "x"))
+            search.assert_called_once_with("custom", "x")
+
     def test_guard_search_answers_like_re_search(self):
         """search() answers re.search for every rule, the option-run rule walked once (#1283)."""
         guard = self.guard_module()

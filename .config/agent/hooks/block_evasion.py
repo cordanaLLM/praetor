@@ -88,6 +88,11 @@ def join_line_continuations(command_str: str) -> str:
     return re.sub(r"\\\r?\n", " ", command_str)
 
 
+# Every match of the privilege rule contains one of these literal program names.
+# BuiltinRule.RequiredAny supplies the same prefilter to Go and the emitted interceptor.
+RULE_PREFILTERS = {BLOCKED_PATTERNS[-1]: ("sudo", "doas", "pkexec", "run0", "su")}
+
+
 # The git rule with an option run (the short skip flag rule) is searched once per run (#1283).
 # re retries a rule at every git it finds, and a git inside an option token (-git, --x=git,
 # -C dir/git) starts at a boundary of the run an earlier git already walked: each retry walked
@@ -101,6 +106,9 @@ GIT_OPTION_RUN_JOIN = r")*\s+("
 
 def search(pattern, text):
     """re.search(pattern, text) is not None, with the git option-run rule in linear time."""
+    literals = RULE_PREFILTERS.get(pattern, ())
+    if literals and not any(literal in text for literal in literals):
+        return False
     head, join, tail = pattern.partition(GIT_OPTION_RUN_JOIN)
     if not join or not head.startswith(GIT_OPTION_RUN_HEAD):
         return re.search(pattern, text) is not None

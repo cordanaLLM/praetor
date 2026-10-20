@@ -138,3 +138,39 @@ func TestRegistrationPrivilegeOpenCodeGap(t *testing.T) {
 		t.Fatal("OpenCode now serves pre-tool: extend privilege replay and update the documented gap")
 	}
 }
+
+func TestPrivilegeRequiredLiterals(t *testing.T) {
+	for _, tc := range []struct {
+		text     string
+		literals []string
+		want     bool
+	}{
+		{"x", nil, true}, {"x", []string{"sudo", "su"}, false},
+		{"sudo true", []string{"sudo"}, true}, {"echo su", []string{"sudo", "su"}, true},
+		{"SUDO true", []string{"sudo"}, false}, {"x", []string{""}, true},
+	} {
+		if got := containsRequiredLiteral(tc.text, tc.literals); got != tc.want {
+			t.Errorf("%q %q: %v, want %v", tc.text, tc.literals, got, tc.want)
+		}
+	}
+	rules := BuiltinRules()
+	for _, rule := range rules {
+		if len(rule.RequiredAny) == 0 {
+			continue
+		}
+		compiled := builtinRule(rule, evasionMessage)
+		rule.RequiredAny[0] = "changed"
+		if compiled.requiredAny[0] == "changed" || BuiltinRules()[len(builtinEvasion)-1].RequiredAny[0] == "changed" {
+			t.Fatal("prefilter literals alias the exported list")
+		}
+	}
+}
+
+// A missing literal must bypass the matcher itself, not merely ignore its answer.
+// The nil matcher would panic if Command ran it before the prefilter.
+func TestCommandRequiredLiteralSkipsMatcher(t *testing.T) {
+	p := &Policy{rules: []denyRule{{requiredAny: []string{"sudo"}}}}
+	if got := p.Command("echo x"); got.Outcome != Allow {
+		t.Fatalf("absent literal: %+v", got)
+	}
+}
