@@ -4,6 +4,7 @@ package sandbox
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"slices"
 	"strconv"
@@ -37,6 +38,7 @@ func DefaultLimits() Limits {
 // Spec mounts Workspace at /workspace. ReadOnly defaults to false. Environment is
 // explicit; PassEnvironment copies only named variables from the builder's input.
 // Commands run at /workspace with no inherited environment or network access.
+// HasLib64 reports whether /usr/lib64 exists on the host. When nil, the host is inspected.
 type Spec struct {
 	Workspace       string
 	ReadOnly        bool
@@ -46,6 +48,7 @@ type Spec struct {
 	Network         NetworkMode
 	Limits          Limits
 	Command         []string
+	HasLib64        func() bool
 }
 
 // Binaries names resolved absolute executables outside the namespace.
@@ -107,15 +110,43 @@ func memorySize(value uint64) string {
 	return decimal(value)
 }
 
+// RootFilesystemArguments returns the base bubblewrap mounts and symlinks
+// shared between runner namespace probes and full sandboxed builds.
+// When hasLib64 is true, /lib64 links to usr/lib64; otherwise to usr/lib.
+func RootFilesystemArguments(hasLib64 bool) []string {
+	lib64 := "usr/lib"
+	if hasLib64 {
+		lib64 = "usr/lib64"
+	}
+	return []string{
+		"--ro-bind", "/usr", "/usr",
+		"--symlink", "usr/bin", "/bin",
+		"--symlink", "usr/lib", "/lib",
+		"--symlink", lib64, "/lib64",
+		"--proc", "/proc",
+		"--dev", "/dev",
+	}
+}
+
+func defaultHasLib64() bool {
+	_, err := os.Stat("/usr/lib64")
+	return err == nil
+}
+
 func filesystemArguments(spec Spec, limits Limits) []string {
 	mode := "--bind"
 	if spec.ReadOnly {
 		mode = "--ro-bind"
 	}
-	args := []string{"--unshare-all", "--die-with-parent", "--new-session", "--clearenv",
-		"--ro-bind", "/usr", "/usr", "--symlink", "usr/bin", "/bin", "--symlink", "usr/lib", "/lib",
-		"--symlink", "usr/lib", "/lib64", "--proc", "/proc", "--dev", "/dev",
-		"--size", decimal(limits.TmpBytes), "--tmpfs", "/tmp", "--dir", "/home", mode, spec.Workspace, "/workspace"}
+	checkLib64 := spec.HasLib64
+	if checkLib64 == nil {
+		checkLib64 = defaultHasLib64
+	}
+	args := []string{"--unshare-all", "--die-with-parent", "--new-session", "--clearenv"}
+	args = append(args, RootFilesystemArguments(checkLib64())...)
+	args = append(args,
+		"--size", decimal(limits.TmpBytes), "--tmpfs", "/tmp", "--dir", "/home", mode, spec.Workspace, "/workspace",
+	)
 	for i := 0; i < len(spec.ReadOnlyBinds); i++ {
 		bind := spec.ReadOnlyBinds[i]
 		args = append(args, "--ro-bind", bind.Source, bind.Target)
