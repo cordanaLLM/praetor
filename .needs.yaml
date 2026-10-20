@@ -3,9 +3,9 @@ repository: github.com/cordanaLLM/praetor
 language: go
 languages:
     - go
-    - python
     - typescript
     - svelte
+    - python
 go_version: "1.27"
 capabilities:
     required:
@@ -71,6 +71,29 @@ capabilities:
         - custom.github_com_pelletier_go_toml_v2
         - custom.github_com_santhosh_tekuri_jsonschema_v6
         - ui.external.jscpd
+        - ui.external.axe_core_playwright
+        - ui.external.eslint_js
+        - ui.external.playwright_test
+        - ui.external.sveltejs_adapter_static
+        - ui.framework
+        - ui.external.sveltejs_vite_plugin_svelte
+        - ui.external.sveltesentio_realtime
+        - ui.external.sveltesentio_ui
+        - ui.external.tailwindcss_vite
+        - ui.external.testing_library_svelte
+        - ui.external.ajv
+        - ui.external.axe_core
+        - ui.external.eslint
+        - ui.external.eslint_plugin_svelte
+        - ui.external.globals
+        - ui.external.jsdom
+        - ui.external.prettier
+        - ui.external.prettier_plugin_svelte
+        - ui.external.svelte_check
+        - ui.styling
+        - ui.external.typescript_eslint
+        - ui.external.vite
+        - ui.external.vitest
     optional:
         - clikit.cli
         - mcp.server
@@ -93,6 +116,188 @@ dependencies:
       capability: config.yaml
       status: gap
       notes: YAML parser and serializer (maintained continuation of gopkg.in/yaml.v3)
+    - package: '@axe-core/playwright'
+      version: 4.14.0
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.axe_core_playwright
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: '@eslint/js'
+      version: 10.0.1
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.eslint_js
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: '@playwright/test'
+      version: 1.56.1
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.playwright_test
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: '@sveltejs/adapter-static'
+      version: 4.0.0
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.sveltejs_adapter_static
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: '@sveltejs/kit'
+      version: 3.1.0
+      language: typescript
+      ecosystem: npm
+      capability: ui.framework
+      status: gap
+      notes: SvelteKit application framework
+    - package: '@sveltejs/vite-plugin-svelte'
+      version: 7.3.1
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.sveltejs_vite_plugin_svelte
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: '@sveltesentio/realtime'
+      version: 0.7.0
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.sveltesentio_realtime
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: '@sveltesentio/ui'
+      version: 0.8.0
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.sveltesentio_ui
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: '@tailwindcss/vite'
+      version: 4.3.3
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.tailwindcss_vite
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: '@testing-library/svelte'
+      version: 5.4.2
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.testing_library_svelte
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: '@types/node'
+      version: 22.20.5
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.types_node
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: ajv
+      version: 8.20.0
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.ajv
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: axe-core
+      version: 4.14.0
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.axe_core
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: eslint
+      version: 10.13.0
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.eslint
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: eslint-plugin-svelte
+      version: 3.23.1
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.eslint_plugin_svelte
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: globals
+      version: 17.13.0
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.globals
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: jsdom
+      version: 30.1.3
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.jsdom
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: prettier
+      version: 3.9.10
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.prettier
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: prettier-plugin-svelte
+      version: 4.1.1
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.prettier_plugin_svelte
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: svelte
+      version: 5.57.2
+      language: typescript
+      ecosystem: npm
+      capability: ui.framework
+      status: gap
+      notes: Core Svelte reactive UI framework
+    - package: svelte-check
+      version: 4.7.7
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.svelte_check
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: tailwindcss
+      version: 4.3.3
+      language: typescript
+      ecosystem: npm
+      capability: ui.styling
+      status: gap
+      notes: Utility-first CSS styling engine
+    - package: typescript
+      version: 6.0.3
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.typescript
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: typescript-eslint
+      version: 8.72.0
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.typescript_eslint
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: vite
+      version: 8.3.4
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.vite
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: vitest
+      version: 5.0.5
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.vitest
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
     - package: babel
       version: 2.18.0 \
       language: python
@@ -352,20 +557,6 @@ dependencies:
       capability: ui.external.sharp
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
-    - package: typescript
-      version: 7.0.2
-      language: typescript
-      ecosystem: npm
-      capability: ui.external.typescript
-      status: gap
-      notes: External npm dependency requiring a target framework adapter or evaluation
-    - package: '@types/node'
-      version: 24.19.1
-      language: typescript
-      ecosystem: npm
-      capability: ui.external.types_node
-      status: gap
-      notes: External npm dependency requiring a target framework adapter or evaluation
     - package: '@types/vscode'
       version: 1.107.0
       language: typescript
@@ -509,7 +700,7 @@ dependencies:
 readiness:
     basis: not-configured
     score: 0
-    total_third_party_deps: 61
+    total_third_party_deps: 85
     covered_deps: 0
-    gap_deps: 61
-updated_at: 2026-10-19T16:33:25.0971395Z
+    gap_deps: 85
+updated_at: 2026-10-20T14:56:13.774238444Z
