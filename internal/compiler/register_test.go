@@ -291,7 +291,7 @@ tiers:
     fallback_tier: ""
 governance:
   max_concurrent_same_model: 1
-  exhaustion_threshold_percent: 90
+  exhaustion_threshold_percent: 85
   orthogonal_audit_required: false
 `)
 	writeRegisterFixture(t, root, ".standards.yaml", "version: 1\nregister:\n  tasks:\n    deploy_prod: {register: social, max_tokens: 512}\n")

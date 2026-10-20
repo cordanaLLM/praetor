@@ -19,6 +19,9 @@ import (
 // DefaultConfigPath is the repository-relative routing catalog every consumer reads.
 const DefaultConfigPath = ".config/models/routing.yaml"
 
+// DefaultQuotaReadingMaxAge is the maximum age of a quota observation when omitted in YAML.
+const DefaultQuotaReadingMaxAge = 10 * time.Minute
+
 const (
 	// MaxRoutingTiers bounds task eligibility evaluation.
 	MaxRoutingTiers = 16
@@ -64,7 +67,7 @@ func decodeRoutingConfig(data []byte, path string) (*RoutingConfig, error) {
 	if len(data) > MaxRoutingFileBytes {
 		return nil, fmt.Errorf("%w: %s exceeds 1 MiB", ErrInvalidRoutingConfig, path)
 	}
-	var cfg RoutingConfig
+	cfg := RoutingConfig{Governance: GovernancePolicy{QuotaReadingMaxAge: DefaultQuotaReadingMaxAge}}
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&cfg); err != nil {
@@ -149,8 +152,11 @@ func validateRoutingGovernance(policy GovernancePolicy) error {
 	if policy.CatalogMaxAgeDays < 0 || policy.CatalogMaxAgeDays > MaxCatalogMaxAgeDays {
 		return fmt.Errorf("%w: catalog_max_age_days must be between 0 and %d", ErrInvalidRoutingConfig, MaxCatalogMaxAgeDays)
 	}
-	if !finiteNonnegative(threshold) || threshold > 100 || policy.MaxConcurrentSameModel < 0 {
+	if !finiteNonnegative(threshold) || threshold > 85 || policy.MaxConcurrentSameModel < 0 {
 		return fmt.Errorf("%w: invalid governance limits", ErrInvalidRoutingConfig)
+	}
+	if policy.QuotaReadingMaxAge <= 0 {
+		return fmt.Errorf("%w: quota_reading_max_age must be positive", ErrInvalidRoutingConfig)
 	}
 	return validateWindowPolicy(policy.Window)
 }

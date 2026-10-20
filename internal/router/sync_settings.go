@@ -78,6 +78,9 @@ func keepGovernance(policy *GovernancePolicy, existing GovernancePolicy, keys ma
 	if keys["exhaustion_threshold_percent"] {
 		policy.ExhaustionThresholdPercent = existing.ExhaustionThresholdPercent
 	}
+	if keys["quota_reading_max_age"] {
+		policy.QuotaReadingMaxAge = existing.QuotaReadingMaxAge
+	}
 	if keys["orthogonal_audit_required"] {
 		policy.OrthogonalAuditRequired = existing.OrthogonalAuditRequired
 	}

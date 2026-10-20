@@ -16,7 +16,7 @@ func taskModel(id string, input, output float64, capabilities ...string) ModelDe
 
 func taskConfig(models ...ModelDescriptor) *RoutingConfig {
 	return &RoutingConfig{Version: 1, Tiers: map[string]Tier{"work": {TargetTasks: []string{"implement"}, Models: models}},
-		Governance: GovernancePolicy{ExhaustionThresholdPercent: 80}}
+		Governance: GovernancePolicy{ExhaustionThresholdPercent: 80, QuotaReadingMaxAge: DefaultQuotaReadingMaxAge}}
 }
 
 func costTaskModel(id string, input, output float64, capabilities ...string) ModelDescriptor {
@@ -89,10 +89,10 @@ func TestTaskRoutingCapacityThresholdAndCooldown(t *testing.T) {
 	if _, err := arbiter.SelectForTask(context.Background(), request); !errors.Is(err, ErrNoEligibleModel) {
 		t.Fatalf("cooldown ignored: %v", err)
 	}
-	cfg.Governance.ExhaustionThresholdPercent = 100
+	cfg.Governance.ExhaustionThresholdPercent = 85
 	tracker.RecordUsage("cheap", 0, 0)
 	if _, err := arbiter.SelectForTask(context.Background(), request); !errors.Is(err, ErrNoEligibleModel) {
-		t.Fatalf("fully exhausted/cooling model selected at threshold100: %v", err)
+		t.Fatalf("fully exhausted/cooling model selected at threshold85: %v", err)
 	}
 }
 
@@ -160,7 +160,7 @@ func TestTaskRoutingInputBounds(t *testing.T) {
 }
 
 func TestTaskRoutingConfigAndCostBounds(t *testing.T) {
-	cfg := &RoutingConfig{Version: 1, Tiers: make(map[string]Tier), Governance: GovernancePolicy{ExhaustionThresholdPercent: 80}}
+	cfg := &RoutingConfig{Version: 1, Tiers: make(map[string]Tier), Governance: GovernancePolicy{ExhaustionThresholdPercent: 80, QuotaReadingMaxAge: DefaultQuotaReadingMaxAge}}
 	for i := 0; i < MaxRoutingTiers; i++ {
 		tier := Tier{TargetTasks: []string{"implement"}}
 		for j := 0; j < MaxModelsPerTier; j++ {
