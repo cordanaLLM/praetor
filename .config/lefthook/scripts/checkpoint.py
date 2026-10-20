@@ -692,7 +692,9 @@ def _session_owned_worktrees(common_dir):
     session_hash = os.environ.get(SESSION_ENV, "").strip().lower()
     if not SESSION_HASH_RE.fullmatch(session_hash):
         return None
-    record_file = common_dir / "praetor-checkpoint" / "sessions" / f"{session_hash}.json"
+    record_file = (
+        common_dir / "praetor-checkpoint" / "sessions" / f"{session_hash}.json"
+    )
     try:
         with record_file.open("rb") as stream:
             raw = stream.read(MAX_RECORD_BYTES + 1)
@@ -842,13 +844,17 @@ def _judge_worktree_candidates(root, cfg, candidates, deadline):
 
 def _git_common_dir(root):
     """Resolve repository common Git directory."""
-    raw = _git(
-        root,
-        "rev-parse",
-        "--path-format=absolute",
-        "--git-common-dir",
-        timeout=WORKTREE_COMMAND_TIMEOUT,
-    ).decode().strip()
+    raw = (
+        _git(
+            root,
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+            timeout=WORKTREE_COMMAND_TIMEOUT,
+        )
+        .decode()
+        .strip()
+    )
     return Path(raw).resolve()
 
 
