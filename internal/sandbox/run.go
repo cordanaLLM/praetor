@@ -39,6 +39,7 @@ type Runner struct {
 	Lookup           func(string) (string, error)
 	CheckUserManager func(context.Context) error
 	ProbeBwrap       func(context.Context) error
+	HasLib64         func() bool
 }
 
 // Command validates the workspace and runtime before returning a contained argv.
@@ -53,6 +54,9 @@ func (r Runner) Command(ctx context.Context, spec Spec) (Invocation, error) {
 	if err != nil {
 		return Invocation{}, err
 	}
+	if spec.HasLib64 == nil && r.HasLib64 != nil {
+		spec.HasLib64 = r.HasLib64
+	}
 	invocation, err := Build(spec, binaries, os.Environ())
 	if err != nil {
 		return Invocation{}, err
@@ -64,12 +68,19 @@ func (r Runner) Command(ctx context.Context, spec Spec) (Invocation, error) {
 	if err != nil {
 		return Invocation{}, err
 	}
+	if err := r.verifyRuntime(ctx, binaries); err != nil {
+		return Invocation{}, err
+	}
+	return invocation, nil
+}
+
+func (r Runner) verifyRuntime(ctx context.Context, binaries Binaries) error {
 	check := r.CheckUserManager
 	if check == nil {
 		check = r.checkManager
 	}
 	if err := check(ctx); err != nil {
-		return Invocation{}, &UnavailableError{Facility: "systemd user manager", Cause: err}
+		return &UnavailableError{Facility: "systemd user manager", Cause: err}
 	}
 	probe := r.ProbeBwrap
 	if probe == nil {
@@ -78,9 +89,9 @@ func (r Runner) Command(ctx context.Context, spec Spec) (Invocation, error) {
 		}
 	}
 	if err := probe(ctx); err != nil {
-		return Invocation{}, &UnavailableError{Facility: "bwrap", Cause: err}
+		return &UnavailableError{Facility: "bwrap", Cause: err}
 	}
-	return invocation, nil
+	return nil
 }
 
 const maxExecutionStderrBytes = 4096
@@ -213,16 +224,14 @@ func (r Runner) probeBwrap(ctx context.Context, bwrap string) error {
 	if _, err := os.Stat(probeTarget); err != nil {
 		probeTarget = "/bin/true"
 	}
-	result, err := util.RunCommandBytes(ctx, "", bwrap, 4096,
-		"--unshare-all", "--die-with-parent",
-		"--ro-bind", "/usr", "/usr",
-		"--symlink", "usr/bin", "/bin",
-		"--symlink", "usr/lib", "/lib",
-		"--symlink", "usr/lib", "/lib64",
-		"--proc", "/proc",
-		"--dev", "/dev",
-		probeTarget,
-	)
+	checkLib64 := r.HasLib64
+	if checkLib64 == nil {
+		checkLib64 = defaultHasLib64
+	}
+	args := []string{"--unshare-all", "--die-with-parent"}
+	args = append(args, RootFilesystemArguments(checkLib64())...)
+	args = append(args, probeTarget)
+	result, err := util.RunCommandBytes(ctx, "", bwrap, 4096, args...)
 	if err != nil {
 		return util.CommandDiagnostic(err, result.Stderr)
 	}

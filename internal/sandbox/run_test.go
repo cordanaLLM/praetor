@@ -31,6 +31,9 @@ func assertUnavailable(t *testing.T, err error, facility string) {
 }
 
 func TestSandboxMissingBwrapNeverStartsCommand(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("sandbox execution tests require Linux")
+	}
 	marker := filepath.Join(t.TempDir(), "executed")
 	executable, err := os.Executable()
 	if err != nil {
@@ -45,6 +48,9 @@ func TestSandboxMissingBwrapNeverStartsCommand(t *testing.T) {
 }
 
 func TestSandboxDeniedNamespaceReportsUnavailableAndNeverStartsCommand(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("user namespace probe tests require Linux")
+	}
 	marker := filepath.Join(t.TempDir(), "executed")
 	executable, err := os.Executable()
 	if err != nil {
@@ -89,7 +95,44 @@ func TestSandboxUnavailableRuntime(t *testing.T) {
 	}
 }
 
+func TestSandboxNonLinuxNeverStartsCommand(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "executed")
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := Spec{
+		Workspace: "/workspace",
+		Command:   []string{executable, "-test.run=^TestSandboxMarkerProcess$", "--", "sandbox-marker", marker},
+	}
+	for _, goos := range []string{"darwin", "windows"} {
+		runner := Runner{GOOS: goos}
+		err := runner.Run(t.Context(), spec, nil, nil, nil)
+		if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("uncontained command started: marker stat = %v", err)
+		}
+		assertUnavailable(t, err, "Linux")
+		if !strings.Contains(err.Error(), goos) {
+			t.Fatalf("error = %v; want unsupported OS %s", err, goos)
+		}
+	}
+	if runtime.GOOS != "linux" {
+		runner := Runner{}
+		err := runner.Run(t.Context(), spec, nil, nil, nil)
+		if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("uncontained command started: marker stat = %v", err)
+		}
+		assertUnavailable(t, err, "Linux")
+		if !strings.Contains(err.Error(), runtime.GOOS) {
+			t.Fatalf("error = %v; want unsupported OS %s", err, runtime.GOOS)
+		}
+	}
+}
+
 func TestSandboxMissingWorkspaceAndEmptyCommand(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("workspace directory validation requires Linux paths")
+	}
 	for _, spec := range []Spec{
 		{Workspace: t.TempDir()},
 		{Workspace: filepath.Join(t.TempDir(), "missing"), Command: []string{"true"}},
@@ -158,6 +201,9 @@ func TestSandboxRealIntegration(t *testing.T) {
 }
 
 func TestSandboxProbeSuccessReportsAvailable(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("sandbox probe success tests require Linux")
+	}
 	runner := stubRunner("")
 	runner.ProbeBwrap = func(context.Context) error { return nil }
 	invocation, err := runner.Command(t.Context(), Spec{Workspace: t.TempDir(), Command: []string{"/usr/bin/true"}})
@@ -188,6 +234,9 @@ func TestSandboxRealBwrapProbeWhenInstalled(t *testing.T) {
 }
 
 func TestSandboxExecutionFailureCarriesStderrTail(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("sandbox execution and stderr tail capture require Linux")
+	}
 	script := filepath.Join(t.TempDir(), "fake-systemd-run")
 	oversize := strings.Repeat("A", maxExecutionStderrBytes*2)
 	const tailMarker = "unique failure diagnostic tail"

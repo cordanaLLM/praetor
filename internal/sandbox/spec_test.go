@@ -16,6 +16,7 @@ func testBinaries() Binaries {
 
 func repairProfile() Spec {
 	return Spec{Workspace: "/source", ReadOnly: true,
+		HasLib64:      func() bool { return true },
 		ReadOnlyBinds: []Bind{{Source: "/cache", Target: "/deps"}, {Source: "/toolchain", Target: "/toolchain"}},
 		Environment: []Variable{{"HOME", "/home"}, {"PATH", "/usr/bin:/bin"}, {"TMPDIR", "/tmp"},
 			{"GOCACHE", "/tmp/go-cache"}, {"GOMODCACHE", "/deps"}, {"GOPATH", "/tmp/go"}, {"GOPROXY", "off"},
@@ -105,4 +106,47 @@ func TestSandboxBuilderCustomLimits(t *testing.T) {
 			t.Fatalf("missing limit %s", arg)
 		}
 	}
+}
+
+func assertLib64Target(t *testing.T, args []string, want string) {
+	t.Helper()
+	idx := slices.Index(args, "/lib64")
+	if idx <= 0 || args[idx-1] != want {
+		t.Fatalf("want /lib64 linked to %s, got %v", want, args)
+	}
+}
+
+func TestSandboxRootFilesystemLayout(t *testing.T) {
+	t.Run("positive has usr lib64", func(t *testing.T) {
+		assertLib64Target(t, RootFilesystemArguments(true), "usr/lib64")
+		spec := Spec{Workspace: "/source", Command: []string{"true"}, HasLib64: func() bool { return true }}
+		inv, err := Build(spec, testBinaries(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertLib64Target(t, inv.Args, "usr/lib64")
+	})
+
+	t.Run("negative lacks usr lib64", func(t *testing.T) {
+		assertLib64Target(t, RootFilesystemArguments(false), "usr/lib")
+		spec := Spec{Workspace: "/source", Command: []string{"true"}, HasLib64: func() bool { return false }}
+		inv, err := Build(spec, testBinaries(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertLib64Target(t, inv.Args, "usr/lib")
+	})
+
+	t.Run("boundary host default", func(t *testing.T) {
+		expectedTarget := "usr/lib"
+		if defaultHasLib64() {
+			expectedTarget = "usr/lib64"
+		}
+		spec := Spec{Workspace: "/source", Command: []string{"true"}}
+		inv, err := Build(spec, testBinaries(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertLib64Target(t, inv.Args, expectedTarget)
+	})
 }

@@ -15,7 +15,10 @@ import (
 // including its discovered toolchain, module cache and explicit environment.
 func TestRepairSandboxProfileGolden(t *testing.T) {
 	skipWithoutPosixLinks(t)
-	dir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	root, cache := filepath.Join(dir, "toolchain"), filepath.Join(dir, "mod")
 	actualRoot := filepath.Join(dir, "real-toolchain")
 	if err := os.MkdirAll(filepath.Join(actualRoot, "bin"), 0o700); err != nil {
@@ -38,6 +41,7 @@ func TestRepairSandboxProfileGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	spec.HasLib64 = func() bool { return true }
 	invocation, err := sandbox.Build(spec, sandbox.Binaries{SystemdRun: "/usr/bin/systemd-run", Prlimit: "/usr/bin/prlimit", Bwrap: "/usr/bin/bwrap"}, nil)
 	if err != nil {
 		t.Fatal(err)
