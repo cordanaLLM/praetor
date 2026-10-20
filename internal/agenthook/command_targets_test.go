@@ -86,6 +86,7 @@ func TestRunCommandTargetBoundaries(t *testing.T) {
 func TestCommandTargetsResolveTheHomeDirectory(t *testing.T) {
 	governed, plain := repository(t, true), repository(t, false)
 	t.Setenv("HOME", filepath.Dir(governed))
+	t.Setenv("USERPROFILE", filepath.Dir(governed))
 	for _, command := range []string{
 		"cd ~/" + filepath.Base(governed) + " && git push --no-verify",
 		"git -C ~/" + filepath.Base(governed) + " push --no-verify",
@@ -95,6 +96,7 @@ func TestCommandTargetsResolveTheHomeDirectory(t *testing.T) {
 		}
 	}
 	t.Setenv("HOME", governed)
+	t.Setenv("USERPROFILE", governed)
 	if root, err := commandTargetRoot(t.Context(), "cd ~ && git status", plain); err != nil || root != governed {
 		t.Fatalf("bare ~: root %q, err %v", root, err)
 	}

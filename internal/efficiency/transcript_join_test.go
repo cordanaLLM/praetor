@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -163,6 +164,37 @@ func TestEfficiencyTranscriptToolInputByteBoundary(t *testing.T) {
 
 func TestEfficiencyTranscriptLiveWorktreeSource(t *testing.T) {
 	dir := t.TempDir()
+	checkLiveWorktreeSource(t, dir)
+}
+
+func TestEfficiencyTranscriptLiveWorktreeSourceSymlink(t *testing.T) {
+	dir := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(dir, alias); err != nil {
+		t.Skipf("directory symlink unavailable: %v", err)
+	}
+	checkLiveWorktreeSource(t, alias)
+	root := filepath.Join(alias, "live")
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, spelling := range []string{root, resolved} {
+		t.Run(spelling, func(t *testing.T) {
+			join := newTranscriptJoin(map[string]string{spelling: "feat/live"}, "trunk")
+			if err := join.recordRoot(root, "stale/transcript"); err != nil {
+				t.Fatal(err)
+			}
+			paths := map[string]bool{literalPath(filepath.Join(root, "missing", "file.go"), ""): true}
+			if branches := join.resolve(paths); !branches["feat/live"] || len(branches) != 1 || len(join.roots) != 1 {
+				t.Fatalf("alias attribution: branches=%v roots=%v", branches, join.roots)
+			}
+		})
+	}
+}
+
+func checkLiveWorktreeSource(t *testing.T, dir string) {
+	t.Helper()
 	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +213,11 @@ func TestEfficiencyTranscriptLiveWorktreeSource(t *testing.T) {
 	if err := join.recordRoot(root, "stale/transcript"); err != nil {
 		t.Fatal(err)
 	}
-	if join.roots[root] != "feat/live" || join.defaultBranch != "trunk" || len(notes) != 0 {
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if join.roots[filepath.ToSlash(resolved)] != "feat/live" || len(join.roots) != 2 || join.defaultBranch != "trunk" || len(notes) != 0 {
 		t.Fatalf("live source precedence: %+v %v", join, notes)
 	}
 }

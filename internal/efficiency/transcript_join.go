@@ -5,7 +5,6 @@ package efficiency
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/harvester"
@@ -64,7 +63,7 @@ func newTranscriptJoin(roots map[string]string, defaultBranch string) *transcrip
 	j := &transcriptJoin{roots: make(map[string]string), live: make(map[string]bool), defaultBranch: defaultBranch,
 		responses: make(map[string]*transcriptResponse), unresolved: make(map[string]bool), conflicts: make(map[string]bool)}
 	for root, branch := range roots {
-		root = filepath.ToSlash(filepath.Clean(root))
+		root = canonicalTranscriptPath(root)
 		j.roots[root], j.live[root] = branch, branch != ""
 	}
 	return j

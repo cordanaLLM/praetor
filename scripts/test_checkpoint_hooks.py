@@ -950,6 +950,19 @@ class NativeLefthook(unittest.TestCase):
         self.assertEqual(scoped["public_paths"], ["README.md"])
 
     def test_adapter_records_worktree_touched_by_bash_and_edit_not_prefix(self):
+        self.assert_adapter_records_worktree_touched_by_bash_and_edit_not_prefix()
+
+    def test_adapter_records_worktree_touched_through_symlink(self):
+        with tempfile.TemporaryDirectory(prefix="praetor-checkpoint-alias-") as directory:
+            alias = Path(directory) / "alias"
+            try:
+                os.symlink(self.root, alias, target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"directory symlink unavailable: {error}")
+            self.root = alias
+            self.assert_adapter_records_worktree_touched_by_bash_and_edit_not_prefix()
+
+    def assert_adapter_records_worktree_touched_by_bash_and_edit_not_prefix(self):
         w_a = self.linked_worktree(self.root / ".claude/worktrees/agent-a", branch="checkpoint/agent-a")
         w_ab = self.linked_worktree(self.root / ".claude/worktrees/agent-ab", branch="checkpoint/agent-ab")
         session_id = "test-session-1234"

@@ -13,7 +13,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / ".config/lefthook/scripts"))
-from common import HookBudget, HookError, refuse_after, run_bounded, session_root
+from common import (
+    HookBudget,
+    HookError,
+    refuse_after,
+    resolved_relative_to,
+    run_bounded,
+    session_root,
+)
 
 LIMIT = 1024 * 1024
 MARKER = "PRAETOR_CHECKPOINT_RESULT="
@@ -46,15 +53,25 @@ def verify_state(root=ROOT, budget=None):
     budget = HookBudget(HOOK_BUDGET) if budget is None else budget
     raw = run_bounded(
         ["lefthook", "run", "agent-state-stop", "--no-tty", "--no-auto-install"],
-        cwd=root, timeout=budget.timeout(STATE_TIMEOUT), max_output=LIMIT, grace=JOB_GRACE,
+        cwd=root,
+        timeout=budget.timeout(STATE_TIMEOUT),
+        max_output=LIMIT,
+        grace=JOB_GRACE,
     )
-    rows = [line[len(STATE_MARKER):] for line in raw.decode().splitlines()
-            if line.startswith(STATE_MARKER)]
+    rows = [
+        line.removeprefix(STATE_MARKER)
+        for line in raw.decode().splitlines()
+        if line.startswith(STATE_MARKER)
+    ]
     if len(rows) != 1:
         raise ValueError("shared state job returned no unique execution result")
     report = json.loads(rows[0])
-    if (not isinstance(report, dict) or type(report.get("schema_version")) is not int
-            or report["schema_version"] != 1 or report.get("verified") is not True):
+    if (
+        not isinstance(report, dict)
+        or type(report.get("schema_version")) is not int
+        or report["schema_version"] != 1
+        or report.get("verified") is not True
+    ):
         raise ValueError("shared state job did not verify ledger freshness")
 
 
@@ -65,25 +82,47 @@ def checkpoint(event, root=ROOT, budget=None, env=None):
     if env:
         cmd_env.update(env)
     raw = run_bounded(
-        ["lefthook", "run", "agent-checkpoint-" + event, "--no-tty", "--no-auto-install"],
-        cwd=root, timeout=budget.timeout(CHECKPOINT_TIMEOUT), max_output=LIMIT, grace=JOB_GRACE,
+        [
+            "lefthook",
+            "run",
+            "agent-checkpoint-" + event,
+            "--no-tty",
+            "--no-auto-install",
+        ],
+        cwd=root,
+        timeout=budget.timeout(CHECKPOINT_TIMEOUT),
+        max_output=LIMIT,
+        grace=JOB_GRACE,
         env=cmd_env,
     )
-    rows = [line[len(MARKER):] for line in raw.decode().splitlines()
-            if line.startswith(MARKER)]
+    rows = [
+        line.removeprefix(MARKER)
+        for line in raw.decode().splitlines()
+        if line.startswith(MARKER)
+    ]
     if len(rows) != 1:
         raise ValueError("shared checkpoint job returned no unique execution result")
     report = json.loads(rows[0])
-    if (not isinstance(report, dict) or report.get("schema_version") != 1
-            or type(report.get("enabled")) is not bool
-            or type(report.get("due")) is not bool
-            or not isinstance(report.get("actions"), list)
-            or len(report["actions"]) > 16
-            or not all(isinstance(item, str) and len(item) <= 1024
-                       for item in report["actions"])
-            or (report.get("deferred") is True
-                and (report["due"] or report["actions"]
-                     or not isinstance(report.get("deferral"), str) or not report["deferral"]))):
+    if (
+        not isinstance(report, dict)
+        or report.get("schema_version") != 1
+        or type(report.get("enabled")) is not bool
+        or type(report.get("due")) is not bool
+        or not isinstance(report.get("actions"), list)
+        or len(report["actions"]) > 16
+        or not all(
+            isinstance(item, str) and len(item) <= 1024 for item in report["actions"]
+        )
+        or (
+            report.get("deferred") is True
+            and (
+                report["due"]
+                or report["actions"]
+                or not isinstance(report.get("deferral"), str)
+                or not report["deferral"]
+            )
+        )
+    ):
         raise ValueError("shared checkpoint job returned an invalid result")
     if report["due"] and not report["actions"]:
         raise ValueError("due checkpoint has no actionable disposition")
@@ -179,10 +218,23 @@ def _extract_tool_info(payload):
 
 
 def _path_matches(resolved_path_str, text):
-    """Match resolved path as whole path or parent dir of subpath; no prefix sharing."""
-    escaped = re.escape(resolved_path_str)
-    pattern = rf"(?<![A-Za-z0-9_./\\-]){escaped}(?:[/\\]|[^\w./\\-]|$)"
-    return bool(re.search(pattern, text))
+    """Compare literal paths in tool text after resolving both filesystem spellings."""
+    # Keep quoted paths with spaces intact; also find absolute operands embedded
+    # in shell commands or scripts. Never execute or expand the command text.
+    pattern = r"""(?<![\w./\\-])(?:"[^"]+"|'[^']+'|(?:[A-Za-z]:[/\\]|/|\\\\)[^\s'";&|<>()]+)"""
+    candidates = [
+        text,
+        *(match.group().strip("\"'") for match in re.finditer(pattern, text)),
+    ]
+    for candidate in candidates:
+        if not Path(candidate).is_absolute():
+            continue
+        try:
+            resolved_relative_to(candidate, resolved_path_str)
+            return True
+        except (OSError, RuntimeError, ValueError):
+            continue
+    return False
 
 
 def _is_worktree_touched(resolved, tool_name, tool_input, strings):
@@ -274,8 +326,11 @@ def record_tool_worktrees(payload, root, budget):
 def blocked(reason, active):
     """One continuation can reconcile the checkpoint; repeat failure stays explicit."""
     if active:
-        return {"continue": False, "stopReason": "Checkpoint blocked: " + reason,
-                "systemMessage": "Checkpoint remains incomplete: " + reason}
+        return {
+            "continue": False,
+            "stopReason": "Checkpoint blocked: " + reason,
+            "systemMessage": "Checkpoint remains incomplete: " + reason,
+        }
     return {"decision": "block", "reason": reason}
 
 
@@ -321,28 +376,43 @@ def respond(payload, budget=None):
     try:
         root = session_root(ROOT, payload.get("cwd"), budget)
     except HookError as error:
-        return feedback(name, active, "Praetor checkpoint could not be verified: "
-                        + str(error)[:1000])
+        return feedback(
+            name,
+            active,
+            "Praetor checkpoint could not be verified: " + str(error)[:1000],
+        )
     session_env = _prepare_session(payload, root, budget, stopping)
     if stopping:
         try:
             verify_state(root, budget)
         except (HookError, OSError, ValueError, subprocess.TimeoutExpired) as error:
-            reason = ("Praetor state could not be verified: " + str(error)[:1000]
-                      + ". Inspect and repair the existing ledger, run praetorctl state "
-                      "sync ., then retry; do not report completion while state is unverified.")
+            reason = (
+                "Praetor state could not be verified: "
+                + str(error)[:1000]
+                + ". Inspect and repair the existing ledger, run praetorctl state "
+                "sync ., then retry; do not report completion while state is unverified."
+            )
             return blocked(reason, active)
     try:
-        report = checkpoint("stop" if stopping else "tool", root, budget, env=session_env)
-        if report.get("deferred") is True:  # a detached job that cannot publish: printed, never a block
-            return {"systemMessage": "Praetor checkpoint deferred: " + report["deferral"]}
+        report = checkpoint(
+            "stop" if stopping else "tool", root, budget, env=session_env
+        )
+        if (
+            report.get("deferred") is True
+        ):  # a detached job that cannot publish: printed, never a block
+            return {
+                "systemMessage": "Praetor checkpoint deferred: " + report["deferral"]
+            }
         if not report["enabled"] or not report["due"]:
             return {}
-        reason = ("Praetor checkpoint due: " + "; ".join(report["actions"])
-                  + ". Review and stage only task-owned public changes; run required "
-                  "verification and normal signed-off commits/pushes. Reuse an existing "
-                  "PR or create a draft for the exact pushed branch. Preserve unrelated "
-                  "and private files. Report a concrete blocker if this cannot complete.")
+        reason = (
+            "Praetor checkpoint due: "
+            + "; ".join(report["actions"])
+            + ". Review and stage only task-owned public changes; run required "
+            "verification and normal signed-off commits/pushes. Reuse an existing "
+            "PR or create a draft for the exact pushed branch. Preserve unrelated "
+            "and private files. Report a concrete blocker if this cannot complete."
+        )
     except (HookError, OSError, ValueError, subprocess.TimeoutExpired) as error:
         reason = "Praetor checkpoint could not be verified: " + str(error)[:1000]
     return feedback(name, active, reason)
@@ -362,8 +432,10 @@ def overrun(payload):
         name, active = lifecycle_event(payload)
     except ValueError:
         return None  # respond() rejects this input itself, long before the limit.
-    reason = (f"Praetor checkpoint adapter gave no answer within {HOOK_LIMIT} s; the "
-              "checkpoint is unverified. Retry once the host responds again.")
+    reason = (
+        f"Praetor checkpoint adapter gave no answer within {HOOK_LIMIT} s; the "
+        "checkpoint is unverified. Retry once the host responds again."
+    )
     return 0 if answer(feedback(name, active, reason)) else None
 
 
@@ -379,7 +451,9 @@ def main():
         finally:
             backstop.cancel()
         if not answer(result):
-            backstop.join(HOOK_STOP)  # The backstop is printing; let it finish and exit.
+            backstop.join(
+                HOOK_STOP
+            )  # The backstop is printing; let it finish and exit.
         return 0
     except (OSError, ValueError) as error:
         print("Praetor checkpoint adapter: " + str(error)[:1000], file=sys.stderr)

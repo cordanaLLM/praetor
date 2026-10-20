@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/harvester"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Only literal shell words are evidence; variables and expansions are never evaluated.
@@ -42,6 +43,15 @@ func literalPath(path, cwd string) string {
 			return ""
 		}
 		path = filepath.Join(cwd, path)
+	}
+	return canonicalTranscriptPath(path)
+}
+
+func canonicalTranscriptPath(path string) string {
+	// Recorded creations and Edit/Write targets may no longer exist. Resolve their
+	// existing ancestors too, so aliases still join the live worktree root.
+	if resolved, err := util.ResolveExistingAncestor(path); err == nil {
+		path = resolved
 	}
 	return filepath.ToSlash(filepath.Clean(path))
 }
@@ -227,6 +237,7 @@ func literalBranch(branch string) bool {
 }
 
 func (j *transcriptJoin) recordRoot(root, branch string) error {
+	root = canonicalTranscriptPath(root)
 	if j.live[root] || j.conflicts[root] {
 		return nil
 	}
