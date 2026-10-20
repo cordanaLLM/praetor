@@ -138,6 +138,8 @@ func (lc LaneCounts) String() string {
 // counts are the parts of the unit's local-first and prompt-cache ratios, so the summary can
 // pool them over all usage.
 type UnitReport struct {
+	TranscriptCoverage         *TranscriptShare               `json:"transcript_coverage,omitempty"`
+	TokenMeasurementReason     string                         `json:"token_measurement_reason,omitempty"`
 	PullRequestNumber          int                            `json:"pull_request_number"`
 	HeadBranch                 string                         `json:"head_branch"`
 	Title                      string                         `json:"title"`
@@ -345,10 +347,11 @@ type SourcesMeasured struct {
 
 // Report holds the complete efficiency ledger output.
 type Report struct {
-	Units            []UnitReport     `json:"units"`
-	MilestoneSummary MilestoneSummary `json:"milestone_summary"`
-	Sources          SourcesMeasured  `json:"sources_measured"`
-	Notes            []string         `json:"notes,omitempty"`
+	TranscriptCoverage *TranscriptShare `json:"transcript_coverage,omitempty"`
+	Units              []UnitReport     `json:"units"`
+	MilestoneSummary   MilestoneSummary `json:"milestone_summary"`
+	Sources            SourcesMeasured  `json:"sources_measured"`
+	Notes              []string         `json:"notes,omitempty"`
 }
 
 // FormatZeroFailureClaim words a failure count of zero per qualified unit: with no failure in

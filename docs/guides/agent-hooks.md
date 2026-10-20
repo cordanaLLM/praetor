@@ -252,8 +252,21 @@ guard by one byte. `TestRegistrationTableMatchesTheTrackedClientFiles` and
 6. **Governed.** The root holds `.standards.yaml`. Anything else is skipped with a reason,
    unless `hooks.scope` is set to `all`: that setting makes the command policy run in an
    ungoverned workspace too, instead of skipping it
-   (`agenthook.AppliesEverywhere`, `internal/agenthook/evaluate.go`). The default,
+   (`agenthook.AppliesEverywhere`, `internal/agenthook/evaluate.go`). `hooks.scope: all`
+   applies to pre-tool commands only; pre-edit, post-tool, stop and the other events keep
+   the skip in an ungoverned workspace. The default,
    `governed`, is the behavior described in the rest of this step.
+
+   Before skipping, command events also check static directory targets: Git's `-C`,
+   `--git-dir` and `--work-tree`, leading `GIT_DIR`/`GIT_WORK_TREE` assignments,
+   `cd`/`pushd` (also behind a `(` or `{` opener), and `env -C`/`--chdir`. A governed
+   target activates command policy even from an ungoverned workspace or a directory outside
+   any repository. Relative paths start at the payload workspace, with repeated Git `-C`
+   paths chained in order; a bare `~` or a leading `~/` is the home directory. Other
+   expansions, missing targets and target probe errors are ignored; more than 16 directory
+   operands fails closed (`internal/agenthook/command_targets.go`). Under `hooks.scope: all`
+   a `pre-tool` command outside any repository is judged too, since the command policy
+   reads only the command text (`judgedEverywhere`).
 7. **Judge.** The process environment first, then the command policy.
 8. **Encode.** The verdict in the client's dialect.
 
@@ -516,9 +529,11 @@ stays.
 | payload event contradicts the argument | exit 2 | exit 1 |
 | command tool without a command string | exit 2 | exit 1 |
 | workspace relative, missing, or Git cannot answer | exit 2 | exit 1 |
-| no repository | exit 0, `praetor hook: no repository, skipped` on stderr | same, and no marker |
-| repository without `.standards.yaml`, `hooks.scope: governed` (default) | exit 0, `praetor hook: workspace not governed, skipped` on stderr | same, and no marker |
-| repository without `.standards.yaml`, `hooks.scope: all` | policy still evaluated (see below) | same |
+| no repository, no governed command target | exit 0, `praetor hook: no repository, skipped` on stderr | same, and no marker |
+| no repository, `hooks.scope: all`, `pre-tool` with a command | policy still evaluated (see below) | same |
+| repository without `.standards.yaml`, `hooks.scope: governed` (default) or other events under `hooks.scope: all`, no governed command target | exit 0, `praetor hook: workspace not governed, skipped` on stderr | same, and no marker |
+| ungoverned workspace or no repository, the command acts in a governed repository (step 6) | policy evaluated as in that repository | same |
+| repository without `.standards.yaml`, `hooks.scope: all`, `pre-tool` with a command | policy still evaluated (see below) | same |
 | environment check fails | exit 2 | exit 1 |
 | command matches a policy rule | exit 2, `[BLOCKED BY <rule>] …` on stderr | exit 1, same text |
 | allowed | exit 0, both streams empty | exit 0, `PRAETOR_COMMAND_POLICY_OK` on stdout for `pre-tool`, nothing for `environment` |
@@ -685,6 +700,19 @@ text. A command is denied when it
   searching the directory stays allowed);
 - runs `adopt`, `conform`, `bootstrap` or a `needs` scan, report, migration or epic
   against the workstation dev root instead of a leaf repository (DEV-01);
+- runs a privilege escalator at command position: `sudo`, `doas`, `pkexec`,
+  `run0`, or `su` with `-c` / `--command`. There is no allow-list or bypass.
+  The rule covers line starts, shell separators, subshells, substitutions and
+  launchers (including `env` assignments, `exec`, `command`, `builtin`, `nohup`,
+  `time`, `nice`, `xargs`, `setsid`, `timeout` with its duration, and `stdbuf`).
+  Mentions used as arguments, such as `grep sudo file`, `echo "use sudo"`,
+  `/etc/sudoers.d/x`, `SUDO_USER` and `git log --grep=sudo`, stay allowed.
+  Bare `su` and `su - root` stay allowed because this rule targets supplied
+  commands; interactive sessions are outside this command-shape check.
+  The admission act judge also refuses these programs instead of unwrapping
+  them as launchers. Replay evidence: `TestPolicyPrivilegePerClientHook`,
+  `TestPolicyPrivilegeNativePythonHooks`, `TestAdmissionPrivilegePrograms` and
+  the `privilege-` fixtures in `internal/agenthook/testdata/pre-tool/cases.json`;
 - merges a pull request past the forge's own merge rules (#1300): `gh pr merge` with
   `--admin` (or `--admin=true`) in any position, a `gh api` call whose path ends in
   `pulls/<n>/merge`, a `gh api graphql` call whose query holds `mergePullRequest`, or
@@ -695,9 +723,26 @@ text. A command is denied when it
 
 Before any rule runs, a backslash at the end of a line joins it with the next one (`\` before
 LF or CRLF becomes one space), the way the shell reads it, so a command split over lines is
-judged as one line. A line break without a backslash still separates two commands. Like every
-rule here, the merge rules match from the first `gh`, `curl` or `wget` word of a line, so a
+judged as one line. A line break without a backslash still separates two commands. The merge rules match from
+the first `gh`, `curl` or `wget` word of a line, so a
 commit message or `echo` that quotes such a command on one line is refused too.
+
+Claude Code (`PreToolUse`), Gemini CLI (`BeforeTool`), Codex (`PreToolUse`)
+and Antigravity (`PreToolUse`, `run_command`) reach the shared policy through
+their registered Go dialects. Antigravity’s tracked plugin registers `praetorctl hook agy pre-tool` through
+its adjacent `praetor_hook.py` launcher; checkpoint and stop hooks remain
+unregistered. The native Python compatibility guards for
+Claude Code, Gemini CLI and Codex run the shared Lefthook command-policy job;
+adoption renders the same text rules from `BuiltinRules`. OpenCode has only
+prompt and post-tool registrations in `registrationTable`
+(`internal/agenthook/registrations.go`): the engine renders no OpenCode
+before-tool guard, so this refusal is **not enforced for OpenCode**.
+
+The text screen still scans literal here-document bodies. A quoted here-document
+containing `$(sudo true)` is therefore refused even though the shell would print
+that body without executing a substitution. Ordinary argument and quoted-string
+mentions above are covered by the replay fixtures; complete shell interpretation
+is outside this text rule.
 
 The rules see only the commands that reach the pre-tool hook. A `core.hooksPath` set by any
 other route fails `praetorctl audit`
@@ -754,6 +799,8 @@ interceptor (`internal/agenthook/testdata/pre-tool/cases.json`).
 ### Where the rules live
 
 The sources live in `internal/agenthook/policy.go` (`builtinEvasion`, `builtinDevRoot`).
+The privilege rule's generator, `internal/agenthook/policy_privilege.go`, shares launcher
+option arities with admission and skips quoted data while retaining substitutions.
 `.config/agent/hooks/block_evasion.py` carries the evasion list, the dev-root rule and the
 read-only exemption byte for byte (`TestPythonGuardCarriesTheBuiltinEvasionList`,
 `TestPythonGuardCarriesTheBuiltinDevRootRule`,
@@ -903,7 +950,9 @@ numbers.
 
 All three engines refuse in the same words. `internal/agenthook/policy.go` holds the one
 wording source: a rule match prints `BuiltinRule.RefusalPrefix` followed by the rule's
-pattern, and the scan-bound, Lefthook-environment and invalid-input refusals are
+pattern, with the diagnostic capped at `MaxReasonBytes` (4096 UTF-8 bytes), so a
+generated privilege pattern cannot flood a client response. The scan-bound,
+Lefthook-environment and invalid-input refusals are
 `ScanBoundRefusal`, `LefthookDisabledRefusal`, `NarrowingRefusal` and `InvalidInputRefusal`.
 The adopted interceptor is rendered from them. Praetor's own guard carries them as literals,
 because its register census lints the text it prints, and

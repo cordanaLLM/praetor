@@ -37,6 +37,7 @@ type LedgerRecord struct {
 	Type             string          `json:"type"`
 	SessionID        string          `json:"sessionId"`
 	Timestamp        string          `json:"timestamp"`
+	CWD              string          `json:"cwd"`
 	GitBranch        string          `json:"gitBranch"`
 	RequestID        string          `json:"requestId"`
 	IsMeta           bool            `json:"isMeta"`
@@ -48,7 +49,7 @@ type LedgerRecord struct {
 }
 
 var ledgerEnvelopeFields = []string{
-	"type", "sessionId", "timestamp", "gitBranch", "requestId",
+	"type", "sessionId", "timestamp", "cwd", "gitBranch", "requestId",
 	"isMeta", "isCompactSummary", "isSidechain", "origin", "message",
 }
 

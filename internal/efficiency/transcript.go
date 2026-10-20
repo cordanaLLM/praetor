@@ -34,6 +34,9 @@ type BranchTranscriptStats struct {
 	OutputTokens        int64
 	LocalRequests       int
 	TotalRequests       int
+	Unattributed        TranscriptShare
+	WorktreeResolved    bool
+	AmbiguousResponses  int
 	seenResponses       map[string]usageSnapshot
 }
 
@@ -113,20 +116,13 @@ func (s *BranchTranscriptStats) applyUsage(rec *harvester.LedgerRecord, classifi
 	}
 }
 
-func (s *BranchTranscriptStats) apply(rec *harvester.LedgerRecord, classifier *Classifier) {
-	if isOperatorTouch(rec) {
-		s.OperatorTouches++
-	}
-	if rec.Message != nil && rec.Message.Usage != nil {
-		s.applyUsage(rec, classifier)
-	}
-}
-
 // SourceNotes lists what a read skipped. Undecodable lines are reported with file and line,
 // never dropped; limit overflows and I/O errors fail the read instead.
 type SourceNotes struct {
 	SkippedLines int
 	Examples     []string
+	JoinNotes    []string
+	Coverage     TranscriptShare
 }
 
 const maxNoteExamples = 10
@@ -140,10 +136,13 @@ func (n *SourceNotes) skip(source string, line int, err error) {
 
 // Lines describes the notes as report lines.
 func (n *SourceNotes) Lines() []string {
-	if n == nil || n.SkippedLines == 0 {
+	if n == nil {
 		return nil
 	}
-	out := []string{fmt.Sprintf("skipped %d undecodable transcript lines (first %d listed)", n.SkippedLines, len(n.Examples))}
+	out := append([]string{}, n.JoinNotes...)
+	if n.SkippedLines > 0 {
+		out = append(out, fmt.Sprintf("skipped %d undecodable transcript lines (first %d listed)", n.SkippedLines, len(n.Examples)))
+	}
 	return append(out, n.Examples...)
 }
 
@@ -163,6 +162,7 @@ type transcriptReader struct {
 	byBranch   map[string]*BranchTranscriptStats
 	notes      *SourceNotes
 	limits     sourceLimits
+	join       *transcriptJoin
 }
 
 func (r *transcriptReader) line(source string, lineNo int, raw []byte) error {
@@ -174,17 +174,10 @@ func (r *transcriptReader) line(source string, lineNo int, raw []byte) error {
 		r.notes.skip(source, lineNo, err)
 		return nil
 	}
-	branch := strings.TrimSpace(rec.GitBranch)
-	if branch == "" {
-		return nil
+	if r.join == nil {
+		r.join = newTranscriptJoin(nil, "main")
 	}
-	stats, ok := r.byBranch[branch]
-	if !ok {
-		stats = &BranchTranscriptStats{seenResponses: make(map[string]usageSnapshot)}
-		r.byBranch[branch] = stats
-	}
-	stats.apply(rec, r.classifier)
-	return nil
+	return r.join.collect(rec, source, lineNo, r)
 }
 
 func (r *transcriptReader) stream(ctx context.Context, source string, in io.Reader) error {
@@ -241,7 +234,11 @@ func (w *transcriptWalker) walk(ctx context.Context) fs.WalkDirFunc {
 // ReadTranscriptStream reads one session stream; the source label names it in notes and errors.
 func ReadTranscriptStream(ctx context.Context, source string, in io.Reader, classifier *Classifier, byBranch map[string]*BranchTranscriptStats) (*SourceNotes, error) {
 	reader := &transcriptReader{classifier: classifier, byBranch: byBranch, notes: &SourceNotes{}, limits: defaultLimits()}
-	return reader.notes, reader.stream(ctx, source, in)
+	if err := reader.stream(ctx, source, in); err != nil {
+		return reader.notes, err
+	}
+	reader.finish()
+	return reader.notes, nil
 }
 
 // ReadTranscriptsDir reads all .jsonl files in dir, subagent sessions included, bounded by
@@ -251,6 +248,10 @@ func ReadTranscriptsDir(ctx context.Context, dir string, classifier *Classifier)
 }
 
 func readTranscriptsDir(ctx context.Context, dir string, classifier *Classifier, limits sourceLimits) (map[string]*BranchTranscriptStats, *SourceNotes, error) {
+	return readJoinedTranscripts(ctx, dir, classifier, limits, newTranscriptJoin(nil, "main"))
+}
+
+func readJoinedTranscripts(ctx context.Context, dir string, classifier *Classifier, limits sourceLimits, join *transcriptJoin) (map[string]*BranchTranscriptStats, *SourceNotes, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
@@ -261,10 +262,11 @@ func readTranscriptsDir(ctx context.Context, dir string, classifier *Classifier,
 	if _, err := os.Stat(cleanDir); err != nil {
 		return nil, nil, fmt.Errorf("read transcripts directory %s: %w", cleanDir, err)
 	}
-	reader := &transcriptReader{classifier: classifier, byBranch: make(map[string]*BranchTranscriptStats), notes: &SourceNotes{}, limits: limits}
+	reader := &transcriptReader{classifier: classifier, byBranch: make(map[string]*BranchTranscriptStats), notes: &SourceNotes{}, limits: limits, join: join}
 	walker := &transcriptWalker{reader: reader, cleanDir: cleanDir}
 	if err := filepath.WalkDir(cleanDir, walker.walk(ctx)); err != nil {
 		return nil, nil, fmt.Errorf("walk transcripts in %s: %w", cleanDir, err)
 	}
+	reader.finish()
 	return reader.byBranch, reader.notes, nil
 }

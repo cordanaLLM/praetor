@@ -97,21 +97,40 @@ func TestEverySourceNamesItsLicenceAndAPinKind(t *testing.T) {
 	}
 }
 
+func findCommitSource(m *Manifest) *Source {
+	for i := range m.Sources {
+		if m.Sources[i].PinKind == PinCommit {
+			return &m.Sources[i]
+		}
+	}
+	return nil
+}
+
 func TestParseManifestRefusals(t *testing.T) {
 	good, err := os.ReadFile(filepath.Join("upstream", ManifestFile))
 	if err != nil {
 		t.Fatal(err)
 	}
+	manifest, err := ParseManifest(good)
+	if err != nil {
+		t.Fatalf("the shipped manifest is refused: %v", err)
+	}
+	commitSource := findCommitSource(manifest)
+	if commitSource == nil {
+		t.Fatal("manifest has no commit-pinned source")
+	}
+	firstPath := manifest.Sources[0].Files[0].Path
+	firstSHA := manifest.Sources[0].Files[0].SHA256
 	text := string(good)
 	cases := map[string]string{
 		"duplicate member":  strings.Replace(text, `"version": 1,`, `"version": 1, "version": 1,`, 1),
 		"unknown field":     strings.Replace(text, `"version": 1,`, `"version": 1, "extra": true,`, 1),
 		"unknown pin kind":  strings.Replace(text, `"pin_kind": "tag"`, `"pin_kind": "branch"`, 1),
-		"short digest":      strings.Replace(text, `"sha256": "0ad8cf34`, `"sha256": "0AD8CF34`, 1),
-		"parent path":       strings.Replace(text, `"path": "claude/claude-code-settings.json"`, `"path": "../claude.json"`, 1),
+		"short digest":      strings.Replace(text, `"`+firstSHA+`"`, `"`+firstSHA[:16]+`"`, 1),
+		"parent path":       strings.Replace(text, `"path": "`+firstPath+`"`, `"path": "../`+filepath.Base(firstPath)+`"`, 1),
 		"insecure base":     strings.Replace(text, `"url_base": "https://raw`, `"url_base": "http://raw`, 1),
 		"version two":       strings.Replace(text, `"version": 1,`, `"version": 2,`, 1),
-		"short commit pin":  strings.Replace(text, `"pin": "ce64da2a95a2bd40740c2d608206f8a36024d30b"`, `"pin": "ce64da2"`, 1),
+		"short commit pin":  strings.Replace(text, `"pin": "`+commitSource.Pin+`"`, `"pin": "`+commitSource.Pin[:7]+`"`, 1),
 		"trailing document": text + "{}",
 	}
 	for name, mutated := range cases {
@@ -122,17 +141,22 @@ func TestParseManifestRefusals(t *testing.T) {
 			t.Errorf("%s: manifest accepted", name)
 		}
 	}
-	if _, err := ParseManifest(good); err != nil {
-		t.Fatalf("the shipped manifest is refused: %v", err)
-	}
 }
 
 func TestLookups(t *testing.T) {
 	manifest := loadManifest(t)
-	if got := manifest.PinnedVersion("codex"); got != "rust-v0.162.0" {
-		t.Errorf("PinnedVersion(codex) = %q", got)
+	codexSources := manifest.ForClient("codex")
+	if len(codexSources) != 2 {
+		t.Fatalf("codex has %d sources, want config and hooks", len(codexSources))
 	}
-	if got := manifest.PinnedVersion("mcp"); got != "2025-11-25" {
+	if got := manifest.PinnedVersion("codex"); got != codexSources[0].Version || got == "" {
+		t.Errorf("PinnedVersion(codex) = %q, want %q", got, codexSources[0].Version)
+	}
+	mcpSources := manifest.ForClient("mcp")
+	if len(mcpSources) == 0 {
+		t.Fatal("mcp has no sources")
+	}
+	if got := manifest.PinnedVersion("mcp"); got != mcpSources[0].Version || got == "" {
 		t.Errorf("PinnedVersion(mcp) = %q, falls back to the first source of any kind", got)
 	}
 	if got := manifest.PinnedVersion("copilot"); got != "" {
@@ -144,12 +168,9 @@ func TestLookups(t *testing.T) {
 	if _, err := manifest.Schema(vendorDirForTests, "nope.json"); err == nil {
 		t.Error("Schema(nope.json) found")
 	}
-	hooks := manifest.ForClient("codex")
-	if len(hooks) != 2 {
-		t.Fatalf("codex has %d sources, want config and hooks", len(hooks))
-	}
-	if got := hooks[1].URL(hooks[1].Files[0]); !strings.HasPrefix(got, "https://raw.githubusercontent.com/openai/codex/rust-v0.162.0/codex-rs/hooks/schema/generated/") {
-		t.Errorf("hook URL %s", got)
+	wantPrefix := "https://raw.githubusercontent.com/openai/codex/" + codexSources[1].Pin + "/codex-rs/hooks/schema/generated/"
+	if got := codexSources[1].URL(codexSources[1].Files[0]); !strings.HasPrefix(got, wantPrefix) {
+		t.Errorf("hook URL %s, want prefix %s", got, wantPrefix)
 	}
 }
 
@@ -317,17 +338,18 @@ func TestRenovateTracksEveryPin_FailsWhenIgnored(t *testing.T) {
 	}
 }
 
-// A Renovate branch moves "pin" and nothing else. The manifest must then be refused offline,
-// naming the source, until the refresh has recorded the new pin with its digests; the stale
-// reader the refresh starts from still accepts it. Boundary: a digest pin that differs from a
-// commit pin in one hex digit is refused too, and a missing digest pin fails the structure check.
-func TestMovedPinIsRefusedUntilRefreshed(t *testing.T) {
-	good, err := os.ReadFile(filepath.Join("upstream", ManifestFile))
-	if err != nil {
-		t.Fatal(err)
+func flippedLastHexDigit(pin string) string {
+	last := pin[len(pin)-1]
+	alt := '0'
+	if last == '0' {
+		alt = '1'
 	}
-	text := string(good)
-	moved := strings.Replace(text, `"pin": "v0.63.0"`, `"pin": "v0.64.0"`, 1)
+	return pin[:len(pin)-1] + string(alt)
+}
+
+func checkMovedTagPin(t *testing.T, text string, gemini Source) {
+	t.Helper()
+	moved := strings.Replace(text, `"pin": "`+gemini.Pin+`"`, `"pin": "`+gemini.Pin+`-bumped"`, 1)
 	if moved == text {
 		t.Fatal("mutation did not change the manifest")
 	}
@@ -337,14 +359,57 @@ func TestMovedPinIsRefusedUntilRefreshed(t *testing.T) {
 	if _, err := ParseStaleManifest([]byte(moved)); err != nil {
 		t.Fatalf("ParseStaleManifest(moved pin) = %v, want the state a refresh starts from", err)
 	}
-	commit := strings.Replace(text, `"pin": "ce64da2a95a2bd40740c2d608206f8a36024d30b"`, `"pin": "ce64da2a95a2bd40740c2d608206f8a36024d30c"`, 1)
+}
+
+func checkCommitPinOffByOne(t *testing.T, text string, commitSource Source) {
+	t.Helper()
+	altPin := flippedLastHexDigit(commitSource.Pin)
+	commit := strings.Replace(text, `"pin": "`+commitSource.Pin+`"`, `"pin": "`+altPin+`"`, 1)
+	if commit == text {
+		t.Fatal("commit pin mutation did not change the manifest")
+	}
 	if _, err := ParseManifest([]byte(commit)); !errors.Is(err, ErrPinMoved) {
 		t.Fatalf("ParseManifest(commit pin off by one digit) = %v, want ErrPinMoved", err)
 	}
-	missing := strings.Replace(text, `"digest_pin": "v0.63.0",`, "", 1)
+}
+
+func checkMissingDigestPin(t *testing.T, text string, gemini Source) {
+	t.Helper()
+	missing := strings.Replace(text, `"digest_pin": "`+gemini.DigestPin+`",`, "", 1)
+	if missing == text {
+		t.Fatal("missing digest pin mutation did not change the manifest")
+	}
 	if _, err := ParseStaleManifest([]byte(missing)); err == nil {
 		t.Fatal("a source without digest_pin was accepted")
 	}
+}
+
+// A Renovate branch moves "pin" and nothing else. The manifest must then be refused offline,
+// naming the source, until the refresh has recorded the new pin with its digests; the stale
+// reader the refresh starts from still accepts it. Boundary: a digest pin that differs from a
+// commit pin in one hex digit is refused too, and a missing digest pin fails the structure check.
+func TestMovedPinIsRefusedUntilRefreshed(t *testing.T) {
+	good, err := os.ReadFile(filepath.Join("upstream", ManifestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := ParseManifest(good)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gemini, ok := manifest.Source("gemini-settings")
+	if !ok {
+		t.Fatal("gemini-settings source not found")
+	}
+	commitSource := findCommitSource(manifest)
+	if commitSource == nil {
+		t.Fatal("commit source not found")
+	}
+
+	text := string(good)
+	checkMovedTagPin(t, text, gemini)
+	checkCommitPinOffByOne(t, text, *commitSource)
+	checkMissingDigestPin(t, text, gemini)
 }
 
 // Only the manifest is embedded: the schema files are build-time and test-time inputs, so no

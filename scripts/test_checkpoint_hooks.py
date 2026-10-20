@@ -275,6 +275,12 @@ class NativeLefthook(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         SCOPE.ROOT = self.root
+        self.config_temp = tempfile.TemporaryDirectory(prefix="praetor-checkpoint-config-")
+        self.addCleanup(self.config_temp.cleanup)
+        self.config_home = Path(self.config_temp.name)
+        env_patcher = mock.patch.dict(os.environ, self.subprocess_env())
+        env_patcher.start()
+        self.addCleanup(env_patcher.stop)
         self.git("init", "-q", "-b", "checkpoint/fixture")
         self.git("config", "user.name", "Checkpoint Fixture")
         self.git("config", "user.email", "fixture@example.test")
@@ -300,15 +306,35 @@ class NativeLefthook(unittest.TestCase):
         self.state("init")
         self.state("sync")
 
+    def subprocess_env(self, overrides=None):
+        """Isolate user configuration so outer host settings and manifests never leak in."""
+        env = dict(os.environ)
+        config_path = str(self.config_home)
+        env["XDG_CONFIG_HOME"] = config_path
+        env["HOME"] = config_path
+        env["AppData"] = config_path
+        env["APPDATA"] = config_path
+        env["USERPROFILE"] = config_path
+        for key in ("PRAETOR_FLEET_CONFIG", "PRAETOR_WORKSTATION_CONFIG"):
+            env.pop(key, None)
+        for key in ("GOPATH", "GOMODCACHE", "GOCACHE"):
+            if key in os.environ:
+                env[key] = os.environ[key]
+        if overrides:
+            env.update(overrides)
+        return env
+
     def state(self, action, root=None):
         root = self.root if root is None else root
         result = run_child([str(root / PRAETORCTL), "state", action, "."],
-                           cwd=root, text=True, capture_output=True, timeout=30)
+                           cwd=root, env=self.subprocess_env(), text=True,
+                           capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def linked_worktree(self, location):
+    def linked_worktree(self, location, branch=None):
         """A linked worktree of the fixture with the CLI and the ledger a new worktree needs."""
-        self.git("worktree", "add", "-q", "-b", "checkpoint/" + location.parent.name, str(location))
+        branch_name = branch if branch is not None else ("checkpoint/" + location.parent.name)
+        self.git("worktree", "add", "-q", "-b", branch_name, str(location))
         (location / "bin").mkdir()
         os.link(self.binary, location / PRAETORCTL)
         self.state("init", location)
@@ -316,7 +342,7 @@ class NativeLefthook(unittest.TestCase):
         return location
 
     def git(self, *args):
-        env = dict(os.environ)
+        env = self.subprocess_env()
         for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"):
             env.pop(name, None)
         result = run_child(["git", *args], cwd=self.root, env=env,
@@ -327,6 +353,7 @@ class NativeLefthook(unittest.TestCase):
     def invoke(self, payload):
         result = run_child([sys.executable, "-B", str(self.root / SCRIPT)], cwd=self.root,
                            input=json.dumps(payload), text=True, capture_output=True,
+                           env=self.subprocess_env(),
                            timeout=60, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
@@ -356,7 +383,7 @@ class NativeLefthook(unittest.TestCase):
             cwd = self.root / "nested path with spaces"
             cwd.mkdir(exist_ok=True)
         argv, directory, extra = self.registered_process(settings, action, cwd, project)
-        return run_child(argv, cwd=directory, env={**os.environ, **extra, **(env or {})},
+        return run_child(argv, cwd=directory, env=self.subprocess_env({**extra, **(env or {})}),
                          input=json.dumps(payload), text=True,
                          capture_output=True, timeout=60, check=False)
 
@@ -364,7 +391,8 @@ class NativeLefthook(unittest.TestCase):
         """A second Git repository whose own .config/agent/hooks must never be the one run."""
         foreign = Path(tempfile.mkdtemp(prefix="praetor-foreign-repo-"))
         self.addCleanup(shutil.rmtree, foreign, True)
-        run_child(["git", "init", "-q", str(foreign)], capture_output=True, timeout=20, check=True)
+        run_child(["git", "init", "-q", str(foreign)], env=self.subprocess_env(),
+                  capture_output=True, timeout=20, check=True)
         return foreign
 
     def test_native_settings_units_and_registered_commands(self):
@@ -587,7 +615,7 @@ class NativeLefthook(unittest.TestCase):
             SCOPE.check(malformed)
         oversized = json.dumps(deleted) + " " * (1 << 20)
         result = run_child([sys.executable, "-B", str(self.root / ".config/agent/hooks/checkpoint_scope.py")],
-                           cwd=self.root, input=oversized, text=True, capture_output=True, timeout=60)
+                           cwd=self.root, env=self.subprocess_env(), input=oversized, text=True, capture_output=True, timeout=60)
         self.assertEqual(result.returncode, 2)
 
     def test_native_batch_scope_binds_repository_and_rejects_traversal(self):
@@ -672,7 +700,7 @@ class NativeLefthook(unittest.TestCase):
 
     def scope_bridge(self, raw):
         return run_child([sys.executable, "-B", str(self.root / ".config/agent/hooks/checkpoint_scope.py")],
-                         cwd=self.root, input=raw, capture_output=True, timeout=20)
+                         cwd=self.root, env=self.subprocess_env(), input=raw, capture_output=True, timeout=20)
 
     def test_registered_file_guards_block_new_paths_before_write(self):
         (self.root / "README.md").write_text("dirty\n")
@@ -758,6 +786,7 @@ class NativeLefthook(unittest.TestCase):
                 names = [self.root, *(other for other in worktrees if other != worktree)]
                 for index, other in enumerate(names):
                     branch = run_child(["git", "branch", "--show-current"], cwd=other,
+                                       env=self.subprocess_env(),
                                        capture_output=True, timeout=20, check=True).stdout.decode().strip()
                     with open_items.open("a", encoding="utf-8") as stream:
                         stream.write(
@@ -795,7 +824,7 @@ class NativeLefthook(unittest.TestCase):
         source = self.foreign_repository()
         run_child(["git", "-C", str(source), "-c", "user.name=Fixture",
                    "-c", "user.email=fixture@example.test", "commit", "-q", "--allow-empty",
-                   "-m", "chore: seed submodule"], capture_output=True, timeout=20, check=True)
+                   "-m", "chore: seed submodule"], env=self.subprocess_env(), capture_output=True, timeout=20, check=True)
         self.git("-c", "protocol.file.allow=always", "submodule", "add", "-q", str(source), name)
         module = self.root / name
         self.assertTrue((module / ".git").is_file(), "submodule has no gitfile")
@@ -810,7 +839,7 @@ class NativeLefthook(unittest.TestCase):
         self.addCleanup(shutil.rmtree, outside, True)
         foreign = self.foreign_repository()
         nested_git = self.root / "vendored"
-        run_child(["git", "init", "-q", str(nested_git)], capture_output=True, timeout=20, check=True)
+        run_child(["git", "init", "-q", str(nested_git)], env=self.subprocess_env(), capture_output=True, timeout=20, check=True)
         module = self.submodule("module")
         for cwd in (str(worktree), str(worktree / "nested")):
             with self.subTest(cwd=cwd):
@@ -919,6 +948,79 @@ class NativeLefthook(unittest.TestCase):
         self.assertNotIn("public_paths", result)
         scoped = SCOPE.inspect_checkpoint(self.root, "tool", include_paths=True)
         self.assertEqual(scoped["public_paths"], ["README.md"])
+
+    def test_adapter_records_worktree_touched_by_bash_and_edit_not_prefix(self):
+        self.assert_adapter_records_worktree_touched_by_bash_and_edit_not_prefix()
+
+    def test_adapter_records_worktree_touched_through_symlink(self):
+        with tempfile.TemporaryDirectory(prefix="praetor-checkpoint-alias-") as directory:
+            alias = Path(directory) / "alias"
+            try:
+                os.symlink(self.root, alias, target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"directory symlink unavailable: {error}")
+            self.root = alias
+            self.assert_adapter_records_worktree_touched_by_bash_and_edit_not_prefix()
+
+    def assert_adapter_records_worktree_touched_by_bash_and_edit_not_prefix(self):
+        w_a = self.linked_worktree(self.root / ".claude/worktrees/agent-a", branch="checkpoint/agent-a")
+        w_ab = self.linked_worktree(self.root / ".claude/worktrees/agent-ab", branch="checkpoint/agent-ab")
+        session_id = "test-session-1234"
+        session_hash = ADAPTER.session_hash_for(session_id)
+        sessions_dir = self.root / ".git" / "praetor-checkpoint" / "sessions"
+        record_file = sessions_dir / f"{session_hash}.json"
+
+        # 1. Payload without session id writes no record
+        payload_no_session = {
+            "hook_event_name": "PostToolUse",
+            "cwd": str(self.root),
+            "tool_name": "Bash",
+            "tool_input": {"command": f"cd {w_a} && ls"},
+        }
+        self.invoke(payload_no_session)
+        self.assertFalse(record_file.exists())
+
+        # 2. Bash command naming w_ab: records w_ab, but NOT w_a (prefix sharing rejected)
+        payload_ab = {
+            "hook_event_name": "PostToolUse",
+            "session_id": session_id,
+            "cwd": str(self.root),
+            "tool_name": "Bash",
+            "tool_input": {"command": f"cd {w_ab} && ls"},
+        }
+        self.invoke(payload_ab)
+        self.assertTrue(record_file.exists())
+        data = json.loads(record_file.read_text())
+        self.assertIn(str(w_ab.resolve()), data)
+        self.assertNotIn(str(w_a.resolve()), data)
+        raw_text = record_file.read_text()
+        self.assertNotIn(session_id, raw_text)
+        self.assertNotIn(session_id, str(record_file))
+
+        # 3. Edit tool with file_path under w_a: records w_a
+        payload_a_edit = {
+            "hook_event_name": "PostToolUse",
+            "session_id": session_id,
+            "cwd": str(self.root),
+            "tool_name": "Edit",
+            "tool_input": {"file_path": str(w_a / "sub" / "file.txt")},
+        }
+        self.invoke(payload_a_edit)
+        data = json.loads(record_file.read_text())
+        self.assertIn(str(w_a.resolve()), data)
+        self.assertIn(str(w_ab.resolve()), data)
+
+    def test_adapter_record_bounds_max_worktrees(self):
+        session_id = "test-session-bound"
+        session_hash = ADAPTER.session_hash_for(session_id)
+        sessions_dir = self.root / ".git" / "praetor-checkpoint" / "sessions"
+        record_file = sessions_dir / f"{session_hash}.json"
+        many_paths = {f"/path/to/worktree-{i:04d}" for i in range(ADAPTER.MAX_WORKTREES + 50)}
+        ADAPTER._write_session_record(sessions_dir, record_file, many_paths)
+        data = json.loads(record_file.read_text())
+        self.assertLessEqual(len(data), ADAPTER.MAX_WORKTREES)
+        self.assertEqual(len(data), ADAPTER.MAX_WORKTREES)
+        self.assertEqual(data, sorted(data))
 
 
 if __name__ == "__main__":

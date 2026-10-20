@@ -256,7 +256,7 @@ func TestPlantedSchemaRenameFailsAndNamesTheField(t *testing.T) {
 	}{
 		{"claude hook event", "claude/claude-code-settings.json", ".claude/settings.json (adoption hooks)", "PreToolUse", []string{"properties", "hooks", "properties"}, "PreToolUse", "BeforeToolUse"},
 		{"gemini mcp servers", "gemini/settings.schema.json", ".gemini/settings.json (MCP registry)", "mcpServers", []string{"properties"}, "mcpServers", "mcpServerList"},
-		{"opencode mcp", "opencode/config.json", "opencode.json (MCP registry)", "mcp", []string{"$defs", "Config", "properties"}, "mcp", "mcpServers"},
+		{"opencode mcp", "opencode/config.json", "opencode.json (MCP registry)", "mcp", []string{"properties"}, "mcp", "mcpServers"},
 		{"codex hooks", "codex/config.schema.json", ".codex/hooks.json (adoption hooks)", "hooks", []string{"properties"}, "hooks", "lifecycle_hooks"},
 	}
 	byName := map[string]rendering{}

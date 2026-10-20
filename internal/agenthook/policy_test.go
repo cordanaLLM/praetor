@@ -1,6 +1,7 @@
 package agenthook
 
 import (
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -93,13 +94,16 @@ func TestPolicyWordBoundaryIsTheStricterOne(t *testing.T) {
 // slice per call so a caller cannot change the policy.
 func TestBuiltinRules(t *testing.T) {
 	rules := BuiltinRules()
-	if len(rules) != len(builtinEvasion)+1 || rules[len(rules)-1] != (BuiltinRule{Source: builtinDevRoot, Invariant: "DEV-01"}) {
+	if len(rules) != len(builtinEvasion)+1 || !reflect.DeepEqual(rules[len(rules)-1], BuiltinRule{Source: builtinDevRoot, Invariant: "DEV-01"}) {
 		t.Fatalf("unexpected rule list: %+v", rules)
 	}
 	exempt := 0
 	for index, rule := range rules[:len(builtinEvasion)] {
 		want := BuiltinRule{Source: builtinEvasion[index], Invariant: "HISS", ReadOnlyExempt: slices.Contains(readOnlyExemptRules, rule.Source)}
-		if rule != want {
+		if rule.Source == privilegeCommandSource {
+			want.RequiredAny = privilegeNames
+		}
+		if !reflect.DeepEqual(rule, want) {
 			t.Errorf("rule %d: %+v", index, rule)
 		}
 		if rule.ReadOnlyExempt {

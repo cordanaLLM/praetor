@@ -164,8 +164,13 @@ func runEfficiencyTo(args []string, out io.Writer) error {
 		return err
 	}
 
+	defaultBranch := ""
+	if manifest != nil {
+		defaultBranch = manifest.Repository.DefaultBranch
+	}
 	collector := efficiency.NewCollector(efficiency.CollectorOptions{
 		Root:           fl.root,
+		DefaultBranch:  defaultBranch,
 		Milestone:      fl.milestone,
 		Limit:          fl.limit,
 		Policy:         policy,

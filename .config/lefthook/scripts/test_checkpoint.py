@@ -180,7 +180,64 @@ class CheckpointTests(unittest.TestCase):
         (path / "public.txt").write_text("unfinished\n")
         result, _ = self.observe_worktrees()
         self.assertTrue(result["due"])
-        self.assertEqual(result["unfinished_worktrees"][0]["reasons"], ["1 public change(s)"])
+        self.assertEqual(
+            result["unfinished_worktrees"][0]["reasons"],
+            ["1 public change(s)", checkpoint.OWNERSHIP_UNKNOWN_REASON],
+        )
+
+    def test_stop_unowned_worktree_does_not_block(self):
+        path = self.add_linked_worktree()
+        (path / "public.txt").write_text("unfinished\n")
+        session_hash = "0123456789abcdef"
+        sessions_dir = (self.root / ".git" / "praetor-checkpoint" / "sessions").resolve()
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        (sessions_dir / f"{session_hash}.json").write_text("[]\n")
+        with mock.patch.dict(os.environ, {checkpoint.SESSION_ENV: session_hash}):
+            result, _ = self.observe_worktrees()
+        self.assertFalse(result["due"])
+        self.assertEqual(result.get("unfinished_worktrees", []), [])
+
+    def test_stop_owned_worktree_blocks_as_today(self):
+        path = self.add_linked_worktree()
+        (path / "public.txt").write_text("unfinished\n")
+        session_hash = "0123456789abcdef"
+        sessions_dir = (self.root / ".git" / "praetor-checkpoint" / "sessions").resolve()
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        (sessions_dir / f"{session_hash}.json").write_text(json.dumps([str(path.resolve())]))
+        with mock.patch.dict(os.environ, {checkpoint.SESSION_ENV: session_hash}):
+            result, _ = self.observe_worktrees()
+        self.assertTrue(result["due"])
+        self.assertEqual(result["unfinished_worktrees"][0]["path"], str(path.resolve()))
+        self.assertNotIn(checkpoint.OWNERSHIP_UNKNOWN_REASON, result["unfinished_worktrees"][0]["reasons"])
+
+    def test_stop_gate_scratch_worktree_never_blocks(self):
+        (self.root / ".gitignore").write_text("/.standards/worktrees/\n")
+        git(self.root, "add", ".gitignore")
+        git(self.root, "commit", "-q", "-m", "ignore scratch")
+        scratch = self.root / ".standards" / "worktrees" / "gate-x"
+        self.external_paths.append(scratch)
+        git(self.root, "worktree", "add", "-q", "-b", "gate-x", str(scratch), "HEAD")
+        (scratch / "public.txt").write_text("unfinished\n")
+        result, _ = self.observe_worktrees()
+        self.assertFalse(result["due"])
+        self.assertEqual(result.get("unfinished_worktrees", []), [])
+        session_hash = "0123456789abcdef"
+        sessions_dir = (self.root / ".git" / "praetor-checkpoint" / "sessions").resolve()
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        (sessions_dir / f"{session_hash}.json").write_text(json.dumps([str(scratch.resolve())]))
+        with mock.patch.dict(os.environ, {checkpoint.SESSION_ENV: session_hash}):
+            result, _ = self.observe_worktrees()
+        self.assertFalse(result["due"])
+        self.assertEqual(result.get("unfinished_worktrees", []), [])
+
+    def test_stop_no_session_variable_names_ownership_unknown(self):
+        path = self.add_linked_worktree()
+        (path / "public.txt").write_text("unfinished\n")
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(checkpoint.SESSION_ENV, None)
+            result, _ = self.observe_worktrees()
+        self.assertTrue(result["due"])
+        self.assertIn(checkpoint.OWNERSHIP_UNKNOWN_REASON, result["unfinished_worktrees"][0]["reasons"])
 
     def test_stop_open_line_names_branch(self):
         path = self.add_linked_worktree()

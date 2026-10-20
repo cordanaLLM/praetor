@@ -145,6 +145,7 @@ func refusalCases() []struct {
 		{"dev root", "praetorctl adopt /home/user/dev", []byte(BuiltinRules()[len(builtinEvasion)].RefusalPrefix() + builtinDevRoot + "\n")},
 		{"scan bound exceeded", strings.Repeat("x", MaxScanLineChars+1), []byte(ScanBoundRefusal() + "\n")},
 		{"scan bound exactly", strings.Repeat("x", MaxScanLineChars), nil},
+		{"privilege refusal bounded", "sudo -n true", []byte(boundReason(rulePrefix("HISS", evasionMessage)+privilegeCommandRule()) + "\n")},
 		{"benign", "git status", nil},
 	}
 }
@@ -272,6 +273,23 @@ func TestPythonGuardCarriesTheBuiltinEvasionList(t *testing.T) {
 	}
 }
 
+// The guard's declared prefilter must match the canonical Go rule, including its
+// binding to the last evasion pattern. Runtime replay covers the actual verdicts.
+func TestPythonGuardCarriesTheRequiredLiterals(t *testing.T) {
+	data, err := os.ReadFile(pythonGuard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quoted := make([]string, 0, len(privilegeNames))
+	for _, name := range privilegeNames {
+		quoted = append(quoted, strconv.Quote(name))
+	}
+	want := "RULE_PREFILTERS = {BLOCKED_PATTERNS[-1]: (" + strings.Join(quoted, ", ") + ")}"
+	if !strings.Contains(string(data), want) || builtinEvasion[len(builtinEvasion)-1] != privilegeCommandSource {
+		t.Fatal("guard prefilter differs from the Go privilege rule")
+	}
+}
+
 // TestPythonGuardCarriesTheBuiltinDevRootRule holds praetor's own Python guard to the engine's
 // generic dev-root rule byte for byte, so neither side names an organisation folder the other
 // does not.
@@ -329,7 +347,9 @@ func pythonIntConstant(t *testing.T, name string) string {
 // adopted interceptor is rendered with. The corpus replay cannot: the Go policy has no such
 // bound, so a command beyond it is refused by the Python guard alone.
 func TestPythonGuardCarriesTheScanBounds(t *testing.T) {
-	for name, want := range map[string]int{"MAX_SCAN_CHARS": MaxScanChars, "MAX_SCAN_LINE_CHARS": MaxScanLineChars} {
+	for name, want := range map[string]int{
+		"MAX_SCAN_CHARS": MaxScanChars, "MAX_SCAN_LINE_CHARS": MaxScanLineChars, "MAX_REASON_BYTES": MaxReasonBytes,
+	} {
 		if got := pythonIntConstant(t, name); got != strconv.Itoa(want) {
 			t.Errorf("%s in %s is %s, agenthook's bound is %d", name, pythonGuard, got, want)
 		}

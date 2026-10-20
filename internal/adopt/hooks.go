@@ -401,11 +401,14 @@ import sys
 MAX_INPUT_BYTES = {{MAX_INPUT_BYTES}}
 MAX_SCAN_CHARS = {{MAX_SCAN_CHARS}}
 MAX_SCAN_LINE_CHARS = {{MAX_SCAN_LINE_CHARS}}
+MAX_REASON_BYTES = {{MAX_REASON_BYTES}}
 BLOCK_EXIT = 2
 
 {{REFUSALS}}
 RULES = [
 {{RULES}}]
+
+{{RULE_PREFILTERS}}
 
 # The RULES judged without the words of read-only commands chained after a commit. Each
 # pattern has a name of its own: wrapped inside the list, it would read as two items with
@@ -486,6 +489,9 @@ GIT_OPTION_RUN_JOIN = r")*\s+("
 
 def search(pattern, text):
     """re.search(pattern, text) is not None, with the git option-run rule in linear time."""
+    literals = RULE_PREFILTERS.get(pattern, ())
+    if literals and not any(literal in text for literal in literals):
+        return False
     head, join, tail = pattern.partition(GIT_OPTION_RUN_JOIN)
     if not join or not head.startswith(GIT_OPTION_RUN_HEAD):
         return re.search(pattern, text) is not None
@@ -520,7 +526,10 @@ def check_command(command):
     for pattern, refusal in RULES:
         text = judged if pattern in READ_ONLY_EXEMPT else command
         if search(pattern, text):
-            raise Blocked(refusal + pattern)
+            reason = (
+                (refusal + pattern).encode()[:MAX_REASON_BYTES].decode(errors="ignore")
+            )
+            raise Blocked(reason)
 
 
 def main():
@@ -608,8 +617,10 @@ func buildBlockEvasionPY() string {
 		"{{MAX_INPUT_BYTES}}", strconv.Itoa(agenthook.MaxInputBytes),
 		"{{MAX_SCAN_CHARS}}", strconv.Itoa(agenthook.MaxScanChars),
 		"{{MAX_SCAN_LINE_CHARS}}", strconv.Itoa(agenthook.MaxScanLineChars),
+		"{{MAX_REASON_BYTES}}", strconv.Itoa(agenthook.MaxReasonBytes),
 		"{{REFUSALS}}", refusals.String(),
 		"{{RULES}}", rules.String(),
+		"{{RULE_PREFILTERS}}", interceptorPrefilters(),
 		"{{READ_ONLY_EXEMPT_PATTERNS}}", exemptPatterns.String(),
 		"{{READ_ONLY_EXEMPT}}", exempt.String(),
 		"{{READ_ONLY_WORDS}}", pythonAssignment("READ_ONLY_WORDS", pyToken{agenthook.ReadOnlyWords, pyRaw}),
@@ -617,6 +628,18 @@ func buildBlockEvasionPY() string {
 		"{{LEFTHOOK_DISABLED}}", disabled.String(),
 		"{{LEFTHOOK_NARROWING}}", pythonStringTuple(agenthook.LefthookNarrowingVariables()),
 	).Replace(blockEvasionTemplate)
+}
+
+// interceptorPrefilters renders the Go policy's necessary literal lists, keyed
+// by the same pattern objects RULES judges, without repeating their source text.
+func interceptorPrefilters() string {
+	var entries strings.Builder
+	for index, rule := range agenthook.BuiltinRules() {
+		if len(rule.RequiredAny) > 0 {
+			entries.WriteString("    RULES[" + strconv.Itoa(index) + "][0]: " + pythonStringTuple(rule.RequiredAny) + ",\n")
+		}
+	}
+	return "RULE_PREFILTERS = {\n" + entries.String() + "}\n"
 }
 
 // pythonStringTuple renders plain ASCII names as a Python tuple literal of strings, laid out
@@ -874,6 +897,7 @@ func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
 // TestPriorEvasionHookDigests_Boundary_CurrentRenderingRecorded fails until a changed rendering
 // is recorded here, so the next release still refreshes it (evasion_prior_test.go).
 var priorEvasionHookDigests = map[string]string{
+	"b43f0818ef78cf285434e865abd9f78529e6064ebb9f4e8ab6ce97ed49637a59": "privilege refusal with shared necessary-literal prefilter",
 	"64fa5045ca8d31b1917383b878a9549960cac8c8b684013369af171f9f2fcd3e": "HISS-16 labels, own pattern list",
 	"15f46f44fcb492f59a63c186196d5be80250af02ac64b51087890094a0087cb5": "HISS labels, own pattern list",
 	"3c0553691766524d3d7c22454e6acb4d6525295aa79f300a783121f329bad800": "engine rules, bounded JSON input",
@@ -888,6 +912,7 @@ var priorEvasionHookDigests = map[string]string{
 	"526ccd7bd6ec2070ed8dc8dfb97a9f9857de99e9c49ae6359c15b5a88fc47273": "dev root ends in either path separator (#200)",
 	"b8937e971450935197b92af4ff3b05adba551939fd90212b142030c8ba85ee06": "SPDX-License-Identifier line behind the shebang (#1281)",
 	"682a8ed3eea87a45a9d6f4b9b5ddc68a1363a2cbeec0dca407cc50a6bee647dd": "current rendering after main changes and SPDX header",
+	"d3dcb48d31aed45db876298e355fe4a815c688d1cac59ff4ec90b7d5b42cd669": "privilege escalation refusal and bounded diagnostics",
 }
 
 // reconcileEvasionHook scaffolds the interceptor. It is generated, not audit-verified, so an
