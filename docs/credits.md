@@ -135,6 +135,11 @@ The `adhd-format` skill and `social-text`, which inherits from it, are adapted f
 | [Dev Container CLI](https://github.com/devcontainers/cli) (`@devcontainers/cli` 0.89.0) | Builds a repository's devcontainer for the gate; the binaries embed its manifest and lock (`internal/devcontainer/cli.go`) and install it into the tool cache | tool, integrated | MIT, © Microsoft Corporation |
 | [interfig](https://github.com/vectorize-io/hindsight/tree/ccfe85b4851957ac2adf88b4a9ddf9668b2882f1/hindsight-interfig) (`hindsight-interfig/` in vectorize-io/hindsight) | Draws the interactive figures on this site; vendored byte-identical at commit `ccfe85b4851957ac2adf88b4a9ddf9668b2882f1` in `tools/figures/third_party/interfig/`. The binaries embed its render source and the figure player that bundles it (`tools/figures/assets.go`) | vendored file, vendored | MIT, © 2025 Vectorize AI, Inc. Its vendored `package.json` names [Vite](https://github.com/vitejs/vite), [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react) and [Prettier](https://github.com/prettier/prettier) (MIT each) as development dependencies; no code of theirs is reproduced, and praetor's figure build does not install them |
 | [React](https://github.com/facebook/react) 19.3.1, with react-dom 19.3.1 and scheduler 0.28.0 | Bundled with interfig into the figure player (`tools/figures/player/player.js`) that the binaries embed and this site loads | dependency, shipped | MIT, © Meta Platforms, Inc. and affiliates |
+| [Aegis-OS Concordia tokens](https://github.com/cordanaLLM/Aegis-OS/tree/5f8e9a23933f9a612c5c1b1c1324250c9b3c0606/ui/concordia-tokens) Commit 5f8e9a23933f9a612c5c1b1c1324250c9b3c0606; Aegis: protective shield, pronounced EE-jis; Concordia: Latin for harmony, kon-KOR-dee-ah | Colour, typography, spacing, reduced motion and 3 px focus tokens; semantic aliases and dark-theme adaptation in the console | vendored file, adapted | EUPL-1.2, © 2026 Lusoris |
+| [sveltesentio](https://github.com/golusoris/sveltesentio) ui 0.8.0, realtime 0.7.0 | The console's UI components and its live-update client (server-sent events), bundled into the console build | dependency, integrated | EUPL-1.2 |
+| [Svelte](https://github.com/sveltejs/svelte) 5.57.2 | The console's component framework; its compiled runtime is part of the console build | dependency, integrated | MIT |
+| [SvelteKit](https://github.com/sveltejs/kit) kit 3.1.0, adapter-static 4.0.0 | The console's application framework and its static adapter; its client runtime is part of the console build | dependency, integrated | MIT |
+| [Ajv](https://github.com/ajv-validator/ajv) 8.20.0 | Compiles console.schema.json into standalone validators at build time, so the browser checks every data file against the schema; one Ajv runtime helper is part of the console build | dependency, integrated | MIT, © Evgeny Poberezkin |
 
 ## Container and development images
 
@@ -326,5 +331,19 @@ extension (`editors/vscode/package.json`), and the packages the vendored interfi
 | [Sätteri](https://github.com/bruits/satteri) (`satteri`) | Markdown and MDX processing of the figures' Astro integration (`tools/figures/astro.mjs`) and its tests | dependency, used by CI | MIT |
 | [DefinitelyTyped](https://github.com/DefinitelyTyped/DefinitelyTyped) | Type declarations (`@types/react`, `@types/react-dom`, `@types/node`, `@types/vscode`) for the figure tooling and the VS Code extension | dependency, used by CI | MIT |
 | [vscode-languageclient](https://github.com/microsoft/vscode-languageserver-node) | The language client of the praetor VS Code extension (`editors/vscode`) | dependency, integrated | MIT |
+| [Tailwind CSS](https://github.com/tailwindlabs/tailwindcss) 4.3.3 | Generates the console's stylesheet at build time | tool, used by CI | MIT |
+| [vite-plugin-svelte](https://github.com/sveltejs/vite-plugin-svelte) 7.3.1 | Compiles the console's Svelte components in the Vite build | tool, used by CI | MIT |
+| [svelte-check](https://github.com/sveltejs/language-tools) 4.7.7 | Type and template checks of the console (`pnpm check`) | tool, used by CI | MIT, © The Svelte Community |
+| [Vitest](https://github.com/vitest-dev/vitest) 5.0.5 | Runs the console's unit tests and the planted bundle-budget overrun | tool, used by CI | MIT, © Anthony Fu |
+| [Svelte Testing Library](https://github.com/testing-library/svelte-testing-library) 5.4.2 | Renders console components in the unit tests | tool, used by CI | MIT |
+| [jsdom](https://github.com/jsdom/jsdom) 30.1.3 | The DOM environment of the console's unit tests | tool, used by CI | MIT |
+| [Playwright](https://github.com/microsoft/playwright) 1.56.1 | Drives the console's accessibility and keyboard tests in Chromium and renders its screenshots | tool, used by CI | Apache-2.0, © Microsoft Corporation |
+| [axe-core](https://github.com/dequelabs/axe-core) 4.14.0 | The accessibility rules engine (WCAG 2.2 AA) of the console's accessibility tests | tool, used by CI | MPL-2.0 |
+| [axe-core Playwright integration](https://github.com/dequelabs/axe-core-npm) 4.14.0 | Runs axe-core inside the console's Playwright tests | tool, used by CI | MPL-2.0 |
+| [ESLint](https://github.com/eslint/eslint) eslint 10.13.0, @eslint/js 10.0.1 | Lints the console's TypeScript and Svelte sources (`pnpm lint`) | tool, used by CI | MIT, © Nicholas C. Zakas |
+| [eslint-plugin-svelte](https://github.com/sveltejs/eslint-plugin-svelte) 3.23.1 | ESLint rules for the console's Svelte components | tool, used by CI | MIT, © Yosuke Ota |
+| [typescript-eslint](https://github.com/typescript-eslint/typescript-eslint) 8.72.0 | ESLint rules and parser for the console's TypeScript | tool, used by CI | MIT |
+| [globals](https://github.com/sindresorhus/globals) 17.13.0 | Browser and Node global names for the console's ESLint configuration | tool, used by CI | MIT, © Sindre Sorhus |
+| [prettier-plugin-svelte](https://github.com/sveltejs/prettier-plugin-svelte) 4.1.1 | Formats the console's Svelte components in the formatting check | tool, used by CI | MIT, © James Birtles |
 
 <!-- REUSE-IgnoreEnd -->

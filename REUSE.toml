@@ -134,3 +134,10 @@ SPDX-FileCopyrightText = [
   "OpenAI",
 ]
 SPDX-License-Identifier = "EUPL-1.2 AND Apache-2.0"
+
+# Synthetic console screenshots: review artifacts rendered from console/fixtures/ only.
+[[annotations]]
+path = ["console/screenshots/*.png"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Lusoris <lusoris@proton.me>"
+SPDX-License-Identifier = "EUPL-1.2"

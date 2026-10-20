@@ -1,0 +1,132 @@
+/* SPDX-FileCopyrightText: 2026 Lusoris <lusoris@proton.me>
+ * SPDX-License-Identifier: EUPL-1.2
+ * Semantic aliases for Concordia and the component library.
+ */
+@import 'tailwindcss';
+@import './concordia-tokens.css';
+@source '../node_modules/@sveltesentio/ui/src';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme static {
+	--color-background: var(--concordia-color-surface);
+	--color-foreground: var(--concordia-color-text);
+	--color-card: var(--concordia-color-surface);
+	--color-card-foreground: var(--concordia-color-text);
+	--color-popover: var(--concordia-color-surface);
+	--color-popover-foreground: var(--concordia-color-text);
+	--color-primary: var(--concordia-color-accent);
+	--color-primary-foreground: var(--concordia-color-on-accent);
+	--color-secondary: var(--concordia-color-surface-raised);
+	--color-secondary-foreground: var(--concordia-color-text);
+	--color-muted: var(--concordia-color-surface-raised);
+	--color-muted-foreground: var(--concordia-color-text-muted);
+	--color-accent: var(--concordia-color-surface-raised);
+	--color-accent-foreground: var(--concordia-color-text);
+	--color-destructive: var(--concordia-color-accent);
+	--color-destructive-foreground: var(--concordia-color-on-accent);
+	--color-border: var(--concordia-color-border);
+	--color-input: var(--concordia-color-border);
+	--color-ring: var(--concordia-color-focus-ring);
+	--color-ok: var(--concordia-color-accent);
+	--color-warn: var(--concordia-color-text);
+	--color-idle: var(--concordia-color-text-muted);
+	--color-bar: var(--concordia-color-accent);
+	--font-sans: var(--concordia-font-family);
+	--font-mono: ui-monospace, monospace;
+	--radius-card: var(--concordia-radius);
+	--space-1: calc(var(--concordia-space-1) / 2);
+	--space-2: var(--concordia-space-1);
+	--space-3: calc(var(--concordia-space-1) + var(--concordia-space-1) / 2);
+	--space-4: var(--concordia-space-2);
+	--space-6: var(--concordia-space-3);
+	--focus-ring-width: var(--concordia-focus-ring-width);
+}
+
+/* Dark adaptation: override the upstream semantic palette, keep its type/space/ring. */
+:root.dark {
+	--concordia-color-surface: #1b1f24;
+	--concordia-color-surface-raised: #282f38;
+	--concordia-color-text: #ffffff;
+	--concordia-color-text-muted: #c3cad4;
+	--concordia-color-accent: #9bc4ff;
+	--concordia-color-on-accent: #1b1f24;
+	--concordia-color-border: #9ca3af;
+	--concordia-color-focus-ring: #9bc4ff;
+}
+
+@layer base {
+	html {
+		background: var(--color-background);
+		color: var(--color-foreground);
+		font-family: var(--font-sans);
+		-webkit-text-size-adjust: 100%;
+	}
+
+	body {
+		margin: 0;
+		min-height: 100dvh;
+		line-height: var(--concordia-line-height);
+		font-size: var(--concordia-font-size);
+	}
+
+	:focus-visible {
+		outline: var(--focus-ring-width) solid var(--color-ring);
+		outline-offset: var(--concordia-focus-ring-offset);
+	}
+
+	a {
+		color: var(--color-primary);
+		text-underline-offset: 3px;
+	}
+
+	code,
+	kbd,
+	pre {
+		font-family: var(--font-mono);
+	}
+}
+
+/* Command palette (@sveltesentio/ui/cmd/palette) reads these. */
+:root {
+	--ssentio-cmd-bg: var(--color-popover);
+	--ssentio-cmd-fg: var(--color-popover-foreground);
+	--ui-accent: var(--color-accent);
+	--ui-border: var(--color-border);
+	--ui-radius: var(--radius-card);
+	--ui-min-target-size: var(--concordia-target-min);
+}
+
+.ssentio-cmd__backdrop {
+	z-index: 50;
+}
+
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation: none !important;
+		animation-iteration-count: 1 !important;
+		transition: none !important;
+		scroll-behavior: auto !important;
+	}
+}
+
+/* Library utilities suppress outlines; restore Concordia's full 3 px ring. */
+:root :focus-visible {
+	outline: var(--concordia-focus-ring-width) solid var(--concordia-color-focus-ring);
+	outline-offset: var(--concordia-focus-ring-offset);
+	box-shadow: none;
+}
