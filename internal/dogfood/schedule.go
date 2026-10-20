@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/admission"
 	"github.com/cordanaLLM/praetor/internal/buildid"
+	"github.com/cordanaLLM/praetor/internal/sentinel"
 )
 
 // MaxScheduleDuration leaves one minute for bookkeeping around the finite suite.
@@ -19,7 +21,7 @@ const MaxScheduleDuration = MaxSuiteDuration + time.Minute
 // engine is the running binary's identity, which the suite report records as
 // SuiteOptions.Engine documents.
 func RunSchedule(ctx context.Context, path string, engine buildid.Identity) (*ScheduleReport, error) {
-	return scheduleTick(ctx, path, true, time.Now, suiteRunnerAs(engine))
+	return scheduleTick(ctx, path, true, time.Now, suiteRunnerAs(engine), nil)
 }
 
 // suiteRunnerAs runs a scheduled suite as the binary engine identifies, so a scheduled report
@@ -33,7 +35,7 @@ func suiteRunnerAs(engine buildid.Identity) scheduleRunner {
 
 // ScheduleStatus reads inputs and state without creating files or running cases.
 func ScheduleStatus(ctx context.Context, path string) (*ScheduleReport, error) {
-	return scheduleTick(ctx, path, false, time.Now, RunSuite)
+	return scheduleTick(ctx, path, false, time.Now, RunSuite, nil)
 }
 
 // ScheduleStatusWithinRoot confines every embedded read path before access for hosted callers.
@@ -41,24 +43,25 @@ func ScheduleStatusWithinRoot(ctx context.Context, path, inputRoot string) (*Sch
 	if inputRoot == "" || !filepath.IsAbs(inputRoot) {
 		return nil, errors.New("schedule confinement requires an absolute input root")
 	}
-	return scheduleTickWithinRoot(ctx, path, inputRoot, false, time.Now, RunSuite)
+	return scheduleTickWithinRoot(ctx, path, inputRoot, false, time.Now, RunSuite, nil)
 }
 
 type scheduleRunner func(context.Context, SuiteOptions) (*SuiteReport, error)
 type scheduleSession struct {
-	snapshot *scheduleSnapshot
-	state    *scheduleState
-	report   *ScheduleReport
-	root     *os.Root
-	now      func() time.Time
-	runner   scheduleRunner
+	snapshot   *scheduleSnapshot
+	state      *scheduleState
+	report     *ScheduleReport
+	root       *os.Root
+	now        func() time.Time
+	runner     scheduleRunner
+	hostReader func() (sentinel.HostStats, error)
 }
 
-func scheduleTick(ctx context.Context, path string, execute bool, now func() time.Time, runner scheduleRunner) (*ScheduleReport, error) {
-	return scheduleTickWithinRoot(ctx, path, "", execute, now, runner)
+func scheduleTick(ctx context.Context, path string, execute bool, now func() time.Time, runner scheduleRunner, hostReader func() (sentinel.HostStats, error)) (*ScheduleReport, error) {
+	return scheduleTickWithinRoot(ctx, path, "", execute, now, runner, hostReader)
 }
 
-func scheduleTickWithinRoot(ctx context.Context, path, inputRoot string, execute bool, now func() time.Time, runner scheduleRunner) (report *ScheduleReport, err error) {
+func scheduleTickWithinRoot(ctx context.Context, path, inputRoot string, execute bool, now func() time.Time, runner scheduleRunner, hostReader func() (sentinel.HostStats, error)) (report *ScheduleReport, err error) {
 	if ctx == nil {
 		return nil, errors.New("schedule requires a context")
 	}
@@ -93,7 +96,7 @@ func scheduleTickWithinRoot(ctx context.Context, path, inputRoot string, execute
 		report.Status = "busy"
 		return report, nil
 	}
-	return report, inspectScheduleSession(ctx, snapshot, report, root, release != nil, execute, now, runner)
+	return report, inspectScheduleSession(ctx, snapshot, report, root, release != nil, execute, now, runner, hostReader)
 }
 
 // openScheduleRoot opens the state directory, returning nil when nonexistent on dry run.
@@ -114,7 +117,7 @@ func acquireScheduleLock(root *os.Root, execute bool) (func() error, bool, error
 	return release, busy, nil
 }
 
-func inspectScheduleSession(ctx context.Context, snapshot *scheduleSnapshot, report *ScheduleReport, root *os.Root, locked, execute bool, now func() time.Time, runner scheduleRunner) error {
+func inspectScheduleSession(ctx context.Context, snapshot *scheduleSnapshot, report *ScheduleReport, root *os.Root, locked, execute bool, now func() time.Time, runner scheduleRunner, hostReader func() (sentinel.HostStats, error)) error {
 	state, err := readScheduleState(ctx, root)
 	if err != nil {
 		return err
@@ -122,14 +125,35 @@ func inspectScheduleSession(ctx context.Context, snapshot *scheduleSnapshot, rep
 	if !locked && state.Attempts > 0 {
 		return errors.New("persisted schedule is missing its lock file")
 	}
-	session := scheduleSession{snapshot: snapshot, state: state, report: report, root: root, now: now, runner: runner}
+	session := scheduleSession{snapshot: snapshot, state: state, report: report, root: root, now: now, runner: runner, hostReader: hostReader}
 	if err := session.inspect(ctx, execute); err != nil {
 		return err
 	}
 	if !execute || report.Status != "due" {
 		return nil
 	}
-	return session.run(ctx)
+	return session.runWhenHostAdmitted(ctx)
+}
+
+func (s *scheduleSession) runWhenHostAdmitted(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	read := s.hostReader
+	if read == nil {
+		read = admission.HostReader(s.snapshot.config.SourceRoot)
+	}
+	stats, err := read()
+	if err != nil {
+		return fmt.Errorf("schedule host admission: read host: %w", err)
+	}
+	verdict := admission.Judge(stats, admission.HostCappedPolicy(stats))
+	s.report.HostReason = verdict.Reason
+	if !verdict.Admit {
+		s.report.Status = "host_held"
+		return nil
+	}
+	return s.run(ctx)
 }
 
 func (s *scheduleSession) inspect(ctx context.Context, execute bool) error {

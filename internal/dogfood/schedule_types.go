@@ -32,6 +32,7 @@ type ScheduleReport struct {
 	Fingerprint         string           `json:"fingerprint"`
 	Status              string           `json:"status"`
 	Reason              string           `json:"reason,omitempty"`
+	HostReason          string           `json:"host_reason,omitempty"`
 	Verified            bool             `json:"verified"`
 	NextDue             time.Time        `json:"next_due,omitempty"`
 	Attempts            int              `json:"attempts"`

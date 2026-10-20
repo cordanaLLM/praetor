@@ -65,6 +65,11 @@ or bytes reach `max_bytes`, persisting `pruned_through` with fsync before deleti
 Retained attempt directories must exist gapless from `pruned_through + 1` through `attempts`.
 Status reads current admission and reports what would be pruned without deleting evidence.
 
+A due run waits for the host admission policy shared with the race stage
+(`admission.HostCappedPolicy`). A held tick returns `status: host_held` and
+`host_reason`; the next tick retries, with no attempt or failure counted.
+Status-only reads stay `due` without reading the host. Host read errors stop the tick.
+
 ## Install the user timer
 
 Install fresh local binaries with `make dev-install`, then run:

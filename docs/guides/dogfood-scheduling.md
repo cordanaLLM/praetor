@@ -81,6 +81,12 @@ Changed engine or configuration inputs reset the failure circuit only when a
 new run is admitted, after at least `retry_seconds` since the previous start.
 A clock rollback delays admission. No reset or force-execution command exists.
 
+A due run waits for the race stage's host admission policy: memory and swap bounds
+are capped to the host's size, and measured one-minute load must be at most 1.25
+times its CPU count (`admission.HostCappedPolicy`). A held tick returns `host_held`
+with `host_reason`; the next tick retries, with no attempt or failure counted.
+Status-only reads stay `due` without reading the host. A host read error stops the tick.
+
 An advisory lock prevents overlapping invocations and is released by the kernel
 when a process exits. A tick that finishes unlocks it before closing it, so a
 subprocess still holding a copy of the descriptor cannot leave the next tick
@@ -92,7 +98,7 @@ its partial evidence remains. Corrupt or inconsistent state, missing attempt
 sequences, failed snapshot writes and failed persistence all stop execution.
 
 Output distinguishes `due`, `cooldown`, `busy`, `circuit_blocked`,
-`resource_blocked`, `verified`, and `failed`. `last_attempt.status` preserves a
+`resource_blocked`, `host_held`, `verified`, and `failed`. `last_attempt.status` preserves a
 previous failure or interruption even during cooldown. Only a newly completed
 successful run sets top-level `verified: true`; status never claims new
 verification. Read-only status and admission no-ops exit successfully with their

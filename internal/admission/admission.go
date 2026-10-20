@@ -38,6 +38,21 @@ func DefaultPolicy() Policy {
 	return Policy{MinAvailableBytes: 12 * gib, MinSwapFreeBytes: 15 * gib, MaxLoad1: 1.25 * float64(runtime.NumCPU())}
 }
 
+// HostCappedPolicy is the fleet's admission policy capped by the host it reads: at most a quarter of
+// the host's memory must be available and at most half of its swap free. The fleet bounds (12
+// GiB, 15 GiB) hold on a host large enough for them; on a smaller host or a CI runner with a few
+// GiB of swap a fixed bound would hold the stage until its deadline on every run.
+func HostCappedPolicy(stats sentinel.HostStats) Policy {
+	policy := DefaultPolicy()
+	if stats.RAMTotalBytes > 0 {
+		policy.MinAvailableBytes = min(policy.MinAvailableBytes, stats.RAMTotalBytes/4)
+	}
+	if stats.SwapMeasured {
+		policy.MinSwapFreeBytes = min(policy.MinSwapFreeBytes, stats.SwapTotalBytes/2)
+	}
+	return policy
+}
+
 // Verdict is one admission decision and the reason it names.
 type Verdict struct {
 	Admit  bool
