@@ -55,6 +55,16 @@ var (
 	unquoter = strings.NewReplacer(`"`, "", `'`, "")
 )
 
+// ShellAssignment reads a leading NAME=value shell word without removing value quotes or
+// expanding it. It shares the assignment grammar used by parseShellCommand.
+func ShellAssignment(word string) (name, value string, ok bool) {
+	match := shellAssignmentWord.FindStringSubmatch(word)
+	if match == nil {
+		return "", "", false
+	}
+	return match[1], match[2], true
+}
+
 // scriptCommands cuts a run: script's fields into its commands, each as its shell words.
 func scriptCommands(fields []string) [][]string {
 	var commands [][]string
@@ -127,16 +137,22 @@ func openSubstitution(word string) bool {
 func openQuote(word string) byte {
 	var open byte
 	for i := 0; i < len(word); i++ {
-		switch c := word[i]; {
-		case open == 0 && (c == '"' || c == '\''):
-			open = c
-		case c == open:
-			open = 0
-		case c == '\\' && open != '\'':
-			i++
-		}
+		i, open = shellQuoteStep(word, i, open)
 	}
 	return open
+}
+
+// shellQuoteStep shares quote and escape handling between word joining and field splitting.
+func shellQuoteStep(text string, i int, open byte) (int, byte) {
+	switch c := text[i]; {
+	case open == 0 && (c == '"' || c == '\''):
+		open = c
+	case c == open:
+		open = 0
+	case c == '\\' && open != '\'':
+		i++
+	}
+	return i, open
 }
 
 // openExpression reports whether word opens a ${{ }} expression it does not close.

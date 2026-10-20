@@ -12,7 +12,6 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
-	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -147,34 +146,9 @@ func actionPath(uses string) string {
 	return action
 }
 
-// scriptFields splits a run: script into its whitespace-separated fields. A command named only
-// in a comment does not run, so comments are dropped first. A backslash-newline continues one
-// command and any other newline ends it, so a newline becomes a ";" field, where the command
-// readers stop (commandSegment); so does a ";" that ends a word ("goreleaser check;"), except
-// find's escaped "\;".
+// scriptFields is the internal entry point for the shared shell field reader.
 func scriptFields(run string) ([]string, error) {
-	script, err := util.StripHashComments(strings.ReplaceAll(run, "\r\n", "\n"))
-	if err != nil {
-		return nil, fmt.Errorf("run script: %w", err)
-	}
-	script = strings.ReplaceAll(strings.ReplaceAll(script, "\\\n", " "), "\n", " ; ")
-	words := strings.Fields(script)
-	if len(words) > maxRunScriptFields {
-		return nil, fmt.Errorf("run script exceeds %d fields", maxRunScriptFields)
-	}
-	fields := make([]string, 0, len(words))
-	for i := 0; i < len(words); i++ {
-		word, ends := strings.CutSuffix(words[i], ";")
-		if !ends || word == "" || strings.HasSuffix(word, "\\") {
-			fields = append(fields, words[i])
-			continue
-		}
-		fields = append(fields, word, ";")
-	}
-	if len(fields) > maxRunScriptFields {
-		return nil, fmt.Errorf("run script exceeds %d fields", maxRunScriptFields)
-	}
-	return fields, nil
+	return ShellFields(run)
 }
 
 // runInvokesSBOMGenerator reports whether a run script's fields invoke a generator that

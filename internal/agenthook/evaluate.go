@@ -119,18 +119,29 @@ func decodeCanonical(ctx context.Context, dialect Dialect, event Event, in Invoc
 
 // resolveGovernedRoot answers the workspace root and whether evaluation continues. The second
 // return is the verdict to use when it does not: no repository or an ungoverned workspace
-// under the governed-only scope are a neutral skip, never a failure.
+// under the governed-only scope are a neutral skip unless a command target is governed.
 func resolveGovernedRoot(ctx context.Context, canonical Canonical, in Invocation) (string, Verdict, bool) {
 	root, err := ResolveRoot(ctx, canonical.Workspaces, in.WorkDir)
+	if err == nil {
+		root, err = resolveCommandRoot(ctx, root, canonical, in)
+	}
 	switch {
 	case err != nil:
 		return "", Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] " + err.Error()}, false
-	case root == "":
+	case root == "" && !judgedWithoutRepository(canonical, in):
 		return "", Verdict{Outcome: Skip, Reason: "no repository"}, false
 	case !Governed(root) && !AppliesEverywhere(in.Settings):
 		return "", Verdict{Outcome: Skip, Reason: "workspace not governed"}, false
 	}
 	return root, Verdict{}, true
+}
+
+// judgedWithoutRepository reports a pre-tool command under hooks.scope: all whose workspace is
+// no repository. The command policy reads the command text only, so it runs with an empty root:
+// the scope covers every workspace, and a shell outside any repository is one. Every other event
+// needs a repository root and keeps the "no repository" skip.
+func judgedWithoutRepository(canonical Canonical, in Invocation) bool {
+	return AppliesEverywhere(in.Settings) && canonical.Event == EventPreTool && canonical.Command != ""
 }
 
 // checkpointWired names the clients whose pre-edit, post-tool and stop rows this change
