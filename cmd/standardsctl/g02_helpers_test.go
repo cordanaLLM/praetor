@@ -8,8 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/cavemansource"
@@ -307,5 +309,54 @@ func mustErrContain(t *testing.T, err error, needle string) {
 	}
 	if !strings.Contains(err.Error(), needle) {
 		t.Fatalf("expected error containing %q, got: %v", needle, err)
+	}
+}
+
+// expiryDays returns the distinct calendar day expiry strings (YYYY-MM-DD) for days ahead of
+// before and after, accepting a test run that crossed midnight UTC (at most two consecutive days).
+func expiryDays(before, after time.Time, days int) []string {
+	bDay := config.ExceptionDay(before)
+	aDay := config.ExceptionDay(after)
+	if bDay.After(aDay) {
+		bDay, aDay = aDay, bDay
+	}
+	expBefore := bDay.AddDate(0, 0, days).Format(config.ExceptionDateLayout)
+	expAfter := aDay.AddDate(0, 0, days).Format(config.ExceptionDateLayout)
+	if expBefore == expAfter {
+		return []string{expBefore}
+	}
+	return []string{expBefore, expAfter}
+}
+
+// matchExpiry finds the one expiry from expiries that haystack contains after prefix,
+// and returns it. It fails t if none match.
+func matchExpiry(t *testing.T, haystack, prefix string, expiries []string) string {
+	t.Helper()
+	for _, exp := range expiries {
+		if strings.Contains(haystack, prefix+exp) {
+			return exp
+		}
+	}
+	t.Fatalf("expected output to contain prefix %q followed by one of %v, got:\n%s", prefix, expiries, haystack)
+	return ""
+}
+
+func TestExpiryDays_ExceptionMidnightBoundary(t *testing.T) {
+	// Midnight boundary: before 2026-10-19T23:59:59Z and after 2026-10-20T00:00:01Z returns both expiry strings.
+	before := time.Date(2026, time.October, 19, 23, 59, 59, 0, time.UTC)
+	after := time.Date(2026, time.October, 20, 0, 0, 1, 0, time.UTC)
+	gotBoth := expiryDays(before, after, config.MaxExceptionDays)
+	wantBoth := []string{"2027-01-17", "2027-01-18"}
+	if !slices.Equal(gotBoth, wantBoth) {
+		t.Fatalf("expiryDays across midnight: got %v, want %v", gotBoth, wantBoth)
+	}
+
+	// Same day: both times on one day returns one expiry string.
+	sameBefore := time.Date(2026, time.October, 19, 10, 0, 0, 0, time.UTC)
+	sameAfter := time.Date(2026, time.October, 19, 11, 0, 0, 0, time.UTC)
+	gotSingle := expiryDays(sameBefore, sameAfter, config.MaxExceptionDays)
+	wantSingle := []string{"2027-01-17"}
+	if !slices.Equal(gotSingle, wantSingle) {
+		t.Fatalf("expiryDays on same day: got %v, want %v", gotSingle, wantSingle)
 	}
 }
