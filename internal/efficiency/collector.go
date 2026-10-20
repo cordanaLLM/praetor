@@ -23,6 +23,7 @@ const DefaultLimit = 20
 // is the efficiency section of the manifest the caller already loaded (nil selects defaults);
 // the collector never loads a manifest itself.
 type CollectorOptions struct {
+	DefaultBranch  string
 	Root           string
 	Milestone      string
 	Limit          int
@@ -193,10 +194,16 @@ func (c *Collector) loadTranscripts(ctx context.Context, report *Report) (map[st
 	if dir == "" {
 		return nil, nil
 	}
-	stats, notes, err := ReadTranscriptsDir(ctx, dir, c.classifier)
+	join, joinNotes, err := c.transcriptJoin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	stats, notes, err := readJoinedTranscripts(ctx, dir, c.classifier, defaultLimits(), join)
 	if err != nil {
 		return nil, fmt.Errorf("read transcripts from %s: %w", dir, err)
 	}
+	report.TranscriptCoverage = &notes.Coverage
+	report.Notes = append(report.Notes, joinNotes...)
 	report.Sources.Transcripts = true
 	report.Notes = append(report.Notes, notes.Lines()...)
 	return stats, nil

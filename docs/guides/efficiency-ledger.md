@@ -140,9 +140,43 @@ and the bound named; nothing is cut off silently.
    under Notes.
 2. **Agent session transcripts:** A directory of agent session JSONL files, read through the
    harvester's line reader and record decoder (8 MiB lines, UTF-8, surrogate and duplicate-key
-   checks). Subagent sessions below the directory are read; hidden directories are skipped. Lines
-   join to a pull request **only by exact head-branch match**. When a head branch name was reused,
-   the sessions belong to the pull request merged last. Lines that fail the decoder checks (for
+   checks). Subagent sessions below the directory are read; hidden directories are skipped. Responses join to a branch after all their streamed content blocks have been read:
+
+   - A non-default `gitBranch` keeps the explicit branch join. The default comes from
+     `repository.default_branch`, then the local `origin/HEAD`; when neither is available,
+     the reader treats `main` as default and reports that choice under Notes.
+   - Otherwise, tool inputs supply paths: Bash `cd`, `git -C` and literal absolute paths;
+     Read/Edit/Write `file_path`; NotebookEdit `file_path` or `notebook_path`; and
+     EnterWorktree `path`. Relative literal paths use the line's `cwd`; shell variables and
+     expansions are never evaluated. A path matches the longest known worktree root at a
+     directory boundary, so `/w/a` does not match `/w/ab`.
+   - Root-to-branch evidence comes first from `git worktree list --porcelain` under `--path`,
+     using the shared worktree reader, then from Bash inputs recording
+     `git worktree add [-b|-B <branch>] <path> [<commit-ish>]` or
+     `git worktree add <path> <branch>`. This retains removed worktrees. A missing branch,
+     conflicting recorded branches, or a commit expression leaves the root unresolved;
+     live branch evidence takes precedence. Recorded creations are considered across all
+     files, regardless of line order. An unavailable live source is named under Notes.
+   - Exactly one resolved branch receives the response usage. Zero or several resolved
+     branches leave the whole response unattributed. Usage retains the existing dedupe key
+     (`message.id` plus `requestId`) and maximum counts across streamed/replayed lines.
+     At most 64 KiB of distinct tool input JSON is scanned per response; overflow fails the
+     read, preserving ambiguity instead of attributing a truncated input.
+
+   Branches join to pull requests **only by exact head-branch match**, through the existing
+   branch-owner join. When a head branch name was reused, the sessions belong to the pull
+   request merged last. Table and JSON output carry the token measurement reason for an
+   unmeasured pull request and `transcript_coverage`: total responses/tokens and unattributed
+   responses/tokens. Tokens in this coverage include input, cache creation, cache read and
+   output for every model, rather than only frontier usage. A unit's denominator is its
+   attributed usage plus unattributed usage in sessions mentioning its branch. Such unresolved
+   usage may appear beside several units; these per-unit shares must not be summed. The
+   report-level total counts every response once, including sessions that mention no unit.
+   Coverage describes branch attribution, independent of gateway deduplication and PR filters;
+   an attributed branch without a listed pull request is still included in this total.
+   Notes name the join sources and counts of roots with unknown branches and paths that could
+   not be resolved. The planted replay is `TestEfficiencyTranscriptToolInputTwoWorktrees` in
+   `internal/efficiency/transcript_join_test.go`. Lines that fail the decoder checks (for
    example an unpaired surrogate) are listed under Notes with file and line; I/O errors and bound
    overflows fail the run.
 3. **Gateway spend-log export:** Rows of the LiteLLM `LiteLLM_SpendLogs` table as JSON lines, a JSON

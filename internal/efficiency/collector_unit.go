@@ -330,6 +330,10 @@ func (c *Collector) buildUnitReport(pr forge.MergedPullRequest, src unitSources,
 	}
 	usage := usageFor(pr.Number, stats, spend, c.transcriptsViaGateway())
 	usage.apply(&unit)
+	c.applyTranscriptCoverage(&unit, stats, src)
+	if unit.FrontierTokensNum == nil && unit.TokenMeasurementReason == "" {
+		unit.TokenMeasurementReason = "no joined transcript response or gateway request"
+	}
 	if usage.omittedTranscriptRequests > 0 && report != nil {
 		report.Notes = append(report.Notes, fmt.Sprintf("unit #%d: %d transcript requests not added (transcripts_via_gateway=true)", pr.Number, usage.omittedTranscriptRequests))
 	}
