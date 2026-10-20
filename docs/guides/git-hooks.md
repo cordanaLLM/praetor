@@ -43,10 +43,13 @@ semgrep --version
 Keep `$HOME/.local/bin` on `PATH`. The symlink command deliberately refuses to
 replace an existing executable. See the [Semgrep package installation guidance](https://pypi.org/project/semgrep/1.178.0/).
 
-On stop, `checkpoint.py` also judges the linked worktrees changed in the last 24 hours:
-unfinished work in one that `.workingdir/OPEN.md` does not name keeps the stop due, and a branch
-whose change already landed in the remote base counts as finished. The rules and the naming
-forms are in the [checkpoint cadence guide](checkpoint-cadence.md).
+On stop, `checkpoint.py` also judges the linked worktrees changed in the last 24 hours that the
+stopping session touched (recorded per session from its tool calls; without a session id, every
+recent worktree, and the finding says ownership is unknown). Gate scratch under
+`.standards/worktrees` never counts. Unfinished work in a judged worktree that
+`.workingdir/OPEN.md` does not name keeps the stop due, and a branch whose change already landed
+in the remote base counts as finished. The rules and the naming forms are in the
+[checkpoint cadence guide](checkpoint-cadence.md).
 
 `make verify-all` also runs `make hooks-lint` (`scripts/test_emitted_hook_lint.py`). It lints
 the Praetor-owned canonical hook sources: `.config/lefthook/scripts/checkpoint.py` and
