@@ -247,11 +247,11 @@ and a fork's checkout is judged at its own umbrella path.
 `praetorctl needs scan --write` writes `.needs.yaml` scored against the operator's
 framework targets (see [Framework targets](#framework-targets)); with none configured it
 records the classification only, without a `framework` line, readiness basis
-`not-configured`. Nothing else regenerates it,
-`compile-context` included. `needs scan --check` scans the same way,
-writes nothing, and fails when the committed file differs from what `--write` would write
-now, printing the committed lines a fresh scan drops (`- committed:<line>`) and the lines
-it adds (`+ generated:<line>`):
+`not-configured`. A write refuses to drop a recorded framework when none is configured.
+Nothing else regenerates it, `compile-context` included. `needs scan --check` scans the
+same way, writes nothing, and fails when the committed file differs from what `--write`
+would write now, printing the committed lines a fresh scan drops (`- committed:<line>`)
+and the lines it adds (`+ generated:<line>`):
 
 ```bash
 praetorctl needs scan --write   # refresh .needs.yaml
@@ -306,6 +306,12 @@ declared non-goal under "Framework Non-goals" and adds a Non-goals column to the
 leaderboard (`TestFrameworkNonGoalLiftsReadiness_3D`,
 `TestAggregateReportsFrameworkNonGoals_3D`). A framework selected by its contract alone,
 without a checkout, declares no non-goals.
+
+When the repository's `.golangci.yml` declares a depguard rule whose `deny` list
+matches a proposed framework replacement (or whose `list-mode: strict` with an
+`allow` list such as `$gostd` denies it), the demand is reported with status
+`declined-by-policy` marked `○` rather than a swap candidate. Its note names the
+depguard rule and the denied prefix. It is not counted as a gap in readiness.
 
 A declaration the code contradicts is false and fails:
 
@@ -537,6 +543,13 @@ declares stays a third-party demand without a version
 (`TestCargoPathDependenciesAreFirstParty_3D`,
 `TestCargoWorkspaceMembersAreFirstParty_3D` in
 `internal/needs/analyzer_rust_test.go`).
+
+A Go requirement is the repository's own when its module path is declared by a
+`go.mod` inside the same checkout: `go.work` `use` members when `go.work`
+exists, or a bounded walk of discovered `go.mod` files, beside local `replace`
+directives. A sibling module required by version is first-party and dropped from
+third-party demands (`TestOwnModulesInCheckout_Positive`,
+`TestOwnModulesInCheckout_GoWork`).
 
 A Zig build is a native project: the native analyzer detects `build.zig` or
 `build.zig.zon` beside `meson.build` and `CMakeLists.txt`, and reports the

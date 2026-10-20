@@ -47,7 +47,7 @@ func validateDiscoveryMatches(rule DiscoveryRule) error {
 	}
 	matchSeen := make(map[string]struct{}, len(rule.Matches))
 	for _, match := range rule.Matches {
-		if match == "" || len(match) > maxDiscoveryMatchBytes || !safeDiscoveryText(match) || strings.Contains(match, "..") {
+		if invalidDiscoveryMatch(match) {
 			return fmt.Errorf("invalid discovery match for %q", rule.Key)
 		}
 		if _, ok := matchSeen[match]; ok {
@@ -61,24 +61,41 @@ func validateDiscoveryMatches(rule DiscoveryRule) error {
 	return nil
 }
 
+// invalidDiscoveryMatch checks if a single discovery match string is malformed.
+func invalidDiscoveryMatch(match string) bool {
+	return match == "" || len(match) > maxDiscoveryMatchBytes || !safeDiscoveryText(match) || strings.Contains(match, "..")
+}
+
 func validateDiscoveryKind(rule DiscoveryRule) error {
 	switch rule.Kind {
 	case discoveryScannerExtension:
-		for _, match := range rule.Matches {
-			if !validDiscoveryExtension(match) || rule.Analyzer != "hiss" {
-				return fmt.Errorf("invalid scanner extension rule %q", rule.Key)
-			}
-		}
+		return validateDiscoveryScannerExtension(rule)
 	case discoveryNeedsMarker:
-		if rule.Analyzer == "" || len(rule.Analyzer) > maxDiscoveryKeyBytes || !safeDiscoveryText(rule.Analyzer) {
-			return fmt.Errorf("needs marker %q requires analyzer", rule.Key)
-		}
+		return validateDiscoveryNeedsMarker(rule)
 	case discoveryVerificationMarker:
 		if rule.Analyzer != "adopt" {
 			return fmt.Errorf("verification marker %q requires analyzer adopt", rule.Key)
 		}
 	default:
 		return fmt.Errorf("unsupported discovery rule kind %q", rule.Kind)
+	}
+	return nil
+}
+
+// validateDiscoveryScannerExtension validates rules of kind discoveryScannerExtension.
+func validateDiscoveryScannerExtension(rule DiscoveryRule) error {
+	for _, match := range rule.Matches {
+		if !validDiscoveryExtension(match) || rule.Analyzer != "hiss" {
+			return fmt.Errorf("invalid scanner extension rule %q", rule.Key)
+		}
+	}
+	return nil
+}
+
+// validateDiscoveryNeedsMarker validates rules of kind discoveryNeedsMarker.
+func validateDiscoveryNeedsMarker(rule DiscoveryRule) error {
+	if rule.Analyzer == "" || len(rule.Analyzer) > maxDiscoveryKeyBytes || !safeDiscoveryText(rule.Analyzer) {
+		return fmt.Errorf("needs marker %q requires analyzer", rule.Key)
 	}
 	return nil
 }

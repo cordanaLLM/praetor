@@ -88,6 +88,25 @@ func ReplaceMember(raw []byte, name string, value jsontext.Value) ([]byte, error
 	return nil, fmt.Errorf("%w: %q", errNoMember, name)
 }
 
+// formatAppendedMember splices a new key-value pair immediately before the closing brace at close.
+func formatAppendedMember(raw []byte, close int, hasMembers bool, name string, value jsontext.Value) ([]byte, error) {
+	key, marshalErr := json.Marshal(name)
+	if marshalErr != nil {
+		return nil, errEncode
+	}
+	separator := []byte("")
+	if hasMembers {
+		separator = []byte(",")
+	}
+	out := make([]byte, 0, len(raw)+len(key)+len(value)+4)
+	out = append(out, raw[:close]...)
+	out = append(out, separator...)
+	out = append(out, key...)
+	out = append(out, ':')
+	out = append(out, value...)
+	return append(out, raw[close:]...), nil
+}
+
 // AppendMember inserts a new member immediately before an object's closing brace and keeps all
 // existing bytes, including member order, whitespace, escapes, and number spellings.
 func AppendMember(raw []byte, name string, value jsontext.Value) ([]byte, error) {
@@ -111,21 +130,7 @@ func AppendMember(raw []byte, name string, value jsontext.Value) ([]byte, error)
 		// leaves the decoder one level deeper (StackDepth 1), the outer close leaves it at 0.
 		if token.Kind() == '}' && decoder.StackDepth() == 0 {
 			close := int(decoder.InputOffset()) - 1
-			key, marshalErr := json.Marshal(name)
-			if marshalErr != nil {
-				return nil, errEncode
-			}
-			separator := []byte("")
-			if len(object) > 0 {
-				separator = []byte(",")
-			}
-			out := make([]byte, 0, len(raw)+len(key)+len(value)+4)
-			out = append(out, raw[:close]...)
-			out = append(out, separator...)
-			out = append(out, key...)
-			out = append(out, ':')
-			out = append(out, value...)
-			return append(out, raw[close:]...), nil
+			return formatAppendedMember(raw, close, len(object) > 0, name, value)
 		}
 	}
 	return nil, errNotObject

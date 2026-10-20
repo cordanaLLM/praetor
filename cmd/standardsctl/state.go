@@ -304,13 +304,7 @@ func runStateSync(args []string) error {
 	defer cancel()
 	loc, resolveErr := resolveStateDir(ctx, dir)
 	if *verify {
-		if *logMsg != "" {
-			return fmt.Errorf("state sync --verify does not accept --log")
-		}
-		if resolveErr != nil {
-			return fmt.Errorf("state sync --verify: %w", resolveErr)
-		}
-		return state.VerifyStateSync(ctx, dir)
+		return verifyStateSync(ctx, dir, *logMsg, resolveErr)
 	}
 
 	if resolveErr != nil || !loc.IsLinked {
@@ -323,6 +317,23 @@ func runStateSync(args []string) error {
 		return fmt.Errorf("state sync failed: %w", err)
 	}
 
+	printStateSyncSummary(snap)
+	return nil
+}
+
+// verifyStateSync verifies state sync without writing when --verify is passed.
+func verifyStateSync(ctx context.Context, dir string, logMsg string, resolveErr error) error {
+	if logMsg != "" {
+		return fmt.Errorf("state sync --verify does not accept --log")
+	}
+	if resolveErr != nil {
+		return fmt.Errorf("state sync --verify: %w", resolveErr)
+	}
+	return state.VerifyStateSync(ctx, dir)
+}
+
+// printStateSyncSummary prints the branch, status, bug and rotation summary of a synchronized state snapshot.
+func printStateSyncSummary(snap *state.StateSnapshot) {
 	statusStr := "clean"
 	if !snap.Clean {
 		statusStr = fmt.Sprintf("dirty (%d modified)", snap.DirtyCount)
@@ -332,7 +343,6 @@ func runStateSync(args []string) error {
 	if snap.ArchivedEntries > 0 {
 		fmt.Printf("Rotated %d oldest STATE.md entries into %s/%s\n", snap.ArchivedEntries, state.WorkingDirName, snap.HistoryArchive)
 	}
-	return nil
 }
 
 func runStateStatus(args []string) error {

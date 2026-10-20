@@ -83,10 +83,15 @@ func validateTranscriptRecord(record antigravityRecord) error {
 	if _, err := time.Parse(time.RFC3339, record.CreatedAt); err != nil {
 		return fmt.Errorf("created_at must be an RFC3339 timestamp")
 	}
-	if len(record.ToolCalls) > 128 {
+	return validateTranscriptToolCalls(record.ToolCalls)
+}
+
+// validateTranscriptToolCalls checks bounded size and field presence for tool calls.
+func validateTranscriptToolCalls(tools []TranscriptToolCall) error {
+	if len(tools) > 128 {
 		return fmt.Errorf("tool call count exceeds 128")
 	}
-	for _, tool := range record.ToolCalls {
+	for _, tool := range tools {
 		if tool.Name == "" || tool.Args == nil {
 			return fmt.Errorf("tool call requires name and object args")
 		}

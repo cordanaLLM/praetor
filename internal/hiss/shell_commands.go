@@ -166,31 +166,45 @@ type shellCases struct {
 	pattern, awaitIn bool
 }
 
-// skip consumes one command and reports whether it is part of a pattern list.
-func (c *shellCases) skip(cmd shellCmd) bool {
-	first := ""
-	if len(cmd.words) > 0 {
-		first = cmd.words[0]
+// firstWord returns the leading element of words, or "" when empty.
+func firstWord(words []string) string {
+	if len(words) > 0 {
+		return words[0]
 	}
-	switch {
-	case c.depth > 0 && first == "esac":
-		c.depth--
-		c.pattern = false
-	case c.pattern && cmd.sep == ")":
+	return ""
+}
+
+// handlePattern consumes a command inside a case pattern and reports whether to skip it.
+func (c *shellCases) handlePattern(cmd shellCmd) bool {
+	if cmd.sep == ")" {
 		// The first command of an item may itself open a case: `x) case $b in`.
 		c.pattern = false
 		c.openCase(cmd.words)
-	case c.pattern:
-		return true
-	case c.depth > 0 && shellCaseEnds[cmd.sep]:
+		return false
+	}
+	return true
+}
+
+// skip consumes one command and reports whether it is part of a pattern list.
+func (c *shellCases) skip(cmd shellCmd) bool {
+	first := firstWord(cmd.words)
+	if c.depth > 0 && first == "esac" {
+		c.depth--
+		c.pattern = false
+		return false
+	}
+	if c.pattern {
+		return c.handlePattern(cmd)
+	}
+	if c.depth > 0 && shellCaseEnds[cmd.sep] {
 		c.pattern = true
 		return true
-	case c.awaitIn && first == "in":
+	}
+	if c.awaitIn && first == "in" {
 		c.awaitIn, c.pattern = false, true
 		return true
-	default:
-		c.openCase(cmd.words)
 	}
+	c.openCase(cmd.words)
 	return false
 }
 

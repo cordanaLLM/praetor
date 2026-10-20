@@ -113,17 +113,8 @@ func loadDiscoveryPolicy(ctx context.Context, path string) (DiscoveryPolicy, str
 	if err != nil {
 		return policy, "", err
 	}
-	var rules []json.RawMessage
-	if err := json.Unmarshal(fields["rules"], &rules); err != nil {
+	if err := validateDiscoveryRulePayloads(fields["rules"]); err != nil {
 		return policy, "", err
-	}
-	if len(rules) < 1 || len(rules) > 128 {
-		return policy, "", errors.New("discovery policy requires 1..128 rules")
-	}
-	for i := 0; i < len(rules) && i < 128; i++ {
-		if _, err := suiteObject(rules[i], []string{"key", "title", "kind", "matches", "analyzer"}); err != nil {
-			return policy, "", err
-		}
 	}
 	if err := json.Unmarshal(data, &policy); err != nil {
 		return policy, "", err
@@ -133,6 +124,23 @@ func loadDiscoveryPolicy(ctx context.Context, path string) (DiscoveryPolicy, str
 		return policy, "", err
 	}
 	return policy, discoveryDigest(data), ValidateDiscoveryPolicy(policy)
+}
+
+// validateDiscoveryRulePayloads verifies each rule object declares the required fields.
+func validateDiscoveryRulePayloads(raw json.RawMessage) error {
+	var rules []json.RawMessage
+	if err := json.Unmarshal(raw, &rules); err != nil {
+		return err
+	}
+	if len(rules) < 1 || len(rules) > 128 {
+		return errors.New("discovery policy requires 1..128 rules")
+	}
+	for i := 0; i < len(rules) && i < 128; i++ {
+		if _, err := suiteObject(rules[i], []string{"key", "title", "kind", "matches", "analyzer"}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func discoveryDigest(data []byte) string {

@@ -99,6 +99,17 @@ func milestonePrerequisites(milestones []Milestone) map[string]map[string]bool {
 	return result
 }
 
+// validateStepExperiment checks step experiment presence and validity.
+func validateStepExperiment(step Step, requireExperiment bool) error {
+	if step.Experiment == nil {
+		if requireExperiment && step.Kind == "implementation" {
+			return fmt.Errorf("step %s: schema_version %d requires experiment.evidence_status on implementation steps", step.ID, SchemaVersion)
+		}
+		return nil
+	}
+	return validateExperiment(step.ID, step.Experiment)
+}
+
 func validateStep(step Step, stepIDs, requirements, milestones, links, outputs map[string]bool, requireExperiment bool) error {
 	if err := validateStepIdentity(step, stepIDs); err != nil {
 		return err
@@ -122,13 +133,7 @@ func validateStep(step Step, stepIDs, requirements, milestones, links, outputs m
 	if err := validateAcceptance("step "+step.ID, step.Acceptance); err != nil {
 		return err
 	}
-	if step.Experiment == nil {
-		if requireExperiment && step.Kind == "implementation" {
-			return fmt.Errorf("step %s: schema_version %d requires experiment.evidence_status on implementation steps", step.ID, SchemaVersion)
-		}
-		return nil
-	}
-	return validateExperiment(step.ID, step.Experiment)
+	return validateStepExperiment(step, requireExperiment)
 }
 
 func validateStepIdentity(step Step, seen map[string]bool) error {

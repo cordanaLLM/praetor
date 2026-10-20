@@ -416,6 +416,22 @@ func validateManifestRegister(m *Manifest) error {
 }
 
 func (p RegisterPolicy) validate() error {
+	if err := p.validateSurfaces(); err != nil {
+		return err
+	}
+	if len(p.Tasks) > MaxRegisterTaskRows {
+		return fmt.Errorf("register tasks exceed %d rows", MaxRegisterTaskRows)
+	}
+	for _, label := range p.sortedTaskLabels() {
+		if err := p.Tasks[label].validate(label); err != nil {
+			return err
+		}
+	}
+	return p.validateSections()
+}
+
+// validateSurfaces verifies each declared register surface and text register pairing.
+func (p RegisterPolicy) validateSurfaces() error {
 	for surface, register := range p.Surfaces {
 		if !KnownRegisterSurface(surface) {
 			return fmt.Errorf("unknown register surface %q", surface)
@@ -430,15 +446,7 @@ func (p RegisterPolicy) validate() error {
 			return fmt.Errorf("register surface %q is fixed to %s: a reply to the operator is never caveman", surface, OperatorRegister)
 		}
 	}
-	if len(p.Tasks) > MaxRegisterTaskRows {
-		return fmt.Errorf("register tasks exceed %d rows", MaxRegisterTaskRows)
-	}
-	for _, label := range p.sortedTaskLabels() {
-		if err := p.Tasks[label].validate(label); err != nil {
-			return err
-		}
-	}
-	return p.validateSections()
+	return nil
 }
 
 // MaxRegisterConventionBytes bounds one register.conventions value. It renders inside one table

@@ -23,22 +23,31 @@ const maxReuseWorkflowBytes = 4 << 20
 // isReuseLintJob reports whether id or job represents a REUSE lint job:
 // named REUSE lint, REUSE, or running reuse lint / fsfe/reuse-action (#1327).
 func isReuseLintJob(id string, job ghworkflow.Job) bool {
-	if strings.EqualFold(id, "reuse") || strings.EqualFold(id, "reuse-lint") || strings.EqualFold(id, "reuse_lint") {
-		return true
-	}
-	if strings.EqualFold(job.Name, "REUSE lint") || strings.EqualFold(job.Name, "REUSE") || strings.EqualFold(job.Name, "reuse-lint") {
+	if isReuseJobName(id, job.Name) {
 		return true
 	}
 	for i := 0; i < len(job.Steps) && i < ghworkflow.MaxStepsPerJob; i++ {
-		step := job.Steps[i]
-		if strings.Contains(step.Run, "reuse lint") {
-			return true
-		}
-		if strings.HasPrefix(strings.TrimSpace(step.Uses), "fsfe/reuse-action") {
+		if isReuseStep(job.Steps[i]) {
 			return true
 		}
 	}
 	return false
+}
+
+// isReuseJobName reports whether id or name represents a REUSE lint job identifier.
+func isReuseJobName(id, name string) bool {
+	if strings.EqualFold(id, "reuse") || strings.EqualFold(id, "reuse-lint") || strings.EqualFold(id, "reuse_lint") {
+		return true
+	}
+	return strings.EqualFold(name, "REUSE lint") || strings.EqualFold(name, "REUSE") || strings.EqualFold(name, "reuse-lint")
+}
+
+// isReuseStep reports whether step runs reuse lint or uses fsfe/reuse-action.
+func isReuseStep(step ghworkflow.Step) bool {
+	if strings.Contains(step.Run, "reuse lint") {
+		return true
+	}
+	return strings.HasPrefix(strings.TrimSpace(step.Uses), "fsfe/reuse-action")
 }
 
 // workflowDeclaresReuseJob reports whether the workflow content data declares a REUSE lint job.

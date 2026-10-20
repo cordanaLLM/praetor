@@ -345,6 +345,7 @@ func scanRepository(ctx context.Context, repo *fleetRepo, registry *AnalyzerRegi
 	row.Subprojects = relativeTo(repo.root, scan.nested)
 	row.UnscannedSubprojects = relativeTo(repo.root, repo.unscanned)
 	row.FailedSubprojects = scan.failed
+	row.Path = repo.root
 	calculateReadiness(row)
 	return row, nil
 }
@@ -355,7 +356,7 @@ func scanRepositoryWithFramework(ctx context.Context, repo *fleetRepo, framework
 	if err != nil {
 		return nil, err
 	}
-	applyFrameworkCoverage(framework, report, registry)
+	applyFrameworkCoverage(ctx, framework, report, registry)
 	return report, nil
 }
 

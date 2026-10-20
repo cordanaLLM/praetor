@@ -160,6 +160,11 @@ func auditDocumentationGate(ctx context.Context, manifest *config.Manifest, root
 	if !documentationEnabled {
 		return auditDocumentationGateDisabled(ctx, manifest, rootDir, declines, families)
 	}
+	return auditDocumentationGateEnabled(ctx, manifest, rootDir, branch, declines, families)
+}
+
+// auditDocumentationGateEnabled verifies assets, wiring, commit state, and lint for an enabled gate.
+func auditDocumentationGateEnabled(ctx context.Context, manifest *config.Manifest, rootDir string, branch config.BranchProtectionPolicy, declines documentationDeclines, families []managedasset.Family) error {
 	count, err := auditDocumentationAssets(ctx, rootDir)
 	if err != nil {
 		return err

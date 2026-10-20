@@ -90,26 +90,48 @@ func verifyStateContent(ctx context.Context, rootPath string, content []byte) er
 // The praetor-state:v1 marker is deliberately unchanged: existing ledgers report stale once
 // and are reconciled by one sync. Bumping it would make them report missing instead, which is
 // a worse message for the same situation.
+// bindWorkingDirLedgers reads and hashes the primary working directory ledgers.
+func bindWorkingDirLedgers(ctx context.Context, root string) ([]string, error) {
+	var parts []string
+	for _, name := range []string{"OPEN.md", "BACKLOG.md", "BUGS.md", "QUESTIONS.md"} {
+		content, err := contextopt.ReadSnapshot(ctx, filepath.Join(root, WorkingDirName, name))
+		if err != nil {
+			return nil, ledgerInputError(root, name, err)
+		}
+		parts = append(parts, name, fmt.Sprintf("%x", sha256.Sum256(content)))
+	}
+	return parts, nil
+}
+
+// bindWorkingDirSidecars reads and hashes the ledger metadata sidecars.
+func bindWorkingDirSidecars(ctx context.Context, root string) ([]string, error) {
+	var parts []string
+	for _, name := range []string{bugMetaName, questionMetaName} {
+		sidecar, err := bindSidecar(ctx, root, name)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, sidecar...)
+	}
+	return parts, nil
+}
+
 func stateBinding(ctx context.Context, rootPath string, snap *StateSnapshot) (string, error) {
 	root, err := util.ResolveExistingPath(ctx, rootPath)
 	if err != nil {
 		return "", err
 	}
 	parts := []string{"praetor-state:v1", root, snap.GitState, snap.Branch, snap.HeadSHA}
-	for _, name := range []string{"OPEN.md", "BACKLOG.md", "BUGS.md", "QUESTIONS.md"} {
-		content, err := contextopt.ReadSnapshot(ctx, filepath.Join(root, WorkingDirName, name))
-		if err != nil {
-			return "", ledgerInputError(root, name, err)
-		}
-		parts = append(parts, name, fmt.Sprintf("%x", sha256.Sum256(content)))
+	ledgerParts, err := bindWorkingDirLedgers(ctx, root)
+	if err != nil {
+		return "", err
 	}
-	for _, name := range []string{bugMetaName, questionMetaName} {
-		sidecar, err := bindSidecar(ctx, root, name)
-		if err != nil {
-			return "", err
-		}
-		parts = append(parts, sidecar...)
+	parts = append(parts, ledgerParts...)
+	sidecarParts, err := bindWorkingDirSidecars(ctx, root)
+	if err != nil {
+		return "", err
 	}
+	parts = append(parts, sidecarParts...)
 	gitRoot := snap.RepoPath
 	if gitRoot == "" {
 		gitRoot = root

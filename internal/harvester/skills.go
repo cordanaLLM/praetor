@@ -262,20 +262,9 @@ func skillGroupRemovals(ctx context.Context, name string, locations []SkillLocat
 	if len(locations) > MaxSkillsScan {
 		return nil, fmt.Errorf("skill location count exceeds %d", MaxSkillsScan)
 	}
-	roots, configs := map[string]bool{}, map[string]bool{}
-	for _, location := range locations {
-		if location.Origin != OriginGeminiRoot && location.Origin != OriginGeminiConfig {
-			continue
-		}
-		gemini, err := canonicalGeminiSkill(ctx, name, location)
-		if err != nil {
-			return nil, err
-		}
-		if location.Origin == OriginGeminiRoot {
-			roots[gemini] = true
-		} else {
-			configs[gemini] = true
-		}
+	roots, configs, err := collectGeminiSkillHomes(ctx, name, locations)
+	if err != nil {
+		return nil, err
 	}
 	if len(configs) == 0 {
 		return nil, nil
@@ -293,6 +282,26 @@ func skillGroupRemovals(ctx context.Context, name string, locations []SkillLocat
 		removals = append(removals, skillRemoval{gemini: home, name: name})
 	}
 	return removals, nil
+}
+
+// collectGeminiSkillHomes separates Gemini root and config origins by canonical home path.
+func collectGeminiSkillHomes(ctx context.Context, name string, locations []SkillLocation) (map[string]bool, map[string]bool, error) {
+	roots, configs := map[string]bool{}, map[string]bool{}
+	for _, location := range locations {
+		if location.Origin != OriginGeminiRoot && location.Origin != OriginGeminiConfig {
+			continue
+		}
+		gemini, err := canonicalGeminiSkill(ctx, name, location)
+		if err != nil {
+			return nil, nil, err
+		}
+		if location.Origin == OriginGeminiRoot {
+			roots[gemini] = true
+		} else {
+			configs[gemini] = true
+		}
+	}
+	return roots, configs, nil
 }
 
 func preflightSkillRemovals(ctx context.Context, report *SkillAuditReport) ([]skillRemoval, error) {
@@ -373,21 +382,29 @@ func DeduplicateSkills(ctx context.Context, report *SkillAuditReport, dryRun boo
 		if err := ctx.Err(); err != nil {
 			return dedupeFailure(result, err)
 		}
-		target := filepath.Join(candidate.gemini, "skills", candidate.name)
-		if dryRun {
-			result.PrunedSkills = append(result.PrunedSkills, target)
-			continue
-		}
-		removed, err := removeSkill(ctx, candidate)
-		if removed {
-			result.PrunedSkills = append(result.PrunedSkills, target)
-			result.ReclaimedEntries++
-		}
-		if err != nil {
-			return dedupeFailure(result, fmt.Errorf("remove skill %s: %w", target, err))
+		if err := applySkillRemoval(ctx, candidate, dryRun, result); err != nil {
+			return dedupeFailure(result, err)
 		}
 	}
 	return result, nil
+}
+
+// applySkillRemoval applies or records a single planned skill removal candidate.
+func applySkillRemoval(ctx context.Context, candidate skillRemoval, dryRun bool, result *DedupeReport) error {
+	target := filepath.Join(candidate.gemini, "skills", candidate.name)
+	if dryRun {
+		result.PrunedSkills = append(result.PrunedSkills, target)
+		return nil
+	}
+	removed, err := removeSkill(ctx, candidate)
+	if removed {
+		result.PrunedSkills = append(result.PrunedSkills, target)
+		result.ReclaimedEntries++
+	}
+	if err != nil {
+		return fmt.Errorf("remove skill %s: %w", target, err)
+	}
+	return nil
 }
 
 func dedupeFailure(result *DedupeReport, err error) (*DedupeReport, error) {

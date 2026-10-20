@@ -126,3 +126,48 @@ func TestAuditTestTimeouts_Negative_UnreadableTimeout(t *testing.T) {
 		t.Fatalf("err = %v; want unreadable timeout 5x reported", err)
 	}
 }
+
+// reusableTimeoutWorkflow is a reusable workflow whose go test takes its timeout from an input,
+// as golusoris's ci-go.yml does; inputBlock declares the input (or nothing).
+func reusableTimeoutWorkflow(inputBlock string) string {
+	return "on:\n  workflow_call:\n    inputs:\n" + inputBlock +
+		"jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n" +
+		"      - run: go test -race -timeout=${{ inputs.test-timeout }} ./...\n"
+}
+
+// Positive: -timeout=${{ inputs.X }} reads the workflow_call default; 10m is within the bound.
+func TestAuditTestTimeouts_Positive_InputDefaultWithinBound(t *testing.T) {
+	wf := reusableTimeoutWorkflow("      test-timeout:\n        type: string\n        default: 10m\n")
+	out, err := auditTimeouts(t, triggerRepository(t, map[string]string{"ci-go.yml": wf}))
+	if err != nil || !strings.Contains(out, "[PASS]") {
+		t.Fatalf("AuditTestTimeouts = %q, %v; want the 10m default to pass", out, err)
+	}
+}
+
+// Negative: a default above the bound fails, naming the input and its default.
+func TestAuditTestTimeouts_Negative_InputDefaultAboveBound(t *testing.T) {
+	wf := reusableTimeoutWorkflow("      test-timeout:\n        type: string\n        default: 45m\n")
+	_, err := auditTimeouts(t, triggerRepository(t, map[string]string{"ci-go.yml": wf}))
+	if err == nil || !strings.Contains(err.Error(), "inputs.test-timeout") || !strings.Contains(err.Error(), "default 45m") ||
+		!strings.Contains(err.Error(), "above the 30m bound") {
+		t.Fatalf("err = %v; want the 45m default above the bound", err)
+	}
+}
+
+// Boundary: an input without a default, or one the workflow does not declare, stays unreadable.
+func TestAuditTestTimeouts_Boundary_InputWithoutDefaultUnreadable(t *testing.T) {
+	for name, block := range map[string]string{
+		"no default": "      test-timeout:\n        type: string\n        required: true\n",
+		"undeclared": "      other:\n        type: string\n        default: 5m\n",
+		"unparsable": "      test-timeout:\n        type: string\n        default: soon\n",
+	} {
+		_, err := auditTimeouts(t, triggerRepository(t, map[string]string{"ci-go.yml": reusableTimeoutWorkflow(block)}))
+		if err == nil || !strings.Contains(err.Error(), "unreadable") || !strings.Contains(err.Error(), "inputs.test-timeout") {
+			t.Fatalf("%s: err = %v; want an unreadable timeout naming the input", name, err)
+		}
+	}
+	wf := reusableTimeoutWorkflow("      test-timeout:\n        type: string\n        default: 30m\n")
+	if out, err := auditTimeouts(t, triggerRepository(t, map[string]string{"ci-go.yml": wf})); err != nil {
+		t.Fatalf("default at the bound = %q, %v; want a pass", out, err)
+	}
+}

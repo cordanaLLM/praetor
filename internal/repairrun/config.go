@@ -59,12 +59,8 @@ func loadConfig(ctx context.Context, path, boundary string) (*configuration, err
 	if err := validateConfig(cfg); err != nil {
 		return nil, err
 	}
-	for _, target := range []string{cfg.SourceRoot, cfg.StateDir, cfg.RepairPolicy.RoutingConfig, cfg.RepairPolicy.UsagePath, cfg.Provider.TokenCommand} {
-		if target != "" {
-			if err := confine(boundary, target); err != nil {
-				return nil, err
-			}
-		}
+	if err := confineConfigTargets(boundary, cfg); err != nil {
+		return nil, err
 	}
 	authority, err := loadPinnedRegisterAuthority(ctx, cfg)
 	if err != nil {
@@ -78,6 +74,18 @@ func loadConfig(ctx context.Context, path, boundary string) (*configuration, err
 		return nil, err
 	}
 	return &configuration{config: cfg, digest: bytesSHA(data), registerAuthority: authority}, nil
+}
+
+// confineConfigTargets checks that all configured paths fall within boundary.
+func confineConfigTargets(boundary string, cfg Config) error {
+	for _, target := range []string{cfg.SourceRoot, cfg.StateDir, cfg.RepairPolicy.RoutingConfig, cfg.RepairPolicy.UsagePath, cfg.Provider.TokenCommand} {
+		if target != "" {
+			if err := confine(boundary, target); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func loadPinnedRegisterAuthority(ctx context.Context, cfg Config) (config.RegisterAuthority, error) {
@@ -170,24 +178,37 @@ func validateConfigPaths(c Config) error {
 	return nil
 }
 
-func validateConfigLists(c Config) error {
-	if len(c.AllowedFiles) < 1 || len(c.AllowedFiles) > 8 || len(c.TestPackages) < 1 || len(c.TestPackages) > 4 {
-		return errors.New("repair requires 1..8 files and 1..4 packages")
-	}
-	seen := map[string]bool{}
-	for _, path := range c.AllowedFiles {
+// validateAllowedFiles checks that allowed files are unique clean non-test Go source paths.
+func validateAllowedFiles(files []string, seen map[string]bool) error {
+	for _, path := range files {
 		if !allowedSourcePath(path) || seen[path] {
 			return errors.New("allowed files must be unique clean non-test Go source paths")
 		}
 		seen[path] = true
 	}
-	for _, name := range c.TestPackages {
+	return nil
+}
+
+// validateTestPackages checks that test packages are unique explicit internal or cmd packages.
+func validateTestPackages(pkgs []string, seen map[string]bool) error {
+	for _, name := range pkgs {
 		if !packageName.MatchString(name) || seen[name] {
 			return errors.New("test packages must be unique explicit internal or cmd packages")
 		}
 		seen[name] = true
 	}
 	return nil
+}
+
+func validateConfigLists(c Config) error {
+	if len(c.AllowedFiles) < 1 || len(c.AllowedFiles) > 8 || len(c.TestPackages) < 1 || len(c.TestPackages) > 4 {
+		return errors.New("repair requires 1..8 files and 1..4 packages")
+	}
+	seen := map[string]bool{}
+	if err := validateAllowedFiles(c.AllowedFiles, seen); err != nil {
+		return err
+	}
+	return validateTestPackages(c.TestPackages, seen)
 }
 
 func allowedSourcePath(path string) bool {

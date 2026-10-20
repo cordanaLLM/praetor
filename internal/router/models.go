@@ -86,12 +86,19 @@ type RoutingConfig struct {
 	Version    int              `yaml:"version"`
 	Tiers      map[string]Tier  `yaml:"tiers"`
 	Governance GovernancePolicy `yaml:"governance"`
+	// Offload opts selected task labels into the Claude pre-dispatch lane picker.
+	Offload *OffloadConfig `yaml:"offload,omitempty"`
 	// Gateway declares the OpenAI-compatible gateway whose router aliases alias entries use.
 	Gateway *GatewayConfig `yaml:"gateway,omitempty"`
 	// Lanes is the one table mapping a lane name to its harness and headless command.
 	Lanes map[string]Lane `yaml:"lanes,omitempty"`
 	// SourceSHA256 identifies the exact loaded configuration bytes, when available.
 	SourceSHA256 string `yaml:"-"`
+}
+
+// OffloadConfig names tasks eligible for an external lane decision.
+type OffloadConfig struct {
+	Labels []string `yaml:"labels"`
 }
 
 // LoadRoutingConfig reads a bounded, validated routing config with a short deadline.

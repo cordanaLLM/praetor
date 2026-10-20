@@ -67,6 +67,13 @@ func creditsPlayerRow(credits string) (string, error) {
 	return rows[0], nil
 }
 
+// hasTermBoundaries reports whether the term match at [start, end) respects boundaries.
+func hasTermBoundaries(text, term string, start, end int, continues func(byte) bool) bool {
+	before := start == 0 || !continues(term[0]) || !continues(text[start-1])
+	after := end == len(text) || !continues(term[len(term)-1]) || !continues(text[end])
+	return before && after
+}
+
 // namesTerm reports whether text holds term as a whole term: where an edge byte of term
 // continues a term (continues), the byte next to it in text does not. With termByte, "react
 // 19.3.0" is not found in "preact 19.3.0" or "react 19.3.01"; an edge byte that continues
@@ -81,9 +88,7 @@ func namesTerm(text, term string, continues func(byte) bool) bool {
 			return false
 		}
 		start, end := offset+index, offset+index+len(term)
-		before := start == 0 || !continues(term[0]) || !continues(text[start-1])
-		after := end == len(text) || !continues(term[len(term)-1]) || !continues(text[end])
-		if before && after {
+		if hasTermBoundaries(text, term, start, end, continues) {
 			return true
 		}
 		offset = start + 1

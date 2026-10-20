@@ -33,6 +33,11 @@ const maxTagPages = 10
 // fullCommitSHA is a full, lowercase commit SHA as the REST API reports one.
 var fullCommitSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
+// IsFullCommitSHA reports whether s is a full, lowercase commit SHA.
+func IsFullCommitSHA(s string) bool {
+	return fullCommitSHA.MatchString(s)
+}
+
 // CommitAt resolves ref in the driver's repository to the full SHA of the commit it names,
 // through GET /repos/{owner}/{repo}/commits/{ref}. ref is a commit SHA or a fully qualified
 // tag, refs/tags/<name>: that form peels an annotated tag to its commit and never matches a

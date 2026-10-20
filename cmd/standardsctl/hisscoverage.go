@@ -150,6 +150,17 @@ func verifyCoverage(ctx context.Context, root string, catalog *hisscoverage.Cata
 	if err != nil {
 		return err
 	}
+	printCoverageNotices(report)
+	if !report.Passed() {
+		return failContradictedCoverage(report)
+	}
+	fmt.Printf("\n[PASS] %d claim(s) checked against %d fixture(s) (%d replayed here, %d attributed elsewhere); every claim holds.\n",
+		report.Claims, report.Fixtures, report.Claims-len(report.Delegated), len(report.Delegated))
+	return nil
+}
+
+// printCoverageNotices prints unbacked coverage warnings and delegated claims.
+func printCoverageNotices(report *hisscoverage.Report) {
 	for i := 0; i < len(report.Unbacked) && i < maxCoverageFindingsPrinted; i++ {
 		fmt.Printf("  [WARN] %s\n", report.Unbacked[i])
 	}
@@ -160,20 +171,19 @@ func verifyCoverage(ctx context.Context, root string, catalog *hisscoverage.Cata
 			fmt.Printf("    [INFO] %s\n", report.Delegated[i])
 		}
 	}
-	if !report.Passed() {
-		fmt.Printf("\n=== Coverage claims contradicted by their fixtures ===\n")
-		for i := 0; i < len(report.Findings) && i < maxCoverageFindingsPrinted; i++ {
-			fmt.Printf("  [FAIL] %s\n", report.Findings[i])
-		}
-		if len(report.Findings) > maxCoverageFindingsPrinted {
-			fmt.Printf("  ... and %d more\n", len(report.Findings)-maxCoverageFindingsPrinted)
-		}
-		return fmt.Errorf("%w: %d of %d claim(s) contradicted across %d fixture(s)",
-			hisscoverage.ErrClaimUnsupported, len(report.Findings), report.Claims, report.Fixtures)
+}
+
+// failContradictedCoverage prints contradicted findings and returns the ErrClaimUnsupported error.
+func failContradictedCoverage(report *hisscoverage.Report) error {
+	fmt.Printf("\n=== Coverage claims contradicted by their fixtures ===\n")
+	for i := 0; i < len(report.Findings) && i < maxCoverageFindingsPrinted; i++ {
+		fmt.Printf("  [FAIL] %s\n", report.Findings[i])
 	}
-	fmt.Printf("\n[PASS] %d claim(s) checked against %d fixture(s) (%d replayed here, %d attributed elsewhere); every claim holds.\n",
-		report.Claims, report.Fixtures, report.Claims-len(report.Delegated), len(report.Delegated))
-	return nil
+	if len(report.Findings) > maxCoverageFindingsPrinted {
+		fmt.Printf("  ... and %d more\n", len(report.Findings)-maxCoverageFindingsPrinted)
+	}
+	return fmt.Errorf("%w: %d of %d claim(s) contradicted across %d fixture(s)",
+		hisscoverage.ErrClaimUnsupported, len(report.Findings), report.Claims, report.Fixtures)
 }
 
 // printHissUsage answers a bare or help-token `hiss` invocation.

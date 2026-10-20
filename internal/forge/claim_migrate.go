@@ -235,27 +235,43 @@ func verifyMigratedReadback(ctx context.Context, f ClaimForge, issueNumber int, 
 	return nil
 }
 
+// isLegacyClaim reports whether a claim uses untagged legacy session or lane format.
+func isLegacyClaim(c Claim) bool {
+	return !IsClaimTag(c.Session) || !IsClaimTag(c.Lane)
+}
+
+// checkReorderingStep validates one comment against any prior unreleased legacy claim.
+func checkReorderingStep(issueNumber int, comment IssueComment, migratingIDs map[int64]bool, legacySeen *bool, legacyID *int64) error {
+	c, ok := ParseClaimMarker(comment.Body)
+	if !ok || c.Released() {
+		return nil
+	}
+	isLegacy := isLegacyClaim(c)
+	isMigrating := migratingIDs[comment.ID]
+	if isLegacy && isMigrating {
+		*legacySeen = true
+		*legacyID = comment.ID
+		return nil
+	}
+	if *legacySeen && !isMigrating {
+		kind := "skipped"
+		if !isLegacy {
+			kind = "tagged"
+		}
+		return fmt.Errorf("issue #%d: %s unreleased claim comment %d sits after legacy unreleased claim comment %d",
+			issueNumber, kind, comment.ID, *legacyID)
+	}
+	return nil
+}
+
 func checkLegacyReordering(issueNumber int, comments []IssueComment, migratingIDs map[int64]bool) error {
 	var (
 		legacyUnreleasedSeen bool
 		legacyUnreleasedID   int64
 	)
 	for i := 0; i < len(comments) && i < MaxIssueCommentsLimit; i++ {
-		c, ok := ParseClaimMarker(comments[i].Body)
-		if !ok || c.Released() {
-			continue
-		}
-		isLegacy := !IsClaimTag(c.Session) || !IsClaimTag(c.Lane)
-		if isLegacy && migratingIDs[comments[i].ID] {
-			legacyUnreleasedSeen = true
-			legacyUnreleasedID = comments[i].ID
-		} else if legacyUnreleasedSeen && !migratingIDs[comments[i].ID] {
-			kind := "skipped"
-			if !isLegacy {
-				kind = "tagged"
-			}
-			return fmt.Errorf("issue #%d: %s unreleased claim comment %d sits after legacy unreleased claim comment %d",
-				issueNumber, kind, comments[i].ID, legacyUnreleasedID)
+		if err := checkReorderingStep(issueNumber, comments[i], migratingIDs, &legacyUnreleasedSeen, &legacyUnreleasedID); err != nil {
+			return err
 		}
 	}
 	return nil

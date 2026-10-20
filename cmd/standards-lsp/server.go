@@ -801,6 +801,20 @@ func (s *Server) Run(ctx context.Context) error {
 	return s.runSession(ctx, maxLSPMessagesPerSession)
 }
 
+// handleSessionFrame processes a received frame and reports whether processing should continue.
+func (s *Server) handleSessionFrame(ctx context.Context, f frame) (bool, error) {
+	if f.err != nil {
+		if errors.Is(f.err, io.EOF) {
+			return false, nil
+		}
+		return false, fmt.Errorf("read error: %w", f.err)
+	}
+	if err := s.process(ctx, f.payload); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // runSession gives the reader and dispatcher the same finite message budget.
 func (s *Server) runSession(ctx context.Context, limit int) error {
 	ctx, cancel := context.WithCancel(ctx)
@@ -813,14 +827,12 @@ func (s *Server) runSession(ctx context.Context, limit int) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case f := <-frames:
-			if f.err != nil {
-				if errors.Is(f.err, io.EOF) {
-					return nil
-				}
-				return fmt.Errorf("read error: %w", f.err)
-			}
-			if err := s.process(ctx, f.payload); err != nil {
+			cont, err := s.handleSessionFrame(ctx, f)
+			if err != nil {
 				return err
+			}
+			if !cont {
+				return nil
 			}
 		}
 	}

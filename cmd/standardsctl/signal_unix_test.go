@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
@@ -240,7 +241,10 @@ func startGateRunHelper(t *testing.T, ignoreHangup bool, extraEnv ...string) *ga
 	h.cmd.Env = append(os.Environ(),
 		"PATH="+stubs+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"PRAETOR_SIGNAL_PROCESS_TEST=gate run --path="+h.repo,
-		"PRAETOR_TEST_READY="+h.ready, "PRAETOR_TEST_REPO="+h.repo, "GOCOVERDIR="+t.TempDir())
+		"PRAETOR_TEST_READY="+h.ready, "PRAETOR_TEST_REPO="+h.repo, "GOCOVERDIR="+t.TempDir(),
+		// The signal tests time the stub git, not the host: a busy runner (load above 1.25 times its
+		// CPUs) held the race stage's admission past the 15 s the stub has to start.
+		gating.GateAdmissionEnv+"=off")
 	h.cmd.Env = append(h.cmd.Env, extraEnv...)
 	h.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	h.cmd.Stdout, h.cmd.Stderr = &h.out, &h.out

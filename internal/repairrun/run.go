@@ -156,21 +156,30 @@ func prepare(ctx context.Context, configPath, reportPath, boundary string) (*adm
 	if err != nil {
 		return nil, err
 	}
-	policyHash, err := policyIdentity(ctx, settings.config)
+	plan, policyHash, err := planRepairsWithPolicyCheck(ctx, settings.config, report)
 	if err != nil {
 		return nil, err
-	}
-	plan, err := dogfood.PlanRepairs(ctx, report, settings.config.RepairPolicy)
-	if err != nil && !errors.Is(err, dogfood.ErrRepairsBlocked) {
-		return nil, err
-	}
-	confirmed, err := policyIdentity(ctx, settings.config)
-	if err != nil || confirmed != policyHash {
-		return nil, errors.New("routing inputs changed while preparing execution")
 	}
 	settings.digest = bytesSHA([]byte(settings.digest + policyHash))
 	result := &Report{Version: 1, Status: "blocked", SourceSHA: settings.config.SourceSHA, ConfigSHA256: settings.digest, StateDir: settings.config.StateDir, ChangedFiles: []string{}, Jobs: []JobStatus{}}
 	return &admission{settings: settings, plan: plan, report: result}, nil
+}
+
+// planRepairsWithPolicyCheck computes a repair plan while verifying that routing inputs do not change.
+func planRepairsWithPolicyCheck(ctx context.Context, cfg Config, report *dogfood.SuiteReport) (*dogfood.RepairPlan, string, error) {
+	policyHash, err := policyIdentity(ctx, cfg)
+	if err != nil {
+		return nil, "", err
+	}
+	plan, err := dogfood.PlanRepairs(ctx, report, cfg.RepairPolicy)
+	if err != nil && !errors.Is(err, dogfood.ErrRepairsBlocked) {
+		return nil, "", err
+	}
+	confirmed, err := policyIdentity(ctx, cfg)
+	if err != nil || confirmed != policyHash {
+		return nil, "", errors.New("routing inputs changed while preparing execution")
+	}
+	return plan, policyHash, nil
 }
 
 func policyIdentity(ctx context.Context, cfg Config) (string, error) {

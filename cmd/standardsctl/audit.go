@@ -225,6 +225,12 @@ func auditManifestAndLockfile(ctx context.Context, opts *auditOptions) (*config.
 	if err != nil {
 		return nil, fmt.Errorf("[FAIL] Manifest audit failed: %w", err)
 	}
+	// The effective policy decodes the manifest without its validators, so "Manifest verified"
+	// printed over a manifest a later step refused (an exception entry with a wrong expiry or an
+	// unknown category). The step runs every manifest validator on the bytes it read.
+	if _, err := config.ParseManifest(opts.manifestPath, manifestBytes); err != nil {
+		return nil, fmt.Errorf("[FAIL] Manifest audit failed: %w", err)
+	}
 	lockPath := filepath.Join(opts.rootDir, ".standards.lock")
 	lockBytes, err := contextopt.ReadSnapshot(ctx, lockPath)
 	if err != nil {
@@ -281,17 +287,22 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 		fmt.Printf("[WARN] Touched-file clean rule judged by debt delta, not by touch; recorded reason: %s\n",
 			opts.debtDeltaReason)
 	}
-	if !ratchet.Passed && base.Absent && len(current) > 0 {
-		return missingBaselineFailure(opts.baselinePath, len(current))
-	}
 	if !ratchet.Passed {
-		return fmt.Errorf("[FAIL] %s", describeRejection(ctx, opts.rootDir, opts.baselinePath, scanOpts, base, current, ratchet, opts.allViolations))
+		return auditRatchetRejection(ctx, opts, scanOpts, base, current, ratchet)
 	}
 	printInvariantVerdict(scanRep, fmt.Sprintf("%d active violations within %d baselined limit (%d touched files clean) (skipped: %d ignored directories, %d symlinks, %d oversize files, %d non-regular files)",
 		ratchet.CurrentCount, base.TotalInfractions, len(touched), scanRep.Skips.DirCount,
 		scanRep.Skips.Symlinks, scanRep.Skips.Oversize, scanRep.Skips.Irregular))
 
 	return auditRatchetPassed(ctx, opts, base, ratchet)
+}
+
+// auditRatchetRejection returns an error describing why the ratchet failed.
+func auditRatchetRejection(ctx context.Context, opts *auditOptions, scanOpts hiss.ScanOptions, base *baseline.Baseline, current []baseline.Infraction, ratchet *baseline.RatchetResult) error {
+	if base.Absent && len(current) > 0 {
+		return missingBaselineFailure(opts.baselinePath, len(current))
+	}
+	return fmt.Errorf("[FAIL] %s", describeRejection(ctx, opts.rootDir, opts.baselinePath, scanOpts, base, current, ratchet, opts.allViolations))
 }
 
 func auditedInfractions(scanRep *hiss.ScanReport, opts *auditOptions) ([]baseline.Infraction, error) {

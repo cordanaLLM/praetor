@@ -36,6 +36,31 @@ type reuseAnnotationInput struct {
 	SPDXFileCopyrightText any `toml:"SPDX-FileCopyrightText"`
 }
 
+// parseReuseAnnotation parses a single REUSE annotation table item.
+func parseReuseAnnotation(item any, index int) (ReuseAnnotation, error) {
+	annotation, ok := item.(map[string]any)
+	if !ok {
+		return ReuseAnnotation{}, fmt.Errorf("%s annotation %d must be a table", ReuseFile, index+1)
+	}
+	if err := rejectDottedReuseKeys(annotation, index); err != nil {
+		return ReuseAnnotation{}, err
+	}
+	input := reuseAnnotationInput{
+		Path: annotation["path"], Precedence: annotation["precedence"],
+		SPDXLicenseIdentifier: annotation["SPDX-License-Identifier"],
+		SPDXFileCopyrightText: annotation["SPDX-FileCopyrightText"],
+	}
+	paths, err := reuseStrings(input.Path, index, "path")
+	if err != nil {
+		return ReuseAnnotation{}, err
+	}
+	licenses, err := reuseStrings(input.SPDXLicenseIdentifier, index, "SPDX-License-Identifier")
+	if err != nil {
+		return ReuseAnnotation{}, err
+	}
+	return ReuseAnnotation{Paths: paths, Licenses: licenses}, nil
+}
+
 // ReuseAnnotationTables parses the full REUSE document and returns each annotation's paths and
 // license identifiers. TOML syntax errors name REUSE.toml; oversized documents are refused.
 func ReuseAnnotationTables(text string) ([]ReuseAnnotation, error) {
@@ -58,27 +83,11 @@ func ReuseAnnotationTables(text string) ([]ReuseAnnotation, error) {
 	}
 	tables := make([]ReuseAnnotation, 0, len(entries))
 	for index, item := range entries {
-		annotation, ok := item.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("%s annotation %d must be a table", ReuseFile, index+1)
-		}
-		if err := rejectDottedReuseKeys(annotation, index); err != nil {
-			return nil, err
-		}
-		input := reuseAnnotationInput{
-			Path: annotation["path"], Precedence: annotation["precedence"],
-			SPDXLicenseIdentifier: annotation["SPDX-License-Identifier"],
-			SPDXFileCopyrightText: annotation["SPDX-FileCopyrightText"],
-		}
-		paths, err := reuseStrings(input.Path, index, "path")
+		ann, err := parseReuseAnnotation(item, index)
 		if err != nil {
 			return nil, err
 		}
-		licenses, err := reuseStrings(input.SPDXLicenseIdentifier, index, "SPDX-License-Identifier")
-		if err != nil {
-			return nil, err
-		}
-		tables = append(tables, ReuseAnnotation{Paths: paths, Licenses: licenses})
+		tables = append(tables, ann)
 	}
 	return tables, nil
 }

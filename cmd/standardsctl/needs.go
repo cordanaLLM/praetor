@@ -112,17 +112,25 @@ func runNeedsScan(ctx context.Context, args []string) error {
 }
 
 // writeNeedsManifest writes .needs.yaml unless the committed manifest already matches the scan
-// apart from updated_at (needs.CheckNeedsManifest), which it then keeps byte for byte: a rewrite
-// moved only the timestamp, so the manifest, a generated artefact (ADR-0017), never rendered
-// fresh.
+// apart from updated_at (needs.CheckNeedsManifest), which it then keeps byte for byte, or when
+// the scan would drop a recorded framework without settings configured (needs.DroppedFramework).
 func writeNeedsManifest(ctx context.Context, path string, report *needs.RepoNeeds) error {
 	drift, err := needs.CheckNeedsManifest(ctx, path, report)
-	if err == nil && drift == "" {
+	if err != nil {
+		if !errors.Is(err, needs.ErrNeedsManifestMissing) {
+			return err
+		}
+	} else if drift == "" {
 		fmt.Printf("\n[PASS] %s/.needs.yaml already matches the scan; kept the recorded file.\n", path)
 		return nil
-	}
-	if err != nil && !errors.Is(err, needs.ErrNeedsManifestMissing) {
-		return err
+	} else {
+		committed, readErr := needs.ReadCommittedManifest(ctx, path)
+		if readErr != nil {
+			return readErr
+		}
+		if err := needs.DroppedFramework(committed, report); err != nil {
+			return err
+		}
 	}
 	if err := needs.WriteNeedsManifest(path, report); err != nil {
 		return fmt.Errorf("failed to write .needs.yaml: %w", err)
@@ -142,11 +150,18 @@ func checkNeedsManifest(ctx context.Context, path string, report *needs.RepoNeed
 	if err != nil {
 		return err
 	}
-	if drift != "" {
-		return fmt.Errorf("%s/.needs.yaml is stale against a fresh scan; run 'praetorctl needs scan --write --path=%s':\n%s", path, path, drift)
+	if drift == "" {
+		fmt.Printf("[PASS] %s/.needs.yaml matches a fresh scan (updated_at ignored).\n", path)
+		return nil
 	}
-	fmt.Printf("[PASS] %s/.needs.yaml matches a fresh scan (updated_at ignored).\n", path)
-	return nil
+	msg := fmt.Sprintf("%s/.needs.yaml is stale against a fresh scan; run 'praetorctl needs scan --write --path=%s':\n%s", path, path, drift)
+	committed, readErr := needs.ReadCommittedManifest(ctx, path)
+	if readErr == nil {
+		if dropErr := needs.DroppedFramework(committed, report); dropErr != nil {
+			return fmt.Errorf("%s\n%w", msg, dropErr)
+		}
+	}
+	return errors.New(msg)
 }
 
 func runNeedsReport(ctx context.Context, args []string) error {

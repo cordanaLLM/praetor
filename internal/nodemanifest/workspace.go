@@ -168,6 +168,22 @@ func workspacePatterns(repoPath string, rootHasManifest bool) ([]string, error) 
 // pattern, and a repository is not broken because one of its patterns is. A
 // pattern that matches nothing and a pattern that cannot be parsed are the same
 // thing to a caller deciding which manifests to read.
+// candidateWorkspacePackage verifies a glob match is a valid package directory under repoPath.
+func candidateWorkspacePackage(repoPath, match string) (string, bool) {
+	info, statErr := os.Stat(match)
+	if statErr != nil || !info.IsDir() {
+		return "", false
+	}
+	if !util.FileExists(filepath.Join(match, "package.json")) {
+		return "", false
+	}
+	rel, relErr := filepath.Rel(repoPath, match)
+	if relErr != nil || strings.HasPrefix(rel, "..") {
+		return "", false
+	}
+	return filepath.ToSlash(rel), true
+}
+
 func globWorkspacePackages(repoPath, pattern string) []string {
 	clean := strings.TrimPrefix(strings.TrimSpace(pattern), "./")
 	if clean == "" || strings.HasPrefix(clean, "!") {
@@ -188,18 +204,9 @@ func globWorkspacePackages(repoPath, pattern string) []string {
 
 	dirs := make([]string, 0, len(matches))
 	for _, match := range matches {
-		info, statErr := os.Stat(match)
-		if statErr != nil || !info.IsDir() {
-			continue
+		if rel, ok := candidateWorkspacePackage(repoPath, match); ok {
+			dirs = append(dirs, rel)
 		}
-		if !util.FileExists(filepath.Join(match, "package.json")) {
-			continue
-		}
-		rel, relErr := filepath.Rel(repoPath, match)
-		if relErr != nil || strings.HasPrefix(rel, "..") {
-			continue
-		}
-		dirs = append(dirs, filepath.ToSlash(rel))
 	}
 	return dirs
 }

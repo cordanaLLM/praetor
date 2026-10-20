@@ -174,18 +174,25 @@ func filterBaselineForModule(base *baseline.Baseline, repoDir, moduleDir string,
 	}
 }
 
+// pathInModule reports whether normFile lies within the non-root module directory relMod.
+func pathInModule(normFile, relMod string) bool {
+	if relMod == "." || relMod == "" {
+		return false
+	}
+	return normFile == relMod || strings.HasPrefix(normFile, relMod+"/")
+}
+
 func moduleHoldsInfraction(relMod, filePath, repoDir string, allModules []goModule) bool {
 	normFile := baseline.NormalizePath(filePath)
 	if relMod != "." && relMod != "" {
-		return normFile == relMod || strings.HasPrefix(normFile, relMod+"/")
+		return pathInModule(normFile, relMod)
 	}
 	for i := 0; i < len(allModules) && i < apiassets.MaxTrackedModules; i++ {
 		subRel, err := filepath.Rel(repoDir, allModules[i].dir)
 		if err != nil {
 			continue
 		}
-		subRel = baseline.NormalizePath(subRel)
-		if subRel != "." && subRel != "" && (normFile == subRel || strings.HasPrefix(normFile, subRel+"/")) {
+		if pathInModule(normFile, baseline.NormalizePath(subRel)) {
 			return false
 		}
 	}

@@ -151,6 +151,26 @@ func GetChangedFiles(ctx context.Context, dir, baseRef, headRef string) ([]strin
 	return files, nil
 }
 
+// classifyPath evaluates a single normalized path, updating counters and change domains.
+func (cs *ChangeSet) classifyPath(p string, nonStateCount, nonDocsCount *int) {
+	if isState(p) {
+		return
+	}
+	*nonStateCount++
+
+	// Agent instruction files (AGENTS.md, compiled vendor files, .agents/**,
+	// .paperclip/**) are classified before documentation: a docs-only decision skips
+	// the HISS-16 compile-context --verify gate, and an agent-only change set must
+	// never take that path even though most of those files end in .md.
+	if !isAgent(p) && isDocumentation(p) {
+		cs.DocsChanged = true
+		return
+	}
+	*nonDocsCount++
+
+	cs.classifySource(p)
+}
+
 // ClassifyChanges categorizes a list of file paths into distinct domains.
 func ClassifyChanges(files []string) *ChangeSet {
 	cs := &ChangeSet{
@@ -174,23 +194,7 @@ func ClassifyChanges(files []string) *ChangeSet {
 		if p == "" {
 			continue
 		}
-
-		if isState(p) {
-			continue
-		}
-		nonStateCount++
-
-		// Agent instruction files (AGENTS.md, compiled vendor files, .agents/**,
-		// .paperclip/**) are classified before documentation: a docs-only decision skips
-		// the HISS-16 compile-context --verify gate, and an agent-only change set must
-		// never take that path even though most of those files end in .md.
-		if !isAgent(p) && isDocumentation(p) {
-			cs.DocsChanged = true
-			continue
-		}
-		nonDocsCount++
-
-		cs.classifySource(p)
+		cs.classifyPath(p, &nonStateCount, &nonDocsCount)
 	}
 
 	cs.StateOnly = nonStateCount == 0 && len(files) > 0

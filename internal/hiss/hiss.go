@@ -245,6 +245,10 @@ type scanWalker struct {
 	files int
 	// admitted counts, per bounded scanner (languageScanners index), the files it was handed.
 	admitted [len(languageScanners)]int
+	// objcMarker records whether an Objective-C marker (.mm, .metal, or *.xcodeproj) was seen.
+	objcMarker bool
+	// unscannedM counts unscanned .m files seen during traversal.
+	unscannedM int
 }
 
 // maxGitFileListBytes bounds the file list read from git (HISS-02). A listing larger than
@@ -370,6 +374,9 @@ func (w *scanWalker) visitDir(rel string, info os.FileInfo) error {
 		w.rep.recordSkippedDir(rel)
 		return filepath.SkipDir
 	}
+	if isObjCDir(info.Name()) {
+		w.objcMarker = true
+	}
 	return nil
 }
 
@@ -407,6 +414,11 @@ func (w *scanWalker) skipFile(rel string, info os.FileInfo) bool {
 	// scanned nor counted as unscanned coverage.
 	case !w.visible.HasFile(filepath.ToSlash(rel)), ShouldIgnorePath(rel):
 		return true
+	}
+	if isObjCFileMarker(rel) {
+		w.objcMarker = true
+	}
+	switch {
 	case !isScannableExt(strings.ToLower(filepath.Ext(rel))):
 		return w.skipCandidate(rel, info)
 	case info.Mode()&os.ModeSymlink != 0:
@@ -430,6 +442,9 @@ func (w *scanWalker) skipCandidate(rel string, info os.FileInfo) bool {
 	if isContentCandidate(rel, strings.ToLower(filepath.Ext(rel))) &&
 		info.Mode().IsRegular() && info.Size() <= MaxScanFileSize {
 		return false
+	}
+	if strings.ToLower(filepath.Ext(rel)) == ".m" {
+		w.unscannedM++
 	}
 	w.rep.Coverage.recordUnscanned(rel)
 	return true
@@ -557,21 +572,31 @@ func readBounded(root, rel string) (data []byte, err error) {
 	return data, nil
 }
 
+func isObjCDir(name string) bool {
+	return strings.HasSuffix(strings.ToLower(name), ".xcodeproj")
+}
+
+func isObjCFileMarker(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.HasSuffix(lower, ".mm") || strings.HasSuffix(lower, ".metal")
+}
+
 // IsNativeExtension reports whether ext, in any case as filepath.Ext returns it, names a file the
-// native (C and C++) scanner reads, the files HISS-01's `goto` and HISS-08's banned-libc checks
-// cover. Scan folds the extension to lower case and dispatches on the same set, so a caller
-// deciding which files make a repository C/C++ (adopt's source detection) reads the audit's own
-// scope instead of a second extension table.
+// native (C, C++, Objective-C++, CUDA, HIP) scanner reads, the files HISS-01's `goto` and HISS-08's
+// banned-libc checks cover. Scan folds the extension to lower case and dispatches on the same set,
+// so a caller deciding which files make a repository C/C++ (adopt's source detection) reads the
+// audit's own scope instead of a second extension table.
 func IsNativeExtension(ext string) bool {
 	return isNativeExt(strings.ToLower(ext))
 }
 
-// isNativeExt is the one C-family table: C, C++ (sources and the .h/.hpp/.hh headers), CUDA
-// and HIP. ci filter reads it through SupportsExtension, so a file the native scanner reads
-// is always code to the CI gate selection as well.
+// isNativeExt is the one C-family table: C, C++, Objective-C++ (sources and the .h/.hpp/.hh
+// headers), CUDA and HIP. ci filter reads it through SupportsExtension, so a file the native
+// scanner reads is always code to the CI gate selection as well.
 func isNativeExt(ext string) bool {
 	return ext == ".c" || ext == ".cpp" || ext == ".cc" || ext == ".cxx" ||
-		ext == ".h" || ext == ".hpp" || ext == ".hh" || ext == ".cu" || ext == ".hip"
+		ext == ".h" || ext == ".hpp" || ext == ".hh" || ext == ".cu" || ext == ".hip" ||
+		ext == ".mm"
 }
 
 // recordViolation appends a violation unless the cap is reached, in which case the

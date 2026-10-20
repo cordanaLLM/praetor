@@ -185,7 +185,7 @@ func (a *fleetAggregation) scanRepo(ctx context.Context, repo *fleetRepo) error 
 	if key := repoIdentityKey(repoNeeds.Repository); key != "" {
 		a.seen[key] = struct{}{}
 	}
-	a.add(repoNeeds)
+	a.add(ctx, repoNeeds)
 	return nil
 }
 
@@ -197,7 +197,7 @@ func isContextError(err error) bool {
 // addHarvested folds one harvested repository into the report unless a repository of the
 // same identity is already on it, and reports whether it was new. A harvested repository
 // is counted as discovered; the on-disk scan counted its repositories through the walk.
-func (a *fleetAggregation) addHarvested(repoNeeds *RepoNeeds) bool {
+func (a *fleetAggregation) addHarvested(ctx context.Context, repoNeeds *RepoNeeds) bool {
 	key := repoIdentityKey(repoNeeds.Repository)
 	if key != "" {
 		if _, dup := a.seen[key]; dup {
@@ -206,15 +206,15 @@ func (a *fleetAggregation) addHarvested(repoNeeds *RepoNeeds) bool {
 		a.seen[key] = struct{}{}
 	}
 	a.report.TotalRepositories++
-	a.add(repoNeeds)
+	a.add(ctx, repoNeeds)
 	return true
 }
 
 // add scores one repository against the framework and puts it on the leaderboard. Rows
 // discovered on disk are distinct repositories whatever they are named, so none is ever
 // merged away; a name two rows share is qualified by location in the consumer lists.
-func (a *fleetAggregation) add(repoNeeds *RepoNeeds) {
-	a.recordFramework(applyFrameworkCoverage(a.framework, repoNeeds, a.registry))
+func (a *fleetAggregation) add(ctx context.Context, repoNeeds *RepoNeeds) {
+	a.recordFramework(applyFrameworkCoverage(ctx, a.framework, repoNeeds, a.registry))
 	a.report.ScannedRepositories++
 	a.report.Leaderboard = append(a.report.Leaderboard, *repoNeeds)
 
@@ -291,7 +291,7 @@ func (a *fleetAggregation) mergeHarvest(ctx context.Context, harvestPath string)
 			a.skipUnsupported(harvested[i].Repository)
 			continue
 		}
-		a.addHarvested(&harvested[i])
+		a.addHarvested(ctx, &harvested[i])
 	}
 	return nil
 }
@@ -342,7 +342,7 @@ func repoIdentityKey(repository string) string {
 // row names, and takes its readiness basis from, the framework RowFramework derives from
 // those reconciliations, which it returns: a row is not configured only when none of its
 // languages has a configured framework.
-func applyFrameworkCoverage(idx *FrameworkIndex, repoNeeds *RepoNeeds, registry *AnalyzerRegistry) *FrameworkIndex {
+func applyFrameworkCoverage(ctx context.Context, idx *FrameworkIndex, repoNeeds *RepoNeeds, registry *AnalyzerRegistry) *FrameworkIndex {
 	if idx == nil || repoNeeds == nil {
 		return idx
 	}
@@ -351,6 +351,7 @@ func applyFrameworkCoverage(idx *FrameworkIndex, repoNeeds *RepoNeeds, registry 
 		reconcileDependency(registry.frameworkFor(repoNeeds.Dependencies[i].Language, idx), &repoNeeds.Dependencies[i])
 	}
 	reconcileStandardImports(idx, repoNeeds)
+	applyDepguardPolicy(ctx, repoNeeds)
 	scored := RowFramework(registry, repoNeeds, idx)
 	repoNeeds.Framework = scored.Name
 	calculateReadiness(repoNeeds)

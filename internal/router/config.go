@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -138,10 +139,29 @@ func ValidateRoutingConfig(cfg *RoutingConfig) error {
 			return err
 		}
 	}
+	if err := validateOffload(cfg); err != nil {
+		return err
+	}
 	if err := validateGateway(cfg); err != nil {
 		return err
 	}
 	return validateLanes(cfg)
+}
+
+func validateOffload(cfg *RoutingConfig) error {
+	if cfg.Offload == nil {
+		return nil
+	}
+	if err := validateRoutingTags(cfg.Offload.Labels); err != nil {
+		return fmt.Errorf("%w: offload labels: %w", ErrInvalidRoutingConfig, err)
+	}
+	declared := DeclaredTaskLabels(cfg)
+	for _, label := range cfg.Offload.Labels {
+		if !slices.Contains(declared, label) {
+			return fmt.Errorf("%w: offload label %q is not declared by target_tasks", ErrInvalidRoutingConfig, label)
+		}
+	}
+	return nil
 }
 
 func validateRoutingGovernance(policy GovernancePolicy) error {

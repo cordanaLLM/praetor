@@ -90,6 +90,43 @@ func TestGoStages_Positive_RunEveryTrackedModule(t *testing.T) {
 	}
 }
 
+// Positive (golusoris/goenvoy's layout): a repository without a root go.mod or go.work whose
+// modules are all nested runs every Go stage in each of them through the real discovery; a
+// root-only discovery would leave the stages not applicable and the run without a receipt.
+func TestGoStages_Positive_NestedModulesWithoutRootModule(t *testing.T) {
+	repo := newHermeticGitRepo(t)
+	commitFile(t, repo, "arr/go.mod", "module example.test/arr\n\ngo 1.27\n")
+	commitFile(t, repo, "media/server/go.mod", "module example.test/media/server\n\ngo 1.27\n")
+	writeLockfiles(t, repo)
+	writeFile(t, filepath.Join(repo, GosecConfigFile), "{\"global\":{}}\n")
+	cfg, recorded := newTestConfig(t, repo, false)
+	cfg.moduleDiscovery = apiassets.TrackedModuleFiles
+	base := cfg.run
+	cfg.run = func(ctx context.Context, dir, name string, args ...string) (string, error) {
+		if name == "go" && len(args) > 0 && args[0] == "list" {
+			*recorded = append(*recorded, recordedCommand{dir: dir, name: name, args: args})
+			return dir + "\n", nil
+		}
+		return base(ctx, dir, name, args...)
+	}
+	if held, err := holdsToolchainMarker(t.Context(), cfg); err != nil || !held {
+		t.Fatalf("nested modules hold the Go marker = %t, %v", held, err)
+	}
+	stages := map[string]func(context.Context, *stageConfig) (string, error){
+		"prefetch": runGoPrefetch, "security": runGoSecurity, "race": runGoTests,
+	}
+	for name, stage := range stages {
+		if msg, err := stage(t.Context(), cfg); err != nil || !strings.Contains(msg, "arr/go.mod") || !strings.Contains(msg, "media/server/go.mod") {
+			t.Fatalf("%s stage = %q, %v; want both nested modules", name, msg, err)
+		}
+	}
+	for _, dir := range []string{filepath.Join(repo, "arr"), filepath.Join(repo, "media", "server")} {
+		if got := countCommandDirs(*recorded, "gosec", dir); got != 1 {
+			t.Errorf("gosec runs in %s = %d, want 1", dir, got)
+		}
+	}
+}
+
 func TestGoStages_Positive_RootNamesItsModule(t *testing.T) {
 	_, cfg, _ := trackedModuleFixture(t, false)
 	if msg, err := runGoPrefetch(t.Context(), cfg); err != nil || !strings.Contains(msg, "go.mod") {

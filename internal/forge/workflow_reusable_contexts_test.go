@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // The caller and called workflow of plurano/shared-ci pull request 5 (#1212).
@@ -242,6 +244,116 @@ func TestReusableCallContexts_JobNameExpression(t *testing.T) {
 	}
 	if !slices.Equal(got, []string{"Licence / REUSE lint"}) {
 		t.Fatalf("contexts = %q, want [Licence / REUSE lint]", got)
+	}
+}
+
+// Positive: the pinned external licence caller contributes its status context,
+// including a root input, to planned workflows and the rendered ruleset.
+func TestReusableCallContexts_PinnedExternalWorkflow(t *testing.T) {
+	callerContent := "on:\n  pull_request:\njobs:\n  licence:\n    name: Licence\n" +
+		"    uses: " + PluranoHoristesLicenceAction + "@" + PluranoHoristesLicenceWorkflowSHA + "  # " + PluranoHoristesLicencePinDate + "\n"
+
+	// Positive: RequiredStatusContextsPlanned / RenderRulesetForRepository for a temp repo holding the plurano caller -> "Licence / REUSE lint".
+	root := t.TempDir()
+	writeWorkflowFixture(t, root, "reuse.yml", callerContent)
+
+	contexts, err := RequiredStatusContextsPlanned(t.Context(), root, nil)
+	if err != nil {
+		t.Fatalf("RequiredStatusContextsPlanned: %v", err)
+	}
+	if !slices.Equal(contexts, []string{"Licence / REUSE lint"}) {
+		t.Fatalf("contexts = %v, want [Licence / REUSE lint]", contexts)
+	}
+
+	policy := config.DefaultPolicy().BranchProtection
+	_, rulesetContexts, err := RenderRulesetForRepository(t.Context(), root, policy, nil)
+	if err != nil {
+		t.Fatalf("RenderRulesetForRepository: %v", err)
+	}
+	if !slices.Equal(rulesetContexts, []string{"Licence / REUSE lint"}) {
+		t.Fatalf("rulesetContexts = %v, want [Licence / REUSE lint]", rulesetContexts)
+	}
+
+	// Positive: a caller with a root input -> "Licence / REUSE lint (<root>)".
+	for _, sub := range []string{"src", "pkg/core"} {
+		callerWithRoot := "on:\n  pull_request:\njobs:\n  licence:\n    name: Licence\n" +
+			"    uses: " + PluranoHoristesLicenceAction + "@" + PluranoHoristesLicenceWorkflowSHA + "\n" +
+			"    with:\n      root: " + sub + "\n"
+		got, err := reusableContexts(t, map[string]string{"reuse.yml": callerWithRoot})
+		if err != nil {
+			t.Fatalf("caller with root %q: %v", sub, err)
+		}
+		want := []string{"Licence / REUSE lint (" + sub + ")"}
+		if !slices.Equal(got, want) {
+			t.Fatalf("caller with root %q = %v, want %v", sub, got, want)
+		}
+	}
+}
+
+// Negative: unknown external workflows and a different horistes SHA are refused.
+func TestReusableCallContexts_PinnedExternalWorkflowRejectsOtherSources(t *testing.T) {
+	// An unknown external reusable workflow keeps its existing refusal.
+	unknownCaller := "on:\n  pull_request:\njobs:\n  licence:\n    name: Licence\n" +
+		"    uses: other/repo/.github/workflows/check.yml@v1\n"
+	_, err := reusableContexts(t, map[string]string{"reuse.yml": unknownCaller})
+	wantUnknown := `calls the reusable workflow other/repo/.github/workflows/check.yml@v1 of another repository`
+	if err == nil || !strings.Contains(err.Error(), wantUnknown) {
+		t.Fatalf("unknown external workflow err = %v, want containing %q", err, wantUnknown)
+	}
+
+	// Negative: the horistes path at another SHA -> refused naming the pin.
+	otherSHA := "1111222233334444555566667777888899990000"
+	otherSHACaller := "on:\n  pull_request:\njobs:\n  licence:\n    name: Licence\n" +
+		"    uses: " + PluranoHoristesLicenceAction + "@" + otherSHA + "\n"
+	_, err = reusableContexts(t, map[string]string{"reuse.yml": otherSHACaller})
+	if err == nil || !strings.Contains(err.Error(), "move the engine pin (forge.PluranoHoristesLicenceWorkflowSHA) first") {
+		t.Fatalf("horistes at another SHA: err = %v, want engine pin instruction", err)
+	}
+}
+
+// Boundary: a caller passing root "." explicitly keeps the default status name.
+func TestReusableCallContexts_PinnedExternalWorkflowExplicitRoot(t *testing.T) {
+	callerExplicitDot := "on:\n  pull_request:\njobs:\n  licence:\n    name: Licence\n" +
+		"    uses: " + PluranoHoristesLicenceAction + "@" + PluranoHoristesLicenceWorkflowSHA + "\n" +
+		"    with:\n      root: .\n"
+	got, err := reusableContexts(t, map[string]string{"reuse.yml": callerExplicitDot})
+	if err != nil || !slices.Equal(got, []string{"Licence / REUSE lint"}) {
+		t.Fatalf("caller with root . = %v, err %v", got, err)
+	}
+}
+
+// Positive: the pinned external specification carries the upstream job id and input defaults.
+func TestPinnedHoristesLicenceSpec(t *testing.T) {
+	called := newCalledWorkflows(nil)
+	spec, err := called.spec("licence", PluranoHoristesLicenceAction+"@"+PluranoHoristesLicenceWorkflowSHA)
+	if err != nil {
+		t.Fatalf("pinned specification: %v", err)
+	}
+	if len(spec.Jobs) != 1 || spec.Jobs["reuse"].Name !=
+		"${{ inputs.root == '.' && 'REUSE lint' || format('REUSE lint ({0})', inputs.root) }}" {
+		t.Fatalf("pinned jobs = %+v, want only reuse with upstream name", spec.Jobs)
+	}
+	defaults := workflowCallDefaults(spec)
+	if len(defaults) != 2 || defaults["runner"].text != "ubuntu-26.04" || defaults["root"].text != "." {
+		t.Fatalf("pinned input defaults = %+v", defaults)
+	}
+}
+
+// Negative and boundary: malformed pins and a path without @ retain the other-repository refusal.
+func TestPinnedHoristesLicenceSpec_RefusesInvalidPin(t *testing.T) {
+	for _, ref := range []string{
+		PluranoHoristesLicenceAction + "@" + strings.ToUpper(PluranoHoristesLicenceWorkflowSHA),
+		PluranoHoristesLicenceAction + "@" + PluranoHoristesLicenceWorkflowSHA[:39],
+		PluranoHoristesLicenceAction,
+	} {
+		t.Run(ref, func(t *testing.T) {
+			caller := "on:\n  pull_request:\njobs:\n  licence:\n    name: Licence\n    uses: " + ref + "\n"
+			_, err := reusableContexts(t, map[string]string{"reuse.yml": caller})
+			want := "calls the reusable workflow " + ref + " of another repository"
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("invalid pin: err = %v, want containing %q", err, want)
+			}
+		})
 	}
 }
 

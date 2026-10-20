@@ -288,7 +288,7 @@ outside a manifest. None of them ships in the binaries.
 
 | Project | Use | Kind and relation | License |
 | :-- | :-- | :-- | :-- |
-| [Lefthook](https://github.com/evilmartians/lefthook) | Git hooks; CI installs it with go install | tool, used by CI | MIT |
+| [Lefthook](https://github.com/evilmartians/lefthook) | Git hooks; CI and the cloud session bootstrap build the tool of `tools/lefthook/go.mod` | tool, used by CI | MIT |
 | [GoReleaser](https://goreleaser.com) | Release archives, the container image and checksums | tool, used by CI | MIT |
 | [golangci-lint](https://golangci-lint.run) | Go linting: `make lint` runs the tool of `tools/lint/go.mod`; the pre-push hook still runs its latest release (#1416) | tool, used by CI | GPL-3.0-only, the upstream LICENSE is the GPL version 3 text, with no notice granting later versions |
 | [gosec](https://github.com/securego/gosec) | Go security scan, a tool of `tools/go/go.mod` | tool, used by CI | Apache-2.0 |

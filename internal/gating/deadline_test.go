@@ -419,10 +419,15 @@ func TestResolveRepoRunBudget_3D(t *testing.T) {
 			"2 test suites at a 12m0s stage bound each + 9m0s for the other stages"},
 		{"cargo only", []string{"Cargo.toml", CargoLockFile}, 1, cargoAllowance,
 			"12m0s race stage bound + 9m0s for the other stages"},
+		{"go and node", []string{"go.mod", PackageJsonFile, "package-lock.json"}, 2, cargoAllowance,
+			"2 test suites at a 12m0s stage bound each + 9m0s for the other stages"},
+		{"node only", []string{PackageJsonFile, "package-lock.json"}, 1, cargoAllowance,
+			"12m0s race stage bound + 9m0s for the other stages"},
 		// Negative: a Go repository keeps exactly the budget it had before Cargo support.
 		{"go only", []string{"go.mod"}, 1, OtherStagesAllowance, goForm},
 		// Boundary: a Cargo.toml without its Cargo.lock runs no Cargo command and adds nothing.
 		{"cargo without a lock", []string{"go.mod", "Cargo.toml"}, 1, OtherStagesAllowance, goForm},
+		{"node without a lock", []string{"go.mod", PackageJsonFile}, 1, OtherStagesAllowance, goForm},
 		{"no marker", nil, 1, OtherStagesAllowance, goForm},
 	}
 	for _, tc := range cases {

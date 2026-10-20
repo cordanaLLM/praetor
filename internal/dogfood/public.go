@@ -99,12 +99,8 @@ func RunPublicLoop(ctx context.Context, opts PublicLoopOptions) (*PublicLoopRepo
 	if err != nil {
 		return report, err
 	}
-	for i := 0; i < len(sources) && i < MaxPublicRepositories; i++ {
-		result := runPublicRepository(ctx, opts, sources[i], filepath.Join(runDir, fmt.Sprintf("repo-%02d", i+1)))
-		report.Results = append(report.Results, result)
-		if err := savePublicJSON(filepath.Join(runDir, "report.json"), report); err != nil {
-			return report, err
-		}
+	if err := executePublicRepositories(ctx, opts, sources, runDir, report); err != nil {
+		return report, err
 	}
 	report.Verified = opts.Apply && publicResultsVerified(report.Results)
 	if err := savePublicJSON(filepath.Join(runDir, "report.json"), report); err != nil {
@@ -114,6 +110,18 @@ func RunPublicLoop(ctx context.Context, opts PublicLoopOptions) (*PublicLoopRepo
 		return report, ErrPublicLoopFailed
 	}
 	return report, nil
+}
+
+// executePublicRepositories iterates over planned sources and persists progress after each repository.
+func executePublicRepositories(ctx context.Context, opts PublicLoopOptions, sources []publicSource, runDir string, report *PublicLoopReport) error {
+	for i := 0; i < len(sources) && i < MaxPublicRepositories; i++ {
+		result := runPublicRepository(ctx, opts, sources[i], filepath.Join(runDir, fmt.Sprintf("repo-%02d", i+1)))
+		report.Results = append(report.Results, result)
+		if err := savePublicJSON(filepath.Join(runDir, "report.json"), report); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func runPublicRepository(ctx context.Context, opts PublicLoopOptions, source publicSource, dir string) PublicRepositoryResult {

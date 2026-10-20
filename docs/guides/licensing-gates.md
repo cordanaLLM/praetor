@@ -48,10 +48,23 @@ Adoption writes two jobs:
   so it behaves the same on every runner), and every later step runs only when the pull request
   is not a draft. The branch is
   `repository.default_branch` of `.standards.yaml`, else the origin HEAD the checkout records,
-  else `main` (`forge.RepositoryDefaultBranch`), written as `branches: ['master']`;
+  else `main` (`forge.RepositoryDefaultBranch`), written as `branches: ['master']`.
+  For a repository owned by the `plurano` organisation, adoption renders `.github/workflows/reuse.yml`
+  as a reusable workflow caller invoking `plurano/horistes/.github/workflows/licence.yml` pinned by full
+  40-hex commit SHA rather than copying the steps and requirements lock into the repository. The byte-lock
+  audit accepts any 40-hex SHA pin (enabling Renovate's `github-actions` manager to update it without failing
+  drift verification) and refuses unpinned refs or tags (`TestAdopt_PluranoRendersLicenceCaller`,
+  `TestAdopt_PluranoAcceptsBumpedSHA`, `TestAdopt_PluranoRefusesNonSHACaller` in
+  `internal/adopt/reuse_gate_test.go`). A plurano repository holding an unedited copy of the older standalone
+  workflow is refreshed to the caller on adoption (`TestAdopt_PluranoRefreshesCopiedReuseWorkflow`);
+
 - a `reuse-lint` pre-commit job in `lefthook.yml` that runs `reuse lint` where reuse 6.x is
   installed, skips with the reason where reuse is not installed, and fails, naming the pin, on
   another reuse major.
+
+For a plurano-owned repository with `.github/workflows/reuse.yml`, `praetorctl audit` requires its
+sole job to call `plurano/horistes/.github/workflows/licence.yml` at a full commit SHA. It reports
+a copied gate or a tag, branch, or short SHA pin with `praetorctl adopt` as the repair.
 
 Praetor's own Compliance workflow installs the same lock the same way. The `reuse-lint` hook job
 names the reuse release line by `supplychain.ReuseActionVersion`, and `praetorctl bump` expects

@@ -858,10 +858,21 @@ modules`; it is never silently truncated.
 
 Each stage visits modules in discovery order. Prefetch runs `go mod verify` and `go mod download`,
 security runs symbol-level `govulncheck` against the repository-root OpenVEX document and `gosec`,
-and the race stage runs `go test -race ./...` in an isolated worktree for each module. The signed
-stage reason contains one result and elapsed time per module, and a failure names the module
-directory. A root-only repository keeps the existing stage behavior with the root module name
-(`go.mod`) added to the result.
+and the race stage runs `go test -race ./...` in an isolated worktree for each module. Each
+module's race suite runs in its own memory-bounded user scope (`systemd-run --user --scope`) when
+scopes are available, so the out-of-memory daemon reclaims from the step rather than from the
+caller's session. Defaults are `MemoryHigh=16G`, `MemoryMax=20G`, and `MemorySwapMax=4G`,
+customizable via `PRAETOR_GATE_SCOPE_MEMORY_HIGH`, `PRAETOR_GATE_SCOPE_MEMORY_MAX`, and
+`PRAETOR_GATE_SCOPE_SWAP_MAX`. An operator can set `PRAETOR_GATE_SCOPE=off` to run unscoped. `PRAETOR_GATE_ADMISSION=off` skips the race stage's wait for host memory, swap and load; the wait only delays the stage and never decides it, and the stage log says it was skipped (the gate's own signal tests set it, because a busy runner held the wait past their timing). On
+platforms where user scopes are unavailable (such as macOS or Windows), the tests run directly and
+the stage message reports `race tests ran unscoped: <reason>`; inside the devcontainer the tests
+run unscoped too, since its runner has no `systemd-run`. Before the first module the stage waits
+until the host has at least 12 GiB available and 15 GiB swap free, capped at a quarter of its memory
+and half of its swap, so a small host or a CI runner with little swap is not held until the
+deadline; each held reading prints one line. The signed stage reason contains one
+result and elapsed time per module, and a failure names the module directory. A root-only
+repository keeps the existing stage behavior with the root module name (`go.mod`) added to the
+result.
 
 The same discovery rule is used by the CLI entry points. `praetorctl go vet` runs `go vet ./...`
 once in every tracked module; `praetorctl security govuln` does the corresponding vulnerability
@@ -933,6 +944,23 @@ through a recording command runner, and the `TestCargoTargetDir_*` cases pin the
 stand-in `cargo` with `testsupport.BuildExecutable`, puts it first on `PATH`, and runs the stages
 through the production runner: all commands passing mints a receipt that verifies and leaves the
 build output in the shared directory after the worktree is gone, and a clippy failure mints none.
+
+### Node repositories (npm, pnpm, Yarn)
+
+Where the repository root holds `package.json` plus exactly one supported lockfile (`package-lock.json` for npm, `pnpm-lock.yaml` for pnpm, or `yarn.lock` for Yarn), the toolchain stages run Node alongside Go and Cargo, or instead of them ([`internal/gating/node.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/node.go)):
+
+| Stage | npm | pnpm | Yarn Classic (v1) | Yarn Berry (v2+) | Runs in | Bound |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| Prefetch & Lockfiles | `npm ci --ignore-scripts` | `pnpm install --frozen-lockfile --ignore-scripts` | `yarn install --frozen-lockfile --ignore-scripts` | `yarn install --immutable --mode=skip-build` | an isolated worktree | `DefaultPrefetchTimeout`, 60 s |
+| Security & SCA Scan | `npm audit --audit-level=high --json` | `pnpm audit --audit-level=high --json` | `yarn audit --level=high --json` | `yarn npm audit --severity=high --json` | the repository | `NodeAuditTimeout`, 3 min |
+| Race-Detector Tests | `npm run test`, then `npm run lint` | `pnpm run test`, then `pnpm run lint` | `yarn run test`, then `yarn run lint` | `yarn run test`, then `yarn run lint` | the isolated worktree | a race stage bound of its own |
+
+- **Detection:** The Node part is present when the repository root holds `package.json` plus exactly one lockfile: `package-lock.json`, `pnpm-lock.yaml`, or `yarn.lock`. A `package.json` without a lockfile or with multiple lockfiles fails stating the files.
+- **Prefetch:** Installs strictly from the lockfile without running lifecycle scripts, in a worktree of its own, so the developer's checkout and its `node_modules` stay untouched; the run fills the package manager's shared cache. Exact flags are taken from installed tool help (`--ignore-scripts`, `--frozen-lockfile`, `--immutable`, `--mode=skip-build`). Yarn version is detected via `yarn --version` to distinguish Classic (v1) from Berry (v2+); a version the gate cannot read fails the part instead of guessing.
+- **Security:** Runs the manager's audit command at a severity threshold of `high`, failing on findings or unparseable errors. An audit that needs network access and fails is reported as a network failure, not passed.
+- **Tests:** In an isolated worktree, installs from the lockfile again (without lifecycle scripts, from the shared cache), then runs the `test` script when declared and the `lint` script when declared. The checkout's own `node_modules` is never linked in: it may hold other versions than the lockfile pins.
+- **What is not applicable:** When `package.json` declares neither a `test` nor a `lint` script, the test stage is not applicable, stated as `no test or lint script declared in package.json: Node tests skipped`, and Node does not count as verified (refusing a receipt unless another language verifies). When `package.json` has no lockfile, toolchain stages do not run and `--admit-unsupported` admits the repository without a receipt.
+- A missing manager binary skips the stage with an install hint and never passes.
 
 ### Go vulnerabilities and the OpenVEX document
 
@@ -1718,9 +1746,9 @@ The deadline is sized to the repository `--path` names (`ResolveRepoRunBudget` i
 
 | Tracked toolchain state | Test suites, one bound each | Allowance for the other stages |
 | :--- | :--- | :--- |
-| N discoverable `go.mod` files, no `Cargo.lock` | N (at least 1 for the deadline calculation) | 5 min |
-| `Cargo.lock`, no discoverable `go.mod` | 1 | 5 min + 1 min `cargo fetch` + 3 min `cargo audit` = 9 min |
-| N discoverable `go.mod` files and `Cargo.lock` | N + 1 | 9 min |
+| N discoverable `go.mod` files, no `Cargo.lock` and no Node lockfile | N (at least 1 for the deadline calculation) | 5 min |
+| `Cargo.lock` or Node lockfile, no discoverable `go.mod` | 1 | 5 min + 1 min prefetch + 3 min audit = 9 min |
+| N discoverable `go.mod` files, `Cargo.lock`, and/or Node lockfile | N + non-Go suites | 5 min + 4 min per present non-Go language |
 
 A mixed repository with one Go module therefore gets 2 × 20 + 9 = 49 minutes by default. Sized for one suite, the run
 deadline let the Go suite and the Cargo commands spend the time the Cargo suite needed, and no value
@@ -2251,11 +2279,13 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     C/C++ clauses. The verification walk records the file names it already visits, under the
     same `--verification-max-*` bounds, and the plan lists them as `source_languages: ["c"]` in
     the JSON report, also when a build marker declares the language too. Every extension the
-    audit's native scan reads (`.c`, `.cpp`, `.cc`, `.cxx`, `.hpp`, `.cu`, `.hip`, in any case;
+    audit's native scan reads (`.c`, `.cpp`, `.cc`, `.cxx`, `.hpp`, `.cu`, `.hip`, `.mm`, in any case;
     `hiss.IsNativeExtension`) makes the repository C/C++, the same files the scan runs the
-    `goto` and banned-libc checks on. A `.h` file does too, unless an Objective-C source (`.m`,
-    `.mm`) sits beside it: `.h` is Objective-C's header as well, and the audit does not scan
-    Objective-C. Files under a directory the scan ignores (`vendor`, `third_party`, `testdata`,
+    `goto` and banned-libc checks on; `.mm` is read by the C/C++ rules, while `.m` stays unscanned
+    and is listed under Not Scanned as `objective-c` where a marker shows the repository is
+    Objective-C. A `.h` file does too, unless an Objective-C source (`.m`) sits beside it: `.h`
+    is Objective-C's header as well, and the audit does not scan Objective-C. Files under a
+    directory the scan ignores (`vendor`, `third_party`, `testdata`,
     build output, and the Zig trees `zig-pkg`, `zig-out` and `.zig-cache`;
     `hiss.ShouldIgnorePath`) never count. In a work tree a file must also be one
     git reports as the repository's own: tracked, or untracked and not ignored

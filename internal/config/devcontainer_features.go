@@ -29,6 +29,20 @@ func ResolveDevContainerFeatures(ctx context.Context, policy *EffectivePolicy) (
 	if len(policy.CatalogArtifacts) > maxDevContainerFeatures {
 		return nil, errors.New("selected catalog contains too many DevContainer feature sources")
 	}
+	features, err := collectCatalogDevContainerFeatures(ctx, policy)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]DevContainerFeature, 0, len(features))
+	for _, feature := range features {
+		result = append(result, feature)
+	}
+	slices.SortFunc(result, func(a, b DevContainerFeature) int { return strings.Compare(a.Ref, b.Ref) })
+	return result, nil
+}
+
+// collectCatalogDevContainerFeatures decodes and merges features from catalog artifacts.
+func collectCatalogDevContainerFeatures(ctx context.Context, policy *EffectivePolicy) (map[string]DevContainerFeature, error) {
 	features := make(map[string]DevContainerFeature)
 	total := 0
 	for i := 0; i < len(policy.CatalogArtifacts); i++ {
@@ -47,12 +61,7 @@ func ResolveDevContainerFeatures(ctx context.Context, policy *EffectivePolicy) (
 			return nil, err
 		}
 	}
-	result := make([]DevContainerFeature, 0, len(features))
-	for _, feature := range features {
-		result = append(result, feature)
-	}
-	slices.SortFunc(result, func(a, b DevContainerFeature) int { return strings.Compare(a.Ref, b.Ref) })
-	return result, nil
+	return features, nil
 }
 
 func mergeDevContainerFeatures(features map[string]DevContainerFeature, additions []DevContainerFeature) error {
@@ -154,6 +163,11 @@ func decodeDevContainerFeature(node *yaml.Node) (DevContainerFeature, error) {
 		}
 		return DevContainerFeature{Ref: ref, Options: map[string]interface{}{}}, nil
 	}
+	return decodeMappingFeature(node)
+}
+
+// decodeMappingFeature decodes a one-entry mapping feature and its options.
+func decodeMappingFeature(node *yaml.Node) (DevContainerFeature, error) {
 	if node.Kind != yaml.MappingNode || len(node.Content) != 2 || node.Content[0].Value == "" {
 		return DevContainerFeature{}, errors.New("feature must be a string or one-entry mapping")
 	}

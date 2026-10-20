@@ -190,22 +190,27 @@ func scanWorkflowActions(ctx context.Context, repoPath string) ([]PackageRef, er
 	}
 	var refs []PackageRef
 	for _, entry := range entries {
-		ext := filepath.Ext(entry.Name())
-		if entry.IsDir() || (ext != ".yml" && ext != ".yaml") {
-			continue
-		}
-		manifest := filepath.Join(".github", "workflows", entry.Name())
-		content, err := readDocumentationFile(ctx, repoPath, manifest)
-		if err != nil {
-			return nil, fmt.Errorf("read workflow %s: %w", entry.Name(), err)
-		}
-		actions, err := workflowPackageRefs(string(content), manifest)
+		actions, err := scanWorkflowEntry(ctx, repoPath, entry)
 		if err != nil {
 			return nil, err
 		}
 		refs = append(refs, actions...)
 	}
 	return refs, nil
+}
+
+// scanWorkflowEntry extracts action references from an entry if it is a YAML workflow file.
+func scanWorkflowEntry(ctx context.Context, repoPath string, entry os.DirEntry) ([]PackageRef, error) {
+	ext := filepath.Ext(entry.Name())
+	if entry.IsDir() || (ext != ".yml" && ext != ".yaml") {
+		return nil, nil
+	}
+	manifest := filepath.Join(".github", "workflows", entry.Name())
+	content, err := readDocumentationFile(ctx, repoPath, manifest)
+	if err != nil {
+		return nil, fmt.Errorf("read workflow %s: %w", entry.Name(), err)
+	}
+	return workflowPackageRefs(string(content), manifest)
 }
 
 func workflowPackageRefs(content, manifest string) ([]PackageRef, error) {

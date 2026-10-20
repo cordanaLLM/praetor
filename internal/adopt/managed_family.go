@@ -46,6 +46,25 @@ func reconcileManagedFamily(ctx context.Context, s *adoptSession, family managed
 	if err != nil {
 		return err
 	}
+	if err := reconcileFamilyAssets(ctx, s, family); err != nil {
+		return err
+	}
+	if err := applyMovedFamilyAssets(ctx, s, family, moved); err != nil {
+		return err
+	}
+	if family.WorkflowFile == "" {
+		return nil
+	}
+	_, err = reconcileManagedFamilyFile(ctx, s, family, scaffold{
+		rel: family.WorkflowFile, perm: filePerm, content: []byte(family.Workflow), auditLocked: true,
+		created:  "Scaffolded required " + family.WorkflowNoun,
+		verified: "Existing " + family.WorkflowNoun + " preserved; audit verifies canonical text",
+	})
+	return err
+}
+
+// reconcileFamilyAssets writes each asset declared in the family up to MaxAssets.
+func reconcileFamilyAssets(ctx context.Context, s *adoptSession, family managedasset.Family) error {
 	names := family.Names()
 	for index := 0; index < len(names) && index < family.MaxAssets; index++ {
 		data, err := family.Read(names[index])
@@ -61,18 +80,7 @@ func reconcileManagedFamily(ctx context.Context, s *adoptSession, family managed
 			return fmt.Errorf("reconcile %s: %w", rel, err)
 		}
 	}
-	if err := applyMovedFamilyAssets(ctx, s, family, moved); err != nil {
-		return err
-	}
-	if family.WorkflowFile == "" {
-		return nil
-	}
-	_, err = reconcileManagedFamilyFile(ctx, s, family, scaffold{
-		rel: family.WorkflowFile, perm: filePerm, content: []byte(family.Workflow), auditLocked: true,
-		created:  "Scaffolded required " + family.WorkflowNoun,
-		verified: "Existing " + family.WorkflowNoun + " preserved; audit verifies canonical text",
-	})
-	return err
+	return nil
 }
 
 // movedFamilyAsset is a release-owned path retired by an asset-family migration. Its snapshot

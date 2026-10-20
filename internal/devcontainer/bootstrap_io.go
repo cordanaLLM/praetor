@@ -242,6 +242,9 @@ func validateBundleContents(ctx context.Context, bundle *Bundle) error {
 	if err := verifyBootstrapDockerfile(artifacts[bootstrapDockerfile], spec); err != nil {
 		return err
 	}
+	if err := verifyLintToolInstall(bundle.Config, artifacts[bootstrapDockerfile], spec); err != nil {
+		return err
+	}
 	return validateArchivedSource(ctx, spec, artifacts)
 }
 

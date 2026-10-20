@@ -347,19 +347,10 @@ func readReportPairs(reportPath, configPath string) ([]LinterPair, error) {
 	var pairs []LinterPair
 
 	for i := 0; i < len(rep.Issues) && i < maxReportIssues; i++ {
-		issue := rep.Issues[i]
-		linter := strings.TrimSpace(issue.FromLinter)
-		if linter == "" {
+		p, ok := issueLinterPair(rep.Issues[i], enabled)
+		if !ok {
 			continue
 		}
-		if len(enabled) > 0 && !enabled[strings.ToLower(linter)] {
-			continue
-		}
-		file := cleanIssueFilename(issue.Pos.Filename)
-		if file == "" {
-			continue
-		}
-		p := LinterPair{File: file, Linter: linter}
 		if !pairSet[p] {
 			pairSet[p] = true
 			pairs = append(pairs, p)
@@ -373,6 +364,22 @@ func readReportPairs(reportPath, configPath string) ([]LinterPair, error) {
 		return cmp.Compare(a.Linter, b.Linter)
 	})
 	return pairs, nil
+}
+
+// issueLinterPair extracts a valid LinterPair from an issue if permitted by the enabled map.
+func issueLinterPair(issue golangciIssue, enabled map[string]bool) (LinterPair, bool) {
+	linter := strings.TrimSpace(issue.FromLinter)
+	if linter == "" {
+		return LinterPair{}, false
+	}
+	if len(enabled) > 0 && !enabled[strings.ToLower(linter)] {
+		return LinterPair{}, false
+	}
+	file := cleanIssueFilename(issue.Pos.Filename)
+	if file == "" {
+		return LinterPair{}, false
+	}
+	return LinterPair{File: file, Linter: linter}, true
 }
 
 func unquoteRulePath(path string) string {

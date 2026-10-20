@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/admission"
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -19,6 +21,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/govuln"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
+	"github.com/cordanaLLM/praetor/internal/sentinel"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/internal/worktree"
 	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
@@ -257,6 +260,46 @@ type stageConfig struct {
 	modules           []goModule
 	modulesDiscovered bool
 	moduleDiscovery   func(context.Context, string) ([]string, error)
+	scopesAvailable   func(context.Context) (bool, string)
+	hostReader        func() (sentinel.HostStats, error)
+	admissionSleep    func(context.Context, time.Duration) error
+	admissionLog      io.Writer
+	admissionPoll     time.Duration
+}
+
+func (c *stageConfig) scopesAvailableFunc() func(context.Context) (bool, string) {
+	if c.scopesAvailable != nil {
+		return c.scopesAvailable
+	}
+	return admission.ScopesAvailable
+}
+
+func (c *stageConfig) hostReaderFunc() func() (sentinel.HostStats, error) {
+	if c.hostReader != nil {
+		return c.hostReader
+	}
+	return admission.HostReader(c.repoDir)
+}
+
+func (c *stageConfig) admissionSleepFunc() func(context.Context, time.Duration) error {
+	if c.admissionSleep != nil {
+		return c.admissionSleep
+	}
+	return admission.SleepContext
+}
+
+func (c *stageConfig) admissionLogWriter() io.Writer {
+	if c.admissionLog != nil {
+		return c.admissionLog
+	}
+	return os.Stderr
+}
+
+func (c *stageConfig) admissionPollDuration() time.Duration {
+	if c.admissionPoll > 0 {
+		return c.admissionPoll
+	}
+	return 5 * time.Second
 }
 
 // newStageConfig builds a stage configuration backed by the real toolchain.
@@ -273,6 +316,11 @@ func newStageConfig(repoDir string, dryRun bool, rep *PipelineReport) *stageConf
 		goarch:          runtime.GOARCH,
 		fetch:           devcontainer.HTTPFetch,
 		moduleDiscovery: apiassets.TrackedModuleFiles,
+		scopesAvailable: admission.ScopesAvailable,
+		hostReader:      admission.HostReader(repoDir),
+		admissionSleep:  admission.SleepContext,
+		admissionLog:    os.Stderr,
+		admissionPoll:   5 * time.Second,
 	}
 }
 
@@ -428,13 +476,16 @@ func executeStage(ctx context.Context, s stage, cfg *stageConfig) error {
 }
 
 // runPrefetchStage verifies the standards lockfiles, then prefetches each language's
-// dependencies: the Go modules, and the Cargo crates where a Cargo.lock pins them (withCargo).
+// dependencies: the Go modules, and Cargo and Node where their lockfiles pin them (withOtherLanguages).
 func runPrefetchStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	if err := VerifyLockfiles(cfg.repoDir); err != nil {
 		return "", err
 	}
 	msg, err := runGoPrefetch(ctx, cfg)
-	return withCargo(ctx, cfg, languagePart{language: languageGo, msg: msg, err: err}, runCargoPrefetch)
+	return withOtherLanguages(ctx, cfg, languagePart{language: languageGo, msg: msg, err: err},
+		nonGoPart{language: languageCargo, present: hasCargo, run: runCargoPrefetch},
+		nonGoPart{language: languageNode, present: hasNode, run: runNodePrefetch},
+	)
 }
 
 // runGoPrefetch is the prefetch stage's Go part: go mod verify and go mod download.
@@ -530,10 +581,13 @@ func hissScanOptions(ctx context.Context, cfg *stageConfig) (hiss.ScanOptions, s
 }
 
 // runSecurityStage runs each language's scanners: govulncheck and gosec for Go, and cargo audit
-// where a Cargo.lock is present (withCargo).
+// and Node audit where their lockfiles are present (withOtherLanguages).
 func runSecurityStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	msg, err := runGoSecurity(ctx, cfg)
-	return withCargo(ctx, cfg, languagePart{language: languageGo, msg: msg, err: err}, runCargoSecurity)
+	return withOtherLanguages(ctx, cfg, languagePart{language: languageGo, msg: msg, err: err},
+		nonGoPart{language: languageCargo, present: hasCargo, run: runCargoSecurity},
+		nonGoPart{language: languageNode, present: hasNode, run: runNodeSecurity},
+	)
 }
 
 // runGoSecurity runs the Go vulnerability gate and gosec. A missing scanner fails the stage: a
@@ -744,10 +798,13 @@ func invalidSettingsClause(rep *flavor.FlavorAuditReport) string {
 }
 
 // runTestStage runs each language's test suite against HEAD in an isolated worktree: the Go
-// race detector, and cargo test and cargo clippy where a Cargo.lock is present (withCargo).
+// race detector, and Cargo and Node suites where their lockfiles are present (withOtherLanguages).
 func runTestStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	msg, err := runGoTests(ctx, cfg)
-	return withCargo(ctx, cfg, languagePart{language: languageGo, msg: msg, err: err}, runCargoTests)
+	return withOtherLanguages(ctx, cfg, languagePart{language: languageGo, msg: msg, err: err},
+		nonGoPart{language: languageCargo, present: hasCargo, run: runCargoTests},
+		nonGoPart{language: languageNode, present: hasNode, run: runNodeTests},
+	)
 }
 
 // runGoTests runs the race detector against HEAD in an isolated worktree. A worktree that
@@ -784,7 +841,18 @@ func runGoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 				"CI runs this leg on Linux with cgo", absent))
 	}
 
-	results, err := runGoModules(ctx, cfg, runGoTestModule)
+	scopeCfg, err := resolveRaceScope(ctx, cfg)
+	if err != nil {
+		return "", err
+	}
+
+	if err := waitRaceAdmission(ctx, cfg); err != nil {
+		return "", err
+	}
+
+	results, err := runGoModules(ctx, cfg, func(mCtx context.Context, mCfg *stageConfig, module goModule) (string, error) {
+		return runGoTestModule(mCtx, mCfg, module, scopeCfg)
+	})
 	if err != nil {
 		return "", err
 	}
@@ -794,7 +862,7 @@ func runGoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 	return moduleResultsMessage(results), nil
 }
 
-func runGoTestModule(ctx context.Context, cfg *stageConfig, module goModule) (string, error) {
+func runGoTestModule(ctx context.Context, cfg *stageConfig, module goModule, scopeCfg raceScopeConfig) (string, error) {
 	budget, err := stageBudget(ctx, cfg.repoDir)
 	if err != nil {
 		return "", err
@@ -802,6 +870,7 @@ func runGoTestModule(ctx context.Context, cfg *stageConfig, module goModule) (st
 	bound := budget.StageBound
 	run := cfg.goToolchain().run
 	note := budget.Note
+	var scopeMsg string
 	err = inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
 		moduleDir := filepath.Join(dir, filepath.Dir(filepath.FromSlash(module.file)))
 		count, listErr := ModulePackageCount(tCtx, run, moduleDir)
@@ -812,7 +881,9 @@ func runGoTestModule(ctx context.Context, cfg *stageConfig, module goModule) (st
 			note = NoPackagesNote + ": race tests not run"
 			return nil
 		}
-		out, testErr := run(tCtx, moduleDir, "go", "test", "-race", "-timeout", bound.String(), "./...")
+		cmdName, cmdArgs, msg := raceTestCommand(module, bound, scopeCfg)
+		scopeMsg = msg
+		out, testErr := run(tCtx, moduleDir, cmdName, cmdArgs...)
 		if testErr == nil {
 			return nil
 		}
@@ -824,6 +895,12 @@ func runGoTestModule(ctx context.Context, cfg *stageConfig, module goModule) (st
 	})
 	if err != nil {
 		return "", err
+	}
+	if note != "" && scopeMsg != "" {
+		return note + "; " + scopeMsg, nil
+	}
+	if scopeMsg != "" {
+		return scopeMsg, nil
 	}
 	return note, nil
 }

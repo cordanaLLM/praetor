@@ -127,16 +127,32 @@ func attributeEnd(s string, pos int) int {
 	return nameEnd + 1 + length
 }
 
+// isNameLetter reports whether c is an ASCII letter.
+func isNameLetter(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+// isNameContinuation reports whether c is an allowed name byte after the leading letter.
+func isNameContinuation(c byte, attribute bool) bool {
+	if isNameLetter(c) || (c >= '0' && c <= '9') {
+		return true
+	}
+	return attribute && strings.IndexByte("-_.:", c) >= 0
+}
+
 // nameLength returns the length of the ASCII name s starts with: a letter, then letters and
 // digits, and for an attribute name also '-', '_', '.' and ':'. It is 0 when s starts with no
 // letter.
 func nameLength(s string, attribute bool) int {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		letter := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-		digit := c >= '0' && c <= '9'
-		punct := attribute && strings.IndexByte("-_.:", c) >= 0
-		if !letter && (i == 0 || (!digit && !punct)) {
+		if i == 0 {
+			if !isNameLetter(c) {
+				return 0
+			}
+			continue
+		}
+		if !isNameContinuation(c, attribute) {
 			return i
 		}
 	}

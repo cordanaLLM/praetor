@@ -420,18 +420,8 @@ func reconcileAgentDefinitions(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
-	personas := generatedPersonas()
-	for i := 0; i < len(personas) && i < maxTranspileTargets; i++ {
-		state, err := s.scaffoldFile(ctx, personas[i])
-		if err != nil {
-			return err
-		}
-		// An edited persona is kept; one that predates the model tier gains it (#1426).
-		if state == scaffoldDrifted {
-			if err := s.addPersonaModelTier(ctx, personas[i]); err != nil {
-				return err
-			}
-		}
+	if err := s.scaffoldGeneratedPersonas(ctx, generatedPersonas()); err != nil {
+		return err
 	}
 	_, excluded, err := compiler.SelectPersonaDirs(ctx, s.repoPath)
 	if err != nil {
@@ -446,6 +436,23 @@ func reconcileAgentDefinitions(ctx context.Context, s *adoptSession) error {
 		s.report.recordNotApplicable(excluded[i], "Not selected by agent_clients in "+manifestFile)
 	}
 	return projectAgentSurfaces(ctx, s, prior)
+}
+
+// scaffoldGeneratedPersonas scaffolds canonical personas and adds missing model tiers to drifted files.
+func (s *adoptSession) scaffoldGeneratedPersonas(ctx context.Context, personas []scaffold) error {
+	for i := 0; i < len(personas) && i < maxTranspileTargets; i++ {
+		state, err := s.scaffoldFile(ctx, personas[i])
+		if err != nil {
+			return err
+		}
+		// An edited persona is kept; one that predates the model tier gains it (#1426).
+		if state == scaffoldDrifted {
+			if err := s.addPersonaModelTier(ctx, personas[i]); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 const defaultAuditorAgentMD = `---

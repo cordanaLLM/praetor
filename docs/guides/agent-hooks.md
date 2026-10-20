@@ -99,6 +99,48 @@ What this means in practice:
   `test_registered_file_guard_matches_the_checkout_by_identity_not_spelling` in
   `scripts/test_checkpoint_hooks.py`).
 
+## Claude Code cloud sessions
+
+A Claude Code cloud session runs in a fresh VM that ships neither `lefthook` nor `praetorctl`
+([cloud environments](https://code.claude.com/docs/en/cloud-environments)). Without them the
+Python adapters above fail closed and refuse every Bash, Edit and Write call. That is safe, but
+the session can do nothing. `.config/agent/hooks/cloud_bootstrap.py` closes the gap at
+`SessionStart` (matcher `startup|resume`, exec form, timeout 600 s). It is registered for
+Claude Code only, since only Claude Code runs cloud sessions:
+
+- It does nothing unless `CLAUDE_CODE_REMOTE` is `true`, the variable the cloud VM sets and a
+  local session never does.
+- It builds `lefthook` from `tools/lefthook/go.mod`, the module CI installs it from, builds
+  `praetorctl` from `./cmd/standardsctl` as the Makefile does, and runs
+  `praetorctl state init --if-absent .`, so the stop checkpoint finds a ledger in the fresh
+  clone. Both binaries go into the first writable directory on `PATH` (`/usr/local/bin`, else
+  `~/.local/bin`).
+- Both builds run with `-mod=readonly`, so every module is verified against a `go.sum` in the
+  checkout. The bootstrap still refuses to build while `GOSUMDB` is `off` or
+  `GONOSUMDB`/`GOINSECURE` is set.
+- The cloud environment must allow `sum.golang.org` and `storage.googleapis.com`. The VM's Go
+  is older than this repository's `toolchain` line, and `go` fetches the newer toolchain through
+  a redirect to `storage.googleapis.com` and verifies it against `sum.golang.org`. Measured on
+  2026-10-19: a VM with `go1.24.7` whose egress proxy refused both hosts, although the
+  [default allowed domains](https://code.claude.com/docs/en/cloud-environments#default-allowed-domains)
+  list them. A failed step names each refused host
+  (`the network refuses <host>; allow it in the cloud environment`).
+- It never disables a hook. A failed step is named in the one status line the session sees
+  (`Praetor cloud session bootstrap: ...`), and the guards stay closed.
+
+Measured on 2026-10-19 with a cloud session started from a bundle of this repository: the
+bootstrap reported `ready`, both tools were on the VM's `PATH`, every pre-tool guard ran
+(exit 0), and no permission prompt appeared with `--permission-mode auto`. A later session cloned
+from GitHub failed the former `go install` on the checksum database, which led to the
+`tools/lefthook` build. `scripts/test_cloud_bootstrap.py` covers the remote-only
+gate, the pins, the checksum refusal, a failed build and the registration;
+`scripts/test_checkpoint_hooks.py` checks its time budget against the registration.
+
+A session starts from GitHub, with a remote it can push to, only when the Claude GitHub App
+reaches the repository; otherwise the CLI uploads a bundle without a remote. Adopted
+repositories do not yet receive the bootstrap, and their bare `praetorctl hook claude pre-tool`
+row fails open without `praetorctl` (cordanaLLM/praetor#1478).
+
 ## Command line and support matrix
 
 ```text
@@ -115,7 +157,7 @@ described under [Rollout](#rollout-engine-skew-never-blocks-a-client).
 | `claude` | `pre-edit` | `PreToolUse` | `^(Edit\|Write)$` | 15 s | `praetorctl hook claude pre-edit` |
 | `claude` | `post-tool` | `PostToolUse` | none | 60 s | `praetorctl hook claude post-tool` |
 | `claude` | `stop` | `Stop` | none | 90 s | `praetorctl hook claude stop` |
-| `claude` | `pre-dispatch` | `PreToolUse` | `^Agent$` | 15 s | `praetorctl hook claude pre-dispatch` |
+| `claude` | `pre-dispatch` | `PreToolUse` | `^Agent$` | 35 s | `praetorctl hook claude pre-dispatch` |
 | `claude` | `dispatch-receipt` | `PostToolUse` | `^Agent$` | 15 s | `praetorctl hook claude dispatch-receipt` |
 | `claude` | `dispatch-abort` | `PostToolUseFailure` | `^Agent$` | 15 s | `praetorctl hook claude dispatch-abort` |
 | `claude` | `dispatch-abort` | `PermissionDenied` | `^Agent$` | 15 s | `praetorctl hook claude dispatch-abort` |
@@ -268,6 +310,33 @@ issues and a `session:` line names the session that must hold them; `pre-dispatc
 issue another live session claims, an unclaimed one and one whose claim it cannot read
 ([issue claims](issue-claims.md), `internal/agenthook/dispatch_claims.go`). A brief that names
 no issue skips the check.
+
+## Routing implementation briefs off the Claude lane
+
+Repositories can opt selected routing task labels into a lane picker in
+`.config/models/routing.yaml`:
+
+```yaml
+offload:
+  labels: [feature_implementation, multi_file_refactors, unit_test_suites, ci_debugging]
+```
+
+Each label must occur in a tier's `target_tasks`. An absent `offload` block leaves dispatch
+unchanged. The rule applies only to Claude's `pre-dispatch` hook, after brief validation and
+before the hook reserves a dispatch correlation.
+
+Set `PRAETOR_LANE_PICKER` to an absolute executable path. Without that variable, the hook
+reads the first line of `$XDG_CONFIG_HOME/praetor/lane-picker`; when `XDG_CONFIG_HOME` is
+unset, it reads `~/.config/praetor/lane-picker`. The file contains the absolute executable
+path. An absent file leaves dispatch unchanged. The environment variable takes precedence.
+
+The hook runs `[path, "pick", task_label]` directly, with closed stdin, a 20-second deadline
+and a 64 KiB stdout cap. Exit 0 means an off-Claude lane has room: stdout's first line must
+be `<lane> <instruction>`. Exit 3 keeps the dispatch on Claude. Other exits, timeouts,
+missing executables and unreadable output allow the dispatch with a notice:
+`lane picker unavailable: <cause>; dispatch stays on the Claude lane`. A successful pick
+denies the Claude dispatch with `[ROUTED] task <label> runs on <lane>, not the Claude lane:
+<instruction> (lane picker <path>)`; the session can use the named lane and instruction.
 
 Claude's pre-tool hook stores only the resolved register row, never the prompt. Its
 post-tool receipt atomically binds that row to the native agent id. The private bounded

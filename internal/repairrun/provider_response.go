@@ -14,12 +14,9 @@ func providerDecodeResponse(data []byte, outputLimit int) (*Proposal, error) {
 	if err != nil {
 		return nil, err
 	}
-	if providerString(response["status"]) != "completed" || !providerNull(response["error"]) || !providerNull(response["incomplete_details"]) {
-		return nil, errors.New("repair provider response is not complete and successful")
-	}
-	id, model := providerString(response["id"]), providerString(response["model"])
-	if !providerSafeText(id, 1024) || !providerSafeText(model, 256) {
-		return nil, errors.New("repair provider response identity is invalid")
+	id, model, err := validateProviderResponseHeader(response)
+	if err != nil {
+		return nil, err
 	}
 	text, err := providerOutput(response["output"])
 	if err != nil {
@@ -35,6 +32,18 @@ func providerDecodeResponse(data []byte, outputLimit int) (*Proposal, error) {
 	}
 	proposal.ResponseID, proposal.ActualModel = id, model
 	return proposal, nil
+}
+
+// validateProviderResponseHeader checks that the response status is successful and extracts verified id and model.
+func validateProviderResponseHeader(response map[string]json.RawMessage) (id, model string, err error) {
+	if providerString(response["status"]) != "completed" || !providerNull(response["error"]) || !providerNull(response["incomplete_details"]) {
+		return "", "", errors.New("repair provider response is not complete and successful")
+	}
+	id, model = providerString(response["id"]), providerString(response["model"])
+	if !providerSafeText(id, 1024) || !providerSafeText(model, 256) {
+		return "", "", errors.New("repair provider response identity is invalid")
+	}
+	return id, model, nil
 }
 
 func providerOutput(raw json.RawMessage) (string, error) {

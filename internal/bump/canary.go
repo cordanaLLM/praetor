@@ -259,10 +259,18 @@ func ApplyBump(ctx context.Context, repoPath string, c UpgradeCandidate, patchPa
 	return nil
 }
 
+// isTaskIDRune reports whether r is an allowed identifier rune.
+func isTaskIDRune(r rune) bool {
+	if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+		return true
+	}
+	return (r >= '0' && r <= '9') || r == '-' || r == '_'
+}
+
 func sanitizeTaskID(pkg string) string {
 	var b strings.Builder
 	for _, r := range pkg {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+		if isTaskIDRune(r) {
 			b.WriteRune(r)
 		} else {
 			b.WriteRune('-')

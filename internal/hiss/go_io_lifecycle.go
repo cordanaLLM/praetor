@@ -243,21 +243,27 @@ func (g *goScanner) cancelOwned(key string, declares bool) bool {
 	return false
 }
 
+// nodeDeclares reports whether node n declares a variable with the given name.
+func nodeDeclares(n ast.Node, name string) bool {
+	switch d := n.(type) {
+	case *ast.AssignStmt:
+		return d.Tok == token.DEFINE && exprsName(d.Lhs, name)
+	case *ast.ValueSpec:
+		return specsName([]ast.Spec{d}, name)
+	case *ast.RangeStmt:
+		return d.Tok == token.DEFINE && exprsName([]ast.Expr{d.Key, d.Value}, name)
+	case *ast.FuncLit:
+		return paramNamed(d.Type, name)
+	}
+	return false
+}
+
 // declaresIn reports whether lit declares name anywhere in its parameters or body, closures
 // included: by a short variable declaration, a var, a range clause or a parameter.
 func declaresIn(lit *ast.FuncLit, name string) bool {
 	found := paramNamed(lit.Type, name)
 	ast.Inspect(lit, func(n ast.Node) bool {
-		switch d := n.(type) {
-		case *ast.AssignStmt:
-			found = found || (d.Tok == token.DEFINE && exprsName(d.Lhs, name))
-		case *ast.ValueSpec:
-			found = found || specsName([]ast.Spec{d}, name)
-		case *ast.RangeStmt:
-			found = found || (d.Tok == token.DEFINE && exprsName([]ast.Expr{d.Key, d.Value}, name))
-		case *ast.FuncLit:
-			found = found || paramNamed(d.Type, name)
-		}
+		found = found || nodeDeclares(n, name)
 		return !found
 	})
 	return found

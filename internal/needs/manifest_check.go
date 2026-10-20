@@ -37,6 +37,64 @@ func marshalNeedsManifest(repoNeeds *RepoNeeds) ([]byte, error) {
 	return data, nil
 }
 
+// frameworkRemedy is the actionable guidance when a scan would drop a committed framework
+// on a host with no framework configured.
+const frameworkRemedy = "set framework.targets.<language> in the workstation or fleet settings (--workstation-config, PRAETOR_WORKSTATION_CONFIG or the install manifest), or pass --framework"
+
+// ReadCommittedManifest reads the committed .needs.yaml under repoPath. It returns
+// ErrNeedsManifestMissing when the file does not exist.
+func ReadCommittedManifest(ctx context.Context, repoPath string) ([]byte, error) {
+	if ctx == nil {
+		return nil, errors.New("needs: reading the committed manifest requires a context")
+	}
+	committed, err := contextopt.ReadSnapshot(ctx, filepath.Join(repoPath, NeedsManifestName))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNeedsManifestMissing
+	}
+	if err != nil {
+		return nil, fmt.Errorf("needs: read %s: %w", NeedsManifestName, err)
+	}
+	return committed, nil
+}
+
+// parseCommittedManifest normalizes CRLF and parses the committed manifest bytes.
+func parseCommittedManifest(committed []byte) (*RepoNeeds, error) {
+	committed = bytes.ReplaceAll(committed, []byte("\r\n"), []byte("\n"))
+	var recorded RepoNeeds
+	if err := yaml.Unmarshal(committed, &recorded); err != nil {
+		return nil, fmt.Errorf("needs: parse committed %s: %w", NeedsManifestName, err)
+	}
+	return &recorded, nil
+}
+
+// DroppedFramework reports an error wrapping ErrFrameworkNotConfigured when the committed
+// manifest records a framework or builder kits and fresh has an empty Framework, so a write
+// or check on a host without framework settings does not silently discard them.
+func DroppedFramework(committed []byte, fresh *RepoNeeds) error {
+	if fresh == nil {
+		return errors.New("needs: cannot check dropped framework against a nil manifest")
+	}
+	recorded, err := parseCommittedManifest(committed)
+	if err != nil {
+		return err
+	}
+	if fresh.Framework != "" {
+		return nil
+	}
+	if recorded.Framework == "" && len(recorded.BuilderKits) == 0 {
+		return nil
+	}
+	var details []string
+	if recorded.Framework != "" {
+		details = append(details, fmt.Sprintf("framework %q", recorded.Framework))
+	}
+	if len(recorded.BuilderKits) > 0 {
+		details = append(details, fmt.Sprintf("builder kits [%s]", strings.Join(recorded.BuilderKits, ", ")))
+	}
+	return fmt.Errorf("needs: committed manifest records %s; fresh scan has no target framework configured; %s: %w",
+		strings.Join(details, " and "), frameworkRemedy, ErrFrameworkNotConfigured)
+}
+
 // CheckNeedsManifest compares the committed .needs.yaml under repoPath with the manifest a
 // fresh scan would write. It returns "" when they match, a drift report otherwise, and
 // ErrNeedsManifestMissing when no manifest is committed. A declared non-goal the fresh scan
@@ -50,12 +108,9 @@ func CheckNeedsManifest(ctx context.Context, repoPath string, fresh *RepoNeeds) 
 	if err := checkDeclaredNonGoals(fresh); err != nil {
 		return "", err
 	}
-	committed, err := contextopt.ReadSnapshot(ctx, filepath.Join(repoPath, NeedsManifestName))
-	if errors.Is(err, os.ErrNotExist) {
-		return "", ErrNeedsManifestMissing
-	}
+	committed, err := ReadCommittedManifest(ctx, repoPath)
 	if err != nil {
-		return "", fmt.Errorf("needs: read %s: %w", NeedsManifestName, err)
+		return "", err
 	}
 	return ManifestDrift(committed, fresh)
 }
@@ -69,11 +124,11 @@ func ManifestDrift(committed []byte, fresh *RepoNeeds) (string, error) {
 	if fresh == nil {
 		return "", errors.New("needs: cannot compare against a nil manifest")
 	}
-	committed = bytes.ReplaceAll(committed, []byte("\r\n"), []byte("\n"))
-	var recorded RepoNeeds
-	if err := yaml.Unmarshal(committed, &recorded); err != nil {
-		return "", fmt.Errorf("needs: parse committed %s: %w", NeedsManifestName, err)
+	recorded, err := parseCommittedManifest(committed)
+	if err != nil {
+		return "", err
 	}
+	committed = bytes.ReplaceAll(committed, []byte("\r\n"), []byte("\n"))
 	candidate := *fresh
 	candidate.UpdatedAt = recorded.UpdatedAt
 	want, err := marshalNeedsManifest(&candidate)

@@ -78,7 +78,7 @@ func analyzeMigrationWith(ctx context.Context, repoPath string, selected Framewo
 	if err != nil {
 		return nil, fmt.Errorf("inspect migration framework: %w", err)
 	}
-	if err := refuseSelfTarget(repoPath, selected, framework); err != nil {
+	if err := refuseSelfTarget(ctx, repoPath, selected, framework); err != nil {
 		return nil, err
 	}
 	report, err := scan(framework)
@@ -93,7 +93,7 @@ func analyzeMigrationWith(ctx context.Context, repoPath string, selected Framewo
 // decides by filesystem identity, so a symlink or another spelling of the path matches), or
 // a root go.mod declaring exactly the index's module. The target's module is read the way
 // the Go analyzer reads it (parseGoMod); a target without a root go.mod declares no module.
-func refuseSelfTarget(repoPath string, selected FrameworkSource, framework *FrameworkIndex) error {
+func refuseSelfTarget(ctx context.Context, repoPath string, selected FrameworkSource, framework *FrameworkIndex) error {
 	named := selected.Checkout
 	if named == "" {
 		named = framework.Name
@@ -104,7 +104,7 @@ func refuseSelfTarget(repoPath string, selected FrameworkSource, framework *Fram
 	if framework.Name == "" {
 		return nil
 	}
-	target, err := parseGoMod(filepath.Join(repoPath, "go.mod"))
+	target, err := parseGoMod(ctx, filepath.Join(repoPath, "go.mod"))
 	if errors.Is(err, ErrGoModMissing) {
 		return nil
 	}

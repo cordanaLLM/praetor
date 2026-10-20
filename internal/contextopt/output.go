@@ -12,18 +12,26 @@ import (
 	"path/filepath"
 )
 
+// validatePlanState verifies the context and presence of analyzed sources in the plan.
+func validatePlanState(ctx context.Context, p *Plan) error {
+	if ctx == nil {
+		return fmt.Errorf("context is required")
+	}
+	if p == nil || len(p.report.Sources) == 0 {
+		return fmt.Errorf("an analyzed plan is required")
+	}
+	return nil
+}
+
 // WriteCandidate revalidates the selected snapshot, then creates context.md and
 // manifest.json in a new 0700 directory, with 0600 files. It never replaces
 // existing output, source files, canonical AGENTS.md, or generated vendor rules.
 func (p *Plan) WriteCandidate(ctx context.Context, outputDir string) (err error) {
-	if ctx == nil {
-		return fmt.Errorf("context is required")
+	if err := validatePlanState(ctx, p); err != nil {
+		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, MaxDuration)
 	defer cancel()
-	if p == nil || len(p.report.Sources) == 0 {
-		return fmt.Errorf("an analyzed plan is required")
-	}
 	abs, err := p.outputPath(outputDir)
 	if err != nil {
 		return err

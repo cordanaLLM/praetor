@@ -246,3 +246,17 @@ func addLanguage(counts map[string]int, language string) map[string]int {
 	}
 	return counts
 }
+
+// recordUnscannedObjectiveC records count unscanned Objective-C files under "objective-c" when
+// an Objective-C marker established the repository's identity.
+func (c *ScanCoverage) recordUnscannedObjectiveC(count int) {
+	if c == nil || count <= 0 {
+		return
+	}
+	if c.UnscannedLanguages == nil {
+		c.UnscannedLanguages = make(map[string]int)
+	}
+	if _, known := c.UnscannedLanguages["objective-c"]; known || len(c.UnscannedLanguages) < maxCoverageLanguages {
+		c.UnscannedLanguages["objective-c"] += count
+	}
+}

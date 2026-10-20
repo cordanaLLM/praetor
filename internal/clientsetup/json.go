@@ -217,6 +217,29 @@ func objectMember(raw []byte, name string) ([]byte, bool, error) {
 	return value, found, nil
 }
 
+// mergeOneOrderedJSONServer merges a single server definition into the raw JSON object if not present.
+func mergeOneOrderedJSONServer(server Server, raw []byte) ([]byte, bool, error) {
+	current, exists, err := objectMember(raw, server.Name)
+	if err != nil {
+		return nil, false, err
+	}
+	if exists {
+		if !matchingJSONServer(current, ClaudeLocal, server) {
+			return nil, false, fmt.Errorf("%w: %s", ErrConflict, server.Name)
+		}
+		return raw, false, nil
+	}
+	encoded, encodeErr := marshalJSON(serverFields(server, ClaudeLocal))
+	if encodeErr != nil {
+		return nil, false, encodeErr
+	}
+	updated, err := clientjson.AppendMember(raw, server.Name, encoded)
+	if err != nil {
+		return nil, false, err
+	}
+	return updated, true, nil
+}
+
 func mergeOrderedJSONServers(ctx context.Context, registry Registry, raw []byte) ([]byte, bool, error) {
 	if err := clientjson.Validate(ctx, raw); err != nil {
 		return nil, false, err
@@ -226,25 +249,14 @@ func mergeOrderedJSONServers(ctx context.Context, registry Registry, raw []byte)
 		if err := checkContext(ctx); err != nil {
 			return nil, false, err
 		}
-		current, exists, err := objectMember(raw, server.Name)
+		updated, added, err := mergeOneOrderedJSONServer(server, raw)
 		if err != nil {
 			return nil, false, err
 		}
-		if exists {
-			if !matchingJSONServer(current, ClaudeLocal, server) {
-				return nil, false, fmt.Errorf("%w: %s", ErrConflict, server.Name)
-			}
-			continue
+		if added {
+			raw = updated
+			changed = true
 		}
-		encoded, encodeErr := marshalJSON(serverFields(server, ClaudeLocal))
-		if encodeErr != nil {
-			return nil, false, encodeErr
-		}
-		raw, err = clientjson.AppendMember(raw, server.Name, encoded)
-		if err != nil {
-			return nil, false, err
-		}
-		changed = true
 	}
 	if !changed {
 		return bytes.Clone(raw), false, nil

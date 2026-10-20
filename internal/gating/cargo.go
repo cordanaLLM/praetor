@@ -18,7 +18,7 @@ import (
 )
 
 // The Cargo parts of the toolchain stages. Each runs only where a Cargo.lock is present
-// (withCargo), through the stage's command runner and lookPath seams like the Go commands, and
+// (withOtherLanguages), through the stage's command runner and lookPath seams like the Go commands, and
 // none runs in a dry run: cargo fetch and cargo audit write caches and reach the network, and the
 // test commands execute repository code.
 
@@ -74,11 +74,11 @@ func requireCargo(cfg *stageConfig) error {
 	return nil
 }
 
-// cargoFailure describes a cargo command that failed under a bound of its own. When that bound
+// commandFailure describes a toolchain command that failed under a bound of its own. When that bound
 // fired while the stage's context was still live, it says so rather than reporting a finding;
 // a cut by the run's deadline is named by attributeRunCut instead.
-func cargoFailure(ctx, cmdCtx context.Context, what string, bound time.Duration, out string, err error) error {
-	excerpt := util.TruncateExcerpt(out, maxCargoOutputBytes)
+func commandFailure(ctx, cmdCtx context.Context, what string, bound time.Duration, out string, maxBytes int, err error) error {
+	excerpt := util.TruncateExcerpt(out, maxBytes)
 	if cmdCtx.Err() != nil && ctx.Err() == nil {
 		return fmt.Errorf("%s did not finish within its %s bound, so this is not a finding: %w: %s",
 			what, bound, err, excerpt)
@@ -98,7 +98,7 @@ func runCargoPrefetch(ctx context.Context, cfg *stageConfig) (string, error) {
 	pCtx, cancel := context.WithTimeout(ctx, DefaultPrefetchTimeout)
 	defer cancel()
 	if out, err := cfg.run(pCtx, cfg.repoDir, "cargo", "fetch", "--locked"); err != nil {
-		return "", cargoFailure(ctx, pCtx, "cargo fetch --locked", DefaultPrefetchTimeout, out, err)
+		return "", commandFailure(ctx, pCtx, "cargo fetch --locked", DefaultPrefetchTimeout, out, maxCargoOutputBytes, err)
 	}
 	return "cargo fetch --locked passed", nil
 }
@@ -120,7 +120,7 @@ func runCargoSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 	aCtx, cancel := context.WithTimeout(ctx, CargoAuditTimeout)
 	defer cancel()
 	if out, err := cfg.run(aCtx, cfg.repoDir, "cargo", "audit"); err != nil {
-		return "", cargoFailure(ctx, aCtx, "cargo audit", CargoAuditTimeout, out, err)
+		return "", commandFailure(ctx, aCtx, "cargo audit", CargoAuditTimeout, out, maxCargoOutputBytes, err)
 	}
 	return "cargo audit passed", nil
 }

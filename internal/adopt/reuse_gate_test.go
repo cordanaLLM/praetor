@@ -924,3 +924,203 @@ func TestEmittedReuseSteps_RunLocallyInTempRepo(t *testing.T) {
 		t.Fatalf("reuse lint failed on temp repo: %v\nOutput:\n%s", err, string(output))
 	}
 }
+
+// Positive: a repository owned by the plurano organisation renders the hosted REUSE gate
+// as a reusable workflow caller of plurano/horistes/.github/workflows/licence.yml pinned by
+// 40-hex SHA with its pin date comment.
+func TestAdopt_PluranoRendersLicenceCaller(t *testing.T) {
+	for _, owner := range []string{"plurano", "Plurano"} {
+		t.Run(owner, func(t *testing.T) {
+			repoPath := newTestRepo(t, "plurano-caller-"+owner)
+			writeOriginRemote(t, repoPath, "https://github.com/"+owner+"/repo.git")
+			mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+			mustWrite(t, filepath.Join(repoPath, supplychain.ReuseFile), "version = 1\n")
+
+			_, s, err := prepareAdoption(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
+			if err != nil {
+				t.Fatalf("prepareAdoption: %v", err)
+			}
+			if err := reconcileReuseGate(t.Context(), s); err != nil {
+				t.Fatalf("reconcileReuseGate: %v", err)
+			}
+
+			workflowPath := filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))
+			got := mustRead(t, workflowPath)
+			want := renderPluranoLicenceWorkflow(forge.FallbackDefaultBranch, pluranoHoristesLicenceWorkflowSHA)
+			if got != want {
+				t.Fatalf("rendered workflow mismatch:\ngot:\n%s\nwant:\n%s", got, want)
+			}
+			if !strings.Contains(got, "uses: "+pluranoHoristesLicenceAction+"@"+pluranoHoristesLicenceWorkflowSHA+"  # "+pluranoHoristesLicencePinDate) {
+				t.Fatalf("workflow lacks expected pinned uses line:\n%s", got)
+			}
+			if !hasAction(s.report, reuseWorkflowFile, actionCreate) {
+				t.Errorf("expected actionCreate for reuseWorkflowFile: %+v", s.report.ActionDetails)
+			}
+
+			planned, err := s.plannedReuseWorkflow(t.Context())
+			if err != nil || len(planned) != 1 || planned[0].Content != want {
+				t.Errorf("plannedReuseWorkflow mismatch: planned=%+v, err=%v", planned, err)
+			}
+
+			managed, err := reuseManagedPaths(t.Context(), s)
+			if err != nil {
+				t.Fatalf("reuseManagedPaths: %v", err)
+			}
+			if slices.Contains(managed, reuseWorkflowFile) {
+				t.Errorf("reuseManagedPaths should not include %s for plurano: got %v", reuseWorkflowFile, managed)
+			}
+
+			// The plurano licence caller renders into the repository ruleset with "Licence / REUSE lint".
+			_, contexts, err := forge.RenderRulesetForRepository(t.Context(), repoPath, config.DefaultPolicy().BranchProtection, nil)
+			if err != nil {
+				t.Fatalf("RenderRulesetForRepository: %v", err)
+			}
+			if !slices.Contains(contexts, "Licence / REUSE lint") {
+				t.Errorf("contexts %v do not contain Licence / REUSE lint", contexts)
+			}
+			s.policy = &config.EffectivePolicy{Policy: *config.DefaultPolicy()}
+			if err := reconcileBranchRuleset(t.Context(), s); err != nil {
+				t.Fatalf("reconcileBranchRuleset: %v", err)
+			}
+		})
+	}
+}
+
+// Positive: non-plurano owners keep today's copied REUSE gate rendering byte for byte.
+func TestAdopt_NonPluranoRenderUnchanged(t *testing.T) {
+	for _, owner := range []string{"acme", "other-org"} {
+		t.Run(owner, func(t *testing.T) {
+			repoPath := newTestRepo(t, "non-plurano-"+owner)
+			writeOriginRemote(t, repoPath, "https://github.com/"+owner+"/repo.git")
+			mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+			mustWrite(t, filepath.Join(repoPath, supplychain.ReuseFile), "version = 1\n")
+
+			_, s, err := prepareAdoption(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
+			if err != nil {
+				t.Fatalf("prepareAdoption: %v", err)
+			}
+			if err := reconcileReuseGate(t.Context(), s); err != nil {
+				t.Fatalf("reconcileReuseGate: %v", err)
+			}
+
+			workflowPath := filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))
+			got := mustRead(t, workflowPath)
+			want := mustReuseWorkflow(t, forge.FallbackDefaultBranch)
+			if got != want {
+				t.Fatalf("non-plurano render differs from golden:\ngot:\n%s\nwant:\n%s", got, want)
+			}
+		})
+	}
+}
+
+// Positive: a plurano-owned repository holding a copied REUSE workflow (today's rendering) is
+// reported and refreshed by adopt to the caller without --force.
+func TestAdopt_PluranoRefreshesCopiedReuseWorkflow(t *testing.T) {
+	repoPath := newTestRepo(t, "plurano-refresh-copied")
+	writeOriginRemote(t, repoPath, "https://github.com/plurano/plurano-refresh-copied.git")
+	mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+	mustWrite(t, filepath.Join(repoPath, supplychain.ReuseFile), "version = 1\n")
+
+	copiedText := mustReuseWorkflow(t, forge.FallbackDefaultBranch)
+	workflowPath := filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))
+	mustWrite(t, workflowPath, copiedText)
+
+	_, s, err := prepareAdoption(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
+	if err != nil {
+		t.Fatalf("prepareAdoption: %v", err)
+	}
+	if err := reconcileReuseGate(t.Context(), s); err != nil {
+		t.Fatalf("reconcileReuseGate: %v", err)
+	}
+
+	got := mustRead(t, workflowPath)
+	want := renderPluranoLicenceWorkflow(forge.FallbackDefaultBranch, pluranoHoristesLicenceWorkflowSHA)
+	if got != want {
+		t.Fatalf("refreshed gate differs from expected caller:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+	if hasAction(s.report, reuseWorkflowFile, actionReplace) {
+		t.Errorf("want refresh without --force, got actionReplace: %+v", s.report.ActionDetails)
+	}
+	if !strings.Contains(reuseGateDetails(s.report), "Refreshed") {
+		t.Errorf("report details do not mention Refreshed: %s", reuseGateDetails(s.report))
+	}
+}
+
+// Negative: a plurano-owned repository holding a caller with a non-SHA ref (tag, branch, short SHA)
+// is refused.
+func TestAdopt_PluranoRefusesNonSHACaller(t *testing.T) {
+	cases := map[string]string{
+		"branch main": "main",
+		"tag v1":      "v1",
+		"short sha":   "5a2700e",
+	}
+	for name, ref := range cases {
+		t.Run(name, func(t *testing.T) {
+			repoPath := newTestRepo(t, "plurano-refuse-"+strings.ReplaceAll(name, " ", "-"))
+			writeOriginRemote(t, repoPath, "https://github.com/plurano/repo.git")
+			mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+			mustWrite(t, filepath.Join(repoPath, supplychain.ReuseFile), "version = 1\n")
+
+			badWorkflow := strings.Replace(
+				renderPluranoLicenceWorkflow(forge.FallbackDefaultBranch, pluranoHoristesLicenceWorkflowSHA),
+				pluranoHoristesLicenceWorkflowSHA, ref, 1)
+			workflowPath := filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))
+			mustWrite(t, workflowPath, badWorkflow)
+
+			_, s, err := prepareAdoption(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
+			if err != nil {
+				t.Fatalf("prepareAdoption: %v", err)
+			}
+			err = reconcileReuseGate(t.Context(), s)
+			if err == nil {
+				t.Fatalf("reconcileReuseGate with ref %q: want error, got nil", ref)
+			}
+			if !strings.Contains(err.Error(), "not a 40-hex commit SHA") {
+				t.Errorf("error %q does not mention not a 40-hex commit SHA", err.Error())
+			}
+
+			if rendered, renderErr := isReuseRendering([]byte(badWorkflow)); renderErr == nil || rendered {
+				t.Errorf("isReuseRendering: rendered=%v, err=%v; want refusal error", rendered, renderErr)
+			}
+		})
+	}
+}
+
+// Boundary: a plurano-owned repository holding a caller whose SHA was bumped to another
+// 40-hex SHA (e.g. by Renovate) is accepted as verified present by the byte-lock audit
+// without being overwritten or reported as drift.
+func TestAdopt_PluranoAcceptsBumpedSHA(t *testing.T) {
+	repoPath := newTestRepo(t, "plurano-bumped-sha")
+	writeOriginRemote(t, repoPath, "https://github.com/plurano/repo.git")
+	mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+	mustWrite(t, filepath.Join(repoPath, supplychain.ReuseFile), "version = 1\n")
+
+	bumpedSHA := "1111222233334444555566667777888899990000"
+	bumpedWorkflow := renderPluranoLicenceWorkflow(forge.FallbackDefaultBranch, bumpedSHA)
+	workflowPath := filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))
+	mustWrite(t, workflowPath, bumpedWorkflow)
+
+	if rendered, err := isReuseRendering([]byte(bumpedWorkflow)); err != nil || !rendered {
+		t.Fatalf("isReuseRendering(bumpedWorkflow) = %v, err %v; want true, nil", rendered, err)
+	}
+
+	_, s, err := prepareAdoption(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
+	if err != nil {
+		t.Fatalf("prepareAdoption: %v", err)
+	}
+	if err := reconcileReuseGate(t.Context(), s); err != nil {
+		t.Fatalf("reconcileReuseGate: %v", err)
+	}
+
+	got := mustRead(t, workflowPath)
+	if got != bumpedWorkflow {
+		t.Fatalf("bumped workflow was overwritten:\ngot:\n%s\nwant:\n%s", got, bumpedWorkflow)
+	}
+
+	if !strings.Contains(reuseGateDetails(s.report), "verified present") {
+		t.Errorf("report details do not mention verified present: %s", reuseGateDetails(s.report))
+	}
+	if hasAction(s.report, reuseWorkflowFile, actionReplace) {
+		t.Errorf("unexpected actionReplace: %+v", s.report.ActionDetails)
+	}
+}

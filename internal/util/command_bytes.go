@@ -100,12 +100,31 @@ func RunCommandPassthrough(ctx context.Context, dir, name string, stdin io.Reade
 	return err
 }
 
-func runBoundedCommand(ctx context.Context, dir, name string, maxBytes int, streams commandStreams, args []string) (result CommandBytes, resultErr error) {
+// validateBoundedCommandInputs checks context presence and bounds on output bytes cap.
+func validateBoundedCommandInputs(ctx context.Context, maxBytes int) error {
 	if ctx == nil {
-		return CommandBytes{}, errors.New("command bytes requires a context")
+		return errors.New("command bytes requires a context")
 	}
 	if maxBytes < 1 || maxBytes > MaxCommandOutputBytes {
-		return CommandBytes{}, fmt.Errorf("command byte cap must be 1..%d", MaxCommandOutputBytes)
+		return fmt.Errorf("command byte cap must be 1..%d", MaxCommandOutputBytes)
+	}
+	return nil
+}
+
+// attachCommandStreams assigns default buffers or supplied stream overrides to cmd.
+func attachCommandStreams(cmd *exec.Cmd, streams commandStreams, out, diagnostic *commandBuffer) {
+	cmd.Stdout, cmd.Stderr = out, diagnostic
+	if streams.stdout != nil {
+		cmd.Stdout = streams.stdout
+	}
+	if streams.stderr != nil {
+		cmd.Stderr = streams.stderr
+	}
+}
+
+func runBoundedCommand(ctx context.Context, dir, name string, maxBytes int, streams commandStreams, args []string) (result CommandBytes, resultErr error) {
+	if err := validateBoundedCommandInputs(ctx, maxBytes); err != nil {
+		return CommandBytes{}, err
 	}
 	ctx, deadlineCancel := ensureDeadline(ctx, DefaultCommandTimeout)
 	defer deadlineCancel()
@@ -119,13 +138,7 @@ func runBoundedCommand(ctx context.Context, dir, name string, maxBytes int, stre
 	defer func() { resultErr = errors.Join(resultErr, cleanup()) }()
 	out := commandBuffer{limit: maxBytes, cancel: cancel}
 	diagnostic := commandBuffer{limit: maxBytes, cancel: cancel}
-	cmd.Stdout, cmd.Stderr = &out, &diagnostic
-	if streams.stdout != nil {
-		cmd.Stdout = streams.stdout
-	}
-	if streams.stderr != nil {
-		cmd.Stderr = streams.stderr
-	}
+	attachCommandStreams(cmd, streams, &out, &diagnostic)
 	err = start()
 	if err == nil {
 		err = cmd.Wait()

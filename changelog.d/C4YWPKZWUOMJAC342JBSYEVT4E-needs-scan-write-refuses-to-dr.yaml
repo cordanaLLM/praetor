@@ -1,0 +1,2 @@
+type: fixed
+title: needs scan --write refuses to drop a recorded framework when none is configured

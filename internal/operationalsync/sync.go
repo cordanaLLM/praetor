@@ -155,6 +155,20 @@ func normalizeCheckoutPath(path *string) error {
 	return util.ValidateExecPathArg(absolute)
 }
 
+// checkDestinationOutsideInputs verifies that abs is not inside or equal to input repositories.
+func checkDestinationOutsideInputs(abs string, inputPaths []string) error {
+	for _, source := range inputPaths {
+		resolved, err := filepath.EvalSymlinks(source)
+		if err != nil {
+			return err
+		}
+		if abs == resolved || strings.HasPrefix(abs, resolved+string(filepath.Separator)) {
+			return errors.New("destination must be outside input repositories")
+		}
+	}
+	return nil
+}
+
 func validateDestination(opts *Options) error {
 	if opts.Destination == "" {
 		return errors.New("prepare requires a new destination")
@@ -187,27 +201,32 @@ func validateDestination(opts *Options) error {
 	if !parentInfo.IsDir() {
 		return errors.New("destination parent must be a directory, never a symlink")
 	}
-	for _, source := range []string{opts.OwnerPath, opts.SourcePath} {
-		resolved, err := filepath.EvalSymlinks(source)
-		if err != nil {
-			return err
-		}
-		if abs == resolved || strings.HasPrefix(abs, resolved+string(filepath.Separator)) {
-			return errors.New("destination must be outside input repositories")
-		}
-	}
-	return nil
+	return checkDestinationOutsideInputs(abs, []string{opts.OwnerPath, opts.SourcePath})
 }
 
-func (op *operation) validate(ctx context.Context) error {
-	o := op.opts
+// checkPreconditions verifies checkout roots, input configuration, and input stability.
+func (op *operation) checkPreconditions(ctx context.Context) error {
 	if err := op.checkCheckoutRoots(ctx); err != nil {
 		return err
 	}
 	if err := op.checkInputConfiguration(ctx); err != nil {
 		return err
 	}
-	if err := verifyInputsUnchanged(ctx, op); err != nil {
+	return verifyInputsUnchanged(ctx, op)
+}
+
+// checkAncestry verifies that BaseSHA is an ancestor in both owner and source repositories.
+func (op *operation) checkAncestry(ctx context.Context) error {
+	o := op.opts
+	if err := op.git.ancestor(ctx, o.OwnerPath, o.BaseSHA, o.OwnerSHA); err != nil {
+		return err
+	}
+	return op.git.ancestor(ctx, o.SourcePath, o.BaseSHA, o.SourceSHA)
+}
+
+func (op *operation) validate(ctx context.Context) error {
+	o := op.opts
+	if err := op.checkPreconditions(ctx); err != nil {
 		return err
 	}
 	base, err := op.readFiles(ctx, o.SourcePath, o.BaseSHA)
@@ -218,10 +237,7 @@ func (op *operation) validate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := op.git.ancestor(ctx, o.OwnerPath, o.BaseSHA, o.OwnerSHA); err != nil {
-		return err
-	}
-	if err := op.git.ancestor(ctx, o.SourcePath, o.BaseSHA, o.SourceSHA); err != nil {
+	if err := op.checkAncestry(ctx); err != nil {
 		return err
 	}
 	next, err := op.readFiles(ctx, o.SourcePath, o.SourceSHA)

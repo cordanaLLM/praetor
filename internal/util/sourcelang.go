@@ -15,7 +15,8 @@ import (
 // An extension two common languages share is left out rather than guessed: .m (Objective-C
 // or MATLAB), .fs (F# or a GLSL fragment shader), .v (Verilog or V). A missing language only
 // costs the dedupe scan a Not Scanned line; a wrong one names a language the repository does
-// not have.
+// not have. The HISS coverage labels .m as objective-c only when a marker shows the repository
+// is Objective-C (.mm, .metal, or *.xcodeproj).
 //
 // The POSIX shell family (.sh, plus .bash for Bash) is "shell", the language the HISS shell
 // scanner reads. Zsh and the Korn shell keep their own names, since their syntax goes beyond
@@ -26,6 +27,7 @@ var sourceLanguages = map[string]string{
 	".c": "c", ".h": "c",
 	".cc": "cpp", ".cpp": "cpp", ".cxx": "cpp", ".hpp": "cpp", ".hh": "cpp", ".hxx": "cpp",
 	".cu": "cuda", ".cuh": "cuda",
+	".mm": "objective-c++",
 	".py": "python",
 	".ts": "typescript", ".tsx": "typescript", ".mts": "typescript", ".cts": "typescript",
 	".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",

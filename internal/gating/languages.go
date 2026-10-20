@@ -15,14 +15,16 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// The languages whose own toolchain the prefetch, security and test stages run. A language
-// counts as present when its marker is at the repository root: go.mod for Go, Cargo.lock for
-// Cargo, which is also what its commands hold the build to (--locked).
+// The languages whose own toolchain the prefetch, security and test stages run. Go counts as
+// present when git tracks a go.mod the gate discovers anywhere in the repository (goModules,
+// apiassets.TrackedModuleFiles), the root's own or only nested ones; Cargo when a Cargo.lock is
+// at the repository root, which is also what its commands hold the build to (--locked).
 const (
 	languageGo    = "go"
 	languageCargo = "cargo"
+	languageNode  = "node"
 	// supportedLanguages names them with their markers for the refusal message.
-	supportedLanguages = "Go (go.mod) and Cargo (Cargo.lock)"
+	supportedLanguages = "Go (go.mod), Cargo (Cargo.lock) and Node (package.json with package-lock.json, pnpm-lock.yaml or yarn.lock)"
 	// AdmitUnsupportedFlag names the `gate run` flag (RunOptions.AdmitUnsupported) the pre-push
 	// hook adoption renders passes (internal/adopt/hooks.go), so a rename changes both.
 	AdmitUnsupportedFlag = "admit-unsupported"
@@ -36,10 +38,11 @@ type RunOptions struct {
 	// DryRun runs only the read-only stages and mints no receipt.
 	DryRun bool
 	// AdmitUnsupported admits, without a receipt, a run in which no toolchain stage ran because
-	// the repository root holds neither a go.mod nor a Cargo.lock: the receipt stage is recorded
-	// as not applicable and names the languages the gate runs no toolchain for, instead of
-	// rejecting the run. A root holding either marker is refused as before when nothing ran for
-	// it, so a Go or Cargo repository whose toolchain stages could not run still fails. The
+	// git tracks no go.mod the gate discovers and the root holds no Cargo.lock
+	// (holdsToolchainMarker): the receipt stage is recorded as not applicable and names the
+	// languages the gate runs no toolchain for, instead of rejecting the run. A repository
+	// holding either marker is refused as before when nothing ran for it, so a Go or Cargo
+	// repository whose toolchain stages could not run still fails. The
 	// pre-push hook adoption renders passes it, so a repository in a language the gate has no
 	// runner for (Meson, CMake, npm, Python) is not refused on every push (#648); a caller that
 	// needs a receipt, such as CI or the gatekeeper, leaves it unset.
@@ -108,35 +111,67 @@ func (c *stageConfig) noteVerified(part languagePart) {
 	}
 }
 
-// withCargo completes a toolchain stage whose Go part has already run, by running its Cargo
-// part where a Cargo.lock is present.
+// unverifyLanguage removes language from verified so an unverified test stage earns no receipt.
+func (c *stageConfig) unverifyLanguage(language string) {
+	c.verified = slices.DeleteFunc(c.verified, func(l string) bool { return l == language })
+}
+
+// nonGoPart is one non-Go language's share of a toolchain stage.
+type nonGoPart struct {
+	language string
+	present  func(repoDir string) bool
+	run      func(context.Context, *stageConfig) (string, error)
+}
+
+// hasCargo reports whether the repository root holds a committed Cargo.lock.
+func hasCargo(repoDir string) bool {
+	return util.FileExists(filepath.Join(repoDir, CargoLockFile))
+}
+
+// withOtherLanguages completes a toolchain stage whose Go part has already run, by running each
+// present non-Go language part in order (Cargo, then Node).
 //
-// Without a Cargo.lock it returns the Go part exactly as the stage returned it before Cargo
-// support, message and verdict alike, so a Go repository's stage lines and signed output are
-// unchanged. A Go part that failed stops the stage before Cargo runs, as any failure stops the
-// pipeline. Otherwise each present language contributes a "language: outcome" clause to the
+// When no non-Go language is present it returns the Go part exactly as the stage returned it before
+// multi-language support, message and verdict alike, so a Go repository's stage lines and signed output
+// are unchanged. A Go part that failed stops the stage before other languages run, as any failure
+// stops the pipeline. Otherwise each present language contributes a "language: outcome" clause to the
 // stage's reason (combineParts), which is how the signed stage output records what ran for which
 // language.
-func withCargo(ctx context.Context, cfg *stageConfig, goPart languagePart,
-	cargo func(context.Context, *stageConfig) (string, error)) (string, error) {
+func withOtherLanguages(ctx context.Context, cfg *stageConfig, goPart languagePart, parts ...nonGoPart) (string, error) {
 	cfg.noteVerified(goPart)
+	if isFailure(goPart.err) {
+		return goPart.msg, goPart.err
+	}
 	modules, err := cfg.goModules(ctx)
 	if err != nil {
 		return "", err
 	}
-	if !util.FileExists(filepath.Join(cfg.repoDir, CargoLockFile)) || isFailure(goPart.err) {
+
+	ranParts := make([]languagePart, 0, len(parts)+1)
+	if len(modules) > 0 {
+		ranParts = append(ranParts, goPart)
+	}
+
+	nonGoRan := 0
+	for i := 0; i < len(parts); i++ {
+		part := parts[i]
+		if !part.present(cfg.repoDir) {
+			continue
+		}
+		msg, runErr := part.run(ctx, cfg)
+		if isFailure(runErr) {
+			return "", fmt.Errorf("%s: %w", part.language, runErr)
+		}
+		p := languagePart{language: part.language, msg: msg, err: runErr}
+		cfg.noteVerified(p)
+		ranParts = append(ranParts, p)
+		nonGoRan++
+	}
+
+	if nonGoRan == 0 {
 		return goPart.msg, goPart.err
 	}
-	msg, err := cargo(ctx, cfg)
-	if isFailure(err) {
-		return "", fmt.Errorf("%s: %w", languageCargo, err)
-	}
-	cargoPart := languagePart{language: languageCargo, msg: msg, err: err}
-	cfg.noteVerified(cargoPart)
-	if len(modules) == 0 {
-		return combineParts(cargoPart)
-	}
-	return combineParts(goPart, cargoPart)
+	return combineParts(ranParts...)
 }
 
 // combineParts folds the parts of the languages a repository holds into one stage verdict, none
@@ -198,7 +233,7 @@ func requireVerification(ctx context.Context, cfg *stageConfig) error {
 }
 
 // holdsToolchainMarker reports whether the repository root holds the marker of a language whose
-// toolchain the gate runs: go.mod for Go, Cargo.lock for Cargo.
+// toolchain the gate runs: go.mod for Go, Cargo.lock for Cargo, package.json with exactly one lockfile for Node.
 func holdsToolchainMarker(ctx context.Context, cfg *stageConfig) (bool, error) {
 	if ctx == nil && !cfg.modulesDiscovered {
 		return false, fmt.Errorf("%w: marker check has no discovery context", ErrModuleDiscoveryMissing)
@@ -207,16 +242,19 @@ func holdsToolchainMarker(ctx context.Context, cfg *stageConfig) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return len(modules) > 0 || util.FileExists(filepath.Join(cfg.repoDir, CargoLockFile)), nil
+	return len(modules) > 0 || util.FileExists(filepath.Join(cfg.repoDir, CargoLockFile)) || hasSingleNodeLockfile(cfg.repoDir), nil
 }
 
 // nothingVerifiedError names why nothing ran: a Cargo.lock whose stages could not run here, the
 // languages at the repository root the gate runs no toolchain for, or that it recognises none.
 func nothingVerifiedError(cfg *stageConfig) error {
 	repoDir := cfg.repoDir
-	notes := make([]string, 0, 2)
+	notes := make([]string, 0, 3)
 	if util.FileExists(filepath.Join(repoDir, CargoLockFile)) {
 		notes = append(notes, "Cargo.lock is present, but no Cargo stage ran here; each stage's reason says why")
+	}
+	if hasSingleNodeLockfile(repoDir) {
+		notes = append(notes, "package.json and its lockfile are present, but no Node stage ran here; each stage's reason says why")
 	}
 	if unsupported := unsupportedLanguages(repoDir); len(unsupported) > 0 {
 		notes = append(notes, "unsupported languages at the repository root: "+strings.Join(unsupported, ", "))
@@ -233,11 +271,12 @@ func nothingVerifiedError(cfg *stageConfig) error {
 // once and with the files that identified it, in the table's order.
 func unsupportedLanguages(repoDir string) []string {
 	hasLock := util.FileExists(filepath.Join(repoDir, CargoLockFile))
+	hasSingleNode := hasSingleNodeLockfile(repoDir)
 	order := make([]string, 0, len(unsupportedMarkers))
 	files := make(map[string][]string, len(unsupportedMarkers))
 	for i := 0; i < len(unsupportedMarkers); i++ {
 		marker := unsupportedMarkers[i]
-		if (hasLock && marker.file == "Cargo.toml") || !util.FileExists(filepath.Join(repoDir, marker.file)) {
+		if (hasLock && marker.file == "Cargo.toml") || (hasSingleNode && marker.file == "package.json") || !util.FileExists(filepath.Join(repoDir, marker.file)) {
 			continue
 		}
 		if _, seen := files[marker.language]; !seen {

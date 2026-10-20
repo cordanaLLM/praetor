@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
@@ -98,7 +99,7 @@ func scanRepoWithFramework(ctx context.Context, repoPath string, framework *Fram
 	if err != nil {
 		return nil, nil, err
 	}
-	applyFrameworkCoverage(framework, report, registry)
+	applyFrameworkCoverage(ctx, framework, report, registry)
 	return report, repo, nil
 }
 
@@ -121,7 +122,15 @@ type goModFile struct {
 // trailing comment, a quoted module path and the "//indirect" marker read the way the go
 // command reads them. A leading UTF-8 byte-order mark is dropped first
 // (gomanifest.TrimBOM), so the module directive on the first line still names the module.
-func parseGoMod(goModPath string) (*goModFile, error) {
+func parseGoMod(ctx context.Context, goModPath string) (*goModFile, error) {
+	if ctx == nil {
+		return nil, errors.New("parseGoMod: context required")
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
 	if !util.FileExists(goModPath) {
 		return nil, fmt.Errorf("%w: %s", ErrGoModMissing, goModPath)
 	}
@@ -136,14 +145,44 @@ func parseGoMod(goModPath string) (*goModFile, error) {
 		return nil, scanErr
 	}
 	state.ignore = gomanifest.NewIgnoreSet(state.ignorePaths)
-	// A requirement the file replaces with a directory of the same checkout, one whose go.mod
-	// declares that module, is its own module, not a third-party dependency.
+	// A requirement the file replaces with a directory of the same checkout, or whose
+	// module path is declared by a go.mod inside the same checkout, is its own module,
+	// not a third-party dependency.
 	modDir := filepath.Dir(goModPath)
-	state.localModules = gomanifest.LocalReplaces(data, modDir, checkoutRoot(modDir))
+	root := checkoutRoot(modDir)
+	state.localModules = gomanifest.LocalReplaces(data, modDir, root)
+	own, err := checkoutOwnModules(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	for module := range own {
+		state.localModules[module] = true
+	}
 	for module := range state.localModules {
 		delete(state.directDeps, module)
 	}
 	return &state.goModFile, nil
+}
+
+// checkoutOwnModules discovers every go.mod declared inside root (go.work use members
+// or a bounded walk) and returns their declared module paths.
+func checkoutOwnModules(ctx context.Context, root string) (map[string]bool, error) {
+	modules, err := gomanifest.DiscoverGoModulesChecked(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	own := make(map[string]bool, len(modules))
+	for i := 0; i < len(modules) && i < gomanifest.MaxDiscoveredModules; i++ {
+		modPath := filepath.Join(root, modules[i], "go.mod")
+		modData, readErr := readManifest(modPath)
+		if readErr != nil {
+			return nil, readErr
+		}
+		if module := gomanifest.ParseManifest(modData).Module; module != "" {
+			own[module] = true
+		}
+	}
+	return own, nil
 }
 
 // goModScanState accumulates the go.mod directives seen so far. Keeping the per-line
@@ -197,7 +236,17 @@ const maxImportScanEntries = 1000000
 // scanASTImports extracts third-party imports and selected catalog stdlib imports from the
 // module at rootDir, skipping the directories its go.mod ignore directives name.
 func scanASTImports(ctx context.Context, rootDir, modulePath string, ignore gomanifest.IgnoreSet) (map[string]struct{}, error) {
-	return scanASTImportsBounded(ctx, rootDir, modulePath, ignore, maxImportScanEntries)
+	imports, _, err := scanASTImportsFiles(ctx, rootDir, modulePath, ignore)
+	return imports, err
+}
+
+// scanASTImportsFiles extracts third-party imports and returns the visited Go files.
+func scanASTImportsFiles(ctx context.Context, rootDir, modulePath string, ignore gomanifest.IgnoreSet) (map[string]struct{}, []string, error) {
+	scan := newImportScan(ctx, rootDir, modulePath, ignore, maxImportScanEntries)
+	if err := scan.walk(); err != nil {
+		return nil, nil, err
+	}
+	return scan.imports, scan.files, nil
 }
 
 // scanASTImportsBounded is scanASTImports with the entry bound as a parameter, so the
@@ -241,6 +290,7 @@ type importScan struct {
 	visited    int
 	fset       *token.FileSet
 	imports    map[string]struct{}
+	files      []string
 	// onFile, when set, receives every scannable Go file instead of the import collection:
 	// the umbrella-import inspection (umbrella.go) walks the same sources this way.
 	onFile func(path string)
@@ -263,6 +313,9 @@ func (s *importScan) visit(path string, info os.FileInfo, walkErr error) error {
 	}
 	if !isScannableGoFile(info) {
 		return nil
+	}
+	if rel, err := filepath.Rel(s.root, path); err == nil {
+		s.files = append(s.files, rel)
 	}
 	if s.onFile != nil {
 		s.onFile(path)
@@ -575,6 +628,8 @@ func calculateReadiness(repoNeeds *RepoNeeds) {
 			nonGoal++
 		case StatusGap:
 			gap++
+		case StatusDeclinedByPolicy:
+			// Declined by policy: not counted as a gap in readiness.
 		}
 	}
 
@@ -636,12 +691,16 @@ func dropLocalModuleImports(imports map[string]struct{}, localModules map[string
 const maxCheckoutDepth = 64
 
 // checkoutRoot returns the nearest ancestor of dir, dir included, that holds a .git entry (a
-// directory, or the file of a worktree or submodule), the root a local module replacement must
-// stay inside. A tree without one is its own root, so no replacement leaves it.
+// directory, or the file of a worktree or submodule) or a go.work file, the root a local module
+// replacement or sibling module must stay inside. A tree without one is its own root, so no
+// replacement leaves it.
 func checkoutRoot(dir string) string {
 	current := dir
 	for i := 0; i < maxCheckoutDepth; i++ {
 		if _, err := os.Lstat(filepath.Join(current, ".git")); err == nil {
+			return current
+		}
+		if _, err := os.Lstat(filepath.Join(current, "go.work")); err == nil {
 			return current
 		}
 		parent := filepath.Dir(current)

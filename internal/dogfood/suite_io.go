@@ -96,8 +96,8 @@ func readSuiteFile(ctx context.Context, root *os.Root, name string) (data []byte
 	if err != nil {
 		return nil, err
 	}
-	if !before.Mode().IsRegular() || before.Size() > maxSuiteConfigBytes {
-		return nil, errors.New("suite config must be a regular file at most 64 KiB")
+	if err := validateSuiteFileInfo(before); err != nil {
+		return nil, err
 	}
 	file, err := openSuiteConfigFile(root, name)
 	if err != nil {
@@ -108,8 +108,8 @@ func readSuiteFile(ctx context.Context, root *os.Root, name string) (data []byte
 	if err != nil {
 		return nil, err
 	}
-	if !os.SameFile(before, opened) || !opened.Mode().IsRegular() {
-		return nil, errors.New("suite config changed during open")
+	if err := checkSuiteFileOpened(before, opened); err != nil {
+		return nil, err
 	}
 	data, err = io.ReadAll(io.LimitReader(file, maxSuiteConfigBytes+1))
 	if err != nil {
@@ -123,6 +123,22 @@ func readSuiteFile(ctx context.Context, root *os.Root, name string) (data []byte
 		return nil, err
 	}
 	return data, ctx.Err()
+}
+
+// validateSuiteFileInfo ensures initial lstat info represents a bounded regular file.
+func validateSuiteFileInfo(info os.FileInfo) error {
+	if !info.Mode().IsRegular() || info.Size() > maxSuiteConfigBytes {
+		return errors.New("suite config must be a regular file at most 64 KiB")
+	}
+	return nil
+}
+
+// checkSuiteFileOpened ensures opened file stat matches initial lstat info.
+func checkSuiteFileOpened(before, opened os.FileInfo) error {
+	if !os.SameFile(before, opened) || !opened.Mode().IsRegular() {
+		return errors.New("suite config changed during open")
+	}
+	return nil
 }
 
 func checkSuiteSnapshot(before, after os.FileInfo, data []byte) error {

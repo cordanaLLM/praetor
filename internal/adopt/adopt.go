@@ -546,6 +546,19 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 	if err := preflightSteps(ctx, s, declined); err != nil {
 		return err
 	}
+	if err := runAdoptStepsChain(ctx, s, steps, declined); err != nil {
+		return err
+	}
+	reportIgnoredWrites(ctx, s)
+	if err := reportStaleEnginePin(ctx, s); err != nil {
+		return err
+	}
+	verifyAgentContext(ctx, s, declined)
+	return nil
+}
+
+// runAdoptStepsChain executes each step in order, checking for context cancellation.
+func runAdoptStepsChain(ctx context.Context, s *adoptSession, steps []namedStep, declined map[string]bool) error {
 	for i := 0; i < len(steps) && i < maxAdoptSteps; i++ {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("adopt cancelled: %w", err)
@@ -554,11 +567,6 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 			return err
 		}
 	}
-	reportIgnoredWrites(ctx, s)
-	if err := reportStaleEnginePin(ctx, s); err != nil {
-		return err
-	}
-	verifyAgentContext(ctx, s, declined)
 	return nil
 }
 

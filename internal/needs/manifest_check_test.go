@@ -128,3 +128,47 @@ func TestCheckNeedsManifest(t *testing.T) {
 		t.Error("nil context accepted")
 	}
 }
+
+// DroppedFramework: negative, a committed manifest with framework and builder kits checked
+// against a fresh scan without a framework returns ErrFrameworkNotConfigured naming both and
+// the remedy; positive, a fresh scan with a framework returns nil; boundary, a committed
+// manifest without a framework checked against a fresh scan without one returns nil, and
+// unparsable bytes fail with a parse error.
+func TestDroppedFramework_3D(t *testing.T) {
+	committedWithBoth := writtenManifest(t, &RepoNeeds{
+		Version: 1, Repository: "example.com/acme/widget", Language: "go",
+		Framework: "example.com/acme/kit", BuilderKits: []string{"acme/kit"},
+	})
+	freshWithout := &RepoNeeds{Version: 1, Repository: "example.com/acme/widget", Language: "go"}
+
+	// Negative: committed manifest with framework + builder_kits and fresh without -> ErrFrameworkNotConfigured naming both.
+	err := DroppedFramework(committedWithBoth, freshWithout)
+	if !errors.Is(err, ErrFrameworkNotConfigured) {
+		t.Fatalf("expected ErrFrameworkNotConfigured, got %v", err)
+	}
+	for _, want := range []string{"example.com/acme/kit", "acme/kit", "set framework.targets.<language> in the workstation or fleet settings"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err.Error(), want)
+		}
+	}
+
+	// Positive: fresh with a framework -> nil.
+	freshWith := &RepoNeeds{Version: 1, Repository: "example.com/acme/widget", Language: "go", Framework: "example.com/acme/kit"}
+	if err := DroppedFramework(committedWithBoth, freshWith); err != nil {
+		t.Fatalf("fresh with framework returned error: %v", err)
+	}
+
+	// Boundary: committed without framework and fresh without -> nil.
+	committedWithout := writtenManifest(t, freshWithout)
+	if err := DroppedFramework(committedWithout, freshWithout); err != nil {
+		t.Fatalf("committed without framework returned error: %v", err)
+	}
+
+	// Boundary: unparsable committed bytes -> parse error; nil fresh manifest -> error.
+	if err := DroppedFramework([]byte("invalid: yaml: [\n"), freshWithout); err == nil || errors.Is(err, ErrFrameworkNotConfigured) {
+		t.Fatalf("unparsable committed bytes did not return parse error: %v", err)
+	}
+	if err := DroppedFramework(committedWithBoth, nil); err == nil {
+		t.Error("nil fresh manifest accepted")
+	}
+}

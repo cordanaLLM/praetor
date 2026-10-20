@@ -29,16 +29,10 @@ const docsReadmeBaseline = ".standards-baseline.json"
 // only a whole `praetorctl adopt` run refreshed the block. A README without the block, or with
 // the block declined by adoption.decline, is left alone.
 func runDocsReadme(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("docs readme", flag.ContinueOnError)
-	check := fs.Bool("check", false, "Report a stale block without writing; exit non-zero when it differs")
-	positional, err := parseInterspersed(fs, args)
+	repoPath, check, err := parseDocsReadmeArgs(args)
 	if err != nil {
 		return err
 	}
-	if len(positional) > 1 {
-		return fmt.Errorf("docs readme accepts at most one repository path, got %q", positional)
-	}
-	repoPath := positionalAt(positional, 0, ".")
 	manifest, err := config.LoadManifest(filepath.Join(repoPath, config.ManifestFileName))
 	if err != nil {
 		return fmt.Errorf("docs readme renders from the manifest: %w", err)
@@ -49,19 +43,45 @@ func runDocsReadme(ctx context.Context, args []string) error {
 		}
 		return err
 	}
-	data, exists, err := contextopt.ObserveSnapshot(ctx, filepath.Join(repoPath, readmegovernance.File))
+	data, ok, err := loadReadmeContent(ctx, repoPath)
 	if err != nil {
 		return err
+	}
+	if !ok {
+		return nil
+	}
+	rendered, changed, err := renderReadmeBlock(manifest, filepath.Join(repoPath, docsReadmeBaseline), data)
+	if err != nil {
+		return err
+	}
+	return applyReadmeBlock(repoPath, rendered, changed, check)
+}
+
+// parseDocsReadmeArgs parses the arguments and flags for the docs readme command.
+func parseDocsReadmeArgs(args []string) (string, bool, error) {
+	fs := flag.NewFlagSet("docs readme", flag.ContinueOnError)
+	check := fs.Bool("check", false, "Report a stale block without writing; exit non-zero when it differs")
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
+		return "", false, err
+	}
+	if len(positional) > 1 {
+		return "", false, fmt.Errorf("docs readme accepts at most one repository path, got %q", positional)
+	}
+	return positionalAt(positional, 0, "."), *check, nil
+}
+
+// loadReadmeContent reads the repository README if it exists and carries the governance block.
+func loadReadmeContent(ctx context.Context, repoPath string) (string, bool, error) {
+	data, exists, err := contextopt.ObserveSnapshot(ctx, filepath.Join(repoPath, readmegovernance.File))
+	if err != nil {
+		return "", false, err
 	}
 	if !exists || !hasReadmeBlock(string(data)) {
 		fmt.Printf("README governance block not applicable: %s carries no block.\n", readmegovernance.File)
-		return nil
+		return "", false, nil
 	}
-	rendered, changed, err := renderReadmeBlock(manifest, filepath.Join(repoPath, docsReadmeBaseline), string(data))
-	if err != nil {
-		return err
-	}
-	return applyReadmeBlock(repoPath, rendered, changed, *check)
+	return string(data), true, nil
 }
 
 // hasReadmeBlock reports whether content carries the governance block's markers; unbalanced

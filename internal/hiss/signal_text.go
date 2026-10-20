@@ -148,6 +148,22 @@ func matchLitOp(code string, i int) (int, string, int, bool) {
 	return (j + len(op)) - (i + 1), op, int(code[i] - '0'), true
 }
 
+// updateDelimDepth updates depth for an open/close delimiter pair, returning handled and ok status.
+func updateDelimDepth(ch, openCh, closeCh byte, depth *int) (bool, bool) {
+	if ch == openCh {
+		*depth++
+		return true, true
+	}
+	if ch == closeCh {
+		if *depth > 0 {
+			*depth--
+			return true, true
+		}
+		return true, false
+	}
+	return false, true
+}
+
 func stepParenDepth(ch byte, parens, brackets *int, forward bool) bool {
 	openP, closeP := byte('('), byte(')')
 	openB, closeB := byte('['), byte(']')
@@ -155,27 +171,11 @@ func stepParenDepth(ch byte, parens, brackets *int, forward bool) bool {
 		openP, closeP = ')', '('
 		openB, closeB = ']', '['
 	}
-	if ch == openP {
-		*parens++
-		return true
+	if handled, ok := updateDelimDepth(ch, openP, closeP, parens); handled {
+		return ok
 	}
-	if ch == closeP {
-		if *parens > 0 {
-			*parens--
-			return true
-		}
-		return false
-	}
-	if ch == openB {
-		*brackets++
-		return true
-	}
-	if ch == closeB {
-		if *brackets > 0 {
-			*brackets--
-			return true
-		}
-		return false
+	if handled, ok := updateDelimDepth(ch, openB, closeB, brackets); handled {
+		return ok
 	}
 	if *parens == 0 && *brackets == 0 && isStopChar(ch) {
 		return false

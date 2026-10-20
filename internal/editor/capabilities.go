@@ -234,6 +234,24 @@ func languageForFile(name string) string {
 	return ""
 }
 
+// appendLanguage adds language (or native expansion) to result if unseen.
+func appendLanguage(language string, seen map[string]bool, result []string) []string {
+	if language == "native" {
+		for _, item := range []string{"c", "cpp"} {
+			if !seen[item] {
+				seen[item] = true
+				result = append(result, item)
+			}
+		}
+		return result
+	}
+	if language != "" && !seen[language] {
+		seen[language] = true
+		result = append(result, language)
+	}
+	return result
+}
+
 func normalizeLanguages(input []string) ([]string, error) {
 	if len(input) > maxLanguageObservations {
 		return nil, errors.New("editor language observations exceed bound")
@@ -242,19 +260,7 @@ func normalizeLanguages(input []string) ([]string, error) {
 	result := make([]string, 0, len(input))
 	for i := 0; i < len(input); i++ {
 		language := strings.ToLower(strings.TrimSpace(input[i]))
-		if language == "native" {
-			for _, item := range []string{"c", "cpp"} {
-				if !seen[item] {
-					seen[item] = true
-					result = append(result, item)
-				}
-			}
-			continue
-		}
-		if language != "" && !seen[language] {
-			seen[language] = true
-			result = append(result, language)
-		}
+		result = appendLanguage(language, seen, result)
 		if len(result) > maxLoopBound {
 			return nil, errors.New("editor language capability count exceeds bound")
 		}

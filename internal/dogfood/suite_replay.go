@@ -39,7 +39,11 @@ func verifySuiteTranscript(ctx context.Context, dir string, result *SuiteCase) e
 	if err := suiteTranscriptPass(ctx, source, cache, result.Replay); err != nil {
 		return fmt.Errorf("replay: %w", err)
 	}
-	replay := result.Replay
+	return validateReplayConsistency(first, result.Replay)
+}
+
+// validateReplayConsistency verifies that replay pass did not alter cache or counters.
+func validateReplayConsistency(first, replay *SuiteReplayPass) error {
 	if replay.Stored != 0 || replay.AlreadyPresent != first.Stored || replay.Scanned != first.Scanned || replay.Skipped != first.Skipped {
 		return errors.New("transcript replay changed cache or counters")
 	}
@@ -102,10 +106,23 @@ func validateSuitePage(source SuiteTranscript, pass *SuiteReplayPass, report *ha
 }
 
 func validateSuiteCounters(pass *SuiteReplayPass, report *harvester.TranscriptIngestReport) error {
+	if err := validatePageRecordCounts(report); err != nil {
+		return err
+	}
+	return validatePageCompletion(report, pass.Scanned)
+}
+
+// validatePageRecordCounts checks that page batch counters are positive and balance.
+func validatePageRecordCounts(report *harvester.TranscriptIngestReport) error {
 	if report.Scanned < 1 || report.Scanned > harvester.MaxTranscriptBatchRecords || report.Stored < 0 || report.AlreadyPresent < 0 || report.Skipped < 0 || report.Scanned != report.Stored+report.AlreadyPresent+report.Skipped {
 		return errors.New("invalid transcript page counters")
 	}
-	remaining := report.TotalRecords - pass.Scanned - report.Scanned
+	return nil
+}
+
+// validatePageCompletion ensures remaining records and completion indicators match.
+func validatePageCompletion(report *harvester.TranscriptIngestReport, passScanned int) error {
+	remaining := report.TotalRecords - passScanned - report.Scanned
 	if remaining < 0 || report.Remaining != remaining || report.Complete != (remaining == 0) || (report.NextCursor == "") != report.Complete {
 		return errors.New("transcript page completion is inconsistent")
 	}

@@ -383,22 +383,35 @@ func (s *scriptScanner) checkInvariants(code string, lineNum int, defined string
 	s.checkErrors(code, lineNum)
 }
 
-func (s *scriptScanner) checkScriptSignals(code string, lineNum int) {
+// collectGuards extracts guards from code and appends them uniquely.
+func (s *scriptScanner) collectGuards(code string) {
 	for _, g := range extractAllGuards(code) {
 		s.guards = appendUniqueGuard(s.guards, g)
 	}
+}
+
+// checkSignalAt inspects code at offset for an unguarded negative signal call.
+func (s *scriptScanner) checkSignalAt(code string, at int, call string, lineNum int) {
+	if at != 0 && isIdentByte(code[at-1]) {
+		return
+	}
+	target, sig, ok := parseNegativeSignalCall(code, at, call)
+	if !ok {
+		return
+	}
+	if sig != "0" && !containsGuard(s.guards, target) {
+		recordViolation(s.rep, "HISS-08", s.rel, lineNum, "",
+			fmt.Sprintf("Signal call process.kill with target %s must be guarded; add guard: if (%s <= 1) ...",
+				target, target))
+	}
+}
+
+func (s *scriptScanner) checkScriptSignals(code string, lineNum int) {
+	s.collectGuards(code)
 	call := "process.kill"
 	at := strings.Index(code, call)
 	for i := 0; i < len(code) && at >= 0; i++ {
-		if at == 0 || !isIdentByte(code[at-1]) {
-			if target, sig, ok := parseNegativeSignalCall(code, at, call); ok {
-				if sig != "0" && !containsGuard(s.guards, target) {
-					recordViolation(s.rep, "HISS-08", s.rel, lineNum, "",
-						fmt.Sprintf("Signal call process.kill with target %s must be guarded; add guard: if (%s <= 1) ...",
-							target, target))
-				}
-			}
-		}
+		s.checkSignalAt(code, at, call, lineNum)
 		next := strings.Index(code[at+1:], call)
 		if next < 0 {
 			break

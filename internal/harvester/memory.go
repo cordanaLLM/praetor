@@ -59,19 +59,24 @@ func ExtractMemoryInsights(ctx context.Context, transcriptsRoot string) ([]Memor
 		if cErr := ctx.Err(); cErr != nil {
 			return nil, fmt.Errorf("context cancelled during memory extraction: %w", cErr)
 		}
-		if !entries[i].IsDir() {
-			continue
-		}
-		transcriptPath, err := util.ConfinePath(transcriptsRoot, filepath.Join(entries[i].Name(), ".system_generated", "logs", "transcript.jsonl"))
-		if err != nil {
-			return nil, fmt.Errorf("confine transcript source: %w", err)
-		}
-		if scanErr := scanTranscript(ctx, transcriptPath, entries[i].Name(), &insights); scanErr != nil {
+		if scanErr := scanTranscriptEntry(ctx, transcriptsRoot, entries[i], &insights); scanErr != nil {
 			return insights, scanErr
 		}
 	}
 
 	return insights, nil
+}
+
+// scanTranscriptEntry confines and scans one transcript subdirectory.
+func scanTranscriptEntry(ctx context.Context, transcriptsRoot string, entry os.DirEntry, insights *[]MemoryInsight) error {
+	if !entry.IsDir() {
+		return nil
+	}
+	transcriptPath, err := util.ConfinePath(transcriptsRoot, filepath.Join(entry.Name(), ".system_generated", "logs", "transcript.jsonl"))
+	if err != nil {
+		return fmt.Errorf("confine transcript source: %w", err)
+	}
+	return scanTranscript(ctx, transcriptPath, entry.Name(), insights)
 }
 
 // scanTranscript opens one transcript and appends the insights it yields. A missing

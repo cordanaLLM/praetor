@@ -88,15 +88,21 @@ func acceptClaudeBlock(block claudeBlock, role string, event *TranscriptEvent, t
 		}
 		event.thinkingBlocks++
 	case "tool_use":
-		if role != "assistant" || block.ID == "" || block.Name == "" || block.Input == nil {
-			return fmt.Errorf("claude tool_use requires assistant role, id, name and object input")
-		}
-		event.ToolCalls = append(event.ToolCalls, TranscriptToolCall{ID: block.ID, Name: block.Name, Args: block.Input})
+		return acceptClaudeToolUse(block, role, event)
 	case "tool_result":
 		return acceptClaudeToolResult(block, role, event)
 	default:
 		return fmt.Errorf("unsupported claude content block")
 	}
+	return nil
+}
+
+// acceptClaudeToolUse validates and records a tool_use block on the transcript event.
+func acceptClaudeToolUse(block claudeBlock, role string, event *TranscriptEvent) error {
+	if role != "assistant" || block.ID == "" || block.Name == "" || block.Input == nil {
+		return fmt.Errorf("claude tool_use requires assistant role, id, name and object input")
+	}
+	event.ToolCalls = append(event.ToolCalls, TranscriptToolCall{ID: block.ID, Name: block.Name, Args: block.Input})
 	return nil
 }
 

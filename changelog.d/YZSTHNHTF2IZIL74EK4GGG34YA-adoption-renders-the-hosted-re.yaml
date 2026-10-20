@@ -1,0 +1,2 @@
+type: changed
+title: Adoption renders the hosted REUSE gate of a plurano-owned repository as a caller of plurano/horistes licence.yml pinned by commit SHA, the ruleset requires its "Licence / REUSE lint" context, and audit fails a copied gate there

@@ -144,15 +144,9 @@ func copyAndPinOneSkill(rootDir, tempDir string, source config.UpstreamSkillSour
 		return err
 	}
 	skillRel := filepath.Join(filepath.FromSlash(compiler.CanonicalSkillsRel), skillName)
-	targetDir, err := util.ConfinePath(rootDir, skillRel)
+	targetDir, err := prepareSkillTargetDir(rootDir, skillRel, skillName)
 	if err != nil {
-		return fmt.Errorf("target skill dir %s: %w", skillName, err)
-	}
-	if err := os.RemoveAll(targetDir); err != nil {
-		return fmt.Errorf("clean target skill dir %s: %w", targetDir, err)
-	}
-	if err := util.MkdirSecure(targetDir, 0750); err != nil {
-		return fmt.Errorf("create target skill dir %s: %w", targetDir, err)
+		return err
 	}
 	if err := copyDirectoryContents(rootDir, srcDir, skillRel); err != nil {
 		return fmt.Errorf("copy skill %s contents: %w", skillName, err)
@@ -160,6 +154,26 @@ func copyAndPinOneSkill(rootDir, tempDir string, source config.UpstreamSkillSour
 	if err := ensureSkillLicense(rootDir, skillRel, repoLicense); err != nil {
 		return err
 	}
+	return validateAndPinSkillLicense(rootDir, skillRel, targetDir, skillName, source)
+}
+
+// prepareSkillTargetDir resolves, cleans, and creates the target directory for a skill.
+func prepareSkillTargetDir(rootDir, skillRel, skillName string) (string, error) {
+	targetDir, err := util.ConfinePath(rootDir, skillRel)
+	if err != nil {
+		return "", fmt.Errorf("target skill dir %s: %w", skillName, err)
+	}
+	if err := os.RemoveAll(targetDir); err != nil {
+		return "", fmt.Errorf("clean target skill dir %s: %w", targetDir, err)
+	}
+	if err := util.MkdirSecure(targetDir, 0750); err != nil {
+		return "", fmt.Errorf("create target skill dir %s: %w", targetDir, err)
+	}
+	return targetDir, nil
+}
+
+// validateAndPinSkillLicense determines the skill's license and records its pinning metadata.
+func validateAndPinSkillLicense(rootDir, skillRel, targetDir, skillName string, source config.UpstreamSkillSource) error {
 	licence := determineSkillLicense(targetDir)
 	if licence == "" || strings.EqualFold(licence, "UNKNOWN") {
 		cleanErr := os.RemoveAll(targetDir)
@@ -525,29 +539,37 @@ func verifyOneUpstreamSource(rootDir string, source config.UpstreamSkillSource) 
 	verified := 0
 	for i := 0; i < len(source.Skills) && i < maxUpstreamSkills; i++ {
 		skillName := source.Skills[i]
-		if !config.ValidSkillName(skillName) {
-			return verified, fmt.Errorf("skill %q is not a valid skill name", skillName)
-		}
-		skillRel := filepath.Join(filepath.FromSlash(compiler.CanonicalSkillsRel), skillName)
-		skillDir, err := util.ConfinePath(rootDir, skillRel)
-		if err != nil {
-			return verified, fmt.Errorf("skill %s: %w", skillName, err)
-		}
-		record, exists, err := caveman.ReadSkillPinRecord(skillDir)
-		if err != nil {
-			return verified, fmt.Errorf("read pin record for %s: %w", skillName, err)
-		}
-		if !exists {
-			return verified, fmt.Errorf("skill %s missing %s", skillName, caveman.SkillPinRecordName)
-		}
-		if record.Repo != source.Repo || record.Tag != source.Tag || !strings.EqualFold(record.Commit, source.Commit) {
-			return verified, fmt.Errorf("skill %s pin mismatch: got %s@%s (%s), want %s@%s (%s)",
-				skillName, record.Repo, record.Tag, record.Commit, source.Repo, source.Tag, source.Commit)
-		}
-		if _, err := caveman.VerifySkillPin(skillDir); err != nil {
-			return verified, fmt.Errorf("verify pin for %s: %w", skillName, err)
+		if err := verifyOnePinnedSkill(rootDir, source, skillName); err != nil {
+			return verified, err
 		}
 		verified++
 	}
 	return verified, nil
+}
+
+// verifyOnePinnedSkill checks that a single pinned skill matches its upstream source record.
+func verifyOnePinnedSkill(rootDir string, source config.UpstreamSkillSource, skillName string) error {
+	if !config.ValidSkillName(skillName) {
+		return fmt.Errorf("skill %q is not a valid skill name", skillName)
+	}
+	skillRel := filepath.Join(filepath.FromSlash(compiler.CanonicalSkillsRel), skillName)
+	skillDir, err := util.ConfinePath(rootDir, skillRel)
+	if err != nil {
+		return fmt.Errorf("skill %s: %w", skillName, err)
+	}
+	record, exists, err := caveman.ReadSkillPinRecord(skillDir)
+	if err != nil {
+		return fmt.Errorf("read pin record for %s: %w", skillName, err)
+	}
+	if !exists {
+		return fmt.Errorf("skill %s missing %s", skillName, caveman.SkillPinRecordName)
+	}
+	if record.Repo != source.Repo || record.Tag != source.Tag || !strings.EqualFold(record.Commit, source.Commit) {
+		return fmt.Errorf("skill %s pin mismatch: got %s@%s (%s), want %s@%s (%s)",
+			skillName, record.Repo, record.Tag, record.Commit, source.Repo, source.Tag, source.Commit)
+	}
+	if _, err := caveman.VerifySkillPin(skillDir); err != nil {
+		return fmt.Errorf("verify pin for %s: %w", skillName, err)
+	}
+	return nil
 }

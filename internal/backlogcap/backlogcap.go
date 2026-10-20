@@ -274,6 +274,27 @@ var counters = map[string]counter{
 		"code-scanning, dependency or secret-scanning alerts"},
 }
 
+// loadPolicyExceptions returns exceptions from policy manifest or loads them from disk.
+func loadPolicyExceptions(root string, policy *config.EffectivePolicy) []config.Exception {
+	if policy.Manifest != nil {
+		return policy.Manifest.Exceptions
+	}
+	manifest, err := config.LoadManifest(filepath.Join(root, config.ManifestFileName))
+	if err == nil && manifest != nil {
+		return manifest.Exceptions
+	}
+	return nil
+}
+
+// resolveWorkingDirPath resolves the working directory path for root.
+func resolveWorkingDirPath(ctx context.Context, root string) string {
+	loc, err := state.ResolveWorkingDir(ctx, root)
+	if err == nil {
+		return loc.WorkingDir
+	}
+	return filepath.Join(root, state.WorkingDirName)
+}
+
 // Evaluate counts every category policy caps, reading the ledgers under root. A nil policy,
 // or one that caps nothing, yields an empty report. A ledger that is absent or cannot be read
 // leaves its category not counted with the reason, so one unreadable ledger never hides the
@@ -282,11 +303,7 @@ func Evaluate(ctx context.Context, root string, policy *config.EffectivePolicy) 
 	if ctx == nil || root == "" {
 		return nil, errors.New("backlog cap evaluation requires a context and a repository root")
 	}
-	loc, err := state.ResolveWorkingDir(ctx, root)
-	workingDir := filepath.Join(root, state.WorkingDirName)
-	if err == nil {
-		workingDir = loc.WorkingDir
-	}
+	workingDir := resolveWorkingDirPath(ctx, root)
 	report := &Report{}
 	if policy == nil {
 		return report, nil
@@ -294,15 +311,7 @@ func Evaluate(ctx context.Context, root string, policy *config.EffectivePolicy) 
 	ctx, cancel := context.WithTimeout(ctx, evaluateTimeout)
 	defer cancel()
 
-	var allExceptions []config.Exception
-	if policy.Manifest != nil {
-		allExceptions = policy.Manifest.Exceptions
-	} else {
-		manifest, err := config.LoadManifest(filepath.Join(root, config.ManifestFileName))
-		if err == nil && manifest != nil {
-			allExceptions = manifest.Exceptions
-		}
-	}
+	allExceptions := loadPolicyExceptions(root, policy)
 	report.Exceptions = allExceptions
 	report.Today = time.Now()
 

@@ -129,13 +129,10 @@ func stripBoilerplate(text string) string {
 		line := strings.TrimSpace(lines[i])
 		lower := strings.ToLower(line)
 
-		if strings.HasPrefix(lower, "# ") || strings.HasPrefix(lower, "## ") {
-			if strings.Contains(lower, "sponsor") || strings.Contains(lower, "license") ||
-				strings.Contains(lower, "contributing") || strings.Contains(lower, "community") {
-				skipSection = true
+		if isHdr, skip := isBoilerplateHeading(lower); isHdr {
+			skipSection = skip
+			if skip {
 				continue
-			} else {
-				skipSection = false
 			}
 		}
 
@@ -145,6 +142,20 @@ func stripBoilerplate(text string) string {
 		cleaned = append(cleaned, line)
 	}
 	return strings.Join(cleaned, "\n")
+}
+
+// isBoilerplateHeading reports whether lower is a markdown header and whether it marks boilerplate.
+func isBoilerplateHeading(lower string) (bool, bool) {
+	if !strings.HasPrefix(lower, "# ") && !strings.HasPrefix(lower, "## ") {
+		return false, false
+	}
+	keywords := []string{"sponsor", "license", "contributing", "community"}
+	for i := 0; i < len(keywords); i++ {
+		if strings.Contains(lower, keywords[i]) {
+			return true, true
+		}
+	}
+	return true, false
 }
 
 // extractSummary returns the first prose line of the documentation, or "" when the first

@@ -175,16 +175,9 @@ func boolPointersEqual(a, b *bool) bool {
 // checked here because yaml.Node.Decode drops the caller's KnownFields setting, so a
 // misspelled key would otherwise be discarded while the section reads as configured.
 func (b *BranchProtectionPolicy) UnmarshalYAML(node *yaml.Node) error {
-	if err := requireKnownKeys(node, "branch_protection", branchProtectionKeys); err != nil {
+	mergeMethods, err := validateBranchProtectionNodes(node)
+	if err != nil {
 		return err
-	}
-	reviewMode := policyMember(node, "review_mode")
-	if reviewMode != nil && (reviewMode.Kind != yaml.ScalarNode || reviewMode.Tag != "!!str") {
-		return errors.New("branch protection review_mode must be a string enum")
-	}
-	mergeMethods := policyMember(node, "allowed_merge_methods")
-	if mergeMethods != nil && mergeMethods.Kind != yaml.SequenceNode {
-		return errors.New("allowed_merge_methods must be a list")
 	}
 	type rawBranchProtectionPolicy BranchProtectionPolicy
 	var decoded rawBranchProtectionPolicy
@@ -200,6 +193,22 @@ func (b *BranchProtectionPolicy) UnmarshalYAML(node *yaml.Node) error {
 	}
 	*b = policy
 	return nil
+}
+
+// validateBranchProtectionNodes checks node shapes before YAML decoding.
+func validateBranchProtectionNodes(node *yaml.Node) (*yaml.Node, error) {
+	if err := requireKnownKeys(node, "branch_protection", branchProtectionKeys); err != nil {
+		return nil, err
+	}
+	reviewMode := policyMember(node, "review_mode")
+	if reviewMode != nil && (reviewMode.Kind != yaml.ScalarNode || reviewMode.Tag != "!!str") {
+		return nil, errors.New("branch protection review_mode must be a string enum")
+	}
+	mergeMethods := policyMember(node, "allowed_merge_methods")
+	if mergeMethods != nil && mergeMethods.Kind != yaml.SequenceNode {
+		return nil, errors.New("allowed_merge_methods must be a list")
+	}
+	return mergeMethods, nil
 }
 
 // EffectiveReviewRequirements resolves the review gate used by every ruleset
