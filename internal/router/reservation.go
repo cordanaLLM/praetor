@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 )
 
 // MaxActiveReservations bounds retained admission handles in one tracker.
@@ -168,6 +169,7 @@ func (lt *LimitTracker) recordCompletionLocked(reservation *TaskReservation, act
 		u.TotalSpend = spend + actual.Cost
 	}
 	delete(lt.unobserved, modelID)
+	u.ObservedAt = time.Now()
 	if overflow {
 		lt.overflowed[modelID] = true
 		return ErrReservationOverflow

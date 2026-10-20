@@ -42,8 +42,7 @@ type TaskRoute struct {
 	// Lane is the executable lane of the pick; LaneNote says why there is none.
 	Lane     *LaneRoute `json:"lane,omitempty"`
 	LaneNote string     `json:"lane_note,omitempty"`
-	// Skipped lists candidates of the task's tiers the gateway rules or a subscription window
-	// excluded, with the reason.
+	// Skipped lists excluded candidates of the task's tiers, with the reason.
 	Skipped []RouteSkip `json:"skipped,omitempty"`
 	// Window is the pacing signal of the pick's governed lane; nil when the lane names no account.
 	Window *WindowDecision `json:"window,omitempty"`
@@ -63,10 +62,14 @@ func (p *taskPass) admit(model ModelDescriptor, tierServes bool) bool {
 	if reason == "" {
 		return true
 	}
+	p.skip(model, reason)
+	return false
+}
+
+func (p *taskPass) skip(model ModelDescriptor, reason string) {
 	if len(p.skips) < MaxRoutingModels {
 		p.skips = append(p.skips, RouteSkip{Model: model.ID, Reason: reason})
 	}
-	return false
 }
 
 // maxErrorSkips bounds the skip reasons quoted in a no-eligible-model error.
@@ -198,17 +201,18 @@ func (a *ModelCapacityArbiter) tierCandidate(pass *taskPass, tier string, model 
 	if governed && !pass.admitWindow(model, window) {
 		return nil, nil
 	}
-	candidate, err := a.taskCandidate(pass.request, tier, model)
+	candidate, err := a.taskCandidate(pass, tier, model)
 	if candidate != nil && governed {
 		candidate.Window = &window
 	}
 	return candidate, err
 }
 
-func (a *ModelCapacityArbiter) taskCandidate(request TaskRequest, tier string, model ModelDescriptor) (*TaskRoute, error) {
-	capacity, err := a.projectTaskCapacity(request, model)
-	if err != nil || capacity == nil {
-		return nil, err
+func (a *ModelCapacityArbiter) taskCandidate(pass *taskPass, tier string, model ModelDescriptor) (*TaskRoute, error) {
+	request := pass.request
+	capacity := a.projectTaskCapacity(pass, model)
+	if capacity == nil {
+		return nil, nil
 	}
 	cost := model.CostPerMIn*(float64(request.InputTokens)/1_000_000) + model.CostPerMOut*(float64(request.OutputTokens)/1_000_000)
 	if math.IsInf(cost, 0) || math.IsNaN(cost) {

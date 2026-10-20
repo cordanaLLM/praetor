@@ -23,7 +23,7 @@ func TestTaskProjectedCapacity(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			tracker := NewLimitTracker()
-			tracker.usage["one"] = &ModelUsage{CurrentRPM: test.rpm, CurrentTPM: test.tpm}
+			tracker.usage["one"] = &ModelUsage{ObservedAt: time.Now(), CurrentRPM: test.rpm, CurrentTPM: test.tpm}
 			arbiter := NewModelCapacityArbiter(taskConfig(taskModel("one", 1, 1)), tracker)
 			_, err := arbiter.SelectForTask(context.Background(), TaskRequest{Task: "implement", InputTokens: test.input, OutputTokens: test.output})
 			if test.allowed && err != nil {
@@ -45,7 +45,7 @@ func TestTaskProjectedCapacityIntegerBounds(t *testing.T) {
 	threshold := (math.MaxInt/5)*4 + (math.MaxInt%5)*4/5
 	for _, current := range []int{threshold - 1, threshold, math.MaxInt} {
 		tracker := NewLimitTracker()
-		tracker.usage["one"] = &ModelUsage{CurrentRPM: current}
+		tracker.usage["one"] = &ModelUsage{ObservedAt: time.Now(), CurrentRPM: current}
 		_, err := NewModelCapacityArbiter(taskConfig(model), tracker).SelectForTask(context.Background(), TaskRequest{Task: "implement", InputTokens: 1})
 		if current == threshold-1 && err != nil {
 			t.Fatalf("exact integer threshold rejected: %v", err)
@@ -61,12 +61,12 @@ func TestOrthogonalUsesConfiguredThreshold(t *testing.T) {
 		threshold float64
 		rpm       int
 		allowed   bool
-	}{{50, 6, false}, {90, 8, true}, {100, 10, false}, {100, 9, true}} {
+	}{{50, 6, false}, {85, 8, true}, {85, 10, false}, {85, 9, false}} {
 		model := taskModel("auditor", 1, 1)
 		cfg := taskConfig(model)
 		cfg.Governance.ExhaustionThresholdPercent = test.threshold
 		tracker := NewLimitTracker()
-		tracker.usage[model.ID] = &ModelUsage{CurrentRPM: test.rpm}
+		tracker.usage[model.ID] = &ModelUsage{ObservedAt: time.Now(), CurrentRPM: test.rpm}
 		_, err := NewModelCapacityArbiter(cfg, tracker).SelectOrthogonalAuditor(FamilyAnthropic, "work")
 		if test.allowed && err != nil {
 			t.Fatalf("threshold %v/rpm %d: %v", test.threshold, test.rpm, err)
@@ -82,7 +82,7 @@ func TestTaskUnknownQuotaDimensionsAndZeroThreshold(t *testing.T) {
 		model := taskModel("one", 1, 1)
 		model.RPMLimit, model.TPMLimit = limits[0], limits[1]
 		tracker := NewLimitTracker()
-		tracker.usage["one"] = &ModelUsage{}
+		tracker.usage["one"] = &ModelUsage{ObservedAt: time.Now()}
 		arbiter := NewModelCapacityArbiter(taskConfig(model), tracker)
 		route := routeTask(t, arbiter, TaskRequest{Task: "implement", InputTokens: 1})
 		if route.QuotaLimitsKnown || route.ProjectedHeadroom != nil {

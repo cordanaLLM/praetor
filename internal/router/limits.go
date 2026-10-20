@@ -8,6 +8,7 @@ import (
 
 // ModelUsage holds recorded counters and cooldown data for one model endpoint.
 type ModelUsage struct {
+	ObservedAt  time.Time `json:"observed_at" yaml:"observed_at"`
 	CurrentRPM  int       `json:"current_rpm" yaml:"current_rpm"`
 	CurrentTPM  int       `json:"current_tpm" yaml:"current_tpm"`
 	TotalSpend  float64   `json:"total_spend" yaml:"total_spend"`
@@ -58,6 +59,7 @@ func (lt *LimitTracker) RecordUsage(modelID string, tokens int, cost float64) {
 		return
 	}
 	lt.addRecordedUsageLocked(modelID, u, actual)
+	u.ObservedAt = time.Now()
 	delete(lt.unobserved, modelID)
 }
 

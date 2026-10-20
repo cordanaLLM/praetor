@@ -98,12 +98,34 @@ A snapshot is a JSON object with exactly these fields:
 | Each model's `current_tpm` | Explicit nonnegative integer token counter |
 
 A model observation may also include nonnegative `total_spend`, nonnegative integer
-`error_count`, and RFC3339 `last_429_time`. Those fields must use their exact names.
+`error_count`, RFC3339 `last_429_time`, and RFC3339 `observed_at`.
+An omitted observation time inherits the snapshot's `captured_at`; importing a
+snapshot never refreshes its observation time. Those fields must use their exact names.
 Duplicate keys, field-name aliases, unknown fields/models, null observations and
 missing counters fail. Do not fill absent observations with invented zeroes.
 When `--usage` is supplied, unobserved models and models lacking a positive RPM or
 TPM limit cannot be selected. Programmatic callers obtain the same behavior with
 `TaskRequest.RequireObservedCapacity`.
+
+`governance.quota_reading_max_age` sets the maximum quota observation age as a
+positive duration (for example, `10m`, the default when omitted from YAML).
+Programmatic configurations must set `Governance.QuotaReadingMaxAge` explicitly.
+A reading exactly at the maximum age remains eligible; older readings, missing
+observation times and future timestamps are refused. A stale reading is refused
+even during provisional selection. `CalculateHeadroom`, `SelectModel` and
+orthogonal auditor selection require a reading; task routing requires one when
+`RequireObservedCapacity` is set. An absent reading can still support the
+provisional task selection described above when that flag is false.
+
+```yaml
+governance:
+  exhaustion_threshold_percent: 85
+  quota_reading_max_age: 10m
+```
+
+`exhaustion_threshold_percent` must be between 0 and 85 inclusive, retaining at
+least 15 percent of every configured provider quota dimension. Configuration
+validation rejects 86 and higher. Both RPM and TPM must fit the threshold.
 
 Admission adds one request and the sum of both token estimates before checking
 each known limit against `exhaustion_threshold_percent`. At 80 percent, 7 recorded
@@ -116,11 +138,19 @@ floating point. Headroom floats are diagnostics only.
 A configured zero RPM or TPM limit disables that dimension in provisional
 selection; it does not prove an unlimited provider quota. A recorded 429 triggers
 the existing 30-second cooldown. Fully exhausted or cooling models remain
-ineligible even at an exhaustion threshold of 100 percent. Orthogonal selection
-uses the configured threshold and requires positive headroom.
+ineligible. Orthogonal selection uses the configured threshold and requires
+positive headroom.
 
-These are historical counter checks. Snapshot timestamps are exposed, but neither
-freshness nor rolling-window expiry is inferred. `total_spend` and `error_count`
+`SelectModel` returns the selected endpoint descriptor with `Skipped` candidates
+using the shared `RouteSkip` type. An exhausted
+tier cascades to its configured fallback. Stale, missing, unreadable, cooling and
+over-threshold readings carry explicit reasons in selection results or errors;
+task routes expose the same exclusions in `skipped`.
+
+These are historical counter checks with an age limit; rolling-window expiry is
+not inferred. Actual `RecordUsage` and known reservation completions timestamp
+their observations; reservations, unknown completions and 429 events preserve
+the preceding quota observation time. `total_spend` and `error_count`
 do not produce a latency, success-rate or error-rate score. Advisory selection uses
 one coherent tracker snapshot and does not reserve anything.
 

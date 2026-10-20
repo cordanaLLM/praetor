@@ -305,7 +305,7 @@ func checkProjectedCapacityOutput(t *testing.T, arbiter *router.ModelCapacityArb
 
 func TestModelsRouteCLIProjectedCapacityMatchesCore(t *testing.T) {
 	path := writeRouteCLIInput(t, cliRouteFixture)
-	usagePath := writeRouteCLIInput(t, `{"version":1,"captured_at":"2026-09-12T12:00:00Z","models":{"cheap":{"current_rpm":7,"current_tpm":700},"reserve":{"current_rpm":8,"current_tpm":0}}}`)
+	usagePath := writeRouteCLIInput(t, `{"version":1,"captured_at":"`+time.Now().UTC().Format(time.RFC3339Nano)+`","models":{"cheap":{"current_rpm":7,"current_tpm":700},"reserve":{"current_rpm":8,"current_tpm":0}}}`)
 	ctx := context.Background()
 	cfg, err := router.LoadRoutingConfigContext(ctx, path)
 	if err != nil {
@@ -358,7 +358,7 @@ func TestModelsRouteCLIUsesConfiguredCostAndLabelsUnknownCapacity(t *testing.T) 
 
 func TestModelsRouteCLIUsesSuppliedCapacityAndRejectsMissingObservations(t *testing.T) {
 	path := writeRouteCLIInput(t, cliRouteFixture)
-	usage := writeRouteCLIInput(t, `{"version":1,"captured_at":"2026-09-12T12:00:00Z","models":{"cheap":{"current_rpm":9,"current_tpm":0},"reserve":{"current_rpm":0,"current_tpm":0}}}`)
+	usage := writeRouteCLIInput(t, `{"version":1,"captured_at":"`+time.Now().UTC().Format(time.RFC3339Nano)+`","models":{"cheap":{"current_rpm":9,"current_tpm":0},"reserve":{"current_rpm":0,"current_tpm":0}}}`)
 	args := []string{"route", "--config=" + path, "--usage=" + usage, "--task=implement", "--input-tokens=1"}
 	out, err := captureStdout(t, func() error { return runModels(args) })
 	if err != nil {
@@ -371,7 +371,7 @@ func TestModelsRouteCLIUsesSuppliedCapacityAndRejectsMissingObservations(t *test
 	if result.Model.ID != "reserve" || !result.CapacityObserved || result.CapturedAt == nil {
 		t.Fatalf("supplied quota ignored: %s", out)
 	}
-	if err := os.WriteFile(usage, []byte(`{"version":1,"captured_at":"2026-09-12T12:00:00Z","models":{"cheap":{"current_rpm":9,"current_tpm":0}}}`), 0o600); err != nil {
+	if err := os.WriteFile(usage, []byte(`{"version":1,"captured_at":"`+time.Now().UTC().Format(time.RFC3339Nano)+`","models":{"cheap":{"current_rpm":9,"current_tpm":0}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := captureStdout(t, func() error { return runModels(args) }); err == nil {

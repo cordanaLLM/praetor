@@ -1,0 +1,2 @@
+type: added
+title: 'Reject stale quota readings during model routing and preserve at least 15 percent headroom with an exhaustion threshold capped at 85 percent'

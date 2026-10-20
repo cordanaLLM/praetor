@@ -56,6 +56,9 @@ type ModelDescriptor struct {
 	// CostRatesDeclared distinguishes explicit zero rates from omitted prices.
 	// The YAML loader sets it; programmatic task-routing configurations must do so.
 	CostRatesDeclared bool `yaml:"-" json:"-"`
+	// Skipped reports candidates excluded by SelectModel before this endpoint was selected.
+	// Selection diagnostics are never persisted into the routing catalog.
+	Skipped []RouteSkip `yaml:"-" json:"skipped,omitempty"`
 }
 
 // Tier groups operator-declared task assignments and their candidate models.
@@ -70,9 +73,12 @@ type Tier struct {
 
 // GovernancePolicy governs concurrency and cross-audit rules.
 type GovernancePolicy struct {
-	MaxConcurrentSameModel     int     `yaml:"max_concurrent_same_model"`
+	MaxConcurrentSameModel int `yaml:"max_concurrent_same_model"`
+	// ExhaustionThresholdPercent cannot exceed 85: retain at least 15% of each provider window.
 	ExhaustionThresholdPercent float64 `yaml:"exhaustion_threshold_percent"`
 	OrthogonalAuditRequired    bool    `yaml:"orthogonal_audit_required"`
+	// QuotaReadingMaxAge bounds observation age, inclusive. Omitted YAML defaults to 10m; must be positive.
+	QuotaReadingMaxAge time.Duration `yaml:"quota_reading_max_age"`
 	// CatalogMaxAgeDays is the freshness window of a catalog entry's as_of date; zero
 	// takes DefaultCatalogMaxAgeDays.
 	CatalogMaxAgeDays int `yaml:"catalog_max_age_days,omitempty"`
