@@ -23,7 +23,10 @@ concurrency:
 
 jobs:
   console:
-    runs-on: ubuntu-26.04
+    # Playwright 1.56.1 installs its Chromium on Ubuntu 24.04 but refuses ubuntu26.04-x64
+    # ("does not support chromium"); move to ubuntu-26.04 with the Playwright update that
+    # supports it.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
