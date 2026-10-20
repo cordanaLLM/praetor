@@ -44,8 +44,9 @@ func TestEfficiencyTranscriptCreationOptions(t *testing.T) {
 				}
 				return
 			}
-			if branch, ok := j.roots[tc.root]; !ok || branch != tc.branch {
-				t.Fatalf("roots=%v; want %s -> %q", j.roots, tc.root, tc.branch)
+			want := canonicalTranscriptPath(tc.root)
+			if branch, ok := j.roots[want]; !ok || branch != tc.branch {
+				t.Fatalf("roots=%v; want %s -> %q", j.roots, want, tc.branch)
 			}
 		})
 	}
