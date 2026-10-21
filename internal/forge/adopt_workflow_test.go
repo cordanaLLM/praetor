@@ -12,7 +12,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// adopt.yml is the one workflow here that a pull request comment starts. issue_comment runs
+// adopt-comment.yml is the workflow here that a pull request comment starts. issue_comment runs
 // the default branch's file with the base repository's token for anyone who can comment, so
 // the shape that keeps that token away from strangers and from the pull request's code is
 // asserted here rather than left to review. The permission split itself is also audited
@@ -36,18 +36,21 @@ const (
 	persistCredentialsKey = ghworkflow.CheckoutPersistInput
 )
 
-// parseAdoptWorkflow parses this repository's adopt.yml afresh, so a test may mutate what it
-// gets back without another test seeing the change.
+// parseAdoptWorkflow reads both entry points afresh and combines their jobs for mutation
+// tests. Each file must have its own trigger, its own job and no inherited permissions.
 func parseAdoptWorkflow(t *testing.T) workflowSpec {
 	t.Helper()
 	workflows, _ := engineWorkflows(t)
-	data, ok := workflows[adoptWorkflowFile]
-	if !ok {
-		t.Fatalf("%s is missing", adoptWorkflowFile)
-	}
-	var spec workflowSpec
-	if err := yaml.Unmarshal(data, &spec); err != nil {
-		t.Fatalf("parse %s: %v", adoptWorkflowFile, err)
+	spec := workflowSpec{Jobs: map[string]workflowJob{}}
+	for _, entry := range adoptEntryPoints {
+		var parsed workflowSpec
+		if err := yaml.Unmarshal(workflows[entry.file], &parsed); err != nil {
+			t.Fatalf("parse %s: %v", entry.file, err)
+		}
+		if gap := adoptEntryPointGap(parsed, entry.event, entry.job); gap != "" {
+			t.Fatalf("%s: %s", entry.file, gap)
+		}
+		spec.Jobs[entry.job] = parsed.Jobs[entry.job]
 	}
 	return spec
 }
@@ -57,7 +60,7 @@ func adoptJob(t *testing.T, spec workflowSpec, id string) workflowJob {
 	t.Helper()
 	job, ok := spec.Jobs[id]
 	if !ok {
-		t.Fatalf("%s has no job %q", adoptWorkflowFile, id)
+		t.Fatalf("adoption workflows have no job %q", id)
 	}
 	return job
 }
@@ -79,7 +82,7 @@ func mustStepIndex(t *testing.T, job workflowJob, accept func(workflowStep) bool
 	t.Helper()
 	index := stepIndex(job, accept)
 	if index < 0 {
-		t.Fatal("the job has no step this mutation needs; adopt.yml changed shape")
+		t.Fatal("the job has no step this mutation needs; adoption workflows changed shape")
 	}
 	return index
 }
@@ -331,8 +334,8 @@ func TestAdoptWorkflow_Positive_CommentJobChecksOutTheResolvedHead(t *testing.T)
 		t.Fatalf("comment job: %s", gap)
 	}
 	workflows, _ := engineWorkflows(t)
-	if strings.Contains(string(workflows[adoptWorkflowFile]), "github.event.pull_request") {
-		t.Error("adopt.yml reads github.event.pull_request, which no run of it carries")
+	if strings.Contains(string(workflows[adoptCommentWorkflowFile]), "github.event.pull_request") {
+		t.Error("adopt-comment.yml reads github.event.pull_request, which no run of it carries")
 	}
 	cases := []struct {
 		name   string
@@ -643,9 +646,11 @@ func TestAdoptWorkflow_Positive_OnlyTheDispatchJobKeepsAGoCache(t *testing.T) {
 		t.Error(gap)
 	}
 	workflows, _ := engineWorkflows(t)
-	findings, err := auditWorkflowGoCaches(adoptWorkflowFile, workflows[adoptWorkflowFile], map[string]string{})
-	if err != nil || len(findings) != 0 {
-		t.Fatalf("go cache audit of %s: %v %v", adoptWorkflowFile, findings, err)
+	for _, file := range [2]string{adoptWorkflowFile, adoptCommentWorkflowFile} {
+		findings, err := auditWorkflowGoCaches(file, workflows[file], map[string]string{})
+		if err != nil || len(findings) != 0 {
+			t.Fatalf("go cache audit of %s: %v %v", file, findings, err)
+		}
 	}
 	dispatch := adoptJob(t, spec, adoptDispatchJob)
 	if identity := goBuildCacheIdentity(dispatch); !slices.Equal(identity, []string{"job:adopt"}) {
@@ -711,7 +716,7 @@ func adoptTimeoutGaps(t *testing.T, data []byte) []string {
 		} `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal(data, &spec); err != nil {
-		t.Fatalf("parse %s: %v", adoptWorkflowFile, err)
+		t.Fatalf("parse adoption workflow: %v", err)
 	}
 	var gaps []string
 	ids := slices.Sorted(maps.Keys(spec.Jobs))
@@ -734,22 +739,26 @@ func adoptTimeoutGaps(t *testing.T, data []byte) []string {
 // job bounds kept and only the head lookup's step bound removed.
 func TestAdoptWorkflow_Positive_EveryJobAndTheHeadLookupAreBounded(t *testing.T) {
 	workflows, _ := engineWorkflows(t)
-	shipped := string(workflows[adoptWorkflowFile])
-	if gaps := adoptTimeoutGaps(t, []byte(shipped)); len(gaps) != 0 {
-		t.Fatalf("unbounded: %q", gaps)
+	for _, file := range [2]string{adoptWorkflowFile, adoptCommentWorkflowFile} {
+		if gaps := adoptTimeoutGaps(t, workflows[file]); len(gaps) != 0 {
+			t.Fatalf("%s unbounded: %q", file, gaps)
+		}
 	}
 	cases := []struct {
 		name   string
+		file   string
 		remove string
 		want   string
 	}{
-		{"negative: the dispatch job's bound removed", "    timeout-minutes: 30\n    permissions:\n      contents: write\n", "job adopt sets no timeout-minutes"},
-		{"boundary: only the head lookup's bound removed", "        timeout-minutes: 2\n", "step pr-head calls the API with no timeout-minutes"},
+		{"negative: the dispatch job's bound removed", adoptWorkflowFile, "    timeout-minutes: 30\n    permissions:\n      contents: write\n", "job adopt sets no timeout-minutes"},
+		{"negative: the comment job's bound removed", adoptCommentWorkflowFile, "    timeout-minutes: 30\n", "job adopt-comment sets no timeout-minutes"},
+		{"boundary: only the head lookup's bound removed", adoptCommentWorkflowFile, "        timeout-minutes: 2\n", "step pr-head calls the API with no timeout-minutes"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			shipped := string(workflows[tc.file])
 			if strings.Count(shipped, tc.remove) != 1 {
-				t.Fatalf("adopt.yml no longer holds %q once, so this mutation decides nothing", tc.remove)
+				t.Fatalf("%s no longer holds %q once, so this mutation decides nothing", tc.file, tc.remove)
 			}
 			// The first line of the matched text is the bound; the rest only anchors it.
 			_, anchor, _ := strings.Cut(tc.remove, "\n")

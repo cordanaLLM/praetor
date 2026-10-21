@@ -109,8 +109,8 @@ no finding:
   other event gets a group of its own run id, because GitHub replaces the older pending run of
   a group whenever a newer one joins, even without `cancel-in-progress`: a group keyed on the
   branch would drop queued pushes to `main`. Workflows without a `pull_request` trigger
-  (Praetor's own `adopt.yml`, `release-binaries.yml`, `wiki-sync.yml`) carry no group, since a
-  run-id group would change nothing there. Every `actions/checkout` step in an emitted gate sets
+  (Praetor's own `adopt.yml`, `adopt-comment.yml`, `release-binaries.yml`, `wiki-sync.yml`) carry
+  no group, since a run-id group would change nothing there. Every `actions/checkout` step in an emitted gate sets
   `persist-credentials: false`, since no gate pushes and the default leaves the job token in
   `.git/config` for every later step (zizmor `artipacked`). `ghworkflow.HostedGateFault`
   refuses a gate without the exact group or with a checkout that keeps the token
