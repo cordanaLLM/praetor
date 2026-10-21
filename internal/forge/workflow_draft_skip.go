@@ -109,8 +109,9 @@ func contextReporter(spec *workflowSpec, context string) (string, error) {
 
 // provenDraftSkips returns the ids of the jobs of spec whose draft skip is proven: a job that
 // carries exactly the draft skip condition and is covered by an aggregate that fails on it
-// (draftSkipAggregateFault), and each such aggregate. Such a gate job stops a draft by way of the
-// aggregate, which the trigger audit counts as stopping it.
+// (draftSkipAggregateFault), each such aggregate, and the gate's dependents covered by that same
+// aggregate. A dependent reading the draft flag keeps its own finding. Such jobs stop a draft
+// by way of the aggregate, which the trigger audit counts as stopping it.
 func provenDraftSkips(spec *workflowSpec) map[string]bool {
 	ids := sortedJobIDs(spec.Jobs)
 	proven := make(map[string]bool)
@@ -122,8 +123,23 @@ func provenDraftSkips(spec *workflowSpec) map[string]bool {
 		for j := 0; j < len(ids) && j < maxJobsPerFile; j++ {
 			if ids[j] != ids[i] && draftSkipAggregateFault(spec, ids[j], ids[i]) == "" {
 				proven[ids[i]], proven[ids[j]] = true, true
+				proveDraftSkipDependents(spec, ids[i], ids[j], proven)
 			}
 		}
 	}
 	return proven
+}
+
+// proveDraftSkipDependents extends a proven gate/aggregate pair to direct dependents covered
+// by that aggregate's existing failure proof. Other needs and draft-reading conditions remain
+// subject to the normal trigger audit.
+func proveDraftSkipDependents(spec *workflowSpec, gateID, aggregateID string, proven map[string]bool) {
+	aggregate := spec.Jobs[aggregateID]
+	needs := provenAggregateNeeds(spec, &aggregate)
+	for i := 0; i < len(needs) && i < maxJobsPerFile; i++ {
+		job := spec.Jobs[needs[i]]
+		if slices.Contains(job.NeedIDs(), gateID) && !strings.Contains(job.If, ghworkflow.PullRequestDraftField) {
+			proven[needs[i]] = true
+		}
+	}
 }

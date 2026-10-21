@@ -308,8 +308,9 @@ const (
 	// reports such a calling job, so it holds back no job that needs it.
 	draftCallsIdle
 	// draftProvenSkip: the job is a gate job that skips a draft with the opt-in job condition,
-	// or the aggregate that fails on that skip (provenDraftSkips, #857). It is a work marker only
-	// (decideJob decides draftStops from it): the aggregate keeps the required check failing on
+	// the aggregate that fails on that skip, or a dependent covered by that aggregate
+	// (provenDraftSkips). It is a work marker only (decideJob decides draftStops from it):
+	// the aggregate keeps the required check failing on
 	// the draft, so the skipped gate job does not let it pass.
 	draftProvenSkip
 )
@@ -390,9 +391,9 @@ func ownDraftHandling(job *workflowJob, work draftHandling) draftHandling {
 // so (`!failure() && !cancelled()`, `always() && needs.plan.result == 'success'`), so the check
 // protects by default and reads none.
 //
-// The one exception is the proven always() aggregate of the opt-in draft skip, which the caller
-// settles first (draftProvenSkip, docs/guides/workflow-triggers.md); any other such workflow is
-// declared in the exceptions list (Limits).
+// The exception is the proven opt-in draft skip, its always() aggregate and covered dependents,
+// which the caller settles first (draftProvenSkip, docs/guides/workflow-triggers.md); any other
+// such workflow is declared in the exceptions list (Limits).
 func decideJob(job *workflowJob, work draftHandling, decided map[string]jobDecision) jobDecision {
 	if work == draftProvenSkip {
 		return jobDecision{handling: draftStops}

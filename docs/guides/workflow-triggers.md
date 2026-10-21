@@ -69,17 +69,15 @@ A `push` filtered to named branches, such as `[main, 'release/**']`, or to tags 
 
 ## The opt-in draft skip
 
-A job condition that reads the draft flag is reported, except one shape: the managed hosted gates
-rendered with `hosted_gates.draft: skip` in `.standards.yaml`
-([Adopting](../adoption.md#which-jobs-the-ruleset-requires)). There the gate job carries exactly
-`github.event_name != 'pull_request' || github.event.pull_request.draft == false`, and the job
-reporting the required check is a proven aggregate in the same workflow: it needs the gate job,
-runs under `always()` alone and fails when the gate job is skipped, which is what a draft leaves of
-it (`forge.DraftSkipFault`, built on the aggregate proof in `internal/forge/workflow_aggregate.go`).
-The check counts both jobs as stopping a draft. The same condition without that aggregate, or
-with an aggregate that passes while the gate job is skipped, is reported as the job-condition
-skip it is (`TestAuditWorkflowTriggersAcceptsTheDraftSkipOnlyBehindItsAggregate`). The judgement
-reads one workflow at a time, so an aggregate in another workflow proves nothing.
+The opt-in draft skip is accepted by shape in any workflow, including managed hosted gates
+rendered with `hosted_gates.draft: skip`: the gate carries exactly
+`github.event_name != 'pull_request' || github.event.pull_request.draft == false`, and a proven
+aggregate in the same workflow needs it, runs under `always()` alone and fails when it is skipped
+(`forge.DraftSkipFault`, using `internal/forge/workflow_aggregate.go`). Jobs that need the gate
+are also accepted when that same aggregate needs and proves failure coverage for each of them;
+an omitted dependent is still reported, as is a dependent whose own condition reads the draft
+flag. An aggregate that passes on the gate's skip proves none of these jobs
+(`TestAuditWorkflowTriggers_DraftSkipFanout`).
 
 The check orders a workflow's jobs by their needs (`util.DependencyOrder`, Kahn's algorithm) and
 decides each job once, after every job it needs, from the job itself and the decisions of its
