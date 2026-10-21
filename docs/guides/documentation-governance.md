@@ -921,6 +921,16 @@ WGSL, Metal) are code as well, and a shader under `docs/` follows the same
 section of the [HISS specification](../standards/hiss-spec.md) lists every
 code kind and the test directories.
 
+A range that changes only frontend sources and documentation outside every tracked Go package
+directory (a SvelteKit app under `console/`, for example) runs the linters, the audit and the
+documentation gates but skips the Go race and security suites (`NonGoOnly` in
+`internal/cifilter/filter.go`, `classifyGoInputs` in `internal/cifilter/frontend.go`). A file
+inside a Go package directory, such as an embedded asset or a package's own TypeScript or
+stylesheet, keeps the range on the tests (`TestFilterConsoleOnlyAndGoInputs`,
+`TestFilterConsoleRangeKindsAndEmbeddedOnly` in `internal/cifilter/frontend_test.go`). When the
+Go package directories cannot be read, `AnalyzeChanges` runs full verification instead of
+guessing.
+
 ### Codespell skips for emitted files
 
 The figure player bundle Praetor emits holds minified third-party identifiers that codespell
