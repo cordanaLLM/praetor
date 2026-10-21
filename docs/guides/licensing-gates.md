@@ -24,6 +24,15 @@ A newer push to a pull request cancels its older `reuse.yml` run, and the workfl
 
 The `reuse.yml` workflow also triggers on `merge_group`, so its check reports for a merge group when the repository declares a merge queue ([Merge queue](../adoption.md#merge-queue)). An unedited copy of the earlier text without the trigger refreshes without `--force` for a repository whose default branch is `main`; for another default branch it needs `--force`.
 
+The rendered `.config/reuse/requirements.txt` carries an SPDX copyright and
+`EUPL-1.2` licence header so the REUSE gate can audit the lock itself; a lock
+without licensing information fails `reuse lint`. Adoption recognizes the earlier
+headerless rendering and refreshes an unedited copy without `--force`, while
+preserving local edits (`internal/adopt/reuse_requirements.go`,
+`reuseRequirementsDigests` in `internal/adopt/reuse_gate.go`, and
+`TestAdoptReuseRequirementsRefreshesHeaderlessRendering` in
+`internal/adopt/reuse_gate_test.go`).
+
 Adoption writes two jobs:
 
 - `.github/workflows/reuse.yml`, whose **REUSE lint** job installs reuse from the hash-pinned
