@@ -1,0 +1,3 @@
+type: fixed
+title: Accept jobs behind a proven draft-skip aggregate in the HISS-18 draft check
+breaking: false
