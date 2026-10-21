@@ -1,0 +1,41 @@
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+//
+// SPDX-License-Identifier: EUPL-1.2
+
+package rules_test
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/cordanaLLM/praetor/tools/secrets/rules"
+)
+
+func TestCategoryExpiryCaps(t *testing.T) {
+	cases := []struct{ name, category, entered, expires, want string }{
+		{"A stated", "A", "2026-10-18", "2027-10-18", ""},
+		{"A missing expiry", "A", "", "", "must be a YYYY-MM-DD date"},
+		{"B boundary", "B", "", "2026-10-21", ""},
+		{"B exceeded", "B", "", "2026-10-22", "category B requires expires on or before 2026-10-21 (3 days"},
+		{"C shorter", "C", "2026-10-18", "2026-10-20", ""},
+		{"D boundary", "D", "", "2027-02-15", ""},
+		{"D exceeded", "D", "", "2027-02-16", "category D requires expires on or before 2027-02-15 (120 days"},
+		{"entered fixed", "C", "2026-10-17", "2026-10-28", "category C requires expires on or before 2026-10-27 (10 days"},
+		{"bad entered", "B", "bad", "2026-10-21", "entered"},
+		{"bad expiry", "B", "2026-10-18", "bad", "must be a YYYY-MM-DD date"},
+		{"uncategorized boundary", "", "2026-10-17", "2027-01-15", ""},
+		{"uncategorized exceeded", "", "2026-10-17", "2027-01-16", "more than 90 days"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := rules.CategoryExpiryProblem(tc.category, tc.entered, tc.expires, testToday)
+			if tc.want == "" {
+				if got != "" {
+					t.Fatal(got)
+				}
+			} else if !strings.Contains(got, tc.want) {
+				t.Fatalf("problem = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

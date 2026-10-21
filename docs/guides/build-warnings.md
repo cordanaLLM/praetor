@@ -153,7 +153,7 @@ exceptions:
 lane of that workflow. The audit prints each excused lane under the entry's reason and expiry and
 passes. An expired entry fails like a missing one. An entry whose workflow has no failing lane,
 or that is left when no workflow builds anything, is stale and fails until it is removed. The
-list's general rules, one line of reason and an expiry at most 90 days ahead, are in
+list's general rules, one line of reason and an expiry within the category interval (A: stated, B: 3 days, C: 10 days, D: 120 days; uncategorized: 90 days), are in
 [clang-tidy coverage: Exceptions](clang-tidy-coverage.md#exceptions).
 
 ## Reading the output
@@ -162,7 +162,7 @@ A failure names each lane, what it lacks and the form to add, then the way out:
 
 ```text
 [FAIL] Build warnings (HISS-10): .github/workflows/ci.yml:14: job native, step "cmake -S . -B build": CMake builds without warnings as errors: the configure command defines no CMAKE_COMPILE_WARNING_AS_ERROR. Add: configure with -DCMAKE_COMPILE_WARNING_AS_ERROR=ON (CMake 3.24 or later) and without --compile-no-warning-as-error.
-[FAIL] Build warnings (HISS-10): no live exceptions entry declares the lanes above; build each with its toolchain's warnings-as-errors form (docs/guides/build-warnings.md), or, for a lane that cannot yet, declare its workflow in the exceptions list of .standards.yaml (rule HISS-10, path .github/workflows/<workflow>, a reason, and an expiry at most 90 days ahead).
+[FAIL] Build warnings (HISS-10): no live exceptions entry declares the lanes above; build each with its toolchain's warnings-as-errors form (docs/guides/build-warnings.md), or, for a lane that cannot yet, declare its workflow in the exceptions list of .standards.yaml (rule HISS-10, path .github/workflows/<workflow>, a reason, and an expiry within the category interval (A: stated, B: 3 days, C: 10 days, D: 120 days; uncategorized: 90 days)).
 ```
 
 A pass counts the lanes by toolchain, lists the excused ones, and states what was read:

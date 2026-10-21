@@ -236,7 +236,7 @@ labelling. GitHub's licence detection, Licensee, reads more names as licence fil
   Licensee refuses (`TestLicenceNamed_3D`).
 
 To keep an upstream notice, name it in the top-level `exceptions` list of `.standards.yaml`, one
-file per entry, by `path` and at the root, with the reason and an expiry at most 90 days ahead,
+file per entry, by `path` and at the root, with the reason and an expiry within the category interval (A: stated, B: 3 days, C: 10 days, D: 120 days; uncategorized: 90 days),
 as for the [clang-tidy coverage gate](clang-tidy-coverage.md#exceptions):
 
 ```yaml

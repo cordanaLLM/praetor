@@ -186,8 +186,7 @@ exceptions:
     expires: 2026-12-31
 ```
 
-The entry follows the rules of the exceptions list (one line of reason, a date at most 90 days
-ahead, no repeats; `config.ValidateExceptions`) and takes a `path` to one `go.mod`, never a glob,
+The entry follows the rules of the exceptions list (one line of reason, an expiry within the category interval (A: stated, B: 3 days, C: 10 days, D: 120 days; uncategorized: 90 days), no repeats; `config.ValidateExceptions`) and takes a `path` to one `go.mod`, never a glob,
 and no `${{` in the reason, because the workflow carries the entries to the gate in the
 environment variable `APICOMPAT_EXCEPTIONS`; the gate reads no manifest. While the entry holds,
 through the end of its `expires` day in UTC, a build failure of that module is not a failure: the

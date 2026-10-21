@@ -1259,6 +1259,28 @@ func TestScanRepo_Negative_StaleExceptionForCleanFileFails(t *testing.T) {
 	}
 }
 
+func TestScanRepo_CategoryDStaleException(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "clean.go", cleanGoSource)
+	writeStandardsManifest(t, root, `exceptions:
+  - rule: HISS-19
+    path: clean.go
+    reason: "category D: generated boilerplate"
+    entered: 2026-10-21
+    expires: 2027-02-18
+`)
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
+		RepoPath: root, Today: time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("category D entry must validate before the native stale check: %v", err)
+	}
+	if report.Passed || len(report.StaleExceptions) != 1 {
+		t.Fatalf("native stale result = passed %v, stale %v", report.Passed, report.StaleExceptions)
+	}
+	t.Log("category D entry validates; native scanner reports its unused exception as stale")
+}
+
 func TestScanRepo_Negative_StaleExceptionForNonGoFileFails(t *testing.T) {
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "clean.go")

@@ -297,7 +297,7 @@ exceptions:
 `path` names the workflow the measurement read, the one the failure line names; with no workflow
 writing provenance, it names the release workflow still to be added. The entry is validated like
 every exceptions entry (`config.ValidateExceptions`): one workflow file directly in
-`.github/workflows`, a one-line reason, and an expiry at most 90 days ahead. While it holds, the
+`.github/workflows`, a one-line reason, and an expiry within the category interval (A: stated, B: 3 days, C: 10 days, D: 120 days; uncategorized: 90 days). While it holds, the
 gate prints the declared and measured values with the entry's reason and expiry and passes:
 
 ```text

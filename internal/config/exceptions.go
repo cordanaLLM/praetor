@@ -134,10 +134,8 @@ var workflowRuleExamples = map[string]string{
 const (
 	// MaxExceptions bounds the entries one manifest declares.
 	MaxExceptions = 1024
-	// MaxExceptionDays is how far ahead of today an entry may expire. An exception is a debt
-	// with a due date, reviewed again when it falls due; scripts/npm_audit_gate.py applies the
-	// same bound to its own list.
-	MaxExceptionDays = 90
+	// MaxExceptionDays bounds uncategorized entries; categorized entries use their interval.
+	MaxExceptionDays = rules.MaxExceptionDays
 	// ExceptionExpiryWarningDays is how many days before an expiry the audit begins warning.
 	ExceptionExpiryWarningDays = 14
 	// MaxExceptionReasonBytes bounds one entry's reason.
@@ -357,8 +355,8 @@ func BacklogExceptionFor(entries []Exception, category string, today time.Time) 
 // ValidateExceptions refuses an exceptions list a gate could not apply as written: more than
 // MaxExceptions entries, an unknown rule, an entry naming both or neither of path and glob, a
 // path that is not one clean repository-relative file, a glob outside the StyleExclusionProblem
-// rules, an empty or multi-line reason, an expires value that is no YYYY-MM-DD date or lies more
-// than MaxExceptionDays after today, and a repeated entry. An expired entry is valid: the gate
+// rules, an empty or multi-line reason, an invalid expiry or one beyond its category interval
+// (MaxExceptionDays when uncategorized), and a repeated entry. An expired entry is valid: the gate
 // that owns its rule fails on its files instead, and the audit's last step fails every expired
 // entry whatever its rule (ExpiredExceptions).
 func ValidateExceptions(entries []Exception, today time.Time) error {
@@ -382,6 +380,7 @@ func ValidateExceptions(entries []Exception, today time.Time) error {
 
 // problem names why one entry is refused, or returns "".
 func (e Exception) problem(today time.Time) string {
+	e.Category = e.expiryCategory()
 	if !slices.Contains(exceptionRules, e.Rule) {
 		return fmt.Sprintf("rule %q is not a rule any gate reads from this list (known: %s)", e.Rule, strings.Join(exceptionRules, ", "))
 	}
@@ -420,11 +419,8 @@ func exceptionCategoryExpiryProblem(e Exception, today time.Time) string {
 }
 
 func uncategorizedExceptionExpiryProblem(e Exception, today time.Time) string {
-	if e.Entered != "" {
-		return "entered requires a category"
-	}
 	if e.Rule != ExceptionRuleMutants {
-		return exceptionExpiryProblem(e.Expires, today)
+		return rules.CategoryExpiryProblem("", e.Entered, e.Expires, today)
 	}
 	if _, err := time.Parse(ExceptionDateLayout, e.Expires); err == nil {
 		return ""
@@ -436,7 +432,24 @@ func categorizedExceptionExpiryProblem(e Exception, today time.Time) string {
 	return rules.CategoryExpiryProblem(e.Category, e.Entered, e.Expires, today)
 }
 
-// ExceptionCategoryDays returns the days allowed for category, and whether the category is valid.
+// expiryCategory prefers the field, then a case-insensitive category prefix in the reason.
+func (e Exception) expiryCategory() string {
+	if e.Category != "" {
+		return e.Category
+	}
+	words := strings.Fields(e.Reason)
+	if len(words) < 2 || !strings.EqualFold(words[0], "category") {
+		return ""
+	}
+	category := strings.ToUpper(strings.TrimRight(words[1], ",:;."))
+	if _, valid := rules.CategoryDays(category); valid {
+		return category
+	}
+	return ""
+}
+
+// ExceptionCategoryDays returns the default duration for category, and whether it is valid.
+// Category A's default is not a cap: an entry states its own expiry.
 func ExceptionCategoryDays(category string) (int, bool) {
 	return rules.CategoryDays(category)
 }
@@ -648,6 +661,7 @@ func (e Exception) ExpiringWithin(today time.Time, days int) bool {
 // interval is the days from entered to expires when both parse; if either does not
 // parse, WarningDays falls back to ExceptionExpiryWarningDays (14 days).
 func (e Exception) WarningDays() int {
+	e.Category = e.expiryCategory()
 	if e.Category == "" {
 		return ExceptionExpiryWarningDays
 	}

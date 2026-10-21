@@ -190,7 +190,7 @@ func TestValidateExceptionsCategories(t *testing.T) {
 		t.Fatalf("an expired declaration must remain valid for its owning gate to fail: %v", err)
 	}
 	base.Category, base.Expires = "C", "2026-10-27"
-	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "category C requires expires 2026-10-26") {
+	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "category C requires expires on or before 2026-10-26") {
 		t.Fatalf("category C with a mismatched expiry = %v", err)
 	}
 	base = validException()
@@ -198,8 +198,8 @@ func TestValidateExceptionsCategories(t *testing.T) {
 		t.Fatalf("uncategorized exception changed behavior: %v", err)
 	}
 	base.Category, base.Entered, base.Expires = "A", "2026-10-06", "2027-01-05"
-	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "more than 90 days") {
-		t.Fatalf("category A escaped the 90-day cap: %v", err)
+	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err != nil {
+		t.Fatalf("category A stated expiry refused: %v", err)
 	}
 }
 
@@ -210,7 +210,7 @@ func TestException_Problem(t *testing.T) {
 		t.Fatalf("expected valid category C to pass, got: %s", prob)
 	}
 	base.Expires = "2026-10-25"
-	if prob := base.Problem(today); !strings.Contains(prob, "category C requires expires 2026-10-20") {
+	if prob := base.Problem(today); !strings.Contains(prob, "category C requires expires on or before 2026-10-20") {
 		t.Fatalf("expected category C interval failure, got: %s", prob)
 	}
 }
@@ -917,7 +917,7 @@ func TestExceptionMatchesSecret_3D(t *testing.T) {
 
 // Positive: a codespell entry naming one file with category C, entered today and expiring today+10
 // passes. Negative: a glob, a missing category, a tool and an invalid expiry are refused. Boundary:
-// category A with expiry up to 90 days passes.
+// category A with an explicit expiry passes.
 func TestValidateExceptionsCodespell(t *testing.T) {
 	today := exceptionsToday
 	valid := Exception{
