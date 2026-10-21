@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { fixture, stubFetch } from '../../test/fixtures.ts';
 import { loadFile } from './load.ts';
 import { validateFile } from './validate.ts';
@@ -11,11 +11,37 @@ test('every committed fixture loads and passes the schema', async () => {
 	}
 });
 
-test('an HTTP error names the file and the status', async () => {
-	const result = await loadFile('cards', { fetchImpl: stubFetch({ cards: { status: 503 } }) });
+test('requests revalidate cached data and expose redirects with an abort signal', async () => {
+	const fetchImpl = vi.fn(stubFetch({ graph: {} }));
+	await loadFile('graph', { fetchImpl });
+	expect(fetchImpl).toHaveBeenCalledWith('./graph.json', {
+		cache: 'no-cache',
+		redirect: 'manual',
+		signal: expect.any(AbortSignal)
+	});
+});
+
+test.each([500, 503])('an HTTP %s error names the file and the status', async (status) => {
+	const result = await loadFile('cards', {
+		fetchImpl: stubFetch({ cards: { status, headers: { 'content-type': 'text/html' } } })
+	});
 	expect(result).toEqual({
 		ok: false,
-		error: { kind: 'http', message: 'cards.json answered HTTP 503' }
+		error: { kind: 'http', message: `cards.json answered HTTP ${status}` }
+	});
+});
+
+test.each([
+	{ type: 'opaqueredirect' as const },
+	{ status: 401 },
+	{ status: 403 },
+	{ raw: '<html>Sign in</html>', headers: { 'content-type': 'text/html' } },
+	{ raw: '<html>Sign in</html>', headers: { 'content-type': 'TEXT/HTML; charset=UTF-8' } }
+])('an expired session is reported for %j', async (reply) => {
+	const result = await loadFile('graph', { fetchImpl: stubFetch({ graph: reply }) });
+	expect(result).toEqual({
+		ok: false,
+		error: { kind: 'signin', message: 'graph.json: the session ended, sign in again' }
 	});
 });
 
@@ -33,13 +59,21 @@ test('a file that never answers times out', async () => {
 	if (!result.ok) expect(result.error.message).toBe('status.json did not arrive within 20 ms');
 });
 
-test('text that is not JSON is a parse error', async () => {
-	const result = await loadFile('cards', {
-		fetchImpl: stubFetch({ cards: { raw: '{"version": 1,' } })
-	});
-	expect(result.ok).toBe(false);
-	if (!result.ok) expect(result.error.kind).toBe('parse');
-});
+test.each(['application/json', 'text/plain', 'text/htmlish'])(
+	'text that is not JSON with content-type %s is a parse error',
+	async (contentType) => {
+		const result = await loadFile('cards', {
+			fetchImpl: stubFetch({
+				cards: { raw: '{"version": 1,', headers: { 'content-type': contentType } }
+			})
+		});
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error.kind).toBe('parse');
+			expect(result.error.message).toMatch(/^cards\.json is not JSON: /);
+		}
+	}
+);
 
 test('a schema violation names the field', async () => {
 	const bad = fixture('cards');

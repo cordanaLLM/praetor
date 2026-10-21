@@ -167,6 +167,12 @@
 			oninput={(e) => view.setFilter('q', e.currentTarget.value)}
 		/>
 	</div>
+	{#if data.signinRequired}
+		<p class="signin" role="alert" aria-label="Sign-in required">
+			Signed out: <a href={location.href.split('#')[0]} data-sveltekit-reload>sign in again</a
+			>
+		</p>
+	{/if}
 	<nav aria-label="Sections">
 		<TabBar active={view.tab} counts={app.counts} onselect={(tab) => void app.selectTab(tab)} />
 	</nav>
@@ -237,6 +243,7 @@
 
 	.bar,
 	.search,
+	.signin,
 	nav,
 	main {
 		max-width: 72rem;
@@ -309,6 +316,15 @@
 
 	.search {
 		margin-block: var(--space-2);
+	}
+
+	.signin {
+		border: 1px solid var(--color-destructive);
+		border-inline-start-width: 4px;
+		border-radius: var(--radius-card);
+		padding: var(--space-3) var(--space-4);
+		margin-block: var(--space-3);
+		background: var(--color-card);
 	}
 
 	.search :global(input) {

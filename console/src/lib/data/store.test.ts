@@ -59,4 +59,24 @@ test('one bad file leaves the other files untouched', async () => {
 	expect(data.cards.error).toBeUndefined();
 	expect(data.status.error).toBeUndefined();
 	expect(data.graph.error?.kind).toBe('http');
+	expect(data.signinRequired).toBe(false);
 });
+
+test.each(['cards', 'graph', 'status'] as const)(
+	'a sign-in error in %s requires sign-in until a successful refresh',
+	async (name) => {
+		const data = new ConsoleData({
+			fetchImpl: stubFetch({
+				cards: {},
+				graph: {},
+				status: {},
+				[name]: (n: number) => (n === 1 ? { type: 'opaqueredirect' } : {})
+			})
+		});
+		expect(data.signinRequired).toBe(false);
+		await data.refresh();
+		expect(data.signinRequired).toBe(true);
+		await data.refresh();
+		expect(data.signinRequired).toBe(false);
+	}
+);

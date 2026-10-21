@@ -3,7 +3,7 @@
 import type { DataFile, FileShapes } from './types.ts';
 import { validateFile, type SchemaProblem } from './validate.ts';
 
-export type LoadErrorKind = 'network' | 'timeout' | 'http' | 'parse' | 'schema';
+export type LoadErrorKind = 'network' | 'timeout' | 'http' | 'parse' | 'schema' | 'signin';
 
 export interface LoadError {
 	kind: LoadErrorKind;
@@ -28,6 +28,16 @@ export function fileUrl(name: DataFile, base?: string): string {
 	return `${base ?? '.'}/${name}.json`;
 }
 
+function isSigninResponse(res: Response): boolean {
+	return (
+		res.type === 'opaqueredirect' ||
+		res.status === 401 ||
+		res.status === 403 ||
+		(res.status === 200 &&
+			res.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() === 'text/html')
+	);
+}
+
 async function fetchText(name: DataFile, opts: LoadOptions): Promise<string | LoadError> {
 	const fetchImpl = opts.fetchImpl ?? fetch;
 	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -35,9 +45,13 @@ async function fetchText(name: DataFile, opts: LoadOptions): Promise<string | Lo
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
 	try {
 		const res = await fetchImpl(fileUrl(name, opts.base), {
-			cache: 'no-store',
+			cache: 'no-cache',
+			redirect: 'manual',
 			signal: controller.signal
 		});
+		if (isSigninResponse(res)) {
+			return { kind: 'signin', message: `${name}.json: the session ended, sign in again` };
+		}
 		if (!res.ok) return { kind: 'http', message: `${name}.json answered HTTP ${res.status}` };
 		return await res.text();
 	} catch (err) {
