@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // shippedCheckpointText returns the text this repository ships at the bundle path rel.
@@ -146,12 +148,17 @@ func TestAuditCheckpointBundle_SourceRemedy(t *testing.T) {
 		checkpointLauncher: shippedCheckpointText(t, checkpointLauncher),
 	})
 	edited := shippedCheckpointText(t, checkpointCommon) + "# local edit\n"
+	commonLF, _ := util.NormalizeLineEndings(shippedCheckpointText(t, checkpointCommon))
+	mixed := crlfText(commonLF) + "# local edit\n"
 	for _, tc := range []struct {
 		name, root, common, want, forbidden string
 	}{
 		{"positive selected source", source, "", "praetorctl adopt --lock-source-root=" + source, "this release's text"},
 		{"negative edited selected source", source, edited, "praetorctl adopt --lock-source-root=" + source, "this release's text"},
 		{"boundary release", "", edited, "this release's text, then run praetorctl adopt.", "--lock-source-root"},
+		{"negative mixed edited selected source", source, mixed, "adoption keeps the bundle while " + checkpointCommon, "no --force needed"},
+		{"boundary mixed edited release", "", mixed, "this release's text, then run praetorctl adopt.", "no --force needed"},
+		{"negative CRLF edited release", "", crlfText(commonLF + "# local edit\n"), "this release's text, then run praetorctl adopt.", "no --force needed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			texts := map[string]string{checkpointScript: firstPriorCheckpointText(t, checkpointScript)}

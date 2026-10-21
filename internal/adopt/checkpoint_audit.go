@@ -97,17 +97,15 @@ func checkpointReferenceDigests(ctx context.Context, root string) (map[string]st
 	}
 	current := make(map[string]string, len(sources))
 	for i := 0; i < len(sources) && i < maxCheckpointSources; i++ {
-		digest, _, err := util.CanonicalTextDigest(sources[i].data)
-		if err != nil {
-			return nil, fmt.Errorf("checkpoint source %s: %w", sources[i].path, err)
-		}
+		digest, _ := util.CheckoutTextDigest(sources[i].data)
 		current[sources[i].path] = digest
 	}
 	return current, nil
 }
 
-// checkpointBundleDigests returns the digest (util.CanonicalTextDigest) of every checkpoint
-// bundle file of the repository at rootDir that exists and has one; a missing file has no entry.
+// checkpointBundleDigests returns the checkout digest of every existing bundle file.
+// Consistent LF and CRLF texts share a digest with the recorded texts. Mixed endings
+// hash byte for byte, so an edited copy remains visible; only missing files have no entry.
 func checkpointBundleDigests(ctx context.Context, rootDir string) (map[string]string, error) {
 	digests := make(map[string]string, len(checkpointBundle))
 	for i := 0; i < len(checkpointBundle) && i < maxCheckpointSources; i++ {
@@ -123,9 +121,8 @@ func checkpointBundleDigests(ctx context.Context, rootDir string) (map[string]st
 		if !exists {
 			continue
 		}
-		if digest, _, err := util.CanonicalTextDigest(data); err == nil {
-			digests[rel] = digest
-		}
+		digest, _ := util.CheckoutTextDigest(data)
+		digests[rel] = digest
 	}
 	return digests, nil
 }
