@@ -1,0 +1,2 @@
+type: security
+title: The Starlight documentation preset overrides postcss-selector-parser to ^7.1.6 (GHSA-rj75-hqrm-r3gf), which its Expressive Code dependency still pins below the fix
