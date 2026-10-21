@@ -512,6 +512,16 @@ fields:
         kind: acts
         effect: >-
           compares the live branch protection with the merge_group selection
+      - func: cmd/standardsctl.auditProtectionTarget
+        kind: acts
+        effect: >-
+          selects merge_group workflows on both sides of pending status check
+          rename discovery
+      - func: cmd/standardsctl.pendingProtectionRenames
+        kind: acts
+        effect: >-
+          closes landed rename windows using the fetched branch's merge_group
+          selection
       - func: cmd/standardsctl.verifySyncLocal
         kind: reports
         effect: >-
