@@ -1,0 +1,2 @@
+type: security
+title: The MkDocs documentation preset pins certifi 2026.10.19, which drops the emSign root certificates GHSA-6q48-6c7w-9gw2 reports compromised
