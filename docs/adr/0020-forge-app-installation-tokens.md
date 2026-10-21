@@ -25,6 +25,7 @@ GitHub App tokens for `release-please` (`docs/guides/release-token.md`, `interna
 `actions/create-github-app-token`), establishing familiarity with the App delegation model.
 
 This design must adhere to core fleet governance rules:
+
 - Credentials of operator accounts are created, rotated, and revoked by the operator, never by an autonomous agent.
   The engine names each such act as an operator step and waits for it.
 - Function permissions are computed strictly from engine call sites, never prompted interactively.
@@ -53,6 +54,7 @@ A dedicated token helper `praetorctl forge token --function=<name>` mints an ins
 permissions of that specific function and to its required repository set. The helper caches tokens in
 `$XDG_RUNTIME_DIR` (tmpfs, mode 0600) until 10 minutes before expiry. It emits the token to stdout without
 surrounding text or logging. Callers inject it into isolated subprocesses:
+
 ```bash
 GH_TOKEN=$(praetorctl forge token --function=read) gh api rate_limit
 ```
@@ -60,6 +62,7 @@ GH_TOKEN=$(praetorctl forge token --function=read) gh api rate_limit
 ### 4. Rights computed per function
 
 A declarative mapping in `internal/forge/` maps each engine function to its minimal permissions:
+
 - Read flows (`--function=read`): `metadata: read`, `contents: read`, `issues: read`, `pull_requests: read`,
   `actions: read`.
 - Push flows (`--function=push`): `contents: write`.
