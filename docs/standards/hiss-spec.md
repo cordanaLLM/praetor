@@ -176,6 +176,7 @@ Zero credentials in Git history:
 - Automated secret detection (`make secrets` / `praetorctl security secrets`) scans full repository history inside `verify-all`.
 - History scans must inspect merge commits using `--log-opts="--full-history --all -m"` because default `git log -p` omits patches for merge commits.
 - API keys, private certificates, and credentials must never be committed.
+- The scaffolded `.gitleaks.toml` extends the gitleaks defaults, which name GitHub and GitLab tokens, with rules for the forge token shapes the defaults lack: a Gitea or Forgejo access token (40 lowercase hex) assigned to a name that says so, sent in an `Authorization: token` header, or written as the password of an https URL (`templates/native/.gitleaks.toml.tmpl`, `TestScaffoldedGitleaksConfigDetectsForgeTokens`). The generic rule's entropy threshold misses a low-entropy token, and a 40-hex git object id stays quiet.
 - Secret scan exemptions must be declared in `.standards.yaml` with `rule: HISS-12`, target `path`, `tool` (the gitleaks rule id, e.g. `generic-api-key`), optional finding `fingerprint`, mandatory ISO-8601 `expires` date, and rationale in `reason`.
 - An expired exemption excuses nothing; an exemption that excuses no findings fails the gate ("excuses no finding: remove it"). Undated exemption files such as `.gitleaksignore` are prohibited.
 
