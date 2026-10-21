@@ -554,13 +554,13 @@ class GitHooks(unittest.TestCase):
                 for argv in commands:
                     if argv[3:5] == ["flavor", "audit"]:
                         run([str(self.binary), *argv[3:]], cwd=root)
-            def check_gate(root):
+            def check_gate(root, packages):
                 run([str(self.binary), "state", "audit", "."], cwd=root)
                 return True
             with mock.patch("checks.parallel", side_effect=check_flavor), \
                     mock.patch("checks.run_full_gate", side_effect=check_gate) as gated:
                 self.assertTrue(source_checks(directory, [".standards.yaml"], base="HEAD"))
-                gated.assert_called_once_with(directory)
+                gated.assert_called_once_with(directory, [])
             self.assertTrue((directory / ".workingdir/OPEN.md").is_file())
             self.assertNotIn("PRIVATE_SNAPSHOT_SENTINEL", (directory / ".workingdir/STATE.md").read_text())
             self.assertEqual(command(directory, "git", "status", "--porcelain").stdout, b"")
@@ -2121,7 +2121,7 @@ class ScopeAndGuard(unittest.TestCase):
                 self.assertTrue(source_checks(root, [".standards.yaml"], base=base))
                 self.assertEqual(calls, [[toolchain.make_program(), "--no-print-directory", "state-audit"],
                                         ["go", "run", "./cmd/standardsctl", "gate", "deadline", "--json"],
-                                        ["go", "run", "./cmd/standardsctl", "gate", "run", "--path=."],
+                                        ["go", "run", "./cmd/standardsctl", "gate", "run", "--path=.", "--race-packages=none"],
                                         ["go", "run", "./cmd/standardsctl", "gate", "verify", "--path=."]])
             def reject_pin(argv, **kwargs):
                 if argv[:5] == ["go", "run", "./cmd/standardsctl", "gate", "verify"]:

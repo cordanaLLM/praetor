@@ -15,7 +15,7 @@ import (
 func newCIRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	writeFixtureFile(t, dir, "main.go", "package main\n\nfunc main() {}\n")
+	writeFixtureFile(t, dir, "cmd/app/main.go", "package main\n\nfunc main() {}\n")
 	writeFixtureFile(t, dir, "README.md", "# Fixture\n")
 	env := initGitFixture(t, dir)
 	if out, err := runFixtureGit(t, dir, env, "checkout", "-q", "-b", "docs"); err != nil {

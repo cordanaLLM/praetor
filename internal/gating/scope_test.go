@@ -145,7 +145,7 @@ func TestRaceStageScope_Boundary_AdmissionHoldTwoReadingsThenAdmits(t *testing.T
 	heldCount := 0
 	cfg.hostReader = func() (sentinel.HostStats, error) {
 		heldCount++
-		if heldCount <= 3 { // the first reading sizes the policy (racePolicy), the next two are held
+		if heldCount <= 3 { // the first reading sizes the policy (admission.HostCappedPolicy), the next two are held
 			return sentinel.HostStats{
 				RAMTotalBytes: 64 * (1 << 30),
 				RAMFreeBytes:  8 * (1 << 30),
@@ -263,21 +263,21 @@ func TestRaceStageScope_Negative_DevcontainerRunsUnscoped(t *testing.T) {
 // 12 GiB and 15 GiB.
 func TestRaceStageScope_Boundary_PolicyFollowsTheHost(t *testing.T) {
 	const gib = uint64(1) << 30
-	small := racePolicy(sentinel.HostStats{RAMTotalBytes: 8 * gib, SwapMeasured: true, SwapTotalBytes: 4 * gib})
+	small := admission.HostCappedPolicy(sentinel.HostStats{RAMTotalBytes: 8 * gib, SwapMeasured: true, SwapTotalBytes: 4 * gib})
 	if small.MinAvailableBytes != 2*gib || small.MinSwapFreeBytes != 2*gib {
 		t.Fatalf("8 GiB host with 4 GiB swap: policy %+v; want 2 GiB available and 2 GiB swap free", small)
 	}
 	if v := admission.Judge(sentinel.HostStats{RAMTotalBytes: 8 * gib, RAMFreeBytes: 3 * gib, SwapMeasured: true, SwapTotalBytes: 4 * gib, SwapFreeBytes: 3 * gib}, small); !v.Admit {
 		t.Fatalf("a small host with 3 GiB free was held: %s", v.Reason)
 	}
-	large := racePolicy(sentinel.HostStats{RAMTotalBytes: 128 * gib, SwapMeasured: true, SwapTotalBytes: 96 * gib})
+	large := admission.HostCappedPolicy(sentinel.HostStats{RAMTotalBytes: 128 * gib, SwapMeasured: true, SwapTotalBytes: 96 * gib})
 	if large.MinAvailableBytes != 12*gib || large.MinSwapFreeBytes != 15*gib {
 		t.Fatalf("128 GiB host: policy %+v; want the fleet's 12 GiB and 15 GiB", large)
 	}
 	if v := admission.Judge(sentinel.HostStats{RAMTotalBytes: 128 * gib, RAMFreeBytes: 10 * gib, SwapMeasured: true, SwapTotalBytes: 96 * gib, SwapFreeBytes: 90 * gib}, large); v.Admit {
 		t.Fatal("a large host with 10 GiB available was admitted")
 	}
-	if noSwap := racePolicy(sentinel.HostStats{RAMTotalBytes: 16 * gib, SwapMeasured: true}); noSwap.MinSwapFreeBytes != 0 {
+	if noSwap := admission.HostCappedPolicy(sentinel.HostStats{RAMTotalBytes: 16 * gib, SwapMeasured: true}); noSwap.MinSwapFreeBytes != 0 {
 		t.Fatalf("a host without swap must not wait for swap: %+v", noSwap)
 	}
 }

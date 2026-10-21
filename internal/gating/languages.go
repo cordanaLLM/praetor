@@ -47,6 +47,9 @@ type RunOptions struct {
 	// runner for (Meson, CMake, npm, Python) is not refused on every push (#648); a caller that
 	// needs a receipt, such as CI or the gatekeeper, leaves it unset.
 	AdmitUnsupported bool
+	// RacePackages limits the root Go module to exact packages supplied by the hook.
+	// Nil keeps the full suite in every module; nonnil empty means no affected Go package.
+	RacePackages []string
 }
 
 // ErrNothingVerified reports a run in which no toolchain stage ran its checks for any language.
@@ -148,7 +151,7 @@ func withOtherLanguages(ctx context.Context, cfg *stageConfig, goPart languagePa
 	}
 
 	ranParts := make([]languagePart, 0, len(parts)+1)
-	if len(modules) > 0 {
+	if len(modules) > 0 || explicitNoGoPart(goPart) {
 		ranParts = append(ranParts, goPart)
 	}
 

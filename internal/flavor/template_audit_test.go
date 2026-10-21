@@ -210,9 +210,15 @@ func TestScaffoldedGitleaksConfigDetectsAKnownProbe(t *testing.T) {
 // literal for the repository's own scan to report.
 func gitleaksReportsProbe(t *testing.T, scanner, dir, config string) bool {
 	t.Helper()
+	probe := "AWS_ACCESS_KEY_ID=" + "AKIA" + "ABCDEFGHIJKLMNOP" + "\n"
+	return scanGitleaksStdin(t, scanner, dir, config, probe)
+}
+
+// scanGitleaksStdin scans probe through gitleaks stdin with config and reports whether a leak was found.
+func scanGitleaksStdin(t *testing.T, scanner, dir, config, probe string) bool {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
-	probe := "AWS_ACCESS_KEY_ID=" + "AKIA" + "ABCDEFGHIJKLMNOP" + "\n"
 	var stdout bytes.Buffer
 	stderr, err := util.RunCommandStream(ctx, dir, scanner, strings.NewReader(probe), &stdout, 1<<16,
 		"stdin", "--no-banner", "--redact=100", "--log-level=warn", "--config", config)
@@ -221,4 +227,91 @@ func gitleaksReportsProbe(t *testing.T, scanner, dir, config string) bool {
 		t.Fatalf("gitleaks failed without reporting a finding: %v\n%s", err, stderr)
 	}
 	return found
+}
+
+// TestScaffoldedGitleaksConfigDetectsForgeTokens verifies custom forge token shapes in the scaffolded
+// and repo gitleaks configurations against synthetic probes assembled at runtime.
+func TestScaffoldedGitleaksConfigDetectsForgeTokens(t *testing.T) {
+	scanner, err := exec.LookPath("gitleaks")
+	if err != nil {
+		t.Skip("gitleaks is not on PATH; validGitleaksConfig covers the configuration shape on every host")
+	}
+	body, err := templates.RenderFile("native/.gitleaks.toml.tmpl", templates.Context{RepoName: "widget", Owner: "acme"})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	dir := t.TempDir()
+	scaffolded := writeGitleaksConfig(t, dir, "scaffolded.toml", body)
+	repoConfig, err := filepath.Abs(filepath.Join("..", "..", ".gitleaks.toml"))
+	if err != nil {
+		t.Fatalf("resolve repo .gitleaks.toml: %v", err)
+	}
+	if _, err := os.Stat(repoConfig); err != nil {
+		t.Fatalf("stat repo .gitleaks.toml: %v", err)
+	}
+
+	positives, negatives, planted := forgeTokenProbeSets()
+	for _, config := range []string{scaffolded, repoConfig} {
+		assertGitleaksReports(t, scanner, dir, config, positives, true)
+	}
+	assertGitleaksReports(t, scanner, dir, scaffolded, negatives, false)
+	defaults := writeGitleaksConfig(t, dir, "defaults.toml", "[extend]\nuseDefault = true\n")
+	assertGitleaksReports(t, scanner, dir, defaults, planted, false)
+}
+
+func writeGitleaksConfig(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+	return path
+}
+
+func assertGitleaksReports(t *testing.T, scanner, dir, config string, probes []string, want bool) {
+	t.Helper()
+	for _, probe := range probes {
+		reported := scanGitleaksStdin(t, scanner, dir, config, probe)
+		if reported == want {
+			continue
+		}
+		if want {
+			t.Errorf("%s did not report positive probe: %q", filepath.Base(config), probe)
+			continue
+		}
+		if filepath.Base(config) == "defaults.toml" {
+			t.Errorf("defaults-only config reported probe that requires custom rules: %q", probe)
+		} else {
+			t.Errorf("scaffolded config reported negative probe: %q", probe)
+		}
+	}
+}
+
+// forgeTokenProbeSets returns runtime-assembled probe suites for positive, negative, and planted-proof scans.
+// Probes are built at run time to avoid placing secret-shaped literals into test sources.
+func forgeTokenProbeSets() (positives, negatives, planted []string) {
+	hex40 := strings.Repeat("0123456789abcdef", 2) + "01234567"
+	hex64 := strings.Repeat("0123456789abcdef", 4)
+	// Gitleaks default generic-api-key has an entropy threshold of 3.5. A 40-hex token with 16 symbols
+	// has Shannon entropy 3.97, which generic-api-key catches when assigned to a variable named TOKEN.
+	// Repeating 8 symbols ("01234567"*5) drops Shannon entropy to 3.0 (< 3.5), which defaults miss
+	// but deterministic gitea-access-token catches.
+	lowEntropy := strings.Repeat("01234567", 5)
+
+	positives = []string{
+		"GITEA_TOKEN=" + hex40 + "\n",
+		`forgejo_pat: "` + hex40 + `"` + "\n",
+		"Authorization: token " + hex40 + "\n",
+		"https://bot:" + hex40 + "@gitea.example.org/o/r.git\n",
+		"GITEA_TOKEN=" + lowEntropy + "\n",
+	}
+	negatives = []string{
+		"commit " + hex40 + "\n",
+		"sha256: " + hex64 + "\n",
+	}
+	planted = []string{
+		"GITEA_TOKEN=" + lowEntropy + "\n",
+		"Authorization: token " + hex40 + "\n",
+	}
+	return positives, negatives, planted
 }

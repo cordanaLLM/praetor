@@ -62,7 +62,7 @@ func TestScheduleActualSuiteAndReadOnlyStatus(t *testing.T) {
 	if _, err := os.Lstat(cfg.StateDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("status created state")
 	}
-	report, err := RunSchedule(context.Background(), path, buildid.Identity{Release: "v1.9.0-scheduled"})
+	report, err := scheduleTick(context.Background(), path, true, time.Now, suiteRunnerAs(buildid.Identity{Release: "v1.9.0-scheduled"}), admittedScheduleHost)
 	if err != nil || !report.Verified || report.Suite == nil || !report.Suite.Verified || report.Attempts != 1 {
 		t.Fatalf("run: %+v %v", report, err)
 	}
@@ -141,29 +141,29 @@ func TestScheduleTimingCircuitAndChangedInput(t *testing.T) {
 	now := fixedScheduleTime()
 	clock := func() time.Time { return now }
 	for i := 0; i < 3; i++ {
-		report, err := scheduleTick(context.Background(), path, true, clock, failedScheduleRunner)
+		report, err := scheduleTick(context.Background(), path, true, clock, failedScheduleRunner, admittedScheduleHost)
 		if err == nil || report.Status != "failed" || report.ConsecutiveFailures != i+1 {
 			t.Fatalf("attempt%d: %+v %v", i, report, err)
 		}
 		now = now.Add(time.Minute)
 	}
-	blocked, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner)
+	blocked, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner, admittedScheduleHost)
 	if err != nil || blocked.Status != "circuit_blocked" || blocked.Attempts != 3 {
 		t.Fatalf("circuit %+v %v", blocked, err)
 	}
 	cfg.IntervalSeconds = 61
 	writeScheduleFixture(t, path, cfg)
-	report, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner)
+	report, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner, admittedScheduleHost)
 	if err != nil || !report.Verified || report.Attempts != 4 || report.ConsecutiveFailures != 0 {
 		t.Fatalf("changed: %+v %v", report, err)
 	}
 	now = now.Add(60 * time.Second)
-	report, err = scheduleTick(context.Background(), path, true, clock, failedScheduleRunner)
+	report, err = scheduleTick(context.Background(), path, true, clock, failedScheduleRunner, admittedScheduleHost)
 	if err != nil || report.Status != "cooldown" || report.Attempts != 4 {
 		t.Fatalf("early %+v %v", report, err)
 	}
 	now = now.Add(time.Second)
-	report, err = scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner)
+	report, err = scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner, admittedScheduleHost)
 	if err != nil || report.Attempts != 5 {
 		t.Fatalf("boundary %+v %v", report, err)
 	}
@@ -182,12 +182,12 @@ func TestScheduleOverlapAndCrashRecovery(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, runner); err != nil {
+		if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, runner, admittedScheduleHost); err != nil {
 			t.Error(err)
 		}
 	}()
 	<-entered
-	busy, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner)
+	busy, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner, admittedScheduleHost)
 	if err != nil || busy.Status != "busy" {
 		t.Errorf("overlap %+v %v", busy, err)
 	}
@@ -210,7 +210,7 @@ func TestScheduleOverlapAndCrashRecovery(t *testing.T) {
 	if err := root.Close(); err != nil {
 		t.Fatal(err)
 	}
-	report, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner)
+	report, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner, admittedScheduleHost)
 	if err != nil || report.LastAttempt.Status != "interrupted" || report.Status != "cooldown" || report.ConsecutiveFailures != 1 {
 		t.Fatalf("interruption %+v %v", report, err)
 	}
@@ -229,7 +229,7 @@ func TestScheduleQuotaIncludesPartialGitAndCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	publicWrite(t, filepath.Join(dir, "pack"), strings.Repeat("x", 1<<20), 0o600)
-	report, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner)
+	report, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner, admittedScheduleHost)
 	if err != nil || report.Status != "resource_blocked" || report.Attempts != 0 || report.RetainedBytes < 1<<20 {
 		t.Fatalf("cap %+v %v", report, err)
 	}
@@ -248,7 +248,7 @@ func TestScheduleFailurePrefixAndFalseGreen(t *testing.T) {
 		failedScheduleRunner,
 	} {
 		path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
-		report, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, runner)
+		report, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, runner, admittedScheduleHost)
 		if err == nil || report.Verified || report.Status != "failed" || report.ConsecutiveFailures != 1 {
 			t.Fatalf("false green %+v %v", report, err)
 		}
@@ -275,7 +275,7 @@ func TestScheduleCancelledAndNilContext(t *testing.T) {
 		t.Fatal("cancel created evidence")
 	}
 	runner := func(ctx context.Context, _ SuiteOptions) (*SuiteReport, error) { return nil, context.Canceled }
-	report, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, runner)
+	report, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, runner, admittedScheduleHost)
 	if !errors.Is(err, context.Canceled) || report.Status != "failed" {
 		t.Fatalf("running cancel: %+v %v", report, err)
 	}
@@ -335,7 +335,7 @@ func TestScheduleConfigStrictAndBoundary(t *testing.T) {
 func TestScheduleStateCorruptionAndReadonly(t *testing.T) {
 	requireScheduling(t)
 	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
-	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner); err != nil {
+	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner, admittedScheduleHost); err != nil {
 		t.Fatal(err)
 	}
 	statePath := filepath.Join(cfg.StateDir, "state.json")
@@ -361,7 +361,7 @@ func TestScheduleStateCorruptionAndReadonly(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := func() time.Time { return fixedScheduleTime().Add(time.Hour) }
-	report, err := scheduleTick(context.Background(), path, true, now, verifiedScheduleRunner)
+	report, err := scheduleTick(context.Background(), path, true, now, verifiedScheduleRunner, admittedScheduleHost)
 	if err == nil || report.Verified {
 		t.Fatalf("readonly state modified %+v %v", report, err)
 	}
@@ -382,7 +382,7 @@ func TestScheduleSnapshotPinsAndWithinRoot(t *testing.T) {
 		publicWrite(t, cfg.SuiteConfig, `{"corrupt":true}`, 0o600)
 		return RunSuite(ctx, opts)
 	}
-	report, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, runner)
+	report, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, runner, admittedScheduleHost)
 	if err != nil || !report.Verified || report.Fingerprint != first.fingerprint {
 		t.Fatalf("snapshot drift %+v %v", report, err)
 	}
@@ -399,11 +399,11 @@ func TestScheduleRunCeilingAndOrphanedPartial(t *testing.T) {
 	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
 	cfg.MaxRuns = 1
 	writeScheduleFixture(t, path, cfg)
-	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner); err != nil {
+	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner, admittedScheduleHost); err != nil {
 		t.Fatal(err)
 	}
 	later := func() time.Time { return fixedScheduleTime().Add(time.Hour) }
-	report, err := scheduleTick(context.Background(), path, true, later, verifiedScheduleRunner)
+	report, err := scheduleTick(context.Background(), path, true, later, verifiedScheduleRunner, admittedScheduleHost)
 	if err != nil || report.Status != "resource_blocked" || report.Attempts != 1 {
 		t.Fatalf("run ceiling %+v %v", report, err)
 	}
@@ -437,7 +437,7 @@ func TestScheduleRetainedAttemptTypesAndSequence(t *testing.T) {
 	requireScheduling(t)
 	for _, replacement := range []string{"run-junk", "file", "symlink"} {
 		path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
-		if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner); err != nil {
+		if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner, admittedScheduleHost); err != nil {
 			t.Fatal(err)
 		}
 		original := filepath.Join(cfg.StateDir, "run-000001")
@@ -483,7 +483,7 @@ func TestScheduleFailureCreatesBoundedPlanAndKeepsBlocked(t *testing.T) {
 		policy.MaxCost = budget
 		cfg.RepairPolicy = &policy
 		writeScheduleFixture(t, path, cfg)
-		report, err := RunSchedule(context.Background(), path, buildid.Identity{})
+		report, err := scheduleTick(context.Background(), path, true, time.Now, suiteRunnerAs(buildid.Identity{}), admittedScheduleHost)
 		if err == nil || report == nil || report.Verified || report.Status != "failed" || report.Suite == nil {
 			t.Fatalf("failure %+v %v", report, err)
 		}
@@ -520,7 +520,7 @@ func TestScheduleCompletedFailureRetainsPlanAfterCancellation(t *testing.T) {
 		cancel()
 		return report, err
 	}
-	report, err := scheduleTick(ctx, path, true, fixedScheduleTime, runner)
+	report, err := scheduleTick(ctx, path, true, fixedScheduleTime, runner, admittedScheduleHost)
 	if err == nil || report.Status != "failed" {
 		t.Fatalf("failure %+v %v", report, err)
 	}
@@ -532,7 +532,7 @@ func TestScheduleCompletedFailureRetainsPlanAfterCancellation(t *testing.T) {
 func TestScheduleInterruptedClockRollbackKeepsValidState(t *testing.T) {
 	requireScheduling(t)
 	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
-	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner); err != nil {
+	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner, admittedScheduleHost); err != nil {
 		t.Fatal(err)
 	}
 	root, err := openScheduleState(context.Background(), cfg.StateDir, false)
@@ -550,7 +550,7 @@ func TestScheduleInterruptedClockRollbackKeepsValidState(t *testing.T) {
 		t.Fatal(err)
 	}
 	clock := func() time.Time { return fixedScheduleTime().Add(-time.Hour) }
-	report, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner)
+	report, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner, admittedScheduleHost)
 	if err != nil || report.Status != "cooldown" || report.LastAttempt.FinishedAt.Before(report.LastAttempt.StartedAt) {
 		t.Fatalf("clock rollback %+v %v", report, err)
 	}
@@ -570,7 +570,7 @@ func TestSchedulePruneOldestPositive(t *testing.T) {
 	now := fixedScheduleTime()
 	for i := 1; i <= 5; i++ {
 		clock := func() time.Time { return now.Add(time.Duration(i) * time.Hour) }
-		report, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner)
+		report, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner, admittedScheduleHost)
 		if err != nil || !report.Verified || report.Attempts != i {
 			t.Fatalf("run %d failed: %+v %v", i, report, err)
 		}
@@ -580,7 +580,7 @@ func TestSchedulePruneOldestPositive(t *testing.T) {
 	writeScheduleFixture(t, path, cfg)
 
 	clock := func() time.Time { return now.Add(6 * time.Hour) }
-	report, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner)
+	report, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner, admittedScheduleHost)
 	if err != nil || !report.Verified {
 		t.Fatalf("tick 6 failed: %+v %v", report, err)
 	}
@@ -609,7 +609,7 @@ func TestSchedulePruneOldestBoundaryEntries(t *testing.T) {
 	now := fixedScheduleTime()
 	for i := 1; i <= 2; i++ {
 		clock := func() time.Time { return now.Add(time.Duration(i) * time.Hour) }
-		if _, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner); err != nil {
+		if _, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner, admittedScheduleHost); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -641,7 +641,7 @@ func TestSchedulePruneOldestBoundaryEntries(t *testing.T) {
 	if err := os.WriteFile(extra, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	report, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner)
+	report, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner, admittedScheduleHost)
 	if err != nil || !report.Verified {
 		t.Fatalf("tick with boundary+1 failed: %+v %v", report, err)
 	}
@@ -656,7 +656,7 @@ func TestScheduleBlockModeEntryCapResourceBlocked(t *testing.T) {
 	cfg.Retention = "block"
 	writeScheduleFixture(t, path, cfg)
 	now := fixedScheduleTime()
-	if _, err := scheduleTick(context.Background(), path, true, func() time.Time { return now }, verifiedScheduleRunner); err != nil {
+	if _, err := scheduleTick(context.Background(), path, true, func() time.Time { return now }, verifiedScheduleRunner, admittedScheduleHost); err != nil {
 		t.Fatal(err)
 	}
 	root, err := openScheduleState(context.Background(), cfg.StateDir, false)
@@ -675,7 +675,7 @@ func TestScheduleBlockModeEntryCapResourceBlocked(t *testing.T) {
 	maxScheduleEntries = usage.entries - 1
 
 	later := func() time.Time { return now.Add(2 * time.Hour) }
-	report, err := scheduleTick(context.Background(), path, true, later, verifiedScheduleRunner)
+	report, err := scheduleTick(context.Background(), path, true, later, verifiedScheduleRunner, admittedScheduleHost)
 	if err != nil {
 		t.Fatalf("expected nil error on resource_blocked, got %v", err)
 	}
@@ -694,7 +694,7 @@ func TestScheduleBlockModeEntryCapResourceBlocked(t *testing.T) {
 func TestSchedulePrunedThroughValidation(t *testing.T) {
 	requireScheduling(t)
 	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
-	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner); err != nil {
+	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner, admittedScheduleHost); err != nil {
 		t.Fatal(err)
 	}
 	root, err := openScheduleState(context.Background(), cfg.StateDir, false)
@@ -742,7 +742,7 @@ func TestSchedulePruneOldestDryRunDeletesNothing(t *testing.T) {
 	now := fixedScheduleTime()
 	for i := 1; i <= 5; i++ {
 		clock := func() time.Time { return now.Add(time.Duration(i) * time.Hour) }
-		if _, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner); err != nil {
+		if _, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner, admittedScheduleHost); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -779,7 +779,7 @@ func TestSchedulePruneOldestDryRunDeletesNothing(t *testing.T) {
 func TestScheduleOldStateLoadsWithoutPrunedThrough(t *testing.T) {
 	requireScheduling(t)
 	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
-	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner); err != nil {
+	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner, admittedScheduleHost); err != nil {
 		t.Fatal(err)
 	}
 	statePath := filepath.Join(cfg.StateDir, "state.json")
@@ -844,7 +844,7 @@ func TestSchedulePruneOldestResumesAnInterruptedPrune(t *testing.T) {
 	now := fixedScheduleTime()
 	for i := 1; i <= 3; i++ {
 		clock := func() time.Time { return now.Add(time.Duration(i) * time.Hour) }
-		if _, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner); err != nil {
+		if _, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner, admittedScheduleHost); err != nil {
 			t.Fatalf("run %d: %v", i, err)
 		}
 	}
@@ -867,14 +867,14 @@ func TestSchedulePruneOldestResumesAnInterruptedPrune(t *testing.T) {
 	}
 	leftover := filepath.Join(cfg.StateDir, "run-000001")
 	clock := func() time.Time { return now.Add(4 * time.Hour) }
-	status, err := scheduleTick(context.Background(), path, false, clock, verifiedScheduleRunner)
+	status, err := scheduleTick(context.Background(), path, false, clock, verifiedScheduleRunner, admittedScheduleHost)
 	if err != nil || len(status.PrunedRuns) != 1 || status.PrunedRuns[0] != "run-000001" {
 		t.Fatalf("status run: %+v %v; want run-000001 named", status, err)
 	}
 	if _, err := os.Stat(leftover); err != nil {
 		t.Fatalf("status run deleted the leftover: %v", err)
 	}
-	report, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner)
+	report, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner, admittedScheduleHost)
 	if err != nil || !report.Verified || report.Attempts != 4 {
 		t.Fatalf("tick after the interrupted prune: %+v %v", report, err)
 	}

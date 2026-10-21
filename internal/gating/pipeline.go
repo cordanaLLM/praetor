@@ -80,7 +80,7 @@ const (
 	stageHISS           = "HISS Invariant Scan"
 	stageSecurity       = "Security & SCA Scan"
 	stageFlavor         = "Flavor Conformance"
-	stageTests          = "Race-Detector Tests"
+	stageTests          = lockdown.RaceStageName
 	stageDeclaredVerify = "Declared Verification"
 	stageReceipt        = "Ed25519 Exit-0 Receipt"
 )
@@ -118,8 +118,8 @@ const (
 	// that ran for one of the repository's languages and not for another (its reason names
 	// each language's outcome).
 	StageSkipped StageStatus = "skipped"
-	// StageNotApplicable means the repository has nothing this stage checks: neither a go.mod
-	// nor a Cargo.lock for the toolchain stages, or a declared profile no flavor implements.
+	// StageNotApplicable means there is nothing selected for this stage: no supported module,
+	// no affected Go package in an explicit pre-push scope, or no implemented flavor.
 	StageNotApplicable StageStatus = "not_applicable"
 )
 
@@ -182,6 +182,8 @@ type PipelineReport struct {
 	// host and why (resolveExecution). The signed stage output carries it as a header line. Nil
 	// only for a run refused before it was resolved.
 	Execution *Execution `json:"execution,omitempty"`
+	// RacePackages records the explicit pre-push scope, nil for the default full run.
+	RacePackages []string `json:"race_packages"`
 }
 
 // StageOutput renders the canonical, deterministic byte stream whose SHA-256 the Exit-0
@@ -198,6 +200,9 @@ func (r *PipelineReport) StageOutput() []byte {
 	)
 	if r.Execution != nil {
 		lines = append(lines, r.Execution.Line())
+	}
+	if r.RacePackages != nil {
+		lines = append(lines, lockdown.RacePackagesLine(r.RacePackages))
 	}
 	for i := 0; i < len(r.Stages) && i < maxStages; i++ {
 		s := r.Stages[i]
@@ -239,6 +244,7 @@ type stageConfig struct {
 	verified []string
 	// admitUnsupported is RunOptions.AdmitUnsupported (requireVerification).
 	admitUnsupported bool
+	racePackages     []string
 	// declaredVerified is set when the declared-verification stage ran the repository's own
 	// verification command and it passed (runDeclaredVerifyStage). It signs no receipt.
 	declaredVerified bool
@@ -362,6 +368,11 @@ func RunGatedPipeline(ctx context.Context, repoDir string, opts RunOptions) (*Pi
 		Stages:  make([]StageResult, 0, maxStages),
 	}
 	cfg := newStageConfig(repoDir, opts.DryRun, rep)
+	if err := validateRacePackages(opts.RacePackages); err != nil {
+		return nil, err
+	}
+	cfg.racePackages = opts.RacePackages
+	rep.RacePackages = opts.RacePackages
 	cfg.admitUnsupported = opts.AdmitUnsupported
 	return runPipeline(ctx, cfg, start), nil
 }
@@ -800,7 +811,7 @@ func invalidSettingsClause(rep *flavor.FlavorAuditReport) string {
 // runTestStage runs each language's test suite against HEAD in an isolated worktree: the Go
 // race detector, and Cargo and Node suites where their lockfiles are present (withOtherLanguages).
 func runTestStage(ctx context.Context, cfg *stageConfig) (string, error) {
-	msg, err := runGoTests(ctx, cfg)
+	msg, err := scopedGoTests(ctx, cfg)
 	return withOtherLanguages(ctx, cfg, languagePart{language: languageGo, msg: msg, err: err},
 		nonGoPart{language: languageCargo, present: hasCargo, run: runCargoTests},
 		nonGoPart{language: languageNode, present: hasNode, run: runNodeTests},
@@ -811,42 +822,8 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (string, error) {
 // cannot be created fails the stage rather than silently testing the dirty tree, and cleanup
 // failures are surfaced instead of dropped (inStageWorktree).
 func runGoTests(ctx context.Context, cfg *stageConfig) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", cutError(ctx, "creating the isolated test worktree", TestStageTimeout, cfg.repoDir, err.Error())
-	}
-	modules, err := cfg.goModules(ctx)
+	scopeCfg, err := prepareGoRace(ctx, cfg)
 	if err != nil {
-		return "", err
-	}
-	if len(modules) == 0 {
-		return "", notApplicable("no go.mod: Go race-detector tests skipped")
-	}
-	if cfg.dryRun {
-		return "", skipped("dry run: race-detector tests skipped")
-	}
-	// The race detector needs cgo and a host C toolchain. Without this check the stage
-	// does not report "no C compiler", it reports `# runtime/cgo` followed by every
-	// package failing to build -- which reads as a repository whose whole tree is
-	// broken. On a Windows box without gcc that is every push, including a push
-	// fixing Windows support, so the gate could not be repaired from the platform it
-	// was broken on. `.config/lefthook/scripts/test_hooks.py` already reasons exactly
-	// this way for the harness self-tests; this is the same rule for the Go gate.
-	available, absent, err := raceDetectorAvailable(ctx, cfg)
-	if err != nil {
-		return "", fmt.Errorf("the race detector probe failed: %w", err)
-	}
-	if !available {
-		return "", skipped(fmt.Sprintf(
-			"race detector unavailable (%s): race-detector tests skipped; "+
-				"CI runs this leg on Linux with cgo", absent))
-	}
-
-	scopeCfg, err := resolveRaceScope(ctx, cfg)
-	if err != nil {
-		return "", err
-	}
-
-	if err := waitRaceAdmission(ctx, cfg); err != nil {
 		return "", err
 	}
 
@@ -863,35 +840,21 @@ func runGoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 }
 
 func runGoTestModule(ctx context.Context, cfg *stageConfig, module goModule, scopeCfg raceScopeConfig) (string, error) {
+	if cfg.racePackages != nil && module.file != "go.mod" {
+		return "outside root-module pre-push race scope", nil
+	}
 	budget, err := stageBudget(ctx, cfg.repoDir)
 	if err != nil {
 		return "", err
 	}
 	bound := budget.StageBound
-	run := cfg.goToolchain().run
 	note := budget.Note
 	var scopeMsg string
 	err = inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
 		moduleDir := filepath.Join(dir, filepath.Dir(filepath.FromSlash(module.file)))
-		count, listErr := ModulePackageCount(tCtx, run, moduleDir)
-		if listErr != nil {
-			return listErr
-		}
-		if count == 0 {
-			note = NoPackagesNote + ": race tests not run"
-			return nil
-		}
-		cmdName, cmdArgs, msg := raceTestCommand(module, bound, scopeCfg)
-		scopeMsg = msg
-		out, testErr := run(tCtx, moduleDir, cmdName, cmdArgs...)
-		if testErr == nil {
-			return nil
-		}
-		if cutErr := cutError(tCtx, "race-detector tests", bound, moduleDir,
-			fmt.Sprintf("%s [%v]", out, testErr)); cutErr != nil {
-			return cutErr
-		}
-		return fmt.Errorf("tests failed in %s: %s (%w)", moduleDir, out, testErr)
+		var testErr error
+		scopeMsg, testErr = runGoRaceCommand(tCtx, cfg, module, moduleDir, bound, scopeCfg)
+		return testErr
 	})
 	if err != nil {
 		return "", err

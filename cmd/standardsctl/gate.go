@@ -78,6 +78,12 @@ func runGateRun(args []string) error {
 			"prefetch, security scanners and race tests, which write the module cache or reach the "+
 			"network; no receipt is minted")
 	asJSON := fs.Bool("json", false, "Output pipeline results as JSON")
+	var racePackages []string
+	fs.Func("race-packages", "Pre-push Go race scope: comma-separated exact import paths, ./..., or none; omitted runs every module", func(raw string) error {
+		var err error
+		racePackages, err = util.ParseRacePackages(raw)
+		return err
+	})
 	admitUnsupported := fs.Bool("admit-unsupported", false,
 		"Admit, without a receipt, a repository whose root holds neither a go.mod nor a Cargo.lock: "+
 			"every stage still runs, and the receipt stage names the languages the gate runs no "+
@@ -109,7 +115,7 @@ func runGateRun(args []string) error {
 		fmt.Printf("Run Deadline: %s\n", budget)
 	}
 
-	rep, err := gatedPipeline(ctx, *path, gating.RunOptions{DryRun: *dryRun, AdmitUnsupported: *admitUnsupported})
+	rep, err := gatedPipeline(ctx, *path, gating.RunOptions{DryRun: *dryRun, AdmitUnsupported: *admitUnsupported, RacePackages: racePackages})
 	if err != nil {
 		return fmt.Errorf("gating pipeline execution failed: %w", err)
 	}

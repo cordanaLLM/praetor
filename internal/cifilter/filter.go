@@ -48,8 +48,10 @@ type ChangeSet struct {
 	// test directory. Such a path also sets ConfigChanged, so an unknown file kind runs tests,
 	// linters and security (fail closed).
 	UnclassifiedChanged bool `json:"unclassified_changed"`
-	StateOnly           bool `json:"state_only"`
-	DocsOnly            bool `json:"docs_only"`
+	// NonGoOnly records a frontend/docs range checked against tracked Go package directories.
+	NonGoOnly bool `json:"non_go_only"`
+	StateOnly bool `json:"state_only"`
+	DocsOnly  bool `json:"docs_only"`
 }
 
 // FilterDecision details the execution plan for CI checks and test suites.
@@ -94,6 +96,9 @@ func AnalyzeChanges(ctx context.Context, opts FilterOptions) (*FilterDecision, e
 	}
 
 	cs := ClassifyChanges(files)
+	if err := classifyGoInputs(ctx, repoDir, opts.HeadRef, cs); err != nil {
+		return makeFullMatrixDecision(cs, fmt.Sprintf("Go input classification unavailable (%v); running full verification", err)), nil
+	}
 	return MakePolicyDecision(cs, opts.ForceAll, policy), nil
 }
 
@@ -247,6 +252,11 @@ func MakePolicyDecision(cs *ChangeSet, forceAll bool, policy config.CIPolicy) *F
 			ChangeSet:      cs,
 		}
 	}
+	if cs.NonGoOnly && !cs.UnclassifiedChanged {
+		return &FilterDecision{RunLinters: true, RunAudit: true, RunDocs: true,
+			RunContextSync: cs.ConfigChanged || cs.AgentChanged, SkipHeavyGates: true, ChangeSet: cs,
+			Reason: "frontend and documentation changes outside Go package directories; skipping Go race and security gates"}
+	}
 	return makeTargetedDecision(cs)
 }
 
@@ -359,7 +369,7 @@ func isDocumentation(p string) bool {
 // HLSL, WGSL and Metal are compiled into the program, so a change to one selects tests,
 // linters and security, and never context sync.
 var unscannedCodeExtensions = []string{
-	".java", ".dart", ".proto", ".zig",
+	".java", ".dart", ".proto", ".zig", ".css", ".html",
 	".glsl", ".vert", ".frag", ".comp", ".geom", ".tesc", ".tese",
 	".rgen", ".rint", ".rahit", ".rchit", ".rmiss", ".rcall", ".hlsl", ".wgsl", ".metal",
 }
@@ -414,7 +424,7 @@ func isBuildManifest(p string) bool {
 }
 
 func isConfig(p string) bool {
-	return isBuildManifest(p) || strings.HasPrefix(p, ".github/") ||
+	return isBuildManifest(p) || isFrontendConfig(p) || strings.HasPrefix(p, ".github/") ||
 		strings.HasSuffix(p, ".yaml") || strings.HasSuffix(p, ".yml")
 }
 

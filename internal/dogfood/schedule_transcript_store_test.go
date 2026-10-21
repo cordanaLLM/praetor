@@ -114,7 +114,7 @@ func TestScheduleTranscriptStoreSurvivesSourcePruning(t *testing.T) {
 	path, cfg, sources := scheduleTranscriptPair(t)
 	runner := suiteRunnerAs(buildid.Identity{Release: "test-schedule-transcript-store"})
 
-	first, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, runner)
+	first, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, runner, admittedScheduleHost)
 	if err != nil || !first.Verified {
 		t.Fatalf("first run: %+v %v", first, err)
 	}
@@ -142,7 +142,7 @@ func TestScheduleTranscriptStoreSurvivesSourcePruning(t *testing.T) {
 	}
 
 	later := func() time.Time { return fixedScheduleTime().Add(2 * time.Hour) }
-	second, err := scheduleTick(context.Background(), path, true, later, runner)
+	second, err := scheduleTick(context.Background(), path, true, later, runner, admittedScheduleHost)
 	if err != nil || !second.Verified {
 		t.Fatalf("second run after source pruning: %+v %v", second, err)
 	}
@@ -169,7 +169,7 @@ func TestScheduleTranscriptStoreFailsClosedWithoutDeclaredBytes(t *testing.T) {
 		if err := os.Remove(source.SourcePath); err != nil {
 			t.Fatal(err)
 		}
-		_, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner)
+		_, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner, admittedScheduleHost)
 		if err == nil || !strings.Contains(err.Error(), source.ID) ||
 			!strings.Contains(err.Error(), source.SourcePath) || !strings.Contains(err.Error(), store) {
 			t.Fatalf("error did not name transcript and both paths: %v", err)
@@ -182,7 +182,7 @@ func TestScheduleTranscriptStoreFailsClosedWithoutDeclaredBytes(t *testing.T) {
 		if err := os.WriteFile(source.SourcePath, []byte("changed\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		_, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner)
+		_, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner, admittedScheduleHost)
 		if err == nil || !strings.Contains(err.Error(), source.ID) ||
 			!strings.Contains(err.Error(), source.SourcePath) || !strings.Contains(err.Error(), store) {
 			t.Fatalf("hash error did not name transcript and both paths: %v", err)
@@ -195,7 +195,7 @@ func TestScheduleTranscriptStoreFailsClosedWithoutDeclaredBytes(t *testing.T) {
 
 func TestScheduleTranscriptStoreRefusesTampering(t *testing.T) {
 	path, cfg, source := scheduleTranscriptSource(t, suiteFixtureRecord+"\n")
-	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner); err != nil {
+	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner, admittedScheduleHost); err != nil {
 		t.Fatal(err)
 	}
 	store := transcriptStorePath(cfg, source)
@@ -204,7 +204,7 @@ func TestScheduleTranscriptStoreRefusesTampering(t *testing.T) {
 		t.Fatal(err)
 	}
 	later := func() time.Time { return fixedScheduleTime().Add(2 * time.Hour) }
-	_, err := scheduleTick(context.Background(), path, true, later, verifiedScheduleRunner)
+	_, err := scheduleTick(context.Background(), path, true, later, verifiedScheduleRunner, admittedScheduleHost)
 	if err == nil || !strings.Contains(err.Error(), store) {
 		t.Fatalf("tampered store was not named: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestScheduleTranscriptStoreRefusesTampering(t *testing.T) {
 
 func TestScheduleTranscriptStorePinsIDAndHash(t *testing.T) {
 	path, cfg, first := scheduleTranscriptSource(t, suiteFixtureRecord+"\n")
-	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner); err != nil {
+	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner, admittedScheduleHost); err != nil {
 		t.Fatal(err)
 	}
 	secondBytes := []byte(strings.ReplaceAll(
@@ -236,7 +236,7 @@ func TestScheduleTranscriptStorePinsIDAndHash(t *testing.T) {
 		Transcripts:        []SuiteTranscript{second},
 	})
 	later := func() time.Time { return fixedScheduleTime().Add(2 * time.Hour) }
-	if _, err := scheduleTick(context.Background(), path, true, later, verifiedScheduleRunner); err != nil {
+	if _, err := scheduleTick(context.Background(), path, true, later, verifiedScheduleRunner, admittedScheduleHost); err != nil {
 		t.Fatal(err)
 	}
 	if filepath.Dir(transcriptStorePath(cfg, first)) == filepath.Dir(transcriptStorePath(cfg, second)) {
@@ -251,7 +251,7 @@ func TestScheduleTranscriptStorePinsIDAndHash(t *testing.T) {
 
 func TestScheduleTranscriptStoreUsesExistingFileWithoutRewrite(t *testing.T) {
 	path, cfg, source := scheduleTranscriptSource(t, suiteFixtureRecord+"\n")
-	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner); err != nil {
+	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner, admittedScheduleHost); err != nil {
 		t.Fatal(err)
 	}
 	store := transcriptStorePath(cfg, source)
@@ -260,7 +260,7 @@ func TestScheduleTranscriptStoreUsesExistingFileWithoutRewrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	later := func() time.Time { return fixedScheduleTime().Add(2 * time.Hour) }
-	if _, err := scheduleTick(context.Background(), path, true, later, verifiedScheduleRunner); err != nil {
+	if _, err := scheduleTick(context.Background(), path, true, later, verifiedScheduleRunner, admittedScheduleHost); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(store)

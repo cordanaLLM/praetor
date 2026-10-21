@@ -1,8 +1,39 @@
 # gitleaks configuration for cordanaLLM/praetor (HISS-12).
 #
-# Extends the upstream default rules; nothing is disabled.
+# Extends the upstream default rules; nothing is disabled. These rules add the
+# forge token shapes the defaults lack (Gitea, Forgejo); GitHub and GitLab come
+# from the defaults.
 [extend]
 useDefault = true
+
+[[rules]]
+id = "gitea-access-token"
+description = "Gitea, Forgejo or Codeberg access token or personal secret"
+regex = '''(?i)(?:gitea|forgejo|codeberg)[\w.-]{0,30}?(?:token|pat|secret|password|key)[\w.-]{0,10}["']?\s*(?:[:=]|:=|=>)\s*["']?([0-9a-f]{40})\b'''
+secretGroup = 1
+keywords = [
+    "gitea",
+    "forgejo",
+    "codeberg",
+]
+
+[[rules]]
+id = "forge-token-authorization-header"
+description = "Forge token in authorization header"
+regex = '''(?i)authorization["']?\s*[:=]\s*["']?token\s+([0-9a-f]{40})\b'''
+secretGroup = 1
+keywords = [
+    "authorization",
+]
+
+[[rules]]
+id = "forge-token-in-url"
+description = "Forge token in URL"
+regex = '''https?://[^\s/:@]{1,100}:([0-9a-f]{40})@'''
+secretGroup = 1
+keywords = [
+    "http",
+]
 
 # The HISS-12 corpus demonstrates that gitleaks catches leaked secrets, so its positive
 # fixtures must contain strings that look exactly like leaked secrets. Scanning them reports

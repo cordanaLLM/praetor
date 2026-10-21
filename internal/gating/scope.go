@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/admission"
-	"github.com/cordanaLLM/praetor/internal/sentinel"
 )
 
 const (
@@ -93,21 +92,6 @@ func resolveRaceScope(ctx context.Context, cfg *stageConfig) (raceScopeConfig, e
 	return raceScopeConfig{useScope: true, limits: limits}, nil
 }
 
-// racePolicy is the fleet's admission policy capped by the host it reads: at most a quarter of
-// the host's memory must be available and at most half of its swap free. The fleet bounds (12
-// GiB, 15 GiB) hold on a host large enough for them; on a smaller host or a CI runner with a few
-// GiB of swap a fixed bound would hold the stage until its deadline on every run.
-func racePolicy(stats sentinel.HostStats) admission.Policy {
-	policy := admission.DefaultPolicy()
-	if stats.RAMTotalBytes > 0 {
-		policy.MinAvailableBytes = min(policy.MinAvailableBytes, stats.RAMTotalBytes/4)
-	}
-	if stats.SwapMeasured {
-		policy.MinSwapFreeBytes = min(policy.MinSwapFreeBytes, stats.SwapTotalBytes/2)
-	}
-	return policy
-}
-
 func waitRaceAdmission(ctx context.Context, cfg *stageConfig) error {
 	if os.Getenv(GateAdmissionEnv) == "off" {
 		if _, err := fmt.Fprintf(cfg.admissionLogWriter(), "admission race: skipped (%s=off)\n", GateAdmissionEnv); err != nil {
@@ -119,7 +103,7 @@ func waitRaceAdmission(ctx context.Context, cfg *stageConfig) error {
 	if err != nil {
 		return fmt.Errorf("admission race: read the host: %w", err)
 	}
-	policy := racePolicy(first)
+	policy := admission.HostCappedPolicy(first)
 	maxWait := TestStageTimeout
 	if deadline, ok := ctx.Deadline(); ok {
 		if left := time.Until(deadline); left > 0 {
@@ -144,8 +128,11 @@ func waitRaceAdmission(ctx context.Context, cfg *stageConfig) error {
 	return nil
 }
 
-func raceTestCommand(module goModule, bound time.Duration, scopeCfg raceScopeConfig) (string, []string, string) {
-	argv := []string{"go", "test", "-race", "-timeout", bound.String(), "./..."}
+func raceTestCommand(module goModule, bound time.Duration, scopeCfg raceScopeConfig, packages []string) (string, []string, string) {
+	if packages == nil {
+		packages = []string{"./..."}
+	}
+	argv := append([]string{"go", "test", "-race", "-timeout", bound.String()}, packages...)
 	if !scopeCfg.useScope {
 		return argv[0], argv[1:], fmt.Sprintf("race tests ran unscoped: %s", scopeCfg.reason)
 	}

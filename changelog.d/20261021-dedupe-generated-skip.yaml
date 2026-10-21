@@ -1,0 +1,3 @@
+type: fixed
+title: Skip generated code and the HISS scanner's ignored trees in the dedupe detector and count skipped generated files
+breaking: false

@@ -1714,6 +1714,34 @@ Without the file list the whole report was `score: 66.7%, 0 missing templates`, 
 operator that something is wrong and nothing about which file to open. `praetorctl flavor audit .`
 prints the same files with their names and descriptions under **Missing or Invalid Settings**.
 
+### Pre-push race package scope
+
+The pre-push hook reuses `go_packages(..., reverse=True)` in
+`.config/lefthook/scripts/checks.py` and hands its selection to `gate run` through
+`--race-packages=<comma-separated exact import paths>`. Changed Go sources,
+package testdata, `EmbedFiles`, `TestEmbedFiles` and `XTestEmbedFiles` select their
+packages and reverse dependents. Deleted inputs beneath a package with embed
+patterns conservatively select that package. Module and Go build/security
+configuration selects every package in the root module. The gate consumes this
+selection; it does not compute a second affected-package set.
+
+An empty selection uses `--race-packages=none`. Its Go race stage records
+`not_applicable` with `no affected Go package (--race-packages=none)` and starts no
+Go test process. Other applicable language tests still run. A nonempty selection
+records the exact package list and why it was supplied. The signed output carries
+both the `race_packages` header and the stage reason, so a scoped receipt certifies
+that selection. `gate verify`, `forge validate-pr` and lockdown's pinned and
+unpinned receipt verifiers reject missing or mismatched scoped reasons.
+
+Without this flag, `gate run` keeps `go test -race ./...` for every tracked Go
+module. `--race-packages=./...` explicitly selects the whole root module; explicit
+pre-push scopes apply only to that module. CI's `Full Verification Harness Gate`
+in `.github/workflows/ci.yml` invokes `make verify-all`; its `test` target in
+`Makefile` still runs the full `./...` race suite and supplies no scope flag.
+The executable cases live in `internal/gating/race_packages_test.go`,
+`internal/lockdown/race_packages_test.go`, and
+`.config/lefthook/scripts/test_race_packages.py`.
+
 ### The race stage's bound, and what firing it means
 
 The race-detector stage is bounded, because an unbounded stage is how a gate hangs instead of

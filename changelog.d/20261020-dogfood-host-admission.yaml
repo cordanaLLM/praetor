@@ -1,0 +1,3 @@
+type: fixed
+title: Hold due dogfood schedule runs until host admission allows execution without counting attempts or failures
+breaking: false

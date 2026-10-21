@@ -176,6 +176,7 @@ Zero credentials in Git history:
 - Automated secret detection (`make secrets` / `praetorctl security secrets`) scans full repository history inside `verify-all`.
 - History scans must inspect merge commits using `--log-opts="--full-history --all -m"` because default `git log -p` omits patches for merge commits.
 - API keys, private certificates, and credentials must never be committed.
+- The scaffolded `.gitleaks.toml` extends the gitleaks defaults, which name GitHub and GitLab tokens, with rules for the forge token shapes the defaults lack: a Gitea or Forgejo access token (40 lowercase hex) assigned to a name that says so, sent in an `Authorization: token` header, or written as the password of an https URL (`templates/native/.gitleaks.toml.tmpl`, `TestScaffoldedGitleaksConfigDetectsForgeTokens`). The generic rule's entropy threshold misses a low-entropy token, and a 40-hex git object id stays quiet.
 - Secret scan exemptions must be declared in `.standards.yaml` with `rule: HISS-12`, target `path`, `tool` (the gitleaks rule id, e.g. `generic-api-key`), optional finding `fingerprint`, mandatory ISO-8601 `expires` date, and rationale in `reason`.
 - An expired exemption excuses nothing; an exemption that excuses no findings fails the gate ("excuses no finding: remove it"). Undated exemption files such as `.gitleaksignore` are prohibited.
 
@@ -258,7 +259,7 @@ One behavior has exactly one implementation:
       expires: "2026-11-01"
   ```
 
-  A clone group whose members all sit in declared, unexpired files does not fail the scan and is reported under `Excepted Duplicate Function Blocks` with each entry's reason and expiry. A group with any member outside excepted files still fails (an entry whose file sits only in mixed groups still fails the scan through the mixed group). An expired entry fails like a missing one, naming the entry; an entry that excuses no duplicate function block is stale and fails until removed. The target must exist and be a regular repository file; no skip is applied on generated-code headers or file names alone.
+  A clone group whose members all sit in declared, unexpired files does not fail the scan and is reported under `Excepted Duplicate Function Blocks` with each entry's reason and expiry. A group with any member outside excepted files still fails (an entry whose file sits only in mixed groups still fails the scan through the mixed group). An expired entry fails like a missing one, naming the entry; an entry that excuses no duplicate function block is stale and fails until removed. The target must exist and be a regular repository file; generated files bearing the canonical `// Code generated ... DO NOT EDIT.` header and directories skipped by the HISS scanner (such as build and target trees) are excluded from the scan automatically.
 - Unexcused duplication is justified in the commit body, not left silent.
 
 ### HISS-20: Replayable Enforcement Evidence

@@ -64,14 +64,15 @@ type SprawlItem struct {
 
 // DedupeReport summarizes codebase duplication and utility sprawl.
 type DedupeReport struct {
-	TotalFilesScanned int              `json:"total_files_scanned"`
-	TotalFuncsScanned int              `json:"total_funcs_scanned"`
-	Duplicates        []DuplicateGroup `json:"duplicates"`
-	Excepted          []DuplicateGroup `json:"excepted,omitempty"`
-	SprawlItems       []SprawlItem     `json:"sprawl_items"`
-	StaleExceptions   []string         `json:"stale_exceptions,omitempty"`
-	CleanlinessScore  float64          `json:"cleanliness_score"`
-	Passed            bool             `json:"passed"`
+	TotalFilesScanned     int              `json:"total_files_scanned"`
+	TotalFuncsScanned     int              `json:"total_funcs_scanned"`
+	SkippedGeneratedFiles int              `json:"skipped_generated_files,omitempty"`
+	Duplicates            []DuplicateGroup `json:"duplicates"`
+	Excepted              []DuplicateGroup `json:"excepted,omitempty"`
+	SprawlItems           []SprawlItem     `json:"sprawl_items"`
+	StaleExceptions       []string         `json:"stale_exceptions,omitempty"`
+	CleanlinessScore      float64          `json:"cleanliness_score"`
+	Passed                bool             `json:"passed"`
 	// Applicable reports whether there was anything to scan. This detector reads Go sources
 	// only, so a repository with none is not clean -- it is unexamined, and the difference
 	// matters to every caller that reads the score.
@@ -180,7 +181,6 @@ func ScanRepoWithOptions(ctx context.Context, opts ScanOptions) (*DedupeReport, 
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		report.TotalFilesScanned++
 		if err := scanGoFile(ctx, fset, filepath.Join(repoPath, relPath), relPath, funcHashMap, funcLocMap, engineMode, &adopterStarts, report); err != nil {
 			return nil, err
 		}
@@ -252,23 +252,6 @@ func validateExceptionTarget(repoPath string, entry config.Exception) error {
 	return nil
 }
 
-// shouldSkipDir excludes directories whose contents are not this repository's own source.
-//
-// testdata is Go's own convention for inputs rather than code, and a fixture corpus is
-// deliberately repetitive: a rule needing a tested and an untested copy of the same function
-// must contain two near-identical files, so scanning them reports duplication that is the
-// point of the fixture rather than a defect. The HISS scanner skips the same name.
-//
-// The scratch directories come from util.IsScratchDir, the list the HISS scanner and adopt's
-// verification planner share: a .claude/worktrees copy of the checkout is the same source
-// again, and scanning it reported every function as its own duplicate. The toolchain trees
-// (util.IsToolchainTreeDir: zig-pkg/, zig-out/, .zig-cache/) hold fetched third-party packages
-// and build output, not the repository's source.
-func shouldSkipDir(name string) bool {
-	return name == ".git" || name == "vendor" || name == "node_modules" ||
-		name == "testdata" || util.IsScratchDir(name) || util.IsToolchainTreeDir(name)
-}
-
 func scanGoFile(ctx context.Context, fset *token.FileSet, path, relPath string, hashMap map[string][]FileLocation, locMap map[string]int, engineMode bool, adopterStarts *[]adopterGitStart, report *DedupeReport) error {
 	content, err := contextopt.ReadSnapshot(ctx, path)
 	if err != nil {
@@ -278,6 +261,12 @@ func scanGoFile(ctx context.Context, fset *token.FileSet, path, relPath string, 
 	if err != nil {
 		return fmt.Errorf("parse dedupe source %s: %w", relPath, err)
 	}
+
+	if util.IsGeneratedGoSource(node) {
+		report.SkippedGeneratedFiles++
+		return nil
+	}
+	report.TotalFilesScanned++
 
 	if engineMode {
 		checkUtilitySprawl(fset, node, relPath, report)

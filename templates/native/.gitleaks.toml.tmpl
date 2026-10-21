@@ -13,9 +13,40 @@ the checkout sits, not its owner, so no owner is guessed from the path.
 <%- define "subject" %><% if .Owner %><% .Owner %>/<% end %><% .RepoName %><% end -%>
 # gitleaks configuration for <% template "subject" . %>.
 #
-# Extends the upstream default rules; nothing is disabled. Add [[allowlists]] entries
-# below for paths that hold deliberately fake secrets, never a blanket exclusion.
+# Extends the upstream default rules; nothing is disabled. These rules add the
+# forge token shapes the defaults lack (Gitea, Forgejo); GitHub and GitLab come
+# from the defaults. Add [[allowlists]] entries below for paths that hold
+# deliberately fake secrets, never a blanket exclusion.
 title = "gitleaks configuration for <% template "subject" . %>"
 
 [extend]
 useDefault = true
+
+[[rules]]
+id = "gitea-access-token"
+description = "Gitea, Forgejo or Codeberg access token or personal secret"
+regex = '''(?i)(?:gitea|forgejo|codeberg)[\w.-]{0,30}?(?:token|pat|secret|password|key)[\w.-]{0,10}["']?\s*(?:[:=]|:=|=>)\s*["']?([0-9a-f]{40})\b'''
+secretGroup = 1
+keywords = [
+    "gitea",
+    "forgejo",
+    "codeberg",
+]
+
+[[rules]]
+id = "forge-token-authorization-header"
+description = "Forge token in authorization header"
+regex = '''(?i)authorization["']?\s*[:=]\s*["']?token\s+([0-9a-f]{40})\b'''
+secretGroup = 1
+keywords = [
+    "authorization",
+]
+
+[[rules]]
+id = "forge-token-in-url"
+description = "Forge token in URL"
+regex = '''https?://[^\s/:@]{1,100}:([0-9a-f]{40})@'''
+secretGroup = 1
+keywords = [
+    "http",
+]
