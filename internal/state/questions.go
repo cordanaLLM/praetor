@@ -51,6 +51,12 @@ var (
 func AddQuestion(rootPath string, q QuestionEntry) (*QuestionEntry, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	return AddQuestionContext(ctx, rootPath, q)
+}
+
+// AddQuestionContext records a new question under the caller's deadline, assigning
+// an ID one past the largest ID in the ledger.
+func AddQuestionContext(ctx context.Context, rootPath string, q QuestionEntry) (*QuestionEntry, error) {
 	lRoot := ledgerRoot(ctx, rootPath)
 	if err := InitWorkingDirContext(ctx, lRoot); err != nil {
 		return nil, err

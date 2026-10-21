@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // ---------------------------------------------------------------------------
@@ -28,8 +30,7 @@ func writeFixture(t *testing.T, root, rel, content string) {
 
 func scanFixture(t *testing.T, root string, opts ScanOptions) *ScanReport {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	ctx := testsupport.DeadlineContext(t)
 	rep, err := Scan(ctx, root, opts)
 	if err != nil {
 		t.Fatalf("Scan failed: %v", err)
