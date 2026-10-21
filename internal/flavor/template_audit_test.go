@@ -241,10 +241,7 @@ func TestScaffoldedGitleaksConfigDetectsForgeTokens(t *testing.T) {
 		t.Fatalf("render: %v", err)
 	}
 	dir := t.TempDir()
-	scaffolded := filepath.Join(dir, "scaffolded.toml")
-	if err := os.WriteFile(scaffolded, []byte(body), 0o600); err != nil {
-		t.Fatalf("write %s: %v", scaffolded, err)
-	}
+	scaffolded := writeGitleaksConfig(t, dir, "scaffolded.toml", body)
 	repoConfig, err := filepath.Abs(filepath.Join("..", "..", ".gitleaks.toml"))
 	if err != nil {
 		t.Fatalf("resolve repo .gitleaks.toml: %v", err)
@@ -255,24 +252,37 @@ func TestScaffoldedGitleaksConfigDetectsForgeTokens(t *testing.T) {
 
 	positives, negatives, planted := forgeTokenProbeSets()
 	for _, config := range []string{scaffolded, repoConfig} {
-		for _, probe := range positives {
-			if !scanGitleaksStdin(t, scanner, dir, config, probe) {
-				t.Errorf("%s did not report positive probe: %q", filepath.Base(config), probe)
-			}
+		assertGitleaksReports(t, scanner, dir, config, positives, true)
+	}
+	assertGitleaksReports(t, scanner, dir, scaffolded, negatives, false)
+	defaults := writeGitleaksConfig(t, dir, "defaults.toml", "[extend]\nuseDefault = true\n")
+	assertGitleaksReports(t, scanner, dir, defaults, planted, false)
+}
+
+func writeGitleaksConfig(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+	return path
+}
+
+func assertGitleaksReports(t *testing.T, scanner, dir, config string, probes []string, want bool) {
+	t.Helper()
+	for _, probe := range probes {
+		reported := scanGitleaksStdin(t, scanner, dir, config, probe)
+		if reported == want {
+			continue
 		}
-	}
-	for _, probe := range negatives {
-		if scanGitleaksStdin(t, scanner, dir, scaffolded, probe) {
-			t.Errorf("scaffolded config reported negative probe: %q", probe)
+		if want {
+			t.Errorf("%s did not report positive probe: %q", filepath.Base(config), probe)
+			continue
 		}
-	}
-	defaults := filepath.Join(dir, "defaults.toml")
-	if err := os.WriteFile(defaults, []byte("[extend]\nuseDefault = true\n"), 0o600); err != nil {
-		t.Fatalf("write defaults: %v", err)
-	}
-	for _, probe := range planted {
-		if scanGitleaksStdin(t, scanner, dir, defaults, probe) {
+		if filepath.Base(config) == "defaults.toml" {
 			t.Errorf("defaults-only config reported probe that requires custom rules: %q", probe)
+		} else {
+			t.Errorf("scaffolded config reported negative probe: %q", probe)
 		}
 	}
 }
