@@ -3,6 +3,7 @@ package sandbox
 import (
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -33,6 +34,9 @@ func LaneProfile(lane string, ports []int) (Spec, error) {
 		spec.Network = NetworkLoopback
 	default:
 		return Spec{}, fmt.Errorf("unknown sandbox lane %q", lane)
+	}
+	if spec.Network != NetworkNone {
+		spec.Identity = &Identity{UID: os.Getuid(), GID: os.Getgid()}
 	}
 	spec.AllowLoopbackPorts = slices.Clone(ports)
 	if err := validateNetwork(spec); err != nil {
@@ -96,8 +100,10 @@ func executionArguments(s Spec, b Binaries) []string {
 func namespaceArguments(s Spec) []string {
 	args := []string{"--unshare-all"}
 	if s.Network == NetworkEgress || s.Network == NetworkLoopback {
-		// pasta owns the private user and network namespaces; retain its mapping.
-		args = []string{"--unshare-ipc", "--unshare-pid", "--unshare-uts", "--unshare-cgroup"}
+		// pasta owns the network namespace and maps the caller to uid 0 with every capability of
+		// its user namespace; a nested user namespace maps the command back to the caller (Identity).
+		args = []string{"--unshare-ipc", "--unshare-pid", "--unshare-uts", "--unshare-cgroup",
+			"--unshare-user", "--uid", strconv.Itoa(s.Identity.UID), "--gid", strconv.Itoa(s.Identity.GID)}
 	}
 	return append(args, "--die-with-parent")
 }

@@ -44,10 +44,17 @@ type Spec struct {
 	Network            NetworkMode
 	AllowLoopbackPorts []int
 	DNS                DNSConfig
+	Identity           *Identity
 	Limits             Limits
 	Command            []string
 	HasLib64           func() bool
 }
+
+// Identity is the caller's uid and gid. In egress and loopback modes pasta maps the
+// caller to uid 0 with every capability of its user namespace; bwrap maps the command
+// back to this identity in a nested user namespace, so it holds no capability and
+// cannot unmount what the profile or a runner hides.
+type Identity struct{ UID, GID int }
 
 // Binaries names resolved absolute executables outside the namespace.
 type Binaries struct{ SystemdRun, Prlimit, Bwrap, Pasta string }

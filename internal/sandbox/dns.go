@@ -30,6 +30,9 @@ func validateNetworkRuntime(s Spec, b Binaries) error {
 	if !absolutePath(b.Pasta) {
 		return &UnavailableError{Facility: "pasta", Cause: errors.New("requires a clean absolute executable path")}
 	}
+	if s.Identity == nil || s.Identity.UID < 0 || s.Identity.GID < 0 {
+		return errors.New("sandbox egress and loopback modes require the caller's uid and gid (Identity)")
+	}
 	if s.Network != NetworkEgress {
 		return nil
 	}

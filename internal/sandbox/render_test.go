@@ -1,8 +1,10 @@
 package sandbox
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -67,7 +69,8 @@ func assertNamespacesContainedInFull(t *testing.T, lane string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"--unshare-ipc", "--unshare-pid", "--unshare-uts", "--unshare-cgroup", "--die-with-parent"}
+	want := []string{"--unshare-ipc", "--unshare-pid", "--unshare-uts", "--unshare-cgroup",
+		"--unshare-user", "--uid", strconv.Itoa(os.Getuid()), "--gid", strconv.Itoa(os.Getgid()), "--die-with-parent"}
 	if lane == "repair" {
 		want = []string{"--unshare-all", "--die-with-parent"}
 	}

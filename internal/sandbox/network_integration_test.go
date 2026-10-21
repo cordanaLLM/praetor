@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -27,6 +28,7 @@ func TestSandboxNetworkProbeProcess(t *testing.T) {
 	}
 	host, port, want := os.Args[index+1], os.Args[index+2], os.Args[index+3]
 	assertPrivateNamespaces(t)
+	assertUnprivilegedIdentity(t)
 	if host == "gateway" {
 		host = probeDefaultGateway(t)
 	}
@@ -47,6 +49,27 @@ func TestSandboxNetworkProbeProcess(t *testing.T) {
 		t.Fatalf("probe %s:%s reached=%t want=%s error=%v", host, port, reached, want, err)
 	}
 	fmt.Println("SANDBOX_NETWORK_PROBE_OK")
+}
+
+// assertUnprivilegedIdentity checks, inside the sandbox, that the command runs as the caller
+// (SANDBOX_EXPECT_UID) with no effective capability and cannot unmount a profile mount.
+func assertUnprivilegedIdentity(t *testing.T) {
+	t.Helper()
+	if want := os.Getenv("SANDBOX_EXPECT_UID"); want != "" && strconv.Itoa(os.Getuid()) != want {
+		t.Fatalf("sandboxed command runs as uid %d, want the caller's %s", os.Getuid(), want)
+	}
+	status, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(status), "\n") {
+		if fields := strings.Fields(line); len(fields) == 2 && fields[0] == "CapEff:" && strings.Trim(fields[1], "0") != "" {
+			t.Fatalf("sandboxed command holds capabilities %s", fields[1])
+		}
+	}
+	if err := syscall.Unmount("/usr", syscall.MNT_DETACH); err == nil {
+		t.Fatal("sandboxed command unmounted /usr")
+	}
 }
 
 func probeDefaultGateway(t *testing.T) string {
@@ -153,6 +176,7 @@ func runNetworkProbe(t *testing.T, b Binaries, spec Spec, host string, port int,
 	}
 	spec.ReadOnlyBinds = append(spec.ReadOnlyBinds, Bind{executable, "/probe"})
 	recordHostNamespaces(t, &spec)
+	spec.Environment = append(spec.Environment, Variable{Name: "SANDBOX_EXPECT_UID", Value: strconv.Itoa(os.Getuid())})
 	spec.Command = []string{"/probe", "-test.run=^TestSandboxNetworkProbeProcess$", "--", "sandbox-network-probe", host, strconv.Itoa(port), want}
 	inv, err := Build(spec, b, nil)
 	if err != nil {

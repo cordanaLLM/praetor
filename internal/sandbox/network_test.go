@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -95,7 +96,8 @@ func TestSandboxNetworkArgv(t *testing.T) {
 func assertPastaArgv(t *testing.T, args []string, spec Spec) {
 	t.Helper()
 	assertArgSequence(t, args, []string{"-t", "none", "-u", "none", "-T", "none", "-U", "none", "--map-host-loopback", "none"})
-	assertArgSequence(t, args, []string{"--unshare-ipc", "--unshare-pid", "--unshare-uts", "--unshare-cgroup"})
+	assertArgSequence(t, args, []string{"--unshare-ipc", "--unshare-pid", "--unshare-uts", "--unshare-cgroup",
+		"--unshare-user", "--uid", strconv.Itoa(os.Getuid()), "--gid", strconv.Itoa(os.Getgid())})
 	if slices.Contains(args, "--unshare-net") || slices.Contains(args, "--unshare-all") {
 		t.Fatal("bwrap replaced pasta network namespace")
 	}

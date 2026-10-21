@@ -56,9 +56,7 @@ func (r Runner) Command(ctx context.Context, spec Spec) (Invocation, error) {
 	if err != nil {
 		return Invocation{}, err
 	}
-	if spec.HasLib64 == nil && r.HasLib64 != nil {
-		spec.HasLib64 = r.HasLib64
-	}
+	spec = r.completeSpec(spec)
 	spec.DNS, err = r.prepareDNS(ctx, spec.Network)
 	if err != nil {
 		return Invocation{}, err
@@ -176,6 +174,18 @@ func (r Runner) lookup(name string) (string, error) {
 		return "", &UnavailableError{Facility: name, Cause: errors.New("lookup did not return a clean absolute path")}
 	}
 	return value, nil
+}
+
+// completeSpec fills what a caller may leave to the runner: the lib64 probe and, in egress and
+// loopback modes, the caller's identity the command is mapped back to.
+func (r Runner) completeSpec(spec Spec) Spec {
+	if spec.HasLib64 == nil && r.HasLib64 != nil {
+		spec.HasLib64 = r.HasLib64
+	}
+	if spec.Identity == nil && (spec.Network == NetworkEgress || spec.Network == NetworkLoopback) {
+		spec.Identity = &Identity{UID: os.Getuid(), GID: os.Getgid()}
+	}
+	return spec
 }
 
 func (r Runner) resolve(network NetworkMode) (Binaries, error) {
