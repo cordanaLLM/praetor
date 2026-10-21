@@ -11,6 +11,9 @@ import (
 )
 
 func runRelease(args []string) error {
+	if len(args) > 0 && args[0] == "smoke" {
+		return runReleaseSmoke(args[1:])
+	}
 	fs := flag.NewFlagSet("release", flag.ContinueOnError)
 	ver := fs.String("version", "", "Target release version (e.g. v1.1.0)")
 	date := fs.String("date", "", "Release date (YYYY-MM-DD)")

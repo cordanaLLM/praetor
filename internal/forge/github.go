@@ -186,20 +186,41 @@ func (g *GitHubDriver) sendRequest(ctx context.Context, method, path string, pay
 		return nil, 0, err
 	}
 
-	target := g.Endpoint + path
-	bodyReader, err := marshalPayload(payload)
+	resp, err := g.openRequest(ctx, method, path, payload, "application/vnd.github+json")
 	if err != nil {
 		return nil, 0, err
 	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close response body (%s %s): %w", method, path, cerr)
+		}
+	}()
 
-	req, err := http.NewRequestWithContext(ctx, method, target, bodyReader)
+	data, readErr := io.ReadAll(io.LimitReader(resp.Body, maxHTTPResponseBody))
+	if readErr != nil {
+		return nil, resp.StatusCode, fmt.Errorf("failed reading response body: %w", readErr)
+	}
+	return data, resp.StatusCode, nil
+}
+
+// openRequest shares request construction with anonymous, read-only release access.
+// The caller owns the response body and supplies a context deadline.
+func (g *GitHubDriver) openRequest(ctx context.Context, method, path string, payload any, accept string) (*http.Response, error) {
+	bodyReader, err := marshalPayload(payload)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed constructing http request: %w", err)
+		return nil, err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+g.Token)
+	req, err := http.NewRequestWithContext(ctx, method, g.Endpoint+path, bodyReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed constructing http request: %w", err)
+	}
+
+	if g.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+g.Token)
+	}
 	req.Header.Set("User-Agent", "praetor-governance-engine")
-	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Accept", accept)
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -213,20 +234,9 @@ func (g *GitHubDriver) sendRequest(ctx context.Context, method, path string, pay
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("github api request failed (%s %s): %w", method, path, err)
+		return nil, fmt.Errorf("github api request failed (%s %s): %w", method, path, err)
 	}
-	defer func() {
-		if cerr := resp.Body.Close(); cerr != nil && err == nil {
-			err = fmt.Errorf("close response body (%s %s): %w", method, path, cerr)
-		}
-	}()
-
-	data, readErr := io.ReadAll(io.LimitReader(resp.Body, maxHTTPResponseBody))
-	if readErr != nil {
-		return nil, resp.StatusCode, fmt.Errorf("failed reading response body: %w", readErr)
-	}
-
-	return data, resp.StatusCode, nil
+	return resp, nil
 }
 
 // rulesetName returns the remote ruleset name for a branch.

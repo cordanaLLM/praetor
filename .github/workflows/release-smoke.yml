@@ -1,0 +1,107 @@
+---
+# SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+# SPDX-License-Identifier: EUPL-1.2
+name: Release Smoke
+
+'on':
+  workflow_call:
+    inputs:
+      tag:
+        description: Published release tag to exercise
+        required: true
+        type: string
+      allow-no-assets:
+        description: Explicitly declare an asset-less release
+        type: boolean
+        default: false
+      praetor-ref:
+        description: Engine commit SHA; defaults to this workflow's own commit
+        type: string
+        default: ''
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag to exercise
+        required: true
+        type: string
+      allow-no-assets:
+        description: Explicitly declare an asset-less release
+        type: boolean
+        default: false
+      praetor-ref:
+        description: Engine commit SHA; defaults to this workflow's own commit
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Verify shipped release assets
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - name: Require a pinned engine revision
+        id: engine
+        shell: python
+        env:
+          PRAETOR_REF: ${{ inputs.praetor-ref }}
+          WORKFLOW_JOB: ${{ toJSON(job) }}
+        run: |
+          import json
+          import os
+          import re
+          import sys
+          job = json.loads(os.environ['WORKFLOW_JOB'])
+          ref = os.environ['PRAETOR_REF'] or job.get('workflow_sha', '')
+          repository = job.get('workflow_repository', '')
+          if not re.fullmatch(r'[0-9a-f]{40}', ref) or not repository:
+              sys.exit('Pinned engine source or workflow identity missing')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'ref={ref}\n')
+              output.write(f'repository={repository}\n')
+      - name: Checkout engine source
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: ${{ steps.engine.outputs.repository }}
+          ref: ${{ steps.engine.outputs.ref }}
+          persist-credentials: false
+      - name: Setup Go
+        # yamllint disable-line rule:line-length
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      # yamllint disable rule:line-length
+      - name: Restore Go module cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/go/pkg/mod
+          key: gomod-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            gomod-${{ runner.os }}-${{ runner.arch }}-
+      - name: Restore Go build cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: gobuild-${{ runner.os }}-${{ runner.arch }}-release-smoke-${{ hashFiles('**/go.sum') }}-${{ steps.engine.outputs.ref }}
+          restore-keys: |
+            gobuild-${{ runner.os }}-${{ runner.arch }}-release-smoke-${{ hashFiles('**/go.sum') }}-
+            gobuild-${{ runner.os }}-${{ runner.arch }}-release-smoke-
+      # yamllint enable rule:line-length
+      - name: Build standardsctl
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/standardsctl" ./cmd/standardsctl
+      - name: Exercise shipped assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          ALLOW_NO_ASSETS: ${{ inputs.allow-no-assets }}
+        run: |
+          "$RUNNER_TEMP/standardsctl" release smoke \
+            "--repo=$RELEASE_REPO" "--tag=$RELEASE_TAG" \
+            "--allow-no-assets=$ALLOW_NO_ASSETS"
