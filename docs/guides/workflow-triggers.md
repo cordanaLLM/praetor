@@ -173,7 +173,7 @@ exceptions:
 The entry names one workflow file directly in `.github/workflows` by `path`; a glob is refused
 (`TestValidateExceptionsWorkflowTarget` in `internal/config/exceptions_test.go`). The other keys
 follow the [exceptions list rules](clang-tidy-coverage.md#exceptions): one line of reason and an
-expiry within the category interval (A: stated, B: 3 days, C: 10 days, D: 120 days; uncategorized: 90 days).
+expiry within the category interval (A: stated, at most 90 days; B: 3 days, C: 10 days, D: 120 days; uncategorized: 90 days).
 
 While the entry holds, through its expiry day, the audit prints the workflow's findings under a
 `[PASS]` line with the reason and expiry instead of reporting them. From the next day they are

@@ -198,8 +198,12 @@ func TestValidateExceptionsCategories(t *testing.T) {
 		t.Fatalf("uncategorized exception changed behavior: %v", err)
 	}
 	base.Category, base.Entered, base.Expires = "A", "2026-10-06", "2027-01-05"
+	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "category A requires expires on or before 2027-01-04 (90 days") {
+		t.Fatalf("category A escaped the 90-day cap: %v", err)
+	}
+	base.Expires = "2027-01-04"
 	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err != nil {
-		t.Fatalf("category A stated expiry refused: %v", err)
+		t.Fatalf("category A stated expiry inside 90 days refused: %v", err)
 	}
 }
 

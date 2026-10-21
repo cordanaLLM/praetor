@@ -81,7 +81,7 @@ func (r Result) Failed() bool {
 }
 
 // CategoryDays returns the default duration in days for an exception category.
-// Category A's default is not a cap: the entry supplies its expiry.
+// Category A states its own expiry in the entry, at most MaxExceptionDays after its base date.
 func CategoryDays(category string) (int, bool) {
 	switch category {
 	case "A":
@@ -148,7 +148,7 @@ func categorizedExpiryProblem(category, expires string, base time.Time, referenc
 		return fmt.Sprintf("expires %q must be a YYYY-MM-DD date", expires)
 	}
 	latest := base.AddDate(0, 0, days)
-	if category != "A" && date.After(latest) {
+	if date.After(latest) {
 		return fmt.Sprintf("category %s requires expires on or before %s (%d days after %s); got %s",
 			category, latest.Format(DateLayout), days, reference, expires)
 	}

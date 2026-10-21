@@ -449,7 +449,7 @@ func (e Exception) expiryCategory() string {
 }
 
 // ExceptionCategoryDays returns the default duration for category, and whether it is valid.
-// Category A's default is not a cap: an entry states its own expiry.
+// Category A states its own expiry, at most MaxExceptionDays after entered or today.
 func ExceptionCategoryDays(category string) (int, bool) {
 	return rules.CategoryDays(category)
 }

@@ -109,7 +109,7 @@ linters:
 ```
 
 Comment format: `category <A|B|C|D>, [entered YYYY-MM-DD, ]expires YYYY-MM-DD, #<issue number>`.
-The validation reuses exception category bounds (`internal/config/exceptions.go`): category A uses its stated expiry without a further cap, B allows 3 days, C allows 10 days, and D allows 120 days. A rule without the comment,
+The validation reuses exception category bounds (`internal/config/exceptions.go`): category A uses its stated expiry, at most 90 days, B allows 3 days, C allows 10 days, and D allows 120 days. A rule without the comment,
 with an invalid date or category, with an expired date, or exceeding its category interval fails the audit
 naming the file, line, linters, path, and failure reason (`TestAuditDeclaredLinters_Exclusion_Planted_MissingComment`,
 `TestAuditDeclaredLinters_Exclusion_Planted_ExpiredRule`,

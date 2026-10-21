@@ -13,7 +13,8 @@ import (
 
 func TestCategoryExpiryCaps(t *testing.T) {
 	cases := []struct{ name, category, entered, expires, want string }{
-		{"A stated", "A", "2026-10-18", "2027-10-18", ""},
+		{"A stated", "A", "2026-10-18", "2027-01-16", ""},
+		{"A beyond 90 days", "A", "2026-10-18", "2027-01-17", "category A requires expires on or before 2027-01-16 (90 days"},
 		{"A missing expiry", "A", "", "", "must be a YYYY-MM-DD date"},
 		{"B boundary", "B", "", "2026-10-21", ""},
 		{"B exceeded", "B", "", "2026-10-22", "category B requires expires on or before 2026-10-21 (3 days"},
