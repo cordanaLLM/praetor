@@ -133,7 +133,7 @@ every file and requires yamllint to reject each one, so the rule is proven to be
 | `pre-commit`, `pre-merge-commit` | Audit the live private ledger, then check the exact index for whitespace, conflict markers, Python/JSON syntax, YAML, shell, workflow and Docker lint; Go formatting and vet on changed packages; verify affected generated agent instructions. |
 | `prepare-commit-msg` | Add an instructional comment to a fresh empty message. |
 | `commit-msg` | Verify the live state synchronization after Lefthook restores partially staged worktree files, then apply the commit message policy (`praetorctl forge check-message`: a conventional subject, Git merge/revert subjects accepted, the HISS-14 `Migration:` footer on a breaking change, and an offline warning for ambiguous closing references; explicit pull request URLs require `Closes-own: <reference>`) and require a DCO sign-off. |
-| `pre-push` | Audit and verify live state before inspecting each actual pushed commit. Run `praetorctl forge refactor-check --base=<base> --head=<head>` over the pushed range for the REF-02 assertion lock; a push without a known base skips it with that reason, and CI checks the pull request range. `checkpoint/*` destinations run file checks, affected Go builds and race tests. Other destinations also require lint, security, vulnerability, governance, flavor and signed-receipt gates. |
+| `pre-push` | Audit and verify live state before inspecting each actual pushed commit. Run `praetorctl forge refactor-check --base=<base> --head=<head>` over the pushed range for the REF-02 assertion lock; a push without a known base skips it with that reason, and CI checks the pull request range. `checkpoint/*` destinations run file checks, affected Go builds and race tests. Other destinations also require lint, security, vulnerability, governance, flavor and signed-receipt gates. The signed gate runs Go race tests only for the affected packages and reverse dependents; an empty selection records `not_applicable: no affected Go package`. |
 | `post-commit` | Synchronize and read back the private state for the new commit, then print the dedupe cadence reminder when due. Sync failures are reported. |
 | `post-checkout`, `post-merge`, `post-rewrite` | Warm changed module dependencies in an isolated clone, rebuild the local CLI for source changes, verify affected agent outputs, report governance changes. `post-merge` then runs `praetorctl workstation install --if-stale`, which rebuilds a lagging engine install from this checkout on the update branch and otherwise skips silently ([refresh a lagging install](workstation-update.md#refresh-a-lagging-install)). File-only checkouts do nothing. |
 | `pre-rebase` | Check the hook environment before replay begins. |
@@ -885,11 +885,20 @@ cannot pass through the lightweight documentation path. Governance and flavor
 audits also run for source and policy/configuration edits. The live private ledger is checked outside
 the exported snapshot; it never becomes published snapshot content. Source and
 governance pushes also retain the full `gate run` pipeline and pinned-key
-`gate verify`. Its full race/security stages replace duplicate scoped runs;
-golangci-lint still uses affected packages. Verified receipts are retained under
+`gate verify`. The hook passes its existing Go selection explicitly as
+`--race-packages=<comma-separated import paths>` to `gate run`, or
+`--race-packages=none` when empty. The race stage and signed `race_packages` header
+record that selection; the empty Go stage is `not_applicable` with the reason
+`no affected Go package (--race-packages=none)`. Security stages retain their
+module scope, and golangci-lint uses affected packages. Verified receipts are retained under
 Git metadata at `praetor-receipts/<commit>.json`, without staging an artifact. Existing
 P0 blockers, audit failures, zero-warning lint failures and all gosec rules remain
-enforced. The full gate and CI remain the final integration checks.
+enforced. `gate run` without `--race-packages` and CI retain full-module race tests.
+The CI filter recognises frontend sources, styles, HTML and app configuration,
+including the console workflow and documentation. Before choosing a light run, it
+checks tracked Go package directories; a file in or below one conservatively
+selects Go tests, covering testdata and embedded inputs of any extension. Unknown
+file kinds still fail closed.
 
 The hook bounds the `gate run` and `gate verify` subprocesses by the gate's own run deadline,
 not by a figure of its own. `run_full_gate` in

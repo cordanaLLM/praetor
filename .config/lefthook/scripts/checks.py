@@ -197,11 +197,12 @@ def golangci_lint_command(directory, packages):
                     "tools/lint/go.mod (preferred) or tools/go/go.mod before pushing Go changes")
 
 
-# The harness self-tests a change to the hook policy runs. The first three travel with the
+# The harness self-tests a change to the hook policy runs. These suites travel with the
 # policy; the scripts/ suites exist only where the snapshot carries them.
 SELF_TESTS = (".config/lefthook/scripts/test_hooks.py",
               ".config/lefthook/scripts/test_security_scope.py",
-              ".config/lefthook/scripts/test_checkpoint.py")
+              ".config/lefthook/scripts/test_checkpoint.py",
+              ".config/lefthook/scripts/test_race_packages.py")
 OPTIONAL_SELF_TESTS = ("scripts/test_checkpoint_hooks.py", "scripts/test_praetor_hook.py")
 
 
@@ -350,8 +351,14 @@ def source_checks(directory, names, gate="all", base=None):
         parallel(semgrep_commands(directory, names), directory)
     if not packages:
         print("Go gates: no affected packages")
-        return run_full_gate(directory) if full_gate else False
+        return run_full_gate(directory, packages) if full_gate else False
     print("Go scope: " + ", ".join(packages))
+    parallel(source_commands(directory, packages, gate, full_gate), directory)
+    return run_full_gate(directory, packages) if full_gate else False
+
+
+def source_commands(directory, packages, gate, full_gate):
+    """Select flavor checks; the signed pipeline owns race/security checks when present."""
     local = local_package_patterns(directory, packages) if gate in {"all", "lint", "sec"} else []
     commands = {"test": ["go", "test", "-race", "-count=1", "-timeout=5m", *packages],
                 "sec": ["gosec", "-conf", ".gosec.json", *local],
@@ -361,12 +368,10 @@ def source_checks(directory, names, gate="all", base=None):
                 "vuln": [*CLI, "security", "govuln", "--path=.", "--", *GOVULN_SCANNER]}
     if gate in {"all", "lint"}:
         commands["lint"] = golangci_lint_command(directory, local)
-    selected = list(commands.values()) if gate == "all" else [commands[gate]]
     if full_gate:
-        # gate run already enforces full race tests, gosec and vulnerability checks.
-        selected = [commands["lint"]]
-    parallel(selected, directory)
-    return run_full_gate(directory) if full_gate else False
+        # gate run enforces the selected race tests, gosec and vulnerability checks.
+        return [commands["lint"]]
+    return list(commands.values()) if gate == "all" else [commands[gate]]
 
 
 def gate_timeout(report):
@@ -386,13 +391,15 @@ def gate_timeout(report):
     return seconds + GATE_LAUNCH_MARGIN
 
 
-def run_full_gate(directory):
+def run_full_gate(directory, packages=None):
     command = [*CLI, "gate"]
     report = run([*command, "deadline", "--json"], cwd=directory, env=clean_env(),
                  timeout=GATE_QUERY_TIMEOUT)
     timeout = gate_timeout(report)
+    scope = [] if packages is None else ["--race-packages=" + (",".join(packages) or "none")]
     for subcommand in ("run", "verify"):
-        run([*command, subcommand, "--path=."], cwd=directory, env=clean_env(),
+        args = scope if subcommand == "run" else []
+        run([*command, subcommand, "--path=.", *args], cwd=directory, env=clean_env(),
             timeout=timeout, capture=False)
     return True
 

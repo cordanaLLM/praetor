@@ -1,0 +1,3 @@
+type: fixed
+title: "Scope pre-push Go race tests to the hook's affected packages and reverse dependents, certify the package list or an explicit no-affected-package reason in signed receipts, and classify frontend-only CI ranges without the fail-closed fallback while retaining full manual and CI race runs and fail-closed handling of unknown inputs"
+breaking: false

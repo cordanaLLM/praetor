@@ -78,7 +78,7 @@ func ambiguousBaseRepo(t *testing.T) string {
 func docsBranchRepo(t *testing.T) string {
 	t.Helper()
 	dir := gitSandbox(t)
-	writeRepoFile(t, dir, "main.go", "package main\n")
+	writeRepoFile(t, dir, "cmd/app/main.go", "package main\n")
 	writeRepoFile(t, dir, "README.md", "# Fixture\n")
 	runRepoGit(t, dir, "init", "-q", "-b", "main")
 	runRepoGit(t, dir, "add", ".")

@@ -273,10 +273,13 @@ func VerifyUnpinnedReceiptFile(rf *ReceiptFile) error {
 
 // checkCertifiedGateOutput applies the content checks both envelope verifiers share, on output
 // whose hash the signature has already been verified against: the format version, then the
-// clean-tree record.
+// clean-tree record and the race scope/reason contract.
 func checkCertifiedGateOutput(output string) error {
 	if err := checkGateOutputVersion(output); err != nil {
 		return err
 	}
-	return RequireCleanWorktree(output)
+	if err := RequireCleanWorktree(output); err != nil {
+		return err
+	}
+	return checkRaceOutput(output)
 }
