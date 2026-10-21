@@ -510,6 +510,90 @@ func TestAuditLiveBranchProtection_PendingContextRename(t *testing.T) {
 	mustContain(t, out, `pending required status check rename: "REUSE lint" -> "Licence / REUSE lint"`)
 }
 
+func (f *auditFixture) recordSquashedOriginMain(t *testing.T) {
+	t.Helper()
+	tree, err := runFixtureGit(t, f.dir, f.gitEnv, "rev-parse", "HEAD^{tree}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit, err := runFixtureGit(t, f.dir, f.gitEnv, "commit-tree", strings.TrimSpace(tree), "-p", "origin/main", "-m", "squashed rename")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runFixtureGit(t, f.dir, f.gitEnv, "update-ref", "refs/remotes/origin/main", strings.TrimSpace(commit)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAuditProtectionTarget_RenameLandedOnDivergedDefault(t *testing.T) {
+	for _, tc := range []struct {
+		name, live string
+		landed     bool
+		wantError  bool
+	}{
+		{"positive pending rename", "REUSE lint", false, false},
+		{"negative landed with stale protection", "REUSE lint", true, true},
+		{"boundary landed with current protection", "Licence / REUSE lint", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &forgeStub{legacy: classicProtection("CI", tc.live)}
+			f := protectedFixture(t, false, "", stub)
+			f.commitWorkflows(t, map[string]string{"licence.yml": prJobWorkflow("REUSE lint")})
+			f.recordOriginMain(t)
+			f.commitWorkflows(t, map[string]string{"licence.yml": prJobWorkflow("Licence / REUSE lint")})
+			if tc.landed {
+				f.recordSquashedOriginMain(t)
+			}
+			out, err := f.audit(t)
+			if !tc.wantError && err != nil {
+				t.Fatalf("valid protection failed: %v\n%s", err, out)
+			}
+			if tc.wantError {
+				mustErrContain(t, err, "missing: Licence / REUSE lint")
+			}
+			if tc.landed {
+				mustContain(t, out, "[INFO]", `"REUSE lint" -> "Licence / REUSE lint"`, "already declares")
+			}
+		})
+	}
+}
+
+func TestAuditProtectionTarget_RenameMergeQueueSelection(t *testing.T) {
+	queued := func(name string) string {
+		return strings.Replace(prJobWorkflow(name), "on:\n  pull_request:", "on: [pull_request, merge_group]", 1)
+	}
+	for _, tc := range []struct {
+		name       string
+		mergeQueue bool
+		before     string
+		after      string
+		want       int
+	}{
+		{"positive queue ignores PR renames", true, queued("Build"), queued("Compile"), 1},
+		{"negative no queue sees both renames", false, queued("Build"), queued("Compile"), 0},
+		{"boundary queue only on old side", true, queued("Build"), prJobWorkflow("Compile"), 0},
+		{"boundary queue only on new side", true, prJobWorkflow("Build"), queued("Compile"), 0},
+		{"boundary PR only", true, prJobWorkflow("Build"), prJobWorkflow("Compile"), 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := protectedFixture(t, false, "", &forgeStub{})
+			f.commitWorkflows(t, map[string]string{"queue.yml": tc.before, "pr.yml": prJobWorkflow("Old PR")})
+			f.recordOriginMain(t)
+			f.commitWorkflows(t, map[string]string{"queue.yml": tc.after, "pr.yml": prJobWorkflow("New PR")})
+			manifest, err := config.LoadManifest(f.manifestPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			policy := declaredProtection(false)
+			policy.MergeQueue = tc.mergeQueue
+			target, _, err := auditProtectionTarget(t.Context(), f.dir, manifest, policy)
+			if err != nil || len(target.renames) != tc.want {
+				t.Fatalf("renames = %+v, %v; want %d", target.renames, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestAuditLiveBranchProtection_RenameWindowBoundaries(t *testing.T) {
 	for _, tc := range []struct {
 		name, workflow string
@@ -521,7 +605,7 @@ func TestAuditLiveBranchProtection_RenameWindowBoundaries(t *testing.T) {
 		{"unrelated live check", prJobWorkflow("Licence / REUSE lint"), []string{"CI", "Lint"}, false, "Licence / REUSE lint"},
 		{"unrelated job identity", strings.Replace(prJobWorkflow("Different"), "  ci:", "  other:", 1), []string{"CI", "REUSE lint"}, false, "Different"},
 		{"window ended", prJobWorkflow("Licence / REUSE lint"), []string{"CI", "REUSE lint"}, true, "Licence / REUSE lint"},
-		{"rename plus missing check", prJobWorkflow("Licence / REUSE lint") + "  extra:\n    name: Extra\n    runs-on: ubuntu-latest\n    steps:\n      - run: make\n", []string{"CI", "REUSE lint"}, false, "Extra"},
+		{"rename plus missing check", prJobWorkflow("Licence / REUSE lint") + "  extra:\n    name: Extra\n    runs-on: ubuntu-latest\n    steps:\n      - run: make\n", []string{"CI", "REUSE lint"}, false, "Licence / REUSE lint, Extra"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stub := &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), tc.live, "active")}

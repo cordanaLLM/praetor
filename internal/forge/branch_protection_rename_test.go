@@ -6,6 +6,7 @@ package forge
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -49,12 +50,60 @@ func TestRequiredStatusContextRenamesInvalidInputs(t *testing.T) {
 }
 
 func TestSingleContextRenameRejectsSeveralChanges(t *testing.T) {
-	old := map[string][]string{"ci.yml/build": {"Build"}, "ci.yml/test": {"Test"}}
-	newJobs := map[string][]string{"ci.yml/build": {"Compile"}, "ci.yml/test": {"Tests"}}
+	old := map[string]contextRenameJob{"ci.yml/build": {names: []string{"Build"}}, "ci.yml/test": {names: []string{"Test"}}}
+	newJobs := map[string]contextRenameJob{"ci.yml/build": {names: []string{"Compile"}}, "ci.yml/test": {names: []string{"Tests"}}}
 	if renames := singleContextRename(old, newJobs); len(renames) != 0 {
 		t.Fatalf("several renames granted a window: %+v", renames)
 	}
 	if renames := singleContextRename(nil, newJobs); len(renames) != 0 {
 		t.Fatalf("new jobs granted a window: %+v", renames)
+	}
+}
+
+func TestRequiredStatusContextRenames_ReusableCallerProof(t *testing.T) {
+	inline := strings.Replace(prWorkflow("Licence / REUSE lint"), "  job:", "  other:", 1)
+	caller := "on: pull_request\njobs:\n  licence:\n    name: Licence\n    uses: " +
+		PluranoHoristesLicenceAction + "@" + PluranoHoristesLicenceWorkflowSHA + "\n"
+	for _, tc := range []struct {
+		name, before, after string
+		want                int
+	}{
+		{"positive reusable caller", prWorkflow("REUSE lint"), caller, 1},
+		{"negative inline suffix", prWorkflow("REUSE lint"), inline, 0},
+		{"negative inline unwrapping", caller, prWorkflow("REUSE lint"), 0},
+		{"boundary stable inline job", prWorkflow("REUSE lint"), prWorkflow("Licence / REUSE lint"), 1},
+		{"boundary unrelated inline job", prWorkflow("REUSE lint"), strings.Replace(inline, "Licence / REUSE lint", "Other", 1), 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, base := committedWorkflowRepo(t, map[string]string{".github/workflows/ci.yml": tc.before})
+			writeWorkflowFixture(t, root, "ci.yml", tc.after)
+			got, err := RequiredStatusContextRenames(t.Context(), root, base, "acme/widgets")
+			if err != nil || len(got) != tc.want {
+				t.Fatalf("renames = %+v, %v; want %d", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestRequiredStatusContextRenames_FileChangeBoundary(t *testing.T) {
+	old := prWorkflow("Build") + "  reuse:\n    name: REUSE lint\n"
+	for _, tc := range []struct {
+		name, before, after string
+		want                int
+	}{
+		{"positive one rename", old, strings.Replace(old, "Build", "Compile", 1), 1},
+		{"negative two renames with changed ID", old, prWorkflow("Compile") + "  licence:\n    name: Licence / REUSE lint\n", 0},
+		{"negative rename plus addition", prWorkflow("Build"), prWorkflow("Compile") + "  extra:\n    name: Extra\n", 0},
+		{"negative rename plus removal", old, prWorkflow("Compile"), 0},
+		{"boundary unchanged", old, old, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, base := committedWorkflowRepo(t, map[string]string{".github/workflows/ci.yml": tc.before})
+			writeWorkflowFixture(t, root, "ci.yml", tc.after)
+			got, err := RequiredStatusContextRenames(t.Context(), root, base, "acme/widgets")
+			if err != nil || len(got) != tc.want {
+				t.Fatalf("renames = %+v, %v; want %d", got, err, tc.want)
+			}
+		})
 	}
 }

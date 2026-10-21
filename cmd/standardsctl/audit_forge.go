@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -173,15 +174,37 @@ func auditProtectionTarget(ctx context.Context, rootDir string, manifest *config
 	if err != nil {
 		return target, []string{fmt.Sprintf("[INFO] Pending status check renames not evaluated: no common ancestor of HEAD and %s (%v); declared checks remain compared.", ref, err)}, nil
 	}
-	renamed, err := forge.RequiredStatusContextRenames(ctx, rootDir, strings.TrimSpace(string(ancestor.Stdout)), target.repository)
+	renamed, err := forge.RequiredStatusContextRenames(ctx, rootDir, strings.TrimSpace(string(ancestor.Stdout)),
+		target.repository, forge.ForMergeQueue(policy.MergeQueue))
 	if errors.Is(err, forge.ErrCommittedWorkflowAbsent) {
 		return target, []string{fmt.Sprintf("[INFO] Pending status check renames not evaluated: %s (%v); declared checks remain compared.", ref, err)}, nil
 	}
 	if err != nil {
 		return protectionTarget{}, nil, fmt.Errorf("discover pending status check renames from %s: %w", ref, err)
 	}
-	target.renames = renamed
-	return target, nil, nil
+	return pendingProtectionRenames(ctx, rootDir, commit, ref, target, renamed)
+}
+
+// A squash or rebase merge can leave HEAD's merge-base before an already landed rename.
+// The fetched branch's own checks close that window, without changing the declaration.
+func pendingProtectionRenames(ctx context.Context, rootDir, commit, ref string, target protectionTarget, renames []forge.StatusContextRename) (protectionTarget, []string, error) {
+	if len(renames) == 0 {
+		return target, nil, nil
+	}
+	contexts, err := forge.RequiredStatusContextsAt(ctx, rootDir, commit, target.repository, forge.ForMergeQueue(target.policy.MergeQueue))
+	if err != nil {
+		return protectionTarget{}, nil, fmt.Errorf("read landed status check renames from %s: %w", ref, err)
+	}
+	var notes []string
+	for _, rename := range renames {
+		if slices.Contains(contexts, rename.New) {
+			notes = append(notes, fmt.Sprintf("[INFO] Pending status check rename dropped: %q -> %q; %s already declares %q.",
+				rename.Old, rename.New, ref, rename.New))
+			continue
+		}
+		target.renames = append(target.renames, rename)
+	}
+	return target, notes, nil
 }
 
 // liveProtectionNotCompared returns the line of a live branch protection check that is not

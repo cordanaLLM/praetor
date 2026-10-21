@@ -138,3 +138,33 @@ func TestCurrentCheckpointDigests_Boundary_MatchShippedBundle(t *testing.T) {
 		}
 	}
 }
+
+func TestAuditCheckpointBundle_SourceRemedy(t *testing.T) {
+	source := checkpointAuditRepo(t, map[string]string{
+		checkpointScript:   shippedCheckpointText(t, checkpointScript),
+		checkpointCommon:   shippedCheckpointText(t, checkpointCommon),
+		checkpointLauncher: shippedCheckpointText(t, checkpointLauncher),
+	})
+	edited := shippedCheckpointText(t, checkpointCommon) + "# local edit\n"
+	for _, tc := range []struct {
+		name, root, common, want, forbidden string
+	}{
+		{"positive selected source", source, "", "praetorctl adopt --lock-source-root=" + source, "this release's text"},
+		{"negative edited selected source", source, edited, "praetorctl adopt --lock-source-root=" + source, "this release's text"},
+		{"boundary release", "", edited, "this release's text, then run praetorctl adopt.", "--lock-source-root"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			texts := map[string]string{checkpointScript: firstPriorCheckpointText(t, checkpointScript)}
+			if tc.common != "" {
+				texts[checkpointCommon] = tc.common
+			}
+			lines, err := AuditCheckpointBundleWithSource(t.Context(), checkpointAuditRepo(t, texts), tc.root)
+			if err != nil || len(lines) != 1 {
+				t.Fatalf("warnings = %q, %v; want one", lines, err)
+			}
+			if !strings.Contains(lines[0], tc.want) || strings.Contains(lines[0], tc.forbidden) {
+				t.Fatalf("warning must contain %q without %q: %s", tc.want, tc.forbidden, lines[0])
+			}
+		})
+	}
+}

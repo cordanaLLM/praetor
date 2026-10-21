@@ -58,10 +58,15 @@ func AuditCheckpointBundleWithSource(ctx context.Context, rootDir, sourceRoot st
 	if err != nil {
 		return nil, err
 	}
-	remedy := "run praetorctl adopt (no --force needed) to refresh it."
+	command, reference := "praetorctl adopt", "this release's text"
+	if sourceRoot != "" {
+		command += " --lock-source-root=" + sourceRoot
+		reference = "the selected source bundle's text"
+	}
+	remedy := "run " + command + " (no --force needed) to refresh it."
 	if edited := editedCheckpointFile(digests, current); edited != "" {
 		remedy = "adoption keeps the bundle while " + edited + " holds an edited copy; restore that file " +
-			"or replace the bundle with this release's text, then run praetorctl adopt."
+			"or replace the bundle with " + reference + ", then run " + command + "."
 	}
 	return checkpointWarningLines(digests, current, sourceRoot, remedy), nil
 }
