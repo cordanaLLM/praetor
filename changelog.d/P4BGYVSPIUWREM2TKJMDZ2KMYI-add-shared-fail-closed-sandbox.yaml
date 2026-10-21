@@ -1,0 +1,2 @@
+type: added
+title: Add shared fail-closed sandbox lane profiles with isolated egress, restricted loopback and NUL-separated argv rendering.

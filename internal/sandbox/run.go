@@ -40,6 +40,8 @@ type Runner struct {
 	CheckUserManager func(context.Context) error
 	ProbeBwrap       func(context.Context) error
 	HasLib64         func() bool
+	resolverFile     string
+	runtimeDirectory string
 }
 
 // Command validates the workspace and runtime before returning a contained argv.
@@ -50,12 +52,16 @@ func (r Runner) Command(ctx context.Context, spec Spec) (Invocation, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	binaries, err := r.resolve()
+	binaries, err := r.resolve(spec.Network)
 	if err != nil {
 		return Invocation{}, err
 	}
 	if spec.HasLib64 == nil && r.HasLib64 != nil {
 		spec.HasLib64 = r.HasLib64
+	}
+	spec.DNS, err = r.prepareDNS(ctx, spec.Network)
+	if err != nil {
+		return Invocation{}, err
 	}
 	invocation, err := Build(spec, binaries, os.Environ())
 	if err != nil {
@@ -172,7 +178,7 @@ func (r Runner) lookup(name string) (string, error) {
 	return value, nil
 }
 
-func (r Runner) resolve() (Binaries, error) {
+func (r Runner) resolve(network NetworkMode) (Binaries, error) {
 	goos := r.GOOS
 	if goos == "" {
 		goos = runtime.GOOS
@@ -192,7 +198,14 @@ func (r Runner) resolve() (Binaries, error) {
 	if err != nil {
 		return Binaries{}, err
 	}
-	return Binaries{SystemdRun: systemd, Prlimit: prlimit, Bwrap: bwrap}, nil
+	b := Binaries{SystemdRun: systemd, Prlimit: prlimit, Bwrap: bwrap}
+	if network == NetworkEgress || network == NetworkLoopback {
+		b.Pasta, err = r.lookup("pasta")
+		if err != nil {
+			return Binaries{}, err
+		}
+	}
+	return b, nil
 }
 
 func (r Runner) checkManager(ctx context.Context) error {

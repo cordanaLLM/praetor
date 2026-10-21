@@ -226,8 +226,7 @@ func TestSandboxRealBwrapProbeWhenInstalled(t *testing.T) {
 	_, err := runner.Command(t.Context(), spec)
 	if err != nil {
 		if errors.Is(err, ErrUnavailable) {
-			t.Logf("probe reported unavailable on this host: %v", err)
-			return
+			t.Skipf("probe reported unavailable on this host: %v", err)
 		}
 		t.Fatalf("unexpected error: %v", err)
 	}

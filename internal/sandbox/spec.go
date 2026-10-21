@@ -11,12 +11,6 @@ import (
 	"strings"
 )
 
-// NetworkMode selects namespace isolation. Only NetworkNone is supported.
-type NetworkMode string
-
-// NetworkNone isolates networking, including host loopback, via --unshare-all.
-const NetworkNone NetworkMode = "none"
-
 // Bind exposes a host path at an absolute sandbox path, read-only.
 type Bind struct{ Source, Target string }
 
@@ -37,22 +31,26 @@ func DefaultLimits() Limits {
 
 // Spec mounts Workspace at /workspace. ReadOnly defaults to false. Environment is
 // explicit; PassEnvironment copies only named variables from the builder's input.
-// Commands run at /workspace with no inherited environment or network access.
+// Commands run at /workspace with no inherited environment. The zero network
+// mode disables networking. Runner prepares DNS for egress; pure Build callers
+// must supply a generated DNSConfig.
 // HasLib64 reports whether /usr/lib64 exists on the host. When nil, the host is inspected.
 type Spec struct {
-	Workspace       string
-	ReadOnly        bool
-	ReadOnlyBinds   []Bind
-	Environment     []Variable
-	PassEnvironment []string
-	Network         NetworkMode
-	Limits          Limits
-	Command         []string
-	HasLib64        func() bool
+	Workspace          string
+	ReadOnly           bool
+	ReadOnlyBinds      []Bind
+	Environment        []Variable
+	PassEnvironment    []string
+	Network            NetworkMode
+	AllowLoopbackPorts []int
+	DNS                DNSConfig
+	Limits             Limits
+	Command            []string
+	HasLib64           func() bool
 }
 
 // Binaries names resolved absolute executables outside the namespace.
-type Binaries struct{ SystemdRun, Prlimit, Bwrap string }
+type Binaries struct{ SystemdRun, Prlimit, Bwrap, Pasta string }
 
 // Invocation is an argv ready for the audited command runner.
 type Invocation struct {
@@ -75,6 +73,7 @@ func Build(spec Spec, binaries Binaries, environ []string) (Invocation, error) {
 	if err != nil {
 		return Invocation{}, err
 	}
+	args = append(args, executionArguments(spec, binaries)...)
 	args = append(args, filesystemArguments(spec, limits)...)
 	variables, err := environmentVariables(spec, environ)
 	if err != nil {
@@ -98,7 +97,7 @@ func scopeArguments(l Limits, b Binaries) ([]string, error) {
 		"--property=MemoryMax=" + memorySize(l.MemoryBytes), "--property=MemorySwapMax=0",
 		"--property=TasksMax=" + decimal(l.Tasks), "--property=CPUQuota=" + decimal(l.CPUPercent) + "%",
 		b.Prlimit, "--as=" + decimal(l.AddressSpaceBytes), "--cpu=" + decimal(l.CPUSeconds),
-		"--fsize=" + decimal(l.FileBytes), "--nofile=" + decimal(l.OpenFiles), "--", b.Bwrap}, nil
+		"--fsize=" + decimal(l.FileBytes), "--nofile=" + decimal(l.OpenFiles), "--"}, nil
 }
 
 func decimal(value uint64) string { return strconv.FormatUint(value, 10) }
@@ -142,7 +141,13 @@ func filesystemArguments(spec Spec, limits Limits) []string {
 	if checkLib64 == nil {
 		checkLib64 = defaultHasLib64
 	}
-	args := []string{"--unshare-all", "--die-with-parent", "--new-session", "--clearenv"}
+	args := []string{"--unshare-all"}
+	if spec.Network == NetworkEgress || spec.Network == NetworkLoopback {
+		// pasta already created private user and network namespaces. Avoid a
+		// second user mapping; bubblewrap still isolates every other namespace.
+		args = []string{"--unshare-ipc", "--unshare-pid", "--unshare-uts", "--unshare-cgroup"}
+	}
+	args = append(args, "--die-with-parent", "--new-session", "--clearenv")
 	args = append(args, RootFilesystemArguments(checkLib64())...)
 	args = append(args,
 		"--size", decimal(limits.TmpBytes), "--tmpfs", "/tmp", "--dir", "/home", mode, spec.Workspace, "/workspace",
@@ -151,15 +156,24 @@ func filesystemArguments(spec Spec, limits Limits) []string {
 		bind := spec.ReadOnlyBinds[i]
 		args = append(args, "--ro-bind", bind.Source, bind.Target)
 	}
+	if spec.Network == NetworkEgress {
+		args = append(args, "--ro-bind", spec.DNS.ResolvConf, "/etc/resolv.conf")
+	}
 	return append(args, "--chdir", "/workspace")
 }
 
 func validateSpec(s Spec, b Binaries) error {
-	if len(s.Command) == 0 || s.Command[0] == "" || len(s.Command) > 256 {
-		return errors.New("sandbox requires a command of 1..256 arguments")
+	if err := validateCommand(s.Command); err != nil {
+		return err
 	}
-	if s.Network != "" && s.Network != NetworkNone {
-		return fmt.Errorf("unsupported sandbox network mode %q; only none is available", s.Network)
+	if !absolutePath(b.Bwrap) {
+		return &UnavailableError{Facility: "bwrap", Cause: errors.New("requires a clean absolute executable path")}
+	}
+	if err := validateNetwork(s); err != nil {
+		return err
+	}
+	if err := validateNetworkRuntime(s, b); err != nil {
+		return err
 	}
 	for _, value := range []string{s.Workspace, b.SystemdRun, b.Prlimit, b.Bwrap} {
 		if !absolutePath(value) {
@@ -189,7 +203,7 @@ func validateBinds(binds []Bind) error {
 }
 
 func validateBindTarget(target string) error {
-	if slices.Contains([]string{"/", "/usr", "/bin", "/lib", "/lib64", "/proc", "/dev", "/tmp", "/home", "/workspace"}, target) {
+	if slices.Contains([]string{"/", "/etc", "/etc/resolv.conf", "/usr", "/bin", "/lib", "/lib64", "/proc", "/dev", "/tmp", "/home", "/workspace"}, target) {
 		return fmt.Errorf("sandbox bind target overlaps reserved mount: %s", target)
 	}
 	// Toolchains may live below /usr, /home or /tmp. Read-only submounts there
@@ -197,6 +211,18 @@ func validateBindTarget(target string) error {
 	for _, reserved := range []string{"/bin", "/lib", "/lib64", "/proc", "/dev", "/workspace"} {
 		if strings.HasPrefix(target, reserved+"/") {
 			return fmt.Errorf("sandbox bind target overlaps reserved mount: %s", target)
+		}
+	}
+	return nil
+}
+
+func validateCommand(command []string) error {
+	if len(command) == 0 || command[0] == "" || len(command) > 256 {
+		return errors.New("sandbox requires a command of 1..256 arguments")
+	}
+	for i := 0; i < len(command); i++ {
+		if strings.ContainsRune(command[i], 0) {
+			return errors.New("sandbox command arguments cannot contain NUL")
 		}
 	}
 	return nil

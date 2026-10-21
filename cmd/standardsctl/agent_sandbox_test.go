@@ -81,3 +81,80 @@ func TestAgentSandboxUnavailableNeverExecutes(t *testing.T) {
 		t.Fatalf("unavailable sandbox or command --help misrouted: %v", err)
 	}
 }
+
+func TestAgentSandboxLaneFlags(t *testing.T) {
+	spec, err := parseAgentSandbox([]string{"--lane", "local", "--allow-loopback-port", "1", "--allow-loopback-port=65535", "--", "/usr/bin/true"})
+	if err != nil || spec.Network != sandbox.NetworkLoopback || !slices.Equal(spec.AllowLoopbackPorts, []int{1, 65535}) {
+		t.Fatalf("local profile = %+v, %v", spec, err)
+	}
+	for _, lane := range []string{"repair", "agy", "codex"} {
+		if _, err := parseAgentSandbox([]string{"--lane", lane, "--", "true"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := parseAgentSandbox([]string{"--lane", lane, "--allow-loopback-port", "4011", "--", "true"}); err == nil {
+			t.Fatalf("accepted local port for %s", lane)
+		}
+	}
+}
+
+func TestAgentSandboxInvalidLaneFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"--lane", "unknown"}, {"--lane", ""},
+		{"--lane", "local", "--allow-loopback-port", "0"},
+		{"--lane", "local", "--allow-loopback-port", "65536"},
+		{"--lane", "local", "--allow-loopback-port", "abc"},
+	} {
+		args = append(args, "--", "true")
+		if _, err := parseAgentSandbox(args); err == nil {
+			t.Fatalf("accepted %v", args)
+		}
+	}
+	args := []string{"--lane", "local"}
+	for i := 0; i < 9; i++ {
+		args = append(args, "--allow-loopback-port", "4011")
+	}
+	if _, err := parseAgentSandbox(append(args, "--", "true")); err == nil {
+		t.Fatal("accepted ninth port")
+	}
+}
+
+func TestAgentSandboxRenderArgv(t *testing.T) {
+	invocation, err := sandbox.Build(sandbox.Spec{Workspace: "/source", Command: []string{"/usr/bin/printf", "a b", "", "--help"}, HasLib64: func() bool { return true }}, sandbox.Binaries{SystemdRun: "/usr/bin/systemd-run", Prlimit: "/usr/bin/prlimit", Bwrap: "/usr/bin/bwrap"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := renderSandboxInvocation(&output, invocation); err != nil {
+		t.Fatal(err)
+	}
+	want := append([]string{invocation.Path}, invocation.Args...)
+	got := bytes.Split(output.Bytes(), []byte{0})
+	if len(got) != len(want)+1 || len(got[len(got)-1]) != 0 {
+		t.Fatalf("render did not NUL terminate each argument: %q", output.Bytes())
+	}
+	for i := 0; i < len(want); i++ {
+		if string(got[i]) != want[i] {
+			t.Fatalf("argv[%d]=%q want=%q", i, got[i], want[i])
+		}
+	}
+	if err := renderSandboxInvocation(failedSandboxWriter{}, invocation); err == nil {
+		t.Fatal("render ignored output failure")
+	}
+}
+
+type failedSandboxWriter struct{}
+
+func (failedSandboxWriter) Write([]byte) (int, error) { return 0, errors.New("planted output failure") }
+
+func TestAgentSandboxRenderRefusesUnavailable(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	output, err := captureStdout(t, func() error {
+		return runAgent([]string{"sandbox", "render", "--lane", "local", "--allow-loopback-port", "4011", "--", "/usr/bin/true"})
+	})
+	if !errors.Is(err, sandbox.ErrUnavailable) || output != "" {
+		t.Fatalf("render emitted unsafe argv: %q, %v", output, err)
+	}
+	if err := runAgent([]string{"sandbox", "render", "--help"}); !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("render help = %v", err)
+	}
+}
