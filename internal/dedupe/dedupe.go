@@ -810,13 +810,13 @@ func classifyDuplicateGroup(group DuplicateGroup, mainRoot string, exceptions []
 	group.Locations = append([]FileLocation(nil), group.Locations...)
 	allExcepted := true
 	var groupExceptions []ExceptionEntry
-	seen := make(map[string]bool)
+	seen := make(map[config.Exception]bool)
 
 	for i := range group.Locations {
-		live := judgeLocation(&group.Locations[i], mainRoot, exceptions, today, used)
+		live := judgeLocation(&group.Locations[i], mainRoot, group.Hash, exceptions, today, used)
 		if live != nil {
-			if !seen[live.Path] {
-				seen[live.Path] = true
+			if !seen[*live] {
+				seen[*live] = true
 				groupExceptions = append(groupExceptions, ExceptionEntry{
 					Path:    live.Path,
 					Reason:  live.Reason,
@@ -833,12 +833,12 @@ func classifyDuplicateGroup(group DuplicateGroup, mainRoot string, exceptions []
 	return group, allExcepted
 }
 
-func judgeLocation(loc *FileLocation, mainRoot string, exceptions []config.Exception, today time.Time, used []bool) *config.Exception {
+func judgeLocation(loc *FileLocation, mainRoot, hash string, exceptions []config.Exception, today time.Time, used []bool) *config.Exception {
 	// Entries belong to the main manifest, so the same path in another root cannot use them.
 	if loc.Root != "" && loc.Root != mainRoot {
 		return nil
 	}
-	live, expired := config.ExceptionFor(exceptions, loc.Path, today, used)
+	live, expired := config.DedupeExceptionFor(exceptions, loc.Path, hash, loc.Line, today, used)
 	if live == nil && expired != nil {
 		loc.Expired = expired.Expires
 	}

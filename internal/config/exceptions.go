@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -64,8 +65,7 @@ const ExceptionRuleRootLicenseNotice = "root-license-notice"
 const ExceptionRuleReuseAnnotationOrder = "reuse-annotation-order"
 
 // ExceptionRuleDedupe is the rule of the HISS-19 deduplication gate (internal/dedupe): an entry
-// excuses one Go file whose duplicate function blocks sit only in excepted files, such as a code
-// generator's repeated output.
+// excuses duplicate blocks in one repository file, optionally scoped by hash or start line.
 const ExceptionRuleDedupe = "HISS-19"
 
 // ExceptionRuleSecrets is the rule of the HISS-12 secret scan gate (internal/secretscan): an entry
@@ -165,6 +165,7 @@ type Exception struct {
 	Function    string `yaml:"function,omitempty"`
 	Tool        string `yaml:"tool,omitempty"`
 	Fingerprint string `yaml:"fingerprint,omitempty"`
+	Lines       string `yaml:"lines,omitempty"`
 	Reason      string `yaml:"reason"`
 	Expires     string `yaml:"expires"`
 	Category    string `yaml:"category,omitempty"`
@@ -280,8 +281,32 @@ func ExceptionsFor(entries []Exception, rule string) []Exception {
 // marked in used, so the gate reports an entry no path marked as stale and an expired one only
 // through its path. An entry beyond len(used) is judged but not marked.
 func ExceptionFor(entries []Exception, rel string, today time.Time, used []bool) (live, expired *Exception) {
+	return exceptionForMatch(entries, today, used, func(e Exception) bool { return e.Matches(rel) })
+}
+
+// DedupeExceptionFor judges HISS-19 entries for one clone location. A fingerprint narrows
+// the path to a group hash prefix; lines narrows it to an inclusive start-line range.
+// Both scopes must match when both are set. Only matching entries are marked in used.
+func DedupeExceptionFor(entries []Exception, rel, hash string, line int, today time.Time, used []bool) (live, expired *Exception) {
+	return exceptionForMatch(entries, today, used, func(e Exception) bool {
+		return e.Rule == ExceptionRuleDedupe && e.Matches(rel) && e.matchesDedupeScope(hash, line)
+	})
+}
+
+func (e Exception) matchesDedupeScope(hash string, line int) bool {
+	if !strings.HasPrefix(strings.ToLower(hash), strings.ToLower(e.Fingerprint)) {
+		return false
+	}
+	if e.Lines == "" {
+		return true
+	}
+	start, end, ok := parseExceptionLines(e.Lines)
+	return ok && line >= start && line <= end
+}
+
+func exceptionForMatch(entries []Exception, today time.Time, used []bool, matches func(Exception) bool) (live, expired *Exception) {
 	for index := 0; index < len(entries) && index < MaxExceptions; index++ {
-		if !entries[index].Matches(rel) {
+		if !matches(entries[index]) {
 			continue
 		}
 		if index < len(used) {
@@ -340,13 +365,13 @@ func ValidateExceptions(entries []Exception, today time.Time) error {
 	if len(entries) > MaxExceptions {
 		return fmt.Errorf("exceptions has %d entries; maximum is %d", len(entries), MaxExceptions)
 	}
-	seen := make(map[[6]string]int, len(entries))
+	seen := make(map[[7]string]int, len(entries))
 	for index := 0; index < len(entries) && index < MaxExceptions; index++ {
 		entry := entries[index]
 		if problem := entry.problem(today); problem != "" {
 			return fmt.Errorf("exceptions[%d] %s", index, problem)
 		}
-		key := [6]string{entry.Rule, entry.Path, entry.Glob, entry.Function, entry.Tool, entry.Fingerprint}
+		key := [7]string{entry.Rule, entry.Path, entry.Glob, entry.Function, entry.Tool, entry.Fingerprint, entry.Lines}
 		if first, repeated := seen[key]; repeated {
 			return fmt.Errorf("exceptions[%d] repeats exceptions[%d] (rule %s, %s)", index, first, entry.Rule, entry.Target())
 		}
@@ -514,12 +539,41 @@ func (e Exception) rootLicenseTargetProblem() string {
 	return ""
 }
 
-// dedupeTargetProblem requires a HISS-19 entry to name one repository file by path, one entry per file.
+// dedupeTargetProblem checks HISS-19 file targets and optional clone scopes.
 func (e Exception) dedupeTargetProblem() string {
-	if e.Rule == ExceptionRuleDedupe && e.Glob != "" {
+	if e.Rule != ExceptionRuleDedupe {
+		if e.Lines != "" {
+			return "lines is only valid for rule HISS-19"
+		}
+		return ""
+	}
+	if e.Glob != "" {
 		return "rule " + e.Rule + " must name one repository file by path, one entry per file"
 	}
+	if e.Fingerprint != "" && (len(e.Fingerprint) < 8 || len(e.Fingerprint) > 64 ||
+		strings.Trim(e.Fingerprint, "0123456789abcdefABCDEF") != "") {
+		return "fingerprint for HISS-19 must be a group hash prefix of 8 to 64 hexadecimal characters"
+	}
+	if e.Lines != "" {
+		if _, _, ok := parseExceptionLines(e.Lines); !ok {
+			return "lines must be START-END with positive 1-based integers and START <= END"
+		}
+	}
 	return ""
+}
+
+func parseExceptionLines(lines string) (int, int, bool) {
+	// Two signed-64-bit decimal integers plus the separator fit within 39 bytes.
+	if len(lines) > 39 || strings.Trim(lines, "0123456789-") != "" {
+		return 0, 0, false
+	}
+	first, last, found := strings.Cut(lines, "-")
+	if !found {
+		return 0, 0, false
+	}
+	start, startErr := strconv.Atoi(first)
+	end, endErr := strconv.Atoi(last)
+	return start, end, startErr == nil && endErr == nil && start > 0 && end >= start
 }
 
 // codespellProblem requires a codespell entry to name one file by path and declare a category.

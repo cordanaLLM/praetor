@@ -259,7 +259,19 @@ One behavior has exactly one implementation:
       expires: "2026-11-01"
   ```
 
-  A clone group whose members all sit in declared, unexpired files does not fail the scan and is reported under `Excepted Duplicate Function Blocks` with each entry's reason and expiry. A group with any member outside excepted files still fails (an entry whose file sits only in mixed groups still fails the scan through the mixed group). An expired entry fails like a missing one, naming the entry; an entry that excuses no duplicate function block is stale and fails until removed. The target must exist and be a regular repository file; generated files bearing the canonical `// Code generated ... DO NOT EDIT.` header and directories skipped by the HISS scanner (such as build and target trees) are excluded from the scan automatically.
+  To excuse one clone group in that file, set `fingerprint` to an 8–64 hexadecimal character prefix of the group's reported `hash` (`dedupe scan --json`). Matching is case-insensitive and accepts odd-length prefixes. To limit locations by line, set `lines: "START-END"`: positive, 1-based, inclusive bounds on the location's **start** line. The block need not end inside the range. Both scopes must match when both are present; omitting both preserves whole-path matching. For example, this entry excuses only starts on lines 10 through 16 in groups whose hash starts with `abcdef12`:
+
+  ```yaml
+  exceptions:
+    - rule: "HISS-19"
+      path: "tests/common/mod.rs"
+      fingerprint: "abcdef12"
+      lines: "10-16"
+      reason: "shared fixture setup awaiting extraction"
+      expires: "2026-11-01"
+  ```
+
+  A clone group is fully excused only when every location matches a live entry, including its scopes. Native groups are reported under `Excepted Duplicate Function Blocks`; foreign groups use `ForeignExcepted` (`foreign_excepted` in JSON). A native group with any unexcused member still fails. An expired scoped entry excuses nothing and annotates only matching locations. An entry is used only when its path and scopes match a duplicate location, even when another location keeps the group reported; a scoped entry that matches nothing remains stale. An unscoped entry keeps the existing whole-path behavior. Distinct scopes may name the same file; identical entries are refused. `TestScanRepo_ScopedExceptions` and `TestLoadManifestDedupeScopeSchemaRoundTrip` cover these contracts. The target must exist and be a regular repository file; generated files bearing the canonical `// Code generated ... DO NOT EDIT.` header and directories skipped by the HISS scanner (such as build and target trees) are excluded from the scan automatically.
 - Unexcused duplication is justified in the commit body, not left silent.
 
 ### HISS-20: Replayable Enforcement Evidence

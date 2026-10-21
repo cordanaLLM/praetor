@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -1785,5 +1786,193 @@ func BetaGit() {
 	}
 	if report.Passed {
 		t.Error("a repository with an unresolved sprawl finding must not pass")
+	}
+}
+
+func TestScanRepo_ScopedExceptions(t *testing.T) {
+	for _, foreign := range []bool{false, true} {
+		t.Run(fmt.Sprintf("foreign=%v", foreign), func(t *testing.T) {
+			root, path, groups := scopedExceptionFixture(t, foreign)
+			first := groups[0]
+			start, end := first.Locations[0].Line, first.Locations[1].Line
+			cases := []struct {
+				name, scope     string
+				excepted, stale int
+			}{
+				{"unscoped", "", 2, 0},
+				{"hash prefix", "fingerprint: " + first.Hash[:8], 1, 0},
+				{"odd hash prefix", "fingerprint: " + first.Hash[:9], 1, 0},
+				{"full hash", "fingerprint: " + first.Hash, 1, 0},
+				{"uppercase", "fingerprint: " + strings.ToUpper(first.Hash[:8]), 1, 0},
+				{"stale hash", "fingerprint: 00000000", 0, 1},
+				{"inclusive lines", fmt.Sprintf("lines: %d-%d", start, end), 1, 0},
+				{"one copy", fmt.Sprintf("lines: %d-%d", start, start), 0, 0},
+				{"stale lines", "lines: 1000-1001", 0, 1},
+				{"hash and lines", fmt.Sprintf("fingerprint: %s\nlines: %d-%d", first.Hash[:8], start, end), 1, 0},
+				{"hash mismatch with matching lines", fmt.Sprintf("fingerprint: 00000000\nlines: %d-%d", start, end), 0, 1},
+				{"line mismatch with matching hash", "fingerprint: " + first.Hash[:8] + "\nlines: 1000-1001", 0, 1},
+			}
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					scope := strings.ReplaceAll(tc.scope, "\n", "\n    ")
+					writeStandardsManifest(t, root, fmt.Sprintf("exceptions:\n  - rule: HISS-19\n    path: %s\n    reason: retained clone\n    expires: 2026-11-18\n    %s\n", path, scope))
+					report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
+						RepoPath: root, Today: time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC),
+					})
+					if err != nil {
+						t.Fatal(err)
+					}
+					assertScopedExceptionReport(t, report, foreign, tc.excepted, tc.stale)
+				})
+			}
+		})
+	}
+}
+
+func scopedExceptionFixture(t *testing.T, foreign bool) (string, string, []dedupe.DuplicateGroup) {
+	t.Helper()
+	root, path := t.TempDir(), "clones.go"
+	writeFile(t, root, path, deepCopyGeneratedClonesSource+`
+func one(n int) int {
+ n += 17
+ n *= 19
+ n -= 23
+ return n
+}
+func two(n int) int {
+ n += 17
+ n *= 19
+ n -= 23
+ return n
+}
+`)
+	if foreign {
+		path = "app.py"
+		writeFile(t, root, path, "print('fixture')\n")
+		file := filepath.Join(root, path)
+		canned := fmt.Sprintf(`{"duplicates":[
+{"format":"python","lines":7,"tokens":50,"firstFile":{"name":%q,"start":1,"end":7},"secondFile":{"name":%q,"start":10,"end":16}},
+{"format":"python","lines":7,"tokens":50,"firstFile":{"name":%q,"start":30,"end":36},"secondFile":{"name":%q,"start":50,"end":56}}]}`, file, file, file, file)
+		t.Setenv("PRAETOR_TEST_FAKE_JSCPD", "1")
+		t.Setenv("PRAETOR_JSCPD_BIN", os.Args[0])
+		t.Setenv("PRAETOR_TEST_FAKE_JSCPD_REPORT_CONTENT", canned)
+	}
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{RepoPath: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups := report.Duplicates
+	if foreign {
+		groups = report.ForeignDuplicates
+	}
+	if len(groups) != 2 {
+		t.Fatalf("fixture needs two clone groups, got %+v", groups)
+	}
+	sort.Slice(groups, func(i, j int) bool { return groups[i].Locations[0].Line < groups[j].Locations[0].Line })
+	return root, path, groups
+}
+
+func assertScopedExceptionReport(t *testing.T, report *dedupe.DedupeReport, foreign bool, excepted, stale int) {
+	t.Helper()
+	gotExcepted, gotDuplicates := len(report.Excepted), len(report.Duplicates)
+	if foreign {
+		gotExcepted, gotDuplicates = len(report.ForeignExcepted), len(report.ForeignDuplicates)
+	}
+	if gotExcepted != excepted || gotDuplicates != 2-excepted || len(report.StaleExceptions) != stale {
+		t.Fatalf("excepted/reported/stale = %d/%d/%d, want %d/%d/%d", gotExcepted, gotDuplicates, len(report.StaleExceptions), excepted, 2-excepted, stale)
+	}
+	if excepted == 1 {
+		groups := report.Excepted
+		if foreign {
+			groups = report.ForeignExcepted
+		}
+		if len(groups[0].Exceptions) != 1 || groups[0].Exceptions[0].Reason != "retained clone" {
+			t.Fatalf("missing exception metadata: %+v", groups[0])
+		}
+	}
+}
+
+func TestScanRepo_ScopedExceptionExpiry(t *testing.T) {
+	for _, foreign := range []bool{false, true} {
+		t.Run(fmt.Sprintf("foreign=%v", foreign), func(t *testing.T) {
+			root, path, groups := scopedExceptionFixture(t, foreign)
+			first := groups[0]
+			cases := []struct{ name, scope string }{
+				{"hash", "fingerprint: " + first.Hash[:8]},
+				{"lines", fmt.Sprintf("lines: %d-%d", first.Locations[0].Line, first.Locations[1].Line)},
+			}
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					writeStandardsManifest(t, root, fmt.Sprintf("exceptions:\n  - rule: HISS-19\n    path: %s\n    reason: expired scoped clone\n    expires: 2026-10-20\n    %s\n", path, tc.scope))
+					report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
+						RepoPath: root, Today: time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC),
+					})
+					if err != nil {
+						t.Fatal(err)
+					}
+					assertScopedExceptionReport(t, report, foreign, 0, 0)
+					found := report.Duplicates
+					if foreign {
+						found = report.ForeignDuplicates
+					}
+					assertScopedExpiry(t, found, first.Hash)
+				})
+			}
+		})
+	}
+}
+
+func assertScopedExpiry(t *testing.T, groups []dedupe.DuplicateGroup, hash string) {
+	t.Helper()
+	for _, group := range groups {
+		want := ""
+		if group.Hash == hash {
+			want = "2026-10-20"
+		}
+		for _, loc := range group.Locations {
+			if loc.Expired != want {
+				t.Errorf("%s:%d expired=%q, want %q", loc.Path, loc.Line, loc.Expired, want)
+			}
+		}
+	}
+}
+
+func TestScanRepo_SeparateLineScopesKeepBothEntries(t *testing.T) {
+	for _, foreign := range []bool{false, true} {
+		t.Run(fmt.Sprintf("foreign=%v", foreign), func(t *testing.T) {
+			root, path, groups := scopedExceptionFixture(t, foreign)
+			first := groups[0]
+			writeStandardsManifest(t, root, fmt.Sprintf(`exceptions:
+  - rule: HISS-19
+    path: %s
+    fingerprint: %s
+    lines: %d-%d
+    reason: first retained copy
+    expires: 2026-11-18
+  - rule: HISS-19
+    path: %s
+    fingerprint: %s
+    lines: %d-%d
+    reason: second retained copy
+    expires: 2026-11-18
+`, path, first.Hash[:8], first.Locations[0].Line, first.Locations[0].Line,
+				path, first.Hash[:8], first.Locations[1].Line, first.Locations[1].Line))
+			report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
+				RepoPath: root, Today: time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			found, remaining := report.Excepted, report.Duplicates
+			if foreign {
+				found, remaining = report.ForeignExcepted, report.ForeignDuplicates
+			}
+			if len(found) != 1 || len(remaining) != 1 || len(report.StaleExceptions) != 0 {
+				t.Fatalf("separate scopes misclassified: %+v", report)
+			}
+			if len(found[0].Exceptions) != 2 || found[0].Exceptions[1].Reason != "second retained copy" {
+				t.Fatalf("each scoped entry must retain metadata: %+v", found[0].Exceptions)
+			}
+		})
 	}
 }
