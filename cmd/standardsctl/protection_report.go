@@ -15,6 +15,7 @@ var protectionTags = map[forge.ProtectionVerdict]string{
 	forge.ProtectionNotRequired: "[OK]",
 	forge.ProtectionDrift:       "[DRIFT]",
 	forge.ProtectionStricter:    "[STRICTER]",
+	forge.ProtectionPending:     "[INFO]",
 }
 
 // protectionTarget is the branch whose live protection is compared, and what it is compared
@@ -24,6 +25,7 @@ type protectionTarget struct {
 	branch     string
 	policy     config.BranchProtectionPolicy
 	contexts   []string
+	renames    []forge.StatusContextRename
 }
 
 // protectionReader reads what the forge enforces on a branch: forge.GitHubDriver, or a stand-in
@@ -35,8 +37,7 @@ type protectionReader interface {
 // liveProtectionTarget is what the live branch protection of a repository is compared with: its
 // default branch (forge.RepositoryDefaultBranch), the declared policy, and the status checks sync
 // --remote requires there (remoteStatusContexts). plan --remote and sync --remote compare with it,
-// so the preview judges the forge on the declaration the write applies; the audit takes the status
-// checks from the default branch's workflows instead (auditProtectionTarget).
+// so the preview and audit judge the forge on the declaration the write applies.
 func liveProtectionTarget(ctx context.Context, rootDir string, manifest *config.Manifest, policy config.BranchProtectionPolicy) (protectionTarget, error) {
 	branch, err := forge.RepositoryDefaultBranch(ctx, rootDir, manifest)
 	if err != nil {
@@ -68,7 +69,7 @@ func compareLiveProtection(ctx context.Context, reader protectionReader, target 
 	if err != nil {
 		return nil, nil, &forgeReadError{err: fmt.Errorf("read the live branch protection of %s: %w", target.branch, err)}
 	}
-	findings, err := forge.EvaluateBranchProtection(target.policy, target.contexts, live)
+	findings, err := forge.EvaluateBranchProtectionWithRenames(target.policy, target.contexts, live, target.renames)
 	if err != nil {
 		return nil, nil, fmt.Errorf("compare the live branch protection of %s: %w", target.branch, err)
 	}

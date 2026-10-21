@@ -92,6 +92,36 @@ func TestAuditCheckpointBundle_Positive_QuietCases(t *testing.T) {
 	}
 }
 
+// The source bundle selected for adoption can differ from the installed audit binary.
+func TestAuditCheckpointBundle_AfterAdoptFromSelectedSource(t *testing.T) {
+	source := newAdoptLockSource(t)
+	for _, rel := range checkpointBundle {
+		text := firstPriorCheckpointText(t, rel)
+		if rel == checkpointLauncher {
+			text = mustRead(t, filepath.Join(checkpointFixtureDir(rel), "proven-339.python.sh"))
+		}
+		if text == "" {
+			t.Fatalf("missing prior fixture for %s", rel)
+		}
+		mustWrite(t, filepath.Join(source, filepath.FromSlash(rel)), text)
+	}
+	repo := newTestRepo(t, "checkpoint-source-audit")
+	adoptWithSource(t, repo, source, false)
+	lines, err := AuditCheckpointBundleWithSource(t.Context(), repo, source)
+	if err != nil || len(lines) != 0 {
+		t.Fatalf("freshly adopted source bundle warned: %q / %v", lines, err)
+	}
+	if lines := auditCheckpointLines(t, repo); len(lines) != len(checkpointBundle) {
+		t.Fatalf("running-release comparison lost stale warnings: %q", lines)
+	}
+	if err := os.Remove(filepath.Join(source, filepath.FromSlash(checkpointCommon))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AuditCheckpointBundleWithSource(t.Context(), repo, source); err == nil {
+		t.Fatal("incomplete selected source was silently accepted")
+	}
+}
+
 // Boundary: currentCheckpointDigests names exactly the bundle this repository ships, each also
 // recorded as a prior text, so a changed script fails here until both maps record it.
 func TestCurrentCheckpointDigests_Boundary_MatchShippedBundle(t *testing.T) {

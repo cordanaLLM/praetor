@@ -37,6 +37,12 @@ var currentCheckpointDigests = map[string]string{
 // policy vendors its scripts from one reviewed commit and keeps them on purpose (BUG-858), so
 // nothing is reported there either.
 func AuditCheckpointBundle(ctx context.Context, rootDir string) ([]string, error) {
+	return AuditCheckpointBundleWithSource(ctx, rootDir, "")
+}
+
+// AuditCheckpointBundleWithSource compares with the bundle adoption copies from sourceRoot,
+// the explicitly selected catalog. Empty sourceRoot retains the running release as reference.
+func AuditCheckpointBundleWithSource(ctx context.Context, rootDir, sourceRoot string) ([]string, error) {
 	vendored, err := extendsCanonicalLefthook(ctx, rootDir)
 	if err != nil || vendored {
 		return nil, err
@@ -45,20 +51,54 @@ func AuditCheckpointBundle(ctx context.Context, rootDir string) ([]string, error
 	if err != nil {
 		return nil, err
 	}
+	if len(digests) == 0 {
+		return nil, nil
+	}
+	current, err := checkpointReferenceDigests(ctx, sourceRoot)
+	if err != nil {
+		return nil, err
+	}
 	remedy := "run praetorctl adopt (no --force needed) to refresh it."
-	if edited := editedCheckpointFile(digests); edited != "" {
+	if edited := editedCheckpointFile(digests, current); edited != "" {
 		remedy = "adoption keeps the bundle while " + edited + " holds an edited copy; restore that file " +
 			"or replace the bundle with this release's text, then run praetorctl adopt."
 	}
+	return checkpointWarningLines(digests, current, sourceRoot, remedy), nil
+}
+
+func checkpointWarningLines(digests, current map[string]string, sourceRoot, remedy string) []string {
 	var lines []string
+	reference := "this release's"
+	if sourceRoot != "" {
+		reference = "the selected source bundle's"
+	}
 	for i := 0; i < len(checkpointBundle) && i < maxCheckpointSources; i++ {
 		rel := checkpointBundle[i]
-		if release, ok := priorCheckpointDigests[rel][digests[rel]]; ok && digests[rel] != currentCheckpointDigests[rel] {
-			lines = append(lines, fmt.Sprintf("[WARN] %s holds the checkpoint evaluator Praetor shipped with %s, not this release's; %s",
-				rel, release, remedy))
+		if release, ok := priorCheckpointDigests[rel][digests[rel]]; ok && digests[rel] != current[rel] {
+			lines = append(lines, fmt.Sprintf("[WARN] %s holds the checkpoint evaluator Praetor shipped with %s, not %s; %s",
+				rel, release, reference, remedy))
 		}
 	}
-	return lines, nil
+	return lines
+}
+
+func checkpointReferenceDigests(ctx context.Context, root string) (map[string]string, error) {
+	if root == "" {
+		return currentCheckpointDigests, nil
+	}
+	sources, err := readCheckpointSources(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	current := make(map[string]string, len(sources))
+	for i := 0; i < len(sources) && i < maxCheckpointSources; i++ {
+		digest, _, err := util.CanonicalTextDigest(sources[i].data)
+		if err != nil {
+			return nil, fmt.Errorf("checkpoint source %s: %w", sources[i].path, err)
+		}
+		current[sources[i].path] = digest
+	}
+	return current, nil
 }
 
 // checkpointBundleDigests returns the digest (util.CanonicalTextDigest) of every checkpoint
@@ -87,11 +127,11 @@ func checkpointBundleDigests(ctx context.Context, rootDir string) (map[string]st
 
 // editedCheckpointFile returns the first bundle path whose digest is neither this release's nor
 // an earlier Praetor text of it, or "" when every existing file is one of those.
-func editedCheckpointFile(digests map[string]string) string {
+func editedCheckpointFile(digests, current map[string]string) string {
 	for i := 0; i < len(checkpointBundle) && i < maxCheckpointSources; i++ {
 		rel := checkpointBundle[i]
 		digest, exists := digests[rel]
-		if !exists || digest == currentCheckpointDigests[rel] {
+		if !exists || digest == current[rel] {
 			continue
 		}
 		if _, prior := priorCheckpointDigests[rel][digest]; !prior {

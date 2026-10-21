@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -112,7 +111,7 @@ func auditLiveForge(ctx context.Context, manifest *config.Manifest, rootDir stri
 
 // auditLiveBranchProtection compares the branch protection the default branch enforces on the
 // forge, from its rulesets and its legacy protection object alike, with the declared policy and
-// the status checks the default branch's workflows report (auditProtectionTarget), through the
+// the status checks rendered from this checkout's declaration (auditProtectionTarget), through the
 // comparison plan --remote prints (compareLiveProtection). The committed ruleset gate reads only the file
 // (adopt.AuditBranchProtectionWithPolicy), so a ruleset GitHub never applied passed it (#159).
 // Drift fails the audit and names every property that differs; a setting stricter than declared
@@ -154,16 +153,9 @@ func auditLiveBranchProtection(ctx context.Context, manifest *config.Manifest, r
 	return errors.Join(liveProtectionVerdict(target, protection, findings), liveMergeQueueVerdict(ctx, rootDir, target, protection))
 }
 
-// auditProtectionTarget is what the audit compares the live branch protection with: the
-// liveProtectionTarget plan --remote compares with, except for the status checks. Those are the
-// checks the workflows of origin's default branch report as this checkout last fetched it
-// (forge.RequiredStatusContextsAt), not this checkout's: the branch can require a job only once
-// the job is on it, and requiring it earlier blocks every open pull request that lacks it. A
-// check this checkout adds is named as not compared yet, and a check the default branch gained
-// since this checkout branched off is compared. Without origin's default branch in the checkout,
-// or with a workflow of it the checkout does not hold (forge.ErrCommittedWorkflowAbsent), the
-// checks are this checkout's, and a note names that substitution (workingTreeChecksNote). The
-// notes are printed with the verdict.
+// auditProtectionTarget uses the same declared checks as plan and ruleset apply. The fetched
+// default branch supplies only evidence of a pending rename, never the declared set. Without
+// that evidence, the comparison remains strict; an unread base cannot excuse a missing check.
 func auditProtectionTarget(ctx context.Context, rootDir string, manifest *config.Manifest, policy config.BranchProtectionPolicy) (protectionTarget, []string, error) {
 	target, err := liveProtectionTarget(ctx, rootDir, manifest, policy)
 	if err != nil {
@@ -175,32 +167,21 @@ func auditProtectionTarget(ctx context.Context, rootDir string, manifest *config
 		return protectionTarget{}, nil, err
 	}
 	if commit == "" {
-		return target, []string{workingTreeChecksNote(target.branch, ref+" is not in this checkout")}, nil
+		return target, nil, nil
 	}
-	committed, err := forge.RequiredStatusContextsAt(ctx, rootDir, commit, target.repository, forge.ForMergeQueue(policy.MergeQueue))
+	ancestor, err := util.RunGitProbe(ctx, rootDir, 128, "merge-base", "HEAD", commit)
+	if err != nil {
+		return target, []string{fmt.Sprintf("[INFO] Pending status check renames not evaluated: no common ancestor of HEAD and %s (%v); declared checks remain compared.", ref, err)}, nil
+	}
+	renamed, err := forge.RequiredStatusContextRenames(ctx, rootDir, strings.TrimSpace(string(ancestor.Stdout)), target.repository)
 	if errors.Is(err, forge.ErrCommittedWorkflowAbsent) {
-		return target, []string{workingTreeChecksNote(target.branch, fmt.Sprintf(
-			"the workflows of %s (%s) are not all in this checkout, as in a partial clone (%v)", ref, shortHead(commit), err))}, nil
+		return target, []string{fmt.Sprintf("[INFO] Pending status check renames not evaluated: %s (%v); declared checks remain compared.", ref, err)}, nil
 	}
 	if err != nil {
-		return protectionTarget{}, nil, fmt.Errorf("discover the required status checks of %s: %w", ref, err)
+		return protectionTarget{}, nil, fmt.Errorf("discover pending status check renames from %s: %w", ref, err)
 	}
-	notes := []string{fmt.Sprintf("[INFO] Live branch protection of %s: status checks compared with the ones %s (%s) reports.",
-		target.branch, ref, shortHead(commit))}
-	added := slices.DeleteFunc(slices.Clone(target.contexts), func(check string) bool { return slices.Contains(committed, check) })
-	if len(added) > 0 {
-		notes = append(notes, fmt.Sprintf("[INFO] Live branch protection of %s: not compared yet, as %s does not report them: %s. "+
-			"Once they are on %s, 'praetorctl sync --remote' requires them.", target.branch, ref, strings.Join(added, ", "), target.branch))
-	}
-	target.contexts = committed
-	return target, notes, nil
-}
-
-// workingTreeChecksNote is the line that names the substitution auditProtectionTarget makes when
-// it cannot read the status checks of the default branch, and why.
-func workingTreeChecksNote(branch, why string) string {
-	return fmt.Sprintf("[INFO] Live branch protection of %s: %s, so the status checks are compared with the ones "+
-		"this checkout's workflows report.", branch, why)
+	target.renames = renamed
+	return target, nil, nil
 }
 
 // liveProtectionNotCompared returns the line of a live branch protection check that is not
@@ -250,7 +231,7 @@ func unadoptedDefaultBranchNote(ctx context.Context, rootDir string, manifest *c
 }
 
 // defaultBranchHasManifest reports whether the commit origin/<branch> points at in this checkout
-// holds the manifest. It reads the fetched ref, as the status checks of the same branch are read,
+// holds the manifest. It reads the fetched ref, as the evidence for a pending rename is read,
 // so no second forge read is made. An origin ref this checkout does not hold is an error, not an
 // absent manifest.
 func defaultBranchHasManifest(ctx context.Context, rootDir, branch string) (bool, error) {
@@ -299,12 +280,21 @@ func liveProtectionVerdict(target protectionTarget, live *forge.LiveBranchProtec
 		}
 	}
 	for _, finding := range findings {
+		if finding.Verdict == forge.ProtectionPending {
+			fmt.Printf("[INFO] Live branch protection of %s: %s\n", target.branch, describeProtectionFinding(finding))
+		}
 		if finding.Verdict == forge.ProtectionStricter {
 			fmt.Printf("[PASS] Live branch protection of %s: live is stricter than declared: %s declared %s, live %s\n",
 				target.branch, finding.Property, finding.Declared, finding.Live)
 		}
 	}
 	if len(drift) == 0 {
+		for _, finding := range findings {
+			if finding.Verdict == forge.ProtectionPending {
+				fmt.Printf("[PASS] Live branch protection of %s: declared policy satisfied within one pending rename window (%s).\n", target.branch, describeMechanisms(live))
+				return nil
+			}
+		}
 		fmt.Printf("[PASS] Live branch protection of %s compared with the forge: GitHub enforces every declared property (%s).\n",
 			target.branch, describeMechanisms(live))
 		return nil
