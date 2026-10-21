@@ -6,9 +6,176 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/dedupe"
 )
+
+type exceptionScanCase struct {
+	name        string
+	native      bool
+	foreign     bool
+	expires     string
+	wantNative  int
+	wantForeign int
+	wantStale   int
+	wantPassed  bool
+}
+
+func TestForeignScan_ExceptionUsage(t *testing.T) {
+	cases := []exceptionScanCase{
+		{"live_both", true, true, "2026-11-18", 1, 1, 0, true},
+		{"live_native_only", true, false, "2026-11-18", 1, 0, 0, true},
+		{"live_foreign_only", false, true, "2026-11-18", 0, 1, 0, true},
+		{"live_neither", false, false, "2026-11-18", 0, 0, 1, false},
+		{"expiry_day_both", true, true, "2026-10-21", 1, 1, 0, true},
+		{"expired_both", true, true, "2026-10-20", 0, 0, 0, false},
+		{"expired_native_only", true, false, "2026-10-20", 0, 0, 0, false},
+		{"expired_foreign_only", false, true, "2026-10-20", 0, 0, 0, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			report := scanExceptionFixture(t, tc)
+			assertExceptionScanReport(t, report, tc)
+		})
+	}
+}
+
+func scanExceptionFixture(t *testing.T, tc exceptionScanCase) *dedupe.DedupeReport {
+	t.Helper()
+	root := t.TempDir()
+	writeFile(t, root, "clones.go", "package sample\n")
+	writeFile(t, root, "app.py", "print('fixture')\n")
+	path := "app.py"
+	if tc.native {
+		path = "clones.go"
+		writeFile(t, root, path, deepCopyGeneratedClonesSource)
+	}
+	canned := `{"duplicates":[]}`
+	if tc.foreign {
+		canned = fmt.Sprintf(`{"duplicates":[{"format":"python","lines":10,"tokens":50,
+		"firstFile":{"name":%q,"start":1,"end":10},
+		"secondFile":{"name":%q,"start":30,"end":39}}]}`,
+			filepath.Join(root, path), filepath.Join(root, path))
+	}
+	t.Setenv("PRAETOR_TEST_FAKE_JSCPD", "1")
+	t.Setenv("PRAETOR_JSCPD_BIN", os.Args[0])
+	t.Setenv("PRAETOR_TEST_FAKE_JSCPD_REPORT_CONTENT", canned)
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
+		RepoPath: root,
+		Today:    time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC),
+		Exceptions: []config.Exception{{
+			Rule: config.ExceptionRuleDedupe, Path: path,
+			Reason: "Category D: retained fixture clones", Expires: tc.expires,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("scan exception fixture: %v", err)
+	}
+	return report
+}
+
+func assertExceptionScanReport(t *testing.T, report *dedupe.DedupeReport, tc exceptionScanCase) {
+	t.Helper()
+	data, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		ForeignExcepted []dedupe.DuplicateGroup `json:"foreign_excepted"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if report.ForeignScanner != "jscpd "+dedupe.JscpdVersion || report.ForeignSkipped != "" {
+		t.Fatalf("stub scanner not executed: %+v", report)
+	}
+	if len(report.Excepted) != tc.wantNative || len(wire.ForeignExcepted) != tc.wantForeign {
+		t.Errorf("excepted native/foreign = %d/%d, want %d/%d", len(report.Excepted), len(wire.ForeignExcepted), tc.wantNative, tc.wantForeign)
+	}
+	if len(report.StaleExceptions) != tc.wantStale || report.Passed != tc.wantPassed {
+		t.Errorf("stale/passed = %d/%v, want %d/%v", len(report.StaleExceptions), report.Passed, tc.wantStale, tc.wantPassed)
+	}
+	assertExceptionFindingCounts(t, report, tc)
+	assertExceptionGroupMetadata(t, wire.ForeignExcepted, tc.expires, false)
+	if tc.expires == "2026-10-20" {
+		assertExceptionGroupMetadata(t, report.Duplicates, tc.expires, true)
+		assertExceptionGroupMetadata(t, report.ForeignDuplicates, tc.expires, true)
+	}
+}
+
+func assertExceptionFindingCounts(t *testing.T, report *dedupe.DedupeReport, tc exceptionScanCase) {
+	t.Helper()
+	wantNative, wantForeign := 0, 0
+	if tc.native {
+		wantNative = 1 - tc.wantNative
+	}
+	if tc.foreign {
+		wantForeign = 1 - tc.wantForeign
+	}
+	if len(report.Duplicates) != wantNative || len(report.ForeignDuplicates) != wantForeign {
+		t.Errorf("unexcused native/foreign = %d/%d, want %d/%d", len(report.Duplicates), len(report.ForeignDuplicates), wantNative, wantForeign)
+	}
+	if report.CleanlinessScore != float64(100-15*wantNative) {
+		t.Errorf("score = %v, want %d", report.CleanlinessScore, 100-15*wantNative)
+	}
+}
+
+func assertExceptionGroupMetadata(t *testing.T, groups []dedupe.DuplicateGroup, expires string, expired bool) {
+	t.Helper()
+	for _, group := range groups {
+		if group.Language == "" && !expired {
+			t.Error("foreign excepted group lost its language")
+		}
+		if !expired {
+			if len(group.Exceptions) != 1 || group.Exceptions[0].Expires != expires {
+				t.Errorf("exception metadata = %+v, want expiry %s", group.Exceptions, expires)
+			}
+			continue
+		}
+		for _, loc := range group.Locations {
+			if loc.Expired != expires {
+				t.Errorf("%s:%d expiry = %q, want %q", loc.Path, loc.Line, loc.Expired, expires)
+			}
+		}
+	}
+}
+
+func TestForeignScan_ExceptionRootBoundary(t *testing.T) {
+	for _, mainPath := range []string{"app.py", "other.py"} {
+		t.Run(mainPath, func(t *testing.T) {
+			root, other := t.TempDir(), t.TempDir()
+			writeFile(t, root, "main.go", "package sample\n")
+			writeFile(t, root, "app.py", "print('fixture')\n")
+			writeFile(t, root, "other.py", "print('fixture')\n")
+			writeFile(t, other, "app.py", "print('fixture')\n")
+			canned := fmt.Sprintf(`{"duplicates":[{"format":"python","lines":10,"tokens":50,
+			"firstFile":{"name":%q,"start":1,"end":10},
+			"secondFile":{"name":%q,"start":1,"end":10}}]}`,
+				filepath.Join(root, mainPath), filepath.Join(other, "app.py"))
+			t.Setenv("PRAETOR_TEST_FAKE_JSCPD", "1")
+			t.Setenv("PRAETOR_JSCPD_BIN", os.Args[0])
+			t.Setenv("PRAETOR_TEST_FAKE_JSCPD_REPORT_CONTENT", canned)
+			report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
+				RepoPath: root, AcrossRoots: []string{other},
+				Today: time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC),
+				Exceptions: []config.Exception{{Rule: config.ExceptionRuleDedupe, Path: "app.py",
+					Reason: "Category D: main repository clones", Expires: "2026-11-18"}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantStale := 0
+			if mainPath == "other.py" {
+				wantStale = 1
+			}
+			if len(report.ForeignDuplicates) != 1 || len(report.StaleExceptions) != wantStale {
+				t.Errorf("foreign duplicates/stale = %d/%d, want 1/%d", len(report.ForeignDuplicates), len(report.StaleExceptions), wantStale)
+			}
+		})
+	}
+}
 
 func TestMain(m *testing.M) {
 	if os.Getenv("PRAETOR_TEST_FAKE_JSCPD") == "1" {

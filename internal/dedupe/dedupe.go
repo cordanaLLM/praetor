@@ -88,6 +88,8 @@ type DedupeReport struct {
 	// ForeignDuplicates holds duplicate groups discovered by the foreign scanner (jscpd).
 	// Foreign duplicate groups are reported, not gated (they do not alter CleanlinessScore or Passed).
 	ForeignDuplicates []DuplicateGroup `json:"foreign_duplicates,omitempty"`
+	// ForeignExcepted holds foreign groups fully excused by live HISS-19 exceptions.
+	ForeignExcepted []DuplicateGroup `json:"foreign_excepted,omitempty"`
 	// ForeignScanner records the name and version of the foreign scanner when executed.
 	ForeignScanner string `json:"foreign_scanner,omitempty"`
 	// ForeignSkipped records why the foreign scan was skipped, if applicable.
@@ -190,11 +192,14 @@ func ScanRepoWithOptions(ctx context.Context, opts ScanOptions) (*DedupeReport, 
 		resolveAdopterGitSprawl(adopterStarts, report)
 	}
 
-	collectDuplicates(funcHashMap, funcLocMap, exceptions, today, report)
-	calculateScore(report)
+	used := make([]bool, len(exceptions))
+	collectDuplicates(funcHashMap, funcLocMap, exceptions, today, used, report)
 	if err := scanForeign(ctx, repoPath, opts.AcrossRoots, scope, report); err != nil {
 		return nil, fmt.Errorf("scan foreign duplicates: %w", err)
 	}
+	classifyForeignDuplicates(repoPath, exceptions, today, used, report)
+	collectStaleExceptions(exceptions, used, report)
+	calculateScore(report)
 	return report, nil
 }
 
@@ -771,13 +776,12 @@ func reportAdopterSprawl(starts []adopterGitStart, helper adopterGitFunction, re
 	})
 }
 
-func collectDuplicates(hashMap map[string][]FileLocation, locMap map[string]int, exceptions []config.Exception, today time.Time, report *DedupeReport) {
-	used := make([]bool, len(exceptions))
+func collectDuplicates(hashMap map[string][]FileLocation, locMap map[string]int, exceptions []config.Exception, today time.Time, used []bool, report *DedupeReport) {
 	for hash, locs := range hashMap {
 		if len(locs) <= 1 {
 			continue
 		}
-		group, allExcepted := classifyDuplicateGroup(hash, locMap[hash], locs, exceptions, today, used)
+		group, allExcepted := classifyDuplicateGroup(DuplicateGroup{Hash: hash, LOC: locMap[hash], Locations: locs}, "", exceptions, today, used)
 		if allExcepted {
 			report.Excepted = append(report.Excepted, group)
 		} else {
@@ -790,6 +794,9 @@ func collectDuplicates(hashMap map[string][]FileLocation, locMap map[string]int,
 	sort.Slice(report.Excepted, func(i, j int) bool {
 		return report.Excepted[i].Hash < report.Excepted[j].Hash
 	})
+}
+
+func collectStaleExceptions(exceptions []config.Exception, used []bool, report *DedupeReport) {
 	for i := 0; i < len(exceptions) && i < config.MaxExceptions; i++ {
 		if !used[i] {
 			report.StaleExceptions = append(report.StaleExceptions, fmt.Sprintf(
@@ -799,18 +806,14 @@ func collectDuplicates(hashMap map[string][]FileLocation, locMap map[string]int,
 	}
 }
 
-func classifyDuplicateGroup(hash string, loc int, locs []FileLocation, exceptions []config.Exception, today time.Time, used []bool) (DuplicateGroup, bool) {
-	group := DuplicateGroup{
-		Hash:      hash,
-		LOC:       loc,
-		Locations: append([]FileLocation(nil), locs...),
-	}
+func classifyDuplicateGroup(group DuplicateGroup, mainRoot string, exceptions []config.Exception, today time.Time, used []bool) (DuplicateGroup, bool) {
+	group.Locations = append([]FileLocation(nil), group.Locations...)
 	allExcepted := true
 	var groupExceptions []ExceptionEntry
 	seen := make(map[string]bool)
 
 	for i := range group.Locations {
-		live := judgeLocation(&group.Locations[i], exceptions, today, used)
+		live := judgeLocation(&group.Locations[i], mainRoot, exceptions, today, used)
 		if live != nil {
 			if !seen[live.Path] {
 				seen[live.Path] = true
@@ -830,7 +833,11 @@ func classifyDuplicateGroup(hash string, loc int, locs []FileLocation, exception
 	return group, allExcepted
 }
 
-func judgeLocation(loc *FileLocation, exceptions []config.Exception, today time.Time, used []bool) *config.Exception {
+func judgeLocation(loc *FileLocation, mainRoot string, exceptions []config.Exception, today time.Time, used []bool) *config.Exception {
+	// Entries belong to the main manifest, so the same path in another root cannot use them.
+	if loc.Root != "" && loc.Root != mainRoot {
+		return nil
+	}
 	live, expired := config.ExceptionFor(exceptions, loc.Path, today, used)
 	if live == nil && expired != nil {
 		loc.Expired = expired.Expires

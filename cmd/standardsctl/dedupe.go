@@ -133,6 +133,7 @@ func printDedupeReport(dir string, report *dedupe.DedupeReport) error {
 			fmt.Println("  Clone detection for other languages is not implemented.")
 		}
 		printForeignDuplicates(report)
+		printExceptedBlocks("Excepted Foreign Duplicate Blocks", report.ForeignExcepted)
 		if len(report.StaleExceptions) > 0 {
 			printStaleExceptions(report.StaleExceptions)
 			return dedupeVerdict(report)
@@ -160,7 +161,8 @@ func printDedupeReport(dir string, report *dedupe.DedupeReport) error {
 	}
 
 	printDuplicateBlocks(report.Duplicates)
-	printExceptedBlocks(report.Excepted)
+	printExceptedBlocks("Excepted Duplicate Function Blocks", report.Excepted)
+	printExceptedBlocks("Excepted Foreign Duplicate Blocks", report.ForeignExcepted)
 	printForeignDuplicates(report)
 	printSprawlInfractions(report.SprawlItems)
 	printStaleExceptions(report.StaleExceptions)
@@ -186,6 +188,10 @@ func printForeignDuplicates(report *dedupe.DedupeReport) {
 	for i, d := range report.ForeignDuplicates {
 		fmt.Printf("  [%d] %s, %d lines (hash: %s):\n", i+1, d.Language, d.LOC, d.Hash)
 		for _, loc := range d.Locations {
+			if loc.Expired != "" {
+				fmt.Printf("      - %s:%d (root: %s; its %s exception expired on %s)\n", loc.Path, loc.Line, loc.Root, config.ExceptionRuleDedupe, loc.Expired)
+				continue
+			}
 			if loc.Root != "" {
 				fmt.Printf("      - %s:%d (root: %s)\n", loc.Path, loc.Line, loc.Root)
 			} else {
@@ -213,15 +219,19 @@ func printDuplicateBlocks(duplicates []dedupe.DuplicateGroup) {
 	}
 }
 
-func printExceptedBlocks(excepted []dedupe.DuplicateGroup) {
+func printExceptedBlocks(title string, excepted []dedupe.DuplicateGroup) {
 	if len(excepted) == 0 {
 		return
 	}
-	fmt.Printf("\nExcepted Duplicate Function Blocks (%d):\n", len(excepted))
+	fmt.Printf("\n%s (%d):\n", title, len(excepted))
 	for i, d := range excepted {
 		fmt.Printf("  [%d] %d lines (hash: %s):\n", i+1, d.LOC, d.Hash)
 		for _, loc := range d.Locations {
-			fmt.Printf("      - %s:%d in %s()\n", loc.Path, loc.Line, loc.FuncName)
+			if loc.FuncName == "" {
+				fmt.Printf("      - %s:%d\n", loc.Path, loc.Line)
+			} else {
+				fmt.Printf("      - %s:%d in %s()\n", loc.Path, loc.Line, loc.FuncName)
+			}
 		}
 		for _, exc := range d.Exceptions {
 			fmt.Printf("      excepted until %s by the exceptions entry (rule %s, %s): %s\n",

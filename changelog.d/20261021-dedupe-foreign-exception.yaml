@@ -1,0 +1,3 @@
+type: fixed
+title: "Honor HISS-19 exceptions in foreign duplicate groups and report entries stale only when neither scanner uses them"
+breaking: false
