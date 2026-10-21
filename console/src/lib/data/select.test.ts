@@ -47,6 +47,21 @@ test('the frontier is in rank order', () => {
 	}
 });
 
+test('the frontier Repository filter uses each row repo and excludes missing repos', () => {
+	const row = { title: 'Same title', status: 'ready', score: 1 };
+	const rows = [
+		{ ...row, id: 'other', repo: 'example/beta', score: 5 },
+		{ ...row, id: 'missing' },
+		{ ...row, id: 'low', repo: 'example/alpha' },
+		{ ...row, id: 'high', repo: 'example/alpha', score: 3 }
+	];
+	expect(
+		filterFrontier(rows, { ...DEFAULT_FILTERS, gRepo: 'example/alpha' }).map((r) => r.id)
+	).toEqual(['high', 'low']);
+	expect(filterFrontier(rows, { ...DEFAULT_FILTERS, gRepo: 'example/theta' })).toEqual([]);
+	expect(filterFrontier(rows, DEFAULT_FILTERS)).toHaveLength(rows.length);
+});
+
 test('repeated ids get distinct keys', () => {
 	expect(keyed([{ id: 'x' }, { id: 'y' }, { id: 'x' }], (v) => v.id).map((k) => k.key)).toEqual([
 		'x',

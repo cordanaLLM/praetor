@@ -8,6 +8,7 @@ filtered by class, goal, status and repository and by the search box.
 	import type { FileSlot } from '#lib/data/store.svelte.ts';
 	import type { Filters, ViewState } from '#lib/view/state.svelte.ts';
 	import FileStatus from './FileStatus.svelte';
+	import GraphDone from './GraphDone.svelte';
 	import Select from './Select.svelte';
 	import Skeleton from './Skeleton.svelte';
 	import TotalsBars from './TotalsBars.svelte';
@@ -24,10 +25,24 @@ filtered by class, goal, status and repository and by the search box.
 	}
 
 	const menus = $derived([
-		{ key: 'gClass', label: 'Class', values: distinct(frontierAll, (f) => f.class) },
-		{ key: 'gGoal', label: 'Goal', values: distinct(frontierAll, (f) => f.goal) },
-		{ key: 'gStatus', label: 'Status', values: distinct(frontierAll, (f) => f.status) },
-		{ key: 'gRepo', label: 'Repository', values: distinct(winsAll, (w) => w.repo) }
+		{ key: 'gClass', label: 'Class', values: options(distinct(frontierAll, (f) => f.class)) },
+		{ key: 'gGoal', label: 'Goal', values: options(distinct(frontierAll, (f) => f.goal)) },
+		{
+			key: 'gStatus',
+			label: 'Status',
+			values: options(distinct(frontierAll, (f) => f.status))
+		},
+		{
+			key: 'gRepo',
+			label: 'Repository',
+			values: [
+				{ value: '', label: 'Any' },
+				...(slot.data?.repos ?? []).map((r) => ({
+					value: r.repo,
+					label: `${r.repo} (${r.items})`
+				}))
+			]
+		}
 	] as const);
 </script>
 
@@ -41,13 +56,15 @@ filtered by class, goal, status and repository and by the search box.
 		<TotalsBars totals={slot.data.totals} unestimated={slot.data.unestimated} />
 	</section>
 
+	<GraphDone recent={slot.data.done_recent} trend={slot.data.done_trend} />
+
 	<div class="filters" role="group" aria-label="Graph filters">
 		{#each menus as m (m.key)}
 			<Select
 				id={`f-${m.key}`}
 				label={m.label}
 				value={view.filters[m.key as keyof Filters] as string}
-				options={options([...m.values])}
+				options={m.values}
 				onchange={(v) => view.setFilter(m.key, v)}
 			/>
 		{/each}

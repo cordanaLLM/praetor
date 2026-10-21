@@ -129,7 +129,10 @@
         "totals",
         "quick_wins",
         "unestimated",
-        "frontier"
+        "frontier",
+        "repos",
+        "done_recent",
+        "done_trend"
       ],
       "unevaluatedProperties": false,
       "properties": {
@@ -242,6 +245,86 @@
               },
               "class": {
                 "type": "string"
+              },
+              "repo": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "done_recent": {
+          "type": "array",
+          "maxItems": 100,
+          "description": "Nodes that went done in the last 24 hours, newest first; a node a withdrawn order closed is left out.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "title",
+              "repo",
+              "done_at"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string"
+              },
+              "repo": {
+                "type": "string"
+              },
+              "done_at": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ$"
+              }
+            }
+          }
+        },
+        "done_trend": {
+          "type": "array",
+          "minItems": 14,
+          "maxItems": 14,
+          "description": "Nodes that went done per UTC day, the last 14 days, oldest first, zero days kept.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "day",
+              "done"
+            ],
+            "properties": {
+              "day": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d\\d-\\d\\d$"
+              },
+              "done": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "repos": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "repo",
+              "items"
+            ],
+            "properties": {
+              "repo": {
+                "type": "string",
+                "minLength": 1
+              },
+              "items": {
+                "type": "integer",
+                "minimum": 0
               }
             }
           }

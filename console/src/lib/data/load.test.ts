@@ -62,6 +62,78 @@ test('the browser validators refuse what the Go schema test refuses', () => {
 	expect(validateFile('cards', cards).map((p) => p.path)).toContain('/cards/0');
 });
 
+test('graph validation requires repository counts, accepts zero and an optional frontier repo', () => {
+	const graph = fixture('graph');
+	expect(validateFile('graph', graph)).toEqual([]);
+	expect(validateFile('graph', { ...graph, repos: [] })).toEqual([]);
+	const missing: Record<string, unknown> = { ...graph };
+	delete missing.repos;
+	expect(validateFile('graph', missing).map((p) => p.message)).toContain(
+		"must have required property 'repos'"
+	);
+	for (const items of [-1, 0.5, '0']) {
+		expect(
+			validateFile('graph', { ...graph, repos: [{ repo: 'example/alpha', items }] }).map(
+				(p) => p.path
+			)
+		).toContain('/repos/0/items');
+	}
+	const row = { id: 'N1', title: 'Ready', status: 'ready', score: 1 };
+	expect(validateFile('graph', { ...graph, frontier: [row] })).toEqual([]);
+	expect(
+		validateFile('graph', { ...graph, frontier: [{ ...row, repo: 1 }] }).map((p) => p.path)
+	).toContain('/frontier/0/repo');
+});
+
+test('graph requires done fields and accepts an empty recent list with 14 trend days', () => {
+	const graph = fixture('graph');
+	expect(validateFile('graph', { ...graph, done_recent: [] })).toEqual([]);
+	for (const key of ['done_recent', 'done_trend'] as const) {
+		const missing: Record<string, unknown> = { ...graph };
+		delete missing[key];
+		expect(validateFile('graph', missing).map((p) => p.message)).toContain(
+			`must have required property '${key}'`
+		);
+	}
+	for (const length of [13, 15]) {
+		const done_trend = Array.from({ length }, () => graph.done_trend[0]);
+		expect(validateFile('graph', { ...graph, done_trend }).map((p) => p.path)).toContain(
+			'/done_trend'
+		);
+	}
+	const done_recent = Array.from({ length: 100 }, () => graph.done_recent[0]);
+	expect(validateFile('graph', { ...graph, done_recent })).toEqual([]);
+	expect(
+		validateFile('graph', { ...graph, done_recent: [...done_recent, done_recent[0]] }).map(
+			(p) => p.path
+		)
+	).toContain('/done_recent');
+});
+
+test('done activity validation rejects invalid dates, counts and extra properties', () => {
+	const graph = fixture('graph');
+	for (const invalid of [
+		{ id: '' },
+		{ done_at: 'yesterday' },
+		{ done_at: '2026-01-15T09:00:00+01:00' },
+		{ repo: 1 },
+		{ unexpected: true }
+	]) {
+		expect(
+			validateFile('graph', { ...graph, done_recent: [{ ...graph.done_recent[0], ...invalid }] })
+				.length
+		).toBeGreaterThan(0);
+	}
+	for (const invalid of [{ day: 'today' }, { done: -1 }, { done: 0.5 }, { extra: 1 }]) {
+		expect(
+			validateFile('graph', {
+				...graph,
+				done_trend: [{ ...graph.done_trend[0], ...invalid }, ...graph.done_trend.slice(1)]
+			}).length
+		).toBeGreaterThan(0);
+	}
+});
+
 test('boundaries: empty lists pass, one past maxItems fails', () => {
 	const empty = { ...fixture('cards'), cards: [] };
 	expect(validateFile('cards', empty)).toEqual([]);

@@ -91,17 +91,6 @@
    "repo": "example/zeta"
   },
   {
-   "kind": "node",
-   "id": "N7",
-   "title": "Renew the release notes",
-   "gain": 2,
-   "effort": 3,
-   "clarity": "clear",
-   "reason": "synthetic",
-   "model": "example-model",
-   "repo": "example/eta"
-  },
-  {
    "kind": "steering",
    "id": "N8",
    "title": "Confirm the dependency update",
@@ -110,7 +99,7 @@
    "clarity": "partial",
    "reason": "synthetic",
    "model": "example-model",
-   "repo": "example/theta"
+   "repo": "example/alpha"
   },
   {
    "kind": "research",
@@ -121,7 +110,7 @@
    "clarity": "clear",
    "reason": "synthetic",
    "model": "example-model",
-   "repo": "example/alpha"
+   "repo": "example/beta"
   },
   {
    "kind": "node",
@@ -132,7 +121,7 @@
    "clarity": "partial",
    "reason": "synthetic",
    "model": "example-model",
-   "repo": "example/beta"
+   "repo": "example/gamma"
   },
   {
    "kind": "steering",
@@ -143,7 +132,7 @@
    "clarity": "clear",
    "reason": "synthetic",
    "model": "example-model",
-   "repo": "example/gamma"
+   "repo": "example/delta"
   },
   {
    "kind": "research",
@@ -154,7 +143,7 @@
    "clarity": "partial",
    "reason": "synthetic",
    "model": "example-model",
-   "repo": "example/delta"
+   "repo": "example/epsilon"
   },
   {
    "kind": "node",
@@ -163,17 +152,6 @@
    "gain": 3,
    "effort": 5,
    "clarity": "clear",
-   "reason": "synthetic",
-   "model": "example-model",
-   "repo": "example/epsilon"
-  },
-  {
-   "kind": "steering",
-   "id": "N14",
-   "title": "Check the licence notice",
-   "gain": 4,
-   "effort": 2,
-   "clarity": "partial",
    "reason": "synthetic",
    "model": "example-model",
    "repo": "example/zeta"
@@ -187,7 +165,7 @@
    "clarity": "clear",
    "reason": "synthetic",
    "model": "example-model",
-   "repo": "example/eta"
+   "repo": "example/alpha"
   },
   {
    "kind": "node",
@@ -198,7 +176,7 @@
    "clarity": "partial",
    "reason": "synthetic",
    "model": "example-model",
-   "repo": "example/theta"
+   "repo": "example/beta"
   },
   {
    "kind": "steering",
@@ -209,7 +187,7 @@
    "clarity": "clear",
    "reason": "synthetic",
    "model": "example-model",
-   "repo": "example/alpha"
+   "repo": "example/gamma"
   },
   {
    "kind": "research",
@@ -220,7 +198,7 @@
    "clarity": "partial",
    "reason": "synthetic",
    "model": "example-model",
-   "repo": "example/beta"
+   "repo": "example/delta"
   },
   {
    "kind": "node",
@@ -231,7 +209,7 @@
    "clarity": "clear",
    "reason": "synthetic",
    "model": "example-model",
-   "repo": "example/gamma"
+   "repo": "example/epsilon"
   },
   {
    "kind": "steering",
@@ -242,7 +220,7 @@
    "clarity": "partial",
    "reason": "synthetic",
    "model": "example-model",
-   "repo": "example/delta"
+   "repo": "example/zeta"
   }
  ],
  "unestimated": 5,
@@ -253,7 +231,8 @@
    "status": "ready",
    "score": 10.0,
    "goal": "A",
-   "class": "survival"
+   "class": "survival",
+   "repo": "example/alpha"
   },
   {
    "id": "N2",
@@ -261,7 +240,8 @@
    "status": "active",
    "score": 9.87,
    "goal": "B",
-   "class": "continuity"
+   "class": "continuity",
+   "repo": "example/beta"
   },
   {
    "id": "N3",
@@ -269,7 +249,8 @@
    "status": "blocked",
    "score": 9.74,
    "goal": "C",
-   "class": "growth"
+   "class": "growth",
+   "repo": "example/gamma"
   },
   {
    "id": "N4",
@@ -277,7 +258,8 @@
    "status": "waiting",
    "score": 9.61,
    "goal": "D",
-   "class": "survival"
+   "class": "survival",
+   "repo": "example/delta"
   },
   {
    "id": "N5",
@@ -285,7 +267,8 @@
    "status": "ready",
    "score": 9.48,
    "goal": "E",
-   "class": "continuity"
+   "class": "continuity",
+   "repo": "example/epsilon"
   },
   {
    "id": "N6",
@@ -293,7 +276,8 @@
    "status": "active",
    "score": 9.35,
    "goal": "A",
-   "class": "growth"
+   "class": "growth",
+   "repo": "example/zeta"
   },
   {
    "id": "N7",
@@ -301,7 +285,8 @@
    "status": "blocked",
    "score": 9.22,
    "goal": "B",
-   "class": "survival"
+   "class": "survival",
+   "repo": "example/eta"
   },
   {
    "id": "N8",
@@ -309,7 +294,8 @@
    "status": "waiting",
    "score": 9.09,
    "goal": "C",
-   "class": "continuity"
+   "class": "continuity",
+   "repo": "example/alpha"
   },
   {
    "id": "N9",
@@ -317,7 +303,8 @@
    "status": "ready",
    "score": 8.96,
    "goal": "D",
-   "class": "growth"
+   "class": "growth",
+   "repo": "example/beta"
   },
   {
    "id": "N10",
@@ -325,7 +312,8 @@
    "status": "active",
    "score": 8.83,
    "goal": "E",
-   "class": "survival"
+   "class": "survival",
+   "repo": "example/gamma"
   },
   {
    "id": "N11",
@@ -333,7 +321,8 @@
    "status": "blocked",
    "score": 8.7,
    "goal": "A",
-   "class": "continuity"
+   "class": "continuity",
+   "repo": "example/delta"
   },
   {
    "id": "N12",
@@ -341,7 +330,8 @@
    "status": "waiting",
    "score": 8.57,
    "goal": "B",
-   "class": "growth"
+   "class": "growth",
+   "repo": "example/epsilon"
   },
   {
    "id": "N13",
@@ -349,7 +339,8 @@
    "status": "ready",
    "score": 8.44,
    "goal": "C",
-   "class": "survival"
+   "class": "survival",
+   "repo": "example/zeta"
   },
   {
    "id": "N14",
@@ -357,7 +348,8 @@
    "status": "active",
    "score": 8.31,
    "goal": "D",
-   "class": "continuity"
+   "class": "continuity",
+   "repo": "example/eta"
   },
   {
    "id": "N15",
@@ -365,7 +357,8 @@
    "status": "blocked",
    "score": 8.18,
    "goal": "E",
-   "class": "growth"
+   "class": "growth",
+   "repo": "example/alpha"
   },
   {
    "id": "N16",
@@ -373,7 +366,8 @@
    "status": "waiting",
    "score": 8.05,
    "goal": "A",
-   "class": "survival"
+   "class": "survival",
+   "repo": "example/beta"
   },
   {
    "id": "N17",
@@ -381,7 +375,8 @@
    "status": "ready",
    "score": 7.92,
    "goal": "B",
-   "class": "continuity"
+   "class": "continuity",
+   "repo": "example/gamma"
   },
   {
    "id": "N18",
@@ -389,7 +384,8 @@
    "status": "active",
    "score": 7.79,
    "goal": "C",
-   "class": "growth"
+   "class": "growth",
+   "repo": "example/delta"
   },
   {
    "id": "N19",
@@ -397,7 +393,8 @@
    "status": "blocked",
    "score": 7.66,
    "goal": "D",
-   "class": "survival"
+   "class": "survival",
+   "repo": "example/epsilon"
   },
   {
    "id": "N20",
@@ -405,7 +402,8 @@
    "status": "waiting",
    "score": 7.53,
    "goal": "E",
-   "class": "continuity"
+   "class": "continuity",
+   "repo": "example/zeta"
   },
   {
    "id": "N21",
@@ -413,7 +411,8 @@
    "status": "ready",
    "score": 7.4,
    "goal": "A",
-   "class": "growth"
+   "class": "growth",
+   "repo": "example/eta"
   },
   {
    "id": "N22",
@@ -421,7 +420,8 @@
    "status": "active",
    "score": 7.27,
    "goal": "B",
-   "class": "survival"
+   "class": "survival",
+   "repo": "example/alpha"
   },
   {
    "id": "N23",
@@ -429,7 +429,8 @@
    "status": "blocked",
    "score": 7.14,
    "goal": "C",
-   "class": "continuity"
+   "class": "continuity",
+   "repo": "example/beta"
   },
   {
    "id": "N24",
@@ -437,7 +438,8 @@
    "status": "waiting",
    "score": 7.01,
    "goal": "D",
-   "class": "growth"
+   "class": "growth",
+   "repo": "example/gamma"
   },
   {
    "id": "N25",
@@ -445,7 +447,8 @@
    "status": "ready",
    "score": 6.88,
    "goal": "E",
-   "class": "survival"
+   "class": "survival",
+   "repo": "example/delta"
   },
   {
    "id": "N26",
@@ -453,7 +456,8 @@
    "status": "active",
    "score": 6.75,
    "goal": "A",
-   "class": "continuity"
+   "class": "continuity",
+   "repo": "example/epsilon"
   },
   {
    "id": "N27",
@@ -461,7 +465,8 @@
    "status": "blocked",
    "score": 6.62,
    "goal": "B",
-   "class": "growth"
+   "class": "growth",
+   "repo": "example/zeta"
   },
   {
    "id": "N28",
@@ -469,7 +474,8 @@
    "status": "waiting",
    "score": 6.49,
    "goal": "C",
-   "class": "survival"
+   "class": "survival",
+   "repo": "example/eta"
   },
   {
    "id": "N29",
@@ -477,7 +483,8 @@
    "status": "ready",
    "score": 6.36,
    "goal": "D",
-   "class": "continuity"
+   "class": "continuity",
+   "repo": "example/alpha"
   },
   {
    "id": "N30",
@@ -485,7 +492,8 @@
    "status": "active",
    "score": 6.23,
    "goal": "E",
-   "class": "growth"
+   "class": "growth",
+   "repo": "example/beta"
   },
   {
    "id": "N31",
@@ -493,7 +501,8 @@
    "status": "blocked",
    "score": 6.1,
    "goal": "A",
-   "class": "survival"
+   "class": "survival",
+   "repo": "example/gamma"
   },
   {
    "id": "N32",
@@ -501,7 +510,8 @@
    "status": "waiting",
    "score": 5.97,
    "goal": "B",
-   "class": "continuity"
+   "class": "continuity",
+   "repo": "example/delta"
   },
   {
    "id": "N33",
@@ -509,7 +519,8 @@
    "status": "ready",
    "score": 5.84,
    "goal": "C",
-   "class": "growth"
+   "class": "growth",
+   "repo": "example/epsilon"
   },
   {
    "id": "N34",
@@ -517,7 +528,8 @@
    "status": "active",
    "score": 5.71,
    "goal": "D",
-   "class": "survival"
+   "class": "survival",
+   "repo": "example/zeta"
   },
   {
    "id": "N35",
@@ -525,7 +537,8 @@
    "status": "blocked",
    "score": 5.58,
    "goal": "E",
-   "class": "continuity"
+   "class": "continuity",
+   "repo": "example/eta"
   },
   {
    "id": "N36",
@@ -533,7 +546,8 @@
    "status": "waiting",
    "score": 5.45,
    "goal": "A",
-   "class": "growth"
+   "class": "growth",
+   "repo": "example/alpha"
   },
   {
    "id": "N37",
@@ -541,7 +555,8 @@
    "status": "ready",
    "score": 5.32,
    "goal": "B",
-   "class": "survival"
+   "class": "survival",
+   "repo": "example/beta"
   },
   {
    "id": "N38",
@@ -549,7 +564,8 @@
    "status": "active",
    "score": 5.19,
    "goal": "C",
-   "class": "continuity"
+   "class": "continuity",
+   "repo": "example/gamma"
   },
   {
    "id": "N39",
@@ -557,7 +573,8 @@
    "status": "blocked",
    "score": 5.06,
    "goal": "D",
-   "class": "growth"
+   "class": "growth",
+   "repo": "example/delta"
   },
   {
    "id": "N40",
@@ -565,7 +582,8 @@
    "status": "waiting",
    "score": 4.93,
    "goal": "E",
-   "class": "survival"
+   "class": "survival",
+   "repo": "example/epsilon"
   },
   {
    "id": "N41",
@@ -573,7 +591,8 @@
    "status": "ready",
    "score": 4.8,
    "goal": "A",
-   "class": "continuity"
+   "class": "continuity",
+   "repo": "example/zeta"
   },
   {
    "id": "N42",
@@ -581,7 +600,8 @@
    "status": "active",
    "score": 4.67,
    "goal": "B",
-   "class": "growth"
+   "class": "growth",
+   "repo": "example/eta"
   },
   {
    "id": "N43",
@@ -589,7 +609,8 @@
    "status": "blocked",
    "score": 4.54,
    "goal": "C",
-   "class": "survival"
+   "class": "survival",
+   "repo": "example/alpha"
   },
   {
    "id": "N44",
@@ -597,7 +618,8 @@
    "status": "waiting",
    "score": 4.41,
    "goal": "D",
-   "class": "continuity"
+   "class": "continuity",
+   "repo": "example/beta"
   },
   {
    "id": "N45",
@@ -605,7 +627,8 @@
    "status": "ready",
    "score": 4.28,
    "goal": "E",
-   "class": "growth"
+   "class": "growth",
+   "repo": "example/gamma"
   },
   {
    "id": "N46",
@@ -613,7 +636,8 @@
    "status": "active",
    "score": 4.15,
    "goal": "A",
-   "class": "survival"
+   "class": "survival",
+   "repo": "example/delta"
   },
   {
    "id": "N47",
@@ -621,7 +645,8 @@
    "status": "blocked",
    "score": 4.02,
    "goal": "B",
-   "class": "continuity"
+   "class": "continuity",
+   "repo": "example/epsilon"
   },
   {
    "id": "N48",
@@ -629,7 +654,8 @@
    "status": "waiting",
    "score": 3.89,
    "goal": "C",
-   "class": "growth"
+   "class": "growth",
+   "repo": "example/zeta"
   },
   {
    "id": "N49",
@@ -637,7 +663,8 @@
    "status": "ready",
    "score": 3.76,
    "goal": "D",
-   "class": "survival"
+   "class": "survival",
+   "repo": "example/eta"
   },
   {
    "id": "N50",
@@ -645,7 +672,8 @@
    "status": "active",
    "score": 3.63,
    "goal": "E",
-   "class": "continuity"
+   "class": "continuity",
+   "repo": "example/alpha"
   },
   {
    "id": "N51",
@@ -653,7 +681,8 @@
    "status": "blocked",
    "score": 3.5,
    "goal": "A",
-   "class": "growth"
+   "class": "growth",
+   "repo": "example/beta"
   },
   {
    "id": "N52",
@@ -661,7 +690,8 @@
    "status": "waiting",
    "score": 3.37,
    "goal": "B",
-   "class": "survival"
+   "class": "survival",
+   "repo": "example/gamma"
   },
   {
    "id": "N53",
@@ -669,7 +699,8 @@
    "status": "ready",
    "score": 3.24,
    "goal": "C",
-   "class": "continuity"
+   "class": "continuity",
+   "repo": "example/delta"
   },
   {
    "id": "N54",
@@ -677,7 +708,8 @@
    "status": "active",
    "score": 3.11,
    "goal": "D",
-   "class": "growth"
+   "class": "growth",
+   "repo": "example/epsilon"
   },
   {
    "id": "N55",
@@ -685,7 +717,8 @@
    "status": "blocked",
    "score": 2.98,
    "goal": "E",
-   "class": "survival"
+   "class": "survival",
+   "repo": "example/zeta"
   },
   {
    "id": "N56",
@@ -693,7 +726,8 @@
    "status": "waiting",
    "score": 2.85,
    "goal": "A",
-   "class": "continuity"
+   "class": "continuity",
+   "repo": "example/eta"
   },
   {
    "id": "N57",
@@ -701,7 +735,8 @@
    "status": "ready",
    "score": 2.72,
    "goal": "B",
-   "class": "growth"
+   "class": "growth",
+   "repo": "example/alpha"
   },
   {
    "id": "N58",
@@ -709,7 +744,8 @@
    "status": "active",
    "score": 2.59,
    "goal": "C",
-   "class": "survival"
+   "class": "survival",
+   "repo": "example/beta"
   },
   {
    "id": "N59",
@@ -717,7 +753,8 @@
    "status": "blocked",
    "score": 2.46,
    "goal": "D",
-   "class": "continuity"
+   "class": "continuity",
+   "repo": "example/gamma"
   },
   {
    "id": "N60",
@@ -725,7 +762,120 @@
    "status": "waiting",
    "score": 2.33,
    "goal": "E",
-   "class": "growth"
+   "class": "growth",
+   "repo": "example/delta"
+  }
+ ],
+ "repos": [
+  {
+   "repo": "example/alpha",
+   "items": 9
+  },
+  {
+   "repo": "example/beta",
+   "items": 9
+  },
+  {
+   "repo": "example/gamma",
+   "items": 9
+  },
+  {
+   "repo": "example/delta",
+   "items": 9
+  },
+  {
+   "repo": "example/epsilon",
+   "items": 8
+  },
+  {
+   "repo": "example/zeta",
+   "items": 8
+  },
+  {
+   "repo": "example/eta",
+   "items": 8
+  },
+  {
+   "repo": "example/theta",
+   "items": 0
+  }
+ ],
+ "done_recent": [
+  {
+   "id": "D1",
+   "title": "Review the release notes",
+   "repo": "example/alpha",
+   "done_at": "2026-01-15T08:30:00Z"
+  },
+  {
+   "id": "D2",
+   "title": "Merge the dependency update",
+   "repo": "example/beta",
+   "done_at": "2026-01-15T05:30:00Z"
+  },
+  {
+   "id": "D3",
+   "title": "Approve the storage quota",
+   "repo": "",
+   "done_at": "2026-01-14T13:30:00Z"
+  }
+ ],
+ "done_trend": [
+  {
+   "day": "2026-01-02",
+   "done": 0
+  },
+  {
+   "day": "2026-01-03",
+   "done": 2
+  },
+  {
+   "day": "2026-01-04",
+   "done": 1
+  },
+  {
+   "day": "2026-01-05",
+   "done": 0
+  },
+  {
+   "day": "2026-01-06",
+   "done": 4
+  },
+  {
+   "day": "2026-01-07",
+   "done": 2
+  },
+  {
+   "day": "2026-01-08",
+   "done": 0
+  },
+  {
+   "day": "2026-01-09",
+   "done": 3
+  },
+  {
+   "day": "2026-01-10",
+   "done": 1
+  },
+  {
+   "day": "2026-01-11",
+   "done": 0
+  },
+  {
+   "day": "2026-01-12",
+   "done": 2
+  },
+  {
+   "day": "2026-01-13",
+   "done": 0
+  },
+  {
+   "day": "2026-01-14",
+   "done": 1
+  },
+  {
+   "day": "2026-01-15",
+   "done": 2
   }
  ]
 }
