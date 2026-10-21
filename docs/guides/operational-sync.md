@@ -336,7 +336,7 @@ test replays both checks against a temp copy of the manifest with the owner over
 | `security.yml` schedule leg | runs | skipped |
 | `sync-flavors.yml`, `sync-models.yml`, `pages.yml`, `wiki-sync.yml`, `release-binaries.yml`, `devcontainer-refresh.yml`, `planning-sync.yml` | runs | skipped at job level; the job name says `canonical repository only` |
 | `portability.yml` | runs; its three legs are required checks | skipped with a stated reason unless the repository variable `PRAETOR_FORK_PORTABILITY` is `enabled`; `sync --remote` does not add its legs there and warns about legs an earlier sync added ([HISS-21](../standards/hiss-21-platform-neutrality.md#outside-the-canonical-repository-the-matrix-is-opt-in-and-says-so)) |
-| `adopt.yml` | on dispatch or comment | on dispatch or comment: a person asked for it in that repository |
+| `adopt.yml`, `adopt-comment.yml` | on dispatch and comment, respectively | on dispatch and comment, respectively: a person asked for it in that repository |
 
 In every copy a pull request the Renovate app opened from a `renovate/` branch also skips the
 Go tests, the Platform Neutrality legs, the preset builds, the security scan and the

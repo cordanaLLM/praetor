@@ -1,0 +1,2 @@
+type: security
+title: UnifiedDiff sizes a whole-replacement diff per side, so the slice capacity no longer comes from an unbounded sum (CodeQL go/allocation-size-overflow)

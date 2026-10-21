@@ -268,7 +268,7 @@ jobs:
       - run: standardsctl adopt --path=.
 `
 
-// trustedCommenterGate is the conjunct adopt.yml's comment job carries now.
+// trustedCommenterGate is the conjunct adopt-comment.yml's job carries now.
 const trustedCommenterGate = `contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)`
 
 func TestAuditPullRequestPermissions_Positive_ReportsAnUngatedCommentJob(t *testing.T) {

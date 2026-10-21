@@ -4,6 +4,26 @@ A commit on `main` becomes an installable version only when a `v*` tag points at
 page covers what that tag sets off, how to cut one, and how the moving flavor tags
 (`bleeding`, `edge`, `latest`, `lts`) follow it.
 
+## Verify shipped release assets
+
+After publication, run `standardsctl release smoke --repo=OWNER/NAME --tag=TAG`.
+The command downloads shipped assets, verifies every `SHA256SUMS` entry and checks
+that all payload assets are listed. Without `SHA256SUMS`, it checks non-empty
+downloads against API sizes. Signature bundles are explicitly reported as
+`not verified: no verifier configured`; checksum integrity does not establish
+authenticity. Zero assets fail unless the release is explicitly asset-less
+(`--allow-no-assets`). Downloads stream within `--max-bytes=N` (default 4 GiB),
+1,000 assets and per-request deadlines. At the exact byte limit a response with
+unknown length is refused because its EOF cannot be proved within the budget.
+
+Reuse `.github/workflows/release-smoke.yml` after the publishing job with `tag`,
+optional `allow-no-assets` (default false), and `praetor-ref` set to a full engine
+commit SHA. Omit `praetor-ref` to use the reusable workflow's own commit. The
+workflow builds its own engine source and checks `${{ github.repository }}`,
+the caller's repository; it also supports manual dispatch with the same inputs.
+Pass release tags through inputs, and pin the reusable workflow's `uses` reference
+to the reviewed engine commit. See [ADR-0019](../adr/0019-released-surfaces-verified-from-shipped-artefacts.md).
+
 ## What a `v*` tag produces
 
 | Consumer | Trigger | Result |

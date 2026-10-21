@@ -7,6 +7,7 @@ package util
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -115,12 +116,15 @@ func walkAlignment(old, updated []string, table []int) []lineEdit {
 	return edits
 }
 
-// replacementEdits removes every line of old and adds every line of updated.
+// replacementEdits removes every line of old and adds every line of updated. Either side is
+// above MaxDiffLines here, so the capacity grows per side rather than from their sum, which
+// has no bound on this path.
 func replacementEdits(old, updated []string) []lineEdit {
-	edits := make([]lineEdit, 0, len(old)+len(updated))
+	edits := make([]lineEdit, 0, len(old))
 	for i := 0; i < len(old); i++ {
 		edits = append(edits, lineEdit{op: '-', line: old[i]})
 	}
+	edits = slices.Grow(edits, len(updated))
 	for j := 0; j < len(updated); j++ {
 		edits = append(edits, lineEdit{op: '+', line: updated[j]})
 	}

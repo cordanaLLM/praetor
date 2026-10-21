@@ -26,6 +26,8 @@ This directory documents all significant architectural and design decisions gove
 | **[ADR-0016](0016-figures-for-adopters.md)** | Interactive Figures for Adopters Through a Managed Engine Family | **Accepted**; amended by [ADR-0018](0018-forge-drivers-repaired-in-place.md) | 2026-09-27 |
 | **[ADR-0017](0017-generated-artefacts-in-pull-requests.md)** | Generated Artefacts in Pull Requests | **Accepted** | 2026-10-01 |
 | **[ADR-0018](0018-forge-drivers-repaired-in-place.md)** | Forge Drivers Repaired in Place Instead of a Spec-Driven Provider Engine | **Accepted** | 2026-10-18 |
+| **[ADR-0019](0019-released-surfaces-verified-from-shipped-artefacts.md)** | Released Surfaces Verified from Shipped Artefacts | **Accepted** | 2026-10-21 |
+| **[ADR-0020](0020-forge-app-installation-tokens.md)** | Forge App Installation Tokens | **Proposed** | 2026-10-21 |
 
 ---
 

@@ -444,25 +444,37 @@ func adoptCallsWithoutResolvedGo(t *testing.T, data []byte) (int, []string) {
 	return calls, missing
 }
 
-// Negative: every praetor-adopt call in adopt.yml passes a go.mod-resolved Go release. A copy
-// of adopt.yml with the input dropped from its last call reports exactly that call.
+// Every praetor-adopt call in either entry point passes a go.mod-resolved Go release.
 func TestAdoptWorkflow_Negative_PassesResolvedGoVersionToAction(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "adopt.yml"))
+	for _, entry := range [2]struct {
+		file  string
+		calls int
+	}{{"adopt.yml", 1}, {"adopt-comment.yml", 2}} {
+		t.Run(entry.file, func(t *testing.T) {
+			checkAdoptWorkflowResolvedGo(t, entry.file, entry.calls)
+		})
+	}
+}
+
+// Removing the last call's input must report exactly that call in either workflow.
+func checkAdoptWorkflowResolvedGo(t *testing.T, file string, wantCalls int) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", file))
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := strings.ReplaceAll(string(data), "\r\n", "\n")
 	calls, missing := adoptCallsWithoutResolvedGo(t, []byte(text))
-	if calls < 3 || len(missing) != 0 {
-		t.Fatalf("adopt.yml: %d praetor-adopt calls, want at least 3; missing a go.mod-resolved Go release: %q", calls, missing)
+	if calls != wantCalls || len(missing) != 0 {
+		t.Fatalf("%s: %d praetor-adopt calls, want %d; missing a go.mod-resolved Go release: %q", file, calls, wantCalls, missing)
 	}
 	last := strings.LastIndex(text, "\n          go-version: ${{ steps.")
 	if last < 0 {
-		t.Fatal("adopt.yml carries no resolved Go version input")
+		t.Fatalf("%s carries no resolved Go version input", file)
 	}
 	end := strings.IndexByte(text[last+1:], '\n')
 	if end < 0 {
-		t.Fatal("adopt.yml ends inside the resolved Go version input")
+		t.Fatalf("%s ends inside the resolved Go version input", file)
 	}
 	mutant := text[:last] + text[last+1+end:]
 	if _, missing := adoptCallsWithoutResolvedGo(t, []byte(mutant)); len(missing) != 1 {

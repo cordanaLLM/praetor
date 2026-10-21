@@ -31,7 +31,7 @@ The last lines of the audit report the four checks:
 ```text
 [PASS] Actions workflow permissions compared with the forge: live workflow permissions match the declaration.
 [PASS] Repository visibility compared with the forge: GitHub reports public.
-[PASS] Workflow runs on main read from the forge: 12 workflows checked, none failing or never run (adopt.yml, ci.yml, ...).
+[PASS] Workflow runs on main read from the forge: 12 workflows checked, none failing or never run (adopt.yml, adopt-comment.yml, ci.yml, ...).
 [PASS] Live branch protection of main compared with the forge: GitHub enforces every declared property (protected by ruleset "praetor-main-protection" #7).
 ```
 
