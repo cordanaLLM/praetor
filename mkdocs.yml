@@ -213,6 +213,7 @@ nav:
           - ADR-0016 Interactive Figures for Adopters: adr/0016-figures-for-adopters.md
           - ADR-0017 Generated Artefacts in Pull Requests: adr/0017-generated-artefacts-in-pull-requests.md
           - ADR-0018 Forge Drivers Repaired in Place: adr/0018-forge-drivers-repaired-in-place.md
+          - ADR-0020 Forge App Installation Tokens: adr/0020-forge-app-installation-tokens.md
   - Reference:
       - API & CLI Reference: wiki/API-Reference.md
       - Wiki Portal: wiki/Home.md

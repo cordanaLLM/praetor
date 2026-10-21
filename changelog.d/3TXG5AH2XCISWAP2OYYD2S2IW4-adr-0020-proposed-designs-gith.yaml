@@ -1,0 +1,2 @@
+type: added
+title: ADR-0020 (proposed) designs GitHub App installation tokens so unattended forge calls work while the desktop keyring is locked
