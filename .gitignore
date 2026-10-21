@@ -76,6 +76,10 @@ all_github_repos.json
 /deploy/arc/
 /deploy/k8s/
 
+# The Playwright MCP server writes page snapshots, console logs and screenshots here; they
+# can show private pages, so they never reach a commit.
+/.playwright-mcp/
+
 # BEGIN praetor private artifacts (praetorctl adopt)
 .workingdir/
 .workingdir2/
