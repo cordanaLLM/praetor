@@ -1416,8 +1416,8 @@ code has to refuse fork heads, as praetor's own adopt-comment job does.
 
 ### Praetor's own adoption workflow
 
-`.github/workflows/adopt.yml` is the hardened form of the example, split into one job per
-entry point:
+The hardened example uses `.github/workflows/adopt.yml` for dispatch and
+`.github/workflows/adopt-comment.yml` for pull request comments, with one job per file:
 
 | Job | Trigger | Token | What it does |
 | :-- | :-- | :-- | :-- |
@@ -1448,7 +1448,9 @@ Two checks keep the split honest. `AuditPullRequestPermissions` in
 `internal/forge/workflow_permissions.go` reports any job that `pull_request`,
 `pull_request_target` or an ungated `issue_comment` can start while it holds a write scope, and
 `TestAuditPullRequestPermissions_Guard_ThisRepositoryIsDisciplined` runs it over this repository.
-`internal/forge/adopt_workflow_test.go` pins the rest: only the dispatch job writes and pushes,
+`internal/forge/adopt_workflow_split_test.go` pins the separate files and rejects a comment
+workflow that also declares `workflow_dispatch`. `internal/forge/adopt_workflow_test.go` pins
+the rest: only the dispatch job writes and pushes,
 every checkout drops its credential, the comment job checks out the head it resolved,
 `target_path` reaches both the adoption and the ratchet through env, `dry_run` reaches the
 adoption and keeps the ratchet and the push from running, only the dispatch job keeps

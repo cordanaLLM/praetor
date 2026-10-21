@@ -895,7 +895,7 @@ func setupGoCacheGap(action compositeAction) string {
 	return ""
 }
 
-// The comment path of adopt.yml turns the action's Go cache off (adopt_workflow_test.go), which
+// adopt-comment.yml turns the action's Go cache off (adopt_workflow_test.go), which
 // only works while the action hands that input to setup-go. Positive: the shipped action does,
 // and keeps setup-go's default for every other caller. Negative: the pass-through dropped or
 // hard-coded, or the input undeclared. Boundary: a default that flips caching off for adopters

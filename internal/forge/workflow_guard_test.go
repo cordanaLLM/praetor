@@ -82,8 +82,8 @@ func grantsWrite(permissions *yaml.Node) bool {
 }
 
 // startsUnattended reports whether any trigger fires without an operator asking for it.
-// adopt.yml is the counter-example: a dispatch or a comment is a person's decision in the
-// repository it is made in, so it runs wherever it is asked to.
+// adopt.yml and adopt-comment.yml are counter-examples: dispatch and comments are a person's
+// decision in the repository they are made in, so they run wherever they are asked to.
 func startsUnattended(on *yaml.Node) bool {
 	attended := map[string]bool{"workflow_dispatch": true, "issue_comment": true, "workflow_call": true}
 	triggers := triggerNames(on)
@@ -154,7 +154,7 @@ func TestEngineWorkflowGuardsFailForAnotherIdentity(t *testing.T) {
 // Verification follows the code: these run in every copy and must never gain a guard.
 func TestVerificationWorkflowsStayUnguarded(t *testing.T) {
 	workflows, _ := engineWorkflows(t)
-	for _, name := range []string{"ci.yml", "compliance.yml", "adopt.yml"} {
+	for _, name := range []string{"ci.yml", "compliance.yml", "adopt.yml", "adopt-comment.yml"} {
 		if data, ok := workflows[name]; !ok || strings.Contains(string(data), "github.repository") {
 			t.Errorf("%s: missing, or carries a repository guard although it runs everywhere", name)
 		}

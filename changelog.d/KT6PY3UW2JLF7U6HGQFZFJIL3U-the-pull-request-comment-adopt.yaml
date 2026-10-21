@@ -1,0 +1,2 @@
+type: security
+title: The pull-request comment adoption job moves to its own workflow, adopt-comment.yml, whose only trigger is issue_comment, so code scanning reads its trusted-commenter gate (CodeQL actions/cache-poisoning/poisonable-step)
