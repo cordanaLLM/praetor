@@ -57,6 +57,23 @@ type Invocation struct {
 	Path        string
 	Args        []string
 	Environment []string
+	network     []string
+	namespaces  []string
+}
+
+// Arguments selects the complete argv or shared network/namespace arguments.
+// Runner.Command must succeed before these arguments are safe to execute.
+func (v Invocation) Arguments(part string) ([]string, error) {
+	switch part {
+	case "full":
+		return append([]string{v.Path}, v.Args...), nil
+	case "network":
+		return slices.Clone(v.network), nil
+	case "namespaces":
+		return slices.Clone(v.namespaces), nil
+	default:
+		return nil, fmt.Errorf("unknown sandbox render part %q (want full, network or namespaces)", part)
+	}
 }
 
 // Build is pure: no filesystem access, environment reads or execution. A zero
@@ -83,7 +100,9 @@ func Build(spec Spec, binaries Binaries, environ []string) (Invocation, error) {
 		args = append(args, "--setenv", variables[i].Name, variables[i].Value)
 	}
 	args = append(args, "--")
-	return Invocation{Path: binaries.SystemdRun, Args: append(args, spec.Command...)}, nil
+	return Invocation{Path: binaries.SystemdRun, Args: append(args, spec.Command...),
+		network:    networkArguments(spec, binaries),
+		namespaces: append(namespaceArguments(spec), resolverArguments(spec)...)}, nil
 }
 
 func scopeArguments(l Limits, b Binaries) ([]string, error) {
@@ -141,13 +160,7 @@ func filesystemArguments(spec Spec, limits Limits) []string {
 	if checkLib64 == nil {
 		checkLib64 = defaultHasLib64
 	}
-	args := []string{"--unshare-all"}
-	if spec.Network == NetworkEgress || spec.Network == NetworkLoopback {
-		// pasta already created private user and network namespaces. Avoid a
-		// second user mapping; bubblewrap still isolates every other namespace.
-		args = []string{"--unshare-ipc", "--unshare-pid", "--unshare-uts", "--unshare-cgroup"}
-	}
-	args = append(args, "--die-with-parent", "--new-session", "--clearenv")
+	args := append(namespaceArguments(spec), "--new-session", "--clearenv")
 	args = append(args, RootFilesystemArguments(checkLib64())...)
 	args = append(args,
 		"--size", decimal(limits.TmpBytes), "--tmpfs", "/tmp", "--dir", "/home", mode, spec.Workspace, "/workspace",
@@ -156,9 +169,7 @@ func filesystemArguments(spec Spec, limits Limits) []string {
 		bind := spec.ReadOnlyBinds[i]
 		args = append(args, "--ro-bind", bind.Source, bind.Target)
 	}
-	if spec.Network == NetworkEgress {
-		args = append(args, "--ro-bind", spec.DNS.ResolvConf, "/etc/resolv.conf")
-	}
+	args = append(args, resolverArguments(spec)...)
 	return append(args, "--chdir", "/workspace")
 }
 

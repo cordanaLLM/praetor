@@ -79,12 +79,32 @@ func pastaArguments(s Spec, b Binaries) []string {
 	} else {
 		args = append(args, "-D", "none") // no route out, so no resolver either (pasta: "-D none disables usage of DNS addresses")
 	}
-	return append(args, "--", b.Bwrap)
+	return append(args, "--")
 }
 
-func executionArguments(s Spec, b Binaries) []string {
+func networkArguments(s Spec, b Binaries) []string {
 	if s.Network == NetworkEgress || s.Network == NetworkLoopback {
 		return pastaArguments(s, b)
 	}
-	return []string{b.Bwrap}
+	return nil
+}
+
+func executionArguments(s Spec, b Binaries) []string {
+	return append(networkArguments(s, b), b.Bwrap)
+}
+
+func namespaceArguments(s Spec) []string {
+	args := []string{"--unshare-all"}
+	if s.Network == NetworkEgress || s.Network == NetworkLoopback {
+		// pasta owns the private user and network namespaces; retain its mapping.
+		args = []string{"--unshare-ipc", "--unshare-pid", "--unshare-uts", "--unshare-cgroup"}
+	}
+	return append(args, "--die-with-parent")
+}
+
+func resolverArguments(s Spec) []string {
+	if s.Network == NetworkEgress {
+		return []string{"--ro-bind", s.DNS.ResolvConf, "/etc/resolv.conf"}
+	}
+	return nil
 }

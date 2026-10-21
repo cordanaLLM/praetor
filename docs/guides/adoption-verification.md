@@ -1415,7 +1415,7 @@ counts pipeline calls for every help spelling and position.
 
 ### Run one command in the agent sandbox
 
-`praetorctl agent sandbox [render] [--lane NAME] [--allow-loopback-port N] [--workspace DIR] [--read-only] -- COMMAND [ARGS...]`
+`praetorctl agent sandbox [render [--part full|network|namespaces]] [--lane NAME] [--allow-loopback-port N] [--workspace DIR] [--read-only] -- COMMAND [ARGS...]`
 mounts the selected host directory (the current directory by default) at `/workspace`
 and runs the command there. The workspace is writable unless `--read-only` is set.
 Arguments after `--`, including `--help`, belong to the command.
@@ -1461,11 +1461,28 @@ praetorctl agent sandbox --workspace . --read-only -- /usr/bin/ls /workspace
 praetorctl agent sandbox --lane codex --workspace . -- /usr/bin/true
 praetorctl agent sandbox --lane local --allow-loopback-port 4011 -- /usr/bin/true
 praetorctl agent sandbox render --lane codex -- /usr/bin/true > sandbox.argv
+praetorctl agent sandbox render --lane local --allow-loopback-port 4011 --part network > network.argv
+praetorctl agent sandbox render --lane local --allow-loopback-port 4011 --part namespaces > namespaces.argv
 ```
 
-`render` performs the same validation and runtime probes as execution, then writes
-the complete argv, starting with `systemd-run`, with a NUL after every argument.
-It never starts the requested command. A runner must check the renderer's exit
+`render` performs the same validation and runtime probes as execution. Its
+`--part full` default writes the complete argv, starting with `systemd-run`,
+with a NUL after every argument, and requires `-- COMMAND [ARGS...]` as before.
+It never starts the requested command. Shell lane runners that supply their own
+filesystem mounts can instead request these parts without a command:
+
+| Part | Arguments |
+| --- | --- |
+| `network` | Pasta executable and options through its `--` separator, without bubblewrap. The repair lane emits zero bytes and exits successfully after validation. |
+| `namespaces` | Egress and local: `--unshare-ipc --unshare-pid --unshare-uts --unshare-cgroup --die-with-parent`. Egress additionally supplies `--ro-bind <generated-resolv.conf> /etc/resolv.conf`. Repair: `--unshare-all --die-with-parent`. No other filesystem mounts are included. |
+
+Both parts use the same argument builders as the full invocation and terminate
+each argument with NUL. Place the network prefix before the runner's bubblewrap
+executable and the namespace arguments among its bubblewrap options. Repair's
+empty network prefix requires its namespace arguments to isolate the network.
+Both parts retain execution's fail-closed checks: missing bubblewrap, required
+pasta, an upstream resolver file or a working runtime emits no argv and returns
+a nonzero status with the reason on stderr. A runner must check the renderer's exit
 status and use a NUL-aware argument reader, preserving empty arguments and spaces.
 Generated resolver files remain under `/run/user/<uid>/praetor-sandbox/`, keyed by
 content, so the printed argv remains usable after the renderer exits. They contain
@@ -1493,8 +1510,12 @@ forward all local ports, and execute directly when bubblewrap is missing; each
 must fail its corresponding check. The network fixture raises its descriptor cap
 so descriptor exhaustion cannot hide the all-port leak; the original resource
 limits remain pinned by the repair golden test.
-`cmd/standardsctl/agent_sandbox_test.go` covers lane flags, NUL rendering, command
-help arguments, unavailability and exit status propagation.
+`internal/sandbox/render_test.go` compares network parts with the full pasta
+slice and checks namespace parts against the full bubblewrap arguments for every
+lane. A mutant replacing the network part with a separate, stale literal option
+list must fail the equality test. `cmd/standardsctl/agent_sandbox_test.go` and
+`agent_sandbox_render_test.go` cover lane and part flags, NUL rendering, command
+help arguments, missing binaries with empty stdout, and exit status propagation.
 
 ### A receipt certifies only a working tree that matches HEAD
 

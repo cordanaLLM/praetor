@@ -16,13 +16,18 @@ import (
 )
 
 func parseAgentSandbox(args []string) (sandbox.Spec, error) {
+	spec, _, err := parseAgentSandboxOptions(args, false)
+	return spec, err
+}
+
+func parseAgentSandboxOptions(args []string, render bool) (sandbox.Spec, string, error) {
 	separator := slices.Index(args, "--")
 	if separator < 0 {
 		if slices.ContainsFunc(args, isHelpToken) {
 			printAgentUsage()
-			return sandbox.Spec{}, flag.ErrHelp
+			return sandbox.Spec{}, "", flag.ErrHelp
 		}
-		return sandbox.Spec{}, errors.New("agent sandbox requires -- COMMAND [ARGS...]")
+		separator = len(args)
 	}
 	flags := flag.NewFlagSet("agent sandbox", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
@@ -31,22 +36,44 @@ func parseAgentSandbox(args []string) (sandbox.Spec, error) {
 	var ports loopbackPorts
 	flags.Var(&ports, "allow-loopback-port", "allowed host-loopback TCP port (repeatable, local lane only)")
 	readOnly := flags.Bool("read-only", false, "mount workspace read-only")
-	if _, err := parseInterspersed(flags, args[:separator]); err != nil {
-		return sandbox.Spec{}, fmt.Errorf("agent sandbox flags: %w", err)
+	part := "full"
+	if render {
+		flags.StringVar(&part, "part", "full", "render part: full, network, namespaces")
 	}
-	if flags.NArg() != 0 || separator == len(args)-1 || args[separator+1] == "" {
-		return sandbox.Spec{}, errors.New("agent sandbox requires flags followed by -- COMMAND [ARGS...]")
+	if _, err := parseInterspersed(flags, args[:separator]); err != nil {
+		return sandbox.Spec{}, "", fmt.Errorf("agent sandbox flags: %w", err)
+	}
+	command, err := sandboxRenderCommand(args, separator, part)
+	if err != nil {
+		return sandbox.Spec{}, "", fmt.Errorf("agent sandbox command: %w", err)
+	}
+	if flags.NArg() != 0 {
+		return sandbox.Spec{}, "", errors.New("agent sandbox requires flags followed by -- COMMAND [ARGS...]")
+	}
+	if _, err := (sandbox.Invocation{}).Arguments(part); err != nil {
+		return sandbox.Spec{}, "", fmt.Errorf("agent sandbox flags: %w", err)
 	}
 	absolute, err := filepath.Abs(*workspace)
 	if err != nil {
-		return sandbox.Spec{}, fmt.Errorf("agent sandbox workspace: %w", err)
+		return sandbox.Spec{}, "", fmt.Errorf("agent sandbox workspace: %w", err)
 	}
 	spec, err := sandbox.LaneProfile(*lane, ports)
 	if err != nil {
-		return sandbox.Spec{}, fmt.Errorf("agent sandbox lane: %w", err)
+		return sandbox.Spec{}, "", fmt.Errorf("agent sandbox lane: %w", err)
 	}
-	spec.Workspace, spec.ReadOnly, spec.Command = absolute, *readOnly, slices.Clone(args[separator+1:])
-	return spec, nil
+	spec.Workspace, spec.ReadOnly, spec.Command = absolute, *readOnly, command
+	return spec, part, nil
+}
+
+func sandboxRenderCommand(args []string, separator int, part string) ([]string, error) {
+	if separator == len(args) && part != "full" {
+		// Partial rendering has no payload; retain the normal command validation.
+		return []string{"/usr/bin/true"}, nil
+	}
+	if separator >= len(args)-1 || args[separator+1] == "" {
+		return nil, errors.New("missing sandbox command")
+	}
+	return slices.Clone(args[separator+1:]), nil
 }
 
 func runAgentSandbox(args []string) error {
@@ -54,7 +81,7 @@ func runAgentSandbox(args []string) error {
 	if render {
 		args = args[1:]
 	}
-	spec, err := parseAgentSandbox(args)
+	spec, part, err := parseAgentSandboxOptions(args, render)
 	if err != nil {
 		return err
 	}
@@ -65,7 +92,7 @@ func runAgentSandbox(args []string) error {
 		if err != nil {
 			return err
 		}
-		return renderSandboxInvocation(os.Stdout, invocation)
+		return renderSandboxPart(os.Stdout, invocation, part)
 	}
 	err = (sandbox.Runner{}).Run(ctx, spec, os.Stdin, os.Stdout, os.Stderr)
 	return agentSandboxResult(err)
@@ -102,7 +129,17 @@ func (p *loopbackPorts) Set(value string) error {
 }
 
 func renderSandboxInvocation(w io.Writer, invocation sandbox.Invocation) error {
-	argv := append([]string{invocation.Path}, invocation.Args...)
+	return renderSandboxPart(w, invocation, "full")
+}
+
+func renderSandboxPart(w io.Writer, invocation sandbox.Invocation, part string) error {
+	argv, err := invocation.Arguments(part)
+	if err != nil {
+		return fmt.Errorf("agent sandbox render: %w", err)
+	}
+	if len(argv) == 0 {
+		return nil
+	}
 	if _, err := io.WriteString(w, strings.Join(argv, "\x00")+"\x00"); err != nil {
 		return fmt.Errorf("agent sandbox render: %w", err)
 	}
