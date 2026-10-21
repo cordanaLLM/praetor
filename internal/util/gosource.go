@@ -7,12 +7,43 @@ package util
 import (
 	"go/ast"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
 
 // maxGoImportSpecs bounds the import specs GoImportSpecs reads from one file (HISS-02).
 const maxGoImportSpecs = 4096
+
+// generatedHeaderRegexp is the canonical cmd/go convention for generated code.
+var generatedHeaderRegexp = regexp.MustCompile(`^// Code generated .* DO NOT EDIT\.$`)
+
+// IsGeneratedGoSource reports whether the parsed Go source file carries the canonical
+// generated-code header comment (^// Code generated .* DO NOT EDIT\.$) on a line before
+// the package clause, as documented by cmd/go.
+func IsGeneratedGoSource(file *ast.File) bool {
+	if file == nil {
+		return false
+	}
+	for _, group := range file.Comments {
+		if group == nil {
+			continue
+		}
+		for _, comment := range group.List {
+			if comment == nil {
+				continue
+			}
+			if comment.Slash >= file.Package {
+				continue
+			}
+			text := strings.TrimRight(comment.Text, "\r")
+			if generatedHeaderRegexp.MatchString(text) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // IsGoNonTestSource reports whether path names a Go source file outside Go's test surface:
 // a .go file that IsGoTestSurface does not claim. go build never compiles a file on the test

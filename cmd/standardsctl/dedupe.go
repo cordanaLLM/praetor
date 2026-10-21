@@ -140,6 +140,9 @@ func printDedupeReport(dir string, report *dedupe.DedupeReport) error {
 		return nil
 	}
 	fmt.Printf("  Files Scanned:     %d\n", report.TotalFilesScanned)
+	if report.SkippedGeneratedFiles > 0 {
+		fmt.Printf("  Generated Skipped: %d\n", report.SkippedGeneratedFiles)
+	}
 	fmt.Printf("  Functions Scanned: %d\n", report.TotalFuncsScanned)
 	fmt.Printf("  Cleanliness Score: %.1f%%\n", report.CleanlinessScore)
 	if report.Partial {

@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -159,6 +160,9 @@ func gitSourceFiles(ctx context.Context, repoPath string) (sourceScope, error) {
 	var scope sourceScope
 	for _, entry := range entries {
 		path := string(entry)
+		if path == "" || hiss.ShouldIgnorePath(filepath.ToSlash(path)) {
+			continue
+		}
 		language := sourceLanguageOf(path)
 		if language == "" {
 			continue
@@ -196,17 +200,20 @@ func finalizeScope(scope *sourceScope) {
 }
 
 func processDirEntry(repoPath, path string, entry fs.DirEntry, scope *sourceScope) error {
-	if entry.IsDir() {
-		if path != repoPath && shouldSkipDir(entry.Name()) {
-			return filepath.SkipDir
-		}
-		return nil
-	}
 	rel, err := filepath.Rel(repoPath, path)
 	if err != nil {
 		return err
 	}
 	rel = filepath.ToSlash(rel)
+	if entry.IsDir() {
+		if path != repoPath && hiss.ShouldIgnoreDir(entry.Name(), rel) {
+			return filepath.SkipDir
+		}
+		return nil
+	}
+	if hiss.ShouldIgnorePath(rel) {
+		return nil
+	}
 	if language := sourceLanguageOf(rel); language != "" {
 		scope.add(language, rel)
 	}
