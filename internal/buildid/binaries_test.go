@@ -33,6 +33,7 @@ import (
 const (
 	binariesBuildTimeout = 5 * time.Minute
 	binaryRunTimeout     = 30 * time.Second
+	maxMainDirEntries    = 4096
 	maxMainSourceFiles   = 256
 )
 
@@ -215,24 +216,38 @@ func emptyStringDefault(tok token.Token, value *ast.ValueSpec, index int) error 
 	return nil
 }
 
-func parseMainPackage(t *testing.T, dir string) []*ast.File {
-	t.Helper()
+func parseMainPackageFiles(dir string) ([]*ast.File, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
+	}
+	if len(entries) > maxMainDirEntries {
+		return nil, fmt.Errorf("directory %s has %d entries; exceeds maxMainDirEntries bound %d", dir, len(entries), maxMainDirEntries)
 	}
 	fset := token.NewFileSet()
 	var files []*ast.File
-	for i := 0; i < len(entries) && i < maxMainSourceFiles; i++ {
+	for i := 0; i < len(entries) && i < maxMainDirEntries; i++ {
 		name := entries[i].Name()
-		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+		if entries[i].IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
+		}
+		if len(files) >= maxMainSourceFiles {
+			return nil, fmt.Errorf("directory %s exceeds maxMainSourceFiles bound %d", dir, maxMainSourceFiles)
 		}
 		file, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, parser.SkipObjectResolution)
 		if err != nil {
-			t.Fatal(err)
+			return nil, err
 		}
 		files = append(files, file)
+	}
+	return files, nil
+}
+
+func parseMainPackage(t *testing.T, dir string) []*ast.File {
+	t.Helper()
+	files, err := parseMainPackageFiles(dir)
+	if err != nil {
+		t.Fatalf("parse main package in %s: %v", dir, err)
 	}
 	return files
 }
@@ -290,5 +305,61 @@ func TestInjectableVersionRefusesWhatMinusXCannotWrite(t *testing.T) {
 		if err := injectableVersion([]*ast.File{file}); (err == nil) != tc.ok {
 			t.Errorf("%s: err = %v, want ok=%v", tc.source, err, tc.ok)
 		}
+	}
+}
+
+// Positive: test files do not count toward maxMainSourceFiles and do not prevent parseMainPackage
+// from finding main.go even when more than maxMainSourceFiles test files sort before it.
+func TestParseMainPackage_Positive_TestFilesDoNotCrowdOutMain(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 260 && i < maxMainDirEntries; i++ {
+		name := filepath.Join(dir, fmt.Sprintf("gate_%03d_test.go", i))
+		if err := os.WriteFile(name, []byte("package main\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mainFile := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(mainFile, []byte("package main\n\nvar version = \"\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	files := parseMainPackage(t, dir)
+	if err := injectableVersion(files); err != nil {
+		t.Fatalf("injectableVersion returned error: %v", err)
+	}
+}
+
+// Negative: a directory declaring more than maxMainSourceFiles non-test sources fails loudly.
+func TestParseMainPackage_Negative_ExceedsSourceFilesBound(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < maxMainSourceFiles+1 && i < maxMainDirEntries; i++ {
+		name := filepath.Join(dir, fmt.Sprintf("src_%03d.go", i))
+		if err := os.WriteFile(name, []byte("package main\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := parseMainPackageFiles(dir)
+	if err == nil {
+		t.Fatalf("parseMainPackageFiles(%s) succeeded, want error for exceeding maxMainSourceFiles=%d", dir, maxMainSourceFiles)
+	}
+	if !strings.Contains(err.Error(), dir) || !strings.Contains(err.Error(), strconv.Itoa(maxMainSourceFiles)) {
+		t.Fatalf("error %q does not name directory %s and bound %d", err, dir, maxMainSourceFiles)
+	}
+}
+
+// Boundary: a directory holding more entries than maxMainDirEntries fails loudly.
+func TestParseMainPackage_Boundary_ExceedsDirEntriesBound(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < maxMainDirEntries+1 && i <= maxMainDirEntries+1; i++ {
+		name := filepath.Join(dir, fmt.Sprintf("entry_%04d.txt", i))
+		if err := os.WriteFile(name, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := parseMainPackageFiles(dir)
+	if err == nil {
+		t.Fatalf("parseMainPackageFiles(%s) succeeded, want error for exceeding maxMainDirEntries=%d", dir, maxMainDirEntries)
+	}
+	if !strings.Contains(err.Error(), dir) || !strings.Contains(err.Error(), strconv.Itoa(maxMainDirEntries)) {
+		t.Fatalf("error %q does not name directory %s and bound %d", err, dir, maxMainDirEntries)
 	}
 }
