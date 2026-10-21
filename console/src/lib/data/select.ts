@@ -97,6 +97,7 @@ export function filterFrontier(list: readonly FrontierItem[], f: Filters): Front
 		.map((item, i) => ({ item, i }))
 		.filter(
 			({ item }) =>
+				(!f.gRepo || item.repo === f.gRepo) &&
 				(!f.gClass || item.class === f.gClass) &&
 				(!f.gGoal || item.goal === f.gGoal) &&
 				(!f.gStatus || item.status === f.gStatus) &&

@@ -11,11 +11,21 @@ export function fixture<K extends DataFile>(name: K): FileShapes[K] {
 
 export type Reply = {
 	status?: number;
+	type?: 'opaqueredirect';
+	headers?: HeadersInit;
 	body?: unknown;
 	raw?: string;
 	error?: Error;
 	hang?: boolean;
 };
+
+function replyResponse(name: DataFile, reply: Reply): Response {
+	if (reply.type === 'opaqueredirect') {
+		return Object.defineProperty(Response.error(), 'type', { value: reply.type });
+	}
+	const text = reply.raw ?? JSON.stringify(reply.body ?? fixture(name));
+	return new Response(text, { status: reply.status ?? 200, headers: reply.headers });
+}
 
 /** fetch stand-in: answers each data file from `replies` (a value or a function of the call count). */
 export function stubFetch(
@@ -35,7 +45,6 @@ export function stubFetch(
 				)
 			);
 		}
-		const text = reply.raw ?? JSON.stringify(reply.body ?? fixture(name));
-		return new Response(text, { status: reply.status ?? 200 });
+		return replyResponse(name, reply);
 	}) as typeof fetch;
 }

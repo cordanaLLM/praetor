@@ -48,6 +48,10 @@ export class ConsoleData {
 		this.options = options;
 	}
 
+	get signinRequired(): boolean {
+		return DATA_FILES.some((name) => this.slot(name).error?.kind === 'signin');
+	}
+
 	slot(name: DataFile): FileSlot<DataFile> {
 		return this[name] as FileSlot<DataFile>;
 	}

@@ -62,9 +62,13 @@ export interface FrontierItem {
 	score: number;
 	goal?: string;
 	class?: string;
+	repo?: string;
 }
 
 export interface GraphFile extends Head {
+	repos: { repo: string; items: number }[];
+	done_recent: { id: string; title: string; repo: string; done_at: string }[];
+	done_trend: { day: string; done: number }[];
 	totals: Partial<Record<TotalKey, Count>>;
 	quick_wins: QuickWin[];
 	unestimated: number;

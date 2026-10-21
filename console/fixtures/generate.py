@@ -9,6 +9,7 @@ Usage: generate.py [--out DIR] [--cards N] [--nodes N] [--sessions N]   defaults
 """
 import argparse
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
 
 GENERATED_AT = "2026-01-15T09:30:00Z"
@@ -50,10 +51,23 @@ def graph(nodes):
               (("waiting", 7), ("active", 12), ("ready", nodes), ("blocked", 20), ("done", 41))}
     wins = [{"kind": pick(("node", "steering", "research"), i), "id": f"N{i + 1}", "title": f"{pick(VERBS, i)} {pick(OBJECTS, i + 2)}",
              "gain": 1 + i % 5, "effort": 1 + (i * 2) % 5, "clarity": pick(("clear", "partial"), i), "reason": "synthetic",
-             "model": "example-model", "repo": pick(REPOS, i)} for i in range(min(nodes, 20))]
+             "model": "example-model", "repo": pick(REPOS[:-1], i)} for i in range(min(nodes, 20))
+            if pick(REPOS[:-1], i) != REPOS[-2]]
     frontier = [{"id": f"N{i + 1}", "title": f"{pick(VERBS, i + 1)} {pick(OBJECTS, i)}", "status": pick(STATUS, i),
-                 "score": round(10 - i * 0.13, 2), "goal": pick("ABCDE", i), "class": pick(CLASSES, i)} for i in range(min(nodes, 200))]
-    return {"version": 1, "generated_at": GENERATED_AT, "totals": totals, "quick_wins": wins, "unestimated": 5, "frontier": frontier}
+                 "score": round(10 - i * 0.13, 2), "goal": pick("ABCDE", i), "class": pick(CLASSES, i),
+                 "repo": pick(REPOS[:-1], i)} for i in range(min(nodes, 200))]
+    # Eta has frontier items but no quick win; theta has no graph items.
+    repos = [{"repo": repo, "items": sum(row["repo"] == repo for row in frontier)} for repo in REPOS]
+    generated = datetime.fromisoformat(GENERATED_AT)
+    done_recent = [{"id": f"D{i + 1}", "title": f"{pick(VERBS, i)} {pick(OBJECTS, i)}",
+                    "repo": REPOS[i] if i < 2 else "",
+                    "done_at": (generated - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")}
+                   for i, hours in enumerate((1, 4, 20))]
+    counts = (0, 2, 1, 0, 4, 2, 0, 3, 1, 0, 2, 0, 1, 2)
+    done_trend = [{"day": (generated.date() - timedelta(days=13 - i)).isoformat(), "done": count}
+                  for i, count in enumerate(counts)]
+    return {"version": 1, "generated_at": GENERATED_AT, "totals": totals, "quick_wins": wins, "unestimated": 5,
+            "frontier": frontier, "repos": repos, "done_recent": done_recent, "done_trend": done_trend}
 
 
 def status(sessions):
