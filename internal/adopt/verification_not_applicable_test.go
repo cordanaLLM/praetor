@@ -109,6 +109,9 @@ func assertNotApplicableExecution(t *testing.T, root, makePath string) {
 	for _, cli := range []string{util.PraetorCLI, util.LegacyCLI} {
 		writeStub(t, stubs, cli, "printf '%s\\n' \"$*\" >> calls\n")
 	}
+	// The documentation block's docs-lint and docs-figures run node, which is not what this test
+	// checks and which a CI runner keeps outside git's directory: a stub answers for it.
+	writeStub(t, stubs, "node", "exit 0\n")
 	// The adopted Makefile resolves the engine with "sh .config/lefthook/engine.sh", so the
 	// launcher's tools must stay reachable once hermeticPath narrows PATH to git's directory,
 	// which need not hold them (Praetor's own devcontainer keeps git in /usr/local/bin).
