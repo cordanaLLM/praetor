@@ -263,27 +263,27 @@ func TestIdentityEqual_3D(t *testing.T) {
 	idLong := Identity{Revision: "32a35c812345"}
 	idDiff := Identity{Revision: "18c50fc7476a"}
 	idRel := Identity{Release: "v1.0.0"}
-	idRel2 := Identity{Release: "v1.0.0"}
 	idRelDiff := Identity{Release: "v2.0.0"}
 	idUnknown := Identity{Unknown: "none"}
 
-	if !idShort.Equal(idLong) || !idLong.Equal(idShort) {
-		t.Error("short revision must match longer prefix")
+	cases := []struct {
+		name string
+		a, b Identity
+		want bool
+	}{
+		{"short revision matches longer prefix", idShort, idLong, true},
+		{"longer revision matches short prefix", idLong, idShort, true},
+		{"different revisions do not match", idShort, idDiff, false},
+		{"identical releases match", idRel, Identity{Release: "v1.0.0"}, true},
+		{"different releases do not match", idRel, idRelDiff, false},
+		{"release does not match revision", idRel, idShort, false},
+		{"unknown does not match revision", idUnknown, idShort, false},
+		{"revision does not match unknown", idShort, idUnknown, false},
 	}
-	if idShort.Equal(idDiff) {
-		t.Error("different revisions must not match")
-	}
-	if !idRel.Equal(idRel2) {
-		t.Error("identical releases must match")
-	}
-	if idRel.Equal(idRelDiff) {
-		t.Error("different releases must not match")
-	}
-	if idRel.Equal(idShort) {
-		t.Error("release must not match revision")
-	}
-	if idUnknown.Equal(idShort) || idShort.Equal(idUnknown) {
-		t.Error("unknown identity must not match")
+	for _, tc := range cases {
+		if got := tc.a.Equal(tc.b); got != tc.want {
+			t.Errorf("%s: Equal = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 	if !idShort.Identified() || !idRel.Identified() || idUnknown.Identified() {
 		t.Error("Identified check incorrect")
