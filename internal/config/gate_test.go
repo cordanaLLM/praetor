@@ -126,4 +126,15 @@ gate:
 	if got := omitted.Gate.DeclaredVerifyTimeoutDuration(); got != 0 {
 		t.Errorf("omitted gate section duration = %v, want 0", got)
 	}
+	if omitted.Gate.EnforceReadmePresentation() {
+		t.Error("omitted gate section must not enforce README presentation by default")
+	}
+
+	enforced, err := ParseManifest("test", []byte("version: 1\ngate:\n  readme_presentation: true\n"))
+	if err != nil {
+		t.Fatalf("gate.readme_presentation must be accepted: %v", err)
+	}
+	if !enforced.Gate.EnforceReadmePresentation() {
+		t.Error("expected EnforceReadmePresentation() == true")
+	}
 }

@@ -90,12 +90,6 @@ exceptions:
     fingerprint: "b2b91312"
     reason: "category D: SleepContext is the engine's context-aware wait; the standalone API compatibility gate (tools/apicompat/gate/main.go, rendered into adopter repositories) carries the same ten lines as defaultWait because it imports no engine package (order engine-praetor-api-modfetch-retry-20261022)"
     expires: "2027-02-20"
-  - rule: "readme-presentation"
-    path: "README.md"
-    reason: "README migration to shared presentation standard in progress"
-    category: D
-    entered: "2026-10-22"
-    expires: "2027-02-19"
 
 # Text register per audience surface and task class (ADR-0010). Task keys are target_tasks
 # labels of .config/models/routing.yaml; every label without a row writes in the register

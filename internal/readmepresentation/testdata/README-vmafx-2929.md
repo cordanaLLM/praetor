@@ -1,6 +1,3 @@
-<!-- SPDX-FileCopyrightText: 2026 VMAFx Authors -->
-<!-- SPDX-License-Identifier: EUPL-1.2 -->
-
 <!-- markdownlint-disable MD013 MD023 MD033 MD036 MD041 -->
 <!-- A centred header needs inline HTML, a banner image, indented headings and
      badge lines past 80 columns, so those five rules are off for this file.

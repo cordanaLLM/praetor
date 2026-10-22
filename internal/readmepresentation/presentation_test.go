@@ -131,6 +131,13 @@ var plantedTestCases = []plantedCase{
 		},
 		wantRuleID: RuleIDTagline,
 	},
+	{
+		name: "no badge block",
+		mutate: func(_ string) string {
+			return "# widgets\n"
+		},
+		wantRuleID: RuleIDBadgeBlock,
+	},
 }
 
 func TestPresentation_Negative_PlantedCasesRefused(t *testing.T) {

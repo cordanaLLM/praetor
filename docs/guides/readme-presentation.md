@@ -35,24 +35,23 @@ When present, section `H2` headings must follow this ordering sequence:
 7. `licen` or `upstream`
 8. `standard` or `governance`
 
-## Ratchet and migration waivers
+## Ratchet and enforcement
 
-Adopters with legacy README files migrate under a declared exception rather
-than failing the gate immediately. To declare a migration waiver, add an entry
-to `.standards.yaml` under `exceptions:`:
+Findings convert into `internal/baseline` infractions (`README-00` through
+`README-05` on `README.md`, `readmepresentation.ToBaseline`) and evaluate
+through `baseline.EvaluateRatchet`. When `.standards-baseline.json` holds
+`README-*` entries, recorded findings pass, new findings above the baseline
+fail the audit, and resolved entries report as stale via
+`ratchet.StaleNotice()`.
+
+For an adopted repository without `README-*` baseline entries or an explicit
+enforcement switch, `readmepresentation.Audit` prints findings (including
+`README-00` when `README.md` is absent) on `[REPORT]` lines (`report: measured,
+not enforced`, matching `HISS-04` in `internal/hiss/measurement.go`) without
+failing the audit exit code. To enforce the gate without baseline entries, set
+`gate.readme_presentation` in `.standards.yaml`:
 
 ```yaml
-exceptions:
-  - rule: "readme-presentation"
-    path: "README.md"
-    reason: "README migration to shared presentation standard in progress"
-    category: D
-    entered: "2026-10-22"
-    expires: "2027-02-19"
+gate:
+  readme_presentation: true
 ```
-
-While the waiver is active, `praetorctl audit` reports active presentation
-findings under `[PASS] README presentation: declared gap` without failing the
-gate. When the exception expires or is removed, findings become blocking
-failures. If a compliant repository keeps an unnecessary waiver, the audit
-reports the entry as stale and fails until it is removed.

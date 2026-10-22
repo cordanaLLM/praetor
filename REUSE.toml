@@ -141,3 +141,14 @@ path = ["console/screenshots/*.png"]
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Lusoris <lusoris@proton.me>"
 SPDX-License-Identifier = "EUPL-1.2"
+
+# The README presentation exemplar fixture is copied from VMAFx/vmafx (README.md),
+# which carries Netflix and Lusoris copyright under BSD-2-Clause-Patent in VMAFx's REUSE.toml.
+[[annotations]]
+path = ["internal/readmepresentation/testdata/README-vmafx-2929.md"]
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "2020 Netflix, Inc.",
+  "2026 Lusoris",
+]
+SPDX-License-Identifier = "BSD-2-Clause-Patent"

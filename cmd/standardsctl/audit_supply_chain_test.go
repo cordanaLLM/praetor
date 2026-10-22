@@ -66,9 +66,6 @@ func adoptedRepository(t *testing.T, files map[string]string, flags ...string) (
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	if _, ok := files["README.md"]; !ok {
-		writeFixtureFile(t, root, "README.md", "# widgets\n")
-	}
 	for name, body := range files {
 		writeFixtureFile(t, root, name, body)
 	}

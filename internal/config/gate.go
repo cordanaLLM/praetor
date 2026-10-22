@@ -16,14 +16,22 @@ import (
 const MaxDeclaredVerifyTimeout = 30 * time.Minute
 
 // GatePolicy is the manifest's gate section: settings of the anti-direct-merge gating pipeline.
-// declared_verify_timeout sets the stage bound for the declared-verification stage. It is
-// repository-only, like Documentation and Security, and stays out of ResolvedPolicy.
+// declared_verify_timeout sets the stage bound for the declared-verification stage.
+// readme_presentation turns measured-not-enforced README presentation report lines into an
+// enforced gate failure when no baseline entry covers the findings. It is repository-only,
+// like Documentation and Security, and stays out of ResolvedPolicy.
 type GatePolicy struct {
 	DeclaredVerifyTimeout string `yaml:"declared_verify_timeout,omitempty"`
+	ReadmePresentation    bool   `yaml:"readme_presentation,omitempty"`
 }
 
 // gateKeys is the closed key set of the gate section.
-var gateKeys = []string{"declared_verify_timeout"}
+var gateKeys = []string{"declared_verify_timeout", "readme_presentation"}
+
+// EnforceReadmePresentation reports whether the manifest enforces the README presentation gate.
+func (p *GatePolicy) EnforceReadmePresentation() bool {
+	return p != nil && p.ReadmePresentation
+}
 
 // UnmarshalYAML checks that all keys are known before decoding GatePolicy.
 func (p *GatePolicy) UnmarshalYAML(node *yaml.Node) error {

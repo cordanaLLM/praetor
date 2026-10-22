@@ -98,32 +98,103 @@ func parseHeroHeight(line string) (int, bool) {
 
 func checkBadgeBlock(lines []string, headerStart, headerEnd int, relPath string, findings *[]Finding) (int, int) {
 	blockStart, blockEnd := findBadgeBlockRange(lines, headerStart, headerEnd)
-	if blockStart >= 0 {
+	if blockStart < 0 {
+		lineNum := 1
+		if headerStart >= 0 {
+			lineNum = headerStart + 1
+		}
+		*findings = append(*findings, Finding{
+			File:    relPath,
+			Line:    lineNum,
+			RuleID:  RuleIDBadgeBlock,
+			Message: "missing style=for-the-badge badge block under header",
+		})
+	} else {
 		checkBadgeGroupsOrder(lines, blockStart, blockEnd, relPath, findings)
 	}
 	checkBadgesOutsideBlock(lines, blockStart, blockEnd, relPath, findings)
 	return blockStart, blockEnd
 }
 
+func isHeaderPreambleLine(trimmed string) bool {
+	if trimmed == "" || isHeaderOpening(trimmed) || strings.HasPrefix(trimmed, "# ") {
+		return true
+	}
+	lower := strings.ToLower(trimmed)
+	for _, prefix := range [...]string{"<!--", "<img", "![", "<picture", "<source", "</picture>", "<h1", "<a ", "</a>"} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasForTheBadge(lines []string, start, end int) bool {
+	for i := start; i >= 0 && i <= end && i < len(lines) && i < MaxLines; i++ {
+		if strings.Contains(lines[i], "style=for-the-badge") {
+			return true
+		}
+	}
+	return false
+}
+
+func advanceCommentState(trimmed string, inComment *bool) bool {
+	if *inComment {
+		if strings.Contains(trimmed, "-->") {
+			*inComment = false
+		}
+		return true
+	}
+	if strings.HasPrefix(trimmed, "<!--") && !strings.Contains(trimmed, "-->") {
+		*inComment = true
+		return true
+	}
+	return false
+}
+
+func isBadgeBlockLine(trimmed string) bool {
+	if strings.Contains(trimmed, "style=for-the-badge") {
+		return true
+	}
+	group, _ := parseBadgeGroup(trimmed)
+	return group > 0
+}
+
+func shouldStopBadgeBlockScan(blockStart int, trimmed string) bool {
+	if blockStart < 0 {
+		return !isHeaderPreambleLine(trimmed)
+	}
+	return trimmed != "" && !strings.HasPrefix(trimmed, "<!--")
+}
+
+func recordBadgeLine(i int, blockStart, blockEnd *int) {
+	if *blockStart < 0 {
+		*blockStart = i
+	}
+	*blockEnd = i
+}
+
 func findBadgeBlockRange(lines []string, headerStart, headerEnd int) (int, int) {
 	if headerStart < 0 {
-		headerStart = 0
-		headerEnd = len(lines)
+		headerStart, headerEnd = 0, len(lines)-1
 	}
-	blockStart := -1
-	blockEnd := -1
-	for i := headerStart; i <= headerEnd && i < len(lines); i++ {
+	blockStart, blockEnd := -1, -1
+	inComment := false
+	for i := headerStart; i <= headerEnd && i < len(lines) && i < MaxLines; i++ {
 		trimmed := strings.TrimSpace(lines[i])
-		isBadge := strings.Contains(trimmed, "style=for-the-badge")
-		isGroup, _ := parseBadgeGroup(trimmed)
-		if isBadge || isGroup > 0 {
-			if blockStart < 0 {
-				blockStart = i
-			}
-			blockEnd = i
-		} else if blockStart >= 0 && trimmed != "" && !strings.HasPrefix(trimmed, "<!--") {
+		if advanceCommentState(trimmed, &inComment) {
+			continue
+		}
+		if isBadgeBlockLine(trimmed) {
+			recordBadgeLine(i, &blockStart, &blockEnd)
+			continue
+		}
+		if shouldStopBadgeBlockScan(blockStart, trimmed) {
 			break
 		}
+	}
+	if blockStart >= 0 && !hasForTheBadge(lines, blockStart, blockEnd) {
+		return -1, -1
 	}
 	return blockStart, blockEnd
 }

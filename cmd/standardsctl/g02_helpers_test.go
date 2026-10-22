@@ -18,7 +18,6 @@ import (
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
-	"github.com/cordanaLLM/praetor/internal/readmegovernance"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
@@ -135,31 +134,6 @@ type auditFixture struct {
 
 const fixtureHarnessJSON = `{"version":1,"platform":"acme/widgets","operating_contract":["Rule 0: terminal disposition required."],"agit_push_format":"reviewed fixture push","invariants":["fixture invariant"]}` + "\n"
 
-const fixtureReadmeMD = `# Widgets
-
-<!-- praetor:readme-governance:start -->
-[![HISS Adopted][praetor-hiss-badge]][praetor-hiss-agents]
-
-Praetor manages this repository's declared governance policy. This managed
-block records adoption state; it is not a verification certificate.
-
-**Verification**: ` + "`make verify-all`" + ` runs the repository's configured
-verification cascade.
-
-**HISS Audit**: ` + "`praetorctl audit`" + ` enforces policy, generated-surface
-integrity, and the debt ratchet.
-
-**Context Sync**: ` + "`praetorctl compile-context --verify`" + ` verifies every
-generated agent context against ` + "`AGENTS.md`" + `.
-
-**Debt Baseline**: ` + "`.standards-baseline.json`" + ` anchors the debt ratchet at
-0 recorded infractions; audit forbids growth.
-
-[praetor-hiss-badge]: https://img.shields.io/badge/Standards-HISS%20Adopted-blue
-[praetor-hiss-agents]: https://github.com/acme/widgets/blob/HEAD/AGENTS.md
-<!-- praetor:readme-governance:end -->
-`
-
 // fixtureManifest renders a .standards.yaml for owner/name; signed adds the
 // require_signed_commits override.
 func fixtureManifest(owner, name string, signed bool) string {
@@ -221,7 +195,6 @@ func newAuditFixture(t *testing.T) *auditFixture {
 	writeFixtureFile(t, dir, ".config/labels.yaml", "version: 1\nlabels: []\n")
 	writeDeclaredRuleset(t, dir, config.DefaultPolicy().BranchProtection)
 	writeFixtureFile(t, dir, ".paperclip/harness.json", fixtureHarnessJSON)
-	writeFixtureFile(t, dir, "README.md", fixtureReadmeMD)
 	// The text register block sends agent evidence under .workingdir/; audit fails unless Git
 	// ignores it (compiler.CheckEvidenceIgnored).
 	writeFixtureFile(t, dir, ".gitignore", "/.workingdir/\n")
@@ -292,31 +265,6 @@ func (f *auditFixture) writeBaseline(t *testing.T, infractions []baseline.Infrac
 	}
 	if err := baseline.SaveBaseline(f.baselinePath, b); err != nil {
 		t.Fatalf("write baseline: %v", err)
-	}
-	f.reconcileReadme(t, b)
-}
-
-func (f *auditFixture) reconcileReadme(t *testing.T, b *baseline.Baseline) {
-	t.Helper()
-	readmePath := filepath.Join(f.dir, "README.md")
-	data, err := os.ReadFile(readmePath)
-	if err != nil {
-		return
-	}
-	manifest, err := config.LoadManifest(f.manifestPath)
-	if err != nil || manifest == nil {
-		return
-	}
-	state, err := readmeGovernanceState(manifest, b, true, string(data))
-	if err != nil {
-		return
-	}
-	updated, changed, err := readmegovernance.Reconcile(string(data), state)
-	if err != nil || !changed {
-		return
-	}
-	if err := os.WriteFile(readmePath, []byte(updated), 0o644); err != nil {
-		t.Fatalf("update fixture readme: %v", err)
 	}
 }
 

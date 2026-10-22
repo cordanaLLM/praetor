@@ -182,9 +182,6 @@ func TestBaselineVerify_Positive_MovedFindingStillVerifies(t *testing.T) {
 	if out, err := runBaselineCmd(t, f, "--record", "--allow-increase", "--reason=legacy debt inventory"); err != nil {
 		t.Fatalf("record the legacy finding: %v\n%s", err, out)
 	}
-	if _, err := docsReadme(t, f.dir); err != nil {
-		t.Fatalf("docs readme: %v", err)
-	}
 	recorded := readFixtureFile(t, f.dir, ".standards-baseline.json")
 	writeFixtureFile(t, f.dir, "legacy.go", movedLegacyGoSource)
 

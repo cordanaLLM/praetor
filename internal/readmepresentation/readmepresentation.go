@@ -53,3 +53,18 @@ type Finding struct {
 func (f Finding) String() string {
 	return fmt.Sprintf("%s:%d: [%s] %s", f.File, f.Line, f.RuleID, f.Message)
 }
+
+// ReportLine formats the finding as a measured-not-enforced [REPORT] line, matching HISS-04.
+func (f Finding) ReportLine() string {
+	return fmt.Sprintf("[REPORT] %s %s:%d %s (report: measured, not enforced)", f.RuleID, f.File, f.Line, f.Message)
+}
+
+// IsReadmeRule reports whether ruleID is one of README-00..README-05.
+func IsReadmeRule(ruleID string) bool {
+	switch ruleID {
+	case RuleIDAbsent, RuleIDBadgeBlock, RuleIDTagline, RuleIDHero, RuleIDDiagrams, RuleIDSections:
+		return true
+	default:
+		return false
+	}
+}

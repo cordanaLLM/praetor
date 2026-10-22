@@ -115,16 +115,24 @@ func (s *Server) auditGates(p auditPaths, effective *config.EffectivePolicy) []a
 		// The CLI audit's release-token gate.
 		func(ctx context.Context) (string, error) { return auditReleaseToken(ctx, s.rootDir, manifest) },
 		// The CLI audit's shared README presentation standard gate.
-		func(ctx context.Context) (string, error) { return auditReadmePresentation(ctx, s.rootDir, manifest) },
+		func(ctx context.Context) (string, error) {
+			return auditReadmePresentation(ctx, s.rootDir, p.baseline, manifest)
+		},
 		func(ctx context.Context) (string, error) { return auditHookConfig(ctx, manifest, s.rootDir) },
 	}
 }
 
 // auditReadmePresentation runs the CLI audit's README presentation gate over root with the
-// manifest's exceptions.
-func auditReadmePresentation(ctx context.Context, root string, manifest *config.Manifest) (string, error) {
+// baseline and manifest gate enforcement switch.
+func auditReadmePresentation(ctx context.Context, root, baselinePath string, manifest *config.Manifest) (string, error) {
+	base, err := baseline.LoadBaseline(baselinePath)
+	if err != nil {
+		return "", fmt.Errorf("[FAIL] Baseline audit failed: %w", err)
+	}
 	return readmepresentation.Audit(ctx, readmepresentation.Options{
-		Root: root, Exceptions: manifest.Exceptions, Today: time.Now(),
+		Root:     root,
+		Baseline: base,
+		Enforce:  manifest != nil && manifest.Gate.EnforceReadmePresentation(),
 	})
 }
 
@@ -171,6 +179,7 @@ func auditBaselineRatchetWithPolicy(ctx context.Context, root, baselinePath stri
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] Baseline audit failed: %w", err)
 	}
+	base = readmepresentation.WithoutReadmeBaseline(base)
 
 	scanOpts, warning := policy.HISSScanOptions(root, hiss.ScanOptions{})
 	scanRep, err := hiss.Scan(ctx, root, scanOpts)

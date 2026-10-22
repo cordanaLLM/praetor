@@ -47,9 +47,12 @@ func checkMermaidBlock(firstLine string, lineNum int, relPath string, findings *
 	}
 }
 
+const maxSvgTargetsPerLine = 32
+
 func checkSvgBelowHeader(rootDir, line, relPath string, lineNum int, findings *[]Finding) {
 	targets := extractSvgTargets(line)
-	for _, target := range targets {
+	for i := 0; i < len(targets) && i < maxSvgTargetsPerLine; i++ {
+		target := targets[i]
 		if isRemoteTarget(target) {
 			continue
 		}
@@ -78,17 +81,17 @@ func checkSvgBelowHeader(rootDir, line, relPath string, lineNum int, findings *[
 
 func extractSvgTargets(line string) []string {
 	var targets []string
-	if m := mdSvgRe.FindAllStringSubmatch(line, -1); len(m) > 0 {
-		for _, sub := range m {
-			if len(sub) > 1 {
-				targets = append(targets, sub[1])
+	if m := mdSvgRe.FindAllStringSubmatch(line, maxSvgTargetsPerLine); len(m) > 0 {
+		for i := 0; i < len(m) && i < maxSvgTargetsPerLine; i++ {
+			if len(m[i]) > 1 {
+				targets = append(targets, m[i][1])
 			}
 		}
 	}
-	if m := htmlSvgRe.FindAllStringSubmatch(line, -1); len(m) > 0 {
-		for _, sub := range m {
-			if len(sub) > 1 {
-				targets = append(targets, sub[1])
+	if m := htmlSvgRe.FindAllStringSubmatch(line, maxSvgTargetsPerLine); len(m) > 0 {
+		for i := 0; i < len(m) && i < maxSvgTargetsPerLine; i++ {
+			if len(m[i]) > 1 {
+				targets = append(targets, m[i][1])
 			}
 		}
 	}
@@ -165,7 +168,7 @@ func newSectionState() *sectionState {
 	}
 }
 
-var sectionKeywords = []struct {
+var sectionKeywords = [...]struct {
 	class    int
 	name     string
 	keywords []string
@@ -180,20 +183,20 @@ var sectionKeywords = []struct {
 	{7, "governance", []string{"standard", "governance"}},
 }
 
-func checkHeadingKeywordOrder(clean string, lineNum int, relPath string, state *sectionState, findings *[]Finding) {
-	lower := strings.ToLower(clean)
-	matchedClass := -1
-	for _, sk := range sectionKeywords {
-		for _, kw := range sk.keywords {
-			if strings.Contains(lower, kw) {
-				matchedClass = sk.class
-				break
+func matchHeadingKeywordClass(lower string) int {
+	for i := 0; i < len(sectionKeywords); i++ {
+		sk := sectionKeywords[i]
+		for j := 0; j < len(sk.keywords) && j < 8; j++ {
+			if strings.Contains(lower, sk.keywords[j]) {
+				return sk.class
 			}
 		}
-		if matchedClass >= 0 {
-			break
-		}
 	}
+	return -1
+}
+
+func checkHeadingKeywordOrder(clean string, lineNum int, relPath string, state *sectionState, findings *[]Finding) {
+	matchedClass := matchHeadingKeywordClass(strings.ToLower(clean))
 	if matchedClass < 0 {
 		return
 	}

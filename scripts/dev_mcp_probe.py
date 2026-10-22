@@ -488,7 +488,6 @@ def audit_fixture(root):
         ".config/labels.yaml": "version: 1\nlabels:\n  - name: test\n    color: '000000'\n",
         ".github/rulesets/main.json": json.dumps(FIXTURE_RULESET, indent=2) + "\n",
         ".standards-baseline.json": '{"version":1,"total_infractions":0,"infractions":[]}\n',
-        "README.md": "# Repo\n",
     }
     for relative, content in files.items():
         target = root / relative

@@ -19,6 +19,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
+	"github.com/cordanaLLM/praetor/internal/readmepresentation"
 	"github.com/cordanaLLM/praetor/internal/runner"
 	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -180,7 +181,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditBaselineAndInvariants(ctx, opts) },
 		func() error { return auditMutationExclusions(ctx, manifest, rootDir, time.Now()) },
 		func() error { return auditReadmeGovernance(ctx, manifest, opts) },
-		func() error { return auditReadmePresentation(ctx, manifest, rootDir) },
+		func() error { return auditReadmePresentation(ctx, manifest, opts) },
 		func() error {
 			return auditDocumentationGate(ctx, manifest, rootDir, opts.effective.Policy.BranchProtection)
 		},
@@ -259,6 +260,7 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 	}
 	opts.baselineKnown = !base.Absent
 	opts.baseline = base
+	hissBase := readmepresentation.WithoutReadmeBaseline(base)
 
 	scanOpts := auditScanOptions(opts)
 	scanRep, err := hiss.Scan(ctx, opts.rootDir, scanOpts)
@@ -280,7 +282,7 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 		return err
 	}
 
-	ratchet := baseline.EvaluateRatchetWithOptions(base, current, touched,
+	ratchet := baseline.EvaluateRatchetWithOptions(hissBase, current, touched,
 		baseline.RatchetOptions{DebtDelta: opts.debtDeltaReason != ""})
 	if opts.debtDeltaReason != "" {
 		// Stated on every run that takes the exception, so it is visible in the hook output and
@@ -289,13 +291,13 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 			opts.debtDeltaReason)
 	}
 	if !ratchet.Passed {
-		return auditRatchetRejection(ctx, opts, scanOpts, base, current, ratchet)
+		return auditRatchetRejection(ctx, opts, scanOpts, hissBase, current, ratchet)
 	}
 	printInvariantVerdict(scanRep, fmt.Sprintf("%d active violations within %d baselined limit (%d touched files clean) (skipped: %d ignored directories, %d symlinks, %d oversize files, %d non-regular files)",
-		ratchet.CurrentCount, base.TotalInfractions, len(touched), scanRep.Skips.DirCount,
+		ratchet.CurrentCount, hissBase.TotalInfractions, len(touched), scanRep.Skips.DirCount,
 		scanRep.Skips.Symlinks, scanRep.Skips.Oversize, scanRep.Skips.Irregular))
 
-	return auditRatchetPassed(ctx, opts, base, ratchet)
+	return auditRatchetPassed(ctx, opts, hissBase, ratchet)
 }
 
 // auditRatchetRejection returns an error describing why the ratchet failed.

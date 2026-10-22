@@ -68,13 +68,13 @@ func TestAuditWorkflowTriggers_CLI(t *testing.T) {
 // flavorFixtures are the smallest repositories adoption scaffolds each flavor's CI workflow in,
 // by the flavor it resolves.
 var flavorFixtures = map[string]map[string]string{
-	"go-service": {"go.mod": "module example.com/widgets\n\ngo 1.24\n", "cmd/widgets/main.go": "package main\n\nfunc main() {}\n", "README.md": "# widgets\n"},
+	"go-service": {"go.mod": "module example.com/widgets\n\ngo 1.24\n", "cmd/widgets/main.go": "package main\n\nfunc main() {}\n"},
 	"rust-systems": {"Cargo.toml": "[package]\nname = \"widgets\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-		"src/main.rs": "fn main() {}\n", "README.md": "# widgets\n"},
+		"src/main.rs": "fn main() {}\n"},
 	"typescript-node": {"package.json": "{\"name\": \"widgets\", \"scripts\": {\"test\": \"node --test\"}}\n",
-		"package-lock.json": "{\"name\": \"widgets\", \"lockfileVersion\": 3, \"requires\": true, \"packages\": {\"\": {\"name\": \"widgets\"}}}\n", "README.md": "# widgets\n"},
-	"jvm-service":    {"pom.xml": "<project/>\n", "src/main/java/App.java": "class App {}\n", "README.md": "# widgets\n"},
-	"mobile-flutter": {"pubspec.yaml": "name: widgets\nenvironment:\n  sdk: \">=3.0.0 <4.0.0\"\ndependencies:\n  flutter:\n    sdk: flutter\n", "lib/main.dart": "void main() {}\n", "README.md": "# widgets\n"},
+		"package-lock.json": "{\"name\": \"widgets\", \"lockfileVersion\": 3, \"requires\": true, \"packages\": {\"\": {\"name\": \"widgets\"}}}\n"},
+	"jvm-service":    {"pom.xml": "<project/>\n", "src/main/java/App.java": "class App {}\n"},
+	"mobile-flutter": {"pubspec.yaml": "name: widgets\nenvironment:\n  sdk: \">=3.0.0 <4.0.0\"\ndependencies:\n  flutter:\n    sdk: flutter\n", "lib/main.dart": "void main() {}\n"},
 }
 
 // End to end (#817): adopting each flavor scaffolds its CI workflow in the hosted gate shape
