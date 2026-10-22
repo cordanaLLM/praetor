@@ -10,6 +10,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/readmepresentation"
 )
 
 func verifyPublicBaseline(ctx context.Context, dir string, original *hiss.ScanReport) (string, error) {
@@ -71,20 +72,26 @@ func parsePublicBaseline(data []byte) (*baseline.Baseline, error) {
 }
 
 func comparePublicBaseline(ctx context.Context, recorded *baseline.Baseline, original *hiss.ScanReport) error {
-	if recorded.Version != 1 || recorded.TotalInfractions != len(recorded.Infractions) || recorded.TotalInfractions != original.TotalInfractions {
+	if recorded.Version != 1 || recorded.TotalInfractions != len(recorded.Infractions) {
+		return errors.New("adopted baseline version or count differs from the independent original scan")
+	}
+	hissRecorded := readmepresentation.WithoutReadmeBaseline(recorded)
+	hissOriginal := publicInfractions(original)
+	hissOriginalCount := original.TotalInfractions - (len(original.Violations) - len(hissOriginal))
+	if hissRecorded.TotalInfractions != hissOriginalCount || hissRecorded.TotalInfractions != len(hissOriginal) {
 		return errors.New("adopted baseline version or count differs from the independent original scan")
 	}
 	// Fingerprints may legitimately collide at the same rule/file/line. Compare
 	// the full entry multiset, retaining multiplicity while ignoring list order.
-	expected := make(map[baseline.Infraction]int, len(original.Violations))
-	for _, infraction := range publicInfractions(original) {
+	expected := make(map[baseline.Infraction]int, len(hissOriginal))
+	for _, infraction := range hissOriginal {
 		expected[infraction]++
 	}
-	for i := 0; i < len(recorded.Infractions) && i < hiss.MaxInfractionsCap; i++ {
+	for i := 0; i < len(hissRecorded.Infractions) && i < hiss.MaxInfractionsCap; i++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		infraction := recorded.Infractions[i]
+		infraction := hissRecorded.Infractions[i]
 		if expected[infraction] == 0 {
 			return errors.New("adopted baseline entry differs from the independent original scan")
 		}

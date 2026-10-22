@@ -208,3 +208,16 @@ func TestRunHissStage_CleanupGotoException(t *testing.T) {
 		}
 	}
 }
+
+func TestRunHissStage_IgnoresReadmeBaselineEntries(t *testing.T) {
+	cfg := hissStageFixture(t, "", 10)
+	baseJSON := `{"version":1,"total_infractions":1,"infractions":[{"rule_id":"README-01","file_path":"README.md","line_number":1,"message":"missing badge","fingerprint":"abc"}]}`
+	writeFile(t, filepath.Join(cfg.repoDir, BaselineFile), baseJSON)
+	msg, err := runHissStage(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("runHissStage unexpected error: %v", err)
+	}
+	if !strings.Contains(msg, "0 infractions within the 0 baselined limit") {
+		t.Fatalf("expected README baseline entry filtered from HISS stage limit, got %q", msg)
+	}
+}

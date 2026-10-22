@@ -827,6 +827,13 @@ func reconcileBaseline(ctx context.Context, s *adoptSession) error {
 	return s.recordFirstBaseline(ctx, full)
 }
 
+func (s *adoptSession) enforceReadmePresentation() bool {
+	if s.policy != nil && s.policy.Manifest != nil {
+		return s.policy.Manifest.Gate.EnforceReadmePresentation()
+	}
+	return config.ReadmePresentationEnforced(s.repoPath)
+}
+
 // recordFirstBaseline scans the repository and records its first baseline at full. A scan that
 // does not complete is an error: persisting an empty baseline would silently mis-anchor the
 // HISS-13 ratchet. A dry run scans and writes nothing.
@@ -844,6 +851,13 @@ func (s *adoptSession) recordFirstBaseline(ctx context.Context, full string) err
 		s.report.BaselineStatus = "failed"
 		return err
 	}
+	readmeFindings, err := readmepresentation.ScanBaselineFindings(ctx, s.repoPath, nil, s.enforceReadmePresentation())
+	if err != nil {
+		s.report.BaselineStatus = "failed"
+		return err
+	}
+	base.Infractions = append(base.Infractions, readmepresentation.ToBaseline(readmeFindings)...)
+	base.TotalInfractions = len(base.Infractions)
 	s.report.BaselineStatus = "scanned"
 	s.report.LegacyDebtCount = base.TotalInfractions
 	if err := s.saveBaseline(full, base); err != nil {
@@ -945,7 +959,7 @@ func (s *adoptSession) checkKeptBaseline(ctx context.Context, full string) error
 	if err != nil {
 		return err
 	}
-	readmeFindings, err := readmepresentation.ScanBaselineFindings(ctx, s.repoPath, recorded, false)
+	readmeFindings, err := readmepresentation.ScanBaselineFindings(ctx, s.repoPath, recorded, s.enforceReadmePresentation())
 	if err != nil {
 		return err
 	}
@@ -987,7 +1001,7 @@ func (s *adoptSession) rerecordBaseline(ctx context.Context, full string) error 
 	if err != nil {
 		return err
 	}
-	readmeFindings, err := readmepresentation.ScanBaselineFindings(ctx, s.repoPath, previous, true)
+	readmeFindings, err := readmepresentation.ScanBaselineFindings(ctx, s.repoPath, previous, s.enforceReadmePresentation())
 	if err != nil {
 		s.report.BaselineStatus = "failed"
 		return err

@@ -9,6 +9,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/readmepresentation"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -255,6 +256,7 @@ func auditBaselineGrowth(ctx context.Context, opts *auditOptions, current *basel
 	if err != nil {
 		return fmt.Errorf("[FAIL] baseline committed at %s is unreadable: %w", opts.baseRef, err)
 	}
+	previous = readmepresentation.WithoutReadmeBaseline(previous)
 
 	if err := baseline.CheckMonotonic(previous, current); err != nil {
 		if current.IncreaseRationale == "" {

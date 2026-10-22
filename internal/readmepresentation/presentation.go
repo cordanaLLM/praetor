@@ -51,12 +51,16 @@ func CheckFileWithInfo(ctx context.Context, rootDir, relPath string) ([]Finding,
 
 func describeReadFailure(relPath string, err error) string {
 	switch {
+	case errors.Is(err, util.ErrPathEscapesRoot):
+		return fmt.Sprintf("%s escapes repository root", relPath)
 	case errors.Is(err, util.ErrNotRegularFile):
 		return fmt.Sprintf("%s is not a regular file", relPath)
 	case errors.Is(err, util.ErrFileTooLarge):
 		return fmt.Sprintf("%s exceeds maximum size (%d bytes)", relPath, MaxFileBytes)
+	case errors.Is(err, fs.ErrPermission):
+		return fmt.Sprintf("%s cannot be read (permission denied)", relPath)
 	default:
-		return fmt.Sprintf("%s cannot be read: %s", relPath, sanitizeDisplayPath(err.Error()))
+		return fmt.Sprintf("%s cannot be read", relPath)
 	}
 }
 

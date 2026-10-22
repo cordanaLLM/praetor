@@ -158,6 +158,9 @@ func pathBelow(root, path string) (string, bool) {
 // current checks report there.
 func findingsAtCommit(ctx context.Context, root, commit string, violations []baseline.Infraction, opts ScanOptions) ([]baseline.Infraction, error) {
 	files, packages := attributionScope(violations)
+	if len(files) == 0 && len(packages) == 0 {
+		return nil, nil
+	}
 	if len(files)+len(packages) > maxAttributedFiles {
 		return nil, fmt.Errorf("they span more than the %d files one attribution reads", maxAttributedFiles)
 	}
@@ -177,6 +180,9 @@ func findingsAtCommit(ctx context.Context, root, commit string, violations []bas
 func attributionScope(violations []baseline.Infraction) (files, packages map[string]bool) {
 	files, packages = make(map[string]bool), make(map[string]bool)
 	for i := 0; i < len(violations); i++ {
+		if strings.HasPrefix(violations[i].RuleID, "README-") {
+			continue
+		}
 		file := slashpath.Clean(baseline.NormalizePath(violations[i].FilePath))
 		if violations[i].RuleID == "HISS-01" && strings.EqualFold(slashpath.Ext(file), ".go") {
 			packages[slashpath.Dir(file)] = true

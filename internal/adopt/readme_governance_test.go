@@ -277,13 +277,30 @@ func TestAdoptRecordBaselineKeepsReadmeFindingsWithZeroHISS(t *testing.T) {
 	mustWrite(t, filepath.Join(repoPath, readmeFile), "# Minimal\n\nPlain text without badges.\n")
 	lockRoot := newAdoptLockSource(t)
 
-	// Initial adopt creates .standards-baseline.json; rerecord with README finding + 0 HISS findings records and keeps README entry.
 	if _, err := Adopt(t.Context(), AdoptOptions{
 		LockSourceRoot: lockRoot,
 		Path:           repoPath,
 		RecordBaseline: true,
 	}); err != nil {
 		t.Fatalf("initial adopt: %v", err)
+	}
+	// Zero-debt baseline + report-only README finding must rerecord cleanly without --allow-increase.
+	if _, err := Adopt(t.Context(), AdoptOptions{
+		LockSourceRoot:   lockRoot,
+		Path:             repoPath,
+		RecordBaseline:   true,
+		RerecordBaseline: true,
+	}); err != nil {
+		t.Fatalf("rerecord report-only README finding with zero-debt baseline: %v", err)
+	}
+	enableReadmePresentationGate(t, repoPath)
+	if _, err := Adopt(t.Context(), AdoptOptions{
+		LockSourceRoot:   lockRoot,
+		Path:             repoPath,
+		RecordBaseline:   true,
+		RerecordBaseline: true,
+	}); err == nil || !strings.Contains(err.Error(), "README presentation finding") || strings.Contains(err.Error(), "HISS invariant violations introduced") {
+		t.Fatalf("expected refusal naming README presentation findings apart from HISS, got: %v", err)
 	}
 	if _, err := Adopt(t.Context(), AdoptOptions{
 		LockSourceRoot:         lockRoot,
@@ -304,6 +321,18 @@ func TestAdoptRecordBaselineKeepsReadmeFindingsWithZeroHISS(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("second rerecord baseline: %v", err)
 	}
+	assertReadmeBaselineRecorded(t, repoPath)
+}
+
+func enableReadmePresentationGate(t *testing.T, repoPath string) {
+	t.Helper()
+	manifestPath := filepath.Join(repoPath, ".standards.yaml")
+	raw := mustRead(t, manifestPath)
+	mustWrite(t, manifestPath, raw+"\ngate:\n  readme_presentation: true\n")
+}
+
+func assertReadmeBaselineRecorded(t *testing.T, repoPath string) {
+	t.Helper()
 	b, err := baseline.LoadBaseline(filepath.Join(repoPath, ".standards-baseline.json"))
 	if err != nil {
 		t.Fatalf("LoadBaseline: %v", err)
@@ -312,4 +341,50 @@ func TestAdoptRecordBaselineKeepsReadmeFindingsWithZeroHISS(t *testing.T) {
 	if !hasReadme || readmeBase.TotalInfractions == 0 {
 		t.Fatalf("expected README-* infractions to survive adopt rerecord with 0 HISS findings, got: %+v", b.Infractions)
 	}
+}
+
+func assertKeptRatchet(t *testing.T, r *BaselineRatchet, wantPassed bool, wantActive, wantUnbaselined int) {
+	t.Helper()
+	if r == nil || r.Passed != wantPassed || r.Active != wantActive || r.Unbaselined != wantUnbaselined {
+		t.Fatalf("kept baseline ratchet = %+v, want Passed=%v Active=%d Unbaselined=%d",
+			r, wantPassed, wantActive, wantUnbaselined)
+	}
+}
+
+func TestAdoptKeptBaselineMergesReadmeFindings(t *testing.T) {
+	repoPath := newTestRepo(t, "readme-kept-baseline-merge")
+	mustWrite(t, filepath.Join(repoPath, readmeFile), "# Minimal\n\nPlain text without badges.\n")
+	lockRoot := newAdoptLockSource(t)
+
+	mustAdoptReadmeBaseline(t, lockRoot, repoPath, AdoptOptions{
+		LockSourceRoot: lockRoot, Path: repoPath, RecordBaseline: true,
+	})
+	enableReadmePresentationGate(t, repoPath)
+	mustAdoptReadmeBaseline(t, lockRoot, repoPath, AdoptOptions{
+		LockSourceRoot: lockRoot, Path: repoPath, RecordBaseline: true,
+		RerecordBaseline: true, AllowBaselineIncrease: true, BaselineIncreaseReason: "record initial README finding",
+	})
+
+	rep := mustAdoptReadmeBaseline(t, lockRoot, repoPath, AdoptOptions{
+		LockSourceRoot: lockRoot, Path: repoPath, RecordBaseline: true,
+	})
+	assertKeptRatchet(t, rep.BaselineRatchet, true, 1, 0)
+	if strings.Contains(strings.Join(rep.Warnings, "\n"), "matches nothing in the tree") {
+		t.Fatalf("unexpected stale baseline warning when README finding is still active: %v", rep.Warnings)
+	}
+
+	mustWrite(t, filepath.Join(repoPath, readmeFile), "# Minimal\n\n```mermaid\ngraph LR\nA-->B\n```\n")
+	rep2 := mustAdoptReadmeBaseline(t, lockRoot, repoPath, AdoptOptions{
+		LockSourceRoot: lockRoot, Path: repoPath, RecordBaseline: true,
+	})
+	assertKeptRatchet(t, rep2.BaselineRatchet, false, 2, 1)
+}
+
+func mustAdoptReadmeBaseline(t *testing.T, _, _ string, opts AdoptOptions) *AdoptReport {
+	t.Helper()
+	rep, err := Adopt(t.Context(), opts)
+	if err != nil {
+		t.Fatalf("Adopt(%+v): %v", opts, err)
+	}
+	return rep
 }

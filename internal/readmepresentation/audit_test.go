@@ -248,3 +248,50 @@ func TestAudit_Positive_GovernanceBlockAtTopEmitsInfoAndZeroCounted(t *testing.T
 		t.Fatalf("expected [PASS] and [INFO] README-05, got:\n%s", line)
 	}
 }
+
+func checkSingleFindingToBaseline(t *testing.T, root, doc string) ([]Finding, baseline.Infraction) {
+	t.Helper()
+	writeTestReadme(t, root, doc)
+	findings, err := CheckFile(t.Context(), root, FileName)
+	if err != nil || len(findings) != 1 {
+		t.Fatalf("%s CheckFile: findings=%v err=%v", root, findings, err)
+	}
+	return findings, ToBaseline(findings)[0]
+}
+
+func TestAudit_Negative_SameReadmeUnderTwoRootsEqualAnchors(t *testing.T) {
+	rootA, rootB := t.TempDir(), t.TempDir()
+	doc := "# proj\n[![a](https://img.shields.io/badge/a-b-blue?style=for-the-badge)](https://x)\n**Tag**\n\n![Missing](docs/assets/missing.svg)\n"
+	findingsA, infA := checkSingleFindingToBaseline(t, rootA, doc)
+	_, infB := checkSingleFindingToBaseline(t, rootB, doc)
+	if infA != infB || strings.Contains(infA.Message, rootA) {
+		t.Fatalf("anchors/messages differ or leaked root:\nrootA: %+v\nrootB: %+v", infA, infB)
+	}
+	recA, err := RecordBaseline(nil, findingsA, baseline.RecordOptions{Repository: "fixture/repo"})
+	if err != nil {
+		t.Fatalf("RecordBaseline: %v", err)
+	}
+	line, err := Audit(t.Context(), Options{Root: rootB, Baseline: recA, Enforce: true})
+	if err != nil || strings.Contains(line, "measured, not enforced") || !strings.Contains(line, "(baselined)") {
+		t.Fatalf("Audit on second root: err=%v line=\n%s", err, line)
+	}
+}
+
+func TestAudit_Negative_ScanBaselineFindingsReportOnlyAndRefusalText(t *testing.T) {
+	dir := t.TempDir()
+	writeTestReadme(t, dir, "# widgets\n")
+	zeroBase := &baseline.Baseline{Version: 1, TotalInfractions: 0}
+
+	findings, err := ScanBaselineFindings(t.Context(), dir, zeroBase, false)
+	if err != nil || len(findings) != 0 {
+		t.Fatalf("expected 0 baseline findings when not enforced and no prior README entries, got findings=%v err=%v", findings, err)
+	}
+	enforcedFindings, err := ScanBaselineFindings(t.Context(), dir, zeroBase, true)
+	if err != nil || len(enforcedFindings) == 0 {
+		t.Fatalf("expected findings when enforce=true, got findings=%v err=%v", enforcedFindings, err)
+	}
+	_, err = RecordBaseline(zeroBase, enforcedFindings, baseline.RecordOptions{})
+	if err == nil || !strings.Contains(err.Error(), "README presentation finding(s)") {
+		t.Fatalf("expected RecordBaseline refusal to name README presentation findings apart from HISS, got: %v", err)
+	}
+}

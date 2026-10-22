@@ -185,13 +185,43 @@ func (r *RatchetResult) touchedClasses(p rejectionPartition) []violationClass {
 	}
 }
 
+func isReadmeInfraction(v Infraction) bool {
+	return strings.HasPrefix(v.RuleID, "README-")
+}
+
+func (r *RatchetResult) subject() string {
+	hasHISS, hasReadme := false, false
+	for i := 0; i < len(r.NewViolations); i++ {
+		if isReadmeInfraction(r.NewViolations[i]) {
+			hasReadme = true
+		} else {
+			hasHISS = true
+		}
+	}
+	for i := 0; i < len(r.TouchedCleanViolations); i++ {
+		if isReadmeInfraction(r.TouchedCleanViolations[i]) {
+			hasReadme = true
+		} else {
+			hasHISS = true
+		}
+	}
+	switch {
+	case hasReadme && !hasHISS:
+		return "README presentation findings"
+	case hasReadme && hasHISS:
+		return "HISS invariant violations and README presentation findings"
+	default:
+		return "HISS invariant violations"
+	}
+}
+
 // render is Summary with limit lines per class; zero or less lists every violation.
 func (r *RatchetResult) render(limit int) string {
 	if r == nil {
 		return "no ratchet result"
 	}
 	if r.CountRegressed {
-		return fmt.Sprintf("HISS invariant violations introduced: total infractions rose from %d to %d (no new fingerprints)", r.PreviousCount, r.CurrentCount)
+		return fmt.Sprintf("%s introduced: total infractions rose from %d to %d (no new fingerprints)", r.subject(), r.PreviousCount, r.CurrentCount)
 	}
 	p := r.partition()
 	var msgs []string
@@ -209,18 +239,19 @@ func (r *RatchetResult) render(limit int) string {
 // code change is called introduced, and one whose every unbaselined violation only moved says
 // the baseline records them at other lines; any other says the baseline does not record them.
 func (r *RatchetResult) header(p rejectionPartition) string {
+	subj := r.subject()
 	touched := r.touchedFigure(p)
 	untraced := len(p.changed) + len(p.unknown)
 	switch {
 	case untraced == 0 && len(p.moved) == 0:
-		return fmt.Sprintf("HISS invariant violations introduced (%d total infractions, %d new unbaselined, %s):",
-			r.CurrentCount, len(p.introduced), touched)
+		return fmt.Sprintf("%s introduced (%d total infractions, %d new unbaselined, %s):",
+			subj, r.CurrentCount, len(p.introduced), touched)
 	case untraced == 0 && len(p.introduced) == 0:
-		return fmt.Sprintf("HISS invariant violations the baseline records at other lines (%d total infractions, %d moved, %s):",
-			r.CurrentCount, len(p.moved), touched)
+		return fmt.Sprintf("%s the baseline records at other lines (%d total infractions, %d moved, %s):",
+			subj, r.CurrentCount, len(p.moved), touched)
 	}
-	return fmt.Sprintf("HISS invariant violations the baseline does not record (%d total infractions, %d unbaselined%s, %s):",
-		r.CurrentCount, len(r.NewViolations), r.breakdown(p), touched)
+	return fmt.Sprintf("%s the baseline does not record (%d total infractions, %d unbaselined%s, %s):",
+		subj, r.CurrentCount, len(r.NewViolations), r.breakdown(p), touched)
 }
 
 // touchedFigure names how many violations sit in touched files and, once the evaluator marked
@@ -396,19 +427,20 @@ func (r *RatchetResult) attribute(b *Baseline, current []Infraction, existed map
 	r.Attribution = make([]Attribution, len(r.NewViolations))
 	r.RecordedLine = make([]int, len(r.NewViolations))
 	for i := 0; i < len(r.NewViolations); i++ {
-		r.Attribution[i], r.RecordedLine[i] = attributeOne(findingKey(r.NewViolations[i]), moved, existed)
+		r.Attribution[i], r.RecordedLine[i] = attributeOne(r.NewViolations[i], moved, existed)
 	}
 }
 
 // attributeOne classifies one new violation, consumes the findings that explain it and returns
 // the line the baseline records a moved one at.
-func attributeOne(key string, moved map[string][]int, existed map[string]int) (Attribution, int) {
+func attributeOne(v Infraction, moved map[string][]int, existed map[string]int) (Attribution, int) {
+	key := findingKey(v)
 	atCommit := take(existed, key)
 	if line, ok := takeLine(moved, key); ok {
 		return AttributionMoved, line
 	}
 	switch {
-	case existed == nil:
+	case existed == nil || isReadmeInfraction(v):
 		return AttributionNone, 0
 	case atCommit:
 		return AttributionCheckChanged, 0

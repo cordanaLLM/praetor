@@ -9,8 +9,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -29,12 +27,14 @@ type Options struct {
 	Enforce  bool
 }
 
-func findingAnchor(msg string) string {
-	norm := strings.TrimSpace(lineRefRe.ReplaceAllString(msg, "line #"))
-	if norm == "" {
-		return "file"
+func findingAnchor(file, ruleID, msg string) string {
+	rel := baseline.NormalizePath(file)
+	if rel == "" {
+		rel = FileName
 	}
-	sum := sha256.Sum256([]byte(norm))
+	rule := strings.TrimSpace(ruleID)
+	norm := strings.TrimSpace(lineRefRe.ReplaceAllString(msg, "line #"))
+	sum := sha256.Sum256([]byte(rel + "\x00" + rule + "\x00" + norm))
 	return fmt.Sprintf("file:%x", sum[:6])
 }
 
@@ -45,7 +45,7 @@ func ToBaseline(findings []Finding) []baseline.Infraction {
 	infractions := make([]baseline.Infraction, 0, n)
 	for i := 0; i < n; i++ {
 		f := findings[i]
-		file := f.File
+		file := baseline.NormalizePath(f.File)
 		if file == "" {
 			file = FileName
 		}
@@ -54,7 +54,7 @@ func ToBaseline(findings []Finding) []baseline.Infraction {
 			FilePath:   file,
 			LineNumber: f.Line,
 			Message:    f.Message,
-			Anchor:     findingAnchor(f.Message),
+			Anchor:     findingAnchor(file, f.RuleID, f.Message),
 		})
 	}
 	baseline.AssignFingerprints(infractions)
@@ -74,19 +74,19 @@ func RecordBaseline(previous *baseline.Baseline, findings []Finding, opts baseli
 	combined := make([]baseline.Infraction, 0, len(hissInfractions)+len(readmeInf))
 	combined = append(combined, hissInfractions...)
 	combined = append(combined, readmeInf...)
-	return baseline.Record(previous, combined, opts)
-}
-
-func readmeExists(rootDir string) bool {
-	_, err := os.Lstat(filepath.Join(rootDir, FileName))
-	return err == nil
+	next, err := baseline.Record(previous, combined, opts)
+	if err != nil && len(readmeInf) > 0 {
+		return nil, fmt.Errorf("%w (%d HISS invariant violation(s), %d README presentation finding(s))",
+			err, len(hissInfractions), len(readmeInf))
+	}
+	return next, err
 }
 
 // ScanBaselineFindings scans rootDir/README.md for baseline recording or verification when
-// previous already carries README entries or when includePresent is set and README.md exists.
-func ScanBaselineFindings(ctx context.Context, rootDir string, previous *baseline.Baseline, includePresent bool) ([]Finding, error) {
+// previous already carries README entries or when enforce is set.
+func ScanBaselineFindings(ctx context.Context, rootDir string, previous *baseline.Baseline, enforce bool) ([]Finding, error) {
 	_, hasReadme := ReadmeBaseline(previous)
-	if !hasReadme && (!includePresent || !readmeExists(rootDir)) {
+	if !hasReadme && !enforce {
 		return nil, nil
 	}
 	return CheckFile(ctx, rootDir, FileName)
@@ -194,7 +194,7 @@ func judgeEnforced(findings []Finding, readmeBase *baseline.Baseline) (string, e
 	fmt.Fprintf(&b, "[PASS] %s: %d active finding(s) within %d recorded in baseline.", GateName, ratchet.CurrentCount, readmeBase.TotalInfractions)
 	for i := 0; i < len(findings) && i < MaxReportedFindings; i++ {
 		b.WriteByte('\n')
-		b.WriteString(findings[i].ReportLine())
+		b.WriteString(findings[i].BaselinedLine())
 	}
 	if stale := ratchet.StaleNotice(); stale != "" {
 		b.WriteString("\n[WARN] " + GateName + ": " + stale)

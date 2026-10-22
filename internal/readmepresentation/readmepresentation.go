@@ -64,6 +64,11 @@ func (f Finding) InfoLine() string {
 	return fmt.Sprintf("[INFO] %s %s:%d %s", f.RuleID, f.File, f.Line, f.Message)
 }
 
+// BaselinedLine formats a finding covered by a recorded baseline entry under enforced mode.
+func (f Finding) BaselinedLine() string {
+	return fmt.Sprintf("[INFO] %s %s:%d %s (baselined)", f.RuleID, f.File, f.Line, f.Message)
+}
+
 // IsReadmeRule reports whether ruleID is one of README-00..README-05.
 func IsReadmeRule(ruleID string) bool {
 	switch ruleID {

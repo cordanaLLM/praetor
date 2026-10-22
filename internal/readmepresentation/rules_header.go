@@ -37,9 +37,6 @@ func stepTagHeader(line string, depth *int) bool {
 }
 
 func stepTitleHeader(trimmed string, sawBadge *bool) bool {
-	if strings.HasPrefix(trimmed, "## ") {
-		return true
-	}
 	if strings.Contains(trimmed, "style=for-the-badge") {
 		*sawBadge = true
 		return false
@@ -54,18 +51,33 @@ func closesHeaderAt(line, trimmed string, openedTag bool, depth *int, sawBadge *
 	return stepTitleHeader(trimmed, sawBadge)
 }
 
+func isHeaderStart(trimmed string) bool {
+	return isHeaderOpening(trimmed) || strings.HasPrefix(trimmed, "# ")
+}
+
+func isBodyH2(line, trimmed string) bool {
+	return leadingSpaces(line) <= 3 && strings.HasPrefix(trimmed, "## ")
+}
+
 func findHeaderBounds(lines []string) (start, end int) {
 	start, end = -1, -1
 	n := min(len(lines), MaxLines)
-	openedTag, sawBadge, depth := false, false, 0
+	openedTag, sawBadge, inComment, depth := false, false, false, 0
 	for i := 0; i < n; i++ {
 		trimmed := strings.TrimSpace(lines[i])
+		if advanceCommentState(trimmed, &inComment) {
+			continue
+		}
 		if start < 0 {
-			if isHeaderOpening(trimmed) || strings.HasPrefix(trimmed, "# ") {
+			if isHeaderStart(trimmed) {
 				start, openedTag = i, isHeaderOpening(trimmed)
 				depth = headerTagDelta(lines[i])
 			}
 			continue
+		}
+		if isBodyH2(lines[i], trimmed) {
+			end = i - 1
+			break
 		}
 		if closesHeaderAt(lines[i], trimmed, openedTag, &depth, &sawBadge) {
 			end = i

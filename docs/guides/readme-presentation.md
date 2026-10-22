@@ -26,14 +26,16 @@ sprawl, oversized hero banners, unthemed diagrams, and disordered sections.
 
 When present, section `H2` headings must follow this ordering sequence:
 
-1. `install` or `get-started` (or `get started`)
-2. `architecture` or `at-glance` (or `at a glance`)
-3. `guide` or `reference`
-4. `contribut` (e.g. Contribute, Contributing)
-5. `support`
-6. `roadmap` or `release`
-7. `licen` or `upstream`
-8. `standard` or `governance`
+1. `get-started`: `install`, `installation`, `get started`,
+   `getting started`, `quick start`, `quickstart`
+2. `architecture`: `architecture`, `at a glance`
+3. `guides`: `guide`, `guides`, `reference`
+4. `contribute`: `contribute`, `contributing`, `contribution`,
+   `contributions`
+5. `support`: `support`
+6. `roadmap`: `roadmap`, `roadmap and releases`
+7. `upstream`: `license`, `licence`, `upstream`
+8. `governance`: `governance`, `standards and governance`
 
 ## Ratchet and enforcement
 

@@ -6,6 +6,7 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"go.yaml.in/yaml/v3"
@@ -31,6 +32,16 @@ var gateKeys = []string{"declared_verify_timeout", "readme_presentation"}
 // EnforceReadmePresentation reports whether the manifest enforces the README presentation gate.
 func (p *GatePolicy) EnforceReadmePresentation() bool {
 	return p != nil && p.ReadmePresentation
+}
+
+// ReadmePresentationEnforced reports whether the manifest at root declares gate.readme_presentation: true.
+// An absent or unreadable manifest returns false (report-only default).
+func ReadmePresentationEnforced(root string) bool {
+	m, err := LoadManifest(filepath.Join(root, ".standards.yaml"))
+	if err != nil || m == nil {
+		return false
+	}
+	return m.Gate.EnforceReadmePresentation()
 }
 
 // UnmarshalYAML checks that all keys are known before decoding GatePolicy.

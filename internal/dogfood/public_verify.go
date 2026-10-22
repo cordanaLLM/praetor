@@ -11,6 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/readmepresentation"
 )
 
 // PublicVerification exposes the bounded checks independently of their verdict.
@@ -85,7 +86,8 @@ func verifyPublicCheckout(ctx context.Context, dir string, anchor publicPolicyAn
 	if err != nil {
 		return result, err
 	}
-	base := &baseline.Baseline{Version: 1, Infractions: publicInfractions(anchor.Scan), TotalInfractions: anchor.Scan.TotalInfractions}
+	infs := publicInfractions(anchor.Scan)
+	base := readmepresentation.WithoutReadmeBaseline(&baseline.Baseline{Version: 1, Infractions: infs, TotalInfractions: len(infs)})
 	result.Ratchet = baseline.EvaluateRatchet(base, publicInfractions(result.Scan), changed)
 	if !result.Ratchet.Passed {
 		return result, errors.New(result.Ratchet.Summary())
@@ -112,8 +114,12 @@ func scanPublicTree(ctx context.Context, dir string, policy *config.EffectivePol
 	return report, nil
 }
 
-// publicInfractions keys a retained scan the way every ratchet keys one (hiss.ConvertToBaseline).
-// A scan retained before findings carried anchors yields line-keyed entries.
+// publicInfractions keys a retained scan the way every ratchet keys one (hiss.ConvertToBaseline),
+// filtering out any README-* entries so HISS ratchets count only HISS infractions.
 func publicInfractions(scan *hiss.ScanReport) []baseline.Infraction {
-	return hiss.ConvertToBaseline(scan.Violations)
+	return readmepresentation.WithoutReadmeBaseline(&baseline.Baseline{
+		Version:          1,
+		TotalInfractions: len(scan.Violations),
+		Infractions:      hiss.ConvertToBaseline(scan.Violations),
+	}).Infractions
 }

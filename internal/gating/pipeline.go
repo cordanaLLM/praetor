@@ -21,6 +21,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/govuln"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
+	"github.com/cordanaLLM/praetor/internal/readmepresentation"
 	"github.com/cordanaLLM/praetor/internal/sentinel"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/internal/worktree"
@@ -554,6 +555,7 @@ func runHissStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("load debt baseline: %w", err)
 	}
+	base = readmepresentation.WithoutReadmeBaseline(base)
 
 	current := hiss.ConvertToBaseline(scanRep.Violations)
 

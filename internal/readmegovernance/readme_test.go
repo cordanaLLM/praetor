@@ -377,8 +377,14 @@ func TestReconcileInsertsBlockAtEndAndStripBlockRemovesMidFileBlock(t *testing.T
 	}
 	midFile := "# Demo\n\n" + Start + "\nold\n" + End + "\n\n## Get started\n\nRun it.\n"
 	stripped := StripBlock(midFile)
-	if strings.Contains(stripped, Start) {
-		t.Fatalf("StripBlock did not remove markers:\n%s", stripped)
+	if stripped != "# Demo\n\n## Get started\n\nRun it.\n" {
+		t.Fatalf("StripBlock mid-file mismatch:\ngot:  %q\nwant: %q", stripped, "# Demo\n\n## Get started\n\nRun it.\n")
+	}
+	if got := StripBlock(Start + "\nold\n" + End + "\n\n## Tail\n"); got != "## Tail\n" {
+		t.Fatalf("StripBlock head-empty mismatch: got %q", got)
+	}
+	if got := StripBlock("# Head\n\n" + Start + "\nold\n" + End + "\n"); got != "# Head\n" {
+		t.Fatalf("StripBlock tail-empty mismatch: got %q", got)
 	}
 	relocated, _, err := Reconcile(stripped, State{BaselineKnown: true})
 	if err != nil {

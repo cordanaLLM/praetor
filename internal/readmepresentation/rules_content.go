@@ -5,7 +5,9 @@
 package readmepresentation
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,8 +18,9 @@ import (
 )
 
 var (
-	mdSvgRe            = regexp.MustCompile(`(?i)!\[[^\]]*\]\(\s*<?([^)>\s"']+\.svg)(?:\?[^)>\s"']*)?>?(?:\s+["'][^"']*["'])?\s*\)`)
-	htmlSvgRe          = regexp.MustCompile(`(?i)<img[^>]+src\s*=\s*["']([^"']+\.svg(?:\?[^"']*)?)["']`)
+	mdSvgRe            = regexp.MustCompile(`(?i)!\[[^\]]*\]\(\s*<?([^)>\s"']+\.svg)(?:[?#][^)>\s"']*)?>?(?:\s+["'][^"']*["'])?\s*\)`)
+	htmlSvgRe          = regexp.MustCompile(`(?i)<(?:img|source)\b[^>]*?\bsrc\s*=\s*["']([^"']+\.svg(?:[?#][^"']*)?)["']`)
+	htmlSrcsetRe       = regexp.MustCompile(`(?i)<(?:img|source)\b[^>]*?\bsrcset\s*=\s*["']([^"']+)["']`)
 	viewBoxRe          = regexp.MustCompile(`(?i)\bviewBox\s*=\s*["']([^"']+)["']`)
 	svgTagWidthRe      = regexp.MustCompile(`(?i)<svg[^>]+width\s*=\s*["']?([0-9.]+)`)
 	mermaidThemeBaseRe = regexp.MustCompile(`(?i)['"]?theme['"]?\s*:\s*['"]?base['"]?\b`)
@@ -94,6 +97,23 @@ func checkMermaidBlock(firstLine string, lineNum int, relPath string, findings *
 
 const maxSvgTargetsPerLine = 32
 
+func describeSvgReadFailure(safeClean string, err error) string {
+	switch {
+	case errors.Is(err, util.ErrPathEscapesRoot):
+		return fmt.Sprintf("SVG image %s escapes repository root", safeClean)
+	case errors.Is(err, fs.ErrNotExist):
+		return fmt.Sprintf("SVG image %s does not exist", safeClean)
+	case errors.Is(err, util.ErrNotRegularFile):
+		return fmt.Sprintf("SVG image %s is not a regular file", safeClean)
+	case errors.Is(err, util.ErrFileTooLarge):
+		return fmt.Sprintf("SVG image %s exceeds maximum size (%d bytes)", safeClean, MaxSVGBytes)
+	case errors.Is(err, fs.ErrPermission):
+		return fmt.Sprintf("SVG image %s cannot be read (permission denied)", safeClean)
+	default:
+		return fmt.Sprintf("SVG image %s cannot be read", safeClean)
+	}
+}
+
 func checkSvgBelowHeader(rootDir, line, relPath string, lineNum int, findings *[]Finding) {
 	targets := extractSvgTargets(line)
 	for i := 0; i < len(targets) && i < maxSvgTargetsPerLine; i++ {
@@ -109,7 +129,7 @@ func checkSvgBelowHeader(rootDir, line, relPath string, lineNum int, findings *[
 				File:    relPath,
 				Line:    lineNum,
 				RuleID:  RuleIDDiagrams,
-				Message: fmt.Sprintf("SVG image %s cannot be read: %v", safeClean, sanitizeDisplayPath(err.Error())),
+				Message: describeSvgReadFailure(safeClean, err),
 			})
 			continue
 		}
@@ -133,6 +153,22 @@ func appendSubmatchTargets(dst []string, matches [][]string) []string {
 	return dst
 }
 
+func appendSrcsetSvgTargets(dst []string, matches [][]string) []string {
+	for i := 0; i < len(matches) && i < maxSvgTargetsPerLine; i++ {
+		if len(matches[i]) < 2 {
+			continue
+		}
+		parts := strings.Split(matches[i][1], ",")
+		for j := 0; j < len(parts) && j < maxSvgTargetsPerLine; j++ {
+			fields := strings.Fields(parts[j])
+			if len(fields) > 0 && strings.HasSuffix(strings.ToLower(cleanTargetSvgPath(fields[0])), ".svg") {
+				dst = append(dst, fields[0])
+			}
+		}
+	}
+	return dst
+}
+
 func extractSvgTargets(line string) []string {
 	if len(line) > 8192 || !strings.Contains(strings.ToLower(line), ".svg") {
 		return nil
@@ -143,6 +179,9 @@ func extractSvgTargets(line string) []string {
 	}
 	if m := htmlSvgRe.FindAllStringSubmatch(line, maxSvgTargetsPerLine); len(m) > 0 {
 		targets = appendSubmatchTargets(targets, m)
+	}
+	if m := htmlSrcsetRe.FindAllStringSubmatch(line, maxSvgTargetsPerLine); len(m) > 0 {
+		targets = appendSrcsetSvgTargets(targets, m)
 	}
 	return targets
 }
@@ -156,8 +195,10 @@ func isRemoteTarget(t string) bool {
 }
 
 func cleanTargetSvgPath(t string) string {
-	clean := strings.Split(t, "?")[0]
-	return strings.Split(clean, "#")[0]
+	clean := strings.TrimSpace(t)
+	clean = strings.Split(clean, "?")[0]
+	clean = strings.Split(clean, "#")[0]
+	return strings.TrimPrefix(clean, "/")
 }
 
 func parseSvgWidth(content string) (float64, bool) {

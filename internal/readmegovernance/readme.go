@@ -388,11 +388,13 @@ func StripBlock(content string) string {
 	}
 	lines := strings.Split(normalized, "\n")
 	head := strings.TrimRight(strings.Join(lines[:first], "\n"), "\n")
-	tail := strings.TrimLeft(strings.Join(lines[last+1:], "\n"), "\n")
+	tail := strings.Trim(strings.Join(lines[last+1:], "\n"), "\n")
 	var out string
 	switch {
+	case head == "" && tail == "":
+		out = ""
 	case head == "":
-		out = tail
+		out = tail + "\n"
 	case tail == "":
 		out = head + "\n"
 	default:

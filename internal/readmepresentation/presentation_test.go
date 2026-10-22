@@ -374,3 +374,91 @@ func TestPresentation_Smoke_ExemplarAndRepoReadme(t *testing.T) {
 	t.Logf("smoke counts: exemplar findings=%d infos=%d; repo README.md findings=%d infos=%d",
 		len(exFindings), len(exInfos), len(repoFindings), len(repoInfos))
 }
+
+func TestPresentation_Negative_FirstH2AfterTitleOnlyHeader(t *testing.T) {
+	testDir := filepath.Join("testdata")
+
+	t.Run("duplicate at first H2", func(t *testing.T) {
+		findings, err := CheckContent(testDir, "README.md", "# T\n\n## X\n\n## X\n")
+		if err != nil {
+			t.Fatalf("CheckContent error: %v", err)
+		}
+		if !hasRuleID(findings, RuleIDSections) {
+			t.Fatalf("expected README-05 duplicate H2 finding, got: %v", findings)
+		}
+	})
+
+	t.Run("section order at first H2", func(t *testing.T) {
+		findings, err := CheckContent(testDir, "README.md", "# T\n\n## Support\n\n## Install\n")
+		if err != nil {
+			t.Fatalf("CheckContent error: %v", err)
+		}
+		if !hasRuleID(findings, RuleIDSections) {
+			t.Fatalf("expected README-05 section order finding, got: %v", findings)
+		}
+	})
+
+	t.Run("governance info line names first H2 line", func(t *testing.T) {
+		doc := "# T\n\n<!-- praetor:readme-governance:start -->\ngoverned\n<!-- praetor:readme-governance:end -->\n\n## First\n\n## Second\n"
+		_, infos, err := CheckContentWithInfo(testDir, "README.md", doc)
+		if err != nil {
+			t.Fatalf("CheckContentWithInfo error: %v", err)
+		}
+		if len(infos) != 1 || infos[0].Line != 7 || !strings.Contains(infos[0].Message, `"First"`) {
+			t.Fatalf("expected info at line 7 naming First, got: %+v", infos)
+		}
+	})
+}
+
+func TestPresentation_Boundary_RootRelativeAndSrcsetSvg(t *testing.T) {
+	testDir := filepath.Join("testdata")
+	exemplar := readTestExemplar(t, testDir)
+
+	t.Run("root-relative valid svg passes", func(t *testing.T) {
+		doc := strings.Replace(exemplar, "## 🚀 Get started",
+			"## 🚀 Get started\n\n![Valid](/docs/assets/valid-figure.svg)\n<source srcset=\"/docs/assets/valid-figure.svg 1x\">\n", 1)
+		findings, err := CheckContent(testDir, "README.md", doc)
+		if err != nil || hasRuleID(findings, RuleIDDiagrams) {
+			t.Fatalf("expected root-relative valid svg to pass, got findings=%v err=%v", findings, err)
+		}
+	})
+
+	t.Run("root-relative wide svg refused", func(t *testing.T) {
+		doc := strings.Replace(exemplar, "## 🚀 Get started",
+			"## 🚀 Get started\n\n![Wide](/docs/assets/wide-figure.svg)\n", 1)
+		findings, err := CheckContent(testDir, "README.md", doc)
+		if err != nil || !hasRuleID(findings, RuleIDDiagrams) {
+			t.Fatalf("expected README-04 for root-relative wide svg, got findings=%v err=%v", findings, err)
+		}
+	})
+
+	t.Run("source srcset wide svg refused", func(t *testing.T) {
+		doc := strings.Replace(exemplar, "## 🚀 Get started",
+			"## 🚀 Get started\n\n<picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"/docs/assets/wide-figure.svg 1x, /docs/assets/valid-figure.svg 2x\"></picture>\n", 1)
+		findings, err := CheckContent(testDir, "README.md", doc)
+		if err != nil || !hasRuleID(findings, RuleIDDiagrams) {
+			t.Fatalf("expected README-04 for source srcset wide svg, got findings=%v err=%v", findings, err)
+		}
+	})
+}
+
+func TestPresentation_GuideKeywordListMatchesCode(t *testing.T) {
+	guidePath := filepath.Join("..", "..", "docs", "guides", "readme-presentation.md")
+	data, err := os.ReadFile(guidePath)
+	if err != nil {
+		t.Fatalf("read guide: %v", err)
+	}
+	guide := string(data)
+	for i := 0; i < len(sectionKeywords); i++ {
+		sk := sectionKeywords[i]
+		if !strings.Contains(guide, "`"+sk.name+"`") {
+			t.Errorf("guide missing section class %q", sk.name)
+		}
+		for j := 0; j < len(sk.keywords); j++ {
+			kw := sk.keywords[j]
+			if !strings.Contains(guide, "`"+kw+"`") {
+				t.Errorf("guide missing keyword %q for class %q", kw, sk.name)
+			}
+		}
+	}
+}

@@ -449,13 +449,27 @@ func TestBaselineRecord_ReadmePresentationSurvivesWithZeroHISS(t *testing.T) {
 	f := newAuditFixture(t)
 	writeFixtureFile(t, f.dir, "README.md", "# Widgets\n")
 
-	out, err := runBaselineCmd(t, f, "--record", "--allow-increase", "--reason=readme presentation debt")
+	// Zero-debt baseline + report-only README finding must record fine without --allow-increase.
+	out, err := runBaselineCmd(t, f, "--record")
 	if err != nil {
-		t.Fatalf("record readme finding with 0 HISS: %v\n%s", err, out)
+		t.Fatalf("record report-only readme finding with 0 HISS: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Total: 0 infractions")
+
+	// With gate.readme_presentation: true, recording without --allow-increase refuses and names README findings apart from HISS.
+	writeFixtureFile(t, f.dir, ".standards.yaml", "version: 1\nrepository:\n  owner: acme\n  name: widgets\ngate:\n  readme_presentation: true\n")
+	if _, err := runBaselineCmd(t, f, "--record"); err == nil || !strings.Contains(err.Error(), "README presentation finding(s)") {
+		t.Fatalf("expected refusal naming README presentation findings apart from HISS, got: %v", err)
+	}
+
+	out, err = runBaselineCmd(t, f, "--record", "--allow-increase", "--reason=readme presentation debt")
+	if err != nil {
+		t.Fatalf("record enforced readme finding with 0 HISS: %v\n%s", err, out)
 	}
 	mustContain(t, out, "Total: 1 infractions, previously 0")
 
-	// Subsequent baseline --record with 0 HISS findings must preserve the README entry.
+	// Subsequent baseline --record with 0 HISS findings must preserve the README entry even without the enforce key.
+	writeFixtureFile(t, f.dir, ".standards.yaml", "version: 1\nrepository:\n  owner: acme\n  name: widgets\n")
 	out, err = runBaselineCmd(t, f, "--record")
 	if err != nil {
 		t.Fatalf("second record: %v\n%s", err, out)
