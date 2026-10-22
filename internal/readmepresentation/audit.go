@@ -6,8 +6,12 @@ package readmepresentation
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
@@ -16,8 +20,7 @@ import (
 // MaxReportedFindings bounds the number of findings formatted in one report (HISS-02).
 const MaxReportedFindings = 200
 
-// MaxBaselineEntries bounds the number of README baseline entries scanned (HISS-02).
-const MaxBaselineEntries = 1000
+var lineRefRe = regexp.MustCompile(`\bline [0-9]+\b`)
 
 // Options holds the inputs for the README presentation audit.
 type Options struct {
@@ -26,13 +29,19 @@ type Options struct {
 	Enforce  bool
 }
 
+func findingAnchor(msg string) string {
+	norm := strings.TrimSpace(lineRefRe.ReplaceAllString(msg, "line #"))
+	if norm == "" {
+		return "file"
+	}
+	sum := sha256.Sum256([]byte(norm))
+	return fmt.Sprintf("file:%x", sum[:6])
+}
+
 // ToBaseline converts README presentation findings (README-00..README-05) into baseline
 // infractions anchored to README.md with deterministic occurrence fingerprints.
 func ToBaseline(findings []Finding) []baseline.Infraction {
 	n := len(findings)
-	if n > MaxBaselineEntries {
-		n = MaxBaselineEntries
-	}
 	infractions := make([]baseline.Infraction, 0, n)
 	for i := 0; i < n; i++ {
 		f := findings[i]
@@ -45,22 +54,42 @@ func ToBaseline(findings []Finding) []baseline.Infraction {
 			FilePath:   file,
 			LineNumber: f.Line,
 			Message:    f.Message,
-			Anchor:     "file",
+			Anchor:     findingAnchor(f.Message),
 		})
 	}
 	baseline.AssignFingerprints(infractions)
 	return infractions
 }
 
-// RecordBaseline builds a baseline from the current README presentation findings.
-func RecordBaseline(previous *baseline.Baseline, findings []Finding, opts baseline.RecordOptions) (*baseline.Baseline, error) {
-	if (previous == nil || previous.Absent) && !opts.AllowIncrease {
+// RecordBaseline builds a baseline from the current README presentation findings and any
+// HISS infractions provided by the caller.
+func RecordBaseline(previous *baseline.Baseline, findings []Finding, opts baseline.RecordOptions, hissInfractions ...baseline.Infraction) (*baseline.Baseline, error) {
+	if previous == nil && !opts.AllowIncrease {
 		opts.AllowIncrease = true
 		if strings.TrimSpace(opts.Rationale) == "" {
 			opts.Rationale = "initial README presentation baseline"
 		}
 	}
-	return baseline.Record(previous, ToBaseline(findings), opts)
+	readmeInf := ToBaseline(findings)
+	combined := make([]baseline.Infraction, 0, len(hissInfractions)+len(readmeInf))
+	combined = append(combined, hissInfractions...)
+	combined = append(combined, readmeInf...)
+	return baseline.Record(previous, combined, opts)
+}
+
+func readmeExists(rootDir string) bool {
+	_, err := os.Lstat(filepath.Join(rootDir, FileName))
+	return err == nil
+}
+
+// ScanBaselineFindings scans rootDir/README.md for baseline recording or verification when
+// previous already carries README entries or when includePresent is set and README.md exists.
+func ScanBaselineFindings(ctx context.Context, rootDir string, previous *baseline.Baseline, includePresent bool) ([]Finding, error) {
+	_, hasReadme := ReadmeBaseline(previous)
+	if !hasReadme && (!includePresent || !readmeExists(rootDir)) {
+		return nil, nil
+	}
+	return CheckFile(ctx, rootDir, FileName)
 }
 
 // ReadmeBaseline extracts README-00..README-05 entries from b and reports whether any were present.
@@ -69,7 +98,7 @@ func ReadmeBaseline(b *baseline.Baseline) (*baseline.Baseline, bool) {
 		return &baseline.Baseline{Version: 1, Absent: true}, false
 	}
 	var entries []baseline.Infraction
-	for i := 0; i < len(b.Infractions) && i < MaxBaselineEntries; i++ {
+	for i := 0; i < len(b.Infractions); i++ {
 		if IsReadmeRule(b.Infractions[i].RuleID) {
 			entries = append(entries, b.Infractions[i])
 		}
@@ -86,24 +115,20 @@ func ReadmeBaseline(b *baseline.Baseline) (*baseline.Baseline, bool) {
 // WithoutReadmeBaseline returns a copy of b with README-00..README-05 entries removed so HISS
 // invariant scans do not count README presentation baseline entries as stale HISS infractions.
 func WithoutReadmeBaseline(b *baseline.Baseline) *baseline.Baseline {
-	if b == nil || b.Absent || len(b.Infractions) == 0 {
+	if b == nil || len(b.Infractions) == 0 {
 		return b
 	}
 	hasReadme := false
-	for i := 0; i < len(b.Infractions) && i < MaxBaselineEntries; i++ {
+	filtered := make([]baseline.Infraction, 0, len(b.Infractions))
+	for i := 0; i < len(b.Infractions); i++ {
 		if IsReadmeRule(b.Infractions[i].RuleID) {
 			hasReadme = true
-			break
+			continue
 		}
+		filtered = append(filtered, b.Infractions[i])
 	}
 	if !hasReadme {
 		return b
-	}
-	filtered := make([]baseline.Infraction, 0, len(b.Infractions))
-	for i := 0; i < len(b.Infractions) && i < MaxBaselineEntries; i++ {
-		if !IsReadmeRule(b.Infractions[i].RuleID) {
-			filtered = append(filtered, b.Infractions[i])
-		}
 	}
 	cp := *b
 	cp.TotalInfractions = len(filtered)
@@ -116,15 +141,32 @@ func Audit(ctx context.Context, opts Options) (string, error) {
 	if ctx == nil {
 		return "", errors.New("[FAIL] " + GateName + ": the audit requires a context")
 	}
-	findings, err := CheckFile(ctx, opts.Root, FileName)
+	findings, infos, err := CheckFileWithInfo(ctx, opts.Root, FileName)
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] %s: %w", GateName, err)
 	}
 	readmeBase, hasBaseline := ReadmeBaseline(opts.Baseline)
 	if hasBaseline || opts.Enforce {
-		return judgeEnforced(findings, readmeBase)
+		out, err := judgeEnforced(findings, readmeBase)
+		if err != nil {
+			return "", err
+		}
+		return appendInfoLines(out, infos), nil
 	}
-	return judgeReported(findings), nil
+	return appendInfoLines(judgeReported(findings), infos), nil
+}
+
+func appendInfoLines(base string, infos []Finding) string {
+	if len(infos) == 0 {
+		return base
+	}
+	var b strings.Builder
+	b.WriteString(base)
+	for i := 0; i < len(infos) && i < MaxReportedFindings; i++ {
+		b.WriteByte('\n')
+		b.WriteString(infos[i].InfoLine())
+	}
+	return b.String()
 }
 
 func judgeReported(findings []Finding) string {

@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/readmepresentation"
 )
 
 const (
@@ -212,5 +214,102 @@ func TestAdoptReadmeGovernanceLinksTheOriginForge(t *testing.T) {
 				t.Fatalf("AGENTS.md link %q, want %q:\n%s", definition, tc.want, got)
 			}
 		})
+	}
+}
+
+const (
+	testCompliantHeader = "# widgets\n\n[![Release](https://img.shields.io/badge/release-v1.0-blue?style=for-the-badge)](https://example.com)\n\n**Fast widget engine**\n\n"
+	testCompliantBody   = "## 🚀 Get started\n\nInstall it.\n\n## 🤝 Contribute\n\nSend a PR.\n"
+)
+
+func TestAdoptPlacesGovernanceBlockLast(t *testing.T) {
+	repoPath := newTestRepo(t, "widgets")
+	readmePath := filepath.Join(repoPath, readmeFile)
+	mustWrite(t, readmePath, testCompliantHeader+testCompliantBody)
+
+	if _, err := Adopt(t.Context(), AdoptOptions{
+		LockSourceRoot: newAdoptLockSource(t),
+		Path:           repoPath,
+		RecordBaseline: true,
+	}); err != nil {
+		t.Fatalf("scratch adopt: %v", err)
+	}
+	adopted := mustRead(t, readmePath)
+	if strings.Index(adopted, testReadmeGovernanceStart) < strings.Index(adopted, "## 🤝 Contribute") {
+		t.Fatalf("scratch adopt did not place governance block at end:\n%s", adopted)
+	}
+	findings, infos, err := readmepresentation.CheckContentWithInfo(repoPath, readmeFile, adopted)
+	if err != nil || len(findings) != 0 || len(infos) != 0 {
+		t.Fatalf("scratch adopt README-05 check: findings=%v infos=%v err=%v", findings, infos, err)
+	}
+}
+
+func TestAdoptForceRelocatesGovernanceBlockAfterH1ToEnd(t *testing.T) {
+	repoPath := newTestRepo(t, "widgets")
+	readmePath := filepath.Join(repoPath, readmeFile)
+	midReadme := testCompliantHeader + previousRelativeBlock + "\n\n" + testCompliantBody
+	mustWrite(t, readmePath, midReadme)
+
+	findings, infos, err := readmepresentation.CheckContentWithInfo(repoPath, readmeFile, midReadme)
+	if err != nil || len(findings) != 0 || len(infos) != 1 {
+		t.Fatalf("expected 0 findings and 1 info line when governance block is after H1, got findings=%v infos=%v err=%v", findings, infos, err)
+	}
+	if _, err := Adopt(t.Context(), AdoptOptions{
+		LockSourceRoot: newAdoptLockSource(t),
+		Path:           repoPath,
+		Force:          true,
+		RecordBaseline: true,
+	}); err != nil {
+		t.Fatalf("adopt --force: %v", err)
+	}
+	relocated := mustRead(t, readmePath)
+	if strings.Index(relocated, testReadmeGovernanceStart) < strings.Index(relocated, "## 🤝 Contribute") {
+		t.Fatalf("adopt --force did not move governance block to end:\n%s", relocated)
+	}
+	findings, infos, err = readmepresentation.CheckContentWithInfo(repoPath, readmeFile, relocated)
+	if err != nil || len(findings) != 0 || len(infos) != 0 {
+		t.Fatalf("after adopt --force expected 0 findings and 0 infos, got findings=%v infos=%v err=%v", findings, infos, err)
+	}
+}
+
+func TestAdoptRecordBaselineKeepsReadmeFindingsWithZeroHISS(t *testing.T) {
+	repoPath := newTestRepo(t, "readme-baseline-survives")
+	mustWrite(t, filepath.Join(repoPath, readmeFile), "# Minimal\n\nPlain text without badges.\n")
+	lockRoot := newAdoptLockSource(t)
+
+	// Initial adopt creates .standards-baseline.json; rerecord with README finding + 0 HISS findings records and keeps README entry.
+	if _, err := Adopt(t.Context(), AdoptOptions{
+		LockSourceRoot: lockRoot,
+		Path:           repoPath,
+		RecordBaseline: true,
+	}); err != nil {
+		t.Fatalf("initial adopt: %v", err)
+	}
+	if _, err := Adopt(t.Context(), AdoptOptions{
+		LockSourceRoot:         lockRoot,
+		Path:                   repoPath,
+		RecordBaseline:         true,
+		RerecordBaseline:       true,
+		AllowBaselineIncrease:  true,
+		BaselineIncreaseReason: "baseline README presentation finding",
+	}); err != nil {
+		t.Fatalf("rerecord baseline with README finding: %v", err)
+	}
+	// Subsequent rerecord with 0 HISS findings must keep the README entry instead of wiping it.
+	if _, err := Adopt(t.Context(), AdoptOptions{
+		LockSourceRoot:   lockRoot,
+		Path:             repoPath,
+		RecordBaseline:   true,
+		RerecordBaseline: true,
+	}); err != nil {
+		t.Fatalf("second rerecord baseline: %v", err)
+	}
+	b, err := baseline.LoadBaseline(filepath.Join(repoPath, ".standards-baseline.json"))
+	if err != nil {
+		t.Fatalf("LoadBaseline: %v", err)
+	}
+	readmeBase, hasReadme := readmepresentation.ReadmeBaseline(b)
+	if !hasReadme || readmeBase.TotalInfractions == 0 {
+		t.Fatalf("expected README-* infractions to survive adopt rerecord with 0 HISS findings, got: %+v", b.Infractions)
 	}
 }

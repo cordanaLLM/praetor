@@ -12,6 +12,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/readmepresentation"
 	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -132,6 +133,11 @@ func verifyBaseline(path string, b *baseline.Baseline, all bool) error {
 	if err != nil {
 		return fmt.Errorf("[FAIL] verify %s: %w", path, err)
 	}
+	readmeFindings, err := readmepresentation.ScanBaselineFindings(ctx, root, b, false)
+	if err != nil {
+		return fmt.Errorf("[FAIL] verify %s: %w", path, err)
+	}
+	current = append(current, readmepresentation.ToBaseline(readmeFindings)...)
 	ratchet := baseline.EvaluateRatchet(b, current, nil)
 	if !ratchet.Passed {
 		return fmt.Errorf("[FAIL] %s: %s", path, describeRejection(ctx, root, path, scanOpts, b, current, ratchet, all))
@@ -171,19 +177,24 @@ func recordBaseline(path string, previous *baseline.Baseline, hissOpts, gosecOpt
 	ctx, cancel := context.WithTimeout(context.Background(), baselineScanTimeout)
 	defer cancel()
 
-	current, _, err := scanBaselineInfractions(ctx, filepath.Dir(path))
+	root := filepath.Dir(path)
+	current, _, err := scanBaselineInfractions(ctx, root)
+	if err != nil {
+		return fmt.Errorf("refusing to record %s: %w", path, err)
+	}
+	readmeFindings, err := readmepresentation.ScanBaselineFindings(ctx, root, previous, true)
 	if err != nil {
 		return fmt.Errorf("refusing to record %s: %w", path, err)
 	}
 
-	repo, commit, err := baselineIdentity(ctx, filepath.Dir(path))
+	repo, commit, err := baselineIdentity(ctx, root)
 	if err != nil {
 		return fmt.Errorf("refusing to record %s: %w", path, err)
 	}
 	hissOpts.Repository, hissOpts.CommitSHA = repo, commit
 	gosecOpts.Repository, gosecOpts.CommitSHA = repo, commit
 
-	next, err := baseline.Record(previous, current, hissOpts)
+	next, err := readmepresentation.RecordBaseline(previous, readmeFindings, hissOpts, current...)
 	if err != nil {
 		return fmt.Errorf("refusing to record %s: %w (pass --allow-increase --reason=<why> to record a deliberate increase)", path, err)
 	}

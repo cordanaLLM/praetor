@@ -409,8 +409,13 @@ func reconcileReadme(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return s.readmeStateError(err)
 	}
-	content, changed, err := readmegovernance.Reconcile(string(data), state)
-	if err != nil || !changed {
+	raw := string(data)
+	input := raw
+	if s.opts.Force {
+		input = readmegovernance.StripBlock(raw)
+	}
+	content, _, err := readmegovernance.Reconcile(input, state)
+	if err != nil || content == raw {
 		return err
 	}
 	if err := s.write(full, []byte(content), filePerm); err != nil {

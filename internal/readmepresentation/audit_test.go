@@ -147,3 +147,104 @@ func TestWithoutReadmeBaseline_FiltersOnlyReadmeRules(t *testing.T) {
 		t.Fatalf("unexpected filtered baseline: %+v", filtered)
 	}
 }
+
+func TestWithoutReadmeBaseline_Boundary_NoTruncationAbove1000(t *testing.T) {
+	const hissCount = 1500
+	infs := make([]baseline.Infraction, 0, hissCount+1)
+	for i := range hissCount {
+		infs = append(infs, baseline.Infraction{
+			RuleID: "HISS-07", FilePath: "f.go", LineNumber: i + 1,
+		})
+	}
+	infs = append(infs, baseline.Infraction{
+		RuleID: RuleIDBadgeBlock, FilePath: FileName, LineNumber: 1,
+	})
+	b := &baseline.Baseline{Version: 1, TotalInfractions: len(infs), Infractions: infs}
+
+	without := WithoutReadmeBaseline(b)
+	if without.TotalInfractions != hissCount || len(without.Infractions) != hissCount {
+		t.Fatalf("WithoutReadmeBaseline truncated %d HISS entries to %d", hissCount, len(without.Infractions))
+	}
+	only, hasReadme := ReadmeBaseline(b)
+	if !hasReadme || only == nil || only.TotalInfractions != 1 || only.Infractions[0].RuleID != RuleIDBadgeBlock {
+		t.Fatalf("ReadmeBaseline missed README entry at index %d: %+v", hissCount, only)
+	}
+}
+
+func assertReportAndEnforceReadFailure(t *testing.T, dir string) {
+	t.Helper()
+	line, err := Audit(t.Context(), Options{Root: dir})
+	if err != nil || !strings.Contains(line, "[REPORT] README-00") {
+		t.Fatalf("report mode on unreadable/invalid README: err=%v line=%q", err, line)
+	}
+	if _, err := Audit(t.Context(), Options{Root: dir, Enforce: true}); err == nil {
+		t.Fatal("enforce mode on unreadable/invalid README must fail")
+	}
+}
+
+func TestAudit_Boundary_DirectoryUnreadableAndOversizedReportVsEnforce(t *testing.T) {
+	t.Run("directory README", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.Mkdir(filepath.Join(dir, "README.md"), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		assertReportAndEnforceReadFailure(t, dir)
+	})
+
+	t.Run("oversized README", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTestReadme(t, dir, strings.Repeat("a", MaxFileBytes+1))
+		assertReportAndEnforceReadFailure(t, dir)
+	})
+
+	t.Run("unreadable README", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root bypasses 0000 file mode")
+		}
+		dir := t.TempDir()
+		p := filepath.Join(dir, "README.md")
+		writeTestReadme(t, dir, "# x\n")
+		if err := os.Chmod(p, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.Chmod(p, 0o600); err != nil {
+				t.Log(err)
+			}
+		})
+		assertReportAndEnforceReadFailure(t, dir)
+	})
+}
+
+func TestAudit_Boundary_RatchetDistinguishesMessagesAndIgnoresLineShifts(t *testing.T) {
+	dir := t.TempDir()
+	base := "# proj\n[![a](https://img.shields.io/badge/a-b-blue?style=for-the-badge)](https://x)\n**Tag**\n\n"
+	writeTestReadme(t, dir, base+"## Foo\n\n## Foo\n")
+	rec := recordTestReadmeBaseline(t, dir)
+
+	// Shifting the same duplicate-heading violation down by lines still passes the ratchet.
+	writeTestReadme(t, dir, base+"\n\n\n## Foo\n\n## Foo\n")
+	if _, err := Audit(t.Context(), Options{Root: dir, Baseline: rec}); err != nil {
+		t.Fatalf("same violation shifted by line numbers should pass ratchet: %v", err)
+	}
+
+	// Swapping the duplicate-heading README-05 for an out-of-order README-05 fails the ratchet.
+	writeTestReadme(t, dir, base+"## Contribute\n\n## Get started\n")
+	if _, err := Audit(t.Context(), Options{Root: dir, Baseline: rec}); err == nil {
+		t.Fatal("different README-05 violation message should fail ratchet")
+	}
+}
+
+func TestAudit_Positive_GovernanceBlockAtTopEmitsInfoAndZeroCounted(t *testing.T) {
+	dir := t.TempDir()
+	content := "# proj\n[![a](https://img.shields.io/badge/a-b-blue?style=for-the-badge)](https://x)\n**Tag**\n\n" +
+		"<!-- praetor:readme-governance:start -->\ngoverned\n<!-- praetor:readme-governance:end -->\n\n## 🚀 Get started\n"
+	writeTestReadme(t, dir, content)
+	line, err := Audit(t.Context(), Options{Root: dir, Enforce: true})
+	if err != nil {
+		t.Fatalf("governance block at top should pass enforce with info line, got err=%v", err)
+	}
+	if !strings.Contains(line, "[PASS] README presentation:") || !strings.Contains(line, "[INFO] README-05") {
+		t.Fatalf("expected [PASS] and [INFO] README-05, got:\n%s", line)
+	}
+}

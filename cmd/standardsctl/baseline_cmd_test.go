@@ -10,6 +10,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/gating"
+	"github.com/cordanaLLM/praetor/internal/readmepresentation"
 )
 
 // runBaselineCmd dispatches the baseline command for the fixture with extra flags.
@@ -442,4 +443,36 @@ func TestBaselineRecord_Gosec_Boundary_UnchangedDebtKeepsBothFiles(t *testing.T)
 	if string(gosecAfter) != string(gosecData) {
 		t.Error("gosec baseline was rewritten despite unchanged debt")
 	}
+}
+
+func TestBaselineRecord_ReadmePresentationSurvivesWithZeroHISS(t *testing.T) {
+	f := newAuditFixture(t)
+	writeFixtureFile(t, f.dir, "README.md", "# Widgets\n")
+
+	out, err := runBaselineCmd(t, f, "--record", "--allow-increase", "--reason=readme presentation debt")
+	if err != nil {
+		t.Fatalf("record readme finding with 0 HISS: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Total: 1 infractions, previously 0")
+
+	// Subsequent baseline --record with 0 HISS findings must preserve the README entry.
+	out, err = runBaselineCmd(t, f, "--record")
+	if err != nil {
+		t.Fatalf("second record: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Baseline unchanged", "Total: 1 infractions, previously 1")
+
+	b, err := baseline.LoadBaseline(f.baselinePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, hasReadme := readmepresentation.ReadmeBaseline(b); !hasReadme || b.TotalInfractions != 1 {
+		t.Fatalf("expected README entry preserved in baseline, got: %+v", b)
+	}
+
+	out, err = runBaselineCmd(t, f, "--verify")
+	if err != nil {
+		t.Fatalf("verify baseline with README entry: %v\n%s", err, out)
+	}
+	mustContain(t, out, "1 active infractions within the 1 recorded")
 }

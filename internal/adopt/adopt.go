@@ -23,6 +23,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
+	"github.com/cordanaLLM/praetor/internal/readmepresentation"
 	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -944,6 +945,11 @@ func (s *adoptSession) checkKeptBaseline(ctx context.Context, full string) error
 	if err != nil {
 		return err
 	}
+	readmeFindings, err := readmepresentation.ScanBaselineFindings(ctx, s.repoPath, recorded, false)
+	if err != nil {
+		return err
+	}
+	current = append(current, readmepresentation.ToBaseline(readmeFindings)...)
 	ratchet := baseline.EvaluateRatchet(recorded, current, nil)
 	verdict := &BaselineRatchet{Passed: ratchet.Passed, Recorded: ratchet.PreviousCount,
 		Active: ratchet.CurrentCount, Unbaselined: len(ratchet.NewViolations)}
@@ -981,11 +987,21 @@ func (s *adoptSession) rerecordBaseline(ctx context.Context, full string) error 
 	if err != nil {
 		return err
 	}
-	next, err := baseline.Record(previous, current, baseline.RecordOptions{AllowIncrease: s.opts.AllowBaselineIncrease,
-		Rationale: s.opts.BaselineIncreaseReason, Repository: s.identity.coordinate(), CommitSHA: commit})
+	readmeFindings, err := readmepresentation.ScanBaselineFindings(ctx, s.repoPath, previous, true)
 	if err != nil {
 		s.report.BaselineStatus = "failed"
-		return s.refusedRerecord(ctx, full, previous, current, err)
+		return err
+	}
+	next, err := readmepresentation.RecordBaseline(previous, readmeFindings, baseline.RecordOptions{
+		AllowIncrease: s.opts.AllowBaselineIncrease,
+		Rationale:     s.opts.BaselineIncreaseReason,
+		Repository:    s.identity.coordinate(),
+		CommitSHA:     commit,
+	}, current...)
+	if err != nil {
+		s.report.BaselineStatus = "failed"
+		combined := append(append([]baseline.Infraction{}, current...), readmepresentation.ToBaseline(readmeFindings)...)
+		return s.refusedRerecord(ctx, full, previous, combined, err)
 	}
 	s.report.BaselineStatus = "scanned"
 	s.report.LegacyDebtCount = next.TotalInfractions

@@ -59,6 +59,11 @@ func (f Finding) ReportLine() string {
 	return fmt.Sprintf("[REPORT] %s %s:%d %s (report: measured, not enforced)", f.RuleID, f.File, f.Line, f.Message)
 }
 
+// InfoLine formats an informational finding line that is not counted as an infraction.
+func (f Finding) InfoLine() string {
+	return fmt.Sprintf("[INFO] %s %s:%d %s", f.RuleID, f.File, f.Line, f.Message)
+}
+
 // IsReadmeRule reports whether ruleID is one of README-00..README-05.
 func IsReadmeRule(ruleID string) bool {
 	switch ruleID {

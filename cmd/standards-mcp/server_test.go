@@ -14,12 +14,14 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/mcp"
+	"github.com/cordanaLLM/praetor/internal/readmepresentation"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -1029,4 +1031,29 @@ func TestServer_Boundary_NotificationsGetNoReplyAndRunNothing(t *testing.T) {
 	if err != nil || !strings.Contains(string(data), `"id":null`) {
 		t.Errorf("error without a readable id must encode \"id\":null: %s (%v)", data, err)
 	}
+}
+
+func TestServer_Positive_AuditReadmePresentationAndBaselineFilter(t *testing.T) {
+	srv, root := newFixtureServer(t)
+
+	// 1. Default report mode emits [REPORT] README presentation without failing standards_audit.
+	audit := callTool(t, srv, "standards_audit", nil)
+	expectText(t, "audit readme report", audit, "[REPORT] README presentation measured, not enforced:")
+
+	// 2. Baseline holding a README-01 entry + 0 HISS entries passes both HISS ratchet (WithoutReadmeBaseline) and README ratchet.
+	writeFixtureFile(t, root, "README.md", "# repo\n")
+	findings, err := readmepresentation.CheckFile(t.Context(), root, "README.md")
+	if err != nil || len(findings) == 0 {
+		t.Fatalf("CheckFile: findings=%v err=%v", findings, err)
+	}
+	rec, err := readmepresentation.RecordBaseline(nil, findings, baseline.RecordOptions{Repository: "fixture/repo"})
+	if err != nil {
+		t.Fatalf("RecordBaseline: %v", err)
+	}
+	if err := baseline.SaveBaseline(filepath.Join(root, ".standards-baseline.json"), rec); err != nil {
+		t.Fatalf("SaveBaseline: %v", err)
+	}
+	audit = callTool(t, srv, "standards_audit", nil)
+	expectText(t, "audit hiss with readme baseline", audit, "[PASS] Technical debt baseline verified: 0 recorded legacy infractions; HISS scan found 0 active violations")
+	expectText(t, "audit readme ratchet", audit, "[PASS] README presentation: 1 active finding(s) within 1 recorded in baseline.")
 }

@@ -6,21 +6,66 @@ package readmepresentation
 
 import (
 	"fmt"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/cordanaLLM/praetor/internal/readmegovernance"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 var (
-	mdSvgRe       = regexp.MustCompile(`!\[[^\]]*\]\(([^)]+\.svg(?:\?[^)]*)?)\)`)
-	htmlSvgRe     = regexp.MustCompile(`(?i)<img[^>]+src=["']([^"']+\.svg(?:\?[^"']*)?)["']`)
-	viewBoxRe     = regexp.MustCompile(`(?i)\bviewBox\s*=\s*["']([^"']+)["']`)
-	svgTagWidthRe = regexp.MustCompile(`(?i)<svg[^>]+width\s*=\s*["']?([0-9.]+)`)
+	mdSvgRe            = regexp.MustCompile(`(?i)!\[[^\]]*\]\(\s*<?([^)>\s"']+\.svg)(?:\?[^)>\s"']*)?>?(?:\s+["'][^"']*["'])?\s*\)`)
+	htmlSvgRe          = regexp.MustCompile(`(?i)<img[^>]+src\s*=\s*["']([^"']+\.svg(?:\?[^"']*)?)["']`)
+	viewBoxRe          = regexp.MustCompile(`(?i)\bviewBox\s*=\s*["']([^"']+)["']`)
+	svgTagWidthRe      = regexp.MustCompile(`(?i)<svg[^>]+width\s*=\s*["']?([0-9.]+)`)
+	mermaidThemeBaseRe = regexp.MustCompile(`(?i)['"]?theme['"]?\s*:\s*['"]?base['"]?\b`)
+	nonWordRe          = regexp.MustCompile(`[^a-z0-9]+`)
 )
+
+func stripBlockquote(line string) string {
+	s := line
+	for depth := 0; depth < 16; depth++ {
+		trimmed := strings.TrimLeft(s, " ")
+		if len(s)-len(trimmed) > 3 || !strings.HasPrefix(trimmed, ">") {
+			break
+		}
+		s = strings.TrimPrefix(trimmed[1:], " ")
+	}
+	return s
+}
+
+func leadingSpaces(line string) int {
+	width := 0
+	for i := 0; i < len(line) && i < 16; i++ {
+		switch line[i] {
+		case ' ':
+			width++
+		case '\t':
+			width += 4
+		default:
+			return width
+		}
+	}
+	return width
+}
+
+func stripInlineComments(line string) string {
+	if !strings.Contains(line, "<!--") {
+		return line
+	}
+	return htmlCommentRe.ReplaceAllString(line, "")
+}
+
+func sanitizeDisplayPath(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return '?'
+		}
+		return r
+	}, s)
+}
 
 func checkMermaidBlock(firstLine string, lineNum int, relPath string, findings *[]Finding) {
 	trimmed := strings.TrimSpace(firstLine)
@@ -35,7 +80,7 @@ func checkMermaidBlock(firstLine string, lineNum int, relPath string, findings *
 	}
 	hasThemeBase := strings.Contains(trimmed, "'theme': 'base'") ||
 		strings.Contains(trimmed, `"theme": "base"`) ||
-		(strings.Contains(trimmed, "theme") && strings.Contains(trimmed, "base"))
+		mermaidThemeBaseRe.MatchString(trimmed)
 	hasThemeVars := strings.Contains(trimmed, "themeVariables")
 	if !hasThemeBase || !hasThemeVars {
 		*findings = append(*findings, Finding{
@@ -57,14 +102,14 @@ func checkSvgBelowHeader(rootDir, line, relPath string, lineNum int, findings *[
 			continue
 		}
 		clean := cleanTargetSvgPath(target)
-		fullPath := filepath.Join(rootDir, filepath.Clean(clean))
-		data, err := util.ReadFileLimited(fullPath, MaxSVGBytes)
+		safeClean := sanitizeDisplayPath(clean)
+		data, err := util.ReadConfinedLimited(rootDir, clean, MaxSVGBytes)
 		if err != nil {
 			*findings = append(*findings, Finding{
 				File:    relPath,
 				Line:    lineNum,
 				RuleID:  RuleIDDiagrams,
-				Message: fmt.Sprintf("SVG image %s cannot be read: %v", clean, err),
+				Message: fmt.Sprintf("SVG image %s cannot be read: %v", safeClean, sanitizeDisplayPath(err.Error())),
 			})
 			continue
 		}
@@ -73,33 +118,41 @@ func checkSvgBelowHeader(rootDir, line, relPath string, lineNum int, findings *[
 				File:    relPath,
 				Line:    lineNum,
 				RuleID:  RuleIDDiagrams,
-				Message: fmt.Sprintf("SVG image %s width %.0f exceeds column limit %d", clean, width, SVGMaxWidth),
+				Message: fmt.Sprintf("SVG image %s width %.0f exceeds column limit %d", safeClean, width, SVGMaxWidth),
 			})
 		}
 	}
 }
 
-func extractSvgTargets(line string) []string {
-	var targets []string
-	if m := mdSvgRe.FindAllStringSubmatch(line, maxSvgTargetsPerLine); len(m) > 0 {
-		for i := 0; i < len(m) && i < maxSvgTargetsPerLine; i++ {
-			if len(m[i]) > 1 {
-				targets = append(targets, m[i][1])
-			}
+func appendSubmatchTargets(dst []string, matches [][]string) []string {
+	for i := 0; i < len(matches) && i < maxSvgTargetsPerLine; i++ {
+		if len(matches[i]) > 1 {
+			dst = append(dst, matches[i][1])
 		}
 	}
+	return dst
+}
+
+func extractSvgTargets(line string) []string {
+	if len(line) > 8192 || !strings.Contains(strings.ToLower(line), ".svg") {
+		return nil
+	}
+	var targets []string
+	if m := mdSvgRe.FindAllStringSubmatch(line, maxSvgTargetsPerLine); len(m) > 0 {
+		targets = appendSubmatchTargets(targets, m)
+	}
 	if m := htmlSvgRe.FindAllStringSubmatch(line, maxSvgTargetsPerLine); len(m) > 0 {
-		for i := 0; i < len(m) && i < maxSvgTargetsPerLine; i++ {
-			if len(m[i]) > 1 {
-				targets = append(targets, m[i][1])
-			}
-		}
+		targets = appendSubmatchTargets(targets, m)
 	}
 	return targets
 }
 
 func isRemoteTarget(t string) bool {
-	return strings.HasPrefix(t, "http://") || strings.HasPrefix(t, "https://") || strings.HasPrefix(t, "data:")
+	lower := strings.ToLower(strings.TrimSpace(t))
+	return strings.HasPrefix(lower, "http://") ||
+		strings.HasPrefix(lower, "https://") ||
+		strings.HasPrefix(lower, "//") ||
+		strings.HasPrefix(lower, "data:")
 }
 
 func cleanTargetSvgPath(t string) string {
@@ -124,7 +177,7 @@ func parseSvgWidth(content string) (float64, bool) {
 	return 0, false
 }
 
-func checkSectionHeading(line string, lineNum int, relPath string, state *sectionState, findings *[]Finding) {
+func checkSectionHeading(line string, lineNum int, relPath string, state *sectionState, findings, infos *[]Finding) {
 	trimmed := strings.TrimSpace(line)
 	if strings.Contains(trimmed, readmegovernance.Start) {
 		state.governanceSeen = true
@@ -135,12 +188,15 @@ func checkSectionHeading(line string, lineNum int, relPath string, state *sectio
 	}
 	clean := strings.TrimSpace(text)
 	if state.governanceSeen {
-		*findings = append(*findings, Finding{
-			File:    relPath,
-			Line:    lineNum,
-			RuleID:  RuleIDSections,
-			Message: fmt.Sprintf("section %q appears after managed governance block (governance block must remain last)", clean),
-		})
+		if !state.governanceInfoEmitted && infos != nil {
+			state.governanceInfoEmitted = true
+			*infos = append(*infos, Finding{
+				File:    relPath,
+				Line:    lineNum,
+				RuleID:  RuleIDSections,
+				Message: fmt.Sprintf("section %q appears after managed governance block (governance block must remain last)", clean),
+			})
+		}
 	}
 	if prev, exists := state.seenH2[clean]; exists {
 		*findings = append(*findings, Finding{
@@ -156,9 +212,10 @@ func checkSectionHeading(line string, lineNum int, relPath string, state *sectio
 }
 
 type sectionState struct {
-	governanceSeen bool
-	seenH2         map[string]int
-	lastClass      int
+	governanceSeen        bool
+	governanceInfoEmitted bool
+	seenH2                map[string]int
+	lastClass             int
 }
 
 func newSectionState() *sectionState {
@@ -173,21 +230,34 @@ var sectionKeywords = [...]struct {
 	name     string
 	keywords []string
 }{
-	{0, "get-started", []string{"install", "get-started", "get started"}},
-	{1, "architecture", []string{"architecture", "at-glance", "at a glance"}},
-	{2, "guides", []string{"guide", "reference"}},
-	{3, "contribute", []string{"contribut"}},
+	{0, "get-started", []string{"install", "installation", "get started", "getting started", "quick start", "quickstart"}},
+	{1, "architecture", []string{"architecture", "at a glance"}},
+	{2, "guides", []string{"guide", "guides", "reference"}},
+	{3, "contribute", []string{"contribute", "contributing", "contribution", "contributions"}},
 	{4, "support", []string{"support"}},
-	{5, "roadmap", []string{"roadmap", "release"}},
-	{6, "upstream", []string{"licen", "upstream"}},
-	{7, "governance", []string{"standard", "governance"}},
+	{5, "roadmap", []string{"roadmap", "roadmap and releases"}},
+	{6, "upstream", []string{"license", "licence", "upstream"}},
+	{7, "governance", []string{"governance", "standards and governance"}},
+}
+
+func normalizeHeadingWords(lower string) string {
+	s := strings.ReplaceAll(lower, "&", " and ")
+	s = strings.TrimSpace(nonWordRe.ReplaceAllString(s, " "))
+	if s == "" {
+		return ""
+	}
+	return " " + s + " "
 }
 
 func matchHeadingKeywordClass(lower string) int {
+	padded := normalizeHeadingWords(lower)
+	if padded == "" {
+		return -1
+	}
 	for i := 0; i < len(sectionKeywords); i++ {
 		sk := sectionKeywords[i]
 		for j := 0; j < len(sk.keywords) && j < 8; j++ {
-			if strings.Contains(lower, sk.keywords[j]) {
+			if strings.Contains(padded, " "+sk.keywords[j]+" ") {
 				return sk.class
 			}
 		}
