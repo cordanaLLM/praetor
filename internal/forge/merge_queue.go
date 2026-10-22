@@ -127,9 +127,14 @@ func selectContexts(files []workflowFile, called calledWorkflows, identity strin
 	if err != nil {
 		return nil, err
 	}
-	contexts = append(contexts, opts.declared...)
-	slices.Sort(contexts)
-	return slices.Compact(contexts), nil
+	// declared contexts follow the derived ones in their declared order; a context both derive and declare stays once, where the
+	// workflows put it, so a repository that declares none renders exactly as before (the list is bounded by Validate)
+	for _, declared := range opts.declared {
+		if !slices.Contains(contexts, declared) {
+			contexts = append(contexts, declared)
+		}
+	}
+	return contexts, nil
 }
 
 // MergeQueueFindings lists, for the repository at repoPath with planned applied over its

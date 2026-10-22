@@ -266,9 +266,9 @@ func TestRenderRulesetForRepository_Positive_PlannedWorkflowsAreRequired(t *test
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	// The required set is sorted independently of workflow file order.
-	if !slices.Equal(contexts, []string{"docs", "verify"}) {
-		t.Fatalf("contexts = %v, want [docs verify]", contexts)
+	// In workflow file name order, as the run that writes docs.yml reads them.
+	if !slices.Equal(contexts, []string{"verify", "docs"}) {
+		t.Fatalf("contexts = %v, want [verify docs]", contexts)
 	}
 	if err := ValidateRepositoryRuleset(data, "main", policy, contexts); err != nil {
 		t.Fatalf("the rendering does not validate: %v", err)

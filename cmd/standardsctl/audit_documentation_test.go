@@ -670,7 +670,7 @@ func TestAuditDocumentationGate_Boundary_RulesetCarriesPerLegMatrixContexts(t *t
 	root := documentationAuditFixture(t)
 	writeFixtureFile(t, root, ".github/workflows/ci.yml", "on: pull_request\njobs:\n  test:\n    name: Test\n"+
 		"    strategy:\n      matrix:\n        os: [ubuntu-latest, windows-latest]\n")
-	contexts := []string{adopt.DocumentationStatusContext, "Test (ubuntu-latest)", "Test (windows-latest)"}
+	contexts := []string{"Test (ubuntu-latest)", "Test (windows-latest)", adopt.DocumentationStatusContext}
 	ruleset, err := forge.RenderRepositoryRuleset("main", config.DefaultPolicy().BranchProtection, contexts)
 	if err != nil {
 		t.Fatal(err)

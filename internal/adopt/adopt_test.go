@@ -2386,7 +2386,7 @@ func TestRequiredStatusContexts_WorkflowTriggers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"Scalar Job", "Verify Gate", "build"}
+	want := []string{"Verify Gate", "build", "Scalar Job"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("contexts = %v, want %v", got, want)
 	}

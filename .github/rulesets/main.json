@@ -44,34 +44,34 @@
       "parameters": {
         "required_status_checks": [
           {
-            "context": "DCO 1.1 \u0026 REUSE Compliance Gate"
-          },
-          {
-            "context": "Documentation Governance"
+            "context": "Release \u0026 Bot Configuration Validation"
           },
           {
             "context": "Documentation Preset Builds"
           },
           {
-            "context": "Go API Compatibility"
+            "context": "Standards \u0026 Invariant Verification Gate"
           },
           {
-            "context": "Go Vulnerability \u0026 AST Security Scan"
+            "context": "DCO 1.1 \u0026 REUSE Compliance Gate"
           },
           {
             "context": "Platform Neutrality (Linux)"
           },
           {
-            "context": "Platform Neutrality (Windows)"
-          },
-          {
             "context": "Platform Neutrality (macOS)"
           },
           {
-            "context": "Release \u0026 Bot Configuration Validation"
+            "context": "Platform Neutrality (Windows)"
           },
           {
-            "context": "Standards \u0026 Invariant Verification Gate"
+            "context": "Go API Compatibility"
+          },
+          {
+            "context": "Documentation Governance"
+          },
+          {
+            "context": "Go Vulnerability \u0026 AST Security Scan"
           }
         ],
         "strict_required_status_checks_policy": true

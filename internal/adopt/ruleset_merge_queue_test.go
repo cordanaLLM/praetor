@@ -47,7 +47,7 @@ func TestAuditBranchProtection_MergeQueue_Positive(t *testing.T) {
 	}
 	plain := t.TempDir()
 	writeQueueWorkflows(t, plain)
-	writeAuditRuleset(t, plain, renderAuditRuleset(t, signedPolicy(), []string{"Documentation Governance", "Unit Tests"}))
+	writeAuditRuleset(t, plain, renderAuditRuleset(t, signedPolicy(), []string{"Unit Tests", "Documentation Governance"}))
 	if _, err := AuditBranchProtectionWithPolicy(t.Context(), &config.Manifest{}, plain, &config.ResolvedPolicy{BranchProtection: signedPolicy()}); err != nil {
 		t.Fatalf("without a queue every pull request context stays required: %v", err)
 	}
