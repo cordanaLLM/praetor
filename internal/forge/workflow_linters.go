@@ -329,7 +329,8 @@ func hasToolOption(args []string, toolLower string) bool {
 	return false
 }
 
-func isInterpreter(prog string) bool {
+// IsInterpreter reports whether prog is a known script interpreter.
+func IsInterpreter(prog string) bool {
 	switch prog {
 	case "python", "python3", "node", "deno", "bun", "bash", "sh", "ruby", "perl", "pwsh":
 		return true
@@ -337,24 +338,61 @@ func isInterpreter(prog string) bool {
 	return false
 }
 
-func scriptPathMatchesTool(scriptPath, toolLower string) bool {
+func isInterpreter(prog string) bool {
+	return IsInterpreter(prog)
+}
+
+// ScriptPathMatchesTool reports whether scriptPath matches toolLower: either a directory
+// component equals toolLower, or its basename holds toolLower as consecutive words separated
+// by '-', '_', or '.'. A hyphenated tool matches consecutive words (run-clang-tidy.py, clang_tidy_run.sh).
+// A tool name inside a longer word does not match (clang-tidyx).
+func ScriptPathMatchesTool(scriptPath, toolLower string) bool {
 	normalized := filepath.ToSlash(scriptPath)
 	parts := strings.Split(normalized, "/")
-	for i := 0; i < len(parts)-1; i++ {
+	toolLower = strings.ToLower(toolLower)
+	toolUnder := strings.ReplaceAll(toolLower, "-", "_")
+	for i := 0; i < len(parts)-1 && i < maxRunScriptFields; i++ {
 		comp := strings.ToLower(parts[i])
 		if comp == "." || comp == "" {
 			continue
 		}
-		if comp == toolLower {
+		if comp == toolLower || comp == toolUnder {
 			return true
 		}
 	}
 	base := parts[len(parts)-1]
+	return BasenameMatchesTool(base, toolLower)
+}
+
+func scriptPathMatchesTool(scriptPath, toolLower string) bool {
+	return ScriptPathMatchesTool(scriptPath, toolLower)
+}
+
+// BasenameMatchesTool reports whether base holds toolLower as consecutive words separated by
+// '-', '_', or '.'. A tool name inside a longer word does not match.
+func BasenameMatchesTool(base, toolLower string) bool {
+	toolWords := strings.FieldsFunc(toolLower, func(r rune) bool {
+		return r == '-' || r == '_'
+	})
+	if len(toolWords) == 0 {
+		return false
+	}
 	words := strings.FieldsFunc(base, func(r rune) bool {
 		return r == '-' || r == '_' || r == '.'
 	})
-	for _, w := range words {
-		if strings.ToLower(w) == toolLower {
+	if len(words) < len(toolWords) {
+		return false
+	}
+	maxStart := len(words) - len(toolWords)
+	for i := 0; i <= maxStart && i < maxRunScriptFields; i++ {
+		match := true
+		for j := 0; j < len(toolWords) && j < maxRunScriptFields; j++ {
+			if !strings.EqualFold(words[i+j], toolWords[j]) {
+				match = false
+				break
+			}
+		}
+		if match {
 			return true
 		}
 	}
