@@ -588,23 +588,34 @@ def _pull_request_rows(raw, kind):
     return rows
 
 
-def _list_pull_requests(root, cfg):
-    """Return validated states from the single repository-wide PR listing."""
-    try:
-        raw = _run(
-            _pull_request_argv(cfg),
-            root,
-            network=True,
-            allowed=(0,),
-            timeout=PULL_REQUEST_TIMEOUT,
-        )
-        rows = _pull_request_rows(raw, "listing")
-        states = {}
-        for row in rows:
-            states.setdefault(row["headRefName"], set()).add(row["state"])
-    except (CheckpointError, ValueError, TypeError):
-        return {}
-    return states
+def _list_pull_requests(root, cfg, deadline):
+    """Return validated states from repository PR listing with bounded retry."""
+    last_error = ""
+    backoffs = (1, 2)
+    for attempt in range(3):
+        if time.monotonic() >= deadline:
+            break
+        try:
+            raw = _run(
+                _pull_request_argv(cfg),
+                root,
+                network=True,
+                allowed=(0,),
+                timeout=PULL_REQUEST_TIMEOUT,
+            )
+            rows = _pull_request_rows(raw, "listing")
+            states = {}
+            for row in rows:
+                states.setdefault(row["headRefName"], set()).add(row["state"])
+            return states, ""
+        except (CheckpointError, ValueError, TypeError) as error:
+            last_error = str(error)
+            if attempt < len(backoffs):
+                delay = backoffs[attempt]
+                if time.monotonic() + delay > deadline:
+                    break
+                time.sleep(delay)
+    return None, last_error or "worktree check budget exhausted"
 
 
 def _probe_one_pull_request(root, cfg, branch):
@@ -641,8 +652,10 @@ def _pull_request_states(root, cfg, branches, deadline):
     if not branches:
         return {}, ""
     if time.monotonic() >= deadline:
-        return {}, "worktree check budget exhausted"
-    states = _list_pull_requests(root, cfg)
+        return None, "worktree check budget exhausted"
+    states, error = _list_pull_requests(root, cfg, deadline)
+    if error:
+        return None, error
     return _probe_pull_requests(root, cfg, branches, states, deadline), ""
 
 
@@ -917,7 +930,7 @@ def _git_common_dir(root):
 
 
 def _unfinished_worktree_records(root, cfg):
-    """Observe only recent, unnamed linked worktrees; return records and optional skip note."""
+    """Observe recent worktrees; return records, skip note, unverified count."""
     deadline = time.monotonic() + WORKTREE_CHECK_BUDGET
     common_dir = _git_common_dir(root)
     owned = _session_owned_worktrees(common_dir)
@@ -928,26 +941,30 @@ def _unfinished_worktree_records(root, cfg):
     states, skipped = _pull_request_states(
         root, cfg, [item[0]["branch"] for item in pr_candidates], deadline
     )
-    for entry, reasons in pr_candidates:
-        state = states.get(entry["branch"])
-        if state is None or "UNVERIFIED" in state:
-            reasons.append("pull request state not verified")
-        elif not state.intersection({"OPEN", "MERGED"}):
-            reasons.append(
-                "pushed branch ahead of base has no open or merged pull request"
-            )
+    unverified_pushed = 0
+    if states is None:
+        unverified_pushed = len(pr_candidates)
+    else:
+        for entry, reasons in pr_candidates:
+            state = states.get(entry["branch"])
+            if state is None or "UNVERIFIED" in state:
+                reasons.append("pull request state not verified")
+            elif not state.intersection({"OPEN", "MERGED"}):
+                reasons.append(
+                    "pushed branch ahead of base has no open or merged pull request"
+                )
     unfinished = [(entry, reasons) for entry, reasons in records if reasons]
     if owned is None:
         for _entry, reasons in unfinished:
             reasons.append(OWNERSHIP_UNKNOWN_REASON)
-    return unfinished, skipped
+    return unfinished, skipped, unverified_pushed
 
 
 def _add_unfinished_worktrees(root, cfg, result):
     """Append bounded stop actions for every recent unnamed worktree with unfinished work."""
     if result.get("deferred"):
         return
-    records, skipped = _unfinished_worktree_records(root, cfg)
+    records, skipped, unverified_pushed = _unfinished_worktree_records(root, cfg)
     result["unfinished_worktrees"] = [
         {"path": item[0]["path"], "branch": item[0]["branch"], "reasons": item[1]}
         for item in records[:MAX_UNFINISHED_WORKTREES]
@@ -968,6 +985,11 @@ def _add_unfinished_worktrees(root, cfg, result):
     if more:
         result["actions"].append(
             f"Unfinished worktrees: and {more} more; name them in .workingdir/OPEN.md"
+        )
+    if unverified_pushed:
+        result["actions"].append(
+            f"Pull request lookup failed ({skipped}): {unverified_pushed} pushed "
+            "branch(es) unverified; retry or name in .workingdir/OPEN.md"
         )
 
 

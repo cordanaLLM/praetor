@@ -138,7 +138,8 @@ class CheckpointTests(unittest.TestCase):
         (path / "checkpoint.json").write_text(json.dumps(value or CONFIG))
 
     def add_linked_worktree(self, branch="checkpoint/orphan"):
-        path = self.root.parent / (self.root.name + "-linked-worktree")
+        suffix = "-linked-worktree" if branch == "checkpoint/orphan" else f"-linked-worktree-{branch.replace('/', '-')}"
+        path = self.root.parent / (self.root.name + suffix)
         self.external_paths.append(path)
         git(self.root, "worktree", "add", "-q", "-b", branch, str(path), "HEAD")
         return path
@@ -375,6 +376,118 @@ class CheckpointTests(unittest.TestCase):
         git(path, "fetch", "-q", "origin")
         result, _ = self.observe_worktrees(fail_gh=True)
         self.assertTrue(result["due"])
+        self.assertEqual(result.get("unfinished_worktrees", []), [])
+        self.assertEqual(len(result["actions"]), 1)
+        self.assertIn("fake gh unavailable", result["actions"][0])
+        self.assertIn("1", result["actions"][0])
+        self.assertEqual(result.get("pull_request_check_skipped"), "fake gh unavailable")
+
+    def test_stop_worktree_pr_listing_retry_succeeds_without_unfinished_record(self):
+        bare = self.root.parent / (self.root.name + "-remote.git")
+        self.external_paths.append(bare)
+        git(self.root, "init", "--bare", "-q", str(bare))
+        git(self.root, "remote", "add", "origin", str(bare))
+        git(self.root, "push", "-q", "-u", "origin", "main")
+        path = self.add_linked_worktree()
+        (path / "new.txt").write_text("commit\n")
+        git(path, "add", "new.txt")
+        git(path, "commit", "-q", "-m", "published")
+        git(path, "push", "-q", "-u", "origin", "checkpoint/orphan")
+        git(path, "fetch", "-q", "origin")
+        attempts = [0]
+        original = checkpoint._run
+
+        def fake_run(argv, root, **kwargs):
+            if argv[:3] == ["gh", "pr", "list"] and "--head" not in argv:
+                attempts[0] += 1
+                if attempts[0] < 3:
+                    raise checkpoint.CheckpointError("transient listing failure")
+                return json.dumps([{"headRefName": "checkpoint/orphan", "state": "MERGED"}]).encode()
+            return original(argv, root, **kwargs)
+
+        with mock.patch.object(checkpoint, "_run", side_effect=fake_run), mock.patch.object(
+            checkpoint.time, "sleep"
+        ) as sleep_mock:
+            result = checkpoint.inspect_checkpoint(self.root, "stop")
+        self.assertEqual(attempts[0], 3)
+        delays = [call.args[0] for call in sleep_mock.call_args_list if call.args and call.args[0] in (1, 2)]
+        self.assertEqual(delays, [1, 2])
+        self.assertEqual(result.get("unfinished_worktrees", []), [])
+        self.assertEqual(result.get("actions", []), [])
+        self.assertFalse(result["due"])
+
+    def test_stop_worktree_pr_listing_failure_names_error_once_with_count(self):
+        bare = self.root.parent / (self.root.name + "-remote.git")
+        self.external_paths.append(bare)
+        git(self.root, "init", "--bare", "-q", str(bare))
+        git(self.root, "remote", "add", "origin", str(bare))
+        git(self.root, "push", "-q", "-u", "origin", "main")
+        for i in range(4):
+            path = self.add_linked_worktree(f"checkpoint/orphan-{i}")
+            (path / f"new-{i}.txt").write_text(f"commit {i}\n")
+            git(path, "add", f"new-{i}.txt")
+            git(path, "commit", "-q", "-m", f"published {i}")
+            git(path, "push", "-q", "-u", "origin", f"checkpoint/orphan-{i}")
+            git(path, "fetch", "-q", "origin")
+        original = checkpoint._run
+
+        def fake_run(argv, root, **kwargs):
+            if argv[:3] == ["gh", "pr", "list"] and "--head" not in argv:
+                raise checkpoint.CheckpointError("listing failed permanently")
+            return original(argv, root, **kwargs)
+
+        with mock.patch.object(checkpoint, "_run", side_effect=fake_run), mock.patch.object(
+            checkpoint.time, "sleep"
+        ):
+            result = checkpoint.inspect_checkpoint(self.root, "stop")
+        self.assertTrue(result["due"])
+        self.assertEqual(len(result["actions"]), 1)
+        self.assertIn("listing failed permanently", result["actions"][0])
+        self.assertIn("4", result["actions"][0])
+        self.assertEqual(result.get("pull_request_check_skipped"), "listing failed permanently")
+        for item in result.get("unfinished_worktrees", []):
+            self.assertNotIn("pull request", " ".join(item.get("reasons", [])))
+        self.assertEqual(result.get("unfinished_worktrees", []), [])
+
+    def test_stop_worktree_pr_listing_spent_deadline_no_retry_sleep(self):
+        cfg = {"enabled": True, "repository": "acme/demo"}
+        with mock.patch.object(
+            checkpoint,
+            "_run",
+            side_effect=checkpoint.CheckpointError("listing deadline error"),
+        ), mock.patch.object(checkpoint.time, "sleep") as sleep_mock:
+            states, error = checkpoint._list_pull_requests(
+                self.root, cfg, deadline=time.monotonic() + 0.5
+            )
+        self.assertFalse(any(call.args and call.args[0] in (1, 2) for call in sleep_mock.call_args_list))
+        self.assertIsNone(states)
+        self.assertEqual(error, "listing deadline error")
+
+    def test_stop_worktree_probe_failure_keeps_unverified_unfinished(self):
+        bare = self.root.parent / (self.root.name + "-remote.git")
+        self.external_paths.append(bare)
+        git(self.root, "init", "--bare", "-q", str(bare))
+        git(self.root, "remote", "add", "origin", str(bare))
+        git(self.root, "push", "-q", "-u", "origin", "main")
+        path = self.add_linked_worktree()
+        (path / "new.txt").write_text("commit\n")
+        git(path, "add", "new.txt")
+        git(path, "commit", "-q", "-m", "published")
+        git(path, "push", "-q", "-u", "origin", "checkpoint/orphan")
+        git(path, "fetch", "-q", "origin")
+        original = checkpoint._run
+
+        def fake_run(argv, root, **kwargs):
+            if argv[:3] == ["gh", "pr", "list"]:
+                if "--head" in argv:
+                    raise checkpoint.CheckpointError("probe failure")
+                return b"[]"
+            return original(argv, root, **kwargs)
+
+        with mock.patch.object(checkpoint, "_run", side_effect=fake_run):
+            result = checkpoint.inspect_checkpoint(self.root, "stop")
+        self.assertTrue(result["due"])
+        self.assertEqual(len(result["unfinished_worktrees"]), 1)
         self.assertIn("pull request state not verified", " ".join(result["unfinished_worktrees"][0]["reasons"]))
 
     def test_stop_old_worktree_admin_is_not_judged(self):

@@ -1,0 +1,2 @@
+type: fixed
+title: Checkpoint stop hook retries PR listing with backoff and collapses failures
