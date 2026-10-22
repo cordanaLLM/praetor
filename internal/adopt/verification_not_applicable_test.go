@@ -42,14 +42,21 @@ func TestAdoptRootWithoutBuildMarkerDeclaresTargetsNotApplicable(t *testing.T) {
 	}
 	root := newTestRepo(t, "no-build-marker-positive")
 	rep := adoptPlain(t, root, false)
+	wantReason := "no build system; verify-all checks agent context, caveman sources and audit."
+	assertNotApplicableReport(t, rep, wantReason)
+	assertNotApplicableMakefile(t, root, wantReason)
+	assertNotApplicableAgents(t, root, wantReason)
+	assertNotApplicableExecution(t, root, makePath)
+}
+
+func assertNotApplicableReport(t *testing.T, rep *AdoptReport, wantReason string) {
+	t.Helper()
 	if rep.Verification.Status != verificationNotApplicable {
 		t.Fatalf("verification status = %s, want %s", rep.Verification.Status, verificationNotApplicable)
 	}
-	wantReason := "no build system; verify-all checks agent context, caveman sources and audit."
 	if len(rep.Verification.Reasons) == 0 || !strings.Contains(rep.Verification.Reasons[0], "no build system") {
 		t.Fatalf("verification reasons = %v, want mentioning no build system", rep.Verification.Reasons)
 	}
-
 	pillar := verificationGatePillar(t, rep)
 	if pillar.Status != PillarReady {
 		t.Fatalf("Verification Gate pillar = %s, want ready", pillar.Status)
@@ -63,7 +70,10 @@ func TestAdoptRootWithoutBuildMarkerDeclaresTargetsNotApplicable(t *testing.T) {
 	if !slices.ContainsFunc(rep.Warnings, func(w string) bool { return strings.Contains(w, "Project verification not-applicable") }) {
 		t.Fatalf("report must state verification not-applicable: %v", rep.Warnings)
 	}
+}
 
+func assertNotApplicableMakefile(t *testing.T, root, wantReason string) {
+	t.Helper()
 	makefile := mustRead(t, filepath.Join(root, makefileName))
 	for _, target := range []string{"compile-context-verify", "caveman-sources", "audit", "test"} {
 		if !strings.Contains(makefile, "verify-all:") || !strings.Contains(makefile, target) {
@@ -79,7 +89,10 @@ func TestAdoptRootWithoutBuildMarkerDeclaresTargetsNotApplicable(t *testing.T) {
 	if strings.Contains(makefile, "exit 1") {
 		t.Fatalf("Makefile must not contain exit 1:\n%s", makefile)
 	}
+}
 
+func assertNotApplicableAgents(t *testing.T, root, wantReason string) {
+	t.Helper()
 	agents := mustRead(t, filepath.Join(root, agentsFile))
 	if strings.Contains(agents, "exit 1") {
 		t.Fatalf("AGENTS.md must not contain exit 1:\n%s", agents)
@@ -87,7 +100,10 @@ func TestAdoptRootWithoutBuildMarkerDeclaresTargetsNotApplicable(t *testing.T) {
 	if !strings.Contains(agents, "# Build and test targets not applicable: "+wantReason) {
 		t.Fatalf("AGENTS.md must name not-applicable targets:\n%s", agents)
 	}
+}
 
+func assertNotApplicableExecution(t *testing.T, root, makePath string) {
+	t.Helper()
 	stubs := t.TempDir()
 	for _, cli := range []string{util.PraetorCLI, util.LegacyCLI} {
 		writeStub(t, stubs, cli, "printf '%s\\n' \"$*\" >> calls\n")
