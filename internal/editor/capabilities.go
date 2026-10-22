@@ -138,7 +138,7 @@ func DetectWorkspaceLanguages(root string) ([]string, error) {
 // scanning at most fileBound files (zero selects util.DefaultDiscoveryEntries).
 func DetectWorkspaceLanguagesBounded(ctx context.Context, root string, fileBound int) ([]string, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, errors.New("workspace language scan requires a context")
 	}
 	runCtx, cancel := context.WithTimeout(ctx, defaultIOTimeout)
 	defer cancel()
@@ -155,7 +155,7 @@ func DetectWorkspaceLanguagesBounded(ctx context.Context, root string, fileBound
 // manifest markers are omitted.
 func DetectWorkspaceSourceLanguagesBounded(ctx context.Context, root string, fileBound int) ([]string, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, errors.New("workspace source language scan requires a context")
 	}
 	runCtx, cancel := context.WithTimeout(ctx, defaultIOTimeout)
 	defer cancel()
@@ -192,6 +192,19 @@ type workspaceLanguageScan struct {
 	languages []string
 }
 
+func (scan *workspaceLanguageScan) recordFile(name string) error {
+	scan.seen++
+	if scan.seen > scan.fileBound {
+		return fmt.Errorf("%w (%d files)", ErrWorkspaceScanBound, scan.fileBound)
+	}
+	// Each language is kept once: a raised bound admits far more files than normalizeLanguages
+	// admits observations, and a file adds nothing its language has not already added.
+	if language := languageForFile(name); language != "" && !slices.Contains(scan.languages, language) {
+		scan.languages = append(scan.languages, language)
+	}
+	return nil
+}
+
 func (scan *workspaceLanguageScan) visit(path string, entry fs.DirEntry, walkErr error) error {
 	if err := scan.ctx.Err(); err != nil {
 		return err
@@ -204,25 +217,16 @@ func (scan *workspaceLanguageScan) visit(path string, entry fs.DirEntry, walkErr
 		return err
 	}
 	rel = filepath.ToSlash(rel)
-	if entry.IsDir() && path != scan.root {
-		if ignoredWorkspaceDir(entry.Name()) || isIgnoredManagedDir(rel) {
+	if entry.IsDir() {
+		if path != scan.root && (ignoredWorkspaceDir(entry.Name()) || isIgnoredManagedDir(rel)) {
 			return fs.SkipDir
 		}
 		return nil
 	}
-	if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || isIgnoredManagedFile(rel) {
+	if strings.HasPrefix(entry.Name(), ".") || isIgnoredManagedFile(rel) {
 		return nil
 	}
-	scan.seen++
-	if scan.seen > scan.fileBound {
-		return fmt.Errorf("%w (%d files)", ErrWorkspaceScanBound, scan.fileBound)
-	}
-	// Each language is kept once: a raised bound admits far more files than normalizeLanguages
-	// admits observations, and a file adds nothing its language has not already added.
-	if language := languageForFile(entry.Name()); language != "" && !slices.Contains(scan.languages, language) {
-		scan.languages = append(scan.languages, language)
-	}
-	return nil
+	return scan.recordFile(entry.Name())
 }
 
 func isIgnoredManagedDir(rel string) bool {
