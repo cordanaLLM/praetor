@@ -109,8 +109,12 @@ func TestVerificationNoticeNamesWhatIsMissing(t *testing.T) {
 		t.Fatalf("notice denies the pytest configuration it found: %s", notice)
 	}
 	_, empty := verificationFixture(t, map[string]string{})
-	if notice := empty.notice(); !strings.Contains(notice, "Missing: a build command and a test command.") || strings.Contains(notice, "Discovered") {
+	if notice := empty.notice(); !strings.Contains(notice, "Project verification not-applicable: no build system") {
 		t.Fatalf("empty plan notice: %s", notice)
+	}
+	_, meson := verificationFixture(t, map[string]string{"meson.build": "project('fixture', 'c')\n"})
+	if notice := meson.notice(); !strings.Contains(notice, "Missing: a build command and a test command.") || strings.Contains(notice, "Discovered") {
+		t.Fatalf("meson plan notice: %s", notice)
 	}
 	_, declared := verificationFixture(t, map[string]string{"go.mod": "module fixture\n"})
 	if notice := declared.notice(); strings.Contains(notice, "exits 1") || strings.Contains(notice, "Missing") || strings.Contains(notice, "Selected by") {

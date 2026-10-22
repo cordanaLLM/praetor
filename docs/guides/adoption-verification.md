@@ -10,6 +10,15 @@ runtimes, status, and any reasons requiring review.
 | `declared-unverified` | Commands follow discovered project metadata. Execution and tool availability still need verification. |
 | `unavailable` | A required build/test command is missing or ambiguous. Generated recipes fail explicitly. |
 | `preserved-unverified` | Existing custom Makefile ownership is preserved. Review and exercise its `verify-all` contract. |
+| `not-applicable` | Root holds no supported build-system marker and no explicit test runner. `build` and `test` targets report not applicable and exit 0; `verify-all` runs context and audit gates. |
+
+A root with no supported build-system marker and no explicit test runner (such as documentation or
+organization profile repositories) is declared `not-applicable` rather than `unavailable`. Its
+Makefile `build` and `test` targets each print one line stating why they do not apply and exit 0
+(`no build system; verify-all checks agent context, caveman sources and audit.`), allowing `make
+verify-all` to run real governance gates (`compile-context-verify`, `caveman-sources`, `audit`) and
+exit 0. `AGENTS.md` names the not-applicable targets without `exit 1`, and the adoption report
+states the plan is not applicable rather than warning that verification is unavailable.
 
 An `unavailable` plan's `verify-all` runs the governance checks and then fails with one
 `printf`/`exit 1` pair, also when adoption appends the rule to an existing Makefile. The

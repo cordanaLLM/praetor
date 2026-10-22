@@ -70,7 +70,7 @@ func TestVerificationZigBuildWithoutTestsUnavailable(t *testing.T) {
 		t.Fatal("unavailable Zig test recipe succeeded")
 	}
 	_, manifestOnly := verificationFixture(t, map[string]string{"build.zig.zon": ".{}\n"})
-	if manifestOnly.Status != verificationUnavailable || len(manifestOnly.Runtimes) != 0 {
+	if manifestOnly.Status != verificationNotApplicable || len(manifestOnly.Runtimes) != 0 {
 		t.Errorf("build.zig.zon alone selected a runtime: %+v", manifestOnly)
 	}
 	_, meson := verificationFixture(t, map[string]string{"meson.build": "project('fixture', 'c')\n"})
