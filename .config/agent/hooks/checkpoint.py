@@ -1,25 +1,32 @@
 #!/usr/bin/env python3
 """Adapt the shared Lefthook checkpoint result to native agent lifecycle events."""
 
-import hashlib
 import json
 import os
-import re
 import subprocess
 import sys
-import tempfile
 import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / ".config/lefthook/scripts"))
 from common import (
+    MAX_WORKTREES as MAX_WORKTREES,
+)
+from common import (
+    SESSION_ENV,
     HookBudget,
     HookError,
+    prepare_checkpoint_session,
     refuse_after,
-    resolved_relative_to,
     run_bounded,
     session_root,
+)
+from common import (
+    _write_session_record as _write_session_record,
+)
+from common import (
+    session_hash_for as session_hash_for,
 )
 
 LIMIT = 1024 * 1024
@@ -27,11 +34,6 @@ MARKER = "PRAETOR_CHECKPOINT_RESULT="
 STATE_MARKER = "PRAETOR_STATE_RESULT="
 EVENTS = {"Stop", "PostToolUse", "AfterAgent", "AfterTool"}
 STOPPING = {"Stop", "AfterAgent"}
-SESSION_ENV = "PRAETOR_CHECKPOINT_SESSION"
-MAX_WORKTREES = 512
-MAX_RECORD_BYTES = 512 * 1024
-SESSION_GIT_TIMEOUT = 2
-SESSION_GIT_OUTPUT = 16 * 1024
 # Every client registers this adapter with a 60 s timeout (.claude/settings.json,
 # .gemini/settings.json, .codex/hooks.json) and lets the event through once it passes (see
 # HookBudget). The checkout lookup, the state job and the checkpoint job share HOOK_BUDGET. A
@@ -129,200 +131,6 @@ def checkpoint(event, root=ROOT, budget=None, env=None):
     return report
 
 
-def extract_session_id(payload):
-    """Read session ID from agent payload without guessing."""
-    if not isinstance(payload, dict):
-        return None
-    session_id = payload.get("session_id")
-    if isinstance(session_id, str) and session_id.strip():
-        return session_id.strip()
-    conv_id = payload.get("conversationId")
-    if isinstance(conv_id, str) and conv_id.strip():
-        return conv_id.strip()
-    return None
-
-
-def session_hash_for(session_id):
-    """Return first 16 hex chars of SHA256 of session ID. Never store raw ID."""
-    return hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:16]
-
-
-def _git_common_dir(root, budget):
-    """Resolve repository common Git directory."""
-    raw = run_bounded(
-        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
-        cwd=root,
-        timeout=budget.timeout(SESSION_GIT_TIMEOUT),
-        max_output=SESSION_GIT_OUTPUT,
-        grace=JOB_GRACE,
-    )
-    return Path(raw.decode().strip()).resolve()
-
-
-def _listed_worktrees(root, budget):
-    """Read bounded NUL-delimited worktree listing."""
-    raw = run_bounded(
-        ["git", "worktree", "list", "--porcelain", "-z"],
-        cwd=root,
-        timeout=budget.timeout(SESSION_GIT_TIMEOUT),
-        max_output=LIMIT,
-        grace=JOB_GRACE,
-    )
-    entries, entry = [], {}
-    for part in raw.split(b"\0"):
-        field = os.fsdecode(part)
-        if not field:
-            if entry and "path" in entry:
-                entries.append(entry)
-                entry = {}
-            if len(entries) >= MAX_WORKTREES:
-                break
-            continue
-        key, sep, val = field.partition(" ")
-        if key == "worktree" and sep:
-            entry["path"] = val
-    if entry and "path" in entry and len(entries) < MAX_WORKTREES:
-        entries.append(entry)
-    return entries
-
-
-MAX_EXTRACT_NODES = 256
-
-
-def _extract_strings(data):
-    """Extract string values iteratively from tool input under a scalar bound."""
-    result = []
-    stack = [data]
-    for _ in range(MAX_EXTRACT_NODES):
-        if not stack:
-            break
-        item = stack.pop()
-        if isinstance(item, str):
-            result.append(item)
-        elif isinstance(item, dict):
-            stack.extend(item.values())
-        elif isinstance(item, (list, tuple)):
-            stack.extend(item)
-    return result
-
-
-def _extract_tool_info(payload):
-    """Extract tool name and tool input from payload."""
-    tool_name = payload.get("tool_name")
-    tool_input = payload.get("tool_input")
-    if not tool_name and isinstance(payload.get("toolCall"), dict):
-        call = payload["toolCall"]
-        tool_name = call.get("name")
-        tool_input = call.get("args")
-    return str(tool_name or ""), tool_input
-
-
-def _path_matches(resolved_path_str, text):
-    """Compare literal paths in tool text after resolving both filesystem spellings."""
-    # Keep quoted paths with spaces intact; also find absolute operands embedded
-    # in shell commands or scripts. Never execute or expand the command text.
-    pattern = r"""(?<![\w./\\-])(?:"[^"]+"|'[^']+'|(?:[A-Za-z]:[/\\]|/|\\\\)[^\s'";&|<>()]+)"""
-    candidates = [
-        text,
-        *(match.group().strip("\"'") for match in re.finditer(pattern, text)),
-    ]
-    for candidate in candidates:
-        if not Path(candidate).is_absolute():
-            continue
-        try:
-            resolved_relative_to(candidate, resolved_path_str)
-            return True
-        except (OSError, RuntimeError, ValueError):
-            continue
-    return False
-
-
-def _is_worktree_touched(resolved, tool_name, tool_input, strings):
-    """Whether worktree was touched by tool invocation."""
-    if tool_name == "EnterWorktree" and isinstance(tool_input, dict):
-        target = tool_input.get("name") or tool_input.get("path")
-        if isinstance(target, str) and target.strip() in (resolved.name, str(resolved)):
-            return True
-    path_str = str(resolved)
-    return any(_path_matches(path_str, s) for s in strings)
-
-
-def _read_session_record(record_file):
-    """Read existing worktree paths from session record file."""
-    try:
-        with record_file.open("rb") as stream:
-            raw = stream.read(MAX_RECORD_BYTES + 1)
-        if len(raw) > MAX_RECORD_BYTES:
-            return set()
-        data = json.loads(raw)
-        if isinstance(data, list):
-            return {str(Path(p).resolve()) for p in data if isinstance(p, str)}
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        pass
-    return set()
-
-
-def _write_session_record(sessions_dir, record_file, paths):
-    """Atomically write sorted bounded worktree paths to session record."""
-    sessions_dir.mkdir(parents=True, exist_ok=True)
-    sorted_paths = sorted(paths)[:MAX_WORKTREES]
-    payload = json.dumps(sorted_paths).encode("utf-8")
-    tmp = None
-    try:
-        with tempfile.NamedTemporaryFile(dir=sessions_dir, delete=False) as handle:
-            tmp = Path(handle.name)
-            handle.write(payload)
-        os.replace(tmp, record_file)
-        tmp = None
-    finally:
-        if tmp is not None:
-            try:
-                tmp.unlink(missing_ok=True)
-            except OSError:
-                pass
-
-
-def ensure_session_record(root, session_hash, budget):
-    """Ensure session record file exists before running stop checkpoint."""
-    common_dir = _git_common_dir(root, budget)
-    sessions_dir = common_dir / "praetor-checkpoint" / "sessions"
-    record_file = sessions_dir / f"{session_hash}.json"
-    if not record_file.is_file():
-        _write_session_record(sessions_dir, record_file, set())
-
-
-def record_tool_worktrees(payload, root, budget):
-    """Record any worktree paths touched by tool event."""
-    session_id = extract_session_id(payload)
-    if not session_id:
-        return
-    session_hash = session_hash_for(session_id)
-    tool_name, tool_input = _extract_tool_info(payload)
-    if not tool_input:
-        return
-    strings = _extract_strings(tool_input)
-    common_dir = _git_common_dir(root, budget)
-    sessions_dir = common_dir / "praetor-checkpoint" / "sessions"
-    record_file = sessions_dir / f"{session_hash}.json"
-
-    worktrees = _listed_worktrees(root, budget)
-    touched = set()
-    for entry in worktrees:
-        try:
-            resolved = Path(entry["path"]).resolve(strict=True)
-        except (OSError, RuntimeError):
-            continue
-        if resolved == root:
-            continue
-        if _is_worktree_touched(resolved, tool_name, tool_input, strings):
-            touched.add(str(resolved))
-    if not touched and record_file.is_file():
-        return
-    existing = _read_session_record(record_file) if record_file.is_file() else set()
-    if touched - existing or not record_file.is_file():
-        _write_session_record(sessions_dir, record_file, existing | touched)
-
-
 def blocked(reason, active):
     """One continuation can reconcile the checkpoint; repeat failure stays explicit."""
     if active:
@@ -355,18 +163,12 @@ def lifecycle_event(payload):
 
 def _prepare_session(payload, root, budget, stopping):
     """Prepare session record and environment variable for checkpoint."""
-    session_id = extract_session_id(payload)
-    if not session_id:
-        return None
-    session_hash = session_hash_for(session_id)
     try:
-        if stopping:
-            ensure_session_record(root, session_hash, budget)
-        else:
-            record_tool_worktrees(payload, root, budget)
-    except Exception as error:  # noqa: BLE001
+        session_hash = prepare_checkpoint_session(payload, root, budget, stopping)
+    except (HookError, OSError, ValueError) as error:
         print("Praetor checkpoint adapter: " + str(error)[:1000], file=sys.stderr)
-    return {SESSION_ENV: session_hash}
+        return None
+    return {SESSION_ENV: session_hash} if session_hash else None
 
 
 def respond(payload, budget=None):

@@ -4,13 +4,14 @@
 import importlib.util
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import unittest
+from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -296,7 +297,7 @@ class NativeLefthook(unittest.TestCase):
         policy["commit_after_files"] = 1
         policy["enforce_batch_scope"] = True
         (self.root / ".config/agent/checkpoint.json").write_text(json.dumps(policy))
-        (self.root / ".gitignore").write_text("/.workingdir/\n/bin/\n/.claude/worktrees/\n")
+        (self.root / ".gitignore").write_text("/.workingdir/\n/bin/\n/.claude/worktrees/\n/.standards/worktrees/\n")
         (self.root / "Makefile").write_text(f".PHONY: hook-cli\nhook-cli:\n\ttest -x {PRAETORCTL}\n")
         (self.root / "bin").mkdir()
         os.link(self.binary, self.root / PRAETORCTL)
@@ -1009,6 +1010,114 @@ class NativeLefthook(unittest.TestCase):
         data = json.loads(record_file.read_text())
         self.assertIn(str(w_a.resolve()), data)
         self.assertIn(str(w_ab.resolve()), data)
+
+    def engine_checkpoint(self, event, session=None, tool_input=None):
+        payload = {"cwd": str(self.root), "tool_name": "Bash"}
+        if session is not None:
+            payload["session_id"] = session
+        if tool_input is not None:
+            payload["tool_input"] = tool_input
+        self.state("sync")
+        return run_child([str(self.binary), "hook", "claude", event],
+                         cwd=self.root, env=self.subprocess_env(),
+                         input=json.dumps(payload), text=True, capture_output=True,
+                         timeout=60, check=False)
+
+    def test_go_stop_session_excludes_other_live_session_worktree(self):
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        own = self.linked_worktree(self.root / ".claude/worktrees/clean", "checkpoint/clean")
+        other = self.linked_worktree(self.root / ".claude/worktrees/other", "checkpoint/other")
+        (other / "README.md").write_text("other session dirty\n")
+        self.invoke({"hook_event_name": "PostToolUse", "session_id": "other-session",
+                     "tool_name": "Bash", "tool_input": {"command": str(other)}})
+        result = self.engine_checkpoint("post-tool", "own-session", {"command": str(own)})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.engine_checkpoint("stop", "own-session")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        record = self.root / ".git/praetor-checkpoint/sessions" / (ADAPTER.session_hash_for("own-session") + ".json")
+        self.assertEqual(json.loads(record.read_text()), [str(own.resolve())])
+
+    def test_go_tool_records_owned_worktree_and_stop_blocks_it(self):
+        own = self.linked_worktree(self.root / ".claude/worktrees/own", "checkpoint/own")
+        (own / "README.md").write_text("owned dirty\n")
+        result = self.engine_checkpoint("post-tool", "  owned-session\t", {"command": str(own)})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        record = self.root / ".git/praetor-checkpoint/sessions" / (ADAPTER.session_hash_for("owned-session") + ".json")
+        self.assertEqual(json.loads(record.read_text()), [str(own.resolve())])
+        self.assertNotIn("owned-session", record.read_text())
+        result = self.engine_checkpoint("stop", "owned-session")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn(str(own), result.stderr)
+        self.assertNotIn("ownership unknown", result.stderr)
+
+    def test_go_stop_without_session_names_recent_activity_fallback(self):
+        other = self.linked_worktree(self.root / ".claude/worktrees/fallback", "checkpoint/fallback")
+        (other / "README.md").write_text("dirty\n")
+        session_hash = "0123456789abcdef"
+        sessions = self.root / ".git/praetor-checkpoint/sessions"
+        ADAPTER._write_session_record(sessions, sessions / (session_hash + ".json"), set())
+        with mock.patch.dict(os.environ, {"PRAETOR_CHECKPOINT_SESSION": session_hash}):
+            result = self.engine_checkpoint("stop")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("worktree ownership unknown: judged by recent activity", result.stderr)
+
+    def test_dead_gate_worktrees_block_here_and_under_other_linked_checkout(self):
+        other = self.linked_worktree(self.root / ".claude/worktrees/other", "checkpoint/other")
+        for index, parent in enumerate((self.root, other)):
+            gate = self.linked_worktree(parent / ".standards/worktrees/gate-2147483647-1", f"checkpoint/dead-{index}")
+            (gate / "README.md").write_text("dead gate dirty\n")
+        result = self.engine_checkpoint("stop", "empty-session")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("gate-2147483647-1", result.stderr)
+        self.assertIn("gate owner pid 2147483647 is not a live praetorctl gate run", result.stderr)
+        self.assertIn(str(other / ".standards/worktrees"), result.stderr)
+
+    @unittest.skipUnless(Path("/proc/self/cmdline").is_file(), "live gate identity requires Linux /proc")
+    def test_live_gate_worktrees_skip_here_and_under_other_linked_checkout(self):
+        scratch = self.root / ".workingdir/gate-process"
+        scratch.mkdir(parents=True)
+        executable = scratch / "praetorctl"
+        shutil.copy(sys.executable, executable)
+        (scratch / "gate").write_text(
+            "import os, time\nfrom pathlib import Path\n"
+            "Path('pid.tmp').write_text(str(os.getpid()))\n"
+            "Path('pid.tmp').replace('pid')\n"
+            "for _ in range(1200):\n"
+            "    if Path('done').exists(): break\n"
+            "    time.sleep(0.05)\n")
+        results = []
+        runner = threading.Thread(target=lambda: results.append(run_child(
+            [str(executable), "gate"], cwd=scratch, timeout=70, check=False)))
+        runner.start()
+        try:
+            for _ in range(200):
+                if (scratch / "pid").is_file():
+                    break
+                time.sleep(0.01)
+            pid = int((scratch / "pid").read_text())
+            other = self.linked_worktree(self.root / ".claude/worktrees/other", "checkpoint/other")
+            for index, parent in enumerate((self.root, other)):
+                gate = self.linked_worktree(parent / f".standards/worktrees/gate-{pid}-1", f"checkpoint/live-{index}")
+                (gate / "README.md").write_text("live gate dirty\n")
+            result = self.engine_checkpoint("stop", "live-session")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        finally:
+            (scratch / "done").write_text("done\n")
+            runner.join(timeout=5)
+        self.assertFalse(runner.is_alive())
+        self.assertEqual(results[0].returncode, 0)
+
+    def test_session_record_byte_bound_preserves_previous_record(self):
+        from common import _write_session_record
+        sessions = self.root / ".git/praetor-checkpoint/sessions"
+        record = sessions / "0123456789abcdef.json"
+        _write_session_record(sessions, record, {"/existing"})
+        previous = record.read_bytes()
+        with mock.patch("common.MAX_RECORD_BYTES", 16):
+            with self.assertRaisesRegex(ValueError, "exceeds byte bound"):
+                _write_session_record(sessions, record, {"/" + "a" * 16})
+        self.assertEqual(record.read_bytes(), previous)
+        self.assertEqual(sorted(sessions.iterdir()), [record])
 
     def test_adapter_record_bounds_max_worktrees(self):
         session_id = "test-session-bound"

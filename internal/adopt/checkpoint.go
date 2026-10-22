@@ -44,6 +44,7 @@ type checkpointSource struct {
 // recorded here (checkpoint_prior_test.go).
 var priorCheckpointDigests = map[string]map[string]string{
 	checkpointScript: {
+		"a466f3ca69d1f93374ebcf999210d288eeefb4b77c0c13ada09dca2bcb090b55": "Go hooks share session ownership and verify live gate scratch owners",
 		"ca53c59946b809a991a8c0d3d8e7ce164786fb4282e48865d47b5b7a7bbd4338": "platform promotion (#14)",
 		"df7029ac02521544a9d32b4e75105512cdc047e28746d476b98f291e87c71a34": "Windows suite (#149)",
 		"57aa9d7a711627bf64b74d23d12e8725e0980bb96d140a289c8ee376b77f9498": "register-sourced hook text (#487)",
@@ -58,6 +59,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"80a0a2da3dc2222e12b5c70ab7bc442fae586f1d06d5bdcb0516df3c20a144ca": "stop checkpoint counts session-owned worktrees and ignores gate scratch",
 	},
 	checkpointCommon: {
+		"daf13baf16b776de9a976809a7e064971fd5946ed4508761c229dba0ef4b4e65": "Go hooks share session ownership and verify live gate scratch owners",
 		"61ccf1481d43073ca29aab6c6e6b78cc6f5cb4a86bf1e7603b8b0e01d02f71a9": "platform promotion (#14)",
 		"28ba4c3481f26f90eb48b371d4a757e16e965280ad1352dfad8c412562d19dbd": "Windows gate (#102)",
 		"d4cf017e548ad619f75869f8cda22b3c03d2e5da02f176dec685df99dc5e0a4a": "Windows suite (#149)",

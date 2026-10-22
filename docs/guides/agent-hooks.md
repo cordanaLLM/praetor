@@ -1333,6 +1333,21 @@ setting: an ungoverned workspace is skipped under the default `governed` scope b
 stop check runs, and no separate switch exists. Fixtures for every case and client are in
 `internal/agenthook/stop_question_test.go`.
 
+The Go post-tool and stop hooks reuse the Python adapter's session recorder through
+`checkpoint.py --prepare-session`. The shared helpers in `common.py` hash the
+payload's session ID to the first 16 hexadecimal SHA-256 characters, record touched
+linked worktrees in a bounded, atomically replaced JSON list under the Git common
+directory, and return only that hash. Go passes it as `PRAETOR_CHECKPOINT_SESSION`
+to the evaluator; another session's worktree does not block this session's stop.
+Missing session IDs use the named `worktree ownership unknown: judged by recent
+activity` fallback. A preparation failure is reported and blocks stop.
+
+Gate scratch paths beneath any linked checkout of the same repository are skipped
+only when `/proc/<pid>/cmdline` identifies `praetorctl gate` for the PID in
+`.standards/worktrees/gate-<pid>-<n>`. Dead or unverifiable owner PIDs remain
+blocking with an explicit reason, including scratch outside the session record.
+The real Go hook regressions are in `scripts/test_checkpoint_hooks.py`.
+
 ## Platform notes
 
 The command is one Go binary and needs `git` on `PATH`; nothing else. It does not need a

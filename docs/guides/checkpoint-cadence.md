@@ -90,14 +90,20 @@ When provided, `require_checks` must be true. Praetor enables it and names its
 standards, compliance and security gates. Local-only repositories perform no
 remote check requests.
 
-On stop, the evaluator checks linked worktrees. The native adapter writes an
-ownership record on tool events (`PostToolUse`, `AfterTool`) into
+On stop, the evaluator checks linked worktrees. The Go hook and native Python
+adapter share the session helpers in `.config/lefthook/scripts/common.py` and
+write an ownership record on tool events (`PostToolUse`, `AfterTool`) into
 `<git common dir>/praetor-checkpoint/sessions/<sha256(session_id)[:16]>.json`,
 recording worktrees whose resolved paths are named as whole paths or entered via
-`EnterWorktree`. On `Stop` and `AfterAgent`, the adapter passes `PRAETOR_CHECKPOINT_SESSION`
-so only worktrees owned by the stopping session are judged. Gate scratch worktrees
-under `.standards/worktrees/` belong to their gate run and never block a stop
-checkpoint. When the session environment variable is absent or no readable session
+`EnterWorktree`. On `Stop` and `AfterAgent`, both paths pass `PRAETOR_CHECKPOINT_SESSION`
+so only worktrees owned by the stopping session are judged. A gate scratch worktree at
+`<linked checkout>/.standards/worktrees/gate-<pid>-<n>` is skipped only while
+`/proc/<pid>/cmdline` identifies a live `praetorctl gate` process. This applies
+beneath every linked checkout of the same repository. A dead, reused, or
+unreadable PID keeps the scratch worktree due with a named owner-PID reason,
+even outside the session record. Systems without `/proc` retain those worktrees.
+Session records are bounded and atomically replaced; raw session IDs are never
+stored. When the session environment variable is absent or no readable session
 record exists (such as during manual stop runs or for clients without a session
 id), the evaluator falls back to judging linked worktrees with Git admin-file
 activity in the last 24 hours, and reports `worktree ownership unknown: judged by

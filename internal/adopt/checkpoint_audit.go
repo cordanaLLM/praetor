@@ -20,8 +20,8 @@ import (
 // an earlier release left behind. TestCurrentCheckpointDigests_Boundary_MatchShippedBundle
 // fails until a changed script is recorded in both.
 var currentCheckpointDigests = map[string]string{
-	checkpointScript:   "80a0a2da3dc2222e12b5c70ab7bc442fae586f1d06d5bdcb0516df3c20a144ca",
-	checkpointCommon:   "dfe0975c01017ee575fdd57ecd28cb8963e253e4ccc698f83e63f3b1b3375a07",
+	checkpointScript:   "a466f3ca69d1f93374ebcf999210d288eeefb4b77c0c13ada09dca2bcb090b55",
+	checkpointCommon:   "daf13baf16b776de9a976809a7e064971fd5946ed4508761c229dba0ef4b4e65",
 	checkpointLauncher: "577b85ce8fa4eb90aae8fa84b251ed828315baf5a20f5f249e346b74f49df622",
 }
 

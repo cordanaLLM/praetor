@@ -2,6 +2,7 @@ package agenthook
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -213,4 +214,31 @@ func checkpointFailureReason(runErr, markerErr error, result util.CommandBytes) 
 		return stderr
 	}
 	return markerErr.Error()
+}
+
+// checkpointSessionContext reuses the Python ownership recorder and passes only its hash
+// to the evaluator. InheritedEnvironment retains the canonical Git-variable scrub.
+func checkpointSessionContext(ctx context.Context, argv []string, root, event string, canonical Canonical) (context.Context, error) {
+	hash := ""
+	if strings.TrimFunc(canonical.ConversationID, isPythonSpace) != "" {
+		payload, err := json.Marshal(map[string]any{
+			"session_id": canonical.ConversationID, "tool_name": canonical.Tool,
+			"tool_input": canonical.CheckpointInput,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("checkpoint session payload: %w", err)
+		}
+		result, runErr := runInterpreter(ctx, argv, root, checkpointScript(root, "checkpoint.py"),
+			[]string{"--event", event, "--prepare-session"}, payload)
+		line, markerErr := extractMarker(result.Stdout, "PRAETOR_CHECKPOINT_SESSION=")
+		if runErr != nil || markerErr != nil {
+			return nil, fmt.Errorf("checkpoint session preparation: %s", checkpointFailureReason(runErr, markerErr, result))
+		}
+		decoded, err := hex.DecodeString(line)
+		if err != nil || len(decoded) != 8 || line != strings.ToLower(line) {
+			return nil, errors.New("checkpoint session preparation returned an invalid hash")
+		}
+		hash = line
+	}
+	return util.WithCommandEnvironment(ctx, util.InheritedEnvironment([]string{"PRAETOR_CHECKPOINT_SESSION=" + hash}))
 }

@@ -1,0 +1,2 @@
+type: fixed
+title: Go stop hooks isolate session worktrees and verify gate scratch owner PIDs
