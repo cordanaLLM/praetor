@@ -368,3 +368,25 @@ func lockTestProfile(t *testing.T, document map[string]any) map[string]any {
 	}
 	return profiles[0]
 }
+
+func TestReadLockPinnedVersion_3D(t *testing.T) {
+	// Positive: returns pinned_version from valid lock
+	root, _ := writeConfigLockFixture(t, lockTestDocument())
+	got, ok := ReadLockPinnedVersion(t.Context(), root)
+	if !ok || got != "v1.0.0" {
+		t.Errorf("ReadLockPinnedVersion = (%q, %v), want (\"v1.0.0\", true)", got, ok)
+	}
+
+	// Negative: missing lockfile
+	emptyDir := t.TempDir()
+	if got, ok := ReadLockPinnedVersion(t.Context(), emptyDir); ok || got != "" {
+		t.Errorf("ReadLockPinnedVersion on empty dir = (%q, %v), want (\"\", false)", got, ok)
+	}
+
+	// Boundary: lock without pinned_version
+	noPinDoc := map[string]any{"version": 1, "digest": lockTestDigest("\n")}
+	noPinRoot, _ := writeConfigLockFixture(t, noPinDoc)
+	if got, ok := ReadLockPinnedVersion(t.Context(), noPinRoot); ok || got != "" {
+		t.Errorf("ReadLockPinnedVersion on unpinned lock = (%q, %v), want (\"\", false)", got, ok)
+	}
+}

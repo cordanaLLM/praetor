@@ -238,3 +238,54 @@ func TestFromModuleVersion_3D(t *testing.T) {
 		}
 	}
 }
+
+// TestFromLockVersion_3D tests parsing .standards.lock pinned_version across positive,
+// negative, and boundary shapes.
+func TestFromLockVersion_3D(t *testing.T) {
+	for pinned, want := range map[string]Identity{
+		"v0.0.0+32a35c8":       {Revision: "32a35c8"},
+		"v0.0.0+32a35c8.dirty": {Revision: "32a35c8", Modified: true},
+		"v1.2.3":               {Release: "v1.2.3"},
+		"32a35c8":              {Revision: "32a35c8"},
+		"":                     {Unknown: "empty lock version"},
+		"   ":                  {Unknown: "empty lock version"},
+		"invalid":              {Unknown: "unrecognized lock version"},
+	} {
+		if got := FromLockVersion(pinned); got != want {
+			t.Errorf("FromLockVersion(%q) = %+v, want %+v", pinned, got, want)
+		}
+	}
+}
+
+// TestIdentityEqual_3D tests identity equality across releases, revisions, and prefixes.
+func TestIdentityEqual_3D(t *testing.T) {
+	idShort := Identity{Revision: "32a35c8"}
+	idLong := Identity{Revision: "32a35c812345"}
+	idDiff := Identity{Revision: "18c50fc7476a"}
+	idRel := Identity{Release: "v1.0.0"}
+	idRel2 := Identity{Release: "v1.0.0"}
+	idRelDiff := Identity{Release: "v2.0.0"}
+	idUnknown := Identity{Unknown: "none"}
+
+	if !idShort.Equal(idLong) || !idLong.Equal(idShort) {
+		t.Error("short revision must match longer prefix")
+	}
+	if idShort.Equal(idDiff) {
+		t.Error("different revisions must not match")
+	}
+	if !idRel.Equal(idRel2) {
+		t.Error("identical releases must match")
+	}
+	if idRel.Equal(idRelDiff) {
+		t.Error("different releases must not match")
+	}
+	if idRel.Equal(idShort) {
+		t.Error("release must not match revision")
+	}
+	if idUnknown.Equal(idShort) || idShort.Equal(idUnknown) {
+		t.Error("unknown identity must not match")
+	}
+	if !idShort.Identified() || !idRel.Identified() || idUnknown.Identified() {
+		t.Error("Identified check incorrect")
+	}
+}

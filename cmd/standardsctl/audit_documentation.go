@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
@@ -51,9 +53,48 @@ func auditExactManagedFile(ctx context.Context, rootDir string, family managedas
 		return otherBranchRenderingFailure(gate, rel, branch, family.Branch())
 	}
 	if family.PriorText(rel, actual) {
+		if matchesLocked, lockedVer, runVer := isLockedEngineAsset(ctx, rootDir); matchesLocked {
+			emitManagedAssetNotice(rootDir, lockedVer, runVer)
+			return nil
+		}
 		return fmt.Errorf("[FAIL] %s asset %s holds an earlier Praetor text; run 'praetorctl adopt' to refresh it", gate, rel)
 	}
 	return fmt.Errorf("[FAIL] %s asset %s differs from the locked Praetor asset; run '%s'", gate, rel, adopt.ForceCommand(""))
+}
+
+var (
+	managedAssetNoticeMu sync.Mutex
+	managedAssetNoticed  = make(map[string]bool)
+)
+
+const maxManagedAssetNotices = 1024
+
+func emitManagedAssetNotice(rootDir, locked, running string) {
+	managedAssetNoticeMu.Lock()
+	defer managedAssetNoticeMu.Unlock()
+	if len(managedAssetNoticed) >= maxManagedAssetNotices {
+		clear(managedAssetNoticed)
+	}
+	if !managedAssetNoticed[rootDir] {
+		managedAssetNoticed[rootDir] = true
+		fmt.Printf("[WARN] Managed assets match locked Praetor %s; newer Praetor %s available; run 'praetorctl adopt' to refresh\n", locked, running)
+	}
+}
+
+func isLockedEngineAsset(ctx context.Context, rootDir string) (bool, string, string) {
+	pinned, ok := config.ReadLockPinnedVersion(ctx, rootDir)
+	if !ok || pinned == "" {
+		return false, "", ""
+	}
+	lockedID := buildid.FromLockVersion(pinned)
+	runID := runningBuild()
+	if !lockedID.Identified() || !runID.Identified() {
+		return false, "", ""
+	}
+	if lockedID.Equal(runID) {
+		return false, "", ""
+	}
+	return true, pinned, runID.String()
 }
 
 // auditDraftSkipGuard refuses the opt-in draft skip (hosted_gates.draft: skip) of the family's

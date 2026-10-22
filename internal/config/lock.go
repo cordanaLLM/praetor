@@ -183,3 +183,17 @@ func decodeStandardsLock(data []byte) (*standardsLock, error) {
 	}
 	return &lock, nil
 }
+
+// ReadLockPinnedVersion returns the pinned_version declared in root's .standards.lock,
+// or false if the lock is missing, unreadable, or invalid.
+func ReadLockPinnedVersion(ctx context.Context, root string) (string, bool) {
+	path, err := util.ConfinePath(root, ".standards.lock")
+	if err != nil {
+		return "", false
+	}
+	lock, err := loadStandardsLock(ctx, path)
+	if err != nil || lock == nil || lock.PinnedVersion == "" {
+		return "", false
+	}
+	return lock.PinnedVersion, true
+}
