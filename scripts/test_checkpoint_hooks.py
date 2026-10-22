@@ -1047,7 +1047,7 @@ class NativeLefthook(unittest.TestCase):
         self.assertNotIn("owned-session", record.read_text())
         result = self.engine_checkpoint("stop", "owned-session")
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn(str(own), result.stderr)
+        self.assertIn(str(own.resolve()), result.stderr)  # resolved: Windows temp paths come back in 8.3 short form
         self.assertNotIn("ownership unknown", result.stderr)
 
     def test_go_stop_without_session_names_recent_activity_fallback(self):
@@ -1070,7 +1070,7 @@ class NativeLefthook(unittest.TestCase):
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("gate-2147483647-1", result.stderr)
         self.assertIn("gate owner pid 2147483647 is not a live praetorctl gate run", result.stderr)
-        self.assertIn(str(other / ".standards/worktrees"), result.stderr)
+        self.assertIn(str((other / ".standards/worktrees").resolve()), result.stderr)  # resolved, as above
 
     @unittest.skipUnless(Path("/proc/self/cmdline").is_file(), "live gate identity requires Linux /proc")
     def test_live_gate_worktrees_skip_here_and_under_other_linked_checkout(self):
