@@ -1,6 +1,7 @@
 package forge
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"testing"
@@ -103,5 +104,43 @@ func TestRulesetRequiresStatusContextStructuralAndBounded(t *testing.T) {
 		[]byte(`{"rules":[`+strings.Join(rules, ",")+`]}`), target,
 	); err == nil {
 		t.Fatal("ruleset above structural scan bound accepted")
+	}
+}
+
+func TestRenderRepositoryRuleset_Positive_EndsWithExactlyOneNewline(t *testing.T) {
+	policy := config.DefaultPolicy().BranchProtection
+	data, err := RenderRepositoryRuleset("main", policy, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) == 0 || data[len(data)-1] != '\n' {
+		t.Fatalf("ruleset rendering does not end with newline: %q", string(data))
+	}
+	if len(data) >= 2 && data[len(data)-2] == '\n' {
+		t.Fatalf("ruleset rendering ends with multiple newlines: %q", string(data))
+	}
+}
+
+func TestRenderRepositoryRuleset_Negative_DroppedNewlineRefused(t *testing.T) {
+	policy := config.DefaultPolicy().BranchProtection
+	data, err := RenderRepositoryRuleset("main", policy, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) == 0 || data[len(data)-1] != '\n' {
+		t.Fatalf("negative check: ruleset rendering dropped final newline: %q", string(data))
+	}
+}
+
+func TestRenderRepositoryRuleset_Boundary_SingleNewlineExact(t *testing.T) {
+	policy := config.DefaultPolicy().BranchProtection
+	contexts := []string{"Documentation Governance"}
+	data, err := RenderRepositoryRuleset("main", policy, contexts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trimmed := bytes.TrimRight(data, "\r\n")
+	if len(data)-len(trimmed) != 1 {
+		t.Fatalf("boundary check: expected exactly 1 trailing newline byte, got delta %d: %q", len(data)-len(trimmed), data)
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -320,5 +321,114 @@ func TestSyncRejectsUnsafeExistingArtifact(t *testing.T) {
 				t.Fatalf("accepted %s artifact:\n%s", kind, out)
 			}
 		})
+	}
+}
+
+func hasSingleTrailingNewline(data []byte) bool {
+	if len(data) == 0 || data[len(data)-1] != '\n' {
+		return false
+	}
+	trimmed := bytes.TrimRight(data, "\r\n")
+	return len(data)-len(trimmed) == 1 || (len(data)-len(trimmed) == 2 && bytes.HasSuffix(data, []byte("\r\n")))
+}
+
+// Positive: praetorctl sync writes .github/rulesets/main.json ending with exactly one newline,
+// and re-sync of a file already ending in newline writes no diff (idempotent).
+func TestSyncRulesetTrailingNewline_Positive(t *testing.T) {
+	f := newSyncValidationFixture(t)
+	rulesetPath := filepath.Join(f.dir, ".github/rulesets/main.json")
+	if err := os.Remove(rulesetPath); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runSyncCmd(t, "--config="+f.manifestPath)
+	if err != nil {
+		t.Fatalf("sync failed: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Synthesizing declarative branch protection ruleset", "Branch protection ruleset verified")
+
+	content, err := os.ReadFile(rulesetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasSingleTrailingNewline(content) {
+		t.Fatalf("synthesized ruleset does not end with single newline: %q", string(content))
+	}
+
+	// Idempotent: re-sync writes no diff and leaves the file byte-identical.
+	outAgain, err := runSyncCmd(t, "--config="+f.manifestPath)
+	if err != nil {
+		t.Fatalf("re-sync failed: %v\n%s", err, outAgain)
+	}
+	mustContain(t, outAgain, "Branch protection ruleset verified")
+	if strings.Contains(outAgain, "Synthesizing") {
+		t.Fatalf("re-sync re-synthesized the file:\n%s", outAgain)
+	}
+	reContent, err := os.ReadFile(rulesetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(reContent, content) {
+		t.Fatalf("re-sync modified the ruleset file")
+	}
+}
+
+// Negative: when newline is dropped, trailing newline check detects and reports the failure.
+func TestSyncRulesetTrailingNewline_Negative_NewlineDropped(t *testing.T) {
+	f := newSyncValidationFixture(t)
+	rulesetPath := filepath.Join(f.dir, ".github/rulesets/main.json")
+	if err := os.Remove(rulesetPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := synthesizeRuleset(f.dir, "main", config.DefaultPolicy().BranchProtection, nil); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(rulesetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasSingleTrailingNewline(content) {
+		t.Fatalf("negative check: newline was dropped by synthesizeRuleset: %q", string(content))
+	}
+}
+
+// Boundary: existing file with newline is byte-identical after sync; file with two
+// trailing newlines is left untouched (chosen rule: left as-is, preserving valid existing files).
+func TestSyncRulesetTrailingNewline_Boundary_ExistingRulesetPreserved(t *testing.T) {
+	f := newSyncValidationFixture(t)
+	rulesetPath := filepath.Join(f.dir, ".github/rulesets/main.json")
+	before, err := os.ReadFile(rulesetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasSingleTrailingNewline(before) {
+		t.Fatalf("fixture ruleset missing newline: %q", string(before))
+	}
+
+	out, err := runSyncCmd(t, "--config="+f.manifestPath)
+	if err != nil {
+		t.Fatalf("sync failed: %v\n%s", err, out)
+	}
+	after, err := os.ReadFile(rulesetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("existing ruleset with newline modified after sync")
+	}
+
+	// Two trailing newlines: left untouched under the chosen rule.
+	twoNewlines := append(before, '\n')
+	writeFixtureFile(t, f.dir, ".github/rulesets/main.json", string(twoNewlines))
+	out2, err := runSyncCmd(t, "--config="+f.manifestPath)
+	if err != nil {
+		t.Fatalf("sync failed: %v\n%s", err, out2)
+	}
+	after2, err := os.ReadFile(rulesetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(twoNewlines, after2) {
+		t.Fatalf("ruleset with two newlines was modified; chosen rule is left untouched")
 	}
 }

@@ -112,7 +112,16 @@ func RenderRepositoryRuleset(branch string, policy config.BranchProtectionPolicy
 	if err != nil {
 		return nil, err
 	}
-	return json.MarshalIndent(doc, "", "  ")
+	return marshalRulesetJSON(doc)
+}
+
+// marshalRulesetJSON encodes the ruleset document as indented JSON ending with exactly one newline.
+func marshalRulesetJSON(doc map[string]any) ([]byte, error) {
+	data, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(data, '\n'), nil
 }
 
 // RepositoryRulesetPath is where a repository carries the praetor branch protection ruleset,
