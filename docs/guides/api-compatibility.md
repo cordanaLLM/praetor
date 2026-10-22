@@ -311,10 +311,10 @@ module.
   ignores the resulting package errors and reports every module as compatible. The pinned commit
   changes only dependencies, and its CLI and exit statuses (0 compatible, 1 incompatible, 2
   failed) match the release.
-- `golang.org/x/tools` is required at v0.51.0 exactly. The commit's own `go.mod` asks for v0.49.0,
-  which reads export data up to version 4, while Go 1.27.2 writes version 5; built against it the
-  checker exits 0 without comparing anything and the canary fails every run (#1049). The build
-  module raises the floor without a change upstream.
+- `golang.org/x/tools` is required at v0.52.0 exactly; the floor is v0.51.0. The commit's own
+  `go.mod` asks for v0.49.0, which reads export data up to version 4, while Go 1.27.2 writes
+  version 5; built against it the checker exits 0 without comparing anything and the canary fails
+  every run (#1049). The build module raises the floor without a change upstream.
 - `go.sum` pins the whole closure, and `-mod=readonly` refuses a build that would change it.
 
 To refresh the module, change the two requirements in `checkerGoMod`, run `go mod tidy` in a

@@ -172,6 +172,8 @@ var priorDigests = map[string]string{
 	"f7e57ed83e70886bb6a37906d040d4e6352c71d79e3da67215d0243f6ad02a4c": WorkflowFile,
 	// The draft skip rendering of the gate before the compare step set GOTOOLCHAIN: auto.
 	"63c91ef6890b046db5a87ad1ec222e4db8a680f4350350b60e5db2934f74f35a": WorkflowFile,
+	// The gate whose checker build module required golang.org/x/tools v0.51.0 (#1197).
+	"0be401a70257a7ed289899f211b9f8e6a3b6bf9eede7a56fd02631e9e7638d88": Directory + "/" + GateFile,
 }
 
 var assetNames = [...]string{GateFile, PlaceholderFile}
