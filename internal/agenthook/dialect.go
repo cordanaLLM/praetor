@@ -119,12 +119,27 @@ func (d Dialect) decodeNativeTool(event Event, object map[string]json.RawMessage
 	if err = fillWorkspace(&canonical, object); err != nil {
 		return Canonical{}, err
 	}
+	fillCheckpointSession(&canonical, object)
 	if event == EventPreTool && d.isCommandTool(canonical.Tool) {
 		if canonical.Command, err = commandOf(object); err != nil {
 			return Canonical{}, err
 		}
 	}
 	return canonical, nil
+}
+
+// fillCheckpointSession treats a malformed optional ID as absent, matching the Python
+// recorder's explicit ownership-unknown fallback.
+func fillCheckpointSession(canonical *Canonical, object map[string]json.RawMessage) {
+	if canonical.Event != EventPostTool && canonical.Event != EventStop {
+		return
+	}
+	if sessionID, err := optionalString(object, "session_id"); err == nil {
+		canonical.ConversationID = sessionID
+	}
+	if canonical.ConversationID != "" && canonical.Event == EventPostTool {
+		canonical.CheckpointInput = object["tool_input"]
+	}
 }
 
 // Encode renders a verdict in the client's dialect. canonical carries the event that

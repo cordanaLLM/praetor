@@ -12,6 +12,8 @@ import (
 	"os"
 	"path"
 
+	"github.com/cordanaLLM/praetor/internal/buildid"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
@@ -196,10 +198,32 @@ func reconcileManagedFamilyFile(ctx context.Context, s *adoptSession, family man
 		// An exact earlier Praetor text is refreshed in its own line-ending style, bound to
 		// the observed bytes, by the refresh the scaffold earlier-text sets use.
 		if known, crlf := family.PriorRendering(sc.rel, actual); known {
+			if matchesLockedEngine(ctx, s) {
+				s.report.recordReconciled(sc.rel, sc.verified)
+				return scaffoldIdentical, nil
+			}
 			return scaffoldWritten, s.replacePriorText(ctx, full, actual, crlf, sc, refreshedFamilyDetail)
 		}
 	}
 	return s.scaffoldFile(ctx, sc)
+}
+
+// matchesLockedEngine reports whether the repository is locked to an engine version differing
+// from the running build, and plain adopt (no --force) should preserve its matching asset.
+func matchesLockedEngine(ctx context.Context, s *adoptSession) bool {
+	if s.opts.Force {
+		return false
+	}
+	pinned, ok := config.ReadLockPinnedVersion(ctx, s.repoPath)
+	if !ok || pinned == "" {
+		return false
+	}
+	lockedID := buildid.FromLockVersion(pinned)
+	runID := s.opts.Engine
+	if !lockedID.Identified() || !runID.Identified() {
+		return false
+	}
+	return !lockedID.Equal(runID)
 }
 
 // refuseForeignFamilyFiles is refuse-on-first-adopt. The family counts as adopted once any of

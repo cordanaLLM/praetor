@@ -28,6 +28,8 @@ const bumpBound = 2 * bootstrapBound
 // BumpOptions selects the Praetor checkout whose reviewed default images a bump moves, the
 // bundle it regenerates, and the pins it moves to.
 type BumpOptions struct {
+	// RepoRoot is the root of the repository holding go.mod.
+	RepoRoot string
 	// SourceRoot is the Praetor checkout holding ReviewedPinsFile, PriorImagesFile and
 	// DevImageDockerfile; the regenerated bundle captures its source.
 	SourceRoot string
@@ -356,7 +358,7 @@ func (p *bumpPlan) apply(ctx context.Context) error {
 // regenerate writes the bundle from the checkout with the new pins and verifies it. It
 // returns the bundle files it planned, written or not, for restoreBump.
 func (p *bumpPlan) regenerate(ctx context.Context) ([]bumpFile, error) {
-	images := BootstrapOptions{SourceRoot: p.options.SourceRoot, Features: p.options.Features,
+	images := BootstrapOptions{RepoRoot: p.options.RepoRoot, SourceRoot: p.options.SourceRoot, Features: p.options.Features,
 		BuilderImage: p.pins["builder"].image(), BaseImage: p.pins["base"].image()}
 	bundle, err := PrepareBundle(ctx, p.options.Name, p.options.Profiles, p.options.Facets, images)
 	if err != nil {

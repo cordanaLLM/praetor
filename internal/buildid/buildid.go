@@ -170,3 +170,59 @@ func pseudoVersionRevision(moduleVersion string) (string, bool) {
 	}
 	return match[1], true
 }
+
+// Identified reports whether id proves a release version or VCS revision.
+func (id Identity) Identified() bool {
+	return id.Release != "" || id.Revision != ""
+}
+
+// Equal reports whether two identities prove the same release or revision.
+// A shortened revision matches its longer prefix.
+func (id Identity) Equal(other Identity) bool {
+	if !id.Identified() || !other.Identified() {
+		return false
+	}
+	if id.Release != "" && other.Release != "" {
+		return id.Release == other.Release
+	}
+	if id.Revision != "" && other.Revision != "" {
+		return strings.HasPrefix(id.Revision, other.Revision) || strings.HasPrefix(other.Revision, id.Revision)
+	}
+	return false
+}
+
+// FromLockVersion resolves what an adopter's .standards.lock pinned_version proves:
+// a SemVer release, an unreleased dev revision (v0.0.0+<rev>), or a bare commit.
+func FromLockVersion(pinned string) Identity {
+	pinned = strings.TrimSpace(pinned)
+	if pinned == "" {
+		return Identity{Unknown: "empty lock version"}
+	}
+	if strings.HasPrefix(pinned, "v0.0.0+") {
+		meta := strings.TrimPrefix(pinned, "v0.0.0+")
+		parts := strings.Split(meta, ".")
+		rev := parts[0]
+		modified := len(parts) > 1 && parts[1] == "dirty"
+		return Identity{Revision: Short(rev), Modified: modified}
+	}
+	if _, ok := semver.Parse(pinned); ok {
+		return Identity{Release: pinned}
+	}
+	if isHexCommit(pinned) {
+		return Identity{Revision: Short(pinned)}
+	}
+	return Identity{Unknown: "unrecognized lock version"}
+}
+
+func isHexCommit(s string) bool {
+	if len(s) < 7 || len(s) > 40 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
+}

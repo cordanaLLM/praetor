@@ -9,7 +9,10 @@
       "installZsh": false,
       "upgradePackages": true
     },
-    "ghcr.io/devcontainers/features/go:1": {},
+    "ghcr.io/devcontainers/features/go:1": {
+      "installGoTools": false,
+      "version": "1.27.3"
+    },
     "ghcr.io/devcontainers/features/node:2": {
       "version": "24"
     }

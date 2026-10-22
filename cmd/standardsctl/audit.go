@@ -442,7 +442,7 @@ func auditDevContainer(ctx context.Context, manifest *config.Manifest, opts *aud
 	if err != nil {
 		return fmt.Errorf("[FAIL] DevContainer catalog resolution failed: %w", err)
 	}
-	dc, err := devcontainer.SynthesizeWithFeatures(manifest, features)
+	dc, err := devcontainer.SynthesizeWithFeatures(manifest, features, opts.rootDir)
 	if err != nil {
 		return fmt.Errorf("[FAIL] DevContainer synthesis failed: %w", err)
 	}

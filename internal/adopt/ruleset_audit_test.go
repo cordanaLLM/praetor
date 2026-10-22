@@ -11,6 +11,21 @@ import (
 	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
+func TestAuditBranchProtectionDeclaredStatusContexts(t *testing.T) {
+	root := t.TempDir()
+	policy := config.DefaultPolicy()
+	policy.BranchProtection.StatusContexts = []string{"evaluator/status"}
+	manifest := &config.Manifest{}
+	writeAuditRuleset(t, root, renderAuditRuleset(t, policy.BranchProtection, nil))
+	if _, err := AuditBranchProtectionWithPolicy(t.Context(), manifest, root, policy); err == nil {
+		t.Fatal("ruleset missing declared status accepted")
+	}
+	writeAuditRuleset(t, root, renderAuditRuleset(t, policy.BranchProtection, policy.BranchProtection.StatusContexts))
+	if _, err := AuditBranchProtectionWithPolicy(t.Context(), manifest, root, policy); err != nil {
+		t.Fatalf("declared status rejected: %v", err)
+	}
+}
+
 func TestAuditBranchProtection_Positive(t *testing.T) {
 	// Case 1: Required ruleset is the one the declared policy renders, and no decline
 	t.Run("ruleset present and verified", func(t *testing.T) {

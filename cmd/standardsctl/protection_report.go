@@ -44,7 +44,7 @@ func liveProtectionTarget(ctx context.Context, rootDir string, manifest *config.
 		return protectionTarget{}, err
 	}
 	repository := manifest.Repository.Owner + "/" + manifest.Repository.Name
-	contexts, _, err := remoteStatusContexts(ctx, rootDir, repository, policy.MergeQueue, nil)
+	contexts, _, err := remoteStatusContexts(ctx, rootDir, repository, policy.MergeQueue, nil, forge.WithDeclaredStatusContexts(policy.StatusContexts))
 	if err != nil {
 		return protectionTarget{}, err
 	}

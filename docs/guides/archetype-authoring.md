@@ -590,6 +590,8 @@ file in `.config/archetypes`, selected or not, so one bad file fails lock verifi
 
 - `branch_protection.review_mode`: single-maintainer review is a repository-only relaxation, set
   in `.standards.yaml` overrides;
+- `branch_protection.status_contexts`: additional required checks are repository-only, set in
+  `.standards.yaml` overrides ([declared status contexts](../adoption.md#declared-status-contexts));
 - negative `required_approving_reviewers` or `slsa_level`;
 - an `error_unwraps` value other than `strict_ban` or `allow_with_comment`;
 - an empty linter name, or one with surrounding whitespace or control characters.

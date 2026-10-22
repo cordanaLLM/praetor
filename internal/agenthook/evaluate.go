@@ -167,7 +167,7 @@ func dispatch(ctx context.Context, row Registration, canonical Canonical, root s
 	case EventPreEdit:
 		return evaluatePreEdit(ctx, row, canonical, root, in)
 	case EventPostTool:
-		return evaluatePostTool(ctx, root, in)
+		return evaluatePostTool(ctx, canonical, root, in)
 	case EventStop:
 		return evaluateStop(ctx, row, root, canonical, in)
 	default:
@@ -219,10 +219,14 @@ func evaluatePreEdit(ctx context.Context, row Registration, canonical Canonical,
 
 // evaluatePostTool never blocks: it annotates. An evaluator that cannot answer, or answers
 // with nothing due, both allow; only a due checkpoint carries the note.
-func evaluatePostTool(ctx context.Context, root string, in Invocation) Verdict {
+func evaluatePostTool(ctx context.Context, canonical Canonical, root string, in Invocation) Verdict {
 	argv, err := ResolveInterpreter(in.Getenv, InterpreterCandidates(in.Settings))
 	if err != nil {
 		return noInterpreterVerdict(EventPostTool)
+	}
+	ctx, err = checkpointSessionContext(ctx, argv, root, "tool", canonical)
+	if err != nil {
+		return Verdict{Outcome: Skip, Reason: "checkpoint due-status unavailable: " + err.Error()}
 	}
 	result, runErr := runInterpreter(ctx, argv, root, checkpointScript(root, "checkpoint.py"), []string{"--event", "tool", "--json", "--marker"}, nil)
 	line, markerErr := extractMarker(result.Stdout, checkpointResultMarker)
@@ -310,6 +314,10 @@ func evaluateStopCheckpoint(ctx context.Context, root string, canonical Canonica
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, stopCheckpointBudget)
 	defer cancel()
+	checkCtx, err = checkpointSessionContext(checkCtx, argv, root, "stop", canonical)
+	if err != nil {
+		return Verdict{Outcome: Deny, Reason: stopReason("Praetor checkpoint could not be verified: "+err.Error(), canonical.StopActive)}
+	}
 	result, runErr := runInterpreter(checkCtx, argv, root, checkpointScript(root, "checkpoint.py"), []string{"--event", "stop", "--json", "--marker"}, nil)
 	line, markerErr := extractMarker(result.Stdout, checkpointResultMarker)
 	if runErr != nil || markerErr != nil {

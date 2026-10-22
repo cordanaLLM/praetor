@@ -87,9 +87,10 @@ type Canonical struct {
 	// yet (only pre-edit's normalised hand-off to checkpoint_scope.py sets it directly).
 	Workspaces []string
 	// ConversationID identifies the agent conversation a payload belongs to. Populated
-	// only by a dialect whose native payload carries one (agy's conversationId); empty
-	// for a dialect that has none.
+	// by native session_id payloads and agy's conversationId; empty when absent.
 	ConversationID string
+	// CheckpointInput carries native tool operands to the shared Python ownership recorder.
+	CheckpointInput json.RawMessage
 	// Step is the payload's own step counter, reused across event kinds because the
 	// rollout spec declares one generic field (3.2): agy's stepIdx for a tool event,
 	// agy's executionNum for a Stop event. Zero means the payload carried none.

@@ -176,6 +176,7 @@ var archetypeKeyProbes = map[string]string{
 	"branch_protection.require_signed_commits": "true", "branch_protection.required_approving_reviewers": "2",
 	"branch_protection.dismiss_stale_reviews": "true", "branch_protection.review_mode": "independent",
 	"branch_protection.merge_queue": "true", "branch_protection.codeql_default_setup": "true",
+	"branch_protection.status_contexts":       "[gate]",
 	"branch_protection.allowed_merge_methods": "[squash]", "branch_protection.require_extra_approval_for_unattributed_changes": "true",
 	"supply_chain.slsa_level": "2", "supply_chain.enforce_cosign": "true", "supply_chain.require_sbom": "true",
 	"linters": "[semgrep]", "devcontainer_features": `["ghcr.io/devcontainers/features/go:1"]`,
@@ -203,6 +204,7 @@ func probeDocument(key, value string) string {
 var repositoryOnlyKeys = map[string]bool{
 	"branch_protection.review_mode": true, "branch_protection.merge_queue": true,
 	"branch_protection.codeql_default_setup": true,
+	"branch_protection.status_contexts":      true,
 }
 
 // ArchetypeKeys lists the closed schema with sections spelled dotted and never bare, and

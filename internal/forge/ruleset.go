@@ -112,7 +112,16 @@ func RenderRepositoryRuleset(branch string, policy config.BranchProtectionPolicy
 	if err != nil {
 		return nil, err
 	}
-	return json.MarshalIndent(doc, "", "  ")
+	return marshalRulesetJSON(doc)
+}
+
+// marshalRulesetJSON encodes the ruleset document as indented JSON ending with exactly one newline.
+func marshalRulesetJSON(doc map[string]any) ([]byte, error) {
+	data, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(data, '\n'), nil
 }
 
 // RepositoryRulesetPath is where a repository carries the praetor branch protection ruleset,
@@ -133,7 +142,7 @@ func RenderRulesetForRepository(ctx context.Context, repoPath string, policy con
 	if err != nil {
 		return nil, nil, fmt.Errorf("render %s: %w", RepositoryRulesetPath, err)
 	}
-	contexts, err := RequiredStatusContextsPlanned(ctx, repoPath, planned, ForMergeQueue(policy.MergeQueue))
+	contexts, err := RequiredStatusContextsPlanned(ctx, repoPath, planned, ForMergeQueue(policy.MergeQueue), WithDeclaredStatusContexts(policy.StatusContexts))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -178,18 +187,18 @@ func ReadRulesetBaseline(ctx context.Context, repoPath string) (RulesetBaseline,
 	if err != nil {
 		return RulesetBaseline{}, fmt.Errorf("read the default branch for %s: %w", RepositoryRulesetPath, err)
 	}
-	contexts, err := RequiredStatusContexts(ctx, repoPath, ForMergeQueue(policy.MergeQueue))
+	contexts, err := RequiredStatusContexts(ctx, repoPath, ForMergeQueue(policy.MergeQueue), WithDeclaredStatusContexts(policy.StatusContexts))
 	if err != nil {
 		return RulesetBaseline{}, fmt.Errorf("read the workflow checks for %s: %w", RepositoryRulesetPath, err)
 	}
 	baseline := RulesetBaseline{Branch: branch, Policy: policy, Contexts: contexts}
 	if policy.MergeQueue {
-		if baseline.UnqueuedContexts, err = RequiredStatusContexts(ctx, repoPath); err != nil {
+		if baseline.UnqueuedContexts, err = RequiredStatusContexts(ctx, repoPath, WithDeclaredStatusContexts(policy.StatusContexts)); err != nil {
 			return RulesetBaseline{}, fmt.Errorf("read the workflow checks for %s: %w", RepositoryRulesetPath, err)
 		}
 		return baseline, nil
 	}
-	if baseline.QueuedContexts, err = RequiredStatusContexts(ctx, repoPath, ForMergeQueue(true)); err != nil {
+	if baseline.QueuedContexts, err = RequiredStatusContexts(ctx, repoPath, ForMergeQueue(true), WithDeclaredStatusContexts(policy.StatusContexts)); err != nil {
 		return RulesetBaseline{}, fmt.Errorf("read the workflow checks for %s: %w", RepositoryRulesetPath, err)
 	}
 	baseline.queuedRead = true

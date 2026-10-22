@@ -212,3 +212,33 @@ func TestAuditDevContainer_ConvertedCheckoutNamesTheRule(t *testing.T) {
 		t.Fatalf("the committed bytes again: %v", err)
 	}
 }
+
+// Positive: devcontainer audit accepts a bundle carrying installGoTools false and the
+// toolchain version from go.mod. Negative: dropping the option causes audit to fail.
+func TestAuditDevContainer_GoFeaturePinnedOptions(t *testing.T) {
+	source, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	initGitFixture(t, root)
+	writeFixtureFile(t, root, "go.mod", "module example.com/audit\n\ngo 1.27\n\ntoolchain go1.27.3\n")
+	if code, out := praetorctl(t, "adopt", "--path", root, "--profile", "framework",
+		"--lock-source-root", source); code != 0 {
+		t.Fatalf("adopt: exit %d\n%s", code, out)
+	}
+	content := readFixtureFile(t, root, filepath.Join(".devcontainer", "devcontainer.json"))
+	if !strings.Contains(content, `"installGoTools": false`) || !strings.Contains(content, `"version": "1.27.3"`) {
+		t.Fatalf("adopted devcontainer lacks expected Go feature options:\n%s", content)
+	}
+	if err := auditDevContainerQuiet(t, root); err != nil {
+		t.Fatalf("auditDevContainer failed on bundle carrying pinned Go options: %v", err)
+	}
+
+	// Negative: dropping installGoTools option causes audit to fail with out of sync error.
+	tampered := strings.Replace(content, `"installGoTools": false,`, "", 1)
+	writeFixtureFile(t, root, filepath.Join(".devcontainer", "devcontainer.json"), tampered)
+	if err := auditDevContainerQuiet(t, root); err == nil || !strings.Contains(err.Error(), "[FAIL] DevContainer out of sync with declared standards") {
+		t.Fatalf("auditDevContainer unexpectedly passed without installGoTools option: %v", err)
+	}
+}

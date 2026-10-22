@@ -238,3 +238,54 @@ func TestFromModuleVersion_3D(t *testing.T) {
 		}
 	}
 }
+
+// TestFromLockVersion_3D tests parsing .standards.lock pinned_version across positive,
+// negative, and boundary shapes.
+func TestFromLockVersion_3D(t *testing.T) {
+	for pinned, want := range map[string]Identity{
+		"v0.0.0+32a35c8":       {Revision: "32a35c8"},
+		"v0.0.0+32a35c8.dirty": {Revision: "32a35c8", Modified: true},
+		"v1.2.3":               {Release: "v1.2.3"},
+		"32a35c8":              {Revision: "32a35c8"},
+		"":                     {Unknown: "empty lock version"},
+		"   ":                  {Unknown: "empty lock version"},
+		"invalid":              {Unknown: "unrecognized lock version"},
+	} {
+		if got := FromLockVersion(pinned); got != want {
+			t.Errorf("FromLockVersion(%q) = %+v, want %+v", pinned, got, want)
+		}
+	}
+}
+
+// TestIdentityEqual_3D tests identity equality across releases, revisions, and prefixes.
+func TestIdentityEqual_3D(t *testing.T) {
+	idShort := Identity{Revision: "32a35c8"}
+	idLong := Identity{Revision: "32a35c812345"}
+	idDiff := Identity{Revision: "18c50fc7476a"}
+	idRel := Identity{Release: "v1.0.0"}
+	idRelDiff := Identity{Release: "v2.0.0"}
+	idUnknown := Identity{Unknown: "none"}
+
+	cases := []struct {
+		name string
+		a, b Identity
+		want bool
+	}{
+		{"short revision matches longer prefix", idShort, idLong, true},
+		{"longer revision matches short prefix", idLong, idShort, true},
+		{"different revisions do not match", idShort, idDiff, false},
+		{"identical releases match", idRel, Identity{Release: "v1.0.0"}, true},
+		{"different releases do not match", idRel, idRelDiff, false},
+		{"release does not match revision", idRel, idShort, false},
+		{"unknown does not match revision", idUnknown, idShort, false},
+		{"revision does not match unknown", idShort, idUnknown, false},
+	}
+	for _, tc := range cases {
+		if got := tc.a.Equal(tc.b); got != tc.want {
+			t.Errorf("%s: Equal = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	if !idShort.Identified() || !idRel.Identified() || idUnknown.Identified() {
+		t.Error("Identified check incorrect")
+	}
+}

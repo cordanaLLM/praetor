@@ -45,8 +45,11 @@ replace an existing executable. See the [Semgrep package installation guidance](
 
 On stop, `checkpoint.py` also judges the linked worktrees changed in the last 24 hours that the
 stopping session touched (recorded per session from its tool calls; without a session id, every
-recent worktree, and the finding says ownership is unknown). Gate scratch under
-`.standards/worktrees` never counts. Unfinished work in a judged worktree that
+recent worktree, and the finding says ownership is unknown). Gate scratch
+(`.standards/worktrees/gate-<pid>-<n>` under any checkout of the repository) is skipped only
+while that pid is a live `praetorctl gate` process, read from `/proc/<pid>/cmdline`; a reused or
+unreadable pid fails closed. Abandoned gate scratch counts whichever session made it, and the
+finding names the dead gate pid. Unfinished work in a judged worktree that
 `.workingdir/OPEN.md` does not name keeps the stop due, and a branch whose change already landed
 in the remote base counts as finished. The rules and the naming forms are in the
 [checkpoint cadence guide](checkpoint-cadence.md).

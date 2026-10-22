@@ -460,7 +460,7 @@ dependencies:
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: platformdirs
-      version: 4.13.0
+      version: 4.13.3
       language: python
       ecosystem: pypi
       capability: python.external.platformdirs

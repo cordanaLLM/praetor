@@ -58,6 +58,37 @@ func TestGoDirective_Boundary_TrailingCommentsCRLFAndToolchainLines(t *testing.T
 	}
 }
 
+// Positive: a toolchain directive in a go.mod is extracted verbatim.
+// Negative: an absent or malformed toolchain directive reports false.
+// Boundary: trailing comments, extra whitespace, tabs, and CRLF endings resolve.
+func TestToolchainDirective_3D(t *testing.T) {
+	// Positive
+	pos := "module x\n\ngo 1.27\n\ntoolchain go1.27.3\n"
+	if v, ok := ToolchainDirective([]byte(pos)); !ok || v != "go1.27.3" {
+		t.Fatalf("ToolchainDirective(%q) = %q, %v; want go1.27.3, true", pos, v, ok)
+	}
+
+	// Negative
+	for _, neg := range []string{"module x\n\ngo 1.27\n", "module x\n\n// toolchain go1.27.3\n", ""} {
+		if v, ok := ToolchainDirective([]byte(neg)); ok || v != "" {
+			t.Fatalf("ToolchainDirective(%q) = %q, %v; want empty, false", neg, v, ok)
+		}
+	}
+
+	// Boundary
+	boundaries := map[string]string{
+		"trailing comment": "module x\n\ntoolchain go1.27.3 // pinned\n",
+		"crlf":             "module x\r\n\r\ntoolchain go1.27.3\r\n",
+		"extra spacing":    "module x\n\n  toolchain   go1.27.3  \n",
+		"tab separator":    "module x\n\ntoolchain\tgo1.27.3\n",
+	}
+	for name, manifest := range boundaries {
+		if v, ok := ToolchainDirective([]byte(manifest)); !ok || v != "go1.27.3" {
+			t.Errorf("%s: ToolchainDirective = %q, %v; want go1.27.3, true", name, v, ok)
+		}
+	}
+}
+
 func TestReplaceLine_Positive_SingleAndBlock(t *testing.T) {
 	inBlock := false
 	line, ok := ReplaceLine("replace old.example/a => new.example/a v1.2.3", &inBlock)

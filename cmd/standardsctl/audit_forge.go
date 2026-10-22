@@ -191,7 +191,7 @@ func pendingProtectionRenames(ctx context.Context, rootDir, commit, ref string, 
 	if len(renames) == 0 {
 		return target, nil, nil
 	}
-	contexts, err := forge.RequiredStatusContextsAt(ctx, rootDir, commit, target.repository, forge.ForMergeQueue(target.policy.MergeQueue))
+	contexts, err := forge.RequiredStatusContextsAt(ctx, rootDir, commit, target.repository, forge.ForMergeQueue(target.policy.MergeQueue), forge.WithDeclaredStatusContexts(target.policy.StatusContexts))
 	if err != nil {
 		return protectionTarget{}, nil, fmt.Errorf("read landed status check renames from %s: %w", ref, err)
 	}

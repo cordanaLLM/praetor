@@ -13,6 +13,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -61,7 +62,7 @@ type DevContainer struct {
 
 // Synthesize produces the legacy profile baseline for checking existing configs.
 // New portable generation uses PrepareBundle with explicit bootstrap inputs.
-func Synthesize(m *config.Manifest) (*DevContainer, error) {
+func Synthesize(m *config.Manifest, repoRoot ...string) (*DevContainer, error) {
 	if m == nil {
 		return nil, errors.New("manifest cannot be nil")
 	}
@@ -74,11 +75,15 @@ func Synthesize(m *config.Manifest) (*DevContainer, error) {
 		repoName = m.Repository.Owner + "/" + repoName
 	}
 
-	return SynthesizeFromProfiles(repoName, m.Profiles, m.Facets)
+	root := ""
+	if len(repoRoot) > 0 {
+		root = repoRoot[0]
+	}
+	return SynthesizeFromProfiles(repoName, m.Profiles, m.Facets, root)
 }
 
 // SynthesizeWithFeatures applies the selected catalog feature set to a manifest.
-func SynthesizeWithFeatures(m *config.Manifest, selected []config.DevContainerFeature) (*DevContainer, error) {
+func SynthesizeWithFeatures(m *config.Manifest, selected []config.DevContainerFeature, repoRoot ...string) (*DevContainer, error) {
 	if m == nil {
 		return nil, errors.New("manifest cannot be nil")
 	}
@@ -89,22 +94,34 @@ func SynthesizeWithFeatures(m *config.Manifest, selected []config.DevContainerFe
 	if m.Repository.Owner != "" {
 		repoName = m.Repository.Owner + "/" + repoName
 	}
-	return SynthesizeFromProfilesWithFeatures(repoName, m.Profiles, m.Facets, selected)
+	root := ""
+	if len(repoRoot) > 0 {
+		root = repoRoot[0]
+	}
+	return SynthesizeFromProfilesWithFeatures(repoName, m.Profiles, m.Facets, selected, root)
 }
 
 // SynthesizeFromProfiles returns the legacy profile baseline. New writers must
 // use PrepareBundle so adopted repositories receive complete bootstrap artifacts.
-func SynthesizeFromProfiles(name string, profiles []string, facets []string) (*DevContainer, error) {
-	return synthesize(name, profiles, facets, nil)
+func SynthesizeFromProfiles(name string, profiles []string, facets []string, repoRoot ...string) (*DevContainer, error) {
+	root := ""
+	if len(repoRoot) > 0 {
+		root = repoRoot[0]
+	}
+	return synthesize(name, profiles, facets, nil, root)
 }
 
 // SynthesizeFromProfilesWithFeatures synthesizes using only features resolved
 // from the selected, pinned catalog entries.
-func SynthesizeFromProfilesWithFeatures(name string, profiles, facets []string, selected []config.DevContainerFeature) (*DevContainer, error) {
-	return synthesize(name, profiles, facets, selected)
+func SynthesizeFromProfilesWithFeatures(name string, profiles, facets []string, selected []config.DevContainerFeature, repoRoot ...string) (*DevContainer, error) {
+	root := ""
+	if len(repoRoot) > 0 {
+		root = repoRoot[0]
+	}
+	return synthesize(name, profiles, facets, selected, root)
 }
 
-func synthesize(name string, profiles []string, facets []string, selected []config.DevContainerFeature) (*DevContainer, error) {
+func synthesize(name string, profiles []string, facets []string, selected []config.DevContainerFeature, repoRoot string) (*DevContainer, error) {
 	if len(selected) > MaxLoopLimit {
 		return nil, errors.New("selected DevContainer features exceed bounds")
 	}
@@ -120,7 +137,7 @@ func synthesize(name string, profiles []string, facets []string, selected []conf
 		containerName = "workspace"
 	}
 
-	features := synthesizeFeatures(selected, profiles, facets)
+	features := synthesizeFeatures(selected, profiles, facets, repoRoot)
 	extensions := synthesizeExtensions(profiles, facets, selected)
 	settings := synthesizeSettings(profiles, facets, selected)
 	postCmd := synthesizePostCreateCommand(profiles, selected)
@@ -146,11 +163,11 @@ func synthesize(name string, profiles []string, facets []string, selected []conf
 }
 
 // synthesizeFeatures resolves devcontainer features for profiles and facets.
-func synthesizeFeatures(selected []config.DevContainerFeature, profiles []string, facets []string) map[string]interface{} {
+func synthesizeFeatures(selected []config.DevContainerFeature, profiles []string, facets []string, repoRoot string) map[string]interface{} {
 	features := make(map[string]interface{})
 	if selected != nil {
 		for i := 0; i < len(selected) && i < MaxLoopLimit; i++ {
-			features[selected[i].Ref] = selectedFeatureOptions(selected[i])
+			features[selected[i].Ref] = selectedFeatureOptions(selected[i], repoRoot)
 		}
 		return features
 	}
@@ -158,9 +175,7 @@ func synthesizeFeatures(selected []config.DevContainerFeature, profiles []string
 	// The Go feature follows the declared profiles: the native toolchain rejects
 	// Go tooling in its extensions and settings, so it receives no Go runtime.
 	if containerHasGoToolchain(profiles, nil) {
-		features[GoFeatureRef] = map[string]interface{}{
-			"version": DefaultGoVersion,
-		}
+		features[GoFeatureRef] = goFeatureDefaults(repoRoot)
 	}
 
 	for i := 0; i < len(facets) && i < MaxLoopLimit; i++ {
@@ -183,20 +198,63 @@ func commonUtilsDefaults() map[string]interface{} {
 	}
 }
 
+// goFeatureDefaults returns the options Praetor gives the Go feature: installGoTools false,
+// and the Go version resolved from the repository's go.mod (toolchain line stripped of "go",
+// else go line, else DefaultGoVersion).
+func goFeatureDefaults(repoRoot string) map[string]interface{} {
+	version := DefaultGoVersion
+	if v, ok := readGoModVersion(repoRoot); ok {
+		version = v
+	}
+	return map[string]interface{}{
+		"installGoTools": false,
+		"version":        version,
+	}
+}
+
+// readGoModVersion reads the Go version from go.mod in repoRoot.
+func readGoModVersion(repoRoot string) (string, bool) {
+	if repoRoot == "" {
+		return "", false
+	}
+	data, err := util.ReadConfinedLimited(repoRoot, "go.mod", contextopt.MaxSourceBytes)
+	if err != nil {
+		return "", false
+	}
+	return parseGoVersion(data)
+}
+
+// parseGoVersion extracts the Go version from go.mod content, preferring the toolchain directive
+// stripped of the leading "go" prefix, falling back to the go directive.
+func parseGoVersion(data []byte) (string, bool) {
+	if tc, ok := gomanifest.ToolchainDirective(data); ok && tc != "" {
+		return strings.TrimPrefix(tc, "go"), true
+	}
+	if gv, ok := gomanifest.GoDirective(data); ok && gv != "" {
+		return gv, true
+	}
+	return "", false
+}
+
 // selectedFeatureOptions returns the options synthesis writes for one feature a pinned catalog
-// selected. For common-utils the selected options are merged over commonUtilsDefaults key by
-// key: a key the catalog sets wins, and every default it leaves unset is kept. A catalog that
+// selected. For common-utils and go, selected options are merged over their defaults key by key:
+// a key the catalog sets wins, and every default it leaves unset is kept. A catalog that
 // selects the feature with no options, as the shipped archetypes do, therefore keeps
 // upgradePackages true, and only an explicit upgradePackages: false turns the upgrade off
 // (#334). Any other feature receives its selected options as given. The catalog's map is never
 // modified.
-func selectedFeatureOptions(feature config.DevContainerFeature) map[string]interface{} {
-	if !isFeature(feature, "common-utils") {
-		return feature.Options
+func selectedFeatureOptions(feature config.DevContainerFeature, repoRoot string) map[string]interface{} {
+	if isFeature(feature, "common-utils") {
+		merged := commonUtilsDefaults()
+		maps.Copy(merged, feature.Options)
+		return merged
 	}
-	merged := commonUtilsDefaults()
-	maps.Copy(merged, feature.Options)
-	return merged
+	if isFeature(feature, "go") {
+		merged := goFeatureDefaults(repoRoot)
+		maps.Copy(merged, feature.Options)
+		return merged
+	}
+	return feature.Options
 }
 
 // hasNativeGPUProfile reports whether the declared profiles select the native

@@ -81,6 +81,9 @@ type BranchProtectionPolicy struct {
 	RequiredApprovingReviewers int              `yaml:"required_approving_reviewers"`
 	DismissStaleReviews        bool             `yaml:"dismiss_stale_reviews"`
 	ReviewMode                 BranchReviewMode `yaml:"review_mode,omitempty"`
+	// StatusContexts declares required contexts that workflow job discovery cannot derive.
+	// Only the repository override may set them; omission preserves existing policy digests.
+	StatusContexts []string `yaml:"status_contexts,omitempty" json:",omitempty"`
 	// MergeQueue declares that the default branch merges through a GitHub merge queue (#893).
 	// The rendered ruleset then carries the merge_queue rule and requires only the status
 	// contexts of workflows that trigger on merge_group, the one event a group runs. It is a
@@ -106,6 +109,7 @@ var branchProtectionKeys = []string{
 	"enforce_linear_history", "require_signed_commits", "required_approving_reviewers",
 	"dismiss_stale_reviews", "review_mode", "merge_queue", "codeql_default_setup",
 	"allowed_merge_methods", "require_extra_approval_for_unattributed_changes",
+	"status_contexts",
 }
 
 // MergeMethod enum values supported by GitHub pull request rulesets.
@@ -121,7 +125,7 @@ var knownMergeMethods = map[string]bool{
 	MergeMethodRebase: true,
 }
 
-// Validate checks that allowed_merge_methods contains valid, non-empty, non-duplicate enum values.
+// Validate checks merge methods and repository-declared status contexts.
 func (b BranchProtectionPolicy) Validate() error {
 	if b.AllowedMergeMethods != nil {
 		if len(b.AllowedMergeMethods) == 0 {
@@ -139,7 +143,7 @@ func (b BranchProtectionPolicy) Validate() error {
 			seen[method] = true
 		}
 	}
-	return nil
+	return validateStatusContexts(b.StatusContexts)
 }
 
 // Equal reports whether b and other declare identical branch protection settings.
@@ -147,7 +151,7 @@ func (b BranchProtectionPolicy) Equal(other BranchProtectionPolicy) bool {
 	if !b.scalarFieldsEqual(other) {
 		return false
 	}
-	if !slices.Equal(b.AllowedMergeMethods, other.AllowedMergeMethods) {
+	if !slices.Equal(b.AllowedMergeMethods, other.AllowedMergeMethods) || !slices.Equal(b.StatusContexts, other.StatusContexts) {
 		return false
 	}
 	return boolPointersEqual(b.RequireExtraApprovalForUnattributedChanges, other.RequireExtraApprovalForUnattributedChanges)
@@ -198,6 +202,9 @@ func (b *BranchProtectionPolicy) UnmarshalYAML(node *yaml.Node) error {
 // validateBranchProtectionNodes checks node shapes before YAML decoding.
 func validateBranchProtectionNodes(node *yaml.Node) (*yaml.Node, error) {
 	if err := requireKnownKeys(node, "branch_protection", branchProtectionKeys); err != nil {
+		return nil, err
+	}
+	if err := validateStatusContextNodes(policyMember(node, "status_contexts")); err != nil {
 		return nil, err
 	}
 	reviewMode := policyMember(node, "review_mode")
@@ -675,6 +682,7 @@ func joinBranchProtection(a, b BranchProtectionPolicy) BranchProtectionPolicy {
 		ReviewMode:                 joinReviewMode(a.ReviewMode, b.ReviewMode),
 		MergeQueue:                 a.MergeQueue || b.MergeQueue,
 		CodeQLDefaultSetup:         a.CodeQLDefaultSetup || b.CodeQLDefaultSetup,
+		StatusContexts:             slices.Clone(a.StatusContexts),
 		AllowedMergeMethods:        joinAllowedMergeMethods(a.AllowedMergeMethods, b.AllowedMergeMethods),
 		RequireExtraApprovalForUnattributedChanges: joinExtraApproval(a.RequireExtraApprovalForUnattributedChanges, b.RequireExtraApprovalForUnattributedChanges),
 	}
@@ -741,6 +749,7 @@ func clonePolicy(p *ResolvedPolicy) *ResolvedPolicy {
 	clone.Linters = append([]string(nil), p.Linters...)
 	clone.DevFeatures = append([]string(nil), p.DevFeatures...)
 	clone.BranchProtection.AllowedMergeMethods = slices.Clone(p.BranchProtection.AllowedMergeMethods)
+	clone.BranchProtection.StatusContexts = slices.Clone(p.BranchProtection.StatusContexts)
 	if p.BranchProtection.RequireExtraApprovalForUnattributedChanges != nil {
 		val := *p.BranchProtection.RequireExtraApprovalForUnattributedChanges
 		clone.BranchProtection.RequireExtraApprovalForUnattributedChanges = &val
@@ -792,6 +801,9 @@ func (b *BranchProtectionPolicy) applyOverride(o *BranchProtectionPolicy) {
 	}
 	*b = joinBranchProtection(*b, *o)
 	b.ReviewMode = mode
+	if o.StatusContexts != nil {
+		b.StatusContexts = slices.Clone(o.StatusContexts)
+	}
 	if o.AllowedMergeMethods != nil {
 		b.AllowedMergeMethods = slices.Clone(o.AllowedMergeMethods)
 	}
