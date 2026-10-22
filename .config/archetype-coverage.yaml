@@ -428,6 +428,36 @@ fields:
         effect: >-
           compares the unattributed changes approval requirement GitHub enforces on the default branch with the
           declared one (plan --remote, sync --remote readback)
+  - key: branch_protection.status_contexts
+    go: [BranchProtectionPolicy.StatusContexts]
+    state: refused
+    refused_by: internal/config.ArchetypeControls.validate
+    reason: Required status contexts belong to a repository; catalog layers cannot declare them.
+    consumers:
+      - func: internal/config.Overrides.DeclaredStatusContexts
+        kind: acts
+        effect: selects repository declarations before sync resolves the effective policy
+      - func: internal/forge.RenderRulesetForRepository
+        kind: acts
+        effect: merges declarations into planned workflow contexts for the rendered ruleset
+      - func: internal/forge.ReadRulesetBaseline
+        kind: acts
+        effect: retains declarations in both queued and unqueued baseline contexts
+      - func: internal/adopt.auditRulesetContent
+        kind: acts
+        effect: compares the committed ruleset against derived and declared contexts
+      - func: cmd/standardsctl.auditDocumentationHostedWiring
+        kind: acts
+        effect: includes declared contexts when comparing the documentation ruleset
+      - func: cmd/standardsctl.reconcileRemoteRuleset
+        kind: acts
+        effect: includes declared contexts in the remote ruleset selection
+      - func: cmd/standardsctl.liveProtectionTarget
+        kind: acts
+        effect: compares live branch protection against the same declared context union
+      - func: cmd/standardsctl.pendingProtectionRenames
+        kind: acts
+        effect: retains declared contexts when reading landed workflow contexts
   - key: branch_protection.review_mode
     go: [BranchProtectionPolicy.ReviewMode]
     state: refused

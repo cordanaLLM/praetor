@@ -605,7 +605,7 @@ func TestAuditLiveBranchProtection_RenameWindowBoundaries(t *testing.T) {
 		{"unrelated live check", prJobWorkflow("Licence / REUSE lint"), []string{"CI", "Lint"}, false, "Licence / REUSE lint"},
 		{"unrelated job identity", strings.Replace(prJobWorkflow("Different"), "  ci:", "  other:", 1), []string{"CI", "REUSE lint"}, false, "Different"},
 		{"window ended", prJobWorkflow("Licence / REUSE lint"), []string{"CI", "REUSE lint"}, true, "Licence / REUSE lint"},
-		{"rename plus missing check", prJobWorkflow("Licence / REUSE lint") + "  extra:\n    name: Extra\n    runs-on: ubuntu-latest\n    steps:\n      - run: make\n", []string{"CI", "REUSE lint"}, false, "Licence / REUSE lint, Extra"},
+		{"rename plus missing check", prJobWorkflow("Licence / REUSE lint") + "  extra:\n    name: Extra\n    runs-on: ubuntu-latest\n    steps:\n      - run: make\n", []string{"CI", "REUSE lint"}, false, "Extra, Licence / REUSE lint"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stub := &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), tc.live, "active")}

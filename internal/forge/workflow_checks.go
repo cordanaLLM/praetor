@@ -42,7 +42,8 @@ const (
 // pull_request triggers, less the jobs a proven aggregate of their workflow covers
 // (aggregateCoveredJobs): the aggregate is required in their place (workflowContextsIn). It never
 // substitutes Praetor's own gates. Reads are bounded and reject symlink paths; incomplete
-// inventories fail.
+// inventories fail. WithDeclaredStatusContexts adds the validated repository allow-list;
+// every variant returns its sorted union with the selected workflow contexts.
 func RequiredStatusContexts(ctx context.Context, repoPath string, opts ...ContextOption) ([]string, error) {
 	return RequiredStatusContextsPlanned(ctx, repoPath, nil, opts...)
 }

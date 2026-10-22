@@ -79,7 +79,7 @@ func auditRulesetContent(ctx context.Context, manifest *config.Manifest, rootDir
 	if !exists {
 		return fmt.Errorf("[FAIL] Branch protection ruleset %s is missing while policy requires linear history or signed commits; run 'praetorctl sync' to reconcile", rulesetFile)
 	}
-	contexts, err := forge.RequiredStatusContexts(ctx, rootDir, forge.ForMergeQueue(policy.MergeQueue))
+	contexts, err := forge.RequiredStatusContexts(ctx, rootDir, forge.ForMergeQueue(policy.MergeQueue), forge.WithDeclaredStatusContexts(policy.StatusContexts))
 	if err != nil {
 		return fmt.Errorf("[FAIL] Branch protection ruleset audit failed: discover required status checks: %w", err)
 	}

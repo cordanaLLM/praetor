@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"go.yaml.in/yaml/v3"
 )
@@ -35,7 +36,16 @@ const (
 // ContextOption changes how the required status contexts of the workflows are selected.
 type ContextOption func(*contextOptions)
 
-type contextOptions struct{ mergeQueue bool }
+type contextOptions struct {
+	mergeQueue bool
+	declared   []string
+}
+
+// WithDeclaredStatusContexts adds the repository's explicit allow-list to workflow contexts.
+// All RequiredStatusContexts variants validate and merge it through selectContexts.
+func WithDeclaredStatusContexts(contexts []string) ContextOption {
+	return func(o *contextOptions) { o.declared = slices.Clone(contexts) }
+}
 
 // ForMergeQueue selects, when on, only the contexts of workflows that trigger on merge_group:
 // on a branch protected by a merge queue a context of any other workflow is never reported for
@@ -103,6 +113,9 @@ func splitMergeGroupFiles(files []workflowFile, called calledWorkflows, identity
 // selectContexts collects the required contexts of files inside the repository named identity,
 // leaving out the workflows a merge queue never runs when opts asks for a queue.
 func selectContexts(files []workflowFile, called calledWorkflows, identity string, opts contextOptions) ([]string, error) {
+	if err := (config.BranchProtectionPolicy{StatusContexts: opts.declared}).Validate(); err != nil {
+		return nil, err
+	}
 	if opts.mergeQueue {
 		kept, _, err := splitMergeGroupFiles(files, called, identity)
 		if err != nil {
@@ -110,7 +123,13 @@ func selectContexts(files []workflowFile, called calledWorkflows, identity strin
 		}
 		files = kept
 	}
-	return filesContextsIn(files, called, identity)
+	contexts, err := filesContextsIn(files, called, identity)
+	if err != nil {
+		return nil, err
+	}
+	contexts = append(contexts, opts.declared...)
+	slices.Sort(contexts)
+	return slices.Compact(contexts), nil
 }
 
 // MergeQueueFindings lists, for the repository at repoPath with planned applied over its

@@ -53,8 +53,8 @@ func TestReusableCallContexts_LocalCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("contexts: %v", err)
 	}
-	if !slices.Equal(got, []string{"licence / REUSE lint", "REUSE lint"}) {
-		t.Fatalf("contexts = %q, want [licence / REUSE lint, REUSE lint]", got)
+	if !slices.Equal(got, []string{"REUSE lint", "licence / REUSE lint"}) {
+		t.Fatalf("contexts = %q, want [REUSE lint, licence / REUSE lint]", got)
 	}
 }
 

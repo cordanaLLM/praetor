@@ -575,7 +575,7 @@ func auditDocumentationHostedWiring(
 	ctx context.Context, manifest *config.Manifest, protection config.BranchProtectionPolicy, rootDir string, rulesetDeclined bool,
 ) error {
 	families := adopt.DocumentationFamilies()
-	contexts, err := hostedDocumentationContexts(ctx, rootDir, families, rulesetDeclined, protection.MergeQueue)
+	contexts, err := hostedDocumentationContexts(ctx, rootDir, families, rulesetDeclined, protection.MergeQueue, forge.WithDeclaredStatusContexts(protection.StatusContexts))
 	if err != nil {
 		return fmt.Errorf("[FAIL] Discover hosted documentation context: %w", err)
 	}
@@ -609,10 +609,10 @@ func auditDocumentationHostedWiring(
 // (forge.RequiredStatusContextsOf), and a workflow elsewhere whose contexts its file cannot show
 // no longer fails an audit that never compares them (#324).
 func hostedDocumentationContexts(
-	ctx context.Context, rootDir string, families []managedasset.Family, rulesetDeclined, mergeQueue bool,
+	ctx context.Context, rootDir string, families []managedasset.Family, rulesetDeclined, mergeQueue bool, opts ...forge.ContextOption,
 ) ([]string, error) {
 	if !rulesetDeclined {
-		return forge.RequiredStatusContexts(ctx, rootDir, forge.ForMergeQueue(mergeQueue))
+		return forge.RequiredStatusContexts(ctx, rootDir, append(opts, forge.ForMergeQueue(mergeQueue))...)
 	}
 	workflows := make([]string, 0, len(families))
 	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {

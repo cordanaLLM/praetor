@@ -161,6 +161,9 @@ func declaredNode(node *yaml.Node) *yaml.Node {
 // one contract: review_mode is a repository-only relaxation no catalog layer may set,
 // counts cannot be negative, and names stay within the bounds the digest verifies.
 func (c ArchetypeControls) validate() error {
+	if c.BranchProtection.StatusContexts != nil {
+		return errors.New("branch_protection.status_contexts is a repository-only setting")
+	}
 	if c.BranchProtection.ReviewMode != "" {
 		return errors.New("branch_protection.review_mode is a repository-only setting")
 	}

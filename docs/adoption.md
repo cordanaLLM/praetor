@@ -358,6 +358,30 @@ requires (`TestSync_Remote_KeepsLiveLeafChecksAndAddsTheAggregate` in
 `praetor-main-protection` by hand in the repository's ruleset settings, then run
 `praetorctl plan --remote` to read the result back.
 
+### Declared status contexts
+
+`overrides.branch_protection.status_contexts` adds checks that workflow job discovery cannot
+derive, such as a commit status posted by a `workflow_run` evaluator. The ruleset uses the
+sorted, deduplicated union of these declarations and the checks derived from pull request
+workflows (`forge.selectContexts`, `TestDeclaredStatusContextsRuleset`). Other contexts remain
+outside that set. Only the repository may declare this key; profiles and facets reject it.
+
+```yaml
+overrides:
+  branch_protection:
+    status_contexts:
+      - evaluator/status
+```
+
+The list accepts at most 256 distinct strings. Each must contain 1 to 255 Unicode characters,
+with no control characters or surrounding whitespace. An empty list adds nothing. A declaration
+that also names a derived check produces one required check (`TestStatusContextsPositiveAndBoundary`,
+`TestStatusContextsNegativeNamedReasons`). When using a merge queue, ensure the declared status
+also reports for each merge group; explicit declarations remain required after workflow filtering.
+`praetorctl sync` writes the union to the branch ruleset (`TestSyncDeclaredStatusContexts`).
+
+### Review mode
+
 A repository with one maintainer declares `review_mode: single_maintainer` under
 `overrides.branch_protection` ([review policy](guides/review-policy.md)). A first adoption on a
 GitHub origin writes it itself when `GITHUB_TOKEN` or `GH_TOKEN` is set and the forge lists exactly
