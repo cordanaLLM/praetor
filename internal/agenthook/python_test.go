@@ -122,6 +122,9 @@ func TestExtractMarker(t *testing.T) {
 	if got, err := extractMarker([]byte("noise\nPRAETOR_CHECKPOINT_RESULT={\"a\":1}\nmore\n"), checkpointResultMarker); err != nil || got != `{"a":1}` {
 		t.Fatalf("one match: %q %v", got, err)
 	}
+	if got, err := extractMarker([]byte("noise\r\nPRAETOR_CHECKPOINT_SESSION=0123456789abcdef\r\n"), "PRAETOR_CHECKPOINT_SESSION="); err != nil || got != "0123456789abcdef" {
+		t.Fatalf("a CRLF marker line (Windows text-mode stdout) must give its value without the CR, got %q, %v", got, err)
+	}
 	if _, err := extractMarker([]byte("noise\n"), checkpointResultMarker); err == nil {
 		t.Error("a missing marker was accepted")
 	}

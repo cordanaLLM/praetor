@@ -165,6 +165,9 @@ func runInterpreter(ctx context.Context, argv []string, dir, script string, scri
 func extractMarker(stdout []byte, marker string) (string, error) {
 	found, count := "", 0
 	for _, line := range strings.Split(string(stdout), "\n") {
+		// A Windows interpreter writes text-mode stdout with CRLF line ends; the value ends
+		// before the CR, or a hex session hash fails to decode (HISS-21).
+		line = strings.TrimSuffix(line, "\r")
 		if rest, ok := strings.CutPrefix(line, marker); ok {
 			count++
 			found = rest
