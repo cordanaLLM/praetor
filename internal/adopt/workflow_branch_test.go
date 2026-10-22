@@ -22,6 +22,8 @@ var hostedGatePriors = map[string][]string{
 		"../../tools/apicompat/testdata/prior/praetor-api.every-branch-and-draft.yml",
 		"../../tools/apicompat/testdata/prior/praetor-api.toolchain-local.yml",
 		"../../tools/apicompat/testdata/prior/praetor-api.toolchain-local-draft-skip.yml",
+		"../../tools/apicompat/testdata/prior/praetor-api.before-modfetch-retry.yml",
+		"../../tools/apicompat/testdata/prior/praetor-api.before-modfetch-retry-draft-skip.yml",
 	},
 	DocumentationWorkflowFile: {
 		"../../tools/markdownlint/testdata/prior/praetor-docs.every-branch-and-draft.yml",

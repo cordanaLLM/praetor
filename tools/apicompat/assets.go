@@ -68,6 +68,9 @@ const (
 // directive selects the toolchain (#1037). This fixes root modules and patch-level nested
 // modules requiring a newer toolchain; a nested module whose go language version is newer than
 // the checker toolchain is not covered (docs/guides/api-compatibility.md).
+// Before comparison, the workflow downloads every module's dependencies with bounded retry
+// (three attempts with 5 s and 15 s backoff), so transient proxy stream errors do not fail
+// the run.
 // The job keeps module and build caches of its own, keyed by its job name, instead of
 // setup-go's shared one (internal/forge/go_cache_checks.go).
 //
@@ -119,6 +122,37 @@ jobs:
             gobuild-${{ runner.os }}-${{ runner.arch }}-api-compatibility-${{ hashFiles('**/go.sum') }}-
             gobuild-${{ runner.os }}-${{ runner.arch }}-api-compatibility-
       # yamllint enable rule:line-length
+      - name: Download Go modules with retry` + ghworkflow.HostedGateStepIf + `
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          for mod in $(git ls-files ':(glob)**/go.mod'); do
+            case "$mod" in
+              testdata/* | */testdata/* | vendor/* | */vendor/*)
+                continue
+                ;;
+              .*/* | */.*/* | _*/* | */_*/*)
+                continue
+                ;;
+            esac
+            dir=$(dirname "$mod")
+            success=0
+            for attempt in 1 2 3; do
+              if (cd "$dir" && go mod download); then
+                success=1
+                break
+              fi
+              echo "go mod download failed for $mod (attempt $attempt of 3)" >&2
+              if [ "$attempt" -eq 1 ]; then
+                sleep 5
+              elif [ "$attempt" -eq 2 ]; then
+                sleep 15
+              fi
+            done
+            if [ "$success" -ne 1 ]; then
+              exit 1
+            fi
+          done
       - name: Compare the API of every Go module` + ghworkflow.HostedGateStepIf + `
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
@@ -134,6 +168,10 @@ jobs:
 // internal/managedasset/testdata/shipped/api-compatibility.sha256 records every text ever
 // shipped, and TestShippedTextLedger fails until each outgoing text is listed here.
 var priorDigests = map[string]string{
+	// The workflow before it downloaded Go modules with bounded retry before the compare step.
+	"b1b8cda8e5e0f06c5f8d58e4df59fa7c567b599382da19854228466696b157a6": WorkflowFile,
+	// The draft skip workflow before it downloaded Go modules with bounded retry before the compare step.
+	"0b93b127b9d26320e4e8566881fed76f6eeaf66724d42cb4c215d3a21b5ee59f": WorkflowFile,
 	"f68c08bc7e6001290ade191d6838d17c6458669a3511492692e971b67333ad83": WorkflowFile, // the workflow before its concurrency group
 	"12d6d77464b18617aa0e1001a05c7850b76641c5205447e70f1b0e72ff630ebb": WorkflowFile, // the draft skip workflow before its concurrency group
 	// The gate before it accepted identical type aliases across packages (engine-apicompat-alias-identical).
