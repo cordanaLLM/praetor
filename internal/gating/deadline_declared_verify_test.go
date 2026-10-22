@@ -100,6 +100,26 @@ func TestResolveRepoRunBudget_Boundary_EnvironmentOverridesDeclaredValue(t *test
 	}
 }
 
+// Negative: an environment override cannot hide an invalid repository declaration or run make.
+func TestRunDeclaredVerifyStage_Negative_CeilingRefusedBeforeCommand(t *testing.T) {
+	requireMake(t)
+	t.Setenv(TestStageTimeoutEnv, "10m")
+	dir := commitDeclaredTimeout(t, declaredVerifyRepo(t, "@exit 0"), "30m1ns")
+	cfg, recorded := newTestConfig(t, dir, false)
+	_, err := runDeclaredVerifyStage(t.Context(), cfg)
+	if err == nil {
+		t.Fatal("declared verification accepted a timeout above its hard ceiling")
+	}
+	for _, want := range []string{"gate.declared_verify_timeout", "30m1ns", "30m0s", "ceiling"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
+	}
+	if cfg.declaredVerified || len(*recorded) != 0 {
+		t.Fatalf("invalid budget ran commands or verified the stage: verified=%v commands=%v", cfg.declaredVerified, *recorded)
+	}
+}
+
 // slowDeclaredVerifyRepo is a committed Python root whose verify-all sleeps for three seconds and
 // whose manifest declares timeout as the declared-verification bound.
 func slowDeclaredVerifyRepo(t *testing.T, timeout string) string {

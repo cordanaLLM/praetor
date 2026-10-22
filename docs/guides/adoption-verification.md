@@ -1234,21 +1234,25 @@ writes or preserves that target, and the managed README names it as the configur
 cascade. The stage reads the makefile GNU Make would read (`GNUmakefile`, `makefile`, `Makefile`,
 in that order) through `util.MakefileHasTarget`.
 
-Where the root holds neither a `go.mod` nor a `Cargo.lock` and the target is declared, the stage
-runs `make verify-all`:
+Where no tracked Go module, root `Cargo.lock`, or root `package.json` with exactly one supported
+Node lockfile selects a toolchain stage, and the target is declared, the stage runs `make verify-all`:
 
 - **Where:** in an isolated worktree of `HEAD`, as the test suites run, so it checks what is pushed
   and writes nothing into the working tree. Because the private ledger (`.workingdir/`) is git-ignored,
   the stage worktree never holds it: `praetorctl state audit` recognizes `PRAETOR_GATE_DECLARED_VERIFY`,
   reports not applicable, and passes, while an existing but invalid ledger still fails.
 - **Dependencies:** before the stage runs, git-ignored folders in the checkout whose base name is on an
-  allow-list (`node_modules`, `.venv`, `venv`) and whose parent exists in the stage worktree are
+  allow-list (`node_modules`) and whose parent exists in the stage worktree are
   discovered (the search does not descend below depth 6; at most 64 folders; folder visits bounded to
   100,000; exceeding the folder count or visit bound fails closed; folders deeper than depth 6 are not
   linked) and symlinked into the stage worktree at the same relative path. On Windows, creating symlinks
   requires Developer Mode or administrator rights; if refused, the stage fails naming the cause and
   the two ways out (enable Developer Mode, or run `make verify-all` in the checkout). The stage prints
   one line naming every linked folder.
+  Python virtualenvs (`.venv`, `venv`) are not linked: `python -m venv` refuses to create an
+  environment over a symlink, and installed entry points embed absolute paths. A verification
+  recipe that needs a virtualenv must prepare its own in the stage worktree
+  (`TestRunGatedPipeline_Negative_VirtualenvRecipeWithIgnoredVenvInCheckout`).
 - **Read-only by check:** each linked folder is fingerprinted before the run (relative path, size, and
   mtime of each entry, bounded to at most 250,000 entries; exceeding fails closed) and checked again
   after. If any entry differs, the stage fails and names the folder because verification wrote into
@@ -1274,7 +1278,8 @@ runs `make verify-all`:
 
 The stage runs nothing in these cases:
 
-- **Not applicable:** a root with a `go.mod` or `Cargo.lock` (its toolchain stages verify it); a
+- **Not applicable:** a tracked Go module, root `Cargo.lock`, or root `package.json` with exactly
+  one supported Node lockfile (its toolchain stages verify it); a
   root without the target (today's admission, naming the unsupported languages); and a gate run
   started from inside `verify-all` (`PRAETOR_GATE_DECLARED_VERIFY` is set in the command's
   environment, so a `verify-all` that runs the gate does not recurse).
