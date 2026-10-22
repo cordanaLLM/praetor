@@ -1,10 +1,11 @@
 package adopt
 
 import (
-	"bytes"
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Positive: the emitted block_evasion.py contains no codespell-flagged word fragments
@@ -18,11 +19,13 @@ func TestBlockEvasionPY_3D_Positive_CodespellClean(t *testing.T) {
 	if err != nil {
 		t.Skip("codespell not installed")
 	}
-	cmd := exec.Command(codespellPath, "-")
-	cmd.Stdin = strings.NewReader(rendered)
-	out, err := cmd.CombinedOutput()
+	stdinCtx, err := util.WithCommandStdin(t.Context(), []byte(rendered))
 	if err != nil {
-		t.Fatalf("codespell reported issues on buildBlockEvasionPY(): %v\noutput:\n%s", err, string(out))
+		t.Fatal(err)
+	}
+	out, err := util.RunCommand(stdinCtx, "", codespellPath, "-")
+	if err != nil {
+		t.Fatalf("codespell reported issues on buildBlockEvasionPY(): %v\noutput:\n%s", err, out)
 	}
 }
 
@@ -36,14 +39,16 @@ func TestBlockEvasionPY_3D_Negative_DetectsWordSplitAcrossLiterals(t *testing.T)
 	if err != nil {
 		t.Skip("codespell not installed")
 	}
-	cmd := exec.Command(codespellPath, "-")
-	cmd.Stdin = bytes.NewReader([]byte("r\"grap\"\n"))
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("codespell expected to flag 'grap', but passed: %s", string(out))
+	stdinCtx, err := util.WithCommandStdin(t.Context(), []byte("r\"grap\"\n"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(string(out), "grap") {
-		t.Fatalf("codespell output did not name 'grap': %s", string(out))
+	out, err := util.RunCommand(stdinCtx, "", codespellPath, "-")
+	if err == nil {
+		t.Fatalf("codespell expected to flag 'grap', but passed: %s", out)
+	}
+	if !strings.Contains(err.Error(), "grap") && !strings.Contains(out, "grap") {
+		t.Fatalf("codespell output did not name 'grap': %v %s", err, out)
 	}
 }
 

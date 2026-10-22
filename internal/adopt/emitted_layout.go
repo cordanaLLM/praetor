@@ -159,6 +159,27 @@ func isLetterUnit(unit string) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
+func lastSpaceEnd(units []string, start, end int) int {
+	for i := end - 1; i > start; i-- {
+		if units[i] == " " {
+			return i + 1
+		}
+	}
+	return end
+}
+
+func rewindLetterWord(units []string, start, end int) int {
+	if !isLetterUnit(units[end-1]) || !isLetterUnit(units[end]) {
+		return end
+	}
+	for i := end - 1; i > start; i-- {
+		if !isLetterUnit(units[i]) {
+			return i + 1
+		}
+	}
+	return end
+}
+
 // literalEnd returns the end of the literal starting at units[start]: as many units as fit
 // room bytes, at least one. An escaped string breaks after its last space when it has one;
 // both kinds avoid splitting an ASCII letter word across adjacent literals.
@@ -172,20 +193,11 @@ func literalEnd(units []string, start, room int, words bool) int {
 		return end
 	}
 	if words {
-		for i := end - 1; i > start; i-- {
-			if units[i] == " " {
-				return i + 1
-			}
+		if spaceEnd := lastSpaceEnd(units, start, end); spaceEnd != end {
+			return spaceEnd
 		}
 	}
-	if isLetterUnit(units[end-1]) && isLetterUnit(units[end]) {
-		for i := end - 1; i > start; i-- {
-			if !isLetterUnit(units[i]) {
-				return i + 1
-			}
-		}
-	}
-	return end
+	return rewindLetterWord(units, start, end)
 }
 
 // pythonPairEntry lays out one two-item tuple of a list at four-space indentation the way
