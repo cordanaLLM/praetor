@@ -157,7 +157,10 @@ func TestAudit_Negative_BacklogCapGateFailsTheAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFixtureFile(t, f.dir, ".standards.yaml", string(manifest)+"backlog:\n  caps:\n    defects: {max: 1, action: gate}\n")
+	writeFixtureFile(t, f.dir, "README.md", "# Widgets\n")
+	writeFixtureFile(t, f.dir, ".standards.yaml", string(manifest)+
+		"adoption:\n  decline: [readme]\n"+
+		"backlog:\n  caps:\n    defects: {max: 1, action: gate}\n")
 	addDefects(t, f.dir, 2)
 	out, err := f.audit(t)
 	mustErrContain(t, err, "backlog cap defects: 2 items, over the cap of 1")

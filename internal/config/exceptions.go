@@ -110,13 +110,17 @@ const ExceptionRulePlatformNeutrality = "HISS-21"
 // ExceptionRuleCodespell is the rule of the codespell exception gate.
 const ExceptionRuleCodespell = "codespell"
 
+// ExceptionRuleReadmePresentation is the rule of the README presentation gate: an entry
+// excuses README presentation infractions (README-01..README-05) until the entry expires.
+const ExceptionRuleReadmePresentation = "readme-presentation"
+
 // exceptionRules lists rules an exceptions entry may name. HISS IDs come from the single HISS
 // registry; the other entries are the non-HISS gates that read this list.
 var exceptionRules = append(hisscatalog.RuleIDs(),
 	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits,
 	ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder, ExceptionRuleDeclaredLinters, ExceptionRuleReleaseToken, ExceptionRuleTestTimeout, ExceptionRuleJobTimeout, ExceptionRuleMutants,
 	ExceptionRuleBacklogCapsDefects, ExceptionRuleBacklogCapsTasks, ExceptionRuleBacklogCapsQuestions, ExceptionRuleBacklogCapsForgeAlerts,
-	ExceptionRuleCodespell, ExceptionRuleGosec,
+	ExceptionRuleCodespell, ExceptionRuleGosec, ExceptionRuleReadmePresentation,
 )
 
 // workflowRuleExamples maps each rule whose entries name one workflow file by path to the

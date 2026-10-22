@@ -30,7 +30,7 @@ const (
 	// preMigrationEpicFile is the pre-migration epic tracked under .workingdir/.
 	preMigrationEpicFile = "PRE_MIGRATION_EPIC.md"
 	// maxAuditGates bounds the governance gate loop (HISS-02).
-	maxAuditGates = 32
+	maxAuditGates = 64
 	// maxLegacyChecks bounds the legacy-reference loop in auditRepoIdentity (HISS-02).
 	maxLegacyChecks = 8
 	// legacyModulePath is the pre-rename module path no repository may reference.
@@ -180,6 +180,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditBaselineAndInvariants(ctx, opts) },
 		func() error { return auditMutationExclusions(ctx, manifest, rootDir, time.Now()) },
 		func() error { return auditReadmeGovernance(ctx, manifest, opts) },
+		func() error { return auditReadmePresentation(ctx, manifest, rootDir) },
 		func() error {
 			return auditDocumentationGate(ctx, manifest, rootDir, opts.effective.Policy.BranchProtection)
 		},

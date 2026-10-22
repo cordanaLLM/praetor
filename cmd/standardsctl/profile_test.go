@@ -173,6 +173,12 @@ func TestCheckDeclarationGates_3D(t *testing.T) {
 	if out, failed := gates(); failed != 0 || !strings.Contains(out, "[PASS] Branch protection") {
 		t.Fatalf("the fixture must pass every declaration gate: %d failed\n%s", failed, out)
 	}
+	// Declaration gates include auditReadmeGovernance, which requires the README governance block
+	// to match the declared facets. The negative tests below isolate each gate by adding facets
+	// without regenerating other files; remove README.md so auditReadmeGovernance does not fail.
+	if err := os.Remove(filepath.Join(f.dir, "README.md")); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
 	declared := effective.Manifest.Facets
 	effective.Manifest.Facets = append(slices.Clone(declared), "docs:seo-portal")
 	if out, failed := gates(); failed != 1 || !strings.Contains(out, "[FAIL] Documentation gate asset") {

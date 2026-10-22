@@ -1,0 +1,58 @@
+# README presentation standard
+
+The README presentation gate checks that an adopted repository's front page
+(`README.md`) follows the shared presentation standard established in ADR-3366
+and exemplified by VMAFx (order `engine-readme-presentation-check-20261022`,
+node `DOC1`). The gate is `readmepresentation.Audit` in
+`internal/readmepresentation/audit.go`, invoked by `praetorctl audit` and the
+MCP `standards_audit` tool.
+
+GitHub renders a README in a column approximately 830 pixels wide on desktop
+browsers, and narrower on mobile viewports. The rules prevent mid-page badge
+sprawl, oversized hero banners, unthemed diagrams, and disordered sections.
+
+## Rules
+
+| Rule ID | Subject | Requirement |
+| :--- | :--- | :--- |
+| `README-00` | Presence | `README.md` must be present at the repository root; absent file is refused. |
+| `README-01` | Badge block | All `style=for-the-badge` badges sit in one contiguous block under the title or banner; none further down. Group comments `<!-- N name -->` must follow fixed rank order: (1) release/version, (2) CI/build, (3) security/scorecard, (4) standards, (5) licence, (6) support. Missing groups are permitted; reordering is refused. |
+| `README-02` | Tagline | The first non-empty text line after the badge block must be a single bold line (`**...**`, `__...__`, `<b>...</b>`, or `<strong>...</strong>`). |
+| `README-03` | Hero banner | Header banner image `height` attribute must be at most 120; `width="100%"` (or 100% width style) is refused. |
+| `README-04` | Diagrams & figures | Every Mermaid code block must begin with a `%%{init:` directive configuring `'theme': 'base'` and `themeVariables`. Any local `.svg` figure below the header must have a `viewBox` width of at most 830 units; the hero banner is exempt. |
+| `README-05` | Sections & governance | Duplicate `H2` headings are refused. The managed governance block (`<!-- praetor:readme-governance:start -->`) must remain in the final section. Present sections must follow keyword class order: get-started, architecture, guides, contribute, support, roadmap, upstream, governance. |
+
+## Section keyword order
+
+When present, section `H2` headings must follow this ordering sequence:
+
+1. `install` or `get-started` (or `get started`)
+2. `architecture` or `at-glance` (or `at a glance`)
+3. `guide` or `reference`
+4. `contribut` (e.g. Contribute, Contributing)
+5. `support`
+6. `roadmap` or `release`
+7. `licen` or `upstream`
+8. `standard` or `governance`
+
+## Ratchet and migration waivers
+
+Adopters with legacy README files migrate under a declared exception rather
+than failing the gate immediately. To declare a migration waiver, add an entry
+to `.standards.yaml` under `exceptions:`:
+
+```yaml
+exceptions:
+  - rule: "readme-presentation"
+    path: "README.md"
+    reason: "README migration to shared presentation standard in progress"
+    category: D
+    entered: "2026-10-22"
+    expires: "2027-02-19"
+```
+
+While the waiver is active, `praetorctl audit` reports active presentation
+findings under `[PASS] README presentation: declared gap` without failing the
+gate. When the exception expires or is removed, findings become blocking
+failures. If a compliant repository keeps an unnecessary waiver, the audit
+reports the entry as stale and fails until it is removed.

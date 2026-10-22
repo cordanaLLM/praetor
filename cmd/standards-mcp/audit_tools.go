@@ -14,6 +14,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/mcp"
+	"github.com/cordanaLLM/praetor/internal/readmepresentation"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -68,7 +69,7 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 		passed++
 	}
 
-	report.Template("\nsummary: MCP audit gates; passed: %d/%d; repository: %s/%s; coverage: manifest, lockfile pins and digests, HISS ratchet, context sync, agent source caveman lint, branch protection, labels, supply chain, workflow triggers, build warnings, release token, hooks. "+
+	report.Template("\nsummary: MCP audit gates; passed: %d/%d; repository: %s/%s; coverage: manifest, lockfile pins and digests, HISS ratchet, context sync, agent source caveman lint, branch protection, labels, supply chain, workflow triggers, build warnings, release token, README presentation, hooks. "+
 		"next: run 'praetorctl audit' for full CLI gate set: paperclip harness, runner matrix, hook activation, backlog caps.",
 		passed+1, len(gates)+1, manifest.Repository.Owner, manifest.Repository.Name)
 	return mcpComposedTextResult(report.Text())
@@ -113,8 +114,18 @@ func (s *Server) auditGates(p auditPaths, effective *config.EffectivePolicy) []a
 		func(ctx context.Context) (string, error) { return auditBuildWarnings(ctx, s.rootDir, manifest) },
 		// The CLI audit's release-token gate.
 		func(ctx context.Context) (string, error) { return auditReleaseToken(ctx, s.rootDir, manifest) },
+		// The CLI audit's shared README presentation standard gate.
+		func(ctx context.Context) (string, error) { return auditReadmePresentation(ctx, s.rootDir, manifest) },
 		func(ctx context.Context) (string, error) { return auditHookConfig(ctx, manifest, s.rootDir) },
 	}
+}
+
+// auditReadmePresentation runs the CLI audit's README presentation gate over root with the
+// manifest's exceptions.
+func auditReadmePresentation(ctx context.Context, root string, manifest *config.Manifest) (string, error) {
+	return readmepresentation.Audit(ctx, readmepresentation.Options{
+		Root: root, Exceptions: manifest.Exceptions, Today: time.Now(),
+	})
 }
 
 // auditBuildWarnings runs the CLI audit's HISS-10 build-warnings gate over root with the

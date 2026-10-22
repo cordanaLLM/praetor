@@ -39,6 +39,15 @@ const fixtureAgentsMD = `# Fixture Repository
 1. Act on verified state.
 `
 
+const fixtureReadmeMD = `# Fixture
+
+**Fixture repository for standards-mcp server tests.**
+
+## 🚀 Get started
+
+Install and run.
+`
+
 const fixtureMainGo = `package main
 
 import "fmt"
@@ -160,6 +169,7 @@ func newFixtureRepo(t *testing.T) string {
 		"go.mod":                            "module fixture\n\ngo 1.27\n",
 		"main.go":                           fixtureMainGo,
 		"complex.go":                        fixtureComplexGo,
+		"README.md":                         fixtureReadmeMD,
 	}
 	for rel, content := range files {
 		writeFixtureFile(t, root, rel, content)
@@ -562,7 +572,7 @@ func TestServer_Positive_PlanAndAuditOnSyncedRepo(t *testing.T) {
 	audit := callTool(t, srv, "standards_audit", nil)
 	expectText(t, "audit", audit, "[PASS] Technical debt baseline verified")
 	expectText(t, "audit", audit, "[PASS] Cross-agent context targets verified in sync")
-	expectText(t, "audit", audit, "passed: 13/13")
+	expectText(t, "audit", audit, "passed: 14/14")
 }
 
 // The heading names the tool, never a repository; the manifest identity follows it (#361).

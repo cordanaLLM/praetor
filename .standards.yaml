@@ -90,6 +90,12 @@ exceptions:
     fingerprint: "b2b91312"
     reason: "category D: SleepContext is the engine's context-aware wait; the standalone API compatibility gate (tools/apicompat/gate/main.go, rendered into adopter repositories) carries the same ten lines as defaultWait because it imports no engine package (order engine-praetor-api-modfetch-retry-20261022)"
     expires: "2027-02-20"
+  - rule: "readme-presentation"
+    path: "README.md"
+    reason: "README migration to shared presentation standard in progress"
+    category: D
+    entered: "2026-10-22"
+    expires: "2027-02-19"
 
 # Text register per audience surface and task class (ADR-0010). Task keys are target_tasks
 # labels of .config/models/routing.yaml; every label without a row writes in the register
@@ -118,7 +124,7 @@ register:
   sources:
     expected: 279
     not_applicable: 141
-    sha256: "sha256:0fa5da8884acb066669e0ff95a17d6c03581bc0479ea625328011514b3024915"
+    sha256: "sha256:c201e63fb57e9d6bac491597d962a00a13188eb7545fb581e8653388cf15e7db"
     inputs:
       - path: ".paperclip/harness.json"
         surface: prompts
@@ -316,6 +322,14 @@ docs_surfaces:
       - "internal/forge/*_test.go"
     docs:
       - "docs/guides/build-warnings.md"
+  - name: "README presentation gate"
+    paths:
+      - "internal/readmepresentation/*.go"
+      - "cmd/standardsctl/audit_readme_presentation.go"
+    exclude:
+      - "internal/readmepresentation/*_test.go"
+    docs:
+      - "docs/guides/readme-presentation.md"
   - name: "licensing gates"
     paths:
       - "internal/supplychain/reuse.go"
