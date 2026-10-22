@@ -91,7 +91,9 @@ func TestCheckpointSessionDecodeNativeOptionalID(t *testing.T) {
 }
 
 func TestCheckpointSessionPreparation_PlantedOldEvaluator(t *testing.T) {
-	shipped := loadShippedCheckpointScript(t)
+	// A Windows checkout carries the script with CRLF line ends (no eol rule for it), so the
+	// planted removal works on the text with LF line ends.
+	shipped := strings.ReplaceAll(loadShippedCheckpointScript(t), "\r\n", "\n")
 	planted := strings.Replace(shipped, "    parser.add_argument(\"--prepare-session\", action=\"store_true\")\n", "", 1)
 	if planted == shipped {
 		t.Fatal("failed to remove --prepare-session definition")
