@@ -6,6 +6,7 @@ package adopt
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -108,7 +109,10 @@ func assertNotApplicableExecution(t *testing.T, root, makePath string) {
 	for _, cli := range []string{util.PraetorCLI, util.LegacyCLI} {
 		writeStub(t, stubs, cli, "printf '%s\\n' \"$*\" >> calls\n")
 	}
-	hermeticPath(t, stubs)
+	// The adopted Makefile resolves the engine with "sh .config/lefthook/engine.sh", so the
+	// launcher's tools must stay reachable once hermeticPath narrows PATH to git's directory,
+	// which need not hold them (Praetor's own devcontainer keeps git in /usr/local/bin).
+	hermeticPath(t, stubs+string(os.PathListSeparator)+hookToolbox(t))
 	out, err := util.RunCommand(context.Background(), root, makePath, "--no-print-directory", "-j1", "verify-all")
 	if err != nil {
 		t.Fatalf("make verify-all failed: %v\noutput:\n%s", err, out)
