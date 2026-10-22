@@ -368,31 +368,37 @@ func scriptPathMatchesTool(scriptPath, toolLower string) bool {
 	return ScriptPathMatchesTool(scriptPath, toolLower)
 }
 
+func isToolWordSeparator(r rune) bool {
+	return r == '-' || r == '_'
+}
+
+func isBasenameWordSeparator(r rune) bool {
+	return r == '-' || r == '_' || r == '.'
+}
+
+func matchesToolWordsAt(words, toolWords []string, offset int) bool {
+	for j := 0; j < len(toolWords) && j < maxRunScriptFields; j++ {
+		if !strings.EqualFold(words[offset+j], toolWords[j]) {
+			return false
+		}
+	}
+	return true
+}
+
 // BasenameMatchesTool reports whether base holds toolLower as consecutive words separated by
 // '-', '_', or '.'. A tool name inside a longer word does not match.
 func BasenameMatchesTool(base, toolLower string) bool {
-	toolWords := strings.FieldsFunc(toolLower, func(r rune) bool {
-		return r == '-' || r == '_'
-	})
+	toolWords := strings.FieldsFunc(toolLower, isToolWordSeparator)
 	if len(toolWords) == 0 {
 		return false
 	}
-	words := strings.FieldsFunc(base, func(r rune) bool {
-		return r == '-' || r == '_' || r == '.'
-	})
+	words := strings.FieldsFunc(base, isBasenameWordSeparator)
 	if len(words) < len(toolWords) {
 		return false
 	}
 	maxStart := len(words) - len(toolWords)
 	for i := 0; i <= maxStart && i < maxRunScriptFields; i++ {
-		match := true
-		for j := 0; j < len(toolWords) && j < maxRunScriptFields; j++ {
-			if !strings.EqualFold(words[i+j], toolWords[j]) {
-				match = false
-				break
-			}
-		}
-		if match {
+		if matchesToolWordsAt(words, toolWords, i) {
 			return true
 		}
 	}
