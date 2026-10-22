@@ -203,11 +203,11 @@ func decodeCheckpointReport(data string) (checkpointReport, error) {
 	return report, nil
 }
 
-// checkpointFailureReason renders one bounded diagnostic from whichever of a run error, a
-// marker error or the child's stderr is available, in that order of usefulness.
+// checkpointFailureReason appends bounded stderr to a run error; otherwise it prefers
+// trimmed stderr over the marker error.
 func checkpointFailureReason(runErr, markerErr error, result util.CommandBytes) string {
 	if runErr != nil {
-		return runErr.Error()
+		return util.CommandDiagnostic(runErr, result.Stderr).Error()
 	}
 	if stderr := strings.TrimSpace(string(result.Stderr)); stderr != "" {
 		return stderr

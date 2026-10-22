@@ -214,6 +214,18 @@ func TestRunStopCleanAllows(t *testing.T) {
 	}
 }
 
+func TestRunStopFailedScriptIncludesStderr(t *testing.T) {
+	root := syncedRepository(t)
+	_, getenv := buildStub(t, "python3")
+	t.Setenv("PRAETOR_STUB_EXIT", "1")
+	t.Setenv("PRAETOR_STUB_STDERR", " \ncheckpoint lock unavailable\n\t")
+	response := Run(context.Background(), checkpointInvocation(t, "stop", root, getenv, []byte(`{}`)))
+	want := "Praetor checkpoint could not be verified: exit status 1: checkpoint lock unavailable"
+	if response.ExitCode != 2 || !strings.Contains(string(response.Stderr), want) {
+		t.Errorf("failed script lost its cause: exit=%d stderr=%q", response.ExitCode, response.Stderr)
+	}
+}
+
 func TestRunStopDueCheckpointBlocksOnce(t *testing.T) {
 	root := syncedRepository(t)
 	_, getenv := buildStub(t, "python3")

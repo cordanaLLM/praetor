@@ -1,0 +1,2 @@
+type: fixed
+title: Include trimmed, bounded script stderr alongside execution errors in checkpoint hook diagnostics.
