@@ -252,38 +252,38 @@ Nothing is compared, and the audit says why, in four cases:
 | The policy requires neither linear history nor signed commits | `[INFO]`; the policy declares no ruleset (`adopt.RulesetRequired`, `TestAuditLiveBranchProtection_Boundary_PolicyWithoutRulesetIsNotCompared`). |
 | `--offline`, no token, no matching `origin`, or a read the forge refused | `[SKIP]` with the reason. Reading the legacy protection object needs read access to the repository's Administration permission, which a workflow's `GITHUB_TOKEN` cannot be granted. |
 | The default branch does not exist on GitHub yet | `[SKIP] Live branch protection of main not compared with the forge: main does not exist on GitHub yet, so nothing is enforced on it.` The first push of the branch is not refused; the audit compares it once it is pushed (`TestAuditLiveBranchProtection_Boundary_UnpushedDefaultBranchIsNotCompared`). |
-| The default branch carries no `.standards.yaml` yet, as on the first push of an adoption | `[SKIP] Live branch protection of main not compared with the forge: main carries no .standards.yaml yet, so the adoption that adds it has not reached it. The comparison starts with the first push after the manifest reaches main.` The presence is read from the commit `origin/<default branch>` points at in the checkout, the ref the status checks are read from, so no second forge read is made (`TestAuditLiveBranchProtection_Boundary_DefaultBranchWithoutManifestIsNotCompared`). A default branch that carries the manifest and no protection still fails. |
+| The default branch carries no `.standards.yaml` yet, as on the first push of an adoption | `[SKIP] Live branch protection of main not compared with the forge: main carries no .standards.yaml yet, so the adoption that adds it has not reached it. The comparison starts with the first push after the manifest reaches main.` The presence is read from the commit `origin/<default branch>` points at in the checkout, the ref used to prove a pending context rename, so no second forge read is made (`TestAuditLiveBranchProtection_Boundary_DefaultBranchWithoutManifestIsNotCompared`). A default branch that carries the manifest and no protection still fails. |
 | The manifest presence cannot be read, such as `origin/<default branch>` absent from the checkout | `[INFO]` naming the error, and the comparison runs: an unreadable presence never skips it (`TestAuditLiveBranchProtection_Negative_ManifestPresenceErrorDoesNotSkip`). |
 
-The status checks come from the default branch, not from the checkout under audit. GitHub can
-require a job only once it runs on the default branch, and requiring it earlier blocks every open
-pull request that lacks the job. So a job a branch adds is listed and not compared:
+The declared status checks come from the checkout's workflows, using the same rendering as
+`plan --remote` and ruleset apply (`auditProtectionTarget`, `liveProtectionTarget`). A new
+required check missing on the forge fails the audit, even before it reaches the default branch
+(`TestAuditLiveBranchProtection_Negative_NewCheckWithoutRenameFails`).
+
+One pending context rename may pass while the forge still requires its old name. The fetched
+default branch must prove that the same workflow path and job ID changed one required context
+into another, or that the same workflow wrapped its sole changed context in a reusable caller
+name, such as `REUSE lint` becoming `Licence / REUSE lint`. The old name must remain required
+live and must no longer be declared. Audit
+names both contexts and writes nothing:
 
 ```text
-[INFO] Live branch protection of main: status checks compared with the ones origin/main (1a2b3c4d) reports.
-[INFO] Live branch protection of main: not compared yet, as origin/main does not report them: Lint. Once they are on main, 'praetorctl sync --remote' requires them.
+[INFO] Live branch protection of main: Required status checks: declared 2, live 2 of 2 required; pending required status check rename: "REUSE lint" -> "Licence / REUSE lint" by ruleset "praetor-main-protection" #1
 ```
 
-A job on the default branch that the live protection does not require fails the audit on every
-branch, a branch cut before the job landed included, until `praetorctl sync --remote` requires it.
-Run that sync from an up-to-date default branch once the job has landed: `sync --remote` and
-`plan --remote` use the workflows of the checkout they run in, because they write and preview what
-that checkout declares. A checkout without `origin/<default branch>`, such as a single-branch
-clone of another branch, compares the live protection with its own workflows and says so
-(`TestAuditLiveBranchProtection_Positive_CheckAddedOffTheDefaultBranchIsNotCompared`,
-`TestAuditLiveBranchProtection_Negative_DefaultBranchCheckNotRequiredDrifts`,
-`TestAuditLiveBranchProtection_Boundary_DefaultBranchNotFetched`).
+Rename evidence is measured from HEAD's common ancestor with the fetched default branch, so
+a stale checkout cannot claim a rename made only on the default branch
+(`TestAuditLiveBranchProtection_StaleHeadDoesNotProveRename`).
+The window ends once the fetched default branch contains the new name. An unrelated live check,
+an unrelated replacement job, another missing requirement, or several renames never excuses drift
+(`TestAuditLiveBranchProtection_PendingContextRename`,
+`TestAuditLiveBranchProtection_RenameWindowBoundaries`). Reconcile the forge once the renamed
+job reaches the default branch. Run `plan --remote` and `sync --remote` from that updated branch.
 
-The workflows of `origin/<default branch>` are read from the checkout's object store, and nothing
-is fetched. A blobless partial clone (`git clone --filter=blob:none`) may lack a workflow that
-changed there since the checkout's own commit. The audit then compares with the checkout's own
-workflows too, and names the workflow it could not read
-(`forge.ErrCommittedWorkflowAbsent`,
-`TestAuditLiveBranchProtection_Boundary_AbsentDefaultBranchWorkflowIsNamed`):
-
-```text
-[INFO] Live branch protection of main: the workflows of origin/main (1a2b3c4d) are not all in this checkout, as in a partial clone (workflow api.yml at commit 1a2b3c4d...: its object is not in this checkout, and nothing is fetched to read it), so the status checks are compared with the ones this checkout's workflows report.
-```
+The base workflows are read only from the checkout's object store; nothing is fetched. Without
+the base ref, or when a partial clone lacks its workflow blobs, no rename window is granted.
+The declared checks remain the checkout's, and an absent workflow is named
+(`TestAuditLiveBranchProtection_Boundary_AbsentDefaultBranchWorkflowIsNamed`).
 
 `praetorctl plan` reads local files only unless `--remote` is passed. Its status then ends with
 `[INFO] Live branch protection not compared with the forge: this plan read local files only.`

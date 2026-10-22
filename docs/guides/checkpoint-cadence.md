@@ -9,6 +9,13 @@ The evaluator and Lefthook jobs are shared across coding agents. Native event
 adapters are client-specific; see [agent lifecycle coverage](agent-lifecycle.md)
 for the tested and untested boundaries.
 
+Adoption copies the evaluator bundle from `adopt --lock-source-root`. When that
+source differs from the installed binary, pass the same root to `audit --catalog-root`
+so the checkpoint audit compares with the bundle adoption actually installed.
+Without an explicit catalog, audit compares with the running release's digests.
+An incomplete selected bundle is an error when checkpoint files are present
+(`TestAuditCheckpointBundle_AfterAdoptFromSelectedSource`).
+
 Run `lefthook run agent-checkpoint-tool` between work chunks and
 `lefthook run agent-checkpoint-stop` before ending a turn. Inspect the returned
 `due` and `actions` fields: a successful observation can report work still due.

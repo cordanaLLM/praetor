@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -23,8 +24,7 @@ func TestScanGoIgnoresCommentsAndAssertions(t *testing.T) {
 		t.Fatalf("write source: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
+	ctx := testsupport.DeadlineContext(t)
 	rep, err := Scan(ctx, dir, ScanOptions{})
 	if err != nil {
 		t.Fatalf("scan: %v", err)

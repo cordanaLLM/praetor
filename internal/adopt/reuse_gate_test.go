@@ -335,6 +335,44 @@ func TestPriorReuseWorkflowDigests_Boundary_CurrentRenderingRecorded(t *testing.
 	}
 }
 
+func TestReuseRequirementsSPDXHeader(t *testing.T) {
+	for _, want := range []string{"# SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>", "# SPDX-License-Identifier: EUPL-1.2"} {
+		if !strings.Contains(strings.SplitN(reuseRequirementsTxt, "attrs==", 2)[0], want) {
+			t.Errorf("rendered requirements lack %q", want)
+		}
+	}
+}
+
+func TestAdoptReuseRequirementsRefreshesHeaderlessRendering(t *testing.T) {
+	for _, tc := range []struct {
+		name, text string
+		refresh    bool
+	}{
+		{"prior LF", reuseRequirementsBody, true},
+		{"prior CRLF", crlfText(reuseRequirementsBody), true},
+		{"current", reuseRequirementsTxt, false},
+		{"edited", reuseRequirementsBody + "# adopter edit\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newTestRepo(t, "reuse-requirements")
+			mustWrite(t, filepath.Join(repo, supplychain.ReuseFile), "version = 1\n")
+			path := filepath.Join(repo, filepath.FromSlash(reuseRequirementsFile))
+			mustWrite(t, path, tc.text)
+			adoptWithSource(t, repo, newAdoptLockSource(t), false)
+			want := tc.text
+			if tc.refresh {
+				want = reuseRequirementsTxt
+				if strings.Contains(tc.text, "\r\n") {
+					want = crlfText(want)
+				}
+			}
+			if got := mustRead(t, path); got != want {
+				t.Fatal("requirements refresh changed unexpected bytes")
+			}
+		})
+	}
+}
+
 // Positive: a workflow whose steps run no command of their own is named by the actions they use.
 // Negative: a workflow running commands is named by them alone. Boundary: one with neither runs
 // no command, as before.

@@ -362,15 +362,34 @@ func (s *adoptSession) scaffoldActiveReuseGate(ctx context.Context, branch strin
 	if err != nil {
 		return err
 	}
+	requirementDigests, err := reuseRequirementsDigests()
+	if err != nil {
+		return err
+	}
 	_, err = s.scaffoldFile(ctx, scaffold{
 		rel:       reuseRequirementsFile,
 		perm:      filePerm,
 		content:   []byte(reuseRequirementsTxt),
+		prior:     requirementDigests,
 		created:   "Scaffolded the REUSE requirements lock: reuse==6.2.0 hash-pinned",
 		verified:  "Existing REUSE requirements lock verified present",
 		refreshed: "Refreshed the REUSE requirements lock",
 	})
 	return err
+}
+
+// reuseRequirementsDigests computes pins from both reproducible renderings, preserving the
+// headerless lock as earlier output without maintaining hand-written hashes.
+func reuseRequirementsDigests() (map[string]string, error) {
+	digests := make(map[string]string, 2)
+	for _, text := range []string{reuseRequirementsBody, reuseRequirementsTxt} {
+		digest, _, err := util.CanonicalTextDigest([]byte(text))
+		if err != nil {
+			return nil, fmt.Errorf("digest REUSE requirements: %w", err)
+		}
+		digests[digest] = "hash-pinned REUSE requirements"
+	}
+	return digests, nil
 }
 
 func reconcileReuseGate(ctx context.Context, s *adoptSession) error {
@@ -549,8 +568,8 @@ func (s *adoptSession) removeReuseGate(ctx context.Context, reason reuseRemoval)
 	return nil
 }
 
-// removeReuseRequirements removes the managed REUSE requirements lock when it matches
-// reuseRequirementsTxt and the REUSE gate does not apply.
+// removeReuseRequirements removes an unedited current or earlier managed lock when the gate
+// does not apply, retaining the same ownership decision as adoption and Renovate management.
 func (s *adoptSession) removeReuseRequirements(ctx context.Context) error {
 	full, err := repoFile(s.repoPath, reuseRequirementsFile)
 	if err != nil {
@@ -560,7 +579,11 @@ func (s *adoptSession) removeReuseRequirements(ctx context.Context) error {
 	if err != nil || !exists {
 		return err
 	}
-	if string(actual) != reuseRequirementsTxt {
+	digests, err := reuseRequirementsDigests()
+	if err != nil {
+		return err
+	}
+	if !isPriorRendering(actual, digests) {
 		return nil
 	}
 	if !s.opts.DryRun {
@@ -641,12 +664,20 @@ func reuseManagedPaths(ctx context.Context, s *adoptSession) ([]string, error) {
 		}
 		managed = append(managed, reuseWorkflowFile)
 	}
+	return reuseManagedRequirements(ctx, s, managed)
+}
+
+func reuseManagedRequirements(ctx context.Context, s *adoptSession, managed []string) ([]string, error) {
 	reqData, reqExists, err := observeAdoptionInput(ctx, s, reuseRequirementsFile)
 	if err != nil {
 		_, err = uninspectableReason(ctx, err)
 		return nil, err
 	}
-	if !reqExists || string(reqData) == reuseRequirementsTxt {
+	digests, err := reuseRequirementsDigests()
+	if err != nil {
+		return nil, err
+	}
+	if !reqExists || isPriorRendering(reqData, digests) {
 		managed = append(managed, reuseRequirementsFile)
 	}
 	return managed, nil

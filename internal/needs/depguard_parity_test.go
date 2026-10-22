@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -422,8 +423,7 @@ func runSingleParityCase(t *testing.T, tc parityCase, repoRoot, fixtureDir strin
 		t.Fatal(err)
 	}
 
-	runCtx, runCancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer runCancel()
+	runCtx := testsupport.DeadlineContext(t)
 
 	out, err := runOracleCommand(runCtx, repoRoot, fixtureDir, tc.enableOnly)
 	if runCtx.Err() != nil {

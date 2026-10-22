@@ -175,6 +175,14 @@ rollback executables and records their source identity; see
 
 ## Question ledger
 
+`state.AddQuestionContext` records a question using the caller's cancellation and
+deadline; `state.AddQuestion` wraps it with a ten-second budget for callers without
+a context. Both allocate the next ID from the largest existing ID and publish the
+sidecar before the table (`internal/state/questions.go`). Flavor application passes
+its caller's context through ledger initialization, including `QUESTIONS.md`, so a
+slow checkout can use that deadline instead of a separate ten-second budget
+(`internal/state/state_init.go`, `internal/flavor/scaffold.go`).
+
 `.workingdir/QUESTIONS.md` uses the same cell codec, text limits and sidecar envelope
 as `BUGS.md` ([`internal/state/ledger_codec.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/state/ledger_codec.go),
 [`ledger_meta.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/state/ledger_meta.go)). The five visible columns stay

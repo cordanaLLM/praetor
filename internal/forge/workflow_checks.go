@@ -121,10 +121,7 @@ func RequiredStatusContextsIn(ctx context.Context, repoPath, repository string, 
 }
 
 // RequiredStatusContextsAt is RequiredStatusContextsIn over the workflows commit holds, a commit
-// of the checkout at repoPath, instead of the working tree's (readCommittedWorkflowFiles). The
-// live branch protection of a branch can require only the checks of the workflows on that
-// branch, so the audit compares it with the commit the branch points at, not with a change that
-// has not landed there yet.
+// of the checkout at repoPath, instead of the working tree's (readCommittedWorkflowFiles).
 func RequiredStatusContextsAt(ctx context.Context, repoPath, commit, repository string, opts ...ContextOption) ([]string, error) {
 	return requiredStatusContextsIn(ctx, repository, newContextOptions(opts), func(ctx context.Context) ([]workflowFile, error) {
 		return readCommittedWorkflowFiles(ctx, repoPath, commit)
@@ -324,6 +321,20 @@ func workflowContextsIn(data []byte, identity string) ([]string, error) {
 // covers (aggregateCoveredJobs) is a required check. A job that calls a reusable workflow
 // reports under the called workflow's jobs, not its own name (reusableCallContexts, #1212).
 func workflowCallContextsIn(data []byte, identity string, called calledWorkflows) ([]string, error) {
+	jobs, err := workflowContextJobs(data, identity, called)
+	if err != nil {
+		return nil, err
+	}
+	var contexts []string
+	for _, id := range slices.Sorted(maps.Keys(jobs)) {
+		contexts = append(contexts, jobs[id]...)
+	}
+	return contexts, nil
+}
+
+// workflowContextJobs preserves job IDs while expanding the required contexts, so audit can
+// distinguish a renamed job from an unrelated new requirement without a second selector.
+func workflowContextJobs(data []byte, identity string, called calledWorkflows) (map[string][]string, error) {
 	var spec workflowSpec
 	if err := yaml.Unmarshal(data, &spec); err != nil {
 		return nil, fmt.Errorf("parse: %w", err)
@@ -336,7 +347,7 @@ func workflowCallContextsIn(data []byte, identity string, called calledWorkflows
 	}
 	ids := sortedJobIDs(spec.Jobs)
 	covered := aggregateCoveredJobs(&spec, ids)
-	var contexts []string
+	contexts := make(map[string][]string)
 	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
 		job := spec.Jobs[ids[i]]
 		if covered[ids[i]] || !requiredJob(&job, identity) {
@@ -346,7 +357,7 @@ func workflowCallContextsIn(data []byte, identity string, called calledWorkflows
 		if err != nil {
 			return nil, err
 		}
-		contexts = append(contexts, names...)
+		contexts[ids[i]] = names
 	}
 	return contexts, nil
 }

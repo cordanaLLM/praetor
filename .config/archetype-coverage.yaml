@@ -326,7 +326,7 @@ fields:
       - func: cmd/standards-mcp.writePlanHeader
         kind: reports
         effect: prints the setting in the MCP plan
-      - func: internal/forge.EvaluateBranchProtection
+      - func: internal/forge.EvaluateBranchProtectionWithRenames
         kind: reports
         effect: >-
           compares the setting GitHub enforces on the default branch with the
@@ -354,7 +354,7 @@ fields:
       - func: cmd/standards-mcp.writePlanHeader
         kind: reports
         effect: prints the setting in the MCP plan
-      - func: internal/forge.EvaluateBranchProtection
+      - func: internal/forge.EvaluateBranchProtectionWithRenames
         kind: reports
         effect: >-
           compares the setting GitHub enforces on the default branch with the
@@ -394,7 +394,7 @@ fields:
       - func: cmd/standardsctl.printPlanHeader
         kind: reports
         effect: prints the setting in praetorctl plan
-      - func: internal/forge.EvaluateBranchProtection
+      - func: internal/forge.EvaluateBranchProtectionWithRenames
         kind: reports
         effect: >-
           compares the setting GitHub enforces on the default branch with the
@@ -411,7 +411,7 @@ fields:
       - func: internal/forge.protectionRules
         kind: acts
         effect: sets allowed_merge_methods in the rendered ruleset
-      - func: internal/forge.EvaluateBranchProtection
+      - func: internal/forge.EvaluateBranchProtectionWithRenames
         kind: reports
         effect: >-
           compares the allowed merge methods GitHub enforces on the default branch with the
@@ -423,7 +423,7 @@ fields:
       - func: internal/forge.protectionRules
         kind: acts
         effect: sets require_extra_approval_for_unattributed_changes in the rendered ruleset
-      - func: internal/forge.EvaluateBranchProtection
+      - func: internal/forge.EvaluateBranchProtectionWithRenames
         kind: reports
         effect: >-
           compares the unattributed changes approval requirement GitHub enforces on the default branch with the
@@ -453,7 +453,7 @@ fields:
       - func: cmd/standards-mcp.writePlanHeader
         kind: reports
         effect: prints the mode in the MCP plan
-      - func: internal/forge.EvaluateBranchProtection
+      - func: internal/forge.EvaluateBranchProtectionWithRenames
         kind: reports
         effect: >-
           compares the setting GitHub enforces on the default branch with the
@@ -515,8 +515,13 @@ fields:
       - func: cmd/standardsctl.auditProtectionTarget
         kind: acts
         effect: >-
-          compares the live branch protection with the merge_group selection
-          of the default branch's workflows
+          selects merge_group workflows on both sides of pending status check
+          rename discovery
+      - func: cmd/standardsctl.pendingProtectionRenames
+        kind: acts
+        effect: >-
+          closes landed rename windows using the fetched branch's merge_group
+          selection
       - func: cmd/standardsctl.verifySyncLocal
         kind: reports
         effect: >-

@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -485,39 +486,201 @@ func (f *auditFixture) commitWorkflows(t *testing.T, workflows map[string]string
 	gitCommitAll(t, f.dir, f.gitEnv, "change the workflows")
 }
 
-// Positive (#159 review): a job this checkout adds is not on origin/main yet, so the live
-// protection cannot require it: the audit compares the checks origin/main reports, names the added
-// one as not compared yet, and passes. A protection that requires only the default branch's checks
-// is no drift.
-func TestAuditLiveBranchProtection_Positive_CheckAddedOffTheDefaultBranchIsNotCompared(t *testing.T) {
+func TestAuditLiveBranchProtection_PendingContextRename(t *testing.T) {
+	stub := &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI", "REUSE lint"}, "active")}
+	f := protectedFixture(t, false, "", stub)
+	f.commitWorkflows(t, map[string]string{"licence.yml": prJobWorkflow("REUSE lint")})
+	f.recordOriginMain(t)
+	f.commitWorkflows(t, map[string]string{"licence.yml": prJobWorkflow("Licence / REUSE lint")})
+	manifest, err := config.LoadManifest(filepath.Join(f.dir, config.ManifestFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, _, err := auditProtectionTarget(t.Context(), f.dir, manifest, declaredProtection(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(target.contexts, "Licence / REUSE lint") || slices.Contains(target.contexts, "REUSE lint") {
+		t.Errorf("declared contexts = %q, want the rendering at HEAD", target.contexts)
+	}
+	out, err := f.audit(t)
+	if err != nil {
+		t.Fatalf("pending rename failed: %v\n%s", err, out)
+	}
+	mustContain(t, out, `pending required status check rename: "REUSE lint" -> "Licence / REUSE lint"`)
+}
+
+func (f *auditFixture) recordSquashedOriginMain(t *testing.T) {
+	t.Helper()
+	tree, err := runFixtureGit(t, f.dir, f.gitEnv, "rev-parse", "HEAD^{tree}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit, err := runFixtureGit(t, f.dir, f.gitEnv, "commit-tree", strings.TrimSpace(tree), "-p", "origin/main", "-m", "squashed rename")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runFixtureGit(t, f.dir, f.gitEnv, "update-ref", "refs/remotes/origin/main", strings.TrimSpace(commit)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAuditProtectionTarget_RenameLandedOnDivergedDefault(t *testing.T) {
+	for _, tc := range []struct {
+		name, live string
+		landed     bool
+		wantError  bool
+	}{
+		{"positive pending rename", "REUSE lint", false, false},
+		{"negative landed with stale protection", "REUSE lint", true, true},
+		{"boundary landed with current protection", "Licence / REUSE lint", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &forgeStub{legacy: classicProtection("CI", tc.live)}
+			f := protectedFixture(t, false, "", stub)
+			f.commitWorkflows(t, map[string]string{"licence.yml": prJobWorkflow("REUSE lint")})
+			f.recordOriginMain(t)
+			f.commitWorkflows(t, map[string]string{"licence.yml": prJobWorkflow("Licence / REUSE lint")})
+			if tc.landed {
+				f.recordSquashedOriginMain(t)
+			}
+			out, err := f.audit(t)
+			if !tc.wantError && err != nil {
+				t.Fatalf("valid protection failed: %v\n%s", err, out)
+			}
+			if tc.wantError {
+				mustErrContain(t, err, "missing: Licence / REUSE lint")
+			}
+			if tc.landed {
+				mustContain(t, out, "[INFO]", `"REUSE lint" -> "Licence / REUSE lint"`, "already declares")
+			}
+		})
+	}
+}
+
+func TestAuditProtectionTarget_RenameMergeQueueSelection(t *testing.T) {
+	queued := func(name string) string {
+		return strings.Replace(prJobWorkflow(name), "on:\n  pull_request:", "on: [pull_request, merge_group]", 1)
+	}
+	for _, tc := range []struct {
+		name       string
+		mergeQueue bool
+		before     string
+		after      string
+		want       int
+	}{
+		{"positive queue ignores PR renames", true, queued("Build"), queued("Compile"), 1},
+		{"negative no queue sees both renames", false, queued("Build"), queued("Compile"), 0},
+		{"boundary queue only on old side", true, queued("Build"), prJobWorkflow("Compile"), 0},
+		{"boundary queue only on new side", true, prJobWorkflow("Build"), queued("Compile"), 0},
+		{"boundary PR only", true, prJobWorkflow("Build"), prJobWorkflow("Compile"), 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := protectedFixture(t, false, "", &forgeStub{})
+			f.commitWorkflows(t, map[string]string{"queue.yml": tc.before, "pr.yml": prJobWorkflow("Old PR")})
+			f.recordOriginMain(t)
+			f.commitWorkflows(t, map[string]string{"queue.yml": tc.after, "pr.yml": prJobWorkflow("New PR")})
+			manifest, err := config.LoadManifest(f.manifestPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			policy := declaredProtection(false)
+			policy.MergeQueue = tc.mergeQueue
+			target, _, err := auditProtectionTarget(t.Context(), f.dir, manifest, policy)
+			if err != nil || len(target.renames) != tc.want {
+				t.Fatalf("renames = %+v, %v; want %d", target.renames, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestAuditLiveBranchProtection_RenameWindowBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name, workflow string
+		live           []string
+		advanceBase    bool
+		missing        string
+	}{
+		{"old requirement absent", prJobWorkflow("Licence / REUSE lint"), []string{"CI"}, false, "Licence / REUSE lint"},
+		{"unrelated live check", prJobWorkflow("Licence / REUSE lint"), []string{"CI", "Lint"}, false, "Licence / REUSE lint"},
+		{"unrelated job identity", strings.Replace(prJobWorkflow("Different"), "  ci:", "  other:", 1), []string{"CI", "REUSE lint"}, false, "Different"},
+		{"window ended", prJobWorkflow("Licence / REUSE lint"), []string{"CI", "REUSE lint"}, true, "Licence / REUSE lint"},
+		{"rename plus missing check", prJobWorkflow("Licence / REUSE lint") + "  extra:\n    name: Extra\n    runs-on: ubuntu-latest\n    steps:\n      - run: make\n", []string{"CI", "REUSE lint"}, false, "Licence / REUSE lint, Extra"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), tc.live, "active")}
+			f := protectedFixture(t, false, "", stub)
+			f.commitWorkflows(t, map[string]string{"licence.yml": prJobWorkflow("REUSE lint")})
+			f.recordOriginMain(t)
+			f.commitWorkflows(t, map[string]string{"licence.yml": tc.workflow})
+			if tc.advanceBase {
+				f.recordOriginMain(t)
+			}
+			_, err := f.audit(t)
+			mustErrContain(t, err, "missing: "+tc.missing)
+			if writes := stub.recorded(); len(writes) != 0 {
+				t.Fatalf("audit wrote to forge: %v", writes)
+			}
+		})
+	}
+}
+
+func TestAuditLiveBranchProtection_PendingReusableContextRename(t *testing.T) {
+	stub := &forgeStub{legacy: classicProtection("CI", "REUSE lint")}
+	f := protectedFixture(t, false, "", stub)
+	f.commitWorkflows(t, map[string]string{"reuse.yml": prJobWorkflow("REUSE lint")})
+	f.recordOriginMain(t)
+	f.commitWorkflows(t, map[string]string{"reuse.yml": "on: [pull_request]\njobs:\n  licence:\n    name: Licence\n    uses: " + forge.PluranoHoristesLicenceAction + "@" + forge.PluranoHoristesLicenceWorkflowSHA + "\n"})
+	out, err := f.audit(t)
+	if err != nil {
+		t.Fatalf("reusable context rename failed: %v\n%s", err, out)
+	}
+	mustContain(t, out, `pending required status check rename: "REUSE lint" -> "Licence / REUSE lint"`)
+	if writes := stub.recorded(); len(writes) != 0 {
+		t.Fatalf("audit wrote to forge: %v", writes)
+	}
+}
+
+func TestAuditLiveBranchProtection_StaleHeadDoesNotProveRename(t *testing.T) {
+	stub := &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI", "Licence / REUSE lint"}, "active")}
+	f := protectedFixture(t, false, "", stub)
+	f.commitWorkflows(t, map[string]string{"reuse.yml": prJobWorkflow("REUSE lint")})
+	old, err := runFixtureGit(t, f.dir, f.gitEnv, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.commitWorkflows(t, map[string]string{"reuse.yml": prJobWorkflow("Licence / REUSE lint")})
+	f.recordOriginMain(t)
+	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "checkout", "--detach", strings.TrimSpace(old)); err != nil {
+		t.Fatalf("checkout stale HEAD: %v (%s)", err, out)
+	}
+	_, err = f.audit(t)
+	mustErrContain(t, err, "missing: REUSE lint")
+}
+
+// A newly declared requirement without a renamed predecessor remains a real mismatch.
+func TestAuditLiveBranchProtection_Negative_NewCheckWithoutRenameFails(t *testing.T) {
 	stub := &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active")}
 	f := protectedFixture(t, false, "", stub)
 	f.recordOriginMain(t)
 	f.commitWorkflows(t, map[string]string{"lint.yml": prJobWorkflow("Lint")})
 	out, err := f.audit(t)
-	if err != nil {
-		t.Fatalf("a check this branch adds failed the audit: %v\n%s", err, out)
+	mustErrContain(t, err, "Required status checks: declared 2, live 1 of 2 required; missing: Lint")
+	if strings.Contains(out, "pending required status check rename") {
+		t.Fatal("an added check was mistaken for a rename")
 	}
-	mustContain(t, out, "[INFO] Live branch protection of main: status checks compared with the ones origin/main (",
-		"[INFO] Live branch protection of main: not compared yet, as origin/main does not report them: Lint. "+
-			"Once they are on main, 'praetorctl sync --remote' requires them.",
-		"[PASS] Live branch protection of main compared with the forge")
 }
 
-// Negative (#159 review): a check origin/main reports that the live protection does not require
-// fails the audit, even when this checkout no longer has the job: the branch GitHub protects is the
-// default branch, not this checkout.
-func TestAuditLiveBranchProtection_Negative_DefaultBranchCheckNotRequiredDrifts(t *testing.T) {
+// A deleted requirement on the fetched base no longer defines the declaration at HEAD.
+func TestAuditLiveBranchProtection_Positive_RemovedCheckDoesNotDefineDeclaration(t *testing.T) {
 	stub := &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active")}
 	f := protectedFixture(t, false, "", stub)
 	f.commitWorkflows(t, map[string]string{"api.yml": prJobWorkflow("API")})
 	f.recordOriginMain(t)
 	f.commitWorkflows(t, map[string]string{"api.yml": ""})
 	out, err := f.audit(t)
-	mustErrContain(t, err, "[FAIL] Live branch protection of main on GitHub does not match the declared policy")
-	mustErrContain(t, err, "  Required status checks: declared 2, live 1 of 2 required; missing: API")
-	if strings.Contains(out, "not compared yet") {
-		t.Fatalf("a check this checkout removed was reported as one it adds:\n%s", out)
+	if err != nil {
+		t.Fatalf("removed declaration failed: %v\n%s", err, out)
 	}
 }
 
@@ -531,9 +694,7 @@ func TestAuditLiveBranchProtection_Boundary_DefaultBranchNotFetched(t *testing.T
 	if err != nil {
 		t.Fatalf("a checkout without origin/main failed the audit: %v\n%s", err, out)
 	}
-	mustContain(t, out, "[INFO] Live branch protection of main: origin/main is not in this checkout, so the status checks "+
-		"are compared with the ones this checkout's workflows report.",
-		"[PASS] Live branch protection of main compared with the forge")
+	mustContain(t, out, "[PASS] Live branch protection of main compared with the forge")
 
 	broken := protectedFixture(t, false, "", &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active")})
 	writeFixtureFile(t, broken.dir, ".github/workflows/broken.yml", "on: [pull_request\n")
@@ -544,7 +705,7 @@ func TestAuditLiveBranchProtection_Boundary_DefaultBranchNotFetched(t *testing.T
 	}
 	gitCommitAll(t, broken.dir, broken.gitEnv, "repair the workflow")
 	_, err = broken.audit(t)
-	mustErrContain(t, err, "[FAIL] Live branch protection audit failed: discover the required status checks of origin/main: workflow broken.yml")
+	mustErrContain(t, err, "[FAIL] Live branch protection audit failed: discover pending status check renames from origin/main: workflow broken.yml")
 }
 
 // recordUnadoptedOriginMain points refs/remotes/origin/main at a commit with an empty tree, as the
@@ -693,10 +854,7 @@ func TestAuditLiveBranchProtection_Boundary_UnpushedDefaultBranchIsNotCompared(t
 	}
 }
 
-// Boundary (#159 review): a workflow of origin/main the checkout does not hold, as in a blobless
-// partial clone, is not fetched: the checks are this checkout's, and a note names that
-// substitution and the workflow. With the object present the same checkout drifts
-// (TestAuditLiveBranchProtection_Negative_DefaultBranchCheckNotRequiredDrifts).
+// An absent base workflow prevents a rename allowance, without changing declared contexts.
 func TestAuditLiveBranchProtection_Boundary_AbsentDefaultBranchWorkflowIsNamed(t *testing.T) {
 	stub := &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active")}
 	f := protectedFixture(t, false, "", stub)
@@ -719,9 +877,8 @@ func TestAuditLiveBranchProtection_Boundary_AbsentDefaultBranchWorkflowIsNamed(t
 	if err != nil {
 		t.Fatalf("an absent default branch workflow failed the audit: %v\n%s", err, out)
 	}
-	mustContain(t, out, "[INFO] Live branch protection of main: the workflows of origin/main (",
-		") are not all in this checkout, as in a partial clone (workflow api.yml at commit ",
-		"), so the status checks are compared with the ones this checkout's workflows report.",
+	mustContain(t, out, "[INFO] Pending status check renames not evaluated: origin/main (workflow api.yml at commit ",
+		"declared checks remain compared.",
 		"[PASS] Live branch protection of main compared with the forge")
 }
 

@@ -27,6 +27,8 @@ const (
 	ProtectionStricter ProtectionVerdict = "stricter"
 	// ProtectionNotRequired means the property is neither declared nor enforced.
 	ProtectionNotRequired ProtectionVerdict = "not-required"
+	// ProtectionPending means one renamed context still requires its previous name live.
+	ProtectionPending ProtectionVerdict = "pending"
 )
 
 // ProtectionFinding is one property compared: what the resolved policy declares, what the
@@ -233,6 +235,13 @@ func decodeRuleParameters(raw json.RawMessage, out any) error {
 // repository has the ruleset praetor writes, its enforcement is compared too
 // (rulesetEnforcementFinding).
 func EvaluateBranchProtection(policy config.BranchProtectionPolicy, contexts []string, live *LiveBranchProtection) ([]ProtectionFinding, error) {
+	return EvaluateBranchProtectionWithRenames(policy, contexts, live, nil)
+}
+
+// EvaluateBranchProtectionWithRenames permits a proven context rename while the old name is
+// still required live. Other missing checks and policy drift remain failures. Callers must
+// obtain renames from RequiredStatusContextRenames; plans and writes use the strict evaluator.
+func EvaluateBranchProtectionWithRenames(policy config.BranchProtectionPolicy, contexts []string, live *LiveBranchProtection, renames []StatusContextRename) ([]ProtectionFinding, error) {
 	if live == nil {
 		return nil, errors.New("evaluate branch protection: no live protection was read")
 	}
@@ -260,7 +269,7 @@ func EvaluateBranchProtection(policy config.BranchProtectionPolicy, contexts []s
 		flagFinding("Linear history", policy.EnforceLinearHistory, e.linearHistory),
 		flagFinding("Deletion blocked", true, e.deletionBlocked),
 		flagFinding("Force pushes blocked", true, e.forcePushBlocked),
-		checksFinding(contexts, e.checks),
+		checksFindingWithRenames(contexts, e.checks, renames),
 	}
 	if finding, compared := rulesetEnforcementFinding(live); compared {
 		findings = append(findings, finding)
@@ -271,6 +280,27 @@ func EvaluateBranchProtection(policy config.BranchProtectionPolicy, contexts []s
 	}
 	findings = append(findings, prFindings...)
 	return append(findings, MergeQueueRulesetFindings(policy, live)...), nil
+}
+
+// checksFindingWithRenames retains the declared names while reporting a single pending rename.
+// A removed old requirement never covers a new check; neither does a still-declared old name.
+func checksFindingWithRenames(contexts []string, live map[string][]string, renames []StatusContextRename) ProtectionFinding {
+	if len(renames) != 1 {
+		return checksFinding(contexts, live)
+	}
+	rename := renames[0]
+	if len(live[rename.Old]) == 0 || len(live[rename.New]) > 0 ||
+		!slices.Contains(contexts, rename.New) || slices.Contains(contexts, rename.Old) {
+		return checksFinding(contexts, live)
+	}
+	aliased := maps.Clone(live)
+	aliased[rename.New] = live[rename.Old]
+	finding := checksFinding(contexts, aliased)
+	finding.Live += fmt.Sprintf("; pending required status check rename: %q -> %q", rename.Old, rename.New)
+	if finding.Verdict == ProtectionEnforced {
+		finding.Verdict = ProtectionPending
+	}
+	return finding
 }
 
 // rulesetEnforcementFinding compares the enforcement of the ruleset praetor writes

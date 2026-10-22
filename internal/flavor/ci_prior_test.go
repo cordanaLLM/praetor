@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/flavor"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -72,7 +73,7 @@ func applyOver(t *testing.T, name, before string, force bool) (*flavor.ApplyRepo
 	if err := os.WriteFile(workflow, []byte(before), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	report, err := flavor.ApplyFlavor(t.Context(), repo, name, force)
+	report, err := flavor.ApplyFlavor(testsupport.DeadlineContext(t), repo, name, force)
 	if err != nil {
 		t.Fatalf("apply %s: %v", name, err)
 	}

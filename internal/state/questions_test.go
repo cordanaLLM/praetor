@@ -1,12 +1,16 @@
 package state
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // legacyQuestionsMD is QUESTIONS.md exactly as the previous writer produced it.
@@ -214,25 +218,58 @@ func TestAddQuestion_Negative_RefusesInvalidFields(t *testing.T) {
 	}
 }
 
+func TestAddQuestionContext_Positive_RoundTrip(t *testing.T) {
+	root := t.TempDir()
+	ctx := testsupport.DeadlineContext(t)
+	want := hostileQuestion()
+	added, err := AddQuestionContext(ctx, root, want)
+	if err != nil {
+		t.Fatalf("AddQuestionContext: %v", err)
+	}
+	if added.ID != "Q-001" || added.Status != "pending" || added.CreatedAt.IsZero() {
+		t.Fatalf("question defaults missing: %+v", added)
+	}
+	want.ID, want.Status, want.CreatedAt = added.ID, added.Status, added.CreatedAt
+	got, err := ListQuestionsContext(ctx, root, "all")
+	if err != nil || len(got) != 1 || !reflect.DeepEqual(got[0], want) {
+		t.Fatalf("question not preserved: got %+v, want %+v, error %v", got, want, err)
+	}
+}
+
+func TestAddQuestionContext_Negative_CancelledContext(t *testing.T) {
+	root := t.TempDir()
+	ctx, cancel := context.WithCancel(testsupport.DeadlineContext(t))
+	cancel()
+	added, err := AddQuestionContext(ctx, root, QuestionEntry{Question: "refuse cancelled write"})
+	if !errors.Is(err, context.Canceled) || added != nil {
+		t.Fatalf("cancelled context must refuse question: added %+v, error %v", added, err)
+	}
+	got, err := ListQuestionsContext(testsupport.DeadlineContext(t), root, "all")
+	if err != nil || len(got) != 0 {
+		t.Fatalf("cancelled write changed ledger: %+v, %v", got, err)
+	}
+}
+
 func TestAddQuestion_Boundary_LimitsAreInclusive(t *testing.T) {
 	root := t.TempDir()
+	ctx := testsupport.DeadlineContext(t)
 	options := make([]string, maxQuestionOptions)
 	for i := range options {
 		options[i] = strings.Repeat("o", i+1)
 	}
 	q := QuestionEntry{Question: strings.Repeat("q", maxLedgerFieldBytes), Context: strings.Repeat("c", maxLedgerFieldBytes), Options: options}
-	if _, err := AddQuestion(root, q); err != nil {
+	if _, err := AddQuestionContext(ctx, root, q); err != nil {
 		t.Fatalf("fields exactly at the bound must be accepted: %v", err)
 	}
-	got, err := ListQuestions(root, "all")
+	got, err := ListQuestionsContext(ctx, root, "all")
 	if err != nil || len(got) != 1 || len(got[0].Options) != maxQuestionOptions || len(got[0].Context) != maxLedgerFieldBytes {
 		t.Fatalf("boundary record not read back: %v", err)
 	}
 	// An empty options list is a question with no preset answers, not one blank option.
-	if _, err := AddQuestion(root, QuestionEntry{Question: "open", Options: []string{}}); err != nil {
+	if _, err := AddQuestionContext(ctx, root, QuestionEntry{Question: "open", Options: []string{}}); err != nil {
 		t.Fatal(err)
 	}
-	open, err := ListQuestions(root, "all")
+	open, err := ListQuestionsContext(ctx, root, "all")
 	if err != nil || len(open) != 2 || len(open[1].Options) != 0 {
 		t.Fatalf("empty options misread: %+v, %v", open, err)
 	}
