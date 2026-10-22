@@ -155,10 +155,11 @@ func TestAuditCheckpointBundle_SourceRemedy(t *testing.T) {
 	}{
 		{"positive selected source", source, "", "praetorctl adopt --lock-source-root=" + source, "this release's text"},
 		{"negative edited selected source", source, edited, "praetorctl adopt --lock-source-root=" + source, "this release's text"},
-		{"boundary release", "", edited, "this release's text, then run praetorctl adopt.", "--lock-source-root"},
+		{"boundary release", "", edited, "this release's text, then run praetorctl adopt --lock-source-root=REVIEWED_PRAETOR_CHECKOUT.", "--force"},
+		{"positive running release", "", "", "praetorctl adopt --lock-source-root=REVIEWED_PRAETOR_CHECKOUT (no --force needed)", "the selected source bundle's"},
 		{"negative mixed edited selected source", source, mixed, "adoption keeps the bundle while " + checkpointCommon, "no --force needed"},
-		{"boundary mixed edited release", "", mixed, "this release's text, then run praetorctl adopt.", "no --force needed"},
-		{"negative CRLF edited release", "", crlfText(commonLF + "# local edit\n"), "this release's text, then run praetorctl adopt.", "no --force needed"},
+		{"boundary mixed edited release", "", mixed, "this release's text, then run praetorctl adopt --lock-source-root=REVIEWED_PRAETOR_CHECKOUT.", "no --force needed"},
+		{"negative CRLF edited release", "", crlfText(commonLF + "# local edit\n"), "this release's text, then run praetorctl adopt --lock-source-root=REVIEWED_PRAETOR_CHECKOUT.", "no --force needed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			texts := map[string]string{checkpointScript: firstPriorCheckpointText(t, checkpointScript)}

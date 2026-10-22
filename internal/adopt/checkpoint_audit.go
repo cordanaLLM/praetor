@@ -58,9 +58,10 @@ func AuditCheckpointBundleWithSource(ctx context.Context, rootDir, sourceRoot st
 	if err != nil {
 		return nil, err
 	}
-	command, reference := "praetorctl adopt", "this release's text"
+	command := "praetorctl adopt --lock-source-root=REVIEWED_PRAETOR_CHECKOUT"
+	reference := "this release's text"
 	if sourceRoot != "" {
-		command += " --lock-source-root=" + sourceRoot
+		command = "praetorctl adopt --lock-source-root=" + sourceRoot
 		reference = "the selected source bundle's text"
 	}
 	remedy := "run " + command + " (no --force needed) to refresh it."

@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -207,6 +209,78 @@ func decodeCheckpointReport(data string) (checkpointReport, error) {
 	return report, nil
 }
 
+// checkpointRefreshCommand is the command named when the adopted checkpoint evaluator lacks
+// --prepare-session support.
+const checkpointRefreshCommand = "praetorctl adopt --lock-source-root=REVIEWED_PRAETOR_CHECKOUT"
+
+// checkpointInspectBudget bounds the read of the adopted checkpoint script.
+const checkpointInspectBudget = 5 * time.Second
+
+// checkpointPrepareSessionArg and checkpointPrepareSessionArgSingle are the exact argparse
+// definitions accepted by the allow-list check for --prepare-session support.
+const (
+	checkpointPrepareSessionArg       = `parser.add_argument("--prepare-session", action="store_true")`
+	checkpointPrepareSessionArgSingle = `parser.add_argument('--prepare-session', action='store_true')`
+)
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
+}
+
+func checkpointRefreshError(script string) error {
+	return fmt.Errorf("%s lacks --prepare-session; run %s to refresh", script, checkpointRefreshCommand)
+}
+
+func checkpointSupportsPrepareSession(data []byte) bool {
+	text := string(data)
+	return strings.Contains(text, checkpointPrepareSessionArg) ||
+		strings.Contains(text, checkpointPrepareSessionArgSingle)
+}
+
+func readAdoptedScript(ctx context.Context, path string) (data []byte, err error) {
+	inspectCtx, cancel := context.WithTimeout(ctx, checkpointInspectBudget)
+	defer cancel()
+	if err := inspectCtx.Err(); err != nil {
+		return nil, err
+	}
+	// #nosec G304 -- path is the adopted evaluator script inside the governed repository.
+	file, openErr := os.Open(path)
+	if openErr != nil {
+		return nil, openErr
+	}
+	defer func() { err = errors.Join(err, file.Close()) }()
+	data, readErr := io.ReadAll(io.LimitReader(contextReader{ctx: inspectCtx, reader: file}, checkpointOutputLimit+1))
+	if readErr != nil {
+		return nil, readErr
+	}
+	if len(data) > checkpointOutputLimit {
+		return nil, util.ErrFileTooLarge
+	}
+	return data, inspectCtx.Err()
+}
+
+func verifyCheckpointEvaluator(ctx context.Context, script string) error {
+	data, err := readAdoptedScript(ctx, script)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return err
+		}
+		return checkpointRefreshError(script)
+	}
+	if !checkpointSupportsPrepareSession(data) {
+		return checkpointRefreshError(script)
+	}
+	return nil
+}
+
 // checkpointFailureReason appends bounded stderr to a run error; otherwise it prefers
 // trimmed stderr over the marker error.
 func checkpointFailureReason(runErr, markerErr error, result util.CommandBytes) string {
@@ -224,6 +298,10 @@ func checkpointFailureReason(runErr, markerErr error, result util.CommandBytes) 
 func checkpointSessionContext(ctx context.Context, argv []string, root, event string, canonical Canonical) (context.Context, error) {
 	hash := ""
 	if strings.TrimFunc(canonical.ConversationID, isPythonSpace) != "" {
+		script := checkpointScript(root, "checkpoint.py")
+		if err := verifyCheckpointEvaluator(ctx, script); err != nil {
+			return nil, fmt.Errorf("checkpoint session preparation: %w", err)
+		}
 		payload, err := json.Marshal(map[string]any{
 			"session_id": canonical.ConversationID, "tool_name": canonical.Tool,
 			"tool_input": canonical.CheckpointInput,
@@ -231,10 +309,13 @@ func checkpointSessionContext(ctx context.Context, argv []string, root, event st
 		if err != nil {
 			return nil, fmt.Errorf("checkpoint session payload: %w", err)
 		}
-		result, runErr := runInterpreter(ctx, argv, root, checkpointScript(root, "checkpoint.py"),
+		result, runErr := runInterpreter(ctx, argv, root, script,
 			[]string{"--event", event, "--prepare-session"}, payload)
 		line, markerErr := extractMarker(result.Stdout, "PRAETOR_CHECKPOINT_SESSION=")
 		if runErr != nil || markerErr != nil {
+			if strings.Contains(string(result.Stderr), "unrecognized arguments") || strings.Contains(string(result.Stdout), "unrecognized arguments") {
+				return nil, fmt.Errorf("checkpoint session preparation: %w", checkpointRefreshError(script))
+			}
 			return nil, fmt.Errorf("checkpoint session preparation: %s", checkpointFailureReason(runErr, markerErr, result))
 		}
 		decoded, err := hex.DecodeString(line)
