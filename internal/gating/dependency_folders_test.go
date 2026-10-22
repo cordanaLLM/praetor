@@ -102,7 +102,7 @@ func TestRunGatedPipeline_Negative_DeclaredVerifyFailsWhenWritingIntoDependencyF
 // Negative: a real test failure (verify-all exits 1) with dependencies present is still refused.
 func TestRunGatedPipeline_Negative_DeclaredVerifyRealTestFailureWithDependenciesPresent(t *testing.T) {
 	requireMake(t)
-	dir := createIgnoredDependencyRepo(t, "test -f node_modules/x/ok && exit 1")
+	dir := createIgnoredDependencyRepo(t, "@test -f node_modules/x/ok || exit 73; echo planted-test-failure >&2; exit 1")
 
 	depFile := filepath.Join(dir, "node_modules", "x", "ok")
 	writeFile(t, depFile, "present\n")
@@ -115,6 +115,20 @@ func TestRunGatedPipeline_Negative_DeclaredVerifyRealTestFailureWithDependencies
 	}
 	if !recipeStatus.MatchString(got.Message) {
 		t.Errorf("reason %q does not name recipe status", got.Message)
+	}
+	if !strings.Contains(got.Message, "planted-test-failure") {
+		t.Errorf("reason %q does not prove dependencies were read before the test failed", got.Message)
+	}
+}
+
+// Negative: dependency reuse belongs to the stage; an ordinary checkout still needs its dependencies.
+func TestDeclaredVerify_Negative_AbsentDependenciesOutsideGate(t *testing.T) {
+	requireMake(t)
+	t.Setenv(DeclaredVerifyGuardEnv, "")
+	dir := createIgnoredDependencyRepo(t, "test -f node_modules/x/ok")
+	_, err := util.RunCommand(t.Context(), dir, "make", declaredVerifyTarget)
+	if err == nil || !recipeStatus.MatchString(err.Error()) {
+		t.Fatalf("make verify-all without dependencies: %v; want a real recipe failure", err)
 	}
 }
 

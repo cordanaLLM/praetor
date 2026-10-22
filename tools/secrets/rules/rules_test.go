@@ -78,9 +78,9 @@ func TestCategoryExpiryProblem_3D(t *testing.T) {
 		t.Errorf("expected error on category Z, got empty")
 	}
 
-	// Uncategorized with entered
-	if prob := rules.CategoryExpiryProblem("", entered, expB, testToday); prob != "entered requires a category" {
-		t.Errorf("expected 'entered requires a category', got: %s", prob)
+	// Uncategorized with entered retains the 90-day interval
+	if prob := rules.CategoryExpiryProblem("", entered, expB, testToday); prob != "" {
+		t.Errorf("expected uncategorized expiry anchored to entered, got: %s", prob)
 	}
 }
 

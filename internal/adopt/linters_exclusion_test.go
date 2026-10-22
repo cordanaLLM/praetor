@@ -130,7 +130,7 @@ linters:
 		t.Fatal("expected category C interval violation to fail")
 	}
 	msg := err.Error()
-	for _, want := range []string{".golangci.yml", "gocyclo", "internal/util/", "category C requires expires 2026-10-11 (entered 2026-10-01 + 10 days)"} {
+	for _, want := range []string{".golangci.yml", "gocyclo", "internal/util/", "category C requires expires on or before 2026-10-11 (10 days after entered 2026-10-01)"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error %q missing expected part %q", msg, want)
 		}

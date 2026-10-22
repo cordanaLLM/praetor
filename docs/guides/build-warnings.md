@@ -153,7 +153,7 @@ exceptions:
 lane of that workflow. The audit prints each excused lane under the entry's reason and expiry and
 passes. An expired entry fails like a missing one. An entry whose workflow has no failing lane,
 or that is left when no workflow builds anything, is stale and fails until it is removed. The
-list's general rules, one line of reason and an expiry at most 90 days ahead, are in
+list's general rules, one line of reason and an expiry within the category interval (A: stated, at most 90 days; B: 3 days, C: 10 days, D: 120 days; uncategorized: 90 days), are in
 [clang-tidy coverage: Exceptions](clang-tidy-coverage.md#exceptions).
 
 ## Reading the output

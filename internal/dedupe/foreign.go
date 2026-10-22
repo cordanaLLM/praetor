@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -447,6 +448,19 @@ func filterDuplicateGroups(groups []DuplicateGroup, mainRoot string, isCrossRoot
 		}
 	}
 	return filtered
+}
+
+func classifyForeignDuplicates(mainRoot string, exceptions []config.Exception, today time.Time, used []bool, report *DedupeReport) {
+	groups := report.ForeignDuplicates
+	report.ForeignDuplicates = nil
+	for i := 0; i < len(groups) && i < maxDuplicatePairs; i++ {
+		group, allExcepted := classifyDuplicateGroup(groups[i], mainRoot, exceptions, today, used)
+		if allExcepted {
+			report.ForeignExcepted = append(report.ForeignExcepted, group)
+		} else {
+			report.ForeignDuplicates = append(report.ForeignDuplicates, group)
+		}
+	}
 }
 
 func shouldKeepGroup(g DuplicateGroup, mainRoot string) bool {

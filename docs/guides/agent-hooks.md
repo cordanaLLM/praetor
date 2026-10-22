@@ -1230,7 +1230,11 @@ ends the call with exit 1 and the error on stderr instead of holding it open. Se
 **No interpreter resolves.** `pre-edit` and `stop` fail closed (deny); `post-tool` can only
 annotate, so it is a stated skip. A `stop` deny after a Python failure reads `checkpoint
 evaluator unavailable: no Python interpreter` the same way a due checkpoint reads `Praetor
-checkpoint due: …`; both are `[BLOCKED BY HISS]` on `claude`/`codex`/`gemini`.
+checkpoint due: …`; both are `[BLOCKED BY HISS]` on `claude`/`codex`/`gemini`. A
+checkpoint evaluator that runs and fails reads `Praetor checkpoint could not be verified:
+<exit status>: <its stderr>`: the script's stderr stays beside the run error, trimmed and cut
+at 64 KiB with a truncation marker (`checkpointFailureReason` through `util.CommandDiagnostic`;
+`TestRunStopFailedScriptIncludesStderr`, `TestCheckpointFailureReason`).
 
 **`stop` state verification.** Besides the checkpoint, which runs on every pass on its own, `stop` calls the Go state-sync
 verifier (`internal/state.VerifyStateSync`, the function behind `praetorctl state sync

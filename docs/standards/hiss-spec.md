@@ -144,7 +144,7 @@ Warnings are treated as fatal errors across all operational layers:
   `Cargo.toml`'s `[lints]` and which sources the repository holds; what a make target, script or
   other build file runs is not read.
 - A lane that cannot use the form yet is declared in the manifest's exceptions list (rule
-  `HISS-10`, the workflow, a reason and an expiry at most 90 days ahead); an expired entry fails
+  `HISS-10`, the workflow, a reason and an expiry within the category interval (A: stated, at most 90 days; B: 3 days, C: 10 days, D: 120 days; uncategorized: 90 days)); an expired entry fails
   like a missing one.
 
 ---
@@ -164,7 +164,7 @@ Every dependency manifest must be cryptographically pinned:
   ([How the audit measures the SLSA level](../guides/releasing.md#how-the-audit-measures-the-slsa-level)).
   The measurement reads workflow files only; published attestations are not checked.
 - A gap the release workflows cannot close yet is declared in the manifest's exceptions list (rule
-  `HISS-11`, the workflow the measurement read, a reason and an expiry at most 90 days ahead): the
+  `HISS-11`, the workflow the measurement read, a reason and an expiry within the category interval (A: stated, at most 90 days; B: 3 days, C: 10 days, D: 120 days; uncategorized: 90 days)): the
   audit prints it with the declared and measured values and passes until the entry expires, and
   an expired entry fails like a missing one
   ([Declaring a gap](../guides/releasing.md#declaring-a-gap)).
@@ -237,7 +237,7 @@ CI pipelines evaluate the git diff before choosing which gates to run:
 - Code is every extension the HISS scanner reads (`hiss.SupportsExtension`: C, C++ with `.h`, `.hpp` and `.hh` headers, Objective-C++ `.mm` read by the C/C++ rules, CUDA, HIP, Go, Python, Rust, JavaScript, TypeScript, Svelte and shell scripts with `.sh` or `.bash`; `.m` is listed as unscanned objective-c where a marker shows the repository is Objective-C), plus Java, Dart, Protocol Buffers, Zig and shading-language sources: GLSL (`.glsl` and the glslang stage suffixes such as `.vert`, `.frag`, `.comp`), HLSL, WGSL and Metal. A code change runs tests, linters and security without context sync. Files under a `test/`, `tests/` or `benches/` directory at any depth, such as a Cargo crate's `tests/`, are tests; the directory names no file kind, so a script or fixture there still fails closed (`internal/cifilter/kinds_test.go`). A file the scanner claims only from its contents (an extensionless script, a systemd unit, an Ansible playbook) is not code here: a diff classifier reads paths, not bytes, so it keeps failing closed or classifying as configuration (`TestUnclassifiedFileKindsRunHeavyGates`).
 - `overrides.ci` in `.standards.yaml` governs the filter. Setting `diff_aware_filtering: false` runs the full matrix for every change; setting `skip_heavy_gates_on_docs_or_state: false` runs it for docs-only and state-only changes. A manifest without the block keeps both on; a declared block reads an omitted key as `false`. `ci filter --config` names another manifest (`internal/config/config.go` `EffectiveCI`, `internal/cifilter/changed_files_test.go`).
 - A gate that is skipped by classification is distinct from a gate that fails: the filter's decision is itself part of the recorded evidence.
-- `praetorctl audit` and the MCP `standards_audit` read the repository's own workflow triggers and report, as `[WARN]` lines naming the file and line, a `push` that runs on every branch, a pull request job that runs its work on a draft, and a job that skips a draft with a job-level condition or through a need held back on the draft. The accepted shape is the hosted gates' (`internal/ghworkflow/hostedgate.go`). Findings warn rather than fail because this rule's failure action rejects nothing. A workflow that must run everywhere is declared in the exceptions list (rule `HISS-18`, its path, a reason and an expiry at most 90 days ahead) ([Workflow trigger audit](../guides/workflow-triggers.md)).
+- `praetorctl audit` and the MCP `standards_audit` read the repository's own workflow triggers and report, as `[WARN]` lines naming the file and line, a `push` that runs on every branch, a pull request job that runs its work on a draft, and a job that skips a draft with a job-level condition or through a need held back on the draft. The accepted shape is the hosted gates' (`internal/ghworkflow/hostedgate.go`). Findings warn rather than fail because this rule's failure action rejects nothing. A workflow that must run everywhere is declared in the exceptions list (rule `HISS-18`, its path, a reason and an expiry within the category interval (A: stated, at most 90 days; B: 3 days, C: 10 days, D: 120 days; uncategorized: 90 days)) ([Workflow trigger audit](../guides/workflow-triggers.md)).
 
 ### HISS-19: Reuse Before Writing
 
@@ -249,7 +249,7 @@ One behavior has exactly one implementation:
 - The native AST scan reads Go only. Polyglot code clone detection across other languages (C, C++, CUDA, Python, Rust, shell, YAML workflows, and other languages listed in `Unscanned`) is delegated to the pinned clone detector `jscpd` 5.4.1 (`tools/jscpd/package.json`). The detector binary is resolved from `PRAETOR_JSCPD_BIN` when set, else `jscpd` on `PATH`, verified under a 10s context timeout to output exactly `jscpd 5.4.1`; if unavailable or mismatched, the foreign scan is skipped with the reason recorded in `ForeignSkipped` while the Go AST scan continues. Cross-root clone detection is supported via `--across DIR` (repeatable), passing all roots to one `jscpd` run and retaining groups spanning multiple roots plus groups in the main root. Languages scanned by `jscpd` enter `ForeignScanned` (reported, not gated); `Not Scanned` (`Unscanned`) keeps naming every language the gate does not judge, and `partial: Go sources only` remains set while `Unscanned` is non-empty. Foreign duplicate groups are reported under `Foreign Duplicate Blocks` (reported, not gated), but do not alter `Passed` or `CleanlinessScore` in this change (gating them requires a baseline). A repository with no Go source gets no verdict at all (`Unscanned` and `Partial` in `internal/dedupe/dedupe.go`; `TestScanRepo_Positive_PolyglotVerdictIsPartial` in `internal/dedupe/coverage_test.go`). `--json` prints the same report as JSON.
 - The clone key renames a function's parameters, receiver, results and locals by first use before hashing (`cloneKey` in `internal/dedupe/dedupe.go`), so a copy whose locals were renamed still matches, while a body that reads a different local or field does not. Bodies under three statements or five printed lines are not hashed.
 - `praetorctl dedupe cadence` makes a sweep due after 20 commits, or once 1,000 Go production lines or 10 Go production files have been added since the recorded sweep, whichever comes first (`--threshold`, `--added-lines`, `--added-files`; `CheckCadence` in `internal/dedupe/cadence.go`).
-- Duplication that is genuinely unavoidable (such as toolchain-generated boilerplate that cannot be unified) is declared in the top-level `exceptions` list of `.standards.yaml` with rule `HISS-19`. The entry names one repository file by `path` (a glob is refused), a reason, and an expiry at most 90 days ahead (`config.ExceptionRuleDedupe` in `internal/config/exceptions.go`):
+- Duplication that is genuinely unavoidable (such as toolchain-generated boilerplate that cannot be unified) is declared in the top-level `exceptions` list of `.standards.yaml` with rule `HISS-19`. The entry names one repository file by `path` (a glob is refused), a reason, and an expiry within the category interval (A: stated, at most 90 days; B: 3 days, C: 10 days, D: 120 days; uncategorized: 90 days) (`config.ExceptionRuleDedupe` in `internal/config/exceptions.go`):
 
   ```yaml
   exceptions:
@@ -259,7 +259,21 @@ One behavior has exactly one implementation:
       expires: "2026-11-01"
   ```
 
-  A clone group whose members all sit in declared, unexpired files does not fail the scan and is reported under `Excepted Duplicate Function Blocks` with each entry's reason and expiry. A group with any member outside excepted files still fails (an entry whose file sits only in mixed groups still fails the scan through the mixed group). An expired entry fails like a missing one, naming the entry; an entry that excuses no duplicate function block is stale and fails until removed. The target must exist and be a regular repository file; generated files bearing the canonical `// Code generated ... DO NOT EDIT.` header and directories skipped by the HISS scanner (such as build and target trees) are excluded from the scan automatically.
+  The `category` field takes precedence over a case-insensitive `category D` (or A, B, C) reason prefix. Caps run from `entered` when present, otherwise today; an earlier expiry is allowed. A requires its own explicit expiry without a further cap. See the [exception fields](../guides/clang-tidy-coverage.md#exceptions) and `TestValidateExceptionsCategoryCaps`.
+
+  To excuse one clone group in that file, set `fingerprint` to an 8–64 hexadecimal character prefix of the group's reported `hash` (`dedupe scan --json`). Matching is case-insensitive and accepts odd-length prefixes. To limit locations by line, set `lines: "START-END"`: positive, 1-based, inclusive bounds on the location's **start** line. The block need not end inside the range. Both scopes must match when both are present; omitting both preserves whole-path matching. For example, this entry excuses only starts on lines 10 through 16 in groups whose hash starts with `abcdef12`:
+
+  ```yaml
+  exceptions:
+    - rule: "HISS-19"
+      path: "tests/common/mod.rs"
+      fingerprint: "abcdef12"
+      lines: "10-16"
+      reason: "shared fixture setup awaiting extraction"
+      expires: "2026-11-01"
+  ```
+
+  A clone group is fully excused only when every location matches a live entry, including its scopes. Native groups are reported under `Excepted Duplicate Function Blocks`; foreign groups use `ForeignExcepted` (`foreign_excepted` in JSON). A native group with any unexcused member still fails. An expired scoped entry excuses nothing and annotates only matching locations. An entry is used only when its path and scopes match a duplicate location, even when another location keeps the group reported; a scoped entry that matches nothing remains stale. An unscoped entry keeps the existing whole-path behavior. Distinct scopes may name the same file; identical entries are refused. `TestScanRepo_ScopedExceptions` and `TestLoadManifestDedupeScopeSchemaRoundTrip` cover these contracts. The target must exist and be a regular repository file; generated files bearing the canonical `// Code generated ... DO NOT EDIT.` header and directories skipped by the HISS scanner (such as build and target trees) are excluded from the scan automatically.
 - Unexcused duplication is justified in the commit body, not left silent.
 
 ### HISS-20: Replayable Enforcement Evidence

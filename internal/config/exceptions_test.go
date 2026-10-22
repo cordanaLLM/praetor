@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
+	"go.yaml.in/yaml/v3"
 )
 
 // exceptionsToday is the fixed day the validator tests judge expiry against.
@@ -189,7 +190,7 @@ func TestValidateExceptionsCategories(t *testing.T) {
 		t.Fatalf("an expired declaration must remain valid for its owning gate to fail: %v", err)
 	}
 	base.Category, base.Expires = "C", "2026-10-27"
-	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "category C requires expires 2026-10-26") {
+	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "category C requires expires on or before 2026-10-26") {
 		t.Fatalf("category C with a mismatched expiry = %v", err)
 	}
 	base = validException()
@@ -197,8 +198,12 @@ func TestValidateExceptionsCategories(t *testing.T) {
 		t.Fatalf("uncategorized exception changed behavior: %v", err)
 	}
 	base.Category, base.Entered, base.Expires = "A", "2026-10-06", "2027-01-05"
-	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "more than 90 days") {
+	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "category A requires expires on or before 2027-01-04 (90 days") {
 		t.Fatalf("category A escaped the 90-day cap: %v", err)
+	}
+	base.Expires = "2027-01-04"
+	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err != nil {
+		t.Fatalf("category A stated expiry inside 90 days refused: %v", err)
 	}
 }
 
@@ -209,7 +214,7 @@ func TestException_Problem(t *testing.T) {
 		t.Fatalf("expected valid category C to pass, got: %s", prob)
 	}
 	base.Expires = "2026-10-25"
-	if prob := base.Problem(today); !strings.Contains(prob, "category C requires expires 2026-10-20") {
+	if prob := base.Problem(today); !strings.Contains(prob, "category C requires expires on or before 2026-10-20") {
 		t.Fatalf("expected category C interval failure, got: %s", prob)
 	}
 }
@@ -916,7 +921,7 @@ func TestExceptionMatchesSecret_3D(t *testing.T) {
 
 // Positive: a codespell entry naming one file with category C, entered today and expiring today+10
 // passes. Negative: a glob, a missing category, a tool and an invalid expiry are refused. Boundary:
-// category A with expiry up to 90 days passes.
+// category A with an explicit expiry passes.
 func TestValidateExceptionsCodespell(t *testing.T) {
 	today := exceptionsToday
 	valid := Exception{
@@ -955,5 +960,128 @@ func TestValidateExceptionsCodespell(t *testing.T) {
 	badExpiry.Expires = today.AddDate(0, 0, 15).Format(ExceptionDateLayout)
 	if err := ValidateExceptions([]Exception{badExpiry}, today); err == nil || !strings.Contains(err.Error(), "requires expires") {
 		t.Fatalf("codespell exception with bad expiry accepted: %v", err)
+	}
+}
+
+func TestValidateExceptionsDedupeScope(t *testing.T) {
+	cases := []struct{ name, scope, want string }{
+		{"unscoped", "", ""},
+		{"prefix", "fingerprint: abcdef12", ""},
+		{"odd prefix", "fingerprint: abcdef123", ""},
+		{"full hash", "fingerprint: " + strings.Repeat("a", 64), ""},
+		{"uppercase", "fingerprint: ABCDEF12", ""},
+		{"short hash", "fingerprint: abcdef1", "fingerprint"},
+		{"long hash", "fingerprint: " + strings.Repeat("a", 65), "fingerprint"},
+		{"nonhex hash", "fingerprint: abcdef1z", "fingerprint"},
+		{"whitespace hash", "fingerprint: ' abcdef12'", "fingerprint"},
+		{"single line", "lines: 1-1", ""},
+		{"both scopes", "lines: 10-20\nfingerprint: abcdef12", ""},
+		{"missing end", "lines: '1-'", "lines"},
+		{"missing separator", "lines: '12'", "lines"},
+		{"zero", "lines: 0-10", "lines"},
+		{"negative", "lines: -1-10", "lines"},
+		{"reversed", "lines: 20-10", "lines"},
+		{"whitespace", "lines: '1 - 10'", "lines"},
+		{"extra separator", "lines: 1-2-3", "lines"},
+		{"overflow", "lines: 1-99999999999999999999999", "lines"},
+		{"nondigit", "lines: one-two", "lines"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := validException()
+			entry.Rule = ExceptionRuleDedupe
+			if err := yaml.Unmarshal([]byte(tc.scope), &entry); err != nil {
+				t.Fatal(err)
+			}
+			err := ValidateExceptions([]Exception{entry}, exceptionsToday)
+			if tc.want == "" && err != nil {
+				t.Fatal(err)
+			}
+			if tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+				t.Fatalf("want named %s refusal, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestLoadManifestDedupeScopeSchemaRoundTrip(t *testing.T) {
+	expires := ExceptionDay(time.Now()).AddDate(0, 0, 30).Format(ExceptionDateLayout)
+	body := fmt.Sprintf(`version: 1
+exceptions:
+  - rule: HISS-19
+    path: tests/common/mod.rs
+    fingerprint: abcdef123
+    lines: 10-16
+    reason: retained fixture clone
+    expires: %s
+  - rule: HISS-19
+    path: tests/common/mod.rs
+    fingerprint: abcdef123
+    lines: 30-36
+    reason: second copy of retained fixture clone
+    expires: %s
+`, expires, expires)
+	manifest, err := LoadManifest(writeManifest(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := RenderManifest(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := LoadManifest(writeManifest(t, string(rendered)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(manifest.Exceptions, again.Exceptions) || !strings.Contains(string(rendered), "lines: 10-16") {
+		t.Fatalf("scopes lost on round trip: %s", rendered)
+	}
+	if err := ValidateExceptions(append(again.Exceptions, again.Exceptions[0]), time.Now()); err == nil {
+		t.Fatal("identical scoped entries must still be refused")
+	}
+}
+
+func TestDedupeExceptionForScopedUsage(t *testing.T) {
+	entry := validException()
+	entry.Rule, entry.Fingerprint, entry.Lines = ExceptionRuleDedupe, "abcdef12", "10-20"
+	expired, absent, other := entry, entry, entry
+	expired.Expires = "2026-10-05"
+	absent.Fingerprint, other.Path = "12345678", "other.go"
+	entries := []Exception{expired, absent, other, entry}
+	for _, line := range []int{9, 10, 20, 21} {
+		t.Run(fmt.Sprintf("line=%d", line), func(t *testing.T) {
+			used := make([]bool, len(entries))
+			live, old := DedupeExceptionFor(entries, entry.Path, "abcdef1234567890", line, exceptionsToday, used)
+			var wantLive, wantOld *Exception
+			wantUsed := make([]bool, len(entries))
+			if line >= 10 && line <= 20 {
+				wantLive, wantOld = &entries[3], &entries[0]
+				wantUsed[0], wantUsed[3] = true, true
+			}
+			if live != wantLive || old != wantOld || !slices.Equal(used, wantUsed) {
+				t.Fatalf("scoped judgement: live=%+v expired=%+v used=%v", live, old, used)
+			}
+		})
+	}
+
+	for _, used := range [][]bool{nil, make([]bool, 1)} {
+		live, _ := DedupeExceptionFor(entries, entry.Path, "abcdef1234567890", 10, exceptionsToday, used)
+		if live == nil {
+			t.Fatal("short usage slice must not prevent judgement")
+		}
+	}
+}
+
+func TestDedupeExceptionScopeGuards(t *testing.T) {
+	entry := validException()
+	entry.Rule = ExceptionRuleDedupe
+	entry.Lines = "20-10"
+	if live, _ := DedupeExceptionFor([]Exception{entry}, entry.Path, "abcdef12", 10, exceptionsToday, nil); live != nil {
+		t.Fatal("malformed line range must not excuse a location")
+	}
+	entry = validException()
+	entry.Lines = "10-20"
+	if err := ValidateExceptions([]Exception{entry}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "lines") {
+		t.Fatalf("line scope for another rule must be refused by name: %v", err)
 	}
 }

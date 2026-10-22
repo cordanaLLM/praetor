@@ -1,12 +1,14 @@
 package agenthook
 
 import (
+	"errors"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // samePath compares two resolved executable paths, case-insensitively on Windows.
@@ -157,5 +159,34 @@ func TestDecodeCheckpointReport(t *testing.T) {
 func TestCheckpointScriptPath(t *testing.T) {
 	if got, want := checkpointScript("/repo", "checkpoint.py"), filepath.Join("/repo", ".config", "lefthook", "scripts", "checkpoint.py"); got != want {
 		t.Errorf("checkpointScript: %q want %q", got, want)
+	}
+}
+
+func TestCheckpointFailureReason(t *testing.T) {
+	runErr := errors.New("exit status 1")
+	markerErr := errors.New("missing checkpoint marker")
+	exact := strings.Repeat("e", util.MaxErrorBodyBytes)
+	for _, tc := range []struct {
+		name   string
+		runErr error
+		stderr string
+		want   string
+	}{
+		{"failed with stderr", runErr, " \nscript failed\n\t", "exit status 1: script failed"},
+		{"failed without stderr", runErr, "", "exit status 1"},
+		{"failed with blank stderr", runErr, " \n\t", "exit status 1"},
+		{"failed at cap", runErr, exact, "exit status 1: " + exact},
+		{"failed above cap", runErr, " \n" + exact + "x\n", "exit status 1: " + exact + "... [truncated]"},
+		{"success with stderr", nil, " \nscript warning\n\t", "script warning"},
+		{"success above cap unchanged", nil, exact + "x", exact + "x"},
+		{"success without stderr", nil, "", markerErr.Error()},
+		{"success with blank stderr", nil, " \n\t", markerErr.Error()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := checkpointFailureReason(tc.runErr, markerErr, util.CommandBytes{Stderr: []byte(tc.stderr)})
+			if got != tc.want {
+				t.Errorf("reason length=%d want length=%d; prefix=%q", len(got), len(tc.want), got[:min(len(got), 100)])
+			}
+		})
 	}
 }
