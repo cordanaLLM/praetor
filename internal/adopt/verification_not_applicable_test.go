@@ -133,3 +133,68 @@ func TestAdoptRootWithBuildMarkerPreservesUnavailableOrDeclared(t *testing.T) {
 		t.Fatalf("custom verification status = %s, want preserved", customRep.Verification.Status)
 	}
 }
+
+// Planted negative & 3D boundary: a root with source files (scripts/x.py, tools/y.sh, or nested
+// deep under a directory) but no build marker must be unavailable naming the detected language,
+// never not-applicable.
+func TestAdoptRootWithSourceFilesWithoutBuildMarkerUnavailable(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		file     string
+		wantLang string
+	}{
+		{"python-script", "scripts/x.py", "python"},
+		{"shell-script", "tools/y.sh", "shell"},
+		{"nested-source-boundary", "nested/deep/inside/path/helper.py", "python"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := newTestRepo(t, tc.name)
+			mustWrite(t, filepath.Join(root, tc.file), "print('hello')\n")
+			rep := adoptPlain(t, root, false)
+			if rep.Verification.Status != verificationUnavailable {
+				t.Fatalf("root with %s: verification status = %s, want %s", tc.file, rep.Verification.Status, verificationUnavailable)
+			}
+			if len(rep.Verification.Reasons) == 0 || !strings.Contains(rep.Verification.Reasons[0], tc.wantLang) {
+				t.Fatalf("verification reasons = %v, want naming %s", rep.Verification.Reasons, tc.wantLang)
+			}
+		})
+	}
+}
+
+// 3D Positive: a docs-only root (README.md, LICENSE, profile/README.md, .github/ISSUE_TEMPLATE/x.yml)
+// declares verification not applicable.
+func TestAdoptDocsOnlyRootDeclaresNotApplicable(t *testing.T) {
+	root := newTestRepo(t, "docs-only-root")
+	mustWrite(t, filepath.Join(root, "README.md"), "# Organization\n")
+	mustWrite(t, filepath.Join(root, "LICENSE"), "EUPL-1.2\n")
+	mustWrite(t, filepath.Join(root, "profile", "README.md"), "# Profile\n")
+	mustWrite(t, filepath.Join(root, ".github", "ISSUE_TEMPLATE", "x.yml"), "name: Bug\n")
+	rep := adoptPlain(t, root, false)
+	if rep.Verification.Status != verificationNotApplicable {
+		t.Fatalf("docs-only root verification status = %s, want %s", rep.Verification.Status, verificationNotApplicable)
+	}
+	if len(rep.Verification.Reasons) == 0 || !strings.Contains(rep.Verification.Reasons[0], "no build system") {
+		t.Fatalf("verification reasons = %v, want mentioning no build system", rep.Verification.Reasons)
+	}
+}
+
+// 3D Boundary: when discovery reaches the workspace scan bound during language scan without runtimes,
+// the plan fails closed to unavailable.
+func TestAdoptRootWalkBoundExceededUnavailable(t *testing.T) {
+	root := newTestRepo(t, "walk-bound")
+	mustWrite(t, filepath.Join(root, "docs", "guide.md"), "# Guide\n")
+	mustWrite(t, filepath.Join(root, "docs", "faq.md"), "# FAQ\n")
+	mustWrite(t, filepath.Join(root, "docs", "intro.md"), "# Intro\n")
+	limits := DefaultVerificationLimits()
+	limits.MaxFiles = 1
+	plan, err := resolveVerificationPlanWithLimits(t.Context(), root, &limits)
+	if err != nil {
+		t.Fatalf("resolveVerificationPlanWithLimits failed: %v", err)
+	}
+	if plan.Status != verificationUnavailable {
+		t.Fatalf("plan status = %s, want unavailable", plan.Status)
+	}
+	if len(plan.Reasons) == 0 || !strings.Contains(plan.Reasons[0], "workspace scan bound") {
+		t.Fatalf("plan reasons = %v, want mentioning workspace scan bound", plan.Reasons)
+	}
+}

@@ -2,7 +2,10 @@ package adopt
 
 import (
 	"context"
+	"errors"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/editor"
 )
 
 // VerificationPlan declares selected project commands, never an execution result.
@@ -81,8 +84,9 @@ func resolveVerificationPlanWithLimits(ctx context.Context, root string, request
 	addZigVerification(plan, inputs)
 	plan.SourceLanguages = inputs.cSources.languages(ctx, root)
 	if len(plan.Runtimes) == 0 {
-		plan.Status = verificationNotApplicable
-		plan.Reasons = []string{notApplicableReason}
+		if err := resolvePlanWithoutRuntimes(ctx, plan, root, limits); err != nil {
+			return nil, err
+		}
 	} else {
 		if len(plan.Build) == 0 || len(plan.Test) == 0 {
 			plan.unavailable("A required build or test command is absent; define and exercise the project's verify-all contract.")
@@ -93,6 +97,30 @@ func resolveVerificationPlanWithLimits(ctx context.Context, root string, request
 	}
 	preserveCustomVerification(plan, inputs.files["Makefile"])
 	return plan, nil
+}
+
+func resolvePlanWithoutRuntimes(ctx context.Context, plan *VerificationPlan, root string, limits VerificationLimits) error {
+	fileBound := limits.MaxEntries
+	if limits.MaxFiles > 0 {
+		fileBound = limits.MaxFiles
+	}
+	observed, err := editor.DetectWorkspaceSourceLanguagesBounded(ctx, root, fileBound)
+	if err != nil {
+		if errors.Is(err, editor.ErrWorkspaceScanBound) {
+			plan.unavailable("Discovery reached the workspace scan bound; define and exercise a project verify-all target.")
+			plan.Status = verificationUnavailable
+			return nil
+		}
+		return err
+	}
+	if len(observed) == 0 {
+		plan.Status = verificationNotApplicable
+		plan.Reasons = []string{notApplicableReason}
+		return nil
+	}
+	plan.unavailable("No supported build-system marker or explicit test runner was found for " + strings.Join(observed, ", ") + "; define and exercise a project verify-all target.")
+	plan.Status = verificationUnavailable
+	return nil
 }
 
 // ObserveVerificationPlanWithLimits exposes the bounded declarative planner to read-only
