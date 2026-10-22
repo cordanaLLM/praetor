@@ -79,7 +79,7 @@ facets:
 
 // TestAuditManagedAssetLock_Positive_OlderLockedEngineWithLockedTextPassesWithNotice:
 // Positive: a fixture adopter locked at an older engine passes audit with locked text,
-// and one notice line naming newer engine and refresh command is emitted.
+// and one notice line naming both engines and the force refresh command is emitted.
 func TestAuditManagedAssetLock_Positive_OlderLockedEngineWithLockedTextPassesWithNotice(t *testing.T) {
 	original := version
 	t.Cleanup(func() { version = original })
@@ -96,8 +96,8 @@ func TestAuditManagedAssetLock_Positive_OlderLockedEngineWithLockedTextPassesWit
 	if err != nil {
 		t.Fatalf("audit failed on older locked engine with locked text: %v", err)
 	}
-	if !strings.Contains(out, "[WARN]") {
-		t.Errorf("expected [WARN] notice in stdout, got:\n%s", out)
+	if !strings.Contains(out, "[WARN] Managed assets match locked Praetor") || !strings.Contains(out, adopt.ForceCommand("")) {
+		t.Errorf("expected [WARN] notice naming the force refresh (plain adopt keeps the locked text), got:\n%s", out)
 	}
 	if !strings.Contains(out, "praetorctl adopt") {
 		t.Errorf("expected refresh command 'praetorctl adopt' in stdout, got:\n%s", out)

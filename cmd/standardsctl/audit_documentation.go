@@ -77,7 +77,10 @@ func emitManagedAssetNotice(rootDir, locked, running string) {
 	}
 	if !managedAssetNoticed[rootDir] {
 		managedAssetNoticed[rootDir] = true
-		fmt.Printf("[WARN] Managed assets match locked Praetor %s; newer Praetor %s available; run 'praetorctl adopt' to refresh\n", locked, running)
+		// Plain adopt keeps an asset that matches the lock (reconcileManagedFamilyFile), so the
+		// refresh that moves asset and lock together is the force form.
+		fmt.Printf("[WARN] Managed assets match locked Praetor %s; this binary is Praetor %s; run '%s' to move assets and lock together\n",
+			locked, running, adopt.ForceCommand(""))
 	}
 }
 
