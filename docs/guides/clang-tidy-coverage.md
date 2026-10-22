@@ -120,7 +120,7 @@ its file and function is stale and fails the audit (`applyHISSExceptions` in
 | `lines` | Optional for `HISS-19` only: `"START-END"`, positive 1-based inclusive bounds on a clone location's start line. Malformed or reversed ranges are refused. When both `fingerprint` and `lines` are present, both must match. Omit both to retain whole-path dedupe matching; an entry matching no scoped location stays stale. |
 | `tool` | Only and always for `declared-linters` and backlog cap rules: the linter or `backlog` target the entry excuses. Neither sets `path` or `glob`, and no other rule takes `tool` (`config.ValidateExceptions`). |
 | `reason` | One line, at most 1024 bytes. |
-| `expires` | An explicit `YYYY-MM-DD` date. A uses the stated expiry without a further cap; B, C and D allow at most 3, 10 and 120 days. Entries without a category retain the 90-day cap. The entry holds through its expiry day. |
+| `expires` | An explicit `YYYY-MM-DD` date. A states its own expiry within the 90-day bound that entries without a category keep; B, C and D allow at most 3, 10 and 120 days. The entry holds through its expiry day. |
 | `category` | The explicit field takes precedence. If omitted, a reason beginning with `category A`, `category B`, `category C` or `category D` supplies the category, case-insensitively. Otherwise the 90-day cap remains. The `mutants` and `codespell` rules require a category. |
 | `entered` | Optional `YYYY-MM-DD` date anchoring the expiry cap. When omitted, the cap is measured from today. The maximum expiry is `entered` (or today) plus the applicable interval; an earlier expiry is allowed. |
 
@@ -238,4 +238,4 @@ move onto the top-level `exceptions` list as further rules; neither is migrated 
 Like `.standards.yaml` exceptions, `scripts/npm_audit_gate.py` warns 14 days before an
 active npm audit exception expires (`EXCEPTION_EXPIRY_WARNING_DAYS`).
 
-Category cap boundaries and reason-prefix precedence are covered by `TestValidateExceptionsCategoryCaps` in `internal/config/exceptions_expiry_test.go`. The separate npm audit exception list retains its own 90-day bound.
+Category cap boundaries, the 90-day bound of category A and reason-prefix precedence are covered by `TestValidateExceptionsCategoryCaps` in `internal/config/exceptions_expiry_test.go`. The separate npm audit exception list retains its own 90-day bound.
