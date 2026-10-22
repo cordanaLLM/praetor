@@ -301,6 +301,13 @@
                 "pattern": "^\\d{4}-\\d\\d-\\d\\d$"
               },
               "done": {
+                "type": "integer"
+              },
+              "closed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "reopened": {
                 "type": "integer",
                 "minimum": 0
               }

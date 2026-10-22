@@ -1,6 +1,7 @@
 <!--
 @component
-Status totals as small horizontal bars (inline SVG, no chart library). The numbers are text, so
+Status totals as small horizontal bars (inline SVG, no chart library). Two bars per status row:
+share of all nodes and share of all units in the whole plan. The numbers are text, so
 the bars are decoration for sighted readers and the list reads the same without them.
 -->
 <script lang="ts">
@@ -14,23 +15,62 @@ the bars are decoration for sighted readers and the list reads the same without 
 			units: totals[key]?.units ?? 0
 		}))
 	);
-	const max = $derived(Math.max(1, ...rows.map((r) => r.nodes)));
+	const totalNodes = $derived(rows.reduce((sum, r) => sum + r.nodes, 0));
+	const totalUnits = $derived(rows.reduce((sum, r) => sum + r.units, 0));
 </script>
 
 <ul class="totals" aria-label="Plan graph totals">
 	{#each rows as row (row.key)}
+		{@const nodeShare = totalNodes > 0 ? row.nodes / totalNodes : 0}
+		{@const unitShare = totalUnits > 0 ? row.units / totalUnits : 0}
+		{@const nodePct = totalNodes > 0 ? Math.round(nodeShare * 100) : 0}
+		{@const unitPct = totalUnits > 0 ? Math.round(unitShare * 100) : 0}
+		{@const nodeWidth = nodeShare * 100}
+		{@const unitWidth = unitShare * 100}
 		<li>
 			<span class="name">{row.key}</span>
-			<svg
-				viewBox="0 0 100 8"
-				preserveAspectRatio="none"
-				aria-hidden="true"
-				focusable="false"
+			<div class="bars">
+				<svg
+					class="bar-nodes"
+					viewBox="0 0 100 6"
+					preserveAspectRatio="none"
+					aria-hidden="true"
+					focusable="false"
+				>
+					<rect class="track" x="0" y="0" width="100" height="6" rx="2" />
+					<rect
+						class="fill fill-nodes"
+						data-kind="nodes"
+						x="0"
+						y="0"
+						width={nodeWidth}
+						height="6"
+						rx="2"
+					/>
+				</svg>
+				<svg
+					class="bar-units"
+					viewBox="0 0 100 6"
+					preserveAspectRatio="none"
+					aria-hidden="true"
+					focusable="false"
+				>
+					<rect class="track" x="0" y="0" width="100" height="6" rx="2" />
+					<rect
+						class="fill fill-units"
+						data-kind="units"
+						x="0"
+						y="0"
+						width={unitWidth}
+						height="6"
+						rx="2"
+					/>
+				</svg>
+			</div>
+			<span class="num"
+				>{row.nodes} of {totalNodes} nodes ({nodePct} %) · {row.units} of {totalUnits} units ({unitPct}
+				%)</span
 			>
-				<rect class="track" x="0" y="0" width="100" height="8" rx="2" />
-				<rect class="fill" x="0" y="0" width={(row.nodes / max) * 100} height="8" rx="2" />
-			</svg>
-			<span class="num">{row.nodes} nodes · {row.units.toLocaleString('en')} units</span>
 		</li>
 	{/each}
 </ul>
@@ -52,6 +92,12 @@ the bars are decoration for sighted readers and the list reads the same without 
 		align-items: center;
 	}
 
+	.bars {
+		display: grid;
+		gap: 2px;
+		width: 100%;
+	}
+
 	.num {
 		grid-column: 2;
 		font-size: 0.8125rem;
@@ -60,7 +106,7 @@ the bars are decoration for sighted readers and the list reads the same without 
 
 	@media (min-width: 40rem) {
 		li {
-			grid-template-columns: 6rem 1fr 13rem;
+			grid-template-columns: 6rem 1fr auto;
 		}
 
 		.num {
@@ -70,7 +116,7 @@ the bars are decoration for sighted readers and the list reads the same without 
 
 	svg {
 		width: 100%;
-		height: 0.625rem;
+		height: 0.375rem;
 	}
 
 	.track {
@@ -79,6 +125,10 @@ the bars are decoration for sighted readers and the list reads the same without 
 
 	.fill {
 		fill: var(--color-bar);
+	}
+
+	.fill-units {
+		opacity: 0.65;
 	}
 
 	.unest {

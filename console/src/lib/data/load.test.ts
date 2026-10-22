@@ -158,7 +158,14 @@ test('done activity validation rejects invalid dates, counts and extra propertie
 				.length
 		).toBeGreaterThan(0);
 	}
-	for (const invalid of [{ day: 'today' }, { done: -1 }, { done: 0.5 }, { extra: 1 }]) {
+	for (const invalid of [
+		{ day: 'today' },
+		{ done: 0.5 },
+		{ extra: 1 },
+		{ closed: -1 },
+		{ reopened: -1 },
+		{ closed: 0.5 }
+	]) {
 		expect(
 			validateFile('graph', {
 				...graph,
@@ -166,6 +173,15 @@ test('done activity validation rejects invalid dates, counts and extra propertie
 			}).length
 		).toBeGreaterThan(0);
 	}
+	expect(
+		validateFile('graph', {
+			...graph,
+			done_trend: [
+				{ ...graph.done_trend[0], done: -1, closed: 1, reopened: 2 },
+				...graph.done_trend.slice(1)
+			]
+		})
+	).toEqual([]);
 });
 
 test('boundaries: empty lists pass, one past maxItems fails', () => {
