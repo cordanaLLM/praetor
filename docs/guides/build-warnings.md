@@ -63,7 +63,10 @@ runs `go vet ./...` (`TestAuditBuildWarningsPassesTheScaffoldedWorkflows`).
 ## What the gate reads
 
 - **Commands of `run:` steps.** A script is cut into commands at `;`, `&&`, `||`, `|`, `&` and
-  line ends, and the parentheses of a subshell (`(cd build && cmake ..)`) are dropped. Words
+  line ends, and the parentheses of a subshell (`(cd build && cmake ..)`) are dropped. Quotes are
+  read with their nesting (`hiss.QuoteStepper`), so a command substitution inside a double-quoted
+  word may hold quotes of its own (`TOKEN="$(gh api 'x' --jq '.y')"`); a quote that is never
+  closed still fails the measurement. Words
   before the program that run nothing of their own (`if`, `then`, `do`, `time`, `nice`,
   `timeout`, `env`, `sudo`, `exec`, `ccache`, `sccache`) are passed over with their options. An
   `echo cargo build` or a command in a comment builds nothing. A program path is cut at `/` or

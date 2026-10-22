@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -26,12 +27,18 @@ func ShellFields(script string) ([]string, error) {
 	scan := shellFieldReader{start: -1}
 	for i := 0; i < len(script); i++ {
 		i = scan.step(script, i)
+		if scan.stepper.ExceededLimit() {
+			return nil, fmt.Errorf("%w: nesting exceeds shell reader limit", ErrShellReadLimit)
+		}
 		if len(scan.fields) > maxRunScriptFields {
 			return nil, fmt.Errorf("%w: %d fields", ErrShellReadLimit, maxRunScriptFields)
 		}
 	}
 	scan.word(script, len(script))
-	if scan.quote != 0 {
+	if scan.stepper.ExceededLimit() {
+		return nil, fmt.Errorf("%w: nesting exceeds shell reader limit", ErrShellReadLimit)
+	}
+	if scan.stepper.Open() {
 		return nil, fmt.Errorf("run script has an unclosed quote")
 	}
 	if len(scan.fields) > maxRunScriptFields {
@@ -41,19 +48,18 @@ func ShellFields(script string) ([]string, error) {
 }
 
 type shellFieldReader struct {
-	fields []string
-	start  int
-	quote  byte
+	fields  []string
+	start   int
+	stepper hiss.QuoteStepper
 }
 
 func (r *shellFieldReader) step(script string, i int) int {
 	c := script[i]
-	if r.quote != 0 || strings.ContainsRune("'\"\\", rune(c)) {
+	if r.stepper.InQuote() || strings.ContainsRune("'\"\\", rune(c)) {
 		if r.start < 0 {
 			r.start = i
 		}
-		i, r.quote = shellQuoteStep(script, i, r.quote)
-		return i
+		return r.stepper.Step(script, i)
 	}
 	if strings.ContainsRune(" \t\r\v\f", rune(c)) {
 		r.word(script, i)

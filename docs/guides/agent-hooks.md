@@ -1211,6 +1211,15 @@ Neither script changes; the marker contract is the one the Lefthook job already 
 never comes back without `actions`). Reading the wrong number of marker lines, invalid JSON,
 or a timeout is treated as the evaluator failing, with the outcome below.
 
+**Session preparation.** When the payload carries a session id, the hook first runs
+`checkpoint.py --event <event> --prepare-session`, so the evaluator judges only the worktrees that
+session touched. An adopted `checkpoint.py` older than that flag is refused before the interpreter
+starts: the hook reads the script (at most 1 MiB, within 5 s) for the exact argparse definition of
+`--prepare-session` and, without it, fails with the script path and the refresh command
+`praetorctl adopt --lock-source-root=REVIEWED_PRAETOR_CHECKOUT`. An `unrecognized arguments` reply
+from the interpreter maps to the same error, and `praetorctl audit` without a source root names the
+same command (`internal/agenthook/python.go`, `checkpointSessionContext`).
+
 **Interpreter resolution.** `hooks.python` (a layered operator setting) names the candidates,
 tried in order through `PATH`: the built-in default is `python3`, then `python`, then the
 two-token `py -3` for a stock Windows install. Each candidate is a bare command or, in the

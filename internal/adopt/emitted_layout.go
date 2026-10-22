@@ -150,23 +150,54 @@ func pythonEscape(r rune) string {
 	return string(r)
 }
 
-// literalEnd returns the end of the literal starting at units[start]: as many units as fit
-// room bytes, at least one. An escaped string breaks after its last space when it has one.
-func literalEnd(units []string, start, room int, words bool) int {
-	end, size := start, 0
-	for end < len(units) && (end == start || size+len(units[end]) <= room) {
-		size += len(units[end])
-		end++
+// isLetterUnit reports whether unit is a single ASCII letter.
+func isLetterUnit(unit string) bool {
+	if len(unit) != 1 {
+		return false
 	}
-	if !words || end == len(units) {
-		return end
-	}
+	b := unit[0]
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
+func lastSpaceEnd(units []string, start, end int) int {
 	for i := end - 1; i > start; i-- {
 		if units[i] == " " {
 			return i + 1
 		}
 	}
 	return end
+}
+
+func rewindLetterWord(units []string, start, end int) int {
+	if !isLetterUnit(units[end-1]) || !isLetterUnit(units[end]) {
+		return end
+	}
+	for i := end - 1; i > start; i-- {
+		if !isLetterUnit(units[i]) {
+			return i + 1
+		}
+	}
+	return end
+}
+
+// literalEnd returns the end of the literal starting at units[start]: as many units as fit
+// room bytes, at least one. An escaped string breaks after its last space when it has one;
+// both kinds avoid splitting an ASCII letter word across adjacent literals.
+func literalEnd(units []string, start, room int, words bool) int {
+	end, size := start, 0
+	for end < len(units) && (end == start || size+len(units[end]) <= room) {
+		size += len(units[end])
+		end++
+	}
+	if end == len(units) {
+		return end
+	}
+	if words {
+		if spaceEnd := lastSpaceEnd(units, start, end); spaceEnd != end {
+			return spaceEnd
+		}
+	}
+	return rewindLetterWord(units, start, end)
 }
 
 // pythonPairEntry lays out one two-item tuple of a list at four-space indentation the way

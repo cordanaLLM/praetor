@@ -5,6 +5,7 @@
 package adopt
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -52,10 +53,14 @@ func adoptPlain(t *testing.T, root string, dryRun bool) *AdoptReport {
 // Verification Gate reports ready.
 func TestVerificationPlaceholderRegeneratedOncePlanIsRunnable(t *testing.T) {
 	root := newTestRepo(t, "placeholder")
+	mustWrite(t, filepath.Join(root, "meson.build"), "project('fixture', 'c')\n")
 	first := adoptPlain(t, root, false)
 	placeholder := mustRead(t, filepath.Join(root, makefileName))
 	if first.Verification.Status != verificationUnavailable || !strings.Contains(placeholder, unavailableRecipeLine) {
 		t.Fatalf("first adoption wrote no placeholder: %+v %q", first.Verification, placeholder)
+	}
+	if err := os.Remove(filepath.Join(root, "meson.build")); err != nil {
+		t.Fatal(err)
 	}
 	mustWrite(t, filepath.Join(root, "Cargo.toml"), cargoManifestFixture)
 	before := snapshotTree(t, root)
@@ -134,6 +139,7 @@ func TestVerificationEditedPlaceholderIsPreserved(t *testing.T) {
 // earlier one, so it is not replaceable and a re-run leaves the tree untouched.
 func TestVerificationPlaceholderIsCurrentWhilePlanUnavailable(t *testing.T) {
 	root := newTestRepo(t, "placeholder-current")
+	mustWrite(t, filepath.Join(root, "meson.build"), "project('fixture', 'c')\n")
 	adoptPlain(t, root, false)
 	plan, err := resolveVerificationPlan(t.Context(), root)
 	if err != nil {

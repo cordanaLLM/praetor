@@ -73,8 +73,8 @@ func buildMakefileFormat(plan *VerificationPlan, prefix string, sourceGate, with
 		"compile-context-verify:\n" + util.MakefileCLI("compile-context --verify") + "\n" +
 		gateRecipe +
 		"audit:\n" + util.MakefileCLI("audit") + "\n" +
-		"test: build\n" + verificationRecipeWith(plan, plan.Test, prefix) + "\n" +
-		"build:\n" + verificationRecipeWith(plan, plan.Build, prefix)
+		"test: build\n" + verificationRecipeTarget(plan, "test", plan.Test, prefix) + "\n" +
+		"build:\n" + verificationRecipeTarget(plan, "build", plan.Build, prefix)
 }
 
 func reconcileMakefile(ctx context.Context, s *adoptSession) error {
@@ -134,7 +134,7 @@ func noteExistingTestTarget(s *adoptSession, data string, exists, generated bool
 	}
 	normalized, _ := util.NormalizeLineEndings(withoutDocumentationMakefileBlock(data))
 	recipe, found := util.MakefileTargetRecipe(normalized, "test")
-	if !found || recipe == unavailableVerificationRecipe {
+	if !found || recipe == unavailableVerificationRecipe || recipe == notApplicableTestRecipe {
 		return
 	}
 	s.report.addWarning("%s", "Makefile target 'test' already exists and is the likely test contract; "+

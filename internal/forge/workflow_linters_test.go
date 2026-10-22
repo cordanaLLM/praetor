@@ -78,6 +78,61 @@ func TestCommandRunsTool_ScriptTools(t *testing.T) {
 	}
 }
 
+func TestScriptPathMatchesTool_3D_Positive(t *testing.T) {
+	tests := []struct {
+		path string
+		tool string
+	}{
+		{"run-clang-tidy.py", "clang-tidy"},
+		{"clang_tidy_run.sh", "clang-tidy"},
+		{"scripts/ci/clang-tidy/run.py", "clang-tidy"},
+		{"scripts/ci/clang_tidy/run.py", "clang-tidy"},
+		{"tools/run-golangci-lint.sh", "golangci-lint"},
+	}
+	for _, tc := range tests {
+		if !scriptPathMatchesTool(tc.path, tc.tool) {
+			t.Errorf("scriptPathMatchesTool(%q, %q) = false; want true", tc.path, tc.tool)
+		}
+	}
+}
+
+func TestScriptPathMatchesTool_3D_Negative(t *testing.T) {
+	tests := []struct {
+		path string
+		tool string
+	}{
+		{"clang-tidyx.py", "clang-tidy"},
+		{"xclang-tidy.py", "clang-tidy"},
+		{"scripts/notsemgrepish.py", "semgrep"},
+		{"scripts/ci/other.py", "clang-tidy"},
+	}
+	for _, tc := range tests {
+		if scriptPathMatchesTool(tc.path, tc.tool) {
+			t.Errorf("scriptPathMatchesTool(%q, %q) = true; want false", tc.path, tc.tool)
+		}
+	}
+}
+
+func TestScriptPathMatchesTool_3D_Boundary(t *testing.T) {
+	tests := []struct {
+		path      string
+		tool      string
+		wantMatch bool
+	}{
+		{"clang-tidy", "clang-tidy", true},
+		{"clang-tidy.py", "clang-tidy", true},
+		{"", "clang-tidy", false},
+		{"run-clang-tidy.py", "", false},
+		{"test_semgrep_run.py", "semgrep", true},
+	}
+	for _, tc := range tests {
+		got := scriptPathMatchesTool(tc.path, tc.tool)
+		if got != tc.wantMatch {
+			t.Errorf("scriptPathMatchesTool(%q, %q) = %v; want %v", tc.path, tc.tool, got, tc.wantMatch)
+		}
+	}
+}
+
 // Step 2: go tool and go run runners.
 // `go tool [flags] T` and `go run [flags] <path ending /T or /T@version>` count for T.
 func TestCommandRunsTool_GoRunners(t *testing.T) {

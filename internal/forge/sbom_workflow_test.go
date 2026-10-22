@@ -186,3 +186,12 @@ func TestSBOMWorkflowSkipsWhatNeverRuns(t *testing.T) {
 		})
 	}
 }
+
+// A step holding nested quotes in a double-quoted command substitution is read cleanly.
+func TestSBOMWorkflowAcceptsNestedQuotesCommandSubstitution(t *testing.T) {
+	step := "      - run: |\n          token=\"$(printf '%s' \"$token_response\" | sed -n 's/.*\"token\":\"\\([^\"]*\\)\".*/\\1/p')\"\n          syft dir:. -o spdx-json=sbom.spdx.json\n"
+	got, err := SBOMWorkflow(context.Background(), sbomRepo(t, map[string]string{".github/workflows/release-build.yml": sbomJob(step)}))
+	if err != nil || got != "release-build.yml" {
+		t.Fatalf("SBOMWorkflow = %q, %v; want release-build.yml", got, err)
+	}
+}

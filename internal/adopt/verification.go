@@ -2,7 +2,10 @@ package adopt
 
 import (
 	"context"
+	"errors"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/editor"
 )
 
 // VerificationPlan declares selected project commands, never an execution result.
@@ -36,9 +39,14 @@ type VerificationPlan struct {
 }
 
 const (
-	verificationDeclared    = "declared-unverified"
-	verificationUnavailable = "unavailable"
-	verificationPreserved   = "preserved-unverified"
+	verificationDeclared      = "declared-unverified"
+	verificationUnavailable   = "unavailable"
+	verificationPreserved     = "preserved-unverified"
+	verificationNotApplicable = "not-applicable"
+
+	notApplicableReason      = "no build system; verify-all checks agent context, caveman sources and audit."
+	notApplicableBuildRecipe = "\t@printf '%s\\n' 'build: not applicable: no build system; verify-all checks agent context, caveman sources and audit.'\n"
+	notApplicableTestRecipe  = "\t@printf '%s\\n' 'test: not applicable: no build system; verify-all checks agent context, caveman sources and audit.'\n"
 )
 
 func containsRuntime(plan *VerificationPlan, runtime string) bool {
@@ -76,16 +84,43 @@ func resolveVerificationPlanWithLimits(ctx context.Context, root string, request
 	addZigVerification(plan, inputs)
 	plan.SourceLanguages = inputs.cSources.languages(ctx, root)
 	if len(plan.Runtimes) == 0 {
-		plan.unavailable("No supported build-system marker or explicit test runner was found; define and exercise a project verify-all target.")
-	}
-	if len(plan.Build) == 0 || len(plan.Test) == 0 {
-		plan.unavailable("A required build or test command is absent; define and exercise the project's verify-all contract.")
-	}
-	if len(plan.Reasons) > 0 {
-		plan.Status = verificationUnavailable
+		if err := resolvePlanWithoutRuntimes(ctx, plan, root, limits); err != nil {
+			return nil, err
+		}
+	} else {
+		if len(plan.Build) == 0 || len(plan.Test) == 0 {
+			plan.unavailable("A required build or test command is absent; define and exercise the project's verify-all contract.")
+		}
+		if len(plan.Reasons) > 0 {
+			plan.Status = verificationUnavailable
+		}
 	}
 	preserveCustomVerification(plan, inputs.files["Makefile"])
 	return plan, nil
+}
+
+func resolvePlanWithoutRuntimes(ctx context.Context, plan *VerificationPlan, root string, limits VerificationLimits) error {
+	fileBound := limits.MaxEntries
+	if limits.MaxFiles > 0 {
+		fileBound = limits.MaxFiles
+	}
+	observed, err := editor.DetectWorkspaceSourceLanguagesBounded(ctx, root, fileBound)
+	if err != nil {
+		if errors.Is(err, editor.ErrWorkspaceScanBound) {
+			plan.unavailable("Discovery reached the workspace scan bound; define and exercise a project verify-all target.")
+			plan.Status = verificationUnavailable
+			return nil
+		}
+		return err
+	}
+	if len(observed) == 0 {
+		plan.Status = verificationNotApplicable
+		plan.Reasons = []string{notApplicableReason}
+		return nil
+	}
+	plan.unavailable("No supported build-system marker or explicit test runner was found for " + strings.Join(observed, ", ") + "; define and exercise a project verify-all target.")
+	plan.Status = verificationUnavailable
+	return nil
 }
 
 // ObserveVerificationPlanWithLimits exposes the bounded declarative planner to read-only
@@ -171,6 +206,20 @@ func verificationRecipe(plan *VerificationPlan, commands [][]string) string {
 	return verificationRecipeWith(plan, commands, verificationRecipePrefix)
 }
 
+func verificationRecipeTarget(plan *VerificationPlan, target string, commands [][]string, prefix string) string {
+	if plan.Status == verificationNotApplicable {
+		switch target {
+		case "build":
+			return notApplicableBuildRecipe
+		case "test":
+			return notApplicableTestRecipe
+		default:
+			return ""
+		}
+	}
+	return verificationRecipeWith(plan, commands, prefix)
+}
+
 // unavailableVerificationRecipe is the recipe a generated rule gets when the plan selects no
 // runnable command for it: it names the report and fails. A Makefile adoption does not recognise
 // as its own current output that still holds this recipe has a verify-all that can only exit 1
@@ -178,6 +227,9 @@ func verificationRecipe(plan *VerificationPlan, commands [][]string) string {
 const unavailableVerificationRecipe = "\t@printf '%s\\n' 'Project verification unavailable; see the adoption report and AGENTS.md.' >&2\n\t@exit 1\n"
 
 func verificationRecipeWith(plan *VerificationPlan, commands [][]string, prefix string) string {
+	if plan.Status == verificationNotApplicable {
+		return ""
+	}
 	if plan.Status == verificationUnavailable || emptyVerificationCommands(commands) {
 		return unavailableVerificationRecipe
 	}
@@ -201,6 +253,13 @@ func verificationCommand(argv []string) string {
 func verificationTestText(plan *VerificationPlan) string {
 	if plan.Status == verificationUnavailable {
 		return "# Project verification unavailable: " + strings.Join(plan.Reasons, " ") + "\nexit 1"
+	}
+	if plan.Status == verificationNotApplicable {
+		reason := notApplicableReason
+		if len(plan.Reasons) > 0 {
+			reason = strings.Join(plan.Reasons, " ")
+		}
+		return "# Build and test targets not applicable: " + reason
 	}
 	commands := plan.commands()
 	if plan.Status == verificationPreserved && len(plan.Declared) > 0 {

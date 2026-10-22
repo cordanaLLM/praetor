@@ -131,7 +131,43 @@ func resolvePlan(ctx context.Context, opts Options, editors []string) (Plan, err
 func DetectWorkspaceLanguages(root string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultIOTimeout)
 	defer cancel()
-	return detectWorkspaceLanguages(ctx, root, util.DefaultDiscoveryEntries)
+	return DetectWorkspaceLanguagesBounded(ctx, root, util.DefaultDiscoveryEntries)
+}
+
+// DetectWorkspaceLanguagesBounded returns bounded observed language capabilities under ctx,
+// scanning at most fileBound files (zero selects util.DefaultDiscoveryEntries).
+func DetectWorkspaceLanguagesBounded(ctx context.Context, root string, fileBound int) ([]string, error) {
+	if ctx == nil {
+		return nil, errors.New("workspace language scan requires a context")
+	}
+	runCtx, cancel := context.WithTimeout(ctx, defaultIOTimeout)
+	defer cancel()
+	bound, err := workspaceFileBound(fileBound)
+	if err != nil {
+		return nil, err
+	}
+	return detectWorkspaceLanguages(runCtx, root, bound)
+}
+
+// DetectWorkspaceSourceLanguagesBounded returns the programming languages of source
+// files observed in a bounded walk of root (up to fileBound files; zero selects
+// util.DefaultDiscoveryEntries). Documentation and configuration formats and project
+// manifest markers are omitted.
+func DetectWorkspaceSourceLanguagesBounded(ctx context.Context, root string, fileBound int) ([]string, error) {
+	if ctx == nil {
+		return nil, errors.New("workspace source language scan requires a context")
+	}
+	runCtx, cancel := context.WithTimeout(ctx, defaultIOTimeout)
+	defer cancel()
+	bound, err := workspaceFileBound(fileBound)
+	if err != nil {
+		return nil, err
+	}
+	scan := workspaceLanguageScan{ctx: runCtx, root: root, fileBound: bound, languages: make([]string, 0, 12)}
+	if err := filepath.WalkDir(root, scan.visit); err != nil {
+		return nil, err
+	}
+	return normalizeLanguages(FilterProgrammingLanguages(scan.languages))
 }
 
 func detectWorkspaceLanguages(ctx context.Context, root string, fileBound int) ([]string, error) {
@@ -156,6 +192,19 @@ type workspaceLanguageScan struct {
 	languages []string
 }
 
+func (scan *workspaceLanguageScan) recordFile(name string) error {
+	scan.seen++
+	if scan.seen > scan.fileBound {
+		return fmt.Errorf("%w (%d files)", ErrWorkspaceScanBound, scan.fileBound)
+	}
+	// Each language is kept once: a raised bound admits far more files than normalizeLanguages
+	// admits observations, and a file adds nothing its language has not already added.
+	if language := languageForFile(name); language != "" && !slices.Contains(scan.languages, language) {
+		scan.languages = append(scan.languages, language)
+	}
+	return nil
+}
+
 func (scan *workspaceLanguageScan) visit(path string, entry fs.DirEntry, walkErr error) error {
 	if err := scan.ctx.Err(); err != nil {
 		return err
@@ -163,22 +212,34 @@ func (scan *workspaceLanguageScan) visit(path string, entry fs.DirEntry, walkErr
 	if walkErr != nil {
 		return walkErr
 	}
-	if entry.IsDir() && path != scan.root && ignoredWorkspaceDir(entry.Name()) {
-		return fs.SkipDir
+	rel, err := filepath.Rel(scan.root, path)
+	if err != nil {
+		return err
 	}
+	rel = filepath.ToSlash(rel)
 	if entry.IsDir() {
+		if path != scan.root && (ignoredWorkspaceDir(entry.Name()) || isIgnoredManagedDir(rel)) {
+			return fs.SkipDir
+		}
 		return nil
 	}
-	scan.seen++
-	if scan.seen > scan.fileBound {
-		return fmt.Errorf("%w (%d files)", ErrWorkspaceScanBound, scan.fileBound)
+	if strings.HasPrefix(entry.Name(), ".") || isIgnoredManagedFile(rel) {
+		return nil
 	}
-	// Each language is kept once: a raised bound admits far more files than normalizeLanguages
-	// admits observations, and a file adds nothing its language has not already added.
-	if language := languageForFile(entry.Name()); language != "" && !slices.Contains(scan.languages, language) {
-		scan.languages = append(scan.languages, language)
+	return scan.recordFile(entry.Name())
+}
+
+func isIgnoredManagedDir(rel string) bool {
+	switch rel {
+	case "tools/figures", "tools/markdownlint", "tools/apicompat":
+		return true
+	default:
+		return false
 	}
-	return nil
+}
+
+func isIgnoredManagedFile(rel string) bool {
+	return rel == "lua/standards.lua"
 }
 
 // analyzerLanguages returns the languages a needs analyzer detected at root adds to the plan: its
@@ -202,8 +263,11 @@ func analyzerLanguages(root, id string) []string {
 // The toolchain trees (util.IsToolchainTreeDir) hold the C sources and headers of the packages
 // Zig fetched and installed, which are no language of the workspace's own.
 func ignoredWorkspaceDir(name string) bool {
+	if strings.HasPrefix(name, ".") {
+		return true
+	}
 	switch name {
-	case ".git", ".worktrees", "node_modules", "vendor", "dist", "build", "target":
+	case "node_modules", "vendor", "dist", "build", "target", "bin", "obj":
 		return true
 	default:
 		return util.IsScratchDir(name) || util.IsToolchainTreeDir(name)
@@ -232,6 +296,29 @@ func languageForFile(name string) string {
 		return "make"
 	}
 	return ""
+}
+
+// IsProgrammingLanguage reports whether language is a programming language rather than a
+// documentation or configuration format (such as markdown, yaml, json, toml, or make).
+func IsProgrammingLanguage(language string) bool {
+	switch language {
+	case "markdown", "yaml", "json", "toml", "make":
+		return false
+	default:
+		return true
+	}
+}
+
+// FilterProgrammingLanguages returns the languages from input that are programming languages,
+// dropping documentation and configuration formats.
+func FilterProgrammingLanguages(languages []string) []string {
+	var result []string
+	for _, lang := range languages {
+		if IsProgrammingLanguage(lang) {
+			result = append(result, lang)
+		}
+	}
+	return result
 }
 
 // appendLanguage adds language (or native expansion) to result if unseen.

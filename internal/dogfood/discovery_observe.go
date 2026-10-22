@@ -196,7 +196,7 @@ func (o *discoveryObserver) verificationStatus(ctx context.Context, root string)
 	if cached.err != nil {
 		return "unknown", "verification-plan-error", cached.err
 	}
-	if cached.plan == nil || cached.plan.Status == "unavailable" {
+	if cached.plan == nil || cached.plan.Status == "unavailable" || cached.plan.Status == "not-applicable" {
 		return "unknown", "verification-plan-declared-unavailable", nil
 	}
 	return "available", "verification-plan-declared", nil

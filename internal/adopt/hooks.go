@@ -913,6 +913,7 @@ var priorEvasionHookDigests = map[string]string{
 	"b8937e971450935197b92af4ff3b05adba551939fd90212b142030c8ba85ee06": "SPDX-License-Identifier line behind the shebang (#1281)",
 	"682a8ed3eea87a45a9d6f4b9b5ddc68a1363a2cbeec0dca407cc50a6bee647dd": "current rendering after main changes and SPDX header",
 	"d3dcb48d31aed45db876298e355fe4a815c688d1cac59ff4ec90b7d5b42cd669": "privilege escalation refusal and bounded diagnostics",
+	"1adce72984aa3c355370298290876e99f536007ee486663eef61634659d0e55a": "whole-word literal boundary without codespell split",
 }
 
 // reconcileEvasionHook scaffolds the interceptor. It is generated, not audit-verified, so an

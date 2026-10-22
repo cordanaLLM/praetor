@@ -95,19 +95,19 @@ func assertVerificationCommand(t *testing.T, plan *VerificationPlan, want []stri
 
 func TestVerificationMissingAndAmbiguousGatesFail(t *testing.T) {
 	for name, files := range map[string]map[string]string{
-		"empty": {}, "solution-without-project": {"App.sln": ""},
-		"dotnet-no-test-project": {"App.csproj": "<Project/>"},
-		"node-no-scripts":        {"package.json": "{}"},
-		"node-no-test":           {"package.json": `{"scripts":{"build":"true"}}`},
-		"node-empty-test":        {"package.json": `{"scripts":{"build":"true","test":"  "}}`},
-		"node-npm-init-test":     {"package.json": `{"scripts":{"build":"true","test":"echo \"Error: no test specified\" && exit 1"}}`},
-		"node-no-build":          {"package.json": `{"scripts":{"test":"true"}}`},
-		"node-other-manager":     {"package.json": `{"packageManager":"pnpm@10.0.0","scripts":{"build":"true","test":"true"}}`},
-		"python-unknown-runner":  {"pyproject.toml": "[project]\n"},
-		"python-no-build":        {"pytest.ini": "[pytest]\n"},
-		"python-old-discovery":   {".python-version": "3.13.5", "tests/test_something.py": "import unittest\n"},
-		"meson-needs-setup":      {"meson.build": "project('fixture', 'c')\n"},
-		"cmake-needs-setup":      {"CMakeLists.txt": "project(fixture)\n"},
+		"solution-without-project": {"App.sln": ""},
+		"dotnet-no-test-project":   {"App.csproj": "<Project/>"},
+		"node-no-scripts":          {"package.json": "{}"},
+		"node-no-test":             {"package.json": `{"scripts":{"build":"true"}}`},
+		"node-empty-test":          {"package.json": `{"scripts":{"build":"true","test":"  "}}`},
+		"node-npm-init-test":       {"package.json": `{"scripts":{"build":"true","test":"echo \"Error: no test specified\" && exit 1"}}`},
+		"node-no-build":            {"package.json": `{"scripts":{"test":"true"}}`},
+		"node-other-manager":       {"package.json": `{"packageManager":"pnpm@10.0.0","scripts":{"build":"true","test":"true"}}`},
+		"python-unknown-runner":    {"pyproject.toml": "[project]\n"},
+		"python-no-build":          {"pytest.ini": "[pytest]\n"},
+		"python-old-discovery":     {".python-version": "3.13.5", "tests/test_something.py": "import unittest\n"},
+		"meson-needs-setup":        {"meson.build": "project('fixture', 'c')\n"},
+		"cmake-needs-setup":        {"CMakeLists.txt": "project(fixture)\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			root, plan := verificationFixture(t, files)

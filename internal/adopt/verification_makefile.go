@@ -373,9 +373,11 @@ func isPlaceholderVerificationMakefile(data string, plan *VerificationPlan) bool
 		return false
 	}
 	placeholder := &VerificationPlan{Status: verificationUnavailable}
+	notApplicablePlaceholder := &VerificationPlan{Status: verificationNotApplicable}
 	return data == buildMakefile(placeholder) ||
 		data == priorSourceGateMakefile(placeholder) ||
-		data == priorPathResolvedMakefile(placeholder)
+		data == priorPathResolvedMakefile(placeholder) ||
+		data == buildMakefile(notApplicablePlaceholder)
 }
 
 // isReplaceableVerificationMakefile reports whether data is earlier Praetor output that adoption

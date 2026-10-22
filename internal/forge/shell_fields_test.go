@@ -17,6 +17,11 @@ func TestShellFields(t *testing.T) {
 		{"comments", "git status # cd hidden\ncd real", []string{"git", "status", ";", "cd", "real"}},
 		{"continuation", "git sta\\\ntus", []string{"git", "status"}},
 		{"escaped", `echo a\;b \"x`, []string{"echo", `a\;b`, `\"x`}},
+		{"20w token line", `token="$(printf '%s' "$token_response" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"`, []string{`token="$(printf '%s' "$token_response" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"`}},
+		{"nested command substitution", `"$(echo "x y")"`, []string{`"$(echo "x y")"`}},
+		{"printf command substitution", `"$(printf '%s' "x")"`, []string{`"$(printf '%s' "x")"`}},
+		{"backquote form", `token="` + "`" + `printf '%s' "$token_response" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p'` + "`" + `"`, []string{`token="` + "`" + `printf '%s' "$token_response" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p'` + "`" + `"`}},
+		{"backquote echo", `"` + "`" + `echo "x y"` + "`" + `"`, []string{`"` + "`" + `echo "x y"` + "`" + `"`}},
 		{"empty", "", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -69,5 +74,34 @@ func TestShellFieldsLineLimit(t *testing.T) {
 	}
 	if _, err := ShellFields(atBound + "\n"); !errors.Is(err, ErrShellReadLimit) {
 		t.Fatalf("line overflow must be identifiable: %v", err)
+	}
+}
+
+func TestShellFields_NestedQuoteErrors(t *testing.T) {
+	unclosed := []struct {
+		name, script string
+	}{
+		{"real unclosed quote", `echo "abc`},
+		{"unclosed substitution quote", `"$(echo "x)"`},
+		{"unclosed inner substitution", `"$(echo "x"`},
+	}
+	for _, tc := range unclosed {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ShellFields(tc.script)
+			if err == nil || got != nil {
+				t.Fatalf("ShellFields(%s) accepted: %v", tc.name, got)
+			}
+			if !strings.Contains(err.Error(), "run script has an unclosed quote") {
+				t.Fatalf("error = %v; want unclosed quote", err)
+			}
+		})
+	}
+
+	var pastBound strings.Builder
+	for i := 0; i < 17; i++ {
+		pastBound.WriteString(`"$(`)
+	}
+	if _, err := ShellFields(pastBound.String()); !errors.Is(err, ErrShellReadLimit) {
+		t.Fatalf("nesting overflow must return ErrShellReadLimit, got: %v", err)
 	}
 }

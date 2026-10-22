@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -135,24 +136,11 @@ func openSubstitution(word string) bool {
 // openQuote returns the quote character word leaves open, or 0. A backslash outside single
 // quotes escapes the character after it.
 func openQuote(word string) byte {
-	var open byte
+	var stepper hiss.QuoteStepper
 	for i := 0; i < len(word); i++ {
-		i, open = shellQuoteStep(word, i, open)
+		i = stepper.Step(word, i)
 	}
-	return open
-}
-
-// shellQuoteStep shares quote and escape handling between word joining and field splitting.
-func shellQuoteStep(text string, i int, open byte) (int, byte) {
-	switch c := text[i]; {
-	case open == 0 && (c == '"' || c == '\''):
-		open = c
-	case c == open:
-		open = 0
-	case c == '\\' && open != '\'':
-		i++
-	}
-	return i, open
+	return stepper.OpenQuote()
 }
 
 // openExpression reports whether word opens a ${{ }} expression it does not close.
