@@ -17,6 +17,9 @@ const maxDirectiveLines = 4096
 // goDirectiveKeyword is the directive that fixes the language version.
 const goDirectiveKeyword = "go"
 
+// toolchainDirectiveKeyword is the directive that fixes the toolchain version.
+const toolchainDirectiveKeyword = "toolchain"
+
 // utf8BOM is the UTF-8 encoding of U+FEFF, the byte-order mark some editors write at the
 // start of a file.
 const utf8BOM = "\ufeff"
@@ -56,6 +59,28 @@ func GoDirective(manifest []byte) (string, bool) {
 // manifest use it instead of re-reading the whole file through GoDirective.
 func GoDirectiveLine(line string) (string, bool) {
 	value, found := directiveArgument(line, goDirectiveKeyword)
+	if !found {
+		return "", false
+	}
+	return strings.Fields(value)[0], true
+}
+
+// ToolchainDirective returns the toolchain version a manifest requires, as written in its
+// `toolchain` line ("go1.27.3"), and whether the manifest declares one at all.
+func ToolchainDirective(manifest []byte) (string, bool) {
+	lines := strings.Split(string(TrimBOM(manifest)), "\n")
+	for i := 0; i < len(lines) && i < maxDirectiveLines; i++ {
+		if version, declared := ToolchainDirectiveLine(lines[i]); declared {
+			return version, true
+		}
+	}
+	return "", false
+}
+
+// ToolchainDirectiveLine returns the version a single go.mod line declares when that line is
+// the `toolchain` directive, with any trailing comment dropped.
+func ToolchainDirectiveLine(line string) (string, bool) {
+	value, found := directiveArgument(line, toolchainDirectiveKeyword)
 	if !found {
 		return "", false
 	}

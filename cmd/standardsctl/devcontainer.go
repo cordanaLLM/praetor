@@ -116,7 +116,8 @@ func runDevContainer(args []string) error {
 // declaredDevContainer resolves the pinned catalog of the manifest at configPath and returns
 // the manifest, its selected features and the configuration they synthesize.
 func declaredDevContainer(ctx context.Context, configPath string) (*config.Manifest, []config.DevContainerFeature, *devcontainer.DevContainer, error) {
-	policy, err := config.LoadEffectivePolicyContext(ctx, config.EffectiveOptions{Root: filepath.Dir(configPath), ManifestPath: configPath})
+	root := filepath.Dir(configPath)
+	policy, err := config.LoadEffectivePolicyContext(ctx, config.EffectiveOptions{Root: root, ManifestPath: configPath})
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to resolve pinned catalog: %w", err)
 	}
@@ -124,7 +125,7 @@ func declaredDevContainer(ctx context.Context, configPath string) (*config.Manif
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to resolve selected DevContainer features: %w", err)
 	}
-	dc, err := devcontainer.SynthesizeWithFeatures(policy.Manifest, features)
+	dc, err := devcontainer.SynthesizeWithFeatures(policy.Manifest, features, root)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to synthesize devcontainer: %w", err)
 	}
@@ -141,12 +142,13 @@ func runDevContainerBump(opts devContainerOptions) error {
 	if err != nil {
 		return err
 	}
+	root := filepath.Dir(opts.configPath)
 	sourceRoot := opts.sourceRoot
 	if sourceRoot == "" {
-		sourceRoot = filepath.Dir(opts.configPath)
+		sourceRoot = root
 	}
 	changes, err := devcontainer.Bump(ctx, devcontainer.BumpOptions{
-		SourceRoot: sourceRoot, Output: opts.outputPath, Name: dc.Name, Profiles: manifest.Profiles, Facets: manifest.Facets,
+		RepoRoot: root, SourceRoot: sourceRoot, Output: opts.outputPath, Name: dc.Name, Profiles: manifest.Profiles, Facets: manifest.Facets,
 		Features: features, Expected: dc, BuilderImage: opts.builderImage, BaseImage: opts.baseImage,
 	})
 	if err != nil {
@@ -161,7 +163,8 @@ func runDevContainerBump(opts devContainerOptions) error {
 
 func generateDevContainerBundle(ctx context.Context, manifest *config.Manifest, dc *devcontainer.DevContainer, features []config.DevContainerFeature, opts devContainerOptions) error {
 	// A flag left unset keeps the image the replaced bundle records (#536).
-	selected := devcontainer.BootstrapOptions{SourceRoot: opts.sourceRoot, BuilderImage: opts.builderImage, BaseImage: opts.baseImage, Features: features}
+	root := filepath.Dir(opts.configPath)
+	selected := devcontainer.BootstrapOptions{RepoRoot: root, SourceRoot: opts.sourceRoot, BuilderImage: opts.builderImage, BaseImage: opts.baseImage, Features: features}
 	selected, notes, err := devcontainer.InheritRecordedImages(ctx, opts.outputPath, selected)
 	if err != nil {
 		return err

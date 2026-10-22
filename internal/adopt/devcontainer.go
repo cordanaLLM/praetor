@@ -21,7 +21,7 @@ func prepareAdoptDevContainer(ctx context.Context, s *adoptSession, path string)
 	if err != nil {
 		return nil, err
 	}
-	baseline, err := devcontainer.Synthesize(manifest)
+	baseline, err := devcontainer.Synthesize(manifest, s.repoPath)
 	if err != nil {
 		return nil, err
 	}
@@ -32,7 +32,7 @@ func prepareAdoptDevContainer(ctx context.Context, s *adoptSession, path string)
 			return nil, fmt.Errorf("resolve selected DevContainer features: %w", err)
 		}
 	}
-	options, notes, err := devcontainer.InheritRecordedImages(ctx, path, devcontainer.BootstrapOptions{SourceRoot: s.opts.LockSourceRoot, Features: features})
+	options, notes, err := devcontainer.InheritRecordedImages(ctx, path, devcontainer.BootstrapOptions{RepoRoot: s.repoPath, SourceRoot: s.opts.LockSourceRoot, Features: features})
 	if err != nil {
 		return nil, err
 	}

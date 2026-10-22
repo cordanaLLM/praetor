@@ -355,7 +355,8 @@ func TestVerify_3D(t *testing.T) {
 
 // TestDogfoodingSynthesis validates synthesis against canonical repository manifest.
 func TestDogfoodingSynthesis(t *testing.T) {
-	policy, err := config.LoadEffectivePolicyContext(t.Context(), config.EffectiveOptions{Root: "../.."})
+	root := filepath.Join("..", "..")
+	policy, err := config.LoadEffectivePolicyContext(t.Context(), config.EffectiveOptions{Root: root})
 	if err != nil {
 		t.Fatalf("failed to resolve root catalog: %v", err)
 	}
@@ -364,7 +365,7 @@ func TestDogfoodingSynthesis(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest := policy.Manifest
-	dc, err := SynthesizeWithFeatures(manifest, features)
+	dc, err := SynthesizeWithFeatures(manifest, features, root)
 	if err != nil {
 		t.Fatalf("failed to synthesize devcontainer from root manifest: %v", err)
 	}
@@ -376,7 +377,7 @@ func TestDogfoodingSynthesis(t *testing.T) {
 
 	ctx := testsupport.DeadlineContext(t)
 
-	if err := Verify(ctx, "../../.devcontainer/devcontainer.json", dc); err != nil {
+	if err := Verify(ctx, filepath.Join(root, ".devcontainer", "devcontainer.json"), dc); err != nil {
 		t.Fatalf("verification of dogfooding .devcontainer/devcontainer.json failed: %v", err)
 	}
 }

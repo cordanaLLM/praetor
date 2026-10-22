@@ -59,6 +59,7 @@ const (
 // BootstrapOptions selects a local Praetor source snapshot and immutable images.
 // SourceRoot is explicit; an ordinary config-only catalog cannot install a CLI.
 type BootstrapOptions struct {
+	RepoRoot     string
 	SourceRoot   string
 	BuilderImage string
 	BaseImage    string
@@ -121,7 +122,11 @@ func PrepareBundle(ctx context.Context, name string, profiles, facets []string, 
 	if err := validateBootstrapImages(options.BuilderImage, options.BaseImage); err != nil {
 		return nil, err
 	}
-	dc, err := SynthesizeFromProfilesWithFeatures(name, profiles, facets, options.Features)
+	root := options.RepoRoot
+	if root == "" {
+		root = options.SourceRoot
+	}
+	dc, err := SynthesizeFromProfilesWithFeatures(name, profiles, facets, options.Features, root)
 	if err != nil {
 		return nil, err
 	}

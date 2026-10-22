@@ -19,7 +19,7 @@ import (
 const goToolsAutoUpdate = "go.toolsManagement.autoUpdate"
 
 // selectedGo is a pinned catalog's Go feature, with the versions an adopter pins.
-var selectedGo = config.DevContainerFeature{Ref: GoFeatureRef, Options: map[string]interface{}{"version": "1.27.1", "golangciLintVersion": "2.13.2"}}
+var selectedGo = config.DevContainerFeature{Ref: GoFeatureRef, Options: map[string]interface{}{"version": "1.27.1", "golangciLintVersion": "2.13.2", "installGoTools": false}}
 
 // synthesizeSelected synthesizes a framework container from selected catalog features.
 func synthesizeSelected(t *testing.T, selected ...config.DevContainerFeature) *DevContainer {
