@@ -810,13 +810,13 @@ func classifyDuplicateGroup(group DuplicateGroup, mainRoot string, exceptions []
 	group.Locations = append([]FileLocation(nil), group.Locations...)
 	allExcepted := true
 	var groupExceptions []ExceptionEntry
-	seen := make(map[config.Exception]bool)
+	seen := make(map[*config.Exception]bool)
 
 	for i := range group.Locations {
 		live := judgeLocation(&group.Locations[i], mainRoot, group.Hash, exceptions, today, used)
 		if live != nil {
-			if !seen[*live] {
-				seen[*live] = true
+			if !seen[live] {
+				seen[live] = true
 				groupExceptions = append(groupExceptions, ExceptionEntry{
 					Path:    live.Path,
 					Reason:  live.Reason,

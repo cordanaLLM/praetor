@@ -10,7 +10,6 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/gating"
-	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // runBaselineCmd dispatches the baseline command for the fixture with extra flags.
@@ -328,20 +327,14 @@ func runVuln(ctx context.Context, arg string) error {
 `
 
 func TestBaselineRecord_Gosec_Positive(t *testing.T) {
-	t.Setenv("PATH", testsupport.PinnedGosecDir(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
-	f := newAuditFixture(t)
-	writeFixtureFile(t, f.dir, "go.mod", "module example.com/widget\n\ngo 1.22\n")
-	writeFixtureFile(t, f.dir, gating.GosecConfigFile, "{\n  \"global\": {\n    \"exclude\": \"\"\n  }\n}\n")
-	writeFixtureFile(t, f.dir, "vuln.go", fixtureGosecVuln)
-	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "add", "."); err != nil {
-		t.Fatalf("git add: %v (%s)", err, out)
-	}
+	f := gosecRecordFixture(t)
 
-	out, err := runBaselineCmd(t, f, "--record", "--allow-gosec-increase", "--gosec-reason=legacy gosec debt")
+	seedHistoricalGosec(t, f)
+	out, err := runBaselineCmd(t, f, "--record")
 	if err != nil {
 		t.Fatalf("record with gosec: %v\n%s", err, out)
 	}
-	mustContain(t, out, "Gosec baseline successfully updated", "Total: 1 infractions, previously 0")
+	mustContain(t, out, "Gosec baseline successfully updated", "Total: 1 infractions, previously 1")
 
 	gosecPath := filepath.Join(f.dir, gating.GosecBaselineFile)
 	gosecBase, err := baseline.LoadBaseline(gosecPath)
@@ -356,12 +349,7 @@ func TestBaselineRecord_Gosec_Positive(t *testing.T) {
 	if err := os.Remove(filepath.Join(f.dir, "vuln.go")); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "add", "."); err != nil {
-		t.Fatalf("git add: %v (%s)", err, out)
-	}
-	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "commit", "-m", "remove vuln"); err != nil {
-		t.Fatalf("git commit: %v (%s)", err, out)
-	}
+	gitCommitAll(t, f.dir, f.gitEnv, "remove vuln")
 
 	out, err = runBaselineCmd(t, f, "--record")
 	if err != nil {
@@ -380,33 +368,26 @@ func TestBaselineRecord_Gosec_Positive(t *testing.T) {
 }
 
 func TestBaselineRecord_Gosec_Negative(t *testing.T) {
-	t.Setenv("PATH", testsupport.PinnedGosecDir(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
-	f := newAuditFixture(t)
-	writeFixtureFile(t, f.dir, "go.mod", "module example.com/widget\n\ngo 1.22\n")
-	writeFixtureFile(t, f.dir, gating.GosecConfigFile, "{\n  \"global\": {\n    \"exclude\": \"\"\n  }\n}\n")
-	writeFixtureFile(t, f.dir, "vuln.go", fixtureGosecVuln)
-	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "add", "."); err != nil {
-		t.Fatalf("git add: %v (%s)", err, out)
-	}
+	f := gosecRecordFixture(t)
 
 	gosecPath := filepath.Join(f.dir, gating.GosecBaselineFile)
 
-	// Gosec increase with only --allow-increase --reason=x is refused; error names --allow-gosec-increase.
+	// HISS increase flags cannot authorize a first gosec baseline.
 	_, err := runBaselineCmd(t, f, "--record", "--allow-increase", "--reason=hiss debt only")
 	if err == nil {
 		t.Fatal("expected error when gosec increases without --allow-gosec-increase")
 	}
-	mustErrContain(t, err, "--allow-gosec-increase")
+	mustErrContain(t, err, "no first gosec baseline")
 	if _, statErr := os.Stat(gosecPath); !os.IsNotExist(statErr) {
 		t.Fatalf("refused record must not write gosec baseline: %v", statErr)
 	}
 
-	// --gosec-reason without --allow-gosec-increase is refused.
+	// A gosec rationale cannot authorize a first gosec baseline.
 	_, err = runBaselineCmd(t, f, "--record", "--gosec-reason=rationale without flag")
 	if err == nil {
 		t.Fatal("expected error with --gosec-reason but no --allow-gosec-increase")
 	}
-	mustErrContain(t, err, "--allow-gosec-increase")
+	mustErrContain(t, err, "no first gosec baseline")
 	if _, statErr := os.Stat(gosecPath); !os.IsNotExist(statErr) {
 		t.Fatalf("refused record must not write gosec baseline: %v", statErr)
 	}
@@ -421,19 +402,10 @@ func TestBaselineRecord_Gosec_Negative(t *testing.T) {
 }
 
 func TestBaselineRecord_Gosec_Boundary_UnchangedDebtKeepsBothFiles(t *testing.T) {
-	t.Setenv("PATH", testsupport.PinnedGosecDir(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
-	f := newAuditFixture(t)
-	writeFixtureFile(t, f.dir, "go.mod", "module example.com/widget\n\ngo 1.22\n")
-	writeFixtureFile(t, f.dir, gating.GosecConfigFile, "{\n  \"global\": {\n    \"exclude\": \"\"\n  }\n}\n")
-	writeFixtureFile(t, f.dir, "vuln.go", fixtureGosecVuln)
-	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "add", "."); err != nil {
-		t.Fatalf("git add: %v (%s)", err, out)
-	}
-	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "commit", "-m", "add vuln"); err != nil {
-		t.Fatalf("git commit: %v (%s)", err, out)
-	}
+	f := gosecRecordFixture(t)
 
-	out, err := runBaselineCmd(t, f, "--record", "--allow-gosec-increase", "--gosec-reason=initial gosec debt")
+	seedHistoricalGosec(t, f)
+	out, err := runBaselineCmd(t, f, "--record")
 	if err != nil {
 		t.Fatalf("record initial: %v\n%s", err, out)
 	}
