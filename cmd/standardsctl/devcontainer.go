@@ -21,6 +21,11 @@ type devContainerOptions struct {
 // preparation does, and reads three git answers.
 const devContainerFreshnessBound = 5 * time.Minute
 
+// devContainerVerifyBound allows manifest resolution and recorded bootstrap verification
+// five minutes, like freshness: source capture can exceed ten seconds under race-detector
+// contention even when verification completes quickly on an idle host.
+const devContainerVerifyBound = 5 * time.Minute
+
 // devContainerBumpBound bounds one bump command: resolving the declared policy, then
 // devcontainer.Bump, which edits the pin source, the prior list and the Dockerfiles, captures
 // the source once for the regenerated bundle, writes it and verifies it, and holds its own
@@ -96,21 +101,43 @@ func runDevContainer(args []string) error {
 	if opts.bump {
 		return runDevContainerBump(opts)
 	}
+	if opts.verify {
+		return runDevContainerVerify(opts, devContainerVerifyBound, devcontainer.Verify)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	manifest, features, dc, err := declaredDevContainer(ctx, opts.configPath)
 	if err != nil {
 		return err
 	}
-	if opts.verify {
-		fmt.Printf("Verifying %s against %s...\n", opts.outputPath, opts.configPath)
-		if err := devcontainer.Verify(ctx, opts.outputPath, dc); err != nil {
-			return fmt.Errorf("devcontainer verification failed: %w", devContainerCheckoutRemedy(ctx, filepath.Dir(opts.configPath), manifest, err))
-		}
-		fmt.Println("[PASS] DevContainer configuration and recorded bootstrap inputs match; runtime execution remains a separate check.")
-		return nil
-	}
 	return generateDevContainerBundle(ctx, manifest, dc, features, opts)
+}
+
+// runDevContainerVerify keeps the production verifier and budget explicit; tests can scale
+// both without replacing package globals or waiting minutes for a deadline.
+func runDevContainerVerify(opts devContainerOptions, bound time.Duration, verify func(context.Context, string, *devcontainer.DevContainer) error) error {
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
+	defer cancel()
+	manifest, _, dc, err := declaredDevContainer(ctx, opts.configPath)
+	if err := devContainerVerifyStepError(ctx, bound, "manifest read", err); err != nil {
+		return err
+	}
+	fmt.Printf("Verifying %s against %s...\n", opts.outputPath, opts.configPath)
+	err = verify(ctx, opts.outputPath, dc)
+	if err := devContainerVerifyStepError(ctx, bound, "verify", err); err != nil {
+		return fmt.Errorf("devcontainer verification failed: %w", devContainerCheckoutRemedy(ctx, filepath.Dir(opts.configPath), manifest, err))
+	}
+	fmt.Println("[PASS] DevContainer configuration and recorded bootstrap inputs match; runtime execution remains a separate check.")
+	return nil
+}
+
+// devContainerVerifyStepError distinguishes budget exhaustion from configuration drift,
+// including a step that returns success after its deadline has already expired.
+func devContainerVerifyStepError(ctx context.Context, bound time.Duration, step string, err error) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("devcontainer verification exceeded %s bound during %s: %w", bound, step, context.DeadlineExceeded)
+	}
+	return err
 }
 
 // declaredDevContainer resolves the pinned catalog of the manifest at configPath and returns
