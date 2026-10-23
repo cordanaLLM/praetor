@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // maxDeclinedArtifacts bounds the declared list so a malformed manifest cannot make
@@ -32,17 +33,32 @@ var DotGitHubHealthArtifacts = []string{
 	"security-policy",
 }
 
-// IsDotGitHubRepository reports whether a repository is named .github, determined by
-// manifest repository.name if non-empty, else the checkout directory name, case-insensitive.
-func IsDotGitHubRepository(repoPath string, manifest *config.Manifest) bool {
+// IsDotGitHubRepository reports whether a repository resolves to .github, determined by
+// manifest repository.name if set; else the name from resolved identity (origin remote,
+// as resolveIdentity yields); else the checkout directory name. Comparison against
+// .github is case-insensitive and exact.
+func IsDotGitHubRepository(manifest *config.Manifest, identityName, repoPath string) bool {
 	var name string
 	if manifest != nil {
 		name = strings.TrimSpace(manifest.Repository.Name)
 	}
+	if name == "" {
+		name = strings.TrimSpace(identityName)
+	}
 	if name == "" && repoPath != "" {
-		name = filepath.Base(filepath.Clean(repoPath))
+		name = repoDirectoryName(repoPath)
 	}
 	return strings.EqualFold(name, DotGitHubRepoName)
+}
+
+func repoDirectoryName(repoPath string) string {
+	clean := filepath.Clean(repoPath)
+	clean = strings.ReplaceAll(clean, "\\", "/")
+	clean = strings.TrimRight(clean, "/")
+	if idx := strings.LastIndex(clean, "/"); idx >= 0 {
+		return clean[idx+1:]
+	}
+	return clean
 }
 
 // IsDotGitHubHealthArtifact reports whether artifact is one of the organisation community health
@@ -312,7 +328,7 @@ func ManifestArtifactDeclined(manifest *config.Manifest, artifact string) (bool,
 	if err != nil {
 		return false, err
 	}
-	if !declined && IsDotGitHubRepository("", manifest) && IsDotGitHubHealthArtifact(artifact) {
+	if !declined && IsDotGitHubRepository(manifest, "", "") && IsDotGitHubHealthArtifact(artifact) {
 		return true, nil
 	}
 	return declined, nil
@@ -323,20 +339,27 @@ func ManifestArtifactDeclined(manifest *config.Manifest, artifact string) (bool,
 // nothing. A manifest that cannot be read or decoded is an error, so a writer outside adoption,
 // such as flavor apply rendering the branch ruleset, fails closed instead of writing a file the
 // repository may have declined. In a repository named .github (by manifest repository.name, else
-// directory name), organisation community health files are declined by default.
+// origin remote, else directory name), organisation community health files are declined by default.
 func RepositoryArtifactDeclined(ctx context.Context, repoPath, artifact string) (bool, error) {
 	manifest, err := loadDeclaredManifest(ctx, repoPath)
 	if err != nil {
 		return false, err
 	}
-	declined, err := ManifestArtifactDeclined(manifest, artifact)
+	declined, err := ArtifactDeclined(manifestDeclines(manifest), artifact)
 	if err != nil {
 		return false, err
 	}
-	if !declined && IsDotGitHubRepository(repoPath, manifest) && IsDotGitHubHealthArtifact(artifact) {
+	if declined {
 		return true, nil
 	}
-	return declined, nil
+	if !IsDotGitHubHealthArtifact(artifact) {
+		return false, nil
+	}
+	var remoteRepo string
+	if remote, err := util.ReadOriginRemote(ctx, repoPath); err == nil {
+		remoteRepo = remote.Repo
+	}
+	return IsDotGitHubRepository(manifest, remoteRepo, repoPath), nil
 }
 
 // manifestDeclines is the adoption.decline list a manifest records; nil declines nothing.
@@ -421,14 +444,7 @@ func (s *adoptSession) isDotGitHub() bool {
 	if s == nil {
 		return false
 	}
-	if s.dotGitHub {
-		return true
-	}
-	var manifest *config.Manifest
-	if s.policy != nil {
-		manifest = s.policy.Manifest
-	}
-	return IsDotGitHubRepository(s.repoPath, manifest)
+	return s.dotGitHub
 }
 
 func (s *adoptSession) effectiveDeclinedList() []string {
@@ -464,9 +480,6 @@ func (s *adoptSession) declines(step string) bool {
 		if declinedName(s.declined[i]) == norm {
 			return true
 		}
-	}
-	if s.isDotGitHub() && IsDotGitHubHealthArtifact(step) {
-		return true
 	}
 	return false
 }

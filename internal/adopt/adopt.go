@@ -179,6 +179,8 @@ type adoptSession struct {
 	report       *AdoptReport
 	policy       *config.EffectivePolicy
 	verification *VerificationPlan
+	// declared is the repository's existing manifest read before the chain runs.
+	declared *config.Manifest
 	// declined carries adoption.decline from the repository's existing manifest, read before
 	// the chain runs so a repository's recorded decision applies to the run that follows it,
 	// joined with organisation community health files declined by default in a .github repository.
@@ -306,11 +308,12 @@ func prepareAdoption(ctx context.Context, opts AdoptOptions) (*AdoptReport, *ado
 	report.Facets, report.FacetOrigin = adoptionFacets(declared, unreadable, opts.Facets, report.Archetype)
 	warnIgnoredFacets(report, opts, declared)
 	report.Verification = verification
-	s := newAdoptSession(normPath, opts, report, declared)
-	if err := s.resolveIdentity(ctx); err != nil {
+	identity, repoName, err := resolveRepositoryIdentity(ctx, normPath, report)
+	if err != nil {
 		report.addError("%s", err)
 		return report, nil, err
 	}
+	s := newAdoptSession(normPath, opts, report, declared, identity, repoName)
 	if err := s.resolveDefaultBranch(ctx, declared); err != nil {
 		report.addError("%s", err)
 		return report, nil, err
@@ -320,23 +323,27 @@ func prepareAdoption(ctx context.Context, opts AdoptOptions) (*AdoptReport, *ado
 	return report, s, nil
 }
 
-// newAdoptSession carries report's resolved archetype, facets and verification plan, and the
-// decisions the existing manifest records (declared, nil without one), through the step chain.
-func newAdoptSession(repoPath string, opts AdoptOptions, report *AdoptReport, declared *config.Manifest) *adoptSession {
+// newAdoptSession carries report's resolved archetype, facets and verification plan, the
+// resolved repository identity, and the decisions the existing manifest records (declared,
+// nil without one), through the step chain.
+func newAdoptSession(repoPath string, opts AdoptOptions, report *AdoptReport, declared *config.Manifest, identity repoIdentity, repoName string) *adoptSession {
 	cleanupGoto, undocumented := declared.CleanupGotoException(repoPath)
 	if undocumented != "" {
 		report.addWarning("%s", undocumented)
 	}
 	explicit := manifestDeclines(declared)
-	dotGitHub := IsDotGitHubRepository(repoPath, declared)
+	dotGitHub := IsDotGitHubRepository(declared, identity.name, repoPath)
 	session := &adoptSession{
 		repoPath:         repoPath,
 		arch:             report.Archetype,
 		facets:           report.Facets,
 		opts:             opts,
 		report:           report,
+		identity:         identity,
+		repoName:         repoName,
 		collaborators:    opts.Collaborators,
 		verification:     report.Verification,
+		declared:         declared,
 		explicitDeclined: explicit,
 		dotGitHub:        dotGitHub,
 		cleanupGoto:      cleanupGoto,
@@ -463,27 +470,40 @@ func (id repoIdentity) coordinate() string {
 	return id.owner + "/" + id.name
 }
 
-// resolveIdentity fills the session's identity and prose label under the caller's context. An
-// unresolved identity is a warning, because every identity field adoption writes stays empty.
-// The origin remote is the only source: the checkpoint evaluator checks the policy's repository
-// against that remote, so no other source could name a repository it accepts. A remote read
-// git did not answer (a cancelled context, a git failure) is an error, not an unresolved
-// identity: adoption must not write an empty identity for a question it never got answered.
-func (s *adoptSession) resolveIdentity(ctx context.Context) error {
-	remote, err := util.ReadOriginRemote(ctx, s.repoPath)
+// resolveRepositoryIdentity fills the repository identity and prose label under the caller's
+// context. An unresolved identity is a warning, because every identity field adoption writes
+// stays empty. The origin remote is the only source: the checkpoint evaluator checks the
+// policy's repository against that remote, so no other source could name a repository it accepts.
+// A remote read git did not answer (a cancelled context, a git failure) is an error, not an
+// unresolved identity: adoption must not write an empty identity for a question it never got
+// answered.
+func resolveRepositoryIdentity(ctx context.Context, repoPath string, report *AdoptReport) (repoIdentity, string, error) {
+	remote, err := util.ReadOriginRemote(ctx, repoPath)
 	if err == nil {
-		s.identity = repoIdentity{owner: remote.Owner, name: remote.Repo, host: remote.Host, path: remote.Path}
-		s.repoName = remote.Repo
-		return nil
+		return repoIdentity{owner: remote.Owner, name: remote.Repo, host: remote.Host, path: remote.Path}, remote.Repo, nil
 	}
 	if !errors.Is(err, util.ErrRepoIdentityUnresolved) {
-		return fmt.Errorf("resolve repository identity: %w", err)
+		return repoIdentity{}, "", fmt.Errorf("resolve repository identity: %w", err)
 	}
-	s.repoName = filepath.Base(s.repoPath)
-	s.report.addWarning("repository identity unresolved (%v): adoption writes no repository.owner or repository.name "+
-		"and installs no checkpoint lifecycle. praetorctl audit fails until %s names both: set them by hand, since "+
-		"adoption never rewrites an existing manifest, and add an origin remote naming <owner>/<repo> before "+
-		"re-running adoption to install the checkpoint lifecycle", err, manifestFile)
+	base := filepath.Base(repoPath)
+	if report != nil {
+		report.addWarning("repository identity unresolved (%v): adoption writes no repository.owner or repository.name "+
+			"and installs no checkpoint lifecycle. praetorctl audit fails until %s names both: set them by hand, since "+
+			"adoption never rewrites an existing manifest, and add an origin remote naming <owner>/<repo> before "+
+			"re-running adoption to install the checkpoint lifecycle", err, manifestFile)
+	}
+	return repoIdentity{}, base, nil
+}
+
+func (s *adoptSession) resolveIdentity(ctx context.Context) error {
+	id, repoName, err := resolveRepositoryIdentity(ctx, s.repoPath, s.report)
+	if err != nil {
+		return err
+	}
+	s.identity = id
+	s.repoName = repoName
+	s.dotGitHub = IsDotGitHubRepository(s.declared, s.identity.name, s.repoPath)
+	s.declined = s.effectiveDeclinedList()
 	return nil
 }
 
