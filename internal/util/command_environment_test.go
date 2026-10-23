@@ -240,3 +240,37 @@ func TestInheritedEnvironment_3D(t *testing.T) {
 		t.Errorf("case-differing override on %s: upper kept=%v, want %v", runtime.GOOS, upperKept, wantKept)
 	}
 }
+
+// OfflineGoEnvironment (#1521): pins GOPROXY=off, GOTOOLCHAIN=local, and GOWORK=off so child
+// Go tools run without network calls and without picking up parent workspaces.
+func TestOfflineGoEnvironment_PositiveNegativeBoundary(t *testing.T) {
+	// Positive: overrides ambient settings and contains the expected flags.
+	t.Setenv("GOPROXY", "https://proxy.golang.org")
+	t.Setenv("GOTOOLCHAIN", "auto")
+	t.Setenv("GOWORK", "/path/to/go.work")
+	got := environmentNames(strings.Join(InheritedEnvironment(OfflineGoEnvironment()), "\n"))
+	if got["GOPROXY"] != "off" {
+		t.Errorf("GOPROXY = %q, want off", got["GOPROXY"])
+	}
+	if got["GOTOOLCHAIN"] != "local" {
+		t.Errorf("GOTOOLCHAIN = %q, want local", got["GOTOOLCHAIN"])
+	}
+	if got["GOWORK"] != "off" {
+		t.Errorf("GOWORK = %q, want off", got["GOWORK"])
+	}
+	// Negative: does not include git variables or PWD.
+	for _, entry := range OfflineGoEnvironment() {
+		if isGitRepositoryVariable(entry) || strings.HasPrefix(entry, "PWD=") {
+			t.Errorf("unexpected entry in OfflineGoEnvironment: %s", entry)
+		}
+	}
+	// Boundary: exact entry count, and a caller's change never reaches the next call.
+	first := OfflineGoEnvironment()
+	if len(first) != 3 {
+		t.Errorf("OfflineGoEnvironment len = %d, want 3", len(first))
+	}
+	first[0] = "GOPROXY=https://proxy.golang.org"
+	if again := OfflineGoEnvironment(); again[0] != "GOPROXY=off" {
+		t.Errorf("OfflineGoEnvironment()[0] = %q after a caller changed its copy, want GOPROXY=off", again[0])
+	}
+}

@@ -1,0 +1,2 @@
+type: fixed
+title: Keep offline documentation sync off the module proxy by executing go doc under an offline Go environment.

@@ -69,7 +69,15 @@ func harvestGoModule(ctx context.Context, repoPath string, ref PackageRef, offli
 			return "", fmt.Errorf("invalid module version: %w", err)
 		}
 	}
-	out, commandErr := util.RunCommandBytes(ctx, repoPath, "go", 1<<20, "doc", goDocTarget(ref, offline))
+	runCtx := ctx
+	if offline {
+		var err error
+		runCtx, err = util.WithCommandEnvironment(ctx, util.InheritedEnvironment(util.OfflineGoEnvironment()))
+		if err != nil {
+			return "", err
+		}
+	}
+	out, commandErr := util.RunCommandBytes(runCtx, repoPath, "go", 1<<20, "doc", goDocTarget(ref, offline))
 	if commandErr == nil && len(out.Stdout) > 50 {
 		return string(out.Stdout), nil
 	}

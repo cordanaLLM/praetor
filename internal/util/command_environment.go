@@ -8,6 +8,15 @@ import (
 	"strings"
 )
 
+// OfflineGoEnvironment returns the overrides that keep child Go commands (go list in
+// internal/needs, go doc in internal/docdistill) off the network: no module proxy
+// (GOPROXY=off), no toolchain download (GOTOOLCHAIN=local) and no workspace file above the
+// project (GOWORK=off). A module or toolchain the cache does not hold fails the run instead of
+// being fetched. Each call returns a fresh slice, so no caller can change another's list.
+func OfflineGoEnvironment() []string {
+	return []string{"GOPROXY=off", "GOTOOLCHAIN=local", "GOWORK=off"}
+}
+
 // InheritedEnvironment is the environment a child inherits without WithCommandEnvironment -- the
 // ambient one minus gitRepositoryVariables -- with overrides, NAME=value entries, set on top: an
 // inherited entry whose name an override names is dropped and the overrides follow in the order
