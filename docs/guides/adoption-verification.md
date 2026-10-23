@@ -566,6 +566,23 @@ projected and linted by the projection and caveman gates, which have no opt-out
 malformed decline entry fails closed. `cmd/standardsctl/audit_agent_definitions_test.go` and
 `internal/compiler/agent_inventory_test.go` pin each case.
 
+### Organisation `.github` repositories and adoption decline
+
+In an organisation `.github` repository, `CONTRIBUTING.md`, `SECURITY.md` and
+`.github/pull_request_template.md` are the defaults GitHub shows for every repository of the
+organisation that has no copy of its own, so the organisation writes them. Adoption treats
+`contributing`, `pull-request-template` and `security-policy` as declined there without an
+`adoption.decline` entry: the report lists each step as declined with that reason, and an existing
+health file stays byte-identical, `--force` included
+(`TestAdopt_DotGitHub_HealthFiles_WritesNoneAndPlansNone`,
+`TestAdopt_DotGitHub_ExistingContributing_ByteIdenticalUnderForce` in
+`internal/adopt/dotgithub_health_files_test.go`).
+
+The repository counts as an organisation `.github` repository when the manifest's
+`repository.name` is `.github`; without a manifest name, the name from the origin remote decides,
+then the directory name. The match is exact and ignores case (`IsDotGitHubRepository` in
+`internal/adopt/declined.go`).
+
 ### What audit does with a declined step
 
 `adoption.decline` in `.standards.yaml` lists adoption steps a repository keeps for itself.
