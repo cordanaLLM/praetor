@@ -138,6 +138,10 @@ const (
 	gitTimeout     = 2 * time.Minute
 	installTimeout = 10 * time.Minute
 	moduleTimeout  = 30 * time.Minute
+
+	downloadAttempts = 3
+	firstBackoff     = 5 * time.Second
+	secondBackoff    = 15 * time.Second
 )
 
 // The checker's build module, written to a temporary directory by buildChecker. It is the text
@@ -544,6 +548,8 @@ type repository struct {
 	// exceptions are the manifest's module exceptions and today the UTC day they are judged on.
 	exceptions []exception
 	today      time.Time
+	runner     toolRunner
+	wait       waitFunc
 }
 
 // policy is the compatibility policy: whether an incompatible change fails the gate, and why.
@@ -898,8 +904,12 @@ func compareEach(
 	for index := 0; index < len(plan.compared) && index < maxModules; index++ {
 		target := plan.compared[index]
 		stdout.printf("Comparing %s (%s) from %s to %s\n", target.dir, target.path, short(repo.base), short(repo.head))
-		buildErr := buildModule(ctx, repo.root, target.dir, stderr.w)
+		buildErr := buildModule(ctx, repo.root, target.dir, stderr.w, repo.runner, repo.wait)
 		if buildErr != nil {
+			var dlErr *downloadError
+			if errors.As(buildErr, &dlErr) {
+				return nil, fmt.Errorf("module %s (%s): %w", target.dir, target.path, buildErr)
+			}
 			note, err := excuseBuildFailure(repo, target, buildErr, stderr)
 			if err != nil {
 				return nil, err
@@ -916,13 +926,80 @@ func compareEach(
 	return results, nil
 }
 
-// buildModule builds the module's packages at HEAD in the repository at root. The checker reads
-// a package it cannot type-check as empty without saying so, so a module that does not build
-// would otherwise read as compatible; go list -export builds what the checker loads and writes
-// nothing into the working tree.
-func buildModule(ctx context.Context, root, dir string, stderr io.Writer) error {
+// toolRunner executes a command in dir with arguments under context.
+type toolRunner func(ctx context.Context, dir string, stdout, stderr io.Writer, name string, args ...string) error
+
+// waitFunc waits for duration d or until ctx is done.
+type waitFunc func(ctx context.Context, d time.Duration) error
+
+// downloadError reports persistent module download failure across attempts.
+type downloadError struct {
+	dir      string
+	attempts int
+	err      error
+}
+
+func (e *downloadError) Error() string {
+	return fmt.Sprintf("download dependencies of module %s failed after %d attempts: %v", e.dir, e.attempts, e.err)
+}
+
+func (e *downloadError) Unwrap() error {
+	return e.err
+}
+
+// defaultWait waits for duration d, stopping early if ctx is done.
+func defaultWait(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// downloadModule runs "go mod download" in moduleDir with bounded retries and backoff.
+func downloadModule(ctx context.Context, moduleDir, dir string, stderr io.Writer, run toolRunner, wait waitFunc) error {
+	var lastErr error
+	for attempt := 1; attempt <= downloadAttempts; attempt++ {
+		if attempt > 1 {
+			backoff := firstBackoff
+			if attempt > 2 {
+				backoff = secondBackoff
+			}
+			if err := wait(ctx, backoff); err != nil {
+				return &downloadError{dir: dir, attempts: attempt - 1, err: err}
+			}
+		}
+		err := run(ctx, moduleDir, io.Discard, stderr, "go", "mod", "download")
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if _, printErr := fmt.Fprintf(stderr, "go mod download failed for %s (attempt %d of %d): %v\n", dir, attempt, downloadAttempts, err); printErr != nil {
+			return &downloadError{dir: dir, attempts: attempt, err: printErr}
+		}
+	}
+	return &downloadError{dir: dir, attempts: downloadAttempts, err: lastErr}
+}
+
+// buildModule downloads dependencies with bounded retry and builds the module's packages at
+// HEAD in the repository at root. The checker reads a package it cannot type-check as empty
+// without saying so, so a module that does not build would otherwise read as compatible; go
+// list -export builds what the checker loads and writes nothing into the working tree.
+func buildModule(ctx context.Context, root, dir string, stderr io.Writer, run toolRunner, wait waitFunc) error {
 	moduleDir := filepath.Join(root, filepath.FromSlash(dir))
-	if err := runTool(ctx, moduleDir, io.Discard, stderr, "go", "list", "-export", "./..."); err != nil {
+	if run == nil {
+		run = runTool
+	}
+	if wait == nil {
+		wait = defaultWait
+	}
+	if err := downloadModule(ctx, moduleDir, dir, stderr, run, wait); err != nil {
+		return err
+	}
+	if err := run(ctx, moduleDir, io.Discard, stderr, "go", "list", "-export", "./..."); err != nil {
 		return fmt.Errorf("its packages do not build at HEAD, so the checker cannot read them: %w", err)
 	}
 	return nil

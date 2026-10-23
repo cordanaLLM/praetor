@@ -1,0 +1,2 @@
+type: fixed
+title: The API compatibility gate retries module downloads with bounded backoff so transient proxy stream errors do not fail adopter CI
