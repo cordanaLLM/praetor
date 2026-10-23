@@ -100,15 +100,22 @@ func TestTranspilerWriteOutputsSlowWithinBound(t *testing.T) {
 	}
 }
 
+// deadlineCaseBound bounds the deadline-naming cases. One context bounds every target of a
+// run, so a real slow write or read of another target could spend it first: the Windows
+// runner spent 80 ms on .github/copilot-instructions.md and the deadline named that target
+// (main 4f04246c6, 2026-10-23). The other targets therefore never touch the disk inside the
+// bound, and the bound leaves room for the directory checks that run before the stubbed target.
+const deadlineCaseBound = 500 * time.Millisecond
+
 func TestTranspilerWriteOutputsDeadlineNamesBoundAndTarget(t *testing.T) {
-	const bound = 80 * time.Millisecond
+	const bound = deadlineCaseBound
 	for _, lateSuccess := range []bool{false, true} {
 		dir, _, res := compileSampleFixture(t)
 		tr := NewTranspiler()
 		tr.Bound = bound
 		tr.writeTarget = func(ctx context.Context, root, rel string, data []byte) error {
 			if rel != ".windsurfrules" {
-				return writeConfinedText(ctx, root, rel, data)
+				return nil // only the stubbed target may meet the deadline
 			}
 			<-ctx.Done()
 			if lateSuccess {
@@ -122,17 +129,23 @@ func TestTranspilerWriteOutputsDeadlineNamesBoundAndTarget(t *testing.T) {
 }
 
 func TestTranspilerVerifyDeadlineNamesBoundAndTarget(t *testing.T) {
-	const bound = 80 * time.Millisecond
+	const bound = deadlineCaseBound
 	for _, lateSuccess := range []bool{false, true} {
 		dir, source, res := compileSampleFixture(t)
 		if err := NewTranspiler().WriteOutputs(res, dir); err != nil {
 			t.Fatal(err)
 		}
+		// The other targets answer from the compiled result, so the comparison stays real while
+		// no disk read spends the bound: Verify checks the context after every target.
+		written := make(map[string][]byte, len(res.Files))
+		for _, file := range res.Files {
+			written[file.RelativePath] = []byte(file.Content)
+		}
 		tr := NewTranspiler()
 		tr.Bound = bound
 		tr.readTarget = func(ctx context.Context, root, rel string) ([]byte, error) {
 			if rel != ".codex/rules.md" {
-				return readConfinedText(ctx, root, rel)
+				return written[rel], nil
 			}
 			<-ctx.Done()
 			if lateSuccess {
