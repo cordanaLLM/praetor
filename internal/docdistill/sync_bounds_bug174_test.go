@@ -8,8 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -72,6 +75,35 @@ func TestSyncRepositoryDocs_Positive_NRefsWriteCatalogAndEveryDoc(t *testing.T) 
 		}
 	}
 	assertCatalogParseable(t, repo, n)
+}
+
+func TestSyncRepositoryDocs_Positive_OfflineSyncMakesZeroProxyRequests(t *testing.T) {
+	var requests atomic.Int64
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.NotFound(w, r)
+	}))
+	defer proxy.Close()
+
+	t.Setenv("GOPROXY", proxy.URL)
+	t.Setenv("GOSUMDB", "off")
+	t.Setenv("GOFLAGS", "-mod=mod")
+
+	const n = 3
+	repo := syncFixture(t, n)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTestTimeout)
+	defer cancel()
+
+	cat, err := SyncRepositoryDocs(ctx, repo, DistillOptions{OfflineOnly: true})
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("offline sync hit the module proxy %d times, want 0", got)
+	}
+	if len(cat.Packages) != n {
+		t.Fatalf("catalog has %d packages, want %d", len(cat.Packages), n)
+	}
 }
 
 func TestSyncRepositoryDocs_Negative_CancelledContextLeavesPreviousCatalogParseable(t *testing.T) {

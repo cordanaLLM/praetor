@@ -28,12 +28,6 @@ const (
 		"{{with .Module}}{{.Main}}{{end}}\t{{join .Imports \" \"}}"
 )
 
-// offlineGoListEnvironment keeps a measurement's go list off the network: no module proxy
-// (GOPROXY=off), no toolchain download (GOTOOLCHAIN=local) and no workspace file above the
-// project (GOWORK=off). A module the cache does not hold fails the run instead of being
-// fetched.
-var offlineGoListEnvironment = []string{"GOPROXY=off", "GOTOOLCHAIN=local", "GOWORK=off"}
-
 // UmbrellaMeasurement is what switching from an umbrella import to the recommended
 // sub-package imports removes from a project's build, read from `go list -deps ./...` run
 // offline. Modules count the dependency modules that provide a package of the build (the
@@ -133,7 +127,7 @@ func measurementReason(err error) string {
 func listModuleGraph(ctx context.Context, dir string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, moduleGraphTimeout)
 	defer cancel()
-	ctx, err := util.WithCommandEnvironment(ctx, util.InheritedEnvironment(offlineGoListEnvironment))
+	ctx, err := util.WithCommandEnvironment(ctx, util.InheritedEnvironment(util.OfflineGoEnvironment()))
 	if err != nil {
 		return nil, err
 	}
