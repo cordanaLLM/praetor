@@ -32,7 +32,14 @@ Recent completions in producer order, with local times, and daily counts by UTC 
 	<h2 id="done-trend-h">Done over 14 days (UTC)</h2>
 	<ol class="trend" aria-label="Done per UTC day">
 		{#each trend as day (day.day)}
-			<li><time datetime={day.day}>{day.day}</time><span>{day.done} done</span></li>
+			{@const hasClosed = day.closed !== undefined}
+			{@const label = hasClosed
+				? `+${day.closed} / -${day.reopened ?? 0} = ${day.done}`
+				: `${day.done} done`}
+			<li class:negative={day.done < 0} aria-label={label}>
+				<time datetime={day.day}>{day.day}</time>
+				<span class:negative={day.done < 0} aria-label={label}>{label}</span>
+			</li>
 		{/each}
 	</ol>
 </section>
@@ -90,5 +97,13 @@ Recent completions in producer order, with local times, and daily counts by UTC 
 		padding: var(--space-2);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-card);
+	}
+
+	.trend li.negative {
+		border-color: var(--color-destructive);
+	}
+
+	.negative {
+		color: var(--color-destructive);
 	}
 </style>

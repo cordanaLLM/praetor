@@ -68,7 +68,7 @@ export interface FrontierItem {
 export interface GraphFile extends Head {
 	repos: { repo: string; items: number }[];
 	done_recent: { id: string; title: string; repo: string; done_at: string }[];
-	done_trend: { day: string; done: number }[];
+	done_trend: { day: string; done: number; closed?: number; reopened?: number }[];
 	totals: Partial<Record<TotalKey, Count>>;
 	quick_wins: QuickWin[];
 	unestimated: number;
