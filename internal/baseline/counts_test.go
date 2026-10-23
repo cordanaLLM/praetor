@@ -23,11 +23,14 @@ func TestCountsAndSplitClasses(t *testing.T) {
 		{"empty", &Baseline{}, ClassCounts{}},
 		{"absent", &Baseline{Absent: true}, ClassCounts{}},
 		{"mixed", &Baseline{Infractions: entries, TotalInfractions: 3}, ClassCounts{HISS: 1, README: 2}},
-		{"understated", &Baseline{Infractions: entries}, ClassCounts{HISS: 1, README: 2}},
+		{"understated", &Baseline{Infractions: entries}, ClassCounts{README: 2}},
+		{"below README count", &Baseline{Infractions: entries, TotalInfractions: 1}, ClassCounts{README: 2}},
+		{"README count only", &Baseline{Infractions: entries, TotalInfractions: 2}, ClassCounts{README: 2}},
+		{"understated HISS only", &Baseline{Infractions: entries[:1]}, ClassCounts{}},
 		{"legacy total", &Baseline{Infractions: entries, TotalInfractions: 5}, ClassCounts{HISS: 3, README: 2}},
 		{"total only", &Baseline{TotalInfractions: 7}, ClassCounts{HISS: 7}},
 		{"negative total", &Baseline{TotalInfractions: -1}, ClassCounts{}},
-		{"unknown rule", &Baseline{Infractions: []Infraction{{RuleID: "README-99"}}}, ClassCounts{HISS: 1}},
+		{"unknown rule", &Baseline{Infractions: []Infraction{{RuleID: "README-99"}}, TotalInfractions: 1}, ClassCounts{HISS: 1}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -71,9 +74,9 @@ func TestIsReadmeRule(t *testing.T) {
 }
 
 func TestCheckMonotonicNamesGrowingClass(t *testing.T) {
-	previous := &Baseline{Infractions: []Infraction{{RuleID: "HISS-07"}, {RuleID: readmerules.RuleIDAbsent}}}
+	previous := &Baseline{TotalInfractions: 2, Infractions: []Infraction{{RuleID: "HISS-07"}, {RuleID: readmerules.RuleIDAbsent}}}
 	for _, rule := range []string{"HISS-07", readmerules.RuleIDAbsent} {
-		next := &Baseline{Infractions: []Infraction{{RuleID: rule}, {RuleID: rule}}}
+		next := &Baseline{TotalInfractions: 2, Infractions: []Infraction{{RuleID: rule}, {RuleID: rule}}}
 		err := CheckMonotonic(previous, next)
 		class := "HISS"
 		if IsReadmeRule(rule) {

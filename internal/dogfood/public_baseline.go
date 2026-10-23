@@ -71,7 +71,7 @@ func parsePublicBaseline(data []byte) (*baseline.Baseline, error) {
 }
 
 func comparePublicBaseline(ctx context.Context, recorded *baseline.Baseline, original *hiss.ScanReport) error {
-	if recorded.Version != 1 || recorded.TotalInfractions != len(recorded.Infractions) {
+	if recorded.Version != 1 || recorded.Count() != len(recorded.Infractions) {
 		return errors.New("adopted baseline version or count differs from the independent original scan")
 	}
 	hissRecorded, _ := recorded.SplitClasses()

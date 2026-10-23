@@ -457,7 +457,16 @@ func TestAdopt_FirstBaselineAndKeptBaselineHonorReadmeGate(t *testing.T) {
 	if firstRep.LegacyDebtCount != 0 {
 		t.Fatalf("first baseline LegacyDebtCount = %d, want 0", firstRep.LegacyDebtCount)
 	}
+	if detail := actionDetail(firstRep, baselineFile, actionCreate); !strings.Contains(detail, "Recorded 0 legacy debt infractions") {
+		t.Errorf("baseline creation included README debt in HISS count: %q", detail)
+	}
 	assertReadmeBaselineRecorded(t, repoPath)
+	kept := mustAdoptReadmeBaseline(t, lockRoot, repoPath, AdoptOptions{
+		LockSourceRoot: lockRoot, Path: repoPath, RecordBaseline: true,
+	})
+	if kept.BaselineRatchet == nil || kept.BaselineRatchet.Recorded != 0 {
+		t.Errorf("kept baseline included README debt in recorded HISS count: %+v", kept.BaselineRatchet)
+	}
 
 	if err := baseline.SaveBaseline(filepath.Join(repoPath, ".standards-baseline.json"), &baseline.Baseline{
 		Version: 1, TotalInfractions: 0, Infractions: []baseline.Infraction{},

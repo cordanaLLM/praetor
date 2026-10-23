@@ -564,10 +564,10 @@ func runHissStage(ctx context.Context, cfg *stageConfig) (string, error) {
 		// The same rendering `praetorctl audit` prints, so the rejection names each new
 		// violation's file, line and rule rather than only how many there are (BUG-792).
 		return "", fmt.Errorf("hiss ratchet failed against a baseline of %d: %s",
-			base.TotalInfractions, ratchet.Summary())
+			base.Counts().HISS, ratchet.Summary())
 	}
 	msg := fmt.Sprintf("%d infractions within the %d baselined limit (function length limit %d)",
-		ratchet.CurrentCount, base.TotalInfractions, scanOpts.MaxFuncLOC)
+		ratchet.CurrentCount, base.Counts().HISS, scanOpts.MaxFuncLOC)
 	if policyWarning != "" {
 		msg += "; " + policyWarning
 	}
@@ -723,7 +723,7 @@ func evaluateGosecModuleRatchet(repoDir, moduleDir string, allModules []goModule
 		return "", fmt.Errorf("gosec found security infractions in %s: %w: %s",
 			moduleDir, origErr, ratchet.Summary())
 	}
-	return fmt.Sprintf("%d gosec infractions within %d baselined limit", ratchet.CurrentCount, moduleBase.TotalInfractions), nil
+	return fmt.Sprintf("%d gosec infractions within %d baselined limit", ratchet.CurrentCount, moduleBase.Count()), nil
 }
 
 func runGoVulnerabilityGate(ctx context.Context, cfg *stageConfig, module goModule) (string, error) {

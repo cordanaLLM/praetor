@@ -155,7 +155,7 @@ func verifyBaseline(path string, b *baseline.Baseline, all bool) error {
 		return fmt.Errorf("[FAIL] %s: %s", path, describeRejection(ctx, root, path, scanOpts, b, current, ratchet, all))
 	}
 	fmt.Printf("[PASS] HISS-13 debt ratchet: %d active infractions within the %d recorded in %s; the file was not rewritten.\n",
-		ratchet.CurrentCount, b.TotalInfractions, path)
+		ratchet.CurrentCount, b.Count(), path)
 	if notice := ratchet.StaleNotice(); notice != "" {
 		// Read-only, like the rest of --verify: the audit's --max-stale-baseline-entries is the
 		// bound that fails a run (#349).
@@ -280,7 +280,7 @@ func printBaseline(path string, b *baseline.Baseline) {
 		repo = "repository"
 	}
 	fmt.Printf("=== %s Technical Debt Baseline ===\n", repo)
-	fmt.Printf("File: %s | Total Infractions: %d\n", path, b.TotalInfractions)
+	fmt.Printf("File: %s | Total Infractions: %d\n", path, b.Count())
 	if b.IncreaseRationale != "" {
 		fmt.Printf("Recorded increase rationale: %s\n", b.IncreaseRationale)
 	}
@@ -288,7 +288,7 @@ func printBaseline(path string, b *baseline.Baseline) {
 		fmt.Printf("  #%d [%s] %s:%d (%s) - %s\n", i+1, inf.RuleID, inf.FilePath, inf.LineNumber, inf.Symbol, inf.Message)
 	}
 
-	if b.TotalInfractions == 0 {
+	if b.Count() == 0 {
 		fmt.Println("Zero technical debt recorded in this baseline.")
 	}
 	printGosecBaselineIfPresent(filepath.Dir(path), repo)
@@ -302,14 +302,14 @@ func printGosecBaselineIfPresent(repoDir, repo string) {
 		return
 	}
 	fmt.Printf("\n=== %s Gosec Technical Debt Baseline ===\n", repo)
-	fmt.Printf("File: %s | Total Infractions: %d\n", gosecPath, gosecBase.TotalInfractions)
+	fmt.Printf("File: %s | Total Infractions: %d\n", gosecPath, gosecBase.Count())
 	if gosecBase.IncreaseRationale != "" {
 		fmt.Printf("Recorded increase rationale: %s\n", gosecBase.IncreaseRationale)
 	}
 	for i, inf := range gosecBase.Infractions {
 		fmt.Printf("  #%d [%s] %s:%d (%s) - %s\n", i+1, inf.RuleID, inf.FilePath, inf.LineNumber, inf.Anchor, inf.Message)
 	}
-	if gosecBase.TotalInfractions == 0 {
+	if gosecBase.Count() == 0 {
 		fmt.Println("Zero gosec technical debt recorded in this baseline.")
 	}
 }

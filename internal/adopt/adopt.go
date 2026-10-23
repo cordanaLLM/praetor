@@ -871,7 +871,7 @@ func (s *adoptSession) recordFirstBaseline(ctx context.Context, full string) err
 	if err := s.saveBaseline(full, base); err != nil {
 		return err
 	}
-	s.report.recordCreated(baselineFile, fmt.Sprintf("Recorded %d legacy debt infractions into baseline", base.TotalInfractions))
+	s.report.recordCreated(baselineFile, fmt.Sprintf("Recorded %d legacy debt infractions into baseline", base.Counts().HISS))
 	return nil
 }
 
@@ -973,7 +973,7 @@ func (s *adoptSession) checkKeptBaseline(ctx context.Context, full string) error
 	}
 	current = append(current, readmepresentation.ToBaseline(readmeFindings)...)
 	ratchet := baseline.EvaluateRatchet(recorded, current, nil)
-	verdict := &BaselineRatchet{Passed: ratchet.Passed, Recorded: ratchet.PreviousCount,
+	verdict := &BaselineRatchet{Passed: ratchet.Passed, Recorded: recorded.Counts().HISS,
 		Active: ratchet.CurrentCount, Unbaselined: len(ratchet.NewViolations)}
 	s.report.BaselineStatus = "existing"
 	s.report.LegacyDebtCount = recorded.Counts().HISS

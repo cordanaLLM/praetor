@@ -153,11 +153,11 @@ func judgeEnforced(findings []Finding, readmeBase *baseline.Baseline, maxStale *
 	if !ratchet.Passed {
 		return "", errors.New(formatEnforcedFailure(findings, ratchet))
 	}
-	if len(findings) == 0 && readmeBase.TotalInfractions == 0 {
+	if len(findings) == 0 && readmeBase.Counts().README == 0 {
 		return fmt.Sprintf("[PASS] %s: %s complies with the presentation standard (README-01..README-05).", GateName, FileName), nil
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "[PASS] %s: %d active finding(s) within %d recorded in baseline.", GateName, ratchet.CurrentCount, readmeBase.TotalInfractions)
+	fmt.Fprintf(&b, "[PASS] %s: %d active finding(s) within %d recorded in baseline.", GateName, ratchet.CurrentCount, readmeBase.Counts().README)
 	for i := 0; i < len(findings) && i < MaxReportedFindings; i++ {
 		b.WriteByte('\n')
 		b.WriteString(findings[i].BaselinedLine())

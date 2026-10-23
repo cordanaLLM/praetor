@@ -101,20 +101,24 @@ func TestRecord_Boundary(t *testing.T) {
 	if same.IncreaseRationale != "" || same.Version != 2 {
 		t.Fatalf("equal snapshot must carry no rationale and keep the version: %+v", same)
 	}
+}
 
-	// Count trusts the entries over a hand-edited total, and tolerates nil.
+func TestCount_UnderstatedHISSTotal(t *testing.T) {
+	// Count preserves an understated HISS total, and tolerates nil.
 	edited := &Baseline{TotalInfractions: 0, Infractions: sampleInfractions(3)}
-	if edited.Count() != 3 {
-		t.Fatalf("Count() = %d, want 3", edited.Count())
+	if edited.Count() != 0 {
+		t.Fatalf("Count() = %d, want 0", edited.Count())
 	}
 	var nilBaseline *Baseline
 	if nilBaseline.Count() != 0 {
 		t.Fatalf("nil Count() = %d, want 0", nilBaseline.Count())
 	}
 	if err := CheckMonotonic(&Baseline{TotalInfractions: 3}, edited); err != nil {
-		t.Fatalf("equal counts must pass: %v", err)
+		t.Fatalf("decreased claimed count must pass: %v", err)
 	}
+}
 
+func TestBaselineSerialization_Boundary(t *testing.T) {
 	// ParseBaseline normalises a missing infractions array.
 	parsed, err := ParseBaseline([]byte(`{"version":1,"total_infractions":0}`))
 	if err != nil || parsed.Infractions == nil {

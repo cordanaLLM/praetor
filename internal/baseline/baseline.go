@@ -199,8 +199,7 @@ func SaveBaseline(path string, b *Baseline) error {
 	return nil
 }
 
-// Count returns the number of infractions a snapshot records, trusting the entries over
-// a hand-edited total.
+// Count returns the combined recorded HISS and README counts from Counts.
 func (b *Baseline) Count() int {
 	counts := b.Counts()
 	return counts.Total()
@@ -217,8 +216,9 @@ func (c ClassCounts) Total() int {
 	return c.HISS + c.README
 }
 
-// Counts returns each class's recorded count. Unitemized debt in a legacy total
-// belongs to HISS; entries take precedence over an understated total.
+// Counts returns each class's recorded count. README entries own their count;
+// HISS owns the claimed total minus README entries, floored at zero. An
+// understated HISS total is never raised to the number of HISS entries.
 func (b *Baseline) Counts() ClassCounts {
 	var counts ClassCounts
 	if b == nil {
@@ -227,12 +227,10 @@ func (b *Baseline) Counts() ClassCounts {
 	for i := 0; i < len(b.Infractions); i++ {
 		if IsReadmeRule(b.Infractions[i].RuleID) {
 			counts.README++
-		} else {
-			counts.HISS++
 		}
 	}
-	if b.TotalInfractions > len(b.Infractions) {
-		counts.HISS += b.TotalInfractions - len(b.Infractions)
+	if b.TotalInfractions > counts.README {
+		counts.HISS = b.TotalInfractions - counts.README
 	}
 	return counts
 }
@@ -443,10 +441,11 @@ func EvaluateRatchetWithOptions(b *Baseline, currentViolations []Infraction, tou
 	}
 
 	listed := len(newViolations) > 0 || len(touchedCleanViolations) > 0
-	passed, countRegressed := ratchetVerdict(listed, len(currentViolations), b.TotalInfractions)
+	previousCount := b.Count()
+	passed, countRegressed := ratchetVerdict(listed, len(currentViolations), previousCount)
 
 	return &RatchetResult{
-		PreviousCount:          b.TotalInfractions,
+		PreviousCount:          previousCount,
 		CurrentCount:           len(currentViolations),
 		NewViolations:          newViolations,
 		TouchedCleanViolations: touchedCleanViolations,
