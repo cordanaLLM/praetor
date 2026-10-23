@@ -581,9 +581,21 @@ func TestScanPassBudgetRefusesPlantedSuperlinearMatchers(t *testing.T) {
 		command: boundLines(`git am "$$$$$$$$$$$${`),
 		want:    0,
 	}
+	// The find plant on find lines held 128 to 131 passes on host but dropped to 89.2 on
+	// a loaded runner (1.8x budget). A shape with 135 find words, 115 .git/hooks paths and
+	// trailing space-dash pairs inside the scan bound measured 244 to 253 passes on host
+	// (about five budgets), so the runner drop seen on the dollar plant (about 3x) still
+	// leaves it above the budget.
+	shapes["planted find lines"] = scanShape{
+		name: "planted find lines",
+		command: boundLines(strings.Repeat("find ", 135) +
+			strings.Repeat(".git/hooks", 115) +
+			strings.Repeat(" -", 111)),
+		want: 0,
+	}
 	for _, tc := range []struct{ name, pattern, shape string }{
 		{"nested quantifier over the dollar runs", `(\$+\$?)+\{x`, "planted dollar runs"},
-		{"find rule before #829", `\bfind\b[^\n]*(?i:\.git[/\\]hooks)[^\n]*\s-(delete|exec|execdir|ok)\b`, "find lines"},
+		{"find rule before #829", `\bfind\b[^\n]*(?i:\.git[/\\]hooks)[^\n]*\s-(delete|exec|execdir|ok)\b`, "planted find lines"},
 	} {
 		script := filepath.Join(t.TempDir(), "planted_block_evasion.py")
 		mustWrite(t, script, plantedInterceptor(t, tc.pattern))
