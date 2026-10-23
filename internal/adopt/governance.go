@@ -309,6 +309,9 @@ func recordPreservedVerificationReconciled(s *adoptSession, documentationEnabled
 }
 
 func reconcileContributing(ctx context.Context, s *adoptSession) error {
+	if s.declines("contributing") {
+		return nil
+	}
 	_, err := s.scaffoldFile(ctx, scaffold{
 		rel:      contributingFile,
 		perm:     filePerm,
@@ -322,6 +325,9 @@ func reconcileContributing(ctx context.Context, s *adoptSession) error {
 // reconcilePullRequestTemplate keeps whichever template name the repository already uses and
 // compares it with the scaffold like every other preserved file.
 func reconcilePullRequestTemplate(ctx context.Context, s *adoptSession) error {
+	if s.declines("pull-request-template") {
+		return nil
+	}
 	upper, err := repoFile(s.repoPath, prTemplateUpper)
 	if err != nil {
 		return err
@@ -341,6 +347,9 @@ func reconcilePullRequestTemplate(ctx context.Context, s *adoptSession) error {
 }
 
 func reconcileSecurityPolicy(ctx context.Context, s *adoptSession) error {
+	if s.declines("security-policy") {
+		return nil
+	}
 	_, err := s.scaffoldFile(ctx, scaffold{
 		rel:      securityFile,
 		perm:     filePerm,

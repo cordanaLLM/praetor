@@ -742,6 +742,32 @@ The groups with behavior of their own:
     earlier adoption wrote, and `lefthook.yml` migrates to the rendering without the job
     (`internal/adopt/reuse_decline_test.go`).
 
+### Organisation .github repositories
+
+In GitHub organisations, a repository named `.github` holds default community health files
+(such as `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`, `SUPPORT.md`, `pull_request_template.md`,
+and issue templates). GitHub serves these files as fallback defaults for every repository in the
+organisation that does not define its own copy.
+
+When adopting a repository named `.github` (matched case-insensitively against `repository.name` in
+`.standards.yaml`, or the repository directory name), Praetor treats organisation community health
+files as declined by default:
+
+- `contributing` (`CONTRIBUTING.md`)
+- `pull-request-template` (`.github/pull_request_template.md`)
+- `security-policy` (`SECURITY.md`)
+
+The adoption report explicitly names each implicit decline with the reason:
+`organisation community health files`.
+
+Explicit declarations in `adoption.decline` continue to take effect. There is no opt-in mechanism to
+scaffold or overwrite these files in an organisation `.github` repository, because the organisation
+maintains its own authoritative copies. Existing community health files in such repositories are never
+modified, even when passing `--force` (`TestAdopt_DotGitHub_ExistingContributing_ByteIdenticalUnderForce`
+in `internal/adopt/dotgithub_health_files_test.go`). Furthermore, `praetorctl audit` skips comparing
+these files against Praetor scaffolds in a `.github` repository, allowing audits to pass without scaffold
+copies (`internal/adopt/declined.go`, `cmd/standardsctl/audit_dotgithub_health_test.go`).
+
 ### The audit engine pin on a re-adoption
 
 A re-adoption writes the managed files of the engine that runs it. A repository whose CI runs

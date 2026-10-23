@@ -180,8 +180,14 @@ type adoptSession struct {
 	policy       *config.EffectivePolicy
 	verification *VerificationPlan
 	// declined carries adoption.decline from the repository's existing manifest, read before
-	// the chain runs so a repository's recorded decision applies to the run that follows it.
+	// the chain runs so a repository's recorded decision applies to the run that follows it,
+	// joined with organisation community health files declined by default in a .github repository.
 	declined []string
+	// explicitDeclined records the artefacts explicitly listed in adoption.decline.
+	explicitDeclined []string
+	// dotGitHub records whether the repository is named .github, where organisation community
+	// health files are declined by default.
+	dotGitHub bool
 	// cleanupGoto is the cleanup-goto exception the existing manifest declares and documents
 	// (config.Manifest.CleanupGotoException), read before the chain runs like declined: the
 	// legacy-debt scan honours it as the audit does, and exceptions states it in the harnesses
@@ -321,19 +327,24 @@ func newAdoptSession(repoPath string, opts AdoptOptions, report *AdoptReport, de
 	if undocumented != "" {
 		report.addWarning("%s", undocumented)
 	}
-	return &adoptSession{
-		repoPath:      repoPath,
-		arch:          report.Archetype,
-		facets:        report.Facets,
-		opts:          opts,
-		report:        report,
-		collaborators: opts.Collaborators,
-		verification:  report.Verification,
-		declined:      manifestDeclines(declared),
-		cleanupGoto:   cleanupGoto,
-		exceptions:    harnessExceptions(cleanupGoto),
-		backupStamp:   newBackupStamp(),
+	explicit := manifestDeclines(declared)
+	dotGitHub := IsDotGitHubRepository(repoPath, declared)
+	session := &adoptSession{
+		repoPath:         repoPath,
+		arch:             report.Archetype,
+		facets:           report.Facets,
+		opts:             opts,
+		report:           report,
+		collaborators:    opts.Collaborators,
+		verification:     report.Verification,
+		explicitDeclined: explicit,
+		dotGitHub:        dotGitHub,
+		cleanupGoto:      cleanupGoto,
+		exceptions:       harnessExceptions(cleanupGoto),
+		backupStamp:      newBackupStamp(),
 	}
+	session.declined = session.effectiveDeclinedList()
+	return session
 }
 
 func newAdoptionReport(path string, opts AdoptOptions, decision classify.Result) *AdoptReport {
@@ -536,7 +547,7 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 	for i := 0; i < len(steps) && i < maxAdoptSteps; i++ {
 		known = append(known, steps[i].name)
 	}
-	declined, err := declinedArtifacts(s.declined, known)
+	declined, err := declinedArtifacts(s.effectiveDeclinedList(), known)
 	if err != nil {
 		return err
 	}

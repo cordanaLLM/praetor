@@ -3,6 +3,7 @@ package adopt
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -12,6 +13,49 @@ import (
 // maxDeclinedArtifacts bounds the declared list so a malformed manifest cannot make
 // adoption iterate without limit.
 const maxDeclinedArtifacts = 64
+
+// DotGitHubRepoName is the name of the organisation community health repository.
+const DotGitHubRepoName = ".github"
+
+// DotGitHubDeclineReason is the reason organisation community health files are declined by default.
+const DotGitHubDeclineReason = "organisation community health files"
+
+// dotGitHubDeclineDetail is the report detail for an organisation community health file declined
+// by default in a repository named .github.
+const dotGitHubDeclineDetail = "Declined by default (" + DotGitHubDeclineReason + ")"
+
+// DotGitHubHealthArtifacts are the organisation community health artefacts declined by default
+// in a repository named .github.
+var DotGitHubHealthArtifacts = []string{
+	"contributing",
+	"pull-request-template",
+	"security-policy",
+}
+
+// IsDotGitHubRepository reports whether a repository is named .github, determined by
+// manifest repository.name if non-empty, else the checkout directory name, case-insensitive.
+func IsDotGitHubRepository(repoPath string, manifest *config.Manifest) bool {
+	var name string
+	if manifest != nil {
+		name = strings.TrimSpace(manifest.Repository.Name)
+	}
+	if name == "" && repoPath != "" {
+		name = filepath.Base(filepath.Clean(repoPath))
+	}
+	return strings.EqualFold(name, DotGitHubRepoName)
+}
+
+// IsDotGitHubHealthArtifact reports whether artifact is one of the organisation community health
+// artefacts declined by default in a repository named .github.
+func IsDotGitHubHealthArtifact(artifact string) bool {
+	normalized := declinedName(artifact)
+	for i := 0; i < len(DotGitHubHealthArtifacts) && i < maxDeclinedArtifacts; i++ {
+		if DotGitHubHealthArtifacts[i] == normalized {
+			return true
+		}
+	}
+	return false
+}
 
 // namedStep pairs a reconciliation step with the name a repository uses to decline it.
 type namedStep struct {
@@ -205,7 +249,7 @@ func skipDeclinedStep(ctx context.Context, s *adoptSession, name string) error {
 			}
 		}
 	}
-	s.report.recordSkipped(name, declinedDetail(name))
+	s.report.recordSkipped(name, s.declinedDetail(name))
 	s.report.recordStep(name, StepDeclined, from)
 	return nil
 }
@@ -260,22 +304,39 @@ func ArtifactDeclined(declared []string, artifact string) (bool, error) {
 
 // ManifestArtifactDeclined resolves one adoption step against the adoption.decline list the
 // manifest records. A manifest without an adoption policy declines nothing; an invalid list
-// fails closed through ArtifactDeclined, so every auditor reads declines one way.
+// fails closed through ArtifactDeclined, so every auditor reads declines one way. In a
+// repository named .github (by manifest repository.name), organisation community health files
+// are declined by default.
 func ManifestArtifactDeclined(manifest *config.Manifest, artifact string) (bool, error) {
-	return ArtifactDeclined(manifestDeclines(manifest), artifact)
+	declined, err := ArtifactDeclined(manifestDeclines(manifest), artifact)
+	if err != nil {
+		return false, err
+	}
+	if !declined && IsDotGitHubRepository("", manifest) && IsDotGitHubHealthArtifact(artifact) {
+		return true, nil
+	}
+	return declined, nil
 }
 
 // RepositoryArtifactDeclined resolves one adoption step against the adoption.decline list of the
 // manifest at repoPath (ManifestArtifactDeclined). A repository without a manifest declines
 // nothing. A manifest that cannot be read or decoded is an error, so a writer outside adoption,
 // such as flavor apply rendering the branch ruleset, fails closed instead of writing a file the
-// repository may have declined.
+// repository may have declined. In a repository named .github (by manifest repository.name, else
+// directory name), organisation community health files are declined by default.
 func RepositoryArtifactDeclined(ctx context.Context, repoPath, artifact string) (bool, error) {
 	manifest, err := loadDeclaredManifest(ctx, repoPath)
 	if err != nil {
 		return false, err
 	}
-	return ManifestArtifactDeclined(manifest, artifact)
+	declined, err := ManifestArtifactDeclined(manifest, artifact)
+	if err != nil {
+		return false, err
+	}
+	if !declined && IsDotGitHubRepository(repoPath, manifest) && IsDotGitHubHealthArtifact(artifact) {
+		return true, nil
+	}
+	return declined, nil
 }
 
 // manifestDeclines is the adoption.decline list a manifest records; nil declines nothing.
@@ -340,14 +401,72 @@ func declinedName(entry string) string {
 	return strings.ToLower(strings.TrimSpace(entry))
 }
 
+// declinedDetail returns the detail string for step; if the step was implicitly declined
+// because the repository is named .github, it names the default decline reason.
+func (s *adoptSession) declinedDetail(step string) string {
+	if s.isImplicitDecline(step) {
+		return dotGitHubDeclineDetail
+	}
+	return declinedDetail(step)
+}
+
+func (s *adoptSession) isImplicitDecline(step string) bool {
+	if !s.isDotGitHub() || !IsDotGitHubHealthArtifact(step) {
+		return false
+	}
+	return !containsDeclined(s.explicitDeclined, step)
+}
+
+func (s *adoptSession) isDotGitHub() bool {
+	if s == nil {
+		return false
+	}
+	if s.dotGitHub {
+		return true
+	}
+	var manifest *config.Manifest
+	if s.policy != nil {
+		manifest = s.policy.Manifest
+	}
+	return IsDotGitHubRepository(s.repoPath, manifest)
+}
+
+func (s *adoptSession) effectiveDeclinedList() []string {
+	declined := append([]string(nil), s.explicitDeclined...)
+	if !s.isDotGitHub() {
+		return declined
+	}
+	for i := 0; i < len(DotGitHubHealthArtifacts) && i < maxDeclinedArtifacts; i++ {
+		step := DotGitHubHealthArtifacts[i]
+		if !containsDeclined(declined, step) {
+			declined = append(declined, step)
+		}
+	}
+	return declined
+}
+
+func containsDeclined(list []string, step string) bool {
+	norm := declinedName(step)
+	for i := 0; i < len(list) && i < maxDeclinedArtifacts; i++ {
+		if declinedName(list[i]) == norm {
+			return true
+		}
+	}
+	return false
+}
+
 // declines reports whether the manifest's adoption.decline names step. Steps that plan an
 // artefact another step writes read it, so a declined writer never leaves a planned file
 // that nothing produces.
 func (s *adoptSession) declines(step string) bool {
+	norm := declinedName(step)
 	for i := 0; i < len(s.declined) && i < maxDeclinedArtifacts; i++ {
-		if declinedName(s.declined[i]) == step {
+		if declinedName(s.declined[i]) == norm {
 			return true
 		}
+	}
+	if s.isDotGitHub() && IsDotGitHubHealthArtifact(step) {
+		return true
 	}
 	return false
 }
