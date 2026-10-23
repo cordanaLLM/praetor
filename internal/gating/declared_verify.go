@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -83,12 +84,12 @@ func declaredVerifyNotApplicable(ctx context.Context, cfg *stageConfig) (string,
 	if os.Getenv(DeclaredVerifyGuardEnv) != "" {
 		return "running inside " + declaredVerifyCommand + " (" + DeclaredVerifyGuardEnv + "); not run again", nil
 	}
-	holdsMarker, err := holdsToolchainMarker(ctx, cfg)
+	markers, err := toolchainMarkers(ctx, cfg)
 	if err != nil {
 		return "", err
 	}
-	if holdsMarker {
-		return "a tracked go.mod or Cargo.lock is present: the toolchain stages verify this repository", nil
+	if len(markers) > 0 {
+		return "a tracked " + strings.Join(markers, " and ") + " is present: the toolchain stages verify this repository", nil
 	}
 	if !declaresVerifyTarget(cfg.repoDir) {
 		return "no verification command declared: the makefile has no " + declaredVerifyTarget + " target", nil

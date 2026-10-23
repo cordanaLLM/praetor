@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -240,5 +241,87 @@ func TestDeclaredVerifyFailureNamesTheOutcome(t *testing.T) {
 		if len(got) > maxDeclaredVerifyDiagnostic+200 {
 			t.Errorf("%s: reason of %d bytes is not bounded", tc.name, len(got))
 		}
+	}
+}
+
+// Positive (HISS-15): a node-only repository (package.json and one lockfile) names
+// "package.json with one lockfile" and names neither go.mod nor Cargo.lock.
+func TestDeclaredVerifyNotApplicable_Positive_NodeOnlyNamesMarker(t *testing.T) {
+	cfg := declaredStageConfig(t, verifyAllMakefile, "package.json", "package-lock.json")
+	reason, err := declaredVerifyNotApplicable(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("declaredVerifyNotApplicable failed: %v", err)
+	}
+	want := "a tracked package.json with one lockfile is present: the toolchain stages verify this repository"
+	if reason != want {
+		t.Fatalf("reason = %q, want %q", reason, want)
+	}
+	if strings.Contains(reason, "go.mod") || strings.Contains(reason, "Cargo.lock") {
+		t.Fatalf("reason %q must not mention go.mod or Cargo.lock", reason)
+	}
+}
+
+// Positive (HISS-15): a go.mod-only repository names go.mod only in its reason.
+func TestDeclaredVerifyNotApplicable_Positive_GoModOnlyNamesMarker(t *testing.T) {
+	cfg := declaredStageConfig(t, verifyAllMakefile, "go.mod")
+	reason, err := declaredVerifyNotApplicable(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("declaredVerifyNotApplicable failed: %v", err)
+	}
+	want := "a tracked go.mod is present: the toolchain stages verify this repository"
+	if reason != want {
+		t.Fatalf("reason = %q, want %q", reason, want)
+	}
+	if strings.Contains(reason, "Cargo.lock") || strings.Contains(reason, "package.json") {
+		t.Fatalf("reason %q must name go.mod only", reason)
+	}
+}
+
+// Positive (HISS-15): a repository with go.mod and Cargo.lock names both markers in fixed order.
+func TestDeclaredVerifyNotApplicable_Positive_GoModAndCargoLockNamesBothInOrder(t *testing.T) {
+	cfg := declaredStageConfig(t, verifyAllMakefile, "go.mod", CargoLockFile)
+	reason, err := declaredVerifyNotApplicable(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("declaredVerifyNotApplicable failed: %v", err)
+	}
+	want := "a tracked go.mod and Cargo.lock is present: the toolchain stages verify this repository"
+	if reason != want {
+		t.Fatalf("reason = %q, want %q", reason, want)
+	}
+}
+
+// Boundary (HISS-15): package.json with two lockfiles and no other marker does not match
+// a toolchain marker; declared verification applies unchanged.
+func TestDeclaredVerifyNotApplicable_Boundary_TwoNodeLockfilesStageApplies(t *testing.T) {
+	cfg := declaredStageConfig(t, verifyAllMakefile, "package.json", "package-lock.json", "yarn.lock")
+	reason, err := declaredVerifyNotApplicable(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("declaredVerifyNotApplicable failed: %v", err)
+	}
+	if reason != "" {
+		t.Fatalf("reason = %q, want empty string (stage applies)", reason)
+	}
+}
+
+// Negative (HISS-15): declaredVerifyNotApplicable propagates ErrModuleDiscoveryMissing when no module discovery is configured.
+func TestDeclaredVerifyNotApplicable_Negative_MissingDiscoveryContext(t *testing.T) {
+	cfg := &stageConfig{repoDir: t.TempDir()}
+	_, err := declaredVerifyNotApplicable(t.Context(), cfg)
+	if !errors.Is(err, ErrModuleDiscoveryMissing) {
+		t.Fatalf("declaredVerifyNotApplicable error = %v, want %v", err, ErrModuleDiscoveryMissing)
+	}
+}
+
+// Positive (HISS-15): toolchainMarkers returns markers in fixed order: go.mod, Cargo.lock,
+// package.json with one lockfile.
+func TestToolchainMarkers_Positive_FixedOrder(t *testing.T) {
+	cfg := declaredStageConfig(t, "", "go.mod", CargoLockFile, "package.json", "package-lock.json")
+	got, err := toolchainMarkers(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("toolchainMarkers failed: %v", err)
+	}
+	want := []string{"go.mod", "Cargo.lock", "package.json with one lockfile"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("toolchainMarkers = %v, want %v", got, want)
 	}
 }

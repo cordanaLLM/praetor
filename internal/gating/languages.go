@@ -235,17 +235,37 @@ func requireVerification(ctx context.Context, cfg *stageConfig) error {
 	return notApplicable(refusal.Error() + "; " + admittedUnsupportedNote)
 }
 
-// holdsToolchainMarker reports whether the repository root holds the marker of a language whose
-// toolchain the gate runs: go.mod for Go, Cargo.lock for Cargo, package.json with exactly one lockfile for Node.
-func holdsToolchainMarker(ctx context.Context, cfg *stageConfig) (bool, error) {
+// toolchainMarkers returns the names of the toolchain markers present at the repository, in fixed order:
+// go.mod, Cargo.lock, package.json with one lockfile.
+func toolchainMarkers(ctx context.Context, cfg *stageConfig) ([]string, error) {
 	if ctx == nil && !cfg.modulesDiscovered {
-		return false, fmt.Errorf("%w: marker check has no discovery context", ErrModuleDiscoveryMissing)
+		return nil, fmt.Errorf("%w: marker check has no discovery context", ErrModuleDiscoveryMissing)
 	}
 	modules, err := cfg.goModules(ctx)
 	if err != nil {
+		return nil, err
+	}
+	markers := make([]string, 0, 3)
+	if len(modules) > 0 {
+		markers = append(markers, "go.mod")
+	}
+	if util.FileExists(filepath.Join(cfg.repoDir, CargoLockFile)) {
+		markers = append(markers, CargoLockFile)
+	}
+	if hasSingleNodeLockfile(cfg.repoDir) {
+		markers = append(markers, "package.json with one lockfile")
+	}
+	return markers, nil
+}
+
+// holdsToolchainMarker reports whether the repository root holds the marker of a language whose
+// toolchain the gate runs: go.mod for Go, Cargo.lock for Cargo, package.json with exactly one lockfile for Node.
+func holdsToolchainMarker(ctx context.Context, cfg *stageConfig) (bool, error) {
+	markers, err := toolchainMarkers(ctx, cfg)
+	if err != nil {
 		return false, err
 	}
-	return len(modules) > 0 || util.FileExists(filepath.Join(cfg.repoDir, CargoLockFile)) || hasSingleNodeLockfile(cfg.repoDir), nil
+	return len(markers) > 0, nil
 }
 
 // nothingVerifiedError names why nothing ran: a Cargo.lock whose stages could not run here, the
