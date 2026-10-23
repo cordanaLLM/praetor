@@ -392,11 +392,10 @@ func EvaluateRatchetWithOptions(b *Baseline, currentViolations []Infraction, tou
 	}
 
 	listed := len(newViolations) > 0 || len(touchedCleanViolations) > 0
-	previousCount := b.Count()
-	passed, countRegressed := ratchetVerdict(listed, len(currentViolations), previousCount)
+	passed, countRegressed := ratchetVerdict(listed, len(currentViolations), b.TotalInfractions)
 
 	return &RatchetResult{
-		PreviousCount:          previousCount,
+		PreviousCount:          b.TotalInfractions,
 		CurrentCount:           len(currentViolations),
 		NewViolations:          newViolations,
 		TouchedCleanViolations: touchedCleanViolations,

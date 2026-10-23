@@ -94,6 +94,19 @@ func TestEvaluateRatchet_CountRegressed_3D(t *testing.T) {
 	}
 }
 
+func TestEvaluateRatchet_ClaimedTotalPreserved(t *testing.T) {
+	b := &Baseline{
+		TotalInfractions: 0,
+		Infractions: []Infraction{
+			{RuleID: "HISS-01", FilePath: "a.go", Fingerprint: "fp1"},
+		},
+	}
+	res := EvaluateRatchet(b, nil, nil)
+	if res.PreviousCount != 0 {
+		t.Fatalf("PreviousCount = %d, want 0", res.PreviousCount)
+	}
+}
+
 func TestLoadBaseline_PositiveAndMissing(t *testing.T) {
 	tmpDir := t.TempDir()
 	missingPath := filepath.Join(tmpDir, "nonexistent.json")
