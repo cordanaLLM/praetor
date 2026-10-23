@@ -263,6 +263,7 @@ type stageConfig struct {
 	// leaves it zero, so devcontainerStartBound derives it from the run's budget; tests shorten it
 	// to reach the bound without waiting for it.
 	containerStart    time.Duration
+	gosecExceptions   *gosecExceptionRun
 	modules           []goModule
 	modulesDiscovered bool
 	moduleDiscovery   func(context.Context, string) ([]string, error)
@@ -609,7 +610,7 @@ func runGoSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 		return "", err
 	}
 	if len(modules) == 0 {
-		return "", notApplicable("no go.mod: Go security scanners skipped")
+		return gosecWithoutModules(ctx, cfg)
 	}
 	if cfg.dryRun {
 		return "", skipped("dry run: govulncheck and gosec not run")
@@ -625,14 +626,7 @@ func runGoSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 	if !util.FileExists(confPath) {
 		return "", fmt.Errorf("%s is missing: the security gate refuses to run gosec without its pinned configuration; run praetorctl adopt to write it", GosecConfigFile)
 	}
-	results, err := runGoModules(ctx, cfg, runGoSecurityModule)
-	if err != nil {
-		return "", err
-	}
-	if runErr := moduleResultsError("Go security", results); runErr != nil {
-		return moduleResultsMessage(results), fmt.Errorf("%w; results: %s", runErr, moduleResultsMessage(results))
-	}
-	return moduleResultsMessage(results), nil
+	return runGosecModules(ctx, cfg)
 }
 
 // runGoVulnerabilityGate runs the Go vulnerability gate (internal/govuln), the implementation
@@ -700,13 +694,20 @@ func handleGosecModuleOutput(cfg *stageConfig, moduleDir, out string, runErr err
 	if parseErr != nil {
 		return "", parseErr
 	}
-	if runErr == nil {
-		return "", nil
-	}
 	if len(findings) == 0 {
+		if runErr == nil {
+			return "", nil
+		}
 		return "", fmt.Errorf("%s: gosec found security infractions in %s: %w: %s", stageSecurity, moduleDir, runErr, out)
 	}
-	return evaluateGosecModuleRatchet(cfg.repoDir, moduleDir, cfg.modules, findings, runErr)
+	remaining := cfg.gosecExceptions.filter(findings)
+	if len(remaining) == 0 {
+		return "", nil
+	}
+	if runErr == nil {
+		runErr = errors.New("gosec reported security findings")
+	}
+	return evaluateGosecModuleRatchet(cfg.repoDir, moduleDir, cfg.modules, remaining, runErr)
 }
 
 func evaluateGosecModuleRatchet(repoDir, moduleDir string, allModules []goModule, findings []baseline.Infraction, origErr error) (string, error) {

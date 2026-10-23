@@ -116,7 +116,7 @@ var exceptionRules = append(hisscatalog.RuleIDs(),
 	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits,
 	ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder, ExceptionRuleDeclaredLinters, ExceptionRuleReleaseToken, ExceptionRuleTestTimeout, ExceptionRuleJobTimeout, ExceptionRuleMutants,
 	ExceptionRuleBacklogCapsDefects, ExceptionRuleBacklogCapsTasks, ExceptionRuleBacklogCapsQuestions, ExceptionRuleBacklogCapsForgeAlerts,
-	ExceptionRuleCodespell,
+	ExceptionRuleCodespell, ExceptionRuleGosec,
 )
 
 // workflowRuleExamples maps each rule whose entries name one workflow file by path to the
@@ -157,17 +157,18 @@ const globCharacters = "*?[]\\"
 // entry; an expired entry excuses nothing, so the gate fails on its files as if the entry were
 // missing (AGENTS.md rule 14).
 type Exception struct {
-	Rule        string `yaml:"rule"`
-	Path        string `yaml:"path,omitempty"`
-	Glob        string `yaml:"glob,omitempty"`
-	Function    string `yaml:"function,omitempty"`
-	Tool        string `yaml:"tool,omitempty"`
-	Fingerprint string `yaml:"fingerprint,omitempty"`
-	Lines       string `yaml:"lines,omitempty"`
-	Reason      string `yaml:"reason"`
-	Expires     string `yaml:"expires"`
-	Category    string `yaml:"category,omitempty"`
-	Entered     string `yaml:"entered,omitempty"`
+	Rule        string   `yaml:"rule"`
+	GosecRules  []string `yaml:"gosec_rules,omitempty"`
+	Path        string   `yaml:"path,omitempty"`
+	Glob        string   `yaml:"glob,omitempty"`
+	Function    string   `yaml:"function,omitempty"`
+	Tool        string   `yaml:"tool,omitempty"`
+	Fingerprint string   `yaml:"fingerprint,omitempty"`
+	Lines       string   `yaml:"lines,omitempty"`
+	Reason      string   `yaml:"reason"`
+	Expires     string   `yaml:"expires"`
+	Category    string   `yaml:"category,omitempty"`
+	Entered     string   `yaml:"entered,omitempty"`
 }
 
 // Target returns the path, glob or tool the entry names.
@@ -380,7 +381,6 @@ func ValidateExceptions(entries []Exception, today time.Time) error {
 
 // problem names why one entry is refused, or returns "".
 func (e Exception) problem(today time.Time) string {
-	e.Category = e.expiryCategory()
 	if !slices.Contains(exceptionRules, e.Rule) {
 		return fmt.Sprintf("rule %q is not a rule any gate reads from this list (known: %s)", e.Rule, strings.Join(exceptionRules, ", "))
 	}
@@ -399,7 +399,7 @@ func (e Exception) problem(today time.Time) string {
 	if problem := e.dedupeTargetProblem(); problem != "" {
 		return problem
 	}
-	if problem := e.codespellProblem(); problem != "" {
+	if problem := e.scannerExceptionProblem(); problem != "" {
 		return problem
 	}
 	if problem := e.functionProblem(); problem != "" {
@@ -412,6 +412,7 @@ func (e Exception) problem(today time.Time) string {
 }
 
 func exceptionCategoryExpiryProblem(e Exception, today time.Time) string {
+	e.Category = e.expiryCategory()
 	if e.Category == "" {
 		return uncategorizedExceptionExpiryProblem(e, today)
 	}
@@ -594,7 +595,7 @@ func (e Exception) codespellProblem() string {
 	if e.Rule != ExceptionRuleCodespell {
 		return ""
 	}
-	if e.Category == "" {
+	if e.expiryCategory() == "" {
 		return "rule codespell requires a category"
 	}
 	if e.Path == "" || e.Glob != "" {

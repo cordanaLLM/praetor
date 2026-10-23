@@ -1,0 +1,2 @@
+type: added
+title: Apply dated per-file gosec exceptions before the Security ratchet and reject stale entries with per-entry finding counts.

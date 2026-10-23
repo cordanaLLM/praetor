@@ -2,6 +2,7 @@ package adopt
 
 import (
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -49,7 +50,7 @@ func readoptedManifest(t *testing.T, s *adoptSession, manifest string) string {
 func TestWithSupplyChainException_Positive_ReadoptionRecordsTheGap(t *testing.T) {
 	linter := config.Exception{Rule: "declared-linters", Tool: "gitleaks", Reason: "r", Expires: "2027-01-11"}
 	got, recorded := gapSession(t, measuredGap()).withSupplyChainException(t.Context(), []config.Exception{linter})
-	if recorded == nil || len(got) != 2 || got[0] != linter || got[1].Rule != config.ExceptionRuleSupplyChain {
+	if recorded == nil || len(got) != 2 || !reflect.DeepEqual(got[0], linter) || got[1].Rule != config.ExceptionRuleSupplyChain {
 		t.Fatalf("exceptions %+v, recorded %+v; want the linter entry then the HISS-11 entry", got, recorded)
 	}
 	if note := supplyChainExceptionNote(*recorded); !strings.Contains(note, "recorded rule HISS-11") {
@@ -65,7 +66,7 @@ func TestWithSupplyChainException_Positive_ReadoptionRecordsTheGap(t *testing.T)
 // meet the declared supply chain record nothing.
 func TestWithSupplyChainException_Negative_DeclaredEntryOrNoGap(t *testing.T) {
 	own := config.Exception{Rule: config.ExceptionRuleSupplyChain, Path: ".github/workflows/ship.yml", Reason: "own", Expires: "2026-12-01"}
-	if got, recorded := gapSession(t, measuredGap()).withSupplyChainException(t.Context(), []config.Exception{own}); recorded != nil || len(got) != 1 || got[0] != own {
+	if got, recorded := gapSession(t, measuredGap()).withSupplyChainException(t.Context(), []config.Exception{own}); recorded != nil || len(got) != 1 || !reflect.DeepEqual(got[0], own) {
 		t.Fatalf("declared entry replaced: %+v, %+v", got, recorded)
 	}
 	if got, recorded := gapSession(t, nil).withSupplyChainException(t.Context(), nil); recorded != nil || len(got) != 0 {

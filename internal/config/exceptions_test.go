@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -1033,7 +1034,7 @@ exceptions:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(manifest.Exceptions, again.Exceptions) || !strings.Contains(string(rendered), "lines: 10-16") {
+	if !reflect.DeepEqual(manifest.Exceptions, again.Exceptions) || !strings.Contains(string(rendered), "lines: 10-16") {
 		t.Fatalf("scopes lost on round trip: %s", rendered)
 	}
 	if err := ValidateExceptions(append(again.Exceptions, again.Exceptions[0]), time.Now()); err == nil {
