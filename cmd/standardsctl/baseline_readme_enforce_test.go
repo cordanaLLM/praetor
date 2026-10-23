@@ -11,7 +11,10 @@ import (
 	"github.com/cordanaLLM/praetor/internal/baseline"
 )
 
-func TestAuditAndBaselineVerifyTrustEntriesOverUnderstatedTotal(t *testing.T) {
+// TestAuditAndBaselineVerifyRatchetOnClaimedTotal pins the ratchet on the claimed per-class total, as main does:
+// a baseline whose claimed total (0) is below its entries (1) sees the matching violation as a count rise and
+// refuses it, never trusting the larger entry count (the never-max rule).
+func TestAuditAndBaselineVerifyRatchetOnClaimedTotal(t *testing.T) {
 	f := newAuditFixture(t)
 	inf := f.addViolation(t)
 	f.writeBaseline(t, []baseline.Infraction{inf}, "")
@@ -24,13 +27,12 @@ func TestAuditAndBaselineVerifyTrustEntriesOverUnderstatedTotal(t *testing.T) {
 	gitCommitAll(t, f.dir, f.gitEnv, "understated baseline fixture")
 	_, auditErr := f.audit(t, "--offline")
 	_, verifyErr := runBaselineCmd(t, f, "--verify")
-	t.Logf("understated total: audit refused=%t; baseline --verify refused=%t", auditErr != nil, verifyErr != nil)
 	for _, result := range []struct {
 		name string
 		err  error
 	}{{"audit --offline", auditErr}, {"baseline --verify", verifyErr}} {
-		if result.err != nil {
-			t.Errorf("%s must trust entries over understated total: %v", result.name, result.err)
+		if result.err == nil {
+			t.Errorf("%s accepted a count above the claimed total 0; the ratchet must judge the claimed total", result.name)
 		}
 	}
 	if after := readFixtureFile(t, f.dir, ".standards-baseline.json"); after != understated {
