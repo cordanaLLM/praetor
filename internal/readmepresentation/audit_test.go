@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 func TestAudit_Positive_CompliantReadme(t *testing.T) {
@@ -202,9 +203,7 @@ func TestAudit_Boundary_DirectoryUnreadableAndOversizedReportVsEnforce(t *testin
 	})
 
 	t.Run("unreadable README", func(t *testing.T) {
-		if os.Geteuid() == 0 {
-			t.Skip("root bypasses 0000 file mode")
-		}
+		testsupport.SkipIfFileModeUnenforced(t)
 		dir := t.TempDir()
 		p := filepath.Join(dir, "README.md")
 		writeTestReadme(t, dir, "# x\n")

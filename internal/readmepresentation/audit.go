@@ -81,8 +81,7 @@ func RecordBaseline(previous *baseline.Baseline, findings []Finding, opts baseli
 // ScanBaselineFindings scans rootDir/README.md for baseline recording or verification when
 // previous already carries README entries or when enforce is set.
 func ScanBaselineFindings(ctx context.Context, rootDir string, previous *baseline.Baseline, enforce bool) ([]Finding, error) {
-	_, hasReadme := ReadmeBaseline(previous)
-	if !hasReadme && !enforce {
+	if previous.Counts().README == 0 && !enforce {
 		return nil, nil
 	}
 	return CheckFile(ctx, rootDir, FileName)
@@ -90,46 +89,17 @@ func ScanBaselineFindings(ctx context.Context, rootDir string, previous *baselin
 
 // ReadmeBaseline extracts README-00..README-05 entries from b and reports whether any were present.
 func ReadmeBaseline(b *baseline.Baseline) (*baseline.Baseline, bool) {
-	if b == nil || b.Absent {
+	if b == nil || b.Absent || b.Counts().README == 0 {
 		return &baseline.Baseline{Version: 1, Absent: true}, false
 	}
-	var entries []baseline.Infraction
-	for i := 0; i < len(b.Infractions); i++ {
-		if baseline.IsReadmeRule(b.Infractions[i].RuleID) {
-			entries = append(entries, b.Infractions[i])
-		}
-	}
-	if len(entries) == 0 {
-		return &baseline.Baseline{Version: 1, Absent: true}, false
-	}
-	cp := *b
-	cp.TotalInfractions = len(entries)
-	cp.Infractions = entries
-	return &cp, true
+	_, readme := b.SplitClasses()
+	return readme, true
 }
 
-// WithoutReadmeBaseline returns a copy of b with README-00..README-05 entries removed so HISS
-// invariant scans do not count README presentation baseline entries as stale HISS infractions.
+// WithoutReadmeBaseline returns the HISS snapshot, excluding README findings.
 func WithoutReadmeBaseline(b *baseline.Baseline) *baseline.Baseline {
-	if b == nil || len(b.Infractions) == 0 {
-		return b
-	}
-	hasReadme := false
-	filtered := make([]baseline.Infraction, 0, len(b.Infractions))
-	for i := 0; i < len(b.Infractions); i++ {
-		if baseline.IsReadmeRule(b.Infractions[i].RuleID) {
-			hasReadme = true
-			continue
-		}
-		filtered = append(filtered, b.Infractions[i])
-	}
-	if !hasReadme {
-		return b
-	}
-	cp := *b
-	cp.TotalInfractions = len(filtered)
-	cp.Infractions = filtered
-	return &cp
+	hiss, _ := b.SplitClasses()
+	return hiss
 }
 
 // Audit runs the README presentation gate: checks README.md against rules README-00..README-05.

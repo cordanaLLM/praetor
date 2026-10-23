@@ -266,7 +266,7 @@ func auditBaselineGrowth(ctx context.Context, opts *auditOptions, current *basel
 		return nil
 	}
 	fmt.Printf("[PASS] HISS-13 debt ratchet: %s does not grow versus %s (%d -> %d).\n",
-		rel, opts.baseRef, previous.TotalInfractions, current.TotalInfractions)
+		rel, opts.baseRef, previous.Counts().Total(), current.Counts().Total())
 	return nil
 }
 

@@ -859,7 +859,6 @@ func (s *adoptSession) recordFirstBaseline(ctx context.Context, full string) err
 		s.report.BaselineStatus = "failed"
 		return err
 	}
-	hissCount := len(base.Infractions)
 	readmeFindings, err := s.scanReadmeBaselineFindings(ctx, nil)
 	if err != nil {
 		s.report.BaselineStatus = "failed"
@@ -868,7 +867,7 @@ func (s *adoptSession) recordFirstBaseline(ctx context.Context, full string) err
 	base.Infractions = append(base.Infractions, readmepresentation.ToBaseline(readmeFindings)...)
 	base.TotalInfractions = len(base.Infractions)
 	s.report.BaselineStatus = "scanned"
-	s.report.LegacyDebtCount = hissCount
+	s.report.LegacyDebtCount = base.Counts().HISS
 	if err := s.saveBaseline(full, base); err != nil {
 		return err
 	}
@@ -910,7 +909,7 @@ func (s *adoptSession) verifyExistingBaseline(full string) error {
 		return err
 	}
 	s.report.BaselineStatus = "existing"
-	s.report.LegacyDebtCount = readmepresentation.WithoutReadmeBaseline(base).Count()
+	s.report.LegacyDebtCount = base.Counts().HISS
 	s.report.recordReconciled(baselineFile, "Technical debt baseline verified present")
 	return nil
 }
@@ -977,7 +976,7 @@ func (s *adoptSession) checkKeptBaseline(ctx context.Context, full string) error
 	verdict := &BaselineRatchet{Passed: ratchet.Passed, Recorded: ratchet.PreviousCount,
 		Active: ratchet.CurrentCount, Unbaselined: len(ratchet.NewViolations)}
 	s.report.BaselineStatus = "existing"
-	s.report.LegacyDebtCount = readmepresentation.WithoutReadmeBaseline(recorded).Count()
+	s.report.LegacyDebtCount = recorded.Counts().HISS
 	s.report.BaselineRatchet = verdict
 	s.report.recordReconciled(baselineFile, verdict.Line())
 	if !ratchet.Passed {
@@ -1027,20 +1026,20 @@ func (s *adoptSession) rerecordBaseline(ctx context.Context, full string) error 
 		return s.refusedRerecord(ctx, full, previous, combined, err)
 	}
 	s.report.BaselineStatus = "scanned"
-	s.report.LegacyDebtCount = len(current)
+	s.report.LegacyDebtCount = next.Counts().HISS
 	if previous.SameDebt(next) && previous.CommitSHA == next.CommitSHA {
 		s.report.recordReconciled(baselineFile, fmt.Sprintf(
-			"Rescanned; baseline unchanged at %d legacy debt infractions", next.TotalInfractions))
+			"Rescanned; baseline unchanged at %d legacy debt infractions", next.Counts().Total()))
 		return nil
 	}
 	if err := s.saveBaseline(full, next); err != nil {
 		return err
 	}
 	s.report.recordReconciled(baselineFile, fmt.Sprintf("Rescanned and re-recorded %d legacy debt infractions into baseline, previously %d",
-		next.TotalInfractions, previous.Count()))
+		next.Counts().Total(), previous.Counts().Total()))
 	if next.IncreaseRationale != "" {
 		s.report.addWarning("%s: debt increased deliberately from %d to %d infractions; recorded rationale: %s",
-			baselineFile, previous.Count(), next.TotalInfractions, next.IncreaseRationale)
+			baselineFile, previous.Counts().Total(), next.Counts().Total(), next.IncreaseRationale)
 	}
 	return nil
 }

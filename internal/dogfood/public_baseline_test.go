@@ -24,7 +24,7 @@ func publicBaselineBytes(t *testing.T, recorded *baseline.Baseline) []byte {
 }
 
 func publicBaselineRecord(scan *hiss.ScanReport) *baseline.Baseline {
-	return &baseline.Baseline{Version: 1, TotalInfractions: scan.TotalInfractions, Infractions: publicInfractions(scan)}
+	return publicScanBaseline(scan)
 }
 
 func publicBaselineOriginal() *hiss.ScanReport {

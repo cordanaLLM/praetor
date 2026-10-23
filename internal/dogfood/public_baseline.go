@@ -10,7 +10,6 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/hiss"
-	"github.com/cordanaLLM/praetor/internal/readmepresentation"
 )
 
 func verifyPublicBaseline(ctx context.Context, dir string, original *hiss.ScanReport) (string, error) {
@@ -75,8 +74,8 @@ func comparePublicBaseline(ctx context.Context, recorded *baseline.Baseline, ori
 	if recorded.Version != 1 || recorded.TotalInfractions != len(recorded.Infractions) {
 		return errors.New("adopted baseline version or count differs from the independent original scan")
 	}
-	hissRecorded := readmepresentation.WithoutReadmeBaseline(recorded)
-	if hissRecorded.TotalInfractions != original.TotalInfractions || hissRecorded.TotalInfractions != len(original.Violations) {
+	hissRecorded, _ := recorded.SplitClasses()
+	if recorded.Counts().HISS != original.TotalInfractions || recorded.Counts().HISS != len(original.Violations) {
 		return errors.New("adopted baseline version or count differs from the independent original scan")
 	}
 	// Fingerprints may legitimately collide at the same rule/file/line. Compare
@@ -96,4 +95,9 @@ func comparePublicBaseline(ctx context.Context, recorded *baseline.Baseline, ori
 		expected[infraction]--
 	}
 	return ctx.Err()
+}
+
+// publicScanBaseline gives independent HISS scans the same class interpretation as adoption.
+func publicScanBaseline(scan *hiss.ScanReport) *baseline.Baseline {
+	return &baseline.Baseline{Version: 1, TotalInfractions: scan.TotalInfractions, Infractions: publicInfractions(scan)}
 }

@@ -19,7 +19,6 @@ import (
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
-	"github.com/cordanaLLM/praetor/internal/readmepresentation"
 	"github.com/cordanaLLM/praetor/internal/runner"
 	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -260,7 +259,7 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 	}
 	opts.baselineKnown = !base.Absent
 	opts.baseline = base
-	hissBase := readmepresentation.WithoutReadmeBaseline(base)
+	hissBase, _ := base.SplitClasses()
 
 	scanOpts := auditScanOptions(opts)
 	scanRep, err := hiss.Scan(ctx, opts.rootDir, scanOpts)
@@ -294,7 +293,7 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 		return auditRatchetRejection(ctx, opts, scanOpts, hissBase, current, ratchet)
 	}
 	printInvariantVerdict(scanRep, fmt.Sprintf("%d active violations within %d baselined limit (%d touched files clean) (skipped: %d ignored directories, %d symlinks, %d oversize files, %d non-regular files)",
-		ratchet.CurrentCount, hissBase.TotalInfractions, len(touched), scanRep.Skips.DirCount,
+		ratchet.CurrentCount, base.Counts().HISS, len(touched), scanRep.Skips.DirCount,
 		scanRep.Skips.Symlinks, scanRep.Skips.Oversize, scanRep.Skips.Irregular))
 
 	return auditRatchetPassed(ctx, opts, base, ratchet)

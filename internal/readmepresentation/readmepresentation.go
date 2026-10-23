@@ -8,21 +8,23 @@ package readmepresentation
 
 import (
 	"fmt"
+
+	"github.com/cordanaLLM/praetor/internal/readmerules"
 )
 
 const (
 	// RuleIDAbsent identifies an absent README.md file.
-	RuleIDAbsent = "README-00"
+	RuleIDAbsent = readmerules.RuleIDAbsent
 	// RuleIDBadgeBlock identifies badge block placement and group ordering violations.
-	RuleIDBadgeBlock = "README-01"
+	RuleIDBadgeBlock = readmerules.RuleIDBadgeBlock
 	// RuleIDTagline identifies tagline placement and formatting violations.
-	RuleIDTagline = "README-02"
+	RuleIDTagline = readmerules.RuleIDTagline
 	// RuleIDHero identifies hero banner sizing and styling violations.
-	RuleIDHero = "README-03"
+	RuleIDHero = readmerules.RuleIDHero
 	// RuleIDDiagrams identifies unthemed mermaid blocks or oversized SVGs.
-	RuleIDDiagrams = "README-04"
+	RuleIDDiagrams = readmerules.RuleIDDiagrams
 	// RuleIDSections identifies duplicate H2 headings or section order violations.
-	RuleIDSections = "README-05"
+	RuleIDSections = readmerules.RuleIDSections
 
 	// GateName is the name printed on audit report lines.
 	GateName = "README presentation"

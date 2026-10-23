@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/readmerules"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -201,59 +202,96 @@ func SaveBaseline(path string, b *Baseline) error {
 // Count returns the number of infractions a snapshot records, trusting the entries over
 // a hand-edited total.
 func (b *Baseline) Count() int {
-	if b == nil {
-		return 0
-	}
-	if n := len(b.Infractions); n > b.TotalInfractions {
-		return n
-	}
-	return b.TotalInfractions
+	counts := b.Counts()
+	return counts.Total()
 }
 
-// IsReadmeRule reports whether ruleID is one of README-00..README-05.
+// ClassCounts separates invariant debt from README presentation findings.
+type ClassCounts struct {
+	HISS   int
+	README int
+}
+
+// Total returns the combined count across both classes.
+func (c ClassCounts) Total() int {
+	return c.HISS + c.README
+}
+
+// Counts returns each class's recorded count. Unitemized debt in a legacy total
+// belongs to HISS; entries take precedence over an understated total.
+func (b *Baseline) Counts() ClassCounts {
+	var counts ClassCounts
+	if b == nil {
+		return counts
+	}
+	for i := 0; i < len(b.Infractions); i++ {
+		if IsReadmeRule(b.Infractions[i].RuleID) {
+			counts.README++
+		} else {
+			counts.HISS++
+		}
+	}
+	if b.TotalInfractions > len(b.Infractions) {
+		counts.HISS += b.TotalInfractions - len(b.Infractions)
+	}
+	return counts
+}
+
+// IsReadmeRule reports whether ruleID identifies a README presentation rule.
 func IsReadmeRule(ruleID string) bool {
 	switch ruleID {
-	case "README-00", "README-01", "README-02", "README-03", "README-04", "README-05":
+	case readmerules.RuleIDAbsent, readmerules.RuleIDBadgeBlock, readmerules.RuleIDTagline,
+		readmerules.RuleIDHero, readmerules.RuleIDDiagrams, readmerules.RuleIDSections:
 		return true
 	default:
 		return false
 	}
 }
 
-func splitClassCounts(b *Baseline) (hissCount, readmeCount int) {
+// SplitClasses returns independent entry slices with the metadata and class counts
+// of b. Nil stays nil; unitemized legacy debt stays in the HISS snapshot.
+func (b *Baseline) SplitClasses() (hiss, readme *Baseline) {
 	if b == nil {
-		return 0, 0
+		return nil, nil
 	}
-	for i := 0; i < len(b.Infractions); i++ {
-		if IsReadmeRule(b.Infractions[i].RuleID) {
-			readmeCount++
-		} else {
-			hissCount++
-		}
-	}
-	if b.TotalInfractions > len(b.Infractions) {
-		hissCount += b.TotalInfractions - len(b.Infractions)
-	}
-	return hissCount, readmeCount
+	hissCopy, readmeCopy := *b, *b
+	hissCopy.Infractions, readmeCopy.Infractions = splitEntries(b.Infractions)
+	counts := b.Counts()
+	hissCopy.TotalInfractions, readmeCopy.TotalInfractions = counts.HISS, counts.README
+	return &hissCopy, &readmeCopy
 }
 
-// CheckMonotonic enforces HISS-13 across snapshots: next may not record more
-// infractions than previous overall or within either rule class (HISS vs README).
-// It returns ErrDebtIncrease with the counts otherwise.
+func splitEntries(entries []Infraction) (hiss, readme []Infraction) {
+	hiss = make([]Infraction, 0, len(entries))
+	readme = make([]Infraction, 0)
+	for i := 0; i < len(entries); i++ {
+		if IsReadmeRule(entries[i].RuleID) {
+			readme = append(readme, entries[i])
+		} else {
+			hiss = append(hiss, entries[i])
+		}
+	}
+	return hiss, readme
+}
+
+// CheckMonotonic enforces HISS-13 independently for HISS and README debt.
+// A rejection names every class that grew and wraps ErrDebtIncrease.
 func CheckMonotonic(previous, next *Baseline) error {
 	if previous == nil || next == nil {
 		return ErrNilSnapshot
 	}
-	prevHISS, prevReadme := splitClassCounts(previous)
-	nextHISS, nextReadme := splitClassCounts(next)
-	if next.Count() <= previous.Count() && nextHISS <= prevHISS && nextReadme <= prevReadme {
+	prevCounts, nextCounts := previous.Counts(), next.Counts()
+	var growth []string
+	if nextCounts.HISS > prevCounts.HISS {
+		growth = append(growth, fmt.Sprintf("HISS increased: %d -> %d", prevCounts.HISS, nextCounts.HISS))
+	}
+	if nextCounts.README > prevCounts.README {
+		growth = append(growth, fmt.Sprintf("README increased: %d -> %d (README presentation finding(s))", prevCounts.README, nextCounts.README))
+	}
+	if len(growth) == 0 {
 		return nil
 	}
-	if prevReadme > 0 || nextReadme > 0 {
-		return fmt.Errorf("%w: %d -> %d (%d -> %d HISS invariant violation(s), %d -> %d README presentation finding(s))",
-			ErrDebtIncrease, previous.Count(), next.Count(), prevHISS, nextHISS, prevReadme, nextReadme)
-	}
-	return fmt.Errorf("%w: %d -> %d", ErrDebtIncrease, previous.Count(), next.Count())
+	return fmt.Errorf("%w: %s", ErrDebtIncrease, strings.Join(growth, "; "))
 }
 
 // Record builds the snapshot that replaces previous from a fresh scan. It refuses a
