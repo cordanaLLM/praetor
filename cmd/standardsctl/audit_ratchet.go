@@ -306,15 +306,6 @@ func gitRelativePath(topLevel, path string) (string, error) {
 	return slashed, nil
 }
 
-// firstLine returns the first non-empty line of s, for compact diagnostics.
-func firstLine(s string) string {
-	lines := splitLines(s, 1)
-	if len(lines) == 0 {
-		return "no output"
-	}
-	return lines[0]
-}
-
 // growthBaselineAtRef applies adoption's split to a legacy base snapshot in memory.
 func growthBaselineAtRef(ctx context.Context, opts *auditOptions, rel string) (*baseline.Baseline, bool, error) {
 	committed, found := readBaselineAtRef(ctx, opts.rootDir, opts.baseRef, rel)
