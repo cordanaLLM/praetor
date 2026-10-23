@@ -36,17 +36,7 @@ func MigrateReadme(ctx context.Context, hissPath, readmePath string, dryRun bool
 	if err != nil {
 		return nil, err
 	}
-	h, r := *old, *old
-	h.Infractions = make([]Infraction, 0, len(old.Infractions))
-	r.Infractions = make([]Infraction, 0)
-	for i := 0; i < len(old.Infractions); i++ {
-		if IsReadmeRule(old.Infractions[i].RuleID) {
-			r.Infractions = append(r.Infractions, old.Infractions[i])
-		} else {
-			h.Infractions = append(h.Infractions, old.Infractions[i])
-		}
-	}
-	result := &ReadmeMigration{HISS: old, Moved: len(r.Infractions)}
+	result := SplitReadme(old)
 	if result.Moved == 0 {
 		result.README, err = LoadClassBaseline(readmePath, READMEClass)
 		return result, err
@@ -54,9 +44,6 @@ func MigrateReadme(ctx context.Context, hissPath, readmePath string, dryRun bool
 	if _, err := os.Lstat(readmePath); !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("refusing migration from %s: %s already exists alongside %d README entries; reconcile both files before praetorctl adopt", hissPath, readmePath, result.Moved)
 	}
-	h.TotalInfractions = max(0, old.TotalInfractions-result.Moved)
-	r.TotalInfractions = result.Moved
-	result.HISS, result.README = &h, &r
 	if dryRun {
 		return result, nil
 	}
@@ -105,4 +92,27 @@ func snapshotJSON(b *Baseline) ([]byte, error) {
 		return nil, fmt.Errorf("failed to marshal baseline: %w", err)
 	}
 	return append(data, '\n'), nil
+}
+
+// SplitReadme plans adoption's legacy split without reading or writing files.
+func SplitReadme(old *Baseline) *ReadmeMigration {
+	h, r := *old, *old
+	h.Infractions = make([]Infraction, 0, len(old.Infractions))
+	r.Infractions = make([]Infraction, 0)
+	for i := 0; i < len(old.Infractions); i++ {
+		if IsReadmeRule(old.Infractions[i].RuleID) {
+			r.Infractions = append(r.Infractions, old.Infractions[i])
+		} else {
+			h.Infractions = append(h.Infractions, old.Infractions[i])
+		}
+	}
+	result := &ReadmeMigration{HISS: old, Moved: len(r.Infractions)}
+	if result.Moved > 0 {
+		h.TotalInfractions = max(0, old.TotalInfractions-result.Moved)
+		r.TotalInfractions = result.Moved
+		result.HISS, result.README = &h, &r
+	} else {
+		result.README = &Baseline{Absent: true}
+	}
+	return result
 }

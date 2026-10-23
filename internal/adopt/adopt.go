@@ -158,9 +158,11 @@ type AdoptReport struct {
 	BaselineRatchet *BaselineRatchet `json:"baseline_ratchet,omitempty"`
 	// BaselineRatchets contains one verdict per independently scanned file.
 	BaselineRatchets []BaselineRatchet `json:"baseline_ratchets,omitempty"`
-	DryRun           bool              `json:"dry_run"`
-	Errors           []string          `json:"errors,omitempty"`
-	Warnings         []string          `json:"warnings,omitempty"`
+	// BaselineNotes names snapshots that were deliberately not recorded.
+	BaselineNotes []string `json:"baseline_notes,omitempty"`
+	DryRun        bool     `json:"dry_run"`
+	Errors        []string `json:"errors,omitempty"`
+	Warnings      []string `json:"warnings,omitempty"`
 	// Steps records each reached step of the chain; Pillars derives the governance pillar
 	// lines from it.
 	Steps []StepOutcome `json:"steps,omitempty"`
@@ -810,8 +812,12 @@ func reconcileBaseline(ctx context.Context, s *adoptSession) (err error) {
 			s.report.BaselineStatus = "failed"
 		}
 	}()
+	if _, err := s.loadExistingBaseline(ctx, filepath.Join(s.repoPath, baselineFile)); err != nil {
+		return err
+	}
 	migration, err := baseline.MigrateReadme(ctx, filepath.Join(s.repoPath, baselineFile), filepath.Join(s.repoPath, gating.ReadmeBaselineFile), s.opts.DryRun)
 	if err != nil {
+		s.report.addError("baseline: migration could not read or reconcile existing snapshots: %v", err)
 		return fmt.Errorf("load existing baseline: %w", err)
 	}
 	s.baselineMigration = migration
@@ -820,7 +826,9 @@ func reconcileBaseline(ctx context.Context, s *adoptSession) (err error) {
 		if s.opts.DryRun {
 			verb = "Would move"
 		}
-		s.report.recordReconciled(baselineFile, fmt.Sprintf("%s %d README entries from %s to %s", verb, migration.Moved, baselineFile, gating.ReadmeBaselineFile))
+		detail := fmt.Sprintf("%s %d README entries from %s to %s", verb, migration.Moved, baselineFile, gating.ReadmeBaselineFile)
+		s.report.recordReconciled(baselineFile, detail)
+		s.report.recordCreated(gating.ReadmeBaselineFile, detail)
 	}
 	for _, file := range []string{baselineFile, gating.ReadmeBaselineFile} {
 		full, err := repoFile(s.repoPath, file)
@@ -835,11 +843,21 @@ func reconcileBaseline(ctx context.Context, s *adoptSession) (err error) {
 }
 
 func (s *adoptSession) reconcileFileBaseline(ctx context.Context, full string) error {
-	previous, err := s.loadExistingBaseline(full)
+	previous, err := s.loadExistingBaseline(ctx, full)
 	if err != nil {
 		return err
 	}
 	if previous.Absent {
+		if filepath.Base(full) == gating.ReadmeBaselineFile {
+			enforce, err := s.enforceReadmePresentation()
+			if err != nil {
+				return err
+			}
+			if !enforce {
+				s.report.BaselineNotes = append(s.report.BaselineNotes, readmepresentation.NotRecorded)
+				return nil
+			}
+		}
 		return s.reconcileMissingBaseline(ctx, full)
 	}
 	switch {
@@ -848,7 +866,7 @@ func (s *adoptSession) reconcileFileBaseline(ctx context.Context, full string) e
 	case s.opts.RecordBaseline:
 		return s.checkKeptBaseline(ctx, full)
 	default:
-		return s.verifyExistingBaseline(full)
+		return s.verifyExistingBaseline(ctx, full)
 	}
 }
 
@@ -870,7 +888,7 @@ func (s *adoptSession) reconcileMissingBaseline(ctx context.Context, full string
 }
 
 func (s *adoptSession) isReadmeUpgrade(full string) bool {
-	return filepath.Base(full) == gating.ReadmeBaselineFile && s.baselineMigration != nil && !s.baselineMigration.HISS.Absent
+	return filepath.Base(full) == gating.ReadmeBaselineFile && s.baselineMigration != nil && s.baselineMigration.Moved > 0
 }
 
 func (s *adoptSession) enforceReadmePresentation() (bool, error) {
@@ -902,8 +920,8 @@ func (s *adoptSession) recordFirstBaseline(ctx context.Context, full string) err
 		return err
 	}
 	base := &baseline.Baseline{Version: 1, Repository: s.identity.coordinate(), CommitSHA: commit, Infractions: current, TotalInfractions: len(current)}
-	if filepath.Base(full) != baselineFile && len(current) == 0 {
-		s.recordFileRatchet(full, &baseline.Baseline{Absent: true}, current)
+	if filepath.Base(full) == gating.ReadmeBaselineFile && len(current) == 0 {
+		s.report.BaselineNotes = append(s.report.BaselineNotes, readmepresentation.NotRecordedClean)
 		return nil
 	}
 	if err := s.saveBaseline(full, base); err != nil {
@@ -933,7 +951,7 @@ func (s *adoptSession) saveBaseline(full string, base *baseline.Baseline) error 
 // loadExistingBaseline reads the baseline the repository has. An unreadable one fails the step
 // on every path: nothing can be verified against it, and replacing it would accept the current
 // debt with no earlier count to ratchet against.
-func (s *adoptSession) loadExistingBaseline(full string) (*baseline.Baseline, error) {
+func (s *adoptSession) loadExistingBaseline(ctx context.Context, full string) (*baseline.Baseline, error) {
 	file := filepath.Base(full)
 	if s.opts.DryRun && s.baselineMigration != nil && s.baselineMigration.Moved > 0 {
 		if file == baselineFile {
@@ -941,11 +959,18 @@ func (s *adoptSession) loadExistingBaseline(full string) (*baseline.Baseline, er
 		}
 		return s.baselineMigration.README, nil
 	}
-	class := baseline.HISSClass
-	if file == gating.ReadmeBaselineFile {
-		class = baseline.READMEClass
+	var base *baseline.Baseline
+	var err error
+	if s.baselineMigration == nil && file == baselineFile {
+		ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
+		defer cancel()
+		s.baselineMigration, err = baseline.MigrateReadme(ctx, full, filepath.Join(s.repoPath, gating.ReadmeBaselineFile), true)
+		if err == nil {
+			base = s.baselineMigration.HISS
+		}
+	} else {
+		base, err = baseline.LoadClassBaseline(full, baseline.ClassForFile(full))
 	}
-	base, err := baseline.LoadClassBaseline(full, class)
 	if err != nil {
 		s.report.BaselineStatus = "failed"
 		s.report.addError("baseline: existing %s is unreadable: %v", file, err)
@@ -956,8 +981,8 @@ func (s *adoptSession) loadExistingBaseline(full string) (*baseline.Baseline, er
 
 // verifyExistingBaseline keeps an existing baseline without scanning (--record-baseline=false)
 // and exposes its debt count so that later steps (the README badge) reflect the recorded state.
-func (s *adoptSession) verifyExistingBaseline(full string) error {
-	base, err := s.loadExistingBaseline(full)
+func (s *adoptSession) verifyExistingBaseline(ctx context.Context, full string) error {
+	base, err := s.loadExistingBaseline(ctx, full)
 	if err != nil {
 		return err
 	}
@@ -1039,7 +1064,7 @@ const rerecordRemedy = "'praetorctl adopt --rerecord-baseline --allow-increase -
 // debt and never written (#358). A rejection is a warning, not a failed adoption: the files
 // adoption owns are reconciled all the same, and `praetorctl audit` is what rejects the debt.
 func (s *adoptSession) checkKeptBaseline(ctx context.Context, full string) error {
-	recorded, err := s.loadExistingBaseline(full)
+	recorded, err := s.loadExistingBaseline(ctx, full)
 	if err != nil {
 		return err
 	}
@@ -1074,7 +1099,7 @@ func (s *adoptSession) checkKeptBaseline(ctx context.Context, full string) error
 // allowed it with a rationale, the recorded repository and commit are carried over when the
 // run resolves none, and a rescan that records the same debt keeps the file byte for byte.
 func (s *adoptSession) rerecordBaseline(ctx context.Context, full string) error {
-	previous, err := s.loadExistingBaseline(full)
+	previous, err := s.loadExistingBaseline(ctx, full)
 	if err != nil {
 		return err
 	}
@@ -1088,7 +1113,7 @@ func (s *adoptSession) rerecordBaseline(ctx context.Context, full string) error 
 		return err
 	}
 	if previous.Absent && len(current) == 0 {
-		s.recordFileRatchet(full, previous, current)
+		s.report.BaselineNotes = append(s.report.BaselineNotes, readmepresentation.NotRecordedClean)
 		return nil
 	}
 	next, err := baseline.Record(previous, current, baseline.RecordOptions{AllowIncrease: s.opts.AllowBaselineIncrease, Rationale: s.opts.BaselineIncreaseReason, Repository: s.identity.coordinate(), CommitSHA: commit})

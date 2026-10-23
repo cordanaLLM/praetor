@@ -113,7 +113,7 @@ func TestAdoptRejectedKeptBaseline_3D(t *testing.T) {
 			t.Fatalf("re-adoption %v = %v; want exit 0 and the baseline kept byte for byte\n%s", flags, err, out)
 		}
 		mustContain(t, out, pendingBaselineLine,
-			"  Debt Baseline: Baseline kept, not re-recorded; HISS-13 ratchet rejects: 1 active infractions against 0 recorded, 1 not in the baseline",
+			"  Baseline kept, not re-recorded; HISS-13 ratchet rejects: 1 active infractions against 0 recorded, 1 not in the baseline",
 			"  Resolve: fix the findings, or accept them deliberately with 'praetorctl adopt --rerecord-baseline --allow-increase --reason=<why>' or "+
 				"'praetorctl baseline --record --allow-increase --reason=<why>'; until then praetorctl audit rejects the repository",
 			"added.go:4")

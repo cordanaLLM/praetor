@@ -293,6 +293,8 @@ func TestAdoptRecordBaselineKeepsReadmeFindingsWithZeroHISS(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("rerecord report-only README finding with zero-debt baseline: %v", err)
 	}
+	// This refusal concerns an existing zero-debt README snapshot, rather than a first recording.
+	mustWrite(t, filepath.Join(repoPath, ".readme-baseline.json"), `{"version":1,"infractions":[]}`)
 	enableReadmePresentationGate(t, repoPath)
 	if _, err := Adopt(t.Context(), AdoptOptions{
 		LockSourceRoot:   lockRoot,
@@ -432,6 +434,7 @@ func TestAdoptRerecord_HISSFixDoesNotCancelNewReadmeDebt(t *testing.T) {
 	mustAdoptReadmeBaseline(t, lockRoot, repoPath, AdoptOptions{
 		LockSourceRoot: lockRoot, Path: repoPath, RecordBaseline: true,
 	})
+	mustWrite(t, filepath.Join(repoPath, ".readme-baseline.json"), `{"version":1,"infractions":[]}`)
 	enableReadmePresentationGate(t, repoPath)
 	mustWrite(t, filepath.Join(repoPath, "rec.go"), "package main\nfunc calm() int { return 1 }\n")
 	mustWrite(t, filepath.Join(repoPath, readmeFile), "# Minimal\n\nPlain text.\n")

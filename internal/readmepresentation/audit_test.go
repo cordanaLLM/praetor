@@ -98,7 +98,7 @@ func recordTestReadmeBaseline(t *testing.T, dir string) *baseline.Baseline {
 	if err != nil {
 		t.Fatalf("CheckFile: %v", err)
 	}
-	rec, err := RecordBaseline(nil, findings, baseline.RecordOptions{Repository: "fixture/repo"})
+	rec, err := baseline.Record(&baseline.Baseline{Absent: true}, ToBaseline(findings), baseline.RecordOptions{Repository: "fixture/repo", AllowIncrease: true, Rationale: "initial README fixture"})
 	if err != nil {
 		t.Fatalf("RecordBaseline: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestAudit_Negative_SameReadmeUnderTwoRootsEqualAnchors(t *testing.T) {
 	if infA != infB || strings.Contains(infA.Message, rootA) {
 		t.Fatalf("anchors/messages differ or leaked root:\nrootA: %+v\nrootB: %+v", infA, infB)
 	}
-	recA, err := RecordBaseline(nil, findingsA, baseline.RecordOptions{Repository: "fixture/repo"})
+	recA, err := baseline.Record(&baseline.Baseline{Absent: true}, ToBaseline(findingsA), baseline.RecordOptions{Repository: "fixture/repo", AllowIncrease: true, Rationale: "initial README fixture"})
 	if err != nil {
 		t.Fatalf("RecordBaseline: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestAudit_Negative_ScanBaselineFindingsReportOnlyAndRefusalText(t *testing.
 	if err != nil || len(enforcedFindings) == 0 {
 		t.Fatalf("expected findings when enforce=true, got findings=%v err=%v", enforcedFindings, err)
 	}
-	_, err = RecordBaseline(zeroBase, enforcedFindings, baseline.RecordOptions{})
+	_, err = baseline.Record(zeroBase, ToBaseline(enforcedFindings), baseline.RecordOptions{})
 	if err == nil || !strings.Contains(err.Error(), "baseline: total infractions increased") {
 		t.Fatalf("expected RecordBaseline refusal to name README presentation findings apart from HISS, got: %v", err)
 	}

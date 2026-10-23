@@ -1046,7 +1046,7 @@ func TestServer_Positive_AuditReadmePresentationAndBaselineFilter(t *testing.T) 
 	if err != nil || len(findings) == 0 {
 		t.Fatalf("CheckFile: findings=%v err=%v", findings, err)
 	}
-	rec, err := readmepresentation.RecordBaseline(nil, findings, baseline.RecordOptions{Repository: "fixture/repo"})
+	rec, err := baseline.Record(&baseline.Baseline{Absent: true}, readmepresentation.ToBaseline(findings), baseline.RecordOptions{Repository: "fixture/repo", AllowIncrease: true, Rationale: "initial README fixture"})
 	if err != nil {
 		t.Fatalf("RecordBaseline: %v", err)
 	}

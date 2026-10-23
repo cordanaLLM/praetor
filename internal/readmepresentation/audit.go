@@ -62,16 +62,11 @@ func ToBaseline(findings []Finding) []baseline.Infraction {
 	return infractions
 }
 
-// RecordBaseline records README findings only in the independent snapshot.
-func RecordBaseline(previous *baseline.Baseline, findings []Finding, opts baseline.RecordOptions) (*baseline.Baseline, error) {
-	if previous == nil && !opts.AllowIncrease {
-		opts.AllowIncrease = true
-		if strings.TrimSpace(opts.Rationale) == "" {
-			opts.Rationale = "initial README presentation baseline"
-		}
-	}
-	return baseline.Record(previous, ToBaseline(findings), opts)
-}
+// NotRecorded describes an absent, unenforced snapshot without claiming a scan passed.
+const NotRecorded = ".readme-baseline.json: not recorded (no README presentation baseline; enforcement off)"
+
+// NotRecordedClean names a clean enforced scan that did not create a snapshot.
+const NotRecordedClean = ".readme-baseline.json: not recorded (no README presentation baseline; presentation scan clean)"
 
 // ScanBaselineFindings scans rootDir/README.md for baseline recording or verification when
 // the README snapshot already exists or enforce is set.
@@ -139,7 +134,7 @@ func judgeEnforced(findings []Finding, readmeBase *baseline.Baseline, maxStale *
 		return "", errors.New(formatEnforcedFailure(findings, ratchet))
 	}
 	if len(findings) == 0 && readmeBase.Count() == 0 {
-		return fmt.Sprintf("[PASS] %s: %s complies with the presentation standard (README-01..README-05); 0 active finding(s) within 0 recorded in .readme-baseline.json.", GateName, FileName), nil
+		return emptyReadmeVerdict(readmeBase), nil
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "[PASS] %s: %d active finding(s) within %d recorded in .readme-baseline.json.", GateName, ratchet.CurrentCount, readmeBase.Count())
@@ -155,6 +150,13 @@ func judgeEnforced(findings []Finding, readmeBase *baseline.Baseline, maxStale *
 		b.WriteString("\n[WARN] " + GateName + ": " + stale)
 	}
 	return b.String(), nil
+}
+
+func emptyReadmeVerdict(readmeBase *baseline.Baseline) string {
+	if readmeBase.Absent {
+		return fmt.Sprintf("[PASS] %s: %s complies with the presentation standard (README-01..README-05).\n[INFO] %s", GateName, FileName, NotRecordedClean)
+	}
+	return fmt.Sprintf("[PASS] %s: %s complies with the presentation standard (README-01..README-05); 0 active finding(s) within 0 recorded in .readme-baseline.json.", GateName, FileName)
 }
 
 func formatEnforcedFailure(findings []Finding, ratchet *baseline.RatchetResult) string {

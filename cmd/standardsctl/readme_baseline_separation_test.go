@@ -126,18 +126,32 @@ type parityVerdict struct {
 
 func TestReadmeBaselineFileParity(t *testing.T) {
 	for _, name := range []string{"HISS only", "README only", "both", "legacy migrated"} {
-		t.Run(name, func(t *testing.T) { checkBaselineFileParity(t, name) })
+		for _, enforce := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/enforce=%t", name, enforce), func(t *testing.T) { checkBaselineFileParity(t, name, enforce) })
+		}
 	}
 }
 
-func checkBaselineFileParity(t *testing.T, name string) {
+func checkBaselineFileParity(t *testing.T, name string, enforce bool) {
 	t.Helper()
 	f := newAuditFixture(t)
-	source := f.dir
-	readme := "# Widgets\n"
-	if name == "HISS only" {
-		readme = "# Widgets\n[![a](https://img.shields.io/badge/a-b-blue?style=for-the-badge)](https://x)\n**Tag**\n"
+	prepareParityBaselines(t, f, name, enforce)
+	rep, err := adopt.Adopt(t.Context(), adopt.AdoptOptions{Path: f.dir, LockSourceRoot: f.dir, RecordBaseline: true, SkipHookActivation: true})
+	if err != nil {
+		t.Fatalf("adopt: %v", err)
 	}
+	if !enforce && name == "HISS only" {
+		assertUnrecordedParity(t, f, rep)
+		return
+	}
+	verdicts := parityReportVerdicts(t, rep)
+	assertExpectedParityCounts(t, name, verdicts)
+	assertFixtureParity(t, f, verdicts)
+}
+
+func prepareParityBaselines(t *testing.T, f *auditFixture, name string, enforce bool) {
+	t.Helper()
+	readme := "# Widgets\n"
 	writeFixtureFile(t, f.dir, "README.md", readme)
 	writeFixtureFile(t, f.dir, ".standards.yaml", readFixtureFile(t, f.dir, ".standards.yaml")+"\nadoption:\n  decline: [dev-container, readme]\ngate:\n  readme_presentation: true\n")
 	if name != "README only" {
@@ -146,16 +160,23 @@ func checkBaselineFileParity(t *testing.T, name string) {
 	if out, err := runBaselineCmd(t, f, "--record", "--allow-increase", "--reason=fixture debt"); err != nil {
 		t.Fatalf("record: %v\n%s", err, out)
 	}
+	if !enforce {
+		manifest := readFixtureFile(t, f.dir, ".standards.yaml")
+		writeFixtureFile(t, f.dir, ".standards.yaml", strings.Replace(manifest, "readme_presentation: true", "readme_presentation: false", 1))
+	}
+	if name == "HISS only" {
+		if err := os.Remove(filepath.Join(f.dir, separatedReadmeFile)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if name == "README only" {
+		if err := os.Remove(f.baselinePath); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if name == "legacy migrated" {
 		plantParityMixedFile(t, f)
 	}
-	rep, err := adopt.Adopt(t.Context(), adopt.AdoptOptions{Path: f.dir, LockSourceRoot: source, RecordBaseline: true, SkipHookActivation: true})
-	if err != nil {
-		t.Fatalf("adopt: %v", err)
-	}
-	verdicts := parityReportVerdicts(t, rep)
-	assertExpectedParityCounts(t, name, verdicts)
-	assertFixtureParity(t, f, verdicts)
 }
 
 func assertFixtureParity(t *testing.T, f *auditFixture, verdicts []parityVerdict) {
@@ -254,8 +275,6 @@ func assertExpectedParityCounts(t *testing.T, name string, verdicts []parityVerd
 	t.Helper()
 	wanted := map[string]int{cliBaseline: 1, separatedReadmeFile: 1}
 	switch name {
-	case "HISS only":
-		wanted[separatedReadmeFile] = 0
 	case "README only":
 		wanted[cliBaseline] = 0
 	}
@@ -269,4 +288,21 @@ func assertExpectedParityCounts(t *testing.T, name string, verdicts []parityVerd
 		}
 		delete(wanted, v.File)
 	}
+}
+
+func assertUnrecordedParity(t *testing.T, f *auditFixture, rep *adopt.AdoptReport) {
+	t.Helper()
+	if len(rep.BaselineRatchets) != 1 || rep.BaselineRatchets[0].File != cliBaseline {
+		t.Fatalf("unrecorded README has a ratchet: %+v", rep.BaselineRatchets)
+	}
+	audit, err := f.audit(t, "--offline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verify, err := runBaselineCmd(t, f, "--verify")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, audit, "measured, not enforced: 1 finding(s)")
+	mustContain(t, verify, ".readme-baseline.json: not recorded")
 }

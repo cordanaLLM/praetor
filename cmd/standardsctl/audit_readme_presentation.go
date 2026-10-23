@@ -35,6 +35,9 @@ func auditReadmePresentation(ctx context.Context, manifest *config.Manifest, opt
 		return err
 	}
 	fmt.Println(line)
+	if base.Absent && (manifest == nil || !manifest.Gate.EnforceReadmePresentation()) {
+		return nil
+	}
 	growthOpts := *opts
 	growthOpts.baselinePath = filepath.Join(opts.rootDir, gating.ReadmeBaselineFile)
 	return auditBaselineGrowth(ctx, &growthOpts, base)

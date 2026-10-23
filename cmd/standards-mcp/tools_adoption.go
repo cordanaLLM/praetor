@@ -230,26 +230,15 @@ var adoptModes = map[adopt.AdoptOutcome]string{
 }
 
 func formatAdoptDebt(sb *mcpTextBuilder, r *adopt.AdoptReport, dryRun bool) {
-	defer func() {
-		for i := 0; i < len(r.BaselineRatchets); i++ {
-			v := r.BaselineRatchets[i]
-			sb.External(fmt.Sprintf("  %s: %d active infractions within %d recorded; passed=%t\n", v.File, v.Active, v.Recorded, v.Passed), mcpTextShared)
-		}
-	}()
-
 	switch r.BaselineStatus {
 	case "scanned":
 		if dryRun {
 			sb.Template("Legacy Debt Scanned (dry-run; not written): %d infractions in .standards-baseline.json\n", r.LegacyDebtCount)
-			return
+		} else {
+			sb.Template("Legacy Debt Baselined: %d infractions in .standards-baseline.json\n", r.LegacyDebtCount)
 		}
-		sb.Template("Legacy Debt Baselined: %d infractions in .standards-baseline.json\n", r.LegacyDebtCount)
 	case "existing":
 		sb.Template("Existing Legacy Debt Baseline: %d infractions in .standards-baseline.json\n", r.LegacyDebtCount)
-		if r.BaselineRatchet != nil && len(r.BaselineRatchets) == 0 {
-			// The adopt package's shared verdict line, the same one the CLI prints.
-			sb.External("  "+r.BaselineRatchet.Line()+"\n", mcpTextShared)
-		}
 	case "skipped":
 		sb.Template("Legacy Debt Scan: skipped (baseline recording disabled)\n")
 	default:
@@ -258,6 +247,9 @@ func formatAdoptDebt(sb *mcpTextBuilder, r *adopt.AdoptReport, dryRun bool) {
 			status = "not_run"
 		}
 		sb.Template("Legacy Debt Baseline: %s; no usable result\n", status)
+	}
+	for _, line := range r.BaselineLines() {
+		sb.External("  "+line+"\n", mcpTextShared)
 	}
 }
 
