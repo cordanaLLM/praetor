@@ -1,0 +1,2 @@
+type: security
+title: Refuse first gosec baselines with findings and prevent existing baselines from growing beyond the default branch.

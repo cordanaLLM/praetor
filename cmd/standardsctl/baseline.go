@@ -66,8 +66,8 @@ func parseBaselineMode(args []string) (baselineMode, error) {
 		"Rescan read-only and fail when the repository carries an infraction the baseline does not record or more than it records; never writes the file")
 	fs.BoolVar(&mode.allowIncrease, "allow-increase", false, "Permit --record to raise the infraction count (HISS-13 exception); requires --reason")
 	fs.StringVar(&mode.reason, "reason", "", "Rationale stored in the baseline when --allow-increase raises the count")
-	fs.BoolVar(&mode.allowGosecIncrease, "allow-gosec-increase", false, "Permit --record to raise the gosec infraction count; requires --gosec-reason")
-	fs.StringVar(&mode.gosecReason, "gosec-reason", "", "Rationale stored in the gosec baseline when --allow-gosec-increase raises the count")
+	fs.BoolVar(&mode.allowGosecIncrease, "allow-gosec-increase", false, "Deprecated: gosec increases are refused; retained for argument compatibility")
+	fs.StringVar(&mode.gosecReason, "gosec-reason", "", "Deprecated gosec increase rationale; retained for argument compatibility")
 	fs.BoolVar(&mode.allViolations, "all-violations", false,
 		"With --verify, list every violation of a rejection instead of the first three per class")
 
@@ -78,13 +78,17 @@ func parseBaselineMode(args []string) (baselineMode, error) {
 	if len(positional) > 0 {
 		return mode, fmt.Errorf("baseline accepts no positional arguments, got %q", positional)
 	}
-	if mode.verify && (mode.record || mode.allowIncrease || mode.reason != "" || mode.allowGosecIncrease || mode.gosecReason != "") {
+	if mode.verify && mode.writesRequested() {
 		return mode, errors.New("--verify is read-only and cannot be combined with --record, --allow-increase, --reason, --allow-gosec-increase or --gosec-reason")
 	}
 	if mode.allViolations && !mode.verify {
 		return mode, errors.New("--all-violations lists a --verify rejection; pass it together with --verify")
 	}
 	return mode, nil
+}
+
+func (mode baselineMode) writesRequested() bool {
+	return mode.record || mode.allowIncrease || mode.reason != "" || mode.allowGosecIncrease || mode.gosecReason != ""
 }
 
 // scanBaselineInfractions scans root under the complexity policy `praetorctl audit` enforces
@@ -216,12 +220,12 @@ func recordGosecBaseline(ctx context.Context, repoDir string, opts baseline.Reco
 	if err != nil {
 		return fmt.Errorf("load gosec baseline: %w", err)
 	}
-	if prevGosec.Absent && len(gosecFindings) == 0 {
+	if prevGosec.Absent && len(gosecFindings) == 0 && !opts.AllowIncrease {
 		return nil
 	}
-	nextGosec, err := baseline.Record(prevGosec, gosecFindings, opts)
+	nextGosec, err := guardedGosecRecord(ctx, repoDir, prevGosec, gosecFindings, opts)
 	if err != nil {
-		return fmt.Errorf("refusing to record %s: %w (pass --allow-gosec-increase --gosec-reason=<why> to record a deliberate increase)", gosecPath, err)
+		return fmt.Errorf("refusing to record %s: %w", gosecPath, err)
 	}
 	return saveGosecBaseline(gosecPath, prevGosec, nextGosec)
 }
