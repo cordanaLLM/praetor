@@ -1,0 +1,3 @@
+type: fixed
+title: "Size the Transpiler compile, write and verify deadline for snapshot publishing and name the bound and target file on expiry"
+issue: "#1518"

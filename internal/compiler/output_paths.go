@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
@@ -106,12 +107,16 @@ type projectionFile struct {
 // checkProjectionFiles runs the writer's refusals (projectionPath, checkOutputPath) over every
 // file before the first is written, so a refused target leaves all of them unchanged.
 func checkProjectionFiles(ctx context.Context, root string, files []projectionFile) error {
+	return checkProjectionFilesBounded(ctx, DefaultAgentBound, root, files)
+}
+
+func checkProjectionFilesBounded(ctx context.Context, bound time.Duration, root string, files []projectionFile) error {
 	for _, file := range files {
 		if _, err := projectionPath(root, file.rel); err != nil {
 			return fmt.Errorf("target %s: %w", file.rel, err)
 		}
-		if err := checkOutputPath(ctx, root, file.rel); err != nil {
-			return fmt.Errorf("target %s: %w", file.rel, err)
+		if err := targetStepError(ctx, bound, file.rel, checkOutputPath(ctx, root, file.rel)); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -119,12 +124,42 @@ func checkProjectionFiles(ctx context.Context, root string, files []projectionFi
 
 // writeProjectionFiles writes every file through writeConfinedText, in order.
 func writeProjectionFiles(ctx context.Context, root string, files []projectionFile) error {
+	return writeProjectionFilesWith(ctx, DefaultAgentBound, root, files, writeConfinedText)
+}
+
+func writeProjectionFilesWith(ctx context.Context, bound time.Duration, root string, files []projectionFile, write func(context.Context, string, string, []byte) error) error {
 	for _, file := range files {
-		if err := writeConfinedText(ctx, root, file.rel, file.data); err != nil {
-			return fmt.Errorf("target %s: %w", file.rel, err)
+		if err := targetStepError(ctx, bound, file.rel, write(ctx, root, file.rel, file.data)); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// targetDeadlineError wraps a deadline expiry on target rel with the active bound, including a
+// step that returns nil after ctx's deadline has expired, and leaves any other error unchanged.
+func targetDeadlineError(ctx context.Context, bound time.Duration, rel string, err error) (error, bool) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("target %s exceeded %s bound: %w", rel, bound, err), true
+	}
+	if ctx != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("target %s exceeded %s bound: %w", rel, bound, context.DeadlineExceeded), true
+	}
+	return err, false
+}
+
+func targetStepError(ctx context.Context, bound time.Duration, rel string, err error) error {
+	if dErr, expired := targetDeadlineError(ctx, bound, rel, err); expired || dErr == nil {
+		return dErr
+	}
+	return fmt.Errorf("target %s: %w", rel, err)
+}
+
+func verifyTargetReadError(ctx context.Context, bound time.Duration, rel string, err error) error {
+	if dErr, expired := targetDeadlineError(ctx, bound, rel, err); expired || dErr == nil {
+		return dErr
+	}
+	return fmt.Errorf("target %s missing or unreadable: %w", rel, err)
 }
 
 // checkOutputPath applies the refusals contextopt.WriteSnapshotIn makes at write time, without

@@ -5,16 +5,20 @@ import (
 	"errors"
 	"path"
 	"path/filepath"
-	"time"
 
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 const (
 	// MaxAgentFiles bounds the canonical personas one persona directory holds and the vendor
 	// files one compile writes (HISS-02).
-	MaxAgentFiles       = 50
-	DefaultAgentTimeout = 10 * time.Second
+	MaxAgentFiles = 50
+	// DefaultAgentBound bounds one Transpiler Compile, WriteOutputs or Verify call without a
+	// caller context (HISS-02). Each target check, read and atomic snapshot publish inside those
+	// calls carries contextopt.MaxDuration (30s), so a ten-second outer timeout cut off the
+	// six-target vendor pass on loaded Windows race runners (#1518).
+	DefaultAgentBound = 2 * contextopt.MaxDuration
 )
 
 // SelectPersonaDirs returns the persona directories agent_clients in the manifest at root keeps

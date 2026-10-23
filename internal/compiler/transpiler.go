@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -16,9 +17,43 @@ const MaxLineBudget = agentcontext.MaxLineBudget
 
 type TargetFile = agentcontext.TargetFile
 type CompileResult = agentcontext.CompileResult
-type Transpiler agentcontext.Transpiler
 
-func NewTranspiler() *Transpiler { return &Transpiler{MaxLines: MaxLineBudget} }
+// Transpiler compiles canonical AGENTS.md into vendor-native agent configurations and writes or
+// verifies the target files under a bounded deadline.
+type Transpiler struct {
+	MaxLines int
+	Clients  []string
+	Env      *agentcontext.RenderEnv
+	// Bound overrides DefaultAgentBound for Compile, WriteOutputs and Verify when positive.
+	Bound       time.Duration
+	writeTarget func(ctx context.Context, root, rel string, data []byte) error
+	readTarget  func(ctx context.Context, root, rel string) ([]byte, error)
+}
+
+func NewTranspiler() *Transpiler {
+	return &Transpiler{MaxLines: MaxLineBudget, Bound: DefaultAgentBound}
+}
+
+func (t *Transpiler) bound() time.Duration {
+	if t != nil && t.Bound > 0 {
+		return t.Bound
+	}
+	return DefaultAgentBound
+}
+
+func (t *Transpiler) targetWriter() func(ctx context.Context, root, rel string, data []byte) error {
+	if t != nil && t.writeTarget != nil {
+		return t.writeTarget
+	}
+	return writeConfinedText
+}
+
+func (t *Transpiler) targetReader() func(ctx context.Context, root, rel string) ([]byte, error) {
+	if t != nil && t.readTarget != nil {
+		return t.readTarget
+	}
+	return readConfinedText
+}
 
 // NotApplicableLine is the report line, without a newline, for a context file or persona
 // directory agent_clients leaves out. compile-context and the MCP standards_compile_context
@@ -29,7 +64,7 @@ func NotApplicableLine(rel string) string {
 
 // Compile reads the canonical AGENTS.md and synthesizes vendor-specific files.
 func (t *Transpiler) Compile(agentsMdPath string) (*CompileResult, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), DefaultAgentTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), t.bound())
 	defer cancel()
 	return t.CompileContext(ctx, agentsMdPath)
 }
@@ -39,13 +74,14 @@ func (t *Transpiler) Compile(agentsMdPath string) (*CompileResult, error) {
 // the same manifest that governs the text register block, so compile, verify and audit agree
 // on which projections exist.
 func (t *Transpiler) CompileContext(ctx context.Context, agentsMdPath string) (*CompileResult, error) {
+	bound := t.bound()
 	contentBytes, err := contextopt.ReadSnapshot(ctx, agentsMdPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read source %s: %w", agentsMdPath, err)
+	if dErr, _ := targetDeadlineError(ctx, bound, agentsMdPath, err); dErr != nil {
+		return nil, fmt.Errorf("failed to read source %s: %w", agentsMdPath, dErr)
 	}
 	selected, err := t.forRepository(ctx, filepath.Dir(agentsMdPath))
-	if err != nil {
-		return nil, err
+	if dErr, _ := targetDeadlineError(ctx, bound, agentsMdPath, err); dErr != nil {
+		return nil, dErr
 	}
 	res, err := selected.CompileContent(string(contentBytes))
 	if err != nil {
@@ -101,12 +137,13 @@ func declaredAgentClients(ctx context.Context, root string) ([]string, error) {
 
 // CompileContent delegates pure rendering to the shared leaf renderer.
 func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
-	return (*agentcontext.Transpiler)(t).CompileContent(content)
+	leaf := agentcontext.Transpiler{MaxLines: t.MaxLines, Clients: t.Clients, Env: t.Env}
+	return leaf.CompileContent(content)
 }
 
 // WriteOutputs writes compiled files to targetDir.
 func (t *Transpiler) WriteOutputs(result *CompileResult, targetDir string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), DefaultAgentTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), t.bound())
 	defer cancel()
 	return t.WriteOutputsContext(ctx, result, targetDir)
 }
@@ -115,30 +152,39 @@ func (t *Transpiler) WriteOutputsContext(ctx context.Context, result *CompileRes
 	if ctx == nil {
 		return errors.New("output writes require a context")
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 	if result == nil || len(result.Files) > MaxAgentFiles {
 		return errors.New("invalid or oversized compiled outputs")
+	}
+	bound := t.bound()
+	if dErr, _ := targetDeadlineError(ctx, bound, firstTargetPath(result.Files, targetDir), ctx.Err()); dErr != nil {
+		return dErr
 	}
 	files := make([]projectionFile, 0, len(result.Files))
 	for _, file := range result.Files {
 		files = append(files, projectionFile{rel: file.RelativePath, data: []byte(file.Content)})
 	}
-	if err := checkProjectionFiles(ctx, targetDir, files); err != nil {
+	if err := checkProjectionFilesBounded(ctx, bound, targetDir, files); err != nil {
 		return err
 	}
 	// The target directory is the operator's chosen boundary, so it is created the way every
 	// other root is (contextopt.EnsureDirectory); everything below it is written confined.
 	if err := contextopt.EnsureDirectory(ctx, targetDir, projectedDirPerm); err != nil {
-		return err
+		dErr, _ := targetDeadlineError(ctx, bound, firstTargetPath(result.Files, targetDir), err)
+		return dErr
 	}
-	return writeProjectionFiles(ctx, targetDir, files)
+	return writeProjectionFilesWith(ctx, bound, targetDir, files, t.targetWriter())
+}
+
+func firstTargetPath(files []TargetFile, fallback string) string {
+	if len(files) > 0 && files[0].RelativePath != "" {
+		return files[0].RelativePath
+	}
+	return fallback
 }
 
 // Verify checks that existing target files match compiled output without modification.
 func (t *Transpiler) Verify(agentsMdPath string, targetDir string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), DefaultAgentTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), t.bound())
 	defer cancel()
 	return t.VerifyContext(ctx, agentsMdPath, targetDir)
 }
@@ -155,11 +201,12 @@ func (t *Transpiler) VerifyCompiled(ctx context.Context, agentsMdPath, targetDir
 	if err != nil {
 		return nil, err
 	}
-
+	bound := t.bound()
+	read := t.targetReader()
 	for _, f := range res.Files {
-		existing, err := readConfinedText(ctx, targetDir, f.RelativePath)
-		if err != nil {
-			return nil, fmt.Errorf("target %s missing or unreadable: %w", f.RelativePath, err)
+		existing, err := read(ctx, targetDir, f.RelativePath)
+		if err := verifyTargetReadError(ctx, bound, f.RelativePath, err); err != nil {
+			return nil, err
 		}
 		if equal, strict := projectionMatches(existing, []byte(f.Content)); !equal {
 			return nil, fmt.Errorf("target %s is out of sync with %s%s; run 'praetorctl compile-context' to reconcile",
