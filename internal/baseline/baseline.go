@@ -64,6 +64,8 @@ type Baseline struct {
 
 // RatchetResult details the evaluation of a commit/PR against the baseline.
 type RatchetResult struct {
+	// Subject names the scanner whose single-class result is rendered.
+	Subject                string `json:",omitempty"`
 	PreviousCount          int
 	CurrentCount           int
 	NewViolations          []Infraction
@@ -136,9 +138,24 @@ type RecordOptions struct {
 	CommitSHA  string
 }
 
-// LoadBaseline reads and parses .standards-baseline.json. A missing file is an empty
-// baseline marked Absent; any other read error is returned.
+// LoadBaseline reads a single-class baseline; missing files are marked Absent.
 func LoadBaseline(path string) (*Baseline, error) {
+	return LoadClassBaseline(path, "")
+}
+
+// LoadClassBaseline additionally refuses entries outside the expected class.
+func LoadClassBaseline(path string, class Class) (*Baseline, error) {
+	b, _, err := loadBaselineRaw(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := b.ValidateClass(path, class); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+func loadBaselineRaw(path string) (*Baseline, []byte, error) {
 	// #nosec G304 -- the baseline path is the operator's own repository file, passed
 	// explicitly by the caller; there is no root to confine it to.
 	data, err := os.ReadFile(path)
@@ -150,16 +167,16 @@ func LoadBaseline(path string) (*Baseline, error) {
 				TotalInfractions: 0,
 				Infractions:      []Infraction{},
 				Absent:           true,
-			}, nil
+			}, nil, nil
 		}
-		return nil, fmt.Errorf("failed to read baseline %s: %w", path, err)
+		return nil, nil, fmt.Errorf("failed to read baseline %s: %w", path, err)
 	}
 
 	b, err := ParseBaseline(data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse baseline %s: %w", path, err)
+		return nil, nil, fmt.Errorf("failed to parse baseline %s: %w", path, err)
 	}
-	return b, nil
+	return b, data, nil
 }
 
 // ParseBaseline decodes a baseline document, for example one read from a git ref.
@@ -188,51 +205,31 @@ func SaveBaseline(path string, b *Baseline) error {
 	b.TotalInfractions = len(b.Infractions)
 	b.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
 
-	data, err := json.MarshalIndent(b, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal baseline: %w", err)
-	}
+	return writeSnapshot(path, b)
+}
 
-	if err := util.WriteFileAt(path, append(data, '\n'), FilePerm); err != nil {
-		return fmt.Errorf("failed to write baseline to %s: %w", path, err)
+// Count returns the number of infractions a snapshot records, trusting the entries over
+// a hand-edited total.
+func (b *Baseline) Count() int {
+	if b == nil {
+		return 0
+	}
+	if n := len(b.Infractions); n > b.TotalInfractions {
+		return n
+	}
+	return b.TotalInfractions
+}
+
+// CheckMonotonic enforces HISS-13 across snapshots: next may not record more
+// infractions than previous. It returns ErrDebtIncrease with both counts otherwise.
+func CheckMonotonic(previous, next *Baseline) error {
+	if previous == nil || next == nil {
+		return ErrNilSnapshot
+	}
+	if next.Count() > previous.Count() {
+		return fmt.Errorf("%w: %d -> %d", ErrDebtIncrease, previous.Count(), next.Count())
 	}
 	return nil
-}
-
-// Count returns the combined recorded HISS and README counts from Counts.
-func (b *Baseline) Count() int {
-	counts := b.Counts()
-	return counts.Total()
-}
-
-// ClassCounts separates invariant debt from README presentation findings.
-type ClassCounts struct {
-	HISS   int
-	README int
-}
-
-// Total returns the combined count across both classes.
-func (c ClassCounts) Total() int {
-	return c.HISS + c.README
-}
-
-// Counts returns each class's recorded count. README entries own their count;
-// HISS owns the claimed total minus README entries, floored at zero. An
-// understated HISS total is never raised to the number of HISS entries.
-func (b *Baseline) Counts() ClassCounts {
-	var counts ClassCounts
-	if b == nil {
-		return counts
-	}
-	for i := 0; i < len(b.Infractions); i++ {
-		if IsReadmeRule(b.Infractions[i].RuleID) {
-			counts.README++
-		}
-	}
-	if b.TotalInfractions > counts.README {
-		counts.HISS = b.TotalInfractions - counts.README
-	}
-	return counts
 }
 
 // IsReadmeRule reports whether ruleID identifies a README presentation rule.
@@ -244,52 +241,6 @@ func IsReadmeRule(ruleID string) bool {
 	default:
 		return false
 	}
-}
-
-// SplitClasses returns independent entry slices with the metadata and class counts
-// of b. Nil stays nil; unitemized legacy debt stays in the HISS snapshot.
-func (b *Baseline) SplitClasses() (hiss, readme *Baseline) {
-	if b == nil {
-		return nil, nil
-	}
-	hissCopy, readmeCopy := *b, *b
-	hissCopy.Infractions, readmeCopy.Infractions = splitEntries(b.Infractions)
-	counts := b.Counts()
-	hissCopy.TotalInfractions, readmeCopy.TotalInfractions = counts.HISS, counts.README
-	return &hissCopy, &readmeCopy
-}
-
-func splitEntries(entries []Infraction) (hiss, readme []Infraction) {
-	hiss = make([]Infraction, 0, len(entries))
-	readme = make([]Infraction, 0)
-	for i := 0; i < len(entries); i++ {
-		if IsReadmeRule(entries[i].RuleID) {
-			readme = append(readme, entries[i])
-		} else {
-			hiss = append(hiss, entries[i])
-		}
-	}
-	return hiss, readme
-}
-
-// CheckMonotonic enforces HISS-13 independently for HISS and README debt.
-// A rejection names every class that grew and wraps ErrDebtIncrease.
-func CheckMonotonic(previous, next *Baseline) error {
-	if previous == nil || next == nil {
-		return ErrNilSnapshot
-	}
-	prevCounts, nextCounts := previous.Counts(), next.Counts()
-	var growth []string
-	if nextCounts.HISS > prevCounts.HISS {
-		growth = append(growth, fmt.Sprintf("HISS increased: %d -> %d", prevCounts.HISS, nextCounts.HISS))
-	}
-	if nextCounts.README > prevCounts.README {
-		growth = append(growth, fmt.Sprintf("README increased: %d -> %d (README presentation finding(s))", prevCounts.README, nextCounts.README))
-	}
-	if len(growth) == 0 {
-		return nil
-	}
-	return fmt.Errorf("%w: %s", ErrDebtIncrease, strings.Join(growth, "; "))
 }
 
 // Record builds the snapshot that replaces previous from a fresh scan. It refuses a

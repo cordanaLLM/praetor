@@ -234,7 +234,7 @@ func printBatchResult(repoName string, dryRun bool, rep *adopt.AdoptReport, err 
 	fmt.Printf("  Reconciled: %d files\n", len(rep.ReconciledNotReplaced()))
 	fmt.Printf("  Replaced:   %d files\n", len(rep.Replaced()))
 	if rep.LegacyDebtCount > 0 {
-		fmt.Printf("  Legacy Debt Baselined: %d infractions\n", rep.LegacyDebtCount)
+		fmt.Printf("  Legacy Debt Baselined: %d infractions in .standards-baseline.json\n", rep.LegacyDebtCount)
 	}
 	printAdoptIssues(rep)
 	return len(rep.Errors) == 0
@@ -319,6 +319,17 @@ var pillarHeadings = map[adopt.AdoptOutcome]string{
 
 // printDebtSummary prints the baselined legacy debt breakdown.
 func printDebtSummary(rep *adopt.AdoptReport) {
+	defer func() {
+		for i := 0; i < len(rep.BaselineRatchets); i++ {
+			v := rep.BaselineRatchets[i]
+			if rep.BaselineStatus == "existing" {
+				fmt.Println("  " + v.Line())
+			} else {
+				fmt.Printf("  %s: %d active infractions within %d recorded; passed=%t\n", v.File, v.Active, v.Recorded, v.Passed)
+			}
+		}
+	}()
+
 	switch rep.BaselineStatus {
 	case "scanned":
 		printScannedDebt(rep)
@@ -341,18 +352,18 @@ func printScannedDebt(rep *adopt.AdoptReport) {
 		label = "Scanned (dry-run; not written)"
 	}
 	if rep.LegacyDebtCount == 0 {
-		fmt.Printf("\n--- Legacy Technical Debt: 0 infractions (%s) ---\n", label)
+		fmt.Printf("\n--- Legacy Technical Debt: 0 infractions (%s) in .standards-baseline.json ---\n", label)
 		return
 	}
-	fmt.Printf("\n--- Legacy Technical Debt %s (%d infractions) ---\n", label, rep.LegacyDebtCount)
+	fmt.Printf("\n--- Legacy Technical Debt %s (%d infractions) in .standards-baseline.json ---\n", label, rep.LegacyDebtCount)
 	printDebtBreakdown(rep, !rep.DryRun)
 }
 
 // printExistingDebt prints the debt a kept baseline records and, when the run rescanned, the
 // ratchet verdict on it (adopt.BaselineRatchet.Line, the line the MCP adopt tool prints too).
 func printExistingDebt(rep *adopt.AdoptReport) {
-	fmt.Printf("\n--- Existing Legacy Technical Debt Baseline: %d infractions ---\n", rep.LegacyDebtCount)
-	if rep.BaselineRatchet != nil {
+	fmt.Printf("\n--- Existing Legacy Technical Debt Baseline: %d infractions in .standards-baseline.json ---\n", rep.LegacyDebtCount)
+	if rep.BaselineRatchet != nil && len(rep.BaselineRatchets) == 0 {
 		fmt.Println("  " + rep.BaselineRatchet.Line())
 	}
 }
@@ -364,7 +375,7 @@ func printDebtBreakdown(rep *adopt.AdoptReport, explain bool) {
 	}
 	sort.Strings(ruleKeys)
 	for _, r := range ruleKeys {
-		fmt.Printf("  • %-8s: %d infractions\n", r, rep.DebtBreakdown[r])
+		fmt.Printf("  • %-8s: %d infractions in .standards-baseline.json\n", r, rep.DebtBreakdown[r])
 	}
 	if explain {
 		fmt.Println("  (Infractions recorded into .standards-baseline.json to prevent CI breaks while ratcheting)")

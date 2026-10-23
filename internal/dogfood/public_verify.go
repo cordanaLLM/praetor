@@ -85,7 +85,7 @@ func verifyPublicCheckout(ctx context.Context, dir string, anchor publicPolicyAn
 	if err != nil {
 		return result, err
 	}
-	base, _ := publicScanBaseline(anchor.Scan).SplitClasses()
+	base := publicScanBaseline(anchor.Scan)
 	result.Ratchet = baseline.EvaluateRatchet(base, publicInfractions(result.Scan), changed)
 	if !result.Ratchet.Passed {
 		return result, errors.New(result.Ratchet.Summary())

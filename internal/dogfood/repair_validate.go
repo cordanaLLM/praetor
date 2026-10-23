@@ -237,7 +237,7 @@ func validateRepairOriginalMetadata(repo PublicRepositoryResult) error {
 	if !suiteSHA.MatchString(repo.OriginalTreeDigest) {
 		return errors.New("public original tree requires a valid SHA-256 identity")
 	}
-	if repo.Plan.LegacyDebtCount != publicScanBaseline(repo.OriginalScan).Counts().HISS {
+	if repo.Plan.LegacyDebtCount != publicScanBaseline(repo.OriginalScan).Count() {
 		return errors.New("planned adoption debt count differs from the independent original scan")
 	}
 	return nil
@@ -266,7 +266,7 @@ func validateRepairAppliedPolicy(attempt PublicAttempt, anchor publicPolicyAncho
 	if attempt.Adoption.DryRun {
 		return errors.New("public verification requires an applied adoption report")
 	}
-	if attempt.Adoption.LegacyDebtCount != publicScanBaseline(anchor.Scan).Counts().HISS {
+	if attempt.Adoption.LegacyDebtCount != publicScanBaseline(anchor.Scan).Count() {
 		return errors.New("applied adoption debt count differs from the independent original scan")
 	}
 	return matchPublicPolicy(anchor.Policy, attempt.Adoption.EffectivePolicy)
@@ -359,7 +359,7 @@ func repairPublicRelativePath(path string) bool {
 }
 
 func validateRepairRatchet(original *hiss.ScanReport, check *PublicVerification, changed []string) error {
-	base, _ := publicScanBaseline(original).SplitClasses()
+	base := publicScanBaseline(original)
 	expected := baseline.EvaluateRatchet(base, publicInfractions(check.Scan), changed)
 	actual := check.Ratchet
 	if !expected.Passed || actual.PreviousCount != expected.PreviousCount || actual.CurrentCount != expected.CurrentCount ||

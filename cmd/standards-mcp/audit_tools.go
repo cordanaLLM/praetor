@@ -12,6 +12,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/mcp"
 	"github.com/cordanaLLM/praetor/internal/readmepresentation"
@@ -125,7 +126,7 @@ func (s *Server) auditGates(p auditPaths, effective *config.EffectivePolicy) []a
 // auditReadmePresentation runs the CLI audit's README presentation gate over root with the
 // baseline and manifest gate enforcement switch.
 func auditReadmePresentation(ctx context.Context, root, baselinePath string, manifest *config.Manifest) (string, error) {
-	base, err := baseline.LoadBaseline(baselinePath)
+	base, err := baseline.LoadClassBaseline(filepath.Join(root, gating.ReadmeBaselineFile), baseline.READMEClass)
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] Baseline audit failed: %w", err)
 	}
@@ -175,11 +176,10 @@ func auditBaselineRatchet(ctx context.Context, root, baselinePath string) (strin
 // (config.EffectivePolicy.HISSScanOptions), as the CLI audit does. A nil policy scans under the
 // audit ceiling and no exception.
 func auditBaselineRatchetWithPolicy(ctx context.Context, root, baselinePath string, policy *config.EffectivePolicy) (string, error) {
-	base, err := baseline.LoadBaseline(baselinePath)
+	base, err := baseline.LoadClassBaseline(baselinePath, baseline.HISSClass)
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] Baseline audit failed: %w", err)
 	}
-	base = readmepresentation.WithoutReadmeBaseline(base)
 
 	scanOpts, warning := policy.HISSScanOptions(root, hiss.ScanOptions{})
 	scanRep, err := hiss.Scan(ctx, root, scanOpts)
@@ -201,7 +201,8 @@ func auditBaselineRatchetWithPolicy(ctx context.Context, root, baselinePath stri
 		return "", fmt.Errorf("[FAIL] %s", ratchet.Summary())
 	}
 	verdict := fmt.Sprintf("[PASS] Technical debt baseline verified: %d recorded legacy infractions; HISS scan found %d active violations within the baselined limit. %s",
-		base.Counts().HISS, ratchet.CurrentCount, scanRep.CoverageEvidence())
+		base.Count(), ratchet.CurrentCount, scanRep.CoverageEvidence())
+	verdict += fmt.Sprintf(" %s: %d active infractions within %d recorded.", baselinePath, ratchet.CurrentCount, base.Count())
 	lines := append([]string{verdict}, scanRep.Complexity.Lines()...)
 	if warning != "" {
 		lines = append(lines, "[WARN] "+warning)

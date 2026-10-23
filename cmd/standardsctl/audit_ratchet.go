@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -256,6 +257,13 @@ func auditBaselineGrowth(ctx context.Context, opts *auditOptions, current *basel
 		return fmt.Errorf("[FAIL] baseline committed at %s is unreadable: %w", opts.baseRef, err)
 	}
 
+	class := baseline.HISSClass
+	if filepath.Base(opts.baselinePath) == gating.ReadmeBaselineFile {
+		class = baseline.READMEClass
+	}
+	if err := previous.ValidateClass(rel, class); err != nil {
+		return err
+	}
 	if err := baseline.CheckMonotonic(previous, current); err != nil {
 		if current.IncreaseRationale == "" {
 			return fmt.Errorf("[FAIL] HISS-13 debt ratchet: %s grew versus %s (%w); fix the new violations or record the increase with 'praetorctl baseline --record --allow-increase --reason=<why>'",
@@ -266,7 +274,7 @@ func auditBaselineGrowth(ctx context.Context, opts *auditOptions, current *basel
 		return nil
 	}
 	fmt.Printf("[PASS] HISS-13 debt ratchet: %s does not grow versus %s (%d -> %d).\n",
-		rel, opts.baseRef, previous.Counts().Total(), current.Counts().Total())
+		rel, opts.baseRef, previous.Count(), current.Count())
 	return nil
 }
 

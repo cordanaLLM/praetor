@@ -180,9 +180,6 @@ func findingsAtCommit(ctx context.Context, root, commit string, violations []bas
 func attributionScope(violations []baseline.Infraction) (files, packages map[string]bool) {
 	files, packages = make(map[string]bool), make(map[string]bool)
 	for i := 0; i < len(violations); i++ {
-		if baseline.IsReadmeRule(violations[i].RuleID) {
-			continue
-		}
 		file := slashpath.Clean(baseline.NormalizePath(violations[i].FilePath))
 		if violations[i].RuleID == "HISS-01" && strings.EqualFold(slashpath.Ext(file), ".go") {
 			packages[slashpath.Dir(file)] = true

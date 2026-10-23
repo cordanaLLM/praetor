@@ -665,7 +665,7 @@ func TestRunHissStage_3D(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected baselined debt to pass the ratchet, got %v", err)
 	}
-	if !strings.Contains(msg, "baselined limit") {
+	if !strings.Contains(msg, "recorded in .standards-baseline.json") {
 		t.Errorf("expected a ratchet summary message, got %q", msg)
 	}
 

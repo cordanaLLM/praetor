@@ -234,6 +234,11 @@ func (r *AdoptReport) PendingPillars() []string {
 
 // baselineRejected reports whether the run kept a baseline its rescan rejects (checkKeptBaseline).
 func (r *AdoptReport) baselineRejected() bool {
+	for i := 0; i < len(r.BaselineRatchets); i++ {
+		if !r.BaselineRatchets[i].Passed {
+			return true
+		}
+	}
 	return r.BaselineRatchet != nil && !r.BaselineRatchet.Passed
 }
 
@@ -244,11 +249,16 @@ func (r *AdoptReport) PendingBaseline() []string {
 	if !r.baselineRejected() {
 		return nil
 	}
-	return []string{
-		debtBaselinePillar + ": " + r.BaselineRatchet.Line(),
-		"Resolve: fix the findings, or accept them deliberately with " + rerecordRemedy +
-			"; until then praetorctl audit rejects the repository",
+	lines := []string{}
+	if len(r.BaselineRatchets) == 0 {
+		lines = append(lines, debtBaselinePillar+": "+r.BaselineRatchet.Line())
 	}
+	for i := 0; i < len(r.BaselineRatchets); i++ {
+		if !r.BaselineRatchets[i].Passed {
+			lines = append(lines, debtBaselinePillar+": "+r.BaselineRatchets[i].Line())
+		}
+	}
+	return append(lines, "Resolve: fix the findings, or accept them deliberately with "+rerecordRemedy+"; until then praetorctl audit rejects the repository")
 }
 
 func pillarStatus(step StepOutcome, dryRun bool) PillarStatus {

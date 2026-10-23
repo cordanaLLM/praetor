@@ -112,7 +112,7 @@ func TestAudit_Boundary_BaselineRatchetPassesRecordedFailsAboveReportsStale(t *t
 
 	// 1. Recorded findings pass the baseline ratchet.
 	line, err := Audit(t.Context(), Options{Root: tempDir, Baseline: rec})
-	if err != nil || !strings.Contains(line, "[PASS] README presentation: 1 active finding(s) within 1 recorded in baseline.") {
+	if err != nil || !strings.Contains(line, "[PASS] README presentation: 1 active finding(s) within 1 recorded in .readme-baseline.json.") {
 		t.Fatalf("expected recorded findings to pass ratchet, got line=%q err=%v", line, err)
 	}
 
@@ -135,44 +135,6 @@ func TestAudit_Boundary_BaselineRatchetPassesRecordedFailsAboveReportsStale(t *t
 	zero := 0
 	if _, err := Audit(t.Context(), Options{Root: tempDir, Baseline: rec, MaxStale: &zero}); err == nil || !strings.Contains(err.Error(), "--max-stale-baseline-entries=0 allows at most 0") {
 		t.Fatalf("expected stale baseline entry to fail MaxStale=0, got err=%v", err)
-	}
-}
-
-func TestWithoutReadmeBaseline_FiltersOnlyReadmeRules(t *testing.T) {
-	b := &baseline.Baseline{
-		Version:          1,
-		TotalInfractions: 2,
-		Infractions: []baseline.Infraction{
-			{RuleID: "HISS-01", FilePath: "main.go", LineNumber: 10},
-			{RuleID: RuleIDBadgeBlock, FilePath: FileName, LineNumber: 1},
-		},
-	}
-	filtered := WithoutReadmeBaseline(b)
-	if filtered.TotalInfractions != 1 || len(filtered.Infractions) != 1 || filtered.Infractions[0].RuleID != "HISS-01" {
-		t.Fatalf("unexpected filtered baseline: %+v", filtered)
-	}
-}
-
-func TestWithoutReadmeBaseline_Boundary_NoTruncationAbove1000(t *testing.T) {
-	const hissCount = 1500
-	infs := make([]baseline.Infraction, 0, hissCount+1)
-	for i := range hissCount {
-		infs = append(infs, baseline.Infraction{
-			RuleID: "HISS-07", FilePath: "f.go", LineNumber: i + 1,
-		})
-	}
-	infs = append(infs, baseline.Infraction{
-		RuleID: RuleIDBadgeBlock, FilePath: FileName, LineNumber: 1,
-	})
-	b := &baseline.Baseline{Version: 1, TotalInfractions: len(infs), Infractions: infs}
-
-	without := WithoutReadmeBaseline(b)
-	if without.TotalInfractions != hissCount || len(without.Infractions) != hissCount {
-		t.Fatalf("WithoutReadmeBaseline truncated %d HISS entries to %d", hissCount, len(without.Infractions))
-	}
-	only, hasReadme := ReadmeBaseline(b)
-	if !hasReadme || only == nil || only.TotalInfractions != 1 || only.Infractions[0].RuleID != RuleIDBadgeBlock {
-		t.Fatalf("ReadmeBaseline missed README entry at index %d: %+v", hissCount, only)
 	}
 }
 
@@ -285,7 +247,7 @@ func TestAudit_Negative_ScanBaselineFindingsReportOnlyAndRefusalText(t *testing.
 	writeTestReadme(t, dir, "# widgets\n")
 	zeroBase := &baseline.Baseline{Version: 1, TotalInfractions: 0}
 
-	findings, err := ScanBaselineFindings(t.Context(), dir, zeroBase, false)
+	findings, err := ScanBaselineFindings(t.Context(), dir, nil, false)
 	if err != nil || len(findings) != 0 {
 		t.Fatalf("expected 0 baseline findings when not enforced and no prior README entries, got findings=%v err=%v", findings, err)
 	}
@@ -294,7 +256,7 @@ func TestAudit_Negative_ScanBaselineFindingsReportOnlyAndRefusalText(t *testing.
 		t.Fatalf("expected findings when enforce=true, got findings=%v err=%v", enforcedFindings, err)
 	}
 	_, err = RecordBaseline(zeroBase, enforcedFindings, baseline.RecordOptions{})
-	if err == nil || !strings.Contains(err.Error(), "README presentation finding(s)") {
+	if err == nil || !strings.Contains(err.Error(), "baseline: total infractions increased") {
 		t.Fatalf("expected RecordBaseline refusal to name README presentation findings apart from HISS, got: %v", err)
 	}
 }

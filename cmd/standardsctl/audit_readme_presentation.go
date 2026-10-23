@@ -7,8 +7,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
+	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/readmepresentation"
 )
 
@@ -18,9 +21,13 @@ func auditReadmePresentation(ctx context.Context, manifest *config.Manifest, opt
 	if opts.maxStale >= 0 {
 		maxStale = &opts.maxStale
 	}
+	base, err := baseline.LoadClassBaseline(filepath.Join(opts.rootDir, gating.ReadmeBaselineFile), baseline.READMEClass)
+	if err != nil {
+		return err
+	}
 	line, err := readmepresentation.Audit(ctx, readmepresentation.Options{
 		Root:     opts.rootDir,
-		Baseline: opts.baseline,
+		Baseline: base,
 		Enforce:  manifest != nil && manifest.Gate.EnforceReadmePresentation(),
 		MaxStale: maxStale,
 	})
@@ -28,5 +35,7 @@ func auditReadmePresentation(ctx context.Context, manifest *config.Manifest, opt
 		return err
 	}
 	fmt.Println(line)
-	return nil
+	growthOpts := *opts
+	growthOpts.baselinePath = filepath.Join(opts.rootDir, gating.ReadmeBaselineFile)
+	return auditBaselineGrowth(ctx, &growthOpts, base)
 }

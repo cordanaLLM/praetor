@@ -156,7 +156,7 @@ func TestPublicBaselineRejectsInvalidAnchorsAndCancellation(t *testing.T) {
 	}
 }
 
-func TestPublicBaselineIgnoresReadmeEntries(t *testing.T) {
+func TestPublicBaselineRefusesReadmeEntries(t *testing.T) {
 	original := publicBaselineOriginal()
 	recorded := publicBaselineRecord(original)
 	recorded.Infractions = append(recorded.Infractions, baseline.Infraction{
@@ -168,7 +168,7 @@ func TestPublicBaselineIgnoresReadmeEntries(t *testing.T) {
 		Fingerprint: "readme01fp",
 	})
 	recorded.TotalInfractions = len(recorded.Infractions)
-	if err := comparePublicBaseline(t.Context(), recorded, original); err != nil {
-		t.Fatalf("comparePublicBaseline counted README entry as HISS mismatch: %v", err)
+	if err := comparePublicBaseline(t.Context(), recorded, original); err == nil {
+		t.Fatal("comparePublicBaseline accepted a README entry in the HISS snapshot")
 	}
 }

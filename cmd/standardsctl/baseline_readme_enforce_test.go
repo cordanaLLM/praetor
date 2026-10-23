@@ -11,7 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/baseline"
 )
 
-func TestAuditAndBaselineVerifyRejectUnderstatedTotal(t *testing.T) {
+func TestAuditAndBaselineVerifyTrustEntriesOverUnderstatedTotal(t *testing.T) {
 	f := newAuditFixture(t)
 	inf := f.addViolation(t)
 	f.writeBaseline(t, []baseline.Infraction{inf}, "")
@@ -29,8 +29,8 @@ func TestAuditAndBaselineVerifyRejectUnderstatedTotal(t *testing.T) {
 		name string
 		err  error
 	}{{"audit --offline", auditErr}, {"baseline --verify", verifyErr}} {
-		if result.err == nil || !strings.Contains(result.err.Error(), "total infractions rose from 0 to 1") {
-			t.Errorf("%s must refuse the understated total with count regression: %v", result.name, result.err)
+		if result.err != nil {
+			t.Errorf("%s must trust entries over understated total: %v", result.name, result.err)
 		}
 	}
 	if after := readFixtureFile(t, f.dir, ".standards-baseline.json"); after != understated {
@@ -50,16 +50,16 @@ func TestBaselineVerifyReadmeEnforcement(t *testing.T) {
 	}
 }
 
-func TestBaselineInspectUsesClassCounts(t *testing.T) {
+func TestBaselineInspectUsesFileCounts(t *testing.T) {
 	f := newAuditFixture(t)
-	writeFixtureFile(t, f.dir, ".standards-baseline.json",
+	writeFixtureFile(t, f.dir, ".readme-baseline.json",
 		`{"version":1,"total_infractions":0,"infractions":[{"rule_id":"README-01"}]}`)
 	out, err := runBaselineCmd(t, f)
 	if err != nil {
 		t.Fatal(err)
 	}
 	mustContain(t, out, "Total Infractions: 1")
-	if strings.Contains(out, "Zero technical debt") {
+	if strings.Contains(out, "Zero technical debt recorded in .readme-baseline.json") {
 		t.Error("inspection ignored the README count")
 	}
 }

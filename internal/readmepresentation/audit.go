@@ -62,44 +62,24 @@ func ToBaseline(findings []Finding) []baseline.Infraction {
 	return infractions
 }
 
-// RecordBaseline builds a baseline from the current README presentation findings and any
-// HISS infractions provided by the caller.
-func RecordBaseline(previous *baseline.Baseline, findings []Finding, opts baseline.RecordOptions, hissInfractions ...baseline.Infraction) (*baseline.Baseline, error) {
-	if previous == nil && len(hissInfractions) == 0 && !opts.AllowIncrease {
+// RecordBaseline records README findings only in the independent snapshot.
+func RecordBaseline(previous *baseline.Baseline, findings []Finding, opts baseline.RecordOptions) (*baseline.Baseline, error) {
+	if previous == nil && !opts.AllowIncrease {
 		opts.AllowIncrease = true
 		if strings.TrimSpace(opts.Rationale) == "" {
 			opts.Rationale = "initial README presentation baseline"
 		}
 	}
-	readmeInf := ToBaseline(findings)
-	combined := make([]baseline.Infraction, 0, len(hissInfractions)+len(readmeInf))
-	combined = append(combined, hissInfractions...)
-	combined = append(combined, readmeInf...)
-	return baseline.Record(previous, combined, opts)
+	return baseline.Record(previous, ToBaseline(findings), opts)
 }
 
 // ScanBaselineFindings scans rootDir/README.md for baseline recording or verification when
-// previous already carries README entries or when enforce is set.
+// the README snapshot already exists or enforce is set.
 func ScanBaselineFindings(ctx context.Context, rootDir string, previous *baseline.Baseline, enforce bool) ([]Finding, error) {
-	if previous.Counts().README == 0 && !enforce {
+	if (previous == nil || previous.Absent) && !enforce {
 		return nil, nil
 	}
 	return CheckFile(ctx, rootDir, FileName)
-}
-
-// ReadmeBaseline extracts README-00..README-05 entries from b and reports whether any were present.
-func ReadmeBaseline(b *baseline.Baseline) (*baseline.Baseline, bool) {
-	if b == nil || b.Absent || b.Counts().README == 0 {
-		return &baseline.Baseline{Version: 1, Absent: true}, false
-	}
-	_, readme := b.SplitClasses()
-	return readme, true
-}
-
-// WithoutReadmeBaseline returns the HISS snapshot, excluding README findings.
-func WithoutReadmeBaseline(b *baseline.Baseline) *baseline.Baseline {
-	hiss, _ := b.SplitClasses()
-	return hiss
 }
 
 // Audit runs the README presentation gate: checks README.md against rules README-00..README-05.
@@ -111,8 +91,12 @@ func Audit(ctx context.Context, opts Options) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] %s: %w", GateName, err)
 	}
-	readmeBase, hasBaseline := ReadmeBaseline(opts.Baseline)
+	readmeBase := opts.Baseline
+	hasBaseline := readmeBase != nil && !readmeBase.Absent
 	if hasBaseline || opts.Enforce {
+		if readmeBase == nil {
+			readmeBase = &baseline.Baseline{Absent: true}
+		}
 		out, err := judgeEnforced(findings, readmeBase, opts.MaxStale)
 		if err != nil {
 			return "", err
@@ -150,14 +134,15 @@ func judgeReported(findings []Finding) string {
 
 func judgeEnforced(findings []Finding, readmeBase *baseline.Baseline, maxStale *int) (string, error) {
 	ratchet := baseline.EvaluateRatchet(readmeBase, ToBaseline(findings), nil)
+	ratchet.Subject = "README presentation findings"
 	if !ratchet.Passed {
 		return "", errors.New(formatEnforcedFailure(findings, ratchet))
 	}
-	if len(findings) == 0 && readmeBase.Counts().README == 0 {
-		return fmt.Sprintf("[PASS] %s: %s complies with the presentation standard (README-01..README-05).", GateName, FileName), nil
+	if len(findings) == 0 && readmeBase.Count() == 0 {
+		return fmt.Sprintf("[PASS] %s: %s complies with the presentation standard (README-01..README-05); 0 active finding(s) within 0 recorded in .readme-baseline.json.", GateName, FileName), nil
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "[PASS] %s: %d active finding(s) within %d recorded in baseline.", GateName, ratchet.CurrentCount, readmeBase.Counts().README)
+	fmt.Fprintf(&b, "[PASS] %s: %d active finding(s) within %d recorded in .readme-baseline.json.", GateName, ratchet.CurrentCount, readmeBase.Count())
 	for i := 0; i < len(findings) && i < MaxReportedFindings; i++ {
 		b.WriteByte('\n')
 		b.WriteString(findings[i].BaselinedLine())
@@ -174,7 +159,7 @@ func judgeEnforced(findings []Finding, readmeBase *baseline.Baseline, maxStale *
 
 func formatEnforcedFailure(findings []Finding, ratchet *baseline.RatchetResult) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "[FAIL] %s: %s fails presentation standard (%d finding(s)):\n", GateName, FileName, len(findings))
+	fmt.Fprintf(&b, "[FAIL] %s: %s fails presentation standard (%d finding(s), .readme-baseline.json):\n", GateName, FileName, len(findings))
 	for i := 0; i < len(findings) && i < MaxReportedFindings; i++ {
 		fmt.Fprintf(&b, "  - %s\n", findings[i].String())
 	}

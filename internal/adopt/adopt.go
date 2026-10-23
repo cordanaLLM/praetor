@@ -21,6 +21,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/editor"
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/readmepresentation"
@@ -155,9 +156,11 @@ type AdoptReport struct {
 	// (checkKeptBaseline); nil when the run recorded, re-recorded or did not scan. A rejecting
 	// verdict holds back an applied run's success line (PendingPillars, PendingBaseline).
 	BaselineRatchet *BaselineRatchet `json:"baseline_ratchet,omitempty"`
-	DryRun          bool             `json:"dry_run"`
-	Errors          []string         `json:"errors,omitempty"`
-	Warnings        []string         `json:"warnings,omitempty"`
+	// BaselineRatchets contains one verdict per independently scanned file.
+	BaselineRatchets []BaselineRatchet `json:"baseline_ratchets,omitempty"`
+	DryRun           bool              `json:"dry_run"`
+	Errors           []string          `json:"errors,omitempty"`
+	Warnings         []string          `json:"warnings,omitempty"`
 	// Steps records each reached step of the chain; Pillars derives the governance pillar
 	// lines from it.
 	Steps []StepOutcome `json:"steps,omitempty"`
@@ -172,14 +175,15 @@ type adoptSession struct {
 	// repoName labels generated prose (the harness title, the contributor guide). It is the
 	// resolved repository name, else the checkout directory's name, and is never written into
 	// an identity field: those read identity, which stays empty when unresolved.
-	repoName     string
-	identity     repoIdentity
-	arch         string
-	facets       []string
-	opts         AdoptOptions
-	report       *AdoptReport
-	policy       *config.EffectivePolicy
-	verification *VerificationPlan
+	repoName          string
+	identity          repoIdentity
+	arch              string
+	facets            []string
+	opts              AdoptOptions
+	report            *AdoptReport
+	baselineMigration *baseline.ReadmeMigration
+	policy            *config.EffectivePolicy
+	verification      *VerificationPlan
 	// declared is the repository's existing manifest read before the chain runs.
 	declared *config.Manifest
 	// declined carries adoption.decline from the repository's existing manifest, read before
@@ -800,31 +804,73 @@ func reconcileExistingManifest(ctx context.Context, s *adoptSession, full string
 // which turned every unbaselined violation into accepted debt, so a plain re-adopt defeated the
 // HISS-13 ratchet (#358). An existing baseline is replaced only on RerecordBaseline, under the
 // rules of `praetorctl baseline --record` (rerecordBaseline).
-func reconcileBaseline(ctx context.Context, s *adoptSession) error {
-	full, err := repoFile(s.repoPath, baselineFile)
+func reconcileBaseline(ctx context.Context, s *adoptSession) (err error) {
+	defer func() {
+		if err != nil {
+			s.report.BaselineStatus = "failed"
+		}
+	}()
+	migration, err := baseline.MigrateReadme(ctx, filepath.Join(s.repoPath, baselineFile), filepath.Join(s.repoPath, gating.ReadmeBaselineFile), s.opts.DryRun)
+	if err != nil {
+		return fmt.Errorf("load existing baseline: %w", err)
+	}
+	s.baselineMigration = migration
+	if migration.Moved > 0 {
+		verb := "Moved"
+		if s.opts.DryRun {
+			verb = "Would move"
+		}
+		s.report.recordReconciled(baselineFile, fmt.Sprintf("%s %d README entries from %s to %s", verb, migration.Moved, baselineFile, gating.ReadmeBaselineFile))
+	}
+	for _, file := range []string{baselineFile, gating.ReadmeBaselineFile} {
+		full, err := repoFile(s.repoPath, file)
+		if err != nil {
+			return err
+		}
+		if err := s.reconcileFileBaseline(ctx, full); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *adoptSession) reconcileFileBaseline(ctx context.Context, full string) error {
+	previous, err := s.loadExistingBaseline(full)
 	if err != nil {
 		return err
 	}
-	existed := fileExists(full)
+	if previous.Absent {
+		return s.reconcileMissingBaseline(ctx, full)
+	}
 	switch {
-	case existed && s.opts.RerecordBaseline:
+	case s.opts.RerecordBaseline:
 		return s.rerecordBaseline(ctx, full)
-	case existed && s.opts.RecordBaseline:
+	case s.opts.RecordBaseline:
 		return s.checkKeptBaseline(ctx, full)
-	case existed:
+	default:
 		return s.verifyExistingBaseline(full)
-	case !s.opts.RecordBaseline:
-		// Recording was declined and there is no baseline to keep, so write nothing. Writing an
-		// empty one is not neutral: it asserts total_infractions: 0 with a fresh timestamp, it is
-		// indistinguishable on disk from a scan that genuinely found no debt, and the ratchet
-		// then reads every pre-existing infraction as new -- so a repository adopted this way
-		// could not commit, and the audit blamed its existing code rather than this flag (#138).
-		s.report.BaselineStatus = "skipped"
-		s.report.recordSkipped(baselineFile, "Not recorded (--record-baseline=false); no baseline was written. "+
-			"Record one before committing, or every existing infraction is ratcheted as new debt")
+	}
+}
+
+func (s *adoptSession) reconcileMissingBaseline(ctx context.Context, full string) error {
+	if !s.opts.RecordBaseline {
+		if filepath.Base(full) == baselineFile {
+			s.report.BaselineStatus = "skipped"
+		}
+		s.report.recordSkipped(filepath.Base(full), "Not recorded (--record-baseline=false); no baseline was written. Record one before committing, or every existing infraction is ratcheted as new debt")
 		return nil
 	}
+	if s.isReadmeUpgrade(full) {
+		if s.opts.RerecordBaseline {
+			return s.rerecordBaseline(ctx, full)
+		}
+		return s.checkKeptBaseline(ctx, full)
+	}
 	return s.recordFirstBaseline(ctx, full)
+}
+
+func (s *adoptSession) isReadmeUpgrade(full string) bool {
+	return filepath.Base(full) == gating.ReadmeBaselineFile && s.baselineMigration != nil && !s.baselineMigration.HISS.Absent
 }
 
 func (s *adoptSession) enforceReadmePresentation() (bool, error) {
@@ -851,27 +897,24 @@ func (s *adoptSession) recordFirstBaseline(ctx context.Context, full string) err
 		s.report.BaselineStatus = "failed"
 		return fmt.Errorf("baseline commit: %w", err)
 	}
-	// The session resolved the repository once (resolveIdentity); "" when the origin remote
-	// names none, as every other identity field adoption writes.
-	base := &baseline.Baseline{Version: 1, Repository: s.identity.coordinate(), CommitSHA: commit,
-		Infractions: make([]baseline.Infraction, 0)}
-	if err := scanLegacyDebt(ctx, s.repoPath, base, s.report, s.legacyDebtScanOptions()); err != nil {
-		s.report.BaselineStatus = "failed"
-		return err
-	}
-	readmeFindings, err := s.scanReadmeBaselineFindings(ctx, nil)
+	current, err := s.currentFileDebt(ctx, full, s.report, nil)
 	if err != nil {
-		s.report.BaselineStatus = "failed"
 		return err
 	}
-	base.Infractions = append(base.Infractions, readmepresentation.ToBaseline(readmeFindings)...)
-	base.TotalInfractions = len(base.Infractions)
-	s.report.BaselineStatus = "scanned"
-	s.report.LegacyDebtCount = base.Counts().HISS
+	base := &baseline.Baseline{Version: 1, Repository: s.identity.coordinate(), CommitSHA: commit, Infractions: current, TotalInfractions: len(current)}
+	if filepath.Base(full) != baselineFile && len(current) == 0 {
+		s.recordFileRatchet(full, &baseline.Baseline{Absent: true}, current)
+		return nil
+	}
 	if err := s.saveBaseline(full, base); err != nil {
 		return err
 	}
-	s.report.recordCreated(baselineFile, fmt.Sprintf("Recorded %d legacy debt infractions into baseline", base.Counts().HISS))
+	if filepath.Base(full) == baselineFile {
+		s.report.BaselineStatus = "scanned"
+		s.report.LegacyDebtCount = base.Count()
+	}
+	s.recordFileRatchet(full, base, current)
+	s.report.recordCreated(filepath.Base(full), fmt.Sprintf("Recorded %d legacy debt infractions into %s", base.Count(), filepath.Base(full)))
 	return nil
 }
 
@@ -891,11 +934,21 @@ func (s *adoptSession) saveBaseline(full string, base *baseline.Baseline) error 
 // on every path: nothing can be verified against it, and replacing it would accept the current
 // debt with no earlier count to ratchet against.
 func (s *adoptSession) loadExistingBaseline(full string) (*baseline.Baseline, error) {
-	base, err := baseline.LoadBaseline(full)
+	file := filepath.Base(full)
+	if s.opts.DryRun && s.baselineMigration != nil && s.baselineMigration.Moved > 0 {
+		if file == baselineFile {
+			return s.baselineMigration.HISS, nil
+		}
+		return s.baselineMigration.README, nil
+	}
+	class := baseline.HISSClass
+	if file == gating.ReadmeBaselineFile {
+		class = baseline.READMEClass
+	}
+	base, err := baseline.LoadClassBaseline(full, class)
 	if err != nil {
-		s.report.addError("baseline: existing %s is unreadable: %v; restore it from version control, or delete it "+
-			"to record a first baseline", baselineFile, err)
 		s.report.BaselineStatus = "failed"
+		s.report.addError("baseline: existing %s is unreadable: %v", file, err)
 		return nil, fmt.Errorf("load existing baseline: %w", err)
 	}
 	return base, nil
@@ -908,10 +961,21 @@ func (s *adoptSession) verifyExistingBaseline(full string) error {
 	if err != nil {
 		return err
 	}
-	s.report.BaselineStatus = "existing"
-	s.report.LegacyDebtCount = base.Counts().HISS
-	s.report.recordReconciled(baselineFile, "Technical debt baseline verified present")
+	if filepath.Base(full) == baselineFile {
+		s.report.BaselineStatus = "existing"
+		s.report.LegacyDebtCount = base.Count()
+	}
+	s.report.recordReconciled(filepath.Base(full), fmt.Sprintf("%s verified present: %d recorded infractions", filepath.Base(full), base.Count()))
 	return nil
+}
+
+// currentFileDebt dispatches scans by file, without combining their findings.
+func (s *adoptSession) currentFileDebt(ctx context.Context, full string, report *AdoptReport, previous *baseline.Baseline) ([]baseline.Infraction, error) {
+	if filepath.Base(full) == gating.ReadmeBaselineFile {
+		findings, err := s.scanReadmeBaselineFindings(ctx, previous)
+		return readmepresentation.ToBaseline(findings), err
+	}
+	return s.currentDebt(ctx, report)
 }
 
 // currentDebt scans the repository as the baseline step records it (scanLegacyDebt) and returns
@@ -929,6 +993,8 @@ func (s *adoptSession) currentDebt(ctx context.Context, report *AdoptReport) ([]
 // baseline --verify` reports for the repository, computed by the same rule
 // (baseline.EvaluateRatchet without a change set).
 type BaselineRatchet struct {
+	// File is the only snapshot this verdict describes.
+	File string `json:"file"`
 	// Passed is false when the repository carries an infraction the baseline does not record,
 	// or more infractions than it records.
 	Passed bool `json:"passed"`
@@ -941,12 +1007,27 @@ type BaselineRatchet struct {
 
 // Line renders the verdict as one report line, the same on every surface (CLI, MCP).
 func (v BaselineRatchet) Line() string {
-	if v.Passed {
-		return fmt.Sprintf("Baseline kept, not re-recorded; HISS-13 ratchet passes: %d active infractions within the %d recorded",
-			v.Active, v.Recorded)
+	file := v.File
+	if file == "" {
+		file = baselineFile
 	}
-	return fmt.Sprintf("Baseline kept, not re-recorded; HISS-13 ratchet rejects: %d active infractions against %d recorded, %d not in the baseline",
-		v.Active, v.Recorded, v.Unbaselined)
+	if v.Passed {
+		return fmt.Sprintf("Baseline kept, not re-recorded; HISS-13 ratchet passes: %d active infractions within the %d recorded in %s", v.Active, v.Recorded, file)
+	}
+	return fmt.Sprintf("Baseline kept, not re-recorded; HISS-13 ratchet rejects: %d active infractions against %d recorded, %d not in the baseline (%s)", v.Active, v.Recorded, v.Unbaselined, file)
+}
+
+// recordFileRatchet records independent counts on every scanned adoption path.
+func (s *adoptSession) recordFileRatchet(full string, recorded *baseline.Baseline, current []baseline.Infraction) *baseline.RatchetResult {
+	ratchet := baseline.EvaluateRatchet(recorded, current, nil)
+	file := filepath.Base(full)
+	if file == gating.ReadmeBaselineFile {
+		ratchet.Subject = "README presentation findings"
+	}
+	verdict := BaselineRatchet{File: file, Passed: ratchet.Passed, Recorded: recorded.Count(), Active: ratchet.CurrentCount, Unbaselined: len(ratchet.NewViolations)}
+	s.report.BaselineRatchets = append(s.report.BaselineRatchets, verdict)
+
+	return ratchet
 }
 
 // rerecordRemedy names the two ways to accept debt a kept baseline does not record.
@@ -962,31 +1043,28 @@ func (s *adoptSession) checkKeptBaseline(ctx context.Context, full string) error
 	if err != nil {
 		return err
 	}
-	// The report states the recorded debt, so the rescan's breakdown stays out of it.
-	current, err := s.currentDebt(ctx, &AdoptReport{DebtBreakdown: make(map[string]int)})
+	current, err := s.currentFileDebt(ctx, full, &AdoptReport{DebtBreakdown: make(map[string]int)}, recorded)
 	if err != nil {
 		return err
 	}
-	readmeFindings, err := s.scanReadmeBaselineFindings(ctx, recorded)
-	if err != nil {
-		return err
+	ratchet := s.recordFileRatchet(full, recorded, current)
+	file := filepath.Base(full)
+	if file == baselineFile {
+		s.report.BaselineStatus = "existing"
+		s.report.LegacyDebtCount = recorded.Count()
 	}
-	current = append(current, readmepresentation.ToBaseline(readmeFindings)...)
-	ratchet := baseline.EvaluateRatchet(recorded, current, nil)
-	verdict := &BaselineRatchet{Passed: ratchet.Passed, Recorded: recorded.Counts().HISS,
-		Active: ratchet.CurrentCount, Unbaselined: len(ratchet.NewViolations)}
-	s.report.BaselineStatus = "existing"
-	s.report.LegacyDebtCount = recorded.Counts().HISS
-	s.report.BaselineRatchet = verdict
-	s.report.recordReconciled(baselineFile, verdict.Line())
+	verdict := s.report.BaselineRatchets[len(s.report.BaselineRatchets)-1]
+	if file == baselineFile {
+		s.report.BaselineRatchet = &verdict
+	}
+	s.report.recordReconciled(file, verdict.Line())
 	if !ratchet.Passed {
-		hiss.AttributeRatchet(ctx, s.repoPath, full, s.legacyDebtScanOptions(), recorded, current, ratchet)
-		s.report.addWarning("%s was kept and does not record the repository's current debt, which praetorctl audit rejects. %s\n"+
-			"  fix the findings, or accept them deliberately with %s", baselineFile, ratchet.Summary(), rerecordRemedy)
-		return nil
-	}
-	if notice := ratchet.StaleNotice(); notice != "" {
-		s.report.addWarning("%s: %s", baselineFile, notice)
+		if file == baselineFile {
+			hiss.AttributeRatchet(ctx, s.repoPath, full, s.legacyDebtScanOptions(), recorded, current, ratchet)
+		}
+		s.report.addWarning("%s was kept and does not record the repository's current debt, which praetorctl audit rejects. %s\n  fix the findings, or accept them deliberately with %s", file, ratchet.Summary(), rerecordRemedy)
+	} else if notice := ratchet.StaleNotice(); notice != "" {
+		s.report.addWarning("%s: %s", file, notice)
 	}
 	return nil
 }
@@ -1005,41 +1083,39 @@ func (s *adoptSession) rerecordBaseline(ctx context.Context, full string) error 
 		s.report.BaselineStatus = "failed"
 		return fmt.Errorf("baseline commit: %w", err)
 	}
-	current, err := s.currentDebt(ctx, s.report)
+	current, err := s.currentFileDebt(ctx, full, s.report, previous)
 	if err != nil {
 		return err
 	}
-	readmeFindings, err := s.scanReadmeBaselineFindings(ctx, previous)
+	if previous.Absent && len(current) == 0 {
+		s.recordFileRatchet(full, previous, current)
+		return nil
+	}
+	next, err := baseline.Record(previous, current, baseline.RecordOptions{AllowIncrease: s.opts.AllowBaselineIncrease, Rationale: s.opts.BaselineIncreaseReason, Repository: s.identity.coordinate(), CommitSHA: commit})
 	if err != nil {
 		s.report.BaselineStatus = "failed"
-		return err
+		return s.refusedRerecord(ctx, full, previous, current, err)
 	}
-	next, err := readmepresentation.RecordBaseline(previous, readmeFindings, baseline.RecordOptions{
-		AllowIncrease: s.opts.AllowBaselineIncrease,
-		Rationale:     s.opts.BaselineIncreaseReason,
-		Repository:    s.identity.coordinate(),
-		CommitSHA:     commit,
-	}, current...)
-	if err != nil {
-		s.report.BaselineStatus = "failed"
-		combined := append(append([]baseline.Infraction{}, current...), readmepresentation.ToBaseline(readmeFindings)...)
-		return s.refusedRerecord(ctx, full, previous, combined, err)
+	return s.saveRerecordedBaseline(full, previous, next, current)
+}
+
+func (s *adoptSession) saveRerecordedBaseline(full string, previous, next *baseline.Baseline, current []baseline.Infraction) error {
+	file := filepath.Base(full)
+	if file == baselineFile {
+		s.report.BaselineStatus = "scanned"
+		s.report.LegacyDebtCount = next.Count()
 	}
-	s.report.BaselineStatus = "scanned"
-	s.report.LegacyDebtCount = next.Counts().HISS
+	s.recordFileRatchet(full, next, current)
 	if previous.SameDebt(next) && previous.CommitSHA == next.CommitSHA {
-		s.report.recordReconciled(baselineFile, fmt.Sprintf(
-			"Rescanned; baseline unchanged at %d legacy debt infractions", next.Counts().Total()))
+		s.report.recordReconciled(file, fmt.Sprintf("Rescanned; baseline unchanged at %d legacy debt infractions in %s", next.Count(), file))
 		return nil
 	}
 	if err := s.saveBaseline(full, next); err != nil {
 		return err
 	}
-	s.report.recordReconciled(baselineFile, fmt.Sprintf("Rescanned and re-recorded %d legacy debt infractions into baseline, previously %d",
-		next.Counts().Total(), previous.Counts().Total()))
+	s.report.recordReconciled(file, fmt.Sprintf("Rescanned and re-recorded %d legacy debt infractions into %s, previously %d", next.Count(), file, previous.Count()))
 	if next.IncreaseRationale != "" {
-		s.report.addWarning("%s: debt increased deliberately from %d to %d infractions; recorded rationale: %s",
-			baselineFile, previous.Counts().Total(), next.Counts().Total(), next.IncreaseRationale)
+		s.report.addWarning("%s: debt increased deliberately from %d to %d infractions; recorded rationale: %s", file, previous.Count(), next.Count(), next.IncreaseRationale)
 	}
 	return nil
 }
@@ -1050,12 +1126,16 @@ func (s *adoptSession) refusedRerecord(ctx context.Context, full string, previou
 	current []baseline.Infraction, cause error,
 ) error {
 	refusal := fmt.Errorf("refusing to re-record %s: %w (pass --allow-increase --reason=<why> to record a deliberate increase); "+
-		"the baseline was kept", baselineFile, cause)
+		"the baseline was kept", filepath.Base(full), cause)
 	ratchet := baseline.EvaluateRatchet(previous, current, nil)
 	if ratchet.Passed {
 		return refusal
 	}
-	hiss.AttributeRatchet(ctx, s.repoPath, full, s.legacyDebtScanOptions(), previous, current, ratchet)
+	if filepath.Base(full) == baselineFile {
+		hiss.AttributeRatchet(ctx, s.repoPath, full, s.legacyDebtScanOptions(), previous, current, ratchet)
+	} else {
+		ratchet.Subject = "README presentation findings"
+	}
 	return fmt.Errorf("%w\n%s", refusal, ratchet.Summary())
 }
 

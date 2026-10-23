@@ -41,22 +41,32 @@ When present, section `H2` headings must follow this ordering sequence:
 
 Findings convert into `internal/baseline` infractions (`README-00` through
 `README-05` on `README.md`, `readmepresentation.ToBaseline`) and evaluate
-through `baseline.EvaluateRatchet`. When `.standards-baseline.json` holds
-`README-*` entries, recorded findings pass, new findings above the baseline
-fail the audit, and resolved entries report as stale via
-`ratchet.StaleNotice()` (and fail `--max-stale-baseline-entries` when the
-stale count exceeds the bound).
+through `baseline.EvaluateRatchet`. README presentation debt lives only in
+`.readme-baseline.json`; `.standards-baseline.json` holds HISS debt and
+`.gosec-baseline.json` holds security findings. Each file has its own recorded
+count and monotonic ratchet. Recorded findings pass, new findings fail, and
+resolved entries report as stale via `ratchet.StaleNotice()` (or fail
+`--max-stale-baseline-entries` when the count exceeds the bound).
 
 `praetorctl baseline --record`, `praetorctl baseline --verify`, and
-`praetorctl adopt` (`--record-baseline` / `--rerecord-baseline`) include
-`README-*` findings in `.standards-baseline.json` only when the existing
-baseline already holds `README-*` entries or `gate.readme_presentation: true`
-is set in `.standards.yaml` (`readmepresentation.ScanBaselineFindings`).
-Monotonic debt checks (`baseline.CheckMonotonic`) track `HISS-*` and
-`README-*` counts separately, so resolving a `README-*` entry never masks a
-new `HISS-*` violation (or vice versa) without `--allow-increase --reason`.
+`praetorctl adopt` scan README findings when `.readme-baseline.json` exists or
+`gate.readme_presentation: true` is set. Recording creates the README file only
+when findings exist or the file already exists. Printed counts name their own
+file, so resolving README debt cannot mask a new HISS violation.
 
-For an adopted repository without `README-*` baseline entries or an explicit
+For a legacy `.standards-baseline.json` holding README entries, run
+`praetorctl adopt` before audit or verification. Adoption moves those entries
+to `.readme-baseline.json` on its record, keep and re-record paths, preserving
+fingerprints, anchors and repository metadata. The HISS claimed total decreases
+by the moved count, floored at zero; the README total equals its entry count.
+`--dry-run` reports the planned move and writes neither file. A second run keeps
+both files byte for byte. An existing README file alongside legacy README
+entries is a conflict: adoption refuses and names both files for reconciliation.
+Mixed or misplaced entries otherwise fail loading with the adoption remedy.
+`cmd/standardsctl/readme_baseline_separation_test.go`
+checks migration and adopt/audit/verify count parity.
+
+For an adopted repository without `.readme-baseline.json` or an explicit
 enforcement switch, `readmepresentation.Audit` prints findings (including
 `README-00` when `README.md` is absent) on `[REPORT]` lines (`report: measured,
 not enforced`, matching `HISS-04` in `internal/hiss/measurement.go`) without

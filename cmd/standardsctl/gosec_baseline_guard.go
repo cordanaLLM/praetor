@@ -49,7 +49,7 @@ func gosecDefaultBaseline(ctx context.Context, root string) (*baseline.Baseline,
 		if !found {
 			return &baseline.Baseline{Absent: true}, nil
 		}
-		return baseline.ParseBaseline(data)
+		return parseGosecBaseline(data)
 	}
 	return &baseline.Baseline{Absent: true}, nil
 }
@@ -73,4 +73,12 @@ func guardedGosecRecord(ctx context.Context, root string, previous *baseline.Bas
 		return nil, fmt.Errorf("%s: %w", gosecBaselineRule, err)
 	}
 	return next, nil
+}
+
+func parseGosecBaseline(data []byte) (*baseline.Baseline, error) {
+	b, err := baseline.ParseBaseline(data)
+	if err != nil {
+		return nil, err
+	}
+	return b, b.ValidateClass(gating.GosecBaselineFile, baseline.HISSClass)
 }

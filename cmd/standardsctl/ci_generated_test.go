@@ -126,7 +126,7 @@ func TestCIGenerated_Positive_ListCheckAndRender(t *testing.T) {
 		t.Fatalf("list: %v\n%s", err, out)
 	}
 	mustContain(t, out, "=== Generated Artefacts: 10 declared ===", "branch regen/<name> and a title chore(generated): <summary>",
-		"[active] upper copy (manifest)", "paths:   out/a.txt", "files:   1", "[inactive] debt baseline (builtin): .standards-baseline.json is absent")
+		"[active] upper copy (manifest)", "paths:   out/a.txt", "files:   1", "[inactive] debt baseline (builtin): its paths select no file")
 	out, err = f.run(t, "list", "--json")
 	if err != nil {
 		t.Fatalf("list --json: %v", err)

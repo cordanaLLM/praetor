@@ -360,36 +360,14 @@ func TestRatchetResultAttribute_Boundary_UnattributedIsNeutral(t *testing.T) {
 	}
 }
 
-func TestRatchetResult_SubjectAndAttributeReadmeBranches(t *testing.T) {
-	readmeInf := Infraction{RuleID: "README-01", FilePath: "README.md", LineNumber: 1, Message: "missing badge block", Fingerprint: "README.md#file:a#0:README-01"}
-	hissInf := Infraction{RuleID: "HISS-07", FilePath: "a.go", LineNumber: 2, Message: "panic", Fingerprint: "a.go:2:HISS-07"}
-
-	onlyReadmeNew := &RatchetResult{PreviousCount: 0, CurrentCount: 1, NewViolations: []Infraction{readmeInf}}
-	if got := onlyReadmeNew.Summary(); !strings.HasPrefix(got, "README presentation findings the baseline does not record") {
-		t.Fatalf("expected README-only NewViolations subject, got:\n%s", got)
+func TestRatchetResultExplicitSubject(t *testing.T) {
+	inf := Infraction{RuleID: "README-01", FilePath: "README.md", Message: "missing badge block"}
+	result := &RatchetResult{Subject: "README presentation findings", NewViolations: []Infraction{inf}}
+	if got := result.Summary(); !strings.HasPrefix(got, "README presentation findings the baseline does not record") {
+		t.Fatal(got)
 	}
-
-	bothNew := &RatchetResult{PreviousCount: 0, CurrentCount: 2, NewViolations: []Infraction{hissInf, readmeInf}}
-	if got := bothNew.Summary(); !strings.HasPrefix(got, "HISS invariant violations and README presentation findings the baseline does not record") {
-		t.Fatalf("expected combined NewViolations subject, got:\n%s", got)
-	}
-
-	onlyReadmeTouched := &RatchetResult{PreviousCount: 1, CurrentCount: 1, TouchedCleanViolations: []Infraction{readmeInf}}
-	if got := onlyReadmeTouched.Summary(); !strings.HasPrefix(got, "README presentation findings introduced") {
-		t.Fatalf("expected README-only TouchedCleanViolations subject, got:\n%s", got)
-	}
-
-	bothTouched := &RatchetResult{PreviousCount: 2, CurrentCount: 2, TouchedCleanViolations: []Infraction{hissInf, readmeInf}}
-	if got := bothTouched.Summary(); !strings.HasPrefix(got, "HISS invariant violations and README presentation findings introduced") {
-		t.Fatalf("expected combined TouchedCleanViolations subject, got:\n%s", got)
-	}
-
-	b := &Baseline{CommitSHA: "0123456789abcdef0123456789abcdef01234567", TotalInfractions: 0, Infractions: []Infraction{}}
-	current := []Infraction{hissInf, readmeInf}
-	res := EvaluateRatchet(b, current, nil)
-	res.Attribute(b, current, []CommitFindings{{Commit: b.CommitSHA, Findings: []Infraction{readmeInf}}})
-	want := []Attribution{AttributionIntroduced, AttributionNone}
-	if !slices.Equal(res.Attribution, want) {
-		t.Fatalf("Attribution with README finding = %v, want %v", res.Attribution, want)
+	result.Subject = ""
+	if got := result.Summary(); !strings.HasPrefix(got, "HISS invariant violations the baseline does not record") {
+		t.Fatal(got)
 	}
 }

@@ -104,17 +104,17 @@ func TestRecord_Boundary(t *testing.T) {
 }
 
 func TestCount_UnderstatedHISSTotal(t *testing.T) {
-	// Count preserves an understated HISS total, and tolerates nil.
+	// Count trusts entries over an understated total and tolerates nil.
 	edited := &Baseline{TotalInfractions: 0, Infractions: sampleInfractions(3)}
-	if edited.Count() != 0 {
-		t.Fatalf("Count() = %d, want 0", edited.Count())
+	if edited.Count() != 3 {
+		t.Fatalf("Count() = %d, want 3", edited.Count())
 	}
 	var nilBaseline *Baseline
 	if nilBaseline.Count() != 0 {
 		t.Fatalf("nil Count() = %d, want 0", nilBaseline.Count())
 	}
 	if err := CheckMonotonic(&Baseline{TotalInfractions: 3}, edited); err != nil {
-		t.Fatalf("decreased claimed count must pass: %v", err)
+		t.Fatalf("equal entry count must pass: %v", err)
 	}
 }
 

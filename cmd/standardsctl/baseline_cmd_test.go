@@ -10,7 +10,6 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/gating"
-	"github.com/cordanaLLM/praetor/internal/readmepresentation"
 )
 
 // runBaselineCmd dispatches the baseline command for the fixture with extra flags.
@@ -458,7 +457,7 @@ func TestBaselineRecord_ReadmePresentationSurvivesWithZeroHISS(t *testing.T) {
 
 	// With gate.readme_presentation: true, recording without --allow-increase refuses and names README findings apart from HISS.
 	writeFixtureFile(t, f.dir, ".standards.yaml", "version: 1\nrepository:\n  owner: acme\n  name: widgets\ngate:\n  readme_presentation: true\n")
-	if _, err := runBaselineCmd(t, f, "--record"); err == nil || !strings.Contains(err.Error(), "README presentation finding(s)") {
+	if _, err := runBaselineCmd(t, f, "--record"); err == nil || !strings.Contains(err.Error(), ".readme-baseline.json") {
 		t.Fatalf("expected refusal naming README presentation findings apart from HISS, got: %v", err)
 	}
 
@@ -476,11 +475,11 @@ func TestBaselineRecord_ReadmePresentationSurvivesWithZeroHISS(t *testing.T) {
 	}
 	mustContain(t, out, "Baseline unchanged", "Total: 1 infractions, previously 1")
 
-	b, err := baseline.LoadBaseline(f.baselinePath)
+	b, err := baseline.LoadBaseline(filepath.Join(f.dir, ".readme-baseline.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, hasReadme := readmepresentation.ReadmeBaseline(b); !hasReadme || b.TotalInfractions != 1 {
+	if b.Absent || b.TotalInfractions != 1 {
 		t.Fatalf("expected README entry preserved in baseline, got: %+v", b)
 	}
 

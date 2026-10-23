@@ -1040,7 +1040,7 @@ func TestServer_Positive_AuditReadmePresentationAndBaselineFilter(t *testing.T) 
 	audit := callTool(t, srv, "standards_audit", nil)
 	expectText(t, "audit readme report", audit, "[REPORT] README presentation measured, not enforced:")
 
-	// 2. Baseline holding a README-01 entry + 0 HISS entries passes both HISS ratchet (WithoutReadmeBaseline) and README ratchet.
+	// 2. Independent README file passes its ratchet without changing HISS debt.
 	writeFixtureFile(t, root, "README.md", "# repo\n")
 	findings, err := readmepresentation.CheckFile(t.Context(), root, "README.md")
 	if err != nil || len(findings) == 0 {
@@ -1050,10 +1050,10 @@ func TestServer_Positive_AuditReadmePresentationAndBaselineFilter(t *testing.T) 
 	if err != nil {
 		t.Fatalf("RecordBaseline: %v", err)
 	}
-	if err := baseline.SaveBaseline(filepath.Join(root, ".standards-baseline.json"), rec); err != nil {
+	if err := baseline.SaveBaseline(filepath.Join(root, ".readme-baseline.json"), rec); err != nil {
 		t.Fatalf("SaveBaseline: %v", err)
 	}
 	audit = callTool(t, srv, "standards_audit", nil)
 	expectText(t, "audit hiss with readme baseline", audit, "[PASS] Technical debt baseline verified: 0 recorded legacy infractions; HISS scan found 0 active violations")
-	expectText(t, "audit readme ratchet", audit, "[PASS] README presentation: 1 active finding(s) within 1 recorded in baseline.")
+	expectText(t, "audit readme ratchet", audit, "[PASS] README presentation: 1 active finding(s) within 1 recorded in .readme-baseline.json.")
 }

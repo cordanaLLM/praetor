@@ -333,12 +333,11 @@ func enableReadmePresentationGate(t *testing.T, repoPath string) {
 
 func assertReadmeBaselineRecorded(t *testing.T, repoPath string) {
 	t.Helper()
-	b, err := baseline.LoadBaseline(filepath.Join(repoPath, ".standards-baseline.json"))
+	b, err := baseline.LoadBaseline(filepath.Join(repoPath, ".readme-baseline.json"))
 	if err != nil {
 		t.Fatalf("LoadBaseline: %v", err)
 	}
-	readmeBase, hasReadme := readmepresentation.ReadmeBaseline(b)
-	if !hasReadme || readmeBase.TotalInfractions == 0 {
+	if b.Absent || b.TotalInfractions == 0 {
 		t.Fatalf("expected README-* infractions to survive adopt rerecord with 0 HISS findings, got: %+v", b.Infractions)
 	}
 }
@@ -368,7 +367,7 @@ func TestAdoptKeptBaselineMergesReadmeFindings(t *testing.T) {
 	rep := mustAdoptReadmeBaseline(t, lockRoot, repoPath, AdoptOptions{
 		LockSourceRoot: lockRoot, Path: repoPath, RecordBaseline: true,
 	})
-	assertKeptRatchet(t, rep.BaselineRatchet, true, 1, 0)
+	assertKeptRatchet(t, &rep.BaselineRatchets[1], true, 1, 0)
 	if strings.Contains(strings.Join(rep.Warnings, "\n"), "matches nothing in the tree") {
 		t.Fatalf("unexpected stale baseline warning when README finding is still active: %v", rep.Warnings)
 	}
@@ -377,7 +376,7 @@ func TestAdoptKeptBaselineMergesReadmeFindings(t *testing.T) {
 	rep2 := mustAdoptReadmeBaseline(t, lockRoot, repoPath, AdoptOptions{
 		LockSourceRoot: lockRoot, Path: repoPath, RecordBaseline: true,
 	})
-	assertKeptRatchet(t, rep2.BaselineRatchet, false, 2, 1)
+	assertKeptRatchet(t, &rep2.BaselineRatchets[1], false, 2, 1)
 }
 
 func mustAdoptReadmeBaseline(t *testing.T, _, _ string, opts AdoptOptions) *AdoptReport {
@@ -468,7 +467,7 @@ func TestAdopt_FirstBaselineAndKeptBaselineHonorReadmeGate(t *testing.T) {
 		t.Errorf("kept baseline included README debt in recorded HISS count: %+v", kept.BaselineRatchet)
 	}
 
-	if err := baseline.SaveBaseline(filepath.Join(repoPath, ".standards-baseline.json"), &baseline.Baseline{
+	if err := baseline.SaveBaseline(filepath.Join(repoPath, ".readme-baseline.json"), &baseline.Baseline{
 		Version: 1, TotalInfractions: 0, Infractions: []baseline.Infraction{},
 	}); err != nil {
 		t.Fatal(err)
@@ -476,5 +475,5 @@ func TestAdopt_FirstBaselineAndKeptBaselineHonorReadmeGate(t *testing.T) {
 	keptRep := mustAdoptReadmeBaseline(t, lockRoot, repoPath, AdoptOptions{
 		LockSourceRoot: lockRoot, Path: repoPath, RecordBaseline: true,
 	})
-	assertKeptRatchet(t, keptRep.BaselineRatchet, false, 1, 1)
+	assertKeptRatchet(t, &keptRep.BaselineRatchets[1], false, 1, 1)
 }

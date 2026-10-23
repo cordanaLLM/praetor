@@ -60,6 +60,9 @@ func parsePublicBaseline(data []byte) (*baseline.Baseline, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := recorded.ValidateClass(".standards-baseline.json", baseline.HISSClass); err != nil {
+		return nil, err
+	}
 	canonical, err := json.Marshal(recorded)
 	if err != nil {
 		return nil, fmt.Errorf("encode canonical adopted baseline: %w", err)
@@ -74,8 +77,8 @@ func comparePublicBaseline(ctx context.Context, recorded *baseline.Baseline, ori
 	if recorded.Version != 1 || recorded.Count() != len(recorded.Infractions) {
 		return errors.New("adopted baseline version or count differs from the independent original scan")
 	}
-	hissRecorded, _ := recorded.SplitClasses()
-	if recorded.Counts().HISS != original.TotalInfractions || recorded.Counts().HISS != len(original.Violations) {
+	hissRecorded := recorded
+	if recorded.Count() != original.TotalInfractions || recorded.Count() != len(original.Violations) {
 		return errors.New("adopted baseline version or count differs from the independent original scan")
 	}
 	// Fingerprints may legitimately collide at the same rule/file/line. Compare

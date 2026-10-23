@@ -1,0 +1,2 @@
+type: fixed
+title: Separate README presentation debt into .readme-baseline.json and migrate legacy mixed snapshots during adoption.

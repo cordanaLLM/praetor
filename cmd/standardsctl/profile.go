@@ -174,7 +174,7 @@ func reportDeclarationGates(ctx context.Context, rep *adopt.AdoptReport, opts ad
 func checkDeclarationGates(ctx context.Context, root string, effective *config.EffectivePolicy) int {
 	opts := &auditOptions{rootDir: root, effective: effective}
 	failed := 0
-	base, err := baseline.LoadBaseline(resolveCompanion(root, "", ".standards-baseline.json"))
+	base, err := baseline.LoadClassBaseline(resolveCompanion(root, "", ".standards-baseline.json"), baseline.HISSClass)
 	if err != nil {
 		fmt.Printf("[FAIL] Baseline audit failed: %v\n", err)
 		failed++

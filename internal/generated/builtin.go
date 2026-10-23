@@ -11,6 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/readmegovernance"
 )
 
@@ -67,8 +68,8 @@ func builtinArtefacts(manifest *config.Manifest) ([]builtin, error) {
 		{decl: config.GeneratedArtefact{Name: NameRegisterBlock, Paths: []string{"AGENTS.md"}, Command: compile,
 			Block:   &config.GeneratedBlock{Start: config.RegisterBlockStart, End: config.RegisterBlockEnd},
 			Sources: []string{config.ManifestFileName}}},
-		{requires: ".standards-baseline.json", decl: config.GeneratedArtefact{Name: NameBaseline, Paths: []string{".standards-baseline.json"},
-			Command: []string{SelfCommand, "baseline", "--record"}, Sources: scannedSources}},
+		{decl: config.GeneratedArtefact{Name: NameBaseline, Paths: []string{gating.BaselineFile, gating.ReadmeBaselineFile, gating.GosecBaselineFile},
+			Command: []string{SelfCommand, "baseline", "--record"}, Sources: append(append([]string{}, scannedSources...), "README.md", "**/*.svg")}},
 		{decl: config.GeneratedArtefact{Name: NameReadmeBlock, Paths: []string{readmegovernance.File},
 			Block:   &config.GeneratedBlock{Start: readmegovernance.Start, End: readmegovernance.End},
 			Command: []string{SelfCommand, "docs", "readme"}, Sources: []string{".standards-baseline.json", config.ManifestFileName}}},

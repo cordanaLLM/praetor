@@ -72,7 +72,7 @@ func readmeGovernanceState(manifest *config.Manifest, base *baseline.Baseline, b
 	}
 	return readmegovernance.State{
 		BaselineKnown:        baselineKnown,
-		LegacyDebtCount:      base.Counts().HISS,
+		LegacyDebtCount:      base.Count(),
 		DocumentationEnabled: documentationEnabled,
 		RepositoryOwner:      owner,
 		RepositoryName:       name,
