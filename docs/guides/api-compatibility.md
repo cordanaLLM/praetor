@@ -245,7 +245,14 @@ binary you built.
    `example.com/w/v2` passes from v1 on. Any other change of the module path is compared, and the
    checker reads every package of the earlier path as removed (`isNewMajor`;
    `TestGate_Positive_InPlaceMajorVersionIsANewModule`, `TestGate_Boundary_MajorVersionSuffixes`).
-4. **Comparison.** For each compared module the gate runs `go list -export ./...` at `HEAD`, so a
+4. **Comparison.** For each compared module the gate first downloads the module's dependencies
+   (`go mod download` in its directory, up to 3 attempts with 5 s and 15 s waits, each failed attempt
+   named on stderr), so one proxy stream error does not read as a module that does not build; a
+   download that fails all 3 attempts stops the run with status 2, and no `api-compatibility`
+   exception excuses it (`TestBuildModule_Positive_FirstDownloadFailsThenSucceeds`,
+   `TestBuildModule_Negative_EveryDownloadFails`,
+   `TestGate_Negative_ExceptionForModulePlusDownloadFailureStillFailsGate` in
+   `tools/apicompat/gate/download_retry_test.go`). It then runs `go list -export ./...` at `HEAD`, so a
    module whose packages do not build fails instead of reading as empty (unless a live
    `api-compatibility` exception excuses it,
    [Modules that need system libraries](#modules-that-need-system-libraries)), and then
@@ -289,7 +296,7 @@ there is no published API, and the gate passes saying so; a push builds on that.
 | :--- | :--- |
 | `0` | Every compared module is compatible, nothing was there to compare, or incompatible changes were reported under the warn policy. |
 | `1` | Incompatible changes under the reject policy, or an unmarked pre-v1 break under `auto`. |
-| `2` | The comparison did not run: a git or discovery error, a malformed `go.mod`, a module that does not build at `HEAD`, a checker that cannot be built, misses the canary, exits with a status other than 0 or 1, or prints an error. |
+| `2` | The comparison did not run: a git or discovery error, a malformed `go.mod`, module dependencies that could not be downloaded in 3 attempts, a module that does not build at `HEAD`, a checker that cannot be built, misses the canary, exits with a status other than 0 or 1, or prints an error. |
 
 Compatibility policy never relaxes execution policy: status 2 holds under `-policy=warn` too.
 `go run` itself exits 1 for any nonzero status of the program, so a workflow log shows the
