@@ -1,2 +1,2 @@
 type: fixed
-title: Download Go modules with bounded retry before the API compatibility compare step so transient proxy stream errors do not fail adopter CI
+title: The API compatibility gate retries module downloads with bounded backoff so transient proxy stream errors do not fail adopter CI

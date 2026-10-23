@@ -46,13 +46,13 @@ func TestRenderWorkflow_Positive_InstallStepRunsBeforeTheChecker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runs) != 4 || runs[0].Name != ghworkflow.HostedGateDraftStepName || runs[1].Name != "Download Go modules with retry" || runs[2].Name != InstallStepName ||
-		runs[3].Script != "go run "+Directory+"/"+GateFile+" -base=\"$BASE\"" {
-		t.Fatalf("workflow runs %+v, want the draft step, download step, install step, then the gate", runs)
+	if len(runs) != 3 || runs[0].Name != ghworkflow.HostedGateDraftStepName || runs[1].Name != InstallStepName ||
+		runs[2].Script != "go run "+Directory+"/"+GateFile+" -base=\"$BASE\"" {
+		t.Fatalf("workflow runs %+v, want the draft step, the install step, then the gate", runs)
 	}
 	wantScript := "sudo apt-get update\nsudo apt-get install -y --no-install-recommends \\\n  libudev-dev \\\n  libopenal-dev \\\n  g++-14"
-	if runs[2].Script != wantScript {
-		t.Fatalf("install script = %q, want %q", runs[2].Script, wantScript)
+	if runs[1].Script != wantScript {
+		t.Fatalf("install script = %q, want %q", runs[1].Script, wantScript)
 	}
 	step := rendered[strings.Index(rendered, installStepOpen):strings.Index(rendered, compareStepMarker)]
 	for _, want := range []string{ghworkflow.HostedGateStepIf, "timeout-minutes: 15\n"} {
@@ -75,7 +75,7 @@ func TestRenderWorkflow_Boundary_EmptySettingsKeepTheBytes(t *testing.T) {
 		}
 	}
 	digest, _, err := util.CanonicalTextDigest([]byte(Workflow))
-	if err != nil || digest != "67e3f3e2f7bef3d3d98fb9e8326fed81734c6c48deeaed0d388be35f0f8d6f17" {
+	if err != nil || digest != "b1b8cda8e5e0f06c5f8d58e4df59fa7c567b599382da19854228466696b157a6" {
 		t.Fatalf("Workflow digest = %s (%v): the default rendering is no longer byte-identical to the shipped text", digest, err)
 	}
 }

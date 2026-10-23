@@ -90,8 +90,8 @@ func TestWorkflowRunsTheGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "go run " + Directory + "/" + GateFile + " -base=\"$BASE\""
-	if len(runs) != 3 || runs[0].Name != ghworkflow.HostedGateDraftStepName || runs[1].Name != "Download Go modules with retry" || runs[2].Script != want {
-		t.Fatalf("workflow runs %+v, want the draft step, the download step and the one gate step %q", runs, want)
+	if len(runs) != 2 || runs[0].Name != ghworkflow.HostedGateDraftStepName || runs[1].Script != want {
+		t.Fatalf("workflow runs %+v, want the draft step and the one gate step %q", runs, want)
 	}
 	if !strings.Contains(Workflow, "BASE: ${{ github.event.pull_request.base.sha }}") {
 		t.Fatal("the pull request base does not reach the gate through env")
@@ -224,20 +224,6 @@ func assertSetupGoStep(t *testing.T, step *ghworkflow.Step) {
 	}
 }
 
-func assertDownloadStep(t *testing.T, step *ghworkflow.Step) {
-	t.Helper()
-	if step == nil {
-		t.Fatal("workflow lacks download step")
-	}
-	var env map[string]string
-	if err := step.Env.Decode(&env); err != nil {
-		t.Fatalf("decode download step env: %v", err)
-	}
-	if got := env["GOTOOLCHAIN"]; got != "auto" {
-		t.Errorf("download step GOTOOLCHAIN = %v, want %q", got, "auto")
-	}
-}
-
 func assertCompareStep(t *testing.T, step *ghworkflow.Step) {
 	t.Helper()
 	if step == nil {
@@ -270,20 +256,15 @@ func TestWorkflowToolchainConfiguration(t *testing.T) {
 		t.Fatal("workflow lacks api-compatibility job")
 	}
 	var setupGoStep *ghworkflow.Step
-	var downloadStep *ghworkflow.Step
 	var compareStep *ghworkflow.Step
 	for i := range job.Steps {
 		if strings.HasPrefix(job.Steps[i].Uses, "actions/setup-go@") {
 			setupGoStep = &job.Steps[i]
-		}
-		if job.Steps[i].Name == "Download Go modules with retry" {
-			downloadStep = &job.Steps[i]
 		}
 		if job.Steps[i].Name == "Compare the API of every Go module" {
 			compareStep = &job.Steps[i]
 		}
 	}
 	assertSetupGoStep(t, setupGoStep)
-	assertDownloadStep(t, downloadStep)
 	assertCompareStep(t, compareStep)
 }

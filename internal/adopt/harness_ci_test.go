@@ -67,7 +67,7 @@ func TestScaffoldedWorkflowsReadWhatAdoptionWrites(t *testing.T) {
 	if got := workflowPaths(workflows); !slices.Equal(got, want) {
 		t.Fatalf("scaffolded workflows = %q, want %q", got, want)
 	}
-	if !slices.Equal(runLabels(workflows[1].runs), []string{ghworkflow.HostedGateDraftStepName, "Download Go modules with retry", `go run tools/apicompat/gate/main.go -base="$BASE"`}) {
+	if !slices.Equal(runLabels(workflows[1].runs), []string{ghworkflow.HostedGateDraftStepName, `go run tools/apicompat/gate/main.go -base="$BASE"`}) {
 		t.Errorf("%s runs = %+v", APICompatibilityWorkflowFile, workflows[1].runs)
 	}
 	if !slices.Equal(runLabels(workflows[2].runs), []string{ghworkflow.HostedGateDraftStepName, "Check for go.mod", "go vet ./...", "go test -race ./..."}) {

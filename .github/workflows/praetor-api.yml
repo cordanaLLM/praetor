@@ -65,38 +65,6 @@ jobs:
             gobuild-${{ runner.os }}-${{ runner.arch }}-api-compatibility-${{ hashFiles('**/go.sum') }}-
             gobuild-${{ runner.os }}-${{ runner.arch }}-api-compatibility-
       # yamllint enable rule:line-length
-      - name: Download Go modules with retry
-        if: github.event.pull_request.draft != true
-        env:
-          GOTOOLCHAIN: auto
-        run: |
-          for mod in $(git ls-files ':(glob)**/go.mod'); do
-            case "$mod" in
-              testdata/* | */testdata/* | vendor/* | */vendor/*)
-                continue
-                ;;
-              .*/* | */.*/* | _*/* | */_*/*)
-                continue
-                ;;
-            esac
-            dir=$(dirname "$mod")
-            success=0
-            for attempt in 1 2 3; do
-              if (cd "$dir" && go mod download); then
-                success=1
-                break
-              fi
-              echo "go mod download failed for $mod (attempt $attempt of 3)" >&2
-              if [ "$attempt" -eq 1 ]; then
-                sleep 5
-              elif [ "$attempt" -eq 2 ]; then
-                sleep 15
-              fi
-            done
-            if [ "$success" -ne 1 ]; then
-              exit 1
-            fi
-          done
       - name: Compare the API of every Go module
         if: github.event.pull_request.draft != true
         env:
