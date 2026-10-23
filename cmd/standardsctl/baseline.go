@@ -133,7 +133,11 @@ func verifyBaseline(path string, b *baseline.Baseline, all bool) error {
 	if err != nil {
 		return fmt.Errorf("[FAIL] verify %s: %w", path, err)
 	}
-	readmeFindings, err := readmepresentation.ScanBaselineFindings(ctx, root, b, config.ReadmePresentationEnforced(root))
+	enforce, err := config.ReadmePresentationEnforced(root)
+	if err != nil {
+		return fmt.Errorf("[FAIL] verify %s: %w", path, err)
+	}
+	readmeFindings, err := readmepresentation.ScanBaselineFindings(ctx, root, b, enforce)
 	if err != nil {
 		return fmt.Errorf("[FAIL] verify %s: %w", path, err)
 	}
@@ -182,7 +186,11 @@ func recordBaseline(path string, previous *baseline.Baseline, hissOpts, gosecOpt
 	if err != nil {
 		return fmt.Errorf("refusing to record %s: %w", path, err)
 	}
-	readmeFindings, err := readmepresentation.ScanBaselineFindings(ctx, root, previous, config.ReadmePresentationEnforced(root))
+	enforce, err := config.ReadmePresentationEnforced(root)
+	if err != nil {
+		return fmt.Errorf("refusing to record %s: %w", path, err)
+	}
+	readmeFindings, err := readmepresentation.ScanBaselineFindings(ctx, root, previous, enforce)
 	if err != nil {
 		return fmt.Errorf("refusing to record %s: %w", path, err)
 	}

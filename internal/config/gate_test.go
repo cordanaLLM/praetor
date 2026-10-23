@@ -5,6 +5,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -136,5 +138,24 @@ gate:
 	}
 	if !enforced.Gate.EnforceReadmePresentation() {
 		t.Error("expected EnforceReadmePresentation() == true")
+	}
+}
+
+func TestGatePolicy_ReadmePresentationEnforced(t *testing.T) {
+	dir := t.TempDir()
+	if got, err := ReadmePresentationEnforced(dir); err != nil || got {
+		t.Fatalf("absent manifest: got=(%v, %v), want (false, nil)", got, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".standards.yaml"), []byte("version: 1\ngate:\n  readme_presentation: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ReadmePresentationEnforced(dir); err != nil || !got {
+		t.Fatalf("enforced manifest: got=(%v, %v), want (true, nil)", got, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".standards.yaml"), []byte("version: 1\ngate:\n  unknown_key: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ReadmePresentationEnforced(dir); err == nil || got {
+		t.Fatalf("invalid manifest: got=(%v, %v), want (false, non-nil error)", got, err)
 	}
 }

@@ -53,6 +53,8 @@ func describeReadFailure(relPath string, err error) string {
 	switch {
 	case errors.Is(err, util.ErrPathEscapesRoot):
 		return fmt.Sprintf("%s escapes repository root", relPath)
+	case errors.Is(err, util.ErrAbsoluteRelPath):
+		return fmt.Sprintf("%s must be a relative path", relPath)
 	case errors.Is(err, util.ErrNotRegularFile):
 		return fmt.Sprintf("%s is not a regular file", relPath)
 	case errors.Is(err, util.ErrFileTooLarge):
@@ -197,12 +199,10 @@ func (c *bodyScanContext) step(line string, idx int) {
 		c.secState.governanceSeen = true
 	}
 	c.mermaidWait = false
-	if idx > c.headerLimit {
+	if idx > c.headerLimit && leadingSpaces(unquoted) <= 3 {
 		clean := stripInlineComments(unquoted)
-		checkSvgBelowHeader(c.rootDir, clean, c.relPath, idx+1, c.findings)
-		if leadingSpaces(unquoted) <= 3 {
-			checkSectionHeading(clean, idx+1, c.relPath, c.secState, c.findings, c.infos)
-		}
+		checkSvgBelowHeader(c.rootDir, stripInlineCode(clean), c.relPath, idx+1, c.findings)
+		checkSectionHeading(clean, idx+1, c.relPath, c.secState, c.findings, c.infos)
 	}
 }
 

@@ -185,21 +185,17 @@ func (r *RatchetResult) touchedClasses(p rejectionPartition) []violationClass {
 	}
 }
 
-func isReadmeInfraction(v Infraction) bool {
-	return strings.HasPrefix(v.RuleID, "README-")
-}
-
 func (r *RatchetResult) subject() string {
 	hasHISS, hasReadme := false, false
 	for i := 0; i < len(r.NewViolations); i++ {
-		if isReadmeInfraction(r.NewViolations[i]) {
+		if IsReadmeRule(r.NewViolations[i].RuleID) {
 			hasReadme = true
 		} else {
 			hasHISS = true
 		}
 	}
 	for i := 0; i < len(r.TouchedCleanViolations); i++ {
-		if isReadmeInfraction(r.TouchedCleanViolations[i]) {
+		if IsReadmeRule(r.TouchedCleanViolations[i].RuleID) {
 			hasReadme = true
 		} else {
 			hasHISS = true
@@ -440,7 +436,7 @@ func attributeOne(v Infraction, moved map[string][]int, existed map[string]int) 
 		return AttributionMoved, line
 	}
 	switch {
-	case existed == nil || isReadmeInfraction(v):
+	case existed == nil || IsReadmeRule(v.RuleID):
 		return AttributionNone, 0
 	case atCommit:
 		return AttributionCheckChanged, 0

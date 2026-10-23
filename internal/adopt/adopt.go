@@ -827,11 +827,19 @@ func reconcileBaseline(ctx context.Context, s *adoptSession) error {
 	return s.recordFirstBaseline(ctx, full)
 }
 
-func (s *adoptSession) enforceReadmePresentation() bool {
+func (s *adoptSession) enforceReadmePresentation() (bool, error) {
 	if s.policy != nil && s.policy.Manifest != nil {
-		return s.policy.Manifest.Gate.EnforceReadmePresentation()
+		return s.policy.Manifest.Gate.EnforceReadmePresentation(), nil
 	}
 	return config.ReadmePresentationEnforced(s.repoPath)
+}
+
+func (s *adoptSession) scanReadmeBaselineFindings(ctx context.Context, previous *baseline.Baseline) ([]readmepresentation.Finding, error) {
+	enforce, err := s.enforceReadmePresentation()
+	if err != nil {
+		return nil, err
+	}
+	return readmepresentation.ScanBaselineFindings(ctx, s.repoPath, previous, enforce)
 }
 
 // recordFirstBaseline scans the repository and records its first baseline at full. A scan that
@@ -851,7 +859,8 @@ func (s *adoptSession) recordFirstBaseline(ctx context.Context, full string) err
 		s.report.BaselineStatus = "failed"
 		return err
 	}
-	readmeFindings, err := readmepresentation.ScanBaselineFindings(ctx, s.repoPath, nil, s.enforceReadmePresentation())
+	hissCount := len(base.Infractions)
+	readmeFindings, err := s.scanReadmeBaselineFindings(ctx, nil)
 	if err != nil {
 		s.report.BaselineStatus = "failed"
 		return err
@@ -859,7 +868,7 @@ func (s *adoptSession) recordFirstBaseline(ctx context.Context, full string) err
 	base.Infractions = append(base.Infractions, readmepresentation.ToBaseline(readmeFindings)...)
 	base.TotalInfractions = len(base.Infractions)
 	s.report.BaselineStatus = "scanned"
-	s.report.LegacyDebtCount = base.TotalInfractions
+	s.report.LegacyDebtCount = hissCount
 	if err := s.saveBaseline(full, base); err != nil {
 		return err
 	}
@@ -901,7 +910,7 @@ func (s *adoptSession) verifyExistingBaseline(full string) error {
 		return err
 	}
 	s.report.BaselineStatus = "existing"
-	s.report.LegacyDebtCount = base.Count()
+	s.report.LegacyDebtCount = readmepresentation.WithoutReadmeBaseline(base).Count()
 	s.report.recordReconciled(baselineFile, "Technical debt baseline verified present")
 	return nil
 }
@@ -959,7 +968,7 @@ func (s *adoptSession) checkKeptBaseline(ctx context.Context, full string) error
 	if err != nil {
 		return err
 	}
-	readmeFindings, err := readmepresentation.ScanBaselineFindings(ctx, s.repoPath, recorded, s.enforceReadmePresentation())
+	readmeFindings, err := s.scanReadmeBaselineFindings(ctx, recorded)
 	if err != nil {
 		return err
 	}
@@ -968,7 +977,7 @@ func (s *adoptSession) checkKeptBaseline(ctx context.Context, full string) error
 	verdict := &BaselineRatchet{Passed: ratchet.Passed, Recorded: ratchet.PreviousCount,
 		Active: ratchet.CurrentCount, Unbaselined: len(ratchet.NewViolations)}
 	s.report.BaselineStatus = "existing"
-	s.report.LegacyDebtCount = recorded.Count()
+	s.report.LegacyDebtCount = readmepresentation.WithoutReadmeBaseline(recorded).Count()
 	s.report.BaselineRatchet = verdict
 	s.report.recordReconciled(baselineFile, verdict.Line())
 	if !ratchet.Passed {
@@ -1001,7 +1010,7 @@ func (s *adoptSession) rerecordBaseline(ctx context.Context, full string) error 
 	if err != nil {
 		return err
 	}
-	readmeFindings, err := readmepresentation.ScanBaselineFindings(ctx, s.repoPath, previous, s.enforceReadmePresentation())
+	readmeFindings, err := s.scanReadmeBaselineFindings(ctx, previous)
 	if err != nil {
 		s.report.BaselineStatus = "failed"
 		return err
@@ -1018,7 +1027,7 @@ func (s *adoptSession) rerecordBaseline(ctx context.Context, full string) error 
 		return s.refusedRerecord(ctx, full, previous, combined, err)
 	}
 	s.report.BaselineStatus = "scanned"
-	s.report.LegacyDebtCount = next.TotalInfractions
+	s.report.LegacyDebtCount = len(current)
 	if previous.SameDebt(next) && previous.CommitSHA == next.CommitSHA {
 		s.report.recordReconciled(baselineFile, fmt.Sprintf(
 			"Rescanned; baseline unchanged at %d legacy debt infractions", next.TotalInfractions))

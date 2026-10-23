@@ -386,6 +386,9 @@ func TestReconcileInsertsBlockAtEndAndStripBlockRemovesMidFileBlock(t *testing.T
 	if got := StripBlock("# Head\n\n" + Start + "\nold\n" + End + "\n"); got != "# Head\n" {
 		t.Fatalf("StripBlock tail-empty mismatch: got %q", got)
 	}
+	if got := StripBlock(Start + "\nold\n" + End + "\n"); got != "" {
+		t.Fatalf("StripBlock both-empty mismatch: got %q, want empty", got)
+	}
 	relocated, _, err := Reconcile(stripped, State{BaselineKnown: true})
 	if err != nil {
 		t.Fatalf("Reconcile after StripBlock: %v", err)

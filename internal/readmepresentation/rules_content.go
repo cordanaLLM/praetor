@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -19,8 +20,8 @@ import (
 
 var (
 	mdSvgRe            = regexp.MustCompile(`(?i)!\[[^\]]*\]\(\s*<?([^)>\s"']+\.svg)(?:[?#][^)>\s"']*)?>?(?:\s+["'][^"']*["'])?\s*\)`)
-	htmlSvgRe          = regexp.MustCompile(`(?i)<(?:img|source)\b[^>]*?\bsrc\s*=\s*["']([^"']+\.svg(?:[?#][^"']*)?)["']`)
-	htmlSrcsetRe       = regexp.MustCompile(`(?i)<(?:img|source)\b[^>]*?\bsrcset\s*=\s*["']([^"']+)["']`)
+	htmlSvgRe          = regexp.MustCompile(`(?i)<(?:img|source)\b[^>]*?(?:[\s"'/])src\s*=\s*["']([^"']+\.svg(?:[?#][^"']*)?)["']`)
+	htmlSrcsetRe       = regexp.MustCompile(`(?i)<(?:img|source)\b[^>]*?(?:[\s"'/])srcset\s*=\s*["']([^"']+)["']`)
 	viewBoxRe          = regexp.MustCompile(`(?i)\bviewBox\s*=\s*["']([^"']+)["']`)
 	svgTagWidthRe      = regexp.MustCompile(`(?i)<svg[^>]+width\s*=\s*["']?([0-9.]+)`)
 	mermaidThemeBaseRe = regexp.MustCompile(`(?i)['"]?theme['"]?\s*:\s*['"]?base['"]?\b`)
@@ -59,6 +60,25 @@ func stripInlineComments(line string) string {
 		return line
 	}
 	return htmlCommentRe.ReplaceAllString(line, "")
+}
+
+func stripInlineCode(line string) string {
+	if !strings.Contains(line, "`") {
+		return line
+	}
+	spans := util.MarkdownCodeSpans(line, 64)
+	if len(spans) == 0 {
+		return line
+	}
+	var b strings.Builder
+	b.Grow(len(line))
+	pos := 0
+	for i := 0; i < len(spans); i++ {
+		b.WriteString(line[pos:spans[i].Start])
+		pos = spans[i].End
+	}
+	b.WriteString(line[pos:])
+	return b.String()
 }
 
 func sanitizeDisplayPath(s string) string {
@@ -101,6 +121,8 @@ func describeSvgReadFailure(safeClean string, err error) string {
 	switch {
 	case errors.Is(err, util.ErrPathEscapesRoot):
 		return fmt.Sprintf("SVG image %s escapes repository root", safeClean)
+	case errors.Is(err, util.ErrAbsoluteRelPath):
+		return fmt.Sprintf("SVG image %s must be a relative path", safeClean)
 	case errors.Is(err, fs.ErrNotExist):
 		return fmt.Sprintf("SVG image %s does not exist", safeClean)
 	case errors.Is(err, util.ErrNotRegularFile):
@@ -114,6 +136,17 @@ func describeSvgReadFailure(safeClean string, err error) string {
 	}
 }
 
+func hasWindowsDrivePrefix(s string) bool {
+	return len(s) >= 2 && ((s[0] >= 'a' && s[0] <= 'z') || (s[0] >= 'A' && s[0] <= 'Z')) && s[1] == ':'
+}
+
+func readConfinedSvg(rootDir, clean string) ([]byte, error) {
+	if hasWindowsDrivePrefix(clean) {
+		return nil, fmt.Errorf("%w: %q", util.ErrAbsoluteRelPath, clean)
+	}
+	return util.ReadConfinedLimited(rootDir, clean, MaxSVGBytes)
+}
+
 func checkSvgBelowHeader(rootDir, line, relPath string, lineNum int, findings *[]Finding) {
 	targets := extractSvgTargets(line)
 	for i := 0; i < len(targets) && i < maxSvgTargetsPerLine; i++ {
@@ -123,7 +156,7 @@ func checkSvgBelowHeader(rootDir, line, relPath string, lineNum int, findings *[
 		}
 		clean := cleanTargetSvgPath(target)
 		safeClean := sanitizeDisplayPath(clean)
-		data, err := util.ReadConfinedLimited(rootDir, clean, MaxSVGBytes)
+		data, err := readConfinedSvg(rootDir, clean)
 		if err != nil {
 			*findings = append(*findings, Finding{
 				File:    relPath,
@@ -198,7 +231,11 @@ func cleanTargetSvgPath(t string) string {
 	clean := strings.TrimSpace(t)
 	clean = strings.Split(clean, "?")[0]
 	clean = strings.Split(clean, "#")[0]
-	return strings.TrimPrefix(clean, "/")
+	if unescaped, err := url.PathUnescape(clean); err == nil {
+		clean = unescaped
+	}
+	clean = strings.ReplaceAll(clean, `\`, "/")
+	return strings.TrimLeft(clean, "/")
 }
 
 func parseSvgWidth(content string) (float64, bool) {
@@ -290,6 +327,11 @@ func normalizeHeadingWords(lower string) string {
 	return " " + s + " "
 }
 
+func matchesHeadingKeyword(padded, kw string) bool {
+	target := " " + kw + " "
+	return strings.HasPrefix(padded, target) || (kw == "at a glance" && strings.HasSuffix(padded, target))
+}
+
 func matchHeadingKeywordClass(lower string) int {
 	padded := normalizeHeadingWords(lower)
 	if padded == "" {
@@ -298,7 +340,7 @@ func matchHeadingKeywordClass(lower string) int {
 	for i := 0; i < len(sectionKeywords); i++ {
 		sk := sectionKeywords[i]
 		for j := 0; j < len(sk.keywords) && j < 8; j++ {
-			if strings.Contains(padded, " "+sk.keywords[j]+" ") {
+			if matchesHeadingKeyword(padded, sk.keywords[j]) {
 				return sk.class
 			}
 		}

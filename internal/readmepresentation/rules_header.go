@@ -36,21 +36,6 @@ func stepTagHeader(line string, depth *int) bool {
 	return *depth <= 0
 }
 
-func stepTitleHeader(trimmed string, sawBadge *bool) bool {
-	if strings.Contains(trimmed, "style=for-the-badge") {
-		*sawBadge = true
-		return false
-	}
-	return *sawBadge && isBoldLine(trimmed)
-}
-
-func closesHeaderAt(line, trimmed string, openedTag bool, depth *int, sawBadge *bool) bool {
-	if openedTag {
-		return stepTagHeader(line, depth)
-	}
-	return stepTitleHeader(trimmed, sawBadge)
-}
-
 func isHeaderStart(trimmed string) bool {
 	return isHeaderOpening(trimmed) || strings.HasPrefix(trimmed, "# ")
 }
@@ -59,10 +44,46 @@ func isBodyH2(line, trimmed string) bool {
 	return leadingSpaces(line) <= 3 && strings.HasPrefix(trimmed, "## ")
 }
 
+func findFirstTaglineLine(lines []string, blockEnd, limit int) (int, bool) {
+	inComment := false
+	for i := blockEnd + 1; i <= limit && i < len(lines) && i < MaxLines; i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if advanceCommentState(trimmed, &inComment) || isIgnoredTaglinePrecursor(trimmed) {
+			continue
+		}
+		return i, isBoldLine(trimmed)
+	}
+	return -1, false
+}
+
+func resolveTitleHeaderEnd(lines []string, start, h2Limit int) int {
+	_, blockEnd := findBadgeBlockRange(lines, start, h2Limit)
+	if blockEnd < 0 {
+		return start
+	}
+	if taglineLine, ok := findFirstTaglineLine(lines, blockEnd, h2Limit); ok {
+		return taglineLine
+	}
+	return blockEnd
+}
+
+func finalizeHeaderEnd(lines []string, start, end int, openedTag bool) int {
+	if start < 0 {
+		return end
+	}
+	if end < 0 {
+		end = min(start+50, len(lines)-1)
+	}
+	if !openedTag {
+		return resolveTitleHeaderEnd(lines, start, end)
+	}
+	return end
+}
+
 func findHeaderBounds(lines []string) (start, end int) {
 	start, end = -1, -1
 	n := min(len(lines), MaxLines)
-	openedTag, sawBadge, inComment, depth := false, false, false, 0
+	openedTag, inComment, depth := false, false, 0
 	for i := 0; i < n; i++ {
 		trimmed := strings.TrimSpace(lines[i])
 		if advanceCommentState(trimmed, &inComment) {
@@ -79,15 +100,12 @@ func findHeaderBounds(lines []string) (start, end int) {
 			end = i - 1
 			break
 		}
-		if closesHeaderAt(lines[i], trimmed, openedTag, &depth, &sawBadge) {
+		if openedTag && stepTagHeader(lines[i], &depth) {
 			end = i
 			break
 		}
 	}
-	if start >= 0 && end < 0 {
-		end = min(start+50, len(lines))
-	}
-	return start, end
+	return start, finalizeHeaderEnd(lines, start, end, openedTag)
 }
 
 func collectImgLine(lines []string, start, headerEnd int) (string, int) {
@@ -388,27 +406,18 @@ func checkTagline(lines []string, blockEnd int, relPath string, findings *[]Find
 	if blockEnd < 0 {
 		return
 	}
-	start := blockEnd + 1
-	limit := min(len(lines), min(start+50, MaxLines))
-	inComment := false
-	for i := start; i < limit; i++ {
-		trimmed := strings.TrimSpace(lines[i])
-		if advanceCommentState(trimmed, &inComment) || isIgnoredTaglinePrecursor(trimmed) {
-			continue
-		}
-		if !isBoldLine(trimmed) {
-			*findings = append(*findings, Finding{
-				File:    relPath,
-				Line:    i + 1,
-				RuleID:  RuleIDTagline,
-				Message: "first non-empty text line after badge block must be a bold tagline",
-			})
-		}
+	limit := min(len(lines)-1, min(blockEnd+50, MaxLines-1))
+	lineIdx, ok := findFirstTaglineLine(lines, blockEnd, limit)
+	if ok {
 		return
+	}
+	reportLine := blockEnd + 1
+	if lineIdx >= 0 {
+		reportLine = lineIdx + 1
 	}
 	*findings = append(*findings, Finding{
 		File:    relPath,
-		Line:    blockEnd + 1,
+		Line:    reportLine,
 		RuleID:  RuleIDTagline,
 		Message: "first non-empty text line after badge block must be a bold tagline",
 	})

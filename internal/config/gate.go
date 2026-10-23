@@ -5,7 +5,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -35,13 +37,16 @@ func (p *GatePolicy) EnforceReadmePresentation() bool {
 }
 
 // ReadmePresentationEnforced reports whether the manifest at root declares gate.readme_presentation: true.
-// An absent or unreadable manifest returns false (report-only default).
-func ReadmePresentationEnforced(root string) bool {
+// An absent manifest returns false, nil (report-only default); an unreadable or invalid manifest returns an error.
+func ReadmePresentationEnforced(root string) (bool, error) {
 	m, err := LoadManifest(filepath.Join(root, ".standards.yaml"))
-	if err != nil || m == nil {
-		return false
+	if errors.Is(err, os.ErrNotExist) || (err == nil && m == nil) {
+		return false, nil
 	}
-	return m.Gate.EnforceReadmePresentation()
+	if err != nil {
+		return false, err
+	}
+	return m.Gate.EnforceReadmePresentation(), nil
 }
 
 // UnmarshalYAML checks that all keys are known before decoding GatePolicy.

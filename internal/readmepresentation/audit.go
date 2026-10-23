@@ -25,6 +25,7 @@ type Options struct {
 	Root     string
 	Baseline *baseline.Baseline
 	Enforce  bool
+	MaxStale *int
 }
 
 func findingAnchor(file, ruleID, msg string) string {
@@ -64,7 +65,7 @@ func ToBaseline(findings []Finding) []baseline.Infraction {
 // RecordBaseline builds a baseline from the current README presentation findings and any
 // HISS infractions provided by the caller.
 func RecordBaseline(previous *baseline.Baseline, findings []Finding, opts baseline.RecordOptions, hissInfractions ...baseline.Infraction) (*baseline.Baseline, error) {
-	if previous == nil && !opts.AllowIncrease {
+	if previous == nil && len(hissInfractions) == 0 && !opts.AllowIncrease {
 		opts.AllowIncrease = true
 		if strings.TrimSpace(opts.Rationale) == "" {
 			opts.Rationale = "initial README presentation baseline"
@@ -74,12 +75,7 @@ func RecordBaseline(previous *baseline.Baseline, findings []Finding, opts baseli
 	combined := make([]baseline.Infraction, 0, len(hissInfractions)+len(readmeInf))
 	combined = append(combined, hissInfractions...)
 	combined = append(combined, readmeInf...)
-	next, err := baseline.Record(previous, combined, opts)
-	if err != nil && len(readmeInf) > 0 {
-		return nil, fmt.Errorf("%w (%d HISS invariant violation(s), %d README presentation finding(s))",
-			err, len(hissInfractions), len(readmeInf))
-	}
-	return next, err
+	return baseline.Record(previous, combined, opts)
 }
 
 // ScanBaselineFindings scans rootDir/README.md for baseline recording or verification when
@@ -99,7 +95,7 @@ func ReadmeBaseline(b *baseline.Baseline) (*baseline.Baseline, bool) {
 	}
 	var entries []baseline.Infraction
 	for i := 0; i < len(b.Infractions); i++ {
-		if IsReadmeRule(b.Infractions[i].RuleID) {
+		if baseline.IsReadmeRule(b.Infractions[i].RuleID) {
 			entries = append(entries, b.Infractions[i])
 		}
 	}
@@ -121,7 +117,7 @@ func WithoutReadmeBaseline(b *baseline.Baseline) *baseline.Baseline {
 	hasReadme := false
 	filtered := make([]baseline.Infraction, 0, len(b.Infractions))
 	for i := 0; i < len(b.Infractions); i++ {
-		if IsReadmeRule(b.Infractions[i].RuleID) {
+		if baseline.IsReadmeRule(b.Infractions[i].RuleID) {
 			hasReadme = true
 			continue
 		}
@@ -147,7 +143,7 @@ func Audit(ctx context.Context, opts Options) (string, error) {
 	}
 	readmeBase, hasBaseline := ReadmeBaseline(opts.Baseline)
 	if hasBaseline || opts.Enforce {
-		out, err := judgeEnforced(findings, readmeBase)
+		out, err := judgeEnforced(findings, readmeBase, opts.MaxStale)
 		if err != nil {
 			return "", err
 		}
@@ -182,7 +178,7 @@ func judgeReported(findings []Finding) string {
 	return b.String()
 }
 
-func judgeEnforced(findings []Finding, readmeBase *baseline.Baseline) (string, error) {
+func judgeEnforced(findings []Finding, readmeBase *baseline.Baseline, maxStale *int) (string, error) {
 	ratchet := baseline.EvaluateRatchet(readmeBase, ToBaseline(findings), nil)
 	if !ratchet.Passed {
 		return "", errors.New(formatEnforcedFailure(findings, ratchet))
@@ -197,6 +193,10 @@ func judgeEnforced(findings []Finding, readmeBase *baseline.Baseline) (string, e
 		b.WriteString(findings[i].BaselinedLine())
 	}
 	if stale := ratchet.StaleNotice(); stale != "" {
+		if maxStale != nil && *maxStale >= 0 && ratchet.Stale > *maxStale {
+			return "", fmt.Errorf("[FAIL] %s: %s; --max-stale-baseline-entries=%d allows at most %d",
+				GateName, stale, *maxStale, *maxStale)
+		}
 		b.WriteString("\n[WARN] " + GateName + ": " + stale)
 	}
 	return b.String(), nil

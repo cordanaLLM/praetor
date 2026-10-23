@@ -156,7 +156,7 @@ func TestPublicBaselineRejectsInvalidAnchorsAndCancellation(t *testing.T) {
 	}
 }
 
-func TestPublicBaselineAndRepairRatchetIgnoreReadmeEntries(t *testing.T) {
+func TestPublicBaselineIgnoresReadmeEntries(t *testing.T) {
 	original := publicBaselineOriginal()
 	recorded := publicBaselineRecord(original)
 	recorded.Infractions = append(recorded.Infractions, baseline.Infraction{
@@ -170,21 +170,5 @@ func TestPublicBaselineAndRepairRatchetIgnoreReadmeEntries(t *testing.T) {
 	recorded.TotalInfractions = len(recorded.Infractions)
 	if err := comparePublicBaseline(t.Context(), recorded, original); err != nil {
 		t.Fatalf("comparePublicBaseline counted README entry as HISS mismatch: %v", err)
-	}
-	withReadmeScan := &hiss.ScanReport{
-		TotalInfractions: 3,
-		Violations: append(append([]hiss.InvariantViolation{}, original.Violations...),
-			hiss.InvariantViolation{RuleID: "README-01", FilePath: "README.md", LineNumber: 1, Message: "missing badge"}),
-	}
-	check := &PublicVerification{
-		Scan: original,
-		Ratchet: baseline.EvaluateRatchet(
-			&baseline.Baseline{Version: 1, TotalInfractions: original.TotalInfractions, Infractions: publicInfractions(original)},
-			publicInfractions(original),
-			nil,
-		),
-	}
-	if err := validateRepairRatchet(withReadmeScan, check, nil); err != nil {
-		t.Fatalf("validateRepairRatchet counted README entry as HISS: %v", err)
 	}
 }

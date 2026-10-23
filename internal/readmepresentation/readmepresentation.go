@@ -68,13 +68,3 @@ func (f Finding) InfoLine() string {
 func (f Finding) BaselinedLine() string {
 	return fmt.Sprintf("[INFO] %s %s:%d %s (baselined)", f.RuleID, f.File, f.Line, f.Message)
 }
-
-// IsReadmeRule reports whether ruleID is one of README-00..README-05.
-func IsReadmeRule(ruleID string) bool {
-	switch ruleID {
-	case RuleIDAbsent, RuleIDBadgeBlock, RuleIDTagline, RuleIDHero, RuleIDDiagrams, RuleIDSections:
-		return true
-	default:
-		return false
-	}
-}

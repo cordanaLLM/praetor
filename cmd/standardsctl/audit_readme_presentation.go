@@ -14,10 +14,15 @@ import (
 
 // auditReadmePresentation runs the shared README presentation standard gate (README-00..README-05).
 func auditReadmePresentation(ctx context.Context, manifest *config.Manifest, opts *auditOptions) error {
+	var maxStale *int
+	if opts.maxStale >= 0 {
+		maxStale = &opts.maxStale
+	}
 	line, err := readmepresentation.Audit(ctx, readmepresentation.Options{
 		Root:     opts.rootDir,
 		Baseline: opts.baseline,
 		Enforce:  manifest != nil && manifest.Gate.EnforceReadmePresentation(),
+		MaxStale: maxStale,
 	})
 	if err != nil {
 		return err

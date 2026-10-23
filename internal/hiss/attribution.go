@@ -180,7 +180,7 @@ func findingsAtCommit(ctx context.Context, root, commit string, violations []bas
 func attributionScope(violations []baseline.Infraction) (files, packages map[string]bool) {
 	files, packages = make(map[string]bool), make(map[string]bool)
 	for i := 0; i < len(violations); i++ {
-		if strings.HasPrefix(violations[i].RuleID, "README-") {
+		if baseline.IsReadmeRule(violations[i].RuleID) {
 			continue
 		}
 		file := slashpath.Clean(baseline.NormalizePath(violations[i].FilePath))

@@ -633,4 +633,22 @@ func TestAudit_ReadmePresentationGateAndBaselineFilterWiring(t *testing.T) {
 	gitCommitAll(t, f.dir, f.gitEnv, "enable readme_presentation gate")
 	_, err = f.audit(t)
 	mustErrContain(t, err, "[FAIL] README presentation:")
+
+	// 4. Hand-added README baseline entry without rationale fails --base growth guard (D1).
+	f.writeBaseline(t, readmepresentation.ToBaseline(findings), "")
+	_, err = f.audit(t, "--base=HEAD")
+	mustErrContain(t, err, "HISS-13 debt ratchet")
+
+	// With rationale it passes --base and --max-stale-baseline-entries=0 while README finding is active (D1 filter).
+	f.writeBaseline(t, readmepresentation.ToBaseline(findings), "accepted readme debt")
+	out, err = f.audit(t, "--base=HEAD", "--max-stale-baseline-entries=0")
+	if err != nil {
+		t.Fatalf("active README baseline entry with --base=HEAD --max-stale-baseline-entries=0: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[WARN] HISS-13 debt ratchet", "accepted readme debt")
+
+	// 5. Fixing README leaves a stale README baseline entry that fails --max-stale-baseline-entries=0 (D2).
+	writeFixtureFile(t, f.dir, "README.md", "# Widgets\n[![a](https://img.shields.io/badge/a-b-blue?style=for-the-badge)](https://x)\n**Tag**\n")
+	_, err = f.audit(t, "--max-stale-baseline-entries=0")
+	mustErrContain(t, err, "--max-stale-baseline-entries=0 allows at most 0")
 }

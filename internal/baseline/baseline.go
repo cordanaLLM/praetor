@@ -210,16 +210,50 @@ func (b *Baseline) Count() int {
 	return b.TotalInfractions
 }
 
+// IsReadmeRule reports whether ruleID is one of README-00..README-05.
+func IsReadmeRule(ruleID string) bool {
+	switch ruleID {
+	case "README-00", "README-01", "README-02", "README-03", "README-04", "README-05":
+		return true
+	default:
+		return false
+	}
+}
+
+func splitClassCounts(b *Baseline) (hissCount, readmeCount int) {
+	if b == nil {
+		return 0, 0
+	}
+	for i := 0; i < len(b.Infractions); i++ {
+		if IsReadmeRule(b.Infractions[i].RuleID) {
+			readmeCount++
+		} else {
+			hissCount++
+		}
+	}
+	if b.TotalInfractions > len(b.Infractions) {
+		hissCount += b.TotalInfractions - len(b.Infractions)
+	}
+	return hissCount, readmeCount
+}
+
 // CheckMonotonic enforces HISS-13 across snapshots: next may not record more
-// infractions than previous. It returns ErrDebtIncrease with both counts otherwise.
+// infractions than previous overall or within either rule class (HISS vs README).
+// It returns ErrDebtIncrease with the counts otherwise.
 func CheckMonotonic(previous, next *Baseline) error {
 	if previous == nil || next == nil {
 		return ErrNilSnapshot
 	}
-	if next.Count() > previous.Count() {
-		return fmt.Errorf("%w: %d -> %d", ErrDebtIncrease, previous.Count(), next.Count())
+	prevHISS, prevReadme := splitClassCounts(previous)
+	nextHISS, nextReadme := splitClassCounts(next)
+	if next.Count() <= previous.Count() && nextHISS <= prevHISS && nextReadme <= prevReadme {
+		return nil
 	}
-	return nil
+	if prevReadme > 0 || nextReadme > 0 {
+		return fmt.Errorf("%w: %d -> %d (%d -> %d HISS invariant violation(s), %d -> %d README presentation finding(s))",
+			ErrDebtIncrease, previous.Count(), next.Count(), prevHISS, nextHISS, prevReadme, nextReadme)
+	}
+	return fmt.Errorf("%w: %d -> %d", ErrDebtIncrease, previous.Count(), next.Count())
 }
 
 // Record builds the snapshot that replaces previous from a fresh scan. It refuses a

@@ -44,7 +44,17 @@ Findings convert into `internal/baseline` infractions (`README-00` through
 through `baseline.EvaluateRatchet`. When `.standards-baseline.json` holds
 `README-*` entries, recorded findings pass, new findings above the baseline
 fail the audit, and resolved entries report as stale via
-`ratchet.StaleNotice()`.
+`ratchet.StaleNotice()` (and fail `--max-stale-baseline-entries` when the
+stale count exceeds the bound).
+
+`praetorctl baseline --record`, `praetorctl baseline --verify`, and
+`praetorctl adopt` (`--record-baseline` / `--rerecord-baseline`) include
+`README-*` findings in `.standards-baseline.json` only when the existing
+baseline already holds `README-*` entries or `gate.readme_presentation: true`
+is set in `.standards.yaml` (`readmepresentation.ScanBaselineFindings`).
+Monotonic debt checks (`baseline.CheckMonotonic`) track `HISS-*` and
+`README-*` counts separately, so resolving a `README-*` entry never masks a
+new `HISS-*` violation (or vice versa) without `--allow-increase --reason`.
 
 For an adopted repository without `README-*` baseline entries or an explicit
 enforcement switch, `readmepresentation.Audit` prints findings (including

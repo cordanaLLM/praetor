@@ -5,10 +5,14 @@
 package readmepresentation
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestPresentation_Positive_ExemplarPasses(t *testing.T) {
@@ -459,6 +463,110 @@ func TestPresentation_GuideKeywordListMatchesCode(t *testing.T) {
 			if !strings.Contains(guide, "`"+kw+"`") {
 				t.Errorf("guide missing keyword %q for class %q", kw, sk.name)
 			}
+		}
+	}
+}
+
+func TestPresentation_ThirdReviewFindings_D3D4D5D7(t *testing.T) {
+	testDir := filepath.Join("testdata")
+	exemplar := readTestExemplar(t, testDir)
+
+	noBadgeDoc := "# Proj\n\nIntro paragraph.\n\n<img src=\"a.png\" height=\"400\">\n\n![Wide](docs/assets/wide-figure.svg)\n\n## 🚀 Get started\n"
+	findings, err := CheckContent(testDir, "README.md", noBadgeDoc)
+	if err != nil || hasRuleID(findings, RuleIDHero) || !hasRuleID(findings, RuleIDDiagrams) {
+		t.Fatalf("D3 no-badge doc: findings=%v err=%v", findings, err)
+	}
+
+	noTaglineDoc := "# Proj\n\n[![a](https://img.shields.io/badge/a-b-blue?style=for-the-badge)](https://x)\n\nPlain intro.\n\n<img src=\"a.png\" height=\"400\">\n\n![Wide](docs/assets/wide-figure.svg)\n\n## 🚀 Get started\n"
+	findings2, err := CheckContent(testDir, "README.md", noTaglineDoc)
+	if err != nil || hasRuleID(findings2, RuleIDHero) || !hasRuleID(findings2, RuleIDDiagrams) {
+		t.Fatalf("D3 no-tagline doc: findings=%v err=%v", findings2, err)
+	}
+
+	platformSupportDoc := strings.Replace(exemplar, "## 🚀 Get started", "## 🚀 Get started\n\n## Platform support", 1)
+	if findings3, err := CheckContent(testDir, "README.md", platformSupportDoc); err != nil || len(findings3) != 0 {
+		t.Fatalf("D5 Platform support before Contributing: findings=%v err=%v", findings3, err)
+	}
+}
+
+func TestPresentation_D4D7_SvgPathsAndFragments(t *testing.T) {
+	testDir := filepath.Join("testdata")
+	exemplar := readTestExemplar(t, testDir)
+	tmp := t.TempDir()
+	validSvg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 100"></svg>`
+	if err := os.WriteFile(filepath.Join(tmp, "my fig.svg"), []byte(validSvg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	doc := "# Proj\n[![a](https://img.shields.io/badge/a-b-blue?style=for-the-badge)](https://x)\n**Tag**\n\n" +
+		"![Escaped](my%20fig.svg)\n" +
+		"Use `![x](missing.svg)` and `<img src=\"missing.svg\">` in inline code.\n\n" +
+		"    ![indented](missing.svg)\n" +
+		"    <img src=\"missing.svg\">\n\n" +
+		"<img data-src=\"missing.svg\" src=\"my%20fig.svg\">\n"
+	if findings, err := CheckContent(tmp, "README.md", doc); err != nil || len(findings) != 0 {
+		t.Fatalf("D4 positive cases: findings=%v err=%v", findings, err)
+	}
+	assertBackslashDriveAndFragmentSvg(t, testDir, exemplar)
+	assertReadFailureBranches(t)
+}
+
+func assertBackslashDriveAndFragmentSvg(t *testing.T, testDir, exemplar string) {
+	t.Helper()
+	winValid := strings.Replace(exemplar, "## 🚀 Get started",
+		"## 🚀 Get started\n\n![Valid](docs\\assets\\valid-figure.svg)\n![Frag](docs/assets/valid-figure.svg#view)\n<picture><source src=\"docs/assets/valid-figure.svg#view\"></picture>\n", 1)
+	if findings, err := CheckContent(testDir, "README.md", winValid); err != nil || len(findings) != 0 {
+		t.Fatalf("expected backslash and fragment valid svg paths to pass, got findings=%v err=%v", findings, err)
+	}
+	for _, tc := range []struct {
+		snippet string
+		wantMsg string
+	}{
+		{"![Escape](..\\outside.svg)", "escapes repository root"},
+		{"![Drive](C:\\outside.svg)", "must be a relative path"},
+		{"<picture><source src=\"docs/assets/wide-figure.svg#frag\"></picture>", "exceeds column limit"},
+		{"![Wide](docs/assets/wide-figure.svg#frag)", "exceeds column limit"},
+	} {
+		doc := strings.Replace(exemplar, "## 🚀 Get started", "## 🚀 Get started\n\n"+tc.snippet+"\n", 1)
+		findings, err := CheckContent(testDir, "README.md", doc)
+		if err != nil || len(findings) != 1 || !strings.Contains(findings[0].Message, tc.wantMsg) {
+			t.Fatalf("snippet %s: got findings=%v err=%v, want %q", tc.snippet, findings, err, tc.wantMsg)
+		}
+	}
+}
+
+func assertReadFailureBranches(t *testing.T) {
+	t.Helper()
+	readmeCases := []struct {
+		err  error
+		want string
+	}{
+		{util.ErrPathEscapesRoot, "README.md escapes repository root"},
+		{util.ErrAbsoluteRelPath, "README.md must be a relative path"},
+		{util.ErrNotRegularFile, "README.md is not a regular file"},
+		{util.ErrFileTooLarge, "README.md exceeds maximum size"},
+		{fs.ErrPermission, "README.md cannot be read (permission denied)"},
+		{errors.New("io error"), "README.md cannot be read"},
+	}
+	for _, tc := range readmeCases {
+		if got := describeReadFailure("README.md", tc.err); !strings.Contains(got, tc.want) {
+			t.Errorf("describeReadFailure(%v) = %q, want %q", tc.err, got, tc.want)
+		}
+	}
+	svgCases := []struct {
+		err  error
+		want string
+	}{
+		{util.ErrPathEscapesRoot, "SVG image fig.svg escapes repository root"},
+		{util.ErrAbsoluteRelPath, "SVG image fig.svg must be a relative path"},
+		{fs.ErrNotExist, "SVG image fig.svg does not exist"},
+		{util.ErrNotRegularFile, "SVG image fig.svg is not a regular file"},
+		{util.ErrFileTooLarge, "SVG image fig.svg exceeds maximum size"},
+		{fs.ErrPermission, "SVG image fig.svg cannot be read (permission denied)"},
+		{errors.New("io error"), "SVG image fig.svg cannot be read"},
+	}
+	for _, tc := range svgCases {
+		if got := describeSvgReadFailure("fig.svg", tc.err); !strings.Contains(got, tc.want) {
+			t.Errorf("describeSvgReadFailure(%v) = %q, want %q", tc.err, got, tc.want)
 		}
 	}
 }

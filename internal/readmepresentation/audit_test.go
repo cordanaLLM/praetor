@@ -131,6 +131,10 @@ func TestAudit_Boundary_BaselineRatchetPassesRecordedFailsAboveReportsStale(t *t
 	if err != nil || !strings.Contains(staleLine, "[WARN] README presentation: 1 baseline entry matches nothing in the tree") {
 		t.Fatalf("expected stale baseline warning, got line=%q err=%v", staleLine, err)
 	}
+	zero := 0
+	if _, err := Audit(t.Context(), Options{Root: tempDir, Baseline: rec, MaxStale: &zero}); err == nil || !strings.Contains(err.Error(), "--max-stale-baseline-entries=0 allows at most 0") {
+		t.Fatalf("expected stale baseline entry to fail MaxStale=0, got err=%v", err)
+	}
 }
 
 func TestWithoutReadmeBaseline_FiltersOnlyReadmeRules(t *testing.T) {
@@ -171,14 +175,14 @@ func TestWithoutReadmeBaseline_Boundary_NoTruncationAbove1000(t *testing.T) {
 	}
 }
 
-func assertReportAndEnforceReadFailure(t *testing.T, dir string) {
+func assertReportAndEnforceReadFailure(t *testing.T, dir, wantMsg string) {
 	t.Helper()
 	line, err := Audit(t.Context(), Options{Root: dir})
-	if err != nil || !strings.Contains(line, "[REPORT] README-00") {
-		t.Fatalf("report mode on unreadable/invalid README: err=%v line=%q", err, line)
+	if err != nil || !strings.Contains(line, "[REPORT] README-00") || !strings.Contains(line, wantMsg) {
+		t.Fatalf("report mode on unreadable/invalid README: want %q, err=%v line=%q", wantMsg, err, line)
 	}
-	if _, err := Audit(t.Context(), Options{Root: dir, Enforce: true}); err == nil {
-		t.Fatal("enforce mode on unreadable/invalid README must fail")
+	if _, err := Audit(t.Context(), Options{Root: dir, Enforce: true}); err == nil || !strings.Contains(err.Error(), wantMsg) {
+		t.Fatalf("enforce mode on unreadable/invalid README: want %q, got err=%v", wantMsg, err)
 	}
 }
 
@@ -188,13 +192,13 @@ func TestAudit_Boundary_DirectoryUnreadableAndOversizedReportVsEnforce(t *testin
 		if err := os.Mkdir(filepath.Join(dir, "README.md"), 0o750); err != nil {
 			t.Fatal(err)
 		}
-		assertReportAndEnforceReadFailure(t, dir)
+		assertReportAndEnforceReadFailure(t, dir, "README.md is not a regular file")
 	})
 
 	t.Run("oversized README", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTestReadme(t, dir, strings.Repeat("a", MaxFileBytes+1))
-		assertReportAndEnforceReadFailure(t, dir)
+		assertReportAndEnforceReadFailure(t, dir, "README.md exceeds maximum size")
 	})
 
 	t.Run("unreadable README", func(t *testing.T) {
@@ -212,7 +216,7 @@ func TestAudit_Boundary_DirectoryUnreadableAndOversizedReportVsEnforce(t *testin
 				t.Log(err)
 			}
 		})
-		assertReportAndEnforceReadFailure(t, dir)
+		assertReportAndEnforceReadFailure(t, dir, "README.md cannot be read (permission denied)")
 	})
 }
 

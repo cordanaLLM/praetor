@@ -11,7 +11,6 @@ import (
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/harvester"
 	"github.com/cordanaLLM/praetor/internal/hiss"
-	"github.com/cordanaLLM/praetor/internal/readmepresentation"
 )
 
 var errRepairPublicRerun = errors.New("verified public report lacks current policy or baseline evidence; rerun required")
@@ -360,8 +359,7 @@ func repairPublicRelativePath(path string) bool {
 }
 
 func validateRepairRatchet(original *hiss.ScanReport, check *PublicVerification, changed []string) error {
-	infs := publicInfractions(original)
-	base := readmepresentation.WithoutReadmeBaseline(&baseline.Baseline{Version: 1, TotalInfractions: len(infs), Infractions: infs})
+	base := &baseline.Baseline{Version: 1, TotalInfractions: original.TotalInfractions, Infractions: publicInfractions(original)}
 	expected := baseline.EvaluateRatchet(base, publicInfractions(check.Scan), changed)
 	actual := check.Ratchet
 	if !expected.Passed || actual.PreviousCount != expected.PreviousCount || actual.CurrentCount != expected.CurrentCount ||

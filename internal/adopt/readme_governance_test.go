@@ -388,3 +388,84 @@ func mustAdoptReadmeBaseline(t *testing.T, _, _ string, opts AdoptOptions) *Adop
 	}
 	return rep
 }
+
+func TestAdoptRerecord_PerClassMonotonicAndLegacyDebtCountExcludesReadme(t *testing.T) {
+	lockRoot := newAdoptLockSource(t)
+	repoPath := newTestRepo(t, "readme-cancel-hiss")
+	mustWrite(t, filepath.Join(repoPath, readmeFile), "# Minimal\n\nPlain text.\n")
+	mustAdoptReadmeBaseline(t, lockRoot, repoPath, AdoptOptions{
+		LockSourceRoot: lockRoot, Path: repoPath, RecordBaseline: true,
+	})
+	enableReadmePresentationGate(t, repoPath)
+	rep := mustAdoptReadmeBaseline(t, lockRoot, repoPath, AdoptOptions{
+		LockSourceRoot: lockRoot, Path: repoPath, RecordBaseline: true,
+		RerecordBaseline: true, AllowBaselineIncrease: true, BaselineIncreaseReason: "initial readme finding",
+	})
+	if rep.LegacyDebtCount != 0 {
+		t.Fatalf("LegacyDebtCount = %d, want 0 (README entries excluded)", rep.LegacyDebtCount)
+	}
+	keptRep := mustAdoptReadmeBaseline(t, lockRoot, repoPath, AdoptOptions{
+		LockSourceRoot: lockRoot, Path: repoPath, RecordBaseline: true,
+	})
+	if keptRep.LegacyDebtCount != 0 {
+		t.Fatalf("kept LegacyDebtCount = %d, want 0", keptRep.LegacyDebtCount)
+	}
+	verifyRep := mustAdoptReadmeBaseline(t, lockRoot, repoPath, AdoptOptions{
+		LockSourceRoot: lockRoot, Path: repoPath, RecordBaseline: false,
+	})
+	if verifyRep.LegacyDebtCount != 0 {
+		t.Fatalf("verify LegacyDebtCount = %d, want 0", verifyRep.LegacyDebtCount)
+	}
+	mustWrite(t, filepath.Join(repoPath, readmeFile), "# Minimal\n[![a](https://img.shields.io/badge/a-b-blue?style=for-the-badge)](https://x)\n**Tag**\n")
+	mustWrite(t, filepath.Join(repoPath, "rec.go"), "package main\nfunc loop(n int) int { return loop(n - 1) }\n")
+	if _, err := Adopt(t.Context(), AdoptOptions{
+		LockSourceRoot: lockRoot, Path: repoPath, RecordBaseline: true, RerecordBaseline: true,
+	}); !errors.Is(err, baseline.ErrDebtIncrease) {
+		t.Fatalf("expected ErrDebtIncrease when README fix cancels new HISS violation, got: %v", err)
+	}
+}
+
+func TestAdoptRerecord_HISSFixDoesNotCancelNewReadmeDebt(t *testing.T) {
+	lockRoot := newAdoptLockSource(t)
+	repoPath := newTestRepo(t, "hiss-cancel-readme")
+	mustWrite(t, filepath.Join(repoPath, readmeFile), "# Minimal\n[![a](https://img.shields.io/badge/a-b-blue?style=for-the-badge)](https://x)\n**Tag**\n")
+	mustWrite(t, filepath.Join(repoPath, "rec.go"), "package main\nfunc loop(n int) int { return loop(n - 1) }\n")
+	mustAdoptReadmeBaseline(t, lockRoot, repoPath, AdoptOptions{
+		LockSourceRoot: lockRoot, Path: repoPath, RecordBaseline: true,
+	})
+	enableReadmePresentationGate(t, repoPath)
+	mustWrite(t, filepath.Join(repoPath, "rec.go"), "package main\nfunc calm() int { return 1 }\n")
+	mustWrite(t, filepath.Join(repoPath, readmeFile), "# Minimal\n\nPlain text.\n")
+	if _, err := Adopt(t.Context(), AdoptOptions{
+		LockSourceRoot: lockRoot, Path: repoPath, RecordBaseline: true, RerecordBaseline: true,
+	}); !errors.Is(err, baseline.ErrDebtIncrease) {
+		t.Fatalf("expected ErrDebtIncrease when HISS fix cancels new README finding, got: %v", err)
+	}
+}
+
+func TestAdopt_FirstBaselineAndKeptBaselineHonorReadmeGate(t *testing.T) {
+	lockRoot := newAdoptLockSource(t)
+	repoPath := newTestRepo(t, "first-and-kept-enforce")
+	mustWrite(t, filepath.Join(repoPath, readmeFile), "# Minimal\n\nPlain text.\n")
+	mustAdoptReadmeBaseline(t, lockRoot, repoPath, AdoptOptions{
+		LockSourceRoot: lockRoot, Path: repoPath, RecordBaseline: false,
+	})
+	enableReadmePresentationGate(t, repoPath)
+	firstRep := mustAdoptReadmeBaseline(t, lockRoot, repoPath, AdoptOptions{
+		LockSourceRoot: lockRoot, Path: repoPath, RecordBaseline: true,
+	})
+	if firstRep.LegacyDebtCount != 0 {
+		t.Fatalf("first baseline LegacyDebtCount = %d, want 0", firstRep.LegacyDebtCount)
+	}
+	assertReadmeBaselineRecorded(t, repoPath)
+
+	if err := baseline.SaveBaseline(filepath.Join(repoPath, ".standards-baseline.json"), &baseline.Baseline{
+		Version: 1, TotalInfractions: 0, Infractions: []baseline.Infraction{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	keptRep := mustAdoptReadmeBaseline(t, lockRoot, repoPath, AdoptOptions{
+		LockSourceRoot: lockRoot, Path: repoPath, RecordBaseline: true,
+	})
+	assertKeptRatchet(t, keptRep.BaselineRatchet, false, 1, 1)
+}

@@ -76,15 +76,13 @@ func comparePublicBaseline(ctx context.Context, recorded *baseline.Baseline, ori
 		return errors.New("adopted baseline version or count differs from the independent original scan")
 	}
 	hissRecorded := readmepresentation.WithoutReadmeBaseline(recorded)
-	hissOriginal := publicInfractions(original)
-	hissOriginalCount := original.TotalInfractions - (len(original.Violations) - len(hissOriginal))
-	if hissRecorded.TotalInfractions != hissOriginalCount || hissRecorded.TotalInfractions != len(hissOriginal) {
+	if hissRecorded.TotalInfractions != original.TotalInfractions || hissRecorded.TotalInfractions != len(original.Violations) {
 		return errors.New("adopted baseline version or count differs from the independent original scan")
 	}
 	// Fingerprints may legitimately collide at the same rule/file/line. Compare
 	// the full entry multiset, retaining multiplicity while ignoring list order.
-	expected := make(map[baseline.Infraction]int, len(hissOriginal))
-	for _, infraction := range hissOriginal {
+	expected := make(map[baseline.Infraction]int, len(original.Violations))
+	for _, infraction := range publicInfractions(original) {
 		expected[infraction]++
 	}
 	for i := 0; i < len(hissRecorded.Infractions) && i < hiss.MaxInfractionsCap; i++ {

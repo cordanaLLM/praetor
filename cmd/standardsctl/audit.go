@@ -297,7 +297,7 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 		ratchet.CurrentCount, hissBase.TotalInfractions, len(touched), scanRep.Skips.DirCount,
 		scanRep.Skips.Symlinks, scanRep.Skips.Oversize, scanRep.Skips.Irregular))
 
-	return auditRatchetPassed(ctx, opts, hissBase, ratchet)
+	return auditRatchetPassed(ctx, opts, base, ratchet)
 }
 
 // auditRatchetRejection returns an error describing why the ratchet failed.

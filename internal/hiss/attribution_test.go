@@ -399,9 +399,15 @@ func TestAttributeRatchet_Boundary_TreeRecordsAndScope(t *testing.T) {
 		{RuleID: "HISS-01", FilePath: "pkg\\a.go"},
 		{RuleID: "HISS-02", FilePath: "pkg/c.go"},
 		{RuleID: "HISS-01", FilePath: "tool.py"},
+		{RuleID: "README-01", FilePath: "README.md"},
 	})
 	if !packages["pkg"] || len(packages) != 1 || !files["pkg/c.go"] || !files["tool.py"] || len(files) != 2 {
 		t.Errorf("scope: files %v packages %v", files, packages)
+	}
+	if got, err := findingsAtCommit(t.Context(), t.TempDir(), object, []baseline.Infraction{
+		{RuleID: "README-01", FilePath: "README.md"},
+	}, ScanOptions{}); err != nil || got != nil {
+		t.Errorf("findingsAtCommit on README-only violations = (%v, %v), want (nil, nil)", got, err)
 	}
 
 	passed := &baseline.RatchetResult{Passed: true}
