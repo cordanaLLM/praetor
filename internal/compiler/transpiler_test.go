@@ -103,8 +103,8 @@ func TestTranspilerWriteOutputsSlowWithinBound(t *testing.T) {
 // deadlineCaseBound bounds the deadline-naming cases. One context bounds every target of a
 // run, so a real slow write or read of another target could spend it first: the Windows
 // runner spent 80 ms on .github/copilot-instructions.md and the deadline named that target
-// (main 4f04246c6, 2026-10-23). The other targets therefore never wait on the bound, and the
-// bound leaves room for the directory checks that run before the stubbed target.
+// (main 4f04246c6, 2026-10-23). The other targets therefore never touch the disk inside the
+// bound, and the bound leaves room for the directory checks that run before the stubbed target.
 const deadlineCaseBound = 500 * time.Millisecond
 
 func TestTranspilerWriteOutputsDeadlineNamesBoundAndTarget(t *testing.T) {
@@ -135,12 +135,17 @@ func TestTranspilerVerifyDeadlineNamesBoundAndTarget(t *testing.T) {
 		if err := NewTranspiler().WriteOutputs(res, dir); err != nil {
 			t.Fatal(err)
 		}
+		// The other targets answer from the compiled result, so the comparison stays real while
+		// no disk read spends the bound: Verify checks the context after every target.
+		written := make(map[string][]byte, len(res.Files))
+		for _, file := range res.Files {
+			written[file.RelativePath] = []byte(file.Content)
+		}
 		tr := NewTranspiler()
 		tr.Bound = bound
 		tr.readTarget = func(ctx context.Context, root, rel string) ([]byte, error) {
 			if rel != ".codex/rules.md" {
-				// the other targets are compared for real but never spend the bound
-				return readConfinedText(context.WithoutCancel(ctx), root, rel)
+				return written[rel], nil
 			}
 			<-ctx.Done()
 			if lateSuccess {
