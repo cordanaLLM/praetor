@@ -363,11 +363,10 @@ const scanPassBudget = 50
 
 // scanCostProbe measures the emitted interceptor's matcher in its own process. It loads the
 // script as a module, so main does not run, and times check_command with CPU time: the pass
-// on the reference command in three batches of at least 0.2 s each, because process_time
-// advances in 15.6 ms ticks on Windows, keeping the cheapest; then each command `runs` times,
-// keeping the least time with the verdict (2 for a refusal). The least reading is the one
-// Python's timeit documentation recommends: higher readings come from interference, not from
-// the code.
+// on the reference command in at least three batches of at least 0.2 s each (or runs where
+// the probe allows), keeping the cheapest; then each command `runs` times, keeping the least
+// time with the verdict (2 for a refusal). The least reading is the one Python's timeit
+// documentation recommends: higher readings come from interference, not from the code.
 const scanCostProbe = `import json, runpy, sys, time
 
 module = runpy.run_path(sys.argv[1])
@@ -384,9 +383,9 @@ def timed(command):
     return time.process_time() - start, 0
 
 
-def one_pass(command):
+def one_pass(command, runs=3):
     best = None
-    for _ in range(3):
+    for _ in range(runs):
         start, count = time.process_time(), 0
         while count < 100000:
             timed(command)
@@ -404,7 +403,7 @@ def least(command, runs):
 
 
 costs = [least(command, request["runs"]) for command in request["commands"]]
-print(json.dumps({"pass": one_pass(request["reference"]), "costs": costs}))
+print(json.dumps({"pass": one_pass(request["reference"], max(3, request["runs"])), "costs": costs}))
 `
 
 // scanCosts is what scanCostProbe reports: the CPU seconds of one pass and, per command, the
@@ -574,9 +573,29 @@ func TestScanPassBudgetRefusesPlantedSuperlinearMatchers(t *testing.T) {
 	for _, shape := range scanBoundShapes() {
 		shapes[shape.name] = shape
 	}
+	// On a loaded CI Linux runner (run 39938932140), the ten-dollar run measured 48.9 passes,
+	// failing scanPassBudget (50). A twelve-dollar run inside the scan bound holds a runner-proof
+	// margin (around 750 passes on host, >= 10x budget) against runner interference.
+	shapes["planted dollar runs"] = scanShape{
+		name:    "planted dollar runs",
+		command: boundLines(`git am "$$$$$$$$$$$${`),
+		want:    0,
+	}
+	// The find plant on find lines held 128 to 131 passes on host but dropped to 89.2 on
+	// a loaded runner (1.8x budget). A shape with 135 find words, 115 .git/hooks paths and
+	// trailing space-dash pairs inside the scan bound measured 244 to 253 passes on host
+	// (about five budgets), so the runner drop seen on the dollar plant (about 3x) still
+	// leaves it above the budget.
+	shapes["planted find lines"] = scanShape{
+		name: "planted find lines",
+		command: boundLines(strings.Repeat("find ", 135) +
+			strings.Repeat(".git/hooks", 115) +
+			strings.Repeat(" -", 111)),
+		want: 0,
+	}
 	for _, tc := range []struct{ name, pattern, shape string }{
-		{"nested quantifier over the dollar runs", `(\$+\$?)+\{x`, "am before odd dollar runs"},
-		{"find rule before #829", `\bfind\b[^\n]*(?i:\.git[/\\]hooks)[^\n]*\s-(delete|exec|execdir|ok)\b`, "find lines"},
+		{"nested quantifier over the dollar runs", `(\$+\$?)+\{x`, "planted dollar runs"},
+		{"find rule before #829", `\bfind\b[^\n]*(?i:\.git[/\\]hooks)[^\n]*\s-(delete|exec|execdir|ok)\b`, "planted find lines"},
 	} {
 		script := filepath.Join(t.TempDir(), "planted_block_evasion.py")
 		mustWrite(t, script, plantedInterceptor(t, tc.pattern))
