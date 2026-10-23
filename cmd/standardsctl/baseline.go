@@ -135,10 +135,17 @@ func verifyBaseline(path string, b *baseline.Baseline, all bool) error {
 	if err := verifyFileBaseline(ctx, root, path, b, current, scanOpts, all); err != nil {
 		return err
 	}
-	if filepath.Base(path) == gating.ReadmeBaselineFile || filepath.Base(path) == gating.GosecBaselineFile {
+	if auxiliaryBaselineFile(path) {
 		return nil
 	}
 	return verifyOptionalBaselines(ctx, root, scanOpts, all)
+}
+
+// auxiliaryBaselineFile reports whether path names one of the per-class snapshots beside the HISS baseline
+// (.readme-baseline.json, .gosec-baseline.json); a command given one of them handles that file alone.
+func auxiliaryBaselineFile(path string) bool {
+	base := filepath.Base(path)
+	return base == gating.ReadmeBaselineFile || base == gating.GosecBaselineFile
 }
 
 func verifyOptionalBaselines(ctx context.Context, root string, scanOpts hiss.ScanOptions, all bool) error {
@@ -283,7 +290,7 @@ func planFileBaseline(ctx context.Context, root, path string, opts baseline.Reco
 	if err != nil {
 		return plan, err
 	}
-	if previous.Absent && len(findings) == 0 && (filepath.Base(path) == gating.ReadmeBaselineFile || filepath.Base(path) == gating.GosecBaselineFile) {
+	if previous.Absent && len(findings) == 0 && auxiliaryBaselineFile(path) {
 		return plan, nil
 	}
 	var next *baseline.Baseline
@@ -372,8 +379,10 @@ func printBaseline(path string, b *baseline.Baseline) error {
 	if b.Count() == 0 {
 		fmt.Println("Zero technical debt recorded in this baseline.")
 	}
-	if err := printOptionalBaselines(filepath.Dir(path), repo); err != nil {
-		return err
+	if !auxiliaryBaselineFile(path) {
+		if err := printOptionalBaselines(filepath.Dir(path), repo); err != nil {
+			return err
+		}
 	}
 	fmt.Println("This is the stored snapshot, not a live scan; run 'praetorctl baseline --verify' or 'praetorctl audit' to check the repository.")
 	return nil

@@ -134,6 +134,28 @@ func TestReview8ExplicitReadmeFile(t *testing.T) {
 	mustContain(t, out, "1 active")
 }
 
+// TestReview9InspectReadmeFileOnce: inspecting .readme-baseline.json prints that snapshot once, not again as an
+// optional baseline beside itself (review r9 finding F7).
+func TestReview9InspectReadmeFileOnce(t *testing.T) {
+	f := newAuditFixture(t)
+	writeFixtureFile(t, f.dir, "README.md", "# Widgets\n")
+	findings, err := readmepresentation.CheckFile(t.Context(), f.dir, "README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(f.dir, separatedReadmeFile)
+	if err := baseline.SaveBaseline(path, &baseline.Baseline{Version: 1, Infractions: readmepresentation.ToBaseline(findings)}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return runBaseline([]string{"--file", path}) })
+	if err != nil {
+		t.Fatalf("inspect of the README file failed: %v", err)
+	}
+	if n := strings.Count(out, "Technical Debt Baseline"); n != 1 {
+		t.Errorf("README snapshot printed %d times, want once:\n%s", n, out)
+	}
+}
+
 func TestReview8DebtLinesOnce(t *testing.T) {
 	rep := &adopt.AdoptReport{BaselineStatus: "existing", BaselineRatchets: []adopt.BaselineRatchet{
 		{File: separatedReadmeFile, Passed: true, Recorded: 1, Active: 1},
