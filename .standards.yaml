@@ -80,6 +80,16 @@ exceptions:
     path: ".github/workflows/release-binaries.yml"
     reason: "release provenance not yet built by an isolated Level 3 builder; the release job reaches Level 2 (#799)"
     expires: "2027-01-04"
+  - rule: "HISS-19"
+    path: "tools/apicompat/gate/main.go"
+    fingerprint: "b2b91312"
+    reason: "category D: the API compatibility gate is a standalone standard-library program rendered into adopter repositories, so its context-aware wait (defaultWait) cannot call internal/admission.SleepContext; the ten-line clone stays (order engine-praetor-api-modfetch-retry-20261022)"
+    expires: "2027-02-20"
+  - rule: "HISS-19"
+    path: "internal/admission/admission.go"
+    fingerprint: "b2b91312"
+    reason: "category D: SleepContext is the engine's context-aware wait; the standalone API compatibility gate (tools/apicompat/gate/main.go, rendered into adopter repositories) carries the same ten lines as defaultWait because it imports no engine package (order engine-praetor-api-modfetch-retry-20261022)"
+    expires: "2027-02-20"
 
 # Text register per audience surface and task class (ADR-0010). Task keys are target_tasks
 # labels of .config/models/routing.yaml; every label without a row writes in the register
