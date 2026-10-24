@@ -5,6 +5,6 @@
   "description": "Pinned jscpd code clone detector for polyglot foreign dedupe",
   "type": "module",
   "dependencies": {
-    "jscpd": "5.4.1"
+    "jscpd": "5.4.2"
   }
 }
