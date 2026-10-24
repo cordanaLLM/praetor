@@ -1,11 +1,3 @@
 {
-  "exceptions": [
-    {
-      "advisory": "GHSA-ch52-4w7c-c8xp",
-      "package": "http-cache-semantics",
-      "locks": ["docs/presets/starlight"],
-      "reason": "max-stale handling can disclose a cached response to another user of a shared cache. Astro 7.3.5 uses the package only in dist/assets/build/remote.js, to decide whether a remote image fetched during the static build may be reused from the build cache. A build serves no users, so no response can cross users. No fixed release exists: http-cache-semantics 4.2.0 is the latest, and astro 7.3.5 requires ^4.2.0.",
-      "expires": "2026-11-02"
-    }
-  ]
+  "exceptions": []
 }
