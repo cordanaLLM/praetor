@@ -181,7 +181,7 @@ func runNodePrefetch(ctx context.Context, cfg *stageConfig) (string, error) {
 	}
 	args := nodeInstallArgs(manager, classic)
 	what := manager + " " + strings.Join(args, " ")
-	err = inStageWorktree(ctx, cfg, DefaultPrefetchTimeout, func(tCtx context.Context, dir string) error {
+	err = inStageWorktree(ctx, cfg, DefaultPrefetchTimeout, "", func(tCtx context.Context, dir string) error {
 		out, runErr := cfg.run(tCtx, dir, manager, args...)
 		if runErr != nil {
 			return commandFailure(ctx, tCtx, what, DefaultPrefetchTimeout, out, maxNodeOutputBytes, runErr)
@@ -391,7 +391,7 @@ func runNodeScript(tCtx context.Context, cfg *stageConfig, bound time.Duration, 
 		return nil
 	}
 	excerpt := util.TruncateExcerpt(out, maxNodeOutputBytes)
-	if cutErr := cutError(tCtx, what, bound, dir, fmt.Sprintf("%s [%v]", excerpt, err)); cutErr != nil {
+	if cutErr := cutError(tCtx, what, bound, "", dir, fmt.Sprintf("%s [%v]", excerpt, err)); cutErr != nil {
 		return cutErr
 	}
 	return fmt.Errorf("%s failed in %s: %s (%w)", what, dir, excerpt, err)
@@ -402,7 +402,7 @@ func runNodeWorktreeScripts(tCtx context.Context, cfg *stageConfig, bound time.D
 	out, err := cfg.run(tCtx, dir, manager, installArgs...)
 	if err != nil {
 		excerpt := util.TruncateExcerpt(out, maxNodeOutputBytes)
-		if cutErr := cutError(tCtx, installWhat, bound, dir, fmt.Sprintf("%s [%v]", excerpt, err)); cutErr != nil {
+		if cutErr := cutError(tCtx, installWhat, bound, "", dir, fmt.Sprintf("%s [%v]", excerpt, err)); cutErr != nil {
 			return cutErr
 		}
 		return fmt.Errorf("%s failed in %s: %s (%w)", installWhat, dir, excerpt, err)
@@ -479,7 +479,7 @@ func runNodeTests(ctx context.Context, cfg *stageConfig) (string, error) {
 		}
 	}
 	installArgs := nodeInstallArgs(manager, classic)
-	err = inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
+	err = inStageWorktree(ctx, cfg, bound, "", func(tCtx context.Context, dir string) error {
 		return runNodeWorktreeScripts(tCtx, cfg, bound, dir, manager, installArgs, hasTest, hasLint)
 	})
 	if err != nil {

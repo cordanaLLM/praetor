@@ -11,6 +11,9 @@ import (
 
 const maxSuitePages = (harvester.MaxTranscriptRecords + harvester.MaxTranscriptBatchRecords - 1) / harvester.MaxTranscriptBatchRecords
 
+// transcriptBatchRecords is the batch size for transcript ingestion passes (overridable in tests).
+var transcriptBatchRecords = harvester.MaxTranscriptBatchRecords
+
 // SuiteReplayPass preserves every actual page, including partial cache failures.
 type SuiteReplayPass struct {
 	Pages          []*harvester.TranscriptIngestReport `json:"pages"`
@@ -54,7 +57,7 @@ func validateReplayConsistency(first, replay *SuiteReplayPass) error {
 }
 
 func suiteTranscriptPass(ctx context.Context, source SuiteTranscript, cache string, pass *SuiteReplayPass) error {
-	opts := harvester.TranscriptIngestOptions{Format: source.Format, SourcePath: source.SourcePath, ExpectedSHA256: source.SHA256, CacheDir: cache, MaxRecords: harvester.MaxTranscriptBatchRecords}
+	opts := harvester.TranscriptIngestOptions{Format: source.Format, SourcePath: source.SourcePath, ExpectedSHA256: source.SHA256, CacheDir: cache, MaxRecords: transcriptBatchRecords}
 	for page := 0; page < maxSuitePages; page++ {
 		report, err := harvester.IngestTranscript(ctx, opts)
 		if report != nil {

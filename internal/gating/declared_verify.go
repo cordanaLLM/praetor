@@ -69,7 +69,7 @@ func runDeclaredVerifyStage(ctx context.Context, cfg *stageConfig) (string, erro
 	if origin == "" {
 		origin = "default"
 	}
-	stageErr := inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
+	stageErr := inStageWorktree(ctx, cfg, bound, origin, func(tCtx context.Context, dir string) error {
 		return executeDeclaredVerify(tCtx, cfg, dir, bound, origin)
 	})
 	if stageErr != nil {

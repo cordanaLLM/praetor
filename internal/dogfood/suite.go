@@ -15,6 +15,9 @@ import (
 // MaxSuiteDuration is a ceiling for the complete case set, including replay.
 const MaxSuiteDuration = 15 * time.Minute
 
+// suiteDuration is the ceiling for the complete case set (overridable in tests).
+var suiteDuration = MaxSuiteDuration
+
 // SuiteOptions selects a config snapshot, explicit stage, and new private output.
 type SuiteOptions struct {
 	ConfigPath  string `json:"config_path"`
@@ -67,7 +70,7 @@ func RunSuite(ctx context.Context, opts SuiteOptions) (*SuiteReport, error) {
 	if ctx == nil {
 		return nil, errors.New("suite requires a context")
 	}
-	ctx, cancel := context.WithTimeout(ctx, MaxSuiteDuration)
+	ctx, cancel := context.WithTimeout(ctx, suiteDuration)
 	defer cancel()
 	if opts.Stage != "plan" && opts.Stage != "verify" {
 		return nil, errors.New("suite stage must be plan or verify")

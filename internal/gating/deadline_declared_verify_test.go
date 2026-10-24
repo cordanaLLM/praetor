@@ -138,8 +138,26 @@ func TestRunGatedPipeline_Negative_SlowVerifyOverDeclaredBoundFails(t *testing.T
 	if rep.Status != StatusRejected || got.Status != StageFailed {
 		t.Fatalf("status %s, stage %s %q; want rejected at the declared verification", rep.Status, got.Status, got.Message)
 	}
-	if !strings.Contains(got.Message, "did not finish within 1s (.standards.yaml)") {
-		t.Errorf("reason %q does not name the declared bound", got.Message)
+	// The declared bound covers worktree setup too, so on a slow runner setup can be what hits it
+	// (#1566): either reason must name the bound and where it came from.
+	if !strings.Contains(got.Message, "did not finish within 1s (.standards.yaml)") &&
+		!strings.Contains(got.Message, "hit the 1s stage bound (.standards.yaml)") {
+		t.Errorf("reason %q does not name the declared bound and origin", got.Message)
+	}
+}
+
+// Negative (#1566): when worktree creation itself hits the declared bound, the reason names
+// the bound and origin.
+func TestRunGatedPipeline_Negative_SetupCutOverDeclaredBoundFails(t *testing.T) {
+	requireMake(t)
+	t.Setenv(TestStageTimeoutEnv, "")
+	rep := gatedRun(t, commitDeclaredTimeout(t, declaredVerifyRepo(t, "@exit 0"), "1ns"), RunOptions{AdmitUnsupported: true})
+	got := stageNamed(t, rep, stageDeclaredVerify)
+	if rep.Status != StatusRejected || got.Status != StageFailed {
+		t.Fatalf("status %s, stage %s %q; want rejected at the declared verification", rep.Status, got.Status, got.Message)
+	}
+	if !strings.Contains(got.Message, "hit the 1ns stage bound (.standards.yaml)") {
+		t.Errorf("reason %q does not name the declared bound and origin on setup cut", got.Message)
 	}
 }
 

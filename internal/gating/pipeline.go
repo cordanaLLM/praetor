@@ -851,7 +851,7 @@ func runGoTestModule(ctx context.Context, cfg *stageConfig, module goModule, sco
 	bound := budget.StageBound
 	note := budget.Note
 	var scopeMsg string
-	err = inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
+	err = inStageWorktree(ctx, cfg, bound, "", func(tCtx context.Context, dir string) error {
 		moduleDir := filepath.Join(dir, filepath.Dir(filepath.FromSlash(module.file)))
 		var testErr error
 		scopeMsg, testErr = runGoRaceCommand(tCtx, cfg, module, moduleDir, bound, scopeCfg)
@@ -874,7 +874,7 @@ func runGoTestModule(ctx context.Context, cfg *stageConfig, module goModule, sco
 // expired stage context (removeWorktree), and a removal that fails is joined to suite's error
 // instead of dropped: an un-removed worktree would leak into the next gate. Every test suite the
 // test stage runs goes through it, so each language's suite is isolated the same way.
-func inStageWorktree(ctx context.Context, cfg *stageConfig, bound time.Duration,
+func inStageWorktree(ctx context.Context, cfg *stageConfig, bound time.Duration, origin string,
 	suite func(tCtx context.Context, dir string) error) (err error) {
 	tCtx, cancel := cfg.boundStage(ctx, bound)
 	defer cancel()
@@ -884,7 +884,7 @@ func inStageWorktree(ctx context.Context, cfg *stageConfig, bound time.Duration,
 		return fmt.Errorf("cannot create a worktree manager for %s", cfg.repoDir)
 	}
 	taskID := fmt.Sprintf("gate-%d-%d", os.Getpid(), time.Now().UnixNano())
-	wt, createErr := createStageWorktree(tCtx, wtMgr, taskID, bound, cfg.repoDir)
+	wt, createErr := createStageWorktree(tCtx, wtMgr, taskID, bound, origin, cfg.repoDir)
 	if createErr != nil {
 		return createErr
 	}
@@ -903,12 +903,12 @@ func inStageWorktree(ctx context.Context, cfg *stageConfig, bound time.Duration,
 // "exit status 1", and the stage reported a repository whose worktree could not be created --
 // the misattribution #100 describes, one step earlier. The run deadline can fire here as well,
 // and is reported as itself rather than as the stage bound (#314).
-func createStageWorktree(tCtx context.Context, wtMgr *worktree.Manager, taskID string, bound time.Duration, repoDir string) (*worktree.Worktree, error) {
+func createStageWorktree(tCtx context.Context, wtMgr *worktree.Manager, taskID string, bound time.Duration, origin string, repoDir string) (*worktree.Worktree, error) {
 	wt, err := wtMgr.Create(tCtx, taskID, "HEAD")
 	if err == nil {
 		return wt, nil
 	}
-	if cutErr := cutError(tCtx, "creating the isolated test worktree", bound, repoDir, err.Error()); cutErr != nil {
+	if cutErr := cutError(tCtx, "creating the isolated test worktree", bound, origin, repoDir, err.Error()); cutErr != nil {
 		return nil, cutErr
 	}
 	return nil, fmt.Errorf("isolated test worktree could not be created in %s: %w", repoDir, err)
@@ -916,12 +916,16 @@ func createStageWorktree(tCtx context.Context, wtMgr *worktree.Manager, taskID s
 
 // stageBoundError reports the test stage cut off by its own deadline while doing what, in dir.
 // cutError calls it only once the stage's own deadline is the one that fired.
-func stageBoundError(what string, bound time.Duration, dir, output string) error {
+func stageBoundError(what string, bound time.Duration, origin string, dir, output string) error {
+	boundOrigin := ""
+	if origin != "" {
+		boundOrigin = " (" + origin + ")"
+	}
 	return fmt.Errorf(
-		"%s hit the %s stage bound in %s before finishing; "+
+		"%s hit the %s stage bound%s in %s before finishing; "+
 			"this is the bound firing, not a test failure. Raise it with %s "+
 			"(maximum %s). Output up to the cut: %s",
-		what, bound, dir, TestStageTimeoutEnv, MaxTestStageTimeout, output)
+		what, bound, boundOrigin, dir, TestStageTimeoutEnv, MaxTestStageTimeout, output)
 }
 
 // raceDetectorAvailable reports whether `go test -race` can build here, and names what

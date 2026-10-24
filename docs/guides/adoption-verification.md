@@ -1293,7 +1293,10 @@ Node lockfile selects a toolchain stage, and the target is declared, the stage r
   `PRAETOR_TEST_STAGE_TIMEOUT` overrides the declared value when set. The whole-run deadline
   (`RunBudget`) reserves the declared bound so the run deadline does not cut the stage short (#314).
   When the bound fires, the stage's reason line names where the bound came from (`default`,
-  `environment`, `.standards.yaml`). Output capture is bounded by `util.RunCommand`.
+  `environment`, `.standards.yaml`). The bound covers creating the stage worktree too, so on a slow
+  runner setup can be what hits it; that reason names the origin as well, for example
+  `creating the isolated test worktree hit the 1s stage bound (.standards.yaml)` (#1566). Output
+  capture is bounded by `util.RunCommand`.
 - **Non-zero exit:** fails the stage and refuses the push. The reason names the command, its exit
   code and the end of its output, for example
   `declared verification make verify-all exited 2: ... Error 1` (GNU Make exits 2 when a recipe
