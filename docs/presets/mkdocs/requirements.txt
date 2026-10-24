@@ -231,9 +231,9 @@ markdown==3.10.3 ; python_full_version < '3.11' \
     #   mkdocs
     #   mkdocs-material
     #   pymdown-extensions
-markdown==3.11.1 ; python_full_version >= '3.11' \
-    --hash=sha256:496f4f80f9ebd3395a04c8ec9595c40bbe8ec19e9c67d21fe071a1643e876606 \
-    --hash=sha256:f1fa378ba5d682900c9ecb55ccceacca936016dda7c3b27097e8ae03ff78feb5
+markdown==3.11.2 ; python_full_version >= '3.11' \
+    --hash=sha256:87bf5d90f2d2882e2c02fcda182c2800456b985bff38913867c49706481514b0 \
+    --hash=sha256:f80390747a2a0ff2ba54da074ce4f862f72a6685f608cd2637b646a6d83993f5
     # via
     #   mkdocs
     #   mkdocs-material
@@ -438,9 +438,9 @@ platformdirs==4.12.4 ; python_full_version < '3.11' \
     --hash=sha256:63743c02414e755de4e31b8f68125c1407495b86c5a006e203c01ff8b9924250 \
     --hash=sha256:78bfb9db2a8471ed7eebe3c3c932da413911042994e699b384fbb4493fa872d7
     # via mkdocs-get-deps
-platformdirs==4.13.3 ; python_full_version >= '3.11' \
-    --hash=sha256:5e567f664eb087ab8521c0179cd8d1bd60857d271136567a39719e28e2d383ce \
-    --hash=sha256:f6ad7f447f24f8a3b82cce5976387428bff894a0eca6c3488f4a17f153c130c4
+platformdirs==4.13.5 ; python_full_version >= '3.11' \
+    --hash=sha256:05831adf87d392760f4b5c3a0a95579ab5a10b18b9b9bd43680dcb47544788a0 \
+    --hash=sha256:53d3ec4280b815c1e0b02edad7f9ee8fda1ba9c0865dd9c2e6e63849ce82fc1e
     # via mkdocs-get-deps
 pygments==2.21.0 \
     --hash=sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9 \
@@ -452,9 +452,9 @@ pymdown-extensions==12.3 \
     # via
     #   -r requirements.in
     #   mkdocs-material
-python-dateutil==2.9.0.post0 \
-    --hash=sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3 \
-    --hash=sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427
+python-dateutil==3.0.0 \
+    --hash=sha256:3c79630202e4152c6add678446984236efe4f57e84d8e892aab0637bab82e9fd \
+    --hash=sha256:7ebcb3c29a92f3ceafe79a7a48a5c45677e9e004bbeec5742ac0bbb00560b7a2
     # via ghp-import
 pyyaml==6.0.3 \
     --hash=sha256:00c4bdeba853cc34e7dd471f16b4114f4162dc03e6b7afcc2128711f0eca823c \
@@ -546,6 +546,10 @@ requests==2.34.2 \
 six==1.17.0 \
     --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274 \
     --hash=sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81
+    # via python-dateutil
+tzdata==2026.5 \
+    --hash=sha256:8cc73c0a0bfca7dbfa59235d60b2eff82231dee33f53d206db1acd9173cfc0a7 \
+    --hash=sha256:b683bd1b6659ddcd810ff02ad09ba821d4bf1065072805063eb35c49617905ac
     # via python-dateutil
 urllib3==2.8.0 \
     --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3 \
