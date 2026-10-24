@@ -443,3 +443,97 @@ func TestBaselineRecord_Gosec_Boundary_UnchangedDebtKeepsBothFiles(t *testing.T)
 		t.Error("gosec baseline was rewritten despite unchanged debt")
 	}
 }
+
+func TestBaselineRecord_ReadmePresentationSurvivesWithZeroHISS(t *testing.T) {
+	f := newAuditFixture(t)
+	writeFixtureFile(t, f.dir, "README.md", "# Widgets\n")
+
+	// Zero-debt baseline + report-only README finding must record fine without --allow-increase.
+	out, err := runBaselineCmd(t, f, "--record")
+	if err != nil {
+		t.Fatalf("record report-only readme finding with 0 HISS: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Total: 0 infractions")
+
+	// With gate.readme_presentation: true, recording without --allow-increase refuses and names README findings apart from HISS.
+	writeFixtureFile(t, f.dir, ".standards.yaml", "version: 1\nrepository:\n  owner: acme\n  name: widgets\ngate:\n  readme_presentation: true\n")
+	if _, err := runBaselineCmd(t, f, "--record"); err == nil || !strings.Contains(err.Error(), ".readme-baseline.json") {
+		t.Fatalf("expected refusal naming README presentation findings apart from HISS, got: %v", err)
+	}
+
+	out, err = runBaselineCmd(t, f, "--record", "--allow-increase", "--reason=readme presentation debt")
+	if err != nil {
+		t.Fatalf("record enforced readme finding with 0 HISS: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Total: 1 infractions, previously 0")
+
+	// Subsequent baseline --record with 0 HISS findings must preserve the README entry even without the enforce key.
+	writeFixtureFile(t, f.dir, ".standards.yaml", "version: 1\nrepository:\n  owner: acme\n  name: widgets\n")
+	out, err = runBaselineCmd(t, f, "--record")
+	if err != nil {
+		t.Fatalf("second record: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Baseline unchanged", "Total: 1 infractions, previously 1")
+
+	b, err := baseline.LoadBaseline(filepath.Join(f.dir, ".readme-baseline.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Absent || b.TotalInfractions != 1 {
+		t.Fatalf("expected README entry preserved in baseline, got: %+v", b)
+	}
+
+	out, err = runBaselineCmd(t, f, "--verify")
+	if err != nil {
+		t.Fatalf("verify baseline with README entry: %v\n%s", err, out)
+	}
+	mustContain(t, out, "1 active infractions within the 1 recorded")
+}
+
+func TestBaselineRecord_PerClassMonotonicAndInvalidManifest(t *testing.T) {
+	t.Run("README fix does not cancel new HISS debt", func(t *testing.T) {
+		f := newAuditFixture(t)
+		writeFixtureFile(t, f.dir, "README.md", "# Widgets\n")
+		writeFixtureFile(t, f.dir, ".standards.yaml", "version: 1\nrepository:\n  owner: acme\n  name: widgets\ngate:\n  readme_presentation: true\n")
+		if _, err := runBaselineCmd(t, f, "--record", "--allow-increase", "--reason=initial readme debt"); err != nil {
+			t.Fatalf("record initial readme debt: %v", err)
+		}
+		writeFixtureFile(t, f.dir, "README.md", "# Widgets\n[![a](https://img.shields.io/badge/a-b-blue?style=for-the-badge)](https://x)\n**Tag**\n")
+		f.addViolation(t)
+		if _, err := runBaselineCmd(t, f, "--record"); !errors.Is(err, baseline.ErrDebtIncrease) {
+			t.Fatalf("expected ErrDebtIncrease when README fix cancels new HISS violation, got: %v", err)
+		}
+		if _, err := runBaselineCmd(t, f, "--record", "--allow-increase", "--reason=accepted hiss debt"); err != nil {
+			t.Fatalf("expected --allow-increase to record HISS increase: %v", err)
+		}
+	})
+
+	t.Run("HISS fix does not cancel new README debt", func(t *testing.T) {
+		f := newAuditFixture(t)
+		f.addViolation(t)
+		if _, err := runBaselineCmd(t, f, "--record", "--allow-increase", "--reason=initial hiss debt"); err != nil {
+			t.Fatalf("record initial hiss debt: %v", err)
+		}
+		writeFixtureFile(t, f.dir, "legacy.go", "package legacy\n")
+		writeFixtureFile(t, f.dir, "README.md", "# Widgets\n")
+		writeFixtureFile(t, f.dir, ".standards.yaml", "version: 1\nrepository:\n  owner: acme\n  name: widgets\ngate:\n  readme_presentation: true\n")
+		if _, err := runBaselineCmd(t, f, "--record"); !errors.Is(err, baseline.ErrDebtIncrease) {
+			t.Fatalf("expected ErrDebtIncrease when HISS fix cancels new README finding, got: %v", err)
+		}
+		if _, err := runBaselineCmd(t, f, "--record", "--allow-increase", "--reason=accepted readme debt"); err != nil {
+			t.Fatalf("expected --allow-increase to record README increase: %v", err)
+		}
+	})
+
+	t.Run("invalid manifest fails record and verify", func(t *testing.T) {
+		f := newAuditFixture(t)
+		writeFixtureFile(t, f.dir, "README.md", "# Widgets\n")
+		writeFixtureFile(t, f.dir, ".standards.yaml", "version: 1\ngate:\n  unknown_key: true\n")
+		if _, err := runBaselineCmd(t, f, "--record"); err == nil {
+			t.Fatal("expected baseline --record to fail on invalid .standards.yaml")
+		}
+		if _, err := runBaselineCmd(t, f, "--verify"); err == nil {
+			t.Fatal("expected baseline --verify to fail on invalid .standards.yaml")
+		}
+	})
+}

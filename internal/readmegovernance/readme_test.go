@@ -365,3 +365,35 @@ func assertOnlyCRLF(t *testing.T, content string) {
 		t.Fatalf("README contains mixed line endings: %q", content)
 	}
 }
+
+func TestReconcileInsertsBlockAtEndAndStripBlockRemovesMidFileBlock(t *testing.T) {
+	input := "# Demo\n\nIntro.\n\n## Get started\n\nRun it.\n\n## Contribute\n\nPRs welcome.\n"
+	out, changed, err := Reconcile(input, State{BaselineKnown: true})
+	if err != nil || !changed {
+		t.Fatalf("Reconcile: changed=%v err=%v", changed, err)
+	}
+	if strings.Index(out, Start) < strings.Index(out, "## Contribute") {
+		t.Fatalf("expected governance block after last section, got:\n%s", out)
+	}
+	midFile := "# Demo\n\n" + Start + "\nold\n" + End + "\n\n## Get started\n\nRun it.\n"
+	stripped := StripBlock(midFile)
+	if stripped != "# Demo\n\n## Get started\n\nRun it.\n" {
+		t.Fatalf("StripBlock mid-file mismatch:\ngot:  %q\nwant: %q", stripped, "# Demo\n\n## Get started\n\nRun it.\n")
+	}
+	if got := StripBlock(Start + "\nold\n" + End + "\n\n## Tail\n"); got != "## Tail\n" {
+		t.Fatalf("StripBlock head-empty mismatch: got %q", got)
+	}
+	if got := StripBlock("# Head\n\n" + Start + "\nold\n" + End + "\n"); got != "# Head\n" {
+		t.Fatalf("StripBlock tail-empty mismatch: got %q", got)
+	}
+	if got := StripBlock(Start + "\nold\n" + End + "\n"); got != "" {
+		t.Fatalf("StripBlock both-empty mismatch: got %q, want empty", got)
+	}
+	relocated, _, err := Reconcile(stripped, State{BaselineKnown: true})
+	if err != nil {
+		t.Fatalf("Reconcile after StripBlock: %v", err)
+	}
+	if strings.Index(relocated, Start) < strings.Index(relocated, "## Get started") {
+		t.Fatalf("expected governance block moved to end after StripBlock+Reconcile, got:\n%s", relocated)
+	}
+}

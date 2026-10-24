@@ -24,7 +24,7 @@ func publicBaselineBytes(t *testing.T, recorded *baseline.Baseline) []byte {
 }
 
 func publicBaselineRecord(scan *hiss.ScanReport) *baseline.Baseline {
-	return &baseline.Baseline{Version: 1, TotalInfractions: scan.TotalInfractions, Infractions: publicInfractions(scan)}
+	return publicScanBaseline(scan)
 }
 
 func publicBaselineOriginal() *hiss.ScanReport {
@@ -153,5 +153,22 @@ func TestPublicBaselineRejectsInvalidAnchorsAndCancellation(t *testing.T) {
 	var nilContext context.Context
 	if _, err := readPublicBaseline(nilContext, dir); err == nil {
 		t.Fatal("nil context accepted")
+	}
+}
+
+func TestPublicBaselineRefusesReadmeEntries(t *testing.T) {
+	original := publicBaselineOriginal()
+	recorded := publicBaselineRecord(original)
+	recorded.Infractions = append(recorded.Infractions, baseline.Infraction{
+		RuleID:      "README-01",
+		FilePath:    "README.md",
+		LineNumber:  1,
+		Message:     "missing style=for-the-badge badge block under header",
+		Anchor:      "file:123456",
+		Fingerprint: "readme01fp",
+	})
+	recorded.TotalInfractions = len(recorded.Infractions)
+	if err := comparePublicBaseline(t.Context(), recorded, original); err == nil {
+		t.Fatal("comparePublicBaseline accepted a README entry in the HISS snapshot")
 	}
 }

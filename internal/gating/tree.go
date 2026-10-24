@@ -20,6 +20,8 @@ const (
 	// GosecBaselineFile is the legacy technical debt baseline the Security and SCA stage ratchets
 	// against for gosec findings.
 	GosecBaselineFile = ".gosec-baseline.json"
+	// ReadmeBaselineFile is the independent README presentation debt snapshot.
+	ReadmeBaselineFile = ".readme-baseline.json"
 	// TreePreconditionStage names the stage a run that could mint a receipt records when it
 	// refuses a working tree that does not match HEAD.
 	TreePreconditionStage = "Clean Tree Precondition"
@@ -37,9 +39,7 @@ var ErrUncleanTree = errors.New("the gate certifies only a working tree that mat
 // file. A manifest that does not load names no document here; the security stage fails on it.
 func subtractiveInputs(repoDir string) []string {
 	inputs := []string{BaselineFile, GosecConfigFile}
-	if util.FileExists(filepath.Join(repoDir, GosecBaselineFile)) {
-		inputs = append(inputs, GosecBaselineFile)
-	}
+	inputs = append(inputs, optionalBaselineFiles(repoDir)...)
 	if vex, err := config.RepositoryGoVEXPath(repoDir); err == nil {
 		inputs = append(inputs, vex)
 	}
@@ -152,4 +152,16 @@ func confirmTreeUnchanged(ctx context.Context, cfg *stageConfig) error {
 		return fmt.Errorf("%w: HEAD moved from %s to %s while the gate ran", ErrUncleanTree, cfg.rep.CommitSHA, now.commit)
 	}
 	return nil
+}
+
+// optionalBaselineFiles lists the independent snapshots present in this tree.
+func optionalBaselineFiles(repoDir string) []string {
+	names := []string{GosecBaselineFile, ReadmeBaselineFile}
+	present := make([]string, 0, len(names))
+	for i := 0; i < len(names); i++ {
+		if util.FileExists(filepath.Join(repoDir, names[i])) {
+			present = append(present, names[i])
+		}
+	}
+	return present
 }

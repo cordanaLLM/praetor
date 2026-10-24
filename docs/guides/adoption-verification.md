@@ -1614,6 +1614,23 @@ and `TestAudit_Positive_TouchedCountNamesBaselined` in
 [`cmd/standardsctl/audit_stale_baseline_test.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/audit_stale_baseline_test.go)
 pin the split, its line-shift case and the explanations.
 
+### Separate README presentation debt
+
+`.standards-baseline.json` carries HISS debt, `.readme-baseline.json` carries
+README presentation findings, and `.gosec-baseline.json` carries security findings.
+Every recorded/active count and ratchet is per file. `praetorctl baseline --record`
+and `--verify` handle the companion files; a README snapshot is created only when
+README findings exist or a README baseline was already present.
+
+`praetorctl adopt` migrates README entries out of a legacy mixed HISS snapshot
+before record, keep or re-record. It preserves fingerprints, anchors and metadata,
+subtracts moved entries from the HISS claimed total (floored at zero), and records
+the README entry count in the new file. `--dry-run` writes nothing; repeat adoption
+keeps the migrated bytes. An existing README baseline plus legacy README entries
+is refused with both paths. Audit refuses mixed files and names `praetorctl adopt`
+as the remedy. The planted migration and per-file count parity cases are in
+`cmd/standardsctl/readme_baseline_separation_test.go`.
+
 ### A baseline entry survives a line shift
 
 Inserting lines above a baselined function does not change the baseline. The entry still matches,

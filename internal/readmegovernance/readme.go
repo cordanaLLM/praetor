@@ -371,9 +371,34 @@ func insertManagedBlock(content, block string) string {
 	if trimmed == "" {
 		return block + "\n"
 	}
-	lineEnd := strings.Index(trimmed, "\n")
-	if strings.HasPrefix(strings.TrimSpace(trimmed), "# ") && lineEnd >= 0 {
-		return trimmed[:lineEnd+1] + "\n" + block + "\n" + trimmed[lineEnd+1:] + "\n"
-	}
 	return trimmed + "\n\n" + block + "\n"
+}
+
+// StripBlock removes an existing managed governance block from content so a subsequent
+// Reconcile inserts the block at the canonical end-of-file position. Content without a
+// valid managed block is returned unchanged so Reconcile surfaces any marker error.
+func StripBlock(content string) string {
+	normalized, crlf, err := util.NormalizeLineEndingsStrict(content)
+	if err != nil {
+		return content
+	}
+	first, last, err := util.FindMarkedBlock(normalized, Start, End)
+	if err != nil || first < 0 {
+		return content
+	}
+	lines := strings.Split(normalized, "\n")
+	head := strings.TrimRight(strings.Join(lines[:first], "\n"), "\n")
+	tail := strings.Trim(strings.Join(lines[last+1:], "\n"), "\n")
+	var out string
+	switch {
+	case head == "" && tail == "":
+		out = ""
+	case head == "":
+		out = tail + "\n"
+	case tail == "":
+		out = head + "\n"
+	default:
+		out = head + "\n\n" + tail + "\n"
+	}
+	return util.RestoreLineEndings(out, crlf)
 }

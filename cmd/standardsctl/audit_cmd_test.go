@@ -11,6 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/readmepresentation"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
@@ -596,4 +597,66 @@ func TestAudit_Positive_PreCommitFrameworkRunner(t *testing.T) {
 	writeFixtureFile(t, f.dir, ".pre-commit-config.yaml", local)
 	_, err = f.audit(t)
 	mustErrContain(t, err, "does not run 'praetorctl audit'")
+}
+
+func TestAudit_ReadmePresentationSeparateBaselineWiring(t *testing.T) {
+	f := newAuditFixture(t)
+	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+"adoption:\n  decline: [readme]\n")
+	writeFixtureFile(t, f.dir, "README.md", "# Widgets\n")
+
+	// 1. Report mode prints [REPORT] README presentation without failing audit.
+	out, err := f.audit(t)
+	if err != nil {
+		t.Fatalf("report mode audit: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[REPORT] README presentation measured, not enforced:")
+
+	// 2. Separate README snapshot leaves the HISS snapshot unchanged.
+	findings, err := readmepresentation.CheckFile(t.Context(), f.dir, "README.md")
+	if err != nil || len(findings) == 0 {
+		t.Fatalf("CheckFile: findings=%v err=%v", findings, err)
+	}
+	writeReadmeFixtureBaseline(t, f, findings, "readme debt")
+	gitCommitAll(t, f.dir, f.gitEnv, "record readme baseline")
+	out, err = f.audit(t)
+	if err != nil {
+		t.Fatalf("audit with README baseline entry: %v\n%s", err, out)
+	}
+	mustContain(t, out,
+		"[PASS] HISS invariant scan verified: 0 active violations within 0 baselined limit",
+		"[PASS] README presentation: 1 active finding(s) within 1 recorded in .readme-baseline.json.",
+	)
+
+	// 3. Enforce switch fails when unbaselined README findings exist.
+	writeReadmeFixtureBaseline(t, f, nil, "")
+	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+"adoption:\n  decline: [readme]\ngate:\n  readme_presentation: true\n")
+	gitCommitAll(t, f.dir, f.gitEnv, "enable readme_presentation gate")
+	_, err = f.audit(t)
+	mustErrContain(t, err, "[FAIL] README presentation:")
+
+	// 4. Hand-added README baseline entry without rationale fails --base growth guard (D1).
+	writeReadmeFixtureBaseline(t, f, findings, "")
+	_, err = f.audit(t, "--base=HEAD")
+	mustErrContain(t, err, "HISS-13 debt ratchet")
+
+	// With rationale it passes --base and --max-stale-baseline-entries=0 while README finding is active (D1 filter).
+	writeReadmeFixtureBaseline(t, f, findings, "accepted readme debt")
+	out, err = f.audit(t, "--base=HEAD", "--max-stale-baseline-entries=0")
+	if err != nil {
+		t.Fatalf("active README baseline entry with --base=HEAD --max-stale-baseline-entries=0: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[WARN] HISS-13 debt ratchet", "accepted readme debt")
+
+	// 5. Fixing README leaves a stale README baseline entry that fails --max-stale-baseline-entries=0 (D2).
+	writeFixtureFile(t, f.dir, "README.md", "# Widgets\n[![a](https://img.shields.io/badge/a-b-blue?style=for-the-badge)](https://x)\n**Tag**\n")
+	_, err = f.audit(t, "--max-stale-baseline-entries=0")
+	mustErrContain(t, err, "--max-stale-baseline-entries=0 allows at most 0")
+}
+
+func writeReadmeFixtureBaseline(t *testing.T, f *auditFixture, findings []readmepresentation.Finding, reason string) {
+	t.Helper()
+	b := &baseline.Baseline{Version: 1, Infractions: readmepresentation.ToBaseline(findings), IncreaseRationale: reason}
+	if err := baseline.SaveBaseline(filepath.Join(f.dir, ".readme-baseline.json"), b); err != nil {
+		t.Fatal(err)
+	}
 }

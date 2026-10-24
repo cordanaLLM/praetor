@@ -47,9 +47,9 @@ func TestAdopt_RejectedKeptBaselineIsPending_3D(t *testing.T) {
 		if !slices.Contains(rep.PendingPillars(), debtBaselinePillar) {
 			t.Fatalf("%s pending = %q; want the rejected baseline to hold back the success line", name, rep.PendingPillars())
 		}
-		closing := strings.Join(rep.PendingBaseline(), "\n")
+		closing := strings.Join(append(rep.BaselineLines(), rep.PendingBaseline()...), "\n")
 		for _, want := range []string{
-			debtBaselinePillar + ": " + rep.BaselineRatchet.Line(), "ratchet rejects: 1 active infractions against 0 recorded, 1 not in the baseline",
+			rep.BaselineRatchet.Line(), "ratchet rejects: 1 active infractions against 0 recorded, 1 not in the baseline",
 			"fix the findings", "'praetorctl adopt --rerecord-baseline --allow-increase --reason=<why>'",
 			"'praetorctl baseline --record --allow-increase --reason=<why>'", "praetorctl audit rejects the repository",
 		} {
@@ -90,7 +90,7 @@ func TestPendingPillars_Baseline_3D(t *testing.T) {
 		if got := tc.report.PendingPillars(); !slices.Equal(got, tc.want) {
 			t.Errorf("%s: PendingPillars() = %q, want %q", name, got, tc.want)
 		}
-		if closing := tc.report.PendingBaseline(); (len(closing) == 2) != slices.Contains(tc.want, debtBaselinePillar) {
+		if closing := tc.report.PendingBaseline(); (len(closing) == 1) != slices.Contains(tc.want, debtBaselinePillar) {
 			t.Errorf("%s: PendingBaseline() = %q", name, closing)
 		}
 	}

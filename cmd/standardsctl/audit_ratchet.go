@@ -246,16 +246,14 @@ func auditBaselineGrowth(ctx context.Context, opts *auditOptions, current *basel
 		return fmt.Errorf("[FAIL] baseline %s is not inside the repository %s: %w", opts.baselinePath, topLevel, err)
 	}
 
-	committed, found := readBaselineAtRef(ctx, opts.rootDir, opts.baseRef, rel)
+	previous, found, err := growthBaselineAtRef(ctx, opts, rel)
+	if err != nil {
+		return err
+	}
 	if !found {
-		fmt.Printf("[INFO] No baseline committed at %s (%s); debt growth guard has nothing to compare.\n", opts.baseRef, firstLine(committed))
+		fmt.Printf("[INFO] No baseline committed at %s (%s); debt growth guard has nothing to compare.\n", opts.baseRef, rel)
 		return nil
 	}
-	previous, err := baseline.ParseBaseline([]byte(committed))
-	if err != nil {
-		return fmt.Errorf("[FAIL] baseline committed at %s is unreadable: %w", opts.baseRef, err)
-	}
-
 	if err := baseline.CheckMonotonic(previous, current); err != nil {
 		if current.IncreaseRationale == "" {
 			return fmt.Errorf("[FAIL] HISS-13 debt ratchet: %s grew versus %s (%w); fix the new violations or record the increase with 'praetorctl baseline --record --allow-increase --reason=<why>'",
@@ -266,7 +264,7 @@ func auditBaselineGrowth(ctx context.Context, opts *auditOptions, current *basel
 		return nil
 	}
 	fmt.Printf("[PASS] HISS-13 debt ratchet: %s does not grow versus %s (%d -> %d).\n",
-		rel, opts.baseRef, previous.TotalInfractions, current.TotalInfractions)
+		rel, opts.baseRef, previous.Count(), current.Count())
 	return nil
 }
 
@@ -308,11 +306,31 @@ func gitRelativePath(topLevel, path string) (string, error) {
 	return slashed, nil
 }
 
-// firstLine returns the first non-empty line of s, for compact diagnostics.
-func firstLine(s string) string {
-	lines := splitLines(s, 1)
-	if len(lines) == 0 {
-		return "no output"
+// growthBaselineAtRef applies adoption's split to a legacy base snapshot in memory.
+func growthBaselineAtRef(ctx context.Context, opts *auditOptions, rel string) (*baseline.Baseline, bool, error) {
+	committed, found := readBaselineAtRef(ctx, opts.rootDir, opts.baseRef, rel)
+	readme := baseline.ClassForFile(rel) == baseline.READMEClass
+	legacy := !readme
+	if !found && readme {
+		committed, found = readBaselineAtRef(ctx, opts.rootDir, opts.baseRef, filepath.ToSlash(filepath.Join(filepath.Dir(rel), ".standards-baseline.json")))
+		legacy = true
 	}
-	return lines[0]
+	if !found {
+		return nil, false, nil
+	}
+	previous, err := baseline.ParseBaseline([]byte(committed))
+	if err != nil {
+		return nil, false, fmt.Errorf("[FAIL] baseline committed at %s is unreadable: %w", opts.baseRef, err)
+	}
+	if legacy {
+		split := baseline.SplitReadme(previous)
+		previous = split.HISS
+		if readme {
+			previous = split.README
+		}
+	}
+	if err := previous.ValidateClass(rel, baseline.ClassForFile(rel)); err != nil {
+		return nil, false, err
+	}
+	return previous, !previous.Absent, nil
 }

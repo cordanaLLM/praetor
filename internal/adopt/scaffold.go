@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -34,8 +35,23 @@ func (r *AdoptReport) recordReconciled(path, details string) {
 
 // recordReconciledAs lists path as reconciled with an explicit action (merge, append).
 func (r *AdoptReport) recordReconciledAs(path, action, details string) {
+	if (path == baselineFile || path == gating.ReadmeBaselineFile) && r.mergeBaselineAction(path, action, details) {
+		return
+	}
 	r.ReconciledFiles = append(r.ReconciledFiles, path)
 	r.ActionDetails = append(r.ActionDetails, ActionDetail{Path: path, Action: action, Details: details})
+}
+
+// mergeBaselineAction keeps a migration and its later verdict on one file action.
+func (r *AdoptReport) mergeBaselineAction(path, action, details string) bool {
+	for i := 0; i < len(r.ActionDetails) && i < maxReportActions; i++ {
+		entry := &r.ActionDetails[i]
+		if entry.Path == path && (entry.Action == action || entry.Action == actionCreate) {
+			entry.Details += "; " + details
+			return true
+		}
+	}
+	return false
 }
 
 // recordReplaced lists path as reconciled with the replace action: existing bytes that were

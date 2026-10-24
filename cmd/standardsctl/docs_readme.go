@@ -94,7 +94,7 @@ func hasReadmeBlock(content string) bool {
 // renderReadmeBlock reconciles content with the state the baseline at baselinePath and the
 // manifest give.
 func renderReadmeBlock(manifest *config.Manifest, baselinePath, content string) (string, bool, error) {
-	base, err := baseline.LoadBaseline(baselinePath)
+	base, err := baseline.LoadClassBaseline(baselinePath, baseline.HISSClass)
 	if err != nil {
 		return "", false, fmt.Errorf("load the debt baseline: %w", err)
 	}

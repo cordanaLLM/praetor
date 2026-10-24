@@ -199,12 +199,33 @@ func cleanupGotoStage(t *testing.T, declared, documented bool) (string, error) {
 // cleanup goto. Negative: without the declaration the goto fails the ratchet. Boundary: a
 // declaration whose document is missing fails the ratchet too.
 func TestRunHissStage_CleanupGotoException(t *testing.T) {
-	if msg, err := cleanupGotoStage(t, true, true); err != nil || !strings.Contains(msg, "0 infractions") {
+	if msg, err := cleanupGotoStage(t, true, true); err != nil || !strings.Contains(msg, "0 active infractions") {
 		t.Fatalf("documented exception: msg=%q err=%v; want the cleanup goto accepted", msg, err)
 	}
 	for name, declared := range map[string]bool{"undeclared": false, "undocumented": true} {
 		if _, err := cleanupGotoStage(t, declared, false); err == nil || !strings.Contains(err.Error(), "HISS-01") {
 			t.Errorf("%s: err = %v; want the goto to fail the ratchet as HISS-01", name, err)
 		}
+	}
+}
+
+func TestRunHissStage_SeparateReadmeBaseline(t *testing.T) {
+	cfg := hissStageFixture(t, "", 10)
+	baseJSON := `{"version":1,"total_infractions":1,"infractions":[{"rule_id":"README-01","file_path":"README.md","line_number":1,"message":"missing badge","fingerprint":"abc"}]}`
+	writeFile(t, filepath.Join(cfg.repoDir, ReadmeBaselineFile), baseJSON)
+	msg, err := runHissStage(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("runHissStage unexpected error: %v", err)
+	}
+	if !strings.Contains(msg, "0 active infractions within the 0 recorded in .standards-baseline.json") {
+		t.Fatalf("expected independent HISS baseline count, got %q", msg)
+	}
+}
+
+func TestRunHissStageRefusesForeignClass(t *testing.T) {
+	cfg := hissStageFixture(t, "", 10)
+	writeFile(t, filepath.Join(cfg.repoDir, BaselineFile), `{"infractions":[{"rule_id":"README-01"}]}`)
+	if _, err := runHissStage(t.Context(), cfg); err == nil || !strings.Contains(err.Error(), "praetorctl adopt") {
+		t.Fatalf("foreign-class baseline accepted: %v", err)
 	}
 }

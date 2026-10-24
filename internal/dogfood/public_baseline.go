@@ -60,6 +60,9 @@ func parsePublicBaseline(data []byte) (*baseline.Baseline, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := recorded.ValidateClass(".standards-baseline.json", baseline.HISSClass); err != nil {
+		return nil, err
+	}
 	canonical, err := json.Marshal(recorded)
 	if err != nil {
 		return nil, fmt.Errorf("encode canonical adopted baseline: %w", err)
@@ -71,7 +74,11 @@ func parsePublicBaseline(data []byte) (*baseline.Baseline, error) {
 }
 
 func comparePublicBaseline(ctx context.Context, recorded *baseline.Baseline, original *hiss.ScanReport) error {
-	if recorded.Version != 1 || recorded.TotalInfractions != len(recorded.Infractions) || recorded.TotalInfractions != original.TotalInfractions {
+	if recorded.Version != 1 || recorded.Count() != len(recorded.Infractions) {
+		return errors.New("adopted baseline version or count differs from the independent original scan")
+	}
+	hissRecorded := recorded
+	if recorded.Count() != original.TotalInfractions || recorded.Count() != len(original.Violations) {
 		return errors.New("adopted baseline version or count differs from the independent original scan")
 	}
 	// Fingerprints may legitimately collide at the same rule/file/line. Compare
@@ -80,15 +87,20 @@ func comparePublicBaseline(ctx context.Context, recorded *baseline.Baseline, ori
 	for _, infraction := range publicInfractions(original) {
 		expected[infraction]++
 	}
-	for i := 0; i < len(recorded.Infractions) && i < hiss.MaxInfractionsCap; i++ {
+	for i := 0; i < len(hissRecorded.Infractions) && i < hiss.MaxInfractionsCap; i++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		infraction := recorded.Infractions[i]
+		infraction := hissRecorded.Infractions[i]
 		if expected[infraction] == 0 {
 			return errors.New("adopted baseline entry differs from the independent original scan")
 		}
 		expected[infraction]--
 	}
 	return ctx.Err()
+}
+
+// publicScanBaseline gives independent HISS scans the same class interpretation as adoption.
+func publicScanBaseline(scan *hiss.ScanReport) *baseline.Baseline {
+	return &baseline.Baseline{Version: 1, TotalInfractions: scan.TotalInfractions, Infractions: publicInfractions(scan)}
 }

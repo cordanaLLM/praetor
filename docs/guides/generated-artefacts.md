@@ -47,13 +47,20 @@ files exist, so a repository without a needs manifest has no "needs manifest" ar
 | --- | --- | --- | --- |
 | compiled context projections | the vendor files, `AGENTS.readonly.md`, persona copies `agent_clients` selects, and the plugin copies | `praetorctl compile-context` | `AGENTS.md` exists and a projection does |
 | agent register block | the register block of `AGENTS.md` | `praetorctl compile-context` | `AGENTS.md` carries the block |
-| debt baseline | `.standards-baseline.json` | `praetorctl baseline --record` | the baseline exists |
+| debt baseline | `.standards-baseline.json`, `.readme-baseline.json`, `.gosec-baseline.json` | `praetorctl baseline --record` | the baseline exists |
 | README governance block | the governance block of `README.md` | `praetorctl docs readme` | `README.md` carries the block |
 | needs manifest | `.needs.yaml` | `praetorctl needs scan --write --manifest=`, with no operator settings | the manifest exists |
 | documentation figures | the `.json` and `.svg` renderings in `docs/assets/figures/` | `node tools/figures/build.mjs build` | `tools/figures/build.mjs` exists |
 | shipped-text ledger | the ledgers in `internal/managedasset/testdata/shipped/` | `go test` of `TestShippedTextLedger` with `PRAETOR_UPDATE_SHIPPED_TEXTS=1` | a Praetor source checkout |
 | client schema types | `internal/codexhook/events_gen.go` and `internal/mcpwire/messages_gen.go` | `go test` of `TestGeneratedTypesAreFresh` with `PRAETOR_UPDATE_CLIENT_SCHEMA_TYPES=1` ([client schemas](client-schemas.md)) | a Praetor source checkout |
 | devcontainer bundle | the files `devcontainer generate` writes to `.devcontainer/` | `praetorctl devcontainer generate --source-root=. --force` | a Praetor source checkout with `.devcontainer/Dockerfile.praetor` |
+
+Each baseline file records one class. README presentation findings are recorded in
+`.readme-baseline.json` only when enforced or already baselined. Upgrade a mixed
+`.standards-baseline.json` with `praetorctl adopt`; preview with `--dry-run`.
+Adoption preserves entry identity and metadata while moving README entries, and
+refuses a conflicting existing README file. See the
+[README migration contract](readme-presentation.md#ratchet-and-enforcement).
 
 They render in this order, so the README block reads the baseline the row above it has just
 recorded. A

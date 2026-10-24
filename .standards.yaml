@@ -118,7 +118,7 @@ register:
   sources:
     expected: 279
     not_applicable: 141
-    sha256: "sha256:0fa5da8884acb066669e0ff95a17d6c03581bc0479ea625328011514b3024915"
+    sha256: "sha256:0265909df4abe2cbe3bbc40172588e5f7de7041c63a9033b803c7035df30f27c"
     inputs:
       - path: ".paperclip/harness.json"
         surface: prompts
@@ -316,6 +316,14 @@ docs_surfaces:
       - "internal/forge/*_test.go"
     docs:
       - "docs/guides/build-warnings.md"
+  - name: "README presentation gate"
+    paths:
+      - "internal/readmepresentation/*.go"
+      - "cmd/standardsctl/audit_readme_presentation.go"
+    exclude:
+      - "internal/readmepresentation/*_test.go"
+    docs:
+      - "docs/guides/readme-presentation.md"
   - name: "licensing gates"
     paths:
       - "internal/supplychain/reuse.go"

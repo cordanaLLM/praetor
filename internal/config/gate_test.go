@@ -5,6 +5,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -125,5 +127,35 @@ gate:
 	}
 	if got := omitted.Gate.DeclaredVerifyTimeoutDuration(); got != 0 {
 		t.Errorf("omitted gate section duration = %v, want 0", got)
+	}
+	if omitted.Gate.EnforceReadmePresentation() {
+		t.Error("omitted gate section must not enforce README presentation by default")
+	}
+
+	enforced, err := ParseManifest("test", []byte("version: 1\ngate:\n  readme_presentation: true\n"))
+	if err != nil {
+		t.Fatalf("gate.readme_presentation must be accepted: %v", err)
+	}
+	if !enforced.Gate.EnforceReadmePresentation() {
+		t.Error("expected EnforceReadmePresentation() == true")
+	}
+}
+
+func TestGatePolicy_ReadmePresentationEnforced(t *testing.T) {
+	dir := t.TempDir()
+	if got, err := ReadmePresentationEnforced(dir); err != nil || got {
+		t.Fatalf("absent manifest: got=(%v, %v), want (false, nil)", got, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".standards.yaml"), []byte("version: 1\ngate:\n  readme_presentation: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ReadmePresentationEnforced(dir); err != nil || !got {
+		t.Fatalf("enforced manifest: got=(%v, %v), want (true, nil)", got, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".standards.yaml"), []byte("version: 1\ngate:\n  unknown_key: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ReadmePresentationEnforced(dir); err == nil || got {
+		t.Fatalf("invalid manifest: got=(%v, %v), want (false, non-nil error)", got, err)
 	}
 }

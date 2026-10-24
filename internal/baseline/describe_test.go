@@ -359,3 +359,15 @@ func TestRatchetResultAttribute_Boundary_UnattributedIsNeutral(t *testing.T) {
 		t.Errorf("Attribute with a nil baseline changed the result: %v", res.Attribution)
 	}
 }
+
+func TestRatchetResultExplicitSubject(t *testing.T) {
+	inf := Infraction{RuleID: "README-01", FilePath: "README.md", Message: "missing badge block"}
+	result := &RatchetResult{Subject: "README presentation findings", NewViolations: []Infraction{inf}}
+	if got := result.Summary(); !strings.HasPrefix(got, "README presentation findings the baseline does not record") {
+		t.Fatal(got)
+	}
+	result.Subject = ""
+	if got := result.Summary(); !strings.HasPrefix(got, "HISS invariant violations the baseline does not record") {
+		t.Fatal(got)
+	}
+}

@@ -550,7 +550,7 @@ func runHissStage(ctx context.Context, cfg *stageConfig) (string, error) {
 		cfg.rep.Complexity = &scanRep.Complexity
 	}
 
-	base, err := baseline.LoadBaseline(filepath.Join(cfg.repoDir, BaselineFile))
+	base, err := baseline.LoadClassBaseline(filepath.Join(cfg.repoDir, BaselineFile), baseline.HISSClass)
 	if err != nil {
 		return "", fmt.Errorf("load debt baseline: %w", err)
 	}
@@ -561,11 +561,11 @@ func runHissStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	if !ratchet.Passed {
 		// The same rendering `praetorctl audit` prints, so the rejection names each new
 		// violation's file, line and rule rather than only how many there are (BUG-792).
-		return "", fmt.Errorf("hiss ratchet failed against a baseline of %d: %s",
-			base.TotalInfractions, ratchet.Summary())
+		return "", fmt.Errorf("hiss ratchet failed against .standards-baseline.json with %d recorded: %s",
+			base.Count(), ratchet.Summary())
 	}
-	msg := fmt.Sprintf("%d infractions within the %d baselined limit (function length limit %d)",
-		ratchet.CurrentCount, base.TotalInfractions, scanOpts.MaxFuncLOC)
+	msg := fmt.Sprintf("%d active infractions within the %d recorded in .standards-baseline.json (function length limit %d)",
+		ratchet.CurrentCount, base.Count(), scanOpts.MaxFuncLOC)
 	if policyWarning != "" {
 		msg += "; " + policyWarning
 	}
@@ -711,7 +711,7 @@ func handleGosecModuleOutput(cfg *stageConfig, moduleDir, out string, runErr err
 }
 
 func evaluateGosecModuleRatchet(repoDir, moduleDir string, allModules []goModule, findings []baseline.Infraction, origErr error) (string, error) {
-	base, err := baseline.LoadBaseline(filepath.Join(repoDir, GosecBaselineFile))
+	base, err := baseline.LoadClassBaseline(filepath.Join(repoDir, GosecBaselineFile), baseline.HISSClass)
 	if err != nil {
 		return "", fmt.Errorf("load gosec baseline for %s: %w", moduleDir, err)
 	}
@@ -721,7 +721,7 @@ func evaluateGosecModuleRatchet(repoDir, moduleDir string, allModules []goModule
 		return "", fmt.Errorf("gosec found security infractions in %s: %w: %s",
 			moduleDir, origErr, ratchet.Summary())
 	}
-	return fmt.Sprintf("%d gosec infractions within %d baselined limit", ratchet.CurrentCount, moduleBase.TotalInfractions), nil
+	return fmt.Sprintf("%d gosec infractions within %d baselined limit in .gosec-baseline.json", ratchet.CurrentCount, moduleBase.Count()), nil
 }
 
 func runGoVulnerabilityGate(ctx context.Context, cfg *stageConfig, module goModule) (string, error) {

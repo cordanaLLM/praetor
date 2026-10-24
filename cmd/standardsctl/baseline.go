@@ -12,6 +12,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/readmepresentation"
 	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -40,7 +41,7 @@ func runBaseline(args []string) error {
 	if err != nil {
 		return err
 	}
-	b, err := baseline.LoadBaseline(mode.path)
+	b, err := baseline.LoadClassBaseline(mode.path, baseline.ClassForFile(mode.path))
 	if err != nil {
 		return fmt.Errorf("failed to load baseline: %w", err)
 	}
@@ -49,12 +50,11 @@ func runBaseline(args []string) error {
 	case mode.record:
 		hissOpts := baseline.RecordOptions{AllowIncrease: mode.allowIncrease, Rationale: mode.reason}
 		gosecOpts := baseline.RecordOptions{AllowIncrease: mode.allowGosecIncrease, Rationale: mode.gosecReason}
-		return recordBaseline(mode.path, b, hissOpts, gosecOpts)
+		return recordBaseline(mode.path, hissOpts, gosecOpts)
 	case mode.verify:
 		return verifyBaseline(mode.path, b, mode.allViolations)
 	}
-	printBaseline(mode.path, b)
-	return nil
+	return printBaseline(mode.path, b)
 }
 
 func parseBaselineMode(args []string) (baselineMode, error) {
@@ -128,20 +128,90 @@ func verifyBaseline(path string, b *baseline.Baseline, all bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), baselineScanTimeout)
 	defer cancel()
 	root := filepath.Dir(path)
-	current, scanOpts, err := scanBaselineInfractions(ctx, root)
+	current, scanOpts, err := scanBaselineInput(ctx, root, path, b)
 	if err != nil {
 		return fmt.Errorf("[FAIL] verify %s: %w", path, err)
 	}
-	ratchet := baseline.EvaluateRatchet(b, current, nil)
-	if !ratchet.Passed {
-		return fmt.Errorf("[FAIL] %s: %s", path, describeRejection(ctx, root, path, scanOpts, b, current, ratchet, all))
+	if err := verifyFileBaseline(ctx, root, path, b, current, scanOpts, all); err != nil {
+		return err
 	}
-	fmt.Printf("[PASS] HISS-13 debt ratchet: %d active infractions within the %d recorded in %s; the file was not rewritten.\n",
-		ratchet.CurrentCount, b.TotalInfractions, path)
+	if auxiliaryBaselineFile(path) {
+		return nil
+	}
+	return verifyOptionalBaselines(ctx, root, scanOpts, all)
+}
+
+// auxiliaryBaselineFile reports whether path names one of the per-class snapshots beside the HISS baseline
+// (.readme-baseline.json, .gosec-baseline.json); a command given one of them handles that file alone.
+func auxiliaryBaselineFile(path string) bool {
+	base := filepath.Base(path)
+	return base == gating.ReadmeBaselineFile || base == gating.GosecBaselineFile
+}
+
+func verifyOptionalBaselines(ctx context.Context, root string, scanOpts hiss.ScanOptions, all bool) error {
+	for _, file := range []string{gating.GosecBaselineFile, gating.ReadmeBaselineFile} {
+		class := baseline.ClassForFile(file)
+		full := filepath.Join(root, file)
+		previous, err := baseline.LoadClassBaseline(full, class)
+		if err != nil {
+			return err
+		}
+		skip, err := skipOptionalBaseline(root, file, previous)
+		if err != nil {
+			return err
+		}
+		if skip {
+			continue
+		}
+		findings, err := scanFileBaseline(ctx, root, file, previous)
+		if err != nil {
+			return err
+		}
+		if err := verifyFileBaseline(ctx, root, full, previous, findings, scanOpts, all); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func skipOptionalBaseline(root, file string, previous *baseline.Baseline) (bool, error) {
+	if !previous.Absent {
+		return false, nil
+	}
+	if file == gating.GosecBaselineFile {
+		return true, nil
+	}
+	enforce, err := config.ReadmePresentationEnforced(root)
+	if err != nil {
+		return false, err
+	}
+	if !enforce {
+		fmt.Println("[INFO] " + readmepresentation.NotRecorded)
+	}
+	return !enforce, nil
+}
+
+func verifyFileBaseline(ctx context.Context, root, path string, b *baseline.Baseline, current []baseline.Infraction, scanOpts hiss.ScanOptions, all bool) error {
+	ratchet := baseline.EvaluateRatchet(b, current, nil)
+	if baseline.ClassForFile(path) == baseline.READMEClass {
+		ratchet.Subject = "README presentation findings"
+	}
+	if !ratchet.Passed {
+		detail := ratchet.Summary()
+		if baseline.ClassForFile(path) != baseline.READMEClass {
+			detail = describeRejection(ctx, root, path, scanOpts, b, current, ratchet, all)
+		} else if all {
+			detail = ratchet.FullSummary()
+		}
+		return fmt.Errorf("[FAIL] %s: %s", path, detail)
+	}
+	if b.Absent && baseline.ClassForFile(path) == baseline.READMEClass {
+		fmt.Println("[INFO] " + readmepresentation.NotRecordedClean)
+		return nil
+	}
+	fmt.Printf("[PASS] HISS-13 debt ratchet: %d active infractions within the %d recorded in %s; the file was not rewritten.\n", ratchet.CurrentCount, b.Count(), path)
 	if notice := ratchet.StaleNotice(); notice != "" {
-		// Read-only, like the rest of --verify: the audit's --max-stale-baseline-entries is the
-		// bound that fails a run (#349).
-		fmt.Printf("[WARN] %s\n", notice)
+		fmt.Printf("[WARN] %s (%s)\n", notice, path)
 	}
 	return nil
 }
@@ -167,82 +237,119 @@ func baselineIdentity(ctx context.Context, dir string) (repository, commit strin
 
 // recordBaseline rescans the repository around the baseline and replaces the snapshot,
 // refusing to raise the count unless the operator allowed it with a rationale.
-func recordBaseline(path string, previous *baseline.Baseline, hissOpts, gosecOpts baseline.RecordOptions) error {
+func recordBaseline(path string, hissOpts, gosecOpts baseline.RecordOptions) error {
 	ctx, cancel := context.WithTimeout(context.Background(), baselineScanTimeout)
 	defer cancel()
-
-	current, _, err := scanBaselineInfractions(ctx, filepath.Dir(path))
-	if err != nil {
-		return fmt.Errorf("refusing to record %s: %w", path, err)
-	}
-
-	repo, commit, err := baselineIdentity(ctx, filepath.Dir(path))
+	root := filepath.Dir(path)
+	repo, commit, err := baselineIdentity(ctx, root)
 	if err != nil {
 		return fmt.Errorf("refusing to record %s: %w", path, err)
 	}
 	hissOpts.Repository, hissOpts.CommitSHA = repo, commit
 	gosecOpts.Repository, gosecOpts.CommitSHA = repo, commit
-
-	next, err := baseline.Record(previous, current, hissOpts)
-	if err != nil {
-		return fmt.Errorf("refusing to record %s: %w (pass --allow-increase --reason=<why> to record a deliberate increase)", path, err)
+	paths := []string{path}
+	if filepath.Base(path) != gating.ReadmeBaselineFile && filepath.Base(path) != gating.GosecBaselineFile {
+		paths = append(paths, filepath.Join(root, gating.GosecBaselineFile), filepath.Join(root, gating.ReadmeBaselineFile))
 	}
-	// A rescan that finds the same debt keeps the recorded file byte for byte, as adoption's
-	// explicit re-record does (rerecordBaseline in internal/adopt/adopt.go, under this same
-	// condition): rewriting it only moved generated_at and dropped an earlier increase
-	// rationale, so the baseline, a generated artefact (ADR-0017), never rendered fresh. A
-	// baseline that records no commit yet is still written, so it gains one (BUG-801).
-	if !previous.Absent && previous.SameDebt(next) && previous.CommitSHA == next.CommitSHA {
-		fmt.Printf("Baseline unchanged: %s (Total: %d infractions, previously %d); kept the recorded file\n",
-			path, next.TotalInfractions, previous.Count())
+	plans := make([]baselineRecordPlan, 0, len(paths))
+	for i := 0; i < len(paths); i++ {
+		opts := hissOpts
+		if filepath.Base(paths[i]) == gating.GosecBaselineFile {
+			opts = gosecOpts
+		}
+		plan, err := planFileBaseline(ctx, root, paths[i], opts)
+		if err != nil {
+			return err
+		}
+		if plan.next != nil {
+			plans = append(plans, plan)
+		}
+	}
+	for i := 0; i < len(plans); i++ {
+		plan := plans[i]
+		if err := saveFileBaseline(plan.path, plan.previous, plan.next); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type baselineRecordPlan struct {
+	path           string
+	previous, next *baseline.Baseline
+}
+
+// planFileBaseline validates a rescan without changing any recorded snapshot.
+func planFileBaseline(ctx context.Context, root, path string, opts baseline.RecordOptions) (baselineRecordPlan, error) {
+	plan := baselineRecordPlan{path: path}
+	previous, err := baseline.LoadClassBaseline(path, baseline.ClassForFile(path))
+	if err != nil {
+		return plan, err
+	}
+	findings, err := scanFileBaseline(ctx, root, filepath.Base(path), previous)
+	if err != nil {
+		return plan, err
+	}
+	if previous.Absent && len(findings) == 0 && auxiliaryBaselineFile(path) {
+		return plan, nil
+	}
+	var next *baseline.Baseline
+	if filepath.Base(path) == gating.GosecBaselineFile {
+		next, err = guardedGosecRecord(ctx, root, previous, findings, opts)
 	} else {
-		if err := baseline.SaveBaseline(path, next); err != nil {
-			return fmt.Errorf("failed to save baseline: %w", err)
-		}
-		fmt.Printf("Baseline successfully updated: %s (Total: %d infractions, previously %d)\n", path, next.TotalInfractions, previous.Count())
-		if next.IncreaseRationale != "" {
-			fmt.Printf("[WARN] Debt increased deliberately; recorded rationale: %s\n", next.IncreaseRationale)
-		}
+		next, err = baseline.Record(previous, findings, opts)
 	}
-	return recordGosecBaseline(ctx, filepath.Dir(path), gosecOpts)
+	if err != nil {
+		if filepath.Base(path) == gating.GosecBaselineFile {
+			return plan, fmt.Errorf("refusing to record %s: %w", path, err)
+		}
+		return plan, fmt.Errorf("refusing to record %s: %w (pass --allow-increase --reason=<why> to record a deliberate increase)", path, err)
+	}
+	plan.previous, plan.next = previous, next
+	return plan, nil
 }
 
-func recordGosecBaseline(ctx context.Context, repoDir string, opts baseline.RecordOptions) error {
-	gosecFindings, hasGo, err := gating.ScanGosec(ctx, repoDir)
-	if err != nil {
-		return fmt.Errorf("scan gosec infractions: %w", err)
+// scanBaselineInput preserves the HISS attribution policy for HISS snapshots.
+func scanBaselineInput(ctx context.Context, root, path string, previous *baseline.Baseline) ([]baseline.Infraction, hiss.ScanOptions, error) {
+	if filepath.Base(path) != gating.ReadmeBaselineFile && filepath.Base(path) != gating.GosecBaselineFile {
+		return scanBaselineInfractions(ctx, root)
 	}
-	if !hasGo {
-		return nil
-	}
-	gosecPath := filepath.Join(repoDir, gating.GosecBaselineFile)
-	prevGosec, err := baseline.LoadBaseline(gosecPath)
-	if err != nil {
-		return fmt.Errorf("load gosec baseline: %w", err)
-	}
-	if prevGosec.Absent && len(gosecFindings) == 0 && !opts.AllowIncrease {
-		return nil
-	}
-	nextGosec, err := guardedGosecRecord(ctx, repoDir, prevGosec, gosecFindings, opts)
-	if err != nil {
-		return fmt.Errorf("refusing to record %s: %w", gosecPath, err)
-	}
-	return saveGosecBaseline(gosecPath, prevGosec, nextGosec)
+	findings, err := scanFileBaseline(ctx, root, filepath.Base(path), previous)
+	return findings, hiss.ScanOptions{}, err
 }
 
-func saveGosecBaseline(gosecPath string, prev, next *baseline.Baseline) error {
-	if !prev.Absent && prev.SameDebt(next) && prev.CommitSHA == next.CommitSHA {
-		fmt.Printf("Gosec baseline unchanged: %s (Total: %d infractions, previously %d); kept the recorded file\n",
-			gosecPath, next.TotalInfractions, prev.Count())
+func scanFileBaseline(ctx context.Context, root, file string, previous *baseline.Baseline) ([]baseline.Infraction, error) {
+	if file == gating.GosecBaselineFile {
+		findings, _, err := gating.ScanGosec(ctx, root)
+		return findings, err
+	}
+	if file != gating.ReadmeBaselineFile {
+		findings, _, err := scanBaselineInfractions(ctx, root)
+		return findings, err
+	}
+	enforce, err := config.ReadmePresentationEnforced(root)
+	if err != nil {
+		return nil, err
+	}
+	findings, err := readmepresentation.ScanBaselineFindings(ctx, root, previous, enforce)
+	return readmepresentation.ToBaseline(findings), err
+}
+
+func saveFileBaseline(path string, previous, next *baseline.Baseline) error {
+	label := "Baseline"
+	if filepath.Base(path) == gating.GosecBaselineFile {
+		label = "Gosec baseline"
+	}
+	if !previous.Absent && previous.SameDebt(next) && previous.CommitSHA == next.CommitSHA {
+		fmt.Printf("%s unchanged: %s (Total: %d infractions, previously %d); kept the recorded file\n", label, path, next.Count(), previous.Count())
 		return nil
 	}
-	if err := baseline.SaveBaseline(gosecPath, next); err != nil {
-		return fmt.Errorf("failed to save gosec baseline: %w", err)
+	if err := baseline.SaveBaseline(path, next); err != nil {
+		return err
 	}
-	fmt.Printf("Gosec baseline successfully updated: %s (Total: %d infractions, previously %d)\n",
-		gosecPath, next.TotalInfractions, prev.Count())
+	fmt.Printf("%s successfully updated: %s (Total: %d infractions, previously %d)\n", label, path, next.Count(), previous.Count())
 	if next.IncreaseRationale != "" {
-		fmt.Printf("[WARN] Gosec debt increased deliberately; recorded rationale: %s\n", next.IncreaseRationale)
+		fmt.Printf("[WARN] Debt increased deliberately in %s; recorded rationale: %s\n", path, next.IncreaseRationale)
 	}
 	return nil
 }
@@ -250,18 +357,18 @@ func saveGosecBaseline(gosecPath string, prev, next *baseline.Baseline) error {
 // printBaseline lists the recorded infractions. Inspect mode reads the stored snapshot and
 // never scans, so it states what was recorded, never whether the repository complies: a
 // missing file and a recorded zero both used to print "100% compliant" (BUG-802).
-func printBaseline(path string, b *baseline.Baseline) {
+func printBaseline(path string, b *baseline.Baseline) error {
 	if b.Absent {
 		fmt.Printf("No baseline file at %s: no technical debt has been recorded and nothing was scanned.\n", path)
 		fmt.Println("Run 'praetorctl baseline --record' to scan and record, or 'praetorctl audit' for a live check.")
-		return
+		return nil
 	}
 	repo := b.Repository
 	if repo == "" {
 		repo = "repository"
 	}
 	fmt.Printf("=== %s Technical Debt Baseline ===\n", repo)
-	fmt.Printf("File: %s | Total Infractions: %d\n", path, b.TotalInfractions)
+	fmt.Printf("File: %s | Total Infractions: %d\n", path, b.Count())
 	if b.IncreaseRationale != "" {
 		fmt.Printf("Recorded increase rationale: %s\n", b.IncreaseRationale)
 	}
@@ -269,28 +376,43 @@ func printBaseline(path string, b *baseline.Baseline) {
 		fmt.Printf("  #%d [%s] %s:%d (%s) - %s\n", i+1, inf.RuleID, inf.FilePath, inf.LineNumber, inf.Symbol, inf.Message)
 	}
 
-	if b.TotalInfractions == 0 {
+	if b.Count() == 0 {
 		fmt.Println("Zero technical debt recorded in this baseline.")
 	}
-	printGosecBaselineIfPresent(filepath.Dir(path), repo)
+	if !auxiliaryBaselineFile(path) {
+		if err := printOptionalBaselines(filepath.Dir(path), repo); err != nil {
+			return err
+		}
+	}
 	fmt.Println("This is the stored snapshot, not a live scan; run 'praetorctl baseline --verify' or 'praetorctl audit' to check the repository.")
+	return nil
 }
 
-func printGosecBaselineIfPresent(repoDir, repo string) {
-	gosecPath := filepath.Join(repoDir, gating.GosecBaselineFile)
-	gosecBase, err := baseline.LoadBaseline(gosecPath)
-	if err != nil || gosecBase.Absent {
-		return
+func printOptionalBaselines(repoDir, repo string) error {
+	for _, file := range []string{gating.GosecBaselineFile, gating.ReadmeBaselineFile} {
+		class := baseline.HISSClass
+		if file == gating.ReadmeBaselineFile {
+			class = baseline.READMEClass
+		}
+		path := filepath.Join(repoDir, file)
+		base, err := baseline.LoadClassBaseline(path, class)
+		if err != nil {
+			return err
+		}
+		if base.Absent {
+			continue
+		}
+		fmt.Printf("\n=== %s %s Technical Debt Baseline ===\n", repo, file)
+		fmt.Printf("File: %s | Total Infractions: %d\n", path, base.Count())
+		if base.IncreaseRationale != "" {
+			fmt.Printf("Recorded increase rationale: %s\n", base.IncreaseRationale)
+		}
+		for i, inf := range base.Infractions {
+			fmt.Printf("  #%d [%s] %s:%d (%s) - %s\n", i+1, inf.RuleID, inf.FilePath, inf.LineNumber, inf.Anchor, inf.Message)
+		}
+		if base.Count() == 0 {
+			fmt.Printf("Zero technical debt recorded in %s.\n", file)
+		}
 	}
-	fmt.Printf("\n=== %s Gosec Technical Debt Baseline ===\n", repo)
-	fmt.Printf("File: %s | Total Infractions: %d\n", gosecPath, gosecBase.TotalInfractions)
-	if gosecBase.IncreaseRationale != "" {
-		fmt.Printf("Recorded increase rationale: %s\n", gosecBase.IncreaseRationale)
-	}
-	for i, inf := range gosecBase.Infractions {
-		fmt.Printf("  #%d [%s] %s:%d (%s) - %s\n", i+1, inf.RuleID, inf.FilePath, inf.LineNumber, inf.Anchor, inf.Message)
-	}
-	if gosecBase.TotalInfractions == 0 {
-		fmt.Println("Zero gosec technical debt recorded in this baseline.")
-	}
+	return nil
 }

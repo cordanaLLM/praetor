@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/readmerules"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -63,6 +64,8 @@ type Baseline struct {
 
 // RatchetResult details the evaluation of a commit/PR against the baseline.
 type RatchetResult struct {
+	// Subject names the scanner whose single-class result is rendered.
+	Subject                string `json:",omitempty"`
 	PreviousCount          int
 	CurrentCount           int
 	NewViolations          []Infraction
@@ -135,9 +138,24 @@ type RecordOptions struct {
 	CommitSHA  string
 }
 
-// LoadBaseline reads and parses .standards-baseline.json. A missing file is an empty
-// baseline marked Absent; any other read error is returned.
+// LoadBaseline reads a single-class baseline; missing files are marked Absent.
 func LoadBaseline(path string) (*Baseline, error) {
+	return LoadClassBaseline(path, "")
+}
+
+// LoadClassBaseline additionally refuses entries outside the expected class.
+func LoadClassBaseline(path string, class Class) (*Baseline, error) {
+	b, _, err := loadBaselineRaw(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := b.ValidateClass(path, class); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+func loadBaselineRaw(path string) (*Baseline, []byte, error) {
 	// #nosec G304 -- the baseline path is the operator's own repository file, passed
 	// explicitly by the caller; there is no root to confine it to.
 	data, err := os.ReadFile(path)
@@ -149,16 +167,16 @@ func LoadBaseline(path string) (*Baseline, error) {
 				TotalInfractions: 0,
 				Infractions:      []Infraction{},
 				Absent:           true,
-			}, nil
+			}, nil, nil
 		}
-		return nil, fmt.Errorf("failed to read baseline %s: %w", path, err)
+		return nil, nil, fmt.Errorf("failed to read baseline %s: %w", path, err)
 	}
 
 	b, err := ParseBaseline(data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse baseline %s: %w", path, err)
+		return nil, nil, fmt.Errorf("failed to parse baseline %s: %w", path, err)
 	}
-	return b, nil
+	return b, data, nil
 }
 
 // ParseBaseline decodes a baseline document, for example one read from a git ref.
@@ -187,15 +205,7 @@ func SaveBaseline(path string, b *Baseline) error {
 	b.TotalInfractions = len(b.Infractions)
 	b.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
 
-	data, err := json.MarshalIndent(b, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal baseline: %w", err)
-	}
-
-	if err := util.WriteFileAt(path, append(data, '\n'), FilePerm); err != nil {
-		return fmt.Errorf("failed to write baseline to %s: %w", path, err)
-	}
-	return nil
+	return writeSnapshot(path, b)
 }
 
 // Count returns the number of infractions a snapshot records, trusting the entries over
@@ -220,6 +230,17 @@ func CheckMonotonic(previous, next *Baseline) error {
 		return fmt.Errorf("%w: %d -> %d", ErrDebtIncrease, previous.Count(), next.Count())
 	}
 	return nil
+}
+
+// IsReadmeRule reports whether ruleID identifies a README presentation rule.
+func IsReadmeRule(ruleID string) bool {
+	switch ruleID {
+	case readmerules.RuleIDAbsent, readmerules.RuleIDBadgeBlock, readmerules.RuleIDTagline,
+		readmerules.RuleIDHero, readmerules.RuleIDDiagrams, readmerules.RuleIDSections:
+		return true
+	default:
+		return false
+	}
 }
 
 // Record builds the snapshot that replaces previous from a fresh scan. It refuses a

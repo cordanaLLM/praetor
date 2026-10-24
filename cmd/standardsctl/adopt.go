@@ -234,7 +234,7 @@ func printBatchResult(repoName string, dryRun bool, rep *adopt.AdoptReport, err 
 	fmt.Printf("  Reconciled: %d files\n", len(rep.ReconciledNotReplaced()))
 	fmt.Printf("  Replaced:   %d files\n", len(rep.Replaced()))
 	if rep.LegacyDebtCount > 0 {
-		fmt.Printf("  Legacy Debt Baselined: %d infractions\n", rep.LegacyDebtCount)
+		fmt.Printf("  Legacy Debt Baselined: %d infractions in .standards-baseline.json\n", rep.LegacyDebtCount)
 	}
 	printAdoptIssues(rep)
 	return len(rep.Errors) == 0
@@ -333,6 +333,12 @@ func printDebtSummary(rep *adopt.AdoptReport) {
 		}
 		fmt.Printf("\n--- Legacy Technical Debt: baseline %s; no usable baseline result ---\n", status)
 	}
+	for _, line := range rep.BaselineLines() {
+		fmt.Println("  " + line)
+	}
+	if rep.BaselineStatus == "scanned" && !rep.DryRun && rep.LegacyDebtCount > 0 {
+		fmt.Println("  (Infractions recorded into .standards-baseline.json to prevent CI breaks while ratcheting)")
+	}
 }
 
 func printScannedDebt(rep *adopt.AdoptReport) {
@@ -341,33 +347,26 @@ func printScannedDebt(rep *adopt.AdoptReport) {
 		label = "Scanned (dry-run; not written)"
 	}
 	if rep.LegacyDebtCount == 0 {
-		fmt.Printf("\n--- Legacy Technical Debt: 0 infractions (%s) ---\n", label)
+		fmt.Printf("\n--- Legacy Technical Debt: 0 infractions (%s) in .standards-baseline.json ---\n", label)
 		return
 	}
-	fmt.Printf("\n--- Legacy Technical Debt %s (%d infractions) ---\n", label, rep.LegacyDebtCount)
-	printDebtBreakdown(rep, !rep.DryRun)
+	fmt.Printf("\n--- Legacy Technical Debt %s (%d infractions) in .standards-baseline.json ---\n", label, rep.LegacyDebtCount)
+	printDebtBreakdown(rep)
 }
 
-// printExistingDebt prints the debt a kept baseline records and, when the run rescanned, the
-// ratchet verdict on it (adopt.BaselineRatchet.Line, the line the MCP adopt tool prints too).
+// printExistingDebt opens the debt summary with the kept HISS snapshot count.
 func printExistingDebt(rep *adopt.AdoptReport) {
-	fmt.Printf("\n--- Existing Legacy Technical Debt Baseline: %d infractions ---\n", rep.LegacyDebtCount)
-	if rep.BaselineRatchet != nil {
-		fmt.Println("  " + rep.BaselineRatchet.Line())
-	}
+	fmt.Printf("\n--- Existing Legacy Technical Debt Baseline: %d infractions in .standards-baseline.json ---\n", rep.LegacyDebtCount)
 }
 
-func printDebtBreakdown(rep *adopt.AdoptReport, explain bool) {
+func printDebtBreakdown(rep *adopt.AdoptReport) {
 	var ruleKeys []string
 	for r := range rep.DebtBreakdown {
 		ruleKeys = append(ruleKeys, r)
 	}
 	sort.Strings(ruleKeys)
 	for _, r := range ruleKeys {
-		fmt.Printf("  • %-8s: %d infractions\n", r, rep.DebtBreakdown[r])
-	}
-	if explain {
-		fmt.Println("  (Infractions recorded into .standards-baseline.json to prevent CI breaks while ratcheting)")
+		fmt.Printf("  • %-8s: %d infractions in .standards-baseline.json\n", r, rep.DebtBreakdown[r])
 	}
 }
 
@@ -419,7 +418,7 @@ func printAdoptedFiles(rep *adopt.AdoptReport) {
 	if len(rep.CreatedFiles) > 0 {
 		fmt.Printf("\n%s (%d):\n", sections.created, len(rep.CreatedFiles))
 		for _, f := range rep.CreatedFiles {
-			printAdoptedFile(sections.createdTag, f, findDetail(rep.ActionDetails, f))
+			printAdoptedFile(sections.createdTag, f, adoptFileDetail(rep, f))
 		}
 	}
 	replaced := rep.Replaced()
@@ -427,7 +426,7 @@ func printAdoptedFiles(rep *adopt.AdoptReport) {
 	if len(reconciled) > 0 {
 		fmt.Printf("\n%s (%d):\n", sections.reconciled, len(reconciled))
 		for _, f := range reconciled {
-			printAdoptedFile(sections.reconciledTag, f, findDetail(rep.ActionDetails, f))
+			printAdoptedFile(sections.reconciledTag, f, adoptFileDetail(rep, f))
 		}
 	}
 	if len(replaced) > 0 {
@@ -453,4 +452,12 @@ func printAdoptedFile(prefix, file, detail string) {
 		return
 	}
 	fmt.Printf("  %s %s\n", prefix, file)
+}
+
+func adoptFileDetail(rep *adopt.AdoptReport, file string) string {
+	detail := findDetail(rep.ActionDetails, file)
+	for i := 0; i < len(rep.BaselineRatchets); i++ {
+		detail = strings.ReplaceAll(detail, rep.BaselineRatchets[i].Line(), "Kept existing baseline; ratchet verdict in debt summary")
+	}
+	return detail
 }

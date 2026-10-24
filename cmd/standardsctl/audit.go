@@ -30,7 +30,7 @@ const (
 	// preMigrationEpicFile is the pre-migration epic tracked under .workingdir/.
 	preMigrationEpicFile = "PRE_MIGRATION_EPIC.md"
 	// maxAuditGates bounds the governance gate loop (HISS-02).
-	maxAuditGates = 32
+	maxAuditGates = 64
 	// maxLegacyChecks bounds the legacy-reference loop in auditRepoIdentity (HISS-02).
 	maxLegacyChecks = 8
 	// legacyModulePath is the pre-rename module path no repository may reference.
@@ -180,6 +180,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditBaselineAndInvariants(ctx, opts) },
 		func() error { return auditMutationExclusions(ctx, manifest, rootDir, time.Now()) },
 		func() error { return auditReadmeGovernance(ctx, manifest, opts) },
+		func() error { return auditReadmePresentation(ctx, manifest, opts) },
 		func() error {
 			return auditDocumentationGate(ctx, manifest, rootDir, opts.effective.Policy.BranchProtection)
 		},
@@ -252,12 +253,13 @@ func auditManifestAndLockfile(ctx context.Context, opts *auditOptions) (*config.
 // the real change set (touched-file clean rule) and, when a base ref is given, refuses a
 // baseline that grew versus the one committed on that ref.
 func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
-	base, err := baseline.LoadBaseline(opts.baselinePath)
+	base, err := baseline.LoadClassBaseline(opts.baselinePath, baseline.HISSClass)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Baseline audit failed: %w", err)
 	}
 	opts.baselineKnown = !base.Absent
 	opts.baseline = base
+	hissBase := base
 
 	scanOpts := auditScanOptions(opts)
 	scanRep, err := hiss.Scan(ctx, opts.rootDir, scanOpts)
@@ -279,7 +281,7 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 		return err
 	}
 
-	ratchet := baseline.EvaluateRatchetWithOptions(base, current, touched,
+	ratchet := baseline.EvaluateRatchetWithOptions(hissBase, current, touched,
 		baseline.RatchetOptions{DebtDelta: opts.debtDeltaReason != ""})
 	if opts.debtDeltaReason != "" {
 		// Stated on every run that takes the exception, so it is visible in the hook output and
@@ -288,11 +290,12 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 			opts.debtDeltaReason)
 	}
 	if !ratchet.Passed {
-		return auditRatchetRejection(ctx, opts, scanOpts, base, current, ratchet)
+		return auditRatchetRejection(ctx, opts, scanOpts, hissBase, current, ratchet)
 	}
 	printInvariantVerdict(scanRep, fmt.Sprintf("%d active violations within %d baselined limit (%d touched files clean) (skipped: %d ignored directories, %d symlinks, %d oversize files, %d non-regular files)",
-		ratchet.CurrentCount, base.TotalInfractions, len(touched), scanRep.Skips.DirCount,
-		scanRep.Skips.Symlinks, scanRep.Skips.Oversize, scanRep.Skips.Irregular))
+		ratchet.CurrentCount, base.Count(), len(touched), scanRep.Skips.DirCount,
+		scanRep.Skips.Symlinks, scanRep.Skips.Oversize, scanRep.Skips.Irregular)+" ("+opts.baselinePath+")")
+	fmt.Printf("[PASS] %s: %d active infractions within %d recorded\n", opts.baselinePath, ratchet.CurrentCount, base.Count())
 
 	return auditRatchetPassed(ctx, opts, base, ratchet)
 }
@@ -302,7 +305,7 @@ func auditRatchetRejection(ctx context.Context, opts *auditOptions, scanOpts his
 	if base.Absent && len(current) > 0 {
 		return missingBaselineFailure(opts.baselinePath, len(current))
 	}
-	return fmt.Errorf("[FAIL] %s", describeRejection(ctx, opts.rootDir, opts.baselinePath, scanOpts, base, current, ratchet, opts.allViolations))
+	return fmt.Errorf("[FAIL] %s: %s", opts.baselinePath, describeRejection(ctx, opts.rootDir, opts.baselinePath, scanOpts, base, current, ratchet, opts.allViolations))
 }
 
 func auditedInfractions(scanRep *hiss.ScanReport, opts *auditOptions) ([]baseline.Infraction, error) {

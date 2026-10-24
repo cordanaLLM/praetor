@@ -45,6 +45,14 @@ lock source root`. The files adoption writes are listed step by step in
 `--offline` makes the audit read nothing from the forge: the live Actions permission, workflow
 run and branch-protection checks report as not made.
 
+HISS debt is recorded in `.standards-baseline.json`; README presentation debt uses
+`.readme-baseline.json`, with independent per-file counts and ratchets. To enforce
+README presentation, set `gate.readme_presentation: true` in `.standards.yaml`.
+For an older mixed baseline, `praetorctl adopt` moves README entries before its
+baseline checks; `--dry-run` previews the move. An existing README baseline beside
+legacy README entries is refused so neither snapshot is overwritten. See
+[README migration and enforcement](readme-presentation.md#ratchet-and-enforcement).
+
 ## Staged onboarding with `praetorctl init`
 
 `praetorctl init` is the staged alternative. It requires canonical `AGENTS.md` instructions:

@@ -395,6 +395,10 @@ func TestAttributeRatchet_Boundary_TreeRecordsAndScope(t *testing.T) {
 		t.Errorf("directory pathspecs: %q %q", directoryPathspec("."), directoryPathspec("pkg/x"))
 	}
 
+}
+
+func TestAttributeRatchetScopeAndEmptyResult(t *testing.T) {
+	object := strings.Repeat("a", 40)
 	files, packages := attributionScope([]baseline.Infraction{
 		{RuleID: "HISS-01", FilePath: "pkg\\a.go"},
 		{RuleID: "HISS-02", FilePath: "pkg/c.go"},

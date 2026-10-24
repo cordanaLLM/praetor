@@ -418,6 +418,12 @@ so a finding in code unchanged since then is tagged as coming from a changed che
 ([A HISS rejection names the violations](adoption-verification.md#a-hiss-rejection-names-the-violations)).
 The tool takes no listing flag; `praetorctl baseline --verify --all-violations` prints every
 violation.
+README presentation findings never share the HISS baseline: the tool's README gate reads
+`.readme-baseline.json` on its own, and with that file absent and enforcement off it reports the
+findings as measured, never as a ratchet pass. `standards_adopt` reports one verdict per baseline
+file, in the order `.standards-baseline.json`, `.gosec-baseline.json`, `.readme-baseline.json`, and
+keeps the rejection line of a kept baseline as the CLI prints it
+([README presentation baseline](readme-presentation.md)).
 The tool keys a finding as the CLI does (`hiss.ConvertToBaseline`): by rule, file and the function
 that holds it, never by its line, so a baselined function that only moved passes the tool's ratchet
 as well ([A baseline entry survives a line shift](adoption-verification.md#a-baseline-entry-survives-a-line-shift)).

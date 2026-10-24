@@ -12,8 +12,10 @@ import (
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/mcp"
+	"github.com/cordanaLLM/praetor/internal/readmepresentation"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -68,7 +70,7 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 		passed++
 	}
 
-	report.Template("\nsummary: MCP audit gates; passed: %d/%d; repository: %s/%s; coverage: manifest, lockfile pins and digests, HISS ratchet, context sync, agent source caveman lint, branch protection, labels, supply chain, workflow triggers, build warnings, release token, hooks. "+
+	report.Template("\nsummary: MCP audit gates; passed: %d/%d; repository: %s/%s; coverage: manifest, lockfile pins and digests, HISS ratchet, context sync, agent source caveman lint, branch protection, labels, supply chain, workflow triggers, build warnings, release token, README presentation, hooks. "+
 		"next: run 'praetorctl audit' for full CLI gate set: paperclip harness, runner matrix, hook activation, backlog caps.",
 		passed+1, len(gates)+1, manifest.Repository.Owner, manifest.Repository.Name)
 	return mcpComposedTextResult(report.Text())
@@ -113,8 +115,26 @@ func (s *Server) auditGates(p auditPaths, effective *config.EffectivePolicy) []a
 		func(ctx context.Context) (string, error) { return auditBuildWarnings(ctx, s.rootDir, manifest) },
 		// The CLI audit's release-token gate.
 		func(ctx context.Context) (string, error) { return auditReleaseToken(ctx, s.rootDir, manifest) },
+		// The CLI audit's shared README presentation standard gate.
+		func(ctx context.Context) (string, error) {
+			return auditReadmePresentation(ctx, s.rootDir, p.baseline, manifest)
+		},
 		func(ctx context.Context) (string, error) { return auditHookConfig(ctx, manifest, s.rootDir) },
 	}
+}
+
+// auditReadmePresentation runs the CLI audit's README presentation gate over root with the
+// baseline and manifest gate enforcement switch.
+func auditReadmePresentation(ctx context.Context, root, baselinePath string, manifest *config.Manifest) (string, error) {
+	base, err := baseline.LoadClassBaseline(filepath.Join(root, gating.ReadmeBaselineFile), baseline.READMEClass)
+	if err != nil {
+		return "", fmt.Errorf("[FAIL] Baseline audit failed: %w", err)
+	}
+	return readmepresentation.Audit(ctx, readmepresentation.Options{
+		Root:     root,
+		Baseline: base,
+		Enforce:  manifest != nil && manifest.Gate.EnforceReadmePresentation(),
+	})
 }
 
 // auditBuildWarnings runs the CLI audit's HISS-10 build-warnings gate over root with the
@@ -156,7 +176,7 @@ func auditBaselineRatchet(ctx context.Context, root, baselinePath string) (strin
 // (config.EffectivePolicy.HISSScanOptions), as the CLI audit does. A nil policy scans under the
 // audit ceiling and no exception.
 func auditBaselineRatchetWithPolicy(ctx context.Context, root, baselinePath string, policy *config.EffectivePolicy) (string, error) {
-	base, err := baseline.LoadBaseline(baselinePath)
+	base, err := baseline.LoadClassBaseline(baselinePath, baseline.HISSClass)
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] Baseline audit failed: %w", err)
 	}
@@ -181,7 +201,8 @@ func auditBaselineRatchetWithPolicy(ctx context.Context, root, baselinePath stri
 		return "", fmt.Errorf("[FAIL] %s", ratchet.Summary())
 	}
 	verdict := fmt.Sprintf("[PASS] Technical debt baseline verified: %d recorded legacy infractions; HISS scan found %d active violations within the baselined limit. %s",
-		base.TotalInfractions, ratchet.CurrentCount, scanRep.CoverageEvidence())
+		base.Count(), ratchet.CurrentCount, scanRep.CoverageEvidence())
+	verdict += fmt.Sprintf(" %s: %d active infractions within %d recorded.", baselinePath, ratchet.CurrentCount, base.Count())
 	lines := append([]string{verdict}, scanRep.Complexity.Lines()...)
 	if warning != "" {
 		lines = append(lines, "[WARN] "+warning)

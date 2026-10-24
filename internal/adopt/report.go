@@ -234,21 +234,21 @@ func (r *AdoptReport) PendingPillars() []string {
 
 // baselineRejected reports whether the run kept a baseline its rescan rejects (checkKeptBaseline).
 func (r *AdoptReport) baselineRejected() bool {
+	for i := 0; i < len(r.BaselineRatchets); i++ {
+		if !r.BaselineRatchets[i].Passed {
+			return true
+		}
+	}
 	return r.BaselineRatchet != nil && !r.BaselineRatchet.Passed
 }
 
-// PendingBaseline returns the lines that close a run whose kept baseline is pending: the verdict
-// `praetorctl baseline --verify` gives and what resolves it. It returns nil when the baseline
-// holds nothing back.
+// PendingBaseline returns the remedy for a rejected kept baseline. BaselineLines carries
+// the verdict in the debt summary; closing the run never repeats it.
 func (r *AdoptReport) PendingBaseline() []string {
 	if !r.baselineRejected() {
 		return nil
 	}
-	return []string{
-		debtBaselinePillar + ": " + r.BaselineRatchet.Line(),
-		"Resolve: fix the findings, or accept them deliberately with " + rerecordRemedy +
-			"; until then praetorctl audit rejects the repository",
-	}
+	return []string{"Resolve: fix the findings, or accept them deliberately with " + rerecordRemedy + "; until then praetorctl audit rejects the repository"}
 }
 
 func pillarStatus(step StepOutcome, dryRun bool) PillarStatus {
@@ -287,4 +287,32 @@ func (p Pillar) Line() string {
 	default:
 		return line + " [" + string(p.Status) + "]"
 	}
+}
+
+// BaselineLines returns per-file verdicts once, in the independent snapshots' order.
+func (r *AdoptReport) BaselineLines() []string {
+	if r.BaselineStatus == "skipped" {
+		return r.BaselineNotes
+	}
+	if r.BaselineStatus != "existing" && r.BaselineStatus != "scanned" {
+		return nil
+	}
+	lines := make([]string, 0, len(r.BaselineRatchets)+len(r.BaselineNotes))
+	for _, file := range []string{baselineFile, ".gosec-baseline.json", ".readme-baseline.json"} {
+		for i := 0; i < len(r.BaselineRatchets); i++ {
+			v := r.BaselineRatchets[i]
+			if v.File != file {
+				continue
+			}
+			if r.BaselineStatus == "existing" {
+				lines = append(lines, v.Line())
+			} else {
+				lines = append(lines, fmt.Sprintf("%s: %d active infractions within %d recorded; passed=%t", v.File, v.Active, v.Recorded, v.Passed))
+			}
+		}
+	}
+	if len(r.BaselineRatchets) == 0 && r.BaselineRatchet != nil {
+		lines = append(lines, r.BaselineRatchet.Line())
+	}
+	return append(lines, r.BaselineNotes...)
 }

@@ -1,0 +1,262 @@
+<!-- markdownlint-disable MD013 MD023 MD033 MD036 MD041 -->
+<!-- A centred header needs inline HTML, a banner image, indented headings and
+     badge lines past 80 columns, so those five rules are off for this file.
+     Same directive style as docs/adr/0000-template.md. The prose below still
+     wraps at 80. -->
+<div align="center">
+
+  <img src="docs/assets/vmafx-readme-banner.svg" alt="VMAFx — perceptual video quality assessment, GPU-accelerated and SIMD-tuned" height="120" />
+
+  <!-- README-STANDARD badge block: one group, fixed order (docs/README-STANDARD.md) -->
+  <!-- 1 release/version -->
+  [![Release](https://img.shields.io/github/v/release/VMAFx/vmafx?sort=semver&style=for-the-badge&label=release&color=3b82f6&labelColor=111a35)](https://github.com/VMAFx/vmafx/releases)
+  <!-- 2 CI/build -->
+  [![Tests](https://img.shields.io/github/actions/workflow/status/VMAFx/vmafx/tests-and-quality-gates.yml?branch=master&event=push&style=for-the-badge&label=Tests&logo=githubactions&logoColor=white&labelColor=111a35)](https://github.com/VMAFx/vmafx/actions/workflows/tests-and-quality-gates.yml)
+  [![Builds](https://img.shields.io/github/actions/workflow/status/VMAFx/vmafx/libvmaf-build-matrix.yml?branch=master&event=push&style=for-the-badge&label=Builds&logo=githubactions&logoColor=white&labelColor=111a35)](https://github.com/VMAFx/vmafx/actions/workflows/libvmaf-build-matrix.yml)
+  [![Lint](https://img.shields.io/github/actions/workflow/status/VMAFx/vmafx/lint-and-format.yml?branch=master&event=push&style=for-the-badge&label=Lint&logo=githubactions&logoColor=white&labelColor=111a35)](https://github.com/VMAFx/vmafx/actions/workflows/lint-and-format.yml)
+  [![FFmpeg](https://img.shields.io/github/actions/workflow/status/VMAFx/vmafx/ffmpeg-integration.yml?branch=master&event=push&style=for-the-badge&label=FFmpeg&logo=githubactions&logoColor=white&labelColor=111a35)](https://github.com/VMAFx/vmafx/actions/workflows/ffmpeg-integration.yml)
+  [![Go](https://img.shields.io/github/actions/workflow/status/VMAFx/vmafx/go-ci.yml?branch=master&event=push&style=for-the-badge&label=Go&logo=githubactions&logoColor=white&labelColor=111a35)](https://github.com/VMAFx/vmafx/actions/workflows/go-ci.yml)
+  [![Rust](https://img.shields.io/github/actions/workflow/status/VMAFx/vmafx/rust-ci.yml?branch=master&event=push&style=for-the-badge&label=Rust&logo=githubactions&logoColor=white&labelColor=111a35)](https://github.com/VMAFx/vmafx/actions/workflows/rust-ci.yml)
+  <!-- 3 security/scorecard -->
+  [![Security](https://img.shields.io/github/actions/workflow/status/VMAFx/vmafx/security-scans.yml?branch=master&event=push&style=for-the-badge&label=Security&logo=githubactions&logoColor=white&labelColor=111a35)](https://github.com/VMAFx/vmafx/actions/workflows/security-scans.yml)
+  [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/VMAFx/vmafx/badge?style=for-the-badge)](https://scorecard.dev/viewer/?uri=github.com/VMAFx/vmafx)
+  [![OpenSSF Best Practices](https://img.shields.io/cii/level/14549?style=for-the-badge&label=OpenSSF%20Best%20Practices&labelColor=111a35)](https://www.bestpractices.dev/projects/14549)
+  <!-- 4 standards -->
+  [![HISS-21](https://img.shields.io/badge/Standards-HISS--21-06b6d4?style=for-the-badge&logo=nasa&labelColor=111a35)](AGENTS.md)
+  [![Power of 10](https://img.shields.io/badge/NASA_JPL-Power_of_10-3b82f6?style=for-the-badge&logo=nasa&labelColor=111a35)](docs/principles.md)
+  [![Conventional Commits](https://img.shields.io/badge/Commits-Conventional-8b5cf6?style=for-the-badge&logo=conventionalcommits&logoColor=white&labelColor=111a35)](CONTRIBUTING.md)
+  <!-- 5 licence -->
+  [![License](https://img.shields.io/badge/License-EUPL--1.2_·_BSD--2--Clause--Patent-3b82f6?style=for-the-badge&labelColor=111a35)](docs/adr/1250-eupl-fork-relicense.md)
+  <!-- 6 support -->
+  [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-GitHub-8b5cf6?style=for-the-badge&logo=githubsponsors&logoColor=white&labelColor=111a35)](https://github.com/sponsors/lusoris)
+  [![Ko-fi](https://img.shields.io/badge/Support-Ko--fi-8b5cf6?style=for-the-badge&logo=kofi&logoColor=white&labelColor=111a35)](https://ko-fi.com/lusoris)
+
+  **Perceptual video quality assessment — GPU-accelerated, SIMD-tuned, numerically exact**
+
+  *A fork of [Netflix/vmaf](https://github.com/Netflix/vmaf) that keeps the reference scores byte-for-byte*
+
+</div>
+
+VMAFx is a perceptual video quality assessment (VMAF) library and `vmaf`
+command-line tool. It adds CUDA, SYCL, HIP and Metal backends and AVX2,
+AVX-512, NEON and SVE2 SIMD paths, each checked against the CPU scores, and
+keeps Netflix's reference scores as a required CI gate. It also ships ONNX
+tiny models, an MCP server and FFmpeg filters.
+
+**[📖 Full documentation](https://vmafx.dev/)** · [Documentation source](docs/index.md)
+
+---
+
+## 🎯 Why VMAFx
+
+VMAFx keeps upstream's numbers and adds the parts a production pipeline needs. The
+three Netflix reference pairs are a required CI gate, so every change below is
+measured against scores that never move.
+
+| | Upstream `libvmaf` | VMAFx |
+| --- | --- | --- |
+| **GPU backends** | CUDA | CUDA · SYCL · HIP · Metal, selected at runtime |
+| **SIMD** | AVX2, AVX-512 | AVX2 · AVX-512 · NEON · SVE2, held to feature-specific parity tolerances |
+| **Output precision** | `%.6f` | `%.6f` by default, `--precision=max` for IEEE-754 round-trip |
+| **Model surface** | `.json` / `.pkl` | plus ONNX tiny models with a signed registry |
+| **Integrations** | FFmpeg filter | FFmpeg, an MCP server, a Kubernetes operator, Go and Rust bindings |
+| **Numerical contract** | — | cross-backend parity is a gate, not a promise |
+
+## 🚀 Get started
+
+Follow the [installation and source-build guide](docs/getting-started/index.md)
+for your platform. For a container workflow, see [Docker](docs/usage/docker.md).
+
+From a clone of the repository, score the tracked 576x324 clip pair:
+
+```sh
+vmaf --reference testdata/ref_576x324_48f.yuv \
+     --distorted testdata/dis_576x324_48f.yuv \
+     --width 576 --height 324 --pixel_format 420 --bitdepth 8 \
+     --backend cpu --json --output scores.json
+```
+
+The terminal ends with the pooled score of the default model, and `scores.json`
+holds all 48 frames:
+
+```text
+vmaf_v1.0.16_3d0h: 95.938229
+```
+
+For your own files, compare a matching reference and distorted Y4M pair:
+
+```sh
+vmaf --reference reference.y4m --distorted distorted.y4m --json --output scores.json
+```
+
+Raw YUV needs its geometry spelled out, and a GPU backend is one flag:
+
+```sh
+vmaf --reference ref.yuv --distorted dis.yuv \
+     --width 1920 --height 1080 --pixel_format 420 --bitdepth 8 \
+     --backend cuda --feature cambi --json --output scores.json
+```
+
+See the [CLI reference](docs/usage/cli.md) for model selection, backend selection
+and output options. For compressed inputs such as MP4, use
+[FFmpeg integration](docs/usage/ffmpeg.md).
+
+## 🧩 Backends at a glance
+
+[![C23](https://img.shields.io/badge/C-23-3b82f6?style=flat-square&labelColor=111a35)](docs/principles.md)
+[![C++23](https://img.shields.io/badge/C%2B%2B-23-3b82f6?style=flat-square&labelColor=111a35)](docs/principles.md)
+[![Go](https://img.shields.io/badge/Go-1.27-06b6d4?style=flat-square&labelColor=111a35)](go.mod)
+[![Rust](https://img.shields.io/badge/Rust-2024-8b5cf6?style=flat-square&labelColor=111a35)](bindings/rust/vmafx-sys/Cargo.toml)
+[![Python](https://img.shields.io/badge/Python-3.14%2B-3b82f6?style=flat-square&labelColor=111a35)](pyproject.toml)
+[![CUDA](https://img.shields.io/badge/CUDA-13.4-06b6d4?style=flat-square&labelColor=111a35)](docs/backends/cuda/overview.md)
+[![ROCm](https://img.shields.io/badge/ROCm-10.1-06b6d4?style=flat-square&labelColor=111a35)](docs/backends/hip/overview.md)
+[![SYCL](https://img.shields.io/badge/SYCL-oneAPI-06b6d4?style=flat-square&labelColor=111a35)](docs/backends/sycl/overview.md)
+[![Metal](https://img.shields.io/badge/Metal-Apple_Silicon-06b6d4?style=flat-square&labelColor=111a35)](docs/backends/metal/index.md)
+[![FFmpeg](https://img.shields.io/badge/FFmpeg-n9.0.2-8b5cf6?style=flat-square&labelColor=111a35)](docs/usage/ffmpeg.md)
+
+Every GPU-backed feature extractor has at least one device twin, and each twin
+is held to the CPU reference by the cross-backend parity gate. The coverage
+matrix below distinguishes those extractors from CPU-only metrics.
+
+| Backend | Selected with | Notes |
+| --- | --- | --- |
+| CPU | `--backend cpu` | scalar reference; SIMD paths dispatch automatically |
+| CUDA | `--backend cuda` | NVIDIA, CUDA 13.4 |
+| SYCL | `--backend sycl` | Intel oneAPI; fp64-free device contract |
+| HIP | `--backend hip` | AMD ROCm 10.1 |
+| Metal | `--backend metal` | Apple Silicon, Apple Family 7 and later |
+
+See [GPU and SIMD backends](docs/backends/index.md) for feature coverage per
+backend and the tolerances the gate enforces.
+
+```mermaid
+%%{init: {"theme": "base", "themeVariables": {"fontSize": "15px", "primaryColor": "#111a35", "primaryTextColor": "#e2e8f0", "primaryBorderColor": "#3b82f6", "lineColor": "#3b82f6", "edgeLabelBackground": "#111a35"}}}%%
+flowchart TD
+    opts["Options<br/>--backend · --model · --feature"]:::input
+    feats["Features to compute<br/>named by the model or the CLI"]:::step
+    reg["Extractor registry<br/>feature name + backend flag"]:::step
+    twin{"Device twin for this<br/>feature and frame size?"}:::decide
+    gpu["GPU twin<br/>CUDA · SYCL · HIP · Metal"]:::gpu
+    cpu["CPU extractor<br/>AVX-512 · AVX2 · NEON · SVE2 · C"]:::cpu
+    opts --> feats --> reg --> twin
+    twin -- yes --> gpu
+    twin -- no --> cpu
+    classDef input fill:#0b1020,stroke:#06b6d4,stroke-width:2px,color:#e2e8f0
+    classDef step fill:#111a35,stroke:#3b82f6,stroke-width:2px,color:#e2e8f0
+    classDef decide fill:#111a35,stroke:#8b5cf6,stroke-width:2px,color:#e2e8f0
+    classDef gpu fill:#06b6d4,stroke:#0b1020,stroke-width:2px,color:#0b1020
+    classDef cpu fill:#8b5cf6,stroke:#0b1020,stroke-width:2px,color:#f8fafc
+```
+
+Backends you disable (`--no_cuda` and the like) leave the candidate list first.
+With `--backend NAME`, a missing or failing backend is an error, never a silent
+fallback to the CPU.
+
+## 📚 Guides and reference
+
+| Task | Documentation |
+| --- | --- |
+| Score videos and choose output formats | [CLI reference](docs/usage/cli.md) |
+| Use VMAFx in FFmpeg | [FFmpeg guide](docs/usage/ffmpeg.md) |
+| Select hardware and check feature coverage | [GPU and SIMD backends](docs/backends/index.md) |
+| Choose metrics and extractor options | [Feature reference](docs/metrics/features.md) |
+| Choose a scoring model | [Models](docs/models/overview.md) |
+| Embed libvmaf in an application | [C API](docs/api/index.md) |
+| Train and run ONNX quality models | [Tiny AI](docs/ai/index.md) |
+| Connect scoring tools through MCP | [MCP servers](docs/mcp/index.md) |
+
+Build requirements, backend limitations and model defaults live in these
+guides so they can be maintained alongside their implementations.
+
+## 🤝 Contribute
+
+Start with [CONTRIBUTING.md](CONTRIBUTING.md) for setup, required checks and
+pull-request expectations. The [engineering principles](docs/principles.md)
+cover coding and numerical-correctness standards; the
+[repository guide](docs/architecture/index.md) explains the source layout.
+
+- [Report a bug or request a feature](https://github.com/VMAFx/vmafx/issues)
+- [Good first issues](https://github.com/VMAFx/vmafx/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+  for a first contribution
+- [Help wanted](https://github.com/VMAFx/vmafx/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+  for issues open to anyone
+- [Ask a question](https://github.com/VMAFx/vmafx/discussions) or read
+  [how to get support](SUPPORT.md)
+- [Code of conduct](CODE_OF_CONDUCT.md)
+- [Accessibility](ACCESSIBILITY.md)
+- [Security reporting policy](SECURITY.md)
+- [Support development](docs/support-vmafx.md)
+
+## 💖 Support VMAFx
+
+VMAFx is free and stays open source. Sponsor it on
+[GitHub Sponsors](https://github.com/sponsors/lusoris) (USD) or
+[Ko-fi](https://ko-fi.com/lusoris) or
+[Patreon](https://www.patreon.com/Lusoris) (EUR) to pay for CI and cloud GPU
+test time. Sponsors are thanked by tier in
+[SPONSORS.md](SPONSORS.md); [Support VMAFx](docs/support-vmafx.md) explains
+what it pays for.
+
+## 📈 Roadmap and releases
+
+- [Roadmap and release goals](docs/roadmap.md)
+- [Releases and downloads](https://github.com/VMAFx/vmafx/releases)
+- [Changelog](CHANGELOG.md)
+- [Release process](docs/development/release.md)
+
+## Upstream and license
+
+VMAFx builds on [Netflix/vmaf](https://github.com/Netflix/vmaf).
+See [upstream releases](https://github.com/Netflix/vmaf/releases) for Netflix's
+release history.
+
+Each file's `SPDX-License-Identifier` header says which licence applies to it
+([ADR-1250](docs/adr/1250-eupl-fork-relicense.md)). The files at the repository
+root hold the texts ([ADR-1699](docs/adr/1699-root-licence-files-eupl.md)):
+
+| Code | Licence | Text |
+| --- | --- | --- |
+| Written by the fork | EUPL-1.2, a reciprocal licence | [`LICENSE`](LICENSE) |
+| Inherited, ported or translated from Netflix/vmaf | BSD-2-Clause-Patent, with Netflix's copyright notice | [`NOTICE`](NOTICE) |
+| Carried from libjxl, Xiph, IQA and other projects | that project's licence, with its notice in the file | [`LICENSES/`](LICENSES/) |
+
+**What that means in practice**: the shipped `libvmaf` links both together.
+Distributing it, modified or not, obliges you to provide its source or point to
+a repository that has it (EUPL-1.2, Article 5). A modified library is
+distributed under EUPL-1.2. If you need permissive terms, use
+[Netflix/vmaf](https://github.com/Netflix/vmaf) upstream, which is unaffected.
+The per-file tags are authoritative; this section is a summary, not legal
+advice. [Licensing](docs/licensing.md) lists what each published package
+carries, and [Embedding VMAFx in another product](docs/licensing.md#embedding-vmafx-in-another-product)
+goes through linking, modification and network use. [Credits](docs/credits.md)
+names every third-party project, model, dataset, paper and tool VMAFx builds on.
+
+## Standards & Governance
+
+This repository conforms to High-Integrity Systems Standards (HISS-21)
+and modernized NASA JPL Power-of-10 rules.
+
+<!-- praetor:readme-governance:start -->
+[![Documentation Governance][praetor-docs-badge]][praetor-docs-runs]
+
+Praetor manages this repository's declared governance policy. This managed
+block records adoption state; it is not a verification certificate.
+
+**Verification**: `make verify-all` runs the repository's configured
+verification cascade.
+
+**HISS Audit**: `praetorctl audit` enforces policy, generated-surface
+integrity, and the debt ratchet.
+
+**Context Sync**: `praetorctl compile-context --verify` verifies every
+generated agent context against `AGENTS.md`.
+
+**Documentation**: `make docs-lint` enforces locked Markdown style and the
+private scratch-link policy.
+
+**Debt Baseline**: `.standards-baseline.json` anchors the debt ratchet at
+0 recorded infractions; audit forbids growth.
+
+[praetor-docs-badge]: https://github.com/vmafx/vmafx/actions/workflows/praetor-docs.yml/badge.svg
+[praetor-docs-runs]: https://github.com/vmafx/vmafx/actions/workflows/praetor-docs.yml
+<!-- praetor:readme-governance:end -->
