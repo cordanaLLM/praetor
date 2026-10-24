@@ -134,8 +134,9 @@ func printDedupeReport(dir string, report *dedupe.DedupeReport) error {
 		}
 		printForeignDuplicates(report)
 		printExceptedBlocks("Excepted Foreign Duplicate Blocks", report.ForeignExcepted)
+		printStaleExceptions(report.StaleExceptions)
+		printNotCheckedExceptions(report.NotCheckedExceptions)
 		if len(report.StaleExceptions) > 0 {
-			printStaleExceptions(report.StaleExceptions)
 			return dedupeVerdict(report)
 		}
 		return nil
@@ -166,6 +167,7 @@ func printDedupeReport(dir string, report *dedupe.DedupeReport) error {
 	printForeignDuplicates(report)
 	printSprawlInfractions(report.SprawlItems)
 	printStaleExceptions(report.StaleExceptions)
+	printNotCheckedExceptions(report.NotCheckedExceptions)
 	return dedupeVerdict(report)
 }
 
@@ -267,6 +269,16 @@ func printStaleExceptions(stale []string) {
 	}
 	fmt.Printf("\nStale Exceptions (%d):\n", len(stale))
 	for _, s := range stale {
+		fmt.Printf("  - %s\n", s)
+	}
+}
+
+func printNotCheckedExceptions(notChecked []string) {
+	if len(notChecked) == 0 {
+		return
+	}
+	fmt.Printf("\nNot Checked Exceptions (%d):\n", len(notChecked))
+	for _, s := range notChecked {
 		fmt.Printf("  - %s\n", s)
 	}
 }

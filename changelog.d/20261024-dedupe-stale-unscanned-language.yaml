@@ -1,0 +1,2 @@
+type: fixed
+title: Report unused HISS-19 dedupe exceptions in unscanned languages as not checked rather than stale

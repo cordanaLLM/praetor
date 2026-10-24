@@ -71,6 +71,7 @@ type DedupeReport struct {
 	Excepted              []DuplicateGroup `json:"excepted,omitempty"`
 	SprawlItems           []SprawlItem     `json:"sprawl_items"`
 	StaleExceptions       []string         `json:"stale_exceptions,omitempty"`
+	NotCheckedExceptions  []string         `json:"not_checked_exceptions,omitempty"`
 	CleanlinessScore      float64          `json:"cleanliness_score"`
 	Passed                bool             `json:"passed"`
 	// Applicable reports whether there was anything to scan. This detector reads Go sources
@@ -167,11 +168,12 @@ func ScanRepoWithOptions(ctx context.Context, opts ScanOptions) (*DedupeReport, 
 		return nil, err
 	}
 	report := &DedupeReport{
-		Duplicates:      make([]DuplicateGroup, 0),
-		Excepted:        make([]DuplicateGroup, 0),
-		SprawlItems:     make([]SprawlItem, 0),
-		StaleExceptions: make([]string, 0),
-		Unscanned:       scope.unscanned,
+		Duplicates:           make([]DuplicateGroup, 0),
+		Excepted:             make([]DuplicateGroup, 0),
+		SprawlItems:          make([]SprawlItem, 0),
+		StaleExceptions:      make([]string, 0),
+		NotCheckedExceptions: make([]string, 0),
+		Unscanned:            scope.unscanned,
 	}
 
 	fset := token.NewFileSet()
@@ -796,14 +798,69 @@ func collectDuplicates(hashMap map[string][]FileLocation, locMap map[string]int,
 	})
 }
 
+const globCharacters = "*?[]\\"
+
+func exceptionLanguage(entry config.Exception) string {
+	if entry.Path != "" {
+		if lang := sourceLanguageOf(entry.Path); lang != "" {
+			return lang
+		}
+		return "unknown"
+	}
+	if entry.Glob != "" {
+		return globLanguage(entry.Glob)
+	}
+	return "unknown"
+}
+
+func globLanguage(glob string) string {
+	ext := filepath.Ext(glob)
+	if ext == "" || strings.ContainsAny(ext, globCharacters) {
+		return "unknown"
+	}
+	if isWorkflowYAML(glob) {
+		return "yaml"
+	}
+	if lang := util.SourceLanguage("file" + ext); lang != "" {
+		return lang
+	}
+	return "unknown"
+}
+
+func isScannedLanguage(lang string, report *DedupeReport) bool {
+	if lang == "" || lang == "unknown" {
+		return false
+	}
+	if lang == goLanguage && report.TotalFilesScanned > 0 {
+		return true
+	}
+	if report.ForeignScanned != nil {
+		_, ok := report.ForeignScanned[lang]
+		return ok
+	}
+	return false
+}
+
 func collectStaleExceptions(exceptions []config.Exception, used []bool, report *DedupeReport) {
 	for i := 0; i < len(exceptions) && i < config.MaxExceptions; i++ {
-		if !used[i] {
-			report.StaleExceptions = append(report.StaleExceptions, fmt.Sprintf(
-				"exceptions entry %s (%s): excuses no duplicate function block; remove the entry",
-				exceptions[i].Target(), config.ExceptionRuleDedupe))
+		if used[i] {
+			continue
 		}
+		classifyUnusedException(exceptions[i], report)
 	}
+}
+
+func classifyUnusedException(entry config.Exception, report *DedupeReport) {
+	lang := exceptionLanguage(entry)
+	if isScannedLanguage(lang, report) {
+		report.StaleExceptions = append(report.StaleExceptions, fmt.Sprintf(
+			"exceptions entry %s (%s): excuses no duplicate function block; remove the entry",
+			entry.Target(), config.ExceptionRuleDedupe))
+		return
+	}
+	report.NotCheckedExceptions = append(report.NotCheckedExceptions, fmt.Sprintf(
+		"exceptions entry %s (%s): %s not scanned by this run; not checked",
+		entry.Target(), config.ExceptionRuleDedupe, lang))
 }
 
 func classifyDuplicateGroup(group DuplicateGroup, mainRoot string, exceptions []config.Exception, today time.Time, used []bool) (DuplicateGroup, bool) {

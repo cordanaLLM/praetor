@@ -1281,7 +1281,7 @@ func TestScanRepo_CategoryDStaleException(t *testing.T) {
 	t.Log("category D entry validates; native scanner reports its unused exception as stale")
 }
 
-func TestScanRepo_Negative_StaleExceptionForNonGoFileFails(t *testing.T) {
+func TestScanRepo_Boundary_UnknownLanguageExceptionNotChecked(t *testing.T) {
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "clean.go")
 	if err := os.WriteFile(sourcePath, []byte(cleanGoSource), 0o600); err != nil {
@@ -1308,15 +1308,18 @@ func TestScanRepo_Negative_StaleExceptionForNonGoFileFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scan repo failed: %v", err)
 	}
-	if report.Passed {
-		t.Fatal("expected report to fail on stale non-Go exception target")
+	if !report.Passed {
+		t.Fatal("expected report to pass when exception target has unknown unscanned language")
 	}
-	if len(report.StaleExceptions) != 1 {
-		t.Fatalf("expected 1 stale exception, got %d", len(report.StaleExceptions))
+	if len(report.StaleExceptions) != 0 {
+		t.Fatalf("expected 0 stale exceptions, got %d: %v", len(report.StaleExceptions), report.StaleExceptions)
 	}
-	want := "exceptions entry README.md (HISS-19): excuses no duplicate function block; remove the entry"
-	if report.StaleExceptions[0] != want {
-		t.Fatalf("stale exception = %q, want %q", report.StaleExceptions[0], want)
+	if len(report.NotCheckedExceptions) != 1 {
+		t.Fatalf("expected 1 not checked exception, got %d", len(report.NotCheckedExceptions))
+	}
+	want := "exceptions entry README.md (HISS-19): unknown not scanned by this run; not checked"
+	if report.NotCheckedExceptions[0] != want {
+		t.Fatalf("not checked exception = %q, want %q", report.NotCheckedExceptions[0], want)
 	}
 }
 
@@ -1996,5 +1999,146 @@ func TestScanRepo_SeparateLineScopesKeepBothEntries(t *testing.T) {
 				t.Fatalf("each scoped entry must retain metadata: %+v", found[0].Exceptions)
 			}
 		})
+	}
+}
+
+func TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked(t *testing.T) {
+	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
+	root := t.TempDir()
+	writeFile(t, root, "clean.go", cleanGoSource)
+	writeFile(t, root, "interop.c", "int f(void) { return 0; }\n")
+	writeStandardsManifest(t, root, `exceptions:
+  - rule: HISS-19
+    path: interop.c
+    reason: C interop files
+    expires: 2026-11-01
+`)
+	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
+		RepoPath: root,
+		Today:    today,
+	})
+	if err != nil {
+		t.Fatalf("scan repo failed: %v", err)
+	}
+	if !report.Passed {
+		t.Fatalf("expected report to pass when exception language was not scanned, got passed=%v, stale=%v", report.Passed, report.StaleExceptions)
+	}
+	if len(report.StaleExceptions) != 0 {
+		t.Fatalf("expected 0 stale exceptions, got %d: %v", len(report.StaleExceptions), report.StaleExceptions)
+	}
+	if len(report.NotCheckedExceptions) != 1 {
+		t.Fatalf("expected 1 not checked exception, got %d: %v", len(report.NotCheckedExceptions), report.NotCheckedExceptions)
+	}
+	want := "exceptions entry interop.c (HISS-19): c not scanned by this run; not checked"
+	if report.NotCheckedExceptions[0] != want {
+		t.Fatalf("not checked exception = %q, want %q", report.NotCheckedExceptions[0], want)
+	}
+}
+
+func TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "clean.go", cleanGoSource)
+	writeStandardsManifest(t, root, `exceptions:
+  - rule: HISS-19
+    path: clean.go
+    reason: unused Go exception
+    expires: 2026-11-01
+`)
+	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
+		RepoPath: root,
+		Today:    today,
+	})
+	if err != nil {
+		t.Fatalf("scan repo failed: %v", err)
+	}
+	if report.Passed {
+		t.Fatal("expected report to fail when Go exception has no duplicate")
+	}
+	if len(report.StaleExceptions) != 1 {
+		t.Fatalf("expected 1 stale exception, got %d", len(report.StaleExceptions))
+	}
+	want := "exceptions entry clean.go (HISS-19): excuses no duplicate function block; remove the entry"
+	if report.StaleExceptions[0] != want {
+		t.Fatalf("stale exception = %q, want %q", report.StaleExceptions[0], want)
+	}
+	if len(report.NotCheckedExceptions) != 0 {
+		t.Fatalf("expected 0 not checked exceptions, got %d: %v", len(report.NotCheckedExceptions), report.NotCheckedExceptions)
+	}
+}
+
+func TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly(t *testing.T) {
+	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
+	root := t.TempDir()
+	writeFile(t, root, "clean.go", cleanGoSource)
+	writeFile(t, root, "interop.c", "int f(void) { return 0; }\n")
+	writeStandardsManifest(t, root, `exceptions:
+  - rule: HISS-19
+    path: clean.go
+    reason: unused Go exception
+    expires: 2026-11-01
+  - rule: HISS-19
+    path: interop.c
+    reason: C interop files
+    expires: 2026-11-01
+`)
+	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
+		RepoPath: root,
+		Today:    today,
+	})
+	if err != nil {
+		t.Fatalf("scan repo failed: %v", err)
+	}
+	if report.Passed {
+		t.Fatal("expected report to fail when stale Go exception is present")
+	}
+	if len(report.StaleExceptions) != 1 {
+		t.Fatalf("expected 1 stale exception, got %d: %v", len(report.StaleExceptions), report.StaleExceptions)
+	}
+	wantStale := "exceptions entry clean.go (HISS-19): excuses no duplicate function block; remove the entry"
+	if report.StaleExceptions[0] != wantStale {
+		t.Fatalf("stale exception = %q, want %q", report.StaleExceptions[0], wantStale)
+	}
+	if len(report.NotCheckedExceptions) != 1 {
+		t.Fatalf("expected 1 not checked exception, got %d: %v", len(report.NotCheckedExceptions), report.NotCheckedExceptions)
+	}
+	wantNotChecked := "exceptions entry interop.c (HISS-19): c not scanned by this run; not checked"
+	if report.NotCheckedExceptions[0] != wantNotChecked {
+		t.Fatalf("not checked exception = %q, want %q", report.NotCheckedExceptions[0], wantNotChecked)
+	}
+}
+
+func TestScanRepo_Boundary_NotApplicableUnscannedExceptionNotChecked(t *testing.T) {
+	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
+	root := t.TempDir()
+	writeFile(t, root, "interop.c", "int f(void) { return 0; }\n")
+	writeStandardsManifest(t, root, `exceptions:
+  - rule: HISS-19
+    path: interop.c
+    reason: C interop files
+    expires: 2026-11-01
+`)
+	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
+		RepoPath: root,
+		Today:    today,
+	})
+	if err != nil {
+		t.Fatalf("scan repo failed: %v", err)
+	}
+	if report.Applicable {
+		t.Fatalf("expected Applicable to be false, got true")
+	}
+	if len(report.StaleExceptions) != 0 {
+		t.Fatalf("expected 0 stale exceptions, got %d: %v", len(report.StaleExceptions), report.StaleExceptions)
+	}
+	if len(report.NotCheckedExceptions) != 1 {
+		t.Fatalf("expected 1 not checked exception, got %d: %v", len(report.NotCheckedExceptions), report.NotCheckedExceptions)
+	}
+	want := "exceptions entry interop.c (HISS-19): c not scanned by this run; not checked"
+	if report.NotCheckedExceptions[0] != want {
+		t.Fatalf("not checked exception = %q, want %q", report.NotCheckedExceptions[0], want)
 	}
 }
