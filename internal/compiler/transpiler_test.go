@@ -76,19 +76,27 @@ func compileSampleFixture(t *testing.T) (string, string, *CompileResult) {
 func TestTranspilerWriteOutputsSlowWithinBound(t *testing.T) {
 	// Scale the production bound and a 12-second target write by 100. The old
 	// 10-second budget (100ms scaled) expires on .windsurfrules; the publish-sized
-	// budget completes and verifies.
+	// budget completes and verifies. Other targets skip disk inside the bound
+	// because real runner disk time (Windows spent the 480ms margin on other files,
+	// PR #1568 run 40080898893, 2026-10-24) would consume the budget before
+	// .windsurfrules completes, the same reason documented on deadlineCaseBound. An
+	// initial unbounded pass populates all targets so Verify checks them.
 	dir, source, res := compileSampleFixture(t)
+	if err := NewTranspiler().WriteOutputs(res, dir); err != nil {
+		t.Fatal(err)
+	}
 	tr := NewTranspiler()
 	tr.Bound = DefaultAgentBound / 100
 	tr.writeTarget = func(ctx context.Context, root, rel string, data []byte) error {
-		if rel == ".windsurfrules" {
-			timer := time.NewTimer(120 * time.Millisecond)
-			defer timer.Stop()
-			select {
-			case <-timer.C:
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+		if rel != ".windsurfrules" {
+			return nil
+		}
+		timer := time.NewTimer(120 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 		return writeConfinedText(ctx, root, rel, data)
 	}
