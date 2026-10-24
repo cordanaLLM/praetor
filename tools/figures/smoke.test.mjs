@@ -2,8 +2,10 @@
 // Browser fixtures stay on loopback; smoke.mjs blocks every external origin.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { main, parseCommandLine } from './smoke.mjs';
 import { capture, withTempDir, write } from './testkit.mjs';
@@ -11,7 +13,7 @@ import { capture, withTempDir, write } from './testkit.mjs';
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><metadata id="figure-spec">{}</metadata><rect width="100" height="100"/></svg>';
 const FIGURE = '<figure class="praetor-figure" data-figure="demo"><picture><source media="(prefers-reduced-motion: reduce)" srcset="assets/figures/demo.static.svg"><img src="assets/figures/demo.svg"></picture></figure>';
 
-test('SVG mode requires a browser and refuses contradictory mount expectations', async () => {
+test('SVG mode refuses contradictory mount expectations', async () => {
   assert.equal(parseCommandLine([]).expectSvg, false);
   assert.equal(parseCommandLine(['--expect-svg']).expectSvg, true);
   assert.equal(parseCommandLine(['--expect-svg', '--require-browser']), null);
@@ -19,6 +21,19 @@ test('SVG mode requires a browser and refuses contradictory mount expectations',
   assert.equal(result.result, 2);
   assert.match(result.output, /--expect-svg.*--require-browser.*mutually exclusive/);
 });
+
+test('SVG mode fails without Chromium while ordinary smoke still skips', () => withTempDir((dir) => {
+  write(join(dir, 'index.html'), FIGURE);
+  const run = (...flags) => spawnSync(process.execPath, [fileURLToPath(new URL('./smoke.mjs', import.meta.url)), '--site', dir, ...flags], {
+    encoding: 'utf8', timeout: 10_000, env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: join(dir, 'absent-browser') },
+  });
+  const fallback = run('--expect-svg');
+  assert.equal(fallback.status, 2, fallback.stderr);
+  assert.match(fallback.stderr, /no Chromium at/);
+  const ordinary = run();
+  assert.equal(ordinary.status, 0, ordinary.stderr);
+  assert.match(ordinary.stdout, /figures smoke: skipped: no Chromium at/);
+}));
 
 test('SVG smoke accepts each own diagram and rejects planted fallback defects', {
   skip: !existsSync(chromium.executablePath()) && 'Chromium is not installed',
