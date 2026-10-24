@@ -1,0 +1,2 @@
+type: fixed
+title: Makefile needs-write target regenerates .needs.yaml without operator settings
