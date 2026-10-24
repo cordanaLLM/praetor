@@ -23,7 +23,7 @@ func TestNeedsScanCheckPassesAfterWrite(t *testing.T) {
 	}
 	engine := filepath.Join("..", "..")
 	if _, err := captureStdout(t, func() error { return dispatchCommand("needs", []string{"scan", "--check", "--path=" + engine}) }); err != nil {
-		t.Fatalf("the committed .needs.yaml is stale; run 'praetorctl needs scan --write': %v", err)
+		t.Fatalf("the committed .needs.yaml is stale; run 'make needs-write': %v", err)
 	}
 }
 

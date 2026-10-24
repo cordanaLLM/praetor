@@ -220,7 +220,7 @@ goldens under `internal/adopt/testdata/managed-family/` (rewrite them with
 `PRAETOR_UPDATE_GOLDEN=1 go test ./internal/adopt -run Golden`), the direct pins
 in `TestPackageLockPinsEveryInstalledPackage`
 (`tools/markdownlint/assets_test.go`), `.needs.yaml`
-(`praetorctl needs scan --write`), and the npm table of `THIRD-PARTY-NOTICES.md`
+(`make needs-write`), and the npm table of `THIRD-PARTY-NOTICES.md`
 (`praetorctl sbom notices`, which stops on a package without a row or under a
 license outside `knownNoticeLicenses` in `internal/supplychain/notices.go`).
 
