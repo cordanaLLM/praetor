@@ -34,8 +34,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Pull request runs replace an older run of the same pull request; a push or scheduled run
+  # gets its own group and is never cancelled, so every main commit gets its verdict (#1566:
+  # a run per merge cancelled the 60 to 100 minute Windows job of the commit before).
+  group: ${{ github.workflow }}-${{ github.event.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
