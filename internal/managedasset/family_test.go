@@ -124,30 +124,9 @@ func TestFigureFamilyDeclaration(t *testing.T) {
 			t.Fatalf("figure engine prior text %s names %s, which is not one of its assets", digest, rel)
 		}
 	}
-	wantMoved := map[string]map[string]string{
-		"tools/figures/dist/loader.js": {
-			"9c741950900a175696e47248c2acd258cb1bb8703f84221d18a0a21146d340fb": "c9bf497702c29ff981b29bb93364637db27fc3d9",
-			"abd878ebc16730be4fe5aef0316230f079825a5723b461bcde48c87e770d8b53": "732589684b245fec347ae31c62bb59f4c40a2c9d",
-		},
-		"tools/figures/dist/player.js": {
-			"2db2e3bfda05a3776f165530a519b6c4a5def717b4dd4192484f8d86076a4a94": "c9bf497702c29ff981b29bb93364637db27fc3d9",
-			"5e0f6d26e888c954ed2983ffe66d7fe8d68c1069b1489212ad6fc32477a52646": "current generated player",
-		},
-		"tools/figures/dist/THIRD-PARTY-LICENSES.txt": {
-			"c2eed2e1431851ddca033c197728664db21fc82d766e465c44f210b949d57a18": "c9bf497702c29ff981b29bb93364637db27fc3d9",
-			"fe156b1f350ef8779088bc9c73f37609d6266d8f2f04a29995d1586b0451cf9d": "current generated license inventory",
-		},
-	}
-	if len(figures.Moved) != len(wantMoved) {
-		t.Fatalf("figure engine retired paths = %v, want %v", figures.Moved, wantMoved)
-	}
-	for rel, want := range wantMoved {
-		if got := figures.Moved[rel]; !maps.Equal(got, want) {
-			t.Fatalf("figure engine retired digests for %s = %v, want %v", rel, got, want)
-		}
-	}
+	assertFigureFamilyMoved(t, figures)
 	paths := figures.ManagedPaths()
-	for _, want := range []string{"tools/figures/core.mjs", "tools/figures/player/player.js", "tools/figures/third_party/interfig/upstream/LICENSE", "tools/figures/README.md"} {
+	for _, want := range []string{"tools/figures/core.mjs", "tools/figures/mkdocs_hook.py", "tools/figures/third_party/interfig/upstream/LICENSE", "tools/figures/README.md"} {
 		if !slices.Contains(paths, want) {
 			t.Fatalf("figure engine managed paths %v lack %s", paths, want)
 		}
@@ -163,6 +142,44 @@ func TestFigureFamilyDeclaration(t *testing.T) {
 	}
 	if figures.VendoredGlob() != "tools/figures/third_party/interfig/upstream/**" || figures.VendoredLicense != "MIT" {
 		t.Fatalf("vendored tree = %q under %q", figures.VendoredGlob(), figures.VendoredLicense)
+	}
+}
+
+func assertFigureFamilyMoved(t *testing.T, figures Family) {
+	t.Helper()
+	wantMoved := map[string]map[string]string{
+		"tools/figures/dist/loader.js": {
+			"9c741950900a175696e47248c2acd258cb1bb8703f84221d18a0a21146d340fb": "c9bf497702c29ff981b29bb93364637db27fc3d9",
+			"abd878ebc16730be4fe5aef0316230f079825a5723b461bcde48c87e770d8b53": "732589684b245fec347ae31c62bb59f4c40a2c9d",
+		},
+		"tools/figures/dist/player.js": {
+			"2db2e3bfda05a3776f165530a519b6c4a5def717b4dd4192484f8d86076a4a94": "c9bf497702c29ff981b29bb93364637db27fc3d9",
+			"5e0f6d26e888c954ed2983ffe66d7fe8d68c1069b1489212ad6fc32477a52646": "current generated player",
+		},
+		"tools/figures/dist/THIRD-PARTY-LICENSES.txt": {
+			"c2eed2e1431851ddca033c197728664db21fc82d766e465c44f210b949d57a18": "c9bf497702c29ff981b29bb93364637db27fc3d9",
+			"fe156b1f350ef8779088bc9c73f37609d6266d8f2f04a29995d1586b0451cf9d": "current generated license inventory",
+		},
+		"tools/figures/player/loader.js": {
+			"9c741950900a175696e47248c2acd258cb1bb8703f84221d18a0a21146d340fb": "c9bf497702c29ff981b29bb93364637db27fc3d9",
+			"abd878ebc16730be4fe5aef0316230f079825a5723b461bcde48c87e770d8b53": "732589684b245fec347ae31c62bb59f4c40a2c9d",
+		},
+		"tools/figures/player/player.js": {
+			"2db2e3bfda05a3776f165530a519b6c4a5def717b4dd4192484f8d86076a4a94": "c9bf497702c29ff981b29bb93364637db27fc3d9",
+			"5e0f6d26e888c954ed2983ffe66d7fe8d68c1069b1489212ad6fc32477a52646": "current generated player",
+		},
+		"tools/figures/player/THIRD-PARTY-LICENSES.txt": {
+			"c2eed2e1431851ddca033c197728664db21fc82d766e465c44f210b949d57a18": "c9bf497702c29ff981b29bb93364637db27fc3d9",
+			"fe156b1f350ef8779088bc9c73f37609d6266d8f2f04a29995d1586b0451cf9d": "current generated license inventory",
+		},
+	}
+	if len(figures.Moved) != len(wantMoved) {
+		t.Fatalf("figure engine retired paths = %v, want %v", figures.Moved, wantMoved)
+	}
+	for rel, want := range wantMoved {
+		if got := figures.Moved[rel]; !maps.Equal(got, want) {
+			t.Fatalf("figure engine retired digests for %s = %v, want %v", rel, got, want)
+		}
 	}
 }
 

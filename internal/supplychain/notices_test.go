@@ -60,11 +60,11 @@ func TestThirdPartyNoticesMatchWhatShips(t *testing.T) {
 	if string(embedded) != string(sources.NPMLock) {
 		t.Fatalf("%s differs from the lock the binaries embed", noticesLockFile)
 	}
-	for rel, read := range map[string][]byte{figureLicensesFile: sources.FigureLicenses, interfigVendorFile: sources.InterfigVendor} {
-		figure, err := figureassets.Read(strings.TrimPrefix(rel, figureassets.Directory+"/"))
-		if err != nil || string(figure) != string(read) {
-			t.Fatalf("%s differs from the copy the binaries embed (%v)", rel, err)
-		}
+	if figure, err := figureassets.ReadPlayer("player/THIRD-PARTY-LICENSES.txt"); err != nil || string(figure) != string(sources.FigureLicenses) {
+		t.Fatalf("%s differs from the copy the binaries embed (%v)", figureLicensesFile, err)
+	}
+	if figure, err := figureassets.Read(strings.TrimPrefix(interfigVendorFile, figureassets.Directory+"/")); err != nil || string(figure) != string(sources.InterfigVendor) {
+		t.Fatalf("%s differs from the copy the binaries embed (%v)", interfigVendorFile, err)
 	}
 	// A check that derived nothing to compare is not a check that passed (HISS-21).
 	modules, modErr := goModuleRows(sources.GoMod)
@@ -95,7 +95,7 @@ func figurePlayerTermTexts(licenses string) map[string]string {
 // player that bundles React, react-dom and scheduler: every license text the embedded player's
 // THIRD-PARTY-LICENSES.txt holds must appear in the notices file as written.
 func TestThirdPartyNoticesCarryFigurePlayerTermsVerbatim(t *testing.T) {
-	licenses, err := figureassets.Read("player/THIRD-PARTY-LICENSES.txt")
+	licenses, err := figureassets.ReadPlayer("player/THIRD-PARTY-LICENSES.txt")
 	if err != nil {
 		t.Fatal(err)
 	}

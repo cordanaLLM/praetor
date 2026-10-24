@@ -1,9 +1,9 @@
 == canonical without REUSE.toml
-stdout "[PASS] Locked documentation gate verified (24 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n"
+stdout "[PASS] Locked documentation gate verified (21 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n"
 == canonical, REUSE.toml without the override
-stdout "[PASS] Locked documentation gate verified (24 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n[WARN] REUSE.toml has no annotation labelling tools/figures/third_party/interfig/upstream/** MIT; add an override annotation for that path after every table that also covers it, such as a whole-tree ** table (tools/figures/README.md, Credit)\n"
+stdout "[PASS] Locked documentation gate verified (21 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n[WARN] REUSE.toml has no annotation labelling tools/figures/third_party/interfig/upstream/** MIT; add an override annotation for that path after every table that also covers it, such as a whole-tree ** table (tools/figures/README.md, Credit)\n"
 == canonical, REUSE.toml with the override
-stdout "[PASS] Locked documentation gate verified (24 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n"
+stdout "[PASS] Locked documentation gate verified (21 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n"
 == figure asset drift
 stdout ""
 error [FAIL] Documentation gate asset tools/figures/build.mjs differs from the locked Praetor asset; run 'praetorctl adopt --force --lock-source-root=<praetor checkout>'
@@ -23,9 +23,9 @@ error [FAIL] .gitattributes must end with the canonical Praetor attribute block;
 stdout ""
 error [FAIL] .gitattributes attribute block is ambiguous (repair it, then run 'praetorctl adopt'): .gitattributes contains duplicate managed attribute blocks
 == canonical, REUSE.toml override before the whole-tree table
-stdout "[PASS] Locked documentation gate verified (24 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n[WARN] REUSE.toml has no annotation labelling tools/figures/third_party/interfig/upstream/** MIT; add an override annotation for that path after every table that also covers it, such as a whole-tree ** table (tools/figures/README.md, Credit)\n"
+stdout "[PASS] Locked documentation gate verified (21 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n[WARN] REUSE.toml has no annotation labelling tools/figures/third_party/interfig/upstream/** MIT; add an override annotation for that path after every table that also covers it, such as a whole-tree ** table (tools/figures/README.md, Credit)\n"
 == attribute block CRLF
-stdout "[PASS] Locked documentation gate verified (24 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n"
+stdout "[PASS] Locked documentation gate verified (21 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n"
 == disabled retains figure asset
 stdout ""
 error [FAIL] Disabled documentation facet retains Praetor asset tools/figures/player/player.js
@@ -38,7 +38,7 @@ error [FAIL] Inspect disabled documentation .gitattributes block: .gitattributes
 == disabled with the operator's own figure rules
 stdout ""
 == attribute block with the DevContainer rule
-stdout "[PASS] Locked documentation gate verified (24 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n"
+stdout "[PASS] Locked documentation gate verified (21 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n"
 == disabled with the DevContainer rule alone
 stdout ""
 == disabled with the DevContainer rule alone, CRLF

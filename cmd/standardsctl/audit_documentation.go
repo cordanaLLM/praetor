@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,6 +18,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/util"
+	figureassets "github.com/cordanaLLM/praetor/tools/figures"
 )
 
 // auditExactManagedFile requires the managed file at rel to hold family's canonical text, one
@@ -293,27 +295,66 @@ func auditDisabledDocumentationAssets(ctx context.Context, rootDir string) error
 func auditDisabledManagedFamily(ctx context.Context, rootDir string, family managedasset.Family) error {
 	paths := family.ManagedPaths()
 	for index := 0; index < len(paths) && index <= family.MaxAssets; index++ {
-		rel := paths[index]
-		path, err := util.ConfinePath(rootDir, rel)
+		if err := auditDisabledManagedFile(ctx, rootDir, family, paths[index]); err != nil {
+			return err
+		}
+	}
+	if adopt.IsFigureEngineRepository(rootDir) {
+		return nil
+	}
+	moved := slices.Sorted(maps.Keys(family.Moved))
+	for index := 0; index < len(moved) && index <= family.MaxAssets; index++ {
+		rel := moved[index]
+		actual, exists, err := observeDisabledFamilyPath(ctx, rootDir, family.Kind, rel)
 		if err != nil {
-			return fmt.Errorf("[FAIL] Disabled %s path %s is unsafe: %w", family.Kind, rel, err)
+			return err
 		}
-		actual, exists, err := contextopt.ObserveSnapshot(ctx, path)
-		if err != nil {
-			return fmt.Errorf("[FAIL] Inspect disabled %s asset %s: %w", family.Kind, rel, err)
-		}
-		if !exists {
-			continue
-		}
-		praetors, err := adopt.ManagedFileIsPraetors(family, rel, actual)
-		if err != nil {
-			return fmt.Errorf("[FAIL] Classify disabled %s asset %s: %w", family.Kind, rel, err)
-		}
-		if praetors {
+		if exists && family.MovedRendering(rel, actual) {
 			return fmt.Errorf("[FAIL] Disabled %s facet retains Praetor asset %s", family.Kind, rel)
 		}
 	}
+	return auditDisabledFigureLock(ctx, rootDir, family)
+}
+
+func auditDisabledFigureLock(ctx context.Context, rootDir string, family managedasset.Family) error {
+	if family.Directory != figureassets.Directory {
+		return nil
+	}
+	actual, exists, err := observeDisabledFamilyPath(ctx, rootDir, family.Kind, figureassets.PlayerLockFile)
+	if err != nil || !exists {
+		return err
+	}
+	if known, _ := figureassets.IsPraetorPlayerLock(actual); known {
+		return fmt.Errorf("[FAIL] Disabled %s facet retains Praetor asset %s", family.Kind, figureassets.PlayerLockFile)
+	}
 	return nil
+}
+
+func auditDisabledManagedFile(ctx context.Context, rootDir string, family managedasset.Family, rel string) error {
+	actual, exists, err := observeDisabledFamilyPath(ctx, rootDir, family.Kind, rel)
+	if err != nil || !exists {
+		return err
+	}
+	praetors, err := adopt.ManagedFileIsPraetors(family, rel, actual)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Classify disabled %s asset %s: %w", family.Kind, rel, err)
+	}
+	if praetors {
+		return fmt.Errorf("[FAIL] Disabled %s facet retains Praetor asset %s", family.Kind, rel)
+	}
+	return nil
+}
+
+func observeDisabledFamilyPath(ctx context.Context, rootDir, kind, rel string) ([]byte, bool, error) {
+	path, err := util.ConfinePath(rootDir, rel)
+	if err != nil {
+		return nil, false, fmt.Errorf("[FAIL] Disabled %s path %s is unsafe: %w", kind, rel, err)
+	}
+	actual, exists, err := contextopt.ObserveSnapshot(ctx, path)
+	if err != nil {
+		return nil, false, fmt.Errorf("[FAIL] Inspect disabled %s asset %s: %w", kind, rel, err)
+	}
+	return actual, exists, nil
 }
 
 func auditDisabledDocumentationMakefile(ctx context.Context, rootDir string) error {
@@ -434,7 +475,29 @@ func auditManagedFamily(ctx context.Context, rootDir string, family managedasset
 			return 0, err
 		}
 	}
+	if family.Directory == figureassets.Directory && !adopt.IsFigureEngineRepository(rootDir) {
+		if err := auditRetiredFigurePlayerBundle(rootDir, family); err != nil {
+			return 0, err
+		}
+	}
 	return len(names), nil
+}
+
+// auditRetiredFigurePlayerBundle refuses the retired figure player bundle in any repository
+// other than the figure engine itself (identified by tools/figures/bundle.mjs).
+func auditRetiredFigurePlayerBundle(rootDir string, family managedasset.Family) error {
+	paths := figureassets.PlayerAssetPaths()
+	for index := 0; index < len(paths) && index < figureassets.MaxAssets; index++ {
+		rel := paths[index]
+		path, err := util.ConfinePath(rootDir, rel)
+		if err != nil {
+			return fmt.Errorf("[FAIL] %s path %s is unsafe: %w", familyGate(family), rel, err)
+		}
+		if _, err := os.Lstat(path); err == nil {
+			return fmt.Errorf("[FAIL] %s: %s is retired from adopter repositories; run 'praetorctl adopt' to remove it (the docs build fetches the release asset)", familyGate(family), rel)
+		}
+	}
+	return nil
 }
 
 func auditDocumentationLocalWiring(

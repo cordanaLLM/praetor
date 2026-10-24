@@ -9,11 +9,11 @@ import (
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
-// untrackFigureEngine drops the committed figure engine player files from the index, so they sit
-// on disk untracked, as an adoption leaves them before the operator commits.
+// untrackFigureEngine drops the committed figure engine third_party files from the index, so
+// they sit on disk untracked, as an adoption leaves them before the operator commits.
 func untrackFigureEngine(t *testing.T, root string) {
 	t.Helper()
-	if out, err := runFixtureGit(t, root, testsupport.HermeticGitEnv(t), "rm", "-q", "-r", "--cached", "tools/figures/player"); err != nil {
+	if out, err := runFixtureGit(t, root, testsupport.HermeticGitEnv(t), "rm", "-q", "-r", "--cached", "tools/figures/third_party"); err != nil {
 		t.Skipf("git rm --cached failed in sandbox: %v (%s)", err, out)
 	}
 }
@@ -28,16 +28,16 @@ func docsManifest() *config.Manifest {
 func TestAuditDocumentationGate_Negative_IgnoredUntrackedFileFails(t *testing.T) {
 	root := documentationAuditFixture(t)
 	untrackFigureEngine(t, root)
-	writeFixtureFile(t, root, ".gitignore", "player/\n\n"+adopt.ManagedGitIgnoreBlock())
+	writeFixtureFile(t, root, ".gitignore", "third_party/\n\n"+adopt.ManagedGitIgnoreBlock())
 	err := docGate(t.Context(), docsManifest(), root)
-	want := "tools/figures/player/loader.js (ignored by .gitignore:1 (player/); add !/tools/figures/player/ after that rule)"
+	want := "tools/figures/third_party/interfig/upstream/LICENSE (ignored by .gitignore:1 (third_party/); add !/tools/figures/third_party/ after that rule)"
 	if err == nil || !strings.Contains(err.Error(), "[FAIL] Documentation gate files are ignored by git and not tracked") ||
-		!strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "tools/figures/player/player.js") {
+		!strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "tools/figures/third_party/interfig/upstream/src/svg.ts") {
 		t.Fatalf("ignored figure engine passed or was not named: %v", err)
 	}
 }
 
-// Positive: a dist/ rule never hides the renamed player, whether it is tracked or untracked.
+// Positive: a dist/ rule never hides the untracked figure engine files, whether tracked or untracked.
 func TestAuditDocumentationGate_Positive_TrackedOrReincludedFilesPass(t *testing.T) {
 	root := documentationAuditFixture(t)
 	writeFixtureFile(t, root, ".gitignore", "dist/\n\n"+adopt.ManagedGitIgnoreBlock())
@@ -46,7 +46,7 @@ func TestAuditDocumentationGate_Positive_TrackedOrReincludedFilesPass(t *testing
 	}
 	untrackFigureEngine(t, root)
 	if err := docGate(t.Context(), docsManifest(), root); err != nil {
-		t.Fatalf("untracked player under a dist rule failed: %v", err)
+		t.Fatalf("untracked figure engine under a dist rule failed: %v", err)
 	}
 }
 

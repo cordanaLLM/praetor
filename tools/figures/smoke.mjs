@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Proves every figure on a built site mounts the interactive player (ADR-0015, section 7).
+// Proves every figure mounts the player, or shows its designed SVG fallback (ADR-0021).
 //
-//   node smoke.mjs [--site <dir>] [--base <path>] [--require-browser]
+//   node smoke.mjs [--site <dir>] [--base <path>] [--require-browser | --expect-svg]
 //
 // The site is served from 127.0.0.1 on a free port by serve.mjs, because module scripts do not
 // load from file://, under --base: the path the site is built for ('/' by default; an Astro site
@@ -18,12 +18,13 @@
 // fails the run nor reaches the network.
 //
 // Without an installed Chromium the run exits 0 and says it skipped (HISS-21), unless
-// --require-browser is given, as the Pages workflow does.
+// --require-browser is given, as the Pages workflow does, or --expect-svg is given. SVG mode
+// requires every figure's own visible diagram, no player mount or request, and no console errors.
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { basePath, serve } from './serve.mjs';
+import { PLAYER_URI, basePath, serve } from './serve.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const MAX_FILES = 20_000;
@@ -173,16 +174,27 @@ async function motionErrors(page) {
 }
 
 /** Findings for one page in one motion mode. */
-async function checkPage(context, origin, path, reduced) {
+async function checkPage(context, origin, path, reduced, expectSvg) {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (error) => errors.push(`page error: ${error.message}`));
   page.on('console', (message) => message.type() === 'error' && onSite(message.location().url, origin) &&
     errors.push(`console error: ${message.text()}`));
+  if (expectSvg) page.on('request', (request) => {
+    const pathname = decodeURIComponent(new URL(request.url()).pathname);
+    if (pathname.includes(`/${PLAYER_URI}/`) || pathname.includes('/player/')) {
+      errors.push(`unexpected player request: ${request.url()}`);
+    }
+  });
   try {
     await page.goto(origin + path, { waitUntil: 'load', timeout: PAGE_TIMEOUT_MS });
     const expected = await page.locator('figure.praetor-figure').count();
     await scrollThrough(page);
+    if (expectSvg) {
+      await page.waitForTimeout(SETTLE_MS);
+      errors.push(...await page.evaluate(svgErrors));
+      return errors.map((error) => `${path}${reduced ? ' (reduced motion)' : ''}: ${error}`);
+    }
     await page.waitForFunction((n) => document.querySelectorAll('.praetor-figure .interfig').length >= n, expected,
       { timeout: PAGE_TIMEOUT_MS }).catch(() => undefined);
     const mounted = await page.locator('.praetor-figure .interfig').count();
@@ -200,6 +212,32 @@ async function checkPage(context, origin, path, reduced) {
   return errors.map((error) => `${path}${reduced ? ' (reduced motion)' : ''}: ${error}`);
 }
 
+/** Each fallback must visibly show its own loaded SVG, including the reduced-motion source. */
+const svgErrors = () => {
+  const errors = [];
+  const playerReference = /\/(?:assets\/javascripts\/figures|player)\//;
+  for (const element of document.querySelectorAll('script, link')) {
+    const reference = element.src || element.href || element.textContent;
+    if (playerReference.test(reference)) errors.push('unexpected player asset reference in SVG mode');
+  }
+  const visible = (element) => {
+    const style = getComputedStyle(element);
+    const box = element.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility === 'visible' && Number(style.opacity) > 0 && box.width > 0 && box.height > 0;
+  };
+  for (const figure of document.querySelectorAll('figure.praetor-figure')) {
+    const slug = figure.getAttribute('data-figure');
+    const image = figure.querySelector('img');
+    const name = image ? new URL(image.currentSrc || image.src, document.baseURI).pathname.split('/').pop() : '';
+    const ownImage = image && image.complete && image.naturalWidth > 0 && visible(image) &&
+      [slug + '.svg', slug + '.static.svg'].includes(name);
+    const inline = Array.from(figure.querySelectorAll('svg')).some((svg) => svg.querySelector('metadata#figure-spec') && visible(svg));
+    if (!slug || !visible(figure) || !(ownImage || inline)) errors.push(`${slug ?? '?'}: does not show its own SVG`);
+    if (figure.querySelector('.interfig')) errors.push(`${slug}: mounted a player in SVG mode`);
+  }
+  return errors;
+};
+
 async function launch(requireBrowser) {
   const { chromium } = await import('playwright');
   if (existsSync(chromium.executablePath())) return chromium.launch({ timeout: PAGE_TIMEOUT_MS });
@@ -209,11 +247,11 @@ async function launch(requireBrowser) {
   return null;
 }
 
-async function smoke(site, base, requireBrowser) {
+async function smoke(site, base, requireBrowser, expectSvg) {
   if (!existsSync(join(site, 'index.html'))) throw new Error(`${site} holds no built site; build the site first`);
   const pages = figurePages(site);
   if (pages.length === 0) throw new Error(`no page under ${site} holds a figure.praetor-figure`);
-  const browser = await launch(requireBrowser);
+  const browser = await launch(requireBrowser || expectSvg);
   if (!browser) return [];
   const server = await serve(site, base);
   const origin = `http://127.0.0.1:${server.address().port}${basePath(base).slice(0, -1)}`;
@@ -222,24 +260,25 @@ async function smoke(site, base, requireBrowser) {
     for (const reduced of [false, true]) {
       const context = await browser.newContext({ reducedMotion: reduced ? 'reduce' : 'no-preference' });
       await context.route((url) => !onSite(url.href, origin), (route) => route.abort('blockedbyclient'));
-      for (const path of pages) errors.push(...(await checkPage(context, origin, path, reduced)));
+      for (const path of pages) errors.push(...(await checkPage(context, origin, path, reduced, expectSvg)));
       await context.close();
     }
   } finally {
     await browser.close();
     server.close();
   }
-  if (!errors.length) console.log(`figures smoke: ${pages.length} page(s) mount every figure, with and without reduced motion`);
+  if (!errors.length) console.log(`figures smoke: ${pages.length} page(s) ${expectSvg ? 'show every figure as SVG without player requests' : 'mount every figure'}, with and without reduced motion`);
   return errors;
 }
 
-const OPTIONS = { site: { type: 'string', default: 'site' }, base: { type: 'string', default: '/' }, 'require-browser': { type: 'boolean', default: false } };
+const OPTIONS = { site: { type: 'string', default: 'site' }, base: { type: 'string', default: '/' }, 'require-browser': { type: 'boolean', default: false }, 'expect-svg': { type: 'boolean', default: false } };
 
-/** The parsed command line, or null when it is not `[--site DIR] [--base PATH] [--require-browser]`. */
+/** The parsed command line, or null for invalid or contradictory expectations. */
 export function parseCommandLine(argv) {
   try {
     const { values } = parseArgs({ args: argv, options: OPTIONS, strict: true, allowPositionals: false });
-    return values.site ? { site: resolve(ROOT, values.site), base: basePath(values.base), requireBrowser: values['require-browser'] } : null;
+    if (values['expect-svg'] && values['require-browser']) return null;
+    return values.site ? { site: resolve(ROOT, values.site), base: basePath(values.base), requireBrowser: values['require-browser'], expectSvg: values['expect-svg'] } : null;
   } catch {
     return null;
   }
@@ -248,10 +287,10 @@ export function parseCommandLine(argv) {
 export async function main(argv) {
   const options = parseCommandLine(argv);
   if (!options) {
-    console.error('usage: node smoke.mjs [--site <dir>] [--base <path>] [--require-browser]');
+    console.error('usage: node smoke.mjs [--site <dir>] [--base <path>] [--require-browser | --expect-svg] (--expect-svg and --require-browser are mutually exclusive)');
     return 2;
   }
-  const errors = await smoke(options.site, options.base, options.requireBrowser);
+  const errors = await smoke(options.site, options.base, options.requireBrowser, options.expectSvg);
   for (const error of errors) console.error(`figures smoke: ${error}`);
   return errors.length ? 1 : 0;
 }

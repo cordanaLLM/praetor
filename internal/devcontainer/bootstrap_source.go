@@ -22,6 +22,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/templates"
+	figureassets "github.com/cordanaLLM/praetor/tools/figures"
 	secretsassets "github.com/cordanaLLM/praetor/tools/secrets"
 )
 
@@ -427,6 +428,9 @@ func preMoveBootstrapFamily(family managedasset.Family) (bootstrapAssetFamily, b
 	if len(family.Moved) == 0 {
 		return bootstrapAssetFamily{}, false
 	}
+	if family.Directory == figureassets.Directory {
+		return figureBootstrapVariant(family, " (pre-move)", "dist/", false), true
+	}
 	movedBase := make(map[string]string, len(family.Moved))
 	for oldRepoPath := range family.Moved {
 		oldRel := strings.TrimPrefix(oldRepoPath, family.Directory+"/")
@@ -437,9 +441,6 @@ func preMoveBootstrapFamily(family managedasset.Family) (bootstrapAssetFamily, b
 	oldAssetPaths := make([]string, 0, len(names))
 	for index := 0; index < len(names) && index < family.MaxAssets; index++ {
 		name := names[index]
-		if name == "eslint.figures.mjs" {
-			continue
-		}
 		if oldRel, ok := movedBase[path.Base(name)]; ok {
 			oldNames = append(oldNames, oldRel)
 			oldAssetPaths = append(oldAssetPaths, family.Directory+"/"+oldRel)
@@ -456,6 +457,36 @@ func preMoveBootstrapFamily(family managedasset.Family) (bootstrapAssetFamily, b
 		preMove:   true,
 		moved:     family.Moved,
 	}, true
+}
+
+func figureBootstrapVariant(family managedasset.Family, suffix, playerPrefix string, includeESLint bool) bootstrapAssetFamily {
+	names := family.Names()
+	playerNames := figureassets.PlayerNames()
+	oldNames := make([]string, 0, len(names)+len(playerNames))
+	oldAssetPaths := make([]string, 0, len(names)+len(playerNames))
+	for index := 0; index < len(names) && index < family.MaxAssets; index++ {
+		name := names[index]
+		if name == "figures.css" {
+			for pIdx := 0; pIdx < len(playerNames) && pIdx < figureassets.MaxPlayerAssets; pIdx++ {
+				oldRel := playerPrefix + path.Base(playerNames[pIdx])
+				oldNames = append(oldNames, oldRel)
+				oldAssetPaths = append(oldAssetPaths, family.Directory+"/"+oldRel)
+			}
+		}
+		if name == "eslint.figures.mjs" && !includeESLint {
+			continue
+		}
+		oldNames = append(oldNames, name)
+		oldAssetPaths = append(oldAssetPaths, family.AssetPath(name))
+	}
+	return bootstrapAssetFamily{
+		name:      family.Name + suffix,
+		source:    family.Source,
+		directive: "//go:embed " + strings.Join(oldNames, " "),
+		assets:    oldAssetPaths,
+		preMove:   true,
+		moved:     family.Moved,
+	}
 }
 
 // templatesSinceRelease are the template bodies added after the latest release, which a bundle
@@ -484,6 +515,13 @@ func archivedAssetFamilies() ([]bootstrapAssetFamily, error) {
 		if preMove, ok := preMoveBootstrapFamily(managed[index]); ok {
 			families = append(families, preMove)
 		}
+		if managed[index].Directory == figureassets.Directory {
+			families = append(
+				families,
+				figureBootstrapVariant(managed[index], " (pre-ADR-0021)", "player/", true),
+				figureBootstrapVariant(managed[index], " (pre-eslint)", "player/", false),
+			)
+		}
 	}
 	return families, nil
 }
@@ -498,7 +536,7 @@ func bootstrapAssetFamilies() ([]bootstrapAssetFamily, error) {
 		return nil, err
 	}
 	managed := managedasset.Families()
-	families := make([]bootstrapAssetFamily, 0, len(managed)+4)
+	families := make([]bootstrapAssetFamily, 0, len(managed)+5)
 	for index := 0; index < len(managed) && index < managedasset.MaxFamilies; index++ {
 		family := managed[index]
 		families = append(families, bootstrapAssetFamily{
@@ -506,6 +544,8 @@ func bootstrapAssetFamilies() ([]bootstrapAssetFamily, error) {
 		})
 	}
 	return append(families, bootstrapAssetFamily{
+		name: "figure player", source: figureassets.PlayerSourceFile, directive: figureassets.PlayerEmbedDirective, assets: figureassets.PlayerAssetPaths(),
+	}, bootstrapAssetFamily{
 		name: "template", source: templates.SourceFile, directive: "//go:embed " + templates.Pattern, assets: templateAssets,
 	}, cliBootstrapFamily(), bootstrapAssetFamily{
 		name: "client schemas", source: clientschema.SourceFile, directive: clientschema.EmbedDirective, assets: clientschema.AssetPaths(),
@@ -602,7 +642,7 @@ func selectFamilyDeclaration(source, directive string, archived []bootstrapAsset
 	return selected, unselected, nil
 }
 
-func verifySelectedFamilyAssets(selected *bootstrapAssetFamily, unselected []*bootstrapAssetFamily, files []bootstrapSourceFile, admitted map[string]bool) error {
+func admitSelectedFamilyAssets(selected *bootstrapAssetFamily, files []bootstrapSourceFile, admitted map[string]bool) error {
 	for _, asset := range selected.assets {
 		if !containsBootstrapSource(files, asset) {
 			if slices.Contains(selected.optional, asset) {
@@ -612,6 +652,10 @@ func verifySelectedFamilyAssets(selected *bootstrapAssetFamily, unselected []*bo
 		}
 		admitted[asset] = true
 	}
+	return nil
+}
+
+func rejectUnselectedFamilyAssets(selected *bootstrapAssetFamily, unselected []*bootstrapAssetFamily, files []bootstrapSourceFile, admitted map[string]bool) error {
 	for _, other := range unselected {
 		for _, asset := range other.assets {
 			if !admitted[asset] && containsBootstrapSource(files, asset) {
@@ -693,6 +737,35 @@ func checkArchivedFileLimits(files []bootstrapSourceFile) error {
 	return nil
 }
 
+type selectedSourceFamily struct {
+	selected   *bootstrapAssetFamily
+	unselected []*bootstrapAssetFamily
+}
+
+func resolveArchivedSelections(files []bootstrapSourceFile, archived []bootstrapAssetFamily, admitted map[string]bool) ([]selectedSourceFamily, error) {
+	sources := uniqueFamilySources(archived)
+	selections := make([]selectedSourceFamily, 0, len(sources))
+	for _, source := range sources {
+		file, ok := findBootstrapSource(files, source)
+		if !ok {
+			continue
+		}
+		directive, err := parseSourceEmbedDirective(file)
+		if err != nil {
+			return nil, err
+		}
+		selected, other, err := selectFamilyDeclaration(source, directive, archived)
+		if err != nil {
+			return nil, err
+		}
+		if err := admitSelectedFamilyAssets(selected, files, admitted); err != nil {
+			return nil, err
+		}
+		selections = append(selections, selectedSourceFamily{selected: selected, unselected: other})
+	}
+	return selections, nil
+}
+
 func validateArchivedBootstrapSourceSet(files []bootstrapSourceFile) error {
 	if err := checkArchivedFileLimits(files); err != nil {
 		return err
@@ -702,23 +775,15 @@ func validateArchivedBootstrapSourceSet(files []bootstrapSourceFile) error {
 		return err
 	}
 	admitted := make(map[string]bool)
-	for _, source := range uniqueFamilySources(archived) {
-		file, ok := findBootstrapSource(files, source)
-		if !ok {
-			continue
-		}
-		directive, err := parseSourceEmbedDirective(file)
-		if err != nil {
+	selections, err := resolveArchivedSelections(files, archived, admitted)
+	if err != nil {
+		return err
+	}
+	for _, sel := range selections {
+		if err := rejectUnselectedFamilyAssets(sel.selected, sel.unselected, files, admitted); err != nil {
 			return err
 		}
-		selected, other, err := selectFamilyDeclaration(source, directive, archived)
-		if err != nil {
-			return err
-		}
-		if err := verifySelectedFamilyAssets(selected, other, files, admitted); err != nil {
-			return err
-		}
-		if err := verifyPreMoveAssetDigests(*selected, files); err != nil {
+		if err := verifyPreMoveAssetDigests(*sel.selected, files); err != nil {
 			return err
 		}
 	}

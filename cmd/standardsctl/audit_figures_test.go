@@ -69,7 +69,7 @@ func figureAuditGoldenCases() []auditGoldenCase {
 			writeFixtureFile(t, root, ".gitattributes", strings.ReplaceAll("* text=auto\n\n"+block, "\n", "\r\n"))
 		}},
 		{name: "disabled retains figure asset", mutate: func(t *testing.T, root string) {
-			data, err := figureassets.Read("player/player.js")
+			data, err := figureassets.ReadPlayer("player/player.js")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -128,4 +128,35 @@ func TestAuditFigureFamilyGolden(t *testing.T) {
 		}
 	}
 	testsupport.AssertGolden(t, filepath.Join("testdata", "managed-family", "figure-audit.golden"), sb.String())
+}
+
+// Positive, negative and boundary: an adopter repository (without tools/figures/bundle.mjs)
+// carrying tools/figures/player/player.js or loader.js fails the documentation gate naming the
+// file and the fix ('praetorctl adopt' removes it; the docs build fetches the release asset),
+// while the canonical engine repository (with tools/figures/bundle.mjs) carrying both files
+// passes.
+func TestAuditFigureFamilyRetiredPlayerRefusal(t *testing.T) {
+	manifest := &config.Manifest{Facets: []string{"docs:seo-portal"}}
+	for _, rel := range []string{
+		figureassets.PlayerDirectory + "/player.js",
+		figureassets.PlayerDirectory + "/loader.js",
+	} {
+		root := documentationAuditFixture(t)
+		writeFixtureFile(t, root, rel, "// retired bundle\n")
+		err := docGate(t.Context(), manifest, root)
+		if err == nil || !strings.Contains(err.Error(), rel) ||
+			!strings.Contains(err.Error(), "retired from adopter repositories") ||
+			!strings.Contains(err.Error(), "praetorctl adopt") ||
+			!strings.Contains(err.Error(), "fetches the release asset") {
+			t.Fatalf("adopter tree carrying %s did not fail with retired player refusal: %v", rel, err)
+		}
+	}
+
+	engineRoot := documentationAuditFixture(t)
+	writeFixtureFile(t, engineRoot, figureassets.BundleScriptFile, "// engine bundler\n")
+	writeFixtureFile(t, engineRoot, figureassets.PlayerDirectory+"/player.js", "// engine player\n")
+	writeFixtureFile(t, engineRoot, figureassets.PlayerDirectory+"/loader.js", "// engine loader\n")
+	if _, err := captureStdout(t, func() error { return docGate(t.Context(), manifest, engineRoot) }); err != nil {
+		t.Fatalf("engine repository carrying player bundle failed: %v", err)
+	}
 }

@@ -612,14 +612,14 @@ jobs:
             done
           done
 
-      # Every figure on the fixture builds must mount the player in Chromium, with and without
-      # reduced motion; the subpath build is served under its path. The run blocks every other
-      # origin, so the preset's placeholder repository widget does not fail it (tools/figures/smoke.mjs).
+      # --lock-source-root pins these fixtures to the unreleased checkout, so they show SVGs
+      # without player requests. --expect-svg requires Chromium and checks both motion modes.
+      # The engine site in the Pages workflow keeps --require-browser to check player mounts.
       - name: Smoke-Test MkDocs Preset Figures
         if: steps.changed.outputs.run == 'true'
         run: |
-          node tools/figures/smoke.mjs --site "$RUNNER_TEMP/preset-mkdocs-root" --require-browser
-          node tools/figures/smoke.mjs --site "$RUNNER_TEMP/preset-mkdocs-subpath" --base /preset/ --require-browser
+          node tools/figures/smoke.mjs --site "$RUNNER_TEMP/preset-mkdocs-root" --expect-svg
+          node tools/figures/smoke.mjs --site "$RUNNER_TEMP/preset-mkdocs-subpath" --base /preset/ --expect-svg
 
       # The Starlight preset imports the figure integration from tools/figures/, which `praetorctl
       # adopt` writes with docs:seo-portal, so it is built as an adopter builds it, never in place
@@ -632,10 +632,9 @@ jobs:
       # own mdx() after the preset's integrations. Starlight registers mdx() with static optimization
       # only when the site has none, and Sätteri's MDX compiler without it refuses an HTML node, so
       # the fourth build proves a figure on an .mdx page renders either way. After each build the
-      # Node site check and the Chromium smoke test run under the base that build used, so a figure
-      # that did not render, an image or loader URL outside /preset/, or a player that does not
-      # mount fails the job. smoke.mjs resolves --site against this checkout, so it gets an
-      # absolute path.
+      # Node site check and the Chromium SVG smoke test run under the base that build used.
+      # Adoption carries no bundled player; this unreleased fixture uses the same fallback mode
+      # as MkDocs above. smoke.mjs resolves --site against this checkout, so it gets an absolute path.
       - name: Build Starlight Preset In An Adopter Fixture
         if: steps.changed.outputs.run == 'true'
         run: |
@@ -660,7 +659,7 @@ jobs:
           npm ci --no-audit --no-fund
           verify() {
             node tools/figures/build.mjs site --config astro.config.mjs --docs src/content/docs --site dist --base "$2"
-            node "$praetor/tools/figures/smoke.mjs" --site "$fixture/dist" --base "$2" --require-browser
+            node "$praetor/tools/figures/smoke.mjs" --site "$fixture/dist" --base "$2" --expect-svg
             mv dist "$RUNNER_TEMP/preset-starlight-$1"
           }
           unset DOCS_SITE_URL

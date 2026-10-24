@@ -38,9 +38,12 @@ var repositoryOnly = []string{
 	"tsconfig.json",
 	"loader.ts",
 	"player.tsx",
+	"player_pack.go",
+	"player_pack_test.go",
 	"keyboard.ts",
 	"bundle.mjs",
 	"smoke.mjs",
+	"smoke.test.mjs",
 	"testkit.mjs",
 	"figures.test.mjs",
 	"checks.test.mjs",
@@ -221,7 +224,7 @@ func TestAssetInventoryMatchesTrackedTree(t *testing.T) {
 	}
 	var want []string
 	for _, name := range tracked {
-		if !slices.Contains(repositoryOnly, name) {
+		if !slices.Contains(repositoryOnly, name) && !slices.Contains(playerFiles, name) {
 			want = append(want, name)
 		}
 	}
@@ -254,7 +257,7 @@ func TestAssetInventoryRefusesRepositoryOnlyFiles(t *testing.T) {
 			t.Errorf("the inventory lists %s, which adoption must never write", name)
 		}
 	}
-	refused := append(slices.Clone(repositoryOnly), "", ".", "player", "../assets.go", "node_modules/react/index.js", "/core.mjs", "player/loader.js/")
+	refused := append(slices.Clone(repositoryOnly), "", ".", "player", "player/loader.js", "../assets.go", "node_modules/react/index.js", "/core.mjs", "player/loader.js/")
 	for _, name := range refused {
 		if _, err := Read(name); err == nil || !strings.Contains(err.Error(), "unknown figures asset") {
 			t.Errorf("Read(%q) = %v, want an unknown-asset refusal", name, err)
@@ -383,8 +386,8 @@ func embeddedScripts(t *testing.T) map[string]string {
 	return files
 }
 
-// Positive: the inventory is import-closed, so a repository holding only these files renders,
-// checks and plays figures with plain Node; the known edges prove the scan read the imports.
+// Positive: the inventory is import-closed, so a repository holding only these files renders and
+// checks figures with plain Node; the known edges prove the scan read the imports.
 func TestAssetInventoryIsImportClosed(t *testing.T) {
 	violations, edges := importViolations(embeddedScripts(t), Names())
 	for _, violation := range violations {
@@ -395,7 +398,6 @@ func TestAssetInventoryIsImportClosed(t *testing.T) {
 		"core.mjs -> third_party/interfig/upstream/src/svg.ts",
 		"third_party/interfig/upstream/src/svg.ts -> third_party/interfig/upstream/src/model.ts",
 		"astro.mjs -> serve.mjs",
-		"player/loader.js -> player/player.js",
 	} {
 		if !slices.Contains(edges, edge) {
 			t.Errorf("the import scan missed %s; it found %q", edge, edges)

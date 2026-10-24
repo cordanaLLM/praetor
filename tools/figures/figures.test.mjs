@@ -813,13 +813,13 @@ test('the smoke run keeps requests and console errors of the served origin and b
 });
 
 test('the smoke command line takes a site, a base path and --require-browser, and nothing else', async () => {
-  assert.deepEqual(parseCommandLine([]), { site: join(ROOT, 'site'), base: '/', requireBrowser: false });
+  assert.deepEqual(parseCommandLine([]), { site: join(ROOT, 'site'), base: '/', requireBrowser: false, expectSvg: false });
   assert.deepEqual(parseCommandLine(['--site', 'dist', '--base', 'docs', '--require-browser']),
-    { site: join(ROOT, 'dist'), base: '/docs/', requireBrowser: true });
+    { site: join(ROOT, 'dist'), base: '/docs/', requireBrowser: true, expectSvg: false });
   assert.equal(parseCommandLine(['--site', join(ROOT, 'elsewhere')]).site, join(ROOT, 'elsewhere'));
   // Boundary: an empty site, a missing value, an unknown flag or a positional argument is misuse.
   for (const argv of [['--site', ''], ['--site'], ['--base'], ['--headed'], ['site']]) assert.equal(parseCommandLine(argv), null, argv.join(' '));
   const { result, output } = await capture(() => smokeMain(['--nope']));
   assert.equal(result, 2);
-  assert.equal(output, 'usage: node smoke.mjs [--site <dir>] [--base <path>] [--require-browser]');
+  assert.match(output, /^usage: node smoke.mjs .*\[--require-browser \| --expect-svg\]/);
 });

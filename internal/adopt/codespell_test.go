@@ -77,14 +77,7 @@ func setupCodespellFixture(t *testing.T) (string, time.Time, *adoptSession, stri
 		t.Fatal(err)
 	}
 
-	playerData, err := figureassets.FS().Open("player/player.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bytesPlayer, err := io.ReadAll(playerData)
-	if closeErr := playerData.Close(); closeErr != nil {
-		t.Fatal(closeErr)
-	}
+	bytesPlayer, err := figureassets.ReadPlayer("player/player.js")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,6 +259,35 @@ func TestCodespell_AdopterReconciliationAndAudit(t *testing.T) {
 	assertCodespellLiveReconciled(t, repo, today, s, codespellBin)
 	expiredException := assertCodespellExpired(t, repo, s, codespellBin)
 	assertCodespellAuditAndPlanted(t, repo, today, expiredException, codespellBin)
+}
+
+func TestCodespell_DoesNotProposeFigurePlayerExceptions(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, ".codespellrc"), []byte("[codespell]\nskip = .git\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifestContent := "version: 1\nfacets:\n  - docs:seo-portal\n"
+	if err := os.WriteFile(filepath.Join(repo, manifestFile), []byte(manifestContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &adoptSession{
+		repoPath: repo,
+		facets:   []string{"docs:seo-portal"},
+		opts:     AdoptOptions{Path: repo},
+		report:   &AdoptReport{},
+	}
+	out, err := captureStdout(t, func() error {
+		return reconcileCodespell(t.Context(), s)
+	})
+	if err != nil {
+		t.Fatalf("reconcileCodespell failed: %v", err)
+	}
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("expected no codespell proposal on stdout, got: %s", out)
+	}
+	if len(s.report.Warnings) != 0 {
+		t.Fatalf("expected no codespell proposal warning, got: %v", s.report.Warnings)
+	}
 }
 
 func TestCodespell_Formats_SetupCfg_And_Pyproject(t *testing.T) {

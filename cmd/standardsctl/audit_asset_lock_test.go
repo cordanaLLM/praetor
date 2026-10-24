@@ -26,24 +26,17 @@ const (
 
 func fixtureChecks32a35c8Text(t *testing.T) string {
 	t.Helper()
-	canonical, err := figureassets.Read("checks.mjs")
+	// Exact 32a35c8 bytes; reconstructing them from the current asset drifts on later edits.
+	raw, err := os.ReadFile(filepath.Join("testdata", "managed-family", "checks-32a35c8.mjs.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	const (
-		target      = "const MARKER = new RegExp(`<!-- figure:([a-z0-9-]+) -->\\\\n([\\\\s\\\\S]*?)<!-- \\\\/figure -->`, 'g');"
-		replacement = "const MARKER = /<!-- figure:([a-z0-9-]+) -->\\n([\\s\\S]*?)<!-- \\/figure -->/g;"
-	)
-	if !strings.Contains(string(canonical), target) {
-		t.Fatalf("target MARKER line not found in canonical checks.mjs")
-	}
-	replaced := strings.Replace(string(canonical), target, replacement, 1)
-	sum := sha256.Sum256([]byte(replaced))
+	sum := sha256.Sum256(raw)
 	digest := hex.EncodeToString(sum[:])
 	if digest != fixtureChecks32a35c8Digest {
 		t.Fatalf("checks.mjs 32a35c8 digest = %s, want %s", digest, fixtureChecks32a35c8Digest)
 	}
-	return replaced
+	return string(raw)
 }
 
 const fixtureFacetDocsSEO = `---

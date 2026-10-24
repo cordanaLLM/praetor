@@ -21,9 +21,9 @@ Everything the figures need sits in one tree, `tools/figures/`:
 | `checks.mjs` | The `sources`, `site` and `portable` checks, and the slot filling of the figure markup. Node builtins only. |
 | `loader.ts`, `player.tsx`, `keyboard.ts` | The player source: the loader reads each figure's props from its SVG and mounts the React player. |
 | `bundle.mjs` | Builds the committed player in `player/` with esbuild, checks it byte for byte against a rebuild from the lock, and holds its size budget. Needs the locked npm install. |
-| `player/` | The committed player: `loader.js`, `player.js` and `THIRD-PARTY-LICENSES.txt`. The same files serve every site. |
+| `player/` | The committed player: `loader.js`, `player.js` and `THIRD-PARTY-LICENSES.txt`, in the engine only. A release carries them as `figures-player.tar.gz`, which adopters fetch ([ADR-0021](../adr/0021-figure-player-as-release-asset.md)). |
 | `types.ts` | The spec type a `docs/figures/<slug>.ts` file checks against. |
-| `mkdocs_hook.py` | The MkDocs hook that renders each `figure` fence and publishes `figures.css` and `player/`. Python standard library and MkDocs only. |
+| `mkdocs_hook.py` | The MkDocs hook that renders each `figure` fence and publishes `figures.css` and the player: `player/` in the engine, elsewhere the release archive `player.lock.json` names, fetched over https and checked against its SHA-256. Python standard library and MkDocs only. |
 | `astro.mjs` | The Astro integration for a Starlight site: renders each `figure` code block, loads the loader, and serves and publishes the figure and player files. Node builtins only. |
 | `serve.mjs` | Serves and copies the figure and player files for `astro.mjs`, and serves a built site for the smoke test. Node builtins only. |
 | `figures.css` | The figure stylesheet, reading Material's theme variables with Starlight's as the fallback. |
@@ -39,7 +39,10 @@ Markdown gate (`figureEngine` in `internal/managedasset/family.go`;
 set, and removing it is the only way to opt out of figures. With the facet enabled,
 `praetorctl adopt` writes:
 
-- the 18 files `assets.go` lists, under `tools/figures/`. A file the repository already had at
+- the 16 files `assets.go` lists, under `tools/figures/`, and `player.lock.json` beside them,
+  which names the engine release and the SHA-256 of the player archive the docs build fetches
+  (an unreleased engine leaves the release empty and the site shows SVG figures with one
+  warning). A file the repository already had at
   one of those paths stops the first adoption, with or without `--force`, because
   `tools/figures/` is a name a repository may use for its own code;
 - rules in the managed block at the end of `.gitattributes` that keep the engine,
@@ -82,9 +85,9 @@ shipped-text ledger, `internal/managedasset/testdata/shipped/figure-engine.sha25
 text the family ever shipped; after such a change, append the new digests with
 `PRAETOR_UPDATE_SHIPPED_TEXTS=1 go test ./internal/managedasset -run 'TestShippedTextLedger$'`
 and add each outgoing digest to `priorDigests` in `assets.go`, so plain adoption refreshes an
-unedited copy. The family holds at most 64 earlier texts; a React bump costs two, one for
-`player/player.js` and one for `player/THIRD-PARTY-LICENSES.txt`, and an esbuild bump two, one for
-each bundle under `player/`.
+unedited copy. The family holds at most 64 earlier texts. The player bundle is no family asset
+any more: a React or esbuild bump changes the release archive, whose digest each adopter's
+`player.lock.json` records, and costs the ledger nothing.
 
 ### Locked assets and linters
 
@@ -391,6 +394,10 @@ workflow runs `check` and `bundle.mjs --check`, builds the site with the committ
 `site` and `sources`, then the smoke test with `--require-browser`, before it uploads the site. Locally the smoke test needs Chromium
 (`npx --prefix tools/figures playwright install chromium`); without it, it exits 0 and says it
 skipped.
+
+The Documentation Preset Builds fixtures pin the unreleased checkout and use `--expect-svg`,
+which requires Chromium and checks each figure's visible SVG, no player requests or mounts,
+and no console errors in both motion modes; the Pages engine site keeps its player-mount check.
 
 ## Updating interfig
 
