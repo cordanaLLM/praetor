@@ -101,10 +101,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     # windows-2025 needed 55 to 80 minutes for the whole job in October 2026 (go test 41 to 63,
     # the harness self-tests 12 to 13), against 12 on Linux and 19 on macOS; a slow runner took
-    # a green run on #737 past the earlier 75-minute limit in its last step. The leg is a
-    # required check, so a limit at that edge cancels a green run and blocks the pull request
-    # (#729 tracks the suite's growth).
-    timeout-minutes: 120
+    # a green run on #737 past the earlier 75-minute limit in its last step. On 2026-10-24 a
+    # runner about twice as slow (median package time x1.96, go test 94 minutes, the harness
+    # self-tests over 21) cancelled main at the 120-minute limit with every finished step green.
+    # The leg is a required check, so a limit at that edge cancels a green run and blocks the
+    # pull request; 180 minutes keeps a third over that run, inside the job-timeout gate's
+    # measured window (1.25 to 4 times the slowest green run). Splitting the leg is the durable
+    # fix (#729 tracks the suite's growth).
+    timeout-minutes: 180
     strategy:
       # One platform failing must never cancel the others. Which platforms are broken is
       # the entire output of this job; cancelling the rest discards it.
