@@ -260,10 +260,10 @@ praetorctl needs scan --check   # fail on a stale .needs.yaml
 
 The comparison ignores `updated_at`, which every scan stamps, and reads CRLF line
 endings as LF. `--write` and `--check` exclude each other. This repository runs the check
-as `make needs-check` inside `make verify-all`, with no operator settings selected (empty
-`PRAETOR_FLEET_CONFIG` and `PRAETOR_WORKSTATION_CONFIG`, `--manifest=`), so a workstation
-that configures framework targets judges the committed manifest the way CI does (this
-repository's own `.needs.yaml` therefore names no framework);
+as `make needs-check` inside `make verify-all` and regenerates the manifest with `make needs-write`,
+with no operator settings selected (empty `PRAETOR_FLEET_CONFIG` and `PRAETOR_WORKSTATION_CONFIG`,
+`--manifest=`), so a workstation that configures framework targets judges and writes the committed
+manifest the way CI does (this repository's own `.needs.yaml` therefore names no framework);
 `praetorctl audit` does not run the check, so an adopter's manifest written by an older
 Praetor is not failed by a newer one. Tests:
 `internal/needs/manifest_check_test.go`, `cmd/standardsctl/needs_check_test.go`.

@@ -127,11 +127,18 @@ client-schemas-test:
 # Nothing regenerates .needs.yaml on its own; this fails when the committed manifest is not
 # what `needs scan --write` would write now. It gates this repository only: adopter audits
 # do not run it, so an adopter's older manifest is not failed by a newer Praetor. The scan
-# reads no operator settings (framework.targets), so a local run judges the manifest as CI
-# does: an empty variable and an empty --manifest select no document.
+# reads no operator settings (framework.targets), and the write side reads none either, so a
+# local run judges and writes the manifest as CI does: an empty variable and an empty
+# --manifest select no document, making local write byte-identical to CI judgement.
+NEEDS_SCAN := PRAETOR_FLEET_CONFIG= PRAETOR_WORKSTATION_CONFIG= go run ./cmd/standardsctl needs scan --manifest=
+
 .PHONY: needs-check
 needs-check:
-	PRAETOR_FLEET_CONFIG= PRAETOR_WORKSTATION_CONFIG= go run ./cmd/standardsctl needs scan --check --manifest=
+	$(NEEDS_SCAN) --check
+
+.PHONY: needs-write
+needs-write:
+	$(NEEDS_SCAN) --write
 
 audit:
 	go run ./cmd/standardsctl audit
