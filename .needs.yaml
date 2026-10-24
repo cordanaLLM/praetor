@@ -94,6 +94,7 @@ capabilities:
         - ui.external.typescript_eslint
         - ui.external.vite
         - ui.external.vitest
+        - python.external.tzdata
     optional:
         - clikit.cli
         - mcp.server
@@ -383,7 +384,7 @@ dependencies:
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: markdown
-      version: 3.11.1
+      version: 3.11.2
       language: python
       ecosystem: pypi
       capability: python.external.markdown
@@ -460,7 +461,7 @@ dependencies:
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: platformdirs
-      version: 4.13.3
+      version: 4.13.5
       language: python
       ecosystem: pypi
       capability: python.external.platformdirs
@@ -481,7 +482,7 @@ dependencies:
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: python-dateutil
-      version: 2.9.0.post0 \
+      version: 3.0.0 \
       language: python
       ecosystem: pypi
       capability: python.external.python_dateutil
@@ -513,6 +514,13 @@ dependencies:
       language: python
       ecosystem: pypi
       capability: python.external.six
+      status: gap
+      notes: External PyPI dependency requiring a target framework adapter or evaluation
+    - package: tzdata
+      version: 2026.5 \
+      language: python
+      ecosystem: pypi
+      capability: python.external.tzdata
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: urllib3
@@ -700,7 +708,7 @@ dependencies:
 readiness:
     basis: not-configured
     score: 0
-    total_third_party_deps: 85
+    total_third_party_deps: 86
     covered_deps: 0
-    gap_deps: 85
-updated_at: 2026-10-20T14:56:13.774238444Z
+    gap_deps: 86
+updated_at: 2026-10-24T16:37:56.85676061Z
