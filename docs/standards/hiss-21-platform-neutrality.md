@@ -582,3 +582,13 @@ incomplete. `deriveSuiteDeadline` and `nestedGoTestArgs` in
 boundaries and the timeout-panic wording, and its
 `TestOverlaySuiteRefusesAPlantedIdentityRegression` proves the guard still fails a test that
 asserts the canonical owner, and that the derived `-timeout` reaches the nested package binary.
+
+**Main runs are no longer cancelled by the next push (#1566).** `portability.yml` grouped runs
+by ref with `cancel-in-progress: true`, so every push to main cancelled the run of the commit
+before. With a merge every hour or so and a Windows leg of 60 to 100 minutes, main went from
+17:06Z to 07:10Z on 2026-10-24 with one completed Windows verdict; the merge train's merge
+of #1492 cancelled a re-run in its last step. The workflow now uses the hosted gate's rule
+(`HostedGateConcurrency` in `internal/ghworkflow`): a pull request run replaces the older run of
+the same pull request, and a push, scheduled or dispatched run is grouped by its run id and runs
+to its end, so every main commit gets a verdict. `ci.yml`, `codeql.yml`, `console.yml` and
+`security.yml` follow the same rule.
