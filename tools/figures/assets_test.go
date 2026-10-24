@@ -43,6 +43,7 @@ var repositoryOnly = []string{
 	"keyboard.ts",
 	"bundle.mjs",
 	"smoke.mjs",
+	"smoke.test.mjs",
 	"testkit.mjs",
 	"figures.test.mjs",
 	"checks.test.mjs",

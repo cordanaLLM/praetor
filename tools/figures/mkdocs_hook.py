@@ -19,8 +19,9 @@ files under player/ (loader.js, player.js and their THIRD-PARTY-LICENSES.txt, wr
 tools/figures/bundle.mjs) sit beside it too; in an adopted repository player.lock.json names the
 engine release asset (figures-player.tar.gz) and its SHA-256
 (docs/adr/0021-figure-player-as-release-asset.md). `on_files` adds the CSS at CSS_URI and the
-player files under PLAYER_URI, and `on_config` links the stylesheet and the loader, as a module
-script, from every page. A site needs no `extra_css` or `extra_javascript` entry for them and no
+player files under PLAYER_URI, and `on_config` links the stylesheet from every page and the loader
+as a module script only when player files are available. A site needs no `extra_css` or
+`extra_javascript` entry for them and no
 bundling step: the loader reads each figure's props from its SVG
 (docs/adr/0016-figures-for-adopters.md, section 3).
 """
@@ -60,6 +61,8 @@ SVG_FALLBACK_WARNING = (
 )
 # player/ holds three files (DIST_FILES in bundle.mjs); the bound only keeps the listing finite.
 MAX_PLAYER_FILES = 16
+# on_config resolves once per build; on_files publishes those exact verified paths.
+_build_assets: tuple[object, list[tuple[str, Path]]] | None = None
 REBUILD = "node tools/figures/build.mjs build"
 
 # Bounded so a pathological page cannot make the hook unbounded (HISS-02).
@@ -207,9 +210,17 @@ def expand(markdown: str, base: str, figures_dir: Path) -> tuple[str, list[str]]
 
 
 def on_config(config):
-    """Link the figure stylesheet and the loader, as a module script, from every page, once each."""
+    """Resolve this build's files and link the loader only when it will be published."""
+    global _build_assets
+    published = published_files()
+    _build_assets = (config, published)
     if CSS_URI not in config["extra_css"]:
         config["extra_css"].append(CSS_URI)
+    if LOADER_URI not in {uri for uri, _ in published}:
+        config["extra_javascript"] = [
+            script for script in config["extra_javascript"] if str(script) != LOADER_URI
+        ]
+        return config
     if all(str(script) != LOADER_URI for script in config["extra_javascript"]):
         # Imported here so the hook loads without MkDocs in tests.
         from mkdocs.config.config_options import ExtraScriptValue
@@ -367,7 +378,11 @@ def on_files(files, config):
 
     A docs_dir file at one of their paths is kept and reported.
     """
-    published = published_files()
+    published = (
+        _build_assets[1]
+        if _build_assets is not None and _build_assets[0] is config
+        else published_files()
+    )
     for uri, source in published:
         if uri in files.src_uris:
             log.warning(

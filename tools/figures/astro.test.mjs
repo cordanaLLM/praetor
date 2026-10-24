@@ -333,6 +333,20 @@ test('the Astro player mount holds exactly the committed player files', () => {
 // The integration's hooks
 // ---------------------------------------------------------------------------------------------
 
+test('an adopted integration without player files injects no loader', () => withTempDir(async (dir) => {
+  // Import the shipped modules at an adopter path: no player/ exists beside astro.mjs.
+  const files = ['astro.mjs', 'checks.mjs', 'core.mjs', 'serve.mjs',
+    'third_party/interfig/upstream/src/svg.ts', 'third_party/interfig/upstream/src/geometry.ts',
+    'third_party/interfig/upstream/src/model.ts'];
+  for (const name of files) write(join(dir, 'tools/figures', name), readFileSync(join(ROOT, 'tools/figures', name)));
+  const { default: adoptedFigures } = await import(pathToFileURL(join(dir, 'tools/figures/astro.mjs')).href);
+  const scripts = [];
+  adoptedFigures().hooks['astro:config:setup']({
+    config: { base: '/preset/' }, updateConfig: () => {}, injectScript: (...args) => scripts.push(args),
+  });
+  assert.deepEqual(scripts, []);
+}));
+
 test('config setup adds the remark plugin and the head loader for the site\'s base', () => withTempDir((dir) => {
   for (const [base, prefix] of [[undefined, '/'], ['/', '/'], ['/docs/', '/docs/'], ['/docs', '/docs/']]) {
     const updates = [];

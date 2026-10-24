@@ -395,6 +395,10 @@ workflow runs `check` and `bundle.mjs --check`, builds the site with the committ
 (`npx --prefix tools/figures playwright install chromium`); without it, it exits 0 and says it
 skipped.
 
+The Documentation Preset Builds fixtures pin the unreleased checkout and use `--expect-svg`,
+which requires Chromium and checks each figure's visible SVG, no player requests or mounts,
+and no console errors in both motion modes; the Pages engine site keeps its player-mount check.
+
 ## Updating interfig
 
 The engine is vendored at a pinned commit. The `interfig-sync.yml` workflow runs

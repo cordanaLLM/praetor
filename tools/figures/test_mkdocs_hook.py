@@ -17,6 +17,7 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 from urllib.error import HTTPError
 
 FIGURES = Path(__file__).resolve().parent
@@ -316,6 +317,79 @@ class Hook(unittest.TestCase):
             [(mkdocs_hook.LOADER_URI, "module")],
         )
 
+    def test_fallback_build_links_no_loader_and_logs_once(self):
+        for release in (None, "", "v1.4.0"):
+            with (
+                self.subTest(release=release),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                lock = self.use_absent_local_player(Path(directory))
+                if release is not None:
+                    write(lock, json.dumps({"release": release}))
+                with (
+                    mock.patch.object(
+                        mkdocs_hook,
+                        "urlopen",
+                        side_effect=HTTPError(
+                            "https://fixture", 404, "Not Found", None, None
+                        ),
+                    ) as download,
+                    self.assertLogs(
+                        "mkdocs.plugins.praetor_figures", level="INFO"
+                    ) as logs,
+                ):
+                    config = {
+                        "extra_css": [],
+                        "extra_javascript": ["other.js", mkdocs_hook.LOADER_URI],
+                    }
+                    mkdocs_hook.on_config(config)
+                    files = _Files([mkdocs_hook.CSS_URI])
+                    mkdocs_hook.on_files(files, config)
+                self.assertEqual(config["extra_javascript"], ["other.js"])
+                self.assertEqual(files.appended, [])
+                self.assertEqual(
+                    sum("figures render as SVG" in line for line in logs.output), 1
+                )
+                self.assertEqual(download.call_count, int(bool(release)))
+
+    def test_available_archive_links_loader_and_downloads_once_per_build(self):
+        try:
+            import mkdocs  # noqa: F401 - on_config builds MkDocs' own script value
+        except ImportError:
+            self.skipTest("mkdocs is not installed; the hook runs only inside MkDocs")
+        raw, digest = self.make_player_archive()
+        with tempfile.TemporaryDirectory() as directory:
+            lock = self.use_absent_local_player(Path(directory))
+            write(lock, json.dumps({"release": "v1.4.0", "sha256": digest}))
+            with mock.patch.object(
+                mkdocs_hook,
+                "urlopen",
+                side_effect=lambda *args, **kwargs: self.fake_response(raw),
+            ) as download:
+                for build in range(2):
+                    config = mkdocs_hook.on_config(
+                        {"extra_css": [], "extra_javascript": []}
+                    )
+                    self.assertEqual(download.call_count, build + 1)
+                    self.assertEqual(
+                        [str(script) for script in config["extra_javascript"]],
+                        [mkdocs_hook.LOADER_URI],
+                    )
+                    files = _Files(
+                        [
+                            mkdocs_hook.CSS_URI,
+                            *[
+                                f"{mkdocs_hook.PLAYER_URI}/{name}"
+                                for name in mkdocs_hook.EXPECTED_PLAYER_FILES
+                            ],
+                        ]
+                    )
+                    with self.assertLogs(
+                        "mkdocs.plugins.praetor_figures", level="WARNING"
+                    ):
+                        mkdocs_hook.on_files(files, config)
+                    self.assertEqual(download.call_count, build + 1)
+
     def test_a_site_build_renders_figures_and_publishes_the_stylesheet_and_the_player(
         self,
     ):
@@ -361,6 +435,38 @@ class Hook(unittest.TestCase):
                 guide,
             )
             self.assertNotIn("Open the interactive figure", guide)
+
+    def test_unreleased_site_build_renders_svg_without_player_references(self):
+        try:
+            from mkdocs.commands.build import build
+            from mkdocs.config import load_config
+        except ImportError:
+            self.skipTest("mkdocs is not installed; the hook runs only inside MkDocs")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            hook = root / "tools/figures/mkdocs_hook.py"
+            write(hook, (FIGURES / "mkdocs_hook.py").read_text(encoding="utf-8"))
+            write(
+                hook.with_name("figures.css"),
+                mkdocs_hook.CSS_FILE.read_text(encoding="utf-8"),
+            )
+            write(hook.with_name("player.lock.json"), '{"release":""}')
+            write(root / "docs/index.md", "# Home\n\n" + FIGURE)
+            write(root / "docs/assets/figures/demo.json", json.dumps(META))
+            write(
+                root / "mkdocs.yml",
+                "site_name: Fixture\nhooks:\n  - tools/figures/mkdocs_hook.py\n",
+            )
+            with self.assertLogs(
+                "mkdocs.plugins.praetor_figures", level="INFO"
+            ) as logs:
+                build(load_config(str(root / "mkdocs.yml"), strict=True))
+            html = (root / "site/index.html").read_text(encoding="utf-8")
+            self.assertIn('<img src="./assets/figures/demo.svg"', html)
+            self.assertNotIn(mkdocs_hook.PLAYER_URI, html)
+            self.assertFalse((root / "site" / mkdocs_hook.PLAYER_URI).exists())
+            self.assertEqual(len(logs.output), 1)
 
     def test_on_page_markdown_warns_for_a_figure_it_cannot_render(self):
         class Page:
@@ -468,10 +574,14 @@ class Hook(unittest.TestCase):
     def test_lock_repository_over_plain_http_is_refused(self):
         with self.assertRaises(mkdocs_hook.CheckError):
             mkdocs_hook.release_archive_url(
-                {"repository": "http://example.test/fork"}, "v1.0.0", "figures-player.tar.gz"
+                {"repository": "http://example.test/fork"},
+                "v1.0.0",
+                "figures-player.tar.gz",
             )
         with self.assertRaises(mkdocs_hook.CheckError):
-            mkdocs_hook.download_player_archive("http://example.test/figures-player.tar.gz")
+            mkdocs_hook.download_player_archive(
+                "http://example.test/figures-player.tar.gz"
+            )
 
     @staticmethod
     def fake_response(payload: bytes):

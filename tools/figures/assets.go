@@ -121,6 +121,9 @@ var priorPlayerDigests = map[string]map[string]string{
 // ledger line was appended from the text itself. The registry allows 64 entries per family
 // (managedasset.MaxPriorTexts); the family's declaration states what each kind of change costs.
 var priorDigests = map[string]string{
+	// MkDocs and Astro before SVG fallback omitted the unavailable player loader.
+	"1cf80d7e961b928950a3836fe18175d4985b8705e8135ab4d5b515ad9922f47f": Directory + "/mkdocs_hook.py",
+	"5ebe22430d1dc231c008dca43e3353eb6285f15e32735707064e2e5ed797eb2f": Directory + "/astro.mjs",
 	// build.mjs before check and sources skipped a repository without a figure spec.
 	"f75975e7f7cbb147b156c3a8f4a00bffef985aa18fa4ee67f6505479fd8e730c": Directory + "/build.mjs",
 	// README.md before it named make docs-figures, the .gitattributes block and the REUSE
