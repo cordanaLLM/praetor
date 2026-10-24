@@ -69,12 +69,10 @@ func reconcileManagedFamily(ctx context.Context, s *adoptSession, family managed
 		created:  "Scaffolded required " + family.WorkflowNoun,
 		verified: "Existing " + family.WorkflowNoun + " preserved; audit verifies canonical text",
 	})
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
+// reconcileManagedFamilyAssets writes each asset declared in the family up to MaxAssets.
 func reconcileManagedFamilyAssets(ctx context.Context, s *adoptSession, family managedasset.Family) error {
 	names := family.Names()
 	for index := 0; index < len(names) && index < family.MaxAssets; index++ {
