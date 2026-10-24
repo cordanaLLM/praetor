@@ -901,7 +901,7 @@ function specErrors(page, output, built, figures) {
 }
 
 /**
- * Whether the site renders its figures as SVG by design (ADR-0019): its repository carries no
+ * Whether the site renders its figures as SVG by design (ADR-0021): its repository carries no
  * player of its own (tools/figures/player/, the engine) and its tools/figures/player.lock.json
  * names no engine release, so the figures hook publishes no player. A lock that names a release
  * still requires the loader: the hook fetches the player then.

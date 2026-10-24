@@ -21,7 +21,7 @@ Everything the figures need sits in one tree, `tools/figures/`:
 | `checks.mjs` | The `sources`, `site` and `portable` checks, and the slot filling of the figure markup. Node builtins only. |
 | `loader.ts`, `player.tsx`, `keyboard.ts` | The player source: the loader reads each figure's props from its SVG and mounts the React player. |
 | `bundle.mjs` | Builds the committed player in `player/` with esbuild, checks it byte for byte against a rebuild from the lock, and holds its size budget. Needs the locked npm install. |
-| `player/` | The committed player: `loader.js`, `player.js` and `THIRD-PARTY-LICENSES.txt`, in the engine only. A release carries them as `figures-player.tar.gz`, which adopters fetch ([ADR-0019](../adr/0019-figure-player-as-release-asset.md)). |
+| `player/` | The committed player: `loader.js`, `player.js` and `THIRD-PARTY-LICENSES.txt`, in the engine only. A release carries them as `figures-player.tar.gz`, which adopters fetch ([ADR-0021](../adr/0021-figure-player-as-release-asset.md)). |
 | `types.ts` | The spec type a `docs/figures/<slug>.ts` file checks against. |
 | `mkdocs_hook.py` | The MkDocs hook that renders each `figure` fence and publishes `figures.css` and the player: `player/` in the engine, elsewhere the release archive `player.lock.json` names, fetched over https and checked against its SHA-256. Python standard library and MkDocs only. |
 | `astro.mjs` | The Astro integration for a Starlight site: renders each `figure` code block, loads the loader, and serves and publishes the figure and player files. Node builtins only. |

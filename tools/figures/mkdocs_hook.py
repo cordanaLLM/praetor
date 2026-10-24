@@ -18,7 +18,7 @@ figures.css sits beside this file, outside docs_dir. In the engine repository th
 files under player/ (loader.js, player.js and their THIRD-PARTY-LICENSES.txt, written by
 tools/figures/bundle.mjs) sit beside it too; in an adopted repository player.lock.json names the
 engine release asset (figures-player.tar.gz) and its SHA-256
-(docs/adr/0019-figure-player-as-release-asset.md). `on_files` adds the CSS at CSS_URI and the
+(docs/adr/0021-figure-player-as-release-asset.md). `on_files` adds the CSS at CSS_URI and the
 player files under PLAYER_URI, and `on_config` links the stylesheet and the loader, as a module
 script, from every page. A site needs no `extra_css` or `extra_javascript` entry for them and no
 bundling step: the loader reads each figure's props from its SVG

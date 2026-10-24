@@ -536,7 +536,7 @@ assets under `tools/markdownlint/`, the figure engine's 16 files under
 `tools/figures/` ([figures guide](figures.md#in-adopting-repositories)) and
 `player.lock.json` beside them, which names the engine release whose
 `figures-player.tar.gz` the docs build fetches and verifies (the player bundle
-itself stays out of adopter trees, ADR-0019),
+itself stays out of adopter trees, ADR-0021),
 `docs-lint` and `docs-figures` prerequisites on `verify-all`, a managed block at
 the end of `.gitattributes` that keeps the engine, the figure specs and their
 outputs at LF, and `.github/workflows/praetor-docs.yml`, whose one job runs the

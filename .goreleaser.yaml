@@ -7,7 +7,7 @@ project_name: standards
 before:
   hooks:
     - go mod tidy
-    # The figure player archive adopters' documentation builds fetch (docs/adr/0019): the one
+    # The figure player archive adopters' documentation builds fetch (docs/adr/0021): the one
     # deterministic packer, so the bytes match the digest the engine writes into an adopter's
     # tools/figures/player.lock.json. checksum and release below carry it like an archive.
     - go run ./cmd/standardsctl figures pack --out .release-extra/figures-player.tar.gz
