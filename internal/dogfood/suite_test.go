@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -41,7 +42,12 @@ func suiteOptions(t *testing.T, sources ...SuiteTranscript) SuiteOptions {
 }
 
 func TestSuiteCompleteReplayAndPagination(t *testing.T) {
-	for _, records := range []int{1, 10001} {
+	origBatch := transcriptBatchRecords
+	const testBatch = 10
+	transcriptBatchRecords = testBatch
+	t.Cleanup(func() { transcriptBatchRecords = origBatch })
+
+	for _, records := range []int{1, 11} {
 		source := suiteFixture(t, strings.Repeat(suiteFixtureRecord+"\n", records))
 		opts := suiteOptions(t, source)
 		report, err := RunSuite(context.Background(), opts)
@@ -55,8 +61,9 @@ func TestSuiteCompleteReplayAndPagination(t *testing.T) {
 		if result.Ingestion.Stored != records || result.Replay.Stored != 0 || result.Replay.AlreadyPresent != records || !result.Replay.Complete {
 			t.Fatalf("wrong replay counters: %+v", result)
 		}
-		if len(result.Ingestion.Pages) != (records+9999)/10000 {
-			t.Fatal("pagination skipped")
+		wantPages := (records + testBatch - 1) / testBatch
+		if len(result.Ingestion.Pages) != wantPages {
+			t.Fatalf("pages = %d, want %d (pagination skipped)", len(result.Ingestion.Pages), wantPages)
 		}
 		assertSuitePrivate(t, opts.ArtifactDir)
 		original, err := os.ReadFile(source.SourcePath)
@@ -209,6 +216,26 @@ func TestSuiteBoundsPolicyAndCancellation(t *testing.T) {
 	config.Transcripts = []SuiteTranscript{source}
 	if err := validateSuiteConfig(&config); err == nil {
 		t.Fatal("duplicate generated ID")
+	}
+}
+
+// Negative (#1566): when suite duration expires before ingestion completes, RunSuite fails naming deadline.
+func TestSuiteRun_Negative_SlowIngestionOverSuiteDurationFails(t *testing.T) {
+	origDuration := suiteDuration
+	suiteDuration = 5 * time.Millisecond
+	t.Cleanup(func() { suiteDuration = origDuration })
+
+	source := suiteFixture(t, strings.Repeat(suiteFixtureRecord+"\n", 2000))
+	opts := suiteOptions(t, source)
+	report, err := RunSuite(context.Background(), opts)
+	if err == nil {
+		t.Fatal("RunSuite succeeded under expired suite duration; want deadline failure")
+	}
+	if !strings.Contains(err.Error(), "context deadline exceeded") && !strings.Contains(err.Error(), "deadline") {
+		t.Fatalf("error %q does not name deadline", err)
+	}
+	if report != nil && (report.Status != "failed" || report.Verified) {
+		t.Fatalf("report = %+v, err = %v; want failed/unverified", report, err)
 	}
 }
 

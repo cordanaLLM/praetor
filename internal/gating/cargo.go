@@ -143,7 +143,7 @@ func runCargoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 	}
 	bound := budget.StageBound
 	targetArgs, targetNote := cargoTargetDir(ctx, cfg.repoDir)
-	err = inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
+	err = inStageWorktree(ctx, cfg, bound, "", func(tCtx context.Context, dir string) error {
 		for i := 0; i < len(cargoTestCommands); i++ {
 			if runErr := runCargoSuite(tCtx, cfg, bound, dir, cargoTestCommands[i], targetArgs); runErr != nil {
 				return runErr
@@ -208,7 +208,7 @@ func runCargoSuite(tCtx context.Context, cfg *stageConfig, bound time.Duration, 
 	}
 	what := "cargo " + strings.Join(args, " ")
 	excerpt := util.TruncateExcerpt(out, maxCargoOutputBytes)
-	if cutErr := cutError(tCtx, what, bound, dir, fmt.Sprintf("%s [%v]", excerpt, err)); cutErr != nil {
+	if cutErr := cutError(tCtx, what, bound, "", dir, fmt.Sprintf("%s [%v]", excerpt, err)); cutErr != nil {
 		return cutErr
 	}
 	return fmt.Errorf("%s failed in %s: %s (%w)", what, dir, excerpt, err)

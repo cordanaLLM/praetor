@@ -47,7 +47,7 @@ func scopedGoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 
 func goRaceApplicability(ctx context.Context, cfg *stageConfig) error {
 	if err := ctx.Err(); err != nil {
-		return cutError(ctx, "creating the isolated test worktree", TestStageTimeout, cfg.repoDir, err.Error())
+		return cutError(ctx, "creating the isolated test worktree", TestStageTimeout, "", cfg.repoDir, err.Error())
 	}
 	if cfg.racePackages != nil && len(cfg.racePackages) == 0 {
 		return notApplicable(lockdown.NoAffectedGoPackage)
@@ -106,7 +106,7 @@ func runGoRaceCommand(ctx context.Context, cfg *stageConfig, module goModule, di
 	if err == nil {
 		return msg, nil
 	}
-	if cutErr := cutError(ctx, "race-detector tests", bound, dir, fmt.Sprintf("%s [%v]", out, err)); cutErr != nil {
+	if cutErr := cutError(ctx, "race-detector tests", bound, "", dir, fmt.Sprintf("%s [%v]", out, err)); cutErr != nil {
 		return "", cutErr
 	}
 	return "", fmt.Errorf("tests failed in %s: %s (%w)", dir, out, err)

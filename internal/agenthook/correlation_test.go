@@ -245,6 +245,7 @@ func TestCorrelationStoreConcurrentReservations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	store.lockWait = 2 * time.Minute
 	resolution := config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent"}
 	const workers = 16
 	errorsSeen := make(chan error, workers)
@@ -262,6 +263,17 @@ func TestCorrelationStoreConcurrentReservations(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// Negative (#1566): production correlationStore leaves lockWait unset and uses correlationLockWait.
+func TestCorrelationStoreProductionLockWaitBound(t *testing.T) {
+	store, err := newCorrelationStore(t.Context(), "", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := store.lockWaitBound(); got != correlationLockWait {
+		t.Fatalf("production store.lockWaitBound() = %v, want correlationLockWait (%v)", got, correlationLockWait)
 	}
 }
 

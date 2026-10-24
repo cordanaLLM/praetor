@@ -279,13 +279,13 @@ func withStageBound(parent context.Context, bound time.Duration) (context.Contex
 // the context is live. context.Cause records whichever deadline fired first, so the stage bound is
 // blamed only when the stage's own deadline fired. Blaming it for the run deadline sent an
 // operator to raise a bound the stage never reached: "hit the 30m0s stage bound" after 4m57s.
-func cutError(stageCtx context.Context, what string, bound time.Duration, dir, output string) error {
+func cutError(stageCtx context.Context, what string, bound time.Duration, origin string, dir, output string) error {
 	cause := context.Cause(stageCtx)
 	switch {
 	case cause == nil:
 		return nil
 	case errors.Is(cause, errStageBoundFired):
-		return stageBoundError(what, bound, dir, output)
+		return stageBoundError(what, bound, origin, dir, output)
 	default:
 		return callerCutError(what, cause, bound, dir, output)
 	}
