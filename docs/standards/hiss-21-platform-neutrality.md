@@ -539,7 +539,10 @@ run passed every test and was still cancelled by the job's own 45-minute limit d
 build check (go test took 27 minutes, the harness self-tests 13), so the job limit went to 75
 minutes. By October 2026 the Windows leg took 55 to 80 minutes (go test 41 to 63, the harness
 self-tests 12 to 13), and a slow runner was cancelled at 75 minutes in its last step with every
-step green, so the job limit is now 120 minutes (#729).
+step green, so the job limit went to 120 minutes (#729). On 2026-10-24 a runner about twice as
+slow (median package time x1.96 against the morning run, go test 94 minutes) cancelled main at
+120 minutes in the harness self-tests, every finished step green, so the limit is now 180
+minutes; splitting the leg stays the durable fix (#729).
 
 **`cmd/standardsctl` in two halves (2026-10-19).** The package ran in the step's main `go test`
 under the same 30-minute bound as every other package, and outgrew it on Windows with no test

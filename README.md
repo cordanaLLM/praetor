@@ -152,7 +152,7 @@ See the [HISS specification](docs/standards/hiss-spec.md) for the full invariant
 ├── editors/                    # VS Code extension; generated Neovim and JetBrains references
 ├── internal/                   # Core Go packages (config, lattice, AST transpiler)
 ├── lua/ & .nvim.lua            # Neovim native governance integrations
-├── .needs.yaml                 # Capability needs written by `praetorctl needs scan --write`
+├── .needs.yaml                 # Capability needs written by `make needs-write`
 ├── .standards.yaml             # Primary repository governance specification
 ├── .standards.lock             # Immutable locked dependency & profile state
 ├── .standards-baseline.json    # Debt ratcheting baseline state
