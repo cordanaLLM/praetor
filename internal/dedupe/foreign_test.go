@@ -177,6 +177,41 @@ func TestForeignScan_ExceptionRootBoundary(t *testing.T) {
 	}
 }
 
+func TestForeignScan_Negative_ScannedForeignExceptionWithoutDuplicateIsStale(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "main.go", "package sample\n")
+	writeFile(t, root, "interop.c", "int f(void) { return 0; }\n")
+	t.Setenv("PRAETOR_TEST_FAKE_JSCPD", "1")
+	t.Setenv("PRAETOR_JSCPD_BIN", os.Args[0])
+	t.Setenv("PRAETOR_TEST_FAKE_JSCPD_REPORT_CONTENT", `{"duplicates":[]}`)
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
+		RepoPath: root,
+		Today:    time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC),
+		Exceptions: []config.Exception{{
+			Rule:    config.ExceptionRuleDedupe,
+			Path:    "interop.c",
+			Reason:  "Category D: C interop",
+			Expires: "2026-11-18",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.ForeignScanned == nil || report.ForeignScanned["c"] != 1 {
+		t.Fatalf("expected ForeignScanned to have c=1, got %v", report.ForeignScanned)
+	}
+	if len(report.StaleExceptions) != 1 {
+		t.Fatalf("expected 1 stale exception when C was scanned, got %d: %v", len(report.StaleExceptions), report.StaleExceptions)
+	}
+	want := "exceptions entry interop.c (HISS-19): excuses no duplicate function block; remove the entry"
+	if report.StaleExceptions[0] != want {
+		t.Fatalf("stale exception = %q, want %q", report.StaleExceptions[0], want)
+	}
+	if len(report.NotCheckedExceptions) != 0 {
+		t.Fatalf("expected 0 not checked exceptions, got %d: %v", len(report.NotCheckedExceptions), report.NotCheckedExceptions)
+	}
+}
+
 func TestMain(m *testing.M) {
 	if os.Getenv("PRAETOR_TEST_FAKE_JSCPD") == "1" {
 		runFakeJscpd()

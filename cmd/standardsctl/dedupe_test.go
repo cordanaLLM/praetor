@@ -452,7 +452,7 @@ func TestRunDedupeScan_Negative_StaleExceptionFailsNamingIt(t *testing.T) {
 	mustErrContain(t, err, "1 stale exception(s)")
 }
 
-func TestRunDedupeScan_Negative_StaleExceptionForNonGoFileFails(t *testing.T) {
+func TestRunDedupeScan_Boundary_UnknownLanguageExceptionNotChecked(t *testing.T) {
 	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
 	writeFixtureFile(t, dir, "README.md", "# Demo\n")
 	expires := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
@@ -465,15 +465,17 @@ func TestRunDedupeScan_Negative_StaleExceptionForNonGoFileFails(t *testing.T) {
 	writeFixtureFile(t, dir, config.ManifestFileName, manifest)
 
 	out, err := captureStdout(t, func() error { return runDedupeScan([]string{dir}) })
-	if err == nil {
-		t.Fatal("stale exception for non-Go file must fail scan")
+	if err != nil {
+		t.Fatalf("unknown language exception must pass without error: %v", err)
 	}
 	mustContain(t, out,
-		"Passed:            false",
-		"Stale Exceptions (1):",
-		"- exceptions entry README.md (HISS-19): excuses no duplicate function block; remove the entry",
+		"Passed:            true",
+		"Not Checked Exceptions (1):",
+		"- exceptions entry README.md (HISS-19): unknown not scanned by this run; not checked",
 	)
-	mustErrContain(t, err, "1 stale exception(s)")
+	if strings.Contains(out, "Stale Exceptions") {
+		t.Errorf("unknown language exception must not be reported as stale:\n%s", out)
+	}
 }
 
 func TestRunDedupeScan_Positive_AcrossFlag(t *testing.T) {
@@ -509,4 +511,87 @@ func TestRunDedupeScan_Positive_GeneratedFilesSkippedArePrinted(t *testing.T) {
 		"Generated Skipped: 1",
 		"Passed:            true",
 	)
+}
+
+func TestRunDedupeScan_Positive_UnscannedLanguageExceptionPasses(t *testing.T) {
+	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
+	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
+	writeFixtureFile(t, dir, "interop.c", "int f(void) { return 0; }\n")
+	expires := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	manifest := fmt.Sprintf(`exceptions:
+  - rule: HISS-19
+    path: interop.c
+    reason: C interop files
+    expires: %s
+`, expires)
+	writeFixtureFile(t, dir, config.ManifestFileName, manifest)
+
+	out, err := captureStdout(t, func() error { return runDedupeScan([]string{dir}) })
+	if err != nil {
+		t.Fatalf("scan with unscanned exception must pass: %v\n%s", err, out)
+	}
+	mustContain(t, out,
+		"Passed:            true",
+		"Not Checked Exceptions (1):",
+		"- exceptions entry interop.c (HISS-19): c not scanned by this run; not checked",
+	)
+	if strings.Contains(out, "Stale Exceptions") {
+		t.Errorf("unscanned exception must not be reported as stale:\n%s", out)
+	}
+}
+
+func TestRunDedupeScan_Negative_MixedExceptionsFailsOnStaleOnly(t *testing.T) {
+	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
+	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
+	writeFixtureFile(t, dir, "interop.c", "int f(void) { return 0; }\n")
+	expires := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	manifest := fmt.Sprintf(`exceptions:
+  - rule: HISS-19
+    path: clean.go
+    reason: clean file has no clones
+    expires: %s
+  - rule: HISS-19
+    path: interop.c
+    reason: C interop files
+    expires: %s
+`, expires, expires)
+	writeFixtureFile(t, dir, config.ManifestFileName, manifest)
+
+	out, err := captureStdout(t, func() error { return runDedupeScan([]string{dir}) })
+	if err == nil {
+		t.Fatal("scan with stale Go exception must fail")
+	}
+	mustErrContain(t, err, "1 stale exception(s)")
+	mustContain(t, out,
+		"Stale Exceptions (1):",
+		"- exceptions entry clean.go (HISS-19): excuses no duplicate function block; remove the entry",
+		"Not Checked Exceptions (1):",
+		"- exceptions entry interop.c (HISS-19): c not scanned by this run; not checked",
+	)
+}
+
+func TestRunDedupeScan_Boundary_NoGoWithUnscannedExceptionReturnsNil(t *testing.T) {
+	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
+	dir := dedupeFixtureDir(t, "interop.c", "int f(void) { return 0; }\n")
+	expires := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	manifest := fmt.Sprintf(`exceptions:
+  - rule: HISS-19
+    path: interop.c
+    reason: C interop files
+    expires: %s
+`, expires)
+	writeFixtureFile(t, dir, config.ManifestFileName, manifest)
+
+	out, err := captureStdout(t, func() error { return runDedupeScan([]string{dir}) })
+	if err != nil {
+		t.Fatalf("a repository with no Go sources and unscanned C exception must not fail: %v\n%s", err, out)
+	}
+	mustContain(t, out,
+		"Not applicable: no Go sources found",
+		"Not Checked Exceptions (1):",
+		"- exceptions entry interop.c (HISS-19): c not scanned by this run; not checked",
+	)
+	if strings.Contains(out, "Stale Exceptions") {
+		t.Errorf("unscanned exception must not be reported as stale:\n%s", out)
+	}
 }
