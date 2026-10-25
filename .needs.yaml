@@ -545,14 +545,14 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: '@astrojs/starlight'
-      version: 0.42.6
+      version: 0.42.7
       language: typescript
       ecosystem: npm
       capability: ui.external.astrojs_starlight
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: astro
-      version: 7.4.0
+      version: 7.4.2
       language: typescript
       ecosystem: npm
       capability: ui.external.astro
@@ -711,4 +711,4 @@ readiness:
     total_third_party_deps: 86
     covered_deps: 0
     gap_deps: 86
-updated_at: 2026-10-24T16:37:56.85676061Z
+updated_at: 2026-10-25T00:45:43.017279499Z
