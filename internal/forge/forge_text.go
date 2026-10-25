@@ -118,9 +118,6 @@ func UnwrapForgeText(text string) string {
 	u.flush()
 
 	output := strings.Join(u.result, "\n")
-	if strings.HasSuffix(text, "\n") {
-		output += "\n"
-	}
 	if crlf {
 		output = strings.ReplaceAll(output, "\n", "\r\n")
 	}
@@ -166,7 +163,8 @@ func (u *unwrapper) processLine(rawLine string) {
 }
 
 func isHeadingLine(trimmed string) bool {
-	return strings.HasPrefix(trimmed, "#")
+	_, ok := util.MarkdownHeadingText(trimmed)
+	return ok
 }
 
 func isTableLine(trimmed string) bool {

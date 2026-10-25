@@ -124,6 +124,41 @@ func TestUnwrapForgeText_Positive(t *testing.T) {
 	}
 }
 
+// TestUnwrapForgeText_ExactAndIdempotent pins the whole output, and unwrapping it again changes
+// nothing: a trailing newline stays one newline, and an issue reference starting a continuation
+// line is paragraph text, not a heading.
+func TestUnwrapForgeText_ExactAndIdempotent(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"trailing newline", "wrapped\nline.\n", "wrapped line.\n"},
+		{"crlf", "wrapped\r\nline.\r\n", "wrapped line.\r\n"},
+		{"no trailing newline", "wrapped\nline.", "wrapped line."},
+		{"issue reference", "Fixes the bug reported in\n#1379 by the reviewer.\n", "Fixes the bug reported in #1379 by the reviewer.\n"},
+		{"heading", "## Title\nbody\n", "## Title\nbody\n"},
+		{"empty", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := UnwrapForgeText(tc.in)
+			if got != tc.want {
+				t.Fatalf("UnwrapForgeText(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			if again := UnwrapForgeText(got); again != got {
+				t.Fatalf("second unwrap changed %q to %q", got, again)
+			}
+		})
+	}
+}
+
+// TestValidateForgeParagraphs_IssueReferenceContinues reports a paragraph whose continuation
+// line starts with an issue reference; a real heading after a line still ends the paragraph.
+func TestValidateForgeParagraphs_IssueReferenceContinues(t *testing.T) {
+	if got := ValidateForgeParagraphs("Fixes the bug reported in\n#1379 by the reviewer.", "ref.md"); len(got) != 1 {
+		t.Fatalf("want one finding for the wrapped issue reference, got %v", got)
+	}
+	if got := ValidateForgeParagraphs("Intro without a stop\n## Heading", "heading.md"); len(got) != 0 {
+		t.Fatalf("a heading is no continuation line, got %v", got)
+	}
+}
+
 // mutantValidate skips paragraph check and demonstrates mutant survival without check.
 func mutantValidate(text, where string) []string {
 	_ = text
