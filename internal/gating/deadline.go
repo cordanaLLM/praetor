@@ -171,7 +171,8 @@ func trackedGoModuleCount(ctx context.Context, repoDir string) (int, error) {
 	count := 0
 	for index := 0; index < len(modules) && index < apiassets.MaxTrackedModules; index++ {
 		moduleDir := filepath.Join(repoDir, filepath.Dir(filepath.FromSlash(modules[index])))
-		packages, listErr := ModulePackageCount(ctx, util.RunCommand, moduleDir)
+		run := retryGoCacheMiss(util.RunCommand, os.Stderr)
+		packages, listErr := ModulePackageCount(ctx, run, moduleDir)
 		// A failed listing counts as a suite so this budget can only be too large, never too
 		// small. The Go stages report the listing failure themselves; this 30-second budget
 		// only sizes the run and stays bounded by MaxTrackedModules.
