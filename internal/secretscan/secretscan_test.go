@@ -224,3 +224,51 @@ func TestCheck_ErrorHandling(t *testing.T) {
 		t.Error("expected error when runner fails")
 	}
 }
+
+func testForeignRemoteExcluded(t *testing.T, dir string) {
+	t.Helper()
+	report, err := secretscan.Check(t.Context(), defaultOptions(dir))
+	if err != nil {
+		t.Fatalf("scan error: %v", err)
+	}
+	if report.Failed() || len(report.Blocking) != 0 {
+		t.Fatalf("expected foreign remote refs to be excluded, got %d blocking findings: %v",
+			len(report.Blocking), report.Blocking)
+	}
+}
+
+func testRefIncluded(t *testing.T, dir, addRef, delRef, leakHash, scopeLabel string) {
+	t.Helper()
+	secrets.UpdateRef(t, dir, addRef, leakHash)
+	secrets.DeleteRef(t, dir, delRef)
+	report, err := secretscan.Check(t.Context(), defaultOptions(dir))
+	if err != nil {
+		t.Fatalf("scan error: %v", err)
+	}
+	if !report.Failed() || len(report.Blocking) == 0 {
+		t.Fatalf("expected blocking finding for secret reachable from %s", scopeLabel)
+	}
+	if report.Blocking[0].Commit != leakHash {
+		t.Errorf("commit = %q, want %q", report.Blocking[0].Commit, leakHash)
+	}
+}
+
+func TestCheck_RefScoping_3D(t *testing.T) {
+	if _, err := exec.LookPath("gitleaks"); err != nil {
+		t.Skip("gitleaks not installed on PATH")
+	}
+	dir, leakHash := secrets.BuildForeignRemoteLeakRepo(t)
+
+	t.Run("foreign remote refs excluded", func(t *testing.T) {
+		testForeignRemoteExcluded(t, dir)
+	})
+	t.Run("origin remote ref included", func(t *testing.T) {
+		testRefIncluded(t, dir, "refs/remotes/origin/feature", "refs/remotes/upstream/leak", leakHash, "refs/remotes/origin/feature")
+	})
+	t.Run("local branch included", func(t *testing.T) {
+		testRefIncluded(t, dir, "refs/heads/feature", "refs/remotes/origin/feature", leakHash, "local branch")
+	})
+	t.Run("tag included", func(t *testing.T) {
+		testRefIncluded(t, dir, "refs/tags/v1.0.0", "refs/heads/feature", leakHash, "tag")
+	})
+}
