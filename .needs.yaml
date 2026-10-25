@@ -314,7 +314,7 @@ dependencies:
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: certifi
-      version: 2026.10.19 \
+      version: 2026.10.23 \
       language: python
       ecosystem: pypi
       capability: python.external.certifi
@@ -711,4 +711,4 @@ readiness:
     total_third_party_deps: 86
     covered_deps: 0
     gap_deps: 86
-updated_at: 2026-10-25T11:41:24.390032106Z
+updated_at: 2026-10-25T14:32:02.565135941Z
