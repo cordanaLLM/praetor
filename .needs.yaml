@@ -272,7 +272,7 @@ dependencies:
       status: gap
       notes: Utility-first CSS styling engine
     - package: typescript
-      version: 6.0.3
+      version: 7.0.2
       language: typescript
       ecosystem: npm
       capability: ui.external.typescript
@@ -711,4 +711,4 @@ readiness:
     total_third_party_deps: 86
     covered_deps: 0
     gap_deps: 86
-updated_at: 2026-10-25T14:32:02.565135941Z
+updated_at: 2026-10-25T16:56:20.539925263Z
