@@ -188,7 +188,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: '@types/node'
-      version: 22.20.5
+      version: 24.19.2
       language: typescript
       ecosystem: npm
       capability: ui.external.types_node
@@ -711,4 +711,4 @@ readiness:
     total_third_party_deps: 86
     covered_deps: 0
     gap_deps: 86
-updated_at: 2026-10-25T00:45:43.017279499Z
+updated_at: 2026-10-25T11:41:24.390032106Z
