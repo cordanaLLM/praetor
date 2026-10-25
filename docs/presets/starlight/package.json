@@ -12,14 +12,14 @@
   },
   "dependencies": {
     "@astrojs/sitemap": "3.7.4",
-    "@astrojs/starlight": "0.42.6",
-    "astro": "7.4.0",
+    "@astrojs/starlight": "0.42.7",
+    "astro": "7.4.2",
     "sharp": "0.35.5"
   },
   "devDependencies": {
     "typescript": "7.0.2"
   },
   "overrides": {
-    "postcss-selector-parser": "^7.1.6"
+    "postcss-selector-parser": "7.1.7"
   }
 }
