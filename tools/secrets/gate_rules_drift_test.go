@@ -59,8 +59,8 @@ func findValueInSpecs(specs []ast.Spec, target string) (string, bool) {
 		for i, id := range valSpec.Names {
 			if id.Name == target && i < len(valSpec.Values) {
 				if lit, ok := valSpec.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-					val, _ := strconv.Unquote(lit.Value)
-					return val, true
+					val, err := strconv.Unquote(lit.Value)
+					return val, err == nil
 				}
 			}
 		}
@@ -81,7 +81,7 @@ func parseGateLogOpts(t *testing.T) string {
 	}
 	val, ok := findConstStringInAST(f, "logOpts")
 	if !ok {
-		t.Fatalf("logOpts const not found in %s", secrets.GateFile)
+		t.Fatalf("logOpts string const not found (or not unquotable) in %s", secrets.GateFile)
 	}
 	return val
 }
