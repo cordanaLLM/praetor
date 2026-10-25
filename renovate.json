@@ -258,6 +258,12 @@
       "matchDepNames": ["modelcontextprotocol/modelcontextprotocol"],
       "allowedVersions": "/^\\d{4}-\\d{2}-\\d{2}$/",
       "versioning": "loose"
+    },
+    {
+      "description": "Hold TypeScript 7 in console until its linters support it: typescript-eslint 8.72.0 peers typescript <6.1.0 and svelte-check 4.7.7 peers ^5 || ^6 (measured 2026-10-25); TypeScript 7.0.2 broke console lint and check on main.",
+      "matchFileNames": ["console/package.json"],
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<7.0.0"
     }
   ]
 }
