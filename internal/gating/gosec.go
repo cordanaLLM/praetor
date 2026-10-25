@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -239,7 +240,8 @@ func scanDiscoveredModules(ctx context.Context, repoDir string, files []string, 
 func scanModuleGosec(ctx context.Context, repoDir, modDir, confPath string) ([]baseline.Infraction, error) {
 	scanCtx, cancel := context.WithTimeout(ctx, gosecScanTimeout)
 	defer cancel()
-	listing, err := util.RunCommand(scanCtx, modDir, "go", "list", "-f", "{{.Dir}}", "./...")
+	run := retryGoCacheMiss(util.RunCommand, os.Stderr)
+	listing, err := run(scanCtx, modDir, "go", "list", "-f", "{{.Dir}}", "./...")
 	if err != nil {
 		return nil, fmt.Errorf("list Go packages in %s: %w", modDir, err)
 	}

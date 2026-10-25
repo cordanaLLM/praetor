@@ -550,10 +550,12 @@ func (tc toolchain) unanswered(what string, err error) (bool, string, error) {
 // the host.
 func (c *stageConfig) goToolchain() toolchain {
 	if c.container != nil {
-		return c.container.toolchain(c.run)
+		tc := c.container.toolchain(c.run)
+		tc.run = retryGoCacheMiss(tc.run, c.admissionLogWriter())
+		return tc
 	}
 	return toolchain{
-		run: c.run,
+		run: retryGoCacheMiss(c.run, c.admissionLogWriter()),
 		have: func(_ context.Context, _, name string) error {
 			if _, err := c.lookPath(name); err != nil {
 				return fmt.Errorf("%w: %w", errNotOnPath, err)
