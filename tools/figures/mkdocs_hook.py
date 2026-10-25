@@ -265,7 +265,8 @@ def download_player_archive(url: str) -> bytes:
     if not url.startswith("https://"):
         raise CheckError(f"the player archive is fetched over https only, not {url!r}")
     # the https guard above is the only way in, so the URL scheme is fixed
-    with urlopen(url, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:  # noqa: S310  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+    with urlopen(url, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:  # noqa: S310
         raw = response.read(MAX_FILE_BYTES + 1)
     if len(raw) > MAX_FILE_BYTES:
         raise CheckError(f"{url} exceeds {MAX_FILE_BYTES} bytes")
