@@ -171,6 +171,9 @@ and the missing path (#1259; `auditExceptionsExpiry` in `cmd/standardsctl/audit_
 One planned file is the exception: the `HISS-11` entry adoption writes for the adopter's release
 workflow `release.yml`, still to be added, passes while no workflow writes provenance. The audit asks the code that writes that entry, and once a provenance workflow
 exists the entry fails like any other stale one.
+A `HISS-12` entry is not checked against the tree either: its finding lives in history, where the file
+may no longer exist, and the secret gate fails an entry no finding uses
+(`TestAuditExceptionTargets_SecretsHistoryPath`).
 
 Inspect declared exceptions and their remaining validity with `praetorctl exceptions list`
 (`cmd/standardsctl/exceptions.go`, `TestExceptionsList_Positive_ListsEntries`):
