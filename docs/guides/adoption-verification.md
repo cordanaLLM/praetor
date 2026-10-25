@@ -1015,8 +1015,17 @@ reached no verdict: govulncheck exited non-zero (a package that does not compile
 the vulnerability database), printed nothing, or did not open its output with a protocol v1
 configuration of a symbol scan of source; the document or `.standards.yaml` does not load; or the
 command line does not parse (a misspelled flag, a missing subcommand), which also prints the
-synopsis. Exit 2 is never a pass, and in `gate run` it fails the stage like a finding. Covered
-advisories and unused statements print on stdout, failures on stderr:
+synopsis. Exit 2 is never a pass, and in `gate run` it fails the stage like a finding.
+
+One failure is retried instead: a parallel build that prunes the shared go-build cache can remove
+an entry while a Go command reads it, and the command fails with a line naming `/go-build/` and
+`no such file or directory`. `praetorctl security govuln`, `praetorctl go vet` and the gate's Go
+stages (package listing, vulnerability gate, gosec) then run that command exactly once more and
+print `govuln: note: go-build cache miss, retried once: <module>` or `gate: note: go-build cache
+miss, retried once: <dir>`; a second miss, a cancelled run or any other error keeps its verdict
+([`internal/govuln/cache.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/govuln/cache.go)).
+
+Covered advisories and unused statements print on stdout, failures on stderr:
 
 ```text
 govuln: GO-2022-1059: golang.org/x/text/language.ParseAcceptLanguage is called (fixed in v0.3.8); no VEX statement covers a called symbol: update golang.org/x/text or stop calling it
