@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -608,8 +607,7 @@ func TestUniqueTestOriginSeparatesStableTags(t *testing.T) {
 }
 
 func TestUniqueTestOriginFormat(t *testing.T) {
-	format := regexp.MustCompile(`^https://forge\.example/praetor-test/[A-Za-z0-9-]+-` +
-		strconv.Itoa(os.Getpid()) + `-[0-9]+-[0-9a-f]{8}\.git$`)
+	format := regexp.MustCompile(`^https://forge\.example/praetor-test/[A-Za-z0-9-]+-[A-Z2-7]{26,}\.git$`)
 	for _, tc := range []struct{ name string }{{"positive"}, {"negative/..?#%é"}, {""}} {
 		t.Run(tc.name, func(t *testing.T) {
 			origin := uniqueTestOrigin(t)
@@ -617,7 +615,7 @@ func TestUniqueTestOriginFormat(t *testing.T) {
 				t.Errorf("two calls must get different origins: %q", origin)
 			}
 			if !format.MatchString(origin) {
-				t.Errorf("origin must have a safe test name, pid, nanoseconds and eight random hex digits: %q", origin)
+				t.Errorf("origin must have a safe test name and a random base32 suffix: %q", origin)
 			}
 		})
 	}
