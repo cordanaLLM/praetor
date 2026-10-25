@@ -5,6 +5,6 @@
 # between each option and its argument: Renovate skips a lock whose header separates them
 # with a space or uses a short option, and CI rejects such a header.
 mkdocs==1.6.1
-mkdocs-material==9.7.7
+mkdocs-material==9.8.0
 mkdocs-minify-plugin==0.8.0
 pymdown-extensions==12.3
