@@ -2,9 +2,9 @@
 
 import hashlib
 import json
-from pathlib import Path
 import subprocess
 import tempfile
+from pathlib import Path
 
 from dev_mcp_rpc import RPCClient
 from dev_mcp_wishes import wish_checks
@@ -183,7 +183,7 @@ def planning_probe_draft():
     acceptance = {"positive": ["Valid input compiles."],
                   "negative": ["Invalid input fails."],
                   "boundary": ["The input byte limit is enforced."]}
-    return {"schema_version": 1, "id": "probe-draft",
+    return {"schema_version": 2, "id": "probe-draft",
             "project": {"id": "probe-project", "title": "Probe",
                         "repository": "example/probe", "revision": "fixture"},
             "sources": [{"id": "source-1", "kind": "research",
@@ -206,6 +206,9 @@ def planning_probe_draft():
                        "expected_outputs": [{"id": "output-1",
                                              "description": "Private planning pack."}],
                        "acceptance": acceptance,
+                       "experiment": {"evidence_status": "established", "null": "",
+                                      "kill_criterion": "", "margin": "",
+                                      "protected_outcomes": [], "disposition": ""},
                        "link": {"todo_id": "todo-1", "roadmap_id": "roadmap-1",
                                 "milestone_id": "milestone-1"}}]}
 
@@ -241,8 +244,15 @@ def planning_checks(client, root):
                           {"input_path": path.name, "output_dir": "public-plan"}), error=True)
     tool_text(client.call("standards_planning_validate",
                           {"input_path": "../outside-planning.json"}), error=True)
+    legacy_path = root / "planning-draft-v1.json"
+    legacy_path.write_text(json.dumps(dict(draft, schema_version=1)))
+    refusal = tool_text(client.call("standards_planning_validate",
+                                   {"input_path": legacy_path.name}), error=True)
+    require("schema_version 1 was refused" in refusal,
+            "planning schema_version 1 did not return the version refusal")
     return ["planning validation stayed metadata-only and unverified",
             "planning prepare artifacts persisted and read back",
+            "planning schema_version 1 refused",
             "planning unsafe arguments paths and collisions rejected"]
 
 
