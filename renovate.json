@@ -4,12 +4,13 @@
     "Renovate pull requests are not merged as opened: the landing pipeline takes each one over on a signed-off fix/renovate-<number> branch with its own pull request, and that pull request runs the full CI and every required check.",
     "CI on the Renovate pull request itself is therefore skipped: the Go tests, the Platform Neutrality legs, the preset builds, the security scan and the documentation site skip a pull request that renovate[bot] opened from a branch starting with renovate/ (docs/guides/contributing.md). The DCO and REUSE gate, the configuration validation and Documentation Governance still run, and a person's pull request from a renovate/ branch runs every job.",
     "rebaseWhen conflicted: a branch is rebased only when it conflicts with main. The default, auto, rebases every open branch whenever main moves, because the ruleset requires up-to-date branches, and those runs filled every runner.",
-    "automerge false everywhere: a skipped required check reports success, so an automerging rule could merge a pull request nothing verified."
+    "automerge false everywhere: a skipped required check reports success, so an automerging rule could merge a pull request nothing verified.",
+    "The fleet preset github>plurano/horistes comes first: the recommended base, a sign-off on the bot's commits, three days of waiting after a release except for a fix of a known vulnerability, go mod tidy after a Go module update. The settings in this file keep this repository's own rules on top of it."
   ],
   "rebaseWhen": "conflicted",
   "automerge": false,
   "extends": [
-    "config:recommended",
+    "github>plurano/horistes",
     ":dependencyDashboard",
     ":semanticCommits",
     ":maintainLockFilesWeekly"

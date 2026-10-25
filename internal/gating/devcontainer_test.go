@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -571,6 +572,52 @@ func TestImageTagAndHomeOutliveTheCheckout(t *testing.T) {
 		if !slices.Contains(dc.env, "HOME="+home) || !slices.Contains(dc.mounts, home) || util.WithinRoot(resolved, home) {
 			t.Errorf("HOME must be the user-cache directory %s, mounted, outside the checkout: %q %q", home, dc.env, dc.mounts)
 		}
+	}
+}
+
+func TestUniqueTestOriginSeparatesStableTags(t *testing.T) {
+	var repos [2]string
+	for i := range repos {
+		repo := newHermeticGitRepo(t)
+		repos[i] = filepath.Join(t.TempDir(), "003")
+		if err := os.Rename(repo, repos[i]); err != nil {
+			t.Fatal(err)
+		}
+		resolved, err := filepath.EvalSymlinks(repos[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		repos[i] = resolved
+		if filepath.Base(resolved) != "003" {
+			t.Fatalf("fixture must resolve to basename 003: %s", resolved)
+		}
+		treeGit(t, resolved, "remote", "add", "origin", "https://forge.example/praetor-test/"+filepath.Base(resolved)+".git")
+	}
+	old := imageRefs(t.Context(), repos[0]).Stable
+	if other := imageRefs(t.Context(), repos[1]).Stable; old != other || old != "praetor-gate-777272822bb8:latest" {
+		t.Fatalf("basename origins must reproduce the measured collision: %q, %q", old, other)
+	}
+	first, second := uniqueTestOrigin(t), uniqueTestOrigin(t)
+	treeGit(t, repos[0], "remote", "set-url", "origin", first)
+	treeGit(t, repos[1], "remote", "set-url", "origin", second)
+	a, b := imageRefs(t.Context(), repos[0]).Stable, imageRefs(t.Context(), repos[1]).Stable
+	if a == b || a == old || b == old {
+		t.Errorf("unique origins must separate stable tags from each other and the basename collision: %q, %q", a, b)
+	}
+}
+
+func TestUniqueTestOriginFormat(t *testing.T) {
+	format := regexp.MustCompile(`^https://forge\.example/praetor-test/[A-Za-z0-9-]+-[A-Z2-7]{26,}\.git$`)
+	for _, tc := range []struct{ name string }{{"positive"}, {"negative/..?#%é"}, {""}} {
+		t.Run(tc.name, func(t *testing.T) {
+			origin := uniqueTestOrigin(t)
+			if origin == uniqueTestOrigin(t) {
+				t.Errorf("two calls must get different origins: %q", origin)
+			}
+			if !format.MatchString(origin) {
+				t.Errorf("origin must have a safe test name and a random base32 suffix: %q", origin)
+			}
+		})
 	}
 }
 

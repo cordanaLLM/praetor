@@ -6,6 +6,7 @@ package gating
 
 import (
 	"context"
+	"crypto/rand"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -91,8 +92,8 @@ func TestRaceStageRunsInARealDevcontainer(t *testing.T) {
 		t.Skip(reason)
 	}
 	repo, resolved := devcontainerRepo(t)
-	// A unique origin gives the test a stable tag of its own, which its cleanup removes.
-	treeGit(t, repo, "remote", "add", "origin", "https://forge.example/praetor-test/"+filepath.Base(resolved)+".git")
+	// A per-run origin gives this run a stable tag of its own, which its cleanup removes.
+	treeGit(t, repo, "remote", "add", "origin", uniqueTestOrigin(t))
 	home := isolateUserCache(t)
 	t.Setenv("CGO_ENABLED", "0")
 	testsupport.BuildExecutable(t, filepath.Join(repo, ".devcontainer"), "toolchain", standInToolchain)
@@ -195,6 +196,19 @@ func TestPraetorsOwnDevcontainerRunsTheGoStages(t *testing.T) {
 			t.Errorf("the node feature must put Node 24 on the container's PATH, got %q", out)
 		}
 	}
+}
+
+// uniqueTestOrigin returns an origin no other run shares. A temporary directory's base name is a
+// per-test counter, so an origin built from it ("003") gave every run the same stable tag.
+func uniqueTestOrigin(t *testing.T) string {
+	t.Helper()
+	name := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			return r
+		}
+		return '-'
+	}, t.Name())
+	return "https://forge.example/praetor-test/" + name + "-" + rand.Text() + ".git"
 }
 
 // realRuntime returns the container runtime this host would build with, asked the way the gate asks

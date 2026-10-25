@@ -7,11 +7,13 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/gating"
+	"github.com/cordanaLLM/praetor/internal/govuln"
 	"github.com/cordanaLLM/praetor/internal/util"
 	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
 )
@@ -54,7 +56,8 @@ func vetOneModule(module string) string {
 	ctx, cancel := commandContext(gating.TestStageTimeout)
 	defer cancel()
 	dir := filepath.Join(".", filepath.Dir(filepath.FromSlash(module)))
-	count, listErr := gating.ModulePackageCount(ctx, util.RunCommand, dir)
+	run := moduleCacheRetry(govuln.Runner(util.RunCommand), os.Stdout, "go vet", module)
+	count, listErr := gating.ModulePackageCount(ctx, run, dir)
 	if listErr == nil && count == 0 {
 		fmt.Printf("go vet %s: %s, skipped\n", module, gating.NoPackagesNote)
 		return ""
@@ -62,7 +65,7 @@ func vetOneModule(module string) string {
 	if listErr != nil {
 		return fmt.Sprintf("%s: %v", module, listErr)
 	}
-	out, runErr := util.RunCommand(ctx, dir, "go", "vet", "./...")
+	out, runErr := run(ctx, dir, "go", "vet", "./...")
 	if runErr != nil {
 		return fmt.Sprintf("%s: %s (%v): %s", module, runErr,
 			time.Since(start).Round(time.Millisecond), strings.TrimSpace(out))

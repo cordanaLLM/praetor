@@ -1,0 +1,2 @@
+type: fixed
+title: Retry Go gate commands once when concurrent cache pruning removes build entries

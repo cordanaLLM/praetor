@@ -656,7 +656,8 @@ func runGoSecurityModule(ctx context.Context, cfg *stageConfig, module goModule)
 }
 
 func resolveModulePackages(ctx context.Context, cfg *stageConfig, moduleDir string) ([]string, string, error) {
-	listing, err := cfg.run(ctx, moduleDir, "go", "list", "-f", "{{.Dir}}", "./...")
+	run := retryGoCacheMiss(cfg.run, cfg.admissionLogWriter())
+	listing, err := run(ctx, moduleDir, "go", "list", "-f", "{{.Dir}}", "./...")
 	if err != nil {
 		return nil, "", fmt.Errorf("list Go packages in %s: %w: %s", moduleDir, err, strings.TrimSpace(listing))
 	}
@@ -725,7 +726,8 @@ func evaluateGosecModuleRatchet(repoDir, moduleDir string, allModules []goModule
 }
 
 func runGoVulnerabilityGate(ctx context.Context, cfg *stageConfig, module goModule) (string, error) {
-	report, err := govuln.Check(ctx, govuln.Options{Dir: module.dir, VEXRoot: cfg.repoDir, Run: govuln.Runner(cfg.run)})
+	run := retryGoCacheMiss(cfg.run, cfg.admissionLogWriter())
+	report, err := govuln.Check(ctx, govuln.Options{Dir: module.dir, VEXRoot: cfg.repoDir, Run: govuln.Runner(run)})
 	if err != nil {
 		return "", fmt.Errorf("go vulnerability gate: %w", err)
 	}

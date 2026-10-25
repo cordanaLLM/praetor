@@ -183,6 +183,7 @@ func reportGovulnModules(ctx context.Context, root string, modules []string, sca
 func reportGovulnModule(ctx context.Context, root, module string, scanner []string,
 	run govuln.Runner, stdout, stderr io.Writer) (int, error) {
 	start := time.Now()
+	run = moduleCacheRetry(run, stdout, "govuln", module)
 	dir := filepath.Join(root, filepath.Dir(filepath.FromSlash(module)))
 	count, err := gating.ModulePackageCount(ctx, run, dir)
 	if err != nil {
@@ -209,6 +210,19 @@ func reportGovulnModule(ctx context.Context, root, module string, scanner []stri
 	notes := prefixedLines("govuln: ", report.Lines(true)) + prefixedLines("govuln: note: ", report.UnusedLines())
 	text := notes + fmt.Sprintf("govuln: PASS: %s (module: %s, elapsed: %v)\n", report.Summary(), module, elapsed)
 	return 0, writeWithStatus(stdout, text, 0)
+}
+
+// moduleCacheRetry reports at most one retry note per module, including failed retries
+// (order engine-gate-private-gocache-20261025). The list and scanner share this runner.
+func moduleCacheRetry(run govuln.Runner, out io.Writer, label, module string) govuln.Runner {
+	noted := false
+	return govuln.RetryCacheMiss(run, func(string) error {
+		if noted {
+			return nil
+		}
+		noted = true
+		return writeWithStatus(out, fmt.Sprintf("%s: note: %s: %s\n", label, govuln.CacheMissNote, module), 0)
+	})
 }
 
 func statusError(code int) error {

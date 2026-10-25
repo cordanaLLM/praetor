@@ -183,6 +183,8 @@ var priorDigests = map[string]string{
 	// mkdocs_hook.py before ADR-0021 fetched figures-player.tar.gz for adopters without a local
 	// tools/figures/player directory.
 	"40577f164ab56013875f3736d1436ba44a703b1c8b82a73235e7f65ecba8e227": Directory + "/mkdocs_hook.py",
+	// mkdocs_hook.py before the https-guarded player download carried semgrep's nosemgrep marker.
+	"bf2646129a0c5923daad5b36fdae6b0d7abd7748e6150a2b846a0f51d09fe0c8": Directory + "/mkdocs_hook.py",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts figures.css mkdocs_hook.py astro.mjs serve.mjs eslint.figures.mjs README.md
