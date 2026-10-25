@@ -6,12 +6,15 @@ package gating
 
 import (
 	"context"
+	"crypto/rand"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
@@ -91,8 +94,8 @@ func TestRaceStageRunsInARealDevcontainer(t *testing.T) {
 		t.Skip(reason)
 	}
 	repo, resolved := devcontainerRepo(t)
-	// A unique origin gives the test a stable tag of its own, which its cleanup removes.
-	treeGit(t, repo, "remote", "add", "origin", "https://forge.example/praetor-test/"+filepath.Base(resolved)+".git")
+	// Base 003 repeated across runs (praetor-gate-777272822bb8:latest); unique origins isolate cleanup.
+	treeGit(t, repo, "remote", "add", "origin", uniqueTestOrigin(t))
 	home := isolateUserCache(t)
 	t.Setenv("CGO_ENABLED", "0")
 	testsupport.BuildExecutable(t, filepath.Join(repo, ".devcontainer"), "toolchain", standInToolchain)
@@ -195,6 +198,22 @@ func TestPraetorsOwnDevcontainerRunsTheGoStages(t *testing.T) {
 			t.Errorf("the node feature must put Node 24 on the container's PATH, got %q", out)
 		}
 	}
+}
+
+func uniqueTestOrigin(t *testing.T) string {
+	t.Helper()
+	var nonce [4]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		t.Fatalf("random test origin: %v", err)
+	}
+	name := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			return r
+		}
+		return '-'
+	}, t.Name())
+	return fmt.Sprintf("https://forge.example/praetor-test/%s-%d-%d-%x.git",
+		name, os.Getpid(), time.Now().UnixNano(), nonce)
 }
 
 // realRuntime returns the container runtime this host would build with, asked the way the gate asks
