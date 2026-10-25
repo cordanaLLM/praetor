@@ -141,3 +141,20 @@ func TestAudit_ExceptionMissingPath_Integration(t *testing.T) {
 	mustErrContain(t, err, "[FAIL] Exceptions: the exceptions entry (rule HISS-10, .github/workflows/build.yml) names the path "+
 		".github/workflows/build.yml, which matches no file in the repository")
 }
+
+// Positive and negative (order engine-secretscan-foreign-remote-refs-20261025): a HISS-12 entry
+// names the file of a finding in history, which the tree may no longer hold, so the tree check
+// passes it (the secret gate fails an entry no finding uses); the same missing path under
+// another rule still fails.
+func TestAuditExceptionTargets_SecretsHistoryPath(t *testing.T) {
+	root := exceptionTargetRoot(t, "src/main.go")
+	secret := liveEntry(config.ExceptionRuleSecrets, "logs/history.txt", "")
+	secret.Tool = "gcp-api-key"
+	out, err := judgeTargets(t, root, secret)
+	if err != nil || strings.Contains(out, "[FAIL]") {
+		t.Fatalf("a HISS-12 entry for a history-only path failed the tree check: (%q, %v)", out, err)
+	}
+
+	_, err = judgeTargets(t, root, liveEntry(config.ExceptionRuleDedupe, "logs/history.txt", ""))
+	mustErrContain(t, err, "(rule HISS-19, logs/history.txt) names the path logs/history.txt, which matches no file")
+}

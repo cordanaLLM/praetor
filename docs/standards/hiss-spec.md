@@ -178,6 +178,7 @@ Zero credentials in Git history:
 - API keys, private certificates, and credentials must never be committed.
 - The scaffolded `.gitleaks.toml` extends the gitleaks defaults, which name GitHub and GitLab tokens, with rules for the forge token shapes the defaults lack: a Gitea or Forgejo access token (40 lowercase hex) assigned to a name that says so, sent in an `Authorization: token` header, or written as the password of an https URL (`templates/native/.gitleaks.toml.tmpl`, `TestScaffoldedGitleaksConfigDetectsForgeTokens`). The generic rule's entropy threshold misses a low-entropy token, and a 40-hex git object id stays quiet.
 - Secret scan exemptions must be declared in `.standards.yaml` with `rule: HISS-12`, target `path`, `tool` (the gitleaks rule id, e.g. `generic-api-key`), optional finding `fingerprint`, mandatory ISO-8601 `expires` date, and rationale in `reason`.
+- A HISS-12 `path` may name a file that exists only in history (a secret removed from the tree but not from the log). The audit's exceptions check does not require it in the tree: the secret gate judges the entry against the scanned history and fails an entry no finding uses (`cmd/standardsctl/audit_exceptions.go`, `TestAuditExceptionTargets_SecretsHistoryPath`).
 - An expired exemption excuses nothing; an exemption that excuses no findings fails the gate ("excuses no finding: remove it"). Undated exemption files such as `.gitleaksignore` are prohibited.
 
 ### HISS-13: Monotonic Debt Ratchet

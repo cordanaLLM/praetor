@@ -191,11 +191,18 @@ func auditExceptionTargets(ctx context.Context, entries []config.Exception, root
 }
 
 // judge returns the [FAIL] line for an entry naming no file, or "" for one that names a file,
-// a planned file or no file at all (a tool entry).
+// a planned file, no file at all (a tool entry) or a HISS-12 history path.
 func (t *exceptionTargets) judge(entry config.Exception, today time.Time) (string, error) {
 	found, err := t.names(entry)
 	if err != nil || found {
 		return "", err
+	}
+	if entry.Rule == config.ExceptionRuleSecrets {
+		// A HISS-12 entry excuses a finding in history, whose file the tree may no longer hold
+		// (order engine-secretscan-foreign-remote-refs-20261025). The secret gate judges it
+		// against the scanned history and fails an entry no finding uses (secretscan
+		// Report.Unused, the gate's stale entries), so the tree says nothing about it.
+		return "", nil
 	}
 	expired := entry.Expired(today)
 	if entry.Rule == config.ExceptionRuleSupplyChain {
