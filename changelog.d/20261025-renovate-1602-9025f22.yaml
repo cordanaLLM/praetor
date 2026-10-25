@@ -1,0 +1,3 @@
+type: changed
+title: "Dependencies: update pnpm to v10.34.5 [security]"
+breaking: false
