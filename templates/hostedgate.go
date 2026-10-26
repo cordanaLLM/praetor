@@ -8,6 +8,7 @@ import (
 	"text/template"
 
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
+	"github.com/cordanaLLM/praetor/internal/toolpins"
 )
 
 // The hosted gate functions render the trigger and draft handling every CI workflow flavor apply
@@ -49,8 +50,8 @@ var templateFuncs = template.FuncMap{
 	hostedGateDraftStepFunc:      func() string { return ghworkflow.HostedGateDraftStep },
 	hostedGateStepIfFunc:         func() string { return ghworkflow.HostedGateStepIf },
 	hostedGateManifestStepIfFunc: func() string { return ghworkflow.HostedGateManifestStepIf },
-	securityGovulnVersionFunc:    func() string { return GoSecurityGovulnVersion },
-	securityGosecVersionFunc:     func() string { return GoSecurityGosecVersion },
-	securityGitleaksVersionFunc:  func() string { return GoSecurityGitleaksVersion },
-	securityXToolsVersionFunc:    func() string { return GoSecurityXToolsVersion },
+	securityGovulnVersionFunc:    func() string { return toolpins.GovulnVersion },
+	securityGosecVersionFunc:     func() string { return toolpins.GosecVersion },
+	securityGitleaksVersionFunc:  func() string { return toolpins.GitleaksVersion },
+	securityXToolsVersionFunc:    func() string { return toolpins.XToolsVersion },
 }

@@ -1,0 +1,3 @@
+type: fixed
+title: Scanner version pins leave exported templates API to keep Go API compatibility on updates
+breaking: false

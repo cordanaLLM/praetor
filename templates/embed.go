@@ -94,18 +94,27 @@ type GoSecurityContext struct {
 	DeclaredScanners bool `json:"declared_scanners"`
 }
 
-// The fallback Security Scan builds these versions in a throwaway module. tools/go/go.mod is
-// the version source; TestGoSecurityVersionsMatchToolsModule names the required update whenever
-// Renovate moves one side without the other.
+// Deprecated: Values frozen 2026-10-26; no longer updated. Live scanner pins: internal/toolpins package.
+// Names kept: exported API stability. Removal: next breaking release.
 const (
-	GoSecurityGovulnVersion   = "v1.8.0"
-	GoSecurityGosecVersion    = "v2.29.0"
+	// Deprecated: Values frozen 2026-10-26; no longer updated. Live scanner pins: internal/toolpins package.
+	// Names kept: exported API stability. Removal: next breaking release.
+	GoSecurityGovulnVersion = "v1.8.0"
+
+	// Deprecated: Values frozen 2026-10-26; no longer updated. Live scanner pins: internal/toolpins package.
+	// Names kept: exported API stability. Removal: next breaking release.
+	GoSecurityGosecVersion = "v2.29.0"
+
+	// Deprecated: Values frozen 2026-10-26; no longer updated. Live scanner pins: internal/toolpins package.
+	// Names kept: exported API stability. Removal: next breaking release.
 	GoSecurityGitleaksVersion = "v8.30.1"
-	GoSecurityXToolsVersion   = "v0.50.0"
-	// GoSecurityXToolsFloor is the oldest golang.org/x/tools whose export-data reader decodes what
-	// go1.27.2 writes (pkgbits V5, uirVersion in cmd/compile/internal/noder/unified.go). gosec
-	// v2.29.0 requires only v0.49.0, so a gosec built without this floor fails to load every
-	// package, reports 0 issues and exits 1 (plurano/pertica main, 2026-10-16).
+
+	// Deprecated: Values frozen 2026-10-26; no longer updated. Live scanner pins: internal/toolpins package.
+	// Names kept: exported API stability. Removal: next breaking release.
+	GoSecurityXToolsVersion = "v0.50.0"
+
+	// Deprecated: Values frozen 2026-10-26; no longer updated. Live scanner pins: internal/toolpins package.
+	// Names kept: exported API stability. Removal: next breaking release.
 	GoSecurityXToolsFloor = "v0.50.0"
 )
 
