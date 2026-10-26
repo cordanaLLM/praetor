@@ -525,8 +525,10 @@ func currentReleaseHarnesses(platform string, stated statedPolicy) ([]Harness, e
 // the `caveman` skill, for a repository that carries it, then the one stating the internal form
 // alone, for a repository that does not (SynthesizeHarnessOver, #235).
 func releasedRegisterDirectives() []string {
-	return []string{config.RegisterDirective(config.TextRegisterInternal),
-		config.RegisterDirectiveWithout(config.TextRegisterInternal, config.RegisterSkills())}
+	return []string{
+		config.RegisterDirective(config.TextRegisterInternal),
+		config.RegisterDirectiveWithout(config.TextRegisterInternal, config.RegisterSkills()),
+	}
 }
 
 // releaseFacts is every HISS fact combination the refresh key accepts when the current
@@ -839,7 +841,7 @@ func writeListItems(b *strings.Builder, values []string) {
 
 // writeCommandFence writes command as a bash fence. A command line cannot be wrapped
 // without changing it, so a line over markdownLineLimit gets an MD013 disable scoped to the
-// fence alone.
+// fence alone; capture and restore keep the repository's rule setting after the fence.
 func writeCommandFence(b *strings.Builder, command string) {
 	long := false
 	lines := strings.Split(command, "\n")
@@ -847,11 +849,11 @@ func writeCommandFence(b *strings.Builder, command string) {
 		long = long || len(lines[i]) > markdownLineLimit
 	}
 	if long {
-		b.WriteString("<!-- markdownlint-disable MD013 -->\n\n")
+		b.WriteString("<!-- markdownlint-capture -->\n<!-- markdownlint-disable MD013 -->\n\n")
 	}
 	fmt.Fprintf(b, "```bash\n%s\n```\n", command)
 	if long {
-		b.WriteString("\n<!-- markdownlint-enable MD013 -->\n")
+		b.WriteString("\n<!-- markdownlint-restore -->\n")
 	}
 }
 

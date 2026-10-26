@@ -1,0 +1,2 @@
+type: fixed
+title: the harness block in AGENTS.md and paperclip command fences capture and restore markdownlint rule state so a repository markdownlint setting with MD013 disabled is preserved after the block instead of being overridden by an inline enable pragma

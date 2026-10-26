@@ -80,6 +80,54 @@ func TestMarkdownFindingsBoundaries(t *testing.T) {
 	}
 }
 
+// Positive, Negative, Boundary (HISS-15): capture pushes rule state, restore pops it back,
+// restore without capture returns to the start state, and the capture stack is bounded at
+// maxCaptureDepth.
+func TestMarkdownFindings_CaptureRestore(t *testing.T) {
+	longLine := strings.Repeat("word ", 20) + "\n"
+
+	// Positive: capture -> disable -> restore returns to start state (MD013 on by default).
+	docDefault := "# T\n\n<!-- markdownlint-capture -->\n<!-- markdownlint-disable MD013 -->\n\n" +
+		longLine + "\n<!-- markdownlint-restore -->\n\n" + longLine
+	findings := MarkdownFindings(docDefault)
+	if len(findings) != 1 || !strings.Contains(findings[0], "MD013") {
+		t.Fatalf("expected 1 finding on line after restore, got: %v", findings)
+	}
+
+	// Positive under repository config with MD013 off: capture -> enable -> restore returns
+	// to start state (MD013 off).
+	docOff := "# T\n\n<!-- markdownlint-capture -->\n<!-- markdownlint-enable MD013 -->\n\n" +
+		longLine + "\n<!-- markdownlint-restore -->\n\n" + longLine
+	findingsOff := MarkdownFindingsWith(docOff, "MD013")
+	if len(findingsOff) != 1 || !strings.Contains(findingsOff[0], "MD013") {
+		t.Fatalf("expected 1 finding inside scoped enable only, got: %v", findingsOff)
+	}
+
+	// Negative: restore without capture resets active rules to the initial configuration.
+	docRestoreWithoutCapture := "# T\n\n<!-- markdownlint-enable MD013 -->\n\n" +
+		longLine + "\n<!-- markdownlint-restore -->\n\n" + longLine
+	findingsReset := MarkdownFindingsWith(docRestoreWithoutCapture, "MD013")
+	if len(findingsReset) != 1 || !strings.Contains(findingsReset[0], "MD013") {
+		t.Fatalf("expected restore without capture to reset to start state (MD013 off), got: %v", findingsReset)
+	}
+
+	// Boundary: nested captures bounded at maxCaptureDepth without stack overflow.
+	var b strings.Builder
+	b.WriteString("# T\n\n")
+	for i := 0; i < maxCaptureDepth+5; i++ {
+		b.WriteString("<!-- markdownlint-capture -->\n\n")
+	}
+	b.WriteString("<!-- markdownlint-disable MD013 -->\n\n" + longLine + "\n")
+	for i := 0; i < maxCaptureDepth+5; i++ {
+		b.WriteString("<!-- markdownlint-restore -->\n\n")
+	}
+	b.WriteString(longLine)
+	findingsNested := MarkdownFindings(b.String())
+	if len(findingsNested) != 1 || !strings.Contains(findingsNested[0], "MD013") {
+		t.Fatalf("nested captures bounded: got %v", findingsNested)
+	}
+}
+
 // Positive: a four-backtick fence holds a three-backtick one as content, so only the outer
 // fence needs blank lines around it. Negative: the shorter run does not close the outer fence,
 // so the line after the outer fence's real closer is still checked (MD031). Boundary: a longer

@@ -287,8 +287,10 @@ func TestAdopt_Positive_Greenfield(t *testing.T) {
 func TestAdoptGreenfieldConfiguredSourcesVerifyWrittenHarness(t *testing.T) {
 	repoPath := newTestRepo(t, "source-gate")
 	mustWrite(t, filepath.Join(repoPath, "go.mod"), "module github.com/test/source-gate\n")
-	if _, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath,
-		Profile: "framework", RecordBaseline: true}); err != nil {
+	if _, err := Adopt(t.Context(), AdoptOptions{
+		LockSourceRoot: newAdoptLockSource(t), Path: repoPath,
+		Profile: "framework", RecordBaseline: true,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	stageAdoptPaths(t, repoPath, paperclipFile)
@@ -316,8 +318,10 @@ register:
   surfaces:
     hooks: internal
 `)
-	if _, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath,
-		Profile: "framework", RecordBaseline: true}); err != nil {
+	if _, err := Adopt(t.Context(), AdoptOptions{
+		LockSourceRoot: newAdoptLockSource(t), Path: repoPath,
+		Profile: "framework", RecordBaseline: true,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	stageAdoptPaths(t, repoPath, paperclipFile)
@@ -351,8 +355,10 @@ func TestAdoptCustomHarnessPreservesBytesAndBindsActualCoverage(t *testing.T) {
 }
 `
 	mustWrite(t, filepath.Join(repoPath, paperclipFile), custom)
-	if _, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath,
-		Profile: "framework", RecordBaseline: true}); err != nil {
+	if _, err := Adopt(t.Context(), AdoptOptions{
+		LockSourceRoot: newAdoptLockSource(t), Path: repoPath,
+		Profile: "framework", RecordBaseline: true,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if got := mustRead(t, filepath.Join(repoPath, paperclipFile)); got != custom {
@@ -410,10 +416,12 @@ func TestAdoptEditedHarnessFailsBeforeWritingWithRemedy(t *testing.T) {
 	before := snapshotTree(t, repoPath)
 	for _, force := range []bool{false, true} {
 		_, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, force))
-		for _, want := range []string{"register.sources sha256 mismatch", "actual " + editedPins.SHA256,
+		for _, want := range []string{
+			"register.sources sha256 mismatch", "actual " + editedPins.SHA256,
 			"to the extracted values this error reports",
 			"recompute the pins with `praetorctl caveman check --configured-sources --root=.` once every input is staged (git add)",
-			"delete it and re-run praetorctl adopt to regenerate it"} {
+			"delete it and re-run praetorctl adopt to regenerate it",
+		} {
 			if err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatalf("force=%v: error lacks %q: %v", force, want, err)
 			}
@@ -455,8 +463,10 @@ func TestAdoptDeclinedHarnessRemedyNeverSuggestsDeletion(t *testing.T) {
 		if err == nil || strings.Contains(err.Error(), "delete it") {
 			t.Fatalf("force=%v: declined run must fail without the delete remedy: %v", force, err)
 		}
-		for _, want := range []string{"restore the " + paperclipFile + " bytes the pins were bound to (git checkout)",
-			"adoption.decline lists the paperclip step"} {
+		for _, want := range []string{
+			"restore the " + paperclipFile + " bytes the pins were bound to (git checkout)",
+			"adoption.decline lists the paperclip step",
+		} {
 			if !strings.Contains(err.Error(), want) {
 				t.Fatalf("force=%v: error lacks %q: %v", force, want, err)
 			}
@@ -624,14 +634,17 @@ func TestAdoptForceKeepsHarnessItCannotPatch(t *testing.T) {
 		duplicate := strings.Replace(renamedHarness, `"version": 1,`, `"version": 1, "notes": "first",`, 1)
 		mustWrite(t, filepath.Join(repoPath, paperclipFile), duplicate)
 		mustWrite(t, filepath.Join(repoPath, "hooks", "notify.sh"), "echo \"result: hook pass.\"\n")
-		inputs := []config.RegisterSourceInput{{Path: "hooks/notify.sh", Surface: config.SurfaceHooks,
-			Kind: "message", Format: config.SourceFormatShell}}
+		inputs := []config.RegisterSourceInput{{
+			Path: "hooks/notify.sh", Surface: config.SurfaceHooks,
+			Kind: "message", Format: config.SourceFormatShell,
+		}}
 		result, err := cavemansource.ExtractInputs(t.Context(), repoPath, inputs)
 		if err != nil {
 			t.Fatal(err)
 		}
 		mustWrite(t, filepath.Join(repoPath, manifestFile), legacyManifest+manifestSourcesYAML(t, &config.RegisterSources{
-			Expected: result.Applicable, NotApplicable: result.NotApplicable, SHA256: result.SHA256, Inputs: inputs}))
+			Expected: result.Applicable, NotApplicable: result.NotApplicable, SHA256: result.SHA256, Inputs: inputs,
+		}))
 		report, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, force))
 		if err != nil {
 			t.Fatalf("force=%v: %v", force, err)
@@ -689,8 +702,10 @@ func TestAdoptForceKeepsDeletedRulesAbsent(t *testing.T) {
 func TestAdoptRejectsStaleExistingSourceContract(t *testing.T) {
 	repoPath := newTestRepo(t, "stale-source-contract")
 	mustWrite(t, filepath.Join(repoPath, "go.mod"), "module github.com/test/stale-source-contract\n")
-	options := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath,
-		Profile: "framework", RecordBaseline: true}
+	options := AdoptOptions{
+		LockSourceRoot: newAdoptLockSource(t), Path: repoPath,
+		Profile: "framework", RecordBaseline: true,
+	}
 	if _, err := Adopt(t.Context(), options); err != nil {
 		t.Fatal(err)
 	}
@@ -947,8 +962,10 @@ func TestAdopt_Negative_ScanTimeoutFailsInsteadOfEmptyBaseline(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	// Cancel right before the baseline step: the scan observes the cancelled context.
 	steps := []adoptStep{func(context.Context, *adoptSession) error { cancel(); return nil }, reconcileBaseline}
-	s := &adoptSession{repoPath: repoPath, repoName: "scan-timeout", arch: "framework",
-		opts: AdoptOptions{Path: repoPath, RecordBaseline: true}, report: &AdoptReport{DebtBreakdown: map[string]int{}}}
+	s := &adoptSession{
+		repoPath: repoPath, repoName: "scan-timeout", arch: "framework",
+		opts: AdoptOptions{Path: repoPath, RecordBaseline: true}, report: &AdoptReport{DebtBreakdown: map[string]int{}},
+	}
 	var err error
 	for i := 0; i < len(steps) && i < maxAdoptSteps; i++ {
 		if err = steps[i](ctx, s); err != nil {
@@ -1206,8 +1223,10 @@ func TestAdopt_UnresolvedIdentityCompletesWithoutGuessing(t *testing.T) {
 	readme := "# Orphan\n"
 	mustWrite(t, filepath.Join(repo, readmeFile), readme)
 	// docs:seo-portal, whose badges need the identity, is no template-seed default (#1075).
-	report, err := Adopt(t.Context(), AdoptOptions{Path: repo, SkipGitValidation: true, SkipHookActivation: true,
-		LockSourceRoot: newAdoptLockSource(t), Facets: config.DefaultFacets()})
+	report, err := Adopt(t.Context(), AdoptOptions{
+		Path: repo, SkipGitValidation: true, SkipHookActivation: true,
+		LockSourceRoot: newAdoptLockSource(t), Facets: config.DefaultFacets(),
+	})
 	if err != nil {
 		t.Fatalf("adoption without an identity failed: %v", err)
 	}
@@ -1408,8 +1427,10 @@ func TestAdopt_UnparsableManifestFailsWithoutRewrite(t *testing.T) {
 func TestScaffoldFile_ReportsDriftInsteadOfVerified(t *testing.T) {
 	repo := t.TempDir()
 	s := &adoptSession{repoPath: repo, report: &AdoptReport{}}
-	sc := scaffold{rel: evasionHookFile, perm: filePerm, content: []byte("import sys\nsys.exit(2)\n"), auditLocked: true,
-		created: "created", verified: "verified"}
+	sc := scaffold{
+		rel: evasionHookFile, perm: filePerm, content: []byte("import sys\nsys.exit(2)\n"), auditLocked: true,
+		created: "created", verified: "verified",
+	}
 	path := filepath.Join(repo, filepath.FromSlash(evasionHookFile))
 	cases := []struct {
 		name, existing string
@@ -1663,7 +1684,7 @@ func TestAdopt_AgentsMD_ForceKeepsRepositoryAdditions(t *testing.T) {
 	}
 	assertNoIssues(t, rep)
 	content := mustRead(t, agents)
-	if !strings.HasPrefix(content, "<!-- SPDX-FileCopyrightText: 2026 Example Maintainers -->\n<!-- SPDX-License-Identifier: MIT -->\n\n<!-- markdownlint-disable MD013 -->\n") {
+	if !strings.HasPrefix(content, "<!-- SPDX-FileCopyrightText: 2026 Example Maintainers -->\n<!-- SPDX-License-Identifier: MIT -->\n\n<!-- markdownlint-capture -->\n<!-- markdownlint-disable MD013 -->\n") {
 		t.Errorf("the preamble must stay above the harness start line:\n%s", content)
 	}
 	if !strings.HasSuffix(content, "\n---\n\n# Repository Rules\n\nKeep this.\n") {
@@ -1720,7 +1741,7 @@ func TestAdopt_AgentsMD_ForceKeepsCRLFPreamble(t *testing.T) {
 			}
 			assertNoIssues(t, rep)
 			content := mustRead(t, agents)
-			if !strings.HasPrefix(content, "<!-- SPDX-FileCopyrightText: 2026 Example Maintainers -->\r\n<!-- SPDX-License-Identifier: MIT -->\r\n\r\n<!-- markdownlint-disable MD013 -->\r\n") {
+			if !strings.HasPrefix(content, "<!-- SPDX-FileCopyrightText: 2026 Example Maintainers -->\r\n<!-- SPDX-License-Identifier: MIT -->\r\n\r\n<!-- markdownlint-capture -->\r\n<!-- markdownlint-disable MD013 -->\r\n") {
 				t.Errorf("the CRLF preamble must stay above the harness:\n%q", content[:min(len(content), 200)])
 			}
 			if strings.Count(content, "\n") != strings.Count(content, "\r\n") || !strings.Contains(content, own[1]+"\r\n") {
@@ -1761,12 +1782,12 @@ func TestAdopt_AgentsMD_ForceReplacesRenamedHarnessTitle(t *testing.T) {
 	}
 	assertNoIssues(t, rep)
 	content := mustRead(t, agents)
-	for want, count := range map[string]int{"Before concluding any turn:": 1, "<!-- markdownlint-disable MD013 -->": 1, title + "\n": 1, "# Our Agent Rules": 0} {
+	for want, count := range map[string]int{"Before concluding any turn:": 1, "<!-- markdownlint-capture -->": 1, "<!-- markdownlint-disable MD013 -->": 1, title + "\n": 1, "# Our Agent Rules": 0} {
 		if got := strings.Count(content, want); got != count {
 			t.Errorf("%q occurs %d times, want %d:\n%s", want, got, count, content)
 		}
 	}
-	if !strings.HasPrefix(content, "<!-- SPDX-FileCopyrightText: 2026 Example Maintainers -->\n<!-- SPDX-License-Identifier: MIT -->\n\n<!-- markdownlint-disable MD013 -->\n"+title+"\n") {
+	if !strings.HasPrefix(content, "<!-- SPDX-FileCopyrightText: 2026 Example Maintainers -->\n<!-- SPDX-License-Identifier: MIT -->\n\n<!-- markdownlint-capture -->\n<!-- markdownlint-disable MD013 -->\n"+title+"\n") {
 		t.Errorf("the preamble must stay directly above the regenerated harness:\n%s", content)
 	}
 	if detail := findActionDetail(rep.ActionDetails, agentsFile); !hasAction(rep, agentsFile, actionReplace) || !strings.Contains(detail, `"# Our Agent Rules"`) {
@@ -1806,6 +1827,7 @@ func TestHarnessStart(t *testing.T) {
 		"no harness":              {"# Rules\nThe Agent Operating Harness is elsewhere.\n", -1},
 		"fenced title":            {"```md\n# x Agent Operating Harness\n```\n", -1},
 		"title at the top":        {"# x Agent Operating Harness\n", 0},
+		"capture and disable":     {"<!-- SPDX -->\n<!-- markdownlint-capture -->\n<!-- markdownlint-disable MD013 -->\n# x Agent Operating Harness\n", len("<!-- SPDX -->\n")},
 		"lint comment above":      {"<!-- SPDX -->\n<!-- markdownlint-disable MD013 MD025 -->\n# x Agent Operating Harness\n", len("<!-- SPDX -->\n")},
 		"preamble above title":    {"<!-- SPDX -->\n\n# x Agent Operating Harness\n", len("<!-- SPDX -->\n\n")},
 		"renamed title":           {"<!-- SPDX -->\n\n# Rules\n\nBefore concluding any turn:\n\n## Core Directives & Invariants\n", len("<!-- SPDX -->\n\n")},

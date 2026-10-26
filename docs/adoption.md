@@ -1123,8 +1123,9 @@ Loaded remotely, the action has no `.git`, so a forced run first checks out prae
   before its first write (`TestAdoptKeptHarnessSpliceRefusedBeforeAnyWrite`).
   With it, the harness is regenerated and what the repository added around it stays:
   - the preamble: every line above the harness start, for example an SPDX header. The
-    harness starts at the first `# ... Agent Operating Harness` title, together with a
-    `<!-- markdownlint-disable ... -->` line directly above it. A harness whose title was
+    harness starts at the first `# ... Agent Operating Harness` title, together with any
+    `<!-- markdownlint-capture -->` and `<!-- markdownlint-disable ... -->` lines directly
+    above it. A harness whose title was
     renamed is found by its `## Core Directives & Invariants` heading and starts at the
     nearest H1 above that heading, or at the top of the file when no H1 precedes it, so the
     renamed title and its intro are regenerated rather than kept above a second copy

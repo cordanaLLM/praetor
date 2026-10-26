@@ -21,11 +21,15 @@ const maxMarkdownLines = 20000
 // maxQuoteDepth bounds the block quote markers unquote strips from one line (HISS-02).
 const maxQuoteDepth = 16
 
+// maxCaptureDepth bounds the stack of captured rule states (HISS-02).
+const maxCaptureDepth = 16
+
 var (
 	markdownHeading  = regexp.MustCompile(`^#{1,6} `)
 	markdownListItem = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)]) `)
 	markdownFence    = regexp.MustCompile("^\\s*(`{3,}|~{3,})(.*)$")
 	markdownDisable  = regexp.MustCompile(`^<!-- markdownlint-(disable|enable)((?: MD\d{3})*) -->$`)
+	markdownScope    = regexp.MustCompile(`^<!-- markdownlint-(capture|restore) -->$`)
 	markdownQuote    = regexp.MustCompile(`^ {0,3}> ?`)
 )
 
@@ -38,6 +42,8 @@ type markdownScan struct {
 	inList   bool
 	inTable  bool
 	disabled map[string]bool
+	initial  map[string]bool
+	stack    []map[string]bool
 	h1       int
 	findings []string
 }
@@ -51,20 +57,37 @@ type markdownScan struct {
 // fence or table needs its blank lines too, and a line holding only quote markers is one. A
 // `<!-- markdownlint-disable MDnnn -->` line suspends that rule until the matching enable
 // line, as markdownlint does, so a scoped disable is honoured and a file-wide one shows up
-// as exactly that. A leading YAML front matter block is skipped, as markdownlint skips it,
-// so the first line after it counts as the document's first line.
+// as exactly that. `<!-- markdownlint-capture -->` saves the active rule state onto a stack
+// and `<!-- markdownlint-restore -->` restores it; a restore without a capture resets rule
+// state back to the initial configuration. A leading YAML front matter block is skipped, as
+// markdownlint skips it, so the first line after it counts as the document's first line.
 //
 // The documentation gate runs the real markdownlint library (tools/markdownlint) with MD013
 // off and generated agent paths excluded; an adopter's own lint may run the defaults on
 // every file Praetor writes. This subset holds a generator to those defaults in a unit test
 // without the gate's Node toolchain.
 func MarkdownFindings(md string) []string {
+	return MarkdownFindingsWith(md)
+}
+
+// MarkdownFindingsWith reports where md breaks markdownlint rules with the rules in off
+// turned off at document start, simulating a repository-level markdownlint configuration.
+func MarkdownFindingsWith(md string, off ...string) []string {
 	lines := strings.Split(strings.TrimSuffix(md, "\n"), "\n")
 	if len(lines) > maxMarkdownLines {
 		return []string{fmt.Sprintf("document exceeds %d lines", maxMarkdownLines)}
 	}
 	start, _ := util.FrontMatterEnd(lines, maxMarkdownLines)
-	scan := &markdownScan{lines: lines[start:], offset: start, disabled: map[string]bool{}}
+	disabled := make(map[string]bool, len(off))
+	for _, rule := range off {
+		disabled[rule] = true
+	}
+	scan := &markdownScan{
+		lines:    lines[start:],
+		offset:   start,
+		disabled: disabled,
+		initial:  cloneRules(disabled),
+	}
 	if !strings.HasSuffix(md, "\n") || strings.HasSuffix(md, "\n\n") {
 		scan.report(len(scan.lines)-1, "MD047", "document must end with exactly one newline")
 	}
@@ -128,6 +151,13 @@ func (s *markdownScan) line(i int) {
 	if m := markdownDisable.FindStringSubmatch(text); m != nil {
 		s.toggle(m[1] == "disable", strings.Fields(m[2]))
 	}
+	if m := markdownScope.FindStringSubmatch(text); m != nil {
+		if m[1] == "capture" {
+			s.capture()
+		} else {
+			s.restore()
+		}
+	}
 	if s.blank(i) && !s.empty(i) {
 		// A comment-only line separates blocks the way a blank line does.
 		s.inList = false
@@ -181,6 +211,34 @@ func (s *markdownScan) fence(i int, marker string) {
 	}
 	s.inFence = !s.inFence
 	s.marker = marker
+}
+
+// cloneRules returns an independent copy of rules.
+func cloneRules(rules map[string]bool) map[string]bool {
+	cp := make(map[string]bool, len(rules))
+	for k, v := range rules {
+		cp[k] = v
+	}
+	return cp
+}
+
+// capture pushes a copy of active rule states onto the stack up to maxCaptureDepth (HISS-02).
+func (s *markdownScan) capture() {
+	if len(s.stack) >= maxCaptureDepth {
+		return
+	}
+	s.stack = append(s.stack, cloneRules(s.disabled))
+}
+
+// restore pops the last captured rule state from the stack, or resets active rules to the
+// document's initial configuration when the stack is empty, matching markdownlint.
+func (s *markdownScan) restore() {
+	if len(s.stack) == 0 {
+		s.disabled = cloneRules(s.initial)
+		return
+	}
+	s.disabled = s.stack[len(s.stack)-1]
+	s.stack = s.stack[:len(s.stack)-1]
 }
 
 // toggle applies a disable or enable comment; no rule names means every rule.

@@ -167,6 +167,42 @@ func TestHarnessLintScopeEndsAtTheRepositoryInstructions(t *testing.T) {
 	}
 }
 
+// Regression (engine-compile-context-md013-restore-20261026): under a repository markdownlint
+// configuration where MD013 is disabled, the rendered harness and tail instructions produce no
+// MD013 finding after the harness boundary. On base (before the restore fix), the inline enable
+// pragma turned MD013 back on, flagging tail lines over the limit.
+func TestHarnessLintScope_PreservesRepoMD013Disabled(t *testing.T) {
+	harness := adoptionHarness(t)
+	tail := "# Repository Rules\n\n" + strings.Repeat("repository prose ", 8) + "\n"
+	merged := harness + harnessSeparator + "\n" + tail
+	findings := testsupport.MarkdownFindingsWith(merged, "MD013")
+	if len(findings) != 0 {
+		t.Fatalf("merged AGENTS.md with MD013 off reported findings: %v", findings)
+	}
+}
+
+// Planted negative: verifies that an inline markdownlint-enable MD013 at harness scope end
+// overrides repository-level MD013: false, proving the checker detects the failure mode.
+func TestHarnessLintScope_PlantedEnableFailsUnderRepoMD013Disabled(t *testing.T) {
+	tail := "# Repository Rules\n\n" + strings.Repeat("repository prose ", 8) + "\n"
+
+	// Inline enable overrides repo config -> finding reported (planted failure proof).
+	enableHarness := "# Title\n\n<!-- markdownlint-disable MD013 -->\nshort\n<!-- markdownlint-enable MD013 -->\n<!-- markdownlint-disable MD025 -->\n"
+	enableMerged := enableHarness + harnessSeparator + "\n" + tail
+	enableFindings := testsupport.MarkdownFindingsWith(enableMerged, "MD013")
+	if len(enableFindings) == 0 || !strings.Contains(strings.Join(enableFindings, "\n"), "MD013") {
+		t.Fatalf("expected planted inline enable to report MD013 finding, got: %v", enableFindings)
+	}
+
+	// Restore pragma respects repo config -> no finding.
+	restoreHarness := "<!-- markdownlint-capture -->\n<!-- markdownlint-disable MD013 -->\n# Title\n\nshort\n<!-- markdownlint-restore -->\n<!-- markdownlint-disable MD025 -->\n"
+	restoreMerged := restoreHarness + harnessSeparator + "\n" + tail
+	restoreFindings := testsupport.MarkdownFindingsWith(restoreMerged, "MD013")
+	if len(restoreFindings) != 0 {
+		t.Fatalf("expected restore form to produce no findings under MD013 off, got: %v", restoreFindings)
+	}
+}
+
 // Boundary: the scope comments sit inside the harness boundary, so splitting a merged file
 // at the end marker leaves them with the harness and a force refresh cannot copy them into
 // the preserved tail.
