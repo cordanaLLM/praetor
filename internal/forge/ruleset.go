@@ -309,7 +309,11 @@ func ValidateRepositoryRuleset(data []byte, branch string, policy config.BranchP
 	if err != nil {
 		return err
 	}
-	if integrationID, _ := config.StatusChecksAppIntegrationID(policy.StatusChecksApp); integrationID > 0 {
+	integrationID, err := config.StatusChecksAppIntegrationID(policy.StatusChecksApp)
+	if err != nil {
+		return err
+	}
+	if integrationID > 0 {
 		if err := validateRulesetStatusChecksApp(data, integrationID, policy.StatusChecksApp); err != nil {
 			return err
 		}
