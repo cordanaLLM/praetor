@@ -192,7 +192,10 @@ def golangci_lint_command(directory, packages):
                      env=clean_env())
         tools = {line.strip() for line in listed.decode("utf-8").splitlines()}
         if tools & GOLANGCI_TOOL_PACKAGES:
-            return ["go", "tool", f"-modfile={modfile}", "golangci-lint", "run", *packages]
+            # A second lint on this host waits for the first one's lock instead of failing
+            # the push with "parallel golangci-lint is running" (#855).
+            return ["go", "tool", f"-modfile={modfile}", "golangci-lint",
+                    "run", "--allow-serial-runners", *packages]
     raise HookError("golangci-lint has no pinned tool directive; add a pinned tool to "
                     "tools/lint/go.mod (preferred) or tools/go/go.mod before pushing Go changes")
 

@@ -101,7 +101,7 @@ vuln: vuln-nested
 lint-nested:
 	for module in $(NESTED_GO_MODULES); do \
 		go -C $$module vet ./... && \
-		go -C $$module tool -modfile=$(CURDIR)/tools/lint/go.mod golangci-lint run --config $(CURDIR)/.golangci.yml || exit 1; \
+		go -C $$module tool -modfile=$(CURDIR)/tools/lint/go.mod golangci-lint run --allow-serial-runners --config $(CURDIR)/.golangci.yml || exit 1; \
 	done
 
 sec-nested:
@@ -159,13 +159,13 @@ fmt-check:
 lint: fmt-check
 	go vet ./...
 	go vet -tags=apicompatgate ./tools/apicompat/gate/
-	$(GO_LINT_TOOL) golangci-lint run
+	$(GO_LINT_TOOL) golangci-lint run --allow-serial-runners
 
 lint-exceptions:
 	@tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
 	go run ./cmd/standardsctl linters exceptions strip-config --out="$$tmpdir/.golangci.yml" || exit 1; \
-	$(GO_LINT_TOOL) golangci-lint run --config="$$tmpdir/.golangci.yml" --issues-exit-code=0 --output.json.path="$$tmpdir/report.json" ./... || exit 1; \
+	$(GO_LINT_TOOL) golangci-lint run --allow-serial-runners --config="$$tmpdir/.golangci.yml" --issues-exit-code=0 --output.json.path="$$tmpdir/report.json" ./... || exit 1; \
 	go run ./cmd/standardsctl linters exceptions generate --report="$$tmpdir/report.json" --issue=1030 --write
 
 # golangci-lint is pinned in its own module, tools/lint/go.mod, which Renovate keeps current; `go
