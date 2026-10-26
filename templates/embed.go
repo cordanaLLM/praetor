@@ -94,18 +94,42 @@ type GoSecurityContext struct {
 	DeclaredScanners bool `json:"declared_scanners"`
 }
 
-// The fallback Security Scan builds these versions in a throwaway module. tools/go/go.mod is
-// the version source; TestGoSecurityVersionsMatchToolsModule names the required update whenever
-// Renovate moves one side without the other.
+// Former scanner version pins of the fallback Security Scan (order
+// finding-landing-failed-79e5b1160d-20261026-1022).
 const (
-	GoSecurityGovulnVersion   = "v1.8.0"
-	GoSecurityGosecVersion    = "v2.29.0"
+	// GoSecurityGovulnVersion was the golang.org/x/vuln version the fallback Security Scan built.
+	//
+	// Deprecated: frozen at its value of 2026-10-26 and no longer updated. The engine reads its
+	// scanner pins from an internal package now, so a version update no longer changes the
+	// exported API; the name stays until a breaking release removes it.
+	GoSecurityGovulnVersion = "v1.8.0"
+
+	// GoSecurityGosecVersion was the github.com/securego/gosec/v2 version the fallback Security Scan built.
+	//
+	// Deprecated: frozen at its value of 2026-10-26 and no longer updated. The engine reads its
+	// scanner pins from an internal package now, so a version update no longer changes the
+	// exported API; the name stays until a breaking release removes it.
+	GoSecurityGosecVersion = "v2.29.0"
+
+	// GoSecurityGitleaksVersion was the github.com/zricethezav/gitleaks/v8 version the fallback Security Scan built.
+	//
+	// Deprecated: frozen at its value of 2026-10-26 and no longer updated. The engine reads its
+	// scanner pins from an internal package now, so a version update no longer changes the
+	// exported API; the name stays until a breaking release removes it.
 	GoSecurityGitleaksVersion = "v8.30.1"
-	GoSecurityXToolsVersion   = "v0.50.0"
-	// GoSecurityXToolsFloor is the oldest golang.org/x/tools whose export-data reader decodes what
-	// go1.27.2 writes (pkgbits V5, uirVersion in cmd/compile/internal/noder/unified.go). gosec
-	// v2.29.0 requires only v0.49.0, so a gosec built without this floor fails to load every
-	// package, reports 0 issues and exits 1 (plurano/pertica main, 2026-10-16).
+
+	// GoSecurityXToolsVersion was the golang.org/x/tools version the fallback Security Scan built.
+	//
+	// Deprecated: frozen at its value of 2026-10-26 and no longer updated. The engine reads its
+	// scanner pins from an internal package now, so a version update no longer changes the
+	// exported API; the name stays until a breaking release removes it.
+	GoSecurityXToolsVersion = "v0.50.0"
+
+	// GoSecurityXToolsFloor was the oldest golang.org/x/tools that decodes go1.27.2 export data.
+	//
+	// Deprecated: frozen at its value of 2026-10-26 and no longer updated. The engine reads its
+	// scanner pins from an internal package now, so a version update no longer changes the
+	// exported API; the name stays until a breaking release removes it.
 	GoSecurityXToolsFloor = "v0.50.0"
 )
 

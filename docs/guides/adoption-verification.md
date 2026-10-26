@@ -1133,14 +1133,14 @@ Otherwise the job creates a throwaway module below `$RUNNER_TEMP`, adds the exac
 `golang.org/x/vuln`, `github.com/securego/gosec/v2` and `golang.org/x/tools` versions required by
 Praetor's `tools/go/go.mod`, downloads the selected graph so Go 1.27 has every package checksum,
 and installs both commands from that module. Module selection raises the scanners' shared
-`golang.org/x/tools` to the Go 1.27.2-compatible pin. The version constants live beside the
-template context in `templates/embed.go`; `TestGoSecurityVersionsMatchToolsModule` fails with an
+`golang.org/x/tools` to the Go 1.27.2-compatible pin. The version constants live in
+`internal/toolpins/pins.go`; `TestGoSecurityVersionsMatchToolsModule` fails with an
 update instruction when Renovate moves the tools module without them.
 
 When the security stage finds no `gosec` on the workstation, it prints the same pinned form as
 its install advice (`flavor.GosecInstallGuide`, `internal/flavor/security_go.go`): install
 through the tools module, whose `golang.org/x/tools` is at least
-`templates.GoSecurityXToolsFloor`. A bare `go install` of `gosec@latest` selects an older
+`toolpins.XToolsFloor`. A bare `go install` of `gosec@latest` selects an older
 x/tools, whose analyzer cannot read Go 1.27.2 export data and fails on every package.
 
 Praetor does not create or alter an adopter's tools module. A missing or partial tools module is
