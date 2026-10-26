@@ -1,0 +1,2 @@
+type: fixed
+title: Audit scope stays inside one argument by falling back to base ref comparison

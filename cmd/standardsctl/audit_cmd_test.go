@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -354,6 +355,41 @@ func TestAudit_TouchedFileCleanRule(t *testing.T) {
 		t.Fatalf("clean touched files: %v", err)
 	}
 	mustContain(t, out, "(2 touched files clean)")
+}
+
+func TestAudit_Touched3000FilesBaseOnly(t *testing.T) {
+	t.Setenv("CI", "true")
+	f := newAuditFixture(t)
+	env := f.gitEnv
+
+	baseOID, err := runFixtureGit(t, f.dir, env, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatalf("rev-parse: %v", err)
+	}
+	baseOID = strings.TrimSpace(baseOID)
+
+	if out, gerr := runFixtureGit(t, f.dir, env, "checkout", "-q", "-b", "feature"); gerr != nil {
+		t.Fatalf("checkout: %v (%s)", gerr, out)
+	}
+
+	for i := 0; i < 3000; i++ {
+		writeFixtureFile(t, f.dir, fmt.Sprintf("pkg%04d/clean.txt", i), "clean\n")
+	}
+	gitCommitAll(t, f.dir, env, "add 3000 clean files")
+
+	// Audit with --base=<oid> only: command starts (no E2BIG) and passes on clean fixture.
+	out, err := f.audit(t, "--base="+baseOID)
+	if err != nil {
+		t.Fatalf("audit with 3000 changed files failed: %v\n%s", err, out)
+	}
+	mustContain(t, out, "(3000 touched files clean)")
+
+	// Planted HISS finding: same temp repo plus one touched file with planted HISS violation.
+	writeFixtureFile(t, f.dir, "violation.go", legacyGoSource)
+	gitCommitAll(t, f.dir, env, "add violation")
+	_, err = f.audit(t, "--base="+baseOID)
+	mustErrContain(t, err, "touched file must be clean")
+	mustErrContain(t, err, "violation.go")
 }
 
 func TestAudit_HISSExceptionAllowsTouchedBaselinedFinding(t *testing.T) {

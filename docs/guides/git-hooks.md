@@ -891,7 +891,10 @@ skipping documentation, so embedded Markdown is still tested. Ordinary docs and
 state edits skip Go race/security gates. A root `README.md` edit still runs the
 governance and flavor audits, so a stale or malformed managed governance block
 cannot pass through the lightweight documentation path. Governance and flavor
-audits also run for source and policy/configuration edits. The live private ledger is checked outside
+audits also run for source and policy/configuration edits. When the touched-file CSV
+exceeds the single-argument limit, the snapshot governance audit passes `--base` alone
+so `praetorctl audit` resolves changed files from Git directly, avoiding argument-length
+limits (engine-hooks-audit-touched-e2big-fix-20261026). The live private ledger is checked outside
 the exported snapshot; it never becomes published snapshot content. Source and
 governance pushes also retain the full `gate run` pipeline and pinned-key
 `gate verify`. The hook passes its existing Go selection explicitly as
