@@ -5,6 +5,8 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
+import tempfile
 import unittest
 from unittest import mock
 
@@ -14,6 +16,45 @@ SPEC = importlib.util.spec_from_file_location("cloud_bootstrap", ROOT / SCRIPT)
 BOOTSTRAP = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BOOTSTRAP)
 REMOTE = {"CLAUDE_CODE_REMOTE": "true", "PATH": os.pathsep.join(["/usr/local/bin", "/usr/bin"])}
+WORKFLOWS = ("ci.yml", "portability.yml")
+
+
+def lefthook_pin_problems(root):
+    """What breaks the one lefthook pin under root: go.mod in tools/lefthook holds the tool directive and names one
+    version, go.sum verifies that version, and the bootstrap and the workflows build or install from that module with no
+    second pin. The version is read from go.mod and never written here, so a lefthook update needs no edit of this test
+    (order engine-bundle-20261026112535-lefthook-pin: a pinned v2.1.14 refused the update to v2.2.2)."""
+    module_dir = Path(root) / BOOTSTRAP.LEFTHOOK_MODULE
+    module = (module_dir / "go.mod").read_text(encoding="utf-8")
+    problems = [] if f"tool {BOOTSTRAP.LEFTHOOK}\n" in module else ["go.mod holds no tool directive for lefthook"]
+    versions = re.findall(rf"^\s*{re.escape(BOOTSTRAP.LEFTHOOK)} (v\S+)", module, re.M)
+    if len(versions) != 1:
+        return problems + [f"go.mod names {len(versions)} lefthook versions, not one"]
+    if f"{BOOTSTRAP.LEFTHOOK} {versions[0]} h1:" not in (module_dir / "go.sum").read_text(encoding="utf-8"):
+        problems.append(f"go.sum does not verify lefthook {versions[0]}")
+    sources = [(str(SCRIPT), Path(root) / SCRIPT)] + [(w, Path(root) / ".github/workflows" / w) for w in WORKFLOWS]
+    for name, path in sources:
+        text = path.read_text(encoding="utf-8")
+        if name in WORKFLOWS and f"go install -C {BOOTSTRAP.LEFTHOOK_MODULE} {BOOTSTRAP.LEFTHOOK}\n" not in text:
+            problems.append(f"{name} does not install lefthook from {BOOTSTRAP.LEFTHOOK_MODULE}")
+        if f"{BOOTSTRAP.LEFTHOOK}@" in text:
+            problems.append(f"{name} keeps a second lefthook pin")
+    return problems
+
+
+def plant_lefthook_pin(root, version, script_extra="", workflow_extra=""):
+    """A minimal tree for lefthook_pin_problems: go.mod and go.sum at version, the bootstrap, and both workflows."""
+    module_dir = Path(root) / BOOTSTRAP.LEFTHOOK_MODULE
+    module_dir.mkdir(parents=True, exist_ok=True)
+    (module_dir / "go.mod").write_text(f"module x\n\ntool {BOOTSTRAP.LEFTHOOK}\n\nrequire (\n"
+                                       f"\t{BOOTSTRAP.LEFTHOOK} {version} // indirect\n)\n", encoding="utf-8")
+    (module_dir / "go.sum").write_text(f"{BOOTSTRAP.LEFTHOOK} {version} h1:x=\n", encoding="utf-8")
+    (Path(root) / SCRIPT).parent.mkdir(parents=True, exist_ok=True)
+    (Path(root) / SCRIPT).write_text(f'LEFTHOOK = "{BOOTSTRAP.LEFTHOOK}"\n' + script_extra, encoding="utf-8")
+    (Path(root) / ".github/workflows").mkdir(parents=True, exist_ok=True)
+    for workflow in WORKFLOWS:
+        (Path(root) / ".github/workflows" / workflow).write_text(
+            f"run: go install -C {BOOTSTRAP.LEFTHOOK_MODULE} {BOOTSTRAP.LEFTHOOK}\n" + workflow_extra, encoding="utf-8")
 
 
 class Which:
@@ -63,15 +104,21 @@ class CloudBootstrap(unittest.TestCase):
         self.assertEqual(commands[2], ["/usr/local/bin/praetorctl", "state", "init", "--if-absent", "."])
 
     def test_lefthook_pin_is_the_module_ci_installs_from(self):
-        module = (ROOT / BOOTSTRAP.LEFTHOOK_MODULE / "go.mod").read_text(encoding="utf-8")
-        self.assertIn(f"tool {BOOTSTRAP.LEFTHOOK}\n", module)
-        self.assertIn(f"\t{BOOTSTRAP.LEFTHOOK} v2.1.14 ", module)
-        gosum = (ROOT / BOOTSTRAP.LEFTHOOK_MODULE / "go.sum").read_text(encoding="utf-8")
-        self.assertIn(f"{BOOTSTRAP.LEFTHOOK} v2.1.14 h1:", gosum, "go.sum, not the checksum database, verifies it")
-        for workflow in ("ci.yml", "portability.yml"):
-            text = (ROOT / ".github/workflows" / workflow).read_text(encoding="utf-8")
-            self.assertIn(f"go install -C {BOOTSTRAP.LEFTHOOK_MODULE} {BOOTSTRAP.LEFTHOOK}\n", text, workflow)
-            self.assertNotIn(f"{BOOTSTRAP.LEFTHOOK}@", text, f"{workflow} keeps a second lefthook pin")
+        self.assertEqual(lefthook_pin_problems(ROOT), [])
+
+    def test_lefthook_pin_follows_the_module_version(self):
+        with tempfile.TemporaryDirectory(prefix="praetor-lefthook-pin-") as temp:
+            root = Path(temp)
+            plant_lefthook_pin(root, "v9.9.9")
+            self.assertEqual(lefthook_pin_problems(root), [], "any version go.mod and go.sum agree on passes")
+            (root / BOOTSTRAP.LEFTHOOK_MODULE / "go.sum").write_text(
+                f"{BOOTSTRAP.LEFTHOOK} v2.1.14 h1:x=\n", encoding="utf-8")
+            self.assertEqual(lefthook_pin_problems(root), ["go.sum does not verify lefthook v9.9.9"])
+            plant_lefthook_pin(root, "v9.9.9", script_extra=f'PIN = "{BOOTSTRAP.LEFTHOOK}@v2.2.2"\n',
+                               workflow_extra=f"go install {BOOTSTRAP.LEFTHOOK}@v2.2.2\n")
+            self.assertEqual(lefthook_pin_problems(root), [
+                f"{SCRIPT} keeps a second lefthook pin", "ci.yml keeps a second lefthook pin",
+                "portability.yml keeps a second lefthook pin"])
 
     def test_refused_hosts_are_named(self):
         stderr = ('go: verifying module: Get "https://sum.golang.org/lookup/x@v1": Forbidden\n'
