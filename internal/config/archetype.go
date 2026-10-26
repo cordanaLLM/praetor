@@ -164,13 +164,16 @@ func (c ArchetypeControls) validate() error {
 	if c.BranchProtection.StatusContexts != nil {
 		return errors.New("branch_protection.status_contexts is a repository-only setting")
 	}
+	if c.BranchProtection.StatusChecksApp != "" {
+		return errors.New("branch_protection.status_checks_app is a repository-only setting")
+	}
 	if c.BranchProtection.ReviewMode != "" {
 		return errors.New("branch_protection.review_mode is a repository-only setting")
 	}
-	if c.BranchProtection.MergeQueue || c.BranchProtection.CodeQLDefaultSetup {
+	if slices.Contains([]bool{c.BranchProtection.MergeQueue, c.BranchProtection.CodeQLDefaultSetup}, true) {
 		return errors.New("branch_protection.merge_queue and codeql_default_setup are repository-only settings")
 	}
-	if c.BranchProtection.RequiredApprovingReviewers < 0 || c.SupplyChain.SLSALevel < 0 {
+	if min(c.BranchProtection.RequiredApprovingReviewers, c.SupplyChain.SLSALevel) < 0 {
 		return errors.New("required_approving_reviewers and slsa_level cannot be negative")
 	}
 	if err := c.BranchProtection.Validate(); err != nil {

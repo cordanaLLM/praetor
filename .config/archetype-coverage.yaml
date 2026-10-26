@@ -458,6 +458,23 @@ fields:
       - func: cmd/standardsctl.pendingProtectionRenames
         kind: acts
         effect: retains declared contexts when reading landed workflow contexts
+  - key: branch_protection.status_checks_app
+    go: [BranchProtectionPolicy.StatusChecksApp]
+    state: refused
+    refused_by: internal/config.ArchetypeControls.validate
+    reason: Required status check app binding belongs to a repository; catalog layers cannot declare it.
+    consumers:
+      - func: internal/forge.protectionDocument
+        kind: acts
+        effect: pins every rendered required status check to the app's integration_id when set
+      - func: internal/forge.ValidateRepositoryRuleset
+        kind: acts
+        effect: requires every status check in the committed ruleset to carry the declared app's integration_id
+      - func: internal/forge.EvaluateBranchProtectionWithRenames
+        kind: reports
+        effect: >-
+          compares the integration_id of live required status checks on the default branch with the
+          declared app (plan --remote, sync --remote readback)
   - key: branch_protection.review_mode
     go: [BranchProtectionPolicy.ReviewMode]
     state: refused

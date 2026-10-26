@@ -98,3 +98,45 @@ func TestStatusContextsPolicyCopiesAndEquality(t *testing.T) {
 		t.Fatal("override accessor aliases input or invents declarations")
 	}
 }
+
+func TestStatusChecksApp_Positive_KnownSlugAndBoundaryEmpty(t *testing.T) {
+	var unset BranchProtectionPolicy
+	if err := yaml.Unmarshal([]byte("status_checks_app: \"\"\n"), &unset); err != nil || unset.StatusChecksApp != "" {
+		t.Fatalf("empty status_checks_app rejected or mutated: %q, %v", unset.StatusChecksApp, err)
+	}
+	var pinned BranchProtectionPolicy
+	if err := yaml.Unmarshal([]byte("status_checks_app: github-actions\n"), &pinned); err != nil || pinned.StatusChecksApp != "github-actions" {
+		t.Fatalf("github-actions rejected: %q, %v", pinned.StatusChecksApp, err)
+	}
+	policy := DefaultPolicy()
+	policy.ApplyOverrides(Overrides{BranchProtection: &pinned})
+	if policy.BranchProtection.StatusChecksApp != "github-actions" {
+		t.Fatalf("override lost: got %q, want github-actions", policy.BranchProtection.StatusChecksApp)
+	}
+	if policy.BranchProtection.Equal(DefaultPolicy().BranchProtection) {
+		t.Fatal("Equal ignores StatusChecksApp")
+	}
+}
+
+func TestStatusChecksApp_Negative_UnknownSlugAndNonString(t *testing.T) {
+	var unknown BranchProtectionPolicy
+	err := yaml.Unmarshal([]byte("status_checks_app: custom-ci\n"), &unknown)
+	if err == nil || !strings.Contains(err.Error(), "status_checks_app") || !strings.Contains(err.Error(), "github-actions") {
+		t.Fatalf("unknown slug must fail naming known slugs (github-actions), got %v", err)
+	}
+	for _, raw := range []string{"15368", "true", "null", "[github-actions]"} {
+		var bad BranchProtectionPolicy
+		if err := yaml.Unmarshal([]byte("status_checks_app: "+raw+"\n"), &bad); err == nil || !strings.Contains(err.Error(), "status_checks_app") {
+			t.Fatalf("non-string %s accepted: %v", raw, err)
+		}
+	}
+}
+
+func TestStatusChecksApp_Negative_RepositoryOnly(t *testing.T) {
+	_, err := LoadEffectivePolicyContext(t.Context(), EffectiveOptions{
+		Root: policyFixture(t, "branch_protection:\n  status_checks_app: github-actions\n", "", ""),
+	})
+	if err == nil || !strings.Contains(err.Error(), "status_checks_app is a repository-only setting") {
+		t.Fatalf("catalog declaration accepted or wrong reason: %v", err)
+	}
+}

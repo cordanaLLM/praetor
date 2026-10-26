@@ -220,8 +220,10 @@ func TestEvaluateBranchProtection_Positive_ActiveManagedRulesetIsEnforced(t *tes
 // no rule; the drift names the enforcement and the ruleset beside every property it would carry.
 func TestEvaluateBranchProtection_Negative_InactiveManagedRulesetDrifts(t *testing.T) {
 	for _, enforcement := range []string{"evaluate", "disabled"} {
-		live := &LiveBranchProtection{Branch: "main", RulesetNames: map[int]string{7: RepositoryRulesetName},
-			RulesetEnforcement: map[int]string{7: enforcement}}
+		live := &LiveBranchProtection{
+			Branch: "main", RulesetNames: map[int]string{7: RepositoryRulesetName},
+			RulesetEnforcement: map[int]string{7: enforcement},
+		}
 		findings, err := EvaluateBranchProtection(declaredHighSecurity(), []string{"CI"}, live)
 		if err != nil {
 			t.Fatal(err)
@@ -243,11 +245,13 @@ func TestEvaluateBranchProtection_Negative_InactiveManagedRulesetDrifts(t *testi
 // does not report the enforcement is not judged on it; of two rulesets of that name the lowest id
 // is compared.
 func TestEvaluateBranchProtection_Boundary_ManagedRulesetAbsentOrUnreported(t *testing.T) {
-	classic := &LiveBranchProtection{Branch: "main", RulesetNames: map[int]string{3: "operator-ruleset"},
+	classic := &LiveBranchProtection{
+		Branch: "main", RulesetNames: map[int]string{3: "operator-ruleset"},
 		RulesetEnforcement: map[int]string{3: "disabled"}, Legacy: &LegacyBranchProtection{
 			RequiredPullRequestReviews: &LegacyPullRequestReviews{RequiredApprovingReviewCount: 1, RequireCodeOwnerReviews: true},
 			RequiredStatusChecks:       &LegacyStatusChecks{Checks: []StatusCheckRef{{Context: "CI"}}},
-		}}
+		},
+	}
 	policy := config.BranchProtectionPolicy{RequiredApprovingReviewers: 1}
 	findings, err := EvaluateBranchProtection(policy, []string{"CI"}, classic)
 	if err != nil {
@@ -270,8 +274,10 @@ func TestEvaluateBranchProtection_Boundary_ManagedRulesetAbsentOrUnreported(t *t
 		t.Fatalf("an unreported enforcement was judged: %+v", findings)
 	}
 
-	twice := &LiveBranchProtection{Branch: "main", RulesetNames: map[int]string{9: RepositoryRulesetName, 4: RepositoryRulesetName},
-		RulesetEnforcement: map[int]string{9: "active", 4: "evaluate"}}
+	twice := &LiveBranchProtection{
+		Branch: "main", RulesetNames: map[int]string{9: RepositoryRulesetName, 4: RepositoryRulesetName},
+		RulesetEnforcement: map[int]string{9: "active", 4: "evaluate"},
+	}
 	if id, enforcement, found := twice.managedRuleset(); !found || id != 4 || enforcement != "evaluate" {
 		t.Fatalf("managed ruleset = %d %q %t, want the lowest id 4", id, enforcement, found)
 	}
@@ -297,6 +303,30 @@ func TestEvaluateBranchProtection_Positive_DeclaredAllowedMergeMethodsMatchesLiv
 	finding := findingOf(t, findings, "allowed_merge_methods")
 	if finding.Verdict != ProtectionEnforced || finding.Declared != "[squash]" || finding.Live != "[squash]" {
 		t.Fatalf("unexpected finding: %+v", finding)
+	}
+}
+
+func TestEvaluateBranchProtection_StatusChecksApp_PositiveAndNegativeDrift(t *testing.T) {
+	policy := declaredHighSecurity()
+	policy.StatusChecksApp = "github-actions"
+	unpinnedLive := matchingRuleset(t)
+	findings, err := EvaluateBranchProtection(policy, []string{"CI"}, unpinnedLive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if drifted := ProtectionDrifts(findings); !slices.Contains(drifted, "Required status checks") {
+		t.Fatalf("desired pinned check vs live unpinned must report drift on Required status checks, got %v (%+v)", drifted, findings)
+	}
+	pinnedLive := matchingRuleset(t)
+	pinnedLive.Rules[5] = liveRule(t, "required_status_checks", 7, map[string]any{
+		"required_status_checks": []any{map[string]any{"context": "CI", "integration_id": 15368}},
+	})
+	findings, err = EvaluateBranchProtection(policy, []string{"CI"}, pinnedLive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if drifted := ProtectionDrifts(findings); len(drifted) != 0 {
+		t.Fatalf("desired pinned check matching live integration_id 15368 must not drift, got %v", drifted)
 	}
 }
 

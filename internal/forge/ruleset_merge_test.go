@@ -208,3 +208,21 @@ func TestMergeRuleset_Positive_ExtraApprovalKeptIsReported(t *testing.T) {
 		t.Fatalf("kept = %v, want %v", kept, want)
 	}
 }
+
+func TestMergeAndConvergeRuleset_StatusChecksApp_PositiveAndNegative(t *testing.T) {
+	live := mustJSONObject(t, `{"name":"p","target":"branch","enforcement":"active",
+	 "conditions":{"ref_name":{"include":["refs/heads/main","refs/heads/lts-*"],"exclude":[]}},
+	 "rules":[{"type":"deletion"},{"type":"required_status_checks","parameters":{
+	  "strict_required_status_checks_policy":true,"required_status_checks":[{"context":"CI"}]}}]}`)
+	desired := mustJSONObject(t, strings.Replace(convergedWant, `{"context":"CI"}`, `{"context":"CI","integration_id":15368}`, 1))
+	if err := rulesetConverged(live, desired); err == nil || !strings.Contains(err.Error(), "integration_id") {
+		t.Fatalf("live unpinned check must not converge against desired pinned check, got %v", err)
+	}
+	merged, _, _, err := mergeRuleset(live, desired)
+	if err != nil {
+		t.Fatalf("mergeRuleset: %v", err)
+	}
+	if err := rulesetConverged(merged, desired); err != nil {
+		t.Fatalf("merged ruleset with pinned integration_id must converge: %v", err)
+	}
+}

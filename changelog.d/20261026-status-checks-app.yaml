@@ -1,0 +1,2 @@
+type: added
+title: Pin rendered required status checks to a GitHub App when overrides.branch_protection.status_checks_app is set

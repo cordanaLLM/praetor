@@ -144,3 +144,41 @@ func TestRenderRepositoryRuleset_Boundary_SingleNewlineExact(t *testing.T) {
 		t.Fatalf("boundary check: expected exactly 1 trailing newline byte, got delta %d: %q", len(data)-len(trimmed), data)
 	}
 }
+
+func TestRenderRepositoryRuleset_Boundary_StatusChecksAppUnsetByteIdentical(t *testing.T) {
+	policy := config.DefaultPolicy().BranchProtection
+	contexts := []string{"Build", "Lint"}
+	baseData, err := RenderRepositoryRuleset("main", policy, contexts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(baseData), "integration_id") {
+		t.Fatalf("unset status_checks_app must not emit integration_id: %s", string(baseData))
+	}
+	wantCheckBlock := "\"required_status_checks\": [\n          {\n            \"context\": \"Build\"\n          },\n          {\n            \"context\": \"Lint\"\n          }\n        ]"
+	if !strings.Contains(string(baseData), wantCheckBlock) {
+		t.Fatalf("unset status_checks_app changed check bytes: %s", string(baseData))
+	}
+}
+
+func TestRenderRepositoryRuleset_Positive_StatusChecksAppGithubActionsPinsEveryCheck(t *testing.T) {
+	policy := config.DefaultPolicy().BranchProtection
+	policy.StatusChecksApp = "github-actions"
+	contexts := []string{"Build", "Lint"}
+	data, err := RenderRepositoryRuleset("main", policy, contexts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCheckBlock := "\"required_status_checks\": [\n          {\n            \"context\": \"Build\",\n            \"integration_id\": 15368\n          },\n          {\n            \"context\": \"Lint\",\n            \"integration_id\": 15368\n          }\n        ]"
+	if !strings.Contains(string(data), wantCheckBlock) {
+		t.Fatalf("github-actions status_checks_app did not pin every check to integration_id 15368: %s", string(data))
+	}
+}
+
+func TestRenderRepositoryRuleset_Negative_StatusChecksAppUnknownSlugRefused(t *testing.T) {
+	policy := config.DefaultPolicy().BranchProtection
+	policy.StatusChecksApp = "other-app"
+	if _, err := RenderRepositoryRuleset("main", policy, []string{"Build"}); err == nil || !strings.Contains(err.Error(), "github-actions") {
+		t.Fatalf("unknown status_checks_app accepted or missing known slugs: %v", err)
+	}
+}

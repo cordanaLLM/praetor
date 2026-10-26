@@ -380,6 +380,21 @@ that also names a derived check produces one required check (`TestStatusContexts
 also reports for each merge group; explicit declarations remain required after workflow filtering.
 `praetorctl sync` writes the union to the branch ruleset (`TestSyncDeclaredStatusContexts`).
 
+`overrides.branch_protection.status_checks_app` pins every required status check in the rendered
+repository ruleset (`.github/rulesets/main.json` and `praetorctl sync --remote`) to one GitHub
+App by adding `"integration_id"` to each entry (`forge.RenderRepositoryRuleset`,
+`TestRenderRepositoryRuleset_Positive_StatusChecksAppGithubActionsPinsEveryCheck`). The slug
+table (`config.StatusChecksAppIntegrationID` in `internal/config/status_contexts.go`) maps
+`github-actions` to `15368` (`GET apps/github-actions`); an unknown slug fails manifest
+validation naming the known slugs (`TestStatusChecksApp_Negative_UnknownSlugAndNonString`). When
+the key is unset, required status checks remain unpinned with no `"integration_id"` field, and
+the rendered bytes are unchanged (`TestRenderRepositoryRuleset_Boundary_StatusChecksAppUnsetByteIdentical`).
+Committed-ruleset validation (`forge.ValidateRepositoryRuleset`) and live branch protection
+evaluation (`forge.EvaluateBranchProtection`) both check `integration_id` when the key is set
+(`TestValidateRepositoryRuleset_StatusChecksApp_Negative_MissingOrWrongIntegrationIDNamesContext`,
+`TestEvaluateBranchProtection_StatusChecksApp_PositiveAndNegativeDrift`). Only the repository may
+declare this key; profiles and facets reject it (`TestStatusChecksApp_Negative_RepositoryOnly`).
+
 ### Review mode
 
 A repository with one maintainer declares `review_mode: single_maintainer` under

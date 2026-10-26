@@ -77,6 +77,7 @@ type liveEnforcement struct {
 	deletionBlocked, forcePushBlocked    liveFlag
 	reviews                              liveCount
 	checks                               map[string][]string
+	integrationID                        int
 }
 
 // pullRequestParameters are the pull_request rule parameters the declared policy sets.
@@ -93,7 +94,11 @@ type statusCheckParameters struct {
 
 // collectEnforcement joins every rule and the legacy protection object of live.
 func collectEnforcement(live *LiveBranchProtection) (*liveEnforcement, error) {
-	e := &liveEnforcement{checks: map[string][]string{}}
+	return collectEnforcementWithApp(live, 0)
+}
+
+func collectEnforcementWithApp(live *LiveBranchProtection, integrationID int) (*liveEnforcement, error) {
+	e := &liveEnforcement{checks: map[string][]string{}, integrationID: integrationID}
 	if len(live.Rules) > maxBranchRules {
 		return nil, fmt.Errorf("branch %s carries more than %d active rules", live.Branch, maxBranchRules)
 	}
@@ -138,7 +143,7 @@ func (e *liveEnforcement) addStatusCheckRule(raw json.RawMessage, by string) err
 		return fmt.Errorf("required status checks exceed %d contexts", maxRulesetContexts)
 	}
 	for i := 0; i < len(params.RequiredStatusChecks) && i < maxRulesetContexts; i++ {
-		e.addCheck(params.RequiredStatusChecks[i].Context, by)
+		e.addCheck(params.RequiredStatusChecks[i], by)
 	}
 	return nil
 }
@@ -172,10 +177,10 @@ func (e *liveEnforcement) addReviews(count int, dismissStale, codeOwner bool, by
 	}
 }
 
-// addCheck records that by requires the status check context.
-func (e *liveEnforcement) addCheck(context, by string) {
-	if context != "" {
-		e.checks[context] = appendMissing(e.checks[context], []string{by})
+// addCheck records that by requires the status check when its integration_id matches.
+func (e *liveEnforcement) addCheck(check StatusCheckRef, by string) {
+	if check.Context != "" && (e.integrationID == 0 || check.IntegrationID == e.integrationID) {
+		e.checks[check.Context] = appendMissing(e.checks[check.Context], []string{by})
 	}
 }
 
@@ -207,10 +212,10 @@ func (e *liveEnforcement) addLegacy(p *LegacyBranchProtection) {
 // check entry alike, enforced by by.
 func (e *liveEnforcement) addLegacyStatusChecks(c *LegacyStatusChecks, by string) {
 	for i := 0; i < len(c.Contexts) && i < maxRulesetContexts; i++ {
-		e.addCheck(c.Contexts[i], by)
+		e.addCheck(StatusCheckRef{Context: c.Contexts[i]}, by)
 	}
 	for i := 0; i < len(c.Checks) && i < maxRulesetContexts; i++ {
-		e.addCheck(c.Checks[i].Context, by)
+		e.addCheck(c.Checks[i], by)
 	}
 }
 
@@ -249,10 +254,14 @@ func EvaluateBranchProtectionWithRenames(policy config.BranchProtectionPolicy, c
 	if err != nil {
 		return nil, fmt.Errorf("evaluate branch protection: %w", err)
 	}
+	integrationID, err := config.StatusChecksAppIntegrationID(policy.StatusChecksApp)
+	if err != nil {
+		return nil, fmt.Errorf("evaluate branch protection: %w", err)
+	}
 	if len(contexts) > maxRulesetContexts {
 		return nil, fmt.Errorf("evaluate branch protection: required status checks exceed %d contexts", maxRulesetContexts)
 	}
-	e, err := collectEnforcement(live)
+	e, err := collectEnforcementWithApp(live, integrationID)
 	if err != nil {
 		return nil, fmt.Errorf("evaluate branch protection: %w", err)
 	}
@@ -315,8 +324,10 @@ func rulesetEnforcementFinding(live *LiveBranchProtection) (ProtectionFinding, b
 		return ProtectionFinding{}, false
 	}
 	label := live.RulesetLabel(LiveBranchRule{RulesetID: id})
-	finding := ProtectionFinding{Property: "Ruleset enforcement", Declared: rulesetEnforcementActive,
-		Live: enforcement + " (" + label + ")", Verdict: ProtectionDrift}
+	finding := ProtectionFinding{
+		Property: "Ruleset enforcement", Declared: rulesetEnforcementActive,
+		Live: enforcement + " (" + label + ")", Verdict: ProtectionDrift,
+	}
 	if enforcement == rulesetEnforcementActive {
 		finding.Live, finding.EnforcedBy, finding.Verdict = enforcement, []string{label}, ProtectionEnforced
 	}
