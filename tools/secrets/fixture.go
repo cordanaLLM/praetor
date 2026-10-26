@@ -133,6 +133,27 @@ func BuildOrdinaryLeakRepo(t testing.TB) (string, string) {
 	return dir, commitHash
 }
 
+// BuildRepoWithFile creates a repository whose one commit holds gitleaksConfig as .gitleaks.toml and content at relPath, so a
+// test can replay the repository's own scan configuration against a planted file (order
+// engine-red-main-secret-scan-pin-sha-20261026).
+func BuildRepoWithFile(t testing.TB, gitleaksConfig []byte, relPath, content string) string {
+	t.Helper()
+	dir, _ := initBaseRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, ".gitleaks.toml"), gitleaksConfig, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, filepath.FromSlash(relPath))
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGitCommand(t, dir, "add", ".")
+	runGitCommand(t, dir, "commit", "--quiet", "-m", "init")
+	return dir
+}
+
 // BuildCleanRepo creates a clean repository with zero secrets.
 func BuildCleanRepo(t testing.TB) string {
 	t.Helper()
