@@ -50,3 +50,15 @@ keywords = [
 [[allowlists]]
 description = "HISS-12 fixture corpus: deliberately fake secrets that exist to prove the rule fires"
 paths = ['''^\.config/hiss/testdata/HISS-12/''']
+
+# Pinned reusable workflow commit ids (order engine-red-main-secret-scan-pin-sha-20261026). The engine pins external reusable
+# workflows by the full commit id of a public repository, in constants named <...>WorkflowSHA in this one file; the secret scan
+# pin's name says Secret, so the default generic-api-key rule read its 40-hex commit id as a key and main went red. The exemption
+# needs both the file and the line shape: a 40-hex value assigned to a ...WorkflowSHA constant. Any other value in the file, and
+# the same line in any other file, is still reported (planted in TestGate_PinnedWorkflowSHAAllowed_3D).
+[[allowlists]]
+description = "Pinned reusable workflow commit ids: the public 40-hex commit of a ...WorkflowSHA constant in the engine's pin table"
+condition = "AND"
+paths = ['''^internal/forge/workflow_reusable_contexts\.go$''']
+regexTarget = "line"
+regexes = ['''^\s*[A-Z][A-Za-z0-9]*WorkflowSHA\s*=\s*"[0-9a-f]{40}"''']

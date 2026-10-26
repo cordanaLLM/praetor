@@ -60,6 +60,41 @@ func TestGate_PlantedMergeOnly_3D(t *testing.T) {
 	}
 }
 
+// pinTable is the engine's pin table file the .gitleaks.toml allowlist names.
+const pinTable = "internal/forge/workflow_reusable_contexts.go"
+
+// pinLine is a pinned reusable workflow commit id as the pin table writes it: a public 40-hex commit
+// assigned to a ...WorkflowSHA constant whose name says Secret.
+const pinLine = "\tPluranoHoristesSecretScanWorkflowSHA = \"c736fac69552061fb795ac49951c5284a3f5d041\" // public commit id\n"
+
+// TestGate_PinnedWorkflowSHAAllowed_3D replays the repository's own .gitleaks.toml (order
+// engine-red-main-secret-scan-pin-sha-20261026): the pinned commit id in the pin table passes, a
+// key-shaped value in the same file is still a finding, and the same commit id line in any other
+// file is still a finding.
+func TestGate_PinnedWorkflowSHAAllowed_3D(t *testing.T) {
+	if _, err := exec.LookPath("gitleaks"); err != nil {
+		t.Skip("gitleaks not installed on PATH")
+	}
+	cfg, err := os.ReadFile(filepath.Join("..", "..", ".gitleaks.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := "package forge\n\nconst (\n"
+	clean := secrets.BuildRepoWithFile(t, cfg, pinTable, head+pinLine+")\n")
+	if out, code := runGateCLI(t, clean, ""); code != 0 {
+		t.Fatalf("pinned commit id in the pin table: exit %d, want 0: %s", code, out)
+	}
+	planted := head + pinLine + "\tpluranoSecretToken = \"" + secrets.PlantedSecret() + "\"\n)\n"
+	leak := secrets.BuildRepoWithFile(t, cfg, pinTable, planted)
+	if out, code := runGateCLI(t, leak, ""); code != 3 || !strings.Contains(out, pinTable) {
+		t.Fatalf("key-shaped value beside the pin: exit %d, want 3 naming %s: %s", code, pinTable, out)
+	}
+	other := secrets.BuildRepoWithFile(t, cfg, "internal/forge/other.go", head+pinLine+")\n")
+	if out, code := runGateCLI(t, other, ""); code != 3 {
+		t.Fatalf("pin line outside the pin table: exit %d, want 3: %s", code, out)
+	}
+}
+
 func runGateLifecycleCase(t *testing.T, entries []rules.Entry) (string, int) {
 	t.Helper()
 	dir, _ := secrets.BuildOrdinaryLeakRepo(t)
