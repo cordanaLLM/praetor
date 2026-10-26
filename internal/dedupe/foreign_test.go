@@ -446,8 +446,8 @@ func TestForeignScan_Positive_CannedReport(t *testing.T) {
 		t.Fatalf("ScanRepoWithOptions: %v", err)
 	}
 
-	if report.ForeignScanner != "jscpd 5.4.1" {
-		t.Fatalf("ForeignScanner = %q, want %q", report.ForeignScanner, "jscpd 5.4.1")
+	if want := "jscpd " + dedupe.JscpdVersion; report.ForeignScanner != want {
+		t.Fatalf("ForeignScanner = %q, want %q", report.ForeignScanner, want)
 	}
 	if report.ForeignSkipped != "" {
 		t.Fatalf("ForeignSkipped = %q, want empty", report.ForeignSkipped)

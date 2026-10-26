@@ -1826,7 +1826,7 @@ entries:
       - "probity.config.ts"
   - name: "jscpd"
     url: "https://github.com/kucherenko/jscpd"
-    detail: "5.4.1"
+    detail: "5.4.2"
     section: "tooling"
     kind: "tool"
     relation: "integrated"
