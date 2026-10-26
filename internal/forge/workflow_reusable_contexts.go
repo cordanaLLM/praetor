@@ -33,12 +33,20 @@ const (
 	PluranoHoristesLicenceWorkflowSHA = "5a2700ef8898bc377f0f9d13d5c95abf54f0fa4c"
 	// PluranoHoristesLicencePinDate names when PluranoHoristesLicenceWorkflowSHA was read.
 	PluranoHoristesLicencePinDate = "2026-10-19"
+	// PluranoHoristesSecretScanAction is the reusable workflow path called for secret scanning in plurano-owned repositories.
+	PluranoHoristesSecretScanAction = "plurano/horistes/.github/workflows/secret-scan.yml"
+	// PluranoHoristesSecretScanWorkflowSHA is the commit SHA of plurano/horistes .github/workflows/secret-scan.yml
+	// pinned for secret scanning (read 2026-10-26).
+	PluranoHoristesSecretScanWorkflowSHA = "c736fac69552061fb795ac49951c5284a3f5d041"
+	// PluranoHoristesSecretScanPinDate names when PluranoHoristesSecretScanWorkflowSHA was read.
+	PluranoHoristesSecretScanPinDate = "2026-10-26"
 )
 
 // pinnedReusableWorkflow is a known external reusable workflow the engine pins.
 type pinnedReusableWorkflow struct {
-	sha  string
-	yaml string
+	sha     string
+	pinName string
+	yaml    string
 }
 
 // horistesLicenceWorkflowYAML mirrors plurano/horistes .github/workflows/licence.yml at
@@ -58,11 +66,31 @@ jobs:
     name: ${{ inputs.root == '.' && 'REUSE lint' || format('REUSE lint ({0})', inputs.root) }}
 `
 
+// horistesSecretScanWorkflowYAML mirrors plurano/horistes .github/workflows/secret-scan.yml at
+// PluranoHoristesSecretScanWorkflowSHA (read 2026-10-26), limited to inputs and the job name
+// needed to compute check contexts.
+const horistesSecretScanWorkflowYAML = `on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: ubuntu-26.04
+jobs:
+  scan:
+    name: Secret scan
+`
+
 // knownPinnedExternalWorkflows maps external workflow action paths to their pinned specification.
 var knownPinnedExternalWorkflows = map[string]pinnedReusableWorkflow{
 	PluranoHoristesLicenceAction: {
-		sha:  PluranoHoristesLicenceWorkflowSHA,
-		yaml: horistesLicenceWorkflowYAML,
+		sha:     PluranoHoristesLicenceWorkflowSHA,
+		pinName: "forge.PluranoHoristesLicenceWorkflowSHA",
+		yaml:    horistesLicenceWorkflowYAML,
+	},
+	PluranoHoristesSecretScanAction: {
+		sha:     PluranoHoristesSecretScanWorkflowSHA,
+		pinName: "forge.PluranoHoristesSecretScanWorkflowSHA",
+		yaml:    horistesSecretScanWorkflowYAML,
 	},
 }
 
@@ -134,7 +162,7 @@ func (c calledWorkflows) externalSpec(job, uses string) (*workflowSpec, error) {
 			return &spec, nil
 		}
 		return nil, fmt.Errorf("job %q calls the reusable workflow %s at %s; only the pinned commit %s is supported "+
-			"(move the engine pin (forge.PluranoHoristesLicenceWorkflowSHA) first)", job, pin.Action, pin.SHA, entry.sha)
+			"(move the engine pin (%s) first)", job, pin.Action, pin.SHA, entry.sha, entry.pinName)
 	}
 
 	return nil, fmt.Errorf("job %q calls the reusable workflow %s of another repository; its jobs, and so the "+

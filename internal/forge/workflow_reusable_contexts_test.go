@@ -67,15 +67,25 @@ func TestReusableCallContexts_RefusesWhatItCannotRead(t *testing.T) {
 		files map[string]string
 		want  string
 	}{
-		"remote": {map[string]string{"licence-check.yml": remote},
-			`job "licence" calls the reusable workflow plurano/shared-ci/.github/workflows/licence.yml@v1 of another repository`},
-		"missing": {map[string]string{"licence-check.yml": licenceCaller},
-			`job "licence" calls ./.github/workflows/licence.yml, which is no workflow in .github/workflows/`},
-		"not reusable": {map[string]string{"licence-check.yml": licenceCaller,
-			"licence.yml": strings.Replace(licenceCalled, "workflow_call", "push", 1)},
-			"declares no workflow_call trigger"},
-		"subdirectory": {map[string]string{"licence-check.yml": strings.Replace(licenceCaller, "licence.yml", "sub/licence.yml", 1),
-			"licence.yml": licenceCalled}, "which is no workflow in"},
+		"remote": {
+			map[string]string{"licence-check.yml": remote},
+			`job "licence" calls the reusable workflow plurano/shared-ci/.github/workflows/licence.yml@v1 of another repository`,
+		},
+		"missing": {
+			map[string]string{"licence-check.yml": licenceCaller},
+			`job "licence" calls ./.github/workflows/licence.yml, which is no workflow in .github/workflows/`,
+		},
+		"not reusable": {
+			map[string]string{
+				"licence-check.yml": licenceCaller,
+				"licence.yml":       strings.Replace(licenceCalled, "workflow_call", "push", 1),
+			},
+			"declares no workflow_call trigger",
+		},
+		"subdirectory": {map[string]string{
+			"licence-check.yml": strings.Replace(licenceCaller, "licence.yml", "sub/licence.yml", 1),
+			"licence.yml":       licenceCalled,
+		}, "which is no workflow in"},
 	}
 	for name, tc := range cases {
 		got, err := reusableContexts(t, tc.files)
@@ -349,6 +359,96 @@ func TestPinnedHoristesLicenceSpec_RefusesInvalidPin(t *testing.T) {
 		t.Run(ref, func(t *testing.T) {
 			caller := "on:\n  pull_request:\njobs:\n  licence:\n    name: Licence\n    uses: " + ref + "\n"
 			_, err := reusableContexts(t, map[string]string{"reuse.yml": caller})
+			want := "calls the reusable workflow " + ref + " of another repository"
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("invalid pin: err = %v, want containing %q", err, want)
+			}
+		})
+	}
+}
+
+// Positive: the pinned external secret scan caller contributes its status context.
+func TestReusableCallContexts_PinnedExternalSecretScan(t *testing.T) {
+	callerContent := "on:\n  pull_request:\njobs:\n  secrets:\n    name: Secrets\n" +
+		"    uses: " + PluranoHoristesSecretScanAction + "@" + PluranoHoristesSecretScanWorkflowSHA + "  # " + PluranoHoristesSecretScanPinDate + "\n" +
+		"    with:\n      runner: ubuntu-26.04\n"
+
+	root := t.TempDir()
+	writeWorkflowFixture(t, root, "secrets.yml", callerContent)
+
+	contexts, err := RequiredStatusContextsPlanned(t.Context(), root, nil)
+	if err != nil {
+		t.Fatalf("RequiredStatusContextsPlanned: %v", err)
+	}
+	if !slices.Equal(contexts, []string{"Secrets / Secret scan"}) {
+		t.Fatalf("contexts = %v, want [Secrets / Secret scan]", contexts)
+	}
+
+	policy := config.DefaultPolicy().BranchProtection
+	_, rulesetContexts, err := RenderRulesetForRepository(t.Context(), root, policy, nil)
+	if err != nil {
+		t.Fatalf("RenderRulesetForRepository: %v", err)
+	}
+	if !slices.Equal(rulesetContexts, []string{"Secrets / Secret scan"}) {
+		t.Fatalf("rulesetContexts = %v, want [Secrets / Secret scan]", rulesetContexts)
+	}
+
+	got, err := reusableContexts(t, map[string]string{"secrets.yml": callerContent})
+	if err != nil {
+		t.Fatalf("reusableContexts: %v", err)
+	}
+	if !slices.Equal(got, []string{"Secrets / Secret scan"}) {
+		t.Fatalf("contexts = %v, want [Secrets / Secret scan]", got)
+	}
+}
+
+// Negative: secret scan caller at another SHA or unpinned ref is refused.
+func TestReusableCallContexts_PinnedExternalSecretScanRejectsOtherSources(t *testing.T) {
+	// Negative: secret scan at another SHA -> refused naming the secret scan pin constant.
+	otherSHA := "1111222233334444555566667777888899990000"
+	otherSHACaller := "on:\n  pull_request:\njobs:\n  secrets:\n    name: Secrets\n" +
+		"    uses: " + PluranoHoristesSecretScanAction + "@" + otherSHA + "\n"
+	_, err := reusableContexts(t, map[string]string{"secrets.yml": otherSHACaller})
+	if err == nil || !strings.Contains(err.Error(), "move the engine pin (forge.PluranoHoristesSecretScanWorkflowSHA) first") {
+		t.Fatalf("secret scan at another SHA: err = %v, want engine pin instruction", err)
+	}
+
+	// Negative: unpinned ref (@main) -> refused as workflow of another repository.
+	unpinnedCaller := "on:\n  pull_request:\njobs:\n  secrets:\n    name: Secrets\n" +
+		"    uses: " + PluranoHoristesSecretScanAction + "@main\n"
+	_, err = reusableContexts(t, map[string]string{"secrets.yml": unpinnedCaller})
+	wantUnknown := "calls the reusable workflow " + PluranoHoristesSecretScanAction + "@main of another repository"
+	if err == nil || !strings.Contains(err.Error(), wantUnknown) {
+		t.Fatalf("unpinned ref: err = %v, want containing %q", err, wantUnknown)
+	}
+}
+
+// Positive: the pinned external secret scan specification carries upstream job id and input defaults.
+func TestPinnedHoristesSecretScanSpec(t *testing.T) {
+	called := newCalledWorkflows(nil)
+	spec, err := called.spec("secrets", PluranoHoristesSecretScanAction+"@"+PluranoHoristesSecretScanWorkflowSHA)
+	if err != nil {
+		t.Fatalf("pinned specification: %v", err)
+	}
+	if len(spec.Jobs) != 1 || spec.Jobs["scan"].Name != "Secret scan" {
+		t.Fatalf("pinned jobs = %+v, want only scan with name 'Secret scan'", spec.Jobs)
+	}
+	defaults := workflowCallDefaults(spec)
+	if len(defaults) != 1 || defaults["runner"].text != "ubuntu-26.04" {
+		t.Fatalf("pinned input defaults = %+v, want runner: ubuntu-26.04", defaults)
+	}
+}
+
+// Negative and boundary: malformed pins and a path without @ retain the other-repository refusal.
+func TestPinnedHoristesSecretScanSpec_RefusesInvalidPin(t *testing.T) {
+	for _, ref := range []string{
+		PluranoHoristesSecretScanAction + "@" + strings.ToUpper(PluranoHoristesSecretScanWorkflowSHA),
+		PluranoHoristesSecretScanAction + "@" + PluranoHoristesSecretScanWorkflowSHA[:39],
+		PluranoHoristesSecretScanAction,
+	} {
+		t.Run(ref, func(t *testing.T) {
+			caller := "on:\n  pull_request:\njobs:\n  secrets:\n    name: Secrets\n    uses: " + ref + "\n"
+			_, err := reusableContexts(t, map[string]string{"secrets.yml": caller})
 			want := "calls the reusable workflow " + ref + " of another repository"
 			if err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatalf("invalid pin: err = %v, want containing %q", err, want)
