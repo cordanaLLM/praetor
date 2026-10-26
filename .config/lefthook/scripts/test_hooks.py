@@ -2182,6 +2182,78 @@ class ScopeAndGuard(unittest.TestCase):
                 with self.assertRaisesRegex(HookError, "lossless CSV"):
                     audit_scope(root, unrepresentable, base)
 
+    def test_audit_scope_stays_within_argument_limit(self):
+        with tempfile.TemporaryDirectory(prefix="praetor-audit-limit-") as temp:
+            root = Path(temp)
+            (root / "legacy.go").write_text("package legacy\n")
+            (root / ".standards-baseline.json").write_text('{"total_infractions": 0}\n')
+            (root / ".standards.yaml").write_text("repository: {}\n")
+            self.init_governance_repo(root)
+            base = command(root, "git", "rev-parse", "HEAD").stdout.decode().strip()
+            # 3000 paths of 50 chars each -> CSV with prefix is ~153 KB (> 120 KB limit).
+            prefix_len = len("pkg0000/")
+            pad_len = 50 - prefix_len - 3
+            paths_3000 = [f"pkg{i:04d}/" + "x" * pad_len + ".go" for i in range(3000)]
+            self.assertEqual(len(paths_3000[0]), 50)
+            self.assertEqual(len(paths_3000), 3000)
+            with io.StringIO() as stderr_buf, contextlib.redirect_stderr(stderr_buf):
+                args = audit_scope(root, paths_3000, base)
+                self.assertEqual(args, ["--base=" + base])
+                self.assertIn(
+                    "3000 touched paths exceed argument limit; "
+                    "audit derives touched files from base.",
+                    stderr_buf.getvalue(),
+                )
+            with io.StringIO(), contextlib.redirect_stderr(io.StringIO()):
+                commands = governance_commands(root, paths_3000, True, base=base)
+                self.assertEqual(commands[0][3:], ["audit", "--base=" + base])
+
+    def test_audit_scope_argument_limit_boundaries_and_negative(self):
+        with tempfile.TemporaryDirectory(prefix="praetor-audit-bound-") as temp:
+            root = Path(temp)
+            (root / "legacy.go").write_text("package legacy\n")
+            (root / ".standards-baseline.json").write_text('{"total_infractions": 0}\n')
+            self.init_governance_repo(root)
+            base = command(root, "git", "rev-parse", "HEAD").stdout.decode().strip()
+
+            # Boundary: CSV exactly at limit (120,000 bytes). Prefix "--touched=" is 10 bytes.
+            p1 = [f"d/{i:04d}/" + "a" * (49 - len(f"d/{i:04d}/")) for i in range(2399)]
+            exact_paths = p1 + ["last/" + "b" * (40 - len("last/"))]
+            exact_csv = "--touched=" + ",".join(exact_paths)
+            self.assertEqual(len(exact_csv.encode("utf-8")), 120_000)
+            self.assertEqual(audit_scope(root, exact_paths, base), ["--base=" + base, exact_csv])
+
+            # One byte over limit -> base only.
+            over_paths = p1 + ["last/" + "b" * (41 - len("last/"))]
+            over_csv = "--touched=" + ",".join(over_paths)
+            self.assertEqual(len(over_csv.encode("utf-8")), 120_001)
+            with io.StringIO() as stderr_buf, contextlib.redirect_stderr(stderr_buf):
+                self.assertEqual(audit_scope(root, over_paths, base), ["--base=" + base])
+                self.assertIn(
+                    "2400 touched paths exceed argument limit; "
+                    "audit derives touched files from base.",
+                    stderr_buf.getvalue(),
+                )
+
+            # Negative: small scope stays byte-identical to base.
+            self.assertEqual(
+                audit_scope(root, ["legacy.go"], base),
+                ["--base=" + base, "--touched=legacy.go"],
+            )
+
+        # Negative: no base + over limit -> HookError.
+        with tempfile.TemporaryDirectory(prefix="praetor-audit-nobase-") as temp_nobase:
+            nobase = Path(temp_nobase)
+            for i in range(2400):
+                target = nobase / f"pkg{i:04d}" / ("z" * 41)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("ok\n")
+            self.init_governance_repo(nobase)
+            with self.assertRaisesRegex(
+                HookError, r"Audit touched paths \(2400\) exceed single-argument limit"
+            ):
+                audit_scope(nobase, ["ignored"], None)
+
     def test_real_scoped_race_test_propagates_failure(self):
         skip_without_race_detector(self)
         with tempfile.TemporaryDirectory(prefix="praetor-race-") as temp:

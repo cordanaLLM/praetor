@@ -439,8 +439,18 @@ def governance_commands(directory, names, source, base=None):
     return commands
 
 
+# Linux kernel MAX_ARG_STRLEN limits each argv entry to 131072 bytes (32 pages).
+# Keep --touched comfortably below that ceiling to prevent E2BIG argument-list overflow.
+# Order: engine-hooks-audit-touched-e2big-fix-20261026.
+TOUCHED_ARG_LIMIT = 120_000
+
+
 def audit_scope(directory, names, base):
-    """Bind G02's debt ratchet and touched-file guard to the actual snapshot diff."""
+    """Bind G02's debt ratchet and touched-file guard to the actual snapshot diff.
+
+    Limits argument length below single-argument ceiling
+    (order engine-hooks-audit-touched-e2big-fix-20261026).
+    """
     args = []
     touched = names
     if base is not None:
@@ -456,9 +466,22 @@ def audit_scope(directory, names, base):
               "historical baseline growth comparison unavailable.")
     # The current G02 CLI accepts CSV and at most 10,000 trimmed entries. Refuse
     # inputs it cannot represent instead of silently auditing a smaller set.
-    if len(touched) > 10000 or any(not name or name != name.strip() or
-                                  any(char in name for char in ",\r\n") for name in touched):
+    if len(touched) > 10000 or any(
+        not name or name != name.strip() or any(char in name for char in ",\r\n")
+        for name in touched
+    ):
         raise HookError("Audit touched paths exceed the CLI's lossless CSV/10,000-path contract")
     if touched:
-        args.append("--touched=" + ",".join(touched))
+        touched_arg = "--touched=" + ",".join(touched)
+        # Linux kernel MAX_ARG_STRLEN ceiling: order engine-hooks-audit-touched-e2big-fix-20261026.
+        if len(touched_arg.encode("utf-8")) <= TOUCHED_ARG_LIMIT:
+            args.append(touched_arg)
+        elif base is not None:
+            print(f"audit: {len(touched)} touched paths exceed argument limit; "
+                  f"audit derives touched files from base.", file=sys.stderr)
+        else:
+            raise HookError(
+                f"Audit touched paths ({len(touched)}) exceed single-argument limit "
+                f"({TOUCHED_ARG_LIMIT} bytes) without base ref"
+            )
     return args
