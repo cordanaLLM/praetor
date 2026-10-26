@@ -457,6 +457,192 @@ func TestPinnedHoristesSecretScanSpec_RefusesInvalidPin(t *testing.T) {
 	}
 }
 
+// Positive: the pinned external release please caller contributes its status context.
+func TestReusableCallContexts_PinnedExternalReleasePlease(t *testing.T) {
+	callerContent := "on:\n  pull_request:\njobs:\n  release:\n    name: Release\n" +
+		"    uses: " + PluranoHoristesReleasePleaseAction + "@" + PluranoHoristesReleasePleaseWorkflowSHA + "  # " + PluranoHoristesReleasePleasePinDate + "\n" +
+		"    with:\n      runner: ubuntu-26.04\n      app_client_id: release-app\n" +
+		"    secrets:\n      app_private_key: ${{ secrets.APP_PRIVATE_KEY }}\n"
+
+	root := t.TempDir()
+	writeWorkflowFixture(t, root, "release.yml", callerContent)
+
+	contexts, err := RequiredStatusContextsPlanned(t.Context(), root, nil)
+	if err != nil {
+		t.Fatalf("RequiredStatusContextsPlanned: %v", err)
+	}
+	if !slices.Equal(contexts, []string{"Release / Release please"}) {
+		t.Fatalf("contexts = %v, want [Release / Release please]", contexts)
+	}
+
+	policy := config.DefaultPolicy().BranchProtection
+	_, rulesetContexts, err := RenderRulesetForRepository(t.Context(), root, policy, nil)
+	if err != nil {
+		t.Fatalf("RenderRulesetForRepository: %v", err)
+	}
+	if !slices.Equal(rulesetContexts, []string{"Release / Release please"}) {
+		t.Fatalf("rulesetContexts = %v, want [Release / Release please]", rulesetContexts)
+	}
+
+	got, err := reusableContexts(t, map[string]string{"release.yml": callerContent})
+	if err != nil {
+		t.Fatalf("reusableContexts: %v", err)
+	}
+	if !slices.Equal(got, []string{"Release / Release please"}) {
+		t.Fatalf("contexts = %v, want [Release / Release please]", got)
+	}
+}
+
+// Negative: release please caller at another SHA or unpinned ref is refused.
+func TestReusableCallContexts_PinnedExternalReleasePleaseRejectsOtherSources(t *testing.T) {
+	// Negative: release please at another SHA -> refused naming the release please pin constant.
+	otherSHA := "1111222233334444555566667777888899990000"
+	otherSHACaller := "on:\n  pull_request:\njobs:\n  release:\n    name: Release\n" +
+		"    uses: " + PluranoHoristesReleasePleaseAction + "@" + otherSHA + "\n"
+	_, err := reusableContexts(t, map[string]string{"release.yml": otherSHACaller})
+	if err == nil || !strings.Contains(err.Error(), "move the engine pin (forge.PluranoHoristesReleasePleaseWorkflowSHA) first") {
+		t.Fatalf("release please at another SHA: err = %v, want engine pin instruction", err)
+	}
+
+	// Negative: unpinned ref (@main) -> refused as workflow of another repository.
+	unpinnedCaller := "on:\n  pull_request:\njobs:\n  release:\n    name: Release\n" +
+		"    uses: " + PluranoHoristesReleasePleaseAction + "@main\n"
+	_, err = reusableContexts(t, map[string]string{"release.yml": unpinnedCaller})
+	wantUnknown := "calls the reusable workflow " + PluranoHoristesReleasePleaseAction + "@main of another repository"
+	if err == nil || !strings.Contains(err.Error(), wantUnknown) {
+		t.Fatalf("unpinned ref: err = %v, want containing %q", err, wantUnknown)
+	}
+}
+
+// Positive: the pinned external release please specification carries upstream job id and input defaults.
+func TestPinnedHoristesReleasePleaseSpec(t *testing.T) {
+	called := newCalledWorkflows(nil)
+	spec, err := called.spec("release", PluranoHoristesReleasePleaseAction+"@"+PluranoHoristesReleasePleaseWorkflowSHA)
+	if err != nil {
+		t.Fatalf("pinned specification: %v", err)
+	}
+	if len(spec.Jobs) != 1 || spec.Jobs["release-please"].Name != "Release please" {
+		t.Fatalf("pinned jobs = %+v, want only release-please with name 'Release please'", spec.Jobs)
+	}
+	defaults := workflowCallDefaults(spec)
+	if len(defaults) != 3 ||
+		defaults["runner"].text != "ubuntu-26.04" ||
+		defaults["config_file"].text != "release-please-config.json" ||
+		defaults["manifest_file"].text != ".release-please-manifest.json" {
+		t.Fatalf("pinned input defaults = %+v, want runner, config_file, manifest_file defaults", defaults)
+	}
+}
+
+// Negative and boundary: malformed pins and a path without @ retain the other-repository refusal.
+func TestPinnedHoristesReleasePleaseSpec_RefusesInvalidPin(t *testing.T) {
+	for _, ref := range []string{
+		PluranoHoristesReleasePleaseAction + "@" + strings.ToUpper(PluranoHoristesReleasePleaseWorkflowSHA),
+		PluranoHoristesReleasePleaseAction + "@" + PluranoHoristesReleasePleaseWorkflowSHA[:39],
+		PluranoHoristesReleasePleaseAction,
+	} {
+		t.Run(ref, func(t *testing.T) {
+			caller := "on:\n  pull_request:\njobs:\n  release:\n    name: Release\n    uses: " + ref + "\n"
+			_, err := reusableContexts(t, map[string]string{"release.yml": caller})
+			want := "calls the reusable workflow " + ref + " of another repository"
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("invalid pin: err = %v, want containing %q", err, want)
+			}
+		})
+	}
+}
+
+// Positive: the pinned external hook copy caller contributes its status context.
+func TestReusableCallContexts_PinnedExternalHookCopy(t *testing.T) {
+	callerContent := "on:\n  pull_request:\njobs:\n  hooks:\n    name: Hooks\n" +
+		"    uses: " + PluranoHoristesHookCopyAction + "@" + PluranoHoristesHookCopyWorkflowSHA + "  # " + PluranoHoristesHookCopyPinDate + "\n" +
+		"    with:\n      runner: ubuntu-26.04\n      hooks_path: .config/hooks\n"
+
+	root := t.TempDir()
+	writeWorkflowFixture(t, root, "hooks.yml", callerContent)
+
+	contexts, err := RequiredStatusContextsPlanned(t.Context(), root, nil)
+	if err != nil {
+		t.Fatalf("RequiredStatusContextsPlanned: %v", err)
+	}
+	if !slices.Equal(contexts, []string{"Hooks / Hook copy"}) {
+		t.Fatalf("contexts = %v, want [Hooks / Hook copy]", contexts)
+	}
+
+	policy := config.DefaultPolicy().BranchProtection
+	_, rulesetContexts, err := RenderRulesetForRepository(t.Context(), root, policy, nil)
+	if err != nil {
+		t.Fatalf("RenderRulesetForRepository: %v", err)
+	}
+	if !slices.Equal(rulesetContexts, []string{"Hooks / Hook copy"}) {
+		t.Fatalf("rulesetContexts = %v, want [Hooks / Hook copy]", rulesetContexts)
+	}
+
+	got, err := reusableContexts(t, map[string]string{"hooks.yml": callerContent})
+	if err != nil {
+		t.Fatalf("reusableContexts: %v", err)
+	}
+	if !slices.Equal(got, []string{"Hooks / Hook copy"}) {
+		t.Fatalf("contexts = %v, want [Hooks / Hook copy]", got)
+	}
+}
+
+// Negative: hook copy caller at another SHA or unpinned ref is refused.
+func TestReusableCallContexts_PinnedExternalHookCopyRejectsOtherSources(t *testing.T) {
+	// Negative: hook copy at another SHA -> refused naming the hook copy pin constant.
+	otherSHA := "1111222233334444555566667777888899990000"
+	otherSHACaller := "on:\n  pull_request:\njobs:\n  hooks:\n    name: Hooks\n" +
+		"    uses: " + PluranoHoristesHookCopyAction + "@" + otherSHA + "\n"
+	_, err := reusableContexts(t, map[string]string{"hooks.yml": otherSHACaller})
+	if err == nil || !strings.Contains(err.Error(), "move the engine pin (forge.PluranoHoristesHookCopyWorkflowSHA) first") {
+		t.Fatalf("hook copy at another SHA: err = %v, want engine pin instruction", err)
+	}
+
+	// Negative: unpinned ref (@main) -> refused as workflow of another repository.
+	unpinnedCaller := "on:\n  pull_request:\njobs:\n  hooks:\n    name: Hooks\n" +
+		"    uses: " + PluranoHoristesHookCopyAction + "@main\n"
+	_, err = reusableContexts(t, map[string]string{"hooks.yml": unpinnedCaller})
+	wantUnknown := "calls the reusable workflow " + PluranoHoristesHookCopyAction + "@main of another repository"
+	if err == nil || !strings.Contains(err.Error(), wantUnknown) {
+		t.Fatalf("unpinned ref: err = %v, want containing %q", err, wantUnknown)
+	}
+}
+
+// Positive: the pinned external hook copy specification carries upstream job id and input defaults.
+func TestPinnedHoristesHookCopySpec(t *testing.T) {
+	called := newCalledWorkflows(nil)
+	spec, err := called.spec("hooks", PluranoHoristesHookCopyAction+"@"+PluranoHoristesHookCopyWorkflowSHA)
+	if err != nil {
+		t.Fatalf("pinned specification: %v", err)
+	}
+	if len(spec.Jobs) != 1 || spec.Jobs["check"].Name != "Hook copy" {
+		t.Fatalf("pinned jobs = %+v, want only check with name 'Hook copy'", spec.Jobs)
+	}
+	defaults := workflowCallDefaults(spec)
+	if len(defaults) != 2 ||
+		defaults["runner"].text != "ubuntu-26.04" ||
+		defaults["hooks_path"].text != ".config/hooks" {
+		t.Fatalf("pinned input defaults = %+v, want runner and hooks_path defaults", defaults)
+	}
+}
+
+// Negative and boundary: malformed pins and a path without @ retain the other-repository refusal.
+func TestPinnedHoristesHookCopySpec_RefusesInvalidPin(t *testing.T) {
+	for _, ref := range []string{
+		PluranoHoristesHookCopyAction + "@" + strings.ToUpper(PluranoHoristesHookCopyWorkflowSHA),
+		PluranoHoristesHookCopyAction + "@" + PluranoHoristesHookCopyWorkflowSHA[:39],
+		PluranoHoristesHookCopyAction,
+	} {
+		t.Run(ref, func(t *testing.T) {
+			caller := "on:\n  pull_request:\njobs:\n  hooks:\n    name: Hooks\n    uses: " + ref + "\n"
+			_, err := reusableContexts(t, map[string]string{"hooks.yml": caller})
+			want := "calls the reusable workflow " + ref + " of another repository"
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("invalid pin: err = %v, want containing %q", err, want)
+			}
+		})
+	}
+}
+
 // Unit tests for the allow-listed expression evaluator (#1334).
 func TestEvaluateCalledJobName(t *testing.T) {
 	inputs := map[string]exprValue{
