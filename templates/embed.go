@@ -98,10 +98,10 @@ type GoSecurityContext struct {
 // the version source; TestGoSecurityVersionsMatchToolsModule names the required update whenever
 // Renovate moves one side without the other.
 const (
-	GoSecurityGovulnVersion   = "v1.8.0"
-	GoSecurityGosecVersion    = "v2.29.0"
+	GoSecurityGovulnVersion   = "v1.9.0"
+	GoSecurityGosecVersion    = "v2.30.0"
 	GoSecurityGitleaksVersion = "v8.30.1"
-	GoSecurityXToolsVersion   = "v0.50.0"
+	GoSecurityXToolsVersion   = "v0.52.0"
 	// GoSecurityXToolsFloor is the oldest golang.org/x/tools whose export-data reader decodes what
 	// go1.27.2 writes (pkgbits V5, uirVersion in cmd/compile/internal/noder/unified.go). gosec
 	// v2.29.0 requires only v0.49.0, so a gosec built without this floor fails to load every

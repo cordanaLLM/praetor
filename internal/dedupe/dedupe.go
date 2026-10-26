@@ -27,7 +27,7 @@ import (
 )
 
 // JscpdVersion is the pinned jscpd version required for foreign clone detection.
-const JscpdVersion = "5.4.1"
+const JscpdVersion = "5.4.2"
 
 // FileLocation points to a file and line number.
 type FileLocation struct {
