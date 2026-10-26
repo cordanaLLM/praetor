@@ -338,9 +338,11 @@ func TestCorrelationStoreWaitsForASlowHolder(t *testing.T) {
 // fixed gap proves that measuring after hold start records a wait shorter than hold (the defect),
 // while measuring before hold start guarantees the wait covers the full hold duration.
 func TestCorrelationStoreSlowHolderWaitPlantedDelay(t *testing.T) {
+	// gap leaves the old shape 300 ms short of hold, far above the 10 ms lock retry delay and
+	// scheduler noise under -race, so the planted case stays deterministic on a loaded runner.
 	const (
 		hold = 700 * time.Millisecond
-		gap  = 50 * time.Millisecond
+		gap  = 300 * time.Millisecond
 	)
 	store, dir := newSlowHolderStore(t, hold)
 	began := time.Now()
