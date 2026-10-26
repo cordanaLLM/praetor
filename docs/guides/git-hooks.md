@@ -13,6 +13,8 @@ Strict source pushes also require `gosec`, `govulncheck` and `semgrep`. Golangci
 from the pinned `tools/lint/go.mod` tool directive when present, or from a matching directive
 in `tools/go/go.mod`. The hook refuses Go pushes when neither module pins it; add a golangci-lint
 tool directive to `tools/lint/go.mod` before pushing. Adoption does not currently create that pin.
+Every golangci-lint run passes `--allow-serial-runners`: a lint that starts while another run on
+the same machine holds golangci-lint's lock waits for it instead of failing the push (#855).
 `tools/go/go.mod` pins `gosec`, `govulncheck` and `gitleaks` as tool directives, which Renovate
 keeps current: `make sec`,
 `make vuln` and `make secrets` run exactly those versions through `go tool -modfile` (`make vuln`

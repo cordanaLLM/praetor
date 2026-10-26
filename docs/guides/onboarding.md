@@ -271,6 +271,9 @@ a Go library.
   The flavor's tool list and the security stage give the same pinned install advice for a
   missing gosec (`flavor.GosecInstallGuide`), with the `golang.org/x/tools` floor Go 1.27.2
   export data needs.
+- The Go flavor's tool list prints golangci-lint as
+  `go tool -modfile=tools/lint/go.mod golangci-lint run --allow-serial-runners`, so a second lint
+  on the same machine waits for the first one's lock instead of failing (#855).
 - `flavor apply` also renders the branch ruleset (`.github/rulesets/main.json`) and lists every
   other required setting with the command that writes it
   ([flavor settings](archetype-authoring.md#flavor-settings-the-ruleset-is-rendered-the-rest-are-deferred)).

@@ -19,7 +19,7 @@ func TestGolangciPinCheckRejectsPlantedLatest(t *testing.T) {
 	if !floatingGolangciReference("go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run") {
 		t.Fatal("floating golangci-lint command was not refused")
 	}
-	if floatingGolangciReference("go tool -modfile=tools/lint/go.mod golangci-lint run") {
+	if floatingGolangciReference("go tool -modfile=tools/lint/go.mod golangci-lint run --allow-serial-runners") {
 		t.Fatal("pinned golangci-lint command was refused")
 	}
 }
@@ -69,7 +69,7 @@ func TestGoServiceGolangciInstallGuideUsesPinnedTool(t *testing.T) {
 	}
 	for _, item := range service.RequiredToolchains() {
 		if item.Binary == "golangci-lint" {
-			if item.InstallGuide != "go tool -modfile=tools/lint/go.mod golangci-lint run" {
+			if item.InstallGuide != "go tool -modfile=tools/lint/go.mod golangci-lint run --allow-serial-runners" {
 				t.Fatalf("golangci-lint install guide = %q", item.InstallGuide)
 			}
 			return

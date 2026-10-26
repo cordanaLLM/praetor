@@ -2726,7 +2726,7 @@ class ToolFloors(unittest.TestCase):
             with mock.patch("checks.run", return_value=b"github.com/golangci/golangci-lint/v2/cmd/golangci-lint\n") as run:
                 command = golangci_lint_command(root, ["./..."])
         self.assertEqual(command, ["go", "tool", "-modfile=tools/lint/go.mod",
-                                   "golangci-lint", "run", "./..."])
+                                   "golangci-lint", "run", "--allow-serial-runners", "./..."])
         self.assertEqual(run.call_args.args[0], ["go", "list", "-modfile=tools/lint/go.mod", "tool"])
 
     def test_golangci_lint_uses_go_module_pin_when_lint_module_lacks_tool(self):
@@ -2740,7 +2740,7 @@ class ToolFloors(unittest.TestCase):
             with mock.patch("checks.run", side_effect=answers):
                 command = golangci_lint_command(root, ["./pkg"])
         self.assertEqual(command, ["go", "tool", "-modfile=tools/go/go.mod",
-                                   "golangci-lint", "run", "./pkg"])
+                                   "golangci-lint", "run", "--allow-serial-runners", "./pkg"])
 
     def test_golangci_lint_without_pin_fails_with_remedy(self):
         with tempfile.TemporaryDirectory() as temp:

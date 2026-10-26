@@ -1,0 +1,3 @@
+type: fixed
+title: Pass --allow-serial-runners to every golangci-lint run so a second lint on the same host waits for the lock instead of failing the gate
+breaking: false
