@@ -34,10 +34,10 @@ const (
 	// PluranoHoristesLicencePinDate names when PluranoHoristesLicenceWorkflowSHA was read.
 	PluranoHoristesLicencePinDate = "2026-10-19"
 	// PluranoHoristesSecretScanAction is the reusable workflow path called for secret scanning in plurano-owned repositories.
-	PluranoHoristesSecretScanAction = "plurano/horistes/.github/workflows/secret-scan.yml"
+	PluranoHoristesSecretScanAction = "plurano/horistes/.github/workflows/secret-scan.yml" // #nosec G101 -- a workflow path; "Secret" names the scan, no credential
 	// PluranoHoristesSecretScanWorkflowSHA is the commit SHA of plurano/horistes .github/workflows/secret-scan.yml
 	// pinned for secret scanning (read 2026-10-26).
-	PluranoHoristesSecretScanWorkflowSHA = "c736fac69552061fb795ac49951c5284a3f5d041"
+	PluranoHoristesSecretScanWorkflowSHA = "c736fac69552061fb795ac49951c5284a3f5d041" // #nosec G101 -- a public commit id, no credential
 	// PluranoHoristesSecretScanPinDate names when PluranoHoristesSecretScanWorkflowSHA was read.
 	PluranoHoristesSecretScanPinDate = "2026-10-26"
 )
@@ -69,6 +69,7 @@ jobs:
 // horistesSecretScanWorkflowYAML mirrors plurano/horistes .github/workflows/secret-scan.yml at
 // PluranoHoristesSecretScanWorkflowSHA (read 2026-10-26), limited to inputs and the job name
 // needed to compute check contexts.
+// #nosec G101 -- a public workflow mirror (inputs and the job name), no credential
 const horistesSecretScanWorkflowYAML = `on:
   workflow_call:
     inputs:
