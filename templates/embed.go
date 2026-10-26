@@ -94,27 +94,42 @@ type GoSecurityContext struct {
 	DeclaredScanners bool `json:"declared_scanners"`
 }
 
-// Deprecated: Values frozen 2026-10-26; no longer updated. Live scanner pins: internal/toolpins package.
-// Names kept: exported API stability. Removal: next breaking release.
+// Former scanner version pins of the fallback Security Scan (order
+// finding-landing-failed-79e5b1160d-20261026-1022).
 const (
-	// Deprecated: Values frozen 2026-10-26; no longer updated. Live scanner pins: internal/toolpins package.
-	// Names kept: exported API stability. Removal: next breaking release.
+	// GoSecurityGovulnVersion was the golang.org/x/vuln version the fallback Security Scan built.
+	//
+	// Deprecated: frozen at its value of 2026-10-26 and no longer updated. The engine reads its
+	// scanner pins from an internal package now, so a version update no longer changes the
+	// exported API; the name stays until a breaking release removes it.
 	GoSecurityGovulnVersion = "v1.8.0"
 
-	// Deprecated: Values frozen 2026-10-26; no longer updated. Live scanner pins: internal/toolpins package.
-	// Names kept: exported API stability. Removal: next breaking release.
+	// GoSecurityGosecVersion was the github.com/securego/gosec/v2 version the fallback Security Scan built.
+	//
+	// Deprecated: frozen at its value of 2026-10-26 and no longer updated. The engine reads its
+	// scanner pins from an internal package now, so a version update no longer changes the
+	// exported API; the name stays until a breaking release removes it.
 	GoSecurityGosecVersion = "v2.29.0"
 
-	// Deprecated: Values frozen 2026-10-26; no longer updated. Live scanner pins: internal/toolpins package.
-	// Names kept: exported API stability. Removal: next breaking release.
+	// GoSecurityGitleaksVersion was the github.com/zricethezav/gitleaks/v8 version the fallback Security Scan built.
+	//
+	// Deprecated: frozen at its value of 2026-10-26 and no longer updated. The engine reads its
+	// scanner pins from an internal package now, so a version update no longer changes the
+	// exported API; the name stays until a breaking release removes it.
 	GoSecurityGitleaksVersion = "v8.30.1"
 
-	// Deprecated: Values frozen 2026-10-26; no longer updated. Live scanner pins: internal/toolpins package.
-	// Names kept: exported API stability. Removal: next breaking release.
+	// GoSecurityXToolsVersion was the golang.org/x/tools version the fallback Security Scan built.
+	//
+	// Deprecated: frozen at its value of 2026-10-26 and no longer updated. The engine reads its
+	// scanner pins from an internal package now, so a version update no longer changes the
+	// exported API; the name stays until a breaking release removes it.
 	GoSecurityXToolsVersion = "v0.50.0"
 
-	// Deprecated: Values frozen 2026-10-26; no longer updated. Live scanner pins: internal/toolpins package.
-	// Names kept: exported API stability. Removal: next breaking release.
+	// GoSecurityXToolsFloor was the oldest golang.org/x/tools that decodes go1.27.2 export data.
+	//
+	// Deprecated: frozen at its value of 2026-10-26 and no longer updated. The engine reads its
+	// scanner pins from an internal package now, so a version update no longer changes the
+	// exported API; the name stays until a breaking release removes it.
 	GoSecurityXToolsFloor = "v0.50.0"
 )
 
