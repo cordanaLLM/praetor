@@ -7,6 +7,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"unicode"
@@ -14,6 +15,38 @@ import (
 
 	"go.yaml.in/yaml/v3"
 )
+
+// statusChecksAppIDs maps a GitHub App slug to its numeric integration_id from GET apps/<slug>.
+var statusChecksAppIDs = map[string]int{"github-actions": 15368}
+
+// StatusChecksAppIntegrationID resolves a status_checks_app slug to its GitHub App integration_id
+// from GET apps/<slug>, or returns 0 when unset.
+func StatusChecksAppIntegrationID(slug string) (int, error) {
+	if slug == "" {
+		return 0, nil
+	}
+	id, ok := statusChecksAppIDs[slug]
+	if !ok {
+		known := slices.Sorted(maps.Keys(statusChecksAppIDs))
+		return 0, fmt.Errorf("status_checks_app %q is unknown (known slugs: %s)", slug, strings.Join(known, ", "))
+	}
+	return id, nil
+}
+
+func validateStatusChecksAppNode(node *yaml.Node) error {
+	if node == nil {
+		return nil
+	}
+	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" {
+		return errors.New("status_checks_app must be a string")
+	}
+	return nil
+}
+
+func validateStatusChecksApp(slug string) error {
+	_, err := StatusChecksAppIntegrationID(slug)
+	return err
+}
 
 const (
 	// MaxDeclaredStatusContexts bounds the repository's additional required contexts.

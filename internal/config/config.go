@@ -84,6 +84,10 @@ type BranchProtectionPolicy struct {
 	// StatusContexts declares required contexts that workflow job discovery cannot derive.
 	// Only the repository override may set them; omission preserves existing policy digests.
 	StatusContexts []string `yaml:"status_contexts,omitempty" json:",omitempty"`
+	// StatusChecksApp pins every rendered required status check to the GitHub App with this
+	// slug (for example "github-actions" -> integration_id 15368). Only the repository override
+	// may set it; omission leaves checks unpinned and preserves existing policy digests.
+	StatusChecksApp string `yaml:"status_checks_app,omitempty" json:",omitempty"`
 	// MergeQueue declares that the default branch merges through a GitHub merge queue (#893).
 	// The rendered ruleset then carries the merge_queue rule and requires only the status
 	// contexts of workflows that trigger on merge_group, the one event a group runs. It is a
@@ -109,7 +113,7 @@ var branchProtectionKeys = []string{
 	"enforce_linear_history", "require_signed_commits", "required_approving_reviewers",
 	"dismiss_stale_reviews", "review_mode", "merge_queue", "codeql_default_setup",
 	"allowed_merge_methods", "require_extra_approval_for_unattributed_changes",
-	"status_contexts",
+	"status_contexts", "status_checks_app",
 }
 
 // MergeMethod enum values supported by GitHub pull request rulesets.
@@ -143,7 +147,7 @@ func (b BranchProtectionPolicy) Validate() error {
 			seen[method] = true
 		}
 	}
-	return validateStatusContexts(b.StatusContexts)
+	return errors.Join(validateStatusContexts(b.StatusContexts), validateStatusChecksApp(b.StatusChecksApp))
 }
 
 // Equal reports whether b and other declare identical branch protection settings.
@@ -163,6 +167,7 @@ func (b BranchProtectionPolicy) scalarFieldsEqual(other BranchProtectionPolicy) 
 		b.RequiredApprovingReviewers == other.RequiredApprovingReviewers &&
 		b.DismissStaleReviews == other.DismissStaleReviews &&
 		b.ReviewMode == other.ReviewMode &&
+		b.StatusChecksApp == other.StatusChecksApp &&
 		b.MergeQueue == other.MergeQueue &&
 		b.CodeQLDefaultSetup == other.CodeQLDefaultSetup
 }
@@ -204,7 +209,10 @@ func validateBranchProtectionNodes(node *yaml.Node) (*yaml.Node, error) {
 	if err := requireKnownKeys(node, "branch_protection", branchProtectionKeys); err != nil {
 		return nil, err
 	}
-	if err := validateStatusContextNodes(policyMember(node, "status_contexts")); err != nil {
+	if err := errors.Join(
+		validateStatusContextNodes(policyMember(node, "status_contexts")),
+		validateStatusChecksAppNode(policyMember(node, "status_checks_app")),
+	); err != nil {
 		return nil, err
 	}
 	reviewMode := policyMember(node, "review_mode")
@@ -683,6 +691,7 @@ func joinBranchProtection(a, b BranchProtectionPolicy) BranchProtectionPolicy {
 		MergeQueue:                 a.MergeQueue || b.MergeQueue,
 		CodeQLDefaultSetup:         a.CodeQLDefaultSetup || b.CodeQLDefaultSetup,
 		StatusContexts:             slices.Clone(a.StatusContexts),
+		StatusChecksApp:            a.StatusChecksApp,
 		AllowedMergeMethods:        joinAllowedMergeMethods(a.AllowedMergeMethods, b.AllowedMergeMethods),
 		RequireExtraApprovalForUnattributedChanges: joinExtraApproval(a.RequireExtraApprovalForUnattributedChanges, b.RequireExtraApprovalForUnattributedChanges),
 	}
@@ -803,6 +812,9 @@ func (b *BranchProtectionPolicy) applyOverride(o *BranchProtectionPolicy) {
 	b.ReviewMode = mode
 	if o.StatusContexts != nil {
 		b.StatusContexts = slices.Clone(o.StatusContexts)
+	}
+	if o.StatusChecksApp != "" {
+		b.StatusChecksApp = o.StatusChecksApp
 	}
 	if o.AllowedMergeMethods != nil {
 		b.AllowedMergeMethods = slices.Clone(o.AllowedMergeMethods)

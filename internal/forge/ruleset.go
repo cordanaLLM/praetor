@@ -22,12 +22,8 @@ const (
 
 type statusRuleset struct {
 	Rules []struct {
-		Type       string `json:"type"`
-		Parameters struct {
-			RequiredStatusChecks []struct {
-				Context string `json:"context"`
-			} `json:"required_status_checks"`
-		} `json:"parameters"`
+		Type       string                `json:"type"`
+		Parameters statusCheckParameters `json:"parameters"`
 	} `json:"rules"`
 }
 
@@ -67,9 +63,7 @@ func parseStatusRuleset(data []byte) (*statusRuleset, error) {
 	return &ruleset, nil
 }
 
-func statusChecksContain(checks []struct {
-	Context string `json:"context"`
-}, target string) (bool, error) {
+func statusChecksContain(checks []StatusCheckRef, target string) (bool, error) {
 	if len(checks) > maxRulesetContexts {
 		return false, fmt.Errorf("required status checks exceed %d contexts", maxRulesetContexts)
 	}
@@ -315,12 +309,41 @@ func ValidateRepositoryRuleset(data []byte, branch string, policy config.BranchP
 	if err != nil {
 		return err
 	}
+	integrationID, err := config.StatusChecksAppIntegrationID(policy.StatusChecksApp)
+	if err != nil {
+		return err
+	}
+	if integrationID > 0 {
+		if err := validateRulesetStatusChecksApp(data, integrationID, policy.StatusChecksApp); err != nil {
+			return err
+		}
+	}
 	var expected map[string]any
 	if err := yaml.Unmarshal(expectedBytes, &expected); err != nil {
 		return fmt.Errorf("parse rendered ruleset: %w", err)
 	}
 	if !reflect.DeepEqual(observed, expected) {
 		return ErrRulesetDrift
+	}
+	return nil
+}
+
+func validateRulesetStatusChecksApp(data []byte, integrationID int, appSlug string) error {
+	ruleset, err := parseStatusRuleset(data)
+	if err != nil {
+		return err
+	}
+	for i := 0; i < len(ruleset.Rules) && i < maxRulesetRules; i++ {
+		if ruleset.Rules[i].Type != "required_status_checks" {
+			continue
+		}
+		checks := ruleset.Rules[i].Parameters.RequiredStatusChecks
+		for j := 0; j < len(checks) && j < maxRulesetContexts; j++ {
+			if checks[j].IntegrationID != integrationID {
+				return fmt.Errorf("%w: required status check %q has integration_id %d, want %d (%s)",
+					ErrRulesetDrift, checks[j].Context, checks[j].IntegrationID, integrationID, appSlug)
+			}
+		}
 	}
 	return nil
 }
@@ -361,9 +384,14 @@ func rulesetBypassActors(policy config.BranchProtectionPolicy) []map[string]any 
 }
 
 // protectionDocument is protectionRuleset without its bypass actors: the name, target,
-// enforcement, refs and rules.
+// enforcement, refs and rules. When policy.StatusChecksApp is set, every required status check
+// carries its numeric integration_id from GET apps/<slug> (config.StatusChecksAppIntegrationID).
 func protectionDocument(name string, refs []string, policy config.BranchProtectionPolicy, contexts []string, strict bool) (map[string]any, error) {
 	reviewCount, requireCodeOwner, err := policy.EffectiveReviewRequirements()
+	if err != nil {
+		return nil, err
+	}
+	integrationID, err := config.StatusChecksAppIntegrationID(policy.StatusChecksApp)
 	if err != nil {
 		return nil, err
 	}
@@ -375,20 +403,28 @@ func protectionDocument(name string, refs []string, policy config.BranchProtecti
 		contexts = slices.DeleteFunc(slices.Clone(contexts), IsDefaultSetupContext)
 	}
 	if len(contexts) > 0 {
-		checks := make([]map[string]string, 0, len(contexts))
-		for i := 0; i < len(contexts) && i < maxRulesetContexts; i++ {
-			checks = append(checks, map[string]string{"context": contexts[i]})
-		}
-		rules = append(rules, map[string]any{"type": "required_status_checks", "parameters": map[string]any{
-			"strict_required_status_checks_policy": strict,
-			"required_status_checks":               checks,
-		}})
+		rules = append(rules, requiredStatusChecksRule(contexts, strict, integrationID))
 	}
 	return map[string]any{
 		"name": name, "target": "branch", "enforcement": rulesetEnforcementActive,
 		"conditions": map[string]any{"ref_name": map[string]any{"include": refs, "exclude": []string{}}},
 		"rules":      rules,
 	}, nil
+}
+
+func requiredStatusChecksRule(contexts []string, strict bool, integrationID int) map[string]any {
+	checks := make([]map[string]any, 0, len(contexts))
+	for i := 0; i < len(contexts) && i < maxRulesetContexts; i++ {
+		check := map[string]any{"context": contexts[i]}
+		if integrationID > 0 {
+			check["integration_id"] = integrationID
+		}
+		checks = append(checks, check)
+	}
+	return map[string]any{"type": "required_status_checks", "parameters": map[string]any{
+		"strict_required_status_checks_policy": strict,
+		"required_status_checks":               checks,
+	}}
 }
 
 func validateRulesetInputs(contexts []string) error {

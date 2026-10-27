@@ -44,8 +44,10 @@ func TestLoadEffectivePolicyJoinsEveryProfileDimension(t *testing.T) {
 		t.Fatal(err)
 	}
 	policy := result.Policy
-	wantBranch := BranchProtectionPolicy{EnforceLinearHistory: true, RequireSignedCommits: true,
-		RequiredApprovingReviewers: 2, DismissStaleReviews: true, ReviewMode: BranchReviewModeIndependent}
+	wantBranch := BranchProtectionPolicy{
+		EnforceLinearHistory: true, RequireSignedCommits: true,
+		RequiredApprovingReviewers: 2, DismissStaleReviews: true, ReviewMode: BranchReviewModeIndependent,
+	}
 	if !policy.BranchProtection.Equal(wantBranch) {
 		t.Fatalf("profile branch protection did not reach the policy: %+v", policy.BranchProtection)
 	}
@@ -177,6 +179,7 @@ var archetypeKeyProbes = map[string]string{
 	"branch_protection.dismiss_stale_reviews": "true", "branch_protection.review_mode": "independent",
 	"branch_protection.merge_queue": "true", "branch_protection.codeql_default_setup": "true",
 	"branch_protection.status_contexts":       "[gate]",
+	"branch_protection.status_checks_app":     "github-actions",
 	"branch_protection.allowed_merge_methods": "[squash]", "branch_protection.require_extra_approval_for_unattributed_changes": "true",
 	"supply_chain.slsa_level": "2", "supply_chain.enforce_cosign": "true", "supply_chain.require_sbom": "true",
 	"linters": "[semgrep]", "devcontainer_features": `["ghcr.io/devcontainers/features/go:1"]`,
@@ -205,6 +208,7 @@ var repositoryOnlyKeys = map[string]bool{
 	"branch_protection.review_mode": true, "branch_protection.merge_queue": true,
 	"branch_protection.codeql_default_setup": true,
 	"branch_protection.status_contexts":      true,
+	"branch_protection.status_checks_app":    true,
 }
 
 // ArchetypeKeys lists the closed schema with sections spelled dotted and never bare, and
@@ -289,8 +293,12 @@ func TestShippedArchetypesDecodeThroughTheArchetypeSchema(t *testing.T) {
 func TestJoinErrorUnwrapsAndMemoryAreCommutativeSuprema(t *testing.T) {
 	allow, strict := ErrorUnwrapsAllowWithComment, ErrorUnwrapsStrictBan
 	cases := []struct{ a, b, want ErrorUnwrapMode }{
-		{"", "", ""}, {"", allow, allow}, {allow, allow, allow},
-		{allow, strict, strict}, {"", strict, strict}, {strict, strict, strict},
+		{"", "", ""},
+		{"", allow, allow},
+		{allow, allow, allow},
+		{allow, strict, strict},
+		{"", strict, strict},
+		{strict, strict, strict},
 		{"bogus", strict, "bogus"},
 	}
 	for _, tc := range cases {

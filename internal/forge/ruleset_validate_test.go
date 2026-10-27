@@ -97,3 +97,48 @@ func TestValidateRepositoryRuleset_Boundary(t *testing.T) {
 		t.Fatalf("key order differences must validate: %v", err)
 	}
 }
+
+func TestValidateRepositoryRuleset_StatusChecksApp_PositiveAndBoundary(t *testing.T) {
+	contexts := []string{"Unit Tests", "Lint"}
+	unpinnedPolicy := validatePolicy()
+	unpinnedData, err := RenderRepositoryRuleset("main", unpinnedPolicy, contexts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateRepositoryRuleset(unpinnedData, "main", unpinnedPolicy, contexts); err != nil {
+		t.Fatalf("unset key must accept ruleset without integration_id: %v", err)
+	}
+	pinnedPolicy := validatePolicy()
+	pinnedPolicy.StatusChecksApp = "github-actions"
+	pinnedData := strings.Replace(string(unpinnedData), `"context": "Unit Tests"`, `"context": "Unit Tests", "integration_id": 15368`, 1)
+	pinnedData = strings.Replace(pinnedData, `"context": "Lint"`, `"context": "Lint", "integration_id": 15368`, 1)
+	if err := ValidateRepositoryRuleset([]byte(pinnedData), "main", pinnedPolicy, contexts); err != nil {
+		t.Fatalf("matching pinned ruleset must validate: %v", err)
+	}
+}
+
+func TestValidateRepositoryRuleset_StatusChecksApp_Negative_MissingOrWrongIntegrationIDNamesContext(t *testing.T) {
+	contexts := []string{"Unit Tests", "Lint"}
+	pinnedPolicy := validatePolicy()
+	pinnedPolicy.StatusChecksApp = "github-actions"
+	missingSecond := strings.Replace(string(mustRenderPinnedFixture(t, validatePolicy(), contexts)),
+		"\"context\": \"Unit Tests\"", "\"context\": \"Unit Tests\",\n            \"integration_id\": 15368", 1)
+	err := ValidateRepositoryRuleset([]byte(missingSecond), "main", pinnedPolicy, contexts)
+	if err == nil || !errors.Is(err, ErrRulesetDrift) || !strings.Contains(err.Error(), "Lint") {
+		t.Fatalf("check lacking integration_id must fail naming context Lint, got %v", err)
+	}
+	wrongID := strings.Replace(missingSecond, "\"context\": \"Lint\"", "\"context\": \"Lint\",\n            \"integration_id\": 999", 1)
+	err = ValidateRepositoryRuleset([]byte(wrongID), "main", pinnedPolicy, contexts)
+	if err == nil || !errors.Is(err, ErrRulesetDrift) || !strings.Contains(err.Error(), "Lint") {
+		t.Fatalf("check with wrong integration_id must fail naming context Lint, got %v", err)
+	}
+}
+
+func mustRenderPinnedFixture(t *testing.T, policy config.BranchProtectionPolicy, contexts []string) []byte {
+	t.Helper()
+	data, err := RenderRepositoryRuleset("main", policy, contexts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}

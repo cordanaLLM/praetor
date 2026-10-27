@@ -457,8 +457,9 @@ func jsonInteger(value any) (int64, error) {
 	}
 }
 
-// unionStatusChecks keeps every live required check, integration binding included, and
-// appends each desired context the live rule does not require yet.
+// unionStatusChecks keeps every live required check, integration binding included, overlays
+// a desired integration_id when the policy pins required checks to an app, and appends each
+// desired context the live rule does not require yet.
 func unionStatusChecks(liveRaw, desiredRaw any) ([]any, error) {
 	live, err := objectList(liveRaw, "required_status_checks", maxRulesetContexts)
 	if err != nil {
@@ -468,11 +469,19 @@ func unionStatusChecks(liveRaw, desiredRaw any) ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	return mergeStatusCheckLists(live, desired)
+}
+
+func mergeStatusCheckLists(live, desired []map[string]any) ([]any, error) {
+	desiredByContext := make(map[any]map[string]any, len(desired))
+	for i := 0; i < len(desired) && i < maxRulesetContexts; i++ {
+		desiredByContext[desired[i]["context"]] = desired[i]
+	}
 	merged := make([]any, 0, len(live)+len(desired))
 	present := make(map[any]bool, len(live))
 	for i := 0; i < len(live) && i < maxRulesetContexts; i++ {
 		present[live[i]["context"]] = true
-		merged = append(merged, live[i])
+		merged = append(merged, mergeStatusCheck(live[i], desiredByContext[live[i]["context"]]))
 	}
 	for i := 0; i < len(desired) && i < maxRulesetContexts; i++ {
 		if !present[desired[i]["context"]] {
@@ -483,6 +492,16 @@ func unionStatusChecks(liveRaw, desiredRaw any) ([]any, error) {
 		return nil, fmt.Errorf("merged required status checks exceed %d contexts", maxRulesetContexts)
 	}
 	return merged, nil
+}
+
+func mergeStatusCheck(liveCheck, desiredCheck map[string]any) map[string]any {
+	if desiredCheck == nil || desiredCheck["integration_id"] == nil {
+		return liveCheck
+	}
+	updated := make(map[string]any, len(liveCheck)+1)
+	maps.Copy(updated, liveCheck)
+	updated["integration_id"] = desiredCheck["integration_id"]
+	return updated
 }
 
 // rulesetConverged reports how a ruleset read back from the forge falls short of want:
@@ -609,16 +628,34 @@ func statusChecksConverged(gotRaw, wantRaw any) error {
 	if err != nil {
 		return err
 	}
-	present := make(map[any]bool, len(got))
+	gotByContext := make(map[any]map[string]any, len(got))
 	for i := 0; i < len(got) && i < maxRulesetContexts; i++ {
-		present[got[i]["context"]] = true
+		gotByContext[got[i]["context"]] = got[i]
 	}
 	for i := 0; i < len(want) && i < maxRulesetContexts; i++ {
-		if !present[want[i]["context"]] {
-			return fmt.Errorf("ruleset readback does not require status check %v", want[i]["context"])
+		if err := statusCheckConverged(gotByContext[want[i]["context"]], want[i]); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func statusCheckConverged(gotCheck, wantCheck map[string]any) error {
+	if gotCheck == nil {
+		return fmt.Errorf("ruleset readback does not require status check %v", wantCheck["context"])
+	}
+	wantID, hasID := wantCheck["integration_id"]
+	if hasID && wantID != nil && !sameIntegrationID(gotCheck["integration_id"], wantID) {
+		return fmt.Errorf("ruleset readback status check %v has integration_id %v, want %v",
+			wantCheck["context"], gotCheck["integration_id"], wantID)
+	}
+	return nil
+}
+
+func sameIntegrationID(got, want any) bool {
+	gotInt, gotErr := jsonInteger(got)
+	wantInt, wantErr := jsonInteger(want)
+	return gotErr == nil && wantErr == nil && gotInt == wantInt
 }
 
 // optionalObject reads a JSON object that may be absent; anything else present is an error.

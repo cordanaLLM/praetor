@@ -592,6 +592,8 @@ file in `.config/archetypes`, selected or not, so one bad file fails lock verifi
   in `.standards.yaml` overrides;
 - `branch_protection.status_contexts`: additional required checks are repository-only, set in
   `.standards.yaml` overrides ([declared status contexts](../adoption.md#declared-status-contexts));
+- `branch_protection.status_checks_app`: pinning required status checks to a GitHub App is
+  repository-only, set in `.standards.yaml` overrides ([declared status contexts](../adoption.md#declared-status-contexts));
 - negative `required_approving_reviewers` or `slsa_level`;
 - an `error_unwraps` value other than `strict_ban` or `allow_with_comment`;
 - an empty linter name, or one with surrounding whitespace or control characters.

@@ -62,9 +62,10 @@ type LegacyPullRequestReviews struct {
 	RequireCodeOwnerReviews      bool `json:"require_code_owner_reviews"`
 }
 
-// StatusCheckRef names one required status check.
+// StatusCheckRef names one required status check and its optional GitHub App integration_id.
 type StatusCheckRef struct {
-	Context string `json:"context"`
+	Context       string `json:"context"`
+	IntegrationID int    `json:"integration_id,omitempty"`
 }
 
 // LegacyStatusChecks is the status check requirement of a legacy protection object. GitHub
@@ -184,8 +185,10 @@ func (g *GitHubDriver) ReadBranchProtection(ctx context.Context, branch string) 
 	if err != nil {
 		return nil, fmt.Errorf("read the legacy branch protection of %s: %w", branch, err)
 	}
-	return &LiveBranchProtection{Branch: branch, Rules: rules, RulesetNames: names, RulesetEnforcement: enforcement,
-		Legacy: legacy, QueueRuleset: queue, Missing: missing, LegacyUnread: unread}, nil
+	return &LiveBranchProtection{
+		Branch: branch, Rules: rules, RulesetNames: names, RulesetEnforcement: enforcement,
+		Legacy: legacy, QueueRuleset: queue, Missing: missing, LegacyUnread: unread,
+	}, nil
 }
 
 // branchRules lists every active rule GitHub enforces on branch, page by page.
