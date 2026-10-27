@@ -102,16 +102,19 @@ praetorctl audit
 {{ end }}` + "```\n"
 
 // harnessFacts is what one adoption run knows when it renders the harness: the identity for
-// the title, the verification plan, the pipelines the run generates, what the git-hooks step
-// leaves active, and the vendor files compile-context writes under agent_clients. The harness
+// the title, the verification plan, the generated and repository-owned gates, what the git-hooks
+// step leaves active, and the vendor files compile-context writes under agent_clients. The harness
 // states nothing beyond them.
 type harnessFacts struct {
 	// owner is empty when the repository identity is unresolved; the title then names name.
 	owner, name, arch string
 	plan              *VerificationPlan
 	pipelines         hisscatalog.Pipeline
-	hooks             hookActivation
-	targets           []agentcontext.VendorTarget
+	// repositoryOwned names preserved gates without granting table credit
+	// (order engine-adopt-force-gate-detect-20261027).
+	repositoryOwned hisscatalog.Pipeline
+	hooks           hookActivation
+	targets         []agentcontext.VendorTarget
 	// workflows are the CI workflows this run scaffolds, with what each runs (rule 5).
 	workflows []scaffoldedWorkflow
 	// hiss is what the invariant rows depend on: languages and the enforced function length.
@@ -228,7 +231,7 @@ func foreignInstructions(existing string) string {
 func buildAgentHarnessDirectives(facts harnessFacts) string {
 	var b strings.Builder
 	b.WriteString(hisscatalog.GatedInvariantsHeading + "\n\n")
-	b.WriteString(adoptedCheckLegend(facts.pipelines))
+	b.WriteString(adoptedCheckLegend(facts))
 	b.WriteString("| Invariant | Rule | Adopted check | On fail |\n| :--- | :--- | :--- | :--- |\n")
 	for _, rule := range hisscatalog.Rules() {
 		generated, failure := rule.AdoptedFor(facts.pipelines, facts.hiss)
@@ -283,20 +286,29 @@ func engineScannerEnforcement(rule hisscatalog.Rule, languages hisscatalog.Langu
 	return rule.AuditScanner(hisscatalog.Facts{Languages: languages})
 }
 
-// adoptedCheckLegend names the coverage source and the gates this adoption generated.
-func adoptedCheckLegend(pipelines hisscatalog.Pipeline) string {
-	var generated []string
+// adoptedCheckLegend names generated and repository-owned gates; only the former earn
+// cell credit (order engine-adopt-force-gate-detect-20261027).
+func adoptedCheckLegend(facts harnessFacts) string {
+	pipelines := facts.pipelines
+	var gates []string
 	if pipelines&hisscatalog.PipelineVerifyAll != 0 {
-		generated = append(generated, "generated `"+verifyCommand+"`")
+		gates = append(gates, "generated `"+verifyCommand+"`")
 	}
 	if pipelines&hisscatalog.PipelineLefthook != 0 {
-		generated = append(generated, "praetor `"+lefthookFile+"`")
+		gates = append(gates, "praetor `"+lefthookFile+"`")
+	}
+	if facts.repositoryOwned&hisscatalog.PipelineVerifyAll != 0 {
+		gates = append(gates, "repository-owned `"+verifyCommand+"` (unread)")
+	}
+	if facts.repositoryOwned&hisscatalog.PipelineLefthook != 0 {
+		gates = append(gates, "repository-owned `"+lefthookFile+"` (unread)")
 	}
 	source := "none: no generated `" + verifyCommand + "`, no praetor `" + lefthookFile + "`"
-	if len(generated) > 0 {
-		source = strings.Join(generated, " + ")
+	if len(gates) > 0 {
+		source = strings.Join(gates, " + ")
 	}
-	return "Adopted check = coverage state + mechanism; else audit scanner; else `unknown`. Gates = (" + source + "); edits not reflected.\n\n"
+	return "Adopted check = coverage state + mechanism; else audit scanner; else `unknown`. Gates = (" + source +
+		"); edits not reflected. Adopted-check cells credit generated gates only.\n\n"
 }
 
 // transpilerRuleHead opens rule 3 with the files compile-context writes under agent_clients,
@@ -507,6 +519,13 @@ func (s *adoptSession) harnessFacts(ctx context.Context, clients []string) (harn
 	if err != nil {
 		return harnessFacts{}, err
 	}
+	var repositoryOwned hisscatalog.Pipeline
+	if s.verification.Status == verificationPreserved {
+		repositoryOwned |= hisscatalog.PipelineVerifyAll
+	}
+	if hooks == hooksRepositoryOwned {
+		repositoryOwned |= hisscatalog.PipelineLefthook
+	}
 	targets, err := agentcontext.VendorTargets(clients)
 	if err != nil {
 		return harnessFacts{}, fmt.Errorf("agent_clients in %s: %w", manifestFile, err)
@@ -529,7 +548,8 @@ func (s *adoptSession) harnessFacts(ctx context.Context, clients []string) (harn
 	}
 	owner, name := s.harnessIdentity()
 	return harnessFacts{owner: owner, name: name, arch: s.arch, plan: s.verification, pipelines: pipelines,
-		hooks: hooks, targets: targets, workflows: workflows, hiss: s.hissFacts(), coverage: coverage, register: register}, nil
+		repositoryOwned: repositoryOwned, hooks: hooks, targets: targets, workflows: workflows,
+		hiss: s.hissFacts(), coverage: coverage, register: register}, nil
 }
 
 // resolveAgentsContent writes AGENTS.md with harness, the harness this run renders: created,

@@ -17,8 +17,11 @@ const lefthookProbeTimeout = 10 * time.Second
 type hookActivation uint8
 
 const (
-	// hooksNone: git-hooks declined, or lefthook.yml is not praetor's rendering.
+	// hooksNone: git-hooks declined and no lefthook.yml exists.
 	hooksNone hookActivation = iota
+	// hooksRepositoryOwned: existing configuration kept without reading its jobs for credit
+	// (order engine-adopt-force-gate-detect-20261027).
+	hooksRepositoryOwned
 	// hooksInactive: praetor's lefthook.yml, but lefthook will not install its hooks here.
 	hooksInactive
 	// hooksLefthook: praetor's lefthook.yml with its hooks installed by lefthook.
@@ -66,11 +69,22 @@ func (s *adoptSession) plannedHookActivation(ctx context.Context) (hookActivatio
 		return hooksNone, fmt.Errorf("resolve adoption.decline for the harness: %w", err)
 	}
 	if declined {
+		_, exists, err := s.readExistingLefthook()
+		if err != nil {
+			return hooksNone, err
+		}
+		if exists {
+			return hooksRepositoryOwned, nil
+		}
 		return hooksNone, nil
 	}
 	owned, err := s.plannedLefthookOwned(ctx)
-	if err != nil || !owned {
+	if err != nil {
 		return hooksNone, err
+	}
+	if !owned {
+		// An absent file is planned as owned; false means an existing file is kept.
+		return hooksRepositoryOwned, nil
 	}
 	if s.opts.SkipHookActivation || !lefthookRunnable(ctx) {
 		return hooksInactive, nil
