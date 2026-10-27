@@ -1,2 +1,2 @@
 type: fixed
-title: HISS-18 trigger audit reads cross-repo reusable workflows pinned at a full commit SHA through read-only forge fetch
+title: The HISS-18 trigger audit reads a reusable workflow of another repository at its pinned commit instead of reporting the calling job as running on a draft

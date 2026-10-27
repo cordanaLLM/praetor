@@ -104,7 +104,7 @@ func (s *Server) auditGates(p auditPaths, effective *config.EffectivePolicy) []a
 		func(ctx context.Context) (string, error) {
 			return forge.AuditWorkflowTriggers(ctx, forge.WorkflowTriggerOptions{
 				Root: s.rootDir, Exceptions: manifest.Exceptions, Today: time.Now(),
-				Callees: nil, CalleesNotRead: "MCP audit without forge reads",
+				CalleesNotRead: "the MCP standards_audit reads nothing from the forge",
 			})
 		},
 		// The CLI audit's test-timeout gate (#1381): a workflow timeout above the bound fails.

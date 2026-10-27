@@ -441,7 +441,7 @@ func TestAuditWorkflowTriggers_ExternalReusable_UnpinnedWarns(t *testing.T) {
 	if !strings.Contains(out, "[WARN] Workflow triggers (HISS-18):") {
 		t.Fatalf("expected WARN, got:\n%s", out)
 	}
-	if !strings.Contains(out, "call targets moving ref of another repository, check reads no jobs there, pin to full commit SHA") {
+	if !strings.Contains(out, "at a ref that is not a full commit SHA, so the jobs it runs can change without a change here and the check reads none of them; pin the call to a full commit SHA") {
 		t.Fatalf("output lacks moving ref / missing pin text:\n%s", out)
 	}
 }
@@ -478,15 +478,16 @@ func TestAuditWorkflowTriggers_ExternalReusable_CalleesNilSkips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	wantSkip := fmt.Sprintf("[SKIP] Workflow triggers (HISS-18): .github/workflows/ci.yml:5: job commits calls %s: --offline; draft handling not judged.",
-		testExternalRef)
+	wantSkip := fmt.Sprintf("[SKIP] Workflow triggers (HISS-18): .github/workflows/ci.yml:5: job commits calls the reusable workflow %s of another "+
+		"repository at the pinned commit %s, which was not read (--offline), so what the job does on a draft is not judged.",
+		testExternalAction, testExternalSHA)
 	if !strings.Contains(out, wantSkip) {
 		t.Fatalf("output lacks SKIP line %q:\n%s", wantSkip, out)
 	}
 	if strings.Contains(out, "[WARN]") {
 		t.Fatalf("unexpected warning:\n%s", out)
 	}
-	if !strings.Contains(out, "[PASS] Workflow triggers (HISS-18):") || !strings.Contains(out, "unread external calls: 1") {
+	if !strings.Contains(out, "[PASS] Workflow triggers (HISS-18):") || !strings.Contains(out, "not read above (1)") {
 		t.Fatalf("expected PASS naming unread external calls:\n%s", out)
 	}
 }
@@ -587,8 +588,32 @@ func TestAuditWorkflowTriggers_ExternalReusable_Boundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	wantBound := fmt.Sprintf("distinct external reusable workflows exceed bound of %d", maxExternalCallees)
+	wantBound := fmt.Sprintf("the workflows call more than %d distinct reusable workflows of other repositories", maxExternalCallees)
 	if !strings.Contains(out, wantBound) || !strings.Contains(out, "[SKIP]") {
 		t.Fatalf("output lacks bound skip line naming %q:\n%s", wantBound, out)
+	}
+}
+
+// Negative (order engine-hiss18-cross-repo-reusable-20261027): a workflow without a pull_request
+// trigger is not judged on a draft, so the check neither reads its pinned callee nor reports it
+// as not read, with a reader and without one.
+func TestAuditWorkflowTriggers_ExternalReusable_PushOnlyCallerNotRead(t *testing.T) {
+	pushOnly := "on:\n  push:\n    branches: [main]\njobs:\n  release:\n    uses: " + testExternalRef + "\n"
+	root := triggerRepository(t, map[string]string{"release.yml": pushOnly})
+	reader := newMapReusableReader()
+	for _, opts := range []WorkflowTriggerOptions{
+		{Root: root, Today: triggersToday, Callees: reader},
+		{Root: root, Today: triggersToday, CalleesNotRead: "--offline"},
+	} {
+		out, err := AuditWorkflowTriggers(t.Context(), opts)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if strings.Contains(out, "[SKIP]") || strings.Contains(out, "[WARN]") || !strings.HasPrefix(out, "[PASS]") {
+			t.Fatalf("push-only caller must pass without a skip line:\n%s", out)
+		}
+	}
+	if len(reader.calls) > 0 {
+		t.Fatalf("reader was asked for the callee of a push-only workflow: %v", reader.calls)
 	}
 }

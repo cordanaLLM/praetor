@@ -124,49 +124,58 @@ func auditOffline(t *testing.T, root string) string {
 	return out
 }
 
-// TestAuditWorkflowTriggers_CLI_ExternalReusable tests that calling a pinned external reusable
-// workflow through the CLI audit passes with a stand-in forge without HISS-18 warnings, and under
-// --offline reports a SKIP line without warnings.
-// Order: engine-hiss18-cross-repo-reusable-20261027.
+// TestAuditWorkflowTriggers_CLI_ExternalReusable runs the audit's HISS-18 gate on a workflow
+// whose pull_request job calls a reusable workflow of another repository pinned to a commit
+// (order engine-hiss18-cross-repo-reusable-20261027). With a token, the gate reads the callee at
+// the pin from a stand-in forge and passes; with --offline or without a token, it names the call
+// as not read and asks the forge nothing. The other audit gates are left out, because the
+// required-check discovery of the branch protection gate refuses a call to another repository on
+// its own terms.
 func TestAuditWorkflowTriggers_CLI_ExternalReusable(t *testing.T) {
+	const (
+		action = "lusoris/SnatchArr/.github/workflows/commit-policy.yml"
+		sha    = "2bf15d49f0eca695707a999808bccd988e2160e1"
+	)
 	calleeBody := "on: workflow_call\njobs:\n  gate:\n    runs-on: ubuntu-latest\n    steps:\n" +
 		ghworkflow.HostedGateDraftStep + "      - run: make check\n"
+	var requests []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/vnd.github.raw+json")
-		w.WriteHeader(http.StatusOK)
+		requests = append(requests, r.URL.Path+"?"+r.URL.RawQuery+" "+r.Header.Get("Accept"))
 		_, _ = w.Write([]byte(calleeBody))
 	}))
 	defer server.Close()
-
-	origEndpoint := actionsForgeEndpoint
-	origToken := resolveActionsToken
+	origEndpoint, origToken := actionsForgeEndpoint, resolveActionsToken
+	t.Cleanup(func() { actionsForgeEndpoint, resolveActionsToken = origEndpoint, origToken })
 	actionsForgeEndpoint = server.URL
-	resolveActionsToken = func(ctx context.Context) string { return "test-token" }
-	t.Cleanup(func() {
-		actionsForgeEndpoint = origEndpoint
-		resolveActionsToken = origToken
-	})
+	token := "test-token"
+	resolveActionsToken = func(context.Context) string { return token }
 
-	f := newAuditFixture(t)
-	const caller = "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\njobs:\n" +
-		"  commits:\n    continue-on-error: true\n    uses: lusoris/SnatchArr/.github/workflows/commit-policy.yml@2bf15d49f0eca695707a999808bccd988e2160e1\n"
-	writeFixtureFile(t, f.dir, ".github/workflows/ci.yml", caller)
-
-	// Stand-in forge via actionsForgeEndpoint + resolveActionsToken stubs -> no HISS-18 WARN.
-	out, err := f.audit(t)
-	if err != nil {
-		t.Fatalf("audit failed: %v\nOutput: %s", err, out)
-	}
-	mustContain(t, out, "[PASS] Workflow triggers (HISS-18):")
-	if strings.Contains(out, "[WARN] Workflow triggers") {
-		t.Fatalf("unexpected HISS-18 warning:\n%s", out)
+	root := t.TempDir()
+	writeFixtureFile(t, root, ".github/workflows/ci.yml", "on:\n  pull_request:\n"+
+		"    types: [opened, synchronize, reopened, ready_for_review]\njobs:\n  commits:\n    uses: "+action+"@"+sha+"\n")
+	gate := func(offline bool) string {
+		out, err := captureStdout(t, func() error {
+			return auditWorkflowTriggers(t.Context(), &config.Manifest{}, root, offline)
+		})
+		if err != nil {
+			t.Fatalf("HISS-18 gate failed: %v\n%s", err, out)
+		}
+		return out
 	}
 
-	// --offline -> SKIP line.
-	outOffline := auditOffline(t, f.dir)
-	mustContain(t, outOffline, "[SKIP] Workflow triggers (HISS-18): .github/workflows/ci.yml:5: job commits calls lusoris/SnatchArr/.github/workflows/commit-policy.yml@2bf15d49f0eca695707a999808bccd988e2160e1: --offline; draft handling not judged.")
-	mustContain(t, outOffline, "[PASS] Workflow triggers (HISS-18):")
-	if strings.Contains(outOffline, "[WARN] Workflow triggers") {
-		t.Fatalf("unexpected HISS-18 warning under --offline:\n%s", outOffline)
+	out := gate(false)
+	mustContain(t, out, "[PASS] Workflow triggers (HISS-18): workflows read: 1;")
+	want := "/repos/lusoris/SnatchArr/contents/.github/workflows/commit-policy.yml?ref=" + sha + " application/vnd.github.raw+json"
+	if strings.Contains(out, "[WARN]") || strings.Contains(out, "[SKIP]") || len(requests) != 1 || requests[0] != want {
+		t.Fatalf("online gate: requests %q, want [%q]\n%s", requests, want, out)
+	}
+
+	skip := "[SKIP] Workflow triggers (HISS-18): .github/workflows/ci.yml:5: job commits calls the reusable workflow " +
+		action + " of another repository at the pinned commit " + sha + ", which was not read ("
+	mustContain(t, gate(true), skip+"--offline)")
+	token = ""
+	mustContain(t, gate(false), skip+"no forge token")
+	if len(requests) != 1 {
+		t.Fatalf("offline or tokenless gate asked the forge: %q", requests)
 	}
 }
