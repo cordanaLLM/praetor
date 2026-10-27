@@ -207,6 +207,7 @@ def pre_push(remote):
               f"{base[:12] if base else 'the full tree'}")
         check_refactor_range(base, head)
         check_docstring_range(base, head)
+        check_merge_range(base, head)
         if not names:
             continue
         check_pushed_snapshot(head, base, mode, names)
@@ -240,6 +241,17 @@ def check_docstring_range(base, head):
         print("Docstring check: skipped, no pushed-range base; CI checks pull request range")
         return
     cli(["docstrings", "check", f"--base={base}", f"--head={head}"])
+
+
+def check_merge_range(base, head):
+    """Refuse merge commits in the pushed range that drop first-parent work.
+
+    Order: engine-dropped-hunk-gate-20261027.
+    """
+    if not base:
+        print("Merge check: skipped, no pushed-range base; CI checks pull request range")
+        return
+    cli(["merge-check", f"--range={base}..{head}"])
 
 
 def check_commits(base):

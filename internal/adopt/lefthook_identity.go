@@ -43,7 +43,10 @@ const (
 // security job and did not change. The "engine from PATH" entries, one per language set with and
 // without the REUSE job and with and without checkpoint jobs, are the renderings whose governance
 // jobs ran whichever praetorctl came first on PATH instead of the engine the repository pins
-// (engineLauncherFile, #906).
+// (engineLauncherFile, #906). The "before merge-check gate" entries, one per language set with
+// and without checkpoint jobs, REUSE job, and tool-module scanner, are the renderings before the
+// pre-push merge-check gate refused merge commits dropping first-parent work
+// (Order: engine-dropped-hunk-gate-20261027).
 var priorLefthookDigests = map[string]string{
 	"b42730d0163c379cbd04622339fd63bc3cd9715599f256c85c12ea94d19be984": "before docstrings job, governance jobs only",
 	"3b94e71702d2bbcdbedc9880ccc3d627895eb1251a437277842cea5b8a05f017": "before docstrings job, governance jobs only, checkpoint jobs",
