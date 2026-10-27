@@ -452,6 +452,10 @@ type Manifest struct {
 	// Gate configures the anti-direct-merge gating pipeline: declared_verify_timeout sets the stage
 	// bound for the declared-verification stage. It is repository-only and stays out of ResolvedPolicy.
 	Gate *GatePolicy `yaml:"gate,omitempty"`
+	// Release configures release governance gates such as release.e2e end-to-end test evidence
+	// per feature and fix commit since the last release tag (order engine-release-feature-e2e-gate-20261027).
+	// It is repository-only and stays out of ResolvedPolicy.
+	Release *ReleasePolicy `yaml:"release,omitempty"`
 	// Licensing configures the licensing gate checks: copyright holder format, etc.
 	// (order engine-fr-rule-checks-20261027).
 	Licensing *LicensingPolicy `yaml:"licensing,omitempty"`
@@ -541,6 +545,7 @@ var manifestValidators = [...]func(*Manifest) error{
 	validateManifestEfficiency,
 	validateManifestSkills,
 	validateManifestGate,
+	validateManifestRelease,
 	validateManifestLicensing,
 }
 
