@@ -17,12 +17,12 @@ upstream schemas (`TestOnlyTheManifestIsEmbedded`). The types generated from the
 
 | Client or format | Vendored file | Upstream | Pin | Licence |
 | --- | --- | --- | --- | --- |
-| Claude Code settings | `claude/claude-code-settings.json` | SchemaStore `src/schemas/json/claude-code-settings.json` | commit `ce64da2` | Apache-2.0 |
-| Gemini CLI settings | `gemini/settings.schema.json` | `google-gemini/gemini-cli` `schemas/settings.schema.json` | `v0.63.0` | Apache-2.0 |
-| Codex config | `codex/config.schema.json` | `openai/codex` `codex-rs/core/config.schema.json` | `rust-v0.162.0` | Apache-2.0 |
-| Codex hook events | `codex/hooks/*.command.{input,output}.schema.json` (23 files) | `openai/codex` `codex-rs/hooks/schema/generated/` | `rust-v0.162.0` | Apache-2.0 |
+| Claude Code settings | `claude/claude-code-settings.json` | SchemaStore `src/schemas/json/claude-code-settings.json` | commit `92fc4bc` | Apache-2.0 |
+| Gemini CLI settings | `gemini/settings.schema.json` | `google-gemini/gemini-cli` `schemas/settings.schema.json` | `v0.65.0` | Apache-2.0 |
+| Codex config | `codex/config.schema.json` | `openai/codex` `codex-rs/core/config.schema.json` | `rust-v0.164.0` | Apache-2.0 |
+| Codex hook events | `codex/hooks/*.command.{input,output}.schema.json` (23 files) | `openai/codex` `codex-rs/hooks/schema/generated/` | `rust-v0.164.0` | Apache-2.0 |
 | MCP protocol | `mcp/schema.json` | `modelcontextprotocol/modelcontextprotocol` `schema/2025-11-25/schema.json` | `2025-11-25` | MIT |
-| opencode config | `opencode/config.json` | `https://opencode.ai/config.json` | hosted copy, release `v1.18.35` | MIT |
+| opencode config | `opencode/config.json` | `https://opencode.ai/config.json` | hosted copy, release `v1.19.4` | MIT |
 
 `clients capabilities` (and the MCP tool `standards_client_capabilities`) reports the pinned
 version and sources per client in a `schema` member, read from the manifest

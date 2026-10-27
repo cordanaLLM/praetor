@@ -8,9 +8,9 @@
       "repo": "SchemaStore/schemastore",
       "pin_kind": "commit",
       "branch": "master",
-      "pin": "bf7c6745505ccace5568dc0d7f4ae29647e9b41a",
-      "digest_pin": "bf7c6745505ccace5568dc0d7f4ae29647e9b41a",
-      "version": "SchemaStore ce64da2",
+      "pin": "92fc4bc82f9b2eefe38ca54085fcc0181ea1b356",
+      "digest_pin": "92fc4bc82f9b2eefe38ca54085fcc0181ea1b356",
+      "version": "SchemaStore 92fc4bc",
       "url_base": "https://raw.githubusercontent.com/SchemaStore/schemastore/{pin}/",
       "license": "Apache-2.0",
       "copyright": "SchemaStore contributors",
@@ -28,9 +28,9 @@
       "kind": "settings",
       "repo": "google-gemini/gemini-cli",
       "pin_kind": "tag",
-      "pin": "v0.64.0",
-      "digest_pin": "v0.64.0",
-      "version": "v0.63.0",
+      "pin": "v0.65.0",
+      "digest_pin": "v0.65.0",
+      "version": "v0.65.0",
       "url_base": "https://raw.githubusercontent.com/google-gemini/gemini-cli/{pin}/",
       "license": "Apache-2.0",
       "copyright": "Google LLC",
@@ -38,7 +38,7 @@
         {
           "path": "gemini/settings.schema.json",
           "upstream": "schemas/settings.schema.json",
-          "sha256": "202057a264b49954dcecb01c27688f2af4576e162dd1b24a0140467d338c513d"
+          "sha256": "db05663b581a541d72396c18d80b65b64a192cb5a9c0e052af15ec46699fd398"
         }
       ]
     },
@@ -48,9 +48,9 @@
       "kind": "settings",
       "repo": "openai/codex",
       "pin_kind": "tag",
-      "pin": "rust-v0.163.0",
-      "digest_pin": "rust-v0.163.0",
-      "version": "rust-v0.162.0",
+      "pin": "rust-v0.164.0",
+      "digest_pin": "rust-v0.164.0",
+      "version": "rust-v0.164.0",
       "url_base": "https://raw.githubusercontent.com/openai/codex/{pin}/",
       "license": "Apache-2.0",
       "copyright": "OpenAI",
@@ -58,7 +58,7 @@
         {
           "path": "codex/config.schema.json",
           "upstream": "codex-rs/core/config.schema.json",
-          "sha256": "e9dd16b9d1710e57b020e42da4af6d6606e8f44cb028a2e94196dee3890d9170"
+          "sha256": "ea611ee3f12a6df314b3e49585015ec6e2ebc7c3f072ccbf63c21306a4cdb5dc"
         }
       ]
     },
@@ -68,9 +68,9 @@
       "kind": "hooks",
       "repo": "openai/codex",
       "pin_kind": "tag",
-      "pin": "rust-v0.163.0",
-      "digest_pin": "rust-v0.163.0",
-      "version": "rust-v0.162.0",
+      "pin": "rust-v0.164.0",
+      "digest_pin": "rust-v0.164.0",
+      "version": "rust-v0.164.0",
       "url_base": "https://raw.githubusercontent.com/openai/codex/{pin}/",
       "license": "Apache-2.0",
       "copyright": "OpenAI",
@@ -218,9 +218,9 @@
       "kind": "settings",
       "repo": "anomalyco/opencode",
       "pin_kind": "hosted",
-      "pin": "v1.19.3",
-      "digest_pin": "v1.19.3",
-      "version": "v1.18.35 (hosted copy)",
+      "pin": "v1.19.4",
+      "digest_pin": "v1.19.4",
+      "version": "v1.19.4 (hosted copy)",
       "url_base": "https://opencode.ai/",
       "license": "MIT",
       "copyright": "2025 opencode",
@@ -228,7 +228,7 @@
         {
           "path": "opencode/config.json",
           "upstream": "config.json",
-          "sha256": "786b5ffc800629bc22145325beaa1dc4c7e6bdbbd5c5e6afd8cd2d59d9fc863c"
+          "sha256": "2c5da655b5b1b558e71ead3da0dda301aa035b1ac531766e1a0cabc4dcf7ca4a"
         }
       ]
     }
