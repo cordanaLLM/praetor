@@ -33,10 +33,12 @@ puts the same versions on `PATH` for the hooks.
 temporary positive, negative and boundary fixtures. The engine version comes from
 `.config/semgrep/requirements.txt`; missing or mismatched engines fail the check.
 This is rule regression coverage, not a replacement for repository source scans.
-For an isolated installation, use the tested 1.178.0 release (Python 3.14 locally):
+For an isolated installation, install the release that file pins into a directory named after
+it (tested with Python 3.14 locally):
 
 ```bash
-PRAETOR_TOOL_DIR="$HOME/.local/share/praetor-tools/semgrep-1.178.0"
+SEMGREP_VERSION="$(sed -n 's/^semgrep==//p' .config/semgrep/requirements.txt)"
+PRAETOR_TOOL_DIR="$HOME/.local/share/praetor-tools/semgrep-$SEMGREP_VERSION"
 python3 -m venv "$PRAETOR_TOOL_DIR"
 "$PRAETOR_TOOL_DIR/bin/python" -m pip install -r .config/semgrep/requirements.txt
 mkdir -p "$HOME/.local/bin"
@@ -45,7 +47,11 @@ semgrep --version
 ```
 
 Keep `$HOME/.local/bin` on `PATH`. The symlink command deliberately refuses to
-replace an existing executable. See the [Semgrep package installation guidance](https://pypi.org/project/semgrep/1.178.0/).
+replace an existing executable. Renovate moves the pin, so `make semgrep-test` fails with
+"semgrep X is required by requirements.txt; installed version is Y" after a bump until the new
+release is installed: run the block again, which installs it beside the old one, and replace
+the link with `ln -sfn "$PRAETOR_TOOL_DIR/bin/semgrep" "$HOME/.local/bin/semgrep"`. See the
+[Semgrep package installation guidance](https://pypi.org/project/semgrep/).
 
 On stop, `checkpoint.py` also judges the linked worktrees changed in the last 24 hours that the
 stopping session touched (recorded per session from its tool calls; without a session id, every
