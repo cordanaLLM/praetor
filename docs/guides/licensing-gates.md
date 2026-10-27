@@ -291,7 +291,7 @@ Tests: `TestCheckCopyrightHolders_PlantedCases` and `TestCheckCopyrightHolders_3
 Kernel-loaded eBPF programs require GPL-compatible licensing for kernel verifier helpers while remaining under the repository's primary license (`CheckBPFLicenses` in [`internal/supplychain/bpf_check.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/supplychain/bpf_check.go)):
 
 - **Kernel-loaded BPF sources**: any file ending with `.bpf.c` or `.bpf.h`, or any C source including `bpf_helpers.h` or `vmlinux.h` and containing a `SEC("` section marker, counts as kernel-loaded BPF.
-- **Mandatory dual licence**: all kernel-loaded BPF source files must declare `SPDX-License-Identifier: EUPL-1.2 OR GPL-2.0-only`. Any BPF file without this expression fails the audit.
+- **Mandatory dual licence**: all kernel-loaded BPF source files must declare the licence expression `EUPL-1.2 OR GPL-2.0-only` in their SPDX licence identifier line. Any BPF file without this expression fails the audit.
 - **GPL-2.0-only restricted**: no other own file in the repository may carry `GPL-2.0-only` (or expressions containing it). Files under `LICENSES/`, vendored directories (`vendor/`, `third_party/`), or covered by REUSE annotations / headers declaring a third-party copyright holder are exempt.
 
 Tests: `TestCheckBPFLicenses_PlantedCases` and `TestCheckBPFLicenses_3D` in `internal/supplychain/bpf_check_test.go`, and `TestAuditLicensing_BPF` in `cmd/standardsctl/audit_reuse_test.go`.

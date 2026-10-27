@@ -285,6 +285,7 @@ func TestAuditLicensing_Issue896(t *testing.T) {
 }
 
 // TestAuditLicensing_CopyrightHolder verifies copyright holder checks through auditLicensing (order engine-fr-rule-checks-20261027).
+// REUSE-IgnoreStart: the fixtures below plant licence headers; they are not this file's licence.
 func TestAuditLicensing_CopyrightHolder(t *testing.T) {
 	today := time.Date(2026, time.October, 27, 12, 0, 0, 0, time.UTC)
 	manifest := &config.Manifest{
@@ -351,3 +352,5 @@ func TestAuditLicensing_BPF(t *testing.T) {
 		t.Fatalf("expected non-BPF GPL failure, got: %v\n%s", err, output)
 	}
 }
+
+// REUSE-IgnoreEnd

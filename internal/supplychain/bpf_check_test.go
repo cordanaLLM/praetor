@@ -11,6 +11,8 @@ import (
 )
 
 // TestCheckBPFLicenses_PlantedCases exercises the planted test cases for BPF dual licensing and GPL restrictions (order engine-fr-rule-checks-20261027).
+
+// REUSE-IgnoreStart: the fixtures below plant licence headers; they are not this file's licence.
 func TestCheckBPFLicenses_PlantedCases(t *testing.T) {
 	const declared = "example-holder <holder@example.invalid>"
 	t.Run("prog.bpf.c with EUPL-1.2 only -> FAIL", func(t *testing.T) { testBPFProgEUPLOnlyCase(t, declared) })
@@ -116,3 +118,5 @@ func testBPFVendoredGPLCase(t *testing.T, declared string) {
 		t.Errorf("expected 0 findings for vendored GPL code, got %v", rep.Findings)
 	}
 }
+
+// REUSE-IgnoreEnd

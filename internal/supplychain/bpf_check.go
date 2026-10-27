@@ -101,7 +101,7 @@ func auditBPFFile(root, rel, declaredName string, tables []ReuseAnnotation) (fin
 	ident := extractLicenseIdentifier(data)
 	if bpf {
 		if ident != RequiredBPFLicenseExpression {
-			return fmt.Sprintf("%s: kernel-loaded BPF source must carry SPDX-License-Identifier: %s", rel, RequiredBPFLicenseExpression), true, nil
+			return fmt.Sprintf("%s: kernel-loaded BPF source must carry %s %s", rel, reuseHeaderTag, RequiredBPFLicenseExpression), true, nil
 		}
 		return "", true, nil
 	}
@@ -220,14 +220,14 @@ func fileCarriesGPL(ident, rel string, tables []ReuseAnnotation) bool {
 	return false
 }
 
-// extractLicenseIdentifier reads SPDX-License-Identifier from the file header.
+// extractLicenseIdentifier reads the licence identifier (reuseHeaderTag) from the file header.
 func extractLicenseIdentifier(content []byte) string {
 	lines := strings.Split(string(content), "\n")
 	for i := 0; i < len(lines) && i < 100; i++ {
 		line := lines[i]
-		idx := strings.Index(line, "SPDX-License-Identifier:")
+		idx := strings.Index(line, reuseHeaderTag)
 		if idx != -1 {
-			expr := line[idx+len("SPDX-License-Identifier:"):]
+			expr := line[idx+len(reuseHeaderTag):]
 			expr = strings.TrimSpace(expr)
 			expr = strings.TrimSuffix(expr, "*/")
 			expr = strings.TrimSuffix(expr, "-->")
