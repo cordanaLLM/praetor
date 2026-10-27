@@ -760,8 +760,10 @@ ranges. REF-03 public API invariance remains covered by the engine API compatibi
 requiring per-hunk conflict resolution. It scans merge commits in the pushed range (or
 `origin/<default-branch>..HEAD` in `make verify-all`), reading each merge commit's parents and
 merge-base. If first parent $P_1$ modified a file relative to merge base $B$, the merge commit $M$
-must not take the second parent $P_2$'s blob wholesale (when $P_2 \ne P_1$) or delete the file while
-$P_1$ preserved it. Findings refuse push and name the merge commit, file, and remedy (`Fix: resolve inside conflict markers, re-merge.`).
+must not drop non-conflicting first-parent hunks in favor of second parent $P_2$'s blob or delete the
+file while $P_1$ preserved it. A three-way merge reconstruction (`git merge-file -p --theirs`) verifies
+whether non-conflicting first-parent work vanished from $M$. Findings refuse push and name the merge
+commit, file, and remedy (`Fix: resolve inside conflict markers, re-merge.`).
 
 These checks are not re-run per commit:
 

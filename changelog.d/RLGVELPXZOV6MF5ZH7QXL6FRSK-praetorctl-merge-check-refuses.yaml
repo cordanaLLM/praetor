@@ -1,2 +1,2 @@
 type: fixed
-title: praetorctl merge-check refuses merge commits dropping first-parent work
+title: praetorctl merge-check judges dropped hunks with three-way merge reconstruction

@@ -87,6 +87,44 @@ func TestMergeCheckCommand_DroppedHunkFails(t *testing.T) {
 	}
 }
 
+// Boundary: unrelated histories -> stated line, exit 0.
+// Order: engine-dropped-hunk-gate-20261027.
+func TestMergeCheckCommand_UnrelatedHistories_StatedLine(t *testing.T) {
+	dir := t.TempDir()
+	testsupport.InitGitRepoWithOrigin(t, dir, "")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"config", "user.name", "Test"},
+		[]string{"config", "user.email", "test@example.com"},
+		[]string{"config", "init.defaultBranch", "main"},
+		[]string{"config", "commit.gpgsign", "false"},
+	)
+	writeMergeFile(t, dir, "a.txt", "one\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "a.txt"}, []string{"commit", "-m", "chore: one"}, []string{"branch", "-M", "main"})
+
+	// Orphan branch with unrelated history
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "--orphan", "other"})
+	testsupport.RunFixtureGit(t, dir, []string{"rm", "-f", "a.txt"})
+	writeMergeFile(t, dir, "b.txt", "two\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "b.txt"}, []string{"commit", "-m", "chore: two"})
+
+	// Merge into main with --allow-unrelated-histories
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "main"})
+	testsupport.RunFixtureGit(t, dir, []string{"merge", "--allow-unrelated-histories", "--no-edit", "other"})
+
+	stdout, err := captureStdout(t, func() error {
+		return dispatchCommandFrom(context.Background(), "merge-check", []string{"--dir=" + dir, "--range=main~1..main"})
+	})
+	if err != nil {
+		t.Fatalf("expected nil error on unrelated histories, got: %v", err)
+	}
+	if !strings.Contains(stdout, "no merge base, not judged") {
+		t.Errorf("expected 'no merge base, not judged', got %q", stdout)
+	}
+	if strings.Contains(stdout, "[FAIL]") {
+		t.Errorf("unexpected [FAIL] in output: %s", stdout)
+	}
+}
+
 func writeMergeFile(t *testing.T, dir, rel, content string) {
 	t.Helper()
 	path := filepath.Join(dir, filepath.FromSlash(rel))

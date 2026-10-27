@@ -53,13 +53,19 @@ func emitMergeCheckResult(res *mergecheck.Result) error {
 		fmt.Printf("merge-check: no merge commits in range %s\n", res.Range)
 		return nil
 	}
-	if len(res.Findings) == 0 {
-		fmt.Printf("[PASS] merge-check: %d merge commit(s) verified in %s: clean\n", res.MergesCount, res.Range)
-		return nil
+	for i := 0; i < len(res.Notices) && i < mergecheck.DefaultMaxMerges; i++ {
+		fmt.Println(res.Notices[i])
 	}
-	for i := 0; i < len(res.Findings) && i < mergecheck.DefaultMaxMerges; i++ {
-		fmt.Println(mergecheck.FormatFinding(res.Findings[i]))
+	if len(res.Findings) > 0 {
+		for i := 0; i < len(res.Findings) && i < mergecheck.DefaultMaxMerges; i++ {
+			fmt.Println(mergecheck.FormatFinding(res.Findings[i]))
+		}
+		fmt.Fprintln(os.Stderr, "Fix: resolve inside conflict markers, re-merge.")
+		return exitStatusError{code: 1}
 	}
-	fmt.Fprintln(os.Stderr, "Fix: resolve inside conflict markers, re-merge.")
-	return exitStatusError{code: 1}
+	verified := res.MergesCount - len(res.Notices)
+	if verified > 0 {
+		fmt.Printf("[PASS] merge-check: %d merge commit(s) verified in %s: clean\n", verified, res.Range)
+	}
+	return nil
 }
