@@ -28,7 +28,8 @@ from checks import (go_packages, source_checks, governance_commands, context_cha
                     semgrep_commands, is_fixture, is_chart_template, file_checks, gofmt_check,
                     lint_commands, golangci_lint_command, self_test_commands,
                     run_full_gate, gate_timeout, FIXTURE_DIRECTORY, GATE_LAUNCH_MARGIN,
-                    GATE_QUERY_TIMEOUT, SEMGREP_LANGUAGE_EXTENSIONS, SEMGREP_SUFFIXES)
+                    GATE_QUERY_TIMEOUT, SEMGREP_LANGUAGE_EXTENSIONS, SEMGREP_SUFFIXES,
+                    tool_module_dirs, trivy_tool_command, TRIVY_SCANNERS, TRIVY_SEVERITY)
 import hooks
 from hooks import push_updates, new_branch_base, pre_push, push_check_mode, prepare_message
 from privacy import check_private_history, check_private_index
@@ -2445,6 +2446,137 @@ class ScopeAndGuard(unittest.TestCase):
                 commands = jobs.call_args_list[-1].args[0]
                 self.assertIn(gate, commands)
                 self.assertFalse([command for command in commands if command[0] == "govulncheck"])
+
+    def test_tool_module_dirs_finds_nested_go_modules(self):
+        # Order: engine-prepush-trivy-tool-modules-20261027.
+        with tempfile.TemporaryDirectory(prefix="praetor-tool-dirs-") as temp:
+            root = Path(temp)
+            (root / "tools/lefthook").mkdir(parents=True)
+            (root / "tools/lefthook/go.mod").write_text("module example.test/lh\n")
+            (root / "tools/lefthook/go.sum").write_text("")
+            (root / "tools/lint").mkdir(parents=True)
+            (root / "tools/lint/go.mod").write_text("module example.test/lint\n")
+            (root / "tools/apicompat/testdata/alias/base").mkdir(parents=True)
+            (root / "tools/apicompat/testdata/alias/base/go.mod").write_text("module alias\n")
+            (root / "core").mkdir()
+            (root / "core/go.mod").write_text("module core\n")
+
+            dirs = checks.tool_module_dirs(
+                root,
+                [
+                    "tools/lefthook/go.mod",
+                    "tools/lefthook/go.sum",
+                    "tools/lint/go.mod",
+                    "tools/missing/go.mod",
+                    "tools/apicompat/testdata/alias/base/go.mod",
+                    "core/go.mod",
+                    "README.md",
+                ],
+            )
+            self.assertEqual(dirs, ["tools/lefthook", "tools/lint"])
+
+    def test_trivy_tool_command_matches_ci_specification(self):
+        # Order: engine-prepush-trivy-tool-modules-20261027.
+        cmd = checks.trivy_tool_command(["tools/lefthook", "tools/lint"])
+        self.assertEqual(
+            cmd,
+            [
+                "trivy",
+                "fs",
+                "--scanners",
+                "vuln",
+                "--severity",
+                "HIGH,CRITICAL",
+                "--exit-code",
+                "1",
+                "--skip-version-check",
+                "tools/lefthook",
+                "tools/lint",
+            ],
+        )
+
+    def test_prepush_tool_module_trivy_finding_fails(self):
+        # Order: engine-prepush-trivy-tool-modules-20261027.
+        with tempfile.TemporaryDirectory(prefix="praetor-trivy-fail-") as temp:
+            root = Path(temp)
+            (root / "tools/lefthook").mkdir(parents=True)
+            (root / "tools/lefthook/go.mod").write_text("module example.test/lh\n")
+            bin_dir = root / "bin"
+            stand_in(
+                bin_dir,
+                "trivy",
+                'echo "CVE-2026-78669 HIGH in golang.org/x/net" >&2\nexit 1\n',
+            )
+            shadowed = os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")])
+            with mock.patch.dict(os.environ, {"PATH": shadowed}):
+                with self.assertRaises(HookError) as cm:
+                    source_checks(root, ["tools/lefthook/go.mod"])
+            error_msg = str(cm.exception)
+            self.assertIn("tools/lefthook", error_msg)
+            self.assertIn("CVE-2026-78669", error_msg)
+
+    def test_prepush_tool_module_trivy_clean_passes(self):
+        # Order: engine-prepush-trivy-tool-modules-20261027.
+        with tempfile.TemporaryDirectory(prefix="praetor-trivy-pass-") as temp:
+            root = Path(temp)
+            (root / "tools/lefthook").mkdir(parents=True)
+            (root / "tools/lefthook/go.mod").write_text("module example.test/lh\n")
+            bin_dir = root / "bin"
+            args_file = root / "trivy_args.txt"
+            stand_in(
+                bin_dir,
+                "trivy",
+                f'printf "%s\\n" "$@" > "{args_file}"\nexit 0\n',
+            )
+            shadowed = os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")])
+            with mock.patch.dict(os.environ, {"PATH": shadowed}):
+                source_checks(root, ["tools/lefthook/go.mod"])
+            self.assertTrue(args_file.is_file(), "stub trivy was not invoked")
+            argv = args_file.read_text().splitlines()
+            self.assertIn("--severity", argv)
+            self.assertIn("HIGH,CRITICAL", argv)
+            self.assertIn("--exit-code", argv)
+            self.assertIn("1", argv)
+            self.assertIn("--scanners", argv)
+            self.assertIn("vuln", argv)
+            self.assertIn("tools/lefthook", argv)
+
+    def test_prepush_tool_module_trivy_absent_skips_with_notice(self):
+        # Order: engine-prepush-trivy-tool-modules-20261027.
+        with tempfile.TemporaryDirectory(prefix="praetor-trivy-absent-") as temp:
+            root = Path(temp)
+            (root / "tools/lefthook").mkdir(parents=True)
+            (root / "tools/lefthook/go.mod").write_text("module example.test/lh\n")
+            orig_which = shutil.which
+            with mock.patch("shutil.which", side_effect=lambda cmd, *a, **kw: None if cmd == "trivy" else orig_which(cmd, *a, **kw)), \
+                    io.StringIO() as out, \
+                    contextlib.redirect_stdout(out):
+                source_checks(root, ["tools/lefthook/go.mod"])
+                output = out.getvalue()
+            expected = "Trivy not installed: tool-module vulnerability scan skipped for tools/lefthook; CI security.yml runs it"
+            self.assertIn(expected, output)
+
+    def test_prepush_without_tool_module_skips_trivy(self):
+        # Order: engine-prepush-trivy-tool-modules-20261027.
+        with tempfile.TemporaryDirectory(prefix="praetor-trivy-unused-") as temp:
+            root = Path(temp)
+            (root / "go.mod").write_text("module example.test/main\n\ngo 1.27\n")
+            (root / "core").mkdir()
+            (root / "core/core.go").write_text("package core\nfunc Value() int { return 1 }\n")
+            bin_dir = root / "bin"
+            invoked_file = root / "trivy_invoked"
+            stand_in(
+                bin_dir,
+                "trivy",
+                f'touch "{invoked_file}"\nexit 1\n',
+            )
+            shadowed = os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")])
+            with mock.patch.dict(os.environ, {"PATH": shadowed}), \
+                    mock.patch("checks.go_packages", return_value=[]), \
+                    mock.patch("checks.governance_commands", return_value=[]), \
+                    mock.patch("checks.semgrep_commands", return_value=[]):
+                source_checks(root, ["core/core.go"])
+            self.assertFalse(invoked_file.exists(), "trivy must not be invoked when no tool module changed")
 
     def test_local_package_patterns_confine_actual_go_metadata(self):
         with tempfile.TemporaryDirectory(prefix="praetor-package-dirs-") as temp:

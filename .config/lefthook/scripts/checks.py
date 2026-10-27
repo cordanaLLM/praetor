@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 import re
+import shutil
 import sys
 
 from common import HookError, clean_env, paths, present_files, resolved_relative_to, run
@@ -53,6 +54,12 @@ GATE_QUERY_TIMEOUT = 300
 CLI = ["go", "run", "./cmd/standardsctl"]
 # The scanner `praetorctl security govuln` starts, by the name PATH resolves (toolchain.BY_NAME).
 GOVULN_SCANNER = ["govulncheck"]
+# Trivy scan configuration for tool modules; matches CI security.yml.
+# Order: engine-prepush-trivy-tool-modules-20261027.
+TRIVY_SCANNERS = ("vuln",)
+TRIVY_SEVERITY = ("HIGH", "CRITICAL")
+TRIVY_TIMEOUT = 300
+MAX_TOOL_MODULE_DIRS = 64
 
 
 def context_changed(names):
@@ -339,8 +346,61 @@ def checkpoint_checks(directory, names):
     parallel([["go", "test", "-race", "-count=1", "-timeout=5m", *packages]], directory)
 
 
+def tool_module_dirs(directory, names):
+    """Sorted unique tools/<name> folders whose go.mod or go.sum appears in pushed names and exists in tree.
+
+    Order: engine-prepush-trivy-tool-modules-20261027.
+    """
+    found = set()
+    for name in names:
+        if is_fixture(name):
+            continue
+        parts = Path(name.replace("\\", "/")).parts
+        if len(parts) == 3 and parts[0] == "tools" and parts[2] in {"go.mod", "go.sum"}:
+            tool_dir = f"tools/{parts[1]}"
+            if (directory / tool_dir / "go.mod").is_file():
+                found.add(tool_dir)
+                if len(found) >= MAX_TOOL_MODULE_DIRS:
+                    break
+    return sorted(found)
+
+
+def trivy_tool_command(dirs):
+    """Return command scanning nested tool module directories with Trivy.
+
+    Order: engine-prepush-trivy-tool-modules-20261027.
+    """
+    scanners = ",".join(TRIVY_SCANNERS) if isinstance(TRIVY_SCANNERS, (list, tuple)) else str(TRIVY_SCANNERS)
+    severity = ",".join(TRIVY_SEVERITY) if isinstance(TRIVY_SEVERITY, (list, tuple)) else str(TRIVY_SEVERITY)
+    return ["trivy", "fs", "--scanners", scanners, "--severity", severity,
+            "--exit-code", "1", "--skip-version-check", *dirs]
+
+
+def tool_module_check(directory, names, gate="all"):
+    """Scan touched nested tool modules with Trivy at CI severity.
+
+    Order: engine-prepush-trivy-tool-modules-20261027.
+    """
+    if gate not in {"all", "sec", "vuln"}:
+        return
+    dirs = tool_module_dirs(directory, names)
+    if not dirs:
+        return
+    dirs_str = ", ".join(dirs)
+    if shutil.which("trivy") is None:
+        print(f"Trivy not installed: tool-module vulnerability scan skipped for {dirs_str}; "
+              "CI security.yml runs it")
+        return
+    try:
+        run(trivy_tool_command(dirs), cwd=directory, env=clean_env(), timeout=TRIVY_TIMEOUT)
+    except HookError as error:
+        tail = "\n".join(str(error).strip().splitlines()[-30:])
+        raise HookError(f"Trivy tool module vulnerability scan failed for {dirs_str}:\n{tail}") from error
+
+
 def source_checks(directory, names, gate="all", base=None):
     """Verify an exported snapshot; governance bootstraps only its absent private ledger."""
+    tool_module_check(directory, names, gate=gate)
     packages = go_packages(directory, names, reverse=True)
     governance = governance_commands(directory, names, bool(packages), base=base)
     full_gate = gate == "all" and any(cmd[3:4] == ["audit"] for cmd in governance)
