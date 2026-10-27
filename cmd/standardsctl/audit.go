@@ -69,6 +69,7 @@ type auditOptions struct {
 	// and stale entries are reported without failing, so a tree that passed keeps passing.
 	maxStale  int
 	linterLog string
+	release   bool
 }
 
 func runAudit(args []string) error {
@@ -115,6 +116,7 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 	maxStale := fs.Int(maxStaleFlag, 0,
 		"Fail when more than N baseline entries match nothing in the tree; unset, stale entries are reported and the audit passes")
 	linterLog := fs.String("linter-log", "", "Path to golangci-lint log output for stale exclusion checks")
+	releaseFlag := fs.Bool("release", false, "Enforce release-context gates such as release.e2e end-to-end evidence per feat/fix commit")
 	var policy config.EffectiveOptions
 	registerPolicySourceFlags(fs, &policy, "audited root")
 	limitFlags := registerVerificationLimitFlags(fs)
@@ -146,6 +148,7 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 		maxStale:        staleBound,
 		policy:          policy,
 		linterLog:       *linterLog,
+		release:         *releaseFlag,
 	}, nil
 }
 
@@ -198,6 +201,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditJobTimeouts(ctx, manifest, rootDir, opts.offline) },
 		func() error { return auditBuildWarnings(ctx, manifest, rootDir) },
 		func() error { return auditReleaseToken(ctx, manifest, rootDir) },
+		func() error { return auditReleaseE2E(ctx, manifest, rootDir, opts.release) },
 		func() error { return auditDeclaredLinters(ctx, manifest, rootDir, opts.effective, opts.linterLog) },
 		func() error { return auditPaperclipHarness(ctx, manifest, opts) },
 		func() error { return auditCavemanConfiguredSources(ctx, manifest, rootDir) },

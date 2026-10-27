@@ -80,7 +80,7 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 // in order, over the resolved paths p and the effective policy.
 func (s *Server) auditGates(p auditPaths, effective *config.EffectivePolicy) []auditGate {
 	manifest := effective.Manifest
-	return []auditGate{
+	return append([]auditGate{
 		func(ctx context.Context) (string, error) {
 			return auditLockfile(ctx, s.rootDir, p.policy.CatalogRoot, manifest)
 		},
@@ -120,7 +120,7 @@ func (s *Server) auditGates(p auditPaths, effective *config.EffectivePolicy) []a
 			return auditReadmePresentation(ctx, s.rootDir, p.baseline, manifest)
 		},
 		func(ctx context.Context) (string, error) { return auditHookConfig(ctx, manifest, s.rootDir) },
-	}
+	}, releaseE2EAuditGates(s.rootDir, manifest)...)
 }
 
 // auditReadmePresentation runs the CLI audit's README presentation gate over root with the
@@ -272,4 +272,19 @@ func auditHookConfig(ctx context.Context, manifest *config.Manifest, root string
 	}
 	hooks, err := adopt.AuditGitHookConfig(ctx, manifest, root)
 	return hooks.Line, err
+}
+
+func releaseE2EAuditGates(root string, manifest *config.Manifest) []auditGate {
+	if manifest == nil || manifest.Release == nil {
+		return nil
+	}
+	return []auditGate{
+		func(ctx context.Context) (string, error) { return auditReleaseE2E(ctx, root, manifest) },
+	}
+}
+
+// auditReleaseE2E runs the CLI audit's release end-to-end evidence gate over root
+// (order engine-release-feature-e2e-gate-20261027).
+func auditReleaseE2E(ctx context.Context, root string, manifest *config.Manifest) (string, error) {
+	return adopt.AuditReleaseE2E(ctx, root, manifest)
 }
