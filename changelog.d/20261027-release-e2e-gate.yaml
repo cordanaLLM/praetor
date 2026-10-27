@@ -1,6 +1,3 @@
-# Order: engine-release-feature-e2e-gate-20261027
-section: Added
-title: "Release end-to-end test evidence gate in `praetorctl audit` and adoption"
-entries:
-  - "`praetorctl audit` and `standards_audit` now verify that every `feat` or `fix` commit since the last `v[0-9]*` release tag touches a declared end-to-end test path (`release.e2e.paths`) or carries a declared `E2E-Test: <id>` trailer (`release.e2e.tests`), warning outside release context and failing in release context (`--release`, `PRAETOR_RELEASE_PR=true`, or `GITHUB_HEAD_REF` starting with `release-please--`)."
-  - "`praetorctl adopt` now baselines `release.e2e.since` to `HEAD` in `.standards.yaml` for repositories with a release workflow (`release-please` config or version-tag workflow)."
+type: added
+title: "`praetorctl audit` checks that every feat or fix commit since the last release tag carries end-to-end test evidence (a declared e2e path or an E2E-Test trailer naming a declared id); it warns outside release context, fails a release pull request, and adoption baselines release.e2e.since for repositories with a release workflow"
+breaking: false
