@@ -114,35 +114,43 @@ func TestAuditWorkflowTriggers_FullTree_Exceptions(t *testing.T) {
 	}
 }
 
-// Mutant (engine-hiss18-full-tree-on-pr-20261027): guard detection always false causes guarded cases
-// to become red (record line).
-func TestAuditWorkflowTriggers_FullTree_MutantGuardsRed(t *testing.T) {
-	guardJob := "on: pull_request\njobs:\n  lint:\n    if: github.ref == 'refs/heads/main'\n    runs-on: ubuntu-latest\n    steps:\n      - run: pre-commit run --all-files\n"
-	rootJob := triggerRepository(t, map[string]string{"x.yml": guardJob})
-
-	guardStep := "on: pull_request\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - if: github.event_name == 'schedule'\n        run: pre-commit run --all-files\n"
-	rootStep := triggerRepository(t, map[string]string{"x.yml": guardStep})
-
-	// Normal run: both must pass with no full-tree finding
-	if out := auditTriggers(t, rootJob); strings.Contains(out, "full-tree command") {
-		t.Fatalf("job-guarded run must pass:\n%s", out)
+// Negative (engine-hiss18-full-tree-on-pr-20261027): a condition the check does not evaluate (an
+// alternative, an inequality, a negation) reads as unguarded, since it can run the step on a pull
+// request; a plain conjunction with the default-branch guard still passes.
+func TestAuditWorkflowTriggers_FullTree_Negative_WideningConditions(t *testing.T) {
+	step := "    runs-on: ubuntu-latest\n    steps:\n      - run: pre-commit run --all-files\n"
+	for _, condition := range []string{
+		"github.ref == 'refs/heads/main' || github.event_name == 'pull_request'",
+		"github.ref_name != github.event.repository.default_branch",
+		"!startsWith(github.ref, 'refs/tags/')",
+	} {
+		doc := "on: pull_request\njobs:\n  lint:\n    if: ${{ " + condition + " }}\n" + step
+		out := auditTriggers(t, triggerRepository(t, map[string]string{"x.yml": doc}))
+		if !strings.Contains(out, "full-tree command") {
+			t.Errorf("condition %q must read as unguarded:\n%s", condition, out)
+		}
 	}
-	if out := auditTriggers(t, rootStep); strings.Contains(out, "full-tree command") {
-		t.Fatalf("step-guarded run must pass:\n%s", out)
+	guarded := "on: pull_request\njobs:\n  lint:\n    if: github.event_name == 'push' && github.ref == 'refs/heads/main'\n" + step
+	if out := auditTriggers(t, triggerRepository(t, map[string]string{"x.yml": guarded})); strings.Contains(out, "full-tree command") {
+		t.Errorf("conjunction with the default-branch guard must pass:\n%s", out)
 	}
+}
 
-	// Mutant: simulate guard detection returning always false
-	old := guardEvaluator
-	defer func() { guardEvaluator = old }()
-	guardEvaluator = func(string) bool { return false }
-
-	outMutantJob := auditTriggers(t, rootJob)
-	if !strings.Contains(outMutantJob, "full-tree command") {
-		t.Fatalf("mutant must make job-guarded case red (expected full-tree finding), got:\n%s", outMutantJob)
+// pre-commit/action (engine-hiss18-full-tree-on-pr-20261027): the action runs `pre-commit run
+// --all-files` unless extra_args says otherwise, so without extra_args, or with --all-files in
+// them, it is reported; extra_args scoped to the changed files pass.
+func TestAuditWorkflowTriggers_FullTree_PreCommitAction(t *testing.T) {
+	uses := "on: pull_request\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1\n"
+	for name, doc := range map[string]string{
+		"default":   uses,
+		"all files": uses + "        with:\n          extra_args: --all-files --show-diff-on-failure\n",
+	} {
+		if out := auditTriggers(t, triggerRepository(t, map[string]string{"x.yml": doc})); !strings.Contains(out, "pre-commit/action (extra_args") {
+			t.Errorf("%s: pre-commit/action must be reported:\n%s", name, out)
+		}
 	}
-
-	outMutantStep := auditTriggers(t, rootStep)
-	if !strings.Contains(outMutantStep, "full-tree command") {
-		t.Fatalf("mutant must make step-guarded case red (expected full-tree finding), got:\n%s", outMutantStep)
+	scoped := uses + "        with:\n          extra_args: --from-ref origin/main --to-ref HEAD\n"
+	if out := auditTriggers(t, triggerRepository(t, map[string]string{"x.yml": scoped})); strings.Contains(out, "full-tree command") {
+		t.Errorf("scoped pre-commit/action must pass:\n%s", out)
 	}
 }

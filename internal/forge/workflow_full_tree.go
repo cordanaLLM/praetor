@@ -6,6 +6,7 @@ package forge
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -19,11 +20,6 @@ const (
 	// maxRunScriptLines bounds the lines read from one run: body (HISS-02).
 	maxRunScriptLines = 512
 )
-
-// guardEvaluator evaluates whether a condition guards the step to default branch, tags or schedule.
-// Placed in a package variable for testing the mutant where guard detection is always false
-// (engine-hiss18-full-tree-on-pr-20261027).
-var guardEvaluator = isGuardedCondition
 
 var scheduleSubstrings = []string{
 	"github.event_name == 'schedule'",
@@ -77,11 +73,17 @@ func containsAny(s string, targets []string) bool {
 	return false
 }
 
-// isGuardedCondition reports whether a job or step condition references the default branch,
-// tags, or schedule (engine-hiss18-full-tree-on-pr-20261027).
+// unguardingCondition matches what can widen a guard to pull request runs again: an alternative
+// (`||`), an inequality or a negation (`github.ref != 'refs/heads/main'`, `!startsWith(...)`).
+var unguardingCondition = regexp.MustCompile(`\|\||!=|!\s*[(A-Za-z]`)
+
+// isGuardedCondition reports whether a job or step condition limits it to the default branch,
+// tags or schedule: it names one of those and carries no alternative, inequality or negation,
+// which the check does not evaluate and so reads as unguarded (order
+// engine-hiss18-full-tree-on-pr-20261027).
 func isGuardedCondition(condition string) bool {
 	cond := strings.TrimSpace(condition)
-	if cond == "" {
+	if cond == "" || unguardingCondition.MatchString(cond) {
 		return false
 	}
 	c := strings.ReplaceAll(cond, "\"", "'")
@@ -149,7 +151,7 @@ func hasWorkflowTrigger(on *yaml.Node, event string) bool {
 }
 
 func evaluateJobFullTree(w *triggerWorkflow, jobID string, job *workflowJob, hasPR, hasPushNonDefault bool) []workflowTriggerFinding {
-	if guardEvaluator(job.If) {
+	if isGuardedCondition(job.If) {
 		return nil
 	}
 	trigger := resolveJobTrigger(job.If, hasPR, hasPushNonDefault)
@@ -159,10 +161,10 @@ func evaluateJobFullTree(w *triggerWorkflow, jobID string, job *workflowJob, has
 	var findings []workflowTriggerFinding
 	for s := 0; s < len(job.Steps) && s < ghworkflow.MaxStepsPerJob; s++ {
 		step := job.Steps[s]
-		if guardEvaluator(step.If) || strings.TrimSpace(step.Run) == "" {
+		if isGuardedCondition(step.If) {
 			continue
 		}
-		if cmd, found := findFullTreeStepCommand(step.Run); found {
+		if cmd, found := fullTreeStepCommand(step); found {
 			findings = append(findings, buildFullTreeFinding(w, jobID, step, s, trigger, cmd))
 		}
 	}
@@ -204,6 +206,29 @@ func buildFullTreeFinding(w *triggerWorkflow, jobID string, step workflowStep, s
 		Job:      jobID,
 		Problem:  problem,
 	}
+}
+
+// preCommitActionPrefix is the reusable action that runs `pre-commit run --all-files` unless its
+// extra_args input says otherwise.
+const preCommitActionPrefix = "pre-commit/action@"
+
+// fullTreeStepCommand returns the full-tree command a step runs: its run: script, or
+// pre-commit/action without extra_args (default --all-files) or with --all-files in them.
+func fullTreeStepCommand(step workflowStep) (string, bool) {
+	if strings.TrimSpace(step.Run) != "" {
+		return findFullTreeStepCommand(step.Run)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(step.Uses), preCommitActionPrefix) {
+		return "", false
+	}
+	extra, set := step.With["extra_args"]
+	if !set {
+		return "pre-commit/action (extra_args default --all-files)", true
+	}
+	if text := fmt.Sprint(extra); strings.Contains(text, "--all-files") {
+		return "pre-commit/action (extra_args " + text + ")", true
+	}
+	return "", false
 }
 
 // findFullTreeStepCommand searches the script line-by-line for full-tree commands
