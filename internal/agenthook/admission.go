@@ -8,11 +8,15 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/admission"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/sentinel"
 )
 
 // Host admission for heavy commands (#1131, docs/guides/admission.md). With
@@ -96,9 +100,24 @@ var (
 	segmentSeparators = strings.NewReplacer(";", "\n", "&", "\n", "|", "\n", "(", "\n", ")", "\n", "{", "\n", "}", "\n")
 )
 
-// admissionCheck holds the compiled shapes of an enforcing policy.
+// admitWrapperSpec describes the options of `praetorctl admit` so the admission check can
+// inspect the inner heavy step's job count even when wrapped by admit
+// (order engine-hook-build-scope-gate-20261027).
+var admitWrapperSpec = wrapperSpec{
+	values: []string{
+		"--label", "--min-avail-gib", "--min-swap-gib", "--max-load1",
+		"--max-mem-used-pct", "--poll", "--wait", "--memory-high", "--memory-max",
+	},
+}
+
+// admissionCheck holds the compiled shapes and scope/job settings of an enforcing policy
+// (order engine-hook-build-scope-gate-20261027).
 type admissionCheck struct {
-	shapes []*regexp.Regexp
+	shapes    []*regexp.Regexp
+	scopeForm bool
+	divisor   int
+	readHost  func() (sentinel.HostStats, error)
+	numCPU    func() int
 }
 
 // newAdmissionCheck compiles the built-in shapes and hooks.admission.commands; it returns nil
@@ -110,8 +129,21 @@ func newAdmissionCheck(settings config.AdmissionSettings) (*admissionCheck, erro
 	if err := config.ValidateAdmissionCommands(settings.Commands); err != nil {
 		return nil, err
 	}
+	divisor := settings.MaxJobsDivisor
+	if divisor == 0 {
+		divisor = config.DefaultAdmissionMaxJobsDivisor
+	}
+	if err := config.ValidateAdmissionMaxJobsDivisor(divisor); err != nil {
+		return nil, err
+	}
 	sources := append(slices.Clone(builtinHeavyShapes), settings.Commands...)
-	check := &admissionCheck{shapes: make([]*regexp.Regexp, 0, len(sources))}
+	check := &admissionCheck{
+		shapes:    make([]*regexp.Regexp, 0, len(sources)),
+		scopeForm: settings.ScopeForm,
+		divisor:   divisor,
+		readHost:  admission.HostReader("."),
+		numCPU:    runtime.NumCPU,
+	}
 	for index, source := range sources {
 		compiled, err := regexp.Compile(source)
 		if err != nil {
@@ -122,8 +154,36 @@ func newAdmissionCheck(settings config.AdmissionSettings) (*admissionCheck, erro
 	return check, nil
 }
 
+// CheckAdmission evaluates command against the admission settings alone
+// (order engine-hook-build-scope-gate-20261027).
+func CheckAdmission(settings config.AdmissionSettings, command string) (Verdict, error) {
+	check, err := newAdmissionCheck(settings)
+	if err != nil {
+		return Verdict{Outcome: Deny}, err
+	}
+	if check == nil {
+		return Verdict{Outcome: Allow}, nil
+	}
+	return check.judge(command), nil
+}
+
+// WithAdmissionHost overrides the host reader and CPU count of an enforcing policy in tests
+// (order engine-hook-build-scope-gate-20261027).
+func (p *Policy) WithAdmissionHost(readHost func() (sentinel.HostStats, error), cores int) *Policy {
+	if p == nil || p.admission == nil {
+		return p
+	}
+	if readHost != nil {
+		p.admission.readHost = readHost
+	}
+	if cores > 0 {
+		p.admission.numCPU = func() int { return cores }
+	}
+	return p
+}
+
 // judge refuses command when one of its simple commands is a heavy step outside `praetorctl
-// admit`, or when it cannot be read.
+// admit` (or an admitted systemd-run scope), exceeds the job cap, or cannot be read.
 func (c *admissionCheck) judge(command string) Verdict {
 	lines, ok := hiss.ShellCode(command, admissionMaxLines)
 	if !ok {
@@ -147,23 +207,186 @@ func (c *admissionCheck) judge(command string) Verdict {
 func (c *admissionCheck) segment(words []string) string {
 	words = words[:min(len(words), admissionMaxWords)]
 	i := skipPrelude(words)
+	admitted, sawSystemdRun := false, false
+	var scopeMissing []string
 	for depth := 0; i < len(words) && depth < admissionMaxWrappers; depth++ {
-		// `praetorctl admit -- <step>` passes here: praetorctl is neither a shape nor a wrapper,
-		// so the step after it is admit's argument, not a command of this segment.
 		name := commandName(words[i])
 		if privilegeInvocationPattern.MatchString(strings.Join(append([]string{name}, words[i+1:]...), " ")) {
 			return refusal("HISS", evasionMessage+"; privilege escalation prohibited: "+name)
 		}
+		if (name == "praetorctl" || name == "standardsctl") && i+1 < len(words) && words[i+1] == "admit" {
+			admitted = true
+			i = commandAfter(words, i+1, admitWrapperSpec)
+			continue
+		}
 		if shape, ok := c.shape(name, words[i+1:]); ok {
-			return admissionRefusal(shape, stepLabel(name, shape, words[i+1:]))
+			return c.judgeStep(name, shape, words[i+1:], admitted, sawSystemdRun, scopeMissing)
 		}
 		spec, wrapper := admissionWrappers[name]
 		if !wrapper {
 			return ""
 		}
-		i = commandAfter(words, i, spec)
+		next := commandAfter(words, i, spec)
+		if name == "systemd-run" {
+			sawSystemdRun = true
+			scopeMissing = missingScopeArgs(words[i+1 : min(next, len(words))])
+		}
+		i = next
 	}
 	return ""
+}
+
+// judgeStep evaluates a matched heavy step against the job cap, `praetorctl admit`, and the
+// systemd-run scope form (order engine-hook-build-scope-gate-20261027).
+func (c *admissionCheck) judgeStep(name, shape string, args []string, admitted, sawSystemdRun bool, scopeMissing []string) string {
+	if reason := c.jobCapRefusal(shape, args); reason != "" {
+		return reason
+	}
+	if admitted {
+		return ""
+	}
+	label := stepLabel(name, shape, args)
+	if c.scopeForm && sawSystemdRun {
+		return c.judgeScope(shape, label, scopeMissing)
+	}
+	return admissionRefusal(shape, label)
+}
+
+// judgeScope verifies a systemd-run scope wrapper and checks live host memory and swap readings
+// through internal/admission (order engine-hook-build-scope-gate-20261027).
+func (c *admissionCheck) judgeScope(shape, label string, missing []string) string {
+	if len(missing) > 0 {
+		return refusal("HISS", fmt.Sprintf("heavy step systemd-run scope incomplete for %s: missing %s; "+
+			"run: systemd-run --user --scope -p MemoryHigh=8G --expand-environment=no <command> or "+
+			"praetorctl admit --label %s -- <command> (docs/guides/admission.md)",
+			shape, strings.Join(missing, ", "), label))
+	}
+	stats, err := c.readHost()
+	if err != nil {
+		return refusal("HISS", fmt.Sprintf("heavy step systemd-run scope host reading failed for %s: %v (docs/guides/admission.md)", shape, err))
+	}
+	policy := admission.HostCappedPolicy(stats)
+	policy.MaxLoad1 = 0
+	verdict := admission.Judge(stats, policy)
+	if !verdict.Admit {
+		return refusal("HISS", fmt.Sprintf("heavy step systemd-run scope refused for %s: %s (readings: %s; docs/guides/admission.md)",
+			shape, verdict.Reason, admission.ReadingsText(stats)))
+	}
+	return ""
+}
+
+// missingScopeArgs returns the required systemd-run scope arguments absent from args
+// (order engine-hook-build-scope-gate-20261027).
+func missingScopeArgs(args []string) []string {
+	user, scope, memHigh, noExpand := false, false, false, false
+	for i := 0; i < len(args) && i < admissionMaxWords; i++ {
+		switch args[i] {
+		case "--user":
+			user = true
+		case "--scope":
+			scope = true
+		case "--expand-environment=no":
+			noExpand = true
+		default:
+			if hasMemoryHighArg(args[i], args, i) {
+				memHigh = true
+			}
+		}
+	}
+	var missing []string
+	if !user {
+		missing = append(missing, "--user")
+	}
+	if !scope {
+		missing = append(missing, "--scope")
+	}
+	if !memHigh {
+		missing = append(missing, "MemoryHigh")
+	}
+	if !noExpand {
+		missing = append(missing, "--expand-environment=no")
+	}
+	return missing
+}
+
+func hasMemoryHighArg(arg string, args []string, index int) bool {
+	if hasMemoryHighValue(strings.TrimPrefix(arg, "-p")) || hasMemoryHighValue(strings.TrimPrefix(arg, "--property=")) {
+		return true
+	}
+	return (arg == "-p" || arg == "--property") && index+1 < len(args) && hasMemoryHighValue(args[index+1])
+}
+
+func hasMemoryHighValue(prop string) bool {
+	val, ok := strings.CutPrefix(prop, "MemoryHigh=")
+	return ok && val != ""
+}
+
+// jobCapRefusal refuses a heavy step whose -j/--jobs flag exceeds floor(cores/divisor) or is
+// unbounded (order engine-hook-build-scope-gate-20261027).
+func (c *admissionCheck) jobCapRefusal(shape string, args []string) string {
+	raw, bare, found := findJobsArg(args)
+	if !found {
+		return ""
+	}
+	cores := max(c.numCPU(), 1)
+	limit := max(cores/c.divisor, 1)
+	if bare {
+		return refusal("HISS", fmt.Sprintf("heavy step job count unbounded for %s: bare %s on %d cores (limit %d, cores/%d); "+
+			"pass -j%d or lower (docs/guides/admission.md)", shape, raw, cores, limit, c.divisor, limit))
+	}
+	jobs, err := strconv.Atoi(raw)
+	if err != nil || jobs < 1 || jobs > limit {
+		return refusal("HISS", fmt.Sprintf("heavy step job count above cap for %s: %s jobs on %d cores (limit %d, cores/%d); "+
+			"pass -j%d or lower (docs/guides/admission.md)", shape, raw, cores, limit, c.divisor, limit))
+	}
+	return ""
+}
+
+func findJobsArg(args []string) (value string, bare bool, found bool) {
+	for i := 0; i < len(args) && i < admissionMaxWords; i++ {
+		if args[i] == "--" {
+			return "", false, false
+		}
+		next := ""
+		if i+1 < len(args) {
+			next = args[i+1]
+		}
+		if value, bare, found := parseJobsToken(args[i], next); found {
+			return value, bare, true
+		}
+	}
+	return "", false, false
+}
+
+func parseJobsToken(arg, next string) (value string, bare bool, found bool) {
+	if arg == "-j" || arg == "--jobs" {
+		if allDigits(next) {
+			return next, false, true
+		}
+		return arg, true, true
+	}
+	if rest, ok := strings.CutPrefix(arg, "--jobs="); ok {
+		if rest == "" {
+			return "--jobs", true, true
+		}
+		return rest, false, true
+	}
+	if strings.HasPrefix(arg, "-j") && allDigits(arg[2:]) {
+		return arg[2:], false, true
+	}
+	return "", false, false
+}
+
+func allDigits(text string) bool {
+	if text == "" || len(text) > 16 {
+		return false
+	}
+	for i := 0; i < len(text) && i < 16; i++ {
+		if text[i] < '0' || text[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // shape returns the matched part of the first shape the command matches.

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,6 +52,7 @@ type settingKind uint8
 const (
 	kindText    settingKind = iota // string scalar
 	kindBool                       // boolean scalar, canonical "true" or "false"
+	kindInt                        // integer scalar, canonical base-10 digits
 	kindList                       // sequence of strings
 	kindArgv                       // sequence of candidates: a string or a sequence of strings
 	kindEntry                      // clients.selected.<id>, framework.targets.<language>: lists the entry, holds its keys
@@ -103,6 +105,8 @@ var operatorSpecs = map[string]settingSpec{
 	"hooks.command_policy.deny":             {kind: kindList, rule: ruleAppend, maxItems: MaxCommandPolicyDenyPatterns, check: denyList},
 	"hooks.admission":                       {kind: kindMapping},
 	"hooks.admission.enforce":               {kind: kindBool, rule: ruleTighten, strict: "true"},
+	"hooks.admission.scope_form":            {kind: kindBool},
+	"hooks.admission.max_jobs_divisor":      {kind: kindInt, check: intAtLeast(1)},
 	"hooks.admission.commands":              {kind: kindList, rule: ruleAppend, maxItems: MaxAdmissionCommands, check: admissionList},
 	"hooks.python":                          {kind: kindArgv, check: pythonCandidates},
 	"update":                                {kind: kindMapping},
@@ -230,6 +234,25 @@ func ValidateCommandPolicyDeny(patterns []string) error {
 // most 32 patterns, each 1..512 bytes without control bytes, each compiling as RE2.
 func ValidateAdmissionCommands(patterns []string) error {
 	return validatePatterns("admission command", patterns, MaxAdmissionCommands)
+}
+
+// ValidateAdmissionMaxJobsDivisor checks hooks.admission.max_jobs_divisor
+// (order engine-hook-build-scope-gate-20261027).
+func ValidateAdmissionMaxJobsDivisor(divisor int) error {
+	if divisor < 1 {
+		return fmt.Errorf("hooks.admission.max_jobs_divisor must be at least 1, got %d", divisor)
+	}
+	return nil
+}
+
+func intAtLeast(low int) settingCheck {
+	return func(_ string, setting OperatorSetting) error {
+		value, err := strconv.Atoi(setting.Value)
+		if err != nil || value < low {
+			return fmt.Errorf("%s must be an integer of at least %d", setting.Path, low)
+		}
+		return nil
+	}
 }
 
 // validatePatterns is the one check behind every operator RE2 list; what names the list in

@@ -10,6 +10,7 @@ import (
 	"maps"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,8 +69,8 @@ func checkSetting(layer string, spec settingSpec, setting OperatorSetting) error
 
 // kindMembers lists which of Value, List and Argv each value kind may carry.
 var kindMembers = map[settingKind][3]bool{
-	kindText: {true, false, false}, kindBool: {true, false, false}, kindList: {false, true, false},
-	kindArgv: {false, false, true}, kindEntry: {false, false, false},
+	kindText: {true, false, false}, kindBool: {true, false, false}, kindInt: {true, false, false},
+	kindList: {false, true, false}, kindArgv: {false, false, true}, kindEntry: {false, false, false},
 }
 
 func checkShape(spec settingSpec, setting OperatorSetting) error {
@@ -85,6 +86,11 @@ func checkShape(spec settingSpec, setting OperatorSetting) error {
 	}
 	if spec.kind == kindBool && setting.Value != "true" && setting.Value != "false" {
 		return fmt.Errorf("%s must be true or false", setting.Path)
+	}
+	if spec.kind == kindInt {
+		if _, err := strconv.Atoi(setting.Value); err != nil {
+			return fmt.Errorf("%s must be an integer", setting.Path)
+		}
 	}
 	if len(setting.List) > spec.maxItems {
 		return fmt.Errorf("%s exceeds %d entries", setting.Path, spec.maxItems)
@@ -196,6 +202,9 @@ func (m *operatorMerge) finish() (*OperatorSettings, map[string][]string, error)
 			return nil, nil, err
 		}
 	}
+	if settings.Hooks.Admission.Enforce && settings.Hooks.Admission.MaxJobsDivisor == 0 {
+		settings.Hooks.Admission.MaxJobsDivisor = DefaultAdmissionMaxJobsDivisor
+	}
 	return &settings, m.contributors, nil
 }
 
@@ -253,8 +262,11 @@ func (c *ClientSettings) targets() map[string]any {
 }
 
 func (h *HookSettings) targets() map[string]any {
-	return map[string]any{"hooks.scope": &h.Scope, "hooks.command_policy.deny": &h.CommandPolicy.Deny, "hooks.python": &h.Python,
-		"hooks.admission.enforce": &h.Admission.Enforce, "hooks.admission.commands": &h.Admission.Commands}
+	return map[string]any{
+		"hooks.scope": &h.Scope, "hooks.command_policy.deny": &h.CommandPolicy.Deny, "hooks.python": &h.Python,
+		"hooks.admission.enforce": &h.Admission.Enforce, "hooks.admission.scope_form": &h.Admission.ScopeForm,
+		"hooks.admission.max_jobs_divisor": &h.Admission.MaxJobsDivisor, "hooks.admission.commands": &h.Admission.Commands,
+	}
 }
 
 func (u *UpdateSettings) targets() map[string]any {
@@ -311,6 +323,8 @@ func assignTarget(targets map[string]any, key string, setting OperatorSetting) e
 		*field = setting.Value
 	case *bool:
 		*field = setting.Value == "true"
+	case *int:
+		*field, err = strconv.Atoi(setting.Value)
 	case *[]string:
 		*field = slices.Clone(setting.List)
 	case *[][]string:

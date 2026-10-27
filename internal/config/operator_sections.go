@@ -91,12 +91,22 @@ type HookSettings struct {
 	Admission     AdmissionSettings     `json:"admission,omitzero"`
 }
 
-// AdmissionSettings turns on host admission for heavy commands (#1131): with Enforce set, the
-// pre-tool policy refuses a recognised heavy command that does not run through `praetorctl
-// admit`. Commands adds RE2 shapes to the built-in ones. Off by default: a host opts in.
+// DefaultAdmissionMaxJobsDivisor is the built-in job-count divisor when admission is enforced
+// without an explicit hooks.admission.max_jobs_divisor (order engine-hook-build-scope-gate-20261027).
+const DefaultAdmissionMaxJobsDivisor = 3
+
+// AdmissionSettings turns on host admission for heavy commands (#1131,
+// order engine-hook-build-scope-gate-20261027): with Enforce set, the pre-tool policy refuses
+// a recognised heavy command that does not run through `praetorctl admit` or, when ScopeForm
+// is set, inside a `systemd-run --user --scope` wrapper carrying MemoryHigh and
+// `--expand-environment=no`, and refuses a heavy step whose job count exceeds
+// floor(cores / MaxJobsDivisor). Commands adds RE2 shapes to the built-in ones. Off by
+// default: a host opts in.
 type AdmissionSettings struct {
-	Enforce  bool     `json:"enforce,omitzero"`
-	Commands []string `json:"commands,omitzero"`
+	Enforce        bool     `json:"enforce,omitzero"`
+	ScopeForm      bool     `json:"scope_form,omitzero"`
+	MaxJobsDivisor int      `json:"max_jobs_divisor,omitzero"`
+	Commands       []string `json:"commands,omitzero"`
 }
 
 // CommandPolicySettings carries the operator deny patterns (RE2). Organisation names and

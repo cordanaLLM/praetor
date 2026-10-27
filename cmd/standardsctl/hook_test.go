@@ -24,6 +24,9 @@ func TestHookProcessHelper(t *testing.T) {
 	if arguments == "" {
 		return
 	}
+	if fleet := os.Getenv("PRAETOR_HOOK_PROCESS_FLEET"); fleet != "" {
+		t.Setenv("PRAETOR_FLEET_CONFIG", fleet)
+	}
 	if err := dispatchCommand("hook", strings.Fields(arguments)); err != nil {
 		os.Exit(commandExitCode(os.Stderr, err))
 	}
@@ -222,6 +225,25 @@ func TestHookProcessSkipsAnUngovernedWorkspace(t *testing.T) {
 	payload := []byte(`{"cwd":` + quoteJSON(t, governed) + `,"tool_input":{"command":"rm -rf .git/hooks"}}`)
 	if _, exit := hookProcess(t, plain, "claude pre-tool", payload); exit != 2 {
 		t.Errorf("payload workspace ignored: exit %d", exit)
+	}
+}
+
+func TestHookProcessAdmissionCheck(t *testing.T) {
+	root := hookRepository(t, true)
+	fleet := filepath.Join(t.TempDir(), "fleet.yaml")
+	if err := os.WriteFile(fleet, []byte("hooks:\n  admission:\n    enforce: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := "PRAETOR_HOOK_PROCESS_FLEET=" + fleet
+	result, exit := hookProcess(t, root, "admission-check", []byte("make verify-all"), env)
+	if exit != 2 || !bytes.Contains(result.Stderr, []byte("heavy step needs host admission: make")) {
+		t.Fatalf("unwrapped make: exit %d stdout %q stderr %q", exit, result.Stdout, result.Stderr)
+	}
+	if result, exit := hookProcess(t, root, "admission-check", []byte("praetorctl admit -- make"), env); exit != 0 || len(result.Stderr) != 0 {
+		t.Fatalf("admitted make: exit %d stdout %q stderr %q", exit, result.Stdout, result.Stderr)
+	}
+	if result, exit := hookProcess(t, root, "admission-check", []byte("make verify-all")); exit != 0 || len(result.Stderr) != 0 {
+		t.Fatalf("enforcement off: exit %d stdout %q stderr %q", exit, result.Stdout, result.Stderr)
 	}
 }
 

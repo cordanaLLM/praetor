@@ -327,6 +327,8 @@ Every string passes the literal rule shared with the MCP registry
 | `hooks.scope` | `governed` | `governed` guards repositories that carry `.standards.yaml`; `all` guards every workspace |
 | `hooks.command_policy.deny` | `[]` | at most 64 RE2 patterns of up to 512 bytes, compiled at load |
 | `hooks.admission.enforce` | `false` | boolean; `true` refuses heavy commands outside `praetorctl admit` ([heavy-step admission](agent-hooks.md#heavy-step-admission)) |
+| `hooks.admission.scope_form` | `false` | boolean; `true` also accepts `systemd-run --user --scope` with `MemoryHigh=` and `--expand-environment=no` when host memory and swap readings pass |
+| `hooks.admission.max_jobs_divisor` | `3` (when `enforce: true`) | integer `>= 1`; caps `-j` / `--jobs` on heavy commands at `floor(cores / divisor)` |
 | `hooks.admission.commands` | `[]` | at most 32 RE2 shapes of up to 512 bytes, compiled at load, added to the built-in ones |
 | `hooks.python` | `[python3, python, [py, -3]]` | up to 8 candidates: a bare command, or a list of a command and up to 8 arguments; an absolute path only in the workstation layer |
 | `update.channel` | `push` | `push`; `release` is reserved until release artifacts ship |

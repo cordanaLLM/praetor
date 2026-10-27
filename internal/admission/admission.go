@@ -80,6 +80,12 @@ func Judge(stats sentinel.HostStats, p Policy) Verdict {
 
 func gibs(b uint64) float64 { return float64(b) / gib }
 
+// ReadingsText formats the available memory and free swap readings of stats
+// (order engine-hook-build-scope-gate-20261027).
+func ReadingsText(stats sentinel.HostStats) string {
+	return fmt.Sprintf("available %.1f GiB, swap free %s", gibs(stats.RAMFreeBytes), swapText(stats))
+}
+
 func swapText(stats sentinel.HostStats) string {
 	if !stats.SwapMeasured {
 		return "unmeasured"

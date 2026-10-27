@@ -923,6 +923,41 @@ print("fixture hook self-tests passed")
                       else command(nested, *process, data=payload, ok=False))
             self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
 
+    def test_guard_and_command_guard_enforce_admission_through_praetorctl(self):
+        """With hooks.admission.enforce enabled, block_evasion and command_guard reach praetorctl."""
+        fleet_on = Path(self.temp.name) / "fleet-on.yaml"
+        fleet_on.write_text("hooks:\n  admission:\n    enforce: true\n", newline="\n")
+        fleet_off = Path(self.temp.name) / "fleet-off.yaml"
+        fleet_off.write_text("hooks:\n  admission:\n    enforce: false\n", newline="\n")
+        payload = json.dumps({"cwd": str(self.repo), "tool_input": {"command": "make verify-all"}}).encode()
+        admitted = json.dumps({"cwd": str(self.repo), "tool_input": {"command": "praetorctl admit -- make"}}).encode()
+        # Enforcement off: allowed without praetorctl.
+        (self.repo / PRAETORCTL).unlink()
+        env_off = {**os.environ, "PATH": "", "PRAETOR_FLEET_CONFIG": str(fleet_off)}
+        off_res = subprocess.run([sys.executable, "-B", str(GUARD)], cwd=self.repo, env=env_off,
+                                 input=payload, capture_output=True, timeout=10, check=False)
+        self.assertEqual(off_res.returncode, 0, off_res.stderr)
+        self.assertIn(b"PRAETOR_COMMAND_POLICY_OK", off_res.stdout)
+        # Enforcement on, praetorctl absent: refused (fail closed).
+        env_absent = {**os.environ, "PATH": "", "PRAETOR_FLEET_CONFIG": str(fleet_on)}
+        absent_res = subprocess.run([sys.executable, "-B", str(GUARD)], cwd=self.repo, env=env_absent,
+                                    input=payload, capture_output=True, timeout=10, check=False)
+        self.assertNotEqual(absent_res.returncode, 0)
+        self.assertIn(b"[BLOCKED BY HISS]", absent_res.stderr)
+        # Enforcement on, praetorctl present in self.repo: unwrapped make refused, admitted passes.
+        os.link(self.binary, self.repo / PRAETORCTL)
+        env_on = {**os.environ, "PRAETOR_FLEET_CONFIG": str(fleet_on)}
+        cmd_guard = self.repo / ".config/agent/hooks/command_guard.py"
+        refused = subprocess.run([sys.executable, "-B", str(cmd_guard)],
+                                 cwd=self.repo, env=env_on, input=payload, capture_output=True,
+                                 timeout=15, check=False)
+        self.assertEqual(refused.returncode, 2, refused.stderr)
+        self.assertIn(b"heavy step needs host admission: make", refused.stderr)
+        allowed = subprocess.run([sys.executable, "-B", str(cmd_guard)],
+                                 cwd=self.repo, env=env_on, input=admitted, capture_output=True,
+                                 timeout=15, check=False)
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+
     def test_good_index_ignores_unstaged_python_syntax_error(self):
         self.write("strange ; $ name.py", "value = 1\n")
         self.write("strange ; $ name.py", "def invalid(:\n", stage=False)

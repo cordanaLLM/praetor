@@ -8,12 +8,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -379,6 +381,52 @@ func TestParityWithThePythonGuardOnTheEnvironment(t *testing.T) {
 			t.Errorf("%q: python exit %d, go exit %d (%s)", variable, python.exit, response.ExitCode, response.Stderr)
 		}
 		if drift := refusalDrift(variable, python.stderr, response.Stderr); drift != "" {
+			t.Error(drift)
+		}
+	}
+}
+
+func buildParityPraetorctl(t *testing.T) string {
+	t.Helper()
+	binDir := t.TempDir()
+	binName := "praetorctl"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	if _, err := util.RunCommand(context.Background(), "", "go", "build", "-o", filepath.Join(binDir, binName), "../../cmd/standardsctl"); err != nil {
+		t.Fatalf("build praetorctl: %v", err)
+	}
+	return binDir
+}
+
+func TestParityWithThePythonGuardOnAdmission(t *testing.T) {
+	interpreter := testsupport.PythonInterpreter(t)
+	fleet := filepath.Join(t.TempDir(), "fleet.yaml")
+	if err := os.WriteFile(fleet, []byte("hooks:\n  admission:\n    enforce: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	payload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": "make verify-all"}})
+	// Enforcement off: allowed without praetorctl on PATH.
+	if off := runGuardScript(t, interpreter, pythonGuard, payload, nil, []string{"PATH="}); off.exit != 0 || !off.marker {
+		t.Fatalf("enforcement off without praetorctl: exit %d marker %v stderr %q", off.exit, off.marker, off.stderr)
+	}
+	// Enforcement on, praetorctl absent: fail closed.
+	absent := runGuardScript(t, interpreter, pythonGuard, payload, nil, []string{"PATH=", "PRAETOR_FLEET_CONFIG=" + fleet})
+	if absent.exit == 0 || !bytes.Contains(absent.stderr, []byte("[BLOCKED BY HISS]")) {
+		t.Fatalf("praetorctl absent with enforcement on: exit %d marker %v stderr %q", absent.exit, absent.marker, absent.stderr)
+	}
+	// Enforcement on, praetorctl on PATH: Python guard refusal matches Go Policy.Command byte for byte.
+	binDir := buildParityPraetorctl(t)
+	policy, err := BuildPolicy(config.HookSettings{Admission: config.AdmissionSettings{Enforce: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cmd := range []string{"make verify-all", "make -j999"} {
+		cmdPayload := commandPayload(t, map[string]any{"tool_input": map[string]string{"command": cmd}})
+		python := runGuardScript(t, interpreter, pythonGuard, cmdPayload, nil,
+			[]string{"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"), "PRAETOR_FLEET_CONFIG=" + fleet})
+		goVerdict := policy.Command(cmd)
+		if drift := refusalDrift(cmd, python.stderr, []byte(goVerdict.Reason+"\n")); drift != "" {
 			t.Error(drift)
 		}
 	}

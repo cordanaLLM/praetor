@@ -40,9 +40,13 @@ func host(availGiB, swapGiB uint64, load float64) sentinel.HostStats {
 
 // Positive: a host above every bound admits, naming what it read.
 func TestJudge_Positive_AdmitsAboveEveryBound(t *testing.T) {
-	v := Judge(host(20, 50, 10), policy)
+	stats := host(20, 50, 10)
+	v := Judge(stats, policy)
 	if !v.Admit || !strings.Contains(v.Reason, "available 20.0 GiB") {
 		t.Fatalf("verdict %+v", v)
+	}
+	if got := ReadingsText(stats); got != "available 20.0 GiB, swap free 50.0 GiB" {
+		t.Fatalf("readings text %q", got)
 	}
 }
 
@@ -53,6 +57,9 @@ func TestJudge_Negative_HoldsBelowABound(t *testing.T) {
 	} {
 		if v := Judge(stats, policy); v.Admit || v.Reason != want {
 			t.Errorf("verdict %+v, want held for %q", v, want)
+		}
+		if got := ReadingsText(stats); !strings.Contains(got, "available") || !strings.Contains(got, "swap free") {
+			t.Errorf("readings text %q", got)
 		}
 	}
 }
@@ -67,6 +74,9 @@ func TestJudge_Boundary_EdgesAndUnmeasured(t *testing.T) {
 	s.SwapMeasured, s.CPULoadMeasured = false, false
 	if v := Judge(s, policy); !v.Admit || !strings.Contains(v.Reason, "swap free unmeasured") {
 		t.Fatalf("unmeasured swap/load verdict %+v", v)
+	}
+	if got := ReadingsText(s); got != "available 20.0 GiB, swap free unmeasured" {
+		t.Fatalf("unmeasured readings text %q", got)
 	}
 	if v := Judge(sentinel.HostStats{}, policy); !v.Admit || !strings.Contains(v.Reason, "admitted unjudged") {
 		t.Fatalf("no memory source verdict %+v", v)
