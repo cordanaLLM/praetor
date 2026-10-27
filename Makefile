@@ -220,8 +220,18 @@ state-init:
 state-audit: state-init
 	go run ./cmd/standardsctl state audit .
 
-dedupe:
-	go run ./cmd/standardsctl dedupe scan .
+# order engine-dedupe-jscpd-skip-fails-closed-20261027: ensure pinned jscpd is present so foreign clone scan does not skip.
+.PHONY: jscpd
+jscpd:
+	@if [ -x tools/jscpd/node_modules/.bin/jscpd ] && [ "$$(tools/jscpd/node_modules/.bin/jscpd --version 2>/dev/null)" = "jscpd 5.4.2" ]; then \
+		: ; \
+	else \
+		npm ci --prefix tools/jscpd --ignore-scripts --no-audit --no-fund ; \
+	fi
+
+.PHONY: dedupe
+dedupe: jscpd
+	PRAETOR_JSCPD_BIN=$(CURDIR)/tools/jscpd/node_modules/.bin/jscpd go run ./cmd/standardsctl dedupe scan .
 
 # HISS-20: every enforcement claim is replayed against its fixture corpus, so a declared
 # state cannot drift from what the rules actually do -- in either direction.
