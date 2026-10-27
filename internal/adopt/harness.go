@@ -876,8 +876,8 @@ func projectVendorContext(ctx context.Context, s *adoptSession, agentsContent st
 	if err != nil {
 		return fmt.Errorf("context compilation: %w", err)
 	}
-	for i := 0; i < len(res.NotApplicable) && i < maxTranspileTargets; i++ {
-		s.report.recordNotApplicable(res.NotApplicable[i], "Not selected by agent_clients in "+manifestFile)
+	if err := reportExcludedContext(ctx, s, clients, res.NotApplicable); err != nil {
+		return err
 	}
 	roContent, err := agentcontext.ReadOnlyProjection(agentsContent)
 	if err != nil {

@@ -87,7 +87,25 @@ func (s *Server) auditGates(p auditPaths, effective *config.EffectivePolicy) []a
 		func(ctx context.Context) (string, error) {
 			return auditBaselineRatchetWithPolicy(ctx, s.rootDir, p.baseline, effective)
 		},
-		func(ctx context.Context) (string, error) { return auditContextSync(ctx, manifest, p.agents, s.rootDir) },
+		// Order: engine-fr-rule-checks-20261027. Extend the context gate group so its
+		// existing summary count stays compatible; each new check retains its own verdict.
+		func(ctx context.Context) (string, error) {
+			checks := []auditGate{
+				func(ctx context.Context) (string, error) { return adopt.AuditEditorSelection(ctx, manifest, s.rootDir) },
+				func(ctx context.Context) (string, error) { return adopt.AuditRenovateEngineBumps(ctx, s.rootDir) },
+				func(ctx context.Context) (string, error) { return adopt.AuditRustMSRV(ctx, s.rootDir) },
+				func(ctx context.Context) (string, error) { return auditContextSync(ctx, manifest, p.agents, s.rootDir) },
+			}
+			var lines []string
+			for i := 0; i < len(checks) && i < 4; i++ {
+				line, err := checks[i](ctx)
+				if err != nil {
+					return "", err
+				}
+				lines = append(lines, line)
+			}
+			return strings.Join(lines, "\n"), nil
+		},
 		// The CLI audit's caveman gate over nested AGENTS.md, personas and skills (#311).
 		func(ctx context.Context) (string, error) { return compiler.AuditAgentSources(ctx, s.rootDir, p.agents) },
 		func(ctx context.Context) (string, error) {
@@ -113,9 +131,7 @@ func (s *Server) auditGates(p auditPaths, effective *config.EffectivePolicy) []a
 		},
 		// The CLI audit's HISS-10 build-warnings gate (#816).
 		func(ctx context.Context) (string, error) { return auditBuildWarnings(ctx, s.rootDir, manifest) },
-		// The CLI audit's release-token gate.
 		func(ctx context.Context) (string, error) { return auditReleaseToken(ctx, s.rootDir, manifest) },
-		// The CLI audit's shared README presentation standard gate.
 		func(ctx context.Context) (string, error) {
 			return auditReadmePresentation(ctx, s.rootDir, p.baseline, manifest)
 		},

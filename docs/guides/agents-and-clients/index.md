@@ -33,3 +33,19 @@ repository policy from the client-specific adapters the other pages configure.
   selection with `praetorctl models route` from `.config/models/routing.yaml`.
 - [Tribunus data sync](../../tribunus/data-sync.md): the data the Tribunus graph router
   needs before it can route work to a model.
+
+## Keep tracked context within the selected clients
+
+The `agent_clients` list in `.standards.yaml` selects the context projections to generate
+and verify. The `editor-selection` gate in `praetorctl audit` refuses a Git-tracked context
+file belonging to an unselected client. Delete the tracked file, or add that client to
+`agent_clients`. An untracked local copy passes. Omitting `agent_clients` selects every
+supported client; an explicit empty list selects none.
+
+Adoption reports each tracked excluded context file as an action requiring deletion and
+leaves the file available for review. The authoritative paths come from
+`internal/agentcontext/render.go` (`VendorTargets`); the gate and adoption share
+`internal/agentcontext/selection.go`. `TestRepositoryChecksEditorSelection` and
+`TestExcludedContextAdoptionAction` in `internal/adopt/` exercise these cases.
+
+The separate `editors` list selects IDE settings and does not select agent-context files.
