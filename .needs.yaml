@@ -643,7 +643,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: js-yaml
-      version: 5.4.3
+      version: 5.5.0
       language: typescript
       ecosystem: npm
       capability: ui.external.js_yaml
@@ -657,7 +657,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: markdownlint
-      version: 0.41.1
+      version: 0.42.0
       language: typescript
       ecosystem: npm
       capability: ui.external.markdownlint
@@ -685,7 +685,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: smol-toml
-      version: 1.9.0
+      version: 1.9.1
       language: typescript
       ecosystem: npm
       capability: ui.external.smol_toml
@@ -711,4 +711,4 @@ readiness:
     total_third_party_deps: 86
     covered_deps: 0
     gap_deps: 86
-updated_at: 2026-10-26T20:58:19.899389878Z
+updated_at: 2026-10-27T05:04:27.788494515Z

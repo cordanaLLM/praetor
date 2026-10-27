@@ -93,13 +93,13 @@ func containsExactLFLine(text, want string) bool {
 
 func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	wantDirect := map[string]string{
-		"js-yaml":                   "5.4.3",
+		"js-yaml":                   "5.5.0",
 		"jsonc-parser":              "3.3.1",
-		"markdownlint":              "0.41.1",
+		"markdownlint":              "0.42.0",
 		"micromark":                 "4.0.3",
 		"micromark-extension-mdxjs": "3.0.0",
 		"parse5":                    "8.0.1",
-		"smol-toml":                 "1.9.0",
+		"smol-toml":                 "1.9.1",
 	}
 	manifestData, err := Read("package.json")
 	if err != nil {
@@ -149,8 +149,8 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 			t.Fatalf("%s lacks exact version, source, or integrity", name)
 		}
 	}
-	if lock.Packages["node_modules/markdownlint"].Version != "0.41.1" {
-		t.Fatal("markdownlint is not pinned to 0.41.1")
+	if lock.Packages["node_modules/markdownlint"].Version != "0.42.0" {
+		t.Fatal("markdownlint is not pinned to 0.42.0")
 	}
 	if lock.Packages["node_modules/micromark"].Version != "4.0.3" {
 		t.Fatal("micromark is not pinned to 4.0.3")
@@ -174,7 +174,7 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	// markdownlint-configure-file comments) from the locked install, so all four are direct
 	// dependencies installed at the top level.
 	for name, version := range map[string]string{
-		"js-yaml": "5.4.3", "markdownlint": "0.41.1", "jsonc-parser": "3.3.1", "smol-toml": "1.9.0",
+		"js-yaml": "5.5.0", "markdownlint": "0.42.0", "jsonc-parser": "3.3.1", "smol-toml": "1.9.1",
 	} {
 		if lock.Packages["node_modules/"+name].Version != version {
 			t.Fatalf("%s is not installed at the top level pinned to %s", name, version)

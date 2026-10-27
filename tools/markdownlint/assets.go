@@ -201,6 +201,10 @@ var priorDigests = map[string]string{
 	"3a106cfded4ad0e3072715dc5c9b454d637bf34d37eeb48d5e68a88662d6a9d0": Directory + "/no-private-scratch-links.mjs",
 	// verify.mjs with an unused catch binding in readLintSource (ESLint no-unused-vars), shipped by #1252.
 	"91bc63a7141e3962f9134e645fe6d09ef7262c21fb0dac18c98843f7061d82a2": Directory + "/verify.mjs",
+	// package.json and package-lock.json on markdownlint 0.41.1, js-yaml 5.4.3, smol-toml 1.9.0 and
+	// katex 0.19.0, before the markdown gate lock update (#801).
+	"b2f28f69e4ec7599c47ba77576ed425f49612f78d0c2308ac62b67772d151ccb": Directory + "/package.json",
+	"dc250eced16decfc99f38e830952d1e8679e2a2e68cd0faa7b893cd7aef8e795": Directory + "/package-lock.json",
 }
 
 var assetNames = [...]string{

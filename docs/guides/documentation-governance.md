@@ -75,7 +75,9 @@ the installed `markdownlint` is the version the lock pins and exposes the
 synchronous entry the children import (`markdownlintLibrary`). A mismatch fails
 the gate with status 2, also when no file is selected for styling
 (`lintEntrySelfTest`). The runner reads that version from the lock, so a pin
-update leaves `verify.mjs` unchanged. The temporary installation is removed
+update leaves `verify.mjs` unchanged; the gate locks `markdownlint` 0.42.0 alongside
+`js-yaml` 5.5.0, `smol-toml` 1.9.1, and `re2js` 2.8.6 in
+`tools/markdownlint/package.json` and its lock file. The temporary installation is removed
 after success or failure.
 
 A finding prints as `markdownlint-cli2`'s default formatter printed it, one line
