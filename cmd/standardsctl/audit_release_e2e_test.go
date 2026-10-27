@@ -56,8 +56,18 @@ func TestAuditReleaseE2E_FlagAndGate(t *testing.T) {
 	runGitForAuditTest(t, repo, "tag", "v0.1.0")
 	writeAndCommitAuditTestFile(t, repo, "src/b.go", "package src\n", "feat: add b")
 
-	manifest := &config.Manifest{}
-	if err := auditReleaseE2E(t.Context(), manifest, repo, false); err != nil {
+	emptyManifest := &config.Manifest{}
+	out, err := captureStdout(t, func() error {
+		return auditReleaseE2E(t.Context(), emptyManifest, repo, true)
+	})
+	if err != nil || strings.TrimSpace(out) != "[SKIP] Release end-to-end evidence not checked: release.e2e not declared." {
+		t.Fatalf("missing section auditReleaseE2E = %q, %v", out, err)
+	}
+
+	manifest := &config.Manifest{Release: &config.ReleasePolicy{E2E: &config.ReleaseE2EPolicy{}}}
+	if _, err := captureStdout(t, func() error {
+		return auditReleaseE2E(t.Context(), manifest, repo, false)
+	}); err != nil {
 		t.Fatalf("non-release auditReleaseE2E expected pass with warning, got %v", err)
 	}
 	err = auditReleaseE2E(t.Context(), manifest, repo, true)
