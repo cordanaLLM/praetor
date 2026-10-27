@@ -6,6 +6,7 @@ package testsupport
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -74,13 +75,33 @@ func RunFakeJscpd(args []string, defaultVersion string, stdout, stderr io.Writer
 		}
 		return 1
 	}
-	if err := os.WriteFile(filepath.Join(outDir, "jscpd-report.json"), fakeJscpdReport(), 0o600); err != nil {
+	if err := writeInDir(outDir, "jscpd-report.json", fakeJscpdReport()); err != nil {
 		if _, werr := fmt.Fprintln(stderr, "fake jscpd: write report:", err); werr != nil {
 			return 2
 		}
 		return 1
 	}
 	return 0
+}
+
+// readInDir reads the file name names inside dir, confined to dir through os.Root.
+func readInDir(dir, name string) (data []byte, err error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	return root.ReadFile(name)
+}
+
+// writeInDir writes data to the file name names inside dir, confined to dir through os.Root.
+func writeInDir(dir, name string, data []byte) (err error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	return root.WriteFile(name, data, 0o600)
 }
 
 // fakeJscpdOutDir reads the output field of the configuration file the -c argument names.
@@ -95,7 +116,7 @@ func fakeJscpdOutDir(args []string) (string, error) {
 	if cfgPath == "" {
 		return "", fmt.Errorf("missing -c flag")
 	}
-	data, err := os.ReadFile(cfgPath)
+	data, err := readInDir(filepath.Dir(cfgPath), filepath.Base(cfgPath))
 	if err != nil {
 		return "", fmt.Errorf("read config %s: %w", cfgPath, err)
 	}
