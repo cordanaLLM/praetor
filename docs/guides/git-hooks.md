@@ -9,7 +9,9 @@ themselves, from fixed names, and prove each before they run it
 Install `yamllint`, `shellcheck`, `actionlint` and `hadolint`
 when editing their file types; applicable checks fail if their tool is missing
 or older than its floor ([linter version floors](#linter-version-floors)).
-Strict source pushes also require `gosec`, `govulncheck` and `semgrep`. Golangci-lint runs
+Strict source pushes also require `gosec`, `govulncheck` and `semgrep`. Pushes touching nested tool
+modules (`tools/*/go.mod` or `go.sum`) also scan those directories with Trivy at CI severity
+(`HIGH,CRITICAL`), skipping with a stated notice when Trivy is not installed. Golangci-lint runs
 from the pinned `tools/lint/go.mod` tool directive when present, or from a matching directive
 in `tools/go/go.mod`. The hook refuses Go pushes when neither module pins it; add a golangci-lint
 tool directive to `tools/lint/go.mod` before pushing. Adoption does not currently create that pin.
