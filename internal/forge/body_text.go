@@ -1,5 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
 // SPDX-License-Identifier: EUPL-1.2
-// SPDX-FileCopyrightText: 2026 Lusoris <lusoris@proton.me>
 
 package forge
 
@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -14,7 +16,7 @@ import (
 // Order: engine-fr-rule-checks-20261027. Body paragraphs keep one physical line.
 var bodyTableDelimiter = regexp.MustCompile(`^\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)+\|?$`)
 
-var nonProseLine = regexp.MustCompile(`^(?:#{1,6}(?:[ \t]|$)|[-*+][ \t]|[0-9]{1,9}[.)][ \t]|[>|]|\[[^]]+\]:|[-*_]{3,}[ \t]*$|[=-]+[ \t]*$)`)
+var nonProseLine = regexp.MustCompile(`^(?:#{1,6}(?:[ \t]|$)|[-*+][ \t]|[0-9]{1,9}[.)][ \t]|[><|]|\[[^]]+\]:|[-*_]{3,}[ \t]*$|[=-]+[ \t]*$|[A-Z][A-Za-z-]*: \S|(?:Fixes|Closes|Resolves|Refs) #[0-9]+)`)
 
 // BodyHardWrapFindings checks pull request and issue prose; commits retain 72-column wrapping.
 // Bodies above the scalar line bound fail rather than being scanned in part.
@@ -38,9 +40,14 @@ func BodyHardWrapFindings(body string) []string {
 		if prose && previous {
 			findings = append(findings, fmt.Sprintf("body line %d: hard-wrapped prose; keep each paragraph on one line", i+1))
 		}
-		previous = prose
+		previous = prose && bodyWrapCandidate(line)
 	}
 	return findings
+}
+
+func bodyWrapCandidate(line string) bool {
+	line = strings.TrimRightFunc(line, unicode.IsSpace)
+	return utf8.RuneCountInString(line) >= 50 && !strings.ContainsAny(line[len(line)-1:], ".!?:;")
 }
 
 func bodyCommentLine(line string, comment *bool) bool {

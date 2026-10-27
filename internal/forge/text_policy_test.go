@@ -1,9 +1,10 @@
+// SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
 // SPDX-License-Identifier: EUPL-1.2
-// SPDX-FileCopyrightText: 2026 Lusoris <lusoris@proton.me>
 
 package forge
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -11,7 +12,7 @@ import (
 
 // Order: engine-fr-rule-checks-20261027. Planted cases use the public checklist path.
 func TestForgeText_WrappedParagraph(t *testing.T) {
-	result, err := ValidatePRChecklist("First prose line\nsecond prose line.")
+	result, err := ValidatePRChecklist("This paragraph has enough prose to wrap across a physical line\nsecond prose line.")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,9 +134,65 @@ func TestForgeText_OwnBodyAndWrappedCommit(t *testing.T) {
 }
 
 func TestForgeText_TableContextEndsAtBlank(t *testing.T) {
-	body := "a | b\n--- | ---\nc | d\n\nProse with a | pipe\nand a continuation."
+	body := "a | b\n--- | ---\nc | d\n\nThis paragraph has enough prose with a | pipe to wrap mid-sentence\nand a continuation."
 	got := BodyHardWrapFindings(body)
 	if len(got) != 1 || !strings.Contains(got[0], "line 6:") {
 		t.Fatal(got)
+	}
+}
+
+func TestForgeText_HardWrapIntentionalBreaks(t *testing.T) {
+	long := strings.Repeat("prose ", 12)
+	cases := []struct{ name, body string }{
+		{"orders", "Summary.\n\nOrder: engine-a-20261027\nOrder: engine-b-20261027\n"},
+		{"closing_order", "Fixes #12\nOrder: engine-a-20261027\n"},
+		{"html_details", "<details>\n<summary>notes</summary>\n\ntext\n</details>\n"},
+		{"Order_with_short_summary", "Summary\nFollow-up summary.\n\nOrder: engine-a-20261027\nOrder: engine-b-20261027\n"},
+		{"long_sentences", long + "ends.\n" + long + "ends."},
+		{"short_previous", strings.Repeat("x", 49) + "\nContinuation."},
+		{"short_runes", strings.Repeat("界", 49) + "\nContinuation."},
+		{"trimmed_previous", strings.Repeat("x", 49) + " \t\nContinuation."},
+		{"period", long + ".\t\nContinuation."},
+		{"exclamation", long + "!\nContinuation."},
+		{"question", long + "?\nContinuation."},
+		{"colon", long + ":\nContinuation."},
+		{"semicolon", long + ";\nContinuation."},
+		{"html_after_prose", long + "\n  <details>\n<summary>notes</summary>\n</details>"},
+		{"trailers_after_prose", long + "\nOrder: engine-a\nRefs: task\nSigned-off-by: Person"},
+		{"closing_keywords", long + "\nFixes #12\n" + long + "\nCloses #13\n" + long + "\nResolves #14\n" + long + "\nRefs #15"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := BodyHardWrapFindings(tc.body); len(got) != 0 {
+				t.Fatalf("intentional breaks flagged: %v", got)
+			}
+		})
+	}
+}
+
+func TestForgeText_HardWrapProse(t *testing.T) {
+	line72 := strings.Repeat("word ", 14) + "ab"
+	cases := []struct {
+		name, body string
+		lines      []int
+	}{
+		{"wrapped_72_columns", line72 + "\n" + line72 + "\nEnd.", []int{2, 3}},
+		{"at_50_runes", strings.Repeat("x", 50) + "\nContinuation.", []int{2}},
+		{"at_50_multibyte_runes", strings.Repeat("界", 50) + "\nContinuation.", []int{2}},
+		{"lowercase_trailer_is_prose", line72 + "\norder: task", []int{2}},
+		{"incomplete_trailer_is_prose", line72 + "\nOrder:", []int{2}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := BodyHardWrapFindings(tc.body)
+			if len(got) != len(tc.lines) {
+				t.Fatalf("want lines %v, got %v", tc.lines, got)
+			}
+			for i := 0; i < len(tc.lines); i++ {
+				if want := fmt.Sprintf("body line %d:", tc.lines[i]); !strings.Contains(got[i], want) {
+					t.Fatalf("want %s, got %s", want, got[i])
+				}
+			}
+		})
 	}
 }

@@ -1,5 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
 // SPDX-License-Identifier: EUPL-1.2
-// SPDX-FileCopyrightText: 2026 Lusoris <lusoris@proton.me>
 
 package forge
 
