@@ -15,11 +15,11 @@ import (
 // auditReleaseE2E checks that every feat or fix commit since the last release tag
 // carries end-to-end test evidence (order engine-release-feature-e2e-gate-20261027).
 func auditReleaseE2E(ctx context.Context, manifest *config.Manifest, rootDir string, flagRelease bool) error {
-	var policy *config.ReleaseE2EPolicy
-	if manifest != nil && manifest.Release != nil {
-		policy = manifest.Release.E2E
+	var policy *config.ReleasePolicy
+	if manifest != nil {
+		policy = manifest.Release
 	}
-	line, err := release.AuditE2E(ctx, rootDir, policy, release.IsReleaseContext(flagRelease))
+	line, err := release.AuditE2E(ctx, rootDir, policy, flagRelease)
 	if err != nil {
 		return err
 	}

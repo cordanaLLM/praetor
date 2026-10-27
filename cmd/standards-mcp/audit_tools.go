@@ -16,6 +16,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/mcp"
 	"github.com/cordanaLLM/praetor/internal/readmepresentation"
+	"github.com/cordanaLLM/praetor/internal/release"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -36,10 +37,9 @@ type auditPaths struct {
 // text is the [FAIL] line.
 type auditGate func(ctx context.Context) (string, error)
 
-// runAuditGates executes the MCP governance audit. Unlike the previous implementation
-// it runs the HISS invariant scanner against the recorded baseline and checks the
-// policy-mandated repository files, so the summary reflects what was verified instead
-// of an unconditional compliance claim.
+// runAuditGates executes the MCP governance audit: it runs the HISS invariant scanner
+// against the recorded baseline and checks the policy-mandated repository files, so the
+// summary reflects what was verified instead of an unconditional compliance claim.
 func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResult {
 	var report mcpTextBuilder
 
@@ -298,16 +298,13 @@ func auditHookConfig(ctx context.Context, manifest *config.Manifest, root string
 }
 
 func releaseE2EAuditGates(root string, manifest *config.Manifest) []auditGate {
-	if manifest == nil || manifest.Release == nil {
-		return nil
+	var policy *config.ReleasePolicy
+	if manifest != nil {
+		policy = manifest.Release
 	}
 	return []auditGate{
-		func(ctx context.Context) (string, error) { return auditReleaseE2E(ctx, root, manifest) },
+		func(ctx context.Context) (string, error) {
+			return release.AuditE2E(ctx, root, policy, false)
+		},
 	}
-}
-
-// auditReleaseE2E runs the CLI audit's release end-to-end evidence gate over root
-// (order engine-release-feature-e2e-gate-20261027).
-func auditReleaseE2E(ctx context.Context, root string, manifest *config.Manifest) (string, error) {
-	return adopt.AuditReleaseE2E(ctx, root, manifest)
 }

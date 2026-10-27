@@ -564,7 +564,7 @@ func TestServer_Positive_PlanAndAuditOnSyncedRepo(t *testing.T) {
 	audit := callTool(t, srv, "standards_audit", nil)
 	expectText(t, "audit", audit, "[PASS] Technical debt baseline verified")
 	expectText(t, "audit", audit, "[PASS] Cross-agent context targets verified in sync")
-	expectText(t, "audit", audit, "passed: 14/14")
+	expectText(t, "audit", audit, "passed: 15/15")
 }
 
 // The heading names the tool, never a repository; the manifest identity follows it (#361).

@@ -35,15 +35,10 @@ const (
 	hostedGateDraftStepFunc      = "hostedGateDraftStep"
 	hostedGateStepIfFunc         = "hostedGateStepIf"
 	hostedGateManifestStepIfFunc = "hostedGateManifestStepIf"
-	hostedGateReleasePREnvFunc   = "hostedGateReleasePREnv"
 	securityGovulnVersionFunc    = "securityGovulnVersion"
 	securityGosecVersionFunc     = "securityGosecVersion"
 	securityGitleaksVersionFunc  = "securityGitleaksVersion"
 	securityXToolsVersionFunc    = "securityXToolsVersion"
-
-	// HostedGateReleasePREnv sets PRAETOR_RELEASE_PR from the pull request head ref prefix so
-	// release-please pull requests run audit in release context (order engine-release-feature-e2e-gate-20261027).
-	HostedGateReleasePREnv = "env:\n  PRAETOR_RELEASE_PR: ${{ startsWith(github.head_ref, 'release-please--') }}\n"
 )
 
 // templateFuncs is the function map execute hands every template. It keeps generated workflow
@@ -55,7 +50,6 @@ var templateFuncs = template.FuncMap{
 	hostedGateDraftStepFunc:      func() string { return ghworkflow.HostedGateDraftStep },
 	hostedGateStepIfFunc:         func() string { return ghworkflow.HostedGateStepIf },
 	hostedGateManifestStepIfFunc: func() string { return ghworkflow.HostedGateManifestStepIf },
-	hostedGateReleasePREnvFunc:   func() string { return HostedGateReleasePREnv },
 	securityGovulnVersionFunc:    func() string { return toolpins.GovulnVersion },
 	securityGosecVersionFunc:     func() string { return toolpins.GosecVersion },
 	securityGitleaksVersionFunc:  func() string { return toolpins.GitleaksVersion },
