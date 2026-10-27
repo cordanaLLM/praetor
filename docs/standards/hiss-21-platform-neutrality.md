@@ -232,6 +232,7 @@ those declarations and the step's `REQUIRED` list:
 | `lefthook` | found on `PATH` under this name | asserted on every leg |
 | `semgrep` | found on `PATH` under this name | reported, not asserted |
 | `sh` | found on `PATH` under this name | asserted on every leg |
+| `trivy` | found on `PATH` under this name | reported, not asserted |
 | `actionlint` | version 1.7.12 or newer | reported, not asserted |
 | `hadolint` | installed; no version floor | reported, not asserted |
 | `shellcheck` | version 0.11.0 or newer | asserted on every leg |
