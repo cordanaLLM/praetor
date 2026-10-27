@@ -337,11 +337,13 @@ func reconcilePullRequestTemplate(ctx context.Context, s *adoptSession) error {
 		rel = prTemplateUpper
 	}
 	_, err = s.scaffoldFile(ctx, scaffold{
-		rel:      rel,
-		perm:     filePerm,
-		content:  []byte(buildPullRequestTemplate()),
-		created:  "Scaffolded pull request template with HISS verification checklist",
-		verified: "Existing pull request template verified present",
+		rel:       rel,
+		perm:      filePerm,
+		content:   []byte(buildPullRequestTemplate()),
+		prior:     priorPRTemplateDigests,
+		refreshed: "Refreshed the unedited pull request template to keep each paragraph on one line",
+		created:   "Scaffolded pull request template with HISS verification checklist",
+		verified:  "Existing pull request template verified present",
 	})
 	return err
 }
@@ -559,8 +561,7 @@ func buildPullRequestTemplate() string {
 		"## Pre-Merge Verification Checklist",
 		"",
 		"- [ ] Local verification passed: `make verify-all`",
-		"- [ ] No new HISS / NASA Power-of-10 infractions (all new/modified functions",
-		"  $\\le 60$ LOC)",
+		"- [ ] No new HISS / NASA Power-of-10 infractions (functions $\\le 60$ LOC)",
 		"- [ ] 3D Tests included (Positive, Negative, Boundary) for public APIs",
 		"- [ ] Agent contexts in sync: `standardsctl compile-context --verify`",
 		"- [ ] Commit messages adhere to Conventional Commits format",
@@ -625,4 +626,9 @@ Describe the decision taken and the architectural rationale.
 - **Positive**: Benefits and capabilities gained.
 - **Negative**: Trade-offs, migration burden, or constraints imposed.
 `
+}
+
+// Order: engine-fr-rule-checks-20261027. Only unedited prior renderings refresh.
+var priorPRTemplateDigests = map[string]string{
+	"68ab0cf67859f207428dea6901db7121ad32f943838b65f1fe36bf965a7770a2": "template before forge text enforcement",
 }

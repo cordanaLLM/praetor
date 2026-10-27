@@ -100,13 +100,15 @@ func ValidatePRChecklistWithPolicyContext(ctx context.Context, prBody string, po
 		}, errors.New("empty PR body")
 	}
 
-	lines := strings.Split(prBody, "\n")
+	lines := strings.SplitN(prBody, "\n", MaxPRLinesLimit+1)
 	if len(lines) > MaxPRLinesLimit {
-		lines = lines[:MaxPRLinesLimit]
+		return &PRChecklistResult{Errors: []string{fmt.Sprintf("PR body exceeds %d lines", MaxPRLinesLimit)}}, nil
 	}
 
 	res := &PRChecklistResult{}
 	scanChecklistLines(lines, res)
+	res.Errors = append(res.Errors, BodyHardWrapFindings(prBody)...)
+	res.Errors = append(res.Errors, ForeignReferenceFindings(prBody, "pull request body", policy.ClosingReferences.OwnOrganizations)...)
 	closingErrors, closingWarnings := closingReferenceFindings(ctx, strings.Join(lines, "\n"), "pull request body", policy.ClosingReferences)
 	res.Errors = append(res.Errors, closingErrors...)
 	res.Warnings = append(res.Warnings, closingWarnings...)
@@ -426,6 +428,7 @@ func AnalyzeCommitWithPolicy(ctx context.Context, message string, closingPolicy 
 	if reason := commitSubjectError(header); reason != "" {
 		res.Errors = append(res.Errors, reason)
 	}
+	res.Errors = append(res.Errors, ForeignReferenceFindings(message, "commit message", closingPolicy.OwnOrganizations)...)
 	closingErrors, closingWarnings := closingReferenceFindings(ctx, trimmed, "commit message", closingPolicy)
 	res.Errors = append(res.Errors, closingErrors...)
 	res.Warnings = append(res.Warnings, closingWarnings...)

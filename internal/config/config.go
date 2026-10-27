@@ -447,6 +447,8 @@ type Manifest struct {
 	// Skills declares pinned upstream skill libraries (skills.upstream). It is repository-only,
 	// like Documentation.
 	Skills *SkillsPolicy `yaml:"skills,omitempty"`
+	// Forge configures the repository text policy (engine-fr-rule-checks-20261027).
+	Forge *ForgeTextPolicy `yaml:"forge,omitempty"`
 	// Gate configures the anti-direct-merge gating pipeline: declared_verify_timeout sets the stage
 	// bound for the declared-verification stage. It is repository-only and stays out of ResolvedPolicy.
 	Gate *GatePolicy `yaml:"gate,omitempty"`
@@ -516,6 +518,7 @@ func parseManifest(path string, data []byte) (*Manifest, error) {
 // the first that fails names the manifest's error. A table keeps parseManifest at constant
 // complexity however many sections the manifest gains (HISS-04).
 var manifestValidators = [...]func(*Manifest) error{
+	validateManifestForgeText,
 	validateManifestReviewPolicy,
 	validateManifestRegister,
 	validateManifestRepository,

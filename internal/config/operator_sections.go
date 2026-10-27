@@ -164,6 +164,8 @@ type ForgeSettings struct {
 	// may take it over (`praetorctl issue claim`, #937).
 	// Unset (zero) means DefaultClaimStale.
 	ClaimStale time.Duration `json:"claim_stale,omitzero"`
+	// OwnOrganizations permits references to additional owners in repository forge text.
+	OwnOrganizations []string `json:"own_organizations,omitzero"`
 }
 
 // DefaultClaimStale is the built-in stale window of an issue claim.

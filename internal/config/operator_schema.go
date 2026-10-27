@@ -130,6 +130,7 @@ var operatorSpecs = map[string]settingSpec{
 	"framework.targets.*.checkout":          {host: true, check: frameworkCheckout},
 	"framework.migration_branch":            {check: optional(branchName)},
 	"forge":                                 {kind: kindMapping},
+	"forge.own_organizations":               {kind: kindList, maxItems: MaxOwnOrganizations, check: ownOrganizationList},
 	"forge.default_owner":                   {check: optional(githubOwner)},
 	"forge.reconcile_repos":                 {kind: kindList, maxItems: MaxReconcileRepos, check: repositoryList},
 	"forge.review_bot":                      {check: optional(reviewBot)},
@@ -478,4 +479,8 @@ func orgContainerList(_ string, setting OperatorSetting) error {
 		}
 	}
 	return nil
+}
+
+func ownOrganizationList(_ string, setting OperatorSetting) error {
+	return ValidateOwnOrganizations(setting.List)
 }

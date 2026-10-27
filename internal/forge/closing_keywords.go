@@ -22,15 +22,17 @@ import (
 // keywords and the reference forms in "Linking a pull request to an issue"; the keyword is
 // case-insensitive and may carry a colon ("Closes: #10").
 //
-// closingKeywordRegex is the one reader of closing references (HISS-19): ParseClosingIssueNumbers
+// referencePattern is the shared grammar of closing and foreign references (HISS-19): ParseClosingIssueNumbers
 // reads closed issue numbers through it, and closingReferenceFindings checks commit messages and
 // pull request bodies through it. Submatches: 1 the keyword; 2 the whole reference; 3-6 a URL's
-// owner, repository, kind (issues, pull or pulls) and number; 7-9 a short reference's owner,
+// owner, repository, kind (issues, pull, pulls or discussions) and number; 7-9 a short reference's owner,
 // repository and number; 10 the number of a GH-N reference.
-var closingKeywordRegex = regexp.MustCompile(`(?i)\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[ \t]*:?\s*(` +
-	`https?://[^\s/]+/([a-z0-9][\w.-]*)/([\w.-]+)/(issues|pulls?)/(\d+)` +
-	`|(?:([a-z0-9][\w.-]*)/)?([\w.-]+)?#(\d+)` +
-	`|gh-(\d+))\b`)
+func referencePattern(kinds, separator string) string {
+	return `https?://[^\s/]+/([a-z0-9][\w.-]*)/([\w.-]+)/(` + kinds + `)/(\d+)` +
+		`|(?:([a-z0-9][\w.-]*)/)?([\w.-]+)?` + separator + `(\d+)` + `|gh-(\d+)`
+}
+
+var closingKeywordRegex = regexp.MustCompile(`(?i)\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[ \t]*:?\s*(` + referencePattern("issues|pulls?", "#") + `)\b`)
 
 // closingAllowMarker starts the line that marks one closing reference as intended: the author
 // opened that pull request, or the reference is an issue the change is meant to close. The line
@@ -74,22 +76,29 @@ func findClosingReferences(text string, limit int) ([]closingReference, bool) {
 
 // newClosingReference builds the reference of one closingKeywordRegex match m in text.
 func newClosingReference(text string, m []int) closingReference {
+	ref := referenceFromMatch(text, m, 2)
+	ref.keyword = text[m[2]:m[3]]
+	return ref
+}
+
+// referenceFromMatch decodes the shared referencePattern submatches; offset skips wrappers.
+func referenceFromMatch(text string, m []int, offset int) closingReference {
 	group := func(n int) string {
+		n += offset
 		if m[2*n] < 0 {
 			return ""
 		}
 		return text[m[2*n]:m[2*n+1]]
 	}
 	ref := closingReference{
-		keyword: group(1),
-		ref:     group(2),
-		owner:   firstNonEmpty(group(3), group(7)),
-		repo:    firstNonEmpty(group(4), group(8)),
-		pull:    strings.HasPrefix(strings.ToLower(group(5)), "pull"),
-		local:   group(9) != "" && group(7) == "" && group(8) == "",
-		line:    strings.Count(text[:m[0]], "\n") + 1,
+		ref:   text[m[2*offset]:m[2*offset+1]],
+		owner: firstNonEmpty(group(1), group(5)),
+		repo:  firstNonEmpty(group(2), group(6)),
+		pull:  strings.HasPrefix(strings.ToLower(group(3)), "pull"),
+		local: group(7) != "" && group(5) == "" && group(6) == "",
+		line:  strings.Count(text[:m[0]], "\n") + 1,
 	}
-	for _, n := range []int{6, 9, 10} {
+	for _, n := range []int{4, 7, 8} {
 		if num, err := strconv.Atoi(group(n)); err == nil {
 			ref.number = num
 		}
@@ -155,6 +164,8 @@ type ClosingReferenceResolver interface {
 type ClosingReferencePolicy struct {
 	Resolver          ClosingReferenceResolver
 	PullRequestAuthor string
+	// OwnOrganizations also includes the owner of the repository being checked.
+	OwnOrganizations []string
 }
 
 // closingReferenceErrors is the legacy offline caller: explicit pull request URLs are errors;
