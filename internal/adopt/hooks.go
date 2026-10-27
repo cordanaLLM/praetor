@@ -329,7 +329,8 @@ func (shape lefthookShape) otherToolGovuln() lefthookShape {
 // reuse-lint job for a REUSE repository), and with the checkpoint lifecycle jobs when checkpoint
 // is set. It opens with a document start and folds every run line longer than yamllint's default
 // limit (lefthookRun), so an adopter whose hooks lint the whole tree with yamllint's defaults
-// accepts it (BUG-782).
+// accepts it (BUG-782). The pre-push merge-check job refuses merge commits dropping first-parent
+// work (Order: engine-dropped-hunk-gate-20261027).
 func buildLefthookYAMLFor(shape lefthookShape, checkpoint bool) string {
 	governed := lefthookGovernedCommand
 	checkpointJobs := ""
@@ -357,6 +358,7 @@ func buildLefthookYAMLFor(shape lefthookShape, checkpoint bool) string {
 		"  parallel: false\n" +
 		"  commands:\n" +
 		lefthookPrePushJobs(shape) +
+		"    merge-check:\n" + lefthookRun(governed("merge-check")) +
 		"    flavor-audit:\n" + lefthookRun(governed("flavor audit .")) +
 		"    audit:\n" + lefthookRun(governed(prePushAuditArgs)) +
 		"    gate:\n" + lefthookRun(governed(prePushGateArgs))

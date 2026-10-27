@@ -64,6 +64,8 @@ pre-push:
         .config/lefthook/engine.sh security govuln; else echo govulncheck is not
         installed, install it with go install
         golang.org/x/vuln/cmd/govulncheck@latest >&2; exit 1; fi
+    merge-check:
+      run: sh .config/lefthook/engine.sh merge-check
     flavor-audit:
       run: sh .config/lefthook/engine.sh flavor audit .
     audit:

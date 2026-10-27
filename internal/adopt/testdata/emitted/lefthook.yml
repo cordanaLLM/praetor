@@ -74,6 +74,8 @@ pre-push:
       run: >-
         sh .config/lefthook/engine.sh security govuln -- go tool
         -modfile=tools/go/go.mod govulncheck
+    merge-check:
+      run: sh .config/lefthook/engine.sh merge-check
     flavor-audit:
       run: sh .config/lefthook/engine.sh flavor audit .
     audit:

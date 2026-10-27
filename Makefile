@@ -447,6 +447,12 @@ hooks-lint:
 	python3 -B scripts/test_emitted_hook_lint.py
 	python3 -B scripts/test_emitted_yaml_lint.py
 
+# Refuse merge commits dropping first-parent work (engine-dropped-hunk-gate-20261027).
+.PHONY: merge-check
+verify-all: merge-check
+merge-check:
+	go run ./cmd/standardsctl merge-check
+
 check-staged:
 	$(HOOK_RUNNER) pre-commit
 
