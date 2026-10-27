@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/dedupe"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
@@ -22,6 +23,10 @@ var testConfigRoot string
 // Linux (XDG_CONFIG_HOME/HOME), macOS (HOME), and Windows (AppData/APPDATA) so tests never touch
 // the developer's real configuration or claim keys.
 func TestMain(m *testing.M) {
+	// The test binary doubles as the fake jscpd of the dedupe tests (testsupport.UseFakeJscpd).
+	if code, ran := testsupport.RunFakeJscpdIfRequested("jscpd " + dedupe.JscpdVersion); ran {
+		os.Exit(code)
+	}
 	installManifestPath = func() (string, error) { return "", nil }
 	resolveActionsToken = func(context.Context) string { return "" }
 	adoptCollaborators = nil
