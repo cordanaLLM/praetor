@@ -30,7 +30,9 @@ const (
 	// DefaultConfig is the repository-relative gitleaks configuration file.
 	DefaultConfig = ".gitleaks.toml"
 	// LogOpts are the log options reading full history and merge commits (#1237).
-	LogOpts = "--full-history --all -m"
+	// Order engine-secretscan-foreign-remote-refs-20261025: read only the repository's
+	// own refs (branches, tags, origin); --all walked refs of other remotes.
+	LogOpts = "--full-history --branches --tags --remotes=origin -m"
 )
 
 // Runner runs one command in dir and returns its standard output; a failure's standard error

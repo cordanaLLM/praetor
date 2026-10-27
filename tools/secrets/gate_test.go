@@ -151,3 +151,29 @@ func TestGate_ExceptionsLifecycle_3D(t *testing.T) {
 		}
 	})
 }
+
+func TestGate_RefScoping_3D(t *testing.T) {
+	if _, err := exec.LookPath("gitleaks"); err != nil {
+		t.Skip("gitleaks not installed on PATH")
+	}
+	dir, leakHash := secrets.BuildForeignRemoteLeakRepo(t)
+
+	t.Run("foreign remote refs excluded", func(t *testing.T) {
+		out, exitCode := runGateCLI(t, dir, "")
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0 on foreign remote ref, got %d: %s", exitCode, out)
+		}
+	})
+
+	t.Run("origin remote ref included", func(t *testing.T) {
+		secrets.UpdateRef(t, dir, "refs/remotes/origin/feature", leakHash)
+		secrets.DeleteRef(t, dir, "refs/remotes/upstream/leak")
+		out, exitCode := runGateCLI(t, dir, "")
+		if exitCode != 3 {
+			t.Fatalf("expected exit code 3 on origin remote ref, got %d: %s", exitCode, out)
+		}
+		if !strings.Contains(out, leakHash) {
+			t.Errorf("output missing leak commit hash %s: %s", leakHash, out)
+		}
+	})
+}

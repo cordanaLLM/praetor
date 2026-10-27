@@ -154,6 +154,47 @@ func BuildRepoWithFile(t testing.TB, gitleaksConfig []byte, relPath, content str
 	return dir
 }
 
+// BuildForeignRemoteLeakRepo creates a repository with a clean main branch and a
+// planted secret commit reachable only from refs/remotes/upstream/leak.
+func BuildForeignRemoteLeakRepo(t testing.TB) (string, string) {
+	t.Helper()
+	dir, recipe := initBaseRepo(t)
+	fileName := recipe.Files["creds_py"]
+
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("clean\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGitCommand(t, dir, "add", ".")
+	runGitCommand(t, dir, "commit", "--quiet", "-m", "init clean")
+
+	runGitCommand(t, dir, "checkout", "--quiet", "-b", "temp_leak")
+	planted := fmt.Sprintf("api_key = %q\n", PlantedSecret())
+	credsPath := filepath.Join(dir, fileName)
+	if err := os.WriteFile(credsPath, []byte(planted), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGitCommand(t, dir, "add", fileName)
+	runGitCommand(t, dir, "commit", "--quiet", "-m", recipe.Messages["ordinary_commit"])
+	leakHash := stringsTrim(runGitCommand(t, dir, "rev-parse", "HEAD"))
+
+	runGitCommand(t, dir, "checkout", "--quiet", "main")
+	runGitCommand(t, dir, "branch", "-D", "temp_leak")
+	runGitCommand(t, dir, "update-ref", "refs/remotes/upstream/leak", leakHash)
+	return dir, leakHash
+}
+
+// UpdateRef updates or creates a git ref in dir.
+func UpdateRef(t testing.TB, dir, ref, commit string) {
+	t.Helper()
+	runGitCommand(t, dir, "update-ref", ref, commit)
+}
+
+// DeleteRef deletes a git ref in dir.
+func DeleteRef(t testing.TB, dir, ref string) {
+	t.Helper()
+	runGitCommand(t, dir, "update-ref", "-d", ref)
+}
+
 // BuildCleanRepo creates a clean repository with zero secrets.
 func BuildCleanRepo(t testing.TB) string {
 	t.Helper()
