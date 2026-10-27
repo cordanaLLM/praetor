@@ -478,6 +478,9 @@ with the manifest's exceptions list). Its findings are `[WARN]` lines and the ga
 only a workflow it cannot read or a malformed `HISS-18` exceptions entry fails it
 ([Workflow trigger audit](workflow-triggers.md),
 `TestServerAuditRunsTheWorkflowTriggerCheck` in `cmd/standards-mcp/audit_policy_test.go`).
+The MCP audit reads nothing from the forge, so where the CLI reads a reusable workflow of another
+repository at the commit its caller pins, `standards_audit` prints a `[SKIP]` line naming the call
+and that reason (`TestServerAuditSkipsAPinnedCallOfAnotherRepository`).
 
 The test-timeout gate runs right after it (`forge.AuditTestTimeouts`, #1381): a workflow line
 that sets a timeout above the 30-minute per-package bound fails the audit unless a live
