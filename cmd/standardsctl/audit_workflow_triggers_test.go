@@ -141,7 +141,9 @@ func TestAuditWorkflowTriggers_CLI_ExternalReusable(t *testing.T) {
 	var requests []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.URL.Path+"?"+r.URL.RawQuery+" "+r.Header.Get("Accept"))
-		_, _ = w.Write([]byte(calleeBody))
+		if _, err := w.Write([]byte(calleeBody)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
 	}))
 	defer server.Close()
 	origEndpoint, origToken := actionsForgeEndpoint, resolveActionsToken
