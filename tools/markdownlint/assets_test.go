@@ -22,6 +22,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestLockedAssetInventory(t *testing.T) {
@@ -408,7 +409,7 @@ func TestGateDeadlineFitsHostedJob(t *testing.T) {
 	for _, required := range []string{"withGateDeadline(GATE_DEADLINE_SECONDS * 1_000, () => {",
 		"const limit = commandLimit(options.timeout ?? DEFAULT_COMMAND_TIMEOUT_MS);", "timeout: limit.ms,",
 		"timeoutReport: (deadline) => lintBudgetReport(", "lintBudgetSelfTest(temporary);",
-		"gateDeadlineSelfTest(temporary);", "onlyModeSelfTest(temporary);"} {
+		"gateDeadlineSelfTest(temporary);", "onlyModeSelfTest(temporary);", "changedSinceSelfTest(temporary);"} {
 		if !strings.Contains(string(data), required) {
 			t.Fatalf("verify.mjs lacks %q", required)
 		}
@@ -585,11 +586,80 @@ func mutateWorkflow(t *testing.T, old, replacement string) string {
 }
 
 const (
-	markdownStep = "      - name: Verify public Markdown" + ghworkflow.HostedGateStepIf +
-		"\n        run: node tools/markdownlint/verify.mjs\n"
+	markdownBaseExpr = "${{ github.event.pull_request.base.sha }}"
+	markdownScript   = `node tools/markdownlint/verify.mjs ${BASE:+--changed-since "$BASE"}`
+	markdownStep     = "      - name: Verify public Markdown" + ghworkflow.HostedGateStepIf +
+		"\n        env:\n          BASE: " + markdownBaseExpr + "\n" +
+		"        run: " + markdownScript + "\n"
 	figureStep = "      - name: Verify figures" + ghworkflow.HostedGateStepIf +
 		"\n        run: |\n          node tools/figures/build.mjs check\n          node tools/figures/build.mjs sources\n"
 )
+
+// markdownStepFault checks that the Verify public Markdown step passes the pull-request base SHA
+// through env BASE to --changed-since without interpolating a GitHub expression into run:
+// (Order: engine-hiss18-emitted-templates-20261027).
+func markdownStepFault(doc string) string {
+	spec, err := ghworkflow.Parse([]byte(doc))
+	if err != nil {
+		return err.Error()
+	}
+	steps, err := ghworkflow.RunSteps(&spec)
+	if err != nil {
+		return err.Error()
+	}
+	index := slices.IndexFunc(steps, func(step ghworkflow.RunStep) bool {
+		return strings.TrimSpace(step.Step.Name) == markdownStepName
+	})
+	if index < 0 {
+		return "the workflow lacks the Markdown step"
+	}
+	step := steps[index].Step
+	baseNode := util.YAMLMappingValue(&step.Env, "BASE")
+	baseVal := ""
+	if baseNode != nil {
+		baseVal = strings.TrimSpace(baseNode.Value)
+	}
+	switch {
+	case strings.Contains(step.Run, "${{"):
+		return "the Markdown step interpolates a GitHub expression into run"
+	case baseVal != markdownBaseExpr:
+		return "the Markdown step env BASE is " + strconv.Quote(baseVal)
+	case strings.TrimSpace(step.Run) != markdownScript:
+		return "the Markdown step runs " + strconv.Quote(strings.TrimSpace(step.Run))
+	}
+	return ""
+}
+
+func TestWorkflowChangedSinceBase(t *testing.T) {
+	if fault := markdownStepFault(Workflow); fault != "" {
+		t.Fatal(fault)
+	}
+	cases := map[string]struct{ doc, fault string }{
+		"whole tree on PR": {
+			mutateWorkflow(t, "        run: "+markdownScript+"\n", "        run: node tools/markdownlint/verify.mjs\n"),
+			"runs \"node tools/markdownlint/verify.mjs\"",
+		},
+		"missing BASE env": {
+			mutateWorkflow(t, "        env:\n          BASE: "+markdownBaseExpr+"\n", ""),
+			"env BASE is \"\"",
+		},
+		"wrong BASE env": {
+			mutateWorkflow(t, markdownBaseExpr, "${{ github.base_ref }}"),
+			"env BASE is \"${{ github.base_ref }}\"",
+		},
+		"direct expression in run": {
+			mutateWorkflow(t, markdownScript, "node tools/markdownlint/verify.mjs --changed-since ${{ github.event.pull_request.base.sha }}"),
+			"interpolates a GitHub expression into run",
+		},
+	}
+	for name, test := range cases {
+		t.Run(name, func(t *testing.T) {
+			if fault := markdownStepFault(test.doc); !strings.Contains(fault, test.fault) {
+				t.Fatalf("markdownStepFault = %q, want one naming %q", fault, test.fault)
+			}
+		})
+	}
+}
 
 // Positive: this repository's own hosted gate is the locked text, byte for byte, so the lint
 // gates that read the copy (scripts/test_emitted_hook_lint.py) judge what adoption writes.
