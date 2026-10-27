@@ -187,7 +187,9 @@ func TestAdmission_JobCountCap(t *testing.T) {
 		"cargo build --jobs 12":         {"12", "32 cores", "limit 10"},
 		"cargo build --jobs":            {"--jobs", "32 cores", "limit 10"},
 		"praetorctl admit -- make -j32": {"32", "32 cores", "limit 10"},
-		"systemd-run --user --scope -p MemoryHigh=8G --expand-environment=no make -j32": {"32", "32 cores", "limit 10"},
+		// admit's own flags (cmd/standardsctl/admit.go) end at `--`; the step after it is judged.
+		"praetorctl admit --timeout 30m --max-load 40 --memory-swap-max 2G -- make -j32": {"32", "32 cores", "limit 10"},
+		"systemd-run --user --scope -p MemoryHigh=8G --expand-environment=no make -j32":  {"32", "32 cores", "limit 10"},
 	} {
 		requireDeniedContaining(t, command, policy.Command(command), substrings...)
 	}
@@ -195,6 +197,8 @@ func TestAdmission_JobCountCap(t *testing.T) {
 		"systemd-run --user --scope -p MemoryHigh=8G --expand-environment=no make -j8",
 		"systemd-run --user --scope -p MemoryHigh=8G --expand-environment=no make -j 10",
 		"praetorctl admit -- make -j8",
+		"praetorctl admit --label verify-all --timeout 30m -- make -j8",
+		"praetorctl admit --label idle",
 		`git commit -s -m "make -j32 verify-all"`,
 	} {
 		if v := policy.Command(allowed); v.Outcome != Allow {

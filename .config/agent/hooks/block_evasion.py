@@ -236,25 +236,26 @@ def admission_enforcement_state():
     return False, False, ""
 
 
-def resolve_praetorctl():
+# An older praetorctl answers `hook admission-check` with this usage error: such a binary is
+# skipped, so a stale bin/praetorctl in a checkout never refuses every command
+# (order engine-hook-build-scope-gate-20261027).
+ADMISSION_UNSUPPORTED = b"unsupported hook client or event"
+
+
+def praetorctl_candidates():
+    """The checkout's bin/praetorctl, then praetorctl on PATH, each once."""
     suffix = ".exe" if os.name == "nt" else ""
+    found = []
     local = Path("bin") / f"praetorctl{suffix}"
     if local.is_file() and os.access(local, os.X_OK):
-        return str(local.resolve())
-    return shutil.which("praetorctl")
+        found.append(str(local.resolve()))
+    on_path = shutil.which("praetorctl")
+    if on_path and on_path not in found:
+        found.append(on_path)
+    return found
 
 
-def check_admission(command_str: str) -> bool:
-    enforce, isolate_manifest, err = admission_enforcement_state()
-    if err:
-        sys.stderr.write(err + "\n")
-        return False
-    if not enforce:
-        return True
-    binary = resolve_praetorctl()
-    if not binary:
-        sys.stderr.write("[BLOCKED BY HISS] heavy-step admission check unavailable: praetorctl not found\n")
-        return False
+def admission_env(isolate_manifest):
     child_env = dict(os.environ)
     if isolate_manifest:
         for var in ("PRAETOR_FLEET_CONFIG", "PRAETOR_WORKSTATION_CONFIG"):
@@ -262,6 +263,11 @@ def check_admission(command_str: str) -> bool:
             if val:
                 child_env["XDG_CONFIG_HOME"] = str(Path(val).resolve().parent)
                 break
+    return child_env
+
+
+def run_admission_check(binary, command_str, child_env):
+    """(verdict, reason): True allows, False refuses, None means this binary predates the check."""
     try:
         result = subprocess.run(
             [binary, "hook", "admission-check"],
@@ -272,14 +278,36 @@ def check_admission(command_str: str) -> bool:
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as error:
-        sys.stderr.write(f"[BLOCKED BY HISS] heavy-step admission check failed: {error}\n")
-        return False
+        return False, f"[BLOCKED BY HISS] heavy-step admission check failed: {error}"
     if result.returncode == 0:
-        return True
+        return True, ""
+    if ADMISSION_UNSUPPORTED in result.stderr:
+        return None, ""
     reason = result.stderr.decode("utf-8", errors="replace").strip()
-    if not reason:
-        reason = f"[BLOCKED BY HISS] heavy-step admission check exited {result.returncode}"
-    sys.stderr.write(reason + "\n")
+    return False, reason or f"[BLOCKED BY HISS] heavy-step admission check exited {result.returncode}"
+
+
+def check_admission(command_str: str) -> bool:
+    enforce, isolate_manifest, err = admission_enforcement_state()
+    if err:
+        sys.stderr.write(err + "\n")
+        return False
+    if not enforce:
+        return True
+    candidates = praetorctl_candidates()
+    child_env = admission_env(isolate_manifest)
+    for binary in candidates[:2]:
+        verdict, reason = run_admission_check(binary, command_str, child_env)
+        if verdict is None:
+            continue
+        if not verdict:
+            sys.stderr.write(reason + "\n")
+        return verdict
+    if candidates:
+        sys.stderr.write("[BLOCKED BY HISS] heavy-step admission check unavailable: praetorctl too old at "
+                         + ", ".join(candidates) + "; update PATH engine or remove bin/praetorctl\n")
+    else:
+        sys.stderr.write("[BLOCKED BY HISS] heavy-step admission check unavailable: praetorctl not found\n")
     return False
 
 def audit_environment() -> bool:

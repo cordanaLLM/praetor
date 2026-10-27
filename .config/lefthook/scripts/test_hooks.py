@@ -958,6 +958,35 @@ print("fixture hook self-tests passed")
                                  timeout=15, check=False)
         self.assertEqual(allowed.returncode, 0, allowed.stderr)
 
+    @unittest.skipIf(os.name == "nt", "the stale-binary stand-in is a POSIX shell script")
+    def test_guard_skips_a_praetorctl_older_than_admission_check(self):
+        """A bin/praetorctl built before admission-check (it answers with the usage error) is skipped
+        for praetorctl on PATH, so a stale checkout binary never refuses every command; with no binary
+        that knows the check the guard refuses naming both (order engine-hook-build-scope-gate-20261027)."""
+        fleet_on = Path(self.temp.name) / "fleet-on.yaml"
+        fleet_on.write_text("hooks:\n  admission:\n    enforce: true\n", newline="\n")
+        payload = json.dumps({"cwd": str(self.repo), "tool_input": {"command": "make verify-all"}}).encode()
+        listing = json.dumps({"cwd": str(self.repo), "tool_input": {"command": "ls -la"}}).encode()
+        stale = self.repo / PRAETORCTL
+        stale.unlink()
+        stale.write_text("#!/bin/sh\necho 'praetor hook: unsupported hook client or event: arguments must match' >&2\n"
+                         "exit 2\n", newline="\n")
+        stale.chmod(0o755)
+        fresh = Path(self.temp.name) / "path-bin"
+        fresh.mkdir()
+        os.link(self.binary, fresh / "praetorctl")
+        env = {**os.environ, "PATH": str(fresh), "PRAETOR_FLEET_CONFIG": str(fleet_on)}
+        for data, code, text in ((payload, 2, b"heavy step needs host admission: make"), (listing, 0, b"")):
+            result = subprocess.run([sys.executable, "-B", str(GUARD)], cwd=self.repo, env=env,
+                                    input=data, capture_output=True, timeout=10, check=False)
+            self.assertEqual(result.returncode != 0, code != 0, result.stderr)
+            self.assertIn(text, result.stderr)
+        env_stale_only = {**os.environ, "PATH": "", "PRAETOR_FLEET_CONFIG": str(fleet_on)}
+        result = subprocess.run([sys.executable, "-B", str(GUARD)], cwd=self.repo, env=env_stale_only,
+                                input=listing, capture_output=True, timeout=10, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"praetorctl too old", result.stderr)
+
     def test_good_index_ignores_unstaged_python_syntax_error(self):
         self.write("strange ; $ name.py", "value = 1\n")
         self.write("strange ; $ name.py", "def invalid(:\n", stage=False)

@@ -100,16 +100,6 @@ var (
 	segmentSeparators = strings.NewReplacer(";", "\n", "&", "\n", "|", "\n", "(", "\n", ")", "\n", "{", "\n", "}", "\n")
 )
 
-// admitWrapperSpec describes the options of `praetorctl admit` so the admission check can
-// inspect the inner heavy step's job count even when wrapped by admit
-// (order engine-hook-build-scope-gate-20261027).
-var admitWrapperSpec = wrapperSpec{
-	values: []string{
-		"--label", "--min-avail-gib", "--min-swap-gib", "--max-load1",
-		"--max-mem-used-pct", "--poll", "--wait", "--memory-high", "--memory-max",
-	},
-}
-
 // admissionCheck holds the compiled shapes and scope/job settings of an enforcing policy
 // (order engine-hook-build-scope-gate-20261027).
 type admissionCheck struct {
@@ -215,8 +205,13 @@ func (c *admissionCheck) segment(words []string) string {
 			return refusal("HISS", evasionMessage+"; privilege escalation prohibited: "+name)
 		}
 		if (name == "praetorctl" || name == "standardsctl") && i+1 < len(words) && words[i+1] == "admit" {
-			admitted = true
-			i = commandAfter(words, i+1, admitWrapperSpec)
+			// The admitted step is everything after admit's `--` (docs/guides/admission.md), so its
+			// job count is judged without a second copy of admit's flag list.
+			step := slices.Index(words[i+2:], "--")
+			if step < 0 {
+				return ""
+			}
+			admitted, i = true, i+2+step+1
 			continue
 		}
 		if shape, ok := c.shape(name, words[i+1:]); ok {
