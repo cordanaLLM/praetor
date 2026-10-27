@@ -2477,7 +2477,7 @@ class ScopeAndGuard(unittest.TestCase):
 
     def test_trivy_tool_command_matches_ci_specification(self):
         # Order: engine-prepush-trivy-tool-modules-20261027.
-        cmd = checks.trivy_tool_command(["tools/lefthook", "tools/lint"])
+        cmd = checks.trivy_tool_command("tools/lefthook")
         self.assertEqual(
             cmd,
             [
@@ -2491,9 +2491,37 @@ class ScopeAndGuard(unittest.TestCase):
                 "1",
                 "--skip-version-check",
                 "tools/lefthook",
-                "tools/lint",
             ],
         )
+
+    def test_prepush_two_tool_modules_scan_one_target_each(self):
+        # Order: engine-1629-landing-failed-20261027-0914. Real trivy fs takes one target; the stub
+        # refuses more than one the same way, and a finding in either module refuses the push.
+        with tempfile.TemporaryDirectory(prefix="praetor-trivy-two-") as temp:
+            root = Path(temp)
+            for name in ("lefthook", "lint"):
+                (root / "tools" / name).mkdir(parents=True)
+                (root / "tools" / name / "go.mod").write_text(f"module example.test/{name}\n")
+            bin_dir = root / "bin"
+            calls = root / "trivy_calls.txt"
+            stand_in(
+                bin_dir,
+                "trivy",
+                f'printf "%s\\n" "$*" >> "{calls}"\n'
+                'last=""; n=0; for a in "$@"; do case "$a" in tools/*) n=$((n+1)); last="$a";; esac; done\n'
+                'if [ "$n" -ne 1 ]; then echo "FATAL multiple targets cannot be specified" >&2; exit 1; fi\n'
+                'if [ "$last" = tools/lint ]; then echo "CVE-2026-78669 HIGH in golang.org/x/net" >&2; exit 1; fi\n'
+                'exit 0\n',
+            )
+            shadowed = os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")])
+            with mock.patch.dict(os.environ, {"PATH": shadowed}):
+                with self.assertRaises(HookError) as cm:
+                    source_checks(root, ["tools/lefthook/go.mod", "tools/lint/go.mod"])
+            error_msg = str(cm.exception)
+            self.assertIn("tools/lint", error_msg)
+            self.assertIn("CVE-2026-78669", error_msg)
+            self.assertNotIn("multiple targets", error_msg)
+            self.assertEqual(len(calls.read_text().splitlines()), 2)
 
     def test_prepush_tool_module_trivy_finding_fails(self):
         # Order: engine-prepush-trivy-tool-modules-20261027.
