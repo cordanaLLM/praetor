@@ -2,11 +2,11 @@
 action reconcile .gitignore :: Private artifact ignore tail block already effective
 report-error refusing to remove drifted documentation asset tools/markdownlint/package.json
 error refusing to remove drifted documentation asset tools/markdownlint/package.json
-file .github/workflows/praetor-docs.yml sha256:5dfc713c093fa90e2c36b042692da07df722535d95248ce4d094dc2ba53328f6
+file .github/workflows/praetor-docs.yml sha256:60c9baed8113117c784c5633dbdad08e3b0d2333b2f7f307faf4a09157d1b4f9
 file tools/markdownlint/package.json sha256:814f0b111bbd33310d28e9307d3ca07556631e895002729953c06f0c1ef6859a
 file tools/markdownlint/package-lock.json sha256:6d2cd064fea008d29c9b5febb88bb09bea28c74e670f4169d224a407f2d9cee8
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
-file tools/markdownlint/verify.mjs sha256:3d65af5a190f353525bb909b540d2cbc1359da1e356e866afb0d7e85f56abed0
+file tools/markdownlint/verify.mjs sha256:239cbed7eebcf5b25dc741de6fb2a519ee3dc0736f3f50cc626bedb5ec40e423
 file tools/markdownlint/no-private-scratch-links.mjs sha256:fb31a8195e6d0527fb908ec3a259e0171dba40fd237bf59197f739c6079763fb
 file .gitignore "bin/\n*.test\n*.out\n.DS_Store\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n.workingdir/\n.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n/.claude/settings.local.json\n/.standards-receipt.json\n# END praetor private artifacts\n"
 file .prettierignore absent
@@ -14,11 +14,11 @@ file .prettierignore absent
 action reconcile .gitignore :: Private artifact ignore tail block already effective
 report-error refusing to remove documentation asset tools/markdownlint/package.json with invalid line endings: text contains mixed LF and CRLF line endings
 error refusing to remove documentation asset tools/markdownlint/package.json with invalid line endings: text contains mixed LF and CRLF line endings
-file .github/workflows/praetor-docs.yml sha256:5dfc713c093fa90e2c36b042692da07df722535d95248ce4d094dc2ba53328f6
+file .github/workflows/praetor-docs.yml sha256:60c9baed8113117c784c5633dbdad08e3b0d2333b2f7f307faf4a09157d1b4f9
 file tools/markdownlint/package.json sha256:478075b86e983158355cb48f3fdd7630b2217b5855be6bfa69c4428b6ae58a25
 file tools/markdownlint/package-lock.json sha256:6d2cd064fea008d29c9b5febb88bb09bea28c74e670f4169d224a407f2d9cee8
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
-file tools/markdownlint/verify.mjs sha256:3d65af5a190f353525bb909b540d2cbc1359da1e356e866afb0d7e85f56abed0
+file tools/markdownlint/verify.mjs sha256:239cbed7eebcf5b25dc741de6fb2a519ee3dc0736f3f50cc626bedb5ec40e423
 file tools/markdownlint/no-private-scratch-links.mjs sha256:fb31a8195e6d0527fb908ec3a259e0171dba40fd237bf59197f739c6079763fb
 file .gitignore "bin/\n*.test\n*.out\n.DS_Store\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n.workingdir/\n.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n/.claude/settings.local.json\n/.standards-receipt.json\n# END praetor private artifacts\n"
 file .prettierignore absent

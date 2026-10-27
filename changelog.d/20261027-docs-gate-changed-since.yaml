@@ -1,0 +1,2 @@
+type: changed
+title: Lint only changed Markdown on pull requests in the emitted documentation gate
