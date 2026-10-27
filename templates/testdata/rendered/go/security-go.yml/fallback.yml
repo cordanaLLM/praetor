@@ -79,10 +79,10 @@ jobs:
           mkdir -p "$d"
           cd "$d"
           go mod init scanners
-          go get golang.org/x/vuln@v1.8.0
-          go get github.com/securego/gosec/v2@v2.29.0
+          go get golang.org/x/vuln@v1.9.0
+          go get github.com/securego/gosec/v2@v2.30.0
           go get github.com/zricethezav/gitleaks/v8@v8.30.1
-          go get golang.org/x/tools@v0.50.0
+          go get golang.org/x/tools@v0.52.0
           go mod download all
           go install golang.org/x/vuln/cmd/govulncheck
           go install github.com/securego/gosec/v2/cmd/gosec

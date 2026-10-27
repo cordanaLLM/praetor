@@ -167,7 +167,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: '@sveltesentio/ui'
-      version: 0.8.0
+      version: 0.8.1
       language: typescript
       ecosystem: npm
       capability: ui.external.sveltesentio_ui
@@ -286,7 +286,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: vite
-      version: 8.3.4
+      version: 8.3.5
       language: typescript
       ecosystem: npm
       capability: ui.external.vite
@@ -608,7 +608,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: playwright
-      version: 1.63.0
+      version: 1.64.1
       language: typescript
       ecosystem: npm
       capability: ui.external.playwright
@@ -636,7 +636,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: jscpd
-      version: 5.4.1
+      version: 5.4.2
       language: typescript
       ecosystem: npm
       capability: ui.external.jscpd
@@ -711,4 +711,4 @@ readiness:
     total_third_party_deps: 86
     covered_deps: 0
     gap_deps: 86
-updated_at: 2026-10-25T23:07:43.099299453Z
+updated_at: 2026-10-26T20:58:19.899389878Z

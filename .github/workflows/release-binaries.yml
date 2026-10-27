@@ -77,7 +77,7 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v5
         with:
-          version: v4.3.0
+          version: v4.3.1
 
       # dockers_v2 builds a multi-platform manifest list with buildx, which needs a
       # docker-container builder. The Dockerfile only copies prebuilt binaries and runs

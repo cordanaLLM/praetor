@@ -314,7 +314,7 @@ outside a manifest. None of them ships in the binaries.
 | [REUSE](https://reuse.software) | License compliance check (reuse lint), installed from a hash-pinned lock in CI and in the emitted REUSE workflow | tool, used by CI | Apache-2.0 AND CC0-1.0 AND CC-BY-SA-4.0 AND GPL-3.0-or-later, the license expression of the PyPI release |
 | [Chromium](https://www.chromium.org) | The browser Playwright downloads in CI to render and check the documentation figures | tool, used by CI | BSD-3-Clause, © 2015 The Chromium Authors |
 | [Probity](https://github.com/nizos/probity) | Optional test-first edit guard for AI coding assistants | tool, used by CI | MIT |
-| [jscpd](https://github.com/kucherenko/jscpd) 5.4.1 | Copy/paste detector for foreign code deduplication in C, C++, CUDA, Python, Rust, shell, and YAML | tool, integrated | MIT, © 2013–2024 Andrey Kucherenko |
+| [jscpd](https://github.com/kucherenko/jscpd) 5.4.2 | Copy/paste detector for foreign code deduplication in C, C++, CUDA, Python, Rust, shell, and YAML | tool, integrated | MIT, © 2013–2024 Andrey Kucherenko |
 
 ## Development dependencies
 
