@@ -183,6 +183,30 @@ func TestServerAuditRunsTheWorkflowTriggerCheck(t *testing.T) {
 	expectText(t, "excepted push", excepted, "passed: 14/14")
 }
 
+// TestServerAuditSkipsAPinnedCallOfAnotherRepository (order engine-hiss18-cross-repo-reusable-20261027):
+// standards_audit reads nothing from the forge, so a pull_request job calling a reusable workflow
+// of another repository pinned to a commit gets the HISS-18 skip line naming the call and that
+// reason, never the warning that the job runs on a draft. The fixture declines the branch ruleset,
+// whose required-check discovery refuses a call to another repository on its own terms.
+func TestServerAuditSkipsAPinnedCallOfAnotherRepository(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	writeFixtureFile(t, root, ".standards.yaml", "version: 1\nrepository:\n  owner: fixture\n  name: repo\n"+
+		"profiles: [framework]\nfacets: []\nadoption:\n  decline:\n    - branch-ruleset\n")
+	if err := os.Remove(filepath.Join(root, ".github", "rulesets", "main.json")); err != nil {
+		t.Fatal(err)
+	}
+	const call = "acme/shared-ci/.github/workflows/gate.yml@2bf15d49f0eca695707a999808bccd988e2160e1"
+	writeFixtureFile(t, root, ".github/workflows/ci.yml", "on:\n  pull_request:\n"+
+		"    types: [opened, synchronize, reopened, ready_for_review]\njobs:\n  gate:\n    uses: "+call+"\n")
+	audit := callTool(t, srv, "standards_audit", nil)
+	expectText(t, "pinned external call", audit, "[SKIP] Workflow triggers (HISS-18): .github/workflows/ci.yml:5: job gate "+
+		"calls the reusable workflow acme/shared-ci/.github/workflows/gate.yml of another repository at the pinned commit "+
+		"2bf15d49f0eca695707a999808bccd988e2160e1, which was not read (the MCP standards_audit reads nothing from the forge)")
+	if text := audit.Content[0].Text; strings.Contains(text, "[WARN] Workflow triggers (HISS-18): .github/workflows/ci.yml") {
+		t.Fatalf("pinned external call reported as a draft run:\n%s", text)
+	}
+}
+
 // TestServerAuditRunsTheBuildWarningsGate (#816): standards_audit runs the HISS-10 gate the CLI
 // audit runs. Boundary: a repository without a build lane skips it with the reason. Negative: a
 // cargo lane without -D warnings fails, naming the workflow and the step. Positive: RUSTFLAGS in
