@@ -27,6 +27,17 @@ before checking changed pinned content, invariant violations, and incomplete sca
 that must fail without changing the baseline. All mutations use disposable
 fixtures. A discovered tool name alone does not prove working behavior.
 
+`standards_audit` also runs the CLI's `editor-selection`, `renovate-engine-bumps` and
+`rust-msrv` checks. Each prints its own verdict inside the context gate group, so the
+existing summary group count stays compatible. The checks refuse tracked context files
+outside `agent_clients`, require engine-update suppression in an existing Renovate
+configuration, and require a pin or workflow build declaration for each Rust minimum.
+They read repository evidence; they do not execute Rust builds. See
+[selected clients](agents-and-clients/index.md#keep-tracked-context-within-the-selected-clients),
+[engine updates](documentation-governance.md#coordinate-engine-updates) and
+[Rust minima](rust-flavors.md). Shared implementation and planted cases live in
+`internal/adopt/`; MCP wire probes must use a fresh server after edits.
+
 ## Native project connections
 
 The MCP server is client-neutral at the wire boundary. Client configuration and

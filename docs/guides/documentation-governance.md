@@ -1143,3 +1143,28 @@ pages. The pull-request gate performs no network requests. Run
 `make docs-lint-test` to replay the valid, drifted, copied-policy, and boundary
 fixtures, including synthetic process and file-status fixtures that need no
 host symlink support.
+
+## Coordinate engine updates
+
+The `renovate-engine-bumps` audit gate requires an existing Renovate configuration to disable
+engine package updates. Adoption adds an owned `packageRules` entry with
+`matchPackageNames`, `enabled: false` and a description identifying coordinated adoption.
+The names derive from the engine module and tool constants: they cover Go module and tool
+pins, GitHub Action references and reusable workflow references. Engine changes therefore
+arrive together with refreshed configuration in one adoption pull request.
+
+The managed-file rule remains separate. An equivalent adopter rule counts only when its
+members are `description`, `matchPackageNames` and `enabled: false`; extra matchers cannot
+prove engine suppression. A later rule that may re-enable updates invalidates an earlier
+engine rule. Adoption reports an unsafe configuration and leaves its bytes intact instead
+of reordering adopter rules. The engine repository itself is exempt by its Go module
+identity, and audit prints `[SKIP]`. A repository without Renovate configuration prints a
+stated `[PASS]` and receives no new configuration.
+
+Discovery and rewrite safety follow the existing `renovate-ignore` rules above. A
+configuration that requires manual editing receives the entries to add. After editing,
+run `praetorctl audit`; `TestRenovateEngineAdoptionReadback` and
+`TestRenovateEngineUnsafeLaterEnable` in `internal/adopt/renovate_engine_test.go` prove the
+write/readback and unsafe paths. See Renovate's
+[`packageRules` documentation](https://docs.renovatebot.com/configuration-options/#packagerules)
+for rule order and matching semantics.

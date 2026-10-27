@@ -139,7 +139,7 @@ func TestRenovateIgnorePositiveDeclaresManagedFilesOnce(t *testing.T) {
 	if want := []string{"$schema", "extends", "ignorePaths", "packageRules", "prConcurrentLimit"}; !slices.Equal(memberNames(root), want) {
 		t.Fatalf("members %v, want %v", memberNames(root), want)
 	}
-	if limit, _ := root.Get("prConcurrentLimit"); string(limit) != "1.50e1" || len(rules) != 2 ||
+	if limit, _ := root.Get("prConcurrentLimit"); string(limit) != "1.50e1" || len(rules) != 3 ||
 		!sameJSON(rules[0], jsontext.Value(`{"matchManagers":["github-actions"],"pinDigests":true}`)) {
 		t.Fatalf("adopter settings changed:\n%s", first)
 	}
@@ -342,7 +342,7 @@ func TestRenovateIgnoreBoundarySkipsTheFamilyOrigin(t *testing.T) {
 		t.Fatalf("adopt: %v", err)
 	}
 	got := mustRead(t, path)
-	if root, managed, rules := renovateTestRules(t, got); len(managed) != 0 || len(rules) != 0 || len(root) != 2 {
+	if root, managed, rules := renovateTestRules(t, got); len(managed) != 0 || len(rules) != 1 || len(root) != 2 {
 		t.Fatalf("family origin kept the managed rule or lost a setting:\n%s", got)
 	}
 	if detail := findActionDetail(report.ActionDetails, "renovate.json"); !strings.Contains(detail, "Removed the Praetor-managed packageRules entry") {
@@ -350,7 +350,7 @@ func TestRenovateIgnoreBoundarySkipsTheFamilyOrigin(t *testing.T) {
 	}
 	report, err = Adopt(t.Context(), opts)
 	if err != nil || mustRead(t, path) != got ||
-		!strings.Contains(findActionDetail(report.ActionDetails, "renovate.json"), "No Praetor-managed file needs a Renovate rule") {
+		!strings.Contains(findActionDetail(report.ActionDetails, "renovate.json"), "already leaves") {
 		t.Fatalf("rerun at the family origin changed renovate.json or misreported it: %v", err)
 	}
 }
@@ -440,7 +440,7 @@ func adopterRenovateConfigWith(rules ...string) string {
 func TestRenovateIgnorePositiveAcceptsAnEquivalentAdopterRule(t *testing.T) {
 	repo := newTestRepo(t, "renovate-equivalent")
 	path := filepath.Join(repo, "renovate.json")
-	config := adopterRenovateConfigWith(equivalentRenovateRule)
+	config := engineFixtureConfig(t, adopterRenovateConfigWith(equivalentRenovateRule))
 	mustWrite(t, path, config)
 	opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo}
 	for run := 0; run < 2; run++ {
@@ -460,7 +460,7 @@ func TestRenovateIgnorePositiveAcceptsAnEquivalentAdopterRule(t *testing.T) {
 		t.Fatalf("adopt: %v", err)
 	}
 	got := mustRead(t, path)
-	if _, own, rules := renovateTestRules(t, got); len(own) != 0 || len(rules) != 2 ||
+	if _, own, rules := renovateTestRules(t, got); len(own) != 0 || len(rules) != 3 ||
 		!sameJSON(rules[0], jsontext.Value(adopterOwnRenovateRule)) || !sameJSON(rules[1], jsontext.Value(equivalentRenovateRule)) {
 		t.Fatalf("managed entry not removed, or an adopter rule changed:\n%s", got)
 	}
@@ -492,7 +492,7 @@ func TestRenovateIgnoreNegativeDeclaresOnlyUncoveredPaths(t *testing.T) {
 	if len(managed) != 1 || managed[0].Enabled || !slices.Equal(managed[0].MatchFileNames, uncovered) {
 		t.Fatalf("want one disabled entry over the uncovered workflows, gate and bundle only, got %+v\n%s", managed, got)
 	}
-	if len(rules) != 3 || !sameJSON(rules[0], jsontext.Value(adopterOwnRenovateRule)) || !sameJSON(rules[1], jsontext.Value(partial)) {
+	if len(rules) != 4 || !sameJSON(rules[0], jsontext.Value(adopterOwnRenovateRule)) || !sameJSON(rules[1], jsontext.Value(partial)) {
 		t.Fatalf("adopter rules reordered or changed:\n%s", got)
 	}
 	if detail := findActionDetail(report.ActionDetails, "renovate.json"); !strings.Contains(detail, fmt.Sprintf("the %d of %d Praetor-managed files", len(uncovered), len(withBundleFixturePaths(renovateManagedFixturePaths)))) {

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -198,6 +199,10 @@ func readVerificationMarker(ctx context.Context, root, rel string, total int, li
 }
 
 func verificationMarker(rel string) bool {
+	// Order: engine-fr-rule-checks-20261027; reuse bounded discovery for MSRV evidence.
+	if filepath.Base(rel) == "Cargo.toml" || filepath.Base(rel) == "rust-toolchain" || filepath.Base(rel) == "rust-toolchain.toml" || ghworkflow.IsWorkflowPath(rel) {
+		return true
+	}
 	if strings.HasSuffix(rel, ".csproj") || strings.HasSuffix(rel, ".sln") || strings.HasSuffix(rel, ".slnx") {
 		return true
 	}
