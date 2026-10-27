@@ -117,6 +117,7 @@ nav:
           - Build-Warnings Gate: guides/build-warnings.md
           - Release-Token Gate: guides/release-token.md
           - Licensing Gates: guides/licensing-gates.md
+          - Rust Compiler Minimum Check: guides/rust-flavors.md
           - Effective Audit Policy: guides/effective-policy.md
           - Generated Artefacts: guides/generated-artefacts.md
           - Review Policy: guides/review-policy.md
