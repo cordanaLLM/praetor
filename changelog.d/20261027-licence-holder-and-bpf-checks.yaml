@@ -1,0 +1,3 @@
+# Order: engine-fr-rule-checks-20261027
+type: added
+title: "`praetorctl audit` licensing gate checks exact copyright holder form and restricts kernel BPF dual licences and GPL-2.0-only"
