@@ -293,26 +293,68 @@ func holdCorrelationLock(t *testing.T, dir string, hold time.Duration) <-chan er
 	return released
 }
 
-// A holder that keeps the lock past the earlier fixed 400 ms is waited for, not reported as a
-// store that "remained locked", as long as the lock comes free inside the wait bound (#558).
-func TestCorrelationStoreWaitsForASlowHolder(t *testing.T) {
+// newSlowHolderStore creates a store in a temporary directory whose lock wait bound outlasts hold.
+func newSlowHolderStore(t *testing.T, hold time.Duration) (correlationStore, string) {
+	t.Helper()
 	dir := t.TempDir()
 	store, err := newCorrelationStore(t.Context(), "", dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const hold = 700 * time.Millisecond
 	if store.lockWaitBound() <= hold {
 		t.Fatalf("lock wait %s does not outlast the %s hold", store.lockWaitBound(), hold)
 	}
-	released := holdCorrelationLock(t, dir, hold)
+	return store, dir
+}
+
+// reserveSlowHolder reserves a session against store behind a slow holder.
+func reserveSlowHolder(t *testing.T, store correlationStore, hold time.Duration) {
+	t.Helper()
 	resolution := config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent"}
-	began := time.Now()
 	if err := store.reserve(t.Context(), "claude", "session", "tool", resolution, ""); err != nil {
 		t.Fatalf("reserve behind a %s holder: %v", hold, err)
 	}
+}
+
+// A holder that keeps the lock past the earlier fixed 400 ms is waited for, not reported as a
+// store that "remained locked", as long as the lock comes free inside the wait bound (#558).
+func TestCorrelationStoreWaitsForASlowHolder(t *testing.T) {
+	const hold = 700 * time.Millisecond
+	store, dir := newSlowHolderStore(t, hold)
+	// Measurement starts before holdCorrelationLock so the hold ends no earlier than began + hold
+	// (engine-flaky-correlation-store-wait-20261026).
+	began := time.Now()
+	released := holdCorrelationLock(t, dir, hold)
+	reserveSlowHolder(t, store, hold)
 	if took := time.Since(began); took < hold {
 		t.Fatalf("reserve took %s and so did not wait for the %s holder", took, hold)
+	}
+	if err := <-released; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Negative (HISS-20, engine-flaky-correlation-store-wait-20261026): holder start delayed by a
+// fixed gap proves that measuring after hold start records a wait shorter than hold (the defect),
+// while measuring before hold start guarantees the wait covers the full hold duration.
+func TestCorrelationStoreSlowHolderWaitPlantedDelay(t *testing.T) {
+	// gap leaves the old shape 300 ms short of hold, far above the 10 ms lock retry delay and
+	// scheduler noise under -race, so the planted case stays deterministic on a loaded runner.
+	const (
+		hold = 700 * time.Millisecond
+		gap  = 300 * time.Millisecond
+	)
+	store, dir := newSlowHolderStore(t, hold)
+	began := time.Now()
+	released := holdCorrelationLock(t, dir, hold)
+	time.Sleep(gap)
+	oldBegan := time.Now()
+	reserveSlowHolder(t, store, hold)
+	if tookOld := time.Since(oldBegan); tookOld >= hold {
+		t.Fatalf("old measurement shape took %s, want < %s with %s delay", tookOld, hold, gap)
+	}
+	if tookNew := time.Since(began); tookNew < hold {
+		t.Fatalf("reserve took %s and so did not wait for the %s holder", tookNew, hold)
 	}
 	if err := <-released; err != nil {
 		t.Fatal(err)
