@@ -2553,7 +2553,7 @@ class ScopeAndGuard(unittest.TestCase):
                     contextlib.redirect_stdout(out):
                 source_checks(root, ["tools/lefthook/go.mod"])
                 output = out.getvalue()
-            expected = "Trivy not installed: tool-module vulnerability scan skipped for tools/lefthook; CI security.yml runs it"
+            expected = "Trivy not installed: tool-module vulnerability scan skipped for tools/lefthook; scan runs only in CI security.yml"
             self.assertIn(expected, output)
 
     def test_prepush_without_tool_module_skips_trivy(self):

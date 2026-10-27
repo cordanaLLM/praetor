@@ -387,7 +387,7 @@ def tool_module_check(directory, names, gate="all"):
     dirs_str = ", ".join(dirs)
     if shutil.which("trivy") is None:
         print(f"Trivy not installed: tool-module vulnerability scan skipped for {dirs_str}; "
-              "CI security.yml runs it")
+              "scan runs only in CI security.yml")
         return
     try:
         run(trivy_tool_command(dirs), cwd=directory, env=clean_env(), timeout=TRIVY_TIMEOUT)
