@@ -24,7 +24,11 @@ The probe checks checkout symbol inspection, canonical context compilation with
 all six outputs read back, verification drift, invalid arguments, path escape,
 unknown tools, corrupt memory, and malformed locks. It also audits a valid fixture
 before checking changed pinned content, invariant violations, and incomplete scans
-that must fail without changing the baseline. All mutations use disposable
+that must fail without changing the baseline. `standards_audit` runs the release-token
+and release end-to-end evidence gates (`cmd/standards-mcp/audit_tools.go`,
+[release-token and release.e2e guide](release-token.md)) alongside the manifest,
+lockfile, HISS ratchet, context sync, branch protection, supply chain, and workflow
+checks. All mutations use disposable
 fixtures. A discovered tool name alone does not prove working behavior.
 
 `standards_audit` also runs the CLI's `editor-selection`, `renovate-engine-bumps` and
