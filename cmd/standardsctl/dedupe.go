@@ -136,7 +136,7 @@ func printDedupeReport(dir string, report *dedupe.DedupeReport) error {
 		printExceptedBlocks("Excepted Foreign Duplicate Blocks", report.ForeignExcepted)
 		printStaleExceptions(report.StaleExceptions)
 		printNotCheckedExceptions(report.NotCheckedExceptions)
-		if len(report.StaleExceptions) > 0 {
+		if len(report.StaleExceptions) > 0 || report.ForeignSkipped != "" {
 			return dedupeVerdict(report)
 		}
 		return nil
@@ -286,6 +286,10 @@ func printNotCheckedExceptions(notChecked []string) {
 // dedupeVerdict turns a report into the command's exit: nil when the scan passed or did not
 // apply, an error naming the finding counts otherwise.
 func dedupeVerdict(report *dedupe.DedupeReport) error {
+	// order engine-dedupe-jscpd-skip-fails-closed-20261027: a skipped foreign scan fails closed.
+	if report.ForeignSkipped != "" {
+		return fmt.Errorf("dedupe audit failed: foreign clone scan skipped: %s", report.ForeignSkipped)
+	}
 	if report.Passed || (!report.Applicable && len(report.StaleExceptions) == 0) {
 		return nil
 	}

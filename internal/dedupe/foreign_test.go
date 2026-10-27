@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -486,6 +487,15 @@ func TestForeignScan_Negative_BinaryNotFound(t *testing.T) {
 	if report.ForeignSkipped == "" {
 		t.Fatalf("ForeignSkipped is empty, want explanation")
 	}
+	if report.Passed {
+		t.Fatalf("Passed must be false when jscpd binary is missing")
+	}
+	if !strings.Contains(report.ForeignSkipped, "definitely_nonexistent_jscpd") {
+		t.Fatalf("ForeignSkipped = %q, want binary path", report.ForeignSkipped)
+	}
+	if !strings.Contains(report.ForeignSkipped, dedupe.JscpdVersion) {
+		t.Fatalf("ForeignSkipped = %q, want wanted version %q", report.ForeignSkipped, dedupe.JscpdVersion)
+	}
 	if report.Unscanned["python"] != 1 {
 		t.Fatalf("Unscanned[python] = %d, want 1", report.Unscanned["python"])
 	}
@@ -515,6 +525,12 @@ func TestForeignScan_Negative_VersionMismatch(t *testing.T) {
 	}
 	if report.ForeignSkipped == "" {
 		t.Fatalf("ForeignSkipped must record version mismatch")
+	}
+	if report.Passed {
+		t.Fatalf("Passed must be false on version mismatch")
+	}
+	if !strings.Contains(report.ForeignSkipped, `"jscpd 5.3.0"`) || !strings.Contains(report.ForeignSkipped, `"jscpd 5.4.2"`) {
+		t.Fatalf("ForeignSkipped = %q, want both found and wanted versions quoted", report.ForeignSkipped)
 	}
 	if report.Unscanned["python"] != 1 {
 		t.Fatalf("Unscanned[python] = %d, want 1", report.Unscanned["python"])

@@ -1,0 +1,2 @@
+type: changed
+title: Fail closed when polyglot foreign deduplication scan is skipped
