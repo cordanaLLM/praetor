@@ -5,6 +5,9 @@
 package main
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 )
 
 // fixtureEverywhereWorkflow is a push workflow without a branch filter.
@@ -118,4 +122,51 @@ func auditOffline(t *testing.T, root string) string {
 		t.Fatalf("audit --offline of a fresh adoption failed: %v\n%s", err, out)
 	}
 	return out
+}
+
+// TestAuditWorkflowTriggers_CLI_ExternalReusable tests that calling a pinned external reusable
+// workflow through the CLI audit passes with a stand-in forge without HISS-18 warnings, and under
+// --offline reports a SKIP line without warnings.
+// Order: engine-hiss18-cross-repo-reusable-20261027.
+func TestAuditWorkflowTriggers_CLI_ExternalReusable(t *testing.T) {
+	calleeBody := "on: workflow_call\njobs:\n  gate:\n    runs-on: ubuntu-latest\n    steps:\n" +
+		ghworkflow.HostedGateDraftStep + "      - run: make check\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.github.raw+json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(calleeBody))
+	}))
+	defer server.Close()
+
+	origEndpoint := actionsForgeEndpoint
+	origToken := resolveActionsToken
+	actionsForgeEndpoint = server.URL
+	resolveActionsToken = func(ctx context.Context) string { return "test-token" }
+	t.Cleanup(func() {
+		actionsForgeEndpoint = origEndpoint
+		resolveActionsToken = origToken
+	})
+
+	f := newAuditFixture(t)
+	const caller = "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\njobs:\n" +
+		"  commits:\n    continue-on-error: true\n    uses: lusoris/SnatchArr/.github/workflows/commit-policy.yml@2bf15d49f0eca695707a999808bccd988e2160e1\n"
+	writeFixtureFile(t, f.dir, ".github/workflows/ci.yml", caller)
+
+	// Stand-in forge via actionsForgeEndpoint + resolveActionsToken stubs -> no HISS-18 WARN.
+	out, err := f.audit(t)
+	if err != nil {
+		t.Fatalf("audit failed: %v\nOutput: %s", err, out)
+	}
+	mustContain(t, out, "[PASS] Workflow triggers (HISS-18):")
+	if strings.Contains(out, "[WARN] Workflow triggers") {
+		t.Fatalf("unexpected HISS-18 warning:\n%s", out)
+	}
+
+	// --offline -> SKIP line.
+	outOffline := auditOffline(t, f.dir)
+	mustContain(t, outOffline, "[SKIP] Workflow triggers (HISS-18): .github/workflows/ci.yml:5: job commits calls lusoris/SnatchArr/.github/workflows/commit-policy.yml@2bf15d49f0eca695707a999808bccd988e2160e1: --offline; draft handling not judged.")
+	mustContain(t, outOffline, "[PASS] Workflow triggers (HISS-18):")
+	if strings.Contains(outOffline, "[WARN] Workflow triggers") {
+		t.Fatalf("unexpected HISS-18 warning under --offline:\n%s", outOffline)
+	}
 }

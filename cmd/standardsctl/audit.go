@@ -193,7 +193,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error {
 			return auditBranchProtectionAndSupplyChain(ctx, manifest, rootDir, &opts.effective.Policy)
 		},
-		func() error { return auditWorkflowTriggers(ctx, manifest, rootDir) },
+		func() error { return auditWorkflowTriggers(ctx, manifest, rootDir, opts.offline) },
 		func() error { return auditTestTimeouts(ctx, manifest, rootDir) },
 		func() error { return auditJobTimeouts(ctx, manifest, rootDir, opts.offline) },
 		func() error { return auditBuildWarnings(ctx, manifest, rootDir) },
@@ -572,9 +572,24 @@ func auditBranchProtectionAndSupplyChain(ctx context.Context, manifest *config.M
 // auditWorkflowTriggers prints the HISS-18 workflow trigger check the MCP standards_audit runs
 // too (forge.AuditWorkflowTriggers, #817), with the manifest's HISS-18 exceptions. Its findings
 // are [WARN] lines; only a check that cannot run fails the audit.
-func auditWorkflowTriggers(ctx context.Context, manifest *config.Manifest, rootDir string) error {
+// Order: engine-hiss18-cross-repo-reusable-20261027.
+func auditWorkflowTriggers(ctx context.Context, manifest *config.Manifest, rootDir string, offline bool) error {
+	var reader forge.ReusableWorkflowReader
+	var notRead string
+	switch {
+	case offline:
+		notRead = "--offline"
+	default:
+		token := resolveActionsToken(ctx)
+		if token == "" {
+			notRead = "no forge token: set GITHUB_TOKEN or GH_TOKEN, or sign in with gh"
+		} else {
+			reader = forge.NewGitHubDriver(token, actionsForgeEndpoint)
+		}
+	}
 	triggers, err := forge.AuditWorkflowTriggers(ctx, forge.WorkflowTriggerOptions{
 		Root: rootDir, Exceptions: manifest.Exceptions, Today: time.Now(),
+		Callees: reader, CalleesNotRead: notRead,
 	})
 	if err != nil {
 		return err
