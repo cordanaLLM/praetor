@@ -933,5 +933,10 @@ func calculateScore(report *DedupeReport) {
 	// empty every deduction is zero and the score is always exactly 100, so keeping "score >= 80"
 	// in the condition was dead logic that another finding category would have slipped past
 	// unnoticed.
-	report.Passed = len(report.Duplicates) == 0 && len(report.SprawlItems) == 0 && len(report.StaleExceptions) == 0
+	//
+	// order engine-dedupe-jscpd-skip-fails-closed-20261027: any foreign clone scan skip (missing
+	// jscpd, version mismatch) fails closed so missing tooling never silently bypasses non-Go clone
+	// detection. Applicable and not-applicable reports both get Passed=false.
+	report.Passed = len(report.Duplicates) == 0 && len(report.SprawlItems) == 0 &&
+		len(report.StaleExceptions) == 0 && report.ForeignSkipped == ""
 }
