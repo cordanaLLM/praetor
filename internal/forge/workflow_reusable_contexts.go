@@ -54,6 +54,13 @@ const (
 	PluranoHoristesHookCopyWorkflowSHA = "c9632c6f9a06ccd560ffe4e1637649bcf19221db"
 	// PluranoHoristesHookCopyPinDate names when PluranoHoristesHookCopyWorkflowSHA was read.
 	PluranoHoristesHookCopyPinDate = "2026-10-26"
+	// PluranoHoristesWorkflowCheckAction is the reusable workflow path called for workflow checks in plurano-owned repositories.
+	PluranoHoristesWorkflowCheckAction = "plurano/horistes/.github/workflows/workflow-check.yml"
+	// PluranoHoristesWorkflowCheckWorkflowSHA is the commit SHA of plurano/horistes .github/workflows/workflow-check.yml
+	// pinned for workflow checks (read 2026-10-27).
+	PluranoHoristesWorkflowCheckWorkflowSHA = "0cf1751b0a80090b6385098500fdacf377b3cdef"
+	// PluranoHoristesWorkflowCheckPinDate names when PluranoHoristesWorkflowCheckWorkflowSHA was read.
+	PluranoHoristesWorkflowCheckPinDate = "2026-10-27"
 )
 
 // pinnedReusableWorkflow is a known external reusable workflow the engine pins.
@@ -140,6 +147,20 @@ jobs:
     name: Hook copy
 `
 
+// horistesWorkflowCheckWorkflowYAML mirrors plurano/horistes .github/workflows/workflow-check.yml at
+// PluranoHoristesWorkflowCheckWorkflowSHA (read 2026-10-27), limited to inputs and the job name
+// needed to compute check contexts.
+const horistesWorkflowCheckWorkflowYAML = `on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: ubuntu-26.04
+jobs:
+  check:
+    name: Workflow check
+`
+
 // knownPinnedExternalWorkflows maps external workflow action paths to their pinned specification.
 var knownPinnedExternalWorkflows = map[string]pinnedReusableWorkflow{
 	PluranoHoristesLicenceAction: {
@@ -161,6 +182,11 @@ var knownPinnedExternalWorkflows = map[string]pinnedReusableWorkflow{
 		sha:     PluranoHoristesHookCopyWorkflowSHA,
 		pinName: "forge.PluranoHoristesHookCopyWorkflowSHA",
 		yaml:    horistesHookCopyWorkflowYAML,
+	},
+	PluranoHoristesWorkflowCheckAction: {
+		sha:     PluranoHoristesWorkflowCheckWorkflowSHA,
+		pinName: "forge.PluranoHoristesWorkflowCheckWorkflowSHA",
+		yaml:    horistesWorkflowCheckWorkflowYAML,
 	},
 }
 

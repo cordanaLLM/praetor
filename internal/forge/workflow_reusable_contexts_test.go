@@ -687,3 +687,93 @@ func TestEvaluateCalledJobName(t *testing.T) {
 		})
 	}
 }
+
+// Positive: the pinned external workflow check caller contributes its status context.
+func TestReusableCallContexts_PinnedExternalWorkflowCheck(t *testing.T) {
+	callerContent := "on:\n  pull_request:\njobs:\n  workflows:\n    name: Workflows\n" +
+		"    uses: " + PluranoHoristesWorkflowCheckAction + "@" + PluranoHoristesWorkflowCheckWorkflowSHA + "  # " + PluranoHoristesWorkflowCheckPinDate + "\n" +
+		"    with:\n      runner: ubuntu-26.04\n"
+
+	root := t.TempDir()
+	writeWorkflowFixture(t, root, "workflows.yml", callerContent)
+
+	contexts, err := RequiredStatusContextsPlanned(t.Context(), root, nil)
+	if err != nil {
+		t.Fatalf("RequiredStatusContextsPlanned: %v", err)
+	}
+	if !slices.Equal(contexts, []string{"Workflows / Workflow check"}) {
+		t.Fatalf("contexts = %v, want [Workflows / Workflow check]", contexts)
+	}
+
+	policy := config.DefaultPolicy().BranchProtection
+	_, rulesetContexts, err := RenderRulesetForRepository(t.Context(), root, policy, nil)
+	if err != nil {
+		t.Fatalf("RenderRulesetForRepository: %v", err)
+	}
+	if !slices.Equal(rulesetContexts, []string{"Workflows / Workflow check"}) {
+		t.Fatalf("rulesetContexts = %v, want [Workflows / Workflow check]", rulesetContexts)
+	}
+
+	got, err := reusableContexts(t, map[string]string{"workflows.yml": callerContent})
+	if err != nil {
+		t.Fatalf("reusableContexts: %v", err)
+	}
+	if !slices.Equal(got, []string{"Workflows / Workflow check"}) {
+		t.Fatalf("contexts = %v, want [Workflows / Workflow check]", got)
+	}
+}
+
+// Negative: workflow check caller at another SHA or unpinned ref is refused.
+func TestReusableCallContexts_PinnedExternalWorkflowCheckRejectsOtherSources(t *testing.T) {
+	// Negative: workflow check at another SHA -> refused naming the workflow check pin constant.
+	otherSHA := "1111222233334444555566667777888899990000"
+	otherSHACaller := "on:\n  pull_request:\njobs:\n  workflows:\n    name: Workflows\n" +
+		"    uses: " + PluranoHoristesWorkflowCheckAction + "@" + otherSHA + "\n"
+	_, err := reusableContexts(t, map[string]string{"workflows.yml": otherSHACaller})
+	if err == nil || !strings.Contains(err.Error(), "move the engine pin (forge.PluranoHoristesWorkflowCheckWorkflowSHA) first") {
+		t.Fatalf("workflow check at another SHA: err = %v, want engine pin instruction", err)
+	}
+
+	// Negative: unpinned ref (@main) -> refused as workflow of another repository.
+	unpinnedCaller := "on:\n  pull_request:\njobs:\n  workflows:\n    name: Workflows\n" +
+		"    uses: " + PluranoHoristesWorkflowCheckAction + "@main\n"
+	_, err = reusableContexts(t, map[string]string{"workflows.yml": unpinnedCaller})
+	wantUnknown := "calls the reusable workflow " + PluranoHoristesWorkflowCheckAction + "@main of another repository"
+	if err == nil || !strings.Contains(err.Error(), wantUnknown) {
+		t.Fatalf("unpinned ref: err = %v, want containing %q", err, wantUnknown)
+	}
+}
+
+// Positive: the pinned external workflow check specification carries upstream job id and input defaults.
+func TestPinnedHoristesWorkflowCheckSpec(t *testing.T) {
+	called := newCalledWorkflows(nil)
+	spec, err := called.spec("workflows", PluranoHoristesWorkflowCheckAction+"@"+PluranoHoristesWorkflowCheckWorkflowSHA)
+	if err != nil {
+		t.Fatalf("pinned specification: %v", err)
+	}
+	if len(spec.Jobs) != 1 || spec.Jobs["check"].Name != "Workflow check" {
+		t.Fatalf("pinned jobs = %+v, want only check with name 'Workflow check'", spec.Jobs)
+	}
+	defaults := workflowCallDefaults(spec)
+	if len(defaults) != 1 || defaults["runner"].text != "ubuntu-26.04" {
+		t.Fatalf("pinned input defaults = %+v, want runner: ubuntu-26.04", defaults)
+	}
+}
+
+// Negative and boundary: malformed pins and a path without @ retain the other-repository refusal.
+func TestPinnedHoristesWorkflowCheckSpec_RefusesInvalidPin(t *testing.T) {
+	for _, ref := range []string{
+		PluranoHoristesWorkflowCheckAction + "@" + strings.ToUpper(PluranoHoristesWorkflowCheckWorkflowSHA),
+		PluranoHoristesWorkflowCheckAction + "@" + PluranoHoristesWorkflowCheckWorkflowSHA[:39],
+		PluranoHoristesWorkflowCheckAction,
+	} {
+		t.Run(ref, func(t *testing.T) {
+			caller := "on:\n  pull_request:\njobs:\n  workflows:\n    name: Workflows\n    uses: " + ref + "\n"
+			_, err := reusableContexts(t, map[string]string{"workflows.yml": caller})
+			want := "calls the reusable workflow " + ref + " of another repository"
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("invalid pin: err = %v, want containing %q", err, want)
+			}
+		})
+	}
+}
