@@ -271,35 +271,53 @@ func checkFileHunk(ctx context.Context, repoDir, mergeSHA, p1, p2, file string, 
 }
 
 func judgeDroppedHunk(ctx context.Context, repoDir, mergeSHA, p1, p2, file, blobP1, blobP2, blobBase string, okBase bool) (*Finding, error) {
-	p1Bytes, err := readBlob(ctx, repoDir, blobP1)
+	p1Bytes, p2Bytes, baseBytes, err := readSideBlobs(ctx, repoDir, blobP1, blobP2, blobBase, okBase)
 	if err != nil {
 		return nil, err
 	}
-	p2Bytes, err := readBlob(ctx, repoDir, blobP2)
-	if err != nil {
-		return nil, err
-	}
-	var baseBytes []byte
-	if okBase {
-		baseBytes, err = readBlob(ctx, repoDir, blobBase)
+	binary := isBinaryBlob(p1Bytes) || isBinaryBlob(p2Bytes) || isBinaryBlob(baseBytes)
+	var mergedBytes []byte
+	if !binary {
+		mergedBytes, binary, err = reconstructMerge(ctx, repoDir, p1Bytes, baseBytes, p2Bytes)
 		if err != nil {
 			return nil, err
 		}
 	}
-	if isBinaryBlob(p1Bytes) || isBinaryBlob(p2Bytes) || isBinaryBlob(baseBytes) {
-		return &Finding{MergeSHA: mergeSHA, FilePath: file, Parent1: p1, Parent2: p2, Binary: true}, nil
-	}
-	mergedBytes, isBin, err := reconstructMerge(ctx, repoDir, p1Bytes, baseBytes, p2Bytes)
-	if err != nil {
-		return nil, err
-	}
-	if isBin {
-		return &Finding{MergeSHA: mergeSHA, FilePath: file, Parent1: p1, Parent2: p2, Binary: true}, nil
+	if binary {
+		return binaryDropped(mergeSHA, file, p1, p2, okBase && blobP2 == blobBase), nil
 	}
 	if bytes.Equal(mergedBytes, p2Bytes) {
 		return nil, nil
 	}
 	return &Finding{MergeSHA: mergeSHA, FilePath: file, Parent1: p1, Parent2: p2, Binary: false}, nil
+}
+
+// readSideBlobs reads the first parent's, the second parent's and, when the merge base holds the
+// file, the base's blob; a file the base lacks reads as empty.
+func readSideBlobs(ctx context.Context, repoDir, blobP1, blobP2, blobBase string, okBase bool) (p1, p2, base []byte, err error) {
+	if p1, err = readBlob(ctx, repoDir, blobP1); err != nil {
+		return nil, nil, nil, err
+	}
+	if p2, err = readBlob(ctx, repoDir, blobP2); err != nil {
+		return nil, nil, nil, err
+	}
+	if okBase {
+		if base, err = readBlob(ctx, repoDir, blobBase); err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	return p1, p2, base, nil
+}
+
+// binaryDropped judges a binary file the merge took whole from the second parent. A binary merges
+// by taking one side, so when both parents changed it the choice is the resolution, not a dropped
+// hunk. Only a second parent that left the file as the merge base had it turns the take into a
+// revert of the first parent's change.
+func binaryDropped(mergeSHA, file, p1, p2 string, p2Unchanged bool) *Finding {
+	if !p2Unchanged {
+		return nil
+	}
+	return &Finding{MergeSHA: mergeSHA, FilePath: file, Parent1: p1, Parent2: p2, Binary: true}
 }
 
 func reconstructMerge(ctx context.Context, repoDir string, p1Bytes, baseBytes, p2Bytes []byte) (merged []byte, isBin bool, err error) {
