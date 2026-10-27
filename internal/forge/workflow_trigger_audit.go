@@ -172,12 +172,17 @@ func isPinnedCall(uses string) bool {
 	return ok && IsFullCommitSHA(pin.SHA)
 }
 
-// collectExternalUses collects unique trimmed non-local uses references across all parsed workflows.
-// Order: engine-hiss18-cross-repo-reusable-20261027.
+// collectExternalUses collects the distinct non-local uses values of the jobs of every workflow
+// with a pull_request trigger, in workflow and job name order. A workflow without one is not
+// judged on a draft, so the check reads none of its callees (order
+// engine-hiss18-cross-repo-reusable-20261027).
 func collectExternalUses(workflows []triggerWorkflow) []string {
 	var distinct []string
 	seen := make(map[string]bool)
 	for i := 0; i < len(workflows) && i < maxWorkflowFiles; i++ {
+		if _, declared := declaredTrigger(&workflows[i].spec.On, pullRequestEvent); !declared {
+			continue
+		}
 		ids := sortedJobIDs(workflows[i].spec.Jobs)
 		for j := 0; j < len(ids) && j < maxJobsPerFile; j++ {
 			rawUses := strings.TrimSpace(workflows[i].spec.Jobs[ids[j]].Uses)
@@ -204,7 +209,8 @@ func resolveExternalCallees(ctx context.Context, workflows []triggerWorkflow, ca
 		}
 		if resolvedCount >= maxExternalCallees {
 			callees[uses] = nil
-			unreadReasons[uses] = fmt.Sprintf("distinct external reusable workflows exceed bound of %d", maxExternalCallees)
+			unreadReasons[uses] = fmt.Sprintf("the workflows call more than %d distinct reusable workflows of other "+
+				"repositories, and the check reads the first %d", maxExternalCallees, maxExternalCallees)
 			continue
 		}
 		resolvedCount++
@@ -678,8 +684,9 @@ func draftProblem(d jobDecision, job *workflowJob) string {
 	case draftRuns:
 		if job.Uses != "" {
 			if !strings.HasPrefix(job.Uses, "./") && !isPinnedCall(job.Uses) {
-				return fmt.Sprintf("runs on a draft pull request: it calls %s: call targets moving ref of another "+
-					"repository, check reads no jobs there, pin to full commit SHA", job.Uses)
+				return fmt.Sprintf("runs on a draft pull request: it calls %s, a reusable workflow of another repository "+
+					"at a ref that is not a full commit SHA, so the jobs it runs can change without a change here and "+
+					"the check reads none of them; pin the call to a full commit SHA", job.Uses)
 			}
 			return fmt.Sprintf("runs on a draft pull request: it calls %s, whose jobs this repository does not show "+
 				"each beginning with the draft step %q and needing no job held back on a draft", job.Uses, ghworkflow.HostedGateDraftStepName)
@@ -696,7 +703,8 @@ func judgeWorkflowTriggers(read int, findings []workflowTriggerFinding, entries 
 	used := make([]bool, len(entries))
 	var lines []string
 	for i := 0; i < len(unread) && i < maxWorkflowFiles*maxJobsPerFile; i++ {
-		lines = append(lines, fmt.Sprintf("[SKIP] %s: %s:%d: job %s calls %s@%s: %s; draft handling not judged.",
+		lines = append(lines, fmt.Sprintf("[SKIP] %s: %s:%d: job %s calls the reusable workflow %s of another "+
+			"repository at the pinned commit %s, which was not read (%s), so what the job does on a draft is not judged.",
 			workflowTriggerGate, unread[i].Workflow, unread[i].Line, unread[i].Job, unread[i].Action, unread[i].SHA, unread[i].Reason))
 	}
 	groups := findingsByWorkflow(findings)
@@ -783,7 +791,7 @@ func workflowTriggerVerdict(read, reported, reportedWorkflows, excepted, unreadE
 	}
 	unreadNote := ""
 	if unreadExternal > 0 {
-		unreadNote = fmt.Sprintf("; unread external calls: %d", unreadExternal)
+		unreadNote = fmt.Sprintf(", outside the calls to reusable workflows of other repositories not read above (%d)", unreadExternal)
 	}
 	return fmt.Sprintf("[PASS] %s: workflows read: %d; no push trigger runs on every branch and no job a pull request "+
 		"starts runs its work on a draft%s%s.", workflowTriggerGate, read, scope, unreadNote)
