@@ -11,6 +11,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/dedupe"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 type exceptionScanCase struct {
@@ -213,94 +214,13 @@ func TestForeignScan_Negative_ScannedForeignExceptionWithoutDuplicateIsStale(t *
 	}
 }
 
+// TestMain lets this test binary act as jscpd (testsupport.RunFakeJscpdIfRequested): a test points
+// PRAETOR_JSCPD_BIN at os.Args[0] and sets testsupport.FakeJscpdEnv.
 func TestMain(m *testing.M) {
-	if os.Getenv("PRAETOR_TEST_FAKE_JSCPD") == "1" {
-		runFakeJscpd()
-		return
+	if code, ran := testsupport.RunFakeJscpdIfRequested("jscpd " + dedupe.JscpdVersion); ran {
+		os.Exit(code)
 	}
 	os.Exit(m.Run())
-}
-
-func runFakeJscpd() {
-	args := os.Args[1:]
-	if handleFakeJscpdVersion(args) {
-		return
-	}
-	cfgPath := findFakeJscpdConfig(args)
-	outDir := parseFakeJscpdOutDir(cfgPath)
-	reportPath := filepath.Join(outDir, "jscpd-report.json")
-	if writeFakeJscpdOversizedReport(reportPath) {
-		return
-	}
-	writeFakeJscpdCannedReport(reportPath)
-}
-
-func handleFakeJscpdVersion(args []string) bool {
-	if len(args) == 0 || args[0] != "--version" {
-		return false
-	}
-	v := os.Getenv("PRAETOR_TEST_FAKE_JSCPD_VERSION")
-	if v == "" {
-		v = "jscpd " + dedupe.JscpdVersion
-	}
-	fmt.Println(v)
-	os.Exit(0)
-	return true
-}
-
-func findFakeJscpdConfig(args []string) string {
-	for i := 0; i < len(args)-1; i++ {
-		if args[i] == "-c" {
-			return args[i+1]
-		}
-	}
-	fmt.Fprintln(os.Stderr, "fake jscpd: missing -c flag")
-	os.Exit(1)
-	return ""
-}
-
-func parseFakeJscpdOutDir(cfgPath string) string {
-	cfgData, err := os.ReadFile(cfgPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "fake jscpd: read config %s: %v\n", cfgPath, err)
-		os.Exit(1)
-	}
-	var cfg struct {
-		Output string `json:"output"`
-	}
-	if err := json.Unmarshal(cfgData, &cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "fake jscpd: parse config %s: %v\n", cfgPath, err)
-		os.Exit(1)
-	}
-	return cfg.Output
-}
-
-func writeFakeJscpdOversizedReport(reportPath string) bool {
-	if os.Getenv("PRAETOR_TEST_FAKE_JSCPD_OVERSIZED") != "1" {
-		return false
-	}
-	oversized := make([]byte, 17<<20)
-	for i := range oversized {
-		oversized[i] = ' '
-	}
-	if err := os.WriteFile(reportPath, oversized, 0o600); err != nil {
-		fmt.Fprintf(os.Stderr, "fake jscpd: write oversized report: %v\n", err)
-		os.Exit(1)
-	}
-	os.Exit(0)
-	return true
-}
-
-func writeFakeJscpdCannedReport(reportPath string) {
-	cannedContent := os.Getenv("PRAETOR_TEST_FAKE_JSCPD_REPORT_CONTENT")
-	if cannedContent == "" {
-		cannedContent = `{"duplicates":[]}`
-	}
-	if err := os.WriteFile(reportPath, []byte(cannedContent), 0o600); err != nil {
-		fmt.Fprintf(os.Stderr, "fake jscpd: write report: %v\n", err)
-		os.Exit(1)
-	}
-	os.Exit(0)
 }
 
 func TestJscpdVersionPin_MatchesPackageJSON(t *testing.T) {
