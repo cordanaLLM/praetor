@@ -1,0 +1,2 @@
+type: fixed
+title: HISS-18 trigger audit reads cross-repo reusable workflows pinned at a full commit SHA through read-only forge fetch

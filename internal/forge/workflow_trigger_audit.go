@@ -33,15 +33,32 @@ const (
 	// marking the draft ready starts no run.
 	notReadyProblem = "stops a draft in its jobs but does not run on " + ghworkflow.HostedGateReadyType +
 		", so marking the draft ready starts no run and the draft's failed check stands until the next push"
+	// maxExternalCallees bounds the distinct external reusable workflows resolved (HISS-02).
+	maxExternalCallees = 32
 )
 
 // WorkflowTriggerOptions is what AuditWorkflowTriggers reads: the repository root, the
 // manifest's exceptions list (the check reads the entries of config.ExceptionRuleWorkflowTriggers)
 // and the day those entries' expiry is judged against.
+// Callees reads external reusable workflows pinned by full commit SHA; CalleesNotRead records
+// why external workflows are not read when Callees is nil (order engine-hiss18-cross-repo-reusable-20261027).
 type WorkflowTriggerOptions struct {
-	Root       string
-	Exceptions []config.Exception
-	Today      time.Time
+	Root           string
+	Exceptions     []config.Exception
+	Today          time.Time
+	Callees        ReusableWorkflowReader
+	CalleesNotRead string
+}
+
+// unreadExternalCall records one job calling an external reusable workflow pinned by SHA
+// that was not read, or could not be read, from the forge (order engine-hiss18-cross-repo-reusable-20261027).
+type unreadExternalCall struct {
+	Workflow string
+	Line     int
+	Job      string
+	Action   string
+	SHA      string
+	Reason   string
 }
 
 // workflowTriggerFinding is one trigger or job of a workflow that starts a run the check counts
@@ -104,11 +121,11 @@ func AuditWorkflowTriggers(ctx context.Context, opts WorkflowTriggerOptions) (st
 	if err := config.ValidateExceptions(entries, opts.Today); err != nil {
 		return "", fmt.Errorf("[FAIL] %s: %w", workflowTriggerGate, err)
 	}
-	read, findings, err := workflowTriggerFindings(ctx, opts.Root)
+	read, findings, unread, err := workflowTriggerFindings(ctx, opts)
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] %s: cannot read the workflows: %w", workflowTriggerGate, err)
 	}
-	return judgeWorkflowTriggers(read, findings, entries, opts.Today), nil
+	return judgeWorkflowTriggers(read, findings, entries, opts.Today, unread), nil
 }
 
 // triggerWorkflow is one parsed workflow with its repository-relative path and the document line
@@ -120,19 +137,19 @@ type triggerWorkflow struct {
 }
 
 // workflowTriggerFindings reads the workflows of the repository at repoPath and returns how many
-// it read and every finding, workflow by workflow in name order and line by line within one.
-func workflowTriggerFindings(ctx context.Context, repoPath string) (int, []workflowTriggerFinding, error) {
+// it read, every finding, and unread external calls (order engine-hiss18-cross-repo-reusable-20261027).
+func workflowTriggerFindings(ctx context.Context, opts WorkflowTriggerOptions) (int, []workflowTriggerFinding, []unreadExternalCall, error) {
 	ctx, cancel := context.WithTimeout(ctx, workflowTriggerTimeout)
 	defer cancel()
-	files, err := readWorkflowFiles(ctx, repoPath)
+	files, err := readWorkflowFiles(ctx, opts.Root)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	workflows := make([]triggerWorkflow, 0, len(files))
 	for i := 0; i < len(files) && i < maxWorkflowFiles; i++ {
 		workflow, err := parseTriggerWorkflow(files[i])
 		if err != nil {
-			return 0, nil, err
+			return 0, nil, nil, err
 		}
 		workflows = append(workflows, workflow)
 	}
@@ -140,11 +157,133 @@ func workflowTriggerFindings(ctx context.Context, repoPath string) (int, []workf
 	for i := 0; i < len(workflows) && i < maxWorkflowFiles; i++ {
 		callees[strings.TrimPrefix(workflows[i].path, plannedWorkflowDir)] = &workflows[i].spec
 	}
+	unread := resolveExternalCallees(ctx, workflows, callees, opts)
 	var findings []workflowTriggerFinding
 	for i := 0; i < len(workflows) && i < maxWorkflowFiles; i++ {
 		findings = append(findings, workflows[i].findings(callees)...)
 	}
-	return len(workflows), findings, nil
+	return len(workflows), findings, unread, nil
+}
+
+// isPinnedCall reports whether uses names an external action pinned by full commit SHA.
+// Order: engine-hiss18-cross-repo-reusable-20261027.
+func isPinnedCall(uses string) bool {
+	pin, ok := util.ParseSHAPin(strings.TrimSpace(uses))
+	return ok && IsFullCommitSHA(pin.SHA)
+}
+
+// collectExternalUses collects unique trimmed non-local uses references across all parsed workflows.
+// Order: engine-hiss18-cross-repo-reusable-20261027.
+func collectExternalUses(workflows []triggerWorkflow) []string {
+	var distinct []string
+	seen := make(map[string]bool)
+	for i := 0; i < len(workflows) && i < maxWorkflowFiles; i++ {
+		ids := sortedJobIDs(workflows[i].spec.Jobs)
+		for j := 0; j < len(ids) && j < maxJobsPerFile; j++ {
+			rawUses := strings.TrimSpace(workflows[i].spec.Jobs[ids[j]].Uses)
+			if rawUses != "" && !strings.HasPrefix(rawUses, "./") && !seen[rawUses] {
+				seen[rawUses] = true
+				distinct = append(distinct, rawUses)
+			}
+		}
+	}
+	return distinct
+}
+
+// resolveExternalCallees resolves distinct external reusable workflows and returns unread call records.
+// Order: engine-hiss18-cross-repo-reusable-20261027.
+func resolveExternalCallees(ctx context.Context, workflows []triggerWorkflow, callees map[string]*workflowSpec, opts WorkflowTriggerOptions) []unreadExternalCall {
+	distinct := collectExternalUses(workflows)
+	unreadReasons := make(map[string]string)
+	resolvedCount := 0
+	for i := 0; i < len(distinct) && i < maxWorkflowFiles*maxJobsPerFile; i++ {
+		uses := distinct[i]
+		pin, ok := util.ParseSHAPin(uses)
+		if !ok || !IsFullCommitSHA(pin.SHA) {
+			continue
+		}
+		if resolvedCount >= maxExternalCallees {
+			callees[uses] = nil
+			unreadReasons[uses] = fmt.Sprintf("distinct external reusable workflows exceed bound of %d", maxExternalCallees)
+			continue
+		}
+		resolvedCount++
+		spec, reason := fetchExternalCallee(ctx, pin, opts)
+		if spec != nil {
+			callees[uses] = spec
+		} else {
+			callees[uses] = nil
+			unreadReasons[uses] = reason
+		}
+	}
+	return recordUnreadCalls(workflows, unreadReasons)
+}
+
+// fetchExternalCallee fetches and parses one external reusable workflow document.
+// Order: engine-hiss18-cross-repo-reusable-20261027.
+func fetchExternalCallee(ctx context.Context, pin util.PinnedAction, opts WorkflowTriggerOptions) (*workflowSpec, string) {
+	if opts.Callees == nil {
+		reason := opts.CalleesNotRead
+		if reason == "" {
+			reason = "no reusable workflow reader configured"
+		}
+		return nil, reason
+	}
+	parts := strings.Split(pin.Action, "/")
+	if len(parts) < 3 {
+		return nil, fmt.Sprintf("action %q has fewer than 3 path segments", pin.Action)
+	}
+	owner, repo := parts[0], parts[1]
+	path := strings.Join(parts[2:], "/")
+	if !strings.HasPrefix(path, plannedWorkflowDir) {
+		return nil, fmt.Sprintf("reusable workflow path %q outside %s", path, plannedWorkflowDir)
+	}
+	if err := util.ValidateGitHubRepositoryIdentity(owner, repo); err != nil {
+		return nil, err.Error()
+	}
+	data, err := opts.Callees.ReusableWorkflowAt(ctx, owner, repo, path, pin.SHA)
+	if err != nil {
+		return nil, err.Error()
+	}
+	spec, err := ghworkflow.Parse(data)
+	if err != nil {
+		return nil, fmt.Sprintf("parse reusable workflow: %v", err)
+	}
+	if _, reusable := eventTrigger(&spec.On, workflowCallEvent); !reusable {
+		return nil, fmt.Sprintf("callee %s@%s declares no %s trigger", pin.Action, pin.SHA, workflowCallEvent)
+	}
+	return &spec, ""
+}
+
+// recordUnreadCalls maps unread external uses reasons to the job call sites that declare them.
+// Order: engine-hiss18-cross-repo-reusable-20261027.
+func recordUnreadCalls(workflows []triggerWorkflow, unreadReasons map[string]string) []unreadExternalCall {
+	if len(unreadReasons) == 0 {
+		return nil
+	}
+	var unread []unreadExternalCall
+	for i := 0; i < len(workflows) && i < maxWorkflowFiles; i++ {
+		w := &workflows[i]
+		ids := sortedJobIDs(w.spec.Jobs)
+		for j := 0; j < len(ids) && j < maxJobsPerFile; j++ {
+			jobID := ids[j]
+			uses := strings.TrimSpace(w.spec.Jobs[jobID].Uses)
+			reason, failed := unreadReasons[uses]
+			if !failed {
+				continue
+			}
+			pin, _ := util.ParseSHAPin(uses)
+			unread = append(unread, unreadExternalCall{
+				Workflow: w.path,
+				Line:     w.jobLines[jobID],
+				Job:      jobID,
+				Action:   pin.Action,
+				SHA:      pin.SHA,
+				Reason:   reason,
+			})
+		}
+	}
+	return unread
 }
 
 // parseTriggerWorkflow decodes one workflow document and records the line of each job ID.
@@ -314,6 +453,9 @@ const (
 	// the aggregate keeps the required check failing on
 	// the draft, so the skipped gate job does not let it pass.
 	draftProvenSkip
+	// draftExternalUnread: the job calls an external reusable workflow pinned by full commit SHA
+	// that was not read, or could not be read, from the forge (order engine-hiss18-cross-repo-reusable-20261027).
+	draftExternalUnread
 )
 
 // jobDecision is what one job does on a draft (handling) and, for a job its needs decide, the need
@@ -448,19 +590,29 @@ func stepWork(job *workflowJob) draftHandling {
 }
 
 // workOnDraft says what job does on a draft before its condition and needs are read: its own
-// steps (stepWork), or the reusable workflow of this repository (one of callees) it calls
-// (calleeWork). A reusable workflow of another repository cannot be read here, so a job calling
-// one runs its work on a draft.
+// steps (stepWork), or the reusable workflow of this repository or an external pinned callee
+// it calls (calleeWork). Order: engine-hiss18-cross-repo-reusable-20261027.
 func workOnDraft(job *workflowJob, callees map[string]*workflowSpec) draftHandling {
 	if job.Uses == "" {
 		return stepWork(job)
 	}
 	name, local := strings.CutPrefix(job.Uses, "./"+plannedWorkflowDir)
-	callee := callees[name]
-	if !local || callee == nil {
-		return draftRuns
+	if local {
+		callee := callees[name]
+		if callee == nil {
+			return draftRuns
+		}
+		return calleeWork(callee.Jobs)
 	}
-	return calleeWork(callee.Jobs)
+	// External callee lookup (order engine-hiss18-cross-repo-reusable-20261027).
+	trimmed := strings.TrimSpace(job.Uses)
+	if callee, ok := callees[trimmed]; ok {
+		if callee != nil {
+			return calleeWork(callee.Jobs)
+		}
+		return draftExternalUnread
+	}
+	return draftRuns
 }
 
 // calleeWork says what a reusable workflow with jobs does on a draft, its jobs judged with their
@@ -525,6 +677,10 @@ func draftProblem(d jobDecision, job *workflowJob) string {
 			"which a required check accepts"
 	case draftRuns:
 		if job.Uses != "" {
+			if !strings.HasPrefix(job.Uses, "./") && !isPinnedCall(job.Uses) {
+				return fmt.Sprintf("runs on a draft pull request: it calls %s: call targets moving ref of another "+
+					"repository, check reads no jobs there, pin to full commit SHA", job.Uses)
+			}
 			return fmt.Sprintf("runs on a draft pull request: it calls %s, whose jobs this repository does not show "+
 				"each beginning with the draft step %q and needing no job held back on a draft", job.Uses, ghworkflow.HostedGateDraftStepName)
 		}
@@ -533,12 +689,16 @@ func draftProblem(d jobDecision, job *workflowJob) string {
 	return ""
 }
 
-// judgeWorkflowTriggers renders the check's lines from the findings of read workflows and the
-// HISS-18 entries: each excepted workflow, each reported finding, each stale entry, then the
-// verdict.
-func judgeWorkflowTriggers(read int, findings []workflowTriggerFinding, entries []config.Exception, today time.Time) string {
+// judgeWorkflowTriggers renders the check's lines from the findings of read workflows, unread external calls,
+// and the HISS-18 entries: each unread external call, each excepted workflow, each reported finding, each stale
+// entry, then the verdict (order engine-hiss18-cross-repo-reusable-20261027).
+func judgeWorkflowTriggers(read int, findings []workflowTriggerFinding, entries []config.Exception, today time.Time, unread []unreadExternalCall) string {
 	used := make([]bool, len(entries))
 	var lines []string
+	for i := 0; i < len(unread) && i < maxWorkflowFiles*maxJobsPerFile; i++ {
+		lines = append(lines, fmt.Sprintf("[SKIP] %s: %s:%d: job %s calls %s@%s: %s; draft handling not judged.",
+			workflowTriggerGate, unread[i].Workflow, unread[i].Line, unread[i].Job, unread[i].Action, unread[i].SHA, unread[i].Reason))
+	}
 	groups := findingsByWorkflow(findings)
 	reported, reportedWorkflows, excepted := 0, 0, 0
 	for i := 0; i < len(groups) && i < maxWorkflowFiles; i++ {
@@ -557,7 +717,7 @@ func judgeWorkflowTriggers(read int, findings []workflowTriggerFinding, entries 
 				"because the workflow it names has none; remove it.", workflowTriggerGate, entries[i].Rule, entries[i].Target()))
 		}
 	}
-	return strings.Join(append(lines, workflowTriggerVerdict(read, reported, reportedWorkflows, excepted)), "\n")
+	return strings.Join(append(lines, workflowTriggerVerdict(read, reported, reportedWorkflows, excepted, len(unread))), "\n")
 }
 
 // findingsByWorkflow groups findings, which arrive workflow by workflow, into one slice per
@@ -604,7 +764,8 @@ func reportedWorkflowTriggers(group []workflowTriggerFinding, expired *config.Ex
 
 // workflowTriggerVerdict is the check's last line: a skip without workflows, a warning that
 // counts the reported findings and names both ways out, or a pass.
-func workflowTriggerVerdict(read, reported, reportedWorkflows, excepted int) string {
+// Order: engine-hiss18-cross-repo-reusable-20261027.
+func workflowTriggerVerdict(read, reported, reportedWorkflows, excepted, unreadExternal int) string {
 	switch {
 	case read == 0:
 		return fmt.Sprintf("[SKIP] %s: the repository holds no workflow under %s, so no trigger was judged.",
@@ -620,6 +781,10 @@ func workflowTriggerVerdict(read, reported, reportedWorkflows, excepted int) str
 	if excepted > 0 {
 		scope = fmt.Sprintf(" outside the excepted workflows above (%d)", excepted)
 	}
+	unreadNote := ""
+	if unreadExternal > 0 {
+		unreadNote = fmt.Sprintf("; unread external calls: %d", unreadExternal)
+	}
 	return fmt.Sprintf("[PASS] %s: workflows read: %d; no push trigger runs on every branch and no job a pull request "+
-		"starts runs its work on a draft%s.", workflowTriggerGate, read, scope)
+		"starts runs its work on a draft%s%s.", workflowTriggerGate, read, scope, unreadNote)
 }

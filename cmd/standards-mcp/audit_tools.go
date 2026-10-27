@@ -100,9 +100,11 @@ func (s *Server) auditGates(p auditPaths, effective *config.EffectivePolicy) []a
 			})
 		},
 		// The CLI audit's HISS-18 workflow trigger check (#817): findings warn, the gate passes.
+		// Order: engine-hiss18-cross-repo-reusable-20261027.
 		func(ctx context.Context) (string, error) {
 			return forge.AuditWorkflowTriggers(ctx, forge.WorkflowTriggerOptions{
 				Root: s.rootDir, Exceptions: manifest.Exceptions, Today: time.Now(),
+				Callees: nil, CalleesNotRead: "MCP audit without forge reads",
 			})
 		},
 		// The CLI audit's test-timeout gate (#1381): a workflow timeout above the bound fails.

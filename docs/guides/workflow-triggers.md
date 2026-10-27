@@ -61,6 +61,14 @@ does. A job also passes when:
   needs such an idle caller is judged on its own, because the check does not read how GitHub
   reports the caller (`TestAuditWorkflowTriggers_FollowsNeedsInsideLocalCallee`,
   `TestAuditWorkflowTriggers_CalleeNeedsChain`);
+- it calls a reusable workflow of another repository pinned to a full commit SHA (`uses: <owner>/<repo>/<path>@<40 hex SHA>`)
+  whose jobs, judged with their needs like the caller's, each begin with the draft step and need no job held back on a draft.
+  The callee is read at the pin through a read-only forge fetch (`forge.ReusableWorkflowReader`). When no reader is available
+  (such as under `--offline` or without a forge token) or when the read fails (HTTP 404, transport error, or unparsable callee),
+  the check emits a `[SKIP]` line naming the action, SHA, and reason, and draft handling is not judged without a warning.
+  An unpinned external call (such as `@main` or `@v1`) is reported with a `[WARN]` line naming the missing pin and explaining
+  that the call targets a moving ref (`TestAuditWorkflowTriggers_ExternalReusable_PinnedPasses`,
+  `TestAuditWorkflowTriggers_ExternalReusable_UnpinnedWarns`, `TestAuditWorkflowTriggers_ExternalReusable_CalleesNilSkips`);
 - a `pull_request` run never starts it, such as a deploy job guarded by
   `github.event_name != 'pull_request'`, or it has no condition of its own and needs such a job,
   which skips it on every pull request and not only on a draft.
