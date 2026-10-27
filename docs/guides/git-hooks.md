@@ -762,7 +762,9 @@ requiring per-hunk conflict resolution. It scans merge commits in the pushed ran
 merge-base. If first parent $P_1$ modified a file relative to merge base $B$, the merge commit $M$
 must not drop non-conflicting first-parent hunks in favor of second parent $P_2$'s blob or delete the
 file while $P_1$ preserved it. A three-way merge reconstruction (`git merge-file -p --theirs`) verifies
-whether non-conflicting first-parent work vanished from $M$. Findings refuse push and name the merge
+whether non-conflicting first-parent work vanished from $M$. A binary file merges by taking one
+side, so it is a finding only when $P_2$ left it as $B$ had it and $M$ took that copy, which reverts
+$P_1$'s change (`TestMergeCheck_BinaryFile_*`). Findings refuse push and name the merge
 commit, file, and remedy (`Fix: resolve inside conflict markers, re-merge.`).
 
 These checks are not re-run per commit:
