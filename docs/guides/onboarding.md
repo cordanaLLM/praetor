@@ -179,6 +179,8 @@ list by `TestFlavorTable_MatchesTheBuiltinFlavors` in `internal/flavor/flavor_ta
 | `go-library` | `framework` | `go.mod` with `pkg/` or `internal/` |
 | `agentic-autonomous` | `framework` | never detected; select it by name |
 
+Rust adopters also satisfy the [declared minimum compiler check](rust-flavors.md).
+
 When your repository matches no row, adoption still succeeds: it scaffolds no flavor templates and
 prints a "Not applicable" warning that names `praetorctl flavor apply --flavor=<name>`. `flavor
 audit` and `flavor apply` refuse until you either add one of the markers above or pass

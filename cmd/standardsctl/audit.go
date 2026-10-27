@@ -178,6 +178,10 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 	rootDir := opts.rootDir
 	gates := []func() error{
 		func() error { return auditRepoIdentity(manifest, rootDir) },
+		// Order: engine-fr-rule-checks-20261027; CLI and MCP share these gates.
+		func() error { return printRepositoryAudit(adopt.AuditEditorSelection(ctx, manifest, rootDir)) },
+		func() error { return printRepositoryAudit(adopt.AuditRenovateEngineBumps(ctx, rootDir)) },
+		func() error { return printRepositoryAudit(adopt.AuditRustMSRV(ctx, rootDir)) },
 		func() error { return auditLockDigestsContext(ctx, manifest, rootDir, opts.policy.CatalogRoot) },
 		func() error { return auditExceptionsExpiry(ctx, manifest, rootDir, time.Now()) },
 		func() error { return auditBaselineAndInvariants(ctx, opts) },
