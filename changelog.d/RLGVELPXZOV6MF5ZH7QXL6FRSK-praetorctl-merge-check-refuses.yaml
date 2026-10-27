@@ -1,0 +1,2 @@
+type: fixed
+title: praetorctl merge-check refuses merge commits dropping first-parent work

@@ -110,6 +110,7 @@ func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 			t.Fatalf("%s: the pre-push security job did not run govulncheck ./...: %v", name, security["run"])
 		}
 		security["run"] = requiredToolGuard(govuln.DefaultScanner, govulnInstallHint, lefthookGovernedCommand(govulnGateArgs))
+		injectDecodedJob(prior, "pre-push", "merge-check", map[string]any{"run": lefthookGovernedCommand("merge-check")})
 		for _, event := range checkpointEvents(checkpoint) {
 			job := decodedJob(t, prior, "agent-checkpoint-"+event, "checkpoint")
 			arguments := "-B " + checkpointScript + " --event " + event + " --json --marker"
@@ -260,6 +261,18 @@ func decodedJob(t *testing.T, decoded map[string]any, hook, job string) map[stri
 		t.Fatalf("the rendering has no %s job %s", hook, job)
 	}
 	return entry
+}
+
+func injectDecodedJob(decoded map[string]any, hook, job string, entry map[string]any) {
+	section, ok := decoded[hook].(map[string]any)
+	if !ok {
+		return
+	}
+	commands, ok := section["commands"].(map[string]any)
+	if !ok {
+		return
+	}
+	commands[job] = entry
 }
 
 // Boundary: every rendering, for every language set, opens with a document start and keeps

@@ -51,6 +51,8 @@ post-commit:
 pre-push:
   parallel: false
   commands:
+    merge-check:
+      run: sh .config/lefthook/engine.sh merge-check
     flavor-audit:
       run: sh .config/lefthook/engine.sh flavor audit .
     audit:

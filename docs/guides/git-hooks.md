@@ -142,7 +142,7 @@ every file and requires yamllint to reject each one, so the rule is proven to be
 | `pre-commit`, `pre-merge-commit` | Audit the live private ledger, then check the exact index for whitespace, conflict markers, Python/JSON syntax, YAML, shell, workflow and Docker lint; Go formatting and vet on changed packages; verify affected generated agent instructions. |
 | `prepare-commit-msg` | Add an instructional comment to a fresh empty message. |
 | `commit-msg` | Verify the live state synchronization after Lefthook restores partially staged worktree files, then apply the commit message policy (`praetorctl forge check-message`: a conventional subject, Git merge/revert subjects accepted, the HISS-14 `Migration:` footer on a breaking change, and an offline warning for ambiguous closing references; explicit pull request URLs require `Closes-own: <reference>`) and require a DCO sign-off. |
-| `pre-push` | Audit and verify live state before inspecting each actual pushed commit. Run `praetorctl forge refactor-check --base=<base> --head=<head>` over the pushed range for the REF-02 assertion lock; a push without a known base skips it with that reason, and CI checks the pull request range. `checkpoint/*` destinations run file checks, affected Go builds and race tests. Other destinations also require lint, security, vulnerability, governance, flavor and signed-receipt gates. The signed gate runs Go race tests only for the affected packages and reverse dependents; an empty selection records `not_applicable: no affected Go package`. |
+| `pre-push` | Audit and verify live state before inspecting each actual pushed commit. Run `praetorctl forge refactor-check --base=<base> --head=<head>` over the pushed range for the REF-02 assertion lock; a push without a known base skips it with that reason, and CI checks the pull request range. Run `praetorctl merge-check` over the pushed range to refuse merge commits dropping first-parent work (Order: engine-dropped-hunk-gate-20261027). `checkpoint/*` destinations run file checks, affected Go builds and race tests. Other destinations also require lint, security, vulnerability, governance, flavor and signed-receipt gates. The signed gate runs Go race tests only for the affected packages and reverse dependents; an empty selection records `not_applicable: no affected Go package`. |
 | `post-commit` | Synchronize and read back the private state for the new commit, then print the dedupe cadence reminder when due. Sync failures are reported. |
 | `post-checkout`, `post-merge`, `post-rewrite` | Warm changed module dependencies in an isolated clone, rebuild the local CLI for source changes, verify affected agent outputs, report governance changes. `post-merge` then runs `praetorctl workstation install --if-stale`, which rebuilds a lagging engine install from this checkout on the update branch and otherwise skips silently ([refresh a lagging install](workstation-update.md#refresh-a-lagging-install)). File-only checkouts do nothing. |
 | `pre-rebase` | Check the hook environment before replay begins. |
@@ -731,6 +731,7 @@ pull request (`.github/workflows/ci.yml`, the two steps after the documentation 
 | `refactor:` commits: REF-02 refuses changed assertion lines or removed test functions; REF-01 runs touched Go package tests at that commit | pre-push runs `praetorctl forge refactor-check --base=<base> --head=<head>` without test execution; CI runs the same range with `--run-tests` | `TestForgeRefactorCheck_*` |
 | `pre-commit`: whitespace errors and conflict markers (`git diff --cached --check`) | `python3 -B .config/lefthook/scripts/hooks.py commits origin/<base>`, which runs `git log --check` over the range | `CommitRange` in `.config/lefthook/scripts/test_hooks.py` |
 | `pre-commit` and `pre-push`: private `.workingdir` content | the same stage, through `check_private_history` | `CommitRange` |
+| `pre-push`: refuse merge commits dropping first-parent work (Order: engine-dropped-hunk-gate-20261027) | `praetorctl merge-check [--range <a>..<b>]` | `TestMergeCheck_*` |
 
 The `refactor:` row checks the preparatory refactoring practice, from Martin Fowler's
 [Preparatory Refactoring](https://martinfowler.com/articles/preparatory-refactoring-example.html)
@@ -754,6 +755,13 @@ packages touched by each refactor commit in a temporary worktree of that commit,
 20-minute test timeout; an unavailable or failing test command fails the gate. Pre-push omits
 suite execution to keep the local range check fast. CI runs it with `--run-tests` on pull-request
 ranges. REF-03 public API invariance remains covered by the engine API compatibility gate.
+
+`standardsctl merge-check` (Order: engine-dropped-hunk-gate-20261027) enforces the fleet rule
+requiring per-hunk conflict resolution. It scans merge commits in the pushed range (or
+`origin/<default-branch>..HEAD` in `make verify-all`), reading each merge commit's parents and
+merge-base. If first parent $P_1$ modified a file relative to merge base $B$, the merge commit $M$
+must not take the second parent $P_2$'s blob wholesale (when $P_2 \ne P_1$) or delete the file while
+$P_1$ preserved it. Findings refuse push and name the merge commit, file, and remedy (`Fix: resolve inside conflict markers, re-merge.`).
 
 These checks are not re-run per commit:
 

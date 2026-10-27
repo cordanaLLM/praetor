@@ -118,6 +118,7 @@ func printCoreCommands() {
 	fmt.Println("  seo audit          Audit a built docs site: page-head JSON-LD, sitemaps, robots.txt")
 	fmt.Println("  sentinel           Inspect workstation RAM/disk health and model headroom")
 	fmt.Println("  skills             Fetch, verify, and manage pinned upstream skills (pin-sync, pin-verify)")
+	fmt.Println("  merge-check        Refuse merge commits dropping first-parent work")
 	fmt.Println("  worktree           Manage isolated ephemeral git worktrees")
 }
 
@@ -263,6 +264,7 @@ func coreCommandTable() map[string]commandFunc {
 		"models":                   runModels,
 		"operational":              runOperational,
 		"plan":                     runPlan,
+		"merge-check":              runMergeCheck,
 		"radar":                    runRadar,
 		"sync":                     runSync,
 		"security":                 runSecurity,

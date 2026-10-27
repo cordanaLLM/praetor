@@ -200,7 +200,7 @@ func TestAdopt_Negative_ForeignLefthookKeptWithAndWithoutForce(t *testing.T) {
 		repoPath, rep := adoptLefthookFixture(t, "foreign-lefthook", foreignLefthook, force)
 		assertLefthookKept(t, repoPath, rep, foreignLefthook)
 		note := lefthookDetails(rep)
-		if !strings.Contains(note, "It lacks 12 generated jobs (post-commit/commands/dedupe-cadence, ") ||
+		if !strings.Contains(note, "It lacks 13 generated jobs (post-commit/commands/dedupe-cadence, ") ||
 			!strings.Contains(note, "and adds 1 (pre-commit/commands/lint).") {
 			t.Errorf("force=%v: the reason does not name the missing and extra jobs: %q", force, note)
 		}
@@ -385,7 +385,7 @@ func TestClassifyLefthookConfig_Boundary_ExtendsAndJobDeltaEdges(t *testing.T) {
 			t.Errorf("extends not recognised in %q: %+v", body, got)
 		}
 	}
-	assertKeptNotCanonical(t, "extends:\n  - .config/lefthook/other.yml\n", "It lacks 12 generated jobs")
+	assertKeptNotCanonical(t, "extends:\n  - .config/lefthook/other.yml\n", "It lacks 13 generated jobs")
 	missingOne := strings.Replace(current, "    gate:\n", "    gate-renamed:\n", 1) + "extra:\n  commands:\n    x:\n      run: 'true'\n"
 	assertKeptNotCanonical(t, missingOne, "It lacks 1 generated jobs (pre-push/commands/gate) and adds 2 (extra/commands/x, pre-push/commands/gate-renamed).")
 	assertKeptNotCanonical(t, "not: [valid yaml\n", "is not a YAML mapping lefthook can read")
@@ -462,7 +462,7 @@ func TestClassifyLefthookConfig_Negative_JobsListEquivalentAndOtherRemotes(t *te
 		"remotes:\n  - git_url: https://example.invalid/hooks\n    configs:\n      - lefthook.yml\n",
 		"remotes:\n  git_url: https://example.invalid/hooks\n  configs: [.config/lefthook/praetor.yml]\n",
 	} {
-		assertKeptNotCanonical(t, body, "It lacks 12 generated jobs")
+		assertKeptNotCanonical(t, body, "It lacks 13 generated jobs")
 	}
 }
 

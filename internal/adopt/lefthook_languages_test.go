@@ -91,7 +91,7 @@ func TestAdopt_Positive_LefthookJobsFollowDetectedLanguages(t *testing.T) {
 	}
 	for _, tc := range cases {
 		repoPath, rep := adoptMarkedRepo(t, tc.name, tc.markers, "")
-		present := append(append([]string{}, tc.present...), "pre-commit/commands/hiss-audit", "pre-push/commands/gate")
+		present := append(append([]string{}, tc.present...), "pre-commit/commands/hiss-audit", "pre-push/commands/gate", "pre-push/commands/merge-check")
 		assertJobs(t, tc.name, writtenLefthookJobs(t, repoPath), present, tc.absent)
 		written := mustRead(t, filepath.Join(repoPath, lefthookFile))
 		if !strings.HasPrefix(written, "# Lefthook Configuration "+tc.header+"\n") {
@@ -157,5 +157,23 @@ func TestAdopt_Boundary_LefthookJobsForUnknownAndJoblessLanguages(t *testing.T) 
 	}
 	if !hasAction(rep, lefthookFile, actionCreate) {
 		t.Errorf("python only: lefthook.yml not created: %+v", rep.ActionDetails)
+	}
+}
+
+// Positive (Order: engine-dropped-hunk-gate-20261027): adopted lefthook configuration carries
+// the merge-check pre-push job across all shapes.
+func TestAdopt_Positive_RenderedLefthookCarriesMergeCheckJob(t *testing.T) {
+	for _, languages := range lefthookLanguageSets {
+		for _, checkpoint := range []bool{false, true} {
+			rendering := buildLefthookYAMLFor(lefthookShape{languages: languages}, checkpoint)
+			var parsed map[string]any
+			if err := yaml.Unmarshal([]byte(rendering), &parsed); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			jobs := lefthookJobs(parsed)
+			if !jobs["pre-push/commands/merge-check"] {
+				t.Errorf("languages=%v, checkpoint=%v: lefthook rendering lacks pre-push/commands/merge-check", languages, checkpoint)
+			}
+		}
 	}
 }
