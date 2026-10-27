@@ -2422,19 +2422,37 @@ function runOnly(root, temporary, settings, named) {
   return status;
 }
 
+// fixtureGitEnv is the configuration a fixture commit runs under: an empty global configuration and
+// no system one, so no operator setting (signing, hooks, templates) reaches the throwaway repository,
+// and a fixed test identity.
+function fixtureGitEnv(root) {
+  const emptyConfig = path.join(root, ".git", "fixture-empty-gitconfig");
+  fs.writeFileSync(emptyConfig, "");
+  return {
+    GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "Praetor Test", GIT_AUTHOR_EMAIL: "test@example.invalid",
+    GIT_COMMITTER_NAME: "Praetor Test", GIT_COMMITTER_EMAIL: "test@example.invalid",
+  };
+}
+
 function commitFixtureFiles(root, files, message) {
   writeFixtureFiles(root, files);
-  const hooks = path.join(root, ".git", "empty-hooks");
-  fs.mkdirSync(hooks, { recursive: true });
-  command("git", ["add", "--", ...Object.keys(files)], { cwd: root });
-  command("git", [
-    "-c", `core.hooksPath=${hooks}`,
-    "-c", "user.name=Praetor Test",
-    "-c", "user.email=test@example.invalid",
-    "-c", "commit.gpgsign=false",
-    "commit", "--quiet", "-m", message,
-  ], { cwd: root });
-  return command("git", ["rev-parse", "HEAD"], { cwd: root }).stdout.trim();
+  const env = fixtureGitEnv(root);
+  command("git", ["add", "--", ...Object.keys(files)], { cwd: root, env });
+  command("git", ["commit", "--quiet", "-m", message], { cwd: root, env });
+  return command("git", ["rev-parse", "HEAD"], { cwd: root, env }).stdout.trim();
+}
+
+// dropInheritedGitEnv removes every GIT_* variable the self-test inherited: a run from inside a git
+// hook carries GIT_DIR, GIT_INDEX_FILE or GIT_CONFIG_* pairs, which would point the fixture
+// repositories' git calls at the enclosing repository.
+function dropInheritedGitEnv() {
+  const names = Object.keys(process.env);
+  for (let index = 0; index < names.length && index < MAX_TRACKED_ENTRIES; index += 1) {
+    if (names[index].toUpperCase().startsWith("GIT_")) {
+      delete process.env[names[index]];
+    }
+  }
 }
 
 function captureChangedSince(root, temporary, settings, ref) {
@@ -2502,6 +2520,7 @@ function changedSinceSelfTest(temporary) {
 }
 
 function runSelfTest(toolDir, temporary) {
+  dropInheritedGitEnv();
   npmInvocationSelfTest(temporary);
   markdownlintLibrarySelfTest();
   styleExclusionGrammarSelfTest();

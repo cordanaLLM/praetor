@@ -11,7 +11,7 @@ file .github/workflows/praetor-docs.yml sha256:60c9baed8113117c784c5633dbdad08e3
 file tools/markdownlint/package.json sha256:a0fece446d91cb12a300a64b7662f8943619a81069aaddf15db9e75b6c34c604
 file tools/markdownlint/package-lock.json sha256:6d2cd064fea008d29c9b5febb88bb09bea28c74e670f4169d224a407f2d9cee8
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
-file tools/markdownlint/verify.mjs sha256:239cbed7eebcf5b25dc741de6fb2a519ee3dc0736f3f50cc626bedb5ec40e423
+file tools/markdownlint/verify.mjs sha256:9c1f237ab6c0103e9c1ec4825f2dcce5270cb11d1deb603672c3c1da40e7b6cc
 file tools/markdownlint/no-private-scratch-links.mjs sha256:fb31a8195e6d0527fb908ec3a259e0171dba40fd237bf59197f739c6079763fb
 file .gitignore "node_modules/\n/.workingdir/\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n.workingdir/\n.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n/.claude/settings.local.json\n/.standards-receipt.json\n# END praetor private artifacts\n"
 file .prettierignore "operator-output/\n\n# BEGIN praetor-managed artifacts (praetorctl adopt)\n# praetorctl audit owns this canonical content. A formatter rewrite fails;\n# documentation text alone permits consistent LF/CRLF checkout conversion.\n.agents/agents/repo-auditor.md\n.agents/agents/repo-gatekeeper.md\n.config/agent/hooks/block_evasion.py\n.config/labels.yaml\n.devcontainer/devcontainer.json\n.github/rulesets/main.json\n.github/workflows/praetor-docs.yml\n.paperclip/harness.json\n.standards-baseline.json\n.standards.lock\n.standards.yaml\nAGENTS.md\nlefthook.yml\ntools/figures/README.md\ntools/figures/astro.mjs\ntools/figures/build.mjs\ntools/figures/checks.mjs\ntools/figures/core.mjs\ntools/figures/eslint.figures.mjs\ntools/figures/figures.css\ntools/figures/mkdocs_hook.py\ntools/figures/serve.mjs\ntools/figures/third_party/interfig/VENDOR.md\ntools/figures/third_party/interfig/upstream/LICENSE\ntools/figures/third_party/interfig/upstream/src/geometry.ts\ntools/figures/third_party/interfig/upstream/src/model.ts\ntools/figures/third_party/interfig/upstream/src/svg.ts\ntools/figures/third_party/interfig/vendor.json\ntools/figures/types.ts\ntools/markdownlint/markdownlint-cli2.yaml\ntools/markdownlint/no-private-scratch-links.mjs\ntools/markdownlint/package-lock.json\ntools/markdownlint/package.json\ntools/markdownlint/verify.mjs\n# END praetor-managed artifacts\n"
@@ -45,7 +45,7 @@ file .github/workflows/praetor-docs.yml sha256:60c9baed8113117c784c5633dbdad08e3
 file tools/markdownlint/package.json sha256:a0fece446d91cb12a300a64b7662f8943619a81069aaddf15db9e75b6c34c604
 file tools/markdownlint/package-lock.json sha256:6d2cd064fea008d29c9b5febb88bb09bea28c74e670f4169d224a407f2d9cee8
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
-file tools/markdownlint/verify.mjs sha256:239cbed7eebcf5b25dc741de6fb2a519ee3dc0736f3f50cc626bedb5ec40e423
+file tools/markdownlint/verify.mjs sha256:9c1f237ab6c0103e9c1ec4825f2dcce5270cb11d1deb603672c3c1da40e7b6cc
 file tools/markdownlint/no-private-scratch-links.mjs sha256:fb31a8195e6d0527fb908ec3a259e0171dba40fd237bf59197f739c6079763fb
 file .gitignore "dist/\r\ncoverage/\r\n\r\n# BEGIN praetor private artifacts (praetorctl adopt)\r\n.workingdir/\r\n.workingdir2/\r\n/.standards/worktrees/\r\n/.agents/mcp_config.json\r\n/.standards/cache/\r\n/.claude/settings.local.json\r\n/.standards-receipt.json\r\n# END praetor private artifacts\r\n"
 file .prettierignore absent
