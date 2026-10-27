@@ -83,7 +83,9 @@ jobs:
           cache: npm
           cache-dependency-path: tools/markdownlint/package-lock.json
       - name: Verify public Markdown` + ghworkflow.HostedGateStepIf + `
-        run: node tools/markdownlint/verify.mjs
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: node tools/markdownlint/verify.mjs ${BASE:+--changed-since "$BASE"}
       - name: Verify figures` + ghworkflow.HostedGateStepIf + `
         run: |
           node tools/figures/build.mjs check
@@ -205,6 +207,11 @@ var priorDigests = map[string]string{
 	// katex 0.19.0, before the markdown gate lock update (#801).
 	"b2f28f69e4ec7599c47ba77576ed425f49612f78d0c2308ac62b67772d151ccb": Directory + "/package.json",
 	"dc250eced16decfc99f38e830952d1e8679e2a2e68cd0faa7b893cd7aef8e795": Directory + "/package-lock.json",
+	// The workflow (fail-closed and draft-skip) and verify.mjs before pull requests passed the base
+	// commit SHA to --changed-since (Order: engine-hiss18-emitted-templates-20261027).
+	"5dfc713c093fa90e2c36b042692da07df722535d95248ce4d094dc2ba53328f6": WorkflowFile,
+	"a6ae93265f75c6a0d272f7619267dd42f3995517755c034025567e47edbe3ede": WorkflowFile,
+	"3d65af5a190f353525bb909b540d2cbc1359da1e356e866afb0d7e85f56abed0": Directory + "/verify.mjs",
 }
 
 var assetNames = [...]string{
