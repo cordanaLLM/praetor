@@ -969,8 +969,7 @@ print("fixture hook self-tests passed")
         listing = json.dumps({"cwd": str(self.repo), "tool_input": {"command": "ls -la"}}).encode()
         stale = self.repo / PRAETORCTL
         stale.unlink()
-        stale.write_text("#!/bin/sh\necho 'praetor hook: unsupported hook client or event: arguments must match' >&2\n"
-                         "exit 2\n", newline="\n")
+        stale.write_text("#!/bin/sh\necho 'Error: unknown command: admission-check' >&2\nexit 1\n", newline="\n")
         stale.chmod(0o755)
         fresh = Path(self.temp.name) / "path-bin"
         fresh.mkdir()

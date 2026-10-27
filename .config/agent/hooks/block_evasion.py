@@ -160,7 +160,7 @@ def audit_command(command_str: str) -> bool:
     return check_admission(command_str)
 
 
-# Host admission delegation to Go (`praetorctl hook admission-check`) when hooks.admission.enforce
+# Host admission delegation to Go (`praetorctl admission-check`) when hooks.admission.enforce
 # is enabled in operator settings (order engine-hook-build-scope-gate-20261027).
 def install_manifest_path():
     if os.name == "nt":
@@ -236,10 +236,10 @@ def admission_enforcement_state():
     return False, False, ""
 
 
-# An older praetorctl answers `hook admission-check` with this usage error: such a binary is
-# skipped, so a stale bin/praetorctl in a checkout never refuses every command
+# An older praetorctl answers `admission-check` with this error: such a binary is skipped, so a
+# stale bin/praetorctl in a checkout never refuses every command
 # (order engine-hook-build-scope-gate-20261027).
-ADMISSION_UNSUPPORTED = b"unsupported hook client or event"
+ADMISSION_UNSUPPORTED = b"unknown command: admission-check"
 
 
 def praetorctl_candidates():
@@ -270,7 +270,7 @@ def run_admission_check(binary, command_str, child_env):
     """(verdict, reason): True allows, False refuses, None means this binary predates the check."""
     try:
         result = subprocess.run(
-            [binary, "hook", "admission-check"],
+            [binary, "admission-check"],
             input=command_str.encode("utf-8"),
             env=child_env,
             capture_output=True,
@@ -281,7 +281,7 @@ def run_admission_check(binary, command_str, child_env):
         return False, f"[BLOCKED BY HISS] heavy-step admission check failed: {error}"
     if result.returncode == 0:
         return True, ""
-    if ADMISSION_UNSUPPORTED in result.stderr:
+    if ADMISSION_UNSUPPORTED in result.stderr + result.stdout:
         return None, ""
     reason = result.stderr.decode("utf-8", errors="replace").strip()
     return False, reason or f"[BLOCKED BY HISS] heavy-step admission check exited {result.returncode}"

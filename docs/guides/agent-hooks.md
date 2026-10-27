@@ -1088,7 +1088,7 @@ accepted when live host memory and swap readings clear `internal/admission` (`Ho
 `HostCappedPolicy`, `Judge`); an incomplete wrapper names the missing flags, and a host
 reading below the bound refuses naming both `available` and `swap free` readings. This
 repository's own Python guard (`.config/agent/hooks/block_evasion.py`) reaches the same Go
-check through `praetorctl hook admission-check` (command text on stdin, exit `0` allow or
+check through `praetorctl admission-check` (command text on stdin, exit `0` allow or
 `2` refuse on stderr) whenever `hooks.admission.enforce` is enabled in the selected operator
 settings, and fails closed if `praetorctl` is absent; the adopted interceptor written into
 other repositories does not read operator settings. A heavy step inside a script, or in a

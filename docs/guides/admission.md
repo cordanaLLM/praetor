@@ -85,7 +85,7 @@ hooks:
 ```
 
 The engine's pre-tool hook (`praetorctl hook <client> pre-tool`) and the engine checkout's
-own Python guard (`praetorctl hook admission-check`) then refuse a recognised heavy command,
+own Python guard (`praetorctl admission-check`) then refuse a recognised heavy command,
 such as `make`, `go test`, `cargo build` or `git push`, that does not run through an admitted
 form, and name the command to run instead. The recognised shapes and how commands are read
 are in [heavy-step admission](agent-hooks.md#heavy-step-admission). The hook refuses rather

@@ -204,14 +204,11 @@ func (c *admissionCheck) segment(words []string) string {
 		if privilegeInvocationPattern.MatchString(strings.Join(append([]string{name}, words[i+1:]...), " ")) {
 			return refusal("HISS", evasionMessage+"; privilege escalation prohibited: "+name)
 		}
-		if (name == "praetorctl" || name == "standardsctl") && i+1 < len(words) && words[i+1] == "admit" {
-			// The admitted step is everything after admit's `--` (docs/guides/admission.md), so its
-			// job count is judged without a second copy of admit's flag list.
-			step := slices.Index(words[i+2:], "--")
+		if step, isAdmit := admitStep(name, words, i); isAdmit {
 			if step < 0 {
 				return ""
 			}
-			admitted, i = true, i+2+step+1
+			admitted, i = true, step
 			continue
 		}
 		if shape, ok := c.shape(name, words[i+1:]); ok {
@@ -229,6 +226,20 @@ func (c *admissionCheck) segment(words []string) string {
 		i = next
 	}
 	return ""
+}
+
+// admitStep reports whether the command at i is `praetorctl admit` and, when it is, the index of
+// the step it admits: everything after admit's `--` (docs/guides/admission.md), so the step's job
+// count is judged without a second copy of admit's flag list; -1 when admit names no step.
+func admitStep(name string, words []string, i int) (int, bool) {
+	if (name != "praetorctl" && name != "standardsctl") || i+1 >= len(words) || words[i+1] != "admit" {
+		return 0, false
+	}
+	separator := slices.Index(words[i+2:], "--")
+	if separator < 0 {
+		return -1, true
+	}
+	return i + 2 + separator + 1, true
 }
 
 // judgeStep evaluates a matched heavy step against the job cap, `praetorctl admit`, and the

@@ -51,9 +51,6 @@ const hookTimeout = 2 * time.Minute
 // and the manifest apply here; audit and gate deliberately never read operator settings
 // (install_manifest.go).
 func runHook(args []string) error {
-	if len(args) == 1 && args[0] == "admission-check" {
-		return runAdmissionCheck(os.Stdin, os.Stderr)
-	}
 	client, event := "", ""
 	if len(args) == 2 {
 		client, event = args[0], args[1]
@@ -79,7 +76,16 @@ func runHook(args []string) error {
 	return writeHookResponse(os.Stdout, os.Stderr, response)
 }
 
-// runAdmissionCheck is `praetorctl hook admission-check`: reads a proposed command from stdin,
+// runAdmissionCheckCommand is `praetorctl admission-check`, a command of its own so `hook` keeps
+// taking any <client> <event> pair (order engine-hook-build-scope-gate-20261027).
+func runAdmissionCheckCommand(args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: praetorctl admission-check < command-text")
+	}
+	return runAdmissionCheck(os.Stdin, os.Stderr)
+}
+
+// runAdmissionCheck is `praetorctl admission-check`: reads a proposed command from stdin,
 // evaluates hooks.admission, and exits 0 on allow or 2 on refusal with the refusal on stderr
 // (order engine-hook-build-scope-gate-20261027).
 func runAdmissionCheck(stdin io.Reader, stderr io.Writer) error {
