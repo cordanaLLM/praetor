@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/editor"
+	"github.com/cordanaLLM/praetor/internal/flavor"
 )
 
 // VerificationPlan declares selected project commands, never an execution result.
@@ -36,6 +37,12 @@ type VerificationPlan struct {
 	// files git reports as the repository's own count. It selects the HISS clauses the harness
 	// renders (planLanguages), never a build or test command.
 	SourceLanguages []string `json:"source_languages,omitempty"`
+	// UIGates reports whether the repository matches FrontendSvelteFlavor, wiring the ui-gates
+	// Playwright target into verify-all.
+	UIGates bool `json:"ui_gates,omitempty"`
+	// UIPackageManager names the declared Node package manager (npm, pnpm, yarn, bun) when present
+	// in package.json so ui-gates selects the matching Playwright runner.
+	UIPackageManager string `json:"ui_package_manager,omitempty"`
 }
 
 const (
@@ -82,6 +89,7 @@ func resolveVerificationPlanWithLimits(ctx context.Context, root string, request
 		return nil, err
 	}
 	addZigVerification(plan, inputs)
+	plan.UIGates = (&flavor.FrontendSvelteFlavor{}).Detect(root)
 	plan.SourceLanguages = inputs.cSources.languages(ctx, root)
 	if len(plan.Runtimes) == 0 {
 		if err := resolvePlanWithoutRuntimes(ctx, plan, root, limits); err != nil {

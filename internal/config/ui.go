@@ -1,5 +1,4 @@
-// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
-//
+// SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
 // SPDX-License-Identifier: EUPL-1.2
 
 package config
@@ -24,38 +23,55 @@ const (
 	MaxUIRouteBytes = 256
 	// DefaultUIRoute is the route path scanned when ui.routes is omitted or empty.
 	DefaultUIRoute = "/"
+	// MaxUIAPIPatternBytes bounds the byte length of ui.api_pattern (HISS-02).
+	MaxUIAPIPatternBytes = 256
+	// DefaultUIAPIPattern is the route mock glob used when ui.api_pattern is omitted or empty.
+	DefaultUIAPIPattern = "**/api/**"
 	// UIInputLatencyEnv is the environment variable carrying ui.input_latency_ms to Playwright.
 	UIInputLatencyEnv = "PRAETOR_UI_INPUT_LATENCY_MS"
 )
 
 // UIPolicy is the manifest's ui section (order engine-fr-rule-checks-20261027): the
 // input-to-next-frame latency threshold in milliseconds (input_latency_ms, 1..10000, required
-// for UI repositories) and the route paths scanned by the generated accessibility and
-// responsiveness gates (routes, defaulting to ["/"]).
+// for UI repositories), the route paths scanned by the generated accessibility and
+// responsiveness gates (routes, defaulting to ["/"]), and the route mock glob for the
+// responsiveness spec's slow-API and HTTP 503 cases (api_pattern, defaulting to "**/api/**").
 type UIPolicy struct {
 	InputLatencyMs int      `yaml:"input_latency_ms,omitempty"`
 	Routes         []string `yaml:"routes,omitempty"`
+	APIPattern     string   `yaml:"api_pattern,omitempty"`
 	hasLatency     bool
+	hasAPIPattern  bool
 }
 
 // UnmarshalYAML decodes the manifest's ui section, refusing unknown or duplicate keys,
-// non-integer latency values, out-of-range input_latency_ms values, and invalid routes.
+// non-integer latency values, out-of-range input_latency_ms values, and invalid routes or
+// api_pattern globs.
 func (p *UIPolicy) UnmarshalYAML(node *yaml.Node) error {
 	var policy UIPolicy
 	present, err := registerIntFields(node, "ui", map[string]*int{
 		"input_latency_ms": &policy.InputLatencyMs,
 		"routes":           nil,
+		"api_pattern":      nil,
 	})
 	if err != nil {
 		return err
 	}
 	policy.hasLatency = present["input_latency_ms"]
+	policy.hasAPIPattern = present["api_pattern"]
 	if present["routes"] {
 		routes, routeErr := decodeUIRoutes(node)
 		if routeErr != nil {
 			return routeErr
 		}
 		policy.Routes = routes
+	}
+	if present["api_pattern"] {
+		pattern, patternErr := decodeUIAPIPattern(node)
+		if patternErr != nil {
+			return patternErr
+		}
+		policy.APIPattern = pattern
 	}
 	if err := validateUIPolicy(&policy); err != nil {
 		return err
@@ -89,8 +105,22 @@ func decodeUIRoutes(node *yaml.Node) ([]string, error) {
 	return nil, nil
 }
 
+func decodeUIAPIPattern(node *yaml.Node) (string, error) {
+	for i := 0; i+1 < len(node.Content) && i < maxPolicyNodes; i += 2 {
+		if node.Content[i].Value != "api_pattern" {
+			continue
+		}
+		val := node.Content[i+1]
+		if val.Kind != yaml.ScalarNode || val.Tag != "!!str" {
+			return "", fmt.Errorf("ui.api_pattern must be a string glob")
+		}
+		return val.Value, nil
+	}
+	return "", nil
+}
+
 // Validate checks a UIPolicy constructed in Go or decoded from YAML, requiring
-// input_latency_ms in 1..10000 and valid bounded routes.
+// input_latency_ms in 1..10000 and valid bounded routes and api_pattern.
 func (p *UIPolicy) Validate() error {
 	if p == nil {
 		return fmt.Errorf("ui.input_latency_ms is required (integer from %d to %d)", MinUIInputLatencyMs, MaxUIInputLatencyMs)
@@ -98,7 +128,10 @@ func (p *UIPolicy) Validate() error {
 	if err := validateDeclaredBound("ui", "input_latency_ms", &p.InputLatencyMs, MinUIInputLatencyMs, MaxUIInputLatencyMs); err != nil {
 		return err
 	}
-	return validateUIRoutes(p.Routes)
+	if err := validateUIRoutes(p.Routes); err != nil {
+		return err
+	}
+	return validateUIAPIPattern(p.APIPattern, p.hasAPIPattern)
 }
 
 func validateManifestUI(m *Manifest) error {
@@ -117,7 +150,10 @@ func validateUIPolicy(p *UIPolicy) error {
 			return err
 		}
 	}
-	return validateUIRoutes(p.Routes)
+	if err := validateUIRoutes(p.Routes); err != nil {
+		return err
+	}
+	return validateUIAPIPattern(p.APIPattern, p.hasAPIPattern)
 }
 
 func validateUIRoutes(routes []string) error {
@@ -151,12 +187,36 @@ func validateSingleUIRoute(index int, route string, seen map[string]int) error {
 	return nil
 }
 
+func validateUIAPIPattern(pattern string, present bool) error {
+	if present && pattern == "" {
+		return fmt.Errorf("ui.api_pattern must not be empty")
+	}
+	if pattern == "" {
+		return nil
+	}
+	if len(pattern) > MaxUIAPIPatternBytes {
+		return fmt.Errorf("ui.api_pattern exceeds %d bytes", MaxUIAPIPatternBytes)
+	}
+	if strings.ContainsAny(pattern, " \t\r\n\x00") {
+		return fmt.Errorf("ui.api_pattern %q must not contain whitespace or control characters", pattern)
+	}
+	return nil
+}
+
 // EffectiveRoutes returns the configured UI routes, or ["/"] when none are declared.
 func (p *UIPolicy) EffectiveRoutes() []string {
 	if p == nil || len(p.Routes) == 0 {
 		return []string{DefaultUIRoute}
 	}
 	return slices.Clone(p.Routes)
+}
+
+// EffectiveAPIPattern returns the configured API route glob, or "**/api/**" when omitted.
+func (p *UIPolicy) EffectiveAPIPattern() string {
+	if p == nil || p.APIPattern == "" {
+		return DefaultUIAPIPattern
+	}
+	return p.APIPattern
 }
 
 // DeclaredUI returns a copy of the manifest's ui section, or nil when omitted.
@@ -175,4 +235,13 @@ func (m *Manifest) UIRoutes() []string {
 		return []string{DefaultUIRoute}
 	}
 	return m.UI.EffectiveRoutes()
+}
+
+// UIAPIPattern returns the API route glob the manifest configures for UI gates, defaulting to
+// "**/api/**".
+func (m *Manifest) UIAPIPattern() string {
+	if m == nil {
+		return DefaultUIAPIPattern
+	}
+	return m.UI.EffectiveAPIPattern()
 }

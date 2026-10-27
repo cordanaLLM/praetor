@@ -1,5 +1,4 @@
-// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
-//
+// SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
 // SPDX-License-Identifier: EUPL-1.2
 
 package flavor_test
@@ -14,6 +13,11 @@ import (
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/templates"
 )
+
+const validUIMakefileFixture = ".PHONY: verify-all ui-gates\n" +
+	"verify-all: ui-gates\n\n" +
+	"ui-gates:\n" +
+	"\t@$$($(PRAETORCTL) ui env) && npx playwright test tests/a11y.spec.ts tests/responsiveness.spec.ts\n"
 
 func renderUISpecFixture(t *testing.T, dir string) {
 	t.Helper()
@@ -44,6 +48,9 @@ func writeBaseSvelteDir(t *testing.T, pkgJSON string) string {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(uiDir, "svelte.config.js"), []byte("export default {};\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(uiDir, "Makefile"), []byte(validUIMakefileFixture), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return uiDir
@@ -99,5 +106,17 @@ func TestValidateUISpecTexts_Negative(t *testing.T) {
 	literalSpec := "const x = process.env.PRAETOR_UI_INPUT_LATENCY_MS;\nnew PerformanceObserver(() => {}).observe({ durationThreshold: 16 });\nexpect(maxDurationMs).toBeLessThanOrEqual(100);\n// 5000 503\n"
 	if err := flavor.ValidateUIResponsivenessSpecText(literalSpec); err == nil || !strings.Contains(err.Error(), "numeric latency literal") {
 		t.Fatalf("ValidateUIResponsivenessSpecText numeric literal err = %v, want numeric latency literal", err)
+	}
+}
+
+func TestAuditUIGates_MissingVerifyAllTargetFails(t *testing.T) {
+	uiDir := writeBaseSvelteDir(t, `{"name":"ui","devDependencies":{"@axe-core/playwright":"4.11.1"}}`)
+	renderUISpecFixture(t, uiDir)
+	if err := os.WriteFile(filepath.Join(uiDir, "Makefile"), []byte("verify-all:\n\t@echo ok\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withThreshold := &config.Manifest{UI: &config.UIPolicy{InputLatencyMs: 100, Routes: []string{"/"}}}
+	if _, err := flavor.AuditUIGates(uiDir, withThreshold); err == nil || !strings.Contains(err.Error(), "ui-gates") {
+		t.Fatalf("missing verify-all ui-gates AuditUIGates err = %v, want ui-gates target failure", err)
 	}
 }

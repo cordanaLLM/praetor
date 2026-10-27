@@ -1,5 +1,4 @@
-// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
-//
+// SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
 // SPDX-License-Identifier: EUPL-1.2
 
 package main
@@ -15,6 +14,11 @@ import (
 	"github.com/cordanaLLM/praetor/templates"
 )
 
+const validUIRepoMakefile = ".PHONY: verify-all ui-gates\n" +
+	"verify-all: ui-gates\n\n" +
+	"ui-gates:\n" +
+	"\t@$$($(PRAETORCTL) ui env) && npx playwright test tests/a11y.spec.ts tests/responsiveness.spec.ts\n"
+
 func writeUIGateRepoFixture(t *testing.T, withSpecs bool) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -24,6 +28,9 @@ func writeUIGateRepoFixture(t *testing.T, withSpecs bool) string {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "svelte.config.js"), []byte("export default {};\n"), 0o600); err != nil {
 		t.Fatalf("write svelte.config.js: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte(validUIRepoMakefile), 0o600); err != nil {
+		t.Fatalf("write Makefile: %v", err)
 	}
 	if !withSpecs {
 		return dir
@@ -71,6 +78,20 @@ func TestAuditUIGates_RenderedSpecsAndThresholdPasses(t *testing.T) {
 	}
 	if !strings.Contains(out, "[PASS] UI gates:") {
 		t.Fatalf("auditUIGates(valid UI repo) output = %q, want [PASS] UI gates:", out)
+	}
+}
+
+func TestAuditUIGates_MissingVerifyAllTargetFails(t *testing.T) {
+	dir := writeUIGateRepoFixture(t, true)
+	if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte("verify-all:\n\t@echo ok\n"), 0o600); err != nil {
+		t.Fatalf("write Makefile without ui-gates: %v", err)
+	}
+	m := &config.Manifest{UI: &config.UIPolicy{InputLatencyMs: 100, Routes: []string{"/"}}}
+	_, err := captureStdout(t, func() error {
+		return auditUIGates(dir, m)
+	})
+	if err == nil || !strings.Contains(err.Error(), "ui-gates") {
+		t.Fatalf("auditUIGates(missing ui-gates target) error = %v, want substring ui-gates", err)
 	}
 }
 

@@ -4,11 +4,11 @@ documents. The documented example also sets baseURL to http://localhost:3000 and
 running "npm run start". Both are left out deliberately: they assert an application server on
 a port and a start script that nothing has checked the repository has, and a SvelteKit
 project does not serve on 3000. A repository adds them once it knows its own values.
-Order: engine-fr-rule-checks-20261027 — verify-all exports PRAETOR_UI_INPUT_LATENCY_MS from
-.standards.yaml via `praetorctl ui env` so tests/responsiveness.spec.ts reads the threshold
-from process.env.PRAETOR_UI_INPUT_LATENCY_MS.
+Order: engine-fr-rule-checks-20261027 — verify-all's `ui-gates` Makefile target runs
+`$(PRAETORCTL) ui env` to export PRAETOR_UI_INPUT_LATENCY_MS from .standards.yaml and invokes
+Playwright on tests/a11y.spec.ts and tests/responsiveness.spec.ts.
 */ -%>
-// Order: engine-fr-rule-checks-20261027
+// Order: engine-fr-rule-checks-20261027 — verify-all target ui-gates runs `$(PRAETORCTL) ui env` and Playwright on tests/a11y.spec.ts and tests/responsiveness.spec.ts
 import { defineConfig, devices } from '@playwright/test';
 
 const uiInputLatencyMs = process.env.PRAETOR_UI_INPUT_LATENCY_MS;

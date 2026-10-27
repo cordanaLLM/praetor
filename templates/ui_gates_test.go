@@ -1,5 +1,4 @@
-// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
-//
+// SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
 // SPDX-License-Identifier: EUPL-1.2
 
 package templates_test
@@ -47,7 +46,9 @@ func TestUIGateSpecs_RenderedGolden(t *testing.T) {
 		"PerformanceObserver",
 		"durationThreshold: 16",
 		"5000",
+		"PENDING_STATE_DEADLINE_MS",
 		"503",
+		`page.route("**/api/**"`,
 	} {
 		if !strings.Contains(resp, required) {
 			t.Errorf("rendered responsiveness.spec.ts lacks %q", required)
@@ -58,10 +59,12 @@ func TestUIGateSpecs_RenderedGolden(t *testing.T) {
 	}
 }
 
-// TestUIGateSpecs_MultiRouteAndAlias verifies custom UIRoutes rendering and the tests/*.tmpl alias.
+// TestUIGateSpecs_MultiRouteAndAlias verifies custom UIRoutes and UIAPIPattern rendering and the
+// tests/*.tmpl alias.
 func TestUIGateSpecs_MultiRouteAndAlias(t *testing.T) {
 	ctx := sampleContext
 	ctx.UIRoutes = []string{"/", "/dashboard", "/settings"}
+	ctx.UIAPIPattern = "**/v1/**"
 	a11y, err := templates.RenderFile("tests/a11y.spec.ts.tmpl", ctx)
 	if err != nil {
 		t.Fatalf("render tests/a11y.spec.ts.tmpl: %v", err)
@@ -79,5 +82,34 @@ func TestUIGateSpecs_MultiRouteAndAlias(t *testing.T) {
 		if !strings.Contains(resp, route) {
 			t.Errorf("rendered responsiveness.spec.ts lacks route %q", route)
 		}
+	}
+	if !strings.Contains(resp, `page.route("**/v1/**"`) || strings.Contains(resp, `**/api/**`) {
+		t.Errorf("rendered responsiveness.spec.ts did not apply custom UIAPIPattern:\n%s", resp)
+	}
+}
+
+func TestUIGateSpecs_PendingStateDeadline(t *testing.T) {
+	resp, err := templates.RenderFile("svelte/responsiveness.spec.ts.tmpl", sampleContext)
+	if err != nil {
+		t.Fatalf("render svelte/responsiveness.spec.ts.tmpl: %v", err)
+	}
+	if !strings.Contains(resp, "PENDING_STATE_DEADLINE_MS") ||
+		!strings.Contains(resp, "SLOW_API_DELAY_MS / 2") ||
+		strings.Contains(resp, "timeout: FRAME_BUDGET_MS") {
+		t.Fatalf("rendered responsiveness.spec.ts lacks PENDING_STATE_DEADLINE_MS or still holds timeout: FRAME_BUDGET_MS")
+	}
+}
+
+func TestUIGateSpecs_PlainThresholdCode(t *testing.T) {
+	resp, err := templates.RenderFile("svelte/responsiveness.spec.ts.tmpl", sampleContext)
+	if err != nil {
+		t.Fatalf("render svelte/responsiveness.spec.ts.tmpl: %v", err)
+	}
+	if strings.Contains(resp, "Number(true)") ||
+		strings.Contains(resp, "Number(false)") ||
+		strings.Contains(resp, "env === process.env") ||
+		!strings.Contains(resp, "parsed <= 0") ||
+		!strings.Contains(resp, "let maxMeasured = 0") {
+		t.Fatalf("rendered responsiveness.spec.ts still holds non-plain threshold or zero code")
 	}
 }

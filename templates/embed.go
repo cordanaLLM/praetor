@@ -92,6 +92,11 @@ type Context struct {
 	// specs scan (order engine-fr-rule-checks-20261027). The zero value renders ["/"]
 	// (RenderFile).
 	UIRoutes []string `json:"ui_routes"`
+
+	// UIAPIPattern is the route mock glob the frontend-svelte responsiveness spec intercepts
+	// for its slow-API and HTTP 503 fault cases (order engine-fr-rule-checks-20261027). The
+	// zero value renders "**/api/**" (RenderFile).
+	UIAPIPattern string `json:"ui_api_pattern"`
 }
 
 // GoSecurityContext describes which pinned scanner installation an adopted Go repository can
@@ -165,6 +170,9 @@ func Render(name, text string, ctx Context) (string, error) {
 func RenderFile(name string, ctx Context) (string, error) {
 	if len(ctx.UIRoutes) == 0 {
 		ctx.UIRoutes = []string{"/"}
+	}
+	if ctx.UIAPIPattern == "" {
+		ctx.UIAPIPattern = "**/api/**"
 	}
 	body, err := shipped.ReadFile(resolveTemplatePath(name))
 	if err != nil {

@@ -1,5 +1,4 @@
-// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
-//
+// SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
 // SPDX-License-Identifier: EUPL-1.2
 
 package flavor
@@ -9,11 +8,13 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/nodemanifest"
 	"github.com/cordanaLLM/praetor/internal/semver"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/templates"
 )
 
@@ -57,9 +58,15 @@ func resolveUISpecContext(_ context.Context, repoPath string) (templates.Context
 	manifestPath := filepath.Join(repoPath, config.ManifestFileName)
 	manifest, err := config.LoadManifest(manifestPath)
 	if err != nil || manifest == nil {
-		return templates.Context{UIRoutes: []string{config.DefaultUIRoute}}, ""
+		return templates.Context{
+			UIRoutes:     []string{config.DefaultUIRoute},
+			UIAPIPattern: config.DefaultUIAPIPattern,
+		}, ""
 	}
-	return templates.Context{UIRoutes: manifest.UIRoutes()}, ""
+	return templates.Context{
+		UIRoutes:     manifest.UIRoutes(),
+		UIAPIPattern: manifest.UIAPIPattern(),
+	}, ""
 }
 
 func validUIA11ySpec(content []byte) bool {
@@ -139,6 +146,9 @@ func AuditUIGates(repoPath string, manifest *config.Manifest) (string, error) {
 	if gap := checkUISpecFileGap(repoPath, UIResponsivenessSpecPath, ValidateUIResponsivenessSpecText); gap != "" {
 		gaps = append(gaps, gap)
 	}
+	if gap := checkUIMakefileGap(repoPath); gap != "" {
+		gaps = append(gaps, gap)
+	}
 	if len(gaps) > 0 {
 		return "", fmt.Errorf("[FAIL] UI gates: %s", strings.Join(gaps, "; "))
 	}
@@ -189,4 +199,48 @@ func checkUISpecFileGap(repoPath, relPath string, validate func(string) error) s
 		return err.Error()
 	}
 	return ""
+}
+
+func checkUIMakefileGap(repoPath string) string {
+	raw, ok := readRequiredFile(repoPath, "Makefile")
+	if !ok {
+		return "Makefile is missing verify-all target ui-gates"
+	}
+	normalized, _ := util.NormalizeLineEndings(string(raw))
+	if !verifyAllRunsUIGates(normalized) {
+		return "Makefile verify-all does not include target ui-gates"
+	}
+	recipe, ok := util.MakefileTargetRecipe(normalized, "ui-gates")
+	if !ok || !strings.Contains(recipe, "ui env") || !strings.Contains(recipe, "playwright test") ||
+		!strings.Contains(recipe, UIA11ySpecPath) || !strings.Contains(recipe, UIResponsivenessSpecPath) {
+		return fmt.Sprintf("Makefile target ui-gates must run praetorctl ui env and playwright test on %s and %s", UIA11ySpecPath, UIResponsivenessSpecPath)
+	}
+	return ""
+}
+
+func verifyAllRunsUIGates(normalized string) bool {
+	if !util.MakefileHasTarget(normalized, "verify-all") || !util.MakefileHasTarget(normalized, "ui-gates") {
+		return false
+	}
+	if recipe, ok := util.MakefileTargetRecipe(normalized, "verify-all"); ok && strings.Contains(recipe, "ui-gates") {
+		return true
+	}
+	lines := strings.Split(normalized, "\n")
+	for i := 0; i < len(lines) && i < util.MaxMakefileLines; i++ {
+		if makefileLineHasPrereq(lines[i], "verify-all", "ui-gates") {
+			return true
+		}
+	}
+	return false
+}
+
+func makefileLineHasPrereq(line, target, prereq string) bool {
+	if strings.HasPrefix(line, "\t") || strings.HasPrefix(strings.TrimSpace(line), "#") {
+		return false
+	}
+	head, prereqs, found := strings.Cut(line, ":")
+	if !found {
+		return false
+	}
+	return slices.Contains(strings.Fields(head), target) && slices.Contains(strings.Fields(prereqs), prereq)
 }
