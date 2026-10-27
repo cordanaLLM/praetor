@@ -370,9 +370,7 @@ def trivy_tool_command(dirs):
 
     Order: engine-prepush-trivy-tool-modules-20261027.
     """
-    scanners = ",".join(TRIVY_SCANNERS) if isinstance(TRIVY_SCANNERS, (list, tuple)) else str(TRIVY_SCANNERS)
-    severity = ",".join(TRIVY_SEVERITY) if isinstance(TRIVY_SEVERITY, (list, tuple)) else str(TRIVY_SEVERITY)
-    return ["trivy", "fs", "--scanners", scanners, "--severity", severity,
+    return ["trivy", "fs", "--scanners", ",".join(TRIVY_SCANNERS), "--severity", ",".join(TRIVY_SEVERITY),
             "--exit-code", "1", "--skip-version-check", *dirs]
 
 

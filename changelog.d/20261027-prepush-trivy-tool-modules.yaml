@@ -1,2 +1,3 @@
 type: fixed
 title: Pre-push hook scans nested Go tool modules with Trivy at CI severity
+breaking: false
