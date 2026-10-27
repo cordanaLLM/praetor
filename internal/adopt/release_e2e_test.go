@@ -61,7 +61,7 @@ func TestAdoptionRender_ReleaseE2ESection(t *testing.T) {
 	}
 }
 
-func TestAdoptionRender_TagWorkflowAndHostedGateEnv(t *testing.T) {
+func TestAdoptionRender_TagWorkflowAndResolveGitCommitError(t *testing.T) {
 	tagRepo, headSHA := initAdoptReleaseTestRepo(t)
 	writeOriginRemote(t, tagRepo, "https://github.com/acme/tag-svc.git")
 	mustWrite(t, filepath.Join(tagRepo, ".github", "workflows", "release.yml"),
@@ -73,11 +73,18 @@ func TestAdoptionRender_TagWorkflowAndHostedGateEnv(t *testing.T) {
 		t.Fatalf("expected release.e2e.since=%q for tag workflow repo, got %+v", headSHA, manifestTag.Release)
 	}
 
-	rendered := RenderHostedGateReleasePREnv("name: Gate\nconcurrency:\n  group: g\n  cancel-in-progress: true\n")
-	if !strings.Contains(rendered, "PRAETOR_RELEASE_PR: ${{ startsWith(github.head_ref, 'release-please--') }}") {
-		t.Fatalf("RenderHostedGateReleasePREnv missing PRAETOR_RELEASE_PR env: %s", rendered)
+	// ResolveGitCommit failure -> write no release.e2e section and record report warning line naming error.
+	brokenRepo := t.TempDir()
+	mustWrite(t, filepath.Join(brokenRepo, "release-please-config.json"), `{"packages":{".":{}}}`)
+	sBroken := &adoptSession{
+		repoPath: brokenRepo,
+		report:   &AdoptReport{},
 	}
-	if len(PriorHostedGateReleasePRDigests()) == 0 {
-		t.Fatalf("expected non-empty PriorHostedGateReleasePRDigests ledger")
+	if got := sBroken.releasePolicy(t.Context()); got != nil {
+		t.Fatalf("expected nil releasePolicy when ResolveGitCommit fails, got %+v", got)
+	}
+	if len(sBroken.report.Warnings) != 1 || !strings.Contains(sBroken.report.Warnings[0], "no release.e2e section recorded:") ||
+		!strings.Contains(sBroken.report.Warnings[0], "resolve commit HEAD") {
+		t.Fatalf("expected warning naming ResolveGitCommit error, got %+v", sBroken.report.Warnings)
 	}
 }

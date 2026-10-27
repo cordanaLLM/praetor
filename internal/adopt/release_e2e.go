@@ -7,30 +7,17 @@ package adopt
 import (
 	"context"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
-	"github.com/cordanaLLM/praetor/internal/ghworkflow"
-	"github.com/cordanaLLM/praetor/internal/release"
 	"github.com/cordanaLLM/praetor/internal/util"
-	"github.com/cordanaLLM/praetor/templates"
 	"go.yaml.in/yaml/v3"
 )
-
-// AuditReleaseE2E runs the release end-to-end evidence gate over root for manifest
-// (order engine-release-feature-e2e-gate-20261027).
-func AuditReleaseE2E(ctx context.Context, root string, manifest *config.Manifest) (string, error) {
-	var policy *config.ReleaseE2EPolicy
-	if manifest != nil && manifest.Release != nil {
-		policy = manifest.Release.E2E
-	}
-	return release.AuditE2E(ctx, root, policy, release.IsReleaseContext(false))
-}
 
 const maxReleaseWorkflowFiles = 64
 
@@ -39,31 +26,6 @@ var releasePleaseConfigPaths = [...]string{
 	".release-please-manifest.json",
 	".github/release-please-config.json",
 	".github/.release-please-manifest.json",
-}
-
-// priorHostedGateReleasePRDigests records earlier hosted-gate renderings prior to
-// PRAETOR_RELEASE_PR context propagation (order engine-release-feature-e2e-gate-20261027).
-var priorHostedGateReleasePRDigests = map[string]string{
-	"e43a041f8665588a41e872f0522fa574a98fc982b1e93310dc7882f9d9c08862": "hosted gate without PRAETOR_RELEASE_PR env block",
-}
-
-// PriorHostedGateReleasePRDigests returns a copy of the prior hosted-gate release PR digest ledger.
-func PriorHostedGateReleasePRDigests() map[string]string {
-	return maps.Clone(priorHostedGateReleasePRDigests)
-}
-
-// RenderHostedGateReleasePREnv injects the PRAETOR_RELEASE_PR environment block into a hosted
-// gate workflow after its concurrency block when not already present
-// (order engine-release-feature-e2e-gate-20261027).
-func RenderHostedGateReleasePREnv(workflow string) string {
-	if strings.Contains(workflow, "PRAETOR_RELEASE_PR:") {
-		return workflow
-	}
-	target := ghworkflow.HostedGateConcurrency + "\n"
-	if strings.Contains(workflow, target) {
-		return strings.Replace(workflow, target, target+templates.HostedGateReleasePREnv+"\n", 1)
-	}
-	return templates.HostedGateReleasePREnv + "\n" + workflow
 }
 
 // releasePolicy returns the release.e2e section adoption writes for a repository that has a
@@ -75,17 +37,35 @@ func (s *adoptSession) releasePolicy(ctx context.Context) *config.ReleasePolicy 
 		return nil
 	}
 	hasRelease, err := HasReleaseWorkflow(ctx, s.repoPath)
-	if err != nil || !hasRelease {
+	if err != nil {
+		s.warnReleasePolicy(fmt.Sprintf("no release.e2e section recorded: %v", err))
+		return nil
+	}
+	if !hasRelease {
 		return nil
 	}
 	since, err := util.ResolveGitCommit(ctx, s.repoPath, "HEAD")
 	if err != nil {
-		return &config.ReleasePolicy{E2E: &config.ReleaseE2EPolicy{}}
+		s.warnReleasePolicy(fmt.Sprintf("no release.e2e section recorded: %v", err))
+		return nil
+	}
+	if since == "" {
+		s.warnReleasePolicy("no release.e2e section recorded: resolve commit HEAD: repository has no commits")
+		return nil
 	}
 	return &config.ReleasePolicy{
 		E2E: &config.ReleaseE2EPolicy{
 			Since: since,
 		},
+	}
+}
+
+func (s *adoptSession) warnReleasePolicy(msg string) {
+	if s == nil || s.report == nil {
+		return
+	}
+	if !slices.Contains(s.report.Warnings, msg) {
+		s.report.addWarning("%s", msg)
 	}
 }
 
@@ -121,19 +101,23 @@ func hasTagReleaseWorkflow(ctx context.Context, repoPath string) (bool, error) {
 		return false, err
 	}
 	for i := 0; i < len(entries) && i < maxReleaseWorkflowFiles; i++ {
-		name := entries[i].Name()
-		if entries[i].IsDir() || (!strings.HasSuffix(name, ".yml") && !strings.HasSuffix(name, ".yaml")) {
-			continue
-		}
-		data, exists, readErr := contextopt.ObserveSnapshot(ctx, filepath.Join(wfDir, name))
-		if readErr != nil || !exists {
-			continue
-		}
-		if workflowTriggersOnVersionTag(string(data)) {
+		if workflowEntryTriggersTag(ctx, wfDir, entries[i]) {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+func workflowEntryTriggersTag(ctx context.Context, wfDir string, entry os.DirEntry) bool {
+	name := entry.Name()
+	if entry.IsDir() || (!strings.HasSuffix(name, ".yml") && !strings.HasSuffix(name, ".yaml")) {
+		return false
+	}
+	data, exists, err := contextopt.ObserveSnapshot(ctx, filepath.Join(wfDir, name))
+	if err != nil || !exists {
+		return false
+	}
+	return workflowTriggersOnVersionTag(string(data))
 }
 
 func workflowTriggersOnVersionTag(content string) bool {

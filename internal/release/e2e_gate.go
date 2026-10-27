@@ -35,11 +35,9 @@ const (
 	maxChangedPaths     = 4096
 	maxCommitBodyLines  = 1024
 	sha12Len            = 12
-)
 
-// evidenceMutantAlwaysTrue is toggled in mutation tests to prove that a stubbed
-// evidence check fails the planted negative test case (order engine-release-feature-e2e-gate-20261027).
-var evidenceMutantAlwaysTrue = false
+	shallowHistoryReason = "shallow history: repository history is shallow; checkout needs fetch-depth 0"
+)
 
 // E2ESettings holds the resolved settings for the release end-to-end evidence check
 // (order engine-release-feature-e2e-gate-20261027).
@@ -119,10 +117,14 @@ func ResolveReleaseContext(flagRelease bool, getenv func(string) string) bool {
 
 // AuditE2E runs the release end-to-end evidence gate and formats its [PASS], [WARN],
 // [FAIL], or [SKIP] output lines (order engine-release-feature-e2e-gate-20261027).
-func AuditE2E(ctx context.Context, repo string, policy *config.ReleaseE2EPolicy, releaseContext bool) (string, error) {
-	result, err := Judge(ctx, repo, SettingsFromPolicy(policy), releaseContext)
+func AuditE2E(ctx context.Context, repo string, policy *config.ReleasePolicy, flagRelease bool) (string, error) {
+	if policy == nil || policy.E2E == nil {
+		return "[SKIP] Release end-to-end evidence not checked: release.e2e not declared.", nil
+	}
+	result, err := Judge(ctx, repo, SettingsFromPolicy(policy.E2E), IsReleaseContext(flagRelease))
 	if err != nil {
-		return "", fmt.Errorf("[FAIL] Release end-to-end evidence check failed: %w", err)
+		fail := fmt.Sprintf("[FAIL] Release end-to-end evidence check failed: %v", err)
+		return fail, fmt.Errorf("[FAIL] Release end-to-end evidence check failed: %w", err)
 	}
 	return formatE2EResult(result)
 }
@@ -152,20 +154,25 @@ func formatE2EResult(result E2EResult) (string, error) {
 	return out, nil
 }
 
-// judge returns the end-to-end evidence findings for commits since the last release tag.
-func judge(ctx context.Context, repo string, settings E2ESettings, releaseContext bool) ([]E2EFinding, error) {
-	res, err := Judge(ctx, repo, settings, releaseContext)
-	if err != nil {
-		return nil, err
-	}
-	return res.Findings, nil
-}
-
 // Judge inspects feat and fix commits in <last-tag>..HEAD for end-to-end test evidence
 // (order engine-release-feature-e2e-gate-20261027).
 func Judge(ctx context.Context, repo string, settings E2ESettings, releaseContext bool) (E2EResult, error) {
 	if ctx == nil {
 		return E2EResult{}, errors.New("release e2e judge: context cannot be nil")
+	}
+	shallow, err := isShallowRepository(ctx, repo)
+	if err != nil {
+		return E2EResult{}, err
+	}
+	if shallow {
+		if releaseContext {
+			return E2EResult{}, errors.New(shallowHistoryReason)
+		}
+		return E2EResult{
+			Skipped:        true,
+			SkipReason:     shallowHistoryReason,
+			ReleaseContext: false,
+		}, nil
 	}
 	tag, found, err := lastReleaseTag(ctx, repo)
 	if err != nil {
@@ -227,9 +234,6 @@ func checkCommitEvidence(
 	paths []string,
 	declaredTests map[string]bool,
 ) (E2EFinding, bool, error) {
-	if evidenceMutantAlwaysTrue {
-		return E2EFinding{}, false, nil
-	}
 	trailers, err := commitE2ETrailers(ctx, repo, commit.sha)
 	if err != nil {
 		return E2EFinding{}, false, err
@@ -263,8 +267,8 @@ func checkCommitEvidence(
 }
 
 func commitE2ETrailers(ctx context.Context, repo, sha string) ([]string, error) {
-	out, ok, err := runGitRead(ctx, repo, maxGitShowBytes, "show", "-s", "--format=%B", sha)
-	if err != nil || !ok {
+	out, err := runGitRead(ctx, repo, maxGitShowBytes, "show", "-s", "--format=%B", sha)
+	if err != nil {
 		return nil, fmt.Errorf("read commit body %s: %w", sha, err)
 	}
 	lines := strings.Split(out, "\n")
@@ -281,9 +285,9 @@ func commitE2ETrailers(ctx context.Context, repo, sha string) ([]string, error) 
 }
 
 func commitTouchesE2EPath(ctx context.Context, repo, sha string, patterns []string) (bool, error) {
-	out, ok, err := runGitRead(ctx, repo, maxGitDiffTreeBytes,
+	out, err := runGitRead(ctx, repo, maxGitDiffTreeBytes,
 		"diff-tree", "--no-commit-id", "--name-only", "-r", "-m", "--root", sha)
-	if err != nil || !ok {
+	if err != nil {
 		return false, fmt.Errorf("read commit paths %s: %w", sha, err)
 	}
 	files := strings.Split(out, "\n")
@@ -335,13 +339,41 @@ func isFeatOrFixSubject(subject string) bool {
 	return strings.TrimSpace(rest[2:]) != ""
 }
 
+func isShallowRepository(ctx context.Context, repo string) (bool, error) {
+	out, err := runGitRead(ctx, repo, maxGitDescribeBytes, "rev-parse", "--is-shallow-repository")
+	if err != nil {
+		return false, err
+	}
+	return out == "true", nil
+}
+
 func lastReleaseTag(ctx context.Context, repo string) (string, bool, error) {
-	tag, ok, err := runGitRead(ctx, repo, maxGitDescribeBytes,
+	result, err := util.RunGitProbe(ctx, repo, maxGitDescribeBytes,
 		"describe", "--tags", "--abbrev=0", "--match", "v[0-9]*")
-	if err != nil || !ok || tag == "" {
-		return "", false, err
+	if err != nil {
+		if isNoReleaseTagDescribe(result, err) {
+			return "", false, nil
+		}
+		return "", false, formatGitError("describe", repo, result.Stderr, err)
+	}
+	tag := strings.TrimSpace(string(result.Stdout))
+	if tag == "" {
+		return "", false, nil
 	}
 	return tag, true, nil
+}
+
+func isNoReleaseTagDescribe(result util.CommandBytes, err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		len(result.Stdout) >= maxGitDescribeBytes || len(result.Stderr) >= maxGitDescribeBytes {
+		return false
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	stderr := string(result.Stderr)
+	return strings.Contains(stderr, "No names found") || strings.Contains(stderr, "cannot describe")
 }
 
 func listCommitsSinceTag(ctx context.Context, repo, tag, since string) ([]commitSummary, error) {
@@ -361,8 +393,8 @@ func listCommitsSinceTag(ctx context.Context, repo, tag, since string) ([]commit
 			args = append(args, "^"+resolved)
 		}
 	}
-	out, ok, err := runGitRead(ctx, repo, maxGitLogBytes, args...)
-	if err != nil || !ok {
+	out, err := runGitRead(ctx, repo, maxGitLogBytes, args...)
+	if err != nil {
 		return nil, fmt.Errorf("list commits %s..HEAD: %w", tag, err)
 	}
 	return parseCommitLog(out), nil
@@ -388,18 +420,18 @@ func parseCommitLog(out string) []commitSummary {
 	return commits
 }
 
-func runGitRead(ctx context.Context, repoDir string, maxBytes int, args ...string) (string, bool, error) {
+func runGitRead(ctx context.Context, repoDir string, maxBytes int, args ...string) (string, error) {
 	result, err := util.RunGitProbe(ctx, repoDir, maxBytes, args...)
-	if err == nil {
-		return strings.TrimSpace(string(result.Stdout)), true, nil
+	if err != nil {
+		return "", formatGitError(args[0], repoDir, result.Stderr, err)
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
-		len(result.Stdout) >= maxBytes || len(result.Stderr) >= maxBytes {
-		return "", false, fmt.Errorf("git %s in %s: %w", args[0], repoDir, err)
+	return strings.TrimSpace(string(result.Stdout)), nil
+}
+
+func formatGitError(subcmd, repoDir string, stderr []byte, err error) error {
+	msg := strings.TrimSpace(string(stderr))
+	if msg != "" {
+		return fmt.Errorf("git %s in %s: %w: %s", subcmd, repoDir, err, msg)
 	}
-	var exitErr *exec.ExitError
-	if errors.Is(err, exec.ErrNotFound) || errors.As(err, &exitErr) {
-		return "", false, nil
-	}
-	return "", false, fmt.Errorf("git %s in %s: %w", args[0], repoDir, err)
+	return fmt.Errorf("git %s in %s: %w", subcmd, repoDir, err)
 }
