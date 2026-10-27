@@ -1,0 +1,22 @@
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+//
+// SPDX-License-Identifier: EUPL-1.2
+
+package main
+
+import (
+	"fmt"
+
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/flavor"
+)
+
+// auditUIGates runs the ui-gates audit check on rootDir (order engine-fr-rule-checks-20261027).
+func auditUIGates(rootDir string, manifest *config.Manifest) error {
+	line, err := flavor.AuditUIGates(rootDir, manifest)
+	if err != nil {
+		return err
+	}
+	fmt.Println(line)
+	return nil
+}

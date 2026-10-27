@@ -319,8 +319,10 @@ same commit therefore scores the same on every machine.
   ([`internal/flavor/audit_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/flavor/audit_test.go)).
 - **Small flavors tolerate no missing setting.** With every template present, a repository passes
   with as many missing or invalid settings as keep it at 80%. That is none for `python-ml`,
-  `os-image`, `frontend-svelte`, `jvm-service`, `mobile-flutter`, `agentic-autonomous` and
-  `infra-k8s`, and one for every other flavor: `python-ml` carries 1 template and 1 setting, so
+  `os-image`, `jvm-service`, `mobile-flutter`, `agentic-autonomous` and
+  `infra-k8s`, and one for every other flavor (including `frontend-svelte`, which carries four
+  templates — `playwright.config.ts`, the WCAG 2.2 AA accessibility spec, the input-latency
+  responsiveness spec and ESLint — plus two settings): `python-ml` carries 1 template and 1 setting, so
   one absent `.vscode/settings.json` scores 50%. The three ledger files used to count as present
   templates on checkouts that carried them, which bought each of those flavors one more gap
   (`go-service` two). `TestAuditFlavor_Boundary_SettingsGapTolerancePerFlavor` in
