@@ -365,13 +365,15 @@ def tool_module_dirs(directory, names):
     return sorted(found)
 
 
-def trivy_tool_command(dirs):
-    """Return command scanning nested tool module directories with Trivy.
+def trivy_tool_command(tool_dir):
+    """Return the command scanning one nested tool module directory with Trivy: trivy fs takes exactly one
+    target and stops with "multiple targets cannot be specified" otherwise (order
+    engine-1629-landing-failed-20261027-0914).
 
     Order: engine-prepush-trivy-tool-modules-20261027.
     """
     return ["trivy", "fs", "--scanners", ",".join(TRIVY_SCANNERS), "--severity", ",".join(TRIVY_SEVERITY),
-            "--exit-code", "1", "--skip-version-check", *dirs]
+            "--exit-code", "1", "--skip-version-check", tool_dir]
 
 
 def tool_module_check(directory, names, gate="all"):
@@ -389,11 +391,15 @@ def tool_module_check(directory, names, gate="all"):
         print(f"Trivy not installed: tool-module vulnerability scan skipped for {dirs_str}; "
               "scan runs only in CI security.yml")
         return
-    try:
-        run(trivy_tool_command(dirs), cwd=directory, env=clean_env(), timeout=TRIVY_TIMEOUT)
-    except HookError as error:
-        tail = "\n".join(str(error).strip().splitlines()[-30:])
-        raise HookError(f"Trivy tool module vulnerability scan failed for {dirs_str}:\n{tail}") from error
+    failed = []
+    for tool_dir in dirs:
+        try:
+            run(trivy_tool_command(tool_dir), cwd=directory, env=clean_env(), timeout=TRIVY_TIMEOUT)
+        except HookError as error:
+            tail = "\n".join(str(error).strip().splitlines()[-30:])
+            failed.append(f"{tool_dir}:\n{tail}")
+    if failed:
+        raise HookError("Trivy tool module vulnerability scan failed for " + "\n".join(failed))
 
 
 def source_checks(directory, names, gate="all", base=None):
