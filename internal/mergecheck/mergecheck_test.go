@@ -5,12 +5,14 @@
 package mergecheck
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func initTestRepo(t *testing.T) string {
@@ -192,6 +194,45 @@ func TestMergeCheck_OnlySecondParentChangedOrIdentical_Clean(t *testing.T) {
 	}
 }
 
+// Positive: partial overlap where P1 edits line 2 to X, P2 edits line 2 to X and line 5 to Y.
+// Plain git merge merges cleanly, result equals P2.
+// Order: engine-dropped-hunk-gate-20261027.
+func TestMergeCheck_PartialOverlapClean_RedBeforeFix(t *testing.T) {
+	dir := initTestRepo(t)
+
+	writeFile(t, dir, "a.txt", "1\n2\n3\n4\n5\n")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "a.txt"},
+		[]string{"commit", "-m", "chore: base"},
+		[]string{"branch", "-M", "main"},
+	)
+
+	// Branch X (P1) edits line 2 to X
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-x"})
+	writeFile(t, dir, "a.txt", "1\nX\n3\n4\n5\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "a.txt"}, []string{"commit", "-m", "feat: X line 2"})
+
+	// Branch Y (P2) edits line 2 to X and line 5 to Y
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-y", "main"})
+	writeFile(t, dir, "a.txt", "1\nX\n3\n4\nY\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "a.txt"}, []string{"commit", "-m", "feat: Y line 2 and 5"})
+
+	// Merge Y into X with plain git merge (clean merge, equals P2)
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "branch-x"})
+	testsupport.RunFixtureGit(t, dir, []string{"merge", "--no-edit", "branch-y"})
+
+	res, err := Check(t.Context(), Options{RepoDir: dir, Range: "main..HEAD"})
+	if err != nil {
+		t.Fatalf("Check failed: %v", err)
+	}
+	if res.MergesCount != 1 {
+		t.Fatalf("expected 1 merge, got %d", res.MergesCount)
+	}
+	if len(res.Findings) != 0 {
+		t.Fatalf("expected 0 findings for clean partial overlap merge, got %d: %+v", len(res.Findings), res.Findings)
+	}
+}
+
 // Negative: file modified on X, deleted in merge M while present on X -> finding.
 // Order: engine-dropped-hunk-gate-20261027.
 func TestMergeCheck_P1ModifiedAndMergeDeletes_Finding(t *testing.T) {
@@ -273,7 +314,7 @@ func TestMergeCheck_RangeWithoutMerges_StatedLine(t *testing.T) {
 func TestMergeCheck_OctopusMerge_DroppedHunk(t *testing.T) {
 	dir := initTestRepo(t)
 
-	writeFile(t, dir, "file1.txt", "base 1\n")
+	writeFile(t, dir, "file1.txt", "line 1\nline 2\nline 3\nline 4\nline 5\n")
 	writeFile(t, dir, "file2.txt", "base 2\n")
 	testsupport.RunFixtureGit(t, dir,
 		[]string{"add", "file1.txt", "file2.txt"},
@@ -283,7 +324,7 @@ func TestMergeCheck_OctopusMerge_DroppedHunk(t *testing.T) {
 
 	// Branch 1 (P1)
 	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-1"})
-	writeFile(t, dir, "file1.txt", "branch 1 edit\n")
+	writeFile(t, dir, "file1.txt", "line 1\nline 2 branch 1 edit\nline 3\nline 4\nline 5\n")
 	testsupport.RunFixtureGit(t, dir, []string{"add", "file1.txt"}, []string{"commit", "-m", "feat: branch 1"})
 
 	// Branch 2 (P2)
@@ -291,9 +332,9 @@ func TestMergeCheck_OctopusMerge_DroppedHunk(t *testing.T) {
 	writeFile(t, dir, "file2.txt", "branch 2 edit\n")
 	testsupport.RunFixtureGit(t, dir, []string{"add", "file2.txt"}, []string{"commit", "-m", "feat: branch 2"})
 
-	// Branch 3 (P3) - also changes file1.txt
+	// Branch 3 (P3) - also changes file1.txt on line 5
 	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-3", "main"})
-	writeFile(t, dir, "file1.txt", "branch 3 edit\n")
+	writeFile(t, dir, "file1.txt", "line 1\nline 2\nline 3\nline 4\nline 5 branch 3 edit\n")
 	testsupport.RunFixtureGit(t, dir, []string{"add", "file1.txt"}, []string{"commit", "-m", "feat: branch 3"})
 
 	// Checkout branch-1 and create octopus merge taking branch-3's file1.txt
@@ -338,9 +379,241 @@ func TestMergeCheck_Mutant_BlobComparison(t *testing.T) {
 	// were kept or where Y's blob was not taken.
 	// A mutant that skips (blobM == blobP2) would fail to detect when Y's whole file was taken.
 	// This test asserts the exact comparison truth table of checkFileHunk logic.
-	hunk1, err := checkFileHunk(t.Context(), ".", "m", "p1", "p2", "test.txt")
+	hunk1, err := checkFileHunk(t.Context(), ".", "m", "p1", "p2", "test.txt", nil)
 	if err == nil && hunk1 != nil {
 		t.Errorf("expected nil finding on non-existent commits")
+	}
+}
+
+// Positive: conflict on line 2 resolved to P2 side, P1 non-conflicting line 4 kept -> no finding.
+// Order: engine-dropped-hunk-gate-20261027.
+func TestMergeCheck_ConflictResolvedP2_NonConflictingP1Kept_Clean(t *testing.T) {
+	dir := initTestRepo(t)
+
+	baseContent := "line 1\nline 2\nline 3\nline 4\nline 5\n"
+	writeFile(t, dir, "alpha.txt", baseContent)
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "alpha.txt"},
+		[]string{"commit", "-m", "chore: base"},
+		[]string{"branch", "-M", "main"},
+	)
+
+	// Branch X (P1) edits line 2 and line 4
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-x"})
+	writeFile(t, dir, "alpha.txt", "line 1\nline 2 P1\nline 3\nline 4 P1\nline 5\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "alpha.txt"}, []string{"commit", "-m", "feat: X edits 2 and 4"})
+
+	// Branch Y (P2) edits line 2 only
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-y", "main"})
+	writeFile(t, dir, "alpha.txt", "line 1\nline 2 P2\nline 3\nline 4\nline 5\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "alpha.txt"}, []string{"commit", "-m", "feat: Y edits 2 only"})
+
+	// Merge Y into X: conflict on line 2 resolved to P2, line 4 P1 kept
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "branch-x"})
+	runGitAllowConflict(t, dir, "merge", "--no-commit", "branch-y")
+	writeFile(t, dir, "alpha.txt", "line 1\nline 2 P2\nline 3\nline 4 P1\nline 5\n")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "alpha.txt"},
+		[]string{"commit", "-m", "merge: resolve conflict to P2 and keep P1 hunk"},
+	)
+
+	res, err := Check(t.Context(), Options{RepoDir: dir, Range: "main..HEAD"})
+	if err != nil {
+		t.Fatalf("Check failed: %v", err)
+	}
+	if res.MergesCount != 1 {
+		t.Fatalf("expected 1 merge, got %d", res.MergesCount)
+	}
+	if len(res.Findings) != 0 {
+		t.Fatalf("expected 0 findings when non-conflicting hunk is kept, got %d: %+v", len(res.Findings), res.Findings)
+	}
+}
+
+// Negative: conflict on line 2 resolved to P2 side and P1 line 4 dropped (`git checkout --theirs` whole file) -> finding.
+// Order: engine-dropped-hunk-gate-20261027.
+func TestMergeCheck_ConflictResolvedP2_NonConflictingP1Dropped_Finding(t *testing.T) {
+	dir := initTestRepo(t)
+
+	baseContent := "line 1\nline 2\nline 3\nline 4\nline 5\n"
+	writeFile(t, dir, "alpha.txt", baseContent)
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "alpha.txt"},
+		[]string{"commit", "-m", "chore: base"},
+		[]string{"branch", "-M", "main"},
+	)
+
+	// Branch X (P1) edits line 2 and line 4
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-x"})
+	writeFile(t, dir, "alpha.txt", "line 1\nline 2 P1\nline 3\nline 4 P1\nline 5\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "alpha.txt"}, []string{"commit", "-m", "feat: X edits 2 and 4"})
+	p1SHA := gitRevParse(t, dir, "HEAD")
+
+	// Branch Y (P2) edits line 2 only
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-y", "main"})
+	writeFile(t, dir, "alpha.txt", "line 1\nline 2 P2\nline 3\nline 4\nline 5\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "alpha.txt"}, []string{"commit", "-m", "feat: Y edits 2 only"})
+	p2SHA := gitRevParse(t, dir, "HEAD")
+
+	// Merge Y into X taking Y whole file (dropping P1's line 4 change)
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "branch-x"})
+	runGitAllowConflict(t, dir, "merge", "--no-commit", "branch-y")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"checkout", "branch-y", "--", "alpha.txt"},
+		[]string{"add", "alpha.txt"},
+		[]string{"commit", "-m", "merge: whole-file resolution dropping P1 hunk"},
+	)
+	mergeSHA := gitRevParse(t, dir, "HEAD")
+
+	res, err := Check(t.Context(), Options{RepoDir: dir, Range: "main..HEAD"})
+	if err != nil {
+		t.Fatalf("Check failed: %v", err)
+	}
+	if res.MergesCount != 1 {
+		t.Fatalf("expected 1 merge, got %d", res.MergesCount)
+	}
+	if len(res.Findings) != 1 {
+		t.Fatalf("expected 1 finding for dropped non-conflicting hunk, got %d: %+v", len(res.Findings), res.Findings)
+	}
+	assertFindingMatch(t, res.Findings[0], "alpha.txt", mergeSHA, p1SHA, p2SHA)
+}
+
+// Negative: binary file whole-file take -> finding naming binary comparison.
+// Order: engine-dropped-hunk-gate-20261027.
+func TestMergeCheck_BinaryFile_WholeFileTake_Finding(t *testing.T) {
+	dir := initTestRepo(t)
+
+	writeFile(t, dir, "bin.dat", "start\x00base_binary_content\n")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "bin.dat"},
+		[]string{"commit", "-m", "chore: base binary"},
+		[]string{"branch", "-M", "main"},
+	)
+
+	// Branch X (P1) edits binary
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-x"})
+	writeFile(t, dir, "bin.dat", "start\x00p1_binary_content\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "bin.dat"}, []string{"commit", "-m", "feat: P1 binary edit"})
+	p1SHA := gitRevParse(t, dir, "HEAD")
+
+	// Branch Y (P2) edits binary
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-y", "main"})
+	writeFile(t, dir, "bin.dat", "start\x00p2_binary_content\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "bin.dat"}, []string{"commit", "-m", "feat: P2 binary edit"})
+	p2SHA := gitRevParse(t, dir, "HEAD")
+
+	// Merge taking P2 binary whole file
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "branch-x"})
+	runGitAllowConflict(t, dir, "merge", "--no-commit", "branch-y")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"checkout", "branch-y", "--", "bin.dat"},
+		[]string{"add", "bin.dat"},
+		[]string{"commit", "-m", "merge: taking theirs for binary"},
+	)
+	mergeSHA := gitRevParse(t, dir, "HEAD")
+
+	res, err := Check(t.Context(), Options{RepoDir: dir, Range: "main..HEAD"})
+	if err != nil {
+		t.Fatalf("Check failed: %v", err)
+	}
+	if res.MergesCount != 1 {
+		t.Fatalf("expected 1 merge, got %d", res.MergesCount)
+	}
+	if len(res.Findings) != 1 {
+		t.Fatalf("expected 1 finding for binary whole-file take, got %d: %+v", len(res.Findings), res.Findings)
+	}
+	f := res.Findings[0]
+	if !f.Binary {
+		t.Errorf("expected Binary=true for binary finding, got false")
+	}
+	assertFindingMatch(t, f, "bin.dat", mergeSHA, p1SHA, p2SHA)
+	formatted := FormatFinding(f)
+	if !strings.Contains(formatted, "binary comparison") {
+		t.Errorf("expected formatted finding to contain 'binary comparison', got %q", formatted)
+	}
+}
+
+// Positive: identical binary change -> no finding.
+// Order: engine-dropped-hunk-gate-20261027.
+func TestMergeCheck_BinaryFile_Identical_Clean(t *testing.T) {
+	dir := initTestRepo(t)
+
+	writeFile(t, dir, "bin.dat", "start\x00base_binary_content\n")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "bin.dat"},
+		[]string{"commit", "-m", "chore: base binary"},
+		[]string{"branch", "-M", "main"},
+	)
+
+	// Branch X (P1) edits binary to same content
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-x"})
+	writeFile(t, dir, "bin.dat", "start\x00same_binary_content\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "bin.dat"}, []string{"commit", "-m", "feat: P1 same binary"})
+
+	// Branch Y (P2) edits binary to same content
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-y", "main"})
+	writeFile(t, dir, "bin.dat", "start\x00same_binary_content\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "bin.dat"}, []string{"commit", "-m", "feat: P2 same binary"})
+
+	// Merge Y into X
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "branch-x"})
+	testsupport.RunFixtureGit(t, dir, []string{"merge", "--no-edit", "branch-y"})
+
+	res, err := Check(t.Context(), Options{RepoDir: dir, Range: "main..HEAD"})
+	if err != nil {
+		t.Fatalf("Check failed: %v", err)
+	}
+	if res.MergesCount != 1 {
+		t.Fatalf("expected 1 merge, got %d", res.MergesCount)
+	}
+	if len(res.Findings) != 0 {
+		t.Fatalf("expected 0 findings for identical binary merge, got %d: %+v", len(res.Findings), res.Findings)
+	}
+}
+
+// Boundary: unrelated histories (no merge base) -> stated line, exit 0.
+// Order: engine-dropped-hunk-gate-20261027.
+func TestMergeCheck_UnrelatedHistories_StatedLineExitZero(t *testing.T) {
+	dir := initTestRepo(t)
+
+	writeFile(t, dir, "a.txt", "history 1\n")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "a.txt"},
+		[]string{"commit", "-m", "chore: root 1"},
+		[]string{"branch", "-M", "main"},
+	)
+
+	// Create orphan branch with unrelated history
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "--orphan", "orphan-branch"})
+	testsupport.RunFixtureGit(t, dir, []string{"rm", "-f", "a.txt"})
+	writeFile(t, dir, "b.txt", "history 2\n")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "b.txt"},
+		[]string{"commit", "-m", "chore: root 2"},
+	)
+
+	// Merge orphan branch into main with --allow-unrelated-histories
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "main"})
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"merge", "--allow-unrelated-histories", "--no-edit", "orphan-branch"},
+	)
+	mergeSHA := gitRevParse(t, dir, "HEAD")
+
+	res, err := Check(t.Context(), Options{RepoDir: dir, Range: "main~1..HEAD"})
+	if err != nil {
+		t.Fatalf("Check failed: %v", err)
+	}
+	if res.MergesCount != 1 {
+		t.Fatalf("expected 1 merge, got %d", res.MergesCount)
+	}
+	if len(res.Findings) != 0 {
+		t.Fatalf("expected 0 findings, got %d: %+v", len(res.Findings), res.Findings)
+	}
+	if len(res.Notices) != 1 {
+		t.Fatalf("expected 1 notice, got %d: %+v", len(res.Notices), res.Notices)
+	}
+	expectedNotice := fmt.Sprintf("merge %s: no merge base, not judged", shortSHA(mergeSHA))
+	if res.Notices[0] != expectedNotice {
+		t.Errorf("expected notice %q, got %q", expectedNotice, res.Notices[0])
 	}
 }
 
@@ -358,4 +631,11 @@ func writeFile(t *testing.T, dir, rel, content string) {
 func gitRevParse(t *testing.T, dir, ref string) string {
 	t.Helper()
 	return strings.TrimSpace(testsupport.RunFixtureGit(t, dir, []string{"rev-parse", ref}))
+}
+
+func runGitAllowConflict(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	if _, err := util.RunGit(t.Context(), dir, args...); err != nil {
+		t.Logf("ignoring expected merge conflict: %v", err)
+	}
 }
