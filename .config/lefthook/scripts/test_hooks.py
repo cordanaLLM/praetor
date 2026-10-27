@@ -2494,6 +2494,7 @@ class ScopeAndGuard(unittest.TestCase):
             ],
         )
 
+    @unittest.skipIf(os.name == "nt", POSIX_STUB)
     def test_prepush_two_tool_modules_scan_one_target_each(self):
         # Order: engine-1629-landing-failed-20261027-0914. Real trivy fs takes one target; the stub
         # refuses more than one the same way, and a finding in either module refuses the push.
@@ -2523,6 +2524,7 @@ class ScopeAndGuard(unittest.TestCase):
             self.assertNotIn("multiple targets", error_msg)
             self.assertEqual(len(calls.read_text().splitlines()), 2)
 
+    @unittest.skipIf(os.name == "nt", POSIX_STUB)
     def test_prepush_tool_module_trivy_finding_fails(self):
         # Order: engine-prepush-trivy-tool-modules-20261027.
         with tempfile.TemporaryDirectory(prefix="praetor-trivy-fail-") as temp:
@@ -2543,6 +2545,7 @@ class ScopeAndGuard(unittest.TestCase):
             self.assertIn("tools/lefthook", error_msg)
             self.assertIn("CVE-2026-78669", error_msg)
 
+    @unittest.skipIf(os.name == "nt", POSIX_STUB)
     def test_prepush_tool_module_trivy_clean_passes(self):
         # Order: engine-prepush-trivy-tool-modules-20261027.
         with tempfile.TemporaryDirectory(prefix="praetor-trivy-pass-") as temp:
