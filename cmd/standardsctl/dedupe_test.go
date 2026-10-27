@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -603,54 +602,16 @@ func TestRunDedupeScan_Boundary_NoGoWithUnscannedExceptionReturnsNil(t *testing.
 	}
 }
 
-// stubPinnedJscpd configures a hermetic pinned-version jscpd stub in t.TempDir and sets PRAETOR_JSCPD_BIN.
-// order engine-dedupe-jscpd-skip-fails-closed-20261027
-func stubPinnedJscpd(t *testing.T) string {
+// stubPinnedJscpd makes the test binary the jscpd the scan runs, at the pinned version
+// (testsupport.UseFakeJscpd; order engine-dedupe-jscpd-skip-fails-closed-20261027).
+func stubPinnedJscpd(t *testing.T) {
 	t.Helper()
-	bin := writeJscpdStub(t, t.TempDir(), "jscpd "+dedupe.JscpdVersion)
-	t.Setenv("PRAETOR_JSCPD_BIN", bin)
-	return bin
-}
-
-// writeJscpdStub writes an executable shell script stub in dir that emulates jscpd.
-// order engine-dedupe-jscpd-skip-fails-closed-20261027
-func writeJscpdStub(t *testing.T, dir, version string) string {
-	t.Helper()
-	bin := filepath.Join(dir, "jscpd-stub.sh")
-	script := fmt.Sprintf(`#!/bin/sh
-if [ "$1" = "--version" ]; then
-  echo %q
-  exit 0
-fi
-cfg=""
-while [ $# -gt 0 ]; do
-  if [ "$1" = "-c" ]; then
-    cfg="$2"
-    shift 2
-  else
-    shift 1
-  fi
-done
-if [ -n "$cfg" ]; then
-  outDir=$(grep -o '"output": *"[^"]*"' "$cfg" | sed 's/"output": *"//;s/"//')
-  if [ -n "$outDir" ]; then
-    mkdir -p "$outDir"
-    echo '{"duplicates":[]}' > "$outDir/jscpd-report.json"
-  fi
-fi
-exit 0
-`, version)
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return bin
+	testsupport.UseFakeJscpd(t, "jscpd "+dedupe.JscpdVersion)
 }
 
 func TestRunDedupeScan_Planted_VersionMismatchFailsClosed(t *testing.T) {
 	// order engine-dedupe-jscpd-skip-fails-closed-20261027
-	stubDir := t.TempDir()
-	stubBin := writeJscpdStub(t, stubDir, "jscpd 5.4.1")
-	t.Setenv("PRAETOR_JSCPD_BIN", stubBin)
+	testsupport.UseFakeJscpd(t, "jscpd 5.4.1")
 
 	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
 	writeFixtureFile(t, dir, "script.py", "print('hello')\n")
@@ -711,9 +672,7 @@ func TestRunDedupeScan_Planted_MissingBinaryFailsClosed(t *testing.T) {
 
 func TestRunDedupeScan_Planted_PinnedStubPasses(t *testing.T) {
 	// order engine-dedupe-jscpd-skip-fails-closed-20261027
-	stubDir := t.TempDir()
-	stubBin := writeJscpdStub(t, stubDir, "jscpd "+dedupe.JscpdVersion)
-	t.Setenv("PRAETOR_JSCPD_BIN", stubBin)
+	testsupport.UseFakeJscpd(t, "jscpd "+dedupe.JscpdVersion)
 
 	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
 	writeFixtureFile(t, dir, "script.py", "print('hello')\n")
@@ -736,9 +695,7 @@ func TestRunDedupeScan_Planted_PinnedStubPasses(t *testing.T) {
 
 func TestRunDedupeScan_Planted_BoundaryNoForeignFilesWithWrongStubPasses(t *testing.T) {
 	// order engine-dedupe-jscpd-skip-fails-closed-20261027
-	stubDir := t.TempDir()
-	stubBin := writeJscpdStub(t, stubDir, "jscpd 5.4.1")
-	t.Setenv("PRAETOR_JSCPD_BIN", stubBin)
+	testsupport.UseFakeJscpd(t, "jscpd 5.4.1")
 
 	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
 
@@ -749,9 +706,7 @@ func TestRunDedupeScan_Planted_BoundaryNoForeignFilesWithWrongStubPasses(t *test
 
 func TestRunDedupeScan_Planted_NotApplicableWrongStubReturnsError(t *testing.T) {
 	// order engine-dedupe-jscpd-skip-fails-closed-20261027
-	stubDir := t.TempDir()
-	stubBin := writeJscpdStub(t, stubDir, "jscpd 5.4.1")
-	t.Setenv("PRAETOR_JSCPD_BIN", stubBin)
+	testsupport.UseFakeJscpd(t, "jscpd 5.4.1")
 
 	dir := dedupeFixtureDir(t, "script.py", "print('hello')\n")
 
