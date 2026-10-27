@@ -10,9 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/tools/secrets/rules"
 
@@ -29,6 +31,10 @@ const (
 	DefaultScanner = "gitleaks"
 	// DefaultConfig is the repository-relative gitleaks configuration file.
 	DefaultConfig = ".gitleaks.toml"
+	// BaselineFile is the repository-relative HISS-13 baseline file (order engine-hiss-unenforced-checks-20261027).
+	BaselineFile = ".standards-baseline.json"
+	// BaselineRuleID is the rule identifier recorded for secret findings in the HISS-13 baseline.
+	BaselineRuleID = "HISS-12"
 	// LogOpts are the log options reading full history and merge commits (#1237).
 	// Order engine-secretscan-foreign-remote-refs-20261025: read only the repository's
 	// own refs (branches, tags, origin); --all walked refs of other remotes.
@@ -53,10 +59,30 @@ type Options struct {
 
 // Report holds the outcome of Check.
 type Report struct {
-	Allowed  []Finding
-	Blocking []Finding
-	Unused   []config.Exception
-	Total    int
+	Allowed        []Finding
+	Baselined      []Finding
+	Blocking       []Finding
+	Unused         []config.Exception
+	StaleBaseline  []baseline.Infraction
+	BaselineAbsent bool
+	Total          int
+}
+
+// RecordOptions selects how RecordBaseline records HISS-12 findings into .standards-baseline.json.
+type RecordOptions struct {
+	Options
+	Reason     string
+	Repository string
+	CommitSHA  string
+}
+
+// RecordResult holds the outcome of RecordBaseline.
+type RecordResult struct {
+	Path      string
+	Previous  *baseline.Baseline
+	Next      *baseline.Baseline
+	Recorded  int
+	Unchanged bool
 }
 
 // Failed reports whether the scan failed the gate: any unexcused finding or unused exception.
@@ -67,22 +93,54 @@ func (r *Report) Failed() bool {
 // Summary returns a human-readable one-line summary of the verdicts.
 func (r *Report) Summary() string {
 	if !r.Failed() {
-		if len(r.Allowed) == 0 {
-			return "zero secret findings in history"
-		}
-		return fmt.Sprintf("zero blocking secret findings (%d allowed by unexpired exceptions)", len(r.Allowed))
+		return r.passSummary()
 	}
-	parts := make([]string, 0, 2)
+	return r.failSummary()
+}
+
+func (r *Report) passSummary() string {
+	baselined := len(r.Baselined)
+	excAllowed := max(0, len(r.Allowed)-baselined)
+	var base string
+	switch {
+	case excAllowed == 0 && baselined == 0:
+		base = "zero secret findings in history"
+	case excAllowed > 0 && baselined == 0:
+		base = fmt.Sprintf("zero blocking secret findings (%d allowed by unexpired exceptions)", excAllowed)
+	case excAllowed == 0 && baselined > 0:
+		base = fmt.Sprintf("zero blocking secret findings (%d baselined)", baselined)
+	default:
+		base = fmt.Sprintf("zero blocking secret findings (%d allowed by unexpired exceptions, %d baselined)", excAllowed, baselined)
+	}
+	return r.appendBaselineNotes(base)
+}
+
+func (r *Report) failSummary() string {
+	parts := make([]string, 0, 3)
 	if len(r.Blocking) > 0 {
 		parts = append(parts, fmt.Sprintf("%d blocking secret finding(s)", len(r.Blocking)))
 	}
 	if len(r.Unused) > 0 {
 		parts = append(parts, fmt.Sprintf("%d unused exception(s)", len(r.Unused)))
 	}
-	return strings.Join(parts, ", ")
+	if len(r.Baselined) > 0 {
+		parts = append(parts, fmt.Sprintf("%d baselined", len(r.Baselined)))
+	}
+	return r.appendBaselineNotes(strings.Join(parts, ", "))
 }
 
-// Check runs gitleaks in opts.Dir and judges its findings against the manifest's HISS-12 exceptions.
+func (r *Report) appendBaselineNotes(base string) string {
+	if len(r.StaleBaseline) > 0 {
+		base += fmt.Sprintf("; %d stale baselined entry(ies)", len(r.StaleBaseline))
+	}
+	if r.BaselineAbsent {
+		base += "; no baselined entries (baseline file absent)"
+	}
+	return base
+}
+
+// Check runs gitleaks in opts.Dir and judges its findings against the manifest's HISS-12 exceptions
+// and the HISS-13 baseline (.standards-baseline.json).
 func Check(ctx context.Context, opts Options) (*Report, error) {
 	if ctx == nil {
 		return nil, errors.New("secretscan: context cannot be nil")
@@ -94,6 +152,10 @@ func Check(ctx context.Context, opts Options) (*Report, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load exceptions: %w", err)
 	}
+	base, err := baseline.LoadBaseline(filepath.Join(opts.Dir, BaselineFile))
+	if err != nil {
+		return nil, fmt.Errorf("load baseline: %w", err)
+	}
 	findings, err := runGitleaks(ctx, opts)
 	if err != nil {
 		return nil, err
@@ -102,7 +164,91 @@ func Check(ctx context.Context, opts Options) (*Report, error) {
 	if opts.Now != nil {
 		now = opts.Now
 	}
-	return judgeFindings(findings, entries, opts.Dir, config.ExceptionDay(now())), nil
+	return judgeFindings(findings, entries, base, opts.Dir, config.ExceptionDay(now())), nil
+}
+
+// RecordBaseline scans history with gitleaks and writes unexcused findings as HISS-12 entries in
+// .standards-baseline.json, keeping every non-HISS-12 entry and enforcing the HISS-13 ratchet.
+func RecordBaseline(ctx context.Context, opts RecordOptions) (*RecordResult, error) {
+	if ctx == nil {
+		return nil, errors.New("secretscan: context cannot be nil")
+	}
+	if opts.Dir == "" || opts.Run == nil {
+		return nil, errors.New("secretscan: directory and runner are required")
+	}
+	entries, err := config.LoadExceptionsFor(ctx, opts.Dir, config.ExceptionRuleSecrets)
+	if err != nil {
+		return nil, fmt.Errorf("load exceptions: %w", err)
+	}
+	baselinePath := filepath.Join(opts.Dir, BaselineFile)
+	previous, err := baseline.LoadBaseline(baselinePath)
+	if err != nil {
+		return nil, fmt.Errorf("load baseline: %w", err)
+	}
+	findings, err := runGitleaks(ctx, opts.Options)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now
+	if opts.Now != nil {
+		now = opts.Now
+	}
+	excReport := judgeFindings(findings, entries, nil, opts.Dir, config.ExceptionDay(now()))
+	return writeRecordedBaseline(baselinePath, previous, excReport.Blocking, opts)
+}
+
+func writeRecordedBaseline(path string, previous *baseline.Baseline, blocking []Finding, opts RecordOptions) (*RecordResult, error) {
+	combined := mergeSecretInfractions(previous.Infractions, blocking, opts.Dir)
+	reason := strings.TrimSpace(opts.Reason)
+	recBase := previous
+	if previous.Absent {
+		recBase = &baseline.Baseline{
+			Version:          1,
+			Repository:       opts.Repository,
+			CommitSHA:        opts.CommitSHA,
+			TotalInfractions: len(combined),
+			Infractions:      []baseline.Infraction{},
+		}
+	}
+	next, err := baseline.Record(recBase, combined, baseline.RecordOptions{
+		AllowIncrease: reason != "",
+		Rationale:     reason,
+		Repository:    opts.Repository,
+		CommitSHA:     opts.CommitSHA,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("refusing to record %s: %w (pass --reason=<why> to record a deliberate increase)", path, err)
+	}
+	if previous.Absent && reason != "" && len(combined) > 0 {
+		next.IncreaseRationale = reason
+	}
+	if !previous.Absent && previous.SameDebt(next) {
+		return &RecordResult{Path: path, Previous: previous, Next: previous, Recorded: len(blocking), Unchanged: true}, nil
+	}
+	if err := baseline.SaveBaseline(path, next); err != nil {
+		return nil, err
+	}
+	return &RecordResult{Path: path, Previous: previous, Next: next, Recorded: len(blocking)}, nil
+}
+
+func mergeSecretInfractions(existing []baseline.Infraction, blocking []Finding, dir string) []baseline.Infraction {
+	combined := make([]baseline.Infraction, 0, len(existing)+len(blocking))
+	for i := 0; i < len(existing); i++ {
+		if existing[i].RuleID != BaselineRuleID {
+			combined = append(combined, existing[i])
+		}
+	}
+	for i := 0; i < len(blocking); i++ {
+		f := blocking[i]
+		combined = append(combined, baseline.Infraction{
+			RuleID:      BaselineRuleID,
+			FilePath:    baseline.NormalizePath(rules.NormalizeFindingPath(f.File, dir)),
+			LineNumber:  f.StartLine,
+			Message:     f.RuleID,
+			Fingerprint: f.Fingerprint,
+		})
+	}
+	return combined
 }
 
 func createTempReportPath() (string, error) {
@@ -149,7 +295,9 @@ func runGitleaks(ctx context.Context, opts Options) ([]Finding, error) {
 func buildGitleaksArgs(opts Options, reportPath string) (string, []string) {
 	cfg := opts.ConfigPath
 	if cfg == "" {
-		cfg = DefaultConfig
+		if _, err := os.Stat(filepath.Join(opts.Dir, DefaultConfig)); err == nil {
+			cfg = DefaultConfig
+		}
 	}
 	scanner := opts.Scanner
 	if len(scanner) == 0 {
@@ -157,8 +305,11 @@ func buildGitleaksArgs(opts Options, reportPath string) (string, []string) {
 	}
 	cmdName := scanner[0]
 	cmdArgs := append([]string{}, scanner[1:]...)
-	cmdArgs = append(cmdArgs, "detect", "--no-banner", "--redact", "--config", cfg,
-		"--log-opts="+LogOpts, "--report-format", "json", "--report-path", reportPath)
+	cmdArgs = append(cmdArgs, "detect", "--no-banner", "--redact")
+	if cfg != "" {
+		cmdArgs = append(cmdArgs, "--config", cfg)
+	}
+	cmdArgs = append(cmdArgs, "--log-opts="+LogOpts, "--report-format", "json", "--report-path", reportPath)
 	return cmdName, cmdArgs
 }
 
@@ -180,9 +331,9 @@ func parseReport(data []byte, runErr error, out string) ([]Finding, error) {
 	return findings, nil
 }
 
-func judgeFindings(findings []Finding, entries []config.Exception, dir string, today time.Time) *Report {
+func judgeFindings(findings []Finding, entries []config.Exception, base *baseline.Baseline, dir string, today time.Time) *Report {
 	ruleEntries := make([]rules.Entry, len(entries))
-	for i := range entries {
+	for i := 0; i < len(entries); i++ {
 		ruleEntries[i] = rules.Entry{
 			Path:        entries[i].Path,
 			RuleID:      entries[i].Tool,
@@ -199,8 +350,52 @@ func judgeFindings(findings []Finding, entries []config.Exception, dir string, t
 		Blocking: res.Blocking,
 		Total:    len(findings),
 	}
-	for _, idx := range res.StaleIdx {
-		report.Unused = append(report.Unused, entries[idx])
+	for i := 0; i < len(res.StaleIdx); i++ {
+		report.Unused = append(report.Unused, entries[res.StaleIdx[i]])
 	}
+	applyBaseline(report, base)
 	return report
+}
+
+func applyBaseline(report *Report, base *baseline.Baseline) {
+	if base == nil || base.Absent {
+		report.BaselineAbsent = true
+		return
+	}
+	matched := indexBaselineFingerprints(base.Infractions)
+	remaining := make([]Finding, 0, len(report.Blocking))
+	for i := 0; i < len(report.Blocking); i++ {
+		f := report.Blocking[i]
+		if _, ok := matched[f.Fingerprint]; ok && f.Fingerprint != "" {
+			matched[f.Fingerprint] = true
+			report.Baselined = append(report.Baselined, f)
+			report.Allowed = append(report.Allowed, f)
+			continue
+		}
+		remaining = append(remaining, f)
+	}
+	report.Blocking = remaining
+	report.StaleBaseline = collectStaleBaseline(base.Infractions, matched)
+}
+
+func indexBaselineFingerprints(infractions []baseline.Infraction) map[string]bool {
+	matched := make(map[string]bool, len(infractions))
+	for i := 0; i < len(infractions); i++ {
+		inf := infractions[i]
+		if inf.RuleID == BaselineRuleID && inf.Fingerprint != "" {
+			matched[inf.Fingerprint] = false
+		}
+	}
+	return matched
+}
+
+func collectStaleBaseline(infractions []baseline.Infraction, matched map[string]bool) []baseline.Infraction {
+	var stale []baseline.Infraction
+	for i := 0; i < len(infractions); i++ {
+		inf := infractions[i]
+		if inf.RuleID == BaselineRuleID && !matched[inf.Fingerprint] {
+			stale = append(stale, inf)
+		}
+	}
+	return stale
 }

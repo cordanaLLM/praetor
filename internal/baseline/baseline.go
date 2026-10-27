@@ -447,7 +447,7 @@ func staleEntries(recorded, current []Infraction) int {
 	after := countByFileRule(current, nil)
 	stale := 0
 	for key, count := range before {
-		if key.rule == ImageRefRuleID {
+		if key.rule == ImageRefRuleID || key.rule == "HISS-12" {
 			continue
 		}
 		if count > after[key] {

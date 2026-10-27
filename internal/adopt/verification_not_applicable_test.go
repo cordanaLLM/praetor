@@ -121,7 +121,7 @@ func assertNotApplicableExecution(t *testing.T, root, makePath string) {
 		t.Fatalf("make verify-all failed: %v\noutput:\n%s", err, out)
 	}
 	calls := mustRead(t, filepath.Join(root, "calls"))
-	if calls != "compile-context --verify\ncaveman check --configured-sources\naudit\n" {
+	if calls != "compile-context --verify\ncaveman check --configured-sources\naudit\nsecurity secrets\n" {
 		t.Fatalf("make verify-all calls = %q", calls)
 	}
 	if !strings.Contains(out, "build: not applicable") || !strings.Contains(out, "test: not applicable") {

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/secretscan"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -198,8 +199,9 @@ func TestCheck_CleanRepo_Passes(t *testing.T) {
 	if report.Failed() {
 		t.Fatalf("clean repo failed: %s", report.Summary())
 	}
-	if report.Summary() != "zero secret findings in history" {
-		t.Errorf("summary = %q, want 'zero secret findings in history'", report.Summary())
+	want := "zero secret findings in history; no baselined entries (baseline file absent)"
+	if report.Summary() != want {
+		t.Errorf("summary = %q, want %q", report.Summary(), want)
 	}
 }
 
@@ -271,4 +273,143 @@ func TestCheck_RefScoping_3D(t *testing.T) {
 	t.Run("tag included", func(t *testing.T) {
 		testRefIncluded(t, dir, "refs/tags/v1.0.0", "refs/heads/feature", leakHash, "tag")
 	})
+}
+
+func stubReportRunner(reportJSON string, exitErr error) secretscan.Runner {
+	return func(_ context.Context, _, _ string, args ...string) (string, error) {
+		for i := 0; i < len(args); i++ {
+			if args[i] == "--report-path" && i+1 < len(args) {
+				if err := os.WriteFile(args[i+1], []byte(reportJSON), 0o600); err != nil {
+					return "", err
+				}
+			}
+		}
+		return "", exitErr
+	}
+}
+
+func TestCheck_Baseline_3D(t *testing.T) {
+	t.Run("new finding not in baseline fails", testBaselineNewFindingFails)
+	t.Run("baselined finding passes and counts in summary", testBaselineMatchedFindingPasses)
+	t.Run("stale baseline entry reports stale without failing", testBaselineStaleEntryPasses)
+}
+
+func testBaselineNewFindingFails(t *testing.T) {
+	dir := t.TempDir()
+	base := &baseline.Baseline{
+		Version: 1,
+		Infractions: []baseline.Infraction{
+			{RuleID: "HISS-12", FilePath: "creds.py", LineNumber: 1, Message: "generic-api-key", Fingerprint: "synth-fp-old"},
+		},
+	}
+	if err := baseline.SaveBaseline(filepath.Join(dir, secretscan.BaselineFile), base); err != nil {
+		t.Fatal(err)
+	}
+	reportJSON := `[{"RuleID":"generic-api-key","File":"creds.py","StartLine":2,"Commit":"aaaa","Fingerprint":"synth-fp-new"}]`
+	report, err := secretscan.Check(t.Context(), secretscan.Options{
+		Dir: dir,
+		Run: stubReportRunner(reportJSON, fmt.Errorf("exit status 1")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Failed() || len(report.Blocking) != 1 || len(report.StaleBaseline) != 1 {
+		t.Fatalf("report = %+v; want 1 blocking, 1 stale", report)
+	}
+}
+
+func testBaselineMatchedFindingPasses(t *testing.T) {
+	dir := t.TempDir()
+	base := &baseline.Baseline{
+		Version: 1,
+		Infractions: []baseline.Infraction{
+			{RuleID: "HISS-12", FilePath: "creds.py", LineNumber: 1, Message: "generic-api-key", Fingerprint: "synth-fp-1"},
+		},
+	}
+	if err := baseline.SaveBaseline(filepath.Join(dir, secretscan.BaselineFile), base); err != nil {
+		t.Fatal(err)
+	}
+	reportJSON := `[{"RuleID":"generic-api-key","File":"creds.py","StartLine":1,"Commit":"aaaa","Fingerprint":"synth-fp-1"}]`
+	report, err := secretscan.Check(t.Context(), secretscan.Options{
+		Dir: dir,
+		Run: stubReportRunner(reportJSON, fmt.Errorf("exit status 1")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Failed() || len(report.Baselined) != 1 || len(report.Allowed) != 1 {
+		t.Fatalf("report = %+v; want pass with 1 baselined finding", report)
+	}
+	if got := report.Summary(); got != "zero blocking secret findings (1 baselined)" {
+		t.Fatalf("summary = %q, want 'zero blocking secret findings (1 baselined)'", got)
+	}
+}
+
+func testBaselineStaleEntryPasses(t *testing.T) {
+	dir := t.TempDir()
+	base := &baseline.Baseline{
+		Version: 1,
+		Infractions: []baseline.Infraction{
+			{RuleID: "HISS-12", FilePath: "creds.py", LineNumber: 1, Message: "generic-api-key", Fingerprint: "synth-fp-stale"},
+		},
+	}
+	if err := baseline.SaveBaseline(filepath.Join(dir, secretscan.BaselineFile), base); err != nil {
+		t.Fatal(err)
+	}
+	report, err := secretscan.Check(t.Context(), secretscan.Options{
+		Dir: dir,
+		Run: stubReportRunner("[]", nil),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Failed() || len(report.StaleBaseline) != 1 {
+		t.Fatalf("report = %+v; want pass with 1 stale baseline entry", report)
+	}
+	if got := report.Summary(); got != "zero secret findings in history; 1 stale baselined entry(ies)" {
+		t.Fatalf("summary = %q, want stale baselined count", got)
+	}
+}
+
+func TestRecordBaseline_3D(t *testing.T) {
+	dir := t.TempDir()
+	initial := &baseline.Baseline{
+		Version: 1,
+		Infractions: []baseline.Infraction{
+			{RuleID: "HISS-04", FilePath: "main.go", LineNumber: 10, Message: "complexity", Fingerprint: "main.go:HISS-04:fn:f#1"},
+		},
+	}
+	baselinePath := filepath.Join(dir, secretscan.BaselineFile)
+	if err := baseline.SaveBaseline(baselinePath, initial); err != nil {
+		t.Fatal(err)
+	}
+	oneFinding := `[{"RuleID":"generic-api-key","File":"creds.py","StartLine":4,"Commit":"aaaa","Secret":"SYNTH-DO-NOT-WRITE","Match":"KEY=SYNTH-DO-NOT-WRITE","Fingerprint":"synth-fp-1"}]`
+	if _, err := secretscan.RecordBaseline(t.Context(), secretscan.RecordOptions{
+		Options: secretscan.Options{Dir: dir, Run: stubReportRunner(oneFinding, fmt.Errorf("exit status 1"))},
+	}); err == nil {
+		t.Fatal("expected count increase without --reason to be refused")
+	}
+	res, err := secretscan.RecordBaseline(t.Context(), secretscan.RecordOptions{
+		Options: secretscan.Options{Dir: dir, Run: stubReportRunner(oneFinding, fmt.Errorf("exit status 1"))},
+		Reason:  "adoption baseline",
+	})
+	if err != nil {
+		t.Fatalf("RecordBaseline with reason failed: %v", err)
+	}
+	if res.Recorded != 1 || res.Next.Count() != 2 {
+		t.Fatalf("recorded = %d, total = %d; want 1 and 2", res.Recorded, res.Next.Count())
+	}
+	raw, err := os.ReadFile(baselinePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "SYNTH-DO-NOT-WRITE") {
+		t.Fatalf("secret text leaked into baseline file:\n%s", string(raw))
+	}
+	twoFindings := `[{"RuleID":"generic-api-key","File":"creds.py","StartLine":4,"Commit":"aaaa","Fingerprint":"synth-fp-1"},{"RuleID":"aws-access-token","File":"b.py","StartLine":8,"Commit":"bbbb","Fingerprint":"synth-fp-2"}]`
+	if _, err := secretscan.RecordBaseline(t.Context(), secretscan.RecordOptions{
+		Options: secretscan.Options{Dir: dir, Run: stubReportRunner(twoFindings, fmt.Errorf("exit status 1"))},
+	}); err == nil {
+		t.Fatal("expected second record with more findings and no reason to be refused")
+	}
 }

@@ -234,7 +234,7 @@ func TestVerificationActualScaffoldBuildAndTestFailurePropagates(t *testing.T) {
 				t.Fatalf("failure %q did not propagate: %v", failure, err)
 			}
 			calls := mustRead(t, filepath.Join(root, "calls"))
-			if failure == "none" && calls != "compile-context --verify\ncaveman check --configured-sources\naudit\nbuild -v ./...\ntest -v -race ./...\n" {
+			if failure == "none" && calls != "compile-context --verify\ncaveman check --configured-sources\naudit\nsecurity secrets\nbuild -v ./...\ntest -v -race ./...\n" {
 				t.Fatalf("scaffold did not exercise required commands: %q", calls)
 			}
 		})

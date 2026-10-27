@@ -2466,7 +2466,8 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
 
   The `Adopted check` column names the
   check and the generated stages that run it, such as `praetorctl audit` HISS scan in verify-all +
-  lefthook pre-commit/pre-push, qualified by language, or `not enforced`. It credits only the
+  lefthook pre-commit/pre-push, qualified by language, or `praetorctl security secrets` (gitleaks
+  history scan) in verify-all + lefthook pre-push for HISS-12 across every language, or `not enforced`. It credits only the
   pipelines this run generates ([`internal/adopt/harness_pipelines.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/harness_pipelines.go)):
   - the `verify-all` target, unless `adoption.decline` lists `makefile` or the plan is
     `preserved-unverified`;

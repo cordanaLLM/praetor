@@ -377,6 +377,7 @@ func isPlaceholderVerificationMakefile(data string, plan *VerificationPlan) bool
 	return data == buildMakefile(placeholder) ||
 		data == priorSourceGateMakefile(placeholder) ||
 		data == priorPathResolvedMakefile(placeholder) ||
+		data == priorSecretsGateMakefile(placeholder) ||
 		data == buildMakefile(notApplicablePlaceholder)
 }
 
@@ -405,6 +406,7 @@ func matchesReplaceableMakefile(stripped string, plan *VerificationPlan) bool {
 		isPriorGeneratedMakefile(stripped, plan) ||
 		stripped == priorSourceGateMakefile(plan) ||
 		stripped == priorPathResolvedMakefile(plan) ||
+		stripped == priorSecretsGateMakefile(plan) ||
 		isPlaceholderVerificationMakefile(stripped, plan)
 }
 
@@ -438,7 +440,8 @@ func preserveCustomVerification(plan *VerificationPlan, data []byte) {
 		text = normalized
 	}
 	text = withoutDocumentationMakefileBlock(text)
-	if !mayDefineVerificationTarget(text) || isReplaceableVerificationMakefile(text, plan) || text == buildMakefile(plan) {
+	if !mayDefineVerificationTarget(text) || isReplaceableVerificationMakefile(text, plan) ||
+		text == buildMakefile(plan) || text == buildMakefileFormat(plan, verificationRecipePrefix, true, false) {
 		return
 	}
 	if normalized, _ := util.NormalizeLineEndings(text); strings.Contains(normalized, unavailableVerificationRecipe) {

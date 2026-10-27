@@ -91,7 +91,7 @@ func TestAdopt_Positive_LefthookJobsFollowDetectedLanguages(t *testing.T) {
 	}
 	for _, tc := range cases {
 		repoPath, rep := adoptMarkedRepo(t, tc.name, tc.markers, "")
-		present := append(append([]string{}, tc.present...), "pre-commit/commands/hiss-audit", "pre-push/commands/gate")
+		present := append(append([]string{}, tc.present...), "pre-commit/commands/hiss-audit", "pre-push/commands/secrets", "pre-push/commands/gate")
 		assertJobs(t, tc.name, writtenLefthookJobs(t, repoPath), present, tc.absent)
 		written := mustRead(t, filepath.Join(repoPath, lefthookFile))
 		if !strings.HasPrefix(written, "# Lefthook Configuration "+tc.header+"\n") {
@@ -147,11 +147,11 @@ func TestAdopt_Negative_GoEveryRepositoryRenderingMigratesToCargoJobs(t *testing
 // Boundary: a repository with no detected language keeps every language's jobs, and a repository
 // whose only detected language has no Go/Rust jobs still receives Go jobs for later modules.
 func TestAdopt_Boundary_LefthookJobsForUnknownAndJoblessLanguages(t *testing.T) {
-	every := append(append([]string{}, goLanguageJobs...), rustLanguageJobs...)
+	every := append(append([]string{"pre-push/commands/secrets"}, goLanguageJobs...), rustLanguageJobs...)
 	repoPath, _ := adoptMarkedRepo(t, "no-marker", nil, "")
 	assertJobs(t, "no marker", writtenLefthookJobs(t, repoPath), every, nil)
 	repoPath, rep := adoptMarkedRepo(t, "python-only", map[string]string{"pytest.ini": "[pytest]\n"}, "")
-	assertJobs(t, "python only", writtenLefthookJobs(t, repoPath), append([]string{"pre-commit/commands/context-check", "pre-push/commands/audit"}, goLanguageJobs...), rustLanguageJobs)
+	assertJobs(t, "python only", writtenLefthookJobs(t, repoPath), append([]string{"pre-commit/commands/context-check", "pre-push/commands/secrets", "pre-push/commands/audit"}, goLanguageJobs...), rustLanguageJobs)
 	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); !strings.HasPrefix(got, "# Lefthook Configuration (Go & HISS Governance)\n") {
 		t.Errorf("python only: the header names a language: %q", strings.SplitN(got, "\n", 2)[0])
 	}

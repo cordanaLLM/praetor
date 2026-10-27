@@ -110,6 +110,9 @@ func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 			t.Fatalf("%s: the pre-push security job did not run govulncheck ./...: %v", name, security["run"])
 		}
 		security["run"] = requiredToolGuard(govuln.DefaultScanner, govulnInstallHint, lefthookGovernedCommand(govulnGateArgs))
+		decodedCommands(t, prior, "pre-push")["secrets"] = map[string]any{
+			"run": requiredToolGuard("gitleaks", gitleaksInstallHint, lefthookGovernedCommand("security secrets")),
+		}
 		for _, event := range checkpointEvents(checkpoint) {
 			job := decodedJob(t, prior, "agent-checkpoint-"+event, "checkpoint")
 			arguments := "-B " + checkpointScript + " --event " + event + " --json --marker"
@@ -250,13 +253,23 @@ func TestLefthookPythonCommandRunsTheHookThroughTheLauncher(t *testing.T) {
 	}
 }
 
-// decodedJob returns the commands entry job of hook in a decoded rendering.
-func decodedJob(t *testing.T, decoded map[string]any, hook, job string) map[string]any {
+// decodedCommands returns the commands map of hook in a decoded rendering.
+func decodedCommands(t *testing.T, decoded map[string]any, hook string) map[string]any {
 	t.Helper()
 	section, isSection := decoded[hook].(map[string]any)
 	commands, isCommands := section["commands"].(map[string]any)
+	if !isSection || !isCommands {
+		t.Fatalf("the rendering has no %s commands", hook)
+	}
+	return commands
+}
+
+// decodedJob returns the commands entry job of hook in a decoded rendering.
+func decodedJob(t *testing.T, decoded map[string]any, hook, job string) map[string]any {
+	t.Helper()
+	commands := decodedCommands(t, decoded, hook)
 	entry, isEntry := commands[job].(map[string]any)
-	if !isSection || !isCommands || !isEntry {
+	if !isEntry {
 		t.Fatalf("the rendering has no %s job %s", hook, job)
 	}
 	return entry

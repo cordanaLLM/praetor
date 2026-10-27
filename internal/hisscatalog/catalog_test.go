@@ -68,7 +68,7 @@ func TestCatalog_Negative_CopyAndUnknownLookup(t *testing.T) {
 func TestRuleExplanation_Boundary_ListSpecification(t *testing.T) {
 	prose, _ := LookupRule("HISS-12")
 	if want := "Rule: HISS-12 (Secret Leak Prevention)\nFormal Specification: Zero credentials in Git history.\n" +
-		"Enforcement: 'make secrets' runs gitleaks over repository history inside verify-all.\n" +
+		"Enforcement: 'make secrets' and 'praetorctl security secrets' (in adopted verify-all and lefthook pre-push) run gitleaks over repository history.\n" +
 		"Failure Action: Verification gate rejection."; prose.Explanation() != want {
 		t.Errorf("HISS-12 explanation = %q, want %q", prose.Explanation(), want)
 	}

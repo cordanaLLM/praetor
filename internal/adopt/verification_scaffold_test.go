@@ -279,3 +279,56 @@ func TestVerificationPriorPathResolvedMakefileWithDocsBlockIsRegenerated(t *test
 		}
 	}
 }
+
+// Order engine-hiss-unenforced-checks-20261027: a Makefile rendered before the HISS-12 secrets
+// target joined verify-all (priorSecretsGateMakefile) is replaced with the current rendering,
+// while a hand-edited copy is preserved.
+func TestVerificationPriorSecretsGateMakefileIsRegenerated(t *testing.T) {
+	t.Run("unedited", func(t *testing.T) {
+		root := newTestRepo(t, "prior-secrets-gate")
+		mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
+		plan, err := resolveVerificationPlan(t.Context(), root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		existing := priorSecretsGateMakefile(plan)
+		if strings.Contains(existing, "\nsecrets:\n") {
+			t.Fatalf("priorSecretsGateMakefile already contains secrets target: %q", existing)
+		}
+		mustWrite(t, filepath.Join(root, "Makefile"), existing)
+		report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := mustRead(t, filepath.Join(root, "Makefile"))
+		want, err := mergeDocumentationMakefile(buildMakefile(plan), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want || !strings.Contains(got, "\nsecrets:\n\t@$(PRAETORCTL) security secrets\n") || report.Verification.Status != verificationDeclared {
+			t.Fatalf("prior secrets-gate Makefile not regenerated: %+v\n%s", report.Verification, got)
+		}
+	})
+	t.Run("edited", func(t *testing.T) {
+		root := newTestRepo(t, "prior-secrets-gate-edited")
+		mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
+		plan, err := resolveVerificationPlan(t.Context(), root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		existing := "# hand-edited by operator\n" + priorSecretsGateMakefile(plan)
+		mustWrite(t, filepath.Join(root, "Makefile"), existing)
+		report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := mustRead(t, filepath.Join(root, "Makefile"))
+		want, err := mergeDocumentationMakefile(existing, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want || report.Verification.Status != verificationPreserved {
+			t.Fatalf("hand-edited Makefile not preserved: %+v\n%s", report.Verification, got)
+		}
+	})
+}
