@@ -49,7 +49,7 @@ func TestForgeText_CheckCommitsForeign(t *testing.T) {
 func TestForgeText_ValidatePR(t *testing.T) {
 	dir := t.TempDir()
 	initGitFixture(t, dir)
-	path := writeFixtureFile(t, dir, "body", "First prose line\nsecond prose line.\n\nforeign-org/tool#12")
+	path := writeFixtureFile(t, dir, "body", "This prose paragraph was wrapped at seventy-two columns like a\ncommit body, so the forge shows a break mid-sentence.\n\nforeign-org/tool#12")
 	err := dispatchCommand("forge", []string{"validate-pr", "--allow-unpinned", "--repo=" + dir, "--config=" + filepath.Join(dir, "missing.yaml"), path})
 	if err == nil || !strings.Contains(err.Error(), "body line 2: hard-wrapped") || !strings.Contains(err.Error(), "foreign reference") {
 		t.Fatalf("want both body refusals, got %v", err)
