@@ -305,7 +305,8 @@ func TestVerificationPriorSecretsGateMakefileIsRegenerated(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got != want || !strings.Contains(got, "\nsecrets:\n\t@$(PRAETORCTL) security secrets\n") || report.Verification.Status != verificationDeclared {
+		wantRecipe := "\nsecrets:\n\t@" + requiredToolGuard("gitleaks", gitleaksInstallHint, "$(PRAETORCTL) security secrets") + "\n"
+		if got != want || !strings.Contains(got, wantRecipe) || report.Verification.Status != verificationDeclared {
 			t.Fatalf("prior secrets-gate Makefile not regenerated: %+v\n%s", report.Verification, got)
 		}
 	})

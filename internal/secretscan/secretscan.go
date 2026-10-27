@@ -34,7 +34,7 @@ const (
 	// BaselineFile is the repository-relative HISS-13 baseline file (order engine-hiss-unenforced-checks-20261027).
 	BaselineFile = ".standards-baseline.json"
 	// BaselineRuleID is the rule identifier recorded for secret findings in the HISS-13 baseline.
-	BaselineRuleID = "HISS-12"
+	BaselineRuleID = baseline.BaselineRuleID
 	// LogOpts are the log options reading full history and merge commits (#1237).
 	// Order engine-secretscan-foreign-remote-refs-20261025: read only the repository's
 	// own refs (branches, tags, origin); --all walked refs of other remotes.
@@ -215,6 +215,7 @@ func writeRecordedBaseline(path string, previous *baseline.Baseline, blocking []
 		Rationale:     reason,
 		Repository:    opts.Repository,
 		CommitSHA:     opts.CommitSHA,
+		OwnedRules:    []string{BaselineRuleID},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("refusing to record %s: %w (pass --reason=<why> to record a deliberate increase)", path, err)

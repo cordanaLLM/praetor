@@ -413,3 +413,75 @@ func TestRecordBaseline_3D(t *testing.T) {
 		t.Fatal("expected second record with more findings and no reason to be refused")
 	}
 }
+
+// Order engine-hiss-unenforced-checks-20261027: secretscan owns HISS-12 baseline entries.
+// Recording with zero findings removes stale HISS-12 entries, and recording with findings
+// writes the current set only, while preserving entries of other rules (HISS-04).
+func TestRecordBaseline_StaleHISS12RemovedAndCurrentWritten(t *testing.T) {
+	t.Run("zero findings removes stale", testRecordBaselineZeroFindingsRemovesStale)
+	t.Run("findings writes current set only", testRecordBaselineFindingsWritesCurrentOnly)
+}
+
+func testRecordBaselineZeroFindingsRemovesStale(t *testing.T) {
+	dir := t.TempDir()
+	initial := &baseline.Baseline{
+		Version:          1,
+		Repository:       "acme/widgets",
+		TotalInfractions: 2,
+		Infractions: []baseline.Infraction{
+			{RuleID: "HISS-04", FilePath: "main.go", LineNumber: 10, Message: "complexity", Fingerprint: "main.go:HISS-04:fn:f#1"},
+			{RuleID: secretscan.BaselineRuleID, FilePath: "old_secret.py", LineNumber: 2, Message: "generic-api-key", Fingerprint: "synth-fp-stale"},
+		},
+	}
+	baselinePath := filepath.Join(dir, secretscan.BaselineFile)
+	if err := baseline.SaveBaseline(baselinePath, initial); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := secretscan.RecordBaseline(t.Context(), secretscan.RecordOptions{
+		Options: secretscan.Options{Dir: dir, Run: stubReportRunner("[]", nil)},
+	})
+	if err != nil {
+		t.Fatalf("RecordBaseline with zero findings failed: %v", err)
+	}
+	if res.Recorded != 0 || res.Next.Count() != 1 {
+		t.Fatalf("expected recorded 0 and total 1 (HISS-04 kept), got recorded %d total %d", res.Recorded, res.Next.Count())
+	}
+	if len(res.Next.Infractions) != 1 || res.Next.Infractions[0].RuleID != "HISS-04" {
+		t.Fatalf("expected only HISS-04 entry, got: %+v", res.Next.Infractions)
+	}
+}
+
+func testRecordBaselineFindingsWritesCurrentOnly(t *testing.T) {
+	dir := t.TempDir()
+	initial := &baseline.Baseline{
+		Version:          1,
+		Repository:       "acme/widgets",
+		TotalInfractions: 2,
+		Infractions: []baseline.Infraction{
+			{RuleID: "HISS-04", FilePath: "main.go", LineNumber: 10, Message: "complexity", Fingerprint: "main.go:HISS-04:fn:f#1"},
+			{RuleID: secretscan.BaselineRuleID, FilePath: "old_secret.py", LineNumber: 2, Message: "generic-api-key", Fingerprint: "synth-fp-stale"},
+		},
+	}
+	baselinePath := filepath.Join(dir, secretscan.BaselineFile)
+	if err := baseline.SaveBaseline(baselinePath, initial); err != nil {
+		t.Fatal(err)
+	}
+
+	currentFinding := `[{"RuleID":"generic-api-key","File":"creds.py","StartLine":4,"Commit":"aaaa","Fingerprint":"synth-fp-current"}]`
+	res, err := secretscan.RecordBaseline(t.Context(), secretscan.RecordOptions{
+		Options: secretscan.Options{Dir: dir, Run: stubReportRunner(currentFinding, fmt.Errorf("exit status 1"))},
+		Reason:  "record current secret finding",
+	})
+	if err != nil {
+		t.Fatalf("RecordBaseline with current finding failed: %v", err)
+	}
+	if res.Recorded != 1 || res.Next.Count() != 2 {
+		t.Fatalf("expected recorded 1 and total 2, got recorded %d total %d", res.Recorded, res.Next.Count())
+	}
+	for _, inf := range res.Next.Infractions {
+		if inf.Fingerprint == "synth-fp-stale" {
+			t.Fatalf("stale HISS-12 entry should not be present: %+v", res.Next.Infractions)
+		}
+	}
+}

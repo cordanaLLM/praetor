@@ -223,6 +223,7 @@ func TestVerificationActualScaffoldBuildAndTestFailurePropagates(t *testing.T) {
 			for _, cli := range []string{util.PraetorCLI, util.LegacyCLI} {
 				writeStub(t, stubs, cli, "printf '%s\\n' \"$*\" >> calls\n[ \"$1\" != '"+failure+"' ]\n")
 			}
+			writeStub(t, stubs, "gitleaks", "exit 0\n")
 			hermeticPath(t, stubs)
 			mustWrite(t, filepath.Join(root, "Makefile"), buildMakefile(plan))
 			// -j1 pins serial execution: this assertion compares an exact call order, and

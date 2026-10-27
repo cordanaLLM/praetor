@@ -78,7 +78,7 @@ func buildMakefileFormatWithSecrets(plan *VerificationPlan, prefix string, sourc
 	secretsTarget, secretsRecipe, secretsPhony := "", "", ""
 	if secretsGate {
 		secretsTarget = " secrets"
-		secretsRecipe = "secrets:\n" + util.MakefileCLI("security secrets") + "\n"
+		secretsRecipe = "secrets:\n\t@" + requiredToolGuard("gitleaks", gitleaksInstallHint, "$(PRAETORCTL) security secrets") + "\n"
 		secretsPhony = " secrets"
 	}
 	includeLine := ""

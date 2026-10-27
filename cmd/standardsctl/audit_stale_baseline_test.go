@@ -121,3 +121,31 @@ func TestAudit_Positive_HISS11BaselineEntriesNotStale(t *testing.T) {
 	}
 	mustContain(t, out, "0 active infractions within the 1 recorded")
 }
+
+// Order engine-hiss-unenforced-checks-20261027: HISS-12 entries in the baseline are owned by
+// secretscan, not the HISS AST sweep. Neither praetorctl baseline --verify nor praetorctl audit
+// counts them as stale or fails a zero-stale bound.
+func TestAudit_Positive_HISS12BaselineEntriesNotStale(t *testing.T) {
+	f := newAuditFixture(t)
+	f.writeBaseline(t, []baseline.Infraction{
+		{RuleID: baseline.BaselineRuleID, FilePath: "creds.py", LineNumber: 1, Fingerprint: "synth-fp-1"},
+	}, "")
+	gitCommitAll(t, f.dir, f.gitEnv, "hiss12 baseline fixture")
+
+	out, err := f.audit(t, "--max-stale-baseline-entries=0")
+	if err != nil {
+		t.Fatalf("audit failed on HISS-12 baseline entry: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "matches nothing") {
+		t.Fatalf("audit counted HISS-12 baseline entry as stale:\n%s", out)
+	}
+
+	out, err = runBaselineCmd(t, f, "--verify")
+	if err != nil {
+		t.Fatalf("baseline --verify failed: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "matches nothing") {
+		t.Fatalf("baseline --verify counted HISS-12 entry as stale:\n%s", out)
+	}
+	mustContain(t, out, "0 active infractions within the 1 recorded")
+}

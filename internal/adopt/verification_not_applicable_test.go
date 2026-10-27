@@ -87,8 +87,8 @@ func assertNotApplicableMakefile(t *testing.T, root, wantReason string) {
 	if !strings.Contains(makefile, "test: not applicable: "+wantReason) {
 		t.Fatalf("Makefile lacks not-applicable test recipe:\n%s", makefile)
 	}
-	if strings.Contains(makefile, "exit 1") {
-		t.Fatalf("Makefile must not contain exit 1:\n%s", makefile)
+	if strings.Contains(makefile, unavailableRecipeLine) || strings.Contains(makefile, unavailableVerificationRecipe) {
+		t.Fatalf("Makefile must not contain unavailable recipe:\n%s", makefile)
 	}
 }
 
@@ -112,6 +112,7 @@ func assertNotApplicableExecution(t *testing.T, root, makePath string) {
 	// The documentation block's docs-lint and docs-figures run node, which is not what this test
 	// checks and which a CI runner keeps outside git's directory: a stub answers for it.
 	writeStub(t, stubs, "node", "exit 0\n")
+	writeStub(t, stubs, "gitleaks", "exit 0\n")
 	// The adopted Makefile resolves the engine with "sh .config/lefthook/engine.sh", so the
 	// launcher's tools must stay reachable once hermeticPath narrows PATH to git's directory,
 	// which need not hold them (Praetor's own devcontainer keeps git in /usr/local/bin).
