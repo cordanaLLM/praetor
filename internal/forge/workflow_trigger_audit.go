@@ -188,6 +188,7 @@ func (w *triggerWorkflow) findings(callees map[string]*workflowSpec) []workflowT
 	if pullRequest, declared := declaredTrigger(&w.spec.On, pullRequestEvent); declared {
 		findings = append(findings, w.pullRequestFindings(pullRequest, callees)...)
 	}
+	findings = append(findings, fullTreeFindings(w)...)
 	slices.SortStableFunc(findings, func(a, b workflowTriggerFinding) int { return cmp.Compare(a.Line, b.Line) })
 	return findings
 }
