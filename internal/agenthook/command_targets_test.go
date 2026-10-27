@@ -109,7 +109,7 @@ func TestScopeAllJudgesACommandOutsideAnyRepository(t *testing.T) {
 	outside := t.TempDir()
 	all := Invocation{WorkDir: outside, Settings: config.HookSettings{Scope: config.HookScopeAll}}
 	command := Canonical{Event: EventPreTool, Command: "git push --no-verify"}
-	if root, _, ok := resolveGovernedRoot(t.Context(), command, all); !ok || root != "" {
+	if root, _, ok := resolveGovernedRoot(t.Context(), Registration{Event: EventPreTool}, command, all); !ok || root != "" {
 		t.Fatalf("scope all must judge a pre-tool command outside a repository: %q %v", root, ok)
 	}
 	for name, tc := range map[string]struct {
@@ -120,7 +120,7 @@ func TestScopeAllJudgesACommandOutsideAnyRepository(t *testing.T) {
 		"edit event":      {Canonical{Event: EventPreEdit, Command: "x"}, all},
 		"no command text": {Canonical{Event: EventPreTool}, all},
 	} {
-		if _, verdict, ok := resolveGovernedRoot(t.Context(), tc.canonical, tc.in); ok || verdict.Reason != "no repository" {
+		if _, verdict, ok := resolveGovernedRoot(t.Context(), Registration{Event: EventPreTool}, tc.canonical, tc.in); ok || verdict.Reason != "no repository" {
 			t.Fatalf("%s: want the no repository skip, got %+v %v", name, verdict, ok)
 		}
 	}
@@ -130,7 +130,7 @@ func TestScopeAllInUngovernedRepository(t *testing.T) {
 	plain := repository(t, false)
 	all := Invocation{WorkDir: plain, Settings: config.HookSettings{Scope: config.HookScopeAll}}
 	command := Canonical{Event: EventPreTool, Command: "git push --no-verify"}
-	if root, _, ok := resolveGovernedRoot(t.Context(), command, all); !ok || root != plain {
+	if root, _, ok := resolveGovernedRoot(t.Context(), Registration{Event: EventPreTool}, command, all); !ok || root != plain {
 		t.Fatalf("scope all must judge a pre-tool command in an ungoverned repository: %q %v; want %q", root, ok, plain)
 	}
 	for name, tc := range map[string]struct {
@@ -142,7 +142,7 @@ func TestScopeAllInUngovernedRepository(t *testing.T) {
 		"no command text": {Canonical{Event: EventPreTool}, all},
 		"governed scope":  {command, Invocation{WorkDir: plain}},
 	} {
-		if _, verdict, ok := resolveGovernedRoot(t.Context(), tc.canonical, tc.in); ok || verdict.Reason != "workspace not governed" {
+		if _, verdict, ok := resolveGovernedRoot(t.Context(), Registration{Event: EventPreTool}, tc.canonical, tc.in); ok || verdict.Reason != "workspace not governed" {
 			t.Fatalf("%s: want the workspace not governed skip, got %+v %v", name, verdict, ok)
 		}
 	}
@@ -150,7 +150,7 @@ func TestScopeAllInUngovernedRepository(t *testing.T) {
 
 func TestCommandTargetsEmptyCommand(t *testing.T) {
 	plain := repository(t, false)
-	root, verdict, ok := resolveGovernedRoot(t.Context(), Canonical{}, Invocation{WorkDir: plain})
+	root, verdict, ok := resolveGovernedRoot(t.Context(), Registration{Event: EventPreTool}, Canonical{}, Invocation{WorkDir: plain})
 	if ok || root != "" || verdict.Outcome != Skip || verdict.Reason != "workspace not governed" {
 		t.Fatalf("empty command changed: %q %+v %v", root, verdict, ok)
 	}
@@ -250,17 +250,17 @@ func TestCommandTargetsIgnoreUnresolvableDirectories(t *testing.T) {
 func TestCommandTargetsPreserveWorkspacePrecedence(t *testing.T) {
 	governed, plain := repository(t, true), repository(t, false)
 	canonical := Canonical{Event: EventPreTool, Workspaces: []string{governed}, Command: strings.Repeat("cd missing;", 17)}
-	if root, _, ok := resolveGovernedRoot(t.Context(), canonical, Invocation{WorkDir: plain}); !ok || root != governed {
+	if root, _, ok := resolveGovernedRoot(t.Context(), Registration{Event: EventPreTool}, canonical, Invocation{WorkDir: plain}); !ok || root != governed {
 		t.Fatalf("governed payload must win: %q %v", root, ok)
 	}
 	canonical.Workspaces = []string{plain}
 	in := Invocation{WorkDir: governed, Settings: config.HookSettings{Scope: config.HookScopeAll}}
-	if root, _, ok := resolveGovernedRoot(t.Context(), canonical, in); !ok || root != plain {
+	if root, _, ok := resolveGovernedRoot(t.Context(), Registration{Event: EventPreTool}, canonical, in); !ok || root != plain {
 		t.Fatalf("scope all must bypass target derivation: %q %v", root, ok)
 	}
 	canonical.Workspaces = []string{filepath.Join(plain, "missing")}
 	canonical.Command = "git -C " + governed + " status"
-	if _, verdict, ok := resolveGovernedRoot(t.Context(), canonical, in); ok || verdict.Outcome != Deny {
+	if _, verdict, ok := resolveGovernedRoot(t.Context(), Registration{Event: EventPreTool}, canonical, in); ok || verdict.Outcome != Deny {
 		t.Fatalf("payload probe errors must deny: %+v %v", verdict, ok)
 	}
 }

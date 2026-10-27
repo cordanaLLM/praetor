@@ -86,6 +86,10 @@ func repositoryRoot(ctx context.Context, dir string) (string, error) {
 	return filepath.FromSlash(root), nil
 }
 
+// resolveWorkspaceRoot is the root lookup the hook runs before judging a call (ResolveRoot); a
+// test replaces it with one that outlasts the deadline.
+var resolveWorkspaceRoot = ResolveRoot
+
 // Governed reports whether root holds the standards manifest.
 func Governed(root string) bool {
 	return root != "" && util.FileExists(filepath.Join(root, manifestName))

@@ -292,6 +292,14 @@ lane sandboxes hide those folders and the plugin would fail on every prompt
 `TestRunPostToolClockAdapters` and `TestRunClockNegativeMalformedAndUnsupportedPairs` in
 `internal/agenthook/clock_test.go`, and `internal/clientsetup/opencode_clock_test.go`.
 
+The line rides on a skip or an allow after a tool, never on a block. A post-tool verdict that
+blocks, such as a workspace root that cannot be resolved, keeps its reason on stderr and its
+exit code; carried as context, it passed as a silent allow (#1386,
+`TestRunPostToolRootLookupFailureStaysVisible`, `TestEncodeClockDeliveryPerOutcome`). A root
+lookup that the deadline ends is the evaluator's timeout at post-tool, a stated skip
+(`checkpoint due-status unavailable`), while pre-tool stays fail-closed on the same lookup
+(`TestRunPostToolRootLookupPastTheDeadline`).
+
 ## Subagent text register gate
 
 The agent-traffic events reuse the same bounded stdin, workspace resolution, record mode and

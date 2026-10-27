@@ -110,7 +110,9 @@ func runClock(t *testing.T, client, event, payload string) Response {
 	time.Local = time.FixedZone("CET", 3600)
 	t.Cleanup(func() { time.Local = prior })
 	now := func() time.Time { return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC) }
-	return Run(context.Background(), Invocation{Client: client, Event: event, Stdin: strings.NewReader(payload), WorkDir: "/tmp", Now: now})
+	// An absolute directory on every platform: "/tmp" is no absolute path on Windows, and the
+	// post-tool deny for it stayed hidden only while a deny carried the clock as context (#1386).
+	return Run(context.Background(), Invocation{Client: client, Event: event, Stdin: strings.NewReader(payload), WorkDir: t.TempDir(), Now: now})
 }
 
 func wantClockLine() string {
