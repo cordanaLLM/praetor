@@ -33,6 +33,7 @@ type harnessProfile struct {
 func adoptedHarness(t *testing.T, profile string, markers map[string]string) string {
 	t.Helper()
 	repo := newTestRepo(t, "widget")
+	useLefthook(t, lefthookRuns)
 	tracked := make([]string, 0, len(markers))
 	for rel, body := range markers {
 		mustWrite(t, filepath.Join(repo, filepath.FromSlash(rel)), body)

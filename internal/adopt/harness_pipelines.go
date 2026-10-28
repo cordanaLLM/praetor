@@ -59,7 +59,8 @@ func (s *adoptSession) generatedPipelines(ctx context.Context) (hisscatalog.Pipe
 // only once `lefthook install` wires it into git: activateGitHooks runs that install and, when
 // it fails, writes the fallback pre-commit hook, which runs compile-context --verify and audit
 // alone (installFallbackHook). Activation skipped by option installs nothing. Either way the
-// lefthook stages do not run, so they are credited only when lefthook itself runs.
+// lefthook stages, including commit-msg and the pre-push commit policy script, do not run,
+// so they are credited only when lefthook itself runs.
 func (s *adoptSession) plannedHookActivation(ctx context.Context) (hookActivation, error) {
 	declined, err := ArtifactDeclined(s.declined, "git-hooks")
 	if err != nil {

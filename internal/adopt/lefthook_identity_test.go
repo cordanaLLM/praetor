@@ -200,7 +200,7 @@ func TestAdopt_Negative_ForeignLefthookKeptWithAndWithoutForce(t *testing.T) {
 		repoPath, rep := adoptLefthookFixture(t, "foreign-lefthook", foreignLefthook, force)
 		assertLefthookKept(t, repoPath, rep, foreignLefthook)
 		note := lefthookDetails(rep)
-		if !strings.Contains(note, "It lacks 13 generated jobs (post-commit/commands/dedupe-cadence, ") ||
+		if !strings.Contains(note, "It lacks 15 generated jobs (commit-msg/commands/message-policy, post-commit/commands/dedupe-cadence, ") ||
 			!strings.Contains(note, "and adds 1 (pre-commit/commands/lint).") {
 			t.Errorf("force=%v: the reason does not name the missing and extra jobs: %q", force, note)
 		}
@@ -235,7 +235,7 @@ func TestAdopt_Boundary_ForceKeepsSymlinkedLefthook(t *testing.T) {
 // Negative: --force never replaces a configuration that holds every generated job plus more,
 // and the reason names the jobs it would have dropped.
 func TestAdopt_Negative_ForceKeepsLefthookJobSuperset(t *testing.T) {
-	extended := buildLefthookYAML() + "commit-msg:\n  commands:\n    conventional:\n      run: ./scripts/check-msg {1}\n"
+	extended := addCustomCommitMsg(buildLefthookYAML())
 	repoPath, rep := adoptLefthookFixture(t, "superset-lefthook", extended, true)
 	assertLefthookKept(t, repoPath, rep, extended)
 	if !strings.Contains(strings.Join(rep.Warnings, "\n"), "It holds every generated job and adds 1 (commit-msg/commands/conventional).") {
@@ -385,7 +385,7 @@ func TestClassifyLefthookConfig_Boundary_ExtendsAndJobDeltaEdges(t *testing.T) {
 			t.Errorf("extends not recognised in %q: %+v", body, got)
 		}
 	}
-	assertKeptNotCanonical(t, "extends:\n  - .config/lefthook/other.yml\n", "It lacks 13 generated jobs")
+	assertKeptNotCanonical(t, "extends:\n  - .config/lefthook/other.yml\n", "It lacks 15 generated jobs")
 	missingOne := strings.Replace(current, "    gate:\n", "    gate-renamed:\n", 1) + "extra:\n  commands:\n    x:\n      run: 'true'\n"
 	assertKeptNotCanonical(t, missingOne, "It lacks 1 generated jobs (pre-push/commands/gate) and adds 2 (extra/commands/x, pre-push/commands/gate-renamed).")
 	assertKeptNotCanonical(t, "not: [valid yaml\n", "is not a YAML mapping lefthook can read")
@@ -398,7 +398,7 @@ func TestClassifyLefthookConfig_Boundary_ExtendsAndJobDeltaEdges(t *testing.T) {
 
 // jobsListRendering rewrites the generated rendering's commands maps as lefthook jobs lists, in
 // sorted order, and appends extra to the pre-commit list.
-func jobsListRendering(t *testing.T, extra ...map[string]any) string {
+func jobsListRendering(t *testing.T, extra ...any) string {
 	t.Helper()
 	var parsed map[string]any
 	if err := yaml.Unmarshal([]byte(buildLefthookYAML()), &parsed); err != nil {
@@ -425,9 +425,7 @@ func jobsListRendering(t *testing.T, extra ...map[string]any) string {
 			list = append(list, job)
 		}
 		if hook == "pre-commit" {
-			for _, job := range extra {
-				list = append(list, job)
-			}
+			list = append(list, extra...)
 		}
 		delete(section, "commands")
 		section["jobs"] = list
@@ -462,7 +460,7 @@ func TestClassifyLefthookConfig_Negative_JobsListEquivalentAndOtherRemotes(t *te
 		"remotes:\n  - git_url: https://example.invalid/hooks\n    configs:\n      - lefthook.yml\n",
 		"remotes:\n  git_url: https://example.invalid/hooks\n  configs: [.config/lefthook/praetor.yml]\n",
 	} {
-		assertKeptNotCanonical(t, body, "It lacks 13 generated jobs")
+		assertKeptNotCanonical(t, body, "It lacks 15 generated jobs")
 	}
 }
 
@@ -470,12 +468,11 @@ func TestClassifyLefthookConfig_Negative_JobsListEquivalentAndOtherRemotes(t *te
 // without them names only the user's job, and the rendering's checkpoint jobs never count as
 // added; the jobs compared are the ones for the repository's languages.
 func TestClassifyLefthookConfig_Boundary_CheckpointOptionalAndLanguageJobs(t *testing.T) {
-	extension := "commit-msg:\n  commands:\n    conventional:\n      run: ./scripts/check-msg {1}\n"
 	for _, checkpoint := range []bool{false, true} {
-		extended := buildLefthookYAMLFor(lefthookShape{languages: lefthookJobLanguages}, checkpoint) + extension
+		extended := addCustomCommitMsg(buildLefthookYAMLFor(lefthookShape{languages: lefthookJobLanguages}, checkpoint))
 		assertKeptNotCanonical(t, extended, "It holds every generated job and adds 1 (commit-msg/commands/conventional).")
 	}
-	goOnly := buildLefthookYAMLFor(lefthookShape{languages: hisscatalog.LanguageGo}, false) + extension
+	goOnly := addCustomCommitMsg(buildLefthookYAMLFor(lefthookShape{languages: hisscatalog.LanguageGo}, false))
 	got := classifyLefthookConfig([]byte(goOnly), lefthookShape{languages: hisscatalog.LanguageRust})
 	if !strings.Contains(got.reason, "It lacks 2 generated jobs (pre-commit/commands/clippy, pre-commit/commands/rustfmt) and adds 4 "+
 		"(commit-msg/commands/conventional, pre-commit/commands/gofmt, pre-commit/commands/govet, pre-push/commands/security).") {

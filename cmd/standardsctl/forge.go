@@ -35,7 +35,7 @@ func printForgeUsage() {
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  sync-wiki [--output=docs/wiki]        Generate git-backed wiki documentation suite")
 	fmt.Println("  validate-pr <pr-body-file>            Verify HISS checklist and the Ed25519 Exit-0 receipt")
-	fmt.Println("  check-commits --base=<ref> [--head=HEAD]  Enforce the commit message policy on a commit range")
+	fmt.Println("  check-commits (--base=<ref> | --pre-push) [--head=HEAD]  Enforce the commit message policy on a commit range")
 	fmt.Println("  refactor-check --base=<ref> [--head=HEAD] [--run-tests]  Check refactor commits in a range")
 	fmt.Println("  check-message <commit-message-file>   Enforce the commit message policy on one message (commit-msg hook)")
 	fmt.Println("  claims migrate --repo OWNER/NAME --issue N [--issue N ...] [--apply]")
@@ -264,7 +264,8 @@ func commitRange(ctx context.Context, repoDir, base, head string) ([]string, err
 // hook skipped still meets the policy the hook enforces (#61).
 func runForgeCheckCommits(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("forge check-commits", flag.ContinueOnError)
-	base := fs.String("base", "", "Base revision of the range to analyze (required)")
+	base := fs.String("base", "", "Base revision of the range to analyze (required unless --pre-push)")
+	prePush := fs.Bool("pre-push", false, "Resolve the upstream or default-branch merge base; reject detached HEAD and empty ranges")
 	head := fs.String("head", "HEAD", "Head revision of the range to analyze")
 	repoDir := fs.String("repo", ".", "Repository directory")
 	token := fs.String("token", "", "Forge API token for closing-reference resolution in CI (default: GITHUB_TOKEN, then GH_TOKEN)")
@@ -277,11 +278,12 @@ func runForgeCheckCommits(ctx context.Context, args []string) error {
 	if len(rest) != 0 {
 		return fmt.Errorf("forge check-commits accepts no positional arguments, got %q", rest)
 	}
-	if *base == "" {
-		return errors.New("usage: standardsctl forge check-commits --base=<ref> [--head=HEAD]")
+	*base, err = forgeCommitBase(ctx, *repoDir, *base, *head, *prePush)
+	if err != nil {
+		return err
 	}
 
-	messages, err := commitRange(ctx, *repoDir, *base, *head)
+	messages, err := checkedCommitRange(ctx, *repoDir, *base, *head, *prePush)
 	if err != nil {
 		return err
 	}

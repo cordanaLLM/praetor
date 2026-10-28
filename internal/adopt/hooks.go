@@ -352,6 +352,10 @@ func buildLefthookYAMLFor(shape lefthookShape, checkpoint bool) string {
 		"    context-check:\n" + lefthookRun(governed("compile-context --verify")) +
 		"    hiss-audit:\n" + lefthookRun(governed(preCommitAuditArgs)) +
 		"\n" +
+		"commit-msg:\n" +
+		"  commands:\n" +
+		"    message-policy:\n" + lefthookRun(governed("forge check-message {1}")) +
+		"\n" +
 		"post-commit:\n" +
 		"  commands:\n" +
 		"    state-sync:\n" + lefthookRun(governed("state sync .")) +
@@ -359,6 +363,8 @@ func buildLefthookYAMLFor(shape lefthookShape, checkpoint bool) string {
 		"\n" +
 		"pre-push:\n" +
 		"  parallel: false\n" +
+		"  scripts:\n" +
+		"    " + commitPolicyScriptName + ":\n      runner: sh\n" +
 		"  commands:\n" +
 		lefthookPrePushJobs(shape) +
 		"    flavor-audit:\n" + lefthookRun(governed("flavor audit .")) +
@@ -729,6 +735,9 @@ func reconcilePlannedEngineLauncher(ctx context.Context, s *adoptSession) error 
 // earlier adoption wrote under the other REUSE switch is migrated (migrateReuseSwitch), and any
 // other is rendered as writeLefthookConfig decides, prior marking an exact earlier rendering.
 func (s *adoptSession) renderLefthook(ctx context.Context, target lefthookTarget, existing []byte, prior bool) (bool, error) {
+	if err := reconcileCommitPolicyScript(ctx, s); err != nil {
+		return false, err
+	}
 	written, err := s.migrateReuseSwitch(target, existing)
 	if err != nil || written {
 		return written, err
