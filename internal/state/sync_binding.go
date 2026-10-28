@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -22,7 +23,7 @@ import (
 // the untracked names (HISS-02). It guards the binding's loops; it is not a repository-size
 // limit. The work is bounded by bytes and time, as every other binding input is: each listing
 // arrives through a probe capped in bytes (syncIndexBytes for the index, contextopt.MaxTotalBytes
-// for the rest) within util.GitProbeTimeout, and untracked content is read within
+// for the rest) within scaledSyncProbeTimeout, and untracked content is read within
 // contextopt.MaxTotalBytes. 1<<20 lies above every count the index cap admits: an index record
 // is at least 54 bytes ("H 100644 <40-hex id> 0", a tab, a one-byte path and the NUL), so
 // 16 MiB holds at most 310,689 of them, and a growing repository reaches the byte or time bound,
@@ -36,6 +37,25 @@ const maxSyncRecords = 1 << 20
 // state inspection. The index listing grows with the repository; the other listings grow only
 // with uncommitted changes and keep contextopt.MaxTotalBytes.
 const syncIndexBytes = util.MaxCommandOutputBytes
+
+// A 10,052-entry fixture took 2.9–9.0s on macOS and 6.1–21.6s on Windows,
+// including setup. Give tree walks one extra second per 1,000 index records;
+// cap each at a minute so a stalled Git still fails on slow hosts (HISS-02).
+const (
+	syncProbeEntriesPerSecond = 1_000
+	syncProbeTimeoutCeiling   = 60 * time.Second
+)
+
+func scaledSyncProbeTimeout(ctx context.Context, indexEntries int) time.Duration {
+	groups := min(indexEntries/syncProbeEntriesPerSecond, int((syncProbeTimeoutCeiling-util.GitProbeTimeout)/time.Second))
+	timeout := util.GitProbeTimeout + time.Duration(groups)*time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		// Keep the command bound positive even when the parent already expired;
+		// the command then reports the parent's cancellation, not an invalid bound.
+		timeout = min(timeout, max(time.Nanosecond, time.Until(deadline)))
+	}
+	return timeout
+}
 
 var syncMarker = regexp.MustCompile(`\n<!-- praetor-state:v1 sha256:([a-f0-9]{64}) -->\n$`)
 
@@ -206,15 +226,19 @@ func stateGitProbes(gitState string) []syncGitProbe {
 func stateGitBinding(ctx context.Context, root, gitState string) ([]string, error) {
 	probes := stateGitProbes(gitState)
 	parts := make([]string, 0, len(probes))
+	indexEntries := 0
 	for _, probe := range probes {
-		output, err := runSyncProbe(ctx, root, probe)
+		output, err := runSyncProbe(ctx, root, probe, indexEntries)
 		if err != nil {
 			return nil, err
 		}
+		if probe.label == "index listing" {
+			indexEntries, err = validateSyncIndex(output)
+			if err != nil {
+				return nil, err
+			}
+		}
 		parts = append(parts, output)
-	}
-	if err := validateSyncIndex(parts[1]); err != nil {
-		return nil, err
 	}
 	untracked, err := stateUntrackedBinding(ctx, root, parts[len(parts)-1])
 	if err != nil {
@@ -223,32 +247,37 @@ func stateGitBinding(ctx context.Context, root, gitState string) ([]string, erro
 	return append(parts, untracked...), nil
 }
 
-// runSyncProbe runs one binding probe within util.GitProbeTimeout. Output that outgrows the
-// probe's cap fails with the cap, for a listing the records read before it, and the remedy. Any
+// runSyncProbe runs one probe within the bound scaled to the validated index count.
+// HEAD and the index listing receive zero entries and keep util.GitProbeTimeout.
+// Output that outgrows the probe's cap fails with the cap, for a listing the records
+// read before it, and the remedy. Any
 // other failure carries git's own diagnostic, which names the path git could not read, such as a
 // tracked file replaced by a named pipe: a tracked path is a state input and fails closed.
-func runSyncProbe(ctx context.Context, root string, probe syncGitProbe) (string, error) {
-	result, err := util.RunGitTreeProbe(ctx, root, probe.limit, util.GitProbeTimeout, probe.args...)
+func runSyncProbe(ctx context.Context, root string, probe syncGitProbe, indexEntries int) (string, error) {
+	timeout := scaledSyncProbeTimeout(ctx, indexEntries)
+	result, err := util.RunGitTreeProbe(ctx, root, probe.limit, timeout, probe.args...)
 	if err == nil {
 		return string(result.Stdout), nil
 	}
 	if len(result.Stdout) < probe.limit {
-		return "", fmt.Errorf("bind state Git %s: %w", probe.label, util.CommandDiagnostic(err, result.Stderr))
+		return "", fmt.Errorf("bind state Git %s (%d index entries, bound %s): %w",
+			probe.label, indexEntries, timeout, util.CommandDiagnostic(err, result.Stderr))
 	}
 	read := ""
 	if probe.listing {
 		read = fmt.Sprintf(" after %d records", bytes.Count(result.Stdout, []byte{0}))
 	}
-	return "", fmt.Errorf("state synchronization cannot bind the Git %s: it exceeds %d bytes%s; %s: %w",
-		probe.label, probe.limit, read, probe.remedy, err)
+	return "", fmt.Errorf("state synchronization cannot bind the Git %s: it exceeds %d bytes%s; %s (%d index entries, bound %s): %w",
+		probe.label, probe.limit, read, probe.remedy, indexEntries, timeout, err)
 }
 
-// validateSyncIndex refuses an index the binding cannot vouch for: more records than
-// maxSyncRecords, a malformed record, a hidden (assume-unchanged or skip-worktree) entry, or a
-// submodule.
-func validateSyncIndex(listing string) error {
-	if count := listingRecords(listing); count > maxSyncRecords {
-		return fmt.Errorf("state synchronization lists %d index entries, over its bound of %d records per Git listing; "+
+// validateSyncIndex returns the validated record count. It refuses more records
+// than maxSyncRecords, a malformed record, a hidden (assume-unchanged or
+// skip-worktree) entry, or a submodule.
+func validateSyncIndex(listing string) (int, error) {
+	count := listingRecords(listing)
+	if count > maxSyncRecords {
+		return 0, fmt.Errorf("state synchronization lists %d index entries, over its bound of %d records per Git listing; "+
 			"the bound guards a loop, not the repository's size, so report the count to the Praetor maintainers", count, maxSyncRecords)
 	}
 	for row := range strings.SplitSeq(strings.TrimSuffix(listing, "\x00"), "\x00") {
@@ -256,17 +285,37 @@ func validateSyncIndex(listing string) error {
 			continue
 		}
 		if len(row) < 2 || row[1] != ' ' {
-			return fmt.Errorf("state synchronization index record is malformed")
+			return 0, fmt.Errorf("state synchronization index record is malformed")
 		}
 		_, name, _ := strings.Cut(row, "\t")
 		if util.GitHiddenIndexReason(row[0]) != "" {
-			return fmt.Errorf("state synchronization refuses assume-unchanged or skip-worktree index entry %q", name)
+			return 0, fmt.Errorf("state synchronization refuses assume-unchanged or skip-worktree index entry %q", name)
 		}
 		if strings.HasPrefix(row[2:], "160000 ") {
-			return fmt.Errorf("state synchronization cannot verify nested submodule worktree %q", name)
+			return 0, fmt.Errorf("state synchronization cannot verify nested submodule worktree %q", name)
 		}
 	}
-	return nil
+	return count, nil
+}
+
+// stateGitStatus sizes the snapshot's tree walk with the same validated listing
+// and deadline as the binding. Snapshot status runs before stateGitBinding.
+func stateGitStatus(ctx context.Context, root string) (string, error) {
+	probes := stateGitProbes("available")
+	listing, err := runSyncProbe(ctx, root, probes[1], 0)
+	if err != nil {
+		return "", err
+	}
+	indexEntries, err := validateSyncIndex(listing)
+	if err != nil {
+		return "", err
+	}
+	probe := probes[2]
+	// Preserve the snapshot's line-based output and receipt visibility.
+	probe.listing = false
+	probe.args = []string{"status", "--porcelain", "--untracked-files=all", "--ignore-submodules=all", "--", ".", ":(top,exclude).workingdir"}
+	output, err := runSyncProbe(ctx, root, probe, indexEntries)
+	return strings.TrimSpace(output), err
 }
 
 // listingRecords counts the records of one NUL-terminated (-z) Git listing; a final record

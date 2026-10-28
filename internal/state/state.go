@@ -117,7 +117,7 @@ func populateGitSnapshot(ctx context.Context, rootPath string, snap *StateSnapsh
 	if err != nil {
 		return fmt.Errorf("read state Git HEAD: %w", err)
 	}
-	status, err := stateGitString(ctx, rootPath, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=all", "--", ".", ":(top,exclude).workingdir")
+	status, err := stateGitStatus(ctx, rootPath)
 	if err != nil {
 		return fmt.Errorf("read state Git status: %w", err)
 	}
