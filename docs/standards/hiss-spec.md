@@ -157,6 +157,13 @@ Every dependency manifest must be cryptographically pinned:
 
 - Pinned lockfiles mandatory (`go.sum`, `Cargo.lock`, `pnpm-lock.yaml`).
 - Zero floating tags (e.g. `:latest`) in container deployments.
+- `praetorctl audit` and the MCP `standards_audit` scan `Dockerfile` / `Containerfile` `FROM`,
+  compose, Kubernetes and Helm `image:`, GitHub Actions `container:` / `services.*.image` /
+  `uses: docker://`, `devcontainer.json` `image`, and fully qualified container image string
+  literals in source files (`internal/supplychain.ScanImageRefs`), failing on any reference lacking
+  an `@sha256:` digest pin (or containing an unresolvable build argument or template expression)
+  unless recorded in `.standards-baseline.json` (`rule_id: "HISS-11"`, via
+  `praetorctl baseline --record-image-refs`) or excused by a live `HISS-11` entry in `.standards.yaml`.
 - SLSA provenance at the declared `supply_chain.slsa_level` and Sigstore Cosign signatures on all
   released binaries.
 - `praetorctl audit` and the MCP `standards_audit` measure the SLSA Build level, cosign signing

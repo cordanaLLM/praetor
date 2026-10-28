@@ -248,3 +248,44 @@ func TestAdopt_Negative_BaselineOptionsAndUnreadableBaseline(t *testing.T) {
 		}
 	}
 }
+
+// Order engine-hiss-unenforced-checks-20261027: re-recording baseline during adoption
+// preserves HISS-11 entries owned by the supply-chain image scanner.
+func TestAdopt_RerecordBaseline_PreservesHISS11(t *testing.T) {
+	repoPath := newTestRepo(t, "rerecord-hiss11")
+	base := &baseline.Baseline{
+		Version:          1,
+		Repository:       "acme/widgets",
+		TotalInfractions: 1,
+		Infractions: []baseline.Infraction{
+			{
+				RuleID:      baseline.ImageRefRuleID,
+				FilePath:    "Dockerfile",
+				LineNumber:  1,
+				Message:     "golang:1.27-alpine",
+				Fingerprint: "Dockerfile:HISS-11:image:golang:1.27-alpine",
+			},
+		},
+	}
+	full := filepath.Join(repoPath, baselineFile)
+	if err := baseline.SaveBaseline(full, base); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Adopt(context.Background(), rerecordOptions(t, repoPath))
+	if err != nil {
+		t.Fatalf("rerecord baseline failed: %v", err)
+	}
+	assertNoIssues(t, rep)
+
+	b, err := baseline.LoadBaseline(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.TotalInfractions != 1 || len(b.Infractions) != 1 {
+		t.Fatalf("expected 1 total infraction preserved, got: %+v", b)
+	}
+	if b.Infractions[0].RuleID != baseline.ImageRefRuleID || b.Infractions[0].Fingerprint != "Dockerfile:HISS-11:image:golang:1.27-alpine" {
+		t.Fatalf("expected HISS-11 entry preserved, got: %+v", b.Infractions[0])
+	}
+}

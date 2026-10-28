@@ -271,8 +271,9 @@ func TestAuditSupplyChainRefusesExpiredStaleAndMalformedEntries(t *testing.T) {
 			[]string{"excuse no gap, because the workflows meet every declaration; remove them"}},
 		"an entry under a policy declaring nothing": {supplyChainPolicy(0, false, false), supplyChainEntry(".github/workflows/release.yml", "2026-12-31"),
 			[]string{"because the policy declares no supply-chain control"}},
-		"a malformed entry": {supplyChainPolicy(3, false, false), supplyChainEntry("release.yml", "2026-12-31"),
-			[]string{"rule HISS-11 must name one workflow file directly in .github/workflows"}},
+		"a malformed entry": {supplyChainPolicy(3, false, false),
+			config.Exception{Rule: config.ExceptionRuleSupplyChain, Glob: ".github/workflows/*.yml", Reason: "globbed", Expires: "2026-12-31"},
+			[]string{"rule HISS-11 must name one file by path, not a glob"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -318,5 +319,76 @@ func TestNewSupplyChainExceptionDeclaresTheGap(t *testing.T) {
 				t.Fatalf("the gate did not read adoption's entry as declaring the gap: %q, %v", out, err)
 			}
 		})
+	}
+}
+
+// TestAuditSupplyChainReplaysImageRefFixtures replays the HISS-11 container image fixtures across
+// go, python, rust, c, typescript, dockerfile and compose through AuditSupplyChain (HISS-20).
+func TestAuditSupplyChainReplaysImageRefFixtures(t *testing.T) {
+	const rootDir = "../../.config/hiss/testdata/HISS-11"
+	langs := []string{"go", "python", "rust", "c", "typescript", "dockerfile", "compose"}
+	buckets := map[string]bool{"positive": true, "negative": false, "gap": false}
+	for _, lang := range langs {
+		for bucket, wantFail := range buckets {
+			dir := filepath.Join(rootDir, lang, bucket)
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				continue
+			}
+			for i := 0; i < len(entries); i++ {
+				name := entries[i].Name()
+				if name == "missing-lockfile-entry.go" {
+					continue
+				}
+				data, err := os.ReadFile(filepath.Join(dir, name))
+				if err != nil {
+					t.Fatal(err)
+				}
+				repo := supplyChainRepo(t, map[string]string{name: string(data)})
+				_, err = auditSupplyChainAt(context.Background(), repo, supplyChainPolicy(0, false, false))
+				if (err != nil) != wantFail {
+					t.Errorf("%s/%s/%s: AuditSupplyChain error = %v; want failure %t", lang, bucket, name, err, wantFail)
+				}
+			}
+		}
+	}
+}
+
+func TestAuditSupplyChainImageRefsBaselineAndExceptions_3D(t *testing.T) {
+	policy := supplyChainPolicy(0, false, false)
+	floating := map[string]string{"Dockerfile": "FROM golang:1.27-alpine\n"}
+
+	root := supplyChainRepo(t, floating)
+	if _, err := auditSupplyChainAt(t.Context(), root, policy); err == nil || !strings.Contains(err.Error(), "golang:1.27-alpine") {
+		t.Fatalf("expected unpinned Dockerfile image to fail AuditSupplyChain, got: %v", err)
+	}
+
+	liveEntry := supplyChainEntry("Dockerfile", "2026-12-31")
+	if out, err := AuditSupplyChain(t.Context(), SupplyChainOptions{
+		Root: root, Policy: policy, Exceptions: []config.Exception{liveEntry}, Today: supplyChainToday,
+	}); err != nil {
+		t.Fatalf("live HISS-11 exception for Dockerfile failed: %v\n%s", err, out)
+	}
+
+	expiredEntry := supplyChainEntry("Dockerfile", "2026-10-05")
+	if _, err := AuditSupplyChain(t.Context(), SupplyChainOptions{
+		Root: root, Policy: policy, Exceptions: []config.Exception{expiredEntry}, Today: supplyChainToday,
+	}); err == nil || !strings.Contains(err.Error(), "expired on 2026-10-05") {
+		t.Fatalf("expected expired HISS-11 exception for Dockerfile to fail, got: %v", err)
+	}
+
+	mustWrite(t, filepath.Join(root, ".standards-baseline.json"),
+		`{"version":1,"total_infractions":1,"infractions":[{"rule_id":"HISS-11","file_path":"Dockerfile","line_number":1,"message":"golang:1.27-alpine","fingerprint":"Dockerfile:HISS-11:image:golang:1.27-alpine"}]}`)
+	if out, err := auditSupplyChainAt(t.Context(), root, policy); err != nil {
+		t.Fatalf("baselined HISS-11 image finding should pass: %v\n%s", err, out)
+	}
+
+	cleanRoot := supplyChainRepo(t, map[string]string{
+		"Dockerfile":               "FROM scratch\n",
+		".standards-baseline.json": `{"version":1,"total_infractions":1,"infractions":[{"rule_id":"HISS-11","file_path":"Dockerfile","line_number":1,"message":"golang:1.27-alpine","fingerprint":"Dockerfile:HISS-11:image:golang:1.27-alpine"}]}`,
+	})
+	out, err := auditSupplyChainAt(t.Context(), cleanRoot, policy)
+	if err != nil || !strings.Contains(out, "stale HISS-11 baseline entry") {
+		t.Fatalf("expected stale HISS-11 baseline entry warning on pass, got out=%q err=%v", out, err)
 	}
 }
