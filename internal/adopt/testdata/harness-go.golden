@@ -28,7 +28,7 @@ Adopted check = coverage state + mechanism; else audit scanner; else `unknown`. 
 | **HISS-08** determinism | zero dynamic code execution (`eval` / `exec`); a process signal's target is bounded above 1 (`killpg`, `kill(-pid)`, Go `syscall.Kill`) | `praetorctl audit` HISS scan in verify-all: C banned calls, Python `eval` / `exec`, Go `syscall.Kill` / `unix.Kill` | new finding fails verify-all |
 | **HISS-09** reference safety | Go: `// SAFETY:` proof before every `unsafe` block | `praetorctl audit` HISS scan in verify-all: Go, Rust `unsafe` without proof; C, Python unchecked | new finding fails verify-all |
 | **HISS-10** warnings | zero warnings: compiler, linter, format sweeps | unknown | advisory |
-| **HISS-11** supply chain | pinned lockfiles; zero floating tags; signed provenance | unknown | advisory |
+| **HISS-11** supply chain | pinned lockfiles; zero floating tags; signed provenance | `praetorctl audit` supply chain + image digest pins in verify-all: Actions SHA pins, Python lock hashes, CDN imports unchecked | new finding fails verify-all |
 | **HISS-12** secrets | zero credentials in Git history | unknown | advisory |
 | **HISS-13** debt ratchet | recorded infractions never grow vs committed baseline | `praetorctl audit` ratchet vs `.standards-baseline.json` in verify-all | growth fails verify-all |
 | **HISS-14** append-only ABI | public API append-only; breaking change = `!` subject + `Migration:` footer | unknown | advisory |

@@ -1,0 +1,2 @@
+type: added
+title: praetorctl audit enforces HISS-11 container image digest pins across adopted repositories
