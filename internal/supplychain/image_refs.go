@@ -362,7 +362,7 @@ func collectDockerfileFindings(file, content string) []ImageRefFinding {
 		if hasDigestPin(target) {
 			continue
 		}
-		unresolvable := strings.Contains(target, "$")
+		unresolvable := strings.Contains(target, "$") || strings.Contains(target, "{{")
 		findings = append(findings, newImageRefFinding(file, stmts[i].line, target, unresolvable))
 	}
 	return findings
@@ -468,12 +468,25 @@ func extractYAMLImageRef(line string, workflow bool) string {
 func cleanYAMLScalar(raw string) string {
 	s := strings.TrimSpace(raw)
 	if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') {
-		quote := s[0]
-		if end := strings.IndexByte(s[1:], quote); end >= 0 {
-			return strings.TrimSpace(s[1 : end+1])
+		if end := closingQuoteIndex(s); end > 0 {
+			return strings.TrimSpace(s[1:end])
 		}
 	}
 	return strings.Trim(strings.TrimSpace(stripInlineComment(s)), `"'`)
+}
+
+func closingQuoteIndex(s string) int {
+	quote := s[0]
+	for i := 1; i < len(s) && i < maxFileLines; i++ {
+		if quote == '"' && s[i] == '\\' {
+			i++
+			continue
+		}
+		if s[i] == quote {
+			return i
+		}
+	}
+	return -1
 }
 
 func validYAMLScalarRef(val string) string {

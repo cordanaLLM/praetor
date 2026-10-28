@@ -812,8 +812,10 @@ rules:
           praetorctl audit and the MCP standards_audit, through internal/adopt.AuditSupplyChain over
           internal/supplychain.ScanImageRefs on Dockerfile and Containerfile FROM instructions.
         rationale: >-
-          positive/Dockerfile.floating and positive/Dockerfile.unresolvable-arg fail AuditSupplyChain;
-          negative/Dockerfile.pinned (digest pin, multi-stage alias, and scratch) passes.
+          positive/Dockerfile.floating fails AuditSupplyChain; negative/Dockerfile.pinned (digest pin,
+          multi-stage alias, and scratch) passes. Build-arg and template FROM references
+          (gap/Dockerfile.unresolvable-arg) cannot be resolved statically to verify a digest pin, so
+          they are reported via [INFO] and not judged as blocking violations.
       - language: compose
         state: partial
         runner: audit

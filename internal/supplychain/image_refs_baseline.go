@@ -22,12 +22,14 @@ const BaselineFile = ".standards-baseline.json"
 type ImageBaselineRecordOptions struct {
 	Root          string
 	BaselinePath  string
+	Previous      *baseline.Baseline
 	AllowIncrease bool
 	Reason        string
 	Repository    string
 	CommitSHA     string
 	Exceptions    []config.Exception
 	Today         time.Time
+	DryRun        bool
 }
 
 // ImageBaselineRecordResult reports the outcome of recording HISS-11 image reference findings.
@@ -38,11 +40,14 @@ type ImageBaselineRecordResult struct {
 	Next     *baseline.Baseline
 }
 
-// ImageFindingsToInfractions converts unpinned image reference findings into HISS-13 baseline entries.
+// ImageFindingsToInfractions converts resolvable unpinned image reference findings into HISS-13 baseline entries.
 func ImageFindingsToInfractions(findings []ImageRefFinding) []baseline.Infraction {
 	out := make([]baseline.Infraction, 0, len(findings))
 	for i := 0; i < len(findings) && i < maxScannedFiles; i++ {
 		f := findings[i]
+		if f.Unresolvable {
+			continue
+		}
 		out = append(out, baseline.Infraction{
 			RuleID:      ImageRefRuleID,
 			FilePath:    f.File,
@@ -55,8 +60,8 @@ func ImageFindingsToInfractions(findings []ImageRefFinding) []baseline.Infractio
 }
 
 // RecordImageRefBaseline scans root for unpinned container image references, filters out
-// findings excused by live HISS-11 exceptions, and records the remainder in .standards-baseline.json
-// while preserving entries of all other rules.
+// unresolvable references and findings excused by live HISS-11 exceptions, and records the
+// remainder in .standards-baseline.json while preserving entries of all other rules.
 func RecordImageRefBaseline(ctx context.Context, opts ImageBaselineRecordOptions) (*ImageBaselineRecordResult, error) {
 	root := opts.Root
 	if root == "" {
@@ -78,9 +83,12 @@ func RecordImageRefBaseline(ctx context.Context, opts ImageBaselineRecordOptions
 	unexcused := filterUnexcusedImageFindings(findings, entries, today)
 	infractions := ImageFindingsToInfractions(unexcused)
 
-	previous, err := baseline.LoadBaseline(path)
-	if err != nil {
-		return nil, err
+	previous := opts.Previous
+	if previous == nil {
+		previous, err = baseline.LoadBaseline(path)
+		if err != nil {
+			return nil, err
+		}
 	}
 	allowIncrease := opts.AllowIncrease || strings.TrimSpace(opts.Reason) != ""
 	next, err := baseline.Record(previous, infractions, baseline.RecordOptions{
@@ -93,7 +101,7 @@ func RecordImageRefBaseline(ctx context.Context, opts ImageBaselineRecordOptions
 	if err != nil {
 		return nil, fmt.Errorf("refusing to record %s: %w (pass --allow-increase --reason=<why> to record a deliberate increase)", path, err)
 	}
-	if previous.Absent || !previous.SameDebt(next) || previous.CommitSHA != next.CommitSHA {
+	if !opts.DryRun && (previous.Absent || !previous.SameDebt(next) || previous.CommitSHA != next.CommitSHA) {
 		if err := baseline.SaveBaseline(path, next); err != nil {
 			return nil, err
 		}
@@ -109,7 +117,7 @@ func RecordImageRefBaseline(ctx context.Context, opts ImageBaselineRecordOptions
 func filterUnexcusedImageFindings(findings []ImageRefFinding, entries []config.Exception, today time.Time) []ImageRefFinding {
 	var out []ImageRefFinding
 	for i := 0; i < len(findings) && i < maxScannedFiles; i++ {
-		if isExcusedByLiveEntry(findings[i].File, entries, today) {
+		if findings[i].Unresolvable || isExcusedByLiveEntry(findings[i].File, entries, today) {
 			continue
 		}
 		out = append(out, findings[i])
