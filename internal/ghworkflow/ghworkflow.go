@@ -114,6 +114,7 @@ type Step struct {
 	ContinueOnError  string         `yaml:"continue-on-error"`
 	With             map[string]any `yaml:"with"`
 	Env              yaml.Node      `yaml:"env"`
+	TimeoutMinutes   yaml.Node      `yaml:"timeout-minutes"`
 	// RunLine is the document line the run: value starts on, its | or > indicator for a block
 	// scalar, and 0 for a step without run:.
 	RunLine int `yaml:"-"`
