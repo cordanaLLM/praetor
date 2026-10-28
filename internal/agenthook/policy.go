@@ -1,6 +1,7 @@
 package agenthook
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"slices"
@@ -345,11 +346,32 @@ func BuiltinRules() []BuiltinRule {
 // builtinMessages words a built-in rule's denial by the invariant it enforces.
 var builtinMessages = map[string]string{"HISS": evasionMessage, "DEV-01": topologyMessage}
 
-// Policy is the compiled command policy: built-in rules first, operator rules after.
+// Policy is the compiled command policy: built-in rules first, operator rules after,
+// followed by two opt-in act checks configured under hooks.*:
+//
+//   - hooks.admission.enforce (admission.go): refuses heavy build, test, gate and push
+//     commands outside `praetorctl admit` or an admitted systemd-run scope, and caps -j.
+//   - hooks.worktrees.enforce (worktrees.go): refuses `git [-C <dir>] worktree add
+//     [options] <path> [<commit-ish>]` unless <path>, resolved against -C <dir> or the
+//     hook working directory, lies directly under <dev root>/worktrees/<repository folder>-<topic>
+//     (non-empty <topic>) or under <repository root>/.claude/worktrees/<name>; unparsable
+//     `git worktree add` invocations fail closed with the parse reason.
 type Policy struct {
 	rules []denyRule
 	// admission is the heavy-step check of hooks.admission; nil unless it is enforced.
 	admission *admissionCheck
+	// worktrees is the git worktree add location check of hooks.worktrees; nil unless it is enforced.
+	worktrees *worktreeCheck
+	// workDir is the default working directory Command uses when CommandIn is not called directly.
+	workDir string
+}
+
+// WithWorkDir sets the default working directory Policy.Command resolves relative paths against.
+func (p *Policy) WithWorkDir(workDir string) *Policy {
+	if p != nil {
+		p.workDir = workDir
+	}
+	return p
 }
 
 // NewPolicy compiles the built-in rules plus the operator deny patterns (RE2). It fails
@@ -383,9 +405,20 @@ func joinLineContinuations(command string) string {
 	return lineContinuationReplacer.Replace(command)
 }
 
-// Command judges one proposed command line. The first matching rule denies; a
-// readOnlyExempt rule judges the command without the words of chained read-only commands.
+// Command judges one proposed command line using p's default working directory. The first
+// matching rule denies; a readOnlyExempt rule judges the command without the words of
+// chained read-only commands.
 func (p *Policy) Command(command string) Verdict {
+	if p == nil {
+		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] no command policy is loaded"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), preToolBudget)
+	defer cancel()
+	return p.CommandIn(ctx, command, p.workDir)
+}
+
+// CommandIn judges one proposed command line with the hook's working directory workDir.
+func (p *Policy) CommandIn(ctx context.Context, command, workDir string) Verdict {
 	if p == nil {
 		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] no command policy is loaded"}
 	}
@@ -401,7 +434,12 @@ func (p *Policy) Command(command string) Verdict {
 		}
 	}
 	if p.admission != nil {
-		return p.admission.judge(command)
+		if verdict := p.admission.judge(command); verdict.Outcome != Allow {
+			return verdict
+		}
+	}
+	if p.worktrees != nil {
+		return p.worktrees.judge(ctx, command, workDir)
 	}
 	return Verdict{Outcome: Allow}
 }

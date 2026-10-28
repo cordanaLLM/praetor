@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -24,24 +23,6 @@ const adoptTimeout = 2 * time.Minute
 
 // errAdoptIncomplete prevents a partially successful report from returning success.
 var errAdoptIncomplete = errors.New("adoption completed with errors")
-
-// resolveHomeSubdir returns explicit when it is set, and otherwise joins segs onto the
-// user's home directory. It never degrades to a working-directory-relative path: when the
-// home directory cannot be resolved the caller gets an error naming the flag to pass
-// instead, rather than silently retargeting the command at the current directory.
-func resolveHomeSubdir(explicit, flagName string, segs ...string) (string, error) {
-	if explicit != "" {
-		return explicit, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve home directory (pass %s explicitly): %w", flagName, err)
-	}
-	if home == "" {
-		return "", fmt.Errorf("home directory is empty: pass %s explicitly", flagName)
-	}
-	return filepath.Join(append([]string{home}, segs...)...), nil
-}
 
 // splitCommaList splits a comma-separated flag value, dropping empty entries.
 func splitCommaList(value string) []string {

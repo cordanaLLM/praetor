@@ -8,13 +8,15 @@ import (
 
 // This file wires `hooks.*` operator settings (S1, internal/config/operator_sections.go)
 // into the evaluator: the command-policy deny list, the heavy-step admission check, the
-// checkpoint governance scope and the Python interpreter candidates. It holds no filesystem access of its own; a caller resolves
+// worktree location check, the checkpoint governance scope and the Python interpreter
+// candidates. It holds no filesystem access of its own; a caller resolves
 // and loads config.OperatorSettings (config.SelectOperatorSettings, config.LoadOperatorSettings)
 // and hands the Hooks section in.
 
 // BuildPolicy compiles the command policy for one hooks section: the built-in rules plus
-// hooks.command_policy.deny, the merge-helper rule when hooks.merge.helper is set, and the
-// heavy-step check when hooks.admission.enforce is set. A
+// hooks.command_policy.deny, the merge-helper rule when hooks.merge.helper is set,
+// the heavy-step check when hooks.admission.enforce is set, and
+// the git worktree add location check when hooks.worktrees.enforce is set. A
 // zero HookSettings compiles the built-in rules alone, so a caller that has not loaded any
 // settings document still fails closed rather than nil.
 func BuildPolicy(hooks config.HookSettings) (*Policy, error) {
@@ -28,6 +30,7 @@ func BuildPolicy(hooks config.HookSettings) (*Policy, error) {
 	if hooks.Merge.Helper != "" {
 		policy.rules = append(policy.rules, mergeHelperRule(hooks.Merge.Helper))
 	}
+	policy.worktrees = newWorktreeCheck(hooks.Worktrees)
 	return policy, nil
 }
 

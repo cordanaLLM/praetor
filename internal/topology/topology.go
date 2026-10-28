@@ -37,7 +37,7 @@ var (
 // those are configured through topology.org_containers (OrgContainers) or recognised by
 // structure, as a directory without a .git holding a child repository
 // (AuditWorkstationTopology).
-var BuiltinOrgContainers = [...]string{"upstream", "local", "stacks", "worktrees", "scratch"}
+var BuiltinOrgContainers = [...]string{"upstream", "local", "stacks", WorktreesContainer, "scratch"}
 
 // OrgContainers returns the lowercased set of organization container names: the built-in
 // names plus the configured ones (topology.org_containers, validated and bounded by
@@ -412,7 +412,7 @@ func gitlinkWithin(ctx context.Context, child, store string) (bool, error) {
 // checkoutGitDataDirs name the directories inside a .git directory where git keeps the
 // repository data of other checkouts: submodule git directories (modules/<name>) and the
 // administrative directories of linked worktrees (worktrees/<name>).
-var checkoutGitDataDirs = [...]string{"modules", "worktrees"}
+var checkoutGitDataDirs = [...]string{"modules", WorktreesContainer}
 
 // holdsCheckoutGitData reports whether the git directory gitPath keeps data another
 // checkout depends on: a non-empty modules or worktrees directory. A headless .git holding
@@ -480,7 +480,7 @@ func manualReviewReason(lowerName string, mode fs.FileMode, location string) (st
 
 func auditOrgContainer(ctx context.Context, orgPath, orgName string, report *TopologyReport) error {
 	lowerOrg := strings.ToLower(orgName)
-	if lowerOrg == "scratch" || lowerOrg == "worktrees" {
+	if lowerOrg == "scratch" || lowerOrg == WorktreesContainer {
 		return nil
 	}
 
