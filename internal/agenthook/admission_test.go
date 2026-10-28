@@ -96,6 +96,34 @@ func TestAdmission_Negative_HeavyStepsRefused(t *testing.T) {
 	}
 }
 
+// Positive and negative (planted): only gate run is a heavy step; other gate subcommands
+// and bare gate usage run without admission, and admitted gate run passes.
+func TestAdmission_GateRunOnly(t *testing.T) {
+	policy := admissionPolicy(t)
+	for command, label := range map[string]string{
+		"praetorctl gate run --path=.": "praetorctl-run",
+		"standardsctl gate run":        "standardsctl-run",
+		"cd x && praetorctl gate run":  "praetorctl-run",
+		"nice praetorctl gate run":     "praetorctl-run",
+	} {
+		v := policy.Command(command)
+		if v.Outcome != Deny || !strings.Contains(v.Reason, "praetorctl admit --label "+label+" -- <command>") {
+			t.Errorf("%q: %v %q, want refused with label %s", command, v.Outcome, v.Reason, label)
+		}
+	}
+	for _, command := range []string{
+		"praetorctl gate verify --path=. --receipt r.json",
+		"praetorctl gate deadline --json",
+		"praetorctl gate keygen",
+		"praetorctl gate",
+		"praetorctl admit --label g -- praetorctl gate run",
+	} {
+		if v := policy.Command(command); v.Outcome != Allow {
+			t.Errorf("%q refused: %s", command, v.Reason)
+		}
+	}
+}
+
 // Boundary: without enforcement nothing is judged, an unreadable command is refused while
 // enforcement is on, and a shape that does not compile fails the policy build.
 func TestAdmission_Boundary_OffUnreadableAndBadShape(t *testing.T) {

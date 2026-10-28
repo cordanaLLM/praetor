@@ -54,7 +54,7 @@ var builtinHeavyShapes = []string{
 	`^cmake --build( |$)`,
 	`^(npm|pnpm|yarn) (build|test|run build)( |$)`,
 	`^(pytest|tox|nox)( |$)`,
-	`^(praetorctl|standardsctl) gate( |$)`,
+	`^(praetorctl|standardsctl) gate run( |$)`,
 	gitPushShape,
 	`^(docker|podman|buildah) (build|bud)( |$)`,
 	`^(bazel|bazelisk) (build|test)( |$)`,
