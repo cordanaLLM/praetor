@@ -289,3 +289,82 @@ func TestAdopt_RerecordBaseline_PreservesHISS11(t *testing.T) {
 		t.Fatalf("expected HISS-11 entry preserved, got: %+v", b.Infractions[0])
 	}
 }
+
+// Order engine-hiss-unenforced-checks-20261027: fresh adoption and re-adoption record existing
+// resolvable HISS-11 image findings once into .standards-baseline.json, audit passes right after,
+// and a second adoption adds none.
+func TestAdopt_RecordsImageRefBaselineOnce_3D(t *testing.T) {
+	repoPath := newTestRepo(t, "adopt-image-refs")
+	mustWrite(t, filepath.Join(repoPath, "Dockerfile"), "FROM golang:1.27-alpine\n")
+	mustWrite(t, filepath.Join(repoPath, "docker-compose.yml"), "services:\n  cache:\n    image: redis:7.2-alpine\n")
+	mustWrite(t, filepath.Join(repoPath, "deploy/helm/templates/deployment.yaml"),
+		"spec:\n  containers:\n    - image: {{ printf \"%s@%s\" .Values.x.image.repository .Values.x.image.digest }}\n")
+
+	opts := readoptOptions(t, repoPath)
+	opts.Profile = "app-service"
+	rep, err := Adopt(t.Context(), opts)
+	if err != nil {
+		t.Fatalf("first adoption failed: %v", err)
+	}
+	assertNoIssues(t, rep)
+
+	lines := strings.Join(rep.BaselineLines(), "\n")
+	if !strings.Contains(lines, "Recorded 2 HISS-11 image reference finding(s) into .standards-baseline.json (reason: adoption baseline)") {
+		t.Fatalf("expected adoption report line to state 2 HISS-11 findings recorded, got:\n%s", lines)
+	}
+
+	full := filepath.Join(repoPath, baselineFile)
+	b, err := baseline.LoadBaseline(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.TotalInfractions != 2 || len(b.Infractions) != 2 || b.IncreaseRationale != "adoption baseline" {
+		t.Fatalf("expected 2 HISS-11 entries with adoption baseline rationale, got: %+v", b)
+	}
+
+	out, err := auditSupplyChainAt(t.Context(), repoPath, supplyChainPolicy(0, false, false))
+	if err != nil {
+		t.Fatalf("expected AuditSupplyChain right after adoption to pass, got: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "[INFO] HISS-11 image references not verified: 1 unresolvable") {
+		t.Fatalf("expected [INFO] line for unresolvable Helm template after adoption, got:\n%s", out)
+	}
+
+	// Second adoption adds none even if a new floating reference appears.
+	mustWrite(t, filepath.Join(repoPath, "k8s.yaml"), "spec:\n  containers:\n    - image: nginx:1.27\n")
+	opts2 := readoptOptions(t, repoPath)
+	opts2.Profile = "app-service"
+	rep2, err := Adopt(t.Context(), opts2)
+	if err != nil {
+		t.Fatalf("second adoption failed: %v", err)
+	}
+	if strings.Contains(strings.Join(rep2.BaselineLines(), "\n"), "Recorded ") {
+		t.Fatalf("second adoption must not re-record HISS-11 image findings, got lines: %v", rep2.BaselineLines())
+	}
+	b2, err := baseline.LoadBaseline(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b2.TotalInfractions != 2 || len(b2.Infractions) != 2 {
+		t.Fatalf("second adoption must keep existing 2 HISS-11 entries and add none, got: %+v", b2)
+	}
+
+	// Re-adopt of an already-adopted repo whose baseline had 0 HISS-11 entries records existing image findings once.
+	legacyRepo, _ := adoptedWithDebt(t, "readopt-records-hiss11-once")
+	mustWrite(t, filepath.Join(legacyRepo, "docker-compose.yml"), "services:\n  db:\n    image: postgres:16-alpine\n  cache:\n    image: redis:7.2-alpine\n")
+	legacyRep, err := Adopt(t.Context(), readoptOptions(t, legacyRepo))
+	if err != nil {
+		t.Fatalf("re-adoption with legacy image refs failed: %v", err)
+	}
+	assertNoIssues(t, legacyRep)
+	legacyBase, err := baseline.LoadBaseline(filepath.Join(legacyRepo, baselineFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacyBase.TotalInfractions != 3 || len(legacyBase.Infractions) != 3 {
+		t.Fatalf("expected 1 HISS-07 + 2 HISS-11 entries after re-adopt, got: %+v", legacyBase)
+	}
+	if _, err := auditSupplyChainAt(t.Context(), legacyRepo, supplyChainPolicy(0, false, false)); err != nil {
+		t.Fatalf("expected AuditSupplyChain after re-adopt to pass, got: %v", err)
+	}
+}
