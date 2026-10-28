@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+#
+# SPDX-License-Identifier: EUPL-1.2
+
+type: fixed
+title: Admit labelled Git pushes in worktree-isolated sessions when live host readings allow them
+breaking: false

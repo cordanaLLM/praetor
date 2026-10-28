@@ -1078,6 +1078,14 @@ command:
 [BLOCKED BY HISS] heavy step needs host admission: go test; run: praetorctl admit --label go-test -- <command>, in background; admit waits for memory, swap and load headroom (docs/guides/admission.md)
 ```
 
+A `git push` has a second admitted form, `PRAETOR_ADMIT=<label> git push ...`, for a
+worktree-isolated Claude Code session, which refuses git named under a launcher such as
+`praetorctl admit`. The check reads the assignment only in front of that push and admits it
+against live memory, swap and load readings, refusing under pressure or when the readings
+cannot be taken; the assignment admits no other shape and no other simple command
+([worktree-isolated sessions](admission.md#worktree-isolated-sessions)). The refusal of a plain
+`git push` names both forms.
+
 A command the reader cannot follow (an open quote or here-document, or more than 4096 lines)
 is refused while enforcement is on. `praetorctl admit -- <step>` passes when the inner step
 stays within the job count cap (`floor(cores / hooks.admission.max_jobs_divisor)`, default

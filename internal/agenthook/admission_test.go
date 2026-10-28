@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/admission"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/sentinel"
 )
@@ -205,4 +206,98 @@ func TestAdmission_JobCountCap(t *testing.T) {
 			t.Errorf("%q refused: %s", allowed, v.Reason)
 		}
 	}
+}
+
+func TestAdmission_IsolatedPush_Positive(t *testing.T) {
+	policy := admissionPolicy(t)
+	for _, command := range []string{
+		"PRAETOR_ADMIT=git-push git push -u origin b",
+		"PRAETOR_ADMIT=x git -C dir push",
+		"PRAETOR_ADMIT=x git -c k=v push",
+		"OTHER=value PRAETOR_ADMIT=git-push git push",
+		"PRAETOR_ADMIT= PRAETOR_ADMIT=x git push",
+		"PRAETOR_ADMIT=" + strings.Repeat("a", 31) + " git push",
+		"praetorctl admit --label git-push -- git push",
+	} {
+		if v := policy.Command(command); v.Outcome != Allow {
+			t.Errorf("%q refused: %s", command, v.Reason)
+		}
+	}
+}
+
+func TestAdmission_IsolatedPush_Negative(t *testing.T) {
+	policy := admissionPolicy(t)
+	for _, command := range []string{
+		"PRAETOR_ADMIT=x make",
+		"PRAETOR_ADMIT=x go test",
+		"PRAETOR_ADMIT=Bad git push",
+		"PRAETOR_ADMIT= git push",
+		"PRAETOR_ADMIT=-bad git push",
+		"PRAETOR_ADMIT=" + strings.Repeat("a", 32) + " git push",
+		"PRAETOR_ADMIT=x PRAETOR_ADMIT= git push",
+		"env PRAETOR_ADMIT=x git push",
+		"git push PRAETOR_ADMIT=x",
+		"PRAETOR_ADMIT=x git push; git push",
+	} {
+		requireDeniedContaining(t, command, policy.Command(command), "host admission")
+	}
+	requireDeniedContaining(t, "plain push", policy.Command("git push -u origin b"),
+		"praetorctl admit --label git-push -- <command>", "PRAETOR_ADMIT=git-push git push")
+	for _, command := range []string{
+		"PRAETOR_ADMIT=git-push git push; make",
+		"PRAETOR_ADMIT=git-push git push\nmake",
+		"PRAETOR_ADMIT=git-push git push && make",
+	} {
+		requireDeniedContaining(t, command, policy.Command(command), "host admission: make")
+	}
+	if v := policy.Command("make"); strings.Contains(v.Reason, "PRAETOR_ADMIT") {
+		t.Errorf("non-push refusal advertises push assignment: %s", v.Reason)
+	}
+}
+
+func TestAdmission_IsolatedPush_HostReadings(t *testing.T) {
+	healthy, err := stubHost(30, 80)()
+	if err != nil {
+		t.Fatal(err)
+	}
+	maxLoad := admission.HostCappedPolicy(healthy).MaxLoad1
+	for _, tc := range []struct {
+		name         string
+		memory, swap uint64
+		load         float64
+		want         string
+	}{
+		{"memory", 8, 80, 0, "available 8.0 GiB"},
+		{"swap", 30, 10, 0, "swap free 10.0 GiB"},
+		{"load", 30, 80, maxLoad + 1, "load"},
+		{"boundary", 12, 15, maxLoad, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stats := healthy
+			stats.RAMFreeBytes, stats.SwapFreeBytes = tc.memory*testGiB, tc.swap*testGiB
+			stats.CPULoadMeasured, stats.CPULoad1Min = true, tc.load
+			policy := admissionPolicy(t).WithAdmissionHost(func() (sentinel.HostStats, error) {
+				return stats, nil
+			}, 32)
+			v := policy.Command("PRAETOR_ADMIT=git-push git push")
+			if tc.want == "" {
+				if v.Outcome != Allow {
+					t.Errorf("threshold refused: %s", v.Reason)
+				}
+				return
+			}
+			requireDeniedContaining(t, tc.name, v, tc.want, "readings:", "available", "swap free", "retry")
+			if v := policy.Command("praetorctl admit --label git-push -- git push"); v.Outcome != Allow {
+				t.Errorf("launcher path changed: %s", v.Reason)
+			}
+		})
+	}
+}
+
+func TestAdmission_IsolatedPush_HostReadError(t *testing.T) {
+	policy := admissionPolicy(t).WithAdmissionHost(func() (sentinel.HostStats, error) {
+		return sentinel.HostStats{}, errors.New("procfs unavailable")
+	}, 32)
+	requireDeniedContaining(t, "failed reading", policy.Command("PRAETOR_ADMIT=x git push"),
+		"host reading failed", "procfs unavailable", "retry")
 }

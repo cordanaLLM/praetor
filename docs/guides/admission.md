@@ -92,6 +92,35 @@ are in [heavy-step admission](agent-hooks.md#heavy-step-admission). The hook ref
 than rewriting the command: a rewritten step that waits for room would wait inside the
 client's tool timeout, while a refused one is started again in the background.
 
+### Worktree-isolated sessions
+
+Claude Code's worktree isolation check can refuse a command that runs Git under a launcher
+such as `praetorctl admit` or `systemd-run`. In such a session, put an admission label directly
+before the push:
+
+```sh
+PRAETOR_ADMIT=git-push git push -u origin topic
+```
+
+The hook reads the leading assignment with the existing command parser and accepts this form
+only for the recognised `git push` shape, including `git -C dir push` and `git -c key=value push`.
+The label must match `[a-z0-9][a-z0-9._-]{0,30}`. An empty or invalid label, an assignment passed
+through `env`, or an assignment after the command does not admit the push. The assignment applies
+only to its own simple command: `PRAETOR_ADMIT=git-push git push; make` still refuses `make`.
+
+This form requests admission; it does not exempt a push. The hook reads the live host through
+`internal/admission` and applies `HostCappedPolicy` and `Judge`, retaining the load limit as well
+as the memory and swap bounds. A host exactly at the thresholds is admitted. Under pressure,
+the hook refuses immediately with the readings and advice to wait and retry; a failed host
+reading also refuses. The assignment does not start a scope or wait for headroom itself.
+
+Plain `git push` remains refused under enforcement, and `PRAETOR_ADMIT=x make` or
+`PRAETOR_ADMIT=x go test` still requires another admitted form. The existing
+`praetorctl admit --label git-push -- git push ...` path is unchanged. The policy cases are
+covered by `TestAdmission_IsolatedPush_*` in `internal/agenthook/admission_test.go`; the Claude
+pre-tool payload and exit codes are covered by `TestHookClaudeIsolatedPushAdmission` in
+`cmd/standardsctl/hook_test.go`.
+
 ### Scope form and memory refusal
 
 With `hooks.admission.scope_form: true`, the pre-tool hook also accepts a direct
@@ -119,7 +148,7 @@ the computed limit.
 
 | Operator key | Default | Meaning |
 | :--- | :--- | :--- |
-| `hooks.admission.enforce` | `false` | refuse heavy steps outside `praetorctl admit` or an admitted scope |
+| `hooks.admission.enforce` | `false` | refuse heavy steps outside `praetorctl admit`, an admitted scope or a live-judged isolated push |
 | `hooks.admission.scope_form` | `false` | accept `systemd-run --user --scope` with `MemoryHigh` and `--expand-environment=no` when host memory and swap clear the admission bounds |
 | `hooks.admission.max_jobs_divisor` | `3` (when `enforce: true`) | cap `-j` / `--jobs` on heavy steps at `floor(cores / divisor)` (`>= 1`) |
 | `hooks.admission.commands` | `[]` | up to 32 additional RE2 heavy-step shapes, appended across layers |
