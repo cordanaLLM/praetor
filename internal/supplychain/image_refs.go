@@ -224,6 +224,12 @@ func ScanImageRefs(ctx context.Context, root string) ([]ImageRefFinding, error) 
 		if errors.Is(readErr, os.ErrNotExist) {
 			continue
 		}
+		if errors.Is(readErr, util.ErrPathEscapesRoot) {
+			// A link that leaves root is never followed (confinement); it is reported as not
+			// verified rather than failing the scan or passing silently.
+			findings = append(findings, newImageRefFinding(filepath.ToSlash(rel), 0, imageRefLinkOutside, true))
+			continue
+		}
 		if readErr != nil {
 			return nil, readErr
 		}
@@ -231,6 +237,9 @@ func ScanImageRefs(ctx context.Context, root string) ([]ImageRefFinding, error) 
 	}
 	return findings, nil
 }
+
+// imageRefLinkOutside is the reference text of a scanned path whose link leaves the root.
+const imageRefLinkOutside = "link outside the repository, not followed"
 
 // imageRefCandidateFiles lists files under root via git when root is a git worktree, or
 // via a bounded directory queue for fixture directories without .git.
