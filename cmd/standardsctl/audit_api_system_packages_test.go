@@ -74,7 +74,7 @@ func TestAuditLocksTheAPIWorkflowToTheExceptionsAlone(t *testing.T) {
 		}
 	}
 	entry := func(expires string) string {
-		return "version: 1\nexceptions:\n  - rule: api-compatibility\n    path: hw/go.mod\n    reason: needs a vendor SDK\n    expires: \"" + expires + "\"\n"
+		return "version: 1\nexceptions:\n  - rule: api-compatibility\n    path: hw/go.mod\n    category: D\n    reason: needs a vendor SDK\n    expires: \"" + expires + "\"\n"
 	}
 	root := t.TempDir()
 	earlier := "holds an earlier Praetor text; run 'praetorctl adopt'"

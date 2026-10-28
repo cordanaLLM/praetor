@@ -135,6 +135,10 @@ const (
 	MaxExceptions = 1024
 	// MaxExceptionDays bounds uncategorized entries; categorized entries use their interval.
 	MaxExceptionDays = rules.MaxExceptionDays
+	// CategoryRequiredFrom is the YYYY-MM-DD entered date from which every exception requires a category.
+	CategoryRequiredFrom = rules.CategoryRequiredFrom
+	// UncategorizedGraceUntil is the latest YYYY-MM-DD expires date allowed for an exception with neither category nor entered.
+	UncategorizedGraceUntil = rules.UncategorizedGraceUntil
 	// ExceptionExpiryWarningDays is how many days before an expiry the audit begins warning.
 	ExceptionExpiryWarningDays = 14
 	// MaxExceptionReasonBytes bounds one entry's reason.

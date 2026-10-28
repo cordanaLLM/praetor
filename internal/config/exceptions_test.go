@@ -26,7 +26,7 @@ var exceptionsToday = time.Date(2026, time.October, 6, 15, 30, 0, 0, time.UTC)
 func validException() Exception {
 	return Exception{
 		Rule: ExceptionRuleClangTidyCoverage, Path: "src/win32/getopt.c",
-		Reason: "Windows-only translation unit; no lane configures a Windows build yet", Expires: "2026-12-31",
+		Reason: "Windows-only translation unit; no lane configures a Windows build yet", Expires: "2026-11-28",
 	}
 }
 
@@ -112,7 +112,7 @@ func TestValidateExceptionsNegative(t *testing.T) {
 		"oversized reason":              {func(e *Exception) { e.Reason = strings.Repeat("r", MaxExceptionReasonBytes+1) }, "exceeds 1024 bytes"},
 		"no date":                       {func(e *Exception) { e.Expires = "next year" }, "must be a YYYY-MM-DD date"},
 		"unpadded date":                 {func(e *Exception) { e.Expires = "2026-12-1" }, "must be a YYYY-MM-DD date"},
-		"too far ahead":                 {func(e *Exception) { e.Expires = "2027-01-05" }, "more than 90 days after today; the latest date allowed is 2027-01-04"},
+		"too far ahead":                 {func(e *Exception) { e.Entered, e.Expires = "2026-10-06", "2027-01-05" }, "more than 90 days after entered 2026-10-06; the latest date allowed is 2027-01-04"},
 		"missing expiry date":           {func(e *Exception) { e.Expires = "" }, "must be a YYYY-MM-DD date"},
 		"declared-linters without tool": {func(e *Exception) { e.Rule, e.Path, e.Tool = ExceptionRuleDeclaredLinters, "", "" }, "rule declared-linters must name one tool"},
 		"declared-linters with path":    {func(e *Exception) { e.Rule, e.Path, e.Tool = ExceptionRuleDeclaredLinters, "a.go", "gitleaks" }, "rule declared-linters must not set path or glob"},
@@ -153,6 +153,7 @@ func TestValidateExceptionsNegative(t *testing.T) {
 func TestValidateExceptionsBoundary(t *testing.T) {
 	for _, expires := range []string{"2027-01-04", "2026-10-06", "2020-01-01"} {
 		entry := validException()
+		entry.Entered = "2026-10-06"
 		entry.Expires = expires
 		if err := ValidateExceptions([]Exception{entry}, exceptionsToday); err != nil {
 			t.Fatalf("expires %s refused: %v", expires, err)
@@ -206,6 +207,10 @@ func TestValidateExceptionsCategories(t *testing.T) {
 	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err != nil {
 		t.Fatalf("category A stated expiry inside 90 days refused: %v", err)
 	}
+	mutantsUncat := Exception{Rule: ExceptionRuleMutants, Path: ".cargo/mutants.toml", Reason: "unsupported generated code", Entered: "2026-10-29", Expires: "2027-01-04"}
+	if err := ValidateExceptions([]Exception{mutantsUncat}, exceptionsToday); err != nil {
+		t.Fatalf("uncategorized mutants exception refused: %v", err)
+	}
 }
 
 func TestException_Problem(t *testing.T) {
@@ -222,7 +227,7 @@ func TestException_Problem(t *testing.T) {
 
 func TestValidateExceptions_HISSRulesAndFunctionScope(t *testing.T) {
 	for _, rule := range hisscatalog.RuleIDs() {
-		entry := Exception{Rule: rule, Path: "src/a.go", Reason: "by design", Expires: "2026-12-31"}
+		entry := Exception{Rule: rule, Path: "src/a.go", Reason: "by design", Expires: "2026-11-28"}
 		switch rule {
 		case ExceptionRuleBuildWarnings:
 			entry.Path = ".github/workflows/ci.yml"
@@ -238,7 +243,7 @@ func TestValidateExceptions_HISSRulesAndFunctionScope(t *testing.T) {
 			t.Errorf("registered HISS rule %s refused: %v", rule, err)
 		}
 	}
-	entry := Exception{Rule: "HISS-02", Path: "src/a.go", Function: "NewBrowser", Reason: "browser lifetime", Expires: "2026-12-31"}
+	entry := Exception{Rule: "HISS-02", Path: "src/a.go", Function: "NewBrowser", Reason: "browser lifetime", Expires: "2026-11-28"}
 	if err := ValidateExceptions([]Exception{entry}, exceptionsToday); err != nil {
 		t.Fatalf("function scoped HISS entry refused: %v", err)
 	}
@@ -246,7 +251,7 @@ func TestValidateExceptions_HISSRulesAndFunctionScope(t *testing.T) {
 	if err := ValidateExceptions([]Exception{entry}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "function is only valid for a HISS scanner rule") {
 		t.Fatalf("non-HISS function scope error = %v", err)
 	}
-	entry = Exception{Rule: "HISS-02", Glob: "src/*.go", Function: "NewBrowser", Reason: "browser lifetime", Expires: "2026-12-31"}
+	entry = Exception{Rule: "HISS-02", Glob: "src/*.go", Function: "NewBrowser", Reason: "browser lifetime", Expires: "2026-11-28"}
 	if err := ValidateExceptions([]Exception{entry}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "one file by path") {
 		t.Fatalf("globbed HISS exception error = %v", err)
 	}
@@ -268,7 +273,7 @@ func TestValidateExceptionsWorkflowTarget(t *testing.T) {
 // A release-token entry must name one workflow file: an entry naming a script is refused with the
 // workflow-target message, which names release.yml as the example.
 func TestValidateExceptionsReleaseTokenNamesAWorkflow(t *testing.T) {
-	entry := Exception{Rule: ExceptionRuleReleaseToken, Path: "scripts/release.sh", Reason: "custom release", Expires: "2026-12-31"}
+	entry := Exception{Rule: ExceptionRuleReleaseToken, Path: "scripts/release.sh", Reason: "custom release", Expires: "2026-11-28"}
 	err := ValidateExceptions([]Exception{entry}, exceptionsToday)
 	want := "rule release-token must name one workflow file directly in .github/workflows by path, such as .github/workflows/release.yml"
 	if err == nil || !strings.Contains(err.Error(), want) {
@@ -279,7 +284,7 @@ func TestValidateExceptionsReleaseTokenNamesAWorkflow(t *testing.T) {
 // A test-timeout entry must name one workflow file: an entry naming a script is refused with the
 // workflow-target message, which names portability.yml as the example (#1381).
 func TestValidateExceptionsTestTimeoutNamesAWorkflow(t *testing.T) {
-	entry := Exception{Rule: ExceptionRuleTestTimeout, Path: "scripts/test.sh", Reason: "longer timeout", Expires: "2026-12-31"}
+	entry := Exception{Rule: ExceptionRuleTestTimeout, Path: "scripts/test.sh", Reason: "longer timeout", Expires: "2026-11-28"}
 	err := ValidateExceptions([]Exception{entry}, exceptionsToday)
 	want := "rule test-timeout must name one workflow file directly in .github/workflows by path, such as .github/workflows/portability.yml"
 	if err == nil || !strings.Contains(err.Error(), want) {
@@ -290,7 +295,7 @@ func TestValidateExceptionsTestTimeoutNamesAWorkflow(t *testing.T) {
 // A job-timeout entry must name one workflow file: an entry naming a script is refused with the
 // workflow-target message, which names ci.yml as the example.
 func TestValidateExceptionsJobTimeoutNamesAWorkflow(t *testing.T) {
-	entry := Exception{Rule: ExceptionRuleJobTimeout, Path: "scripts/test.sh", Reason: "longer job timeout", Expires: "2026-12-31"}
+	entry := Exception{Rule: ExceptionRuleJobTimeout, Path: "scripts/test.sh", Reason: "longer job timeout", Expires: "2026-11-28"}
 	err := ValidateExceptions([]Exception{entry}, exceptionsToday)
 	want := "rule job-timeout must name one workflow file directly in .github/workflows by path, such as .github/workflows/ci.yml"
 	if err == nil || !strings.Contains(err.Error(), want) {
@@ -301,7 +306,7 @@ func TestValidateExceptionsJobTimeoutNamesAWorkflow(t *testing.T) {
 // validateWorkflowTarget runs the workflow-target cases for one rule.
 func validateWorkflowTarget(t *testing.T, rule string) {
 	entry := func(target string) Exception {
-		return Exception{Rule: rule, Path: target, Reason: "the workflow falls short of the rule", Expires: "2026-12-31"}
+		return Exception{Rule: rule, Path: target, Reason: "the workflow falls short of the rule", Expires: "2026-11-28"}
 	}
 	for _, target := range []string{".github/workflows/release.yml", ".github/workflows/release-binaries.yaml"} {
 		if err := ValidateExceptions([]Exception{validException(), entry(target)}, exceptionsToday); err != nil {
@@ -492,11 +497,11 @@ func TestValidateClangTidyDataPaths(t *testing.T) {
 // Negative: a glob, or a path below the root, is refused, naming the rule. Boundary: the same
 // root file under the other rule is another entry, not a repeat.
 func TestValidateExceptionsRootLicenseNotice(t *testing.T) {
-	notice := Exception{Rule: ExceptionRuleRootLicenseNotice, Path: "COPYING", Reason: "upstream GPL notice kept verbatim", Expires: "2026-12-31"}
+	notice := Exception{Rule: ExceptionRuleRootLicenseNotice, Path: "COPYING", Reason: "upstream GPL notice kept verbatim", Expires: "2026-11-28"}
 	if err := ValidateExceptions([]Exception{notice}, exceptionsToday); err != nil {
 		t.Fatalf("a root file entry refused: %v", err)
 	}
-	order := Exception{Rule: ExceptionRuleReuseAnnotationOrder, Path: "REUSE.toml", Reason: "4000 vendored globs", Expires: "2026-12-31"}
+	order := Exception{Rule: ExceptionRuleReuseAnnotationOrder, Path: "REUSE.toml", Reason: "4000 vendored globs", Expires: "2026-11-28"}
 	if err := ValidateExceptions([]Exception{order}, exceptionsToday); err != nil {
 		t.Fatalf("a REUSE.toml order entry refused: %v", err)
 	}
@@ -536,7 +541,7 @@ func TestValidateExceptionsDedupeTarget(t *testing.T) {
 		Rule:    ExceptionRuleDedupe,
 		Path:    "api/v1/zz_generated.deepcopy.go",
 		Reason:  "controller-gen repeated DeepCopyInto",
-		Expires: "2026-12-31",
+		Expires: "2026-11-28",
 	}
 	if err := ValidateExceptions([]Exception{entry}, exceptionsToday); err != nil {
 		t.Fatalf("a valid HISS-19 entry was refused: %v", err)
@@ -844,7 +849,7 @@ func TestExceptionRuleSecrets_3D(t *testing.T) {
 		Rule:    ExceptionRuleSecrets,
 		Path:    "settings.py",
 		Tool:    "generic-api-key",
-		Expires: "2026-12-31",
+		Expires: "2026-11-28",
 		Reason:  "legacy test token",
 	}
 	if err := ValidateExceptions([]Exception{valid}, exceptionsToday); err != nil {
