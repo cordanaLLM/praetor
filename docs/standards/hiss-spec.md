@@ -160,10 +160,12 @@ Every dependency manifest must be cryptographically pinned:
 - `praetorctl audit` and the MCP `standards_audit` scan `Dockerfile` / `Containerfile` `FROM`,
   compose, Kubernetes and Helm `image:`, GitHub Actions `container:` / `services.*.image` /
   `uses: docker://`, `devcontainer.json` `image`, and fully qualified container image string
-  literals in source files (`internal/supplychain.ScanImageRefs`), failing on any reference lacking
-  an `@sha256:` digest pin (or containing an unresolvable build argument or template expression)
-  unless recorded in `.standards-baseline.json` (`rule_id: "HISS-11"`, via
-  `praetorctl baseline --record-image-refs`) or excused by a live `HISS-11` entry in `.standards.yaml`.
+  literals in source files (`internal/supplychain.ScanImageRefs`), failing on any resolvable
+  reference lacking an `@sha256:` digest pin unless recorded in `.standards-baseline.json`
+  (`rule_id: "HISS-11"`, via `praetorctl baseline --record-image-refs --reason "<why>"` or recorded
+  once at adoption) or excused by a live `HISS-11` entry in `.standards.yaml`. Unresolvable
+  references (template expressions, build arguments, or shell variables) are reported via `[INFO]`
+  with their count and sample locations and are not judged as blocking violations.
 - SLSA provenance at the declared `supply_chain.slsa_level` and Sigstore Cosign signatures on all
   released binaries.
 - `praetorctl audit` and the MCP `standards_audit` measure the SLSA Build level, cosign signing
