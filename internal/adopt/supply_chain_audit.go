@@ -479,6 +479,11 @@ func (s *adoptSession) reconcileImageRefBaseline(ctx context.Context, full strin
 	if repo == "" {
 		repo = s.identity.coordinate()
 	}
+	exceptions, err := s.supplyChainExceptions(ctx)
+	if err != nil {
+		s.report.BaselineStatus = "failed"
+		return fmt.Errorf("load HISS-11 exceptions for the adoption baseline: %w", err)
+	}
 	res, err := supplychain.RecordImageRefBaseline(ctx, supplychain.ImageBaselineRecordOptions{
 		Root:          s.repoPath,
 		BaselinePath:  full,
@@ -487,7 +492,7 @@ func (s *adoptSession) reconcileImageRefBaseline(ctx context.Context, full strin
 		Reason:        "adoption baseline",
 		Repository:    repo,
 		CommitSHA:     commit,
-		Exceptions:    s.supplyChainExceptions(ctx),
+		Exceptions:    exceptions,
 		DryRun:        s.opts.DryRun,
 	})
 	if err != nil {
@@ -520,15 +525,17 @@ func (s *adoptSession) applyImageRefBaselineResult(res *supplychain.ImageBaselin
 	s.report.recordReconciled(baselineFile, note)
 }
 
-func (s *adoptSession) supplyChainExceptions(ctx context.Context) []config.Exception {
+// supplyChainExceptions returns the HISS-11 entries the adoption baseline honours: from the
+// resolved policy, the declaration, or the manifest on disk. A manifest that cannot be read fails
+// the record, so a live exception is never ignored without a word.
+func (s *adoptSession) supplyChainExceptions(ctx context.Context) ([]config.Exception, error) {
 	if s.policy != nil && s.policy.Manifest != nil {
-		return config.ExceptionsFor(s.policy.Manifest.Exceptions, config.ExceptionRuleSupplyChain)
+		return config.ExceptionsFor(s.policy.Manifest.Exceptions, config.ExceptionRuleSupplyChain), nil
 	}
 	if s.declared != nil {
-		return config.ExceptionsFor(s.declared.Exceptions, config.ExceptionRuleSupplyChain)
+		return config.ExceptionsFor(s.declared.Exceptions, config.ExceptionRuleSupplyChain), nil
 	}
-	entries, _ := config.LoadExceptionsFor(ctx, s.repoPath, config.ExceptionRuleSupplyChain)
-	return entries
+	return config.LoadExceptionsFor(ctx, s.repoPath, config.ExceptionRuleSupplyChain)
 }
 
 func hasImageRefBaselineEntries(infractions []baseline.Infraction) bool {
