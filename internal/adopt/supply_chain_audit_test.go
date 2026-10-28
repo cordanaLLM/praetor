@@ -331,15 +331,9 @@ func TestAuditSupplyChainReplaysImageRefFixtures(t *testing.T) {
 	for _, lang := range langs {
 		for bucket, wantFail := range buckets {
 			dir := filepath.Join(rootDir, lang, bucket)
-			entries, err := os.ReadDir(dir)
-			if err != nil {
-				continue
-			}
+			entries := imageRefFixtureEntries(dir)
 			for i := 0; i < len(entries); i++ {
 				name := entries[i].Name()
-				if name == "missing-lockfile-entry.go" {
-					continue
-				}
 				data, err := os.ReadFile(filepath.Join(dir, name))
 				if err != nil {
 					t.Fatal(err)
@@ -352,6 +346,20 @@ func TestAuditSupplyChainReplaysImageRefFixtures(t *testing.T) {
 			}
 		}
 	}
+}
+
+func imageRefFixtureEntries(dir string) []os.DirEntry {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	fixtures := make([]os.DirEntry, 0, len(entries))
+	for i := 0; i < len(entries); i++ {
+		if entries[i].Name() != "missing-lockfile-entry.go" {
+			fixtures = append(fixtures, entries[i])
+		}
+	}
+	return fixtures
 }
 
 func TestAuditSupplyChainImageRefsBaselineAndExceptions_3D(t *testing.T) {
@@ -395,7 +403,13 @@ func TestAuditSupplyChainImageRefsBaselineAndExceptions_3D(t *testing.T) {
 
 func TestAuditSupplyChainUnresolvableAndHelmTemplates_3D(t *testing.T) {
 	policy := supplyChainPolicy(0, false, false)
+	assertUnresolvableImageRefsPass(t, policy)
+	assertMixedImageRefsFail(t, policy)
+	assertUnresolvableImageRefPreviewBound(t, policy)
+}
 
+func assertUnresolvableImageRefsPass(t *testing.T, policy *config.ResolvedPolicy) {
+	t.Helper()
 	// Positive: unresolvable references only (including Helm printf digest template) pass and emit [INFO] with count.
 	unresolvableRepo := supplyChainRepo(t, map[string]string{
 		"Dockerfile": "ARG BASE_IMAGE=alpine:3.19\nFROM ${BASE_IMAGE}\n",
@@ -412,7 +426,10 @@ func TestAuditSupplyChainUnresolvableAndHelmTemplates_3D(t *testing.T) {
 	if !strings.Contains(out, wantInfo) {
 		t.Fatalf("expected [INFO] summary line %q in output, got:\n%s", wantInfo, out)
 	}
+}
 
+func assertMixedImageRefsFail(t *testing.T, policy *config.ResolvedPolicy) {
+	t.Helper()
 	// Negative: mixed resolvable floating reference + unresolvable references blocks on resolvable only and counts unresolvable in [INFO].
 	mixedRepo := supplyChainRepo(t, map[string]string{
 		"Dockerfile":                            "FROM golang:1.27-alpine\n",
@@ -436,7 +453,10 @@ func TestAuditSupplyChainUnresolvableAndHelmTemplates_3D(t *testing.T) {
 		strings.Contains(err.Error(), "[FAIL] Supply chain (HISS-11): .github/workflows/ci.yml") {
 		t.Errorf("unresolvable reference was formatted as [FAIL]:\n%s", err.Error())
 	}
+}
 
+func assertUnresolvableImageRefPreviewBound(t *testing.T, policy *config.ResolvedPolicy) {
+	t.Helper()
 	// Boundary: more than 5 unresolvable references reports total count 6 and lists only first 5.
 	sixUnresolvable := supplyChainRepo(t, map[string]string{
 		"deploy/helm/templates/deployment.yaml": strings.Join([]string{

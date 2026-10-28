@@ -222,15 +222,45 @@ func TestScannedFileSelectsPinFormatsOutsideTestdata(t *testing.T) {
 	}
 }
 
+type imageRefSurfaceCase struct {
+	name         string
+	file         string
+	content      string
+	wantRefs     []string
+	unresolvable bool
+}
+
+func runtimeImageRefCases(digest string) []imageRefSurfaceCase {
+	return []imageRefSurfaceCase{
+		{
+			name:     "workflow container services and docker uses",
+			file:     ".github/workflows/ci.yml",
+			content:  "jobs:\n  test:\n    container: golang:1.27\n    services:\n      redis:\n        image: redis:7\n    steps:\n      - uses: docker://alpine:3.19\n      - uses: docker://alpine:3.19@sha256:" + digest + "\n",
+			wantRefs: []string{"golang:1.27", "redis:7", "docker://alpine:3.19"},
+		},
+		{
+			name:     "devcontainer image field",
+			file:     ".devcontainer/devcontainer.json",
+			content:  "{\n  \"image\": \"mcr.microsoft.com/devcontainers/go:1.27\"\n}\n",
+			wantRefs: []string{"mcr.microsoft.com/devcontainers/go:1.27"},
+		},
+		{
+			name:     "source string literals qualified references",
+			file:     "runner.go",
+			content:  "package p\nconst a = \"ghcr.io/org/runner:1.4.2\"\nconst b = \"localhost:5000/team/worker:v2\"\nconst c = \"ghcr.io/org/runner:1.4.2@sha256:" + digest + "\"\n",
+			wantRefs: []string{"ghcr.io/org/runner:1.4.2", "localhost:5000/team/worker:v2"},
+		},
+		{
+			name:    "source string literals plain host:port and URLs never match",
+			file:    "net.go",
+			content: "package p\nvar (a = \"localhost:8080\"; b = \"127.0.0.1:5432\"; c = \"db.internal:5432\"; d = \"https://ghcr.io/org/runner:1.4.2\"; e = \"redis:7.2\")\n",
+		},
+	}
+}
+
 func TestCollectImageRefFindingsSurfaces_3D(t *testing.T) {
 	const digest = "4a7b9f0e1c2d3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b"
-	cases := []struct {
-		name         string
-		file         string
-		content      string
-		wantRefs     []string
-		unresolvable bool
-	}{
+	cases := []imageRefSurfaceCase{
 		{
 			name:     "Dockerfile floating FROM and stage alias ignored",
 			file:     "Dockerfile",
@@ -262,30 +292,8 @@ func TestCollectImageRefFindingsSurfaces_3D(t *testing.T) {
 			content:  "services:\n  db:\n    image: postgres:16-alpine\n  cache:\n    image: redis:7.2@sha256:" + digest + "\n",
 			wantRefs: []string{"postgres:16-alpine"},
 		},
-		{
-			name:     "workflow container services and docker uses",
-			file:     ".github/workflows/ci.yml",
-			content:  "jobs:\n  test:\n    container: golang:1.27\n    services:\n      redis:\n        image: redis:7\n    steps:\n      - uses: docker://alpine:3.19\n      - uses: docker://alpine:3.19@sha256:" + digest + "\n",
-			wantRefs: []string{"golang:1.27", "redis:7", "docker://alpine:3.19"},
-		},
-		{
-			name:     "devcontainer image field",
-			file:     ".devcontainer/devcontainer.json",
-			content:  "{\n  \"image\": \"mcr.microsoft.com/devcontainers/go:1.27\"\n}\n",
-			wantRefs: []string{"mcr.microsoft.com/devcontainers/go:1.27"},
-		},
-		{
-			name:     "source string literals qualified references",
-			file:     "runner.go",
-			content:  "package p\nconst a = \"ghcr.io/org/runner:1.4.2\"\nconst b = \"localhost:5000/team/worker:v2\"\nconst c = \"ghcr.io/org/runner:1.4.2@sha256:" + digest + "\"\n",
-			wantRefs: []string{"ghcr.io/org/runner:1.4.2", "localhost:5000/team/worker:v2"},
-		},
-		{
-			name:    "source string literals plain host:port and URLs never match",
-			file:    "net.go",
-			content: "package p\nvar (a = \"localhost:8080\"; b = \"127.0.0.1:5432\"; c = \"db.internal:5432\"; d = \"https://ghcr.io/org/runner:1.4.2\"; e = \"redis:7.2\")\n",
-		},
 	}
+	cases = append(cases, runtimeImageRefCases(digest)...)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := CollectImageRefFindings(tc.file, tc.content)
@@ -336,6 +344,11 @@ func TestScanImageRefsReadBoundaries(t *testing.T) {
 	if len(findings) != 0 {
 		t.Fatalf("deleted files produced findings: %+v", findings)
 	}
+	assertImageRefOutsideLink(t, root)
+}
+
+func assertImageRefOutsideLink(t *testing.T, root string) {
+	t.Helper()
 	outside := filepath.Join(t.TempDir(), "compose.yml")
 	if err := os.WriteFile(outside, []byte("services:\n  app:\n    image: docker.io/library/redis:latest\n"), 0o600); err != nil {
 		t.Fatalf("write outside compose file: %v", err)
@@ -344,7 +357,7 @@ func TestScanImageRefsReadBoundaries(t *testing.T) {
 		t.Skipf("symlink unavailable on this platform, link case not run: %v", err)
 	}
 	testsupport.RunFixtureGit(t, root, []string{"add", "-A"})
-	findings, err = ScanImageRefs(t.Context(), root)
+	findings, err := ScanImageRefs(t.Context(), root)
 	if err != nil {
 		t.Fatalf("link leaving the root failed the scan: %v", err)
 	}

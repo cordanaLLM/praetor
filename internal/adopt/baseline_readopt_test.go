@@ -349,6 +349,11 @@ func TestAdopt_RecordsImageRefBaselineOnce_3D(t *testing.T) {
 		t.Fatalf("second adoption must keep existing 2 HISS-11 entries and add none, got: %+v", b2)
 	}
 
+	assertLegacyImageRefBaselineRecorded(t)
+}
+
+func assertLegacyImageRefBaselineRecorded(t *testing.T) {
+	t.Helper()
 	// Re-adopt of an already-adopted repo whose baseline had 0 HISS-11 entries records existing image findings once.
 	legacyRepo, _ := adoptedWithDebt(t, "readopt-records-hiss11-once")
 	mustWrite(t, filepath.Join(legacyRepo, "docker-compose.yml"), "services:\n  db:\n    image: postgres:16-alpine\n  cache:\n    image: redis:7.2-alpine\n")
