@@ -150,7 +150,7 @@ every file and requires yamllint to reject each one, so the rule is proven to be
 | --- | --- |
 | `pre-commit`, `pre-merge-commit` | Audit the live private ledger, then check the exact index for whitespace, conflict markers, Python/JSON syntax, YAML, shell, workflow and Docker lint; Go formatting and vet on changed packages; verify affected generated agent instructions. |
 | `prepare-commit-msg` | Add an instructional comment to a fresh empty message. |
-| `commit-msg` | Verify the live state synchronization after Lefthook restores partially staged worktree files, then apply the commit message policy (`praetorctl forge check-message`: a conventional subject, Git merge/revert subjects accepted, the HISS-14 `Migration:` footer on a breaking change, and an offline warning for ambiguous closing references; explicit pull request URLs require `Closes-own: <reference>`) and require a DCO sign-off. |
+| `commit-msg` | Verify the live state synchronization after Lefthook restores partially staged worktree files, then apply the commit message policy (`praetorctl forge check-message`: a conventional subject, Git merge/revert subjects accepted, the HISS-14 `Migration:` footer on a breaking change, refusal of tool attribution trailers and footers, and an offline warning for ambiguous closing references; explicit pull request URLs require `Closes-own: <reference>`) and require a DCO sign-off. |
 | `pre-push` | Audit and verify live state before inspecting each actual pushed commit. Run `praetorctl forge refactor-check --base=<base> --head=<head>` over the pushed range for the REF-02 assertion lock; a push without a known base skips it with that reason, and CI checks the pull request range. `checkpoint/*` destinations run file checks, affected Go builds and race tests. Other destinations also require lint, security, vulnerability, governance, flavor and signed-receipt gates. The signed gate runs Go race tests only for the affected packages and reverse dependents; an empty selection records `not_applicable: no affected Go package`. |
 | `post-commit` | Synchronize and read back the private state for the new commit, then print the dedupe cadence reminder when due. Sync failures are reported. |
 | `post-checkout`, `post-merge`, `post-rewrite` | Warm changed module dependencies in an isolated clone, rebuild the local CLI for source changes, verify affected agent outputs, report governance changes. `post-merge` then runs `praetorctl workstation install --if-stale`, which rebuilds a lagging engine install from this checkout on the update branch and otherwise skips silently ([refresh a lagging install](workstation-update.md#refresh-a-lagging-install)). File-only checkouts do nothing. |
@@ -753,7 +753,13 @@ The commit-msg hook and CI share one implementation of the message policy, `forg
 message file Git hands it, which first drops what Git removes before it records the message: the
 lines that start with `#`, and the scissors line with everything after it. A message file over
 1 MiB, or of more than 100000 lines before the scissors line, is refused, not checked in part
-(`TestCleanCommitMessage_Boundary_LineBound`).
+(`TestCleanCommitMessage_Boundary_LineBound`). The policy also enforces the fleet attribution rule:
+it refuses any `Co-authored-by` trailer naming an AI model, coding tool, or bot (`claude`, `anthropic`,
+`openai`, `chatgpt`, `gpt`, `codex`, `gemini`, `copilot`, `cursor`, `opencode`, `antigravity`,
+`noreply@anthropic.com`, or ending in `[bot]`), any `Generated with` or `Created with` footer, and any
+line starting with a robot emoji. Trailers are parsed from the final paragraph following Git
+`interpret-trailers` semantics, so trailer-like lines in middle body paragraphs pass as prose while
+human co-authors remain accepted.
 
 `standardsctl forge refactor-check` uses the same Conventional Commits subject parser as
 `AnalyzeCommit` to select `refactor:` commits. REF-02 checks changed `*_test.go` hunks for

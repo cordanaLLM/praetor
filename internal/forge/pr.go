@@ -429,6 +429,9 @@ func AnalyzeCommitWithPolicy(ctx context.Context, message string, closingPolicy 
 		res.Errors = append(res.Errors, reason)
 	}
 	res.Errors = append(res.Errors, ForeignReferenceFindings(message, "commit message", closingPolicy.OwnOrganizations)...)
+	if attrErrors := commitAttributionErrors(trimmed); len(attrErrors) > 0 {
+		res.Errors = append(res.Errors, attrErrors...)
+	}
 	closingErrors, closingWarnings := closingReferenceFindings(ctx, trimmed, "commit message", closingPolicy)
 	res.Errors = append(res.Errors, closingErrors...)
 	res.Warnings = append(res.Warnings, closingWarnings...)
