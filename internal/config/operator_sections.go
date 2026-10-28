@@ -89,6 +89,12 @@ type HookSettings struct {
 	CommandPolicy CommandPolicySettings `json:"command_policy"`
 	Python        [][]string            `json:"python"`
 	Admission     AdmissionSettings     `json:"admission,omitzero"`
+	Merge         MergeSettings         `json:"merge,omitzero"`
+}
+
+// MergeSettings names the operator's merge helper. Empty leaves direct merges allowed.
+type MergeSettings struct {
+	Helper string `json:"helper"`
 }
 
 // DefaultAdmissionMaxJobsDivisor is the built-in job-count divisor when admission is enforced
