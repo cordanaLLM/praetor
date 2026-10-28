@@ -79,7 +79,25 @@ Worker pools, concurrent routines, and parallel fan-out must declare an explicit
 
 - Goroutine pools and thread spawning must specify a maximum concurrency capacity.
 - Unbounded queue workers or unbounded concurrency patterns are banned.
-- Status: advisory; race-detector tests verify absence of data races but do not verify pool bounds.
+- **Go enforcement (`internal/hiss/go_fanout.go`):** any `go` statement inside a `for` or `range`
+  body (directly, or inside a `func` literal invoked in that loop) is reported across production,
+  generated, and `_test.go` files unless the enclosing function bounds it by one of five shapes:
+  1. **Bounded `errgroup.Group`:** an `errgroup.Group` or `*errgroup.Group` with a `SetLimit` call
+     on the same group before the loop (`g.SetLimit(n)` with positive `n`).
+  2. **Weighted semaphore:** a `semaphore.Weighted` `Acquire` (or `TryAcquire`) call inside the
+     loop body before the `go` statement.
+  3. **Buffered token channel:** a send on a buffered channel (`make(chan T, cap)`) inside the loop
+     body before the `go` statement with a matching receive (`<-ch`) in the goroutine (deferred or
+     at the end of the goroutine body).
+  4. **Static loop bound:** a `range` over a fixed-length array type (`[N]T` or `[...]T`) or a
+     constant-bounded counter loop (`for i := 0; i < constN; i++` where `constN` is a constant
+     expression).
+  5. **Allow-listed worker pool (`//hiss:bound`):** a worker pool loop over a constant or an
+     explicit `int` variable named in a `//hiss:bound <var><=<bound> <reason>` (or
+     `//hiss:bound <var>=<bound> <reason>`) comment immediately above the loop stating the bound
+     value and justification.
+- Other languages remain unchecked by the scanner; `go test -race` verifies absence of data races
+  on executed paths but does not prove pool bounds.
 
 ---
 

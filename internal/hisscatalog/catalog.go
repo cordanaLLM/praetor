@@ -120,10 +120,11 @@ var catalog = []Rule{
 		ID:            "HISS-06",
 		Title:         "Bounded Concurrency",
 		Specification: "Worker pools and concurrent fan-out carry an explicit scalar upper bound.",
-		Enforcement:   "NOT ENFORCED for the axiom. The race detector cannot observe an unbounded pool: a lock-order inversion or an unbounded but race-free fan-out produces no data race. 'go test -race' runs, but it does not decide this rule.",
-		FailureAction: "None today; the rule is advisory until a check is attached.",
+		Enforcement:   "The internal/hiss scanner (Go only: go statement per loop iteration without errgroup SetLimit, semaphore, token channel, constant bound or //hiss:bound; other languages unchecked).",
+		FailureAction: "Pre-commit and CI blocker.",
 		Scope:         "concurrency",
 		Directive:     []Clause{{Text: "explicit scalar upper bound on every worker pool + concurrent fan-out"}},
+		Adoption:      auditCheck(LanguageGo, "Go only: go statement per loop iteration without errgroup SetLimit, semaphore, token channel, constant bound or //hiss:bound; other languages unchecked"),
 	},
 	{
 		ID:            "HISS-07",

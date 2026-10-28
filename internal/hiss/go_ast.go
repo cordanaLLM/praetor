@@ -37,6 +37,7 @@ func scanGoSource(data []byte, rel string, rep *ScanReport, opts ScanOptions) {
 	}
 	g := &goScanner{
 		fset:    fset,
+		file:    file,
 		rel:     rel,
 		rep:     rep,
 		maxLOC:  opts.MaxFuncLOC,
@@ -99,6 +100,7 @@ func (g *goScanner) measure(file *ast.File, limits ComplexityLimits) {
 
 type goScanner struct {
 	fset    *token.FileSet
+	file    *ast.File
 	rel     string
 	rep     *ScanReport
 	maxLOC  int
@@ -267,6 +269,7 @@ func (g *goScanner) checkSelfRecursion(call *ast.CallExpr) {
 
 func (g *goScanner) inspect(n ast.Node) {
 	g.logs.track(n)
+	g.checkGoFanoutNode(n)
 	switch node := n.(type) {
 	case *ast.FuncDecl:
 		g.checkFuncLOC(node)

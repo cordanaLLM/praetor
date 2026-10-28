@@ -14,7 +14,7 @@ runs the checks its adoption generates.
 | **HISS-03** | Zero Frame Malloc | no | NOT ENFORCED. No allocation benchmark gate exists in this repository. | None today; the rule is advisory until a check is attached. |
 | **HISS-04** | Complexity Bounds & Modular Sizing | yes | gocyclo, gocognit and funlen via golangci-lint (.golangci.yml) at its configured thresholds; the HISS scanner enforces function length and measures cyclomatic, cognitive and statement counts without enforcing them, the measurement standards_inspect_symbols and standards-lsp share. | Build sweep blocker. |
 | **HISS-05** | Variable Scoping | no | NOT ENFORCED. No executable check exists in this repository, and no configured linter decides this rule. | None today; the rule is advisory until a check is attached. |
-| **HISS-06** | Bounded Concurrency | no | NOT ENFORCED for the axiom. The race detector cannot observe an unbounded pool: a lock-order inversion or an unbounded but race-free fan-out produces no data race. 'go test -race' runs, but it does not decide this rule. | None today; the rule is advisory until a check is attached. |
+| **HISS-06** | Bounded Concurrency | no | The internal/hiss scanner (Go only: go statement per loop iteration without errgroup SetLimit, semaphore, token channel, constant bound or //hiss:bound; other languages unchecked). | Pre-commit and CI blocker. |
 | **HISS-07** | Checked Errors & Zero Unwrap | yes | golangci-lint (errcheck and wrapping rules) in make lint. | Compiler / linter error. |
 | **HISS-08** | Static Determinism & Banned Functions | no | Semgrep rules. | Admission rejection. |
 | **HISS-09** | Reference Safety & Mandatory Safety Proofs | no | AST check. | Immediate AST check rejection. |

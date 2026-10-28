@@ -382,6 +382,30 @@ rules:
           its brace opens on, and reported at the workflow line of its header: 61 lines is
           reported and 60 is not. A function in a block of another shell, such as a python step,
           is not measured and is held as a gap.
+  - id: HISS-06
+    coverage:
+      - language: go
+        state: partial
+        mechanism: >-
+          internal/hiss go_fanout.go checkGoFanout, dispatched from go_ast.go inspect on every
+          *ast.GoStmt in production, generated and _test.go files
+        rationale: >-
+          A go statement inside a for or range body (directly, or inside a function literal
+          invoked inside that loop) is reported unless the enclosing function bounds it by one
+          of five shapes: an errgroup.Group or *errgroup.Group with a SetLimit call on the same
+          group before the loop (negative/errgroup-setlimit.go;
+          positive/errgroup-without-setlimit.go), a semaphore.Weighted Acquire or TryAcquire
+          inside the loop before the go statement (negative/semaphore-acquire.go), a send on a
+          buffered token channel inside the loop before the go statement with a matching receive
+          deferred or at the end of the goroutine body (negative/token-channel.go), a range over
+          a fixed array type or a constant-bounded counter loop (negative/constant-loop.go;
+          positive/unbounded-range-fanout.go, positive/fanout-in-func-literal.go), or a worker
+          pool loop over a constant or an explicit int variable named with a bound value and
+          reason in a //hiss:bound comment on the loop (negative/hiss-bound-comment.go). gap/
+          records what the per-function syntax check does not prove: a bound passed to SetLimit
+          from a caller variable without interprocedural constant propagation
+          (gap/caller-variable-bound.go) and a token channel sized by runtime.NumCPU() without a
+          //hiss:bound comment (gap/numcpu-pool.go).
   - id: HISS-08
     coverage:
       - language: c

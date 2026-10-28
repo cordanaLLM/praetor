@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+#
+# SPDX-License-Identifier: EUPL-1.2
+
+entries:
+  - category: Added
+    title: "**HISS-06 Go Bounded-Concurrency Scanner**: Enforce bounded goroutine fan-out inside loops in `praetorctl audit`"
+    summary: "`internal/hiss` now reports `go` statements inside `for` or `range` loops across production, generated, and `_test.go` files unless bounded by `errgroup.Group.SetLimit`, `semaphore.Weighted.Acquire`, a buffered token channel, a constant or fixed-array loop bound, or a `//hiss:bound` directive, and credits `HISS-06` to adopted Go repositories."
