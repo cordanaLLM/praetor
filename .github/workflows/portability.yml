@@ -505,9 +505,13 @@ jobs:
         # The driver's 1800 s suite timeout plus bounded tree cleanup fits inside this bound.
         timeout-minutes: 40
         shell: bash
+        # Both run whatever the first returns, so a failing timeout regression never hides the
+        # suites' own results on that leg; the step fails when either does.
         run: |
-          "$PYTHON" -u -B scripts/test_portability_selftest.py
-          "$PYTHON" -u -B scripts/portability_selftest.py --min-executed "$MIN_EXECUTED"
+          status=0
+          "$PYTHON" -u -B scripts/test_portability_selftest.py || status=$?
+          "$PYTHON" -u -B scripts/portability_selftest.py --min-executed "$MIN_EXECUTED" || status=$?
+          exit "$status"
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}
           # Deliberately a collapse detector, not a coverage assertion. The honest floor per
