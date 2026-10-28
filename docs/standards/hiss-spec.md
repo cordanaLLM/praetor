@@ -52,6 +52,20 @@ Hot simulation loops and rendering ticks (e.g. 60Hz/120Hz pipelines) must mainta
 $$\Delta \text{HeapAlloc}_{\text{tick}} = 0$$
 Memory must be pre-allocated during subsystem initialization. Any dynamic heap allocation detected during a frame loop causes immediate test failure.
 
+#### Go Declaration Grammar & Verification Contract
+
+The static scanner cannot identify hot simulation loops without an explicit declaration. Hot paths declare their allocation invariant through their doc comment:
+
+```go
+//hiss:hot <reason>
+func Step() { ... }
+```
+
+- **Marker Grammar:** `//hiss:hot <reason>`. An explanatory reason is mandatory; a bare `//hiss:hot` marker is reported as a rule finding. Markers placed on non-function declarations (`const`, `var`, `type`) are invalid and reported with a stated finding while remaining ignored for test requirements.
+- **Verification Test Shape:** For each marked function or method, `_test.go` files in the same package directory (internal or external test package) must contain a call to `testing.AllocsPerRun(n, f)` where $n > 0$ and the function literal calls the marked function (as an identifier or selector).
+- **Zero Assertion:** The measurement result must be compared against 0 in an `if` statement (`if allocs != 0` or `if allocs > 0`) whose body fails the test via `t.Fatal`, `t.Fatalf`, `t.Error`, or `t.Errorf`.
+- **Language Scope:** Go only. Unmarked code is unchecked. Rust and C implementations are unchecked.
+
 ### HISS-04: Complexity Bounds & Modular Sizing
 
 Functions must remain strictly bounded in complexity and scope:

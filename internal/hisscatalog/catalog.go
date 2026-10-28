@@ -89,10 +89,11 @@ var catalog = []Rule{
 		ID:            "HISS-03",
 		Title:         "Zero Frame Malloc",
 		Specification: "Hot simulation and frame loops must maintain zero dynamic heap allocations: ΔHeapAlloc_tick = 0.",
-		Enforcement:   "NOT ENFORCED. No allocation benchmark gate exists in this repository.",
-		FailureAction: "None today; the rule is advisory until a check is attached.",
+		Enforcement:   "Go only: //hiss:hot functions need a testing.AllocsPerRun test asserting zero; unmarked code unchecked; Rust, C unchecked",
+		FailureAction: "Build sweep blocker.",
 		Scope:         "memory",
 		Directive:     []Clause{{Languages: LanguageGo | LanguageRust | LanguageC, Text: "zero heap allocation in hot simulation/tick loops"}},
+		Adoption:      auditCheck(LanguageGo, "Go only: //hiss:hot functions need a testing.AllocsPerRun test asserting zero; unmarked code unchecked; Rust, C unchecked"),
 	},
 	{
 		ID:            "HISS-04",

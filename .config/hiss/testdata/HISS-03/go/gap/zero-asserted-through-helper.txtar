@@ -1,0 +1,27 @@
+A function whose zero allocation guarantee is asserted through a helper function without the hiss:hot marker.
+
+-- transform.go --
+package gap
+
+// Transform runs on every frame but uses a custom test helper rather than hiss:hot.
+func Transform(b []byte) []byte {
+	return b
+}
+
+-- transform_test.go --
+package gap
+
+import "testing"
+
+func assertZero(t *testing.T, f func()) {
+	t.Helper()
+	if allocs := testing.AllocsPerRun(50, f); allocs != 0 {
+		t.Fatalf("allocations: %v", allocs)
+	}
+}
+
+func TestTransform(t *testing.T) {
+	assertZero(t, func() {
+		Transform(nil)
+	})
+}

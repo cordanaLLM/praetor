@@ -295,6 +295,15 @@ rules:
           the rate limit that stops a restart loop (systemd.unit(5)). A bounded oneshot and a
           restarting daemon under a rate limit are not. A drop-in (.conf) that overrides a unit is
           not read and is held as a gap.
+  - id: HISS-03
+    coverage:
+      - language: go
+        state: partial
+        mechanism: internal/hiss go_hot_alloc.go checkHotAllocations
+        rationale: >-
+          Go only: functions and methods whose doc comment carries a line //hiss:hot <reason>
+          must have a testing.AllocsPerRun test asserting zero allocations. Unmarked code
+          is unchecked; Rust and C are not checked.
   - id: HISS-04
     coverage:
       - language: go
