@@ -28,6 +28,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -51,23 +52,26 @@ SUITES = (
 # is echoed into this stream. The FIRST "Ran N tests" can therefore belong to a child, not to
 # the suite being measured -- which is how this driver once reported "2 executed" for a run of
 # 66. The authoritative summary is the last one, and the outcome is read only after it.
-RAN = re.compile(r"^Ran (\d+) tests? in ", re.M)
+RAN = re.compile(r"^Ran (\d+) tests? in ", re.MULTILINE)
 SKIPPED = re.compile(r"skipped=(\d+)")
 # verbosity=2 prints one line per skip: "name (mod.Case.name) ... skipped 'reason'".
-SKIP_REASON = re.compile(r"^(\S+) \([^)]*\) \.\.\. skipped ['\"](.*)['\"]$", re.M)
+SKIP_REASON = re.compile(
+    r"^(\S+) \([^)]*\) \.\.\. skipped ['\"](.*)['\"]$", re.MULTILINE
+)
 # unittest reports each failing case in a block headed by a rule of 70 "=" and then
 # "FAIL: name (mod.Case.name)" or "ERROR: ...". The per-case "... FAIL" outcome line is not
 # usable: a docstring replaces the name on it, and output the case prints lands between the
 # name and the outcome. Anchoring on the rule keeps a test that merely prints "FAIL:" out.
-FAILED_CASE = re.compile(r"^={70}\n(FAIL|ERROR): (\S+) \(", re.M)
-# A per-suite timeout well above the slowest observed run; a hung suite must fail, not hang CI.
+FAILED_CASE = re.compile(r"^={70}\n(FAIL|ERROR): (\S+) \(", re.MULTILINE)
+# 30 minutes per suite plus bounded cleanup stays below the workflow's 40-minute step bound.
 SUITE_TIMEOUT_SECONDS = 1800
+SUITE_CLEANUP_SECONDS = 5
 # The same rule, used to cut the output into one block per failing case. Printing only the
 # run's last 25 lines meant a suite that failed four cases published one traceback and left
 # the other three to be attributed by reading the code (#135). Both bounds keep a noisy suite
 # from burying the log; the tail is still printed when nothing parses as a block.
 CASE_RULE = "=" * 70
-SUMMARY_RULE = re.compile(r"^-{70}\nRan \d+ tests? in ", re.M)
+SUMMARY_RULE = re.compile(r"^-{70}\nRan \d+ tests? in ", re.MULTILINE)
 MAX_FAILURE_BLOCKS = 12
 MAX_FAILURE_BLOCK_LINES = 40
 
@@ -81,7 +85,7 @@ WORKFLOW = Path(".github/workflows/portability.yml")
 PAGE = Path("docs/standards/hiss-21-platform-neutrality.md")
 TABLE_START = "<!-- praetor:hook-toolchain:start -->"
 TABLE_END = "<!-- praetor:hook-toolchain:end -->"
-REQUIRED = re.compile(r"^ +REQUIRED: ([a-z0-9_.,-]+)$", re.M)
+REQUIRED = re.compile(r"^ +REQUIRED: ([a-z0-9_.,-]+)$", re.MULTILINE)
 # What each resolved program must state before the policy runs it.
 PROOFS = {"python": "Python {floor} or newer", "make": "GNU Make"}
 
@@ -99,7 +103,9 @@ CHILD_REPORT_END = "praetor-selftest: end of child report"
 # The start marker is not anchored to a line start: unittest prints a test's name or its dot
 # without a newline before the test runs, so the first line of a report can follow it.
 CHILD_REPORT = re.compile(
-    rf"{re.escape(CHILD_REPORT_START)}$.*?^{re.escape(CHILD_REPORT_END)}$", re.M | re.S)
+    rf"{re.escape(CHILD_REPORT_START)}$.*?^{re.escape(CHILD_REPORT_END)}$",
+    re.MULTILINE | re.DOTALL,
+)
 # Reports repeated per suite, and the tail quoted from each stream of an attempt. A crash
 # prints little; the bounds keep a noisy one from burying the log.
 MAX_CHILD_REPORTS = 8
@@ -107,7 +113,7 @@ MAX_CHILD_OUTPUT = 1500
 MAX_CHILD_LINES = 20
 # Children that state their version with another argument than --version.
 VERSION_ARGS = {"go": ("version",)}
-VERSION_LINE = re.compile(r"^[ \t]*(\S[^\r\n]*)", re.M)
+VERSION_LINE = re.compile(r"^[ \t]*(\S[^\r\n]*)", re.MULTILINE)
 MAX_VERSION_REASON = 240
 # Frames searched upwards for the test that started a child (HISS-02).
 MAX_CALLER_FRAMES = 32
@@ -128,7 +134,9 @@ def asserted_tools(workflow):
     """Return the tools the workflow's Assert Hook Toolchain step requires on every leg."""
     found = REQUIRED.findall(workflow)
     if len(found) != 1:
-        raise ValueError(f"{WORKFLOW.as_posix()}: expected one REQUIRED list, found {len(found)}")
+        raise ValueError(
+            f"{WORKFLOW.as_posix()}: expected one REQUIRED list, found {len(found)}"
+        )
     return found[0].split(",")
 
 
@@ -146,17 +154,24 @@ def declared_requirements(toolchain):
     for tool in toolchain.BY_NAME:
         required[tool] = "found on `PATH` under this name"
     for tool, floor in toolchain.tool_floors().items():
-        required[tool] = "installed; no version floor" if floor is None \
+        required[tool] = (
+            "installed; no version floor"
+            if floor is None
             else f"version {floor} or newer"
+        )
     return required
 
 
 def toolchain_table(required, asserted):
     """Render the declared hook tools and what the matrix asserts for each as a Markdown table."""
-    rows = ["| Tool | The hook policy requires | Platform Neutrality job |",
-            "| :--- | :--- | :--- |"]
+    rows = [
+        "| Tool | The hook policy requires | Platform Neutrality job |",
+        "| :--- | :--- | :--- |",
+    ]
     for tool, requirement in required.items():
-        coverage = "asserted on every leg" if tool in asserted else "reported, not asserted"
+        coverage = (
+            "asserted on every leg" if tool in asserted else "reported, not asserted"
+        )
         rows.append(f"| `{tool}` | {requirement} | {coverage} |")
     return "\n".join(rows)
 
@@ -164,7 +179,9 @@ def toolchain_table(required, asserted):
 def current_toolchain_table():
     """Render the table from the declarations and the workflow of this checkout."""
     workflow = (ROOT / WORKFLOW).read_text(encoding="utf-8")
-    return toolchain_table(declared_requirements(hook_toolchain()), asserted_tools(workflow))
+    return toolchain_table(
+        declared_requirements(hook_toolchain()), asserted_tools(workflow)
+    )
 
 
 def marked_table(page):
@@ -183,7 +200,7 @@ def failure_blocks(output):
         if len(blocks) >= MAX_FAILURE_BLOCKS:
             break
         end = SUMMARY_RULE.search(part)
-        body = part[:end.start()] if end else part
+        body = part[: end.start()] if end else part
         blocks.append("\n".join(body.rstrip().splitlines()[:MAX_FAILURE_BLOCK_LINES]))
     return blocks
 
@@ -209,8 +226,12 @@ def child_version(path, name):
     """
     toolchain = hook_toolchain()
     try:
-        return toolchain.stated_version([path, *VERSION_ARGS.get(name, ("--version",))],
-                                        VERSION_LINE) or "states no version"
+        return (
+            toolchain.stated_version(
+                [path, *VERSION_ARGS.get(name, ("--version",))], VERSION_LINE
+            )
+            or "states no version"
+        )
     except toolchain.HookError as error:
         return "version unknown: " + " ".join(str(error).split())[:MAX_VERSION_REASON]
 
@@ -254,16 +275,27 @@ def quoted(stream):
 
 def child_report(argv, attempts, outcome):
     """Print one child report to stderr between the markers and return its body lines."""
-    body = [f"  outcome: {outcome}", f"  test: {calling_test()}",
-            f"  child: {child_identity(argv[0])}",
-            "  argv: " + repr([str(part) for part in argv])[:MAX_CHILD_OUTPUT]]
+    body = [
+        f"  outcome: {outcome}",
+        f"  test: {calling_test()}",
+        f"  child: {child_identity(argv[0])}",
+        "  argv: " + repr([str(part) for part in argv])[:MAX_CHILD_OUTPUT],
+    ]
     for number, attempt in enumerate(attempts, 1):
         name = exit_signal(attempt.returncode)
         ended = f"killed by {name}" if name else "exited"
         body.append(f"  attempt {number}: {ended} (return code {attempt.returncode})")
         body.append("    stdout:" + quoted(attempt.stdout))
         body.append("    stderr:" + quoted(attempt.stderr))
-    print("", CHILD_REPORT_START, *body, CHILD_REPORT_END, sep="\n", file=sys.stderr, flush=True)
+    print(
+        "",
+        CHILD_REPORT_START,
+        *body,
+        CHILD_REPORT_END,
+        sep="\n",
+        file=sys.stderr,
+        flush=True,
+    )
     return body
 
 
@@ -279,7 +311,9 @@ def run_child(argv, **options):
     pass.
     """
     if options.get("timeout") is None:
-        raise ValueError("run_child needs a timeout: a hung child must fail its test (HISS-02)")
+        raise ValueError(
+            "run_child needs a timeout: a hung child must fail its test (HISS-02)"
+        )
     check = options.pop("check", False)
     first = subprocess.run(argv, check=False, **options)
     final = first
@@ -290,14 +324,20 @@ def run_child(argv, **options):
             child_report(argv, [first], f"the retry did not finish: {error}")
             raise
         crashed = exit_signal(final.returncode) is not None
-        outcome = "a signal ended the retry too" if crashed else \
-            f"the retry exited {final.returncode}"
+        outcome = (
+            "a signal ended the retry too"
+            if crashed
+            else f"the retry exited {final.returncode}"
+        )
         body = child_report(argv, [first, final], outcome)
         if crashed:
-            raise ChildCrashed("\n".join([f"{argv[0]}: a signal ended both attempts (#809)",
-                                          *body]))
+            raise ChildCrashed(
+                "\n".join([f"{argv[0]}: a signal ended both attempts (#809)", *body])
+            )
     if check and final.returncode:
-        raise subprocess.CalledProcessError(final.returncode, argv, final.stdout, final.stderr)
+        raise subprocess.CalledProcessError(
+            final.returncode, argv, final.stdout, final.stderr
+        )
     return final
 
 
@@ -306,23 +346,90 @@ def child_reports(output):
     return [match.group(0) for match in CHILD_REPORT.finditer(output)]
 
 
+def stop_suite(process):
+    """Kill the suite's tree, then reap its leader with a bounded wait.
+
+    Unlike the hook runner's best-effort cleanup, tree-kill errors reach the suite failure.
+    Keep output off pipes here too: taskkill's timeout must not drain inherited handles.
+    """
+    try:
+        if os.name == "nt":
+            run_child(
+                ["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=SUITE_CLEANUP_SECONDS,
+                check=True,
+            )
+        else:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # The suite and its process group already exited.
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=SUITE_CLEANUP_SECONDS)
+
+
 def run_suite(path):
     """Execute one suite and return (ok, ran, skipped, reasons, failed, tail, children)."""
+    failure = ""
+    group = (
+        {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+        if os.name == "nt"
+        else {"start_new_session": True}
+    )
     try:
-        result = subprocess.run(
-            [sys.executable, "-B", str(path)],
-            cwd=ROOT, capture_output=True, text=True,
-            timeout=SUITE_TIMEOUT_SECONDS, check=False,
+        # Regular files never wait for EOF from a grandchild holding the suite's handles.
+        with (
+            tempfile.TemporaryFile(mode="w+t", errors="replace") as stdout,
+            tempfile.TemporaryFile(mode="w+t", errors="replace") as stderr,
+        ):
+            process = subprocess.Popen(
+                [sys.executable, "-B", str(path)],
+                cwd=ROOT,
+                stdout=stdout,
+                stderr=stderr,
+                **group,
+            )
+            try:
+                process.wait(timeout=SUITE_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                failure = f"{path}: suite timeout after {SUITE_TIMEOUT_SECONDS}s"
+                try:
+                    stop_suite(process)
+                except (OSError, subprocess.SubprocessError) as error:
+                    failure += f"; tree cleanup failed: {error}"
+            stdout.seek(0)
+            stderr.seek(0)
+            output = stdout.read(os.fstat(stdout.fileno()).st_size) + stderr.read(
+                os.fstat(stderr.fileno()).st_size
+            )
+    except (OSError, subprocess.SubprocessError) as error:
+        return (
+            False,
+            0,
+            0,
+            [],
+            [],
+            f"{path}: {failure} {type(error).__name__}: {error}",
+            [],
         )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        return False, 0, 0, [], [], f"{type(error).__name__}: {error}", []
-    output = result.stdout + result.stderr
+    if failure:
+        return False, 0, 0, [], [], failure + "\n" + output, child_reports(output)
+    return suite_result(process.returncode, output)
+
+
+def suite_result(returncode, output):
+    """Parse one completed suite's output without treating a missing summary as a pass."""
     summaries = list(RAN.finditer(output))
     ran_match = summaries[-1] if summaries else None
     ran = int(ran_match.group(1)) if ran_match else 0
     # Read the skip count from the status line that follows the final summary, so a nested
     # suite's "OK (skipped=N)" cannot be mistaken for this one's.
-    tail_text = output[ran_match.end():] if ran_match else ""
+    tail_text = output[ran_match.end() :] if ran_match else ""
     skipped_match = SKIPPED.search(tail_text)
     skipped = int(skipped_match.group(1)) if skipped_match else 0
     reasons = SKIP_REASON.findall(output)
@@ -330,31 +437,39 @@ def run_suite(path):
     tail = "\n\n".join(failure_blocks(output)) or "\n".join(output.splitlines()[-25:])
     # No summary line means the suite died before unittest reported: treat as failure even
     # if the exit code says otherwise, because zero tests is not a pass.
-    ok = result.returncode == 0 and ran_match is not None
+    ok = returncode == 0 and ran_match is not None
     return ok, ran, skipped, reasons, failed, tail, child_reports(output)
 
 
 def report(name, ok, ran, skipped, reasons, children=()):
     """Print one suite's line, every skip reason it gave and every child report it printed."""
     status = "PASS" if ok else "FAIL"
-    print(f"[{status}] {name}: {ran - skipped} executed, {skipped} skipped, {ran} collected")
+    print(
+        f"[{status}] {name}: {ran - skipped} executed, {skipped} skipped, {ran} collected"
+    )
     for test, reason in reasons:
         print(f"         skipped {test}: {reason}")
     if not children:
         return
     shown = min(len(children), MAX_CHILD_REPORTS)
-    print(f"         signal exits of a child: {len(children)}, the first {shown} reported below")
+    print(
+        f"         signal exits of a child: {len(children)}, the first {shown} reported below"
+    )
     for block in children[:MAX_CHILD_REPORTS]:
         print(block)
-    print(f"::warning title=Self-test child ended by a signal::{name}: {len(children)} child "
-          "process(es) ended by a signal; each report in this step's log names the child and "
-          "both attempts (#809)")
+    print(
+        f"::warning title=Self-test child ended by a signal::{name}: {len(children)} child "
+        "process(es) ended by a signal; each report in this step's log names the child and "
+        "both attempts (#809)"
+    )
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--min-executed", type=int, default=1,
+        "--min-executed",
+        type=int,
+        default=1,
         help="fail if fewer than this many tests actually executed across all suites",
     )
     args = parser.parse_args(argv)
@@ -366,6 +481,7 @@ def main(argv=None):
             print(f"[FAIL] {suite.as_posix()}: missing")
             failures.append(suite.as_posix())
             continue
+        print(f"[RUN] {suite.as_posix()}", flush=True)
         ok, ran, skipped, reasons, failed, tail, children = run_suite(suite)
         report(suite.as_posix(), ok, ran, skipped, reasons, children)
         total_executed += ran - skipped
@@ -377,7 +493,9 @@ def main(argv=None):
 
     print(f"\nTotal executed: {total_executed} (floor {args.min_executed})")
     if failures:
-        print(f"::error::harness self-tests failed on this platform: {', '.join(failures)}")
+        print(
+            f"::error::harness self-tests failed on this platform: {', '.join(failures)}"
+        )
         return 1
     if total_executed < args.min_executed:
         print(

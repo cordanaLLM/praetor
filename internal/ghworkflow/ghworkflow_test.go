@@ -321,3 +321,16 @@ func TestJob_TimeoutMinutes(t *testing.T) {
 		t.Errorf("job c timeout-minutes = %q, want expression", got)
 	}
 }
+
+// The step bound retains literal, absent and expression values just like the job bound.
+func TestStep_TimeoutMinutes(t *testing.T) {
+	doc := "jobs:\n  a:\n    steps:\n      - timeout-minutes: 40\n      - run: true\n      - timeout-minutes: ${{ inputs.timeout }}\n"
+	spec, err := Parse([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := spec.Jobs["a"].Steps
+	if steps[0].TimeoutMinutes.Value != "40" || steps[1].TimeoutMinutes.Kind != 0 || steps[2].TimeoutMinutes.Value != "${{ inputs.timeout }}" {
+		t.Fatalf("step timeout-minutes values not preserved: %+v", steps)
+	}
+}
