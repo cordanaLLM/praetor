@@ -1,0 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+# SPDX-License-Identifier: EUPL-1.2
+type: fixed
+title: Block guarded hook calls when operator settings cannot load and keep workstation install repair reachable
+issue: 1651

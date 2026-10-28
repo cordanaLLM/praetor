@@ -57,10 +57,7 @@ func runHook(args []string) error {
 	}
 	ctx, cancel := commandContext(hookTimeout)
 	defer cancel()
-	settings, err := defaultOperatorSettingsFlags().load(ctx)
-	if err != nil {
-		return err
-	}
+	settings, settingsErr := defaultOperatorSettingsFlags().load(ctx)
 	policy, err := agenthook.BuildPolicy(settings.Hooks)
 	if err != nil {
 		return err
@@ -72,6 +69,7 @@ func runHook(args []string) error {
 	response := agenthook.Run(ctx, agenthook.Invocation{
 		Client: client, Event: event, Stdin: os.Stdin, Getenv: os.Getenv, WorkDir: workDir,
 		Policy: policy, Settings: settings.Hooks, IssueClaims: hookIssueClaims(settings.Forge),
+		SettingsError: settingsErr,
 	})
 	return writeHookResponse(os.Stdout, os.Stderr, response)
 }

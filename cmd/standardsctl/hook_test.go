@@ -27,6 +27,9 @@ func TestHookProcessHelper(t *testing.T) {
 	if fleet := os.Getenv("PRAETOR_HOOK_PROCESS_FLEET"); fleet != "" {
 		t.Setenv("PRAETOR_FLEET_CONFIG", fleet)
 	}
+	if manifest := os.Getenv("PRAETOR_HOOK_PROCESS_MANIFEST"); manifest != "" {
+		installManifestPath = func() (string, error) { return manifest, nil }
+	}
 	command, words := "hook", strings.Fields(arguments)
 	if other := os.Getenv("PRAETOR_HOOK_PROCESS_COMMAND"); other != "" {
 		command, words = other, nil
