@@ -20,8 +20,8 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// The install manifest is the one persisted settings selection. `workstation install` and
-// `workstation update` write it; `hook`, `clients` and `workstation` read it through
+// The install manifest is the one persisted settings selection. `workstation install`
+// writes it; `hook`, `clients` and `workstation` read it through
 // SelectOperatorSettings. `audit` and `gate` never read it: they take explicit flags only.
 
 // InstallManifestVersion is the schema version this reader accepts.
@@ -41,7 +41,7 @@ const (
 	SettingsNotConfigured   = "not-configured"
 )
 
-// InstallManifest records what `workstation install|update` put on this host and which
+// InstallManifest records what `workstation install` put on this host and which
 // settings documents it used. Paths are host paths; digests bind the settings bytes.
 type InstallManifest struct {
 	Version      int                        `json:"version"`
@@ -139,8 +139,7 @@ func DecodeInstallManifest(data []byte) (InstallManifest, error) {
 // WriteInstallManifest validates manifest and writes it to path atomically: a temp file
 // in the same directory, then a rename, so a reader (SelectOperatorSettings included)
 // never observes a partially written manifest. The parent directory is created private to
-// the owner when missing. `workstation install` and `workstation update` are the only
-// callers; nothing else persists this file.
+// the owner when missing. `workstation install` persists this file.
 func WriteInstallManifest(path string, manifest InstallManifest) (err error) {
 	if err := manifest.validate(); err != nil {
 		return fmt.Errorf("install manifest: %w", err)
@@ -292,7 +291,7 @@ func SelectOperatorSettings(ctx context.Context, request SettingsRequest) (Setti
 		return selection, nil
 	}
 	if err := selection.fillFromManifest(ctx, request.ManifestPath); err != nil {
-		return SettingsSelection{}, err
+		return SettingsSelection{}, settingsLoadFailure(err, selection)
 	}
 	return selection, nil
 }
@@ -306,15 +305,28 @@ func (s *SettingsSelection) fillFromManifest(ctx context.Context, path string) e
 	if err != nil {
 		return err
 	}
-	if s.Fleet.Path == "" {
-		if s.Fleet, err = recordedDocument(ctx, "fleet", manifest.Settings.Fleet); err != nil {
-			return err
+	// Keep both recorded paths available for repair, even when the first read fails.
+	checks := []struct {
+		name     string
+		selected *SettingsDocument
+		recorded *InstalledDocument
+	}{
+		{"fleet", &s.Fleet, manifest.Settings.Fleet},
+		{"workstation", &s.Workstation, manifest.Settings.Workstation},
+	}
+	for _, check := range checks {
+		if check.selected.Path == "" && check.recorded != nil {
+			*check.selected = SettingsDocument{Path: check.recorded.Path, Origin: SettingsFromManifest}
 		}
 	}
-	if s.Workstation.Path == "" {
-		s.Workstation, err = recordedDocument(ctx, "workstation", manifest.Settings.Workstation)
+	for _, check := range checks {
+		if check.selected.Origin == SettingsFromManifest {
+			if _, err := recordedDocument(ctx, check.name, check.recorded); err != nil {
+				return err
+			}
+		}
 	}
-	return err
+	return nil
 }
 
 func explicitDocument(flag string, getenv func(string) string, variable string) SettingsDocument {
@@ -338,7 +350,24 @@ func recordedDocument(ctx context.Context, name string, document *InstalledDocum
 		return SettingsDocument{}, fmt.Errorf("%s settings recorded by the install manifest: %w", name, err)
 	}
 	if policyDigest(data) != document.SHA256 {
-		return SettingsDocument{}, fmt.Errorf("%s settings %s changed since the install manifest recorded them; run workstation update or select the file explicitly", name, document.Path)
+		return SettingsDocument{}, fmt.Errorf("%w: %s settings %s changed since the install manifest recorded them", ErrSettingsChanged, name, document.Path)
 	}
 	return SettingsDocument{Path: document.Path, Origin: SettingsFromManifest}, nil
+}
+
+// ErrSettingsChanged identifies a recorded document whose bytes differ from installation.
+// Order: engine-hook-digest-mismatch-fail-closed-20261028.
+var ErrSettingsChanged = errors.New("operator settings digest mismatch")
+
+// settingsLoadFailure preserves the cause and names the implemented repair command.
+func settingsLoadFailure(err error, selection SettingsSelection) error {
+	command := `praetorctl workstation install --source "<engine checkout>"`
+	for _, document := range []struct{ flag, path string }{
+		{"--fleet-config", selection.Fleet.Path}, {"--workstation-config", selection.Workstation.Path},
+	} {
+		if document.path != "" {
+			command += fmt.Sprintf(" %s %q", document.flag, document.path)
+		}
+	}
+	return fmt.Errorf("%w; repair: %s", err, command)
 }
