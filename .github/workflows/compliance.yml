@@ -13,6 +13,8 @@ on:
     branches:
       - main
       - 'lts-*'
+  merge_group:
+    types: [checks_requested]
 
 # A push run inspects the commits since the previous push's tip, so a push run that never
 # finishes leaves its commits inspected by no run at all. Each push run therefore gets a
@@ -86,6 +88,8 @@ jobs:
           DCO_BEFORE_SHA: ${{ github.event.before }}
           DCO_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           DCO_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          DCO_MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          DCO_MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: >-
           scripts/dco_check.sh
           "$DCO_EVENT_NAME" "$DCO_BASE_REF" "$DCO_BEFORE_SHA" "$DCO_HEAD_SHA"

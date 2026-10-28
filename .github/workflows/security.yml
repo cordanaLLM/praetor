@@ -14,6 +14,8 @@ on:
     branches:
       - main
       - 'lts-*'
+  merge_group:
+    types: [checks_requested]
   schedule:
     - cron: '0 4 * * *'
 

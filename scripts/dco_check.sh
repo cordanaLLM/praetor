@@ -44,7 +44,13 @@ fi
 readonly EVENT_NAME=$1
 readonly BASE_REF=$2
 readonly BEFORE_SHA=$3
-readonly HEAD_SHA=$4
+# A merge_group run names its range in the event (merge_group.base_sha, head_sha); the
+# workflow passes both through the environment, and the event head wins over the checkout.
+head_input=$4
+if [[ "$EVENT_NAME" == "merge_group" && -n "${DCO_MERGE_GROUP_HEAD_SHA:-}" ]]; then
+  head_input=$DCO_MERGE_GROUP_HEAD_SHA
+fi
+readonly HEAD_SHA=$head_input
 readonly DEFAULT_BRANCH=$5
 
 if [[ -z "$HEAD_SHA" ]]; then
@@ -76,6 +82,18 @@ resolve_base() {
       exit 2
     fi
     resolve_branch "$BASE_REF"
+    return 0
+  fi
+  if [[ "$EVENT_NAME" == "merge_group" ]]; then
+    local mg_base="${DCO_MERGE_GROUP_BASE_SHA:-$BASE_REF}"
+    if [[ -z "$mg_base" ]]; then
+      mg_base="${BEFORE_SHA:-}"
+    fi
+    if [[ -z "$mg_base" ]]; then
+      echo "A merge_group event must supply a base sha." >&2
+      exit 2
+    fi
+    printf '%s\n' "$mg_base"
     return 0
   fi
   if [[ -z "$BEFORE_SHA" || "$BEFORE_SHA" =~ $ZERO_SHA_PATTERN ]]; then
@@ -132,6 +150,17 @@ while IFS= read -r commit; do
   if ((inspected > MAX_COMMITS)); then
     echo "DCO 1.1 check failed: $RANGE exceeds the $MAX_COMMITS-commit inspection bound." >&2
     exit 1
+  fi
+  if [[ "$EVENT_NAME" == "merge_group" ]]; then
+    parents=$(git log -1 --format='%p' "$commit")
+    if [[ "$parents" =~ [[:space:]] ]]; then
+      author=$(git log -1 --format='%an' "$commit")
+      committer_email=$(git log -1 --format='%ce' "$commit")
+      if [[ ("$author" == "GitHub" || "$author" == "web-flow") && "$committer_email" == *"noreply@github.com"* ]]; then
+        echo "DCO 1.1: skipping GitHub merge queue automated commit $commit ($author <$committer_email>)"
+        continue
+      fi
+    fi
   fi
   # The message is captured, not piped into grep: grep exits at its first match, git then
   # takes SIGPIPE, and under pipefail that status would report a correctly signed commit
