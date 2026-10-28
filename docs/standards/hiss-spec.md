@@ -164,7 +164,8 @@ Every dependency manifest must be cryptographically pinned:
   reference lacking an `@sha256:` digest pin unless recorded in `.standards-baseline.json`
   (`rule_id: "HISS-11"`, via `praetorctl baseline --record-image-refs --reason "<why>"` or recorded
   once at adoption) or excused by a live `HISS-11` entry in `.standards.yaml`. Unresolvable
-  references (template expressions, build arguments, or shell variables) are reported via `[INFO]`
+  references (template expressions, build arguments, or shell variables) and links that leave the
+  repository, which are never followed, are reported via `[INFO]`
   with their count and sample locations and are not judged as blocking violations.
 - SLSA provenance at the declared `supply_chain.slsa_level` and Sigstore Cosign signatures on all
   released binaries.

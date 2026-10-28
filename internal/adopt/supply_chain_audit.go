@@ -439,7 +439,7 @@ func formatUnresolvableImageFindings(unresolvable []supplychain.ImageRefFinding)
 		f := unresolvable[i]
 		samples = append(samples, fmt.Sprintf("%s:%d %s", f.File, f.Line, f.Reference))
 	}
-	return fmt.Sprintf("[INFO] HISS-11 image references not verified: %d unresolvable (template or variable); first 5: %s",
+	return fmt.Sprintf("[INFO] HISS-11 image references not verified: %d unresolvable (template, variable or link outside the repository); first 5: %s",
 		len(unresolvable), strings.Join(samples, ", "))
 }
 

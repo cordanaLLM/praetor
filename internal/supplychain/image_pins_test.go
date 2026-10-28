@@ -336,4 +336,19 @@ func TestScanImageRefsReadBoundaries(t *testing.T) {
 	if len(findings) != 0 {
 		t.Fatalf("deleted files produced findings: %+v", findings)
 	}
+	outside := filepath.Join(t.TempDir(), "compose.yml")
+	if err := os.WriteFile(outside, []byte("services:\n  app:\n    image: docker.io/library/redis:latest\n"), 0o600); err != nil {
+		t.Fatalf("write outside compose file: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "docker-compose.yml")); err != nil {
+		t.Skipf("symlink unavailable on this platform, link case not run: %v", err)
+	}
+	testsupport.RunFixtureGit(t, root, []string{"add", "-A"})
+	findings, err = ScanImageRefs(t.Context(), root)
+	if err != nil {
+		t.Fatalf("link leaving the root failed the scan: %v", err)
+	}
+	if len(findings) != 1 || !findings[0].Unresolvable || findings[0].Reference != imageRefLinkOutside || findings[0].File != "docker-compose.yml" {
+		t.Fatalf("link leaving the root: got %+v, want one unresolvable finding for docker-compose.yml", findings)
+	}
 }
