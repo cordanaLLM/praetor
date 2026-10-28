@@ -21,7 +21,7 @@ import (
 
 // Host admission for heavy commands (#1131, docs/guides/admission.md). With
 // hooks.admission.enforce set, the pre-tool policy refuses a command that starts a recognised
-// heavy step outside `praetorctl admit`, and the refusal names the admitted form. The command
+// heavy step outside an admitted form, and the refusal names the admitted form. The command
 // is read the way the shell scanner reads a script (hiss.ShellCode): quoted text, comments and
 // here-document bodies are not commands, so a commit message that mentions `make` is not a
 // heavy step. A command the reader cannot follow is refused while enforcement is on.
@@ -37,6 +37,9 @@ const (
 	admissionMaxWrappers = 8
 	// admissionShapeWords is how many words of a command its shapes see.
 	admissionShapeWords = 16
+	// admissionLabelEnv is a segment-local label for a live-judged isolated push.
+	admissionLabelEnv = "PRAETOR_ADMIT"
+	gitPushShape      = `^git( -[Cc] [^ ]+)* push( |$)`
 )
 
 // builtinHeavyShapes are the heavy steps the engine recognises: builds, test suites, gates and
@@ -52,7 +55,7 @@ var builtinHeavyShapes = []string{
 	`^(npm|pnpm|yarn) (build|test|run build)( |$)`,
 	`^(pytest|tox|nox)( |$)`,
 	`^(praetorctl|standardsctl) gate( |$)`,
-	`^git( -[Cc] [^ ]+)* push( |$)`,
+	gitPushShape,
 	`^(docker|podman|buildah) (build|bud)( |$)`,
 	`^(bazel|bazelisk) (build|test)( |$)`,
 	`^(gradle|gradlew|mvn)( |$)`,
@@ -95,6 +98,7 @@ var admissionPrelude = []string{"!", "if", "then", "else", "elif", "do", "while"
 var (
 	assignmentWord = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 	labelWord      = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,30}$`)
+	gitPushPattern = regexp.MustCompile(gitPushShape)
 	// segmentSeparators end one simple command: lists, pipes, subshells, groups and command
 	// substitutions (the lexer writes a backquoted one as $(...)).
 	segmentSeparators = strings.NewReplacer(";", "\n", "&", "\n", "|", "\n", "(", "\n", ")", "\n", "{", "\n", "}", "\n")
@@ -173,7 +177,7 @@ func (p *Policy) WithAdmissionHost(readHost func() (sentinel.HostStats, error), 
 }
 
 // judge refuses command when one of its simple commands is a heavy step outside `praetorctl
-// admit` (or an admitted systemd-run scope), exceeds the job cap, or cannot be read.
+// admit`, an admitted scope or a live-judged isolated push, exceeds the job cap, or cannot be read.
 func (c *admissionCheck) judge(command string) Verdict {
 	lines, ok := hiss.ShellCode(command, admissionMaxLines)
 	if !ok {
@@ -197,6 +201,7 @@ func (c *admissionCheck) judge(command string) Verdict {
 func (c *admissionCheck) segment(words []string) string {
 	words = words[:min(len(words), admissionMaxWords)]
 	i := skipPrelude(words)
+	pushLabel := assignedAdmissionLabel(words[:i])
 	admitted, sawSystemdRun := false, false
 	var scopeMissing []string
 	for depth := 0; i < len(words) && depth < admissionMaxWrappers; depth++ {
@@ -212,7 +217,7 @@ func (c *admissionCheck) segment(words []string) string {
 			continue
 		}
 		if shape, ok := c.shape(name, words[i+1:]); ok {
-			return c.judgeStep(name, shape, words[i+1:], admitted, sawSystemdRun, scopeMissing)
+			return c.judgeStep(name, shape, words[i+1:], admitted, sawSystemdRun, scopeMissing, pushLabel)
 		}
 		spec, wrapper := admissionWrappers[name]
 		if !wrapper {
@@ -242,20 +247,53 @@ func admitStep(name string, words []string, i int) (int, bool) {
 	return i + 2 + separator + 1, true
 }
 
-// judgeStep evaluates a matched heavy step against the job cap, `praetorctl admit`, and the
-// systemd-run scope form (order engine-hook-build-scope-gate-20261027).
-func (c *admissionCheck) judgeStep(name, shape string, args []string, admitted, sawSystemdRun bool, scopeMissing []string) string {
+// judgeStep evaluates a matched heavy step against the job cap and its admitted forms.
+func (c *admissionCheck) judgeStep(name, shape string, args []string, admitted, sawSystemdRun bool, scopeMissing []string, pushLabel string) string {
 	if reason := c.jobCapRefusal(shape, args); reason != "" {
 		return reason
 	}
 	if admitted {
 		return ""
 	}
+	if pushLabel != "" && gitPushPattern.MatchString(shape) {
+		return c.judgePush(shape, pushLabel)
+	}
 	label := stepLabel(name, shape, args)
 	if c.scopeForm && sawSystemdRun {
 		return c.judgeScope(shape, label, scopeMissing)
 	}
 	return admissionRefusal(shape, label)
+}
+
+// assignedAdmissionLabel reads only the prelude already identified by skipPrelude. The last
+// assignment wins, as in the shell; invalid and empty labels do not admit a push.
+func assignedAdmissionLabel(prelude []string) string {
+	label := ""
+	for i := 0; i < len(prelude) && i < admissionMaxWords; i++ {
+		if value, ok := strings.CutPrefix(prelude[i], admissionLabelEnv+"="); ok {
+			label = value
+		}
+	}
+	if !labelWord.MatchString(label) {
+		return ""
+	}
+	return label
+}
+
+// judgePush admits the assignment form against live memory, swap and load readings. Unlike
+// praetorctl admit it refuses immediately under pressure so the client can retry later.
+func (c *admissionCheck) judgePush(shape, label string) string {
+	stats, err := c.readHost()
+	if err != nil {
+		return refusal("HISS", fmt.Sprintf("heavy step isolated push host reading failed for %s (%s): %v; "+
+			"retry when host readings are available (docs/guides/admission.md)", shape, label, err))
+	}
+	verdict := admission.Judge(stats, admission.HostCappedPolicy(stats))
+	if !verdict.Admit {
+		return refusal("HISS", fmt.Sprintf("heavy step isolated push refused for %s (%s): %s (readings: %s); "+
+			"wait for headroom and retry (docs/guides/admission.md)", shape, label, verdict.Reason, admission.ReadingsText(stats)))
+	}
+	return ""
 }
 
 // judgeScope verifies a systemd-run scope wrapper and checks live host memory and swap readings
@@ -480,6 +518,11 @@ func stepLabel(name, shape string, args []string) string {
 
 // admissionRefusal names the heavy step and the admitted form of the command.
 func admissionRefusal(shape, label string) string {
+	isolated := ""
+	if gitPushPattern.MatchString(shape) {
+		isolated = "; in a worktree-isolated session where git under a launcher is refused, run: " +
+			admissionLabelEnv + "=" + label + " git push ... (live host judgment; retry under pressure)"
+	}
 	return refusal("HISS", "heavy step needs host admission: "+shape+"; run: praetorctl admit --label "+label+
-		" -- <command>, in background; admit waits for memory, swap and load headroom (docs/guides/admission.md)")
+		" -- <command>, in background; admit waits for memory, swap and load headroom"+isolated+" (docs/guides/admission.md)")
 }

@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/agenthook"
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/sentinel"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -248,6 +250,43 @@ func TestHookProcessAdmissionCheck(t *testing.T) {
 	}
 	if result, exit := hookProcess(t, root, "-", []byte("make verify-all"), command); exit != 0 || len(result.Stderr) != 0 {
 		t.Fatalf("enforcement off: exit %d stdout %q stderr %q", exit, result.Stdout, result.Stderr)
+	}
+}
+
+func TestHookClaudeIsolatedPushAdmission(t *testing.T) {
+	settings := config.HookSettings{Admission: config.AdmissionSettings{Enforce: true}}
+	policy, err := agenthook.BuildPolicy(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy.WithAdmissionHost(func() (sentinel.HostStats, error) {
+		return sentinel.HostStats{
+			RAMTotalBytes: 64 << 30, RAMFreeBytes: 30 << 30,
+			SwapMeasured: true, SwapTotalBytes: 100 << 30, SwapFreeBytes: 80 << 30,
+		}, nil
+	}, 32)
+	root := hookRepository(t, true)
+	for _, tc := range []struct {
+		command string
+		exit    int
+	}{
+		{"PRAETOR_ADMIT=git-push git push -u origin b", 0},
+		{"git push -u origin b", 2},
+	} {
+		payload := `{"tool_name":"Bash","tool_input":{"command":` + quoteJSON(t, tc.command) + `}}`
+		response := agenthook.Run(context.Background(), agenthook.Invocation{
+			Client: "claude", Event: "pre-tool", WorkDir: root,
+			Stdin: strings.NewReader(payload), Policy: policy, Settings: settings,
+			Getenv: func(string) string { return "" },
+		})
+		var stdout, stderr bytes.Buffer
+		exit := 0
+		if err := writeHookResponse(&stdout, &stderr, response); err != nil {
+			exit = commandExitCode(&stderr, err)
+		}
+		if exit != tc.exit || stdout.Len() != 0 || (exit == 2) != strings.Contains(stderr.String(), "host admission") {
+			t.Errorf("%q: exit %d stdout %q stderr %q", tc.command, exit, stdout.String(), stderr.String())
+		}
 	}
 }
 
