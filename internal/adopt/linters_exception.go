@@ -181,10 +181,11 @@ func filterExistingExceptions(existing []config.Exception, missingMap map[string
 
 func newDeclaredLinterException(linter config.DeclaredLinter, today time.Time) config.Exception {
 	return config.Exception{
-		Rule:    config.ExceptionRuleDeclaredLinters,
-		Tool:    linter.Name,
-		Reason:  fmt.Sprintf("adoption scaffolds no CI job for %s declared by %s; run it in a workflow, or remove this entry", linter.Name, linter.Source),
-		Expires: config.ExceptionDay(today).AddDate(0, 0, config.MaxExceptionDays).Format(config.ExceptionDateLayout),
+		Rule:     config.ExceptionRuleDeclaredLinters,
+		Tool:     linter.Name,
+		Category: "D",
+		Reason:   fmt.Sprintf("adoption scaffolds no CI job for %s declared by %s; run it in a workflow, or remove this entry", linter.Name, linter.Source),
+		Expires:  config.ExceptionDay(today).AddDate(0, 0, config.MaxExceptionDays).Format(config.ExceptionDateLayout),
 	}
 }
 

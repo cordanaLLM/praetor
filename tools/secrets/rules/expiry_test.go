@@ -26,6 +26,12 @@ func TestCategoryExpiryCaps(t *testing.T) {
 		{"bad expiry", "B", "2026-10-18", "bad", "must be a YYYY-MM-DD date"},
 		{"uncategorized boundary", "", "2026-10-17", "2027-01-15", ""},
 		{"uncategorized exceeded", "", "2026-10-17", "2027-01-16", "more than 90 days"},
+		{"entered before cutoff without category", "", "2026-10-28", "2027-01-26", ""},
+		{"entered cutoff without category", "", "2026-10-29", "2026-11-01", "category is required"},
+		{"entered cutoff with category B", "B", "2026-10-29", "2026-11-01", ""},
+		{"entered cutoff category B exceeded", "B", "2026-10-29", "2026-11-02", "category B requires expires on or before 2026-11-01 (3 days"},
+		{"no entered grace boundary", "", "", "2026-11-28", ""},
+		{"no entered past grace", "", "", "2026-11-29", "category is required"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

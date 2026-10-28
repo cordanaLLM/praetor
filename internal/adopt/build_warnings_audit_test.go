@@ -35,7 +35,7 @@ func auditBuildWarningsIn(t *testing.T, files map[string]string, entries ...conf
 
 // buildWarningsEntry is a HISS-10 exceptions entry for the workflow path, expiring on expires.
 func buildWarningsEntry(path, expires string) config.Exception {
-	return config.Exception{Rule: config.ExceptionRuleBuildWarnings, Path: path,
+	return config.Exception{Rule: config.ExceptionRuleBuildWarnings, Path: path, Entered: "2026-10-07",
 		Reason: "the vendored decoder still warns under MSVC; upstream fix pending", Expires: expires}
 }
 
@@ -180,7 +180,7 @@ func TestAuditBuildWarningsRefusesExpiredStaleAndMalformedEntries(t *testing.T) 
 		"a malformed entry": {failing, buildWarningsEntry("ci.yml", "2026-12-31"),
 			[]string{"rule HISS-10 must name one workflow file directly in .github/workflows by path, such as .github/workflows/ci.yml"}},
 		"an entry past the bound": {failing, buildWarningsEntry(".github/workflows/ci.yml", "2027-01-06"),
-			[]string{"more than 90 days after today"}},
+			[]string{"more than 90 days after entered 2026-10-07"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -199,7 +199,7 @@ var supplyChainToday = time.Date(2026, time.October, 6, 12, 0, 0, 0, time.UTC)
 
 // supplyChainEntry is a HISS-11 exceptions entry for the workflow path, expiring on expires.
 func supplyChainEntry(path, expires string) config.Exception {
-	return config.Exception{Rule: config.ExceptionRuleSupplyChain, Path: path,
+	return config.Exception{Rule: config.ExceptionRuleSupplyChain, Path: path, Category: "D",
 		Reason: "release provenance not yet built by an isolated Level 3 builder", Expires: expires}
 }
 

@@ -78,6 +78,7 @@ overrides:
 exceptions:
   - rule: "HISS-11"
     path: ".github/workflows/release-binaries.yml"
+    category: "D"
     reason: "release provenance not yet built by an isolated Level 3 builder; the release job reaches Level 2 (#799)"
     expires: "2027-01-04"
   - rule: "HISS-19"

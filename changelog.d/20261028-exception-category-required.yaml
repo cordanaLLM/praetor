@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+#
+# SPDX-License-Identifier: EUPL-1.2
+
+type: changed
+title: Require a rectification category (A, B, C or D) on new .standards.yaml exceptions entered on or after 2026-10-29 or omitting entered and expiring after 2026-11-28
