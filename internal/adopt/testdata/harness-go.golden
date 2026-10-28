@@ -14,7 +14,7 @@ Pass = exit 0. Signed Ed25519 Exit-0 receipt only from `praetorctl gate run`; re
 
 ## Core Directives & Invariants
 
-Adopted check = coverage state + mechanism; else audit scanner; else `unknown`. Gates = (generated `make verify-all`); edits not reflected.
+Adopted check = coverage state + mechanism; else audit scanner; else `unknown`. Gates = (generated `make verify-all`); edits not reflected. Adopted-check cells credit generated gates only.
 
 | Invariant | Rule | Adopted check | On fail |
 | :--- | :--- | :--- | :--- |

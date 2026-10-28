@@ -2333,7 +2333,8 @@ require separate reconciliation; a C# command plan does not imply a configured
 
 ## What the generated harness claims
 
-The `AGENTS.md` harness states only what adoption generated. Its source is
+The `AGENTS.md` harness distinguishes generated checks from repository-owned gates it preserves.
+Its source is
 [`internal/adopt/harness.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/harness.go); the tests are in
 [`internal/adopt/harness_truth_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/harness_truth_test.go).
 
@@ -2487,8 +2488,14 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
   TypeScript repository and the lefthook `go vet` row in a Rust crate are examples
   (`TestAdoptedFor`).
 
-  The line above the table names the pipelines it read and says the cells describe the files as
-  adoption wrote them; a later edit to the `Makefile` or `lefthook.yml` is not reflected there.
+  The line above the table names generated gates and any repository-owned gates adoption keeps:
+  a preserved `make verify-all` target and an existing `lefthook.yml` that is not Praetor's
+  rendering, or is kept because `git-hooks` is declined. Repository-owned gates are marked
+  `(unread)` and earn no adopted-check cell credit; only generated gates earn that credit.
+  `--force` does not change this distinction. The legend says `none:` only when neither kind
+  exists (`TestAdoptHarnessRepositoryOwnedGates`, order
+  `engine-adopt-force-gate-detect-20261027`). A later edit to the `Makefile` or `lefthook.yml`
+  is not reflected in the table.
   Rule 5 claims hooks only when lefthook
   installs praetor's `lefthook.yml`, and says the file's hooks stay inactive when lefthook did not
   run (`TestHarnessTableFollowsGeneratedPipelines`,
