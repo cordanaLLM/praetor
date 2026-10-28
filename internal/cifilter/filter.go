@@ -17,7 +17,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// Invariant bounds.
+// Invariant bounds (HISS-02: every loop over changed paths stops at one of these).
 const (
 	maxFilesToInspect = 5000
 	defaultGitTimeout = 15 * time.Second
