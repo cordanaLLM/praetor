@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+#
+# SPDX-License-Identifier: EUPL-1.2
+
+# OSV-Scanner configuration (https://google.github.io/osv-scanner/configuration/).
+# Every entry is a dated exception: ignoreUntil is entry date plus the interval of its
+# category, and an expired entry no longer suppresses the finding.
+
+[[IgnoredVulns]]
+id = "GHSA-gcqx-w48m-w2h4"
+ignoreUntil = 2026-11-07
+reason = "Category C (10 days from 2026-10-28). deepmerge 4.3.1, prototype poisoning in mergeObject (low), no patched release; reached only through @sveltejs/vite-plugin-svelte 7.3.1, a build-time devDependency of console/ (console/pnpm-lock.yaml), never shipped to a browser. Re-check when vite-plugin-svelte drops or bumps deepmerge, or a patched deepmerge appears. Order engine-osv-deepmerge-exception-20261028."
