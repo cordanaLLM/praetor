@@ -1,3 +1,4 @@
+<!-- markdownlint-capture -->
 <!-- markdownlint-disable MD013 -->
 # acme/widget Agent Operating Harness
 
@@ -97,6 +98,6 @@ praetorctl audit
 make verify-all
 ```
 
-<!-- markdownlint-enable MD013 -->
+<!-- markdownlint-restore -->
 <!-- markdownlint-disable MD025 -->
 <!-- praetor:harness:end -->

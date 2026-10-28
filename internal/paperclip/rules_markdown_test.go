@@ -27,15 +27,15 @@ func TestRenderedRulesPassDefaultMarkdownlint(t *testing.T) {
 	if findings := testsupport.MarkdownFindings(string(data)); len(findings) != 0 {
 		t.Fatalf("rules.md breaks markdownlint defaults: %v\n%s", findings, data)
 	}
-	// An unwrappable command fence may carry an MD013 disable, but only one re-enabled right
+	// An unwrappable command fence may carry an MD013 disable, but only one restored right
 	// after that fence: a file-wide disable would also silence the adopter's own additions
 	// (BUG-806).
 	text := string(data)
-	if strings.Count(text, "markdownlint-disable") != strings.Count(text, "markdownlint-enable") {
+	if strings.Count(text, "markdownlint-disable") != strings.Count(text, "markdownlint-restore") {
 		t.Fatalf("rules.md leaves a markdownlint rule disabled past its fence:\n%s", data)
 	}
-	for _, block := range strings.Split(text, "<!-- markdownlint-disable MD013 -->")[1:] {
-		fenceEnd := strings.Index(block, "```\n\n<!-- markdownlint-enable MD013 -->")
+	for _, block := range strings.Split(text, "<!-- markdownlint-capture -->\n<!-- markdownlint-disable MD013 -->")[1:] {
+		fenceEnd := strings.Index(block, "```\n\n<!-- markdownlint-restore -->")
 		if fenceEnd < 0 || strings.Count(block[:fenceEnd], "```") != 1 {
 			t.Fatalf("an MD013 disable must cover exactly one command fence:\n%s", data)
 		}
@@ -86,7 +86,21 @@ func TestRenderedRulesWrapAtTheLineLimit(t *testing.T) {
 			t.Errorf("continuation line opens a new block: %q", line)
 		}
 	}
-	if strings.Count(rules, "<!-- markdownlint-disable MD013 -->") != 1 || strings.Count(rules, "<!-- markdownlint-enable MD013 -->") != 1 {
-		t.Fatalf("long push command not scoped by one disable/enable pair:\n%s", rules)
+	if strings.Count(rules, "<!-- markdownlint-capture -->") != 1 || strings.Count(rules, "<!-- markdownlint-disable MD013 -->") != 1 || strings.Count(rules, "<!-- markdownlint-restore -->") != 1 {
+		t.Fatalf("long push command not scoped by one capture/disable/restore block:\n%s", rules)
+	}
+}
+
+// Regression: a command fence too long to wrap uses capture and restore around MD013 disable
+// so a repository markdownlint setting with MD013 off does not report findings on long lines
+// following the fence.
+func TestPaperclipFence_PreservesRepoMD013Disabled(t *testing.T) {
+	command := "git push origin HEAD:refs/for/main -o topic=" + strings.Repeat("t", markdownLineLimit)
+	h := &Harness{Version: 1, Platform: "acme", OperatingContract: []string{"rule 1"}, AGitPushFormat: command, Invariants: []string{"HISS-01"}}
+	rules := renderRules(h)
+	tailRules := rules + "\n## Repository Rules\n\n" + strings.Repeat("repository prose ", 8) + "\n"
+	findings := testsupport.MarkdownFindingsWith(tailRules, "MD013")
+	if len(findings) != 0 {
+		t.Fatalf("paperclip rules with MD013 off reported findings after fence: %v", findings)
 	}
 }

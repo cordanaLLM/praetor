@@ -32,20 +32,25 @@ const (
 )
 
 // harnessLintScopeEnd closes the harness's markdownlint scope. The harness carries a table
-// and rule lines no 80-column wrap can hold, so it disables MD013 at its first line and
-// enables it again here, before the repository's own instructions start; those follow a
-// second H1, so MD025 is disabled from here on and only there. A disable on the first line
-// alone used to silence both rules for everything the repository wrote below the harness
-// (BUG-806).
-const harnessLintScopeEnd = "<!-- markdownlint-enable MD013 -->\n<!-- markdownlint-disable MD025 -->\n"
+// and rule lines no 80-column wrap can hold, so it captures rule state and disables MD013
+// at its first line, and restores that state here before the repository's own instructions
+// start (order engine-compile-context-md013-restore-20261026); an inline enable here used to
+// turn MD013 back on for repositories whose configuration turned it off. The repository's
+// instructions follow a second H1, so MD025 is disabled from here on and only there. A
+// disable on the first line alone used to silence both rules for everything the repository
+// wrote below the harness (BUG-806).
+const harnessLintScopeEnd = "<!-- markdownlint-restore -->\n<!-- markdownlint-disable MD025 -->\n"
 
 // agentHarnessTemplate opens the harness. It is agent-only text, so it is written in the
 // internal register and passes the caveman lint that compile-context --verify and audit run
-// over the whole AGENTS.md (TestHarnessPassesCavemanLint). The title names owner/name when the
-// repository identity resolves, so a --force refresh keeps the owner an earlier harness named
-// (BUG-949). Without a verify-all target (VerifyCmd empty) the turn ends with the praetor gates
-// it would have run, never with a make target the repository lacks.
-const agentHarnessTemplate = `<!-- markdownlint-disable MD013 -->
+// over the whole AGENTS.md (TestHarnessPassesCavemanLint). The capture and MD013 disable lines
+// keep the table and rule lines from triggering MD013 while allowing harnessLintScopeEnd to
+// restore the repository's markdownlint setting (order engine-compile-context-md013-restore-20261026).
+// The title names owner/name when the repository identity resolves, so a --force refresh keeps
+// the owner an earlier harness named (BUG-949). Without a verify-all target (VerifyCmd empty) the
+// turn ends with the praetor gates it would have run, never with a make target the repository lacks.
+const agentHarnessTemplate = `<!-- markdownlint-capture -->
+<!-- markdownlint-disable MD013 -->
 # {{ if .Owner }}{{ .Owner }}/{{ end }}{{ .RepoName }} Agent Operating Harness
 
 ` + agentcontext.BandHeadMarker + `
@@ -353,6 +358,9 @@ const harnessAntiLoopRule = `6. **Anti-loop interception.** Same AST diff + erro
 // harnessTitleSuffix ends the H1 of every harness praetor writes (agentHarnessTemplate).
 const harnessTitleSuffix = "Agent Operating Harness"
 
+// harnessLintCapture opens the markdownlint comment saving state above the harness H1.
+const harnessLintCapture = "<!-- markdownlint-capture"
+
 // harnessLintDisable opens the markdownlint comment every praetor harness has written on the
 // line above its H1, whatever rules it named (MD013 now; MD013 MD025, or none, earlier).
 const harnessLintDisable = "<!-- markdownlint-disable"
@@ -375,9 +383,9 @@ func hasHarness(content string) bool {
 // above that heading, or at the top of content when no H1 precedes it: every harness praetor
 // writes opens with an H1, so the text between that H1 and the heading is harness intro. Kept
 // as preamble, it would sit above the regenerated intro on every later --force, with its
-// edited lines never replaced. A markdownlint-disable comment on the line directly above the
-// start line is part of the harness. Text above the start is the repository's preamble, such
-// as an SPDX header. H1s and headings inside fenced code are skipped.
+// edited lines never replaced. Any markdownlint capture and disable comments directly above
+// the start line are part of the harness. Text above the start is the repository's preamble,
+// such as an SPDX header. H1s and headings inside fenced code are skipped.
 func harnessStart(content string) int {
 	lines := strings.SplitN(content, "\n", maxHarnessLines)
 	var fence util.MarkdownFence
@@ -401,13 +409,19 @@ func harnessStart(content string) int {
 	return -1
 }
 
-// lineStartWithLint returns offset, where line i of lines starts, or where line i-1 starts
-// when that line is a markdownlint-disable comment (harnessLintDisable).
+// lineStartWithLint returns offset, where line i of lines starts, or where the markdownlint
+// comments directly above it start when lines i-1, i-2 hold capture or disable pragmas
+// (harnessLintCapture, harnessLintDisable).
 func lineStartWithLint(lines []string, i, offset int) int {
-	if i > 0 && strings.HasPrefix(strings.TrimSpace(lines[i-1]), harnessLintDisable) {
-		return offset - len(lines[i-1]) - 1
+	start := offset
+	for k := i - 1; k >= 0; k-- {
+		trimmed := strings.TrimSpace(lines[k])
+		if !strings.HasPrefix(trimmed, harnessLintDisable) && !strings.HasPrefix(trimmed, harnessLintCapture) {
+			break
+		}
+		start -= len(lines[k]) + 1
 	}
-	return offset
+	return start
 }
 
 // splitHarnessTail splits body, text that opens with an existing harness, at the harness
@@ -528,8 +542,10 @@ func (s *adoptSession) harnessFacts(ctx context.Context, clients []string) (harn
 		return harnessFacts{}, fmt.Errorf("read HISS coverage for adopted harness: %w", err)
 	}
 	owner, name := s.harnessIdentity()
-	return harnessFacts{owner: owner, name: name, arch: s.arch, plan: s.verification, pipelines: pipelines,
-		hooks: hooks, targets: targets, workflows: workflows, hiss: s.hissFacts(), coverage: coverage, register: register}, nil
+	return harnessFacts{
+		owner: owner, name: name, arch: s.arch, plan: s.verification, pipelines: pipelines,
+		hooks: hooks, targets: targets, workflows: workflows, hiss: s.hissFacts(), coverage: coverage, register: register,
+	}, nil
 }
 
 // resolveAgentsContent writes AGENTS.md with harness, the harness this run renders: created,
