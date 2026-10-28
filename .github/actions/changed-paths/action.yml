@@ -40,7 +40,6 @@ runs:
         echo "base_ref=$BASE_REF" >> "$GITHUB_OUTPUT"
 
         if [ -n "${{ inputs.paths }}" ]; then
-          # shellcheck disable=SC2086
           CHANGED=$(git diff --name-only "$BASE_REF"..."$DIFF_HEAD" -- ${{ inputs.paths }})
           if [ -n "$CHANGED" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
