@@ -430,7 +430,8 @@ The sync is bounded by bytes and time, not by the size of the repository:
 | :--- | :--- | :--- |
 | index listing | 16 MiB (`syncIndexBytes`) | the largest cap a bounded command accepts (`util.MaxCommandOutputBytes`), which `util.RefuseGitStatusFilters` also uses for its listings of the same tracked paths |
 | every other Git output | 8 MiB each (`contextopt.MaxTotalBytes`) | these grow with uncommitted changes, not with the repository |
-| each Git probe | 5 seconds (`util.GitProbeTimeout`) | the deadline every state probe shares |
+| HEAD and index-listing probes | 5 seconds (`util.GitProbeTimeout`) | establish the tracked-entry count before scaling tree walks |
+| tree-wide status, staged diff, unstaged diff and untracked-listing probes | 5 seconds + 1 second per complete 1,000 index entries, capped at 60 seconds | `scaledSyncProbeTimeout` gives slow hosts time proportional to the validated index; an earlier caller deadline always wins |
 | records per Git listing | 1,048,576 (`maxSyncRecords`) | the loop bound (HISS-02); an index record is at least 54 bytes, so the 16 MiB cap admits at most 310,689 and is reached first |
 | untracked content | 1 MiB per file, 8 MiB in total | beyond either, a path is bound by metadata |
 
@@ -439,6 +440,12 @@ listing outgrows 16 MiB, about 148,000 files with 60-byte paths, and that error 
 the cap, the records read before it and what to do (`TestRunSyncProbeByteBound_3D`).
 The earlier cap of 10,000 index entries refused an adopter repository once it tracked
 10,115 files (#775); `TestStateSyncLargeIndex_3D` syncs a repository tracking 10,052.
+The snapshot's status walk uses the same scaled deadline as the binding probes.
+A deadline error names the probe, validated index-entry count and applied time
+bound. `TestStateSyncSlowRunner_3D` in `internal/state/sync_scaled_test.go` syncs
+and verifies 10,052 entries with a compiled Git shim delaying status and diff by
+six seconds each; `TestScaledSyncProbeTimeout_3D` and
+`TestScaledSyncProbeDeadline_3D` cover increments, the ceiling and caller deadlines.
 These bounds change no input a ledger could already bind, so existing ledgers keep
 verifying without a new sync.
 

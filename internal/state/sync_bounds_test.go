@@ -66,12 +66,14 @@ func TestStateSyncLargeIndex_3D(t *testing.T) {
 // reach the record checks; one more fails naming the count, the bound and what to do.
 func TestValidateSyncIndexRecordBound_3D(t *testing.T) {
 	row := "H 100644 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 0\tx\x00"
-	if err := validateSyncIndex(strings.Repeat(row, 3)); err != nil {
-		t.Fatalf("valid index records refused: %v", err)
+	if count, err := validateSyncIndex(strings.Repeat(row, 3)); err != nil || count != 3 {
+		t.Fatalf("valid index records: count %d, error %v; want 3, nil", count, err)
 	}
 	// The short records fail the record check, which shows the count let them through.
-	requireErrorContains(t, validateSyncIndex(strings.Repeat("x\x00", maxSyncRecords)), "index record is malformed")
-	requireErrorContains(t, validateSyncIndex(strings.Repeat("x\x00", maxSyncRecords+1)),
+	_, err := validateSyncIndex(strings.Repeat("x\x00", maxSyncRecords))
+	requireErrorContains(t, err, "index record is malformed")
+	_, err = validateSyncIndex(strings.Repeat("x\x00", maxSyncRecords+1))
+	requireErrorContains(t, err,
 		fmt.Sprintf("lists %d index entries, over its bound of %d records", maxSyncRecords+1, maxSyncRecords),
 		"report the count")
 	for listing, want := range map[string]int{"": 0, "a\x00": 1, "a\x00b": 2} {
@@ -262,16 +264,16 @@ func TestStateSyncIrregularStateInputFailsClosed_3D(t *testing.T) {
 func TestRunSyncProbeByteBound_3D(t *testing.T) {
 	root := syncFixture(t)
 	probe := stateGitProbes("available")[1]
-	listing, err := runSyncProbe(t.Context(), root, probe)
+	listing, err := runSyncProbe(t.Context(), root, probe, 0)
 	if err != nil || listingRecords(listing) != 2 {
 		t.Fatalf("index listing = %q, %v; want the two fixture entries", listing, err)
 	}
 	probe.limit = len(listing)
-	if exact, err := runSyncProbe(t.Context(), root, probe); err != nil || exact != listing {
+	if exact, err := runSyncProbe(t.Context(), root, probe, 0); err != nil || exact != listing {
 		t.Fatalf("a listing exactly at its cap: %q, %v", exact, err)
 	}
 	probe.limit = len(listing) - 1
-	_, err = runSyncProbe(t.Context(), root, probe)
+	_, err = runSyncProbe(t.Context(), root, probe, 0)
 	requireErrorContains(t, err,
 		fmt.Sprintf("cannot bind the Git index listing: it exceeds %d bytes after 1 records", probe.limit), syncReportIndex)
 }
