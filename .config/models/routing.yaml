@@ -265,3 +265,9 @@ governance:
     exhaustion_threshold_percent: 80
     orthogonal_audit_required: true
     quota_reading_max_age: 10m0s
+# Native Claude Agent overrides keyed by a tier's target_tasks label.
+# model: haiku | sonnet | opus | fable; effort: low | medium | high | xhigh | max
+# Omit effort to keep the session default. Explicit model or effort in a call wins.
+# Unlisted labels keep session role defaults. Change a label only after a measured
+# pass rate at fewer tokens supports the change; no routes are enabled initially.
+claude_subagent: {}

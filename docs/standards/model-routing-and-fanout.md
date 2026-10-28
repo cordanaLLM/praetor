@@ -22,6 +22,42 @@ repair admission there too. The older `SelectModel` tier-cascade and
 `SelectOrthogonalAuditor` helpers still exist, but have no production consumer.
 They do not establish that a running agent harness enforces their policies.
 
+## Claude subagent overrides
+
+The same catalog can select native Claude Agent aliases and effort by task label:
+
+```yaml
+claude_subagent:
+  feature_implementation:
+    model: sonnet
+    effort: medium
+```
+
+This example is opt-in; the shipped catalog has `claude_subagent: {}`. Every key
+must appear in a tier's `target_tasks`. The table accepts at most 64 entries.
+Models are `haiku`, `sonnet`, `opus`, or `fable`; effort is optional and accepts
+`low`, `medium`, `high`, `xhigh`, or `max`. Invalid entries fail catalog loading
+with their task key (`internal/router/claude_subagent_test.go`). Change a label's
+route only when measured pass rate at fewer tokens supports the change.
+Catalog sync retains this section, including an explicitly empty table and its
+comments (`internal/router/claude_subagent_sync_test.go`).
+
+After validating a brief, Claude's registered `pre-dispatch` hook looks up its
+`task:` label. If the call names neither `model` nor `effort`, the hook emits the
+complete tool input through PreToolUse `hookSpecificOutput.updatedInput`, adding
+the configured model and effort. An omitted effort keeps the session default.
+A call naming either field retains its own choices, including an explicitly
+empty value. Unlisted labels keep session role defaults; other clients receive
+no model or effort rewrite. Session settings stay unchanged.
+
+Routing preserves every other tool argument and any read-only prompt rewrite.
+The hook reports `routed <label> -> <model>/<effort>` (an omitted effort leaves
+the suffix empty) and stores the applied override in the dispatch correlation's
+optional `claude_subagent` field for later receipts. These behaviors are exercised
+through the hook's native payload and encoder in
+`internal/agenthook/claude_subagent_test.go`; see also
+[the dispatch hook guide](../guides/agent-hooks.md#subagent-text-register-gate).
+
 ## Select a declared task
 
 Run from the Praetor checkout:

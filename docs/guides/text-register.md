@@ -402,6 +402,14 @@ label ([subagent text register gate](agent-hooks.md#subagent-text-register-gate)
 The same label can route a Claude dispatch to another lane: when `routing.yaml` lists it
 under `offload`, the hook asks the operator's lane picker first, from the same routing snapshot
 ([routing implementation briefs off the Claude lane](agent-hooks.md#routing-implementation-briefs-off-the-claude-lane)).
+The same snapshot also supplies `claude_subagent` model and effort overrides:
+`config.LoadRegisterRoutingAuthority` returns the checked register authority, task
+vocabulary and routing configuration together. Claude applies an override only
+when the validated task has a route and its Agent call names neither native
+field; unlisted tasks retain session role defaults. The register resolution stays
+bound to its manifest digest. See [Claude subagent overrides](../standards/model-routing-and-fanout.md#claude-subagent-overrides)
+and `internal/config/register_claude_subagent_test.go`.
+
 A brief may additionally specify `readonly: true` (or `read-only: true`) to request the
 canonical read-only context projection (`AGENTS.readonly.md`), which strips mutating
 turn-end instructions and ledger mutating commands. How each client delivers it, and that

@@ -94,12 +94,20 @@ type RoutingConfig struct {
 	Governance GovernancePolicy `yaml:"governance"`
 	// Offload opts selected task labels into the Claude pre-dispatch lane picker.
 	Offload *OffloadConfig `yaml:"offload,omitempty"`
+	// ClaudeSubagent maps declared task labels to native Claude Agent overrides.
+	ClaudeSubagent map[string]ClaudeSubagentRoute `yaml:"claude_subagent,omitempty"`
 	// Gateway declares the OpenAI-compatible gateway whose router aliases alias entries use.
 	Gateway *GatewayConfig `yaml:"gateway,omitempty"`
 	// Lanes is the one table mapping a lane name to its harness and headless command.
 	Lanes map[string]Lane `yaml:"lanes,omitempty"`
 	// SourceSHA256 identifies the exact loaded configuration bytes, when available.
 	SourceSHA256 string `yaml:"-"`
+}
+
+// ClaudeSubagentRoute selects a native model alias and optional effort for one task.
+type ClaudeSubagentRoute struct {
+	Model  string `yaml:"model" json:"model"`
+	Effort string `yaml:"effort,omitempty" json:"effort,omitempty"`
 }
 
 // OffloadConfig names tasks eligible for an external lane decision.

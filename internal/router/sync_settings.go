@@ -12,8 +12,9 @@ import (
 // A decoded struct cannot tell an explicit false or zero from an omitted key, so presence
 // is read from the document itself.
 type settingsPresence struct {
-	governance map[string]bool
-	tiers      map[string]map[string]bool
+	governance     map[string]bool
+	tiers          map[string]map[string]bool
+	claudeSubagent []*yaml.Node
 }
 
 // declaredSettings reads the keys the existing catalog declares. The bytes were already
@@ -27,8 +28,16 @@ func declaredSettings(data []byte, exists bool) (settingsPresence, error) {
 		Tiers      map[string]map[string]yaml.Node `yaml:"tiers"`
 		Governance map[string]yaml.Node            `yaml:"governance"`
 	}
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return presence, fmt.Errorf("read declared catalog document: %w", err)
+	}
+	if err := document.Decode(&doc); err != nil {
 		return presence, fmt.Errorf("read declared catalog settings: %w", err)
+	}
+	mapping := document.Content[0]
+	if index := routingSectionIndex(mapping, "claude_subagent"); index >= 0 {
+		presence.claudeSubagent = mapping.Content[index : index+2]
 	}
 	for key := range doc.Governance {
 		presence.governance[key] = true
@@ -87,4 +96,32 @@ func keepGovernance(policy *GovernancePolicy, existing GovernancePolicy, keys ma
 	if keys["catalog_max_age_days"] {
 		policy.CatalogMaxAgeDays = existing.CatalogMaxAgeDays
 	}
+}
+
+// routingSectionIndex locates a validated catalog key without losing YAML comments.
+func routingSectionIndex(mapping *yaml.Node, key string) int {
+	for index := 0; index+1 < len(mapping.Content) && index < MaxRoutingFileBytes; index += 2 {
+		if mapping.Content[index].Value == key {
+			return index
+		}
+	}
+	return -1
+}
+
+// marshalSyncedCatalog retains the operator's native route section, including an
+// explicitly empty table and its comments. Other catalog fields use the seed writer.
+func marshalSyncedCatalog(cfg *RoutingConfig, declared settingsPresence) ([]byte, error) {
+	var document yaml.Node
+	if err := document.Encode(cfg); err != nil {
+		return nil, err
+	}
+	if len(declared.claudeSubagent) == 2 {
+		index := routingSectionIndex(&document, "claude_subagent")
+		if index < 0 {
+			document.Content = append(document.Content, declared.claudeSubagent...)
+		} else {
+			copy(document.Content[index:index+2], declared.claudeSubagent)
+		}
+	}
+	return yaml.Marshal(&document)
 }
