@@ -24,6 +24,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -288,9 +289,8 @@ func fixtureRepo(t *testing.T, files map[string]string) string {
 			t.Fatalf("write %s: %v", rel, err)
 		}
 	}
-	if _, err := util.RunGitProbe(t.Context(), root, maxScopeBytes, "init", "-q"); err != nil {
-		t.Fatalf("git init the fixture repository: %v", err)
-	}
+	// engine-agenthook-windows-flake-20261028: fixtures init git under fixture bound, not probe bound.
+	testsupport.RunFixtureGit(t, root, []string{"init", "-q"})
 	return root
 }
 
