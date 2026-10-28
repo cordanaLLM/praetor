@@ -5,6 +5,9 @@
 package main
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 )
 
 // fixtureEverywhereWorkflow is a push workflow without a branch filter.
@@ -118,4 +122,62 @@ func auditOffline(t *testing.T, root string) string {
 		t.Fatalf("audit --offline of a fresh adoption failed: %v\n%s", err, out)
 	}
 	return out
+}
+
+// TestAuditWorkflowTriggers_CLI_ExternalReusable runs the audit's HISS-18 gate on a workflow
+// whose pull_request job calls a reusable workflow of another repository pinned to a commit
+// (order engine-hiss18-cross-repo-reusable-20261027). With a token, the gate reads the callee at
+// the pin from a stand-in forge and passes; with --offline or without a token, it names the call
+// as not read and asks the forge nothing. The other audit gates are left out, because the
+// required-check discovery of the branch protection gate refuses a call to another repository on
+// its own terms.
+func TestAuditWorkflowTriggers_CLI_ExternalReusable(t *testing.T) {
+	const (
+		action = "lusoris/SnatchArr/.github/workflows/commit-policy.yml"
+		sha    = "2bf15d49f0eca695707a999808bccd988e2160e1"
+	)
+	calleeBody := "on: workflow_call\njobs:\n  gate:\n    runs-on: ubuntu-latest\n    steps:\n" +
+		ghworkflow.HostedGateDraftStep + "      - run: make check\n"
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.Path+"?"+r.URL.RawQuery+" "+r.Header.Get("Accept"))
+		if _, err := w.Write([]byte(calleeBody)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	defer server.Close()
+	origEndpoint, origToken := actionsForgeEndpoint, resolveActionsToken
+	t.Cleanup(func() { actionsForgeEndpoint, resolveActionsToken = origEndpoint, origToken })
+	actionsForgeEndpoint = server.URL
+	token := "test-token"
+	resolveActionsToken = func(context.Context) string { return token }
+
+	root := t.TempDir()
+	writeFixtureFile(t, root, ".github/workflows/ci.yml", "on:\n  pull_request:\n"+
+		"    types: [opened, synchronize, reopened, ready_for_review]\njobs:\n  commits:\n    uses: "+action+"@"+sha+"\n")
+	gate := func(offline bool) string {
+		out, err := captureStdout(t, func() error {
+			return auditWorkflowTriggers(t.Context(), &config.Manifest{}, root, offline)
+		})
+		if err != nil {
+			t.Fatalf("HISS-18 gate failed: %v\n%s", err, out)
+		}
+		return out
+	}
+
+	out := gate(false)
+	mustContain(t, out, "[PASS] Workflow triggers (HISS-18): workflows read: 1;")
+	want := "/repos/lusoris/SnatchArr/contents/.github/workflows/commit-policy.yml?ref=" + sha + " application/vnd.github.raw+json"
+	if strings.Contains(out, "[WARN]") || strings.Contains(out, "[SKIP]") || len(requests) != 1 || requests[0] != want {
+		t.Fatalf("online gate: requests %q, want [%q]\n%s", requests, want, out)
+	}
+
+	skip := "[SKIP] Workflow triggers (HISS-18): .github/workflows/ci.yml:5: job commits calls the reusable workflow " +
+		action + " of another repository at the pinned commit " + sha + ", which was not read ("
+	mustContain(t, gate(true), skip+"--offline)")
+	token = ""
+	mustContain(t, gate(false), skip+"no forge token")
+	if len(requests) != 1 {
+		t.Fatalf("offline or tokenless gate asked the forge: %q", requests)
+	}
 }

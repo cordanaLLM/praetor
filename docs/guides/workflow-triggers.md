@@ -61,6 +61,19 @@ does. A job also passes when:
   needs such an idle caller is judged on its own, because the check does not read how GitHub
   reports the caller (`TestAuditWorkflowTriggers_FollowsNeedsInsideLocalCallee`,
   `TestAuditWorkflowTriggers_CalleeNeedsChain`);
+- it calls a reusable workflow of another repository pinned to a full commit SHA
+  (`uses: <owner>/<repo>/.github/workflows/<file>@<40-hex SHA>`) whose jobs meet the same test as
+  those of a reusable workflow of this repository.
+  `praetorctl audit` reads the called workflow at that commit from the forge, read only and under
+  a deadline (`forge.ReusableWorkflowReader`). When it cannot, under `--offline`, without a forge
+  token, in the MCP `standards_audit`, or when the read fails, a `[SKIP]` line names the call, the
+  pinned commit and the reason, and the job is not judged on a draft. A workflow without a
+  `pull_request` trigger has none of its callees read. A call to a moving ref of another
+  repository, such as `@main` or `@v1`, is reported, since the jobs it runs can change without a
+  change in the calling repository (`TestAuditWorkflowTriggers_ExternalReusable_PinnedPasses`,
+  `TestAuditWorkflowTriggers_ExternalReusable_UnpinnedWarns`,
+  `TestAuditWorkflowTriggers_ExternalReusable_CalleesNilSkips`,
+  `TestAuditWorkflowTriggers_CLI_ExternalReusable`);
 - a `pull_request` run never starts it, such as a deploy job guarded by
   `github.event_name != 'pull_request'`, or it has no condition of its own and needs such a job,
   which skips it on every pull request and not only on a draft.

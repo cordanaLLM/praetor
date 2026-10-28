@@ -501,8 +501,17 @@ jobs:
       # to catch. The hooks they drive resolve their own interpreter, as on any host.
       - name: Harness Self-Tests
         if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
+        # 19 green Windows runs: median 21.8 min, p95/max 25.1 min; 40 min = 1.6x p95.
+        # The driver's 1800 s suite timeout plus bounded tree cleanup fits inside this bound.
+        timeout-minutes: 40
         shell: bash
-        run: '"$PYTHON" -B scripts/portability_selftest.py --min-executed "$MIN_EXECUTED"'
+        # Both run whatever the first returns, so a failing timeout regression never hides the
+        # suites' own results on that leg; the step fails when either does.
+        run: |
+          status=0
+          "$PYTHON" -u -B scripts/test_portability_selftest.py || status=$?
+          "$PYTHON" -u -B scripts/portability_selftest.py --min-executed "$MIN_EXECUTED" || status=$?
+          exit "$status"
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}
           # Deliberately a collapse detector, not a coverage assertion. The honest floor per

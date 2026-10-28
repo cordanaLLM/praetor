@@ -6,6 +6,7 @@ package forge
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -346,7 +347,7 @@ func TestAuditWorkflowTriggers_SkipsWithoutWorkflowsAndFailsUnread(t *testing.T)
 // workflows (ci.yml, compliance.yml, pages.yml, portability.yml, security.yml) follow it.
 func TestAuditWorkflowTriggers_EngineWorkflowsPass(t *testing.T) {
 	engine := filepath.Join("..", "..")
-	read, findings, err := workflowTriggerFindings(t.Context(), engine)
+	read, findings, _, err := workflowTriggerFindings(t.Context(), WorkflowTriggerOptions{Root: engine})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,5 +356,264 @@ func TestAuditWorkflowTriggers_EngineWorkflowsPass(t *testing.T) {
 	}
 	for _, finding := range findings {
 		t.Errorf("an engine workflow is reported: %s", finding)
+	}
+}
+
+// mapReusableReader is a stand-in ReusableWorkflowReader for tests.
+// Order: engine-hiss18-cross-repo-reusable-20261027.
+type mapReusableReader struct {
+	files map[string][]byte
+	errs  map[string]error
+	calls map[string]int
+}
+
+func newMapReusableReader() *mapReusableReader {
+	return &mapReusableReader{
+		files: make(map[string][]byte),
+		errs:  make(map[string]error),
+		calls: make(map[string]int),
+	}
+}
+
+func (m *mapReusableReader) ReusableWorkflowAt(ctx context.Context, owner, repo, path, sha string) ([]byte, error) {
+	key := fmt.Sprintf("%s/%s/%s@%s", owner, repo, path, sha)
+	m.calls[key]++
+	if err, ok := m.errs[key]; ok {
+		return nil, err
+	}
+	if data, ok := m.files[key]; ok {
+		return data, nil
+	}
+	return nil, fmt.Errorf("reusable workflow %s: %w", key, ErrRepositoryNotVisible)
+}
+
+const (
+	testExternalAction = "lusoris/SnatchArr/.github/workflows/commit-policy.yml"
+	testExternalSHA    = "2bf15d49f0eca695707a999808bccd988e2160e1"
+	testExternalRef    = testExternalAction + "@" + testExternalSHA
+	testExternalCaller = "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\njobs:\n" +
+		"  commits:\n    uses: " + testExternalRef + "\n"
+)
+
+// Positive (order engine-hiss18-cross-repo-reusable-20261027): pinned external callee, only job
+// begins with draft step, caller trigger lists ready_for_review -> PASS, no WARN.
+func TestAuditWorkflowTriggers_ExternalReusable_PinnedPasses(t *testing.T) {
+	reader := newMapReusableReader()
+	calleeBody := "on: workflow_call\njobs:\n  gate:\n    runs-on: x\n    steps:\n" +
+		ghworkflow.HostedGateDraftStep + gateRunStep
+	reader.files[testExternalRef] = []byte(calleeBody)
+
+	root := triggerRepository(t, map[string]string{"ci.yml": testExternalCaller})
+	out, err := AuditWorkflowTriggers(t.Context(), WorkflowTriggerOptions{
+		Root: root, Today: triggersToday, Callees: reader,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(out, "[PASS]") {
+		t.Fatalf("expected [PASS], got:\n%s", out)
+	}
+	if strings.Contains(out, "[WARN]") {
+		t.Fatalf("unexpected warning:\n%s", out)
+	}
+	if strings.Contains(out, "[SKIP]") {
+		t.Fatalf("unexpected skip line:\n%s", out)
+	}
+}
+
+// Negative: same caller with @main -> WARN naming missing pin; reader never asked.
+// Order: engine-hiss18-cross-repo-reusable-20261027.
+func TestAuditWorkflowTriggers_ExternalReusable_UnpinnedWarns(t *testing.T) {
+	reader := newMapReusableReader()
+	unpinnedCaller := "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\njobs:\n" +
+		"  commits:\n    uses: " + testExternalAction + "@main\n"
+	root := triggerRepository(t, map[string]string{"ci.yml": unpinnedCaller})
+
+	out, err := AuditWorkflowTriggers(t.Context(), WorkflowTriggerOptions{
+		Root: root, Today: triggersToday, Callees: reader,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(reader.calls) > 0 {
+		t.Fatalf("reader was asked for unpinned call: %v", reader.calls)
+	}
+	if !strings.Contains(out, "[WARN] Workflow triggers (HISS-18):") {
+		t.Fatalf("expected WARN, got:\n%s", out)
+	}
+	if !strings.Contains(out, "at a ref that is not a full commit SHA, so the jobs it runs can change without a change here and the check reads none of them; pin the call to a full commit SHA") {
+		t.Fatalf("output lacks moving ref / missing pin text:\n%s", out)
+	}
+}
+
+// Negative: pinned external callee whose job runs work on draft -> WARN, same as local callee.
+// Order: engine-hiss18-cross-repo-reusable-20261027.
+func TestAuditWorkflowTriggers_ExternalReusable_WorkOnDraftWarns(t *testing.T) {
+	reader := newMapReusableReader()
+	calleeRunsWork := "on: workflow_call\njobs:\n  gate:\n    runs-on: x\n    steps:\n      - run: make check\n"
+	reader.files[testExternalRef] = []byte(calleeRunsWork)
+
+	root := triggerRepository(t, map[string]string{"ci.yml": testExternalCaller})
+	out, err := AuditWorkflowTriggers(t.Context(), WorkflowTriggerOptions{
+		Root: root, Today: triggersToday, Callees: reader,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := fmt.Sprintf("runs on a draft pull request: it calls %s, whose jobs this repository does not show "+
+		"each beginning with the draft step %q and needing no job held back on a draft",
+		testExternalRef, ghworkflow.HostedGateDraftStepName)
+	if !strings.Contains(out, "[WARN] Workflow triggers (HISS-18):") || !strings.Contains(out, want) {
+		t.Fatalf("output lacks expected warning %q:\n%s", want, out)
+	}
+}
+
+// Boundary: pinned call, Callees nil + reason -> SKIP line naming action, SHA, reason; no WARN for job.
+// Order: engine-hiss18-cross-repo-reusable-20261027.
+func TestAuditWorkflowTriggers_ExternalReusable_CalleesNilSkips(t *testing.T) {
+	root := triggerRepository(t, map[string]string{"ci.yml": testExternalCaller})
+	out, err := AuditWorkflowTriggers(t.Context(), WorkflowTriggerOptions{
+		Root: root, Today: triggersToday, Callees: nil, CalleesNotRead: "--offline",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantSkip := fmt.Sprintf("[SKIP] Workflow triggers (HISS-18): .github/workflows/ci.yml:5: job commits calls the reusable workflow %s of another "+
+		"repository at the pinned commit %s, which was not read (--offline), so what the job does on a draft is not judged.",
+		testExternalAction, testExternalSHA)
+	if !strings.Contains(out, wantSkip) {
+		t.Fatalf("output lacks SKIP line %q:\n%s", wantSkip, out)
+	}
+	if strings.Contains(out, "[WARN]") {
+		t.Fatalf("unexpected warning:\n%s", out)
+	}
+	if !strings.Contains(out, "[PASS] Workflow triggers (HISS-18):") || !strings.Contains(out, "not read above (1)") {
+		t.Fatalf("expected PASS naming unread external calls:\n%s", out)
+	}
+}
+
+// Boundary: pinned call, stand-in reader error (404) -> SKIP line naming error.
+// Order: engine-hiss18-cross-repo-reusable-20261027.
+func TestAuditWorkflowTriggers_ExternalReusable_ReaderErrorSkips(t *testing.T) {
+	reader := newMapReusableReader()
+	reader.errs[testExternalRef] = fmt.Errorf("reusable workflow %s: %w", testExternalRef, ErrRepositoryNotVisible)
+
+	root := triggerRepository(t, map[string]string{"ci.yml": testExternalCaller})
+	out, err := AuditWorkflowTriggers(t.Context(), WorkflowTriggerOptions{
+		Root: root, Today: triggersToday, Callees: reader,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "[SKIP] Workflow triggers (HISS-18):") || !strings.Contains(out, ErrRepositoryNotVisible.Error()) {
+		t.Fatalf("output lacks 404 SKIP line:\n%s", out)
+	}
+	if strings.Contains(out, "[WARN]") {
+		t.Fatalf("unexpected warning:\n%s", out)
+	}
+	if !strings.Contains(out, "[PASS]") {
+		t.Fatalf("expected PASS verdict:\n%s", out)
+	}
+}
+
+// Boundary: callee without workflow_call trigger -> SKIP line naming reason.
+// Order: engine-hiss18-cross-repo-reusable-20261027.
+func TestAuditWorkflowTriggers_ExternalReusable_MissingWorkflowCallTriggerSkips(t *testing.T) {
+	reader := newMapReusableReader()
+	calleePush := "on: push\njobs:\n  gate:\n    runs-on: x\n    steps:\n" +
+		ghworkflow.HostedGateDraftStep + gateRunStep
+	reader.files[testExternalRef] = []byte(calleePush)
+
+	root := triggerRepository(t, map[string]string{"ci.yml": testExternalCaller})
+	out, err := AuditWorkflowTriggers(t.Context(), WorkflowTriggerOptions{
+		Root: root, Today: triggersToday, Callees: reader,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "[SKIP] Workflow triggers (HISS-18):") || !strings.Contains(out, "declares no workflow_call trigger") {
+		t.Fatalf("output lacks missing workflow_call SKIP line:\n%s", out)
+	}
+	if strings.Contains(out, "[WARN]") {
+		t.Fatalf("unexpected warning:\n%s", out)
+	}
+	if !strings.Contains(out, "[PASS]") {
+		t.Fatalf("expected PASS verdict:\n%s", out)
+	}
+}
+
+// Boundary: one pinned call from two jobs in two workflows -> reader asked once;
+// distinct calls above bound -> surplus calls SKIP naming bound.
+// Order: engine-hiss18-cross-repo-reusable-20261027.
+func TestAuditWorkflowTriggers_ExternalReusable_Boundary(t *testing.T) {
+	reader := newMapReusableReader()
+	calleeBody := "on: workflow_call\njobs:\n  gate:\n    runs-on: x\n    steps:\n" +
+		ghworkflow.HostedGateDraftStep + gateRunStep
+	reader.files[testExternalRef] = []byte(calleeBody)
+
+	// Part 1: two jobs in two workflows calling the same pinned callee.
+	w1 := "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\njobs:\n" +
+		"  j1:\n    uses: " + testExternalRef + "\n"
+	w2 := "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\njobs:\n" +
+		"  j2:\n    uses: " + testExternalRef + "\n"
+
+	root := triggerRepository(t, map[string]string{"w1.yml": w1, "w2.yml": w2})
+	out, err := AuditWorkflowTriggers(t.Context(), WorkflowTriggerOptions{
+		Root: root, Today: triggersToday, Callees: reader,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if count := reader.calls[testExternalRef]; count != 1 {
+		t.Fatalf("reader asked %d times for deduplicated call, want 1", count)
+	}
+	if !strings.HasPrefix(out, "[PASS]") || strings.Contains(out, "[WARN]") || strings.Contains(out, "[SKIP]") {
+		t.Fatalf("deduplicated callers must pass cleanly:\n%s", out)
+	}
+
+	// Part 2: distinct external calls exceeding maxExternalCallees (32).
+	var overflowJobs strings.Builder
+	overflowJobs.WriteString("on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\njobs:\n")
+	for i := 0; i <= maxExternalCallees; i++ {
+		action := fmt.Sprintf("acme/repo%02d/.github/workflows/call.yml", i)
+		ref := fmt.Sprintf("%s@%040x", action, i+1)
+		reader.files[ref] = []byte(calleeBody)
+		fmt.Fprintf(&overflowJobs, "  job%02d:\n    uses: %s\n", i, ref)
+	}
+
+	overflowRoot := triggerRepository(t, map[string]string{"overflow.yml": overflowJobs.String()})
+	out, err = AuditWorkflowTriggers(t.Context(), WorkflowTriggerOptions{
+		Root: overflowRoot, Today: triggersToday, Callees: reader,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantBound := fmt.Sprintf("the workflows call more than %d distinct reusable workflows of other repositories", maxExternalCallees)
+	if !strings.Contains(out, wantBound) || !strings.Contains(out, "[SKIP]") {
+		t.Fatalf("output lacks bound skip line naming %q:\n%s", wantBound, out)
+	}
+}
+
+// Negative (order engine-hiss18-cross-repo-reusable-20261027): a workflow without a pull_request
+// trigger is not judged on a draft, so the check neither reads its pinned callee nor reports it
+// as not read, with a reader and without one.
+func TestAuditWorkflowTriggers_ExternalReusable_PushOnlyCallerNotRead(t *testing.T) {
+	pushOnly := "on:\n  push:\n    branches: [main]\njobs:\n  release:\n    uses: " + testExternalRef + "\n"
+	root := triggerRepository(t, map[string]string{"release.yml": pushOnly})
+	reader := newMapReusableReader()
+	for _, opts := range []WorkflowTriggerOptions{
+		{Root: root, Today: triggersToday, Callees: reader},
+		{Root: root, Today: triggersToday, CalleesNotRead: "--offline"},
+	} {
+		out, err := AuditWorkflowTriggers(t.Context(), opts)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if strings.Contains(out, "[SKIP]") || strings.Contains(out, "[WARN]") || !strings.HasPrefix(out, "[PASS]") {
+			t.Fatalf("push-only caller must pass without a skip line:\n%s", out)
+		}
+	}
+	if len(reader.calls) > 0 {
+		t.Fatalf("reader was asked for the callee of a push-only workflow: %v", reader.calls)
 	}
 }

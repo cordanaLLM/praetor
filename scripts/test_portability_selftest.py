@@ -13,21 +13,27 @@ passes a healthy suite proves almost nothing on its own.
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import textwrap
 import threading
+import time
 import unittest
 from pathlib import Path
+from typing import ClassVar
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 
 _spec = importlib.util.spec_from_file_location(
-    "portability_selftest", ROOT / "scripts" / "portability_selftest.py")
+    "portability_selftest", ROOT / "scripts" / "portability_selftest.py"
+)
 driver = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(driver)
 
@@ -44,7 +50,9 @@ SUITE_TEMPLATE = textwrap.dedent("""
 def write_suite(directory, name, body):
     """Materialise a throwaway unittest module and return its path relative to directory."""
     path = Path(directory) / name
-    path.write_text(SUITE_TEMPLATE.format(body=textwrap.indent(body, "    ")), encoding="utf-8")
+    path.write_text(
+        SUITE_TEMPLATE.format(body=textwrap.indent(body, "    ")), encoding="utf-8"
+    )
     return Path(name)
 
 
@@ -67,12 +75,206 @@ def run_driver(directory, suites, argv):
     return code, buffer.getvalue()
 
 
+HANGING_SUITE = textwrap.dedent("""
+    import os, pathlib, subprocess, sys, time
+    pathlib.Path('parent.pid').write_text(str(os.getpid()))
+    grandchild = (
+        "import pathlib, threading, time; "
+        "threading.Timer(4, lambda: pathlib.Path('orphan').write_text('alive')).start(); "
+        "time.sleep(300)"
+    )
+    child = subprocess.Popen([sys.executable, '-c', grandchild])
+    pathlib.Path('grandchild.pid').write_text(str(child.pid))
+    print('suite stdout', flush=True)
+    print('suite stderr', file=sys.stderr, flush=True)
+    time.sleep(300)
+""")
+
+SUITE_TIMEOUT_WORKER = textwrap.dedent("""
+    import importlib.util, json, pathlib
+    spec = importlib.util.spec_from_file_location('driver', {driver_path!r})
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+    driver.ROOT = pathlib.Path.cwd()
+    driver.SUITE_TIMEOUT_SECONDS = 2
+    result = driver.run_suite(pathlib.Path('hang.py'))
+    pathlib.Path('result.json').write_text(json.dumps(result))
+""")
+
+
+def cleanup_suite_fixture(root):
+    """Remove both fixture processes even when exercising a broken runner on Windows."""
+    for name in ("grandchild.pid", "parent.pid"):
+        if not (root / name).exists():
+            continue
+        pid = int((root / name).read_text())
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+        else:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+
+
+def run_suite_worker(root, worker):
+    """Bound even a broken Windows runner without inheriting its output pipes."""
+    subprocess.run(
+        [sys.executable, "-B", "-c", worker],
+        cwd=root,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=18,
+        check=True,
+    )
+    return json.loads((root / "result.json").read_text())
+
+
 class PortabilityDriver(unittest.TestCase):
+    @unittest.skipIf(
+        os.name == "nt",
+        "the guard sits on the POSIX killpg path; Windows uses taskkill",
+    )
+    def test_stop_suite_refuses_a_group_kill_for_unsafe_pids(self):
+        """pid 0 or 1, a non-integer, a bool or our own group never reach os.killpg."""
+
+        class Leader:
+            def __init__(self, pid):
+                self.pid = pid
+
+            def poll(self):
+                return 0
+
+            def kill(self):
+                raise AssertionError("an exited leader is not killed again")
+
+            def wait(self, timeout=None):
+                return 0
+
+        for pid in (0, 1, True, "12", None, os.getpgrp()):
+            with (
+                self.subTest(pid=pid),
+                mock.patch.object(driver.os, "killpg") as killpg,
+                self.assertRaisesRegex(OSError, "refusing to kill the process group"),
+            ):
+                driver.stop_suite(Leader(pid))
+            killpg.assert_not_called()
+
+    def test_suite_timeout_with_inherited_grandchild_output(self):
+        """A pipe-holding grandchild cannot outlive the suite's bound or stall the driver."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "hang.py").write_text(HANGING_SUITE, encoding="utf-8")
+            worker = SUITE_TIMEOUT_WORKER.format(driver_path=driver.__file__)
+            started = time.monotonic()
+            try:
+                result = run_suite_worker(root, worker)
+                self.assertLess(time.monotonic() - started, 20)
+                self.assertFalse(result[0], result)
+                self.assertIn("hang.py", result[5])
+                self.assertIn("2", result[5])
+                self.assertIn("timeout", result[5].lower())
+                self.assertTrue(
+                    (root / "grandchild.pid").is_file(), "fixture never forked"
+                )
+                time.sleep(max(0, 6 - (time.monotonic() - started)))
+                self.assertFalse(
+                    (root / "orphan").exists(), "grandchild survived tree cleanup"
+                )
+                self.assertIn("suite stdout", result[5])
+                self.assertIn("suite stderr", result[5])
+            finally:
+                cleanup_suite_fixture(root)
+
+    def test_output_handles_do_not_delay_failed_tree_cleanup(self):
+        """A failed tree killer leaves output handles open; file reads must still return."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "hang.py").write_text(HANGING_SUITE, encoding="utf-8")
+            worker = SUITE_TIMEOUT_WORKER.format(driver_path=driver.__file__)
+            unavailable = (
+                "def unavailable(*args, **kwargs):\n"
+                "    raise OSError('tree killer unavailable')\n"
+                "driver.run_child = unavailable\n"
+                "driver.os.killpg = unavailable\n"
+            )
+            worker = worker.replace(
+                "result = driver.run_suite", unavailable + "result = driver.run_suite"
+            )
+            started = time.monotonic()
+            try:
+                result = run_suite_worker(root, worker)
+                self.assertLess(time.monotonic() - started, 20)
+                self.assertFalse(result[0], result)
+                for text in (
+                    "hang.py",
+                    "timeout after 2s",
+                    "tree cleanup failed",
+                    "tree killer unavailable",
+                    "suite stdout",
+                    "suite stderr",
+                ):
+                    self.assertIn(text, result[5])
+            finally:
+                cleanup_suite_fixture(root)
+
+    def test_suite_name_is_flushed_before_start(self):
+        with tempfile.TemporaryDirectory() as temp:
+            suite = write_suite(temp, "ok.py", "def test_a(self): pass\n")
+            with driver_over(temp, [suite]), mock.patch("builtins.print") as printing:
+
+                def started(path):
+                    printing.assert_called_with("[RUN] ok.py", flush=True)
+                    return True, 1, 0, [], [], "", []
+
+                with mock.patch.object(driver, "run_suite", side_effect=started):
+                    self.assertEqual(driver.main([]), 0)
+
+    def test_windows_tree_cleanup_is_bounded_and_reports_errors(self):
+        for error in (
+            None,
+            OSError("taskkill unavailable"),
+            subprocess.TimeoutExpired("taskkill", 5),
+        ):
+            with self.subTest(error=error):
+                process = mock.Mock(pid=1234)
+                process.poll.return_value = None
+                with (
+                    mock.patch.object(driver.os, "name", "nt"),
+                    mock.patch.object(
+                        driver, "run_child", side_effect=error
+                    ) as killing,
+                ):
+                    if error is None:
+                        driver.stop_suite(process)
+                    else:
+                        with self.assertRaises(type(error)):
+                            driver.stop_suite(process)
+                killing.assert_called_once_with(
+                    ["taskkill", "/T", "/F", "/PID", "1234"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=driver.SUITE_CLEANUP_SECONDS,
+                    check=True,
+                )
+                process.kill.assert_called_once_with()
+                process.wait.assert_called_once_with(
+                    timeout=driver.SUITE_CLEANUP_SECONDS
+                )
 
     def test_passing_suite_is_accepted(self):
         """Positive: suites that pass and clear the floor exit zero."""
         with tempfile.TemporaryDirectory() as temp:
-            suite = write_suite(temp, "ok.py", "def test_a(self): pass\ndef test_b(self): pass\n")
+            suite = write_suite(
+                temp, "ok.py", "def test_a(self): pass\ndef test_b(self): pass\n"
+            )
             code, output = run_driver(temp, [suite], ["--min-executed", "2"])
         self.assertEqual(code, 0, output)
         self.assertIn("2 executed", output)
@@ -92,7 +294,9 @@ class PortabilityDriver(unittest.TestCase):
         the floor the platform reads as green while having checked nothing at all.
         """
         with tempfile.TemporaryDirectory() as temp:
-            suite = write_suite(temp, "skipped.py", "def test_a(self): self.skipTest('no cgo')\n")
+            suite = write_suite(
+                temp, "skipped.py", "def test_a(self): self.skipTest('no cgo')\n"
+            )
             code, output = run_driver(temp, [suite], ["--min-executed", "1"])
         self.assertEqual(code, 1, output)
         self.assertIn("below the floor", output)
@@ -102,8 +306,10 @@ class PortabilityDriver(unittest.TestCase):
         """A skip must name what is absent, or the operator cannot tell coverage was lost."""
         with tempfile.TemporaryDirectory() as temp:
             suite = write_suite(
-                temp, "mixed.py",
-                "def test_a(self): pass\ndef test_b(self): self.skipTest('race needs cgo')\n")
+                temp,
+                "mixed.py",
+                "def test_a(self): pass\ndef test_b(self): self.skipTest('race needs cgo')\n",
+            )
             code, output = run_driver(temp, [suite], ["--min-executed", "1"])
         self.assertEqual(code, 0, output)
         self.assertIn("race needs cgo", output)
@@ -112,7 +318,9 @@ class PortabilityDriver(unittest.TestCase):
     def test_floor_boundary_is_inclusive(self):
         """Boundary: executed == floor passes, executed == floor - 1 fails."""
         with tempfile.TemporaryDirectory() as temp:
-            suite = write_suite(temp, "two.py", "def test_a(self): pass\ndef test_b(self): pass\n")
+            suite = write_suite(
+                temp, "two.py", "def test_a(self): pass\ndef test_b(self): pass\n"
+            )
             at_floor, _ = run_driver(temp, [suite], ["--min-executed", "2"])
             below_floor, _ = run_driver(temp, [suite], ["--min-executed", "3"])
         self.assertEqual(at_floor, 0)
@@ -123,13 +331,17 @@ class PortabilityDriver(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "silent.py"
             path.write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
-            code, output = run_driver(temp, [Path("silent.py")], ["--min-executed", "0"])
+            code, output = run_driver(
+                temp, [Path("silent.py")], ["--min-executed", "0"]
+            )
         self.assertEqual(code, 1, output)
 
     def test_missing_suite_is_rejected(self):
         """A suite that is not on disk must fail rather than be counted as nothing to do."""
         with tempfile.TemporaryDirectory() as temp:
-            code, output = run_driver(temp, [Path("absent.py")], ["--min-executed", "0"])
+            code, output = run_driver(
+                temp, [Path("absent.py")], ["--min-executed", "0"]
+            )
         self.assertEqual(code, 1, output)
         self.assertIn("missing", output)
 
@@ -142,13 +354,15 @@ class PortabilityDriver(unittest.TestCase):
         something did, which is the precise failure this driver exists to prevent.
         """
         with tempfile.TemporaryDirectory() as temp:
-            body = ("def test_noisy(self):\n"
-                    "    print('-' * 70)\n"
-                    "    print('Ran 2 tests in 0.001s')\n"
-                    "    print()\n"
-                    "    print('OK (skipped=1)')\n"
-                    "def test_b(self): pass\n"
-                    "def test_c(self): pass\n")
+            body = (
+                "def test_noisy(self):\n"
+                "    print('-' * 70)\n"
+                "    print('Ran 2 tests in 0.001s')\n"
+                "    print()\n"
+                "    print('OK (skipped=1)')\n"
+                "def test_b(self): pass\n"
+                "def test_c(self): pass\n"
+            )
             suite = write_suite(temp, "nested.py", body)
             code, output = run_driver(temp, [suite], ["--min-executed", "3"])
         self.assertEqual(code, 0, output)
@@ -160,7 +374,7 @@ class PortabilityDriver(unittest.TestCase):
         Two lists of the same suites drift; this pins them together (HISS-19).
         """
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
-        target = re.search(r"^hooks-test:\n((?:\t.*\n)+)", makefile, re.M)
+        target = re.search(r"^hooks-test:\n((?:\t.*\n)+)", makefile, re.MULTILINE)
         self.assertIsNotNone(target, "hooks-test target not found in Makefile")
         declared = re.findall(r"python3 -B (\S+\.py)", target.group(1))
         # The Makefile names suites with slashes; str() of a Path uses the host separator, so on
@@ -175,12 +389,14 @@ class PortabilityDriver(unittest.TestCase):
         was routinely cut off and the log said a suite failed without saying which test.
         """
         with tempfile.TemporaryDirectory() as temp:
-            body = ("def test_a_fails_early(self): self.fail('early')\n"
-                    "def test_b_errors(self):\n"
-                    "    \"\"\"A docstring replaces the name on the outcome line.\"\"\"\n"
-                    "    print('printed before the failure')\n"
-                    "    raise RuntimeError('boom')\n"
-                    "def test_c_noisy(self): print('\\n'.join(['noise'] * 60))\n")
+            body = (
+                "def test_a_fails_early(self): self.fail('early')\n"
+                "def test_b_errors(self):\n"
+                '    """A docstring replaces the name on the outcome line."""\n'
+                "    print('printed before the failure')\n"
+                "    raise RuntimeError('boom')\n"
+                "def test_c_noisy(self): print('\\n'.join(['noise'] * 60))\n"
+            )
             suite = write_suite(temp, "named.py", body)
             code, output = run_driver(temp, [suite], ["--min-executed", "1"])
         self.assertEqual(code, 1, output)
@@ -204,14 +420,21 @@ class PortabilityDriver(unittest.TestCase):
         passed against both drivers and proved only that the function exists.
         """
         with tempfile.TemporaryDirectory() as temp:
-            body = ("def test_a(self): self.fail('marker alpha')\n"
-                    "def test_b(self): self.fail('marker bravo')\n"
-                    "def test_c(self): self.fail('marker charlie')\n"
-                    "def test_d(self): self.fail('marker delta')\n")
+            body = (
+                "def test_a(self): self.fail('marker alpha')\n"
+                "def test_b(self): self.fail('marker bravo')\n"
+                "def test_c(self): self.fail('marker charlie')\n"
+                "def test_d(self): self.fail('marker delta')\n"
+            )
             suite = write_suite(temp, "blocks.py", body)
             code, output = run_driver(temp, [suite], ["--min-executed", "1"])
         self.assertEqual(code, 1, output)
-        for marker in ("marker alpha", "marker bravo", "marker charlie", "marker delta"):
+        for marker in (
+            "marker alpha",
+            "marker bravo",
+            "marker charlie",
+            "marker delta",
+        ):
             self.assertIn(marker, output)
         # Boundary: the blocks are bounded, so a suite that prints nothing parseable still
         # publishes its tail rather than nothing at all.
@@ -232,7 +455,9 @@ class PortabilityDriver(unittest.TestCase):
         rule = "\n" + driver.CASE_RULE + "\n"
 
         def compose(count):
-            return "preamble" + "".join(f"{rule}FAIL: case_{n} (m.T.case_{n})\nbody\n" for n in range(count))
+            return "preamble" + "".join(
+                f"{rule}FAIL: case_{n} (m.T.case_{n})\nbody\n" for n in range(count)
+            )
 
         at_limit = driver.failure_blocks(compose(driver.MAX_FAILURE_BLOCKS))
         self.assertEqual(len(at_limit), driver.MAX_FAILURE_BLOCKS)
@@ -252,8 +477,16 @@ class PortabilityDriver(unittest.TestCase):
         self.assertNotIn(f"line {driver.MAX_FAILURE_BLOCK_LINES}", cut[0])
         # Negative: a block is cut at the summary rule, so the run's trailing summary is never
         # counted against either bound.
-        summary = "preamble" + rule + "FAIL: case_z (m.T.case_z)\nbody\n" + "-" * 70 + "\nRan 1 test in 0.1s\n\nFAILED"
-        self.assertEqual(driver.failure_blocks(summary), ["FAIL: case_z (m.T.case_z)\nbody"])
+        summary = (
+            "preamble"
+            + rule
+            + "FAIL: case_z (m.T.case_z)\nbody\n"
+            + "-" * 70
+            + "\nRan 1 test in 0.1s\n\nFAILED"
+        )
+        self.assertEqual(
+            driver.failure_blocks(summary), ["FAIL: case_z (m.T.case_z)\nbody"]
+        )
 
     def test_passing_suite_names_no_failures(self):
         """Negative: a green suite prints no failure lines, even if its output mentions FAIL."""
@@ -297,15 +530,25 @@ STDIN_CHILD = textwrap.dedent("""
         os.kill(os.getpid(), signal.SIGTERM)
     sys.exit(0 if data else 2)
 """)
-NO_SIGNAL_EXIT = ("Windows ends no process by a signal: os.kill there leaves the signal number "
-                  "as an ordinary exit code, which run_child returns without a retry")
+NO_SIGNAL_EXIT = (
+    "Windows ends no process by a signal: os.kill there leaves the signal number "
+    "as an ordinary exit code, which run_child returns without a retry"
+)
 DRIVER_PATH = Path(driver.__file__)
 
 
 def stub_argv(directory, crashes, code):
     """Return the argv of one stub child and the file that counts its attempts."""
     counter = Path(directory) / f"attempts-{crashes}-{code}"
-    return [sys.executable, "-B", "-c", STUB_CHILD, str(counter), str(crashes), str(code)], counter
+    return [
+        sys.executable,
+        "-B",
+        "-c",
+        STUB_CHILD,
+        str(counter),
+        str(crashes),
+        str(code),
+    ], counter
 
 
 def attempts(counter):
@@ -314,8 +557,9 @@ def attempts(counter):
 
 def report_block(outcome):
     """A child report as run_child prints it, for driver cases that need no real crash."""
-    return "\n".join([driver.CHILD_REPORT_START, f"  outcome: {outcome}",
-                      driver.CHILD_REPORT_END])
+    return "\n".join(
+        [driver.CHILD_REPORT_START, f"  outcome: {outcome}", driver.CHILD_REPORT_END]
+    )
 
 
 class ChildRetry(unittest.TestCase):
@@ -333,8 +577,9 @@ class ChildRetry(unittest.TestCase):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             try:
-                outcome = driver.run_child(argv, capture_output=True, text=True, timeout=60,
-                                           **options)
+                outcome = driver.run_child(
+                    argv, capture_output=True, text=True, timeout=60, **options
+                )
             except (AssertionError, subprocess.CalledProcessError) as error:
                 outcome = error
         return outcome, attempts(counter), stderr.getvalue()
@@ -348,7 +593,9 @@ class ChildRetry(unittest.TestCase):
         self.assertIn(f"test: {self.id()}", text)
 
     @unittest.skipIf(os.name == "nt", NO_SIGNAL_EXIT)
-    def test_a_child_a_signal_ends_once_passes_on_the_retry_and_both_attempts_are_reported(self):
+    def test_a_child_a_signal_ends_once_passes_on_the_retry_and_both_attempts_are_reported(
+        self,
+    ):
         result, count, stderr = self.run_stub(crashes=1, code=0)
         self.assertEqual(result.returncode, 0, stderr)
         self.assertEqual(result.stdout, "out 2\n")
@@ -367,7 +614,9 @@ class ChildRetry(unittest.TestCase):
         message = str(error)
         self.assertIn("a signal ended both attempts (#809)", message)
         self.assertIn("outcome: a signal ended the retry too", message)
-        self.assert_reports_both_attempts(message, "killed by SIGTERM (return code -15)")
+        self.assert_reports_both_attempts(
+            message, "killed by SIGTERM (return code -15)"
+        )
         # The report reaches the suite's stream once; the failure message carries no markers,
         # so the driver does not repeat it a second time from the traceback.
         self.assertEqual(len(driver.child_reports(stderr)), 1, stderr)
@@ -383,11 +632,15 @@ class ChildRetry(unittest.TestCase):
         argv = [sys.executable, "-B", "-c", STDIN_CHILD, str(counter)]
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            result = driver.run_child(argv, input="payload\n", capture_output=True, text=True,
-                                      timeout=30)
+            result = driver.run_child(
+                argv, input="payload\n", capture_output=True, text=True, timeout=30
+            )
         self.assertEqual(attempts(counter), 2, stderr.getvalue())
-        self.assertEqual((result.returncode, result.stdout), (0, "read 'payload\\n'\n"),
-                         "the retry must read the same input as the first attempt")
+        self.assertEqual(
+            (result.returncode, result.stdout),
+            (0, "read 'payload\\n'\n"),
+            "the retry must read the same input as the first attempt",
+        )
 
     def test_a_nonzero_exit_without_a_signal_is_returned_at_once(self):
         result, count, stderr = self.run_stub(crashes=0, code=1)
@@ -411,12 +664,17 @@ class ChildRetry(unittest.TestCase):
         self.assert_reports_both_attempts(reports[0], "exited (return code 2)")
         error, count, stderr = self.run_stub(crashes=1, code=4, check=True)
         self.assertIsInstance(error, subprocess.CalledProcessError)
-        self.assertEqual((error.returncode, count, len(driver.child_reports(stderr))), (4, 2, 1))
+        self.assertEqual(
+            (error.returncode, count, len(driver.child_reports(stderr))), (4, 2, 1)
+        )
 
     def test_a_child_without_a_timeout_is_refused_before_it_starts(self):
         argv, counter = stub_argv(self.temp, 0, 0)
         for options in ({}, {"timeout": None}):
-            with self.subTest(options=options), self.assertRaisesRegex(ValueError, "HISS-02"):
+            with (
+                self.subTest(options=options),
+                self.assertRaisesRegex(ValueError, "HISS-02"),
+            ):
                 driver.run_child(argv, capture_output=True, **options)
         self.assertEqual(attempts(counter), 0)
 
@@ -431,20 +689,28 @@ class ChildRetry(unittest.TestCase):
         self.assertEqual(driver.exit_signal(-200), "signal 200")
 
     def test_the_child_is_named_by_kind_resolved_path_and_version(self):
-        self.assertRegex(driver.child_identity(sys.executable),
-                         rf"^Python launcher, {re.escape(self.python)}, Python 3\.\d+")
+        self.assertRegex(
+            driver.child_identity(sys.executable),
+            rf"^Python launcher, {re.escape(self.python)}, Python 3\.\d+",
+        )
         missing = "praetor-no-such-program"
-        self.assertEqual(driver.child_identity(missing), f"{missing}, {missing} (not on PATH)")
+        self.assertEqual(
+            driver.child_identity(missing), f"{missing}, {missing} (not on PATH)"
+        )
         shell = shutil.which("sh")
         if shell is not None:
-            self.assertTrue(driver.child_identity("sh").startswith(
-                f"sh, {os.path.realpath(shell)}, "))
+            self.assertTrue(
+                driver.child_identity("sh").startswith(
+                    f"sh, {os.path.realpath(shell)}, "
+                )
+            )
 
     def test_a_child_started_outside_a_test_is_said_to_be(self):
         found = []
         # A thread's stack holds no test frame.
-        worker = threading.Thread(target=lambda: found.append(driver.calling_test()),
-                                  daemon=True)
+        worker = threading.Thread(
+            target=lambda: found.append(driver.calling_test()), daemon=True
+        )
         worker.start()
         worker.join(30)
         self.assertEqual(found, ["not started by a test"])
@@ -471,17 +737,19 @@ class ChildReportsInTheLog(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             once, _ = stub_argv(temp, 1, 0)
             always, _ = stub_argv(temp, 99, 0)
-            body = (f"def child(self, argv):\n"
-                    f"    import importlib.util\n"
-                    f"    spec = importlib.util.spec_from_file_location(\n"
-                    f"        'd', {str(DRIVER_PATH)!r})\n"
-                    f"    module = importlib.util.module_from_spec(spec)\n"
-                    f"    spec.loader.exec_module(module)\n"
-                    f"    return module.run_child(argv, capture_output=True, timeout=60)\n"
-                    f"def test_crash_then_pass(self):\n"
-                    f"    self.assertEqual(self.child({once!r}).returncode, 0)\n"
-                    f"def test_crash_twice(self):\n"
-                    f"    self.child({always!r})\n")
+            body = (
+                f"def child(self, argv):\n"
+                f"    import importlib.util\n"
+                f"    spec = importlib.util.spec_from_file_location(\n"
+                f"        'd', {str(DRIVER_PATH)!r})\n"
+                f"    module = importlib.util.module_from_spec(spec)\n"
+                f"    spec.loader.exec_module(module)\n"
+                f"    return module.run_child(argv, capture_output=True, timeout=60)\n"
+                f"def test_crash_then_pass(self):\n"
+                f"    self.assertEqual(self.child({once!r}).returncode, 0)\n"
+                f"def test_crash_twice(self):\n"
+                f"    self.child({always!r})\n"
+            )
             suite = write_suite(temp, "children.py", body)
             code, output = run_driver(temp, [suite], ["--min-executed", "1"])
         self.assertEqual(code, 1, output)
@@ -494,40 +762,55 @@ class ChildReportsInTheLog(unittest.TestCase):
         # One line per argv, whatever the arguments hold: the stub's -c script spans lines.
         self.assertIn("  argv: [", output)
         self.assertIn("\\nimport os, signal, sys\\n", output)
-        self.assertIn("::warning title=Self-test child ended by a signal::children.py: 2", output)
+        self.assertIn(
+            "::warning title=Self-test child ended by a signal::children.py: 2", output
+        )
 
     def test_a_passing_suite_still_publishes_its_child_reports(self):
         with tempfile.TemporaryDirectory() as temp:
             block = report_block("the retry exited 0")
-            body = (f"def test_a(self):\n"
-                    f"    import sys\n"
-                    f"    print({block!r}, file=sys.stderr)\n")
+            body = (
+                f"def test_a(self):\n"
+                f"    import sys\n"
+                f"    print({block!r}, file=sys.stderr)\n"
+            )
             suite = write_suite(temp, "retried.py", body)
             code, output = run_driver(temp, [suite], ["--min-executed", "1"])
         self.assertEqual(code, 0, output)
         self.assertIn("[PASS] retried.py", output)
         self.assertIn(block, output)
-        self.assertIn("::warning title=Self-test child ended by a signal::retried.py: 1", output)
+        self.assertIn(
+            "::warning title=Self-test child ended by a signal::retried.py: 1", output
+        )
 
     def test_child_reports_are_bounded(self):
         """Boundary: at the limit every report is printed, one past it the surplus is not."""
         for count in (driver.MAX_CHILD_REPORTS, driver.MAX_CHILD_REPORTS + 1):
             with self.subTest(count=count), tempfile.TemporaryDirectory() as temp:
-                blocks = "\n".join(report_block(f"the retry exited {n}") for n in range(count))
-                body = (f"def test_a(self):\n"
-                        f"    import sys\n"
-                        f"    print({blocks!r}, file=sys.stderr)\n")
+                blocks = "\n".join(
+                    report_block(f"the retry exited {n}") for n in range(count)
+                )
+                body = (
+                    f"def test_a(self):\n"
+                    f"    import sys\n"
+                    f"    print({blocks!r}, file=sys.stderr)\n"
+                )
                 suite = write_suite(temp, "many.py", body)
                 code, output = run_driver(temp, [suite], ["--min-executed", "1"])
                 self.assertEqual(code, 0, output)
                 shown = driver.MAX_CHILD_REPORTS
-                self.assertIn(f"signal exits of a child: {count}, the first {shown} reported "
-                              "below", output)
+                self.assertIn(
+                    f"signal exits of a child: {count}, the first {shown} reported "
+                    "below",
+                    output,
+                )
                 self.assertEqual(output.count(driver.CHILD_REPORT_START), shown)
                 self.assertIn(f"exited {shown - 1}", output)
                 self.assertNotIn(f"exited {shown}\n", output)
         # Negative: an unterminated report is not a report.
-        self.assertEqual(driver.child_reports(driver.CHILD_REPORT_START + "\n  outcome: x\n"), [])
+        self.assertEqual(
+            driver.child_reports(driver.CHILD_REPORT_START + "\n  outcome: x\n"), []
+        )
 
 
 # The self-test suites that start every child through run_child, never directly (#809).
@@ -541,11 +824,18 @@ class ChildSuites(unittest.TestCase):
             with self.subTest(suite=suite.as_posix()):
                 self.assertIn(suite, driver.SUITES)
                 text = (ROOT / suite).read_text(encoding="utf-8")
-                self.assertIsNone(DIRECT_START.search(text), "start the child through run_child")
+                self.assertIsNone(
+                    DIRECT_START.search(text), "start the child through run_child"
+                )
                 self.assertIn("run_child = DRIVER.run_child", text)
         # Negative: the pattern finds each way a suite could start a child past the helper.
-        for line in ("import subprocess", "subprocess.run(argv)", "os.system('x')",
-                     "os.execv(path, argv)", "os.spawnlp(0, 'sh')"):
+        for line in (
+            "import subprocess",
+            "subprocess.run(argv)",
+            "os.system('x')",
+            "os.execv(path, argv)",
+            "os.spawnlp(0, 'sh')",
+        ):
             self.assertIsNotNone(DIRECT_START.search(line), line)
         self.assertIsNone(DIRECT_START.search("result = run_child(argv, timeout=20)"))
 
@@ -562,12 +852,17 @@ class HookToolchainTable(unittest.TestCase):
         table, before, after = driver.marked_table(page)
         rendered = driver.current_toolchain_table()
         if os.environ.get(UPDATE_TABLE_ENV) == "1":
-            (ROOT / driver.PAGE).write_text(before + rendered + after, encoding="utf-8",
-                                            newline="\n")
+            (ROOT / driver.PAGE).write_text(
+                before + rendered + after, encoding="utf-8", newline="\n"
+            )
             return
-        self.assertEqual(table, rendered, f"{driver.PAGE.as_posix()} differs from the declared "
-                         f"hook toolchain; regenerate it with {UPDATE_TABLE_ENV}=1 "
-                         "python3 -B scripts/test_portability_selftest.py")
+        self.assertEqual(
+            table,
+            rendered,
+            f"{driver.PAGE.as_posix()} differs from the declared "
+            f"hook toolchain; regenerate it with {UPDATE_TABLE_ENV}=1 "
+            "python3 -B scripts/test_portability_selftest.py",
+        )
 
     def test_the_table_names_every_declared_tool_once(self):
         # The page carries exactly this rendering (the case above), and the DeclaredPrograms
@@ -576,48 +871,73 @@ class HookToolchainTable(unittest.TestCase):
         toolchain = driver.hook_toolchain()
         declared = [*toolchain.RESOLVED, *toolchain.BY_NAME, *toolchain.tool_floors()]
         rows = driver.current_toolchain_table().splitlines()[2:]
-        self.assertEqual([re.match(r"\| `([^`]+)` \|", row).group(1) for row in rows], declared)
+        self.assertEqual(
+            [re.match(r"\| `([^`]+)` \|", row).group(1) for row in rows], declared
+        )
         self.assertEqual(len(declared), len(set(declared)))
         self.assertIn("sh", declared)
 
     def test_the_workflow_requires_only_declared_tools_and_every_one_a_hook_needs(self):
         toolchain = driver.hook_toolchain()
-        asserted = driver.asserted_tools((ROOT / driver.WORKFLOW).read_text(encoding="utf-8"))
+        asserted = driver.asserted_tools(
+            (ROOT / driver.WORKFLOW).read_text(encoding="utf-8")
+        )
         declared = [*toolchain.RESOLVED, *toolchain.BY_NAME, *toolchain.tool_floors()]
         self.assertEqual([tool for tool in asserted if tool not in declared], [])
         self.assertEqual(len(asserted), len(set(asserted)))
         # No hook starts without its interpreter, make and the shell that runs every job.
-        self.assertEqual([tool for tool in (*toolchain.RESOLVED, "sh") if tool not in asserted], [])
+        self.assertEqual(
+            [tool for tool in (*toolchain.RESOLVED, "sh") if tool not in asserted], []
+        )
         self.assertNotIn(str(ROOT / driver.HOOK_SCRIPTS), sys.path)
 
     def test_requirements_are_read_from_the_policy_declarations(self):
         class Policy:
-            RESOLVED = {"python": (("python3",), ("py", "-3")), "make": (("make",),)}
+            RESOLVED: ClassVar = {
+                "python": (("python3",), ("py", "-3")),
+                "make": (("make",),),
+            }
             PYTHON_FLOOR = "3.10"
             BY_NAME = ("git",)
 
             @staticmethod
             def tool_floors():
                 return {"shellcheck": "0.11.0", "hadolint": None}
+
         required = driver.declared_requirements(Policy)
-        self.assertEqual(required, {
-            "python": "the first of `python3`, `py -3` on `PATH` that states Python 3.10 or newer",
-            "make": "the first of `make` on `PATH` that states GNU Make",
-            "git": "found on `PATH` under this name",
-            "shellcheck": "version 0.11.0 or newer",
-            "hadolint": "installed; no version floor"})
-        self.assertEqual(list(required), ["python", "make", "git", "shellcheck", "hadolint"])
+        self.assertEqual(
+            required,
+            {
+                "python": "the first of `python3`, `py -3` on `PATH` that states Python 3.10 or newer",
+                "make": "the first of `make` on `PATH` that states GNU Make",
+                "git": "found on `PATH` under this name",
+                "shellcheck": "version 0.11.0 or newer",
+                "hadolint": "installed; no version floor",
+            },
+        )
+        self.assertEqual(
+            list(required), ["python", "make", "git", "shellcheck", "hadolint"]
+        )
         # Every program the real policy resolves has a stated proof.
-        self.assertEqual(sorted(driver.PROOFS), sorted(driver.hook_toolchain().RESOLVED))
+        self.assertEqual(
+            sorted(driver.PROOFS), sorted(driver.hook_toolchain().RESOLVED)
+        )
 
     def test_table_rows_follow_the_requirements_and_the_required_list(self):
-        required = {"python": "states Python 3.10 or newer", "sh": "found on `PATH`",
-                    "hadolint": "installed; no version floor"}
+        required = {
+            "python": "states Python 3.10 or newer",
+            "sh": "found on `PATH`",
+            "hadolint": "installed; no version floor",
+        }
         table = driver.toolchain_table(required, ["python", "sh"])
-        self.assertEqual(table.splitlines()[2:], [
-            "| `python` | states Python 3.10 or newer | asserted on every leg |",
-            "| `sh` | found on `PATH` | asserted on every leg |",
-            "| `hadolint` | installed; no version floor | reported, not asserted |"])
+        self.assertEqual(
+            table.splitlines()[2:],
+            [
+                "| `python` | states Python 3.10 or newer | asserted on every leg |",
+                "| `sh` | found on `PATH` | asserted on every leg |",
+                "| `hadolint` | installed; no version floor | reported, not asserted |",
+            ],
+        )
         # Negative: nothing required, so nothing is claimed as asserted.
         self.assertNotIn("asserted on every leg", driver.toolchain_table(required, []))
         # Boundary: no declaration leaves the header alone.
@@ -626,18 +946,27 @@ class HookToolchainTable(unittest.TestCase):
     def test_the_required_list_is_read_from_one_workflow_line(self):
         step = "        env:\n          REQUIRED: python,make,yamllint\n"
         self.assertEqual(driver.asserted_tools(step), ["python", "make", "yamllint"])
-        for workflow in ("jobs: {}\n", step + step, "REQUIRED: python\n",
-                         "          REQUIRED: python make\n"):
+        for workflow in (
+            "jobs: {}\n",
+            step + step,
+            "REQUIRED: python\n",
+            "          REQUIRED: python make\n",
+        ):
             with self.subTest(workflow=workflow), self.assertRaises(ValueError):
                 driver.asserted_tools(workflow)
 
     def test_a_page_without_the_marked_block_is_refused(self):
-        block = f"intro\n{driver.TABLE_START}\n| a |\n| b |\n{driver.TABLE_END}\noutro\n"
+        block = (
+            f"intro\n{driver.TABLE_START}\n| a |\n| b |\n{driver.TABLE_END}\noutro\n"
+        )
         table, before, after = driver.marked_table(block)
         self.assertEqual(table, "| a |\n| b |")
         self.assertEqual(before + table + after, block)
-        for page in ("no markers\n", f"{driver.TABLE_START}\n| a |\n",
-                     f"| a |\n{driver.TABLE_END}\n"):
+        for page in (
+            "no markers\n",
+            f"{driver.TABLE_START}\n| a |\n",
+            f"| a |\n{driver.TABLE_END}\n",
+        ):
             with self.subTest(page=page), self.assertRaises(ValueError):
                 driver.marked_table(page)
 
@@ -646,11 +975,14 @@ class HookToolchainTable(unittest.TestCase):
 HOOK_LINT_INPUT = ".config/hook-lint/requirements.in"
 HOOK_LINT_LOCK = ".config/hook-lint/requirements.txt"
 ACTIONLINT_FILE = ".github/actionlint.yaml"
-SHELLCHECK_PIN = re.compile(r"^ +SHELLCHECK_VERSION: (\S+)$", re.M)
+SHELLCHECK_PIN = re.compile(r"^ +SHELLCHECK_VERSION: (\S+)$", re.MULTILINE)
 LOCK_PYTHON = re.compile(r"--python-version=(\d+\.\d+)\b")
 # Files that would install a linter in this repository: the workflows and the container.
-INSTALL_SOURCES = (".github/workflows/*.yml", ".devcontainer/devcontainer.json",
-                   ".devcontainer/Dockerfile.praetor")
+INSTALL_SOURCES = (
+    ".github/workflows/*.yml",
+    ".devcontainer/devcontainer.json",
+    ".devcontainer/Dockerfile.praetor",
+)
 
 
 def floor_gap(toolchain, tool, installed, floors):
@@ -675,39 +1007,58 @@ class HookToolFloorSources(unittest.TestCase):
     def test_the_versions_this_repository_installs_meet_the_floors(self):
         toolchain = driver.hook_toolchain()
         floors = toolchain.tool_floors()
-        self.assertEqual(sorted(floors), ["actionlint", "hadolint", "shellcheck", "yamllint"])
+        self.assertEqual(
+            sorted(floors), ["actionlint", "hadolint", "shellcheck", "yamllint"]
+        )
         # The lint lock input is read by the reader the floors file is read by.
-        parsed = [toolchain.requirement(line) for line in self.text(HOOK_LINT_INPUT).splitlines()]
-        pins = {name: version for name, operator, version in filter(None, parsed)
-                if operator == "=="}
+        parsed = [
+            toolchain.requirement(line)
+            for line in self.text(HOOK_LINT_INPUT).splitlines()
+        ]
+        pins = {
+            name: version
+            for name, operator, version in filter(None, parsed)
+            if operator == "=="
+        }
         self.assertEqual(floor_gap(toolchain, "yamllint", pins["yamllint"], floors), "")
         released = SHELLCHECK_PIN.findall(self.text(driver.WORKFLOW))
         self.assertEqual(len(released), 1, released)
         self.assertEqual(floor_gap(toolchain, "shellcheck", released[0], floors), "")
         self.assertIn(f"actionlint v{floors['actionlint']}", self.text(ACTIONLINT_FILE))
         # The interpreter floor is the release the lint lock is compiled for.
-        self.assertEqual(LOCK_PYTHON.findall(self.text(HOOK_LINT_LOCK)), [toolchain.PYTHON_FLOOR])
+        self.assertEqual(
+            LOCK_PYTHON.findall(self.text(HOOK_LINT_LOCK)), [toolchain.PYTHON_FLOOR]
+        )
 
     def test_a_linter_without_a_source_has_no_floor(self):
         # Nothing here installs hadolint or names a version of it, so its line declares no
         # floor. Once a file below does, derive the floor from that file.
         floors = driver.hook_toolchain().tool_floors()
-        self.assertEqual([tool for tool, floor in floors.items() if floor is None], ["hadolint"])
-        named = [path.relative_to(ROOT).as_posix()
-                 for pattern in INSTALL_SOURCES for path in sorted(ROOT.glob(pattern))
-                 if "hadolint" in path.read_text(encoding="utf-8")]
+        self.assertEqual(
+            [tool for tool, floor in floors.items() if floor is None], ["hadolint"]
+        )
+        named = [
+            path.relative_to(ROOT).as_posix()
+            for pattern in INSTALL_SOURCES
+            for path in sorted(ROOT.glob(pattern))
+            if "hadolint" in path.read_text(encoding="utf-8")
+        ]
         self.assertEqual(named, [])
         self.assertGreater(len(list(ROOT.glob(INSTALL_SOURCES[0]))), 3)
 
     def test_floor_gaps_are_named(self):
         toolchain = driver.hook_toolchain()
         floors = {"shellcheck": "0.11.0", "yamllint": "1.38.0", "hadolint": None}
-        cases = (("shellcheck", "0.11.0", ""), ("shellcheck", "v0.11.0", ""),
-                 ("yamllint", "1.39.0", ""),
-                 ("shellcheck", "0.9.0", "below the declared floor 0.11.0"),
-                 ("yamllint", "1.37.9", "below the declared floor 1.38.0"),
-                 ("hadolint", "2.14.0", "has no floor"), ("actionlint", "1.7.12", "has no floor"),
-                 ("shellcheck", "stable", "is not a version"))
+        cases = (
+            ("shellcheck", "0.11.0", ""),
+            ("shellcheck", "v0.11.0", ""),
+            ("yamllint", "1.39.0", ""),
+            ("shellcheck", "0.9.0", "below the declared floor 0.11.0"),
+            ("yamllint", "1.37.9", "below the declared floor 1.38.0"),
+            ("hadolint", "2.14.0", "has no floor"),
+            ("actionlint", "1.7.12", "has no floor"),
+            ("shellcheck", "stable", "is not a version"),
+        )
         for tool, installed, want in cases:
             with self.subTest(tool=tool, installed=installed):
                 gap = floor_gap(toolchain, tool, installed, floors)

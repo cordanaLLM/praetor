@@ -356,8 +356,8 @@ The gate reads the block at run time, so a declaration changes no locked asset.
 `TestDocumentationSettingsMirrorConfig` in `tools/markdownlint/assets_test.go`
 keeps the gate's constants equal to audit's, and `make docs-lint-test` replays
 the settings, raised-bound, style-exclusion, glob-grammar, glob-character,
-lint-entry, lint-output, lint-memory, lint-budget, gate-deadline, `--only`, and
-hermetic-configuration fixtures.
+lint-entry, lint-output, lint-memory, lint-budget, gate-deadline, `--only`,
+`--changed-since`, and hermetic-configuration fixtures.
 
 ### Lint time budget
 
@@ -399,8 +399,21 @@ long it took. Each name is resolved from the current directory and must be a
 file the gate styles; any other name, an excluded or missing file included, is
 refused before linting (`namedStyleFiles`).
 
+`node tools/markdownlint/verify.mjs --changed-since <ref>` filters the bounded
+inventory to the paths `git diff --name-only --diff-filter=d <ref>...HEAD`
+reports as changed since `<ref>`, then runs style selection, the private-link
+rule, and `markdownlint` on that subset alone (`runChangedSince` in
+`tools/markdownlint/verify.mjs`). Its summary line names `--changed-since`,
+`<ref>`, and the changed file counts; when no Markdown file in the inventory
+changed, it prints a pass line (`0 changed Markdown files; pass`) and exits 0.
+When any `tools/markdownlint/*` or `TOOL_FILES` path changed, when
+`.standards.yaml` changed, or when `<ref>` is unknown to Git (such as a shallow
+clone or missing base commit), it states the reason and lints the whole tree
+instead (`changedPathsSince`).
+
 `lintBudgetSelfTest` replays a planted child that sleeps past a 1 s budget and
-passes under a 10 s one, and `onlyModeSelfTest` covers `--only`.
+passes under a 10 s one, `onlyModeSelfTest` covers `--only`, and
+`changedSinceSelfTest` covers `--changed-since`.
 
 ### Gate deadline
 
@@ -881,7 +894,16 @@ bootstrap error.
 
 The dedicated hosted workflow runs for every push to the repository's default
 branch and every pull request that is not a draft, and again when a draft is
-marked ready for review. Adoption renders it for the default branch the branch
+marked ready for review. The job stays unconditioned and the trigger carries no
+`paths` filter, so the required `Documentation Governance` status check reports
+on every pull request. Its `Verify public Markdown` step sets
+`BASE: ${{ github.event.pull_request.base.sha }}` in `env` and runs
+`node tools/markdownlint/verify.mjs ${BASE:+--changed-since "$BASE"}`: pull
+requests lint only the Markdown changed since the base commit (unless a
+documentation gate tool file or `.standards.yaml` changed, or the base commit
+is missing), while pushes to the default branch and `merge_group` runs have an
+empty `BASE` and lint the whole tree (`TestWorkflowChangedSinceBase` in
+`tools/markdownlint/assets_test.go`). Adoption renders it for the default branch the branch
 ruleset protects, and audit locks that rendering; a push to another branch or
 of a tag starts no run. On a draft the job fails by design without checking
 anything, saying the gate runs when the pull request is marked ready, and the
@@ -1121,3 +1143,28 @@ pages. The pull-request gate performs no network requests. Run
 `make docs-lint-test` to replay the valid, drifted, copied-policy, and boundary
 fixtures, including synthetic process and file-status fixtures that need no
 host symlink support.
+
+## Coordinate engine updates
+
+The `renovate-engine-bumps` audit gate requires an existing Renovate configuration to disable
+engine package updates. Adoption adds an owned `packageRules` entry with
+`matchPackageNames`, `enabled: false` and a description identifying coordinated adoption.
+The names derive from the engine module and tool constants: they cover Go module and tool
+pins, GitHub Action references and reusable workflow references. Engine changes therefore
+arrive together with refreshed configuration in one adoption pull request.
+
+The managed-file rule remains separate. An equivalent adopter rule counts only when its
+members are `description`, `matchPackageNames` and `enabled: false`; extra matchers cannot
+prove engine suppression. A later rule that may re-enable updates invalidates an earlier
+engine rule. Adoption reports an unsafe configuration and leaves its bytes intact instead
+of reordering adopter rules. The engine repository itself is exempt by its Go module
+identity, and audit prints `[SKIP]`. A repository without Renovate configuration prints a
+stated `[PASS]` and receives no new configuration.
+
+Discovery and rewrite safety follow the existing `renovate-ignore` rules above. A
+configuration that requires manual editing receives the entries to add. After editing,
+run `praetorctl audit`; `TestRenovateEngineAdoptionReadback` and
+`TestRenovateEngineUnsafeLaterEnable` in `internal/adopt/renovate_engine_test.go` prove the
+write/readback and unsafe paths. See Renovate's
+[`packageRules` documentation](https://docs.renovatebot.com/configuration-options/#packagerules)
+for rule order and matching semantics.

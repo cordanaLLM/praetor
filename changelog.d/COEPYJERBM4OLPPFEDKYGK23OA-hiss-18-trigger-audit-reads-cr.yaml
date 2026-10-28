@@ -1,0 +1,2 @@
+type: fixed
+title: The HISS-18 trigger audit reads a reusable workflow of another repository at its pinned commit instead of reporting the calling job as running on a draft

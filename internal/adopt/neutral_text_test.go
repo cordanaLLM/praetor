@@ -43,7 +43,7 @@ func TestNeutralText_Positive(t *testing.T) {
 	// with what that CI runs, read from the workflow bodies (BUG-804).
 	for _, want := range []string{
 		"Adoption adds no server-side `praetorctl` gate run. Scaffolded CI: ",
-		"`" + DocumentationWorkflowFile + "` runs step `" + ghworkflow.HostedGateDraftStepName + "`, `node tools/markdownlint/verify.mjs`",
+		"`" + DocumentationWorkflowFile + "` runs step `" + ghworkflow.HostedGateDraftStepName + "`, `node tools/markdownlint/verify.mjs ${BASE:+--changed-since \"$BASE\"}`",
 		"`.github/workflows/ci.yml` runs step `" + ghworkflow.HostedGateDraftStepName + "`, step `Check for go.mod`, `go vet ./...`, `go test -race ./...`",
 	} {
 		if !strings.Contains(harness, want) {

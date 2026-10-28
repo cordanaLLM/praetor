@@ -676,7 +676,7 @@ writes any (`TestAdoptionScaffoldTable_MatchesTheStepChain` in
 | `makefile` | `Makefile` with the `verify-all` target |
 | `editors` | `.editorconfig`, `.vscode/`, `.idea/`, `.zed/`, `.helix/`, `.fleet/`, `.nvim.lua`, `lua/`, `.dir-locals.el`, `standards.sublime-project`, `.clang-tidy` where the profile calls for it |
 | `formatter-ignore` | `.prettierignore` entries for managed artifacts, where a formatter is configured |
-| `renovate-ignore` | the managed-file ignore rule in an existing Renovate configuration; none is created |
+| `renovate-ignore` | the managed-file and engine-update suppression rules in an existing Renovate configuration; none is created |
 | `actionlint-labels` | `.github/actionlint.yaml` runner labels |
 | `contributing` | `CONTRIBUTING.md` |
 | `pull-request-template` | `.github/pull_request_template.md` |
@@ -1772,3 +1772,7 @@ Generated locks omit `generated_at`; a lock that sets it still validates. The
 behavior is pinned by `internal/config/lock_test.go`,
 `cmd/standardsctl/lockdigest_test.go`, `cmd/standardsctl/sync_validation_test.go`,
 `internal/adopt/lock_test.go` and `internal/harvester/onboard_safety_test.go`.
+
+The repository audits also enforce [selected agent-context files](guides/agents-and-clients/index.md#keep-tracked-context-within-the-selected-clients),
+[coordinated engine updates](guides/documentation-governance.md#coordinate-engine-updates)
+and [declared Rust compiler minima](guides/rust-flavors.md).
