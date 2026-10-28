@@ -2632,14 +2632,31 @@ adoption writes the harness beside it (`TestAdoptDryRunParity_Boundary_Secondary
 
 ## Shared screen and accessibility matrix
 
-For a `frontend-svelte` repository, declare the shared A11Y-CHECK1 data file in
-`.standards.yaml`, beside the input latency threshold:
+For a `frontend-svelte` repository, declare the shared A11Y-CHECK1 data file and
+measurement evidence in `.standards.yaml`, beside the input latency threshold:
 
 ```yaml
 ui:
   input_latency_ms: 100
+  input_latency_source: "cordanaLLM/Aegis-OS@7828da5640001111222233334444555566667777:benchmarks/latency.json"
   screen_matrix: tests/screen-matrix.json
 ```
+
+`ui.input_latency_source` pins the measurement evidence `<owner>/<repo>@<40-hex commit>:<path>`
+the threshold value comes from. When measurement evidence publication is pending,
+declare a category C exception naming the supplying owner:
+
+```yaml
+exceptions:
+  - rule: "ui-latency-source"
+    category: "C"
+    reason: "threshold schema owner cordanaLLM/Aegis-OS M28, parked until 2026-11-03"
+    expires: "2026-11-03"
+```
+
+The gate enforces category C (a fixed 10-day rectification interval). The reason
+must name the owner who supplies the evidence. An expired exception excuses
+nothing.
 
 Obtain the data file and its consuming Playwright spec from
 `golusoris/sveltesentio`, the shared Svelte UI contract project. Its delivery unit

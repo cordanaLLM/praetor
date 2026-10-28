@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+# SPDX-License-Identifier: EUPL-1.2
+
+type: added
+title: "UI audits require ui.input_latency_source pinning measurement evidence or a live categorized exception naming the owner"
+breaking: true

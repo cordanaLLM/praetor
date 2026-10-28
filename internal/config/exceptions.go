@@ -110,13 +110,17 @@ const ExceptionRulePlatformNeutrality = "HISS-21"
 // ExceptionRuleCodespell is the rule of the codespell exception gate.
 const ExceptionRuleCodespell = "codespell"
 
+// ExceptionRuleUILatencySource is the rule of the UI latency source gate: an entry excuses
+// a missing ui.input_latency_source when a categorized exception names the owner who supplies it.
+const ExceptionRuleUILatencySource = "ui-latency-source"
+
 // exceptionRules lists rules an exceptions entry may name. HISS IDs come from the single HISS
 // registry; the other entries are the non-HISS gates that read this list.
 var exceptionRules = append(hisscatalog.RuleIDs(),
 	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits,
 	ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder, ExceptionRuleDeclaredLinters, ExceptionRuleReleaseToken, ExceptionRuleTestTimeout, ExceptionRuleJobTimeout, ExceptionRuleMutants,
 	ExceptionRuleBacklogCapsDefects, ExceptionRuleBacklogCapsTasks, ExceptionRuleBacklogCapsQuestions, ExceptionRuleBacklogCapsForgeAlerts,
-	ExceptionRuleCodespell, ExceptionRuleGosec,
+	ExceptionRuleCodespell, ExceptionRuleGosec, ExceptionRuleUILatencySource,
 )
 
 // workflowRuleExamples maps each rule whose entries name one workflow file by path to the
@@ -432,6 +436,11 @@ func categorizedExceptionExpiryProblem(e Exception, today time.Time) string {
 	return rules.CategoryExpiryProblem(e.Category, e.Entered, e.Expires, today)
 }
 
+// ExpiryCategory returns the entry's category: Category if non-empty, or the prefix in Reason.
+func (e Exception) ExpiryCategory() string {
+	return e.expiryCategory()
+}
+
 // expiryCategory prefers the field, then a case-insensitive category prefix in the reason.
 func (e Exception) expiryCategory() string {
 	if e.Category != "" {
@@ -491,10 +500,32 @@ func (e Exception) targetProblem() string {
 	if e.Rule == ExceptionRuleSecrets {
 		return e.secretsTargetProblem()
 	}
+	if e.Rule == ExceptionRuleUILatencySource {
+		return e.uiLatencySourceProblem()
+	}
 	if e.Tool != "" {
 		return fmt.Sprintf("rule %s must not set tool", e.Rule)
 	}
 	return e.pathOrGlobTargetProblem()
+}
+
+func (e Exception) uiLatencySourceProblem() string {
+	if e.Rule != ExceptionRuleUILatencySource {
+		return ""
+	}
+	if e.expiryCategory() == "" {
+		return "rule ui-latency-source requires a category"
+	}
+	if e.Glob != "" {
+		return "rule ui-latency-source must not set glob"
+	}
+	if e.Tool != "" {
+		return "rule ui-latency-source must not set tool"
+	}
+	if e.Path != "" && e.Path != ManifestFileName {
+		return fmt.Sprintf("rule ui-latency-source path must be %s when set", ManifestFileName)
+	}
+	return ""
 }
 
 func (e Exception) secretsTargetProblem() string {
