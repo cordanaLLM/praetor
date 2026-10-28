@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -178,7 +179,8 @@ func TestSettingsFailureRepairCommand(t *testing.T) {
 	if err == nil {
 		t.Fatal("digest mismatch accepted")
 	}
-	for _, required := range []string{"workstation install --source", "--fleet-config", fleet.Path, "--workstation-config", workstation.Path} {
+	// The repair command quotes each path with %q, so a Windows path appears with doubled backslashes.
+	for _, required := range []string{"workstation install --source", "--fleet-config", strconv.Quote(fleet.Path), "--workstation-config", strconv.Quote(workstation.Path)} {
 		if !strings.Contains(err.Error(), required) {
 			t.Errorf("missing %q: %v", required, err)
 		}

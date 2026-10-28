@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -64,7 +65,7 @@ func TestHookSettingsUnavailableBlocks(t *testing.T) {
 				}
 				line := string(result.Stdout) + string(result.Stderr)
 				if exit != want || !strings.Contains(line, "[BLOCKED BY HISS] operator settings unavailable:") ||
-					!strings.Contains(line, "workstation install --source") || !strings.Contains(line, fleet) {
+					!strings.Contains(line, "workstation install --source") || !strings.Contains(line, strconv.Quote(fleet)) {
 					t.Fatalf("exit %d want %d: %s", exit, want, line)
 				}
 				t.Logf("exit %d: %s", exit, strings.TrimSpace(line))
