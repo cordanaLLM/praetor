@@ -62,8 +62,9 @@ func TestScaledSyncProbeDeadline_3D(t *testing.T) {
 	}
 }
 
-// Slow status and diff commands exceed the old fixed bound on every platform.
-// SyncState includes snapshot status, both bindings, and its verification readback.
+// A slow unstaged diff (the probe that ran out of time on a loaded macOS runner) exceeds the
+// old fixed bound on every platform. Only that probe is slowed, so the case costs two six-second
+// calls (binding and verification readback) instead of every tree probe.
 func TestStateSyncSlowRunner_3D(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skipf("slow-runner fixture needs the Go toolchain to build git: %v", err)
@@ -80,24 +81,24 @@ func TestStateSyncSlowRunner_3D(t *testing.T) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	start := time.Now()
 	if _, err := SyncState(t.Context(), root, "slow runner"); err != nil {
-		t.Fatalf("10,052 entries with six-second Git tree probes failed to sync: %v", err)
+		t.Fatalf("10,052 entries with a six-second unstaged diff failed to sync: %v", err)
 	}
 	t.Logf("slow-runner sync and readback: %s", time.Since(start))
 	t.Run("earlier caller deadline", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 		defer cancel()
-		_, err := runSyncProbe(ctx, root, stateGitProbes("available")[2], 10_052)
+		_, err := runSyncProbe(ctx, root, stateGitProbes("available")[4], 10_052)
 		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("slow status ignored caller deadline: %v", err)
+			t.Fatalf("slow unstaged diff ignored caller deadline: %v", err)
 		}
-		requireErrorContains(t, err, "status", "10052 index entries", "bound")
+		requireErrorContains(t, err, "unstaged diff", "10052 index entries", "bound")
 	})
 	t.Run("small index retains fixed bound", func(t *testing.T) {
-		_, err := runSyncProbe(t.Context(), root, stateGitProbes("available")[2], 0)
+		_, err := runSyncProbe(t.Context(), root, stateGitProbes("available")[4], 0)
 		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("slow status at zero entries: %v; want deadline", err)
+			t.Fatalf("slow unstaged diff at zero entries: %v; want deadline", err)
 		}
-		requireErrorContains(t, err, "status", "0 index entries", "bound 5s")
+		requireErrorContains(t, err, "unstaged diff", "0 index entries", "bound 5s")
 	})
 }
 
@@ -112,11 +113,13 @@ import (
 	"time"
 )
 func main() {
+	diff, cached := false, false
 	for i := 1; i < len(os.Args); i++ {
-		if os.Args[i] == "status" || os.Args[i] == "diff" {
-			time.Sleep(6 * time.Second)
-			break
-		}
+		diff = diff || os.Args[i] == "diff"
+		cached = cached || os.Args[i] == "--cached"
+	}
+	if diff && !cached {
+		time.Sleep(6 * time.Second)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
