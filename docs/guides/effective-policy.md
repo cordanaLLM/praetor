@@ -326,6 +326,7 @@ Every string passes the literal rule shared with the MCP registry
 | `clients.selected.<id>.permissions.allow` | `[]` | at most 32 literals of up to 512 bytes, merged across layers |
 | `hooks.scope` | `governed` | `governed` guards repositories that carry `.standards.yaml`; `all` guards every workspace |
 | `hooks.command_policy.deny` | `[]` | at most 64 RE2 patterns of up to 512 bytes, compiled at load |
+| `hooks.merge.helper` | empty (off) | a command name or path consisting of one unquoted shell word without spaces; later layers replace it, including with empty to disable; refuses direct `gh pr merge` and names the helper |
 | `hooks.admission.enforce` | `false` | boolean; `true` refuses heavy commands outside `praetorctl admit` ([heavy-step admission](agent-hooks.md#heavy-step-admission)) |
 | `hooks.admission.scope_form` | `false` | boolean; `true` also accepts `systemd-run --user --scope` with `MemoryHigh=` and `--expand-environment=no` when host memory and swap readings pass |
 | `hooks.admission.max_jobs_divisor` | `3` (when `enforce: true`) | integer `>= 1`; caps `-j` / `--jobs` on heavy commands at `floor(cores / divisor)` |
@@ -341,6 +342,17 @@ Every string passes the literal rule shared with the MCP registry
 | `update.require_signed` | `true` | boolean |
 | `update.allowed_signers` | empty | clean path, relative to the file that sets it, or absolute |
 | `update.receipt_public_key` | empty | 64 lowercase hex characters (Ed25519) |
+
+Set `hooks.merge.helper: /abs/squash_merge.sh` to require the operator's helper for
+pull request merges. The policy refuses direct `gh pr merge`, including after a
+chained command or GitHub CLI global options, and the refusal names the helper.
+Like the built-in merge rules, it scans quoted mentions too. A line beginning
+with the helper's command name or a path with the same basename is exempt from
+this additional rule; other deny rules still apply. For example,
+`squash_merge.sh 12 <sha>` and `bash /abs/squash_merge.sh 12 <sha>` remain allowed.
+The helper owns head matching and merge checks; configuring its name does not
+inspect its implementation. Tests: `internal/agenthook/merge_helper_test.go` and
+`internal/config/operator_merge_helper_test.go`.
 
 The engine ships no deny pattern and manages no client's grant list. Both are
 operator decisions: organisation names belong in `hooks.command_policy.deny`, and

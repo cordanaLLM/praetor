@@ -18,6 +18,21 @@ type denyRule struct {
 	prefix         string
 	readOnlyExempt bool
 	requiredAny    []string
+	exemptFirst    *regexp.Regexp
+}
+
+// matches applies an optional first-command exemption to each matched line independently.
+// A helper invocation on one line cannot exempt a direct merge on a later line.
+func (r denyRule) matches(command string) bool {
+	if r.exemptFirst == nil {
+		return r.pattern.MatchString(command)
+	}
+	for _, match := range r.pattern.FindAllString(command, len(command)) {
+		if !r.exemptFirst.MatchString(match) {
+			return true
+		}
+	}
+	return false
 }
 
 // pythonSpace is what `\s` matches in Python's `re` on text. RE2's `\s` is ASCII only and
@@ -186,8 +201,10 @@ func lineThroughFirstWord(words ...string) string {
 //     api.github.com .../pulls/<n>/merge URL are refused so agent sessions cannot use the
 //     operator's ruleset bypass. Each rule is anchored via lineThroughFirstWord and keeps at
 //     most two gap expressions per line for linear/quadratic execution. Plain gh pr merge
-//     without --admin, gh api pulls/<n> reads, and mentions that omit the refusal triggers stay
-//     allowed.
+//     without --admin stays allowed unless hooks.merge.helper opts in to the merge-helper
+//     rule (BuildPolicy). That rule names the helper and exempts lines whose first command
+//     matches its basename. gh api pulls/<n> reads and mentions that omit the refusal
+//     triggers stay allowed.
 //
 // The short skip flag rule and the skip variable rule judge the command without the words of
 // chained read-only commands (readOnlyExemptRules); every other rule judges the whole command.
@@ -379,7 +396,7 @@ func (p *Policy) Command(command string) Verdict {
 		if rule.readOnlyExempt {
 			text = judged
 		}
-		if containsRequiredLiteral(text, rule.requiredAny) && rule.pattern.MatchString(text) {
+		if containsRequiredLiteral(text, rule.requiredAny) && rule.matches(text) {
 			return Verdict{Outcome: Deny, Reason: boundReason(rule.prefix + rule.source)}
 		}
 	}
