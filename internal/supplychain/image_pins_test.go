@@ -331,7 +331,7 @@ func TestScanImageRefsReadBoundaries(t *testing.T) {
 		t.Fatalf("grow big/Dockerfile: %v", err)
 	}
 	_, err := ScanImageRefs(t.Context(), root)
-	if err == nil || !strings.Contains(err.Error(), "big/Dockerfile") {
+	if err == nil || !strings.Contains(err.Error(), filepath.Join("big", "Dockerfile")) {
 		t.Fatalf("oversized tracked file: got error %v, want one naming big/Dockerfile", err)
 	}
 	if err := os.Remove(filepath.Join(root, "big", "Dockerfile")); err != nil {
