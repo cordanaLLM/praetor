@@ -26,6 +26,8 @@ clang_tidy:
 exceptions:
   - rule: "clang-tidy-coverage"
     path: "src/win32/getopt.c"
+    category: "D"
+    entered: "2026-10-29"
     reason: "Windows-only unit; no lane configures a Windows build yet"
     expires: "2026-12-31"
 ```
@@ -125,8 +127,8 @@ its file and function is stale and fails the audit (`applyHISSExceptions` in
 | `lines` | Optional for `HISS-19` only: `"START-END"`, positive 1-based inclusive bounds on a clone location's start line. Malformed or reversed ranges are refused. When both `fingerprint` and `lines` are present, both must match. Omit both to retain whole-path dedupe matching; an entry matching no scoped location stays stale. |
 | `tool` | Only and always for `declared-linters` and backlog cap rules: the linter or `backlog` target the entry excuses. Neither sets `path` or `glob`, and no other rule takes `tool` (`config.ValidateExceptions`). |
 | `reason` | One line, at most 1024 bytes. |
-| `expires` | An explicit `YYYY-MM-DD` date. A states its own expiry within the 90-day bound that entries without a category keep; B, C and D allow at most 3, 10 and 120 days. The entry holds through its expiry day. |
-| `category` | The explicit field takes precedence. If omitted, a reason beginning with `category A`, `category B`, `category C` or `category D` supplies the category, case-insensitively. Otherwise the 90-day cap remains. The `mutants`, `codespell` and `ui-latency-source` rules require a category. |
+| `expires` | An explicit `YYYY-MM-DD` date within the category's rectification interval: `B` allows at most 3 days, `C` 10 days, `D` 120 days, and `A` its stated interval up to 90 days (`rules.CategoryDays` in `tools/secrets/rules/rules.go`). Legacy uncategorised entries keep the 90-day bound. The entry holds through its expiry day. |
+| `category` | Rectification category (`A` stated interval up to 90 days, `B` 3 days, `C` 10 days, `D` 120 days). Set `category` explicitly or begin `reason` with `category A`, `category B`, `category C` or `category D` (case-insensitively; the explicit field takes precedence, `Exception.expiryCategory` in `internal/config/exceptions.go`). Every exception with `entered` on or after `2026-10-29` (`rules.CategoryRequiredFrom`, re-exported as `config.CategoryRequiredFrom`), or with `entered` omitted and `expires` after `2026-11-28` (`rules.UncategorizedGraceUntil`, re-exported as `config.UncategorizedGraceUntil`, the D-free grace window so existing short-lived entries run out), must carry a category (`rules.CategoryExpiryProblem`, `TestCategoryExpiryCaps` in `tools/secrets/rules/expiry_test.go`, `TestValidateExceptionsCategoryCaps` in `internal/config/exceptions_expiry_test.go`). Existing uncategorised entries entered before `2026-10-29`, or without `entered` expiring on or before `2026-11-28`, keep the 90-day cap until they expire or are renewed. The `codespell` and `ui-latency-source` rules always require a category (`TestValidateExceptionsCodespell`, `TestException_UILatencySource`), while `mutants` keeps its existing handling (`uncategorizedExceptionExpiryProblem` in `internal/config/exceptions.go`, `TestValidateExceptionsCategories`). |
 | `entered` | Optional `YYYY-MM-DD` date anchoring the expiry cap. When omitted, the cap is measured from today. The maximum expiry is `entered` (or today) plus the applicable interval; an earlier expiry is allowed. |
 
 The `mutants` rule names one tracked mutation-tool configuration by `path`, such as

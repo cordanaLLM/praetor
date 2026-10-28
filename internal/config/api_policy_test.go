@@ -81,7 +81,7 @@ func TestAPIPolicy_Negative_InvalidPackagesFail(t *testing.T) {
 func TestExceptions_APICompatibilityRuleNamesAModule(t *testing.T) {
 	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
 	entry := func(path, glob, reason, expires string) []Exception {
-		return []Exception{{Rule: ExceptionRuleAPICompatibility, Path: path, Glob: glob, Reason: reason, Expires: expires}}
+		return []Exception{{Rule: ExceptionRuleAPICompatibility, Path: path, Glob: glob, Entered: "2026-10-08", Reason: reason, Expires: expires}}
 	}
 	for _, valid := range [][]Exception{
 		entry("go.mod", "", "needs libudev.h", "2026-12-01"),
