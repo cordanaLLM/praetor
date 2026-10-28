@@ -62,7 +62,8 @@ RESOLVED = {"python": PYTHON_CANDIDATES, "make": MAKE_CANDIDATES}
 # starts every job of praetor.yml and the pre-push script. run (common.py) refuses the hook
 # with the program named when one is missing. The DeclaredPrograms cases of test_hooks.py
 # hold this list to what those files start, so a new program cannot land undeclared (#341).
-BY_NAME = ("git", "go", "gofmt", "gosec", "govulncheck", "lefthook", "semgrep", "sh")
+# Order: engine-prepush-trivy-tool-modules-20261027.
+BY_NAME = ("git", "go", "gofmt", "gosec", "govulncheck", "lefthook", "semgrep", "sh", "trivy")
 # What a rejected candidate printed is quoted in one bounded line of the refusal.
 MAX_REASON = 240
 
