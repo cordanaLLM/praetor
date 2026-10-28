@@ -108,6 +108,8 @@ var operatorSpecs = map[string]settingSpec{
 	"hooks.admission.scope_form":            {kind: kindBool},
 	"hooks.admission.max_jobs_divisor":      {kind: kindInt, check: intAtLeast(1)},
 	"hooks.admission.commands":              {kind: kindList, rule: ruleAppend, maxItems: MaxAdmissionCommands, check: admissionList},
+	"hooks.worktrees":                       {kind: kindMapping},
+	"hooks.worktrees.enforce":               {kind: kindBool, rule: ruleTighten, strict: "true"},
 	"hooks.python":                          {kind: kindArgv, check: pythonCandidates},
 	"hooks.merge":                           {kind: kindMapping},
 	"hooks.merge.helper":                    {check: matching(mergeHelperPattern, "empty or a single shell word without spaces, at most 256 characters")},

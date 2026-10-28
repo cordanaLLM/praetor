@@ -171,7 +171,7 @@ func dispatch(ctx context.Context, row Registration, canonical Canonical, root s
 		if row.Event == EventStop {
 			return evaluateStopQuestion(row, canonical)
 		}
-		return evaluateCommand(canonical, in)
+		return evaluateCommand(ctx, canonical, in)
 	}
 	switch row.Event {
 	case EventPreEdit:
@@ -181,15 +181,15 @@ func dispatch(ctx context.Context, row Registration, canonical Canonical, root s
 	case EventStop:
 		return evaluateStop(ctx, row, root, canonical, in)
 	default:
-		return evaluateCommand(canonical, in)
+		return evaluateCommand(ctx, canonical, in)
 	}
 }
 
-func evaluateCommand(canonical Canonical, in Invocation) Verdict {
+func evaluateCommand(ctx context.Context, canonical Canonical, in Invocation) Verdict {
 	if canonical.Command == "" {
 		return Verdict{Outcome: Allow}
 	}
-	return in.Policy.Command(canonical.Command)
+	return in.Policy.CommandIn(ctx, canonical.Command, commandBase(canonical, in.WorkDir))
 }
 
 // noInterpreterVerdict differs per event (3.3): pre-edit and stop fail closed (deny; stop's
