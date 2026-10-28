@@ -25,7 +25,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 func TestRepositoryPinsOneDigestPerImageTag(t *testing.T) {
@@ -150,9 +150,8 @@ func fixtureRepo(t *testing.T, files map[string]string) string {
 			t.Fatalf("write %s: %v", rel, err)
 		}
 	}
-	if _, err := util.RunGitProbe(t.Context(), root, maxScopeBytes, "init", "-q"); err != nil {
-		t.Fatalf("git init the fixture repository: %v", err)
-	}
+	// engine-agenthook-windows-flake-20261028: fixtures init git under fixture bound, not probe bound.
+	testsupport.RunFixtureGit(t, root, []string{"init", "-q"})
 	return root
 }
 
@@ -305,5 +304,36 @@ func TestCollectImageRefFindingsSurfaces_3D(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Boundaries of the file read (HISS-02, HISS-21): a tracked file deleted from the working tree is
+// skipped, and a tracked file above maxImageRefFileBytes fails the scan with its name instead of
+// being read in full or skipped.
+func TestScanImageRefsReadBoundaries(t *testing.T) {
+	root := fixtureRepo(t, map[string]string{
+		"Dockerfile":     "FROM docker.io/library/alpine:3.20\n",
+		"big/Dockerfile": "FROM docker.io/library/alpine:3.20\n",
+	})
+	testsupport.RunFixtureGit(t, root, []string{"add", "-A"})
+	if err := os.Remove(filepath.Join(root, "Dockerfile")); err != nil {
+		t.Fatalf("remove tracked Dockerfile: %v", err)
+	}
+	if err := os.Truncate(filepath.Join(root, "big", "Dockerfile"), maxImageRefFileBytes+1); err != nil {
+		t.Fatalf("grow big/Dockerfile: %v", err)
+	}
+	_, err := ScanImageRefs(t.Context(), root)
+	if err == nil || !strings.Contains(err.Error(), "big/Dockerfile") {
+		t.Fatalf("oversized tracked file: got error %v, want one naming big/Dockerfile", err)
+	}
+	if err := os.Remove(filepath.Join(root, "big", "Dockerfile")); err != nil {
+		t.Fatalf("remove big/Dockerfile: %v", err)
+	}
+	findings, err := ScanImageRefs(t.Context(), root)
+	if err != nil {
+		t.Fatalf("tracked files deleted from the working tree: %v", err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("deleted files produced findings: %+v", findings)
 	}
 }
