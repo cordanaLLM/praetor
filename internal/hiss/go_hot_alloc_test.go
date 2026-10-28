@@ -64,6 +64,15 @@ func hotAllocPositiveCases() []hotAllocTestCase {
 			wantSub:   "has no testing.AllocsPerRun test asserting zero allocations",
 		},
 		{
+			name: "positive: zero comparison whose body only logs",
+			sources: map[string]string{
+				"hot.go":      "package p\n\n//hiss:hot rendering frame\nfunc Frame() {}\n",
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestFrame(t *testing.T) {\n\tif allocs := testing.AllocsPerRun(100, func() { Frame() }); allocs != 0 {\n\t\tt.Logf(\"allocs %v\", allocs)\n\t}\n}\n",
+			},
+			wantCount: 1,
+			wantSub:   "has no testing.AllocsPerRun test asserting zero allocations",
+		},
+		{
 			name: "positive: marker without reason",
 			sources: map[string]string{
 				"hot.go": "package p\n\n//hiss:hot\nfunc Step() {}\n",
