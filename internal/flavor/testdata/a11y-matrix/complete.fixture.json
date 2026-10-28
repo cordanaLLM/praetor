@@ -1,0 +1,125 @@
+{
+  "$comment": "SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>; SPDX-License-Identifier: EUPL-1.2. Test fixture only; sveltesentio-a11y-matrix-check-20261028 owns the published contract.",
+  "classes": [
+    {
+      "name": "phone",
+      "width": 390,
+      "height": 844,
+      "dpr": 1
+    },
+    {
+      "name": "phone",
+      "width": 390,
+      "height": 844,
+      "dpr": 2
+    },
+    {
+      "name": "tablet",
+      "width": 768,
+      "height": 1024,
+      "dpr": 1
+    },
+    {
+      "name": "tablet",
+      "width": 768,
+      "height": 1024,
+      "dpr": 2
+    },
+    {
+      "name": "laptop-1366",
+      "width": 1366,
+      "height": 768,
+      "dpr": 1
+    },
+    {
+      "name": "laptop-1366",
+      "width": 1366,
+      "height": 768,
+      "dpr": 2
+    },
+    {
+      "name": "laptop-1440",
+      "width": 1440,
+      "height": 900,
+      "dpr": 1
+    },
+    {
+      "name": "laptop-1440",
+      "width": 1440,
+      "height": 900,
+      "dpr": 2
+    },
+    {
+      "name": "desktop-1920",
+      "width": 1920,
+      "height": 1080,
+      "dpr": 1
+    },
+    {
+      "name": "desktop-1920",
+      "width": 1920,
+      "height": 1080,
+      "dpr": 2
+    },
+    {
+      "name": "qhd-2560",
+      "width": 2560,
+      "height": 1440,
+      "dpr": 1
+    },
+    {
+      "name": "qhd-2560",
+      "width": 2560,
+      "height": 1440,
+      "dpr": 2
+    },
+    {
+      "name": "4k-3840",
+      "width": 3840,
+      "height": 2160,
+      "dpr": 1
+    },
+    {
+      "name": "4k-3840",
+      "width": 3840,
+      "height": 2160,
+      "dpr": 2
+    },
+    {
+      "name": "ultrawide-3440",
+      "width": 3440,
+      "height": 1440,
+      "dpr": 1
+    },
+    {
+      "name": "ultrawide-3440",
+      "width": 3440,
+      "height": 1440,
+      "dpr": 2
+    },
+    {
+      "name": "ultrawide-5120",
+      "width": 5120,
+      "height": 1440,
+      "dpr": 1
+    },
+    {
+      "name": "ultrawide-5120",
+      "width": 5120,
+      "height": 1440,
+      "dpr": 2
+    }
+  ],
+  "class_source": {
+    "source": "A11Y-CHECK1 contract floor fixture, sveltesentio-a11y-matrix-check-20261028",
+    "date": "2026-10-28"
+  },
+  "checks": {
+    "reflow": 320,
+    "zoom": [
+      200,
+      400
+    ],
+    "text_spacing": true
+  }
+}

@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+# SPDX-License-Identifier: EUPL-1.2
+
+type: added
+title: "UI audits require a declared screen matrix file and a consuming Playwright spec in ui-gates; schema validation states pending until the A11Y-CHECK1 schema is pinned"
+breaking: true

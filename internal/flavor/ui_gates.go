@@ -149,10 +149,14 @@ func AuditUIGates(repoPath string, manifest *config.Manifest) (string, error) {
 	if gap := checkUIMakefileGap(repoPath); gap != "" {
 		gaps = append(gaps, gap)
 	}
-	if len(gaps) > 0 {
-		return "", fmt.Errorf("[FAIL] UI gates: %s", strings.Join(gaps, "; "))
+	matrixLine, matrixErr := auditUIScreenMatrix(repoPath, manifest, screenMatrixSchemaPin)
+	if matrixErr != nil {
+		gaps = append(gaps, matrixErr.Error())
 	}
-	return fmt.Sprintf(
+	if len(gaps) > 0 {
+		return matrixLine, fmt.Errorf("[FAIL] UI gates: %s", strings.Join(gaps, "; "))
+	}
+	return matrixLine + "\n" + fmt.Sprintf(
 		"[PASS] UI gates: %s and %s verified (ui.input_latency_ms=%d, routes=%d).",
 		UIA11ySpecPath, UIResponsivenessSpecPath, manifest.UI.InputLatencyMs, len(manifest.UIRoutes()),
 	), nil

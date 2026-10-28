@@ -43,7 +43,7 @@ func writeUIGateRepoFixture(t *testing.T, withSpecs bool) string {
 	if err != nil {
 		t.Fatalf("render a11y spec: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, flavor.UIA11ySpecPath), []byte(a11y), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, flavor.UIA11ySpecPath), []byte(a11y+"\nimport matrix from '../matrix.json';\n"), 0o600); err != nil {
 		t.Fatalf("write a11y spec: %v", err)
 	}
 	resp, err := templates.RenderFile(flavor.UIResponsivenessSpecTemplate, ctx)
@@ -69,7 +69,10 @@ func TestAuditUIGates_MissingSpecsFails(t *testing.T) {
 
 func TestAuditUIGates_RenderedSpecsAndThresholdPasses(t *testing.T) {
 	dir := writeUIGateRepoFixture(t, true)
-	m := &config.Manifest{UI: &config.UIPolicy{InputLatencyMs: 100, Routes: []string{"/", "/settings"}}}
+	if err := os.WriteFile(filepath.Join(dir, "matrix.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := &config.Manifest{UI: &config.UIPolicy{InputLatencyMs: 100, Routes: []string{"/", "/settings"}, ScreenMatrix: "matrix.json"}}
 	out, err := captureStdout(t, func() error {
 		return auditUIGates(dir, m)
 	})
@@ -167,5 +170,23 @@ func TestUIEnvCommand_PositiveAndNegative(t *testing.T) {
 		return runUI([]string{"env", "--config", manifestPath})
 	}); err == nil || !strings.Contains(err.Error(), "ui.input_latency_ms") {
 		t.Fatalf("runUI(missing ui) error = %v, want substring ui.input_latency_ms", err)
+	}
+}
+
+func TestAuditUIGatesScreenMatrixPendingOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		"svelte.config.js": "export default {};\n", "package.json": `{"name":"ui"}`,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := captureStdout(t, func() error { return auditUIGates(dir, &config.Manifest{}) })
+	if err == nil || !strings.Contains(err.Error(), "ui.screen_matrix") {
+		t.Fatalf("missing matrix must fail: %v", err)
+	}
+	if !strings.Contains(out, "schema validation pending A11Y-CHECK1 pin (sveltesentio-a11y-matrix-check-20261028)") {
+		t.Fatalf("CLI did not print pending schema status: %q", out)
 	}
 }

@@ -13,9 +13,11 @@ import (
 // auditUIGates runs the ui-gates audit check on rootDir (order engine-fr-rule-checks-20261027).
 func auditUIGates(rootDir string, manifest *config.Manifest) error {
 	line, err := flavor.AuditUIGates(rootDir, manifest)
+	if line != "" {
+		fmt.Println(line)
+	}
 	if err != nil {
 		return err
 	}
-	fmt.Println(line)
 	return nil
 }

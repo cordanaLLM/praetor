@@ -1,0 +1,547 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>; SPDX-License-Identifier: EUPL-1.2. Test fixture only; sveltesentio-a11y-matrix-check-20261028 owns the published contract.",
+  "type": "object",
+  "required": [
+    "classes",
+    "class_source",
+    "checks"
+  ],
+  "properties": {
+    "classes": {
+      "type": "array",
+      "minItems": 18,
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "width",
+          "height",
+          "dpr"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "dpr": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "allOf": [
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name",
+              "width",
+              "height",
+              "dpr"
+            ],
+            "properties": {
+              "name": {
+                "const": "phone"
+              },
+              "width": {
+                "const": 390
+              },
+              "height": {
+                "const": 844
+              },
+              "dpr": {
+                "const": 1
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name",
+              "width",
+              "height",
+              "dpr"
+            ],
+            "properties": {
+              "name": {
+                "const": "phone"
+              },
+              "width": {
+                "const": 390
+              },
+              "height": {
+                "const": 844
+              },
+              "dpr": {
+                "const": 2
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name",
+              "width",
+              "height",
+              "dpr"
+            ],
+            "properties": {
+              "name": {
+                "const": "tablet"
+              },
+              "width": {
+                "const": 768
+              },
+              "height": {
+                "const": 1024
+              },
+              "dpr": {
+                "const": 1
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name",
+              "width",
+              "height",
+              "dpr"
+            ],
+            "properties": {
+              "name": {
+                "const": "tablet"
+              },
+              "width": {
+                "const": 768
+              },
+              "height": {
+                "const": 1024
+              },
+              "dpr": {
+                "const": 2
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name",
+              "width",
+              "height",
+              "dpr"
+            ],
+            "properties": {
+              "name": {
+                "const": "laptop-1366"
+              },
+              "width": {
+                "const": 1366
+              },
+              "height": {
+                "const": 768
+              },
+              "dpr": {
+                "const": 1
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name",
+              "width",
+              "height",
+              "dpr"
+            ],
+            "properties": {
+              "name": {
+                "const": "laptop-1366"
+              },
+              "width": {
+                "const": 1366
+              },
+              "height": {
+                "const": 768
+              },
+              "dpr": {
+                "const": 2
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name",
+              "width",
+              "height",
+              "dpr"
+            ],
+            "properties": {
+              "name": {
+                "const": "laptop-1440"
+              },
+              "width": {
+                "const": 1440
+              },
+              "height": {
+                "const": 900
+              },
+              "dpr": {
+                "const": 1
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name",
+              "width",
+              "height",
+              "dpr"
+            ],
+            "properties": {
+              "name": {
+                "const": "laptop-1440"
+              },
+              "width": {
+                "const": 1440
+              },
+              "height": {
+                "const": 900
+              },
+              "dpr": {
+                "const": 2
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name",
+              "width",
+              "height",
+              "dpr"
+            ],
+            "properties": {
+              "name": {
+                "const": "desktop-1920"
+              },
+              "width": {
+                "const": 1920
+              },
+              "height": {
+                "const": 1080
+              },
+              "dpr": {
+                "const": 1
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name",
+              "width",
+              "height",
+              "dpr"
+            ],
+            "properties": {
+              "name": {
+                "const": "desktop-1920"
+              },
+              "width": {
+                "const": 1920
+              },
+              "height": {
+                "const": 1080
+              },
+              "dpr": {
+                "const": 2
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name",
+              "width",
+              "height",
+              "dpr"
+            ],
+            "properties": {
+              "name": {
+                "const": "qhd-2560"
+              },
+              "width": {
+                "const": 2560
+              },
+              "height": {
+                "const": 1440
+              },
+              "dpr": {
+                "const": 1
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name",
+              "width",
+              "height",
+              "dpr"
+            ],
+            "properties": {
+              "name": {
+                "const": "qhd-2560"
+              },
+              "width": {
+                "const": 2560
+              },
+              "height": {
+                "const": 1440
+              },
+              "dpr": {
+                "const": 2
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name",
+              "width",
+              "height",
+              "dpr"
+            ],
+            "properties": {
+              "name": {
+                "const": "4k-3840"
+              },
+              "width": {
+                "const": 3840
+              },
+              "height": {
+                "const": 2160
+              },
+              "dpr": {
+                "const": 1
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name",
+              "width",
+              "height",
+              "dpr"
+            ],
+            "properties": {
+              "name": {
+                "const": "4k-3840"
+              },
+              "width": {
+                "const": 3840
+              },
+              "height": {
+                "const": 2160
+              },
+              "dpr": {
+                "const": 2
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name",
+              "width",
+              "height",
+              "dpr"
+            ],
+            "properties": {
+              "name": {
+                "const": "ultrawide-3440"
+              },
+              "width": {
+                "const": 3440
+              },
+              "height": {
+                "const": 1440
+              },
+              "dpr": {
+                "const": 1
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name",
+              "width",
+              "height",
+              "dpr"
+            ],
+            "properties": {
+              "name": {
+                "const": "ultrawide-3440"
+              },
+              "width": {
+                "const": 3440
+              },
+              "height": {
+                "const": 1440
+              },
+              "dpr": {
+                "const": 2
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name",
+              "width",
+              "height",
+              "dpr"
+            ],
+            "properties": {
+              "name": {
+                "const": "ultrawide-5120"
+              },
+              "width": {
+                "const": 5120
+              },
+              "height": {
+                "const": 1440
+              },
+              "dpr": {
+                "const": 1
+              }
+            }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": [
+              "name",
+              "width",
+              "height",
+              "dpr"
+            ],
+            "properties": {
+              "name": {
+                "const": "ultrawide-5120"
+              },
+              "width": {
+                "const": 5120
+              },
+              "height": {
+                "const": 1440
+              },
+              "dpr": {
+                "const": 2
+              }
+            }
+          }
+        }
+      ]
+    },
+    "class_source": {
+      "type": "object",
+      "required": [
+        "source",
+        "date"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "date": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        }
+      }
+    },
+    "checks": {
+      "type": "object",
+      "required": [
+        "reflow",
+        "zoom",
+        "text_spacing"
+      ],
+      "properties": {
+        "reflow": {
+          "const": 320
+        },
+        "zoom": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "allOf": [
+            {
+              "contains": {
+                "const": 200
+              }
+            },
+            {
+              "contains": {
+                "const": 400
+              }
+            }
+          ]
+        },
+        "text_spacing": {
+          "const": true
+        }
+      }
+    }
+  }
+}
