@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -665,7 +666,7 @@ func TestRunDedupeScan_Planted_MissingBinaryFailsClosed(t *testing.T) {
 	if report.Passed {
 		t.Fatal("expected report.Passed=false on missing foreign binary, got true")
 	}
-	if !strings.Contains(report.ForeignSkipped, missingBin) {
+	if !strings.Contains(report.ForeignSkipped, strconv.Quote(missingBin)) {
 		t.Fatalf("ForeignSkipped = %q, want it to name binary path %q", report.ForeignSkipped, missingBin)
 	}
 }
