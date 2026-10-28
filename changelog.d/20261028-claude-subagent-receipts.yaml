@@ -1,0 +1,2 @@
+type: added
+title: Record labeled background Claude subagent outcomes at SubagentStop with model, effort, verdict, whole-run tokens and duration in the resolved state folder
