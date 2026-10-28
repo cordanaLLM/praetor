@@ -833,6 +833,13 @@ it with `praetorctl gate run` on the current release. `TestVerifyPinnedReceiptFi
 `TestDisposition_VerifyReceipt_V1Refused` sign a real v1 receipt and require each verifier to
 refuse it.
 
+A missing mandatory Go scanner fails the gate with its name and restore guidance. When
+`tools/go/go.mod` exists, `ScannerInstallGuide` (`internal/flavor/security_go.go`) names that
+module's pinned install command; otherwise it retains the scanner's installation hint.
+`TestRequireScannerRestore_3D` (`internal/gating/gating_test.go`) covers the refusal, and
+`internal/flavor/scanner_install_test.go` covers the pinned guidance. For hook linters without
+Go module pins, see [linter version floors](git-hooks.md#linter-version-floors).
+
 A skipped or not-applicable stage names its reason and does not fail the repository:
 
 - The prefetch, security and race-detector stages -- the toolchain stages -- are **not

@@ -8,12 +8,12 @@ must be usable and the run fails when one is not.
 """
 
 import argparse
-from pathlib import Path
 import re
 import shutil
 import sys
+from pathlib import Path
 
-from common import HookError, clean_env, run
+from common import HookError, clean_env, missing_tool_line, run
 
 # The one place the linters and their floors are declared, beside the policy that enforces
 # them (#343).
@@ -34,7 +34,7 @@ VERSION_TIMEOUT = 30
 # "(devel)" and then "built with go1.26.4 ...", and the Go version must not pass as its own.
 VERSION_OUTPUT = {
     "actionlint": re.compile(r"\Av?(\d+(?:\.\d+)+)\s"),
-    "shellcheck": re.compile(r"^version: (\d+(?:\.\d+)+)\s*$", re.M),
+    "shellcheck": re.compile(r"^version: (\d+(?:\.\d+)+)\s*$", re.MULTILINE),
     "yamllint": re.compile(r"\Ayamllint (\d+(?:\.\d+)+)"),
 }
 # The two programs the policy resolves instead of starting by a name a command spells (#339,
@@ -175,16 +175,28 @@ def checked_version(tool, floors, which=shutil.which):
     floor = floors[tool]
     if floor is None:
         if which(tool) is None:
-            raise HookError(f"{tool} is required ({FLOORS_NAME}, any version): "
-                            f"it is not on PATH")
+            raise HookError(
+                missing_tool_line(
+                    tool,
+                    reason=(
+                        f"{tool} is required ({FLOORS_NAME}, any version): it is not on PATH"
+                    ),
+                )
+            )
         return None
     required = f"{tool} >= {floor} is required ({FLOORS_NAME})"
     try:
         version = installed_version(tool)
     except HookError as error:
-        raise HookError(f"{required}: {error}") from error
+        raise HookError(
+            missing_tool_line(tool, floor=floor, reason=f"{required}: {error}")
+        ) from error
     if below(version, floor):
-        raise HookError(f"{required}: the {tool} on PATH is {version}")
+        raise HookError(
+            missing_tool_line(
+                tool, floor=floor, reason=f"{required}: the {tool} on PATH is {version}"
+            )
+        )
     return version
 
 

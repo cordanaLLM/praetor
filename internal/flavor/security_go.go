@@ -7,6 +7,7 @@ package flavor
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/toolpins"
@@ -31,6 +32,23 @@ const GosecInstallGuide = "go install -modfile=" + gomanifest.ToolModuleFile + "
 	" (the tools module requires " + gosecModule + " " + toolpins.GosecVersion +
 	" and golang.org/x/tools " + toolpins.XToolsVersion +
 	" or later; a bare go install of gosec builds an x/tools too old for the go1.27.2 export data)"
+
+// ScannerInstallGuide anchors scanner restoration to the repository's tools module when present.
+func ScannerInstallGuide(repoPath, binary, fallback string) string {
+	if !util.FileExists(filepath.Join(repoPath, gomanifest.ToolModuleFile)) {
+		return fallback
+	}
+	var pkg string
+	switch binary {
+	case "govulncheck":
+		pkg = govulnToolPackage
+	case "gosec":
+		pkg = gosecToolPackage
+	default:
+		return fallback
+	}
+	return fmt.Sprintf("go -C %q install -modfile=%s %s", repoPath, gomanifest.ToolModuleFile, pkg)
+}
 
 // securityWorkflowFacts selects the install form for the Security Scan workflow. A tools
 // module that declares all scanners remains the adopter's version source; every other repository
