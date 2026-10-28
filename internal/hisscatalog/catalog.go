@@ -171,7 +171,7 @@ var catalog = []Rule{
 		FailureAction: "Exit code 1.",
 		Scope:         "warnings",
 		Directive:     []Clause{{Text: "zero warnings: compiler, linter, format sweeps"}},
-		Adoption:      AdoptedCheck{Check: "`go vet` + `gofmt`", Coverage: "Go only", Trigger: "vet finding", Stages: StagePreCommit, Languages: LanguageGo},
+		Adoption:      AdoptedCheck{Check: "Go `go vet` + `gofmt`; Rust `cargo clippy` + `cargo fmt`", Coverage: "Go and Rust", Trigger: "vet, clippy or format finding", Stages: StagePreCommit, Languages: LanguageGo | LanguageRust},
 	},
 	{
 		ID:            "HISS-11",
