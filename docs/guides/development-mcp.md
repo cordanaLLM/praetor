@@ -42,6 +42,14 @@ They read repository evidence; they do not execute Rust builds. See
 [Rust minima](rust-flavors.md). Shared implementation and planted cases live in
 `internal/adopt/`; MCP wire probes must use a fresh server after edits.
 
+For UI roots, `standards_audit` also calls the CLI's shared
+`flavor.AuditUIGates` implementation. The [shared screen matrix adoption
+contract](adoption-verification.md#shared-screen-and-accessibility-matrix)
+describes its A11Y2 checks and the explicit pending status while the upstream
+schema is unpublished. `cmd/standards-mcp/audit_ui_gates_test.go` exercises the
+non-UI skip, missing declaration, invalid JSON, and complete unpinned contract
+through the registered JSON-RPC tool.
+
 ## Native project connections
 
 The MCP server is client-neutral at the wire boundary. Client configuration and
