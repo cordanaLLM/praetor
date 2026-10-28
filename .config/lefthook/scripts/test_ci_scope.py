@@ -6,6 +6,7 @@
 import contextlib
 import io
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -249,6 +250,15 @@ class CIScopeTests(unittest.TestCase):
         self.assertIn("other/other.go", result[2])
 
 
+# The workflow's run steps use `shell: bash`, which Actions resolves on PATH (Git Bash on the
+# Windows image). A bare "bash" given to CreateProcess searches System32 before PATH and starts
+# the WSL launcher instead, which has no distribution on the runner; resolve it the way Actions does.
+BASH = shutil.which("bash")
+
+
+@unittest.skipUnless(
+    BASH, "no bash on PATH: the workflow's bash steps cannot be replayed on this host"
+)
 class WorkflowCommandsTests(unittest.TestCase):
     def step(self, name):
         workflow = (
@@ -305,7 +315,7 @@ class WorkflowCommandsTests(unittest.TestCase):
         )
         output = run(
             [
-                "bash",
+                BASH,
                 "-e",
                 "-o",
                 "pipefail",
