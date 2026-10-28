@@ -41,6 +41,45 @@ func TestPortability_SelftestTimeout(t *testing.T) {
 	}
 }
 
+const (
+	selftestRegressionCommand = `"$PYTHON" -u -B scripts/test_portability_selftest.py`
+	selftestDriverCommand     = `"$PYTHON" -u -B scripts/portability_selftest.py`
+)
+
+// selftestProgressProblem keeps the timeout regression on every platform before real suites.
+func selftestProgressProblem(workflow string) string {
+	spec, err := ghworkflow.Parse([]byte(workflow))
+	if err != nil {
+		return err.Error()
+	}
+	for _, job := range spec.Jobs {
+		for _, step := range job.Steps {
+			if step.Name == "Harness Self-Tests" {
+				regression := strings.Index(step.Run, selftestRegressionCommand)
+				driver := strings.Index(step.Run, selftestDriverCommand)
+				if regression < 0 || driver < regression {
+					return "run timeout regressions before the driver, both unbuffered"
+				}
+				return ""
+			}
+		}
+	}
+	return "no Harness Self-Tests step"
+}
+
+func TestPortability_SelftestRegressionsAndDriverRunUnbuffered(t *testing.T) {
+	workflow := readPortability(t)
+	if problem := selftestProgressProblem(workflow); problem != "" {
+		t.Fatal(problem)
+	}
+	for _, command := range []string{selftestRegressionCommand, selftestDriverCommand} {
+		planted := strings.Replace(workflow, command, strings.Replace(command, " -u", "", 1), 1)
+		if planted == workflow || selftestProgressProblem(planted) == "" {
+			t.Fatalf("planted buffered or missing command accepted: %s", command)
+		}
+	}
+}
+
 func TestPortability_SelftestTimeoutBoundariesAndPlantedDefects(t *testing.T) {
 	for _, tc := range []struct {
 		name, step, job string

@@ -505,7 +505,9 @@ jobs:
         # The driver's 1800 s suite timeout plus bounded tree cleanup fits inside this bound.
         timeout-minutes: 40
         shell: bash
-        run: '"$PYTHON" -u -B scripts/portability_selftest.py --min-executed "$MIN_EXECUTED"'
+        run: |
+          "$PYTHON" -u -B scripts/test_portability_selftest.py
+          "$PYTHON" -u -B scripts/portability_selftest.py --min-executed "$MIN_EXECUTED"
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}
           # Deliberately a collapse detector, not a coverage assertion. The honest floor per
