@@ -537,3 +537,58 @@ func TestBaselineRecord_PerClassMonotonicAndInvalidManifest(t *testing.T) {
 		}
 	})
 }
+
+// Order engine-hiss-unenforced-checks-20261027: baseline --record retains entries for rules
+// owned by another scanner (HISS-11), carrying them over into the new baseline snapshot.
+func TestBaselineRecord_PreservesHISS11Entries(t *testing.T) {
+	f := newAuditFixture(t)
+	f.writeBaseline(t, []baseline.Infraction{
+		{
+			RuleID:      baseline.ImageRefRuleID,
+			FilePath:    "Dockerfile",
+			LineNumber:  1,
+			Message:     "golang:1.27-alpine",
+			Fingerprint: "Dockerfile:HISS-11:image:golang:1.27-alpine",
+		},
+	}, "")
+	gitCommitAll(t, f.dir, f.gitEnv, "initial hiss-11 baseline")
+
+	out, err := runBaselineCmd(t, f, "--record")
+	if err != nil {
+		t.Fatalf("baseline --record failed: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Total: 1 infractions, previously 1")
+
+	b, err := baseline.LoadBaseline(f.baselinePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.TotalInfractions != 1 || len(b.Infractions) != 1 {
+		t.Fatalf("expected 1 total infraction preserved, got: %+v", b)
+	}
+	if b.Infractions[0].RuleID != baseline.ImageRefRuleID || b.Infractions[0].Fingerprint != "Dockerfile:HISS-11:image:golang:1.27-alpine" {
+		t.Fatalf("expected HISS-11 entry preserved, got: %+v", b.Infractions[0])
+	}
+}
+
+func TestBaselineRecordImageRefs_3D(t *testing.T) {
+	f := newAuditFixture(t)
+	writeFixtureFile(t, f.dir, "Dockerfile", "FROM golang:1.27-alpine\n")
+	gitCommitAll(t, f.dir, f.gitEnv, "unpinned dockerfile")
+
+	if _, err := runBaselineCmd(t, f, "--record-image-refs"); err == nil {
+		t.Fatal("expected --record-image-refs without --reason to fail on debt increase")
+	}
+
+	out, err := runBaselineCmd(t, f, "--record-image-refs", "--allow-increase", "--reason=legacy image tag")
+	if err != nil {
+		t.Fatalf("record-image-refs with rationale failed: %v\n%s", err, out)
+	}
+	b, err := baseline.LoadBaseline(f.baselinePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Infractions) != 1 || b.Infractions[0].RuleID != baseline.ImageRefRuleID {
+		t.Fatalf("expected 1 HISS-11 infraction recorded, got: %+v", b.Infractions)
+	}
+}
