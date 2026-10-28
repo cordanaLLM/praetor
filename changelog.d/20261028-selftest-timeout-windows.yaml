@@ -1,0 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+# SPDX-License-Identifier: EUPL-1.2
+type: fixed
+title: Bound harness self-tests on Windows with process-tree cleanup, a step timeout, and immediate suite progress
+breaking: false
