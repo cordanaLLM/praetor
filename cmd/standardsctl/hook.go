@@ -76,6 +76,43 @@ func runHook(args []string) error {
 	return writeHookResponse(os.Stdout, os.Stderr, response)
 }
 
+// runAdmissionCheckCommand is `praetorctl admission-check`, a command of its own so `hook` keeps
+// taking any <client> <event> pair (order engine-hook-build-scope-gate-20261027).
+func runAdmissionCheckCommand(args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: praetorctl admission-check < command-text")
+	}
+	return runAdmissionCheck(os.Stdin, os.Stderr)
+}
+
+// runAdmissionCheck is `praetorctl admission-check`: reads a proposed command from stdin,
+// evaluates hooks.admission, and exits 0 on allow or 2 on refusal with the refusal on stderr
+// (order engine-hook-build-scope-gate-20261027).
+func runAdmissionCheck(stdin io.Reader, stderr io.Writer) error {
+	data, err := io.ReadAll(io.LimitReader(stdin, agenthook.MaxInputBytes+1))
+	if err != nil || len(data) > agenthook.MaxInputBytes {
+		return writeAdmissionRefusal(stderr, "[BLOCKED BY HISS] admission-check input invalid or over bound")
+	}
+	ctx, cancel := commandContext(hookTimeout)
+	defer cancel()
+	settings, err := defaultOperatorSettingsFlags().load(ctx)
+	if err != nil {
+		return writeAdmissionRefusal(stderr, fmt.Sprintf("[BLOCKED BY HISS] admission-check settings unavailable: %v", err))
+	}
+	verdict, err := agenthook.CheckAdmission(settings.Hooks.Admission, string(data))
+	if err != nil {
+		return writeAdmissionRefusal(stderr, fmt.Sprintf("[BLOCKED BY HISS] admission-check policy invalid: %v", err))
+	}
+	if verdict.Outcome == agenthook.Deny {
+		return writeAdmissionRefusal(stderr, verdict.Reason)
+	}
+	return nil
+}
+
+func writeAdmissionRefusal(stderr io.Writer, reason string) error {
+	return writeHookResponse(io.Discard, stderr, agenthook.Response{Stderr: []byte(reason + "\n"), ExitCode: 2})
+}
+
 // writeHookResponse emits the dialect's bytes. A deny keeps its exit code even when a
 // stream is closed: the code is the verdict, the text only explains it. An allow whose
 // bytes cannot be delivered is a failure, so silence is never read as a delivered allow.

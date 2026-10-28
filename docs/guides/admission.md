@@ -80,15 +80,49 @@ in one of the host's operator layers, usually the workstation or fleet document
 hooks:
   admission:
     enforce: true
+    scope_form: true
+    max_jobs_divisor: 3
 ```
 
-The engine's pre-tool hook (`praetorctl hook <client> pre-tool`) then refuses a recognised
-heavy command, such as `make`, `go test`, `cargo build` or `git push`, that does not run
-through `praetorctl admit`, and names the command to run instead. The recognised shapes and
-how commands are read are in [heavy-step admission](agent-hooks.md#heavy-step-admission).
-The hook refuses rather than rewriting the command: a rewritten step that waits for room
-would wait inside the client's tool timeout, while a refused one is started again in the
-background.
+The engine's pre-tool hook (`praetorctl hook <client> pre-tool`) and the engine checkout's
+own Python guard (`praetorctl admission-check`) then refuse a recognised heavy command,
+such as `make`, `go test`, `cargo build` or `git push`, that does not run through an admitted
+form, and name the command to run instead. The recognised shapes and how commands are read
+are in [heavy-step admission](agent-hooks.md#heavy-step-admission). The hook refuses rather
+than rewriting the command: a rewritten step that waits for room would wait inside the
+client's tool timeout, while a refused one is started again in the background.
+
+### Scope form and memory refusal
+
+With `hooks.admission.scope_form: true`, the pre-tool hook also accepts a direct
+`systemd-run` transient user scope around the heavy step when the wrapper carries `--user`,
+`--scope`, a `MemoryHigh=` property (`-p MemoryHigh=8G` or `--property=MemoryHigh=8G`) and
+`--expand-environment=no`:
+
+```sh
+systemd-run --user --scope -p MemoryHigh=8G --expand-environment=no make verify-all
+```
+
+A `systemd-run` wrapper missing any of those four parts is refused with the missing flags
+named. When the wrapper is complete, the hook reads the host's live memory and swap headroom
+through `internal/admission` (`HostReader`, `HostCappedPolicy`, `Judge`): if `MemAvailable`
+is below `12 GiB` (or a quarter of total RAM on a smaller host) or `SwapFree` is below
+`15 GiB` (or half of total swap), the hook refuses the scope and names both readings so the
+session waits or uses `praetorctl admit`.
+
+### Job count cap
+
+While `hooks.admission.enforce` is on, any heavy step carrying `-j N`, `-jN`, `--jobs N` or
+`--jobs=N` above `floor(cores / max_jobs_divisor)` (default divisor `3`), or a bare `-j` /
+`--jobs` with no count, is refused naming the requested job count, the host's core count and
+the computed limit.
+
+| Operator key | Default | Meaning |
+| :--- | :--- | :--- |
+| `hooks.admission.enforce` | `false` | refuse heavy steps outside `praetorctl admit` or an admitted scope |
+| `hooks.admission.scope_form` | `false` | accept `systemd-run --user --scope` with `MemoryHigh` and `--expand-environment=no` when host memory and swap clear the admission bounds |
+| `hooks.admission.max_jobs_divisor` | `3` (when `enforce: true`) | cap `-j` / `--jobs` on heavy steps at `floor(cores / divisor)` (`>= 1`) |
+| `hooks.admission.commands` | `[]` | up to 32 additional RE2 heavy-step shapes, appended across layers |
 
 Enforcement is off by default, so an adopter who sets nothing sees no change. Once a layer
 turns it on, a later layer cannot turn it off. With `hooks.scope: governed`, the default, the

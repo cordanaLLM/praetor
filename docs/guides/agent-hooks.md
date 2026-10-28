@@ -1079,11 +1079,22 @@ command:
 ```
 
 A command the reader cannot follow (an open quote or here-document, or more than 4096 lines)
-is refused while enforcement is on. `praetorctl admit -- <step>` passes, since `praetorctl` is
-neither a shape nor a wrapper. A heavy step inside a script, or in a string handed to `sh -c`,
-is not seen. Only the engine call applies this check: this repository's Python guard and the
-adopted interceptor do not read operator settings. `internal/agenthook/admission_test.go`
-replays refused, admitted and unreadable commands.
+is refused while enforcement is on. `praetorctl admit -- <step>` passes when the inner step
+stays within the job count cap (`floor(cores / hooks.admission.max_jobs_divisor)`, default
+divisor `3`; `-j` / `--jobs` above the cap or bare `-j` / `--jobs` is refused naming the
+count, core count and limit). With `hooks.admission.scope_form: true`, a `systemd-run`
+wrapper carrying `--user`, `--scope`, `MemoryHigh=` and `--expand-environment=no` is also
+accepted when live host memory and swap readings clear `internal/admission` (`HostReader`,
+`HostCappedPolicy`, `Judge`); an incomplete wrapper names the missing flags, and a host
+reading below the bound refuses naming both `available` and `swap free` readings. This
+repository's own Python guard (`.config/agent/hooks/block_evasion.py`) reaches the same Go
+check through `praetorctl admission-check` (command text on stdin, exit `0` allow or
+`2` refuse on stderr) whenever `hooks.admission.enforce` is enabled in the selected operator
+settings, and fails closed if `praetorctl` is absent; the adopted interceptor written into
+other repositories does not read operator settings. A heavy step inside a script, or in a
+string handed to `sh -c`, is not seen. `internal/agenthook/admission_test.go`,
+`internal/agenthook/parity_test.go` and `cmd/standardsctl/hook_test.go` replay refused,
+admitted, scoped, job-capped and unreadable commands.
 
 ## Record mode
 

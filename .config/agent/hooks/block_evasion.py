@@ -7,6 +7,9 @@ import sys
 import os
 import re
 import json
+from pathlib import Path
+import shutil
+import subprocess
 
 MAX_INPUT_BYTES = 1 << 20
 MAX_REASON_BYTES = 4096
@@ -154,7 +157,158 @@ def audit_command(command_str: str) -> bool:
             )
             return False
 
-    return True
+    return check_admission(command_str)
+
+
+# Host admission delegation to Go (`praetorctl admission-check`) when hooks.admission.enforce
+# is enabled in operator settings (order engine-hook-build-scope-gate-20261027).
+def install_manifest_path():
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA", "").strip()
+        return Path(appdata) / "praetor" / "install.json" if appdata else None
+    xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    if xdg:
+        return Path(xdg) / "praetor" / "install.json"
+    home = os.environ.get("HOME", "").strip()
+    return Path(home) / ".config" / "praetor" / "install.json" if home else None
+
+
+def admission_enforce_in_yaml(text: str) -> bool:
+    hooks_indent = None
+    admission_indent = None
+    for raw_line in text.splitlines()[:4096]:
+        line = raw_line.split("#", 1)[0].rstrip()
+        stripped = line.lstrip(" ")
+        if not stripped:
+            continue
+        if re.search(r"\bhooks\s*:\s*\{[^{}]*\badmission\s*:\s*\{[^{}]*\benforce\s*:\s*true\b", stripped):
+            return True
+        indent = len(line) - len(stripped)
+        if hooks_indent is not None and indent <= hooks_indent:
+            hooks_indent = None
+            admission_indent = None
+        if admission_indent is not None and indent <= admission_indent:
+            admission_indent = None
+        if hooks_indent is None and re.match(r"^hooks\s*:\s*$", stripped):
+            hooks_indent = indent
+        elif hooks_indent is not None and admission_indent is None:
+            if re.match(r"^admission\s*:\s*\{[^{}]*\benforce\s*:\s*true\b", stripped):
+                return True
+            if re.match(r"^admission\s*:\s*$", stripped):
+                admission_indent = indent
+        elif admission_indent is not None and re.match(r"^enforce\s*:\s*true\s*$", stripped):
+            return True
+    return False
+
+
+def admission_enforcement_state():
+    """Return (enforce, isolate_manifest, error_reason) from selected operator settings."""
+    fleet = os.environ.get("PRAETOR_FLEET_CONFIG", "").strip()
+    workstation = os.environ.get("PRAETOR_WORKSTATION_CONFIG", "").strip()
+    explicit = [Path(p) for p in (fleet, workstation) if p]
+    manifest = install_manifest_path()
+    manifest_docs = []
+    manifest_missing = False
+    if manifest is not None and manifest.is_file():
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+            settings = data.get("settings") if isinstance(data, dict) else None
+            if isinstance(settings, dict):
+                for key in ("fleet", "workstation"):
+                    doc = settings.get(key)
+                    if isinstance(doc, dict) and isinstance(doc.get("path"), str) and doc["path"]:
+                        path = Path(doc["path"])
+                        if path.is_file():
+                            manifest_docs.append(path)
+                        else:
+                            manifest_missing = True
+        except (OSError, ValueError):
+            if not explicit:
+                return True, False, "[BLOCKED BY HISS] admission settings manifest unreadable"
+    paths = explicit if explicit else manifest_docs
+    for path in paths:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as error:
+            return True, False, f"[BLOCKED BY HISS] admission settings unavailable: {error}"
+        if admission_enforce_in_yaml(text):
+            return True, bool(explicit and manifest_missing), ""
+    return False, False, ""
+
+
+# An older praetorctl answers `admission-check` with this error: such a binary is skipped, so a
+# stale bin/praetorctl in a checkout never refuses every command
+# (order engine-hook-build-scope-gate-20261027).
+ADMISSION_UNSUPPORTED = b"unknown command: admission-check"
+
+
+def praetorctl_candidates():
+    """The checkout's bin/praetorctl, then praetorctl on PATH, each once."""
+    suffix = ".exe" if os.name == "nt" else ""
+    found = []
+    local = Path("bin") / f"praetorctl{suffix}"
+    if local.is_file() and os.access(local, os.X_OK):
+        found.append(str(local.resolve()))
+    on_path = shutil.which("praetorctl")
+    if on_path and on_path not in found:
+        found.append(on_path)
+    return found
+
+
+def admission_env(isolate_manifest):
+    child_env = dict(os.environ)
+    if isolate_manifest:
+        for var in ("PRAETOR_FLEET_CONFIG", "PRAETOR_WORKSTATION_CONFIG"):
+            val = child_env.get(var, "").strip()
+            if val:
+                child_env["XDG_CONFIG_HOME"] = str(Path(val).resolve().parent)
+                break
+    return child_env
+
+
+def run_admission_check(binary, command_str, child_env):
+    """(verdict, reason): True allows, False refuses, None means this binary predates the check."""
+    try:
+        result = subprocess.run(
+            [binary, "admission-check"],
+            input=command_str.encode("utf-8"),
+            env=child_env,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        return False, f"[BLOCKED BY HISS] heavy-step admission check failed: {error}"
+    if result.returncode == 0:
+        return True, ""
+    if ADMISSION_UNSUPPORTED in result.stderr + result.stdout:
+        return None, ""
+    reason = result.stderr.decode("utf-8", errors="replace").strip()
+    return False, reason or f"[BLOCKED BY HISS] heavy-step admission check exited {result.returncode}"
+
+
+def check_admission(command_str: str) -> bool:
+    enforce, isolate_manifest, err = admission_enforcement_state()
+    if err:
+        sys.stderr.write(err + "\n")
+        return False
+    if not enforce:
+        return True
+    candidates = praetorctl_candidates()
+    child_env = admission_env(isolate_manifest)
+    for binary in candidates[:2]:
+        verdict, reason = run_admission_check(binary, command_str, child_env)
+        if verdict is None:
+            continue
+        if not verdict:
+            sys.stderr.write(reason + "\n")
+        return verdict
+    if candidates:
+        sys.stderr.write("[BLOCKED BY HISS] heavy-step admission check unavailable: praetorctl too old at "
+                         + ", ".join(candidates) + "; update PATH engine or remove bin/praetorctl\n")
+    else:
+        sys.stderr.write("[BLOCKED BY HISS] heavy-step admission check unavailable: praetorctl not found\n")
+    return False
 
 def audit_environment() -> bool:
     value = os.environ.get("LEFTHOOK")

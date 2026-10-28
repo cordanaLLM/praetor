@@ -95,6 +95,8 @@ func decodeSettingValue(node *yaml.Node, path string, spec settingSpec) (Operato
 	switch spec.kind {
 	case kindBool:
 		setting.Value, err = boolScalar(node, path)
+	case kindInt:
+		setting.Value, err = intScalar(node, path)
 	case kindList:
 		setting.List, err = stringSequence(node, path, spec.maxItems)
 	case kindArgv:
@@ -118,6 +120,14 @@ func boolScalar(node *yaml.Node, path string) (string, error) {
 		return "", fmt.Errorf("%s must be true or false", path)
 	}
 	return strconv.FormatBool(value), nil
+}
+
+func intScalar(node *yaml.Node, path string) (string, error) {
+	var value int
+	if node.Kind != yaml.ScalarNode || node.Tag != "!!int" || node.Decode(&value) != nil {
+		return "", fmt.Errorf("%s must be an integer", path)
+	}
+	return strconv.Itoa(value), nil
 }
 
 func stringSequence(node *yaml.Node, path string, limit int) ([]string, error) {
