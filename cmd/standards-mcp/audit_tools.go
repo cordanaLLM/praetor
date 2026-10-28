@@ -87,25 +87,7 @@ func (s *Server) auditGates(p auditPaths, effective *config.EffectivePolicy) []a
 		func(ctx context.Context) (string, error) {
 			return auditBaselineRatchetWithPolicy(ctx, s.rootDir, p.baseline, effective)
 		},
-		// Order: engine-fr-rule-checks-20261027. Extend the context gate group so its
-		// existing summary count stays compatible; each new check retains its own verdict.
-		func(ctx context.Context) (string, error) {
-			checks := []auditGate{
-				func(ctx context.Context) (string, error) { return adopt.AuditEditorSelection(ctx, manifest, s.rootDir) },
-				func(ctx context.Context) (string, error) { return adopt.AuditRenovateEngineBumps(ctx, s.rootDir) },
-				func(ctx context.Context) (string, error) { return adopt.AuditRustMSRV(ctx, s.rootDir) },
-				func(ctx context.Context) (string, error) { return auditContextSync(ctx, manifest, p.agents, s.rootDir) },
-			}
-			var lines []string
-			for i := 0; i < len(checks) && i < 4; i++ {
-				line, err := checks[i](ctx)
-				if err != nil {
-					return "", err
-				}
-				lines = append(lines, line)
-			}
-			return strings.Join(lines, "\n"), nil
-		},
+		s.contextGroupGate(manifest, p.agents),
 		// The CLI audit's caveman gate over nested AGENTS.md, personas and skills (#311).
 		func(ctx context.Context) (string, error) { return compiler.AuditAgentSources(ctx, s.rootDir, p.agents) },
 		func(ctx context.Context) (string, error) {
@@ -138,6 +120,29 @@ func (s *Server) auditGates(p auditPaths, effective *config.EffectivePolicy) []a
 			return auditReadmePresentation(ctx, s.rootDir, p.baseline, manifest)
 		},
 		func(ctx context.Context) (string, error) { return auditHookConfig(ctx, manifest, s.rootDir) },
+	}
+}
+
+// contextGroupGate runs the editor selection, Renovate engine bump, Rust MSRV and context sync
+// checks as one gate, so the gate group's existing summary count stays compatible; each check
+// keeps its own verdict line. Order: engine-fr-rule-checks-20261027.
+func (s *Server) contextGroupGate(manifest *config.Manifest, agents string) auditGate {
+	return func(ctx context.Context) (string, error) {
+		checks := []auditGate{
+			func(ctx context.Context) (string, error) { return adopt.AuditEditorSelection(ctx, manifest, s.rootDir) },
+			func(ctx context.Context) (string, error) { return adopt.AuditRenovateEngineBumps(ctx, s.rootDir) },
+			func(ctx context.Context) (string, error) { return adopt.AuditRustMSRV(ctx, s.rootDir) },
+			func(ctx context.Context) (string, error) { return auditContextSync(ctx, manifest, agents, s.rootDir) },
+		}
+		var lines []string
+		for i := 0; i < len(checks) && i < 4; i++ {
+			line, err := checks[i](ctx)
+			if err != nil {
+				return "", err
+			}
+			lines = append(lines, line)
+		}
+		return strings.Join(lines, "\n"), nil
 	}
 }
 
