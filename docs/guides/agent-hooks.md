@@ -1065,10 +1065,12 @@ the base name of the command on (`builtinHeavyShapes`):
 | `meson compile`, `meson test`, `cmake --build` | C and C++ builds |
 | `npm`, `pnpm`, `yarn` with `build`, `test` or `run build` | JavaScript builds and tests |
 | `pytest`, `tox`, `nox` | Python test runs |
-| `praetorctl gate`, `standardsctl gate` | the engine's gate |
+| `praetorctl gate run`, `standardsctl gate run` | engine gate pipeline |
 | `git push`, also after `-C dir` or `-c key=value` | the pre-push gate |
 | `docker build`, `podman build`, `buildah bud` | image builds |
 | `bazel build`, `bazel test`, `gradle`, `mvn` | other build tools |
+
+The `gate verify`, `gate deadline` and `gate keygen` subcommands read or print only.
 
 `hooks.admission.commands` adds shapes in the same form, for example `'^just build( |$)'`.
 A refused command names the shape and the admitted form, with a label taken from the
