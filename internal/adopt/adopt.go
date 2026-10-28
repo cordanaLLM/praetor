@@ -933,7 +933,7 @@ func (s *adoptSession) recordFirstBaseline(ctx context.Context, full string) err
 	}
 	s.recordFileRatchet(full, base, current)
 	s.report.recordCreated(filepath.Base(full), fmt.Sprintf("Recorded %d legacy debt infractions into %s", base.Count(), filepath.Base(full)))
-	return nil
+	return s.reconcileImageRefBaseline(ctx, full, base)
 }
 
 // saveBaseline writes base to full; a dry run writes nothing.
@@ -1091,7 +1091,7 @@ func (s *adoptSession) checkKeptBaseline(ctx context.Context, full string) error
 	} else if notice := ratchet.StaleNotice(); notice != "" {
 		s.report.addWarning("%s: %s", file, notice)
 	}
-	return nil
+	return s.reconcileImageRefBaseline(ctx, full, recorded)
 }
 
 // rerecordBaseline replaces the existing baseline at full with a rescan, as `praetorctl
@@ -1121,7 +1121,10 @@ func (s *adoptSession) rerecordBaseline(ctx context.Context, full string) error 
 		s.report.BaselineStatus = "failed"
 		return s.refusedRerecord(ctx, full, previous, current, err)
 	}
-	return s.saveRerecordedBaseline(full, previous, next, current)
+	if err := s.saveRerecordedBaseline(full, previous, next, current); err != nil {
+		return err
+	}
+	return s.reconcileImageRefBaseline(ctx, full, next)
 }
 
 func (s *adoptSession) saveRerecordedBaseline(full string, previous, next *baseline.Baseline, current []baseline.Infraction) error {

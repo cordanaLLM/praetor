@@ -3,16 +3,9 @@
   "generated_at": "2026-10-28T04:10:17Z",
   "repository": "cordanaLLM/praetor",
   "commit_sha": "2e7f78017a6cb2a80faf3f274d64509cd9e9a6df",
-  "total_infractions": 3,
+  "total_infractions": 2,
   "increase_rationale": "record existing HISS-11 image references (order engine-hiss-unenforced-checks-20261027)",
   "infractions": [
-    {
-      "rule_id": "HISS-11",
-      "file_path": "deploy/helm/praetor/templates/deployment.yaml",
-      "line_number": 33,
-      "message": "{{ include \"praetor.image\" . | quote }}",
-      "fingerprint": "deploy/helm/praetor/templates/deployment.yaml:HISS-11:image:{{ include \"praetor.image\" . | quote }}"
-    },
     {
       "rule_id": "HISS-11",
       "file_path": "internal/devcontainer/devcontainer.go",

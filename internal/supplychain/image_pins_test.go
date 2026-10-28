@@ -251,6 +251,13 @@ func TestCollectImageRefFindingsSurfaces_3D(t *testing.T) {
 			unresolvable: true,
 		},
 		{
+			name:         "Helm printf digest template is reported unresolvable",
+			file:         "deploy/helm/templates/deployment.yaml",
+			content:      "spec:\n  containers:\n    - image: \"{{ printf \\\"%s@%s\\\" .Values.x.image.repository .Values.x.image.digest }}\"\n",
+			wantRefs:     []string{`{{ printf \"%s@%s\" .Values.x.image.repository .Values.x.image.digest }}`},
+			unresolvable: true,
+		},
+		{
 			name:     "compose and k8s image field",
 			file:     "docker-compose.yml",
 			content:  "services:\n  db:\n    image: postgres:16-alpine\n  cache:\n    image: redis:7.2@sha256:" + digest + "\n",
