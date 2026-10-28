@@ -275,8 +275,10 @@ class WorkflowCommandsTests(unittest.TestCase):
 
     def execute(self, temp, step, packages, adopt="false", cli="false", fail="false"):
         root = Path(temp)
+        # LF like ci_scope.py writes it: text mode writes CRLF on Windows, and bash `read -r`
+        # would keep the carriage return in each package name.
         (root / "portability-packages.txt").write_text(
-            "".join(p + "\n" for p in packages), encoding="utf-8"
+            "".join(p + "\n" for p in packages), encoding="utf-8", newline="\n"
         )
         # An in-process shell stub exercises the actual workflow command text, including
         # its array handling and all four runs, without installing tools or running suites.
