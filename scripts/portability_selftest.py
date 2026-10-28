@@ -363,8 +363,18 @@ def stop_suite(process):
                 check=True,
             )
         else:
+            pid = process.pid
+            # A pid of 0 or 1, a non-integer from a test double, or our own group would turn
+            # killpg into a signal for every process this user owns; refuse before signalling.
+            if (
+                not isinstance(pid, int)
+                or isinstance(pid, bool)
+                or pid <= 1
+                or pid == os.getpgrp()
+            ):
+                raise OSError(f"refusing to kill the process group of pid {pid!r}")
             try:
-                os.killpg(process.pid, signal.SIGKILL)
+                os.killpg(pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass  # The suite and its process group already exited.
     finally:

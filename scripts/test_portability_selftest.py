@@ -137,6 +137,35 @@ def run_suite_worker(root, worker):
 
 
 class PortabilityDriver(unittest.TestCase):
+    @unittest.skipIf(
+        os.name == "nt",
+        "the guard sits on the POSIX killpg path; Windows uses taskkill",
+    )
+    def test_stop_suite_refuses_a_group_kill_for_unsafe_pids(self):
+        """pid 0 or 1, a non-integer, a bool or our own group never reach os.killpg."""
+
+        class Leader:
+            def __init__(self, pid):
+                self.pid = pid
+
+            def poll(self):
+                return 0
+
+            def kill(self):
+                raise AssertionError("an exited leader is not killed again")
+
+            def wait(self, timeout=None):
+                return 0
+
+        for pid in (0, 1, True, "12", None, os.getpgrp()):
+            with (
+                self.subTest(pid=pid),
+                mock.patch.object(driver.os, "killpg") as killpg,
+                self.assertRaisesRegex(OSError, "refusing to kill the process group"),
+            ):
+                driver.stop_suite(Leader(pid))
+            killpg.assert_not_called()
+
     def test_suite_timeout_with_inherited_grandchild_output(self):
         """A pipe-holding grandchild cannot outlive the suite's bound or stall the driver."""
         with tempfile.TemporaryDirectory() as temp:
