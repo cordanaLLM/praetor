@@ -124,7 +124,17 @@ func reserveClaudeDispatch(ctx context.Context, canonical Canonical, in Invocati
 	if err != nil {
 		return fmt.Errorf("reserve dispatch: %w", err)
 	}
-	entry := correlationEntry{Resolution: res, LaunchDigest: correlationLaunchDigest(prompt), ClaudeSubagent: route}
+	label, err := caveman.ExtractBriefTask(canonical.Briefs[0])
+	if err != nil {
+		return err
+	}
+	if route == nil {
+		if route, err = claudeRequestedRoute(canonical.DispatchInput); err != nil {
+			return err
+		}
+	}
+	entry := correlationEntry{Resolution: res, Task: label,
+		LaunchDigest: correlationLaunchDigest(prompt), ClaudeSubagent: route}
 	if err := store.reserveEntry(ctx, "claude", canonical.ConversationID, canonical.ToolUseID, entry); err != nil {
 		return fmt.Errorf("reserve dispatch: %w", err)
 	}
@@ -178,7 +188,7 @@ func evaluateDispatchReceipt(ctx context.Context, row Registration, canonical Ca
 	store, err := newCorrelationStore(ctx, root, in.CorrelationDir)
 	var pending correlationEntry
 	if err == nil {
-		pending, err = store.promote(ctx, row.Client, canonical.ConversationID, canonical.ToolUseID, canonical.AgentID)
+		pending, err = store.promoteResolved(ctx, row.Client, canonical.ConversationID, canonical.ToolUseID, canonical.AgentID, canonical.ResolvedModel)
 	}
 	if err != nil {
 		return trafficDenied(fmt.Errorf("bind dispatch: %w", err))
@@ -217,6 +227,11 @@ func evaluateAgentReturn(ctx context.Context, row Registration, canonical Canoni
 	if verdict.Outcome != Allow && !canonical.StopActive {
 		return verdict
 	}
+	if !entry.HandbackDelivered && verdict.Outcome == Allow {
+		// A return without SubagentHandback was validated just above; its verdict field counts.
+		entry.HandbackVerdict = claudeVerdictWord(canonical.Return)
+	}
+	recordClaudeReturnOutcome(ctx, row.Client, root, canonical, entry, &verdict)
 	if err := store.complete(ctx, row.Client, canonical.ConversationID, canonical.AgentID); err != nil {
 		return returnNotJudged(fmt.Errorf("release agent correlation: %w", err))
 	}

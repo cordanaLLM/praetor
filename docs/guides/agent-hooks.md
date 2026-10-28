@@ -349,6 +349,45 @@ checked against its change. The hook admits all three under both vocabularies an
 still refuses a near-miss label (`TestClaudeAdmitsReviewLabels` in
 `internal/agenthook/agent_brief_authority_test.go`).
 
+## Claude subagent outcome receipts
+
+Each labeled background Claude subagent appends one outcome at `SubagentStop` (`post-return`),
+before removing its active correlation entry, to `.workingdir/routing/outcomes.jsonl` under the
+repository root returned by `state.ResolveWorkingDir` (`internal/state/resolve.go`). A linked
+worktree without its own `.workingdir` writes to the main worktree's state folder instead of
+creating a private state folder in the worktree. Unlabeled entries write no outcome. The log
+remains private and Git-ignored; the efficiency collector reads the same store. Implementation:
+`internal/agenthook/claude_outcomes.go`; lifecycle fixture:
+`TestClaudeBackgroundReceiptLifecycle` in `internal/agenthook/claude_receipts_test.go`.
+
+| Field | Measurement |
+| --- | --- |
+| `task`, `lane` | Brief task label; `claude-subagent`. |
+| `target`, `effort` | Applied routing override, otherwise the requested Agent input; absent model becomes `default`, absent effort remains empty. |
+| `resolved_model`, `duration_ms` | Launch receipt (`async_launched`) `resolvedModel` (`none` when absent) and elapsed milliseconds from reservation `CreatedAt` to `SubagentStop`. |
+| `tokens` | Whole-run sum of assistant-row input, output, cache creation and cache read tokens from the subagent transcript. |
+| `result`, `note` | Validated handback verdict classification and any measurement gap. |
+| `identity` | Resolved model, `claude-code`, prompt or task digest and reserved manifest digest; unavailable harness version is `unknown`. |
+
+`SubagentStop` supplies `agent_transcript_path` (`.../<session>/subagents/agent-<agent_id>.jsonl`).
+The reader accepts the path only when it is absolute, its parent directory is named `subagents`,
+and its base name is `agent-<agent_id>.jsonl` matching the payload's `agent_id`. It reads through
+`util.ReadConfinedLimited` with bounds of 64 MiB, 100,000 lines and 8 MiB per line. Unreadable,
+rejected, malformed or oversized input records zero tokens and `tokens unread` in the note.
+Tokens are bounded to 0..1,000,000,000,000. Old outcome rows without `tokens` or `effort` still
+read (`internal/router/outcomes_usage_test.go`).
+
+The verdict comes from a confirmed `SubagentHandback`, or, for a subagent that returns without
+one, from the return text `SubagentStop` validates. Verdicts `pass`, `green`, `ok` and `done`
+yield `ok`; `fail`, `red`, `blocked` and `partial` yield `fail`. Any other word, or no verdict,
+yields `fail` with `verdict <word>` or `verdict none` in the note. Notes combine verdict and
+token gaps when both occur. State-folder resolution or outcome append failure never changes the
+`SubagentStop` decision: the failure is reported in its Notice.
+
+Routing changes under U4 require at least 20 receipted runs per compared label and route,
+equal pass rate and fewer whole-run tokens before changing that label. These receipts provide
+the measurements; recording them does not change routing automatically.
+
 ## Routing implementation briefs off the Claude lane
 
 Repositories can opt selected routing task labels into a lane picker in
@@ -376,8 +415,9 @@ missing executables and unreadable output allow the dispatch with a notice:
 denies the Claude dispatch with `[ROUTED] task <label> runs on <lane>, not the Claude lane:
 <instruction> (lane picker <path>)`; the session can use the named lane and instruction.
 
-Claude's pre-tool hook stores only the resolved register row, never the prompt. Its
-post-tool receipt atomically binds that row to the native agent id. The private bounded
+Claude's pre-tool hook stores the label, resolved register row and effective route, plus a
+rewritten prompt's digest; it never stores the prompt body. Its post-tool launch receipt atomically
+binds that row to the native agent id and records `resolvedModel`. The private bounded
 store lives below Git's shared directory at
 `$GIT_COMMON_DIR/praetor/agenthook-correlations`, so an isolated agent worktree reaches the
 same correlation as its parent without adding working-tree state. Failed and auto-mode
@@ -411,10 +451,11 @@ launches outlasted on a Windows runner (#558; `TestCorrelationStoreWaitsForASlow
 Claude Code 2.1.271 and later can deliver an auto-mode report through the documented
 `SubagentHandback.tool_input.message` field. The `pre-handback` hook checks that message
 before delivery, using the `session_id`, `agent_id`, and `tool_use_id` supplied to subagent
-tool hooks. It stores only a digest binding that tool use to the validated report.
+tool hooks. It stores a digest binding that tool use to the validated report, together with its verdict
+word for receipts.
 `handback-receipt` marks delivery after the tool succeeds and only when the delivered input
 matches that digest. Failure or permission denial clears only the matching provisional
-digest, so a stale event cannot alter a newer attempt. `SubagentStop.last_assistant_message`
+digest and verdict, so a stale event cannot alter a newer attempt. `SubagentStop.last_assistant_message`
 remains the checked fallback when delivery did not complete. After a confirmed handback,
 `SubagentStop` removes the binding without treating its optional closing text as the report. See the
 [Claude Code hook reference](https://code.claude.com/docs/en/hooks#subagentstop).

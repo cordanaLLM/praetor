@@ -19,6 +19,8 @@ const DefaultOutcomeLogPath = ".workingdir/routing/outcomes.jsonl"
 const (
 	// MaxOutcomeLines bounds the records one read of the outcome log returns.
 	MaxOutcomeLines = 100_000
+	// MaxOutcomeTokens bounds a whole run's usage, including cached input tokens.
+	MaxOutcomeTokens int64 = 1_000_000_000_000
 	// maxOutcomeLineBytes bounds one record, so one append is a single small write.
 	maxOutcomeLineBytes = 4096
 	maxOutcomeNoteBytes = 256
@@ -41,6 +43,8 @@ type Outcome struct {
 	ResolvedModel string      `json:"resolved_model,omitempty"`
 	Result        string      `json:"result"`
 	DurationMS    int64       `json:"duration_ms,omitempty"`
+	Tokens        int64       `json:"tokens,omitempty"`
+	Effort        string      `json:"effort,omitempty"`
 	Note          string      `json:"note,omitempty"`
 	Identity      RunIdentity `json:"identity"`
 	IdentityKey   string      `json:"identity_key,omitempty"`
@@ -79,6 +83,12 @@ func validateOutcomeBasics(o Outcome) error {
 }
 
 func validateOutcomeDimensions(o Outcome) error {
+	if o.Tokens < 0 || o.Tokens > MaxOutcomeTokens {
+		return fmt.Errorf("outcome tokens must be between 0 and %d", MaxOutcomeTokens)
+	}
+	if !validClaudeEffort(o.Effort) {
+		return errors.New("outcome effort must be empty, low, medium, high, xhigh or max")
+	}
 	if o.Time.IsZero() || o.DurationMS < 0 || len(o.Note) > maxOutcomeNoteBytes {
 		return errors.New("outcome needs a time, a nonnegative duration and a note of at most 256 bytes")
 	}

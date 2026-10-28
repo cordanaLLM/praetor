@@ -8,6 +8,32 @@ import (
 	"github.com/cordanaLLM/praetor/internal/router"
 )
 
+// claudeVerdictWord is called only after the handback passed its register contract.
+func claudeVerdictWord(text string) string {
+	word, err := caveman.ExtractReturnVerdict(text)
+	if err != nil {
+		return ""
+	}
+	if len(word) > 64 {
+		return "oversized"
+	}
+	return word
+}
+
+func claudeOutcomeResult(word string) (string, string) {
+	switch word {
+	case "pass", "green", "ok", "done":
+		return router.OutcomeOK, ""
+	case "fail", "red", "blocked", "partial":
+		return router.OutcomeFail, ""
+	default:
+		if word == "" {
+			word = "none"
+		}
+		return router.OutcomeFail, "verdict " + word
+	}
+}
+
 // routeClaudeSubagent composes a validated task override with any prompt rewrite.
 // Presence of either native override key keeps both choices with the caller.
 func routeClaudeSubagent(routes map[string]router.ClaudeSubagentRoute, canonical Canonical, verdict *Verdict) (*router.ClaudeSubagentRoute, error) {

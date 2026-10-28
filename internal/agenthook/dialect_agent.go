@@ -158,6 +158,9 @@ func decodeNativeReceipt(client string, canonical Canonical, object map[string]j
 	if statusErr != nil || status != "async_launched" {
 		return Canonical{}, errors.New("tool_response.status must be async_launched")
 	}
+	if canonical.ResolvedModel, err = optionalString(response, "resolvedModel"); err != nil {
+		return Canonical{}, fmt.Errorf("tool_response.%w", err)
+	}
 	canonical.AgentID, err = requiredString(response, "agentId")
 	return canonical, err
 }
@@ -201,6 +204,9 @@ func decodeNativeReturn(client string, canonical Canonical, object map[string]js
 		return Canonical{}, err
 	}
 	if canonical.Return, err = optionalString(object, finalMessageKey(client)); err != nil {
+		return Canonical{}, err
+	}
+	if canonical.TranscriptPath, err = optionalString(object, "agent_transcript_path"); err != nil {
 		return Canonical{}, err
 	}
 	if canonical.StopActive, _, err = optionalBool(object, "stop_hook_active"); err != nil {
