@@ -408,7 +408,7 @@ func TestAuditSupplyChainUnresolvableAndHelmTemplates_3D(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unresolvable-only references must not block AuditSupplyChain: %v\n%s", err, out)
 	}
-	wantInfo := "[INFO] HISS-11 image references not verified: 4 unresolvable (template or variable); first 5:"
+	wantInfo := "[INFO] HISS-11 image references not verified: 4 unresolvable (template, variable or link outside the repository); first 5:"
 	if !strings.Contains(out, wantInfo) {
 		t.Fatalf("expected [INFO] summary line %q in output, got:\n%s", wantInfo, out)
 	}
@@ -426,7 +426,7 @@ func TestAuditSupplyChainUnresolvableAndHelmTemplates_3D(t *testing.T) {
 	for _, want := range []string{
 		"golang:1.27-alpine",
 		`praetorctl baseline --record-image-refs --reason "<why>"`,
-		"[INFO] HISS-11 image references not verified: 2 unresolvable (template or variable); first 5:",
+		"[INFO] HISS-11 image references not verified: 2 unresolvable (template, variable or link outside the repository); first 5:",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("mixed audit error missing %q:\n%s", want, err.Error())
@@ -454,7 +454,7 @@ func TestAuditSupplyChainUnresolvableAndHelmTemplates_3D(t *testing.T) {
 	if err != nil {
 		t.Fatalf("6 unresolvable references must pass: %v\n%s", err, sixOut)
 	}
-	if !strings.Contains(sixOut, "[INFO] HISS-11 image references not verified: 6 unresolvable (template or variable); first 5:") ||
+	if !strings.Contains(sixOut, "[INFO] HISS-11 image references not verified: 6 unresolvable (template, variable or link outside the repository); first 5:") ||
 		!strings.Contains(sixOut, "img5") || strings.Contains(sixOut, "img6") {
 		t.Fatalf("expected 6 counted and only first 5 listed in [INFO], got:\n%s", sixOut)
 	}
