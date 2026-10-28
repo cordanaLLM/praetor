@@ -87,7 +87,7 @@ func foldWorktreeModules(ctx context.Context, gitDir string) (string, error) {
 // directory. The path prefixes are read from the unfolded segments, so every check names
 // a directory that exists on disk.
 func isWorktreeModules(ctx context.Context, segments []string, i int) (bool, error) {
-	if i == 0 || i+2 >= len(segments) || segments[i] != "worktrees" || segments[i+2] != "modules" {
+	if i == 0 || i+2 >= len(segments) || segments[i] != WorktreesContainer || segments[i+2] != "modules" {
 		return false, nil
 	}
 	worktreeGitDir := filepath.FromSlash(strings.Join(segments[:i+2], "/"))

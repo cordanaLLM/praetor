@@ -110,3 +110,53 @@ func TestGitCommonDirBoundaryCommondirFiles(t *testing.T) {
 		t.Errorf("cancelled GitCommonDir error = %v", err)
 	}
 }
+
+func TestRepositoryRootResolution(t *testing.T) {
+	root := t.TempDir()
+	mainDir := filepath.Join(root, "acme", "praetor")
+	initTestGit(t, mainDir)
+	subDir := filepath.Join(mainDir, "internal", "sub")
+	if err := os.MkdirAll(subDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	linkedWT := filepath.Join(root, WorktreesContainer, "praetor-topic")
+	linkedGitDir := filepath.Join(mainDir, ".git", WorktreesContainer, "topic")
+	writeCommonDirFixture(t, filepath.Join(linkedGitDir, "HEAD"), "ref: refs/heads/topic\n")
+	writeCommonDirFixture(t, filepath.Join(linkedGitDir, "commondir"), "../..\n")
+	writeCommonDirFixture(t, filepath.Join(linkedWT, ".git"), "gitdir: "+linkedGitDir+"\n")
+
+	wantRoot := filepath.Dir(commonDirOf(t, mainDir))
+	for _, dir := range []string{mainDir, subDir, linkedWT} {
+		got, err := RepositoryRoot(context.Background(), dir)
+		if err != nil || got != wantRoot {
+			t.Fatalf("RepositoryRoot(%s) = %q, %v; want %q", dir, got, err, wantRoot)
+		}
+	}
+	for _, bad := range []string{"", root} {
+		if _, err := RepositoryRoot(context.Background(), bad); !errors.Is(err, ErrNotCheckout) {
+			t.Fatalf("RepositoryRoot(%q) error = %v, want ErrNotCheckout", bad, err)
+		}
+	}
+}
+
+func TestResolveDevRootDirResolution(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv(DevRootEnv, "")
+	t.Setenv(LegacyDevRootEnv, "")
+	if got, err := ResolveDevRootDir("", "--dev-root"); err != nil || got != filepath.Join(home, "dev") {
+		t.Fatalf("ResolveDevRootDir default = %q, %v", got, err)
+	}
+	t.Setenv(LegacyDevRootEnv, filepath.Join(home, "legacy-dev"))
+	if got, err := ResolveDevRootDir("", "--dev-root"); err != nil || got != filepath.Join(home, "legacy-dev") {
+		t.Fatalf("ResolveDevRootDir legacy = %q, %v", got, err)
+	}
+	t.Setenv(DevRootEnv, filepath.Join(home, "custom-dev"))
+	if got, err := ResolveDevRootDir("", "--dev-root"); err != nil || got != filepath.Join(home, "custom-dev") {
+		t.Fatalf("ResolveDevRootDir env = %q, %v", got, err)
+	}
+	if got, err := ResolveDevRootDir("/explicit", "--dev-root"); err != nil || got != "/explicit" {
+		t.Fatalf("ResolveDevRootDir explicit = %q, %v", got, err)
+	}
+}
