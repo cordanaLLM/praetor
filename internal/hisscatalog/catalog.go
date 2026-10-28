@@ -112,10 +112,11 @@ var catalog = []Rule{
 		ID:            "HISS-05",
 		Title:         "Variable Scoping",
 		Specification: "Identifiers are declared in the smallest lexical scope that serves them.",
-		Enforcement:   "NOT ENFORCED. No executable check exists in this repository, and no configured linter decides this rule.",
-		FailureAction: "None today; the rule is advisory until a check is attached.",
+		Enforcement:   "The internal/hiss Go scanner reports function-top var and short-declaration locals used only inside one nested block (including its header), with no initializer or only literals, proven constant identifiers, or composite literals with literal/constant keys and values. Calls, receives, indexes, unproven selectors, variable reads, function literals and method values are excluded. Address-taken and closure-captured locals are exempt; nested declarations and other languages are unchecked. Replayed by 'praetorctl hiss coverage --verify'.",
+		FailureAction: "New findings fail the audit HISS-13 debt ratchet.",
 		Scope:         "scoping",
 		Directive:     []Clause{{Text: "declare every identifier in smallest lexical scope serving it"}},
+		Adoption:      auditCheck(LanguageGo, "Go only: function-top locals with side-effect-free, order-independent literal/constant initializers used only inside one nested block; other languages unchecked"),
 	},
 	{
 		ID:            "HISS-06",
@@ -444,8 +445,8 @@ func SplitInvariantRow(line string) (InvariantRow, bool) {
 // trimmed cells. It reports false when rest does not close with a pipe or holds no cell.
 func splitTableCells(rest string) ([]string, bool) {
 	var cells []string
-	start, escaped := 0, false
-	for i := 0; i < len(rest); i++ {
+	start := 0
+	for i, escaped := 0, false; i < len(rest); i++ {
 		switch {
 		case escaped:
 			escaped = false
@@ -472,12 +473,8 @@ func InvariantTableRows(agentsMD string) ([]InvariantRow, error) {
 	if len(lines) > maxGatedTableLines {
 		return nil, fmt.Errorf("%w: %d lines, limit %d", ErrGatedTableTooLong, len(lines), maxGatedTableLines)
 	}
-	var (
-		rows      []InvariantRow
-		fence     util.MarkdownFence
-		inSection bool
-	)
-	for i := 0; i < len(lines) && i < maxGatedTableLines; i++ {
+	var rows []InvariantRow
+	for i, fence, inSection := 0, (util.MarkdownFence{}), false; i < len(lines) && i < maxGatedTableLines; i++ {
 		line := strings.TrimSpace(lines[i])
 		if fence.Inside(line) {
 			continue

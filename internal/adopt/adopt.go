@@ -31,7 +31,7 @@ import (
 
 // Invariant bounds (HISS-02: every loop in this package carries one of these caps).
 const (
-	maxInfractionsCap   = 10000
+	maxInfractionsCap   = hiss.MaxInfractionsCap
 	defaultTimeout      = 30 * time.Second
 	maxAdoptSteps       = 32
 	maxTranspileTargets = 64
@@ -1209,8 +1209,8 @@ func scanLegacyDebt(ctx context.Context, repoPath string, base *baseline.Baselin
 		return fmt.Errorf("scan legacy debt in %s: %w", repoPath, err)
 	}
 
-	if scanRep.Truncated {
-		return fmt.Errorf("scan legacy debt in %s: %w", repoPath, hiss.ErrScanTruncated)
+	if err := scanRep.CompletionError(); err != nil {
+		return fmt.Errorf("scan legacy debt in %s: %w", repoPath, err)
 	}
 
 	// Keyed as every ratchet keys a scan (hiss.ConvertToBaseline), so the audit that judges this

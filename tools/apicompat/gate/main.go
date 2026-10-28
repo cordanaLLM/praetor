@@ -380,10 +380,12 @@ func main() {
 // so is a report the gate could not write.
 func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 	stdout, stderr := &printer{w: out}, &printer{w: errOut}
-	status, err := runGate(ctx, args, stdout, stderr)
-	if err != nil {
+	var status int
+	if result, err := runGate(ctx, args, stdout, stderr); err != nil {
 		stderr.annotate("error", "the API compatibility comparison did not run: "+err.Error())
 		status = exitNotRun
+	} else {
+		status = result
 	}
 	if stdout.failed != nil || stderr.failed != nil {
 		return exitNotRun
@@ -593,31 +595,31 @@ func resolveRepository(ctx context.Context, opts options) (repository, error) {
 
 // commitOf resolves revision to the full name of the commit it names.
 func commitOf(ctx context.Context, root, revision string) (string, error) {
-	commit, err := gitOutput(ctx, root, "rev-parse", "--verify", "--quiet", revision+"^{commit}")
-	if err != nil {
+	if commit, err := gitOutput(ctx, root, "rev-parse", "--verify", "--quiet", revision+"^{commit}"); err != nil {
 		return "", fmt.Errorf("revision %q does not name a commit: %w", revision, err)
+	} else {
+		return commit, nil
 	}
-	return commit, nil
 }
 
 // newestReleaseTag returns the highest root release tag merged into head.
 func newestReleaseTag(ctx context.Context, root, head string) (releaseTag, error) {
-	tags, err := gitRecords(ctx, root, '\n', maxTags, func(string) bool { return true },
-		"tag", "--merged", head, "--list", "v*")
-	if err != nil {
+	if tags, err := gitRecords(ctx, root, '\n', maxTags, func(string) bool { return true },
+		"tag", "--merged", head, "--list", "v*"); err != nil {
 		return releaseTag{}, err
-	}
-	var newest releaseTag
-	for index := 0; index < len(tags) && index < maxTags; index++ {
-		candidate, ok, err := parseReleaseTag(tags[index])
-		if err != nil {
-			return releaseTag{}, err
+	} else {
+		var newest releaseTag
+		for index := 0; index < len(tags) && index < maxTags; index++ {
+			candidate, ok, err := parseReleaseTag(tags[index])
+			if err != nil {
+				return releaseTag{}, err
+			}
+			if ok && (!newest.found || slices.Compare(candidate.version[:], newest.version[:]) > 0) {
+				newest = candidate
+			}
 		}
-		if ok && (!newest.found || slices.Compare(candidate.version[:], newest.version[:]) > 0) {
-			newest = candidate
-		}
+		return newest, nil
 	}
-	return newest, nil
 }
 
 // parseReleaseTag reads name as a root release tag; ok is false for any other tag.
@@ -706,8 +708,7 @@ func planModules(ctx context.Context, repo repository) (modulePlan, error) {
 // pair sorts one HEAD module against the base module in its directory: none there is an added
 // module, a later major version of it is a new major version, and anything else is compared.
 func (p *modulePlan) pair(base []module, target module) {
-	at := slices.IndexFunc(base, func(m module) bool { return m.dir == target.dir })
-	switch {
+	switch at := slices.IndexFunc(base, func(m module) bool { return m.dir == target.dir }); {
 	case at < 0:
 		p.added = append(p.added, target)
 	case isNewMajor(base[at].path, target.path):
@@ -736,16 +737,16 @@ func splitMajor(modulePath string) (string, int) {
 	if strings.HasPrefix(modulePath, "gopkg.in/") {
 		separator, least = ".v", 0
 	}
-	index := strings.LastIndex(modulePath, separator)
-	if index <= 0 {
+	if index := strings.LastIndex(modulePath, separator); index <= 0 {
 		return modulePath, 1
+	} else {
+		digits := modulePath[index+len(separator):]
+		major, err := strconv.Atoi(digits)
+		if err != nil || strconv.Itoa(major) != digits || major < least {
+			return modulePath, 1
+		}
+		return modulePath[:index], major
 	}
-	digits := modulePath[index+len(separator):]
-	major, err := strconv.Atoi(digits)
-	if err != nil || strconv.Itoa(major) != digits || major < least {
-		return modulePath, 1
-	}
-	return modulePath[:index], major
 }
 
 // splitPublic returns the modules whose path has no internal element, and appends the others
@@ -768,28 +769,28 @@ func containsDir(modules []module, dir string) bool {
 
 // discoverModules lists the modules revision tracks, in directory order.
 func discoverModules(ctx context.Context, root, revision string) ([]module, error) {
-	files, err := gitRecords(ctx, root, 0, maxTreeEntries, isModuleFile,
-		"ls-tree", "-r", "-z", "--full-tree", "--name-only", revision)
-	if err != nil {
+	if files, err := gitRecords(ctx, root, 0, maxTreeEntries, isModuleFile,
+		"ls-tree", "-r", "-z", "--full-tree", "--name-only", revision); err != nil {
 		return nil, fmt.Errorf("list the files of %s: %w", short(revision), err)
-	}
-	if len(files) > maxModules {
-		return nil, fmt.Errorf("%s tracks %d Go modules, more than the %d one run compares", short(revision), len(files), maxModules)
-	}
-	slices.Sort(files)
-	modules := make([]module, 0, len(files))
-	for index := 0; index < len(files) && index < maxModules; index++ {
-		data, err := gitCapture(ctx, root, maxGoModBytes, "cat-file", "blob", revision+":"+files[index])
-		if err != nil {
-			return nil, err
+	} else {
+		if len(files) > maxModules {
+			return nil, fmt.Errorf("%s tracks %d Go modules, more than the %d one run compares", short(revision), len(files), maxModules)
 		}
-		modulePath, err := declaredModulePath(string(data))
-		if err != nil {
-			return nil, fmt.Errorf("%s:%s: %w", short(revision), files[index], err)
+		slices.Sort(files)
+		modules := make([]module, 0, len(files))
+		for index := 0; index < len(files) && index < maxModules; index++ {
+			data, err := gitCapture(ctx, root, maxGoModBytes, "cat-file", "blob", revision+":"+files[index])
+			if err != nil {
+				return nil, err
+			}
+			modulePath, err := declaredModulePath(string(data))
+			if err != nil {
+				return nil, fmt.Errorf("%s:%s: %w", short(revision), files[index], err)
+			}
+			modules = append(modules, module{dir: path.Dir(files[index]), path: modulePath})
 		}
-		modules = append(modules, module{dir: path.Dir(files[index]), path: modulePath})
+		return modules, nil
 	}
-	return modules, nil
 }
 
 // isModuleFile reports whether a tracked path is a go.mod the go command would build: one in no
@@ -817,8 +818,7 @@ func skippedDirectory(name string) bool {
 // declaredModulePath returns the path of a go.mod's module directive: bare, double-quoted or
 // back-quoted, with an optional trailing comment.
 func declaredModulePath(gomod string) (string, error) {
-	lines := strings.Split(gomod, "\n")
-	for index := 0; index < len(lines) && index < maxGoModLines; index++ {
+	for lines, index := strings.Split(gomod, "\n"), 0; index < len(lines) && index < maxGoModLines; index++ {
 		value, found := moduleDirective(lines[index])
 		if !found {
 			continue
@@ -835,11 +835,11 @@ func declaredModulePath(gomod string) (string, error) {
 // moduleDirective returns the argument of line when line is a module directive.
 func moduleDirective(line string) (string, bool) {
 	line, _, _ = strings.Cut(line, "//")
-	rest, found := strings.CutPrefix(strings.TrimSpace(line), "module")
-	if !found || rest == "" || !strings.ContainsRune(" \t\"`", rune(rest[0])) {
+	if rest, found := strings.CutPrefix(strings.TrimSpace(line), "module"); !found || rest == "" || !strings.ContainsRune(" \t\"`", rune(rest[0])) {
 		return "", false
+	} else {
+		return strings.TrimSpace(rest), true
 	}
-	return strings.TrimSpace(rest), true
 }
 
 // unquotedModulePath reads a module directive's argument as one module path.
@@ -1009,19 +1009,19 @@ func buildModule(ctx context.Context, root, dir string, stderr io.Writer, run to
 // names its go.mod, and the failure otherwise, naming an expired exception when there is one.
 // The module is never compared in place of a build the exception excuses.
 func excuseBuildFailure(repo repository, target module, buildErr error, stderr *printer) (string, error) {
-	live, expired := exceptionFor(repo.exceptions, target.dir, repo.today)
-	if live == nil {
+	if live, expired := exceptionFor(repo.exceptions, target.dir, repo.today); live == nil {
 		failure := fmt.Errorf("module %s (%s): %w", target.dir, target.path, buildErr)
 		if expired != nil {
 			failure = fmt.Errorf("%w; the exception for %s expired on %s (%s), so it excuses nothing",
 				failure, expired.Path, expired.Expires, expired.Reason)
 		}
 		return "", failure
+	} else {
+		note := fmt.Sprintf("excepted until %s: %s", live.Expires, live.Reason)
+		stderr.annotate("warning", fmt.Sprintf("module %s (%s) was not compared: %s; build failure: %v",
+			target.dir, target.path, note, buildErr))
+		return note, nil
 	}
-	note := fmt.Sprintf("excepted until %s: %s", live.Expires, live.Reason)
-	stderr.annotate("warning", fmt.Sprintf("module %s (%s) was not compared: %s; build failure: %v",
-		target.dir, target.path, note, buildErr))
-	return note, nil
 }
 
 // compareModule runs the checker on the module's directory in site, after buildModule built the
@@ -1033,30 +1033,23 @@ func compareModule(ctx context.Context, checker string, site checkerSite, target
 		return false, fmt.Errorf("create the checker's directory: %w", err)
 	}
 	var buf bytes.Buffer
-	incompatible, err := runChecker(ctx, checker, site.root, checkerDir, site.base, site.head, &buf, stderr)
-	if err != nil {
+	if incompatible, err := runChecker(ctx, checker, site.root, checkerDir, site.base, site.head, &buf, stderr); err != nil || !incompatible {
 		if _, writeErr := stdout.Write(buf.Bytes()); writeErr != nil {
 			return false, writeErr
 		}
 		return false, err
 	}
-	if !incompatible {
-		if _, writeErr := stdout.Write(buf.Bytes()); writeErr != nil {
-			return false, writeErr
-		}
-		return false, nil
-	}
-	stillIncompatible, filteredOutput, filterErr := filterModuleOutput(ctx, site.root, site.base, site.head, target, baseModules, headModules, aliases, buf.String())
-	if filterErr != nil {
+	if stillIncompatible, filteredOutput, filterErr := filterModuleOutput(ctx, site.root, site.base, site.head, target, baseModules, headModules, aliases, buf.String()); filterErr != nil {
 		if _, writeErr := stdout.Write(buf.Bytes()); writeErr != nil {
 			return false, writeErr
 		}
 		return true, filterErr
+	} else {
+		if _, writeErr := io.WriteString(stdout, filteredOutput); writeErr != nil {
+			return false, writeErr
+		}
+		return stillIncompatible, nil
 	}
-	if _, writeErr := io.WriteString(stdout, filteredOutput); writeErr != nil {
-		return false, writeErr
-	}
-	return stillIncompatible, nil
 }
 
 // checkerSite is where the checker compares a module: a repository root and the two commits.
@@ -1085,22 +1078,21 @@ func checkerSitesFor(ctx context.Context, repo repository, plan modulePlan, stde
 	if !slices.ContainsFunc(plan.compared, func(m module) bool { return m.dir != "." }) {
 		return sites, release, nil
 	}
-	vendored, err := tracksRootVendor(ctx, repo)
-	if err != nil || !vendored {
+	if vendored, err := tracksRootVendor(ctx, repo); err != nil || !vendored {
 		return sites, release, err
+	} else {
+		clone, release, err := vendorFreeClone(ctx, repo, stderr)
+		if err != nil {
+			return checkerSites{}, nil, err
+		}
+		sites.nested = clone
+		return sites, release, nil
 	}
-	clone, release, err := vendorFreeClone(ctx, repo, stderr)
-	if err != nil {
-		return checkerSites{}, nil, err
-	}
-	sites.nested = clone
-	return sites, release, nil
 }
 
 // tracksRootVendor reports whether the base or HEAD tracks an entry named vendor at the root.
 func tracksRootVendor(ctx context.Context, repo repository) (bool, error) {
-	revisions := [...]string{repo.base, repo.head}
-	for index := 0; index < len(revisions); index++ {
+	for revisions, index := [...]string{repo.base, repo.head}, 0; index < len(revisions); index++ {
 		entries, err := gitRecords(ctx, repo.root, 0, len(revisions), func(string) bool { return true },
 			"ls-tree", "-z", "--full-tree", revisions[index], "--", "vendor")
 		if err != nil {
@@ -1135,8 +1127,7 @@ func vendorFreeClone(ctx context.Context, repo repository, stderr io.Writer) (ch
 func commitVendorFree(ctx context.Context, repo repository, dir string, stderr io.Writer) (checkerSite, error) {
 	config := scratchGitConfig(filepath.Join(dir, "no-hooks"))
 	clone := checkerSite{root: filepath.Join(dir, "repo")}
-	cloneArgs := append(config, "clone", "--quiet", "--no-checkout", "--", repo.root, clone.root)
-	if err := runTool(ctx, dir, io.Discard, stderr, "git", cloneArgs...); err != nil {
+	if err := runTool(ctx, dir, io.Discard, stderr, "git", append(config, "clone", "--quiet", "--no-checkout", "--", repo.root, clone.root)...); err != nil {
 		return checkerSite{}, err
 	}
 	var err error
@@ -1158,11 +1149,11 @@ func vendorFreeCommit(ctx context.Context, clone string, config []string, revisi
 	if _, err := gitOutput(ctx, clone, "rm", "-r", "--cached", "--quiet", "--force", "--ignore-unmatch", "--", "vendor"); err != nil {
 		return "", err
 	}
-	tree, err := gitOutput(ctx, clone, "write-tree")
-	if err != nil {
+	if tree, err := gitOutput(ctx, clone, "write-tree"); err != nil {
 		return "", err
+	} else {
+		return gitOutput(ctx, clone, append(config, "commit-tree", tree, "-m", "apicompat: "+revision+" without the root vendor entry")...)
 	}
-	return gitOutput(ctx, clone, append(config, "commit-tree", tree, "-m", "apicompat: "+revision+" without the root vendor entry")...)
 }
 
 // emptyHead empties the clone's index and points its HEAD at an empty commit. git reads the
@@ -1222,10 +1213,9 @@ func buildChecker(ctx context.Context, dir string, stderr io.Writer) (string, er
 	if err := os.Mkdir(module, 0o700); err != nil {
 		return "", fmt.Errorf("create the checker build module: %w", err)
 	}
-	files := [...]struct{ name, text string }{
+	for _, file := range [...]struct{ name, text string }{
 		{"go.mod", checkerGoMod}, {"go.sum", checkerGoSum}, {"tools.go", checkerTools},
-	}
-	for _, file := range files {
+	} {
 		if err := os.WriteFile(filepath.Join(module, file.name), []byte(file.text), 0o600); err != nil {
 			return "", fmt.Errorf("write the checker build module: %w", err)
 		}
@@ -1257,20 +1247,21 @@ func verifyChecker(ctx context.Context, checker string, stderr io.Writer) (err e
 		return fmt.Errorf("create the canary repository: %w", err)
 	}
 	defer func() { err = errors.Join(err, os.RemoveAll(dir)) }()
-	repo := filepath.Join(dir, "repo")
-	base, head, err := commitCanary(ctx, repo, filepath.Join(dir, "no-hooks"))
-	if err != nil {
-		return fmt.Errorf("create the canary repository: %w", err)
+	return verifyCanary(ctx, checker, filepath.Join(dir, "repo"), filepath.Join(dir, "no-hooks"), stderr)
+}
+
+func verifyCanary(ctx context.Context, checker, repo, hooks string, stderr io.Writer) error {
+	if base, head, checkErr := commitCanary(ctx, repo, hooks); checkErr != nil {
+		return fmt.Errorf("create the canary repository: %w", checkErr)
+	} else {
+		if incompatible, checkErr := runChecker(ctx, checker, repo, repo, base, head, io.Discard, stderr); checkErr != nil {
+			return fmt.Errorf("the checker failed on its canary: %w", checkErr)
+		} else if !incompatible {
+			return errors.New("the checker reported the canary's removed exported function as compatible, " +
+				"so it cannot read the packages this Go toolchain builds")
+		}
+		return nil
 	}
-	incompatible, err := runChecker(ctx, checker, repo, repo, base, head, io.Discard, stderr)
-	if err != nil {
-		return fmt.Errorf("the checker failed on its canary: %w", err)
-	}
-	if !incompatible {
-		return errors.New("the checker reported the canary's removed exported function as compatible, " +
-			"so it cannot read the packages this Go toolchain builds")
-	}
-	return nil
 }
 
 // commitCanary creates the canary repository in repo with two commits and returns them. The
@@ -1280,7 +1271,7 @@ func commitCanary(ctx context.Context, repo, hooks string) (base, head string, e
 		return "", "", err
 	}
 	commit := slices.Clip(append(scratchGitConfig(hooks), "commit", "--quiet", "--all", "--message"))
-	steps := []func() error{
+	for _, step := range []func() error{
 		func() error { return runTool(ctx, repo, io.Discard, io.Discard, "git", "init", "--quiet") },
 		func() error { return writeCanary(repo, canaryBefore) },
 		func() error { return runTool(ctx, repo, io.Discard, io.Discard, "git", "add", "--all") },
@@ -1289,9 +1280,8 @@ func commitCanary(ctx context.Context, repo, hooks string) (base, head string, e
 		func() error { return os.WriteFile(filepath.Join(repo, "canary.go"), []byte(canaryAfter), 0o600) },
 		func() error { return runTool(ctx, repo, io.Discard, io.Discard, "git", append(commit, "head")...) },
 		func() error { head, err = commitOf(ctx, repo, "HEAD"); return err },
-	}
-	for index := 0; index < len(steps); index++ {
-		if err := steps[index](); err != nil {
+	} {
+		if err := step(); err != nil {
 			return "", "", err
 		}
 	}
@@ -1338,8 +1328,7 @@ func classifyChecker(runErr error, diagnostics string) (bool, error) {
 
 // reportedError reports whether diagnostics hold a line in cobra's error format.
 func reportedError(diagnostics string) bool {
-	lines := strings.Split(diagnostics, "\n")
-	for index := 0; index < len(lines) && index < maxGoModLines; index++ {
+	for lines, index := strings.Split(diagnostics, "\n"), 0; index < len(lines) && index < maxGoModLines; index++ {
 		if strings.HasPrefix(strings.TrimSpace(lines[index]), "Error: ") {
 			return true
 		}
@@ -1383,55 +1372,53 @@ func verdict(ctx context.Context, repo repository, plan modulePlan, results []re
 
 // incompatibleVerdict decides whether incompatible changes fail the gate or pass as a warning.
 func incompatibleVerdict(ctx context.Context, repo repository, incompatible int, stdout, stderr *printer) int {
-	message := fmt.Sprintf("%d incompatible module change(s) from %s to HEAD %s", incompatible, repo.baseName, short(repo.head))
-	if repo.policy.reject {
+	if message := fmt.Sprintf("%d incompatible module change(s) from %s to HEAD %s", incompatible, repo.baseName, short(repo.head)); repo.policy.reject {
 		stderr.annotate("error", message+" rejected ("+repo.policy.reason+")")
 		return exitRejected
-	}
-	if !repo.policy.autoPreV1 {
-		stdout.annotate("warning", message+" reported, not rejected ("+repo.policy.reason+")")
+	} else {
+		if !repo.policy.autoPreV1 {
+			stdout.annotate("warning", message+" reported, not rejected ("+repo.policy.reason+")")
+			return exitCompatible
+		}
+		breakingCommit, err := findBreakingCommit(ctx, repo)
+		if err != nil {
+			stderr.annotate("error", fmt.Sprintf("failed reading commits %s..%s: %v", repo.baseName, short(repo.head), err))
+			return exitNotRun
+		}
+		if breakingCommit == "" {
+			stderr.annotate("error", message+" rejected ("+repo.policy.reason+": missing breaking marker (! in subject) with Migration: footer)")
+			return exitRejected
+		}
+		stdout.annotate("warning", message+" reported, not rejected ("+repo.policy.reason+"): breaking commit "+short(breakingCommit))
 		return exitCompatible
 	}
-	breakingCommit, err := findBreakingCommit(ctx, repo)
-	if err != nil {
-		stderr.annotate("error", fmt.Sprintf("failed reading commits %s..%s: %v", repo.baseName, short(repo.head), err))
-		return exitNotRun
-	}
-	if breakingCommit == "" {
-		stderr.annotate("error", message+" rejected ("+repo.policy.reason+": missing breaking marker (! in subject) with Migration: footer)")
-		return exitRejected
-	}
-	stdout.annotate("warning", message+" reported, not rejected ("+repo.policy.reason+"): breaking commit "+short(breakingCommit))
-	return exitCompatible
 }
 
 // findBreakingCommit returns the SHA of the first commit in base..head carrying a breaking
 // marker (! in subject) and a non-empty Migration: footer, or "" if none carries it.
 func findBreakingCommit(ctx context.Context, repo repository) (string, error) {
-	limit := fmt.Sprintf("--max-count=%d", maxAnalyzedCommits+1)
-	format := "--format=%H%x1f%B%x00"
-	out, err := gitCapture(ctx, repo.root, maxCommitLogBytes, "log", limit, format, repo.base+".."+repo.head, "--")
-	if err != nil {
+	if out, err := gitCapture(ctx, repo.root, maxCommitLogBytes, "log", fmt.Sprintf("--max-count=%d", maxAnalyzedCommits+1), "--format=%H%x1f%B%x00", repo.base+".."+repo.head, "--"); err != nil {
 		return "", fmt.Errorf("git log %s..%s: %w", short(repo.base), short(repo.head), err)
-	}
-	records := strings.Split(string(out), "\x00")
-	if len(records) > maxAnalyzedCommits+1 {
-		return "", fmt.Errorf("commit range %s..%s exceeds %d commits", short(repo.base), short(repo.head), maxAnalyzedCommits)
-	}
-	for index := 0; index < len(records) && index < maxAnalyzedCommits; index++ {
-		record := strings.TrimSpace(records[index])
-		if record == "" {
-			continue
+	} else {
+		records := strings.Split(string(out), "\x00")
+		if len(records) > maxAnalyzedCommits+1 {
+			return "", fmt.Errorf("commit range %s..%s exceeds %d commits", short(repo.base), short(repo.head), maxAnalyzedCommits)
 		}
-		sha, message, ok := strings.Cut(record, "\x1f")
-		if !ok {
-			continue
+		for index := 0; index < len(records) && index < maxAnalyzedCommits; index++ {
+			record := strings.TrimSpace(records[index])
+			if record == "" {
+				continue
+			}
+			sha, message, ok := strings.Cut(record, "\x1f")
+			if !ok {
+				continue
+			}
+			if isBreakingCommit(message) {
+				return sha, nil
+			}
 		}
-		if isBreakingCommit(message) {
-			return sha, nil
-		}
+		return "", nil
 	}
-	return "", nil
 }
 
 // isBreakingCommit reports whether message is a breaking commit as the engine's commit policy reads
@@ -1520,8 +1507,7 @@ func gitRecords(ctx context.Context, dir string, sep byte, limit int, keep func(
 
 // scanRecords reads at most limit records ending in sep; a final record without sep counts.
 func scanRecords(reader *bufio.Reader, sep byte, limit int, keep func(string) bool) ([]string, error) {
-	var kept []string
-	for count := 0; count <= limit; count++ {
+	for kept, count := []string(nil), 0; count <= limit; count++ {
 		record, err := reader.ReadString(sep)
 		if err != nil && !errors.Is(err, io.EOF) {
 			return nil, err
@@ -1548,21 +1534,21 @@ func runGit(ctx context.Context, dir string, consume func(io.Reader) error, args
 	// #nosec G204 -- git with the gate's fixed subcommands; a revision argument never starts with "-" (parseOptions) and no shell runs.
 	command := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 	command.Stderr = diagnostics
-	stdout, err := command.StdoutPipe()
-	if err != nil {
+	if stdout, err := command.StdoutPipe(); err != nil {
 		return fmt.Errorf("git %s: %w", args[0], err)
+	} else {
+		if err := command.Start(); err != nil {
+			return fmt.Errorf("git %s: %w", args[0], err)
+		}
+		if err := consume(stdout); err != nil {
+			cancel()
+			return errors.Join(fmt.Errorf("git %s: %w", args[0], err), command.Wait())
+		}
+		if err := command.Wait(); err != nil {
+			return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(diagnostics.String()))
+		}
+		return nil
 	}
-	if err := command.Start(); err != nil {
-		return fmt.Errorf("git %s: %w", args[0], err)
-	}
-	if err := consume(stdout); err != nil {
-		cancel()
-		return errors.Join(fmt.Errorf("git %s: %w", args[0], err), command.Wait())
-	}
-	if err := command.Wait(); err != nil {
-		return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(diagnostics.String()))
-	}
-	return nil
 }
 
 // boundedBuffer keeps the first limit bytes written to it and drops the rest, reporting every
@@ -1628,8 +1614,7 @@ func matchLeftBoundary(s string, start int, kind replacementKind) bool {
 	if start == 0 {
 		return true
 	}
-	prev := s[start-1]
-	switch kind {
+	switch prev := s[start-1]; kind {
 	case kindBare:
 		return !isWordChar(prev) && prev != '/' && prev != '.'
 	case kindShort:
@@ -1641,10 +1626,8 @@ func matchLeftBoundary(s string, start int, kind replacementKind) bool {
 
 func replaceAliasPattern(s string, r aliasReplacement) (string, bool) {
 	var sb strings.Builder
-	idx := 0
-	pLen := len(r.pattern)
 	changed := false
-	for loop := 0; idx < len(s) && loop < maxTypeStringBytes; loop++ {
+	for idx, pLen, loop := 0, len(r.pattern), 0; idx < len(s) && loop < maxTypeStringBytes; loop++ {
 		match := strings.Index(s[idx:], r.pattern)
 		if match < 0 {
 			sb.WriteString(s[idx:])
@@ -1653,7 +1636,7 @@ func replaceAliasPattern(s string, r aliasReplacement) (string, bool) {
 		start := idx + match
 		end := start + pLen
 		leftOK := matchLeftBoundary(s, start, r.kind)
-		rightOK := (end == len(s) || !isWordChar(s[end]))
+		rightOK := end == len(s) || !isWordChar(s[end])
 		if leftOK && rightOK {
 			sb.WriteString(s[idx:start])
 			sb.WriteString(r.target)
@@ -1687,10 +1670,9 @@ func buildAliasReplacements(aliases []typeAlias, currentPkg string) []aliasRepla
 }
 
 func replaceTypeAliases(typeStr, currentPkg string, aliases []typeAlias) (string, bool) {
-	replacements := buildAliasReplacements(aliases, currentPkg)
 	res := typeStr
 	anyChanged := false
-	for index := 0; index < len(replacements) && index < maxAliases*3; index++ {
+	for replacements, index := buildAliasReplacements(aliases, currentPkg), 0; index < len(replacements) && index < maxAliases*3; index++ {
 		newRes, changed := replaceAliasPattern(res, replacements[index])
 		if changed {
 			anyChanged = true
@@ -1751,38 +1733,39 @@ func formatTypeDecl(ts *ast.TypeSpec, fileImports []*ast.ImportSpec) string {
 }
 
 func checkCompatibleAlias(line, currentPkg string, identical, nonIdentical []typeAlias) (bool, string) {
-	if !strings.HasPrefix(line, "  - ") {
-		return false, ""
-	}
-	stripped := line[4:]
-	colonIdx := strings.Index(stripped, ": changed from ")
-	if colonIdx < 0 {
-		return false, ""
-	}
-	target := stripped[:colonIdx]
-	rem := stripped[colonIdx+len(": changed from "):]
-	toIdx := strings.Index(rem, " to ")
-	if toIdx < 0 {
-		return false, ""
-	}
-	oldType := rem[:toIdx]
-	newType := rem[toIdx+len(" to "):]
+	if strings.HasPrefix(line, "  - ") {
+		stripped := line[4:]
+		colonIdx := strings.Index(stripped, ": changed from ")
+		if colonIdx < 0 {
+			return false, ""
+		}
+		target := stripped[:colonIdx]
+		rem := stripped[colonIdx+len(": changed from "):]
+		toIdx := strings.Index(rem, " to ")
+		if toIdx < 0 {
+			return false, ""
+		}
+		oldType := rem[:toIdx]
+		newType := rem[toIdx+len(" to "):]
 
-	if _, bad := replaceTypeAliases(oldType, currentPkg, nonIdentical); bad {
-		return false, ""
-	}
-	if _, bad := replaceTypeAliases(newType, currentPkg, nonIdentical); bad {
-		return false, ""
-	}
+		if _, bad := replaceTypeAliases(oldType, currentPkg, nonIdentical); bad {
+			return false, ""
+		}
+		if _, bad := replaceTypeAliases(newType, currentPkg, nonIdentical); bad {
+			return false, ""
+		}
 
-	ro, co := replaceTypeAliases(oldType, currentPkg, identical)
-	rn, cn := replaceTypeAliases(newType, currentPkg, identical)
-	if ro == rn && (co || cn) {
-		accepted := fmt.Sprintf("  - %s: changed from %s to %s (compatible: alias of identical type)",
-			target, oldType, newType)
-		return true, accepted
+		ro, co := replaceTypeAliases(oldType, currentPkg, identical)
+		rn, cn := replaceTypeAliases(newType, currentPkg, identical)
+		if ro == rn && (co || cn) {
+			accepted := fmt.Sprintf("  - %s: changed from %s to %s (compatible: alias of identical type)",
+				target, oldType, newType)
+			return true, accepted
+		}
+		return false, ""
+	} else {
+		return false, ""
 	}
-	return false, ""
 }
 
 func moduleDirs(modules []module) []string {
@@ -1794,10 +1777,8 @@ func moduleDirs(modules []module) []string {
 }
 
 func ownerModuleDir(filePath string, moduleDirs []string) string {
-	p := strings.TrimPrefix(path.Clean(filepath.ToSlash(filePath)), "/")
 	owner := "."
-	bestLen := 0
-	for index := 0; index < len(moduleDirs) && index < maxModules; index++ {
+	for p, bestLen, index := strings.TrimPrefix(path.Clean(filepath.ToSlash(filePath)), "/"), 0, 0; index < len(moduleDirs) && index < maxModules; index++ {
 		dir := strings.TrimPrefix(path.Clean(filepath.ToSlash(moduleDirs[index])), "/")
 		if dir == "." || dir == "" {
 			continue
@@ -1815,20 +1796,20 @@ func listModuleGoFiles(ctx context.Context, root, rev string, target module, mod
 	if target.dir != "." && target.dir != "" {
 		args = append(args, "--", target.dir)
 	}
-	records, err := gitRecords(ctx, root, 0, maxTreeEntries, isGoSourceFile, args...)
-	if err != nil {
+	if records, err := gitRecords(ctx, root, 0, maxTreeEntries, isGoSourceFile, args...); err != nil {
 		return nil, err
-	}
-	targetDir := path.Clean(filepath.ToSlash(target.dir))
-	dirs := moduleDirs(modules)
-	files := make([]string, 0, min(len(records), maxTreeEntries))
-	for index := 0; index < len(records) && index < maxTreeEntries; index++ {
-		filePath := records[index]
-		if ownerModuleDir(filePath, dirs) == targetDir {
-			files = append(files, filePath)
+	} else {
+		targetDir := path.Clean(filepath.ToSlash(target.dir))
+		dirs := moduleDirs(modules)
+		files := make([]string, 0, min(len(records), maxTreeEntries))
+		for index := 0; index < len(records) && index < maxTreeEntries; index++ {
+			filePath := records[index]
+			if ownerModuleDir(filePath, dirs) == targetDir {
+				files = append(files, filePath)
+			}
 		}
+		return files, nil
 	}
-	return files, nil
 }
 
 func filePackagePath(modulePath, moduleDir, filePath string) string {
@@ -1875,8 +1856,7 @@ func resolveAliasTarget(ts *ast.TypeSpec, imports map[string]string, moduleDir, 
 }
 
 func appendAliases(aliases []typeAlias, f *ast.File, moduleDir, pkgPath string) []typeAlias {
-	imports := collectFileImports(f.Imports)
-	for dIdx := 0; dIdx < len(f.Decls) && dIdx < maxDecls && len(aliases) < maxAliases; dIdx++ {
+	for imports, dIdx := collectFileImports(f.Imports), 0; dIdx < len(f.Decls) && dIdx < maxDecls && len(aliases) < maxAliases; dIdx++ {
 		gen, ok := f.Decls[dIdx].(*ast.GenDecl)
 		if !ok || gen.Tok != token.TYPE {
 			continue
@@ -1900,9 +1880,8 @@ func appendTypeSpecs(aliases []typeAlias, specs []ast.Spec, imports map[string]s
 }
 
 func collectAliasesAtHead(ctx context.Context, root, head string, modules []module) ([]typeAlias, error) {
-	fset := token.NewFileSet()
 	aliases := make([]typeAlias, 0, maxAliases)
-	for modIndex := 0; modIndex < len(modules) && modIndex < maxModules && len(aliases) < maxAliases; modIndex++ {
+	for fset, modIndex := token.NewFileSet(), 0; modIndex < len(modules) && modIndex < maxModules && len(aliases) < maxAliases; modIndex++ {
 		target := modules[modIndex]
 		files, err := listModuleGoFiles(ctx, root, head, target, modules)
 		if err != nil {
@@ -1938,47 +1917,46 @@ func matchTypeSpecInGenDecl(gen *ast.GenDecl, typeName string, imports []*ast.Im
 }
 
 func matchTypeDeclInFile(fset *token.FileSet, filePath string, data []byte, typeName string) (string, bool) {
-	f, err := parser.ParseFile(fset, filePath, data, parser.SkipObjectResolution)
-	if err != nil {
+	if f, err := parser.ParseFile(fset, filePath, data, parser.SkipObjectResolution); err != nil {
+		return "", false
+	} else {
+		for dIdx := 0; dIdx < len(f.Decls) && dIdx < maxDecls; dIdx++ {
+			gen, ok := f.Decls[dIdx].(*ast.GenDecl)
+			if !ok || gen.Tok != token.TYPE {
+				continue
+			}
+			if decl, found := matchTypeSpecInGenDecl(gen, typeName, f.Imports); found {
+				return decl, true
+			}
+		}
 		return "", false
 	}
-	for dIdx := 0; dIdx < len(f.Decls) && dIdx < maxDecls; dIdx++ {
-		gen, ok := f.Decls[dIdx].(*ast.GenDecl)
-		if !ok || gen.Tok != token.TYPE {
-			continue
-		}
-		if decl, found := matchTypeSpecInGenDecl(gen, typeName, f.Imports); found {
-			return decl, true
-		}
-	}
-	return "", false
 }
 
 // findTypeDeclInModule searches a single module for typeName in pkgPath.
 func findTypeDeclInModule(ctx context.Context, fset *token.FileSet, root, rev string, target module, modules []module, pkgPath, typeName string) (string, error) {
-	files, err := listModuleGoFiles(ctx, root, rev, target, modules)
-	if err != nil {
+	if files, err := listModuleGoFiles(ctx, root, rev, target, modules); err != nil {
 		return "", fmt.Errorf("list Go files in module %s: %w", target.dir, err)
+	} else {
+		for index := 0; index < len(files) && index < maxGoFiles; index++ {
+			filePath := files[index]
+			if filePackagePath(target.path, target.dir, filePath) != pkgPath {
+				continue
+			}
+			data, err := gitCapture(ctx, root, maxDeclBytes, "cat-file", "blob", rev+":"+filePath)
+			if err != nil {
+				return "", fmt.Errorf("read type source %s: %w", filePath, err)
+			}
+			if decl, found := matchTypeDeclInFile(fset, filePath, data, typeName); found {
+				return decl, nil
+			}
+		}
+		return "", nil
 	}
-	for index := 0; index < len(files) && index < maxGoFiles; index++ {
-		filePath := files[index]
-		if filePackagePath(target.path, target.dir, filePath) != pkgPath {
-			continue
-		}
-		data, err := gitCapture(ctx, root, maxDeclBytes, "cat-file", "blob", rev+":"+filePath)
-		if err != nil {
-			return "", fmt.Errorf("read type source %s: %w", filePath, err)
-		}
-		if decl, found := matchTypeDeclInFile(fset, filePath, data, typeName); found {
-			return decl, nil
-		}
-	}
-	return "", nil
 }
 
 func findTypeDecl(ctx context.Context, root, rev string, modules []module, pkgPath, typeName string) (string, error) {
-	fset := token.NewFileSet()
-	for modIndex := 0; modIndex < len(modules) && modIndex < maxModules; modIndex++ {
+	for fset, modIndex := token.NewFileSet(), 0; modIndex < len(modules) && modIndex < maxModules; modIndex++ {
 		decl, err := findTypeDeclInModule(ctx, fset, root, rev, modules[modIndex], modules, pkgPath, typeName)
 		if err != nil {
 			return "", err
@@ -2068,10 +2046,8 @@ func routeChangeLine(line, pkg string, inIncomp, inComp bool, id, nonId []typeAl
 }
 
 func filterOutput(output string, identical, nonIdentical []typeAlias) (bool, string) {
-	lines := strings.Split(output, "\n")
 	var res strings.Builder
 	currentPkg := ""
-	inIncompatible, inCompatible := false, false
 	var incompLines, compLines []string
 	hasIncompatible := false
 
@@ -2086,7 +2062,7 @@ func filterOutput(output string, identical, nonIdentical []typeAlias) (bool, str
 		}
 	}
 
-	for lIdx := 0; lIdx < len(lines) && lIdx < maxOutputLines; lIdx++ {
+	for lines, inIncompatible, inCompatible, lIdx := strings.Split(output, "\n"), false, false, 0; lIdx < len(lines) && lIdx < maxOutputLines; lIdx++ {
 		kind, text := classifyLine(lines[lIdx])
 		switch kind {
 		case linePackage:

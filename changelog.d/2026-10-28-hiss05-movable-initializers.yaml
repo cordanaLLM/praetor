@@ -1,0 +1,2 @@
+type: fixed
+title: Restrict Go variable scope findings to literal and constant initializers that can move without reordering effects.

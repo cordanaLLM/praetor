@@ -273,6 +273,7 @@ func (g *goScanner) inspect(n ast.Node) {
 	switch node := n.(type) {
 	case *ast.FuncDecl:
 		g.checkFuncLOC(node)
+		g.checkNarrowScope(node)
 		g.enterFunc()
 	case *ast.FuncLit:
 		g.forgetParams(node)

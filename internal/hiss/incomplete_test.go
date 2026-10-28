@@ -2,6 +2,7 @@ package hiss
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,5 +122,25 @@ func TestScanReportIncompleteNilIsIncomplete(t *testing.T) {
 	var rep *ScanReport
 	if !rep.Incomplete() {
 		t.Error("a nil report must be treated as incomplete, never as a clean verdict")
+	}
+}
+
+func TestScanReportCompletionError(t *testing.T) {
+	cases := []struct {
+		name   string
+		report *ScanReport
+		want   error
+	}{
+		{"complete", &ScanReport{}, nil},
+		{"unparsed", &ScanReport{Skips: ScanSkips{Unparsed: 1}}, ErrScanIncomplete},
+		{"truncated", &ScanReport{Truncated: true}, ErrScanTruncated},
+		{"nil boundary", nil, ErrScanIncomplete},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.report.CompletionError(); !errors.Is(err, tc.want) {
+				t.Fatalf("CompletionError = %v, want %v", err, tc.want)
+			}
+		})
 	}
 }

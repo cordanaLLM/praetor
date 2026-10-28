@@ -142,8 +142,8 @@ func scanBaselineInfractions(ctx context.Context, root string) ([]baseline.Infra
 	if err != nil {
 		return nil, scanOpts, fmt.Errorf("failed to scan for baseline infractions: %w", err)
 	}
-	if scanRep.Truncated {
-		return nil, scanOpts, fmt.Errorf("refusing an incomplete scan: %w", hiss.ErrScanTruncated)
+	if err := scanRep.CompletionError(); err != nil {
+		return nil, scanOpts, fmt.Errorf("refusing an incomplete scan: %w", err)
 	}
 	return hiss.ConvertToBaseline(scanRep.Violations), scanOpts, nil
 }

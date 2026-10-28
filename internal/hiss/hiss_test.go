@@ -183,7 +183,7 @@ func TestScan_IgnoreDirsOptionAndSkipAccounting(t *testing.T) {
 
 func TestScan_CleanFixtureYieldsZero(t *testing.T) {
 	root := t.TempDir()
-	writeFixture(t, root, "clean.go", "package clean\n\nimport \"os\"\n\nfunc Read(p string) ([]byte, error) {\n\tdata, err := os.ReadFile(p)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\t_, statErr := os.Stat(p)\n\tif statErr != nil {\n\t\treturn nil, statErr\n\t}\n\tfor i := 0; i < 3; i++ {\n\t\tprintln(i)\n\t}\n\treturn data, nil\n}\n")
+	writeFixture(t, root, "clean.go", "package clean\n\nimport \"os\"\n\nfunc Read(p string) ([]byte, error) {\n\tdata, err := os.ReadFile(p)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif _, statErr := os.Stat(p); statErr != nil {\n\t\treturn nil, statErr\n\t}\n\tfor i := 0; i < 3; i++ {\n\t\tprintln(i)\n\t}\n\treturn data, err\n}\n")
 	writeFixture(t, root, "clean.py", "def retrieval(n):\n    try:\n        return n\n    except ValueError:\n        return 0\n\n\nwhile_true_name = 1\n")
 	writeFixture(t, root, "clean.rs", "fn main() -> Result<(), String> {\n    let v: Option<i32> = Some(1);\n    match v {\n        Some(x) => println!(\"{}\", x),\n        None => {}\n    }\n    // SAFETY: the pointer is valid for the whole call.\n    unsafe { touch() }\n    Ok(())\n}\n")
 	writeFixture(t, root, "clean.c", "#include <stdio.h>\n\nint main(void) {\n    char buf[8];\n    fgets(buf, sizeof buf, stdin);\n    snprintf(buf, sizeof buf, \"x\");\n    strncpy(buf, \"y\", 2);\n    return 0;\n}\n")

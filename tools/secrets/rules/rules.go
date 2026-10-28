@@ -113,11 +113,16 @@ func ExpiryProblem(expires string, today time.Time) string {
 }
 
 func expiryProblem(expires string, base time.Time, reference string) string {
-	date, err := time.Parse(DateLayout, expires)
-	if err != nil {
+	if date, err := time.Parse(DateLayout, expires); err != nil {
 		return fmt.Sprintf("expires %q must be a YYYY-MM-DD date", expires)
+	} else {
+		latest := base.AddDate(0, 0, MaxExceptionDays)
+		if date.After(latest) {
+			return fmt.Sprintf("expires %s is more than %d days after %s; the latest date allowed is %s",
+				expires, MaxExceptionDays, reference, latest.Format(DateLayout))
+		}
+		return ""
 	}
-	return checkExpiryCap(expires, date, base, reference)
 }
 
 func checkExpiryCap(expires string, date, base time.Time, reference string) string {
@@ -167,20 +172,20 @@ func missingCategoryProblem(detail string) string {
 }
 
 func categorizedExpiryProblem(category, expires string, base time.Time, reference string) string {
-	days, valid := CategoryDays(category)
-	if !valid {
+	if days, valid := CategoryDays(category); !valid {
 		return fmt.Sprintf("category %q must be A, B, C or D", category)
+	} else {
+		date, err := time.Parse(DateLayout, expires)
+		if err != nil {
+			return fmt.Sprintf("expires %q must be a YYYY-MM-DD date", expires)
+		}
+		latest := base.AddDate(0, 0, days)
+		if date.After(latest) {
+			return fmt.Sprintf("category %s requires expires on or before %s (%d days after %s); got %s",
+				category, latest.Format(DateLayout), days, reference, expires)
+		}
+		return ""
 	}
-	date, err := time.Parse(DateLayout, expires)
-	if err != nil {
-		return fmt.Sprintf("expires %q must be a YYYY-MM-DD date", expires)
-	}
-	latest := base.AddDate(0, 0, days)
-	if date.After(latest) {
-		return fmt.Sprintf("category %s requires expires on or before %s (%d days after %s); got %s",
-			category, latest.Format(DateLayout), days, reference, expires)
-	}
-	return ""
 }
 
 // ValidPath reports whether path is a clean repository-relative file path.

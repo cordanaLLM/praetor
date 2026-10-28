@@ -214,8 +214,8 @@ func auditBaselineRatchetWithPolicy(ctx context.Context, root, baselinePath stri
 		return "", fmt.Errorf("[FAIL] Invariant audit failed: %w", err)
 	}
 
-	if scanRep.Truncated {
-		return "", fmt.Errorf("[FAIL] Invariant audit failed: %w", hiss.ErrScanTruncated)
+	if err := scanRep.CompletionError(); err != nil {
+		return "", fmt.Errorf("[FAIL] Invariant audit failed: %w", err)
 	}
 
 	current := hiss.ConvertToBaseline(scanRep.Violations)

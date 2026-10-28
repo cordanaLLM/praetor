@@ -199,6 +199,7 @@ docs_surfaces:
   - name: "HISS rule matchers"
     paths:
       - "internal/hiss/rules.go"
+      - "internal/hiss/go_narrow_scope.go"
       - "internal/hiss/go_callgraph.go"
     docs:
       - "docs/standards/**"

@@ -19,6 +19,7 @@ When invoked, execute audit in strict order of operations:
    - `HISS-02 (Bounded Loops, I/O Timeouts)`: unbounded `for {}` (Go), native loops (C), `loop {}` (Rust), `while True` (Python). Go I/O: context without deadline (`context.Background`, `context.TODO`, `WithCancel` / `WithValue` of one, `WithoutCancel`) reaching call; context-less `exec.Command`, `net.Dial*`, `http.Get` / `Head` / `Post` / `PostForm` / `NewRequest`. Test files, `main.main` exempt.
    - `HISS-03 (Zero Frame Malloc)`: Go `//hiss:hot` functions and methods require `testing.AllocsPerRun` test asserting zero allocations. Rust, C unchecked.
    - `HISS-04 (Complexity Bounds)`: Func LOC $\le 60$ (audit ceiling `config.AuditMaxFuncLOC`). Cyclomatic $\le 10$, cognitive $\le 15$ = `gocyclo`, `gocognit`, `funlen` in golangci-lint (`make lint`), not `Scan()`.
+   - `HISS-05 (Variable Scoping)`: Go function-top locals used only inside one nested block; address + capture exempt.
    - `HISS-06 (Bounded Concurrency)`: Go `go` statement per loop iteration without `errgroup.Group.SetLimit`, `semaphore.Weighted.Acquire`, buffered token channel, constant/array bound or `//hiss:bound` comment; other languages unchecked.
    - `HISS-07 (Checked Errors)`: Go unchecked error assignment (`_ =`) and `panic`, Rust `.unwrap()` / `.expect()`, Python bare `except`.
    - `HISS-08 (Static Determinism)`: `gets`, `strcpy`, `sprintf` (C); `eval` / `exec` (Python). Go = `forbidigo` in golangci-lint.

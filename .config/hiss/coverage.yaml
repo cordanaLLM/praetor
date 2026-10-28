@@ -27,6 +27,25 @@
 # the defect this mechanism exists to prevent.
 version: 1
 rules:
+  - id: HISS-05
+    coverage:
+      - language: go
+        state: partial
+        mechanism: internal/hiss go_narrow_scope.go checkNarrowScope, using go_scope.go
+        rationale: >-
+          Function-top var and short-declaration locals with no initializer or only
+          literals, proven constant identifiers, and composite literals with
+          literal/constant keys and values are reported when every read
+          and write lies inside one child if, for, range, switch, select or plain block,
+          including headers and their case clauses. Uses in sibling blocks or after
+          a loop keep the declaration. Address-taking and closure capture are
+          conservative exemptions. Calls, receives, indexes, variable reads,
+          unproven selectors, function literals and method values are excluded.
+          Constant proof uses local and same-file package declarations plus
+          unshadowed booleans, with a 1024-expression bound per declaration;
+          unresolved names and field keys are skipped.
+          Closure-only use within a child block and nested
+          declarations in shadowing chains remain gaps. Other languages are unchecked.
   - id: HISS-01
     coverage:
       - language: go

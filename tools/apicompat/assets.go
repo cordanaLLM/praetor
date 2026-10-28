@@ -134,6 +134,7 @@ jobs:
 // internal/managedasset/testdata/shipped/api-compatibility.sha256 records every text ever
 // shipped, and TestShippedTextLedger fails until each outgoing text is listed here.
 var priorDigests = map[string]string{
+	"a7f11ff7dcf942b9f512e40e66461a49c71f85849dc193eb5b8a293ac8e774cd": Directory + "/" + GateFile,
 	"f68c08bc7e6001290ade191d6838d17c6458669a3511492692e971b67333ad83": WorkflowFile, // the workflow before its concurrency group
 	"12d6d77464b18617aa0e1001a05c7850b76641c5205447e70f1b0e72ff630ebb": WorkflowFile, // the draft skip workflow before its concurrency group
 	// The gate before it accepted identical type aliases across packages (engine-apicompat-alias-identical).

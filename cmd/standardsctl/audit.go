@@ -276,8 +276,8 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 		return fmt.Errorf("[FAIL] Invariant audit failed: %w", err)
 	}
 	fmt.Printf("[INFO] %s\n", scanRep.CoverageEvidence())
-	if scanRep.Truncated {
-		return fmt.Errorf("[FAIL] Invariant audit failed: %w (%d infractions recorded before truncation)", hiss.ErrScanTruncated, scanRep.TotalInfractions)
+	if err := scanRep.CompletionError(); err != nil {
+		return fmt.Errorf("[FAIL] Invariant audit failed: %w (%d infractions recorded)", err, scanRep.TotalInfractions)
 	}
 	printLines(scanRep.Complexity.Lines())
 	current, err := auditedInfractions(scanRep, opts)

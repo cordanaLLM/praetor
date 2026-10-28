@@ -132,6 +132,9 @@ func TestAdoptedFor(t *testing.T) {
 		languages Language
 		enforced  bool
 	}{
+		{"HISS-05", LanguageGo, true},
+		{"HISS-05", LanguageRust, false},
+		{"HISS-05", LanguageGo | LanguageOther, true},
 		{"HISS-09", LanguageGo, true},
 		{"HISS-10", LanguageGo, true},
 		{"HISS-09", LanguageC, false},
@@ -184,9 +187,9 @@ func TestAuditScanner_PositiveNegativeBoundary(t *testing.T) {
 	if got := scanner.AuditScanner(Facts{Languages: LanguageOther}); got != "" {
 		t.Errorf("scanner applies to other-language repository: %q", got)
 	}
-	unknown, ok := LookupRule("HISS-05")
+	unknown, ok := LookupRule("HISS-06")
 	if !ok {
-		t.Fatal("HISS-05 missing from catalog")
+		t.Fatal("HISS-06 missing from catalog")
 	}
 	if got := unknown.AuditScanner(Facts{Languages: LanguageGo}); got != "" {
 		t.Errorf("non-scanner rule acquired audit scanner: %q", got)

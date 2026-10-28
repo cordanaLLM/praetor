@@ -23,7 +23,7 @@ Adopted check = coverage state + mechanism; else audit scanner; else `unknown`. 
 | **HISS-02** loops, I/O | scalar upper bound on every loop; explicit deadline on every I/O call; Go: I/O takes `context.Context` deadline | `praetorctl audit` HISS scan in verify-all: unbounded loop shapes in Go, C, Rust, Python; I/O deadlines unchecked | new finding fails verify-all |
 | **HISS-03** memory | Go: zero heap allocation in hot simulation/tick loops | unknown | advisory |
 | **HISS-04** complexity | McCabe cyclomatic <= 15, cognitive <= 20, statements <= 75; func LOC <= 60 (audit ceiling) | `praetorctl audit` HISS scan in verify-all: function length only; other caps need repository linter | new finding fails verify-all |
-| **HISS-05** scoping | declare every identifier in smallest lexical scope serving it | unknown | advisory |
+| **HISS-05** scoping | declare every identifier in smallest lexical scope serving it | `praetorctl audit` HISS scan in verify-all: Go only: function-top locals used only inside one nested block; other languages unchecked | new finding fails verify-all |
 | **HISS-06** concurrency | explicit scalar upper bound on every worker pool + concurrent fan-out | unknown | advisory |
 | **HISS-07** errors | every error handled or wrapped with context; Go: zero unchecked `error` return | `praetorctl audit` HISS scan in verify-all: partial in Go, Rust, Python | new finding fails verify-all |
 | **HISS-08** determinism | zero dynamic code execution (`eval` / `exec`); a process signal's target is bounded above 1 (`killpg`, `kill(-pid)`, Go `syscall.Kill`) | `praetorctl audit` HISS scan in verify-all: C banned calls, Python `eval` / `exec`, Go `syscall.Kill` / `unix.Kill` | new finding fails verify-all |

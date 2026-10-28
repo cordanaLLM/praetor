@@ -816,9 +816,8 @@ documented only when its sheet extracted content (`DistilledDoc.Extracted`).
 answers say so explicitly:
 
 ```text
-Rule: HISS-05 (Variable Scoping)
-Enforcement: NOT ENFORCED. No executable check exists in this repository, and no configured
-linter decides this rule.
+Rule: HISS-03 (Zero Frame Malloc)
+Enforcement: NOT ENFORCED. No allocation benchmark gate exists in this repository.
 Failure Action: None today; the rule is advisory until a check is attached.
 Adopted repositories: not enforced; adoption generates no check for this rule.
 ```
