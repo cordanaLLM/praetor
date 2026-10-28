@@ -254,6 +254,9 @@ func agyCommandOf(args json.RawMessage) (string, error) {
 func agyEncode(d Dialect, canonical Canonical, verdict Verdict) Response {
 	switch canonical.Event {
 	case EventPrompt:
+		if verdict.Outcome == Skip {
+			return agyRespond(map[string]any{}, []byte("praetor hook: "+boundReason(verdict.Reason)+", skipped\n"))
+		}
 		if verdict.AddedContext == "" {
 			if verdict.Outcome == Deny {
 				return agyRespond(map[string]any{"injectSteps": []any{map[string]string{"ephemeralMessage": boundReason(verdict.Reason)}}}, nil)
