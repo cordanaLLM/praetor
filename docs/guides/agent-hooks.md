@@ -1318,8 +1318,29 @@ document named by `PRAETOR_FLEET_CONFIG` / `PRAETOR_WORKSTATION_CONFIG` or the i
 manifest is merged through `config.LoadOperatorSettings` before every hook call, with the
 built-in defaults (`python3`, `python`, `py -3`, governed scope, no operator deny patterns)
 when neither is configured. The whole call, this settings resolution included, runs under a
-two-minute bound (`hookTimeout` in `cmd/standardsctl/hook.go`): a settings source that stalls
-ends the call with exit 1 and the error on stderr instead of holding it open. See
+two-minute bound (`hookTimeout` in `cmd/standardsctl/hook.go`). Settings load failures,
+including a recorded SHA-256 mismatch, an unreadable document or invalid settings, refuse
+guarded events through the client's blocking dialect. The refusal begins with
+`[BLOCKED BY HISS] operator settings unavailable:` and names the cause and repair command.
+Annotation events (`post-tool`, prompt clocks, subagent-start notes and dispatch/handback
+receipts or aborts) instead emit a stated skip with the same cause. Stop checks and guarded
+subagent boundaries retain their existing blocking and repeated-stop behavior.
+
+The repair command uses the recorded fleet and workstation paths:
+
+```sh
+praetorctl workstation install --source "<engine checkout>" --fleet-config "<recorded fleet path>" --workstation-config "<recorded workstation path>"
+```
+
+Replace the checkout placeholder with the engine source checkout; an unconfigured document
+has no corresponding flag in the diagnostic. A valid pre-tool shell payload containing one
+literal `praetorctl workstation install` or `standardsctl workstation install` command remains
+allowed with a settings-unavailable notice, so the repair can run. Shell chains, substitutions
+and redirects do not receive this exception. Tests use temporary manifests and documents
+(`TestHookSettingsUnavailableBlocks`, `TestHookSettingsRepairAndSkip`,
+`TestHookSettingsMatchedAllows`, `TestSettingsRepairCommand`).
+
+Order: `engine-hook-digest-mismatch-fail-closed-20261028`. See
 [effective policy](effective-policy.md) for the layering model this section shares with
 `complexity`.
 
