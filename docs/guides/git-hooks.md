@@ -169,7 +169,7 @@ A staged change to `lefthook.yml`, a native client hook file (`.claude/settings.
 under `.agents/plugins/praetor/`, anything under `.config/lefthook/` or `.config/agent/`, or
 one of the two hook test scripts runs the harness self-tests
 (`.config/lefthook/scripts/checks.py`): `lefthook validate`, `test_hooks.py`,
-`test_security_scope.py`, `test_checkpoint.py`, `scripts/test_checkpoint_hooks.py`, and
+`test_security_scope.py`, `test_ci_scope.py`, `test_checkpoint.py`, `scripts/test_checkpoint_hooks.py`, and
 `scripts/test_praetor_hook.py`. The last one runs the tracked agent-hook strings through
 `sh -c` against the skew guard `.config/agent/hooks/praetor_hook.py` and its AGY plugin copy
 ([Agent hooks](agent-hooks.md#rollout-engine-skew-never-blocks-a-client)). `make hooks-test`
@@ -1219,7 +1219,10 @@ corpus. Both forms read the directory name from `FIXTURE_DIRECTORY`, so they can
 ## Which changed files select which checks
 
 `.config/lefthook/scripts/checks.py` classifies each changed path once, and each set is held to its
-real source by a test in `.config/lefthook/scripts/test_hooks.py`:
+real source by a test in `.config/lefthook/scripts/test_hooks.py`. The Platform Neutrality workflow
+selects its pull request scope with the same `go_packages` selector through
+`.config/lefthook/scripts/ci_scope.py`, so the hook and the workflow pick the same packages
+([Platform Neutrality pull request scope](workflow-triggers.md#platform-neutrality-pull-request-scope)):
 
 | Set | Selects | Matches | Held in step by |
 | :--- | :--- | :--- | :--- |

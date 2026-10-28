@@ -1,0 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+# SPDX-License-Identifier: EUPL-1.2
+type: changed
+title: Scope Platform Neutrality pull requests to affected steps and Go packages while keeping full push and dispatch runs
+breaking: false

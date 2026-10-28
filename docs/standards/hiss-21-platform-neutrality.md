@@ -62,7 +62,12 @@ reason and states where the coverage is recovered.
 
 `.github/workflows/portability.yml` runs the matrix on `ubuntu-26.04`, `macos-26` and
 `windows-2025` with `fail-fast: false`, compiling, vetting and testing every package and then
-running the harness self-tests through `scripts/portability_selftest.py`. Every leg sets Go up
+running the harness self-tests through `scripts/portability_selftest.py`. That full run happens on
+every push to `main` or `lts-*` and on manual dispatch. A pull request runs the steps and Go
+packages its changed files reach, selected by `.config/lefthook/scripts/ci_scope.py`; the legs and
+their required status names stay, each skipped step prints its reason, and any path the selector
+does not classify runs everything
+([Platform Neutrality pull request scope](../guides/workflow-triggers.md#platform-neutrality-pull-request-scope)). Every leg sets Go up
 from the `go.mod` toolchain directive (setup-go `go-version-file`), so the three platforms build
 with the same Go release as the other workflows
 ([Go toolchain](../guides/contributing.md#go-toolchain)). Each leg also vets and

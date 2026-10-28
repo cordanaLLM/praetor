@@ -140,6 +140,42 @@ On a draft, each required check therefore fails with the annotation the checkpoi
 as `draft_pending` ([checkpoint cadence](checkpoint-cadence.md)); marking the pull request ready
 starts the run that replaces the failure on the same head commit.
 
+## Platform Neutrality pull request scope
+
+The three legs in [the Platform Neutrality workflow](https://github.com/cordanaLLM/praetor/blob/main/.github/workflows/portability.yml)
+keep their required status names. On `pull_request`,
+`.config/lefthook/scripts/ci_scope.py` compares the base branch's merge base with the checked-out
+head, logs `changed files: N`, and records the scope and each step's run or skip reason in the
+step summary. `push` on `main` or `lts-*` and `workflow_dispatch` run every step and package.
+
+The helper reuses `checks.py`'s `go_packages(..., reverse=True)`: Go sources, cgo inputs,
+fixtures and embedded files select their packages and reverse importers. Build and vet exclude
+test-only packages; tests retain those packages. The test step keeps its four invocations:
+ordinary packages, `internal/adopt`, and the two `cmd/standardsctl` halves. Each empty partition
+prints why it skipped; a failure still allows the later selected partitions to run and fails
+the step.
+
+- Workflow and hook configuration, pinned tool modules, `scripts/portability_selftest.py`, Go
+  configuration, a removed Go package directory (its importers match no listed package) and any
+  unclassified path select the full scope.
+- Documentation selects the figure checks. Changelog fragments, root Markdown other than
+  `README.md`, licence files and `REUSE.toml` select no optional step unless Go embeds them.
+- The selected CLI package or a change under `scripts/` selects the harness and its toolchain.
+  The schema oracle runs for its own nested module or a selected package in its test dependency
+  graph; its Go files do not select main-module packages.
+- Figure, interfig and Markdown tool inputs select their respective checks. Node setup runs
+  when any of those checks needs it.
+
+Building the CLI and checking documentation references run on every scope. A failed diff or Go
+listing reports an explicit full-run fallback. If even the full package listing fails, the
+helper writes `./...` with that reason; the workflow must resolve it before testing, so a
+persistent Go failure cannot turn into a successful empty run. An unreadable diff reports that
+the changed-file count is unavailable.
+
+The temporary-repository fixtures in `.config/lefthook/scripts/test_ci_scope.py` cover these
+paths and execute the workflow's shell commands against a Go stub. The forge guards retain the
+CLI split, draft exclusion, tool ordering, platform coverage and documentation reference checks.
+
 ## Why findings warn
 
 HISS-18's failure action is a CI optimization gate (`internal/hisscatalog/catalog.go`), the one
