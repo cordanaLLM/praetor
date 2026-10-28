@@ -260,7 +260,7 @@ func TestValidateExceptions_HISSRulesAndFunctionScope(t *testing.T) {
 // refused with the rule named. Boundary: the target check binds only those rules, so a
 // clang-tidy-coverage entry for a C file stays valid beside them.
 func TestValidateExceptionsWorkflowTarget(t *testing.T) {
-	for _, rule := range []string{ExceptionRuleSupplyChain, ExceptionRuleBuildWarnings, ExceptionRuleWorkflowTriggers, ExceptionRuleTestTimeout, ExceptionRuleJobTimeout, ExceptionRuleReleaseToken} {
+	for _, rule := range []string{ExceptionRuleBuildWarnings, ExceptionRuleWorkflowTriggers, ExceptionRuleTestTimeout, ExceptionRuleJobTimeout, ExceptionRuleReleaseToken} {
 		t.Run(rule, func(t *testing.T) { validateWorkflowTarget(t, rule) })
 	}
 }

@@ -750,61 +750,79 @@ rules:
     coverage:
       - language: go
         state: partial
-        runner: golangci-lint
+        runner: audit
         mechanism: >-
-          Go toolchain go.sum verification, reached by go build/go test ./... in make test (a
-          verify-all prerequisite). NOT internal/hiss (no HISS-11 rule exists), NOT golangci-lint
-          (.golangci.yml enables no supply-chain linter), NOT semgrep
-          (.config/semgrep/hiss-invariants.yml has 5 rules, none HISS-11), and NOT the gate:
-          internal/gating.VerifyLockfiles, called by the stage named 'Prefetch & Lockfiles', only
-          stats .standards.
+          praetorctl audit and the MCP standards_audit, through internal/adopt.AuditSupplyChain over
+          internal/supplychain.ScanImageRefs for fully qualified container image string literals, plus
+          Go toolchain go.sum verification reached by go build/go test ./... in make test. NOT
+          internal/hiss (which has no HISS-11 rule).
         rationale: >-
-          internal/hiss over HISS-11/go: total=0, filesRead=5. golangci-lint with the repo's
-          .golangci.yml over all Go fixtures: '0 issues.' semgrep over HISS-11: 0 findings. gitleaks
-          over HISS-11: no leaks found. The one thing that does fire:
-          positive/missing-lockfile-entry.go in a module whose go.sum lacks the entry -> go build
-          ./... exits 1 with 'missing go.sum entry for module providing package gopkg.in/yaml.v3';
-          after go
+          internal/adopt TestAuditSupplyChainReplaysTheHISS11Fixtures replays positive/floating-container-tag.go
+          (reported) and negative/pinned-container-digest.go (clean). positive/missing-lockfile-entry.go
+          in a module whose go.sum lacks the entry fails go build ./... with 'missing go.sum entry'.
+          gap/replace-directive-local.go remains an undetected gap.
       - language: rust
-        state: unsupported
+        state: partial
+        runner: audit
         mechanism: >-
-          none
+          praetorctl audit and the MCP standards_audit, through internal/adopt.AuditSupplyChain over
+          internal/supplychain.ScanImageRefs for fully qualified container image string literals. NOT
+          internal/hiss, which has no HISS-11 rule.
         rationale: >-
-          internal/hiss over HISS-11/rust: total=0, filesRead=4 (the Rust scanner only implements
-          HISS-02 loop, HISS-07 unwrap/expect and HISS-09 unsafe). semgrep: 0 findings (its two Rust
-          rules are hiss-07-banned-unwrap/expect). gitleaks: no leaks. No Cargo.lock / cargo build
-          --locked check exists anywhere in the repository, and the gate's lockfile stage never looks
-          at Cargo.lock. Both gap fixtures are real hermeticity violat
+          internal/adopt TestAuditSupplyChainReplaysTheHISS11Fixtures replays positive/floating-container-tag.rs
+          (reported) and negative/pinned-container-digest.rs (clean). Cargo.lock / floating git dependency
+          checks (gap/floating-git-dep.rs) remain an undetected gap.
       - language: python
-        state: unsupported
+        state: partial
+        runner: audit
         mechanism: >-
-          none
+          praetorctl audit and the MCP standards_audit, through internal/adopt.AuditSupplyChain over
+          internal/supplychain.ScanImageRefs for fully qualified container image string literals. NOT
+          internal/hiss, which has no HISS-11 rule.
         rationale: >-
-          internal/hiss over HISS-11/python: total=0, filesRead=4 (the Python scanner implements only
-          HISS-02 while True, HISS-08 eval/exec and HISS-07 bare except). semgrep: 0 findings.
-          gitleaks: no leaks. No requirements/pip --require-hashes or lockfile check exists in the
-          repository. gap/pip-install-unpinned.py installs an unversioned, unhashed dependency at run
-          time and is not reported by any mechanism.
+          internal/adopt TestAuditSupplyChainReplaysTheHISS11Fixtures replays positive/floating-container-tag.py
+          (reported) and negative/pinned-container-digest.py (clean). Unhashed runtime pip installs
+          (gap/pip-install-unpinned.py) remain an undetected gap.
       - language: c
-        state: unsupported
+        state: partial
+        runner: audit
         mechanism: >-
-          none
+          praetorctl audit and the MCP standards_audit, through internal/adopt.AuditSupplyChain over
+          internal/supplychain.ScanImageRefs for fully qualified container image string literals. NOT
+          internal/hiss, which has no HISS-11 rule.
         rationale: >-
-          internal/hiss over HISS-11/c: total=0, filesRead=4 (the native scanner implements only
-          HISS-02 unbounded loop, HISS-08 gets/strcpy/sprintf and HISS-01 goto). semgrep's only C rule
-          is hiss-08-banned-c-memory: 0 findings here. gitleaks: no leaks. gap/dlopen-unverified.c
-          maps an unpinned, unsigned shared object into the process at run time and nothing reports
-          it.
+          internal/adopt TestAuditSupplyChainReplaysTheHISS11Fixtures replays positive/floating-container-tag.c
+          (reported) and negative/pinned-container-digest.c (clean). Unverified dlopen calls
+          (gap/dlopen-unverified.c) remain an undetected gap.
       - language: typescript
-        state: unsupported
+        state: partial
+        runner: audit
         mechanism: >-
-          none
+          praetorctl audit and the MCP standards_audit, through internal/adopt.AuditSupplyChain over
+          internal/supplychain.ScanImageRefs for fully qualified container image string literals. NOT
+          internal/hiss, which has no HISS-11 rule.
         rationale: >-
-          internal/hiss reads TypeScript for HISS-01, HISS-02, HISS-04, HISS-07 and HISS-08 but has
-          no HISS-11 rule, so these fixtures yield no HISS-11 finding. semgrep has a TypeScript rule
-          (hiss-08-banned-eval) but none for HISS-11: 0 findings. No pnpm-lock.yaml /
-          --frozen-lockfile check exists. gap/cdn-import-latest.ts imports executable code from a CDN
-          at a floati
+          internal/adopt TestAuditSupplyChainReplaysTheHISS11Fixtures replays positive/floating-container-tag.ts
+          (reported) and negative/pinned-container-digest.ts (clean). Unpinned CDN imports
+          (gap/cdn-import-latest.ts) remain an undetected gap.
+      - language: dockerfile
+        state: partial
+        runner: audit
+        mechanism: >-
+          praetorctl audit and the MCP standards_audit, through internal/adopt.AuditSupplyChain over
+          internal/supplychain.ScanImageRefs on Dockerfile and Containerfile FROM instructions.
+        rationale: >-
+          positive/Dockerfile.floating and positive/Dockerfile.unresolvable-arg fail AuditSupplyChain;
+          negative/Dockerfile.pinned (digest pin, multi-stage alias, and scratch) passes.
+      - language: compose
+        state: partial
+        runner: audit
+        mechanism: >-
+          praetorctl audit and the MCP standards_audit, through internal/adopt.AuditSupplyChain over
+          internal/supplychain.ScanImageRefs on compose, Kubernetes, and Helm image: fields.
+        rationale: >-
+          positive/docker-compose.floating.yml fails AuditSupplyChain; negative/docker-compose.pinned.yml
+          passes.
       - language: svelte
         state: unsupported
         mechanism: >-
