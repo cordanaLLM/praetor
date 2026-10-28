@@ -162,7 +162,8 @@ names and flushes each suite before starting it, captures output in temporary fi
 the suite's process tree at its 1800-second timeout, reserving at most two five-second waits
 for cleanup. Inherited output handles cannot delay output collection. The planted grandchild case in
 `scripts/test_portability_selftest.py` and `TestPortability_SelftestTimeout` in
-`internal/forge/portability_selftest_timeout_test.go` guard the suite and step bounds.
+`internal/forge/portability_selftest_timeout_test.go` guard the suite and step bounds. The
+workflow runs the driver's regression suite before the harness suites on every platform.
 
 The driver exists because the suites' exit codes are not a sufficient pass condition. It
 requires that every suite exited zero **and** that at least `--min-executed` tests actually ran,
