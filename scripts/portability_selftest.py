@@ -36,6 +36,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # The suites `make hooks-test` runs. Kept in this order so the output reads the same
 # everywhere; the list is asserted against the Makefile by test_portability_selftest.py.
 SUITES = (
+    Path(".config/lefthook/scripts/test_ci_scope.py"),
     Path(".config/lefthook/scripts/test_security_scope.py"),
     Path(".config/lefthook/scripts/test_hooks.py"),
     Path(".config/lefthook/scripts/test_checkpoint.py"),

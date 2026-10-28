@@ -461,7 +461,7 @@ func markdownGateSelfTestGap(job workflowJob) string {
 	setupNode := false
 	for i := 0; i < len(job.Steps) && i < maxStepsPerJob; i++ {
 		step := job.Steps[i]
-		if strings.HasPrefix(step.Uses, "actions/setup-node@") && runsOnEveryLeg(step) {
+		if strings.HasPrefix(step.Uses, "actions/setup-node@") && runsInPortabilityScope(step, "node") {
 			setupNode = true
 		}
 		if strings.TrimSpace(step.Run) != markdownGateSelfTest {
@@ -470,7 +470,7 @@ func markdownGateSelfTestGap(job workflowJob) string {
 		switch {
 		case !setupNode:
 			return "self-test runs before an unconditional setup-node step"
-		case !runsOnEveryLeg(step):
+		case !runsInPortabilityScope(step, "markdown"):
 			return "self-test step is conditional: " + step.If
 		}
 		return ""
@@ -486,6 +486,19 @@ var everyLegConditions = []string{"", "${{ !cancelled() }}", "${{ !cancelled() &
 // runsOnEveryLeg reports whether a step's condition cannot differ between matrix legs.
 func runsOnEveryLeg(step workflowStep) bool {
 	return slices.Contains(everyLegConditions, strings.TrimSpace(step.If))
+}
+
+// runsInPortabilityScope permits only the declared step scope, never a platform condition.
+// Push and dispatch set every flag; PR fixtures exercise each selector branch.
+func runsInPortabilityScope(step workflowStep, flag string) bool {
+	if runsOnEveryLeg(step) {
+		return true
+	}
+	term := "steps.scope.outputs." + flag + " == 'true'"
+	if flag == "node" {
+		term = "(steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true')"
+	}
+	return strings.TrimSpace(step.If) == "${{ !cancelled() && "+ghworkflow.HostedGateNotDraft+" && "+term+" }}"
 }
 
 // The Markdown gate runner is emitted into adopters' verify-all, and only the portability
@@ -969,5 +982,28 @@ func TestVerifyJobRunsDocsAuditOnRunDocs(t *testing.T) {
 				t.Fatalf("gap = %q, want containing %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// Scope guards accept only the named selector output and still reject platform skips.
+func TestPortabilityScopeConditions(t *testing.T) {
+	prefix := "${{ !cancelled() && " + ghworkflow.HostedGateNotDraft + " && "
+	cases := []struct {
+		condition, flag string
+		want            bool
+	}{
+		{everyLegConditions[2], "harness", true},
+		{prefix + "steps.scope.outputs.harness == 'true' }}", "harness", true},
+		{prefix + "steps.scope.outputs.markdown == 'true' }}", "markdown", true},
+		{prefix + "(steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true') }}", "node", true},
+		{prefix + "steps.scope.outputs.go == 'true' }}", "harness", false},
+		{prefix + "steps.scope.outputs.harness == 'true' && runner.os != 'Windows' }}", "harness", false},
+		{"${{ !cancelled() && steps.scope.outputs.harness == 'true' }}", "harness", false},
+		{prefix + "steps.scope.outputs.harness != 'true' }}", "harness", false},
+	}
+	for _, tc := range cases {
+		if got := runsInPortabilityScope(workflowStep{If: tc.condition}, tc.flag); got != tc.want {
+			t.Errorf("condition %q, flag %s: got %v, want %v", tc.condition, tc.flag, got, tc.want)
+		}
 	}
 }

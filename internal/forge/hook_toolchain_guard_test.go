@@ -128,7 +128,7 @@ func hookToolchainGap(job workflowJob) string {
 // hookToolchainStepGap judges the assertion step itself.
 func hookToolchainStepGap(step workflowStep, env map[string]string, readable bool) string {
 	switch {
-	case !runsOnEveryLeg(step):
+	case !runsInPortabilityScope(step, "harness"):
 		return "toolchain assertion is conditional: " + step.If
 	case !readable:
 		return "toolchain assertion has no readable env block"
@@ -152,7 +152,7 @@ func hookSelfTestGap(step workflowStep, asserted bool) string {
 	switch {
 	case !asserted:
 		return "self-tests run before the hook toolchain is asserted"
-	case !runsOnEveryLeg(step):
+	case !runsInPortabilityScope(step, "harness"):
 		return "self-tests are conditional: " + step.If
 	}
 	return ""

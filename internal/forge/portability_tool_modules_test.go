@@ -58,7 +58,7 @@ func TestPortability_Negative_PlantedToolModuleStepsAreRefused(t *testing.T) {
 		"after tests":   strings.Replace(strings.Replace(workflow, testPackageStep, "- name: TMP", 1), toolModulesStep, testPackageStep, 1),
 		"other command": strings.Replace(workflow, toolModulesRun, "go mod download", 1),
 		"no build":      strings.Replace(workflow, toolBuildRun, "true", 1),
-		"default shell": strings.Replace(workflow, toolModulesStep+"\n        if: ${{ !cancelled() && github.event.pull_request.draft != true }}\n        shell: bash", toolModulesStep+"\n        if: ${{ !cancelled() && github.event.pull_request.draft != true }}", 1),
+		"default shell": strings.Replace(workflow, toolModulesStep+"\n        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}\n        shell: bash", toolModulesStep+"\n        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}", 1),
 	}
 	for name, text := range planted {
 		if text == workflow {

@@ -153,6 +153,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
 
       - name: Setup Go Toolchain
         id: setup-go
@@ -167,16 +168,54 @@ jobs:
           job: portability
           go-version: ${{ steps.setup-go.outputs.go-version }}
 
+      - name: Detect Changed Paths
+        id: base
+        uses: ./.github/actions/changed-paths
+
       - name: Setup Python Toolchain
         id: python
         uses: actions/setup-python@v7
         with:
           python-version: '3.13'
 
+      # One PR run cost 119.4 runner minutes across the three legs. Scope PR work
+      # through the hook's package selector; push and dispatch retain the full run.
+      - name: Select Platform Neutrality Scope
+        id: scope
+        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        shell: bash
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ steps.base.outputs.base_ref }}
+        run: |
+          "$PYTHON" -B .config/lefthook/scripts/ci_scope.py --event "$EVENT" --base "$BASE" --head HEAD \
+            --output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY" --packages "$RUNNER_TEMP/portability-packages.txt"
+
+      - name: Select Buildable Go Packages
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        shell: bash
+        run: |
+          packages=()
+          while IFS= read -r package; do packages+=("$package"); done < "$RUNNER_TEMP/portability-packages.txt"
+          # go build rejects test-only packages; use Go's own source-file metadata.
+          go list -f '{{if or .GoFiles .CgoFiles}}{{.ImportPath}}{{end}}' "${packages[@]}" > "$RUNNER_TEMP/buildable.txt"
+
       # Build before test: a compile error on one OS is the cheapest portability defect to
       # find and the one most likely to be a build-constraint or path-separator mistake.
       - name: Compile Every Package
-        run: go build ./...
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        shell: bash
+        run: |
+          buildable=()
+          while IFS= read -r package; do
+            if [ -n "$package" ]; then buildable+=("$package"); fi
+          done < "$RUNNER_TEMP/buildable.txt"
+          if [ "${#buildable[@]}" -gt 0 ]; then
+            go build "${buildable[@]}"
+          else
+            echo "Compile Every Package skipped: selected packages contain tests only"
+          fi
 
       # Every step below runs even when an earlier one failed. #84 was four portability
       # defects stacked so that each was invisible until the one before it was fixed, which
@@ -184,8 +223,18 @@ jobs:
       # reproduces exactly that. `!cancelled()` does not alter the job's conclusion: a failed
       # step still fails the leg. It only means one run reports every layer instead of one.
       - name: Vet Every Package
-        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
-        run: go vet ./...
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        shell: bash
+        run: |
+          buildable=()
+          while IFS= read -r package; do
+            if [ -n "$package" ]; then buildable+=("$package"); fi
+          done < "$RUNNER_TEMP/buildable.txt"
+          if [ "${#buildable[@]}" -gt 0 ]; then
+            go vet "${buildable[@]}"
+          else
+            echo "Vet Every Package skipped: selected packages contain tests only"
+          fi
 
       # The gating and flavor tests build the pinned gosec and install the fallback scanners
       # from the versions tools/go/go.mod pins, under a 2-minute and a 4-minute bound. Those
@@ -197,7 +246,7 @@ jobs:
       # ran out of the same bounds compiling the scanners while the other test binaries ran;
       # building them here, outside any bound, leaves the tests a build cache to hit.
       - name: Download And Build Pinned Tools
-        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
           go mod download -modfile=tools/go/go.mod
@@ -224,10 +273,10 @@ jobs:
       # Windows it took 1856 s while #166 ran its hermetic fixtures there; with that enablement taken
       # out again (#1369) it takes 129 s (run 38983863003), so its longer bound and the dated
       # exception for it are gone (#1381). operationalsync's identity suite replays only the
-      # Windows-specific adopt tests on Windows, so it stays in the first run. Both runs always go;
-      # the step fails when either does.
+      # Windows-specific adopt tests on Windows, so it stays in the first run. Every selected run
+      # goes even after a failure; the step fails when any selected run does.
       - name: Test Every Package
-        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
           adopt=$(go list ./internal/adopt)
@@ -239,8 +288,11 @@ jobs:
           # every test runs exactly once (internal/forge TestPortability_LongestPackageRunsInHalves).
           cli_half='^Test(Aud|[B-D])'
           # A read loop, not mapfile: macOS runners ship bash 3.2, which has no mapfile.
+          selected=()
+          while IFS= read -r package; do selected+=("$package"); done < "$RUNNER_TEMP/portability-packages.txt"
+          go list "${selected[@]}" > "$RUNNER_TEMP/selected-packages.txt"
           packages=()
-          while IFS= read -r package; do packages+=("$package"); done < <(go list ./... | grep -vxF -e "$adopt" -e "$cli")
+          while IFS= read -r package; do packages+=("$package"); done < <(grep -vxF -e "$adopt" -e "$cli" "$RUNNER_TEMP/selected-packages.txt")
           json="$RUNNER_TEMP/go-test-$RUNNER_OS.json"
           : > "$json"
           show() {
@@ -256,20 +308,34 @@ jobs:
             cat "$1" >> "$json"
           }
           status=0
-          go test -json -timeout 30m "${packages[@]}" > "$RUNNER_TEMP/run-1.json" 2>&1 || status=$?
-          show "$RUNNER_TEMP/run-1.json"
-          go test -json -timeout 30m "$adopt" > "$RUNNER_TEMP/run-2.json" 2>&1 || status=$?
-          show "$RUNNER_TEMP/run-2.json"
-          go test -json -timeout 30m -run "$cli_half" "$cli" > "$RUNNER_TEMP/run-3.json" 2>&1 || status=$?
-          show "$RUNNER_TEMP/run-3.json"
-          go test -json -timeout 30m -skip "$cli_half" "$cli" > "$RUNNER_TEMP/run-4.json" 2>&1 || status=$?
-          show "$RUNNER_TEMP/run-4.json"
+          if [ "${#packages[@]}" -gt 0 ]; then
+            go test -json -timeout 30m "${packages[@]}" > "$RUNNER_TEMP/run-1.json" 2>&1 || status=$?
+            show "$RUNNER_TEMP/run-1.json"
+          else
+            echo "run-1 skipped: no selected packages outside adopt and CLI"
+          fi
+          if [ "$ADOPT" = true ]; then
+            go test -json -timeout 30m "$adopt" > "$RUNNER_TEMP/run-2.json" 2>&1 || status=$?
+            show "$RUNNER_TEMP/run-2.json"
+          else
+            echo "run-2 skipped: adopt is not selected"
+          fi
+          if [ "$CLI" = true ]; then
+            go test -json -timeout 30m -run "$cli_half" "$cli" > "$RUNNER_TEMP/run-3.json" 2>&1 || status=$?
+            show "$RUNNER_TEMP/run-3.json"
+            go test -json -timeout 30m -skip "$cli_half" "$cli" > "$RUNNER_TEMP/run-4.json" 2>&1 || status=$?
+            show "$RUNNER_TEMP/run-4.json"
+          else
+            echo "run-3/run-4 skipped: CLI is not selected"
+          fi
           exit "$status"
         env:
+          ADOPT: ${{ steps.scope.outputs.adopt }}
+          CLI: ${{ steps.scope.outputs.cli }}
           PYTHON: ${{ steps.python.outputs.python-path }}
 
       - name: Upload Per-Test Timing
-        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: go-test-json-${{ matrix.name }}
@@ -281,7 +347,7 @@ jobs:
       # client config against the vendored upstream schemas and builds and drives standards-mcp,
       # so it runs on each platform too (HISS-21); its network checks skip with a stated reason.
       - name: Test The Client Schema Oracle Module
-        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.schemacheck == 'true' }}
         run: |
           go -C tools/schemacheck vet ./...
           go -C tools/schemacheck test -timeout 30m ./...
@@ -291,7 +357,7 @@ jobs:
       # a suite that silently degrades because a tool is missing is the failure mode this whole
       # job exists to make visible, and it would be absurd to introduce it here.
       - name: Install Pinned Git Hook Toolchain
-        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
         run: go install -C tools/lefthook github.com/evilmartians/lefthook/v2
 
       # test_security_scope.py fails outright when gosec is absent rather than skipping, which
@@ -306,7 +372,7 @@ jobs:
       # TestPortabilityPassesNoDottedDashArgumentThroughPowerShell keeps such an argument out
       # of the default shell.
       - name: Install Security Scanner
-        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
         shell: bash
         run: go install -modfile=tools/go/go.mod github.com/securego/gosec/v2/cmd/gosec
 
@@ -328,7 +394,7 @@ jobs:
       # yamllint pin (HISS-19). The lock is universal for Python >= 3.10, and it also brings
       # black and flake8, which no hook runs.
       - name: Install YAML Linter
-        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
         shell: bash
         run: >-
           "$PYTHON" -m pip install --disable-pip-version-check --require-hashes
@@ -349,7 +415,7 @@ jobs:
       # reproducible gate (HISS-19, HISS-20). The install directory goes first on PATH so the
       # pin wins over the preinstalled copy.
       - name: Install Shell Linter
-        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
         shell: bash
         env:
           SHELLCHECK_VERSION: v0.11.0
@@ -418,7 +484,7 @@ jobs:
       # tool; one outside --require is reported as not asserted, never silently absent. The
       # table in docs/standards/hiss-21-platform-neutrality.md is rendered from REQUIRED.
       - name: Assert Hook Toolchain
-        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
         shell: bash
         run: '"$PYTHON" -B .config/lefthook/scripts/toolchain.py --require "$REQUIRED"'
         env:
@@ -434,7 +500,7 @@ jobs:
       # than by name: assuming a platform's binary naming is the exact defect this job exists
       # to catch. The hooks they drive resolve their own interpreter, as on any host.
       - name: Harness Self-Tests
-        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
         shell: bash
         run: '"$PYTHON" -B scripts/portability_selftest.py --min-executed "$MIN_EXECUTED"'
         env:
@@ -452,7 +518,7 @@ jobs:
       # start the npm batch shim without a shell and runs the npm-cli.js shipped beside node.exe
       # instead; this step is the leg that proves that path works on the platform it exists for.
       - name: Setup Node Toolchain
-        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && (steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true') }}
         uses: actions/setup-node@v7
         with:
           node-version: '24'
@@ -462,7 +528,7 @@ jobs:
             tools/markdownlint/package-lock.json
 
       - name: Markdown Gate Self-Test
-        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.markdown == 'true' }}
         run: node tools/markdownlint/verify.mjs --self-test
 
       # `make docs-figures-check` and the managed `make docs-figures` are verify-all gates, so they
@@ -477,7 +543,7 @@ jobs:
       # at the end of .gitattributes). The Chromium smoke test needs a built site and runs in
       # pages.yml on Linux only.
       - name: Figure Build Check
-        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.figures == 'true' }}
         shell: bash
         run: |
           npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
@@ -492,7 +558,7 @@ jobs:
       # `-text` in .gitattributes so their hashes hold on a Windows checkout, and node expands the
       # quoted test glob itself (docs/standards/hiss-21-platform-neutrality.md).
       - name: Interfig Verify Gate
-        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.interfig == 'true' }}
         shell: bash
         run: |
           "$PYTHON" -B scripts/test_sync_interfig.py

@@ -423,6 +423,7 @@ portability-test:
 	python3 -B scripts/test_portability_selftest.py
 
 hooks-test:
+	python3 -B .config/lefthook/scripts/test_ci_scope.py
 	python3 -B .config/lefthook/scripts/test_security_scope.py
 	python3 -B .config/lefthook/scripts/test_hooks.py
 	python3 -B .config/lefthook/scripts/test_checkpoint.py
