@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -209,6 +210,28 @@ func TestAuditE2E_ShallowClone(t *testing.T) {
 	assertContainsAll(t, skipOut, "[SKIP]", "shallow history")
 }
 
+// corruptGitStubSource is a stand-in git (testsupport.BuildExecutable, HISS-21): it answers
+// --is-shallow-repository with false and fails every other call with exit 128 and an unrelated
+// stderr line, as a corrupt object database does.
+const corruptGitStubSource = `package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	for _, arg := range os.Args[1:] {
+		if arg == "--is-shallow-repository" {
+			fmt.Println("false")
+			return
+		}
+	}
+	fmt.Fprintln(os.Stderr, "fatal: corrupt object database")
+	os.Exit(128)
+}
+`
+
 func TestAuditE2E_GitErrorFailsClosed(t *testing.T) {
 	repo := initTestGitRepo(t)
 	commitFile(t, repo, "src/init.go", "package src\n", "chore: initial commit")
@@ -216,11 +239,7 @@ func TestAuditE2E_GitErrorFailsClosed(t *testing.T) {
 
 	// 1. Git stub exiting 128 with unrelated stderr on describe -> error, never SKIP.
 	stubDir := t.TempDir()
-	stubPath := filepath.Join(stubDir, "git")
-	script := "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = \"--is-shallow-repository\" ]; then\n    echo false\n    exit 0\n  fi\ndone\necho \"fatal: corrupt object database\" >&2\nexit 128\n"
-	if err := os.WriteFile(stubPath, []byte(script), 0o700); err != nil {
-		t.Fatalf("write git stub: %v", err)
-	}
+	testsupport.BuildExecutable(t, stubDir, "git", corruptGitStubSource)
 	t.Setenv("PATH", stubDir)
 
 	for _, rel := range []bool{false, true} {
