@@ -10,6 +10,7 @@ fail, because that is the state the driver exists to catch. A test proving the d
 passes a healthy suite proves almost nothing on its own.
 """
 
+import ast
 import contextlib
 import importlib.util
 import io
@@ -23,6 +24,7 @@ import textwrap
 import threading
 import unittest
 from pathlib import Path
+from typing import ClassVar
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -160,7 +162,7 @@ class PortabilityDriver(unittest.TestCase):
         Two lists of the same suites drift; this pins them together (HISS-19).
         """
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
-        target = re.search(r"^hooks-test:\n((?:\t.*\n)+)", makefile, re.M)
+        target = re.search(r"^hooks-test:\n((?:\t.*\n)+)", makefile, re.MULTILINE)
         self.assertIsNotNone(target, "hooks-test target not found in Makefile")
         declared = re.findall(r"python3 -B (\S+\.py)", target.group(1))
         # The Makefile names suites with slashes; str() of a Path uses the host separator, so on
@@ -535,19 +537,48 @@ CHILD_SUITES = (Path("scripts/test_checkpoint_hooks.py"),)
 DIRECT_START = re.compile(r"\bsubprocess\b|\bos\.(?:system|popen|spawn\w*|exec\w*)\(")
 
 
+def starts_child(text):
+    """Find process imports and calls while allowing inspection of a mocked runner."""
+    for node in ast.walk(ast.parse(text)):
+        if isinstance(node, ast.Import) and any(
+            alias.name.split(".")[0] == "subprocess" for alias in node.names
+        ):
+            return True
+        if isinstance(node, ast.ImportFrom) and node.module == "subprocess":
+            return True
+        if isinstance(node, ast.Call) and DIRECT_START.search(
+            ast.unparse(node.func) + "("
+        ):
+            return True
+    return False
+
+
 class ChildSuites(unittest.TestCase):
     def test_every_child_of_an_adopting_suite_starts_through_run_child(self):
         for suite in CHILD_SUITES:
             with self.subTest(suite=suite.as_posix()):
                 self.assertIn(suite, driver.SUITES)
                 text = (ROOT / suite).read_text(encoding="utf-8")
-                self.assertIsNone(DIRECT_START.search(text), "start the child through run_child")
+                self.assertFalse(
+                    starts_child(text), "start the child through run_child"
+                )
                 self.assertIn("run_child = DRIVER.run_child", text)
         # Negative: the pattern finds each way a suite could start a child past the helper.
-        for line in ("import subprocess", "subprocess.run(argv)", "os.system('x')",
-                     "os.execv(path, argv)", "os.spawnlp(0, 'sh')"):
-            self.assertIsNotNone(DIRECT_START.search(line), line)
-        self.assertIsNone(DIRECT_START.search("result = run_child(argv, timeout=20)"))
+        for line in (
+            "import subprocess",
+            "from subprocess import run as start",
+            "subprocess.run(argv)",
+            "GUARD.subprocess.run(argv)",
+            "os.system('x')",
+            "os.execv(path, argv)",
+            "os.spawnlp(0, 'sh')",
+        ):
+            self.assertTrue(starts_child(line), line)
+        for line in (
+            "result = run_child(argv, timeout=20)",
+            'mock.patch.object(GUARD.subprocess, "run", side_effect=error)',
+        ):
+            self.assertFalse(starts_child(line), line)
 
 
 # Rewrites the page's table from its rendering instead of comparing.
@@ -592,7 +623,7 @@ class HookToolchainTable(unittest.TestCase):
 
     def test_requirements_are_read_from_the_policy_declarations(self):
         class Policy:
-            RESOLVED = {"python": (("python3",), ("py", "-3")), "make": (("make",),)}
+            RESOLVED: ClassVar = {"python": (("python3",), ("py", "-3")), "make": (("make",),)}
             PYTHON_FLOOR = "3.10"
             BY_NAME = ("git",)
 
@@ -646,7 +677,7 @@ class HookToolchainTable(unittest.TestCase):
 HOOK_LINT_INPUT = ".config/hook-lint/requirements.in"
 HOOK_LINT_LOCK = ".config/hook-lint/requirements.txt"
 ACTIONLINT_FILE = ".github/actionlint.yaml"
-SHELLCHECK_PIN = re.compile(r"^ +SHELLCHECK_VERSION: (\S+)$", re.M)
+SHELLCHECK_PIN = re.compile(r"^ +SHELLCHECK_VERSION: (\S+)$", re.MULTILINE)
 LOCK_PYTHON = re.compile(r"--python-version=(\d+\.\d+)\b")
 # Files that would install a linter in this repository: the workflows and the container.
 INSTALL_SOURCES = (".github/workflows/*.yml", ".devcontainer/devcontainer.json",

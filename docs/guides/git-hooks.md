@@ -1,5 +1,7 @@
 # Local Git hooks
 
+Missing tools fail closed with their names and restore advice. The native hook adapters report `lefthook not found on PATH` and suggest `go -C <repo>/tools/lefthook install github.com/evilmartians/lefthook/v2`, followed by `lefthook version` for read-back. The security gate reports missing `govulncheck` or `gosec` with `go -C <repo> install -modfile=tools/go/go.mod <package>` when that pin file exists, retaining its previous advice otherwise. These commands select the repository's versions; `scripts/test_checkpoint_hooks.py` and `TestRequireScannerRestore_3D` in `internal/gating/gating_test.go` cover the diagnostics.
+
 Install Lefthook 2.1.14 or newer, then run `make hooks` and `make hooks-check`.
 The configuration is tested with 2.1.14. Python 3.10 or newer, GNU Make, Git, a POSIX `sh`
 and the repository Go version are required. The hooks find the interpreter and `make`
@@ -225,9 +227,25 @@ runs without a line in the floors file fails the same way, as does a floors file
 unreadable or holds a line in any other shape.
 
 ```text
-praetor hooks: shellcheck >= 0.11.0 is required (.config/lefthook/tool-floors.txt): the shellcheck on PATH is 0.9.0
-praetor hooks: hadolint is required (.config/lefthook/tool-floors.txt, any version): it is not on PATH
+praetor hooks: shellcheck >= 0.11.0 is required (.config/lefthook/tool-floors.txt): the shellcheck on PATH is 0.9.0. Restore: download shellcheck v0.11.0 for your platform from https://github.com/koalaman/shellcheck/releases; read-back: shellcheck --version
+praetor hooks: hadolint is required (.config/lefthook/tool-floors.txt, any version): it is not on PATH. Restore: install hadolint from a system package or https://github.com/hadolint/hadolint/releases; read-back: hadolint --version
 ```
+
+Each refusal keeps the requirement first and appends a `Restore:` line from the shared
+`missing_tool_line` helper in `.config/lefthook/scripts/common.py`. Its restore table covers
+linters without Go module pins:
+
+| Tool | Restore guidance |
+| :--- | :--- |
+| `actionlint` | `go install github.com/rhysd/actionlint/cmd/actionlint@v<floor>` |
+| `yamllint` | `<python> -m pip install --require-hashes -r .config/hook-lint/requirements.txt` |
+| `shellcheck` | Download the platform's release at `v<floor>` from <https://github.com/koalaman/shellcheck/releases>. |
+| `hadolint` | Install a system package or a platform release from <https://github.com/hadolint/hadolint/releases>. |
+
+`<floor>` comes from `tool-floors.txt`; `<python>` is the interpreter running the hook.
+Run the pip restore from the checkout root in the Python environment used for hooks.
+Lefthook and the Go scanners retain the repository pins described above. A tool without
+a restore-table entry receives generic guidance naming itself and `tool-floors.txt`.
 
 The `ToolFloors` cases in `.config/lefthook/scripts/test_hooks.py` cover each outcome and
 replay the version readers against the linters installed on the host. The
@@ -237,6 +255,10 @@ when `.github/actionlint.yaml` measures against another `actionlint` release tha
 and when a workflow or the development container starts to name `hadolint` while its line
 still declares no floor. To raise a floor, change its line together with the source its
 comment names.
+
+The `HookToolRestores` cases plant a `PATH` without both `actionlint` and `lefthook`,
+check every linter's restore guidance, and exercise an `actionlint` stub below and at its
+floor. A changed floor fixture ensures restore versions follow the file.
 
 One reader serves every requirement line (`requirement` in `toolchain.py`): the floors file
 and the hash-locked lint lock that `scripts/test_emitted_hook_lint.py` installs from are

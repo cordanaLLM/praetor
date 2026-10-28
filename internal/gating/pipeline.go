@@ -752,6 +752,7 @@ func gosecConfigPath(repoDir, moduleDir string) (string, error) {
 // requireScanner fails closed when a mandatory scanner is not on PATH.
 func requireScanner(cfg *stageConfig, binary, installHint string) error {
 	if _, err := cfg.lookPath(binary); err != nil {
+		installHint = flavor.ScannerInstallGuide(cfg.repoDir, binary, installHint)
 		return fmt.Errorf("%w: %s not found on PATH (%s): %w", ErrMissingScanner, binary, installHint, err)
 	}
 	return nil

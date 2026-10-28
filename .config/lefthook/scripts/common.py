@@ -22,6 +22,64 @@ class HookError(Exception):
     """An actionable local gate failure."""
 
 
+# The bootstrap and failure diagnostics use the same repository-owned Lefthook pin.
+LEFTHOOK_MODULE = "tools/lefthook"
+LEFTHOOK = "github.com/evilmartians/lefthook/v2"
+# Versions come from tool-floors.txt; Go tools retain their repository-owned pins.
+TOOL_RESTORES = {
+    "actionlint": "go install github.com/rhysd/actionlint/cmd/actionlint@v{floor}",
+    "yamllint": "{python} -m pip install --require-hashes -r .config/hook-lint/requirements.txt",
+    "shellcheck": "download shellcheck v{floor} for your platform from https://github.com/koalaman/shellcheck/releases",
+    "hadolint": "install hadolint from a system package or https://github.com/hadolint/hadolint/releases",
+    "lefthook": "go -C {module} install " + LEFTHOOK,
+    "gosec": "go -C {root_q} install -modfile=tools/go/go.mod github.com/securego/gosec/v2/cmd/gosec",
+    "govulncheck": "go -C {root_q} install -modfile=tools/go/go.mod golang.org/x/vuln/cmd/govulncheck",
+}
+
+
+def missing_tool_line(name, root=None, *, reason=None, floor=None):
+    """Name the tool's failure and its restore source, keeping a supplied reason first."""
+    template = TOOL_RESTORES.get(name)
+    root = Path(__file__).resolve().parents[3] if root is None else Path(root)
+    module = root / LEFTHOOK_MODULE
+    if name == "lefthook" and not (module / "go.mod").is_file():
+        template = "read {root}/tools/lefthook/go.mod for the pinned install command"
+    if (
+        "-modfile=tools/go/go.mod" in (template or "")
+        and not (root / "tools/go/go.mod").is_file()
+    ):
+        template = "read {root}/tools/go/go.mod for the pinned install command"
+    if template is None or ("{floor}" in template and floor is None):
+        template = (
+            "read .config/lefthook/tool-floors.txt and install {name} for your platform"
+        )
+    quoted = {
+        key: "'" + str(value).replace("'", "'\"'\"'") + "'"
+        for key, value in {
+            "module": module,
+            "python": sys.executable,
+            "root_q": root,
+        }.items()
+    }
+    restore = template.format(
+        name=name,
+        floor=floor,
+        root=root,
+        **quoted,
+    )
+    reason = reason or (
+        f"Praetor: {name} not found on PATH; shared hook policy cannot run, call refused"
+    )
+    version = "version" if name == "lefthook" else "--version"
+    return f"{reason}. Restore: {restore}; read-back: {name} {version}"
+
+
+def require_tool(name):
+    """Fail before starting a shared job when its tool is unavailable."""
+    if shutil.which(name) is None:
+        raise HookError(missing_tool_line(name))
+
+
 KILL_TREE_TIMEOUT = 10
 # The praetor CLI runs each git or go command in a process group of its own. Asked to stop by a
 # catchable signal, it forwards that signal to each command's group, waits up to its
@@ -319,6 +377,8 @@ def run_bounded(
                 )
             return stdout
     except (OSError, subprocess.TimeoutExpired) as error:
+        if isinstance(error, FileNotFoundError) and error.filename == "lefthook":
+            raise HookError(missing_tool_line("lefthook")) from error
         raise HookError(
             f"{args[0]} checkpoint process failed ({type(error).__name__})"
         ) from error

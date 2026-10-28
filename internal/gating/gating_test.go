@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/govuln"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
@@ -464,6 +465,49 @@ func TestExecuteStage_SkipVerdicts(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"status":"skipped"`) || strings.Contains(string(raw), `"passed"`) {
 		t.Errorf("stage JSON must carry the status and no passed bool: %s", raw)
+	}
+}
+
+type scannerRestoreCase struct{ binary, pkg, fallback string }
+
+func TestRequireScannerRestore_3D(t *testing.T) {
+	for _, pinned := range []bool{true, false} {
+		for _, scanner := range []scannerRestoreCase{
+			{"govulncheck", "golang.org/x/vuln/cmd/govulncheck", "go install golang.org/x/vuln/cmd/govulncheck@latest"},
+			{"gosec", "github.com/securego/gosec/v2/cmd/gosec", flavor.GosecInstallGuide},
+		} {
+			t.Run(fmt.Sprintf("%s/pinned=%v", scanner.binary, pinned), func(t *testing.T) {
+				assertScannerRestore(t, pinned, scanner)
+			})
+		}
+	}
+}
+
+func assertScannerRestore(t *testing.T, pinned bool, scanner scannerRestoreCase) {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "repo with spaces")
+	if pinned {
+		writeFile(t, filepath.Join(root, "tools/go/go.mod"), "module fixture\n")
+	}
+	cfg, _ := newTestConfig(t, root, false)
+	cfg.lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	err := requireScanner(cfg, scanner.binary, scanner.fallback)
+	if !errors.Is(err, ErrMissingScanner) {
+		t.Fatalf("missing scanner must fail closed: %v", err)
+	}
+	want := scanner.fallback
+	if pinned {
+		want = fmt.Sprintf("go -C %q install -modfile=tools/go/go.mod %s", root, scanner.pkg)
+		if strings.Contains(err.Error(), "@latest") {
+			t.Errorf("pinned restore floats: %v", err)
+		}
+	}
+	if !strings.Contains(err.Error(), scanner.binary+" not found on PATH ("+want+")") {
+		t.Errorf("missing restore %q: %v", want, err)
+	}
+	cfg.lookPath = func(string) (string, error) { return "/stub/" + scanner.binary, nil }
+	if err := requireScanner(cfg, scanner.binary, scanner.fallback); err != nil {
+		t.Errorf("present scanner refused: %v", err)
 	}
 }
 
