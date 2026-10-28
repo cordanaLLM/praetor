@@ -38,7 +38,7 @@ Adopted check = coverage state + mechanism; else audit scanner; else `unknown`. 
 | **HISS-17** state ledger | turn start `praetorctl state status`; turn end `praetorctl state sync .` | unknown | advisory |
 | **HISS-18** CI efficiency | diff-aware gating via `praetorctl ci filter` | unknown | advisory |
 | **HISS-19** reuse before writing | one behavior = one implementation; extend or call existing code | unknown | advisory |
-| **HISS-20** replayable evidence | every enforcement claim backed by fixtures replayed both directions | unknown | advisory |
+| **HISS-20** replayable evidence | every enforcement claim backed by fixtures replayed both directions | `praetorctl hiss coverage --verify --embedded` (engine corpus replay) in verify-all: the pinned engine's own claims; adopter-specific rules have no corpus | contradiction fails verify-all |
 | **HISS-21** platform neutrality | gates, hooks, emitted templates run on Linux, macOS, Windows, or skip with stated reason | unknown | advisory |
 
 ## Operational Rules

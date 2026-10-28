@@ -152,3 +152,26 @@ func TestRunHiss_Boundary_NoArgsPrintsUsageAndSucceeds(t *testing.T) {
 	}
 	mustContain(t, out, "Usage: praetorctl hiss")
 }
+
+func TestRunHissCoverage_Positive_EmbeddedReplayPasses(t *testing.T) {
+	out, err := runCoverage(t, "--verify", "--embedded")
+	if err != nil {
+		t.Fatalf("embedded coverage verify must pass: %v\n%s", err, out)
+	}
+	mustContain(t, out,
+		"[PASS]",
+		"claim(s) checked against",
+		fmt.Sprintf("(engine %s)", buildVersion()),
+		"every claim holds.",
+	)
+}
+
+func TestRunHissCoverage_Negative_EmbeddedWithCombinedPathRefused(t *testing.T) {
+	_, err := runCoverage(t, "--verify", "--embedded", "--path=.")
+	mustErrContain(t, err, "hiss coverage: --embedded refuses --path")
+}
+
+func TestRunHissCoverage_Negative_EmbeddedWithSyncTitlesRefused(t *testing.T) {
+	_, err := runCoverage(t, "--embedded", "--sync-titles")
+	mustErrContain(t, err, "--embedded cannot be combined with --sync-titles")
+}

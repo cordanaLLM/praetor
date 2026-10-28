@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	praetor "github.com/cordanaLLM/praetor"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
@@ -28,7 +29,7 @@ func TestBootstrapAssetFamiliesGolden(t *testing.T) {
 	var sb strings.Builder
 	for _, family := range families {
 		fmt.Fprintf(&sb, "family %q source %q directive %q\n", family.name, family.source, family.directive)
-		if family.name != "template" {
+		if family.name != "template" && family.name != "hiss coverage corpus" {
 			fmt.Fprintf(&sb, "  assets %q\n", family.assets)
 		}
 	}
@@ -50,6 +51,8 @@ func TestBootstrapAssetFamiliesGolden(t *testing.T) {
 		{"tools/markdownlint/assets.go", "// go:embed is only prose"},
 		{cliSourceFile, "//go:embed " + cliEmbedPatterns},
 		{cliSourceFile, "//go:embed cli/node.json"},
+		{praetor.CorpusSourceFile, praetor.CorpusEmbedDirective},
+		{praetor.CorpusSourceFile, "//go:embed .config/hiss/coverage.yaml"},
 	} {
 		fmt.Fprintf(&sb, "directive %s %q %v\n", probe.source, probe.text, validateEmbedDirective(probe.source, probe.text, captureRules))
 	}

@@ -208,7 +208,7 @@ func TestVerificationActualScaffoldBuildAndTestFailurePropagates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("make is required for scaffold execution: %v", err)
 	}
-	for _, failure := range []string{"none", "build", "test", "audit", "caveman"} {
+	for _, failure := range []string{"none", "build", "test", "audit", "caveman", "hiss"} {
 		t.Run(failure, func(t *testing.T) {
 			root, plan := verificationFixture(t, map[string]string{
 				"go.mod":                               "module fixture\n",
@@ -235,7 +235,7 @@ func TestVerificationActualScaffoldBuildAndTestFailurePropagates(t *testing.T) {
 				t.Fatalf("failure %q did not propagate: %v", failure, err)
 			}
 			calls := mustRead(t, filepath.Join(root, "calls"))
-			if failure == "none" && calls != "compile-context --verify\ncaveman check --configured-sources\naudit\nsecurity secrets\nbuild -v ./...\ntest -v -race ./...\n" {
+			if failure == "none" && calls != "compile-context --verify\ncaveman check --configured-sources\nhiss coverage --verify --embedded\naudit\nsecurity secrets\nbuild -v ./...\ntest -v -race ./...\n" {
 				t.Fatalf("scaffold did not exercise required commands: %q", calls)
 			}
 		})

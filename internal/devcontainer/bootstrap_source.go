@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 
+	praetor "github.com/cordanaLLM/praetor"
 	"github.com/cordanaLLM/praetor/internal/clientschema"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
@@ -149,19 +150,19 @@ func captureBootstrapFiles(ctx context.Context, root string) ([]bootstrapSourceF
 // only the packages go build ./cmd/standardsctl reads (#501).
 var bootstrapSourcePathspec = []string{"*.go", "go.mod", "go.sum", "LICENSE", ":(exclude)*_test.go", ":(exclude,glob)**/testdata/**"}
 
-func bootstrapSourcePaths(ctx context.Context, root string) ([]string, error) {
-	families, err := bootstrapAssetFamilies()
-	if err != nil {
-		return nil, err
-	}
-	args := append([]string{"ls-files", "--cached", "--others", "--exclude-standard", "-z", "--"}, bootstrapSourcePathspec...)
+func runSourceGitAssets(ctx context.Context, root string, families []bootstrapAssetFamily) (string, error) {
+	var assetArgs []string
 	for _, family := range families {
-		args = append(args, family.assets...)
+		assetArgs = append(assetArgs, family.assets...)
 	}
-	data, err := runSourceGit(ctx, root, args...)
-	if err != nil {
-		return nil, err
+	if len(assetArgs) == 0 {
+		return "", nil
 	}
+	args := append([]string{"ls-files", "--cached", "--others", "--exclude-standard", "-z", "--"}, assetArgs...)
+	return runSourceGit(ctx, root, args...)
+}
+
+func parseBootstrapSourcePaths(data string) ([]string, error) {
 	unique := make(map[string]bool)
 	for _, path := range strings.Split(data, "\x00") {
 		if path == "" {
@@ -181,6 +182,30 @@ func bootstrapSourcePaths(ctx context.Context, root string) ([]string, error) {
 	}
 	sort.Strings(paths)
 	return paths, nil
+}
+
+func bootstrapSourcePaths(ctx context.Context, root string) ([]string, error) {
+	families, err := bootstrapAssetFamilies()
+	if err != nil {
+		return nil, err
+	}
+	args := append([]string{"ls-files", "--cached", "--others", "--exclude-standard", "-z", "--"}, bootstrapSourcePathspec...)
+	data, err := runSourceGit(ctx, root, args...)
+	if err != nil {
+		return nil, err
+	}
+	assetData, err := runSourceGitAssets(ctx, root, families)
+	if err != nil {
+		return nil, err
+	}
+	if assetData != "" {
+		if data != "" {
+			data += "\x00" + assetData
+		} else {
+			data = assetData
+		}
+	}
+	return parseBootstrapSourcePaths(data)
 }
 
 // runSourceGit runs one git command in the source root. A failure names the command and carries
@@ -219,23 +244,23 @@ func validateBootstrapSourceName(name string, rules sourceRules) error {
 // validateBootstrapSourceKind admits the module files, the assets of every declared go:embed
 // family (rules.families), and non-test Go source: the inputs go build
 // ./cmd/standardsctl reads. bootstrapSourcePathspec plus the family assets asks git for
-// exactly these. Go's test surface is refused first, so no asset allowance can admit a
-// _test.go file or a testdata member.
+// exactly these. Declared assets are admitted first, then Go's test surface is refused,
+// so undeclared test files cannot enter the captured set.
 func validateBootstrapSourceKind(name string, rules sourceRules) error {
+	families, err := rules.families()
+	if err != nil {
+		return err
+	}
+	if isBootstrapAsset(name, families) {
+		return nil
+	}
 	switch {
 	case util.IsGoTestSurface(name):
 		return fmt.Errorf("bootstrap source %s is test-only; go build never reads _test.go files or testdata directories", name)
 	case name == "go.mod", name == "go.sum", name == "LICENSE", strings.HasSuffix(name, ".go"):
 		return nil
 	}
-	families, err := rules.families()
-	if err != nil {
-		return err
-	}
-	if !isBootstrapAsset(name, families) {
-		return errors.New("unsupported bootstrap source file; non-Go build inputs require explicit capture support")
-	}
-	return nil
+	return errors.New("unsupported bootstrap source file; non-Go build inputs require explicit capture support")
 }
 
 func validateBootstrapSourceFile(name string, data []byte, rules sourceRules) error {
@@ -553,6 +578,8 @@ func bootstrapAssetFamilies() ([]bootstrapAssetFamily, error) {
 		name: "reviewed images", source: reviewedImagesSource, directive: priorImagesDirective, assets: []string{PriorImagesFile},
 	}, bootstrapAssetFamily{
 		name: "secrets gate", source: secretsassets.SourceFile, directive: secretsassets.EmbedDirective, assets: secretsassets.AssetPaths(),
+	}, bootstrapAssetFamily{
+		name: "hiss coverage corpus", source: praetor.CorpusSourceFile, directive: praetor.CorpusEmbedDirective, assets: praetor.AssetPaths(),
 	}), nil
 }
 

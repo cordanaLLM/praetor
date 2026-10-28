@@ -15,6 +15,7 @@ family "reviewed images" source "internal/devcontainer/reviewed_images.go" direc
   assets ["internal/devcontainer/prior-images.json"]
 family "secrets gate" source "tools/secrets/assets.go" directive "//go:embed gate/main.go gate/rules_gen.go gate/placeholder.go"
   assets ["tools/secrets/gate/main.go" "tools/secrets/gate/rules_gen.go" "tools/secrets/gate/placeholder.go"]
+family "hiss coverage corpus" source "corpus.go" directive "//go:embed all:.config/hiss/coverage.yaml all:.config/hiss/testdata"
 asset tools/markdownlint/verify.mjs true <nil>
 name tools/markdownlint/verify.mjs <nil>
 asset tools/markdownlint/package-lock.json true <nil>
@@ -41,3 +42,5 @@ directive tools/markdownlint/other.go "//go:embed package.json package-lock.json
 directive tools/markdownlint/assets.go "// go:embed is only prose" <nil>
 directive internal/devcontainer/cli.go "//go:embed cli/package.json cli/package-lock.json cli/node.json" <nil>
 directive internal/devcontainer/cli.go "//go:embed cli/node.json" bootstrap source internal/devcontainer/cli.go embeds assets; explicit asset capture is required
+directive corpus.go "//go:embed all:.config/hiss/coverage.yaml all:.config/hiss/testdata" <nil>
+directive corpus.go "//go:embed .config/hiss/coverage.yaml" bootstrap source corpus.go embeds assets; explicit asset capture is required

@@ -2504,7 +2504,8 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
   checks rather than overstate it. A row reads `not enforced` where the check decides none of the
   repository's languages or the rule has no analogue there. HISS-09 in a C engine, HISS-01 in a
   TypeScript repository and the lefthook `go vet` row in a Rust crate are examples
-  (`TestAdoptedFor`).
+  (`TestAdoptedFor`). HISS-20 credits the engine's own replayable coverage claims
+  (`praetorctl hiss coverage --verify --embedded`) in generated `verify-all`.
 
   The line above the table names the pipelines it read and says the cells describe the files as
   adoption wrote them; a later edit to the `Makefile` or `lefthook.yml` is not reflected there.

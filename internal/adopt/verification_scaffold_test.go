@@ -280,6 +280,66 @@ func TestVerificationPriorPathResolvedMakefileWithDocsBlockIsRegenerated(t *test
 	}
 }
 
+// Positive: a Makefile generated before HISS-20 embedded replay joined verify-all
+// (priorCoverageMakefile) is replaced with the current rendering containing hiss-coverage,
+// while an edited one is preserved (HISS-20).
+func TestVerificationPriorCoverageMakefileIsRegenerated(t *testing.T) {
+	t.Run("unedited", func(t *testing.T) {
+		root := newTestRepo(t, "prior-coverage")
+		mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
+		plan, err := resolveVerificationPlan(t.Context(), root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		existing := priorCoverageMakefile(plan)
+		if existing == buildMakefile(plan) || strings.Contains(existing, "hiss-coverage") {
+			t.Fatalf("fixture is not the prior coverage rendering: %q", existing)
+		}
+		mustWrite(t, filepath.Join(root, "Makefile"), existing)
+		report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := mustRead(t, filepath.Join(root, "Makefile"))
+		want, mergeErr := mergeDocumentationMakefile(buildMakefile(plan), false)
+		if mergeErr != nil {
+			t.Fatal(mergeErr)
+		}
+		if got != want || report.Verification.Status != verificationDeclared {
+			t.Fatalf("a prior coverage Makefile was not regenerated: %+v %q", report.Verification, got)
+		}
+		if !strings.Contains(got, "hiss coverage --verify --embedded") {
+			t.Fatalf("regenerated Makefile missing hiss coverage line:\n%s", got)
+		}
+	})
+	t.Run("edited", func(t *testing.T) {
+		root := newTestRepo(t, "prior-coverage-edited")
+		mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
+		plan, err := resolveVerificationPlan(t.Context(), root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		existing := "# operator changes\n" + priorCoverageMakefile(plan)
+		mustWrite(t, filepath.Join(root, "Makefile"), existing)
+		report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := mustRead(t, filepath.Join(root, "Makefile"))
+		withInclude, _, err := ensureEngineMakefileInclude(existing)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, mergeErr := mergeDocumentationMakefile(withInclude, false)
+		if mergeErr != nil {
+			t.Fatal(mergeErr)
+		}
+		if got != want || report.Verification.Status != verificationPreserved {
+			t.Fatalf("an edited Makefile was not preserved: %+v %q", report.Verification, got)
+		}
+	})
+}
+
 // Order engine-hiss-unenforced-checks-20261027: a Makefile rendered before the HISS-12 secrets
 // target joined verify-all (priorSecretsGateMakefile) is replaced with the current rendering,
 // while a hand-edited copy is preserved.

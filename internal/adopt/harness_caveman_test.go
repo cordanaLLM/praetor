@@ -37,9 +37,9 @@ func TestHarnessCavemanLintSeesAdopterProse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prose := "Search for an existing implementation before adding one. Grep the repository for the " +
-		"capability and extend the code that is already there. Two implementations of one behavior are a " +
-		"defect: they drift, and the second one stops matching the first.\n"
+	prose := "Search for existing implementation before adding new logic here. Grep the repository for " +
+		"capability and extend code that is already there. Two implementations of one behavior are a " +
+		"defect: they drift, and second one stops matching first. Check every gate.\n"
 	// One passage fails although the article-free harness above it would dilute a whole-file
 	// density below the limit: the gate judges the text after the end marker on its own.
 	report := lintHarness(harness + harnessSeparator + "\n" + prose)

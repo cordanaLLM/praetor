@@ -274,10 +274,16 @@ var catalog = []Rule{
 		ID:            "HISS-20",
 		Title:         "Replayable Enforcement Evidence",
 		Specification: "Every rule carries fixtures replayed in both directions: a claim of enforcement must report each of its positive fixtures, and a claim of absence must leave its gap fixtures undetected. A coverage claim is reproducible, never asserted.",
-		Enforcement:   "'praetorctl hiss coverage --verify', run inside verify-all against '.config/hiss/coverage.yaml'.",
+		Enforcement:   "'praetorctl hiss coverage --verify' against '.config/hiss/coverage.yaml', or 'praetorctl hiss coverage --verify --embedded' for the engine corpus.",
 		FailureAction: "Verification gate rejection.",
 		Scope:         "replayable evidence",
 		Directive:     []Clause{{Text: "every enforcement claim backed by fixtures replayed both directions"}},
+		Adoption: AdoptedCheck{
+			Check:    "`praetorctl hiss coverage --verify --embedded` (engine corpus replay)",
+			Coverage: "the pinned engine's own claims; adopter-specific rules have no corpus",
+			Trigger:  "contradiction",
+			Stages:   StageVerifyAll,
+		},
 	},
 	{
 		ID:            "HISS-21",
