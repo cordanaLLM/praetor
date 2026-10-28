@@ -101,10 +101,8 @@ func RecordImageRefBaseline(ctx context.Context, opts ImageBaselineRecordOptions
 	if err != nil {
 		return nil, fmt.Errorf("refusing to record %s: %w (pass --allow-increase --reason=<why> to record a deliberate increase)", path, err)
 	}
-	if !opts.DryRun && (previous.Absent || !previous.SameDebt(next) || previous.CommitSHA != next.CommitSHA) {
-		if err := baseline.SaveBaseline(path, next); err != nil {
-			return nil, err
-		}
+	if err := saveImageRefBaseline(path, previous, next, opts.DryRun); err != nil {
+		return nil, err
 	}
 	return &ImageBaselineRecordResult{
 		Path:     path,
@@ -112,6 +110,13 @@ func RecordImageRefBaseline(ctx context.Context, opts ImageBaselineRecordOptions
 		Previous: previous,
 		Next:     next,
 	}, nil
+}
+
+func saveImageRefBaseline(path string, previous, next *baseline.Baseline, dryRun bool) error {
+	if !dryRun && (previous.Absent || !previous.SameDebt(next) || previous.CommitSHA != next.CommitSHA) {
+		return baseline.SaveBaseline(path, next)
+	}
+	return nil
 }
 
 func filterUnexcusedImageFindings(findings []ImageRefFinding, entries []config.Exception, today time.Time) []ImageRefFinding {

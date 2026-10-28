@@ -259,34 +259,45 @@ func imageRefCandidateFiles(ctx context.Context, root string) ([]string, error) 
 
 // walkDirectoryFiles enumerates relative file paths under root without recursion (HISS-01, HISS-02).
 func walkDirectoryFiles(root string) ([]string, error) {
-	dirs := []string{"."}
-	var files []string
-	for d := 0; d < len(dirs) && d < maxScannedFiles; d++ {
-		relDir := dirs[d]
+	walk := imageRefDirectoryWalk{dirs: []string{"."}}
+	for d := 0; d < len(walk.dirs) && d < maxScannedFiles; d++ {
+		relDir := walk.dirs[d]
 		entries, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(relDir)))
 		if err != nil {
 			return nil, fmt.Errorf("read directory %s: %w", relDir, err)
 		}
-		for i := 0; i < len(entries) && i < maxScannedFiles; i++ {
-			name := entries[i].Name()
-			if name == ".git" || name == ".workingdir" || name == "node_modules" || name == "vendor" {
-				continue
-			}
-			child := name
-			if relDir != "." {
-				child = relDir + "/" + name
-			}
-			if entries[i].IsDir() {
-				dirs = append(dirs, child)
-				continue
-			}
-			if len(files) >= maxScannedFiles {
-				return nil, fmt.Errorf("image scan scope passed %d files", maxScannedFiles)
-			}
-			files = append(files, child)
+		if err := walk.appendEntries(relDir, entries); err != nil {
+			return nil, err
 		}
 	}
-	return files, nil
+	return walk.files, nil
+}
+
+type imageRefDirectoryWalk struct {
+	dirs  []string
+	files []string
+}
+
+func (walk *imageRefDirectoryWalk) appendEntries(relDir string, entries []os.DirEntry) error {
+	for i := 0; i < len(entries) && i < maxScannedFiles; i++ {
+		name := entries[i].Name()
+		if name == ".git" || name == ".workingdir" || name == "node_modules" || name == "vendor" {
+			continue
+		}
+		child := name
+		if relDir != "." {
+			child = relDir + "/" + name
+		}
+		if entries[i].IsDir() {
+			walk.dirs = append(walk.dirs, child)
+			continue
+		}
+		if len(walk.files) >= maxScannedFiles {
+			return fmt.Errorf("image scan scope passed %d files", maxScannedFiles)
+		}
+		walk.files = append(walk.files, child)
+	}
+	return nil
 }
 
 // CollectImageRefFindings extracts unpinned container image references from one file's content.
@@ -325,9 +336,7 @@ func hasDigestPin(ref string) bool {
 func isDockerfile(slashed string) bool {
 	base := filepath.Base(slashed)
 	lower := strings.ToLower(base)
-	if strings.HasSuffix(lower, ".tmpl") {
-		lower = strings.TrimSuffix(lower, ".tmpl")
-	}
+	lower = strings.TrimSuffix(lower, ".tmpl")
 	return lower == "dockerfile" || lower == "containerfile" ||
 		strings.HasPrefix(lower, "dockerfile.") || strings.HasPrefix(lower, "containerfile.") ||
 		strings.HasSuffix(lower, ".dockerfile") || strings.HasSuffix(lower, ".containerfile")
@@ -360,12 +369,7 @@ type numberedLine struct {
 
 func collectDockerfileFindings(file, content string) []ImageRefFinding {
 	stmts := dockerfileStatements(content)
-	stages := make(map[string]bool, len(stmts))
-	for i := 0; i < len(stmts) && i < maxFileLines; i++ {
-		if target, stage := parseDockerfileFrom(stmts[i].text); target != "" && stage != "" {
-			stages[strings.ToLower(stage)] = true
-		}
-	}
+	stages := dockerfileStages(stmts)
 	var findings []ImageRefFinding
 	for i := 0; i < len(stmts) && i < maxFileLines; i++ {
 		target, _ := parseDockerfileFrom(stmts[i].text)
@@ -379,6 +383,16 @@ func collectDockerfileFindings(file, content string) []ImageRefFinding {
 		findings = append(findings, newImageRefFinding(file, stmts[i].line, target, unresolvable))
 	}
 	return findings
+}
+
+func dockerfileStages(stmts []numberedLine) map[string]bool {
+	stages := make(map[string]bool, len(stmts))
+	for i := 0; i < len(stmts) && i < maxFileLines; i++ {
+		if target, stage := parseDockerfileFrom(stmts[i].text); target != "" && stage != "" {
+			stages[strings.ToLower(stage)] = true
+		}
+	}
+	return stages
 }
 
 func dockerfileStatements(content string) []numberedLine {
@@ -639,11 +653,13 @@ func isHostnameToken(h string) bool {
 		return false
 	}
 	for i := 0; i < len(h) && i < maxLineLiterals; i++ {
-		c := h[i]
-		isAlphaNum := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
-		if !isAlphaNum && c != '.' && c != '-' {
+		if !isHostnameByte(h[i]) {
 			return false
 		}
 	}
 	return true
+}
+
+func isHostnameByte(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-'
 }
