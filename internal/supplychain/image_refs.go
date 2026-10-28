@@ -22,6 +22,10 @@ const ImageRefRuleID = "HISS-11"
 // maxScannedFiles bounds how many repository paths one scan reads (HISS-02).
 const maxScannedFiles = 8192
 
+// maxImageRefFileBytes bounds one scanned file (HISS-02): a larger tracked file is refused by
+// util.ReadConfinedLimited and fails the scan with its name, never read in full or skipped.
+const maxImageRefFileBytes = 16 << 20
+
 // maxFileLines bounds how many lines one file scan processes (HISS-02).
 const maxFileLines = 16384
 
@@ -178,7 +182,7 @@ func ScanRepositoryPins(ctx context.Context, root string) ([]ImagePin, error) {
 		if !ScannedFile(rel) {
 			continue
 		}
-		content, readErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		content, readErr := util.ReadConfinedLimited(root, filepath.FromSlash(rel), maxImageRefFileBytes)
 		if errors.Is(readErr, os.ErrNotExist) {
 			continue
 		}
@@ -216,7 +220,7 @@ func ScanImageRefs(ctx context.Context, root string) ([]ImageRefFinding, error) 
 		if !ScannedImageRefFile(rel) {
 			continue
 		}
-		content, readErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		content, readErr := util.ReadConfinedLimited(root, filepath.FromSlash(rel), maxImageRefFileBytes)
 		if errors.Is(readErr, os.ErrNotExist) {
 			continue
 		}
