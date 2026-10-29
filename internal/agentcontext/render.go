@@ -45,6 +45,10 @@ type CompileResult struct {
 // Transpiler compiles canonical AGENTS.md into vendor-native agent configurations.
 type Transpiler struct {
 	MaxLines int
+	// ReadImport resolves a repository-root-relative import through a bounded reader.
+	ReadImport func(string) (string, error)
+	// ProjectDocBytes counts the tracked nested AGENTS.md files known to the compiler.
+	ProjectDocBytes int
 	// Clients selects the projections CompileContent emits, by agent client id. nil emits
 	// every projection, the behaviour before selection existed; a non-nil list, empty
 	// included, emits exactly the projections of the clients it names (#202).
@@ -71,21 +75,39 @@ func NewTranspiler() *Transpiler {
 // Copilot and Windsurf each read .agents/skills (their skills documentation, checked
 // 2026-10-06), so their skillDir is empty.
 type vendorTarget struct {
-	client     string
-	path       string
-	section    string
-	prefix     string
-	personaDir string
-	skillDir   string
+	client      string
+	path        string
+	section     string
+	prefix      string
+	personaDir  string
+	skillDir    string
+	importDepth int
 }
 
 var vendorTargets = [6]vendorTarget{
-	{client: string(clientid.Claude), path: "CLAUDE.md", section: "Claude Code", personaDir: ".claude/agents", skillDir: ".claude/skills"},
+	{client: string(clientid.Claude), path: "CLAUDE.md", section: "Claude Code", personaDir: ".claude/agents", skillDir: ".claude/skills", importDepth: 4},
 	{client: "cursor", path: ".cursor/rules/hiss-invariants.mdc", section: "Cursor", prefix: cursorFrontmatter},
 	{client: "copilot", path: ".github/copilot-instructions.md", section: "GitHub Copilot", personaDir: ".github/agents"},
 	{client: "windsurf", path: ".windsurfrules", section: "Windsurf"},
-	{client: string(clientid.Gemini), path: ".gemini/GEMINI.md", section: "Gemini", personaDir: ".gemini/agents"},
+	{client: string(clientid.Gemini), path: ".gemini/GEMINI.md", section: "Gemini", personaDir: ".gemini/agents", importDepth: 5},
 	{client: string(clientid.Codex), path: ".codex/rules.md", section: "Codex", personaDir: ".codex/agents"},
+}
+
+type clientSizeCap struct {
+	value int
+	unit  string
+}
+
+// Client limits checked 2026-10-28 (issue #1674). Codex rust-v0.165.0:
+// codex-rs/core/src/agents_md.rs and config/mod.rs, project_doc_max_bytes.
+// Windsurf: https://docs.windsurf.com/llms-full.txt (workspace rule characters).
+// Antigravity: https://antigravity.google/docs/rules (bytes after includes).
+// Antigravity reads GEMINI.md too, so that projection uses its stricter limit.
+// No documented hard limit: Claude Code, Cursor, Copilot, .codex/rules.md.
+var clientSizeCaps = map[string]clientSizeCap{
+	CanonicalFile:       {value: 32768, unit: "bytes"},
+	".windsurfrules":    {value: 12000, unit: "characters"},
+	".gemini/GEMINI.md": {value: 24000, unit: "bytes"},
 }
 
 // PersonaDirs resolves a client selection to the persona directories it keeps and the ones it
@@ -286,6 +308,9 @@ func exportTargets(selected []vendorTarget) []VendorTarget {
 // AGENTS.md yields the projections of its LF blob rather than LF headers above CRLF lines; a
 // source with mixed endings compiles as it is.
 func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
+	if err := checkClientSize(CanonicalFile, len(content)+t.ProjectDocBytes); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(content) == "" {
 		return nil, fmt.Errorf("canonical AGENTS.md content is empty")
 	}
@@ -328,6 +353,10 @@ func (t *Transpiler) renderTargets(targets []vendorTarget, body func(section str
 		depth := strings.Count(target.path, "/")
 		if depth > 0 {
 			text = rewriteRelativeLinks(text, depth)
+		}
+		text, err := t.prepareImports(target, text)
+		if err != nil {
+			return nil, err
 		}
 		count := countLines(text)
 		if count > t.MaxLines {
