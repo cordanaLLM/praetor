@@ -212,6 +212,10 @@ var priorDigests = map[string]string{
 	"5dfc713c093fa90e2c36b042692da07df722535d95248ce4d094dc2ba53328f6": WorkflowFile,
 	"a6ae93265f75c6a0d272f7619267dd42f3995517755c034025567e47edbe3ede": WorkflowFile,
 	"3d65af5a190f353525bb909b540d2cbc1359da1e356e866afb0d7e85f56abed0": Directory + "/verify.mjs",
+	// package.json and package-lock.json on markdownlint 0.42.0 with re2js 2.8.6, before the re2js
+	// override for GHSA-gg6h-894w-4m9c (Order: engine-golangci-exceptions-expired-20261029).
+	"a0fece446d91cb12a300a64b7662f8943619a81069aaddf15db9e75b6c34c604": Directory + "/package.json",
+	"6d2cd064fea008d29c9b5febb88bb09bea28c74e670f4169d224a407f2d9cee8": Directory + "/package-lock.json",
 }
 
 var assetNames = [...]string{

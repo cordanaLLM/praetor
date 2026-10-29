@@ -381,6 +381,10 @@ func applySkipRangeReplacement(lines []string, sectionIdx, skipStart, skipEnd in
 	return append(res, lines[sectionIdx+1:]...)
 }
 
+// codespellNow is the clock reconcileCodespell judges exception expiry against; tests replace it
+// so no fixture depends on the wall clock (Order: engine-golangci-exceptions-expired-20261029).
+var codespellNow = time.Now
+
 func reconcileCodespell(ctx context.Context, s *adoptSession) error {
 	cfg, err := DetectCodespellConfig(s.repoPath)
 	if err != nil || cfg.Type == ConfigTypeNone {
@@ -391,7 +395,7 @@ func reconcileCodespell(ctx context.Context, s *adoptSession) error {
 		return fmt.Errorf("read %s: %w", cfg.RelPath, err)
 	}
 	manifestExceptions := loadSessionExceptions(ctx, s)
-	today := time.Now()
+	today := codespellNow()
 	nextSkips := computeNextCodespellSkips(ParseCodespellSkip(string(data), cfg.Type), manifestExceptions, today)
 	if !slices.Equal(ParseCodespellSkip(string(data), cfg.Type), nextSkips) {
 		updated := UpdateCodespellSkip(string(data), cfg.Type, nextSkips)

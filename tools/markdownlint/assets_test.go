@@ -116,8 +116,9 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	assertDirectDependencies(t, manifest.Dependencies, wantDirect)
 	// micromark-extension-math, which markdownlint pins, asks for katex ^0.16.0, and every
 	// release in that range carries GHSA-238p-pmpm-9mq7 (fixed in 0.18.2), so the manifest
-	// overrides katex to one exact release (#793).
-	wantOverrides := map[string]string{"katex": "0.19.0"}
+	// overrides katex to one exact release (#793). markdownlint 0.42.0 pins re2js 2.8.6, which
+	// carries GHSA-gg6h-894w-4m9c (fixed in 2.8.7), so re2js is overridden the same way.
+	wantOverrides := map[string]string{"katex": "0.19.0", "re2js": "2.9.1"}
 	if !maps.Equal(manifest.Overrides, wantOverrides) {
 		t.Fatalf("overrides = %v, want %v", manifest.Overrides, wantOverrides)
 	}

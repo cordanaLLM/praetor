@@ -67,10 +67,20 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 	return captured, runErr
 }
 
-func setupCodespellFixture(t *testing.T) (string, time.Time, *adoptSession, string) {
+// codespellLiveExpiry is the category C expiry (10 days) of the fixture's live exception.
+func codespellLiveExpiry(today time.Time) string {
+	return today.AddDate(0, 0, 10).Format(time.DateOnly)
+}
+
+// setupCodespellFixture injects today as reconcileCodespell's clock and dates every fixture
+// exception from it, so no case reads the wall clock: fixed dates made this test fail once
+// 2026-10-28 passed (Order: engine-golangci-exceptions-expired-20261029).
+func setupCodespellFixture(t *testing.T, today time.Time) (string, time.Time, *adoptSession, string) {
 	t.Helper()
 	repo := t.TempDir()
-	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
+	saved := codespellNow
+	codespellNow = func() time.Time { return today }
+	t.Cleanup(func() { codespellNow = saved })
 	playerPath := "tools/figures/player/player.js"
 	fullPlayerPath := filepath.Join(repo, filepath.FromSlash(playerPath))
 	if err := os.MkdirAll(filepath.Dir(fullPlayerPath), 0755); err != nil {
@@ -99,8 +109,8 @@ exceptions:
     path: tools/figures/player/player.js
     category: C
     reason: minified third-party interfig bundle
-    entered: 2026-10-18
-    expires: 2026-10-28
+    entered: ` + today.Format(time.DateOnly) + `
+    expires: ` + codespellLiveExpiry(today) + `
 `
 	if err := os.WriteFile(filepath.Join(repo, manifestFile), []byte(manifestContent), 0644); err != nil {
 		t.Fatal(err)
@@ -146,8 +156,8 @@ func assertCodespellLiveReconciled(t *testing.T, repo string, today time.Time, s
 		Path:     playerPath,
 		Category: "C",
 		Reason:   "minified third-party interfig bundle",
-		Entered:  "2026-10-18",
-		Expires:  "2026-10-28",
+		Entered:  today.Format(time.DateOnly),
+		Expires:  codespellLiveExpiry(today),
 	}
 	out, err := captureStdout(t, func() error {
 		return AuditCodespell(t.Context(), repo, []config.Exception{liveException}, today)
@@ -155,7 +165,7 @@ func assertCodespellLiveReconciled(t *testing.T, repo string, today time.Time, s
 	if err != nil {
 		t.Fatalf("AuditCodespell failed unexpectedly: %v", err)
 	}
-	if !strings.Contains(out, "[PASS] codespell: tools/figures/player/player.js, excepted until 2026-10-28") {
+	if !strings.Contains(out, "[PASS] codespell: tools/figures/player/player.js, excepted until "+codespellLiveExpiry(today)) {
 		t.Errorf("Audit output missing live entry with expiry: %s", out)
 	}
 
@@ -167,7 +177,7 @@ func assertCodespellLiveReconciled(t *testing.T, repo string, today time.Time, s
 	}
 }
 
-func assertCodespellExpired(t *testing.T, repo string, s *adoptSession, codespellBin string) config.Exception {
+func assertCodespellExpired(t *testing.T, repo string, today time.Time, s *adoptSession, codespellBin string) config.Exception {
 	t.Helper()
 	playerPath := "tools/figures/player/player.js"
 	codespellrcPath := filepath.Join(repo, ".codespellrc")
@@ -178,8 +188,8 @@ func assertCodespellExpired(t *testing.T, repo string, s *adoptSession, codespel
 		Path:     playerPath,
 		Category: "C",
 		Reason:   "minified third-party interfig bundle",
-		Entered:  "2026-10-01",
-		Expires:  "2026-10-11",
+		Entered:  today.AddDate(0, 0, -28).Format(time.DateOnly),
+		Expires:  today.AddDate(0, 0, -18).Format(time.DateOnly),
 	}
 	expiredManifest := `version: 1
 facets:
@@ -189,8 +199,8 @@ exceptions:
     path: tools/figures/player/player.js
     category: C
     reason: minified third-party interfig bundle
-    entered: 2026-10-01
-    expires: 2026-10-11
+    entered: ` + today.AddDate(0, 0, -28).Format(time.DateOnly) + `
+    expires: ` + today.AddDate(0, 0, -18).Format(time.DateOnly) + `
 `
 	if err := os.WriteFile(filepath.Join(repo, manifestFile), []byte(expiredManifest), 0644); err != nil {
 		t.Fatal(err)
@@ -254,11 +264,18 @@ func assertCodespellAuditAndPlanted(t *testing.T, repo string, today time.Time, 
 	}
 }
 
+// The same fixture holds on its base date and with the clock shifted by 30 days: no case
+// depends on the wall clock.
 func TestCodespell_AdopterReconciliationAndAudit(t *testing.T) {
-	repo, today, s, codespellBin := setupCodespellFixture(t)
-	assertCodespellLiveReconciled(t, repo, today, s, codespellBin)
-	expiredException := assertCodespellExpired(t, repo, s, codespellBin)
-	assertCodespellAuditAndPlanted(t, repo, today, expiredException, codespellBin)
+	base := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
+	for _, today := range []time.Time{base, base.AddDate(0, 0, 30)} {
+		t.Run(today.Format(time.DateOnly), func(t *testing.T) {
+			repo, now, s, codespellBin := setupCodespellFixture(t, today)
+			assertCodespellLiveReconciled(t, repo, now, s, codespellBin)
+			expiredException := assertCodespellExpired(t, repo, now, s, codespellBin)
+			assertCodespellAuditAndPlanted(t, repo, now, expiredException, codespellBin)
+		})
+	}
 }
 
 func TestCodespell_DoesNotProposeFigurePlayerExceptions(t *testing.T) {

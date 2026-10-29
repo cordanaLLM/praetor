@@ -104,6 +104,53 @@ linters:
 	}
 }
 
+// Order engine-golangci-exceptions-expired-20261029: verify exclusion expiry day boundary.
+// Category C entered 2026-10-02: expires 2026-10-11 (yesterday) fails, expires 2026-10-12 (today) passes.
+func TestAuditDeclaredLinters_Exclusion_Boundary_ExpiryDay(t *testing.T) {
+	cases := []struct {
+		name    string
+		expires string
+		wantErr bool
+	}{
+		{name: "yesterday_expired", expires: "2026-10-11", wantErr: true},
+		{name: "today_holding", expires: "2026-10-12", wantErr: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeGolangciWorkflow(t, root)
+			content := fmt.Sprintf("version: \"2\"\nlinters:\n  enable:\n    - gocyclo\n  exclusions:\n    rules:\n      # category C, entered 2026-10-02, expires %s, #1030\n      - path: internal/util/\n        linters:\n          - gocyclo\n", tc.expires)
+			writeLinterFixtureFile(t, root, ".golangci.yml", content)
+
+			_, err := AuditDeclaredLinters(t.Context(), DeclaredLintersOptions{
+				RootDir: root,
+				Policy:  singleLinterPolicy("framework", "gocyclo"),
+				Today:   testToday,
+			})
+			if tc.wantErr {
+				assertExpiryError(t, err, tc.expires)
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected expires %s to pass, got: %v", tc.expires, err)
+			}
+		})
+	}
+}
+
+func assertExpiryError(t *testing.T, err error, expires string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected expires %s to fail", expires)
+	}
+	msg := err.Error()
+	for _, want := range []string{".golangci.yml", "gocyclo", "internal/util/", "expired " + expires} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q missing expected part %q", msg, want)
+		}
+	}
+}
+
 // Planted negative: category C rule whose expiry is more than 10 days after entered date fails.
 func TestAuditDeclaredLinters_Exclusion_Planted_CategoryCExceededInterval(t *testing.T) {
 	ctx := t.Context()
