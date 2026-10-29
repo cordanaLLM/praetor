@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/secretscan"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/tools/secrets"
 	"go.yaml.in/yaml/v3"
@@ -483,5 +485,182 @@ func testRecordBaselineFindingsWritesCurrentOnly(t *testing.T) {
 		if inf.Fingerprint == "synth-fp-stale" {
 			t.Fatalf("stale HISS-12 entry should not be present: %+v", res.Next.Infractions)
 		}
+	}
+}
+
+func TestResolveScanner_PlainBinary_3D(t *testing.T) {
+	t.Run("returns lookpath for plain binary", func(t *testing.T) {
+		dir := t.TempDir()
+		plain := testsupport.BuildFakeGitleaks(t, dir)
+		t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+		got, err := secretscan.ResolveScanner(t.Context())
+		if err != nil {
+			t.Fatalf("ResolveScanner failed: %v", err)
+		}
+		if got != plain {
+			t.Fatalf("ResolveScanner = %q, want %q", got, plain)
+		}
+	})
+	t.Run("fails when gitleaks missing on PATH", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		if _, err := secretscan.ResolveScanner(t.Context()); err == nil {
+			t.Fatal("expected error when gitleaks is not on PATH")
+		}
+	})
+	t.Run("fails on nil context", func(t *testing.T) {
+		var nilCtx context.Context
+		if _, err := secretscan.ResolveScanner(nilCtx); err == nil {
+			t.Fatal("expected error on nil context")
+		}
+	})
+}
+
+func TestResolveScanner_MiseShim_Success(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on windows")
+	}
+	normalHome := t.TempDir()
+	realDir := t.TempDir()
+	realGitleaks := testsupport.BuildFakeGitleaks(t, realDir)
+	shimDir := t.TempDir()
+	miseBin := testsupport.BuildFakeMise(t, shimDir, normalHome, realGitleaks)
+	if err := os.Symlink(miseBin, filepath.Join(shimDir, "gitleaks")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", normalHome)
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	got, err := secretscan.ResolveScanner(t.Context())
+	if err != nil {
+		t.Fatalf("ResolveScanner failed: %v", err)
+	}
+	if got != realGitleaks {
+		t.Fatalf("ResolveScanner = %q, want %q", got, realGitleaks)
+	}
+}
+
+func TestResolveScanner_MiseShim_Failures(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on windows")
+	}
+	cases := []struct {
+		name       string
+		miseSource string
+	}{
+		{
+			name:       "non-zero exit",
+			miseSource: "package main\nimport (\"fmt\"; \"os\")\nfunc main() { fmt.Fprintln(os.Stderr, \"failed\"); os.Exit(1) }\n",
+		},
+		{
+			name:       "two lines",
+			miseSource: "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"/path/to/gitleaks\\nextra line\") }\n",
+		},
+		{
+			name:       "relative path",
+			miseSource: "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"bin/gitleaks\") }\n",
+		},
+		{
+			name:       "base not gitleaks",
+			miseSource: "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"/usr/bin/python\") }\n",
+		},
+		{
+			name:       "missing file",
+			miseSource: "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"/tmp/nonexistent-praetor-test/gitleaks\") }\n",
+		},
+		{
+			name:       "another mise shim",
+			miseSource: "package main\nimport (\"fmt\"; \"os\"; \"path/filepath\")\nfunc main() { fmt.Println(filepath.Join(filepath.Dir(os.Args[0]), \"second-gitleaks\")) }\n",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			verifyMiseShimFailure(t, tc.miseSource, tc.name == "another mise shim")
+		})
+	}
+}
+
+func verifyMiseShimFailure(t *testing.T, miseSource string, isAnotherShim bool) {
+	t.Helper()
+	dir := t.TempDir()
+	miseBin := testsupport.BuildExecutable(t, dir, "mise", miseSource)
+	shim := filepath.Join(dir, "gitleaks")
+	if err := os.Symlink(miseBin, shim); err != nil {
+		t.Fatal(err)
+	}
+	if isAnotherShim {
+		if err := os.Symlink(miseBin, filepath.Join(dir, "second-gitleaks")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	_, err := secretscan.ResolveScanner(t.Context())
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "gitleaks on PATH") || !strings.Contains(err.Error(), "is a mise shim; resolving its executable with \"mise which gitleaks\" failed") {
+		t.Fatalf("error = %q, want failure mentioning mise shim and mise which gitleaks", err.Error())
+	}
+}
+
+func TestResolveScanner_PlantedMiseUntrustedProof(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on windows")
+	}
+	normalHome := t.TempDir()
+	isolatedHome := t.TempDir()
+	realDir := t.TempDir()
+	realGitleaks := testsupport.BuildFakeGitleaks(t, realDir)
+	shimDir := t.TempDir()
+	miseBin := testsupport.BuildFakeMise(t, shimDir, normalHome, realGitleaks)
+	if err := os.Symlink(miseBin, filepath.Join(shimDir, "gitleaks")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", normalHome)
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cleanRepo := secrets.BuildCleanRepo(t)
+	isolatedCtx, err := util.WithCommandEnvironment(t.Context(), []string{
+		"HOME=" + isolatedHome,
+		"PATH=/usr/bin:/bin",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Old behaviour (Scanner unset): gitleaks shim fails under isolated HOME
+	oldOpts := secretscan.Options{
+		Dir: cleanRepo,
+		Run: util.RunCommand,
+	}
+	_, oldErr := secretscan.Check(isolatedCtx, oldOpts)
+	if oldErr == nil {
+		t.Fatal("expected old behaviour to fail with untrusted config error")
+	}
+	if !strings.Contains(oldErr.Error(), "are not trusted") {
+		t.Fatalf("oldErr = %q, want untrusted error", oldErr.Error())
+	}
+
+	// 2. Fixed behaviour: ResolveScanner resolves to real binary bypassing shim
+	resolved, err := secretscan.ResolveScanner(isolatedCtx)
+	if err != nil {
+		t.Fatalf("ResolveScanner failed: %v", err)
+	}
+	if resolved != realGitleaks {
+		t.Fatalf("resolved = %q, want real binary %q", resolved, realGitleaks)
+	}
+	newOpts := secretscan.Options{
+		Dir:     cleanRepo,
+		Scanner: []string{resolved},
+		Run:     util.RunCommand,
+	}
+	report, err := secretscan.Check(isolatedCtx, newOpts)
+	if err != nil {
+		t.Fatalf("Check with resolved scanner failed: %v", err)
+	}
+	if report.Failed() || len(report.Blocking) != 0 {
+		t.Fatalf("expected 0 blocking findings, got: %s", report.Summary())
 	}
 }

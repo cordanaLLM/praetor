@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -137,6 +139,131 @@ func (r *Report) appendBaselineNotes(base string) string {
 		base += "; no baselined entries (baseline file absent)"
 	}
 	return base
+}
+
+// whichTimeout bounds a single mise which query (HISS-02).
+const whichTimeout = 30 * time.Second
+
+// ResolveScanner returns the executable path Check should run for DefaultScanner.
+//
+// In isolated execution environments (such as the public dogfood adoption loop or the discovery
+// sandbox), the child context sets an isolated HOME and PATH (for example, HOME=<run>/home,
+// PATH=/usr/bin:/bin). When gitleaks on the parent PATH is a mise shim (a symlink resolving to
+// mise), running the shim under an isolated HOME causes mise to walk parent directories for
+// configuration and fail because ~/.config/mise/config.toml is untrusted.
+//
+// When gitleaks on PATH is a mise shim, ResolveScanner resolves the real binary path by running
+// "mise which gitleaks" in os.TempDir() with the ambient environment restored via
+// util.InheritedEnvironment, validating that the output points to an existing regular executable
+// binary before returning it. For non-shim installations, the path found by exec.LookPath is
+// returned unchanged.
+func ResolveScanner(ctx context.Context) (string, error) {
+	if ctx == nil {
+		return "", errors.New("secretscan: context cannot be nil")
+	}
+	path, err := exec.LookPath(DefaultScanner)
+	if err != nil {
+		return "", fmt.Errorf("locate %s on PATH: %w", DefaultScanner, err)
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s symlink: %w", path, err)
+	}
+	if !isMiseExecutable(filepath.Base(resolved)) {
+		return path, nil
+	}
+	return resolveMiseShim(ctx, path, resolved)
+}
+
+func resolveMiseShim(ctx context.Context, path, resolved string) (string, error) {
+	whichCtx, cancel := context.WithTimeout(ctx, whichTimeout)
+	defer cancel()
+	envCtx, err := util.WithCommandEnvironment(whichCtx, util.InheritedEnvironment(nil))
+	if err != nil {
+		return "", fmt.Errorf("%s on PATH (%s) is a mise shim; configuring ambient environment failed: %w", DefaultScanner, path, err)
+	}
+	out, err := util.RunCommand(envCtx, os.TempDir(), resolved, "which", DefaultScanner)
+	if err != nil {
+		return "", fmt.Errorf("%s on PATH (%s) is a mise shim; resolving its executable with \"mise which %s\" failed: %w", DefaultScanner, path, DefaultScanner, err)
+	}
+	return validateMiseOutput(path, out)
+}
+
+func validateMiseOutput(path, out string) (string, error) {
+	lines := strings.Split(strings.ReplaceAll(strings.TrimSpace(out), "\r\n", "\n"), "\n")
+	if len(lines) != 1 || strings.TrimSpace(lines[0]) == "" {
+		return "", fmt.Errorf("%s on PATH (%s) is a mise shim; resolving its executable with \"mise which %s\" failed: expected exactly one line, got %d lines: %q",
+			DefaultScanner, path, DefaultScanner, len(lines), out)
+	}
+	realPath := strings.TrimSpace(lines[0])
+	if !filepath.IsAbs(realPath) {
+		return "", fmt.Errorf("%s on PATH (%s) is a mise shim; resolving its executable with \"mise which %s\" failed: path %q is not absolute",
+			DefaultScanner, path, DefaultScanner, realPath)
+	}
+	expectedBase := executableName(DefaultScanner)
+	if !isMatchingExecutableName(filepath.Base(realPath), expectedBase) {
+		return "", fmt.Errorf("%s on PATH (%s) is a mise shim; resolving its executable with \"mise which %s\" failed: base name is %q, expected %q",
+			DefaultScanner, path, DefaultScanner, filepath.Base(realPath), expectedBase)
+	}
+	if err := validateExecutableFile(path, realPath); err != nil {
+		return "", err
+	}
+	return realPath, nil
+}
+
+func validateExecutableFile(path, realPath string) error {
+	fi, err := os.Stat(realPath)
+	if err != nil {
+		return fmt.Errorf("%s on PATH (%s) is a mise shim; resolving its executable with \"mise which %s\" failed: %w",
+			DefaultScanner, path, DefaultScanner, err)
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s on PATH (%s) is a mise shim; resolving its executable with \"mise which %s\" failed: %s is not a regular file",
+			DefaultScanner, path, DefaultScanner, realPath)
+	}
+	if !isExecutableRegularFile(realPath, fi) {
+		return fmt.Errorf("%s on PATH (%s) is a mise shim; resolving its executable with \"mise which %s\" failed: %s is not executable",
+			DefaultScanner, path, DefaultScanner, realPath)
+	}
+	realResolved, err := filepath.EvalSymlinks(realPath)
+	if err != nil {
+		return fmt.Errorf("%s on PATH (%s) is a mise shim; resolving its executable with \"mise which %s\" failed: %w",
+			DefaultScanner, path, DefaultScanner, err)
+	}
+	if isMiseExecutable(filepath.Base(realResolved)) {
+		return fmt.Errorf("%s on PATH (%s) is a mise shim; resolving its executable with \"mise which %s\" failed: resolved path %s is also a mise shim",
+			DefaultScanner, path, DefaultScanner, realResolved)
+	}
+	return nil
+}
+
+func executableName(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".exe"
+	}
+	return name
+}
+
+func isMatchingExecutableName(base, expected string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(base, expected)
+	}
+	return base == expected
+}
+
+func isMiseExecutable(name string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(name, "mise.exe") || strings.EqualFold(name, "mise")
+	}
+	return name == "mise"
+}
+
+func isExecutableRegularFile(path string, fi os.FileInfo) bool {
+	if runtime.GOOS == "windows" {
+		ext := strings.ToLower(filepath.Ext(path))
+		return ext == ".exe" || ext == ".com"
+	}
+	return fi.Mode().Perm()&0o111 != 0
 }
 
 // Check runs gitleaks in opts.Dir and judges its findings against the manifest's HISS-12 exceptions

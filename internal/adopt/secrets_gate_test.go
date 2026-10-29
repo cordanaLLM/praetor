@@ -7,11 +7,14 @@ package adopt
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/toolpins"
+	"github.com/cordanaLLM/praetor/internal/util"
 	secretsassets "github.com/cordanaLLM/praetor/tools/secrets"
 )
 
@@ -168,6 +171,43 @@ func TestSecretsGate_AdoptionBaseline_3D(t *testing.T) {
 			t.Fatalf("baseline = %+v; want 1 HISS-12 entry with synth-adopt-fp", base)
 		}
 	})
+	t.Run("gitleaks as mise shim in isolated environment succeeds", testSecretsGate_MiseShimIsolated)
+}
+
+func testSecretsGate_MiseShimIsolated(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on windows")
+	}
+	root := newTestRepo(t, "secrets-with-mise-shim")
+	normalHome := t.TempDir()
+	isolatedHome := t.TempDir()
+	realDir := t.TempDir()
+	realGitleaks := testsupport.BuildFakeGitleaks(t, realDir)
+	shimDir := t.TempDir()
+	miseBin := testsupport.BuildFakeMise(t, shimDir, normalHome, realGitleaks)
+	if err := os.Symlink(miseBin, filepath.Join(shimDir, "gitleaks")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", normalHome)
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	isolatedCtx, err := util.WithCommandEnvironment(t.Context(), []string{
+		"HOME=" + isolatedHome,
+		"PATH=/usr/bin:/bin",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := familySession(t, false)
+	s.repoPath = root
+
+	if err := reconcileSecretsGate(isolatedCtx, s); err != nil {
+		t.Fatalf("reconcileSecretsGate failed: %v", err)
+	}
+	details := actionDetailsFor(s.report, "secrets")
+	if !strings.Contains(details, "Recorded 0 HISS-12 secret finding(s)") {
+		t.Fatalf("details = %q, want 0 recorded findings", details)
+	}
 }
 
 func actionDetailsFor(rep *AdoptReport, path string) string {

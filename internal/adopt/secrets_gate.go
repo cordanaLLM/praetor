@@ -59,9 +59,14 @@ func (s *adoptSession) reconcileSecretsBaseline(ctx context.Context) error {
 	}
 	scanCtx, cancel := context.WithTimeout(ctx, secretscan.ScanTimeout)
 	defer cancel()
+	scanner, err := secretscan.ResolveScanner(scanCtx)
+	if err != nil {
+		return fmt.Errorf("secrets baseline scan: %w", err)
+	}
 	opts := secretscan.Options{
-		Dir: s.repoPath,
-		Run: util.RunCommand,
+		Dir:     s.repoPath,
+		Scanner: []string{scanner},
+		Run:     util.RunCommand,
 	}
 	if s.opts.DryRun || s.report.BaselineStatus == "existing" {
 		rep, err := secretscan.Check(scanCtx, opts)
