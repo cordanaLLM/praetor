@@ -400,7 +400,14 @@ verdict.
 Repositories declaring `docs:seo-portal` also receive a locked Markdown gate,
 its dedicated required CI workflow, and private scratch-link protection. The
 [documentation governance guide](documentation-governance.md) describes its
-inventory, diagnostics, adoption behavior, and bounds.
+inventory, diagnostics, adoption behavior, and bounds. Repositories matching
+`frontend-svelte` (`FrontendSvelteFlavor.Detect` in `internal/flavor/definitions.go`)
+also receive a `ui-gates` Makefile target in `verify-all` (`internal/adopt/governance.go`,
+`internal/adopt/verification_makefile.go`, tested in
+`internal/adopt/ui_gates_makefile_test.go`) that exports `PRAETOR_UI_INPUT_LATENCY_MS` via
+`praetorctl ui env` and runs Playwright over the scaffolded accessibility and responsiveness
+specs ([the `frontend-svelte` UI gates](archetype-authoring.md#the-frontend-svelte-ui-accessibility-and-responsiveness-gates)),
+while replacing prior UI Makefile renderings on refresh.
 
 ## README governance is adoption evidence, not certification
 

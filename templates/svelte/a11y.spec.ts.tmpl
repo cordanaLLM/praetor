@@ -1,0 +1,42 @@
+<%- /*
+Scaffolded as tests/a11y.spec.ts by frontend-svelte (order engine-fr-rule-checks-20261027).
+Runs @axe-core/playwright at WCAG 2.2 AA tags across every route in ui.routes and fails on
+any violation, listing the violations in the assertion message.
+*/ -%>
+// Order: engine-fr-rule-checks-20261027
+import AxeBuilder from '@axe-core/playwright';
+import { expect, test } from '@playwright/test';
+
+export const WCAG_22_AA_TAGS: readonly string[] = [
+	'wcag2a',
+	'wcag2aa',
+	'wcag21a',
+	'wcag21aa',
+	'wcag22aa',
+];
+
+export const UI_ROUTES: readonly string[] = [
+<%- range .UIRoutes %>
+	<% printf "%q" . %>,
+<%- end %>
+];
+
+for (const route of UI_ROUTES) {
+	test(`route ${route} passes WCAG 2.2 AA axe scan`, async ({ page }) => {
+		await page.goto(route);
+		const results = await new AxeBuilder({ page })
+			.withTags([...WCAG_22_AA_TAGS])
+			.analyze();
+		const violations = results.violations.map((violation) => ({
+			id: violation.id,
+			impact: violation.impact,
+			description: violation.description,
+			helpUrl: violation.helpUrl,
+			nodes: violation.nodes.map((node) => node.target),
+		}));
+		expect(
+			violations,
+			`WCAG 2.2 AA accessibility violations on ${route}: ${JSON.stringify(violations)}`,
+		).toEqual([]);
+	});
+}

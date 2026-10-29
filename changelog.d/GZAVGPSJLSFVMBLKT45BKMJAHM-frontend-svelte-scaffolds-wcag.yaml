@@ -1,0 +1,2 @@
+type: added
+title: '`frontend-svelte` scaffolds WCAG 2.2 AA accessibility (`tests/a11y.spec.ts`) and input-latency responsiveness (`tests/responsiveness.spec.ts`) Playwright gates, `praetorctl ui env` exports `ui.input_latency_ms` from `.standards.yaml`, and `praetorctl audit` enforces the `ui-gates` check (order `engine-fr-rule-checks-20261027`)'

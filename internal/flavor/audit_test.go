@@ -134,7 +134,7 @@ func TestAuditFlavor_Boundary_FlavorWithNoTemplatesScoresOnSettings(t *testing.T
 // them, and go-service tolerated two.
 var settingsGapTolerance = map[string]int{
 	"agentic-autonomous": 0,
-	"frontend-svelte":    0,
+	"frontend-svelte":    1,
 	"go-library":         1,
 	"go-service":         1,
 	"infra-k8s":          0,

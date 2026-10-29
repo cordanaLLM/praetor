@@ -230,6 +230,9 @@ func (f *FrontendSvelteFlavor) Detect(repoPath string) bool {
 func (f *FrontendSvelteFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
 		{Path: "playwright.config.ts", Description: "E2E testing configuration", Source: "svelte/playwright.config.ts.tmpl", Validator: carriesCode},
+		// Order engine-fr-rule-checks-20261027: WCAG 2.2 AA accessibility and input-latency responsiveness gates.
+		{Path: UIA11ySpecPath, Description: "WCAG 2.2 AA accessibility gate over configured UI routes", Source: UIA11ySpecTemplate, Resolve: resolveUISpecContext, Validator: validUIA11ySpec},
+		{Path: UIResponsivenessSpecPath, Description: "Input-to-next-frame responsiveness gate over configured UI routes", Source: UIResponsivenessSpecTemplate, Resolve: resolveUISpecContext, Validator: validUIResponsivenessSpec},
 		eslintTemplate("ECMAScript & Svelte linter"),
 	}
 }

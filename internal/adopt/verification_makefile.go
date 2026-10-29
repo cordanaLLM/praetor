@@ -390,11 +390,29 @@ func isReplaceableVerificationMakefile(data string, plan *VerificationPlan) bool
 		return false
 	}
 	stripped := withoutDocumentationMakefileBlock(normalized)
+	if matchesReplaceableMakefile(stripped, plan) {
+		return true
+	}
+	if plan != nil && plan.UIGates {
+		noUI := withoutUIGates(plan)
+		return stripped == buildMakefile(noUI) || matchesReplaceableMakefile(stripped, noUI)
+	}
+	return false
+}
+
+func matchesReplaceableMakefile(stripped string, plan *VerificationPlan) bool {
 	return isLegacyVerificationMakefile(stripped) ||
 		isPriorGeneratedMakefile(stripped, plan) ||
 		stripped == priorSourceGateMakefile(plan) ||
 		stripped == priorPathResolvedMakefile(plan) ||
 		isPlaceholderVerificationMakefile(stripped, plan)
+}
+
+func withoutUIGates(plan *VerificationPlan) *VerificationPlan {
+	copyPlan := *plan
+	copyPlan.UIGates = false
+	copyPlan.UIPackageManager = ""
+	return &copyPlan
 }
 
 const legacyVerificationStub = "\n.PHONY: all verify-all audit compile-context build test\n\nverify-all:\n\t@echo \"Running verification...\"\n\ncompile-context:\n\t@standardsctl compile-context\n\naudit:\n\t@standardsctl audit\n\ntest:\n\t@go test -v -race ./...\n\nbuild:\n\t@go build -v ./...\n"
@@ -450,8 +468,13 @@ func appendVerificationTargets(existing string, plan *VerificationPlan) (string,
 	}
 	var result strings.Builder
 	result.WriteString(normalized)
+	uiPrereq, uiPhony := "", ""
+	if plan != nil && plan.UIGates {
+		uiPrereq = " ui-gates"
+		uiPhony = " ui-gates"
+	}
 	result.WriteString("\n# Praetor declared verification; existing project recipes remain unchanged.\n" +
-		util.MakefileCLIVariable + ".PHONY: verify-all\nverify-all:\n\t@$(PRAETORCTL) compile-context --verify\n\t@$(PRAETORCTL) caveman check --configured-sources\n\t@$(PRAETORCTL) audit\n")
+		util.MakefileCLIVariable + ".PHONY: verify-all" + uiPhony + "\nverify-all:" + uiPrereq + "\n\t@$(PRAETORCTL) compile-context --verify\n\t@$(PRAETORCTL) caveman check --configured-sources\n\t@$(PRAETORCTL) audit\n")
 	// One recipe for the build and test commands together: rendered once for each, an
 	// unavailable plan wrote its failing pair twice (#594).
 	result.WriteString(verificationRecipe(plan, plan.commands()))
@@ -459,6 +482,9 @@ func appendVerificationTargets(existing string, plan *VerificationPlan) (string,
 		if !util.MakefileHasTarget(normalized, target) {
 			result.WriteString("\n" + target + ":\n\t@$(PRAETORCTL) " + target + "\n")
 		}
+	}
+	if plan != nil && plan.UIGates && !util.MakefileHasTarget(normalized, "ui-gates") {
+		result.WriteString("\nui-gates:\n" + uiGatesRecipe(plan))
 	}
 	return util.RestoreLineEndings(result.String(), crlf), nil
 }

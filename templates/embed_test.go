@@ -13,6 +13,17 @@ import (
 // the zero value of those facts here.
 var sampleContext = templates.Context{RepoName: "widget", Owner: "acme"}
 
+// Compile-time assertion that templates.Context satisfies comparable (contract preservation).
+var _ = templates.Context{} == templates.Context{}
+
+func TestContext_Comparable(t *testing.T) {
+	a := templates.Context{RepoName: "a"}
+	b := templates.Context{RepoName: "a"}
+	if a != b {
+		t.Fatalf("identical Context values must compare equal")
+	}
+}
+
 // The Dart analyzer config includes the rule set Context.DartLints names, and no include
 // otherwise (BUG-1010).
 func TestRenderFile_DartAnalysisIncludesOnlyTheNamedLintPackage(t *testing.T) {

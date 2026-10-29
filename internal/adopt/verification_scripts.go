@@ -25,6 +25,9 @@ func addNodeVerification(p *VerificationPlan, inputs verificationInputs) error {
 	if err != nil {
 		return err
 	}
+	if declared, _, ok := nodemanifest.DeclaredManager(manager); ok && declared != "" {
+		p.UIPackageManager = string(declared)
+	}
 	if !nodemanifest.NpmRuns(manager) {
 		p.unavailable("Select commands for the declared package manager; npm cannot stand in for another package manager.")
 		return nil

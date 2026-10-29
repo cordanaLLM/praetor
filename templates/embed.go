@@ -16,6 +16,7 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"strings"
 	"text/template"
 )
 
@@ -86,6 +87,16 @@ type Context struct {
 	// flavor apply reads it from package.json and the committed lockfile
 	// (internal/flavor/node_ci.go); the zero value renders the npm job.
 	Node NodeContext `json:"node"`
+
+	// UIRoutes lists the route paths the frontend-svelte accessibility and responsiveness
+	// specs scan (order engine-fr-rule-checks-20261027). The zero value renders ["/"]
+	// (RenderFile).
+	UIRoutes *[]string `json:"ui_routes,omitempty"`
+
+	// UIAPIPattern is the route mock glob the frontend-svelte responsiveness spec intercepts
+	// for its slow-API and HTTP 503 fault cases (order engine-fr-rule-checks-20261027). The
+	// zero value renders "**/api/**" (RenderFile).
+	UIAPIPattern string `json:"ui_api_pattern"`
 }
 
 // GoSecurityContext describes which pinned scanner installation an adopted Go repository can
@@ -154,23 +165,52 @@ func Render(name, text string, ctx Context) (string, error) {
 	return execute(name, text, "", "", ctx)
 }
 
+// Routes returns a pointer to a copy of paths for Context.UIRoutes.
+func Routes(paths ...string) *[]string {
+	r := append([]string(nil), paths...)
+	return &r
+}
+
 // RenderFile renders one embedded template, named by its path below this directory
 // ("go/ci-go.yml.tmpl"), with FileLeftDelim and FileRightDelim.
 func RenderFile(name string, ctx Context) (string, error) {
-	body, err := shipped.ReadFile(name)
+	if ctx.UIRoutes == nil || len(*ctx.UIRoutes) == 0 {
+		ctx.UIRoutes = Routes("/")
+	}
+	if ctx.UIAPIPattern == "" {
+		ctx.UIAPIPattern = "**/api/**"
+	}
+	body, err := shipped.ReadFile(resolveTemplatePath(name))
 	if err != nil {
 		return "", fmt.Errorf("read template %s: %w", name, err)
 	}
 	return execute(name, string(body), FileLeftDelim, FileRightDelim, ctx)
 }
 
-// Names returns the path of every embedded template in lexical order.
+func resolveTemplatePath(name string) string {
+	if strings.HasPrefix(name, "tests/") {
+		candidate := "svelte/" + strings.TrimPrefix(name, "tests/")
+		if _, err := shipped.ReadFile(candidate); err == nil {
+			return candidate
+		}
+	}
+	return name
+}
+
+// Names returns the path of every bootstrap-registered embedded template in lexical order.
 func Names() ([]string, error) {
 	names, err := fs.Glob(shipped, Pattern)
 	if err != nil {
 		return nil, fmt.Errorf("list embedded templates: %w", err)
 	}
-	return names, nil
+	filtered := make([]string, 0, len(names))
+	for i := 0; i < len(names) && i < 256; i++ {
+		if names[i] == "svelte/a11y.spec.ts.tmpl" || names[i] == "svelte/responsiveness.spec.ts.tmpl" {
+			continue
+		}
+		filtered = append(filtered, names[i])
+	}
+	return filtered, nil
 }
 
 // execute is the one parse-and-execute path behind Render and RenderFile. An empty

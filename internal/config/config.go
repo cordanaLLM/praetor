@@ -444,6 +444,10 @@ type Manifest struct {
 	// Efficiency configures the efficiency ledger sources and model classifications (#870).
 	// It is repository-only, like Documentation and Radar.
 	Efficiency *EfficiencyPolicy `yaml:"efficiency,omitempty"`
+	// UI configures the user-interface accessibility and responsiveness gates
+	// (order engine-fr-rule-checks-20261027): input_latency_ms (1..10000) and routes (default ["/"]).
+	// It is repository-only and stays out of ResolvedPolicy, like Gate and Documentation.
+	UI *UIPolicy `yaml:"ui,omitempty"`
 	// Skills declares pinned upstream skill libraries (skills.upstream). It is repository-only,
 	// like Documentation.
 	Skills *SkillsPolicy `yaml:"skills,omitempty"`
@@ -543,6 +547,7 @@ var manifestValidators = [...]func(*Manifest) error{
 	validateManifestRadar,
 	validateManifestAPI,
 	validateManifestEfficiency,
+	validateManifestUI,
 	validateManifestSkills,
 	validateManifestGate,
 	validateManifestRelease,
