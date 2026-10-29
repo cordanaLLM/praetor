@@ -116,7 +116,7 @@ func validateAllBriefs(authority briefAuthority, briefs []string) (config.Resolu
 
 // reserveClaudeDispatch stores the pending row of a validated Claude dispatch: the register
 // contract of its return and, for a read-only one, the digest of the prompt it was rewritten to.
-func reserveClaudeDispatch(ctx context.Context, canonical Canonical, in Invocation, root string, res config.Resolution, prompt string) error {
+func reserveClaudeDispatch(ctx context.Context, canonical Canonical, in Invocation, root string, res config.Resolution, prompt string, route *router.ClaudeSubagentRoute) error {
 	if len(canonical.Briefs) != 1 {
 		return errors.New("client dispatch must carry exactly one brief")
 	}
@@ -124,7 +124,8 @@ func reserveClaudeDispatch(ctx context.Context, canonical Canonical, in Invocati
 	if err != nil {
 		return fmt.Errorf("reserve dispatch: %w", err)
 	}
-	if err := store.reserve(ctx, "claude", canonical.ConversationID, canonical.ToolUseID, res, correlationLaunchDigest(prompt)); err != nil {
+	entry := correlationEntry{Resolution: res, LaunchDigest: correlationLaunchDigest(prompt), ClaudeSubagent: route}
+	if err := store.reserveEntry(ctx, "claude", canonical.ConversationID, canonical.ToolUseID, entry); err != nil {
 		return fmt.Errorf("reserve dispatch: %w", err)
 	}
 	return nil
@@ -154,12 +155,21 @@ func evaluateAgentBriefs(ctx context.Context, row Registration, canonical Canoni
 		return trafficDenied(err)
 	}
 	verdict.Notice = appendLaneNotice(verdict.Notice, offload.Notice)
-	if row.Client == "claude" {
-		if err := reserveClaudeDispatch(ctx, canonical, in, root, resolution, prompt); err != nil {
-			return trafficDenied(err)
-		}
+	if err := authority.reserveDispatch(ctx, row.Client, canonical, in, root, resolution, prompt, &verdict); err != nil {
+		return trafficDenied(err)
 	}
 	return verdict
+}
+
+func (a briefAuthority) reserveDispatch(ctx context.Context, client string, canonical Canonical, in Invocation, root string, res config.Resolution, prompt string, verdict *Verdict) error {
+	if client != "claude" {
+		return nil
+	}
+	route, err := routeClaudeSubagent(a.claudeSubagent, canonical, verdict)
+	if err != nil {
+		return err
+	}
+	return reserveClaudeDispatch(ctx, canonical, in, root, res, prompt, route)
 }
 
 // evaluateDispatchReceipt binds a launched agent to its dispatch, then checks a read-only
@@ -239,17 +249,23 @@ func returnNotJudged(err error) Verdict {
 // one governed root, loaded once per dispatch: every brief of a dispatch is judged by the
 // same manifest, and the files are read once however many briefs it carries.
 type briefAuthority struct {
-	register config.RegisterAuthority
-	labels   []string
-	offload  *router.OffloadConfig
+	register       config.RegisterAuthority
+	labels         []string
+	offload        *router.OffloadConfig
+	claudeSubagent map[string]router.ClaudeSubagentRoute
 }
 
 func loadBriefAuthority(ctx context.Context, root string) (briefAuthority, error) {
-	register, labels, offload, err := config.LoadRegisterDispatchAuthority(ctx, root)
+	register, labels, routing, err := config.LoadRegisterRoutingAuthority(ctx, root)
 	if err != nil {
 		return briefAuthority{}, fmt.Errorf("load register policy: %w", err)
 	}
-	return briefAuthority{register: register, labels: labels, offload: offload}, nil
+	authority := briefAuthority{register: register, labels: labels}
+	if routing != nil {
+		authority.offload = routing.Offload
+		authority.claudeSubagent = routing.ClaudeSubagent
+	}
+	return authority, nil
 }
 
 // validateAgentBrief resolves the brief's task through the digest-bound register

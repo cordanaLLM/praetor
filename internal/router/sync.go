@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
-	"go.yaml.in/yaml/v3"
 )
 
 // RawModelInfo represents metadata from upstream LiteLLM/OpenRouter catalogs.
@@ -323,7 +322,7 @@ func syncCatalog(ctx context.Context, targetPath string, opts SyncOptions, disco
 	if err := probeForSync(ctx, cfg, result, opts); err != nil {
 		return nil, err
 	}
-	data, err := yaml.Marshal(cfg)
+	data, err := marshalSyncedCatalog(cfg, declared)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal updated routing config: %w", err)
 	}
@@ -408,6 +407,7 @@ func planCatalog(existing *RoutingConfig, declared settingsPresence, discovered 
 	cfg := seedCatalog()
 	keepDeclaredSettings(cfg, existing, declared)
 	cfg.Gateway, cfg.Lanes = existing.Gateway, existing.Lanes
+	cfg.ClaudeSubagent = existing.ClaudeSubagent
 	preserveUnowned(cfg, existing, modelIDs(cfg))
 	addDiscovered(cfg, discovered, now)
 	removed := missingIDs(existing, cfg)

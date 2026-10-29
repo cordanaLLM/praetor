@@ -332,6 +332,16 @@ issue another live session claims, an unclaimed one and one whose claim it canno
 ([issue claims](issue-claims.md), `internal/agenthook/dispatch_claims.go`). A brief that names
 no issue skips the check.
 
+## Claude subagent model and effort
+
+The routing catalog's optional `claude_subagent` table maps a validated task label
+to a native model alias and optional effort. Claude's `pre-dispatch` hook adds
+these through PreToolUse `updatedInput` only when the Agent call names neither
+field. Existing read-only prompt rewrites survive, and the applied route is
+retained in the dispatch correlation for receipts. Unlisted labels retain session
+role defaults. See [catalog configuration and bounds](../standards/model-routing-and-fanout.md#claude-subagent-overrides)
+and `internal/agenthook/claude_subagent_test.go`.
+
 ## Routing implementation briefs off the Claude lane
 
 Repositories can opt selected routing task labels into a lane picker in

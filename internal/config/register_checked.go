@@ -40,10 +40,19 @@ func LoadRegisterTaskAuthority(ctx context.Context, root string) (RegisterAuthor
 
 // LoadRegisterDispatchAuthority also returns the offload rule from the same routing snapshot.
 func LoadRegisterDispatchAuthority(ctx context.Context, root string) (RegisterAuthority, []string, *router.OffloadConfig, error) {
+	authority, labels, routing, err := loadCheckedRegisterAuthority(ctx, root, true)
+	if routing == nil {
+		return authority, labels, nil, err
+	}
+	return authority, labels, routing.Offload, err
+}
+
+// LoadRegisterRoutingAuthority returns register policy and the complete routing snapshot.
+func LoadRegisterRoutingAuthority(ctx context.Context, root string) (RegisterAuthority, []string, *router.RoutingConfig, error) {
 	return loadCheckedRegisterAuthority(ctx, root, true)
 }
 
-func loadCheckedRegisterAuthority(ctx context.Context, root string, withLabels bool) (RegisterAuthority, []string, *router.OffloadConfig, error) {
+func loadCheckedRegisterAuthority(ctx context.Context, root string, withLabels bool) (RegisterAuthority, []string, *router.RoutingConfig, error) {
 	if ctx == nil {
 		return RegisterAuthority{}, nil, nil, errors.New("text register requires a context")
 	}
@@ -57,18 +66,18 @@ func loadCheckedRegisterAuthority(ctx context.Context, root string, withLabels b
 	if !withLabels && !authority.HasDeclaredTasks() {
 		return authority, nil, nil, nil
 	}
-	labels, offload, err := registerTaskLabels(ctx, root)
+	labels, routing, err := registerTaskLabels(ctx, root)
 	if err != nil {
 		return RegisterAuthority{}, nil, nil, err
 	}
 	if err := authority.ValidateTaskLabels(labels); err != nil {
 		return RegisterAuthority{}, nil, nil, fmt.Errorf("%s: %w", registerManifestName, err)
 	}
-	return authority, labels, offload, nil
+	return authority, labels, routing, nil
 }
 
 // registerTaskLabels returns the target_tasks vocabulary that governs root.
-func registerTaskLabels(ctx context.Context, root string) ([]string, *router.OffloadConfig, error) {
+func registerTaskLabels(ctx context.Context, root string) ([]string, *router.RoutingConfig, error) {
 	path := filepath.Join(root, filepath.FromSlash(registerRoutingRel))
 	if !util.FileExists(path) {
 		return router.DefaultTaskLabels(), nil, nil
@@ -77,5 +86,5 @@ func registerTaskLabels(ctx context.Context, root string) ([]string, *router.Off
 	if err != nil {
 		return nil, nil, fmt.Errorf("text register task labels: %w", err)
 	}
-	return router.DeclaredTaskLabels(cfg), cfg.Offload, nil
+	return router.DeclaredTaskLabels(cfg), cfg, nil
 }

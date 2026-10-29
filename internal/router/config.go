@@ -142,7 +142,14 @@ func ValidateRoutingConfig(cfg *RoutingConfig) error {
 			return err
 		}
 	}
+	return validateRoutingTables(cfg)
+}
+
+func validateRoutingTables(cfg *RoutingConfig) error {
 	if err := validateOffload(cfg); err != nil {
+		return err
+	}
+	if err := validateClaudeSubagent(cfg); err != nil {
 		return err
 	}
 	if err := validateGateway(cfg); err != nil {

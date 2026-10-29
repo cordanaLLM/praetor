@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/router"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -53,9 +54,11 @@ const (
 var errNoCorrelation = errors.New("agent correlation missing")
 
 type correlationEntry struct {
-	Resolution     config.Resolution `json:"resolution"`
-	CreatedAt      int64             `json:"created_at"`
-	HandbackDigest string            `json:"handback_digest,omitempty"`
+	// ClaudeSubagent records only overrides applied by the dispatch hook.
+	ClaudeSubagent *router.ClaudeSubagentRoute `json:"claude_subagent,omitempty"`
+	Resolution     config.Resolution           `json:"resolution"`
+	CreatedAt      int64                       `json:"created_at"`
+	HandbackDigest string                      `json:"handback_digest,omitempty"`
 	// LaunchDigest is the SHA-256 of the prompt a read-only dispatch was rewritten to; the
 	// dispatch receipt compares the prompt the agent launched with against it.
 	LaunchDigest      string `json:"launch_digest,omitempty"`
@@ -95,6 +98,10 @@ func newCorrelationStore(ctx context.Context, root, override string) (correlatio
 // must not shut off every later launch until its TTL runs out. An evicted agent's text is
 // then unowned, a stated skip, never a hold.
 func (s correlationStore) reserve(ctx context.Context, client, session, toolID string, resolution config.Resolution, launchDigest string) error {
+	return s.reserveEntry(ctx, client, session, toolID, correlationEntry{Resolution: resolution, LaunchDigest: launchDigest})
+}
+
+func (s correlationStore) reserveEntry(ctx context.Context, client, session, toolID string, entry correlationEntry) error {
 	name, err := correlationName("pending", client, session, toolID)
 	if err != nil {
 		return err
@@ -110,7 +117,8 @@ func (s correlationStore) reserve(ctx context.Context, client, session, toolID s
 		if evictErr := s.evictOldest(live); evictErr != nil {
 			return evictErr
 		}
-		return s.write(name, correlationEntry{Resolution: resolution, CreatedAt: time.Now().UTC().Unix(), LaunchDigest: launchDigest})
+		entry.CreatedAt = time.Now().UTC().Unix()
+		return s.write(name, entry)
 	})
 }
 
