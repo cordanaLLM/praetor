@@ -18,14 +18,17 @@ package supplychain
 // file nobody thought of is covered too.
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestRepositoryPinsOneDigestPerImageTag(t *testing.T) {
@@ -331,8 +334,10 @@ func TestScanImageRefsReadBoundaries(t *testing.T) {
 		t.Fatalf("grow big/Dockerfile: %v", err)
 	}
 	_, err := ScanImageRefs(t.Context(), root)
-	if err == nil || !strings.Contains(err.Error(), filepath.Join("big", "Dockerfile")) {
-		t.Fatalf("oversized tracked file: got error %v, want one naming big/Dockerfile", err)
+	// The error quotes the path (%q), so a Windows separator appears escaped: compare with the quoted form.
+	quoted := strings.Trim(strconv.Quote(filepath.Join("big", "Dockerfile")), `"`)
+	if !errors.Is(err, util.ErrFileTooLarge) || !strings.Contains(err.Error(), quoted) {
+		t.Fatalf("oversized tracked file: got error %v, want util.ErrFileTooLarge naming %s", err, quoted)
 	}
 	if err := os.Remove(filepath.Join(root, "big", "Dockerfile")); err != nil {
 		t.Fatalf("remove big/Dockerfile: %v", err)
