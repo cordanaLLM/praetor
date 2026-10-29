@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -16,14 +17,19 @@ func TestDeclaredTaskLabelsPositive(t *testing.T) {
 		t.Fatalf("load shipped routing.yaml: %v", err)
 	}
 	labels := DeclaredTaskLabels(cfg)
-	if len(labels) != 16 {
-		t.Fatalf("shipped routing.yaml declares %d labels, want 16: %v", len(labels), labels)
+	if len(labels) != 19 {
+		t.Fatalf("shipped routing.yaml declares %d labels, want 19: %v", len(labels), labels)
 	}
 	if !sort.StringsAreSorted(labels) {
 		t.Fatalf("labels are not sorted: %v", labels)
 	}
 	if defaults := DefaultTaskLabels(); !reflect.DeepEqual(labels, defaults) {
 		t.Fatalf("shipped labels %v differ from the built-in defaults %v", labels, defaults)
+	}
+	for _, review := range []string{"code_review", "review", "pr_body_check"} {
+		if !slices.Contains(labels, review) {
+			t.Fatalf("shipped routing.yaml does not declare review label %q: %v", review, labels)
+		}
 	}
 }
 
@@ -56,8 +62,8 @@ func TestDeclaredTaskLabelsBoundary(t *testing.T) {
 
 func TestDefaultTaskLabels(t *testing.T) {
 	labels := DefaultTaskLabels()
-	if len(labels) != 16 || !sort.StringsAreSorted(labels) {
-		t.Fatalf("default labels = %v, want 16 sorted labels", labels)
+	if len(labels) != 19 || !sort.StringsAreSorted(labels) {
+		t.Fatalf("default labels = %v, want 19 sorted labels", labels)
 	}
 	labels[0] = "mutated"
 	if DefaultTaskLabels()[0] == "mutated" {

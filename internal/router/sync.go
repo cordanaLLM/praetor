@@ -243,6 +243,9 @@ var legacySeedCatalog = []catalogEntry{
 	{"meta-llama/llama-3.3-70b-instruct", 5000, 5000000, 0.35, 0.40},
 }
 
+// defaultRoutingTiers is the built-in vocabulary. Review work carries three labels: code_review
+// for a diff or change review, review as the same work under the name briefs already use, and
+// pr_body_check for a pull request text checked against its change.
 func defaultRoutingTiers() map[string]Tier {
 	return map[string]Tier{
 		"heavy-frontier": {
@@ -252,12 +255,12 @@ func defaultRoutingTiers() map[string]Tier {
 		},
 		"midweight": {
 			Description:  "Tier 2 Mid-Weight Workhorses (20B-35B: 27B Qwen3.8, 30B Qwen3, 32B Coder, Codestral)",
-			TargetTasks:  []string{"feature_implementation", "multi_file_refactors", "unit_test_suites", "ci_debugging"},
+			TargetTasks:  []string{"feature_implementation", "multi_file_refactors", "unit_test_suites", "ci_debugging", "code_review", "review"},
 			FallbackTier: "lightweight",
 		},
 		"lightweight": {
 			Description:  "Tier 1 Lightweight Models (5B-16B: 9B Qwythos/Gemma, 7B/14B Qwen, Phi-4, Haiku)",
-			TargetTasks:  []string{"function_docstrings", "single_file_audits", "test_case_stubbing", "fast_cli_tools"},
+			TargetTasks:  []string{"function_docstrings", "single_file_audits", "test_case_stubbing", "fast_cli_tools", "pr_body_check"},
 			FallbackTier: "nano",
 		},
 		"nano": {
