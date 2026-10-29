@@ -73,6 +73,46 @@ layered `AGENTS.md` has no register block yet (`TestSpliceRegisterBlock_LayeredS
 This page covers the compiled context files. The MCP tool list and tool output are not changed by
 cache bands.
 
+## Client size caps and imports
+
+`praetorctl compile-context` and `--verify` refuse oversized context before
+writing projections. The registry is beside `vendorTargets` in
+`internal/agentcontext/render.go`; the limits below were checked for issue #1674
+on 2026-10-28.
+
+| File | Cap | Source |
+| :--- | :--- | :--- |
+| `AGENTS.md` plus tracked nested `AGENTS.md` files known to the compiler | 32,768 bytes together | Codex CLI [`agents_md.rs`](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/core/src/agents_md.rs) and [`config/mod.rs`](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/core/src/config/mod.rs), `project_doc_max_bytes` default |
+| `.gemini/GEMINI.md` | 24,000 bytes after import expansion | [Antigravity rules](https://antigravity.google/docs/rules); Antigravity reads this file too, so the strictest reader wins |
+| `.windsurfrules` | 12,000 Unicode characters | [Windsurf documentation](https://docs.windsurf.com/llms-full.txt), workspace rule limit |
+
+The remaining vendor targets have no documented hard size cap in this registry.
+Generated headers count toward projection caps. The existing line budget still
+applies. A refusal names the file, measured size, unit and cap, for example:
+`target file .gemini/GEMINI.md exceeds client size cap (25000 bytes > 24000)`.
+
+A standalone `@path` line outside fenced code is an import. Paths resolve from
+the repository root. Claude Code and Gemini CLI keep that line; their sizes
+include the imported content in place of the line, including nested imports.
+Cursor, Copilot, Windsurf and Codex rules instead receive
+`See path (read on demand).` Fenced examples, indented lines and inline mentions
+remain unchanged. This translation adds no automatically loaded content for
+clients without `@path` expansion.
+
+Expansion uses an iterative stack, refuses cycles, and allows four import hops
+for Claude Code and five for Gemini CLI. Missing or unreadable imports name the
+path. Reads use the compiler's confined, deadline-bound snapshot reader, limited
+to 1 MiB per file; traversal is bounded to 256 imports per projection. These
+safety bounds also apply to clients without a documented size cap. Import
+behavior sources: [Claude Code memory](https://code.claude.com/docs/en/memory)
+and [Gemini CLI context files](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/gemini-md.md),
+checked for issue #1674 on 2026-10-28.
+
+Regression evidence: `internal/agentcontext/imports_test.go` covers byte and
+character boundaries, translation, fenced examples, expansion, cycles, missing
+files and depth limits; `internal/compiler/imports_test.go` exercises real file
+reads, nested project documents, compile/write/readback and verification refusal.
+
 ## Adopted repositories
 
 `praetorctl adopt` writes the harness with the three markers (`internal/adopt/harness.go`), so a

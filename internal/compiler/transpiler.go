@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"time"
 
@@ -25,9 +26,11 @@ type Transpiler struct {
 	Clients  []string
 	Env      *agentcontext.RenderEnv
 	// Bound overrides DefaultAgentBound for Compile, WriteOutputs and Verify when positive.
-	Bound       time.Duration
-	writeTarget func(ctx context.Context, root, rel string, data []byte) error
-	readTarget  func(ctx context.Context, root, rel string) ([]byte, error)
+	Bound           time.Duration
+	writeTarget     func(ctx context.Context, root, rel string, data []byte) error
+	readTarget      func(ctx context.Context, root, rel string) ([]byte, error)
+	readImport      func(string) (string, error)
+	projectDocBytes int
 }
 
 func NewTranspiler() *Transpiler {
@@ -91,18 +94,26 @@ func (t *Transpiler) CompileContext(ctx context.Context, agentsMdPath string) (*
 	return res, nil
 }
 
-// forRepository returns t when it already carries a selection, otherwise a copy selecting the
-// agent clients the manifest at root declares.
+// forRepository binds the client selection, confined import reader and known nested project
+// document sizes to a copy. Compile and verify use this same repository view.
 func (t *Transpiler) forRepository(ctx context.Context, root string) (*Transpiler, error) {
-	if t.Clients != nil {
-		return t, nil
+	selected := *t
+	if selected.Clients == nil {
+		clients, err := declaredAgentClients(ctx, root)
+		if err != nil {
+			return nil, err
+		}
+		selected.Clients = clients
 	}
-	clients, err := declaredAgentClients(ctx, root)
+	selected.readImport = func(rel string) (string, error) {
+		data, err := readConfinedText(ctx, root, rel)
+		return string(data), err
+	}
+	size, err := nestedProjectDocBytes(ctx, root)
 	if err != nil {
 		return nil, err
 	}
-	selected := *t
-	selected.Clients = clients
+	selected.projectDocBytes = size
 	return &selected, nil
 }
 
@@ -137,8 +148,30 @@ func declaredAgentClients(ctx context.Context, root string) ([]string, error) {
 
 // CompileContent delegates pure rendering to the shared leaf renderer.
 func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
-	leaf := agentcontext.Transpiler{MaxLines: t.MaxLines, Clients: t.Clients, Env: t.Env}
+	leaf := agentcontext.Transpiler{MaxLines: t.MaxLines, Clients: t.Clients, Env: t.Env,
+		ReadImport: t.readImport, ProjectDocBytes: t.projectDocBytes}
 	return leaf.CompileContent(content)
+}
+
+// nestedProjectDocBytes reuses the tracked context inventory; files removed from
+// the working tree contribute no bytes, matching the nested context lint.
+func nestedProjectDocBytes(ctx context.Context, root string) (int, error) {
+	paths, err := ListNestedContextFiles(ctx, root)
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for i := 0; i < len(paths) && i < MaxNestedContextFiles; i++ {
+		data, err := readConfinedText(ctx, root, paths[i])
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return 0, fmt.Errorf("read project document %s: %w", paths[i], err)
+		}
+		total += len(data)
+	}
+	return total, nil
 }
 
 // WriteOutputs writes compiled files to targetDir.

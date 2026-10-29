@@ -1,0 +1,2 @@
+type: changed
+title: Refuse compiled context above client size caps after import expansion and translate imports into on-demand references for clients without expansion.
