@@ -63,13 +63,13 @@ func TestUIGateSpecs_RenderedGolden(t *testing.T) {
 // tests/*.tmpl alias.
 func TestUIGateSpecs_MultiRouteAndAlias(t *testing.T) {
 	ctx := sampleContext
-	ctx.UIRoutes = []string{"/", "/dashboard", "/settings"}
+	ctx.UIRoutes = templates.Routes("/", "/dashboard", "/settings")
 	ctx.UIAPIPattern = "**/v1/**"
 	a11y, err := templates.RenderFile("tests/a11y.spec.ts.tmpl", ctx)
 	if err != nil {
 		t.Fatalf("render tests/a11y.spec.ts.tmpl: %v", err)
 	}
-	for _, route := range ctx.UIRoutes {
+	for _, route := range *ctx.UIRoutes {
 		if !strings.Contains(a11y, route) {
 			t.Errorf("rendered a11y.spec.ts lacks route %q", route)
 		}
@@ -78,13 +78,67 @@ func TestUIGateSpecs_MultiRouteAndAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render tests/responsiveness.spec.ts.tmpl: %v", err)
 	}
-	for _, route := range ctx.UIRoutes {
+	for _, route := range *ctx.UIRoutes {
 		if !strings.Contains(resp, route) {
 			t.Errorf("rendered responsiveness.spec.ts lacks route %q", route)
 		}
 	}
 	if !strings.Contains(resp, `page.route("**/v1/**"`) || strings.Contains(resp, `**/api/**`) {
 		t.Errorf("rendered responsiveness.spec.ts did not apply custom UIAPIPattern:\n%s", resp)
+	}
+}
+
+// TestUIGateSpecs_RenderByteIdentical confirms that default routes and ["/", "/settings"]
+// renders are byte-identical before and after pointer migration (order engine-fr-rule-checks-20261027).
+func TestUIGateSpecs_RenderByteIdentical(t *testing.T) {
+	defaultA11y, err := templates.RenderFile("svelte/a11y.spec.ts.tmpl", templates.Context{})
+	if err != nil {
+		t.Fatalf("render default a11y: %v", err)
+	}
+	goldenA11yPath := filepath.Join(renderedRoot, "svelte", "a11y.spec", "default.ts")
+	testsupport.AssertGolden(t, goldenA11yPath, defaultA11y)
+
+	emptyRoutesCtx := templates.Context{UIRoutes: templates.Routes()}
+	emptyA11y, err := templates.RenderFile("svelte/a11y.spec.ts.tmpl", emptyRoutesCtx)
+	if err != nil {
+		t.Fatalf("render empty a11y: %v", err)
+	}
+	if defaultA11y != emptyA11y {
+		t.Fatalf("empty routes render != default routes render")
+	}
+
+	defaultResp, err := templates.RenderFile("svelte/responsiveness.spec.ts.tmpl", templates.Context{})
+	if err != nil {
+		t.Fatalf("render default responsiveness: %v", err)
+	}
+	goldenRespPath := filepath.Join(renderedRoot, "svelte", "responsiveness.spec", "default.ts")
+	testsupport.AssertGolden(t, goldenRespPath, defaultResp)
+
+	emptyResp, err := templates.RenderFile("svelte/responsiveness.spec.ts.tmpl", emptyRoutesCtx)
+	if err != nil {
+		t.Fatalf("render empty responsiveness: %v", err)
+	}
+	if defaultResp != emptyResp {
+		t.Fatalf("empty routes responsiveness render != default routes render")
+	}
+
+	multiCtx := templates.Context{UIRoutes: templates.Routes("/", "/settings")}
+	multiA11y, err := templates.RenderFile("svelte/a11y.spec.ts.tmpl", multiCtx)
+	if err != nil {
+		t.Fatalf("render multi a11y: %v", err)
+	}
+	expectedMultiA11y := strings.Replace(defaultA11y, "\t\"/\",\n", "\t\"/\",\n\t\"/settings\",\n", 1)
+	if multiA11y != expectedMultiA11y {
+		t.Fatalf("multi-route a11y render differs from expected byte output")
+	}
+
+	multiResp, err := templates.RenderFile("svelte/responsiveness.spec.ts.tmpl", multiCtx)
+	if err != nil {
+		t.Fatalf("render multi responsiveness: %v", err)
+	}
+	expectedMultiResp := strings.Replace(defaultResp, "\t\"/\",\n", "\t\"/\",\n\t\"/settings\",\n", 1)
+	if multiResp != expectedMultiResp {
+		t.Fatalf("multi-route responsiveness render differs from expected byte output")
 	}
 }
 

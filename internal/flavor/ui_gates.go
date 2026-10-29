@@ -59,12 +59,12 @@ func resolveUISpecContext(_ context.Context, repoPath string) (templates.Context
 	manifest, err := config.LoadManifest(manifestPath)
 	if err != nil || manifest == nil {
 		return templates.Context{
-			UIRoutes:     []string{config.DefaultUIRoute},
+			UIRoutes:     templates.Routes(config.DefaultUIRoute),
 			UIAPIPattern: config.DefaultUIAPIPattern,
 		}, ""
 	}
 	return templates.Context{
-		UIRoutes:     manifest.UIRoutes(),
+		UIRoutes:     templates.Routes(manifest.UIRoutes()...),
 		UIAPIPattern: manifest.UIAPIPattern(),
 	}, ""
 }

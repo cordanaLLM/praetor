@@ -91,7 +91,7 @@ type Context struct {
 	// UIRoutes lists the route paths the frontend-svelte accessibility and responsiveness
 	// specs scan (order engine-fr-rule-checks-20261027). The zero value renders ["/"]
 	// (RenderFile).
-	UIRoutes []string `json:"ui_routes"`
+	UIRoutes *[]string `json:"ui_routes,omitempty"`
 
 	// UIAPIPattern is the route mock glob the frontend-svelte responsiveness spec intercepts
 	// for its slow-API and HTTP 503 fault cases (order engine-fr-rule-checks-20261027). The
@@ -165,11 +165,17 @@ func Render(name, text string, ctx Context) (string, error) {
 	return execute(name, text, "", "", ctx)
 }
 
+// Routes returns a pointer to a copy of paths for Context.UIRoutes.
+func Routes(paths ...string) *[]string {
+	r := append([]string(nil), paths...)
+	return &r
+}
+
 // RenderFile renders one embedded template, named by its path below this directory
 // ("go/ci-go.yml.tmpl"), with FileLeftDelim and FileRightDelim.
 func RenderFile(name string, ctx Context) (string, error) {
-	if len(ctx.UIRoutes) == 0 {
-		ctx.UIRoutes = []string{"/"}
+	if ctx.UIRoutes == nil || len(*ctx.UIRoutes) == 0 {
+		ctx.UIRoutes = Routes("/")
 	}
 	if ctx.UIAPIPattern == "" {
 		ctx.UIAPIPattern = "**/api/**"

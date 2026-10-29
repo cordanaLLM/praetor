@@ -38,7 +38,7 @@ func writeUIGateRepoFixture(t *testing.T, withSpecs bool) string {
 	if err := os.MkdirAll(filepath.Join(dir, "tests"), 0o750); err != nil {
 		t.Fatalf("mkdir tests: %v", err)
 	}
-	ctx := templates.Context{RepoName: "ui-app", Owner: "acme", UIRoutes: []string{"/", "/settings"}}
+	ctx := templates.Context{RepoName: "ui-app", Owner: "acme", UIRoutes: templates.Routes("/", "/settings")}
 	a11y, err := templates.RenderFile(flavor.UIA11ySpecTemplate, ctx)
 	if err != nil {
 		t.Fatalf("render a11y spec: %v", err)

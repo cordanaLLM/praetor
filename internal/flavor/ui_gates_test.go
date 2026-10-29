@@ -21,7 +21,7 @@ const validUIMakefileFixture = ".PHONY: verify-all ui-gates\n" +
 
 func renderUISpecFixture(t *testing.T, dir string) {
 	t.Helper()
-	ctx := templates.Context{RepoName: "ui-fixture", Owner: "acme", UIRoutes: []string{"/"}}
+	ctx := templates.Context{RepoName: "ui-fixture", Owner: "acme", UIRoutes: templates.Routes("/")}
 	a11y, err := templates.RenderFile(flavor.UIA11ySpecTemplate, ctx)
 	if err != nil {
 		t.Fatalf("render a11y spec: %v", err)
