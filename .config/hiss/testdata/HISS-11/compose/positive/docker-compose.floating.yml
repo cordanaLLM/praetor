@@ -1,4 +1,4 @@
 # HISS-11 positive: compose service image with a floating tag.
 services:
   cache:
-    image: redis:7.2-alpine
+    image: redis:8.0-alpine

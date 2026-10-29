@@ -1,0 +1,3 @@
+type: changed
+title: "Dependencies: update redis docker tag to v8"
+breaking: false
