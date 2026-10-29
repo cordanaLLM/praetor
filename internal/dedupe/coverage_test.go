@@ -19,8 +19,15 @@ import (
 
 const polyglotGoSource = "package tooling\n\nfunc Add(a, b int) int {\n\treturn a + b\n}\n"
 
+func setPinnedJscpdStub(t *testing.T) {
+	t.Helper()
+	t.Setenv("PRAETOR_TEST_FAKE_JSCPD", "1")
+	t.Setenv("PRAETOR_JSCPD_BIN", os.Args[0])
+	t.Setenv("PRAETOR_TEST_FAKE_JSCPD_REPORT_CONTENT", `{"duplicates":[]}`)
+}
+
 func TestScanRepo_Positive_PolyglotVerdictIsPartial(t *testing.T) {
-	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
+	setPinnedJscpdStub(t)
 	dir := t.TempDir()
 	writeFile(t, dir, "tooling/add.go", polyglotGoSource)
 	writeFile(t, dir, "crates/core/src/lib.rs", "pub fn add() {}\n")
@@ -46,7 +53,7 @@ func TestScanRepo_Positive_PolyglotVerdictIsPartial(t *testing.T) {
 // A Go tool beside a JVM and JavaScript tree was still reported as a plain pass while the
 // language table knew only nine languages: every language the scan cannot read has to count.
 func TestScanRepo_Positive_JVMAndModuleSourcesMakeTheVerdictPartial(t *testing.T) {
-	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
+	setPinnedJscpdStub(t)
 	dir := t.TempDir()
 	writeFile(t, dir, "tooling/add.go", polyglotGoSource)
 	writeFile(t, dir, "java/A.java", "class A {}\n")

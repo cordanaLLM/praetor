@@ -1,0 +1,2 @@
+type: added
+title: praetorctl audit enforces HISS-11 container image digest pins on resolvable references, reports unresolvable templates as INFO, and records existing findings once at adoption

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -197,6 +199,7 @@ func TestRunDedupeCadence_Boundary_GrowthBelowThresholdStaysQuiet(t *testing.T) 
 // #161: a polyglot repository with a small Go module used to get "Passed: true" with no word
 // about the source the scan never read. The verdict now says partial and names the rest.
 func TestRunDedupeScan_Positive_PolyglotVerdictSaysPartial(t *testing.T) {
+	stubPinnedJscpd(t)
 	dir := dedupeFixtureDir(t, "tooling/clean.go", dedupeCleanSource)
 	writeFixtureFile(t, dir, "crates/core/src/lib.rs", "pub fn add() {}\n")
 	writeFixtureFile(t, dir, "crates/core/src/util.rs", "pub fn sub() {}\n")
@@ -227,6 +230,7 @@ func TestRunDedupeScan_Negative_GoOnlyVerdictIsNotQualified(t *testing.T) {
 // A repository with no Go at all still reports no verdict, now naming what it holds, and the
 // JSON form carries the same coverage fields.
 func TestRunDedupeScan_Boundary_NoGoNamesTheLanguagesAndJSONCarriesThem(t *testing.T) {
+	stubPinnedJscpd(t)
 	dir := dedupeFixtureDir(t, "src/app.ts", "export const a = 1;\n")
 	out, err := captureStdout(t, func() error { return runDedupeScan([]string{dir}) })
 	if err != nil {
@@ -513,7 +517,11 @@ func TestRunDedupeScan_Positive_GeneratedFilesSkippedArePrinted(t *testing.T) {
 	)
 }
 
-func TestRunDedupeScan_Positive_UnscannedLanguageExceptionPasses(t *testing.T) {
+// TestRunDedupeScan_Negative_UnscannedLanguageExceptionFailsOnForeignSkip verifies that
+// when the foreign scanner is missing or skipped, the scan fails closed (Passed: false and
+// CLI error) even if the exception is in NotCheckedExceptions.
+// order engine-dedupe-jscpd-skip-fails-closed-20261027
+func TestRunDedupeScan_Negative_UnscannedLanguageExceptionFailsOnForeignSkip(t *testing.T) {
 	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
 	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
 	writeFixtureFile(t, dir, "interop.c", "int f(void) { return 0; }\n")
@@ -527,11 +535,12 @@ func TestRunDedupeScan_Positive_UnscannedLanguageExceptionPasses(t *testing.T) {
 	writeFixtureFile(t, dir, config.ManifestFileName, manifest)
 
 	out, err := captureStdout(t, func() error { return runDedupeScan([]string{dir}) })
-	if err != nil {
-		t.Fatalf("scan with unscanned exception must pass: %v\n%s", err, out)
+	if err == nil {
+		t.Fatalf("scan with missing foreign scanner must fail closed, got nil: %s", out)
 	}
+	mustErrContain(t, err, "foreign clone scan skipped")
 	mustContain(t, out,
-		"Passed:            true",
+		"Passed:            false",
 		"Not Checked Exceptions (1):",
 		"- exceptions entry interop.c (HISS-19): c not scanned by this run; not checked",
 	)
@@ -541,9 +550,8 @@ func TestRunDedupeScan_Positive_UnscannedLanguageExceptionPasses(t *testing.T) {
 }
 
 func TestRunDedupeScan_Negative_MixedExceptionsFailsOnStaleOnly(t *testing.T) {
-	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
 	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
-	writeFixtureFile(t, dir, "interop.c", "int f(void) { return 0; }\n")
+	writeFixtureFile(t, dir, "README.md", "# docs\n")
 	expires := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
 	manifest := fmt.Sprintf(`exceptions:
   - rule: HISS-19
@@ -551,8 +559,8 @@ func TestRunDedupeScan_Negative_MixedExceptionsFailsOnStaleOnly(t *testing.T) {
     reason: clean file has no clones
     expires: %s
   - rule: HISS-19
-    path: interop.c
-    reason: C interop files
+    path: README.md
+    reason: doc files
     expires: %s
 `, expires, expires)
 	writeFixtureFile(t, dir, config.ManifestFileName, manifest)
@@ -566,32 +574,150 @@ func TestRunDedupeScan_Negative_MixedExceptionsFailsOnStaleOnly(t *testing.T) {
 		"Stale Exceptions (1):",
 		"- exceptions entry clean.go (HISS-19): excuses no duplicate function block; remove the entry",
 		"Not Checked Exceptions (1):",
-		"- exceptions entry interop.c (HISS-19): c not scanned by this run; not checked",
+		"- exceptions entry README.md (HISS-19): unknown not scanned by this run; not checked",
 	)
 }
 
 func TestRunDedupeScan_Boundary_NoGoWithUnscannedExceptionReturnsNil(t *testing.T) {
-	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
-	dir := dedupeFixtureDir(t, "interop.c", "int f(void) { return 0; }\n")
+	dir := dedupeFixtureDir(t, "README.md", "# not go\n")
 	expires := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
 	manifest := fmt.Sprintf(`exceptions:
   - rule: HISS-19
-    path: interop.c
-    reason: C interop files
+    path: README.md
+    reason: non-Go file
     expires: %s
 `, expires)
 	writeFixtureFile(t, dir, config.ManifestFileName, manifest)
 
 	out, err := captureStdout(t, func() error { return runDedupeScan([]string{dir}) })
 	if err != nil {
-		t.Fatalf("a repository with no Go sources and unscanned C exception must not fail: %v\n%s", err, out)
+		t.Fatalf("a repository with no Go sources and unscanned non-foreign exception must not fail: %v\n%s", err, out)
 	}
 	mustContain(t, out,
 		"Not applicable: no Go sources found",
 		"Not Checked Exceptions (1):",
-		"- exceptions entry interop.c (HISS-19): c not scanned by this run; not checked",
+		"- exceptions entry README.md (HISS-19): unknown not scanned by this run; not checked",
 	)
 	if strings.Contains(out, "Stale Exceptions") {
 		t.Errorf("unscanned exception must not be reported as stale:\n%s", out)
+	}
+}
+
+// stubPinnedJscpd makes the test binary the jscpd the scan runs, at the pinned version
+// (testsupport.UseFakeJscpd; order engine-dedupe-jscpd-skip-fails-closed-20261027).
+func stubPinnedJscpd(t *testing.T) {
+	t.Helper()
+	testsupport.UseFakeJscpd(t, "jscpd "+dedupe.JscpdVersion)
+}
+
+func TestRunDedupeScan_Planted_VersionMismatchFailsClosed(t *testing.T) {
+	// order engine-dedupe-jscpd-skip-fails-closed-20261027
+	testsupport.UseFakeJscpd(t, "jscpd 5.4.1")
+
+	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
+	writeFixtureFile(t, dir, "script.py", "print('hello')\n")
+
+	// CLI text mode must return error.
+	_, textErr := captureStdout(t, func() error { return runDedupeScan([]string{dir}) })
+	if textErr == nil {
+		t.Fatal("expected text mode to return error on foreign scan version mismatch, got nil")
+	}
+
+	// CLI --json mode must return error and report Passed=false.
+	jsonOut, jsonErr := captureStdout(t, func() error { return runDedupeScan([]string{"--json", dir}) })
+	if jsonErr == nil {
+		t.Fatal("expected --json mode to return error on foreign scan version mismatch, got nil")
+	}
+	var report dedupe.DedupeReport
+	if err := json.Unmarshal([]byte(jsonOut), &report); err != nil {
+		t.Fatalf("unmarshal json: %v\noutput: %s", err, jsonOut)
+	}
+	if report.Passed {
+		t.Fatal("expected report.Passed=false on foreign scan version mismatch, got true")
+	}
+	if !strings.Contains(report.ForeignSkipped, "jscpd 5.4.1") || !strings.Contains(report.ForeignSkipped, "jscpd 5.4.2") {
+		t.Fatalf("ForeignSkipped = %q, want it to name %q and %q", report.ForeignSkipped, "jscpd 5.4.1", "jscpd 5.4.2")
+	}
+}
+
+func TestRunDedupeScan_Planted_MissingBinaryFailsClosed(t *testing.T) {
+	// order engine-dedupe-jscpd-skip-fails-closed-20261027
+	missingBin := filepath.Join(t.TempDir(), "nonexistent-jscpd-bin")
+	t.Setenv("PRAETOR_JSCPD_BIN", missingBin)
+
+	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
+	writeFixtureFile(t, dir, "script.py", "print('hello')\n")
+
+	// CLI text mode must return error.
+	_, textErr := captureStdout(t, func() error { return runDedupeScan([]string{dir}) })
+	if textErr == nil {
+		t.Fatal("expected text mode to return error on missing foreign binary, got nil")
+	}
+
+	// CLI --json mode must return error and report Passed=false.
+	jsonOut, jsonErr := captureStdout(t, func() error { return runDedupeScan([]string{"--json", dir}) })
+	if jsonErr == nil {
+		t.Fatal("expected --json mode to return error on missing foreign binary, got nil")
+	}
+	var report dedupe.DedupeReport
+	if err := json.Unmarshal([]byte(jsonOut), &report); err != nil {
+		t.Fatalf("unmarshal json: %v\noutput: %s", err, jsonOut)
+	}
+	if report.Passed {
+		t.Fatal("expected report.Passed=false on missing foreign binary, got true")
+	}
+	if !strings.Contains(report.ForeignSkipped, strconv.Quote(missingBin)) {
+		t.Fatalf("ForeignSkipped = %q, want it to name binary path %q", report.ForeignSkipped, missingBin)
+	}
+}
+
+func TestRunDedupeScan_Planted_PinnedStubPasses(t *testing.T) {
+	// order engine-dedupe-jscpd-skip-fails-closed-20261027
+	testsupport.UseFakeJscpd(t, "jscpd "+dedupe.JscpdVersion)
+
+	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
+	writeFixtureFile(t, dir, "script.py", "print('hello')\n")
+
+	jsonOut, err := captureStdout(t, func() error { return runDedupeScan([]string{"--json", dir}) })
+	if err != nil {
+		t.Fatalf("expected pinned stub to pass, got err: %v", err)
+	}
+	var report dedupe.DedupeReport
+	if err := json.Unmarshal([]byte(jsonOut), &report); err != nil {
+		t.Fatalf("unmarshal json: %v\noutput: %s", err, jsonOut)
+	}
+	if !report.Passed {
+		t.Fatalf("expected report.Passed=true with pinned stub, got false: %+v", report)
+	}
+	if report.ForeignScanner != "jscpd "+dedupe.JscpdVersion {
+		t.Fatalf("ForeignScanner = %q, want %q", report.ForeignScanner, "jscpd "+dedupe.JscpdVersion)
+	}
+}
+
+func TestRunDedupeScan_Planted_BoundaryNoForeignFilesWithWrongStubPasses(t *testing.T) {
+	// order engine-dedupe-jscpd-skip-fails-closed-20261027
+	testsupport.UseFakeJscpd(t, "jscpd 5.4.1")
+
+	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
+
+	if err := runDedupeScan([]string{dir}); err != nil {
+		t.Fatalf("clean repo without foreign files must pass without asking stub: %v", err)
+	}
+}
+
+func TestRunDedupeScan_Planted_NotApplicableWrongStubReturnsError(t *testing.T) {
+	// order engine-dedupe-jscpd-skip-fails-closed-20261027
+	testsupport.UseFakeJscpd(t, "jscpd 5.4.1")
+
+	dir := dedupeFixtureDir(t, "script.py", "print('hello')\n")
+
+	_, textErr := captureStdout(t, func() error { return runDedupeScan([]string{dir}) })
+	if textErr == nil {
+		t.Fatal("expected not-applicable fixture with wrong stub to return error in text mode, got nil")
+	}
+
+	_, jsonErr := captureStdout(t, func() error { return runDedupeScan([]string{"--json", dir}) })
+	if jsonErr == nil {
+		t.Fatal("expected not-applicable fixture with wrong stub to return error in --json mode, got nil")
 	}
 }

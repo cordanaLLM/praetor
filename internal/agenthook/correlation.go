@@ -54,11 +54,14 @@ const (
 var errNoCorrelation = errors.New("agent correlation missing")
 
 type correlationEntry struct {
-	// ClaudeSubagent records only overrides applied by the dispatch hook.
-	ClaudeSubagent *router.ClaudeSubagentRoute `json:"claude_subagent,omitempty"`
-	Resolution     config.Resolution           `json:"resolution"`
-	CreatedAt      int64                       `json:"created_at"`
-	HandbackDigest string                      `json:"handback_digest,omitempty"`
+	// ClaudeSubagent records the routed override or requested model and effort.
+	ClaudeSubagent  *router.ClaudeSubagentRoute `json:"claude_subagent,omitempty"`
+	Resolution      config.Resolution           `json:"resolution"`
+	CreatedAt       int64                       `json:"created_at"`
+	HandbackDigest  string                      `json:"handback_digest,omitempty"`
+	HandbackVerdict string                      `json:"handback_verdict,omitempty"`
+	Task            string                      `json:"task,omitempty"`
+	ResolvedModel   string                      `json:"resolved_model,omitempty"`
 	// LaunchDigest is the SHA-256 of the prompt a read-only dispatch was rewritten to; the
 	// dispatch receipt compares the prompt the agent launched with against it.
 	LaunchDigest      string `json:"launch_digest,omitempty"`
@@ -124,6 +127,10 @@ func (s correlationStore) reserveEntry(ctx context.Context, client, session, too
 
 // promote binds the pending row of a dispatch to the agent it launched and returns that row.
 func (s correlationStore) promote(ctx context.Context, client, session, toolID, agentID string) (correlationEntry, error) {
+	return s.promoteResolved(ctx, client, session, toolID, agentID, "")
+}
+
+func (s correlationStore) promoteResolved(ctx context.Context, client, session, toolID, agentID, resolvedModel string) (correlationEntry, error) {
 	pending, err := correlationName("pending", client, session, toolID)
 	if err != nil {
 		return correlationEntry{}, err
@@ -131,6 +138,9 @@ func (s correlationStore) promote(ctx context.Context, client, session, toolID, 
 	active, err := correlationName("active", client, session, agentID)
 	if err != nil {
 		return correlationEntry{}, err
+	}
+	if resolvedModel == "" {
+		resolvedModel = "none"
 	}
 	var entry correlationEntry
 	err = s.withLock(ctx, func() error {
@@ -144,7 +154,15 @@ func (s correlationStore) promote(ctx context.Context, client, session, toolID, 
 		if absentErr := s.requireAbsent(active, "agent correlation already exists"); absentErr != nil {
 			return absentErr
 		}
-		return s.rename(pending, active, "bind dispatch correlation")
+		// The rename keeps the bind atomic; the resolved model is written onto the bound entry.
+		if renameErr := s.rename(pending, active, "bind dispatch correlation"); renameErr != nil {
+			return renameErr
+		}
+		entry.ResolvedModel = resolvedModel
+		if writeErr := s.write(active, entry); writeErr != nil {
+			return fmt.Errorf("record resolved model: %w", writeErr)
+		}
+		return nil
 	})
 	return entry, err
 }
@@ -190,6 +208,7 @@ func (s correlationStore) active(ctx context.Context, client, session, agentID s
 		if readErr != nil {
 			return readErr
 		}
+		entry.HandbackVerdict = ""
 		found = entry
 		return nil
 	})
@@ -214,6 +233,7 @@ func (s correlationStore) markHandbackValidated(ctx context.Context, client, ses
 			return readErr
 		}
 		entry.HandbackDigest = correlationHandbackDigest(toolID, text)
+		entry.HandbackVerdict = claudeVerdictWord(text)
 		return s.write(active, entry)
 	})
 }
@@ -256,6 +276,7 @@ func (s correlationStore) cancelHandback(ctx context.Context, client, session, a
 			return errors.New("handback abort does not match a validated report")
 		}
 		entry.HandbackDigest = ""
+		entry.HandbackVerdict = ""
 		return s.write(active, entry)
 	})
 }

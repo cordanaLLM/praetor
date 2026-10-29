@@ -130,3 +130,38 @@ func TestGosecFirstBaselineGuard_DefaultBranchGrowthRefused(t *testing.T) {
 	}
 	mustErrContain(t, err, "no first gosec baseline")
 }
+
+// Order engine-hiss-unenforced-checks-20261027: gosec baseline guard record preserves HISS-11
+// entries from the previous baseline.
+func TestGosecBaselineGuard_PreservesHISS11(t *testing.T) {
+	f := gosecRecordFixture(t)
+	seedHistoricalGosec(t, f)
+	prev := &baseline.Baseline{
+		Version:          1,
+		TotalInfractions: 2,
+		Infractions: []baseline.Infraction{
+			{RuleID: "G204", FilePath: "vuln.go", LineNumber: 13, Fingerprint: "fp-gosec"},
+			{RuleID: baseline.ImageRefRuleID, FilePath: "Dockerfile", LineNumber: 1, Fingerprint: "Dockerfile:HISS-11:image:golang:1.27"},
+		},
+	}
+	findings := []baseline.Infraction{
+		{RuleID: "G204", FilePath: "vuln.go", LineNumber: 13, Fingerprint: "fp-gosec"},
+	}
+	next, err := guardedGosecRecord(t.Context(), f.dir, prev, findings, baseline.RecordOptions{})
+	if err != nil {
+		t.Fatalf("guardedGosecRecord failed: %v", err)
+	}
+	if next.TotalInfractions != 2 || len(next.Infractions) != 2 {
+		t.Fatalf("expected 2 infractions preserved (1 gosec + 1 HISS-11), got %+v", next)
+	}
+	found := false
+	for _, inf := range next.Infractions {
+		if inf.RuleID == baseline.ImageRefRuleID && inf.Fingerprint == "Dockerfile:HISS-11:image:golang:1.27" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected HISS-11 entry preserved in next baseline, got %+v", next.Infractions)
+	}
+}

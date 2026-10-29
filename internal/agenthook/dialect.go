@@ -228,7 +228,14 @@ func openCodeEncode(_ Dialect, canonical Canonical, verdict Verdict) Response {
 		if err != nil {
 			return Response{Stderr: []byte("praetor hook: encode response: " + err.Error() + "\n"), ExitCode: usageExit}
 		}
-		return Response{Stdout: append(data, '\n')}
+		response := Response{Stdout: append(data, '\n')}
+		if verdict.Outcome == Skip && verdict.Reason != "" {
+			response.Stderr = []byte("praetor hook: " + boundReason(verdict.Reason) + ", skipped\n")
+		}
+		return response
+	}
+	if verdict.Outcome == Skip {
+		return Response{Stderr: []byte("praetor hook: " + boundReason(verdict.Reason) + ", skipped\n")}
 	}
 	if verdict.Outcome == Deny {
 		return Response{Stderr: []byte(boundReason(verdict.Reason) + "\n"), ExitCode: usageExit}

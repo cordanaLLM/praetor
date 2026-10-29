@@ -171,13 +171,16 @@ func resolveJscpdBinary(ctx context.Context, dir string) (string, string, string
 	versionCtx, cancel := context.WithTimeout(ctx, jscpdVersionTimeout)
 	defer cancel()
 
+	expected := "jscpd " + JscpdVersion
 	out, err := util.RunCommandBytes(versionCtx, dir, bin, 4096, "--version")
 	if err != nil {
-		return "", "", fmt.Sprintf("resolve jscpd: %v", err)
+		// order engine-dedupe-jscpd-skip-fails-closed-20261027: binary path, error, wanted version, install hint.
+		return "", "", fmt.Sprintf("resolve jscpd %q: %v (want %q; install with `npm ci --prefix tools/jscpd` or set %s)",
+			bin, err, expected, jscpdBinaryEnv)
 	}
 	version := strings.TrimSpace(string(out.Stdout))
-	expected := "jscpd " + JscpdVersion
 	if version != expected {
+		// order engine-dedupe-jscpd-skip-fails-closed-20261027: found and wanted version both quoted.
 		return "", "", fmt.Sprintf("unexpected jscpd version: %q, want %q", version, expected)
 	}
 	return bin, version, ""

@@ -28,6 +28,9 @@ type Invocation struct {
 	WorkDir  string
 	Policy   *Policy
 	Settings config.HookSettings
+	// SettingsError refuses guarded calls through the selected client dialect.
+	// Order: engine-hook-digest-mismatch-fail-closed-20261028.
+	SettingsError error
 	// CorrelationDir overrides the private repository cache in tests. Production callers
 	// leave it empty so one deterministic path under Git's shared directory bridges hook
 	// processes and isolated worktrees without entering the tracked working tree.
@@ -52,7 +55,7 @@ func Run(ctx context.Context, in Invocation) Response {
 	}
 	ctx, cancel := context.WithTimeout(ctx, budgetForRow(row))
 	defer cancel()
-	if dir := recordDirOf(in.Getenv); dir != "" {
+	if dir := recordDirOf(in.Getenv); dir != "" && in.SettingsError == nil {
 		return recordAndAllow(ctx, dir, row, dialect, in)
 	}
 	canonical, verdict := evaluate(ctx, dialect, row, in)

@@ -59,6 +59,10 @@ func budgetFor(event Event) time.Duration {
 // of canonical it managed to build before the failure that produced its verdict.
 func evaluate(ctx context.Context, dialect Dialect, row Registration, in Invocation) (Canonical, Verdict) {
 	canonical, err := decodeCanonical(ctx, dialect, row.Event, in)
+	if in.SettingsError != nil {
+		canonical.Event = row.Event
+		return canonical, returnBoundary(row, canonical, settingsUnavailable(canonical, in.SettingsError, err))
+	}
 	if err != nil {
 		// Only the event and a return's stop_hook_active survive a decode failure (Decode).
 		canonical = Canonical{Event: row.Event, StopActive: canonical.StopActive}

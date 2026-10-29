@@ -177,10 +177,16 @@ var catalog = []Rule{
 		ID:            "HISS-11",
 		Title:         "Hermetic Supply Chain",
 		Specification: "Pinned lockfiles mandatory. Zero floating tags. SLSA Level 3 provenance attestations and Sigstore Cosign signatures.",
-		Enforcement:   "CI attestation gate.",
+		Enforcement:   "'praetorctl audit' supply-chain and container image digest pin check; CI attestation gate.",
 		FailureAction: "Deployment rejection.",
 		Scope:         "supply chain",
 		Directive:     []Clause{{Text: "pinned lockfiles; zero floating tags; signed provenance"}},
+		Adoption: AdoptedCheck{
+			Check:    "`praetorctl audit` supply chain + image digest pins",
+			Coverage: "Actions SHA pins, Python lock hashes, CDN imports unchecked",
+			Trigger:  "new finding",
+			Stages:   auditStages,
+		},
 	},
 	{
 		ID:            "HISS-12",

@@ -2021,8 +2021,12 @@ func TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scan repo failed: %v", err)
 	}
-	if !report.Passed {
-		t.Fatalf("expected report to pass when exception language was not scanned, got passed=%v, stale=%v", report.Passed, report.StaleExceptions)
+	// order engine-dedupe-jscpd-skip-fails-closed-20261027: a skipped foreign scan fails closed.
+	if report.Passed {
+		t.Fatalf("expected report to fail closed when foreign scan is skipped, got passed=true")
+	}
+	if report.ForeignSkipped == "" {
+		t.Fatalf("expected ForeignSkipped to record skip reason")
 	}
 	if len(report.StaleExceptions) != 0 {
 		t.Fatalf("expected 0 stale exceptions, got %d: %v", len(report.StaleExceptions), report.StaleExceptions)

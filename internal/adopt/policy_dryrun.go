@@ -31,6 +31,9 @@ func newAdoptionManifest(ctx context.Context, s *adoptSession) (*config.Manifest
 	if entry := s.supplyChainException(ctx); entry != nil {
 		manifest.Exceptions = []config.Exception{*entry}
 	}
+	if release := s.releasePolicy(ctx); release != nil {
+		manifest.Release = release
+	}
 	if plan.absent() {
 		return manifest, plan, nil
 	}

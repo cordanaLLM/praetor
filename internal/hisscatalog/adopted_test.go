@@ -71,6 +71,11 @@ func TestAdoptedExplanation_Positive_StatesAdoptedEnforcement(t *testing.T) {
 		!strings.Contains(text, "Holds only where adoption generated that pipeline") {
 		t.Fatalf("HISS-01 adopted explanation:\n%s", text)
 	}
+	supplyChain, _ := LookupRule("HISS-11")
+	if check, failure := supplyChain.Adopted(AllPipelines); check != "`praetorctl audit` supply chain + image digest pins in verify-all + lefthook pre-commit/pre-push: Actions SHA pins, Python lock hashes, CDN imports unchecked" ||
+		failure != "new finding fails verify-all, blocks commit, blocks push" {
+		t.Fatalf("HISS-11 Adopted() = %q, %q", check, failure)
+	}
 	unchecked, _ := LookupRule("HISS-12")
 	if text := unchecked.AdoptedExplanation(); text != unchecked.Explanation()+"\nAdopted repositories: not enforced; adoption generates no check for this rule." {
 		t.Fatalf("HISS-12 adopted explanation:\n%s", text)

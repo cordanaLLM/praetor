@@ -9,6 +9,41 @@ import (
 
 var taskFieldValueRe = regexp.MustCompile(`(?i)^(?:[-*+]\s+)?task:\s*(.*?)\s*$`)
 
+const maxReturnExtractBytes = 1 << 20
+
+// ExtractReturnVerdict reads the first verdict word using the contract's field grammar.
+// Fenced examples, quoted literals and disabled regions cannot supply a verdict.
+func ExtractReturnVerdict(text string) (string, error) {
+	if len(text) > maxReturnExtractBytes {
+		return "", errors.New("return exceeds verdict extraction bound")
+	}
+	lines, _ := scan(text)
+	word, seen := "", false
+	for index := 0; index < len(lines) && index < maxReturnExtractBytes; index++ {
+		ln := lines[index]
+		if !shapeContent(ln) {
+			continue
+		}
+		prose := maskQuoted(proseOf(ln))
+		if schemaFieldAtStart(prose) != "verdict" {
+			continue
+		}
+		if seen {
+			return "", errors.New("return verdict field is duplicated")
+		}
+		seen = true
+		_, value, _ := strings.Cut(prose, ":")
+		fields := strings.Fields(value)
+		if len(fields) > 0 {
+			word = strings.ToLower(fields[0])
+		}
+	}
+	if word == "" {
+		return "", errors.New("return verdict field is missing or empty")
+	}
+	return word, nil
+}
+
 // ExtractBriefTask returns the task label carried by a structured Caveman brief. It
 // deliberately reuses Check's scanner and field grammar, so task-aware runtime gates do
 // not grow a second interpretation of fenced code, caveman:off regions, or list fields.

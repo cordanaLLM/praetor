@@ -74,3 +74,42 @@ When no workflow invokes `release-please`, the gate skips:
 ```text
 [SKIP] Release token not checked: no workflow under .github/workflows holds a release-please step.
 ```
+
+## Release end-to-end test evidence gate (`release.e2e`)
+
+Both `praetorctl audit` (`cmd/standardsctl/audit_release_e2e.go`) and the MCP tool `standards_audit` (`cmd/standards-mcp/audit_tools.go`) also run the release end-to-end evidence gate (`release.AuditE2E` and `release.Judge` in `internal/release/e2e_gate.go`, order `engine-release-feature-e2e-gate-20261027`).
+
+### Configuration in `.standards.yaml`
+
+Configure `release.e2e` in `.standards.yaml` (`internal/config/release_policy.go`):
+
+```yaml
+release:
+  e2e:
+    paths:
+      - "e2e/**"
+      - "tests/e2e/**"
+      - "test/e2e/**"
+      - "**/*_e2e_test.go"
+      - "**/*.e2e.ts"
+      - "**/*.e2e.js"
+      - "playwright/**"
+      - "cypress/**"
+    tests:
+      - "login-flow"
+    since: "a1b2c3d4e5f60123456789abcdef0123456789ab"
+```
+
+- `paths`: repository-relative slash globs matching end-to-end test files. When omitted or empty, the built-in default list above applies (`config.DefaultReleaseE2EPaths`).
+- `tests`: declared end-to-end test identifiers accepted in `E2E-Test: <id>` commit trailers.
+- `since`: baseline commit SHA. Commits reachable from `since` are exempt from the check.
+
+### How commits are judged
+
+1. When `.standards.yaml` does not declare `release.e2e`, the gate prints `[SKIP] Release end-to-end evidence not checked: release.e2e not declared.` and succeeds.
+2. Before inspecting tags, the gate runs `git rev-parse --is-shallow-repository`. When the checkout is shallow, release context fails with `[FAIL] Release end-to-end evidence check failed: shallow history: repository history is shallow; checkout needs fetch-depth 0`, and non-release context prints a `[SKIP]` line naming the shallow history.
+3. The gate resolves the most recent reachable tag matching `v[0-9]*` via `git describe --tags --abbrev=0 --match v[0-9]*`. When `git describe` reports no reachable matching tag (`No names found` or `cannot describe`), the gate prints `[SKIP] Release end-to-end evidence not checked: no release tag matching v[0-9]* is reachable from HEAD.` Any other git failure fails the check closed naming the subcommand and stderr.
+4. Non-merge commits in `<tag>..HEAD` (excluding commits reachable from `release.e2e.since`) with Conventional Commit type `feat` or `fix` (with optional `(scope)` and `!`) are inspected. Other commit types (`chore`, `docs`, `refactor`, etc.) are ignored.
+5. A `feat` or `fix` commit satisfies the gate when at least one changed path matches `release.e2e.paths` or its commit message carries an `E2E-Test: <id>` trailer whose `<id>` is listed in `release.e2e.tests`. An `E2E-Test: <id>` trailer naming an undeclared identifier produces a finding naming that identifier.
+6. In release context (`praetorctl audit --release`, `PRAETOR_RELEASE_PR=true`, or `GITHUB_HEAD_REF` starting with `release-please--`), each finding prints `[FAIL] Release end-to-end evidence: <sha12> (<subject>): <reason>` and fails the audit. Outside release context, findings print `[WARN]` lines and the audit passes.
+7. During `praetorctl adopt` (`internal/adopt/release_e2e.go`), repositories with a `release-please` configuration or a version-tag release workflow receive `release.e2e.since` set to `HEAD` at adoption time. When `HEAD` cannot be resolved, adoption omits `release.e2e` and records a warning naming the resolution error.

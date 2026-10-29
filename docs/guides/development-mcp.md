@@ -24,7 +24,11 @@ The probe checks checkout symbol inspection, canonical context compilation with
 all six outputs read back, verification drift, invalid arguments, path escape,
 unknown tools, corrupt memory, and malformed locks. It also audits a valid fixture
 before checking changed pinned content, invariant violations, and incomplete scans
-that must fail without changing the baseline. All mutations use disposable
+that must fail without changing the baseline. `standards_audit` runs the release-token
+and release end-to-end evidence gates (`cmd/standards-mcp/audit_tools.go`,
+[release-token and release.e2e guide](release-token.md)) alongside the manifest,
+lockfile, HISS ratchet, context sync, branch protection, supply chain, and workflow
+checks. All mutations use disposable
 fixtures. A discovered tool name alone does not prove working behavior.
 
 `standards_audit` also runs the CLI's `editor-selection`, `renovate-engine-bumps` and
@@ -476,7 +480,9 @@ The release-token gate is the CLI's own too (`adopt.AuditReleaseToken`, run with
 exceptions list): it fails a release-please step that takes its token from anything but an earlier,
 unconditional GitHub App token step of the same job, and skips a repository with no release-please
 step ([Release token gate](release-token.md), `TestServerAuditRunsTheReleaseTokenGate` in
-`cmd/standards-mcp/audit_policy_test.go`).
+`cmd/standards-mcp/audit_policy_test.go`). The release end-to-end evidence gate calls
+`release.AuditE2E` directly (`releaseE2EAuditGates` in `cmd/standards-mcp/audit_tools.go`),
+skipping when `release.e2e` is not declared (`TestReleaseE2EAuditGates_MissingSectionSkips`).
 
 The HISS-18 workflow trigger check is the CLI's own as well (`forge.AuditWorkflowTriggers`, run
 with the manifest's exceptions list). Its findings are `[WARN]` lines and the gate still passes;

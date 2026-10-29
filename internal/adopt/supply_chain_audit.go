@@ -4,12 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
+	"github.com/cordanaLLM/praetor/internal/state"
+	"github.com/cordanaLLM/praetor/internal/supplychain"
 )
 
 // supplyChainGate names the gate on every line it prints.
@@ -53,10 +57,19 @@ func AuditSupplyChain(ctx context.Context, opts SupplyChainOptions) (string, err
 	if err := config.ValidateExceptions(entries, opts.Today); err != nil {
 		return "", fmt.Errorf("[FAIL] %s: %w", supplyChainGate, err)
 	}
+	imgAudit, err := auditSupplyChainImages(ctx, opts.Root, entries, opts.Today)
+	if err != nil {
+		return "", err
+	}
+	wfOut, wfErr := auditSupplyChainWorkflows(ctx, opts, entries, imgAudit.usedEntries)
+	return finalizeSupplyChainAudit(wfOut, wfErr, imgAudit)
+}
+
+func auditSupplyChainWorkflows(ctx context.Context, opts SupplyChainOptions, entries []config.Exception, usedByImages map[int]bool) (string, error) {
 	declared := opts.Policy.SupplyChain
 	if !declaresSupplyChain(declared) {
-		if len(entries) > 0 {
-			return "", errors.New(staleSupplyChainEntries(entries, "the policy declares no supply-chain control"))
+		if unused := unusedSupplyChainEntries(entries, usedByImages); len(unused) > 0 {
+			return "", errors.New(staleSupplyChainEntries(unused, "the policy declares no supply-chain control"))
 		}
 		return "[PASS] " + supplyChainGate + ": policy declares SLSA Build Level 0, no cosign signing and no SBOM; no workflow is required.", nil
 	}
@@ -65,12 +78,22 @@ func AuditSupplyChain(ctx context.Context, opts SupplyChainOptions) (string, err
 		return "", err
 	}
 	if len(gap.Shortfalls) == 0 {
-		if len(entries) > 0 {
-			return "", errors.New(staleSupplyChainEntries(entries, "the workflows meet every declaration"))
+		if unused := unusedSupplyChainEntries(entries, usedByImages); len(unused) > 0 {
+			return "", errors.New(staleSupplyChainEntries(unused, "the workflows meet every declaration"))
 		}
 		return supplyChainPass(declared, gap), nil
 	}
-	return judgeSupplyChainGap(gap, entries, opts.Today)
+	return judgeSupplyChainGap(gap, entries, usedByImages, opts.Today)
+}
+
+func unusedSupplyChainEntries(entries []config.Exception, used map[int]bool) []config.Exception {
+	var unused []config.Exception
+	for i := 0; i < len(entries) && i < config.MaxExceptions; i++ {
+		if !used[i] {
+			unused = append(unused, entries[i])
+		}
+	}
+	return unused
 }
 
 // declaresSupplyChain reports whether declared asks for any supply-chain control: a level above
@@ -123,10 +146,13 @@ func (g supplyChainGap) releaseWorkflow() string {
 }
 
 // excuses reports whether entry names this gap's release workflow. With no workflow writing
-// provenance there is none to name, so any HISS-11 entry, whose path the validator keeps
-// inside .github/workflows, declares the gap.
+// provenance there is none to name, so any HISS-11 entry naming a workflow in .github/workflows
+// declares the gap.
 func (g supplyChainGap) excuses(entry config.Exception) bool {
-	return g.Measured.LevelWorkflow == "" || entry.Matches(g.releaseWorkflow())
+	if g.Measured.LevelWorkflow == "" {
+		return ghworkflow.IsWorkflowPath(entry.Path)
+	}
+	return entry.Matches(g.releaseWorkflow())
 }
 
 // summary names every shortfall in a few words, for an exceptions entry's reason.
@@ -164,8 +190,8 @@ func supplyChainShortfalls(declared config.SupplyChainPolicy, measured forge.Pro
 // judgeSupplyChainGap passes a gap a live entry declares and fails any other: one [FAIL] line
 // per shortfall, then why no entry declares it. An entry that names another workflow than the
 // one the measurement read is stale and fails either way.
-func judgeSupplyChainGap(gap supplyChainGap, entries []config.Exception, today time.Time) (string, error) {
-	live, expired, stale := selectSupplyChainEntries(gap, entries, today)
+func judgeSupplyChainGap(gap supplyChainGap, entries []config.Exception, usedByImages map[int]bool, today time.Time) (string, error) {
+	live, expired, stale := selectSupplyChainEntries(gap, entries, usedByImages, today)
 	var staleLine []string
 	if len(stale) > 0 {
 		staleLine = []string{staleSupplyChainEntries(stale, "the measurement read "+gap.releaseWorkflow())}
@@ -185,12 +211,15 @@ func judgeSupplyChainGap(gap supplyChainGap, entries []config.Exception, today t
 }
 
 // selectSupplyChainEntries sorts the HISS-11 entries against gap: the last live one that names
-// its release workflow, the first expired one that does, and every one that names another.
-func selectSupplyChainEntries(gap supplyChainGap, entries []config.Exception, today time.Time) (live, expired *config.Exception, stale []config.Exception) {
+// its release workflow, the first expired one that does, and every one that names another and
+// excused no image reference finding.
+func selectSupplyChainEntries(gap supplyChainGap, entries []config.Exception, usedByImages map[int]bool, today time.Time) (live, expired *config.Exception, stale []config.Exception) {
 	for index := 0; index < len(entries) && index < config.MaxExceptions; index++ {
 		switch {
 		case !gap.excuses(entries[index]):
-			stale = append(stale, entries[index])
+			if !usedByImages[index] {
+				stale = append(stale, entries[index])
+			}
 		case !entries[index].Expired(today):
 			live = &entries[index]
 		case expired == nil:
@@ -273,4 +302,247 @@ func supplyChainPass(declared config.SupplyChainPolicy, gap supplyChainGap) stri
 		parts = append(parts, "SBOM generated in "+gap.SBOM)
 	}
 	return "[PASS] " + supplyChainGate + ": " + strings.Join(parts, "; ") + ". " + supplyChainScope
+}
+
+// maxImageFindingsReported bounds the image findings loop in supplyChainImageAudit (HISS-02).
+const maxImageFindingsReported = 8192
+
+// maxUnresolvableSamples bounds how many unresolvable image references the [INFO] summary lists.
+const maxUnresolvableSamples = 5
+
+type supplyChainImageAudit struct {
+	blocking      []supplychain.ImageRefFinding
+	unresolvable  []supplychain.ImageRefFinding
+	staleBaseline []baseline.Infraction
+	usedEntries   map[int]bool
+	expired       *config.Exception
+}
+
+func auditSupplyChainImages(ctx context.Context, root string, entries []config.Exception, today time.Time) (supplyChainImageAudit, error) {
+	res := supplyChainImageAudit{usedEntries: make(map[int]bool, len(entries))}
+	if root == "" {
+		return res, nil
+	}
+	findings, err := supplychain.ScanImageRefs(ctx, root)
+	if err != nil {
+		return res, fmt.Errorf("[FAIL] %s: cannot scan container image references: %w", supplyChainGate, err)
+	}
+	base, err := baseline.LoadBaseline(filepath.Join(root, supplychain.BaselineFile))
+	if err != nil {
+		return res, fmt.Errorf("[FAIL] %s: cannot load %s: %w", supplyChainGate, supplychain.BaselineFile, err)
+	}
+	recordedFp := indexImageBaselineFingerprints(base.Infractions)
+	matchedFp := make(map[string]bool, len(recordedFp))
+	for i := 0; i < len(findings) && i < maxImageFindingsReported; i++ {
+		f := findings[i]
+		if f.Unresolvable {
+			res.unresolvable = append(res.unresolvable, f)
+			continue
+		}
+		live, expired := matchImageException(f.File, entries, res.usedEntries, today)
+		if live != nil {
+			continue
+		}
+		fp := baseline.NormalizePath(f.Fingerprint)
+		if recordedFp[fp] {
+			matchedFp[fp] = true
+			continue
+		}
+		res.blocking = append(res.blocking, f)
+		if expired != nil && res.expired == nil {
+			res.expired = expired
+		}
+	}
+	res.staleBaseline = collectStaleImageBaseline(base.Infractions, matchedFp)
+	return res, nil
+}
+
+func indexImageBaselineFingerprints(infractions []baseline.Infraction) map[string]bool {
+	recorded := make(map[string]bool)
+	for i := 0; i < len(infractions) && i < maxImageFindingsReported; i++ {
+		if infractions[i].RuleID == baseline.ImageRefRuleID {
+			recorded[baseline.NormalizePath(infractions[i].Fingerprint)] = true
+		}
+	}
+	return recorded
+}
+
+func collectStaleImageBaseline(infractions []baseline.Infraction, matched map[string]bool) []baseline.Infraction {
+	var stale []baseline.Infraction
+	for i := 0; i < len(infractions) && i < maxImageFindingsReported; i++ {
+		if infractions[i].RuleID == baseline.ImageRefRuleID && !matched[baseline.NormalizePath(infractions[i].Fingerprint)] {
+			stale = append(stale, infractions[i])
+		}
+	}
+	return stale
+}
+
+func matchImageException(file string, entries []config.Exception, used map[int]bool, today time.Time) (live, expired *config.Exception) {
+	for i := 0; i < len(entries) && i < config.MaxExceptions; i++ {
+		if !entries[i].Matches(file) {
+			continue
+		}
+		used[i] = true
+		if !entries[i].Expired(today) {
+			live = &entries[i]
+		} else if expired == nil {
+			expired = &entries[i]
+		}
+	}
+	return live, expired
+}
+
+func finalizeSupplyChainAudit(wfOut string, wfErr error, img supplyChainImageAudit) (string, error) {
+	infoLine := formatUnresolvableImageFindings(img.unresolvable)
+	if len(img.blocking) > 0 {
+		imgFail := formatBlockingImageFindings(img)
+		if infoLine != "" {
+			imgFail += "\n" + infoLine
+		}
+		if wfErr != nil {
+			return infoLine, errors.New(wfErr.Error() + "\n" + imgFail)
+		}
+		return infoLine, errors.New(imgFail)
+	}
+	if wfErr != nil {
+		if infoLine != "" {
+			return infoLine, errors.New(wfErr.Error() + "\n" + infoLine)
+		}
+		return "", wfErr
+	}
+	if len(img.staleBaseline) == 0 && infoLine == "" {
+		return wfOut, nil
+	}
+	var b strings.Builder
+	b.WriteString(wfOut)
+	for i := 0; i < len(img.staleBaseline) && i < maxImageFindingsReported; i++ {
+		inf := img.staleBaseline[i]
+		fmt.Fprintf(&b, "\n[WARN] %s: stale HISS-11 baseline entry in %s: %s:%d %s (%s); remove or re-record with 'praetorctl baseline --record-image-refs'.",
+			supplyChainGate, supplychain.BaselineFile, inf.FilePath, inf.LineNumber, inf.Message, inf.Fingerprint)
+	}
+	if infoLine != "" {
+		b.WriteString("\n" + infoLine)
+	}
+	return b.String(), nil
+}
+
+func formatUnresolvableImageFindings(unresolvable []supplychain.ImageRefFinding) string {
+	if len(unresolvable) == 0 {
+		return ""
+	}
+	limit := len(unresolvable)
+	if limit > maxUnresolvableSamples {
+		limit = maxUnresolvableSamples
+	}
+	samples := make([]string, 0, limit)
+	for i := 0; i < limit; i++ {
+		f := unresolvable[i]
+		samples = append(samples, fmt.Sprintf("%s:%d %s", f.File, f.Line, f.Reference))
+	}
+	return fmt.Sprintf("[INFO] HISS-11 image references not verified: %d unresolvable (template, variable or link outside the repository); first 5: %s",
+		len(unresolvable), strings.Join(samples, ", "))
+}
+
+func formatBlockingImageFindings(img supplyChainImageAudit) string {
+	lines := make([]string, 0, len(img.blocking)+1)
+	for i := 0; i < len(img.blocking) && i < maxImageFindingsReported; i++ {
+		f := img.blocking[i]
+		lines = append(lines, fmt.Sprintf("[FAIL] %s: %s:%d: container image reference %q lacks an immutable digest pin [%s] (%s); digest-pin the reference to @sha256:<64 hex>, record in %s with 'praetorctl baseline --record-image-refs --reason \"<why>\"', or declare a HISS-11 exception in .standards.yaml.",
+			supplyChainGate, f.File, f.Line, f.Reference, f.RuleID, f.Fingerprint, supplychain.BaselineFile))
+	}
+	if img.expired != nil {
+		lines = append(lines, expiredExceptionEntry(supplyChainGate, "the unpinned image reference above fails", "pin the image to @sha256:", *img.expired))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// reconcileImageRefBaseline records current resolvable HISS-11 image reference findings once
+// into .standards-baseline.json through supplychain.RecordImageRefBaseline. Existing HISS-11
+// baseline entries are kept untouched so a second adoption adds none.
+func (s *adoptSession) reconcileImageRefBaseline(ctx context.Context, full string, current *baseline.Baseline) error {
+	if filepath.Base(full) != baselineFile || !s.opts.RecordBaseline || current == nil {
+		return nil
+	}
+	if hasImageRefBaselineEntries(current.Infractions) {
+		return nil
+	}
+	commit := current.CommitSHA
+	if commit == "" {
+		var err error
+		commit, err = state.RecordedCommit(ctx, s.repoPath)
+		if err != nil {
+			s.report.BaselineStatus = "failed"
+			return fmt.Errorf("baseline commit: %w", err)
+		}
+	}
+	repo := current.Repository
+	if repo == "" {
+		repo = s.identity.coordinate()
+	}
+	exceptions, err := s.supplyChainExceptions(ctx)
+	if err != nil {
+		s.report.BaselineStatus = "failed"
+		return fmt.Errorf("load HISS-11 exceptions for the adoption baseline: %w", err)
+	}
+	res, err := supplychain.RecordImageRefBaseline(ctx, supplychain.ImageBaselineRecordOptions{
+		Root:          s.repoPath,
+		BaselinePath:  full,
+		Previous:      current,
+		AllowIncrease: true,
+		Reason:        "adoption baseline",
+		Repository:    repo,
+		CommitSHA:     commit,
+		Exceptions:    exceptions,
+		DryRun:        s.opts.DryRun,
+	})
+	if err != nil {
+		s.report.BaselineStatus = "failed"
+		return err
+	}
+	s.applyImageRefBaselineResult(res)
+	return nil
+}
+
+func (s *adoptSession) applyImageRefBaselineResult(res *supplychain.ImageBaselineRecordResult) {
+	if res == nil || res.Recorded == 0 {
+		return
+	}
+	s.report.DebtBreakdown[supplychain.ImageRefRuleID] = res.Recorded
+	s.report.LegacyDebtCount = res.Next.Count()
+	for i := 0; i < len(s.report.BaselineRatchets); i++ {
+		if s.report.BaselineRatchets[i].File == baselineFile {
+			s.report.BaselineRatchets[i].Recorded = res.Next.Count()
+			s.report.BaselineRatchets[i].Active += res.Recorded
+			if s.report.BaselineRatchet != nil {
+				v := s.report.BaselineRatchets[i]
+				s.report.BaselineRatchet = &v
+			}
+		}
+	}
+	note := fmt.Sprintf("Recorded %d HISS-11 image reference finding(s) into %s (reason: adoption baseline)",
+		res.Recorded, baselineFile)
+	s.report.BaselineNotes = append(s.report.BaselineNotes, note)
+	s.report.recordReconciled(baselineFile, note)
+}
+
+// supplyChainExceptions returns the HISS-11 entries the adoption baseline honours: from the
+// resolved policy, the declaration, or the manifest on disk. A manifest that cannot be read fails
+// the record, so a live exception is never ignored without a word.
+func (s *adoptSession) supplyChainExceptions(ctx context.Context) ([]config.Exception, error) {
+	if s.policy != nil && s.policy.Manifest != nil {
+		return config.ExceptionsFor(s.policy.Manifest.Exceptions, config.ExceptionRuleSupplyChain), nil
+	}
+	if s.declared != nil {
+		return config.ExceptionsFor(s.declared.Exceptions, config.ExceptionRuleSupplyChain), nil
+	}
+	return config.LoadExceptionsFor(ctx, s.repoPath, config.ExceptionRuleSupplyChain)
+}
+
+func hasImageRefBaselineEntries(infractions []baseline.Infraction) bool {
+	for i := 0; i < len(infractions) && i < maxImageFindingsReported; i++ {
+		if infractions[i].RuleID == baseline.ImageRefRuleID {
+			return true
+		}
+	}
+	return false
 }

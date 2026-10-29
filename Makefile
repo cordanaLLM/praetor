@@ -220,8 +220,17 @@ state-init:
 state-audit: state-init
 	go run ./cmd/standardsctl state audit .
 
-dedupe:
-	go run ./cmd/standardsctl dedupe scan .
+# The foreign clone scan of `dedupe` runs the jscpd tools/jscpd/package-lock.json pins; a skipped
+# foreign scan fails the gate (order engine-dedupe-jscpd-skip-fails-closed-20261027). npm ci writes
+# node_modules/.package-lock.json, so the install reruns only when the pin files change.
+JSCPD_BIN := $(CURDIR)/tools/jscpd/node_modules/.bin/jscpd
+
+tools/jscpd/node_modules/.package-lock.json: tools/jscpd/package.json tools/jscpd/package-lock.json
+	npm ci --prefix tools/jscpd --ignore-scripts --no-audit --no-fund
+
+.PHONY: dedupe
+dedupe: tools/jscpd/node_modules/.package-lock.json
+	PRAETOR_JSCPD_BIN=$(JSCPD_BIN) go run ./cmd/standardsctl dedupe scan .
 
 # HISS-20: every enforcement claim is replayed against its fixture corpus, so a declared
 # state cannot drift from what the rules actually do -- in either direction.

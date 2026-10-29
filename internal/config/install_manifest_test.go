@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -167,6 +168,29 @@ func TestSelectOperatorSettingsNotConfigured(t *testing.T) {
 	}
 }
 
+// Order: engine-hook-digest-mismatch-fail-closed-20261028.
+func TestSettingsFailureRepairCommand(t *testing.T) {
+	fleet, workstation := recorded(t, "hooks: {}\n"), recorded(t, "hooks: {}\n")
+	manifest := writeInstallManifest(t, manifestFixture(t, fleet, workstation))
+	if err := os.WriteFile(fleet.Path, []byte("hooks: {scope: all}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := SelectOperatorSettings(t.Context(), SettingsRequest{ManifestPath: manifest})
+	if err == nil {
+		t.Fatal("digest mismatch accepted")
+	}
+	// The repair command quotes each path with %q, so a Windows path appears with doubled backslashes.
+	for _, required := range []string{"workstation install --source", "--fleet-config", strconv.Quote(fleet.Path), "--workstation-config", strconv.Quote(workstation.Path)} {
+		if !strings.Contains(err.Error(), required) {
+			t.Errorf("missing %q: %v", required, err)
+		}
+	}
+	if strings.Contains(err.Error(), "workstation update") {
+		t.Fatalf("nonexistent repair command: %v", err)
+	}
+	t.Log(err)
+}
+
 func TestSelectOperatorSettingsRejectsStaleOrInvalidManifest(t *testing.T) {
 	fleet := recorded(t, "clients: {}\n")
 	manifest := writeInstallManifest(t, manifestFixture(t, fleet, nil))
@@ -174,7 +198,7 @@ func TestSelectOperatorSettingsRejectsStaleOrInvalidManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := SelectOperatorSettings(t.Context(), SettingsRequest{ManifestPath: manifest}); err == nil ||
-		!strings.Contains(err.Error(), "changed since the install manifest recorded them") {
+		!strings.Contains(err.Error(), "changed since the install manifest recorded them") || !errors.Is(err, ErrSettingsChanged) {
 		t.Fatalf("stale digest accepted: %v", err)
 	}
 	if err := os.Remove(fleet.Path); err != nil {

@@ -53,7 +53,11 @@ func SelectOperatorPolicy(ctx context.Context, request SettingsRequest) (*Effect
 	if err != nil {
 		return nil, err
 	}
-	return LoadOperatorPolicy(ctx, selection)
+	policy, err := LoadOperatorPolicy(ctx, selection)
+	if err != nil {
+		return nil, settingsLoadFailure(err, selection)
+	}
+	return policy, nil
 }
 
 // operatorLayers decodes whichever of the fleet and workstation documents are configured, in

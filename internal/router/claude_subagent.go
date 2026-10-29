@@ -20,9 +20,13 @@ func validateClaudeSubagent(cfg *RoutingConfig) error {
 		if !slices.Contains([]string{"haiku", "sonnet", "opus", "fable"}, route.Model) {
 			return fmt.Errorf("%w: claude_subagent key %q has invalid model %q", ErrInvalidRoutingConfig, label, route.Model)
 		}
-		if !slices.Contains([]string{"", "low", "medium", "high", "xhigh", "max"}, route.Effort) {
+		if !validClaudeEffort(route.Effort) {
 			return fmt.Errorf("%w: claude_subagent key %q has invalid effort %q", ErrInvalidRoutingConfig, label, route.Effort)
 		}
 	}
 	return nil
+}
+
+func validClaudeEffort(effort string) bool {
+	return slices.Contains([]string{"", "low", "medium", "high", "xhigh", "max"}, effort)
 }

@@ -97,13 +97,21 @@ func planManifestSources(ctx context.Context, s *adoptSession, full string, data
 		return manifestPlan{}, false, err
 	}
 	if sources == nil {
-		return manifestPlan{data: data, note: unboundSourcesNote(harness)}, false, nil
+		out, relChanged, relErr := s.reconcileManifestReleaseSection(ctx, manifest, data)
+		if relErr != nil {
+			return manifestPlan{}, false, fmt.Errorf("existing %s: %w", manifestFile, relErr)
+		}
+		return manifestPlan{data: out, note: unboundSourcesNote(harness)}, relChanged, nil
 	}
 	replacement, changed, err := setManifestSources(ctx, data, sources, replace)
 	if err != nil {
 		return manifestPlan{}, false, fmt.Errorf("existing %s: %w", manifestFile, err)
 	}
-	return manifestPlan{data: replacement, note: manifestSourcesNote(declared, sources, changed, harness, s.opts.Force)}, changed, nil
+	replacement, relChanged, err := s.reconcileManifestReleaseSection(ctx, manifest, replacement)
+	if err != nil {
+		return manifestPlan{}, false, fmt.Errorf("existing %s: %w", manifestFile, err)
+	}
+	return manifestPlan{data: replacement, note: manifestSourcesNote(declared, sources, changed, harness, s.opts.Force)}, changed || relChanged, nil
 }
 
 // unboundSourcesNote reports an existing manifest left without register.sources.
