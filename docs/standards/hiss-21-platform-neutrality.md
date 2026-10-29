@@ -63,7 +63,9 @@ reason and states where the coverage is recovered.
 `.github/workflows/portability.yml` runs the matrix on `ubuntu-26.04`, `macos-26` and
 `windows-2025` with `fail-fast: false`, compiling, vetting and testing every package and then
 running the harness self-tests through `scripts/portability_selftest.py`. That full run happens on
-every push to `main` or `lts-*` and on manual dispatch. A pull request runs the steps and Go
+every push to `main` or `lts-*`, on manual dispatch and on a merge queue run (`merge_group`,
+`checks_requested`; [merge group triggers](../guides/workflow-triggers.md#merge-group-triggers-merge_group)),
+so a queued group reports the same required status names. A pull request runs the steps and Go
 packages its changed files reach, selected by `.config/lefthook/scripts/ci_scope.py`; the legs and
 their required status names stay, each skipped step prints its reason, and any path the selector
 does not classify runs everything
