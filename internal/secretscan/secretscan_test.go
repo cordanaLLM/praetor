@@ -544,44 +544,87 @@ func TestResolveScanner_MiseShim_Failures(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation requires privileges on windows")
 	}
+	// printSibling makes the fake mise print <its own directory>/other/gitleaks, which setup
+	// prepares per case; each case names the detail only its own validation branch reports.
+	const printSibling = "package main\nimport (\"fmt\"; \"os\"; \"path/filepath\")\nfunc main() { fmt.Println(filepath.Join(filepath.Dir(os.Args[0]), \"other\", \"gitleaks\")) }\n"
 	cases := []struct {
 		name       string
 		miseSource string
+		setup      func(t *testing.T, dir, miseBin string)
+		want       string
 	}{
 		{
 			name:       "non-zero exit",
 			miseSource: "package main\nimport (\"fmt\"; \"os\")\nfunc main() { fmt.Fprintln(os.Stderr, \"failed\"); os.Exit(1) }\n",
+			want:       "exit status 1",
 		},
 		{
 			name:       "two lines",
 			miseSource: "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"/path/to/gitleaks\\nextra line\") }\n",
+			want:       "expected exactly one line, got 2 lines",
 		},
 		{
 			name:       "relative path",
 			miseSource: "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"bin/gitleaks\") }\n",
+			want:       "is not absolute",
 		},
 		{
 			name:       "base not gitleaks",
 			miseSource: "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"/usr/bin/python\") }\n",
+			want:       "base name is \"python\"",
 		},
 		{
 			name:       "missing file",
 			miseSource: "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"/tmp/nonexistent-praetor-test/gitleaks\") }\n",
+			want:       "no such file or directory",
+		},
+		{
+			name:       "directory, not a regular file",
+			miseSource: printSibling,
+			setup: func(t *testing.T, dir, _ string) {
+				mkdirAll(t, filepath.Join(dir, "other", "gitleaks"))
+			},
+			want: "is not a regular file",
+		},
+		{
+			name:       "not executable",
+			miseSource: printSibling,
+			setup: func(t *testing.T, dir, _ string) {
+				mkdirAll(t, filepath.Join(dir, "other"))
+				if err := os.WriteFile(filepath.Join(dir, "other", "gitleaks"), []byte("data"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "is not executable",
 		},
 		{
 			name:       "another mise shim",
-			miseSource: "package main\nimport (\"fmt\"; \"os\"; \"path/filepath\")\nfunc main() { fmt.Println(filepath.Join(filepath.Dir(os.Args[0]), \"second-gitleaks\")) }\n",
+			miseSource: printSibling,
+			setup: func(t *testing.T, dir, miseBin string) {
+				mkdirAll(t, filepath.Join(dir, "other"))
+				if err := os.Symlink(miseBin, filepath.Join(dir, "other", "gitleaks")); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "is also a mise shim",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			verifyMiseShimFailure(t, tc.miseSource, tc.name == "another mise shim")
+			verifyMiseShimFailure(t, tc.miseSource, tc.setup, tc.want)
 		})
 	}
 }
 
-func verifyMiseShimFailure(t *testing.T, miseSource string, isAnotherShim bool) {
+func mkdirAll(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func verifyMiseShimFailure(t *testing.T, miseSource string, setup func(t *testing.T, dir, miseBin string), want string) {
 	t.Helper()
 	dir := t.TempDir()
 	miseBin := testsupport.BuildExecutable(t, dir, "mise", miseSource)
@@ -589,10 +632,8 @@ func verifyMiseShimFailure(t *testing.T, miseSource string, isAnotherShim bool) 
 	if err := os.Symlink(miseBin, shim); err != nil {
 		t.Fatal(err)
 	}
-	if isAnotherShim {
-		if err := os.Symlink(miseBin, filepath.Join(dir, "second-gitleaks")); err != nil {
-			t.Fatal(err)
-		}
+	if setup != nil {
+		setup(t, dir, miseBin)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
@@ -600,8 +641,8 @@ func verifyMiseShimFailure(t *testing.T, miseSource string, isAnotherShim bool) 
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "gitleaks on PATH") || !strings.Contains(err.Error(), "is a mise shim; resolving its executable with \"mise which gitleaks\" failed") {
-		t.Fatalf("error = %q, want failure mentioning mise shim and mise which gitleaks", err.Error())
+	if !strings.Contains(err.Error(), "is a mise shim; resolving its executable with \"mise which gitleaks\" failed") || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %q, want the mise shim failure naming %q", err.Error(), want)
 	}
 }
 
