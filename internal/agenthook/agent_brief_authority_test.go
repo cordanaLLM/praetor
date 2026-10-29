@@ -247,3 +247,36 @@ func validateBriefAt(t *testing.T, ctx context.Context, root, text string) (conf
 	}
 	return validateAgentBrief(authority, text)
 }
+
+// The review labels the routing probes measure are declared by the built-in vocabulary and
+// by the shipped routing.yaml alike: the native hook admits each one, and a near-miss label
+// stays refused.
+func TestClaudeAdmitsReviewLabels(t *testing.T) {
+	shipped, err := os.ReadFile(filepath.Join("..", "..", ".config", "models", "routing.yaml"))
+	if err != nil {
+		t.Fatalf("read shipped routing.yaml: %v", err)
+	}
+	for _, source := range []string{"defaults", "shipped"} {
+		t.Run(source, func(t *testing.T) {
+			root := repository(t, true)
+			if source == "shipped" {
+				writeBriefFixture(t, root, ".config/models/routing.yaml", string(shipped))
+			}
+			assertReviewLabelAdmission(t, root)
+		})
+	}
+}
+
+func assertReviewLabelAdmission(t *testing.T, root string) {
+	t.Helper()
+	state := t.TempDir()
+	for _, task := range []string{"code_review", "review", "pr_body_check", "code_reviews"} {
+		pre := nativePayload(t, "PreToolUse", "review-session", "Agent", "review-"+task,
+			map[string]any{"prompt": briefFor(task, "internal/agenthook"), "run_in_background": true}, nil)
+		response := runAgentHook(t, root, state, "claude", EventPreDispatch, pre)
+		refused := response.ExitCode == 2 && strings.Contains(string(response.Stderr), "not declared by routing")
+		if want := task == "code_reviews"; refused != want || (!want && response.ExitCode != 0) {
+			t.Fatalf("task %s: exit %d stderr %q, want refused=%v", task, response.ExitCode, response.Stderr, want)
+		}
+	}
+}

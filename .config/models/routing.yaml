@@ -114,6 +114,7 @@ tiers:
             - single_file_audits
             - test_case_stubbing
             - fast_cli_tools
+            - pr_body_check
         models:
             - id: hf.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF:Q8_0
               family: qwen
@@ -172,6 +173,8 @@ tiers:
             - multi_file_refactors
             - unit_test_suites
             - ci_debugging
+            - code_review
+            - review
         models:
             - id: hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M
               family: qwen

@@ -342,6 +342,13 @@ retained in the dispatch correlation for receipts. Unlisted labels retain sessio
 role defaults. See [catalog configuration and bounds](../standards/model-routing-and-fanout.md#claude-subagent-overrides)
 and `internal/agenthook/claude_subagent_test.go`.
 
+Review work has three labels in the built-in vocabulary and in the shipped
+`routing.yaml`: `code_review` for a diff or change review, `review` for the same
+work under the name existing briefs use, and `pr_body_check` for a pull request text
+checked against its change. The hook admits all three under both vocabularies and
+still refuses a near-miss label (`TestClaudeAdmitsReviewLabels` in
+`internal/agenthook/agent_brief_authority_test.go`).
+
 ## Routing implementation briefs off the Claude lane
 
 Repositories can opt selected routing task labels into a lane picker in
