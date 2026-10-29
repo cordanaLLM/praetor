@@ -98,7 +98,7 @@ func (g *GitHubDriver) CreateIssueComment(ctx context.Context, number int, body 
 	if err != nil {
 		return IssueComment{}, fmt.Errorf("create comment on issue #%d: %w", number, err)
 	}
-	resp, status, err := g.sendRequest(ctx, http.MethodPost, path, map[string]string{"body": body})
+	resp, status, err := g.sendRequest(ctx, http.MethodPost, path, map[string]string{"body": UnwrapForgeText(body)})
 	if err != nil {
 		return IssueComment{}, fmt.Errorf("failed commenting on issue #%d: %w", number, err)
 	}
@@ -124,7 +124,7 @@ func (g *GitHubDriver) EditIssueComment(ctx context.Context, commentID int64, bo
 	if err != nil {
 		return fmt.Errorf("edit comment %d: %w", commentID, err)
 	}
-	resp, status, err := g.sendRequest(ctx, http.MethodPatch, path, map[string]string{"body": body})
+	resp, status, err := g.sendRequest(ctx, http.MethodPatch, path, map[string]string{"body": UnwrapForgeText(body)})
 	if err != nil {
 		return fmt.Errorf("failed editing comment %d: %w", commentID, err)
 	}

@@ -322,6 +322,11 @@ func reconcileContributing(ctx context.Context, s *adoptSession) error {
 	return err
 }
 
+// priorPullRequestTemplateDigests records the digests of every earlier Praetor pull request template.
+var priorPullRequestTemplateDigests = map[string]string{
+	"68ab0cf67859f207428dea6901db7121ad32f943838b65f1fe36bf965a7770a2": "wrapped checklist item lines (#110)",
+}
+
 // reconcilePullRequestTemplate keeps whichever template name the repository already uses and
 // compares it with the scaffold like every other preserved file.
 func reconcilePullRequestTemplate(ctx context.Context, s *adoptSession) error {
@@ -337,11 +342,13 @@ func reconcilePullRequestTemplate(ctx context.Context, s *adoptSession) error {
 		rel = prTemplateUpper
 	}
 	_, err = s.scaffoldFile(ctx, scaffold{
-		rel:      rel,
-		perm:     filePerm,
-		content:  []byte(buildPullRequestTemplate()),
-		created:  "Scaffolded pull request template with HISS verification checklist",
-		verified: "Existing pull request template verified present",
+		rel:       rel,
+		perm:      filePerm,
+		content:   []byte(buildPullRequestTemplate()),
+		created:   "Scaffolded pull request template with HISS verification checklist",
+		verified:  "Existing pull request template verified present",
+		refreshed: "Refreshed an unedited earlier Praetor pull request template to the unwrapped text",
+		prior:     priorPullRequestTemplateDigests,
 	})
 	return err
 }
@@ -559,8 +566,7 @@ func buildPullRequestTemplate() string {
 		"## Pre-Merge Verification Checklist",
 		"",
 		"- [ ] Local verification passed: `make verify-all`",
-		"- [ ] No new HISS / NASA Power-of-10 infractions (all new/modified functions",
-		"  $\\le 60$ LOC)",
+		"- [ ] No new HISS / NASA Power-of-10 infractions (all new/modified functions $\\le 60$ LOC)",
 		"- [ ] 3D Tests included (Positive, Negative, Boundary) for public APIs",
 		"- [ ] Agent contexts in sync: `standardsctl compile-context --verify`",
 		"- [ ] Commit messages adhere to Conventional Commits format",
