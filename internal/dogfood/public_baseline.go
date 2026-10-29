@@ -12,7 +12,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
-func verifyPublicBaseline(ctx context.Context, dir string, original *hiss.ScanReport) (string, error) {
+func verifyPublicBaseline(ctx context.Context, dir string, original *hiss.ScanReport, imageRefs []baseline.Infraction) (string, error) {
 	if err := validatePublicScan(original); err != nil {
 		return "", err
 	}
@@ -24,7 +24,7 @@ func verifyPublicBaseline(ctx context.Context, dir string, original *hiss.ScanRe
 	if err != nil {
 		return "", err
 	}
-	if err := comparePublicBaseline(ctx, recorded, original); err != nil {
+	if err := comparePublicBaseline(ctx, recorded, original, imageRefs); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
@@ -73,25 +73,32 @@ func parsePublicBaseline(data []byte) (*baseline.Baseline, error) {
 	return recorded, nil
 }
 
-func comparePublicBaseline(ctx context.Context, recorded *baseline.Baseline, original *hiss.ScanReport) error {
+func checkBaselineCounts(recorded, expected *baseline.Baseline) error {
 	if recorded.Version != 1 || recorded.Count() != len(recorded.Infractions) {
 		return errors.New("adopted baseline version or count differs from the independent original scan")
 	}
-	hissRecorded := recorded
-	if recorded.Count() != original.TotalInfractions || recorded.Count() != len(original.Violations) {
+	if recorded.Count() != expected.Count() || recorded.Count() != len(expected.Infractions) {
 		return errors.New("adopted baseline version or count differs from the independent original scan")
+	}
+	return nil
+}
+
+func comparePublicBaseline(ctx context.Context, recorded *baseline.Baseline, original *hiss.ScanReport, imageRefs []baseline.Infraction) error {
+	expectedBase := publicExpectedBaseline(original, imageRefs)
+	if err := checkBaselineCounts(recorded, expectedBase); err != nil {
+		return err
 	}
 	// Fingerprints may legitimately collide at the same rule/file/line. Compare
 	// the full entry multiset, retaining multiplicity while ignoring list order.
-	expected := make(map[baseline.Infraction]int, len(original.Violations))
-	for _, infraction := range publicInfractions(original) {
-		expected[infraction]++
+	expected := make(map[baseline.Infraction]int, len(expectedBase.Infractions))
+	for i := 0; i < len(expectedBase.Infractions) && i < hiss.MaxInfractionsCap; i++ {
+		expected[expectedBase.Infractions[i]]++
 	}
-	for i := 0; i < len(hissRecorded.Infractions) && i < hiss.MaxInfractionsCap; i++ {
+	for i := 0; i < len(recorded.Infractions) && i < hiss.MaxInfractionsCap; i++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		infraction := hissRecorded.Infractions[i]
+		infraction := recorded.Infractions[i]
 		if expected[infraction] == 0 {
 			return errors.New("adopted baseline entry differs from the independent original scan")
 		}
@@ -101,6 +108,18 @@ func comparePublicBaseline(ctx context.Context, recorded *baseline.Baseline, ori
 }
 
 // publicScanBaseline gives independent HISS scans the same class interpretation as adoption.
+// The debt ratchet uses it: the post-adoption scan is HISS-only, so its base stays HISS-only.
 func publicScanBaseline(scan *hiss.ScanReport) *baseline.Baseline {
 	return &baseline.Baseline{Version: 1, TotalInfractions: scan.TotalInfractions, Infractions: publicInfractions(scan)}
+}
+
+// publicExpectedBaseline is the baseline adoption records for the original tree: the independent
+// HISS infractions plus the unexcused HISS-11 image references adoption baselines too
+// (supplychain.UnexcusedImageRefInfractions). Every debt count and baseline comparison uses it.
+func publicExpectedBaseline(scan *hiss.ScanReport, imageRefs []baseline.Infraction) *baseline.Baseline {
+	infractions := publicInfractions(scan)
+	combined := make([]baseline.Infraction, 0, len(infractions)+len(imageRefs))
+	combined = append(combined, infractions...)
+	combined = append(combined, imageRefs...)
+	return &baseline.Baseline{Version: 1, TotalInfractions: scan.TotalInfractions + len(imageRefs), Infractions: combined}
 }

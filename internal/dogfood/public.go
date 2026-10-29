@@ -10,7 +10,10 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -53,17 +56,18 @@ type PublicAttempt struct {
 
 // PublicRepositoryResult distinguishes plans, verified applications and failures.
 type PublicRepositoryResult struct {
-	OriginalSnapshot   *SnapshotReport    `json:"original_snapshot,omitempty"`
-	Repository         string             `json:"repository"`
-	RequestedSHA       string             `json:"requested_sha,omitempty"`
-	SourceSHA          string             `json:"source_sha,omitempty"`
-	Checkout           string             `json:"checkout"`
-	Status             string             `json:"status"`
-	Plan               *adopt.AdoptReport `json:"plan,omitempty"`
-	OriginalScan       *hiss.ScanReport   `json:"original_scan,omitempty"`
-	OriginalTreeDigest string             `json:"original_tree_digest,omitempty"`
-	Attempts           []PublicAttempt    `json:"attempts,omitempty"`
-	Error              string             `json:"error,omitempty"`
+	OriginalSnapshot   *SnapshotReport       `json:"original_snapshot,omitempty"`
+	Repository         string                `json:"repository"`
+	RequestedSHA       string                `json:"requested_sha,omitempty"`
+	SourceSHA          string                `json:"source_sha,omitempty"`
+	Checkout           string                `json:"checkout"`
+	Status             string                `json:"status"`
+	Plan               *adopt.AdoptReport    `json:"plan,omitempty"`
+	OriginalScan       *hiss.ScanReport      `json:"original_scan,omitempty"`
+	OriginalImageRefs  []baseline.Infraction `json:"original_image_refs,omitempty"`
+	OriginalTreeDigest string                `json:"original_tree_digest,omitempty"`
+	Attempts           []PublicAttempt       `json:"attempts,omitempty"`
+	Error              string                `json:"error,omitempty"`
 }
 
 // PublicLoopReport names the durable evidence and the exact verification scope.
@@ -204,12 +208,31 @@ func scanPublicOriginalWithLimits(ctx context.Context, result *PublicRepositoryR
 	if err != nil {
 		return fmt.Errorf("scan original tree under planned policy: %w", err)
 	}
+	// Adoption baselines the original tree's unexcused HISS-11 image references too
+	// (adopt reconcileImageRefBaseline); the planned manifest's exceptions excuse the same ones.
+	var exceptions []config.Exception
+	if result.Plan != nil && result.Plan.EffectivePolicy != nil && result.Plan.EffectivePolicy.Manifest != nil {
+		exceptions = result.Plan.EffectivePolicy.Manifest.Exceptions
+	}
+	imageRefs, err := supplychain.UnexcusedImageRefInfractions(ctx, result.Checkout, exceptions, time.Now())
+	if err != nil {
+		return fmt.Errorf("scan original tree image references: %w", err)
+	}
+	if len(imageRefs) > hiss.MaxInfractionsCap {
+		return errors.New("original image references exceed capacity")
+	}
+	result.OriginalImageRefs = imageRefs
 	return nil
 }
 
 func reconcilePublicRepository(ctx context.Context, opts PublicLoopOptions, result *PublicRepositoryResult, original publicTree, adoptOpts adopt.AdoptOptions) error {
 	previous := ""
-	anchor := publicPolicyAnchor{Policy: result.Plan.EffectivePolicy, Scan: result.OriginalScan, snapshotLimits: &opts.InputLimits.Snapshot}
+	anchor := publicPolicyAnchor{
+		Policy:         result.Plan.EffectivePolicy,
+		Scan:           result.OriginalScan,
+		ImageRefs:      result.OriginalImageRefs,
+		snapshotLimits: &opts.InputLimits.Snapshot,
+	}
 	for i := 0; i < opts.MaxAttempts && i < MaxPublicAttempts; i++ {
 		adoptOpts.DryRun = false
 		recordPublicBaseline(&adoptOpts, i == 0)

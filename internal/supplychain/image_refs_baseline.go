@@ -59,6 +59,25 @@ func ImageFindingsToInfractions(findings []ImageRefFinding) []baseline.Infractio
 	return out
 }
 
+// UnexcusedImageRefInfractions scans root for unpinned container image references, filters out
+// unresolvable references and findings excused by live HISS-11 exceptions, and converts the
+// remaining findings into HISS-13 baseline infractions.
+func UnexcusedImageRefInfractions(ctx context.Context, root string, exceptions []config.Exception, today time.Time) ([]baseline.Infraction, error) {
+	if root == "" {
+		root = "."
+	}
+	if today.IsZero() {
+		today = time.Now()
+	}
+	findings, err := ScanImageRefs(ctx, root)
+	if err != nil {
+		return nil, fmt.Errorf("scan image references: %w", err)
+	}
+	entries := config.ExceptionsFor(exceptions, config.ExceptionRuleSupplyChain)
+	unexcused := filterUnexcusedImageFindings(findings, entries, today)
+	return ImageFindingsToInfractions(unexcused), nil
+}
+
 // RecordImageRefBaseline scans root for unpinned container image references, filters out
 // unresolvable references and findings excused by live HISS-11 exceptions, and records the
 // remainder in .standards-baseline.json while preserving entries of all other rules.
@@ -75,13 +94,10 @@ func RecordImageRefBaseline(ctx context.Context, opts ImageBaselineRecordOptions
 	if today.IsZero() {
 		today = time.Now()
 	}
-	findings, err := ScanImageRefs(ctx, root)
+	infractions, err := UnexcusedImageRefInfractions(ctx, root, opts.Exceptions, today)
 	if err != nil {
 		return nil, err
 	}
-	entries := config.ExceptionsFor(opts.Exceptions, config.ExceptionRuleSupplyChain)
-	unexcused := filterUnexcusedImageFindings(findings, entries, today)
-	infractions := ImageFindingsToInfractions(unexcused)
 
 	previous := opts.Previous
 	if previous == nil {
