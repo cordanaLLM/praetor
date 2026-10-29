@@ -283,3 +283,74 @@ func TestAuditLicensing_Issue896(t *testing.T) {
 		t.Fatalf("issue #896 REUSE.toml did not pass both licence gates:\n%s", output)
 	}
 }
+
+// TestAuditLicensing_CopyrightHolder verifies copyright holder checks through auditLicensing (order engine-fr-rule-checks-20261027).
+// REUSE-IgnoreStart: the fixtures below plant licence headers; they are not this file's licence.
+func TestAuditLicensing_CopyrightHolder(t *testing.T) {
+	today := time.Date(2026, time.October, 27, 12, 0, 0, 0, time.UTC)
+	manifest := &config.Manifest{
+		Licensing: &config.LicensingPolicy{
+			CopyrightHolder: "example-holder <holder@example.invalid>",
+		},
+	}
+	root := t.TempDir()
+	writeFixtureFile(t, root, "pkg/bad.go", "// SPDX-FileCopyrightText: 2026 Example-Holder <other@example.invalid>\n// SPDX-License-Identifier: EUPL-1.2\npackage pkg\n")
+	output, err := captureStdout(t, func() error {
+		return auditLicensing(t.Context(), manifest, root, today)
+	})
+	if err == nil || !strings.Contains(err.Error(), "[FAIL] copyright holder: 1 mismatch(es)") {
+		t.Fatalf("expected holder mismatch failure, got: %v\n%s", err, output)
+	}
+
+	goodRoot := t.TempDir()
+	writeFixtureFile(t, goodRoot, "pkg/good.go", "// SPDX-FileCopyrightText: 2026 example-holder <holder@example.invalid>\n// SPDX-License-Identifier: EUPL-1.2\npackage pkg\n")
+	output, err = captureStdout(t, func() error {
+		return auditLicensing(t.Context(), manifest, goodRoot, today)
+	})
+	if err != nil || !strings.Contains(output, "[PASS] copyright holder:") {
+		t.Fatalf("expected holder check to pass, got: %v\n%s", err, output)
+	}
+
+	skipRoot := t.TempDir()
+	output, err = captureStdout(t, func() error {
+		return auditLicensing(t.Context(), &config.Manifest{}, skipRoot, today)
+	})
+	if err != nil || !strings.Contains(output, "[SKIP] copyright holder not checked") {
+		t.Fatalf("expected holder skip line, got: %v\n%s", err, output)
+	}
+}
+
+// TestAuditLicensing_BPF verifies BPF and GPL licensing checks through auditLicensing (order engine-fr-rule-checks-20261027).
+func TestAuditLicensing_BPF(t *testing.T) {
+	today := time.Date(2026, time.October, 27, 12, 0, 0, 0, time.UTC)
+	manifest := &config.Manifest{}
+
+	bpfBadRoot := t.TempDir()
+	writeFixtureFile(t, bpfBadRoot, "bpf/prog.bpf.c", "// SPDX-License-Identifier: EUPL-1.2\n")
+	output, err := captureStdout(t, func() error {
+		return auditLicensing(t.Context(), manifest, bpfBadRoot, today)
+	})
+	if err == nil || !strings.Contains(err.Error(), "[FAIL] BPF licensing: 1 problem(s)") {
+		t.Fatalf("expected BPF single licence failure, got: %v\n%s", err, output)
+	}
+
+	bpfGoodRoot := t.TempDir()
+	writeFixtureFile(t, bpfGoodRoot, "bpf/prog.bpf.c", "// SPDX-License-Identifier: EUPL-1.2 OR GPL-2.0-only\n")
+	output, err = captureStdout(t, func() error {
+		return auditLicensing(t.Context(), manifest, bpfGoodRoot, today)
+	})
+	if err != nil || !strings.Contains(output, "[PASS] BPF licensing:") {
+		t.Fatalf("expected BPF dual licence to pass, got: %v\n%s", err, output)
+	}
+
+	gplBadRoot := t.TempDir()
+	writeFixtureFile(t, gplBadRoot, "cmd/main.c", "// SPDX-License-Identifier: GPL-2.0-only\n")
+	output, err = captureStdout(t, func() error {
+		return auditLicensing(t.Context(), manifest, gplBadRoot, today)
+	})
+	if err == nil || !strings.Contains(err.Error(), "[FAIL] BPF licensing: 1 problem(s)") {
+		t.Fatalf("expected non-BPF GPL failure, got: %v\n%s", err, output)
+	}
+}
+
+// REUSE-IgnoreEnd

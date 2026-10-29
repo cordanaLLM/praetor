@@ -1,7 +1,7 @@
 # Licensing gates
 
 A repository that declares its licensing the [REUSE](https://reuse.software/spec-3.3/) way gets
-three checks from Praetor:
+five checks from Praetor:
 
 1. [`reuse lint`](#reuse-lint-in-hooks-and-ci) before every commit and in CI, written by
    `praetorctl adopt` where the root carries `REUSE.toml` or `.reuse/dep5` and the manifest
@@ -9,7 +9,12 @@ three checks from Praetor:
 2. the [annotation order check](#annotation-order) of `praetorctl audit`, which fails an
    override in `REUSE.toml` that never takes effect;
 3. the [root licence check](#one-root-licence) of `praetorctl audit`, which holds the root to one
-   `LICENSE` with the declared licence's text.
+   `LICENSE` with the declared licence's text;
+4. the [copyright holder format check](#copyright-holder-format) of `praetorctl audit`, which
+   verifies that every own copyright line names the declared rights holder in one exact form;
+5. the [BPF dual licence and GPL check](#bpf-dual-licence-and-gpl-restrictions) of `praetorctl audit`,
+   which requires kernel-loaded BPF sources to carry `EUPL-1.2 OR GPL-2.0-only` and prohibits `GPL-2.0-only`
+   in any other own file.
 
 The annotation order check reads `REUSE.toml`, and the root licence check runs where `LICENSES/`
 is a directory. A repository with none of these gets none of the checks, and the audit says that
@@ -260,3 +265,33 @@ Tests: `TestCheckRootLicensePositive`, `TestCheckRootLicenseNegative` and
 `TestCheckRootLicenseBoundary` in `internal/supplychain/root_license_test.go`,
 `TestValidateExceptionsRootLicenseNotice` in `internal/config/exceptions_test.go`, and
 `TestAuditLicensing_3D` in `cmd/standardsctl/audit_reuse_test.go`.
+
+<!-- Order: engine-fr-rule-checks-20261027 -->
+## Copyright holder format
+
+A repository declaring its copyright holder in `.standards.yaml` (`licensing.copyright_holder`) holds every own copyright notice to that exact form:
+
+```yaml
+licensing:
+  copyright_holder: "example-holder <holder@example.invalid>"
+```
+
+`praetorctl audit` verifies every `SPDX-FileCopyrightText` line in tracked files and `REUSE.toml` annotations (`CheckCopyrightHolders` in [`internal/supplychain/holder_check.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/supplychain/holder_check.go)):
+
+- **Matching own lines**: when the extracted holder name (text before `<`, case-insensitive and trimmed) equals the declared holder name, the line must match the declared string exactly, allowing any preceding year or range (`<year or range> <holder>`).
+- **Mismatches fail**: if the email, casing, or name differs, the check fails, reporting the file, line number, found text, and expected form.
+- **Third-party notices**: copyright lines naming a different rights holder (such as vendored code or third-party contributors) are untouched.
+- **Undeclared holder**: if `.standards.yaml` omits `licensing.copyright_holder`, the audit skips with an explanatory line, never passing silently.
+
+Tests: `TestCheckCopyrightHolders_PlantedCases` and `TestCheckCopyrightHolders_3D` in `internal/supplychain/holder_check_test.go`, and `TestAuditLicensing_CopyrightHolder` in `cmd/standardsctl/audit_reuse_test.go`.
+
+<!-- Order: engine-fr-rule-checks-20261027 -->
+## BPF dual licence and GPL restrictions
+
+Kernel-loaded eBPF programs require GPL-compatible licensing for kernel verifier helpers while remaining under the repository's primary license (`CheckBPFLicenses` in [`internal/supplychain/bpf_check.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/supplychain/bpf_check.go)):
+
+- **Kernel-loaded BPF sources**: any file ending with `.bpf.c` or `.bpf.h`, or any C source including `bpf_helpers.h` or `vmlinux.h` and containing a `SEC("` section marker, counts as kernel-loaded BPF.
+- **Mandatory dual licence**: all kernel-loaded BPF source files must declare the licence expression `EUPL-1.2 OR GPL-2.0-only` in their SPDX licence identifier line. Any BPF file without this expression fails the audit.
+- **GPL-2.0-only restricted**: no other own file in the repository may carry `GPL-2.0-only` (or expressions containing it). Files under `LICENSES/`, vendored directories (`vendor/`, `third_party/`), or covered by REUSE annotations / headers declaring a third-party copyright holder are exempt.
+
+Tests: `TestCheckBPFLicenses_PlantedCases` and `TestCheckBPFLicenses_3D` in `internal/supplychain/bpf_check_test.go`, and `TestAuditLicensing_BPF` in `cmd/standardsctl/audit_reuse_test.go`.

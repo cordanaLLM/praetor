@@ -450,6 +450,9 @@ type Manifest struct {
 	// Gate configures the anti-direct-merge gating pipeline: declared_verify_timeout sets the stage
 	// bound for the declared-verification stage. It is repository-only and stays out of ResolvedPolicy.
 	Gate *GatePolicy `yaml:"gate,omitempty"`
+	// Licensing configures the licensing gate checks: copyright holder format, etc.
+	// (order engine-fr-rule-checks-20261027).
+	Licensing *LicensingPolicy `yaml:"licensing,omitempty"`
 }
 
 // AdoptionPolicy declares generated artefacts this repository refuses.
@@ -535,6 +538,7 @@ var manifestValidators = [...]func(*Manifest) error{
 	validateManifestEfficiency,
 	validateManifestSkills,
 	validateManifestGate,
+	validateManifestLicensing,
 }
 
 // DecodeManifest parses the manifest with no unknown fields, so a misspelled key is an

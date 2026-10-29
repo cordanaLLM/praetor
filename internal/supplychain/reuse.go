@@ -20,8 +20,9 @@ const (
 )
 
 type ReuseAnnotation struct {
-	Paths    []string
-	Licenses []string
+	Paths      []string
+	Licenses   []string
+	Copyrights []string
 }
 
 type reuseDocument struct {
@@ -58,7 +59,11 @@ func parseReuseAnnotation(item any, index int) (ReuseAnnotation, error) {
 	if err != nil {
 		return ReuseAnnotation{}, err
 	}
-	return ReuseAnnotation{Paths: paths, Licenses: licenses}, nil
+	copyrights, err := reuseStrings(input.SPDXFileCopyrightText, index, "SPDX-FileCopyrightText")
+	if err != nil {
+		return ReuseAnnotation{}, err
+	}
+	return ReuseAnnotation{Paths: paths, Licenses: licenses, Copyrights: copyrights}, nil
 }
 
 // ReuseAnnotationTables parses the full REUSE document and returns each annotation's paths and

@@ -20,11 +20,12 @@ import (
 )
 
 // auditLicensing runs the licensing gates (docs/guides/licensing-gates.md): REUSE.toml
-// annotation order, one root licence, and the plurano caller. It reports header-only
-// REUSE labelling too. All checks run before their errors are joined.
+// annotation order, one root licence, copyright holder exact form, BPF dual licensing,
+// and the plurano caller. It reports header-only REUSE labelling too. All checks run before their errors are joined.
 func auditLicensing(ctx context.Context, manifest *config.Manifest, rootDir string, today time.Time) error {
 	return errors.Join(auditReuseRecords(ctx, manifest, rootDir, today), auditRootLicense(ctx, manifest, rootDir, today),
-		auditReuseHeadersOnly(ctx, rootDir), adopt.AuditPluranoLicenceCaller(ctx, rootDir, manifest.Repository.Owner))
+		auditReuseHeadersOnly(ctx, rootDir), adopt.AuditPluranoLicenceCaller(ctx, rootDir, manifest.Repository.Owner),
+		auditCopyrightHolder(ctx, manifest, rootDir), auditBPFLicensing(ctx, manifest, rootDir))
 }
 
 // auditReuseHeadersOnly warns, with supplychain.ReuseHeadersOnlyNotice, about a repository that
@@ -67,6 +68,49 @@ func auditRootLicense(ctx context.Context, manifest *config.Manifest, rootDir st
 	}
 	fmt.Printf("[PASS] root licence: %s holds the text of %s/%s.txt; %s.\n",
 		supplychain.RootLicenseFile, supplychain.LicensesDir, report.License, kept)
+	return nil
+}
+
+// auditCopyrightHolder runs supplychain.CheckCopyrightHolders and prints its verdict (order engine-fr-rule-checks-20261027).
+func auditCopyrightHolder(ctx context.Context, manifest *config.Manifest, rootDir string) error {
+	holder := manifest.DeclaredCopyrightHolder()
+	report, err := supplychain.CheckCopyrightHolders(ctx, supplychain.CopyrightHolderOptions{
+		Root:            rootDir,
+		CopyrightHolder: holder,
+	})
+	if err != nil {
+		return fmt.Errorf("[FAIL] copyright holder not checked: %w", err)
+	}
+	if report.Skipped != "" {
+		fmt.Printf("[SKIP] copyright holder not checked: %s.\n", report.Skipped)
+		return nil
+	}
+	if len(report.Findings) > 0 {
+		for _, finding := range report.Findings {
+			fmt.Printf("  - %s\n", finding)
+		}
+		return fmt.Errorf("[FAIL] copyright holder: %d mismatch(es) with declared %s", len(report.Findings), report.Holder)
+	}
+	fmt.Printf("[PASS] copyright holder: every own copyright line matches declared %s.\n", report.Holder)
+	return nil
+}
+
+// auditBPFLicensing runs supplychain.CheckBPFLicenses and prints its verdict (order engine-fr-rule-checks-20261027).
+func auditBPFLicensing(ctx context.Context, manifest *config.Manifest, rootDir string) error {
+	report, err := supplychain.CheckBPFLicenses(ctx, supplychain.BPFLicenseOptions{
+		Root:           rootDir,
+		DeclaredHolder: manifest.DeclaredCopyrightHolder(),
+	})
+	if err != nil {
+		return fmt.Errorf("[FAIL] BPF licensing not checked: %w", err)
+	}
+	if len(report.Findings) > 0 {
+		for _, finding := range report.Findings {
+			fmt.Printf("  - %s\n", finding)
+		}
+		return fmt.Errorf("[FAIL] BPF licensing: %d problem(s) with kernel-loaded BPF or GPL licensing", len(report.Findings))
+	}
+	fmt.Printf("[PASS] BPF licensing: kernel-loaded BPF sources are dual-licensed EUPL-1.2 OR GPL-2.0-only; no other own file carries GPL-2.0-only.\n")
 	return nil
 }
 
