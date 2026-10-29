@@ -35,7 +35,7 @@ func TestServerAuditScreenMatrixContract(t *testing.T) {
 
 func writeMCPUISpecs(t *testing.T, root string) {
 	t.Helper()
-	ctx := templates.Context{RepoName: "ui-fixture", Owner: "acme", UIRoutes: []string{"/"}}
+	ctx := templates.Context{RepoName: "ui-fixture", Owner: "acme", UIRoutes: templates.Routes("/")}
 	for _, spec := range []struct{ source, path string }{
 		{flavor.UIA11ySpecTemplate, flavor.UIA11ySpecPath},
 		{flavor.UIResponsivenessSpecTemplate, flavor.UIResponsivenessSpecPath},
