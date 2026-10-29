@@ -386,3 +386,18 @@ needs:
     - "git.worktree"
     - "ast.analyzer"
     - "telemetry.logging"
+
+# Forge organisations whose issues and pull requests may be referenced in link form; a reference
+# to any other owner is refused in pull request bodies and commit messages, because the forge
+# posts a back-reference into that thread (order engine-fr-rule-checks-20261027).
+forge:
+  own_organizations:
+    - lusoris
+    - cordanaLLM
+    - golusoris
+    - VMAFx
+    - tekmora
+    - plurano
+    - vidiko
+    - jellysin
+    - goph-arr
