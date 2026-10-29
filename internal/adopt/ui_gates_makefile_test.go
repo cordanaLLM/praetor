@@ -21,7 +21,7 @@ func TestUIGatesMakefile_VerifyAllRunsUIGates(t *testing.T) {
 	}
 	makefile := buildMakefile(plan)
 	if !util.MakefileHasTarget(makefile, "ui-gates") ||
-		!strings.Contains(makefile, "verify-all: compile-context-verify caveman-sources audit ui-gates test") ||
+		!strings.Contains(makefile, "verify-all: compile-context-verify caveman-sources audit ui-gates secrets test") ||
 		!strings.Contains(makefile, "$(PRAETORCTL) ui env") ||
 		!strings.Contains(makefile, "npx playwright test tests/a11y.spec.ts tests/responsiveness.spec.ts") {
 		t.Fatalf("UI Makefile lacks ui-gates target in verify-all:\n%s", makefile)
