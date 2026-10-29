@@ -1,0 +1,3 @@
+type: added
+title: Refuse hard-wrapped pull request prose and foreign references in forge text
+breaking: false

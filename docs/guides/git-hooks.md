@@ -775,6 +775,24 @@ These checks are not re-run per commit:
   (`fmt-check`), `go vet` (`lint`) and `compile-context --verify` on the pull request's head tree
   instead, so a defect that a later commit of the same pull request removes is not reported.
 
+## Forge text policy
+
+`praetorctl forge validate-pr <body-file>` adds body text findings to the checklist result. Pull request and issue paragraphs use one physical line per paragraph. `forge.BodyHardWrapFindings` also accepts issue bodies; the issue command has no body-validation entry point. A prose line fails with a body line number only when the preceding prose line has at least 50 characters (Unicode runes, trailing whitespace trimmed) and does not end in `.`, `!`, `?`, `:` or `;`. Short lines and complete sentences keep intentional line breaks. Headings, list items, table rows, blockquotes, HTML tags and comments, trailers such as `Order:` and `Signed-off-by:`, closing-keyword lines such as `Fixes #12`, link definitions and fenced code (including receipts) are excluded. A line ending in two spaces or a backslash marks an explicit break. Commit bodies retain their 72-column wrapping.
+
+`praetorctl forge check-message <message-file>` and `praetorctl forge check-commits --base=<ref>` refuse foreign references, as does `validate-pr`. Active references to an issue, pull request or discussion in another organisation can create a forge back-reference. Write foreign references inside inline code or fenced code. The shared reference parser recognises `owner/repo#N`, `owner/repo!N` and `https://github.com/owner/repo/(issues|pull|discussions)/N`; bare `#N` remains allowed.
+
+The repository's origin owner is trusted automatically; `GITHUB_REPOSITORY` supplies the owner in CI. Add other trusted owners to the repository manifest:
+
+```yaml
+forge:
+  own_organizations:
+    - example-org
+```
+
+The list accepts at most 64 valid owners and compares names without case. An absent manifest or origin adds no owners; malformed manifests fail. `check-message` and `check-commits` read the manifest under `--repo`; `validate-pr` reads `--config`. No network access is needed for these two text checks. Bodies above 3,000 lines and reference text above 1 MiB fail rather than being checked in part.
+
+Evidence: `TestForgeText_WrappedParagraph`, `TestForgeText_BodyForeignReferences`, `TestForgeText_BoundaryMarkup`, `TestForgeText_Organizations` and the command tests in `cmd/standardsctl/forge_text_test.go` cover refusals, allowed forms and limits. Order: `engine-fr-rule-checks-20261027`.
+
 ## Hook files adoption keeps
 
 The audit compares none of the hook files below with a rendering, so `praetorctl adopt --force`

@@ -2645,7 +2645,8 @@ repository's own text.
 
 | File | Rules disabled |
 | :--- | :--- |
-| `CONTRIBUTING.md`, `.github/pull_request_template.md`, `SECURITY.md`, `docs/adr/README.md`, `docs/adr/0000-template.md` | none; lines are wrapped within 80 columns |
+| `CONTRIBUTING.md`, `SECURITY.md`, `docs/adr/README.md`, `docs/adr/0000-template.md` | none; lines are wrapped within 80 columns |
+| `.github/pull_request_template.md` | none; each paragraph and list item stays on one line within 80 columns |
 | `.agents/agents/repo-auditor.md`, `.agents/agents/repo-gatekeeper.md` | none |
 | `.paperclip/rules.md` | none, except MD013 around a push command too long to wrap; contract lines are wrapped within 80 columns |
 | `AGENTS.md` | MD013 from the first line to `<!-- praetor:harness:end -->`, for the harness table; MD025 after it, because the repository's instructions open with their own H1 |
@@ -2655,9 +2656,17 @@ Files adopted before this change open with a file-wide `<!-- markdownlint-disabl
 personas and refreshes the `AGENTS.md` harness while keeping the repository's own
 instructions. `.paperclip/` is refreshed, with or without `--force`, only while it is
 unmodified earlier output; delete an edited one and rerun adoption to regenerate it. It
-never rewrites an existing `CONTRIBUTING.md`, pull request template, `SECURITY.md` or
+never rewrites an existing `CONTRIBUTING.md`, `SECURITY.md` or
 `docs/adr/`: those belong to the repository once written (`internal/adopt/governance.go`),
 so delete their disable line by hand and wrap the lines it covered.
+
+An unedited pull request template matching a prior digest is refreshed automatically,
+including a CRLF checkout. The current template keeps each paragraph and list item on
+one physical line. Edited copies are preserved. `priorPRTemplateDigests` in
+`internal/adopt/governance.go` records the earlier text, replayed from
+`internal/adopt/testdata/pr-template/wrapped.md.prior`. `TestForgeText_PriorTemplate`
+covers refresh, line endings and preservation. The [forge text policy](git-hooks.md#forge-text-policy)
+explains body wrapping and foreign references.
 
 `internal/adopt/generated_markdown_test.go` and
 `internal/paperclip/rules_markdown_test.go` check each file with

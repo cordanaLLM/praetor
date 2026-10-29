@@ -44,7 +44,7 @@ func closingRefusal(errs []string, keyword, ref string, line int) string {
 // ambiguous references warn and stay valid until CI resolves them with forge access.
 func TestClosingKeywords_PlantedReferencesOffline(t *testing.T) {
 	for _, c := range plantedClosingCases {
-		analysis, err := AnalyzeCommit("fix(forge): planted\n\n" + c.text)
+		analysis, err := AnalyzeCommitWithPolicy(t.Context(), "fix(forge): planted\n\n"+c.text, ClosingReferencePolicy{OwnOrganizations: []string{"owner", "o"}})
 		if err != nil {
 			t.Errorf("commit message %q: %v", c.text, err)
 			continue
@@ -90,7 +90,7 @@ func TestClosingKeywords_Positive_CleanAndMarkedText(t *testing.T) {
 		"fix(x): y\n\nCloses #12 and Fixes O/R#5\n\n" + closingAllowMarker + " #12\ncloses-own: o/r#5",
 		"fix(x): y\n\nresolved https://github.com/o/r/pull/7\n" + closingAllowMarker + " https://github.com/o/r/pull/7",
 	} {
-		if analysis, err := AnalyzeCommit(text); err != nil || !analysis.Valid {
+		if analysis, err := AnalyzeCommitWithPolicy(t.Context(), text, ClosingReferencePolicy{OwnOrganizations: []string{"o"}}); err != nil || !analysis.Valid {
 			t.Errorf("%q: %+v, %v; want it valid", text, analysis, err)
 		}
 	}

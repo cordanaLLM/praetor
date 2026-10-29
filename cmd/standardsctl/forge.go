@@ -191,7 +191,7 @@ func runForgeValidatePR(args []string) error {
 		return err
 	}
 
-	closingPolicy, err := closingPolicyForCI(ctx, *repoDir, *token, *endpoint, *prAuthor)
+	closingPolicy, err := forgePolicyForCI(ctx, *repoDir, *configPath, *token, *endpoint, *prAuthor)
 	if err != nil {
 		return err
 	}
@@ -285,7 +285,7 @@ func runForgeCheckCommits(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	closingPolicy, err := closingPolicyForCI(ctx, *repoDir, *token, *endpoint, *prAuthor)
+	closingPolicy, err := forgePolicyForCI(ctx, *repoDir, filepath.Join(*repoDir, config.ManifestFileName), *token, *endpoint, *prAuthor)
 	if err != nil {
 		return err
 	}
@@ -324,7 +324,9 @@ func commitMessageFailure(ctx context.Context, entry string, closingPolicy forge
 		return "", nil
 	}
 	failure := buildid.Short(sha) + ": " + strings.Join(analysis.Errors, "; ")
-	fmt.Printf("[FAIL] %s\n", failure)
+	for i := 0; i < len(analysis.Errors) && i < maxCommitMessageBytes; i++ {
+		fmt.Printf("[FAIL] %s: %s\n", buildid.Short(sha), analysis.Errors[i])
+	}
 	return failure, nil
 }
 
@@ -336,6 +338,7 @@ const maxCommitMessageBytes = 1 << 20
 // of the policy check-commits applies in CI.
 func runForgeCheckMessage(args []string) error {
 	fs := flag.NewFlagSet("forge check-message", flag.ContinueOnError)
+	repoDir := fs.String("repo", ".", "Repository directory")
 	rest, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
@@ -351,7 +354,13 @@ func runForgeCheckMessage(args []string) error {
 	if err != nil {
 		return fmt.Errorf("commit message %s: %w", rest[0], err)
 	}
-	analysis, err := forge.AnalyzeCommit(message)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	policy, err := forgeTextPolicy(ctx, *repoDir, filepath.Join(*repoDir, config.ManifestFileName), forge.ClosingReferencePolicy{})
+	if err != nil {
+		return err
+	}
+	analysis, err := forge.AnalyzeCommitWithPolicy(ctx, message, policy)
 	if err != nil {
 		return fmt.Errorf("commit message %s: %w", rest[0], err)
 	}
