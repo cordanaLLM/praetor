@@ -2626,14 +2626,6 @@ linters:
         linters:
           - gocyclo
       # category C, entered 2026-10-29, expires 2026-11-08, #1030
-      - path: ^internal/util/command_group_signal_unix_test\.go$
-        linters:
-          - noctx
-      # category C, entered 2026-10-29, expires 2026-11-08, #1030
-      - path: ^internal/util/command_interrupt_unix_test\.go$
-        linters:
-          - noctx
-      # category C, entered 2026-10-29, expires 2026-11-08, #1030
       - path: ^internal/util/git_ignore_test\.go$
         linters:
           - gocyclo
