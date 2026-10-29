@@ -314,7 +314,7 @@ as the lock records them, copyright lines as each package's license file states 
 | `ms` | 2.1.3 | MIT | `Copyright (c) 2020 Vercel, Inc.` |
 | `parse-entities` | 4.0.2 | MIT | `Copyright (c) Titus Wormer <mailto:tituswormer@gmail.com>` |
 | `parse5` | 8.0.1 | MIT | `Copyright (c) 2013-2019 Ivan Nikulin (ifaaan@gmail.com, https://github.com/inikulin)` |
-| `re2js` | 2.8.6 | MIT | `Copyright (c) 2023 Oleksii Vasyliev` |
+| `re2js` | 2.9.1 | MIT | `Copyright (c) 2023 Oleksii Vasyliev` |
 | `smol-toml` | 1.9.1 | BSD-3-Clause | `Copyright (c) Squirrel Chat et al., All rights reserved.` |
 | `string-width` | 8.3.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
 | `strip-ansi` | 7.2.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
