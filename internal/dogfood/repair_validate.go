@@ -217,7 +217,10 @@ func repairPublicAnchor(repo PublicRepositoryResult) (publicPolicyAnchor, error)
 	if repo.Plan == nil || repo.Plan.EffectivePolicy == nil || repo.OriginalScan == nil || repo.OriginalTreeDigest == "" {
 		return publicPolicyAnchor{}, errRepairPublicRerun
 	}
-	anchor := publicPolicyAnchor{Policy: repo.Plan.EffectivePolicy, Scan: repo.OriginalScan}
+	if err := validateRepairOriginalImageRefs(repo.OriginalImageRefs); err != nil {
+		return publicPolicyAnchor{}, err
+	}
+	anchor := publicPolicyAnchor{Policy: repo.Plan.EffectivePolicy, Scan: repo.OriginalScan, ImageRefs: repo.OriginalImageRefs}
 	if err := publicAdoptionError(repo.Plan, nil); err != nil {
 		return anchor, err
 	}
@@ -233,11 +236,24 @@ func repairPublicAnchor(repo PublicRepositoryResult) (publicPolicyAnchor, error)
 	return anchor, validateRepairOriginalMetadata(repo)
 }
 
+func validateRepairOriginalImageRefs(refs []baseline.Infraction) error {
+	if len(refs) > hiss.MaxInfractionsCap {
+		return errors.New("public image references exceed capacity")
+	}
+	for i := 0; i < len(refs) && i < hiss.MaxInfractionsCap; i++ {
+		ref := refs[i]
+		if ref.RuleID != baseline.ImageRefRuleID || !repairPublicRelativePath(ref.FilePath) || ref.LineNumber <= 0 || ref.Fingerprint == "" {
+			return errors.New("public image references contain an invalid infraction identity")
+		}
+	}
+	return nil
+}
+
 func validateRepairOriginalMetadata(repo PublicRepositoryResult) error {
 	if !suiteSHA.MatchString(repo.OriginalTreeDigest) {
 		return errors.New("public original tree requires a valid SHA-256 identity")
 	}
-	if repo.Plan.LegacyDebtCount != publicScanBaseline(repo.OriginalScan).Count() {
+	if repo.Plan.LegacyDebtCount != publicExpectedBaseline(repo.OriginalScan, repo.OriginalImageRefs).Count() {
 		return errors.New("planned adoption debt count differs from the independent original scan")
 	}
 	return nil
@@ -253,7 +269,7 @@ func validateRepairAttempt(attempt PublicAttempt, number int, anchor publicPolic
 	if err := validateRepairChangedFiles(attempt.ChangedFiles); err != nil {
 		return err
 	}
-	return validateRepairVerification(attempt.Verification, anchor, attempt.ChangedFiles)
+	return validateRepairVerification(attempt.Verification, anchor, attempt.Adoption.EffectivePolicy.SHA256, attempt.ChangedFiles)
 }
 
 func validateRepairAppliedPolicy(attempt PublicAttempt, anchor publicPolicyAnchor) error {
@@ -266,17 +282,17 @@ func validateRepairAppliedPolicy(attempt PublicAttempt, anchor publicPolicyAncho
 	if attempt.Adoption.DryRun {
 		return errors.New("public verification requires an applied adoption report")
 	}
-	if attempt.Adoption.LegacyDebtCount != publicScanBaseline(anchor.Scan).Count() {
+	if attempt.Adoption.LegacyDebtCount != publicExpectedBaseline(anchor.Scan, anchor.ImageRefs).Count() {
 		return errors.New("applied adoption debt count differs from the independent original scan")
 	}
 	return matchPublicPolicy(anchor.Policy, attempt.Adoption.EffectivePolicy)
 }
 
-func validateRepairVerification(check *PublicVerification, anchor publicPolicyAnchor, changed []string) error {
+func validateRepairVerification(check *PublicVerification, anchor publicPolicyAnchor, appliedPolicySHA string, changed []string) error {
 	if check == nil || !check.LockVerified || !check.ContextVerified || check.Scan == nil || check.Scan.Truncated || check.Ratchet == nil || !check.Ratchet.Passed {
 		return errors.New("public verification attempt is incomplete")
 	}
-	if err := validateRepairPolicyEvidence(check, anchor); err != nil {
+	if err := validateRepairPolicyEvidence(check, anchor, appliedPolicySHA); err != nil {
 		return err
 	}
 	if err := validateRepairPublicScan(check.Scan); err != nil {
@@ -285,11 +301,11 @@ func validateRepairVerification(check *PublicVerification, anchor publicPolicyAn
 	return validateRepairRatchet(anchor.Scan, check, changed)
 }
 
-func validateRepairPolicyEvidence(check *PublicVerification, anchor publicPolicyAnchor) error {
+func validateRepairPolicyEvidence(check *PublicVerification, anchor publicPolicyAnchor, appliedPolicySHA string) error {
 	if check.PolicySHA256 == "" || check.MaxFuncLOC == 0 || check.BaselineSHA256 == "" || !check.BaselineVerified {
 		return errRepairPublicRerun
 	}
-	if check.PolicySHA256 != anchor.Policy.SHA256 || check.MaxFuncLOC != anchor.Policy.Policy.Complexity.MaxFuncLOC {
+	if check.PolicySHA256 != appliedPolicySHA || check.MaxFuncLOC != anchor.Policy.Policy.Complexity.MaxFuncLOC {
 		return errors.New("public verification policy differs from the planned policy")
 	}
 	if !suiteSHA.MatchString(check.BaselineSHA256) {

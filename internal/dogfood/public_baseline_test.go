@@ -9,9 +9,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/supplychain"
 )
 
 func publicBaselineBytes(t *testing.T, recorded *baseline.Baseline) []byte {
@@ -44,7 +46,7 @@ func TestPublicBaselineAcceptsReorderingAndMetadata(t *testing.T) {
 	recorded.IncreaseRationale = "explicit imported legacy debt"
 	dir := t.TempDir()
 	publicWrite(t, filepath.Join(dir, ".standards-baseline.json"), string(publicBaselineBytes(t, recorded)), 0o600)
-	if digest, err := verifyPublicBaseline(t.Context(), dir, original); err != nil || len(digest) != 64 {
+	if digest, err := verifyPublicBaseline(t.Context(), dir, original, nil); err != nil || len(digest) != 64 {
 		t.Fatalf("valid reordered entries or metadata rejected: %s %v", digest, err)
 	}
 }
@@ -67,7 +69,7 @@ func TestPublicBaselineRejectsCorruptedEntriesAndCounts(t *testing.T) {
 			recorded := publicBaselineRecord(original)
 			mutate(recorded)
 			publicWrite(t, filepath.Join(dir, ".standards-baseline.json"), string(publicBaselineBytes(t, recorded)), 0o600)
-			if digest, err := verifyPublicBaseline(t.Context(), dir, original); err == nil || digest != "" {
+			if digest, err := verifyPublicBaseline(t.Context(), dir, original, nil); err == nil || digest != "" {
 				t.Fatalf("corrupt baseline falsely verified: %s %v", digest, err)
 			}
 		})
@@ -111,17 +113,17 @@ func TestPublicBaselineRequiresZeroDebtArtifactAndBoundedRead(t *testing.T) {
 	original := &hiss.ScanReport{}
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".standards-baseline.json")
-	if _, err := verifyPublicBaseline(t.Context(), dir, original); !errors.Is(err, os.ErrNotExist) {
+	if _, err := verifyPublicBaseline(t.Context(), dir, original, nil); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing zero-debt baseline fabricated: %v", err)
 	}
 	data := publicBaselineBytes(t, publicBaselineRecord(original))
 	exact := append(data, bytes.Repeat([]byte(" "), maxRepairReportBytes-len(data))...)
 	publicWrite(t, path, string(exact), 0o600)
-	if _, err := verifyPublicBaseline(t.Context(), dir, original); err != nil {
+	if _, err := verifyPublicBaseline(t.Context(), dir, original, nil); err != nil {
 		t.Fatalf("exact byte bound rejected: %v", err)
 	}
 	publicWrite(t, path, string(append(exact, ' ')), 0o600)
-	if _, err := verifyPublicBaseline(t.Context(), dir, original); err == nil {
+	if _, err := verifyPublicBaseline(t.Context(), dir, original, nil); err == nil {
 		t.Fatal("oversize baseline accepted")
 	}
 	if err := os.Remove(path); err != nil {
@@ -132,7 +134,7 @@ func TestPublicBaselineRequiresZeroDebtArtifactAndBoundedRead(t *testing.T) {
 	if err := os.Symlink(target, path); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := verifyPublicBaseline(t.Context(), dir, original); err == nil {
+	if _, err := verifyPublicBaseline(t.Context(), dir, original, nil); err == nil {
 		t.Fatal("symlink baseline accepted")
 	}
 }
@@ -141,13 +143,13 @@ func TestPublicBaselineRejectsInvalidAnchorsAndCancellation(t *testing.T) {
 	dir := t.TempDir()
 	invalid := []*hiss.ScanReport{nil, {TotalInfractions: 1}, {Truncated: true}, {Violations: []hiss.InvariantViolation{{RuleID: "HISS-07"}}}}
 	for _, original := range invalid {
-		if _, err := verifyPublicBaseline(t.Context(), dir, original); err == nil {
+		if _, err := verifyPublicBaseline(t.Context(), dir, original, nil); err == nil {
 			t.Fatalf("invalid independent anchor accepted: %+v", original)
 		}
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := verifyPublicBaseline(ctx, dir, &hiss.ScanReport{}); !errors.Is(err, context.Canceled) {
+	if _, err := verifyPublicBaseline(ctx, dir, &hiss.ScanReport{}, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("baseline cancellation lost: %v", err)
 	}
 	var nilContext context.Context
@@ -168,7 +170,67 @@ func TestPublicBaselineRefusesReadmeEntries(t *testing.T) {
 		Fingerprint: "readme01fp",
 	})
 	recorded.TotalInfractions = len(recorded.Infractions)
-	if err := comparePublicBaseline(t.Context(), recorded, original); err == nil {
+	if err := comparePublicBaseline(t.Context(), recorded, original, nil); err == nil {
 		t.Fatal("comparePublicBaseline accepted a README entry in the HISS snapshot")
+	}
+}
+
+func TestPublicBaselineDevcontainerImageRef(t *testing.T) {
+	dir := t.TempDir()
+	devDir := filepath.Join(dir, ".devcontainer")
+	if err := os.MkdirAll(devDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	devcontainerJSON := "{\n  \"name\": \"python\",\n  \"image\": \"mcr.microsoft.com/devcontainers/python:3\"\n}\n"
+	publicWrite(t, filepath.Join(devDir, "devcontainer.json"), devcontainerJSON, 0o600)
+
+	original := &hiss.ScanReport{
+		TotalInfractions: 1,
+		Violations: []hiss.InvariantViolation{
+			{
+				RuleID:     "HISS-04",
+				FilePath:   "fixture.go",
+				LineNumber: 10,
+				Message:    "function length 70 exceeds 60",
+			},
+		},
+	}
+
+	imageRefs, err := supplychain.UnexcusedImageRefInfractions(t.Context(), dir, nil, time.Now())
+	if err != nil {
+		t.Fatalf("scan image refs: %v", err)
+	}
+	if len(imageRefs) != 1 || imageRefs[0].RuleID != baseline.ImageRefRuleID {
+		t.Fatalf("expected 1 HISS-11 infraction, got %+v", imageRefs)
+	}
+
+	// 1. Positive: adopted baseline holding HISS + HISS-11 verifies.
+	expected := publicExpectedBaseline(original, imageRefs)
+	publicWrite(t, filepath.Join(dir, ".standards-baseline.json"), string(publicBaselineBytes(t, expected)), 0o600)
+	digest, err := verifyPublicBaseline(t.Context(), dir, original, imageRefs)
+	if err != nil || len(digest) != 64 {
+		t.Fatalf("combined baseline holding HISS and HISS-11 rejected: %s %v", digest, err)
+	}
+
+	// 2. Planted negative 1: baseline missing the HISS-11 entry fails.
+	hissOnly := publicScanBaseline(original)
+	publicWrite(t, filepath.Join(dir, ".standards-baseline.json"), string(publicBaselineBytes(t, hissOnly)), 0o600)
+	if _, err := verifyPublicBaseline(t.Context(), dir, original, imageRefs); err == nil {
+		t.Fatal("planted defect: baseline missing HISS-11 entry was accepted")
+	}
+
+	// 3. Planted negative 2: baseline with an extra HISS-11 entry not in the tree fails.
+	extraRefs := append([]baseline.Infraction(nil), imageRefs...)
+	extraRefs = append(extraRefs, baseline.Infraction{
+		RuleID:      baseline.ImageRefRuleID,
+		FilePath:    "Dockerfile",
+		LineNumber:  1,
+		Message:     "golang:1.27-alpine",
+		Fingerprint: "Dockerfile:HISS-11:image:golang:1.27-alpine",
+	})
+	withExtra := publicExpectedBaseline(original, extraRefs)
+	publicWrite(t, filepath.Join(dir, ".standards-baseline.json"), string(publicBaselineBytes(t, withExtra)), 0o600)
+	if _, err := verifyPublicBaseline(t.Context(), dir, original, imageRefs); err == nil {
+		t.Fatal("planted defect: baseline with extra HISS-11 entry was accepted")
 	}
 }

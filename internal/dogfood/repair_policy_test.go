@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
@@ -207,4 +208,146 @@ func TestRepairFailedHistoricalPublicEvidenceRemainsTriageInput(t *testing.T) {
 	if err != nil || len(plan.Jobs) != 1 || plan.Jobs[0].UntrustedEvidence.CaseID != result.ID {
 		t.Fatalf("historical failure lost its triage job: %v (%+v)", err, plan)
 	}
+}
+
+func repairAppliedPolicyFixture(t *testing.T) *SuiteReport {
+	t.Helper()
+	report := repairPublicPolicyFixture(t)
+	item := &report.Cases[0].Public.Results[0]
+
+	originalManifest := publicRead(t, filepath.Join(item.Checkout, ".standards.yaml"))
+	publicWrite(t, filepath.Join(item.Checkout, ".standards.yaml"), originalManifest+"\n# comment changing source hash\n", 0o600)
+	appliedPolicy, err := config.LoadEffectivePolicyContext(t.Context(), config.EffectiveOptions{Root: item.Checkout, Audit: true})
+	publicWrite(t, filepath.Join(item.Checkout, ".standards.yaml"), originalManifest, 0o600)
+	if err != nil {
+		t.Fatalf("load alternative applied policy: %v", err)
+	}
+	if appliedPolicy.SHA256 == item.Plan.EffectivePolicy.SHA256 {
+		t.Fatal("expected applied policy SHA-256 to differ from plan")
+	}
+	if err := matchPublicPolicy(item.Plan.EffectivePolicy, appliedPolicy); err != nil {
+		t.Fatalf("expected applied policy content to match plan: %v", err)
+	}
+
+	imageRef := baseline.Infraction{
+		RuleID:      baseline.ImageRefRuleID,
+		FilePath:    ".devcontainer/devcontainer.json",
+		LineNumber:  3,
+		Message:     "mcr.microsoft.com/devcontainers/python:3",
+		Fingerprint: ".devcontainer/devcontainer.json:HISS-11:image:mcr.microsoft.com/devcontainers/python:3",
+	}
+	item.OriginalImageRefs = []baseline.Infraction{imageRef}
+	expectedDebt := publicExpectedBaseline(item.OriginalScan, item.OriginalImageRefs).Count()
+	item.Plan.LegacyDebtCount = expectedDebt
+
+	for i := range item.Attempts {
+		attempt := &item.Attempts[i]
+		attempt.Adoption.EffectivePolicy = appliedPolicy
+		attempt.Adoption.LegacyDebtCount = expectedDebt
+		attempt.Verification.PolicySHA256 = appliedPolicy.SHA256
+		attempt.Verification.MaxFuncLOC = appliedPolicy.Policy.Complexity.MaxFuncLOC
+	}
+	return report
+}
+
+func TestRepairAppliedPolicyDifferentSHAButEqualContentAndImageRefs(t *testing.T) {
+	report := repairAppliedPolicyFixture(t)
+	loaded, err := loadRepairPolicyFixture(t, report)
+	if err != nil {
+		t.Fatalf("verified report with differing applied policy SHA rejected: %v", err)
+	}
+	plan, err := PlanRepairs(t.Context(), loaded, repairTestPolicy(t))
+	if err != nil || plan.Status != "no_failures" || len(plan.Jobs) != 0 {
+		t.Fatalf("verified report manufactured repair work: %v (%+v)", err, plan)
+	}
+}
+
+func TestRepairAppliedPolicyDifferentSHAVerificationMismatch(t *testing.T) {
+	report := repairAppliedPolicyFixture(t)
+	report.Cases[0].Public.Results[0].Attempts[0].Verification.PolicySHA256 = strings.Repeat("c", 64)
+	_, err := loadRepairPolicyFixture(t, report)
+	if err == nil || !strings.Contains(err.Error(), "public verification policy differs from the planned policy") {
+		t.Fatalf("expected 'public verification policy differs from the planned policy', got: %v", err)
+	}
+}
+
+func TestRepairAppliedPolicyDifferentSHAMaxFuncLOCMismatch(t *testing.T) {
+	report := repairAppliedPolicyFixture(t)
+	report.Cases[0].Public.Results[0].Attempts[0].Verification.MaxFuncLOC = 99
+	_, err := loadRepairPolicyFixture(t, report)
+	if err == nil || !strings.Contains(err.Error(), "public verification policy differs from the planned policy") {
+		t.Fatalf("expected 'public verification policy differs from the planned policy', got: %v", err)
+	}
+}
+
+func TestRepairAppliedPolicyDifferentSHAPlanDebtCountHISSOnly(t *testing.T) {
+	report := repairAppliedPolicyFixture(t)
+	item := &report.Cases[0].Public.Results[0]
+	item.Plan.LegacyDebtCount = item.OriginalScan.TotalInfractions
+	_, err := loadRepairPolicyFixture(t, report)
+	if err == nil || !strings.Contains(err.Error(), "planned adoption debt count differs from the independent original scan") {
+		t.Fatalf("expected 'planned adoption debt count differs...', got: %v", err)
+	}
+}
+
+func TestRepairAppliedPolicyDifferentSHAAppliedDebtCountHISSOnly(t *testing.T) {
+	report := repairAppliedPolicyFixture(t)
+	item := &report.Cases[0].Public.Results[0]
+	item.Attempts[0].Adoption.LegacyDebtCount = item.OriginalScan.TotalInfractions
+	_, err := loadRepairPolicyFixture(t, report)
+	if err == nil || !strings.Contains(err.Error(), "applied adoption debt count differs from the independent original scan") {
+		t.Fatalf("expected 'applied adoption debt count differs...', got: %v", err)
+	}
+}
+
+func TestRepairValidatesOriginalImageRefs(t *testing.T) {
+	validRef := baseline.Infraction{
+		RuleID:      baseline.ImageRefRuleID,
+		FilePath:    ".devcontainer/devcontainer.json",
+		LineNumber:  3,
+		Message:     "python:3",
+		Fingerprint: ".devcontainer/devcontainer.json:HISS-11:image:python:3",
+	}
+
+	if err := validateRepairOriginalImageRefs(nil); err != nil {
+		t.Fatalf("nil image refs rejected: %v", err)
+	}
+	if err := validateRepairOriginalImageRefs([]baseline.Infraction{}); err != nil {
+		t.Fatalf("empty image refs rejected: %v", err)
+	}
+	if err := validateRepairOriginalImageRefs([]baseline.Infraction{validRef}); err != nil {
+		t.Fatalf("valid image ref rejected: %v", err)
+	}
+
+	invalidCases := []struct {
+		name   string
+		mutate func(*baseline.Infraction)
+	}{
+		{"rule_id not HISS-11", func(r *baseline.Infraction) { r.RuleID = "HISS-04" }},
+		{"line_number zero", func(r *baseline.Infraction) { r.LineNumber = 0 }},
+		{"line_number negative", func(r *baseline.Infraction) { r.LineNumber = -1 }},
+		{"empty fingerprint", func(r *baseline.Infraction) { r.Fingerprint = "" }},
+		{"empty file_path", func(r *baseline.Infraction) { r.FilePath = "" }},
+		{"relative escaping path", func(r *baseline.Infraction) { r.FilePath = "../other/file.json" }},
+		{"non-canonical path", func(r *baseline.Infraction) { r.FilePath = "a/../b.json" }},
+	}
+	for _, tc := range invalidCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ref := validRef
+			tc.mutate(&ref)
+			if err := validateRepairOriginalImageRefs([]baseline.Infraction{ref}); err == nil {
+				t.Fatalf("invalid infraction accepted for %s", tc.name)
+			}
+		})
+	}
+
+	t.Run("count exceeds cap", func(t *testing.T) {
+		oversized := make([]baseline.Infraction, hiss.MaxInfractionsCap+1)
+		for i := range oversized {
+			oversized[i] = validRef
+		}
+		if err := validateRepairOriginalImageRefs(oversized); err == nil {
+			t.Fatal("oversized image refs accepted")
+		}
+	})
 }
