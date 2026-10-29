@@ -17,6 +17,9 @@ const (
 	FilePerm os.FileMode = 0o644
 	// ImageRefRuleID is the rule identifier of container image pin findings (HISS-11).
 	ImageRefRuleID = "HISS-11"
+	// BaselineRuleID is the rule identifier of secret scan findings (HISS-12),
+	// owned externally by secretscan.
+	BaselineRuleID = "HISS-12"
 	// maxOwnedRules bounds the owned rules slice checked during Record (HISS-02).
 	maxOwnedRules = 16
 )
@@ -310,11 +313,16 @@ func ownsRule(owned []string, rule string) bool {
 }
 
 func carriedInfractions(previous []Infraction, owned []string) []Infraction {
+	// The secret scan writer passes every entry it keeps (mergeSecretInfractions); it carries none.
+	if ownsRule(owned, BaselineRuleID) {
+		return nil
+	}
 	ownsImageRefs := ownsRule(owned, ImageRefRuleID)
 	var carried []Infraction
 	for i := 0; i < len(previous); i++ {
 		isImageRef := previous[i].RuleID == ImageRefRuleID
-		if (ownsImageRefs && !isImageRef) || (!ownsImageRefs && isImageRef) {
+		isSecret := previous[i].RuleID == BaselineRuleID
+		if (ownsImageRefs && !isImageRef) || (!ownsImageRefs && (isImageRef || isSecret)) {
 			carried = append(carried, previous[i])
 		}
 	}
@@ -447,7 +455,7 @@ func staleEntries(recorded, current []Infraction) int {
 	after := countByFileRule(current, nil)
 	stale := 0
 	for key, count := range before {
-		if key.rule == ImageRefRuleID {
+		if key.rule == ImageRefRuleID || key.rule == BaselineRuleID {
 			continue
 		}
 		if count > after[key] {

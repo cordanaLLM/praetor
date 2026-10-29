@@ -76,12 +76,12 @@ func TestAdoptedExplanation_Positive_StatesAdoptedEnforcement(t *testing.T) {
 		failure != "new finding fails verify-all, blocks commit, blocks push" {
 		t.Fatalf("HISS-11 Adopted() = %q, %q", check, failure)
 	}
-	unchecked, _ := LookupRule("HISS-12")
+	unchecked, _ := LookupRule("HISS-03")
 	if text := unchecked.AdoptedExplanation(); text != unchecked.Explanation()+"\nAdopted repositories: not enforced; adoption generates no check for this rule." {
-		t.Fatalf("HISS-12 adopted explanation:\n%s", text)
+		t.Fatalf("HISS-03 adopted explanation:\n%s", text)
 	}
 	if check, failure := unchecked.Adopted(AllPipelines); check != NotEnforced || failure != Advisory {
-		t.Fatalf("HISS-12 Adopted() = %q, %q", check, failure)
+		t.Fatalf("HISS-03 Adopted() = %q, %q", check, failure)
 	}
 }
 
@@ -137,6 +137,11 @@ func TestAdoptedFor(t *testing.T) {
 		{"HISS-01", LanguageOther, false},
 		{"HISS-07", LanguageC, false},
 		{"HISS-10", LanguageRust, false},
+		{"HISS-12", LanguageGo, true},
+		{"HISS-12", LanguageRust, true},
+		{"HISS-12", LanguagePython, true},
+		{"HISS-12", LanguageC, true},
+		{"HISS-12", LanguageOther, true},
 		{"HISS-16", LanguageOther, true},
 		{"HISS-10", LanguageGo | LanguageOther, true},
 	}
@@ -146,6 +151,7 @@ func TestAdoptedFor(t *testing.T) {
 		if enforced := check != NotEnforced; enforced != tc.enforced || (!enforced && failure != Advisory) {
 			t.Errorf("%s for %b: %q, %q; want enforced=%v", tc.id, tc.languages, check, failure, tc.enforced)
 		}
+		assertHISS12AdoptedFor(t, tc.id, tc.languages, check)
 	}
 	for _, rule := range Rules() {
 		wantCheck, wantFailure := rule.Adopted(AllPipelines)
@@ -155,6 +161,13 @@ func TestAdoptedFor(t *testing.T) {
 		if rule.Adoption.Languages&^scannedLanguages != 0 && rule.Adoption.Check == adoptedAudit {
 			t.Errorf("%s audit scan claims a language internal/hiss does not read: %b", rule.ID, rule.Adoption.Languages)
 		}
+	}
+}
+
+func assertHISS12AdoptedFor(t *testing.T, id string, languages Language, check string) {
+	t.Helper()
+	if id == "HISS-12" && !strings.Contains(check, "`praetorctl security secrets` (gitleaks history scan)") {
+		t.Errorf("HISS-12 for %b: %q; want security secrets check text", languages, check)
 	}
 }
 

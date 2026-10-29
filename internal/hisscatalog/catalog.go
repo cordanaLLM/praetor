@@ -192,10 +192,16 @@ var catalog = []Rule{
 		ID:            "HISS-12",
 		Title:         "Secret Leak Prevention",
 		Specification: "Zero credentials in Git history.",
-		Enforcement:   "'make secrets' runs gitleaks over repository history inside verify-all.",
+		Enforcement:   "'make secrets' and 'praetorctl security secrets' (in adopted verify-all and lefthook pre-push) run gitleaks over repository history.",
 		FailureAction: "Verification gate rejection.",
 		Scope:         "secrets",
 		Directive:     []Clause{{Text: "zero credentials in Git history"}},
+		// Order: engine-hiss-unenforced-checks-20261027.
+		Adoption: AdoptedCheck{
+			Check:   "`praetorctl security secrets` (gitleaks history scan)",
+			Trigger: "new finding",
+			Stages:  StageVerifyAll | StagePrePush,
+		},
 	},
 	{
 		ID:            "HISS-13",

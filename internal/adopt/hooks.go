@@ -19,6 +19,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/lefthookconfig"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
+	"github.com/cordanaLLM/praetor/internal/toolpins"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
@@ -56,6 +57,9 @@ const (
 	govulnToolScanner = "go tool -modfile=" + toolGoModFile + " govulncheck"
 	// govulnInstallHint is the instruction printed when a declared tool is missing on PATH.
 	govulnInstallHint = "go install golang.org/x/vuln/cmd/govulncheck@latest"
+	// gitleaksInstallHint names the pinned gitleaks version when gitleaks is missing on PATH
+	// (order engine-hiss-unenforced-checks-20261027).
+	gitleaksInstallHint = "go install github.com/zricethezav/gitleaks/v8@" + toolpins.GitleaksVersion
 	// govulnModule is the module path of the Go vulnerability scanner.
 	govulnModule = "golang.org/x/vuln"
 	// govulnToolPackage is the package path run with go tool.
@@ -230,20 +234,20 @@ func lefthookPreCommitJobs(languages hisscatalog.Language) string {
 }
 
 // lefthookPrePushJobs renders the pre-push jobs of languages: the Go vulnerability gate for Go
-// (govulnGateArgs). When shape carries toolGovuln, the job runs govulncheck through the
-// repository's tool module; otherwise it looks up govulncheck on PATH and fails when missing.
-// The gate job runs cargo audit for a Cargo.lock itself.
+// (govulnGateArgs) and the HISS-12 secrets scan for every language (order engine-hiss-unenforced-checks-20261027).
 func lefthookPrePushJobs(shape lefthookShape) string {
-	if shape.languages&hisscatalog.LanguageGo == 0 {
-		return ""
+	jobs := ""
+	if shape.languages&hisscatalog.LanguageGo != 0 {
+		var command string
+		if shape.toolGovuln {
+			command = lefthookGovernedCommand(govulnGateArgs + " -- " + govulnToolScanner)
+		} else {
+			command = requiredToolGuard(govuln.DefaultScanner, govulnInstallHint, lefthookGovernedCommand(govulnGateArgs))
+		}
+		jobs += "    security:\n" + lefthookRun(command)
 	}
-	var command string
-	if shape.toolGovuln {
-		command = lefthookGovernedCommand(govulnGateArgs + " -- " + govulnToolScanner)
-	} else {
-		command = requiredToolGuard(govuln.DefaultScanner, govulnInstallHint, lefthookGovernedCommand(govulnGateArgs))
-	}
-	return "    security:\n" + lefthookRun(command)
+	secretsCmd := requiredToolGuard("gitleaks", gitleaksInstallHint, lefthookGovernedCommand("security secrets"))
+	return jobs + "    secrets:\n" + lefthookRun(secretsCmd)
 }
 
 // reuseLintCommand renders the run line of the reuse-lint job: reuse lint at the release line

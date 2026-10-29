@@ -223,6 +223,7 @@ func TestVerificationActualScaffoldBuildAndTestFailurePropagates(t *testing.T) {
 			for _, cli := range []string{util.PraetorCLI, util.LegacyCLI} {
 				writeStub(t, stubs, cli, "printf '%s\\n' \"$*\" >> calls\n[ \"$1\" != '"+failure+"' ]\n")
 			}
+			writeStub(t, stubs, "gitleaks", "exit 0\n")
 			hermeticPath(t, stubs)
 			mustWrite(t, filepath.Join(root, "Makefile"), buildMakefile(plan))
 			// -j1 pins serial execution: this assertion compares an exact call order, and
@@ -234,7 +235,7 @@ func TestVerificationActualScaffoldBuildAndTestFailurePropagates(t *testing.T) {
 				t.Fatalf("failure %q did not propagate: %v", failure, err)
 			}
 			calls := mustRead(t, filepath.Join(root, "calls"))
-			if failure == "none" && calls != "compile-context --verify\ncaveman check --configured-sources\naudit\nbuild -v ./...\ntest -v -race ./...\n" {
+			if failure == "none" && calls != "compile-context --verify\ncaveman check --configured-sources\naudit\nsecurity secrets\nbuild -v ./...\ntest -v -race ./...\n" {
 				t.Fatalf("scaffold did not exercise required commands: %q", calls)
 			}
 		})

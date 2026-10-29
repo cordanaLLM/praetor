@@ -265,7 +265,7 @@ func TestAdopt_Positive_Greenfield(t *testing.T) {
 		t.Error("greenfield AGENTS.md must end with the harness end marker")
 	}
 	makefile := mustRead(t, filepath.Join(repoPath, "Makefile"))
-	if !strings.Contains(makefile, "verify-all: compile-context-verify caveman-sources audit test") ||
+	if !strings.Contains(makefile, "verify-all: compile-context-verify caveman-sources audit secrets test") ||
 		!strings.Contains(makefile, "caveman check --configured-sources") {
 		t.Errorf("greenfield verify-all must run the real gates, got:\n%s", makefile)
 	}

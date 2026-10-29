@@ -373,3 +373,44 @@ func assertLegacyImageRefBaselineRecorded(t *testing.T) {
 		t.Fatalf("expected AuditSupplyChain after re-adopt to pass, got: %v", err)
 	}
 }
+
+// Order engine-hiss-unenforced-checks-20261027: re-recording baseline during adoption
+// preserves HISS-12 entries owned by secretscan.
+func TestAdopt_RerecordBaseline_PreservesHISS12(t *testing.T) {
+	repoPath := newTestRepo(t, "rerecord-hiss12")
+	base := &baseline.Baseline{
+		Version:          1,
+		Repository:       "acme/widgets",
+		TotalInfractions: 1,
+		Infractions: []baseline.Infraction{
+			{
+				RuleID:      baseline.BaselineRuleID,
+				FilePath:    "keys.py",
+				LineNumber:  5,
+				Message:     "generic-api-key",
+				Fingerprint: "synth-fp-old",
+			},
+		},
+	}
+	full := filepath.Join(repoPath, baselineFile)
+	if err := baseline.SaveBaseline(full, base); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Adopt(context.Background(), rerecordOptions(t, repoPath))
+	if err != nil {
+		t.Fatalf("rerecord baseline failed: %v", err)
+	}
+	assertNoIssues(t, rep)
+
+	b, err := baseline.LoadBaseline(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.TotalInfractions != 1 || len(b.Infractions) != 1 {
+		t.Fatalf("expected 1 total infraction preserved, got: %+v", b)
+	}
+	if b.Infractions[0].RuleID != baseline.BaselineRuleID || b.Infractions[0].Fingerprint != "synth-fp-old" {
+		t.Fatalf("expected HISS-12 entry preserved, got: %+v", b.Infractions[0])
+	}
+}

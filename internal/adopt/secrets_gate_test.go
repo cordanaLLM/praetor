@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/toolpins"
 	secretsassets "github.com/cordanaLLM/praetor/tools/secrets"
 )
 
@@ -128,4 +130,52 @@ func TestSecretsGate_NonGoRepo_Skips(t *testing.T) {
 	if _, err := os.Stat(gateMain); !os.IsNotExist(err) {
 		t.Fatalf("expected gate not to be emitted for non-Go repo, but found: %s", gateMain)
 	}
+}
+
+func TestSecretsGate_AdoptionBaseline_3D(t *testing.T) {
+	t.Run("missing gitleaks reports pinned version", func(t *testing.T) {
+		root := newTestRepo(t, "secrets-missing-gitleaks")
+		s := familySession(t, false)
+		s.repoPath = root
+		if err := reconcileSecretsGate(t.Context(), s); err != nil {
+			t.Fatal(err)
+		}
+		details := actionDetailsFor(s.report, "secrets")
+		if !strings.Contains(details, "gitleaks not found on PATH") || !strings.Contains(details, toolpins.GitleaksVersion) {
+			t.Fatalf("details = %q, want missing gitleaks and pinned version %s", details, toolpins.GitleaksVersion)
+		}
+	})
+	t.Run("gitleaks on PATH records HISS-12 baseline once", func(t *testing.T) {
+		root := newTestRepo(t, "secrets-with-gitleaks")
+		stubDir := t.TempDir()
+		script := "while [ $# -gt 0 ]; do\n  if [ \"$1\" = \"--report-path\" ]; then\n    shift\n    printf '%s' '[{\"RuleID\":\"generic-api-key\",\"File\":\"creds.py\",\"StartLine\":5,\"Commit\":\"aaaa\",\"Secret\":\"SYNTH-NEVER-SAVE\",\"Fingerprint\":\"synth-adopt-fp\"}]' > \"$1\"\n    exit 1\n  fi\n  shift\ndone\nexit 0\n"
+		writeStub(t, stubDir, "gitleaks", script)
+		t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		s := familySession(t, false)
+		s.repoPath = root
+		if err := reconcileSecretsGate(t.Context(), s); err != nil {
+			t.Fatal(err)
+		}
+		details := actionDetailsFor(s.report, "secrets")
+		if !strings.Contains(details, "Recorded 1 HISS-12 secret finding(s)") {
+			t.Fatalf("details = %q, want 1 recorded finding", details)
+		}
+		base, err := baseline.LoadBaseline(filepath.Join(root, baselineFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if base.Absent || len(base.Infractions) != 1 || base.Infractions[0].RuleID != "HISS-12" || base.Infractions[0].Fingerprint != "synth-adopt-fp" {
+			t.Fatalf("baseline = %+v; want 1 HISS-12 entry with synth-adopt-fp", base)
+		}
+	})
+}
+
+func actionDetailsFor(rep *AdoptReport, path string) string {
+	var parts []string
+	for i := 0; i < len(rep.ActionDetails); i++ {
+		if rep.ActionDetails[i].Path == path {
+			parts = append(parts, rep.ActionDetails[i].Details)
+		}
+	}
+	return strings.Join(parts, "\n")
 }

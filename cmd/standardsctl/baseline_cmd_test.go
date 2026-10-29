@@ -592,3 +592,36 @@ func TestBaselineRecordImageRefs_3D(t *testing.T) {
 		t.Fatalf("expected 1 HISS-11 infraction recorded, got: %+v", b.Infractions)
 	}
 }
+
+// Order engine-hiss-unenforced-checks-20261027: baseline --record retains entries for rules
+// owned by another scanner (HISS-12), carrying them over into the new baseline snapshot.
+func TestBaselineRecord_PreservesHISS12Entries(t *testing.T) {
+	f := newAuditFixture(t)
+	f.writeBaseline(t, []baseline.Infraction{
+		{
+			RuleID:      baseline.BaselineRuleID,
+			FilePath:    "cmd/secret.go",
+			LineNumber:  10,
+			Message:     "generic-api-key",
+			Fingerprint: "synth-fp-old",
+		},
+	}, "")
+	gitCommitAll(t, f.dir, f.gitEnv, "initial hiss-12 baseline")
+
+	out, err := runBaselineCmd(t, f, "--record")
+	if err != nil {
+		t.Fatalf("baseline --record failed: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Total: 1 infractions, previously 1")
+
+	b, err := baseline.LoadBaseline(f.baselinePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.TotalInfractions != 1 || len(b.Infractions) != 1 {
+		t.Fatalf("expected 1 total infraction preserved, got: %+v", b)
+	}
+	if b.Infractions[0].RuleID != baseline.BaselineRuleID || b.Infractions[0].Fingerprint != "synth-fp-old" {
+		t.Fatalf("expected HISS-12 entry preserved with synth-fp-old, got: %+v", b.Infractions[0])
+	}
+}

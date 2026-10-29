@@ -30,7 +30,7 @@ Adopted check = coverage state + mechanism; else audit scanner; else `unknown`. 
 | **HISS-09** reference safety | Go: `// SAFETY:` proof before every `unsafe` block | `praetorctl audit` HISS scan in verify-all: Go, Rust `unsafe` without proof; C, Python unchecked | new finding fails verify-all |
 | **HISS-10** warnings | zero warnings: compiler, linter, format sweeps | unknown | advisory |
 | **HISS-11** supply chain | pinned lockfiles; zero floating tags; signed provenance | `praetorctl audit` supply chain + image digest pins in verify-all: Actions SHA pins, Python lock hashes, CDN imports unchecked | new finding fails verify-all |
-| **HISS-12** secrets | zero credentials in Git history | unknown | advisory |
+| **HISS-12** secrets | zero credentials in Git history | `praetorctl security secrets` (gitleaks history scan) in verify-all | new finding fails verify-all |
 | **HISS-13** debt ratchet | recorded infractions never grow vs committed baseline | `praetorctl audit` ratchet vs `.standards-baseline.json` in verify-all | growth fails verify-all |
 | **HISS-14** append-only ABI | public API append-only; breaking change = `!` subject + `Migration:` footer | unknown | advisory |
 | **HISS-15** 3D testing | positive + negative + boundary tests, every public interface | unknown | advisory |

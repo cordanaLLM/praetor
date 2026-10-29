@@ -35,7 +35,8 @@ func AssignFingerprints(infractions []Infraction) {
 	seen := make(map[string]int, len(infractions))
 	for _, i := range order {
 		v := &infractions[i]
-		if v.RuleID == ImageRefRuleID && v.Fingerprint != "" {
+		// Order: engine-hiss-unenforced-checks-20261027 (HISS-12 secret findings keep their fingerprint).
+		if (v.RuleID == ImageRefRuleID || v.RuleID == BaselineRuleID) && v.Fingerprint != "" {
 			continue
 		}
 		if v.Anchor == "" {

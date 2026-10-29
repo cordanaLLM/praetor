@@ -69,28 +69,56 @@ func securityUsageError(stderr io.Writer, err error) error {
 }
 
 // runSecuritySecrets scans history with gitleaks, reading merge commits and judging findings against
-// HISS-12 exceptions. It exits 3 on an unexcused finding and 2 on an incomplete scan.
+// HISS-12 exceptions and .standards-baseline.json (order engine-hiss-unenforced-checks-20261027).
+// It exits 3 on an unexcused finding and 2 on an incomplete scan.
 func runSecuritySecrets(args []string, run govuln.Runner, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("security secrets", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	repoPath := fs.String("path", ".", "Root of the repository to scan; its .standards.yaml names the exceptions")
 	configPath := fs.String("config", "", "Path to .gitleaks.toml configuration (default is <path>/.gitleaks.toml)")
+	recordBaseline := fs.Bool("record-baseline", false, "Record current unexcused secret findings as HISS-12 entries in .standards-baseline.json")
+	reason := fs.String("reason", "", "Rationale stored in .standards-baseline.json when --record-baseline raises the count")
 	scanner, err := parseInterspersed(fs, args)
 	if err != nil {
 		return securitySecretsUsageError(stderr, err)
 	}
+	if !*recordBaseline && strings.TrimSpace(*reason) != "" {
+		return securitySecretsUsageError(stderr, errors.New("--reason requires --record-baseline"))
+	}
 	ctx, cancel := commandContext(secretscan.ScanTimeout + time.Minute)
 	defer cancel()
-	report, err := secretscan.Check(ctx, secretscan.Options{
+	opts := secretscan.Options{
 		Dir:        *repoPath,
 		ConfigPath: *configPath,
 		Scanner:    scanner,
 		Run:        secretscan.Runner(run),
-	})
+	}
+	if *recordBaseline {
+		return runSecuritySecretsRecord(ctx, opts, *reason, stdout, stderr)
+	}
+	report, err := secretscan.Check(ctx, opts)
 	if err != nil {
 		return writeWithStatus(stderr, fmt.Sprintf("secrets: no verdict: %v\n", err), secretsIncompleteExit)
 	}
 	return reportSecrets(report, stdout, stderr)
+}
+
+func runSecuritySecretsRecord(ctx context.Context, opts secretscan.Options, reason string, stdout, stderr io.Writer) error {
+	repo, commit, err := baselineIdentity(ctx, opts.Dir)
+	if err != nil {
+		repo, commit = "", ""
+	}
+	res, err := secretscan.RecordBaseline(ctx, secretscan.RecordOptions{
+		Options:    opts,
+		Reason:     reason,
+		Repository: repo,
+		CommitSHA:  commit,
+	})
+	if err != nil {
+		return writeWithStatus(stderr, fmt.Sprintf("secrets: no verdict: %v\n", err), secretsIncompleteExit)
+	}
+	msg := fmt.Sprintf("secrets: recorded %d HISS-12 finding(s) in %s (total %d infractions)\n", res.Recorded, res.Path, res.Next.Count())
+	return writeWithStatus(stdout, msg, 0)
 }
 
 func securitySecretsUsageError(stderr io.Writer, err error) error {
@@ -108,26 +136,37 @@ func reportSecrets(report *secretscan.Report, stdout, stderr io.Writer) error {
 			return writeErr
 		}
 	}
+	for i := 0; i < len(report.StaleBaseline); i++ {
+		inf := report.StaleBaseline[i]
+		msg := fmt.Sprintf("secrets: stale baseline entry: %s:%d [%s] (%s)\n", inf.FilePath, inf.LineNumber, inf.Message, inf.Fingerprint)
+		if writeErr := writeWithStatus(stdout, msg, 0); writeErr != nil {
+			return writeErr
+		}
+	}
 	if report.Failed() {
-		for i := 0; i < len(report.Blocking); i++ {
-			f := report.Blocking[i]
-			msg := fmt.Sprintf("secrets: finding: commit %s: %s:%d [%s] (%s)\n", f.Commit, f.File, f.StartLine, f.RuleID, f.Fingerprint)
-			if writeErr := writeWithStatus(stderr, msg, 0); writeErr != nil {
-				return writeErr
-			}
-		}
-		for i := 0; i < len(report.Unused); i++ {
-			e := report.Unused[i]
-			msg := fmt.Sprintf("secrets: exceptions entry (rule %s, %s, tool %s): excuses no finding: remove it\n", e.Rule, e.Path, e.Tool)
-			if writeErr := writeWithStatus(stderr, msg, 0); writeErr != nil {
-				return writeErr
-			}
-		}
-		msg := fmt.Sprintf("secrets: FAIL: %s\n", report.Summary())
-		return writeWithStatus(stderr, msg, secretsFindingExit)
+		return reportFailedSecrets(report, stderr)
 	}
 	msg := fmt.Sprintf("secrets: PASS: %s\n", report.Summary())
 	return writeWithStatus(stdout, msg, 0)
+}
+
+func reportFailedSecrets(report *secretscan.Report, stderr io.Writer) error {
+	for i := 0; i < len(report.Blocking); i++ {
+		f := report.Blocking[i]
+		msg := fmt.Sprintf("secrets: finding: commit %s: %s:%d [%s] (%s)\n", f.Commit, f.File, f.StartLine, f.RuleID, f.Fingerprint)
+		if writeErr := writeWithStatus(stderr, msg, 0); writeErr != nil {
+			return writeErr
+		}
+	}
+	for i := 0; i < len(report.Unused); i++ {
+		e := report.Unused[i]
+		msg := fmt.Sprintf("secrets: exceptions entry (rule %s, %s, tool %s): excuses no finding: remove it\n", e.Rule, e.Path, e.Tool)
+		if writeErr := writeWithStatus(stderr, msg, 0); writeErr != nil {
+			return writeErr
+		}
+	}
+	msg := fmt.Sprintf("secrets: FAIL: %s\n", report.Summary())
+	return writeWithStatus(stderr, msg, secretsFindingExit)
 }
 
 // runSecurityGovuln scans the module at --path with the scanner command after "--" (govulncheck

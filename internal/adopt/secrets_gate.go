@@ -7,10 +7,14 @@ package adopt
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/secretscan"
+	"github.com/cordanaLLM/praetor/internal/state"
+	"github.com/cordanaLLM/praetor/internal/toolpins"
 	"github.com/cordanaLLM/praetor/internal/util"
 	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
 	secretsassets "github.com/cordanaLLM/praetor/tools/secrets"
@@ -20,9 +24,16 @@ import (
 // SecurityWorkflowPath is the relative path of the security scan workflow.
 const SecurityWorkflowPath = ".github/workflows/security.yml"
 
-// reconcileSecretsGate reconciles the standalone secrets gate program under tools/secrets
-// and renders any HISS-12 secrets exceptions from .standards.yaml into the workflow step.
+// secretsAdoptionReason is the HISS-13 rationale recorded when adoption baselines existing secret findings.
+const secretsAdoptionReason = "adoption baseline"
+
+// reconcileSecretsGate baselines HISS-12 findings when gitleaks is on PATH (order
+// engine-hiss-unenforced-checks-20261027), reconciles the standalone secrets gate program under
+// tools/secrets, and renders any HISS-12 secrets exceptions from .standards.yaml into the workflow step.
 func reconcileSecretsGate(ctx context.Context, s *adoptSession) error {
+	if err := s.reconcileSecretsBaseline(ctx); err != nil {
+		return err
+	}
 	tracksGo, err := apiassets.TracksModule(ctx, s.repoPath)
 	if err != nil {
 		return err
@@ -34,6 +45,61 @@ func reconcileSecretsGate(ctx context.Context, s *adoptSession) error {
 		return err
 	}
 	return s.renderSecretsExceptions(ctx)
+}
+
+func (s *adoptSession) reconcileSecretsBaseline(ctx context.Context) error {
+	if _, err := exec.LookPath(secretscan.DefaultScanner); err != nil {
+		line := fmt.Sprintf("HISS-12 secret scan baseline skipped: %s not found on PATH (pinned %s; install with %s)",
+			secretscan.DefaultScanner, toolpins.GitleaksVersion, gitleaksInstallHint)
+		s.report.recordNotApplicable("secrets", line)
+		return nil
+	}
+	if inRepo, err := util.GitWorktreePresent(ctx, s.repoPath); err != nil || !inRepo {
+		return err
+	}
+	scanCtx, cancel := context.WithTimeout(ctx, secretscan.ScanTimeout)
+	defer cancel()
+	opts := secretscan.Options{
+		Dir: s.repoPath,
+		Run: util.RunCommand,
+	}
+	if s.opts.DryRun || s.report.BaselineStatus == "existing" {
+		rep, err := secretscan.Check(scanCtx, opts)
+		if err != nil {
+			return fmt.Errorf("secrets baseline scan: %w", err)
+		}
+		s.report.recordNotApplicable("secrets", fmt.Sprintf("Recorded %d HISS-12 secret finding(s) into %s (reason: %s)", len(rep.Blocking)+len(rep.Baselined), baselineFile, secretsAdoptionReason))
+		return nil
+	}
+	return s.recordAdoptionSecretsBaseline(scanCtx, opts)
+}
+
+func (s *adoptSession) recordAdoptionSecretsBaseline(ctx context.Context, opts secretscan.Options) error {
+	if !s.opts.RecordBaseline && !fileExists(filepath.Join(s.repoPath, baselineFile)) {
+		rep, err := secretscan.Check(ctx, opts)
+		if err != nil {
+			return fmt.Errorf("secrets baseline scan: %w", err)
+		}
+		if len(rep.Blocking) == 0 {
+			s.report.recordNotApplicable("secrets", fmt.Sprintf("Recorded 0 HISS-12 secret finding(s) into %s (reason: %s)", baselineFile, secretsAdoptionReason))
+			return nil
+		}
+	}
+	commit, err := state.RecordedCommit(ctx, s.repoPath)
+	if err != nil {
+		commit = ""
+	}
+	res, err := secretscan.RecordBaseline(ctx, secretscan.RecordOptions{
+		Options:    opts,
+		Reason:     secretsAdoptionReason,
+		Repository: s.identity.coordinate(),
+		CommitSHA:  commit,
+	})
+	if err != nil {
+		return fmt.Errorf("record secrets baseline: %w", err)
+	}
+	s.report.recordNotApplicable("secrets", fmt.Sprintf("Recorded %d HISS-12 secret finding(s) into %s (reason: %s)", res.Recorded, baselineFile, secretsAdoptionReason))
+	return nil
 }
 
 func (s *adoptSession) scaffoldSecretsGateAssets(ctx context.Context) error {

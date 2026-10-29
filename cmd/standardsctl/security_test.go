@@ -532,7 +532,8 @@ func TestSecuritySecrets_Positive_CleanPasses(t *testing.T) {
 
 func TestSecuritySecrets_Negative_UsageErrorExitsTwo(t *testing.T) {
 	cases := map[string][]string{
-		"unknown flag": {"secrets", "--bogus-flag"},
+		"unknown flag":               {"secrets", "--bogus-flag"},
+		"reason without record flag": {"secrets", "--reason=why"},
 	}
 	for name, args := range cases {
 		var stdout, stderr bytes.Buffer
@@ -540,5 +541,64 @@ func TestSecuritySecrets_Negative_UsageErrorExitsTwo(t *testing.T) {
 		if exitCode(err) != secretsIncompleteExit || !strings.Contains(stderr.String(), "secrets: no verdict") {
 			t.Errorf("%s: exit %d, want %d, stderr: %s", name, exitCode(err), secretsIncompleteExit, stderr.String())
 		}
+	}
+}
+
+func stubSecretsReportRunner(jsonText string, runErr error) govuln.Runner {
+	return func(_ context.Context, _, _ string, args ...string) (string, error) {
+		for i := 0; i < len(args); i++ {
+			if args[i] == "--report-path" && i+1 < len(args) {
+				if err := os.WriteFile(args[i+1], []byte(jsonText), 0o600); err != nil {
+					return "", err
+				}
+			}
+		}
+		return "", runErr
+	}
+}
+
+func TestSecuritySecrets_BaselineLifecycle_3D(t *testing.T) {
+	dir := t.TempDir()
+	oneFinding := `[{"RuleID":"generic-api-key","File":"creds.py","StartLine":3,"Commit":"aaaa","Secret":"SYNTH-REDACT-ME","Match":"KEY=SYNTH-REDACT-ME","Fingerprint":"synth-fp-1"}]`
+	var stdout, stderr bytes.Buffer
+	err := dispatchSecurity([]string{"secrets", "--path=" + dir, "--record-baseline"}, stubSecretsReportRunner(oneFinding, errors.New("exit 1")), &stdout, &stderr)
+	if err != nil || exitCode(err) != 0 {
+		t.Fatalf("initial record failed: err=%v stderr=%s", err, stderr.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, ".standards-baseline.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "SYNTH-REDACT-ME") {
+		t.Fatalf("secret leaked into baseline: %s", string(raw))
+	}
+	assertSecuritySecretsBaselineVerdicts(t, dir, oneFinding, stubSecretsReportRunner)
+}
+
+func assertSecuritySecretsBaselineVerdicts(t *testing.T, dir, oneFinding string, runReport func(string, error) govuln.Runner) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	err := dispatchSecurity([]string{"secrets", "--path=" + dir}, runReport(oneFinding, errors.New("exit 1")), &stdout, &stderr)
+	if err != nil || !strings.Contains(stdout.String(), "secrets: PASS: zero blocking secret findings (1 baselined)") {
+		t.Fatalf("baselined check failed: err=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	err = dispatchSecurity([]string{"secrets", "--path=" + dir}, runReport("[]", nil), &stdout, &stderr)
+	if err != nil || !strings.Contains(stdout.String(), "secrets: stale baseline entry: creds.py:3 [generic-api-key] (synth-fp-1)") {
+		t.Fatalf("stale check failed: err=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+	}
+	twoFindings := `[{"RuleID":"generic-api-key","File":"creds.py","StartLine":3,"Commit":"aaaa","Fingerprint":"synth-fp-1"},{"RuleID":"aws-access-token","File":"b.py","StartLine":8,"Commit":"bbbb","Fingerprint":"synth-fp-2"}]`
+	stdout.Reset()
+	stderr.Reset()
+	err = dispatchSecurity([]string{"secrets", "--path=" + dir, "--record-baseline"}, runReport(twoFindings, errors.New("exit 1")), &stdout, &stderr)
+	if exitCode(err) != secretsIncompleteExit {
+		t.Fatalf("record increase without reason: exit=%d, want %d", exitCode(err), secretsIncompleteExit)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	err = dispatchSecurity([]string{"secrets", "--path=" + dir, "--record-baseline", "--reason=accepted"}, runReport(twoFindings, errors.New("exit 1")), &stdout, &stderr)
+	if err != nil || !strings.Contains(stdout.String(), "secrets: recorded 2 HISS-12 finding(s)") {
+		t.Fatalf("record increase with reason failed: err=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
 	}
 }

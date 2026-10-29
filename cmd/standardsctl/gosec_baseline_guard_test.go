@@ -165,3 +165,38 @@ func TestGosecBaselineGuard_PreservesHISS11(t *testing.T) {
 		t.Fatalf("expected HISS-11 entry preserved in next baseline, got %+v", next.Infractions)
 	}
 }
+
+// Order engine-hiss-unenforced-checks-20261027: gosec baseline guard record preserves HISS-12
+// entries from the previous baseline.
+func TestGosecBaselineGuard_PreservesHISS12(t *testing.T) {
+	f := gosecRecordFixture(t)
+	seedHistoricalGosec(t, f)
+	prev := &baseline.Baseline{
+		Version:          1,
+		TotalInfractions: 2,
+		Infractions: []baseline.Infraction{
+			{RuleID: "G204", FilePath: "vuln.go", LineNumber: 13, Fingerprint: "fp-gosec"},
+			{RuleID: baseline.BaselineRuleID, FilePath: "creds.py", LineNumber: 1, Fingerprint: "fp-hiss12"},
+		},
+	}
+	findings := []baseline.Infraction{
+		{RuleID: "G204", FilePath: "vuln.go", LineNumber: 13, Fingerprint: "fp-gosec"},
+	}
+	next, err := guardedGosecRecord(t.Context(), f.dir, prev, findings, baseline.RecordOptions{})
+	if err != nil {
+		t.Fatalf("guardedGosecRecord failed: %v", err)
+	}
+	if next.TotalInfractions != 2 || len(next.Infractions) != 2 {
+		t.Fatalf("expected 2 infractions preserved (1 gosec + 1 HISS-12), got %+v", next)
+	}
+	found := false
+	for _, inf := range next.Infractions {
+		if inf.RuleID == baseline.BaselineRuleID && inf.Fingerprint == "fp-hiss12" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected HISS-12 entry preserved in next baseline, got %+v", next.Infractions)
+	}
+}
