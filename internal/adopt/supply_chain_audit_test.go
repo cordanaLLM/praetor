@@ -271,8 +271,9 @@ func TestAuditSupplyChainRefusesExpiredStaleAndMalformedEntries(t *testing.T) {
 			[]string{"excuse no gap, because the workflows meet every declaration; remove them"}},
 		"an entry under a policy declaring nothing": {supplyChainPolicy(0, false, false), supplyChainEntry(".github/workflows/release.yml", "2026-12-31"),
 			[]string{"because the policy declares no supply-chain control"}},
-		"a malformed entry": {supplyChainPolicy(3, false, false), supplyChainEntry("release.yml", "2026-12-31"),
-			[]string{"rule HISS-11 must name one workflow file directly in .github/workflows"}},
+		"a malformed entry": {supplyChainPolicy(3, false, false),
+			config.Exception{Rule: config.ExceptionRuleSupplyChain, Glob: ".github/workflows/*.yml", Reason: "globbed", Expires: "2026-12-31"},
+			[]string{"rule HISS-11 must name one file by path, not a glob"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -318,5 +319,163 @@ func TestNewSupplyChainExceptionDeclaresTheGap(t *testing.T) {
 				t.Fatalf("the gate did not read adoption's entry as declaring the gap: %q, %v", out, err)
 			}
 		})
+	}
+}
+
+// TestAuditSupplyChainReplaysImageRefFixtures replays the HISS-11 container image fixtures across
+// go, python, rust, c, typescript, dockerfile and compose through AuditSupplyChain (HISS-20).
+func TestAuditSupplyChainReplaysImageRefFixtures(t *testing.T) {
+	const rootDir = "../../.config/hiss/testdata/HISS-11"
+	langs := []string{"go", "python", "rust", "c", "typescript", "dockerfile", "compose"}
+	buckets := map[string]bool{"positive": true, "negative": false, "gap": false}
+	for _, lang := range langs {
+		for bucket, wantFail := range buckets {
+			dir := filepath.Join(rootDir, lang, bucket)
+			entries := imageRefFixtureEntries(dir)
+			for i := 0; i < len(entries); i++ {
+				name := entries[i].Name()
+				data, err := os.ReadFile(filepath.Join(dir, name))
+				if err != nil {
+					t.Fatal(err)
+				}
+				repo := supplyChainRepo(t, map[string]string{name: string(data)})
+				_, err = auditSupplyChainAt(context.Background(), repo, supplyChainPolicy(0, false, false))
+				if (err != nil) != wantFail {
+					t.Errorf("%s/%s/%s: AuditSupplyChain error = %v; want failure %t", lang, bucket, name, err, wantFail)
+				}
+			}
+		}
+	}
+}
+
+func imageRefFixtureEntries(dir string) []os.DirEntry {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	fixtures := make([]os.DirEntry, 0, len(entries))
+	for i := 0; i < len(entries); i++ {
+		if entries[i].Name() != "missing-lockfile-entry.go" {
+			fixtures = append(fixtures, entries[i])
+		}
+	}
+	return fixtures
+}
+
+func TestAuditSupplyChainImageRefsBaselineAndExceptions_3D(t *testing.T) {
+	policy := supplyChainPolicy(0, false, false)
+	floating := map[string]string{"Dockerfile": "FROM golang:1.27-alpine\n"}
+
+	root := supplyChainRepo(t, floating)
+	if _, err := auditSupplyChainAt(t.Context(), root, policy); err == nil || !strings.Contains(err.Error(), "golang:1.27-alpine") {
+		t.Fatalf("expected unpinned Dockerfile image to fail AuditSupplyChain, got: %v", err)
+	}
+
+	liveEntry := supplyChainEntry("Dockerfile", "2026-12-31")
+	if out, err := AuditSupplyChain(t.Context(), SupplyChainOptions{
+		Root: root, Policy: policy, Exceptions: []config.Exception{liveEntry}, Today: supplyChainToday,
+	}); err != nil {
+		t.Fatalf("live HISS-11 exception for Dockerfile failed: %v\n%s", err, out)
+	}
+
+	expiredEntry := supplyChainEntry("Dockerfile", "2026-10-05")
+	if _, err := AuditSupplyChain(t.Context(), SupplyChainOptions{
+		Root: root, Policy: policy, Exceptions: []config.Exception{expiredEntry}, Today: supplyChainToday,
+	}); err == nil || !strings.Contains(err.Error(), "expired on 2026-10-05") {
+		t.Fatalf("expected expired HISS-11 exception for Dockerfile to fail, got: %v", err)
+	}
+
+	mustWrite(t, filepath.Join(root, ".standards-baseline.json"),
+		`{"version":1,"total_infractions":1,"infractions":[{"rule_id":"HISS-11","file_path":"Dockerfile","line_number":1,"message":"golang:1.27-alpine","fingerprint":"Dockerfile:HISS-11:image:golang:1.27-alpine"}]}`)
+	if out, err := auditSupplyChainAt(t.Context(), root, policy); err != nil {
+		t.Fatalf("baselined HISS-11 image finding should pass: %v\n%s", err, out)
+	}
+
+	cleanRoot := supplyChainRepo(t, map[string]string{
+		"Dockerfile":               "FROM scratch\n",
+		".standards-baseline.json": `{"version":1,"total_infractions":1,"infractions":[{"rule_id":"HISS-11","file_path":"Dockerfile","line_number":1,"message":"golang:1.27-alpine","fingerprint":"Dockerfile:HISS-11:image:golang:1.27-alpine"}]}`,
+	})
+	out, err := auditSupplyChainAt(t.Context(), cleanRoot, policy)
+	if err != nil || !strings.Contains(out, "stale HISS-11 baseline entry") {
+		t.Fatalf("expected stale HISS-11 baseline entry warning on pass, got out=%q err=%v", out, err)
+	}
+}
+
+func TestAuditSupplyChainUnresolvableAndHelmTemplates_3D(t *testing.T) {
+	policy := supplyChainPolicy(0, false, false)
+	assertUnresolvableImageRefsPass(t, policy)
+	assertMixedImageRefsFail(t, policy)
+	assertUnresolvableImageRefPreviewBound(t, policy)
+}
+
+func assertUnresolvableImageRefsPass(t *testing.T, policy *config.ResolvedPolicy) {
+	t.Helper()
+	// Positive: unresolvable references only (including Helm printf digest template) pass and emit [INFO] with count.
+	unresolvableRepo := supplyChainRepo(t, map[string]string{
+		"Dockerfile": "ARG BASE_IMAGE=alpine:3.19\nFROM ${BASE_IMAGE}\n",
+		"deploy/helm/templates/deployment.yaml": "spec:\n  containers:\n" +
+			"    - image: {{ printf \"%s@%s\" .Values.x.image.repository .Values.x.image.digest }}\n" +
+			"    - image: \"{{ printf \\\"%s@%s\\\" .Values.y.image.repository .Values.y.image.digest }}\"\n",
+		".github/workflows/ci.yml": "jobs:\n  test:\n    container: ${{ inputs.container }}\n",
+	})
+	out, err := auditSupplyChainAt(t.Context(), unresolvableRepo, policy)
+	if err != nil {
+		t.Fatalf("unresolvable-only references must not block AuditSupplyChain: %v\n%s", err, out)
+	}
+	wantInfo := "[INFO] HISS-11 image references not verified: 4 unresolvable (template, variable or link outside the repository); first 5:"
+	if !strings.Contains(out, wantInfo) {
+		t.Fatalf("expected [INFO] summary line %q in output, got:\n%s", wantInfo, out)
+	}
+}
+
+func assertMixedImageRefsFail(t *testing.T, policy *config.ResolvedPolicy) {
+	t.Helper()
+	// Negative: mixed resolvable floating reference + unresolvable references blocks on resolvable only and counts unresolvable in [INFO].
+	mixedRepo := supplyChainRepo(t, map[string]string{
+		"Dockerfile":                            "FROM golang:1.27-alpine\n",
+		"deploy/helm/templates/deployment.yaml": "spec:\n  containers:\n    - image: {{ printf \"%s@%s\" .Values.x.image.repository .Values.x.image.digest }}\n",
+		".github/workflows/ci.yml":              "jobs:\n  test:\n    container: ${{ inputs.container }}\n",
+	})
+	mixedOut, err := auditSupplyChainAt(t.Context(), mixedRepo, policy)
+	if err == nil {
+		t.Fatalf("expected mixed repo with resolvable floating reference to fail, got pass:\n%s", mixedOut)
+	}
+	for _, want := range []string{
+		"golang:1.27-alpine",
+		`praetorctl baseline --record-image-refs --reason "<why>"`,
+		"[INFO] HISS-11 image references not verified: 2 unresolvable (template, variable or link outside the repository); first 5:",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("mixed audit error missing %q:\n%s", want, err.Error())
+		}
+	}
+	if strings.Contains(err.Error(), "[FAIL] Supply chain (HISS-11): deploy/helm") ||
+		strings.Contains(err.Error(), "[FAIL] Supply chain (HISS-11): .github/workflows/ci.yml") {
+		t.Errorf("unresolvable reference was formatted as [FAIL]:\n%s", err.Error())
+	}
+}
+
+func assertUnresolvableImageRefPreviewBound(t *testing.T, policy *config.ResolvedPolicy) {
+	t.Helper()
+	// Boundary: more than 5 unresolvable references reports total count 6 and lists only first 5.
+	sixUnresolvable := supplyChainRepo(t, map[string]string{
+		"deploy/helm/templates/deployment.yaml": strings.Join([]string{
+			"spec:",
+			"  containers:",
+			"    - image: {{ .Values.img1 }}",
+			"    - image: {{ .Values.img2 }}",
+			"    - image: {{ .Values.img3 }}",
+			"    - image: {{ .Values.img4 }}",
+			"    - image: {{ .Values.img5 }}",
+			"    - image: {{ .Values.img6 }}",
+		}, "\n") + "\n",
+	})
+	sixOut, err := auditSupplyChainAt(t.Context(), sixUnresolvable, policy)
+	if err != nil {
+		t.Fatalf("6 unresolvable references must pass: %v\n%s", err, sixOut)
+	}
+	if !strings.Contains(sixOut, "[INFO] HISS-11 image references not verified: 6 unresolvable (template, variable or link outside the repository); first 5:") ||
+		!strings.Contains(sixOut, "img5") || strings.Contains(sixOut, "img6") {
+		t.Fatalf("expected 6 counted and only first 5 listed in [INFO], got:\n%s", sixOut)
 	}
 }

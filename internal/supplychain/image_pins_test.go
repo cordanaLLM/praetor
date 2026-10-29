@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+//
+// SPDX-License-Identifier: EUPL-1.2
+
 package supplychain
 
 // Every container image this repository pins is written down more than once: the
@@ -14,161 +18,19 @@ package supplychain
 // file nobody thought of is covered too.
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"testing"
 
-	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
-
-// taggedDigest matches "<repository>:<tag>@sha256:<64 hex>", the tag-plus-digest form
-// HISS-11 asks for. A bare "<repository>@sha256:..." carries no tag to disagree about and
-// is deliberately not matched.
-var taggedDigest = regexp.MustCompile(`([A-Za-z0-9][A-Za-z0-9._/-]*):([A-Za-z0-9][A-Za-z0-9._-]*)@sha256:([0-9a-f]{64})`)
-
-// maxScannedFiles bounds how many repository paths one scan reads (HISS-02). Git reports
-// roughly 1,800 paths for this tree.
-const maxScannedFiles = 8192
-
-// maxScopeBytes bounds the NUL-separated listing git returns (HISS-02).
-const maxScopeBytes = 8 << 20
-
-// pinnedFileNames are the formats that carry image references. Markdown is left out on
-// purpose: prose quotes digests as examples, and an example is not a pin.
-var pinnedFileNames = map[string]bool{".go": true, ".json": true, ".yml": true, ".yaml": true, ".tmpl": true}
-
-// imagePin is one "<image>:<tag>@sha256:<digest>" occurrence and where it was read.
-type imagePin struct {
-	file   string
-	image  string
-	digest string
-}
-
-// collectImagePins extracts every tagged-digest reference from one file's content. Pure,
-// so the conflict report below is replayable from synthetic content and not only from
-// whatever the tree happens to hold today (HISS-20).
-func collectImagePins(file string, content string) []imagePin {
-	matches := taggedDigest.FindAllStringSubmatch(content, -1)
-	pins := make([]imagePin, 0, len(matches))
-	for _, match := range matches {
-		pins = append(pins, imagePin{file: file, image: normalizeImage(match[1]) + ":" + match[2], digest: match[3]})
-	}
-	return pins
-}
-
-// normalizeImage strips the implicit Docker Hub prefixes, so "docker.io/library/golang"
-// and "golang" are one image rather than two.
-func normalizeImage(repository string) string {
-	for _, prefix := range []string{"docker.io/library/", "docker.io/", "index.docker.io/library/", "index.docker.io/"} {
-		if strings.HasPrefix(repository, prefix) {
-			return strings.TrimPrefix(repository, prefix)
-		}
-	}
-	return repository
-}
-
-// conflictingPins groups pins by image:tag and returns only the groups carrying more than
-// one digest, which is the defect: one tag, two answers.
-func conflictingPins(pins []imagePin) map[string][]imagePin {
-	byImage := make(map[string][]imagePin, len(pins))
-	for _, pin := range pins {
-		byImage[pin.image] = append(byImage[pin.image], pin)
-	}
-	conflicts := make(map[string][]imagePin)
-	for image, group := range byImage {
-		digests := make(map[string]bool, len(group))
-		for _, pin := range group {
-			digests[pin.digest] = true
-		}
-		if len(digests) > 1 {
-			conflicts[image] = group
-		}
-	}
-	return conflicts
-}
-
-// repositoryFiles asks git which paths belong to this repository: tracked files plus
-// untracked files git is not ignoring.
-//
-// A raw filesystem walk was wrong twice over. .claude/worktrees/ is gitignored
-// (.gitignore:66) and holds one full checkout per agent -- 281,981 files on the maintainer's
-// tree -- so the walk blew through maxScannedFiles and made `go test ./...` red in the
-// primary checkout while staying green when run from inside one of those worktrees. Raising
-// the bound is the worse fix: the sibling checkouts sit at older commits, so
-// golang:1.27-alpine is pinned to two different digests across them and the scan then reports
-// a CONFLICT for files this repository does not own.
-//
-// The listing is the seam this repository already uses for exactly that scoping question --
-// same argv and the same bounded, configuration-isolated probe as internal/hiss/hiss.go's
-// GitVisiblePaths and internal/dedupe/scope.go's gitSourceFiles -- rather than a third
-// mechanism that would have to be kept in step with them (HISS-19).
-func repositoryFiles(ctx context.Context, root string) ([]string, error) {
-	out, err := util.RunGitProbe(ctx, root, maxScopeBytes,
-		"ls-files", "--cached", "--others", "--exclude-standard", "--deduplicate", "-z", "--", ".")
-	if err != nil {
-		return nil, fmt.Errorf("enumerate image pin scope in %s: %w", root, err)
-	}
-	var files []string
-	for _, rel := range strings.Split(string(out.Stdout), "\x00") {
-		if rel == "" {
-			continue
-		}
-		if len(files) >= maxScannedFiles {
-			return nil, fmt.Errorf("image pin scope passed %d files; narrow the listing", maxScannedFiles)
-		}
-		files = append(files, rel)
-	}
-	return files, nil
-}
-
-// scannedFile reports whether a repository path is a format that carries image pins.
-//
-// testdata is dropped for the reason internal/dedupe/scope.go drops it: a fixture corpus is
-// deliberately repetitive and the digests in it are inputs to some other rule, not this
-// repository's own pins. Everything else the old walk skipped by name -- .git, .workingdir,
-// vendor, node_modules -- is already outside the git listing, ignored or never tracked, so no
-// second skip list has to be held in step with .gitignore.
-func scannedFile(rel string) bool {
-	slashed := filepath.ToSlash(rel)
-	if strings.HasPrefix(slashed, "testdata/") || strings.Contains(slashed, "/testdata/") {
-		return false
-	}
-	base := filepath.Base(slashed)
-	return pinnedFileNames[filepath.Ext(base)] || strings.HasPrefix(base, "Dockerfile")
-}
-
-// scanRepositoryPins collects every tagged-digest reference the repository owns.
-func scanRepositoryPins(ctx context.Context, root string) ([]imagePin, error) {
-	files, err := repositoryFiles(ctx, root)
-	if err != nil {
-		return nil, err
-	}
-	var pins []imagePin
-	for _, rel := range files {
-		if !scannedFile(rel) {
-			continue
-		}
-		content, readErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
-		if errors.Is(readErr, os.ErrNotExist) {
-			continue // A tracked deletion is listed but absent from the working tree.
-		}
-		if readErr != nil {
-			return nil, readErr
-		}
-		pins = append(pins, collectImagePins(filepath.ToSlash(rel), string(content))...)
-	}
-	return pins, nil
-}
 
 func TestRepositoryPinsOneDigestPerImageTag(t *testing.T) {
 	requireGit(t)
-	pins, err := scanRepositoryPins(t.Context(), filepath.Join("..", ".."))
+	pins, err := ScanRepositoryPins(t.Context(), filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatalf("scan repository image pins: %v", err)
 	}
@@ -184,28 +46,28 @@ func TestRepositoryPinsOneDigestPerImageTag(t *testing.T) {
 	if shared < 2 {
 		t.Fatalf("expected at least two images pinned from several files, found %d in %d references: the scan has stopped matching this tree", shared, len(pins))
 	}
-	for image, group := range conflictingPins(pins) {
+	for image, group := range ConflictingPins(pins) {
 		t.Errorf("%s is pinned to more than one digest:\n%s", image, describePins(group))
 	}
 }
 
 // pinCopies maps each image:tag to the set of files that pin it.
-func pinCopies(pins []imagePin) map[string]map[string]bool {
+func pinCopies(pins []ImagePin) map[string]map[string]bool {
 	copies := make(map[string]map[string]bool)
 	for _, pin := range pins {
-		if copies[pin.image] == nil {
-			copies[pin.image] = make(map[string]bool)
+		if copies[pin.Image] == nil {
+			copies[pin.Image] = make(map[string]bool)
 		}
-		copies[pin.image][pin.file] = true
+		copies[pin.Image][pin.File] = true
 	}
 	return copies
 }
 
 // describePins renders a conflict in file order so the failure names the copy to fix.
-func describePins(group []imagePin) string {
+func describePins(group []ImagePin) string {
 	lines := make([]string, 0, len(group))
 	for _, pin := range group {
-		lines = append(lines, fmt.Sprintf("  %s: sha256:%s", pin.file, pin.digest))
+		lines = append(lines, fmt.Sprintf("  %s: sha256:%s", pin.File, pin.Digest))
 	}
 	sort.Strings(lines)
 	return strings.Join(lines, "\n")
@@ -252,14 +114,14 @@ func TestConflictingPinsReportsOnlyDisagreement(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var pins []imagePin
+			var pins []ImagePin
 			for file, content := range tc.files {
-				pins = append(pins, collectImagePins(file, content)...)
+				pins = append(pins, CollectImagePins(file, content)...)
 			}
 			if len(pins) != tc.wantPins {
 				t.Fatalf("collected %d pins, want %d: %v", len(pins), tc.wantPins, pins)
 			}
-			conflicts := conflictingPins(pins)
+			conflicts := ConflictingPins(pins)
 			if len(conflicts) != len(tc.wantConflicts) {
 				t.Fatalf("reported %d conflicts, want %d: %v", len(conflicts), len(tc.wantConflicts), conflicts)
 			}
@@ -288,9 +150,8 @@ func fixtureRepo(t *testing.T, files map[string]string) string {
 			t.Fatalf("write %s: %v", rel, err)
 		}
 	}
-	if _, err := util.RunGitProbe(t.Context(), root, maxScopeBytes, "init", "-q"); err != nil {
-		t.Fatalf("git init the fixture repository: %v", err)
-	}
+	// engine-agenthook-windows-flake-20261028: fixtures init git under fixture bound, not probe bound.
+	testsupport.RunFixtureGit(t, root, []string{"init", "-q"})
 	return root
 }
 
@@ -311,25 +172,25 @@ func TestScanRepositoryPinsSkipsGitignoredCheckouts(t *testing.T) {
 		ignoring[rel] = content
 	}
 
-	pins, err := scanRepositoryPins(t.Context(), fixtureRepo(t, ignoring))
+	pins, err := ScanRepositoryPins(t.Context(), fixtureRepo(t, ignoring))
 	if err != nil {
 		t.Fatalf("scan the fixture with the nested checkout ignored: %v", err)
 	}
 	if len(pins) != 1 {
 		t.Fatalf("an ignored checkout contributed pins: %v", pins)
 	}
-	if conflicts := conflictingPins(pins); len(conflicts) != 0 {
+	if conflicts := ConflictingPins(pins); len(conflicts) != 0 {
 		t.Errorf("an ignored checkout at an older digest was reported as a conflict: %v", conflicts)
 	}
 
-	tracked, err := scanRepositoryPins(t.Context(), fixtureRepo(t, tree))
+	tracked, err := ScanRepositoryPins(t.Context(), fixtureRepo(t, tree))
 	if err != nil {
 		t.Fatalf("scan the fixture without the ignore rule: %v", err)
 	}
 	if len(tracked) != 3 {
 		t.Fatalf("collected %d pins from the unignored tree, want 3: %v", len(tracked), tracked)
 	}
-	if _, reported := conflictingPins(tracked)["golang:1.27-alpine"]; !reported {
+	if _, reported := ConflictingPins(tracked)["golang:1.27-alpine"]; !reported {
 		t.Error("the scan no longer reports a real two-digest conflict, so the ignored case above proves nothing")
 	}
 }
@@ -338,10 +199,10 @@ func TestScanRepositoryPinsSkipsGitignoredCheckouts(t *testing.T) {
 // scan, and a directory that is no git work tree is likewise refused rather than walked.
 func TestScanRepositoryPinsRejectsARootGitCannotList(t *testing.T) {
 	requireGit(t)
-	if _, err := scanRepositoryPins(t.Context(), filepath.Join(t.TempDir(), "absent")); err == nil {
+	if _, err := ScanRepositoryPins(t.Context(), filepath.Join(t.TempDir(), "absent")); err == nil {
 		t.Error("scanning an absent root returned no error")
 	}
-	if _, err := scanRepositoryPins(t.Context(), t.TempDir()); err == nil {
+	if _, err := ScanRepositoryPins(t.Context(), t.TempDir()); err == nil {
 		t.Error("scanning a directory that is no git work tree returned no error")
 	}
 }
@@ -350,13 +211,157 @@ func TestScanRepositoryPinsRejectsARootGitCannotList(t *testing.T) {
 // prose are not.
 func TestScannedFileSelectsPinFormatsOutsideTestdata(t *testing.T) {
 	for _, rel := range []string{"Dockerfile", "build/package/Dockerfile", ".devcontainer/Dockerfile.praetor", "a.go", "b.yml", "c.yaml", "d.json", "e.tmpl"} {
-		if !scannedFile(rel) {
+		if !ScannedFile(rel) {
 			t.Errorf("%s carries pins and was skipped", rel)
 		}
 	}
 	for _, rel := range []string{"README.md", "docs/adoption.md", "testdata/Dockerfile", "internal/hiss/testdata/a.go", "LICENSE"} {
-		if scannedFile(rel) {
+		if ScannedFile(rel) {
 			t.Errorf("%s is not one of this repository's pins and was scanned", rel)
 		}
+	}
+}
+
+type imageRefSurfaceCase struct {
+	name         string
+	file         string
+	content      string
+	wantRefs     []string
+	unresolvable bool
+}
+
+func runtimeImageRefCases(digest string) []imageRefSurfaceCase {
+	return []imageRefSurfaceCase{
+		{
+			name:     "workflow container services and docker uses",
+			file:     ".github/workflows/ci.yml",
+			content:  "jobs:\n  test:\n    container: golang:1.27\n    services:\n      redis:\n        image: redis:7\n    steps:\n      - uses: docker://alpine:3.19\n      - uses: docker://alpine:3.19@sha256:" + digest + "\n",
+			wantRefs: []string{"golang:1.27", "redis:7", "docker://alpine:3.19"},
+		},
+		{
+			name:     "devcontainer image field",
+			file:     ".devcontainer/devcontainer.json",
+			content:  "{\n  \"image\": \"mcr.microsoft.com/devcontainers/go:1.27\"\n}\n",
+			wantRefs: []string{"mcr.microsoft.com/devcontainers/go:1.27"},
+		},
+		{
+			name:     "source string literals qualified references",
+			file:     "runner.go",
+			content:  "package p\nconst a = \"ghcr.io/org/runner:1.4.2\"\nconst b = \"localhost:5000/team/worker:v2\"\nconst c = \"ghcr.io/org/runner:1.4.2@sha256:" + digest + "\"\n",
+			wantRefs: []string{"ghcr.io/org/runner:1.4.2", "localhost:5000/team/worker:v2"},
+		},
+		{
+			name:    "source string literals plain host:port and URLs never match",
+			file:    "net.go",
+			content: "package p\nvar (a = \"localhost:8080\"; b = \"127.0.0.1:5432\"; c = \"db.internal:5432\"; d = \"https://ghcr.io/org/runner:1.4.2\"; e = \"redis:7.2\")\n",
+		},
+	}
+}
+
+func TestCollectImageRefFindingsSurfaces_3D(t *testing.T) {
+	const digest = "4a7b9f0e1c2d3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b"
+	cases := []imageRefSurfaceCase{
+		{
+			name:     "Dockerfile floating FROM and stage alias ignored",
+			file:     "Dockerfile",
+			content:  "FROM golang:1.27-alpine AS builder\nFROM scratch\nFROM builder\n",
+			wantRefs: []string{"golang:1.27-alpine"},
+		},
+		{
+			name:    "Dockerfile digest pinned FROM",
+			file:    "Containerfile",
+			content: "FROM golang:1.27-alpine@sha256:" + digest + " AS builder\nFROM builder\nFROM scratch\n",
+		},
+		{
+			name:         "Dockerfile build arg without digest is reported unresolvable",
+			file:         "Dockerfile",
+			content:      "ARG BASE_IMAGE=alpine:3.19\nFROM ${BASE_IMAGE}\n",
+			wantRefs:     []string{"${BASE_IMAGE}"},
+			unresolvable: true,
+		},
+		{
+			name:         "Helm printf digest template is reported unresolvable",
+			file:         "deploy/helm/templates/deployment.yaml",
+			content:      "spec:\n  containers:\n    - image: \"{{ printf \\\"%s@%s\\\" .Values.x.image.repository .Values.x.image.digest }}\"\n",
+			wantRefs:     []string{`{{ printf \"%s@%s\" .Values.x.image.repository .Values.x.image.digest }}`},
+			unresolvable: true,
+		},
+		{
+			name:     "compose and k8s image field",
+			file:     "docker-compose.yml",
+			content:  "services:\n  db:\n    image: postgres:16-alpine\n  cache:\n    image: redis:7.2@sha256:" + digest + "\n",
+			wantRefs: []string{"postgres:16-alpine"},
+		},
+	}
+	cases = append(cases, runtimeImageRefCases(digest)...)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := CollectImageRefFindings(tc.file, tc.content)
+			if len(got) != len(tc.wantRefs) {
+				t.Fatalf("got %d findings (%+v), want %d (%v)", len(got), got, len(tc.wantRefs), tc.wantRefs)
+			}
+			for i, want := range tc.wantRefs {
+				if got[i].Reference != want || got[i].RuleID != ImageRefRuleID {
+					t.Errorf("finding[%d] = %+v, want reference %q rule %s", i, got[i], want, ImageRefRuleID)
+				}
+				if got[i].Fingerprint != ImageRefFingerprint(tc.file, want) {
+					t.Errorf("finding[%d] fingerprint = %q, want %q", i, got[i].Fingerprint, ImageRefFingerprint(tc.file, want))
+				}
+				if tc.unresolvable && !got[i].Unresolvable {
+					t.Errorf("finding[%d] expected Unresolvable=true, got %+v", i, got[i])
+				}
+			}
+		})
+	}
+}
+
+// Boundaries of the file read (HISS-02, HISS-21): a tracked file deleted from the working tree is
+// skipped, and a tracked file above maxImageRefFileBytes fails the scan with its name instead of
+// being read in full or skipped.
+func TestScanImageRefsReadBoundaries(t *testing.T) {
+	root := fixtureRepo(t, map[string]string{
+		"Dockerfile":     "FROM docker.io/library/alpine:3.20\n",
+		"big/Dockerfile": "FROM docker.io/library/alpine:3.20\n",
+	})
+	testsupport.RunFixtureGit(t, root, []string{"add", "-A"})
+	if err := os.Remove(filepath.Join(root, "Dockerfile")); err != nil {
+		t.Fatalf("remove tracked Dockerfile: %v", err)
+	}
+	if err := os.Truncate(filepath.Join(root, "big", "Dockerfile"), maxImageRefFileBytes+1); err != nil {
+		t.Fatalf("grow big/Dockerfile: %v", err)
+	}
+	_, err := ScanImageRefs(t.Context(), root)
+	if err == nil || !strings.Contains(err.Error(), "big/Dockerfile") {
+		t.Fatalf("oversized tracked file: got error %v, want one naming big/Dockerfile", err)
+	}
+	if err := os.Remove(filepath.Join(root, "big", "Dockerfile")); err != nil {
+		t.Fatalf("remove big/Dockerfile: %v", err)
+	}
+	findings, err := ScanImageRefs(t.Context(), root)
+	if err != nil {
+		t.Fatalf("tracked files deleted from the working tree: %v", err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("deleted files produced findings: %+v", findings)
+	}
+	assertImageRefOutsideLink(t, root)
+}
+
+func assertImageRefOutsideLink(t *testing.T, root string) {
+	t.Helper()
+	outside := filepath.Join(t.TempDir(), "compose.yml")
+	if err := os.WriteFile(outside, []byte("services:\n  app:\n    image: docker.io/library/redis:latest\n"), 0o600); err != nil {
+		t.Fatalf("write outside compose file: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "docker-compose.yml")); err != nil {
+		t.Skipf("symlink unavailable on this platform, link case not run: %v", err)
+	}
+	testsupport.RunFixtureGit(t, root, []string{"add", "-A"})
+	findings, err := ScanImageRefs(t.Context(), root)
+	if err != nil {
+		t.Fatalf("link leaving the root failed the scan: %v", err)
+	}
+	if len(findings) != 1 || !findings[0].Unresolvable || findings[0].Reference != imageRefLinkOutside || findings[0].File != "docker-compose.yml" {
+		t.Fatalf("link leaving the root: got %+v, want one unresolvable finding for docker-compose.yml", findings)
 	}
 }

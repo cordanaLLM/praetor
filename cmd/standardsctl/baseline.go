@@ -14,6 +14,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/readmepresentation"
 	"github.com/cordanaLLM/praetor/internal/state"
+	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -28,6 +29,7 @@ var errBaselineMissing = errors.New("no baseline file to verify")
 type baselineMode struct {
 	path               string
 	record             bool
+	recordImageRefs    bool
 	verify             bool
 	allowIncrease      bool
 	reason             string
@@ -47,6 +49,8 @@ func runBaseline(args []string) error {
 	}
 
 	switch {
+	case mode.recordImageRefs:
+		return recordImageRefBaselineCmd(mode.path, mode.allowIncrease, mode.reason)
 	case mode.record:
 		hissOpts := baseline.RecordOptions{AllowIncrease: mode.allowIncrease, Rationale: mode.reason}
 		gosecOpts := baseline.RecordOptions{AllowIncrease: mode.allowGosecIncrease, Rationale: mode.gosecReason}
@@ -62,6 +66,7 @@ func parseBaselineMode(args []string) (baselineMode, error) {
 	fs := flag.NewFlagSet("baseline", flag.ContinueOnError)
 	fs.StringVar(&mode.path, "file", ".standards-baseline.json", "Path to baseline file; its directory is the scanned root")
 	fs.BoolVar(&mode.record, "record", false, "Record current infractions into baseline file")
+	fs.BoolVar(&mode.recordImageRefs, "record-image-refs", false, "Record current unexcused HISS-11 container image reference findings into baseline file")
 	fs.BoolVar(&mode.verify, "verify", false,
 		"Rescan read-only and fail when the repository carries an infraction the baseline does not record or more than it records; never writes the file")
 	fs.BoolVar(&mode.allowIncrease, "allow-increase", false, "Permit --record to raise the infraction count (HISS-13 exception); requires --reason")
@@ -88,7 +93,35 @@ func parseBaselineMode(args []string) (baselineMode, error) {
 }
 
 func (mode baselineMode) writesRequested() bool {
-	return mode.record || mode.allowIncrease || mode.reason != "" || mode.allowGosecIncrease || mode.gosecReason != ""
+	return mode.record || mode.recordImageRefs || mode.allowIncrease || mode.reason != "" || mode.allowGosecIncrease || mode.gosecReason != ""
+}
+
+func recordImageRefBaselineCmd(path string, allowIncrease bool, reason string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), baselineScanTimeout)
+	defer cancel()
+	root := filepath.Dir(path)
+	repo, commit, err := baselineIdentity(ctx, root)
+	if err != nil {
+		return fmt.Errorf("refusing to record %s: %w", path, err)
+	}
+	var exceptions []config.Exception
+	if manifest, err := config.LoadManifest(filepath.Join(root, ".standards.yaml")); err == nil && manifest != nil {
+		exceptions = manifest.Exceptions
+	}
+	res, err := supplychain.RecordImageRefBaseline(ctx, supplychain.ImageBaselineRecordOptions{
+		Root:          root,
+		BaselinePath:  path,
+		AllowIncrease: allowIncrease,
+		Reason:        reason,
+		Repository:    repo,
+		CommitSHA:     commit,
+		Exceptions:    exceptions,
+		Today:         time.Now(),
+	})
+	if err != nil {
+		return err
+	}
+	return saveFileBaseline(res.Path, res.Previous, res.Next)
 }
 
 // scanBaselineInfractions scans root under the complexity policy `praetorctl audit` enforces

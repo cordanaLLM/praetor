@@ -86,3 +86,38 @@ func TestAudit_Positive_TouchedCountNamesBaselined(t *testing.T) {
 	mustErrContain(t, err, "(touched file must be clean, baselined)")
 	mustErrContain(t, err, "1 of the touched-file violations are baselined: touching a file revokes its baseline exemptions")
 }
+
+// Order engine-hiss-unenforced-checks-20261027: HISS-11 entries in the baseline are owned by
+// the supply-chain image scanner, not the HISS AST sweep. Neither praetorctl baseline --verify
+// nor praetorctl audit's AST sweep counts them as stale or fails a zero-stale bound.
+func TestAudit_Positive_HISS11BaselineEntriesNotStale(t *testing.T) {
+	f := newAuditFixture(t)
+	writeFixtureFile(t, f.dir, "Dockerfile", "FROM golang:1.27-alpine\n")
+	f.writeBaseline(t, []baseline.Infraction{
+		{
+			RuleID:      baseline.ImageRefRuleID,
+			FilePath:    "Dockerfile",
+			LineNumber:  1,
+			Message:     "golang:1.27-alpine",
+			Fingerprint: "Dockerfile:HISS-11:image:golang:1.27-alpine",
+		},
+	}, "")
+	gitCommitAll(t, f.dir, f.gitEnv, "hiss11 baseline fixture")
+
+	out, err := f.audit(t, "--max-stale-baseline-entries=0")
+	if err != nil {
+		t.Fatalf("audit failed on HISS-11 baseline entry: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "matches nothing") {
+		t.Fatalf("audit counted HISS-11 baseline entry as stale:\n%s", out)
+	}
+
+	out, err = runBaselineCmd(t, f, "--verify")
+	if err != nil {
+		t.Fatalf("baseline --verify failed: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "matches nothing") {
+		t.Fatalf("baseline --verify counted HISS-11 entry as stale:\n%s", out)
+	}
+	mustContain(t, out, "0 active infractions within the 1 recorded")
+}

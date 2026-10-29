@@ -122,7 +122,6 @@ var exceptionRules = append(hisscatalog.RuleIDs(),
 // workflowRuleExamples maps each rule whose entries name one workflow file by path to the
 // workflow a refusal names as an example.
 var workflowRuleExamples = map[string]string{
-	ExceptionRuleSupplyChain:      "release.yml",
 	ExceptionRuleBuildWarnings:    "ci.yml",
 	ExceptionRuleWorkflowTriggers: "release.yml",
 	ExceptionRuleTestTimeout:      "portability.yml",
@@ -523,7 +522,7 @@ func (e Exception) declaredLintersTargetProblem() string {
 }
 
 func (e Exception) pathOrGlobTargetProblem() string {
-	if slices.Contains(hisscatalog.ScannerRuleIDs(), e.Rule) && (e.Path == "" || e.Glob != "") {
+	if (slices.Contains(hisscatalog.ScannerRuleIDs(), e.Rule) || e.Rule == ExceptionRuleSupplyChain) && (e.Path == "" || e.Glob != "") {
 		return fmt.Sprintf("rule %s must name one file by path, not a glob", e.Rule)
 	}
 	if (e.Path == "") == (e.Glob == "") {

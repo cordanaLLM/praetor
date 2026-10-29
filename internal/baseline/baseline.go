@@ -15,6 +15,10 @@ import (
 const (
 	// FilePerm is the mode of the written baseline: a tracked artifact reviewers read.
 	FilePerm os.FileMode = 0o644
+	// ImageRefRuleID is the rule identifier of container image pin findings (HISS-11).
+	ImageRefRuleID = "HISS-11"
+	// maxOwnedRules bounds the owned rules slice checked during Record (HISS-02).
+	maxOwnedRules = 16
 )
 
 var (
@@ -136,6 +140,9 @@ type RecordOptions struct {
 	Rationale  string
 	Repository string
 	CommitSHA  string
+	// OwnedRules declares rule IDs this recording pass owns. Infractions of unowned
+	// rules carried over from the previous baseline remain preserved.
+	OwnedRules []string
 }
 
 // LoadBaseline reads a single-class baseline; missing files are marked Absent.
@@ -260,17 +267,20 @@ func Record(previous *Baseline, infractions []Infraction, opts RecordOptions) (*
 		commitSHA = previous.CommitSHA
 	}
 
+	carried := carriedInfractions(previous.Infractions, opts.OwnedRules)
+	totalCount := len(infractions) + len(carried)
 	next := &Baseline{
 		Version:          previous.Version,
 		Repository:       repository,
 		CommitSHA:        commitSHA,
-		Infractions:      make([]Infraction, 0, len(infractions)),
-		TotalInfractions: len(infractions),
+		Infractions:      make([]Infraction, 0, totalCount),
+		TotalInfractions: totalCount,
 	}
 	if next.Version == 0 {
 		next.Version = 1
 	}
 	next.Infractions = append(next.Infractions, infractions...)
+	next.Infractions = append(next.Infractions, carried...)
 
 	// Avoid commit_sha churn: if infractions didn't change at all, retain the old SHA.
 	if previous.CommitSHA != "" && sameInfractions(previous.Infractions, next.Infractions) {
@@ -288,6 +298,27 @@ func Record(previous *Baseline, infractions []Infraction, opts RecordOptions) (*
 		next.IncreaseRationale = rationale
 	}
 	return next, nil
+}
+
+func ownsRule(owned []string, rule string) bool {
+	for i := 0; i < len(owned) && i < maxOwnedRules; i++ {
+		if owned[i] == rule {
+			return true
+		}
+	}
+	return false
+}
+
+func carriedInfractions(previous []Infraction, owned []string) []Infraction {
+	ownsImageRefs := ownsRule(owned, ImageRefRuleID)
+	var carried []Infraction
+	for i := 0; i < len(previous); i++ {
+		isImageRef := previous[i].RuleID == ImageRefRuleID
+		if (ownsImageRefs && !isImageRef) || (!ownsImageRefs && isImageRef) {
+			carried = append(carried, previous[i])
+		}
+	}
+	return carried
 }
 
 // SameDebt reports whether next records the same debt as b for the same repository: the
@@ -416,6 +447,9 @@ func staleEntries(recorded, current []Infraction) int {
 	after := countByFileRule(current, nil)
 	stale := 0
 	for key, count := range before {
+		if key.rule == ImageRefRuleID {
+			continue
+		}
 		if count > after[key] {
 			stale += count - after[key]
 		}
