@@ -104,8 +104,7 @@ func TestValidateUISpecTexts_Negative(t *testing.T) {
 	if err := flavor.ValidateUIResponsivenessSpecText("const x = 1;\n"); err == nil || !strings.Contains(err.Error(), config.UIInputLatencyEnv) {
 		t.Fatalf("ValidateUIResponsivenessSpecText missing env err = %v, want %s", err, config.UIInputLatencyEnv)
 	}
-	literalSpec := "const x = process.env.PRAETOR_UI_INPUT_LATENCY_MS;\nnew PerformanceObserver(() => {}).observe({ durationThreshold: 16 });\nexpect(maxDurationMs).toBeLessThanOrEqual(100);\n// 5000 503\n"
-	if err := flavor.ValidateUIResponsivenessSpecText(literalSpec); err == nil || !strings.Contains(err.Error(), "numeric latency literal") {
+	if err := flavor.ValidateUIResponsivenessSpecText("const x = process.env.PRAETOR_UI_INPUT_LATENCY_MS;\nnew PerformanceObserver(() => {}).observe({ durationThreshold: 16 });\nexpect(maxDurationMs).toBeLessThanOrEqual(100);\n// 5000 503\n"); err == nil || !strings.Contains(err.Error(), "numeric latency literal") {
 		t.Fatalf("ValidateUIResponsivenessSpecText numeric literal err = %v, want numeric latency literal", err)
 	}
 }

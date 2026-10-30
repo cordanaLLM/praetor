@@ -133,7 +133,7 @@ func TestScreenMatrixFileStaysWithinRoot(t *testing.T) {
 }
 
 func TestScreenMatrixReferenceStrings(t *testing.T) {
-	cases := []struct {
+	for _, tc := range []struct {
 		content string
 		valid   bool
 	}{
@@ -146,8 +146,7 @@ func TestScreenMatrixReferenceStrings(t *testing.T) {
 		{`const file = "matrix.json.backup"`, false},
 		{`const file = matrix.json`, false},
 		{`const file = 'matrix.json"`, false},
-	}
-	for _, tc := range cases {
+	} {
 		if got := referencesScreenMatrix(tc.content, "data/matrix.json"); got != tc.valid {
 			t.Errorf("reference %q = %v, want %v", tc.content, got, tc.valid)
 		}

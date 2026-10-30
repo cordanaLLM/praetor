@@ -156,8 +156,7 @@ func checkScreenMatrixSpec(root, rel string) error {
 
 func referencesScreenMatrix(content, rel string) bool {
 	// Basenames also cover paths relative to a nested spec directory.
-	quotes := []string{"'", "\"", "`"}
-	for i := 0; i < len(quotes) && i < 3; i++ {
+	for quotes, i := []string{"'", "\"", "`"}, 0; i < len(quotes) && i < 3; i++ {
 		quote := regexp.QuoteMeta(quotes[i])
 		pattern := quote + "(?:[^\"'`\\r\\n]*/)?" + regexp.QuoteMeta(path.Base(rel)) + quote
 		if regexp.MustCompile(pattern).MatchString(content) {

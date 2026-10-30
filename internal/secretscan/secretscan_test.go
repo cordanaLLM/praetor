@@ -201,8 +201,7 @@ func TestCheck_CleanRepo_Passes(t *testing.T) {
 	if report.Failed() {
 		t.Fatalf("clean repo failed: %s", report.Summary())
 	}
-	want := "zero secret findings in history; no baselined entries (baseline file absent)"
-	if report.Summary() != want {
+	if want := "zero secret findings in history; no baselined entries (baseline file absent)"; report.Summary() != want {
 		t.Errorf("summary = %q, want %q", report.Summary(), want)
 	}
 }
@@ -408,9 +407,8 @@ func TestRecordBaseline_3D(t *testing.T) {
 	if strings.Contains(string(raw), "SYNTH-DO-NOT-WRITE") {
 		t.Fatalf("secret text leaked into baseline file:\n%s", string(raw))
 	}
-	twoFindings := `[{"RuleID":"generic-api-key","File":"creds.py","StartLine":4,"Commit":"aaaa","Fingerprint":"synth-fp-1"},{"RuleID":"aws-access-token","File":"b.py","StartLine":8,"Commit":"bbbb","Fingerprint":"synth-fp-2"}]`
 	if _, err := secretscan.RecordBaseline(t.Context(), secretscan.RecordOptions{
-		Options: secretscan.Options{Dir: dir, Run: stubReportRunner(twoFindings, fmt.Errorf("exit status 1"))},
+		Options: secretscan.Options{Dir: dir, Run: stubReportRunner(`[{"RuleID":"generic-api-key","File":"creds.py","StartLine":4,"Commit":"aaaa","Fingerprint":"synth-fp-1"},{"RuleID":"aws-access-token","File":"b.py","StartLine":8,"Commit":"bbbb","Fingerprint":"synth-fp-2"}]`, fmt.Errorf("exit status 1"))},
 	}); err == nil {
 		t.Fatal("expected second record with more findings and no reason to be refused")
 	}
@@ -719,6 +717,7 @@ func TestUnexcusedSecretInfractions(t *testing.T) {
 			Fingerprint: "fp-excused",
 			Category:    "A",
 			Expires:     "2026-12-31",
+			Category:    "D",
 			Reason:      "test fixture exception",
 		},
 	})

@@ -76,12 +76,18 @@ func TestAdoptedExplanation_Positive_StatesAdoptedEnforcement(t *testing.T) {
 		failure != "new finding fails verify-all, blocks commit, blocks push" {
 		t.Fatalf("HISS-11 Adopted() = %q, %q", check, failure)
 	}
-	unchecked, _ := LookupRule("HISS-03")
+	for _, id := range []string{"HISS-03", "HISS-05", "HISS-06"} {
+		rule, _ := LookupRule(id)
+		if text := rule.AdoptedExplanation(); !strings.Contains(text, "HISS scan in verify-all + lefthook pre-commit/pre-push") {
+			t.Errorf("%s adopted explanation: %s", id, text)
+		}
+	}
+	unchecked, _ := LookupRule("HISS-18")
 	if text := unchecked.AdoptedExplanation(); text != unchecked.Explanation()+"\nAdopted repositories: not enforced; adoption generates no check for this rule." {
-		t.Fatalf("HISS-03 adopted explanation:\n%s", text)
+		t.Fatalf("HISS-18 adopted explanation:\n%s", text)
 	}
 	if check, failure := unchecked.Adopted(AllPipelines); check != NotEnforced || failure != Advisory {
-		t.Fatalf("HISS-03 Adopted() = %q, %q", check, failure)
+		t.Fatalf("HISS-18 Adopted() = %q, %q", check, failure)
 	}
 }
 
@@ -187,9 +193,15 @@ func TestAuditScanner_PositiveNegativeBoundary(t *testing.T) {
 	if got := scanner.AuditScanner(Facts{Languages: LanguageOther}); got != "" {
 		t.Errorf("scanner applies to other-language repository: %q", got)
 	}
-	unknown, ok := LookupRule("HISS-06")
+	for _, id := range []string{"HISS-03", "HISS-05", "HISS-06"} {
+		rule, _ := LookupRule(id)
+		if got := rule.AuditScanner(Facts{Languages: LanguageGo}); got == "" {
+			t.Errorf("Go audit scanner missing for %s", id)
+		}
+	}
+	unknown, ok := LookupRule("HISS-18")
 	if !ok {
-		t.Fatal("HISS-06 missing from catalog")
+		t.Fatal("HISS-18 missing from catalog")
 	}
 	if got := unknown.AuditScanner(Facts{Languages: LanguageGo}); got != "" {
 		t.Errorf("non-scanner rule acquired audit scanner: %q", got)

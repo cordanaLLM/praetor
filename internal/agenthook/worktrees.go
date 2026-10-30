@@ -60,8 +60,7 @@ func (c *worktreeCheck) judge(ctx context.Context, command, workDir string) Verd
 	if err != nil {
 		return Verdict{Outcome: Deny, Reason: boundReason(refusal("HISS", "git worktree add check: "+err.Error()))}
 	}
-	start := 0
-	for i := 0; i <= len(fields); i++ {
+	for start, i := 0, 0; i <= len(fields); i++ {
 		if i < len(fields) && !targetCommandSeparator(fields[i]) {
 			continue
 		}

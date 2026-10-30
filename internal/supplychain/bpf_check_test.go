@@ -157,8 +157,7 @@ func testOversizeBPFMissingLicenseCase(t *testing.T, declared string) {
 	if len(rep.Findings) != 1 {
 		t.Fatalf("expected 1 finding, got %d: %v", len(rep.Findings), rep.Findings)
 	}
-	want := "prog.bpf.c: kernel-loaded BPF source must carry SPDX-License-Identifier: EUPL-1.2 OR GPL-2.0-only"
-	if rep.Findings[0] != want {
+	if want := "prog.bpf.c: kernel-loaded BPF source must carry SPDX-License-Identifier: EUPL-1.2 OR GPL-2.0-only"; rep.Findings[0] != want {
 		t.Errorf("got %q, want %q", rep.Findings[0], want)
 	}
 }
@@ -177,8 +176,7 @@ func testOversizeOwnFileGPLCase(t *testing.T, declared string) {
 	if len(rep.Findings) != 1 {
 		t.Fatalf("expected 1 finding, got %d: %v", len(rep.Findings), rep.Findings)
 	}
-	want := "main.c: own file carries GPL-2.0-only licence"
-	if rep.Findings[0] != want {
+	if want := "main.c: own file carries GPL-2.0-only licence"; rep.Findings[0] != want {
 		t.Errorf("got %q, want %q", rep.Findings[0], want)
 	}
 }
@@ -213,8 +211,7 @@ func testExactLimitGPLCase(t *testing.T, declared string) {
 	if len(rep.Findings) != 1 {
 		t.Fatalf("expected 1 finding, got %d: %v", len(rep.Findings), rep.Findings)
 	}
-	want := "exact.c: own file carries GPL-2.0-only licence"
-	if rep.Findings[0] != want {
+	if want := "exact.c: own file carries GPL-2.0-only licence"; rep.Findings[0] != want {
 		t.Errorf("got %q, want %q", rep.Findings[0], want)
 	}
 }

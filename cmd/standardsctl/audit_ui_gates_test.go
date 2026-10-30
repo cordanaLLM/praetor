@@ -22,8 +22,7 @@ const validUIRepoMakefile = ".PHONY: verify-all ui-gates\n" +
 func writeUIGateRepoFixture(t *testing.T, withSpecs bool) string {
 	t.Helper()
 	dir := t.TempDir()
-	pkgJSON := `{"name":"ui-app","devDependencies":{"@axe-core/playwright":"4.11.1","@playwright/test":"1.52.0"}}`
-	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkgJSON), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"ui-app","devDependencies":{"@axe-core/playwright":"4.11.1","@playwright/test":"1.52.0"}}`), 0o600); err != nil {
 		t.Fatalf("write package.json: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "svelte.config.js"), []byte("export default {};\n"), 0o600); err != nil {
@@ -148,8 +147,7 @@ func TestAuditUIGates_NonUIFixtureSkips(t *testing.T) {
 func TestUIEnvCommand_PositiveAndNegative(t *testing.T) {
 	dir := t.TempDir()
 	manifestPath := filepath.Join(dir, ".standards.yaml")
-	validYAML := "ui:\n  input_latency_ms: 120\n  routes:\n    - /\n"
-	if err := os.WriteFile(manifestPath, []byte(validYAML), 0o600); err != nil {
+	if err := os.WriteFile(manifestPath, []byte("ui:\n  input_latency_ms: 120\n  routes:\n    - /\n"), 0o600); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 	out, err := captureStdout(t, func() error {
@@ -162,8 +160,7 @@ func TestUIEnvCommand_PositiveAndNegative(t *testing.T) {
 		t.Fatalf("runUI(env) output = %q, want %q", strings.TrimSpace(out), "export PRAETOR_UI_INPUT_LATENCY_MS=120")
 	}
 
-	missingYAML := "version: 1\n"
-	if err := os.WriteFile(manifestPath, []byte(missingYAML), 0o600); err != nil {
+	if err := os.WriteFile(manifestPath, []byte("version: 1\n"), 0o600); err != nil {
 		t.Fatalf("write manifest without ui: %v", err)
 	}
 	if _, err := captureStdout(t, func() error {

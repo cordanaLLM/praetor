@@ -5,13 +5,51 @@
 package adopt
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
+
+// Main shipped the secrets job before commit policy; every such shape must migrate too.
+func TestAdoptCommitPolicy_PriorWithSecrets(t *testing.T) {
+	for _, languages := range lefthookLanguageSets {
+		for _, reuse := range []bool{false, true} {
+			for _, tool := range []bool{false, true} {
+				if tool && languages&hisscatalog.LanguageGo == 0 {
+					continue
+				}
+				assertPriorWithSecrets(t, lefthookShape{languages: languages, reuse: reuse, toolGovuln: tool})
+			}
+		}
+	}
+}
+
+func assertPriorWithSecrets(t *testing.T, shape lefthookShape) {
+	t.Helper()
+	for _, checkpoint := range []bool{false, true} {
+		body := buildLefthookYAMLFor(shape, checkpoint)
+		body = strings.Replace(body, "commit-msg:\n  commands:\n    message-policy:\n"+
+			lefthookRun(lefthookGovernedCommand("forge check-message {1}"))+"\n", "", 1)
+		body = strings.Replace(body, "  scripts:\n    "+commitPolicyScriptName+":\n      runner: sh\n", "", 1)
+		name := fmt.Sprintf("secrets-before-policy-%d-%t-%t-%t.lefthook.yml", shape.languages, shape.reuse, shape.toolGovuln, checkpoint)
+		path := filepath.Join(priorLefthookFixtures, name)
+		if os.Getenv(updateEmittedFixturesEnv) == "1" {
+			mustWrite(t, path, body)
+		}
+		if got := mustRead(t, path); got != body {
+			t.Fatalf("%s differs; regenerate with %s=1", path, updateEmittedFixturesEnv)
+		}
+		if !isPriorLefthookConfig([]byte(body)) {
+			t.Errorf("prior secrets template unrecognized: %s %s", fixtureDigest(t, name, []byte(body)), name)
+		}
+	}
+}
 
 func addCustomCommitMsg(rendering string) string {
 	return strings.Replace(rendering, "commit-msg:\n  commands:\n",

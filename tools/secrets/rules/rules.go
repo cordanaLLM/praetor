@@ -116,12 +116,7 @@ func expiryProblem(expires string, base time.Time, reference string) string {
 	if date, err := time.Parse(DateLayout, expires); err != nil {
 		return fmt.Sprintf("expires %q must be a YYYY-MM-DD date", expires)
 	} else {
-		latest := base.AddDate(0, 0, MaxExceptionDays)
-		if date.After(latest) {
-			return fmt.Sprintf("expires %s is more than %d days after %s; the latest date allowed is %s",
-				expires, MaxExceptionDays, reference, latest.Format(DateLayout))
-		}
-		return ""
+		return checkExpiryCap(expires, date, base, reference)
 	}
 }
 
