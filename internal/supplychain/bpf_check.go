@@ -88,9 +88,12 @@ func loadReuseTables(ctx context.Context, root string) ([]ReuseAnnotation, error
 }
 
 // auditBPFFile inspects one file for BPF compliance and GPL-2.0-only restrictions.
+// A file over hiss.MaxScanFileSize is judged on its first bytes up to that size: its name, licence
+// header and BPF includes sit there, and a large generated file is no failure (order
+// engine-golusoris-gate-skew-20261030).
 func auditBPFFile(root, rel, declaredName string, tables []ReuseAnnotation) (finding string, isBPF bool, err error) {
 	absPath := filepath.Join(root, filepath.FromSlash(rel))
-	data, err := util.ReadFileLimited(absPath, hiss.MaxScanFileSize)
+	data, err := util.ReadFilePrefix(absPath, hiss.MaxScanFileSize)
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, util.ErrNotRegularFile) {
 		return "", false, nil
 	}

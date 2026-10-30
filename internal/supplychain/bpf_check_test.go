@@ -7,7 +7,10 @@ package supplychain
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 // TestCheckBPFLicenses_PlantedCases exercises the planted test cases for BPF dual licensing and GPL restrictions (order engine-fr-rule-checks-20261027).
@@ -20,6 +23,11 @@ func TestCheckBPFLicenses_PlantedCases(t *testing.T) {
 	t.Run("plain C file with SEC(\" and vmlinux.h, EUPL only -> FAIL", func(t *testing.T) { testBPFCProbeEUPLOnlyCase(t, declared) })
 	t.Run("ordinary main.c with GPL-2.0-only -> FAIL", func(t *testing.T) { testBPFMainGPLCase(t, declared) })
 	t.Run("vendored file under REUSE annotation of other holder with GPL-2.0-only -> PASS", func(t *testing.T) { testBPFVendoredGPLCase(t, declared) })
+	t.Run("oversize non-BPF js -> PASS", func(t *testing.T) { testOversizeNonBPFPassCase(t, declared) })
+	t.Run("oversize name.bpf.c without required licence -> FAIL", func(t *testing.T) { testOversizeBPFMissingLicenseCase(t, declared) })
+	t.Run("oversize own file carrying GPL-2.0-only header -> FAIL", func(t *testing.T) { testOversizeOwnFileGPLCase(t, declared) })
+	t.Run("file exactly at limit behaves as before -> PASS", func(t *testing.T) { testExactLimitBPFCase(t, declared) })
+	t.Run("file exactly at limit with GPL-2.0-only -> FAIL", func(t *testing.T) { testExactLimitGPLCase(t, declared) })
 }
 
 func testBPFProgEUPLOnlyCase(t *testing.T, declared string) {
@@ -116,6 +124,98 @@ func testBPFVendoredGPLCase(t *testing.T, declared string) {
 	}
 	if len(rep.Findings) != 0 {
 		t.Errorf("expected 0 findings for vendored GPL code, got %v", rep.Findings)
+	}
+}
+
+func testOversizeNonBPFPassCase(t *testing.T, declared string) {
+	root := t.TempDir()
+	header := "// License: MIT\nconsole.log('scalar');\n"
+	content := header + strings.Repeat("x", int(hiss.MaxScanFileSize)+1024-len(header))
+	if err := os.WriteFile(filepath.Join(root, "scalar.js"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := CheckBPFLicenses(t.Context(), BPFLicenseOptions{Root: root, DeclaredHolder: declared})
+	if err != nil {
+		t.Fatalf("unexpected error for oversize non-BPF js: %v", err)
+	}
+	if len(rep.Findings) != 0 {
+		t.Errorf("expected 0 findings for oversize non-BPF js, got %v", rep.Findings)
+	}
+}
+
+func testOversizeBPFMissingLicenseCase(t *testing.T, declared string) {
+	root := t.TempDir()
+	header := "// SPDX-FileCopyrightText: 2026 example-holder <holder@example.invalid>\n// SPDX-License-Identifier: EUPL-1.2\n"
+	content := header + strings.Repeat("x", int(hiss.MaxScanFileSize)+1024-len(header))
+	if err := os.WriteFile(filepath.Join(root, "prog.bpf.c"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := CheckBPFLicenses(t.Context(), BPFLicenseOptions{Root: root, DeclaredHolder: declared})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rep.Findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d: %v", len(rep.Findings), rep.Findings)
+	}
+	want := "prog.bpf.c: kernel-loaded BPF source must carry SPDX-License-Identifier: EUPL-1.2 OR GPL-2.0-only"
+	if rep.Findings[0] != want {
+		t.Errorf("got %q, want %q", rep.Findings[0], want)
+	}
+}
+
+func testOversizeOwnFileGPLCase(t *testing.T, declared string) {
+	root := t.TempDir()
+	header := "// SPDX-FileCopyrightText: 2026 example-holder <holder@example.invalid>\n// SPDX-License-Identifier: GPL-2.0-only\n"
+	content := header + strings.Repeat("x", int(hiss.MaxScanFileSize)+1024-len(header))
+	if err := os.WriteFile(filepath.Join(root, "main.c"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := CheckBPFLicenses(t.Context(), BPFLicenseOptions{Root: root, DeclaredHolder: declared})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rep.Findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d: %v", len(rep.Findings), rep.Findings)
+	}
+	want := "main.c: own file carries GPL-2.0-only licence"
+	if rep.Findings[0] != want {
+		t.Errorf("got %q, want %q", rep.Findings[0], want)
+	}
+}
+
+func testExactLimitBPFCase(t *testing.T, declared string) {
+	root := t.TempDir()
+	header := "// SPDX-FileCopyrightText: 2026 example-holder <holder@example.invalid>\n// SPDX-License-Identifier: EUPL-1.2 OR GPL-2.0-only\n"
+	content := header + strings.Repeat("x", int(hiss.MaxScanFileSize)-len(header))
+	if err := os.WriteFile(filepath.Join(root, "exact.bpf.c"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := CheckBPFLicenses(t.Context(), BPFLicenseOptions{Root: root, DeclaredHolder: declared})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rep.Findings) != 0 {
+		t.Errorf("expected 0 findings for valid BPF at exact limit, got %v", rep.Findings)
+	}
+}
+
+func testExactLimitGPLCase(t *testing.T, declared string) {
+	root := t.TempDir()
+	header := "// SPDX-FileCopyrightText: 2026 example-holder <holder@example.invalid>\n// SPDX-License-Identifier: GPL-2.0-only\n"
+	content := header + strings.Repeat("x", int(hiss.MaxScanFileSize)-len(header))
+	if err := os.WriteFile(filepath.Join(root, "exact.c"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := CheckBPFLicenses(t.Context(), BPFLicenseOptions{Root: root, DeclaredHolder: declared})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rep.Findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d: %v", len(rep.Findings), rep.Findings)
+	}
+	want := "exact.c: own file carries GPL-2.0-only licence"
+	if rep.Findings[0] != want {
+		t.Errorf("got %q, want %q", rep.Findings[0], want)
 	}
 }
 

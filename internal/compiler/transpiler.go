@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path"
 	"path/filepath"
 	"time"
 
@@ -31,6 +32,7 @@ type Transpiler struct {
 	readTarget      func(ctx context.Context, root, rel string) ([]byte, error)
 	readImport      func(string) (string, error)
 	projectDocBytes int
+	projectDocChain string
 }
 
 func NewTranspiler() *Transpiler {
@@ -109,11 +111,11 @@ func (t *Transpiler) forRepository(ctx context.Context, root string) (*Transpile
 		data, err := readConfinedText(ctx, root, rel)
 		return string(data), err
 	}
-	size, err := nestedProjectDocBytes(ctx, root)
+	size, chain, err := largestNestedProjectDocChain(ctx, root)
 	if err != nil {
 		return nil, err
 	}
-	selected.projectDocBytes = size
+	selected.projectDocBytes, selected.projectDocChain = size, chain
 	return &selected, nil
 }
 
@@ -149,29 +151,53 @@ func declaredAgentClients(ctx context.Context, root string) ([]string, error) {
 // CompileContent delegates pure rendering to the shared leaf renderer.
 func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
 	leaf := agentcontext.Transpiler{MaxLines: t.MaxLines, Clients: t.Clients, Env: t.Env,
-		ReadImport: t.readImport, ProjectDocBytes: t.projectDocBytes}
+		ReadImport: t.readImport, ProjectDocBytes: t.projectDocBytes, ProjectDocChain: t.projectDocChain}
 	return leaf.CompileContent(content)
 }
 
-// nestedProjectDocBytes reuses the tracked context inventory; files removed from
-// the working tree contribute no bytes, matching the nested context lint.
-func nestedProjectDocBytes(ctx context.Context, root string) (int, error) {
+// maxContextChainDepth bounds ancestor directory traversal for one nested context file (HISS-02).
+const maxContextChainDepth = 64
+
+// largestNestedProjectDocChain returns the bytes of the largest chain of tracked nested AGENTS.md
+// files on one path down from the project root, and the deepest file of that chain. A client
+// loads the root file and the files on the path to its working directory, never a sibling
+// package's (Codex: codex-rs/core/src/agents_md.rs, rust-v0.165.0), so siblings do not add up
+// (order engine-golusoris-gate-skew-20261030). Files removed from the working tree contribute
+// no bytes, matching the nested context lint.
+func largestNestedProjectDocChain(ctx context.Context, root string) (int, string, error) {
 	paths, err := ListNestedContextFiles(ctx, root)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
-	total := 0
+	sizes := make(map[string]int, len(paths))
 	for i := 0; i < len(paths) && i < MaxNestedContextFiles; i++ {
 		data, err := readConfinedText(ctx, root, paths[i])
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			return 0, fmt.Errorf("read project document %s: %w", paths[i], err)
+			return 0, "", fmt.Errorf("read project document %s: %w", paths[i], err)
 		}
-		total += len(data)
+		sizes[paths[i]] = len(data)
 	}
-	return total, nil
+	largest, deepest := 0, ""
+	for i := 0; i < len(paths) && i < MaxNestedContextFiles; i++ {
+		if chain := projectDocChainBytes(paths[i], sizes); chain > largest {
+			largest, deepest = chain, paths[i]
+		}
+	}
+	return largest, deepest, nil
+}
+
+// projectDocChainBytes sums the nested AGENTS.md files from rel's directory up to the root.
+func projectDocChainBytes(rel string, sizes map[string]int) int {
+	chain := 0
+	dir := path.Dir(rel)
+	for depth := 0; depth < maxContextChainDepth && dir != "." && dir != "/"; depth++ {
+		chain += sizes[path.Join(dir, contextFileName)]
+		dir = path.Dir(dir)
+	}
+	return chain
 }
 
 // WriteOutputs writes compiled files to targetDir.

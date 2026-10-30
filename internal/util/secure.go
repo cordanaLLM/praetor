@@ -146,6 +146,28 @@ func ReadFileLimited(path string, limit int64) ([]byte, error) {
 	return readAllLimited(file, path, limit)
 }
 
+// ReadFilePrefix reads at most the first limit bytes of the regular file at path, for a check
+// that only needs the start of a file, such as its licence header or include lines. It is
+// ReadFileLimited for a file allowed to carry more: the same limit and regular-file checks,
+// and no ErrFileTooLarge.
+func ReadFilePrefix(path string, limit int64) (data []byte, resultErr error) {
+	if err := checkReadLimit(limit); err != nil {
+		return nil, err
+	}
+	file, err := openRegular(path, func() (os.FileInfo, error) { return os.Stat(path) }, func() (*os.File, error) {
+		// #nosec G304 -- callers confine path to their root before opening it.
+		return os.Open(path)
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, file.Close()) }()
+	if data, err = io.ReadAll(io.LimitReader(file, limit)); err != nil {
+		return nil, fmt.Errorf("util: read %q: %w", path, err)
+	}
+	return data, nil
+}
+
 // ReadLimitedIn is ReadFileLimited for the entry name inside dir, a pinned directory handle
 // (os.Root): name is inspected and opened through that handle, which follows a link only while
 // it stays inside dir, and the read carries ReadFileLimited's limit and regular-file check.
