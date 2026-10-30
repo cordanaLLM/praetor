@@ -198,7 +198,7 @@
       "kind": "protocol",
       "repo": "modelcontextprotocol/modelcontextprotocol",
       "pin_kind": "tag",
-      "pin": "2025-11-25",
+      "pin": "2026-07-28",
       "digest_pin": "2025-11-25",
       "version": "2025-11-25",
       "url_base": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/{pin}/",
