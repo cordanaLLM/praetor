@@ -61,6 +61,15 @@ agent_clients: [claude, codex]
 | `gemini` | `.gemini/GEMINI.md` | `.gemini/agents` |
 | `codex` | `.codex/rules.md` | `.codex/agents` |
 
+A client's documented size cap (`clientSizeCaps` in `internal/agentcontext/render.go`:
+`AGENTS.md` for Codex, `.windsurfrules`, `.gemini/GEMINI.md`) binds only a client the
+selection keeps. Adoption validates the harness it writes through the same selection, so
+`adopt --force` in a repository with `agent_clients: [claude, codex, gemini]` no longer exits
+1 on `.windsurfrules` over its 12000 characters. A declared client over its cap still fails,
+naming the file and both sizes (`target file .windsurfrules exceeds client size cap (17799
+characters > 12000)`), and a manifest without `agent_clients` caps every client as before
+(`TestAdopt_ClientSelectionSizeCaps`, `TestCompileContent_ClientSelectionSizeCaps`).
+
 The registry is `vendorTargets` in `internal/agentcontext/render.go`. Repository-relative
 links are rewritten for subdirectory targets by prefixing `../` per directory depth.
 The compiler reads the key from the manifest beside `AGENTS.md`, the one that already

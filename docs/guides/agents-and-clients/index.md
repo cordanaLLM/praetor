@@ -40,7 +40,9 @@ The `agent_clients` list in `.standards.yaml` selects the context projections to
 and verify. The `editor-selection` gate in `praetorctl audit` refuses a Git-tracked context
 file belonging to an unselected client. Delete the tracked file, or add that client to
 `agent_clients`. An untracked local copy passes. Omitting `agent_clients` selects every
-supported client; an explicit empty list selects none.
+supported client; an explicit empty list selects none. A client's size cap (for example
+`.windsurfrules` at 12000 characters) applies only to a selected client; see
+[editor capabilities](../editor-capabilities.md#selecting-agent-clients).
 
 Adoption reports each tracked excluded context file as an action requiring deletion and
 leaves the file available for review. The authoritative paths come from

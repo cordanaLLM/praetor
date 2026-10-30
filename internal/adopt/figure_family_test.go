@@ -497,3 +497,27 @@ func TestDocumentationMakefileFigureTargetBoundary(t *testing.T) {
 		t.Fatalf("targets %v, earlier blocks %d", documentationMakefileTargets, len(priorDocumentationMakefileBlocks))
 	}
 }
+
+// TestEmittedVendorMarkdown_NamesNoUnadoptedPaths proves that the emitted VENDOR.md
+// names no paths adopters do not get (such as tools/figures/player/ or bundle steps).
+func TestEmittedVendorMarkdown_NamesNoUnadoptedPaths(t *testing.T) {
+	family := lintPriorFamily(t, "Figure engine")
+	vendorText, ok, err := family.Canonical("tools/figures/third_party/interfig/VENDOR.md")
+	if err != nil || !ok {
+		t.Fatalf("failed to read emitted VENDOR.md: ok=%v, err=%v", ok, err)
+	}
+
+	content := string(vendorText)
+	for retiredPath := range family.Moved {
+		if strings.Contains(content, retiredPath) {
+			t.Errorf("emitted VENDOR.md names retired path %s adopters do not get", retiredPath)
+		}
+		playerDir := filepath.Dir(retiredPath)
+		if strings.Contains(content, playerDir+"/") || strings.Contains(content, playerDir+" ") || strings.Contains(content, playerDir+"`") {
+			t.Errorf("emitted VENDOR.md names engine-only directory %s adopters do not get", playerDir)
+		}
+	}
+	if strings.Contains(content, filepath.Join(family.Directory, "bundle.mjs")) {
+		t.Errorf("emitted VENDOR.md names engine-only bundler path adopters do not get")
+	}
+}

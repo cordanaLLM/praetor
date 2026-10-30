@@ -156,10 +156,10 @@ func TestValidateHarnessProjectionExactBudget(t *testing.T) {
 	if exact == "" {
 		t.Fatal("failed to construct exact line-budget fixture")
 	}
-	if err := validateHarnessProjection(exact); err != nil {
+	if err := validateHarnessProjectionForClients(exact, nil); err != nil {
 		t.Fatalf("exact projection budget rejected: %v", err)
 	}
-	if err := validateHarnessProjection(exact + "overflow\n"); err == nil {
+	if err := validateHarnessProjectionForClients(exact+"overflow\n", nil); err == nil {
 		t.Fatal("projection over budget accepted")
 	}
 }

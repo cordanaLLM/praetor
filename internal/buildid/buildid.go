@@ -193,6 +193,7 @@ func (id Identity) Equal(other Identity) bool {
 
 // FromLockVersion resolves what an adopter's .standards.lock pinned_version proves:
 // a SemVer release, an unreleased dev revision (v0.0.0+<rev>), or a bare commit.
+// A catalog lock (v0.0.0+catalog.<hex>) names a catalog digest rather than an engine build.
 func FromLockVersion(pinned string) Identity {
 	pinned = strings.TrimSpace(pinned)
 	if pinned == "" {
@@ -201,6 +202,9 @@ func FromLockVersion(pinned string) Identity {
 	if strings.HasPrefix(pinned, "v0.0.0+") {
 		meta := strings.TrimPrefix(pinned, "v0.0.0+")
 		parts := strings.Split(meta, ".")
+		if isCatalogLockParts(parts) {
+			return Identity{Unknown: "catalog lock, not an engine build"}
+		}
 		rev := parts[0]
 		modified := len(parts) > 1 && parts[1] == "dirty"
 		return Identity{Revision: Short(rev), Modified: modified}
@@ -214,11 +218,19 @@ func FromLockVersion(pinned string) Identity {
 	return Identity{Unknown: "unrecognized lock version"}
 }
 
+func isCatalogLockParts(parts []string) bool {
+	return len(parts) == 2 && parts[0] == "catalog" && isHex(parts[1])
+}
+
 func isHexCommit(s string) bool {
-	if len(s) < 7 || len(s) > 40 {
+	return len(s) >= 7 && len(s) <= 40 && isHex(s)
+}
+
+func isHex(s string) bool {
+	if s == "" || len(s) > 64 {
 		return false
 	}
-	for i := 0; i < len(s); i++ {
+	for i := 0; i < len(s) && i < 64; i++ {
 		c := s[i]
 		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
 			return false
