@@ -61,7 +61,8 @@ while that pid is a live `praetorctl gate` process, read from `/proc/<pid>/cmdli
 unreadable pid fails closed. Abandoned gate scratch counts whichever session made it, and the
 finding names the dead gate pid. Unfinished work in a judged worktree that
 `.workingdir/OPEN.md` does not name keeps the stop due, and a branch whose change already landed
-in the remote base counts as finished. The pull request state of the pushed branches comes from
+in the remote base counts as finished, as does one a merged pull request carried: its exact HEAD,
+or its change in the base that pull request names. The pull request state of the pushed branches comes from
 one repository-wide listing, tried up to three times with a bounded backoff (1 s, then 2 s) inside
 the worktree check budget; a listing that still fails keeps the stop due with one line naming the
 lookup error and the count of pushed branches left unverified, instead of one finding per
