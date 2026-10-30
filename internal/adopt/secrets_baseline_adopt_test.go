@@ -14,6 +14,18 @@ import (
 
 func setupSecretsAdoptFixture(t *testing.T, withGitleaks bool) string {
 	t.Helper()
+	// Build the fake gitleaks before newTestRepo narrows PATH (hermeticPath): inside a git
+	// hook git resolves to its exec-path, whose directory holds no go command.
+	stubDir := ""
+	if withGitleaks {
+		stubDir = t.TempDir()
+		payload := `[{"RuleID":"generic-api-key","File":"creds.py","StartLine":1,"Commit":"aaaa","Secret":"SYNTH-NEVER-SAVE","Fingerprint":"synth-adopt-fp"}]`
+		testsupport.BuildFakeGitleaks(t, stubDir, payload)
+	}
+	// The fixture commit must not read the developer's git configuration: a global
+	// commit.gpgsign needs gpg, which the hermetic PATH does not hold.
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	repoPath := newTestRepo(t, "secrets-adopt-fixture")
 	secretFile := filepath.Join(repoPath, "creds.py")
 	mustWrite(t, secretFile, "API_KEY = \"SYNTH-NEVER-SAVE\"\n")
@@ -26,9 +38,6 @@ func setupSecretsAdoptFixture(t *testing.T, withGitleaks bool) string {
 		t.Fatalf("git commit: %v\n%s", err, out)
 	}
 	if withGitleaks {
-		stubDir := t.TempDir()
-		payload := `[{"RuleID":"generic-api-key","File":"creds.py","StartLine":1,"Commit":"aaaa","Secret":"SYNTH-NEVER-SAVE","Fingerprint":"synth-adopt-fp"}]`
-		testsupport.BuildFakeGitleaks(t, stubDir, payload)
 		t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
 	return repoPath

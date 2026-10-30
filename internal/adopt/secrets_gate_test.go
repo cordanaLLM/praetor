@@ -180,13 +180,15 @@ func testSecretsGate_MiseShimIsolated(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation requires privileges on windows")
 	}
-	root := newTestRepo(t, "secrets-with-mise-shim")
 	normalHome := t.TempDir()
 	isolatedHome := t.TempDir()
 	realDir := t.TempDir()
+	// Build the fakes before newTestRepo narrows PATH (hermeticPath): inside a git hook git
+	// resolves to its exec-path, whose directory holds no go command.
 	realGitleaks := testsupport.BuildFakeGitleaks(t, realDir)
 	shimDir := t.TempDir()
 	miseBin := testsupport.BuildFakeMise(t, shimDir, normalHome, realGitleaks)
+	root := newTestRepo(t, "secrets-with-mise-shim")
 	if err := os.Symlink(miseBin, filepath.Join(shimDir, "gitleaks")); err != nil {
 		t.Fatal(err)
 	}
