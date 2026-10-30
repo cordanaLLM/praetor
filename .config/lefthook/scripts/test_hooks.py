@@ -2656,7 +2656,8 @@ class ScopeAndGuard(unittest.TestCase):
             (root / ".config/lefthook/scripts").mkdir(parents=True)
             hook_script = root / ".config/lefthook/scripts/checkpoint.py"
             hook_script.write_text("# script\n", encoding="utf-8")
-            (root / "main.go").write_text("package main\n", encoding="utf-8")
+            # LF on every platform: text mode writes CRLF on Windows, and gofmt -l lists such a file.
+            (root / "main.go").write_text("package main\n", encoding="utf-8", newline="\n")
 
             stub_bin = root / "cached" / "bin"
             stub_bin.mkdir(parents=True)
