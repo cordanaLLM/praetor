@@ -48,7 +48,7 @@ func tidyCoverageManifest(excepted string) string {
 		return manifest
 	}
 	expires := config.ExceptionDay(time.Now()).AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
-	return manifest + fmt.Sprintf("exceptions:\n  - rule: \"clang-tidy-coverage\"\n    path: %q\n    reason: \"Windows-only unit\"\n    expires: %q\n",
+	return manifest + fmt.Sprintf("exceptions:\n  - rule: \"clang-tidy-coverage\"\n    path: %q\n    reason: \"Windows-only unit\"\n    category: A\n    expires: %q\n",
 		excepted, expires)
 }
 

@@ -45,7 +45,7 @@ func TestAuditWorkflowTriggers_CLI(t *testing.T) {
 	today := config.ExceptionDay(time.Now())
 	entry := func(expires time.Time) string {
 		return "exceptions:\n  - rule: \"HISS-18\"\n    path: \".github/workflows/everywhere.yml\"\n" +
-			"    reason: \"builds every branch push by design\"\n    expires: \"" + expires.Format(config.ExceptionDateLayout) + "\"\n"
+			"    reason: \"builds every branch push by design\"\n    category: A\n    expires: \"" + expires.Format(config.ExceptionDateLayout) + "\"\n"
 	}
 	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+entry(today.AddDate(0, 0, -1)))
 	out, err = f.audit(t)

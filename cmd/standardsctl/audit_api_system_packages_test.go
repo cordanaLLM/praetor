@@ -29,7 +29,7 @@ func TestAuditLocksTheAPIWorkflowToTheManifestRendering(t *testing.T) {
 	expires := time.Now().UTC().AddDate(0, 0, 30).Format("2006-01-02")
 	root := t.TempDir()
 	writeFixtureFile(t, root, ".standards.yaml", "version: 1\napi:\n  system_packages:\n    - libudev-dev\n"+
-		"exceptions:\n  - rule: api-compatibility\n    path: hw/go.mod\n    reason: needs a vendor SDK\n    expires: \""+expires+"\"\n")
+		"exceptions:\n  - rule: api-compatibility\n    path: hw/go.mod\n    reason: needs a vendor SDK\n    category: A\n    expires: \""+expires+"\"\n")
 	writeFamilyFixture(t, root, family, func(text string) string { return text })
 	earlier := "holds an earlier Praetor text; run 'praetorctl adopt'"
 	if _, err := auditManagedFamily(t.Context(), root, family); err == nil || !strings.Contains(err.Error(), earlier) {

@@ -362,6 +362,7 @@ func TestRunDedupeScan_Positive_ExceptedDeepCopyClonesPassAndAreListedAsExcepted
   - rule: HISS-19
     path: zz_generated.deepcopy.go
     reason: generated-style DeepCopyInto clones
+    category: A
     expires: %s
 `, expires)
 	writeFixtureFile(t, dir, config.ManifestFileName, manifest)
@@ -422,6 +423,7 @@ func TestRunDedupeScan_Negative_MissingExceptionTargetRefusedByValidation(t *tes
   - rule: HISS-19
     path: nonexistent.go
     reason: missing file
+    category: A
     expires: %s
 `, expires)
 	writeFixtureFile(t, dir, config.ManifestFileName, manifest)
@@ -440,6 +442,7 @@ func TestRunDedupeScan_Negative_StaleExceptionFailsNamingIt(t *testing.T) {
   - rule: HISS-19
     path: clean.go
     reason: clean file has no clones
+    category: A
     expires: %s
 `, expires)
 	writeFixtureFile(t, dir, config.ManifestFileName, manifest)
@@ -464,6 +467,7 @@ func TestRunDedupeScan_Boundary_UnknownLanguageExceptionNotChecked(t *testing.T)
   - rule: HISS-19
     path: README.md
     reason: non-Go file
+    category: A
     expires: %s
 `, expires)
 	writeFixtureFile(t, dir, config.ManifestFileName, manifest)
@@ -530,6 +534,7 @@ func TestRunDedupeScan_Negative_UnscannedLanguageExceptionFailsOnForeignSkip(t *
   - rule: HISS-19
     path: interop.c
     reason: C interop files
+    category: A
     expires: %s
 `, expires)
 	writeFixtureFile(t, dir, config.ManifestFileName, manifest)
@@ -557,10 +562,12 @@ func TestRunDedupeScan_Negative_MixedExceptionsFailsOnStaleOnly(t *testing.T) {
   - rule: HISS-19
     path: clean.go
     reason: clean file has no clones
+    category: A
     expires: %s
   - rule: HISS-19
     path: README.md
     reason: doc files
+    category: A
     expires: %s
 `, expires, expires)
 	writeFixtureFile(t, dir, config.ManifestFileName, manifest)
@@ -585,6 +592,7 @@ func TestRunDedupeScan_Boundary_NoGoWithUnscannedExceptionReturnsNil(t *testing.
   - rule: HISS-19
     path: README.md
     reason: non-Go file
+    category: A
     expires: %s
 `, expires)
 	writeFixtureFile(t, dir, config.ManifestFileName, manifest)

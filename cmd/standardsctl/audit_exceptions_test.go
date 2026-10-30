@@ -185,7 +185,7 @@ func TestAudit_ExceptionsExpiryWarning_Integration(t *testing.T) {
 
 	// In contrast, an exception expiring in 30 days produces no warning in audit
 	expires30 := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
-	entry30 := fmt.Sprintf("exceptions:\n  - rule: HISS-10\n    path: .github/workflows/build.yml\n    reason: compiler upgrade pending\n    expires: %q\n", expires30)
+	entry30 := fmt.Sprintf("exceptions:\n  - rule: HISS-10\n    path: .github/workflows/build.yml\n    reason: compiler upgrade pending\n    category: A\n    expires: %q\n", expires30)
 	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+entry30)
 
 	out, err = f.audit(t)

@@ -483,7 +483,7 @@ func writeHISSException(t *testing.T, f *auditFixture, path, function, expires s
 	if function != "" {
 		entry += "    function: " + function + "\n"
 	}
-	entry += "    reason: browser lifecycle owns this long lived context\n    expires: \"" + expires + "\"\n"
+	entry += "    reason: browser lifecycle owns this long lived context\n    category: A\n    expires: \"" + expires + "\"\n"
 	updated := strings.Replace(string(content), "register:\n", entry+"register:\n", 1)
 	writeFixtureFile(t, f.dir, ".standards.yaml", updated)
 }

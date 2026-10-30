@@ -132,7 +132,7 @@ func TestAuditExceptionTargets_PlannedReleaseWorkflow(t *testing.T) {
 func TestAudit_ExceptionMissingPath_Integration(t *testing.T) {
 	f := newAuditFixture(t)
 	expires := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
-	entry := fmt.Sprintf("exceptions:\n  - rule: HISS-10\n    path: .github/workflows/build.yml\n    reason: compiler upgrade pending\n    expires: %q\n", expires)
+	entry := fmt.Sprintf("exceptions:\n  - rule: HISS-10\n    path: .github/workflows/build.yml\n    reason: compiler upgrade pending\n    category: A\n    expires: %q\n", expires)
 	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+entry)
 	out, err := f.audit(t)
 	if err == nil {
