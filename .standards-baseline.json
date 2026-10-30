@@ -1,10 +1,9 @@
 {
   "version": 1,
-  "generated_at": "2026-10-30T21:47:36Z",
+  "generated_at": "2026-10-30T22:57:29Z",
   "repository": "cordanaLLM/praetor",
-  "commit_sha": "b3d9c576467f37a49818317bf70d0793f1b45dc4",
+  "commit_sha": "feaccbcccbf10fd390f1beb8c91f179adf3e2d89",
   "total_infractions": 1159,
-  "increase_rationale": "Existing wide-scope declarations for HISS-05 and fixed-table goroutine fixtures for HISS-06; order praetor-rules-24h-stale-queue-s007-20261030",
   "infractions": [
     {
       "rule_id": "HISS-05",
@@ -3654,45 +3653,45 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/config/exceptions_test.go",
-      "line_number": 280,
+      "line_number": 281,
       "symbol": "TestValidateExceptionsReleaseTokenNamesAWorkflow",
-      "message": "TestValidateExceptionsReleaseTokenNamesAWorkflow: 'want' line 280; declare in if block line 281",
+      "message": "TestValidateExceptionsReleaseTokenNamesAWorkflow: 'want' line 281; declare in if block line 282",
       "anchor": "fn:TestValidateExceptionsReleaseTokenNamesAWorkflow",
       "fingerprint": "internal/config/exceptions_test.go:HISS-05:fn:TestValidateExceptionsReleaseTokenNamesAWorkflow#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/config/exceptions_test.go",
-      "line_number": 291,
+      "line_number": 292,
       "symbol": "TestValidateExceptionsTestTimeoutNamesAWorkflow",
-      "message": "TestValidateExceptionsTestTimeoutNamesAWorkflow: 'want' line 291; declare in if block line 292",
+      "message": "TestValidateExceptionsTestTimeoutNamesAWorkflow: 'want' line 292; declare in if block line 293",
       "anchor": "fn:TestValidateExceptionsTestTimeoutNamesAWorkflow",
       "fingerprint": "internal/config/exceptions_test.go:HISS-05:fn:TestValidateExceptionsTestTimeoutNamesAWorkflow#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/config/exceptions_test.go",
-      "line_number": 302,
+      "line_number": 303,
       "symbol": "TestValidateExceptionsJobTimeoutNamesAWorkflow",
-      "message": "TestValidateExceptionsJobTimeoutNamesAWorkflow: 'want' line 302; declare in if block line 303",
+      "message": "TestValidateExceptionsJobTimeoutNamesAWorkflow: 'want' line 303; declare in if block line 304",
       "anchor": "fn:TestValidateExceptionsJobTimeoutNamesAWorkflow",
       "fingerprint": "internal/config/exceptions_test.go:HISS-05:fn:TestValidateExceptionsJobTimeoutNamesAWorkflow#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/config/exceptions_test.go",
-      "line_number": 463,
+      "line_number": 464,
       "symbol": "TestValidateClangTidyDataPaths",
-      "message": "TestValidateClangTidyDataPaths: 'cases' line 463; declare in range block line 473",
+      "message": "TestValidateClangTidyDataPaths: 'cases' line 464; declare in range block line 474",
       "anchor": "fn:TestValidateClangTidyDataPaths",
       "fingerprint": "internal/config/exceptions_test.go:HISS-05:fn:TestValidateClangTidyDataPaths#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/config/exceptions_test.go",
-      "line_number": 685,
+      "line_number": 686,
       "symbol": "TestFormatDaysLeft_Cases",
-      "message": "TestFormatDaysLeft_Cases: 'cases' line 685; declare in range block line 695",
+      "message": "TestFormatDaysLeft_Cases: 'cases' line 686; declare in range block line 696",
       "anchor": "fn:TestFormatDaysLeft_Cases",
       "fingerprint": "internal/config/exceptions_test.go:HISS-05:fn:TestFormatDaysLeft_Cases#1"
     },
@@ -4392,90 +4391,90 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 1470,
+      "line_number": 1472,
       "symbol": "TestScanRepo_Negative_MissingExceptionTargetWordingWithFilteredOutPredecessor",
-      "message": "TestScanRepo_Negative_MissingExceptionTargetWordingWithFilteredOutPredecessor: 'want' line 1470; declare in if block line 1471",
+      "message": "TestScanRepo_Negative_MissingExceptionTargetWordingWithFilteredOutPredecessor: 'want' line 1472; declare in if block line 1473",
       "anchor": "fn:TestScanRepo_Negative_MissingExceptionTargetWordingWithFilteredOutPredecessor",
       "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Negative_MissingExceptionTargetWordingWithFilteredOutPredecessor#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 1481,
+      "line_number": 1483,
       "symbol": "TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19",
-      "message": "TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19: 'sourceA' line 1481; declare in if block line 1497",
+      "message": "TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19: 'sourceA' line 1483; declare in if block line 1499",
       "anchor": "fn:TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19",
       "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 1489,
+      "line_number": 1491,
       "symbol": "TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19",
-      "message": "TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19: 'sourceB' line 1489; declare in if block line 1500",
+      "message": "TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19: 'sourceB' line 1491; declare in if block line 1502",
       "anchor": "fn:TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19",
       "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19#2"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 1548,
+      "line_number": 1550,
       "symbol": "TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone",
-      "message": "TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone: 'sourceA' line 1548; declare in if block line 1564",
+      "message": "TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone: 'sourceA' line 1550; declare in if block line 1566",
       "anchor": "fn:TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone",
       "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 1556,
+      "line_number": 1558,
       "symbol": "TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone",
-      "message": "TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone: 'sourceB' line 1556; declare in if block line 1567",
+      "message": "TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone: 'sourceB' line 1558; declare in if block line 1569",
       "anchor": "fn:TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone",
       "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone#2"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 2037,
+      "line_number": 2039,
       "symbol": "TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked",
-      "message": "TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked: 'want' line 2037; declare in if block line 2038",
+      "message": "TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked: 'want' line 2039; declare in if block line 2040",
       "anchor": "fn:TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked",
       "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 2066,
+      "line_number": 2068,
       "symbol": "TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale",
-      "message": "TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale: 'want' line 2066; declare in if block line 2067",
+      "message": "TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale: 'want' line 2068; declare in if block line 2069",
       "anchor": "fn:TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale",
       "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 2104,
+      "line_number": 2106,
       "symbol": "TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly",
-      "message": "TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly: 'wantStale' line 2104; declare in if block line 2105",
+      "message": "TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly: 'wantStale' line 2106; declare in if block line 2107",
       "anchor": "fn:TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly",
       "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 2111,
+      "line_number": 2113,
       "symbol": "TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly",
-      "message": "TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly: 'wantNotChecked' line 2111; declare in if block line 2112",
+      "message": "TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly: 'wantNotChecked' line 2113; declare in if block line 2114",
       "anchor": "fn:TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly",
       "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly#2"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 2144,
+      "line_number": 2146,
       "symbol": "TestScanRepo_Boundary_NotApplicableUnscannedExceptionNotChecked",
-      "message": "TestScanRepo_Boundary_NotApplicableUnscannedExceptionNotChecked: 'want' line 2144; declare in if block line 2145",
+      "message": "TestScanRepo_Boundary_NotApplicableUnscannedExceptionNotChecked: 'want' line 2146; declare in if block line 2147",
       "anchor": "fn:TestScanRepo_Boundary_NotApplicableUnscannedExceptionNotChecked",
       "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Boundary_NotApplicableUnscannedExceptionNotChecked#1"
     },
