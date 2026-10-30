@@ -17,6 +17,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/strictjson"
 	"github.com/cordanaLLM/praetor/internal/util"
+	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 )
 
 // renovateConfig is the part of renovate.json that keeps a hosted workflow's SHA pins and a
@@ -321,5 +322,52 @@ func TestRenovatePinSectionsBoundary(t *testing.T) {
 	manifest := []byte(`{"name": "x", "scripts": {}, "overrides": {"a": "1.0.0"}, "engines": {"node": ">=22"}}`)
 	if got := npmSections(t, manifest); !slices.Equal(got, []string{"engines", "overrides"}) {
 		t.Fatalf("npmSections = %v", got)
+	}
+}
+
+// nodenvReadsVersionFile names what stops Renovate's nodenv manager from updating the engine's
+// own version file, or returns "": a manager list without nodenv, or a rule turning off the file.
+func nodenvReadsVersionFile(raw []byte) string {
+	var config struct {
+		EnabledManagers []string `json:"enabledManagers"`
+		PackageRules    []struct {
+			MatchFileNames []string `json:"matchFileNames"`
+			Enabled        *bool    `json:"enabled"`
+		} `json:"packageRules"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return err.Error()
+	}
+	if len(config.EnabledManagers) > 0 && !slices.Contains(config.EnabledManagers, "nodenv") {
+		return "enabledManagers leaves out nodenv"
+	}
+	for _, rule := range config.PackageRules {
+		if rule.Enabled != nil && !*rule.Enabled && slices.Contains(rule.MatchFileNames, markdownassets.NodeVersionFile) {
+			return "a packageRule turns off " + markdownassets.NodeVersionFile
+		}
+	}
+	return ""
+}
+
+// Positive: the engine's Renovate keeps its own version file current. Negative: a manager list
+// without nodenv and a rule disabling the file are named. Boundary: a manager list with nodenv and
+// a rule on other files hold.
+func TestRenovateReadsTheNodeVersionFile(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "renovate.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fault := nodenvReadsVersionFile(raw); fault != "" {
+		t.Fatal(fault)
+	}
+	for text, want := range map[string]string{
+		`{"enabledManagers": ["npm"]}`: "leaves out nodenv",
+		`{"packageRules": [{"matchFileNames": [".node-version"], "enabled": false}]}`: "turns off",
+		`{"enabledManagers": ["nodenv"]}`:                                             "",
+		`{"packageRules": [{"matchFileNames": ["go.mod"], "enabled": false}]}`:        "",
+	} {
+		if fault := nodenvReadsVersionFile([]byte(text)); (want == "") != (fault == "") || !strings.Contains(fault, want) {
+			t.Fatalf("nodenvReadsVersionFile(%s) = %q, want %q", text, fault, want)
+		}
 	}
 }

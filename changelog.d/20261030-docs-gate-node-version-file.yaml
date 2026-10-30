@@ -1,0 +1,3 @@
+type: changed
+title: The documentation gate no longer holds every adopting repository on Node 24; praetor-docs.yml takes its release from the repository's own .node-version, which adoption writes once when absent and never overwrites and the repository's bot updates, while audit keeps the workflow byte-locked and refuses a blank, unreadable or below-floor file; run praetorctl adopt and commit the refreshed workflow with the seeded file
+breaking: true

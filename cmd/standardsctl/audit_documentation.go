@@ -19,6 +19,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/util"
 	figureassets "github.com/cordanaLLM/praetor/tools/figures"
+	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 )
 
 // auditExactManagedFile requires the managed file at rel to hold family's canonical text, one
@@ -214,6 +215,14 @@ func auditDocumentationGateEnabled(ctx context.Context, manifest *config.Manifes
 	count, err := auditDocumentationAssets(ctx, rootDir)
 	if err != nil {
 		return err
+	}
+	nodeVersion, err := adopt.AuditNodeVersionFile(ctx, rootDir)
+	if err != nil {
+		return err
+	}
+	if nodeVersion != "" {
+		fmt.Printf("[PASS] Documentation gate runs on Node %s from %s, which the repository owns.\n",
+			nodeVersion, markdownassets.NodeVersionFile)
 	}
 	if err := auditDocumentationLocalWiring(ctx, rootDir, declines, families); err != nil {
 		return err
@@ -426,17 +435,18 @@ func auditDocumentationAssets(ctx context.Context, rootDir string) (int, error) 
 // the same verdict (adopt.IgnoredPaths, the question adoption asks of every file it writes).
 // When git cannot answer, the gate fails closed, as the scratch ignore check before it does.
 func auditDocumentationFilesCommitted(ctx context.Context, rootDir string) error {
-	return auditFamilyFilesCommitted(ctx, rootDir, adopt.DocumentationFamilies())
+	return auditFamilyFilesCommitted(ctx, rootDir, adopt.DocumentationFamilies(), markdownassets.NodeVersionFile)
 }
 
 // auditFamilyFilesCommitted is auditDocumentationFilesCommitted for the managed paths of
-// families, the families of one facet; its failures name the first family's gate.
-func auditFamilyFilesCommitted(ctx context.Context, rootDir string, families []managedasset.Family) error {
+// families, the families of one facet, and for other, the files their gate reads that the
+// repository owns; its failures name the first family's gate.
+func auditFamilyFilesCommitted(ctx context.Context, rootDir string, families []managedasset.Family, other ...string) error {
 	if len(families) == 0 {
 		return nil
 	}
 	gate := familyGate(families[0])
-	rels := make([]string, 0)
+	rels := slices.Clone(other)
 	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {
 		rels = append(rels, families[index].ManagedPaths()...)
 	}

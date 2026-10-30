@@ -844,3 +844,167 @@ func TestPriorDigestsBoundary(t *testing.T) {
 		t.Fatalf("an unknown prior file maps to %q", got)
 	}
 }
+
+func TestCheckNodeVersion(t *testing.T) {
+	floor, err := nodeFloor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pos := []struct{ input, want string }{
+		{"24", "24"},
+		{"24.22.1", "24.22.1"},
+		{"v26.12.1", "v26.12.1"},
+		{"26\n", "26"},
+		{"26\r\n", "26"},
+		{"lts/*", "lts/*"},
+		{"lts/iron", "lts/iron"},
+		{"lts/-1", "lts/-1"},
+		{"node", "node"},
+		{strconv.Itoa(floor), strconv.Itoa(floor)},
+	}
+	for _, tc := range pos {
+		got, err := CheckNodeVersion([]byte(tc.input))
+		if err != nil || got != tc.want {
+			t.Fatalf("CheckNodeVersion(%q) = %q, %v; want %q, nil", tc.input, got, err, tc.want)
+		}
+	}
+	neg := []string{
+		"", "   \n\t ", "# comment\n24", "24\n26", "24 # x",
+		"banana", "20.1.0", "v18", ">=24", strconv.Itoa(floor - 1),
+	}
+	for _, input := range neg {
+		if got, err := CheckNodeVersion([]byte(input)); err == nil {
+			t.Fatalf("CheckNodeVersion(%q) = %q, want error", input, got)
+		}
+	}
+	if _, err := CheckNodeVersion([]byte("")); err == nil || !strings.Contains(err.Error(), "falls back") {
+		t.Fatalf("blank file error %v does not name the fallback", err)
+	}
+	if _, err := CheckNodeVersion([]byte(strconv.Itoa(floor - 1))); err == nil || !strings.Contains(err.Error(), "engines") {
+		t.Fatalf("below-floor error %v does not name engines", err)
+	}
+}
+
+func TestNodeFloorFailsClosed(t *testing.T) {
+	cases := []struct {
+		name      string
+		engine    string
+		wantFloor int
+		wantErr   bool
+	}{
+		{name: "exact >=22.12.0", engine: ">=22.12.0", wantFloor: 22},
+		{name: "caret", engine: "^22", wantErr: true},
+		{name: "empty", engine: "", wantErr: true},
+		{name: "non-numeric", engine: ">=x", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseNodeFloor(tc.engine)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("parseNodeFloor(%q) = %d, want error", tc.engine, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseNodeFloor(%q) unexpected error: %v", tc.engine, err)
+			}
+			if got != tc.wantFloor {
+				t.Fatalf("parseNodeFloor(%q) = %d, want %d", tc.engine, got, tc.wantFloor)
+			}
+		})
+	}
+}
+
+func setupNodeStepFault(workflowYAML string) string {
+	spec, err := ghworkflow.Parse([]byte(workflowYAML))
+	if err != nil {
+		return "parse workflow: " + err.Error()
+	}
+	job, ok := spec.Jobs["documentation"]
+	if !ok {
+		return "workflow lacks documentation job"
+	}
+	var setupNode *ghworkflow.Step
+	for i := range job.Steps {
+		if strings.HasPrefix(job.Steps[i].Uses, "actions/setup-node@") {
+			setupNode = &job.Steps[i]
+			break
+		}
+	}
+	if setupNode == nil {
+		return "workflow lacks setup-node step"
+	}
+	if _, hasVersion := setupNode.With["node-version"]; hasVersion {
+		if _, hasFile := setupNode.With["node-version-file"]; hasFile {
+			return "setup-node step declares both node-version and node-version-file"
+		}
+		return "setup-node step declares fixed node-version"
+	}
+	file, hasFile := setupNode.With["node-version-file"]
+	if !hasFile {
+		return "setup-node step lacks node-version-file"
+	}
+	filePath, ok := file.(string)
+	if !ok || filePath != NodeVersionFile {
+		return fmt.Sprintf("setup-node step uses %q, want %s", file, NodeVersionFile)
+	}
+	return ""
+}
+
+func TestWorkflowTakesNodeFromTheVersionFile(t *testing.T) {
+	if fault := setupNodeStepFault(Workflow); fault != "" {
+		t.Fatalf("Workflow fault: %s", fault)
+	}
+	plantedCases := map[string]struct {
+		mutated   string
+		wantFault string
+	}{
+		"fixed node-version: 24": {
+			mutated:   mutateWorkflow(t, "          node-version-file: .node-version\n", "          node-version: \"24\"\n"),
+			wantFault: "declares fixed node-version",
+		},
+		"other file": {
+			mutated:   mutateWorkflow(t, "          node-version-file: .node-version\n", "          node-version-file: .other-node-version\n"),
+			wantFault: ".other-node-version",
+		},
+		"both keys": {
+			mutated:   mutateWorkflow(t, "          node-version-file: .node-version\n", "          node-version-file: .node-version\n          node-version: \"24\"\n"),
+			wantFault: "declares both node-version and node-version-file",
+		},
+	}
+	for name, tc := range plantedCases {
+		t.Run(name, func(t *testing.T) {
+			fault := setupNodeStepFault(tc.mutated)
+			if !strings.Contains(fault, tc.wantFault) {
+				t.Fatalf("setupNodeStepFault() = %q, want fault containing %q", fault, tc.wantFault)
+			}
+		})
+	}
+}
+
+// Positive: the shipped text reads the file. Negative: every earlier text names its release, so
+// an unedited copy that a locked engine keeps is told apart. Boundary: a copy reading another file
+// is not read as this one.
+func TestReadsNodeVersionFile(t *testing.T) {
+	if !ReadsNodeVersionFile([]byte(Workflow)) {
+		t.Fatal("the shipped workflow does not read the version file")
+	}
+	entries, err := filepath.Glob(filepath.Join(priorTextDir, "praetor-docs.*"))
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("no earlier workflow texts: %v", err)
+	}
+	for _, entry := range entries {
+		data, err := os.ReadFile(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ReadsNodeVersionFile(data) {
+			t.Fatalf("%s reads the version file", entry)
+		}
+	}
+	other := mutateWorkflow(t, "node-version-file: .node-version", "node-version-file: .nvmrc")
+	if ReadsNodeVersionFile([]byte(other)) {
+		t.Fatal("a copy reading .nvmrc counts as reading the version file")
+	}
+}

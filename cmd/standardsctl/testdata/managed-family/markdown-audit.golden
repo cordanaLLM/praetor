@@ -1,7 +1,7 @@
 == canonical
-stdout "[PASS] Locked documentation gate verified (21 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n"
+stdout "[PASS] Documentation gate runs on Node 24.22.1 from .node-version, which the repository owns.\n[PASS] Locked documentation gate verified (21 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n"
 == canonical CRLF
-stdout "[PASS] Locked documentation gate verified (21 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n"
+stdout "[PASS] Documentation gate runs on Node 24.22.1 from .node-version, which the repository owns.\n[PASS] Locked documentation gate verified (21 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n"
 == asset drift
 stdout ""
 error [FAIL] Documentation gate asset tools/markdownlint/package.json differs from the locked Praetor asset; run 'praetorctl adopt --force --lock-source-root=<praetor checkout>'
@@ -21,7 +21,7 @@ error [FAIL] Documentation gate asset .github/workflows/praetor-docs.yml differs
 stdout ""
 error [FAIL] Documentation gate asset .github/workflows/praetor-docs.yml is missing or unreadable: <os error>
 == ruleset without context
-stdout ""
+stdout "[PASS] Documentation gate runs on Node 24.22.1 from .node-version, which the repository owns.\n"
 error [FAIL] Documentation required status context is not reconciled in the branch ruleset: ruleset differs from declared branch protection policy; review the existing file before reconciliation
 == disabled clean
 stdout ""

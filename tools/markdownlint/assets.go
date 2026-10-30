@@ -8,10 +8,17 @@
 package markdownlint
 
 import (
+	"bytes"
 	"embed"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"io/fs"
 	"maps"
+	"regexp"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -24,6 +31,9 @@ const (
 	SourceFile = Directory + "/assets.go"
 	// WorkflowFile is the repository-relative hosted documentation gate.
 	WorkflowFile = ".github/workflows/praetor-docs.yml"
+	// NodeVersionFile is the repository-relative file naming the Node release WorkflowFile runs on.
+	// The repository owns it, so it is no asset of the family and audit does not lock its bytes.
+	NodeVersionFile = ".node-version"
 	// StatusContext is the exact required check emitted by WorkflowFile.
 	StatusContext = "Documentation Governance"
 	// MaxAssets bounds all asset iteration.
@@ -56,6 +66,11 @@ const (
 // 'on' key that the truthy rule does not read as a boolean, and a line-length exemption for
 // the two pin lines, which a 40-hex SHA plus its comment carries past 80 columns at step
 // indentation.
+//
+// The lock is why the text names no Node release: a value in it would hold every adopter on the
+// release this text was written for. setup-node reads NodeVersionFile instead, a file adoption
+// seeds once and the repository owns, so an adopter's own bot moves the value and the bytes stay
+// locked (internal/adopt/node_version.go).
 const Workflow = `---
 name: Praetor Documentation Governance
 
@@ -79,7 +94,7 @@ jobs:
         # yamllint disable-line rule:line-length
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
-          node-version: "24"
+          node-version-file: .node-version
           cache: npm
           cache-dependency-path: tools/markdownlint/package-lock.json
       - name: Verify public Markdown` + ghworkflow.HostedGateStepIf + `
@@ -216,6 +231,10 @@ var priorDigests = map[string]string{
 	// override for GHSA-gg6h-894w-4m9c (Order: engine-golangci-exceptions-expired-20261029).
 	"a0fece446d91cb12a300a64b7662f8943619a81069aaddf15db9e75b6c34c604": Directory + "/package.json",
 	"6d2cd064fea008d29c9b5febb88bb09bea28c74e670f4169d224a407f2d9cee8": Directory + "/package-lock.json",
+	// The workflow (fail-closed and draft-skip) with a fixed node-version 24, which locked adopters
+	// out of their own Node update (Order: engine-praetor-docs-node-pin-20261030).
+	"60c9baed8113117c784c5633dbdad08e3b0d2333b2f7f307faf4a09157d1b4f9": WorkflowFile,
+	"28bf795e95d50cedca2917344cc768a39dc6a8e389120a0eef115de48fc9b739": WorkflowFile,
 }
 
 var assetNames = [...]string{
@@ -247,4 +266,79 @@ func PriorDigests() map[string]string {
 // Read returns one canonical asset without exposing mutable embedded storage.
 func Read(name string) ([]byte, error) {
 	return util.ReadEmbeddedAsset(assets, "markdownlint", Names(), name)
+}
+
+var (
+	numericNodeVersionPattern = regexp.MustCompile(`^v?([0-9]+)(?:\.[0-9]+){0,2}$`)
+	aliasNodeVersionPattern   = regexp.MustCompile(`^(?:lts/(?:\*|-[0-9]+|[a-z]+)|node|latest|current)$`)
+	nodeFloorPattern          = regexp.MustCompile(`^>=([0-9]+)(?:\.[0-9]+)*$`)
+)
+
+// parseNodeFloor returns the major of an engines.node range of the form >=22.12.0. Any other form
+// is an error, so a range this reader does not understand fails the check instead of passing it.
+func parseNodeFloor(engine string) (int, error) {
+	matches := nodeFloorPattern.FindStringSubmatch(strings.TrimSpace(engine))
+	if matches == nil {
+		return 0, fmt.Errorf("engines.node %q in %s/package.json is not a minimum like >=22.12.0", engine, Directory)
+	}
+	floor, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return 0, fmt.Errorf("engines.node %q in %s/package.json: %w", engine, Directory, err)
+	}
+	return floor, nil
+}
+
+// nodeFloor returns the lowest Node major the gate's locked install declares it runs on.
+func nodeFloor() (int, error) {
+	data, err := Read("package.json")
+	if err != nil {
+		return 0, err
+	}
+	var manifest struct {
+		Engines struct {
+			Node string `json:"node"`
+		} `json:"engines"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return 0, fmt.Errorf("decode %s/package.json: %w", Directory, err)
+	}
+	return parseNodeFloor(manifest.Engines.Node)
+}
+
+// ReadsNodeVersionFile reports whether workflow, a copy of WorkflowFile, takes its Node release
+// from NodeVersionFile. An earlier Praetor text names the release itself.
+func ReadsNodeVersionFile(workflow []byte) bool {
+	return bytes.Contains(workflow, []byte("node-version-file: "+NodeVersionFile))
+}
+
+// CheckNodeVersion returns the release data, the content of NodeVersionFile, names. It mirrors what
+// setup-node 7.1.0 and Renovate's nodenv manager read through an allow-list: setup-node takes the
+// first line holding a single token and falls back to the runner's Node on a blank file, Renovate
+// takes the whole trimmed text as one version, so the two agree only on one token. A numeric
+// release below the major of engines.node in package.json fails. An alias (lts/*, lts/iron, node,
+// latest, current) resolves later and is not compared.
+func CheckNodeVersion(data []byte) (string, error) {
+	version := strings.TrimSpace(string(data))
+	if version == "" {
+		return "", errors.New("the file is blank, and actions/setup-node then falls back to the runner's Node with only a warning")
+	}
+	if aliasNodeVersionPattern.MatchString(version) {
+		return version, nil
+	}
+	matches := numericNodeVersionPattern.FindStringSubmatch(version)
+	if matches == nil {
+		return "", fmt.Errorf("%q is not one Node release or alias", version)
+	}
+	major, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return "", fmt.Errorf("the Node release %q: %w", version, err)
+	}
+	floor, err := nodeFloor()
+	if err != nil {
+		return "", err
+	}
+	if major < floor {
+		return "", fmt.Errorf("the Node release %q is below major %d, the floor of engines.node in %s/package.json", version, floor, Directory)
+	}
+	return version, nil
 }
