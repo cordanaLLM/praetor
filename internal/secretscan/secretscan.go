@@ -175,18 +175,69 @@ func ResolveScanner(ctx context.Context) (string, error) {
 	return resolveMiseShim(ctx, path, resolved)
 }
 
+// resolveMiseShim asks mise for the executable behind the shim, first with the ambient
+// environment. A process that moved HOME after start (a test harness isolating the user
+// configuration) leaves mise without its install tree, so a failed first query is retried once
+// with the home the shim itself lives under (inferMiseHome); both failures are reported.
 func resolveMiseShim(ctx context.Context, path, resolved string) (string, error) {
-	whichCtx, cancel := context.WithTimeout(ctx, whichTimeout)
-	defer cancel()
-	envCtx, err := util.WithCommandEnvironment(whichCtx, util.InheritedEnvironment(nil))
-	if err != nil {
-		return "", fmt.Errorf("%s on PATH (%s) is a mise shim; configuring ambient environment failed: %w", DefaultScanner, path, err)
+	out, err := runMiseWhich(ctx, resolved, nil)
+	if err == nil {
+		return validateMiseOutput(path, out)
 	}
-	out, err := util.RunCommand(envCtx, os.TempDir(), resolved, "which", DefaultScanner)
-	if err != nil {
+	home := inferMiseHome(path)
+	if home == "" {
 		return "", fmt.Errorf("%s on PATH (%s) is a mise shim; resolving its executable with \"mise which %s\" failed: %w", DefaultScanner, path, DefaultScanner, err)
 	}
+	out, retryErr := runMiseWhich(ctx, resolved, []string{
+		"HOME=" + home,
+		"XDG_CONFIG_HOME=" + filepath.Join(home, ".config"),
+		"MISE_CONFIG_DIR=" + filepath.Join(home, ".config", "mise"),
+		"MISE_DATA_DIR=" + filepath.Join(home, ".local", "share", "mise"),
+	})
+	if retryErr != nil {
+		return "", fmt.Errorf("%s on PATH (%s) is a mise shim; resolving its executable with \"mise which %s\" failed: %w (retry with the shim's home %s: %w)",
+			DefaultScanner, path, DefaultScanner, err, home, retryErr)
+	}
 	return validateMiseOutput(path, out)
+}
+
+// runMiseWhich runs `mise which gitleaks` in a neutral directory, never the scanned checkout, with
+// the ambient environment plus overrides.
+func runMiseWhich(ctx context.Context, mise string, overrides []string) (string, error) {
+	whichCtx, cancel := context.WithTimeout(ctx, whichTimeout)
+	defer cancel()
+	envCtx, err := util.WithCommandEnvironment(whichCtx, util.InheritedEnvironment(overrides))
+	if err != nil {
+		return "", fmt.Errorf("configure the mise environment: %w", err)
+	}
+	return util.RunCommand(envCtx, os.TempDir(), mise, "which", DefaultScanner)
+}
+
+func inferMiseHome(path string) string {
+	for _, candidate := range []string{path, evalLink(path)} {
+		if candidate == "" {
+			continue
+		}
+		prefix, _, found := strings.Cut(candidate, string(filepath.Separator)+".local")
+		if found && prefix != "" {
+			miseData := filepath.Join(prefix, ".local", "share", "mise")
+			if fi, err := os.Stat(miseData); err == nil && fi.IsDir() {
+				return prefix
+			}
+		}
+	}
+	return ""
+}
+
+func evalLink(path string) string {
+	target, err := os.Readlink(path)
+	if err != nil {
+		return ""
+	}
+	if !filepath.IsAbs(target) {
+		return filepath.Join(filepath.Dir(path), target)
+	}
+	return target
 }
 
 func validateMiseOutput(path, out string) (string, error) {

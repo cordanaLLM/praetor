@@ -140,7 +140,8 @@ func TestSecretsGate_AdoptionBaseline_3D(t *testing.T) {
 		root := newTestRepo(t, "secrets-missing-gitleaks")
 		s := familySession(t, false)
 		s.repoPath = root
-		if err := reconcileSecretsGate(t.Context(), s); err != nil {
+		s.opts.RecordBaseline = true
+		if err := reconcileBaseline(t.Context(), s); err != nil {
 			t.Fatal(err)
 		}
 		details := actionDetailsFor(s.report, "secrets")
@@ -156,7 +157,8 @@ func TestSecretsGate_AdoptionBaseline_3D(t *testing.T) {
 		t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 		s := familySession(t, false)
 		s.repoPath = root
-		if err := reconcileSecretsGate(t.Context(), s); err != nil {
+		s.opts.RecordBaseline = true
+		if err := reconcileBaseline(t.Context(), s); err != nil {
 			t.Fatal(err)
 		}
 		details := actionDetailsFor(s.report, "secrets")
@@ -200,9 +202,10 @@ func testSecretsGate_MiseShimIsolated(t *testing.T) {
 	}
 	s := familySession(t, false)
 	s.repoPath = root
+	s.opts.RecordBaseline = true
 
-	if err := reconcileSecretsGate(isolatedCtx, s); err != nil {
-		t.Fatalf("reconcileSecretsGate failed: %v", err)
+	if err := reconcileBaseline(isolatedCtx, s); err != nil {
+		t.Fatalf("reconcileBaseline failed: %v", err)
 	}
 	details := actionDetailsFor(s.report, "secrets")
 	if !strings.Contains(details, "Recorded 0 HISS-12 secret finding(s)") {

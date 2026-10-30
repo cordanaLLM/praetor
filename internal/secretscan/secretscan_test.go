@@ -765,3 +765,96 @@ func TestUnexcusedSecretInfractions(t *testing.T) {
 		t.Fatalf("RecordBaseline wrote %+v, want %+v", recRes.Next.Infractions, got)
 	}
 }
+
+func TestResolveScanner_MiseShim_InferredHome(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on windows")
+	}
+	realHome := t.TempDir()
+	isolatedHome := t.TempDir()
+	realDir := t.TempDir()
+	realGitleaks := testsupport.BuildFakeGitleaks(t, realDir)
+	shimDir := filepath.Join(realHome, ".local", "bin")
+	mkdirAll(t, shimDir)
+	miseDataDir := filepath.Join(realHome, ".local", "share", "mise")
+	mkdirAll(t, miseDataDir)
+
+	miseSource := fmt.Sprintf(`package main
+import (
+	"fmt"
+	"os"
+)
+func main() {
+	if len(os.Args) >= 3 && os.Args[1] == "which" && os.Args[2] == "gitleaks" {
+		if os.Getenv("HOME") != %q {
+			fmt.Fprintln(os.Stderr, "mise ERROR gitleaks is not a mise bin")
+			os.Exit(1)
+		}
+		fmt.Println(%q)
+		return
+	}
+	os.Exit(2)
+}
+`, realHome, realGitleaks)
+	miseBin := testsupport.BuildExecutable(t, shimDir, "mise", miseSource)
+	if err := os.Symlink(miseBin, filepath.Join(shimDir, "gitleaks")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", isolatedHome)
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	got, err := secretscan.ResolveScanner(t.Context())
+	if err != nil {
+		t.Fatalf("ResolveScanner failed: %v", err)
+	}
+	if got != realGitleaks {
+		t.Fatalf("ResolveScanner = %q, want %q", got, realGitleaks)
+	}
+}
+
+// TestResolveScanner_MiseShim_AmbientHomeWins: when mise answers under the ambient environment,
+// the home inferred from the shim's location is never applied (it is a retry for a moved HOME).
+func TestResolveScanner_MiseShim_AmbientHomeWins(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on windows")
+	}
+	shimHome := t.TempDir()
+	ambientHome := t.TempDir()
+	ambientGitleaks := testsupport.BuildFakeGitleaks(t, t.TempDir())
+	inferredGitleaks := testsupport.BuildFakeGitleaks(t, t.TempDir())
+	shimDir := filepath.Join(shimHome, ".local", "bin")
+	mkdirAll(t, shimDir)
+	mkdirAll(t, filepath.Join(shimHome, ".local", "share", "mise"))
+
+	miseSource := fmt.Sprintf(`package main
+import (
+	"fmt"
+	"os"
+)
+func main() {
+	if len(os.Args) >= 3 && os.Args[1] == "which" && os.Args[2] == "gitleaks" {
+		if os.Getenv("HOME") == %q {
+			fmt.Println(%q)
+			return
+		}
+		fmt.Println(%q)
+		return
+	}
+	os.Exit(2)
+}
+`, ambientHome, ambientGitleaks, inferredGitleaks)
+	miseBin := testsupport.BuildExecutable(t, shimDir, "mise", miseSource)
+	if err := os.Symlink(miseBin, filepath.Join(shimDir, "gitleaks")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", ambientHome)
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	got, err := secretscan.ResolveScanner(t.Context())
+	if err != nil {
+		t.Fatalf("ResolveScanner failed: %v", err)
+	}
+	if got != ambientGitleaks {
+		t.Fatalf("ResolveScanner = %q, want the ambient answer %q (not the inferred-home answer %q)", got, ambientGitleaks, inferredGitleaks)
+	}
+}

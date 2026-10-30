@@ -12,6 +12,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
+	"github.com/cordanaLLM/praetor/internal/secretscan"
 	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 )
@@ -499,28 +500,34 @@ func (s *adoptSession) reconcileImageRefBaseline(ctx context.Context, full strin
 		s.report.BaselineStatus = "failed"
 		return err
 	}
-	s.applyImageRefBaselineResult(res)
+	if res != nil {
+		s.applyRuleBaselineResult(supplychain.ImageRefRuleID, res.Recorded, res.Next)
+	}
 	return nil
 }
 
-func (s *adoptSession) applyImageRefBaselineResult(res *supplychain.ImageBaselineRecordResult) {
-	if res == nil || res.Recorded == 0 {
+func (s *adoptSession) applyRuleBaselineResult(ruleID string, recorded int, next *baseline.Baseline) {
+	if recorded == 0 || next == nil {
 		return
 	}
-	s.report.DebtBreakdown[supplychain.ImageRefRuleID] = res.Recorded
-	s.report.LegacyDebtCount = res.Next.Count()
+	s.report.DebtBreakdown[ruleID] = recorded
+	s.report.LegacyDebtCount = next.Count()
 	for i := 0; i < len(s.report.BaselineRatchets); i++ {
 		if s.report.BaselineRatchets[i].File == baselineFile {
-			s.report.BaselineRatchets[i].Recorded = res.Next.Count()
-			s.report.BaselineRatchets[i].Active += res.Recorded
+			s.report.BaselineRatchets[i].Recorded = next.Count()
+			s.report.BaselineRatchets[i].Active += recorded
 			if s.report.BaselineRatchet != nil {
 				v := s.report.BaselineRatchets[i]
 				s.report.BaselineRatchet = &v
 			}
 		}
 	}
-	note := fmt.Sprintf("Recorded %d HISS-11 image reference finding(s) into %s (reason: adoption baseline)",
-		res.Recorded, baselineFile)
+	label := "image reference"
+	if ruleID == secretscan.BaselineRuleID {
+		label = "secret"
+	}
+	note := fmt.Sprintf("Recorded %d %s %s finding(s) into %s (reason: adoption baseline)",
+		recorded, ruleID, label, baselineFile)
 	s.report.BaselineNotes = append(s.report.BaselineNotes, note)
 	s.report.recordReconciled(baselineFile, note)
 }
