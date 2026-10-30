@@ -33,8 +33,12 @@ claude_subagent:
     effort: medium
 ```
 
-This example is opt-in; the shipped catalog has `claude_subagent: {}`. Every key
-must appear in a tier's `target_tasks`. The table accepts at most 64 entries.
+This example is opt-in. The shipped catalog routes two labels, `single_file_audits`
+and `pr_body_check`, to `haiku`, because planted-defect probes measured an equal pass
+rate at a lower cost (`TestShippedClaudeSubagentRoutes`); other labels keep session
+role defaults until a measurement supports a route, and a label whose pass rate drops
+is reverted.
+Every key must appear in a tier's `target_tasks`. The table accepts at most 64 entries.
 Models are `haiku`, `sonnet`, `opus`, or `fable`; effort is optional and accepts
 `low`, `medium`, `high`, `xhigh`, or `max`. Invalid entries fail catalog loading
 with their task key (`internal/router/claude_subagent_test.go`). Change a label's

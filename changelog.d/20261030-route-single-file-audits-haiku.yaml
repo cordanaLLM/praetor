@@ -1,0 +1,2 @@
+type: changed
+title: Claude subagents with the single_file_audits or pr_body_check label now run on Haiku unless the call names a model, after planted-defect probes measured an equal pass rate at a lower cost; every other label keeps its session default
