@@ -502,25 +502,13 @@ func defaultedBinaryDir(binDir string) string {
 	return binDir
 }
 
-// isExecutableRegularFile reports whether path is a regular file goos can execute. Windows
-// carries executability in the file extension rather than in a permission bit, and Go reports
-// 0666 or 0444 for every file there, so the Unix bit test alone would answer "not executable"
-// for every Windows workspace and silently drop the capability (HISS-21).
+// isExecutableRegularFile reports whether path, not followed through a link, is a regular file
+// goos can execute (util.ExecutableFile); a Unix bit test alone would silently drop the
+// capability on every Windows workspace (HISS-21).
 func isExecutableRegularFile(path, goos string) bool {
 	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return false
-	}
-	if goos == "windows" {
-		return windowsExecutableExts[strings.ToLower(filepath.Ext(path))]
-	}
-	return info.Mode().Perm()&0o111 != 0
+	return err == nil && util.ExecutableFile(path, info, goos)
 }
-
-// windowsExecutableExts are the extensions a shell-less spawn starts on Windows: CreateProcess
-// runs .com and .exe images, and Node's process_wrap rejects .bat and .cmd with EINVAL, so a
-// batch-file language server never starts from the VS Code client.
-var windowsExecutableExts = map[string]bool{".exe": true, ".com": true}
 
 func isRegularFile(path string) bool {
 	info, err := os.Lstat(path)

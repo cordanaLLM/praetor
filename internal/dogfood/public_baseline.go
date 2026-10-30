@@ -12,7 +12,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
-func verifyPublicBaseline(ctx context.Context, dir string, original *hiss.ScanReport, imageRefs []baseline.Infraction) (string, error) {
+func verifyPublicBaseline(ctx context.Context, dir string, original *hiss.ScanReport, imageRefs, secretFindings []baseline.Infraction) (string, error) {
 	if err := validatePublicScan(original); err != nil {
 		return "", err
 	}
@@ -24,7 +24,7 @@ func verifyPublicBaseline(ctx context.Context, dir string, original *hiss.ScanRe
 	if err != nil {
 		return "", err
 	}
-	if err := comparePublicBaseline(ctx, recorded, original, imageRefs); err != nil {
+	if err := comparePublicBaseline(ctx, recorded, original, imageRefs, secretFindings); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
@@ -83,8 +83,8 @@ func checkBaselineCounts(recorded, expected *baseline.Baseline) error {
 	return nil
 }
 
-func comparePublicBaseline(ctx context.Context, recorded *baseline.Baseline, original *hiss.ScanReport, imageRefs []baseline.Infraction) error {
-	expectedBase := publicExpectedBaseline(original, imageRefs)
+func comparePublicBaseline(ctx context.Context, recorded *baseline.Baseline, original *hiss.ScanReport, imageRefs, secretFindings []baseline.Infraction) error {
+	expectedBase := publicExpectedBaseline(original, imageRefs, secretFindings)
 	if err := checkBaselineCounts(recorded, expectedBase); err != nil {
 		return err
 	}
@@ -114,12 +114,14 @@ func publicScanBaseline(scan *hiss.ScanReport) *baseline.Baseline {
 }
 
 // publicExpectedBaseline is the baseline adoption records for the original tree: the independent
-// HISS infractions plus the unexcused HISS-11 image references adoption baselines too
-// (supplychain.UnexcusedImageRefInfractions). Every debt count and baseline comparison uses it.
-func publicExpectedBaseline(scan *hiss.ScanReport, imageRefs []baseline.Infraction) *baseline.Baseline {
+// HISS infractions plus the unexcused HISS-11 image references and HISS-12 secret findings adoption
+// baselines too (supplychain.UnexcusedImageRefInfractions and secretscan.UnexcusedSecretInfractions).
+// Every debt count and baseline comparison uses it.
+func publicExpectedBaseline(scan *hiss.ScanReport, imageRefs, secretFindings []baseline.Infraction) *baseline.Baseline {
 	infractions := publicInfractions(scan)
-	combined := make([]baseline.Infraction, 0, len(infractions)+len(imageRefs))
+	combined := make([]baseline.Infraction, 0, len(infractions)+len(imageRefs)+len(secretFindings))
 	combined = append(combined, infractions...)
 	combined = append(combined, imageRefs...)
-	return &baseline.Baseline{Version: 1, TotalInfractions: scan.TotalInfractions + len(imageRefs), Infractions: combined}
+	combined = append(combined, secretFindings...)
+	return &baseline.Baseline{Version: 1, TotalInfractions: scan.TotalInfractions + len(imageRefs) + len(secretFindings), Infractions: combined}
 }
