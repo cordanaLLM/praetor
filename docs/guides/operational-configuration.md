@@ -140,7 +140,9 @@ sponsoring and monetization pages are the unconfigured rendering.
 `TestRepositoryFundingSurfacesMatchTheOperatorConfiguration` in
 `internal/funding/funding_test.go` fails if a configured rendering is committed to the
 engine. In an operational fork, whose `.standards.yaml` records `repository.source`, the
-same test requires the rendering of the fork's own document instead.
+same test requires the rendering of the fork's own document instead. The engine README's
+hand-written Support Praetor section names the project's own sponsor page: it sits outside
+the rendered blocks, and adoption does not write it into an adopting repository.
 
 ```yaml
 github: [exampleOrg]            # GitHub Sponsors, at most four accounts
