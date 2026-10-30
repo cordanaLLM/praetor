@@ -11,10 +11,15 @@ import (
 )
 
 // BuildFakeGitleaks builds a stand-in gitleaks executable in dir that accepts detect
-// arguments and writes an empty JSON array report to the --report-path argument.
-func BuildFakeGitleaks(t testing.TB, dir string) string {
+// arguments and writes a JSON array report to the --report-path argument. If reportPayload
+// is provided, that payload is written; otherwise, an empty JSON array "[]" is written.
+func BuildFakeGitleaks(t testing.TB, dir string, reportPayload ...string) string {
 	t.Helper()
-	source := `package main
+	payload := "[]"
+	if len(reportPayload) > 0 && reportPayload[0] != "" {
+		payload = reportPayload[0]
+	}
+	source := fmt.Sprintf(`package main
 
 import (
 	"os"
@@ -22,21 +27,22 @@ import (
 )
 
 func main() {
+	payload := []byte(%q)
 	for i := 1; i < len(os.Args); i++ {
 		arg := os.Args[i]
 		if arg == "--report-path" && i+1 < len(os.Args) {
-			_ = os.WriteFile(os.Args[i+1], []byte("[]"), 0o600)
+			_ = os.WriteFile(os.Args[i+1], payload, 0o600)
 			os.Exit(0)
 		}
 		if strings.HasPrefix(arg, "--report-path=") {
 			path := strings.TrimPrefix(arg, "--report-path=")
-			_ = os.WriteFile(path, []byte("[]"), 0o600)
+			_ = os.WriteFile(path, payload, 0o600)
 			os.Exit(0)
 		}
 	}
 	os.Exit(0)
 }
-`
+`, payload)
 	return BuildExecutable(t, dir, "gitleaks", source)
 }
 

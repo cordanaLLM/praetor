@@ -9,6 +9,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/secretscan"
 )
 
 func repairPublicPolicyFixture(t *testing.T) *SuiteReport {
@@ -237,7 +238,15 @@ func repairAppliedPolicyFixture(t *testing.T) *SuiteReport {
 		Fingerprint: ".devcontainer/devcontainer.json:HISS-11:image:mcr.microsoft.com/devcontainers/python:3",
 	}
 	item.OriginalImageRefs = []baseline.Infraction{imageRef}
-	expectedDebt := publicExpectedBaseline(item.OriginalScan, item.OriginalImageRefs).Count()
+	secretFinding := baseline.Infraction{
+		RuleID:      secretscan.BaselineRuleID,
+		FilePath:    "docs/tutorial/deploy.rst",
+		LineNumber:  73,
+		Message:     "generic-api-key",
+		Fingerprint: "d086db85:docs/tutorial/deploy.rst:generic-api-key",
+	}
+	item.OriginalSecretFindings = []baseline.Infraction{secretFinding}
+	expectedDebt := publicExpectedBaseline(item.OriginalScan, item.OriginalImageRefs, item.OriginalSecretFindings).Count()
 	item.Plan.LegacyDebtCount = expectedDebt
 
 	for i := range item.Attempts {
@@ -290,10 +299,32 @@ func TestRepairAppliedPolicyDifferentSHAPlanDebtCountHISSOnly(t *testing.T) {
 	}
 }
 
+func TestRepairAppliedPolicyPlanDebtCountMissingSecrets(t *testing.T) {
+	report := repairAppliedPolicyFixture(t)
+	item := &report.Cases[0].Public.Results[0]
+	// Count including image refs but leaving out secret findings fails.
+	item.Plan.LegacyDebtCount = item.OriginalScan.TotalInfractions + len(item.OriginalImageRefs)
+	_, err := loadRepairPolicyFixture(t, report)
+	if err == nil || !strings.Contains(err.Error(), "planned adoption debt count differs from the independent original scan") {
+		t.Fatalf("expected 'planned adoption debt count differs...', got: %v", err)
+	}
+}
+
 func TestRepairAppliedPolicyDifferentSHAAppliedDebtCountHISSOnly(t *testing.T) {
 	report := repairAppliedPolicyFixture(t)
 	item := &report.Cases[0].Public.Results[0]
 	item.Attempts[0].Adoption.LegacyDebtCount = item.OriginalScan.TotalInfractions
+	_, err := loadRepairPolicyFixture(t, report)
+	if err == nil || !strings.Contains(err.Error(), "applied adoption debt count differs from the independent original scan") {
+		t.Fatalf("expected 'applied adoption debt count differs...', got: %v", err)
+	}
+}
+
+func TestRepairAppliedPolicyAppliedDebtCountMissingSecrets(t *testing.T) {
+	report := repairAppliedPolicyFixture(t)
+	item := &report.Cases[0].Public.Results[0]
+	// Count including image refs but leaving out secret findings fails.
+	item.Attempts[0].Adoption.LegacyDebtCount = item.OriginalScan.TotalInfractions + len(item.OriginalImageRefs)
 	_, err := loadRepairPolicyFixture(t, report)
 	if err == nil || !strings.Contains(err.Error(), "applied adoption debt count differs from the independent original scan") {
 		t.Fatalf("expected 'applied adoption debt count differs...', got: %v", err)
@@ -348,6 +379,58 @@ func TestRepairValidatesOriginalImageRefs(t *testing.T) {
 		}
 		if err := validateRepairOriginalImageRefs(oversized); err == nil {
 			t.Fatal("oversized image refs accepted")
+		}
+	})
+}
+
+func TestRepairValidatesOriginalSecretFindings(t *testing.T) {
+	validFinding := baseline.Infraction{
+		RuleID:      secretscan.BaselineRuleID,
+		FilePath:    "docs/tutorial/deploy.rst",
+		LineNumber:  73,
+		Message:     "generic-api-key",
+		Fingerprint: "d086db85:docs/tutorial/deploy.rst:generic-api-key",
+	}
+
+	if err := validateRepairOriginalSecretFindings(nil); err != nil {
+		t.Fatalf("nil secret findings rejected: %v", err)
+	}
+	if err := validateRepairOriginalSecretFindings([]baseline.Infraction{}); err != nil {
+		t.Fatalf("empty secret findings rejected: %v", err)
+	}
+	if err := validateRepairOriginalSecretFindings([]baseline.Infraction{validFinding}); err != nil {
+		t.Fatalf("valid secret finding rejected: %v", err)
+	}
+
+	invalidCases := []struct {
+		name   string
+		mutate func(*baseline.Infraction)
+	}{
+		{"rule_id not HISS-12", func(r *baseline.Infraction) { r.RuleID = "HISS-11" }},
+		{"line_number zero", func(r *baseline.Infraction) { r.LineNumber = 0 }},
+		{"line_number negative", func(r *baseline.Infraction) { r.LineNumber = -1 }},
+		{"empty fingerprint", func(r *baseline.Infraction) { r.Fingerprint = "" }},
+		{"empty file_path", func(r *baseline.Infraction) { r.FilePath = "" }},
+		{"relative escaping path", func(r *baseline.Infraction) { r.FilePath = "../other/file.rst" }},
+		{"non-canonical path", func(r *baseline.Infraction) { r.FilePath = "a/../b.rst" }},
+	}
+	for _, tc := range invalidCases {
+		t.Run(tc.name, func(t *testing.T) {
+			finding := validFinding
+			tc.mutate(&finding)
+			if err := validateRepairOriginalSecretFindings([]baseline.Infraction{finding}); err == nil {
+				t.Fatalf("invalid infraction accepted for %s", tc.name)
+			}
+		})
+	}
+
+	t.Run("count exceeds cap", func(t *testing.T) {
+		oversized := make([]baseline.Infraction, hiss.MaxInfractionsCap+1)
+		for i := range oversized {
+			oversized[i] = validFinding
+		}
+		if err := validateRepairOriginalSecretFindings(oversized); err == nil {
+			t.Fatal("oversized secret findings accepted")
 		}
 	})
 }

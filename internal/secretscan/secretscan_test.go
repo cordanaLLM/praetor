@@ -540,77 +540,80 @@ func TestResolveScanner_MiseShim_Success(t *testing.T) {
 	}
 }
 
+type miseFailureCase struct {
+	name       string
+	miseSource string
+	setup      func(t *testing.T, dir, miseBin string)
+	want       string
+}
+
+// printSiblingFakeMise makes the fake mise print <its own directory>/other/gitleaks, which setup
+// prepares per case; each case names the detail only its own validation branch reports.
+const printSiblingFakeMise = "package main\nimport (\"fmt\"; \"os\"; \"path/filepath\")\nfunc main() { fmt.Println(filepath.Join(filepath.Dir(os.Args[0]), \"other\", \"gitleaks\")) }\n"
+
+var miseFailureCases = []miseFailureCase{
+	{
+		name:       "non-zero exit",
+		miseSource: "package main\nimport (\"fmt\"; \"os\")\nfunc main() { fmt.Fprintln(os.Stderr, \"failed\"); os.Exit(1) }\n",
+		want:       "exit status 1",
+	},
+	{
+		name:       "two lines",
+		miseSource: "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"/path/to/gitleaks\\nextra line\") }\n",
+		want:       "expected exactly one line, got 2 lines",
+	},
+	{
+		name:       "relative path",
+		miseSource: "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"bin/gitleaks\") }\n",
+		want:       "is not absolute",
+	},
+	{
+		name:       "base not gitleaks",
+		miseSource: "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"/usr/bin/python\") }\n",
+		want:       "base name is \"python\"",
+	},
+	{
+		name:       "missing file",
+		miseSource: "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"/tmp/nonexistent-praetor-test/gitleaks\") }\n",
+		want:       "no such file or directory",
+	},
+	{
+		name:       "directory, not a regular file",
+		miseSource: printSiblingFakeMise,
+		setup: func(t *testing.T, dir, _ string) {
+			mkdirAll(t, filepath.Join(dir, "other", "gitleaks"))
+		},
+		want: "is not a regular file",
+	},
+	{
+		name:       "not executable",
+		miseSource: printSiblingFakeMise,
+		setup: func(t *testing.T, dir, _ string) {
+			mkdirAll(t, filepath.Join(dir, "other"))
+			if err := os.WriteFile(filepath.Join(dir, "other", "gitleaks"), []byte("data"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+		want: "is not executable",
+	},
+	{
+		name:       "another mise shim",
+		miseSource: printSiblingFakeMise,
+		setup: func(t *testing.T, dir, miseBin string) {
+			mkdirAll(t, filepath.Join(dir, "other"))
+			if err := os.Symlink(miseBin, filepath.Join(dir, "other", "gitleaks")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		want: "is also a mise shim",
+	},
+}
+
 func TestResolveScanner_MiseShim_Failures(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation requires privileges on windows")
 	}
-	// printSibling makes the fake mise print <its own directory>/other/gitleaks, which setup
-	// prepares per case; each case names the detail only its own validation branch reports.
-	const printSibling = "package main\nimport (\"fmt\"; \"os\"; \"path/filepath\")\nfunc main() { fmt.Println(filepath.Join(filepath.Dir(os.Args[0]), \"other\", \"gitleaks\")) }\n"
-	cases := []struct {
-		name       string
-		miseSource string
-		setup      func(t *testing.T, dir, miseBin string)
-		want       string
-	}{
-		{
-			name:       "non-zero exit",
-			miseSource: "package main\nimport (\"fmt\"; \"os\")\nfunc main() { fmt.Fprintln(os.Stderr, \"failed\"); os.Exit(1) }\n",
-			want:       "exit status 1",
-		},
-		{
-			name:       "two lines",
-			miseSource: "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"/path/to/gitleaks\\nextra line\") }\n",
-			want:       "expected exactly one line, got 2 lines",
-		},
-		{
-			name:       "relative path",
-			miseSource: "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"bin/gitleaks\") }\n",
-			want:       "is not absolute",
-		},
-		{
-			name:       "base not gitleaks",
-			miseSource: "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"/usr/bin/python\") }\n",
-			want:       "base name is \"python\"",
-		},
-		{
-			name:       "missing file",
-			miseSource: "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"/tmp/nonexistent-praetor-test/gitleaks\") }\n",
-			want:       "no such file or directory",
-		},
-		{
-			name:       "directory, not a regular file",
-			miseSource: printSibling,
-			setup: func(t *testing.T, dir, _ string) {
-				mkdirAll(t, filepath.Join(dir, "other", "gitleaks"))
-			},
-			want: "is not a regular file",
-		},
-		{
-			name:       "not executable",
-			miseSource: printSibling,
-			setup: func(t *testing.T, dir, _ string) {
-				mkdirAll(t, filepath.Join(dir, "other"))
-				if err := os.WriteFile(filepath.Join(dir, "other", "gitleaks"), []byte("data"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			},
-			want: "is not executable",
-		},
-		{
-			name:       "another mise shim",
-			miseSource: printSibling,
-			setup: func(t *testing.T, dir, miseBin string) {
-				mkdirAll(t, filepath.Join(dir, "other"))
-				if err := os.Symlink(miseBin, filepath.Join(dir, "other", "gitleaks")); err != nil {
-					t.Fatal(err)
-				}
-			},
-			want: "is also a mise shim",
-		},
-	}
-
-	for _, tc := range cases {
+	for _, tc := range miseFailureCases {
 		t.Run(tc.name, func(t *testing.T) {
 			verifyMiseShimFailure(t, tc.miseSource, tc.setup, tc.want)
 		})
@@ -703,5 +706,62 @@ func TestResolveScanner_PlantedMiseUntrustedProof(t *testing.T) {
 	}
 	if report.Failed() || len(report.Blocking) != 0 {
 		t.Fatalf("expected 0 blocking findings, got: %s", report.Summary())
+	}
+}
+
+func TestUnexcusedSecretInfractions(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir, []config.Exception{
+		{
+			Rule:        config.ExceptionRuleSecrets,
+			Path:        "excused.py",
+			Tool:        "generic-api-key",
+			Fingerprint: "fp-excused",
+			Expires:     "2026-12-31",
+			Reason:      "test fixture exception",
+		},
+	})
+	reportJSON := `[
+		{"RuleID":"generic-api-key","File":"blocking.py","StartLine":10,"Fingerprint":"fp-blocking"},
+		{"RuleID":"generic-api-key","File":"excused.py","StartLine":20,"Fingerprint":"fp-excused"}
+	]`
+	fakeGitleaks := testsupport.BuildFakeGitleaks(t, dir, reportJSON)
+	opts := secretscan.Options{
+		Dir:     dir,
+		Scanner: []string{fakeGitleaks},
+		Run:     util.RunCommand,
+		Now:     func() time.Time { return testDay },
+	}
+
+	got, err := secretscan.UnexcusedSecretInfractions(t.Context(), opts)
+	if err != nil {
+		t.Fatalf("UnexcusedSecretInfractions failed: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 unexcused infraction, got %d: %+v", len(got), got)
+	}
+	want := baseline.Infraction{
+		RuleID:      secretscan.BaselineRuleID,
+		FilePath:    "blocking.py",
+		LineNumber:  10,
+		Message:     "generic-api-key",
+		Fingerprint: "fp-blocking",
+	}
+	if got[0] != want {
+		t.Fatalf("got infraction %+v, want %+v", got[0], want)
+	}
+
+	recRes, err := secretscan.RecordBaseline(t.Context(), secretscan.RecordOptions{
+		Options: opts,
+		Reason:  "adoption baseline",
+	})
+	if err != nil {
+		t.Fatalf("RecordBaseline failed: %v", err)
+	}
+	if recRes.Recorded != len(got) || recRes.Next.Count() != len(got) {
+		t.Fatalf("RecordBaseline recorded %d total %d, want %d", recRes.Recorded, recRes.Next.Count(), len(got))
+	}
+	if len(recRes.Next.Infractions) != 1 || recRes.Next.Infractions[0] != want {
+		t.Fatalf("RecordBaseline wrote %+v, want %+v", recRes.Next.Infractions, got)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/harvester"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/secretscan"
 )
 
 var errRepairPublicRerun = errors.New("verified public report lacks current policy or baseline evidence; rerun required")
@@ -220,7 +221,15 @@ func repairPublicAnchor(repo PublicRepositoryResult) (publicPolicyAnchor, error)
 	if err := validateRepairOriginalImageRefs(repo.OriginalImageRefs); err != nil {
 		return publicPolicyAnchor{}, err
 	}
-	anchor := publicPolicyAnchor{Policy: repo.Plan.EffectivePolicy, Scan: repo.OriginalScan, ImageRefs: repo.OriginalImageRefs}
+	if err := validateRepairOriginalSecretFindings(repo.OriginalSecretFindings); err != nil {
+		return publicPolicyAnchor{}, err
+	}
+	anchor := publicPolicyAnchor{
+		Policy:         repo.Plan.EffectivePolicy,
+		Scan:           repo.OriginalScan,
+		ImageRefs:      repo.OriginalImageRefs,
+		SecretFindings: repo.OriginalSecretFindings,
+	}
 	if err := publicAdoptionError(repo.Plan, nil); err != nil {
 		return anchor, err
 	}
@@ -237,13 +246,21 @@ func repairPublicAnchor(repo PublicRepositoryResult) (publicPolicyAnchor, error)
 }
 
 func validateRepairOriginalImageRefs(refs []baseline.Infraction) error {
+	return validateRepairOriginalInfractions(refs, baseline.ImageRefRuleID, "image references")
+}
+
+func validateRepairOriginalSecretFindings(findings []baseline.Infraction) error {
+	return validateRepairOriginalInfractions(findings, secretscan.BaselineRuleID, "secret findings")
+}
+
+func validateRepairOriginalInfractions(refs []baseline.Infraction, expectedRuleID, label string) error {
 	if len(refs) > hiss.MaxInfractionsCap {
-		return errors.New("public image references exceed capacity")
+		return fmt.Errorf("public %s exceed capacity", label)
 	}
 	for i := 0; i < len(refs) && i < hiss.MaxInfractionsCap; i++ {
 		ref := refs[i]
-		if ref.RuleID != baseline.ImageRefRuleID || !repairPublicRelativePath(ref.FilePath) || ref.LineNumber <= 0 || ref.Fingerprint == "" {
-			return errors.New("public image references contain an invalid infraction identity")
+		if ref.RuleID != expectedRuleID || !repairPublicRelativePath(ref.FilePath) || ref.LineNumber <= 0 || ref.Fingerprint == "" {
+			return fmt.Errorf("public %s contain an invalid infraction identity", label)
 		}
 	}
 	return nil
@@ -253,7 +270,7 @@ func validateRepairOriginalMetadata(repo PublicRepositoryResult) error {
 	if !suiteSHA.MatchString(repo.OriginalTreeDigest) {
 		return errors.New("public original tree requires a valid SHA-256 identity")
 	}
-	if repo.Plan.LegacyDebtCount != publicExpectedBaseline(repo.OriginalScan, repo.OriginalImageRefs).Count() {
+	if repo.Plan.LegacyDebtCount != publicExpectedBaseline(repo.OriginalScan, repo.OriginalImageRefs, repo.OriginalSecretFindings).Count() {
 		return errors.New("planned adoption debt count differs from the independent original scan")
 	}
 	return nil
@@ -282,7 +299,7 @@ func validateRepairAppliedPolicy(attempt PublicAttempt, anchor publicPolicyAncho
 	if attempt.Adoption.DryRun {
 		return errors.New("public verification requires an applied adoption report")
 	}
-	if attempt.Adoption.LegacyDebtCount != publicExpectedBaseline(anchor.Scan, anchor.ImageRefs).Count() {
+	if attempt.Adoption.LegacyDebtCount != publicExpectedBaseline(anchor.Scan, anchor.ImageRefs, anchor.SecretFindings).Count() {
 		return errors.New("applied adoption debt count differs from the independent original scan")
 	}
 	return matchPublicPolicy(anchor.Policy, attempt.Adoption.EffectivePolicy)

@@ -294,9 +294,25 @@ func Check(ctx context.Context, opts Options) (*Report, error) {
 	return judgeFindings(findings, entries, base, opts.Dir, config.ExceptionDay(now())), nil
 }
 
-// RecordBaseline scans history with gitleaks and writes unexcused findings as HISS-12 entries in
-// .standards-baseline.json, keeping every non-HISS-12 entry and enforcing the HISS-13 ratchet.
-func RecordBaseline(ctx context.Context, opts RecordOptions) (*RecordResult, error) {
+// secretFindingsToInfractions converts gitleaks findings into HISS-13 baseline infractions.
+func secretFindingsToInfractions(findings []Finding, dir string) []baseline.Infraction {
+	out := make([]baseline.Infraction, len(findings))
+	for i := 0; i < len(findings); i++ {
+		f := findings[i]
+		out[i] = baseline.Infraction{
+			RuleID:      BaselineRuleID,
+			FilePath:    baseline.NormalizePath(rules.NormalizeFindingPath(f.File, dir)),
+			LineNumber:  f.StartLine,
+			Message:     f.RuleID,
+			Fingerprint: f.Fingerprint,
+		}
+	}
+	return out
+}
+
+// UnexcusedSecretInfractions scans opts.Dir with gitleaks, filters out findings excused by live
+// HISS-12 exceptions in the manifest, and converts the remaining findings into HISS-13 baseline infractions.
+func UnexcusedSecretInfractions(ctx context.Context, opts Options) ([]baseline.Infraction, error) {
 	if ctx == nil {
 		return nil, errors.New("secretscan: context cannot be nil")
 	}
@@ -307,12 +323,7 @@ func RecordBaseline(ctx context.Context, opts RecordOptions) (*RecordResult, err
 	if err != nil {
 		return nil, fmt.Errorf("load exceptions: %w", err)
 	}
-	baselinePath := filepath.Join(opts.Dir, BaselineFile)
-	previous, err := baseline.LoadBaseline(baselinePath)
-	if err != nil {
-		return nil, fmt.Errorf("load baseline: %w", err)
-	}
-	findings, err := runGitleaks(ctx, opts.Options)
+	findings, err := runGitleaks(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -321,11 +332,32 @@ func RecordBaseline(ctx context.Context, opts RecordOptions) (*RecordResult, err
 		now = opts.Now
 	}
 	excReport := judgeFindings(findings, entries, nil, opts.Dir, config.ExceptionDay(now()))
-	return writeRecordedBaseline(baselinePath, previous, excReport.Blocking, opts)
+	return secretFindingsToInfractions(excReport.Blocking, opts.Dir), nil
 }
 
-func writeRecordedBaseline(path string, previous *baseline.Baseline, blocking []Finding, opts RecordOptions) (*RecordResult, error) {
-	combined := mergeSecretInfractions(previous.Infractions, blocking, opts.Dir)
+// RecordBaseline scans history with gitleaks and writes unexcused findings as HISS-12 entries in
+// .standards-baseline.json, keeping every non-HISS-12 entry and enforcing the HISS-13 ratchet.
+func RecordBaseline(ctx context.Context, opts RecordOptions) (*RecordResult, error) {
+	if ctx == nil {
+		return nil, errors.New("secretscan: context cannot be nil")
+	}
+	if opts.Dir == "" || opts.Run == nil {
+		return nil, errors.New("secretscan: directory and runner are required")
+	}
+	baselinePath := filepath.Join(opts.Dir, BaselineFile)
+	previous, err := baseline.LoadBaseline(baselinePath)
+	if err != nil {
+		return nil, fmt.Errorf("load baseline: %w", err)
+	}
+	infractions, err := UnexcusedSecretInfractions(ctx, opts.Options)
+	if err != nil {
+		return nil, err
+	}
+	return writeRecordedBaseline(baselinePath, previous, infractions, opts)
+}
+
+func writeRecordedBaseline(path string, previous *baseline.Baseline, infractions []baseline.Infraction, opts RecordOptions) (*RecordResult, error) {
+	combined := mergeSecretInfractions(previous.Infractions, infractions)
 	reason := strings.TrimSpace(opts.Reason)
 	recBase := previous
 	if previous.Absent {
@@ -351,31 +383,22 @@ func writeRecordedBaseline(path string, previous *baseline.Baseline, blocking []
 		next.IncreaseRationale = reason
 	}
 	if !previous.Absent && previous.SameDebt(next) {
-		return &RecordResult{Path: path, Previous: previous, Next: previous, Recorded: len(blocking), Unchanged: true}, nil
+		return &RecordResult{Path: path, Previous: previous, Next: previous, Recorded: len(infractions), Unchanged: true}, nil
 	}
 	if err := baseline.SaveBaseline(path, next); err != nil {
 		return nil, err
 	}
-	return &RecordResult{Path: path, Previous: previous, Next: next, Recorded: len(blocking)}, nil
+	return &RecordResult{Path: path, Previous: previous, Next: next, Recorded: len(infractions)}, nil
 }
 
-func mergeSecretInfractions(existing []baseline.Infraction, blocking []Finding, dir string) []baseline.Infraction {
-	combined := make([]baseline.Infraction, 0, len(existing)+len(blocking))
+func mergeSecretInfractions(existing, newInfractions []baseline.Infraction) []baseline.Infraction {
+	combined := make([]baseline.Infraction, 0, len(existing)+len(newInfractions))
 	for i := 0; i < len(existing); i++ {
 		if existing[i].RuleID != BaselineRuleID {
 			combined = append(combined, existing[i])
 		}
 	}
-	for i := 0; i < len(blocking); i++ {
-		f := blocking[i]
-		combined = append(combined, baseline.Infraction{
-			RuleID:      BaselineRuleID,
-			FilePath:    baseline.NormalizePath(rules.NormalizeFindingPath(f.File, dir)),
-			LineNumber:  f.StartLine,
-			Message:     f.RuleID,
-			Fingerprint: f.Fingerprint,
-		})
-	}
+	combined = append(combined, newInfractions...)
 	return combined
 }
 

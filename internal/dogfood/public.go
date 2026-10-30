@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/secretscan"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -56,18 +58,19 @@ type PublicAttempt struct {
 
 // PublicRepositoryResult distinguishes plans, verified applications and failures.
 type PublicRepositoryResult struct {
-	OriginalSnapshot   *SnapshotReport       `json:"original_snapshot,omitempty"`
-	Repository         string                `json:"repository"`
-	RequestedSHA       string                `json:"requested_sha,omitempty"`
-	SourceSHA          string                `json:"source_sha,omitempty"`
-	Checkout           string                `json:"checkout"`
-	Status             string                `json:"status"`
-	Plan               *adopt.AdoptReport    `json:"plan,omitempty"`
-	OriginalScan       *hiss.ScanReport      `json:"original_scan,omitempty"`
-	OriginalImageRefs  []baseline.Infraction `json:"original_image_refs,omitempty"`
-	OriginalTreeDigest string                `json:"original_tree_digest,omitempty"`
-	Attempts           []PublicAttempt       `json:"attempts,omitempty"`
-	Error              string                `json:"error,omitempty"`
+	OriginalSnapshot       *SnapshotReport       `json:"original_snapshot,omitempty"`
+	Repository             string                `json:"repository"`
+	RequestedSHA           string                `json:"requested_sha,omitempty"`
+	SourceSHA              string                `json:"source_sha,omitempty"`
+	Checkout               string                `json:"checkout"`
+	Status                 string                `json:"status"`
+	Plan                   *adopt.AdoptReport    `json:"plan,omitempty"`
+	OriginalScan           *hiss.ScanReport      `json:"original_scan,omitempty"`
+	OriginalImageRefs      []baseline.Infraction `json:"original_image_refs,omitempty"`
+	OriginalSecretFindings []baseline.Infraction `json:"original_secret_findings,omitempty"`
+	OriginalTreeDigest     string                `json:"original_tree_digest,omitempty"`
+	Attempts               []PublicAttempt       `json:"attempts,omitempty"`
+	Error                  string                `json:"error,omitempty"`
 }
 
 // PublicLoopReport names the durable evidence and the exact verification scope.
@@ -222,7 +225,37 @@ func scanPublicOriginalWithLimits(ctx context.Context, result *PublicRepositoryR
 		return errors.New("original image references exceed capacity")
 	}
 	result.OriginalImageRefs = imageRefs
+	secretFindings, err := scanPublicOriginalSecrets(ctx, result.Checkout)
+	if err != nil {
+		return fmt.Errorf("scan original tree secret findings: %w", err)
+	}
+	result.OriginalSecretFindings = secretFindings
 	return nil
+}
+
+func scanPublicOriginalSecrets(ctx context.Context, dir string) ([]baseline.Infraction, error) {
+	if _, err := exec.LookPath(secretscan.DefaultScanner); err != nil {
+		return nil, nil
+	}
+	scanCtx, cancel := context.WithTimeout(ctx, secretscan.ScanTimeout)
+	defer cancel()
+	scanner, err := secretscan.ResolveScanner(scanCtx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve scanner: %w", err)
+	}
+	opts := secretscan.Options{
+		Dir:     dir,
+		Scanner: []string{scanner},
+		Run:     util.RunCommand,
+	}
+	secrets, err := secretscan.UnexcusedSecretInfractions(scanCtx, opts)
+	if err != nil {
+		return nil, err
+	}
+	if len(secrets) > hiss.MaxInfractionsCap {
+		return nil, errors.New("original secret findings exceed capacity")
+	}
+	return secrets, nil
 }
 
 func reconcilePublicRepository(ctx context.Context, opts PublicLoopOptions, result *PublicRepositoryResult, original publicTree, adoptOpts adopt.AdoptOptions) error {
@@ -231,6 +264,7 @@ func reconcilePublicRepository(ctx context.Context, opts PublicLoopOptions, resu
 		Policy:         result.Plan.EffectivePolicy,
 		Scan:           result.OriginalScan,
 		ImageRefs:      result.OriginalImageRefs,
+		SecretFindings: result.OriginalSecretFindings,
 		snapshotLimits: &opts.InputLimits.Snapshot,
 	}
 	for i := 0; i < opts.MaxAttempts && i < MaxPublicAttempts; i++ {

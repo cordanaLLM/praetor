@@ -30,6 +30,7 @@ type publicPolicyAnchor struct {
 	Policy         *config.EffectivePolicy
 	Scan           *hiss.ScanReport
 	ImageRefs      []baseline.Infraction
+	SecretFindings []baseline.Infraction
 }
 
 func applyPublicAttempt(ctx context.Context, opts adopt.AdoptOptions, original publicTree, anchor publicPolicyAnchor, number int) PublicAttempt {
@@ -73,7 +74,7 @@ func verifyPublicCheckout(ctx context.Context, dir string, anchor publicPolicyAn
 	}
 	result.LockVerified = true
 	result.PolicySHA256, result.MaxFuncLOC = policy.SHA256, policy.Policy.Complexity.MaxFuncLOC
-	result.BaselineSHA256, err = verifyPublicBaseline(ctx, dir, anchor.Scan, anchor.ImageRefs)
+	result.BaselineSHA256, err = verifyPublicBaseline(ctx, dir, anchor.Scan, anchor.ImageRefs, anchor.SecretFindings)
 	if err != nil {
 		return result, err
 	}
