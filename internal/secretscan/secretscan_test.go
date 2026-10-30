@@ -717,7 +717,6 @@ func TestUnexcusedSecretInfractions(t *testing.T) {
 			Fingerprint: "fp-excused",
 			Category:    "A",
 			Expires:     "2026-12-31",
-			Category:    "D",
 			Reason:      "test fixture exception",
 		},
 	})
