@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -36,29 +37,34 @@ const (
 // for UI repositories), the route paths scanned by the generated accessibility and
 // responsiveness gates (routes, defaulting to ["/"]), and the route mock glob for the
 // responsiveness spec's slow-API and HTTP 503 cases (api_pattern, defaulting to "**/api/**").
+// ScreenMatrix names the A11Y-CHECK1 data file; ui-gates requires it for UI repositories.
 type UIPolicy struct {
-	InputLatencyMs int      `yaml:"input_latency_ms,omitempty"`
-	Routes         []string `yaml:"routes,omitempty"`
-	APIPattern     string   `yaml:"api_pattern,omitempty"`
-	hasLatency     bool
-	hasAPIPattern  bool
+	InputLatencyMs  int      `yaml:"input_latency_ms,omitempty"`
+	Routes          []string `yaml:"routes,omitempty"`
+	APIPattern      string   `yaml:"api_pattern,omitempty"`
+	ScreenMatrix    string   `yaml:"screen_matrix,omitempty"`
+	hasLatency      bool
+	hasAPIPattern   bool
+	hasScreenMatrix bool
 }
 
 // UnmarshalYAML decodes the manifest's ui section, refusing unknown or duplicate keys,
 // non-integer latency values, out-of-range input_latency_ms values, and invalid routes or
-// api_pattern globs.
+// api_pattern globs or screen_matrix paths.
 func (p *UIPolicy) UnmarshalYAML(node *yaml.Node) error {
 	var policy UIPolicy
 	present, err := registerIntFields(node, "ui", map[string]*int{
 		"input_latency_ms": &policy.InputLatencyMs,
 		"routes":           nil,
 		"api_pattern":      nil,
+		"screen_matrix":    nil,
 	})
 	if err != nil {
 		return err
 	}
 	policy.hasLatency = present["input_latency_ms"]
 	policy.hasAPIPattern = present["api_pattern"]
+	policy.hasScreenMatrix = present["screen_matrix"]
 	if present["routes"] {
 		routes, routeErr := decodeUIRoutes(node)
 		if routeErr != nil {
@@ -67,11 +73,18 @@ func (p *UIPolicy) UnmarshalYAML(node *yaml.Node) error {
 		policy.Routes = routes
 	}
 	if present["api_pattern"] {
-		pattern, patternErr := decodeUIAPIPattern(node)
+		pattern, patternErr := decodeUIString(node, "api_pattern")
 		if patternErr != nil {
 			return patternErr
 		}
 		policy.APIPattern = pattern
+	}
+	if present["screen_matrix"] {
+		matrix, matrixErr := decodeUIString(node, "screen_matrix")
+		if matrixErr != nil {
+			return matrixErr
+		}
+		policy.ScreenMatrix = matrix
 	}
 	if err := validateUIPolicy(&policy); err != nil {
 		return err
@@ -105,14 +118,14 @@ func decodeUIRoutes(node *yaml.Node) ([]string, error) {
 	return nil, nil
 }
 
-func decodeUIAPIPattern(node *yaml.Node) (string, error) {
+func decodeUIString(node *yaml.Node, key string) (string, error) {
 	for i := 0; i+1 < len(node.Content) && i < maxPolicyNodes; i += 2 {
-		if node.Content[i].Value != "api_pattern" {
+		if node.Content[i].Value != key {
 			continue
 		}
 		val := node.Content[i+1]
 		if val.Kind != yaml.ScalarNode || val.Tag != "!!str" {
-			return "", fmt.Errorf("ui.api_pattern must be a string glob")
+			return "", fmt.Errorf("ui.%s must be a string", key)
 		}
 		return val.Value, nil
 	}
@@ -131,7 +144,7 @@ func (p *UIPolicy) Validate() error {
 	if err := validateUIRoutes(p.Routes); err != nil {
 		return err
 	}
-	return validateUIAPIPattern(p.APIPattern, p.hasAPIPattern)
+	return validateUIStrings(p)
 }
 
 func validateManifestUI(m *Manifest) error {
@@ -153,7 +166,7 @@ func validateUIPolicy(p *UIPolicy) error {
 	if err := validateUIRoutes(p.Routes); err != nil {
 		return err
 	}
-	return validateUIAPIPattern(p.APIPattern, p.hasAPIPattern)
+	return validateUIStrings(p)
 }
 
 func validateUIRoutes(routes []string) error {
@@ -244,4 +257,18 @@ func (m *Manifest) UIAPIPattern() string {
 		return DefaultUIAPIPattern
 	}
 	return m.UI.EffectiveAPIPattern()
+}
+
+// validateUIStrings holds both optional string fields to their declared contracts.
+func validateUIStrings(p *UIPolicy) error {
+	if err := validateUIAPIPattern(p.APIPattern, p.hasAPIPattern); err != nil {
+		return err
+	}
+	if !p.hasScreenMatrix && p.ScreenMatrix == "" {
+		return nil
+	}
+	if !ValidRepositoryPath(p.ScreenMatrix) || !filepath.IsLocal(p.ScreenMatrix) || strings.Contains(p.ScreenMatrix, ":") {
+		return fmt.Errorf("ui.screen_matrix must be a non-empty repository-relative path of at most %d bytes, confined to the repository", maxRepositoryPath)
+	}
+	return nil
 }

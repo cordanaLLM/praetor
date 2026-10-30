@@ -11,6 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/hiss"
@@ -61,16 +62,18 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 			return mcpComposedErrorResult(report.Text())
 		}
 		line, err := gates[i](ctx)
+		if line != "" {
+			report.External(line+"\n", mcpTextUntrusted)
+		}
 		if err != nil {
 			// A gate error carries its own [FAIL] verdict and quotes repository paths.
 			report.External(err.Error(), mcpTextUntrusted)
 			return mcpComposedErrorResult(report.Text())
 		}
-		report.External(line+"\n", mcpTextUntrusted)
 		passed++
 	}
 
-	report.Template("\nsummary: MCP audit gates; passed: %d/%d; repository: %s/%s; coverage: manifest, lockfile pins and digests, HISS ratchet, context sync, agent source caveman lint, branch protection, labels, supply chain, workflow triggers, build warnings, release token, README presentation, hooks. "+
+	report.Template("\nsummary: MCP audit gates; passed: %d/%d; repository: %s/%s; coverage: manifest, lockfile pins and digests, HISS ratchet, context sync, agent source caveman lint, branch protection, labels, supply chain, workflow triggers, build warnings, release token, README presentation, UI gates, hooks. "+
 		"next: run 'praetorctl audit' for full CLI gate set: paperclip harness, runner matrix, hook activation, backlog caps.",
 		passed+1, len(gates)+1, manifest.Repository.Owner, manifest.Repository.Name)
 	return mcpComposedTextResult(report.Text())
@@ -119,6 +122,7 @@ func (s *Server) auditGates(p auditPaths, effective *config.EffectivePolicy) []a
 		func(ctx context.Context) (string, error) {
 			return auditReadmePresentation(ctx, s.rootDir, p.baseline, manifest)
 		},
+		func(context.Context) (string, error) { return flavor.AuditUIGates(s.rootDir, manifest) },
 		func(ctx context.Context) (string, error) { return auditHookConfig(ctx, manifest, s.rootDir) },
 	}, releaseE2EAuditGates(s.rootDir, manifest)...)
 }

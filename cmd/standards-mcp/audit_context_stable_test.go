@@ -46,6 +46,6 @@ func TestMCPAuditAgentContext_Negative_RefusesVolatileHeadBand(t *testing.T) {
 func TestMCPAuditAgentContext_Boundary_UnmarkedSourceWarns(t *testing.T) {
 	srv, _ := newFixtureServer(t)
 	audit := callTool(t, srv, "standards_audit", nil)
-	expectText(t, "unmarked source audit pass", audit, "passed: 15/15")
+	expectText(t, "unmarked source audit pass", audit, auditAllPassed())
 	expectText(t, "unmarked source warns", audit, compiler.UnlayeredWarning)
 }

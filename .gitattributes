@@ -203,6 +203,9 @@ internal/clientschema/upstream/** -text -whitespace
 # by generate.py; a CRLF checkout would change them on Windows trees.
 console/fixtures/* text eol=lf
 
+# A11Y-CHECK1 test schema bytes and data fixtures remain stable across checkouts.
+internal/flavor/testdata/a11y-matrix/*.json text eol=lf
+
 # BEGIN praetor managed attributes (praetorctl adopt)
 # praetorctl audit hashes these files; keep their checkout bytes the same on every platform.
 .devcontainer/Dockerfile.praetor text eol=lf

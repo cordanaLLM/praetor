@@ -96,3 +96,33 @@ func TestUIPolicy_Boundary(t *testing.T) {
 		t.Fatalf("max boundary failed: %+v", high.UI)
 	}
 }
+
+func TestUIScreenMatrixPolicy(t *testing.T) {
+	cases := []struct {
+		name, value string
+		valid       bool
+	}{
+		{"positive", `"tests/screen-matrix.json"`, true},
+		{"absolute", `"/matrix.json"`, false},
+		{"escape", `"../matrix.json"`, false},
+		{"nested escape", `"tests/../../matrix.json"`, false},
+		{"windows absolute", `"C:/matrix.json"`, false},
+		{"empty", `""`, false},
+		{"not string", "12", false},
+		{"null", "null", false},
+		{"bound", fmt.Sprintf("%q", strings.Repeat("a", maxRepositoryPath)), true},
+		{"overlong", fmt.Sprintf("%q", strings.Repeat("a", maxRepositoryPath+1)), false},
+		{"duplicate", "a.json\n  screen_matrix: b.json", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := ParseManifest("manifest.yaml", []byte("ui:\n  screen_matrix: "+tc.value+"\n"))
+			if (err == nil) != tc.valid {
+				t.Fatalf("screen_matrix valid=%v, error=%v", tc.valid, err)
+			}
+			if tc.valid && m.DeclaredUI().ScreenMatrix != m.UI.ScreenMatrix {
+				t.Fatal("DeclaredUI lost screen_matrix")
+			}
+		})
+	}
+}

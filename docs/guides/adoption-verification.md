@@ -2630,6 +2630,53 @@ an earlier release bound included (`TestAdoptDeletedHarnessRebindsPinsAcrossRele
 (`TestAdoptForceKeepsDeletedRulesAbsent`). One present where no harness exists is kept when
 adoption writes the harness beside it (`TestAdoptDryRunParity_Boundary_SecondaryScaffoldsListedAndKept`).
 
+## Shared screen and accessibility matrix
+
+For a `frontend-svelte` repository, declare the shared A11Y-CHECK1 data file in
+`.standards.yaml`, beside the input latency threshold:
+
+```yaml
+ui:
+  input_latency_ms: 100
+  screen_matrix: tests/screen-matrix.json
+```
+
+Obtain the data file and its consuming Playwright spec from
+`golusoris/sveltesentio`, the shared Svelte UI contract project. Its delivery unit
+is `sveltesentio-a11y-matrix-check-20261028`. Keep its matrix and spec together;
+the engine validates the contract and does not render or generate a second
+matrix implementation. Add the spec's literal `tests/*.spec.ts` or
+`tests/*.spec.js` path to the `playwright test` command in `ui-gates`, alongside
+`tests/a11y.spec.ts` and `tests/responsiveness.spec.ts`. Keep `ui-gates` in
+`verify-all`. The spec must reference the declared data path, a relative path to
+it, or its basename as a quoted string.
+
+`praetorctl audit gate ui-gates` and MCP `standards_audit` share
+`flavor.AuditUIGates` in `internal/flavor/ui_gates.go`. They reject a missing
+`ui.screen_matrix`, an unreadable or escaping file, invalid JSON, and a missing
+reference in a spec selected by the `ui-gates` recipe. Paths use the existing
+manifest repository-path contract: at most 256 bytes, relative and confined.
+File and schema reads are bounded to 1 MiB. Non-UI repositories retain their
+stated skip.
+
+The upstream schema has not shipped. The engine's single schema identity in
+`internal/flavor/ui_screen_matrix.go` therefore records `unpinned` and the
+upstream unit rather than inventing a version or digest. Every UI audit prints:
+
+```text
+schema validation pending A11Y-CHECK1 pin (sveltesentio-a11y-matrix-check-20261028)
+```
+
+This status verifies no screen coverage or accessibility flags. The other
+contract checks still fail when their requirements are missing. On publication,
+pin the upstream schema source path, version, SHA-256 and engine-owned bytes in
+that identity. The pinned path rejects missing bytes, digest drift, invalid
+schemas and invalid data; external schema references are refused. Class names,
+sizes and accessibility flags belong to that upstream schema. The provisional
+floor is expressed only by `internal/flavor/testdata/a11y-matrix/schema.fixture.json`;
+`TestValidateUIScreenMatrixFloor` and `TestAuditUIScreenMatrixPinned` exercise
+its red and green cases without treating it as a published schema.
+
 ## Canonical context preparation
 
 Adoption preserves repository-specific `AGENTS.md` instructions when composing
