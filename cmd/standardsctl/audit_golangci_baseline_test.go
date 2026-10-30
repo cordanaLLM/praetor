@@ -6,12 +6,46 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/forge"
 )
+
+// ciRunsBaselineGuard reports whether a workflow text runs audit against a base ref, the form
+// that enables the growth guards.
+func ciRunsBaselineGuard(t *testing.T, workflow []byte) bool {
+	t.Helper()
+	runs, err := forge.WorkflowRuns(workflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return slices.ContainsFunc(runs, func(run forge.WorkflowRun) bool {
+		return strings.Contains(run.Script, "standardsctl audit --base=")
+	})
+}
+
+// Positive: the pull request gate re-runs the growth guards the pre-push hook runs, so a push with
+// its hooks skipped cannot grow a baseline. Negative: a plain audit is not the guard. Boundary: a
+// comment naming the command runs nothing.
+func TestCIRunsTheBaselineGrowthGuard(t *testing.T) {
+	workflow, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ciRunsBaselineGuard(t, workflow) {
+		t.Fatal("ci.yml runs no standardsctl audit --base")
+	}
+	const shape = "jobs:\n  gate:\n    runs-on: ubuntu-26.04\n    steps:\n      # standardsctl audit --base=x\n      - run: %s\n"
+	if ciRunsBaselineGuard(t, fmt.Appendf(nil, shape, "go run ./cmd/standardsctl audit")) {
+		t.Fatal("a plain audit counts as the growth guard")
+	}
+}
 
 func fixtureGolangciRules(rules ...string) string {
 	var b strings.Builder
