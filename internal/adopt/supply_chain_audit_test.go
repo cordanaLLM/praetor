@@ -272,7 +272,7 @@ func TestAuditSupplyChainRefusesExpiredStaleAndMalformedEntries(t *testing.T) {
 		"an entry under a policy declaring nothing": {supplyChainPolicy(0, false, false), supplyChainEntry(".github/workflows/release.yml", "2026-12-31"),
 			[]string{"because the policy declares no supply-chain control"}},
 		"a malformed entry": {supplyChainPolicy(3, false, false),
-			config.Exception{Rule: config.ExceptionRuleSupplyChain, Glob: ".github/workflows/*.yml", Reason: "globbed", Expires: "2026-12-31"},
+			config.Exception{Rule: config.ExceptionRuleSupplyChain, Glob: ".github/workflows/*.yml", Reason: "globbed", Category: "A", Expires: "2026-12-31"},
 			[]string{"rule HISS-11 must name one file by path, not a glob"}},
 	}
 	for name, tc := range cases {

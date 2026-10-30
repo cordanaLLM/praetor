@@ -204,7 +204,7 @@ func TestJobTimeout_Exceptions(t *testing.T) {
 	writeWorkflow(t, root, "clean.yml", "on: push\njobs:\n  j:\n    timeout-minutes: 30\n    steps:\n      - run: echo 2\n")
 	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
 	liveEx := []config.Exception{{
-		Rule: config.ExceptionRuleJobTimeout, Path: ".github/workflows/fail.yml", Reason: "waived", Expires: "2026-12-31",
+		Rule: config.ExceptionRuleJobTimeout, Path: ".github/workflows/fail.yml", Reason: "waived", Category: "A", Expires: "2026-12-31",
 	}}
 	outLive, err := AuditJobTimeouts(t.Context(), JobTimeoutOptions{
 		Root: root, Today: today, Exceptions: liveEx, OfflineReason: "--offline",
@@ -229,7 +229,7 @@ func TestJobTimeout_Exceptions(t *testing.T) {
 		t.Errorf("expired exception must not silence finding; got:\n%s", outExp)
 	}
 	staleEx := []config.Exception{{
-		Rule: config.ExceptionRuleJobTimeout, Path: ".github/workflows/clean.yml", Reason: "waived", Expires: "2026-12-31",
+		Rule: config.ExceptionRuleJobTimeout, Path: ".github/workflows/clean.yml", Reason: "waived", Category: "A", Expires: "2026-12-31",
 	}}
 	outStale, err := AuditJobTimeouts(t.Context(), JobTimeoutOptions{
 		Root: root, Today: today, Exceptions: staleEx, OfflineReason: "--offline",

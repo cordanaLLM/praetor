@@ -58,7 +58,7 @@ func checkRoot(t *testing.T, root string, exceptions ...config.Exception) RootLi
 
 // keep is a root-license-notice exception for name expiring on expires.
 func keep(name, expires string) config.Exception {
-	return config.Exception{Rule: config.ExceptionRuleRootLicenseNotice, Path: name, Reason: "upstream notice kept verbatim", Expires: expires}
+	return config.Exception{Rule: config.ExceptionRuleRootLicenseNotice, Path: name, Reason: "upstream notice kept verbatim", Category: "A", Expires: expires}
 }
 
 // Positive: LICENSE holding the text of the licence the whole-tree annotation declares passes,

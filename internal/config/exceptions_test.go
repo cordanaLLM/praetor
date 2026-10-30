@@ -114,7 +114,7 @@ func TestValidateExceptionsNegative(t *testing.T) {
 		"oversized reason":              {func(e *Exception) { e.Reason = strings.Repeat("r", MaxExceptionReasonBytes+1) }, "exceeds 1024 bytes"},
 		"no date":                       {func(e *Exception) { e.Expires = "next year" }, "must be a YYYY-MM-DD date"},
 		"unpadded date":                 {func(e *Exception) { e.Expires = "2026-12-1" }, "must be a YYYY-MM-DD date"},
-		"too far ahead":                 {func(e *Exception) { e.Entered, e.Expires = "2026-10-06", "2027-01-05" }, "more than 90 days after entered 2026-10-06; the latest date allowed is 2027-01-04"},
+		"too far ahead":                 {func(e *Exception) { e.Category, e.Entered, e.Expires = "A", "2026-10-06", "2027-01-05" }, "category A requires expires on or before 2027-01-04 (90 days after entered 2026-10-06); got 2027-01-05"},
 		"missing expiry date":           {func(e *Exception) { e.Expires = "" }, "must be a YYYY-MM-DD date"},
 		"declared-linters without tool": {func(e *Exception) { e.Rule, e.Path, e.Tool = ExceptionRuleDeclaredLinters, "", "" }, "rule declared-linters must name one tool"},
 		"declared-linters with path":    {func(e *Exception) { e.Rule, e.Path, e.Tool = ExceptionRuleDeclaredLinters, "a.go", "gitleaks" }, "rule declared-linters must not set path or glob"},
@@ -141,7 +141,7 @@ func TestValidateExceptionsNegative(t *testing.T) {
 	}
 	for _, manifest := range []string{
 		"version: 1\nexceptions:\n  - rule: \"clang-tidy-coverage\"\n    path: \"a.c\"\n    reason: \"r\"\n    expires: \"2001-01-01\"\n    owner: \"x\"\n",
-		"version: 1\nexceptions:\n  - rule: \"clang-tidy-coverage\"\n    path: \"a.c\"\n    reason: \"r\"\n    expires: \"9999-12-31\"\n",
+		"version: 1\nexceptions:\n  - rule: \"clang-tidy-coverage\"\n    path: \"a.c\"\n    reason: \"r\"\n    category: A\n    expires: \"9999-12-31\"\n",
 	} {
 		if _, err := LoadManifest(writeManifest(t, manifest)); err == nil {
 			t.Fatalf("LoadManifest accepted a malformed exceptions list:\n%s", manifest)
@@ -155,6 +155,7 @@ func TestValidateExceptionsNegative(t *testing.T) {
 func TestValidateExceptionsBoundary(t *testing.T) {
 	for _, expires := range []string{"2027-01-04", "2026-10-06", "2020-01-01"} {
 		entry := validException()
+		entry.Category = "A"
 		entry.Entered = "2026-10-06"
 		entry.Expires = expires
 		if err := ValidateExceptions([]Exception{entry}, exceptionsToday); err != nil {
@@ -345,7 +346,7 @@ func validateWorkflowTarget(t *testing.T, rule string) {
 func TestExceptionFor(t *testing.T) {
 	const ci = ".github/workflows/ci.yml"
 	entry := func(path, expires string) Exception {
-		return Exception{Rule: ExceptionRuleWorkflowTriggers, Path: path, Reason: "runs everywhere", Expires: expires}
+		return Exception{Rule: ExceptionRuleWorkflowTriggers, Path: path, Reason: "runs everywhere", Category: "A", Expires: expires}
 	}
 	entries := []Exception{
 		entry(ci, "2026-10-05"), entry(".github/workflows/other.yml", "2026-12-31"),
