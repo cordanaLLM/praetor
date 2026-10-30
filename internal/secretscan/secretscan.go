@@ -272,7 +272,7 @@ func validateExecutableFile(path, realPath string) error {
 		return fmt.Errorf("%s on PATH (%s) is a mise shim; resolving its executable with \"mise which %s\" failed: %s is not a regular file",
 			DefaultScanner, path, DefaultScanner, realPath)
 	}
-	if !isExecutableRegularFile(realPath, fi) {
+	if !util.ExecutableFile(realPath, fi, runtime.GOOS) {
 		return fmt.Errorf("%s on PATH (%s) is a mise shim; resolving its executable with \"mise which %s\" failed: %s is not executable",
 			DefaultScanner, path, DefaultScanner, realPath)
 	}
@@ -307,14 +307,6 @@ func isMiseExecutable(name string) bool {
 		return strings.EqualFold(name, "mise.exe") || strings.EqualFold(name, "mise")
 	}
 	return name == "mise"
-}
-
-func isExecutableRegularFile(path string, fi os.FileInfo) bool {
-	if runtime.GOOS == "windows" {
-		ext := strings.ToLower(filepath.Ext(path))
-		return ext == ".exe" || ext == ".com"
-	}
-	return fi.Mode().Perm()&0o111 != 0
 }
 
 // Check runs gitleaks in opts.Dir and judges its findings against the manifest's HISS-12 exceptions

@@ -23,8 +23,8 @@ import (
 var allowedModeChecks = map[string]string{
 	"internal/adopt/hook_runner_audit.go:hookRunnable": "tests the owner-execute bit only after the goos == windows branch, " +
 		"which judges the #! line instead",
-	"internal/editor/capabilities.go:isExecutableRegularFile": "tests the execute bits only after the goos == windows branch, " +
-		"which judges the file extension instead",
+	"internal/util/executable.go:ExecutableFile": "tests the execute bits only after the goos == windows branch, " +
+		"which judges the file extension instead; the editor capability probe and the secret scanner both call it",
 	"internal/dogfood/schedule_io.go:checkScheduleWriteTarget": "tests the owner-write bit, which Windows expresses " +
 		"(0444 for a read-only file, 0666 otherwise); privacy is judged by util.ArtefactPrivacy",
 }
