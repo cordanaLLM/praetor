@@ -218,9 +218,9 @@
       "kind": "settings",
       "repo": "anomalyco/opencode",
       "pin_kind": "hosted",
-      "pin": "v1.19.4",
-      "digest_pin": "v1.19.4",
-      "version": "v1.19.4 (hosted copy)",
+      "pin": "v2.1.4",
+      "digest_pin": "v2.1.4",
+      "version": "v2.1.4 (hosted copy)",
       "url_base": "https://opencode.ai/",
       "license": "MIT",
       "copyright": "2025 opencode",
@@ -228,7 +228,7 @@
         {
           "path": "opencode/config.json",
           "upstream": "config.json",
-          "sha256": "2c5da655b5b1b558e71ead3da0dda301aa035b1ac531766e1a0cabc4dcf7ca4a"
+          "sha256": "ffa4d846f84030315d42ba6449f6ade7ea3bb5de6352485253c7ee6168416b8c"
         }
       ]
     }
