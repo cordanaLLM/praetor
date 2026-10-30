@@ -14,6 +14,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/pymanifest"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -271,7 +272,7 @@ func contractNameKey(ecosystem, name string) string {
 	case "", contractEcosystemGo:
 		return stripMajorSuffix(name)
 	case "pypi":
-		return normalizePyPIName(name)
+		return pymanifest.NormalizeName(name)
 	default:
 		return strings.ToLower(name)
 	}

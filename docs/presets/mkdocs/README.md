@@ -18,7 +18,8 @@ hook. `mkdocs.yml`, `docs/` and `overrides/` go into the repository root: MkDocs
 lock, `requirements.in` and `requirements.txt`, goes into `docs/` beside your pages, so it does
 not replace a `requirements.txt` your repository keeps at its root; the `exclude_docs` list in
 `mkdocs.yml` keeps both files out of the built site. This README stays behind, and your
-repository keeps its own `README.md`. A copied file replaces one of the same name.
+repository keeps its own `README.md`. A copied file replaces one of the same name. The lock
+installs on Python 3.11 or newer, the floor of mkdocs-material 9.8.
 
 <!-- praetor:docs-references:off paths in an adopter's repository after the Quickstart copy -->
 
@@ -82,7 +83,7 @@ both files (this directory in the preset, `docs/` in your repository) with the c
 in the `requirements.txt` header:
 
 ```bash
-uv pip compile --universal --generate-hashes --python-version=3.10 requirements.in --output-file=requirements.txt
+uv pip compile --universal --generate-hashes --python-version=3.11 requirements.in --output-file=requirements.txt
 ```
 
 Keep the `=` between each option and its argument. Renovate's `pip-compile` manager re-runs the

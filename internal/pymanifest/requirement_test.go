@@ -21,6 +21,9 @@ func TestParseRequirement_Positive_ReadsNameAndVersion(t *testing.T) {
 		{"foo (>=1.0)", "foo", "1.0"},
 		{"pkg @ git+https://example.com/pkg.git@v1#egg=pkg", "pkg", ""},
 		{"Pkg_Name.ext@https://example.com/p.whl", "pkg_name.ext", ""},
+		// A hashed lock ends each entry with the continuation of its hash list.
+		{`mkdocs-material==9.8.0 \`, "mkdocs-material", "9.8.0"},
+		{`markdown==3.10.3 ; python_full_version < '3.11' \`, "markdown", "3.10.3"},
 	}
 	for _, tc := range cases {
 		got, ok := ParseRequirement(tc.line)

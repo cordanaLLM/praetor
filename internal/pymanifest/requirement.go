@@ -45,12 +45,14 @@ func ParseRequirement(line string) (Requirement, bool) {
 	return Requirement{Name: strings.ToLower(spec[:end]), Version: specifierVersion(spec[end:])}, true
 }
 
-// stripDecorations removes a comment and an environment marker from a requirement and trims the
-// quotes and comma a TOML or Python list puts around it:
-// `"requests[security]>=2 ; python_version<'3.8'",  # note` becomes `requests[security]>=2`.
+// stripDecorations removes a comment, an environment marker and the line continuation a hashed
+// lock ends each entry with, and trims the quotes and comma a TOML or Python list puts around
+// it: `"requests[security]>=2 ; python_version<'3.8'",  # note` becomes `requests[security]>=2`,
+// and `mkdocs==1.6.1 \` becomes `mkdocs==1.6.1`.
 func stripDecorations(line string) string {
 	spec, _, _ := strings.Cut(line, "#")
 	spec, _, _ = strings.Cut(spec, ";")
+	spec = strings.TrimSuffix(strings.TrimSpace(spec), `\`)
 	return strings.TrimSpace(strings.Trim(strings.TrimSpace(spec), `"',`))
 }
 

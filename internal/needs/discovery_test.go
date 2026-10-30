@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
+	"github.com/cordanaLLM/praetor/internal/pymanifest"
 )
 
 // Fixture helpers. A checkout is a directory whose .git holds a HEAD; a linked worktree's
@@ -396,7 +397,7 @@ func TestDemandIdentityNormalisesPyPINames(t *testing.T) {
 	}
 	count := 0
 	for _, dep := range row.Dependencies {
-		if normalizePyPIName(dep.Package) == "typing-extensions" {
+		if pymanifest.NormalizeName(dep.Package) == "typing-extensions" {
 			count++
 		}
 	}
@@ -423,8 +424,8 @@ func TestNormalizePyPIName(t *testing.T) {
 		"already-normalized": "already-normalized",
 	}
 	for in, want := range cases {
-		if got := normalizePyPIName(in); got != want {
-			t.Errorf("normalizePyPIName(%q) = %q, want %q", in, got, want)
+		if got := pymanifest.NormalizeName(in); got != want {
+			t.Errorf("pymanifest.NormalizeName(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

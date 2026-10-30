@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	"github.com/cordanaLLM/praetor/internal/pymanifest"
 )
 
 // LanguageAnalyzer defines the contract for analyzing a repository's language-specific needs.
@@ -301,34 +303,11 @@ func demandIdentity(dep DependencyDemand) string {
 	switch dep.Ecosystem {
 	case "go":
 	case "pypi":
-		name = normalizePyPIName(name)
+		name = pymanifest.NormalizeName(name)
 	default:
 		name = strings.ToLower(name)
 	}
 	return dep.Ecosystem + "\x00" + name
-}
-
-// normalizePyPIName applies PEP 503 name normalisation: every run of "-", "_" and "."
-// becomes a single "-", and the result is lower-cased.
-func normalizePyPIName(name string) string {
-	var sb strings.Builder
-	sb.Grow(len(name))
-	inRun := false
-	for _, r := range strings.ToLower(name) {
-		if r == '-' || r == '_' || r == '.' {
-			inRun = true
-			continue
-		}
-		if inRun {
-			sb.WriteByte('-')
-			inRun = false
-		}
-		sb.WriteRune(r)
-	}
-	if inRun {
-		sb.WriteByte('-')
-	}
-	return sb.String()
 }
 
 func appendUniqueStr(slice []string, val string) []string {
