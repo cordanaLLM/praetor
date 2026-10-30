@@ -45,6 +45,7 @@ type checkpointSource struct {
 var priorCheckpointDigests = map[string]map[string]string{
 	checkpointScript: {
 		"54130726f2c6830a763a2485b849293d4c014e34c308596cc3e28d5330e6fc3f": "stop checkpoint retries PR listing and collapses failure",
+		"6295b09a4077a3c3bc6819ecf69b3eb18fe4c3a23d4473d99c880fc3184ce3b5": "stop checkpoint judges landed worktrees by their merged pull request",
 		"a466f3ca69d1f93374ebcf999210d288eeefb4b77c0c13ada09dca2bcb090b55": "Go hooks share session ownership and verify live gate scratch owners",
 		"ca53c59946b809a991a8c0d3d8e7ce164786fb4282e48865d47b5b7a7bbd4338": "platform promotion (#14)",
 		"df7029ac02521544a9d32b4e75105512cdc047e28746d476b98f291e87c71a34": "Windows suite (#149)",

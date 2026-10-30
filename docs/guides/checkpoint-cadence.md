@@ -113,8 +113,14 @@ pushed advance without an open or merged PR keep the stop checkpoint due, unless
 the worktree is clean and its net change since its merge base is already in the
 remote base (its reversed patch applies to a temporary index of the base): a branch
 landed through a squash or a train is finished without a pull request of its own
-head. If checkpoint publication is disabled or has no configured repository, PR
-state is skipped and reported.
+head. A clean worktree whose only finding is commits not on a remote is also looked
+up in the bounded pull request listing: it is finished when a merged pull request
+carried its exact HEAD, or when its net change is in the base that pull request
+names. Pull requests that land on another base than the configured one (an
+operations repository's role branch, for example) therefore no longer keep it due;
+a base name outside the ref-name pattern is never passed to Git, and a failed lookup
+keeps the finding. If checkpoint publication is disabled or has no configured
+repository, PR state is skipped and reported.
 
 To keep a worktree visible without blocking this turn, name it in
 `.workingdir/OPEN.md` by its branch name, directory basename, or full path. A

@@ -333,6 +333,144 @@ class CheckpointTests(unittest.TestCase):
         result, _ = self.observe_worktrees()
         self.assertTrue(result["due"], "a public change after the landing is still unfinished")
 
+    def landed_elsewhere(self, *, base_line):
+        """A unit squash-landed on the non-default base `controller`; its remote branch is gone.
+
+        base_line is what `controller` holds in new.txt after the landing, so a later edit there
+        can keep the unit's reversed patch from applying.
+        """
+        bare = self.root.parent / (self.root.name + "-remote.git")
+        self.external_paths.append(bare)
+        git(self.root, "init", "--bare", "-q", str(bare))
+        git(self.root, "remote", "add", "origin", str(bare))
+        git(self.root, "push", "-q", "-u", "origin", "main")
+        path = self.add_linked_worktree()
+        (path / "new.txt").write_text("landed\n")
+        git(path, "add", "new.txt")
+        git(path, "commit", "-q", "-m", "unit")
+        git(self.root, "switch", "-q", "-c", "controller", "main")
+        (self.root / "new.txt").write_text(base_line)
+        git(self.root, "add", "new.txt")
+        git(self.root, "commit", "-q", "-m", "squash (unit)")
+        git(self.root, "push", "-q", "origin", "controller")
+        git(self.root, "switch", "-q", "checkpoint/test")
+        git(path, "fetch", "-q", "origin")
+        return git(path, "rev-parse", "HEAD").stdout.decode().strip()
+
+    def merged_row(self, oid, base="controller", state="MERGED"):
+        return {"headRefName": "checkpoint/orphan", "state": state,
+                "headRefOid": oid, "baseRefName": base}
+
+    def test_stop_squash_landed_on_another_base_is_judged_by_its_merged_pr(self):
+        # Planted: the content landed on controller, not on the configured base main, under a
+        # head the lander rebased. Only the merged pull request names controller.
+        head = self.landed_elsewhere(base_line="landed\n")
+        result, _ = self.observe_worktrees()
+        self.assertTrue(result["due"], "no pull request names the base it landed on")
+        rebased = "0" * 40
+        self.assertNotEqual(rebased, head)
+        result, calls = self.observe_worktrees(open_prs=[self.merged_row(rebased)])
+        self.assertEqual(result.get("unfinished_worktrees", []), [])
+        self.assertFalse(result["due"])
+        listing = next(call for call in calls if call[:3] == ["gh", "pr", "list"])
+        self.assertIn("headRefName,state,headRefOid,baseRefName", listing)
+
+    def test_stop_worktree_head_of_a_merged_pr_landed_whatever_its_base_did_later(self):
+        # controller changed the landed line afterwards, so no reversed patch applies, but the
+        # merged pull request carried exactly this HEAD.
+        head = self.landed_elsewhere(base_line="edited after the landing\n")
+        for row in (
+            self.merged_row("1" * 40),
+            self.merged_row(head, state="OPEN"),
+            self.merged_row(head, state="CLOSED"),
+        ):
+            result, _ = self.observe_worktrees(open_prs=[row])
+            self.assertTrue(result["due"], row)
+            self.assertIn("not on any remote", " ".join(result["unfinished_worktrees"][0]["reasons"]))
+        result, _ = self.observe_worktrees(open_prs=[self.merged_row(head)])
+        self.assertFalse(result["due"])
+        self.assertEqual(result.get("unfinished_worktrees", []), [])
+
+    def test_stop_landed_lookup_failure_keeps_the_unpublished_finding(self):
+        self.landed_elsewhere(base_line="landed\n")
+        result, _ = self.observe_worktrees(fail_gh=True)
+        self.assertTrue(result["due"])
+        reasons = " ".join(result["unfinished_worktrees"][0]["reasons"])
+        self.assertIn("not on any remote", reasons)
+        self.assertNotIn("pull request", reasons)
+        self.assertFalse(any("pushed branch(es) unverified" in item for item in result["actions"]))
+
+    def test_stop_detached_worktree_with_unpublished_commit_looks_up_no_pull_request(self):
+        # A detached HEAD names no branch, so a lookup could only run a second unfiltered
+        # listing and spend a probe (review-1695-checkpoint-r1 finding 1).
+        bare = self.root.parent / (self.root.name + "-remote.git")
+        self.external_paths.append(bare)
+        git(self.root, "init", "--bare", "-q", str(bare))
+        git(self.root, "remote", "add", "origin", str(bare))
+        git(self.root, "push", "-q", "-u", "origin", "main")
+        path = self.add_linked_worktree()
+        (path / "new.txt").write_text("detached work\n")
+        git(path, "add", "new.txt")
+        git(path, "commit", "-q", "-m", "unit")
+        git(path, "switch", "-q", "--detach")
+        result, calls = self.observe_worktrees()
+        self.assertTrue(result["due"])
+        self.assertIn("not on any remote", " ".join(result["unfinished_worktrees"][0]["reasons"]))
+        self.assertFalse(any(call[:3] == ["gh", "pr", "list"] for call in calls))
+
+    def test_stop_landed_candidates_leave_the_probes_to_pushed_branches(self):
+        # Three local-only branches and one pushed branch whose merged pull request is older
+        # than the listing: the pushed branch is probed first and passes, as before the landed
+        # lookup existed (review-1695-checkpoint-r1 finding 2).
+        bare = self.root.parent / (self.root.name + "-remote.git")
+        self.external_paths.append(bare)
+        git(self.root, "init", "--bare", "-q", str(bare))
+        git(self.root, "remote", "add", "origin", str(bare))
+        git(self.root, "push", "-q", "-u", "origin", "main")
+        for i in range(3):
+            path = self.add_linked_worktree(f"checkpoint/local-{i}")
+            (path / f"local-{i}.txt").write_text("local\n")
+            git(path, "add", f"local-{i}.txt")
+            git(path, "commit", "-q", "-m", f"local {i}")
+        pushed = self.add_linked_worktree("checkpoint/pushed")
+        (pushed / "pushed.txt").write_text("pushed\n")
+        git(pushed, "add", "pushed.txt")
+        git(pushed, "commit", "-q", "-m", "pushed")
+        git(pushed, "push", "-q", "-u", "origin", "checkpoint/pushed")
+        git(pushed, "fetch", "-q", "origin")
+        original, probed = checkpoint._run, []
+
+        def fake_run(argv, root, **kwargs):
+            if argv[:3] == ["gh", "pr", "list"]:
+                if "--head" not in argv:
+                    return b"[]"
+                branch = argv[argv.index("--head") + 1]
+                probed.append(branch)
+                rows = [{"headRefName": branch, "state": "MERGED"}] if branch == "checkpoint/pushed" else []
+                return json.dumps(rows).encode()
+            return original(argv, root, **kwargs)
+
+        with mock.patch.object(checkpoint, "_run", side_effect=fake_run):
+            result = checkpoint.inspect_checkpoint(self.root, "stop")
+        self.assertEqual(probed[0], "checkpoint/pushed")
+        flagged = {item["branch"] for item in result.get("unfinished_worktrees", [])}
+        self.assertNotIn("checkpoint/pushed", flagged)
+        self.assertEqual(flagged, {f"checkpoint/local-{i}" for i in range(3)})
+
+    def test_stop_merged_pr_base_outside_ref_names_is_not_read(self):
+        # Boundary: a base name that is no plain ref name never reaches git, and the worktree
+        # stays judged; a listing row whose head or base is no string is malformed.
+        self.landed_elsewhere(base_line="landed\n")
+        for base in ("../controller", "-controller", "", "controller..main", "controller//main"):
+            result, calls = self.observe_worktrees(open_prs=[self.merged_row("2" * 40, base)])
+            self.assertTrue(result["due"], base)
+            git_args = [" ".join(call) for call in calls if call[0] == "git"]
+            self.assertFalse(base and any(base in args for args in git_args), base)
+        for field, value in (("baseRefName", 7), ("headRefOid", None)):
+            row = {"headRefName": "x", "state": "MERGED", field: value}
+            with self.assertRaises(checkpoint.CheckpointError, msg=field):
+                checkpoint._pull_request_rows(json.dumps([row]), "listing")
+
     def test_stop_worktree_commit_without_remote_blocks(self):
         path = self.add_linked_worktree()
         (path / "new.txt").write_text("commit\n")

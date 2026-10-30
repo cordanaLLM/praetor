@@ -1,0 +1,2 @@
+type: fixed
+title: The stop checkpoint treats a worktree as landed when a merged pull request carried its exact HEAD or put its change into the base that pull request names, so units landed on a base other than the configured one are no longer flagged as commits not on any remote
