@@ -27,13 +27,20 @@ runs:
       run: |
         if [ "${{ github.event_name }}" = "pull_request" ]; then
           BASE_REF="origin/${{ github.base_ref }}"
+          DIFF_HEAD="HEAD"
+        elif [ "${{ github.event_name }}" = "merge_group" ]; then
+          BASE_REF="${{ github.event.merge_group.base_sha }}"
+          DIFF_HEAD="${{ github.event.merge_group.head_sha }}"
+          git cat-file -e "${BASE_REF}^{commit}" 2>/dev/null || git fetch --no-tags origin "${BASE_REF}"
+          git cat-file -e "${DIFF_HEAD}^{commit}" 2>/dev/null || git fetch --no-tags origin "${DIFF_HEAD}"
         else
           BASE_REF="HEAD~1"
+          DIFF_HEAD="HEAD"
         fi
         echo "base_ref=$BASE_REF" >> "$GITHUB_OUTPUT"
 
         if [ -n "${{ inputs.paths }}" ]; then
-          CHANGED=$(git diff --name-only "$BASE_REF"...HEAD -- ${{ inputs.paths }})
+          CHANGED=$(git diff --name-only "$BASE_REF"..."$DIFF_HEAD" -- ${{ inputs.paths }})
           if [ -n "$CHANGED" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
             EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)

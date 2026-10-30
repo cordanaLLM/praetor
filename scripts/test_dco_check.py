@@ -386,6 +386,83 @@ class DcoCheckTests(unittest.TestCase):
         self.assertIn(f"{DEFAULT_BRANCH}..", result.stdout)
         self.assertNotIn(f"origin/{DEFAULT_BRANCH}..", result.stdout)
 
+    def test_merge_group_accepts_signed_squash_commits(self) -> None:
+        """A merge_group event inspects the range between base_sha and head_sha."""
+        head = commit(self.repository, "squashed.txt", signed=True)
+
+        result = run_check(self.repository, "merge_group", self.first, "", head)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("all 1 commits", result.stdout)
+        self.assertIn(f"{self.first}..{head}", result.stdout)
+
+    def test_merge_group_rejects_unsigned_commit(self) -> None:
+        """An unsigned commit in a merge_group range fails the gate."""
+        head = commit(self.repository, "unsigned.txt", signed=False)
+
+        result = run_check(self.repository, "merge_group", self.first, "", head)
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn(f"Commit {head} is missing 'Signed-off-by:'", result.stdout)
+        self.assertIn("1 of 1 commits", result.stdout)
+
+    def test_merge_group_accepts_github_automated_merge_commit(self) -> None:
+        """GitHub automated merge commit in merge queue (web-flow/noreply) is skipped."""
+        git("checkout", "-b", "feature-branch", cwd=self.repository)
+        commit(self.repository, "feature_file.txt", signed=True)
+        git("checkout", DEFAULT_BRANCH, cwd=self.repository)
+        git("merge", "--no-ff", "feature-branch", "-m", "Merge commit", cwd=self.repository)
+        subprocess.run(
+            ("git", "commit", "--amend", "--no-edit", "--author=GitHub <noreply@github.com>"),
+            cwd=self.repository,
+            check=True,
+            stdout=subprocess.PIPE,
+            env={**os.environ, "GIT_COMMITTER_NAME": "GitHub", "GIT_COMMITTER_EMAIL": "noreply@github.com"},
+        )
+        merge_commit = git("rev-parse", "HEAD", cwd=self.repository)
+
+        result = run_check(self.repository, "merge_group", self.first, "", merge_commit)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("skipping GitHub merge queue automated commit", result.stdout)
+
+    def test_merge_group_rejects_unsigned_merge_commit_not_from_github(self) -> None:
+        """Only GitHub's own queue merge commit is skipped; a person's unsigned merge fails."""
+        git("checkout", "-b", "feature-branch", cwd=self.repository)
+        commit(self.repository, "feature_file.txt", signed=True)
+        git("checkout", DEFAULT_BRANCH, cwd=self.repository)
+        git("merge", "--no-ff", "feature-branch", "-m", "Merge commit", cwd=self.repository)
+        merge_commit = git("rev-parse", "HEAD", cwd=self.repository)
+
+        result = run_check(self.repository, "merge_group", self.first, "", merge_commit)
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn(f"Commit {merge_commit} is missing 'Signed-off-by:'", result.stdout)
+
+    def test_merge_group_reads_environment_variables_when_supplied(self) -> None:
+        """Event base_sha and head_sha can be supplied via environment."""
+        head = commit(self.repository, "signed_env.txt", signed=True)
+
+        env = {
+            **os.environ,
+            **BASE_ENV,
+            "DCO_MERGE_GROUP_BASE_SHA": self.first,
+            "DCO_MERGE_GROUP_HEAD_SHA": head,
+        }
+        result = subprocess.run(
+            ("bash", str(SCRIPT), "merge_group", "", "", "", DEFAULT_BRANCH),
+            cwd=self.repository,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            timeout=60,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("all 1 commits", result.stdout)
+
 
 class ComplianceWiringTests(unittest.TestCase):
     """The workflow wiring that invokes the gate, pinned so a silent skip fails a test.

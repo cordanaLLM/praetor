@@ -24,6 +24,8 @@ on:
     branches:
       - main
       - 'lts-*'
+  merge_group:
+    types: [checks_requested]
 
 concurrency:
   # Pull request runs replace an older run of the same pull request; a push or scheduled run
