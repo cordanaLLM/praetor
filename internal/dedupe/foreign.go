@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -255,15 +256,16 @@ func parseJscpdReport(data []byte) ([]rawJscpdDuplicate, error) {
 	return rep.Duplicates, nil
 }
 
+func fileEnd(f rawJscpdFile, lines int) int {
+	if f.End != 0 {
+		return f.End
+	}
+	return f.Start + lines - 1
+}
+
 func rangesOverlap(f1, f2 rawJscpdFile, lines int) bool {
-	e1 := f1.End
-	if e1 == 0 {
-		e1 = f1.Start + lines - 1
-	}
-	e2 := f2.End
-	if e2 == 0 {
-		e2 = f2.Start + lines - 1
-	}
+	e1 := fileEnd(f1, lines)
+	e2 := fileEnd(f2, lines)
 	return f1.Start <= e2 && f2.Start <= e1
 }
 
@@ -344,37 +346,145 @@ func sortDuplicateGroups(groups []DuplicateGroup) {
 	})
 }
 
-func buildDuplicateGroup(dups []rawJscpdDuplicate, roots []rootMapping, isCrossRoot bool) DuplicateGroup {
-	locMap := make(map[string]FileLocation)
-	lines := dups[0].Lines
-	format := dups[0].Format
+type rawFileSpan struct {
+	root  string
+	path  string
+	start int
+	end   int
+}
+
+type spanRangeKey struct {
+	root   string
+	path   string
+	start1 int
+	end1   int
+	start2 int
+	end2   int
+}
+
+func makePartnerKey(root, path string, s1, e1, s2, e2 int) spanRangeKey {
+	if s1 > s2 || (s1 == s2 && e1 > e2) {
+		s1, s2 = s2, s1
+		e1, e2 = e2, e1
+	}
+	return spanRangeKey{
+		root:   root,
+		path:   path,
+		start1: s1,
+		end1:   e1,
+		start2: s2,
+		end2:   e2,
+	}
+}
+
+func arePartners(partners map[spanRangeKey]struct{}, s1, s2 rawFileSpan) bool {
+	k := makePartnerKey(s1.root, s1.path, s1.start, s1.end, s2.start, s2.end)
+	_, ok := partners[k]
+	return ok
+}
+
+// partnerOfAny reports whether next is the other end of a pair with any of members: two ends of
+// one pair are real repeats, so they never merge into one block, directly or through a span
+// merged in between.
+func partnerOfAny(partners map[spanRangeKey]struct{}, members []rawFileSpan, next rawFileSpan) bool {
+	return slices.ContainsFunc(members, func(member rawFileSpan) bool { return arePartners(partners, member, next) })
+}
+
+func addSpan(byFile map[string][]rawFileSpan, seen map[rawFileSpan]struct{}, span rawFileSpan) {
+	if _, ok := seen[span]; ok {
+		return
+	}
+	seen[span] = struct{}{}
+	fileKey := fmt.Sprintf("%s\x00%s", span.root, span.path)
+	byFile[fileKey] = append(byFile[fileKey], span)
+}
+
+func collectSpansAndPartners(dups []rawJscpdDuplicate, roots []rootMapping, isCrossRoot bool) (map[string][]rawFileSpan, map[spanRangeKey]struct{}) {
+	spansByFile := make(map[string][]rawFileSpan)
+	seenSpans := make(map[rawFileSpan]struct{})
+	partners := make(map[spanRangeKey]struct{})
 
 	for i := 0; i < len(dups) && i < maxDuplicatePairs; i++ {
 		d := dups[i]
 		loc1 := resolveFileLocation(d.FirstFile, roots, isCrossRoot)
 		loc2 := resolveFileLocation(d.SecondFile, roots, isCrossRoot)
-		key1 := fmt.Sprintf("%s\x00%s\x00%d", loc1.Root, loc1.Path, loc1.Line)
-		key2 := fmt.Sprintf("%s\x00%s\x00%d", loc2.Root, loc2.Path, loc2.Line)
-		if key1 == key2 {
+		s1 := d.FirstFile.Start
+		e1 := fileEnd(d.FirstFile, d.Lines)
+		s2 := d.SecondFile.Start
+		e2 := fileEnd(d.SecondFile, d.Lines)
+
+		if loc1.Root == loc2.Root && loc1.Path == loc2.Path && s1 == s2 && e1 == e2 {
 			continue
 		}
-		locMap[key1] = loc1
-		locMap[key2] = loc2
+		if loc1.Root == loc2.Root && loc1.Path == loc2.Path {
+			k := makePartnerKey(loc1.Root, loc1.Path, s1, e1, s2, e2)
+			partners[k] = struct{}{}
+		}
+		addSpan(spansByFile, seenSpans, rawFileSpan{root: loc1.Root, path: loc1.Path, start: s1, end: e1})
+		addSpan(spansByFile, seenSpans, rawFileSpan{root: loc2.Root, path: loc2.Path, start: s2, end: e2})
 	}
+	return spansByFile, partners
+}
 
-	locations := make([]FileLocation, 0, len(locMap))
-	for _, loc := range locMap {
-		locations = append(locations, loc)
+func mergeFileSpans(spans []rawFileSpan, partners map[spanRangeKey]struct{}) []rawFileSpan {
+	n := len(spans)
+	if n <= 1 {
+		return spans
+	}
+	sort.Slice(spans, func(i, j int) bool {
+		if spans[i].start != spans[j].start {
+			return spans[i].start < spans[j].start
+		}
+		return spans[i].end < spans[j].end
+	})
+
+	merged := make([]rawFileSpan, 0, n)
+	cur := spans[0]
+	first := 0 // spans[first:i] are the raw spans merged into cur
+	for i := 1; i < n && i < maxDuplicatePairs; i++ {
+		next := spans[i]
+		if next.start <= cur.end+1 && !partnerOfAny(partners, spans[first:i], next) {
+			if next.end > cur.end {
+				cur.end = next.end
+			}
+		} else {
+			merged = append(merged, cur)
+			cur, first = next, i
+		}
+	}
+	merged = append(merged, cur)
+	return merged
+}
+
+func buildDuplicateGroup(dups []rawJscpdDuplicate, roots []rootMapping, isCrossRoot bool) DuplicateGroup {
+	spansByFile, partners := collectSpansAndPartners(dups, roots, isCrossRoot)
+
+	locations := make([]FileLocation, 0, len(spansByFile))
+	maxLOC := dups[0].Lines
+	for _, spans := range spansByFile {
+		merged := mergeFileSpans(spans, partners)
+		for j := 0; j < len(merged) && j < maxDuplicatePairs; j++ {
+			span := merged[j]
+			spanLen := span.end - span.start + 1
+			if spanLen > maxLOC {
+				maxLOC = spanLen
+			}
+			locations = append(locations, FileLocation{
+				Root: span.root,
+				Path: span.path,
+				Line: span.start,
+			})
+		}
 	}
 	sortLocations(locations)
 
-	lang := determineLanguage(format, locations)
+	lang := determineLanguage(dups[0].Format, locations)
 	hash := computeDuplicateHash(lang, locations)
 
 	return DuplicateGroup{
 		Language:  lang,
 		Hash:      hash,
-		LOC:       lines,
+		LOC:       maxLOC,
 		Locations: locations,
 	}
 }

@@ -656,6 +656,303 @@ func TestForeignScan_Boundary_SameFileDifferentLinesYieldsTwoLocations(t *testin
 	}
 }
 
+func TestForeignScan_Positive_ContiguousCloneSpanMergedToOneCopy(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "main.go", "package main\n")
+	writeFile(t, root, "a/trivy_scan.py", "# scan a\n")
+	writeFile(t, root, "b/trivy_scan.py", "# scan b\n")
+
+	canned := fmt.Sprintf(`{
+  "duplicates": [
+    {
+      "format": "python",
+      "lines": 11,
+      "tokens": 50,
+      "firstFile": {"name": %q, "start": 163, "end": 173},
+      "secondFile": {"name": %q, "start": 212, "end": 221}
+    },
+    {
+      "format": "python",
+      "lines": 11,
+      "tokens": 50,
+      "firstFile": {"name": %q, "start": 173, "end": 183},
+      "secondFile": {"name": %q, "start": 222, "end": 232}
+    }
+  ]
+}`,
+		filepath.Join(root, "a", "trivy_scan.py"), filepath.Join(root, "b", "trivy_scan.py"),
+		filepath.Join(root, "a", "trivy_scan.py"), filepath.Join(root, "b", "trivy_scan.py"),
+	)
+
+	t.Setenv("PRAETOR_TEST_FAKE_JSCPD", "1")
+	t.Setenv("PRAETOR_JSCPD_BIN", os.Args[0])
+	t.Setenv("PRAETOR_TEST_FAKE_JSCPD_REPORT_CONTENT", canned)
+
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{RepoPath: root})
+	if err != nil {
+		t.Fatalf("ScanRepoWithOptions: %v", err)
+	}
+	if len(report.ForeignDuplicates) != 1 {
+		t.Fatalf("ForeignDuplicates count = %d, want 1", len(report.ForeignDuplicates))
+	}
+	group := report.ForeignDuplicates[0]
+	if len(group.Locations) != 2 {
+		t.Fatalf("group.Locations count = %d, want 2", len(group.Locations))
+	}
+	if group.LOC != 21 {
+		t.Fatalf("group.LOC = %d, want 21", group.LOC)
+	}
+	if group.Locations[0].Path != "a/trivy_scan.py" || group.Locations[0].Line != 163 {
+		t.Fatalf("group.Locations[0] = %+v, want a/trivy_scan.py:163", group.Locations[0])
+	}
+	if group.Locations[1].Path != "b/trivy_scan.py" || group.Locations[1].Line != 212 {
+		t.Fatalf("group.Locations[1] = %+v, want b/trivy_scan.py:212", group.Locations[1])
+	}
+}
+
+type realRepeatCase struct {
+	name      string
+	canned    func(root string) string
+	wantCount int
+	wantLOC   int
+	wantLines []int
+}
+
+func runRealRepeatCase(t *testing.T, tc realRepeatCase) {
+	t.Helper()
+	root := t.TempDir()
+	writeFile(t, root, "main.go", "package main\n")
+	writeFile(t, root, "app.py", "# python fixture\n")
+
+	t.Setenv("PRAETOR_TEST_FAKE_JSCPD", "1")
+	t.Setenv("PRAETOR_JSCPD_BIN", os.Args[0])
+	t.Setenv("PRAETOR_TEST_FAKE_JSCPD_REPORT_CONTENT", tc.canned(root))
+
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{RepoPath: root})
+	if err != nil {
+		t.Fatalf("ScanRepoWithOptions: %v", err)
+	}
+	if len(report.ForeignDuplicates) != 1 {
+		t.Fatalf("ForeignDuplicates count = %d, want 1", len(report.ForeignDuplicates))
+	}
+	group := report.ForeignDuplicates[0]
+	if len(group.Locations) != tc.wantCount {
+		t.Fatalf("group.Locations count = %d, want %d", len(group.Locations), tc.wantCount)
+	}
+	if group.LOC != tc.wantLOC {
+		t.Fatalf("group.LOC = %d, want %d", group.LOC, tc.wantLOC)
+	}
+	for i, wantLine := range tc.wantLines {
+		if group.Locations[i].Line != wantLine {
+			t.Fatalf("group.Locations[%d].Line = %d, want %d", i, group.Locations[i].Line, wantLine)
+		}
+	}
+}
+
+func realRepeatCases() []realRepeatCase {
+	return []realRepeatCase{
+		{
+			name: "far_apart",
+			canned: func(root string) string {
+				path := filepath.Join(root, "app.py")
+				return fmt.Sprintf(`{"duplicates":[{"format":"python","lines":11,"tokens":50,"firstFile":{"name":%q,"start":10,"end":20},"secondFile":{"name":%q,"start":50,"end":60}}]}`, path, path)
+			},
+			wantCount: 2,
+			wantLOC:   11,
+			wantLines: []int{10, 50},
+		},
+		{
+			name: "directly_adjacent",
+			canned: func(root string) string {
+				path := filepath.Join(root, "app.py")
+				return fmt.Sprintf(`{"duplicates":[{"format":"python","lines":10,"tokens":50,"firstFile":{"name":%q,"start":10,"end":19},"secondFile":{"name":%q,"start":20,"end":29}}]}`, path, path)
+			},
+			wantCount: 2,
+			wantLOC:   10,
+			wantLines: []int{10, 20},
+		},
+		{
+			name: "chain_three_adjacent",
+			canned: func(root string) string {
+				path := filepath.Join(root, "app.py")
+				return fmt.Sprintf(`{"duplicates":[
+					{"format":"python","lines":10,"tokens":50,"firstFile":{"name":%q,"start":20,"end":29},"secondFile":{"name":%q,"start":10,"end":19}},
+					{"format":"python","lines":10,"tokens":50,"firstFile":{"name":%q,"start":20,"end":29},"secondFile":{"name":%q,"start":30,"end":39}}
+				]}`, path, path, path, path)
+			},
+			wantCount: 3,
+			wantLOC:   10,
+			wantLines: []int{10, 20, 30},
+		},
+		{
+			name: "overlapping",
+			canned: func(root string) string {
+				path := filepath.Join(root, "app.py")
+				return fmt.Sprintf(`{"duplicates":[{"format":"python","lines":16,"tokens":50,"firstFile":{"name":%q,"start":10,"end":25},"secondFile":{"name":%q,"start":20,"end":35}}]}`, path, path)
+			},
+			wantCount: 2,
+			wantLOC:   16,
+			wantLines: []int{10, 20},
+		},
+	}
+}
+
+func TestForeignScan_Negative_RealRepeatsStay(t *testing.T) {
+	for _, tc := range realRepeatCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			runRealRepeatCase(t, tc)
+		})
+	}
+}
+
+// 100-110 and 110-120 are one split block; 121-131 abuts it but is the real repeat of its second
+// half, so it stays a copy of its own.
+func TestForeignScan_Negative_SplitBlockBesideItsOwnRepeat(t *testing.T) {
+	runRealRepeatCase(t, realRepeatCase{
+		canned: func(root string) string {
+			path := filepath.Join(root, "app.py")
+			return fmt.Sprintf(`{"duplicates":[
+				{"format":"python","lines":11,"tokens":50,"firstFile":{"name":%q,"start":100,"end":110},"secondFile":{"name":%q,"start":200,"end":210}},
+				{"format":"python","lines":11,"tokens":50,"firstFile":{"name":%q,"start":110,"end":120},"secondFile":{"name":%q,"start":121,"end":131}}
+			]}`, path, path, path, path)
+		},
+		wantCount: 3,
+		wantLOC:   21,
+		wantLines: []int{100, 121, 200},
+	})
+}
+
+func TestForeignScan_Boundary_GapOfOneLineYieldsTwoGroups(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "main.go", "package main\n")
+	writeFile(t, root, "a.py", "# a\n")
+	writeFile(t, root, "b.py", "# b\n")
+
+	canned := fmt.Sprintf(`{
+  "duplicates": [
+    {
+      "format": "python",
+      "lines": 11,
+      "tokens": 50,
+      "firstFile": {"name": %q, "start": 10, "end": 20},
+      "secondFile": {"name": %q, "start": 10, "end": 20}
+    },
+    {
+      "format": "python",
+      "lines": 11,
+      "tokens": 50,
+      "firstFile": {"name": %q, "start": 22, "end": 32},
+      "secondFile": {"name": %q, "start": 22, "end": 32}
+    }
+  ]
+}`,
+		filepath.Join(root, "a.py"), filepath.Join(root, "b.py"),
+		filepath.Join(root, "a.py"), filepath.Join(root, "b.py"),
+	)
+
+	t.Setenv("PRAETOR_TEST_FAKE_JSCPD", "1")
+	t.Setenv("PRAETOR_JSCPD_BIN", os.Args[0])
+	t.Setenv("PRAETOR_TEST_FAKE_JSCPD_REPORT_CONTENT", canned)
+
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{RepoPath: root})
+	if err != nil {
+		t.Fatalf("ScanRepoWithOptions: %v", err)
+	}
+	if len(report.ForeignDuplicates) != 2 {
+		t.Fatalf("ForeignDuplicates count = %d, want 2 groups for gap of one line", len(report.ForeignDuplicates))
+	}
+	for i, g := range report.ForeignDuplicates {
+		if len(g.Locations) != 2 {
+			t.Fatalf("group[%d].Locations count = %d, want 2", i, len(g.Locations))
+		}
+	}
+}
+
+func TestForeignScan_Boundary_EndAbsentZeroMergesByStartPlusLinesMinusOne(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "main.go", "package main\n")
+	writeFile(t, root, "a.py", "# a\n")
+	writeFile(t, root, "b.py", "# b\n")
+
+	canned := fmt.Sprintf(`{
+  "duplicates": [
+    {
+      "format": "python",
+      "lines": 11,
+      "tokens": 50,
+      "firstFile": {"name": %q, "start": 163, "end": 0},
+      "secondFile": {"name": %q, "start": 212, "end": 0}
+    },
+    {
+      "format": "python",
+      "lines": 11,
+      "tokens": 50,
+      "firstFile": {"name": %q, "start": 173, "end": 0},
+      "secondFile": {"name": %q, "start": 222, "end": 0}
+    }
+  ]
+}`,
+		filepath.Join(root, "a.py"), filepath.Join(root, "b.py"),
+		filepath.Join(root, "a.py"), filepath.Join(root, "b.py"),
+	)
+
+	t.Setenv("PRAETOR_TEST_FAKE_JSCPD", "1")
+	t.Setenv("PRAETOR_JSCPD_BIN", os.Args[0])
+	t.Setenv("PRAETOR_TEST_FAKE_JSCPD_REPORT_CONTENT", canned)
+
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{RepoPath: root})
+	if err != nil {
+		t.Fatalf("ScanRepoWithOptions: %v", err)
+	}
+	if len(report.ForeignDuplicates) != 1 {
+		t.Fatalf("ForeignDuplicates count = %d, want 1", len(report.ForeignDuplicates))
+	}
+	group := report.ForeignDuplicates[0]
+	if len(group.Locations) != 2 {
+		t.Fatalf("group.Locations count = %d, want 2", len(group.Locations))
+	}
+	if group.LOC != 21 {
+		t.Fatalf("group.LOC = %d, want 21", group.LOC)
+	}
+	if group.Locations[0].Line != 163 || group.Locations[1].Line != 212 {
+		t.Fatalf("group.Locations lines = [%d, %d], want [163, 212]", group.Locations[0].Line, group.Locations[1].Line)
+	}
+}
+
+func TestForeignScan_Boundary_UnmergedGroupHashUnchanged(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "main.go", "package main\n")
+	writeFile(t, root, "app.py", "# app\n")
+
+	canned := fmt.Sprintf(`{
+  "duplicates": [
+    {
+      "format": "python",
+      "lines": 10,
+      "tokens": 50,
+      "firstFile": {"name": %q, "start": 1, "end": 10},
+      "secondFile": {"name": %q, "start": 20, "end": 30}
+    }
+  ]
+}`, filepath.Join(root, "app.py"), filepath.Join(root, "app.py"))
+
+	t.Setenv("PRAETOR_TEST_FAKE_JSCPD", "1")
+	t.Setenv("PRAETOR_JSCPD_BIN", os.Args[0])
+	t.Setenv("PRAETOR_TEST_FAKE_JSCPD_REPORT_CONTENT", canned)
+
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{RepoPath: root})
+	if err != nil {
+		t.Fatalf("ScanRepoWithOptions: %v", err)
+	}
+	if len(report.ForeignDuplicates) != 1 {
+		t.Fatalf("ForeignDuplicates count = %d, want 1", len(report.ForeignDuplicates))
+	}
+	const wantHash = "a2adde83d939121bff0b49228da1125239bd9f0150ff18dc4ebc137c88ebb821"
+	if got := report.ForeignDuplicates[0].Hash; got != wantHash {
+		t.Fatalf("group.Hash = %q, want fixed baseline %q", got, wantHash)
+	}
+}
+
 const (
 	realCFixture = `
 int compute_complex_math(int alpha, int beta, int gamma, int delta) {
