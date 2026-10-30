@@ -208,8 +208,8 @@ and every earlier line must be in `priorDigests`, in both directions
 (`TestShippedTextLedger`). Changing a managed text therefore takes three steps,
 and CI fails until all three are done:
 
-1. Change the text (a Renovate pin update does this for the workflow, and for
-   `package.json` and `package-lock.json`).
+1. Change the text (a Renovate pin update or lock file maintenance does this for
+   the workflow, and for `package.json` and `package-lock.json`).
 2. Append its digest:
    `PRAETOR_UPDATE_SHIPPED_TEXTS=1 go test ./internal/managedasset -run 'TestShippedTextLedger$'`.
    The step only appends; it never rewrites or drops a line.
@@ -217,9 +217,10 @@ and CI fails until all three are done:
    `tools/markdownlint/testdata/prior/`. The test failure names the digest and
    the file whose history holds the text.
 
-An npm pin update also moves what records the lock's contents, so a Renovate
-pin pull request for the gate fails CI until these follow: the adoption
-goldens under `internal/adopt/testdata/managed-family/` (rewrite them with
+An npm pin update or lock file maintenance also moves what records the lock's
+contents, so a Renovate pin or lock maintenance pull request for the gate fails
+CI until these follow: the adoption goldens under
+`internal/adopt/testdata/managed-family/` (rewrite them with
 `PRAETOR_UPDATE_GOLDEN=1 go test ./internal/adopt -run Golden`), the direct pins
 in `TestPackageLockPinsEveryInstalledPackage`
 (`tools/markdownlint/assets_test.go`), `.needs.yaml`
