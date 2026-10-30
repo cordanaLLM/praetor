@@ -861,6 +861,7 @@ def _landed_by_pull_request(path, cfg, marks):
         return any(
             REF_NAME.fullmatch(base)
             and ".." not in base
+            and "//" not in base
             and _content_in_base(path, cfg, base)
             for _oid, base in merged
         )
@@ -951,14 +952,19 @@ def _ordered_map(fn, items):
 
 
 def _judge_worktree_candidates(root, cfg, candidates, deadline):
-    """Separate unfinished records from branches requiring bounded PR state reads."""
+    """Separate unfinished records from branches requiring bounded PR state reads.
+
+    Pushed candidates come first, so landed ones never take the three explicit-head probes a
+    pushed branch outside the listing needs; a detached HEAD names no branch to look up.
+    """
     jobs = [(cfg, entry, path, deadline) for entry, path in candidates]
     results = _ordered_map(lambda job: _judge_worktree(root, *job), jobs)
     records = [(entry, reasons) for entry, reasons, _ in results]
     pr_candidates = []
     for entry, _reasons, needs_pr in results:
-        if needs_pr:
+        if needs_pr == "pushed" or (needs_pr == "landed" and entry.get("branch")):
             pr_candidates.append((entry, _reasons, needs_pr))
+    pr_candidates.sort(key=lambda item: item[2] != "pushed")
     return records, pr_candidates
 
 

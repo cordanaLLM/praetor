@@ -400,11 +400,68 @@ class CheckpointTests(unittest.TestCase):
         self.assertNotIn("pull request", reasons)
         self.assertFalse(any("pushed branch(es) unverified" in item for item in result["actions"]))
 
+    def test_stop_detached_worktree_with_unpublished_commit_looks_up_no_pull_request(self):
+        # A detached HEAD names no branch, so a lookup could only run a second unfiltered
+        # listing and spend a probe (review-1695-checkpoint-r1 finding 1).
+        bare = self.root.parent / (self.root.name + "-remote.git")
+        self.external_paths.append(bare)
+        git(self.root, "init", "--bare", "-q", str(bare))
+        git(self.root, "remote", "add", "origin", str(bare))
+        git(self.root, "push", "-q", "-u", "origin", "main")
+        path = self.add_linked_worktree()
+        (path / "new.txt").write_text("detached work\n")
+        git(path, "add", "new.txt")
+        git(path, "commit", "-q", "-m", "unit")
+        git(path, "switch", "-q", "--detach")
+        result, calls = self.observe_worktrees()
+        self.assertTrue(result["due"])
+        self.assertIn("not on any remote", " ".join(result["unfinished_worktrees"][0]["reasons"]))
+        self.assertFalse(any(call[:3] == ["gh", "pr", "list"] for call in calls))
+
+    def test_stop_landed_candidates_leave_the_probes_to_pushed_branches(self):
+        # Three local-only branches and one pushed branch whose merged pull request is older
+        # than the listing: the pushed branch is probed first and passes, as before the landed
+        # lookup existed (review-1695-checkpoint-r1 finding 2).
+        bare = self.root.parent / (self.root.name + "-remote.git")
+        self.external_paths.append(bare)
+        git(self.root, "init", "--bare", "-q", str(bare))
+        git(self.root, "remote", "add", "origin", str(bare))
+        git(self.root, "push", "-q", "-u", "origin", "main")
+        for i in range(3):
+            path = self.add_linked_worktree(f"checkpoint/local-{i}")
+            (path / f"local-{i}.txt").write_text("local\n")
+            git(path, "add", f"local-{i}.txt")
+            git(path, "commit", "-q", "-m", f"local {i}")
+        pushed = self.add_linked_worktree("checkpoint/pushed")
+        (pushed / "pushed.txt").write_text("pushed\n")
+        git(pushed, "add", "pushed.txt")
+        git(pushed, "commit", "-q", "-m", "pushed")
+        git(pushed, "push", "-q", "-u", "origin", "checkpoint/pushed")
+        git(pushed, "fetch", "-q", "origin")
+        original, probed = checkpoint._run, []
+
+        def fake_run(argv, root, **kwargs):
+            if argv[:3] == ["gh", "pr", "list"]:
+                if "--head" not in argv:
+                    return b"[]"
+                branch = argv[argv.index("--head") + 1]
+                probed.append(branch)
+                rows = [{"headRefName": branch, "state": "MERGED"}] if branch == "checkpoint/pushed" else []
+                return json.dumps(rows).encode()
+            return original(argv, root, **kwargs)
+
+        with mock.patch.object(checkpoint, "_run", side_effect=fake_run):
+            result = checkpoint.inspect_checkpoint(self.root, "stop")
+        self.assertEqual(probed[0], "checkpoint/pushed")
+        flagged = {item["branch"] for item in result.get("unfinished_worktrees", [])}
+        self.assertNotIn("checkpoint/pushed", flagged)
+        self.assertEqual(flagged, {f"checkpoint/local-{i}" for i in range(3)})
+
     def test_stop_merged_pr_base_outside_ref_names_is_not_read(self):
         # Boundary: a base name that is no plain ref name never reaches git, and the worktree
         # stays judged; a listing row whose head or base is no string is malformed.
         self.landed_elsewhere(base_line="landed\n")
-        for base in ("../controller", "-controller", "", "controller..main"):
+        for base in ("../controller", "-controller", "", "controller..main", "controller//main"):
             result, calls = self.observe_worktrees(open_prs=[self.merged_row("2" * 40, base)])
             self.assertTrue(result["due"], base)
             git_args = [" ".join(call) for call in calls if call[0] == "git"]
