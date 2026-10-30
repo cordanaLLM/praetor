@@ -43,10 +43,12 @@ const (
 	maxKeyPathDepth  = 16
 )
 
-// LinterPair is one (file, linter) finding target.
+// LinterPair is one (file, linter, function) finding target.
+// Function is set for complexity linters (gocyclo, gocognit, funlen) and empty for file-level linters.
 type LinterPair struct {
-	File   string
-	Linter string
+	File     string
+	Linter   string
+	Function string
 }
 
 // GenerateExceptionsOptions configures the exception generator and ratchet.
@@ -75,6 +77,7 @@ type golangciReport struct {
 
 type golangciIssue struct {
 	FromLinter string           `json:"FromLinter"`
+	Text       string           `json:"Text"`
 	Pos        golangciPosition `json:"Pos"`
 }
 
@@ -82,17 +85,23 @@ type golangciPosition struct {
 	Filename string `json:"Filename"`
 }
 
-type recordedExceptionRule struct {
-	Pair      LinterPair
-	Exception config.Exception
-	Rule      golangciExclusionRule
+// RecordedExceptionRule is one rule parsed from the generated exceptions block.
+type RecordedExceptionRule struct {
+	Pair               LinterPair
+	Exception          config.Exception
+	IsBaseline         bool
+	IsLegacyComplexity bool
+	Rule               golangciExclusionRule
 }
+
+type recordedExceptionRule = RecordedExceptionRule
 
 type ratchetAction int
 
 const (
 	ratchetUnchanged ratchetAction = iota
 	ratchetRenew
+	ratchetShrinkBaseline
 	ratchetNewFinding
 	ratchetCountDidNotDrop
 )
@@ -101,6 +110,10 @@ type ratchetVerdict struct {
 	Action         ratchetAction
 	NewPair        LinterPair
 	EarliestExpiry string
+	BaselineCount  int
+	DatedCount     int
+	RecordedDated  int
+	MeasuredDated  int
 }
 
 // StripGolangciConfig writes .golangci.yml without the generated block and with
@@ -332,6 +345,77 @@ func cleanIssueFilename(name string) string {
 	return clean
 }
 
+func isComplexityLinter(linter string) bool {
+	switch strings.ToLower(strings.TrimSpace(linter)) {
+	case "gocyclo", "gocognit", "funlen":
+		return true
+	default:
+		return false
+	}
+}
+
+func extractDelimited(s, prefix string, endDelim byte) string {
+	idx := strings.Index(s, prefix)
+	if idx == -1 {
+		return ""
+	}
+	rest := s[idx+len(prefix):]
+	endIdx := strings.IndexByte(rest, endDelim)
+	if endIdx <= 0 {
+		return ""
+	}
+	return rest[:endIdx]
+}
+
+func extractIssueFunction(linter, text string) string {
+	switch strings.ToLower(strings.TrimSpace(linter)) {
+	case "gocyclo", "gocognit":
+		return extractDelimited(text, "of func `", '`')
+	case "funlen":
+		return extractDelimited(text, "Function '", '\'')
+	default:
+		return ""
+	}
+}
+
+func functionTextRegexp(linter, fn string) string {
+	quoted := regexp.QuoteMeta(fn)
+	switch strings.ToLower(strings.TrimSpace(linter)) {
+	case "gocyclo", "gocognit":
+		return fmt.Sprintf("func `%s`", quoted)
+	case "funlen":
+		return fmt.Sprintf("Function '%s'", quoted)
+	default:
+		return quoted
+	}
+}
+
+func unquoteRegexpMeta(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s) && i < maxGolangciLines; i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			i++
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+func unquoteRuleText(linter, text string) string {
+	trimmed := strings.TrimSpace(text)
+	switch strings.ToLower(strings.TrimSpace(linter)) {
+	case "gocyclo", "gocognit":
+		if strings.HasPrefix(trimmed, "func `") && strings.HasSuffix(trimmed, "`") {
+			return unquoteRegexpMeta(trimmed[len("func `") : len(trimmed)-1])
+		}
+	case "funlen":
+		if strings.HasPrefix(trimmed, "Function '") && strings.HasSuffix(trimmed, "'") {
+			return unquoteRegexpMeta(trimmed[len("Function '") : len(trimmed)-1])
+		}
+	}
+	return ""
+}
+
 func readReportPairs(reportPath, configPath string) ([]LinterPair, error) {
 	data, err := util.ReadFileLimited(reportPath, maxLintReportBytes)
 	if err != nil {
@@ -347,7 +431,10 @@ func readReportPairs(reportPath, configPath string) ([]LinterPair, error) {
 	var pairs []LinterPair
 
 	for i := 0; i < len(rep.Issues) && i < maxReportIssues; i++ {
-		p, ok := issueLinterPair(rep.Issues[i], enabled)
+		p, ok, err := issueLinterPair(rep.Issues[i], enabled)
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
 			continue
 		}
@@ -357,29 +444,41 @@ func readReportPairs(reportPath, configPath string) ([]LinterPair, error) {
 		}
 	}
 
-	slices.SortFunc(pairs, func(a, b LinterPair) int {
-		if c := cmp.Compare(a.File, b.File); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.Linter, b.Linter)
-	})
+	slices.SortFunc(pairs, compareLinterPairs)
 	return pairs, nil
 }
 
+func compareLinterPairs(a, b LinterPair) int {
+	if c := cmp.Compare(a.File, b.File); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.Linter, b.Linter); c != 0 {
+		return c
+	}
+	return cmp.Compare(a.Function, b.Function)
+}
+
 // issueLinterPair extracts a valid LinterPair from an issue if permitted by the enabled map.
-func issueLinterPair(issue golangciIssue, enabled map[string]bool) (LinterPair, bool) {
+func issueLinterPair(issue golangciIssue, enabled map[string]bool) (LinterPair, bool, error) {
 	linter := strings.TrimSpace(issue.FromLinter)
 	if linter == "" {
-		return LinterPair{}, false
+		return LinterPair{}, false, nil
 	}
 	if len(enabled) > 0 && !enabled[strings.ToLower(linter)] {
-		return LinterPair{}, false
+		return LinterPair{}, false, nil
 	}
 	file := cleanIssueFilename(issue.Pos.Filename)
 	if file == "" {
-		return LinterPair{}, false
+		return LinterPair{}, false, nil
 	}
-	return LinterPair{File: file, Linter: linter}, true
+	var fn string
+	if isComplexityLinter(linter) {
+		fn = extractIssueFunction(linter, issue.Text)
+		if fn == "" {
+			return LinterPair{}, false, fmt.Errorf("extract function from %s finding in %s (%q)", linter, file, issue.Text)
+		}
+	}
+	return LinterPair{File: file, Linter: linter, Function: fn}, true, nil
 }
 
 func unquoteRulePath(path string) string {
@@ -398,7 +497,7 @@ func parseBlockRules(configPath string, blockLines []string) []recordedException
 		return nil
 	}
 	rulesSeq := findYAMLMappingKey(root.Content[0], "rules")
-	rules := parseExclusionRulesSeq(configPath, rulesSeq)
+	rules := parseExclusionRulesSeq(configPath, rulesSeq, 0, len(blockLines)+1)
 	var recorded []recordedExceptionRule
 	for i := 0; i < len(rules) && i < maxExclusionRules; i++ {
 		r := rules[i]
@@ -406,13 +505,33 @@ func parseBlockRules(configPath string, blockLines []string) []recordedException
 		if len(r.linters) > 0 {
 			linter = r.linters[0]
 		}
+		fn := unquoteRuleText(linter, r.text)
+		isLegacy := !r.isBaseline && isComplexityLinter(linter) && fn == ""
 		recorded = append(recorded, recordedExceptionRule{
-			Pair:      LinterPair{File: unquoteRulePath(r.path), Linter: linter},
-			Exception: r.exception,
-			Rule:      r,
+			Pair:               LinterPair{File: unquoteRulePath(r.path), Linter: linter, Function: fn},
+			Exception:          r.exception,
+			IsBaseline:         r.isBaseline,
+			IsLegacyComplexity: isLegacy,
+			Rule:               r,
 		})
 	}
 	return recorded
+}
+
+func validateBlockRules(configPath string, lines []string, beginLine, endLine int, recorded []recordedExceptionRule) error {
+	if errs := validateGeneratedBlockComments(configPath, lines, beginLine, endLine); len(errs) > 0 {
+		return errors.New(errs[0])
+	}
+	for i := 0; i < len(recorded) && i < maxExclusionRules; i++ {
+		r := recorded[i]
+		if !r.Rule.hasComment {
+			return fmt.Errorf("%s:%d: generated rule for %s carries unrecognised or missing comment", configPath, beginLine+r.Rule.line, r.Pair.File)
+		}
+		if r.IsBaseline && r.Pair.Function == "" {
+			return fmt.Errorf("%s:%d: baseline rule for %s (%s) requires function text regexp", configPath, beginLine+r.Rule.line, r.Pair.File, r.Pair.Linter)
+		}
+	}
+	return nil
 }
 
 func locateGeneratedBlock(lines []string) (int, int) {
@@ -430,25 +549,68 @@ func locateGeneratedBlock(lines []string) (int, int) {
 	return beginLine, endLine
 }
 
-func readExistingGeneratedBlock(configPath string) ([]recordedExceptionRule, int, int, error) {
+// ParseGeneratedBlock parses and validates the generated exclusions block from data.
+func ParseGeneratedBlock(configPath string, data []byte) ([]RecordedExceptionRule, int, int, error) {
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return nil, -1, -1, fmt.Errorf("parse %s: %w", configPath, err)
+	}
+	if len(root.Content) > 0 && root.Content[0].Kind != yaml.MappingNode {
+		return nil, -1, -1, fmt.Errorf("%s: root must be a mapping", configPath)
+	}
+	lines := strings.Split(string(data), "\n")
+	beginLine, endLine := locateGeneratedBlock(lines)
+	if beginLine == -1 && endLine == -1 {
+		return nil, -1, -1, nil
+	}
+	if beginLine == -1 || endLine == -1 {
+		return nil, beginLine, endLine, fmt.Errorf("%s: unclosed generated-exceptions block", configPath)
+	}
+	blockLines := lines[beginLine+1 : endLine]
+	recorded := parseBlockRules(configPath, blockLines)
+	if err := validateBlockRules(configPath, lines, beginLine, endLine, recorded); err != nil {
+		return nil, beginLine, endLine, err
+	}
+	return recorded, beginLine, endLine, nil
+}
+
+// ReadExistingGeneratedBlock reads and validates the generated exclusions block from configPath.
+func ReadExistingGeneratedBlock(configPath string) ([]RecordedExceptionRule, int, int, error) {
 	data, err := util.ReadFileLimited(configPath, maxLintConfigBytes)
 	if err != nil {
 		return nil, -1, -1, fmt.Errorf("read %s: %w", configPath, err)
 	}
-	lines := strings.Split(string(data), "\n")
-	beginLine, endLine := locateGeneratedBlock(lines)
-	if beginLine == -1 || endLine == -1 {
-		return nil, -1, -1, nil
-	}
-	blockLines := lines[beginLine+1 : endLine]
-	return parseBlockRules(configPath, blockLines), beginLine, endLine, nil
+	return ParseGeneratedBlock(configPath, data)
 }
 
-func findNewFinding(recordedMap map[LinterPair]recordedExceptionRule, measured []LinterPair) (LinterPair, bool) {
-	for i := 0; i < len(measured) && i < maxExclusionRules; i++ {
-		if _, ok := recordedMap[measured[i]]; !ok {
-			return measured[i], true
+func readExistingGeneratedBlock(configPath string) ([]recordedExceptionRule, int, int, error) {
+	return ReadExistingGeneratedBlock(configPath)
+}
+
+func buildRatchetMaps(recorded []recordedExceptionRule) (map[LinterPair]recordedExceptionRule, map[LinterPair]bool) {
+	recordedMap := make(map[LinterPair]recordedExceptionRule, len(recorded))
+	legacyFiles := make(map[LinterPair]bool)
+	for i := 0; i < len(recorded) && i < maxExclusionRules; i++ {
+		r := recorded[i]
+		if r.IsLegacyComplexity {
+			legacyFiles[LinterPair{File: r.Pair.File, Linter: r.Pair.Linter}] = true
+			continue
 		}
+		recordedMap[r.Pair] = r
+	}
+	return recordedMap, legacyFiles
+}
+
+func findNewFinding(recordedMap map[LinterPair]recordedExceptionRule, legacyFiles map[LinterPair]bool, measured []LinterPair) (LinterPair, bool) {
+	for i := 0; i < len(measured) && i < maxExclusionRules; i++ {
+		m := measured[i]
+		if _, ok := recordedMap[m]; ok {
+			continue
+		}
+		if isComplexityLinter(m.Linter) && legacyFiles[LinterPair{File: m.File, Linter: m.Linter}] {
+			continue
+		}
+		return m, true
 	}
 	return LinterPair{}, false
 }
@@ -458,6 +620,9 @@ func checkRecordedExpiry(recorded []recordedExceptionRule, today time.Time) (boo
 	earliestExpiry := ""
 	for i := 0; i < len(recorded) && i < maxExclusionRules; i++ {
 		r := recorded[i]
+		if r.IsBaseline || r.IsLegacyComplexity {
+			continue
+		}
 		if r.Exception.Expired(today) {
 			hasExpired = true
 		}
@@ -468,25 +633,69 @@ func checkRecordedExpiry(recorded []recordedExceptionRule, today time.Time) (boo
 	return hasExpired, earliestExpiry
 }
 
-func evaluateRatchet(recorded []recordedExceptionRule, measured []LinterPair, today time.Time) ratchetVerdict {
-	recordedMap := make(map[LinterPair]recordedExceptionRule, len(recorded))
+func countRatchetBuckets(recorded []recordedExceptionRule, measured []LinterPair) (int, int, bool, int, int) {
+	recBaseline, recDated := 0, 0
+	hasLegacy := false
 	for i := 0; i < len(recorded) && i < maxExclusionRules; i++ {
-		recordedMap[recorded[i].Pair] = recorded[i]
+		if recorded[i].IsLegacyComplexity {
+			hasLegacy = true
+		} else if recorded[i].IsBaseline {
+			recBaseline++
+		} else {
+			recDated++
+		}
 	}
-	if newPair, found := findNewFinding(recordedMap, measured); found {
+	measBaseline, measDated := 0, 0
+	for i := 0; i < len(measured) && i < maxExclusionRules; i++ {
+		if isComplexityLinter(measured[i].Linter) {
+			measBaseline++
+		} else {
+			measDated++
+		}
+	}
+	return recBaseline, recDated, hasLegacy, measBaseline, measDated
+}
+
+func evaluateRatchet(recorded []recordedExceptionRule, measured []LinterPair, today time.Time) ratchetVerdict {
+	recordedMap, legacyFiles := buildRatchetMaps(recorded)
+	if newPair, found := findNewFinding(recordedMap, legacyFiles, measured); found {
 		return ratchetVerdict{Action: ratchetNewFinding, NewPair: newPair}
 	}
-	if len(measured) < len(recorded) {
+	recBaseline, recDated, hasLegacy, measBaseline, measDated := countRatchetBuckets(recorded, measured)
+	if recDated > 0 && measDated < recDated {
 		return ratchetVerdict{Action: ratchetRenew}
 	}
 	hasExpired, earliest := checkRecordedExpiry(recorded, today)
 	if hasExpired {
-		return ratchetVerdict{Action: ratchetCountDidNotDrop}
+		return ratchetVerdict{
+			Action:        ratchetCountDidNotDrop,
+			RecordedDated: recDated,
+			MeasuredDated: measDated,
+		}
 	}
-	return ratchetVerdict{Action: ratchetUnchanged, EarliestExpiry: earliest}
+	if hasLegacy || measBaseline < recBaseline {
+		return ratchetVerdict{Action: ratchetShrinkBaseline}
+	}
+	return ratchetVerdict{
+		Action:         ratchetUnchanged,
+		EarliestExpiry: earliest,
+		BaselineCount:  recBaseline,
+		DatedCount:     recDated,
+	}
 }
 
-func formatGeneratedBlock(pairs []LinterPair, category string, today time.Time, issue int) (string, error) {
+func preservedDatedExceptions(recorded []recordedExceptionRule) map[LinterPair]config.Exception {
+	preserved := make(map[LinterPair]config.Exception)
+	for i := 0; i < len(recorded) && i < maxExclusionRules; i++ {
+		r := recorded[i]
+		if !r.IsBaseline && !r.IsLegacyComplexity {
+			preserved[r.Pair] = r.Exception
+		}
+	}
+	return preserved
+}
+
+func formatGeneratedBlock(pairs []LinterPair, category string, today time.Time, issue int, preserved map[LinterPair]config.Exception) (string, error) {
 	days, ok := config.ExceptionCategoryDays(category)
 	if !ok {
 		return "", fmt.Errorf("invalid category %q: must be A, B, C or D", category)
@@ -497,14 +706,29 @@ func formatGeneratedBlock(pairs []LinterPair, category string, today time.Time, 
 	var b strings.Builder
 	b.WriteString("      " + GeneratedExceptionsBegin + "\n")
 	for i := 0; i < len(pairs) && i < maxExclusionRules; i++ {
-		p := pairs[i]
-		fmt.Fprintf(&b, "      # category %s, entered %s, expires %s, #%d\n", category, entered, expires, issue)
-		fmt.Fprintf(&b, "      - path: ^%s$\n", regexp.QuoteMeta(p.File))
-		b.WriteString("        linters:\n")
-		fmt.Fprintf(&b, "          - %s\n", p.Linter)
+		writeGeneratedRule(&b, pairs[i], category, entered, expires, issue, preserved)
 	}
 	b.WriteString("      " + GeneratedExceptionsEnd)
 	return b.String(), nil
+}
+
+func writeGeneratedRule(b *strings.Builder, p LinterPair, category, entered, expires string, issue int, preserved map[LinterPair]config.Exception) {
+	if isComplexityLinter(p.Linter) {
+		fmt.Fprintf(b, "      # baseline #%d\n", issue)
+		fmt.Fprintf(b, "      - path: ^%s$\n", regexp.QuoteMeta(p.File))
+		b.WriteString("        linters:\n")
+		fmt.Fprintf(b, "          - %s\n", p.Linter)
+		fmt.Fprintf(b, "        text: %s\n", functionTextRegexp(p.Linter, p.Function))
+		return
+	}
+	ruleCat, ruleEntered, ruleExpires := category, entered, expires
+	if exc, ok := preserved[p]; ok && exc.Category != "" && exc.Entered != "" && exc.Expires != "" {
+		ruleCat, ruleEntered, ruleExpires = exc.Category, exc.Entered, exc.Expires
+	}
+	fmt.Fprintf(b, "      # category %s, entered %s, expires %s, #%d\n", ruleCat, ruleEntered, ruleExpires, issue)
+	fmt.Fprintf(b, "      - path: ^%s$\n", regexp.QuoteMeta(p.File))
+	b.WriteString("        linters:\n")
+	fmt.Fprintf(b, "          - %s\n", p.Linter)
 }
 
 // findRulesInsertionIndex returns the line after the last line of linters.exclusions.rules,
@@ -625,7 +849,7 @@ func GenerateExceptions(opts GenerateExceptionsOptions) (GenerateResult, error) 
 		return GenerateResult{ExitCode: 1, Message: err.Error()}, err
 	}
 	if len(recorded) == 0 {
-		return writeGeneratedBlock(opts, measured, category, today, beginLine, endLine)
+		return writeGeneratedBlock(opts, measured, category, today, beginLine, endLine, nil)
 	}
 	verdict := evaluateRatchet(recorded, measured, today)
 	return handleRatchetVerdict(opts, recorded, measured, verdict, category, today, beginLine, endLine)
@@ -633,8 +857,8 @@ func GenerateExceptions(opts GenerateExceptionsOptions) (GenerateResult, error) 
 
 // writeGeneratedBlock renders the generated block for measured and writes it into the
 // configuration, or prints it without --write; the first run and a renewal share it.
-func writeGeneratedBlock(opts GenerateExceptionsOptions, measured []LinterPair, category string, today time.Time, beginLine, endLine int) (GenerateResult, error) {
-	block, err := formatGeneratedBlock(measured, category, today, opts.Issue)
+func writeGeneratedBlock(opts GenerateExceptionsOptions, measured []LinterPair, category string, today time.Time, beginLine, endLine int, preserved map[LinterPair]config.Exception) (GenerateResult, error) {
+	block, err := formatGeneratedBlock(measured, category, today, opts.Issue, preserved)
 	if err != nil {
 		return GenerateResult{ExitCode: 1, Message: err.Error()}, err
 	}
@@ -650,25 +874,44 @@ func writeGeneratedBlock(opts GenerateExceptionsOptions, measured []LinterPair, 
 	return GenerateResult{ExitCode: 0, Written: false, Count: len(measured)}, nil
 }
 
+func formatNewFindingMessage(p LinterPair) string {
+	if p.Function != "" {
+		return fmt.Sprintf("new finding in %s (%s) %s: fix it, a generated exception never grows", p.File, p.Linter, p.Function)
+	}
+	return fmt.Sprintf("new finding in %s (%s): fix it, a generated exception never grows", p.File, p.Linter)
+}
+
+func formatUnchangedMessage(total int, verdict ratchetVerdict) string {
+	if verdict.DatedCount > 0 && verdict.BaselineCount > 0 {
+		return fmt.Sprintf("unchanged: %d entries (%d baseline, %d dated) live until %s", total, verdict.BaselineCount, verdict.DatedCount, verdict.EarliestExpiry)
+	}
+	if verdict.DatedCount > 0 {
+		return fmt.Sprintf("unchanged: %d entries live until %s", total, verdict.EarliestExpiry)
+	}
+	return fmt.Sprintf("unchanged: %d baseline entries", total)
+}
+
 func handleRatchetVerdict(opts GenerateExceptionsOptions, recorded []recordedExceptionRule, measured []LinterPair,
 	verdict ratchetVerdict, category string, today time.Time, beginLine, endLine int) (GenerateResult, error) {
 	switch verdict.Action {
 	case ratchetNewFinding:
-		msg := fmt.Sprintf("new finding in %s (%s): fix it, a generated exception never grows", verdict.NewPair.File, verdict.NewPair.Linter)
+		msg := formatNewFindingMessage(verdict.NewPair)
 		if err := emitResult(opts.Stderr, msg); err != nil {
 			return GenerateResult{ExitCode: 1, Message: err.Error()}, err
 		}
 		return GenerateResult{ExitCode: 3, Message: msg}, nil
 	case ratchetRenew:
-		return writeGeneratedBlock(opts, measured, category, today, beginLine, endLine)
+		return writeGeneratedBlock(opts, measured, category, today, beginLine, endLine, nil)
+	case ratchetShrinkBaseline:
+		return writeGeneratedBlock(opts, measured, category, today, beginLine, endLine, preservedDatedExceptions(recorded))
 	case ratchetUnchanged:
-		msg := fmt.Sprintf("unchanged: %d entries live until %s", len(recorded), verdict.EarliestExpiry)
+		msg := formatUnchangedMessage(len(recorded), verdict)
 		if err := emitResult(opts.Stdout, msg); err != nil {
 			return GenerateResult{ExitCode: 1, Message: err.Error()}, err
 		}
 		return GenerateResult{ExitCode: 0, Message: msg, Written: false, Count: len(recorded)}, nil
 	case ratchetCountDidNotDrop:
-		msg := fmt.Sprintf("count did not drop: %d recorded, %d measured; renewal needs a lower count", len(recorded), len(measured))
+		msg := fmt.Sprintf("count did not drop: %d recorded, %d measured; renewal needs a lower count", verdict.RecordedDated, verdict.MeasuredDated)
 		if err := emitResult(opts.Stderr, msg); err != nil {
 			return GenerateResult{ExitCode: 1, Message: err.Error()}, err
 		}

@@ -63,7 +63,7 @@ func prepareDeclaredLintersAudit(ctx context.Context, opts DeclaredLintersOption
 	return today, entries, declared, nil
 }
 
-func finalizeDeclaredLintersAudit(judged declaredLintersJudgement, applicableCount int, skipLines []string, exclusionFailures []string) (string, error) {
+func finalizeDeclaredLintersAudit(judged declaredLintersJudgement, applicableCount, baselineCount int, skipLines []string, exclusionFailures []string) (string, error) {
 	var errLines []string
 	if len(judged.unexcused) > 0 || len(judged.stale) > 0 {
 		errLines = append(errLines, judged.failure())
@@ -74,7 +74,7 @@ func finalizeDeclaredLintersAudit(judged declaredLintersJudgement, applicableCou
 	if len(errLines) > 0 {
 		return strings.Join(skipLines, "\n"), errors.New(strings.Join(errLines, "\n"))
 	}
-	passMsg := judged.pass(applicableCount)
+	passMsg := judged.pass(applicableCount, baselineCount)
 	if len(skipLines) > 0 {
 		passMsg = strings.Join(skipLines, "\n") + "\n" + passMsg
 	}
@@ -117,13 +117,13 @@ func AuditDeclaredLinters(ctx context.Context, opts DeclaredLintersOptions) (str
 
 	judged := judgeDeclaredLinters(missing, entries, today)
 
-	exclSkip, exclFailures, err := auditDeclaredLinterExclusions(opts, declared, today)
+	exclSkip, baselineCount, exclFailures, err := auditDeclaredLinterExclusions(opts, declared, today)
 	if err != nil {
 		return strings.Join(skipLines, "\n"), err
 	}
 	skipLines = append(skipLines, exclSkip...)
 
-	return finalizeDeclaredLintersAudit(judged, len(applicable), skipLines, exclFailures)
+	return finalizeDeclaredLintersAudit(judged, len(applicable), baselineCount, skipLines, exclFailures)
 }
 
 func hasDeclaredLinter(declared []config.DeclaredLinter, name string) bool {
@@ -633,12 +633,22 @@ func (j declaredLintersJudgement) failure() string {
 	return strings.Join(lines, "\n")
 }
 
-func (j declaredLintersJudgement) pass(totalDeclared int) string {
+func (j declaredLintersJudgement) pass(totalDeclared, baselineCount int) string {
 	if len(j.excused) == 0 {
+		if baselineCount > 0 {
+			return fmt.Sprintf("[PASS] %s: every declared linter is run by a CI workflow (%d verified, %d baseline).",
+				declaredLintersGate, totalDeclared, baselineCount)
+		}
 		return fmt.Sprintf("[PASS] %s: every declared linter is run by a CI workflow (%d verified).", declaredLintersGate, totalDeclared)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "[PASS] %s: %d declared linters run; %d excepted:", declaredLintersGate, totalDeclared-len(j.excused), len(j.excused))
+	if baselineCount > 0 {
+		fmt.Fprintf(&b, "[PASS] %s: %d declared linters run; %d excepted (%d baseline):",
+			declaredLintersGate, totalDeclared-len(j.excused), len(j.excused), baselineCount)
+	} else {
+		fmt.Fprintf(&b, "[PASS] %s: %d declared linters run; %d excepted:",
+			declaredLintersGate, totalDeclared-len(j.excused), len(j.excused))
+	}
 	for _, e := range j.excused {
 		live := j.live[e.Name]
 		fmt.Fprintf(&b, "\n  - %s, excepted until %s by the exceptions entry (rule %s, %s): %s",

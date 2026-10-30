@@ -1,0 +1,2 @@
+type: changed
+title: New over-cap functions in baselined test files are now refused by per-function complexity baseline rules (# baseline #1030) instead of being hidden behind expiring per-file exclusions, and audit --base refuses a grown baseline.

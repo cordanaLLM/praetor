@@ -133,7 +133,7 @@ func TestGroupSignallerBoundary_ProbeBound(t *testing.T) {
 func deadGroupLeader(t *testing.T) int {
 	t.Helper()
 	// Raw exec: tests dead process group signalling directly; routing through util would be circular.
-	cmd := exec.Command("sh", "-c", "exit 0")
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", "exit 0")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Run(); err != nil {
 		t.Fatal(err)

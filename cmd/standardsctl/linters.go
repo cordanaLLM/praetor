@@ -15,7 +15,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
-// runLinters manages per-file linter exception rules and configurations.
+// runLinters manages per-function complexity baselines and dated per-file linter exception rules.
 func runLinters(args []string) error {
 	if len(args) == 0 || isHelpToken(args[0]) {
 		printLintersUsage()
@@ -31,7 +31,7 @@ func printLintersUsage() {
 	fmt.Println("Usage: praetorctl linters exceptions <strip-config|generate> [flags]")
 	fmt.Println("\nCommands:")
 	fmt.Println("  strip-config    Write .golangci.yml without generated exclusions and with relative-path-mode: gitroot")
-	fmt.Println("  generate        Read golangci-lint JSON report and generate or ratchet exclusions")
+	fmt.Println("  generate        Ratchet per-function complexity baselines (# baseline #<issue>) and dated per-file exclusions")
 }
 
 func runLintersExceptions(args []string) error {

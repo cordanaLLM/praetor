@@ -47,7 +47,7 @@ func sequenceLengths(t *testing.T, path string) (revive, exclusions int) {
 
 func generateInto(t *testing.T, cfgContent string) (string, error) {
 	t.Helper()
-	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, []LinterPair{{File: "internal/pkg/a_test.go", Linter: "funlen"}})
+	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, []LinterPair{{File: "internal/pkg/a_test.go", Linter: "funlen", Function: "TestOversized"}})
 	_, err := GenerateExceptions(GenerateExceptionsOptions{
 		ConfigPath: cfgPath, ReportPath: repPath, Issue: 1030, Category: "C",
 		Today: parseTestDate(t, "2026-10-19"), Write: true, Stdout: &strings.Builder{},
