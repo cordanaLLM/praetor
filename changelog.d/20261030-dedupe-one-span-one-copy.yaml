@@ -1,0 +1,2 @@
+type: fixed
+title: Foreign clone reports no longer count one block as several copies when jscpd splits it into abutting pairs; the group lists one location per contiguous span with the full length as its LOC, and a real repeat in the same file stays a copy of its own
