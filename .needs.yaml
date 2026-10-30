@@ -307,84 +307,84 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: babel
-      version: 2.18.0 \
+      version: 2.18.0
       language: python
       ecosystem: pypi
       capability: python.external.babel
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: backrefs
-      version: 8.1 \
+      version: "8.1"
       language: python
       ecosystem: pypi
       capability: python.external.backrefs
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: certifi
-      version: 2026.10.23 \
+      version: 2026.10.23
       language: python
       ecosystem: pypi
       capability: python.external.certifi
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: charset-normalizer
-      version: 3.5.2 \
+      version: 3.5.2
       language: python
       ecosystem: pypi
       capability: python.external.charset_normalizer
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: click
-      version: 8.5.0 \
+      version: 8.5.0
       language: python
       ecosystem: pypi
       capability: clikit.cli
       status: gap
       notes: Composable command line interface kit
     - package: colorama
-      version: 0.4.6 \
+      version: 0.4.6
       language: python
       ecosystem: pypi
       capability: python.external.colorama
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: csscompressor
-      version: 0.9.5 \
+      version: 0.9.5
       language: python
       ecosystem: pypi
       capability: python.external.csscompressor
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: ghp-import
-      version: 2.1.0 \
+      version: 2.1.0
       language: python
       ecosystem: pypi
       capability: python.external.ghp_import
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: htmlmin2
-      version: 0.1.13 \
+      version: 0.1.13
       language: python
       ecosystem: pypi
       capability: python.external.htmlmin2
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: idna
-      version: 3.20 \
+      version: "3.20"
       language: python
       ecosystem: pypi
       capability: python.external.idna
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: jinja2
-      version: 3.1.6 \
+      version: 3.1.6
       language: python
       ecosystem: pypi
       capability: python.external.jinja2
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: jsmin
-      version: 3.0.1 \
+      version: 3.0.1
       language: python
       ecosystem: pypi
       capability: python.external.jsmin
@@ -398,70 +398,70 @@ dependencies:
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: markupsafe
-      version: 3.0.4 \
+      version: 3.0.4
       language: python
       ecosystem: pypi
       capability: python.external.markupsafe
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: mergedeep
-      version: 1.3.4 \
+      version: 1.3.4
       language: python
       ecosystem: pypi
       capability: python.external.mergedeep
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: mkdocs
-      version: 1.6.1 \
+      version: 1.6.1
       language: python
       ecosystem: pypi
       capability: python.external.mkdocs
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: mkdocs-get-deps
-      version: 0.2.2 \
+      version: 0.2.2
       language: python
       ecosystem: pypi
       capability: python.external.mkdocs_get_deps
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: mkdocs-material
-      version: 9.7.7 \
+      version: 9.8.0
       language: python
       ecosystem: pypi
       capability: python.external.mkdocs_material
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: mkdocs-material-extensions
-      version: 1.3.1 \
+      version: 1.3.1
       language: python
       ecosystem: pypi
       capability: python.external.mkdocs_material_extensions
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: mkdocs-minify-plugin
-      version: 0.8.0 \
+      version: 0.8.0
       language: python
       ecosystem: pypi
       capability: python.external.mkdocs_minify_plugin
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: packaging
-      version: 26.3 \
+      version: "26.3"
       language: python
       ecosystem: pypi
       capability: python.external.packaging
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: paginate
-      version: 0.5.7 \
+      version: 0.5.7
       language: python
       ecosystem: pypi
       capability: python.external.paginate
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: pathspec
-      version: 1.1.1 \
+      version: 1.1.1
       language: python
       ecosystem: pypi
       capability: python.external.pathspec
@@ -475,70 +475,70 @@ dependencies:
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: pygments
-      version: 2.21.0 \
+      version: 2.21.0
       language: python
       ecosystem: pypi
       capability: python.external.pygments
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: pymdown-extensions
-      version: 12.3 \
+      version: "12.3"
       language: python
       ecosystem: pypi
       capability: python.external.pymdown_extensions
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: python-dateutil
-      version: 3.0.0 \
+      version: 3.0.0
       language: python
       ecosystem: pypi
       capability: python.external.python_dateutil
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: pyyaml
-      version: 6.0.3 \
+      version: 6.0.3
       language: python
       ecosystem: pypi
       capability: python.external.pyyaml
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: pyyaml-env-tag
-      version: 1.1 \
+      version: "1.1"
       language: python
       ecosystem: pypi
       capability: python.external.pyyaml_env_tag
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: requests
-      version: 2.34.2 \
+      version: 2.34.2
       language: python
       ecosystem: pypi
       capability: http.client
       status: gap
       notes: Synchronous HTTP library
     - package: six
-      version: 1.17.0 \
+      version: 1.17.0
       language: python
       ecosystem: pypi
       capability: python.external.six
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: tzdata
-      version: 2026.5 \
+      version: "2026.5"
       language: python
       ecosystem: pypi
       capability: python.external.tzdata
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: urllib3
-      version: 2.8.0 \
+      version: 2.8.0
       language: python
       ecosystem: pypi
       capability: python.external.urllib3
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: watchdog
-      version: 6.0.0 \
+      version: 6.0.0
       language: python
       ecosystem: pypi
       capability: python.external.watchdog
@@ -711,4 +711,4 @@ readiness:
     total_third_party_deps: 86
     covered_deps: 0
     gap_deps: 86
-updated_at: 2026-10-29T05:20:43.360797771Z
+updated_at: 2026-10-30T02:45:04.388910381Z

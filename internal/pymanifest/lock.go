@@ -72,13 +72,13 @@ func exactPin(line string) (string, bool) {
 	return NormalizeName(requirement.Name) + "==" + requirement.Version, true
 }
 
-// lockedVersions returns the set of "name==version" a hashed lock pins. Each entry line ends
-// with the continuation of its hash list, which is cut before the line is read.
+// lockedVersions returns the set of "name==version" a hashed lock pins; ParseRequirement drops
+// the continuation of each entry's hash list.
 func lockedVersions(lock string) map[string]bool {
 	held := map[string]bool{}
 	lines := strings.Split(lock, "\n")
 	for i := 0; i < len(lines) && i < maxManifestLines; i++ {
-		if pin, ok := exactPin(strings.TrimSuffix(strings.TrimSpace(lines[i]), `\`)); ok {
+		if pin, ok := exactPin(lines[i]); ok {
 			held[pin] = true
 		}
 	}
