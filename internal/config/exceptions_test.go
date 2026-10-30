@@ -39,10 +39,12 @@ exceptions:
   - rule: "clang-tidy-coverage"
     path: "src/win32/getopt.c"
     reason: "Windows-only translation unit"
+    category: A
     expires: %s
   - rule: "clang-tidy-coverage"
     glob: "tests/fixtures/**/*.c"
     reason: "rule-engine fixtures that are never built"
+    category: A
     expires: "%s"
 clang_tidy:
   lanes:
@@ -512,7 +514,7 @@ func TestValidateExceptionsRootLicenseNotice(t *testing.T) {
 	}
 	expires := ExceptionDay(time.Now()).AddDate(0, 0, 30).Format(ExceptionDateLayout)
 	m, err := LoadManifest(writeManifest(t, "version: 1\nexceptions:\n  - rule: \"root-license-notice\"\n    path: \"COPYING\"\n"+
-		"    reason: \"upstream notice\"\n    expires: \""+expires+"\"\n"))
+		"    reason: \"upstream notice\"\n    category: A\n    expires: \""+expires+"\"\n"))
 	if err != nil || len(ExceptionsFor(m.Exceptions, ExceptionRuleRootLicenseNotice)) != 1 {
 		t.Fatalf("LoadManifest: %v, %+v", err, m)
 	}
@@ -558,7 +560,7 @@ func TestValidateExceptionsDedupeTarget(t *testing.T) {
 	}
 
 	expires := ExceptionDay(time.Now()).AddDate(0, 0, 30).Format(ExceptionDateLayout)
-	manifest := fmt.Sprintf("version: 1\nexceptions:\n  - rule: %q\n    path: %q\n    reason: %q\n    expires: %q\n",
+	manifest := fmt.Sprintf("version: 1\nexceptions:\n  - rule: %q\n    path: %q\n    reason: %q\n    category: A\n    expires: %q\n",
 		ExceptionRuleDedupe, "pkg/deepcopy.go", "generated clones", expires)
 	m, err := LoadManifest(writeManifest(t, manifest))
 	if err != nil || len(ExceptionsFor(m.Exceptions, ExceptionRuleDedupe)) != 1 {
@@ -569,7 +571,7 @@ func TestValidateExceptionsDedupeTarget(t *testing.T) {
 func TestLoadExceptionsFor_Positive(t *testing.T) {
 	root := t.TempDir()
 	expires := ExceptionDay(time.Now()).AddDate(0, 0, 30).Format(ExceptionDateLayout)
-	content := fmt.Sprintf("version: 1\nexceptions:\n  - rule: %q\n    path: %q\n    reason: %q\n    expires: %q\n",
+	content := fmt.Sprintf("version: 1\nexceptions:\n  - rule: %q\n    path: %q\n    reason: %q\n    category: A\n    expires: %q\n",
 		ExceptionRuleDedupe, "pkg/deepcopy.go", "generated clones", expires)
 	if err := os.WriteFile(filepath.Join(root, ManifestFileName), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
@@ -1019,12 +1021,14 @@ exceptions:
     fingerprint: abcdef123
     lines: 10-16
     reason: retained fixture clone
+    category: A
     expires: %s
   - rule: HISS-19
     path: tests/common/mod.rs
     fingerprint: abcdef123
     lines: 30-36
     reason: second copy of retained fixture clone
+    category: A
     expires: %s
 `, expires, expires)
 	manifest, err := LoadManifest(writeManifest(t, body))
