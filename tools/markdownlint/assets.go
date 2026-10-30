@@ -235,6 +235,9 @@ var priorDigests = map[string]string{
 	// out of their own Node update (Order: engine-praetor-docs-node-pin-20261030).
 	"60c9baed8113117c784c5633dbdad08e3b0d2333b2f7f307faf4a09157d1b4f9": WorkflowFile,
 	"28bf795e95d50cedca2917344cc768a39dc6a8e389120a0eef115de48fc9b739": WorkflowFile,
+	// package-lock.json with the re2js override, before the lockfile maintenance refresh of
+	// @types/estree, ansi-regex and argparse (#658).
+	"7c3ec9fd4db6bd4c962460a1fbc39bfb9398340d2317393b47d54dfc21b850ea": Directory + "/package-lock.json",
 }
 
 var assetNames = [...]string{
