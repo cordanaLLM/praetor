@@ -20,6 +20,10 @@ type Dialect struct {
 	// commandTools are the tool names routed to the command policy. A payload without a
 	// tool name is a command tool: the registration matcher already selected it.
 	commandTools []string
+	// optionalCommandTools are tools whose tool_input.command, when present, goes to the
+	// command policy too. Claude Code 2.1.314 runs Bash-matching hooks on the shell command a
+	// Monitor call starts (lusoris/praetor#946); a Monitor that opens a WebSocket starts none.
+	optionalCommandTools []string
 	// everyToolIsCommand makes the command string mandatory whatever the tool is called.
 	everyToolIsCommand bool
 	// denyExit is the exit code of a deny; the reason always goes to stderr.
@@ -42,7 +46,7 @@ type Dialect struct {
 const CommandPolicyMarker = "PRAETOR_COMMAND_POLICY_OK"
 
 var dialectTable = []Dialect{
-	{Client: "claude", payloadClient: "claude", commandTools: []string{"Bash"}, denyExit: 2},
+	{Client: "claude", payloadClient: "claude", commandTools: []string{"Bash"}, optionalCommandTools: []string{"Monitor"}, denyExit: 2},
 	{Client: "codex", payloadClient: "codex", commandTools: []string{"Bash"}, denyExit: 2},
 	{Client: "gemini", payloadClient: "gemini", commandTools: []string{"run_shell_command"}, denyExit: 2},
 	{Client: "opencode", payloadClient: "opencode", denyExit: 2, encode: openCodeEncode},
@@ -120,10 +124,16 @@ func (d Dialect) decodeNativeTool(event Event, object map[string]json.RawMessage
 		return Canonical{}, err
 	}
 	fillCheckpointSession(&canonical, object)
-	if event == EventPreTool && d.isCommandTool(canonical.Tool) {
-		if canonical.Command, err = commandOf(object); err != nil {
-			return Canonical{}, err
-		}
+	if event != EventPreTool {
+		return canonical, nil
+	}
+	if d.isCommandTool(canonical.Tool) {
+		canonical.Command, err = commandOf(object)
+	} else if slices.Contains(d.optionalCommandTools, canonical.Tool) {
+		canonical.Command, err = optionalCommandOf(object)
+	}
+	if err != nil {
+		return Canonical{}, err
 	}
 	return canonical, nil
 }
@@ -323,6 +333,20 @@ func commandOf(object map[string]json.RawMessage) (string, error) {
 		return "", err
 	}
 	command, err := requiredString(input, "command")
+	if err != nil {
+		return "", fmt.Errorf("tool_input.%w", err)
+	}
+	return command, nil
+}
+
+// optionalCommandOf reads the command of a tool that may start none (optionalCommandTools):
+// tool_input must be an object, and a command in it must be text; an absent one is "".
+func optionalCommandOf(object map[string]json.RawMessage) (string, error) {
+	input, err := requiredObject(object, "tool_input")
+	if err != nil {
+		return "", err
+	}
+	command, err := optionalString(input, "command")
 	if err != nil {
 		return "", fmt.Errorf("tool_input.%w", err)
 	}

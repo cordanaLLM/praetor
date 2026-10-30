@@ -1,0 +1,2 @@
+type: fixed
+title: The Claude Code pre-tool hook judges the shell command a Monitor call starts with the command policy, as it judges Bash, so a hook-evasion push started through Monitor is refused instead of passing

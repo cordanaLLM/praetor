@@ -183,6 +183,12 @@ described under [Rollout](#rollout-engine-skew-never-blocks-a-client).
 | `agy` | `pre-dispatch` | `PreToolUse` | `invoke_subagent` | 30 s | `praetorctl hook agy pre-dispatch` |
 | `agy` | `stop` | `Stop` | none | 30 s | `praetorctl hook agy stop` |
 
+Claude Code (2.1.314 and later) also runs the `^Bash$` pre-tool row on the shell command a
+`Monitor` call starts. The claude dialect reads that command from the Monitor payload's
+`tool_input.command` and the command policy judges it as it judges the same command from Bash
+(`TestRunClaudeMonitorCommandIsGuarded`); a Monitor that opens a WebSocket carries no command
+and passes, and a command that is not text is invalid input.
+
 Codex carries no `pre-edit` row: it registers no native pre-edit event today. The checkpoint
 rows above exist in the table and answer real calls. Of them, the tracked registration
 files (`.claude/settings.json`, `.codex/hooks.json`, `.gemini/settings.json`) name only
