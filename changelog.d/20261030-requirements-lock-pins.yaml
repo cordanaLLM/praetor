@@ -1,0 +1,2 @@
+type: fixed
+title: A tracked requirements.in whose exact pin its hashed lock does not hold now fails the engine's tests, so an input bump that skipped the recompile no longer lands
