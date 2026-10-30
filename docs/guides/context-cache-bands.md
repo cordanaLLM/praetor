@@ -82,14 +82,15 @@ on 2026-10-28.
 
 | File | Cap | Source |
 | :--- | :--- | :--- |
-| `AGENTS.md` plus tracked nested `AGENTS.md` files known to the compiler | 32,768 bytes together | Codex CLI [`agents_md.rs`](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/core/src/agents_md.rs) and [`config/mod.rs`](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/core/src/config/mod.rs), `project_doc_max_bytes` default |
+| `AGENTS.md` plus tracked nested files on one root-to-directory path | 32,768 bytes together | Codex CLI [`agents_md.rs`](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/core/src/agents_md.rs) and [`config/mod.rs`](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/core/src/config/mod.rs), `project_doc_max_bytes` default |
 | `.gemini/GEMINI.md` | 24,000 bytes after import expansion | [Antigravity rules](https://antigravity.google/docs/rules); Antigravity reads this file too, so the strictest reader wins |
 | `.windsurfrules` | 12,000 Unicode characters | [Windsurf documentation](https://docs.windsurf.com/llms-full.txt), workspace rule limit |
 
 The remaining vendor targets have no documented hard size cap in this registry.
 Generated headers count toward projection caps. The existing line budget still
 applies. A refusal names the file, measured size, unit and cap, for example:
-`target file .gemini/GEMINI.md exceeds client size cap (25000 bytes > 24000)`.
+`target file .gemini/GEMINI.md exceeds client size cap (25000 bytes > 24000)`. An `AGENTS.md`
+refusal also names the deepest file of the largest nested chain, the path to trim.
 
 A standalone `@path` line outside fenced code is an import. Paths resolve from
 the repository root. Claude Code and Gemini CLI keep that line; their sizes

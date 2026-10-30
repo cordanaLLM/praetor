@@ -47,8 +47,10 @@ type Transpiler struct {
 	MaxLines int
 	// ReadImport resolves a repository-root-relative import through a bounded reader.
 	ReadImport func(string) (string, error)
-	// ProjectDocBytes counts the tracked nested AGENTS.md files known to the compiler.
+	// ProjectDocBytes counts the bytes of the largest tracked nested AGENTS.md chain known to the compiler.
 	ProjectDocBytes int
+	// ProjectDocChain names the deepest file of that chain, for the refusal.
+	ProjectDocChain string
 	// Clients selects the projections CompileContent emits, by agent client id. nil emits
 	// every projection, the behaviour before selection existed; a non-nil list, empty
 	// included, emits exactly the projections of the clients it names (#202).
@@ -309,6 +311,9 @@ func exportTargets(selected []vendorTarget) []VendorTarget {
 // source with mixed endings compiles as it is.
 func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
 	if err := checkClientSize(CanonicalFile, len(content)+t.ProjectDocBytes); err != nil {
+		if t.ProjectDocChain != "" {
+			return nil, fmt.Errorf("%w; largest nested chain ends at %s", err, t.ProjectDocChain)
+		}
 		return nil, err
 	}
 	if strings.TrimSpace(content) == "" {

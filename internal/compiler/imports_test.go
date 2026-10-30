@@ -74,6 +74,50 @@ func TestProjectDocCapIncludesKnownNestedContexts(t *testing.T) {
 	}
 }
 
+// compileCodexNested compiles a repository holding files for Codex, whose cap is the chain's.
+func compileCodexNested(t *testing.T, files map[string]string) error {
+	t.Helper()
+	tr := NewTranspiler()
+	tr.Clients = []string{"codex"}
+	_, err := tr.CompileContext(t.Context(), filepath.Join(nestedRepo(t, files), "AGENTS.md"))
+	return err
+}
+
+// Positive (engine-golusoris-gate-skew-20261030): a client loads one path, so sibling packages
+// whose bytes add up far past the cap pass.
+func TestProjectDocCapChain_Positive_SiblingsDoNotAddUp(t *testing.T) {
+	files := map[string]string{}
+	for i := range 5 {
+		files[fmt.Sprintf("pkg%d/AGENTS.md", i)] = strings.Repeat("a", 20000)
+	}
+	if err := compileCodexNested(t, files); err != nil {
+		t.Fatalf("sibling packages totaling 100k bytes must pass the chain cap: %v", err)
+	}
+}
+
+// Negative: one path over the cap is refused, and the refusal names the file to trim from.
+func TestProjectDocCapChain_Negative_DeepChainRefusedAndNamed(t *testing.T) {
+	err := compileCodexNested(t, map[string]string{
+		"a/AGENTS.md":     strings.Repeat("a", 15000),
+		"a/b/AGENTS.md":   strings.Repeat("b", 15000),
+		"a/b/c/AGENTS.md": strings.Repeat("c", 10000),
+	})
+	assertCompilerImportError(t, err, "AGENTS.md", "client size cap", "a/b/c/AGENTS.md")
+}
+
+// Boundary: a chain exactly at the cap passes, one byte more is refused.
+func TestProjectDocCapChain_Boundary_ExactCap(t *testing.T) {
+	part1 := 10000
+	part2 := 32768 - len(lintTerseAgents) - part1
+	files := func(second int) map[string]string {
+		return map[string]string{"a/AGENTS.md": strings.Repeat("a", part1), "a/b/AGENTS.md": strings.Repeat("b", second)}
+	}
+	if err := compileCodexNested(t, files(part2)); err != nil {
+		t.Fatalf("a chain exactly at the cap must pass: %v", err)
+	}
+	assertCompilerImportError(t, compileCodexNested(t, files(part2+1)), "AGENTS.md", "32769 bytes > 32768")
+}
+
 func TestRepositoryImportReadFailuresNamePath(t *testing.T) {
 	for _, name := range []string{"missing.md", "directory", "huge.md"} {
 		t.Run(name, func(t *testing.T) {
