@@ -570,7 +570,13 @@ def _pull_request_argv(cfg, branch=None):
     argv = ["gh", "pr", "list", "--repo", cfg["repository"], "--state", "all"]
     if branch:
         argv.extend(("--head", branch))
-    return [*argv, "--limit", "200", "--json", "headRefName,state,headRefOid,baseRefName"]
+    return [
+        *argv,
+        "--limit",
+        "200",
+        "--json",
+        "headRefName,state,headRefOid,baseRefName",
+    ]
 
 
 def _pull_request_rows(raw, kind):
@@ -637,7 +643,9 @@ def _probe_one_pull_request(root, cfg, branch):
         timeout=PULL_REQUEST_TIMEOUT,
     )
     rows = _pull_request_rows(raw, "probe")
-    return set().union(*(_row_marks(row) for row in rows if row["headRefName"] == branch))
+    return set().union(
+        *(_row_marks(row) for row in rows if row["headRefName"] == branch)
+    )
 
 
 def _probe_pull_requests(root, cfg, branches, states, deadline):
@@ -851,7 +859,9 @@ def _landed_by_pull_request(path, cfg, marks):
         if head.decode().strip() in {oid for oid, _base in merged}:
             return True
         return any(
-            REF_NAME.fullmatch(base) and ".." not in base and _content_in_base(path, cfg, base)
+            REF_NAME.fullmatch(base)
+            and ".." not in base
+            and _content_in_base(path, cfg, base)
             for _oid, base in merged
         )
     except (CheckpointError, ValueError, OSError):
