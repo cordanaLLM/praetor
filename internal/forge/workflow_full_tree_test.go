@@ -100,10 +100,11 @@ func TestAuditWorkflowTriggers_FullTree_Exceptions(t *testing.T) {
 	doc := "on: pull_request\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pre-commit run --all-files\n"
 	root := triggerRepository(t, map[string]string{"exempt.yml": doc})
 	entry := config.Exception{
-		Rule:    config.ExceptionRuleWorkflowTriggers,
-		Path:    ".github/workflows/exempt.yml",
-		Reason:  "legacy full tree run on pull requests",
-		Expires: "2026-12-31",
+		Rule:     config.ExceptionRuleWorkflowTriggers,
+		Path:     ".github/workflows/exempt.yml",
+		Reason:   "legacy full tree run on pull requests",
+		Category: "A",
+		Expires:  "2026-12-31",
 	}
 	out := auditTriggers(t, root, entry)
 	if strings.Contains(out, "[WARN] Workflow triggers (HISS-18): .github/workflows/exempt.yml") {

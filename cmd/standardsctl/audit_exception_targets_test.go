@@ -33,7 +33,7 @@ func exceptionTargetRoot(t *testing.T, files ...string) string {
 
 // liveEntry is an entry that holds on targetsToday.
 func liveEntry(rule, path, glob string) config.Exception {
-	return config.Exception{Rule: rule, Path: path, Glob: glob, Reason: "debt", Expires: "2026-11-30"}
+	return config.Exception{Rule: rule, Path: path, Glob: glob, Reason: "debt", Category: "A", Expires: "2026-11-30"}
 }
 
 // judgeTargets runs the existence check over entries in root and returns its output and error.
@@ -51,7 +51,7 @@ func TestAuditExceptionTargets_ExistingTargetsPass(t *testing.T) {
 	out, err := judgeTargets(t, root,
 		liveEntry(config.ExceptionRuleBuildWarnings, ".github/workflows/ci.yml", ""),
 		liveEntry(config.ExceptionRuleClangTidyCoverage, "", "src/gen/*.pb.go"),
-		config.Exception{Rule: config.ExceptionRuleDeclaredLinters, Tool: "gitleaks", Reason: "debt", Expires: "2026-11-30"},
+		config.Exception{Rule: config.ExceptionRuleDeclaredLinters, Tool: "gitleaks", Reason: "debt", Category: "A", Expires: "2026-11-30"},
 	)
 	if err != nil {
 		t.Fatalf("existing targets failed: %v\n%s", err, out)
