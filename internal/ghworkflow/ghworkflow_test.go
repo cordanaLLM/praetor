@@ -52,6 +52,9 @@ func TestParse_RecordsRunPositions(t *testing.T) {
 	if first, _, _ := strings.Cut(steps[1].Run, "echo one"); strings.Count(first, "\n") != 1 {
 		t.Errorf("the literal block must keep its blank first line, got %q", steps[1].Run)
 	}
+	if steps[0].UsesLine != 6 || steps[1].UsesLine != 0 {
+		t.Errorf("uses lines = %d, %d; want 6, 0", steps[0].UsesLine, steps[1].UsesLine)
+	}
 }
 
 // jobsDocument returns a workflow with n jobs of steps steps each.

@@ -278,7 +278,12 @@ read, and closed when a workflow is empty, malformed or calls a reusable workflo
 does not hold. A policy that declares Level 0 and neither control reads no workflow. The built-in
 default is Level 0, so `org-health` and `upstream-fork`, which release nothing, resolve to the 0
 they declare. `TestAuditSupplyChainReplaysTheHISS11Fixtures` replays the HISS-11 fixtures under
-`.config/hiss/testdata/HISS-11/github-actions` in both directions.
+`.config/hiss/testdata/HISS-11/github-actions` in both directions. `adopt.AuditSupplyChain` also
+scans container image references (`internal/supplychain.ScanImageRefs`): in workflow files only
+`jobs.<id>.container` (scalar or `.image`), `jobs.<id>.services.<name>.image` and
+`jobs.<id>.steps[].uses` starting with `docker://` count (`internal/ghworkflow.Parse`), `.invalid`
+registry hosts (RFC 2606) are ignored, and `@NAME@` substitution tokens or unparseable workflows
+are reported as unresolvable (`[INFO]`).
 
 ### Declaring a gap
 
