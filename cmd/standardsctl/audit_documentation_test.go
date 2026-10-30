@@ -13,6 +13,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/readmegovernance"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	figureassets "github.com/cordanaLLM/praetor/tools/figures"
 	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 )
@@ -623,6 +624,7 @@ func documentationAuditFixture(t *testing.T) string {
 		}
 	}
 	writeFixtureFile(t, root, adopt.DocumentationWorkflowFile, adopt.DocumentationWorkflow())
+	writeFixtureFile(t, root, markdownassets.NodeVersionFile, "24.22.1\n")
 	writeFixtureFile(t, root, "Makefile", adopt.DocumentationMakefileBlock())
 	writeFixtureFile(t, root, ".gitignore", adopt.ManagedGitIgnoreBlock())
 	writeFixtureFile(t, root, ".gitattributes", "* text=auto\n\n"+adopt.ManagedGitAttributesBlock(adopt.DocumentationAttributes()))
@@ -765,4 +767,116 @@ func TestAuditDocumentationScratchIgnores_SymlinkRefused(t *testing.T) {
 			t.Fatalf("real directory failed: %v", err)
 		}
 	})
+}
+
+func TestAuditDocumentationGateNodeVersionPlanted(t *testing.T) {
+	manifest := docsManifest()
+	root := documentationAuditFixture(t)
+	writeFixtureFile(t, root, markdownassets.NodeVersionFile, "26.12.1\n")
+	if err := docGate(t.Context(), manifest, root); err != nil {
+		t.Fatalf("planted adopter with Node 26.12.1 failed: %v", err)
+	}
+}
+
+func TestAuditDocumentationGateNodeVersionHandEditedWorkflowFails(t *testing.T) {
+	manifest := docsManifest()
+	root := documentationAuditFixture(t)
+	editedWorkflow := strings.Replace(adopt.DocumentationWorkflow(),
+		"node-version-file: .node-version", "node-version: \"26\"", 1)
+	writeFixtureFile(t, root, adopt.DocumentationWorkflowFile, editedWorkflow)
+	err := docGate(t.Context(), manifest, root)
+	if err == nil || !strings.Contains(err.Error(), "differs from the locked Praetor asset") {
+		t.Fatalf("hand-edited workflow copy passed or error did not name asset diff: %v", err)
+	}
+}
+
+func TestAuditDocumentationGateNodeVersionInvalidCases(t *testing.T) {
+	manifest := docsManifest()
+	cases := []struct {
+		name      string
+		content   string
+		remove    bool
+		wantMatch string
+	}{
+		{name: "missing", remove: true, wantMatch: "missing"},
+		{name: "blank", content: "   \n\t", wantMatch: "blank"},
+		{name: "banana", content: "banana\n", wantMatch: "not one Node release"},
+		{name: "below floor", content: "20.1.0\n", wantMatch: "below major"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := documentationAuditFixture(t)
+			path := filepath.Join(root, markdownassets.NodeVersionFile)
+			if tc.remove {
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				writeFixtureFile(t, root, markdownassets.NodeVersionFile, tc.content)
+			}
+			err := docGate(t.Context(), manifest, root)
+			if err == nil {
+				t.Fatalf("case %s unexpectedly passed", tc.name)
+			}
+			if !strings.Contains(err.Error(), markdownassets.NodeVersionFile) {
+				t.Fatalf("case %s error %q does not name %s", tc.name, err.Error(), markdownassets.NodeVersionFile)
+			}
+			if !strings.Contains(err.Error(), tc.wantMatch) {
+				t.Fatalf("case %s error %q does not contain %q", tc.name, err.Error(), tc.wantMatch)
+			}
+		})
+	}
+}
+
+func TestAuditDocumentationGateNodeVersionIgnoredUntracked(t *testing.T) {
+	manifest := docsManifest()
+	root := documentationAuditFixture(t)
+	if _, err := runFixtureGit(t, root, testsupport.HermeticGitEnv(t), "rm", "-q", "--cached", markdownassets.NodeVersionFile); err != nil {
+		t.Fatalf("git rm --cached failed: %v", err)
+	}
+	writeFixtureFile(t, root, ".gitignore", markdownassets.NodeVersionFile+"\n\n"+adopt.ManagedGitIgnoreBlock())
+	err := docGate(t.Context(), manifest, root)
+	if err == nil || !strings.Contains(err.Error(), "ignored by git and not tracked") ||
+		!strings.Contains(err.Error(), markdownassets.NodeVersionFile) {
+		t.Fatalf("ignored and untracked .node-version passed or did not name file: %v", err)
+	}
+}
+
+// The engine's own gate reads the same file as an adopter's. No value is asserted here: the
+// engine's Renovate moves it, and a test naming the release would fail that update.
+func TestEngineDogfoodNodeVersion(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", markdownassets.NodeVersionFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := markdownassets.CheckNodeVersion(data); err != nil {
+		t.Fatalf("the repository's own %s: %v", markdownassets.NodeVersionFile, err)
+	}
+}
+
+// A repository locked to an earlier engine keeps that engine's workflow text past the byte lock
+// (auditExactManagedFile), and that text names its Node release, so no version file is demanded.
+// Boundary: the same repository on the current text with the file gone fails.
+func TestAuditDocumentationGateNodeVersionLockedEarlierEngine(t *testing.T) {
+	original := version
+	t.Cleanup(func() { version = original })
+	version = fixtureRunningRevision
+
+	root := setupFixtureAdopterRepo(t, config.UnreleasedLockVersion(fixtureOlderEngineRevision))
+	if err := os.Remove(filepath.Join(root, markdownassets.NodeVersionFile)); err != nil {
+		t.Fatal(err)
+	}
+	enabled := &config.Manifest{Facets: []string{"docs:seo-portal"}}
+	err := docGate(t.Context(), enabled, root)
+	if err == nil || !strings.Contains(err.Error(), markdownassets.NodeVersionFile) {
+		t.Fatalf("current text without the file = %v, want a failure naming it", err)
+	}
+	prior, err := os.ReadFile(filepath.Join("..", "..", "tools", "markdownlint", "testdata", "prior", "praetor-docs.before-node-version-file.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureFile(t, root, adopt.DocumentationWorkflowFile, string(prior))
+	if err := docGate(t.Context(), enabled, root); err != nil {
+		t.Fatalf("locked earlier text without the file: %v", err)
+	}
 }

@@ -671,7 +671,7 @@ writes any (`TestAdoptionScaffoldTable_MatchesTheStepChain` in
 | `baseline` | `.standards-baseline.json`: the recorded legacy debt |
 | `agent-harness` | `AGENTS.md`; `CLAUDE.md`, `.cursor/rules/hiss-invariants.mdc`, `.github/copilot-instructions.md`, `.windsurfrules`, `.gemini/GEMINI.md`, `.codex/rules.md`; the register skills in `.agents/skills/` and their `.claude/skills/` copies |
 | `dev-container` | `.devcontainer/` bundle (`devcontainer.json`, `Dockerfile.praetor`, source companions); the `.gitattributes` managed block |
-| `documentation-gate` | `tools/markdownlint/`, `tools/figures/`, `.github/workflows/praetor-docs.yml` (facet `docs:seo-portal`) |
+| `documentation-gate` | `tools/markdownlint/`, `tools/figures/`, `.github/workflows/praetor-docs.yml`, `.node-version` (seeded once when absent) (facet `docs:seo-portal`) |
 | `api-compatibility-gate` | `tools/apicompat/gate/`, `.github/workflows/praetor-api.yml` (facet `api:public-contract`, tracked `go.mod`) |
 | `makefile` | `Makefile` with the `verify-all` target |
 | `editors` | `.editorconfig`, `.vscode/`, `.idea/`, `.zed/`, `.helix/`, `.fleet/`, `.nvim.lua`, `lua/`, `.dir-locals.el`, `standards.sublime-project`, `.clang-tidy` where the profile calls for it |
@@ -712,7 +712,10 @@ The groups with behavior of their own:
    `.github/workflows/praetor-docs.yml` with its required
    **Documentation Governance** context
    ([documentation governance](guides/documentation-governance.md#adoption-audit-and-ci),
-   [figures](guides/figures.md#in-adopting-repositories)). The figure checks skip, saying why,
+   [figures](guides/figures.md#in-adopting-repositories)). The hosted workflow takes its Node
+   release from `.node-version`, which adoption writes once when absent and the repository owns
+   ([Node version of the gate](guides/documentation-governance.md#node-version-of-the-gate)).
+   The figure checks skip, saying why,
    until the repository adds its first spec under `docs/figures/`. Adoption stops, even with
    `--force`, when a file the repository already had at one of the engine's paths under
    `tools/figures/` differs from it; move that file aside and rerun. Remove the facet to opt out.
@@ -914,7 +917,7 @@ Three rules hold on every run, `--force` or not:
 | Generated, not audit-verified | the anti-evasion interceptor, the checkpoint scripts and policy, the personas `.agents/agents/repo-auditor.md` and `repo-gatekeeper.md`, the register skills and their upstream `LICENSE` files under `.agents/skills/` (`.agents/skills/<name>/SKILL.md` and `LICENSE`), the label taxonomy, `CONTRIBUTING.md`, the pull request template, `SECURITY.md`, editor files that are not JSON | an edited file is kept with a warning that counts the lines regenerating it would change | the same; delete the file and re-run adopt to regenerate it (`TestAdopt_Negative_EditedEvasionHookKeptUnderForce`) |
 | | `lefthook.yml` | a current or earlier Praetor rendering is written, migrated or verified; any other configuration is kept and not activated | the same, and a CRLF checkout of the current rendering is rewritten with LF bytes (`TestAdopt_Negative_ForeignLefthookKeptWithAndWithoutForce`) |
 | | the `pre-commit` hook written when lefthook cannot install | a hook Praetor did not write is kept | the same (`TestAdopt_Hooks_ForeignPreCommitKeptWithAndWithoutForce`) |
-| Written only when absent | flavor templates such as `rustfmt.toml`, developer-owned editor files such as `.nvim.lua`, the ADR directory | an existing file is kept | the same |
+| Written only when absent | flavor templates such as `rustfmt.toml`, developer-owned editor files such as `.nvim.lua`, the ADR directory, `.node-version` (seeded once for the docs gate) | an existing file is kept | the same |
 
 A caller that ran `adopt --force` to reset a repository to the scaffold gets this refresh instead:
 delete the files to regenerate, then run adopt. `scripts/adopt_repos.sh` runs

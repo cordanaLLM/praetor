@@ -91,6 +91,9 @@ func reconcileDocumentationGate(ctx context.Context, s *adoptSession) error {
 	if err := reconcileCodespell(ctx, s); err != nil {
 		return err
 	}
+	if err := reconcileNodeVersionFile(ctx, s); err != nil {
+		return err
+	}
 	return reconcileManagedAttributes(ctx, s, true)
 }
 

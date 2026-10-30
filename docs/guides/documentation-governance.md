@@ -960,6 +960,44 @@ stylesheet, keeps the range on the tests (`TestFilterConsoleOnlyAndGoInputs`,
 Go package directories cannot be read, `AnalyzeChanges` runs full verification instead of
 guessing.
 
+### Node version of the gate
+
+The hosted gate runs on the Node release named in `.node-version` at the
+repository root: `.github/workflows/praetor-docs.yml` hands that file to
+`actions/setup-node` as `node-version-file`. The workflow stays byte-locked and
+the value belongs to the repository, so moving to another Node major changes one
+line the lock does not cover.
+
+Adoption writes `.node-version` once, when it is absent, with the release in
+`internal/devcontainer/cli/node.json`. An existing file keeps its bytes, under
+`--force` too, and removing the `docs:seo-portal` facet leaves it in place
+(`internal/adopt/node_version_test.go`).
+
+Renovate's `nodenv` manager reads the file by default, and the `renovate-ignore`
+step leaves it out of the entry that turns Renovate off for the managed files
+(`TestRenovateManagedPathsExcludesNodeVersion`), so the repository's own bot
+proposes updates. A repository that limits `enabledManagers`, or turns the path
+off in a rule of its own, updates the file by hand.
+
+Audit never compares the value with a pin. It checks that
+(`CheckNodeVersion` in `tools/markdownlint/assets.go`,
+`AuditNodeVersionFile` in `internal/adopt/node_version.go`):
+
+- the file exists, and git tracks it or does not ignore it;
+- the file holds one token: a release such as `24`, `24.22.1` or `v26.12.1`, an
+  `lts/` alias, or `node`, `latest` or `current`. `actions/setup-node` falls back
+  to the runner's Node on a blank file with only a warning, and takes the first
+  single-token line of a longer one, so audit refuses both;
+- a numeric release is not below the major of `engines.node` in
+  `tools/markdownlint/package.json`. An alias is not compared.
+
+A repository locked to an earlier engine keeps that engine's workflow text, which
+names its release itself, and audit demands no version file until the refresh.
+
+A repository that keeps its pin only in `.nvmrc`, `.tool-versions`, `mise.toml` or
+`package.json` gets a separate `.node-version`, and its bot updates each file on
+its own.
+
 ### Codespell skips for emitted files
 
 The figure player bundle Praetor emits holds minified third-party identifiers that codespell
