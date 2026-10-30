@@ -18,7 +18,10 @@ ROOT = Path(__file__).resolve().parent.parent
 BUILD_TIMEOUT = 180
 SESSION_TIMEOUT = 12 * 60 * 60
 MAX_SOURCE_FILES = 20_000
-MAX_FILE_BYTES = 32 * 1024 * 1024
+# 2026-10-30: unstripped standards-mcp measured 33,584,171 bytes with the HISS
+# corpus used by devcontainer bootstrap inventories; 36 MiB leaves 4,164,565 bytes
+# (12.4%) of headroom while retaining a bounded provenance read.
+MAX_FILE_BYTES = 36 * 1024 * 1024
 
 
 def command_output(command, timeout=10):

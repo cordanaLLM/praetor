@@ -56,6 +56,17 @@ class SourceIdentityTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "bound"):
                 dev_mcp.read_bounded(self.source)
 
+    def test_measured_binary_fits_and_default_bound_still_rejects_overflow(self):
+        # Unstripped standards-mcp size measured on 2026-10-30 with the HISS corpus.
+        measured_binary_bytes = 33_584_171
+        with self.source.open("wb") as stream:
+            stream.truncate(measured_binary_bytes)
+        self.assertEqual(len(dev_mcp.read_bounded(self.source)), measured_binary_bytes)
+        with self.source.open("wb") as stream:
+            stream.truncate(dev_mcp.MAX_FILE_BYTES + 1)
+        with self.assertRaisesRegex(RuntimeError, "bound"):
+            dev_mcp.read_bounded(self.source)
+
     def test_server_identity_mismatch_fails(self):
         class Client:
             initialize_response = {"result": {"serverInfo": {"version": "old"}}}
