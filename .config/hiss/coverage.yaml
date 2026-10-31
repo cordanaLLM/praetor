@@ -39,7 +39,13 @@ rules:
           and write lies inside one child if, for, range, switch, select or plain block,
           including headers and their case clauses. Uses in sibling blocks or after
           a loop keep the declaration. Address-taking and closure capture are
-          conservative exemptions. Calls, receives, indexes, variable reads,
+          conservative exemptions. Potential mutation in a loop (including nested
+          loops, conditions and post statements) also keeps the declaration:
+          assignments, compound writes, increments/decrements, element/field writes,
+          delete/clear, address passing and method calls. Fully reset locals stay
+          conservatively exempt without dominance proof; read-only loop uses remain
+          findings, and plain if/switch writes remain unaffected.
+          Calls, receives, indexes, variable reads,
           unproven selectors, function literals and method values are excluded.
           Constant proof uses local and same-file package declarations plus
           unshadowed booleans, with a 1024-expression bound per declaration;

@@ -19,7 +19,8 @@ type narrowLocal struct {
 // checkNarrowScope covers function-top var and := locals with movable initializers.
 // Calls and other ordered expressions are not candidates. Any read or write outside
 // one child block keeps the declaration; address-taking and captures are conservative
-// exemptions. Nested declarations and closure-only uses remain explicit coverage gaps.
+// exemptions, as are potentially mutated locals in loops. Nested declarations and
+// closure-only uses remain explicit coverage gaps.
 func (g *goScanner) checkNarrowScope(fn *ast.FuncDecl) {
 	if fn.Body == nil {
 		return
@@ -53,7 +54,7 @@ func (g *goScanner) checkNarrowScope(fn *ast.FuncDecl) {
 		}
 		line := g.fset.Position(local.decl.Pos()).Line
 		g.record("HISS-05", local.decl.Pos(), name,
-			fmt.Sprintf("%s: '%s' line %d; declare in %s block line %d",
+			fmt.Sprintf("%s: '%s' line %d; declare in %s block line %d (address-taken, captured and loop-mutated locals exempt)",
 				name, local.decl.Name, line, narrowBlockKind(local.block), g.fset.Position(local.block.Pos()).Line))
 	}
 }
@@ -100,7 +101,7 @@ func appendVarLocals(locals []narrowLocal, stmt *ast.DeclStmt, movable map[ast.N
 }
 
 func trackNarrowUse(scope *goScope, n ast.Node, locals map[*ast.Ident]*narrowLocal) {
-	keepAddressedLocal(scope, n, locals)
+	keepNarrowState(scope, n, locals)
 	id, ok := n.(*ast.Ident)
 	if !ok || len(scope.nodes) == 0 || !scope.reference(id) {
 		return
@@ -114,16 +115,6 @@ func trackNarrowUse(scope *goScope, n ast.Node, locals map[*ast.Ident]*narrowLoc
 		local.keep = true
 	}
 	local.block = block
-}
-
-func keepAddressedLocal(scope *goScope, n ast.Node, locals map[*ast.Ident]*narrowLocal) {
-	if unary, ok := n.(*ast.UnaryExpr); ok && unary.Op == token.AND {
-		if id, ok := ast.Unparen(unary.X).(*ast.Ident); ok {
-			if local := locals[scope.resolve(id.Name)]; local != nil {
-				local.keep = true
-			}
-		}
-	}
 }
 
 // The first frame after the function and its body is the outermost child block,
