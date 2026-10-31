@@ -72,7 +72,7 @@ func TestSandboxBuilderRejectsInvalidSpecs(t *testing.T) {
 		{"empty command", func(s *Spec) { s.Command = nil }},
 		{"empty executable", func(s *Spec) { s.Command = []string{""} }},
 		{"relative workspace", func(s *Spec) { s.Workspace = "relative" }},
-		{"egress unavailable", func(s *Spec) { s.Network = "egress" }},
+		{"egress without runtime", func(s *Spec) { s.Network = "egress" }},
 		{"host network refused", func(s *Spec) { s.Network = "host" }},
 		{"partial limits", func(s *Spec) { s.Limits = Limits{Tasks: 1} }},
 		{"invalid env", func(s *Spec) { s.PassEnvironment = []string{"BAD=VALUE"} }},
