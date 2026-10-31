@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/release"
 )
 
@@ -28,9 +29,20 @@ func auditReleaseE2E(ctx context.Context, manifest *config.Manifest, rootDir str
 }
 
 // auditReleaseTestLevels evaluates required and declared release test levels (#1733).
-func auditReleaseTestLevels(ctx context.Context, manifest *config.Manifest, rootDir string, flagRelease bool) error {
+func auditReleaseTestLevels(ctx context.Context, manifest *config.Manifest, rootDir string, flagRelease, offline bool) error {
+	var repo config.RepositoryMetadata
+	if manifest != nil {
+		repo = manifest.Repository
+	}
+	branch, branchErr := forge.RepositoryDefaultBranch(ctx, rootDir, manifest)
+	live := openActionsForge(ctx, rootDir, repo, offline)
+	if branchErr != nil {
+		live.reader = nil
+	}
 	line, _, err := release.AuditTestLevelsLine(ctx, rootDir, manifest, release.TestLevelsOptions{
 		FlagRelease: flagRelease,
+		Actions:     live.reader,
+		Branch:      branch,
 	})
 	if err != nil {
 		return err

@@ -85,11 +85,14 @@ func TestAuditReleaseTestLevels_GateAndAuditWiring(t *testing.T) {
 	writeFixtureFile(t, f.dir, ".github/workflows/ci.yml",
 		"name: CI\non:\n  pull_request:\njobs:\n  test:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - run: go test -vet=all ./...\n")
 	writeDeclaredRuleset(t, f.dir, config.DefaultPolicy().BranchProtection)
+	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "add", "."); err != nil {
+		t.Fatalf("git add: %v (%s)", err, out)
+	}
 
 	manifest := &config.Manifest{Profiles: []string{"framework"}}
 	// Non-release context warns without failing.
 	warnOut, warnErr := captureStdout(t, func() error {
-		return auditReleaseTestLevels(t.Context(), manifest, f.dir, false)
+		return auditReleaseTestLevels(t.Context(), manifest, f.dir, false, true)
 	})
 	if warnErr != nil || !strings.Contains(warnOut, "[WARN] Release test levels:") {
 		t.Fatalf("expected [WARN] outside release context, got out=%q err=%v", warnOut, warnErr)
@@ -118,5 +121,45 @@ func TestAuditReleaseTestLevels_GateAndAuditWiring(t *testing.T) {
 	_, recErr := runBaselineCmd(t, f, "--record", "--allow-increase", "--reason=attempt to add test level anchor")
 	if recErr == nil || !strings.Contains(recErr.Error(), "shrink-only") {
 		t.Fatalf("expected baseline --record to refuse added RELEASE-TEST-LEVEL anchor, got %v", recErr)
+	}
+}
+
+func TestAuditReleaseTestLevels_LiveForgeHealthAndOffline(t *testing.T) {
+	f := newAuditFixture(t)
+	writeFixtureFile(t, f.dir, "go.mod", "module example.com/lib\n\ngo 1.25.0\n")
+	writeFixtureFile(t, f.dir, "pkg/lib.go", "// Package lib provides a helper.\npackage lib\n\n// Value returns one.\nfunc Value() int { return 1 }\n")
+	writeFixtureFile(t, f.dir, "pkg/lib_test.go", "package lib\n\nimport \"testing\"\n\nfunc TestValue(t *testing.T) {}\n")
+	writeFixtureFile(t, f.dir, "pkg/lib_integration_test.go", "package lib\n\nimport \"testing\"\n\nfunc TestIntegration(t *testing.T) {}\n")
+	writeFixtureFile(t, f.dir, ".github/workflows/ci.yml",
+		"name: Nightly\non:\n  schedule:\n    - cron: '0 3 * * *'\njobs:\n  test:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - run: go test -vet=all ./...\n")
+	f.addGitHubOrigin(t)
+	gitCommitAll(t, f.dir, f.gitEnv, "add library tests and scheduled workflow")
+
+	serveActions(t, &actionsStub{
+		runs: map[string]map[string]any{
+			"ci.yml": {
+				"total_count": 1,
+				"workflow_runs": []map[string]any{
+					{"run_number": 42, "status": "completed", "conclusion": "failure", "event": "schedule", "html_url": "https://example.invalid/runs/42"},
+				},
+			},
+		},
+	})
+
+	// When online in release mode, a failing default-branch workflow run fails the release test levels gate.
+	_, relErr := f.audit(t, "--release")
+	if relErr == nil || !strings.Contains(relErr.Error(), "workflow ci.yml run health is failing") {
+		t.Fatalf("expected online --release audit to fail on failing live workflow run, got %v", relErr)
+	}
+
+	// With --offline, live run health is unmeasured and the gate passes.
+	offOut, offErr := captureStdout(t, func() error {
+		return auditReleaseTestLevels(t.Context(), &config.Manifest{
+			Repository: config.RepositoryMetadata{Owner: "acme", Name: "widgets"},
+			Profiles:   []string{"framework"},
+		}, f.dir, true, true)
+	})
+	if offErr != nil || !strings.Contains(offOut, "live run health unmeasured") {
+		t.Fatalf("expected --offline release test levels to pass with unmeasured health, got out=%q err=%v", offOut, offErr)
 	}
 }

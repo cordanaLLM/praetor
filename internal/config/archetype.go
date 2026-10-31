@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"slices"
 	"strings"
 
@@ -234,34 +233,46 @@ func ProfileReleaseTestLevels(ctx context.Context, root string, profiles []strin
 	return result, nil
 }
 
+var shippedProfileArchetypeYAML = map[string]string{
+	"app-service":        "id: app-service\nrelease_test_levels:\n  - unit\n  - integration\n  - e2e\n  - load_soak\n  - recovery_restore\n",
+	"closed-private":     "id: closed-private\n",
+	"container-image":    "id: container-image\nrelease_test_levels:\n  - smoke\n",
+	"framework":          "id: framework\n",
+	"gitops-infra":       "id: gitops-infra\nrelease_test_levels:\n  - smoke\n",
+	"library-client":     "id: library-client\nrelease_test_levels:\n  - unit\n  - integration\n",
+	"native-gpu-systems": "id: native-gpu-systems\nrelease_test_levels:\n  - unit\n  - integration\n",
+	"org-health":         "id: org-health\n",
+	"os-image":           "id: os-image\nrelease_test_levels:\n  - smoke\n",
+	"pages-site":         "id: pages-site\n",
+	"planning-artifacts": "id: planning-artifacts\n",
+	"template-seed":      "id: template-seed\n",
+	"upstream-fork":      "id: upstream-fork\n",
+	"web-package":        "id: web-package\nrelease_test_levels:\n  - unit\n  - e2e\n  - a11y\n",
+}
+
 func loadProfileArchetype(ctx context.Context, root, profile string) (Archetype, bool, error) {
+	var localArch Archetype
+	foundLocal := false
 	if root != "" {
 		path := filepath.Join(root, ".config", "archetypes", profile+".yaml")
 		data, err := contextopt.ReadSnapshot(ctx, path)
 		if err == nil {
 			arch, decErr := decodeArchetype(ctx, path, data)
-			return arch, decErr == nil, decErr
-		}
-		if !errors.Is(err, os.ErrNotExist) {
+			if decErr != nil || len(arch.ReleaseTestLevels) > 0 {
+				return arch, decErr == nil, decErr
+			}
+			localArch, foundLocal = arch, true
+		} else if !errors.Is(err, os.ErrNotExist) {
 			return Archetype{}, false, err
 		}
 	}
-	shippedPath := filepath.Join(shippedArchetypesDir(), profile+".yaml")
-	data, err := contextopt.ReadSnapshot(ctx, shippedPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return Archetype{}, false, nil
-		}
-		return Archetype{}, false, err
-	}
-	arch, decErr := decodeArchetype(ctx, shippedPath, data)
-	return arch, decErr == nil, decErr
-}
-
-func shippedArchetypesDir() string {
-	_, file, _, ok := runtime.Caller(0)
+	src, ok := shippedProfileArchetypeYAML[profile]
 	if !ok {
-		return filepath.Join(".config", "archetypes")
+		if foundLocal {
+			return localArch, true, nil
+		}
+		return Archetype{}, false, fmt.Errorf("profile %q: %w", profile, ErrLockSourceMissing)
 	}
-	return filepath.Join(filepath.Dir(file), "..", "..", ".config", "archetypes")
+	arch, decErr := decodeArchetype(ctx, profile+".yaml", []byte(src))
+	return arch, decErr == nil, decErr
 }

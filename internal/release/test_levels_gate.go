@@ -43,11 +43,12 @@ const (
 	// LiveRunHealthVerified is emitted when live forge run health was checked and passed.
 	LiveRunHealthVerified = "live run health verified"
 
-	maxRepoScanFiles        = 10000
 	maxLevelFileBytes       = 1 << 20
 	maxWorkflowJobs         = 64
 	maxReleaseWorkflowFiles = ghworkflow.MaxFiles
 )
+
+var maxRepoScanFiles = 10000
 
 // TestLevelsOptions configures AuditTestLevels (#1733).
 type TestLevelsOptions struct {
@@ -122,7 +123,12 @@ func AuditTestLevels(
 	for i := 0; i < len(bindings) && i < config.MaxReleaseTestLevels; i++ {
 		report.Levels = append(report.Levels, bindings[i].Level)
 	}
-	return evaluateLevelBindings(ctx, repoPath, bindings, opts, report)
+	report, err = evaluateLevelBindings(ctx, repoPath, bindings, opts, report)
+	if err != nil && report.Detail == "" {
+		report.Status = TestLevelStatusFail
+		report.Detail = err.Error()
+	}
+	return report, err
 }
 
 func ensureManifest(repoPath string, manifest *config.Manifest) (*config.Manifest, error) {
@@ -375,7 +381,10 @@ func evaluateLevelBindings(
 	}
 	for i := 0; i < len(bindings) && i < config.MaxReleaseTestLevels; i++ {
 		b := bindings[i]
-		reason := checkSingleLevel(ctx, repoPath, b, files, workflows, auxScripts, liveByWorkflow)
+		reason, lvlErr := checkSingleLevel(ctx, repoPath, b, files, workflows, auxScripts, liveByWorkflow)
+		if lvlErr != nil {
+			return report, lvlErr
+		}
 		if reason == "" {
 			continue
 		}
@@ -400,28 +409,31 @@ func checkSingleLevel(
 	workflows []parsedWorkflowFile,
 	auxScripts string,
 	liveByWorkflow map[string]forge.WorkflowRunFinding,
-) string {
-	matchedFiles := matchFilesForGlobList(files, b.Spec.Paths)
-	if len(matchedFiles) == 0 {
-		return fmt.Sprintf("no tracked file matches paths %v", b.Spec.Paths)
+) (string, error) {
+	matchedFiles, err := matchFilesForGlobList(files, b.Spec.Paths)
+	if err != nil {
+		return "", err
 	}
-	if b.Spec.Pattern != "" {
-		ok, err := anyFileMatchesPattern(ctx, repoPath, matchedFiles, b.Spec.Pattern)
-		if err != nil || !ok {
-			return fmt.Sprintf("no matched file satisfies pattern %q", b.Spec.Pattern)
-		}
+	if len(matchedFiles) == 0 {
+		return fmt.Sprintf("no tracked file matches paths %v", b.Spec.Paths), nil
+	}
+	if b.Spec.Pattern != "" && !anyFileMatchesPattern(ctx, repoPath, matchedFiles, b.Spec.Pattern) {
+		return fmt.Sprintf("no matched file satisfies pattern %q", b.Spec.Pattern), nil
 	}
 	wfName, ok := findRunnableWorkflowForLevel(b, workflows, auxScripts)
 	if !ok {
-		return "no runnable workflow job executes this level"
+		return "no runnable workflow job executes this level", nil
 	}
 	if finding, hasLive := liveByWorkflow[wfName]; hasLive && finding.Health != forge.WorkflowHealthy {
-		return fmt.Sprintf("workflow %s run health is %s", wfName, finding.Health)
+		return fmt.Sprintf("workflow %s run health is %s", wfName, finding.Health), nil
 	}
-	return ""
+	return "", nil
 }
 
-func matchFilesForGlobList(files, globs []string) []string {
+func matchFilesForGlobList(files, globs []string) ([]string, error) {
+	if len(files) > maxRepoScanFiles {
+		return nil, fmt.Errorf("repository lists %d files; the test level scan is bounded to %d", len(files), maxRepoScanFiles)
+	}
 	var matched []string
 	for i := 0; i < len(files) && i < maxRepoScanFiles; i++ {
 		f := files[i]
@@ -429,13 +441,13 @@ func matchFilesForGlobList(files, globs []string) []string {
 			matched = append(matched, f)
 		}
 	}
-	return matched
+	return matched, nil
 }
 
-func anyFileMatchesPattern(ctx context.Context, repoPath string, relPaths []string, pattern string) (bool, error) {
+func anyFileMatchesPattern(ctx context.Context, repoPath string, relPaths []string, pattern string) bool {
 	re, err := regexp.Compile(pattern)
 	if err != nil {
-		return false, err
+		return false
 	}
 	for i := 0; i < len(relPaths) && i < maxRepoScanFiles; i++ {
 		data, readErr := contextopt.ReadSnapshot(ctx, filepath.Join(repoPath, filepath.FromSlash(relPaths[i])))
@@ -443,10 +455,10 @@ func anyFileMatchesPattern(ctx context.Context, repoPath string, relPaths []stri
 			continue
 		}
 		if re.Match(data) {
-			return true, nil
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
 func findRunnableWorkflowForLevel(
@@ -615,18 +627,25 @@ func loadAuxBuildScripts(ctx context.Context, repoPath string) string {
 }
 
 func listRepositoryFiles(ctx context.Context, repoPath string) ([]string, error) {
-	res, err := util.RunGitProbe(ctx, repoPath, maxGitLogBytes, "ls-files", "--cached", "--others", "--exclude-standard")
-	if err == nil {
-		files := filterExistingGitFiles(repoPath, string(res.Stdout))
-		if len(files) > 0 {
-			return files, nil
-		}
+	if !util.PathExists(filepath.Join(repoPath, ".git")) {
+		return walkRepositoryFilesBounded(repoPath)
 	}
-	return walkRepositoryFilesBounded(repoPath)
+	res, err := util.RunGitProbe(ctx, repoPath, maxGitLogBytes, "ls-files", "--cached")
+	if err != nil {
+		return nil, fmt.Errorf("list tracked files: %w", err)
+	}
+	return filterExistingGitFiles(repoPath, string(res.Stdout))
 }
 
-func filterExistingGitFiles(repoPath, gitOut string) []string {
-	lines := strings.Split(strings.TrimSpace(gitOut), "\n")
+func filterExistingGitFiles(repoPath, gitOut string) ([]string, error) {
+	trimmed := strings.TrimSpace(gitOut)
+	if trimmed == "" {
+		return nil, nil
+	}
+	lines := strings.Split(trimmed, "\n")
+	if len(lines) > maxRepoScanFiles {
+		return nil, fmt.Errorf("repository lists %d files; the test level scan is bounded to %d", len(lines), maxRepoScanFiles)
+	}
 	var files []string
 	for i := 0; i < len(lines) && i < maxRepoScanFiles; i++ {
 		rel := strings.TrimSpace(lines[i])
@@ -638,7 +657,7 @@ func filterExistingGitFiles(repoPath, gitOut string) []string {
 			files = append(files, filepath.ToSlash(rel))
 		}
 	}
-	return files
+	return files, nil
 }
 
 func walkRepositoryFilesBounded(repoPath string) ([]string, error) {
@@ -654,8 +673,11 @@ func walkRepositoryFilesBounded(repoPath string) ([]string, error) {
 			}
 			return nil
 		}
-		if len(files) >= maxRepoScanFiles || !d.Type().IsRegular() {
+		if !d.Type().IsRegular() {
 			return nil
+		}
+		if len(files) >= maxRepoScanFiles {
+			return fmt.Errorf("repository exceeds the %d-file test level scan bound", maxRepoScanFiles)
 		}
 		rel, err := filepath.Rel(repoPath, path)
 		if err == nil {

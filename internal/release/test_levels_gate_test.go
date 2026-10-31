@@ -15,6 +15,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 type fakeActionsReader struct {
@@ -232,5 +233,73 @@ func TestAuditTestLevels_Boundary_OfflineRunHealthAndScheduledDefaultBranchRun(t
 	})
 	if liveErr != nil || liveRep.Status != TestLevelStatusPass || liveRep.LiveHealth != LiveRunHealthVerified {
 		t.Fatalf("expected scheduled workflow with healthy default-branch run to pass, got %+v, err=%v", liveRep, liveErr)
+	}
+}
+
+func TestAuditTestLevels_Negative_UntrackedFileInGitRepoDoesNotSatisfyLevel(t *testing.T) {
+	t.Setenv("GITHUB_REF", "")
+	t.Setenv("GITHUB_HEAD_REF", "")
+	t.Setenv("PRAETOR_RELEASE_PR", "")
+	repo := setupGoLibraryTempRepo(t)
+	ctx := t.Context()
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"config", "user.name", "Test User"},
+		{"config", "user.email", "test@example.com"},
+		{"config", "commit.gpgsign", "false"},
+		{"add", "."},
+		{"commit", "-q", "-m", "chore: initial tracked files"},
+	} {
+		if out, err := util.RunGit(ctx, repo, args...); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	// Write an untracked integration test file; it must not satisfy the integration level in a Git repo.
+	writeTestRepoFile(t, repo, "client_integration_test.go", "package lib\n\nimport \"testing\"\n\nfunc TestIntegration(t *testing.T) {}\n")
+	rep, err := AuditTestLevels(ctx, repo, nil, TestLevelsOptions{FlagRelease: true})
+	if err == nil || rep.Status != TestLevelStatusFail || !strings.Contains(rep.Detail, "integration") {
+		t.Fatalf("expected untracked integration test file in Git repo to be refused, got %+v, err=%v", rep, err)
+	}
+
+	// Once tracked in the Git index, the integration test satisfies the level.
+	if out, gitErr := util.RunGit(ctx, repo, "add", "client_integration_test.go"); gitErr != nil {
+		t.Fatalf("git add: %v\n%s", gitErr, out)
+	}
+	passRep, passErr := AuditTestLevels(ctx, repo, nil, TestLevelsOptions{FlagRelease: true})
+	if passErr != nil || passRep.Status != TestLevelStatusPass {
+		t.Fatalf("expected tracked integration test file to pass, got %+v, err=%v", passRep, passErr)
+	}
+}
+
+func TestAuditTestLevels_Negative_FileScanCapOverflowFailsClosed(t *testing.T) {
+	origCap := maxRepoScanFiles
+	maxRepoScanFiles = 3
+	t.Cleanup(func() { maxRepoScanFiles = origCap })
+
+	repo := setupGoLibraryTempRepo(t)
+	writeTestRepoFile(t, repo, "z_integration_test.go", "package lib\n")
+
+	// Non-Git walk exceeding maxRepoScanFiles must fail closed with an error instead of truncating.
+	if _, err := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: false}); err == nil || !strings.Contains(err.Error(), "scan") {
+		t.Fatalf("expected walk scan cap overflow to fail closed, got err=%v", err)
+	}
+
+	// Git-backed file list exceeding maxRepoScanFiles must also fail closed.
+	ctx := t.Context()
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"config", "user.name", "Test User"},
+		{"config", "user.email", "test@example.com"},
+		{"config", "commit.gpgsign", "false"},
+		{"add", "."},
+		{"commit", "-q", "-m", "chore: initial tracked files"},
+	} {
+		if out, err := util.RunGit(ctx, repo, args...); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if _, err := AuditTestLevels(ctx, repo, nil, TestLevelsOptions{FlagRelease: false}); err == nil || !strings.Contains(err.Error(), "scan") {
+		t.Fatalf("expected git file list cap overflow to fail closed, got err=%v", err)
 	}
 }

@@ -249,4 +249,8 @@ func TestReleaseTestLevelsPolicy_Boundary_ArchetypeDefaults(t *testing.T) {
 	if len(byProfile["framework"]) != 0 || len(byProfile["org-health"]) != 0 {
 		t.Fatalf("expected none for framework and org-health, got %v", byProfile)
 	}
+
+	if _, err := ProfileReleaseTestLevels(t.Context(), t.TempDir(), []string{"nonexistent-profile"}); err == nil {
+		t.Fatalf("expected unknown profile missing from repository and shipped catalog to fail closed")
+	}
 }
