@@ -3,26 +3,19 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 )
 
 func TestLaneProfile(t *testing.T) {
+	want := map[string]NetworkMode{"repair": NetworkNone, "agy": NetworkEgress, "codex": NetworkEgress, "local": NetworkLoopback}
 	for _, lane := range []string{"repair", "agy", "codex", "local"} {
-		t.Run(lane, func(t *testing.T) {
-			spec, err := LaneProfile(lane, nil)
-			if err != nil || spec.Limits != DefaultLimits() {
-				t.Fatalf("profile = %+v, %v", spec, err)
-			}
-			want := map[string]NetworkMode{"repair": NetworkNone, "agy": NetworkEgress, "codex": NetworkEgress, "local": NetworkLoopback}
-			if spec.Network != want[lane] {
-				t.Fatalf("network = %q", spec.Network)
-			}
-		})
+		t.Run(lane, func(t *testing.T) { assertLaneProfile(t, lane, want[lane]) })
 	}
 	for _, lane := range []string{"", "unknown", "host", "AGY"} {
 		if _, err := LaneProfile(lane, nil); err == nil {
@@ -31,9 +24,95 @@ func TestLaneProfile(t *testing.T) {
 	}
 }
 
+// assertLaneProfile checks one lane's limits and network through the pure core with a fixed
+// identity, then through LaneProfile on this host, which refuses a networked lane by name where
+// the process has no POSIX user ids.
+func assertLaneProfile(t *testing.T, lane string, want NetworkMode) {
+	t.Helper()
+	spec, err := laneProfile(lane, nil, Identity{UID: 1000, GID: 1000})
+	if err != nil || spec.Limits != DefaultLimits() || spec.Network != want {
+		t.Fatalf("laneProfile = %+v, %v", spec, err)
+	}
+	hostSpec, err := LaneProfile(lane, nil)
+	if os.Getuid() < 0 && lane != "repair" {
+		assertUnavailable(t, err, "POSIX user ids")
+		return
+	}
+	if err != nil || hostSpec.Limits != DefaultLimits() || hostSpec.Network != want {
+		t.Fatalf("LaneProfile = %+v, %v", hostSpec, err)
+	}
+}
+
+func TestLaneProfileIdentity(t *testing.T) {
+	t.Run("positive fixed identity", func(t *testing.T) {
+		for _, lane := range []string{"agy", "codex", "local"} {
+			assertLaneIdentityNamespaces(t, lane, Identity{UID: 1000, GID: 1000}, "1000", "1000")
+		}
+	})
+	t.Run("negative missing POSIX user ids", func(t *testing.T) {
+		for _, pair := range [][2]int{{-1, -1}, {-1, 1000}, {1000, -1}} {
+			assertNegativeLaneIdentity(t, pair[0], pair[1])
+		}
+	})
+	t.Run("boundary zero identity", func(t *testing.T) {
+		for _, lane := range []string{"agy", "codex", "local"} {
+			assertLaneIdentityNamespaces(t, lane, Identity{UID: 0, GID: 0}, "0", "0")
+		}
+	})
+}
+
+func assertLaneIdentityNamespaces(t *testing.T, lane string, id Identity, wantUID, wantGID string) {
+	t.Helper()
+	spec, err := laneProfile(lane, nil, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Workspace, spec.Command = "/source", []string{"/usr/bin/true"}
+	if spec.Network == NetworkEgress {
+		spec.DNS = DNSConfig{Nameservers: []string{"192.0.2.53"}, ResolvConf: "/generated/resolv.conf"}
+	}
+	b := testBinaries()
+	b.Pasta = "/usr/bin/pasta"
+	inv, err := Build(spec, b, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	namespaces, err := inv.Arguments("namespaces")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertArgSequence(t, namespaces, []string{"--uid", wantUID, "--gid", wantGID})
+}
+
+func assertNegativeLaneIdentity(t *testing.T, uid, gid int) {
+	t.Helper()
+	previous := currentIdentity
+	currentIdentity = func() (int, int) { return uid, gid }
+	t.Cleanup(func() { currentIdentity = previous })
+	if spec, err := LaneProfile("repair", nil); err != nil || spec.Identity != nil {
+		t.Fatalf("repair with (%d,%d) = %+v, %v", uid, gid, spec, err)
+	}
+	for _, lane := range []string{"agy", "codex", "local"} {
+		spec, err := LaneProfile(lane, nil)
+		if err == nil {
+			spec.Workspace, spec.Command = "/source", []string{"/usr/bin/true"}
+			spec.DNS = DNSConfig{Nameservers: []string{"192.0.2.53"}, ResolvConf: "/generated/resolv.conf"}
+			b := testBinaries()
+			b.Pasta = "/usr/bin/pasta"
+			_, buildErr := Build(spec, b, nil)
+			t.Fatalf("LaneProfile(%q) accepted (%d,%d) (Build error: %v)", lane, uid, gid, buildErr)
+		}
+		assertUnavailable(t, err, "POSIX user ids")
+		want := fmt.Sprintf("sandbox lane %q needs POSIX user ids, which %s does not have", lane, runtime.GOOS)
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q; want %q", err.Error(), want)
+		}
+	}
+}
+
 func TestLaneProfilePorts(t *testing.T) {
 	for _, ports := range [][]int{nil, {1}, {65535}, {1, 2, 3, 4, 5, 6, 7, 65535}} {
-		spec, err := LaneProfile("local", ports)
+		spec, err := laneProfile("local", ports, Identity{UID: 1000, GID: 1000})
 		if err != nil || !slices.Equal(spec.AllowLoopbackPorts, ports) {
 			t.Fatalf("ports %v: %+v, %v", ports, spec, err)
 		}
@@ -52,7 +131,7 @@ func TestLaneProfilePorts(t *testing.T) {
 
 func networkSpec(t *testing.T, lane string, ports []int) Spec {
 	t.Helper()
-	spec, err := LaneProfile(lane, ports)
+	spec, err := laneProfile(lane, ports, Identity{UID: 1000, GID: 1000})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +176,7 @@ func assertPastaArgv(t *testing.T, args []string, spec Spec) {
 	t.Helper()
 	assertArgSequence(t, args, []string{"-t", "none", "-u", "none", "-T", "none", "-U", "none", "--map-host-loopback", "none"})
 	assertArgSequence(t, args, []string{"--unshare-ipc", "--unshare-pid", "--unshare-uts", "--unshare-cgroup",
-		"--unshare-user", "--uid", strconv.Itoa(os.Getuid()), "--gid", strconv.Itoa(os.Getgid())})
+		"--unshare-user", "--uid", "1000", "--gid", "1000"})
 	if slices.Contains(args, "--unshare-net") || slices.Contains(args, "--unshare-all") {
 		t.Fatal("bwrap replaced pasta network namespace")
 	}

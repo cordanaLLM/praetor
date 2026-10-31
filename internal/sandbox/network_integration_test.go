@@ -205,8 +205,11 @@ func runNetworkProbe(t *testing.T, b Binaries, spec Spec, host string, port int,
 
 func realNetworkSpec(t *testing.T, lane string, ports []int) Spec {
 	t.Helper()
-	spec := networkSpec(t, lane, ports)
-	spec.Workspace = t.TempDir()
+	spec, err := LaneProfile(lane, ports)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Workspace, spec.Command = t.TempDir(), []string{"/usr/bin/true"}
 	// Isolate the port policy from descriptor exhaustion in the all-ports mutant,
 	// capped at the hard limit because raising it needs privilege the CI runner lacks.
 	// The default descriptor cap is pinned separately by the repair argv golden.

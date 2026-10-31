@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -21,9 +22,28 @@ const (
 	NetworkLoopback NetworkMode = "loopback"
 )
 
+var currentIdentity = func() (int, int) {
+	return os.Getuid(), os.Getgid()
+}
+
 // LaneProfile selects the shared limits and connectivity. Callers supply workspace,
 // command, mounts and environment. Local ports are explicit, with no implicit proxy.
 func LaneProfile(lane string, ports []int) (Spec, error) {
+	uid, gid := currentIdentity()
+	spec, err := laneProfile(lane, ports, Identity{UID: uid, GID: gid})
+	if err != nil {
+		return Spec{}, err
+	}
+	if spec.Network != NetworkNone && (uid < 0 || gid < 0) {
+		return Spec{}, &UnavailableError{
+			Facility: "POSIX user ids",
+			Cause:    fmt.Errorf("sandbox lane %q needs POSIX user ids, which %s does not have", lane, runtime.GOOS),
+		}
+	}
+	return spec, nil
+}
+
+func laneProfile(lane string, ports []int, id Identity) (Spec, error) {
 	spec := Spec{Limits: DefaultLimits()}
 	switch lane {
 	case "repair":
@@ -36,7 +56,7 @@ func LaneProfile(lane string, ports []int) (Spec, error) {
 		return Spec{}, fmt.Errorf("unknown sandbox lane %q", lane)
 	}
 	if spec.Network != NetworkNone {
-		spec.Identity = &Identity{UID: os.Getuid(), GID: os.Getgid()}
+		spec.Identity = &Identity{UID: id.UID, GID: id.GID}
 	}
 	spec.AllowLoopbackPorts = slices.Clone(ports)
 	if err := validateNetwork(spec); err != nil {

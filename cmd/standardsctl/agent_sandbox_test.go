@@ -6,7 +6,9 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/sandbox"
@@ -83,17 +85,38 @@ func TestAgentSandboxUnavailableNeverExecutes(t *testing.T) {
 }
 
 func TestAgentSandboxLaneFlags(t *testing.T) {
+	assertLocalLaneFlags(t)
+	for _, lane := range []string{"repair", "agy", "codex"} {
+		assertNonLocalLaneFlags(t, lane)
+	}
+}
+
+func assertLocalLaneFlags(t *testing.T) {
+	t.Helper()
 	spec, err := parseAgentSandbox([]string{"--lane", "local", "--allow-loopback-port", "1", "--allow-loopback-port=65535", "--", "/usr/bin/true"})
+	if os.Getuid() < 0 {
+		if !errors.Is(err, sandbox.ErrUnavailable) || !strings.Contains(err.Error(), runtime.GOOS) {
+			t.Fatalf("local profile without POSIX user ids = %+v, %v", spec, err)
+		}
+		return
+	}
 	if err != nil || spec.Network != sandbox.NetworkLoopback || !slices.Equal(spec.AllowLoopbackPorts, []int{1, 65535}) {
 		t.Fatalf("local profile = %+v, %v", spec, err)
 	}
-	for _, lane := range []string{"repair", "agy", "codex"} {
-		if _, err := parseAgentSandbox([]string{"--lane", lane, "--", "true"}); err != nil {
-			t.Fatal(err)
+}
+
+func assertNonLocalLaneFlags(t *testing.T, lane string) {
+	t.Helper()
+	_, err := parseAgentSandbox([]string{"--lane", lane, "--", "true"})
+	if os.Getuid() < 0 && lane != "repair" {
+		if !errors.Is(err, sandbox.ErrUnavailable) || !strings.Contains(err.Error(), runtime.GOOS) {
+			t.Fatalf("lane %s without POSIX user ids = %v", lane, err)
 		}
-		if _, err := parseAgentSandbox([]string{"--lane", lane, "--allow-loopback-port", "4011", "--", "true"}); err == nil {
-			t.Fatalf("accepted local port for %s", lane)
-		}
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseAgentSandbox([]string{"--lane", lane, "--allow-loopback-port", "4011", "--", "true"}); err == nil {
+		t.Fatalf("accepted local port for %s", lane)
 	}
 }
 

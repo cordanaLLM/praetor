@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -14,10 +15,7 @@ import (
 
 func TestAgentSandboxRenderPartFlags(t *testing.T) {
 	for _, part := range []string{"network", "namespaces"} {
-		spec, got, err := parseAgentSandboxOptions([]string{"--lane", "local", "--allow-loopback-port", "4011", "--part=" + part}, true)
-		if err != nil || got != part || !slices.Equal(spec.AllowLoopbackPorts, []int{4011}) {
-			t.Fatalf("partial parse: %+v, %q, %v", spec, got, err)
-		}
+		assertSandboxRenderPartParse(t, part)
 	}
 	for _, args := range [][]string{
 		nil, {"--part=full"}, {"--part="}, {"--part=unknown"},
@@ -37,8 +35,29 @@ func TestAgentSandboxRenderPartFlags(t *testing.T) {
 	}
 }
 
+func assertSandboxRenderPartParse(t *testing.T, part string) {
+	t.Helper()
+	if _, got, err := parseAgentSandboxOptions([]string{"--part=" + part}, true); err != nil || got != part {
+		t.Fatalf("repair partial parse: %q, %v", got, err)
+	}
+	spec, got, err := parseAgentSandboxOptions([]string{"--lane", "local", "--allow-loopback-port", "4011", "--part=" + part}, true)
+	if os.Getuid() < 0 {
+		if !errors.Is(err, sandbox.ErrUnavailable) || !strings.Contains(err.Error(), runtime.GOOS) {
+			t.Fatalf("partial parse without POSIX user ids: %+v, %q, %v", spec, got, err)
+		}
+		return
+	}
+	if err != nil || got != part || !slices.Equal(spec.AllowLoopbackPorts, []int{4011}) {
+		t.Fatalf("partial parse: %+v, %q, %v", spec, got, err)
+	}
+}
+
 func TestAgentSandboxRenderPartsNUL(t *testing.T) {
 	for _, lane := range []string{"repair", "agy", "codex", "local"} {
+		if (runtime.GOOS == "windows" || os.Getuid() < 0) && lane != "repair" {
+			assertSandboxRenderMissingPOSIXIDs(t, lane)
+			continue
+		}
 		spec, err := sandbox.LaneProfile(lane, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -51,6 +70,20 @@ func TestAgentSandboxRenderPartsNUL(t *testing.T) {
 		}
 		for _, part := range []string{"full", "network", "namespaces"} {
 			assertSandboxPartNUL(t, inv, part)
+		}
+	}
+}
+
+func assertSandboxRenderMissingPOSIXIDs(t *testing.T, lane string) {
+	t.Helper()
+	for _, part := range []string{"full", "network", "namespaces"} {
+		var diagnostic bytes.Buffer
+		output, err := captureStdout(t, func() error {
+			return runAgent([]string{"sandbox", "render", "--lane", lane, "--part", part, "--", "/usr/bin/true"})
+		})
+		code := commandExitCode(&diagnostic, err)
+		if code == 0 || output != "" || !errors.Is(err, sandbox.ErrUnavailable) || !strings.Contains(diagnostic.String(), "POSIX user ids") || !strings.Contains(diagnostic.String(), runtime.GOOS) {
+			t.Fatalf("missing POSIX user ids lane %s part %s: exit=%d stdout=%q stderr=%q err=%v", lane, part, code, output, diagnostic.String(), err)
 		}
 	}
 }
