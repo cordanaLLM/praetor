@@ -27,6 +27,13 @@ test('plain target: own __proto__ key is dropped, Object.prototype untouched', (
 	expect(({} as Record<string, unknown>).polluted).toBeUndefined();
 });
 
+test('poisoned target: own __proto__ key does not set the result prototype', () => {
+	const result = deepmerge(poisoned(), {});
+	expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+	expect(result.polluted).toBeUndefined();
+	expect(result.kept).toEqual({ x: 1 });
+});
+
 test('ordinary merge still merges nested keys and replaces arrays as the plugin asks', () => {
 	const result = deepmerge(
 		{ a: { b: 1 }, list: [1, 2] },

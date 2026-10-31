@@ -1,5 +1,5 @@
 diff --git a/dist/cjs.js b/dist/cjs.js
-index 7c36cbdd06cc22c92d590be3f87a08a91ca06b40..9fa7217b8fbc382fcc49065e3223d176acf87c79 100644
+index 7c36cbdd06cc22c92d590be3f87a08a91ca06b40..679cef68714bdd319f5fbfdaee92bcd457dba927 100644
 --- a/dist/cjs.js
 +++ b/dist/cjs.js
 @@ -71,7 +71,8 @@ function propertyIsOnObject(object, property) {
@@ -12,8 +12,18 @@ index 7c36cbdd06cc22c92d590be3f87a08a91ca06b40..9fa7217b8fbc382fcc49065e3223d176
  		&& !(Object.hasOwnProperty.call(target, key) // unsafe if they exist up the prototype chain,
  			&& Object.propertyIsEnumerable.call(target, key)) // and also unsafe if they're nonenumerable.
  }
+@@ -80,6 +81,9 @@ function mergeObject(target, source, options) {
+ 	var destination = {};
+ 	if (options.isMergeableObject(target)) {
+ 		getKeys(target).forEach(function(key) {
++			if (key === '__proto__') {
++				return
++			}
+ 			destination[key] = cloneUnlessOtherwiseSpecified(target[key], options);
+ 		});
+ 	}
 diff --git a/dist/umd.js b/dist/umd.js
-index 4071e7c56ec8e5273fe166f6e723ac460fab8b72..80c2fd6863ac7e469d8f19ac3841cdc24a3fa782 100644
+index 4071e7c56ec8e5273fe166f6e723ac460fab8b72..d81f34e178ab91be5bc01c3be76100e5f4fee391 100644
 --- a/dist/umd.js
 +++ b/dist/umd.js
 @@ -75,7 +75,8 @@
@@ -26,8 +36,18 @@ index 4071e7c56ec8e5273fe166f6e723ac460fab8b72..80c2fd6863ac7e469d8f19ac3841cdc2
  			&& !(Object.hasOwnProperty.call(target, key) // unsafe if they exist up the prototype chain,
  				&& Object.propertyIsEnumerable.call(target, key)) // and also unsafe if they're nonenumerable.
  	}
+@@ -84,6 +85,9 @@
+ 		var destination = {};
+ 		if (options.isMergeableObject(target)) {
+ 			getKeys(target).forEach(function(key) {
++				if (key === '__proto__') {
++					return
++				}
+ 				destination[key] = cloneUnlessOtherwiseSpecified(target[key], options);
+ 			});
+ 		}
 diff --git a/index.js b/index.js
-index 77968aed5d456cccc294f60912ef381fa1e52a7b..9a70c2e6f24be7c4c9ab4cb6012dde190005a82a 100644
+index 77968aed5d456cccc294f60912ef381fa1e52a7b..05f66792ee143ff2d77292ec3e7a703cc46015e1 100644
 --- a/index.js
 +++ b/index.js
 @@ -46,7 +46,8 @@ function propertyIsOnObject(object, property) {
@@ -40,3 +60,13 @@ index 77968aed5d456cccc294f60912ef381fa1e52a7b..9a70c2e6f24be7c4c9ab4cb6012dde19
  		&& !(Object.hasOwnProperty.call(target, key) // unsafe if they exist up the prototype chain,
  			&& Object.propertyIsEnumerable.call(target, key)) // and also unsafe if they're nonenumerable.
  }
+@@ -55,6 +56,9 @@ function mergeObject(target, source, options) {
+ 	var destination = {}
+ 	if (options.isMergeableObject(target)) {
+ 		getKeys(target).forEach(function(key) {
++			if (key === '__proto__') {
++				return
++			}
+ 			destination[key] = cloneUnlessOtherwiseSpecified(target[key], options)
+ 		})
+ 	}
