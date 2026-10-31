@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@proton.me>
+# SPDX-License-Identifier: EUPL-1.2
+
+# deepmerge 4.3.1 is the latest release and still sets the result prototype from an own
+# "__proto__" key (GHSA-gcqx-w48m-w2h4); the patch refuses that key until upstream ships a fix.
+# scripts/deepmerge-patch.test.ts pins it. Drop both when @sveltejs/vite-plugin-svelte no longer
+# resolves deepmerge 4.3.1 (osv-scanner.toml carries the matching exception).
+patchedDependencies:
+  deepmerge@4.3.1: patches/deepmerge@4.3.1.patch
