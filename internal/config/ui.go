@@ -5,7 +5,9 @@ package config
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -38,14 +40,17 @@ const (
 // responsiveness gates (routes, defaulting to ["/"]), and the route mock glob for the
 // responsiveness spec's slow-API and HTTP 503 cases (api_pattern, defaulting to "**/api/**").
 // ScreenMatrix names the A11Y-CHECK1 data file; ui-gates requires it for UI repositories.
+// InputLatencySource is the pinned reference `<owner>/<repo>@<40-hex commit>:<path>` to measurement evidence.
 type UIPolicy struct {
-	InputLatencyMs  int      `yaml:"input_latency_ms,omitempty"`
-	Routes          []string `yaml:"routes,omitempty"`
-	APIPattern      string   `yaml:"api_pattern,omitempty"`
-	ScreenMatrix    string   `yaml:"screen_matrix,omitempty"`
-	hasLatency      bool
-	hasAPIPattern   bool
-	hasScreenMatrix bool
+	InputLatencyMs     int      `yaml:"input_latency_ms,omitempty"`
+	InputLatencySource string   `yaml:"input_latency_source,omitempty"`
+	Routes             []string `yaml:"routes,omitempty"`
+	APIPattern         string   `yaml:"api_pattern,omitempty"`
+	ScreenMatrix       string   `yaml:"screen_matrix,omitempty"`
+	hasLatency         bool
+	hasLatencySource   bool
+	hasAPIPattern      bool
+	hasScreenMatrix    bool
 }
 
 // UnmarshalYAML decodes the manifest's ui section, refusing unknown or duplicate keys,
@@ -54,17 +59,26 @@ type UIPolicy struct {
 func (p *UIPolicy) UnmarshalYAML(node *yaml.Node) error {
 	var policy UIPolicy
 	present, err := registerIntFields(node, "ui", map[string]*int{
-		"input_latency_ms": &policy.InputLatencyMs,
-		"routes":           nil,
-		"api_pattern":      nil,
-		"screen_matrix":    nil,
+		"input_latency_ms":     &policy.InputLatencyMs,
+		"input_latency_source": nil,
+		"routes":               nil,
+		"api_pattern":          nil,
+		"screen_matrix":        nil,
 	})
 	if err != nil {
 		return err
 	}
 	policy.hasLatency = present["input_latency_ms"]
+	policy.hasLatencySource = present["input_latency_source"]
 	policy.hasAPIPattern = present["api_pattern"]
 	policy.hasScreenMatrix = present["screen_matrix"]
+	if present["input_latency_source"] {
+		src, srcErr := decodeUIString(node, "input_latency_source")
+		if srcErr != nil {
+			return srcErr
+		}
+		policy.InputLatencySource = src
+	}
 	if present["routes"] {
 		routes, routeErr := decodeUIRoutes(node)
 		if routeErr != nil {
@@ -259,16 +273,88 @@ func (m *Manifest) UIAPIPattern() string {
 	return m.UI.EffectiveAPIPattern()
 }
 
-// validateUIStrings holds both optional string fields to their declared contracts.
+var (
+	uiSourceOwnerPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	uiSourceRepoPattern  = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+)
+
+// validateUIStrings holds optional string fields to their declared contracts.
 func validateUIStrings(p *UIPolicy) error {
 	if err := validateUIAPIPattern(p.APIPattern, p.hasAPIPattern); err != nil {
 		return err
 	}
-	if !p.hasScreenMatrix && p.ScreenMatrix == "" {
-		return nil
+	if p.hasScreenMatrix || p.ScreenMatrix != "" {
+		if !ValidRepositoryPath(p.ScreenMatrix) || !filepath.IsLocal(p.ScreenMatrix) || strings.Contains(p.ScreenMatrix, ":") {
+			return fmt.Errorf("ui.screen_matrix must be a non-empty repository-relative path of at most %d bytes, confined to the repository", maxRepositoryPath)
+		}
 	}
-	if !ValidRepositoryPath(p.ScreenMatrix) || !filepath.IsLocal(p.ScreenMatrix) || strings.Contains(p.ScreenMatrix, ":") {
-		return fmt.Errorf("ui.screen_matrix must be a non-empty repository-relative path of at most %d bytes, confined to the repository", maxRepositoryPath)
+	if p.hasLatencySource || p.InputLatencySource != "" {
+		if err := validateUIInputLatencySource(p.InputLatencySource); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func validateUIInputLatencySource(source string) error {
+	if !validUIInputLatencySource(source) {
+		return fmt.Errorf("ui.input_latency_source must be a pinned reference '<owner>/<repo>@<40-hex commit>:<path>'")
+	}
+	return nil
+}
+
+func validUIInputLatencySource(source string) bool {
+	if source == "" || len(source) > maxRepositoryPath*2 {
+		return false
+	}
+	repoCoord, rest, hasAt := strings.Cut(source, "@")
+	if !hasAt || !validUISourceRepoCoord(repoCoord) {
+		return false
+	}
+	commit, relPath, hasColon := strings.Cut(rest, ":")
+	if !hasColon || len(commit) != 40 || !isLowerHex40(commit) {
+		return false
+	}
+	return validUISourcePath(relPath)
+}
+
+func validUISourceRepoCoord(repoCoord string) bool {
+	owner, repo, hasSlash := strings.Cut(repoCoord, "/")
+	if !hasSlash || strings.Contains(repo, "/") {
+		return false
+	}
+	return validUISourceName(owner, uiSourceOwnerPattern) && validUISourceName(repo, uiSourceRepoPattern)
+}
+
+func validUISourceName(name string, pattern *regexp.Regexp) bool {
+	if name == "" || name == "." || name == ".." || len(name) > 100 {
+		return false
+	}
+	return pattern.MatchString(name)
+}
+
+func isLowerHex40(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if !isLowerHexChar(s[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func isLowerHexChar(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
+}
+
+func validUISourcePath(p string) bool {
+	if p == "" || len(p) > maxRepositoryPath || strings.HasPrefix(p, "/") || strings.Contains(p, "..") {
+		return false
+	}
+	if strings.ContainsAny(p, "\\\x00\r\n \t") {
+		return false
+	}
+	return path.Clean(p) == p && p != "."
 }

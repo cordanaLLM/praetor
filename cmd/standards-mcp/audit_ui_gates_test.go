@@ -24,7 +24,7 @@ func TestServerAuditScreenMatrixContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFixtureFile(t, root, ".standards.yaml", string(manifest)+"\nui:\n  input_latency_ms: 100\n  screen_matrix: matrix.json\n")
+	writeFixtureFile(t, root, ".standards.yaml", string(manifest)+"\nui:\n  input_latency_ms: 100\n  input_latency_source: \"cordanaLLM/Aegis-OS@7828da5640001111222233334444555566667777:evidence/latency.json\"\n  screen_matrix: matrix.json\n")
 	writeFixtureFile(t, root, "matrix.json", "{}")
 	result := callTool(t, srv, "standards_audit", nil)
 	expectText(t, "valid matrix reference", result, "[PASS] UI gates:")

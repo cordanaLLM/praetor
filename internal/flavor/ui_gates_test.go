@@ -14,10 +14,13 @@ import (
 	"github.com/cordanaLLM/praetor/templates"
 )
 
-const validUIMakefileFixture = ".PHONY: verify-all ui-gates\n" +
-	"verify-all: ui-gates\n\n" +
-	"ui-gates:\n" +
-	"\t@$$($(PRAETORCTL) ui env) && npx playwright test tests/a11y.spec.ts tests/responsiveness.spec.ts\n"
+const (
+	validUIMakefileFixture = ".PHONY: verify-all ui-gates\n" +
+		"verify-all: ui-gates\n\n" +
+		"ui-gates:\n" +
+		"\t@$$($(PRAETORCTL) ui env) && npx playwright test tests/a11y.spec.ts tests/responsiveness.spec.ts\n"
+	validUISourceFixture = "cordanaLLM/Aegis-OS@7828da5640001111222233334444555566667777:evidence/latency.json"
+)
 
 func renderUISpecFixture(t *testing.T, dir string) {
 	t.Helper()
@@ -66,7 +69,12 @@ func TestAuditUIGates_Boundary_NonUISkips(t *testing.T) {
 
 func TestAuditUIGates_PositiveAndMissingSpecs(t *testing.T) {
 	uiDir := writeBaseSvelteDir(t, `{"name":"ui","devDependencies":{"@axe-core/playwright":"4.11.1"}}`)
-	withThreshold := &config.Manifest{UI: &config.UIPolicy{InputLatencyMs: 100, Routes: []string{"/"}, ScreenMatrix: "screen-matrix.json"}}
+	withThreshold := &config.Manifest{UI: &config.UIPolicy{
+		InputLatencyMs:     100,
+		InputLatencySource: validUISourceFixture,
+		Routes:             []string{"/"},
+		ScreenMatrix:       "screen-matrix.json",
+	}}
 	if _, err := flavor.AuditUIGates(uiDir, withThreshold); err == nil ||
 		!strings.Contains(err.Error(), flavor.UIA11ySpecPath) ||
 		!strings.Contains(err.Error(), flavor.UIResponsivenessSpecPath) {
@@ -88,7 +96,12 @@ func TestAuditUIGates_Negative_ThresholdAndDependencyPin(t *testing.T) {
 		t.Fatalf("absent threshold err = %v, want ui.input_latency_ms", err)
 	}
 
-	withThreshold := &config.Manifest{UI: &config.UIPolicy{InputLatencyMs: 100, Routes: []string{"/"}, ScreenMatrix: "screen-matrix.json"}}
+	withThreshold := &config.Manifest{UI: &config.UIPolicy{
+		InputLatencyMs:     100,
+		InputLatencySource: validUISourceFixture,
+		Routes:             []string{"/"},
+		ScreenMatrix:       "screen-matrix.json",
+	}}
 	if err := os.WriteFile(filepath.Join(uiDir, "package.json"), []byte(`{"name":"ui","devDependencies":{"@axe-core/playwright":"^4.11.1"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +129,12 @@ func TestAuditUIGates_MissingVerifyAllTargetFails(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(uiDir, "Makefile"), []byte("verify-all:\n\t@echo ok\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	withThreshold := &config.Manifest{UI: &config.UIPolicy{InputLatencyMs: 100, Routes: []string{"/"}, ScreenMatrix: "screen-matrix.json"}}
+	withThreshold := &config.Manifest{UI: &config.UIPolicy{
+		InputLatencyMs:     100,
+		InputLatencySource: validUISourceFixture,
+		Routes:             []string{"/"},
+		ScreenMatrix:       "screen-matrix.json",
+	}}
 	if _, err := flavor.AuditUIGates(uiDir, withThreshold); err == nil || !strings.Contains(err.Error(), "ui-gates") {
 		t.Fatalf("missing verify-all ui-gates AuditUIGates err = %v, want ui-gates target failure", err)
 	}
@@ -125,7 +143,10 @@ func TestAuditUIGates_MissingVerifyAllTargetFails(t *testing.T) {
 func TestAuditUIGates_ScreenMatrixMissingKey(t *testing.T) {
 	dir := writeBaseSvelteDir(t, `{"name":"ui","devDependencies":{"@axe-core/playwright":"4.11.1"}}`)
 	renderUISpecFixture(t, dir)
-	manifest := &config.Manifest{UI: &config.UIPolicy{InputLatencyMs: 100}}
+	manifest := &config.Manifest{UI: &config.UIPolicy{
+		InputLatencyMs:     100,
+		InputLatencySource: validUISourceFixture,
+	}}
 	if _, err := flavor.AuditUIGates(dir, manifest); err == nil || !strings.Contains(err.Error(), "missing required ui.screen_matrix") {
 		t.Fatalf("missing matrix key must fail naming ui.screen_matrix: %v", err)
 	}

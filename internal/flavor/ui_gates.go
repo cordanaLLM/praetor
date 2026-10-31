@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/nodemanifest"
@@ -125,10 +126,30 @@ func hasSlowAPIAnd503Cases(content string) bool {
 	return hasSlowDelay && strings.Contains(content, "503")
 }
 
+var (
+	ownerPrefixPattern = regexp.MustCompile(`(?i)\b(?:owner(?:\s+is)?|owned\s+by)[:\s]+([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?)`)
+	ownerSuffixPattern = regexp.MustCompile(`(?i)\b([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?)(?:\s+[A-Za-z0-9_.-]+)?\s+as\s+owner\b`)
+)
+
+func extractExceptionOwner(reason string) string {
+	if m := ownerPrefixPattern.FindStringSubmatch(reason); len(m) > 1 {
+		return strings.Trim(m[1], ",;.")
+	}
+	if m := ownerSuffixPattern.FindStringSubmatch(reason); len(m) > 1 {
+		return strings.Trim(m[1], ",;.")
+	}
+	return ""
+}
+
 // AuditUIGates runs the ui-gates audit check on repoPath (order engine-fr-rule-checks-20261027).
 // It reuses FrontendSvelteFlavor.Detect to classify UI repositories; non-UI repositories return
 // a [SKIP] line and a nil error.
 func AuditUIGates(repoPath string, manifest *config.Manifest) (string, error) {
+	return AuditUIGatesToday(repoPath, manifest, time.Now())
+}
+
+// AuditUIGatesToday runs the ui-gates audit check using today as the reference time for exception expiry.
+func AuditUIGatesToday(repoPath string, manifest *config.Manifest, today time.Time) (string, error) {
 	svelte := &FrontendSvelteFlavor{}
 	if !svelte.Detect(repoPath) {
 		return "[SKIP] UI gates: not a frontend-svelte repository.", nil
@@ -136,6 +157,10 @@ func AuditUIGates(repoPath string, manifest *config.Manifest) (string, error) {
 	var gaps []string
 	if gap := checkUIThresholdGap(manifest); gap != "" {
 		gaps = append(gaps, gap)
+	}
+	sourceLine, sourceGap := checkUILatencySourceGap(manifest, today)
+	if sourceGap != "" {
+		gaps = append(gaps, sourceGap)
 	}
 	if gap := checkUIAxeDependencyGap(repoPath); gap != "" {
 		gaps = append(gaps, gap)
@@ -157,9 +182,32 @@ func AuditUIGates(repoPath string, manifest *config.Manifest) (string, error) {
 		return matrixLine, fmt.Errorf("[FAIL] UI gates: %s", strings.Join(gaps, "; "))
 	}
 	return matrixLine + "\n" + fmt.Sprintf(
-		"[PASS] UI gates: %s and %s verified (ui.input_latency_ms=%d, routes=%d).",
-		UIA11ySpecPath, UIResponsivenessSpecPath, manifest.UI.InputLatencyMs, len(manifest.UIRoutes()),
+		"[PASS] UI gates: %s and %s verified (ui.input_latency_ms=%d, %s, routes=%d).",
+		UIA11ySpecPath, UIResponsivenessSpecPath, manifest.UI.InputLatencyMs, sourceLine, len(manifest.UIRoutes()),
 	), nil
+}
+
+func checkUILatencySourceGap(manifest *config.Manifest, today time.Time) (string, string) {
+	if manifest == nil || manifest.UI == nil || manifest.UI.InputLatencyMs <= 0 {
+		return "", ""
+	}
+	if manifest.UI.InputLatencySource != "" {
+		return fmt.Sprintf("source=%s", manifest.UI.InputLatencySource), ""
+	}
+	entries := config.ExceptionsFor(manifest.Exceptions, config.ExceptionRuleUILatencySource)
+	for i := len(entries) - 1; i >= 0; i-- {
+		entry := entries[i]
+		if entry.Expired(today) || entry.ExpiryCategory() == "" {
+			continue
+		}
+		owner := extractExceptionOwner(entry.Reason)
+		if owner == "" {
+			continue
+		}
+		info := fmt.Sprintf("exception=%s (owner %s, expires %s)", entry.Rule, owner, entry.Expires)
+		return info, ""
+	}
+	return "", "ui.input_latency_source missing: pin the measurement evidence the threshold comes from"
 }
 
 func checkUIThresholdGap(manifest *config.Manifest) string {

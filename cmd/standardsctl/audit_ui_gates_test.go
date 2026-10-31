@@ -72,7 +72,12 @@ func TestAuditUIGates_RenderedSpecsAndThresholdPasses(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "matrix.json"), []byte(`{}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	m := &config.Manifest{UI: &config.UIPolicy{InputLatencyMs: 100, Routes: []string{"/", "/settings"}, ScreenMatrix: "matrix.json"}}
+	m := &config.Manifest{UI: &config.UIPolicy{
+		InputLatencyMs:     100,
+		InputLatencySource: "cordanaLLM/Aegis-OS@7828da5640001111222233334444555566667777:evidence/latency.json",
+		Routes:             []string{"/", "/settings"},
+		ScreenMatrix:       "matrix.json",
+	}}
 	out, err := captureStdout(t, func() error {
 		return auditUIGates(dir, m)
 	})

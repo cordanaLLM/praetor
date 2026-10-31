@@ -126,3 +126,47 @@ func TestUIScreenMatrixPolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestUIInputLatencySourcePolicy(t *testing.T) {
+	validPin := "cordanaLLM/Aegis-OS@7828da5640001111222233334444555566667777:evidence/latency.json"
+	boundPin := "cordanaLLM/Aegis-OS@7828da5640001111222233334444555566667777:" + strings.Repeat("a", maxRepositoryPath)
+	overlongPin := "cordanaLLM/Aegis-OS@7828da5640001111222233334444555566667777:" + strings.Repeat("a", maxRepositoryPath+1)
+	cases := []struct {
+		name, value string
+		valid       bool
+	}{
+		{"positive", validPin, true},
+		{"bound path", boundPin, true},
+		{"overlong path", overlongPin, false},
+		{"short sha 39", "cordanaLLM/Aegis-OS@7828da564000111122223333444455556666777:bench.json", false},
+		{"short sha 7", "cordanaLLM/Aegis-OS@7828da5:bench.json", false},
+		{"uppercase hex", "cordanaLLM/Aegis-OS@7828DA5640001111222233334444555566667777:bench.json", false},
+		{"path with ..", "cordanaLLM/Aegis-OS@7828da5640001111222233334444555566667777:../bench.json", false},
+		{"leading slash", "cordanaLLM/Aegis-OS@7828da5640001111222233334444555566667777:/bench.json", false},
+		{"empty path", "cordanaLLM/Aegis-OS@7828da5640001111222233334444555566667777:", false},
+		{"missing colon", "cordanaLLM/Aegis-OS@7828da5640001111222233334444555566667777", false},
+		{"missing at", "cordanaLLM/Aegis-OS:evidence/latency.json", false},
+		{"empty owner", "/Aegis-OS@7828da5640001111222233334444555566667777:bench.json", false},
+		{"empty repo", "cordanaLLM/@7828da5640001111222233334444555566667777:bench.json", false},
+		{"extra repo slash", "a/b/c@7828da5640001111222233334444555566667777:bench.json", false},
+		{"empty string", `""`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			val := tc.value
+			if !strings.HasPrefix(val, `"`) {
+				val = fmt.Sprintf("%q", val)
+			}
+			m, err := ParseManifest("manifest.yaml", []byte("ui:\n  input_latency_source: "+val+"\n"))
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v, err=%v", tc.valid, err)
+			}
+			if !tc.valid && !strings.Contains(err.Error(), "ui.input_latency_source") {
+				t.Fatalf("expected error naming ui.input_latency_source, got: %v", err)
+			}
+			if tc.valid && m.DeclaredUI().InputLatencySource != m.UI.InputLatencySource {
+				t.Fatal("DeclaredUI lost input_latency_source")
+			}
+		})
+	}
+}
