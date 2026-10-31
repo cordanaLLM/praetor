@@ -1,0 +1,2 @@
+type: fixed
+title: The Go vulnerability gate now reads the repository's OpenVEX document for every module of a multi-module repository, where nested modules used to report it missing

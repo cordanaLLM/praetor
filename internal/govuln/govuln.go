@@ -67,8 +67,8 @@ type Runner func(ctx context.Context, dir, name string, args ...string) (string,
 
 // Options selects what Check scans and how.
 type Options struct {
-	// Dir is the root of the Go module to scan. Its manifest names the OpenVEX document
-	// (config.RepositoryGoVEXPath).
+	// Dir is the root of the Go module to scan. The OpenVEX document is read below VEXRoot, or
+	// below Dir when VEXRoot is empty.
 	Dir string
 	// VEXRoot is the repository root whose manifest names the shared OpenVEX document. Empty
 	// uses Dir, preserving the single-module caller behavior.
@@ -123,7 +123,7 @@ func Check(ctx context.Context, opts Options) (*Report, error) {
 		return nil, fmt.Errorf("%w: %s does not say which document to read: %w", ErrInvalidVEX, config.ManifestFileName, err)
 	}
 	// The document is read before the scan: a broken one fails in a second, not after minutes.
-	vex, err := loadVEX(opts.Dir, vexPath, now())
+	vex, err := loadVEX(root, vexPath, now())
 	if err != nil {
 		return nil, err
 	}
