@@ -26,3 +26,15 @@ func auditReleaseE2E(ctx context.Context, manifest *config.Manifest, rootDir str
 	fmt.Println(line)
 	return nil
 }
+
+// auditReleaseTestLevels evaluates required and declared release test levels (#1733).
+func auditReleaseTestLevels(ctx context.Context, manifest *config.Manifest, rootDir string, flagRelease bool) error {
+	line, _, err := release.AuditTestLevelsLine(ctx, rootDir, manifest, release.TestLevelsOptions{
+		FlagRelease: flagRelease,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Println(line)
+	return nil
+}

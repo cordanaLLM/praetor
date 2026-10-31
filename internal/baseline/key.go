@@ -36,7 +36,7 @@ func AssignFingerprints(infractions []Infraction) {
 	for _, i := range order {
 		v := &infractions[i]
 		// Order: engine-hiss-unenforced-checks-20261027 (HISS-12 secret findings keep their fingerprint).
-		if (v.RuleID == ImageRefRuleID || v.RuleID == BaselineRuleID) && v.Fingerprint != "" {
+		if isAuxiliaryRule(v.RuleID) && v.Fingerprint != "" {
 			continue
 		}
 		if v.Anchor == "" {

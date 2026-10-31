@@ -754,6 +754,16 @@ fields:
         effect: >-
           selects language-scoped DevContainer features from repository
           manifests when resolving pinned catalog artifacts
+  - key: release_test_levels
+    go: [Archetype.ReleaseTestLevels]
+    state: consumed
+    consumers:
+      - func: internal/config.ProfileReleaseTestLevels
+        kind: acts
+        effect: >-
+          loads the default required release test levels declared by a
+          repository's resolved profiles for manifest validation and the
+          release test levels gate (#1733)
   - key: backlog.caps.defects.max
     go: [BacklogCap.Max]
     state: consumed

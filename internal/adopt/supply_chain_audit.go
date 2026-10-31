@@ -523,8 +523,11 @@ func (s *adoptSession) applyRuleBaselineResult(ruleID string, recorded int, next
 		}
 	}
 	label := "image reference"
-	if ruleID == secretscan.BaselineRuleID {
+	switch ruleID {
+	case secretscan.BaselineRuleID:
 		label = "secret"
+	case baseline.ReleaseTestLevelRuleID:
+		label = "release test level"
 	}
 	note := fmt.Sprintf("Recorded %d %s %s finding(s) into %s (reason: adoption baseline)",
 		recorded, ruleID, label, baselineFile)
