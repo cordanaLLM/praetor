@@ -1,0 +1,2 @@
+type: security
+title: 'Security: renew the console deepmerge OSV-Scanner exception to 2026-11-09 after re-checking that no patched deepmerge or vite-plugin-svelte release exists'
