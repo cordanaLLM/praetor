@@ -278,6 +278,11 @@ cannot read keeps the jobs it needs required beside it, as before. A proven aggr
 - may lead its condition with the Renovate skip above. That gate is skipped on a Renovate pull
   request, so it covers only the jobs that carry the same skip; a job it needs without the skip
   stays required;
+- may also carry one parenthesised repository guard before `always()`, after the optional
+  Renovate skip (`(<repository guard>) && always()`). That gate is skipped where the guard is
+  false, so it covers only the jobs that carry the same repository guard, and counts as stopping a
+  draft pull request (`internal/forge/workflow_draft_skip.go`) when every job it needs begins with
+  the hosted gate's draft step and is covered;
 - is not advisory and passes when every job it needs succeeded;
 - has only steps of the two shapes below. Any other step, such as a checkout, is refused: a step
   can change what a later one runs.
