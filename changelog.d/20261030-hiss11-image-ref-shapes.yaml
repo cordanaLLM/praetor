@@ -1,0 +1,3 @@
+type: fixed
+title: "Non-container workflow image: keys, @NAME@ deploy tokens and .invalid RFC 2606 hosts are no longer reported as unpinned HISS-11 container images"
+breaking: false

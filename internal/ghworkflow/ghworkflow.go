@@ -63,8 +63,9 @@ type RunDefaults struct {
 //
 // RunsOn is a raw node because the key has three shapes: one label, a list of labels, and a
 // mapping of a runner group and its labels (RunnerLabels). Container is raw because it is an
-// image name or a mapping; only its presence changes the default shell (StepShell). Needs is raw
-// because the key is one job id or a list of them (NeedIDs).
+// image name or a mapping; only its presence changes the default shell (StepShell). Services is
+// raw because each service is a mapping under its service name, read by the HISS-11 image-ref
+// scan. Needs is raw because the key is one job id or a list of them (NeedIDs).
 //
 // Uses is the reusable workflow a job calls instead of running steps: a path under Dir of this
 // repository ("./.github/workflows/<file>") or "<owner>/<repo>/.github/workflows/<file>@<ref>".
@@ -83,6 +84,7 @@ type Job struct {
 	RunsOn          yaml.Node      `yaml:"runs-on"`
 	Defaults        Defaults       `yaml:"defaults"`
 	Container       yaml.Node      `yaml:"container"`
+	Services        yaml.Node      `yaml:"services"`
 	TimeoutMinutes  yaml.Node      `yaml:"timeout-minutes"`
 }
 
@@ -115,6 +117,8 @@ type Step struct {
 	With             map[string]any `yaml:"with"`
 	Env              yaml.Node      `yaml:"env"`
 	TimeoutMinutes   yaml.Node      `yaml:"timeout-minutes"`
+	// UsesLine is the document line the uses: value sits on, and 0 for a step without uses:.
+	UsesLine int `yaml:"-"`
 	// RunLine is the document line the run: value starts on, its | or > indicator for a block
 	// scalar, and 0 for a step without run:.
 	RunLine int `yaml:"-"`
@@ -127,10 +131,13 @@ type Step struct {
 // itself.
 type stepFields Step
 
-// UnmarshalYAML decodes a step and records where its run: value sits in the document.
+// UnmarshalYAML decodes a step and records where its uses: and run: values sit in the document.
 func (s *Step) UnmarshalYAML(node *yaml.Node) error {
 	if err := node.Decode((*stepFields)(s)); err != nil {
 		return err
+	}
+	if uses := util.YAMLMappingValue(node, "uses"); uses != nil {
+		s.UsesLine = uses.Line
 	}
 	if run := util.YAMLMappingValue(node, "run"); run != nil {
 		s.RunLine, s.RunLiteral = run.Line, run.Kind == yaml.ScalarNode && run.Style&yaml.LiteralStyle != 0
