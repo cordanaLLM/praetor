@@ -353,7 +353,7 @@ defaults.
   host-like tokens and paths outside the root are not citations
   (`internal/caveman/return_claims.go`). A file extension is recognised by its shape, so no
   per-repository list exists.
-- Claimed runs: backticked spans and `$ ` items in the `ran` or `commands` field are compared
+- Claimed runs: backticked spans and items that start with a dollar sign and a space in the `ran` or `commands` field are compared
   with the Bash calls of the Claude subagent transcript, read through `forEachClaudeTranscriptLine`,
   the one bounded transcript loop the usage totals share (`internal/agenthook/claude_usage.go`).
   A claimed command with no such call is a miss; prose in those fields is not a claimed run.
