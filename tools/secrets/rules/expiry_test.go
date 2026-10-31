@@ -12,7 +12,7 @@ import (
 )
 
 func TestCategoryExpiryCaps(t *testing.T) {
-	cases := []struct{ name, category, entered, expires, want string }{
+	for _, tc := range []struct{ name, category, entered, expires, want string }{
 		{"A stated", "A", "2026-10-18", "2027-01-16", ""},
 		{"A beyond 90 days", "A", "2026-10-18", "2027-01-17", "category A requires expires on or before 2027-01-16 (90 days"},
 		{"A missing expiry", "A", "", "", "must be a YYYY-MM-DD date"},
@@ -32,8 +32,7 @@ func TestCategoryExpiryCaps(t *testing.T) {
 		{"entered cutoff category B exceeded", "B", "2026-10-29", "2026-11-02", "category B requires expires on or before 2026-11-01 (3 days"},
 		{"no entered grace boundary", "", "", "2026-11-28", ""},
 		{"no entered past grace", "", "", "2026-11-29", "category is required"},
-	}
-	for _, tc := range cases {
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := rules.CategoryExpiryProblem(tc.category, tc.entered, tc.expires, testToday)
 			if tc.want == "" {

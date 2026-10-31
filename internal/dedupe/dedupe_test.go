@@ -24,7 +24,7 @@ func TestScanRepo_Positive_DuplicatesAndSprawl(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, tmp, "go.mod", "module github.com/cordanaLLM/praetor\n")
 
-	file1 := `package test
+	if err := os.WriteFile(filepath.Join(tmp, "a.go"), []byte(`package test
 import "fmt"
 func ProcessDataA(x int) int {
 	fmt.Println("step 1")
@@ -33,8 +33,10 @@ func ProcessDataA(x int) int {
 	fmt.Println("step 4")
 	return x * 2
 }
-`
-	file2 := `package test
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "b.go"), []byte(`package test
 import "fmt"
 func ProcessDataB(x int) int {
 	fmt.Println("step 1")
@@ -43,20 +45,15 @@ func ProcessDataB(x int) int {
 	fmt.Println("step 4")
 	return x * 2
 }
-`
-	sprawlFile := `package test
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "c.go"), []byte(`package test
 import "os/exec"
 func CallGit() {
 	_ = exec.Command("git", "status")
 }
-`
-	if err := os.WriteFile(filepath.Join(tmp, "a.go"), []byte(file1), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tmp, "b.go"), []byte(file2), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tmp, "c.go"), []byte(sprawlFile), 0644); err != nil {
+`), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -100,7 +97,7 @@ func CallGit() {
 func TestScanRepo_Positive_CommandContextGitIsReported(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, tmp, "go.mod", "module github.com/cordanaLLM/praetor\n")
-	source := `package test
+	if err := os.WriteFile(filepath.Join(tmp, "ctx.go"), []byte(`package test
 
 import (
 	"context"
@@ -116,8 +113,7 @@ func CallGit(ctx context.Context, tool string) {
 	_ = exec.Command(tool, "status")
 	_ = exec.CommandContext(ctx)
 }
-`
-	if err := os.WriteFile(filepath.Join(tmp, "ctx.go"), []byte(source), 0o600); err != nil {
+`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -290,13 +286,11 @@ func TestScanRepo_Negative_FailsWithoutReport(t *testing.T) {
 func TestScanRepo_Boundary_SmallFunctionsIgnored(t *testing.T) {
 	tmp := t.TempDir()
 	// Trivial 2-line functions should not trigger duplicate detection
-	file1 := "package test\nfunc GetA() int {\n\treturn 1\n}\n"
-	file2 := "package test\nfunc GetB() int {\n\treturn 1\n}\n"
 
-	if err := os.WriteFile(filepath.Join(tmp, "a.go"), []byte(file1), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, "a.go"), []byte("package test\nfunc GetA() int {\n\treturn 1\n}\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmp, "b.go"), []byte(file2), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, "b.go"), []byte("package test\nfunc GetB() int {\n\treturn 1\n}\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -774,8 +768,7 @@ func TestScanRepoContextAndRootErrors(t *testing.T) {
 	if _, err := dedupe.ScanRepoContext(cancelled, dir); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected cancellation, got %v", err)
 	}
-	var absent context.Context
-	if report, err := dedupe.ScanRepoContext(absent, dir); err == nil || report != nil {
+	if report, err := dedupe.ScanRepoContext(context.Context(nil), dir); err == nil || report != nil {
 		t.Fatalf("nil context must fail: %+v, %v", report, err)
 	}
 	if report, err := dedupe.ScanRepoContext(t.Context(), filepath.Join(dir, "missing")); err == nil || report != nil {
@@ -877,15 +870,14 @@ func forbiddenExecMessage(t *testing.T) (string, bool) {
 func TestScanRepo_Boundary_SprawlAdviceMatchesTheLinterRule(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, tmp, "go.mod", "module github.com/cordanaLLM/praetor\n")
-	source := `package test
+	if err := os.WriteFile(filepath.Join(tmp, "sprawl.go"), []byte(`package test
 
 import "os/exec"
 
 func CallGit() {
 	_ = exec.Command("git", "status")
 }
-`
-	if err := os.WriteFile(filepath.Join(tmp, "sprawl.go"), []byte(source), 0o600); err != nil {
+`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1186,14 +1178,12 @@ func TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation(t *testing.T
 	if err == nil {
 		t.Fatal("expected ScanRepo to fail on missing exception target file")
 	}
-	want := "exceptions entry nonexistent.go (HISS-19): target file does not exist"
-	if !strings.Contains(err.Error(), want) {
+	if want := "exceptions entry nonexistent.go (HISS-19): target file does not exist"; !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %q, want it to contain %q", err.Error(), want)
 	}
 
 	// Boundary: non-regular file (directory) as target is refused.
-	dirTarget := "subpkg.go"
-	if err := os.Mkdir(filepath.Join(tmp, dirTarget), 0o755); err != nil {
+	if err := os.Mkdir(filepath.Join(tmp, "subpkg.go"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	dirManifest := `exceptions:
@@ -1207,8 +1197,7 @@ func TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation(t *testing.T
 	if err == nil {
 		t.Fatal("expected ScanRepo to fail on directory exception target")
 	}
-	wantDir := "is not a regular file"
-	if !strings.Contains(err.Error(), wantDir) {
+	if wantDir := "is not a regular file"; !strings.Contains(err.Error(), wantDir) {
 		t.Fatalf("err = %q, want it to contain %q", err.Error(), wantDir)
 	}
 }
@@ -1253,8 +1242,7 @@ func TestScanRepo_Negative_StaleExceptionForCleanFileFails(t *testing.T) {
 	if len(report.StaleExceptions) != 1 {
 		t.Fatalf("expected 1 stale exception, got %d", len(report.StaleExceptions))
 	}
-	want := "exceptions entry clean.go (HISS-19): excuses no duplicate function block; remove the entry"
-	if report.StaleExceptions[0] != want {
+	if want := "exceptions entry clean.go (HISS-19): excuses no duplicate function block; remove the entry"; report.StaleExceptions[0] != want {
 		t.Fatalf("stale exception = %q, want %q", report.StaleExceptions[0], want)
 	}
 }
@@ -1317,8 +1305,7 @@ func TestScanRepo_Boundary_UnknownLanguageExceptionNotChecked(t *testing.T) {
 	if len(report.NotCheckedExceptions) != 1 {
 		t.Fatalf("expected 1 not checked exception, got %d", len(report.NotCheckedExceptions))
 	}
-	want := "exceptions entry README.md (HISS-19): unknown not scanned by this run; not checked"
-	if report.NotCheckedExceptions[0] != want {
+	if want := "exceptions entry README.md (HISS-19): unknown not scanned by this run; not checked"; report.NotCheckedExceptions[0] != want {
 		t.Fatalf("not checked exception = %q, want %q", report.NotCheckedExceptions[0], want)
 	}
 }
@@ -1363,8 +1350,7 @@ func TestScanRepo_Negative_UnusedExceptionWithClonesFailsForUnusedEntry(t *testi
 	if len(report.StaleExceptions) != 1 {
 		t.Fatalf("expected 1 stale exception, got %d", len(report.StaleExceptions))
 	}
-	want := "exceptions entry clean.go (HISS-19): excuses no duplicate function block; remove the entry"
-	if report.StaleExceptions[0] != want {
+	if want := "exceptions entry clean.go (HISS-19): excuses no duplicate function block; remove the entry"; report.StaleExceptions[0] != want {
 		t.Fatalf("stale exception = %q, want %q", report.StaleExceptions[0], want)
 	}
 }
@@ -1392,8 +1378,7 @@ func TestScanRepo_Negative_SymlinkExceptionTargetIsRefused(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected ScanRepo to fail on symlink exception target")
 	}
-	want := "exceptions entry symlink.go (HISS-19): target is not a regular file"
-	if !strings.Contains(err.Error(), want) {
+	if want := "exceptions entry symlink.go (HISS-19): target is not a regular file"; !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %q, want it to contain %q", err.Error(), want)
 	}
 }
@@ -1421,8 +1406,7 @@ func TestValidateExceptions_Negative_SymlinkAndContextCancellation(t *testing.T)
 	if err == nil {
 		t.Fatal("expected ValidateExceptions to fail on symlink target")
 	}
-	want := "exceptions entry symlink.go (HISS-19): target is not a regular file"
-	if !strings.Contains(err.Error(), want) {
+	if want := "exceptions entry symlink.go (HISS-19): target is not a regular file"; !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %q, want it to contain %q", err.Error(), want)
 	}
 
@@ -1442,8 +1426,7 @@ func TestScanRepo_Negative_MalformedManifestWrapsLoadExceptionsError(t *testing.
 	if err == nil {
 		t.Fatal("expected ScanRepo to fail on malformed manifest")
 	}
-	want := "load HISS-19 exceptions:"
-	if !strings.Contains(err.Error(), want) {
+	if want := "load HISS-19 exceptions:"; !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %q, want it to contain %q", err.Error(), want)
 	}
 }
@@ -1469,8 +1452,7 @@ func TestScanRepo_Negative_MissingExceptionTargetWordingWithFilteredOutPredecess
 	if err == nil {
 		t.Fatal("expected ScanRepo to fail on missing exception target file")
 	}
-	want := "exceptions entry gone.go (HISS-19): target file does not exist"
-	if !strings.Contains(err.Error(), want) {
+	if want := "exceptions entry gone.go (HISS-19): target file does not exist"; !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %q, want it to contain %q", err.Error(), want)
 	}
 	if strings.Contains(err.Error(), "exceptions[0]") {
@@ -1480,26 +1462,24 @@ func TestScanRepo_Negative_MissingExceptionTargetWordingWithFilteredOutPredecess
 
 func TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19(t *testing.T) {
 	tmp := t.TempDir()
-	sourceA := `package test
+	if err := os.WriteFile(filepath.Join(tmp, "cloneA.go"), []byte(`package test
 import "fmt"
 func DuplicateHelperA() {
 	fmt.Println("line 1")
 	fmt.Println("line 2")
 	fmt.Println("line 3")
 }
-`
-	sourceB := `package test
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "cloneB.go"), []byte(`package test
 import "fmt"
 func DuplicateHelperB() {
 	fmt.Println("line 1")
 	fmt.Println("line 2")
 	fmt.Println("line 3")
 }
-`
-	if err := os.WriteFile(filepath.Join(tmp, "cloneA.go"), []byte(sourceA), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tmp, "cloneB.go"), []byte(sourceB), 0o600); err != nil {
+`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1547,26 +1527,24 @@ func DuplicateHelperB() {
 
 func TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone(t *testing.T) {
 	tmp := t.TempDir()
-	sourceA := `package test
+	if err := os.WriteFile(filepath.Join(tmp, "cloneA.go"), []byte(`package test
 import "fmt"
 func DuplicateHelperA() {
 	fmt.Println("step 1")
 	fmt.Println("step 2")
 	fmt.Println("step 3")
 }
-`
-	sourceB := `package test
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "cloneB.go"), []byte(`package test
 import "fmt"
 func DuplicateHelperB() {
 	fmt.Println("step 1")
 	fmt.Println("step 2")
 	fmt.Println("step 3")
 }
-`
-	if err := os.WriteFile(filepath.Join(tmp, "cloneA.go"), []byte(sourceA), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(tmp, "cloneB.go"), []byte(sourceB), 0o600); err != nil {
+`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2036,8 +2014,7 @@ func TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked(t *testing.T) {
 	if len(report.NotCheckedExceptions) != 1 {
 		t.Fatalf("expected 1 not checked exception, got %d: %v", len(report.NotCheckedExceptions), report.NotCheckedExceptions)
 	}
-	want := "exceptions entry interop.c (HISS-19): c not scanned by this run; not checked"
-	if report.NotCheckedExceptions[0] != want {
+	if want := "exceptions entry interop.c (HISS-19): c not scanned by this run; not checked"; report.NotCheckedExceptions[0] != want {
 		t.Fatalf("not checked exception = %q, want %q", report.NotCheckedExceptions[0], want)
 	}
 }
@@ -2065,8 +2042,7 @@ func TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale(t *testing.T) {
 	if len(report.StaleExceptions) != 1 {
 		t.Fatalf("expected 1 stale exception, got %d", len(report.StaleExceptions))
 	}
-	want := "exceptions entry clean.go (HISS-19): excuses no duplicate function block; remove the entry"
-	if report.StaleExceptions[0] != want {
+	if want := "exceptions entry clean.go (HISS-19): excuses no duplicate function block; remove the entry"; report.StaleExceptions[0] != want {
 		t.Fatalf("stale exception = %q, want %q", report.StaleExceptions[0], want)
 	}
 	if len(report.NotCheckedExceptions) != 0 {
@@ -2103,15 +2079,13 @@ func TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly(t *testing.T) {
 	if len(report.StaleExceptions) != 1 {
 		t.Fatalf("expected 1 stale exception, got %d: %v", len(report.StaleExceptions), report.StaleExceptions)
 	}
-	wantStale := "exceptions entry clean.go (HISS-19): excuses no duplicate function block; remove the entry"
-	if report.StaleExceptions[0] != wantStale {
+	if wantStale := "exceptions entry clean.go (HISS-19): excuses no duplicate function block; remove the entry"; report.StaleExceptions[0] != wantStale {
 		t.Fatalf("stale exception = %q, want %q", report.StaleExceptions[0], wantStale)
 	}
 	if len(report.NotCheckedExceptions) != 1 {
 		t.Fatalf("expected 1 not checked exception, got %d: %v", len(report.NotCheckedExceptions), report.NotCheckedExceptions)
 	}
-	wantNotChecked := "exceptions entry interop.c (HISS-19): c not scanned by this run; not checked"
-	if report.NotCheckedExceptions[0] != wantNotChecked {
+	if wantNotChecked := "exceptions entry interop.c (HISS-19): c not scanned by this run; not checked"; report.NotCheckedExceptions[0] != wantNotChecked {
 		t.Fatalf("not checked exception = %q, want %q", report.NotCheckedExceptions[0], wantNotChecked)
 	}
 }
@@ -2143,8 +2117,7 @@ func TestScanRepo_Boundary_NotApplicableUnscannedExceptionNotChecked(t *testing.
 	if len(report.NotCheckedExceptions) != 1 {
 		t.Fatalf("expected 1 not checked exception, got %d: %v", len(report.NotCheckedExceptions), report.NotCheckedExceptions)
 	}
-	want := "exceptions entry interop.c (HISS-19): c not scanned by this run; not checked"
-	if report.NotCheckedExceptions[0] != want {
+	if want := "exceptions entry interop.c (HISS-19): c not scanned by this run; not checked"; report.NotCheckedExceptions[0] != want {
 		t.Fatalf("not checked exception = %q, want %q", report.NotCheckedExceptions[0], want)
 	}
 }

@@ -1,9 +1,9 @@
 {
   "version": 1,
-  "generated_at": "2026-10-31T00:23:41Z",
+  "generated_at": "2026-10-31T01:52:48Z",
   "repository": "cordanaLLM/praetor",
-  "commit_sha": "9d151c89400d2b9da2b3310d5d23ff2f7fc5c7cc",
-  "total_infractions": 1158,
+  "commit_sha": "cd167b8b61f974977749d8db04a5eecf0cbbd46f",
+  "total_infractions": 1076,
   "infractions": [
     {
       "rule_id": "HISS-05",
@@ -223,30 +223,12 @@
     },
     {
       "rule_id": "HISS-05",
-      "file_path": "cmd/standardsctl/audit.go",
-      "line_number": 772,
-      "symbol": "auditRunnerMatrix",
-      "message": "auditRunnerMatrix: 'targets' line 772; declare in range block line 784",
-      "anchor": "fn:auditRunnerMatrix",
-      "fingerprint": "cmd/standardsctl/audit.go:HISS-05:fn:auditRunnerMatrix#1"
-    },
-    {
-      "rule_id": "HISS-05",
       "file_path": "cmd/standardsctl/audit_agent_definitions_test.go",
       "line_number": 124,
       "symbol": "TestAuditAgentDefinitionsFrontMatterBoundaries",
       "message": "TestAuditAgentDefinitionsFrontMatterBoundaries: 'cases' line 124; declare in range block line 134",
       "anchor": "fn:TestAuditAgentDefinitionsFrontMatterBoundaries",
       "fingerprint": "cmd/standardsctl/audit_agent_definitions_test.go:HISS-05:fn:TestAuditAgentDefinitionsFrontMatterBoundaries#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "cmd/standardsctl/audit_api_system_packages_test.go",
-      "line_number": 80,
-      "symbol": "TestAuditLocksTheAPIWorkflowToTheExceptionsAlone",
-      "message": "TestAuditLocksTheAPIWorkflowToTheExceptionsAlone: 'earlier' line 80; declare in range block line 83",
-      "anchor": "fn:TestAuditLocksTheAPIWorkflowToTheExceptionsAlone",
-      "fingerprint": "cmd/standardsctl/audit_api_system_packages_test.go:HISS-05:fn:TestAuditLocksTheAPIWorkflowToTheExceptionsAlone#1"
     },
     {
       "rule_id": "HISS-05",
@@ -466,15 +448,6 @@
     },
     {
       "rule_id": "HISS-05",
-      "file_path": "cmd/standardsctl/dedupe_test.go",
-      "line_number": 309,
-      "symbol": "TestRunDedupeScan_Boundary_JSONKeepsTheVerdict",
-      "message": "TestRunDedupeScan_Boundary_JSONKeepsTheVerdict: 'missing' line 309; declare in if block line 310",
-      "anchor": "fn:TestRunDedupeScan_Boundary_JSONKeepsTheVerdict",
-      "fingerprint": "cmd/standardsctl/dedupe_test.go:HISS-05:fn:TestRunDedupeScan_Boundary_JSONKeepsTheVerdict#1"
-    },
-    {
-      "rule_id": "HISS-05",
       "file_path": "cmd/standardsctl/dogfood_repairs_test.go",
       "line_number": 39,
       "symbol": "repairCLIFixture",
@@ -535,24 +508,6 @@
       "message": "TestForgeClaimsMigrateCLI_Negative_FlagValidation: 'cases' line 135; declare in range block line 145",
       "anchor": "fn:TestForgeClaimsMigrateCLI_Negative_FlagValidation",
       "fingerprint": "cmd/standardsctl/forge_claims_migrate_test.go:HISS-05:fn:TestForgeClaimsMigrateCLI_Negative_FlagValidation#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "cmd/standardsctl/forge_push_test.go",
-      "line_number": 55,
-      "symbol": "TestForgePrePush_Negative_DetachedMissingAndEmpty",
-      "message": "TestForgePrePush_Negative_DetachedMissingAndEmpty: 'cases' line 55; declare in range block line 63",
-      "anchor": "fn:TestForgePrePush_Negative_DetachedMissingAndEmpty",
-      "fingerprint": "cmd/standardsctl/forge_push_test.go:HISS-05:fn:TestForgePrePush_Negative_DetachedMissingAndEmpty#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "cmd/standardsctl/forge_push_test.go",
-      "line_number": 121,
-      "symbol": "TestForgeCheckMessage_PlantedMigration",
-      "message": "TestForgeCheckMessage_PlantedMigration: 'cases' line 121; declare in range block line 129",
-      "anchor": "fn:TestForgeCheckMessage_PlantedMigration",
-      "fingerprint": "cmd/standardsctl/forge_push_test.go:HISS-05:fn:TestForgeCheckMessage_PlantedMigration#1"
     },
     {
       "rule_id": "HISS-05",
@@ -844,24 +799,6 @@
     },
     {
       "rule_id": "HISS-05",
-      "file_path": "cmd/standardsctl/tidy_coverage_test.go",
-      "line_number": 180,
-      "symbol": "TestRunCITidyCoverage_Positive_DataPaths",
-      "message": "TestRunCITidyCoverage_Positive_DataPaths: 'want' line 180; declare in if block line 181",
-      "anchor": "fn:TestRunCITidyCoverage_Positive_DataPaths",
-      "fingerprint": "cmd/standardsctl/tidy_coverage_test.go:HISS-05:fn:TestRunCITidyCoverage_Positive_DataPaths#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "cmd/standardsctl/tidy_coverage_test.go",
-      "line_number": 194,
-      "symbol": "TestRunCITidyCoverage_Boundary_SkipWhenAllUnitsAreData",
-      "message": "TestRunCITidyCoverage_Boundary_SkipWhenAllUnitsAreData: 'want' line 194; declare in if block line 195",
-      "anchor": "fn:TestRunCITidyCoverage_Boundary_SkipWhenAllUnitsAreData",
-      "fingerprint": "cmd/standardsctl/tidy_coverage_test.go:HISS-05:fn:TestRunCITidyCoverage_Boundary_SkipWhenAllUnitsAreData#1"
-    },
-    {
-      "rule_id": "HISS-05",
       "file_path": "cmd/standardsctl/topology_audit_test.go",
       "line_number": 137,
       "symbol": "TestTopologyAuditVerdict_TruncationJoinsOtherProblems",
@@ -877,42 +814,6 @@
       "message": "TestMergeActionlintLabelsBoundaryLayouts: 'block' line 255; declare in range block line 256",
       "anchor": "fn:TestMergeActionlintLabelsBoundaryLayouts",
       "fingerprint": "internal/adopt/actionlint_test.go:HISS-05:fn:TestMergeActionlintLabelsBoundaryLayouts#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/adopt/adopt_test.go",
-      "line_number": 246,
-      "symbol": "TestAdopt_Positive_Greenfield",
-      "message": "TestAdopt_Positive_Greenfield: 'expectedCreated' line 246; declare in range block line 251",
-      "anchor": "fn:TestAdopt_Positive_Greenfield",
-      "fingerprint": "internal/adopt/adopt_test.go:HISS-05:fn:TestAdopt_Positive_Greenfield#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/adopt/adopt_test.go",
-      "line_number": 1048,
-      "symbol": "TestResolveArchetype_Markers",
-      "message": "TestResolveArchetype_Markers: 'tests' line 1048; declare in range block line 1064",
-      "anchor": "fn:TestResolveArchetype_Markers",
-      "fingerprint": "internal/adopt/adopt_test.go:HISS-05:fn:TestResolveArchetype_Markers#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/adopt/adopt_test.go",
-      "line_number": 1576,
-      "symbol": "TestAdopt_AgentsMD_ForcePreservesCustomInstructions",
-      "message": "TestAdopt_AgentsMD_ForcePreservesCustomInstructions: 'cases' line 1576; declare in range block line 1580",
-      "anchor": "fn:TestAdopt_AgentsMD_ForcePreservesCustomInstructions",
-      "fingerprint": "internal/adopt/adopt_test.go:HISS-05:fn:TestAdopt_AgentsMD_ForcePreservesCustomInstructions#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/adopt/adopt_test.go",
-      "line_number": 2412,
-      "symbol": "TestRequiredStatusContexts_WorkflowTriggers",
-      "message": "TestRequiredStatusContexts_WorkflowTriggers: 'want' line 2412; declare in if block line 2413",
-      "anchor": "fn:TestRequiredStatusContexts_WorkflowTriggers",
-      "fingerprint": "internal/adopt/adopt_test.go:HISS-05:fn:TestRequiredStatusContexts_WorkflowTriggers#1"
     },
     {
       "rule_id": "HISS-05",
@@ -940,33 +841,6 @@
       "message": "buildLaneJudgement.writeExcused: 'entry' line 204; declare in for block line 205",
       "anchor": "fn:buildLaneJudgement.writeExcused",
       "fingerprint": "internal/adopt/build_warnings_audit.go:HISS-05:fn:buildLaneJudgement.writeExcused#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/adopt/build_warnings_audit_test.go",
-      "line_number": 45,
-      "symbol": "TestAuditBuildWarningsFailsALaneWithoutTheForm",
-      "message": "TestAuditBuildWarningsFailsALaneWithoutTheForm: 'cases' line 45; declare in range block line 61",
-      "anchor": "fn:TestAuditBuildWarningsFailsALaneWithoutTheForm",
-      "fingerprint": "internal/adopt/build_warnings_audit_test.go:HISS-05:fn:TestAuditBuildWarningsFailsALaneWithoutTheForm#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/adopt/build_warnings_audit_test.go",
-      "line_number": 82,
-      "symbol": "TestAuditBuildWarningsPassesLanesWithTheForm",
-      "message": "TestAuditBuildWarningsPassesLanesWithTheForm: 'cases' line 82; declare in range block line 91",
-      "anchor": "fn:TestAuditBuildWarningsPassesLanesWithTheForm",
-      "fingerprint": "internal/adopt/build_warnings_audit_test.go:HISS-05:fn:TestAuditBuildWarningsPassesLanesWithTheForm#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/adopt/build_warnings_audit_test.go",
-      "line_number": 280,
-      "symbol": "TestAuditBuildWarningsReplaysTheHISS10Fixtures",
-      "message": "TestAuditBuildWarningsReplaysTheHISS10Fixtures: 'buckets' line 280; declare in range block line 281",
-      "anchor": "fn:TestAuditBuildWarningsReplaysTheHISS10Fixtures",
-      "fingerprint": "internal/adopt/build_warnings_audit_test.go:HISS-05:fn:TestAuditBuildWarningsReplaysTheHISS10Fixtures#1"
     },
     {
       "rule_id": "HISS-05",
@@ -1219,24 +1093,6 @@
       "message": "TestAdopt_Positive_KconfigRuleGetsTheDirectoryNegation: 'probes' line 303; declare in if block line 304",
       "anchor": "fn:TestAdopt_Positive_KconfigRuleGetsTheDirectoryNegation",
       "fingerprint": "internal/adopt/ignored_writes_test.go:HISS-05:fn:TestAdopt_Positive_KconfigRuleGetsTheDirectoryNegation#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/adopt/lefthook_commit_policy_test.go",
-      "line_number": 103,
-      "symbol": "TestAdoptCommitPolicy_Negative_CustomCommitMsgPreserved",
-      "message": "TestAdoptCommitPolicy_Negative_CustomCommitMsgPreserved: 'custom' line 103; declare in range block line 104",
-      "anchor": "fn:TestAdoptCommitPolicy_Negative_CustomCommitMsgPreserved",
-      "fingerprint": "internal/adopt/lefthook_commit_policy_test.go:HISS-05:fn:TestAdoptCommitPolicy_Negative_CustomCommitMsgPreserved#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/adopt/lefthook_identity_test.go",
-      "line_number": 446,
-      "symbol": "TestClassifyLefthookConfig_Positive_JobsListSupersetAndRemotes",
-      "message": "TestClassifyLefthookConfig_Positive_JobsListSupersetAndRemotes: 'remote' line 446; declare in range block line 447",
-      "anchor": "fn:TestClassifyLefthookConfig_Positive_JobsListSupersetAndRemotes",
-      "fingerprint": "internal/adopt/lefthook_identity_test.go:HISS-05:fn:TestClassifyLefthookConfig_Positive_JobsListSupersetAndRemotes#1"
     },
     {
       "rule_id": "HISS-05",
@@ -1588,51 +1444,6 @@
       "message": "rustMSRVJobVersions: 'active' line 61; declare in for block line 63",
       "anchor": "fn:rustMSRVJobVersions",
       "fingerprint": "internal/adopt/rust_msrv_workflow.go:HISS-05:fn:rustMSRVJobVersions#2"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/adopt/supply_chain_audit_test.go",
-      "line_number": 147,
-      "symbol": "TestAuditSupplyChainBoundaries",
-      "message": "TestAuditSupplyChainBoundaries: 'malformed' line 147; declare in range block line 151",
-      "anchor": "fn:TestAuditSupplyChainBoundaries",
-      "fingerprint": "internal/adopt/supply_chain_audit_test.go:HISS-05:fn:TestAuditSupplyChainBoundaries#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/adopt/supply_chain_audit_test.go",
-      "line_number": 177,
-      "symbol": "TestAuditSupplyChainReplaysTheHISS11Fixtures",
-      "message": "TestAuditSupplyChainReplaysTheHISS11Fixtures: 'buckets' line 177; declare in range block line 178",
-      "anchor": "fn:TestAuditSupplyChainReplaysTheHISS11Fixtures",
-      "fingerprint": "internal/adopt/supply_chain_audit_test.go:HISS-05:fn:TestAuditSupplyChainReplaysTheHISS11Fixtures#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/adopt/supply_chain_audit_test.go",
-      "line_number": 329,
-      "symbol": "TestAuditSupplyChainReplaysImageRefFixtures",
-      "message": "TestAuditSupplyChainReplaysImageRefFixtures: 'langs' line 329; declare in range block line 331",
-      "anchor": "fn:TestAuditSupplyChainReplaysImageRefFixtures",
-      "fingerprint": "internal/adopt/supply_chain_audit_test.go:HISS-05:fn:TestAuditSupplyChainReplaysImageRefFixtures#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/adopt/supply_chain_audit_test.go",
-      "line_number": 330,
-      "symbol": "TestAuditSupplyChainReplaysImageRefFixtures",
-      "message": "TestAuditSupplyChainReplaysImageRefFixtures: 'buckets' line 330; declare in range block line 331",
-      "anchor": "fn:TestAuditSupplyChainReplaysImageRefFixtures",
-      "fingerprint": "internal/adopt/supply_chain_audit_test.go:HISS-05:fn:TestAuditSupplyChainReplaysImageRefFixtures#2"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/adopt/supply_chain_audit_test.go",
-      "line_number": 425,
-      "symbol": "assertUnresolvableImageRefsPass",
-      "message": "assertUnresolvableImageRefsPass: 'wantInfo' line 425; declare in if block line 426",
-      "anchor": "fn:assertUnresolvableImageRefsPass",
-      "fingerprint": "internal/adopt/supply_chain_audit_test.go:HISS-05:fn:assertUnresolvableImageRefsPass#1"
     },
     {
       "rule_id": "HISS-05",
@@ -3643,60 +3454,6 @@
     },
     {
       "rule_id": "HISS-05",
-      "file_path": "internal/config/exceptions_expiry_test.go",
-      "line_number": 15,
-      "symbol": "TestValidateExceptionsCategoryCaps",
-      "message": "TestValidateExceptionsCategoryCaps: 'cases' line 15; declare in range block line 48",
-      "anchor": "fn:TestValidateExceptionsCategoryCaps",
-      "fingerprint": "internal/config/exceptions_expiry_test.go:HISS-05:fn:TestValidateExceptionsCategoryCaps#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/config/exceptions_test.go",
-      "line_number": 281,
-      "symbol": "TestValidateExceptionsReleaseTokenNamesAWorkflow",
-      "message": "TestValidateExceptionsReleaseTokenNamesAWorkflow: 'want' line 281; declare in if block line 282",
-      "anchor": "fn:TestValidateExceptionsReleaseTokenNamesAWorkflow",
-      "fingerprint": "internal/config/exceptions_test.go:HISS-05:fn:TestValidateExceptionsReleaseTokenNamesAWorkflow#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/config/exceptions_test.go",
-      "line_number": 292,
-      "symbol": "TestValidateExceptionsTestTimeoutNamesAWorkflow",
-      "message": "TestValidateExceptionsTestTimeoutNamesAWorkflow: 'want' line 292; declare in if block line 293",
-      "anchor": "fn:TestValidateExceptionsTestTimeoutNamesAWorkflow",
-      "fingerprint": "internal/config/exceptions_test.go:HISS-05:fn:TestValidateExceptionsTestTimeoutNamesAWorkflow#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/config/exceptions_test.go",
-      "line_number": 303,
-      "symbol": "TestValidateExceptionsJobTimeoutNamesAWorkflow",
-      "message": "TestValidateExceptionsJobTimeoutNamesAWorkflow: 'want' line 303; declare in if block line 304",
-      "anchor": "fn:TestValidateExceptionsJobTimeoutNamesAWorkflow",
-      "fingerprint": "internal/config/exceptions_test.go:HISS-05:fn:TestValidateExceptionsJobTimeoutNamesAWorkflow#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/config/exceptions_test.go",
-      "line_number": 464,
-      "symbol": "TestValidateClangTidyDataPaths",
-      "message": "TestValidateClangTidyDataPaths: 'cases' line 464; declare in range block line 474",
-      "anchor": "fn:TestValidateClangTidyDataPaths",
-      "fingerprint": "internal/config/exceptions_test.go:HISS-05:fn:TestValidateClangTidyDataPaths#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/config/exceptions_test.go",
-      "line_number": 686,
-      "symbol": "TestFormatDaysLeft_Cases",
-      "message": "TestFormatDaysLeft_Cases: 'cases' line 686; declare in range block line 696",
-      "anchor": "fn:TestFormatDaysLeft_Cases",
-      "fingerprint": "internal/config/exceptions_test.go:HISS-05:fn:TestFormatDaysLeft_Cases#1"
-    },
-    {
-      "rule_id": "HISS-05",
       "file_path": "internal/config/facet_effects_test.go",
       "line_number": 42,
       "symbol": "TestFacetEffects_Positive_NamesWhatEachFacetRaises",
@@ -4237,249 +3994,6 @@
     },
     {
       "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 27,
-      "symbol": "TestScanRepo_Positive_DuplicatesAndSprawl",
-      "message": "TestScanRepo_Positive_DuplicatesAndSprawl: 'file1' line 27; declare in if block line 53",
-      "anchor": "fn:TestScanRepo_Positive_DuplicatesAndSprawl",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Positive_DuplicatesAndSprawl#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 37,
-      "symbol": "TestScanRepo_Positive_DuplicatesAndSprawl",
-      "message": "TestScanRepo_Positive_DuplicatesAndSprawl: 'file2' line 37; declare in if block line 56",
-      "anchor": "fn:TestScanRepo_Positive_DuplicatesAndSprawl",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Positive_DuplicatesAndSprawl#2"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 47,
-      "symbol": "TestScanRepo_Positive_DuplicatesAndSprawl",
-      "message": "TestScanRepo_Positive_DuplicatesAndSprawl: 'sprawlFile' line 47; declare in if block line 59",
-      "anchor": "fn:TestScanRepo_Positive_DuplicatesAndSprawl",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Positive_DuplicatesAndSprawl#3"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 103,
-      "symbol": "TestScanRepo_Positive_CommandContextGitIsReported",
-      "message": "TestScanRepo_Positive_CommandContextGitIsReported: 'source' line 103; declare in if block line 120",
-      "anchor": "fn:TestScanRepo_Positive_CommandContextGitIsReported",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Positive_CommandContextGitIsReported#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 293,
-      "symbol": "TestScanRepo_Boundary_SmallFunctionsIgnored",
-      "message": "TestScanRepo_Boundary_SmallFunctionsIgnored: 'file1' line 293; declare in if block line 296",
-      "anchor": "fn:TestScanRepo_Boundary_SmallFunctionsIgnored",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Boundary_SmallFunctionsIgnored#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 294,
-      "symbol": "TestScanRepo_Boundary_SmallFunctionsIgnored",
-      "message": "TestScanRepo_Boundary_SmallFunctionsIgnored: 'file2' line 294; declare in if block line 299",
-      "anchor": "fn:TestScanRepo_Boundary_SmallFunctionsIgnored",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Boundary_SmallFunctionsIgnored#2"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 777,
-      "symbol": "TestScanRepoContextAndRootErrors",
-      "message": "TestScanRepoContextAndRootErrors: 'absent' line 777; declare in if block line 778",
-      "anchor": "fn:TestScanRepoContextAndRootErrors",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepoContextAndRootErrors#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 880,
-      "symbol": "TestScanRepo_Boundary_SprawlAdviceMatchesTheLinterRule",
-      "message": "TestScanRepo_Boundary_SprawlAdviceMatchesTheLinterRule: 'source' line 880; declare in if block line 888",
-      "anchor": "fn:TestScanRepo_Boundary_SprawlAdviceMatchesTheLinterRule",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Boundary_SprawlAdviceMatchesTheLinterRule#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 1189,
-      "symbol": "TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation",
-      "message": "TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation: 'want' line 1189; declare in if block line 1190",
-      "anchor": "fn:TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 1195,
-      "symbol": "TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation",
-      "message": "TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation: 'dirTarget' line 1195; declare in if block line 1196",
-      "anchor": "fn:TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation#2"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 1210,
-      "symbol": "TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation",
-      "message": "TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation: 'wantDir' line 1210; declare in if block line 1211",
-      "anchor": "fn:TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation#3"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 1256,
-      "symbol": "TestScanRepo_Negative_StaleExceptionForCleanFileFails",
-      "message": "TestScanRepo_Negative_StaleExceptionForCleanFileFails: 'want' line 1256; declare in if block line 1257",
-      "anchor": "fn:TestScanRepo_Negative_StaleExceptionForCleanFileFails",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Negative_StaleExceptionForCleanFileFails#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 1320,
-      "symbol": "TestScanRepo_Boundary_UnknownLanguageExceptionNotChecked",
-      "message": "TestScanRepo_Boundary_UnknownLanguageExceptionNotChecked: 'want' line 1320; declare in if block line 1321",
-      "anchor": "fn:TestScanRepo_Boundary_UnknownLanguageExceptionNotChecked",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Boundary_UnknownLanguageExceptionNotChecked#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 1366,
-      "symbol": "TestScanRepo_Negative_UnusedExceptionWithClonesFailsForUnusedEntry",
-      "message": "TestScanRepo_Negative_UnusedExceptionWithClonesFailsForUnusedEntry: 'want' line 1366; declare in if block line 1367",
-      "anchor": "fn:TestScanRepo_Negative_UnusedExceptionWithClonesFailsForUnusedEntry",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Negative_UnusedExceptionWithClonesFailsForUnusedEntry#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 1395,
-      "symbol": "TestScanRepo_Negative_SymlinkExceptionTargetIsRefused",
-      "message": "TestScanRepo_Negative_SymlinkExceptionTargetIsRefused: 'want' line 1395; declare in if block line 1396",
-      "anchor": "fn:TestScanRepo_Negative_SymlinkExceptionTargetIsRefused",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Negative_SymlinkExceptionTargetIsRefused#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 1424,
-      "symbol": "TestValidateExceptions_Negative_SymlinkAndContextCancellation",
-      "message": "TestValidateExceptions_Negative_SymlinkAndContextCancellation: 'want' line 1424; declare in if block line 1425",
-      "anchor": "fn:TestValidateExceptions_Negative_SymlinkAndContextCancellation",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestValidateExceptions_Negative_SymlinkAndContextCancellation#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 1445,
-      "symbol": "TestScanRepo_Negative_MalformedManifestWrapsLoadExceptionsError",
-      "message": "TestScanRepo_Negative_MalformedManifestWrapsLoadExceptionsError: 'want' line 1445; declare in if block line 1446",
-      "anchor": "fn:TestScanRepo_Negative_MalformedManifestWrapsLoadExceptionsError",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Negative_MalformedManifestWrapsLoadExceptionsError#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 1472,
-      "symbol": "TestScanRepo_Negative_MissingExceptionTargetWordingWithFilteredOutPredecessor",
-      "message": "TestScanRepo_Negative_MissingExceptionTargetWordingWithFilteredOutPredecessor: 'want' line 1472; declare in if block line 1473",
-      "anchor": "fn:TestScanRepo_Negative_MissingExceptionTargetWordingWithFilteredOutPredecessor",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Negative_MissingExceptionTargetWordingWithFilteredOutPredecessor#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 1483,
-      "symbol": "TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19",
-      "message": "TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19: 'sourceA' line 1483; declare in if block line 1499",
-      "anchor": "fn:TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 1491,
-      "symbol": "TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19",
-      "message": "TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19: 'sourceB' line 1491; declare in if block line 1502",
-      "anchor": "fn:TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19#2"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 1550,
-      "symbol": "TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone",
-      "message": "TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone: 'sourceA' line 1550; declare in if block line 1566",
-      "anchor": "fn:TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 1558,
-      "symbol": "TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone",
-      "message": "TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone: 'sourceB' line 1558; declare in if block line 1569",
-      "anchor": "fn:TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone#2"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 2039,
-      "symbol": "TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked",
-      "message": "TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked: 'want' line 2039; declare in if block line 2040",
-      "anchor": "fn:TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 2068,
-      "symbol": "TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale",
-      "message": "TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale: 'want' line 2068; declare in if block line 2069",
-      "anchor": "fn:TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 2106,
-      "symbol": "TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly",
-      "message": "TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly: 'wantStale' line 2106; declare in if block line 2107",
-      "anchor": "fn:TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 2113,
-      "symbol": "TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly",
-      "message": "TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly: 'wantNotChecked' line 2113; declare in if block line 2114",
-      "anchor": "fn:TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly#2"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/dedupe/dedupe_test.go",
-      "line_number": 2146,
-      "symbol": "TestScanRepo_Boundary_NotApplicableUnscannedExceptionNotChecked",
-      "message": "TestScanRepo_Boundary_NotApplicableUnscannedExceptionNotChecked: 'want' line 2146; declare in if block line 2147",
-      "anchor": "fn:TestScanRepo_Boundary_NotApplicableUnscannedExceptionNotChecked",
-      "fingerprint": "internal/dedupe/dedupe_test.go:HISS-05:fn:TestScanRepo_Boundary_NotApplicableUnscannedExceptionNotChecked#1"
-    },
-    {
-      "rule_id": "HISS-05",
       "file_path": "internal/dedupe/foreign_test.go",
       "line_number": 29,
       "symbol": "TestForeignScan_ExceptionUsage",
@@ -4513,15 +4027,6 @@
       "message": "TestBootstrapClosureCapturesOnlyTheBuildImports: 'want' line 71; declare in if block line 82",
       "anchor": "fn:TestBootstrapClosureCapturesOnlyTheBuildImports",
       "fingerprint": "internal/devcontainer/bootstrap_closure_test.go:HISS-05:fn:TestBootstrapClosureCapturesOnlyTheBuildImports#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/devcontainer/bootstrap_family_golden_test.go",
-      "line_number": 46,
-      "symbol": "TestBootstrapAssetFamiliesGolden",
-      "message": "TestBootstrapAssetFamiliesGolden: 'markdownDirective' line 46; declare in range block line 47",
-      "anchor": "fn:TestBootstrapAssetFamiliesGolden",
-      "fingerprint": "internal/devcontainer/bootstrap_family_golden_test.go:HISS-05:fn:TestBootstrapAssetFamiliesGolden#1"
     },
     {
       "rule_id": "HISS-05",
@@ -5632,33 +5137,6 @@
     },
     {
       "rule_id": "HISS-05",
-      "file_path": "internal/forge/job_timeout_audit_test.go",
-      "line_number": 194,
-      "symbol": "TestJobTimeout_PathNaming",
-      "message": "TestJobTimeout_PathNaming: 'want' line 194; declare in if block line 195",
-      "anchor": "fn:TestJobTimeout_PathNaming",
-      "fingerprint": "internal/forge/job_timeout_audit_test.go:HISS-05:fn:TestJobTimeout_PathNaming#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/forge/job_timeout_audit_test.go",
-      "line_number": 274,
-      "symbol": "TestJobMatches_MatrixAndPrefix",
-      "message": "TestJobMatches_MatrixAndPrefix: 'cases' line 274; declare in range block line 285",
-      "anchor": "fn:TestJobMatches_MatrixAndPrefix",
-      "fingerprint": "internal/forge/job_timeout_audit_test.go:HISS-05:fn:TestJobMatches_MatrixAndPrefix#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/forge/job_timeout_audit_test.go",
-      "line_number": 387,
-      "symbol": "TestJobTimeout_Unreadable_RunJobsFailsAllRuns",
-      "message": "TestJobTimeout_Unreadable_RunJobsFailsAllRuns: 'want' line 387; declare in if block line 388",
-      "anchor": "fn:TestJobTimeout_Unreadable_RunJobsFailsAllRuns",
-      "fingerprint": "internal/forge/job_timeout_audit_test.go:HISS-05:fn:TestJobTimeout_Unreadable_RunJobsFailsAllRuns#1"
-    },
-    {
-      "rule_id": "HISS-05",
       "file_path": "internal/forge/labels_test.go",
       "line_number": 121,
       "symbol": "TestDefaultLabelTaxonomy_Negative",
@@ -6109,42 +5587,6 @@
     },
     {
       "rule_id": "HISS-05",
-      "file_path": "internal/forge/workflow_full_tree_test.go",
-      "line_number": 20,
-      "symbol": "TestAuditWorkflowTriggers_FullTree_Negative_PullRequestPreCommitAllFiles",
-      "message": "TestAuditWorkflowTriggers_FullTree_Negative_PullRequestPreCommitAllFiles: 'wantFinding' line 20; declare in if block line 21",
-      "anchor": "fn:TestAuditWorkflowTriggers_FullTree_Negative_PullRequestPreCommitAllFiles",
-      "fingerprint": "internal/forge/workflow_full_tree_test.go:HISS-05:fn:TestAuditWorkflowTriggers_FullTree_Negative_PullRequestPreCommitAllFiles#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/forge/workflow_full_tree_test.go",
-      "line_number": 29,
-      "symbol": "TestAuditWorkflowTriggers_FullTree_Positive_GuardedJobOrStep",
-      "message": "TestAuditWorkflowTriggers_FullTree_Positive_GuardedJobOrStep: 'jobGuarded' line 29; declare in range block line 31",
-      "anchor": "fn:TestAuditWorkflowTriggers_FullTree_Positive_GuardedJobOrStep",
-      "fingerprint": "internal/forge/workflow_full_tree_test.go:HISS-05:fn:TestAuditWorkflowTriggers_FullTree_Positive_GuardedJobOrStep#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/forge/workflow_full_tree_test.go",
-      "line_number": 30,
-      "symbol": "TestAuditWorkflowTriggers_FullTree_Positive_GuardedJobOrStep",
-      "message": "TestAuditWorkflowTriggers_FullTree_Positive_GuardedJobOrStep: 'stepGuarded' line 30; declare in range block line 31",
-      "anchor": "fn:TestAuditWorkflowTriggers_FullTree_Positive_GuardedJobOrStep",
-      "fingerprint": "internal/forge/workflow_full_tree_test.go:HISS-05:fn:TestAuditWorkflowTriggers_FullTree_Positive_GuardedJobOrStep#2"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/forge/workflow_full_tree_test.go",
-      "line_number": 81,
-      "symbol": "TestAuditWorkflowTriggers_FullTree_Negative_MoleculeAll",
-      "message": "TestAuditWorkflowTriggers_FullTree_Negative_MoleculeAll: 'wantFinding' line 81; declare in if block line 82",
-      "anchor": "fn:TestAuditWorkflowTriggers_FullTree_Negative_MoleculeAll",
-      "fingerprint": "internal/forge/workflow_full_tree_test.go:HISS-05:fn:TestAuditWorkflowTriggers_FullTree_Negative_MoleculeAll#1"
-    },
-    {
-      "rule_id": "HISS-05",
       "file_path": "internal/forge/workflow_guard_test.go",
       "line_number": 88,
       "symbol": "startsUnattended",
@@ -6385,15 +5827,6 @@
       "message": "resolveExternalCallees: 'resolvedCount' line 203; declare in for block line 204",
       "anchor": "fn:resolveExternalCallees",
       "fingerprint": "internal/forge/workflow_trigger_audit.go:HISS-05:fn:resolveExternalCallees#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/forge/workflow_trigger_audit_test.go",
-      "line_number": 339,
-      "symbol": "TestAuditWorkflowTriggers_SkipsWithoutWorkflowsAndFailsUnread",
-      "message": "TestAuditWorkflowTriggers_SkipsWithoutWorkflowsAndFailsUnread: 'missing' line 339; declare in if block line 340",
-      "anchor": "fn:TestAuditWorkflowTriggers_SkipsWithoutWorkflowsAndFailsUnread",
-      "fingerprint": "internal/forge/workflow_trigger_audit_test.go:HISS-05:fn:TestAuditWorkflowTriggers_SkipsWithoutWorkflowsAndFailsUnread#1"
     },
     {
       "rule_id": "HISS-05",
@@ -7252,51 +6685,6 @@
     },
     {
       "rule_id": "HISS-05",
-      "file_path": "internal/hiss/hiss_test.go",
-      "line_number": 81,
-      "symbol": "TestShouldIgnorePath",
-      "message": "TestShouldIgnorePath: 'tests' line 81; declare in range block line 113",
-      "anchor": "fn:TestShouldIgnorePath",
-      "fingerprint": "internal/hiss/hiss_test.go:HISS-05:fn:TestShouldIgnorePath#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/hiss/hiss_test.go",
-      "line_number": 121,
-      "symbol": "TestShouldIgnoreDir",
-      "message": "TestShouldIgnoreDir: 'tests' line 121; declare in range block line 144",
-      "anchor": "fn:TestShouldIgnoreDir",
-      "fingerprint": "internal/hiss/hiss_test.go:HISS-05:fn:TestShouldIgnoreDir#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/hiss/hiss_test.go",
-      "line_number": 498,
-      "symbol": "TestScan_NativeNonFunctionBlocksAreNotFunctions",
-      "message": "TestScan_NativeNonFunctionBlocksAreNotFunctions: 'cases' line 498; declare in range block line 509",
-      "anchor": "fn:TestScan_NativeNonFunctionBlocksAreNotFunctions",
-      "fingerprint": "internal/hiss/hiss_test.go:HISS-05:fn:TestScan_NativeNonFunctionBlocksAreNotFunctions#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/hiss/hiss_test.go",
-      "line_number": 728,
-      "symbol": "TestScan_ContextGuards",
-      "message": "TestScan_ContextGuards: 'nilCtx' line 728; declare in if block line 729",
-      "anchor": "fn:TestScan_ContextGuards",
-      "fingerprint": "internal/hiss/hiss_test.go:HISS-05:fn:TestScan_ContextGuards#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/hiss/incomplete_test.go",
-      "line_number": 122,
-      "symbol": "TestScanReportIncompleteNilIsIncomplete",
-      "message": "TestScanReportIncompleteNilIsIncomplete: 'rep' line 122; declare in if block line 123",
-      "anchor": "fn:TestScanReportIncompleteNilIsIncomplete",
-      "fingerprint": "internal/hiss/incomplete_test.go:HISS-05:fn:TestScanReportIncompleteNilIsIncomplete#1"
-    },
-    {
-      "rule_id": "HISS-05",
       "file_path": "internal/hiss/rules.go",
       "line_number": 411,
       "symbol": "regexBodyEnd",
@@ -7519,15 +6907,6 @@
       "message": "TestParseArchive_Negative_RefusesUnsafeArchives: 'cases' line 44; declare in range block line 53",
       "anchor": "fn:TestParseArchive_Negative_RefusesUnsafeArchives",
       "fingerprint": "internal/hisscoverage/archive_test.go:HISS-05:fn:TestParseArchive_Negative_RefusesUnsafeArchives#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/hisscoverage/verify_test.go",
-      "line_number": 239,
-      "symbol": "TestLoadCatalogRejectsUnknownField",
-      "message": "TestLoadCatalogRejectsUnknownField: 'body' line 239; declare in if block line 240",
-      "anchor": "fn:TestLoadCatalogRejectsUnknownField",
-      "fingerprint": "internal/hisscoverage/verify_test.go:HISS-05:fn:TestLoadCatalogRejectsUnknownField#1"
     },
     {
       "rule_id": "HISS-06",
@@ -8701,15 +8080,6 @@
     },
     {
       "rule_id": "HISS-05",
-      "file_path": "internal/secretscan/secretscan_test.go",
-      "line_number": 210,
-      "symbol": "TestCheck_ErrorHandling",
-      "message": "TestCheck_ErrorHandling: 'nilCtx' line 210; declare in if block line 211",
-      "anchor": "fn:TestCheck_ErrorHandling",
-      "fingerprint": "internal/secretscan/secretscan_test.go:HISS-05:fn:TestCheck_ErrorHandling#1"
-    },
-    {
-      "rule_id": "HISS-05",
       "file_path": "internal/semver/semver_test.go",
       "line_number": 7,
       "symbol": "TestCutOperator_Positive_SplitsEveryComparator",
@@ -9025,69 +8395,6 @@
     },
     {
       "rule_id": "HISS-05",
-      "file_path": "internal/supplychain/bpf_check_test.go",
-      "line_number": 35,
-      "symbol": "testBPFProgEUPLOnlyCase",
-      "message": "testBPFProgEUPLOnlyCase: 'code' line 35; declare in if block line 36",
-      "anchor": "fn:testBPFProgEUPLOnlyCase",
-      "fingerprint": "internal/supplychain/bpf_check_test.go:HISS-05:fn:testBPFProgEUPLOnlyCase#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/supplychain/bpf_check_test.go",
-      "line_number": 46,
-      "symbol": "testBPFProgEUPLOnlyCase",
-      "message": "testBPFProgEUPLOnlyCase: 'want' line 46; declare in if block line 47",
-      "anchor": "fn:testBPFProgEUPLOnlyCase",
-      "fingerprint": "internal/supplychain/bpf_check_test.go:HISS-05:fn:testBPFProgEUPLOnlyCase#2"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/supplychain/bpf_check_test.go",
-      "line_number": 54,
-      "symbol": "testBPFProgDualCase",
-      "message": "testBPFProgDualCase: 'code' line 54; declare in if block line 55",
-      "anchor": "fn:testBPFProgDualCase",
-      "fingerprint": "internal/supplychain/bpf_check_test.go:HISS-05:fn:testBPFProgDualCase#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/supplychain/bpf_check_test.go",
-      "line_number": 81,
-      "symbol": "testBPFCProbeEUPLOnlyCase",
-      "message": "testBPFCProbeEUPLOnlyCase: 'want' line 81; declare in if block line 82",
-      "anchor": "fn:testBPFCProbeEUPLOnlyCase",
-      "fingerprint": "internal/supplychain/bpf_check_test.go:HISS-05:fn:testBPFCProbeEUPLOnlyCase#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/supplychain/bpf_check_test.go",
-      "line_number": 89,
-      "symbol": "testBPFMainGPLCase",
-      "message": "testBPFMainGPLCase: 'code' line 89; declare in if block line 90",
-      "anchor": "fn:testBPFMainGPLCase",
-      "fingerprint": "internal/supplychain/bpf_check_test.go:HISS-05:fn:testBPFMainGPLCase#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/supplychain/bpf_check_test.go",
-      "line_number": 100,
-      "symbol": "testBPFMainGPLCase",
-      "message": "testBPFMainGPLCase: 'want' line 100; declare in if block line 101",
-      "anchor": "fn:testBPFMainGPLCase",
-      "fingerprint": "internal/supplychain/bpf_check_test.go:HISS-05:fn:testBPFMainGPLCase#2"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/supplychain/bpf_check_test.go",
-      "line_number": 117,
-      "symbol": "testBPFVendoredGPLCase",
-      "message": "testBPFVendoredGPLCase: 'code' line 117; declare in if block line 118",
-      "anchor": "fn:testBPFVendoredGPLCase",
-      "fingerprint": "internal/supplychain/bpf_check_test.go:HISS-05:fn:testBPFVendoredGPLCase#1"
-    },
-    {
-      "rule_id": "HISS-05",
       "file_path": "internal/supplychain/content_tools_test.go",
       "line_number": 35,
       "symbol": "TestGenerateSLSAProvenance_Positive_DpkgDebPackage",
@@ -9373,42 +8680,6 @@
       "message": "TestWindowsNewlinePythonTranslatesTextStreamsOnly: 'source' line 75; declare in if block line 76",
       "anchor": "fn:TestWindowsNewlinePythonTranslatesTextStreamsOnly",
       "fingerprint": "internal/testsupport/python_test.go:HISS-05:fn:TestWindowsNewlinePythonTranslatesTextStreamsOnly#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/tidycoverage/coverage_test.go",
-      "line_number": 149,
-      "symbol": "TestCheck_Negative_ExpiredAndStaleExceptions",
-      "message": "TestCheck_Negative_ExpiredAndStaleExceptions: 'want' line 149; declare in if block line 154",
-      "anchor": "fn:TestCheck_Negative_ExpiredAndStaleExceptions",
-      "fingerprint": "internal/tidycoverage/coverage_test.go:HISS-05:fn:TestCheck_Negative_ExpiredAndStaleExceptions#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/tidycoverage/coverage_test.go",
-      "line_number": 292,
-      "symbol": "TestCheck_DataPaths_PlantedDataDir",
-      "message": "TestCheck_DataPaths_PlantedDataDir: 'want' line 292; declare in if block line 293",
-      "anchor": "fn:TestCheck_DataPaths_PlantedDataDir",
-      "fingerprint": "internal/tidycoverage/coverage_test.go:HISS-05:fn:TestCheck_DataPaths_PlantedDataDir#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/tidycoverage/coverage_test.go",
-      "line_number": 317,
-      "symbol": "TestCheck_DataPaths_BoundaryNotUnderAndEmpty",
-      "message": "TestCheck_DataPaths_BoundaryNotUnderAndEmpty: 'want' line 317; declare in if block line 321",
-      "anchor": "fn:TestCheck_DataPaths_BoundaryNotUnderAndEmpty",
-      "fingerprint": "internal/tidycoverage/coverage_test.go:HISS-05:fn:TestCheck_DataPaths_BoundaryNotUnderAndEmpty#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/tidycoverage/coverage_test.go",
-      "line_number": 339,
-      "symbol": "TestCheck_DataPaths_SkipWhenAllUnitsAreData",
-      "message": "TestCheck_DataPaths_SkipWhenAllUnitsAreData: 'wantSkip' line 339; declare in if block line 340",
-      "anchor": "fn:TestCheck_DataPaths_SkipWhenAllUnitsAreData",
-      "fingerprint": "internal/tidycoverage/coverage_test.go:HISS-05:fn:TestCheck_DataPaths_SkipWhenAllUnitsAreData#1"
     },
     {
       "rule_id": "HISS-05",
@@ -10363,15 +9634,6 @@
       "message": "TestReadYAMLRefusals: 'cases' line 58; declare in range block line 66",
       "anchor": "fn:TestReadYAMLRefusals",
       "fingerprint": "tools/schemacheck/yaml_test.go:HISS-05:fn:TestReadYAMLRefusals#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "tools/secrets/rules/expiry_test.go",
-      "line_number": 15,
-      "symbol": "TestCategoryExpiryCaps",
-      "message": "TestCategoryExpiryCaps: 'cases' line 15; declare in range block line 36",
-      "anchor": "fn:TestCategoryExpiryCaps",
-      "fingerprint": "tools/secrets/rules/expiry_test.go:HISS-05:fn:TestCategoryExpiryCaps#1"
     },
     {
       "rule_id": "HISS-05",

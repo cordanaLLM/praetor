@@ -207,8 +207,7 @@ func TestCheck_CleanRepo_Passes(t *testing.T) {
 }
 
 func TestCheck_ErrorHandling(t *testing.T) {
-	var nilCtx context.Context
-	if _, err := secretscan.Check(nilCtx, secretscan.Options{}); err == nil {
+	if _, err := secretscan.Check(context.Context(nil), secretscan.Options{}); err == nil {
 		t.Error("expected error on nil context")
 	}
 	ctx := t.Context()

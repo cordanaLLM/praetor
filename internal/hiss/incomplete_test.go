@@ -119,8 +119,7 @@ func TestScanIncompleteOnTruncation(t *testing.T) {
 // TestScanReportIncompleteNilIsIncomplete is the boundary dimension for the absent report:
 // a nil report describes no examined scope at all, so it must never answer "complete".
 func TestScanReportIncompleteNilIsIncomplete(t *testing.T) {
-	var rep *ScanReport
-	if !rep.Incomplete() {
+	if rep := (*ScanReport)(nil); !rep.Incomplete() {
 		t.Error("a nil report must be treated as incomplete, never as a clean verdict")
 	}
 }

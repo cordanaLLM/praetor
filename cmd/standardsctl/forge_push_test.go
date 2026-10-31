@@ -52,15 +52,14 @@ func TestForgePrePush_Positive_UpstreamAndFirstPush(t *testing.T) {
 }
 
 func TestForgePrePush_Negative_DetachedMissingAndEmpty(t *testing.T) {
-	cases := []struct {
+	for _, tc := range []struct {
 		name, want string
 		setup      []string
 	}{
 		{"detached", "attached HEAD", []string{"checkout", "--detach"}},
 		{"missing default", "resolve pre-push merge base", []string{"branch", "-D", "main"}},
 		{"empty", "no commits checked", []string{"branch", "-f", "main", "HEAD"}},
-	}
-	for _, tc := range cases {
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir, env := pushFixture(t)
 			pushGit(t, dir, env, tc.setup...)
@@ -118,15 +117,14 @@ func TestForgePrePush_Boundary_RecordedRemoteDefaultPreferred(t *testing.T) {
 }
 
 func TestForgeCheckMessage_PlantedMigration(t *testing.T) {
-	cases := []struct {
+	for _, tc := range []struct {
 		message string
 		valid   bool
 	}{
 		{"feat!: drop x\n", false},
 		{"feat!: drop x\n\nMigration: use the replacement API\n", true},
 		{"drop x\n", false},
-	}
-	for _, tc := range cases {
+	} {
 		path := writeFixtureFile(t, t.TempDir(), "COMMIT_EDITMSG", tc.message)
 		err := runForge([]string{"check-message", path})
 		if (err == nil) != tc.valid {

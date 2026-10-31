@@ -177,8 +177,7 @@ func TestRunCITidyCoverage_Positive_DataPaths(t *testing.T) {
 	})
 	writeTidyCoverageDatabase(t, root, "src/a.c")
 	out, err := captureStdout(t, func() error { return runCITidyCoverage(t.Context(), []string{"--dir=" + root}) })
-	want := "[PASS] clang-tidy translation-unit coverage: all 1 tracked translation units read by a lane (cpu: 1) or excused by a live exception (0), 1 under declared data paths."
-	if err != nil || !strings.Contains(out, want) {
+	if want := "[PASS] clang-tidy translation-unit coverage: all 1 tracked translation units read by a lane (cpu: 1) or excused by a live exception (0), 1 under declared data paths."; err != nil || !strings.Contains(out, want) {
 		t.Fatalf("ci tidy-coverage = %v\n%s\nwant:\n%s", err, out, want)
 	}
 }
@@ -191,8 +190,7 @@ func TestRunCITidyCoverage_Boundary_SkipWhenAllUnitsAreData(t *testing.T) {
 		".standards.yaml":       manifest,
 	})
 	out, err := captureStdout(t, func() error { return runCITidyCoverage(t.Context(), []string{"--dir=" + root}) })
-	want := "[SKIP] clang-tidy translation-unit coverage not checked: every tracked translation unit lies under a declared data path."
-	if err != nil || !strings.Contains(out, want) {
+	if want := "[SKIP] clang-tidy translation-unit coverage not checked: every tracked translation unit lies under a declared data path."; err != nil || !strings.Contains(out, want) {
 		t.Fatalf("ci tidy-coverage = %v\n%s\nwant:\n%s", err, out, want)
 	}
 }

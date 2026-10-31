@@ -236,8 +236,7 @@ func TestLoadCatalogRejectsUnknownField(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatalf("create config dir: %v", err)
 	}
-	body := "version: 1\nrules:\n  - id: HISS-01\n    title: t\n    covrage:\n      - language: go\n"
-	if err := os.WriteFile(filepath.Join(dir, "coverage.yaml"), []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "coverage.yaml"), []byte("version: 1\nrules:\n  - id: HISS-01\n    title: t\n    covrage:\n      - language: go\n"), 0o600); err != nil {
 		t.Fatalf("write catalog: %v", err)
 	}
 

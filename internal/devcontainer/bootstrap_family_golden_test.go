@@ -43,11 +43,10 @@ func TestBootstrapAssetFamiliesGolden(t *testing.T) {
 		fmt.Fprintf(&sb, "asset %s %t <nil>\n", name, asset)
 		fmt.Fprintf(&sb, "name %s %v\n", name, validateBootstrapSourceName(name, captureRules))
 	}
-	markdownDirective := "//go:embed package.json package-lock.json markdownlint-cli2.yaml verify.mjs no-private-scratch-links.mjs"
 	for _, probe := range []struct{ source, text string }{
-		{"tools/markdownlint/assets.go", markdownDirective},
+		{"tools/markdownlint/assets.go", "//go:embed package.json package-lock.json markdownlint-cli2.yaml verify.mjs no-private-scratch-links.mjs"},
 		{"tools/markdownlint/assets.go", "//go:embed verify.mjs"},
-		{"tools/markdownlint/other.go", markdownDirective},
+		{"tools/markdownlint/other.go", "//go:embed package.json package-lock.json markdownlint-cli2.yaml verify.mjs no-private-scratch-links.mjs"},
 		{"tools/markdownlint/assets.go", "// go:embed is only prose"},
 		{cliSourceFile, "//go:embed " + cliEmbedPatterns},
 		{cliSourceFile, "//go:embed cli/node.json"},

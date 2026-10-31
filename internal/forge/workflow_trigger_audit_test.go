@@ -336,8 +336,7 @@ func TestAuditWorkflowTriggers_SkipsWithoutWorkflowsAndFailsUnread(t *testing.T)
 		!strings.Contains(err.Error(), "inventory exceeds") {
 		t.Fatalf("an inventory above the bound: %v", err)
 	}
-	var missing context.Context
-	if _, err := AuditWorkflowTriggers(missing, WorkflowTriggerOptions{Root: empty}); err == nil || !strings.Contains(err.Error(), "requires a context") {
+	if _, err := AuditWorkflowTriggers(context.Context(nil), WorkflowTriggerOptions{Root: empty}); err == nil || !strings.Contains(err.Error(), "requires a context") {
 		t.Fatalf("a nil context: %v", err)
 	}
 }

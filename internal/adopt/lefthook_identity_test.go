@@ -443,8 +443,7 @@ func jobsListRendering(t *testing.T, extra ...any) string {
 func TestClassifyLefthookConfig_Positive_JobsListSupersetAndRemotes(t *testing.T) {
 	superset := jobsListRendering(t, map[string]any{"name": "lint-docs", "run": "make docs-lint"})
 	assertKeptNotCanonical(t, superset, "It holds every generated job and adds 1 (pre-commit/commands/lint-docs).")
-	remote := "remotes:\n  - git_url: https://github.com/cordanaLLM/praetor\n    ref: v1.0.0\n    configs:\n      - ./.config/lefthook/praetor.yml\n"
-	for _, body := range []string{remote, canonicalRootLefthook} {
+	for _, body := range []string{"remotes:\n  - git_url: https://github.com/cordanaLLM/praetor\n    ref: v1.0.0\n    configs:\n      - ./.config/lefthook/praetor.yml\n", canonicalRootLefthook} {
 		if got := classifyLefthookConfig([]byte(body), lefthookShape{languages: lefthookJobLanguages}); !got.canonical || !strings.Contains(got.reason, canonicalLefthookPolicy) {
 			t.Fatalf("configuration reaching the canonical policy not recognised: %+v\n%s", got, body)
 		}

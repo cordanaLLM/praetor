@@ -100,8 +100,8 @@ func TestLefthookCommitPolicy_Positive_ParsedJobs(t *testing.T) {
 
 // A repository-owned commit-msg stays byte-identical, even under --force, and is reported.
 func TestAdoptCommitPolicy_Negative_CustomCommitMsgPreserved(t *testing.T) {
-	custom := "commit-msg:\n  commands:\n    custom-policy:\n      run: echo custom {1}\n"
 	for _, force := range []bool{false, true} {
+		custom := "commit-msg:\n  commands:\n    custom-policy:\n      run: echo custom {1}\n"
 		repo, report := adoptLefthookFixture(t, "custom-commit-msg", custom, force)
 		assertLefthookKept(t, repo, report, custom)
 		identity := classifyLefthookConfig([]byte(custom), lefthookShape{languages: lefthookJobLanguages})

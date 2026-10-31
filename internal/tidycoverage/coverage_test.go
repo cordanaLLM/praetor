@@ -146,12 +146,11 @@ func TestCheck_Negative_ExpiredAndStaleExceptions(t *testing.T) {
 	writeCompileDatabase(t, root, "src/a.c")
 	report := check(t, root, []config.ClangTidyLane{cpuLane},
 		exception("src/win32/getopt.c", "2026-10-05"), exception("src/a.c", "2026-12-31"), exception("src/gone.c", "2026-12-31"))
-	want := []string{
+	if want := []string{
 		"src/win32/getopt.c: read by no clang-tidy lane; its exception expired on 2026-10-05",
 		"exceptions entry src/a.c (clang-tidy-coverage): excuses no translation unit that every lane leaves unread; remove the entry",
 		"exceptions entry src/gone.c (clang-tidy-coverage): excuses no translation unit that every lane leaves unread; remove the entry",
-	}
-	if findingsText(report) != strings.Join(want, "\n") {
+	}; findingsText(report) != strings.Join(want, "\n") {
 		t.Fatalf("findings:\n%s\nwant:\n%s", findingsText(report), strings.Join(want, "\n"))
 	}
 }
@@ -289,8 +288,7 @@ func TestCheck_DataPaths_PlantedDataDir(t *testing.T) {
 	if report.DataUnits != 1 || report.Units != 2 {
 		t.Fatalf("report counts = %+v, want DataUnits 1, Units 2", report)
 	}
-	want := "src/real.hip: read by no clang-tidy lane and named by no exceptions entry"
-	if findingsText(report) != want {
+	if want := "src/real.hip: read by no clang-tidy lane and named by no exceptions entry"; findingsText(report) != want {
 		t.Fatalf("findings:\n%s\nwant:\n%s", findingsText(report), want)
 	}
 }
@@ -314,11 +312,10 @@ func TestCheck_DataPaths_BoundaryNotUnderAndEmpty(t *testing.T) {
 	if report.DataUnits != 0 || report.Units != 2 {
 		t.Fatalf("report counts = %+v, want DataUnits 0, Units 2", report)
 	}
-	want := []string{
+	if want := []string{
 		"data path data holds no tracked translation unit; remove it from clang_tidy.data_paths",
 		"database/x.hip: read by no clang-tidy lane and named by no exceptions entry",
-	}
-	if findingsText(report) != strings.Join(want, "\n") {
+	}; findingsText(report) != strings.Join(want, "\n") {
 		t.Fatalf("findings:\n%s\nwant:\n%s", findingsText(report), strings.Join(want, "\n"))
 	}
 }
@@ -336,8 +333,7 @@ func TestCheck_DataPaths_SkipWhenAllUnitsAreData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Check = %v", err)
 	}
-	wantSkip := "every tracked translation unit lies under a declared data path"
-	if report.Skipped != wantSkip || !report.Passed() || report.DataUnits != 1 || report.Units != 0 {
+	if wantSkip := "every tracked translation unit lies under a declared data path"; report.Skipped != wantSkip || !report.Passed() || report.DataUnits != 1 || report.Units != 0 {
 		t.Fatalf("report = %+v, want Skipped %q", report, wantSkip)
 	}
 }

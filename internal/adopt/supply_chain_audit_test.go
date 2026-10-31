@@ -144,11 +144,10 @@ func TestAuditSupplyChainBoundaries(t *testing.T) {
 		!strings.Contains(err.Error(), "declares SLSA Build Level 1 but the workflows reach Level 0. Level 1 needs") {
 		t.Fatalf("Level 1 without a workflow = %v; want a failure", err)
 	}
-	malformed := map[string]string{
+	for name, content := range map[string]string{
 		"empty":     "",
 		"malformed": "jobs: [unclosed\n",
-	}
-	for name, content := range malformed {
+	} {
 		t.Run(name, func(t *testing.T) {
 			root := supplyChainRepo(t, map[string]string{".github/workflows/release.yml": content})
 			_, err := auditSupplyChainAt(context.Background(), root, supplyChainPolicy(1, false, false))
@@ -174,8 +173,7 @@ func TestAuditSupplyChainBoundaries(t *testing.T) {
 // fixtures fail it, negative ones pass, and gap fixtures pass although they release nothing
 // attested: the gap the catalog records.
 func TestAuditSupplyChainReplaysTheHISS11Fixtures(t *testing.T) {
-	buckets := map[string]bool{"positive": true, "negative": false, "gap": false}
-	for bucket, wantFail := range buckets {
+	for bucket, wantFail := range map[string]bool{"positive": true, "negative": false, "gap": false} {
 		entries, err := os.ReadDir(filepath.Join(hiss11Fixtures, bucket))
 		if err != nil || len(entries) == 0 {
 			t.Fatalf("read %s fixtures: %d entries, %v", bucket, len(entries), err)
@@ -326,9 +324,8 @@ func TestNewSupplyChainExceptionDeclaresTheGap(t *testing.T) {
 // go, python, rust, c, typescript, dockerfile and compose through AuditSupplyChain (HISS-20).
 func TestAuditSupplyChainReplaysImageRefFixtures(t *testing.T) {
 	const rootDir = "../../.config/hiss/testdata/HISS-11"
-	langs := []string{"go", "python", "rust", "c", "typescript", "dockerfile", "compose"}
-	buckets := map[string]bool{"positive": true, "negative": false, "gap": false}
-	for _, lang := range langs {
+	for _, lang := range []string{"go", "python", "rust", "c", "typescript", "dockerfile", "compose"} {
+		buckets := map[string]bool{"positive": true, "negative": false, "gap": false}
 		for bucket, wantFail := range buckets {
 			dir := filepath.Join(rootDir, lang, bucket)
 			entries := imageRefFixtureEntries(dir)
@@ -422,8 +419,7 @@ func assertUnresolvableImageRefsPass(t *testing.T, policy *config.ResolvedPolicy
 	if err != nil {
 		t.Fatalf("unresolvable-only references must not block AuditSupplyChain: %v\n%s", err, out)
 	}
-	wantInfo := "[INFO] HISS-11 image references not verified: 4 unresolvable (template, variable or link outside the repository); first 5:"
-	if !strings.Contains(out, wantInfo) {
+	if wantInfo := "[INFO] HISS-11 image references not verified: 4 unresolvable (template, variable or link outside the repository); first 5:"; !strings.Contains(out, wantInfo) {
 		t.Fatalf("expected [INFO] summary line %q in output, got:\n%s", wantInfo, out)
 	}
 }

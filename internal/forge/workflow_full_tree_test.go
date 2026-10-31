@@ -17,8 +17,7 @@ func TestAuditWorkflowTriggers_FullTree_Negative_PullRequestPreCommitAllFiles(t 
 	doc := "on: pull_request\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pre-commit run --all-files\n"
 	root := triggerRepository(t, map[string]string{"pr.yml": doc})
 	out := auditTriggers(t, root)
-	wantFinding := "[WARN] Workflow triggers (HISS-18): .github/workflows/pr.yml:6: pull_request job lint step 1 runs full-tree command \"pre-commit run --all-files\" on every pull request: scope to changed files (pre-commit run --from-ref origin/main --to-ref HEAD) or guard to default branch, tags or schedule."
-	if !strings.Contains(out, wantFinding) {
+	if wantFinding := "[WARN] Workflow triggers (HISS-18): .github/workflows/pr.yml:6: pull_request job lint step 1 runs full-tree command \"pre-commit run --all-files\" on every pull request: scope to changed files (pre-commit run --from-ref origin/main --to-ref HEAD) or guard to default branch, tags or schedule."; !strings.Contains(out, wantFinding) {
 		t.Fatalf("output lacks expected finding:\n%s\nwant finding:\n%s", out, wantFinding)
 	}
 }
@@ -26,9 +25,7 @@ func TestAuditWorkflowTriggers_FullTree_Negative_PullRequestPreCommitAllFiles(t 
 // Positive (engine-hiss18-full-tree-on-pr-20261027): job guarded by github.ref == 'refs/heads/main'
 // or step guarded by github.event_name == 'schedule' produces no finding.
 func TestAuditWorkflowTriggers_FullTree_Positive_GuardedJobOrStep(t *testing.T) {
-	jobGuarded := "on: pull_request\njobs:\n  lint:\n    if: github.ref == 'refs/heads/main'\n    runs-on: ubuntu-latest\n    steps:\n      - run: pre-commit run --all-files\n"
-	stepGuarded := "on: pull_request\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - if: github.event_name == 'schedule'\n        run: pre-commit run --all-files\n"
-	for name, doc := range map[string]string{"job": jobGuarded, "step": stepGuarded} {
+	for name, doc := range map[string]string{"job": "on: pull_request\njobs:\n  lint:\n    if: github.ref == 'refs/heads/main'\n    runs-on: ubuntu-latest\n    steps:\n      - run: pre-commit run --all-files\n", "step": "on: pull_request\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - if: github.event_name == 'schedule'\n        run: pre-commit run --all-files\n"} {
 		root := triggerRepository(t, map[string]string{"x.yml": doc})
 		out := auditTriggers(t, root)
 		if strings.Contains(out, "full-tree command") {
@@ -78,8 +75,7 @@ func TestAuditWorkflowTriggers_FullTree_Negative_MoleculeAll(t *testing.T) {
 	doc := "on: pull_request\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: molecule test --all\n"
 	root := triggerRepository(t, map[string]string{"mol.yml": doc})
 	out := auditTriggers(t, root)
-	wantFinding := "[WARN] Workflow triggers (HISS-18): .github/workflows/mol.yml:6: pull_request job test step 1 runs full-tree command \"molecule test --all\" on every pull request: scope to changed files (pre-commit run --from-ref origin/main --to-ref HEAD) or guard to default branch, tags or schedule."
-	if !strings.Contains(out, wantFinding) {
+	if wantFinding := "[WARN] Workflow triggers (HISS-18): .github/workflows/mol.yml:6: pull_request job test step 1 runs full-tree command \"molecule test --all\" on every pull request: scope to changed files (pre-commit run --from-ref origin/main --to-ref HEAD) or guard to default branch, tags or schedule."; !strings.Contains(out, wantFinding) {
 		t.Fatalf("molecule test --all must be reported:\n%s\nwant:\n%s", out, wantFinding)
 	}
 }

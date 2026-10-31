@@ -191,8 +191,7 @@ func TestJobTimeout_PathNaming(t *testing.T) {
 	if err != nil {
 		t.Fatalf("measured error: %v", err)
 	}
-	want := "[INFO] job-timeout: measured path for 1 jobs (forge runs of main), static path for 1 jobs (no successful run)"
-	if !strings.Contains(measuredOut, want) {
+	if want := "[INFO] job-timeout: measured path for 1 jobs (forge runs of main), static path for 1 jobs (no successful run)"; !strings.Contains(measuredOut, want) {
 		t.Errorf("measured output must name counts; want %q, got:\n%s", want, measuredOut)
 	}
 }
@@ -271,7 +270,7 @@ func TestJobTimeout_WarnOnlyNeverFails(t *testing.T) {
 
 // Job name mapping matches matrix jobs and prefix before ${{ or ' ('.
 func TestJobMatches_MatrixAndPrefix(t *testing.T) {
-	cases := []struct {
+	for _, tc := range []struct {
 		target string
 		forge  string
 		want   bool
@@ -281,8 +280,7 @@ func TestJobMatches_MatrixAndPrefix(t *testing.T) {
 		{"lint", "lint", true},
 		{"test", "test-other (1.22)", false},
 		{"unit", "integration", false},
-	}
-	for _, tc := range cases {
+	} {
 		if got := jobMatches(tc.target, tc.forge); got != tc.want {
 			t.Errorf("jobMatches(%q, %q) = %v, want %v", tc.target, tc.forge, got, tc.want)
 		}
@@ -384,8 +382,7 @@ func TestJobTimeout_Unreadable_RunJobsFailsAllRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AuditJobTimeouts failed: %v", err)
 	}
-	want := "static path for 1 jobs: 0 without a successful run, 1 whose runs could not be read (read run jobs: HTTP 502)"
-	if !strings.Contains(out, want) {
+	if want := "static path for 1 jobs: 0 without a successful run, 1 whose runs could not be read (read run jobs: HTTP 502)"; !strings.Contains(out, want) {
 		t.Errorf("expected unreadable line with error; want %q, got:\n%s", want, out)
 	}
 }

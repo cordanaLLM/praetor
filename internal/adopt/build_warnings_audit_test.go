@@ -42,7 +42,7 @@ func buildWarningsEntry(path, expires string) config.Exception {
 // Negative, per language: a lane without its toolchain's form fails, naming the workflow, the
 // job, the step and what to add (#816).
 func TestAuditBuildWarningsFailsALaneWithoutTheForm(t *testing.T) {
-	cases := map[string]struct {
+	for name, tc := range map[string]struct {
 		steps string
 		want  []string
 	}{
@@ -57,8 +57,7 @@ func TestAuditBuildWarningsFailsALaneWithoutTheForm(t *testing.T) {
 			[]string{`step "cargo build --locked": Cargo builds without warnings as errors`, `RUSTFLAGS: "-D warnings"`}},
 		"Go": {"      - run: go build ./...\n",
 			[]string{"Go builds without warnings as errors: no binding step of any workflow runs go vet", "run go vet ./..."}},
-	}
-	for name, tc := range cases {
+	} {
 		t.Run(name, func(t *testing.T) {
 			out, err := auditBuildWarningsIn(t, map[string]string{".github/workflows/ci.yml": ciSteps(tc.steps)})
 			if err == nil {
@@ -79,7 +78,7 @@ func TestAuditBuildWarningsFailsALaneWithoutTheForm(t *testing.T) {
 // Positive, per language: the same lanes with their toolchain's form pass, counted by
 // toolchain, with the scope of the measurement.
 func TestAuditBuildWarningsPassesLanesWithTheForm(t *testing.T) {
-	cases := map[string]struct {
+	for name, tc := range map[string]struct {
 		steps, want string
 	}{
 		"C through CMake": {"      - run: cmake -S . -B build -DCMAKE_COMPILE_WARNING_AS_ERROR=ON\n      - run: cmake --build build\n", "1 build lanes fail on a warning (CMake 1)."},
@@ -87,8 +86,7 @@ func TestAuditBuildWarningsPassesLanesWithTheForm(t *testing.T) {
 		"C through Meson": {"      - run: meson setup build --werror\n", "(Meson 1)"},
 		"Rust":            {"      - run: cargo build --locked\n        env:\n          RUSTFLAGS: -D warnings\n      - run: cargo clippy -- -D warnings\n", "2 build lanes fail on a warning (Cargo 2)."},
 		"Go":              {"      - run: go vet ./...\n      - run: go test ./...\n", "(Go 1)"},
-	}
-	for name, tc := range cases {
+	} {
 		t.Run(name, func(t *testing.T) {
 			out, err := auditBuildWarningsIn(t, map[string]string{".github/workflows/ci.yml": ciSteps(tc.steps)})
 			if err != nil {
@@ -277,8 +275,7 @@ func TestAuditBuildWarningsPassesTheScaffoldedWorkflows(t *testing.T) {
 // replay in both directions. Positive fixtures fail it, negative ones pass, and gap fixtures
 // pass although warnings in them would not fail the run: the gap the catalog records.
 func TestAuditBuildWarningsReplaysTheHISS10Fixtures(t *testing.T) {
-	buckets := map[string]bool{"positive": true, "negative": false, "gap": false}
-	for bucket, wantFail := range buckets {
+	for bucket, wantFail := range map[string]bool{"positive": true, "negative": false, "gap": false} {
 		entries, err := os.ReadDir(filepath.Join(hiss10Fixtures, bucket))
 		if err != nil || len(entries) == 0 {
 			t.Fatalf("read %s fixtures: %d entries, %v", bucket, len(entries), err)
