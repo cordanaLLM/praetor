@@ -468,7 +468,7 @@ dependencies:
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: platformdirs
-      version: 4.13.5
+      version: 4.14.0
       language: python
       ecosystem: pypi
       capability: python.external.platformdirs
@@ -524,7 +524,7 @@ dependencies:
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: tzdata
-      version: "2026.5"
+      version: "2026.6"
       language: python
       ecosystem: pypi
       capability: python.external.tzdata
@@ -711,4 +711,4 @@ readiness:
     total_third_party_deps: 86
     covered_deps: 0
     gap_deps: 86
-updated_at: 2026-10-30T02:45:04.388910381Z
+updated_at: 2026-10-31T01:47:21.746602585Z
