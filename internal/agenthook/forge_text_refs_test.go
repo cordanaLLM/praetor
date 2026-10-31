@@ -180,17 +180,73 @@ func TestForgeTextRefsBoundaryAndFailClosedCases(t *testing.T) {
 			assertForgeTextDenied(t, runPreToolCommand(t, root, tc.command, nil), tc.wantPath)
 		})
 	}
+	assertForgeTextOverflowBoundsDenied(t, root)
+}
+
+func assertForgeTextOverflowBoundsDenied(t *testing.T, root string) {
+	t.Helper()
+	cleanPath := filepath.Join(root, "clean.md")
+	foreignPath := filepath.Join(root, "foreign.md")
+	writeTestFixtureFile(t, cleanPath, "Clean note referencing #10.\n")
+	writeTestFixtureFile(t, foreignPath, "Foreign note referencing outside-org/project#42.\n")
+
+	cases := []struct {
+		name     string
+		command  string
+		wantSpan string
+	}{
+		{
+			name: "flag file count over maxForgeTextFiles fails closed",
+			command: "gh api -X POST repos/fleet-org/governed-repo/issues/1/comments" +
+				strings.Repeat(" -F note=@clean.md", maxForgeTextFiles) + " -F extra=@foreign.md",
+			wantSpan: "exceeds 32 named files",
+		},
+		{
+			name: "cat substitution count over maxForgeTextFiles fails closed",
+			command: `gh issue comment 1 --body "` +
+				strings.Repeat("$(cat clean.md) ", maxForgeTextFiles) + `$(cat foreign.md)"`,
+			wantSpan: "exceeds 32 named files",
+		},
+		{
+			name: "command segment count over maxForgeTextSegments fails closed",
+			command: strings.Repeat(`gh issue comment 1 --body "ok" ; `, maxForgeTextSegments) +
+				`gh issue comment 1 --body "outside-org/project#42"`,
+			wantSpan: "exceeds 256 command segments",
+		},
+		{
+			name:     "shell word count over maxForgeTextWords fails closed",
+			command:  strings.Repeat("true ", maxForgeTextWords) + `; g"h" issue comment 1 --body "outside-org/project#42"`,
+			wantSpan: "4096 fields",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertForgeTextDenied(t, runPreToolCommand(t, root, tc.command, nil), tc.wantSpan)
+		})
+	}
 }
 
 func TestForgeTextRefsOrganizationResolutionCases(t *testing.T) {
+	t.Setenv("GITHUB_REPOSITORY", "process-leaked-org/process-repo")
 	noOrgRoot := repositoryWithManifest(t, "version: 1\nrepository:\n  owner: solo-owner\n  name: solo-repo\n")
 	if resp := runPreToolCommand(t, noOrgRoot, `gh issue comment 1 --body "See solo-owner/other-repo#8"`, nil); resp.ExitCode != 0 {
 		t.Fatalf("expected repo owner reference to be allowed, got exit %d: %q", resp.ExitCode, string(resp.Stderr))
 	}
+	assertForgeTextDenied(t, runPreToolCommand(t, noOrgRoot, `gh issue comment 1 --body "See process-leaked-org/other-repo#8"`, nil), "process-leaked-org/other-repo#8")
 	denyResp := runPreToolCommand(t, noOrgRoot, `gh issue comment 1 --body "See fleet-org/other-repo#8"`, nil)
 	assertForgeTextDenied(t, denyResp, "fleet-org/other-repo#8")
 	if !strings.Contains(string(denyResp.Stderr), forgeTextNoOrgNotice) {
 		t.Errorf("expected refusal to name missing org list notice, got %q", string(denyResp.Stderr))
+	}
+
+	repoEnv := func(key string) string {
+		if key == "GITHUB_REPOSITORY" {
+			return "hook-env-owner/governed-repo"
+		}
+		return ""
+	}
+	if resp := runPreToolCommand(t, noOrgRoot, `gh issue comment 1 --body "See hook-env-owner/other-repo#8"`, repoEnv); resp.ExitCode != 0 {
+		t.Fatalf("expected invocation GITHUB_REPOSITORY owner to be allowed, got exit %d: %q", resp.ExitCode, string(resp.Stderr))
 	}
 
 	fleetFile := filepath.Join(t.TempDir(), "fleet.yaml")

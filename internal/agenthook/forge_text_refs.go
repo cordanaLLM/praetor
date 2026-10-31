@@ -6,6 +6,7 @@ package agenthook
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -77,7 +78,7 @@ func evaluateForgeTextRefs(ctx context.Context, canonical Canonical, root string
 
 func judgeGHWriteCall(ctx context.Context, call ghWriteCall, own []string, noOrgList bool) Verdict {
 	if call.fileErr != "" {
-		return forgeTextDeny("cannot read file "+call.fileErr, noOrgList)
+		return forgeTextDeny(call.fileErr, noOrgList)
 	}
 	if findings := forge.ForeignReferenceFindings(call.raw, "gh command", own); len(findings) > 0 {
 		return forgeTextDeny(findings[0], noOrgList)
@@ -113,7 +114,7 @@ func resolveHookOwnOrganizations(ctx context.Context, root string, getenv func(s
 	if root != "" {
 		manifestPath = filepath.Join(root, manifestName)
 	}
-	own, err := forge.ResolveOwnOrganizations(ctx, root, manifestPath, opForge.OwnOrganizations)
+	own, err := forge.ResolveOwnOrganizations(ctx, root, manifestPath, opForge.OwnOrganizations, getenv)
 	if err != nil {
 		return nil, false, err
 	}
@@ -138,19 +139,20 @@ func loadOperatorForgeSettings(ctx context.Context, getenv func(string) string) 
 }
 
 func collectGHWriteCalls(command, baseDir string) ([]ghWriteCall, error) {
-	fields, err := forge.ShellFields(command)
-	if err != nil {
-		if ghWriteWordPattern.MatchString(command) {
-			return nil, err
-		}
-		return nil, nil
+	fields, err := shellFieldsForGH(command)
+	if err != nil || len(fields) == 0 {
+		return nil, err
 	}
 	var calls []ghWriteCall
 	workDir := baseDir
-	start := 0
-	for i := 0; i <= len(fields) && i <= maxForgeTextWords && len(calls) < maxForgeTextSegments; i++ {
+	start, segments := 0, 0
+	for i := 0; i <= len(fields) && i <= maxForgeTextWords; i++ {
 		if i < len(fields) && !targetCommandSeparator(fields[i]) {
 			continue
+		}
+		segments++
+		if segments > maxForgeTextSegments {
+			return nil, fmt.Errorf("command exceeds %d command segments", maxForgeTextSegments)
 		}
 		call, nextDir, ok := parseSegmentGHCall(command, fields[start:i], workDir)
 		workDir = nextDir
@@ -160,6 +162,20 @@ func collectGHWriteCalls(command, baseDir string) ([]ghWriteCall, error) {
 		start = i + 1
 	}
 	return calls, nil
+}
+
+func shellFieldsForGH(command string) ([]string, error) {
+	fields, err := forge.ShellFields(command)
+	if err != nil {
+		if errors.Is(err, forge.ErrShellReadLimit) || ghWriteWordPattern.MatchString(command) {
+			return nil, err
+		}
+		return nil, nil
+	}
+	if len(fields) > maxForgeTextWords {
+		return nil, fmt.Errorf("command exceeds %d shell words", maxForgeTextWords)
+	}
+	return fields, nil
 }
 
 func parseSegmentGHCall(fullCommand string, words []string, workDir string) (ghWriteCall, string, bool) {
@@ -279,13 +295,16 @@ func extractGHCallFiles(segment, subcmd string, args []string, workDir string) (
 	if fileErr != "" {
 		return nil, readsStdin, fileErr
 	}
-	catPaths := extractCatSubstFiles(segment)
-	for i := 0; i < len(catPaths) && len(files) < maxForgeTextFiles; i++ {
-		file, ok := resolveGHTextFile(catPaths[i], workDir)
+	catPaths, exceeded := extractCatSubstFiles(segment)
+	if exceeded {
+		return nil, readsStdin, fmt.Sprintf("gh command exceeds %d named files", maxForgeTextFiles)
+	}
+	for i := 0; i < len(catPaths) && i < maxForgeTextFiles; i++ {
+		var ok bool
+		files, ok, fileErr = appendGHTextFile(files, catPaths[i], workDir)
 		if !ok {
-			return nil, readsStdin, catPaths[i]
+			return nil, readsStdin, fileErr
 		}
-		files = append(files, file)
 	}
 	return files, readsStdin, ""
 }
@@ -293,26 +312,38 @@ func extractGHCallFiles(segment, subcmd string, args []string, workDir string) (
 func collectFlagFiles(subcmd string, args []string, workDir string) ([]ghTextFile, bool, string) {
 	var files []ghTextFile
 	readsStdin := false
-	for i := 0; i < len(args) && i < maxForgeTextWords && len(files) < maxForgeTextFiles; i++ {
+	for i := 0; i < len(args) && i < maxForgeTextWords; i++ {
 		rawPath, next, matched, valid := extractFlagFile(subcmd, args, i)
 		i = next
 		if !matched {
 			continue
 		}
 		if !valid {
-			return nil, readsStdin, rawPath
+			return nil, readsStdin, "cannot read file " + rawPath
 		}
 		if unquoteTarget(rawPath) == "-" {
 			readsStdin = true
 			continue
 		}
-		file, ok := resolveGHTextFile(rawPath, workDir)
+		var ok bool
+		var fileErr string
+		files, ok, fileErr = appendGHTextFile(files, rawPath, workDir)
 		if !ok {
-			return nil, readsStdin, rawPath
+			return nil, readsStdin, fileErr
 		}
-		files = append(files, file)
 	}
 	return files, readsStdin, ""
+}
+
+func appendGHTextFile(files []ghTextFile, rawPath, workDir string) ([]ghTextFile, bool, string) {
+	file, ok := resolveGHTextFile(rawPath, workDir)
+	if !ok {
+		return nil, false, "cannot read file " + rawPath
+	}
+	if len(files) >= maxForgeTextFiles {
+		return nil, false, fmt.Sprintf("gh command exceeds %d named files", maxForgeTextFiles)
+	}
+	return append(files, file), true, ""
 }
 
 func extractFlagFile(subcmd string, args []string, i int) (string, int, bool, bool) {
@@ -365,8 +396,11 @@ func extractAPIFieldFile(raw string) (string, bool, bool) {
 	return path, true, true
 }
 
-func extractCatSubstFiles(segment string) []string {
-	matches := catSubstPattern.FindAllStringSubmatch(segment, maxForgeTextFiles)
+func extractCatSubstFiles(segment string) ([]string, bool) {
+	matches := catSubstPattern.FindAllStringSubmatch(segment, maxForgeTextFiles+1)
+	if len(matches) > maxForgeTextFiles {
+		return nil, true
+	}
 	var paths []string
 	for i := 0; i < len(matches) && i < maxForgeTextFiles; i++ {
 		arg := unquoteTarget(matches[i][1])
@@ -374,7 +408,7 @@ func extractCatSubstFiles(segment string) []string {
 			paths = append(paths, matches[i][1])
 		}
 	}
-	return paths
+	return paths, false
 }
 
 func resolveGHTextFile(rawPath, workDir string) (ghTextFile, bool) {

@@ -17,10 +17,10 @@ import (
 )
 
 // ResolveOwnOrganizations returns the trusted forge organisations from extra, the manifest at
-// manifestPath, and the repository owner from GITHUB_REPOSITORY, the origin remote of repo, or
-// the manifest's repository.owner. A missing manifest or origin adds no extra owner; invalid
-// manifests and failed reads are errors.
-func ResolveOwnOrganizations(ctx context.Context, repo, manifestPath string, extra []string) ([]string, error) {
+// manifestPath, and the repository owner from GITHUB_REPOSITORY (via getenv), the origin remote
+// of repo, or the manifest's repository.owner. A missing manifest or origin adds no extra owner;
+// invalid manifests and failed reads are errors.
+func ResolveOwnOrganizations(ctx context.Context, repo, manifestPath string, extra []string, getenv func(string) string) ([]string, error) {
 	own := slices.Clone(extra)
 	var manifest *config.Manifest
 	if manifestPath != "" {
@@ -33,7 +33,7 @@ func ResolveOwnOrganizations(ctx context.Context, repo, manifestPath string, ext
 	if manifest != nil && manifest.Forge != nil {
 		own = append(own, manifest.Forge.OwnOrganizations...)
 	}
-	owner, err := resolveReferenceOwner(ctx, repo, manifest)
+	owner, err := resolveReferenceOwner(ctx, repo, manifest, getenv)
 	if err != nil {
 		return own, err
 	}
@@ -43,8 +43,8 @@ func ResolveOwnOrganizations(ctx context.Context, repo, manifestPath string, ext
 	return own, nil
 }
 
-func resolveReferenceOwner(ctx context.Context, repo string, manifest *config.Manifest) (string, error) {
-	if identity := os.Getenv("GITHUB_REPOSITORY"); identity != "" {
+func resolveReferenceOwner(ctx context.Context, repo string, manifest *config.Manifest, getenv func(string) string) (string, error) {
+	if identity := lookupEnv(getenv, "GITHUB_REPOSITORY"); identity != "" {
 		owner, name, _ := strings.Cut(identity, "/")
 		if err := util.ValidateGitHubRepositoryIdentity(owner, name); err != nil {
 			return "", fmt.Errorf("GITHUB_REPOSITORY: %w", err)
@@ -64,6 +64,13 @@ func resolveReferenceOwner(ctx context.Context, repo string, manifest *config.Ma
 		return manifest.Repository.Owner, nil
 	}
 	return "", nil
+}
+
+func lookupEnv(getenv func(string) string, key string) string {
+	if getenv == nil {
+		return ""
+	}
+	return getenv(key)
 }
 
 // Order: engine-fr-rule-checks-20261027. Use the closing-reference grammar and decoder.
