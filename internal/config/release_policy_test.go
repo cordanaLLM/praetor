@@ -187,11 +187,6 @@ func TestReleaseTestLevelsPolicy_Negative_DropRequiredLevelFailsValidation(t *te
 		want string
 	}{
 		{
-			name: "omits required integration level for library-client",
-			yaml: "version: 1\nprofiles:\n  - library-client\nrelease:\n  test_levels:\n    unit:\n      paths:\n        - \"**/*_test.go\"\n",
-			want: "cannot drop required test level \"integration\" for profile \"library-client\"",
-		},
-		{
 			name: "nulls required integration level",
 			yaml: "version: 1\nprofiles:\n  - library-client\nrelease:\n  test_levels:\n    unit:\n      paths:\n        - \"**/*_test.go\"\n    integration: null\n",
 			want: "cannot drop a required test level",
@@ -252,5 +247,20 @@ func TestReleaseTestLevelsPolicy_Boundary_ArchetypeDefaults(t *testing.T) {
 
 	if _, err := ProfileReleaseTestLevels(t.Context(), t.TempDir(), []string{"nonexistent-profile"}); err == nil {
 		t.Fatalf("expected unknown profile missing from repository and shipped catalog to fail closed")
+	}
+}
+
+// The drop check needs the repository's effective profiles and archetypes, so a manifest parse
+// accepts a declaration that omits a required level and ValidateForProfiles refuses it.
+func TestReleaseTestLevelsPolicy_Boundary_DropCheckRunsOnProfilesNotOnParse(t *testing.T) {
+	const yaml = "version: 1\nprofiles:\n  - library-client\nrelease:\n  test_levels:\n    unit:\n      paths:\n        - \"**/*_test.go\"\n"
+	m, err := ParseManifest(".standards.yaml", []byte(yaml))
+	if err != nil {
+		t.Fatalf("ParseManifest refused a declaration only the profile check can judge: %v", err)
+	}
+	err = m.Release.ValidateForProfiles(t.Context(), "", m.Profiles)
+	want := "cannot drop required test level \"integration\" for profile \"library-client\""
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("ValidateForProfiles: got err=%v, want substring %q", err, want)
 	}
 }

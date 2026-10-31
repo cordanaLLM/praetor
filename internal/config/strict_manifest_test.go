@@ -300,3 +300,22 @@ func TestValidRepositoryIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateManifest_3D(t *testing.T) {
+	// Positive: valid manifest passes validation
+	valid := &Manifest{Version: 1}
+	if err := ValidateManifest(valid); err != nil {
+		t.Fatalf("expected valid manifest to pass validation: %v", err)
+	}
+
+	// Negative: invalid default_branch fails validation
+	invalid := &Manifest{Repository: RepositoryMetadata{DefaultBranch: "invalid branch"}}
+	if err := ValidateManifest(invalid); err == nil || !strings.Contains(err.Error(), "repository.default_branch") {
+		t.Fatalf("expected invalid default_branch to fail validation, got err=%v", err)
+	}
+
+	// Boundary: nil manifest passes validation cleanly
+	if err := ValidateManifest(nil); err != nil {
+		t.Fatalf("expected nil manifest to pass validation cleanly, got: %v", err)
+	}
+}

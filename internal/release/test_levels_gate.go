@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -133,6 +134,9 @@ func AuditTestLevels(
 
 func ensureManifest(repoPath string, manifest *config.Manifest) (*config.Manifest, error) {
 	if manifest != nil {
+		if err := config.ValidateManifest(manifest); err != nil {
+			return nil, fmt.Errorf("validate supplied manifest: %w", err)
+		}
 		return manifest, nil
 	}
 	loaded, err := config.LoadManifest(filepath.Join(repoPath, config.ManifestFileName))
@@ -577,23 +581,46 @@ func advisoryContinueOnError(raw string) bool {
 	return trimmed == "true" || strings.Contains(trimmed, "true")
 }
 
-func loadRepositoryWorkflows(ctx context.Context, repoPath string) ([]parsedWorkflowFile, string, error) {
-	wfDir := filepath.Join(repoPath, ".github", "workflows")
-	entries, err := os.ReadDir(wfDir)
+func loadRepositoryWorkflows(ctx context.Context, repoPath string) (_ []parsedWorkflowFile, _ string, err error) {
+	if ctx == nil {
+		return nil, "", errors.New("context is required")
+	}
+	ctx, cancel := context.WithTimeout(ctx, contextopt.MaxDuration)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
+	root, err := contextopt.OpenDirectoryIn(ctx, repoPath, filepath.Join(".github", "workflows"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, loadAuxBuildScripts(ctx, repoPath), nil
+	}
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, loadAuxBuildScripts(ctx, repoPath), nil
-		}
 		return nil, "", fmt.Errorf("read workflows directory: %w", err)
 	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	directory, err := root.Open(".")
+	if err != nil {
+		return nil, "", fmt.Errorf("read workflows directory: %w", err)
+	}
+	defer func() { err = errors.Join(err, directory.Close()) }()
+	entries, err := directory.ReadDir(maxReleaseWorkflowFiles + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, "", fmt.Errorf("read workflows directory: %w", err)
+	}
+	if len(entries) > maxReleaseWorkflowFiles {
+		return nil, "", fmt.Errorf("workflow inventory exceeds %d files", maxReleaseWorkflowFiles)
+	}
+	return parseWorkflowEntries(ctx, root, entries), loadAuxBuildScripts(ctx, repoPath), nil
+}
+
+func parseWorkflowEntries(ctx context.Context, root *os.Root, entries []os.DirEntry) []parsedWorkflowFile {
 	var parsed []parsedWorkflowFile
 	for i := 0; i < len(entries) && i < maxReleaseWorkflowFiles; i++ {
 		entry := entries[i]
 		if entry.IsDir() || !isYAMLFilename(entry.Name()) {
 			continue
 		}
-		fullPath := filepath.Join(wfDir, entry.Name())
-		data, readErr := contextopt.ReadSnapshot(ctx, fullPath)
+		data, readErr := contextopt.ReadRootSnapshot(ctx, root, entry.Name())
 		if readErr != nil || len(data) > maxLevelFileBytes {
 			continue
 		}
@@ -607,7 +634,7 @@ func loadRepositoryWorkflows(ctx context.Context, repoPath string) ([]parsedWork
 			Workflow: wf,
 		})
 	}
-	return parsed, loadAuxBuildScripts(ctx, repoPath), nil
+	return parsed
 }
 
 func isYAMLFilename(name string) bool {

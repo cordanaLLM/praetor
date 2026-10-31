@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -209,16 +208,16 @@ func (p *ReleaseE2EPolicy) unmarshalField(key string, val *yaml.Node) error {
 	return err
 }
 
+// validateManifestRelease checks the release block's shape only. Whether it drops a required
+// test level depends on the repository's effective profiles (its flavor, which internal/config
+// cannot resolve) and on the repository's own .config/archetypes, neither of which a manifest
+// parse knows; ParseManifest also reads manifests from git base commits. The release test
+// levels gate runs that check once, with both (internal/release resolveLevelBindings).
 func validateManifestRelease(m *Manifest) error {
 	if m == nil || m.Release == nil {
 		return nil
 	}
-	if err := m.Release.Validate(); err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return m.Release.ValidateForProfiles(ctx, "", m.Profiles)
+	return m.Release.Validate()
 }
 
 // Validate checks a decoded ReleasePolicy against path, test-id, commit-SHA, and test_levels bounds.

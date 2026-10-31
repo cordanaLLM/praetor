@@ -131,7 +131,7 @@ Each profile under `.config/archetypes/<profile>.yaml` declares its default `rel
 
 A repository's required test levels are the union of `release_test_levels` across the profiles of its resolved flavor (`HISSProfile` plus `AlsoImplements` via `flavor.ResolveTargets` / `flavor.ResolveForProfile`) and its declared `profiles`. For example, a `go-service` repository (`framework` + `app-service`) inherits the `app-service` levels, and a `go-library` repository (`framework` + `library-client`) inherits `unit` and `integration`.
 
-### Configuration in `.standards.yaml`
+### Test level configuration in `.standards.yaml`
 
 Configure `release.test_levels` in `.standards.yaml` (`internal/config/release_policy.go`) to bind levels to repository test files and workflow jobs or to add additional required levels:
 
@@ -156,7 +156,7 @@ release:
 - `pattern`: optional regular expression matched against the content of files matched by `paths`.
 - `job`: optional GitHub Actions workflow job ID or display name under `.github/workflows/`.
 - `run`: optional command substring matched against `run:` steps of executable workflow jobs (`ghworkflow.RunSteps`).
-- When `release.test_levels` is declared in `.standards.yaml`, it must include every level required by the repository's profiles (`ReleasePolicy.ValidateForProfiles`); attempting to drop a required level fails validation.
+- When `release.test_levels` is declared in `.standards.yaml`, it must include every level required by the repository's effective profiles (`ReleasePolicy.ValidateForProfiles`). The release test levels gate checks this with the resolved flavor profiles and the repository's own `.config/archetypes`, so a dropped level fails the gate; loading the manifest checks only the block's shape.
 
 ### Verification, live run health, and baseline ratchet
 

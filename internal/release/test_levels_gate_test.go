@@ -7,6 +7,7 @@ package release
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -203,6 +205,49 @@ func TestAuditTestLevels_Negative_DeclarationDroppingRequiredLevelFailsValidatio
 	}
 }
 
+// A repository's own .config/archetypes file sets its profiles' required levels: the gate
+// honours it, so a declaration that omits a level the shipped catalog requires but the local
+// archetype does not passes the drop check (manifest parsing no longer judges it).
+func TestAuditTestLevels_Positive_LocalArchetypeLowersRequiredLevels(t *testing.T) {
+	repo := setupGoLibraryTempRepo(t)
+	shipped, err := os.ReadFile(filepath.Join("..", "..", ".config", "archetypes", "library-client.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const required = "release_test_levels:\n  - \"unit\"\n  - \"integration\"\n"
+	if !strings.Contains(string(shipped), required) {
+		t.Fatalf("library-client archetype no longer requires unit and integration in the expected form")
+	}
+	local := strings.Replace(string(shipped), required, "release_test_levels:\n  - \"unit\"\n", 1)
+	writeTestRepoFile(t, repo, ".config/archetypes/library-client.yaml", local)
+	writeTestRepoFile(t, repo, ".standards.yaml",
+		"version: 1\nprofiles:\n  - library-client\nrelease:\n  test_levels:\n    unit:\n      paths:\n        - \"**/*_test.go\"\n")
+	rep, err := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: true})
+	if err != nil && strings.Contains(err.Error(), "cannot drop required test level") {
+		t.Fatalf("local archetype ignored: %v (report %+v)", err, rep)
+	}
+	if !slices.Contains(rep.Levels, "unit") {
+		t.Fatalf("levels %v lack unit; the gate did not resolve the local archetype (err %v)", rep.Levels, err)
+	}
+	if slices.Contains(rep.Levels, "integration") {
+		t.Fatalf("levels %v still carry integration from the shipped catalog", rep.Levels)
+	}
+}
+
+// A workflow directory past the read bound fails the gate instead of judging the first files.
+func TestAuditTestLevels_Negative_WorkflowInventoryOverBoundFailsClosed(t *testing.T) {
+	repo := setupGoLibraryTempRepo(t)
+	for i := 0; i <= maxReleaseWorkflowFiles; i++ {
+		writeTestRepoFile(t, repo, fmt.Sprintf(".github/workflows/w%02d.yml", i),
+			"on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test ./...\n")
+	}
+	_, err := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: true})
+	want := fmt.Sprintf("workflow inventory exceeds %d files", maxReleaseWorkflowFiles)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("got err=%v, want substring %q", err, want)
+	}
+}
+
 func TestAuditTestLevels_Boundary_OfflineRunHealthAndScheduledDefaultBranchRun(t *testing.T) {
 	t.Setenv("GITHUB_REF", "")
 	t.Setenv("GITHUB_HEAD_REF", "")
@@ -301,5 +346,30 @@ func TestAuditTestLevels_Negative_FileScanCapOverflowFailsClosed(t *testing.T) {
 	}
 	if _, err := AuditTestLevels(ctx, repo, nil, TestLevelsOptions{FlagRelease: false}); err == nil || !strings.Contains(err.Error(), "scan") {
 		t.Fatalf("expected git file list cap overflow to fail closed, got err=%v", err)
+	}
+}
+
+func TestAuditTestLevels_Negative_WorkflowDirReadHonorsContextCancellation(t *testing.T) {
+	repo := setupGoLibraryTempRepo(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, _, err := loadRepositoryWorkflows(ctx, repo)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled on cancelled context, got %v", err)
+	}
+}
+
+func TestAuditTestLevels_Negative_SuppliedManifestWithInvalidPolicyFailsValidation(t *testing.T) {
+	repo := setupGoLibraryTempRepo(t)
+	badManifest := &config.Manifest{
+		Flavors: []config.FlavorPin{
+			{Name: "go-service"},
+			{Name: "go-service"},
+		},
+	}
+	rep, err := AuditTestLevels(t.Context(), repo, badManifest, TestLevelsOptions{FlagRelease: false})
+	if err == nil || !strings.Contains(err.Error(), "validate supplied manifest") {
+		t.Fatalf("expected invalid supplied manifest to fail validation, got rep=%+v, err=%v", rep, err)
 	}
 }
