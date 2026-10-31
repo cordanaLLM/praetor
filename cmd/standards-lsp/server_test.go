@@ -51,6 +51,11 @@ func diagnosticsOf(t *testing.T, notifs []JSONRPCNotification) []Diagnostic {
 	return publishedParams(t, notifs).Diagnostics
 }
 
+// hasRPCError reports whether resp is an error response carrying the JSON-RPC code.
+func hasRPCError(resp *JSONRPCResponse, code int) bool {
+	return resp != nil && resp.Error != nil && resp.Error.Code == code
+}
+
 // closeQuietly closes a test pipe end; pipe closes cannot fail, but the error is still
 // observed rather than discarded.
 func closeQuietly(t *testing.T, c io.Closer) {
@@ -196,7 +201,18 @@ func testLSPChangeWithViolations(t *testing.T, srv *Server, ctx context.Context)
 }
 
 func testLSPSaveCloseAndShutdown(t *testing.T, srv *Server, ctx context.Context) {
-	// didSave re-publishes the diagnostics of the stored (changed) document.
+	testLSPSaveRepublishes(t, srv, ctx)
+	testLSPCloseForgets(t, srv, ctx)
+
+	resp, _ := mustHandle(t, srv, ctx, `{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}`)
+	if resp == nil || resp.Error != nil || resp.Result != nil || resp.ID == nil {
+		t.Errorf("shutdown error: resp=%+v", resp)
+	}
+}
+
+// testLSPSaveRepublishes checks that didSave re-publishes the diagnostics of the stored
+// (changed) document.
+func testLSPSaveRepublishes(t *testing.T, srv *Server, ctx context.Context) {
 	_, notifs := mustHandle(t, srv, ctx, `{"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":{"uri":"file:///sample.go"}}}`)
 	saveDiags := diagnosticsOf(t, notifs)
 	if countDiagnostics(saveDiags, "HISS-07", "panic") != 1 || countDiagnostics(saveDiags, "HISS-01", "") != 1 {
@@ -205,9 +221,11 @@ func testLSPSaveCloseAndShutdown(t *testing.T, srv *Server, ctx context.Context)
 	if params := publishedParams(t, notifs); params.Version == nil || *params.Version != 2 {
 		t.Errorf("didSave must carry the stored version 2, got %+v", params)
 	}
+}
 
-	// didClose forgets the document and clears its diagnostics.
-	_, notifs = mustHandle(t, srv, ctx, `{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"file:///sample.go"}}}`)
+// testLSPCloseForgets checks that didClose forgets the document and clears its diagnostics.
+func testLSPCloseForgets(t *testing.T, srv *Server, ctx context.Context) {
+	_, notifs := mustHandle(t, srv, ctx, `{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"file:///sample.go"}}}`)
 	if params := publishedParams(t, notifs); len(params.Diagnostics) != 0 || params.URI != "file:///sample.go" {
 		t.Errorf("didClose must publish an empty diagnostics set, got %+v", params)
 	}
@@ -221,11 +239,6 @@ func testLSPSaveCloseAndShutdown(t *testing.T, srv *Server, ctx context.Context)
 	_, notifs = mustHandle(t, srv, ctx, `{"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":{"uri":"file:///sample.go"}}}`)
 	if diags := diagnosticsOf(t, notifs); len(diags) != 0 {
 		t.Errorf("a closed document has no stored text and must analyse clean, got %+v", diags)
-	}
-
-	resp, _ := mustHandle(t, srv, ctx, `{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}`)
-	if resp == nil || resp.Error != nil || resp.Result != nil || resp.ID == nil {
-		t.Errorf("shutdown error: resp=%+v", resp)
 	}
 }
 
@@ -339,8 +352,14 @@ func TestLSP_Negative_MalformedAndUnknownMethods(t *testing.T) {
 	ctx := context.Background()
 	srv := NewServer(&bytes.Buffer{}, &bytes.Buffer{}, "v1.0.0")
 
+	testLSPParseErrorAndUnknownMethods(t, srv, ctx)
+	testLSPMalformedParams(t, srv, ctx)
+	testLSPAfterShutdown(t, srv, ctx)
+}
+
+func testLSPParseErrorAndUnknownMethods(t *testing.T, srv *Server, ctx context.Context) {
 	resp, notifs := mustHandle(t, srv, ctx, `{"jsonrpc":"2.0", invalid-json`)
-	if resp == nil || resp.Error == nil || resp.Error.Code != -32700 || resp.ID != nil {
+	if !hasRPCError(resp, -32700) || resp.ID != nil {
 		t.Errorf("expected code -32700 with null id for parse error, got: %+v", resp)
 	}
 	if len(notifs) != 0 {
@@ -348,16 +367,18 @@ func TestLSP_Negative_MalformedAndUnknownMethods(t *testing.T) {
 	}
 
 	resp, _ = mustHandle(t, srv, ctx, `{"jsonrpc":"2.0","id":42,"method":"custom/unknown","params":{}}`)
-	if resp == nil || resp.Error == nil || resp.Error.Code != -32601 {
+	if !hasRPCError(resp, -32601) {
 		t.Errorf("expected code -32601 for unknown method, got: %+v", resp)
 	}
 	resp, _ = mustHandle(t, srv, ctx, `{"jsonrpc":"2.0","method":"custom/unknownNotification","params":{}}`)
 	if resp != nil {
 		t.Errorf("unknown notifications must not be answered, got %+v", resp)
 	}
+}
 
-	// Malformed params never end the session: notifications are dropped, requests
-	// receive -32602.
+// testLSPMalformedParams checks that malformed params never end the session: notifications
+// are dropped, requests receive -32602, and unparsable source yields one SYNTAX diagnostic.
+func testLSPMalformedParams(t *testing.T, srv *Server, ctx context.Context) {
 	for _, bad := range []string{
 		`{"jsonrpc":"2.0","method":"textDocument/didOpen","params":"nope"}`,
 		`{"jsonrpc":"2.0","method":"textDocument/didOpen"}`,
@@ -370,23 +391,25 @@ func TestLSP_Negative_MalformedAndUnknownMethods(t *testing.T) {
 			t.Errorf("malformed notification must be dropped silently: %s -> resp=%+v notifs=%d", bad, resp, len(notifs))
 		}
 	}
-	resp, _ = mustHandle(t, srv, ctx, `{"jsonrpc":"2.0","id":5,"method":"textDocument/didOpen","params":"nope"}`)
-	if resp == nil || resp.Error == nil || resp.Error.Code != -32602 {
+	resp, _ := mustHandle(t, srv, ctx, `{"jsonrpc":"2.0","id":5,"method":"textDocument/didOpen","params":"nope"}`)
+	if !hasRPCError(resp, -32602) {
 		t.Errorf("malformed request params must yield -32602, got %+v", resp)
 	}
 
-	_, notifs = mustHandle(t, srv, ctx, didOpen("file:///broken.go", "package sample\nfunc Broken( {\n"))
+	_, notifs := mustHandle(t, srv, ctx, didOpen("file:///broken.go", "package sample\nfunc Broken( {\n"))
 	diags := diagnosticsOf(t, notifs)
 	if len(diags) != 1 || diags[0].Code != "SYNTAX" {
 		t.Errorf("expected SYNTAX diagnostic, got: %+v", diags)
 	}
+}
 
+func testLSPAfterShutdown(t *testing.T, srv *Server, ctx context.Context) {
 	srv.isShutdown = true
-	resp, _ = mustHandle(t, srv, ctx, `{"jsonrpc":"2.0","id":99,"method":"initialize"}`)
-	if resp == nil || resp.Error == nil || resp.Error.Code != -32600 {
+	resp, _ := mustHandle(t, srv, ctx, `{"jsonrpc":"2.0","id":99,"method":"initialize"}`)
+	if !hasRPCError(resp, -32600) {
 		t.Errorf("expected code -32600 for request after shutdown, got: %+v", resp)
 	}
-	resp, notifs = mustHandle(t, srv, ctx, `{"jsonrpc":"2.0","method":"initialized"}`)
+	resp, notifs := mustHandle(t, srv, ctx, `{"jsonrpc":"2.0","method":"initialized"}`)
 	if resp != nil || len(notifs) != 0 {
 		t.Errorf("a notification after shutdown must be dropped, got resp=%+v notifs=%d", resp, len(notifs))
 	}
