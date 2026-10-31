@@ -338,6 +338,30 @@ issue another live session claims, an unclaimed one and one whose claim it canno
 ([issue claims](issue-claims.md), `internal/agenthook/dispatch_claims.go`). A brief that names
 no issue skips the check.
 
+## Review return claims
+
+At `SubagentStop` (`post-return`), a return from a dispatch whose task label is a review or audit
+label is also checked against what it claims (`internal/agenthook/return_claims.go`, issue #1713).
+The labels come from the repository's routing vocabulary: every label whose name holds `review`
+or `audit`; unreadable routing labels skip the check with a reason instead of falling back to
+defaults.
+
+- Cited files: every `path`, `path:N`, `path:N-M`, `path:N:col`, `path#LN-M` and a list of line
+  numbers after a path resolves against the governed root. A missing file, or a line or range end
+  past the end of the file, is a miss. Trailing sentence punctuation is stripped and absolute paths
+  under the root count; plain words, dotted symbols, bare file names without a directory,
+  host-like tokens and paths outside the root are not citations
+  (`internal/caveman/return_claims.go`). A file extension is recognised by its shape, so no
+  per-repository list exists.
+- Claimed runs: backticked spans and `$ ` items in the `ran` or `commands` field are compared
+  with the Bash calls of the Claude subagent transcript, read through `forEachClaudeTranscriptLine`,
+  the one bounded transcript loop the usage totals share (`internal/agenthook/claude_usage.go`).
+  A claimed command with no such call is a miss; prose in those fields is not a claimed run.
+  Codex has no transcript reader, so its claimed runs are stated as unmeasured, never passed.
+- Misses deny the return with the list, under the same contract as the register gate: the
+  subagent receives them as its next instruction; after `stop_hook_active` the deny becomes a
+  stated skip (`internal/agenthook/agent_traffic.go`).
+
 ## Claude subagent model and effort
 
 The routing catalog's optional `claude_subagent` table maps a validated task label
