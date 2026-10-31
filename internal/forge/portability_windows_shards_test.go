@@ -5,13 +5,14 @@
 package forge
 
 import (
+	"bytes"
 	"fmt"
-	"os/exec"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -56,14 +57,15 @@ func runWindowsShardSelection(t *testing.T, stepRun, shard string, packages []st
 	if !strings.Contains(stepRun, wantAwk) {
 		t.Fatalf("windows-shard Test Every Package step missing %q", wantAwk)
 	}
-	cmd := exec.CommandContext(t.Context(), "bash", "-c", wantAwk)
-	cmd.Env = append(cmd.Environ(), "SHARD="+shard)
-	cmd.Stdin = strings.NewReader(strings.Join(packages, "\n") + "\n")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("shard %s selection failed: %v\n%s", shard, err, out)
+	// The shard number goes into the filter text, not the environment: util.RunCommandStream runs
+	// with the shared command environment and its deadline.
+	filter := strings.Replace(wantAwk, `"$SHARD"`, shard, 1)
+	var out bytes.Buffer
+	stdin := strings.NewReader(strings.Join(packages, "\n") + "\n")
+	if _, err := util.RunCommandStream(t.Context(), "", "bash", stdin, &out, 1<<20, "-c", filter); err != nil {
+		t.Fatalf("shard %s selection failed: %v", shard, err)
 	}
-	trimmed := strings.TrimSpace(string(out))
+	trimmed := strings.TrimSpace(out.String())
 	if trimmed == "" {
 		return nil
 	}
@@ -114,21 +116,33 @@ func TestPortabilityWindowsShards_Positive(t *testing.T) {
 	}
 }
 
-// Negative: dropping the failure/cancelled condition or always() from the aggregator breaks
-// provenAggregateNeeds, and aggregateFails reports fails=true on failure for the real workflow.
+// Negative: dropping the failure condition, dropping always(), or changing the aggregator's
+// repository guard by one character makes provenAggregateNeeds return nil and fails the check, and
+// aggregateFails reports fails=true on failure for the real workflow.
 func TestPortabilityWindowsShards_Negative(t *testing.T) {
 	workflows, identity := engineWorkflows(t)
 	raw := string(workflows["portability.yml"])
 	for name, mutated := range map[string]string{
 		"dropped failure condition": strings.Replace(raw,
-			"contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')",
-			"contains(needs.*.result, 'cancelled')", 1),
+			"contains(needs.*.result, 'failure') || ",
+			"", 1),
 		"dropped cancelled condition": strings.Replace(raw,
 			" || contains(needs.*.result, 'cancelled')", "", 1),
 		"dropped always()": strings.Replace(raw, " && always()", "", 1),
+		"guard differs by one character": strings.Replace(raw,
+			"PRAETOR_FORK_PORTABILITY == 'enabled') && always()",
+			"PRAETOR_FORK_PORTABILITY == 'enablex') && always()", 1),
 	} {
 		if mutated == raw {
 			t.Fatalf("%s: mutation did not apply", name)
+		}
+		spec, err := ghworkflow.Parse([]byte(mutated))
+		if err != nil {
+			t.Fatalf("%s: parse: %v", name, err)
+		}
+		winJob := spec.Jobs["windows"]
+		if got := provenAggregateNeeds(&spec, &winJob); got != nil {
+			t.Fatalf("%s: provenAggregateNeeds = %v, want nil", name, got)
 		}
 		if problem := portabilityWindowsShardsProblem([]byte(mutated), identity); problem == "" {
 			t.Fatalf("%s: broken aggregator passed", name)
@@ -148,7 +162,7 @@ func TestPortabilityWindowsShards_Negative(t *testing.T) {
 	}
 }
 
-// Boundary: cancelled fails the aggregate while success passes it.
+// Boundary: cancelled and skipped fail the aggregate while success passes it.
 func TestPortabilityWindowsShards_Boundary(t *testing.T) {
 	workflows, _ := engineWorkflows(t)
 	spec, err := ghworkflow.Parse(workflows["portability.yml"])
@@ -165,5 +179,8 @@ func TestPortabilityWindowsShards_Boundary(t *testing.T) {
 	}
 	if fails, known := aggregateFails(steps, map[string]string{"windows-shard": needsResultSuccess}); !known || fails {
 		t.Fatalf("success: fails = %t, known = %t; want false, true", fails, known)
+	}
+	if fails, known := aggregateFails(steps, map[string]string{"windows-shard": needsResultSkipped}); !known || !fails {
+		t.Fatalf("skipped: fails = %t, known = %t; want true, true", fails, known)
 	}
 }
