@@ -8,8 +8,8 @@ action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded lock
 action create .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow
 action append .prettierignore :: Preserved existing rules and declared the praetor-managed artifacts
 file .github/workflows/praetor-docs.yml sha256:854dde1037c7065c232e7bb318322d1565eab78f79c84e283d2ee1c9c343834c
-file tools/markdownlint/package.json sha256:3a0e0be3e0e217bd4aef508347d5fbe1ed89e65c3668a6da761af256c24bd107
-file tools/markdownlint/package-lock.json sha256:ff8d70bc3eda4814a2fd5a90b9e56720068f27a1fcfa082117da7f62d0f2c1b6
+file tools/markdownlint/package.json sha256:154815f5ca6f8328f4d73a473ae27717042ea71c0e2faeadb81fe6f4e8aa1624
+file tools/markdownlint/package-lock.json sha256:d17327f29300200731db5c52e6b25bf776cd4c5ff618851eb40621fd19fb0cf7
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
 file tools/markdownlint/verify.mjs sha256:9c1f237ab6c0103e9c1ec4825f2dcce5270cb11d1deb603672c3c1da40e7b6cc
 file tools/markdownlint/no-private-scratch-links.mjs sha256:fb31a8195e6d0527fb908ec3a259e0171dba40fd237bf59197f739c6079763fb
@@ -42,8 +42,8 @@ action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded lock
 action create .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
 file .github/workflows/praetor-docs.yml sha256:854dde1037c7065c232e7bb318322d1565eab78f79c84e283d2ee1c9c343834c
-file tools/markdownlint/package.json sha256:3a0e0be3e0e217bd4aef508347d5fbe1ed89e65c3668a6da761af256c24bd107
-file tools/markdownlint/package-lock.json sha256:ff8d70bc3eda4814a2fd5a90b9e56720068f27a1fcfa082117da7f62d0f2c1b6
+file tools/markdownlint/package.json sha256:154815f5ca6f8328f4d73a473ae27717042ea71c0e2faeadb81fe6f4e8aa1624
+file tools/markdownlint/package-lock.json sha256:d17327f29300200731db5c52e6b25bf776cd4c5ff618851eb40621fd19fb0cf7
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
 file tools/markdownlint/verify.mjs sha256:9c1f237ab6c0103e9c1ec4825f2dcce5270cb11d1deb603672c3c1da40e7b6cc
 file tools/markdownlint/no-private-scratch-links.mjs sha256:fb31a8195e6d0527fb908ec3a259e0171dba40fd237bf59197f739c6079763fb
