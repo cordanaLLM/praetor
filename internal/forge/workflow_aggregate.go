@@ -42,16 +42,24 @@ func aggregateCoveredJobs(spec *workflowSpec, ids []string) map[string]bool {
 	return covered
 }
 
+// aggregateGuard is the leading Renovate skip and repository guard an aggregate's condition
+// carries before always(), so coversNeed requires any covered need to carry the same guards.
+type aggregateGuard struct {
+	renovate   bool
+	repository string
+}
+
 // provenAggregateNeeds returns the jobs job needs that it is proven to fail on, or nil when job
 // is no proven aggregate. The proof reads an allow-list of shapes and refuses every other one
-// (aggregateShape): a job that needs at least one job, runs under always() alone, is not advisory
-// and has only exit steps and alls-green steps. Its steps must pass when every need succeeded,
-// and a need is covered when they fail whenever that need alone failed or was cancelled
-// (failsWhenNeedFails). An aggregate the file cannot prove, such as one that only echoes, covers
-// nothing and stays a required check beside the jobs it needs.
+// (aggregateShape): a job that needs at least one job, runs under always() after at most the
+// Renovate skip and a repository guard, is not advisory and has only exit steps and alls-green
+// steps. Its steps must pass when every need succeeded, and a need is covered when they fail
+// whenever that need alone failed or was cancelled (failsWhenNeedFails) and the need carries the
+// aggregate's guards (coversNeed). An aggregate the file cannot prove, such as one that only
+// echoes, covers nothing and stays a required check beside the jobs it needs.
 func provenAggregateNeeds(spec *workflowSpec, job *workflowJob) []string {
 	needs := job.NeedIDs()
-	steps, renovate, shaped := aggregateShape(spec, job)
+	steps, guard, shaped := aggregateShape(spec, job)
 	if len(needs) == 0 || !shaped {
 		return nil
 	}
@@ -60,7 +68,7 @@ func provenAggregateNeeds(spec *workflowSpec, job *workflowJob) []string {
 	}
 	var covered []string
 	for i := 0; i < len(needs) && i < maxJobsPerFile; i++ {
-		if coversNeed(spec, steps, needs, needs[i], renovate) {
+		if coversNeed(spec, steps, needs, needs[i], guard) {
 			covered = append(covered, needs[i])
 		}
 	}
@@ -68,44 +76,56 @@ func provenAggregateNeeds(spec *workflowSpec, job *workflowJob) []string {
 }
 
 // coversNeed reports whether an aggregate with steps over needs covers need. Under a leading
-// Renovate skip (renovate) the aggregate is skipped on a Renovate pull request, and a skipped
-// required check passes, so it covers only a need that carries the same skip
-// (carriesRenovateBranchSkip) and so does not run there either. A need that still runs on that
-// pull request stays required, or a failure of it would merge.
-func coversNeed(spec *workflowSpec, steps []gateStep, needs []string, need string, renovate bool) bool {
-	if renovate && !carriesRenovateBranchSkip(spec.Jobs[need].If) {
+// Renovate skip or repository guard the aggregate is skipped where the guard is false, and a
+// skipped required check passes, so it covers only a need that carries the same skip and guard
+// and so does not run there either. A need that still runs there stays required, or a failure of
+// it would merge.
+func coversNeed(spec *workflowSpec, steps []gateStep, needs []string, need string, guard aggregateGuard) bool {
+	needIf := spec.Jobs[need].If
+	if guard.renovate && !carriesRenovateBranchSkip(needIf) {
+		return false
+	}
+	if guard.repository != "" && withoutRenovateBranchSkip(needIf) != guard.repository {
 		return false
 	}
 	return failsWhenNeedFails(steps, needs, need)
 }
 
-// aggregateShape returns the steps of job (gateSteps) and whether its condition leads with the
-// Renovate skip, or false when job is not an aggregate in the allowed shape: its condition is
-// always() alone (aggregateCondition), it is not advisory, and every step is an exit step or an
-// alls-green step.
-func aggregateShape(spec *workflowSpec, job *workflowJob) (steps []gateStep, renovate, shaped bool) {
-	renovate, always := aggregateCondition(job.If)
+// aggregateShape returns the steps of job (gateSteps) and the guards its condition carries before
+// always() (aggregateCondition), or false when job is not an aggregate in the allowed shape: it
+// is not advisory, and every step is an exit step or an alls-green step.
+func aggregateShape(spec *workflowSpec, job *workflowJob) (steps []gateStep, guard aggregateGuard, shaped bool) {
+	guard, always := aggregateCondition(job.If)
 	if !always || advisoryJob(job.ContinueOnError) {
-		return nil, false, false
+		return nil, aggregateGuard{}, false
 	}
 	steps, shaped = gateSteps(spec, job)
-	return steps, renovate, shaped
+	return steps, guard, shaped
 }
 
 // aggregateCondition reads an aggregate's job condition. It holds (always) only for always()
-// alone, bare or as one ${{ }} expression, after an optional leading renovateBranchSkip conjunct,
-// which renovate reports (withoutRenovateBranchSkip).
+// alone, bare or as one ${{ }} expression, after an optional leading renovateBranchSkip conjunct
+// (withoutRenovateBranchSkip) and an optional parenthesised repository-guard disjunction
+// (withoutTrailingAlways), which guard reports.
 //
-// always() makes the job run on every run, a cancelled one included, so it reports even when a
-// need failed or was skipped. `!cancelled()` and `success() || failure()` do not run on a
-// cancelled run, and whether GitHub then reports the skipped gate as skipped, which satisfies a
-// required check, or as cancelled is not verified (community discussion #26303 reports both), so
-// neither covers a need. Any other condition can skip the gate on a run where a need failed.
-func aggregateCondition(condition string) (renovate, always bool) {
+// always() makes the job run on every run where its guard holds, a cancelled one included, so it
+// reports even when a need failed or was skipped. `!cancelled()` and `success() || failure()` do
+// not run on a cancelled run, and whether GitHub then reports the skipped gate as skipped, which
+// satisfies a required check, or as cancelled is not verified (community discussion #26303
+// reports both), so neither covers a need. Any other condition can skip the gate on a run where a
+// need failed.
+func aggregateCondition(condition string) (guard aggregateGuard, always bool) {
 	rest := withoutRenovateBranchSkip(condition)
+	guard.renovate = rest != strings.TrimSpace(condition)
+	if inner := withoutTrailingAlways(rest); inner != rest &&
+		strings.Contains(inner, "github.repository == (vars."+canonicalRepositoryVariable+" || '") &&
+		!strings.Contains(inner, "&&") && !strings.Contains(inner, "!(") {
+		guard.repository = inner
+		return guard, true
+	}
 	expression, closed := ghworkflow.UnwrapExpression(rest)
 	always = closed && strings.Join(strings.Fields(expression), "") == "always()"
-	return rest != strings.TrimSpace(condition), always
+	return guard, always
 }
 
 // carriesRenovateBranchSkip reports whether a job condition leads with renovateBranchSkip as

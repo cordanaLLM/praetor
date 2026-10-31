@@ -179,8 +179,10 @@ func TestPortabilityAssertsTheHookToolchainBeforeTheSelfTests(t *testing.T) {
 	if err := yaml.Unmarshal(workflows["portability.yml"], &spec); err != nil {
 		t.Fatalf("parse portability.yml: %v", err)
 	}
-	if gap := hookToolchainGap(spec.Jobs["harness"]); gap != "" {
-		t.Fatalf("portability harness: %s", gap)
+	for _, jobID := range []string{"harness", "windows-shard"} {
+		if gap := hookToolchainGap(spec.Jobs[jobID]); gap != "" {
+			t.Fatalf("portability %s: %s", jobID, gap)
+		}
 	}
 	every := "${{ !cancelled() }}"
 	check := func(condition, required string) workflowStep {

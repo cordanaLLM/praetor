@@ -45,6 +45,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  SHELLCHECK_VERSION: v0.11.0
+
 jobs:
   # Outside the canonical repository the matrix is an operator's choice (#189): the macOS
   # and Windows legs are billed at a multiple on a private repository, and an operational
@@ -128,8 +131,6 @@ jobs:
             name: Linux
           - os: macos-26
             name: macOS
-          - os: windows-2025
-            name: Windows
 
     steps:
       # The hosted gate's draft step, as ghworkflow.HostedGateDraftStep renders it: on a draft
@@ -419,8 +420,6 @@ jobs:
       - name: Install Shell Linter
         if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
         shell: bash
-        env:
-          SHELLCHECK_VERSION: v0.11.0
         run: |
           set -euo pipefail
           mkdir -p "${RUNNER_TEMP}/shellcheck"
@@ -577,3 +576,315 @@ jobs:
           node --test 'tools/figures/third_party/interfig/upstream/src/*.test.ts'
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}
+
+  windows-shard:
+    name: Platform Neutrality (Windows shard ${{ matrix.shard }})
+    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled')"
+    runs-on: windows-2025
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+
+    steps:
+      - name: Stop on a draft pull request
+        if: github.event.pull_request.draft == true
+        shell: bash
+        env:
+          TITLE: Gate not run on a draft
+          MESSAGE: >-
+            The gate did not run because the pull request is a draft.
+            It runs when the pull request is marked ready for review.
+        run: |
+          echo "::error title=$TITLE::$MESSAGE"
+          echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: Checkout Source Code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Setup Go Toolchain
+        id: setup-go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Restore Go Module And Build Caches
+        uses: ./.github/actions/go-cache
+        with:
+          job: portability-windows-shard-${{ matrix.shard }}
+          go-version: ${{ steps.setup-go.outputs.go-version }}
+
+      - name: Detect Changed Paths
+        id: base
+        uses: ./.github/actions/changed-paths
+
+      - name: Setup Python Toolchain
+        id: python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Select Platform Neutrality Scope
+        id: scope
+        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        shell: bash
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ steps.base.outputs.base_ref }}
+        run: |
+          "$PYTHON" -B .config/lefthook/scripts/ci_scope.py --event "$EVENT" --base "$BASE" --head HEAD \
+            --output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY" --packages "$RUNNER_TEMP/portability-packages.txt"
+
+      - name: Select Buildable Go Packages
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        shell: bash
+        run: |
+          packages=()
+          while IFS= read -r package; do packages+=("$package"); done < "$RUNNER_TEMP/portability-packages.txt"
+          go list -f '{{if or .GoFiles .CgoFiles}}{{.ImportPath}}{{end}}' "${packages[@]}" > "$RUNNER_TEMP/buildable.txt"
+
+      - name: Compile Every Package
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        shell: bash
+        run: |
+          buildable=()
+          while IFS= read -r package; do
+            if [ -n "$package" ]; then buildable+=("$package"); fi
+          done < "$RUNNER_TEMP/buildable.txt"
+          if [ "${#buildable[@]}" -gt 0 ]; then
+            go build "${buildable[@]}"
+          else
+            echo "Compile Every Package skipped: selected packages contain tests only"
+          fi
+
+      - name: Vet Every Package
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        shell: bash
+        run: |
+          buildable=()
+          while IFS= read -r package; do
+            if [ -n "$package" ]; then buildable+=("$package"); fi
+          done < "$RUNNER_TEMP/buildable.txt"
+          if [ "${#buildable[@]}" -gt 0 ]; then
+            go vet "${buildable[@]}"
+          else
+            echo "Vet Every Package skipped: selected packages contain tests only"
+          fi
+
+      - name: Download And Build Pinned Tools
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        shell: bash
+        run: |
+          go mod download -modfile=tools/go/go.mod
+          go build -modfile=tools/go/go.mod -o "$RUNNER_TEMP/pinned-tools/" golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec github.com/zricethezav/gitleaks/v8
+
+      - name: Test Every Package
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        shell: bash
+        run: |
+          adopt=$(go list ./internal/adopt)
+          cli=$(go list ./cmd/standardsctl)
+          cli_half='^Test(Aud|[B-D])'
+          selected=()
+          while IFS= read -r package; do selected+=("$package"); done < "$RUNNER_TEMP/portability-packages.txt"
+          go list "${selected[@]}" > "$RUNNER_TEMP/selected-packages.txt"
+          packages=()
+          while IFS= read -r package; do packages+=("$package"); done < <(grep -vxF -e "$adopt" -e "$cli" "$RUNNER_TEMP/selected-packages.txt" | LC_ALL=C sort | awk -v shard="$SHARD" 'NR % 2 == (shard % 2)')
+          json="$RUNNER_TEMP/go-test-$RUNNER_OS.json"
+          : > "$json"
+          show() {
+            "$PYTHON" -B -c 'import json, sys
+          sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+          for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
+              try:
+                  event = json.loads(line) if line.startswith("{") else {"Action": "output", "Output": line}
+              except ValueError:
+                  event = {"Action": "output", "Output": line}
+              if event.get("Action") in ("output", "build-output"):
+                  sys.stdout.write(event.get("Output", ""))' "$1"
+            cat "$1" >> "$json"
+          }
+          status=0
+          if [ "${#packages[@]}" -gt 0 ]; then
+            go test -json -timeout 30m "${packages[@]}" > "$RUNNER_TEMP/run-1.json" 2>&1 || status=$?
+            show "$RUNNER_TEMP/run-1.json"
+          else
+            echo "run-1 skipped: no selected packages outside adopt and CLI for shard $SHARD"
+          fi
+          if [ "$SHARD" = 1 ]; then
+            if [ "$ADOPT" = true ]; then
+              go test -json -timeout 30m "$adopt" > "$RUNNER_TEMP/run-2.json" 2>&1 || status=$?
+              show "$RUNNER_TEMP/run-2.json"
+            else
+              echo "run-2 skipped: adopt is not selected"
+            fi
+            if [ "$CLI" = true ]; then
+              go test -json -timeout 30m -run "$cli_half" "$cli" > "$RUNNER_TEMP/run-3.json" 2>&1 || status=$?
+              show "$RUNNER_TEMP/run-3.json"
+              go test -json -timeout 30m -skip "$cli_half" "$cli" > "$RUNNER_TEMP/run-4.json" 2>&1 || status=$?
+              show "$RUNNER_TEMP/run-4.json"
+            else
+              echo "run-3/run-4 skipped: CLI is not selected"
+            fi
+          fi
+          exit "$status"
+        env:
+          ADOPT: ${{ steps.scope.outputs.adopt }}
+          CLI: ${{ steps.scope.outputs.cli }}
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          SHARD: ${{ matrix.shard }}
+
+      - name: Upload Per-Test Timing
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-test-json-Windows-shard${{ matrix.shard }}
+          path: ${{ runner.temp }}/go-test-${{ runner.os }}.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Test The Client Schema Oracle Module
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.schemacheck == 'true' && matrix.shard == 2 }}
+        run: |
+          go -C tools/schemacheck vet ./...
+          go -C tools/schemacheck test -timeout 30m ./...
+
+      - name: Install Pinned Git Hook Toolchain
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
+        run: go install -C tools/lefthook github.com/evilmartians/lefthook/v2
+
+      - name: Install Security Scanner
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
+        shell: bash
+        run: go install -modfile=tools/go/go.mod github.com/securego/gosec/v2/cmd/gosec
+
+      - name: Install YAML Linter
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
+        shell: bash
+        run: >-
+          "$PYTHON" -m pip install --disable-pip-version-check --require-hashes
+          -r .config/hook-lint/requirements.txt
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+
+      - name: Install Shell Linter
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/shellcheck"
+          base="https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}"
+          case "${RUNNER_OS}" in
+            Windows)
+              curl -fsSL --max-time 300 -o "${RUNNER_TEMP}/shellcheck.zip" "${base}/shellcheck-${SHELLCHECK_VERSION}.zip"
+              if command -v 7z >/dev/null 2>&1; then
+                7z x -y -bso0 -bsp0 -o"${RUNNER_TEMP}/shellcheck" "${RUNNER_TEMP}/shellcheck.zip"
+              else
+                unzip -q -o "${RUNNER_TEMP}/shellcheck.zip" -d "${RUNNER_TEMP}/shellcheck"
+              fi
+              ;;
+            *)
+              if [ "${RUNNER_OS}" = macOS ]; then platform=darwin; else platform=linux; fi
+              machine="$(uname -m)"
+              if [ "${machine}" = arm64 ]; then machine=aarch64; fi
+              curl -fsSL --max-time 300 "${base}/shellcheck-${SHELLCHECK_VERSION}.${platform}.${machine}.tar.xz" \
+                | tar -xJ -C "${RUNNER_TEMP}/shellcheck" --strip-components=1
+              ;;
+          esac
+          echo "${RUNNER_TEMP}/shellcheck" >> "${GITHUB_PATH}"
+          if [ "${RUNNER_OS}" = Windows ]; then
+            "${RUNNER_TEMP}/shellcheck/shellcheck.exe" --version
+          else
+            "${RUNNER_TEMP}/shellcheck/shellcheck" --version
+          fi
+
+      - name: Build praetorctl
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && matrix.shard == 2 }}
+        shell: bash
+        run: go build -o "bin/praetorctl$(go env GOEXE)" ./cmd/standardsctl
+
+      - name: Documentation References
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && matrix.shard == 2 }}
+        shell: bash
+        run: '"bin/praetorctl$(go env GOEXE)" docs references --path=.'
+
+      - name: Assert Hook Toolchain
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
+        shell: bash
+        run: '"$PYTHON" -B .config/lefthook/scripts/toolchain.py --require "$REQUIRED"'
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          REQUIRED: "python,make,git,go,gofmt,gosec,lefthook,sh,shellcheck,yamllint"
+
+      - name: Harness Self-Tests
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
+        timeout-minutes: 40
+        shell: bash
+        run: |
+          status=0
+          "$PYTHON" -u -B scripts/test_portability_selftest.py || status=$?
+          "$PYTHON" -u -B scripts/portability_selftest.py --min-executed "$MIN_EXECUTED" || status=$?
+          exit "$status"
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          MIN_EXECUTED: '10'
+
+      - name: Setup Node Toolchain
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && (steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true') && matrix.shard == 2 }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            tools/figures/package-lock.json
+            tools/markdownlint/package-lock.json
+
+      - name: Markdown Gate Self-Test
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.markdown == 'true' && matrix.shard == 2 }}
+        run: node tools/markdownlint/verify.mjs --self-test
+
+      - name: Figure Build Check
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.figures == 'true' && matrix.shard == 2 }}
+        shell: bash
+        run: |
+          npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
+          npm --prefix tools/figures test
+          npm --prefix tools/figures run typecheck
+          node tools/figures/build.mjs check
+          node tools/figures/bundle.mjs --check
+          node tools/figures/build.mjs sources
+
+      - name: Interfig Verify Gate
+        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.interfig == 'true' && matrix.shard == 2 }}
+        shell: bash
+        run: |
+          "$PYTHON" -B scripts/test_sync_interfig.py
+          "$PYTHON" -B scripts/sync_interfig.py verify
+          node --test 'tools/figures/third_party/interfig/upstream/src/*.test.ts'
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+
+  # The aggregate carries the same Renovate skip and repository guard as windows-shard before
+  # always(), so provenAggregateNeeds covers the shard matrix and provenDraftStepAggregate proves
+  # draft handling through each shard's leading draft step. Shards are skipped only where the
+  # aggregate's own guard is false, so failing on failure, cancelled or skipped is stricter and
+  # never fires on a normal run.
+  windows:
+    name: Platform Neutrality (Windows)
+    needs: windows-shard
+    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled') && always()"
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - name: Require Every Windows Portability Shard
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
+        run: |
+          echo "::error::a Windows portability shard failed, was cancelled or was skipped"
+          exit 1

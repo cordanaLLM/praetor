@@ -7,6 +7,8 @@ package forge
 import (
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 )
 
 const (
@@ -21,7 +23,32 @@ const (
 // toolModulesFirstProblem reports how the matrix departs from downloading the pinned tool
 // modules, in bash, before it tests every package; "" when it holds that shape.
 func toolModulesFirstProblem(workflow string) string {
-	download, tests := strings.Index(workflow, toolModulesStep), strings.Index(workflow, testPackageStep)
+	spec, err := ghworkflow.Parse([]byte(workflow))
+	if err != nil {
+		return err.Error()
+	}
+	for _, jobID := range []string{"harness", "windows-shard"} {
+		job, ok := spec.Jobs[jobID]
+		if !ok {
+			return "missing job " + jobID
+		}
+		if problem := jobToolModulesProblem(job); problem != "" {
+			return jobID + ": " + problem
+		}
+	}
+	return ""
+}
+
+func jobToolModulesProblem(job ghworkflow.Job) string {
+	download, tests := -1, -1
+	for i := 0; i < len(job.Steps) && i < ghworkflow.MaxStepsPerJob; i++ {
+		switch job.Steps[i].Name {
+		case "Download And Build Pinned Tools":
+			download = i
+		case "Test Every Package":
+			tests = i
+		}
+	}
 	switch {
 	case download < 0:
 		return "no " + toolModulesStep + " step"
@@ -30,11 +57,11 @@ func toolModulesFirstProblem(workflow string) string {
 	case download > tests:
 		return "the tool modules download after the tests"
 	}
-	step := workflow[download:tests]
-	if !strings.Contains(step, toolModulesRun) || !strings.Contains(step, "shell: bash") {
+	step := job.Steps[download]
+	if !strings.Contains(step.Run, toolModulesRun) || strings.TrimSpace(step.Shell) != "bash" {
 		return "the download step does not run " + toolModulesRun + " in bash"
 	}
-	if !strings.Contains(step, toolBuildRun) {
+	if !strings.Contains(step.Run, toolBuildRun) {
 		return "the step does not build the pinned scanners before the tests"
 	}
 	return ""

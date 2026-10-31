@@ -1,0 +1,2 @@
+type: added
+title: Proven aggregate gates may carry a parenthesised repository guard before always() to cover needs with the same guard and stop draft pull requests when every covered need begins with the draft step
