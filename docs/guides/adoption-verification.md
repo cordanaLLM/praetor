@@ -1042,8 +1042,9 @@ govuln: FAIL: govulncheck v1.8.0, symbol scan: 1 advisories present, 1 failing, 
 The document lives at `security.go_vex` in `.standards.yaml`, `security/vex/go.openvex.json` by
 default (`config.RepositoryGoVEXPath` in
 [`internal/config/security_policy.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/config/security_policy.go)).
-A repository whose scan reports no advisory needs no document. Without one, every advisory present
-in the build fails. The gate reads [OpenVEX v0.2.0](https://github.com/openvex/spec/blob/main/OPENVEX-SPEC.md):
+In a repository with several Go modules every module is judged against this one document at the
+repository root. A repository whose scan reports no advisory needs no document. Without one, every
+advisory present in the build fails. The gate reads [OpenVEX v0.2.0](https://github.com/openvex/spec/blob/main/OPENVEX-SPEC.md):
 
 ```json
 {

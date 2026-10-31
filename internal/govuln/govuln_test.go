@@ -72,16 +72,50 @@ func notAffected(name, justification, lastUpdated string) string {
 func module(t *testing.T, vex string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if vex != "" {
-		path := filepath.Join(dir, "security", "vex", "go.openvex.json")
-		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(vex), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
+	writeVEX(t, dir, vex)
 	return dir
+}
+
+// writeVEX writes vex at the default document path below dir, when vex is not empty.
+func writeVEX(t *testing.T, dir, vex string) {
+	t.Helper()
+	if vex == "" {
+		return
+	}
+	path := filepath.Join(dir, "security", "vex", "go.openvex.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(vex), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// nested writes a repository root holding rootVEX and its nested module "sub" holding subVEX,
+// each at the default document path when not empty.
+func nested(t *testing.T, rootVEX, subVEX string) (root, sub string) {
+	t.Helper()
+	root = module(t, rootVEX)
+	sub = filepath.Join(root, "sub")
+	if err := os.MkdirAll(sub, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	writeVEX(t, sub, subVEX)
+	return root, sub
+}
+
+// coveringVEX is a document whose current statement covers the advisory of the "module" stream.
+func coveringVEX() string {
+	return vexDoc(notAffected("GO-2022-1059", "vulnerable_code_not_present", ""))
+}
+
+// checkNested runs Check on the nested module sub, with vexRoot as the repository root, against
+// the recorded "module" stream.
+func checkNested(t *testing.T, sub, vexRoot string) (*Report, error) {
+	t.Helper()
+	var calls []call
+	return Check(t.Context(), Options{Dir: sub, VEXRoot: vexRoot, Run: stubRunner(fixture(t, "module"), nil, &calls),
+		Now: func() time.Time { return testNow }})
 }
 
 // check runs Check on dir against the recorded stream named by stream.
@@ -217,27 +251,7 @@ func TestGovuln_Positive_ScannerModfileRewrite(t *testing.T) {
 
 // Positive: Check runs the scanner with -modfile resolved against VEXRoot when Dir is a submodule.
 func TestCheck_GovulnSubmoduleAbsoluteModfile(t *testing.T) {
-	root := t.TempDir()
-	sub := filepath.Join(root, "sub")
-	if err := os.MkdirAll(sub, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	vexPath := filepath.Join(root, "security", "vex", "go.openvex.json")
-	if err := os.MkdirAll(filepath.Dir(vexPath), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	vex := vexDoc(notAffected("GO-2022-1059", "vulnerable_code_not_present", ""))
-	if err := os.WriteFile(vexPath, []byte(vex), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	subVexPath := filepath.Join(sub, "security", "vex", "go.openvex.json")
-	if err := os.MkdirAll(filepath.Dir(subVexPath), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(subVexPath, []byte(vex), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
+	root, sub := nested(t, coveringVEX(), "")
 	var calls []call
 	run := stubRunner(fixture(t, "module"), nil, &calls)
 	scanner := []string{"go", "tool", "-modfile=tools/go/go.mod", "govulncheck"}
@@ -269,18 +283,7 @@ func TestCheck_GovulnSubmoduleAbsoluteModfile(t *testing.T) {
 // Boundary: a relative repository root (the hook's default --path=.) still yields an absolute
 // -modfile, so a submodule run finds the tools module.
 func TestCheck_Boundary_RelativeRootYieldsAbsoluteModfile(t *testing.T) {
-	root := t.TempDir()
-	sub := filepath.Join(root, "sub")
-	vex := vexDoc(notAffected("GO-2022-1059", "vulnerable_code_not_present", ""))
-	for _, dir := range []string{root, sub} {
-		vexPath := filepath.Join(dir, "security", "vex", "go.openvex.json")
-		if err := os.MkdirAll(filepath.Dir(vexPath), 0o750); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(vexPath, []byte(vex), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
+	root, _ := nested(t, coveringVEX(), "")
 	stream := fixture(t, "module") // read before the working directory leaves the package
 	t.Chdir(root)
 	abs, err := filepath.Abs(".")
@@ -289,13 +292,40 @@ func TestCheck_Boundary_RelativeRootYieldsAbsoluteModfile(t *testing.T) {
 	}
 	var calls []call
 	run := stubRunner(stream, nil, &calls)
-	_, err = Check(t.Context(), Options{Dir: "sub", VEXRoot: ".", Run: run, Now: func() time.Time { return testNow },
+	report, err := Check(t.Context(), Options{Dir: "sub", VEXRoot: ".", Run: run, Now: func() time.Time { return testNow },
 		Scanner: []string{"go", "tool", "-modfile=tools/go/go.mod", "govulncheck"}})
-	if err != nil {
-		t.Fatalf("Check: %v", err)
-	}
+	mustPass(t, report, err, 1)
 	want := "-modfile=" + filepath.Join(abs, "tools", "go", "go.mod")
 	if len(calls) != 1 || !slices.Contains(calls[0].args, want) {
 		t.Fatalf("calls = %+v, want one scanner run with %q", calls, want)
 	}
+}
+
+// Positive: a nested module is judged against the document at the repository root, the one
+// document the root manifest names.
+func TestCheck_Positive_NestedModuleReadsRootVEX(t *testing.T) {
+	root, sub := nested(t, coveringVEX(), "")
+	report, err := checkNested(t, sub, root)
+	mustPass(t, report, err, 1)
+	if !report.VEXFound {
+		t.Fatalf("VEXFound = false, want the document at %s found", root)
+	}
+}
+
+// Negative: a copy inside a nested module is not the repository document; with none at the
+// repository root the advisory fails.
+func TestCheck_Negative_NestedModuleCopyCoversNothing(t *testing.T) {
+	root, sub := nested(t, "", coveringVEX())
+	report, err := checkNested(t, sub, root)
+	mustFail(t, report, err, "security/vex/go.openvex.json does not exist")
+	if report.VEXFound {
+		t.Fatal("VEXFound = true, want the nested module's copy ignored")
+	}
+}
+
+// Boundary: with VEXRoot empty the scanned directory is the root, as for a single-module caller.
+func TestCheck_Boundary_EmptyVEXRootReadsDir(t *testing.T) {
+	_, sub := nested(t, "", coveringVEX())
+	report, err := checkNested(t, sub, "")
+	mustPass(t, report, err, 1)
 }
