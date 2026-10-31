@@ -152,7 +152,7 @@ func TestAudit_ExpiredBacklogCapEntryFailsTheAudit(t *testing.T) {
 	today := config.ExceptionDay(time.Now())
 	entry := func(expires time.Time) string {
 		return "exceptions:\n  - rule: \"backlog.caps.forge_alerts\"\n    tool: \"backlog\"\n" +
-			"    reason: \"alerts triaged in the weekly sweep\"\n    expires: \"" + expires.Format(config.ExceptionDateLayout) + "\"\n"
+			"    reason: \"alerts triaged in the weekly sweep\"\n    category: A\n    expires: \"" + expires.Format(config.ExceptionDateLayout) + "\"\n"
 	}
 	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+entry(today.AddDate(0, 0, -1)))
 	out, err := f.audit(t)
@@ -171,7 +171,7 @@ func TestAudit_ExceptionsExpiryWarning_Integration(t *testing.T) {
 
 	// Add an exception expiring in 10 days
 	expires := time.Now().AddDate(0, 0, 10).Format(config.ExceptionDateLayout)
-	entry := fmt.Sprintf("exceptions:\n  - rule: HISS-10\n    path: .github/workflows/build.yml\n    reason: compiler upgrade pending\n    expires: %q\n", expires)
+	entry := fmt.Sprintf("exceptions:\n  - rule: HISS-10\n    path: .github/workflows/build.yml\n    reason: compiler upgrade pending\n    category: A\n    expires: %q\n", expires)
 	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+entry)
 
 	out, err := f.audit(t)
@@ -185,7 +185,7 @@ func TestAudit_ExceptionsExpiryWarning_Integration(t *testing.T) {
 
 	// In contrast, an exception expiring in 30 days produces no warning in audit
 	expires30 := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
-	entry30 := fmt.Sprintf("exceptions:\n  - rule: HISS-10\n    path: .github/workflows/build.yml\n    reason: compiler upgrade pending\n    expires: %q\n", expires30)
+	entry30 := fmt.Sprintf("exceptions:\n  - rule: HISS-10\n    path: .github/workflows/build.yml\n    reason: compiler upgrade pending\n    category: A\n    expires: %q\n", expires30)
 	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+entry30)
 
 	out, err = f.audit(t)

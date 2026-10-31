@@ -199,7 +199,7 @@ var supplyChainToday = time.Date(2026, time.October, 6, 12, 0, 0, 0, time.UTC)
 
 // supplyChainEntry is a HISS-11 exceptions entry for the workflow path, expiring on expires.
 func supplyChainEntry(path, expires string) config.Exception {
-	return config.Exception{Rule: config.ExceptionRuleSupplyChain, Path: path,
+	return config.Exception{Rule: config.ExceptionRuleSupplyChain, Path: path, Category: "D",
 		Reason: "release provenance not yet built by an isolated Level 3 builder", Expires: expires}
 }
 
@@ -272,7 +272,7 @@ func TestAuditSupplyChainRefusesExpiredStaleAndMalformedEntries(t *testing.T) {
 		"an entry under a policy declaring nothing": {supplyChainPolicy(0, false, false), supplyChainEntry(".github/workflows/release.yml", "2026-12-31"),
 			[]string{"because the policy declares no supply-chain control"}},
 		"a malformed entry": {supplyChainPolicy(3, false, false),
-			config.Exception{Rule: config.ExceptionRuleSupplyChain, Glob: ".github/workflows/*.yml", Reason: "globbed", Expires: "2026-12-31"},
+			config.Exception{Rule: config.ExceptionRuleSupplyChain, Glob: ".github/workflows/*.yml", Reason: "globbed", Category: "A", Expires: "2026-12-31"},
 			[]string{"rule HISS-11 must name one file by path, not a glob"}},
 	}
 	for name, tc := range cases {

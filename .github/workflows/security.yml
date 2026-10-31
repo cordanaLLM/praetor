@@ -128,10 +128,10 @@ jobs:
         run: |
           TRIVY_VERSION="0.75.0"
           TRIVY_SHA256="c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f"
-          curl -sSfL --max-time 60 "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" -o /tmp/trivy.tar.gz
-          echo "${TRIVY_SHA256}  /tmp/trivy.tar.gz" | sha256sum -c -
-          sudo tar -xzf /tmp/trivy.tar.gz -C /usr/local/bin trivy
-          rm -f /tmp/trivy.tar.gz
+          curl -sSfL --max-time 60 "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" -o "${RUNNER_TEMP}/trivy.tar.gz"
+          echo "${TRIVY_SHA256}  ${RUNNER_TEMP}/trivy.tar.gz" | sha256sum -c -
+          sudo tar -xzf "${RUNNER_TEMP}/trivy.tar.gz" -C /usr/local/bin trivy
+          rm -f "${RUNNER_TEMP}/trivy.tar.gz"
 
       # Planted-case verification (HISS-20 negative case, Rule 13 "Proven checks"):
       # scan a go.mod that pins golang.org/x/net v0.16.0, which carries the published HIGH advisory

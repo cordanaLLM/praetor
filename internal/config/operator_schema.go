@@ -108,7 +108,11 @@ var operatorSpecs = map[string]settingSpec{
 	"hooks.admission.scope_form":            {kind: kindBool},
 	"hooks.admission.max_jobs_divisor":      {kind: kindInt, check: intAtLeast(1)},
 	"hooks.admission.commands":              {kind: kindList, rule: ruleAppend, maxItems: MaxAdmissionCommands, check: admissionList},
+	"hooks.worktrees":                       {kind: kindMapping},
+	"hooks.worktrees.enforce":               {kind: kindBool, rule: ruleTighten, strict: "true"},
 	"hooks.python":                          {kind: kindArgv, check: pythonCandidates},
+	"hooks.merge":                           {kind: kindMapping},
+	"hooks.merge.helper":                    {check: matching(mergeHelperPattern, "empty or a single shell word without spaces, at most 256 characters")},
 	"update":                                {kind: kindMapping},
 	"update.channel":                        {check: oneOf("push")},
 	"update.source":                         {check: oneOf("checkout")},
@@ -146,13 +150,14 @@ var reservedValues = map[string]string{
 }
 
 var (
-	remotePattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
-	branchPattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$`)
-	pinPattern        = regexp.MustCompile(`^(|[0-9a-f]{40})$`)
-	receiptKeyPattern = regexp.MustCompile(`^(|[0-9a-f]{64})$`)
-	bareCommand       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$`)
-	settingKey        = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
-	orgContainerName  = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+	remotePattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+	branchPattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$`)
+	pinPattern         = regexp.MustCompile(`^(|[0-9a-f]{40})$`)
+	receiptKeyPattern  = regexp.MustCompile(`^(|[0-9a-f]{64})$`)
+	bareCommand        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$`)
+	mergeHelperPattern = regexp.MustCompile(`^[\p{L}\p{N}_./\\:@%+,=~+-]{0,256}$`)
+	settingKey         = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+	orgContainerName   = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 )
 
 // Wildcard prefixes: the schema path element after each is an identifier, written `*` in

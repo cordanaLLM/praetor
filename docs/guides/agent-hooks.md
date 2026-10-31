@@ -1170,6 +1170,41 @@ string handed to `sh -c`, is not seen. `internal/agenthook/admission_test.go`,
 `internal/agenthook/parity_test.go` and `cmd/standardsctl/hook_test.go` replay refused,
 admitted, scoped, job-capped and unreadable commands.
 
+## Worktree locations
+
+Worktree location enforcement is off by default. A host turns it on with
+`hooks.worktrees.enforce: true` in one of its operator layers
+([operator settings](effective-policy.md#operator-settings)). `praetorctl hook <client>
+pre-tool` then refuses a command holding `git [-C <dir>] worktree add [options] <path>
+[<commit-ish>]` unless `<path>`, resolved against `-C <dir>` or the hook working directory,
+lies in one of two locations (`internal/agenthook/worktrees.go`):
+
+- directly under `<dev root>/worktrees/<repository folder>-<topic>`, where `<dev root>` is
+  resolved through `topology.ResolveDevRootDir` (`$PRAETOR_DEV_ROOT`, else
+  `$PRAETOR_DEV_DIR`, else `<home>/dev`), `<repository folder>` is the base name of the
+  main repository checkout (`topology.RepositoryRoot`, the parent of `topology.GitCommonDir`),
+  and `<topic>` is non-empty; or
+- under `<repository root>/.claude/worktrees/<name>` inside that repository.
+
+Options from `git-worktree(1)` (`-f`/`--force`, `-d`/`--detach`, `--checkout`/`--no-checkout`,
+`--lock`/`--no-lock`, `--reason <string>`, `--orphan`, `-b`/`-B <branch>`,
+`--track`/`--no-track`, `--guess-remote`/`--no-guess-remote`, `-q`/`--quiet`,
+`--relative-paths`/`--no-relative-paths`, and `--`) are accepted before or after `<path>`.
+Other `git worktree` subcommands (`list`, `remove`, `prune`) are untouched. While
+enforcement is on, an unparsable `git worktree add` command (missing `<path>`, unknown
+option, missing option argument, unclosed quote, or more than two positional arguments)
+fails closed with the parse reason, and a location refusal names the resolved `<path>` and
+both allowed forms (`TestWorktrees_Positive_DeclaredDevRootWorktreeAllowed`,
+`TestWorktrees_Negative_OtherRepoPrefixRefused`, `TestWorktrees_Boundary_EmptyTopicRefused`,
+`TestWorktrees_Negative_OutsideWorktreesRefused`,
+`TestWorktrees_Negative_RelativePathResolvedAndRefused`,
+`TestWorktrees_Positive_ClaudeWorktreesAllowed`,
+`TestWorktrees_Positive_GitDashCResolvesAgainstTargetRepo`,
+`TestWorktrees_Positive_OptionsBeforeAndAfterPathParsed`,
+`TestWorktrees_Boundary_NonAddWorktreeSubcommandsUntouched`,
+`TestWorktrees_Negative_UnparsableWorktreeAddFailsClosed` in
+`internal/agenthook/worktrees_test.go`).
+
 ## Record mode
 
 Set `PRAETOR_HOOK_RECORD_DIR` to a private, writable directory and every hook call, for

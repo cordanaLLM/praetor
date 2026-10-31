@@ -176,7 +176,7 @@ func TestServerAuditRunsTheWorkflowTriggerCheck(t *testing.T) {
 	expires := config.ExceptionDay(time.Now()).AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
 	writeFixtureFile(t, root, ".standards.yaml", "version: 1\nrepository:\n  owner: fixture\n  name: repo\nprofiles: [framework]\n"+
 		"facets: []\nexceptions:\n  - rule: \"HISS-18\"\n    path: \".github/workflows/everywhere.yml\"\n"+
-		"    reason: \"builds every branch push by design\"\n    expires: \""+expires+"\"\n")
+		"    reason: \"builds every branch push by design\"\n    category: A\n    expires: \""+expires+"\"\n")
 	excepted := callTool(t, srv, "standards_audit", nil)
 	expectText(t, "excepted push", excepted, "[PASS] Workflow triggers (HISS-18): .github/workflows/everywhere.yml excepted until "+
 		expires+" by the exceptions entry (rule HISS-18, .github/workflows/everywhere.yml): builds every branch push by design")
@@ -227,7 +227,7 @@ func TestServerAuditRunsTheBuildWarningsGate(t *testing.T) {
 	expires := time.Now().AddDate(0, 0, 30).Format("2006-01-02")
 	writeFixtureFile(t, root, ".standards.yaml", "version: 1\nrepository:\n  owner: fixture\n  name: repo\nprofiles: [framework]\n"+
 		"facets: []\nexceptions:\n  - rule: HISS-10\n    path: .github/workflows/ci.yml\n    reason: vendored crate warns until upstream lands its fix\n"+
-		"    expires: \""+expires+"\"\n")
+		"    category: A\n    expires: \""+expires+"\"\n")
 	audit := callTool(t, srv, "standards_audit", nil)
 	expectText(t, "excepted lane", audit, "0 build lanes fail on a warning; 1 excepted:")
 	expectText(t, "excepted lane", audit, auditAllPassed())

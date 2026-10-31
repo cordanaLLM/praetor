@@ -30,6 +30,9 @@ func writeExceptionsManifest(t *testing.T, entries ...config.Exception) string {
 		if e.Function != "" {
 			fmt.Fprintf(&sb, "    function: %q\n", e.Function)
 		}
+		if e.Category != "" {
+			fmt.Fprintf(&sb, "    category: %q\n", e.Category)
+		}
 		fmt.Fprintf(&sb, "    reason: %q\n    expires: %q\n",
 			e.Reason, e.Expires)
 	}
@@ -132,7 +135,7 @@ func TestExceptionsList_Boundary_EmptyAndNoMatches(t *testing.T) {
 	mustContain(t, out, "No exceptions declared.")
 
 	manifestFuture := writeExceptionsManifest(t,
-		config.Exception{Rule: "clang-tidy-coverage", Path: "src/future.c", Reason: "future debt", Expires: "2026-12-01"},
+		config.Exception{Rule: "clang-tidy-coverage", Path: "src/future.c", Category: "D", Reason: "future debt", Expires: "2026-12-01"},
 	)
 	today := "2026-10-10"
 	outFilter, err := captureStdout(t, func() error {

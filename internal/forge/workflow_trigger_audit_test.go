@@ -53,7 +53,7 @@ func auditTriggers(t *testing.T, root string, entries ...config.Exception) strin
 // triggerEntry is a HISS-18 exceptions entry for the workflow file name, expiring on expires.
 func triggerEntry(name, expires string) config.Exception {
 	return config.Exception{Rule: config.ExceptionRuleWorkflowTriggers, Path: ".github/workflows/" + name,
-		Reason: "runs on every branch push by design", Expires: expires}
+		Reason: "runs on every branch push by design", Category: "A", Expires: expires}
 }
 
 // Positive (#817): the hosted gate shape passes, and so do a tag release, a push filtered to
