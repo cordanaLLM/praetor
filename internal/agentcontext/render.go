@@ -310,10 +310,11 @@ func exportTargets(selected []vendorTarget) []VendorTarget {
 // AGENTS.md yields the projections of its LF blob rather than LF headers above CRLF lines; a
 // source with mixed endings compiles as it is.
 func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
-	if err := checkClientSize(CanonicalFile, len(content)+t.ProjectDocBytes); err != nil {
-		if t.ProjectDocChain != "" {
-			return nil, fmt.Errorf("%w; largest nested chain ends at %s", err, t.ProjectDocChain)
-		}
+	targets, excluded, err := selectTargets(t.Clients)
+	if err != nil {
+		return nil, err
+	}
+	if err := t.checkCanonicalSize(targets, len(content)); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(content) == "" {
@@ -321,10 +322,6 @@ func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
 	}
 	if lf, _, err := util.NormalizeLineEndingsStrict(content); err == nil {
 		content = lf
-	}
-	targets, excluded, err := selectTargets(t.Clients)
-	if err != nil {
-		return nil, err
 	}
 	lines, owners, err := ownVendorLines(content)
 	if err != nil {
@@ -346,6 +343,17 @@ func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
 		NotApplicable: excluded,
 		Layered:       layered,
 	}, nil
+}
+
+func (t *Transpiler) checkCanonicalSize(targets []vendorTarget, contentBytes int) error {
+	if !slices.ContainsFunc(targets, func(target vendorTarget) bool { return target.client == string(clientid.Codex) }) {
+		return nil
+	}
+	err := checkClientSize(CanonicalFile, contentBytes+t.ProjectDocBytes)
+	if err != nil && t.ProjectDocChain != "" {
+		return fmt.Errorf("%w; largest nested chain ends at %s", err, t.ProjectDocChain)
+	}
+	return err
 }
 
 // renderTargets renders every target through body, visiting them in the order the render env

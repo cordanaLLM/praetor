@@ -189,3 +189,46 @@ func TestAdopt_Boundary_PlainAdoptLeavesLockedTextAndLockConsistent(t *testing.T
 		t.Fatalf("audit refused assets after plain adopt: %v", auditErr)
 	}
 }
+
+// TestAuditManagedAssetLock_CatalogLockEarlierTextRefreshedByPlainAdopt proves end to end
+// that a repository on a catalog lock (v0.0.0+catalog.<hex>) holding an earlier managed
+// text fails audit naming plain adoption, refreshes on plain adopt, and then passes audit
+// cleanly with no [WARN].
+func TestAuditManagedAssetLock_CatalogLockEarlierTextRefreshedByPlainAdopt(t *testing.T) {
+	original := version
+	t.Cleanup(func() { version = original })
+	version = fixtureRunningRevision
+
+	root := setupFixtureAdopterRepo(t, "v0.0.0+catalog.3495794d2176")
+	checksRel := filepath.Join(figureassets.Directory, "checks.mjs")
+	writeFixtureFile(t, root, checksRel, fixtureChecks32a35c8Text(t))
+
+	enabled := &config.Manifest{Facets: []string{"docs:seo-portal"}}
+	out, err := captureStdout(t, func() error {
+		return docGate(t.Context(), enabled, root)
+	})
+	if err == nil {
+		t.Fatalf("expected audit to fail on catalog lock holding earlier text, got stdout:\n%s", out)
+	}
+	const wantAdvice = "holds an earlier Praetor text; run 'praetorctl adopt' to refresh it"
+	if !strings.Contains(err.Error(), wantAdvice) {
+		t.Fatalf("expected audit failure naming plain adoption %q, got: %v", wantAdvice, err)
+	}
+	if strings.Contains(out, "[WARN]") || strings.Contains(out, "Managed assets match locked Praetor") {
+		t.Fatalf("expected no locked-engine [WARN] for catalog lock, got:\n%s", out)
+	}
+
+	if _, err := adopt.Adopt(t.Context(), adopt.AdoptOptions{Path: root, Engine: runningBuild()}); err != nil {
+		t.Fatalf("plain adopt failed: %v", err)
+	}
+
+	outAfter, errAfter := captureStdout(t, func() error {
+		return docGate(t.Context(), enabled, root)
+	})
+	if errAfter != nil {
+		t.Fatalf("audit failed after plain adopt refreshed catalog-locked repo: %v", errAfter)
+	}
+	if strings.Contains(outAfter, "[WARN]") || strings.Contains(outAfter, "Managed assets match locked Praetor") {
+		t.Fatalf("expected clean audit with no [WARN] after plain adopt, got:\n%s", outAfter)
+	}
+}

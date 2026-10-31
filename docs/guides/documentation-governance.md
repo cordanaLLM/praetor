@@ -855,6 +855,16 @@ generated before these pins changed fails the exact-content check. Plain
 `praetorctl adopt` refreshes an unedited earlier text as described above; an
 edited copy needs `praetorctl adopt --force --lock-source-root=<praetor checkout>`.
 
+A lock built from a catalog pins `v0.0.0+catalog.<hex>`, which names a catalog digest, not
+an engine build (`buildid.FromLockVersion` returns an unidentified identity for it). Audit
+therefore never prints `[WARN] Managed assets match locked Praetor ...` for such a lock, and
+plain `praetorctl adopt` refreshes an earlier managed text instead of keeping it as the
+locked one. An audit that reports `holds an earlier Praetor text; run 'praetorctl adopt' to
+refresh it` clears after that one plain run; `adopt --force` rebuilding the same catalog lock
+only reports `Verified the lock already pins the selected source bundle`.
+`TestAuditManagedAssetLock_CatalogLockEarlierTextRefreshedByPlainAdopt` runs the sequence in
+a temporary repository.
+
 `adoption.decline: [branch-ruleset]` leaves `.github/rulesets/main.json`
 operator-owned, as described in the
 [adoption verification guide](adoption-verification.md). Adoption then never

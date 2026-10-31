@@ -194,3 +194,65 @@ func TestSelectedClients_Boundary_AbsentAndEmptySelection(t *testing.T) {
 		t.Fatalf("empty selection = %v, %v, %v", kept, left, err)
 	}
 }
+
+func sizedSource(lines, lineLen int) string {
+	line := strings.Repeat("a", lineLen-1) + "\n"
+	return "# Harness\n\n" + strings.Repeat(line, lines)
+}
+
+// sizeCapCase is one selection and source CompileContent judges against client size caps.
+// wantErr lists the fragments the failure must carry; none means the compile must pass.
+type sizeCapCase struct {
+	name    string
+	clients []string
+	source  string
+	wantErr []string
+}
+
+func sizeCapCases() []sizeCapCase {
+	overWindsurf := sizedSource(80, 180) // 14,412 characters: over windsurf (12,000), under gemini (24,000)
+	overCodex := sizedSource(200, 170)   // 34,012 bytes: over the AGENTS.md cap (32,768)
+	exactCodex := "# Harness\n\n" + strings.Repeat("a", 32768-len("# Harness\n\n")-1) + "\n"
+	exactWindsurf := strings.Repeat("a", 12000-len(generatedHeader))
+	return []sizeCapCase{
+		{"undeclared windsurf over cap passes", []string{"claude", "codex", "gemini"}, overWindsurf, nil},
+		{"no selection still caps windsurf", nil, overWindsurf, []string{".windsurfrules", "> 12000"}},
+		{"declared windsurf over cap fails", []string{"windsurf"}, overWindsurf, []string{".windsurfrules", "> 12000"}},
+		{"declared windsurf exactly at cap passes", []string{"windsurf"}, exactWindsurf, nil},
+		{"undeclared codex over cap passes", []string{"claude"}, overCodex, nil},
+		{"declared codex over cap fails", []string{"codex"}, overCodex, []string{"AGENTS.md", "> 32768"}},
+		{"declared codex exactly at cap passes", []string{"codex"}, exactCodex, nil},
+	}
+}
+
+// requireSizeCapOutcome compiles tc.source for tc.clients and fails unless the compile passes
+// (no wantErr) or fails carrying every wantErr fragment.
+func requireSizeCapOutcome(t *testing.T, tc sizeCapCase) {
+	t.Helper()
+	tr := NewTranspiler()
+	tr.Clients = tc.clients
+	_, err := tr.CompileContent(tc.source)
+	if len(tc.wantErr) == 0 {
+		if err != nil {
+			t.Fatalf("compile rejected: %v", err)
+		}
+		return
+	}
+	if err == nil {
+		t.Fatalf("compile passed; want failure carrying %v", tc.wantErr)
+	}
+	for _, fragment := range tc.wantErr {
+		if !strings.Contains(err.Error(), fragment) {
+			t.Errorf("failure %q lacks %q", err, fragment)
+		}
+	}
+}
+
+// TestCompileContent_ClientSelectionSizeCaps verifies that a client size cap binds only a
+// client the selection keeps (every client when Clients is nil), names the file and both sizes
+// on failure, and passes a source exactly at the cap.
+func TestCompileContent_ClientSelectionSizeCaps(t *testing.T) {
+	for _, tc := range sizeCapCases() {
+		t.Run(tc.name, func(t *testing.T) { requireSizeCapOutcome(t, tc) })
+	}
+}

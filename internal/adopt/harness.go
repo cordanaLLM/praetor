@@ -264,7 +264,9 @@ func harnessEnforcement(rule hisscatalog.Rule, facts harnessFacts, generated str
 	return "unknown"
 }
 
-// declaredEnforcement renders every language claim for one rule in file order.
+// declaredEnforcement renders the state of every language claim for one rule in file order and
+// points at the catalog. The harness is loaded into every session, so the mechanism prose stays in
+// the catalog: inlined, it carried a harness past the size cap of a client the repository declares.
 func declaredEnforcement(ruleID string, catalog *hisscoverage.Catalog) string {
 	if catalog == nil {
 		return ""
@@ -276,9 +278,12 @@ func declaredEnforcement(ruleID string, catalog *hisscoverage.Catalog) string {
 		claims := make([]string, 0, len(catalog.Rules[i].Coverage))
 		for j := 0; j < len(catalog.Rules[i].Coverage); j++ {
 			claim := catalog.Rules[i].Coverage[j]
-			claims = append(claims, string(claim.State)+" ("+claim.Language+"): "+claim.Mechanism)
+			claims = append(claims, string(claim.State)+" ("+claim.Language+")")
 		}
-		return strings.Join(claims, "; ")
+		if len(claims) == 0 {
+			return ""
+		}
+		return strings.Join(claims, ", ") + ": " + hisscoverage.CatalogFile
 	}
 	return ""
 }
@@ -301,7 +306,7 @@ func adoptedCheckLegend(pipelines hisscatalog.Pipeline) string {
 	if len(generated) > 0 {
 		source = strings.Join(generated, " + ")
 	}
-	return "Adopted check = coverage state + mechanism; else audit scanner; else `unknown`. Gates = (" + source + "); edits not reflected.\n\n"
+	return "Adopted check = coverage state + catalog path; else audit scanner; else `unknown`. Gates = (" + source + "); edits not reflected.\n\n"
 }
 
 // transpilerRuleHead opens rule 3 with the files compile-context writes under agent_clients,
@@ -474,6 +479,7 @@ func reconcileAgentHarness(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return fmt.Errorf("read agent_clients selection from %s: %w", manifestFile, err)
 	}
+	s.agentClients = declared.AgentClients
 	// Before the harness renders the register block, which names the skills the run leaves (#235).
 	if err := s.installRegisterSkills(ctx); err != nil {
 		return err
@@ -563,7 +569,7 @@ func resolveAgentsContent(ctx context.Context, s *adoptSession, harness string) 
 		return "", err
 	}
 	if !exists {
-		if err := validateHarnessProjection(harness); err != nil {
+		if err := validateHarnessProjectionForClients(harness, s.agentClients); err != nil {
 			return "", err
 		}
 		if err := s.write(full, []byte(harness), filePerm); err != nil {
@@ -579,8 +585,13 @@ func resolveAgentsContent(ctx context.Context, s *adoptSession, harness string) 
 	return mergeExistingAgentsContent(ctx, s, full, string(found), string(existingBytes), harness)
 }
 
-func validateHarnessProjection(content string) error {
-	if _, err := compiler.NewTranspiler().CompileContent(content); err != nil {
+// validateHarnessProjectionForClients refuses content that cannot compile into the projections of
+// the clients agent_clients selects (nil selects every client), so a client size cap binds only a
+// client the repository uses.
+func validateHarnessProjectionForClients(content string, clients []string) error {
+	tr := compiler.NewTranspiler()
+	tr.Clients = clients
+	if _, err := tr.CompileContent(content); err != nil {
 		return fmt.Errorf("context composition cannot produce valid projections: %w", err)
 	}
 	return nil
@@ -594,7 +605,7 @@ func validateHarnessProjection(content string) error {
 func mergeExistingAgentsContent(ctx context.Context, s *adoptSession, full, found, existing, harness string) (string, error) {
 	if !hasHarness(existing) {
 		merged := harness + harnessSeparator + "\n" + foreignInstructions(existing)
-		if err := validateHarnessProjection(merged); err != nil {
+		if err := validateHarnessProjectionForClients(merged, s.agentClients); err != nil {
 			return "", err
 		}
 		if err := s.write(full, []byte(merged), filePerm); err != nil {
@@ -628,7 +639,7 @@ func keepAgentHarness(ctx context.Context, s *adoptSession, found, existing, har
 	if err != nil {
 		return "", err
 	}
-	kept, spliced, err := splicedKeptHarness(existing, block)
+	kept, spliced, err := splicedKeptHarness(existing, block, s.agentClients)
 	if err != nil {
 		return "", err
 	}
@@ -638,7 +649,7 @@ func keepAgentHarness(ctx context.Context, s *adoptSession, found, existing, har
 	}
 	if existing != found {
 		if !spliced {
-			if err := validateHarnessProjection(kept); err != nil {
+			if err := validateHarnessProjectionForClients(kept, s.agentClients); err != nil {
 				return "", err
 			}
 		}
@@ -666,15 +677,15 @@ func keepAgentHarness(ctx context.Context, s *adoptSession, found, existing, har
 // splicedKeptHarness returns existing, a harness a run without --force keeps, with its text
 // register block spliced from block (compiler.SpliceRegisterBlock), and whether the splice
 // changed it. A changed harness must still compile into valid projections
-// (validateHarnessProjection). keepAgentHarness writes the result and preflightKeptHarness checks
+// (validateHarnessProjectionForClients). keepAgentHarness writes the result and preflightKeptHarness checks
 // it before the first step writes, so both refuse the same file.
-func splicedKeptHarness(existing, block string) (string, bool, error) {
+func splicedKeptHarness(existing, block string, clients []string) (string, bool, error) {
 	kept, spliced, err := compiler.SpliceRegisterBlock(existing, block)
 	if err != nil {
 		return "", false, fmt.Errorf("%s: text register block: %w", agentsFile, err)
 	}
 	if spliced {
-		if err := validateHarnessProjection(kept); err != nil {
+		if err := validateHarnessProjectionForClients(kept, clients); err != nil {
 			return "", false, err
 		}
 	}
@@ -699,7 +710,12 @@ func preflightKeptHarness(ctx context.Context, s *adoptSession, block string) er
 	if err != nil || !hasHarness(string(existing)) {
 		return err
 	}
-	_, spliced, err := splicedKeptHarness(string(existing), block)
+	declared, err := config.LoadDeclaredTooling(ctx, s.repoPath)
+	if err != nil {
+		return fmt.Errorf("read agent_clients selection from %s: %w", manifestFile, err)
+	}
+	s.agentClients = declared.AgentClients
+	_, spliced, err := splicedKeptHarness(string(existing), block, s.agentClients)
 	if err != nil || !spliced {
 		return err
 	}
@@ -731,7 +747,7 @@ func refreshAgentHarness(ctx context.Context, s *adoptSession, found, existing, 
 		return "", err
 	}
 	merged = util.RestoreLineEndings(merged, crlf)
-	if err := validateHarnessProjection(merged); err != nil {
+	if err := validateHarnessProjectionForClients(merged, s.agentClients); err != nil {
 		return "", err
 	}
 	if merged == found {

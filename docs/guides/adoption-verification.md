@@ -2464,7 +2464,10 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     regenerate with `go test ./internal/adopt -run TestAdoptedHarnessGolden
     -update-harness-golden` after reviewing the change.
 
-  The `Adopted check` column names the
+  For a rule the repository declares in `.config/hiss/coverage.yaml`, the `Adopted check` column
+  gives the state per language and that path, and the mechanism stays in the catalog, because the
+  harness is loaded into every session (`TestDeclaredEnforcementNamesStatesNotMechanisms`).
+  Otherwise the column names the
   check and the generated stages that run it, such as `praetorctl audit` HISS scan in verify-all +
   lefthook pre-commit/pre-push, qualified by language, or `praetorctl security secrets` (gitleaks
   history scan) in verify-all + lefthook pre-push for HISS-12 across every language, or `not enforced`. It credits only the
