@@ -2,11 +2,15 @@
 
 import ast
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
+import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import shutil
 import sys
+import tempfile
 
 from common import HookError, clean_env, paths, present_files, resolved_relative_to, run
 from privacy import PRIVATE_STATE_ERROR
@@ -70,8 +74,11 @@ def parallel(commands, directory):
     """Bound concurrency and collect every error; no result is silently dropped."""
     failures = []
     with ThreadPoolExecutor(max_workers=3) as pool:
-        jobs = [(cmd, pool.submit(run, cmd, cwd=directory, env=clean_env(), timeout=600))
-                for cmd in commands]
+        jobs = []
+        for cmd in commands:
+            env = clean_env()
+            env.update(getattr(cmd, "env", None) or {})
+            jobs.append((cmd, pool.submit(run, cmd, cwd=directory, env=env, timeout=600)))
         for cmd, future in jobs:
             try:
                 output = future.result()
@@ -227,6 +234,176 @@ def self_test_commands(directory):
     return [["lefthook", "validate"], *([sys.executable, "-B", suite] for suite in suites)]
 
 
+HOOK_LINT_SUITE = "scripts/test_emitted_hook_lint.py"
+HOOK_SOURCE_PREFIXES = (".config/lefthook/scripts/", ".config/agent/hooks/")
+HOOK_LINT_BIN_ENV = "PRAETOR_HOOK_LINT_BIN"
+HOOK_LINT_LOCK = ".config/hook-lint/requirements.txt"
+HOOK_LINT_GO_MOD = "tools/go/go.mod"
+HOOK_LINT_VENV_TIMEOUT = 120
+HOOK_LINT_PIP_TIMEOUT = 300
+HOOK_LINT_GO_TIMEOUT = 300
+
+
+class Command(list):
+    """Command argv with optional environment overrides."""
+
+    def __init__(self, args, env=None):
+        super().__init__(args)
+        self.env = dict(env) if env else None
+
+
+def hook_sources_changed(names):
+    """Report whether pushed paths include hook sources or the hook lint test itself."""
+    return any(name == HOOK_LINT_SUITE or name.startswith(HOOK_SOURCE_PREFIXES) for name in names)
+
+
+def load_hook_lint(directory):
+    path = directory / HOOK_LINT_SUITE
+    if not path.is_file():
+        return None
+    scripts_dir = str((directory / "scripts").resolve())
+    added = False
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+        added = True
+    try:
+        spec = importlib.util.spec_from_file_location("test_emitted_hook_lint", path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        if added and scripts_dir in sys.path:
+            sys.path.remove(scripts_dir)
+
+
+def hook_lint_digest(directory):
+    """Return the 16-hex digest of what a built toolchain depends on.
+
+    Both locks of the pushed snapshot and the interpreter: a venv does not outlive the Python it
+    was made with, so a Python upgrade must build a new one instead of reusing a dead one.
+    """
+    req_file = directory / HOOK_LINT_LOCK
+    go_mod_file = directory / HOOK_LINT_GO_MOD
+    if not req_file.is_file():
+        raise HookError(f"hook lint requirements lock missing: {req_file}")
+    if not go_mod_file.is_file():
+        raise HookError(f"hook lint go.mod missing: {go_mod_file}")
+    hasher = hashlib.sha256()
+    hasher.update(req_file.read_bytes())
+    hasher.update(go_mod_file.read_bytes())
+    hasher.update(sys.version.encode())
+    return hasher.hexdigest()[:16]
+
+
+def hook_lint_cache_root(cache_home=None):
+    """Return the folder that holds the hook lint toolchain builds."""
+    if cache_home is None:
+        env_cache = os.environ.get("XDG_CACHE_HOME")
+        cache_base = Path(env_cache).expanduser() if env_cache else Path.home() / ".cache"
+    else:
+        cache_base = Path(cache_home)
+    return cache_base / "praetor" / "hook-lint"
+
+
+def venv_bin(venv):
+    """Return the directory of a venv's executables on this platform."""
+    return venv / ("Scripts" if os.name == "nt" else "bin")
+
+
+def _install_hook_lint_venv(build, directory, runner):
+    try:
+        runner([sys.executable, "-m", "venv", str(build)],
+               cwd=directory, env=clean_env(), timeout=HOOK_LINT_VENV_TIMEOUT)
+    except (HookError, OSError) as error:
+        raise HookError(f"hook lint toolchain provisioning failed (venv): {error}\n"
+                        "CI command: python3 -m venv <dir>") from error
+
+
+def _install_hook_lint_pip(build, directory, runner):
+    python = venv_bin(build) / ("python.exe" if os.name == "nt" else "python")
+    try:
+        runner([str(python), "-m", "pip", "install", "--require-hashes", "-r", str(directory / HOOK_LINT_LOCK)],
+               cwd=directory, env=clean_env(), timeout=HOOK_LINT_PIP_TIMEOUT)
+    except (HookError, OSError) as error:
+        raise HookError(f"hook lint toolchain provisioning failed (pip install): {error}\n"
+                        f"CI command: <dir>/bin/python -m pip install --require-hashes -r {HOOK_LINT_LOCK}") from error
+
+
+def _install_hook_lint_go(build, directory, runner):
+    ci = f"GOBIN=<dir>/bin go install -modfile={HOOK_LINT_GO_MOD} mvdan.cc/gofumpt mvdan.cc/sh/v3/cmd/shfmt"
+    if shutil.which("go") is None:
+        raise HookError(f"hook lint toolchain provisioning failed (go missing): 'go' not found on PATH\nCI command: {ci}")
+    go_env = clean_env()
+    go_env["GOBIN"] = str(venv_bin(build))
+    try:
+        runner(["go", "install", f"-modfile={(directory / HOOK_LINT_GO_MOD).as_posix()}",
+                "mvdan.cc/gofumpt", "mvdan.cc/sh/v3/cmd/shfmt"],
+               cwd=directory, env=go_env, timeout=HOOK_LINT_GO_TIMEOUT)
+    except (HookError, OSError) as error:
+        raise HookError(f"hook lint toolchain provisioning failed (go install): {error}\nCI command: {ci}") from error
+
+
+def _ready_hook_lint_bin(root, pointer, digest):
+    """Return the executables of the build the pointer names, or None when there is none."""
+    try:
+        name = pointer.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    bin_dir = venv_bin(root / name)
+    return bin_dir if name.startswith(f"{digest}-") and bin_dir.is_dir() else None
+
+
+def _publish_hook_lint_build(root, pointer, build):
+    """Name a finished build in the pointer file, atomically."""
+    with tempfile.NamedTemporaryFile("w", dir=root, delete=False, encoding="utf-8") as handle:
+        handle.write(build.name)
+    os.replace(handle.name, pointer)
+
+
+def provision_hook_lint(directory, cache_home=None, runner=run):
+    """Return the bin directory of the pinned hook lint toolchain, built once per digest.
+
+    The same steps as CI's Install Pinned Hook Lint Toolchain. A venv's scripts hold its absolute
+    path, on Windows inside their .exe launchers, so a build cannot be renamed into place: each
+    build keeps its own folder, and a pointer file written last names the finished one. An
+    interrupted or failed build is never used, and two parallel pushes each finish a valid one.
+    """
+    digest = hook_lint_digest(directory)
+    root = hook_lint_cache_root(cache_home)
+    pointer = root / f"{digest}.ready"
+    ready = _ready_hook_lint_bin(root, pointer, digest)
+    if ready is not None:
+        return ready
+    root.mkdir(parents=True, exist_ok=True)
+    build = Path(tempfile.mkdtemp(dir=root, prefix=f"{digest}-"))
+    try:
+        _install_hook_lint_venv(build, directory, runner)
+        _install_hook_lint_pip(build, directory, runner)
+        _install_hook_lint_go(build, directory, runner)
+        _publish_hook_lint_build(root, pointer, build)
+    except BaseException:
+        shutil.rmtree(build, ignore_errors=True)
+        raise
+    return venv_bin(build)
+
+
+def require_hook_lint_tools(directory, environ=None):
+    """Require the pinned hook lint toolchain before running the suite (HISS-19, HISS-21)."""
+    module = load_hook_lint(directory)
+    if module is None:
+        return
+    pins = module.toolchain_pins()
+    failures = []
+    for tool in (*module.TOOLS, *module.GO_PINNED_TOOLS):
+        _, problem, _ = module.resolve_tool(tool, pins, environ=environ)
+        if problem is not None:
+            failures.append(problem)
+    if failures:
+        raise HookError("\n".join(failures))
+
+
 def file_checks(directory, names):
     files = present_files(directory, names)
     if any(name == ".workingdir" or name.startswith(".workingdir/") for name in files):
@@ -243,6 +420,10 @@ def file_checks(directory, names):
                     "scripts/test_praetor_hook.py"}
            or name.startswith((".config/lefthook/", ".config/agent/")) for name in files):
         commands.extend(self_test_commands(directory))
+    if hook_sources_changed(names) and (directory / HOOK_LINT_SUITE).is_file():
+        hook_env = {HOOK_LINT_BIN_ENV: str(provision_hook_lint(directory))}
+        require_hook_lint_tools(directory, environ=hook_env)
+        commands.append(Command([sys.executable, "-B", HOOK_LINT_SUITE], env=hook_env))
     if context_changed(names):
         commands.append([*CLI, "compile-context", "--verify"])
     parallel(commands, directory)

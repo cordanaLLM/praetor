@@ -1,0 +1,2 @@
+type: fixed
+title: Pre-push file checks run the hook lint CI suite (scripts/test_emitted_hook_lint.py) whenever pushed paths touch hook sources or the suite itself, provisioning the pinned toolchain into a cached venv like CI and failing closed if provisioning fails or tools are mismatched
