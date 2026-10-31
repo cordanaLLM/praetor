@@ -211,7 +211,18 @@ test('the tests compile through the Sätteri the Starlight preset locks', () => 
   const preset = version('docs/presets/starlight/package-lock.json');
   assert.ok(preset, 'docs/presets/starlight/package-lock.json installs satteri');
   assert.equal(version('tools/figures/package-lock.json'), preset,
-    'pin satteri in tools/figures/package.json to the version docs/presets/starlight/package-lock.json installs');
+    'pin satteri in tools/figures/package.json to the version docs/presets/starlight/package-lock.json installs; the bot leaves this pin alone and it moves with the preset lock');
+});
+
+test('renovate.json keeps Sätteri in tools/figures pinned to the Starlight preset lock', () => {
+  const renovate = JSON.parse(readFileSync(join(ROOT, 'renovate.json'), 'utf8'));
+  const rule = (renovate.packageRules || []).find((r) =>
+    Array.isArray(r.matchManagers) && r.matchManagers.includes('npm') &&
+    Array.isArray(r.matchFileNames) && r.matchFileNames.includes('tools/figures/**') &&
+    Array.isArray(r.matchPackageNames) && r.matchPackageNames.includes('satteri'),
+  );
+  assert.ok(rule, 'renovate.json packageRules holds a rule matching npm satteri under tools/figures/**');
+  assert.equal(rule.enabled, false, 'renovate.json packageRule for satteri in tools/figures disables automated updates');
 });
 
 test('Sätteri renders each markup case unchanged on a Markdown page and on an MDX page, optimized or not', () => withTempDir((dir) => {
