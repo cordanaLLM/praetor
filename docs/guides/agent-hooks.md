@@ -381,7 +381,9 @@ and its base name is `agent-<agent_id>.jsonl` matching the payload's `agent_id`.
 `util.ReadConfinedLimited` with bounds of 64 MiB, 100,000 lines and 8 MiB per line. Unreadable,
 rejected, malformed or oversized input records zero tokens and `tokens unread` in the note.
 Tokens are bounded to 0..1,000,000,000,000. Old outcome rows without `tokens` or `effort` still
-read (`internal/router/outcomes_usage_test.go`).
+read (`internal/router/outcomes_usage_test.go`). The bounded transcript parser
+(`forEachClaudeTranscriptLine` in `internal/agenthook/claude_usage.go`) is shared with review
+return claim checking, extracting recorded Bash tool calls to compare against claimed command runs.
 
 The verdict comes from a confirmed `SubagentHandback`, or, for a subagent that returns without
 one, from the return text `SubagentStop` validates. Verdicts `pass`, `green`, `ok` and `done`
@@ -480,8 +482,9 @@ and hand it the reason as its next instruction (exit 2 table and `SubagentStop` 
 control in the [Claude Code hook reference](https://code.claude.com/docs/en/hooks#subagentstop);
 [Codex hooks](https://developers.openai.com/codex/hooks)). `SubagentStop` also fires for
 Claude Code's internal agents, such as prompt suggestions and `/btw` side questions. The
-return boundary therefore denies only a register violation in a Praetor-owned return, which
-the subagent can rewrite, and a payload it cannot decode, which fails closed:
+return boundary therefore denies only a register violation or review claim mismatch in a
+Praetor-owned return, which the subagent can rewrite, and a payload it cannot decode, which
+fails closed:
 
 - The Claude row's matcher `^.+$` never matches an empty `agent_type`, so internal agents of
   a session without a named agent never reach the hook.
@@ -492,6 +495,16 @@ the subagent can rewrite, and a payload it cannot decode, which fails closed:
   agent` as a skip (`unownedAgent`, `internal/agenthook/agent_traffic.go`).
 - A correlation store failure at `SubagentStop` is a skip that names the fault
   (`subagent return not judged: …`). The pre-launch gate still fails closed on the same fault.
+- Review and audit return claims are resolved against the repository root and the subagent
+  transcript (`internal/agenthook/return_claims.go`). For subagents dispatched with a review
+  or audit routing label, `SubagentStop` extracts cited paths, line numbers and ranges
+  (`path:N`, `path:N-M`), and claimed runs from the return text. Any cited path absent from
+  the repository, or pointing to a line or range past the end of the file, denies the return
+  with `[BLOCKED BY HISS] return claim:` so the subagent can correct the citation. Claimed
+  runs are verified against recorded Bash tool calls in the Claude subagent transcript; a
+  claimed command without a matching call is denied. For Codex, claimed runs are reported as
+  unmeasured skips (`codexReturn`, `internal/agenthook/agent_traffic.go`). Non-review tasks
+  pass claim checks without inspection.
 - `stop_hook_active` bounds the retry: once a stop hook has continued the subagent, a second
   deny becomes a skip and the binding is released, so it cannot outlive the agent. A later
   resume of that agent is unowned, like any completed agent (`evaluateAgentReturn`,
@@ -501,7 +514,8 @@ the subagent can rewrite, and a payload it cannot decode, which fails closed:
   `Invalid hook input` and the continued one is a skip. Only a JSON `true` counts; an
   absent or non-boolean flag keeps the deny.
 - Codex enforces no register at this boundary, so every Codex `SubagentStop` result is a
-  skip, including a null `last_assistant_message`.
+  skip, including a null `last_assistant_message`. Claimed runs in its return text are
+  reported as unmeasured skips rather than silently passed.
 
 `internal/agenthook/agent_return_boundary_test.go` replays each case.
 

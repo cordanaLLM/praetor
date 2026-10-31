@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/router"
 	"github.com/cordanaLLM/praetor/internal/strictjson"
@@ -47,23 +48,33 @@ func claudeTranscriptData(transcriptPath, agentID string) ([]byte, error) {
 }
 
 func sumClaudeUsage(ctx context.Context, data []byte) (int64, error) {
+	var total int64
+	err := forEachClaudeTranscriptLine(ctx, data, func(line []byte) error { return addClaudeUsage(&total, line) })
+	if err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+// forEachClaudeTranscriptLine hands every line of a bounded subagent transcript to visit, in order,
+// and stops at the first error or a cancelled context. Usage totals and claimed-run checks share it.
+func forEachClaudeTranscriptLine(ctx context.Context, data []byte, visit func([]byte) error) error {
 	if len(data) > maxClaudeTranscriptBytes || bytes.Count(data, []byte{'\n'}) > maxClaudeTranscriptLines {
-		return 0, errors.New("claude subagent transcript exceeds read bounds")
+		return errors.New("claude subagent transcript exceeds read bounds")
 	}
 	lines := bytes.Split(bytes.TrimSuffix(data, []byte{'\n'}), []byte{'\n'})
 	if len(lines) > maxClaudeTranscriptLines {
-		return 0, errors.New("claude subagent transcript exceeds line bound")
+		return errors.New("claude subagent transcript exceeds line bound")
 	}
-	var total int64
 	for index := 0; index < len(lines) && index < maxClaudeTranscriptLines; index++ {
 		if err := ctx.Err(); err != nil {
-			return 0, err
+			return err
 		}
-		if err := addClaudeUsage(&total, lines[index]); err != nil {
-			return 0, err
+		if err := visit(lines[index]); err != nil {
+			return err
 		}
 	}
-	return total, nil
+	return nil
 }
 
 // The harvester cannot be imported here: its compiler dependency imports agenthook.
@@ -99,6 +110,87 @@ func addClaudeTokens(total *int64, usage map[string]json.RawMessage) error {
 			return errors.New("claude subagent tokens exceed outcome bounds")
 		}
 		*total += tokens
+	}
+	return nil
+}
+
+// readClaudeBashCommands reads all executed Bash tool commands from the subagent transcript.
+func readClaudeBashCommands(ctx context.Context, transcriptPath, agentID string) ([]string, error) {
+	data, err := claudeTranscriptData(transcriptPath, agentID)
+	if err != nil {
+		return nil, err
+	}
+	return collectClaudeBashCommands(ctx, data)
+}
+
+func collectClaudeBashCommands(ctx context.Context, data []byte) ([]string, error) {
+	var commands []string
+	err := forEachClaudeTranscriptLine(ctx, data, func(line []byte) error { return extractClaudeBashLine(&commands, line) })
+	if err != nil {
+		return nil, err
+	}
+	return commands, nil
+}
+
+func extractClaudeBashLine(commands *[]string, raw []byte) error {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil
+	}
+	if err := strictjson.Validate(raw, strictjson.Options{MaxBytes: maxClaudeTranscriptLineBytes, MaxDepth: 64}); err != nil {
+		return fmt.Errorf("validate Claude transcript row: %w", err)
+	}
+	var record struct {
+		Type    string          `json:"type"`
+		Name    string          `json:"name"`
+		Input   json.RawMessage `json:"input"`
+		Message *struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return fmt.Errorf("decode Claude transcript row: %w", err)
+	}
+	if record.Type == "tool_use" && strings.EqualFold(record.Name, "bash") && len(record.Input) > 0 {
+		return appendBashInput(commands, record.Input)
+	}
+	if record.Type == "assistant" && record.Message != nil && len(record.Message.Content) > 0 {
+		return extractBashBlocks(commands, record.Message.Content)
+	}
+	return nil
+}
+
+func extractBashBlocks(commands *[]string, content json.RawMessage) error {
+	if len(content) == 0 || content[0] != '[' {
+		return nil
+	}
+	var blocks []struct {
+		Type  string          `json:"type"`
+		Name  string          `json:"name"`
+		Input json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(content, &blocks); err != nil {
+		return fmt.Errorf("decode tool blocks: %w", err)
+	}
+	for i := 0; i < len(blocks) && i < 1024; i++ {
+		b := blocks[i]
+		if b.Type == "tool_use" && strings.EqualFold(b.Name, "bash") && len(b.Input) > 0 {
+			if err := appendBashInput(commands, b.Input); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func appendBashInput(commands *[]string, rawInput json.RawMessage) error {
+	var in struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(rawInput, &in); err != nil {
+		return fmt.Errorf("decode bash command: %w", err)
+	}
+	if cmd := strings.TrimSpace(in.Command); cmd != "" {
+		*commands = append(*commands, cmd)
 	}
 	return nil
 }
