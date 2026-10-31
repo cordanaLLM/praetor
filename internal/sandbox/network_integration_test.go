@@ -1,3 +1,5 @@
+//go:build linux
+
 package sandbox
 
 import (
@@ -205,9 +207,14 @@ func realNetworkSpec(t *testing.T, lane string, ports []int) Spec {
 	t.Helper()
 	spec := networkSpec(t, lane, ports)
 	spec.Workspace = t.TempDir()
-	// Isolate the port policy from descriptor exhaustion in the all-ports mutant.
+	// Isolate the port policy from descriptor exhaustion in the all-ports mutant,
+	// capped at the hard limit because raising it needs privilege the CI runner lacks.
 	// The default descriptor cap is pinned separately by the repair argv golden.
-	spec.Limits.OpenFiles = 262144
+	var rl syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rl); err != nil {
+		t.Fatalf("get RLIMIT_NOFILE: %v", err)
+	}
+	spec.Limits.OpenFiles = min(262144, rl.Max)
 	if spec.Network == NetworkEgress {
 		dns, err := (Runner{runtimeDirectory: t.TempDir()}).prepareDNS(t.Context(), spec.Network)
 		if err != nil {
