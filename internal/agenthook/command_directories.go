@@ -8,6 +8,23 @@ import (
 
 // commandDirectories reads leading assignments/wrappers, then just the actual command word.
 func commandDirectories(words []string, base string) []commandTarget {
+	word, args, cmdDir, targets, wrapperSeen := walkCommandWords(words, base)
+	switch word {
+	case "":
+		if wrapperSeen {
+			return targets
+		}
+		return nil // Assignment-only shell statements have no command target.
+	case "git":
+		return append(targets, gitDirectories(args, cmdDir)...)
+	case "cd", "pushd":
+		return append(targets, changeDirectoryTarget(args, cmdDir)...)
+	default:
+		return targets
+	}
+}
+
+func walkCommandWords(words []string, base string) (string, []string, string, []commandTarget, bool) {
 	var targets []commandTarget
 	wrapperSeen := false
 	for i := 0; i < len(words); i++ {
@@ -18,7 +35,8 @@ func commandDirectories(words []string, base string) []commandTarget {
 			}
 			continue
 		}
-		switch strings.TrimLeft(unquoteTarget(words[i]), "(") {
+		word := strings.TrimLeft(unquoteTarget(words[i]), "(")
+		switch word {
 		case "", "{":
 			continue // A subshell or group opener ahead of the command word.
 		case "env":
@@ -27,18 +45,11 @@ func commandDirectories(words []string, base string) []commandTarget {
 			i, base, dirs = envDirectories(words, i+1, base)
 			targets = append(targets, dirs...)
 			i-- // Continue at the command word after env's options.
-		case "git":
-			return append(targets, gitDirectories(words[i+1:], base)...)
-		case "cd", "pushd":
-			return append(targets, changeDirectoryTarget(words[i+1:], base)...)
 		default:
-			return targets
+			return word, words[i+1:], base, targets, wrapperSeen
 		}
 	}
-	if wrapperSeen {
-		return targets
-	}
-	return nil // Assignment-only shell statements have no command target.
+	return "", nil, base, targets, wrapperSeen
 }
 
 func changeDirectoryTarget(args []string, base string) []commandTarget {

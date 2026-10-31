@@ -792,7 +792,9 @@ forge:
 
 The list accepts at most 64 valid owners and compares names without case. An absent manifest or origin adds no owners; malformed manifests fail. `check-message` and `check-commits` read the manifest under `--repo`; `validate-pr` reads `--config`. No network access is needed for these two text checks. Bodies above 3,000 lines and reference text above 1 MiB fail rather than being checked in part.
 
-Evidence: `TestForgeText_WrappedParagraph`, `TestForgeText_BodyForeignReferences`, `TestForgeText_BoundaryMarkup`, `TestForgeText_Organizations` and the command tests in `cmd/standardsctl/forge_text_test.go` cover refusals, allowed forms and limits. Order: `engine-fr-rule-checks-20261027`.
+The pre-tool agent hook (`internal/agenthook/forge_text_refs.go`, rule `forge-text-foreign-reference`) applies the same `forge.ForeignReferenceFindings` and `forge.ResolveOwnOrganizations` checks to every `gh` write call in a proposed shell command before execution; see [agent hooks](agent-hooks.md#forge-text-foreign-reference-guard) for its scope, text sources and limits.
+
+Evidence: `TestForgeText_WrappedParagraph`, `TestForgeText_BodyForeignReferences`, `TestForgeText_BoundaryMarkup`, `TestForgeText_Organizations` and the command tests in `cmd/standardsctl/forge_text_test.go`, plus `TestForgeTextRefsRefusedPerForm`, `TestForgeTextRefsAcceptedCases`, `TestForgeTextRefsBoundaryAndFailClosedCases` and `TestForgeTextRefsOrganizationResolutionCases` in `internal/agenthook/forge_text_refs_test.go`, cover refusals, allowed forms and limits. Order: `engine-fr-rule-checks-20261027`, `engine-forge-text-outside-ref-guard-20261031`.
 
 ## Hook files adoption keeps
 

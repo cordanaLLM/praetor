@@ -273,8 +273,18 @@ guard by one byte. `TestRegistrationTableMatchesTheTrackedClientFiles` and
    operands fails closed (`internal/agenthook/command_targets.go`). Under `hooks.scope: all`
    a `pre-tool` command outside any repository is judged too, since the command policy
    reads only the command text (`judgedEverywhere`).
-7. **Judge.** The process environment first, then the command policy.
+7. **Judge.** The process environment first, then the command policy, then the forge-text foreign-reference guard ([Forge-text foreign-reference guard](#forge-text-foreign-reference-guard)).
 8. **Encode.** The verdict in the client's dialect.
+
+## Forge-text foreign-reference guard
+
+The `pre-tool` command evaluator runs `evaluateForgeTextRefs` (`internal/agenthook/forge_text_refs.go`, rule `forge-text-foreign-reference`) after the command policy. It applies `forge.ForeignReferenceFindings` (`internal/forge/foreign_references.go`) to every `gh` write call in a proposed shell command before execution so an agent cannot post an active reference (`owner/repo#N`, `owner/repo!N`, `https://github.com/owner/repo/(issues|pull|discussions)/N`) to an organisation outside the trusted list:
+
+- **Scope.** `gh issue` (`create`, `edit`, `comment`), `gh pr` (`create`, `edit`, `comment`, `review`), `gh release` (`create`, `edit`), and `gh api` calls whose endpoint path names `issues`, `pulls` or `comments` with a write method (`-X`/`--method` other than `GET` or `HEAD`) or field/input flags (`-f`, `--raw-field`, `-F`, `--field`, `--input`). Read-only `gh` commands (`gh pr view`, `gh api` GET/HEAD reads) are ignored.
+- **Text sources.** The command is split into fields with `forge.ShellFields` and into chained commands at `targetCommandSeparator` (`;`, `&`, `&&`, `|`, `||`), tracking the working directory through `cd`, `pushd` and `env -C`/`--chdir` (`internal/agenthook/command_directories.go`). For each scoped `gh` call the hook checks the call's fields joined by spaces (covering inline `--body`/`-b`, `--title`/`-t`, `--notes`, `-f`/`-F`/`--field`/`--raw-field` arguments and quoted `"$(cat <<'EOF' ...)"` bodies), or the whole command text when the call reads its body from standard input (`-F -`, `--body-file -`, `--notes-file -`, `--input -`, `-F`/`--field name=@-`, covering unquoted here-documents). It also reads every file the call names (`--body-file`/`-F <path>` on `issue`/`pr`, `--notes-file`/`-F <path>` on `release`, `--input <path>` and `-F`/`--field name=@<path>` on `api`, and `$(cat <path>)` inside the call) up to 1 MiB (`util.ReadFileLimited`). A named file that cannot be read or exceeds 1 MiB, or a `forge.ShellFields` error on a command holding a `gh` write word, fails closed. Trusted organisations are resolved by `forge.ResolveOwnOrganizations` from the active operator layers (`PRAETOR_FLEET_CONFIG`, `PRAETOR_WORKSTATION_CONFIG`), the governed root's `.standards.yaml` (`forge.own_organizations`), and the repository owner (`GITHUB_REPOSITORY`, the `origin` remote, or `repository.owner`); when no `forge.own_organizations` list resolves, only the repository owner counts as own and the refusal states that fact.
+- **Limits.** Inspection is static over the command string and the files it directly names at hook evaluation time, so text built at run time from shell variables, command substitutions other than `$(cat <path>)` or other files is not seen by the pre-tool hook (`praetorctl forge check-message`, `check-commits` and `validate-pr` still inspect the final text; see [Git hooks](git-hooks.md#forge-text-policy)).
+
+Tests: `TestForgeTextRefsRefusedPerForm`, `TestForgeTextRefsAcceptedCases`, `TestForgeTextRefsBoundaryAndFailClosedCases` and `TestForgeTextRefsOrganizationResolutionCases` in `internal/agenthook/forge_text_refs_test.go`. Order: `engine-forge-text-outside-ref-guard-20261031`.
 
 ## Clock on every prompt
 
