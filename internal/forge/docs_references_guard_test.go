@@ -50,8 +50,10 @@ func TestPortabilityRunsDocumentationReferencesOnEveryLeg(t *testing.T) {
 	if err := yaml.Unmarshal(workflows["portability.yml"], &spec); err != nil {
 		t.Fatalf("parse portability.yml: %v", err)
 	}
-	if gap := docsReferencesGap(spec.Jobs["harness"]); gap != "" {
-		t.Fatalf("portability harness: %s", gap)
+	for _, jobID := range []string{"harness", "windows-shard"} {
+		if gap := docsReferencesGap(spec.Jobs[jobID]); gap != "" {
+			t.Fatalf("portability %s: %s", jobID, gap)
+		}
 	}
 	build := workflowStep{Run: `go build -o "bin/praetorctl$(go env GOEXE)" ./cmd/standardsctl`, If: "${{ !cancelled() }}"}
 	check := workflowStep{Run: `"bin/praetorctl$(go env GOEXE)" ` + docsReferencesCommand, If: "${{ !cancelled() }}"}
