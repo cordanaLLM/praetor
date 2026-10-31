@@ -16,6 +16,8 @@ const (
 	commitPolicyScriptFile = ".lefthook/pre-push/" + commitPolicyScriptName
 )
 
+// REUSE-IgnoreStart: the strings below hold the emitted script's licence lines, not this file's.
+
 // buildCommitPolicyScript runs independently of Lefthook's changed-file estimate. Command
 // jobs can be skipped when the final diff is empty, even with invalid commits in the range.
 func buildCommitPolicyScript() string {
@@ -24,6 +26,8 @@ func buildCommitPolicyScript() string {
 		"set -eu\n" +
 		"exec " + lefthookGovernedCommand("forge check-commits --pre-push") + "\n"
 }
+
+// REUSE-IgnoreEnd
 
 // reconcileCommitPolicyScript uses the same scaffold ownership rules as the engine launcher.
 // A custom script is preserved and fails adoption rather than earning an unbacked stage.
