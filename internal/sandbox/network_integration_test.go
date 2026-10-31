@@ -253,8 +253,9 @@ func TestSandboxRealPlantedHostNetworkReachesListener(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"--unshare-pid", "--die-with-parent"}
+	args := []string{"--unshare-pid", "--die-with-parent", "--clearenv"}
 	args = append(args, RootFilesystemArguments(defaultHasLib64())...)
+	args = append(args, "--tmpfs", "/tmp")
 	args = append(args, "--ro-bind", executable, "/probe", "--", "/probe", "-test.run=^TestSandboxNetworkProbeProcess$", "--", "sandbox-network-probe", "127.0.0.1", strconv.Itoa(port), "reachable")
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
