@@ -299,8 +299,26 @@ func assertPrivateNamespaces(t *testing.T) {
 	}
 }
 
+// laneRequiredBinaries lists what a lane resolves, in the order Runner.resolve looks them up, so
+// a real-lookup test skips with the reason when a binary resolved before its missing one is absent.
+func laneRequiredBinaries(lane string) []string {
+	binaries := []string{"bwrap", "systemd-run", "prlimit"}
+	if lane == "agy" || lane == "codex" || lane == "local" {
+		binaries = append(binaries, "pasta")
+	}
+	return binaries
+}
+
 func realMissingLaneBinary(t *testing.T, missing, lane string) {
 	t.Helper()
+	for _, name := range laneRequiredBinaries(lane) {
+		if name == missing {
+			break
+		}
+		if _, err := (Runner{}).lookup(name); err != nil {
+			t.Skipf("real lookup prerequisite %s unavailable: %v", name, err)
+		}
+	}
 	runner := Runner{Lookup: func(name string) (string, error) {
 		if name == missing {
 			return "", os.ErrNotExist
