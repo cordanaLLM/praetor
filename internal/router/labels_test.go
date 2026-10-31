@@ -33,6 +33,22 @@ func TestDeclaredTaskLabelsPositive(t *testing.T) {
 	}
 }
 
+// The shipped routes follow measured probes label by label, so a route appears or moves only
+// together with its evidence (docs/standards/model-routing-and-fanout.md).
+func TestShippedClaudeSubagentRoutes(t *testing.T) {
+	cfg, err := LoadRoutingConfigContext(context.Background(), filepath.Join("..", "..", ".config", "models", "routing.yaml"))
+	if err != nil {
+		t.Fatalf("load shipped routing.yaml: %v", err)
+	}
+	want := map[string]ClaudeSubagentRoute{
+		"pr_body_check":      {Model: "haiku"},
+		"single_file_audits": {Model: "haiku"},
+	}
+	if !reflect.DeepEqual(cfg.ClaudeSubagent, want) {
+		t.Fatalf("shipped routes = %+v, want %+v", cfg.ClaudeSubagent, want)
+	}
+}
+
 func TestDeclaredTaskLabelsNegative(t *testing.T) {
 	if labels := DeclaredTaskLabels(nil); labels == nil || len(labels) != 0 {
 		t.Fatalf("nil configuration = %v, want an empty non-nil slice", labels)
