@@ -238,6 +238,9 @@ var priorDigests = map[string]string{
 	// package-lock.json with the re2js override, before the lockfile maintenance refresh of
 	// @types/estree, ansi-regex and argparse (#658).
 	"7c3ec9fd4db6bd4c962460a1fbc39bfb9398340d2317393b47d54dfc21b850ea": Directory + "/package-lock.json",
+	// package.json and package-lock.json on katex 0.19.0, before the katex 0.19.1 update (#801).
+	"3a0e0be3e0e217bd4aef508347d5fbe1ed89e65c3668a6da761af256c24bd107": Directory + "/package.json",
+	"ff8d70bc3eda4814a2fd5a90b9e56720068f27a1fcfa082117da7f62d0f2c1b6": Directory + "/package-lock.json",
 }
 
 var assetNames = [...]string{
