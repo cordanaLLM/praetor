@@ -100,3 +100,19 @@ func TestClaudeUsageOversize(t *testing.T) {
 		t.Fatalf("oversize accepted: %d %v", tokens, err)
 	}
 }
+
+func TestReadClaudeBashCommands(t *testing.T) {
+	planted := `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"git status"}}]}}
+{"type":"user","message":{"content":"ok"}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"go test -race ./..."}}]}}
+`
+	path := plantClaudeTranscript(t, planted)
+	got, err := readClaudeBashCommands(t.Context(), path, "agent")
+	if err != nil {
+		t.Fatalf("unexpected read error: %v", err)
+	}
+	want := []string{"git status", "go test -race ./..."}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}

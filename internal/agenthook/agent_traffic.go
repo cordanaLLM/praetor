@@ -220,20 +220,28 @@ func evaluateAgentReturn(ctx context.Context, row Registration, canonical Canoni
 	if err != nil {
 		return returnNotJudged(err)
 	}
-	verdict := Verdict{Outcome: Allow}
-	if !entry.HandbackDelivered {
-		verdict = validateAgentReturn(entry.Resolution, canonical.Return)
-	}
-	if verdict.Outcome != Allow && !canonical.StopActive {
+	verdict := judgeAgentReturn(ctx, row.Client, root, canonical, &entry)
+	if verdict.Outcome == Deny && !canonical.StopActive {
 		return verdict
-	}
-	if !entry.HandbackDelivered && verdict.Outcome == Allow {
-		// A return without SubagentHandback was validated just above; its verdict field counts.
-		entry.HandbackVerdict = claudeVerdictWord(canonical.Return)
 	}
 	recordClaudeReturnOutcome(ctx, row.Client, root, canonical, entry, &verdict)
 	if err := store.complete(ctx, row.Client, canonical.ConversationID, canonical.AgentID); err != nil {
 		return returnNotJudged(fmt.Errorf("release agent correlation: %w", err))
+	}
+	return verdict
+}
+
+func judgeAgentReturn(ctx context.Context, client, root string, canonical Canonical, entry *correlationEntry) Verdict {
+	verdict := Verdict{Outcome: Allow}
+	if !entry.HandbackDelivered {
+		verdict = validateAgentReturn(entry.Resolution, canonical.Return)
+	}
+	if verdict.Outcome != Allow {
+		return verdict
+	}
+	verdict = evaluateReturnClaims(ctx, client, root, canonical, *entry)
+	if !entry.HandbackDelivered && verdict.Outcome != Deny {
+		entry.HandbackVerdict = claudeVerdictWord(canonical.Return)
 	}
 	return verdict
 }
@@ -243,6 +251,10 @@ func evaluateAgentReturn(ctx context.Context, row Registration, canonical Canoni
 func codexReturn(canonical Canonical) Verdict {
 	if strings.TrimFunc(canonical.Return, isPythonSpace) == "" {
 		return Verdict{Outcome: Skip, Reason: "codex return capture unavailable: last_assistant_message is absent"}
+	}
+	claims, err := caveman.ExtractReturnRan(canonical.Return)
+	if err == nil && len(claims) > 0 {
+		return Verdict{Outcome: Skip, Reason: "codex return register unenforceable, claimed runs unmeasured: " + strings.Join(claims, ", ")}
 	}
 	return Verdict{Outcome: Skip, Reason: "codex return register unenforceable: spawn payload has no documented subagent correlation key"}
 }
