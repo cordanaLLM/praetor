@@ -92,6 +92,9 @@ func containsExactLFLine(text, want string) bool {
 	return false
 }
 
+// TestPackageLockPinsEveryInstalledPackage checks that the shipped package.json names its direct
+// dependencies and pins the katex and re2js overrides to exact releases, and that the lock pins
+// every package it installs (Positive: the shipped files pass; the assertions fail on any drift).
 func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	wantDirect := map[string]string{
 		"js-yaml":                   "5.5.0",
