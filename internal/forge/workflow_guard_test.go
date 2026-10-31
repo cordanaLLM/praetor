@@ -226,8 +226,8 @@ func TestPortabilityFollowsTheRepositoryVariable(t *testing.T) {
 	if got := spec.Jobs["windows-shard"].If; got != runs {
 		t.Errorf("windows-shard condition = %q, want %q", got, runs)
 	}
-	if got := spec.Jobs["windows"].If; got != renovateBranchSkip+" && always()" {
-		t.Errorf("windows condition = %q, want %q", got, renovateBranchSkip+" && always()")
+	if got := spec.Jobs["windows"].If; got != runs+" && always()" {
+		t.Errorf("windows condition = %q, want %q", got, runs+" && always()")
 	}
 	if got := spec.Jobs["skipped"].If; got != "!("+runs+")" {
 		t.Errorf("skipped condition = %q, want the exact negation of the harness condition", got)
