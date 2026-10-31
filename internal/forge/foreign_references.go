@@ -4,13 +4,67 @@
 package forge
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"os"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
+
+// ResolveOwnOrganizations returns the trusted forge organisations from extra, the manifest at
+// manifestPath, and the repository owner from GITHUB_REPOSITORY, the origin remote of repo, or
+// the manifest's repository.owner. A missing manifest or origin adds no extra owner; invalid
+// manifests and failed reads are errors.
+func ResolveOwnOrganizations(ctx context.Context, repo, manifestPath string, extra []string) ([]string, error) {
+	own := slices.Clone(extra)
+	var manifest *config.Manifest
+	if manifestPath != "" {
+		var err error
+		manifest, err = config.LoadManifest(manifestPath)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return own, err
+		}
+	}
+	if manifest != nil && manifest.Forge != nil {
+		own = append(own, manifest.Forge.OwnOrganizations...)
+	}
+	owner, err := resolveReferenceOwner(ctx, repo, manifest)
+	if err != nil {
+		return own, err
+	}
+	if owner != "" {
+		own = append(own, owner)
+	}
+	return own, nil
+}
+
+func resolveReferenceOwner(ctx context.Context, repo string, manifest *config.Manifest) (string, error) {
+	if identity := os.Getenv("GITHUB_REPOSITORY"); identity != "" {
+		owner, name, _ := strings.Cut(identity, "/")
+		if err := util.ValidateGitHubRepositoryIdentity(owner, name); err != nil {
+			return "", fmt.Errorf("GITHUB_REPOSITORY: %w", err)
+		}
+		return owner, nil
+	}
+	if repo != "" {
+		owner, _, err := util.ResolveRemoteIdentity(ctx, repo)
+		if err == nil {
+			return owner, nil
+		}
+		if !errors.Is(err, util.ErrRepoIdentityUnresolved) {
+			return "", err
+		}
+	}
+	if manifest != nil {
+		return manifest.Repository.Owner, nil
+	}
+	return "", nil
+}
 
 // Order: engine-fr-rule-checks-20261027. Use the closing-reference grammar and decoder.
 var textReferenceRegex = regexp.MustCompile(`(?i)^(` + referencePattern("issues|pulls?|discussions", "[#!]") + `)\b`)
