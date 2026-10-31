@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -36,6 +39,9 @@ func resolveStaleBound(fs *flag.FlagSet, value int) (int, error) {
 // against the stated bound, then the growth guard versus --base.
 func auditRatchetPassed(ctx context.Context, opts *auditOptions, base *baseline.Baseline, ratchet *baseline.RatchetResult) error {
 	if err := auditStaleBaseline(ratchet, opts.maxStale); err != nil {
+		return err
+	}
+	if err := auditGolangciBaselineGrowth(ctx, opts); err != nil {
 		return err
 	}
 	return auditBaselineGrowth(ctx, opts, base)
@@ -265,6 +271,82 @@ func auditBaselineGrowth(ctx context.Context, opts *auditOptions, current *basel
 	}
 	fmt.Printf("[PASS] HISS-13 debt ratchet: %s does not grow versus %s (%d -> %d).\n",
 		rel, opts.baseRef, previous.Count(), current.Count())
+	return nil
+}
+
+// maxGolangciRules bounds the number of exclusion rules scanned in .golangci.yml (HISS-02).
+const maxGolangciRules = 10000
+
+// auditGolangciBaselineGrowth enforces that no # baseline rules were added in .golangci.yml
+// versus the base ref (#1030). Rules in the generated block carry no expiry, so a hand-added
+// baseline rule would hide an over-cap function permanently.
+func auditGolangciBaselineGrowth(ctx context.Context, opts *auditOptions) error {
+	if opts.baseRef == "" {
+		return nil
+	}
+	topLevel, err := gitTopLevel(ctx, opts.rootDir)
+	if err != nil {
+		return fmt.Errorf("[FAIL] --base=%s requires a git repository: %w", opts.baseRef, err)
+	}
+	cfgRel, err := gitRelativePath(topLevel, filepath.Join(opts.rootDir, ".golangci.yml"))
+	if err != nil {
+		return fmt.Errorf("[FAIL] .golangci.yml is not inside the repository %s: %w", topLevel, err)
+	}
+	baseMap, found, err := readBaseGolangciBaselines(ctx, opts, cfgRel)
+	if err != nil || !found {
+		return err
+	}
+	return checkHeadGolangciBaselines(opts.rootDir, opts.baseRef, cfgRel, baseMap)
+}
+
+// readBaseGolangciBaselines reads and parses .golangci.yml committed at baseRef.
+func readBaseGolangciBaselines(ctx context.Context, opts *auditOptions, cfgRel string) (map[adopt.LinterPair]bool, bool, error) {
+	committed, found := readBaselineAtRef(ctx, opts.rootDir, opts.baseRef, cfgRel)
+	if !found {
+		fmt.Printf("[INFO] No %s committed at %s; debt growth guard has nothing to compare.\n", cfgRel, opts.baseRef)
+		return nil, false, nil
+	}
+	baseRules, _, _, err := adopt.ParseGeneratedBlock(cfgRel, []byte(committed))
+	if err != nil {
+		return nil, false, fmt.Errorf("[FAIL] %s committed at %s is unreadable: %w", cfgRel, opts.baseRef, err)
+	}
+	baseMap := make(map[adopt.LinterPair]bool)
+	for i := 0; i < len(baseRules) && i < maxGolangciRules; i++ {
+		if baseRules[i].IsBaseline {
+			baseMap[baseRules[i].Pair] = true
+		}
+	}
+	if len(baseMap) == 0 {
+		fmt.Printf("[INFO] No %s baseline rules committed at %s; debt growth guard has nothing to compare.\n", cfgRel, opts.baseRef)
+		return nil, false, nil
+	}
+	return baseMap, true, nil
+}
+
+// checkHeadGolangciBaselines verifies that all HEAD baseline rules were present in baseMap.
+func checkHeadGolangciBaselines(rootDir, baseRef, cfgRel string, baseMap map[adopt.LinterPair]bool) error {
+	headPath := filepath.Join(rootDir, ".golangci.yml")
+	headRules, _, _, err := adopt.ReadExistingGeneratedBlock(headPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Printf("[PASS] %s baseline: does not grow versus %s (%d -> 0).\n", cfgRel, baseRef, len(baseMap))
+			return nil
+		}
+		return fmt.Errorf("[FAIL] read %s: %w", headPath, err)
+	}
+	headBaselineCount := 0
+	for i := 0; i < len(headRules) && i < maxGolangciRules; i++ {
+		r := headRules[i]
+		if !r.IsBaseline {
+			continue
+		}
+		headBaselineCount++
+		if !baseMap[r.Pair] {
+			return fmt.Errorf("[FAIL] %s: baseline rule for %s (%s, %s): fix it, a baseline never grows",
+				cfgRel, r.Pair.File, r.Pair.Linter, r.Pair.Function)
+		}
+	}
+	fmt.Printf("[PASS] %s baseline: does not grow versus %s (%d -> %d).\n", cfgRel, baseRef, len(baseMap), headBaselineCount)
 	return nil
 }
 

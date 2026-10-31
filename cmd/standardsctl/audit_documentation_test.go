@@ -805,26 +805,33 @@ func TestAuditDocumentationGateNodeVersionInvalidCases(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			root := documentationAuditFixture(t)
-			path := filepath.Join(root, markdownassets.NodeVersionFile)
-			if tc.remove {
-				if err := os.Remove(path); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				writeFixtureFile(t, root, markdownassets.NodeVersionFile, tc.content)
-			}
-			err := docGate(t.Context(), manifest, root)
-			if err == nil {
-				t.Fatalf("case %s unexpectedly passed", tc.name)
-			}
-			if !strings.Contains(err.Error(), markdownassets.NodeVersionFile) {
-				t.Fatalf("case %s error %q does not name %s", tc.name, err.Error(), markdownassets.NodeVersionFile)
-			}
-			if !strings.Contains(err.Error(), tc.wantMatch) {
-				t.Fatalf("case %s error %q does not contain %q", tc.name, err.Error(), tc.wantMatch)
-			}
+			assertNodeVersionCaseFails(t, manifest, tc.name, tc.content, tc.remove, tc.wantMatch)
 		})
+	}
+}
+
+// assertNodeVersionCaseFails removes or rewrites the fixture's Node version file and asserts the
+// documentation gate fails naming the file and wantMatch.
+func assertNodeVersionCaseFails(t *testing.T, manifest *config.Manifest, name, content string, remove bool, wantMatch string) {
+	t.Helper()
+	root := documentationAuditFixture(t)
+	path := filepath.Join(root, markdownassets.NodeVersionFile)
+	if remove {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		writeFixtureFile(t, root, markdownassets.NodeVersionFile, content)
+	}
+	err := docGate(t.Context(), manifest, root)
+	if err == nil {
+		t.Fatalf("case %s unexpectedly passed", name)
+	}
+	if !strings.Contains(err.Error(), markdownassets.NodeVersionFile) {
+		t.Fatalf("case %s error %q does not name %s", name, err.Error(), markdownassets.NodeVersionFile)
+	}
+	if !strings.Contains(err.Error(), wantMatch) {
+		t.Fatalf("case %s error %q does not contain %q", name, err.Error(), wantMatch)
 	}
 }
 

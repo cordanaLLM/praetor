@@ -133,7 +133,7 @@ When `linters.exclusions.warn-unused` is not true, the audit records the gap wit
 
 #### Generated test exceptions block and ratchet
 
-When replacing file-class exclusions (such as `_test\.go`) with granular, dated per-file exceptions,
+When replacing file-class exclusions (such as `_test\.go`) with granular exclusions,
 `praetorctl linters exceptions` generates and ratchets an anchored exceptions block inside
 `linters.exclusions.rules[]` (`internal/adopt/linters_generated_exceptions.go`,
 `TestGenerateExceptions_FormatAndOrder_Positive`, `TestGenerateExceptions_Ratchet_Positive_LowerCountRenews`):
@@ -147,29 +147,40 @@ linters:
         linters:
           - forbidigo
       # praetor:generated-exceptions begin (praetorctl linters exceptions; never edit by hand)
-      # category C, entered 2026-10-18, expires 2026-10-28, #1030
+      # baseline #1030
       - path: ^cmd/standards-lsp/fuzz_test\.go$
         linters:
           - gocognit
+        text: func `FuzzLSPHandleMessage`
+      # category C, entered 2026-10-29, expires 2026-11-08, #1030
+      - path: ^internal/testsupport/commandcut_test\.go$
+        linters:
+          - forbidigo
       # praetor:generated-exceptions end
 ```
 
 The block is bounded by comment markers `# praetor:generated-exceptions begin (praetorctl linters exceptions; never edit by hand)`
-and `# praetor:generated-exceptions end`. Each rule targets exactly one `(file, linter)` pair with an anchored regular expression
-(`^<QuoteMeta>$`) sorted by file path then linter name, carrying category C (10-day limit) and issue provenance (#1030).
+and `# praetor:generated-exceptions end`, sorted by file path, linter name, and function name:
+
+- **Complexity linters (`gocyclo`, `gocognit`, `funlen`)**: emit one rule per `(file, linter, function)` with a `text:` regular expression that quotes the function or method receiver name (`regexp.QuoteMeta`) and closes with the diagnostic message's delimiter (``func `<name>` `` for `gocyclo`/`gocognit`, `Function '<name>'` for `funlen`) so `TestX` never matches `TestXY` (`TestGenerateExceptions_TextRegexp_DelimitersAndQuoting`). These rules carry `# baseline #<issue>` and no expiry; `praetorctl audit` counts them in its `[PASS]` summary (`N verified, M baseline`) and fails closed on any unrecognised comment form in the generated block (`TestAuditDeclaredLinters_Exclusion_BaselineCountedAndNeverExpires`, `TestAuditDeclaredLinters_Exclusion_UnknownCommentInGeneratedBlockFailsClosed`).
+- **File-level linters (`forbidigo`, `noctx`)**: findings name no function, so rules stay `(file, linter)` pairs carrying `# category C, entered YYYY-MM-DD, expires YYYY-MM-DD, #<issue>`. Their dates renew only when the measured count of dated rules drops below the recorded count (`TestGenerateExceptions_BaselineShrinkAndHold`).
 
 Two commands drive generation and ratcheting:
 
 1. `praetorctl linters exceptions strip-config --out <path>`: writes `.golangci.yml` without the generated block and
-   with `run.relative-path-mode: gitroot`, allowing an unconstrained lint run to report all findings hidden by the block
-   (`TestStripGolangciConfig_3D`).
+   with `run.relative-path-mode: gitroot` and `issues.uniq-by-line: false`, allowing an unconstrained lint run to report all findings hidden by the block
+   (`TestStripGolangciConfig_Positive`).
 2. `praetorctl linters exceptions generate --report <report.json> --issue <N> [--category C] [--today YYYY-MM-DD] [--write]`:
    reads a golangci-lint v2 JSON report and applies ratchet invariants (`TestGenerateExceptions_Ratchet_Positive_LowerCountRenews`,
-   `TestGenerateExceptions_Ratchet_Negative_NewFindingRefused`, `TestGenerateExceptions_Ratchet_Negative_ExpiredRefused`):
-   - **New finding**: a pair present in the report but absent from the block causes exit 3 (`new finding in <file> (<linter>): fix it, a generated exception never grows`).
-   - **Decreased count**: clean pairs drop out, and all remaining pairs renew their entered and expiry dates.
-   - **Unchanged count, active entries**: no changes written, exits 0 (`unchanged: N entries live until <date>`).
-   - **Unchanged count, expired entry**: refusal with exit 3 (`count did not drop: N recorded, M measured; renewal needs a lower count`).
+   `TestGenerateExceptions_Ratchet_Negative_NewFindingRefused`, `TestGenerateExceptions_Ratchet_Negative_ExpiredRefused`,
+   `TestGenerateExceptions_PlantedGocycloNewFinding`):
+   - **New finding**: an unrecorded `(file, linter, function)` or `(file, linter)` target causes exit 3 (`new finding in <file> (<linter>) [<function>]: fix it, a generated exception never grows`).
+   - **Cleaned baseline function**: a recorded complexity function whose finding is gone is dropped from the block while dated rules keep their existing expiry unless the dated rule count also dropped.
+   - **Decreased dated count**: clean dated pairs drop out, and remaining dated pairs renew their entered and expiry dates.
+   - **Unchanged count, active entries**: no changes written, exits 0 (`unchanged: ...`).
+   - **Unchanged dated count, expired entry**: refusal with exit 3 (`count did not drop: N recorded, M measured; renewal needs a lower count`).
+
+   Across commits, `praetorctl audit --base <ref>` enforces that the baseline never grows by refusing any `# baseline` rule at HEAD not present on the base ref (`TestAudit_GolangciBaselineGrowth_Negative_HandAddedRuleRefused`).
 
    A configuration without the generated block takes it at the end of `linters.exclusions.rules`, whose key the
    generator finds by YAML structure: an earlier `rules:` key of another mapping, such as

@@ -366,6 +366,18 @@ jobs:
         if: steps.filter.outputs.skip_heavy_gates == 'true' && steps.filter.outputs.run_audit != 'false' && github.event_name != 'push'
         run: go run ./cmd/standardsctl audit
 
+      # The growth guards of audit --base (the HISS-13 debt baseline and the lint baseline of #1030)
+      # otherwise run only in the pre-push hook, and a push with its hooks skipped carries no proof of
+      # them. A baseline lint rule has no expiry, so a hand-added one would hide an over-cap function
+      # for good (TestCIRunsTheBaselineGrowthGuard).
+      - name: Baseline Growth Guard (debt and lint baselines)
+        if: github.event_name == 'pull_request' && steps.filter.outputs.run_audit != 'false'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null || git fetch --no-tags origin "${BASE_SHA}"
+          go run ./cmd/standardsctl audit --base="$BASE_SHA"
+
       - name: Verify Binary Compilation
         if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
         run: make build

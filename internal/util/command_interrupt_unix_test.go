@@ -130,8 +130,11 @@ func startInterruptHelper(t *testing.T, mode, script string, extraEnv ...string)
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	// Raw exec: tests interrupt signal forwarding directly; routing through util would be circular and context-cancel would kill helper prematurely.
-	helper := exec.Command(binary, interruptHelperRun)
+	// Raw exec: tests interrupt signal forwarding directly; routing through util would be circular.
+	// t.Context is canceled only as the test ends, so the helper lives through every signal the
+	// test sends; Cancel then kills the whole group, as the cleanup below does.
+	helper := exec.CommandContext(t.Context(), binary, interruptHelperRun)
+	helper.Cancel = func() error { return syscall.Kill(-helper.Process.Pid, syscall.SIGKILL) }
 	helper.Env = append(os.Environ(), "PRAETOR_COMMAND_INTERRUPT_TEST="+mode,
 		"PRAETOR_COMMAND_INTERRUPT_DIR="+dir, "PRAETOR_COMMAND_INTERRUPT_SCRIPT="+script,
 		"GOCOVERDIR="+t.TempDir())
