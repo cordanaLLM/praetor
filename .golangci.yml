@@ -138,14 +138,6 @@ linters:
         linters:
           - gocyclo
       # category C, entered 2026-10-29, expires 2026-11-08, #1030
-      - path: ^cmd/standards-lsp/server_test\.go$
-        linters:
-          - gocognit
-      # category C, entered 2026-10-29, expires 2026-11-08, #1030
-      - path: ^cmd/standards-lsp/server_test\.go$
-        linters:
-          - gocyclo
-      # category C, entered 2026-10-29, expires 2026-11-08, #1030
       - path: ^cmd/standards-mcp/audit_branch_ruleset_test\.go$
         linters:
           - funlen
