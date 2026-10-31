@@ -1,0 +1,9 @@
+# deepmerge 4.3.1 (GHSA-gcqx-w48m-w2h4) has no patched release; its only consumer,
+# @sveltejs/vite-plugin-svelte, merges options through the patch below instead, so the
+# override removes deepmerge from the lock. Drop both when a vite-plugin-svelte release
+# no longer depends on deepmerge or a patched deepmerge appears.
+overrides:
+  deepmerge: '-'
+
+patchedDependencies:
+  '@sveltejs/vite-plugin-svelte@7.3.1': patches/@sveltejs__vite-plugin-svelte@7.3.1.patch

@@ -152,3 +152,11 @@ SPDX-FileCopyrightText = [
   "2026 Lusoris",
 ]
 SPDX-License-Identifier = "BSD-2-Clause-Patent"
+
+# pnpm patches of npm packages: the diff context is the upstream package's MIT-licensed source,
+# the added lines are this repository's (console/pnpm-workspace.yaml applies them).
+[[annotations]]
+path = ["console/patches/**"]
+precedence = "override"
+SPDX-FileCopyrightText = ["2021 vite-plugin-svelte contributors", "2026 Lusoris <lusoris@proton.me>"]
+SPDX-License-Identifier = "EUPL-1.2 AND MIT"
