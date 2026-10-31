@@ -1,0 +1,2 @@
+type: security
+title: 'Security: the console patches deepmerge 4.3.1 in-tree so an own __proto__ key no longer sets a merged result''s prototype (GHSA-gcqx-w48m-w2h4); a vitest pins the patch, and the OSV-Scanner exception now names the mitigation and stays only because the scanner matches by version'
