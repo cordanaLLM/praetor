@@ -7,7 +7,11 @@ package forge
 import (
 	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -45,6 +49,30 @@ func portabilityWindowsShardsProblem(raw []byte, identity string) string {
 	}
 	if covered := provenAggregateNeeds(&spec, &winJob); !slices.Equal(covered, []string{"windows-shard"}) {
 		return fmt.Sprintf("provenAggregateNeeds(windows) = %v, want [windows-shard]", covered)
+	}
+	if problem := packageLoopsProblem(raw); problem != "" {
+		return problem
+	}
+	return ""
+}
+
+// packageLoopsProblem verifies all package-reading loops in harness and windows-shard declare a
+// scalar upper bound (HISS-02).
+func packageLoopsProblem(raw []byte) string {
+	spec, err := ghworkflow.Parse(raw)
+	if err != nil {
+		return fmt.Sprintf("parse workflow: %v", err)
+	}
+	for _, jobID := range []string{"harness", "windows-shard"} {
+		for _, stepName := range []string{"Select Buildable Go Packages", "Test Every Package"} {
+			step, found := findJobStep(spec.Jobs[jobID], stepName)
+			if !found {
+				return fmt.Sprintf("%s missing %s step", jobID, stepName)
+			}
+			if !strings.Contains(step.Run, "max_packages=") {
+				return fmt.Sprintf("%s %s missing max_packages scalar bound", jobID, stepName)
+			}
+		}
 	}
 	return ""
 }
@@ -148,6 +176,10 @@ func TestPortabilityWindowsShards_Negative(t *testing.T) {
 			t.Fatalf("%s: broken aggregator passed", name)
 		}
 	}
+	mutatedUnbounded := strings.Replace(raw, "max_packages=\"${PORTABILITY_MAX_PACKAGES:?}\"\n", "", 1)
+	if problem := packageLoopsProblem([]byte(mutatedUnbounded)); problem == "" {
+		t.Fatal("dropped max_packages bound passed packageLoopsProblem")
+	}
 	spec, err := ghworkflow.Parse([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
@@ -182,5 +214,105 @@ func TestPortabilityWindowsShards_Boundary(t *testing.T) {
 	}
 	if fails, known := aggregateFails(steps, map[string]string{"windows-shard": needsResultSkipped}); !known || !fails {
 		t.Fatalf("skipped: fails = %t, known = %t; want true, true", fails, known)
+	}
+}
+
+// runWindowsPackageRead executes the package-reading loop from stepRun against lines in packages.
+func runWindowsPackageRead(t *testing.T, stepRun, limit string, packages []string) ([]string, error) {
+	t.Helper()
+	re := regexp.MustCompile(`(?s)(max_packages=\S+[\s\S]*?while IFS= read -r package; do[\s\S]*?done < "\$RUNNER_TEMP/portability-packages\.txt")`)
+	m := re.FindStringSubmatch(stepRun)
+	var loop, arr string
+	if m != nil {
+		loop = m[1]
+		arr = "packages"
+		if strings.Contains(loop, `selected+=("$package")`) {
+			arr = "selected"
+		}
+	} else {
+		reUnbounded := regexp.MustCompile(`(?s)((?:packages|selected)=\(\)\s*\n\s*while IFS= read -r package; do[\s\S]*?done < "\$RUNNER_TEMP/portability-packages\.txt")`)
+		mUnbounded := reUnbounded.FindStringSubmatch(stepRun)
+		if mUnbounded == nil {
+			t.Fatal("step missing package read loop")
+		}
+		loop = mUnbounded[1]
+		arr = "packages"
+		if strings.Contains(loop, `selected+=("$package")`) {
+			arr = "selected"
+		}
+	}
+	tmp := filepath.Join(t.TempDir(), "portability-packages.txt")
+	content := strings.Join(packages, "\n")
+	if len(packages) > 0 {
+		content += "\n"
+	}
+	if err := os.WriteFile(tmp, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := "PORTABILITY_MAX_PACKAGES=" + limit + "\n" + strings.Replace(loop, `"$RUNNER_TEMP/portability-packages.txt"`, fmt.Sprintf("%q", tmp), 1) +
+		fmt.Sprintf("\nfor p in \"${%s[@]}\"; do echo \"$p\"; done\n", arr)
+
+	var out bytes.Buffer
+	_, err := util.RunCommandStream(t.Context(), "", "bash", nil, &out, 1<<20, "-c", script)
+	if err != nil {
+		return nil, err
+	}
+	trimmed := strings.TrimSpace(out.String())
+	if trimmed == "" {
+		return nil, nil
+	}
+	return strings.Split(trimmed, "\n"), nil
+}
+
+func checkStepPackageLoop(t *testing.T, jobID, stepName, limit string, step ghworkflow.Step) {
+	t.Helper()
+	if !strings.Contains(step.Run, "max_packages=") {
+		t.Fatalf("%s %q step missing max_packages scalar bound", jobID, stepName)
+	}
+	pkgs := []string{"pkg1", "pkg2", "pkg3"}
+	got, err := runWindowsPackageRead(t, step.Run, limit, pkgs)
+	if err != nil {
+		t.Fatalf("%s %s positive failed: %v", jobID, stepName, err)
+	}
+	if !slices.Equal(got, pkgs) {
+		t.Fatalf("%s %s positive got %v, want %v", jobID, stepName, got, pkgs)
+	}
+	bound, err := strconv.Atoi(limit)
+	if err != nil || bound < 1 || bound > 4096 {
+		t.Fatalf("PORTABILITY_MAX_PACKAGES = %q, want an integer in 1..4096", limit)
+	}
+	atLimit := make([]string, bound)
+	for i := range atLimit {
+		atLimit[i] = fmt.Sprintf("pkg%d", i)
+	}
+	if got, err := runWindowsPackageRead(t, step.Run, limit, atLimit); err != nil || len(got) != bound {
+		t.Fatalf("%s %s at the limit (%d packages): got %d, err %v", jobID, stepName, bound, len(got), err)
+	}
+	over := append(atLimit, "pkg-over")
+	if _, err := runWindowsPackageRead(t, step.Run, limit, over); err == nil {
+		t.Fatalf("%s %s over-limit (%d packages) did not fail closed", jobID, stepName, len(over))
+	}
+}
+
+// HISS-02 verification: the package reading loops in harness and windows-shard must declare a
+// scalar bound and fail closed if the package list exceeds it.
+func TestPortabilityWindowsShards_PackageLoopBounds(t *testing.T) {
+	workflows, _ := engineWorkflows(t)
+	spec, err := ghworkflow.Parse(workflows["portability.yml"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	limit, set, known := ghworkflow.EnvValue("PORTABILITY_MAX_PACKAGES", &spec.Env)
+	if !set || !known {
+		t.Fatal("portability.yml declares no workflow-level PORTABILITY_MAX_PACKAGES")
+	}
+	for _, jobID := range []string{"harness", "windows-shard"} {
+		for _, stepName := range []string{"Select Buildable Go Packages", "Test Every Package"} {
+			step, found := findJobStep(spec.Jobs[jobID], stepName)
+			if !found {
+				t.Fatalf("%s missing %q step", jobID, stepName)
+			}
+			checkStepPackageLoop(t, jobID, stepName, limit, step)
+		}
 	}
 }

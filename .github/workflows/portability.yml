@@ -47,6 +47,9 @@ permissions:
 
 env:
   SHELLCHECK_VERSION: v0.11.0
+  # Upper bound on the Go packages one read loop accepts (HISS-02); the repository has about
+  # 125. A loop past it fails the step instead of truncating the list.
+  PORTABILITY_MAX_PACKAGES: "512"
 
 jobs:
   # Outside the canonical repository the matrix is an operator's choice (#189): the macOS
@@ -199,8 +202,15 @@ jobs:
         if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
+          max_packages="${PORTABILITY_MAX_PACKAGES:?}"
           packages=()
-          while IFS= read -r package; do packages+=("$package"); done < "$RUNNER_TEMP/portability-packages.txt"
+          while IFS= read -r package; do
+            if [ "${#packages[@]}" -ge "$max_packages" ]; then
+              echo "::error::package count exceeds $max_packages" >&2
+              exit 1
+            fi
+            packages+=("$package")
+          done < "$RUNNER_TEMP/portability-packages.txt"
           # go build rejects test-only packages; use Go's own source-file metadata.
           go list -f '{{if or .GoFiles .CgoFiles}}{{.ImportPath}}{{end}}' "${packages[@]}" > "$RUNNER_TEMP/buildable.txt"
 
@@ -210,9 +220,16 @@ jobs:
         if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
+          max_packages="${PORTABILITY_MAX_PACKAGES:?}"
           buildable=()
           while IFS= read -r package; do
-            if [ -n "$package" ]; then buildable+=("$package"); fi
+            if [ -n "$package" ]; then
+              if [ "${#buildable[@]}" -ge "$max_packages" ]; then
+                echo "::error::package count exceeds $max_packages" >&2
+                exit 1
+              fi
+              buildable+=("$package")
+            fi
           done < "$RUNNER_TEMP/buildable.txt"
           if [ "${#buildable[@]}" -gt 0 ]; then
             go build "${buildable[@]}"
@@ -229,9 +246,16 @@ jobs:
         if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
+          max_packages="${PORTABILITY_MAX_PACKAGES:?}"
           buildable=()
           while IFS= read -r package; do
-            if [ -n "$package" ]; then buildable+=("$package"); fi
+            if [ -n "$package" ]; then
+              if [ "${#buildable[@]}" -ge "$max_packages" ]; then
+                echo "::error::package count exceeds $max_packages" >&2
+                exit 1
+              fi
+              buildable+=("$package")
+            fi
           done < "$RUNNER_TEMP/buildable.txt"
           if [ "${#buildable[@]}" -gt 0 ]; then
             go vet "${buildable[@]}"
@@ -291,11 +315,24 @@ jobs:
           # every test runs exactly once (internal/forge TestPortability_LongestPackageRunsInHalves).
           cli_half='^Test(Aud|[B-D])'
           # A read loop, not mapfile: macOS runners ship bash 3.2, which has no mapfile.
+          max_packages="${PORTABILITY_MAX_PACKAGES:?}"
           selected=()
-          while IFS= read -r package; do selected+=("$package"); done < "$RUNNER_TEMP/portability-packages.txt"
+          while IFS= read -r package; do
+            if [ "${#selected[@]}" -ge "$max_packages" ]; then
+              echo "::error::package count exceeds $max_packages" >&2
+              exit 1
+            fi
+            selected+=("$package")
+          done < "$RUNNER_TEMP/portability-packages.txt"
           go list "${selected[@]}" > "$RUNNER_TEMP/selected-packages.txt"
           packages=()
-          while IFS= read -r package; do packages+=("$package"); done < <(grep -vxF -e "$adopt" -e "$cli" "$RUNNER_TEMP/selected-packages.txt")
+          while IFS= read -r package; do
+            if [ "${#packages[@]}" -ge "$max_packages" ]; then
+              echo "::error::package count exceeds $max_packages" >&2
+              exit 1
+            fi
+            packages+=("$package")
+          done < <(grep -vxF -e "$adopt" -e "$cli" "$RUNNER_TEMP/selected-packages.txt")
           json="$RUNNER_TEMP/go-test-$RUNNER_OS.json"
           : > "$json"
           show() {
@@ -646,17 +683,31 @@ jobs:
         if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
+          max_packages="${PORTABILITY_MAX_PACKAGES:?}"
           packages=()
-          while IFS= read -r package; do packages+=("$package"); done < "$RUNNER_TEMP/portability-packages.txt"
+          while IFS= read -r package; do
+            if [ "${#packages[@]}" -ge "$max_packages" ]; then
+              echo "::error::package count exceeds $max_packages" >&2
+              exit 1
+            fi
+            packages+=("$package")
+          done < "$RUNNER_TEMP/portability-packages.txt"
           go list -f '{{if or .GoFiles .CgoFiles}}{{.ImportPath}}{{end}}' "${packages[@]}" > "$RUNNER_TEMP/buildable.txt"
 
       - name: Compile Every Package
         if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
+          max_packages="${PORTABILITY_MAX_PACKAGES:?}"
           buildable=()
           while IFS= read -r package; do
-            if [ -n "$package" ]; then buildable+=("$package"); fi
+            if [ -n "$package" ]; then
+              if [ "${#buildable[@]}" -ge "$max_packages" ]; then
+                echo "::error::package count exceeds $max_packages" >&2
+                exit 1
+              fi
+              buildable+=("$package")
+            fi
           done < "$RUNNER_TEMP/buildable.txt"
           if [ "${#buildable[@]}" -gt 0 ]; then
             go build "${buildable[@]}"
@@ -668,9 +719,16 @@ jobs:
         if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
+          max_packages="${PORTABILITY_MAX_PACKAGES:?}"
           buildable=()
           while IFS= read -r package; do
-            if [ -n "$package" ]; then buildable+=("$package"); fi
+            if [ -n "$package" ]; then
+              if [ "${#buildable[@]}" -ge "$max_packages" ]; then
+                echo "::error::package count exceeds $max_packages" >&2
+                exit 1
+              fi
+              buildable+=("$package")
+            fi
           done < "$RUNNER_TEMP/buildable.txt"
           if [ "${#buildable[@]}" -gt 0 ]; then
             go vet "${buildable[@]}"
@@ -692,11 +750,24 @@ jobs:
           adopt=$(go list ./internal/adopt)
           cli=$(go list ./cmd/standardsctl)
           cli_half='^Test(Aud|[B-D])'
+          max_packages="${PORTABILITY_MAX_PACKAGES:?}"
           selected=()
-          while IFS= read -r package; do selected+=("$package"); done < "$RUNNER_TEMP/portability-packages.txt"
+          while IFS= read -r package; do
+            if [ "${#selected[@]}" -ge "$max_packages" ]; then
+              echo "::error::package count exceeds $max_packages" >&2
+              exit 1
+            fi
+            selected+=("$package")
+          done < "$RUNNER_TEMP/portability-packages.txt"
           go list "${selected[@]}" > "$RUNNER_TEMP/selected-packages.txt"
           packages=()
-          while IFS= read -r package; do packages+=("$package"); done < <(grep -vxF -e "$adopt" -e "$cli" "$RUNNER_TEMP/selected-packages.txt" | LC_ALL=C sort | awk -v shard="$SHARD" 'NR % 2 == (shard % 2)')
+          while IFS= read -r package; do
+            if [ "${#packages[@]}" -ge "$max_packages" ]; then
+              echo "::error::package count exceeds $max_packages" >&2
+              exit 1
+            fi
+            packages+=("$package")
+          done < <(grep -vxF -e "$adopt" -e "$cli" "$RUNNER_TEMP/selected-packages.txt" | LC_ALL=C sort | awk -v shard="$SHARD" 'NR % 2 == (shard % 2)')
           json="$RUNNER_TEMP/go-test-$RUNNER_OS.json"
           : > "$json"
           show() {

@@ -463,14 +463,14 @@ const markdownGateSelfTest = "node tools/markdownlint/verify.mjs --self-test"
 // markdownGateSelfTestGap names why a job does not replay the Markdown gate self-test on
 // every leg, or returns "" when it does. A step skipped by an OS condition would restore
 // the silent Windows gap HISS-21 forbids, so only unconditional steps count.
-func markdownGateSelfTestGap(job workflowJob) string {
+func markdownGateSelfTestGap(job workflowJob, jobID string) string {
 	if advisoryJob(job.ContinueOnError) {
 		return "job is advisory"
 	}
 	setupNode := false
 	for i := 0; i < len(job.Steps) && i < maxStepsPerJob; i++ {
 		step := job.Steps[i]
-		if strings.HasPrefix(step.Uses, "actions/setup-node@") && runsInPortabilityScope(step, "node") {
+		if strings.HasPrefix(step.Uses, "actions/setup-node@") && runsInPortabilityScope(step, jobID, "node") {
 			setupNode = true
 		}
 		if strings.TrimSpace(step.Run) != markdownGateSelfTest {
@@ -479,7 +479,7 @@ func markdownGateSelfTestGap(job workflowJob) string {
 		switch {
 		case !setupNode:
 			return "self-test runs before an unconditional setup-node step"
-		case !runsInPortabilityScope(step, "markdown"):
+		case !runsInPortabilityScope(step, jobID, "markdown"):
 			return "self-test step is conditional: " + step.If
 		}
 		return ""
@@ -498,14 +498,18 @@ var everyLegConditions = []string{
 }
 
 // runsOnEveryLeg reports whether a step's condition cannot differ between matrix legs.
-func runsOnEveryLeg(step workflowStep) bool {
-	return slices.Contains(everyLegConditions, strings.TrimSpace(step.If))
+func runsOnEveryLeg(step workflowStep, jobID string) bool {
+	cond := strings.TrimSpace(step.If)
+	if cond == everyLegConditions[3] {
+		return jobID == "windows-shard"
+	}
+	return slices.Contains(everyLegConditions[:3], cond)
 }
 
 // runsInPortabilityScope permits only the declared step scope, never a platform condition.
 // Push and dispatch set every flag; PR fixtures exercise each selector branch.
-func runsInPortabilityScope(step workflowStep, flag string) bool {
-	if runsOnEveryLeg(step) {
+func runsInPortabilityScope(step workflowStep, jobID, flag string) bool {
+	if runsOnEveryLeg(step, jobID) {
 		return true
 	}
 	term := "steps.scope.outputs." + flag + " == 'true'"
@@ -514,7 +518,13 @@ func runsInPortabilityScope(step workflowStep, flag string) bool {
 	}
 	condition := strings.TrimSpace(step.If)
 	base := "${{ !cancelled() && " + ghworkflow.HostedGateNotDraft + " && " + term
-	return condition == base+" }}" || condition == base+" && matrix.shard == 2 }}"
+	if condition == base+" }}" {
+		return true
+	}
+	if jobID == "windows-shard" && condition == base+" && matrix.shard == 2 }}" {
+		return true
+	}
+	return false
 }
 
 // The Markdown gate runner is emitted into adopters' verify-all, and only the portability
@@ -527,7 +537,7 @@ func TestPortabilityReplaysMarkdownGateSelfTestOnEveryLeg(t *testing.T) {
 		t.Fatalf("parse portability.yml: %v", err)
 	}
 	for _, jobID := range []string{"harness", "windows-shard"} {
-		if gap := markdownGateSelfTestGap(spec.Jobs[jobID]); gap != "" {
+		if gap := markdownGateSelfTestGap(spec.Jobs[jobID], jobID); gap != "" {
 			t.Fatalf("portability %s: %s", jobID, gap)
 		}
 	}
@@ -554,10 +564,12 @@ func TestPortabilityReplaysMarkdownGateSelfTestOnEveryLeg(t *testing.T) {
 			{Uses: node.Uses, If: everyLegConditions[2]}, {Run: markdownGateSelfTest, If: everyLegConditions[2]}}}, ""},
 		{"boundary draft term beside a leg term", workflowJob{Steps: []workflowStep{node,
 			{Run: markdownGateSelfTest, If: "${{ !cancelled() && " + ghworkflow.HostedGateNotDraft + " && runner.os != 'Windows' }}"}}}, "conditional"},
+		{"negative shard condition in harness", workflowJob{Steps: []workflowStep{
+			node, {Run: markdownGateSelfTest, If: everyLegConditions[3]}}}, "conditional"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := markdownGateSelfTestGap(tc.job)
+			got := markdownGateSelfTestGap(tc.job, "harness")
 			if (tc.want == "") != (got == "") || !strings.Contains(got, tc.want) {
 				t.Fatalf("gap = %q, want containing %q", got, tc.want)
 			}
@@ -999,26 +1011,31 @@ func TestVerifyJobRunsDocsAuditOnRunDocs(t *testing.T) {
 func TestPortabilityScopeConditions(t *testing.T) {
 	prefix := "${{ !cancelled() && " + ghworkflow.HostedGateNotDraft + " && "
 	cases := []struct {
+		jobID           string
 		condition, flag string
 		want            bool
 	}{
-		{everyLegConditions[2], "harness", true},
-		{everyLegConditions[3], "harness", true},
-		{prefix + "steps.scope.outputs.harness == 'true' }}", "harness", true},
-		{prefix + "steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}", "harness", true},
-		{prefix + "steps.scope.outputs.markdown == 'true' }}", "markdown", true},
-		{prefix + "steps.scope.outputs.markdown == 'true' && matrix.shard == 2 }}", "markdown", true},
-		{prefix + "(steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true') }}", "node", true},
-		{prefix + "(steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true') && matrix.shard == 2 }}", "node", true},
-		{prefix + "steps.scope.outputs.go == 'true' }}", "harness", false},
-		{prefix + "steps.scope.outputs.harness == 'true' && matrix.shard == 1 }}", "harness", false},
-		{prefix + "steps.scope.outputs.harness == 'true' && runner.os != 'Windows' }}", "harness", false},
-		{"${{ !cancelled() && steps.scope.outputs.harness == 'true' }}", "harness", false},
-		{prefix + "steps.scope.outputs.harness != 'true' }}", "harness", false},
+		{"harness", everyLegConditions[2], "harness", true},
+		{"harness", everyLegConditions[3], "harness", false},
+		{"windows-shard", everyLegConditions[3], "harness", true},
+		{"harness", prefix + "steps.scope.outputs.harness == 'true' }}", "harness", true},
+		{"harness", prefix + "steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}", "harness", false},
+		{"windows-shard", prefix + "steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}", "harness", true},
+		{"harness", prefix + "steps.scope.outputs.markdown == 'true' }}", "markdown", true},
+		{"harness", prefix + "steps.scope.outputs.markdown == 'true' && matrix.shard == 2 }}", "markdown", false},
+		{"windows-shard", prefix + "steps.scope.outputs.markdown == 'true' && matrix.shard == 2 }}", "markdown", true},
+		{"harness", prefix + "(steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true') }}", "node", true},
+		{"harness", prefix + "(steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true') && matrix.shard == 2 }}", "node", false},
+		{"windows-shard", prefix + "(steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true') && matrix.shard == 2 }}", "node", true},
+		{"harness", prefix + "steps.scope.outputs.go == 'true' }}", "harness", false},
+		{"harness", prefix + "steps.scope.outputs.harness == 'true' && matrix.shard == 1 }}", "harness", false},
+		{"harness", prefix + "steps.scope.outputs.harness == 'true' && runner.os != 'Windows' }}", "harness", false},
+		{"harness", "${{ !cancelled() && steps.scope.outputs.harness == 'true' }}", "harness", false},
+		{"harness", prefix + "steps.scope.outputs.harness != 'true' }}", "harness", false},
 	}
 	for _, tc := range cases {
-		if got := runsInPortabilityScope(workflowStep{If: tc.condition}, tc.flag); got != tc.want {
-			t.Errorf("condition %q, flag %s: got %v, want %v", tc.condition, tc.flag, got, tc.want)
+		if got := runsInPortabilityScope(workflowStep{If: tc.condition}, tc.jobID, tc.flag); got != tc.want {
+			t.Errorf("job %s, condition %q, flag %s: got %v, want %v", tc.jobID, tc.condition, tc.flag, got, tc.want)
 		}
 	}
 }
