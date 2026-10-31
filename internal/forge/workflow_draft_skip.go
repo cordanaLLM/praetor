@@ -107,11 +107,13 @@ func contextReporter(spec *workflowSpec, context string) (string, error) {
 	return "", fmt.Errorf("jobs %s all report the required check %q", strings.Join(reporters, ", "), context)
 }
 
-// provenDraftSkips returns the ids of the jobs of spec whose draft skip is proven: a job that
-// carries exactly the draft skip condition and is covered by an aggregate that fails on it
-// (draftSkipAggregateFault), each such aggregate, and the gate's dependents covered by that same
-// aggregate. A dependent reading the draft flag keeps its own finding. Such jobs stop a draft
-// by way of the aggregate, which the trigger audit counts as stopping it.
+// provenDraftSkips returns the ids of the jobs of spec whose draft handling is proven by an
+// aggregate: a job that carries the opt-in draft skip condition and is covered by an aggregate
+// that fails on it (draftSkipAggregateFault), each such aggregate, the gate's dependents covered
+// by that same aggregate, and any aggregate whose needs are all covered and each begin with the
+// draft step (provenDraftStepAggregate). A dependent reading the draft flag keeps its own
+// finding. Such jobs stop a draft by way of the aggregate, which the trigger audit counts as
+// stopping it.
 func provenDraftSkips(spec *workflowSpec) map[string]bool {
 	ids := sortedJobIDs(spec.Jobs)
 	proven := make(map[string]bool)
@@ -127,7 +129,31 @@ func provenDraftSkips(spec *workflowSpec) map[string]bool {
 			}
 		}
 	}
+	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
+		if provenDraftStepAggregate(spec, ids[i]) {
+			proven[ids[i]] = true
+		}
+	}
 	return proven
+}
+
+// provenDraftStepAggregate reports whether aggregateID is a proven aggregate that covers every
+// job it needs, each of which stops a draft in its first step (beginsWithDraftStep). On a draft
+// pull request every covered need fails in that first step and the aggregate fails on that
+// failure, so the aggregate stops the draft without a draft step of its own.
+func provenDraftStepAggregate(spec *workflowSpec, aggregateID string) bool {
+	aggregate := spec.Jobs[aggregateID]
+	needs := aggregate.NeedIDs()
+	if len(needs) == 0 || len(provenAggregateNeeds(spec, &aggregate)) != len(needs) {
+		return false
+	}
+	for i := 0; i < len(needs) && i < maxJobsPerFile; i++ {
+		need := spec.Jobs[needs[i]]
+		if !beginsWithDraftStep(&need) {
+			return false
+		}
+	}
+	return true
 }
 
 // proveDraftSkipDependents extends a proven gate/aggregate pair to direct dependents covered

@@ -27,11 +27,26 @@ func repositoryGuard(identity string) string {
 
 // guardHoldsInRepository reports whether a job condition is always true inside the
 // repository named identity: a disjunction that contains the repository guard for exactly
-// that identity. Such a job still reports on every pull request there, so it stays a
-// required check context. Any conjunction or negation is treated as conditional, because
-// its value is not knowable from the file.
+// that identity, alone or as one parenthesised group before && always()
+// (withoutTrailingAlways). Such a job still reports on every pull request there, so it stays
+// a required check context. Any other conjunction or negation is treated as conditional,
+// because its value is not knowable from the file.
 func guardHoldsInRepository(condition, identity string) bool {
-	return identity != "" && disjunctionContains(condition, repositoryGuard(identity))
+	return identity != "" && disjunctionContains(withoutTrailingAlways(condition), repositoryGuard(identity))
+}
+
+// withoutTrailingAlways strips a trailing " && always()" when the preceding term is one
+// parenthesised group (enclosedGroup), returning the group's inner text, or condition
+// unchanged.
+func withoutTrailingAlways(condition string) string {
+	prefix, found := strings.CutSuffix(strings.TrimSpace(condition), " && always()")
+	if !found {
+		return condition
+	}
+	if inner, enclosed := enclosedGroup(strings.TrimSpace(prefix)); enclosed {
+		return inner
+	}
+	return condition
 }
 
 // pullRequestRunTerm is the job condition term that holds on every pull request run: the one a
