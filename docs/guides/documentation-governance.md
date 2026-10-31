@@ -117,14 +117,14 @@ audit script passes it, but OpenSSF Scorecard's Vulnerabilities check reports
 every severity in an adopter's copy of the lock. `markdownlint` pins
 `micromark-extension-math` 3.1.0, which asks for `katex` `^0.16.0`, a range with
 no fixed release, so `tools/markdownlint/package.json` sets
-`"overrides": { "katex": "0.19.0" }`. Renovate's npm manager reads the override
+`"overrides": { "katex": "0.19.1" }`. Renovate's npm manager reads the override
 and moves it in the `markdown gate lock` group (`renovate.json`). That rule
 pins only the `dependencies` and `overrides` sections (`matchDepTypes`), so
 `engines.node` stays the range `>=22.12.0` instead of one exact Node release
 (`TestRenovatePinsFamilyManifestsExceptRanges` in
 `internal/managedasset/renovate_test.go`, which reads the rule's file patterns
 with `util.RenovatePatternsCover`, the matcher adoption uses). The floor is
-22.12.0 because `katex` 0.19.0 depends on `commander` 15.0.0, which declares that
+22.12.0 because `katex` 0.19.1 depends on `commander` 15.0.0, which declares that
 engine, and because `mathSelfTest` loads the ES-module-only `micromark` through
 `require`, which Node allows without a flag from 22.12.0 on. The
 `markdownlint` library loads `katex` through the math extension, and
