@@ -260,6 +260,10 @@ func auditBaselineGrowth(ctx context.Context, opts *auditOptions, current *basel
 		fmt.Printf("[INFO] No baseline committed at %s (%s); debt growth guard has nothing to compare.\n", opts.baseRef, rel)
 		return nil
 	}
+	if err := baseline.CheckReleaseTestLevelsSubset(previous, current); err != nil {
+		return fmt.Errorf("[FAIL] HISS-13 debt ratchet: %s added release test level debt versus %s (%w)",
+			rel, opts.baseRef, err)
+	}
 	if err := baseline.CheckMonotonic(previous, current); err != nil {
 		if current.IncreaseRationale == "" {
 			return fmt.Errorf("[FAIL] HISS-13 debt ratchet: %s grew versus %s (%w); fix the new violations or record the increase with 'praetorctl baseline --record --allow-increase --reason=<why>'",

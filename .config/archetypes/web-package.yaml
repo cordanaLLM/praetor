@@ -30,6 +30,11 @@ supply_chain:
   enforce_cosign: false
   require_sbom: true
 
+release_test_levels:
+  - "unit"
+  - "e2e"
+  - "a11y"
+
 # Flat config only. ESLint v10 states that "the old configuration format is no
 # longer supported", so an archetype that named .eslintrc.* would require a file
 # the linter cannot load.

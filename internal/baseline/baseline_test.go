@@ -1,6 +1,7 @@
 package baseline
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -253,5 +254,37 @@ func TestNormalizePath_Boundary(t *testing.T) {
 		if got := NormalizePath(in); got != want {
 			t.Errorf("NormalizePath(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestReleaseTestLevelShrinkOnly(t *testing.T) {
+	baseInf := Infraction{
+		RuleID:     ReleaseTestLevelRuleID,
+		FilePath:   ".standards.yaml",
+		LineNumber: 1,
+		Anchor:     "level:library-client:integration",
+		Message:    "existing gap",
+	}
+	prev := &Baseline{Version: 1, TotalInfractions: 1, Infractions: []Infraction{baseInf}}
+	AssignFingerprints(prev.Infractions)
+
+	// Shrinking or preserving existing anchor passes.
+	if err := CheckReleaseTestLevelsSubset(prev, &Baseline{Version: 1}); err != nil {
+		t.Fatalf("shrinking RELEASE-TEST-LEVEL anchor should pass: %v", err)
+	}
+
+	// Adding a new anchor is refused even with AllowIncrease.
+	added := []Infraction{
+		baseInf,
+		{
+			RuleID:     ReleaseTestLevelRuleID,
+			FilePath:   ".standards.yaml",
+			LineNumber: 1,
+			Anchor:     "level:library-client:unit",
+			Message:    "added gap",
+		},
+	}
+	if _, err := Record(prev, added, RecordOptions{AllowIncrease: true, Rationale: "try add"}); !errors.Is(err, ErrReleaseTestLevelShrinkOnly) {
+		t.Fatalf("expected ErrReleaseTestLevelShrinkOnly, got %v", err)
 	}
 }

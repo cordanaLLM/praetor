@@ -206,6 +206,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditBuildWarnings(ctx, manifest, rootDir) },
 		func() error { return auditReleaseToken(ctx, manifest, rootDir) },
 		func() error { return auditReleaseE2E(ctx, manifest, rootDir, opts.release) },
+		func() error { return auditReleaseTestLevels(ctx, manifest, rootDir, opts.release) },
 		func() error { return auditDeclaredLinters(ctx, manifest, rootDir, opts.effective, opts.linterLog) },
 		func() error { return auditPaperclipHarness(ctx, manifest, opts) },
 		func() error { return auditCavemanConfiguredSources(ctx, manifest, rootDir) },

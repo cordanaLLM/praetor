@@ -113,3 +113,54 @@ release:
 5. A `feat` or `fix` commit satisfies the gate when at least one changed path matches `release.e2e.paths` or its commit message carries an `E2E-Test: <id>` trailer whose `<id>` is listed in `release.e2e.tests`. An `E2E-Test: <id>` trailer naming an undeclared identifier produces a finding naming that identifier.
 6. In release context (`praetorctl audit --release`, `PRAETOR_RELEASE_PR=true`, or `GITHUB_HEAD_REF` starting with `release-please--`), each finding prints `[FAIL] Release end-to-end evidence: <sha12> (<subject>): <reason>` and fails the audit. Outside release context, findings print `[WARN]` lines and the audit passes.
 7. During `praetorctl adopt` (`internal/adopt/release_e2e.go`), repositories with a `release-please` configuration or a version-tag release workflow receive `release.e2e.since` set to `HEAD` at adoption time. When `HEAD` cannot be resolved, adoption omits `release.e2e` and records a warning naming the resolution error.
+
+## Release test levels gate (`release.test_levels`)
+
+Both `praetorctl audit` (`cmd/standardsctl/audit_release_e2e.go`) and the MCP tool `standards_audit` (`cmd/standards-mcp/audit_tools.go`) run the release test levels gate (`release.AuditTestLevels` in `internal/release/test_levels_gate.go`, `#1733`).
+
+### Archetype defaults
+
+Each profile under `.config/archetypes/<profile>.yaml` declares its default `release_test_levels` list (`internal/config/archetype.go`):
+
+- `app-service`: `unit`, `integration`, `e2e`, `load_soak`, `recovery_restore`
+- `library-client`: `unit`, `integration`
+- `web-package`: `unit`, `e2e`, `a11y`
+- `native-gpu-systems`: `unit`, `integration`
+- `container-image`, `gitops-infra`, `os-image`: `smoke`
+- `framework`, `org-health`, `planning-artifacts`, `template-seed`, `upstream-fork`, `pages-site`, `closed-private`: none
+
+A repository's required test levels are the union of `release_test_levels` across the profiles of its resolved flavor (`HISSProfile` plus `AlsoImplements` via `flavor.ResolveTargets` / `flavor.ResolveForProfile`) and its declared `profiles`. For example, a `go-service` repository (`framework` + `app-service`) inherits the `app-service` levels, and a `go-library` repository (`framework` + `library-client`) inherits `unit` and `integration`.
+
+### Configuration in `.standards.yaml`
+
+Configure `release.test_levels` in `.standards.yaml` (`internal/config/release_policy.go`) to bind levels to repository test files and workflow jobs or to add additional required levels:
+
+```yaml
+release:
+  test_levels:
+    unit:
+      paths:
+        - "**/*_test.go"
+      job: "test"
+      run: "go test"
+    integration:
+      paths:
+        - "tests/integration/**"
+        - "**/*_integration_test.go"
+      pattern: "TestIntegration"
+      job: "integration"
+      run: "go test -tags=integration"
+```
+
+- `paths`: non-empty list of repository-relative slash globs matching tracked test files for the level.
+- `pattern`: optional regular expression matched against the content of files matched by `paths`.
+- `job`: optional GitHub Actions workflow job ID or display name under `.github/workflows/`.
+- `run`: optional command substring matched against `run:` steps of executable workflow jobs (`ghworkflow.RunSteps`).
+- When `release.test_levels` is declared in `.standards.yaml`, it must include every level required by the repository's profiles (`ReleasePolicy.ValidateForProfiles`); attempting to drop a required level fails validation.
+
+### Verification, live run health, and baseline ratchet
+
+1. **Static binding.** For every required or declared level, the gate checks that at least one tracked file matches `paths` (and `pattern` when set) and that at least one workflow job under `.github/workflows/` without a constant-false condition (`ghworkflow.NeverRuns`) matches `job` or `run`.
+2. **Live run health.** When a forge reader is available, the gate checks workflow run health (`forge.AuditWorkflowRunHealth`). A workflow that does not trigger on `pull_request` (such as a scheduled `load_soak` workflow) is satisfied by the latest healthy run on the default branch. When the forge is unreadable (offline or without a token), the output reports `"live run health unmeasured"` rather than silently passing.
+3. **Ratchet (`RELEASE-TEST-LEVEL`).** Existing level gaps recorded during `praetorctl adopt` in `.standards-baseline.json` under rule `RELEASE-TEST-LEVEL` (anchor `level:<profile>:<level>`) are shrink-only (`baseline.CheckReleaseTestLevelsSubset`): `praetorctl baseline --record` and `praetorctl audit --base` refuse any new `RELEASE-TEST-LEVEL` anchor not already present on the default branch's baseline.
+4. **Enforcement context.** In release context (`--release`, `PRAETOR_RELEASE_PR=true`, `GITHUB_HEAD_REF` starting with `release-please--`, or `refs/tags/v*`), an unbaselined gap prints `[FAIL] Release test levels:` and returns a non-nil error. Outside release context, unbaselined gaps print `[WARN] Release test levels:` and do not fail the audit.

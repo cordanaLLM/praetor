@@ -326,20 +326,44 @@ func planFileBaseline(ctx context.Context, root, path string, opts baseline.Reco
 	if previous.Absent && len(findings) == 0 && auxiliaryBaselineFile(path) {
 		return plan, nil
 	}
-	var next *baseline.Baseline
-	if filepath.Base(path) == gating.GosecBaselineFile {
-		next, err = guardedGosecRecord(ctx, root, previous, findings, opts)
-	} else {
-		next, err = baseline.Record(previous, findings, opts)
-	}
+	next, err := recordFileSnapshot(ctx, root, path, previous, findings, opts)
 	if err != nil {
-		if filepath.Base(path) == gating.GosecBaselineFile {
-			return plan, fmt.Errorf("refusing to record %s: %w", path, err)
-		}
-		return plan, fmt.Errorf("refusing to record %s: %w (pass --allow-increase --reason=<why> to record a deliberate increase)", path, err)
+		return plan, formatBaselineRecordError(path, err)
 	}
 	plan.previous, plan.next = previous, next
 	return plan, nil
+}
+
+func recordFileSnapshot(
+	ctx context.Context,
+	root, path string,
+	previous *baseline.Baseline,
+	findings []baseline.Infraction,
+	opts baseline.RecordOptions,
+) (*baseline.Baseline, error) {
+	if filepath.Base(path) == gating.GosecBaselineFile {
+		return guardedGosecRecord(ctx, root, previous, findings, opts)
+	}
+	next, err := baseline.Record(previous, findings, opts)
+	if err == nil && !auxiliaryBaselineFile(path) {
+		err = verifyCarriedReleaseTestLevels(ctx, root, filepath.Base(path), previous, next)
+	}
+	return next, err
+}
+
+func formatBaselineRecordError(path string, err error) error {
+	if filepath.Base(path) == gating.GosecBaselineFile || errors.Is(err, baseline.ErrReleaseTestLevelShrinkOnly) {
+		return fmt.Errorf("refusing to record %s: %w", path, err)
+	}
+	return fmt.Errorf("refusing to record %s: %w (pass --allow-increase --reason=<why> to record a deliberate increase)", path, err)
+}
+
+func verifyCarriedReleaseTestLevels(ctx context.Context, root, file string, previous, next *baseline.Baseline) error {
+	defBase, err := defaultBranchBaseline(ctx, root, file, previous)
+	if err != nil {
+		return err
+	}
+	return baseline.CheckReleaseTestLevelsSubset(defBase, next)
 }
 
 // scanBaselineInput preserves the HISS attribution policy for HISS snapshots.

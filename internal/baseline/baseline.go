@@ -20,6 +20,8 @@ const (
 	// BaselineRuleID is the rule identifier of secret scan findings (HISS-12),
 	// owned externally by secretscan.
 	BaselineRuleID = "HISS-12"
+	// ReleaseTestLevelRuleID is the rule identifier of release test level gaps (#1733).
+	ReleaseTestLevelRuleID = "RELEASE-TEST-LEVEL"
 	// maxOwnedRules bounds the owned rules slice checked during Record (HISS-02).
 	maxOwnedRules = 16
 )
@@ -32,6 +34,9 @@ var (
 	ErrIncreaseRationaleRequired = errors.New("baseline: an allowed increase requires a non-empty rationale")
 	// ErrNilSnapshot reports a nil baseline handed to a comparison.
 	ErrNilSnapshot = errors.New("baseline: snapshot must not be nil")
+	// ErrReleaseTestLevelShrinkOnly reports an attempt to add a new RELEASE-TEST-LEVEL anchor
+	// or use allow-increase on a RELEASE-TEST-LEVEL baseline (#1733).
+	ErrReleaseTestLevelShrinkOnly = errors.New("baseline: RELEASE-TEST-LEVEL is shrink-only and cannot add new anchors")
 )
 
 // Infraction represents a baselined legacy technical debt violation.
@@ -146,6 +151,9 @@ type RecordOptions struct {
 	// OwnedRules declares rule IDs this recording pass owns. Infractions of unowned
 	// rules carried over from the previous baseline remain preserved.
 	OwnedRules []string
+	// InitialAdoption permits initial RELEASE-TEST-LEVEL entries during repository adoption
+	// when no RELEASE-TEST-LEVEL entries exist in the previous baseline (#1733).
+	InitialAdoption bool
 }
 
 // LoadBaseline reads a single-class baseline; missing files are marked Absent.
@@ -230,6 +238,15 @@ func (b *Baseline) Count() int {
 	return b.TotalInfractions
 }
 
+// CheckReleaseTestLevelsSubset verifies that every RELEASE-TEST-LEVEL anchor in next already
+// exists in previous (#1733).
+func CheckReleaseTestLevelsSubset(previous, next *Baseline) error {
+	if previous == nil || next == nil {
+		return ErrNilSnapshot
+	}
+	return checkReleaseTestLevelShrinkOnly(previous, next.Infractions, RecordOptions{})
+}
+
 // CheckMonotonic enforces HISS-13 across snapshots: next may not record more
 // infractions than previous. It returns ErrDebtIncrease with both counts otherwise.
 func CheckMonotonic(previous, next *Baseline) error {
@@ -259,6 +276,9 @@ func IsReadmeRule(ruleID string) bool {
 func Record(previous *Baseline, infractions []Infraction, opts RecordOptions) (*Baseline, error) {
 	if previous == nil {
 		previous = &Baseline{Version: 1, Infractions: []Infraction{}}
+	}
+	if err := checkReleaseTestLevelShrinkOnly(previous, infractions, opts); err != nil {
+		return nil, err
 	}
 
 	repository := opts.Repository
@@ -312,17 +332,49 @@ func ownsRule(owned []string, rule string) bool {
 	return false
 }
 
+func isAuxiliaryRule(ruleID string) bool {
+	return ruleID == ImageRefRuleID || ruleID == BaselineRuleID || ruleID == ReleaseTestLevelRuleID
+}
+
+func checkReleaseTestLevelShrinkOnly(previous *Baseline, infractions []Infraction, opts RecordOptions) error {
+	existing := make(map[string]bool)
+	for i := 0; i < len(previous.Infractions); i++ {
+		inf := previous.Infractions[i]
+		if inf.RuleID == ReleaseTestLevelRuleID {
+			existing[inf.Anchor] = true
+		}
+	}
+	if opts.InitialAdoption && len(existing) == 0 {
+		return nil
+	}
+	for i := 0; i < len(infractions); i++ {
+		inf := infractions[i]
+		if inf.RuleID != ReleaseTestLevelRuleID {
+			continue
+		}
+		if opts.AllowIncrease {
+			return fmt.Errorf("%w: allow-increase is not permitted for %s", ErrReleaseTestLevelShrinkOnly, ReleaseTestLevelRuleID)
+		}
+		if !existing[inf.Anchor] {
+			return fmt.Errorf("%w: %q is not in the baseline", ErrReleaseTestLevelShrinkOnly, inf.Anchor)
+		}
+	}
+	return nil
+}
+
 func carriedInfractions(previous []Infraction, owned []string) []Infraction {
 	// The secret scan writer passes every entry it keeps (mergeSecretInfractions); it carries none.
 	if ownsRule(owned, BaselineRuleID) {
 		return nil
 	}
-	ownsImageRefs := ownsRule(owned, ImageRefRuleID)
 	var carried []Infraction
 	for i := 0; i < len(previous); i++ {
-		isImageRef := previous[i].RuleID == ImageRefRuleID
-		isSecret := previous[i].RuleID == BaselineRuleID
-		if (ownsImageRefs && !isImageRef) || (!ownsImageRefs && (isImageRef || isSecret)) {
+		rule := previous[i].RuleID
+		keep := isAuxiliaryRule(rule)
+		if len(owned) > 0 {
+			keep = !ownsRule(owned, rule)
+		}
+		if keep {
 			carried = append(carried, previous[i])
 		}
 	}
@@ -455,7 +507,7 @@ func staleEntries(recorded, current []Infraction) int {
 	after := countByFileRule(current, nil)
 	stale := 0
 	for key, count := range before {
-		if key.rule == ImageRefRuleID || key.rule == BaselineRuleID {
+		if isAuxiliaryRule(key.rule) {
 			continue
 		}
 		if count > after[key] {
