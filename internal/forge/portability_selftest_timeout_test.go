@@ -19,20 +19,25 @@ func selftestTimeoutProblem(workflow string) string {
 	if err != nil {
 		return err.Error()
 	}
-	for _, job := range spec.Jobs {
+	found := false
+	for _, jobID := range ghworkflow.SortedJobIDs(spec.Jobs) {
+		job := spec.Jobs[jobID]
 		for _, step := range job.Steps {
 			if step.Name != "Harness Self-Tests" {
 				continue
 			}
+			found = true
 			minutes, stepErr := strconv.Atoi(step.TimeoutMinutes.Value)
 			jobMinutes, jobErr := strconv.Atoi(job.TimeoutMinutes.Value)
 			if stepErr != nil || jobErr != nil || minutes < 30 || minutes > 60 || minutes >= jobMinutes {
 				return "Harness Self-Tests needs timeout-minutes in [30, 60] below the job timeout"
 			}
-			return ""
 		}
 	}
-	return "no Harness Self-Tests step"
+	if !found {
+		return "no Harness Self-Tests step"
+	}
+	return ""
 }
 
 func TestPortability_SelftestTimeout(t *testing.T) {
@@ -52,19 +57,24 @@ func selftestProgressProblem(workflow string) string {
 	if err != nil {
 		return err.Error()
 	}
-	for _, job := range spec.Jobs {
+	found := false
+	for _, jobID := range ghworkflow.SortedJobIDs(spec.Jobs) {
+		job := spec.Jobs[jobID]
 		for _, step := range job.Steps {
 			if step.Name == "Harness Self-Tests" {
+				found = true
 				regression := strings.Index(step.Run, selftestRegressionCommand)
 				driver := strings.Index(step.Run, selftestDriverCommand)
 				if regression < 0 || driver < regression {
 					return "run timeout regressions before the driver, both unbuffered"
 				}
-				return ""
 			}
 		}
 	}
-	return "no Harness Self-Tests step"
+	if !found {
+		return "no Harness Self-Tests step"
+	}
+	return ""
 }
 
 func TestPortability_SelftestRegressionsAndDriverRunUnbuffered(t *testing.T) {

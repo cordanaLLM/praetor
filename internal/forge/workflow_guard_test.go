@@ -223,6 +223,12 @@ func TestPortabilityFollowsTheRepositoryVariable(t *testing.T) {
 	if got := spec.Jobs["harness"].If; got != runs {
 		t.Errorf("harness condition = %q, want %q", got, runs)
 	}
+	if got := spec.Jobs["windows-shard"].If; got != runs {
+		t.Errorf("windows-shard condition = %q, want %q", got, runs)
+	}
+	if got := spec.Jobs["windows"].If; got != renovateBranchSkip+" && always()" {
+		t.Errorf("windows condition = %q, want %q", got, renovateBranchSkip+" && always()")
+	}
 	if got := spec.Jobs["skipped"].If; got != "!("+runs+")" {
 		t.Errorf("skipped condition = %q, want the exact negation of the harness condition", got)
 	}
@@ -234,7 +240,9 @@ func TestPortabilityFollowsTheRepositoryVariable(t *testing.T) {
 // workflow keeps running on a Renovate branch, the DCO and REUSE gate included, and the
 // portability stated-reason job runs there because its condition negates the matrix's.
 var renovateSkippingJobs = []string{
-	"ci.yml/docs-presets", "ci.yml/verify", "pages.yml/build", "portability.yml/harness", "security.yml/security",
+	"ci.yml/docs-presets", "ci.yml/verify", "pages.yml/build",
+	"portability.yml/harness", "portability.yml/windows", "portability.yml/windows-shard",
+	"security.yml/security",
 }
 
 // renovateSkipConditions returns, keyed "<workflow>/<job id>", the condition of every job of a
@@ -310,6 +318,7 @@ func conditionFacts(identity string, run pullRequestRun) *strings.Replacer {
 		repositoryGuard(identity), "true",
 		portabilityVariable, "false",
 		pullRequestRunTerm, "true",
+		"always()", "true",
 	)
 }
 
@@ -479,9 +488,14 @@ func markdownGateSelfTestGap(job workflowJob) string {
 }
 
 // everyLegConditions are the step conditions that cannot differ between matrix legs: none,
-// !cancelled(), and !cancelled() held off a draft pull request (ghworkflow.HostedGateNotDraft),
-// whose term reads the event every leg shares, never the leg (#817).
-var everyLegConditions = []string{"", "${{ !cancelled() }}", "${{ !cancelled() && " + ghworkflow.HostedGateNotDraft + " }}"}
+// !cancelled(), !cancelled() held off a draft pull request (ghworkflow.HostedGateNotDraft),
+// and the Windows shard-2 carrier condition.
+var everyLegConditions = []string{
+	"",
+	"${{ !cancelled() }}",
+	"${{ !cancelled() && " + ghworkflow.HostedGateNotDraft + " }}",
+	"${{ !cancelled() && " + ghworkflow.HostedGateNotDraft + " && matrix.shard == 2 }}",
+}
 
 // runsOnEveryLeg reports whether a step's condition cannot differ between matrix legs.
 func runsOnEveryLeg(step workflowStep) bool {
@@ -498,32 +512,28 @@ func runsInPortabilityScope(step workflowStep, flag string) bool {
 	if flag == "node" {
 		term = "(steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true')"
 	}
-	return strings.TrimSpace(step.If) == "${{ !cancelled() && "+ghworkflow.HostedGateNotDraft+" && "+term+" }}"
+	condition := strings.TrimSpace(step.If)
+	base := "${{ !cancelled() && " + ghworkflow.HostedGateNotDraft + " && " + term
+	return condition == base+" }}" || condition == base+" && matrix.shard == 2 }}"
 }
 
 // The Markdown gate runner is emitted into adopters' verify-all, and only the portability
-// matrix runs it on Windows. Positive: the real harness job replays it on every leg.
-// Negative and boundary: a missing step, a step before Node exists, or an OS-guarded step.
+// matrix runs it on Windows. Positive: the real harness job and Windows shard replay it on
+// every leg. Negative and boundary: a missing step, a step before Node exists, or an OS-guarded step.
 func TestPortabilityReplaysMarkdownGateSelfTestOnEveryLeg(t *testing.T) {
 	workflows, _ := engineWorkflows(t)
 	var spec workflowSpec
 	if err := yaml.Unmarshal(workflows["portability.yml"], &spec); err != nil {
 		t.Fatalf("parse portability.yml: %v", err)
 	}
-	harness := spec.Jobs["harness"]
-	if gap := markdownGateSelfTestGap(harness); gap != "" {
-		t.Fatalf("portability harness: %s", gap)
+	for _, jobID := range []string{"harness", "windows-shard"} {
+		if gap := markdownGateSelfTestGap(spec.Jobs[jobID]); gap != "" {
+			t.Fatalf("portability %s: %s", jobID, gap)
+		}
 	}
-	// The leg is identified by its image family, not by one label: the matrix names an
-	// explicit image (windows-2025), never the windows-latest alias, and the next image
-	// bump must not read as the Windows leg disappearing.
-	legs := matrixOSLegs(harness)
-	windows := false
-	for i := 0; i < len(legs) && i < maxMatrixLegs; i++ {
-		windows = windows || strings.HasPrefix(legs[i], "windows-")
-	}
-	if !windows {
-		t.Fatalf("portability harness legs = %v, want a Windows leg", legs)
+	winShard := spec.Jobs["windows-shard"]
+	if !windowsLeg(winShard) {
+		t.Fatalf("portability windows-shard runs-on = %v, want a Windows leg", ghworkflow.RunnerLabels(&winShard.RunsOn))
 	}
 	node := workflowStep{Uses: "actions/setup-node@v4", If: "${{ !cancelled() }}"}
 	selfTest := workflowStep{Run: markdownGateSelfTest + "\n", If: "${{ !cancelled() }}"}
@@ -993,10 +1003,15 @@ func TestPortabilityScopeConditions(t *testing.T) {
 		want            bool
 	}{
 		{everyLegConditions[2], "harness", true},
+		{everyLegConditions[3], "harness", true},
 		{prefix + "steps.scope.outputs.harness == 'true' }}", "harness", true},
+		{prefix + "steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}", "harness", true},
 		{prefix + "steps.scope.outputs.markdown == 'true' }}", "markdown", true},
+		{prefix + "steps.scope.outputs.markdown == 'true' && matrix.shard == 2 }}", "markdown", true},
 		{prefix + "(steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true') }}", "node", true},
+		{prefix + "(steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true') && matrix.shard == 2 }}", "node", true},
 		{prefix + "steps.scope.outputs.go == 'true' }}", "harness", false},
+		{prefix + "steps.scope.outputs.harness == 'true' && matrix.shard == 1 }}", "harness", false},
 		{prefix + "steps.scope.outputs.harness == 'true' && runner.os != 'Windows' }}", "harness", false},
 		{"${{ !cancelled() && steps.scope.outputs.harness == 'true' }}", "harness", false},
 		{prefix + "steps.scope.outputs.harness != 'true' }}", "harness", false},
