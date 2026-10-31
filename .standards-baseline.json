@@ -1,9 +1,9 @@
 {
   "version": 1,
-  "generated_at": "2026-10-30T22:57:29Z",
+  "generated_at": "2026-10-31T00:23:41Z",
   "repository": "cordanaLLM/praetor",
-  "commit_sha": "feaccbcccbf10fd390f1beb8c91f179adf3e2d89",
-  "total_infractions": 1159,
+  "commit_sha": "9d151c89400d2b9da2b3310d5d23ff2f7fc5c7cc",
+  "total_infractions": 1158,
   "infractions": [
     {
       "rule_id": "HISS-05",
@@ -4558,15 +4558,6 @@
       "message": "TestNameSource_3D: 'want' line 108; declare in if block line 109",
       "anchor": "fn:TestNameSource_3D",
       "fingerprint": "internal/devcontainer/bootstrap_source_error_test.go:HISS-05:fn:TestNameSource_3D#1"
-    },
-    {
-      "rule_id": "HISS-05",
-      "file_path": "internal/devcontainer/bootstrap_source_test.go",
-      "line_number": 51,
-      "symbol": "TestBootstrapSourceExcludesGoTestSurface",
-      "message": "TestBootstrapSourceExcludesGoTestSurface: 'want' line 51; declare in if block line 61",
-      "anchor": "fn:TestBootstrapSourceExcludesGoTestSurface",
-      "fingerprint": "internal/devcontainer/bootstrap_source_test.go:HISS-05:fn:TestBootstrapSourceExcludesGoTestSurface#1"
     },
     {
       "rule_id": "HISS-05",

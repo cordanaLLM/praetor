@@ -5,11 +5,14 @@ package main
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
+	praetor "github.com/cordanaLLM/praetor"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/hisscoverage"
 )
@@ -164,6 +167,33 @@ func TestRunHissCoverage_Positive_EmbeddedReplayPasses(t *testing.T) {
 		fmt.Sprintf("(engine %s)", buildVersion()),
 		"every claim holds.",
 	)
+}
+
+// Reusing the bootstrap inventory must leave coverage replay live: a positive fixture
+// replaced with non-recursive Go contradicts the embedded HISS-01 claim.
+func TestRunHissCoverage_Negative_EmbeddedCorpusDrift(t *testing.T) {
+	corpus, catalog, err := loadCoverageTarget(t.Context(), "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := fstest.MapFS{}
+	for _, name := range praetor.AssetPaths() {
+		data, readErr := fs.ReadFile(corpus, name)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		changed[name] = &fstest.MapFile{Data: data}
+	}
+	const planted = ".config/hiss/testdata/HISS-01/go/positive/direct-recursion.go"
+	if _, ok := changed[planted]; !ok {
+		t.Fatal("positive recursion fixture missing from the embedded corpus")
+	}
+	changed[planted] = &fstest.MapFile{Data: []byte("package example\nfunc leaf() {}\n")}
+	out, err := captureStdout(t, func() error {
+		return verifyCoverage(t.Context(), changed, catalog, true)
+	})
+	mustErrContain(t, err, hisscoverage.ErrClaimUnsupported.Error())
+	mustContain(t, out, "HISS-01", "direct-recursion.go", "but the fixture is not reported")
 }
 
 func TestRunHissCoverage_Negative_EmbeddedWithCombinedPathRefused(t *testing.T) {

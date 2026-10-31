@@ -15,6 +15,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	praetor "github.com/cordanaLLM/praetor"
 	"github.com/cordanaLLM/praetor/internal/clientschema"
@@ -45,8 +46,11 @@ type sourceRules struct {
 }
 
 var (
-	captureRules = sourceRules{families: bootstrapAssetFamilies, repair: ""}
-	archiveRules = sourceRules{families: archivedAssetFamilies, repair: bundleSourceRepair}
+	// Only compiled asset declarations are shared; each capture and archive still reads
+	// and validates its own source bytes. Rebuilding these inventories per file walks
+	// the entire embedded corpus thousands of times during one adoption.
+	captureRules = sourceRules{families: sync.OnceValues(bootstrapAssetFamilies), repair: ""}
+	archiveRules = sourceRules{families: sync.OnceValues(archivedAssetFamilies), repair: bundleSourceRepair}
 )
 
 // SourceRootForms is what every flag or parameter selecting a Praetor source root accepts, and
