@@ -16,7 +16,7 @@ run by the workflow `.github/workflows/praetor-api.yml` under the status context
 
 The HISS audit scanner also reads the emitted Go gate, including its tagged source. Its
 declarations follow the Go HISS-05 scope check, so a fresh adoption adds no variable-scoping
-debt from the gate itself. The [fresh-adoption tests](../../cmd/standardsctl/audit_workflow_triggers_test.go)
+debt from the gate itself. The fresh-adoption tests (`cmd/standardsctl/audit_workflow_triggers_test.go`)
 verify the emitted source through `praetorctl audit`.
 
 While the facet is declared and git tracks a `go.mod`, `praetorctl adopt` writes three locked files
