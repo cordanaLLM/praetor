@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -86,5 +87,42 @@ func TestAdoptionRender_TagWorkflowAndResolveGitCommitError(t *testing.T) {
 	if len(sBroken.report.Warnings) != 1 || !strings.Contains(sBroken.report.Warnings[0], "no release.e2e section recorded:") ||
 		!strings.Contains(sBroken.report.Warnings[0], "resolve commit HEAD") {
 		t.Fatalf("expected warning naming ResolveGitCommit error, got %+v", sBroken.report.Warnings)
+	}
+}
+
+func TestAdoptReconcileReleaseTestLevelsBaseline_RecordsInitialGaps(t *testing.T) {
+	repo, headSHA := initAdoptReleaseTestRepo(t)
+	writeOriginRemote(t, repo, "https://github.com/acme/release-lib.git")
+	mustWrite(t, filepath.Join(repo, "release-please-config.json"), `{"packages":{".":{}}}`)
+	mustWrite(t, filepath.Join(repo, "go.mod"), "module github.com/acme/release-lib\n\ngo 1.25.0\n")
+	mustWrite(t, filepath.Join(repo, "pkg", "lib.go"), "package lib\n")
+	mustWrite(t, filepath.Join(repo, "pkg", "lib_test.go"), "package lib\n\nimport \"testing\"\n\nfunc TestLib(t *testing.T) {}\n")
+	mustWrite(t, filepath.Join(repo, ".github", "workflows", "ci.yml"),
+		"name: CI\non: pull_request\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test ./...\n")
+	runGitInAdoptReleaseTest(t, repo, "add", ".")
+	// writeOriginRemote rewrote .git/config, so the identity set by initAdoptReleaseTestRepo is gone;
+	// pass it on the command so the commit never depends on the host's git config.
+	runGitInAdoptReleaseTest(t, repo, "-c", "user.name=Test User", "-c", "user.email=test@example.com",
+		"-c", "commit.gpgsign=false", "commit", "-m", "feat: add go lib")
+
+	s := identitySession(t, repo)
+	s.arch = "framework"
+	s.opts.RecordBaseline = true
+	s.report.DebtBreakdown = map[string]int{}
+	basePath := filepath.Join(repo, baselineFile)
+	initial := &baseline.Baseline{Version: 1, Repository: "acme/release-lib", CommitSHA: headSHA, Infractions: []baseline.Infraction{}}
+	if err := baseline.SaveBaseline(basePath, initial); err != nil {
+		t.Fatalf("SaveBaseline: %v", err)
+	}
+	if err := s.reconcileReleaseTestLevelsBaseline(t.Context(), basePath, initial); err != nil {
+		t.Fatalf("reconcileReleaseTestLevelsBaseline: %v", err)
+	}
+	recorded, err := baseline.LoadBaseline(basePath)
+	if err != nil {
+		t.Fatalf("LoadBaseline: %v", err)
+	}
+	if len(recorded.Infractions) != 1 || recorded.Infractions[0].RuleID != baseline.ReleaseTestLevelRuleID ||
+		recorded.Infractions[0].Anchor != "level:library-client:integration" {
+		t.Fatalf("expected 1 RELEASE-TEST-LEVEL integration baseline entry, got %+v", recorded.Infractions)
 	}
 }

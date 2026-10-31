@@ -21,6 +21,13 @@ const gosecBaselineRule = "no first gosec baseline; existing gosec baseline only
 // gosecDefaultBaseline reads the default branch through the shared offline git readers.
 // The remote-tracking branch takes precedence over a possibly edited local branch.
 func gosecDefaultBaseline(ctx context.Context, root string) (*baseline.Baseline, error) {
+	return defaultBranchBaseline(ctx, root, gating.GosecBaselineFile, nil)
+}
+
+func defaultBranchBaseline(ctx context.Context, root, file string, fallback *baseline.Baseline) (*baseline.Baseline, error) {
+	if fallback != nil && !gitHasCommits(ctx, root) {
+		return fallback, nil
+	}
 	branch, err := forge.RepositoryDefaultBranch(ctx, root, nil)
 	if err != nil {
 		return nil, err
@@ -31,27 +38,33 @@ func gosecDefaultBaseline(ctx context.Context, root string) (*baseline.Baseline,
 		if err != nil {
 			return nil, err
 		}
-		if commit == "" {
-			continue
+		if commit != "" {
+			return readCommittedBaseline(ctx, root, commit, file)
 		}
-		top, err := gitTopLevel(ctx, root)
-		if err != nil {
-			return nil, err
-		}
-		rel, err := gitRelativePath(top, filepath.Join(root, gating.GosecBaselineFile))
-		if err != nil {
-			return nil, err
-		}
-		data, found, err := generated.CommitTree(top, commit).Read(ctx, rel)
-		if err != nil {
-			return nil, err
-		}
-		if !found {
-			return &baseline.Baseline{Absent: true}, nil
-		}
-		return parseGosecBaseline(data)
+	}
+	if fallback != nil {
+		return fallback, nil
 	}
 	return &baseline.Baseline{Absent: true}, nil
+}
+
+func readCommittedBaseline(ctx context.Context, root, commit, file string) (*baseline.Baseline, error) {
+	top, err := gitTopLevel(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	rel, err := gitRelativePath(top, filepath.Join(root, file))
+	if err != nil {
+		return nil, err
+	}
+	data, found, err := generated.CommitTree(top, commit).Read(ctx, rel)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return &baseline.Baseline{Absent: true}, nil
+	}
+	return parseClassBaseline(file, data)
 }
 
 func guardedGosecRecord(ctx context.Context, root string, previous *baseline.Baseline, findings []baseline.Infraction, opts baseline.RecordOptions) (*baseline.Baseline, error) {
@@ -75,10 +88,10 @@ func guardedGosecRecord(ctx context.Context, root string, previous *baseline.Bas
 	return next, nil
 }
 
-func parseGosecBaseline(data []byte) (*baseline.Baseline, error) {
+func parseClassBaseline(file string, data []byte) (*baseline.Baseline, error) {
 	b, err := baseline.ParseBaseline(data)
 	if err != nil {
 		return nil, err
 	}
-	return b, b.ValidateClass(gating.GosecBaselineFile, baseline.HISSClass)
+	return b, b.ValidateClass(file, baseline.ClassForFile(file))
 }

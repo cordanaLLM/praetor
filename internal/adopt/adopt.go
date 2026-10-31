@@ -942,7 +942,10 @@ func (s *adoptSession) reconcileRuleBaselines(ctx context.Context, full string, 
 	if err := s.reconcileImageRefBaseline(ctx, full, base); err != nil {
 		return err
 	}
-	return s.reconcileSecretsBaseline(ctx, full, base)
+	if err := s.reconcileSecretsBaseline(ctx, full, base); err != nil {
+		return err
+	}
+	return s.reconcileReleaseTestLevelsBaseline(ctx, full, base)
 }
 
 // saveBaseline writes base to full; a dry run writes nothing.

@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
@@ -24,6 +27,7 @@ type Archetype struct {
 	Runtime               string
 	Complexity            ComplexityOverride
 	Controls              ArchetypeControls
+	ReleaseTestLevels     []string
 	DevFeaturesByLanguage map[string][]DevContainerFeature
 	Backlog               BacklogCaps
 }
@@ -53,6 +57,7 @@ type archetypeDocument struct {
 	ErrorUnwraps          ErrorUnwrapMode        `yaml:"error_unwraps"`
 	BranchProtection      BranchProtectionPolicy `yaml:"branch_protection"`
 	SupplyChain           SupplyChainPolicy      `yaml:"supply_chain"`
+	ReleaseTestLevels     []string               `yaml:"release_test_levels"`
 	Linters               []string               `yaml:"linters"`
 	DevContainerFeatures  yaml.Node              `yaml:"devcontainer_features"`
 	DevFeaturesByLanguage yaml.Node              `yaml:"devcontainer_features_by_language"`
@@ -142,10 +147,13 @@ func (d *archetypeDocument) archetype(path string) (Archetype, error) {
 	if err := controls.validate(); err != nil {
 		return Archetype{}, err
 	}
+	if err := validatePolicyNames(d.ReleaseTestLevels); err != nil {
+		return Archetype{}, fmt.Errorf("release_test_levels: %w", err)
+	}
 	return Archetype{
 		ID: id, Name: d.Name, Description: d.Description, Runtime: d.Runtime,
-		Complexity: complexity, Controls: controls, DevFeaturesByLanguage: byLanguage,
-		Backlog: d.Backlog.Caps,
+		Complexity: complexity, Controls: controls, ReleaseTestLevels: d.ReleaseTestLevels,
+		DevFeaturesByLanguage: byLanguage, Backlog: d.Backlog.Caps,
 	}, nil
 }
 
@@ -203,4 +211,57 @@ func (c ArchetypeControls) contribution(result *ResolvedPolicy) {
 		refs = append(refs, c.DevFeatures[i].Ref)
 	}
 	result.DevFeatures = refs
+}
+
+// ProfileReleaseTestLevels returns the release_test_levels declared for each profile in
+// .config/archetypes/<profile>.yaml under root, falling back to the shipped catalog when root
+// does not carry that profile file.
+func ProfileReleaseTestLevels(ctx context.Context, root string, profiles []string) (map[string][]string, error) {
+	result := make(map[string][]string, len(profiles))
+	for i := 0; i < len(profiles) && i < maxLockEntries; i++ {
+		profile := strings.TrimSpace(profiles[i])
+		if profile == "" {
+			continue
+		}
+		archetype, ok, err := loadProfileArchetype(ctx, root, profile)
+		if err != nil {
+			return nil, err
+		}
+		if ok && len(archetype.ReleaseTestLevels) > 0 {
+			result[profile] = append([]string(nil), archetype.ReleaseTestLevels...)
+		}
+	}
+	return result, nil
+}
+
+func loadProfileArchetype(ctx context.Context, root, profile string) (Archetype, bool, error) {
+	if root != "" {
+		path := filepath.Join(root, ".config", "archetypes", profile+".yaml")
+		data, err := contextopt.ReadSnapshot(ctx, path)
+		if err == nil {
+			arch, decErr := decodeArchetype(ctx, path, data)
+			return arch, decErr == nil, decErr
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return Archetype{}, false, err
+		}
+	}
+	shippedPath := filepath.Join(shippedArchetypesDir(), profile+".yaml")
+	data, err := contextopt.ReadSnapshot(ctx, shippedPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Archetype{}, false, nil
+		}
+		return Archetype{}, false, err
+	}
+	arch, decErr := decodeArchetype(ctx, shippedPath, data)
+	return arch, decErr == nil, decErr
+}
+
+func shippedArchetypesDir() string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		return filepath.Join(".config", "archetypes")
+	}
+	return filepath.Join(filepath.Dir(file), "..", "..", ".config", "archetypes")
 }

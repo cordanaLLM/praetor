@@ -12,9 +12,12 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/release"
+	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
@@ -168,4 +171,106 @@ func setManifestRelease(ctx context.Context, data []byte, release *config.Releas
 		return nil, false, err
 	}
 	return out, true, nil
+}
+
+// reconcileReleaseTestLevelsBaseline records initial RELEASE-TEST-LEVEL gaps into
+// .standards-baseline.json when a release workflow exists (#1733).
+func (s *adoptSession) reconcileReleaseTestLevelsBaseline(
+	ctx context.Context,
+	full string,
+	current *baseline.Baseline,
+) error {
+	if filepath.Base(full) != baselineFile || !s.opts.RecordBaseline || current == nil {
+		return nil
+	}
+	if hasRelease, err := HasReleaseWorkflow(ctx, s.repoPath); err != nil {
+		return err
+	} else if !hasRelease {
+		return nil
+	}
+	snap := s.loadLatestReleaseBaseline(full, current)
+	if hasReleaseTestLevelBaselineEntries(snap.Infractions) {
+		return nil
+	}
+	infractions, err := s.scanInitialReleaseTestLevelGaps(ctx, full)
+	if err != nil || len(infractions) == 0 {
+		return err
+	}
+	return s.recordInitialReleaseTestLevelGaps(ctx, full, snap, infractions)
+}
+
+func (s *adoptSession) loadLatestReleaseBaseline(full string, fallback *baseline.Baseline) *baseline.Baseline {
+	if !s.opts.DryRun {
+		if disk, err := baseline.LoadBaseline(full); err == nil && !disk.Absent {
+			return disk
+		}
+	}
+	return fallback
+}
+
+func hasReleaseTestLevelBaselineEntries(infractions []baseline.Infraction) bool {
+	for i := 0; i < len(infractions); i++ {
+		if infractions[i].RuleID == baseline.ReleaseTestLevelRuleID {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *adoptSession) scanInitialReleaseTestLevelGaps(
+	ctx context.Context,
+	baselinePath string,
+) ([]baseline.Infraction, error) {
+	var fallbackManifest *config.Manifest
+	if s.arch != "" && !fileExists(filepath.Join(s.repoPath, config.ManifestFileName)) {
+		fallbackManifest = &config.Manifest{Profiles: []string{s.arch}}
+	}
+	report, err := release.AuditTestLevels(ctx, s.repoPath, fallbackManifest, release.TestLevelsOptions{
+		BaselinePath: baselinePath,
+	})
+	if err != nil && len(report.Findings) == 0 {
+		return nil, err
+	}
+	return release.TestLevelInfractions(report.Findings), nil
+}
+
+func (s *adoptSession) recordInitialReleaseTestLevelGaps(
+	ctx context.Context,
+	full string,
+	snap *baseline.Baseline,
+	infractions []baseline.Infraction,
+) error {
+	commit := snap.CommitSHA
+	if commit == "" {
+		var err error
+		commit, err = state.RecordedCommit(ctx, s.repoPath)
+		if err != nil {
+			s.report.BaselineStatus = "failed"
+			return fmt.Errorf("baseline commit: %w", err)
+		}
+	}
+	repo := snap.Repository
+	if repo == "" {
+		repo = s.identity.coordinate()
+	}
+	next, err := baseline.Record(snap, infractions, baseline.RecordOptions{
+		AllowIncrease:   true,
+		InitialAdoption: true,
+		Rationale:       "adoption baseline",
+		Repository:      repo,
+		CommitSHA:       commit,
+		OwnedRules:      []string{baseline.ReleaseTestLevelRuleID},
+	})
+	if err != nil {
+		s.report.BaselineStatus = "failed"
+		return err
+	}
+	if !s.opts.DryRun {
+		if err := baseline.SaveBaseline(full, next); err != nil {
+			s.report.BaselineStatus = "failed"
+			return err
+		}
+	}
+	s.applyRuleBaselineResult(baseline.ReleaseTestLevelRuleID, len(infractions), next)
+	return nil
 }

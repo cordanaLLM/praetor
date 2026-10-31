@@ -5,8 +5,12 @@
 package config
 
 import (
+	"context"
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -18,6 +22,10 @@ const (
 	MaxReleaseE2ETests = 256
 	// MaxReleaseE2ETestIDLen bounds one declared end-to-end test identifier in bytes.
 	MaxReleaseE2ETestIDLen = 128
+	// MaxReleaseTestLevels bounds the number of entries in release.test_levels (HISS-02).
+	MaxReleaseTestLevels = 32
+	// MaxReleaseTestLevelFieldLen bounds pattern, job, and run strings in release.test_levels.
+	MaxReleaseTestLevelFieldLen = 256
 	// minReleaseCommitSHALen is the shortest git commit prefix accepted in release.e2e.since.
 	minReleaseCommitSHALen = 7
 	// maxReleaseCommitSHALen is the full SHA-1 hex digest length accepted in release.e2e.since.
@@ -25,8 +33,9 @@ const (
 )
 
 var (
-	releasePolicyKeys    = []string{"e2e"}
-	releaseE2EPolicyKeys = []string{"paths", "tests", "since"}
+	releasePolicyKeys        = []string{"e2e", "test_levels"}
+	releaseE2EPolicyKeys     = []string{"paths", "tests", "since"}
+	releaseTestLevelSpecKeys = []string{"paths", "pattern", "job", "run"}
 )
 
 // defaultReleaseE2EPaths is the built-in end-to-end test path glob list used when
@@ -54,6 +63,20 @@ func DefaultReleaseE2EPaths() []string {
 type ReleasePolicy struct {
 	// E2E configures the release end-to-end evidence check for feat and fix commits.
 	E2E *ReleaseE2EPolicy `yaml:"e2e,omitempty"`
+	// TestLevels binds release test levels to repository test paths and CI workflow steps (#1733).
+	TestLevels map[string]ReleaseTestLevelSpec `yaml:"test_levels,omitempty"`
+}
+
+// ReleaseTestLevelSpec configures one release test level under release.test_levels.<level> (#1733).
+type ReleaseTestLevelSpec struct {
+	// Paths lists repository-relative slash globs matching test files for this level.
+	Paths []string `yaml:"paths,omitempty"`
+	// Pattern is an optional regular expression that at least one matched file's content must satisfy.
+	Pattern string `yaml:"pattern,omitempty"`
+	// Job is an optional GitHub Actions workflow job id or name that runs this level.
+	Job string `yaml:"job,omitempty"`
+	// Run is an optional command substring that a workflow step must run.
+	Run string `yaml:"run,omitempty"`
 }
 
 // ReleaseE2EPolicy configures the release end-to-end test evidence gate under release.e2e
@@ -84,16 +107,79 @@ func (p *ReleasePolicy) UnmarshalYAML(value *yaml.Node) error {
 	if err := requireKnownKeys(value, "release", releasePolicyKeys); err != nil {
 		return err
 	}
-	for i := 0; i+1 < len(value.Content) && i < 4; i += 2 {
-		if value.Content[i].Value == "e2e" {
+	for i := 0; i+1 < len(value.Content) && i < 8; i += 2 {
+		switch value.Content[i].Value {
+		case "e2e":
 			var e2e ReleaseE2EPolicy
 			if err := e2e.UnmarshalYAML(value.Content[i+1]); err != nil {
 				return err
 			}
 			p.E2E = &e2e
+		case "test_levels":
+			levels, err := unmarshalReleaseTestLevels(value.Content[i+1])
+			if err != nil {
+				return err
+			}
+			p.TestLevels = levels
 		}
 	}
 	return nil
+}
+
+func unmarshalReleaseTestLevels(value *yaml.Node) (map[string]ReleaseTestLevelSpec, error) {
+	if value == nil || value.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("release.test_levels must be a mapping")
+	}
+	if len(value.Content)/2 > MaxReleaseTestLevels {
+		return nil, fmt.Errorf("release.test_levels has %d entries; the maximum is %d",
+			len(value.Content)/2, MaxReleaseTestLevels)
+	}
+	levels := make(map[string]ReleaseTestLevelSpec, len(value.Content)/2)
+	for i := 0; i+1 < len(value.Content) && i < MaxReleaseTestLevels*2; i += 2 {
+		level := value.Content[i].Value
+		specNode := value.Content[i+1]
+		if _, exists := levels[level]; exists {
+			return nil, fmt.Errorf("release.test_levels: duplicate key %q", level)
+		}
+		spec, err := unmarshalReleaseTestLevelSpec(level, specNode)
+		if err != nil {
+			return nil, err
+		}
+		levels[level] = spec
+	}
+	return levels, nil
+}
+
+func unmarshalReleaseTestLevelSpec(level string, value *yaml.Node) (ReleaseTestLevelSpec, error) {
+	prefix := "release.test_levels." + level
+	if value == nil || (value.Kind == yaml.ScalarNode && (value.ShortTag() == "!!null" || value.Value == "" || value.Value == "false" || value.Value == "none")) {
+		return ReleaseTestLevelSpec{}, fmt.Errorf("%s cannot drop a required test level", prefix)
+	}
+	if err := requireKnownKeys(value, prefix, releaseTestLevelSpecKeys); err != nil {
+		return ReleaseTestLevelSpec{}, err
+	}
+	var spec ReleaseTestLevelSpec
+	for i := 0; i+1 < len(value.Content) && i < 16; i += 2 {
+		if err := spec.unmarshalField(prefix, value.Content[i].Value, value.Content[i+1]); err != nil {
+			return ReleaseTestLevelSpec{}, err
+		}
+	}
+	return spec, nil
+}
+
+func (s *ReleaseTestLevelSpec) unmarshalField(prefix, key string, val *yaml.Node) error {
+	var err error
+	switch key {
+	case "paths":
+		s.Paths, err = stringSequence(val, prefix+".paths", MaxReleaseE2EPaths)
+	case "pattern":
+		s.Pattern, err = stringScalar(val, prefix+".pattern")
+	case "job":
+		s.Job, err = stringScalar(val, prefix+".job")
+	case "run":
+		s.Run, err = stringScalar(val, prefix+".run")
+	}
+	return err
 }
 
 // UnmarshalYAML decodes release.e2e with strict key and type checks.
@@ -127,15 +213,120 @@ func validateManifestRelease(m *Manifest) error {
 	if m == nil || m.Release == nil {
 		return nil
 	}
-	return m.Release.Validate()
+	if err := m.Release.Validate(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return m.Release.ValidateForProfiles(ctx, "", m.Profiles)
 }
 
-// Validate checks a decoded ReleasePolicy against path, test-id, and commit-SHA bounds.
+// Validate checks a decoded ReleasePolicy against path, test-id, commit-SHA, and test_levels bounds.
 func (p *ReleasePolicy) Validate() error {
-	if p == nil || p.E2E == nil {
+	if p == nil {
 		return nil
 	}
-	return p.E2E.Validate()
+	if p.E2E != nil {
+		if err := p.E2E.Validate(); err != nil {
+			return err
+		}
+	}
+	return validateReleaseTestLevelsMap(p.TestLevels)
+}
+
+// ValidateForProfiles verifies that a declared release.test_levels map does not drop any level
+// required by the given archetype profiles (#1733).
+func (p *ReleasePolicy) ValidateForProfiles(ctx context.Context, root string, profiles []string) error {
+	if p == nil || p.TestLevels == nil || len(profiles) == 0 {
+		return nil
+	}
+	byProfile, err := ProfileReleaseTestLevels(ctx, root, profiles)
+	if err != nil {
+		return err
+	}
+	for i := 0; i < len(profiles) && i < maxLockEntries; i++ {
+		profile := profiles[i]
+		required := byProfile[profile]
+		for j := 0; j < len(required) && j < maxPolicyNames; j++ {
+			level := required[j]
+			if _, ok := p.TestLevels[level]; !ok {
+				return fmt.Errorf("release.test_levels cannot drop required test level %q for profile %q",
+					level, profile)
+			}
+		}
+	}
+	return nil
+}
+
+func validateReleaseTestLevelsMap(levels map[string]ReleaseTestLevelSpec) error {
+	if len(levels) == 0 {
+		return nil
+	}
+	if len(levels) > MaxReleaseTestLevels {
+		return fmt.Errorf("release.test_levels has %d entries; the maximum is %d",
+			len(levels), MaxReleaseTestLevels)
+	}
+	names := make([]string, 0, len(levels))
+	for name := range levels {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for i := 0; i < len(names) && i < MaxReleaseTestLevels; i++ {
+		name := names[i]
+		if err := levels[name].Validate(name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Validate checks a single ReleaseTestLevelSpec under release.test_levels.<level>.
+func (s ReleaseTestLevelSpec) Validate(level string) error {
+	if problem := releaseE2ETestIDProblem(level); problem != "" {
+		return fmt.Errorf("release.test_levels key %q %s", level, problem)
+	}
+	prefix := "release.test_levels." + level
+	if len(s.Paths) == 0 {
+		return fmt.Errorf("%s.paths must declare at least one path glob", prefix)
+	}
+	if err := validateReleasePathGlobs(s.Paths, prefix+".paths"); err != nil {
+		return err
+	}
+	if err := validateReleaseTestLevelPattern(prefix, s.Pattern); err != nil {
+		return err
+	}
+	if err := validateReleaseTestLevelField(prefix+".job", s.Job); err != nil {
+		return err
+	}
+	return validateReleaseTestLevelField(prefix+".run", s.Run)
+}
+
+func validateReleaseTestLevelPattern(prefix, pattern string) error {
+	if pattern == "" {
+		return nil
+	}
+	if len(pattern) > MaxReleaseTestLevelFieldLen {
+		return fmt.Errorf("%s.pattern is %d bytes; the maximum is %d",
+			prefix, len(pattern), MaxReleaseTestLevelFieldLen)
+	}
+	if _, err := regexp.Compile(pattern); err != nil {
+		return fmt.Errorf("%s.pattern invalid regular expression: %w", prefix, err)
+	}
+	return nil
+}
+
+func validateReleaseTestLevelField(field, val string) error {
+	if val == "" {
+		return nil
+	}
+	if strings.TrimSpace(val) == "" {
+		return fmt.Errorf("%s must not be blank", field)
+	}
+	if len(val) > MaxReleaseTestLevelFieldLen {
+		return fmt.Errorf("%s is %d bytes; the maximum is %d",
+			field, len(val), MaxReleaseTestLevelFieldLen)
+	}
+	return nil
 }
 
 // Validate checks a decoded ReleaseE2EPolicy against path, test-id, and commit-SHA bounds.
@@ -153,19 +344,23 @@ func (p *ReleaseE2EPolicy) Validate() error {
 }
 
 func validateReleaseE2EPaths(paths []string) error {
+	return validateReleasePathGlobs(paths, "release.e2e.paths")
+}
+
+func validateReleasePathGlobs(paths []string, field string) error {
 	if len(paths) > MaxReleaseE2EPaths {
-		return fmt.Errorf("release.e2e.paths has %d entries; the maximum is %d",
-			len(paths), MaxReleaseE2EPaths)
+		return fmt.Errorf("%s has %d entries; the maximum is %d",
+			field, len(paths), MaxReleaseE2EPaths)
 	}
 	seen := make(map[string]int, len(paths))
 	for i := 0; i < len(paths) && i < MaxReleaseE2EPaths; i++ {
 		pattern := paths[i]
 		if problem := StyleExclusionProblem(pattern); problem != "" {
-			return fmt.Errorf("release.e2e.paths[%d] %q %s", i, pattern, problem)
+			return fmt.Errorf("%s[%d] %q %s", field, i, pattern, problem)
 		}
 		if first, dup := seen[pattern]; dup {
-			return fmt.Errorf("release.e2e.paths[%d] duplicates release.e2e.paths[%d] (%q)",
-				i, first, pattern)
+			return fmt.Errorf("%s[%d] duplicates %s[%d] (%q)",
+				field, i, field, first, pattern)
 		}
 		seen[pattern] = i
 	}
