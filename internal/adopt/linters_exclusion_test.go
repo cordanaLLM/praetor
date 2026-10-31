@@ -469,3 +469,108 @@ jobs:
 		t.Errorf("expected 'exclusions not read (format)' gap line, got: %s", out)
 	}
 }
+
+// Positive: # baseline #1030 rules have no expiry and are reported as baseline count in [PASS].
+func TestAuditDeclaredLinters_Exclusion_BaselineCountedAndNeverExpires(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	writeGolangciWorkflow(t, root)
+	writeLinterFixtureFile(t, root, ".golangci.yml", `version: "2"
+linters:
+  enable:
+    - gocyclo
+  exclusions:
+    rules:
+      `+GeneratedExceptionsBegin+`
+      # baseline #1030
+      - path: ^internal/a_test\.go$
+        linters:
+          - gocyclo
+        text: func `+"`TestAlpha`"+`
+      # baseline #1030
+      - path: ^internal/b_test\.go$
+        linters:
+          - gocyclo
+        text: func `+"`TestBeta`"+`
+      `+GeneratedExceptionsEnd+`
+`)
+	futureToday := parseTestDate(t, "2030-05-01")
+	out, err := AuditDeclaredLinters(ctx, DeclaredLintersOptions{
+		RootDir: root,
+		Policy:  singleLinterPolicy("framework", "gocyclo"),
+		Today:   futureToday,
+	})
+	if err != nil {
+		t.Fatalf("expected baseline rules to pass without expiry, got: %v", err)
+	}
+	if !strings.Contains(out, "[PASS] Declared linters: every declared linter is run by a CI workflow (1 verified, 2 baseline).") {
+		t.Errorf("expected baseline count in [PASS] summary, got: %s", out)
+	}
+}
+
+// Negative: dated rule past expiry still fails alongside # baseline #1030 rules.
+func TestAuditDeclaredLinters_Exclusion_BaselineWithExpiredDatedRuleFails(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	writeGolangciWorkflow(t, root)
+	writeLinterFixtureFile(t, root, ".golangci.yml", `version: "2"
+linters:
+  enable:
+    - gocyclo
+  exclusions:
+    rules:
+      `+GeneratedExceptionsBegin+`
+      # baseline #1030
+      - path: ^internal/a_test\.go$
+        linters:
+          - gocyclo
+        text: func `+"`TestAlpha`"+`
+      # category C, entered 2026-10-01, expires 2026-10-10, #1030
+      - path: ^internal/b_test\.go$
+        linters:
+          - forbidigo
+      `+GeneratedExceptionsEnd+`
+`)
+	_, err := AuditDeclaredLinters(ctx, DeclaredLintersOptions{
+		RootDir: root,
+		Policy:  singleLinterPolicy("framework", "gocyclo"),
+		Today:   testToday,
+	})
+	if err == nil {
+		t.Fatal("expected expired dated rule in generated block to fail")
+	}
+	if !strings.Contains(err.Error(), "expired 2026-10-10") {
+		t.Errorf("expected expired 2026-10-10 error, got: %v", err)
+	}
+}
+
+// Negative: unrecognised comment form in generated block fails closed.
+func TestAuditDeclaredLinters_Exclusion_UnknownCommentInGeneratedBlockFailsClosed(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	writeGolangciWorkflow(t, root)
+	writeLinterFixtureFile(t, root, ".golangci.yml", `version: "2"
+linters:
+  enable:
+    - gocyclo
+  exclusions:
+    rules:
+      `+GeneratedExceptionsBegin+`
+      # permanently exempt test helper
+      - path: ^internal/a_test\.go$
+        linters:
+          - gocyclo
+      `+GeneratedExceptionsEnd+`
+`)
+	_, err := AuditDeclaredLinters(ctx, DeclaredLintersOptions{
+		RootDir: root,
+		Policy:  singleLinterPolicy("framework", "gocyclo"),
+		Today:   testToday,
+	})
+	if err == nil {
+		t.Fatal("expected unknown comment form in generated block to fail closed")
+	}
+	if !strings.Contains(err.Error(), "unrecognised comment in generated block") {
+		t.Errorf("expected unrecognised comment error, got: %v", err)
+	}
+}

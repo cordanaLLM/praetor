@@ -1086,3 +1086,46 @@ func TestDedupeExceptionScopeGuards(t *testing.T) {
 		t.Fatalf("line scope for another rule must be refused by name: %v", err)
 	}
 }
+
+func TestException_UILatencySource(t *testing.T) {
+	today := time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC)
+	base := Exception{
+		Rule:     ExceptionRuleUILatencySource,
+		Category: "C",
+		Entered:  "2026-10-28",
+		Expires:  "2026-11-03",
+		Reason:   "threshold schema owner cordanaLLM/Aegis-OS M28, parked until 2026-11-03",
+	}
+	if err := ValidateExceptions([]Exception{base}, today); err != nil {
+		t.Fatalf("valid ui-latency-source exception refused: %v", err)
+	}
+	withStandardsPath := base
+	withStandardsPath.Path = ManifestFileName
+	if err := ValidateExceptions([]Exception{withStandardsPath}, today); err != nil {
+		t.Fatalf("ui-latency-source with .standards.yaml path refused: %v", err)
+	}
+
+	noCat := base
+	noCat.Category = ""
+	if err := ValidateExceptions([]Exception{noCat}, today); err == nil || !strings.Contains(err.Error(), "rule ui-latency-source requires a category") {
+		t.Fatalf("missing category must be refused, got: %v", err)
+	}
+
+	withGlob := base
+	withGlob.Glob = "*.yaml"
+	if err := ValidateExceptions([]Exception{withGlob}, today); err == nil || !strings.Contains(err.Error(), "must not set glob") {
+		t.Fatalf("glob must be refused, got: %v", err)
+	}
+
+	withTool := base
+	withTool.Tool = "tool"
+	if err := ValidateExceptions([]Exception{withTool}, today); err == nil || !strings.Contains(err.Error(), "must not set tool") {
+		t.Fatalf("tool must be refused, got: %v", err)
+	}
+
+	foreignPath := base
+	foreignPath.Path = "other.txt"
+	if err := ValidateExceptions([]Exception{foreignPath}, today); err == nil || !strings.Contains(err.Error(), "path must be .standards.yaml") {
+		t.Fatalf("foreign path must be refused, got: %v", err)
+	}
+}

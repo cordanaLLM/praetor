@@ -19,7 +19,7 @@ import (
 )
 
 // agentUsage describes the agent command-line syntax.
-const agentUsage = "usage: praetorctl agent <list|run <agent-name>|sandbox [--workspace DIR] [--read-only] -- COMMAND [ARGS...]>"
+const agentUsage = "usage: praetorctl agent <list|run <agent-name>|sandbox [render [--part full|network|namespaces]] [--lane NAME] [--allow-loopback-port N] [--workspace DIR] [--read-only] -- COMMAND [ARGS...]>"
 
 // printAgentUsage answers a help probe of the agent command.
 func printAgentUsage() {

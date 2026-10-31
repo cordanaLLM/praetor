@@ -6,7 +6,6 @@ package adopt
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -26,20 +25,28 @@ const (
 	maxDeclaredLinters = 256
 )
 
-var exclusionCommentPattern = regexp.MustCompile(
-	`(?i)^\s*category\s+([ABCD])\s*,\s*(?:entered\s+(\d{4}-\d{2}-\d{2})\s*,\s*)?expires\s+(\d{4}-\d{2}-\d{2})\s*,\s*#(\d+)\s*$`,
+var (
+	exclusionCommentPattern = regexp.MustCompile(
+		`(?i)^\s*category\s+([ABCD])\s*,\s*(?:entered\s+(\d{4}-\d{2}-\d{2})\s*,\s*)?expires\s+(\d{4}-\d{2}-\d{2})\s*,\s*#(\d+)\s*$`,
+	)
+	baselineCommentPattern = regexp.MustCompile(
+		`(?i)^\s*baseline\s+#(\d+)\s*$`,
+	)
 )
 
 type golangciExclusionRule struct {
-	file       string
-	line       int
-	path       string
-	pathExcept string
-	linters    []string
-	text       string
-	source     string
-	hasComment bool
-	exception  config.Exception
+	file             string
+	line             int
+	path             string
+	pathExcept       string
+	linters          []string
+	text             string
+	source           string
+	hasComment       bool
+	isBaseline       bool
+	issue            string
+	inGeneratedBlock bool
+	exception        config.Exception
 }
 
 func (r golangciExclusionRule) targetPath() string {
@@ -72,23 +79,64 @@ func (r golangciExclusionRule) String() string {
 	return strings.Join(parts, ", ")
 }
 
-func parseExclusionComment(comment string) (bool, config.Exception) {
-	lines := strings.Split(comment, "\n")
-	for i := 0; i < len(lines) && i < maxCommentLines; i++ {
-		clean := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[i]), "#"))
-		matches := exclusionCommentPattern.FindStringSubmatch(clean)
-		if len(matches) == 5 {
-			return true, config.Exception{
+type parsedExclusionComment struct {
+	valid      bool
+	isBaseline bool
+	issue      string
+	exception  config.Exception
+}
+
+func isGeneratedBlockMarker(trimmed string) bool {
+	return trimmed == GeneratedExceptionsBegin || trimmed == GeneratedExceptionsEnd
+}
+
+func parseExclusionCommentLine(line string) parsedExclusionComment {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || isGeneratedBlockMarker(trimmed) {
+		return parsedExclusionComment{}
+	}
+	clean := strings.TrimSpace(strings.TrimPrefix(trimmed, "#"))
+	if matches := exclusionCommentPattern.FindStringSubmatch(clean); len(matches) == 5 {
+		return parsedExclusionComment{
+			valid: true,
+			exception: config.Exception{
 				Rule:     config.ExceptionRuleDeclaredLinters,
 				Tool:     "exclusion",
 				Category: strings.ToUpper(matches[1]),
 				Entered:  matches[2],
 				Expires:  matches[3],
 				Reason:   "#" + matches[4],
-			}
+			},
 		}
 	}
-	return false, config.Exception{}
+	if matches := baselineCommentPattern.FindStringSubmatch(clean); len(matches) == 2 {
+		return parsedExclusionComment{
+			valid:      true,
+			isBaseline: true,
+			issue:      "#" + matches[1],
+		}
+	}
+	return parsedExclusionComment{}
+}
+
+func parseExclusionComment(comment string, inGeneratedBlock bool) parsedExclusionComment {
+	lines := strings.Split(comment, "\n")
+	var found parsedExclusionComment
+	for i := 0; i < len(lines) && i < maxCommentLines; i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" || isGeneratedBlockMarker(trimmed) {
+			continue
+		}
+		parsed := parseExclusionCommentLine(trimmed)
+		if !parsed.valid {
+			if inGeneratedBlock {
+				return parsedExclusionComment{}
+			}
+			continue
+		}
+		found = parsed
+	}
+	return found
 }
 
 func extractRuleComment(item *yaml.Node) string {
@@ -140,8 +188,8 @@ func parseLintersNode(valNode *yaml.Node) []string {
 	return nil
 }
 
-func parseRuleItemNode(file string, item *yaml.Node) golangciExclusionRule {
-	rule := golangciExclusionRule{file: file, line: item.Line}
+func parseRuleItemNode(file string, item *yaml.Node, inGeneratedBlock bool) golangciExclusionRule {
+	rule := golangciExclusionRule{file: file, line: item.Line, inGeneratedBlock: inGeneratedBlock}
 	if item.Kind != yaml.MappingNode {
 		return rule
 	}
@@ -149,7 +197,11 @@ func parseRuleItemNode(file string, item *yaml.Node) golangciExclusionRule {
 		applyRuleField(&rule, item.Content[i].Value, item.Content[i+1])
 	}
 	rawComment := extractRuleComment(item)
-	rule.hasComment, rule.exception = parseExclusionComment(rawComment)
+	parsed := parseExclusionComment(rawComment, inGeneratedBlock)
+	rule.hasComment = parsed.valid
+	rule.isBaseline = parsed.isBaseline
+	rule.issue = parsed.issue
+	rule.exception = parsed.exception
 	return rule
 }
 
@@ -163,8 +215,9 @@ func findYAMLMappingKey(node *yaml.Node, key string) *yaml.Node {
 }
 
 type golangciExclusionConfig struct {
-	rules      []golangciExclusionRule
-	warnUnused bool
+	rules         []golangciExclusionRule
+	warnUnused    bool
+	blockFailures []string
 }
 
 func findExclusionsMapping(doc *yaml.Node) *yaml.Node {
@@ -182,29 +235,59 @@ func findExclusionsMapping(doc *yaml.Node) *yaml.Node {
 	return exclusionsNode
 }
 
-func parseExclusionRulesSeq(fileName string, seq *yaml.Node) []golangciExclusionRule {
+func isLineInGeneratedBlock(line1Based, beginLine, endLine int) bool {
+	if beginLine == -1 || endLine == -1 {
+		return false
+	}
+	return line1Based > beginLine+1 && line1Based <= endLine+1
+}
+
+func parseExclusionRulesSeq(fileName string, seq *yaml.Node, beginLine, endLine int) []golangciExclusionRule {
 	if seq == nil || seq.Kind != yaml.SequenceNode {
 		return nil
 	}
 	var rules []golangciExclusionRule
 	for i := 0; i < len(seq.Content) && i < maxExclusionRules; i++ {
-		rules = append(rules, parseRuleItemNode(fileName, seq.Content[i]))
+		item := seq.Content[i]
+		inBlock := isLineInGeneratedBlock(item.Line, beginLine, endLine)
+		rules = append(rules, parseRuleItemNode(fileName, item, inBlock))
 	}
 	return rules
 }
 
-func parseExclusionsNode(fileName string, node *yaml.Node) *golangciExclusionConfig {
+func parseExclusionsNode(fileName string, node *yaml.Node, beginLine, endLine int) *golangciExclusionConfig {
 	if node == nil {
 		return &golangciExclusionConfig{}
 	}
 	warnNode := findYAMLMappingKey(node, "warn-unused")
 	warnUnused := warnNode != nil && strings.EqualFold(warnNode.Value, "true")
-	rules := parseExclusionRulesSeq(fileName, findYAMLMappingKey(node, "rules"))
+	rules := parseExclusionRulesSeq(fileName, findYAMLMappingKey(node, "rules"), beginLine, endLine)
 	return &golangciExclusionConfig{rules: rules, warnUnused: warnUnused}
 }
 
+func validateGeneratedBlockComments(fileName string, lines []string, beginLine, endLine int) []string {
+	if beginLine == -1 && endLine == -1 {
+		return nil
+	}
+	if beginLine == -1 || endLine == -1 {
+		return []string{formatExclusionFailure(fileName, 1, nil, "", "unclosed generated-exceptions block")}
+	}
+	var failures []string
+	for i := beginLine + 1; i < endLine && i < maxGolangciLines; i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if !strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if !parseExclusionCommentLine(trimmed).valid {
+			failures = append(failures,
+				formatExclusionFailure(fileName, i+1, nil, "", fmt.Sprintf("unrecognised comment in generated block: %s", trimmed)))
+		}
+	}
+	return failures
+}
+
 func readGolangciExclusionConfig(cfg *config.GolangciConfigFile) (*golangciExclusionConfig, error) {
-	data, err := os.ReadFile(cfg.Path)
+	data, err := util.ReadFileLimited(cfg.Path, maxLintConfigBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", cfg.Name, err)
 	}
@@ -215,7 +298,11 @@ func readGolangciExclusionConfig(cfg *config.GolangciConfigFile) (*golangciExclu
 	if len(root.Content) == 0 {
 		return &golangciExclusionConfig{}, nil
 	}
-	return parseExclusionsNode(cfg.Name, findExclusionsMapping(root.Content[0])), nil
+	lines := strings.Split(string(data), "\n")
+	beginLine, endLine := locateGeneratedBlock(lines)
+	parsed := parseExclusionsNode(cfg.Name, findExclusionsMapping(root.Content[0]), beginLine, endLine)
+	parsed.blockFailures = validateGeneratedBlockComments(cfg.Name, lines, beginLine, endLine)
+	return parsed, nil
 }
 
 func hasAnyDeclaredLinter(linters []string, declaredMap map[string]bool) bool {
@@ -235,11 +322,7 @@ func filterDeclaredExclusionRules(rules []golangciExclusionRule, declared []conf
 	var filtered []golangciExclusionRule
 	for i := 0; i < len(rules) && i < maxExclusionRules; i++ {
 		r := rules[i]
-		if len(r.linters) == 0 {
-			filtered = append(filtered, r)
-			continue
-		}
-		if hasAnyDeclaredLinter(r.linters, declaredMap) {
+		if len(r.linters) == 0 || r.inGeneratedBlock || hasAnyDeclaredLinter(r.linters, declaredMap) {
 			filtered = append(filtered, r)
 		}
 	}
@@ -275,14 +358,34 @@ func formatExclusionFailure(file string, line int, linters []string, path, probl
 		declaredLintersGate, file, line, lintersStr, path, problem)
 }
 
-func validateRulesExpiry(rules []golangciExclusionRule, today time.Time) ([]golangciExclusionRule, []string) {
+func validateBaselineRule(r golangciExclusionRule) string {
+	if !r.inGeneratedBlock {
+		return "baseline comment is only valid inside generated block"
+	}
+	if len(r.linters) != 1 || unquoteRuleText(r.linters[0], r.text) == "" {
+		return "baseline rule requires complexity linter and function text regexp"
+	}
+	return ""
+}
+
+func validateRulesExpiry(rules []golangciExclusionRule, today time.Time) ([]golangciExclusionRule, int, []string) {
 	var valid []golangciExclusionRule
 	var failures []string
+	baselineCount := 0
 	for i := 0; i < len(rules) && i < maxExclusionRules; i++ {
 		r := rules[i]
 		if !r.hasComment {
 			failures = append(failures,
 				formatExclusionFailure(r.file, r.line, r.linters, r.targetPath(), "missing category and expiry comment"))
+			continue
+		}
+		if r.isBaseline {
+			if prob := validateBaselineRule(r); prob != "" {
+				failures = append(failures, formatExclusionFailure(r.file, r.line, r.linters, r.targetPath(), prob))
+				continue
+			}
+			baselineCount++
+			valid = append(valid, r)
 			continue
 		}
 		if r.exception.Expired(today) {
@@ -297,7 +400,7 @@ func validateRulesExpiry(rules []golangciExclusionRule, today time.Time) ([]gola
 		}
 		valid = append(valid, r)
 	}
-	return valid, failures
+	return valid, baselineCount, failures
 }
 
 func auditStaleExclusions(rules []golangciExclusionRule, warnUnused bool, logPath string) ([]string, []string, error) {
@@ -314,31 +417,35 @@ func auditStaleExclusions(rules []golangciExclusionRule, warnUnused bool, logPat
 	return nil, staleFailures, nil
 }
 
-func auditDeclaredLinterExclusions(opts DeclaredLintersOptions, declared []config.DeclaredLinter, today time.Time) ([]string, []string, error) {
+func auditDeclaredLinterExclusions(opts DeclaredLintersOptions, declared []config.DeclaredLinter, today time.Time) ([]string, int, []string, error) {
 	cfg, err := config.LocateGolangciConfig(opts.RootDir)
 	if err != nil {
-		return nil, nil, fmt.Errorf("[FAIL] %s: %w", declaredLintersGate, err)
+		return nil, 0, nil, fmt.Errorf("[FAIL] %s: %w", declaredLintersGate, err)
 	}
 	if cfg == nil {
-		return nil, nil, nil
+		return nil, 0, nil, nil
 	}
 	if cfg.Format != "yaml" {
-		return []string{"[SKIP] " + declaredLintersGate + ": exclusions not read (format)"}, nil, nil
+		return []string{"[SKIP] " + declaredLintersGate + ": exclusions not read (format)"}, 0, nil, nil
 	}
 	parsedCfg, err := readGolangciExclusionConfig(cfg)
 	if err != nil {
-		return nil, nil, fmt.Errorf("[FAIL] %s: %w", declaredLintersGate, err)
+		return nil, 0, nil, fmt.Errorf("[FAIL] %s: %w", declaredLintersGate, err)
 	}
 	rules := filterDeclaredExclusionRules(parsedCfg.rules, declared)
-	if len(rules) == 0 {
-		return nil, nil, nil
+	if len(rules) == 0 && len(parsedCfg.blockFailures) == 0 {
+		return nil, 0, nil, nil
 	}
 
-	validRules, failureLines := validateRulesExpiry(rules, today)
+	validRules, baselineCount, failureLines := validateRulesExpiry(rules, today)
+	failureLines = append(failureLines, parsedCfg.blockFailures...)
+	if len(rules) == 0 {
+		return nil, baselineCount, failureLines, nil
+	}
 	skipLines, staleFailures, err := auditStaleExclusions(validRules, parsedCfg.warnUnused, opts.LintLogPath)
 	if err != nil {
-		return nil, nil, err
+		return nil, baselineCount, nil, err
 	}
 	failureLines = append(failureLines, staleFailures...)
-	return skipLines, failureLines, nil
+	return skipLines, baselineCount, failureLines, nil
 }

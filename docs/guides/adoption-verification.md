@@ -1042,8 +1042,9 @@ govuln: FAIL: govulncheck v1.8.0, symbol scan: 1 advisories present, 1 failing, 
 The document lives at `security.go_vex` in `.standards.yaml`, `security/vex/go.openvex.json` by
 default (`config.RepositoryGoVEXPath` in
 [`internal/config/security_policy.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/config/security_policy.go)).
-A repository whose scan reports no advisory needs no document. Without one, every advisory present
-in the build fails. The gate reads [OpenVEX v0.2.0](https://github.com/openvex/spec/blob/main/OPENVEX-SPEC.md):
+In a repository with several Go modules every module is judged against this one document at the
+repository root. A repository whose scan reports no advisory needs no document. Without one, every
+advisory present in the build fails. The gate reads [OpenVEX v0.2.0](https://github.com/openvex/spec/blob/main/OPENVEX-SPEC.md):
 
 ```json
 {
@@ -1415,37 +1416,107 @@ counts pipeline calls for every help spelling and position.
 
 ### Run one command in the agent sandbox
 
-`praetorctl agent sandbox [--workspace DIR] [--read-only] -- COMMAND [ARGS...]`
+`praetorctl agent sandbox [render [--part full|network|namespaces]] [--lane NAME] [--allow-loopback-port N] [--workspace DIR] [--read-only] -- COMMAND [ARGS...]`
 mounts the selected host directory (the current directory by default) at `/workspace`
 and runs the command there. The workspace is writable unless `--read-only` is set.
 Arguments after `--`, including `--help`, belong to the command.
 
 The Linux profile in `internal/sandbox` is shared with repair verification. It uses
 bubblewrap namespaces, a read-only `/usr`, a private `/proc` and `/dev`, and a
-1 GiB temporary `/tmp`. Networking is disabled, including host loopback. Egress
-is reserved for a follow-up; no host-network or pasta mode is available. The
-command starts with a clean environment; the CLI passes no host variables.
+1 GiB temporary `/tmp`. The command starts with a clean environment; the CLI
+passes no host variables. `sandbox.LaneProfile` selects the same resource defaults
+and network policy for every caller:
+
+| Lane | Network policy |
+| --- | --- |
+| `repair` (default) | No network, including host loopback; bubblewrap uses `--unshare-all`. |
+| `agy`, `codex` | Internet egress through pasta, with no inbound or outbound port forwards and no host-loopback or gateway mapping. |
+| `local` | Only caller-listed host-loopback TCP ports, with no external route. Repeat `--allow-loopback-port N` for up to eight ports in 1..65535. An empty list allows none. |
+
+Unknown lanes and ports supplied to another lane are errors. Every lane has its
+own PID namespace. For connected modes, pasta creates the private user and network
+namespaces, then bubblewrap unshares PID, IPC, UTS and cgroup namespaces and builds
+the private mount namespace. Bubblewrap keeps pasta's network namespace; it does
+not replace it. This also avoids a second UID mapping inside pasta's user namespace.
+
+Egress uses `--config-net`, `-t none -u none -T none -U none`, and
+`--map-host-loopback none` (which implies `--no-map-gw`). DNS nameservers come only
+from `/run/systemd/resolve/resolv.conf`, are passed individually with `-D`, and are
+written to a generated file mounted read-only at `/etc/resolv.conf`. A missing,
+empty or invalid upstream resolver file refuses the run and names the file.
+The host's `/etc/resolv.conf` stub is never used as a fallback.
+
+Local mode omits `--config-net`: the namespace has no external addresses or routes.
+Pasta brings loopback up independently and `-T` forwards the listed TCP ports;
+`-t`, `-u` and `-U` remain `none`, and `--map-host-loopback none` remains set.
+These behaviors are documented in pasta 2026_10_02's manual under `--config-net`,
+`--tcp-ns`, “Handling of local traffic in pasta” and “pasta and loopback interface”.
+`internal/sandbox/network_integration_test.go` checks the absent external routes,
+allowed forwarding, loopback and gateway refusal, and all seven private namespaces.
+
 Use an absolute executable path, for example:
 
 ```bash
 praetorctl agent sandbox --workspace . -- /usr/bin/true
 praetorctl agent sandbox --workspace . --read-only -- /usr/bin/ls /workspace
+praetorctl agent sandbox --lane codex --workspace . -- /usr/bin/true
+praetorctl agent sandbox --lane local --allow-loopback-port 4011 -- /usr/bin/true
+praetorctl agent sandbox render --lane codex -- /usr/bin/true > sandbox.argv
+praetorctl agent sandbox render --lane local --allow-loopback-port 4011 --part network > network.argv
+praetorctl agent sandbox render --lane local --allow-loopback-port 4011 --part namespaces > namespaces.argv
 ```
+
+`render` performs the same validation and runtime probes as execution. Its
+`--part full` default writes the complete argv, starting with `systemd-run`,
+with a NUL after every argument, and requires `-- COMMAND [ARGS...]` as before.
+It never starts the requested command. Shell lane runners that supply their own
+filesystem mounts can instead request these parts without a command:
+
+| Part | Arguments |
+| --- | --- |
+| `network` | Pasta executable and options through its `--` separator, without bubblewrap. The repair lane emits zero bytes and exits successfully after validation. |
+| `namespaces` | Egress and local: `--unshare-ipc --unshare-pid --unshare-uts --unshare-cgroup --die-with-parent`. Egress additionally supplies `--ro-bind <generated-resolv.conf> /etc/resolv.conf`. Repair: `--unshare-all --die-with-parent`. No other filesystem mounts are included. |
+
+Both parts use the same argument builders as the full invocation and terminate
+each argument with NUL. Place the network prefix before the runner's bubblewrap
+executable and the namespace arguments among its bubblewrap options. Repair's
+empty network prefix requires its namespace arguments to isolate the network.
+Both parts retain execution's fail-closed checks: missing bubblewrap, required
+pasta, an upstream resolver file or a working runtime emits no argv and returns
+a nonzero status with the reason on stderr. A runner must check the renderer's exit
+status and use a NUL-aware argument reader, preserving empty arguments and spaces.
+Generated resolver files remain under `/run/user/<uid>/praetor-sandbox/`, keyed by
+content, so the printed argv remains usable after the renderer exits. They contain
+only upstream nameserver lines and live until runtime-directory cleanup. The Go
+runner supplies a control environment containing only `PATH=/usr/bin:/bin` and
+`XDG_RUNTIME_DIR=/run/user/<uid>`; shell runners should supply that same environment.
 
 A systemd user scope limits memory to 4 GiB with no swap, tasks to 128, and CPU
 to 200%. `prlimit` additionally bounds address space to 4 GiB, CPU time to
 120 seconds, file size to 256 MiB, and open files to 256. The CLI has a five-minute
 execution deadline. Its exit status preserves the contained command's exit status.
 Missing `bwrap`, `systemd-run`, `prlimit` or a reachable user manager is an error;
-macOS and Windows report that Linux is required. No command runs uncontained.
-The manager probe also requires `systemctl` on PATH.
+egress and local modes also require `pasta`. macOS and Windows report that Linux
+is required. No command runs uncontained. The manager probe requires `systemctl`
+on PATH.
 
 `internal/sandbox/spec_test.go` pins the original repair profile's full argument
-list. `internal/sandbox/run_test.go` checks missing runtimes, a marker command
-that must never start, and real containment when Linux and the user manager are
-available; otherwise the integration test states its skip reason.
-`cmd/standardsctl/agent_sandbox_test.go` covers parsing, command help arguments,
-unavailability and exit status propagation.
+list. Network unit tests pin forwarding options, DNS content and refusal cases.
+Real network tests exercise `prlimit`, pasta and bubblewrap independently of the
+systemd user bus; `TestSandboxRealIntegration` separately checks the full scope.
+Unavailable binaries or denied user namespaces produce explicit skips. The
+PID-only planted profile reaches the same listener, proving the refusal probe
+can detect a host-network leak. Mutation runs remove the gateway mapping block,
+forward all local ports, and execute directly when bubblewrap is missing; each
+must fail its corresponding check. The network fixture raises its descriptor cap
+so descriptor exhaustion cannot hide the all-port leak; the original resource
+limits remain pinned by the repair golden test.
+`internal/sandbox/render_test.go` compares network parts with the full pasta
+slice and checks namespace parts against the full bubblewrap arguments for every
+lane. A mutant replacing the network part with a separate, stale literal option
+list must fail the equality test. `cmd/standardsctl/agent_sandbox_test.go` and
+`agent_sandbox_render_test.go` cover lane and part flags, NUL rendering, command
+help arguments, missing binaries with empty stdout, and exit status propagation.
 
 ### A receipt certifies only a working tree that matches HEAD
 
@@ -2464,7 +2535,10 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     regenerate with `go test ./internal/adopt -run TestAdoptedHarnessGolden
     -update-harness-golden` after reviewing the change.
 
-  The `Adopted check` column names the
+  For a rule the repository declares in `.config/hiss/coverage.yaml`, the `Adopted check` column
+  gives the state per language and that path, and the mechanism stays in the catalog, because the
+  harness is loaded into every session (`TestDeclaredEnforcementNamesStatesNotMechanisms`).
+  Otherwise the column names the
   check and the generated stages that run it, such as `praetorctl audit` HISS scan in verify-all +
   lefthook pre-commit/pre-push, qualified by language, or `praetorctl security secrets` (gitleaks
   history scan) in verify-all + lefthook pre-push for HISS-12 across every language, or `not enforced`. It credits only the
@@ -2632,14 +2706,31 @@ adoption writes the harness beside it (`TestAdoptDryRunParity_Boundary_Secondary
 
 ## Shared screen and accessibility matrix
 
-For a `frontend-svelte` repository, declare the shared A11Y-CHECK1 data file in
-`.standards.yaml`, beside the input latency threshold:
+For a `frontend-svelte` repository, declare the shared A11Y-CHECK1 data file and
+measurement evidence in `.standards.yaml`, beside the input latency threshold:
 
 ```yaml
 ui:
   input_latency_ms: 100
+  input_latency_source: "cordanaLLM/Aegis-OS@7828da5640001111222233334444555566667777:benchmarks/latency.json"
   screen_matrix: tests/screen-matrix.json
 ```
+
+`ui.input_latency_source` pins the measurement evidence `<owner>/<repo>@<40-hex commit>:<path>`
+the threshold value comes from. When measurement evidence publication is pending,
+declare a category C exception naming the supplying owner:
+
+```yaml
+exceptions:
+  - rule: "ui-latency-source"
+    category: "C"
+    reason: "threshold schema owner cordanaLLM/Aegis-OS M28, parked until 2026-11-03"
+    expires: "2026-11-03"
+```
+
+The gate enforces category C (a fixed 10-day rectification interval). The reason
+must name the owner who supplies the evidence. An expired exception excuses
+nothing.
 
 Obtain the data file and its consuming Playwright spec from
 `golusoris/sveltesentio`, the shared Svelte UI contract project. Its delivery unit

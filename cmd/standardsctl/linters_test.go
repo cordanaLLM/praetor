@@ -51,7 +51,7 @@ func TestRunLinters_CLI_Generate(t *testing.T) {
 	cfg := filepath.Join(dir, ".golangci.yml")
 	rep := filepath.Join(dir, "report.json")
 	writeLinterFixture(t, cfg, "version: \"2\"\nlinters:\n  enable:\n    - gocyclo\n")
-	writeLinterFixture(t, rep, `{"Issues":[{"FromLinter":"gocyclo","Pos":{"Filename":"a_test.go"}}]}`)
+	writeLinterFixture(t, rep, `{"Issues":[{"FromLinter":"gocyclo","Text":"cyclomatic complexity 15 of func `+"`TestAlpha`"+` is high (> 11)","Pos":{"Filename":"a_test.go"}}]}`)
 
 	// Positive: generate output
 	args := []string{

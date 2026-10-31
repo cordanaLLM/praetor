@@ -5,15 +5,19 @@
 package supplychain
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/util"
+	"go.yaml.in/yaml/v3"
 )
 
 // ImageRefRuleID is the HISS rule identifier for unpinned container image references.
@@ -42,6 +46,9 @@ var (
 
 	// digestPinPattern matches a valid sha256 digest suffix on a container image reference.
 	digestPinPattern = regexp.MustCompile(`@sha256:[0-9a-f]{64}(?:$|\s)`)
+
+	// substitutionTokenPattern matches "@NAME@" substitution tokens filled at deploy time.
+	substitutionTokenPattern = regexp.MustCompile(`@[A-Za-z_][A-Za-z0-9_]*@`)
 
 	// ociRepoPattern matches a lowercase OCI repository path ("library/golang", "org/runner").
 	ociRepoPattern = regexp.MustCompile(`^[a-z0-9]+(?:[._/-][a-z0-9]+)*$`)
@@ -333,6 +340,32 @@ func hasDigestPin(ref string) bool {
 	return digestPinPattern.MatchString(strings.TrimSpace(ref))
 }
 
+func isUnresolvableImageRef(ref string) bool {
+	return strings.Contains(ref, "$") || strings.Contains(ref, "{{") || substitutionTokenPattern.MatchString(ref)
+}
+
+func isInvalidRegistryHost(ref string) bool {
+	trimmed := strings.TrimPrefix(strings.TrimSpace(ref), "docker://")
+	host, _, ok := strings.Cut(trimmed, "/")
+	if !ok {
+		return false
+	}
+	hostname, port, hasPort := strings.Cut(host, ":")
+	if (hasPort && !isNumericPort(port)) || !isHostnameToken(hostname) {
+		return false
+	}
+	lower := strings.ToLower(hostname)
+	return lower == "invalid" || strings.HasSuffix(lower, ".invalid")
+}
+
+func appendImageRefFinding(findings []ImageRefFinding, file string, line int, ref string) []ImageRefFinding {
+	trimmed := strings.TrimSpace(ref)
+	if trimmed == "" || isInvalidRegistryHost(trimmed) || hasDigestPin(trimmed) {
+		return findings
+	}
+	return append(findings, newImageRefFinding(file, line, trimmed, isUnresolvableImageRef(trimmed)))
+}
+
 func isDockerfile(slashed string) bool {
 	base := filepath.Base(slashed)
 	lower := strings.ToLower(base)
@@ -376,11 +409,7 @@ func collectDockerfileFindings(file, content string) []ImageRefFinding {
 		if target == "" || strings.EqualFold(target, "scratch") || stages[strings.ToLower(target)] {
 			continue
 		}
-		if hasDigestPin(target) {
-			continue
-		}
-		unresolvable := strings.Contains(target, "$") || strings.Contains(target, "{{")
-		findings = append(findings, newImageRefFinding(file, stmts[i].line, target, unresolvable))
+		findings = appendImageRefFinding(findings, file, stmts[i].line, target)
 	}
 	return findings
 }
@@ -452,21 +481,73 @@ func stripInlineComment(s string) string {
 }
 
 func collectYAMLFindings(file, content string) []ImageRefFinding {
+	if isWorkflowFile(file) {
+		return collectWorkflowFindings(file, content)
+	}
 	lines := strings.Split(content, "\n")
-	workflow := isWorkflowFile(file)
 	var findings []ImageRefFinding
 	for i := 0; i < len(lines) && i < maxFileLines; i++ {
-		ref := extractYAMLImageRef(lines[i], workflow)
-		if ref == "" || hasDigestPin(ref) {
-			continue
-		}
-		unresolvable := strings.Contains(ref, "$") || strings.Contains(ref, "{{")
-		findings = append(findings, newImageRefFinding(file, i+1, ref, unresolvable))
+		findings = appendImageRefFinding(findings, file, i+1, extractYAMLImageRef(lines[i]))
 	}
 	return findings
 }
 
-func extractYAMLImageRef(line string, workflow bool) string {
+func collectWorkflowFindings(file, content string) []ImageRefFinding {
+	spec, err := ghworkflow.Parse([]byte(content))
+	if err != nil {
+		return []ImageRefFinding{newImageRefFinding(file, 0, err.Error(), true)}
+	}
+	ids := ghworkflow.SortedJobIDs(spec.Jobs)
+	var findings []ImageRefFinding
+	for i := 0; i < len(ids) && i < ghworkflow.MaxJobsPerFile; i++ {
+		job := spec.Jobs[ids[i]]
+		findings = appendWorkflowContainerFinding(findings, file, &job.Container)
+		findings = appendWorkflowServiceFindings(findings, file, &job.Services)
+		findings = appendWorkflowStepFindings(findings, file, job.Steps)
+	}
+	slices.SortStableFunc(findings, func(a, b ImageRefFinding) int {
+		return cmp.Compare(a.Line, b.Line)
+	})
+	return findings
+}
+
+func appendWorkflowContainerFinding(findings []ImageRefFinding, file string, container *yaml.Node) []ImageRefFinding {
+	switch container.Kind {
+	case yaml.ScalarNode:
+		if container.ShortTag() != "!!null" {
+			return appendImageRefFinding(findings, file, container.Line, container.Value)
+		}
+	case yaml.MappingNode:
+		if img := util.YAMLMappingValue(container, "image"); img != nil && img.Kind == yaml.ScalarNode && img.ShortTag() != "!!null" {
+			return appendImageRefFinding(findings, file, img.Line, img.Value)
+		}
+	}
+	return findings
+}
+
+func appendWorkflowServiceFindings(findings []ImageRefFinding, file string, services *yaml.Node) []ImageRefFinding {
+	if services.Kind != yaml.MappingNode {
+		return findings
+	}
+	for i := 0; i+1 < len(services.Content) && i < maxFileLines; i += 2 {
+		if img := util.YAMLMappingValue(services.Content[i+1], "image"); img != nil && img.Kind == yaml.ScalarNode && img.ShortTag() != "!!null" {
+			findings = appendImageRefFinding(findings, file, img.Line, img.Value)
+		}
+	}
+	return findings
+}
+
+func appendWorkflowStepFindings(findings []ImageRefFinding, file string, steps []ghworkflow.Step) []ImageRefFinding {
+	for i := 0; i < len(steps) && i < maxFileLines; i++ {
+		uses := strings.TrimSpace(steps[i].Uses)
+		if strings.HasPrefix(uses, "docker://") {
+			findings = appendImageRefFinding(findings, file, steps[i].UsesLine, uses)
+		}
+	}
+	return findings
+}
+
+func extractYAMLImageRef(line string) string {
 	trimmed := strings.TrimSpace(line)
 	if strings.HasPrefix(trimmed, "- ") {
 		trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
@@ -475,21 +556,10 @@ func extractYAMLImageRef(line string, workflow bool) string {
 		return ""
 	}
 	key, rest, ok := strings.Cut(trimmed, ":")
-	if !ok {
+	if !ok || strings.TrimSpace(key) != "image" {
 		return ""
 	}
-	key = strings.TrimSpace(key)
-	val := cleanYAMLScalar(rest)
-	switch {
-	case key == "image":
-		return validYAMLScalarRef(val)
-	case workflow && key == "uses" && strings.HasPrefix(val, "docker://"):
-		return val
-	case workflow && key == "container":
-		return validYAMLScalarRef(val)
-	default:
-		return ""
-	}
+	return validYAMLScalarRef(cleanYAMLScalar(rest))
 }
 
 func cleanYAMLScalar(raw string) string {
@@ -528,11 +598,10 @@ func collectDevcontainerFindings(file, content string) []ImageRefFinding {
 	var findings []ImageRefFinding
 	for i := 0; i < len(lines) && i < maxFileLines; i++ {
 		m := devcontainerImageField.FindStringSubmatch(lines[i])
-		if len(m) < 2 || hasDigestPin(m[1]) {
+		if len(m) < 2 {
 			continue
 		}
-		unresolvable := strings.Contains(m[1], "$") || strings.Contains(m[1], "{")
-		findings = append(findings, newImageRefFinding(file, i+1, m[1], unresolvable))
+		findings = appendImageRefFinding(findings, file, i+1, m[1])
 	}
 	return findings
 }
@@ -549,7 +618,7 @@ func collectSourceLiteralFindings(file, content string) []ImageRefFinding {
 		for j := 0; j < len(matches) && j < maxLineLiterals; j++ {
 			lit := firstNonEmptySubmatch(matches[j][1:])
 			if isUnpinnedQualifiedImageLiteral(lit) {
-				findings = append(findings, newImageRefFinding(file, folded[i].line, lit, strings.Contains(lit, "$")))
+				findings = appendImageRefFinding(findings, file, folded[i].line, lit)
 			}
 		}
 	}
@@ -612,7 +681,7 @@ func isUnpinnedQualifiedImageLiteral(lit string) bool {
 		return false
 	}
 	host, rest, ok := strings.Cut(lit, "/")
-	if !ok || !isRegistryHost(host) || hasDigestPin(rest) {
+	if !ok || !isRegistryHost(host) || isInvalidRegistryHost(lit) || hasDigestPin(rest) {
 		return false
 	}
 	repo, tag, hasTag := strings.Cut(rest, ":")

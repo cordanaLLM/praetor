@@ -1,0 +1,2 @@
+type: changed
+title: The update bot no longer moves satteri in tools/figures on its own, because the figures tests must compile through the version the Starlight preset locks

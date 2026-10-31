@@ -29,7 +29,11 @@ from checks import (go_packages, source_checks, governance_commands, context_cha
                     lint_commands, golangci_lint_command, self_test_commands,
                     run_full_gate, gate_timeout, FIXTURE_DIRECTORY, GATE_LAUNCH_MARGIN,
                     GATE_QUERY_TIMEOUT, SEMGREP_LANGUAGE_EXTENSIONS, SEMGREP_SUFFIXES,
-                    tool_module_dirs, trivy_tool_command, TRIVY_SCANNERS, TRIVY_SEVERITY)
+                    tool_module_dirs, trivy_tool_command, TRIVY_SCANNERS, TRIVY_SEVERITY,
+                    hook_sources_changed, require_hook_lint_tools, HOOK_LINT_SUITE,
+                    HOOK_SOURCE_PREFIXES, provision_hook_lint, hook_lint_digest,
+                    hook_lint_cache_root, venv_bin, load_hook_lint, HOOK_LINT_BIN_ENV, Command,
+                    parallel)
 import hooks
 from hooks import push_updates, new_branch_base, pre_push, push_check_mode, prepare_message
 from privacy import check_private_history, check_private_index
@@ -2608,6 +2612,194 @@ class ScopeAndGuard(unittest.TestCase):
                     mock.patch("checks.semgrep_commands", return_value=[]):
                 source_checks(root, ["core/core.go"])
             self.assertFalse(invoked_file.exists(), "trivy must not be invoked when no tool module changed")
+
+    def test_prepush_hook_sources_changed_identifies_hook_paths(self):
+        self.assertTrue(hook_sources_changed([".config/lefthook/scripts/checkpoint.py"]))
+        self.assertTrue(hook_sources_changed([".config/agent/hooks/block_evasion.py"]))
+        self.assertTrue(hook_sources_changed([HOOK_LINT_SUITE]))
+        self.assertFalse(hook_sources_changed([".config/lefthook/README.md"]))
+        self.assertFalse(hook_sources_changed([".config/lefthook/praetor.yml"]))
+        self.assertFalse(hook_sources_changed(["cmd/praetorctl/main.go"]))
+        self.assertFalse(hook_sources_changed(["docs/guides/git-hooks.md"]))
+
+    def test_prepush_require_hook_lint_tools_fails_closed_when_mismatched_or_absent(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            # When suite is absent (e.g. adopted repository), require_hook_lint_tools returns None
+            self.assertIsNone(require_hook_lint_tools(root))
+
+        # Test tool missing / version mismatch fails closed with install command (HISS-19, HISS-21)
+        mock_module = mock.Mock()
+        mock_module.TOOLS = ("black", "flake8", "yamllint", "ruff")
+        mock_module.GO_PINNED_TOOLS = ("gofumpt", "shfmt")
+        mock_module.toolchain_pins.return_value = {"black": "26.10.1", "flake8": "7.4.1"}
+        mock_module.resolve_tool.side_effect = lambda tool, pins, environ=None: (
+            (None, f"{tool} 7.4.1 is pinned but /bin/{tool} reports 7.5.0; install it with: "
+                   "python3 -m pip install --require-hashes -r .config/hook-lint/requirements.txt",
+             False) if tool == "flake8" else (f"/bin/{tool}", None, False)
+        )
+        with mock.patch("checks.load_hook_lint", return_value=mock_module):
+            with self.assertRaises(HookError) as cm:
+                require_hook_lint_tools(Path.cwd())
+            err = str(cm.exception)
+            self.assertIn("flake8 7.4.1 is pinned", err)
+            self.assertIn(
+                "python3 -m pip install --require-hashes -r .config/hook-lint/requirements.txt",
+                err,
+            )
+
+    def test_prepush_file_checks_schedules_hook_lint_on_hook_path(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "scripts").mkdir(parents=True)
+            (root / HOOK_LINT_SUITE).write_text("# suite\n", encoding="utf-8")
+            (root / ".config/lefthook/scripts").mkdir(parents=True)
+            hook_script = root / ".config/lefthook/scripts/checkpoint.py"
+            hook_script.write_text("# script\n", encoding="utf-8")
+            # LF on every platform: text mode writes CRLF on Windows, and gofmt -l lists such a file.
+            (root / "main.go").write_text("package main\n", encoding="utf-8", newline="\n")
+
+            stub_bin = root / "cached" / "bin"
+            stub_bin.mkdir(parents=True)
+
+            # A push touching a hook path schedules the hook lint suite with toolchain env
+            with mock.patch("checks.parallel") as scheduled, \
+                    mock.patch("checks.require_floors"), \
+                    mock.patch("checks.provision_hook_lint", return_value=stub_bin), \
+                    mock.patch("checks.require_hook_lint_tools") as require_lint:
+                file_checks(root, [".config/lefthook/scripts/checkpoint.py"])
+            require_lint.assert_called_once_with(root, environ={HOOK_LINT_BIN_ENV: str(stub_bin)})
+            scheduled.assert_called_once()
+            commands = scheduled.call_args.args[0]
+            self.assertIn([sys.executable, "-B", HOOK_LINT_SUITE], commands)
+            suite_cmd = next(c for c in commands if c == [sys.executable, "-B", HOOK_LINT_SUITE])
+            self.assertEqual(suite_cmd.env, {HOOK_LINT_BIN_ENV: str(stub_bin)})
+
+            # A push touching no hook path does not run or schedule the stage
+            with mock.patch("checks.parallel") as scheduled, \
+                    mock.patch("checks.require_floors"), \
+                    mock.patch("checks.provision_hook_lint") as prov_lint, \
+                    mock.patch("checks.require_hook_lint_tools") as require_lint:
+                file_checks(root, ["main.go"])
+            prov_lint.assert_not_called()
+            require_lint.assert_not_called()
+            scheduled.assert_called_once()
+            commands = scheduled.call_args.args[0]
+            self.assertNotIn([sys.executable, "-B", HOOK_LINT_SUITE], commands)
+
+    def hook_lint_repo(self, temp):
+        root = Path(temp) / "repo"
+        (root / ".config/hook-lint").mkdir(parents=True)
+        (root / "tools/go").mkdir(parents=True)
+        (root / ".config/hook-lint/requirements.txt").write_bytes(b"black==26.10.1\n")
+        (root / "tools/go/go.mod").write_bytes(b"module tools\n")
+        return root, Path(temp) / "cache"
+
+    @staticmethod
+    def fake_toolchain_runner(fail=None, calls=None):
+        """A provisioning runner that builds a venv directory and fails the named step."""
+        def runner(cmd, cwd=None, env=None, timeout=None):
+            if calls is not None:
+                calls.append(cmd)
+            step = "venv" if "venv" in cmd else "pip" if "pip" in cmd else "go"
+            if step == fail:
+                raise HookError(f"{step} execution error")
+            if step == "venv":
+                venv_bin(Path(cmd[-1])).mkdir(parents=True)
+            return b""
+        return runner
+
+    def test_prepush_hook_lint_provisioning_builds_once_and_reuses(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, cache_home = self.hook_lint_repo(temp)
+            calls = []
+            runner = self.fake_toolchain_runner(calls=calls)
+            with mock.patch("shutil.which", return_value="/usr/bin/go"):
+                first = provision_hook_lint(root, cache_home=cache_home, runner=runner)
+                self.assertEqual(len(calls), 3)
+                self.assertEqual(provision_hook_lint(root, cache_home=cache_home, runner=runner), first)
+            self.assertEqual(len(calls), 3, "the second call runs no installer")
+            self.assertTrue(first.is_dir())
+            self.assertEqual(first.parent.parent, hook_lint_cache_root(cache_home))
+            # The venv is used where it was built: no rename, so its scripts keep their path.
+            self.assertIn(str(first.parent), " ".join(calls[0]))
+
+    def test_prepush_hook_lint_rebuilds_when_the_build_is_gone_or_python_changed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, cache_home = self.hook_lint_repo(temp)
+            calls = []
+            runner = self.fake_toolchain_runner(calls=calls)
+            with mock.patch("shutil.which", return_value="/usr/bin/go"):
+                first = provision_hook_lint(root, cache_home=cache_home, runner=runner)
+                shutil.rmtree(first.parent)
+                second = provision_hook_lint(root, cache_home=cache_home, runner=runner)
+                self.assertEqual(len(calls), 6, "a pointer to a removed build builds again")
+                self.assertTrue(second.is_dir())
+                digest = hook_lint_digest(root)
+                with mock.patch("checks.sys.version", "another interpreter"):
+                    self.assertNotEqual(hook_lint_digest(root), digest)
+
+    def test_prepush_hook_lint_provisioning_failure_leaves_nothing_and_names_step(self):
+        cases = (("venv", "/usr/bin/go", "python3 -m venv"),
+                 ("pip", "/usr/bin/go", "pip install --require-hashes"),
+                 (None, None, "go install -modfile"),
+                 ("go", "/usr/bin/go", "go install -modfile"))
+        for fail, go_path, command in cases:
+            with self.subTest(fail=fail, go=go_path), tempfile.TemporaryDirectory() as temp:
+                root, cache_home = self.hook_lint_repo(temp)
+                with mock.patch("shutil.which", return_value=go_path), self.assertRaises(HookError) as cm:
+                    provision_hook_lint(root, cache_home=cache_home, runner=self.fake_toolchain_runner(fail))
+                self.assertIn("hook lint toolchain provisioning failed", str(cm.exception))
+                self.assertIn(command, str(cm.exception))
+                self.assertEqual(list(hook_lint_cache_root(cache_home).iterdir()), [],
+                                 "neither a build folder nor a pointer stays behind")
+
+    @unittest.skipIf(os.name == "nt", POSIX_STUB)
+    def test_prepush_hook_lint_planted_stub_toolchain_end_to_end(self):
+        """Planted: the real suite passes on stub tools at the pins and fails on a rejecting black."""
+        with tempfile.TemporaryDirectory() as temp:
+            fake_bin = Path(temp) / "bin"
+            fake_bin.mkdir()
+            module = load_hook_lint(ROOT)
+            pins = module.toolchain_pins()
+
+            for tool in (*module.TOOLS, *module.GO_PINNED_TOOLS):
+                version = pins[tool]
+                stub = fake_bin / tool
+                stub.write_text(f"""#!/bin/sh
+if [ "$1" = "--version" ]; then
+    echo "{tool} {version}"
+    exit 0
+fi
+exit 0
+""")
+                stub.chmod(0o755)
+
+            # Passing case: command carrying PRAETOR_HOOK_LINT_BIN=fake_bin passes parallel file check
+            cmd_pass = Command([sys.executable, "-B", "scripts/test_emitted_hook_lint.py",
+                                "EmittedSourcesTest.test_black_accepts_hook_python"],
+                               env={HOOK_LINT_BIN_ENV: str(fake_bin)})
+            parallel([cmd_pass], ROOT)
+
+            # Planted rejecting black: stub black exits 1
+            stub_black = fake_bin / "black"
+            stub_black.write_text(f"""#!/bin/sh
+if [ "$1" = "--version" ]; then
+    echo "black {pins['black']}"
+    exit 0
+fi
+echo "planted black formatting refusal" >&2
+exit 1
+""")
+            stub_black.chmod(0o755)
+
+            cmd_fail = Command([sys.executable, "-B", "scripts/test_emitted_hook_lint.py",
+                                "EmittedSourcesTest.test_black_accepts_hook_python"],
+                               env={HOOK_LINT_BIN_ENV: str(fake_bin)})
+            with self.assertRaises(HookError) as cm:
+                parallel([cmd_fail], ROOT)
+            self.assertIn("exited 1", str(cm.exception))
+            self.assertIn("planted black formatting refusal", str(cm.exception))
 
     def test_local_package_patterns_confine_actual_go_metadata(self):
         with tempfile.TemporaryDirectory(prefix="praetor-package-dirs-") as temp:

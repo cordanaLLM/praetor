@@ -229,6 +229,8 @@ type adoptSession struct {
 	// (registerSkillSources) so the preflight, the Paperclip harness the manifest step binds, the
 	// register block and the install agree on it (#235).
 	registerSkills registerSkillPlan
+	// agentClients is the manifest's agent_clients selection; nil selects every client.
+	agentClients []string
 	// dryRunWrites holds, in a dry run only, what each file the run would scaffold or remove
 	// comes to (planDryRunWrite, planDryRunRemoval), so a later step previews against the tree
 	// the run leaves rather than the one on disk.

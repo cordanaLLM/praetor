@@ -44,9 +44,14 @@ rules:
 	adoptHarnessForCoverage(t, repo)
 
 	harness := agentsHarness(t, repo)
-	for _, want := range []string{"partial (go): fixture scanner", "manual (go): peer review", "unsupported (go): none", "| **HISS-05**"} {
+	for _, want := range []string{"partial (go): .config/hiss/coverage.yaml", "manual (go): .config/hiss/coverage.yaml", "unsupported (go): .config/hiss/coverage.yaml", "| **HISS-05**"} {
 		if !strings.Contains(harness, want) {
 			t.Errorf("forced harness lacks %q", want)
+		}
+	}
+	for _, prose := range []string{"fixture scanner", "peer review"} {
+		if strings.Contains(harness, prose) {
+			t.Errorf("forced harness inlines the mechanism %q", prose)
 		}
 	}
 	if rowFor(t, harness, "HISS-05") == "" || !strings.Contains(rowFor(t, harness, "HISS-05"), "unknown") {

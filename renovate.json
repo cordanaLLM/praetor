@@ -214,6 +214,13 @@
       "groupName": "react tools/figures"
     },
     {
+      "description": "tools/figures Sätteri: keep tools/figures satteri and docs/presets/starlight paired. The Starlight preset lock decides the pin; satteri in tools/figures moves only when the preset lock moves.",
+      "matchManagers": ["npm"],
+      "matchFileNames": ["tools/figures/**"],
+      "matchPackageNames": ["satteri"],
+      "enabled": false
+    },
+    {
       "description": "Hook lint toolchain: requirements.txt is the hashed lock the pip-compile manager compiles from requirements.in, so pip_requirements must not rewrite it on its own.",
       "matchManagers": ["pip_requirements"],
       "matchFileNames": [".config/hook-lint/requirements.txt", ".config/reuse/requirements.txt"],

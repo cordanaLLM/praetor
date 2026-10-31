@@ -158,15 +158,17 @@ Every dependency manifest must be cryptographically pinned:
 - Pinned lockfiles mandatory (`go.sum`, `Cargo.lock`, `pnpm-lock.yaml`).
 - Zero floating tags (e.g. `:latest`) in container deployments.
 - `praetorctl audit` and the MCP `standards_audit` scan `Dockerfile` / `Containerfile` `FROM`,
-  compose, Kubernetes and Helm `image:`, GitHub Actions `container:` / `services.*.image` /
-  `uses: docker://`, `devcontainer.json` `image`, and fully qualified container image string
-  literals in source files (`internal/supplychain.ScanImageRefs`), failing on any resolvable
-  reference lacking an `@sha256:` digest pin unless recorded in `.standards-baseline.json`
-  (`rule_id: "HISS-11"`, via `praetorctl baseline --record-image-refs --reason "<why>"` or recorded
-  once at adoption) or excused by a live `HISS-11` entry in `.standards.yaml`. Unresolvable
-  references (template expressions, build arguments, or shell variables) and links that leave the
-  repository, which are never followed, are reported via `[INFO]`
-  with their count and sample locations and are not judged as blocking violations.
+  compose, Kubernetes and Helm `image:`, GitHub Actions `jobs.<id>.container`,
+  `jobs.<id>.container.image`, `jobs.<id>.services.<name>.image` and `jobs.<id>.steps[].uses`
+  starting with `docker://` (`internal/ghworkflow.Parse`), `devcontainer.json` `image`, and fully
+  qualified container image string literals in source files (`internal/supplychain.ScanImageRefs`),
+  failing on any resolvable reference lacking an `@sha256:` digest pin unless recorded in
+  `.standards-baseline.json` (`rule_id: "HISS-11"`, via `praetorctl baseline --record-image-refs --reason "<why>"` or recorded
+  once at adoption) or excused by a live `HISS-11` entry in `.standards.yaml`. References whose
+  registry host is `invalid` or ends in `.invalid` (RFC 2606) are ignored; unresolvable references
+  (template expressions, build arguments, shell variables, `@NAME@` substitution tokens, or an
+  unparseable workflow) and links that leave the repository, which are never followed, are reported
+  via `[INFO]` with their count and sample locations and are not judged as blocking violations.
 - SLSA provenance at the declared `supply_chain.slsa_level` and Sigstore Cosign signatures on all
   released binaries.
 - `praetorctl audit` and the MCP `standards_audit` measure the SLSA Build level, cosign signing

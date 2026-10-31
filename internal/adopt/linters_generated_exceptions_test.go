@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,22 @@ func sampleConfigContent(handRule, blockRules string) string {
 	return sb.String()
 }
 
+func sampleIssueText(linter, fn string) string {
+	if fn == "" {
+		fn = "TestSample"
+	}
+	switch linter {
+	case "gocyclo":
+		return "cyclomatic complexity 15 of func `" + fn + "` is high (> 11)"
+	case "gocognit":
+		return "cognitive complexity 20 of func `" + fn + "` is high (> 16)"
+	case "funlen":
+		return "Function '" + fn + "' is too long (70 > 58)"
+	default:
+		return "use of forbidden identifier"
+	}
+}
+
 func sampleReportJSON(t *testing.T, pairs []LinterPair) []byte {
 	t.Helper()
 	rep := golangciReport{
@@ -39,6 +56,7 @@ func sampleReportJSON(t *testing.T, pairs []LinterPair) []byte {
 	for i, p := range pairs {
 		rep.Issues[i] = golangciIssue{
 			FromLinter: p.Linter,
+			Text:       sampleIssueText(p.Linter, p.Function),
 			Pos: golangciPosition{
 				Filename: p.File,
 			},
@@ -171,9 +189,11 @@ func TestGenerateExceptions_FormatAndOrder_Positive(t *testing.T) {
 	handRule := "      # category A, expires 2026-12-01, #100\n      - path: internal/hand/\n        linters:\n          - forbidigo"
 	cfgContent := sampleConfigContent(handRule, "")
 	pairs := []LinterPair{
-		{File: "internal/pkg/b_test.go", Linter: "gocognit"},
-		{File: "internal/pkg/a_test.go", Linter: "gocyclo"},
-		{File: "internal/pkg/a_test.go", Linter: "funlen"},
+		{File: "internal/pkg/b_test.go", Linter: "forbidigo"},
+		{File: "internal/pkg/b_test.go", Linter: "gocognit", Function: "TestBeta"},
+		{File: "internal/pkg/a_test.go", Linter: "gocyclo", Function: "TestZeta"},
+		{File: "internal/pkg/a_test.go", Linter: "gocyclo", Function: "TestAlpha"},
+		{File: "internal/pkg/a_test.go", Linter: "funlen", Function: "TestLong"},
 	}
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
 	today := parseTestDate(t, "2026-10-18")
@@ -191,10 +211,15 @@ func TestGenerateExceptions_FormatAndOrder_Positive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateExceptions failed: %v", err)
 	}
-	if res.ExitCode != 0 || !res.Written || res.Count != 3 {
+	if res.ExitCode != 0 || !res.Written || res.Count != 5 {
 		t.Fatalf("unexpected result: code=%d written=%v count=%d", res.ExitCode, res.Written, res.Count)
 	}
 
+	assertFormattedGeneratedOrder(t, cfgPath, handRule)
+}
+
+func assertFormattedGeneratedOrder(t *testing.T, cfgPath, handRule string) {
+	t.Helper()
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
 		t.Fatalf("read config: %v", err)
@@ -203,20 +228,30 @@ func TestGenerateExceptions_FormatAndOrder_Positive(t *testing.T) {
 	if !strings.Contains(result, handRule) {
 		t.Errorf("hand rule modified:\n%s", result)
 	}
-
-	expectedSnippet := "      # category C, entered 2026-10-18, expires 2026-10-28, #1030\n" +
+	expectedSnippet := "      # baseline #1030\n" +
 		"      - path: ^internal/pkg/a_test\\.go$\n" +
 		"        linters:\n" +
 		"          - funlen\n" +
-		"      # category C, entered 2026-10-18, expires 2026-10-28, #1030\n" +
+		"        text: Function 'TestLong'\n" +
+		"      # baseline #1030\n" +
 		"      - path: ^internal/pkg/a_test\\.go$\n" +
 		"        linters:\n" +
 		"          - gocyclo\n" +
+		"        text: func `TestAlpha`\n" +
+		"      # baseline #1030\n" +
+		"      - path: ^internal/pkg/a_test\\.go$\n" +
+		"        linters:\n" +
+		"          - gocyclo\n" +
+		"        text: func `TestZeta`\n" +
 		"      # category C, entered 2026-10-18, expires 2026-10-28, #1030\n" +
 		"      - path: ^internal/pkg/b_test\\.go$\n" +
 		"        linters:\n" +
-		"          - gocognit\n"
-
+		"          - forbidigo\n" +
+		"      # baseline #1030\n" +
+		"      - path: ^internal/pkg/b_test\\.go$\n" +
+		"        linters:\n" +
+		"          - gocognit\n" +
+		"        text: func `TestBeta`\n"
 	if !strings.Contains(result, expectedSnippet) {
 		t.Errorf("generated block order/format mismatch. Expected snippet:\n%s\nGot:\n%s", expectedSnippet, result)
 	}
@@ -226,19 +261,19 @@ func TestGenerateExceptions_Ratchet_Positive_LowerCountRenews(t *testing.T) {
 	oldBlock := "      # category C, entered 2026-10-01, expires 2026-10-11, #1030\n" +
 		"      - path: ^internal/a_test\\.go$\n" +
 		"        linters:\n" +
-		"          - funlen\n" +
+		"          - forbidigo\n" +
 		"      # category C, entered 2026-10-01, expires 2026-10-11, #1030\n" +
 		"      - path: ^internal/a_test\\.go$\n" +
 		"        linters:\n" +
-		"          - gocyclo\n" +
+		"          - noctx\n" +
 		"      # category C, entered 2026-10-01, expires 2026-10-11, #1030\n" +
 		"      - path: ^internal/b_test\\.go$\n" +
 		"        linters:\n" +
-		"          - gocognit\n"
+		"          - forbidigo\n"
 	cfgContent := sampleConfigContent("", oldBlock)
 	pairs := []LinterPair{
-		{File: "internal/a_test.go", Linter: "funlen"},
-		{File: "internal/a_test.go", Linter: "gocyclo"},
+		{File: "internal/a_test.go", Linter: "forbidigo"},
+		{File: "internal/a_test.go", Linter: "noctx"},
 	}
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
 	today := parseTestDate(t, "2026-10-18")
@@ -274,14 +309,15 @@ func TestGenerateExceptions_Ratchet_Positive_LowerCountRenews(t *testing.T) {
 }
 
 func TestGenerateExceptions_Ratchet_Negative_NewFindingRefused(t *testing.T) {
-	block := "      # category C, entered 2026-10-18, expires 2026-10-28, #1030\n" +
+	block := "      # baseline #1030\n" +
 		"      - path: ^internal/a_test\\.go$\n" +
 		"        linters:\n" +
-		"          - gocyclo\n"
+		"          - gocyclo\n" +
+		"        text: func `TestAlpha`\n"
 	cfgContent := sampleConfigContent("", block)
 	pairs := []LinterPair{
-		{File: "internal/a_test.go", Linter: "gocyclo"},
-		{File: "internal/b_test.go", Linter: "gocognit"},
+		{File: "internal/a_test.go", Linter: "gocyclo", Function: "TestAlpha"},
+		{File: "internal/b_test.go", Linter: "forbidigo"},
 	}
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
 	today := parseTestDate(t, "2026-10-18")
@@ -302,7 +338,7 @@ func TestGenerateExceptions_Ratchet_Negative_NewFindingRefused(t *testing.T) {
 	if res.ExitCode != 3 || res.Written {
 		t.Fatalf("expected exit 3 and no write, got code=%d written=%v", res.ExitCode, res.Written)
 	}
-	expectedMsg := "new finding in internal/b_test.go (gocognit): fix it, a generated exception never grows"
+	expectedMsg := "new finding in internal/b_test.go (forbidigo): fix it, a generated exception never grows"
 	if !strings.Contains(res.Message, expectedMsg) {
 		t.Errorf("message mismatch. Want %q, got %q", expectedMsg, res.Message)
 	}
@@ -312,15 +348,15 @@ func TestGenerateExceptions_Ratchet_Negative_ExpiredRefused(t *testing.T) {
 	block := "      # category C, entered 2026-10-01, expires 2026-10-11, #1030\n" +
 		"      - path: ^internal/a_test\\.go$\n" +
 		"        linters:\n" +
-		"          - funlen\n" +
+		"          - forbidigo\n" +
 		"      # category C, entered 2026-10-01, expires 2026-10-11, #1030\n" +
 		"      - path: ^internal/a_test\\.go$\n" +
 		"        linters:\n" +
-		"          - gocyclo\n"
+		"          - noctx\n"
 	cfgContent := sampleConfigContent("", block)
 	pairs := []LinterPair{
-		{File: "internal/a_test.go", Linter: "funlen"},
-		{File: "internal/a_test.go", Linter: "gocyclo"},
+		{File: "internal/a_test.go", Linter: "forbidigo"},
+		{File: "internal/a_test.go", Linter: "noctx"},
 	}
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
 	today := parseTestDate(t, "2026-10-18")
@@ -351,15 +387,15 @@ func TestGenerateExceptions_Ratchet_Boundary_LiveEntriesNoOp(t *testing.T) {
 	block := "      # category C, entered 2026-10-18, expires 2026-10-28, #1030\n" +
 		"      - path: ^internal/a_test\\.go$\n" +
 		"        linters:\n" +
-		"          - funlen\n" +
+		"          - forbidigo\n" +
 		"      # category C, entered 2026-10-18, expires 2026-10-28, #1030\n" +
 		"      - path: ^internal/a_test\\.go$\n" +
 		"        linters:\n" +
-		"          - gocyclo\n"
+		"          - noctx\n"
 	cfgContent := sampleConfigContent("", block)
 	pairs := []LinterPair{
-		{File: "internal/a_test.go", Linter: "funlen"},
-		{File: "internal/a_test.go", Linter: "gocyclo"},
+		{File: "internal/a_test.go", Linter: "forbidigo"},
+		{File: "internal/a_test.go", Linter: "noctx"},
 	}
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
 	today := parseTestDate(t, "2026-10-18")
@@ -387,14 +423,15 @@ func TestGenerateExceptions_Ratchet_Boundary_LiveEntriesNoOp(t *testing.T) {
 }
 
 func TestGenerateExceptions_PlantedGocycloNewFinding(t *testing.T) {
-	block := "      # category C, entered 2026-10-18, expires 2026-10-28, #1030\n" +
+	block := "      # baseline #1030\n" +
 		"      - path: ^internal/existing_test\\.go$\n" +
 		"        linters:\n" +
-		"          - gocyclo\n"
+		"          - gocyclo\n" +
+		"        text: func `TestExisting`\n"
 	cfgContent := sampleConfigContent("", block)
 	pairs := []LinterPair{
-		{File: "internal/existing_test.go", Linter: "gocyclo"},
-		{File: "internal/planted_test.go", Linter: "gocyclo"},
+		{File: "internal/existing_test.go", Linter: "gocyclo", Function: "TestExisting"},
+		{File: "internal/existing_test.go", Linter: "gocyclo", Function: "TestPlantedNewFunc"},
 	}
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
 	today := parseTestDate(t, "2026-10-18")
@@ -413,10 +450,134 @@ func TestGenerateExceptions_PlantedGocycloNewFinding(t *testing.T) {
 		t.Fatalf("GenerateExceptions error: %v", err)
 	}
 	if res.ExitCode != 3 || res.Written {
-		t.Fatalf("expected exit 3 refusing planted finding, got code=%d written=%v", res.ExitCode, res.Written)
+		t.Fatalf("expected exit 3 refusing planted finding in already baselined file, got code=%d written=%v", res.ExitCode, res.Written)
 	}
-	if !strings.Contains(res.Message, "planted_test.go (gocyclo)") {
-		t.Errorf("refusal message missing planted_test.go: %s", res.Message)
+	want := "new finding in internal/existing_test.go (gocyclo) TestPlantedNewFunc: fix it, a generated exception never grows"
+	if !strings.Contains(res.Message, want) {
+		t.Errorf("refusal message = %q, want %q", res.Message, want)
+	}
+}
+
+func TestGenerateExceptions_BaselineShrinkAndHold(t *testing.T) {
+	block := "      # baseline #1030\n" +
+		"      - path: ^internal/existing_test\\.go$\n" +
+		"        linters:\n" +
+		"          - gocyclo\n" +
+		"        text: func `TestCleaned`\n" +
+		"      # baseline #1030\n" +
+		"      - path: ^internal/existing_test\\.go$\n" +
+		"        linters:\n" +
+		"          - gocyclo\n" +
+		"        text: func `TestStillOverCap`\n" +
+		"      # category C, entered 2026-10-10, expires 2026-10-20, #1030\n" +
+		"      - path: ^internal/existing_test\\.go$\n" +
+		"        linters:\n" +
+		"          - forbidigo\n"
+	cfgContent := sampleConfigContent("", block)
+	pairs := []LinterPair{
+		{File: "internal/existing_test.go", Linter: "forbidigo"},
+		{File: "internal/existing_test.go", Linter: "gocyclo", Function: "TestStillOverCap"},
+	}
+	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
+	today := parseTestDate(t, "2026-10-18")
+
+	res, err := GenerateExceptions(GenerateExceptionsOptions{
+		ConfigPath: cfgPath, ReportPath: repPath, Issue: 1030, Category: "C", Today: today, Write: true,
+	})
+	if err != nil || res.ExitCode != 0 || !res.Written || res.Count != 2 {
+		t.Fatalf("shrink baseline: err=%v res=%+v", err, res)
+	}
+	assertBaselineShrunkAndDatedPreserved(t, cfgPath, repPath, today)
+}
+
+func assertBaselineShrunkAndDatedPreserved(t *testing.T, cfgPath, repPath string, today time.Time) {
+	t.Helper()
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Contains(text, "TestCleaned") {
+		t.Errorf("cleaned function was not dropped:\n%s", text)
+	}
+	if !strings.Contains(text, "TestStillOverCap") {
+		t.Errorf("remaining function was dropped:\n%s", text)
+	}
+	// forbidigo count did not drop, so its dates must not advance to 2026-10-18.
+	if !strings.Contains(text, "entered 2026-10-10, expires 2026-10-20") {
+		t.Errorf("dated forbidigo rule dates moved without a lower dated count:\n%s", text)
+	}
+	res2, err := GenerateExceptions(GenerateExceptionsOptions{
+		ConfigPath: cfgPath, ReportPath: repPath, Issue: 1030, Category: "C", Today: today, Write: true,
+	})
+	if err != nil || res2.ExitCode != 0 || res2.Written {
+		t.Fatalf("second run should be unchanged no-op: err=%v res=%+v", err, res2)
+	}
+}
+
+func TestGenerateExceptions_TextRegexp_DelimitersAndQuoting(t *testing.T) {
+	cases := []struct {
+		linter   string
+		fn       string
+		wantRe   string
+		matchMsg string
+		noMatch  string
+	}{
+		{
+			linter:   "gocyclo",
+			fn:       "TestX",
+			wantRe:   "func `TestX`",
+			matchMsg: "cyclomatic complexity 14 of func `TestX` is high (> 11)",
+			noMatch:  "cyclomatic complexity 14 of func `TestXY` is high (> 11)",
+		},
+		{
+			linter:   "funlen",
+			fn:       "TestX",
+			wantRe:   "Function 'TestX'",
+			matchMsg: "Function 'TestX' is too long (65 > 58)",
+			noMatch:  "Function 'TestXY' is too long (65 > 58)",
+		},
+		{
+			linter:   "gocognit",
+			fn:       "(*forgeStub).handler",
+			wantRe:   `func ` + "`" + `\(\*forgeStub\)\.handler` + "`",
+			matchMsg: "cognitive complexity 22 of func `(*forgeStub).handler` is high (> 16)",
+			noMatch:  "cognitive complexity 22 of func `(forgeStub).handler` is high (> 16)",
+		},
+		{
+			linter:   "gocyclo",
+			fn:       "TestMeta[pkg.Type+1]($a|^b?)",
+			wantRe:   `func ` + "`" + `TestMeta\[pkg\.Type\+1\]\(\$a\|\^b\?\)` + "`",
+			matchMsg: "cyclomatic complexity 12 of func `TestMeta[pkg.Type+1]($a|^b?)` is high (> 11)",
+			noMatch:  "cyclomatic complexity 12 of func `TestMeta[pkgXType+1]($a|^b?)` is high (> 11)",
+		},
+	}
+	for _, tc := range cases {
+		assertTextRegexpCase(t, tc.linter, tc.fn, tc.wantRe, tc.matchMsg, tc.noMatch)
+	}
+}
+
+func assertTextRegexpCase(t *testing.T, linter, fn, wantRe, matchMsg, noMatch string) {
+	t.Helper()
+	gotRe := functionTextRegexp(linter, fn)
+	if gotRe != wantRe {
+		t.Fatalf("%s(%q) regexp = %q, want %q", linter, fn, gotRe, wantRe)
+	}
+	re, err := regexp.Compile(gotRe)
+	if err != nil {
+		t.Fatalf("compile %q: %v", gotRe, err)
+	}
+	if !re.MatchString(matchMsg) {
+		t.Errorf("regexp %q did not match %q", gotRe, matchMsg)
+	}
+	if re.MatchString(noMatch) {
+		t.Errorf("regexp %q matched %q", gotRe, noMatch)
+	}
+	if extracted := extractIssueFunction(linter, matchMsg); extracted != fn {
+		t.Errorf("extractIssueFunction(%q, %q) = %q, want %q", linter, matchMsg, extracted, fn)
+	}
+	if unquoted := unquoteRuleText(linter, gotRe); unquoted != fn {
+		t.Errorf("unquoteRuleText(%q, %q) = %q, want %q", linter, gotRe, unquoted, fn)
 	}
 }
 
@@ -430,8 +591,8 @@ func writeSameLineTestFiles(t *testing.T) (string, string) {
 	}
 	repJSON := `{
 		"Issues": [
-			{"FromLinter": "gocyclo", "Pos": {"Filename": "internal/pkg/foo.go", "Line": 42}},
-			{"FromLinter": "gocognit", "Pos": {"Filename": "internal/pkg/foo.go", "Line": 42}}
+			{"FromLinter": "gocyclo", "Text": "cyclomatic complexity 14 of func ` + "`TestSameLine`" + ` is high (> 11)", "Pos": {"Filename": "internal/pkg/foo.go", "Line": 42}},
+			{"FromLinter": "gocognit", "Text": "cognitive complexity 19 of func ` + "`TestSameLine`" + ` is high (> 16)", "Pos": {"Filename": "internal/pkg/foo.go", "Line": 42}}
 		]
 	}`
 	repPath := filepath.Join(dir, "report.json")

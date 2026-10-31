@@ -272,5 +272,14 @@ governance:
 # model: haiku | sonnet | opus | fable; effort: low | medium | high | xhigh | max
 # Omit effort to keep the session default. Explicit model or effort in a call wins.
 # Unlisted labels keep session role defaults. Change a label only after a measured
-# pass rate at fewer tokens supports the change; no routes are enabled initially.
-claude_subagent: {}
+# pass rate at fewer tokens or lower cost supports the change, and revert one whose
+# pass rate drops.
+claude_subagent:
+    # Planted-defect probes, 20 runs per arm: haiku found 80 of 80 with no false
+    # positive; no arm can beat that, and sonnet at medium effort found 80 of 80 with 1.
+    pr_body_check:
+        model: haiku
+    # Planted-defect probes, 21 runs per arm: haiku found 103 of 105 with 1 false
+    # positive, sonnet at medium effort 102 of 105 with 1.
+    single_file_audits:
+        model: haiku

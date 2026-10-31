@@ -118,3 +118,46 @@ func TestAdopt_Boundary_AbsentSelectionKeepsEverySurface(t *testing.T) {
 		t.Errorf("absent keys reported surfaces not applicable: %v", rep.ActionDetails)
 	}
 }
+
+// forceAdoptWithClients rewrites the manifest at repoPath to manifest (when not empty) and runs
+// adopt --force over it.
+func forceAdoptWithClients(t *testing.T, repoPath, lockSource, manifest string) error {
+	t.Helper()
+	if manifest != "" {
+		mustWrite(t, filepath.Join(repoPath, manifestFile), manifest)
+	}
+	_, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: lockSource, Path: repoPath, Force: true})
+	return err
+}
+
+// requireWindsurfCapFailure fails unless err names .windsurfrules and its size against the cap.
+func requireWindsurfCapFailure(t *testing.T, err error, scenario string) {
+	t.Helper()
+	if err == nil || !strings.Contains(err.Error(), ".windsurfrules") || !strings.Contains(err.Error(), "> 12000") {
+		t.Fatalf("%s: want a failure naming .windsurfrules and its sizes, got: %v", scenario, err)
+	}
+}
+
+// TestAdopt_ClientSelectionSizeCaps proves adopt --force enforces a client size cap only for a
+// client agent_clients keeps: an undeclared client over its cap passes, a declared one fails
+// naming the file and sizes, and a manifest without agent_clients caps every client as before.
+func TestAdopt_ClientSelectionSizeCaps(t *testing.T) {
+	lockSource := newAdoptLockSource(t)
+	tail := strings.Repeat("- repository rule line kept across force refresh of the harness (padding to exceed windsurf cap).\n", 100)
+
+	repoPath, _, err := adoptWithManifest(t, "cap-undeclared-windsurf",
+		"version: 1\nagent_clients: [claude, codex, gemini]\n")
+	if err != nil {
+		t.Fatalf("initial Adopt: %v", err)
+	}
+	agentsPath := filepath.Join(repoPath, agentsFile)
+	mustWrite(t, agentsPath, mustRead(t, agentsPath)+harnessSeparator+"\n"+tail)
+
+	if err := forceAdoptWithClients(t, repoPath, lockSource, ""); err != nil {
+		t.Fatalf("undeclared .windsurfrules over its cap failed adopt --force: %v", err)
+	}
+	err = forceAdoptWithClients(t, repoPath, lockSource, "version: 1\nagent_clients: [claude, windsurf]\n")
+	requireWindsurfCapFailure(t, err, "declared windsurf")
+	err = forceAdoptWithClients(t, repoPath, lockSource, "version: 1\n")
+	requireWindsurfCapFailure(t, err, "absent agent_clients")
+}

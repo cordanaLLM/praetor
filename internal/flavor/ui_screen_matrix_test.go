@@ -49,7 +49,11 @@ func TestAuditUIGatesScreenMatrix(t *testing.T) {
 			if tc.data != "" {
 				writeMatrixFixture(t, dir, tc.data, tc.reference)
 			}
-			manifest := &config.Manifest{UI: &config.UIPolicy{InputLatencyMs: 100, ScreenMatrix: "screen-matrix.json"}}
+			manifest := &config.Manifest{UI: &config.UIPolicy{
+				InputLatencyMs:     100,
+				InputLatencySource: "cordanaLLM/Aegis-OS@7828da5640001111222233334444555566667777:evidence/latency.json",
+				ScreenMatrix:       "screen-matrix.json",
+			}}
 			line, err := flavor.AuditUIGates(dir, manifest)
 			if !strings.Contains(line, "schema validation pending A11Y-CHECK1 pin (sveltesentio-a11y-matrix-check-20261028)") {
 				t.Fatalf("missing pending line: %q", line)

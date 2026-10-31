@@ -242,18 +242,41 @@ func TestFromModuleVersion_3D(t *testing.T) {
 // TestFromLockVersion_3D tests parsing .standards.lock pinned_version across positive,
 // negative, and boundary shapes.
 func TestFromLockVersion_3D(t *testing.T) {
-	for pinned, want := range map[string]Identity{
-		"v0.0.0+32a35c8":       {Revision: "32a35c8"},
-		"v0.0.0+32a35c8.dirty": {Revision: "32a35c8", Modified: true},
-		"v1.2.3":               {Release: "v1.2.3"},
-		"32a35c8":              {Revision: "32a35c8"},
-		"":                     {Unknown: "empty lock version"},
-		"   ":                  {Unknown: "empty lock version"},
-		"invalid":              {Unknown: "unrecognized lock version"},
-	} {
+	for pinned, want := range lockVersionCases() {
 		if got := FromLockVersion(pinned); got != want {
 			t.Errorf("FromLockVersion(%q) = %+v, want %+v", pinned, got, want)
 		}
+	}
+	catalogID := FromLockVersion("v0.0.0+catalog.abc123")
+	if catalogID.Identified() || !strings.Contains(catalogID.Unknown, "catalog") {
+		t.Errorf("catalog lock must be unidentified with catalog reason, got %+v", catalogID)
+	}
+}
+
+// lockVersionCases lists pinned_version values with the identity each proves: engine revisions
+// and releases keep their identity, a catalog lock (v0.0.0+catalog.<hex>) names no engine, and
+// a catalog spelling without the exact dot-hex form stays the revision it reads as.
+func lockVersionCases() map[string]Identity {
+	const catalogReason = "catalog lock, not an engine build"
+	return map[string]Identity{
+		"v0.0.0+32a35c8":              {Revision: "32a35c8"},
+		"v0.0.0+32a35c8.dirty":        {Revision: "32a35c8", Modified: true},
+		"v0.0.0+abc1234":              {Revision: "abc1234"},
+		"v0.0.0+abc1234.dirty":        {Revision: "abc1234", Modified: true},
+		"v0.0.0+deadbeefcafe":         {Revision: "deadbeefcafe"},
+		"deadbeefcafe":                {Revision: "deadbeefcafe"},
+		"v0.0.0+catalog":              {Revision: "catalog"},
+		"v0.0.0+catalogabc":           {Revision: "catalogabc"},
+		"v0.0.0+catalog.zzz":          {Revision: "catalog"},
+		"v0.0.0+catalog.abc123.dirty": {Revision: "catalog"},
+		"v0.0.0+catalog.dirty":        {Revision: "catalog", Modified: true},
+		"v0.0.0+catalog.abc123":       {Unknown: catalogReason},
+		"v0.0.0+catalog.25451d888c87": {Unknown: catalogReason},
+		"v1.2.3":                      {Release: "v1.2.3"},
+		"32a35c8":                     {Revision: "32a35c8"},
+		"":                            {Unknown: "empty lock version"},
+		"   ":                         {Unknown: "empty lock version"},
+		"invalid":                     {Unknown: "unrecognized lock version"},
 	}
 }
 
