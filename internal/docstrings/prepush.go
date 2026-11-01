@@ -6,7 +6,6 @@ package docstrings
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -85,7 +84,7 @@ func parsePrePushLine(line string) (PrePushUpdate, error) {
 		return PrePushUpdate{}, fmt.Errorf("pre-push stdin line exceeds %d bytes", maxPrePushLineBytes)
 	}
 	fields := strings.Fields(line)
-	if len(fields) != 4 || !isValidHexOID(fields[1]) || !isValidHexOID(fields[3]) {
+	if len(fields) != 4 || !util.ValidGitObjectID(fields[1]) || !util.ValidGitObjectID(fields[3]) {
 		return PrePushUpdate{}, fmt.Errorf("malformed pre-push ref input %q: expected <local-ref> <local-oid> <remote-ref> <remote-oid>", line)
 	}
 	return PrePushUpdate{
@@ -94,16 +93,6 @@ func parsePrePushLine(line string) (PrePushUpdate, error) {
 		RemoteRef: fields[2],
 		RemoteOID: fields[3],
 	}, nil
-}
-
-// isValidHexOID reports whether oid is a 40- or 64-character hexadecimal object ID
-// (SHA-1 or SHA-256 repositories).
-func isValidHexOID(oid string) bool {
-	if len(oid) != 40 && len(oid) != 64 {
-		return false
-	}
-	_, err := hex.DecodeString(oid)
-	return err == nil
 }
 
 // isZeroOID reports whether oid consists entirely of '0' characters.

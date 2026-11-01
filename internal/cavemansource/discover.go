@@ -2,7 +2,6 @@ package cavemansource
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -300,7 +299,7 @@ func splitTrackedSourceIndex(data []byte) ([]string, error) {
 func parseTrackedSourceIndexEntry(entry string) (string, error) {
 	metadata, path, ok := strings.Cut(entry, "\t")
 	fields := strings.Fields(metadata)
-	if !ok || len(fields) != 3 || !validGitObjectID(fields[1]) || fields[2] != "0" || path == "" {
+	if !ok || len(fields) != 3 || !util.ValidGitObjectID(fields[1]) || fields[2] != "0" || path == "" {
 		return "", errors.New("tracked caveman source index contains malformed entry")
 	}
 	normalized := filepath.ToSlash(path)
@@ -312,12 +311,4 @@ func parseTrackedSourceIndexEntry(entry string) (string, error) {
 	default:
 		return "", fmt.Errorf("caveman source %s has unsupported index mode %s", normalized, fields[0])
 	}
-}
-
-func validGitObjectID(value string) bool {
-	if len(value) != 40 && len(value) != 64 {
-		return false
-	}
-	_, err := hex.DecodeString(value)
-	return err == nil
 }
