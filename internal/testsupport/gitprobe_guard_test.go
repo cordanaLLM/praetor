@@ -10,8 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // TestGitProbeGuard_Repository_ScansTrackedTestFiles scans tracked *_test.go files
@@ -29,44 +27,50 @@ func TestGitProbeGuard_Repository_ScansTrackedTestFiles(t *testing.T) {
 	}
 }
 
-// TestGitProbeGuard_Planted tests detection of planted mutating and read-only probe calls.
+func writeProbeFixtureFile(t *testing.T, dir, name string, src []byte) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, src, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func assertSingleFinding(t *testing.T, label, file string, src []byte, wantSubcmd string) {
+	t.Helper()
+	findings, err := ScanProbeMutations(file, src)
+	if err != nil || len(findings) != 1 || findings[0].Subcommand != wantSubcmd {
+		t.Fatalf("%s: want 1 finding %q, got err=%v findings=%v", label, wantSubcmd, err, findings)
+	}
+}
+
+func assertNoFindings(t *testing.T, label, file string, src []byte) {
+	t.Helper()
+	findings, err := ScanProbeMutations(file, src)
+	if err != nil || len(findings) != 0 {
+		t.Fatalf("%s: want 0 findings, got err=%v findings=%v", label, err, findings)
+	}
+}
+
+// TestGitProbeGuard_Planted tests detection of planted mutating and read-only probe calls
+// through both ScanProbeMutations and ScanTrackedTestGitProbes.
 func TestGitProbeGuard_Planted(t *testing.T) {
 	dir := t.TempDir()
+	InitGitRepoWithOrigin(t, dir, "")
 
-	// Positive planted case: util.RunGitProbe with "init"
-	initSrc := []byte("package sample_test\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, \"init\", \"-q\")\n}\n")
-	initFile := filepath.Join(dir, "init_test.go")
-	if err := os.WriteFile(initFile, initSrc, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	initBytes, err := util.ReadFileLimited(initFile, maxTestFileBytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	findings, err := ScanProbeMutations(initFile, initBytes)
-	if err != nil {
-		t.Fatalf("scan init planted: %v", err)
-	}
-	if len(findings) != 1 || findings[0].Subcommand != "init" {
-		t.Fatalf("planted init: want 1 finding with init, got %v", findings)
-	}
+	initSrc := []byte("package sample_test\n\nimport \"github.com/cordanaLLM/praetor/internal/util\"\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, \"init\", \"-q\")\n}\n")
+	readSrc := []byte("package sample_test\n\nimport \"github.com/cordanaLLM/praetor/internal/util\"\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, \"rev-parse\", \"HEAD\")\n}\n")
+	initFile := writeProbeFixtureFile(t, dir, "init_test.go", initSrc)
+	readFile := writeProbeFixtureFile(t, dir, "read_test.go", readSrc)
+	writeProbeFixtureFile(t, dir, "untracked_test.go", initSrc)
+	RunFixtureGit(t, dir, []string{"add", "--", "init_test.go", "read_test.go"})
 
-	// Negative planted case: util.RunGitProbe with "rev-parse" (read probe allowed)
-	readSrc := []byte("package sample_test\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, \"rev-parse\", \"HEAD\")\n}\n")
-	readFile := filepath.Join(dir, "read_test.go")
-	if err := os.WriteFile(readFile, readSrc, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	readBytes, err := util.ReadFileLimited(readFile, maxTestFileBytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	readFindings, err := ScanProbeMutations(readFile, readBytes)
-	if err != nil {
-		t.Fatalf("scan read planted: %v", err)
-	}
-	if len(readFindings) != 0 {
-		t.Fatalf("planted read probe: want 0 findings, got %v", readFindings)
+	assertSingleFinding(t, "planted init", initFile, initSrc, "init")
+	assertNoFindings(t, "planted read probe", readFile, readSrc)
+
+	trackedFindings, err := ScanTrackedTestGitProbes(t.Context(), dir)
+	if err != nil || len(trackedFindings) != 1 || trackedFindings[0].Subcommand != "init" || trackedFindings[0].File != "init_test.go" {
+		t.Fatalf("tracked planted scan: err=%v findings=%v", err, trackedFindings)
 	}
 }
 
@@ -148,5 +152,172 @@ func TestGitProbeGuard_Boundaries(t *testing.T) {
 	otherFindings, err := ScanProbeMutations("other_test.go", otherSrc)
 	if err != nil || len(otherFindings) != 0 {
 		t.Fatalf("no probe: err=%v findings=%v", err, otherFindings)
+	}
+}
+
+func probeCallSource(pkgExpr string, args ...string) []byte {
+	quoted := make([]string, 0, len(args))
+	for i := 0; i < len(args) && i < maxCallArgs+8; i++ {
+		quoted = append(quoted, fmt.Sprintf("%q", args[i]))
+	}
+	return []byte(fmt.Sprintf("package sample_test\n\nfunc f() {\n\t%s.RunGitProbe(ctx, dir, 4096, %s)\n}\n",
+		pkgExpr, strings.Join(quoted, ", ")))
+}
+
+// TestGitProbeGuard_WriteInvocationsOfReadOnlySubcommands verifies write forms of hash-object,
+// remote, and symbolic-ref are rejected while read-only forms pass.
+func TestGitProbeGuard_WriteInvocationsOfReadOnlySubcommands(t *testing.T) {
+	disallowed := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"hash-object", "-w", "file.txt"}, "hash-object -w"},
+		{[]string{"hash-object", "-t", "blob", "-w", "file.txt"}, "hash-object -w"},
+		{[]string{"hash-object", "-wt", "blob", "file.txt"}, "hash-object -wt"},
+		{[]string{"remote", "add", "origin", "https://example.invalid/repo.git"}, "remote add"},
+		{[]string{"remote", "-v", "add", "origin", "https://example.invalid/repo.git"}, "remote add"},
+		{[]string{"remote", "set-url", "origin", "https://example.invalid/repo.git"}, "remote set-url"},
+		{[]string{"remote", "remove", "origin"}, "remote remove"},
+		{[]string{"remote", "rename", "origin", "upstream"}, "remote rename"},
+		{[]string{"symbolic-ref", "HEAD", "refs/heads/other"}, "symbolic-ref HEAD refs/heads/other"},
+		{[]string{"symbolic-ref", "-d", "HEAD"}, "symbolic-ref -d"},
+		{[]string{"symbolic-ref", "--delete", "HEAD"}, "symbolic-ref --delete"},
+		{[]string{"symbolic-ref", "-m", "reason", "HEAD", "refs/heads/other"}, "symbolic-ref -m"},
+	}
+	for i := 0; i < len(disallowed) && i < maxCallArgs; i++ {
+		tc := disallowed[i]
+		findings, err := ScanProbeMutations("sample_test.go", probeCallSource("util", tc.args...))
+		if err != nil || len(findings) != 1 || findings[0].Subcommand != tc.want {
+			t.Fatalf("write form %v: want 1 finding %q, got err=%v findings=%v", tc.args, tc.want, err, findings)
+		}
+	}
+
+	allowed := [][]string{
+		{"hash-object", "-t", "blob", "--stdin"},
+		{"hash-object", "--path=a.go", "--", "a.go"},
+		{"remote", "-v"},
+		{"remote", "get-url", "--push", "origin"},
+		{"remote", "show", "-n", "origin"},
+		{"symbolic-ref", "--quiet", "--short", "HEAD"},
+	}
+	for i := 0; i < len(allowed) && i < maxCallArgs; i++ {
+		findings, err := ScanProbeMutations("sample_test.go", probeCallSource("util", allowed[i]...))
+		if err != nil || len(findings) != 0 {
+			t.Fatalf("read-only form %v: want 0 findings, got err=%v findings=%v", allowed[i], err, findings)
+		}
+	}
+}
+
+// TestGitProbeGuard_ImportAlias verifies aliased imports of internal/util are recognized.
+func TestGitProbeGuard_ImportAlias(t *testing.T) {
+	badSrc := []byte("package sample_test\n\nimport gitutil \"github.com/cordanaLLM/praetor/internal/util\"\n\nfunc f() {\n\tgitutil.RunGitProbe(ctx, dir, 4096, \"init\")\n}\n")
+	findings, err := ScanProbeMutations("alias_test.go", badSrc)
+	if err != nil || len(findings) != 1 || findings[0].Subcommand != "init" {
+		t.Fatalf("aliased util.RunGitProbe(\"init\"): want 1 finding, got err=%v findings=%v", err, findings)
+	}
+
+	goodSrc := []byte("package sample_test\n\nimport gitutil \"github.com/cordanaLLM/praetor/internal/util\"\n\nfunc f() {\n\tgitutil.RunGitProbe(ctx, dir, 4096, \"rev-parse\", \"HEAD\")\n}\n")
+	goodFindings, err := ScanProbeMutations("alias_test.go", goodSrc)
+	if err != nil || len(goodFindings) != 0 {
+		t.Fatalf("aliased util.RunGitProbe(\"rev-parse\"): want 0 findings, got err=%v findings=%v", err, goodFindings)
+	}
+
+	otherSrc := []byte("package sample_test\n\nimport other \"example.com/other\"\n\nfunc f() {\n\tother.RunGitProbe(ctx, dir, 4096, \"init\")\n}\n")
+	otherFindings, err := ScanProbeMutations("other_test.go", otherSrc)
+	if err != nil || len(otherFindings) != 0 {
+		t.Fatalf("unrelated package RunGitProbe: want 0 findings, got err=%v findings=%v", err, otherFindings)
+	}
+}
+
+// TestGitProbeGuard_GlobalOptions verifies operand-taking and flag Git global options before the subcommand.
+func TestGitProbeGuard_GlobalOptions(t *testing.T) {
+	disallowed := [][]string{
+		{"--git-dir", "status", "init"},
+		{"--git-dir=status", "init"},
+		{"--work-tree", "status", "init"},
+		{"--work-tree=status", "init"},
+		{"-C", "status", "init"},
+		{"-Cstatus", "init"},
+		{"-c", "status=true", "init"},
+		{"-cstatus=true", "init"},
+		{"--namespace", "status", "init"},
+		{"--config-env", "core.bare=status", "init"},
+		{"--attr-source", "status", "init"},
+		{"--super-prefix", "status", "init"},
+	}
+	for i := 0; i < len(disallowed) && i < maxCallArgs; i++ {
+		findings, err := ScanProbeMutations("sample_test.go", probeCallSource("util", disallowed[i]...))
+		if err != nil || len(findings) != 1 || findings[0].Subcommand != "init" {
+			t.Fatalf("global option %v: want 1 finding \"init\", got err=%v findings=%v", disallowed[i], err, findings)
+		}
+	}
+
+	allowed := []string{"--git-dir", "status", "--work-tree=.", "-C", "sub", "-c", "core.bare=false", "--no-pager", "rev-parse", "HEAD"}
+	findings, err := ScanProbeMutations("sample_test.go", probeCallSource("util", allowed...))
+	if err != nil || len(findings) != 0 {
+		t.Fatalf("allowed global options: want 0 findings, got err=%v findings=%v", err, findings)
+	}
+}
+
+// TestGitProbeGuard_ArgumentScanExhaustion verifies that exceeding maxCallArgs global options fails closed.
+func TestGitProbeGuard_ArgumentScanExhaustion(t *testing.T) {
+	exceeded := make([]string, 0, maxCallArgs+1)
+	for i := 0; i < maxCallArgs; i++ {
+		exceeded = append(exceeded, "--no-pager")
+	}
+	exceeded = append(exceeded, "init")
+	findings, err := ScanProbeMutations("sample_test.go", probeCallSource("util", exceeded...))
+	if err != nil || len(findings) != 1 || findings[0].Subcommand != "<argument bound exceeded>" {
+		t.Fatalf("64 global options before init: want 1 exhaustion finding, got err=%v findings=%v", err, findings)
+	}
+
+	withinBad := append(exceeded[:maxCallArgs-1:maxCallArgs-1], "init")
+	withinFindings, err := ScanProbeMutations("sample_test.go", probeCallSource("util", withinBad...))
+	if err != nil || len(withinFindings) != 1 || withinFindings[0].Subcommand != "init" {
+		t.Fatalf("63 global options before init: want 1 \"init\" finding, got err=%v findings=%v", err, withinFindings)
+	}
+
+	withinGood := append(exceeded[:maxCallArgs-1:maxCallArgs-1], "rev-parse")
+	goodFindings, err := ScanProbeMutations("sample_test.go", probeCallSource("util", withinGood...))
+	if err != nil || len(goodFindings) != 0 {
+		t.Fatalf("63 global options before rev-parse: want 0 findings, got err=%v findings=%v", err, goodFindings)
+	}
+}
+
+// TestGitProbeGuard_NonLiteralCommand verifies non-literal commands fail closed and constants resolve.
+func TestGitProbeGuard_NonLiteralCommand(t *testing.T) {
+	varSrc := []byte("package sample_test\n\nfunc f() {\n\tcmd := \"init\"\n\tutil.RunGitProbe(ctx, dir, 4096, cmd)\n}\n")
+	assertSingleFinding(t, "variable subcommand", "var_test.go", varSrc, "<non-literal>")
+
+	sliceSrc := []byte("package sample_test\n\nfunc f(args ...string) {\n\tutil.RunGitProbe(ctx, dir, 4096, args...)\n}\n")
+	assertSingleFinding(t, "variadic subcommand", "slice_test.go", sliceSrc, "<non-literal>")
+
+	constBadSrc := []byte("package sample_test\n\nconst sub = \"init\"\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, sub)\n}\n")
+	assertSingleFinding(t, "const mutating subcommand", "const_bad_test.go", constBadSrc, "init")
+
+	constGoodSrc := []byte("package sample_test\n\nconst sub = \"rev-parse\"\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, sub, \"HEAD\")\n}\n")
+	assertNoFindings(t, "const read-only subcommand", "const_good_test.go", constGoodSrc)
+}
+
+// TestGitProbeGuard_TrackedFileBound verifies ScanTrackedTestGitProbes returns an error
+// when the repository exceeds maxTrackedTestFiles tracked test files.
+func TestGitProbeGuard_TrackedFileBound(t *testing.T) {
+	dir := t.TempDir()
+	InitGitRepoWithOrigin(t, dir, "")
+	for i := 0; i < maxTrackedTestFiles; i++ {
+		name := filepath.Join(dir, fmt.Sprintf("f%04d_test.go", i))
+		if err := os.WriteFile(name, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	initSrc := []byte("package sample_test\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, \"init\")\n}\n")
+	if err := os.WriteFile(filepath.Join(dir, "zzz_test.go"), initSrc, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	RunFixtureGit(t, dir, []string{"add", "."})
+
+	findings, err := ScanTrackedTestGitProbes(t.Context(), dir)
+	if err == nil {
+		t.Fatalf("exceeding maxTrackedTestFiles (%d): want error, got err=<nil> findings=%v", maxTrackedTestFiles, findings)
 	}
 }
