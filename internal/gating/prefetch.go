@@ -52,11 +52,11 @@ func PrefetchDependencies(ctx context.Context, repoDir string) (*PrefetchReport,
 // prefetchDependencies is PrefetchDependencies with the command runner injected, so the gate
 // stage runs the go commands through the same seam as every other stage and a test can prove
 // which of them ran.
+//
+// A first attempt that ends in a transient kill (its deadline, SIGKILL or SIGTERM) runs once
+// more under a fresh DefaultPrefetchTimeout window; the report's Message names the retry. A
+// second failure, or any other failure, is returned as the module's error.
 func prefetchDependencies(ctx context.Context, repoDir string, run commandRunner) (*PrefetchReport, error) {
-	return prefetchModule(ctx, repoDir, run, true)
-}
-
-func prefetchModule(ctx context.Context, repoDir string, run commandRunner, allowRetry bool) (*PrefetchReport, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("prefetch: context cannot be nil")
 	}
@@ -76,7 +76,7 @@ func prefetchModule(ctx context.Context, repoDir string, run commandRunner, allo
 		return nil, fmt.Errorf("prefetch cancelled: %w (%w)", firstErr, err)
 	}
 	reason, ok := transientPrefetchReason(firstErr)
-	if !allowRetry || !ok {
+	if !ok {
 		return nil, firstErr
 	}
 	if secondErr := prefetchModuleOnce(ctx, repoDir, run); secondErr != nil {
