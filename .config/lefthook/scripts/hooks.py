@@ -158,8 +158,8 @@ def push_base(head, old, remote, include_checkpoints=False):
     if not common or common == old:
         return old
     base = new_branch_base(head, remote, include_checkpoints)
-    print(f"Push baseline: {old[:12]} was rewritten; scanning against "
-          f"{base[:12] if base else 'the full tree'}")
+    print(f"Push baseline: {old[:12]} rewritten; scan base "
+          f"{base[:12] if base else 'full tree'}")
     return base
 
 

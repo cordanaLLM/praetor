@@ -1213,7 +1213,7 @@ obtained from `git ls-remote --symref <remote> HEAD`. A force push of rewritten 
 branch, whose replaced head is no longer an ancestor of the pushed one) takes the same merge-base:
 diffing against the replaced head would count every commit the rebase picked up from the default
 branch as this push's work, and the range checks (refactor assertion lock, docstring coverage)
-would judge code the push did not write. The push prints `Push baseline: <old> was rewritten`
+would judge code the push did not write. The push prints `Push baseline: <old> rewritten; scan base <base>`
 when it does this (`push_base` in `.config/lefthook/scripts/hooks.py`,
 `test_force_push_of_rewritten_history_scans_against_merge_base`). `praetorctl docstrings check
 --pre-push` applies the same rule for adopters (`ResolvePrePushBase`,
