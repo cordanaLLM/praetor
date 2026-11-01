@@ -247,3 +247,17 @@ func TestRunDocstrings_Modes(t *testing.T) {
 		t.Fatalf("off mode: want exit 0, got %d", codeOff)
 	}
 }
+
+// TestRunDocstrings_ModeOffWithoutOriginMain verifies that mode off exits 0 without origin/main.
+func TestRunDocstrings_ModeOffWithoutOriginMain(t *testing.T) {
+	dir := initDocstringsFixtureRepo(t, map[string]string{"pkg/work.go": "package pkg\n"})
+	runDocstringsGit(t, dir, "update-ref", "-d", "refs/remotes/origin/main")
+	writeDocstringsFixtureFile(t, dir, ".coderabbit.yaml", "reviews:\n  pre_merge_checks:\n    docstrings:\n      mode: off\n      threshold: 80\n")
+	out, code := runDocstringsCaptured(t, "check", "--path="+dir)
+	if code != 0 {
+		t.Fatalf("expected exit 0 for mode off without origin/main, got %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "(mode: off)") {
+		t.Fatalf("expected output to mention mode off, got:\n%s", out)
+	}
+}

@@ -94,6 +94,14 @@ func Check(ctx context.Context, opts Options) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.Mode == "off" {
+		rep := &Report{
+			Threshold: cfg.Threshold,
+			Mode:      cfg.Mode,
+		}
+		finalizeReport(rep)
+		return rep, nil
+	}
 	baseRef := opts.BaseRef
 	if baseRef == "" {
 		resolved, err := DefaultBaseRef(ctx, repoDir, defaultRemoteName)
@@ -163,7 +171,10 @@ func evaluateChangedFiles(ctx context.Context, repoDir, headRef string, cfg Conf
 
 // evaluateSingleFile extracts functions for rel and records coverage for those overlapping fileRanges.
 func evaluateSingleFile(ctx context.Context, repoDir, headRef, rel string, fileRanges []cifilter.LineRange, rep *Report) error {
-	data, ok, err := readTargetFile(ctx, repoDir, headRef, rel)
+	if !isSupportedPath(rel) {
+		return nil
+	}
+	data, ok, err := targetFileReader(ctx, repoDir, headRef, rel)
 	if err != nil || !ok {
 		return err
 	}
@@ -177,7 +188,12 @@ func evaluateSingleFile(ctx context.Context, repoDir, headRef, rel string, fileR
 	if len(functions) == 0 {
 		return nil
 	}
-	lines := splitSourceLines(data)
+	recordFunctionCoverage(rel, data, splitSourceLines(data), functions, fileRanges, rep)
+	return nil
+}
+
+// recordFunctionCoverage updates rep with coverage for functions overlapping fileRanges.
+func recordFunctionCoverage(rel string, data []byte, lines []string, functions []hiss.FunctionSpan, fileRanges []cifilter.LineRange, rep *Report) {
 	for i := 0; i < len(functions); i++ {
 		fn := functions[i]
 		if !overlapsRanges(fn, fileRanges) {
@@ -194,7 +210,6 @@ func evaluateSingleFile(ctx context.Context, repoDir, headRef, rel string, fileR
 			})
 		}
 	}
-	return nil
 }
 
 // finalizeReport computes the final coverage percentage and pass/fail verdict.
@@ -217,6 +232,9 @@ func overlapsRanges(fn hiss.FunctionSpan, ranges []cifilter.LineRange) bool {
 	}
 	return false
 }
+
+// targetFileReader reads rel from worktree or headRef; replaced by tests to count or verify file reads.
+var targetFileReader = readTargetFile
 
 // readTargetFile reads rel from the working tree when headRef is empty or from git show headRef:rel.
 // It returns ok=false when rel is a non-regular worktree entry or a gitlink/symlink tree entry.
@@ -267,13 +285,35 @@ func splitSourceLines(data []byte) []string {
 	return strings.Split(text, "\n")
 }
 
+// isSupportedPath reports whether rel is of a supported source language or needs content to decide.
+func isSupportedPath(rel string) bool {
+	style, needsContent := resolvePathDocStyle(rel)
+	return style != docStyleNone || needsContent
+}
+
+// resolvePathDocStyle returns the docStyle determined by rel's path alone,
+// and whether the file needs its content read to decide its language.
+func resolvePathDocStyle(rel string) (docStyle, bool) {
+	lang := util.SourceLanguage(rel)
+	if lang != "" {
+		return languageDocStyles[lang], false
+	}
+	if filepath.Ext(rel) == "" {
+		return docStyleNone, true
+	}
+	return docStyleNone, false
+}
+
 // resolveDocStyle maps a file path and content to its language docstring family.
 func resolveDocStyle(rel string, data []byte) docStyle {
-	lang := util.SourceLanguage(rel)
-	if lang == "" && hasShellShebang(data) {
-		lang = "shell"
+	style, needsContent := resolvePathDocStyle(rel)
+	if !needsContent {
+		return style
 	}
-	return languageDocStyles[lang]
+	if hasShellShebang(data) {
+		return docStyleShellAbove
+	}
+	return docStyleNone
 }
 
 // hasShellShebang reports whether data starts with a sh or bash shebang line.

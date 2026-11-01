@@ -6,9 +6,11 @@ package docstrings_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -278,4 +280,77 @@ func TestPrePushAndDefaultBranch_3D(t *testing.T) {
 	writeTestFile(t, dir, "pkg/a.go", "package pkg\n\n// Ok is documented.\nfunc Ok() {}\n")
 	rep, err := docstrings.Check(t.Context(), docstrings.Options{RepoDir: dir})
 	assertDocstringReport(t, "omitted BaseRef uses origin/trunk", rep, err, true, 1, 1)
+}
+
+// TestCheck_ModeOffWithoutOriginMain_ShortCircuits verifies that mode off short-circuits
+// before base ref resolution or diff calculation in a repo lacking origin/main.
+func TestCheck_ModeOffWithoutOriginMain_ShortCircuits(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_AUTHOR_NAME", "praetor-test")
+	t.Setenv("GIT_AUTHOR_EMAIL", "test@example.invalid")
+	t.Setenv("GIT_COMMITTER_NAME", "praetor-test")
+	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.invalid")
+	dir := t.TempDir()
+	writeTestFile(t, dir, ".coderabbit.yaml", "reviews:\n  pre_merge_checks:\n    docstrings:\n      mode: off\n      threshold: 80\n")
+	writeTestFile(t, dir, "pkg/a.go", "package pkg\n\nfunc Unchecked() {}\n")
+	runGitCmd(t, dir, "init", "-q", "-b", "main")
+	runGitCmd(t, dir, "add", ".")
+	runGitCmd(t, dir, "commit", "-q", "-m", "initial")
+	// There is intentionally no origin remote and no origin/main ref.
+	rep, err := docstrings.Check(t.Context(), docstrings.Options{RepoDir: dir})
+	if err != nil {
+		t.Fatalf("expected mode off to exit 0 without origin/main, got error: %v", err)
+	}
+	assertDocstringReport(t, "mode off without origin/main", rep, err, true, 0, 0)
+	if rep.Mode != "off" {
+		t.Fatalf("expected mode off, got %+v", rep)
+	}
+}
+
+// TestCheck_UnsupportedFileTypeNotRead verifies that changed files of unsupported types
+// (such as Markdown documentation or JSON data) are not read, while extensionless shell scripts are.
+func TestCheck_UnsupportedFileTypeNotRead(t *testing.T) {
+	baseGo := "package pkg\n\n// Alpha is documented.\nfunc Alpha() {}\n"
+	dir := newDocstringTestRepo(t, map[string]string{
+		"pkg/a.go":        baseGo,
+		"docs/manual.md":  "# Manual\n",
+		"data/items.json": "[]\n",
+		"bin/deploy":      "#!/bin/sh\n# Deploy helper.\ndeploy() {\n  echo ok\n}\n",
+	})
+	// Touch all four files in the worktree.
+	writeTestFile(t, dir, "pkg/a.go", baseGo+"\n// Beta is documented.\nfunc Beta() {}\n")
+	writeTestFile(t, dir, "docs/manual.md", "# Manual Updated\n")
+	writeTestFile(t, dir, "data/items.json", "[\"item\"]\n")
+	writeTestFile(t, dir, "bin/deploy", "#!/bin/sh\n# Deploy helper.\ndeploy() {\n  echo ok\n}\n# Extra task.\nstep() {\n  echo step\n}\n")
+
+	var readPaths []string
+	restore := docstrings.SetTargetFileReaderForTest(func(ctx context.Context, repoDir, headRef, rel string) ([]byte, bool, error) {
+		readPaths = append(readPaths, rel)
+		if strings.HasSuffix(rel, ".md") || strings.HasSuffix(rel, ".json") {
+			return nil, false, errors.New("unsupported file must not be read: " + rel)
+		}
+		return docstrings.ReadTargetFileDefault(ctx, repoDir, headRef, rel)
+	})
+	defer restore()
+
+	rep, err := docstrings.Check(t.Context(), docstrings.Options{RepoDir: dir, BaseRef: "origin/main"})
+	if err != nil {
+		t.Fatalf("expected unsupported file not to be read, but Check failed: %v", err)
+	}
+	// pkg/a.go (Beta, 1) + bin/deploy (step, 1) = 2 counted, both documented.
+	assertDocstringReport(t, "unsupported files not read", rep, err, true, 2, 2)
+
+	for _, p := range readPaths {
+		if strings.HasSuffix(p, ".md") || strings.HasSuffix(p, ".json") {
+			t.Fatalf("targetFileReader read unsupported file %q", p)
+		}
+	}
+	if !slices.Contains(readPaths, "pkg/a.go") {
+		t.Fatalf("expected pkg/a.go to be read, got reads: %v", readPaths)
+	}
+	if !slices.Contains(readPaths, "bin/deploy") {
+		t.Fatalf("expected extensionless script bin/deploy to be read, got reads: %v", readPaths)
+	}
 }
