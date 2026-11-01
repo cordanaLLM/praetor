@@ -86,6 +86,10 @@ type Canonical struct {
 	// FilePath is additive (H2): dialect.Decode does not populate it from a real payload
 	// yet (only pre-edit's normalised hand-off to checkpoint_scope.py sets it directly).
 	Workspaces []string
+	// CommandDir is the command working directory the dialect payload provides (native
+	// payloads' cwd); empty when the dialect carries workspace roots without a command cwd
+	// (agy's workspacePaths), so commandBase falls back to Invocation.WorkDir.
+	CommandDir string
 	// ConversationID identifies the agent conversation a payload belongs to. Populated
 	// by native session_id payloads and agy's conversationId; empty when absent.
 	ConversationID string

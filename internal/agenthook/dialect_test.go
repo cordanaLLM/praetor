@@ -24,7 +24,7 @@ func TestDialectDecode(t *testing.T) {
 	claude, _ := DialectFor("claude")
 	payload := []byte(`{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/w","tool_input":{"command":" git status "}}`)
 	got, err := claude.Decode(EventPreTool, payload)
-	want := Canonical{Event: EventPreTool, Tool: "Bash", Command: " git status ", Workspaces: []string{"/w"}}
+	want := Canonical{Event: EventPreTool, Tool: "Bash", Command: " git status ", Workspaces: []string{"/w"}, CommandDir: "/w"}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("decode: %+v %v", got, err)
 	}

@@ -935,15 +935,7 @@ func resolvePushRemoteAndForge(ctx context.Context, repoDir, remoteName string) 
 	if !util.DirExists(repoDir) {
 		return util.GitRemote{}, "", fmt.Errorf("repository directory %q does not exist", repoDir)
 	}
-	var (
-		remote util.GitRemote
-		err    error
-	)
-	if remoteName == "" || remoteName == "origin" {
-		remote, err = util.ReadOriginRemote(ctx, repoDir)
-	} else {
-		remote, err = util.ReadGitRemote(ctx, repoDir, remoteName)
-	}
+	remote, err := util.ReadGitPushRemote(ctx, repoDir, remoteName)
 	if err != nil {
 		return util.GitRemote{}, "", err
 	}

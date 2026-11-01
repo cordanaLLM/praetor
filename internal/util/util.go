@@ -595,6 +595,19 @@ func ReadOriginRemote(ctx context.Context, repoPath string) (GitRemote, error) {
 // already a remote URL or path) and parses it as a network remote (ParseGitRemote). An empty
 // name reads "origin".
 func ReadGitRemote(ctx context.Context, repoPath, name string) (GitRemote, error) {
+	return readGitRemoteWith(ctx, repoPath, name, readRemoteURL)
+}
+
+// ReadGitPushRemote reads the effective push URL of the named git remote in repoPath via
+// `git remote get-url --push` (or parses name directly when it is already a remote URL or path)
+// and parses it as a network remote (ParseGitRemote). An empty name reads "origin".
+func ReadGitPushRemote(ctx context.Context, repoPath, name string) (GitRemote, error) {
+	return readGitRemoteWith(ctx, repoPath, name, readRemotePushURL)
+}
+
+// readGitRemoteWith resolves name in repoPath using readURL (or parses a direct URL/path) and
+// parses it as a network remote via ParseGitRemote.
+func readGitRemoteWith(ctx context.Context, repoPath, name string, readURL func(context.Context, string, string) (string, error)) (GitRemote, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		name = "origin"
@@ -606,7 +619,7 @@ func ReadGitRemote(ctx context.Context, repoPath, name string) (GitRemote, error
 		}
 		return remote, nil
 	}
-	raw, err := readRemoteURL(ctx, repoPath, name)
+	raw, err := readURL(ctx, repoPath, name)
 	if err != nil {
 		return GitRemote{}, err
 	}
@@ -645,6 +658,31 @@ func readRemoteURL(ctx context.Context, repoPath, name string) (string, error) {
 		return "", fmt.Errorf("%w: no %s remote in %q", ErrRepoIdentityUnresolved, name, repoPath)
 	}
 	return remote, nil
+}
+
+// readRemotePushURL queries git for the effective push URL of the named remote in repoPath.
+func readRemotePushURL(ctx context.Context, repoPath, name string) (string, error) {
+	remote, err := RunGit(ctx, repoPath, "remote", "get-url", "--push", "--", name)
+	if err != nil {
+		if gitAnsweredMissingRemote(ctx, err) {
+			return "", fmt.Errorf("%w: no %s remote in %q", ErrRepoIdentityUnresolved, name, repoPath)
+		}
+		return "", fmt.Errorf("util: read the %s push remote in %q: %w", name, repoPath, err)
+	}
+	if strings.TrimSpace(remote) == "" {
+		return "", fmt.Errorf("%w: no %s remote in %q", ErrRepoIdentityUnresolved, name, repoPath)
+	}
+	return remote, nil
+}
+
+// gitAnsweredMissingRemote reports whether err is git remote get-url's answer that a named
+// remote is not configured (exit status 2) rather than a read that did not complete.
+func gitAnsweredMissingRemote(ctx context.Context, err error) bool {
+	if ctx != nil && ctx.Err() != nil {
+		return false
+	}
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == 2
 }
 
 // GitAnsweredUnset reports whether err is git's answer that a requested key or ref is unset

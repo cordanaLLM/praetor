@@ -901,3 +901,142 @@ func TestAdmission_GitPushHead_Planted_WildcardRefspecsRefused(t *testing.T) {
 		policy.CommandInDir(ctx, repo, "PRAETOR_ADMIT=git-push git push origin refs/heads/merged-topic:refs/heads/merged-topic"),
 		"#42", "MERGED", "push to a new branch")
 }
+
+// Planted negative, positive and boundary: resolvePushRemoteAndForge resolves the effective
+// push URL (`remote.<name>.pushurl` and `url.<base>.pushInsteadOf`) rather than the fetch URL,
+// while ReadOriginRemote and ReadGitRemote keep reading the fetch URL for their other callers.
+func TestAdmission_GitPushHead_Planted_PushURLAndPushInsteadOf(t *testing.T) {
+	ctx := context.Background()
+	repo := defaultAdmissionRepo(t)
+	mustGit(t, repo, "config", "remote.origin.pushurl", "https://codeberg.org/fork/widgets.git")
+	mustGit(t, repo, "remote", "add", "rewritten", "https://github.com/acme/widgets.git")
+	mustGit(t, repo, "config", "url.https://codeberg.org/fork/.pushInsteadOf", "https://github.com/acme/")
+
+	policy := admissionPolicy(t).WithAdmissionPullRequests(repo, stubForkVsUpstreamPullRequests)
+	for _, cmd := range []string{
+		"PRAETOR_ADMIT=git-push git push origin merged-in-fork",
+		"praetorctl admit --label git-push -- git push origin merged-in-fork",
+		"PRAETOR_ADMIT=git-push git push rewritten merged-in-fork",
+	} {
+		requireDeniedContaining(t, cmd, policy.CommandInDir(ctx, repo, cmd),
+			"fork/widgets", "#84", "MERGED", "push to a new branch")
+	}
+	for _, cmd := range []string{
+		"PRAETOR_ADMIT=git-push git push origin clean-in-fork",
+		"PRAETOR_ADMIT=git-push git push rewritten clean-in-fork",
+	} {
+		if v := policy.CommandInDir(ctx, repo, cmd); v.Outcome != Allow {
+			t.Fatalf("%q refused when only upstream fetch URL had a merged PR: %s", cmd, v.Reason)
+		}
+	}
+	assertUpstreamFetchRemotesUnchanged(t, ctx, repo)
+}
+
+func stubForkVsUpstreamPullRequests(_ context.Context, target PushTarget) ([]forge.PullRequestHead, error) {
+	if target.Remote.Owner == "fork" && target.Forge == config.ForgeForgejo && target.Branch == "merged-in-fork" {
+		return []forge.PullRequestHead{{Number: 84, State: forge.PullRequestStateMerged, HeadBranch: "merged-in-fork"}}, nil
+	}
+	if target.Remote.Owner == "acme" && target.Branch == "clean-in-fork" {
+		return []forge.PullRequestHead{{Number: 85, State: forge.PullRequestStateMerged, HeadBranch: "clean-in-fork"}}, nil
+	}
+	return nil, nil
+}
+
+func assertUpstreamFetchRemotesUnchanged(t *testing.T, ctx context.Context, repo string) {
+	t.Helper()
+	want := util.GitRemote{Host: "github.com", Path: "acme/widgets", Owner: "acme", Repo: "widget" + "s"}
+	if got, err := util.ReadOriginRemote(ctx, repo); err != nil || got != want {
+		t.Fatalf("ReadOriginRemote fetch reader changed: %+v, %v", got, err)
+	}
+	if got, err := util.ReadGitRemote(ctx, repo, "rewritten"); err != nil || got != want {
+		t.Fatalf("ReadGitRemote fetch reader changed: %+v, %v", got, err)
+	}
+}
+
+func governedAdmissionRepo(t *testing.T, branch, originURL string) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	initAdmissionRepo(t, dir, branch, originURL)
+	if err := os.WriteFile(filepath.Join(dir, manifestName), []byte("version: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// Planted negative, positive and boundary: AGY workspacePaths keep their precedence for
+// repository-root discovery while commandBase uses Invocation.WorkDir (and native dialects'
+// CommandDir when present) across evaluateCommand, resolveCommandRoot, and evaluateForgeTextRefs.
+func TestAdmission_GitPushHead_Planted_AgyWorkspaceVsCommandDir(t *testing.T) {
+	addDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	outerRepo := governedAdmissionRepo(t, "outer-merged", "https://github.com/acme/outer.git")
+	nestedRepo := governedAdmissionRepo(t, "nested-topic", "https://github.com/fork/nested.git")
+
+	pol := admissionPolicy(t).WithAdmissionPullRequests(outerRepo, func(_ context.Context, target PushTarget) ([]forge.PullRequestHead, error) {
+		if target.Remote.Owner == "acme" && target.Remote.Repo == "outer" {
+			return []forge.PullRequestHead{{Number: 90, State: forge.PullRequestStateMerged, HeadBranch: target.Branch}}, nil
+		}
+		if target.Remote.Owner == "fork" && target.Remote.Repo == "nested" && target.Branch == "nested-merged" {
+			return []forge.PullRequestHead{{Number: 91, State: forge.PullRequestStateMerged, HeadBranch: "nested-merged"}}, nil
+		}
+		return nil, nil
+	})
+
+	allowResp := runAgyPreToolWithPolicy(t, pol, nestedRepo, []string{addDir, outerRepo, nestedRepo}, "PRAETOR_ADMIT=git-push git push")
+	if !agyStdoutAllows(t, "pre-tool", allowResp) {
+		t.Fatalf("agy push from nestedRepo refused by outer workspace: %s", allowResp.Stdout)
+	}
+	denyResp := runAgyPreToolWithPolicy(t, pol, nestedRepo, []string{addDir, nestedRepo}, "PRAETOR_ADMIT=git-push git push origin HEAD:nested-merged")
+	if agyStdoutAllows(t, "pre-tool", denyResp) || !strings.Contains(string(denyResp.Stdout), "fork/nested") || !strings.Contains(string(denyResp.Stdout), "#91") {
+		t.Fatalf("agy push to merged branch in nestedRepo not refused with fork/nested #91: %s", denyResp.Stdout)
+	}
+	assertAgyCommandBaseCallers(t, pol, addDir, outerRepo, nestedRepo)
+}
+
+func assertAgyCommandBaseCallers(t *testing.T, pol *Policy, addDir, outerRepo, nestedRepo string) {
+	t.Helper()
+	plainRepo := repository(t, false)
+	relCmd := "git -C " + filepath.Base(nestedRepo) + " push --no-verify"
+	relResp := runAgyPreToolWithPolicy(t, pol, filepath.Dir(nestedRepo), []string{addDir, plainRepo}, relCmd)
+	if agyStdoutAllows(t, "pre-tool", relResp) || !strings.Contains(string(relResp.Stdout), evasionMessage) {
+		t.Fatalf("agy relative command target from WorkDir allowed: %s", relResp.Stdout)
+	}
+
+	bodyPath := filepath.Join(nestedRepo, "pr-body.md")
+	if err := os.WriteFile(bodyPath, []byte("Ref upstream/other#12\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ghResp := runAgyPreToolWithPolicy(t, pol, nestedRepo, []string{addDir, outerRepo}, "gh pr create --repo acme/outer --title t --body-file pr-body.md")
+	if agyStdoutAllows(t, "pre-tool", ghResp) || !strings.Contains(string(ghResp.Stdout), "upstream/other#12") {
+		t.Fatalf("agy relative gh --body-file in WorkDir not checked for foreign reference: %s", ghResp.Stdout)
+	}
+
+	claudePayload := commandPayload(t, map[string]any{
+		"cwd":        nestedRepo,
+		"tool_input": map[string]any{"command": "PRAETOR_ADMIT=git-push git push origin HEAD:nested-merged"},
+	})
+	claudeResp := Run(context.Background(), Invocation{
+		Client: "claude", Event: "pre-tool", Stdin: strings.NewReader(string(claudePayload)),
+		Getenv: noEnvironment, WorkDir: outerRepo, Policy: pol,
+	})
+	if claudeResp.ExitCode == 0 || !strings.Contains(string(claudeResp.Stderr), "fork/nested") || !strings.Contains(string(claudeResp.Stderr), "#91") {
+		t.Fatalf("claude payload cwd did not take precedence over WorkDir: %s", claudeResp.Stderr)
+	}
+}
+
+func runAgyPreToolWithPolicy(t *testing.T, pol *Policy, workDir string, workspaces []string, cmd string) Response {
+	t.Helper()
+	payload := commandPayload(t, map[string]any{
+		"workspacePaths": workspaces,
+		"toolCall":       map[string]any{"name": "run_command", "args": map[string]any{"CommandLine": cmd}},
+	})
+	return Run(context.Background(), Invocation{
+		Client: "agy", Event: "pre-tool", Stdin: strings.NewReader(string(payload)),
+		Getenv: noEnvironment, WorkDir: workDir, Policy: pol,
+	})
+}
