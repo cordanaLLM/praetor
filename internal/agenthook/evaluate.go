@@ -163,6 +163,8 @@ func checkpointWired(client string) bool {
 	return client == "claude" || client == "codex" || client == "gemini"
 }
 
+// dispatch routes an evaluated hook invocation to the agent-traffic, stop, pre-edit,
+// post-tool or command evaluator for row.Client and row.Event.
 func dispatch(ctx context.Context, row Registration, canonical Canonical, root string, in Invocation) Verdict {
 	if agentTrafficEvent(row.Event) {
 		return evaluateAgentTraffic(ctx, row, canonical, root, in)
@@ -171,7 +173,7 @@ func dispatch(ctx context.Context, row Registration, canonical Canonical, root s
 		if row.Event == EventStop {
 			return evaluateStopQuestion(row, canonical)
 		}
-		return evaluateCommand(canonical, in)
+		return evaluateCommand(ctx, canonical, root, in)
 	}
 	switch row.Event {
 	case EventPreEdit:
@@ -181,15 +183,20 @@ func dispatch(ctx context.Context, row Registration, canonical Canonical, root s
 	case EventStop:
 		return evaluateStop(ctx, row, root, canonical, in)
 	default:
-		return evaluateCommand(canonical, in)
+		return evaluateCommand(ctx, canonical, root, in)
 	}
 }
 
-func evaluateCommand(canonical Canonical, in Invocation) Verdict {
+// evaluateCommand runs the built-in command policy and the forge-text foreign-reference
+// guard on canonical.Command, refusing commands that violate either check.
+func evaluateCommand(ctx context.Context, canonical Canonical, root string, in Invocation) Verdict {
 	if canonical.Command == "" {
 		return Verdict{Outcome: Allow}
 	}
-	return in.Policy.Command(canonical.Command)
+	if verdict := in.Policy.Command(canonical.Command); verdict.Outcome != Allow {
+		return verdict
+	}
+	return evaluateForgeTextRefs(ctx, canonical, root, in)
 }
 
 // noInterpreterVerdict differs per event (3.3): pre-edit and stop fail closed (deny; stop's

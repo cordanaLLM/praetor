@@ -196,3 +196,29 @@ func TestForgeText_HardWrapProse(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveOwnOrganizations_UsesProvidedGetenv verifies that ResolveOwnOrganizations
+// reads GITHUB_REPOSITORY only from the supplied getenv callback and ignores the process environment when getenv is nil.
+func TestResolveOwnOrganizations_UsesProvidedGetenv(t *testing.T) {
+	t.Setenv("GITHUB_REPOSITORY", "process-org/process-repo")
+	ownWithoutEnv, err := ResolveOwnOrganizations(t.Context(), "", "", []string{"extra-org"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(ownWithoutEnv, ",") != "extra-org" {
+		t.Fatalf("expected process GITHUB_REPOSITORY to be ignored when getenv is nil, got %v", ownWithoutEnv)
+	}
+	customEnv := func(key string) string {
+		if key == "GITHUB_REPOSITORY" {
+			return "custom-owner/custom-repo"
+		}
+		return ""
+	}
+	ownWithCustomEnv, err := ResolveOwnOrganizations(t.Context(), "", "", []string{"extra-org"}, customEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(ownWithCustomEnv, ",") != "extra-org,custom-owner" {
+		t.Fatalf("expected custom getenv GITHUB_REPOSITORY owner, got %v", ownWithCustomEnv)
+	}
+}
