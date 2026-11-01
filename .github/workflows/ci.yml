@@ -1,10 +1,10 @@
 name: CI Enforcement
 
 # The hosted gate shape (internal/ghworkflow/hostedgate.go, docs/guides/workflow-triggers.md): a
-# pull request runs on every activity that can change what merges. Every job a pull request starts
-# fails a draft in its first step instead of running its work, and runs once the draft is marked
-# ready (ready_for_review). edited stays: the governance checklist step reads the pull request
-# body, so a body edit is an activity that changes the verdict.
+# pull request runs on every activity that can change what merges. Required jobs fail a draft
+# before work; the advisory review planner emits their held reason without API reads on drafts.
+# Marking the draft ready (ready_for_review) starts a new run. edited stays: the governance
+# checklist step reads the pull request body, so a body edit changes the verdict.
 #
 # A push runs on the protected branches (the default branch and the lts-* branches the ruleset
 # protects) and on checkpoint/** branches: their pre-push policy is lighter because this run is
@@ -42,6 +42,8 @@ permissions:
 jobs:
   review-gate:
     name: Heavy tier review gate
+    # Advisory planner: required heavy jobs enforce its outputs, including missing verdicts.
+    continue-on-error: true
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
@@ -50,30 +52,25 @@ jobs:
       checks: read
       statuses: read
     outputs:
-      clear: ${{ github.event_name != 'pull_request' && 'true' || steps.review.outputs.clear }}
-      reason: ${{ steps.review.outputs.reason }}
+      clear: ${{ github.event_name != 'pull_request' && 'true' || steps.draft.outputs.clear || steps.review.outputs.clear }}
+      reason: ${{ steps.draft.outputs.reason || steps.review.outputs.reason }}
     steps:
-      - name: Stop on a draft pull request
+      - name: Hold heavy tier on a draft pull request
+        id: draft
         if: github.event.pull_request.draft == true
         shell: bash
-        env:
-          TITLE: Gate not run on a draft
-          MESSAGE: >-
-            The gate did not run because the pull request is a draft.
-            It runs when the pull request is marked ready for review.
         run: |
-          echo "::error title=$TITLE::$MESSAGE"
-          echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
-          exit 1
+          echo "clear=false" >> "$GITHUB_OUTPUT"
+          echo "reason=draft pull request" >> "$GITHUB_OUTPUT"
 
       - name: Checkout review gate
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
         uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Evaluate review clearance
         id: review
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}

@@ -355,6 +355,13 @@ summary. It performs no checkout, dependency setup or suite work. Even steps tha
 continue after a failure require `clear == 'true'`. A failed review-gate job also produces a
 held failure. Draft barriers remain enforced after the inert review-hold step.
 
+The review planner is advisory (`continue-on-error: true`), so `Heavy tier review gate` is
+not a required context. The required heavy jobs enforce its verdict and fail closed when its
+outputs are missing. On drafts the planner succeeds with `clear=false` and the exact reason
+`draft pull request`, without checkout or API reads. The three Platform Neutrality contexts
+remain required in the canonical repository: context discovery recognizes their repository
+guard followed by `&& !cancelled()` (`internal/forge/workflow_guard.go`).
+
 Pushes, merge groups and manual dispatches clear the gate without API reads and retain full
 heavy work. Existing repository opt-in, Renovate and draft policies still apply.
 

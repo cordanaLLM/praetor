@@ -48,6 +48,10 @@ func TestCanonicalRulesetRequiresEveryPlatformNeutralityLeg(t *testing.T) {
 			t.Errorf("the stated-reason skip job became a required context: %q", context)
 		}
 	}
+	requireContexts(t, "canonical", contexts, nil, []string{"Heavy tier review gate"})
+	if !slices.Equal(contexts, committedRequiredContexts(t)) {
+		t.Errorf("derived contexts %v differ from committed contexts %v", contexts, committedRequiredContexts(t))
+	}
 }
 
 // Positive, negative and boundary coverage for RequiredStatusContextsIn: the canonical repository

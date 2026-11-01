@@ -46,6 +46,83 @@ func TestWorkflowHeavyReviewGate(t *testing.T) {
 	}
 }
 
+func TestWorkflowReviewPlannerDraftVerdict(t *testing.T) {
+	workflows, _ := engineWorkflows(t)
+	for _, file := range []string{"ci.yml", "portability.yml"} {
+		t.Run(file, func(t *testing.T) {
+			assertReviewPlannerDraftVerdict(t, workflows[file])
+		})
+	}
+}
+
+func assertReviewPlannerDraftVerdict(t *testing.T, data []byte) {
+	t.Helper()
+	spec, err := ghworkflow.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := spec.Jobs["review-gate"]
+	if !reviewPlannerIdleOnDraft(&job) {
+		t.Fatal("advisory draft planner must succeed with clear=false and the exact draft reason before work")
+	}
+	for _, output := range []string{"clear", "reason"} {
+		if !strings.Contains(string(data), "steps.draft.outputs."+output+" || steps.review.outputs."+output) {
+			t.Errorf("planner output %s must include the draft verdict", output)
+		}
+	}
+}
+
+func TestReviewPlannerDraftAuditAndPlantedDefects(t *testing.T) {
+	const fixture = `jobs:
+  review-gate:
+    continue-on-error: true
+    steps:
+      - name: Hold heavy tier on a draft pull request
+        id: draft
+        if: github.event.pull_request.draft == true
+        shell: bash
+        run: |
+          echo "clear=false" >> "$GITHUB_OUTPUT"
+          echo "reason=draft pull request" >> "$GITHUB_OUTPUT"
+      - if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+        run: echo review
+`
+	spec, err := ghworkflow.Parse([]byte(fixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := spec.Jobs["review-gate"]
+	decision := jobDecision{handling: ownDraftHandling(&job, stepWork(&job))}
+	if problem := draftProblem(decision, &job); problem != "" {
+		t.Fatal(problem)
+	}
+	for _, pair := range [][2]string{
+		{"continue-on-error: true", "continue-on-error: false"},
+		{"clear=false", "clear=true"},
+		{"reason=draft pull request", "reason=unknown"},
+		{"id: draft", "id: other"},
+		{"shell: bash", "shell: pwsh"},
+		{"run: |", "run: |\n          exit 1"},
+		{" && github.event.pull_request.draft != true", ""},
+	} {
+		planted := strings.Replace(fixture, pair[0], pair[1], 1)
+		assertReviewPlannerDraftRejected(t, planted)
+	}
+}
+
+func assertReviewPlannerDraftRejected(t *testing.T, text string) {
+	t.Helper()
+	spec, err := ghworkflow.Parse([]byte(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := spec.Jobs["review-gate"]
+	decision := jobDecision{handling: ownDraftHandling(&job, stepWork(&job))}
+	if draftProblem(decision, &job) == "" {
+		t.Errorf("draft audit accepted planted planner defect:\n%s", text)
+	}
+}
+
 // reviewGateFileProblems lists what is missing from one workflow's review gate: a complete gate job,
 // review clearance on every heavy job, the non-PR clear default, and a fast configuration job that
 // does not wait for review.

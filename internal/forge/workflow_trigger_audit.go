@@ -462,6 +462,9 @@ const (
 	// draftExternalUnread: the job calls an external reusable workflow pinned by full commit SHA
 	// that was not read, or could not be read, from the forge (order engine-hiss18-cross-repo-reusable-20261027).
 	draftExternalUnread
+	// draftPlannerIdle: an advisory planner emits a held draft verdict and runs no other work
+	// (reviewPlannerIdleOnDraft). It succeeds, so dependents still report their held failures.
+	draftPlannerIdle
 )
 
 // jobDecision is what one job does on a draft (handling) and, for a job its needs decide, the need
@@ -523,6 +526,8 @@ func ownDraftHandling(job *workflowJob, work draftHandling) draftHandling {
 		return draftUnreached
 	case strings.Contains(job.If, ghworkflow.PullRequestDraftField):
 		return draftConditionSkip
+	case reviewPlannerIdleOnDraft(job):
+		return draftPlannerIdle
 	case work != draftStops:
 		return work
 	case advisoryJob(job.ContinueOnError):
