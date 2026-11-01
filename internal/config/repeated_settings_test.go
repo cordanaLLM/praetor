@@ -346,3 +346,73 @@ func TestRepeatedSettings_Negative_MissingManifest(t *testing.T) {
 		t.Fatal("want error for missing manifest, got nil")
 	}
 }
+
+func TestRepeatedSettings_Negative_EntryMarkerWithDifferingChildren(t *testing.T) {
+	root := t.TempDir()
+	manifestPath := writeStandardManifest(t, root,
+		"clients:\n  selected:\n    agy:\n      required: true\nframework:\n  targets:\n    go:\n      module: github.com/example/repo\n")
+	fleetPath := writePolicyFile(t, root, "fleet.yaml",
+		"clients:\n  selected:\n    agy:\n      required: false\nframework:\n  targets:\n    go:\n      module: github.com/example/other\n")
+
+	opts := EffectiveOptions{
+		Root:         root,
+		ManifestPath: manifestPath,
+		FleetPath:    fleetPath,
+	}
+
+	findings, err := RepeatedSettings(opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("want 0 findings when entry markers match but child settings differ, got %d: %+v", len(findings), findings)
+	}
+}
+
+func TestRepeatedSettings_Positive_EntryMarkerReportsOnlyEqualChild(t *testing.T) {
+	root := t.TempDir()
+	manifestPath := writeStandardManifest(t, root, "clients:\n  selected:\n    agy:\n      required: true\n")
+	fleetPath := writePolicyFile(t, root, "fleet.yaml", "clients:\n  selected:\n    agy:\n      required: true\n")
+
+	opts := EffectiveOptions{
+		Root:         root,
+		ManifestPath: manifestPath,
+		FleetPath:    fleetPath,
+	}
+
+	findings, err := RepeatedSettings(opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding for repeated child setting without entry marker, got %d: %+v", len(findings), findings)
+	}
+	if findings[0].Path != "clients.selected.agy.required" || findings[0].Value != "true" {
+		t.Fatalf("finding = %+v, want clients.selected.agy.required = true", findings[0])
+	}
+}
+
+func TestRepeatedSettings_Boundary_EntryMarkerMixedChildren(t *testing.T) {
+	root := t.TempDir()
+	manifestPath := writeStandardManifest(t, root,
+		"framework:\n  targets:\n    go:\n      module: github.com/example/repo\n      contract: docs/a.md\n")
+	fleetPath := writePolicyFile(t, root, "fleet.yaml",
+		"framework:\n  targets:\n    go:\n      module: github.com/example/repo\n      contract: docs/b.md\n")
+
+	opts := EffectiveOptions{
+		Root:         root,
+		ManifestPath: manifestPath,
+		FleetPath:    fleetPath,
+	}
+
+	findings, err := RepeatedSettings(opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("want 1 finding for matching child setting only, got %d: %+v", len(findings), findings)
+	}
+	if findings[0].Path != "framework.targets.go.module" || findings[0].Value != "github.com/example/repo" {
+		t.Fatalf("finding = %+v, want framework.targets.go.module = github.com/example/repo", findings[0])
+	}
+}

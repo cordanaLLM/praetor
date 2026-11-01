@@ -71,3 +71,35 @@ func TestExceptionWarningDaysReasonCategory(t *testing.T) {
 		t.Fatalf("explicit category warning = %d, want 1", got)
 	}
 }
+
+func TestValidateExceptionsHISS18CategoryCutoff(t *testing.T) {
+	today := time.Date(2026, 10, 21, 18, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name, category, entered, expires, want string
+	}{
+		{"positive categorized past cutoff", "A", "2026-10-29", "2026-12-31", ""},
+		{"boundary uncategorized entered before cutoff", "", "2026-10-28", "2027-01-19", ""},
+		{"boundary uncategorized without entered within grace", "", "", "2026-11-28", ""},
+		{"negative uncategorized entered on cutoff", "", "2026-10-29", "2026-11-01", "category is required (entered 2026-10-29 is on or after 2026-10-29"},
+		{"negative uncategorized without entered past grace", "", "", "2026-11-29", "category is required (entered is omitted and expires 2026-11-29 is after 2026-11-28"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := Exception{
+				Rule:     ExceptionRuleWorkflowTriggers,
+				Path:     ".github/workflows/release.yml",
+				Category: tc.category,
+				Entered:  tc.entered,
+				Reason:   "workflow must run on every branch push",
+				Expires:  tc.expires,
+			}
+			err := ValidateExceptions([]Exception{entry}, today)
+			if tc.want == "" && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+				t.Fatalf("ValidateExceptions = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}

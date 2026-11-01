@@ -257,6 +257,9 @@ func checkOperatorRepeats(manifestPath string, node *yaml.Node, upperOperator *o
 	var findings []RepeatedSetting
 	for i := 0; i < len(repoSettings) && i < maxOperatorSettings; i++ {
 		setting := repoSettings[i]
+		if spec, err := settingSpecFor(setting.Path); err == nil && spec.kind == kindEntry {
+			continue
+		}
 		source := formatSource(upperOperator.contributors[setting.Path], opts)
 		if source == "" {
 			continue
