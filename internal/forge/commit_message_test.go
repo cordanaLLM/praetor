@@ -1,9 +1,11 @@
 package forge
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestAnalyzeCommit_Positive_ConventionalAndGitGeneratedSubjects (#61): every accepted type, with
@@ -118,6 +120,13 @@ func TestAnalyzeCommit_Positive_AttributionAllowed(t *testing.T) {
 			name: "human co-author passes",
 			message: "feat(planning): implement commit check\n\n" +
 				"Co-authored-by: Jane Doe <jane@example.org>\n" +
+				"Signed-off-by: Author <author@example.com>",
+		},
+		{
+			name: "folded human co-author passes",
+			message: "feat(planning): implement commit check\n\n" +
+				"Co-authored-by: Jane Doe\n" +
+				" <jane@example.org>\n" +
 				"Signed-off-by: Author <author@example.com>",
 		},
 		{
@@ -275,11 +284,103 @@ var attributionRefusedCases = []struct {
 			"Co-authored-by: Antigravity <dev@example.org>",
 		offendingLine: "Co-authored-by: Antigravity <dev@example.org>",
 	},
+	{
+		name: "folded coauthor continuation names claude",
+		message: "feat(planning): implement commit check\n\n" +
+			"Co-authored-by: Human\n" +
+			" Claude <human@example.com>\n" +
+			"Signed-off-by: Human <human@example.com>",
+		offendingLine: "Co-authored-by: Human Claude <human@example.com>",
+	},
+	{
+		name: "folded coauthor tab continuation names anthropic noreply",
+		message: "feat(planning): implement commit check\n\n" +
+			"Co-authored-by: Helper\n" +
+			"\t<noreply@anthropic.com>",
+		offendingLine: "Co-authored-by: Helper <noreply@anthropic.com>",
+	},
+	{
+		name: "folded coauthor multi-line continuation",
+		message: "feat(planning): implement commit check\n\n" +
+			"Co-authored-by: Jane Doe\n" +
+			" <jane@example.org>\n" +
+			" (pair session with Codex)",
+		offendingLine: "Co-authored-by: Jane Doe <jane@example.org> (pair session with Codex)",
+	},
+	{
+		name: "comment-prefixed generated-with footer in stored commit",
+		message: "feat(planning): implement commit check\n\n" +
+			"# Generated with SomeTool",
+		offendingLine: "# Generated with SomeTool",
+	},
+	{
+		name: "markdown heading created-by footer in stored commit",
+		message: "feat(planning): implement commit check\n\n" +
+			"### Created by Claude Code",
+		offendingLine: "### Created by Claude Code",
+	},
 }
 
 func TestAnalyzeCommit_Negative_AttributionRefused(t *testing.T) {
 	for _, tc := range attributionRefusedCases {
 		t.Run(tc.name, func(t *testing.T) { assertAttributionRefused(t, tc.message, tc.offendingLine) })
+	}
+}
+
+func TestAnalyzeCommit_Boundary_CommentedFooterCleanedInHookRefusedInStoredCommit(t *testing.T) {
+	rawHookMessage := "feat(planning): implement commit check\n\n# Generated with SomeTool\n"
+	cleaned, err := CleanCommitMessage(rawHookMessage)
+	if err != nil {
+		t.Fatalf("CleanCommitMessage: %v", err)
+	}
+	hookAnalysis, err := AnalyzeCommit(cleaned)
+	if err != nil || !hookAnalysis.Valid {
+		t.Fatalf("cleaned hook message should pass, got %+v, %v", hookAnalysis, err)
+	}
+	assertAttributionRefused(t, rawHookMessage, "# Generated with SomeTool")
+}
+
+func TestAnalyzeCommit_Boundary_AttributionDeduplicationOrderAndScale(t *testing.T) {
+	dupMsg := "feat(planning): check deduplication\n\n" +
+		"Generated with AlphaTool\n" +
+		"Generated with BetaTool\n" +
+		"Generated with AlphaTool\n\n" +
+		"Co-authored-by: Claude <noreply@anthropic.com>\n" +
+		"Co-authored-by: GitHub Copilot\n" +
+		"Co-authored-by: Claude <noreply@anthropic.com>"
+	analysis, err := AnalyzeCommit(dupMsg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantOrder := []string{
+		"no tool attribution (fleet rule): Generated with AlphaTool; fix: drop the line",
+		"no tool attribution (fleet rule): Generated with BetaTool; fix: drop the line",
+		"no tool attribution (fleet rule): Co-authored-by: Claude <noreply@anthropic.com>; fix: drop the line",
+		"no tool attribution (fleet rule): Co-authored-by: GitHub Copilot; fix: drop the line",
+	}
+	if len(analysis.Errors) != len(wantOrder) {
+		t.Fatalf("got %d errors %v, want %d", len(analysis.Errors), analysis.Errors, len(wantOrder))
+	}
+	for i := 0; i < len(wantOrder); i++ {
+		if analysis.Errors[i] != wantOrder[i] {
+			t.Fatalf("Errors[%d] = %q, want %q", i, analysis.Errors[i], wantOrder[i])
+		}
+	}
+
+	const distinctLines = 60000
+	var b strings.Builder
+	b.WriteString("feat(planning): scale check\n\n")
+	for i := 0; i < distinctLines; i++ {
+		fmt.Fprintf(&b, "Generated with Tool-%d\n", i)
+	}
+	start := time.Now()
+	errs := commitAttributionErrors(b.String())
+	elapsed := time.Since(start)
+	if len(errs) != distinctLines {
+		t.Fatalf("got %d attribution errors, want %d", len(errs), distinctLines)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("commitAttributionErrors for %d distinct lines took %s (quadratic scan); want <= 2s", distinctLines, elapsed)
 	}
 }
 
