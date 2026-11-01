@@ -809,15 +809,13 @@ func resolveDestinationBranches(ctx context.Context, repoDir string, refspecs []
 		if err != nil {
 			return nil, err
 		}
-		if skip {
+		if skip || isLocalTagOnly(ctx, repoDir, refspecs[i]) {
 			continue
 		}
 		if branch == "HEAD" || branch == "@" {
 			if branch, err = resolveCurrentBranch(ctx, repoDir); err != nil {
 				return nil, err
 			}
-		} else if isLocalTagOnly(ctx, repoDir, refspecs[i], branch) {
-			continue
 		}
 		branches = append(branches, branch)
 	}
@@ -863,15 +861,21 @@ func trimBranchRefPrefix(target, refspec string) (string, bool, error) {
 	return target, false, nil
 }
 
-// isLocalTagOnly reports whether a target refers to a local git tag without a matching branch.
-func isLocalTagOnly(ctx context.Context, repoDir, rawRefspec, branch string) bool {
+// isLocalTagOnly reports whether an unqualified refspec's source refers to a local git tag
+// without a matching local branch.
+func isLocalTagOnly(ctx context.Context, repoDir, rawRefspec string) bool {
 	if strings.Contains(rawRefspec, "refs/") || !util.DirExists(repoDir) {
 		return false
 	}
-	if _, err := util.RunGit(ctx, repoDir, "show-ref", "--verify", "--quiet", "refs/tags/"+branch); err != nil {
+	spec := strings.TrimPrefix(strings.TrimSpace(rawRefspec), "+")
+	src, _, _ := strings.Cut(spec, ":")
+	if src == "" || src == "HEAD" || src == "@" {
 		return false
 	}
-	_, headErr := util.RunGit(ctx, repoDir, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	if _, err := util.RunGit(ctx, repoDir, "show-ref", "--verify", "--quiet", "refs/tags/"+src); err != nil {
+		return false
+	}
+	_, headErr := util.RunGit(ctx, repoDir, "show-ref", "--verify", "--quiet", "refs/heads/"+src)
 	return headErr != nil
 }
 

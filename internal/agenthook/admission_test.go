@@ -748,3 +748,57 @@ func TestAdmission_GitPushHead_Planted_MirrorAndAllBranches(t *testing.T) {
 		policy.CommandInDir(ctx, repo, "PRAETOR_ADMIT=git-push git push --all origin"),
 		"git push target resolution failed", "--all")
 }
+
+// Planted negative, positive and boundary: refspec tag detection inspects the source ref rather
+// than the destination name, so a local tag sharing the destination branch name cannot hide a
+// branch push (`HEAD:merged-topic`, `main:merged-topic`), while a local-tag source pushed to an
+// unqualified destination (`v1:merged-topic`) is skipped as a tag push unless the destination
+// explicitly names `refs/heads/`.
+func TestAdmission_GitPushHead_Planted_RefspecSourceTagVsBranch(t *testing.T) {
+	ctx := context.Background()
+	repo := defaultAdmissionRepo(t)
+	mustGit(t, repo, "tag", "merged-topic")
+	mustGit(t, repo, "tag", "v1")
+	mustGit(t, repo, "branch", "ambiguous-ref")
+	mustGit(t, repo, "tag", "ambiguous-ref")
+
+	calls := 0
+	policy := admissionPolicy(t).WithAdmissionPullRequests(repo, func(_ context.Context, target PushTarget) ([]forge.PullRequestHead, error) {
+		calls++
+		switch target.Branch {
+		case "merged-topic":
+			return []forge.PullRequestHead{{Number: 42, State: forge.PullRequestStateMerged, HeadBranch: "merged-topic"}}, nil
+		case "closed-topic":
+			return []forge.PullRequestHead{{Number: 19, State: forge.PullRequestStateClosed, HeadBranch: "closed-topic"}}, nil
+		default:
+			return nil, nil
+		}
+	})
+
+	for _, cmd := range []string{
+		"PRAETOR_ADMIT=git-push git push origin HEAD:merged-topic",
+		"PRAETOR_ADMIT=git-push git push origin +HEAD:merged-topic",
+		"PRAETOR_ADMIT=git-push git push origin main:merged-topic",
+		"PRAETOR_ADMIT=git-push git push origin ambiguous-ref:merged-topic",
+		"PRAETOR_ADMIT=git-push git push origin v1:refs/heads/merged-topic",
+	} {
+		requireDeniedContaining(t, cmd, policy.CommandInDir(ctx, repo, cmd),
+			"#42", "MERGED", "push to a new branch")
+	}
+
+	calls = 0
+	for _, cmd := range []string{
+		"PRAETOR_ADMIT=git-push git push origin v1",
+		"PRAETOR_ADMIT=git-push git push origin v1:merged-topic",
+		"PRAETOR_ADMIT=git-push git push origin +v1:merged-topic",
+		"PRAETOR_ADMIT=git-push git push origin v1:closed-topic",
+		"PRAETOR_ADMIT=git-push git push origin +v1:closed-topic",
+	} {
+		if v := policy.CommandInDir(ctx, repo, cmd); v.Outcome != Allow {
+			t.Errorf("%q refused: %s", cmd, v.Reason)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("local-tag source pushes queried the forge %d times, want 0", calls)
+	}
+}

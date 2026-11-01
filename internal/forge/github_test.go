@@ -506,11 +506,42 @@ func TestReadPullRequestsByHead_Forgejo_TokenOnlyToDeclaredOrAllowlistedHost(t *
 	}{
 		{name: "undeclared host matching the pattern", host: "forgejo.attacker.com", want: ""},
 		{name: "declared host", host: "forgejo.example.org", declared: []string{"forgejo.example.org"}, want: "token secret-forgejo-token"},
+		{name: "http endpoint on declared host", host: "http://forgejo.example.org", declared: []string{"forgejo.example.org"}, want: ""},
 		{name: "undeclared codeberg.org", host: "codeberg.org", want: ""},
 	}
 	for _, tc := range cases {
 		remote := util.GitRemote{Host: tc.host, Owner: "acme", Repo: "widgets"}
 		if _, err := ReadPullRequestsByHead(ctx, config.ForgeForgejo, remote, "topic", tc.declared...); err != nil {
+			t.Fatalf("%s: lookup: %v", tc.name, err)
+		}
+		if got := lastAuth(); got != tc.want {
+			t.Fatalf("%s: auth header %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// Planted negative, positive and boundary (CWE-522): ReadPullRequestsByHead sends the ambient
+// GitHub token only to github.com (or api.github.com) over HTTPS; a non-GitHub host declared as
+// GitHub or an http:// endpoint receives no token.
+func TestReadPullRequestsByHead_GitHub_TokenOnlyToGitHubHTTPS(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "secret-github-token")
+	ctx, lastAuth := forgejoAuthProbe(t)
+	cases := []struct {
+		name, host string
+		declared   []string
+		want       string
+	}{
+		{name: "github.com", host: "github.com", want: "Bearer secret-github-token"},
+		{name: "api.github.com", host: "api.github.com", want: "Bearer secret-github-token"},
+		{name: "https github.com", host: "https://github.com", want: "Bearer secret-github-token"},
+		{name: "non-GitHub host declared as GitHub", host: "ghe.attacker.com", declared: []string{"ghe.attacker.com"}, want: ""},
+		{name: "lookalike host", host: "github.com.attacker.com", want: ""},
+		{name: "http github.com endpoint", host: "http://github.com", want: ""},
+		{name: "http api.github.com endpoint", host: "http://api.github.com", want: ""},
+	}
+	for _, tc := range cases {
+		remote := util.GitRemote{Host: tc.host, Owner: "acme", Repo: "widgets"}
+		if _, err := ReadPullRequestsByHead(ctx, config.ForgeGitHub, remote, "topic", tc.declared...); err != nil {
 			t.Fatalf("%s: lookup: %v", tc.name, err)
 		}
 		if got := lastAuth(); got != tc.want {

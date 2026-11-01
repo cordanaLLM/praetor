@@ -1256,18 +1256,41 @@ func IsTrustedForgejoHost(host, declaredHost string) bool {
 	return h != "" && decl != "" && h == decl
 }
 
-// normalizeForgeHost strips scheme, port, and trailing dot from host for case-insensitive comparison.
+// IsTrustedGitHubHost reports whether host is github.com (or api.github.com) over HTTPS.
+// The ambient GitHub token belongs to github.com, so a repository that declares
+// repository.forge: github for another host or an http:// endpoint gets no token.
+func IsTrustedGitHubHost(host string) bool {
+	h := normalizeForgeHost(host)
+	return h == "github.com" || h == "api.github.com"
+}
+
+// normalizeForgeHost strips an https:// scheme, port, and trailing dot from host for
+// case-insensitive comparison. Any non-HTTPS scheme (such as http://) is rejected.
 func normalizeForgeHost(raw string) string {
 	raw = strings.ToLower(strings.TrimSpace(raw))
 	if strings.Contains(raw, "://") {
-		if u, err := url.Parse(raw); err == nil {
-			raw = u.Host
+		u, err := url.Parse(raw)
+		if err != nil || u.Scheme != "https" {
+			return ""
 		}
+		raw = u.Host
+	}
+	if strings.Contains(raw, "/") {
+		return ""
 	}
 	if host, _, err := net.SplitHostPort(raw); err == nil {
 		return strings.TrimSuffix(strings.ToLower(host), ".")
 	}
 	return strings.TrimSuffix(raw, ".")
+}
+
+// resolveGitHubTokenForHost returns the ambient GitHub token only if host is a trusted
+// GitHub host; any other host gets no token.
+func resolveGitHubTokenForHost(ctx context.Context, host string) string {
+	if !IsTrustedGitHubHost(host) {
+		return ""
+	}
+	return util.ResolveAuthTokenContext(ctx, "")
 }
 
 // resolveForgejoTokenForHost returns FORGEJO_TOKEN or GITEA_TOKEN only if host is trusted;
@@ -1293,7 +1316,8 @@ func ReadPullRequestsByHead(ctx context.Context, kind config.Forge, remote util.
 	}
 	switch kind {
 	case config.ForgeGitHub:
-		driver := NewGitHubDriver(util.ResolveAuthTokenContext(ctx, ""), endpoint)
+		token := resolveGitHubTokenForHost(ctx, remote.Host)
+		driver := NewGitHubDriver(token, endpoint)
 		if client := httpClientFromContext(ctx); client != nil {
 			driver.HTTPClient = client
 		}
