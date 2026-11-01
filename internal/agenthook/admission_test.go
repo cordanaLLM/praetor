@@ -522,7 +522,7 @@ func TestAdmission_GitPushHead_TargetResolution_PositiveAndBoundary(t *testing.T
 	}
 	for _, tc := range cases {
 		got = nil
-		if v := policy.CommandInDir(t.Context(), tc.workDir, tc.cmd); v.Outcome != Allow {
+		if v := policy.CommandIn(t.Context(), tc.cmd, tc.workDir); v.Outcome != Allow {
 			t.Fatalf("%q refused: %s", tc.cmd, v.Reason)
 		}
 		if len(got) != 1 || got[0].Remote.Owner != tc.wantOwner || got[0].Remote.Repo != tc.wantRepo ||
@@ -533,10 +533,10 @@ func TestAdmission_GitPushHead_TargetResolution_PositiveAndBoundary(t *testing.T
 	}
 
 	requireDeniedContaining(t, "missing -C dir",
-		policy.CommandInDir(t.Context(), repo, "PRAETOR_ADMIT=git-push git -C nonexistent push origin main"),
+		policy.CommandIn(t.Context(), "PRAETOR_ADMIT=git-push git -C nonexistent push origin main", repo),
 		"git push target resolution failed")
 	requireDeniedContaining(t, "missing remote",
-		policy.CommandInDir(t.Context(), repo, "PRAETOR_ADMIT=git-push git push unknown-remote main"),
+		policy.CommandIn(t.Context(), "PRAETOR_ADMIT=git-push git push unknown-remote main", repo),
 		"git push target resolution failed")
 }
 
@@ -669,10 +669,10 @@ func TestAdmission_GitPushHead_Planted_OmittedRefspecViaGitPushRef(t *testing.T)
 
 	// No upstream configured: refused with git's reason rather than guessing untracked-branch.
 	requireDeniedContaining(t, "no upstream bare push",
-		policy.CommandInDir(ctx, noUpstream, "PRAETOR_ADMIT=git-push git push"),
+		policy.CommandIn(ctx, "PRAETOR_ADMIT=git-push git push", noUpstream),
 		"git push target resolution failed", "@{push}")
 	requireDeniedContaining(t, "no upstream remote push",
-		policy.CommandInDir(ctx, noUpstream, "PRAETOR_ADMIT=git-push git push origin"),
+		policy.CommandIn(ctx, "PRAETOR_ADMIT=git-push git push origin", noUpstream),
 		"git push target resolution failed", "@{push}")
 
 	// Configure a commit and upstream pointing to upstream/tracked-dst.
@@ -685,20 +685,20 @@ func TestAdmission_GitPushHead_Planted_OmittedRefspecViaGitPushRef(t *testing.T)
 
 	// Bare `git push` now resolves via @{push} to remote "upstream" (fork/widgets) and branch "tracked-dst".
 	requireDeniedContaining(t, "resolved via @{push} to upstream/tracked-dst",
-		policy.CommandInDir(ctx, noUpstream, "PRAETOR_ADMIT=git-push git push"),
+		policy.CommandIn(ctx, "PRAETOR_ADMIT=git-push git push", noUpstream),
 		"fork/widgets", "tracked-dst", "#61", "MERGED")
 
 	// push.default=nothing: git cannot resolve @{push}, so the push is refused.
 	mustGit(t, noUpstream, "config", "push.default", "nothing")
 	requireDeniedContaining(t, "push.default nothing",
-		policy.CommandInDir(ctx, noUpstream, "PRAETOR_ADMIT=git-push git push"),
+		policy.CommandIn(ctx, "PRAETOR_ADMIT=git-push git push", noUpstream),
 		"git push target resolution failed", "@{push}")
 
 	// Detached HEAD: git cannot resolve @{push}, so the push is refused.
 	mustGit(t, noUpstream, "config", "push.default", "simple")
 	mustGit(t, noUpstream, "checkout", "--detach", "-q", "HEAD")
 	requireDeniedContaining(t, "detached HEAD bare push",
-		policy.CommandInDir(ctx, noUpstream, "PRAETOR_ADMIT=git-push git push"),
+		policy.CommandIn(ctx, "PRAETOR_ADMIT=git-push git push", noUpstream),
 		"git push target resolution failed", "@{push}")
 }
 
@@ -723,18 +723,18 @@ func TestAdmission_GitPushHead_Planted_MirrorAndAllBranches(t *testing.T) {
 		"PRAETOR_ADMIT=git-push git push --mirror origin",
 		"praetorctl admit --label git-push -- git push --mirror",
 	} {
-		requireDeniedContaining(t, cmd, policy.CommandInDir(ctx, repo, cmd),
+		requireDeniedContaining(t, cmd, policy.CommandIn(ctx, cmd, repo),
 			"--mirror", "push branches one by one")
 	}
 
 	requireDeniedContaining(t, "push --all with merged local branch",
-		policy.CommandInDir(ctx, repo, "PRAETOR_ADMIT=git-push git push --all origin"),
+		policy.CommandIn(ctx, "PRAETOR_ADMIT=git-push git push --all origin", repo),
 		"merged-feature", "#73", "MERGED")
 
 	mustGit(t, repo, "branch", "-D", "merged-feature")
 	mustGit(t, repo, "branch", "clean-feature")
 	queried = nil
-	if v := policy.CommandInDir(ctx, repo, "PRAETOR_ADMIT=git-push git push --all origin"); v.Outcome != Allow {
+	if v := policy.CommandIn(ctx, "PRAETOR_ADMIT=git-push git push --all origin", repo); v.Outcome != Allow {
 		t.Fatalf("push --all with clean branches refused: %s", v.Reason)
 	}
 	if len(queried) != 2 {
@@ -745,7 +745,7 @@ func TestAdmission_GitPushHead_Planted_MirrorAndAllBranches(t *testing.T) {
 		mustGit(t, repo, "branch", "extra-"+strings.Repeat("a", i/10)+string(rune('a'+i%10)))
 	}
 	requireDeniedContaining(t, "push --all exceeding branch bound",
-		policy.CommandInDir(ctx, repo, "PRAETOR_ADMIT=git-push git push --all origin"),
+		policy.CommandIn(ctx, "PRAETOR_ADMIT=git-push git push --all origin", repo),
 		"git push target resolution failed", "--all")
 }
 
@@ -782,7 +782,7 @@ func TestAdmission_GitPushHead_Planted_RefspecSourceTagVsBranch(t *testing.T) {
 		"PRAETOR_ADMIT=git-push git push origin ambiguous-ref:merged-topic",
 		"PRAETOR_ADMIT=git-push git push origin v1:refs/heads/merged-topic",
 	} {
-		requireDeniedContaining(t, cmd, policy.CommandInDir(ctx, repo, cmd),
+		requireDeniedContaining(t, cmd, policy.CommandIn(ctx, cmd, repo),
 			"#42", "MERGED", "push to a new branch")
 	}
 
@@ -794,7 +794,7 @@ func TestAdmission_GitPushHead_Planted_RefspecSourceTagVsBranch(t *testing.T) {
 		"PRAETOR_ADMIT=git-push git push origin v1:closed-topic",
 		"PRAETOR_ADMIT=git-push git push origin +v1:closed-topic",
 	} {
-		if v := policy.CommandInDir(ctx, repo, cmd); v.Outcome != Allow {
+		if v := policy.CommandIn(ctx, cmd, repo); v.Outcome != Allow {
 			t.Errorf("%q refused: %s", cmd, v.Reason)
 		}
 	}
@@ -838,7 +838,7 @@ func TestAdmission_GitPushHead_Planted_ConfigTargetOverridesRefused(t *testing.T
 		"PRAETOR_ADMIT=git-push git -c IncludeIf.onbranch:main.path=/tmp/gitconfig push origin main",
 		"PRAETOR_ADMIT=git-push git -c http.lowSpeedLimit=1 -c remote.origin.url=https://github.com/other/widgets.git push origin main",
 	} {
-		requireDeniedContaining(t, cmd, policy.CommandInDir(ctx, repo, cmd),
+		requireDeniedContaining(t, cmd, policy.CommandIn(ctx, cmd, repo),
 			"git push target resolution failed", "overrides the push target")
 	}
 	if calls != 0 {
@@ -850,12 +850,12 @@ func TestAdmission_GitPushHead_Planted_ConfigTargetOverridesRefused(t *testing.T
 		"PRAETOR_ADMIT=git-push git -c core.sshCommand=ssh push origin main",
 		"praetorctl admit --label git-push -- git -c credential.helper= push origin main",
 	} {
-		if v := policy.CommandInDir(ctx, repo, cmd); v.Outcome != Allow {
+		if v := policy.CommandIn(ctx, cmd, repo); v.Outcome != Allow {
 			t.Errorf("%q refused: %s", cmd, v.Reason)
 		}
 	}
 	requireDeniedContaining(t, "benign -c on merged branch still refused by forge check",
-		policy.CommandInDir(ctx, repo, "PRAETOR_ADMIT=git-push git -c http.lowSpeedLimit=1 push origin merged-topic"),
+		policy.CommandIn(ctx, "PRAETOR_ADMIT=git-push git -c http.lowSpeedLimit=1 push origin merged-topic", repo),
 		"#42", "MERGED", "push to a new branch")
 }
 
@@ -887,18 +887,18 @@ func TestAdmission_GitPushHead_Planted_WildcardRefspecsRefused(t *testing.T) {
 		"PRAETOR_ADMIT=git-push git push origin main ^refs/heads/merged-topic",
 		"PRAETOR_ADMIT=git-push git push origin main refs/heads/*:refs/heads/*",
 	} {
-		requireDeniedContaining(t, cmd, policy.CommandInDir(ctx, repo, cmd),
+		requireDeniedContaining(t, cmd, policy.CommandIn(ctx, cmd, repo),
 			"git push target resolution failed", "wildcard git push refspec", "push branches one by one")
 	}
 	if calls != 0 {
 		t.Fatalf("wildcard refspec pushes queried the forge %d times, want 0", calls)
 	}
 
-	if v := policy.CommandInDir(ctx, repo, "PRAETOR_ADMIT=git-push git push origin refs/heads/main:refs/heads/main"); v.Outcome != Allow {
+	if v := policy.CommandIn(ctx, "PRAETOR_ADMIT=git-push git push origin refs/heads/main:refs/heads/main", repo); v.Outcome != Allow {
 		t.Fatalf("explicit non-wildcard refspec refused: %s", v.Reason)
 	}
 	requireDeniedContaining(t, "explicit non-wildcard refspec to merged branch",
-		policy.CommandInDir(ctx, repo, "PRAETOR_ADMIT=git-push git push origin refs/heads/merged-topic:refs/heads/merged-topic"),
+		policy.CommandIn(ctx, "PRAETOR_ADMIT=git-push git push origin refs/heads/merged-topic:refs/heads/merged-topic", repo),
 		"#42", "MERGED", "push to a new branch")
 }
 
@@ -918,14 +918,14 @@ func TestAdmission_GitPushHead_Planted_PushURLAndPushInsteadOf(t *testing.T) {
 		"praetorctl admit --label git-push -- git push origin merged-in-fork",
 		"PRAETOR_ADMIT=git-push git push rewritten merged-in-fork",
 	} {
-		requireDeniedContaining(t, cmd, policy.CommandInDir(ctx, repo, cmd),
+		requireDeniedContaining(t, cmd, policy.CommandIn(ctx, cmd, repo),
 			"fork/widgets", "#84", "MERGED", "push to a new branch")
 	}
 	for _, cmd := range []string{
 		"PRAETOR_ADMIT=git-push git push origin clean-in-fork",
 		"PRAETOR_ADMIT=git-push git push rewritten clean-in-fork",
 	} {
-		if v := policy.CommandInDir(ctx, repo, cmd); v.Outcome != Allow {
+		if v := policy.CommandIn(ctx, cmd, repo); v.Outcome != Allow {
 			t.Fatalf("%q refused when only upstream fetch URL had a merged PR: %s", cmd, v.Reason)
 		}
 	}
