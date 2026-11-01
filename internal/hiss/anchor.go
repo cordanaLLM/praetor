@@ -3,6 +3,7 @@ package hiss
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -56,19 +57,20 @@ type funcSpan struct {
 }
 
 // ExtractFileFunctions returns the function and method spans recorded for rel by the HISS
-// language scanners without running a second parser.
-func ExtractFileFunctions(rel string, data []byte) []FunctionSpan {
+// language scanners without running a second parser. It returns a parse error when rel is a
+// Go source file that cannot be parsed, and (nil, nil) for empty or unsupported files.
+func ExtractFileFunctions(rel string, data []byte) ([]FunctionSpan, error) {
 	if len(data) == 0 {
-		return nil
+		return nil, nil
 	}
 	ext := strings.ToLower(filepath.Ext(rel))
 	if ext == ".go" {
 		fset := token.NewFileSet()
-		file, err := parser.ParseFile(fset, "", data, parser.SkipObjectResolution)
+		file, err := parser.ParseFile(fset, rel, data, parser.SkipObjectResolution)
 		if err != nil {
-			return nil
+			return nil, fmt.Errorf("parse %s: %w", rel, err)
 		}
-		return exportFunctionSpans(extractGoFunctions(fset, file))
+		return exportFunctionSpans(extractGoFunctions(fset, file)), nil
 	}
 	src := sourceFile{rel: rel, data: data}
 	rep := newScanReport(MaxInfractionsCap)
@@ -82,7 +84,7 @@ func ExtractFileFunctions(rel string, data []byte) []FunctionSpan {
 	} else if ext == ".java" || ext == ".kt" || ext == ".kts" || ext == ".swift" {
 		scanNativeLines(src.lfLines(), src.rel, rep, opts)
 	}
-	return exportFunctionSpans(rep.functions)
+	return exportFunctionSpans(rep.functions), nil
 }
 
 // exportFunctionSpans converts internal funcSpan records into exported FunctionSpan values.

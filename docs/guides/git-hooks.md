@@ -770,14 +770,14 @@ packages touched by each refactor commit in a temporary worktree of that commit,
 suite execution to keep the local range check fast. CI runs it with `--run-tests` on pull-request
 ranges. REF-03 public API invariance remains covered by the engine API compatibility gate.
 
-`praetorctl docstrings check [--path=.] [--base=origin/main] [--head=<ref>] [--threshold=80]`
+`praetorctl docstrings check [--path=.] [--base=<ref>] [--head=<ref>] [--pre-push] [--threshold=80]`
 reproduces CodeRabbit's diff-scoped docstring coverage pre-merge check locally (`internal/docstrings/docstrings.go`,
 `TestCheck_Positive_PlantedCases`). Every function or method in `internal/hiss`'s scanner inventory
 whose source span overlaps a line added or modified in `git diff -U0` against the merge base is
-counted, exported or unexported and test functions included. The coverage threshold defaults to
-`reviews.pre_merge_checks.docstrings.threshold` in `.coderabbit.yaml` (`80` when absent) and exits
-`1` below threshold or `2` on a read or configuration failure. Adopter repositories run the same
-check in `lefthook.yml` `pre-push` via `sh .config/lefthook/engine.sh docstrings check`.
+counted, exported or unexported and test functions included. The mode (`error`, `warning`, or `off`) and coverage threshold default to
+`reviews.pre_merge_checks.docstrings` in `.coderabbit.yaml` (`error` and `80` when absent): `error` exits
+`1` below threshold, `warning` reports uncovered functions and exits `0`, `off` skips the check, and a read or configuration failure exits `2`. Adopter repositories run the same
+check in `lefthook.yml` `pre-push` via `sh .config/lefthook/engine.sh docstrings check --pre-push` with `use_stdin: true`.
 
 These checks are not re-run per commit:
 

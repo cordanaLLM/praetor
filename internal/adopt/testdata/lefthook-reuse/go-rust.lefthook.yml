@@ -71,7 +71,8 @@ pre-push:
         installed, install it with go install
         github.com/zricethezav/gitleaks/v8@v8.30.1 >&2; exit 1; fi
     docstrings:
-      run: sh .config/lefthook/engine.sh docstrings check
+      use_stdin: true
+      run: sh .config/lefthook/engine.sh docstrings check --pre-push
     flavor-audit:
       run: sh .config/lefthook/engine.sh flavor audit .
     audit:

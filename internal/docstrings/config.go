@@ -18,7 +18,7 @@ const (
 	// DefaultThreshold is CodeRabbit's default docstring coverage percentage floor.
 	DefaultThreshold = 80
 	// DefaultMode is the default pre-merge check mode when .coderabbit.yaml is absent.
-	DefaultMode    = "warning"
+	DefaultMode    = "error"
 	maxConfigBytes = 1 << 20
 )
 

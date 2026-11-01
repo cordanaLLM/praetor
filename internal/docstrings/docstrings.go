@@ -94,11 +94,19 @@ func Check(ctx context.Context, opts Options) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	baseRef := opts.BaseRef
+	if baseRef == "" {
+		resolved, err := DefaultBaseRef(ctx, repoDir, defaultRemoteName)
+		if err != nil {
+			return nil, err
+		}
+		baseRef = resolved
+	}
 	diffHead := opts.HeadRef
 	if diffHead == "" {
 		diffHead = "WORKTREE"
 	}
-	ranges, err := cifilter.GetChangedLineRanges(ctx, repoDir, opts.BaseRef, diffHead)
+	ranges, err := cifilter.GetChangedLineRanges(ctx, repoDir, baseRef, diffHead)
 	if err != nil {
 		return nil, err
 	}
@@ -125,16 +133,20 @@ func resolveEffectiveConfig(repoDir string, override *int) (Config, error) {
 
 // evaluateChangedFiles inspects every changed file in deterministic order and computes coverage.
 func evaluateChangedFiles(ctx context.Context, repoDir, headRef string, cfg Config, ranges map[string][]cifilter.LineRange) (*Report, error) {
+	rep := &Report{
+		Threshold: cfg.Threshold,
+		Mode:      cfg.Mode,
+	}
+	if cfg.Mode == "off" {
+		finalizeReport(rep)
+		return rep, nil
+	}
 	paths := make([]string, 0, len(ranges))
 	for rel := range ranges {
 		paths = append(paths, rel)
 	}
 	slices.Sort(paths)
 
-	rep := &Report{
-		Threshold: cfg.Threshold,
-		Mode:      cfg.Mode,
-	}
 	for i := 0; i < len(paths); i++ {
 		rel := paths[i]
 		fileRanges := ranges[rel]
@@ -151,14 +163,17 @@ func evaluateChangedFiles(ctx context.Context, repoDir, headRef string, cfg Conf
 
 // evaluateSingleFile extracts functions for rel and records coverage for those overlapping fileRanges.
 func evaluateSingleFile(ctx context.Context, repoDir, headRef, rel string, fileRanges []cifilter.LineRange, rep *Report) error {
-	data, err := readTargetFile(ctx, repoDir, headRef, rel)
-	if err != nil {
+	data, ok, err := readTargetFile(ctx, repoDir, headRef, rel)
+	if err != nil || !ok {
 		return err
 	}
 	if resolveDocStyle(rel, data) == docStyleNone {
 		return nil
 	}
-	functions := hiss.ExtractFileFunctions(rel, data)
+	functions, err := hiss.ExtractFileFunctions(rel, data)
+	if err != nil {
+		return fmt.Errorf("extract functions from %s: %w", rel, err)
+	}
 	if len(functions) == 0 {
 		return nil
 	}
@@ -190,7 +205,7 @@ func finalizeReport(rep *Report) {
 		return
 	}
 	rep.Coverage = float64(rep.Covered) * 100.0 / float64(rep.Counted)
-	rep.Passed = rep.Mode == "off" || rep.Covered*100 >= rep.Counted*rep.Threshold
+	rep.Passed = rep.Mode == "off" || rep.Mode == "warning" || rep.Covered*100 >= rep.Counted*rep.Threshold
 }
 
 // overlapsRanges reports whether fn's line span overlaps any changed line range.
@@ -204,32 +219,46 @@ func overlapsRanges(fn hiss.FunctionSpan, ranges []cifilter.LineRange) bool {
 }
 
 // readTargetFile reads rel from the working tree when headRef is empty or from git show headRef:rel.
-func readTargetFile(ctx context.Context, repoDir, headRef, rel string) ([]byte, error) {
+// It returns ok=false when rel is a non-regular worktree entry or a gitlink/symlink tree entry.
+func readTargetFile(ctx context.Context, repoDir, headRef, rel string) ([]byte, bool, error) {
 	if headRef != "" && headRef != "WORKTREE" {
-		gitCtx, cancel := context.WithTimeout(ctx, gitReadTimeout)
-		defer cancel()
-		out, err := util.RunGit(gitCtx, repoDir, "show", fmt.Sprintf("%s:%s", headRef, rel))
-		if err != nil {
-			return nil, fmt.Errorf("read %s at %s: %w", rel, headRef, err)
-		}
-		return []byte(out), nil
+		return readGitRevisionFile(ctx, repoDir, headRef, rel)
 	}
 	fullPath := filepath.Join(repoDir, filepath.FromSlash(rel))
 	info, err := os.Lstat(fullPath)
 	if err != nil {
-		return nil, fmt.Errorf("stat %s: %w", rel, err)
+		return nil, false, fmt.Errorf("stat %s: %w", rel, err)
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("refusing non-regular file %s", rel)
+	if !info.Mode().IsRegular() {
+		return nil, false, nil
 	}
 	if info.Size() > maxSourceBytes {
-		return nil, fmt.Errorf("file %s exceeds %d bytes", rel, maxSourceBytes)
+		return nil, false, fmt.Errorf("file %s exceeds %d bytes", rel, maxSourceBytes)
 	}
 	data, err := os.ReadFile(fullPath) // #nosec G304 -- fullPath is confined to repoDir and verified regular above
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", rel, err)
+		return nil, false, fmt.Errorf("read %s: %w", rel, err)
 	}
-	return data, nil
+	return data, true, nil
+}
+
+// readGitRevisionFile reads rel at headRef via git ls-tree and git show, skipping gitlinks and symlinks.
+func readGitRevisionFile(ctx context.Context, repoDir, headRef, rel string) ([]byte, bool, error) {
+	gitCtx, cancel := context.WithTimeout(ctx, gitReadTimeout)
+	defer cancel()
+	treeOut, err := util.RunGit(gitCtx, repoDir, "ls-tree", headRef, "--", rel)
+	if err != nil {
+		return nil, false, fmt.Errorf("ls-tree %s:%s: %w", headRef, rel, err)
+	}
+	fields := strings.Fields(treeOut)
+	if len(fields) == 0 || fields[0] == "160000" || fields[0] == "120000" {
+		return nil, false, nil
+	}
+	out, err := util.RunGit(gitCtx, repoDir, "show", fmt.Sprintf("%s:%s", headRef, rel))
+	if err != nil {
+		return nil, false, fmt.Errorf("read %s at %s: %w", rel, headRef, err)
+	}
+	return []byte(out), true, nil
 }
 
 // splitSourceLines splits data into LF-normalized lines.

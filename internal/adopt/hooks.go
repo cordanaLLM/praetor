@@ -247,8 +247,8 @@ func lefthookPrePushJobs(shape lefthookShape) string {
 		jobs += "    security:\n" + lefthookRun(command)
 	}
 	secretsCmd := requiredToolGuard("gitleaks", gitleaksInstallHint, lefthookGovernedCommand("security secrets"))
-	docstringsCmd := lefthookGovernedCommand("docstrings check")
-	return jobs + "    secrets:\n" + lefthookRun(secretsCmd) + "    docstrings:\n" + lefthookRun(docstringsCmd)
+	docstringsCmd := lefthookGovernedCommand("docstrings check --pre-push")
+	return jobs + "    secrets:\n" + lefthookRun(secretsCmd) + "    docstrings:\n      use_stdin: true\n" + lefthookRun(docstringsCmd)
 }
 
 // reuseLintCommand renders the run line of the reuse-lint job: reuse lint at the release line

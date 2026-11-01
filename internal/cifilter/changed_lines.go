@@ -58,7 +58,7 @@ func GetChangedLineRanges(ctx context.Context, dir, baseRef, headRef string) (ma
 
 // runUnifiedZeroDiff runs git diff -U0 against the merge base of baseRef and headRef.
 func runUnifiedZeroDiff(ctx context.Context, dir, baseRef, headRef string) (string, error) {
-	flags := []string{"diff", "-U0", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/"}
+	flags := []string{"-c", "core.quotePath=false", "diff", "-U0", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/"}
 	if headRef == "WORKTREE" {
 		mb, err := resolveMergeBase(ctx, dir, baseRef, "HEAD")
 		if err != nil {
@@ -121,7 +121,7 @@ func stepDiffLine(line, currentFile string, result map[string][]LineRange) (stri
 	if strings.HasPrefix(line, "diff --git ") {
 		return "", nil
 	}
-	if strings.HasPrefix(line, "+++ ") {
+	if currentFile == "" && strings.HasPrefix(line, "+++ ") {
 		return parseDiffTargetFile(line, result)
 	}
 	if currentFile != "" && strings.HasPrefix(line, "@@ ") {
@@ -142,11 +142,11 @@ func parseDiffTargetFile(line string, existing map[string][]LineRange) (string, 
 		return "", nil
 	}
 	if !strings.HasPrefix(line, "+++ b/") {
-		return "", nil
+		return "", fmt.Errorf("quoted or unsupported diff target header: %q", line)
 	}
 	path := strings.TrimSpace(strings.TrimPrefix(line, "+++ b/"))
 	if path == "" {
-		return "", nil
+		return "", fmt.Errorf("empty diff target header: %q", line)
 	}
 	if _, ok := existing[path]; !ok && len(existing) >= maxFilesToInspect {
 		return "", fmt.Errorf("git diff exceeds %d file entries", maxFilesToInspect)

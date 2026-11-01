@@ -8,6 +8,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,6 +63,22 @@ func runGitCmd(t *testing.T, dir string, args ...string) {
 	if out, err := util.RunGit(ctx, dir, args...); err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
+}
+
+// runGitOut runs git in dir with a hermetic environment and returns trimmed stdout.
+func runGitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	envCtx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(envCtx, 30*time.Second)
+	defer cancel()
+	out, err := util.RunGit(ctx, dir, args...)
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(out)
 }
 
 // assertDocstringReport checks that a docstring coverage report matches the expected pass state and counts.
@@ -166,4 +184,98 @@ func TestCheck_Negative_FailClosedOnInvalidConfigOrRef(t *testing.T) {
 	if _, err := docstrings.Check(t.Context(), docstrings.Options{RepoDir: dir, BaseRef: "nonexistent-ref"}); err == nil {
 		t.Fatal("expected nonexistent base ref to fail closed")
 	}
+}
+
+// TestCheck_Positive_ModesErrorWarningOff verifies error, warning, and off modes in .coderabbit.yaml.
+func TestCheck_Positive_ModesErrorWarningOff(t *testing.T) {
+	dir := newDocstringTestRepo(t, map[string]string{"pkg/a.go": "package pkg\n"})
+	writeTestFile(t, dir, "pkg/a.go", "package pkg\n\nfunc Undocumented() {\n\t_ = 1\n}\n")
+
+	writeTestFile(t, dir, ".coderabbit.yaml", "reviews:\n  pre_merge_checks:\n    docstrings:\n      mode: error\n      threshold: 80\n")
+	repErr, err := docstrings.Check(t.Context(), docstrings.Options{RepoDir: dir, BaseRef: "origin/main"})
+	assertDocstringReport(t, "mode error", repErr, err, false, 1, 0)
+	if repErr.Mode != "error" || len(repErr.Uncovered) != 1 {
+		t.Fatalf("expected error mode with 1 uncovered function, got %+v", repErr)
+	}
+
+	writeTestFile(t, dir, ".coderabbit.yaml", "reviews:\n  pre_merge_checks:\n    docstrings:\n      mode: warning\n      threshold: 80\n")
+	repWarn, err := docstrings.Check(t.Context(), docstrings.Options{RepoDir: dir, BaseRef: "origin/main"})
+	assertDocstringReport(t, "mode warning", repWarn, err, true, 1, 0)
+	if repWarn.Mode != "warning" || len(repWarn.Uncovered) != 1 || repWarn.Coverage != 0.0 {
+		t.Fatalf("expected warning mode to report uncovered function and pass, got %+v", repWarn)
+	}
+
+	writeTestFile(t, dir, ".coderabbit.yaml", "reviews:\n  pre_merge_checks:\n    docstrings:\n      mode: off\n      threshold: 80\n")
+	repOff, err := docstrings.Check(t.Context(), docstrings.Options{RepoDir: dir, BaseRef: "origin/main"})
+	assertDocstringReport(t, "mode off", repOff, err, true, 0, 0)
+	if repOff.Mode != "off" {
+		t.Fatalf("expected off mode, got %+v", repOff)
+	}
+}
+
+// TestCheck_Boundary_SubmoduleGitlinkAndSymlinkSkipped verifies that a submodule bump and a changed symlink
+// are skipped without failing the check in both worktree and --head modes.
+func TestCheck_Boundary_SubmoduleGitlinkAndSymlinkSkipped(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs developer mode on Windows")
+	}
+	dir := newDocstringTestRepo(t, map[string]string{"pkg/a.go": "package pkg\n"})
+	headOID := runGitOut(t, dir, "rev-parse", "HEAD")
+
+	writeTestFile(t, dir, "pkg/a.go", "package pkg\n\n// Covered is documented.\nfunc Covered() {\n\t_ = 1\n}\n")
+	if err := os.MkdirAll(filepath.Join(dir, "vendor", "sub"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("a.go", filepath.Join(dir, "pkg", "link.go")); err != nil {
+		t.Fatal(err)
+	}
+	runGitCmd(t, dir, "add", "pkg/a.go", "pkg/link.go")
+	runGitCmd(t, dir, "update-index", "--add", "--cacheinfo", "160000,"+headOID+",vendor/sub")
+	runGitCmd(t, dir, "commit", "-q", "-m", "add submodule gitlink and symlink")
+
+	repWT, err := docstrings.Check(t.Context(), docstrings.Options{RepoDir: dir, BaseRef: "origin/main"})
+	assertDocstringReport(t, "worktree with gitlink and symlink", repWT, err, true, 1, 1)
+
+	repHead, err := docstrings.Check(t.Context(), docstrings.Options{RepoDir: dir, BaseRef: "origin/main", HeadRef: "HEAD"})
+	assertDocstringReport(t, "head with gitlink and symlink", repHead, err, true, 1, 1)
+}
+
+// TestCheck_Negative_ChangedGoFileParseErrorFails verifies that a Go syntax error in a changed file fails the check.
+func TestCheck_Negative_ChangedGoFileParseErrorFails(t *testing.T) {
+	dir := newDocstringTestRepo(t, map[string]string{"pkg/broken.go": "package pkg\n"})
+	writeTestFile(t, dir, "pkg/broken.go", "package pkg\nfunc Broken(\n")
+	_, err := docstrings.Check(t.Context(), docstrings.Options{RepoDir: dir, BaseRef: "origin/main"})
+	if err == nil || !strings.Contains(err.Error(), "pkg/broken.go") {
+		t.Fatalf("expected parse error naming pkg/broken.go, got %v", err)
+	}
+}
+
+// TestPrePushAndDefaultBranch_3D verifies 40- and 64-hex pre-push stdin parsing, delete skipping,
+// base resolution, and omitted BaseRef resolution via forge.RepositoryDefaultBranch.
+func TestPrePushAndDefaultBranch_3D(t *testing.T) {
+	oid40 := strings.Repeat("a", 40)
+	oid64 := strings.Repeat("b", 64)
+	zero40 := strings.Repeat("0", 40)
+	stdin := "refs/heads/f1 " + oid40 + " refs/heads/f1 " + zero40 + "\n" +
+		"refs/heads/del " + zero40 + " refs/heads/del " + oid40 + "\n" +
+		"refs/heads/f2 " + oid64 + " refs/heads/f2 " + strings.Repeat("c", 64) + "\n"
+	updates, err := docstrings.ParsePrePushStdin(strings.NewReader(stdin))
+	if err != nil || len(updates) != 2 || updates[0].LocalOID != oid40 || updates[1].LocalOID != oid64 {
+		t.Fatalf("ParsePrePushStdin valid 40/64-hex: got %+v, err=%v", updates, err)
+	}
+	for _, bad := range []string{"only-three a b\n", "r1 not-hex r2 " + oid40 + "\n"} {
+		if _, err := docstrings.ParsePrePushStdin(strings.NewReader(bad)); err == nil {
+			t.Fatalf("expected malformed stdin %q to fail", bad)
+		}
+	}
+
+	dir := newDocstringTestRepo(t, map[string]string{"pkg/a.go": "package pkg\n"})
+	runGitCmd(t, dir, "branch", "-m", "main", "trunk")
+	runGitCmd(t, dir, "update-ref", "refs/remotes/origin/trunk", "HEAD")
+	runGitCmd(t, dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
+	runGitCmd(t, dir, "update-ref", "-d", "refs/remotes/origin/main")
+
+	writeTestFile(t, dir, "pkg/a.go", "package pkg\n\n// Ok is documented.\nfunc Ok() {}\n")
+	rep, err := docstrings.Check(t.Context(), docstrings.Options{RepoDir: dir})
+	assertDocstringReport(t, "omitted BaseRef uses origin/trunk", rep, err, true, 1, 1)
 }

@@ -6,10 +6,12 @@ package cifilter_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/cifilter"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // TestGetChangedLineRanges_Positive verifies added, modified, and pure-deletion hunks against the merge base.
@@ -23,9 +25,10 @@ func TestGetChangedLineRanges_Positive(t *testing.T) {
 	runRepoGit(t, dir, "checkout", "-q", "-b", "feature")
 
 	writeRepoFile(t, dir, "a.go", "package a\n\nfunc Two() {\n\t_ = 20\n\t_ = 21\n}\n")
+	writeRepoFile(t, dir, "pkg/ä.go", "package pkg\n\nfunc Ändern() {\n\t_ = 1\n}\n")
 	runRepoGit(t, dir, "rm", "-q", "gone.go")
-	runRepoGit(t, dir, "add", "a.go")
-	runRepoGit(t, dir, "commit", "-q", "-m", "modify a.go and delete gone.go")
+	runRepoGit(t, dir, "add", "a.go", "pkg/ä.go")
+	runRepoGit(t, dir, "commit", "-q", "-m", "modify a.go, add non-ASCII file, and delete gone.go")
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
@@ -41,9 +44,13 @@ func TestGetChangedLineRanges_Positive(t *testing.T) {
 	if len(got) != 1 || got[0] != (cifilter.LineRange{Start: 4, End: 5}) {
 		t.Fatalf("a.go ranges = %+v, want [{Start:4 End:5}]", got)
 	}
+	gotNonASCII := ranges["pkg/ä.go"]
+	if len(gotNonASCII) != 1 || gotNonASCII[0] != (cifilter.LineRange{Start: 1, End: 5}) {
+		t.Fatalf("pkg/ä.go ranges = %+v, want [{Start:1 End:5}]", gotNonASCII)
+	}
 }
 
-// TestGetChangedLineRanges_Negative verifies that nil context or unresolvable refs fail closed.
+// TestGetChangedLineRanges_Negative verifies that nil context, unresolvable refs, or quoted control-byte paths fail closed.
 func TestGetChangedLineRanges_Negative(t *testing.T) {
 	dir := docsBranchRepo(t)
 	//nolint:staticcheck // Deliberate nil context test for fail-closed guard.
@@ -54,6 +61,16 @@ func TestGetChangedLineRanges_Negative(t *testing.T) {
 	defer cancel()
 	if _, err := cifilter.GetChangedLineRanges(ctx, dir, "no-such-ref", "HEAD"); err == nil {
 		t.Fatal("unresolvable base ref must fail")
+	}
+
+	blobOID, err := util.RunGit(ctx, dir, "rev-parse", "HEAD:README.md")
+	if err != nil {
+		t.Fatalf("rev-parse HEAD:README.md: %v", err)
+	}
+	runRepoGit(t, dir, "update-index", "--add", "--cacheinfo", "100644,"+strings.TrimSpace(blobOID)+",tab\tname.go")
+	runRepoGit(t, dir, "commit", "-q", "-m", "add control-byte path")
+	if _, err := cifilter.GetChangedLineRanges(ctx, dir, "main", "HEAD"); err == nil {
+		t.Fatal("quoted diff target line with control byte must return an error instead of being dropped")
 	}
 }
 

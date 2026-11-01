@@ -272,7 +272,10 @@ func TestExtractFileFunctions_Positive_AllScannerFamilies(t *testing.T) {
 		{"App.java", "class App {\n  void start() {\n  }\n}\n", []FunctionSpan{{Name: "start", Start: 2, End: 3}}},
 	}
 	for _, tc := range cases {
-		got := ExtractFileFunctions(tc.rel, []byte(tc.src))
+		got, err := ExtractFileFunctions(tc.rel, []byte(tc.src))
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", tc.rel, err)
+		}
 		if len(got) != len(tc.want) {
 			t.Fatalf("%s: got %+v, want %+v", tc.rel, got, tc.want)
 		}
@@ -286,13 +289,13 @@ func TestExtractFileFunctions_Positive_AllScannerFamilies(t *testing.T) {
 
 // TestExtractFileFunctions_NegativeAndBoundary verifies empty, broken, and unsupported inputs.
 func TestExtractFileFunctions_NegativeAndBoundary(t *testing.T) {
-	if got := ExtractFileFunctions("a.go", nil); got != nil {
-		t.Fatalf("empty data: got %+v, want nil", got)
+	if got, err := ExtractFileFunctions("a.go", nil); got != nil || err != nil {
+		t.Fatalf("empty data: got %+v, %v, want nil, nil", got, err)
 	}
-	if got := ExtractFileFunctions("a.go", []byte("package broken\nfunc (")); got != nil {
-		t.Fatalf("invalid Go syntax: got %+v, want nil", got)
+	if got, err := ExtractFileFunctions("a.go", []byte("package broken\nfunc (")); err == nil || got != nil {
+		t.Fatalf("invalid Go syntax: got %+v, %v, want nil and parse error", got, err)
 	}
-	if got := ExtractFileFunctions("README.md", []byte("# Heading\n")); got != nil {
-		t.Fatalf("unsupported markdown: got %+v, want nil", got)
+	if got, err := ExtractFileFunctions("README.md", []byte("# Heading\n")); got != nil || err != nil {
+		t.Fatalf("unsupported markdown: got %+v, %v, want nil, nil", got, err)
 	}
 }

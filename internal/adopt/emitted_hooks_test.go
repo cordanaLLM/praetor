@@ -114,7 +114,8 @@ func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 			"run": requiredToolGuard("gitleaks", gitleaksInstallHint, lefthookGovernedCommand("security secrets")),
 		}
 		decodedCommands(t, prior, "pre-push")["docstrings"] = map[string]any{
-			"run": lefthookGovernedCommand("docstrings check"),
+			"use_stdin": true,
+			"run":       lefthookGovernedCommand("docstrings check --pre-push"),
 		}
 		for _, event := range checkpointEvents(checkpoint) {
 			job := decodedJob(t, prior, "agent-checkpoint-"+event, "checkpoint")
