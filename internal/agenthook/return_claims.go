@@ -46,14 +46,9 @@ func evaluateReturnClaims(ctx context.Context, client, root string, canonical Ca
 	if err != nil {
 		return Verdict{Outcome: Deny, Reason: returnClaimDenyPrefix + err.Error()}
 	}
-	var misses []string
-	for i := 0; i < len(citations) && i < maxReturnCitations; i++ {
-		if err := ctx.Err(); err != nil {
-			return Verdict{Outcome: Skip, Reason: "return claims not judged: " + err.Error()}
-		}
-		if miss := checkCitation(ctx, root, citations[i]); miss != "" {
-			misses = append(misses, miss)
-		}
+	misses, err := evaluateCitations(ctx, root, citations)
+	if err != nil {
+		return Verdict{Outcome: Skip, Reason: "return claims not judged: " + err.Error()}
 	}
 	claimedRuns, err := caveman.ExtractReturnRan(canonical.Return)
 	if err != nil {
@@ -68,6 +63,24 @@ func evaluateReturnClaims(ctx context.Context, client, root string, canonical Ca
 		return Verdict{Outcome: Skip, Reason: "claimed runs unmeasured: " + unmeasured}
 	}
 	return Verdict{Outcome: Allow}
+}
+
+// evaluateCitations validates return citations beneath root within the parent context.
+func evaluateCitations(ctx context.Context, root string, citations []caveman.ReturnCitation) ([]string, error) {
+	var misses []string
+	for i := 0; i < len(citations) && i < maxReturnCitations; i++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		miss := checkCitation(ctx, root, citations[i])
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if miss != "" {
+			misses = append(misses, miss)
+		}
+	}
+	return misses, nil
 }
 
 // isReviewTask reports whether task matches a review or audit label in target_tasks.
@@ -196,7 +209,7 @@ func checkFileLineBound(ctx context.Context, dir *os.Root, base string, c cavema
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			return fmt.Sprintf("%s:%d: read timeout: %v", c.Path, c.Line, err)
 		}
-		if errors.Is(err, util.ErrFileTooLarge) || strings.Contains(err.Error(), "at most") {
+		if errors.Is(err, util.ErrFileTooLarge) {
 			return fmt.Sprintf("%s:%d: file exceeds 1 MiB bound", c.Path, c.Line)
 		}
 		return fmt.Sprintf("%s:%d: read error: %v", c.Path, c.Line, err)

@@ -290,3 +290,129 @@ func TestReturnClaims_Refused_EchoArgumentNotExecutedCommand(t *testing.T) {
 		t.Fatalf("expected echo argument refusal: exit %d stderr %q", resp.ExitCode, resp.Stderr)
 	}
 }
+
+// cancelOnCitationReadContext cancels the parent context during citation read,
+// after the loop-top check has passed.
+type cancelOnCitationReadContext struct {
+	context.Context
+	cancel    context.CancelFunc
+	errCalls  int
+	topPassed bool
+}
+
+func (c *cancelOnCitationReadContext) Err() error {
+	c.errCalls++
+	if c.errCalls == 3 {
+		c.topPassed = true
+	}
+	return c.Context.Err()
+}
+
+func (c *cancelOnCitationReadContext) Done() <-chan struct{} {
+	if c.topPassed {
+		c.cancel()
+	}
+	return c.Context.Done()
+}
+
+// TestReturnClaims_Positive_ContextCanceledDuringCitationRead verifies that cancellation
+// during checkCitation yields Skip, never a Deny verdict.
+func TestReturnClaims_Positive_ContextCanceledDuringCitationRead(t *testing.T) {
+	root := repository(t, true)
+	writeTestLines(t, root, "internal/agenthook/testfile.txt", 5, "")
+	baseCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &cancelOnCitationReadContext{Context: baseCtx, cancel: cancel}
+	canonical := Canonical{
+		Return: "verdict: pass\nchanged: internal/agenthook/testfile.txt:5\nran: none\nevidence: exit 0\nopen: none\n",
+	}
+	entry := correlationEntry{Task: "review"}
+	verdict := evaluateReturnClaims(ctx, "claude", root, canonical, entry)
+	if verdict.Outcome != Skip {
+		t.Fatalf("verdict.Outcome = %v, want Skip; reason %q", verdict.Outcome, verdict.Reason)
+	}
+	if !strings.Contains(verdict.Reason, "return claims not judged") {
+		t.Fatalf("verdict.Reason = %q, want 'return claims not judged' prefix", verdict.Reason)
+	}
+}
+
+// TestReturnClaims_Negative_UncanceledContextGenuineFailureDenies verifies that an uncanceled
+// context with an invalid citation yields Deny, not Skip.
+func TestReturnClaims_Negative_UncanceledContextGenuineFailureDenies(t *testing.T) {
+	root := repository(t, true)
+	writeTestLines(t, root, "internal/agenthook/testfile.txt", 5, "")
+	canonical := Canonical{
+		Return: "verdict: pass\nchanged: internal/agenthook/testfile.txt:99\nran: none\nevidence: exit 0\nopen: none\n",
+	}
+	entry := correlationEntry{Task: "review"}
+	verdict := evaluateReturnClaims(context.Background(), "claude", root, canonical, entry)
+	if verdict.Outcome != Deny {
+		t.Fatalf("verdict.Outcome = %v, want Deny; reason %q", verdict.Outcome, verdict.Reason)
+	}
+	if !strings.Contains(verdict.Reason, "line 99 exceeds file line count 5") {
+		t.Fatalf("verdict.Reason = %q, want line bound failure", verdict.Reason)
+	}
+}
+
+// cancelBeforeLoopContext cancels the context after isReviewTask has checked it.
+type cancelBeforeLoopContext struct {
+	context.Context
+	cancel       context.CancelFunc
+	doneIsReview bool
+}
+
+func (c *cancelBeforeLoopContext) Err() error {
+	if c.doneIsReview {
+		c.cancel()
+		return c.Context.Err()
+	}
+	c.doneIsReview = true
+	return nil
+}
+
+// TestReturnClaims_Boundary_ContextCanceledAtLoopTop verifies that context cancellation
+// caught at the top of the evaluation loop yields Skip.
+func TestReturnClaims_Boundary_ContextCanceledAtLoopTop(t *testing.T) {
+	root := repository(t, true)
+	writeTestLines(t, root, "internal/agenthook/testfile.txt", 5, "")
+	baseCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &cancelBeforeLoopContext{Context: baseCtx, cancel: cancel}
+	canonical := Canonical{
+		Return: "verdict: pass\nchanged: internal/agenthook/testfile.txt:5\nran: none\nevidence: exit 0\nopen: none\n",
+	}
+	entry := correlationEntry{Task: "review"}
+	verdict := evaluateReturnClaims(ctx, "claude", root, canonical, entry)
+	if verdict.Outcome != Skip {
+		t.Fatalf("verdict.Outcome = %v, want Skip; reason %q", verdict.Outcome, verdict.Reason)
+	}
+	if !strings.Contains(verdict.Reason, "return claims not judged") {
+		t.Fatalf("verdict.Reason = %q, want 'return claims not judged' prefix", verdict.Reason)
+	}
+}
+
+// TestReturnClaims_Boundary_NonRegularCitationNotReportedAsOversized verifies that a non-regular
+// cited path (symlink) is reported with its read error rather than as an oversized file.
+func TestReturnClaims_Boundary_NonRegularCitationNotReportedAsOversized(t *testing.T) {
+	root, state := repository(t, true), t.TempDir()
+	writeTestLines(t, root, "internal/agenthook/target.txt", 5, "")
+	symlink := filepath.Join(root, "internal", "agenthook", "symlink.txt")
+	if err := os.Symlink("target.txt", symlink); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	prepareClaudeCorrelation(t, root, state, "s", "t", "agent", testReviewBrief)
+	transcript := plantClaudeTranscript(t, "")
+	ret := "verdict: pass\nchanged: internal/agenthook/symlink.txt:1\nran: none\nevidence: exit 0\nopen: none\n"
+	stop := claudeSubagentStopPayload(t, root, transcript, ret)
+	resp := runAgentHook(t, root, state, "claude", EventPostReturn, stop)
+	if resp.ExitCode != 2 {
+		t.Fatalf("expected deny on non-regular citation: exit %d stderr %q", resp.ExitCode, resp.Stderr)
+	}
+	stderr := string(resp.Stderr)
+	if strings.Contains(stderr, "file exceeds 1 MiB bound") {
+		t.Fatalf("non-regular citation must not be reported as oversized: %q", stderr)
+	}
+	if !strings.Contains(stderr, "source must be regular") {
+		t.Fatalf("expected 'source must be regular' in stderr, got %q", stderr)
+	}
+}

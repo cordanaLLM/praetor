@@ -15,6 +15,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func validateOptions(options Options) (Options, error) {
@@ -272,8 +274,11 @@ func snapshotRootCopy(ctx context.Context, root *os.Root, name string, dst io.Wr
 	if err != nil {
 		return 0, err
 	}
-	if !before.Mode().IsRegular() || before.Size() > limit {
-		return 0, fmt.Errorf("source must be regular and at most %d bytes", limit)
+	if !before.Mode().IsRegular() {
+		return 0, fmt.Errorf("source must be regular")
+	}
+	if before.Size() > limit {
+		return 0, fmt.Errorf("source exceeds %d bytes: %w", limit, util.ErrFileTooLarge)
 	}
 	file, err := openSource(root, name)
 	if err != nil {
@@ -337,8 +342,11 @@ func stableCopy(ctx context.Context, dst io.Writer, file *os.File, before os.Fil
 	if err != nil {
 		return 0, err
 	}
-	if count > limit || count != before.Size() || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
-		return 0, fmt.Errorf("source changed during snapshot or exceeded byte bound")
+	if count > limit {
+		return 0, fmt.Errorf("source exceeds %d bytes: %w", limit, util.ErrFileTooLarge)
+	}
+	if count != before.Size() || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		return 0, fmt.Errorf("source changed during snapshot")
 	}
 	return count, ctx.Err()
 }

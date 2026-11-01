@@ -2,11 +2,14 @@ package needs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestFrameworkAvailabilityRequiresExactCatalogPackage(t *testing.T) {
@@ -93,30 +96,35 @@ func TestFrameworkObservedSourceFailuresAndBounds(t *testing.T) {
 		name  string
 		setup func(*testing.T, string)
 		want  string
+		is    error // a sentinel the error must wrap; want is then empty
 	}{
-		{"invalid source", func(t *testing.T, root string) { writeFixture(t, root, "db/pgx/doc.go", "package pgx\nfunc broken(") }, "parse framework source"},
+		{"invalid source", func(t *testing.T, root string) { writeFixture(t, root, "db/pgx/doc.go", "package pgx\nfunc broken(") }, "parse framework source", nil},
 		{"conflicting modules", func(t *testing.T, root string) {
 			writeFixture(t, root, "go.mod", "module example.com/a\nmodule example.com/b\n")
-		}, "one unambiguous module"},
+		}, "one unambiguous module", nil},
 		{"entry limit", func(t *testing.T, root string) {
 			for i := 0; i <= maxFrameworkPackageEntries; i++ {
 				writeFixture(t, root, fmt.Sprintf("db/pgx/file-%d.txt", i), "data")
 			}
-		}, "128 directory entries"},
+		}, "128 directory entries", nil},
 		{"oversized source", func(t *testing.T, root string) {
 			writeFixture(t, root, "db/pgx/doc.go", "package pgx\n//"+strings.Repeat("x", 1<<20))
-		}, "at most"},
+		}, "", util.ErrFileTooLarge},
 		{"source symlink", func(t *testing.T, root string) {
 			target := writeFixture(t, t.TempDir(), "outside.go", "package pgx\ntype Available struct{}\n")
 			if err := os.Symlink(target, filepath.Join(root, "db/pgx/doc.go")); err != nil {
 				t.Fatal(err)
 			}
-		}, ""},
+		}, "", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := setupFrameworkCheckout(t, "example.com/observed", "db/pgx")
 			tc.setup(t, root)
-			if _, err := InspectFramework(t.Context(), acmeSource(root)); err == nil || !strings.Contains(err.Error(), tc.want) {
+			_, err := InspectFramework(t.Context(), acmeSource(root))
+			if tc.is != nil && !errors.Is(err, tc.is) {
+				t.Fatalf("wanted %s error wrapping %v, got %v", tc.name, tc.is, err)
+			}
+			if tc.is == nil && (err == nil || !strings.Contains(err.Error(), tc.want)) {
 				t.Fatalf("wanted explicit %s error, got %v", tc.name, err)
 			}
 		})

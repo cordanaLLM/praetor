@@ -3,6 +3,7 @@ package cavemansource
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -1474,7 +1475,7 @@ func TestExtractFileByteBoundary(t *testing.T) {
 		t.Fatalf("exact %d-byte file rejected: values=%d err=%v", contextopt.MaxSourceBytes, len(result.Sources), err)
 	}
 	writeSourceFile(t, root, "hooks/exact.sh", exact+"x")
-	if _, err := ExtractInputs(t.Context(), root, []config.RegisterSourceInput{input}); err == nil || !strings.Contains(err.Error(), "at most 1048576 bytes") {
+	if _, err := ExtractInputs(t.Context(), root, []config.RegisterSourceInput{input}); !errors.Is(err, util.ErrFileTooLarge) {
 		t.Fatalf("%d-byte file accepted: %v", contextopt.MaxSourceBytes+1, err)
 	}
 }
