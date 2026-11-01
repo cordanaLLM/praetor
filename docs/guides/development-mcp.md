@@ -31,16 +31,21 @@ lockfile, HISS ratchet, context sync, branch protection, supply chain, and workf
 checks. All mutations use disposable
 fixtures. A discovered tool name alone does not prove working behavior.
 
-`standards_audit` also runs the CLI's `editor-selection`, `renovate-engine-bumps` and
-`rust-msrv` checks. Each prints its own verdict inside the context gate group, so the
-existing summary group count stays compatible. The checks refuse tracked context files
-outside `agent_clients`, require engine-update suppression in an existing Renovate
-configuration, and require a pin or workflow build declaration for each Rust minimum.
-They read repository evidence; they do not execute Rust builds. See
+`standards_audit` also runs the CLI's `editor-selection`,
+`renovate-engine-bumps`, `rust-msrv` and `bestpractices-claims` checks. Each
+prints its own verdict inside the context gate group, so the existing summary
+group count stays compatible. The checks refuse tracked context files outside
+`agent_clients`, require engine-update suppression in an existing Renovate
+configuration, require a pin or workflow build declaration for each Rust
+minimum, and validate any root `.bestpractices.json` claims against the vendored
+OpenSSF Best Practices criteria. They read repository evidence; they do not
+execute Rust builds. See
 [selected clients](agents-and-clients/index.md#keep-tracked-context-within-the-selected-clients),
-[engine updates](documentation-governance.md#coordinate-engine-updates) and
-[Rust minima](rust-flavors.md). Shared implementation and planted cases live in
-`internal/adopt/`; MCP wire probes must use a fresh server after edits.
+[engine updates](documentation-governance.md#coordinate-engine-updates),
+[Rust minima](rust-flavors.md) and
+[OpenSSF Best Practices claim verification](adoption-verification.md#openssf-best-practices-claim-verification).
+Shared implementations and planted cases live in `internal/adopt/` and
+`internal/bestpractices/`; MCP wire probes must use a fresh server after edits.
 
 For UI roots, `standards_audit` also calls the CLI's shared
 `flavor.AuditUIGates` implementation. The [shared screen matrix adoption

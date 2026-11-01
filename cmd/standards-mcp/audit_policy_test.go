@@ -277,3 +277,75 @@ func TestServerAuditRunsTheBestPracticesGate(t *testing.T) {
 	expectError(t, "forbidden N/A claim", callTool(t, srv, "standards_audit", nil),
 		`[FAIL] bestpractices-claims: .bestpractices.json has 1 forbidden claim(s): criterion "description_good" (status "N/A", rule na_not_allowed)`)
 }
+
+func TestServerAuditContextGroupGuideContract(t *testing.T) {
+	guidePath := filepath.Join(sourceCheckoutRoot(t), "docs", "guides", "development-mcp.md")
+	data, err := os.ReadFile(guidePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkAuditContextGroupGuide(string(data)); err != nil {
+		t.Fatalf("docs/guides/development-mcp.md context-group contract failed: %v", err)
+	}
+
+	valid := "`editor-selection`, `renovate-engine-bumps`, `rust-msrv` and `bestpractices-claims` " +
+		"(adoption-verification.md#openssf-best-practices-claim-verification) in `internal/adopt/` and `internal/bestpractices/`."
+	if err := checkAuditContextGroupGuide(valid); err != nil {
+		t.Fatalf("positive fixture failed: %v", err)
+	}
+	for _, tc := range []struct {
+		name, doc, wantErr string
+	}{
+		{
+			name:    "negative missing bestpractices-claims",
+			doc:     "`editor-selection`, `renovate-engine-bumps` and `rust-msrv` in `internal/adopt/`.",
+			wantErr: "missing context-group check `bestpractices-claims`",
+		},
+		{
+			name:    "negative missing bestpractices reference",
+			doc:     "`editor-selection`, `renovate-engine-bumps`, `rust-msrv` and `bestpractices-claims` in `internal/adopt/`.",
+			wantErr: "missing guide reference adoption-verification.md#openssf-best-practices-claim-verification",
+		},
+		{
+			name:    "boundary out of execution order",
+			doc:     "`editor-selection`, `bestpractices-claims`, `renovate-engine-bumps` and `rust-msrv` (adoption-verification.md#openssf-best-practices-claim-verification) in `internal/adopt/` and `internal/bestpractices/`.",
+			wantErr: "context-group check `bestpractices-claims` precedes prior check",
+		},
+		{
+			name:    "boundary empty guide",
+			doc:     "",
+			wantErr: "missing context-group check `editor-selection`",
+		},
+	} {
+		err := checkAuditContextGroupGuide(tc.doc)
+		if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+			t.Fatalf("%s: got %v, want %q", tc.name, err, tc.wantErr)
+		}
+	}
+}
+
+func checkAuditContextGroupGuide(doc string) error {
+	checks := [4]string{"`editor-selection`", "`renovate-engine-bumps`", "`rust-msrv`", "`bestpractices-claims`"}
+	last := -1
+	for i := 0; i < len(checks); i++ {
+		idx := strings.Index(doc, checks[i])
+		if idx < 0 {
+			return fmt.Errorf("missing context-group check %s", checks[i])
+		}
+		if idx < last {
+			return fmt.Errorf("context-group check %s precedes prior check", checks[i])
+		}
+		last = idx
+	}
+	refs := [3]string{
+		"adoption-verification.md#openssf-best-practices-claim-verification",
+		"`internal/adopt/`",
+		"`internal/bestpractices/`",
+	}
+	for i := 0; i < len(refs); i++ {
+		if !strings.Contains(doc, refs[i]) {
+			return fmt.Errorf("missing guide reference %s", refs[i])
+		}
+	}
+	return nil
+}
