@@ -189,6 +189,9 @@ func unfoldTrailerParagraph(para []string) []string {
 // and a Co-authored-by trailer in the final paragraph naming a model, tool or bot (the
 // trailer block as git interpret-trailers reads it, including folded continuation lines).
 func commitAttributionErrors(message string) []string {
+	if over := commitLinesOverBound(message); over != "" {
+		return []string{over}
+	}
 	seen := make(map[string]struct{})
 	errs := attributionLineErrors(message, seen)
 	paragraphs := commitParagraphs(message)
@@ -204,6 +207,17 @@ func commitAttributionErrors(message string) []string {
 		}
 	}
 	return errs
+}
+
+// commitLinesOverBound returns the refusal for a message of more than maxCommitMessageLines
+// lines, or "". A stored commit reaches the attribution scan without CleanCommitMessage, and the
+// scan stops at the bound, so a footer past it would otherwise pass unchecked.
+func commitLinesOverBound(message string) string {
+	if strings.Count(strings.TrimSuffix(message, "\n"), "\n") < maxCommitMessageLines {
+		return ""
+	}
+	return fmt.Sprintf("commit message holds more than %d lines; the policy refuses it rather than "+
+		"check its attribution in part", maxCommitMessageLines)
 }
 
 // attributionLineErrors refuses footer lines anywhere in message: a robot emoji opening a

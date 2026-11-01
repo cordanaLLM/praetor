@@ -416,3 +416,23 @@ func TestRepeatedSettings_Boundary_EntryMarkerMixedChildren(t *testing.T) {
 		t.Fatalf("finding = %+v, want framework.targets.go.module = github.com/example/repo", findings[0])
 	}
 }
+
+// TestIsEntryMarker_3D verifies that entry markers are recognised, value settings are not, and an
+// unknown or malformed setting path is an error instead of a silent skip.
+func TestIsEntryMarker_3D(t *testing.T) {
+	for _, path := range []string{"clients.selected.agy", "framework.targets.go"} {
+		if marker, err := isEntryMarker(path); err != nil || !marker {
+			t.Fatalf("isEntryMarker(%q) = %v, %v; want true, nil", path, marker, err)
+		}
+	}
+	for _, path := range []string{"clients.selected.agy.required", "clients.selected"} {
+		if marker, err := isEntryMarker(path); err != nil || marker {
+			t.Fatalf("isEntryMarker(%q) = %v, %v; want false, nil", path, marker, err)
+		}
+	}
+	for _, path := range []string{"no.such.setting", "", "clients.selected.not a client"} {
+		if _, err := isEntryMarker(path); err == nil {
+			t.Fatalf("isEntryMarker(%q) = nil error; want the unknown-setting error", path)
+		}
+	}
+}

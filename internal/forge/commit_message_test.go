@@ -396,3 +396,20 @@ func assertAttributionRefused(t *testing.T, message, offendingLine string) {
 	}
 	t.Fatalf("did not find expected refusal message for %q in %v", offendingLine, analysis.Errors)
 }
+
+// TestCommitAttributionErrors_Boundary_LineBound verifies that a stored message over the line
+// bound is refused outright, so a footer past the bound cannot pass unchecked, while a message of
+// exactly the bound is analysed as usual.
+func TestCommitAttributionErrors_Boundary_LineBound(t *testing.T) {
+	filler := strings.Repeat("body line\n", maxCommitMessageLines-2)
+	atBound := "feat(forge): bound\n" + filler + "plain last line"
+	if errs := commitAttributionErrors(atBound); len(errs) != 0 {
+		t.Fatalf("message of exactly %d lines: got %v, want no errors", maxCommitMessageLines, errs)
+	}
+	over := "feat(forge): bound\n" + filler + "plain line\nGenerated with AlphaTool"
+	errs := commitAttributionErrors(over)
+	if len(errs) != 1 || !strings.Contains(errs[0], "more than") {
+		t.Fatalf("message of %d lines with a footer past the bound: got %v, want the over-bound refusal",
+			maxCommitMessageLines+1, errs)
+	}
+}

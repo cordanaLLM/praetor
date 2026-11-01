@@ -249,6 +249,17 @@ func upperCategoryCap(upperPolicy *EffectivePolicy, category string) BacklogCap 
 	return BacklogCap{}
 }
 
+// isEntryMarker reports whether path is an entry marker (clients.selected.<id>,
+// framework.targets.<lang>), which names an entry instead of holding a value and so is never a
+// repeated setting. An unknown or malformed path is an error, never a silent skip.
+func isEntryMarker(path string) (bool, error) {
+	spec, err := settingSpecFor(path)
+	if err != nil {
+		return false, fmt.Errorf("repeated settings: %w", err)
+	}
+	return spec.kind == kindEntry, nil
+}
+
 func checkOperatorRepeats(manifestPath string, node *yaml.Node, upperOperator *operatorMerge, opts EffectiveOptions) ([]RepeatedSetting, error) {
 	repoSettings, owned, err := decodeOperatorSections(node)
 	if err != nil || !owned {
@@ -257,7 +268,11 @@ func checkOperatorRepeats(manifestPath string, node *yaml.Node, upperOperator *o
 	var findings []RepeatedSetting
 	for i := 0; i < len(repoSettings) && i < maxOperatorSettings; i++ {
 		setting := repoSettings[i]
-		if spec, err := settingSpecFor(setting.Path); err == nil && spec.kind == kindEntry {
+		marker, err := isEntryMarker(setting.Path)
+		if err != nil {
+			return nil, err
+		}
+		if marker {
 			continue
 		}
 		source := formatSource(upperOperator.contributors[setting.Path], opts)
