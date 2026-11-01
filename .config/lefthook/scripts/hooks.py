@@ -146,17 +146,23 @@ def push_base(head, old, remote, include_checkpoints=False):
     """Return the commit a pushed update is scanned against.
 
     A fast-forward is scanned against the ref it replaces. A new branch, and a force push of
-    rewritten history (the replaced head is no longer an ancestor of the pushed one), are scanned
-    against the merge base with the remote's default branch: diffing a rebased branch against its
-    replaced head counts every commit the rebase picked up from the default branch as this push's
-    work, and the range checks then judge code the push did not write (#1741). A replaced head
-    that is missing locally is returned unchanged; the caller reports it and scans the full tree.
+    rewritten history (the replaced head is no longer an ancestor of the pushed one, including an
+    unrelated root), are scanned against the merge base with the remote's default branch: diffing
+    a rebased branch against its replaced head counts every commit the rebase picked up from the
+    default branch as this push's work, and the range checks then judge code the push did not
+    write (#1741). A replaced head that is missing locally is returned unchanged; the caller
+    reports it and scans the full tree.
     """
     if set(old) == {"0"}:
         return new_branch_base(head, remote, include_checkpoints)
     common = run(["git", "merge-base", old, head], allowed=(0, 1, 128)).decode().strip()
-    if not common or common == old:
+    if common == old:
         return old
+    if not common:
+        try:
+            run(["git", "cat-file", "-e", old + "^{commit}"])
+        except HookError:
+            return old
     base = new_branch_base(head, remote, include_checkpoints)
     print(f"Push baseline: {old[:12]} rewritten; scan base "
           f"{base[:12] if base else 'full tree'}")

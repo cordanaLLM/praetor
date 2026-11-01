@@ -261,12 +261,12 @@ func TestPrePushAndDefaultBranch_3D(t *testing.T) {
 	stdin := "refs/heads/f1 " + oid40 + " refs/heads/f1 " + zero40 + "\n" +
 		"refs/heads/del " + zero40 + " refs/heads/del " + oid40 + "\n" +
 		"refs/heads/f2 " + oid64 + " refs/heads/f2 " + strings.Repeat("c", 64) + "\n"
-	updates, err := docstrings.ParsePrePushStdin(strings.NewReader(stdin))
+	updates, err := docstrings.ParsePrePushStdin(t.Context(), strings.NewReader(stdin))
 	if err != nil || len(updates) != 2 || updates[0].LocalOID != oid40 || updates[1].LocalOID != oid64 {
 		t.Fatalf("ParsePrePushStdin valid 40/64-hex: got %+v, err=%v", updates, err)
 	}
 	for _, bad := range []string{"only-three a b\n", "r1 not-hex r2 " + oid40 + "\n"} {
-		if _, err := docstrings.ParsePrePushStdin(strings.NewReader(bad)); err == nil {
+		if _, err := docstrings.ParsePrePushStdin(t.Context(), strings.NewReader(bad)); err == nil {
 			t.Fatalf("expected malformed stdin %q to fail", bad)
 		}
 	}
@@ -387,5 +387,93 @@ func TestResolvePrePushBase_RewrittenBranch_3D(t *testing.T) {
 		if skip != "" || got != tc.want {
 			t.Fatalf("%s: got base %q skip %q, want %q", tc.name, got, skip, tc.want)
 		}
+	}
+}
+
+// assertDefaultBaseRef checks that DefaultBaseRef resolves wantRef and wantSource without error.
+func assertDefaultBaseRef(t *testing.T, label, dir, wantRef, wantSource string) {
+	t.Helper()
+	ref, source, err := docstrings.DefaultBaseRef(t.Context(), dir, "origin")
+	if err != nil || ref != wantRef || source != wantSource {
+		t.Fatalf("%s: got ref=%q source=%q err=%v, want %s %s", label, ref, source, err, wantRef, wantSource)
+	}
+}
+
+// TestDefaultBaseRef_RemoteSymrefOverStaleLocal_3D verifies that DefaultBaseRef and ResolvePrePushBase
+// prefer the remote's own symbolic HEAD over a stale local origin/HEAD or .standards.yaml, and fall
+// back to the local default branch with source "local" when the remote cannot answer.
+func TestDefaultBaseRef_RemoteSymrefOverStaleLocal_3D(t *testing.T) {
+	dir := newDocstringTestRepo(t, map[string]string{"pkg/a.go": "package pkg\n"})
+	mainOID := runGitOut(t, dir, "rev-parse", "HEAD")
+
+	remoteDir := filepath.Join(t.TempDir(), "remote.git")
+	runGitCmd(t, dir, "init", "--bare", "-q", "-b", "main", remoteDir)
+	runGitCmd(t, dir, "remote", "add", "origin", remoteDir)
+	runGitCmd(t, dir, "push", "-q", "origin", "main")
+
+	writeTestFile(t, dir, "pkg/a.go", "package pkg\n\nfunc StaleBypass() {}\n")
+	runGitCmd(t, dir, "add", ".")
+	runGitCmd(t, dir, "commit", "-q", "-m", "undocumented feature commit")
+	featOID := runGitOut(t, dir, "rev-parse", "HEAD")
+	runGitCmd(t, dir, "update-ref", "refs/remotes/origin/feat", featOID)
+	runGitCmd(t, dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/feat")
+
+	assertDefaultBaseRef(t, "reachable remote", dir, "origin/main", "remote")
+	base, skip := docstrings.ResolvePrePushBase(t.Context(), dir, "origin", featOID, strings.Repeat("0", 40))
+	if skip != "" || base != mainOID {
+		t.Fatalf("ResolvePrePushBase with stale local origin/HEAD: got base=%q skip=%q, want %q", base, skip, mainOID)
+	}
+	rep, err := docstrings.Check(t.Context(), docstrings.Options{RepoDir: dir, HeadRef: featOID})
+	assertDocstringReport(t, "Check against remote default over stale local HEAD", rep, err, false, 1, 0)
+
+	runGitCmd(t, remoteDir, "symbolic-ref", "HEAD", "refs/heads/nonexistent-head")
+	runGitCmd(t, remoteDir, "update-ref", "--no-deref", "HEAD", mainOID)
+	assertDefaultBaseRef(t, "detached remote HEAD", dir, "origin/feat", "local")
+
+	runGitCmd(t, dir, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "unreachable.git"))
+	assertDefaultBaseRef(t, "unreachable remote", dir, "origin/feat", "local")
+
+	padLine := strings.Repeat("0", 40) + "\trefs/heads/pad\n"
+	if got := docstrings.ParseRemoteDefaultBranchForTest(strings.Repeat(padLine, 63) + "ref: refs/heads/main\tHEAD\n"); got != "main" {
+		t.Fatalf("ParseRemoteDefaultBranch at line 64 boundary: got %q, want main", got)
+	}
+	if got := docstrings.ParseRemoteDefaultBranchForTest(strings.Repeat(padLine, 64) + "ref: refs/heads/main\tHEAD\n"); got != "" {
+		t.Fatalf("ParseRemoteDefaultBranch past line 64 boundary: got %q, want empty", got)
+	}
+}
+
+type stallingReader struct {
+	unblock <-chan struct{}
+}
+
+// Read blocks until unblock is closed and then returns EOF.
+func (s stallingReader) Read(_ []byte) (int, error) {
+	<-s.unblock
+	return 0, os.ErrClosed
+}
+
+// TestParsePrePushStdin_Deadline_3D verifies that ParsePrePushStdin stops on ctx.Done() when the
+// reader stalls before EOF, accepts valid input within the deadline, and enforces the byte boundary.
+func TestParsePrePushStdin_Deadline_3D(t *testing.T) {
+	unblock := make(chan struct{})
+	t.Cleanup(func() { close(unblock) })
+	shortCtx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
+	defer cancel()
+	_, err := docstrings.ParsePrePushStdin(shortCtx, stallingReader{unblock: unblock})
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("ParsePrePushStdin with stalled reader: got err=%v, want timeout wrapping DeadlineExceeded", err)
+	}
+	if _, err := docstrings.ParsePrePushStdin(nil, strings.NewReader("")); err == nil { //nolint:staticcheck // SA1012: intentionally testing nil context refusal
+		t.Fatal("expected nil context to fail closed")
+	}
+	if _, err := docstrings.ParsePrePushStdin(t.Context(), nil); err == nil {
+		t.Fatal("expected nil reader to fail closed")
+	}
+	exactMax := strings.Repeat("\n", 1<<20)
+	if updates, err := docstrings.ParsePrePushStdin(t.Context(), strings.NewReader(exactMax)); err != nil || len(updates) != 0 {
+		t.Fatalf("ParsePrePushStdin exact 1 MiB boundary: got len=%d err=%v", len(updates), err)
+	}
+	if _, err := docstrings.ParsePrePushStdin(t.Context(), strings.NewReader(exactMax+"\n")); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("ParsePrePushStdin 1 MiB + 1 byte boundary: got err=%v, want exceeds error", err)
 	}
 }

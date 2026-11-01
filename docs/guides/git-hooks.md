@@ -1210,14 +1210,19 @@ selection, failed discovery and readback, and real native-protocol pipe exchange
 A fast-forward push of an existing branch is scanned against the ref it is replacing. A push of a
 **new** branch has no such ref, so the base is the merge-base with the remote's default branch,
 obtained from `git ls-remote --symref <remote> HEAD`. A force push of rewritten history (a rebased
-branch, whose replaced head is no longer an ancestor of the pushed one) takes the same merge-base:
+branch, or an unrelated local root confirmed via `git cat-file -e <old>^{commit}`, whose replaced
+head is not an ancestor of the pushed one) takes the same merge-base, while a replaced head missing
+locally scans the full tree:
 diffing against the replaced head would count every commit the rebase picked up from the default
 branch as this push's work, and the range checks (refactor assertion lock, docstring coverage)
 would judge code the push did not write. The push prints `Push baseline: <old> rewritten; scan base <base>`
 when it does this (`push_base` in `.config/lefthook/scripts/hooks.py`,
 `test_force_push_of_rewritten_history_scans_against_merge_base`). `praetorctl docstrings check
---pre-push` applies the same rule for adopters (`ResolvePrePushBase`,
-`TestResolvePrePushBase_RewrittenBranch_3D`).
+--pre-push` applies the same rule for adopters, querying `git ls-remote --symref <remote> HEAD`
+first through `DefaultBaseRef` before falling back to `forge.RepositoryDefaultBranch` and bounding
+its stdin read to the command context (`ResolvePrePushBase`, `ParsePrePushStdin`,
+`TestResolvePrePushBase_RewrittenBranch_3D`, `TestDefaultBaseRef_RemoteSymrefOverStaleLocal_3D`,
+`TestParsePrePushStdin_Deadline_3D`).
 
 The remote is asked rather than `refs/remotes/<remote>/HEAD` being trusted. Git writes that
 symref once at clone time and never updates it: it is inherited when a clone is cloned,

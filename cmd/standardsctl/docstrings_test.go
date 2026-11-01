@@ -224,6 +224,13 @@ func TestRunDocstrings_PrePush(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "no pushed ref update on stdin") {
 		t.Fatalf("empty stdin: want exit 0 and the stated skip, got %d:\n%s", code, out)
 	}
+	// 6. Expired pre-push stdin context exits 2.
+	shortCtx, cancel := context.WithTimeout(t.Context(), time.Nanosecond)
+	defer cancel()
+	time.Sleep(time.Millisecond)
+	if err := runDocstringsPrePush(shortCtx, dir, nil, strings.NewReader(line)); commandExitCode(io.Discard, err) != 2 {
+		t.Fatalf("expired pre-push stdin context: want exit 2, got err=%v", err)
+	}
 }
 
 // TestRunDocstrings_Modes verifies CLI behavior and exit codes for warning, error, and off modes.

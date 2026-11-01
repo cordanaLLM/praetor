@@ -12,6 +12,9 @@ type TargetFileReaderFunc = func(ctx context.Context, repoDir, headRef, rel stri
 // ReadTargetFileDefault exposes the default targetFileReader for test wrappers.
 var ReadTargetFileDefault = readTargetFile
 
+// ParseRemoteDefaultBranchForTest exposes parseRemoteDefaultBranch for boundary testing.
+var ParseRemoteDefaultBranchForTest = parseRemoteDefaultBranch
+
 // SetTargetFileReaderForTest replaces targetFileReader and returns a restore function.
 func SetTargetFileReaderForTest(fn TargetFileReaderFunc) func() {
 	orig := targetFileReader

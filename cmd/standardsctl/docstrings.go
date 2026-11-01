@@ -105,7 +105,7 @@ func runDocstringsRange(ctx context.Context, repoPath, baseRef, headRef string, 
 
 // runDocstringsPrePush reads git pre-push updates from r and checks each pushed range.
 func runDocstringsPrePush(ctx context.Context, repoPath string, override *int, r io.Reader) error {
-	updates, err := docstrings.ParsePrePushStdin(r)
+	updates, err := docstrings.ParsePrePushStdin(ctx, r)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[ERROR] %v\n", err)
 		return exitStatusError{code: 2}

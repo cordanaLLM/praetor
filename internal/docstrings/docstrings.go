@@ -104,7 +104,7 @@ func Check(ctx context.Context, opts Options) (*Report, error) {
 	}
 	baseRef := opts.BaseRef
 	if baseRef == "" {
-		resolved, err := DefaultBaseRef(ctx, repoDir, defaultRemoteName)
+		resolved, _, err := DefaultBaseRef(ctx, repoDir, defaultRemoteName)
 		if err != nil {
 			return nil, err
 		}
