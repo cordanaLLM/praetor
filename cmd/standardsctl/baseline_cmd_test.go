@@ -593,50 +593,60 @@ func TestBaselineRecordImageRefs_3D(t *testing.T) {
 	}
 }
 
-func TestBaselineRecordImageRefs_ManifestError_3D(t *testing.T) {
-	cases := []struct {
-		name     string
-		setup    func(t *testing.T, dir string)
-		wantText string
-	}{
-		{
-			name: "invalid manifest syntax",
-			setup: func(t *testing.T, dir string) {
-				writeFixtureFile(t, dir, ".standards.yaml", "exceptions: [unclosed\n")
-			},
-			wantText: ".standards.yaml",
-		},
-		{
-			name: "unreadable manifest file",
-			setup: func(t *testing.T, dir string) {
-				p := writeFixtureFile(t, dir, ".standards.yaml", "exceptions: []\n")
-				if err := os.Chmod(p, 0000); err != nil {
-					t.Skipf("cannot chmod 0000: %v", err)
-				}
-				t.Cleanup(func() { _ = os.Chmod(p, 0644) })
-			},
-			wantText: ".standards.yaml",
-		},
-		{
-			name: "directory as manifest",
-			setup: func(t *testing.T, dir string) {
-				p := filepath.Join(dir, ".standards.yaml")
-				_ = os.Remove(p)
-				if err := os.Mkdir(p, 0755); err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() { _ = os.RemoveAll(p) })
-			},
-			wantText: ".standards.yaml",
-		},
-	}
+type manifestErrorCase struct {
+	name     string
+	setup    func(t *testing.T, dir string)
+	wantText string
+}
 
-	for _, tc := range cases {
+// removeIfPresent removes path, failing the test on any error except a missing path.
+func removeIfPresent(t *testing.T, path string, all bool) {
+	t.Helper()
+	remove := os.Remove
+	if all {
+		remove = os.RemoveAll
+	}
+	if err := remove(path); err != nil && !os.IsNotExist(err) {
+		t.Errorf("remove %s: %v", path, err)
+	}
+}
+
+// manifestErrorCases are the manifest states a baseline record must refuse: unparsable,
+// unreadable, and a directory where the file belongs.
+func manifestErrorCases() []manifestErrorCase {
+	return []manifestErrorCase{
+		{name: "invalid manifest syntax", wantText: ".standards.yaml", setup: func(t *testing.T, dir string) {
+			writeFixtureFile(t, dir, ".standards.yaml", "exceptions: [unclosed\n")
+		}},
+		{name: "unreadable manifest file", wantText: ".standards.yaml", setup: func(t *testing.T, dir string) {
+			p := writeFixtureFile(t, dir, ".standards.yaml", "exceptions: []\n")
+			if err := os.Chmod(p, 0000); err != nil {
+				t.Skipf("cannot chmod 0000: %v", err)
+			}
+			t.Cleanup(func() {
+				if err := os.Chmod(p, 0o644); err != nil {
+					t.Errorf("restore mode of %s: %v", p, err)
+				}
+			})
+		}},
+		{name: "directory as manifest", wantText: ".standards.yaml", setup: func(t *testing.T, dir string) {
+			p := filepath.Join(dir, ".standards.yaml")
+			removeIfPresent(t, p, false)
+			if err := os.Mkdir(p, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { removeIfPresent(t, p, true) })
+		}},
+	}
+}
+
+func TestBaselineRecordImageRefs_ManifestError_3D(t *testing.T) {
+	for _, tc := range manifestErrorCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newAuditFixture(t)
 			writeFixtureFile(t, f.dir, "Dockerfile", "FROM golang:1.27-alpine\n")
 			gitCommitAll(t, f.dir, f.gitEnv, "unpinned dockerfile")
-			_ = os.Remove(f.baselinePath)
+			removeIfPresent(t, f.baselinePath, false)
 
 			tc.setup(t, f.dir)
 
