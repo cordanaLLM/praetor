@@ -174,3 +174,17 @@ func TestExtractReturnCitationsExtensionShapeAndHosts(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractReturnCitations_ShortGoSymbolsAndRmd(t *testing.T) {
+	text := "verdict: pass\nchanged: none\nran: none\nevidence: internal/router.MaxTaskLabels internal/config.Load internal/foo.Bar docs/report.Rmd:10\nopen: none\n"
+	got, err := ExtractReturnCitations(text)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []ReturnCitation{
+		{Path: "docs/report.Rmd", Line: 10},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}

@@ -35,6 +35,7 @@ var (
 	markdownLinkRe       = regexp.MustCompile(`\[([^\]]*)\]\(([^)]*)\)`)
 	backtickSpanRe       = regexp.MustCompile("`([^`]+)`")
 	commandFieldStartRe  = regexp.MustCompile(`(?i)^(?:[-*+]\s+)?(ran|commands):(?:\s*(.*))?$`)
+	exportedIdentifierRe = regexp.MustCompile(`[A-Z][a-z]`)
 )
 
 // fileExtensionRe is the shape of a file extension in any repository: a dot, then 1 to 16
@@ -289,9 +290,29 @@ func isNonPathToken(path string) bool {
 		strings.HasPrefix(path, "https://") || strings.ContainsAny(path, "*?|<>\"'")
 }
 
+// isAllowedMixedCaseExtension allows genuine mixed-case repository file extensions
+// (such as .Rmd or .Rproj) that would otherwise match the exported-identifier heuristic.
+func isAllowedMixedCaseExtension(ext string) bool {
+	switch ext {
+	case ".Rmd", ".Rproj", ".RData":
+		return true
+	default:
+		return false
+	}
+}
+
+// hasRepoFileExtension reports whether base has the shape of a repository file extension,
+// refusing code symbols (like internal/foo.Bar or router.MaxTaskLabels) while accepting real
+// extensions including allowlisted mixed-case extensions like .Rmd.
 func hasRepoFileExtension(base string) bool {
 	ext := filepath.Ext(base)
-	return len(ext) > 1 && len(ext) <= maxFileExtensionBytes && fileExtensionRe.MatchString(ext)
+	if len(ext) <= 1 || len(ext) > maxFileExtensionBytes || !fileExtensionRe.MatchString(ext) {
+		return false
+	}
+	if isAllowedMixedCaseExtension(ext) {
+		return true
+	}
+	return !exportedIdentifierRe.MatchString(ext)
 }
 
 // isHostLike reports a token whose first segment is a host name (github.com/o/r/x.md,

@@ -5,6 +5,7 @@
 package agenthook
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -195,5 +196,97 @@ func TestReturnClaims_SyntheticSurveyAllShapes(t *testing.T) {
 	wantStderr := returnClaimDenyPrefix + strings.Join(wantMisses, "; ")
 	if stderr != wantStderr {
 		t.Fatalf("stderr = %q, want %q", stderr, wantStderr)
+	}
+}
+
+func TestReturnClaims_CancellableCitationRead(t *testing.T) {
+	root := repository(t, true)
+	writeTestLines(t, root, "internal/agenthook/policy.go", 10, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	miss := checkCitation(ctx, root, caveman.ReturnCitation{Path: "internal/agenthook/policy.go", Line: 0})
+	if miss == "" || !strings.Contains(miss, "context canceled") {
+		t.Fatalf("expected context cancellation error on line 0 citation, got %q", miss)
+	}
+}
+
+func TestReturnClaims_Refused_SymlinkEscapingRoot(t *testing.T) {
+	root, state := repository(t, true), t.TempDir()
+	writeTestLines(t, root, "internal/agenthook/testfile.txt", 5, "")
+	outside := t.TempDir()
+	outsideFile := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(outsideFile, []byte("outside content\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	symlink := filepath.Join(root, "internal", "agenthook", "escape_symlink.txt")
+	if err := os.Symlink(outsideFile, symlink); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	prepareClaudeCorrelation(t, root, state, "s", "t", "agent", testReviewBrief)
+	transcript := plantClaudeTranscript(t, "")
+	badReturn := "verdict: pass\nchanged: internal/agenthook/escape_symlink.txt:1\nran: none\nevidence: exit 0\nopen: none\n"
+	stop := claudeSubagentStopPayload(t, root, transcript, badReturn)
+	resp := runAgentHook(t, root, state, "claude", EventPostReturn, stop)
+	if resp.ExitCode != 2 || !strings.Contains(string(resp.Stderr), "escape_symlink.txt") {
+		t.Fatalf("expected escaping symlink refusal: exit %d stderr %q", resp.ExitCode, resp.Stderr)
+	}
+}
+
+type cancelAfterCallsContext struct {
+	context.Context
+	remaining int
+}
+
+func (c *cancelAfterCallsContext) Err() error {
+	if c.remaining <= 0 {
+		return context.DeadlineExceeded
+	}
+	c.remaining--
+	return nil
+}
+
+func TestReturnClaims_Skip_EndedContext(t *testing.T) {
+	root := repository(t, true)
+	writeTestLines(t, root, "internal/agenthook/testfile.txt", 5, "")
+	ctx := &cancelAfterCallsContext{Context: context.Background(), remaining: 2}
+	canonical := Canonical{
+		Return: "verdict: pass\nchanged: internal/agenthook/testfile.txt:5\nran: none\nevidence: exit 0\nopen: none\n",
+	}
+	entry := correlationEntry{Task: "review"}
+	verdict := evaluateReturnClaims(ctx, "claude", root, canonical, entry)
+	if verdict.Outcome != Skip {
+		t.Fatalf("verdict.Outcome = %v, want Skip on ended context; reason %q", verdict.Outcome, verdict.Reason)
+	}
+}
+
+func TestReturnClaims_Accepted_BashCommandPastIndex1023(t *testing.T) {
+	root, state := repository(t, true), t.TempDir()
+	writeTestLines(t, root, "internal/agenthook/testfile.txt", 5, "")
+	prepareClaudeCorrelation(t, root, state, "s", "t", "agent", testReviewBrief)
+	var b strings.Builder
+	for i := 0; i < 1024; i++ {
+		fmt.Fprintf(&b, `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"echo dummy %d"}}]}}`+"\n", i)
+	}
+	b.WriteString(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"go test -race ./..."}}]}}` + "\n")
+	transcript := plantClaudeTranscript(t, b.String())
+	goodReturn := "verdict: pass\nchanged: internal/agenthook/testfile.txt:5\nran: `go test -race`\nevidence: exit 0\nopen: none\n"
+	stop := claudeSubagentStopPayload(t, root, transcript, goodReturn)
+	resp := runAgentHook(t, root, state, "claude", EventPostReturn, stop)
+	if resp.ExitCode != 0 {
+		t.Fatalf("expected accepted return with command at index 1024: exit %d stderr %q", resp.ExitCode, resp.Stderr)
+	}
+}
+
+func TestReturnClaims_Refused_EchoArgumentNotExecutedCommand(t *testing.T) {
+	root, state := repository(t, true), t.TempDir()
+	writeTestLines(t, root, "internal/agenthook/testfile.txt", 5, "")
+	prepareClaudeCorrelation(t, root, state, "s", "t", "agent", testReviewBrief)
+	transcriptData := `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"echo go test -race"}}]}}` + "\n"
+	transcript := plantClaudeTranscript(t, transcriptData)
+	badReturn := "verdict: pass\nchanged: internal/agenthook/testfile.txt:5\nran: `go test -race`\nevidence: exit 0\nopen: none\n"
+	stop := claudeSubagentStopPayload(t, root, transcript, badReturn)
+	resp := runAgentHook(t, root, state, "claude", EventPostReturn, stop)
+	if resp.ExitCode != 2 || !strings.Contains(string(resp.Stderr), "go test -race: claimed run with no matching Bash tool call") {
+		t.Fatalf("expected echo argument refusal: exit %d stderr %q", resp.ExitCode, resp.Stderr)
 	}
 }
