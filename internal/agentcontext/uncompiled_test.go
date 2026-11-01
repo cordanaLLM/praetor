@@ -4,12 +4,14 @@
 package agentcontext
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
@@ -94,5 +96,36 @@ func TestVerifyUncompiledInstructions_Context_Boundary(t *testing.T) {
 	}
 	if _, err := UncompiledInstructionFiles(t.Context(), many); err == nil || !strings.Contains(err.Error(), "never truncated") {
 		t.Fatalf("%d paths must fail closed, got %v", maxScannedInstructionPaths+1, err)
+	}
+}
+
+type assertProbeBoundedContext struct {
+	context.Context
+	bounded bool
+}
+
+func (c *assertProbeBoundedContext) Deadline() (time.Time, bool) {
+	c.bounded = true
+	return c.Context.Deadline()
+}
+
+func (c *assertProbeBoundedContext) Err() error {
+	if !c.bounded {
+		return errors.New("initial Git worktree probe must run under a bounded timeout context")
+	}
+	return c.Context.Err()
+}
+
+// TestUncompiledInstructionFiles_BoundsInitialProbe verifies that GitWorktreePresent runs under a timeout context.
+func TestUncompiledInstructionFiles_BoundsInitialProbe(t *testing.T) {
+	dir := t.TempDir()
+	testsupport.InitGitRepoWithOrigin(t, dir, "")
+	ctx := &assertProbeBoundedContext{Context: t.Context()}
+	files, err := UncompiledInstructionFiles(ctx, dir)
+	if err != nil {
+		t.Fatalf("UncompiledInstructionFiles must succeed under bounded probe context, got: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("expected 0 files, got %d", len(files))
 	}
 }

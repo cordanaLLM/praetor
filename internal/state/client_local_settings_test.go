@@ -5,6 +5,7 @@
 package state_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -177,4 +178,43 @@ func canonicalGitIgnoreVersion(t *testing.T, dir string) string {
 		t.Fatalf("canonical block lookup: ok=%v match=%+v, want a current block", ok, canonical)
 	}
 	return canonical.Version
+}
+
+// Positive: state-ledger-integrity documentation reflects the current canonical managed block version.
+func TestStateLedgerIntegrityGuide_DocumentsCurrentBlockVersion_Positive(t *testing.T) {
+	content := readStateLedgerIntegrityGuide(t)
+	canonical := canonicalGitIgnoreVersion(t, t.TempDir())
+	wantPhrase := fmt.Sprintf("Since block %s", canonical)
+	if !strings.Contains(content, wantPhrase) {
+		t.Fatalf("state-ledger-integrity.md must document current canonical block (%s): missing %q", canonical, wantPhrase)
+	}
+}
+
+// Negative: an unmanaged or obsolete block version is not documented as current canonical.
+func TestStateLedgerIntegrityGuide_DocumentsCurrentBlockVersion_Negative(t *testing.T) {
+	content := readStateLedgerIntegrityGuide(t)
+	unmanaged := "Since block v99"
+	if strings.Contains(content, unmanaged) {
+		t.Fatalf("state-ledger-integrity.md must not document unmanaged block: found %q", unmanaged)
+	}
+}
+
+// Boundary: all recognized historical block versions remain documented.
+func TestStateLedgerIntegrityGuide_DocumentsCurrentBlockVersion_Boundary(t *testing.T) {
+	content := readStateLedgerIntegrityGuide(t)
+	for _, historical := range []string{"block v3", "block v4"} {
+		if !strings.Contains(content, historical) {
+			t.Fatalf("state-ledger-integrity.md must document historical %s", historical)
+		}
+	}
+}
+
+func readStateLedgerIntegrityGuide(t *testing.T) string {
+	t.Helper()
+	guidePath := filepath.Join("..", "..", "docs", "guides", "state-ledger-integrity.md")
+	content, err := os.ReadFile(guidePath)
+	if err != nil {
+		t.Fatalf("read guide: %v", err)
+	}
+	return string(content)
 }

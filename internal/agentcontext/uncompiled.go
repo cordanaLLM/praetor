@@ -27,16 +27,16 @@ var ErrUncompiledInstruction = errors.New("agent instruction file outside AGENTS
 // tracked, or untracked and not ignored, matching .github/instructions/*.instructions.md
 // or .cursor/rules/*.mdc other than the compiled .cursor/rules/hiss-invariants.mdc.
 func UncompiledInstructionFiles(ctx context.Context, repoPath string) ([]string, error) {
-	inRepo, err := util.GitWorktreePresent(ctx, repoPath)
+	probeCtx, cancel := context.WithTimeout(ctx, uncompiledProbeTimeout)
+	defer cancel()
+
+	inRepo, err := util.GitWorktreePresent(probeCtx, repoPath)
 	if err != nil {
 		return nil, fmt.Errorf("detect Git work tree for %s: %w", repoPath, err)
 	}
 	if !inRepo {
 		return nil, nil
 	}
-
-	probeCtx, cancel := context.WithTimeout(ctx, uncompiledProbeTimeout)
-	defer cancel()
 
 	result, err := util.RunGitProbe(probeCtx, repoPath, maxUncompiledListingBytes,
 		"ls-files", "--cached", "--others", "--exclude-standard", "-z", "--",
