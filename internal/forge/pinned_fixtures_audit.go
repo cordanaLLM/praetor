@@ -119,38 +119,10 @@ func listTrackedFiles(ctx context.Context, root string) ([]string, error) {
 	return slices.Compact(tracked), nil
 }
 
-func isTestFile(root, rel string) bool {
-	if strings.HasSuffix(rel, "_test.go") {
-		return true
-	}
-	base := path.Base(rel)
-	if (strings.HasPrefix(base, "test_") && strings.HasSuffix(base, ".py")) || strings.HasSuffix(base, "_test.py") {
-		return true
-	}
-	if strings.Contains(base, ".test.") || strings.Contains(base, ".spec.") {
-		return true
-	}
-	if strings.HasSuffix(rel, ".rs") {
-		return isRustTest(root, rel)
-	}
-	return false
-}
-
-func isRustTest(root, rel string) bool {
-	if strings.HasPrefix(rel, "tests/") || strings.Contains(rel, "/tests/") {
-		return true
-	}
-	data, err := util.ReadFileLimited(filepath.Join(root, rel), 64*1024)
-	if err != nil {
-		return false
-	}
-	return bytes.Contains(data, []byte("#[cfg(test)]"))
-}
-
 func scanTestFiles(root string, tracked []string) ([]string, map[string]string, map[string]string, error) {
 	testFiles := make([]string, 0, len(tracked)/4)
 	for i := 0; i < len(tracked) && i < maxTrackedFiles; i++ {
-		if isTestFile(root, tracked[i]) {
+		if IsTestFile(root, tracked[i]) {
 			testFiles = append(testFiles, tracked[i])
 		}
 	}
@@ -174,7 +146,7 @@ func findPinnedFixtures(root string, tracked []string, testFiles []string, testC
 	var pinned []pinnedFixture
 	for i := 0; i < len(tracked) && i < maxTrackedFiles; i++ {
 		f := tracked[i]
-		if isTestFile(root, f) {
+		if IsTestFile(root, f) {
 			continue
 		}
 		if match, ok := matchFixture(root, f, testFiles, testContents, pinnedHashes); ok {

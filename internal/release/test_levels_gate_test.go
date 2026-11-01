@@ -373,3 +373,80 @@ func TestAuditTestLevels_Negative_SuppliedManifestWithInvalidPolicyFailsValidati
 		t.Fatalf("expected invalid supplied manifest to fail validation, got rep=%+v, err=%v", rep, err)
 	}
 }
+
+// Planted negative for Finding 1: directory glob (**/integration/**) alone with no pattern
+// must not be satisfied by a tracked non-test file (pkg/integration/README.md).
+func TestAuditTestLevels_Negative_DirectoryGlobMatchedNonTestFileAloneDoesNotSatisfyLevel(t *testing.T) {
+	t.Setenv("GITHUB_REF", "")
+	t.Setenv("GITHUB_HEAD_REF", "")
+	t.Setenv("PRAETOR_RELEASE_PR", "")
+	repo := setupGoLibraryTempRepo(t)
+	// Write a non-test file in pkg/integration; default integration paths include **/integration/**
+	writeTestRepoFile(t, repo, "pkg/integration/README.md", "# Integration docs\n")
+
+	rep, err := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: true})
+	if err == nil || rep.Status != TestLevelStatusFail || !strings.Contains(rep.Detail, "integration") {
+		t.Fatalf("expected non-test file in integration dir to fail integration level, got rep=%+v, err=%v", rep, err)
+	}
+
+	// Adding a recognizable test file inside pkg/integration now satisfies the level.
+	writeTestRepoFile(t, repo, "pkg/integration/client_test.go", "package lib\n\nimport \"testing\"\n\nfunc TestIntegration(t *testing.T) {}\n")
+	passRep, passErr := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: true})
+	if passErr != nil || passRep.Status != TestLevelStatusPass {
+		t.Fatalf("expected recognizable test file in integration dir to pass, got rep=%+v, err=%v", passRep, passErr)
+	}
+}
+
+// Planted negative for Finding 2: when the gate runs inside the workflow that supplies
+// a required level, forge reports workflow health as "self"; this must not be treated as a gap.
+func TestAuditTestLevels_Positive_SelfWorkflowRunHealthDoesNotCreateGap(t *testing.T) {
+	t.Setenv("GITHUB_REF", "")
+	t.Setenv("GITHUB_HEAD_REF", "")
+	t.Setenv("PRAETOR_RELEASE_PR", "")
+	t.Setenv("GITHUB_WORKFLOW_REF", "example/lib/.github/workflows/ci.yml@refs/heads/main")
+	repo := setupGoLibraryTempRepo(t)
+	writeTestRepoFile(t, repo, "client_integration_test.go", "package lib\n\nimport \"testing\"\n\nfunc TestIntegration(t *testing.T) {}\n")
+
+	fakeReader := &fakeActionsReader{
+		byWorkflow: map[string]forge.WorkflowRunHistory{
+			"ci.yml": {
+				Known:     true,
+				Total:     1,
+				Completed: []forge.WorkflowRunRecord{{Number: 1, Event: "push", Conclusion: "success"}},
+			},
+		},
+	}
+	rep, err := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{
+		FlagRelease: true,
+		Actions:     fakeReader,
+		Branch:      "main",
+	})
+	if err != nil || rep.Status != TestLevelStatusPass {
+		t.Fatalf("expected self-classified workflow run health to not create gap, got rep=%+v, err=%v", rep, err)
+	}
+}
+
+type cancelOnValueContext struct {
+	context.Context
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnValueContext) Value(key any) any {
+	defer c.cancel()
+	return c.Context.Value(key)
+}
+
+// Planted negative for Finding 3: context error while reading workflow entries must fail closed with an error.
+func TestAuditTestLevels_Negative_WorkflowScanContextErrorReturnsError(t *testing.T) {
+	repo := setupGoLibraryTempRepo(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	wrapped := &cancelOnValueContext{
+		Context: ctx,
+		cancel:  cancel,
+	}
+
+	_, _, err := loadRepositoryWorkflows(wrapped, repo)
+	if err == nil || (!errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled)) {
+		t.Fatalf("expected context error, got %v", err)
+	}
+}

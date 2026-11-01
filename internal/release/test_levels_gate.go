@@ -405,6 +405,7 @@ func evaluateLevelBindings(
 	return finalizeTestLevelsReport(report)
 }
 
+// checkSingleLevel evaluates one resolved level binding against repository files, workflows, and live forge health.
 func checkSingleLevel(
 	ctx context.Context,
 	repoPath string,
@@ -414,7 +415,7 @@ func checkSingleLevel(
 	auxScripts string,
 	liveByWorkflow map[string]forge.WorkflowRunFinding,
 ) (string, error) {
-	matchedFiles, err := matchFilesForGlobList(files, b.Spec.Paths)
+	matchedFiles, err := matchFilesForLevel(repoPath, files, b.Spec)
 	if err != nil {
 		return "", err
 	}
@@ -428,24 +429,47 @@ func checkSingleLevel(
 	if !ok {
 		return "no runnable workflow job executes this level", nil
 	}
-	if finding, hasLive := liveByWorkflow[wfName]; hasLive && finding.Health != forge.WorkflowHealthy {
+	if finding, hasLive := liveByWorkflow[wfName]; hasLive && finding.Health != forge.WorkflowHealthy && finding.Health != forge.WorkflowSelf {
 		return fmt.Sprintf("workflow %s run health is %s", wfName, finding.Health), nil
 	}
 	return "", nil
 }
 
-func matchFilesForGlobList(files, globs []string) ([]string, error) {
+// matchFilesForLevel returns repository files matching the level's path globs, requiring
+// a recognizable test file for directory globs when pattern is unset.
+func matchFilesForLevel(root string, files []string, spec config.ReleaseTestLevelSpec) ([]string, error) {
 	if len(files) > maxRepoScanFiles {
 		return nil, fmt.Errorf("repository lists %d files; the test level scan is bounded to %d", len(files), maxRepoScanFiles)
 	}
+	hasPattern := strings.TrimSpace(spec.Pattern) != ""
 	var matched []string
 	for i := 0; i < len(files) && i < maxRepoScanFiles; i++ {
 		f := files[i]
-		if matchesAnyGlob(f, globs) {
+		if fileMatchesLevelPaths(root, f, spec.Paths, hasPattern) {
 			matched = append(matched, f)
 		}
 	}
 	return matched, nil
+}
+
+// fileMatchesLevelPaths reports whether rel matches any glob in paths; a directory glob without a
+// pattern accepts only a test file by its language convention (forge.IsTestFile).
+func fileMatchesLevelPaths(root, rel string, paths []string, hasPattern bool) bool {
+	for i := 0; i < len(paths) && i < config.MaxReleaseTestLevels; i++ {
+		g := paths[i]
+		if !matchesAnyGlob(rel, []string{g}) {
+			continue
+		}
+		if !isDirectoryGlob(g) || hasPattern || forge.IsTestFile(root, rel) {
+			return true
+		}
+	}
+	return false
+}
+
+// isDirectoryGlob reports whether glob matches a directory tree rather than a specific file pattern.
+func isDirectoryGlob(glob string) bool {
+	return strings.HasSuffix(glob, "/**") || strings.HasSuffix(glob, "/*") || strings.HasSuffix(glob, "/")
 }
 
 func anyFileMatchesPattern(ctx context.Context, repoPath string, relPaths []string, pattern string) bool {
@@ -581,6 +605,7 @@ func advisoryContinueOnError(raw string) bool {
 	return trimmed == "true" || strings.Contains(trimmed, "true")
 }
 
+// loadRepositoryWorkflows loads and parses GitHub Actions workflows and auxiliary build files.
 func loadRepositoryWorkflows(ctx context.Context, repoPath string) (_ []parsedWorkflowFile, _ string, err error) {
 	if ctx == nil {
 		return nil, "", errors.New("context is required")
@@ -588,7 +613,7 @@ func loadRepositoryWorkflows(ctx context.Context, repoPath string) (_ []parsedWo
 	ctx, cancel := context.WithTimeout(ctx, contextopt.MaxDuration)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("read workflows: %w", err)
 	}
 	root, err := contextopt.OpenDirectoryIn(ctx, repoPath, filepath.Join(".github", "workflows"))
 	if errors.Is(err, os.ErrNotExist) {
@@ -598,43 +623,88 @@ func loadRepositoryWorkflows(ctx context.Context, repoPath string) (_ []parsedWo
 		return nil, "", fmt.Errorf("read workflows directory: %w", err)
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
-	directory, err := root.Open(".")
+	entries, err := readWorkflowDirEntries(root)
 	if err != nil {
 		return nil, "", fmt.Errorf("read workflows directory: %w", err)
+	}
+	workflows, err := parseWorkflowEntries(ctx, root, entries)
+	if err != nil {
+		return nil, "", err
+	}
+	aux := loadAuxBuildScripts(ctx, repoPath)
+	if err := ctx.Err(); err != nil {
+		return nil, "", fmt.Errorf("read auxiliary build scripts: %w", err)
+	}
+	return workflows, aux, nil
+}
+
+// readWorkflowDirEntries reads up to maxReleaseWorkflowFiles entries from a workflows directory root.
+func readWorkflowDirEntries(root *os.Root) ([]os.DirEntry, error) {
+	directory, err := root.Open(".")
+	if err != nil {
+		return nil, fmt.Errorf("open directory: %w", err)
 	}
 	defer func() { err = errors.Join(err, directory.Close()) }()
 	entries, err := directory.ReadDir(maxReleaseWorkflowFiles + 1)
 	if err != nil && !errors.Is(err, io.EOF) {
-		return nil, "", fmt.Errorf("read workflows directory: %w", err)
+		return nil, fmt.Errorf("read directory: %w", err)
 	}
 	if len(entries) > maxReleaseWorkflowFiles {
-		return nil, "", fmt.Errorf("workflow inventory exceeds %d files", maxReleaseWorkflowFiles)
+		return nil, fmt.Errorf("workflow inventory exceeds %d files", maxReleaseWorkflowFiles)
 	}
-	return parseWorkflowEntries(ctx, root, entries), loadAuxBuildScripts(ctx, repoPath), nil
+	return entries, nil
 }
 
-func parseWorkflowEntries(ctx context.Context, root *os.Root, entries []os.DirEntry) []parsedWorkflowFile {
+// parseWorkflowEntries parses workflow definitions from directory entries, failing closed on context cancellation.
+func parseWorkflowEntries(ctx context.Context, root *os.Root, entries []os.DirEntry) ([]parsedWorkflowFile, error) {
 	var parsed []parsedWorkflowFile
 	for i := 0; i < len(entries) && i < maxReleaseWorkflowFiles; i++ {
-		entry := entries[i]
-		if entry.IsDir() || !isYAMLFilename(entry.Name()) {
-			continue
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("scan workflow entries: %w", err)
 		}
-		data, readErr := contextopt.ReadRootSnapshot(ctx, root, entry.Name())
-		if readErr != nil || len(data) > maxLevelFileBytes {
-			continue
+		item, err := parseSingleWorkflowEntry(ctx, root, entries[i])
+		if err != nil {
+			return nil, err
 		}
-		wf, parseErr := ghworkflow.Parse(data)
-		if parseErr != nil {
-			continue
+		if item != nil {
+			parsed = append(parsed, *item)
 		}
-		parsed = append(parsed, parsedWorkflowFile{
-			Name:     entry.Name(),
-			RelPath:  filepath.ToSlash(filepath.Join(".github", "workflows", entry.Name())),
-			Workflow: wf,
-		})
 	}
-	return parsed
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("scan workflow entries: %w", err)
+	}
+	return parsed, nil
+}
+
+// parseSingleWorkflowEntry reads and parses a single workflow file, failing closed on context cancellation.
+func parseSingleWorkflowEntry(ctx context.Context, root *os.Root, entry os.DirEntry) (*parsedWorkflowFile, error) {
+	if entry.IsDir() || !isYAMLFilename(entry.Name()) {
+		return nil, nil
+	}
+	data, readErr := contextopt.ReadRootSnapshot(ctx, root, entry.Name())
+	if readErr != nil {
+		if isContextDone(ctx, readErr) {
+			return nil, fmt.Errorf("read workflow snapshot %s: %w", entry.Name(), readErr)
+		}
+		return nil, nil
+	}
+	if len(data) > maxLevelFileBytes {
+		return nil, nil
+	}
+	wf, parseErr := ghworkflow.Parse(data)
+	if parseErr != nil {
+		return nil, nil //nolint:nilerr // an unparseable workflow supplies no job, so the levels it would carry show as gaps
+	}
+	return &parsedWorkflowFile{
+		Name:     entry.Name(),
+		RelPath:  filepath.ToSlash(filepath.Join(".github", "workflows", entry.Name())),
+		Workflow: wf,
+	}, nil
+}
+
+// isContextDone reports whether err or ctx indicates context cancellation or deadline expiration.
+func isContextDone(ctx context.Context, err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || (ctx != nil && ctx.Err() != nil)
 }
 
 func isYAMLFilename(name string) bool {
