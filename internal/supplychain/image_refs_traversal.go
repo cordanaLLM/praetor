@@ -60,7 +60,8 @@ func imageRefCandidateFiles(ctx context.Context, root string) ([]string, error) 
 // walkDirectoryFiles enumerates relative file paths under root without recursion (HISS-01, HISS-02).
 func walkDirectoryFiles(root string) ([]string, error) {
 	walk := imageRefDirectoryWalk{dirs: []string{"."}}
-	for d := 0; d < len(walk.dirs) && d < maxScannedFiles; d++ {
+	var d int
+	for d = 0; d < len(walk.dirs) && d < maxScannedFiles; d++ {
 		relDir := walk.dirs[d]
 		entries, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(relDir)))
 		if err != nil {
@@ -70,6 +71,9 @@ func walkDirectoryFiles(root string) ([]string, error) {
 			return nil, err
 		}
 	}
+	if d < len(walk.dirs) {
+		return nil, fmt.Errorf("image scan scope passed %d directories", maxScannedFiles)
+	}
 	return walk.files, nil
 }
 
@@ -78,10 +82,17 @@ type imageRefDirectoryWalk struct {
 	files []string
 }
 
+func isIgnoredScanDir(name string) bool {
+	return name == ".git" || name == ".workingdir" || name == "node_modules" || name == "vendor"
+}
+
 func (walk *imageRefDirectoryWalk) appendEntries(relDir string, entries []os.DirEntry) error {
+	if len(entries) > maxScannedFiles {
+		return fmt.Errorf("directory %s passed %d entries", relDir, maxScannedFiles)
+	}
 	for i := 0; i < len(entries) && i < maxScannedFiles; i++ {
 		name := entries[i].Name()
-		if name == ".git" || name == ".workingdir" || name == "node_modules" || name == "vendor" {
+		if isIgnoredScanDir(name) {
 			continue
 		}
 		child := name
@@ -89,6 +100,9 @@ func (walk *imageRefDirectoryWalk) appendEntries(relDir string, entries []os.Dir
 			child = relDir + "/" + name
 		}
 		if entries[i].IsDir() {
+			if len(walk.dirs) >= maxScannedFiles {
+				return fmt.Errorf("image scan scope passed %d directories", maxScannedFiles)
+			}
 			walk.dirs = append(walk.dirs, child)
 			continue
 		}
@@ -104,6 +118,9 @@ func (walk *imageRefDirectoryWalk) appendEntries(relDir string, entries []os.Dir
 // filter, reading each file confined and limited, and invoking visit with the file content
 // or read error (HISS-01, HISS-02, HISS-19).
 func iterateScannedFiles(root string, files []string, filter func(string) bool, visit func(rel string, content []byte, readErr error) error) error {
+	if len(files) > maxScannedFiles {
+		return fmt.Errorf("image scan scope passed %d files", maxScannedFiles)
+	}
 	for i := 0; i < len(files) && i < maxScannedFiles; i++ {
 		rel := files[i]
 		if !filter(rel) {
