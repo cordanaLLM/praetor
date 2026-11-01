@@ -999,9 +999,18 @@ func (g *GitHubDriver) RemoveLabel(ctx context.Context, number int, label string
 	return nil
 }
 
-// HeadPullRequestsPerPage bounds the single-page pull request head lookup used by git-push
-// admission (HISS-02).
-const HeadPullRequestsPerPage = 20
+// Head pull request lookup pagination bounds (HISS-02).
+const (
+	// HeadPullRequestsPerPage bounds each page of the pull request head lookup used by
+	// git-push admission (HISS-02).
+	HeadPullRequestsPerPage = 20
+	// HeadPullRequestsMaxPages bounds how many pages of pull requests a head lookup scans
+	// before failing closed (HISS-02).
+	HeadPullRequestsMaxPages = 5
+	// MaxHeadPullRequests bounds the total pull requests examined across all pages of a
+	// head lookup (HISS-02).
+	MaxHeadPullRequests = HeadPullRequestsPerPage * HeadPullRequestsMaxPages
+)
 
 // PullRequestHead state constants.
 const (
@@ -1018,6 +1027,15 @@ type PullRequestHead struct {
 	HeadBranch string
 }
 
+type ghPullHeadRepo struct {
+	FullName string `json:"full_name"`
+	Name     string `json:"name"`
+	Owner    *struct {
+		Login    string `json:"login"`
+		Username string `json:"username"`
+	} `json:"owner"`
+}
+
 type ghPullRaw struct {
 	Number    int     `json:"number"`
 	Title     string  `json:"title"`
@@ -1027,7 +1045,9 @@ type ghPullRaw struct {
 	CreatedAt string  `json:"created_at"`
 	MergedAt  *string `json:"merged_at"`
 	Head      struct {
-		Ref string `json:"ref"`
+		Ref   string          `json:"ref"`
+		Label string          `json:"label"`
+		Repo  *ghPullHeadRepo `json:"repo"`
 	} `json:"head"`
 	Milestone *struct {
 		Title string `json:"title"`
@@ -1037,23 +1057,30 @@ type ghPullRaw struct {
 // ParseHeadPullRequests decodes one single-page pull request listing (GitHub or Forgejo)
 // and keeps the pull requests whose head branch is branch.
 func ParseHeadPullRequests(body []byte, branch string) ([]PullRequestHead, error) {
+	heads, _, err := parseHeadPullRequestsPage(body, "", "", branch)
+	return heads, err
+}
+
+// parseHeadPullRequestsPage decodes one pull request listing page, returning the pull
+// requests matching owner/repo and branch along with the raw item count on the page.
+func parseHeadPullRequestsPage(body []byte, owner, repo, branch string) ([]PullRequestHead, int, error) {
 	var raw []ghPullRaw
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, fmt.Errorf("failed parsing pull requests list (raw: %q): %w", util.BodyPreview(body), err)
+		return nil, 0, fmt.Errorf("failed parsing pull requests list (raw: %q): %w", util.BodyPreview(body), err)
 	}
 	if raw == nil {
-		return nil, errors.New("pull request listing must be an array, not null")
+		return nil, 0, errors.New("pull request listing must be an array, not null")
 	}
 	if len(raw) > HeadPullRequestsPerPage {
-		return nil, fmt.Errorf("pull request listing returned %d items, exceeding limit %d", len(raw), HeadPullRequestsPerPage)
+		return nil, 0, fmt.Errorf("pull request listing returned %d items, exceeding limit %d", len(raw), HeadPullRequestsPerPage)
 	}
 	heads := make([]PullRequestHead, 0, len(raw))
 	for i := 0; i < len(raw) && i < HeadPullRequestsPerPage; i++ {
 		item := raw[i]
 		if item.Number <= 0 {
-			return nil, errors.New("pull request listing contains an invalid pull request number")
+			return nil, 0, errors.New("pull request listing contains an invalid pull request number")
 		}
-		if item.Head.Ref != branch {
+		if !headMatchesTarget(item, owner, repo, branch) {
 			continue
 		}
 		heads = append(heads, PullRequestHead{
@@ -1062,7 +1089,77 @@ func ParseHeadPullRequests(body []byte, branch string) ([]PullRequestHead, error
 			HeadBranch: item.Head.Ref,
 		})
 	}
-	return heads, nil
+	return heads, len(raw), nil
+}
+
+// headMatchesTarget reports whether item's head ref equals branch and its head repository
+// metadata, when present in the forge response, matches owner/repo.
+func headMatchesTarget(item ghPullRaw, owner, repo, branch string) bool {
+	if item.Head.Ref != branch {
+		return false
+	}
+	if owner == "" && repo == "" {
+		return true
+	}
+	if labelOwner, _, hasColon := strings.Cut(strings.TrimSpace(item.Head.Label), ":"); hasColon && labelOwner != "" && owner != "" {
+		if !strings.EqualFold(labelOwner, owner) {
+			return false
+		}
+	}
+	if item.Head.Repo == nil {
+		return true
+	}
+	return headRepoMatches(item.Head.Repo, owner, repo)
+}
+
+// headRepoMatches checks a non-nil pull request head repository block against owner and repo.
+func headRepoMatches(headRepo *ghPullHeadRepo, owner, repo string) bool {
+	if full := strings.TrimSpace(headRepo.FullName); full != "" && owner != "" && repo != "" {
+		if !strings.EqualFold(full, owner+"/"+repo) {
+			return false
+		}
+	}
+	if name := strings.TrimSpace(headRepo.Name); name != "" && repo != "" && !strings.EqualFold(name, repo) {
+		return false
+	}
+	if repoOwner := headRepoOwner(headRepo); repoOwner != "" && owner != "" && !strings.EqualFold(repoOwner, owner) {
+		return false
+	}
+	return true
+}
+
+// headRepoOwner extracts the owner login or username from a pull request head repository block.
+func headRepoOwner(headRepo *ghPullHeadRepo) string {
+	if headRepo == nil || headRepo.Owner == nil {
+		return ""
+	}
+	if login := strings.TrimSpace(headRepo.Owner.Login); login != "" {
+		return login
+	}
+	return strings.TrimSpace(headRepo.Owner.Username)
+}
+
+// collectHeadPullRequests walks up to HeadPullRequestsMaxPages pages of pull requests,
+// filtering client-side to branch and (when carried by the response) owner/repo. It stops
+// on the first short page and fails closed with errPageCeiling if the bound is reached.
+func collectHeadPullRequests(owner, repo, branch string, fetchPage func(page int) ([]byte, error)) ([]PullRequestHead, error) {
+	var all []PullRequestHead
+	for page := 1; page <= HeadPullRequestsMaxPages; page++ {
+		body, err := fetchPage(page)
+		if err != nil {
+			return nil, err
+		}
+		heads, rawCount, err := parseHeadPullRequestsPage(body, owner, repo, branch)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, heads...)
+		if rawCount < HeadPullRequestsPerPage {
+			return all, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: pull request head listing for %q exceeded %d pages of %d items",
+		errPageCeiling, branch, HeadPullRequestsMaxPages, HeadPullRequestsPerPage)
 }
 
 // pullRequestHeadState normalizes the state of a pull request into OPEN, MERGED, or CLOSED.
@@ -1076,8 +1173,9 @@ func pullRequestHeadState(item ghPullRaw) string {
 	return PullRequestStateClosed
 }
 
-// ListPullRequestsByHead fetches up to one bounded page of pull requests (all states) whose
-// head branch is branch from the GitHub REST API.
+// ListPullRequestsByHead fetches up to HeadPullRequestsMaxPages bounded pages of pull
+// requests (all states) whose head branch is branch from the GitHub REST API, filtering
+// client-side to the target repository and branch.
 func (g *GitHubDriver) ListPullRequestsByHead(ctx context.Context, branch string) ([]PullRequestHead, error) {
 	if ctx == nil {
 		return nil, errors.New("list pull requests by head: context cannot be nil")
@@ -1086,14 +1184,22 @@ func (g *GitHubDriver) ListPullRequestsByHead(ctx context.Context, branch string
 	if branch == "" {
 		return nil, errors.New("list pull requests by head: branch is required")
 	}
-	base, err := g.repoPath("pulls")
+	owner, repo, err := g.resolveRepository()
 	if err != nil {
 		return nil, fmt.Errorf("list pull requests by head %q: %w", branch, err)
 	}
 	ctx, cancel := context.WithTimeout(ctx, defaultHTTPTimeout)
 	defer cancel()
-	path := fmt.Sprintf("%s?state=all&head=%s&per_page=%d&page=1",
-		base, url.QueryEscape(g.Owner+":"+branch), HeadPullRequestsPerPage)
+	prefix := fmt.Sprintf("/repos/%s/%s/pulls?state=all&head=%s&per_page=%d&page=",
+		owner, repo, url.QueryEscape(owner+":"+branch), HeadPullRequestsPerPage)
+	return collectHeadPullRequests(owner, repo, branch, func(page int) ([]byte, error) {
+		return g.fetchHeadPullsPage(ctx, branch, prefix, page)
+	})
+}
+
+// fetchHeadPullsPage fetches and validates one page of pull requests for branch from GitHub.
+func (g *GitHubDriver) fetchHeadPullsPage(ctx context.Context, branch, prefix string, page int) ([]byte, error) {
+	path := fmt.Sprintf("%s%d", prefix, page)
 	body, status, err := g.readRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed listing pull requests for head %q: %w", branch, err)
@@ -1102,11 +1208,11 @@ func (g *GitHubDriver) ListPullRequestsByHead(ctx context.Context, branch string
 		return nil, fmt.Errorf("unexpected status %d listing pull requests for head %q: %s",
 			status, branch, util.BodyPreview(body))
 	}
-	return ParseHeadPullRequests(body, branch)
+	return body, nil
 }
 
-// ReadPullRequestsByHead queries the forge (GitHub or Forgejo) for up to one bounded page of
-// pull requests in any state whose head branch is branch.
+// ReadPullRequestsByHead queries the forge (GitHub or Forgejo) for up to HeadPullRequestsMaxPages
+// bounded pages of pull requests in any state whose head branch is branch.
 func ReadPullRequestsByHead(ctx context.Context, kind config.Forge, remote util.GitRemote, branch string) ([]PullRequestHead, error) {
 	if ctx == nil {
 		return nil, errors.New("read pull requests by head: context cannot be nil")

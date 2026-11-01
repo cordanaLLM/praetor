@@ -1199,11 +1199,15 @@ against live memory, swap and load readings, refusing under pressure or when the
 cannot be taken; the assignment admits no other shape and no other simple command
 ([worktree-isolated sessions](admission.md#worktree-isolated-sessions)). The refusal of a plain
 `git push` names both forms. Every admitted `git push` (`PRAETOR_ADMIT` and `praetorctl admit`
-alike, excluding `--delete`, `:branch` and tag pushes) also resolves the repository directory,
-remote (`util.ReadOriginRemote`, `util.ReadGitRemote`, `util.ParseGitRemote`) and destination
-branch (`src:dst`, branch name, or `HEAD` via `git`), reads up to one bounded page of pull
-requests for that head branch on GitHub or Forgejo, and refuses when a `MERGED` or `CLOSED` pull
-request heads the branch and no `OPEN` one does, or when target/forge resolution fails
+alike, excluding `--delete`, `:branch` and tag pushes; `--mirror` is refused outright) also
+resolves the repository directory, remote (`util.ReadOriginRemote`, `util.ReadGitRemote`,
+`util.ParseGitRemote`) and destination branches (`src:dst`, branch name, `HEAD` via
+`git symbolic-ref`, an omitted refspec and remote via `git rev-parse --symbolic-full-name @{push}`,
+or every local branch via bounded `git for-each-ref refs/heads` for `--all` / `--branches`),
+reads up to `forge.HeadPullRequestsMaxPages` bounded pages of pull requests for each head branch
+on GitHub or Forgejo (filtering client-side to the pushed repository and branch and failing
+closed at the page ceiling), and refuses when a `MERGED` or `CLOSED` pull request heads a
+destination branch and no `OPEN` one does, or when target/forge resolution fails
 ([merged and closed pull request heads](admission.md#merged-and-closed-pull-request-heads)).
 
 A command the reader cannot follow (an open quote or here-document, or more than 4096 lines)

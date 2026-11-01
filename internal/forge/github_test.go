@@ -444,3 +444,85 @@ func TestListPullRequestsByHead_Boundary(t *testing.T) {
 		t.Fatalf("exact page bound = %d, %v", len(heads), err)
 	}
 }
+
+// Planted negative and positive: a forge that ignores the head query parameter and returns
+// pull requests of other branches or of forks on the same branch name is filtered client-side
+// across pages, keeping only pull requests of the pushed repository and branch.
+func TestListPullRequestsByHead_Planted_ServerIgnoresHeadAndForkFiltered(t *testing.T) {
+	mergedPR := func(num int, ref, label, fullName, owner string) map[string]any {
+		return map[string]any{
+			"number": num, "state": "closed", "merged": true, "merged_at": "2026-10-31T10:00:00Z",
+			"head": map[string]any{
+				"ref": ref, "label": label,
+				"repo": map[string]any{"full_name": fullName, "name": "widgets", "owner": map[string]any{"login": owner}},
+			},
+		}
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") == "2" {
+			writeRulesetJSON(w, http.StatusOK, []map[string]any{mergedPR(91, "topic", "acme:topic", "acme/widgets", "acme")})
+			return
+		}
+		page1 := []map[string]any{
+			mergedPR(10, "other-branch", "acme:other-branch", "acme/widgets", "acme"),
+			mergedPR(11, "topic", "fork-owner:topic", "fork-owner/widgets", "fork-owner"),
+			mergedPR(12, "clean-branch", "fork-owner:clean-branch", "fork-owner/widgets", "fork-owner"),
+		}
+		for len(page1) < HeadPullRequestsPerPage {
+			page1 = append(page1, mergedPR(100+len(page1), "unrelated", "acme:unrelated", "acme/widgets", "acme"))
+		}
+		writeRulesetJSON(w, http.StatusOK, page1)
+	}))
+	defer srv.Close()
+
+	fj := NewGiteaDriver("tok", srv.URL)
+	fj.SetRepository("acme", "widgets")
+	gh := NewGitHubDriver("tok", srv.URL)
+	gh.SetRepository("acme", "widgets")
+
+	for _, tc := range []struct {
+		name string
+		list func(ctx context.Context, branch string) ([]PullRequestHead, error)
+	}{
+		{"forgejo", fj.ListPullRequestsByHead},
+		{"github", gh.ListPullRequestsByHead},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, err := tc.list(context.Background(), "clean-branch"); err != nil || len(got) != 0 {
+				t.Fatalf("expected fork/other-branch PRs filtered for clean-branch, got %+v, err=%v", got, err)
+			}
+			got, err := tc.list(context.Background(), "topic")
+			if err != nil || len(got) != 1 || got[0].Number != 91 || got[0].State != PullRequestStateMerged {
+				t.Fatalf("expected page-2 same-repo PR #91 for topic, got %+v, err=%v", got, err)
+			}
+		})
+	}
+}
+
+// Planted negative: reaching the head pull request pagination ceiling without a short page
+// fails closed on both GitHub and Forgejo drivers.
+func TestListPullRequestsByHead_Planted_PageCeilingFailsClosed(t *testing.T) {
+	fullPage := make([]map[string]any, HeadPullRequestsPerPage)
+	for i := range fullPage {
+		fullPage[i] = map[string]any{
+			"number": i + 1, "state": "closed", "merged": true, "merged_at": "2026-10-31T10:00:00Z",
+			"head": map[string]any{"ref": "other-branch"},
+		}
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeRulesetJSON(w, http.StatusOK, fullPage)
+	}))
+	defer srv.Close()
+
+	gh := NewGitHubDriver("tok", srv.URL)
+	gh.SetRepository("acme", "widgets")
+	if _, err := gh.ListPullRequestsByHead(context.Background(), "topic"); err == nil || !strings.Contains(err.Error(), "pages of 20") {
+		t.Fatalf("GitHub page ceiling should fail closed with page bound reason, got %v", err)
+	}
+
+	fj := NewGiteaDriver("tok", srv.URL)
+	fj.SetRepository("acme", "widgets")
+	if _, err := fj.ListPullRequestsByHead(context.Background(), "topic"); err == nil || !strings.Contains(err.Error(), "pages of 20") {
+		t.Fatalf("Forgejo page ceiling should fail closed with page bound reason, got %v", err)
+	}
+}

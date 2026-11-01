@@ -45,8 +45,20 @@ func initAdmissionRepo(t *testing.T, dir, branch, originURL string) {
 	if _, err := util.RunGit(ctx, dir, "init", "-q", "-b", branch); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := util.RunGit(ctx, dir, "-c", "user.name=t", "-c", "user.email=t@e", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-q", "-m", "init"); err != nil {
+		t.Fatal(err)
+	}
 	if originURL != "" {
 		if _, err := util.RunGit(ctx, dir, "remote", "add", "origin", originURL); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := util.RunGit(ctx, dir, "update-ref", "refs/remotes/origin/"+branch, "HEAD"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := util.RunGit(ctx, dir, "config", "branch."+branch+".remote", "origin"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := util.RunGit(ctx, dir, "config", "branch."+branch+".merge", "refs/heads/"+branch); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -477,6 +489,9 @@ func TestAdmission_GitPushHead_TargetResolution_PositiveAndBoundary(t *testing.T
 	if _, err := util.RunGit(context.Background(), repo, "remote", "add", "upstream", "git@codeberg.org:fork/widgets.git"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := util.RunGit(context.Background(), repo, "update-ref", "refs/remotes/upstream/current-head", "HEAD"); err != nil {
+		t.Fatal(err)
+	}
 	sub := filepath.Join(repo, "sub")
 	initAdmissionRepo(t, sub, "sub-branch", "https://forgejo.example.org/acme/subrepo.git")
 
@@ -565,4 +580,168 @@ func TestAdmission_GitPushHead_GitHubAndForgejoLoopback(t *testing.T) {
 	requireDeniedContaining(t, "forgejo closed",
 		policy.Command("praetorctl admit --label git-push -- git push codeberg fj-closed"),
 		"#88", "CLOSED", "push to a new branch")
+}
+
+func writeTestBody(t *testing.T, w http.ResponseWriter, body string) {
+	t.Helper()
+	if _, err := io.WriteString(w, body); err != nil {
+		t.Errorf("write test response: %v", err)
+	}
+}
+
+func mustGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	if _, err := util.RunGit(context.Background(), dir, args...); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Planted negative and positive (findings 1 and 2): a server that ignores the head parameter
+// and returns a merged pull request of another branch (or a fork) does not refuse the push, a
+// terminal pull request on the second page refuses the push, and reaching the pagination bound
+// without the end refuses the push with a named reason.
+func TestAdmission_GitPushHead_Planted_ServerIgnoresHeadAndPagination(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		page := r.URL.Query().Get("page")
+		head := r.URL.Query().Get("head")
+		if strings.Contains(head, "bound-topic") {
+			items := make([]string, 0, forge.HeadPullRequestsPerPage)
+			for i := 0; i < forge.HeadPullRequestsPerPage; i++ {
+				items = append(items, `{"number":200,"state":"closed","merged":true,"head":{"ref":"unrelated","repo":{"full_name":"acme/widgets"}}}`)
+			}
+			writeTestBody(t, w, "["+strings.Join(items, ",")+"]")
+			return
+		}
+		if page == "2" {
+			writeTestBody(t, w, `[{"number":105,"state":"closed","merged":true,"head":{"ref":"page2-topic","repo":{"full_name":"acme/widgets"}}}]`)
+			return
+		}
+		items := []string{
+			`{"number":101,"state":"closed","merged":true,"head":{"ref":"other-branch","repo":{"full_name":"acme/widgets"}}}`,
+			`{"number":102,"state":"closed","merged":true,"head":{"ref":"clean-topic","repo":{"full_name":"fork/widgets"}}}`,
+		}
+		for len(items) < forge.HeadPullRequestsPerPage {
+			items = append(items, `{"number":199,"state":"open","merged":false,"head":{"ref":"noise","repo":{"full_name":"acme/widgets"}}}`)
+		}
+		writeTestBody(t, w, "["+strings.Join(items, ",")+"]")
+	}))
+	defer srv.Close()
+
+	repo := defaultAdmissionRepo(t)
+	mustGit(t, repo, "remote", "add", "codeberg", "https://codeberg.org/acme/widgets.git")
+	policy := admissionPolicy(t).WithAdmissionPullRequests(repo, func(ctx context.Context, target PushTarget) ([]forge.PullRequestHead, error) {
+		d := forge.NewGiteaDriver("tok", srv.URL)
+		d.SetRepository(target.Remote.Owner, target.Remote.Repo)
+		return d.ListPullRequestsByHead(ctx, target.Branch)
+	})
+
+	if v := policy.Command("PRAETOR_ADMIT=git-push git push codeberg clean-topic"); v.Outcome != Allow {
+		t.Fatalf("merged PR of another branch/fork should not refuse push: %s", v.Reason)
+	}
+	requireDeniedContaining(t, "page 2 merged PR",
+		policy.Command("PRAETOR_ADMIT=git-push git push codeberg page2-topic"),
+		"#105", "MERGED", "push to a new branch")
+	requireDeniedContaining(t, "pagination bound reached",
+		policy.Command("PRAETOR_ADMIT=git-push git push codeberg bound-topic"),
+		"git push forge pull request check failed", "pages of 20")
+}
+
+// Planted negative and positive (finding 3): an omitted refspec is resolved via
+// `git rev-parse --symbolic-full-name @{push}` (including the remote it names), and when git
+// cannot tell (no upstream, push.default nothing, detached HEAD) the push is refused with the
+// reason instead of guessing the current branch.
+func TestAdmission_GitPushHead_Planted_OmittedRefspecViaGitPushRef(t *testing.T) {
+	ctx := context.Background()
+	noUpstream := t.TempDir()
+	mustGit(t, noUpstream, "init", "-q", "-b", "untracked-branch")
+	mustGit(t, noUpstream, "remote", "add", "origin", "https://github.com/acme/widgets.git")
+
+	policy := admissionPolicy(t).WithAdmissionPullRequests(noUpstream, func(_ context.Context, target PushTarget) ([]forge.PullRequestHead, error) {
+		if target.Remote.Owner == "fork" && target.Branch == "tracked-dst" {
+			return []forge.PullRequestHead{{Number: 61, State: forge.PullRequestStateMerged, HeadBranch: "tracked-dst"}}, nil
+		}
+		return nil, nil
+	})
+
+	// No upstream configured: refused with git's reason rather than guessing untracked-branch.
+	requireDeniedContaining(t, "no upstream bare push",
+		policy.CommandInDir(ctx, noUpstream, "PRAETOR_ADMIT=git-push git push"),
+		"git push target resolution failed", "@{push}")
+	requireDeniedContaining(t, "no upstream remote push",
+		policy.CommandInDir(ctx, noUpstream, "PRAETOR_ADMIT=git-push git push origin"),
+		"git push target resolution failed", "@{push}")
+
+	// Configure a commit and upstream pointing to upstream/tracked-dst.
+	mustGit(t, noUpstream, "-c", "user.name=t", "-c", "user.email=t@e", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-q", "-m", "init")
+	mustGit(t, noUpstream, "remote", "add", "upstream", "https://codeberg.org/fork/widgets.git")
+	mustGit(t, noUpstream, "update-ref", "refs/remotes/upstream/tracked-dst", "HEAD")
+	mustGit(t, noUpstream, "config", "branch.untracked-branch.remote", "upstream")
+	mustGit(t, noUpstream, "config", "branch.untracked-branch.merge", "refs/heads/tracked-dst")
+	mustGit(t, noUpstream, "config", "push.default", "upstream")
+
+	// Bare `git push` now resolves via @{push} to remote "upstream" (fork/widgets) and branch "tracked-dst".
+	requireDeniedContaining(t, "resolved via @{push} to upstream/tracked-dst",
+		policy.CommandInDir(ctx, noUpstream, "PRAETOR_ADMIT=git-push git push"),
+		"fork/widgets", "tracked-dst", "#61", "MERGED")
+
+	// push.default=nothing: git cannot resolve @{push}, so the push is refused.
+	mustGit(t, noUpstream, "config", "push.default", "nothing")
+	requireDeniedContaining(t, "push.default nothing",
+		policy.CommandInDir(ctx, noUpstream, "PRAETOR_ADMIT=git-push git push"),
+		"git push target resolution failed", "@{push}")
+
+	// Detached HEAD: git cannot resolve @{push}, so the push is refused.
+	mustGit(t, noUpstream, "config", "push.default", "simple")
+	mustGit(t, noUpstream, "checkout", "--detach", "-q", "HEAD")
+	requireDeniedContaining(t, "detached HEAD bare push",
+		policy.CommandInDir(ctx, noUpstream, "PRAETOR_ADMIT=git-push git push"),
+		"git push target resolution failed", "@{push}")
+}
+
+// Planted negative and positive (finding 4): `git push --mirror` is refused with the reason,
+// and `git push --all` judges every local branch under refs/heads (refusing when any local
+// branch has a terminal PR or when the branch count exceeds the bound).
+func TestAdmission_GitPushHead_Planted_MirrorAndAllBranches(t *testing.T) {
+	ctx := context.Background()
+	repo := defaultAdmissionRepo(t)
+	mustGit(t, repo, "branch", "merged-feature")
+
+	var queried []string
+	policy := admissionPolicy(t).WithAdmissionPullRequests(repo, func(_ context.Context, target PushTarget) ([]forge.PullRequestHead, error) {
+		queried = append(queried, target.Branch)
+		if target.Branch == "merged-feature" {
+			return []forge.PullRequestHead{{Number: 73, State: forge.PullRequestStateMerged, HeadBranch: "merged-feature"}}, nil
+		}
+		return nil, nil
+	})
+
+	for _, cmd := range []string{
+		"PRAETOR_ADMIT=git-push git push --mirror origin",
+		"praetorctl admit --label git-push -- git push --mirror",
+	} {
+		requireDeniedContaining(t, cmd, policy.CommandInDir(ctx, repo, cmd),
+			"--mirror", "push branches one by one")
+	}
+
+	requireDeniedContaining(t, "push --all with merged local branch",
+		policy.CommandInDir(ctx, repo, "PRAETOR_ADMIT=git-push git push --all origin"),
+		"merged-feature", "#73", "MERGED")
+
+	mustGit(t, repo, "branch", "-D", "merged-feature")
+	mustGit(t, repo, "branch", "clean-feature")
+	queried = nil
+	if v := policy.CommandInDir(ctx, repo, "PRAETOR_ADMIT=git-push git push --all origin"); v.Outcome != Allow {
+		t.Fatalf("push --all with clean branches refused: %s", v.Reason)
+	}
+	if len(queried) != 2 {
+		t.Fatalf("push --all queried %v, want 2 local branches", queried)
+	}
+
+	for i := 0; i < 35; i++ {
+		mustGit(t, repo, "branch", "extra-"+strings.Repeat("a", i/10)+string(rune('a'+i%10)))
+	}
+	requireDeniedContaining(t, "push --all exceeding branch bound",
+		policy.CommandInDir(ctx, repo, "PRAETOR_ADMIT=git-push git push --all origin"),
+		"git push target resolution failed", "--all")
 }
