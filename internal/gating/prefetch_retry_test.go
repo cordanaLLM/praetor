@@ -18,28 +18,71 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-func TestPrefetchRetry_Positive_DownloadTimeoutRetriedOnce(t *testing.T) {
-	repo, cfg, _ := trackedModuleFixture(t, true)
-	toolingDir := filepath.Join(repo, "tooling")
-	downloadCalls := 0
-	rootVerifyCalls := 0
-	var retryDeadlines []time.Time
+type toolingTimeoutProbe struct {
+	repoDir         string
+	toolingDir      string
+	downloadCalls   int
+	rootVerifyCalls int
+	retryDeadlines  []time.Time
+}
 
-	cfg.run = func(ctx context.Context, dir, name string, args ...string) (string, error) {
-		if dir == repo && len(args) == 2 && args[1] == "verify" {
-			rootVerifyCalls++
+func (p *toolingTimeoutProbe) run(ctx context.Context, dir, _ string, args ...string) (string, error) {
+	if dir == p.repoDir && isGoModSubcommand(args, "verify") {
+		p.rootVerifyCalls++
+	}
+	if dir != p.toolingDir || !isGoModSubcommand(args, "download") {
+		return "", nil
+	}
+	p.downloadCalls++
+	if deadline, ok := ctx.Deadline(); ok {
+		p.retryDeadlines = append(p.retryDeadlines, deadline)
+	}
+	if p.downloadCalls == 1 {
+		return "downloading modules", fmt.Errorf("download timed out: %w", context.DeadlineExceeded)
+	}
+	return "", nil
+}
+
+func isGoModSubcommand(args []string, sub string) bool {
+	return len(args) == 2 && args[1] == sub
+}
+
+func failFirstDownloadRunner(firstOut string, firstErr error) (commandRunner, *int) {
+	var downloadCalls int
+	run := func(_ context.Context, _, _ string, args ...string) (string, error) {
+		if !isGoModSubcommand(args, "download") {
+			return "", nil
 		}
-		if dir == toolingDir && len(args) == 2 && args[1] == "download" {
-			downloadCalls++
-			if deadline, ok := ctx.Deadline(); ok {
-				retryDeadlines = append(retryDeadlines, deadline)
-			}
-			if downloadCalls == 1 {
-				return "downloading modules", fmt.Errorf("download timed out: %w", context.DeadlineExceeded)
-			}
+		downloadCalls++
+		if downloadCalls == 1 {
+			return firstOut, firstErr
 		}
 		return "", nil
 	}
+	return run, &downloadCalls
+}
+
+func assertPassedAfterRetry(t *testing.T, rep *PrefetchReport, err error, downloadCalls int, wantReason string) {
+	t.Helper()
+	if err != nil || rep == nil {
+		t.Fatalf("expected SIGKILL prefetch error to retry and pass, got rep=%+v err=%v", rep, err)
+	}
+	if downloadCalls != 2 {
+		t.Errorf("downloadCalls = %d, want 2", downloadCalls)
+	}
+	wantSub := fmt.Sprintf("passed after retry (first attempt: %s)", wantReason)
+	if !strings.Contains(rep.Message, wantSub) {
+		t.Errorf("rep.Message = %q, want %s retry note", rep.Message, wantReason)
+	}
+}
+
+func TestPrefetchRetry_Positive_DownloadTimeoutRetriedOnce(t *testing.T) {
+	repo, cfg, _ := trackedModuleFixture(t, true)
+	probe := &toolingTimeoutProbe{
+		repoDir:    repo,
+		toolingDir: filepath.Join(repo, "tooling"),
+	}
+	cfg.run = probe.run
 
 	msg, err := runGoPrefetch(t.Context(), cfg)
 	if err != nil {
@@ -49,11 +92,11 @@ func TestPrefetchRetry_Positive_DownloadTimeoutRetriedOnce(t *testing.T) {
 	if !strings.Contains(msg, wantSub) {
 		t.Errorf("moduleResultsMessage = %q, want substring %q", msg, wantSub)
 	}
-	if rootVerifyCalls != 1 {
-		t.Errorf("root module verify calls = %d, want 1 (same module retried only)", rootVerifyCalls)
+	if probe.rootVerifyCalls != 1 {
+		t.Errorf("root module verify calls = %d, want 1 (same module retried only)", probe.rootVerifyCalls)
 	}
-	if downloadCalls != 2 || len(retryDeadlines) != 2 {
-		t.Fatalf("tooling download calls = %d (deadlines %d), want 2", downloadCalls, len(retryDeadlines))
+	if probe.downloadCalls != 2 || len(probe.retryDeadlines) != 2 {
+		t.Fatalf("tooling download calls = %d (deadlines %d), want 2", probe.downloadCalls, len(probe.retryDeadlines))
 	}
 }
 
@@ -63,7 +106,7 @@ func TestPrefetchRetry_Positive_TwoModulesEachRetriedOnce(t *testing.T) {
 	downloadCalls := map[string]int{}
 
 	cfg.run = func(_ context.Context, dir, _ string, args ...string) (string, error) {
-		if len(args) == 2 && args[1] == "download" {
+		if isGoModSubcommand(args, "download") {
 			downloadCalls[dir]++
 			if downloadCalls[dir] == 1 {
 				return "downloading modules", fmt.Errorf("download timed out: %w", context.DeadlineExceeded)
@@ -93,7 +136,7 @@ func TestPrefetchRetry_Negative_TimeoutTwiceFailsNamingBothAttempts(t *testing.T
 	goDir := newGoModuleDir(t)
 	downloadCalls := 0
 	stub := func(_ context.Context, _, _ string, args ...string) (string, error) {
-		if len(args) == 2 && args[1] == "download" {
+		if isGoModSubcommand(args, "download") {
 			downloadCalls++
 			return fmt.Sprintf("attempt-%d-out", downloadCalls), fmt.Errorf("attempt %d: %w", downloadCalls, context.DeadlineExceeded)
 		}
@@ -123,7 +166,7 @@ func TestPrefetchRetry_Negative_NonTransientErrorNotRetried(t *testing.T) {
 	calls := 0
 	stub := func(_ context.Context, _, _ string, args ...string) (string, error) {
 		calls++
-		if len(args) == 2 && args[1] == "download" {
+		if isGoModSubcommand(args, "download") {
 			return "checksum mismatch", nonTransient
 		}
 		return "", nil
@@ -201,25 +244,9 @@ func TestPrefetchRetry_Positive_KilledBySignalRetried(t *testing.T) {
 		{name: "wrapped ExitError", err: fmt.Errorf("process killed: %w", exitErr)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			downloadCalls := 0
-			rep, err := prefetchDependencies(t.Context(), goDir, func(_ context.Context, _, _ string, args ...string) (string, error) {
-				if len(args) == 2 && args[1] == "download" {
-					downloadCalls++
-					if downloadCalls == 1 {
-						return "", tc.err
-					}
-				}
-				return "", nil
-			})
-			if err != nil || rep == nil {
-				t.Fatalf("expected SIGKILL prefetch error to retry and pass, got rep=%+v err=%v", rep, err)
-			}
-			if downloadCalls != 2 {
-				t.Errorf("downloadCalls = %d, want 2", downloadCalls)
-			}
-			if !strings.Contains(rep.Message, "passed after retry (first attempt: signal: killed)") {
-				t.Errorf("rep.Message = %q, want signal: killed retry note", rep.Message)
-			}
+			run, downloadCalls := failFirstDownloadRunner("", tc.err)
+			rep, err := prefetchDependencies(t.Context(), goDir, run)
+			assertPassedAfterRetry(t, rep, err, *downloadCalls, "signal: killed")
 		})
 	}
 }
