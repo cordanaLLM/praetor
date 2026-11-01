@@ -43,6 +43,9 @@ func ResolveOwnOrganizations(ctx context.Context, repo, manifestPath string, ext
 	return own, nil
 }
 
+// resolveReferenceOwner resolves the repository owner from GITHUB_REPOSITORY (via getenv),
+// the origin remote of repo, or manifest.Repository.Owner, refusing malformed
+// GITHUB_REPOSITORY values and unexpected remote-lookup errors.
 func resolveReferenceOwner(ctx context.Context, repo string, manifest *config.Manifest, getenv func(string) string) (string, error) {
 	if identity := lookupEnv(getenv, "GITHUB_REPOSITORY"); identity != "" {
 		owner, name, _ := strings.Cut(identity, "/")
@@ -66,6 +69,7 @@ func resolveReferenceOwner(ctx context.Context, repo string, manifest *config.Ma
 	return "", nil
 }
 
+// lookupEnv reads key through getenv, returning an empty string when getenv is nil.
 func lookupEnv(getenv func(string) string, key string) string {
 	if getenv == nil {
 		return ""

@@ -10,8 +10,9 @@ import (
 	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
-// Order: engine-fr-rule-checks-20261027. The explicit repository determines the trusted owner;
-// a missing origin trusts no extra owner. Invalid manifests and failed reads are errors.
+// forgeTextPolicy resolves the trusted forge organisations for repo and manifestPath and
+// stores them on policy. A missing manifest or origin adds no extra owner; invalid manifests
+// and failed reads are refused with an error (Order: engine-fr-rule-checks-20261027).
 func forgeTextPolicy(ctx context.Context, repo, manifestPath string, policy forge.ClosingReferencePolicy) (forge.ClosingReferencePolicy, error) {
 	own, err := forge.ResolveOwnOrganizations(ctx, repo, manifestPath, policy.OwnOrganizations, os.Getenv)
 	if err != nil {

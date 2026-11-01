@@ -197,6 +197,8 @@ func TestForgeText_HardWrapProse(t *testing.T) {
 	}
 }
 
+// TestResolveOwnOrganizations_UsesProvidedGetenv verifies that ResolveOwnOrganizations
+// reads GITHUB_REPOSITORY only from the supplied getenv callback and ignores the process environment when getenv is nil.
 func TestResolveOwnOrganizations_UsesProvidedGetenv(t *testing.T) {
 	t.Setenv("GITHUB_REPOSITORY", "process-org/process-repo")
 	ownWithoutEnv, err := ResolveOwnOrganizations(t.Context(), "", "", []string{"extra-org"}, nil)

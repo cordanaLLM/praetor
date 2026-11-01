@@ -8,8 +8,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -31,25 +33,51 @@ const (
 
 var (
 	ghAPIScopedPath    = regexp.MustCompile(`(?i)(?:^|/)(?:issues|pulls|comments)(?:/|$|\?)`)
-	ghWriteWordPattern = regexp.MustCompile(`(?i)\bgh\b[\s\S]*\b(issue\b[\s\S]*\b(create|edit|comment)|pr\b[\s\S]*\b(create|edit|comment|review)|release\b[\s\S]*\b(create|edit)|api\b[\s\S]*(issues|pulls|comments))\b`)
+	ghWriteWordPattern = regexp.MustCompile(ghWriteWordSource(scopedGHActions))
 	catSubstPattern    = regexp.MustCompile(`\$\(\s*cat(?:\s+--)?\s+([^\s<>|;&)]+)\s*\)`)
-	ghAPIValueFlags    = map[string]bool{
+	scopedGHActions    = map[string]map[string]bool{
+		"issue":   {"create": true, "edit": true, "comment": true, "close": true, "reopen": true},
+		"pr":      {"create": true, "edit": true, "comment": true, "review": true, "close": true, "reopen": true, "merge": true},
+		"release": {"create": true, "edit": true},
+	}
+	ghAPIValueFlags = map[string]bool{
 		"-H": true, "--header": true, "--hostname": true, "--cache": true,
 		"-q": true, "--jq": true, "-p": true, "--preview": true, "-t": true, "--template": true,
 	}
 )
 
+// ghWriteWordSource builds the pattern that keeps an unparseable command refused when it may be a gh
+// write: every subcommand and action of actions, plus gh api on issues, pulls or comments. Deriving it
+// from scopedGHActions keeps the fallback and the allowlist naming the same actions.
+func ghWriteWordSource(actions map[string]map[string]bool) string {
+	subs := slices.Sorted(maps.Keys(actions))
+	alts := make([]string, 0, len(subs)+1)
+	for i := 0; i < len(subs) && i < 16; i++ {
+		names := slices.Sorted(maps.Keys(actions[subs[i]]))
+		alts = append(alts, regexp.QuoteMeta(subs[i])+`\b[\s\S]*\b(`+strings.Join(names, "|")+`)`)
+	}
+	alts = append(alts, `api\b[\s\S]*(issues|pulls|comments)`)
+	return `(?i)\bgh\b[\s\S]*\b(` + strings.Join(alts, "|") + `)\b`
+}
+
+// ghTextFile pairs the human-readable label reported in refusals with the resolved
+// filesystem path read by the forge-text guard.
 type ghTextFile struct {
 	label    string
 	resolved string
 }
 
+// ghWriteCall holds the raw command text, resolved file arguments and any file-collection
+// refusal for a single scoped gh write invocation.
 type ghWriteCall struct {
 	raw     string
 	files   []ghTextFile
 	fileErr string
 }
 
+// evaluateForgeTextRefs inspects every scoped gh write call in canonical.Command and
+// refuses the command when shell parsing fails, trusted organisations cannot be resolved,
+// or any inline text or named file contains a foreign forge reference.
 func evaluateForgeTextRefs(ctx context.Context, canonical Canonical, root string, in Invocation) Verdict {
 	ctx, cancel := context.WithTimeout(ctx, forgeTextReadTimeout)
 	defer cancel()
@@ -76,6 +104,8 @@ func evaluateForgeTextRefs(ctx context.Context, canonical Canonical, root string
 	return Verdict{Outcome: Allow}
 }
 
+// judgeGHWriteCall checks a single ghWriteCall and its named files against own, refusing
+// file collection errors, unreadable or oversized files, and foreign forge references.
 func judgeGHWriteCall(ctx context.Context, call ghWriteCall, own []string, noOrgList bool) Verdict {
 	if call.fileErr != "" {
 		return forgeTextDeny(call.fileErr, noOrgList)
@@ -95,6 +125,8 @@ func judgeGHWriteCall(ctx context.Context, call ghWriteCall, own []string, noOrg
 	return Verdict{Outcome: Allow}
 }
 
+// forgeTextDeny builds a HISS Deny verdict for rule forge-text-foreign-reference with
+// detail and the allowed reference forms, appending the missing-organisation notice when noOrgList is set.
 func forgeTextDeny(detail string, noOrgList bool) Verdict {
 	if noOrgList {
 		detail += "; " + forgeTextNoOrgNotice
@@ -105,6 +137,8 @@ func forgeTextDeny(detail string, noOrgList bool) Verdict {
 	}
 }
 
+// resolveHookOwnOrganizations resolves the trusted forge organisations from operator
+// settings, the repository manifest and repository identity, refusing invalid manifests or settings.
 func resolveHookOwnOrganizations(ctx context.Context, root string, getenv func(string) string) ([]string, bool, error) {
 	opForge, err := loadOperatorForgeSettings(ctx, getenv)
 	if err != nil {
@@ -122,6 +156,8 @@ func resolveHookOwnOrganizations(ctx context.Context, root string, getenv func(s
 	return own, noOrgList, nil
 }
 
+// loadOperatorForgeSettings loads operator-level forge settings when fleet or workstation
+// config environment variables are set, refusing invalid operator policy files.
 func loadOperatorForgeSettings(ctx context.Context, getenv func(string) string) (config.ForgeSettings, error) {
 	if getenv == nil {
 		return config.ForgeSettings{}, nil
@@ -138,6 +174,8 @@ func loadOperatorForgeSettings(ctx context.Context, getenv func(string) string) 
 	return policy.OperatorSettings().Forge, nil
 }
 
+// collectGHWriteCalls splits command into shell segments, tracks working-directory changes
+// and returns every scoped gh write call, refusing commands that exceed maxForgeTextSegments or fail shell parsing.
 func collectGHWriteCalls(command, baseDir string) ([]ghWriteCall, error) {
 	fields, err := shellFieldsForGH(command)
 	if err != nil || len(fields) == 0 {
@@ -164,6 +202,8 @@ func collectGHWriteCalls(command, baseDir string) ([]ghWriteCall, error) {
 	return calls, nil
 }
 
+// shellFieldsForGH splits command into shell words with forge.ShellFields, refusing any
+// forge.ErrShellReadLimit error, commands over maxForgeTextWords, or parse errors on commands matching ghWriteWordPattern.
 func shellFieldsForGH(command string) ([]string, error) {
 	fields, err := forge.ShellFields(command)
 	if err != nil {
@@ -178,6 +218,8 @@ func shellFieldsForGH(command string) ([]string, error) {
 	return fields, nil
 }
 
+// parseSegmentGHCall inspects one command segment, updates workDir on cd or pushd, and
+// extracts a ghWriteCall when the segment invokes a scoped gh write subcommand, refusing non-gh or unscoped segments.
 func parseSegmentGHCall(fullCommand string, words []string, workDir string) (ghWriteCall, string, bool) {
 	word, args, cmdDir, _, _ := walkCommandWords(words, workDir)
 	if word == "cd" || word == "pushd" {
@@ -201,6 +243,8 @@ func parseSegmentGHCall(fullCommand string, words []string, workDir string) (ghW
 	return ghWriteCall{raw: raw, files: files, fileErr: fileErr}, workDir, true
 }
 
+// classifyGHCall identifies the gh subcommand and remaining arguments for a scoped write
+// action or write-mode gh api call, refusing missing, read-only or unscoped subcommands.
 func classifyGHCall(args []string) (string, []string, bool) {
 	subcmd, next, ok := nextGHPositional(args, 0)
 	if !ok {
@@ -216,6 +260,8 @@ func classifyGHCall(args []string) (string, []string, bool) {
 	return subcmd, args[after:], true
 }
 
+// nextGHPositional returns the next non-flag positional token in args starting at start,
+// skipping -R/--repo values and flag tokens and refusing when no positional token remains.
 func nextGHPositional(args []string, start int) (string, int, bool) {
 	for i := start; i < len(args) && i < maxForgeTextWords; i++ {
 		tok := unquoteTarget(args[i])
@@ -231,19 +277,14 @@ func nextGHPositional(args []string, start int) (string, int, bool) {
 	return "", len(args), false
 }
 
+// isScopedGHSubcommand reports whether subcmd and action form a gh write command that can
+// post user-supplied text to the forge, refusing read-only or non-text actions.
 func isScopedGHSubcommand(subcmd, action string) bool {
-	switch subcmd {
-	case "issue":
-		return action == "create" || action == "edit" || action == "comment"
-	case "pr":
-		return action == "create" || action == "edit" || action == "comment" || action == "review"
-	case "release":
-		return action == "create" || action == "edit"
-	default:
-		return false
-	}
+	return scopedGHActions[subcmd][action]
 }
 
+// isScopedGHAPI reports whether a gh api argument list targets an issues, pulls or comments
+// endpoint with a non-read method or field flags, refusing GET/HEAD reads and unscoped paths.
 func isScopedGHAPI(args []string) bool {
 	hasPath, hasFields, method := scanGHAPIArgs(args)
 	if !hasPath || method == "GET" || method == "HEAD" {
@@ -252,6 +293,8 @@ func isScopedGHAPI(args []string) bool {
 	return method != "" || hasFields
 }
 
+// scanGHAPIArgs scans gh api arguments for a scoped endpoint path, field/input flags and
+// an explicit HTTP method, skipping non-field option values.
 func scanGHAPIArgs(args []string) (bool, bool, string) {
 	hasPath, hasFields := false, false
 	method := ""
@@ -270,6 +313,8 @@ func scanGHAPIArgs(args []string) (bool, bool, string) {
 	return hasPath, hasFields, method
 }
 
+// stepGHAPIOtherArg advances past value-taking gh api flags and records whether tok matches
+// a scoped issues, pulls or comments endpoint path.
 func stepGHAPIOtherArg(tok string, i int, hasPath bool) (int, bool) {
 	if ghAPIValueFlags[tok] {
 		return i + 1, hasPath
@@ -280,6 +325,8 @@ func stepGHAPIOtherArg(tok string, i int, hasPath bool) (int, bool) {
 	return i, hasPath
 }
 
+// parseGHAPIFieldFlag checks whether args[i] is a gh api field or input flag (-f, -F,
+// --field, --raw-field, --input) and returns the next index when matched, refusing other flags.
 func parseGHAPIFieldFlag(args []string, i int, tok string) (int, bool) {
 	if _, next, ok, _ := flagValue(args, i, "-f", "-f", "--raw-field", "--input"); ok {
 		return next, true
@@ -290,6 +337,8 @@ func parseGHAPIFieldFlag(args []string, i int, tok string) (int, bool) {
 	return i, false
 }
 
+// extractGHCallFiles collects file paths referenced by gh flags and $(cat <path>)
+// substitutions in segment, refusing malformed paths or calls exceeding maxForgeTextFiles.
 func extractGHCallFiles(segment, subcmd string, args []string, workDir string) ([]ghTextFile, bool, string) {
 	files, readsStdin, fileErr := collectFlagFiles(subcmd, args, workDir)
 	if fileErr != "" {
@@ -309,6 +358,8 @@ func extractGHCallFiles(segment, subcmd string, args []string, workDir string) (
 	return files, readsStdin, ""
 }
 
+// collectFlagFiles scans args for file-bearing flags on subcmd, marks standard-input
+// targets (-, /dev/stdin, /dev/fd/0), and refuses missing flag values or file counts over maxForgeTextFiles.
 func collectFlagFiles(subcmd string, args []string, workDir string) ([]ghTextFile, bool, string) {
 	var files []ghTextFile
 	readsStdin := false
@@ -321,7 +372,7 @@ func collectFlagFiles(subcmd string, args []string, workDir string) ([]ghTextFil
 		if !valid {
 			return nil, readsStdin, "cannot read file " + rawPath
 		}
-		if unquoteTarget(rawPath) == "-" {
+		if isStdinTarget(rawPath) {
 			readsStdin = true
 			continue
 		}
@@ -335,6 +386,19 @@ func collectFlagFiles(subcmd string, args []string, workDir string) ([]ghTextFil
 	return files, readsStdin, ""
 }
 
+// isStdinTarget reports whether rawPath names standard input (-, /dev/stdin or /dev/fd/0)
+// rather than a regular file path, refusing other paths so they are resolved on disk.
+func isStdinTarget(rawPath string) bool {
+	target := unquoteTarget(strings.TrimSpace(rawPath))
+	if target == "-" {
+		return true
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(target))
+	return cleaned == "/dev/stdin" || cleaned == "/dev/fd/0"
+}
+
+// appendGHTextFile resolves rawPath against workDir and appends it to files, refusing
+// empty paths or lists that already hold maxForgeTextFiles entries.
 func appendGHTextFile(files []ghTextFile, rawPath, workDir string) ([]ghTextFile, bool, string) {
 	file, ok := resolveGHTextFile(rawPath, workDir)
 	if !ok {
@@ -346,6 +410,8 @@ func appendGHTextFile(files []ghTextFile, rawPath, workDir string) ([]ghTextFile
 	return append(files, file), true, ""
 }
 
+// extractFlagFile extracts a file path argument from a gh body/notes flag or a gh api
+// --input or @file field at args[i], refusing non-file flags or empty file operands.
 func extractFlagFile(subcmd string, args []string, i int) (string, int, bool, bool) {
 	if subcmd != "api" {
 		return flagValue(args, i, "-F", "--body-file", "--notes-file", "-F")
@@ -361,6 +427,8 @@ func extractFlagFile(subcmd string, args []string, i int) (string, int, bool, bo
 	return path, next, matched, pathValid
 }
 
+// flagValue parses separate, inline (=) or attached short flag values at args[i] for
+// names, refusing a matched flag whose value is missing or empty.
 func flagValue(args []string, i int, short string, names ...string) (string, int, bool, bool) {
 	tok := unquoteTarget(args[i])
 	for j := 0; j < len(names) && j < 4; j++ {
@@ -380,6 +448,8 @@ func flagValue(args []string, i int, short string, names ...string) (string, int
 	return "", i, false, false
 }
 
+// extractAPIFieldFile extracts the file path from a gh api key=@path field assignment,
+// refusing assignments without @ or with an empty path after @.
 func extractAPIFieldFile(raw string) (string, bool, bool) {
 	_, val, ok := strings.Cut(unquoteTarget(raw), "=")
 	if !ok {
@@ -396,6 +466,8 @@ func extractAPIFieldFile(raw string) (string, bool, bool) {
 	return path, true, true
 }
 
+// extractCatSubstFiles extracts file operands from $(cat <path>) command substitutions in
+// segment, ignoring flag arguments and refusing segments with more than maxForgeTextFiles matches.
 func extractCatSubstFiles(segment string) ([]string, bool) {
 	matches := catSubstPattern.FindAllStringSubmatch(segment, maxForgeTextFiles+1)
 	if len(matches) > maxForgeTextFiles {
@@ -411,6 +483,8 @@ func extractCatSubstFiles(segment string) ([]string, bool) {
 	return paths, false
 }
 
+// resolveGHTextFile cleans and resolves rawPath against workDir into a ghTextFile with its
+// refusal label, refusing empty paths after unquoting.
 func resolveGHTextFile(rawPath, workDir string) (ghTextFile, bool) {
 	cleaned := homeTarget(unquoteTarget(strings.TrimSpace(rawPath)))
 	if cleaned == "" {
@@ -428,6 +502,8 @@ func resolveGHTextFile(rawPath, workDir string) (ghTextFile, bool) {
 	return ghTextFile{label: label, resolved: resolved}, true
 }
 
+// readForgeTextFile reads up to maxForgeTextFileBytes from path within forgeTextReadTimeout,
+// refusing expired contexts, non-regular or unreadable files, and files over 1 MiB.
 func readForgeTextFile(ctx context.Context, path string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, forgeTextReadTimeout)
 	defer cancel()

@@ -14,6 +14,8 @@ import (
 	"time"
 )
 
+// repositoryWithManifest creates an isolated Git repository fixture with manifestYAML
+// written to .standards.yaml and fails the test if setup cannot complete.
 func repositoryWithManifest(t *testing.T, manifestYAML string) string {
 	t.Helper()
 	dir := repository(t, false)
@@ -23,6 +25,8 @@ func repositoryWithManifest(t *testing.T, manifestYAML string) string {
 	return dir
 }
 
+// writeTestFixtureFile writes content to path, creating parent directories as needed,
+// and fails the test if any filesystem write fails.
 func writeTestFixtureFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -33,6 +37,8 @@ func writeTestFixtureFile(t *testing.T, path, content string) {
 	}
 }
 
+// writeRefusedFormFixtures populates root with body, JSON, field, release-note and cat
+// fixture files carrying foreign references that the pre-tool guard must refuse.
 func writeRefusedFormFixtures(t *testing.T, root string) {
 	t.Helper()
 	writeTestFixtureFile(t, filepath.Join(root, "pr-body.md"),
@@ -47,6 +53,8 @@ func writeRefusedFormFixtures(t *testing.T, root string) {
 		"Body from cat mentioning outside-org/project#204\n")
 }
 
+// runPreToolCommand executes a Claude pre-tool Bash hook invocation for command in workDir
+// and returns the encoded hook response.
 func runPreToolCommand(t *testing.T, workDir, command string, getenv func(string) string) Response {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -68,6 +76,8 @@ func runPreToolCommand(t *testing.T, workDir, command string, getenv func(string
 	})
 }
 
+// assertForgeTextDenied verifies that resp refuses the command with exit code 2, names
+// the forge-text rule and wantSpan, and prints the allowed reference forms.
 func assertForgeTextDenied(t *testing.T, resp Response, wantSpan string) {
 	t.Helper()
 	stderr := string(resp.Stderr)
@@ -85,6 +95,8 @@ func assertForgeTextDenied(t *testing.T, resp Response, wantSpan string) {
 	}
 }
 
+// TestForgeTextRefsRefusedPerForm verifies that every scoped gh write subcommand and
+// input source refuses active references to organisations outside the trusted set.
 func TestForgeTextRefsRefusedPerForm(t *testing.T) {
 	root := repositoryWithManifest(t, "version: 1\nrepository:\n  owner: repo-owner\n  name: governed-repo\nforge:\n  own_organizations:\n    - fleet-org\n    - second-fleet\n")
 	writeRefusedFormFixtures(t, root)
@@ -97,10 +109,18 @@ func TestForgeTextRefsRefusedPerForm(t *testing.T) {
 		{"owner/repo#N in gh api --input JSON file", `gh api repos/fleet-org/governed-repo/pulls/5/comments --input comment.json`, `outside-org/project#88`},
 		{"owner/repo#N in $(cat <<EOF here-document", "gh issue comment 9 --body \"$(cat <<'EOF'\nContext:\nSee outside-org/project#51 for background.\nEOF\n)\"", `outside-org/project#51`},
 		{"owner/repo#N in unquoted here-document on standard input", "gh issue comment 9 --body-file - <<EOF\nContext:\nSee outside-org/project#52 for background.\nEOF\n", `outside-org/project#52`},
+		{"owner/repo#N in unquoted here-document on /dev/stdin", "gh issue comment 9 --body-file /dev/stdin <<EOF\nContext:\nSee outside-org/project#53 for background.\nEOF\n", `outside-org/project#53`},
+		{"owner/repo#N in unquoted here-document on /dev/fd/0", "gh pr comment 9 --body-file /dev/fd/0 <<EOF\nContext:\nSee outside-org/project#54 for background.\nEOF\n", `outside-org/project#54`},
 		{"owner/repo!N in gh api -F body=@file", `gh api -X POST repos/fleet-org/governed-repo/issues/9/comments -F body=@field-body.md`, `outside-org/project!99`},
 		{"owner/repo#N in $(cat <path>)", `gh pr review 14 --comment -b "$(cat cat-body.md)"`, `outside-org/project#204`},
 		{"chained cd and gh release edit --notes-file", `cd sub && gh release edit v1.2.0 --notes-file release-notes.md`, `outside-org/project#105`},
 		{"gh release create inline --notes", `gh release create v1.3.0 --title "v1.3.0" --notes "Fixes outside-org/project#301"`, `outside-org/project#301`},
+		{"gh issue close --comment", `gh issue close 5 --comment "Superseded by outside-org/project#310"`, `outside-org/project#310`},
+		{"gh issue reopen --comment", `gh issue reopen 5 -c "Reopening after outside-org/project#311"`, `outside-org/project#311`},
+		{"gh pr close --comment", `gh pr close 12 --comment "Closing for outside-org/project#312"`, `outside-org/project#312`},
+		{"gh pr reopen --comment", `gh pr reopen 12 -c "Reopened for outside-org/project#313"`, `outside-org/project#313`},
+		{"gh pr merge --subject and --body", `gh pr merge 12 --squash --subject "Fix outside-org/project#314" --body "Details in outside-org/project#315"`, `outside-org/project#314`},
+		{"gh pr merge --body-file", `gh pr merge 12 --squash --body-file pr-body.md`, `https://github.com/outside-org/project/pull/77`},
 	}
 
 	for _, tc := range cases {
@@ -110,6 +130,8 @@ func TestForgeTextRefsRefusedPerForm(t *testing.T) {
 	}
 }
 
+// TestForgeTextRefsAcceptedCases verifies that own-organisation references, bare issue
+// numbers, plain text, code spans, code fences, and read-only gh calls are allowed.
 func TestForgeTextRefsAcceptedCases(t *testing.T) {
 	root := repositoryWithManifest(t, "version: 1\nrepository:\n  owner: repo-owner\n  name: governed-repo\nforge:\n  own_organizations:\n    - fleet-org\n    - second-fleet\n")
 	writeTestFixtureFile(t, filepath.Join(root, "good-body.md"),
@@ -163,6 +185,8 @@ func TestForgeTextRefsAcceptedCases(t *testing.T) {
 	}
 }
 
+// TestForgeTextRefsBoundaryAndFailClosedCases verifies that unreadable files, shell reader
+// errors on gh writes, and exceeded file, segment or word bounds fail closed.
 func TestForgeTextRefsBoundaryAndFailClosedCases(t *testing.T) {
 	root := repositoryWithManifest(t, "version: 1\nrepository:\n  owner: repo-owner\n  name: governed-repo\nforge:\n  own_organizations:\n    - fleet-org\n")
 	unreadableCases := []struct {
@@ -183,6 +207,8 @@ func TestForgeTextRefsBoundaryAndFailClosedCases(t *testing.T) {
 	assertForgeTextOverflowBoundsDenied(t, root)
 }
 
+// assertForgeTextOverflowBoundsDenied verifies that commands exceeding maxForgeTextFiles,
+// maxForgeTextSegments or maxForgeTextWords are refused with the corresponding limit error.
 func assertForgeTextOverflowBoundsDenied(t *testing.T, root string) {
 	t.Helper()
 	cleanPath := filepath.Join(root, "clean.md")
@@ -226,6 +252,9 @@ func assertForgeTextOverflowBoundsDenied(t *testing.T, root string) {
 	}
 }
 
+// TestForgeTextRefsOrganizationResolutionCases verifies that trusted organisations resolve
+// from the invocation environment, operator config and manifest while ignoring ambient
+// process environment leaks and refusing unlisted foreign owners.
 func TestForgeTextRefsOrganizationResolutionCases(t *testing.T) {
 	t.Setenv("GITHUB_REPOSITORY", "process-leaked-org/process-repo")
 	noOrgRoot := repositoryWithManifest(t, "version: 1\nrepository:\n  owner: solo-owner\n  name: solo-repo\n")
@@ -261,4 +290,20 @@ func TestForgeTextRefsOrganizationResolutionCases(t *testing.T) {
 		t.Fatalf("expected operator fleet org to be allowed, got exit %d: %q", resp.ExitCode, string(resp.Stderr))
 	}
 	assertForgeTextDenied(t, runPreToolCommand(t, noOrgRoot, `gh issue comment 1 --body "See outside-org/service#11"`, getenv), "outside-org/service#11")
+}
+
+// Boundary: the fallback pattern for unparseable commands names exactly the allowlisted gh write actions,
+// so an action added to scopedGHActions is refused on a parse error too, never silently skipped.
+func TestForgeTextWriteWordsCoverEveryScopedAction(t *testing.T) {
+	for sub, actions := range scopedGHActions {
+		for action := range actions {
+			command := "gh " + sub + " " + action + ` --body "unterminated`
+			if _, err := shellFieldsForGH(command); err == nil {
+				t.Errorf("%q: parse error not refused", command)
+			}
+		}
+	}
+	if _, err := shellFieldsForGH(`gh repo view "unterminated`); err != nil {
+		t.Errorf("read-only gh command with a parse error refused: %v", err)
+	}
 }

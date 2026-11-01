@@ -163,6 +163,8 @@ func checkpointWired(client string) bool {
 	return client == "claude" || client == "codex" || client == "gemini"
 }
 
+// dispatch routes an evaluated hook invocation to the agent-traffic, stop, pre-edit,
+// post-tool or command evaluator for row.Client and row.Event.
 func dispatch(ctx context.Context, row Registration, canonical Canonical, root string, in Invocation) Verdict {
 	if agentTrafficEvent(row.Event) {
 		return evaluateAgentTraffic(ctx, row, canonical, root, in)
@@ -185,6 +187,8 @@ func dispatch(ctx context.Context, row Registration, canonical Canonical, root s
 	}
 }
 
+// evaluateCommand runs the built-in command policy and the forge-text foreign-reference
+// guard on canonical.Command, refusing commands that violate either check.
 func evaluateCommand(ctx context.Context, canonical Canonical, root string, in Invocation) Verdict {
 	if canonical.Command == "" {
 		return Verdict{Outcome: Allow}

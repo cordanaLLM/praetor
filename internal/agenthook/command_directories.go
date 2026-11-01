@@ -6,7 +6,8 @@ import (
 	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
-// commandDirectories reads leading assignments/wrappers, then just the actual command word.
+// commandDirectories extracts static directory targets from leading shell assignments, env
+// wrappers and git, cd or pushd commands, returning nil for assignment-only statements.
 func commandDirectories(words []string, base string) []commandTarget {
 	word, args, cmdDir, targets, wrapperSeen := walkCommandWords(words, base)
 	switch word {
@@ -24,6 +25,9 @@ func commandDirectories(words []string, base string) []commandTarget {
 	}
 }
 
+// walkCommandWords strips leading variable assignments, subshell/group openers and env
+// wrappers from words, returning the command word, its arguments, the effective working
+// directory and any GIT_DIR/GIT_WORK_TREE or env directory targets.
 func walkCommandWords(words []string, base string) (string, []string, string, []commandTarget, bool) {
 	var targets []commandTarget
 	wrapperSeen := false
@@ -52,6 +56,8 @@ func walkCommandWords(words []string, base string) (string, []string, string, []
 	return "", nil, base, targets, wrapperSeen
 }
 
+// changeDirectoryTarget resolves the destination directory of a cd or pushd command
+// relative to base, returning nil when no directory operand is present.
 func changeDirectoryTarget(args []string, base string) []commandTarget {
 	if len(args) > 0 && args[0] == "--" {
 		args = args[1:]
