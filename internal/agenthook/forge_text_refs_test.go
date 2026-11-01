@@ -307,3 +307,121 @@ func TestForgeTextWriteWordsCoverEveryScopedAction(t *testing.T) {
 		t.Errorf("read-only gh command with a parse error refused: %v", err)
 	}
 }
+
+// TestForgeTextRefsSubshellDirectoryIsolation verifies that cd or pushd inside a subshell
+// does not alter the parent shell working directory for subsequent gh commands.
+func TestForgeTextRefsSubshellDirectoryIsolation(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nrepository:\n  owner: repo-owner\n  name: governed-repo\nforge:\n  own_organizations:\n    - fleet-org\n")
+	writeTestFixtureFile(t, filepath.Join(root, "body.md"), "Foreign reference outside-org/project#42\n")
+	cleanDir := filepath.Join(root, "clean_sub")
+	writeTestFixtureFile(t, filepath.Join(cleanDir, "body.md"), "Clean reference #42\n")
+	writeTestFixtureFile(t, filepath.Join(cleanDir, "foreign.md"), "Foreign reference outside-org/project#99\n")
+	cases := []struct {
+		name     string
+		command  string
+		wantSpan string
+	}{
+		{
+			name:     "subshell cd does not leak to parent command with semicolon",
+			command:  `(cd clean_sub; true); gh issue comment 1 --body-file body.md`,
+			wantSpan: "outside-org/project#42",
+		},
+		{
+			name:     "spaced subshell cd does not leak to parent command",
+			command:  `( cd clean_sub ; true ) ; gh issue comment 1 --body-file body.md`,
+			wantSpan: "outside-org/project#42",
+		},
+		{
+			name:     "single-segment subshell cd does not leak to parent command",
+			command:  `( cd clean_sub ) ; gh issue comment 1 --body-file body.md`,
+			wantSpan: "outside-org/project#42",
+		},
+		{
+			name:     "subshell cd applies to commands inside the subshell",
+			command:  `(cd clean_sub && gh issue comment 1 --body-file foreign.md)`,
+			wantSpan: "outside-org/project#99",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertForgeTextDenied(t, runPreToolCommand(t, root, tc.command, nil), tc.wantSpan)
+		})
+	}
+
+	allowedCases := []struct {
+		name    string
+		command string
+	}{
+		{
+			name:    "clean command in subshell directory allowed",
+			command: `(cd clean_sub && gh issue comment 1 --body-file body.md)`,
+		},
+		{
+			name:    "clean command after subshell allowed",
+			command: `(cd clean_sub; true); gh issue comment 1 --body "Clean fleet-org/project#1"`,
+		},
+	}
+	for _, tc := range allowedCases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := runPreToolCommand(t, root, tc.command, nil)
+			if resp.ExitCode != 0 {
+				t.Fatalf("expected allow exit 0, got %d: %q", resp.ExitCode, string(resp.Stderr))
+			}
+		})
+	}
+}
+
+// TestForgeTextRefsConcatenatedShellFragments verifies that references split across
+// adjacent quoted and unquoted shell fragments are joined into the passed word and refused.
+func TestForgeTextRefsConcatenatedShellFragments(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nrepository:\n  owner: repo-owner\n  name: governed-repo\nforge:\n  own_organizations:\n    - fleet-org\n")
+
+	cases := []struct {
+		name     string
+		command  string
+		wantSpan string
+	}{
+		{
+			name:     "single-quoted owner adjacent to unquoted repo and number",
+			command:  `gh issue comment 1 --body 'outside-org'/project#5`,
+			wantSpan: "outside-org/project#5",
+		},
+		{
+			name:     "double-quoted owner and slash adjacent to unquoted repo and number",
+			command:  `gh issue comment 1 --body "outside-org/"project#5`,
+			wantSpan: "outside-org/project#5",
+		},
+		{
+			name:     "multiple adjacent quoted fragments",
+			command:  `gh issue comment 1 --body 'outside'-'org'/project#5`,
+			wantSpan: "outside-org/project#5",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertForgeTextDenied(t, runPreToolCommand(t, root, tc.command, nil), tc.wantSpan)
+		})
+	}
+
+	allowedCases := []struct {
+		name    string
+		command string
+	}{
+		{
+			name:    "single-quoted own organisation adjacent to unquoted repo",
+			command: `gh issue comment 1 --body 'fleet-org'/project#5`,
+		},
+		{
+			name:    "double-quoted own organisation and slash adjacent to unquoted repo",
+			command: `gh issue comment 1 --body "fleet-org/"project#5`,
+		},
+	}
+	for _, tc := range allowedCases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := runPreToolCommand(t, root, tc.command, nil)
+			if resp.ExitCode != 0 {
+				t.Fatalf("expected allow exit 0, got %d: %q", resp.ExitCode, string(resp.Stderr))
+			}
+		})
+	}
+}

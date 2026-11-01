@@ -175,14 +175,14 @@ func loadOperatorForgeSettings(ctx context.Context, getenv func(string) string) 
 }
 
 // collectGHWriteCalls splits command into shell segments, tracks working-directory changes
-// and returns every scoped gh write call, refusing commands that exceed maxForgeTextSegments or fail shell parsing.
+// per subshell level and returns every scoped gh write call, refusing commands exceeding limits.
 func collectGHWriteCalls(command, baseDir string) ([]ghWriteCall, error) {
 	fields, err := shellFieldsForGH(command)
 	if err != nil || len(fields) == 0 {
 		return nil, err
 	}
 	var calls []ghWriteCall
-	workDir := baseDir
+	dirStack := []string{baseDir}
 	start, segments := 0, 0
 	for i := 0; i <= len(fields) && i <= maxForgeTextWords; i++ {
 		if i < len(fields) && !targetCommandSeparator(fields[i]) {
@@ -192,14 +192,198 @@ func collectGHWriteCalls(command, baseDir string) ([]ghWriteCall, error) {
 		if segments > maxForgeTextSegments {
 			return nil, fmt.Errorf("command exceeds %d command segments", maxForgeTextSegments)
 		}
-		call, nextDir, ok := parseSegmentGHCall(command, fields[start:i], workDir)
-		workDir = nextDir
+		segWords := fields[start:i]
+		dirStack = pushSubshellLevel(dirStack, countSubshellOpeners(segWords))
+		closers := countSubshellClosers(segWords)
+		if closers > 0 {
+			segWords = trimSegmentTrailingParens(segWords, closers)
+		}
+		call, nextDir, ok := parseSegmentGHCall(command, segWords, dirStack[len(dirStack)-1])
+		dirStack[len(dirStack)-1] = nextDir
 		if ok {
 			calls = append(calls, call)
 		}
+		dirStack = popSubshellLevel(dirStack, closers)
 		start = i + 1
 	}
 	return calls, nil
+}
+
+// pushSubshellLevel duplicates the top working directory on stack for each opened subshell level.
+func pushSubshellLevel(stack []string, count int) []string {
+	for i := 0; i < count && len(stack) < maxForgeTextSegments; i++ {
+		stack = append(stack, stack[len(stack)-1])
+	}
+	return stack
+}
+
+// popSubshellLevel pops count subshell levels from stack, keeping the root directory.
+func popSubshellLevel(stack []string, count int) []string {
+	for i := 0; i < count && len(stack) > 1; i++ {
+		stack = stack[:len(stack)-1]
+	}
+	return stack
+}
+
+// countLeadingParens returns the number of leading '(' bytes in word.
+func countLeadingParens(word string) int {
+	count := 0
+	for count < len(word) && word[count] == '(' {
+		count++
+	}
+	return count
+}
+
+// countSubshellOpeners counts unquoted leading '(' in words ahead of the command word.
+func countSubshellOpeners(words []string) int {
+	openers := 0
+	for i := 0; i < len(words) && i < maxForgeTextWords; i++ {
+		w := words[i]
+		if len(w) == 0 {
+			continue
+		}
+		if w[0] != '(' {
+			break
+		}
+		leading := countLeadingParens(w)
+		openers += leading
+		if leading < len(w) {
+			break
+		}
+	}
+	return openers
+}
+
+// countTrailingParens returns the number of unescaped trailing ')' bytes in word.
+func countTrailingParens(word string) int {
+	count := 0
+	for i := len(word) - 1; i >= 0; i-- {
+		if word[i] != ')' {
+			break
+		}
+		slashes := 0
+		for j := i - 1; j >= 0 && word[j] == '\\'; j-- {
+			slashes++
+		}
+		if slashes%2 != 0 {
+			break
+		}
+		count++
+	}
+	return count
+}
+
+// countSubshellClosers counts unquoted, unescaped trailing ')' from the end of words.
+func countSubshellClosers(words []string) int {
+	closers := 0
+	for i := len(words) - 1; i >= 0; i-- {
+		w := words[i]
+		if len(w) == 0 {
+			continue
+		}
+		trailing := countTrailingParens(w)
+		if trailing == 0 {
+			break
+		}
+		closers += trailing
+		if trailing == len(w) {
+			continue
+		}
+		break
+	}
+	return closers
+}
+
+// trimSegmentTrailingParens strips trailing subshell closing parentheses from words.
+func trimSegmentTrailingParens(words []string, closers int) []string {
+	if closers <= 0 || len(words) == 0 {
+		return words
+	}
+	cleaned := slices.Clone(words)
+	remaining := closers
+	for i := len(cleaned) - 1; i >= 0 && remaining > 0; i-- {
+		w := cleaned[i]
+		trailing := countTrailingParens(w)
+		if trailing == 0 {
+			break
+		}
+		strip := min(trailing, remaining)
+		cleaned[i] = w[:len(w)-strip]
+		remaining -= strip
+	}
+	return slices.DeleteFunc(cleaned, func(s string) bool { return s == "" })
+}
+
+// unquoteShellWord removes shell quotes and resolves escape sequences in word,
+// joining adjacent quoted and unquoted fragments into the token the shell passes.
+func unquoteShellWord(word string) string {
+	var sb strings.Builder
+	inSingle, inDouble := false, false
+	for i := 0; i < len(word); i++ {
+		c := word[i]
+		if inSingle {
+			if c == '\'' {
+				inSingle = false
+			} else {
+				sb.WriteByte(c)
+			}
+			continue
+		}
+		if inDouble {
+			i = stepDoubleQuotedByte(&sb, word, i, c, &inDouble)
+			continue
+		}
+		i = stepUnquotedByte(&sb, word, i, c, &inSingle, &inDouble)
+	}
+	return sb.String()
+}
+
+// stepDoubleQuotedByte processes one byte inside double quotes, resolving \" \\ \$ \` and \newline.
+func stepDoubleQuotedByte(sb *strings.Builder, word string, i int, c byte, inDouble *bool) int {
+	if c == '"' {
+		*inDouble = false
+		return i
+	}
+	if c == '\\' && i+1 < len(word) {
+		next := word[i+1]
+		if next == '"' || next == '\\' || next == '$' || next == '`' || next == '\n' {
+			sb.WriteByte(next)
+			return i + 1
+		}
+	}
+	sb.WriteByte(c)
+	return i
+}
+
+// stepUnquotedByte processes one byte outside quotes, entering single or double quotes or escaping.
+func stepUnquotedByte(sb *strings.Builder, word string, i int, c byte, inSingle, inDouble *bool) int {
+	switch c {
+	case '\'':
+		*inSingle = true
+	case '"':
+		*inDouble = true
+	case '\\':
+		if i+1 < len(word) {
+			i++
+			sb.WriteByte(word[i])
+		}
+	default:
+		sb.WriteByte(c)
+	}
+	return i
+}
+
+// shellWordsText unquotes each shell word in words and joins them with single spaces,
+// reproducing the argument text the shell would pass to the command.
+func shellWordsText(words []string) string {
+	if len(words) == 0 {
+		return ""
+	}
+	unquoted := make([]string, len(words))
+	for i := 0; i < len(words) && i < maxForgeTextWords; i++ {
+		unquoted[i] = unquoteShellWord(words[i])
+	}
+	return strings.Join(unquoted, " ")
 }
 
 // shellFieldsForGH splits command into shell words with forge.ShellFields, refusing any
@@ -235,8 +419,8 @@ func parseSegmentGHCall(fullCommand string, words []string, workDir string) (ghW
 	if !ok {
 		return ghWriteCall{}, workDir, false
 	}
-	raw := strings.Join(words, " ")
-	files, readsStdin, fileErr := extractGHCallFiles(raw, subcmd, rest, cmdDir)
+	raw := shellWordsText(words)
+	files, readsStdin, fileErr := extractGHCallFiles(strings.Join(words, " "), subcmd, rest, cmdDir)
 	if readsStdin {
 		raw = fullCommand
 	}
