@@ -5,6 +5,7 @@ package agentcontext
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,5 +84,15 @@ func TestVerifyUncompiledInstructions_Context_Boundary(t *testing.T) {
 
 	if err := VerifyUncompiledInstructions(t.Context(), dir); err != nil {
 		t.Fatalf("ignored and non-matching files must return nil, got %v", err)
+	}
+
+	// 3. More committable paths than the bound fail closed instead of being truncated
+	many := t.TempDir()
+	testsupport.InitGitRepoWithOrigin(t, many, "")
+	for i := 0; i <= maxScannedInstructionPaths; i++ {
+		writeTestFile(t, many, fmt.Sprintf(".github/instructions/n%03d.txt", i), "x\n")
+	}
+	if _, err := UncompiledInstructionFiles(t.Context(), many); err == nil || !strings.Contains(err.Error(), "never truncated") {
+		t.Fatalf("%d paths must fail closed, got %v", maxScannedInstructionPaths+1, err)
 	}
 }

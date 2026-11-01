@@ -54,6 +54,10 @@ func UncompiledInstructionFiles(ctx context.Context, repoPath string) ([]string,
 	}
 
 	paths := strings.Split(raw, "\x00")
+	if len(paths) > maxScannedInstructionPaths {
+		return nil, fmt.Errorf("read committable instruction files in %s: %d paths exceed the bound of %d; never truncated",
+			repoPath, len(paths), maxScannedInstructionPaths)
+	}
 	var found []string
 	for i := 0; i < len(paths) && i < maxScannedInstructionPaths; i++ {
 		p := paths[i]

@@ -58,67 +58,36 @@ var pinnedGitIgnoreBlockVersions = map[string][]string{
 // permutations of legacy scratch retirement and config directory negation, in LF and CRLF.
 func TestLookupManagedGitIgnoreTail_Positive(t *testing.T) {
 	root := t.TempDir()
-
-	for name, tc := range map[string]struct {
-		version     gitIgnoreBlockVersion
-		wantCurrent bool
-		wantVersion string
-	}{
-		"current v5 canonical block": {
-			version:     gitIgnoreBlockVersion{Version: "v5", Rules: pinnedGitIgnoreBlockVersions["v5"]},
-			wantCurrent: true,
-			wantVersion: "v5",
-		},
-		"historical v4 receipt block": {
-			version:     gitIgnoreBlockVersion{Version: "v4", Rules: pinnedGitIgnoreBlockVersions["v4"]},
-			wantCurrent: false,
-			wantVersion: "v4",
-		},
-		"historical v3 unanchored block": {
-			version:     gitIgnoreBlockVersion{Version: "v3", Rules: pinnedGitIgnoreBlockVersions["v3"]},
-			wantCurrent: false,
-			wantVersion: "v3",
-		},
-		"historical v2 root-anchored block": {
-			version:     gitIgnoreBlockVersion{Version: "v2", Rules: pinnedGitIgnoreBlockVersions["v2"]},
-			wantCurrent: false,
-			wantVersion: "v2",
-		},
-		"historical v1 four-rule block": {
-			version:     gitIgnoreBlockVersion{Version: "v1", Rules: pinnedGitIgnoreBlockVersions["v1"]},
-			wantCurrent: false,
-			wantVersion: "v1",
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
+	for _, version := range []string{"v5", "v4", "v3", "v2", "v1"} {
+		block := gitIgnoreBlockVersion{Version: version, Rules: pinnedGitIgnoreBlockVersions[version]}
+		t.Run(version, func(t *testing.T) {
 			for _, keepLegacy := range []bool{true, false} {
 				for _, negateConfig := range []bool{true, false} {
-					block := tc.version.Render(keepLegacy, negateConfig)
-					text := "dist/\n\n" + block
-
-					match, ok := LookupManagedGitIgnoreTail(t.Context(), root, text)
-					if !ok {
-						t.Fatalf("keepLegacy=%v negateConfig=%v: block not recognized:\n%s", keepLegacy, negateConfig, text)
-					}
-					if match.Current != tc.wantCurrent {
-						t.Fatalf("keepLegacy=%v negateConfig=%v: got Current=%v, want %v", keepLegacy, negateConfig, match.Current, tc.wantCurrent)
-					}
-					if match.Version != tc.wantVersion {
-						t.Fatalf("keepLegacy=%v negateConfig=%v: got Version=%q, want %q", keepLegacy, negateConfig, match.Version, tc.wantVersion)
-					}
-
-					if !HasManagedGitIgnoreTail(t.Context(), root, text) {
-						t.Fatalf("HasManagedGitIgnoreTail returned false for valid block:\n%s", text)
-					}
-
-					crlfText := strings.ReplaceAll(text, "\n", "\r\n")
-					crlfMatch, crlfOk := LookupManagedGitIgnoreTail(t.Context(), root, crlfText)
-					if !crlfOk || crlfMatch.Version != tc.wantVersion {
-						t.Fatalf("CRLF block lookup failed: ok=%v, match=%+v", crlfOk, crlfMatch)
-					}
+					text := "dist/\n\n" + block.Render(keepLegacy, negateConfig)
+					assertManagedGitIgnoreTail(t, root, text, version == "v5", version)
 				}
 			}
 		})
+	}
+}
+
+// assertManagedGitIgnoreTail checks that text ends in a recognised managed block of wantVersion,
+// with LF and with CRLF line ends.
+func assertManagedGitIgnoreTail(t *testing.T, root, text string, wantCurrent bool, wantVersion string) {
+	t.Helper()
+	match, ok := LookupManagedGitIgnoreTail(t.Context(), root, text)
+	if !ok {
+		t.Fatalf("block not recognized:\n%s", text)
+	}
+	if match.Current != wantCurrent || match.Version != wantVersion {
+		t.Fatalf("got Current=%v Version=%q, want %v %q", match.Current, match.Version, wantCurrent, wantVersion)
+	}
+	if !HasManagedGitIgnoreTail(t.Context(), root, text) {
+		t.Fatalf("HasManagedGitIgnoreTail returned false for valid block:\n%s", text)
+	}
+	crlfMatch, crlfOk := LookupManagedGitIgnoreTail(t.Context(), root, strings.ReplaceAll(text, "\n", "\r\n"))
+	if !crlfOk || crlfMatch.Version != wantVersion {
+		t.Fatalf("CRLF block lookup failed: ok=%v, match=%+v", crlfOk, crlfMatch)
 	}
 }
 
