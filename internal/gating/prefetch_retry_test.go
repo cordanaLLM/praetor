@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +54,38 @@ func TestPrefetchRetry_Positive_DownloadTimeoutRetriedOnce(t *testing.T) {
 	}
 	if downloadCalls != 2 || len(retryDeadlines) != 2 {
 		t.Fatalf("tooling download calls = %d (deadlines %d), want 2", downloadCalls, len(retryDeadlines))
+	}
+}
+
+func TestPrefetchRetry_Positive_TwoModulesEachRetriedOnce(t *testing.T) {
+	repo, cfg, _ := trackedModuleFixture(t, true)
+	toolingDir := filepath.Join(repo, "tooling")
+	downloadCalls := map[string]int{}
+
+	cfg.run = func(_ context.Context, dir, _ string, args ...string) (string, error) {
+		if len(args) == 2 && args[1] == "download" {
+			downloadCalls[dir]++
+			if downloadCalls[dir] == 1 {
+				return "downloading modules", fmt.Errorf("download timed out: %w", context.DeadlineExceeded)
+			}
+		}
+		return "", nil
+	}
+
+	msg, err := runGoPrefetch(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("expected both modules to recover after one retry each, got error: %v", err)
+	}
+	if downloadCalls[repo] != 2 || downloadCalls[toolingDir] != 2 {
+		t.Fatalf("download calls = root:%d tooling:%d, want 2 each", downloadCalls[repo], downloadCalls[toolingDir])
+	}
+	for _, wantSub := range []string{
+		"go.mod: passed after retry (first attempt: context deadline exceeded)",
+		"tooling/go.mod: passed after retry (first attempt: context deadline exceeded)",
+	} {
+		if !strings.Contains(msg, wantSub) {
+			t.Errorf("moduleResultsMessage = %q, want substring %q", msg, wantSub)
+		}
 	}
 }
 
@@ -140,6 +173,9 @@ func TestPrefetchRetry_Boundary_ParentContextCancelledNoRetry(t *testing.T) {
 
 func killedBySignalExitError(t *testing.T) *exec.ExitError {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("no POSIX signal status on Windows: a SIGKILL ExitError cannot be produced")
+	}
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skipf("sh not on PATH: %v", err)
 	}
