@@ -184,6 +184,45 @@ func TestWorktrees_Positive_ClaudeWorktreesAllowed(t *testing.T) {
 	}
 }
 
+func TestWorktrees_Negative_SymlinkedParentEscapingRootRefused(t *testing.T) {
+	fx := newWorktreeFixture(t)
+	policy := enforcingWorktreePolicy(t, fx.repoDir)
+
+	nonexistentTarget := filepath.Join(fx.devRoot, topology.WorktreesContainer, "praetor-new-worktree")
+	if _, err := os.Lstat(nonexistentTarget); !os.IsNotExist(err) {
+		t.Fatalf("expected %s not to exist before test, got err=%v", nonexistentTarget, err)
+	}
+	if verdict := policy.Command("git worktree add " + nonexistentTarget); verdict.Outcome != Allow {
+		t.Fatalf("expected allow for nonexistent destination %q, got %+v", nonexistentTarget, verdict)
+	}
+
+	outsideDir := t.TempDir()
+	claudeWorktrees := filepath.Join(fx.repoDir, ".claude", topology.WorktreesContainer)
+	if err := os.MkdirAll(claudeWorktrees, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	escapeLink := filepath.Join(claudeWorktrees, "escaped-parent")
+	if err := os.Symlink(outsideDir, escapeLink); err != nil {
+		t.Fatal(err)
+	}
+	escapedTarget := filepath.Join(escapeLink, "new-worktree")
+	if verdict := policy.Command("git worktree add " + escapedTarget); verdict.Outcome != Deny {
+		t.Fatalf("expected deny for symlinked parent escaping claude worktrees %q, got %+v", escapedTarget, verdict)
+	}
+
+	devWorktrees := filepath.Join(fx.devRoot, topology.WorktreesContainer)
+	if err := os.Remove(devWorktrees); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideDir, devWorktrees); err != nil {
+		t.Fatal(err)
+	}
+	escapedDevTarget := filepath.Join(devWorktrees, "praetor-topic")
+	if verdict := policy.Command("git worktree add " + escapedDevTarget); verdict.Outcome != Deny {
+		t.Fatalf("expected deny for symlinked worktrees container escaping dev root %q, got %+v", escapedDevTarget, verdict)
+	}
+}
+
 func TestWorktrees_Positive_GitDashCResolvesAgainstTargetRepo(t *testing.T) {
 	fx := newWorktreeFixture(t)
 	outsideDir := t.TempDir()
@@ -256,6 +295,7 @@ func TestWorktrees_Negative_UnparsableWorktreeAddFailsClosed(t *testing.T) {
 		{cmd: "git worktree add", want: "missing <path>"},
 		{cmd: "git worktree add -f -b topic", want: "missing <path>"},
 		{cmd: "git worktree add --unknown " + goodTarget, want: "unknown option --unknown"},
+		{cmd: "git worktree add --no-reason " + goodTarget, want: "unknown option --no-reason"},
 		{cmd: "git worktree add -x " + goodTarget, want: "unknown option -x"},
 		{cmd: "git worktree add -b", want: "missing branch name for -b"},
 		{cmd: "git worktree add --reason", want: "missing argument for --reason"},

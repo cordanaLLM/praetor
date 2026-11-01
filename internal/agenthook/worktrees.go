@@ -41,7 +41,6 @@ var worktreeAddBoolLongOpts = []string{
 	"--quiet",
 	"--relative-paths",
 	"--no-relative-paths",
-	"--no-reason",
 }
 
 type worktreeCheck struct{}
@@ -258,6 +257,9 @@ func resolveWorktreeContext(ctx context.Context, baseDir string) (resolvedBase, 
 	return resolvedBase, repoRoot, devRoot, ""
 }
 
+// resolveWorktreeTargetPath resolves rawPath lexically against baseDir and canonicalises its
+// deepest existing ancestor through util.ResolveExistingPath (filepath.EvalSymlinks on the
+// deepest existing ancestor, then filepath.Join of the non-existent trailing segments).
 func resolveWorktreeTargetPath(ctx context.Context, rawPath, baseDir string) (string, string) {
 	cleaned := homeTarget(unquoteTarget(rawPath))
 	if cleaned == "" {
