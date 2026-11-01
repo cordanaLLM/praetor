@@ -9,6 +9,8 @@ import (
 	"testing"
 )
 
+// TestValidGitObjectID_Positive verifies that ValidGitObjectID accepts 40-hex SHA-1 and 64-hex
+// SHA-256 object ids in lower, upper and mixed case.
 func TestValidGitObjectID_Positive(t *testing.T) {
 	cases := []struct {
 		name string
@@ -32,6 +34,8 @@ func TestValidGitObjectID_Positive(t *testing.T) {
 	}
 }
 
+// TestValidGitObjectID_Negative verifies that ValidGitObjectID refuses full-length ids holding a
+// non-hex character, a space, a hyphen, punctuation, a newline or a null byte.
 func TestValidGitObjectID_Negative(t *testing.T) {
 	cases := []struct {
 		name string
@@ -56,6 +60,8 @@ func TestValidGitObjectID_Negative(t *testing.T) {
 	}
 }
 
+// TestValidGitObjectID_Boundary verifies that ValidGitObjectID refuses the empty string, one
+// character and the lengths next to 40 and 64 (39, 41, 48, 63, 65).
 func TestValidGitObjectID_Boundary(t *testing.T) {
 	cases := []struct {
 		name string

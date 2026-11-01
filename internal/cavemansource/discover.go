@@ -296,6 +296,8 @@ func splitTrackedSourceIndex(data []byte) ([]string, error) {
 	return entries, nil
 }
 
+// parseTrackedSourceIndexEntry returns the slash path of one `git ls-files -s` entry for a regular
+// stage-0 file with a valid object id, and refuses symlinks, other modes and malformed entries.
 func parseTrackedSourceIndexEntry(entry string) (string, error) {
 	metadata, path, ok := strings.Cut(entry, "\t")
 	fields := strings.Fields(metadata)
