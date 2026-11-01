@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // recordedRulesetRequest captures one API call made by the driver.
@@ -335,5 +336,111 @@ func TestGitHubDriverUsesDedicatedBoundedClient(t *testing.T) {
 	gh := NewGitHubDriver("ordinary-token", "http://127.0.0.1")
 	if gh.HTTPClient == nil || gh.HTTPClient.Timeout != defaultHTTPTimeout {
 		t.Fatalf("driver must own a client with its bounded timeout, got %+v", gh.HTTPClient)
+	}
+}
+
+// TestListPullRequestsByHead_GitHub_Positive tests GitHub head pull request listing.
+func TestListPullRequestsByHead_GitHub_Positive(t *testing.T) {
+	ghSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/widgets/pulls" || r.URL.Query().Get("state") != "all" || r.URL.Query().Get("head") != "acme:topic" {
+			t.Errorf("unexpected github request: %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		w.WriteHeader(http.StatusOK)
+		if _, err := io.WriteString(w, `[{"number":42,"state":"closed","merged_at":"2026-10-31T10:00:00Z","head":{"ref":"topic"}},{"number":43,"state":"open","merged_at":null,"head":{"ref":"topic"}},{"number":44,"state":"closed","merged_at":null,"head":{"ref":"other"}}]`); err != nil {
+			t.Errorf("write github response: %v", err)
+		}
+	}))
+	defer ghSrv.Close()
+
+	gh := NewGitHubDriver("tok", ghSrv.URL)
+	gh.SetRepository("acme", "widgets")
+	gotGH, err := gh.ListPullRequestsByHead(context.Background(), "topic")
+	if err != nil || len(gotGH) != 2 || gotGH[0].Number != 42 || gotGH[0].State != PullRequestStateMerged || gotGH[1].State != PullRequestStateOpen {
+		t.Fatalf("GitHub ListPullRequestsByHead = %+v, %v", gotGH, err)
+	}
+}
+
+// TestListPullRequestsByHead_Forgejo_Positive tests Forgejo head pull request listing.
+func TestListPullRequestsByHead_Forgejo_Positive(t *testing.T) {
+	fjSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/repos/acme/widgets/pulls" || r.URL.Query().Get("state") != "all" || r.URL.Query().Get("head") != "topic" {
+			t.Errorf("unexpected forgejo request: %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		if r.Header.Get("Authorization") != "token fj-tok" {
+			t.Errorf("unexpected forgejo auth header: %q", r.Header.Get("Authorization"))
+		}
+		w.WriteHeader(http.StatusOK)
+		if _, err := io.WriteString(w, `[{"number":19,"state":"closed","merged":true,"head":{"ref":"topic"}},{"number":20,"state":"closed","merged":false,"head":{"ref":"topic"}}]`); err != nil {
+			t.Errorf("write forgejo response: %v", err)
+		}
+	}))
+	defer fjSrv.Close()
+
+	fj := NewGiteaDriver("fj-tok", fjSrv.URL)
+	fj.SetRepository("acme", "widgets")
+	gotFJ, err := fj.ListPullRequestsByHead(context.Background(), "topic")
+	if err != nil || len(gotFJ) != 2 || gotFJ[0].State != PullRequestStateMerged || gotFJ[1].State != PullRequestStateClosed {
+		t.Fatalf("Forgejo ListPullRequestsByHead = %+v, %v", gotFJ, err)
+	}
+}
+
+func TestListPullRequestsByHead_Negative(t *testing.T) {
+	errSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		if _, err := io.WriteString(w, "forge down"); err != nil {
+			t.Errorf("write error response: %v", err)
+		}
+	}))
+	defer errSrv.Close()
+
+	gh := NewGitHubDriver("tok", errSrv.URL)
+	gh.SetRepository("acme", "widgets")
+	if _, err := gh.ListPullRequestsByHead(context.Background(), "topic"); err == nil {
+		t.Fatal("GitHub 500 should fail")
+	}
+	if _, err := gh.ListPullRequestsByHead(context.Background(), ""); err == nil {
+		t.Fatal("empty branch should fail")
+	}
+	fj := NewGiteaDriver("tok", errSrv.URL)
+	fj.SetRepository("acme", "widgets")
+	if _, err := fj.ListPullRequestsByHead(context.Background(), "topic"); err == nil {
+		t.Fatal("Forgejo 500 should fail")
+	}
+	if _, err := ParseHeadPullRequests([]byte(`null`), "topic"); err == nil {
+		t.Fatal("null JSON listing should fail")
+	}
+	if _, err := ParseHeadPullRequests([]byte(`[{"number":0,"state":"open","head":{"ref":"topic"}}]`), "topic"); err == nil {
+		t.Fatal("invalid PR number 0 should fail")
+	}
+	if _, err := ReadPullRequestsByHead(context.Background(), config.ForgeGitLab, util.GitRemote{Host: "gitlab.com", Owner: "acme", Repo: "widgets"}, "topic"); err == nil {
+		t.Fatal("unsupported forge should fail")
+	}
+}
+
+func TestListPullRequestsByHead_Boundary(t *testing.T) {
+	if got := ForgejoAPIBase(""); got != "https://codeberg.org/api/v1" {
+		t.Fatalf("empty ForgejoAPIBase = %q", got)
+	}
+	if got := ForgejoAPIBase("https://codeberg.org/api/v1/"); got != "https://codeberg.org/api/v1" {
+		t.Fatalf("already-suffixed ForgejoAPIBase = %q", got)
+	}
+	items := make([]map[string]any, HeadPullRequestsPerPage+1)
+	for i := range items {
+		items[i] = map[string]any{"number": i + 1, "state": "open", "head": map[string]any{"ref": "topic"}}
+	}
+	raw, err := json.Marshal(items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseHeadPullRequests(raw, "topic"); err == nil {
+		t.Fatal("page exceeding HeadPullRequestsPerPage should fail")
+	}
+	exact, err := json.Marshal(items[:HeadPullRequestsPerPage])
+	if err != nil {
+		t.Fatal(err)
+	}
+	heads, err := ParseHeadPullRequests(exact, "topic")
+	if err != nil || len(heads) != HeadPullRequestsPerPage {
+		t.Fatalf("exact page bound = %d, %v", len(heads), err)
 	}
 }

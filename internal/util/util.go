@@ -588,13 +588,31 @@ func RunGitBytes(ctx context.Context, dir string, maxBytes int, args ...string) 
 // returned wrapped and is neither, so no caller records "no identity" for a question that
 // was never answered.
 func ReadOriginRemote(ctx context.Context, repoPath string) (GitRemote, error) {
-	raw, err := readOriginURL(ctx, repoPath)
+	return ReadGitRemote(ctx, repoPath, "origin")
+}
+
+// ReadGitRemote reads the named git remote in repoPath (or parses remote directly when it is
+// already a remote URL or path) and parses it as a network remote (ParseGitRemote). An empty
+// name reads "origin".
+func ReadGitRemote(ctx context.Context, repoPath, name string) (GitRemote, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "origin"
+	}
+	if strings.ContainsAny(name, ":/\\") {
+		remote, err := ParseGitRemote(name)
+		if err != nil {
+			return GitRemote{}, fmt.Errorf("%w: the %s remote in %q: %w", ErrRepoIdentityUnresolved, name, repoPath, err)
+		}
+		return remote, nil
+	}
+	raw, err := readRemoteURL(ctx, repoPath, name)
 	if err != nil {
 		return GitRemote{}, err
 	}
 	remote, err := ParseGitRemote(raw)
 	if err != nil {
-		return GitRemote{}, fmt.Errorf("%w: the origin remote in %q: %w", ErrRepoIdentityUnresolved, repoPath, err)
+		return GitRemote{}, fmt.Errorf("%w: the %s remote in %q: %w", ErrRepoIdentityUnresolved, name, repoPath, err)
 	}
 	return remote, nil
 }
@@ -614,12 +632,17 @@ func ResolveRemoteIdentity(ctx context.Context, repoPath string) (owner, repo st
 // readOriginURL returns the raw origin remote URL. No origin remote, or an empty one, is
 // ErrRepoIdentityUnresolved; a read git did not answer is any other error.
 func readOriginURL(ctx context.Context, repoPath string) (string, error) {
-	remote, err := RunGit(ctx, repoPath, "config", "--get", "remote.origin.url")
+	return readRemoteURL(ctx, repoPath, "origin")
+}
+
+// readRemoteURL queries git configuration for the named remote URL in repoPath.
+func readRemoteURL(ctx context.Context, repoPath, name string) (string, error) {
+	remote, err := RunGit(ctx, repoPath, "config", "--get", "remote."+name+".url")
 	if err != nil && !GitAnsweredUnset(ctx, err) {
-		return "", fmt.Errorf("util: read the origin remote in %q: %w", repoPath, err)
+		return "", fmt.Errorf("util: read the %s remote in %q: %w", name, repoPath, err)
 	}
 	if strings.TrimSpace(remote) == "" {
-		return "", fmt.Errorf("%w: no origin remote in %q", ErrRepoIdentityUnresolved, repoPath)
+		return "", fmt.Errorf("%w: no %s remote in %q", ErrRepoIdentityUnresolved, name, repoPath)
 	}
 	return remote, nil
 }

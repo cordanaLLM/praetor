@@ -5,13 +5,21 @@
 package agenthook
 
 import (
+	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/admission"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/sentinel"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const testGiB = 1 << 30
@@ -28,13 +36,40 @@ func stubHost(availGiB, swapGiB uint64) func() (sentinel.HostStats, error) {
 	}
 }
 
+func initAdmissionRepo(t *testing.T, dir, branch, originURL string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := util.RunGit(ctx, dir, "init", "-q", "-b", branch); err != nil {
+		t.Fatal(err)
+	}
+	if originURL != "" {
+		if _, err := util.RunGit(ctx, dir, "remote", "add", "origin", originURL); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func defaultAdmissionRepo(t *testing.T) string {
+	t.Helper()
+	repo := t.TempDir()
+	initAdmissionRepo(t, repo, "main", "https://github.com/acme/widgets.git")
+	initAdmissionRepo(t, filepath.Join(repo, "dir"), "main", "https://github.com/acme/widgets.git")
+	return repo
+}
+
 func admissionPolicy(t *testing.T, commands ...string) *Policy {
 	t.Helper()
 	policy, err := BuildPolicy(config.HookSettings{Admission: config.AdmissionSettings{Enforce: true, Commands: commands}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return policy.WithAdmissionHost(stubHost(30, 80), 32)
+	repo := defaultAdmissionRepo(t)
+	return policy.WithAdmissionHost(stubHost(30, 80), 32).WithAdmissionPullRequests(repo, func(context.Context, PushTarget) ([]forge.PullRequestHead, error) {
+		return nil, nil
+	})
 }
 
 func scopeAdmissionPolicy(t *testing.T, availGiB, swapGiB uint64, cores int) *Policy {
@@ -45,7 +80,10 @@ func scopeAdmissionPolicy(t *testing.T, availGiB, swapGiB uint64, cores int) *Po
 	if err != nil {
 		t.Fatal(err)
 	}
-	return policy.WithAdmissionHost(stubHost(availGiB, swapGiB), cores)
+	repo := defaultAdmissionRepo(t)
+	return policy.WithAdmissionHost(stubHost(availGiB, swapGiB), cores).WithAdmissionPullRequests(repo, func(context.Context, PushTarget) ([]forge.PullRequestHead, error) {
+		return nil, nil
+	})
 }
 
 // Positive: light commands, heavy steps run through praetorctl admit, and heavy words that are
@@ -328,4 +366,203 @@ func TestAdmission_IsolatedPush_HostReadError(t *testing.T) {
 	}, 32)
 	requireDeniedContaining(t, "failed reading", policy.Command("PRAETOR_ADMIT=x git push"),
 		"host reading failed", "procfs unavailable", "retry")
+}
+
+// Planted negative: pushing to a branch headed by a MERGED or CLOSED pull request (with no OPEN
+// pull request on that branch) is refused on both the PRAETOR_ADMIT and praetorctl admit paths,
+// naming the pull request number, its state (MERGED or CLOSED), and instructing to push to a new branch.
+func TestAdmission_GitPushHead_Planted_MergedAndClosedRefused(t *testing.T) {
+	repo := defaultAdmissionRepo(t)
+	policy := admissionPolicy(t).WithAdmissionPullRequests(repo, func(_ context.Context, target PushTarget) ([]forge.PullRequestHead, error) {
+		switch target.Branch {
+		case "merged-topic":
+			return []forge.PullRequestHead{{Number: 42, State: forge.PullRequestStateMerged, HeadBranch: "merged-topic"}}, nil
+		case "closed-topic":
+			return []forge.PullRequestHead{{Number: 19, State: forge.PullRequestStateClosed, HeadBranch: "closed-topic"}}, nil
+		default:
+			return nil, nil
+		}
+	})
+	for _, cmd := range []string{
+		"PRAETOR_ADMIT=git-push git push -u origin merged-topic",
+		"praetorctl admit --label git-push -- git push -u origin merged-topic",
+	} {
+		requireDeniedContaining(t, cmd, policy.Command(cmd), "#42", "MERGED", "push to a new branch")
+	}
+	for _, cmd := range []string{
+		"PRAETOR_ADMIT=git-push git push -u origin closed-topic",
+		"praetorctl admit --label git-push -- git push -u origin closed-topic",
+	} {
+		requireDeniedContaining(t, cmd, policy.Command(cmd), "#19", "CLOSED", "push to a new branch")
+	}
+}
+
+// Planted positive: pushing to a branch headed by an OPEN pull request (even when an older
+// MERGED or CLOSED pull request used the same branch name) or to a new branch with no pull
+// request passes on both admission paths.
+func TestAdmission_GitPushHead_Planted_OpenAndNewBranchPass(t *testing.T) {
+	repo := defaultAdmissionRepo(t)
+	policy := admissionPolicy(t).WithAdmissionPullRequests(repo, func(_ context.Context, target PushTarget) ([]forge.PullRequestHead, error) {
+		if target.Branch == "open-topic" {
+			return []forge.PullRequestHead{
+				{Number: 42, State: forge.PullRequestStateMerged, HeadBranch: "open-topic"},
+				{Number: 55, State: forge.PullRequestStateOpen, HeadBranch: "open-topic"},
+			}, nil
+		}
+		return nil, nil
+	})
+	for _, cmd := range []string{
+		"PRAETOR_ADMIT=git-push git push -u origin open-topic",
+		"praetorctl admit --label git-push -- git push -u origin open-topic",
+		"PRAETOR_ADMIT=git-push git push -u origin brand-new-branch",
+		"praetorctl admit --label git-push -- git push -u origin brand-new-branch",
+	} {
+		if v := policy.Command(cmd); v.Outcome != Allow {
+			t.Errorf("%q refused: %s", cmd, v.Reason)
+		}
+	}
+}
+
+// Planted negative: a forge read failure fails closed with a named refusal on both paths.
+func TestAdmission_GitPushHead_Planted_ForgeReadFailureRefused(t *testing.T) {
+	repo := defaultAdmissionRepo(t)
+	policy := admissionPolicy(t).WithAdmissionPullRequests(repo, func(context.Context, PushTarget) ([]forge.PullRequestHead, error) {
+		return nil, errors.New("forge api 503 unavailable")
+	})
+	for _, cmd := range []string{
+		"PRAETOR_ADMIT=git-push git push -u origin topic",
+		"praetorctl admit --label git-push -- git push -u origin topic",
+	} {
+		requireDeniedContaining(t, cmd, policy.Command(cmd),
+			"git push forge pull request check failed", "forge api 503 unavailable")
+	}
+}
+
+// Planted boundary: delete pushes (--delete, -d, :branch) and tag pushes (--tags, tag <name>,
+// refs/tags/<name>) are not judged and never query the forge.
+func TestAdmission_GitPushHead_Planted_DeleteAndTagPushesNotJudged(t *testing.T) {
+	repo := defaultAdmissionRepo(t)
+	calls := 0
+	policy := admissionPolicy(t).WithAdmissionPullRequests(repo, func(context.Context, PushTarget) ([]forge.PullRequestHead, error) {
+		calls++
+		return []forge.PullRequestHead{{Number: 99, State: forge.PullRequestStateMerged, HeadBranch: "merged-topic"}}, nil
+	})
+	for _, cmd := range []string{
+		"PRAETOR_ADMIT=git-push git push --delete origin merged-topic",
+		"PRAETOR_ADMIT=git-push git push -d origin merged-topic",
+		"PRAETOR_ADMIT=git-push git push -fd origin merged-topic",
+		"PRAETOR_ADMIT=git-push git push origin :merged-topic",
+		"PRAETOR_ADMIT=git-push git push origin +:merged-topic",
+		"praetorctl admit --label git-push -- git push --delete origin merged-topic",
+		"praetorctl admit --label git-push -- git push origin :merged-topic",
+		"PRAETOR_ADMIT=git-push git push --tags origin",
+		"PRAETOR_ADMIT=git-push git push origin tag v1.2.3",
+		"PRAETOR_ADMIT=git-push git push origin refs/tags/v1.2.3",
+		"PRAETOR_ADMIT=git-push git push origin HEAD:refs/tags/v1.2.3",
+	} {
+		if v := policy.Command(cmd); v.Outcome != Allow {
+			t.Errorf("%q refused: %s", cmd, v.Reason)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("delete/tag pushes queried the forge %d times, want 0", calls)
+	}
+}
+
+// Target resolution covers invocation working directory, git -C, named remote vs origin, and
+// refspec destination branch vs HEAD resolved through git.
+func TestAdmission_GitPushHead_TargetResolution_PositiveAndBoundary(t *testing.T) {
+	repo := t.TempDir()
+	initAdmissionRepo(t, repo, "current-head", "https://github.com/acme/widgets.git")
+	if _, err := util.RunGit(context.Background(), repo, "remote", "add", "upstream", "git@codeberg.org:fork/widgets.git"); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(repo, "sub")
+	initAdmissionRepo(t, sub, "sub-branch", "https://forgejo.example.org/acme/subrepo.git")
+
+	var got []PushTarget
+	policy := admissionPolicy(t).WithAdmissionPullRequests(repo, func(_ context.Context, target PushTarget) ([]forge.PullRequestHead, error) {
+		got = append(got, target)
+		return nil, nil
+	})
+
+	cases := []struct {
+		workDir    string
+		cmd        string
+		wantOwner  string
+		wantRepo   string
+		wantForge  config.Forge
+		wantBranch string
+	}{
+		{repo, "PRAETOR_ADMIT=git-push git push", "acme", "widgets", config.ForgeGitHub, "current-head"},
+		{repo, "PRAETOR_ADMIT=git-push git push origin HEAD", "acme", "widgets", config.ForgeGitHub, "current-head"},
+		{repo, "PRAETOR_ADMIT=git-push git push --repo=upstream", "fork", "widgets", config.ForgeForgejo, "current-head"},
+		{repo, "PRAETOR_ADMIT=git-push git push upstream HEAD:feature-dst", "fork", "widgets", config.ForgeForgejo, "feature-dst"},
+		{repo, "PRAETOR_ADMIT=git-push git push upstream local:refs/heads/mapped", "fork", "widgets", config.ForgeForgejo, "mapped"},
+		{repo, "PRAETOR_ADMIT=git-push git -C sub push origin +HEAD:refs/for/review-target", "acme", "subrepo", config.ForgeForgejo, "review-target"},
+		{sub, "praetorctl admit --label git-push -- git push", "acme", "subrepo", config.ForgeForgejo, "sub-branch"},
+	}
+	for _, tc := range cases {
+		got = nil
+		if v := policy.CommandInDir(t.Context(), tc.workDir, tc.cmd); v.Outcome != Allow {
+			t.Fatalf("%q refused: %s", tc.cmd, v.Reason)
+		}
+		if len(got) != 1 || got[0].Remote.Owner != tc.wantOwner || got[0].Remote.Repo != tc.wantRepo ||
+			got[0].Forge != tc.wantForge || got[0].Branch != tc.wantBranch {
+			t.Errorf("%q resolved %+v, want owner=%s repo=%s forge=%s branch=%s",
+				tc.cmd, got, tc.wantOwner, tc.wantRepo, tc.wantForge, tc.wantBranch)
+		}
+	}
+
+	requireDeniedContaining(t, "missing -C dir",
+		policy.CommandInDir(t.Context(), repo, "PRAETOR_ADMIT=git-push git -C nonexistent push origin main"),
+		"git push target resolution failed")
+	requireDeniedContaining(t, "missing remote",
+		policy.CommandInDir(t.Context(), repo, "PRAETOR_ADMIT=git-push git push unknown-remote main"),
+		"git push target resolution failed")
+}
+
+// End-to-end loopback HTTP check for GitHub and Forgejo drivers through Policy.
+func TestAdmission_GitPushHead_GitHubAndForgejoLoopback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		switch r.URL.Path {
+		case "/repos/acme/widgets/pulls":
+			if _, err := io.WriteString(w, `[{"number":77,"state":"closed","merged_at":"2026-10-31T10:00:00Z","head":{"ref":"gh-merged"}}]`); err != nil {
+				t.Errorf("write github response: %v", err)
+			}
+		case "/api/v1/repos/acme/widgets/pulls":
+			if _, err := io.WriteString(w, `[{"number":88,"state":"closed","merged":false,"head":{"ref":"fj-closed"}}]`); err != nil {
+				t.Errorf("write forgejo response: %v", err)
+			}
+		default:
+			if _, err := io.WriteString(w, `[]`); err != nil {
+				t.Errorf("write default response: %v", err)
+			}
+		}
+	}))
+	defer srv.Close()
+
+	repo := defaultAdmissionRepo(t)
+	policy := admissionPolicy(t).WithAdmissionPullRequests(repo, func(ctx context.Context, target PushTarget) ([]forge.PullRequestHead, error) {
+		if target.Forge == config.ForgeForgejo {
+			d := forge.NewGiteaDriver("tok", srv.URL)
+			d.SetRepository(target.Remote.Owner, target.Remote.Repo)
+			return d.ListPullRequestsByHead(ctx, target.Branch)
+		}
+		d := forge.NewGitHubDriver("tok", srv.URL)
+		d.SetRepository(target.Remote.Owner, target.Remote.Repo)
+		return d.ListPullRequestsByHead(ctx, target.Branch)
+	})
+
+	requireDeniedContaining(t, "github merged",
+		policy.Command("PRAETOR_ADMIT=git-push git push origin gh-merged"),
+		"#77", "MERGED", "push to a new branch")
+
+	if _, err := util.RunGit(context.Background(), repo, "remote", "add", "codeberg", "https://codeberg.org/acme/widgets.git"); err != nil {
+		t.Fatal(err)
+	}
+	requireDeniedContaining(t, "forgejo closed",
+		policy.Command("praetorctl admit --label git-push -- git push codeberg fj-closed"),
+		"#88", "CLOSED", "push to a new branch")
 }

@@ -121,6 +121,26 @@ covered by `TestAdmission_IsolatedPush_*` in `internal/agenthook/admission_test.
 pre-tool payload and exit codes are covered by `TestHookClaudeIsolatedPushAdmission` in
 `cmd/standardsctl/hook_test.go`.
 
+### Merged and closed pull request heads
+
+Every judged `git push` (`PRAETOR_ADMIT=<label> git push ...` and `praetorctl admit ... -- git push ...` alike) also checks that the destination branch is not the head of an already merged or closed pull request (`internal/agenthook/admission.go`: `judgePush`, `judgePushHead`).
+
+The hook resolves:
+
+- the repository directory from the invocation's working directory or `git -C <dir>`;
+- the remote from the named argument (`--repo` or positional remote, else `origin`) through `util.ReadOriginRemote`, `util.ReadGitRemote` and `util.ParseGitRemote` (`internal/util/util.go`);
+- the destination branch from the refspec destination (`src:dst`, plain branch name, or `HEAD` resolved to the current branch through `git symbolic-ref --quiet --short HEAD`).
+
+Delete pushes (`--delete`, `-d`, `:branch`) and tag pushes (`--tags`, `tag <name>`, `refs/tags/<name>`) are not judged. For branch pushes, the hook queries up to one bounded page (`forge.HeadPullRequestsPerPage = 20`, 15-second timeout) of pull requests in all states for that head branch on GitHub (`forge.GitHubDriver.ListPullRequestsByHead`) or Forgejo (`forge.GiteaDriver.ListPullRequestsByHead`, `GET /api/v1/repos/{owner}/{repo}/pulls?state=all&head={branch}&page=1&limit=20`).
+
+When a `MERGED` or `CLOSED` pull request heads the branch and no `OPEN` pull request does, the push is refused naming the pull request number and state and instructing the caller to push to a new branch:
+
+```text
+[BLOCKED BY HISS] git push to branch merged-topic on acme/widgets refused: pull request #42 is MERGED; push to a new branch instead (docs/guides/admission.md)
+```
+
+When the target repository, remote, branch or forge pull request listing cannot be read, the check fails closed with a named refusal (`git push target resolution failed` or `git push forge pull request check failed`). A branch with no pull request or with an `OPEN` pull request passes (`TestAdmission_GitPushHead_*` in `internal/agenthook/admission_test.go`).
+
 ### Scope form and memory refusal
 
 With `hooks.admission.scope_form: true`, the pre-tool hook also accepts a direct

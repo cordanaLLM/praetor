@@ -5,18 +5,24 @@
 package agenthook
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"path"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/admission"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/sentinel"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Host admission for heavy commands (#1131, docs/guides/admission.md). With
@@ -104,14 +110,30 @@ var (
 	segmentSeparators = strings.NewReplacer(";", "\n", "&", "\n", "|", "\n", "(", "\n", ")", "\n", "{", "\n", "}", "\n")
 )
 
+const pushTargetTimeout = 15 * time.Second
+
+// PushTarget identifies the repository directory, parsed network remote, forge kind and
+// destination branch of a judged git push.
+type PushTarget struct {
+	RepoDir string
+	Remote  util.GitRemote
+	Forge   config.Forge
+	Branch  string
+}
+
+// PullRequestHeadReader queries the forge for pull requests whose head is target.Branch.
+type PullRequestHeadReader func(ctx context.Context, target PushTarget) ([]forge.PullRequestHead, error)
+
 // admissionCheck holds the compiled shapes and scope/job settings of an enforcing policy
 // (order engine-hook-build-scope-gate-20261027).
 type admissionCheck struct {
-	shapes    []*regexp.Regexp
-	scopeForm bool
-	divisor   int
-	readHost  func() (sentinel.HostStats, error)
-	numCPU    func() int
+	shapes           []*regexp.Regexp
+	scopeForm        bool
+	divisor          int
+	workDir          string
+	readHost         func() (sentinel.HostStats, error)
+	numCPU           func() int
+	readPullRequests PullRequestHeadReader
 }
 
 // newAdmissionCheck compiles the built-in shapes and hooks.admission.commands; it returns nil
@@ -132,11 +154,12 @@ func newAdmissionCheck(settings config.AdmissionSettings) (*admissionCheck, erro
 	}
 	sources := append(slices.Clone(builtinHeavyShapes), settings.Commands...)
 	check := &admissionCheck{
-		shapes:    make([]*regexp.Regexp, 0, len(sources)),
-		scopeForm: settings.ScopeForm,
-		divisor:   divisor,
-		readHost:  admission.HostReader("."),
-		numCPU:    runtime.NumCPU,
+		shapes:           make([]*regexp.Regexp, 0, len(sources)),
+		scopeForm:        settings.ScopeForm,
+		divisor:          divisor,
+		readHost:         admission.HostReader("."),
+		numCPU:           runtime.NumCPU,
+		readPullRequests: defaultPullRequestHeadReader,
 	}
 	for index, source := range sources {
 		compiled, err := regexp.Compile(source)
@@ -146,6 +169,11 @@ func newAdmissionCheck(settings config.AdmissionSettings) (*admissionCheck, erro
 		check.shapes = append(check.shapes, compiled)
 	}
 	return check, nil
+}
+
+// defaultPullRequestHeadReader queries the forge driver for pull requests by head branch.
+func defaultPullRequestHeadReader(ctx context.Context, target PushTarget) ([]forge.PullRequestHead, error) {
+	return forge.ReadPullRequestsByHead(ctx, target.Forge, target.Remote, target.Branch)
 }
 
 // CheckAdmission evaluates command against the admission settings alone
@@ -176,9 +204,31 @@ func (p *Policy) WithAdmissionHost(readHost func() (sentinel.HostStats, error), 
 	return p
 }
 
+// WithAdmissionPullRequests overrides the default repository directory and forge pull-request
+// head reader of an enforcing policy in tests.
+func (p *Policy) WithAdmissionPullRequests(workDir string, read PullRequestHeadReader) *Policy {
+	if p == nil || p.admission == nil {
+		return p
+	}
+	if workDir != "" {
+		p.admission.workDir = workDir
+	}
+	if read != nil {
+		p.admission.readPullRequests = read
+	}
+	return p
+}
+
 // judge refuses command when one of its simple commands is a heavy step outside `praetorctl
 // admit`, an admitted scope or a live-judged isolated push, exceeds the job cap, or cannot be read.
 func (c *admissionCheck) judge(command string) Verdict {
+	ctx, cancel := context.WithTimeout(context.Background(), pushTargetTimeout)
+	defer cancel()
+	return c.judgeInDir(ctx, "", command)
+}
+
+// judgeInDir evaluates simple commands with workDir as the base repository directory.
+func (c *admissionCheck) judgeInDir(ctx context.Context, workDir, command string) Verdict {
 	lines, ok := hiss.ShellCode(command, admissionMaxLines)
 	if !ok {
 		return Verdict{Outcome: Deny, Reason: refusal("HISS", "heavy-step check: command unreadable (open quote, open here-document "+
@@ -189,7 +239,7 @@ func (c *admissionCheck) judge(command string) Verdict {
 		return Verdict{Outcome: Deny, Reason: refusal("HISS", fmt.Sprintf("heavy-step check: over %d simple commands; split command", admissionMaxSegments))}
 	}
 	for index := 0; index < len(segments) && index < admissionMaxSegments; index++ {
-		if reason := c.segment(strings.Fields(segments[index])); reason != "" {
+		if reason := c.segment(ctx, workDir, strings.Fields(segments[index])); reason != "" {
 			return Verdict{Outcome: Deny, Reason: reason}
 		}
 	}
@@ -198,7 +248,7 @@ func (c *admissionCheck) judge(command string) Verdict {
 
 // segment reports whether one simple command is a heavy step, looking through the wrappers
 // before it, or a privilege escalator, and returns the refusal.
-func (c *admissionCheck) segment(words []string) string {
+func (c *admissionCheck) segment(ctx context.Context, workDir string, words []string) string {
 	words = words[:min(len(words), admissionMaxWords)]
 	i := skipPrelude(words)
 	pushLabel := assignedAdmissionLabel(words[:i])
@@ -217,7 +267,7 @@ func (c *admissionCheck) segment(words []string) string {
 			continue
 		}
 		if shape, ok := c.shape(name, words[i+1:]); ok {
-			return c.judgeStep(name, shape, words[i+1:], admitted, sawSystemdRun, scopeMissing, pushLabel)
+			return c.judgeStep(ctx, workDir, name, shape, words[i+1:], admitted, sawSystemdRun, scopeMissing, pushLabel)
 		}
 		spec, wrapper := admissionWrappers[name]
 		if !wrapper {
@@ -248,15 +298,15 @@ func admitStep(name string, words []string, i int) (int, bool) {
 }
 
 // judgeStep evaluates a matched heavy step against the job cap and its admitted forms.
-func (c *admissionCheck) judgeStep(name, shape string, args []string, admitted, sawSystemdRun bool, scopeMissing []string, pushLabel string) string {
+func (c *admissionCheck) judgeStep(ctx context.Context, workDir, name, shape string, args []string, admitted, sawSystemdRun bool, scopeMissing []string, pushLabel string) string {
 	if reason := c.jobCapRefusal(shape, args); reason != "" {
 		return reason
 	}
+	if gitPushPattern.MatchString(shape) {
+		return c.judgePush(ctx, workDir, shape, args, admitted, sawSystemdRun, scopeMissing, pushLabel)
+	}
 	if admitted {
 		return ""
-	}
-	if pushLabel != "" && gitPushPattern.MatchString(shape) {
-		return c.judgePush(shape, pushLabel)
 	}
 	label := stepLabel(name, shape, args)
 	if c.scopeForm && sawSystemdRun {
@@ -280,9 +330,33 @@ func assignedAdmissionLabel(prelude []string) string {
 	return label
 }
 
-// judgePush admits the assignment form against live memory, swap and load readings. Unlike
+// judgePush checks host admission for the push (via praetorctl admit, PRAETOR_ADMIT=<label>, or
+// an admitted systemd-run scope) and then verifies that the destination branch on the remote
+// forge is not headed by a MERGED or CLOSED pull request without an OPEN one.
+func (c *admissionCheck) judgePush(ctx context.Context, workDir, shape string, args []string, admitted, sawSystemdRun bool, scopeMissing []string, pushLabel string) string {
+	if reason := c.judgePushAdmission(shape, admitted, sawSystemdRun, scopeMissing, pushLabel); reason != "" {
+		return reason
+	}
+	return c.judgePushHead(ctx, workDir, shape, args)
+}
+
+// judgePushAdmission verifies whether the push command has valid host admission.
+func (c *admissionCheck) judgePushAdmission(shape string, admitted, sawSystemdRun bool, scopeMissing []string, pushLabel string) string {
+	if admitted {
+		return ""
+	}
+	if pushLabel != "" {
+		return c.judgePushHost(shape, pushLabel)
+	}
+	if c.scopeForm && sawSystemdRun {
+		return c.judgeScope(shape, "git-push", scopeMissing)
+	}
+	return admissionRefusal(shape, "git-push")
+}
+
+// judgePushHost admits the assignment form against live memory, swap and load readings. Unlike
 // praetorctl admit it refuses immediately under pressure so the client can retry later.
-func (c *admissionCheck) judgePush(shape, label string) string {
+func (c *admissionCheck) judgePushHost(shape, label string) string {
 	stats, err := c.readHost()
 	if err != nil {
 		return refusal("HISS", fmt.Sprintf("heavy step isolated push host reading failed for %s (%s): %v; "+
@@ -294,6 +368,393 @@ func (c *admissionCheck) judgePush(shape, label string) string {
 			"wait for headroom and retry (docs/guides/admission.md)", shape, label, verdict.Reason, admission.ReadingsText(stats)))
 	}
 	return ""
+}
+
+// judgePushHead evaluates whether git push target branches are headed by terminal pull requests.
+func (c *admissionCheck) judgePushHead(ctx context.Context, workDir, shape string, args []string) string {
+	ctx, cancel := context.WithTimeout(ctx, pushTargetTimeout)
+	defer cancel()
+	baseDir := workDir
+	if baseDir == "" {
+		baseDir = c.workDir
+	}
+	targets, skip, err := resolvePushTargets(ctx, baseDir, args)
+	if err != nil {
+		return refusal("HISS", fmt.Sprintf("git push target resolution failed for %s: %v; "+
+			"verify repository, remote and branch before pushing (docs/guides/admission.md)", shape, err))
+	}
+	if skip {
+		return ""
+	}
+	reader := c.readPullRequests
+	if reader == nil {
+		reader = defaultPullRequestHeadReader
+	}
+	for i := 0; i < len(targets) && i < admissionMaxWords; i++ {
+		if reason := checkPushTargetHead(ctx, shape, targets[i], reader); reason != "" {
+			return reason
+		}
+	}
+	return ""
+}
+
+// checkPushTargetHead checks a single push target for blocking terminal pull requests.
+func checkPushTargetHead(ctx context.Context, shape string, target PushTarget, reader PullRequestHeadReader) string {
+	pulls, err := reader(ctx, target)
+	if err != nil {
+		return refusal("HISS", fmt.Sprintf("git push forge pull request check failed for %s (%s/%s branch %s): %v; "+
+			"retry when the forge is reachable (docs/guides/admission.md)",
+			shape, target.Remote.Owner, target.Remote.Repo, target.Branch, err))
+	}
+	if pr, blocked := terminalHeadPullRequest(pulls, target.Branch); blocked {
+		return refusal("HISS", fmt.Sprintf("git push to branch %s on %s/%s refused: pull request #%d is %s; "+
+			"push to a new branch instead (docs/guides/admission.md)",
+			target.Branch, target.Remote.Owner, target.Remote.Repo, pr.Number, pr.State))
+	}
+	return ""
+}
+
+// terminalHeadPullRequest finds the blocking terminal pull request (preferring MERGED over CLOSED)
+// heading branch, or reports false when an OPEN pull request heads it or no pull request was found.
+func terminalHeadPullRequest(pulls []forge.PullRequestHead, branch string) (forge.PullRequestHead, bool) {
+	var closed, merged forge.PullRequestHead
+	for i := 0; i < len(pulls) && i < forge.HeadPullRequestsPerPage; i++ {
+		pr := pulls[i]
+		if pr.HeadBranch != "" && pr.HeadBranch != branch {
+			continue
+		}
+		if isOpen, done := recordTerminalPull(pr, branch, &merged, &closed); done {
+			if isOpen {
+				return forge.PullRequestHead{}, false
+			}
+		}
+	}
+	return selectTerminalPull(merged, closed)
+}
+
+// recordTerminalPull records the first MERGED or CLOSED pull request, or signals an OPEN pull request.
+func recordTerminalPull(pr forge.PullRequestHead, branch string, merged, closed *forge.PullRequestHead) (open, ok bool) {
+	switch strings.ToUpper(strings.TrimSpace(pr.State)) {
+	case forge.PullRequestStateOpen:
+		return true, true
+	case forge.PullRequestStateMerged:
+		if merged.Number == 0 {
+			*merged = forge.PullRequestHead{Number: pr.Number, State: forge.PullRequestStateMerged, HeadBranch: branch}
+		}
+	case forge.PullRequestStateClosed:
+		if closed.Number == 0 {
+			*closed = forge.PullRequestHead{Number: pr.Number, State: forge.PullRequestStateClosed, HeadBranch: branch}
+		}
+	}
+	return false, false
+}
+
+// selectTerminalPull returns the chosen terminal pull request, prioritizing MERGED over CLOSED.
+func selectTerminalPull(merged, closed forge.PullRequestHead) (forge.PullRequestHead, bool) {
+	if merged.Number > 0 {
+		return merged, true
+	}
+	if closed.Number > 0 {
+		return closed, true
+	}
+	return forge.PullRequestHead{}, false
+}
+
+// resolvePushTargets determines the repo directory, destination branches, and forge details for git push.
+func resolvePushTargets(ctx context.Context, baseDir string, gitArgs []string) ([]PushTarget, bool, error) {
+	repoDir, pushArgs, err := parseGitPushArgs(baseDir, gitArgs)
+	if err != nil {
+		return nil, false, err
+	}
+	remoteName, refspecs, skip, err := parsePushCommand(pushArgs)
+	if err != nil || skip {
+		return nil, skip, err
+	}
+	branches, err := resolveDestinationBranches(ctx, repoDir, refspecs)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(branches) == 0 {
+		return nil, true, nil
+	}
+	remote, forgeKind, err := resolvePushRemoteAndForge(ctx, repoDir, remoteName)
+	if err != nil {
+		return nil, false, err
+	}
+	targets := make([]PushTarget, 0, len(branches))
+	for i := 0; i < len(branches) && i < admissionMaxWords; i++ {
+		targets = append(targets, PushTarget{
+			RepoDir: repoDir,
+			Remote:  remote,
+			Forge:   forgeKind,
+			Branch:  branches[i],
+		})
+	}
+	return targets, false, nil
+}
+
+// parseGitPushArgs separates the git directory flags from push subcommand arguments.
+func parseGitPushArgs(baseDir string, gitArgs []string) (repoDir string, pushArgs []string, err error) {
+	repoDir = baseDir
+	if repoDir == "" {
+		repoDir = "."
+	}
+	for i := 0; i < len(gitArgs) && i < admissionMaxWords; i++ {
+		switch gitArgs[i] {
+		case "push":
+			return repoDir, gitArgs[i+1:], nil
+		case "-C":
+			if i+1 >= len(gitArgs) {
+				return "", nil, errors.New("git -C requires a directory argument")
+			}
+			repoDir = joinRepoDir(repoDir, gitArgs[i+1])
+			i++
+		case "-c":
+			if i+1 >= len(gitArgs) {
+				return "", nil, errors.New("git -c requires a configuration argument")
+			}
+			i++
+		default:
+			return "", nil, fmt.Errorf("unexpected git argument %q before push", gitArgs[i])
+		}
+	}
+	return "", nil, errors.New("missing push subcommand")
+}
+
+// joinRepoDir resolves a relative repository path against baseDir.
+func joinRepoDir(baseDir, next string) string {
+	if filepath.IsAbs(next) || baseDir == "" || baseDir == "." {
+		return next
+	}
+	return filepath.Join(baseDir, next)
+}
+
+// parsePushCommand extracts the destination remote, refspecs, or skip determination from git push arguments.
+func parsePushCommand(pushArgs []string) (remote string, refspecs []string, skip bool, err error) {
+	var positionals []string
+	repoFlag := ""
+	endOpts := false
+	for i := 0; i < len(pushArgs) && i < admissionMaxWords; i++ {
+		arg := pushArgs[i]
+		if !endOpts && arg == "--" {
+			endOpts = true
+			continue
+		}
+		if endOpts || !strings.HasPrefix(arg, "-") || arg == "-" {
+			positionals = append(positionals, arg)
+			continue
+		}
+		nextI, optSkip, optErr := parsePushOption(pushArgs, i, &repoFlag)
+		if optErr != nil || optSkip {
+			return "", nil, optSkip, optErr
+		}
+		i = nextI
+	}
+	return resolvePushPositionals(repoFlag, positionals)
+}
+
+// parsePushOption parses an option at index i of pushArgs, returning the updated index, skip flag, and error.
+func parsePushOption(pushArgs []string, i int, repoFlag *string) (int, bool, error) {
+	arg := pushArgs[i]
+	if isDeleteOrTagFlag(arg) {
+		return i, true, nil
+	}
+	if val, ok := strings.CutPrefix(arg, "--repo="); ok {
+		*repoFlag = val
+		return i, false, nil
+	}
+	if arg == "--repo" {
+		if i+1 >= len(pushArgs) {
+			return i, false, errors.New("git push --repo requires a repository argument")
+		}
+		*repoFlag = pushArgs[i+1]
+		return i + 1, false, nil
+	}
+	if pushFlagTakesValue(arg) {
+		if i+1 >= len(pushArgs) {
+			return i, false, fmt.Errorf("git push %s requires an argument", arg)
+		}
+		return i + 1, false, nil
+	}
+	return i, false, nil
+}
+
+// isDeleteOrTagFlag reports whether a command-line flag denotes a tag or delete push.
+func isDeleteOrTagFlag(arg string) bool {
+	if arg == "-d" || arg == "--delete" || arg == "--tags" || arg == "--mirror" {
+		return true
+	}
+	if strings.HasPrefix(arg, "--") || strings.HasPrefix(arg, "-o") {
+		return false
+	}
+	return strings.ContainsRune(arg[1:], 'd')
+}
+
+// pushFlagTakesValue reports whether a push flag consumes the following argument as its value.
+func pushFlagTakesValue(arg string) bool {
+	return arg == "-o" || arg == "--push-option" || arg == "--receive-pack" || arg == "--exec"
+}
+
+// resolvePushPositionals derives remote and refspecs from positional arguments and --repo flag.
+func resolvePushPositionals(repoFlag string, positionals []string) (remote string, refspecs []string, skip bool, err error) {
+	remote = repoFlag
+	if remote == "" {
+		remote = "origin"
+	}
+	if len(positionals) == 0 {
+		return remote, []string{"HEAD"}, false, nil
+	}
+	remote = positionals[0]
+	if len(positionals) == 1 {
+		return remote, []string{"HEAD"}, false, nil
+	}
+	if positionals[1] == "tag" {
+		return "", nil, true, nil
+	}
+	return remote, positionals[1:], false, nil
+}
+
+// resolveDestinationBranches resolves destination branch names for the given refspecs.
+func resolveDestinationBranches(ctx context.Context, repoDir string, refspecs []string) ([]string, error) {
+	branches := make([]string, 0, len(refspecs))
+	for i := 0; i < len(refspecs) && i < admissionMaxWords; i++ {
+		branch, skip, err := classifyRefspec(refspecs[i])
+		if err != nil {
+			return nil, err
+		}
+		if skip {
+			continue
+		}
+		if branch == "HEAD" || branch == "@" {
+			if branch, err = resolveCurrentBranch(ctx, repoDir); err != nil {
+				return nil, err
+			}
+		} else if isLocalTagOnly(ctx, repoDir, refspecs[i], branch) {
+			continue
+		}
+		branches = append(branches, branch)
+	}
+	return branches, nil
+}
+
+// classifyRefspec inspects a git refspec to extract the target branch or skip indicator.
+func classifyRefspec(refspec string) (branch string, skip bool, err error) {
+	spec := strings.TrimPrefix(strings.TrimSpace(refspec), "+")
+	if spec == "" {
+		return "", false, errors.New("empty git push refspec")
+	}
+	src, dst, hasColon := strings.Cut(spec, ":")
+	if hasColon && src == "" {
+		if dst == "" {
+			return "", false, errors.New("empty git push refspec ':'")
+		}
+		return "", true, nil
+	}
+	target := src
+	if hasColon && dst != "" {
+		target = dst
+	}
+	if strings.HasPrefix(src, "refs/tags/") || strings.HasPrefix(target, "refs/tags/") {
+		return "", true, nil
+	}
+	return trimBranchRefPrefix(target, refspec)
+}
+
+// trimBranchRefPrefix strips git ref prefixes (refs/heads/, refs/for/) from the target.
+func trimBranchRefPrefix(target, refspec string) (string, bool, error) {
+	switch {
+	case strings.HasPrefix(target, "refs/heads/"):
+		target = strings.TrimPrefix(target, "refs/heads/")
+	case strings.HasPrefix(target, "refs/for/"):
+		target = strings.TrimPrefix(target, "refs/for/")
+	case strings.HasPrefix(target, "refs/"):
+		return "", false, fmt.Errorf("unsupported destination ref %q", target)
+	}
+	if target == "" {
+		return "", false, fmt.Errorf("empty destination branch in refspec %q", refspec)
+	}
+	return target, false, nil
+}
+
+// isLocalTagOnly reports whether a target refers to a local git tag without a matching branch.
+func isLocalTagOnly(ctx context.Context, repoDir, rawRefspec, branch string) bool {
+	if strings.Contains(rawRefspec, "refs/") || !util.DirExists(repoDir) {
+		return false
+	}
+	if _, err := util.RunGit(ctx, repoDir, "show-ref", "--verify", "--quiet", "refs/tags/"+branch); err != nil {
+		return false
+	}
+	_, headErr := util.RunGit(ctx, repoDir, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	return headErr != nil
+}
+
+// resolveCurrentBranch reads the current checked-out branch in repoDir via symbolic-ref.
+func resolveCurrentBranch(ctx context.Context, repoDir string) (string, error) {
+	if !util.DirExists(repoDir) {
+		return "", fmt.Errorf("repository directory %q does not exist", repoDir)
+	}
+	branch, err := util.RunGit(ctx, repoDir, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("resolve current branch in %q: %w", repoDir, err)
+	}
+	if branch == "" || branch == "HEAD" {
+		return "", fmt.Errorf("detached HEAD in %q", repoDir)
+	}
+	return branch, nil
+}
+
+// resolvePushRemoteAndForge identifies the remote network details and target forge kind.
+func resolvePushRemoteAndForge(ctx context.Context, repoDir, remoteName string) (util.GitRemote, config.Forge, error) {
+	if !util.DirExists(repoDir) {
+		return util.GitRemote{}, "", fmt.Errorf("repository directory %q does not exist", repoDir)
+	}
+	var (
+		remote util.GitRemote
+		err    error
+	)
+	if remoteName == "" || remoteName == "origin" {
+		remote, err = util.ReadOriginRemote(ctx, repoDir)
+	} else {
+		remote, err = util.ReadGitRemote(ctx, repoDir, remoteName)
+	}
+	if err != nil {
+		return util.GitRemote{}, "", err
+	}
+	forgeKind, err := resolvePushForge(repoDir, remote)
+	if err != nil {
+		return util.GitRemote{}, "", err
+	}
+	return remote, forgeKind, nil
+}
+
+// resolvePushForge resolves the forge kind from manifest declaration or remote hostname.
+func resolvePushForge(repoDir string, remote util.GitRemote) (config.Forge, error) {
+	declared, err := declaredManifestForge(repoDir)
+	if err != nil {
+		return "", err
+	}
+	if declared == "" && isForgejoHost(remote.Host) {
+		return config.ForgeForgejo, nil
+	}
+	return config.RepositoryForge(declared, remote.Host)
+}
+
+// declaredManifestForge reads the forge declared in .standards.yaml if present.
+func declaredManifestForge(repoDir string) (config.Forge, error) {
+	manifestPath := filepath.Join(repoDir, config.ManifestFileName)
+	if !util.FileExists(manifestPath) {
+		return "", nil
+	}
+	manifest, err := config.LoadManifest(manifestPath)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", manifestPath, err)
+	}
+	return manifest.Repository.Forge, nil
+}
+
+// isForgejoHost checks whether a hostname indicates a Forgejo or Codeberg host.
+func isForgejoHost(host string) bool {
+	return host == "codeberg.org" || strings.HasPrefix(host, "forgejo.") || strings.Contains(host, ".forgejo.")
 }
 
 // judgeScope verifies a systemd-run scope wrapper and checks live host memory and swap readings
