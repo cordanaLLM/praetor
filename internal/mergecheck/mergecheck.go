@@ -35,6 +35,8 @@ const (
 	maxBlobBytes = 16 << 20
 	// binaryProbeBytes bounds the prefix inspected for NUL bytes.
 	binaryProbeBytes = 8000
+	// maxLsTreeArgBytes bounds the path argument bytes per git ls-tree call (HISS-02, HISS-21).
+	maxLsTreeArgBytes = 16 << 10
 )
 
 // Finding records one file whose first-parent work was dropped in a merge commit.
@@ -142,6 +144,11 @@ func runMergeCheck(ctx context.Context, repoDir, commitRange string, maxMerges i
 // ResolveDefaultRange resolves the default range (origin default branch..HEAD).
 // Order: engine-dropped-hunk-gate-20261027.
 func ResolveDefaultRange(ctx context.Context, repoDir string) (string, error) {
+	if before := strings.TrimSpace(os.Getenv("GITHUB_EVENT_BEFORE")); !isZeroOID(before) {
+		if commit, err := util.ResolveGitCommit(ctx, repoDir, before); err == nil && commit != "" {
+			return before + "..HEAD", nil
+		}
+	}
 	branch, err := forge.RepositoryDefaultBranch(ctx, repoDir, nil)
 	if err != nil || branch == "" {
 		branch = forge.FallbackDefaultBranch
@@ -155,6 +162,10 @@ func ResolveDefaultRange(ctx context.Context, repoDir string) (string, error) {
 		return branch + "..HEAD", nil
 	}
 	return "origin/" + branch + "..HEAD", nil
+}
+
+func isZeroOID(oid string) bool {
+	return oid == "" || strings.Trim(oid, "0") == ""
 }
 
 // FormatFinding formats one finding line naming merge sha12, file, and both parents.
@@ -189,6 +200,9 @@ func checkMergeCommit(ctx context.Context, repoDir, sha string) ([]Finding, []st
 	}
 	if len(parents) < 2 {
 		return nil, nil, nil
+	}
+	if len(parents) > maxParents {
+		return nil, nil, fmt.Errorf("mergecheck: merge %s has %d parents, exceeds limit %d", shortSHA(sha), len(parents), maxParents)
 	}
 	p1 := parents[0]
 	var allFindings []Finding
@@ -422,45 +436,68 @@ func isBinaryBlob(b []byte) bool {
 }
 
 func treeBlobs(ctx context.Context, repoDir, commit string, paths []string) (map[string]string, error) {
+	blobs := make(map[string]string)
 	if len(paths) == 0 || commit == "" {
-		return make(map[string]string), nil
+		return blobs, nil
 	}
-	opCtx, cancel := context.WithTimeout(ctx, gitOpTimeout)
-	defer cancel()
-	args := make([]string, 0, len(paths)+5)
-	args = append(args, "ls-tree", "-r", "-z", commit, "--")
-	for i := 0; i < len(paths) && i < maxDiffFiles; i++ {
-		args = append(args, paths[i])
-	}
-	cmdBytes, err := util.RunGitProbe(opCtx, repoDir, util.MaxCommandOutputBytes, args...)
+	chunks, err := chunkPaths(paths, maxLsTreeArgBytes)
 	if err != nil {
 		return nil, err
 	}
-	return parseTreeBlobs(cmdBytes.Stdout, maxDiffFiles), nil
+	for c := 0; c < len(chunks) && c < maxDiffFiles; c++ {
+		if err := readTreeBlobChunk(ctx, repoDir, commit, chunks[c], blobs); err != nil {
+			return nil, err
+		}
+	}
+	return blobs, nil
 }
 
-func parseTreeBlobs(raw []byte, maxEntries int) map[string]string {
-	blobs := make(map[string]string)
-	if len(raw) == 0 {
-		return blobs
+func chunkPaths(paths []string, budget int) ([][]string, error) {
+	if budget <= 0 {
+		budget = maxLsTreeArgBytes
 	}
-	entries := bytes.Split(raw, []byte{0})
-	for i := 0; i < len(entries) && i < maxEntries; i++ {
-		entry := entries[i]
-		if len(entry) == 0 {
-			continue
+	if len(paths) > maxDiffFiles {
+		return nil, fmt.Errorf("mergecheck: changed file count %d exceeds limit %d", len(paths), maxDiffFiles)
+	}
+	var chunks [][]string
+	var cur []string
+	size := 0
+	for i := 0; i < len(paths) && i < maxDiffFiles; i++ {
+		need := len(paths[i]) + 1
+		if size+need > budget && len(cur) > 0 {
+			chunks = append(chunks, cur)
+			cur = nil
+			size = 0
 		}
-		tabIdx := bytes.IndexByte(entry, '\t')
-		if tabIdx == -1 {
-			continue
-		}
-		fields := strings.Fields(string(entry[:tabIdx]))
-		if len(fields) >= 3 && fields[1] == "blob" {
-			path := string(entry[tabIdx+1:])
-			blobs[path] = fields[2]
+		cur = append(cur, paths[i])
+		size += need
+	}
+	if len(cur) > 0 {
+		chunks = append(chunks, cur)
+	}
+	return chunks, nil
+}
+
+func readTreeBlobChunk(ctx context.Context, repoDir, commit string, chunk []string, blobs map[string]string) error {
+	opCtx, cancel := context.WithTimeout(ctx, gitOpTimeout)
+	defer cancel()
+	args := make([]string, 0, len(chunk)+6)
+	args = append(args, "ls-tree", "--full-tree", "-r", "-z", commit, "--")
+	args = append(args, chunk...)
+	cmdBytes, err := util.RunGitProbe(opCtx, repoDir, util.MaxCommandOutputBytes, args...)
+	if err != nil {
+		return err
+	}
+	entries, err := util.ParseGitTreeListing(cmdBytes.Stdout, false, maxDiffFiles)
+	if err != nil {
+		return fmt.Errorf("parse ls-tree for %s: %w", shortSHA(commit), err)
+	}
+	for i := 0; i < len(entries) && i < maxDiffFiles; i++ {
+		if entries[i].Type == "blob" {
+			blobs[entries[i].Path] = entries[i].Object
 		}
 	}
-	return blobs
+	return nil
 }
 
 func listMergeCommits(ctx context.Context, repoDir, commitRange string, maxMerges int) ([]string, error) {
@@ -511,20 +548,26 @@ func filesChanged(ctx context.Context, repoDir, base, p1 string) ([]string, erro
 	if err != nil {
 		return nil, err
 	}
-	return parseNullSeparated(cmdBytes.Stdout, maxDiffFiles), nil
+	return parseNullSeparated(cmdBytes.Stdout, maxDiffFiles)
 }
 
-func parseNullSeparated(raw []byte, maxItems int) []string {
+func parseNullSeparated(raw []byte, maxItems int) ([]string, error) {
+	raw = bytes.TrimRight(raw, "\x00")
 	if len(raw) == 0 {
-		return nil
+		return nil, nil
 	}
 	parts := bytes.Split(raw, []byte{0})
-	items := make([]string, 0, len(parts))
-	for i := 0; i < len(parts) && i < maxItems; i++ {
+	items := make([]string, 0, min(len(parts), maxItems))
+	limit := maxItems + 1
+	for i := 0; i < len(parts) && i <= limit; i++ {
 		str := string(parts[i])
-		if str != "" {
-			items = append(items, str)
+		if str == "" {
+			continue
 		}
+		if len(items) >= maxItems {
+			return nil, fmt.Errorf("mergecheck: diff exceeds %d changed files", maxItems)
+		}
+		items = append(items, str)
 	}
-	return items
+	return items, nil
 }

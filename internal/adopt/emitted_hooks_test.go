@@ -117,7 +117,10 @@ func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 			"use_stdin": true,
 			"run":       lefthookGovernedCommand("docstrings check --pre-push"),
 		}
-		injectDecodedJob(prior, "pre-push", "merge-check", map[string]any{"run": lefthookGovernedCommand("merge-check")})
+		injectDecodedJob(prior, "pre-push", "merge-check", map[string]any{
+			"run":       mergeCheckPrePushCommand(),
+			"use_stdin": true,
+		})
 		for _, event := range checkpointEvents(checkpoint) {
 			job := decodedJob(t, prior, "agent-checkpoint-"+event, "checkpoint")
 			arguments := "-B " + checkpointScript + " --event " + event + " --json --marker"

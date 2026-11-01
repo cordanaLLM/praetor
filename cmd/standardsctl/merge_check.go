@@ -27,10 +27,11 @@ func runMergeCheck(args []string) error {
 	if err != nil {
 		return err
 	}
-	if len(rest) > 0 && *commitRange == "" {
-		*commitRange = rest[0]
-	} else if len(rest) > 0 {
+	if len(rest) > 1 || (len(rest) == 1 && *commitRange != "") {
 		return fmt.Errorf("merge-check accepts at most one range argument, got %q", rest)
+	}
+	if len(rest) == 1 {
+		*commitRange = rest[0]
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), mergeCheckTimeout)

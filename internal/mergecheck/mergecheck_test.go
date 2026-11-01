@@ -5,6 +5,7 @@
 package mergecheck
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/testsupport"
@@ -195,14 +196,68 @@ func TestMergeCheck_PartialOverlapClean_RedBeforeFix(t *testing.T) {
 // Mutant verification: mutant where blob comparison is inverted or skipped.
 // Order: engine-dropped-hunk-gate-20261027.
 func TestMergeCheck_Mutant_BlobComparison(t *testing.T) {
-	// A mutant that inverts (blobM != blobP2) would flag clean merges where both changes
-	// were kept or where Y's blob was not taken.
-	// A mutant that skips (blobM == blobP2) would fail to detect when Y's whole file was taken.
-	// This test asserts the exact comparison truth table of checkFileHunk logic.
-	hunk1, err := checkFileHunk(t.Context(), "test.txt", nil)
-	if err == nil && hunk1 != nil {
-		t.Errorf("expected nil finding on non-existent commits")
+	dir := initTestRepo(t)
+	blobBase := writeTestBlob(t, dir, "line 1\nline 2\nline 3\n")
+	blobP1 := writeTestBlob(t, dir, "line 1 P1\nline 2\nline 3\n")
+	blobP2 := writeTestBlob(t, dir, "line 1\nline 2\nline 3 P2\n")
+	blobMerged := writeTestBlob(t, dir, "line 1 P1\nline 2\nline 3 P2\n")
+
+	if hunk, err := checkFileHunk(t.Context(), "test.txt", nil); err != nil || hunk != nil {
+		t.Fatalf("nil blobs: got (%+v, %v), want (nil, nil)", hunk, err)
 	}
+	cases := []struct {
+		name      string
+		m, p1, p2 string
+		wantFile  string
+	}{
+		{name: "clean merge blobM != blobP2", m: blobMerged, p1: blobP1, p2: blobP2, wantFile: ""},
+		{name: "unchanged blobP2 == blobP1", m: blobP1, p1: blobP1, p2: blobP1, wantFile: ""},
+		{name: "dropped hunk blobM == blobP2 and blobP2 != blobP1", m: blobP2, p1: blobP1, p2: blobP2, wantFile: "test.txt"},
+		{name: "missing p1 blob entry", m: blobP2, p1: "", p2: blobP2, wantFile: ""},
+	}
+	for _, tc := range cases {
+		blobs := buildTestCommitBlobs(dir, "test.txt", tc.m, tc.p1, tc.p2, blobBase)
+		hunk, err := checkFileHunk(t.Context(), "test.txt", blobs)
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", tc.name, err)
+		}
+		gotFile := ""
+		if hunk != nil {
+			gotFile = hunk.FilePath
+		}
+		if gotFile != tc.wantFile {
+			t.Fatalf("%s: got finding file %q, want %q", tc.name, gotFile, tc.wantFile)
+		}
+	}
+}
+
+func writeTestBlob(t *testing.T, dir, content string) string {
+	t.Helper()
+	writeFile(t, dir, "blob.tmp", content)
+	return strings.TrimSpace(testsupport.RunFixtureGit(t, dir, []string{"hash-object", "-w", "blob.tmp"}))
+}
+
+func buildTestCommitBlobs(dir, file, m, p1, p2, base string) *commitBlobs {
+	cb := &commitBlobs{
+		repoDir:  dir,
+		mergeSHA: "m",
+		p1SHA:    "p1",
+		p2SHA:    "p2",
+		m:        map[string]string{},
+		p1:       map[string]string{},
+		p2:       map[string]string{},
+		base:     map[string]string{file: base},
+	}
+	if m != "" {
+		cb.m[file] = m
+	}
+	if p1 != "" {
+		cb.p1[file] = p1
+	}
+	if p2 != "" {
+		cb.p2[file] = p2
+	}
+	return cb
 }
 
 // Positive: conflict on line 2 resolved to P2 side, P1 non-conflicting line 4 kept -> no finding.

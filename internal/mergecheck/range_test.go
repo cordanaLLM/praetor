@@ -6,6 +6,9 @@ package mergecheck
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -148,5 +151,159 @@ func TestMergeCheck_UnrelatedHistories_StatedLineExitZero(t *testing.T) {
 	expectedNotice := fmt.Sprintf("merge %s: no merge base, not judged", shortSHA(mergeSHA))
 	if res.Notices[0] != expectedNotice {
 		t.Errorf("expected notice %q, got %q", expectedNotice, res.Notices[0])
+	}
+}
+
+// Positive: running Check with RepoDir set to a subdirectory of the repository still resolves
+// root-relative paths with --full-tree and detects dropped hunks.
+func TestMergeCheck_SubdirectoryRepoDir_DetectsDroppedHunk(t *testing.T) {
+	dir := initTestRepo(t)
+	writeFile(t, dir, "alpha.txt", "line 1\nline 2\nline 3\nline 4\nline 5\n")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "alpha.txt"},
+		[]string{"commit", "-m", "chore: base"},
+		[]string{"branch", "-M", "main"},
+	)
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-x"})
+	writeFile(t, dir, "alpha.txt", "line 1\nline 2 P1\nline 3\nline 4\nline 5\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "alpha.txt"}, []string{"commit", "-m", "feat: X"})
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-y", "main"})
+	writeFile(t, dir, "alpha.txt", "line 1\nline 2\nline 3\nline 4\nline 5 P2\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "alpha.txt"}, []string{"commit", "-m", "feat: Y"})
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "branch-x"})
+	testsupport.RunFixtureGit(t, dir, []string{"merge", "--no-commit", "branch-y"})
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"checkout", "branch-y", "--", "alpha.txt"},
+		[]string{"add", "alpha.txt"},
+		[]string{"commit", "-m", "merge: take Y"},
+	)
+	subDir := filepath.Join(dir, "nested", "sub")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Check(t.Context(), Options{RepoDir: subDir, Range: "main..HEAD"})
+	if err != nil {
+		t.Fatalf("Check from subdirectory failed: %v", err)
+	}
+	if len(res.Findings) != 1 || res.Findings[0].FilePath != "alpha.txt" {
+		t.Fatalf("expected 1 finding for alpha.txt from subdirectory RepoDir, got %+v", res.Findings)
+	}
+}
+
+// Positive/Boundary: treeBlobs chunks path arguments under a 16 KiB command-line byte budget.
+func TestMergeCheck_TreeBlobs_ChunksPathsUnderCommandLineBudget(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("POSIX shell wrapper required")
+	}
+	dir := initTestRepo(t)
+	writeFile(t, dir, "a.txt", "hello\n")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "a.txt"},
+		[]string{"commit", "-m", "chore: base"},
+		[]string{"branch", "-M", "main"},
+	)
+	head := gitRevParse(t, dir, "HEAD")
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shimDir := t.TempDir()
+	shimPath := filepath.Join(shimDir, "git")
+	script := "#!/bin/sh\n" +
+		"bytes=0\n" +
+		"for arg in \"$@\"; do bytes=$((bytes + ${#arg} + 1)); done\n" +
+		"if [ \"$bytes\" -gt 16500 ]; then echo \"arg list too long: $bytes\" >&2; exit 128; fi\n" +
+		"exec \"" + realGit + "\" \"$@\"\n"
+	if err := os.WriteFile(shimPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	paths := make([]string, 0, 260)
+	paths = append(paths, "a.txt")
+	for i := 0; i < 259; i++ {
+		paths = append(paths, fmt.Sprintf("dir/subdir/very_long_file_name_padding_to_exceed_16k_budget_%04d.txt", i))
+	}
+	blobs, err := treeBlobs(t.Context(), dir, head, paths)
+	if err != nil {
+		t.Fatalf("treeBlobs failed under 16 KiB argument cap: %v", err)
+	}
+	if blobs["a.txt"] == "" {
+		t.Fatalf("expected blob for a.txt, got %+v", blobs)
+	}
+	chunks, err := chunkPaths(paths, maxLsTreeArgBytes)
+	if err != nil || len(chunks) < 2 {
+		t.Fatalf("expected >= 2 chunks under 16 KiB budget, got len=%d err=%v", len(chunks), err)
+	}
+	if _, err := chunkPaths(make([]string, maxDiffFiles+1), maxLsTreeArgBytes); err == nil {
+		t.Fatalf("expected error when paths exceed maxDiffFiles")
+	}
+}
+
+// Negative: exceeding maxParents on an octopus merge or maxDiffFiles in filesChanged fails closed.
+func TestMergeCheck_Negative_BoundsFailClosedWhenExceeded(t *testing.T) {
+	items, err := parseNullSeparated([]byte("a\x00b\x00"), 2)
+	if err != nil || len(items) != 2 {
+		t.Fatalf("boundary 2 items: got (%v, %v), want 2 items and nil err", items, err)
+	}
+	if _, err := parseNullSeparated([]byte("a\x00b\x00c\x00"), 2); err == nil || !strings.Contains(err.Error(), "exceeds 2 changed files") {
+		t.Fatalf("expected error when parseNullSeparated exceeds maxItems, got: %v", err)
+	}
+	dir := initTestRepo(t)
+	writeFile(t, dir, "a.txt", "base\n")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "a.txt"},
+		[]string{"commit", "-m", "chore: base"},
+		[]string{"branch", "-M", "main"},
+	)
+	tree := gitRevParse(t, dir, "HEAD^{tree}")
+	baseSHA := gitRevParse(t, dir, "HEAD")
+
+	args := []string{"commit-tree", tree}
+	for i := 0; i < maxParents+1; i++ {
+		parent := strings.TrimSpace(testsupport.RunFixtureGit(t, dir, []string{
+			"commit-tree", tree, "-p", baseSHA, "-m", fmt.Sprintf("chore: parent %d", i),
+		}))
+		args = append(args, "-p", parent)
+	}
+	args = append(args, "-m", "merge: exceeds maxParents")
+	mergeCommit := strings.TrimSpace(testsupport.RunFixtureGit(t, dir, args))
+	testsupport.RunFixtureGit(t, dir, []string{"reset", "--hard", mergeCommit})
+
+	_, err = Check(t.Context(), Options{RepoDir: dir, Range: baseSHA + ".." + mergeCommit})
+	if err == nil || !strings.Contains(err.Error(), "exceeds limit") {
+		t.Fatalf("expected error when merge parent count exceeds maxParents (%d), got: %v", maxParents, err)
+	}
+}
+
+// Positive/Boundary: ResolveDefaultRange uses GITHUB_EVENT_BEFORE when set to a non-zero commit,
+// and falls back to origin/<default>..HEAD when unset or all-zero.
+func TestMergeCheck_ResolveDefaultRange_UsesGitHubEventBefore(t *testing.T) {
+	dir := initTestRepo(t)
+	writeFile(t, dir, "a.txt", "one\n")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "a.txt"},
+		[]string{"commit", "-m", "chore: one"},
+		[]string{"branch", "-M", "main"},
+	)
+	beforeSHA := gitRevParse(t, dir, "HEAD")
+	writeFile(t, dir, "a.txt", "two\n")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "a.txt"},
+		[]string{"commit", "-m", "feat: two"},
+		[]string{"update-ref", "refs/remotes/origin/main", "HEAD"},
+	)
+
+	t.Setenv("GITHUB_EVENT_BEFORE", beforeSHA)
+	got, err := ResolveDefaultRange(t.Context(), dir)
+	if err != nil || got != beforeSHA+"..HEAD" {
+		t.Fatalf("with GITHUB_EVENT_BEFORE=%s: got (%q, %v), want (%q, nil)", beforeSHA, got, err, beforeSHA+"..HEAD")
+	}
+
+	t.Setenv("GITHUB_EVENT_BEFORE", strings.Repeat("0", 40))
+	gotZero, err := ResolveDefaultRange(t.Context(), dir)
+	if err != nil || gotZero != "origin/main..HEAD" {
+		t.Fatalf("with zero GITHUB_EVENT_BEFORE: got (%q, %v), want (\"origin/main..HEAD\", nil)", gotZero, err)
 	}
 }

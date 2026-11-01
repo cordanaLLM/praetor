@@ -132,3 +132,73 @@ func writeMergeFile(t *testing.T, dir, rel, content string) {
 		t.Fatal(err)
 	}
 }
+
+// Negative: surplus positional range arguments without --range are rejected instead of silently
+// ignoring the second range. Positive: a single positional range is accepted. Boundary: --range
+// combined with a positional range is rejected.
+func TestMergeCheckCommand_SurplusPositionalRangesRejected(t *testing.T) {
+	dir := t.TempDir()
+	testsupport.InitGitRepoWithOrigin(t, dir, "")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"config", "user.name", "Test"},
+		[]string{"config", "user.email", "test@example.com"},
+		[]string{"config", "init.defaultBranch", "main"},
+		[]string{"config", "commit.gpgsign", "false"},
+	)
+	writeMergeFile(t, dir, "a.txt", "one\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "a.txt"}, []string{"commit", "-m", "chore: one"}, []string{"branch", "-M", "main"})
+	writeMergeFile(t, dir, "a.txt", "two\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "a.txt"}, []string{"commit", "-m", "feat: two"})
+
+	if _, err := captureStdout(t, func() error {
+		return dispatchCommandFrom(context.Background(), "merge-check", []string{"--dir=" + dir, "main~1..main"})
+	}); err != nil {
+		t.Fatalf("expected single positional range to succeed, got: %v", err)
+	}
+
+	_, err := captureStdout(t, func() error {
+		return dispatchCommandFrom(context.Background(), "merge-check", []string{"--dir=" + dir, "main~1..main", "main..HEAD"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "merge-check accepts at most one range argument") {
+		t.Fatalf("expected surplus positional ranges error, got: %v", err)
+	}
+
+	_, err = captureStdout(t, func() error {
+		return dispatchCommandFrom(context.Background(), "merge-check", []string{"--dir=" + dir, "--range=main~1..main", "main..HEAD"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "merge-check accepts at most one range argument") {
+		t.Fatalf("expected flag+positional range error, got: %v", err)
+	}
+}
+
+func makefilePassesMergeCheckRange(makefile string) bool {
+	return strings.Contains(makefile, "MERGE_CHECK_RANGE ?=") &&
+		strings.Contains(makefile, "GITHUB_EVENT_BEFORE") &&
+		strings.Contains(makefile, "0000000000000000000000000000000000000000") &&
+		strings.Contains(makefile, "\tgo run ./cmd/standardsctl merge-check $(if $(MERGE_CHECK_RANGE),--range=\"$(MERGE_CHECK_RANGE)\")\n")
+}
+
+// Positive: Makefile and ci.yml pass a range based on the push's previous SHA while keeping the
+// default for local use. Negative: the prior plain recipe without MERGE_CHECK_RANGE is refused.
+// Boundary: the all-zero SHA on branch creation is filtered out.
+func TestMergeCheckCommand_MakefilePassesPushedRangeInCI(t *testing.T) {
+	makefileBytes, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	makefile := strings.ReplaceAll(string(makefileBytes), "\r\n", "\n")
+	if !makefilePassesMergeCheckRange(makefile) {
+		t.Fatalf("Makefile merge-check recipe does not pass --range from MERGE_CHECK_RANGE / GITHUB_EVENT_BEFORE")
+	}
+	if makefilePassesMergeCheckRange("merge-check:\n\tgo run ./cmd/standardsctl merge-check\n") {
+		t.Fatalf("prior plain Makefile recipe without MERGE_CHECK_RANGE passed")
+	}
+	workflowBytes, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := strings.ReplaceAll(string(workflowBytes), "\r\n", "\n")
+	if !strings.Contains(workflow, "GITHUB_EVENT_BEFORE:") {
+		t.Fatalf("ci.yml does not pass GITHUB_EVENT_BEFORE to verify-all")
+	}
+}

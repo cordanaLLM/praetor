@@ -2,12 +2,14 @@ package adopt
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -174,6 +176,60 @@ func TestAdopt_Positive_RenderedLefthookCarriesMergeCheckJob(t *testing.T) {
 			if !jobs["pre-push/commands/merge-check"] {
 				t.Errorf("languages=%v, checkpoint=%v: lefthook rendering lacks pre-push/commands/merge-check", languages, checkpoint)
 			}
+			mc := decodedJob(t, parsed, "pre-push", "merge-check")
+			if mc["use_stdin"] != true || !strings.Contains(yamlString(mc["run"]), "--range=") {
+				t.Fatalf("languages=%v, checkpoint=%v: merge-check use_stdin=%v run=%v, want use_stdin=true and --range=", languages, checkpoint, mc["use_stdin"], mc["run"])
+			}
+		}
+	}
+	verifyMergeCheckPrePushExecution(t)
+}
+
+func yamlString(v any) string {
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	return s
+}
+
+func verifyMergeCheckPrePushExecution(t *testing.T) {
+	t.Helper()
+	if os.PathSeparator == '\\' {
+		return
+	}
+	dir := t.TempDir()
+	enginePath := filepath.Join(dir, engineLauncherFile)
+	if err := os.MkdirAll(filepath.Dir(enginePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(enginePath, []byte("#!/bin/sh\necho \"called:$*\"\nexit \"${STUB_EXIT:-0}\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oid1 := strings.Repeat("1", 40)
+	oid2 := strings.Repeat("2", 40)
+	zero := strings.Repeat("0", 40)
+	runner := "printf '%s' \"$1\" | { " + mergeCheckPrePushCommand() + "; } 2>&1"
+
+	out, err := util.RunCommand(t.Context(), dir, "sh", "-c", runner, "sh", "refs/heads/other "+oid1+" refs/heads/main "+oid2+"\n")
+	if err != nil || !strings.Contains(out, "called:merge-check --range="+oid2+".."+oid1) {
+		t.Fatalf("positive pushed range: err=%v out=%q", err, out)
+	}
+
+	t.Setenv("STUB_EXIT", "1")
+	if _, failErr := util.RunCommand(t.Context(), dir, "sh", "-c", runner, "sh", "refs/heads/other "+oid1+" refs/heads/main "+oid2+"\n"); failErr == nil {
+		t.Fatalf("negative failing merge-check: expected non-nil error")
+	}
+	t.Setenv("STUB_EXIT", "0")
+
+	for name, stdin := range map[string]string{
+		"empty":      "",
+		"new branch": "refs/heads/new " + oid1 + " refs/heads/new " + zero + "\n",
+		"delete ref": "refs/heads/old " + zero + " refs/heads/old " + oid2 + "\n",
+	} {
+		skipOut, skipErr := util.RunCommand(t.Context(), dir, "sh", "-c", runner, "sh", stdin)
+		if skipErr != nil || !strings.Contains(skipOut, "no pushed commit range on stdin, skipping merge-check") {
+			t.Fatalf("boundary %s: err=%v out=%q", name, skipErr, skipOut)
 		}
 	}
 }

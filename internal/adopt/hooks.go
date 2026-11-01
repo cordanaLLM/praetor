@@ -363,10 +363,24 @@ func buildLefthookYAMLFor(shape lefthookShape, checkpoint bool) string {
 		"  parallel: false\n" +
 		"  commands:\n" +
 		lefthookPrePushJobs(shape) +
-		"    merge-check:\n" + lefthookRun(governed("merge-check")) +
+		"    merge-check:\n" +
+		"      use_stdin: true\n" +
+		lefthookRun(mergeCheckPrePushCommand()) +
 		"    flavor-audit:\n" + lefthookRun(governed("flavor audit .")) +
 		"    audit:\n" + lefthookRun(governed(prePushAuditArgs)) +
 		"    gate:\n" + lefthookRun(governed(prePushGateArgs))
+}
+
+// mergeCheckPrePushCommand reads git pre-push ref lines (<local-ref> <local-oid> <remote-ref>
+// <remote-oid>) from stdin and runs merge-check over each pushed range whose local and remote
+// OIDs are both non-zero; when no pushed range exists on stdin (ref deletion, new branch with
+// all-zero remote OID, or empty stdin), it prints a stated skip reason to stderr.
+func mergeCheckPrePushCommand() string {
+	return "ran=0; while read -r _ loid _ roid; do " +
+		"if [ x$(echo $loid | tr -d 0) != x ] && [ x$(echo $roid | tr -d 0) != x ]; then " +
+		"ran=1; " + lefthookGovernedCommand("merge-check --range=$roid..$loid") + " || exit $?; " +
+		"fi; done; " +
+		"if [ $ran = 0 ]; then echo no pushed commit range on stdin, skipping merge-check >&2; fi"
 }
 
 // blockEvasionTemplate is the agent PreToolUse interceptor adoption writes. It is not a git
