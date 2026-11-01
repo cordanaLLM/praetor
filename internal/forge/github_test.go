@@ -463,11 +463,10 @@ func (rt *redirectTransport) RoundTrip(req *http.Request) (*http.Response, error
 	return base.RoundTrip(clone)
 }
 
-// Planted negative and positive (Finding 2, CWE-522): declared Forgejo host receives FORGEJO_TOKEN,
-// while an undeclared host matching the pattern receives no token.
-func TestReadPullRequestsByHead_Forgejo_TokenOnlyToDeclaredOrAllowlistedHost(t *testing.T) {
-	t.Setenv("FORGEJO_TOKEN", "secret-forgejo-token")
-
+// forgejoAuthProbe returns a context whose HTTP client sends every request to a stub server and
+// a reader of the Authorization header the stub saw last.
+func forgejoAuthProbe(t *testing.T) (context.Context, func() string) {
+	t.Helper()
 	var (
 		mu       sync.Mutex
 		lastAuth string
@@ -477,53 +476,46 @@ func TestReadPullRequestsByHead_Forgejo_TokenOnlyToDeclaredOrAllowlistedHost(t *
 		lastAuth = r.Header.Get("Authorization")
 		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, `[]`)
+		if _, err := io.WriteString(w, `[]`); err != nil {
+			t.Errorf("stub forge write: %v", err)
+		}
 	}))
-	defer srv.Close()
-
+	t.Cleanup(srv.Close)
 	srvURL, err := url.Parse(srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	testClient := &http.Client{
-		Transport: &redirectTransport{targetURL: srvURL, base: srv.Client().Transport},
+	client := &http.Client{Transport: &redirectTransport{targetURL: srvURL, base: srv.Client().Transport}}
+	read := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return lastAuth
 	}
-	ctx := WithHTTPClient(context.Background(), testClient)
+	return WithHTTPClient(context.Background(), client), read
+}
 
-	// Planted negative: undeclared host matching pattern receives no token (CWE-522).
-	undeclaredRemote := util.GitRemote{Host: "forgejo.attacker.com", Owner: "acme", Repo: "widgets"}
-	if _, err := ReadPullRequestsByHead(ctx, config.ForgeForgejo, undeclaredRemote, "topic"); err != nil {
-		t.Fatalf("undeclared host lookup: %v", err)
+// Planted negative and positive (Finding 2, CWE-522): only the declared Forgejo host receives
+// FORGEJO_TOKEN; an undeclared host matching the pattern, codeberg.org included, receives none.
+func TestReadPullRequestsByHead_Forgejo_TokenOnlyToDeclaredOrAllowlistedHost(t *testing.T) {
+	t.Setenv("FORGEJO_TOKEN", "secret-forgejo-token")
+	ctx, lastAuth := forgejoAuthProbe(t)
+	cases := []struct {
+		name, host string
+		declared   []string
+		want       string
+	}{
+		{name: "undeclared host matching the pattern", host: "forgejo.attacker.com", want: ""},
+		{name: "declared host", host: "forgejo.example.org", declared: []string{"forgejo.example.org"}, want: "token secret-forgejo-token"},
+		{name: "undeclared codeberg.org", host: "codeberg.org", want: ""},
 	}
-	mu.Lock()
-	gotAuth := lastAuth
-	mu.Unlock()
-	if gotAuth != "" {
-		t.Fatalf("undeclared host matching pattern received auth header %q, want none", gotAuth)
-	}
-
-	// Planted positive: declared host receives token.
-	declaredRemote := util.GitRemote{Host: "forgejo.example.org", Owner: "acme", Repo: "widgets"}
-	if _, err := ReadPullRequestsByHead(ctx, config.ForgeForgejo, declaredRemote, "topic", "forgejo.example.org"); err != nil {
-		t.Fatalf("declared host lookup: %v", err)
-	}
-	mu.Lock()
-	gotDeclaredAuth := lastAuth
-	mu.Unlock()
-	if gotDeclaredAuth != "token secret-forgejo-token" {
-		t.Fatalf("declared host received auth header %q, want %q", gotDeclaredAuth, "token secret-forgejo-token")
-	}
-
-	// Planted negative: codeberg.org is trusted by no name; undeclared, it gets no token.
-	codebergRemote := util.GitRemote{Host: "codeberg.org", Owner: "acme", Repo: "widgets"}
-	if _, err := ReadPullRequestsByHead(ctx, config.ForgeForgejo, codebergRemote, "topic"); err != nil {
-		t.Fatalf("undeclared codeberg lookup: %v", err)
-	}
-	mu.Lock()
-	gotCodebergAuth := lastAuth
-	mu.Unlock()
-	if gotCodebergAuth != "" {
-		t.Fatalf("undeclared codeberg.org received auth header %q, want none", gotCodebergAuth)
+	for _, tc := range cases {
+		remote := util.GitRemote{Host: tc.host, Owner: "acme", Repo: "widgets"}
+		if _, err := ReadPullRequestsByHead(ctx, config.ForgeForgejo, remote, "topic", tc.declared...); err != nil {
+			t.Fatalf("%s: lookup: %v", tc.name, err)
+		}
+		if got := lastAuth(); got != tc.want {
+			t.Fatalf("%s: auth header %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 
