@@ -1151,6 +1151,20 @@ print("fixture hook self-tests passed")
             run_cli.assert_not_called()
             self.assertIn("Refactor check: skipped, no pushed-range base", out.getvalue())
 
+    def test_docstring_range_uses_exact_base_or_skips_without_one(self):
+        """Verify check_docstring_range runs with an exact base and skips when absent."""
+        with mock.patch("hooks.cli") as run_cli:
+            hooks.check_docstring_range("base-sha", "head-sha")
+        run_cli.assert_called_once_with([
+            "docstrings", "check", "--base=base-sha", "--head=head-sha",
+        ])
+        for base in (None, ""):
+            with self.subTest(base=base), mock.patch("hooks.cli") as run_cli, \
+                    mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                hooks.check_docstring_range(base, "head-sha")
+            run_cli.assert_not_called()
+            self.assertIn("Docstring check: skipped, no pushed-range base", out.getvalue())
+
     def test_real_push_initial_docs_update_new_branch_and_deletion(self):
         remote = Path(self.temp.name) / "remote.git"
         command(self.repo, "git", "init", "--bare", "-q", str(remote))
@@ -1179,6 +1193,7 @@ print("fixture hook self-tests passed")
         self.assertNotEqual(self.hook("pre-push", "origin", data=b"broken\n").returncode, 0)
 
     def test_push_passes_actual_base_to_snapshot_audit(self):
+        """Verify pre_push forwards the resolved base revision to snapshot and range checks."""
         base = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
         self.write("README.md", "# Range audit\n")
         command(self.repo, "git", "commit", "-q", "-s", "-m", "docs: test pushed range")
@@ -1192,15 +1207,18 @@ print("fixture hook self-tests passed")
             with mock.patch.dict(os.environ, AUTOCRLF_ENV), \
                     mock.patch("hooks.sys.stdin", io.StringIO(protocol)), \
                     mock.patch("hooks.source_checks", return_value=False) as check, \
-                    mock.patch("hooks.check_refactor_range") as refactors:
+                    mock.patch("hooks.check_refactor_range") as refactors, \
+                    mock.patch("hooks.check_docstring_range") as docstrings:
                 pre_push("origin")
                 self.assertEqual(check.call_args.kwargs, {"base": base})
                 self.assertEqual(check.call_args.args[1], ["README.md"])
                 refactors.assert_called_once_with(base, head)
+                docstrings.assert_called_once_with(base, head)
             with mock.patch.dict(os.environ, AUTOCRLF_ENV), \
                     mock.patch("hooks.sys.stdin", io.StringIO(protocol.replace(base, "f" * 40))), \
                     mock.patch("hooks.source_checks", return_value=False) as check, \
-                    mock.patch("hooks.check_refactor_range"):
+                    mock.patch("hooks.check_refactor_range"), \
+                    mock.patch("hooks.check_docstring_range"):
                 pre_push("origin")
                 self.assertIsNone(check.call_args.kwargs["base"])
                 self.assertIn("lefthook.yml", check.call_args.args[1])
@@ -1248,6 +1266,7 @@ print("fixture hook self-tests passed")
         self.assertFalse((self.repo / ".standards-receipt.json").exists())
 
     def test_push_destination_controls_mode_and_mixed_refs_still_run_strict_checks(self):
+        """Verify pre_push selects checkpoint or strict mode from the destination ref."""
         base = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
         self.write("README.md", "# Checkpoint routing\n")
         command(self.repo, "git", "commit", "-q", "-s", "-m", "docs: test destination policy")
@@ -1260,6 +1279,7 @@ print("fixture hook self-tests passed")
             # Only the destination determines policy; the local branch is irrelevant.
             with mock.patch("hooks.sys.stdin", io.StringIO(strict)), \
                     mock.patch("hooks.check_refactor_range"), \
+                    mock.patch("hooks.check_docstring_range"), \
                     mock.patch("hooks.checkpoint_checks") as wip, \
                     mock.patch("hooks.source_checks", return_value=False) as full:
                 pre_push("origin")
@@ -1271,6 +1291,7 @@ print("fixture hook self-tests passed")
                 with self.subTest(protocol=protocol), \
                         mock.patch("hooks.sys.stdin", io.StringIO(protocol)), \
                         mock.patch("hooks.check_refactor_range"), \
+                        mock.patch("hooks.check_docstring_range"), \
                         mock.patch("hooks.source_checks", side_effect=HookError("strict release rejected")) as full:
                     with self.assertRaisesRegex(HookError, "strict release rejected"):
                         pre_push("origin")
@@ -1278,6 +1299,7 @@ print("fixture hook self-tests passed")
             # File checks are mandatory before either mode's source checks.
             with mock.patch("hooks.sys.stdin", io.StringIO(checkpoint)), \
                     mock.patch("hooks.check_refactor_range"), \
+                    mock.patch("hooks.check_docstring_range"), \
                     mock.patch("hooks.file_checks", side_effect=HookError("invalid snapshot syntax")), \
                     mock.patch("hooks.checkpoint_checks") as wip:
                 with self.assertRaisesRegex(HookError, "invalid snapshot syntax"):

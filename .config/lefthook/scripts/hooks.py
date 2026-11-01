@@ -148,6 +148,7 @@ def push_check_mode(destination):
 
 
 def pre_push(remote):
+    """Verify pushed ref updates before Git sends them to remote."""
     guard()
     updates = push_updates(sys.stdin.read())
     if updates:
@@ -178,6 +179,7 @@ def pre_push(remote):
         print(f"Push scope: {len(names)} file(s) versus "
               f"{base[:12] if base else 'the full tree'}")
         check_refactor_range(base, head)
+        check_docstring_range(base, head)
         if not names:
             continue
         check_pushed_snapshot(head, base, mode, names)
@@ -198,6 +200,19 @@ def check_refactor_range(base, head):
         print("Refactor check: skipped, no pushed-range base; CI checks pull request range")
         return
     cli(["forge", "refactor-check", f"--base={base}", f"--head={head}"])
+
+
+def check_docstring_range(base, head):
+    """Run the diff-scoped docstring coverage check over the exact outgoing commit range.
+
+    Without a pushed-range base the range would be the whole history, whose old functions
+    this push did not touch, so the check is skipped with that reason; CI checks the pull
+    request range against its base either way.
+    """
+    if not base:
+        print("Docstring check: skipped, no pushed-range base; CI checks pull request range")
+        return
+    cli(["docstrings", "check", f"--base={base}", f"--head={head}"])
 
 
 def check_commits(base):

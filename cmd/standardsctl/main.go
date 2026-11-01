@@ -96,7 +96,8 @@ func printCoreCommands() {
 	fmt.Println("  devcontainer       Synthesize, verify, bump the reviewed images of, or check the bundle freshness of .devcontainer/devcontainer.json")
 	fmt.Println("  flavor             Inspect, audit, and scaffold engineering flavors (11 archetypes)")
 	fmt.Println("  flavors            Plan or sync moving version flavor tags (bleeding, latest, lts)")
-	fmt.Println("  docs               Harvest, compress, and audit package documentation sheets")
+	fmt.Print("  docs               Harvest, compress, and audit package documentation sheets\n" +
+		"  docstrings         Check diff-scoped docstring coverage against .coderabbit.yaml\n")
 	fmt.Println("  hindsight          Manage local zero-token memory cache and sync with Hindsight server")
 	fmt.Println("  state              Manage .workingdir/ session state, bugs ledger, and questions")
 	fmt.Println("  exceptions         List or inspect declared exceptions")
@@ -253,6 +254,7 @@ func coreCommandTable() map[string]commandFunc {
 		"flavor":                   runFlavor,
 		"flavors":                  runFlavors,
 		"docs":                     runDocs,
+		"docstrings":               runDocstrings,
 		"hindsight":                runHindsight,
 		"state":                    runState,
 		"exceptions":               runExceptions,

@@ -234,7 +234,7 @@ func lefthookPreCommitJobs(languages hisscatalog.Language) string {
 }
 
 // lefthookPrePushJobs renders the pre-push jobs of languages: the Go vulnerability gate for Go
-// (govulnGateArgs) and the HISS-12 secrets scan for every language (order engine-hiss-unenforced-checks-20261027).
+// (govulnGateArgs), the HISS-12 secrets scan, and the diff-scoped docstring coverage check for every language.
 func lefthookPrePushJobs(shape lefthookShape) string {
 	jobs := ""
 	if shape.languages&hisscatalog.LanguageGo != 0 {
@@ -247,7 +247,8 @@ func lefthookPrePushJobs(shape lefthookShape) string {
 		jobs += "    security:\n" + lefthookRun(command)
 	}
 	secretsCmd := requiredToolGuard("gitleaks", gitleaksInstallHint, lefthookGovernedCommand("security secrets"))
-	return jobs + "    secrets:\n" + lefthookRun(secretsCmd)
+	docstringsCmd := lefthookGovernedCommand("docstrings check")
+	return jobs + "    secrets:\n" + lefthookRun(secretsCmd) + "    docstrings:\n" + lefthookRun(docstringsCmd)
 }
 
 // reuseLintCommand renders the run line of the reuse-lint job: reuse lint at the release line
