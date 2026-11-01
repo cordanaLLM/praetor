@@ -398,6 +398,8 @@ func TestAdmission_GitPushHead_Planted_MergedAndClosedRefused(t *testing.T) {
 	for _, cmd := range []string{
 		"PRAETOR_ADMIT=git-push git push -u origin merged-topic",
 		"praetorctl admit --label git-push -- git push -u origin merged-topic",
+		"PRAETOR_ADMIT=git-push git push --tags origin merged-topic",
+		"PRAETOR_ADMIT=git-push git push origin tag v1 merged-topic",
 	} {
 		requireDeniedContaining(t, cmd, policy.Command(cmd), "#42", "MERGED", "push to a new branch")
 	}
@@ -468,6 +470,7 @@ func TestAdmission_GitPushHead_Planted_DeleteAndTagPushesNotJudged(t *testing.T)
 		"praetorctl admit --label git-push -- git push --delete origin merged-topic",
 		"praetorctl admit --label git-push -- git push origin :merged-topic",
 		"PRAETOR_ADMIT=git-push git push --tags origin",
+		"PRAETOR_ADMIT=git-push git push origin tag v1",
 		"PRAETOR_ADMIT=git-push git push origin tag v1.2.3",
 		"PRAETOR_ADMIT=git-push git push origin refs/tags/v1.2.3",
 		"PRAETOR_ADMIT=git-push git push origin HEAD:refs/tags/v1.2.3",

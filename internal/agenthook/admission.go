@@ -483,6 +483,8 @@ type pushCommandSpec struct {
 	remote      string
 	refspecs    []string
 	allBranches bool
+	tags        bool
+	delete      bool
 	skip        bool
 }
 
@@ -611,7 +613,12 @@ func parsePushOption(pushArgs []string, i int, spec *pushCommandSpec) (int, erro
 		spec.allBranches = true
 		return i, nil
 	}
-	if isDeleteOrTagFlag(arg) {
+	if arg == "--tags" {
+		spec.tags = true
+		return i, nil
+	}
+	if isDeleteFlag(arg) {
+		spec.delete = true
 		spec.skip = true
 		return i, nil
 	}
@@ -641,9 +648,9 @@ func parsePushValueOption(pushArgs []string, i int, spec *pushCommandSpec) (int,
 	return i, nil
 }
 
-// isDeleteOrTagFlag reports whether a command-line flag denotes a tag or delete push.
-func isDeleteOrTagFlag(arg string) bool {
-	if arg == "-d" || arg == "--delete" || arg == "--tags" {
+// isDeleteFlag reports whether a command-line flag denotes a delete push.
+func isDeleteFlag(arg string) bool {
+	if arg == "-d" || arg == "--delete" {
 		return true
 	}
 	if strings.HasPrefix(arg, "--") || strings.HasPrefix(arg, "-o") {
@@ -659,7 +666,7 @@ func pushFlagTakesValue(arg string) bool {
 
 // finalizePushCommand derives the remote and refspecs from positional arguments and flags.
 func finalizePushCommand(spec *pushCommandSpec, positionals []string) error {
-	if spec.allBranches && spec.skip {
+	if spec.allBranches && (spec.delete || spec.tags) {
 		return errors.New("git push --all cannot be combined with --delete or --tags")
 	}
 	if spec.skip {
@@ -669,18 +676,36 @@ func finalizePushCommand(spec *pushCommandSpec, positionals []string) error {
 		return finalizeAllBranchesPush(spec, positionals)
 	}
 	if len(positionals) == 0 {
+		if spec.tags {
+			spec.skip = true
+		}
 		return nil
 	}
 	spec.remote = positionals[0]
-	if len(positionals) == 1 {
-		return nil
-	}
-	if positionals[1] == "tag" {
+	refspecs, droppedTag := dropTagRefspecs(positionals[1:])
+	if len(refspecs) == 0 && (spec.tags || droppedTag) {
 		spec.skip = true
 		return nil
 	}
-	spec.refspecs = positionals[1:]
+	spec.refspecs = refspecs
 	return nil
+}
+
+// dropTagRefspecs drops each "tag <name>" pair from args and reports whether any tag pair was dropped.
+func dropTagRefspecs(args []string) ([]string, bool) {
+	var (
+		refspecs []string
+		dropped  bool
+	)
+	for i := 0; i < len(args) && i < admissionMaxWords; i++ {
+		if args[i] == "tag" && i+1 < len(args) {
+			dropped = true
+			i++
+			continue
+		}
+		refspecs = append(refspecs, args[i])
+	}
+	return refspecs, dropped
 }
 
 // finalizeAllBranchesPush validates positional arguments for a `git push --all` invocation.
