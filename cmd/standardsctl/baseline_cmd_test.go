@@ -593,6 +593,68 @@ func TestBaselineRecordImageRefs_3D(t *testing.T) {
 	}
 }
 
+func TestBaselineRecordImageRefs_ManifestError_3D(t *testing.T) {
+	cases := []struct {
+		name     string
+		setup    func(t *testing.T, dir string)
+		wantText string
+	}{
+		{
+			name: "invalid manifest syntax",
+			setup: func(t *testing.T, dir string) {
+				writeFixtureFile(t, dir, ".standards.yaml", "exceptions: [unclosed\n")
+			},
+			wantText: ".standards.yaml",
+		},
+		{
+			name: "unreadable manifest file",
+			setup: func(t *testing.T, dir string) {
+				p := writeFixtureFile(t, dir, ".standards.yaml", "exceptions: []\n")
+				if err := os.Chmod(p, 0000); err != nil {
+					t.Skipf("cannot chmod 0000: %v", err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(p, 0644) })
+			},
+			wantText: ".standards.yaml",
+		},
+		{
+			name: "directory as manifest",
+			setup: func(t *testing.T, dir string) {
+				p := filepath.Join(dir, ".standards.yaml")
+				_ = os.Remove(p)
+				if err := os.Mkdir(p, 0755); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.RemoveAll(p) })
+			},
+			wantText: ".standards.yaml",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAuditFixture(t)
+			writeFixtureFile(t, f.dir, "Dockerfile", "FROM golang:1.27-alpine\n")
+			gitCommitAll(t, f.dir, f.gitEnv, "unpinned dockerfile")
+			_ = os.Remove(f.baselinePath)
+
+			tc.setup(t, f.dir)
+
+			out, err := runBaselineCmd(t, f, "--record-image-refs", "--allow-increase", "--reason=legacy image tag")
+			if err == nil {
+				t.Fatalf("expected baseline record to fail on manifest error, got success with out:\n%s", out)
+			}
+			errStr := err.Error() + "\n" + out
+			if !strings.Contains(errStr, tc.wantText) {
+				t.Fatalf("error %q does not name manifest %q", errStr, tc.wantText)
+			}
+			if _, statErr := os.Stat(f.baselinePath); !os.IsNotExist(statErr) {
+				t.Fatalf("expected no baseline file written at %s, but file exists: %v", f.baselinePath, statErr)
+			}
+		})
+	}
+}
+
 // Order engine-hiss-unenforced-checks-20261027: baseline --record retains entries for rules
 // owned by another scanner (HISS-12), carrying them over into the new baseline snapshot.
 func TestBaselineRecord_PreservesHISS12Entries(t *testing.T) {

@@ -104,8 +104,12 @@ func recordImageRefBaselineCmd(path string, allowIncrease bool, reason string) e
 	if err != nil {
 		return fmt.Errorf("refusing to record %s: %w", path, err)
 	}
+	manifest, err := config.LoadManifest(filepath.Join(root, config.ManifestFileName))
+	if err != nil {
+		return fmt.Errorf("refusing to record %s: %w", path, err)
+	}
 	var exceptions []config.Exception
-	if manifest, err := config.LoadManifest(filepath.Join(root, ".standards.yaml")); err == nil && manifest != nil {
+	if manifest != nil {
 		exceptions = manifest.Exceptions
 	}
 	res, err := supplychain.RecordImageRefBaseline(ctx, supplychain.ImageBaselineRecordOptions{
