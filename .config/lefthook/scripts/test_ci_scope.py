@@ -257,6 +257,29 @@ BASH = shutil.which("bash")
 MAX_WORKFLOW_LINES = 2048
 
 
+# An in-process shell stub exercises the actual workflow command text, including its array
+# handling and all four runs, without installing tools or running suites.
+GO_STUB = r"""go() {
+          printf '%s\n' "$*" >> "$RUNNER_TEMP/calls"
+          case "$1" in
+            list)
+              shift
+              case "$1" in
+                ./internal/adopt) echo example.test/scope/internal/adopt ;;
+                ./cmd/standardsctl) echo example.test/scope/cmd/standardsctl ;;
+                -f) shift 2; for package in "$@"; do
+                      if [ "$package" != example.test/scope/only ]; then echo "$package"; fi
+                    done ;;
+                *) printf '%s\n' "$@" ;;
+              esac ;;
+            test)
+              TEST_COUNT=$(( ${TEST_COUNT:-0} + 1 ))
+              if [ "$FAIL_GO" = true ] || { [ "$FAIL_GO" = first ] && [ "$TEST_COUNT" -eq 1 ]; }; then return 9; fi ;;
+          esac
+        }
+        """
+
+
 @unittest.skipUnless(
     BASH, "no bash on PATH: the workflow's bash steps cannot be replayed on this host"
 )
@@ -319,6 +342,18 @@ class WorkflowCommandsTests(unittest.TestCase):
             env.update(self.env_block(section, indent))
         return env
 
+    def run_env(self, root, setup_step, step, fixture):
+        """Return one step run's env: workflow, job, step, then runner and fixture values."""
+        return {
+            **clean_env(),
+            **(self.workflow_env(setup_step) if setup_step else {}),
+            **self.workflow_env(step),
+            "RUNNER_TEMP": root.as_posix(),
+            "RUNNER_OS": "fixture",
+            "PYTHON": sys.executable,
+            **fixture,
+        }
+
     def execute(
         self,
         temp,
@@ -335,45 +370,14 @@ class WorkflowCommandsTests(unittest.TestCase):
         (root / "portability-packages.txt").write_text(
             "".join(p + "\n" for p in packages), encoding="utf-8", newline="\n"
         )
-        # An in-process shell stub exercises the actual workflow command text, including
-        # its array handling and all four runs, without installing tools or running suites.
-        stub = r"""go() {
-          printf '%s\n' "$*" >> "$RUNNER_TEMP/calls"
-          case "$1" in
-            list)
-              shift
-              case "$1" in
-                ./internal/adopt) echo example.test/scope/internal/adopt ;;
-                ./cmd/standardsctl) echo example.test/scope/cmd/standardsctl ;;
-                -f) shift 2; for package in "$@"; do
-                      if [ "$package" != example.test/scope/only ]; then echo "$package"; fi
-                    done ;;
-                *) printf '%s\n' "$@" ;;
-              esac ;;
-            test)
-              TEST_COUNT=$(( ${TEST_COUNT:-0} + 1 ))
-              if [ "$FAIL_GO" = true ] || { [ "$FAIL_GO" = first ] && [ "$TEST_COUNT" -eq 1 ]; }; then return 9; fi ;;
-          esac
-        }
-        """
         setup_step = (
             "Select Buildable Go Packages"
             if step in {"Compile Every Package", "Vet Every Package"}
             else ""
         )
         setup = self.step(setup_step) if setup_step else ""
-        run_env = {
-            **clean_env(),
-            **(self.workflow_env(setup_step) if setup_step else {}),
-            **self.workflow_env(step),
-            "RUNNER_TEMP": root.as_posix(),
-            "RUNNER_OS": "fixture",
-            "PYTHON": sys.executable,
-            "ADOPT": adopt,
-            "CLI": cli,
-            "FAIL_GO": fail,
-            **(env or {}),
-        }
+        fixture = {"ADOPT": adopt, "CLI": cli, "FAIL_GO": fail, **(env or {})}
+        run_env = self.run_env(root, setup_step, step, fixture)
         output = run(
             [
                 BASH,
@@ -381,7 +385,7 @@ class WorkflowCommandsTests(unittest.TestCase):
                 "-o",
                 "pipefail",
                 "-c",
-                stub + setup + "\n" + self.step(step),
+                GO_STUB + setup + "\n" + self.step(step),
             ],
             env=run_env,
             timeout=30,
