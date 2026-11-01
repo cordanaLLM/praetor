@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { gzipSync } from 'node:zlib';
 import { evaluate, markdownToHtml, mdxToJs } from 'satteri';
 import figures, {
   MAX_NODES, NAME, RESTART_DELAY_MS, addFigurePlugin, figureBase, figureMounts, figuresDigest, loaderScript, publishFigures,
@@ -356,6 +357,100 @@ test('an adopted integration without player files injects no loader', () => with
     config: { base: '/preset/' }, updateConfig: () => {}, injectScript: (...args) => scripts.push(args),
   });
   assert.deepEqual(scripts, []);
+}));
+
+function buildTarGz(entries) {
+  const blocks = [];
+  for (const { name, body, typeflag = '0' } of entries) {
+    const data = Buffer.from(body);
+    const header = Buffer.alloc(512);
+    header.write(name, 0, 100, 'utf8');
+    header.write('0000644\0', 100, 8, 'ascii');
+    header.write('0000000\0', 108, 8, 'ascii');
+    header.write('0000000\0', 116, 8, 'ascii');
+    header.write(`${data.length.toString(8).padStart(11, '0')}\0`, 124, 12, 'ascii');
+    header.write('00000000000\0', 136, 12, 'ascii');
+    header.write('        ', 148, 8, 'ascii');
+    header[156] = typeflag.charCodeAt(0);
+    header.write('ustar\0', 257, 6, 'ascii');
+    header.write('00', 263, 2, 'ascii');
+    let sum = 0;
+    for (const byte of header) sum += byte;
+    header.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148, 8, 'ascii');
+    blocks.push(header, data, Buffer.alloc((512 - (data.length % 512)) % 512));
+  }
+  blocks.push(Buffer.alloc(1024));
+  return gzipSync(Buffer.concat(blocks));
+}
+
+test('an adopted integration with a released player.lock.json injects the loader and publishes the locked player', () => withTempDir(async (dir) => {
+  const files = ['astro.mjs', 'checks.mjs', 'core.mjs', 'serve.mjs',
+    'third_party/interfig/upstream/src/svg.ts', 'third_party/interfig/upstream/src/geometry.ts',
+    'third_party/interfig/upstream/src/model.ts'];
+  for (const name of files) write(join(dir, 'tools/figures', name), readFileSync(join(ROOT, 'tools/figures', name)));
+  const archive = buildTarGz([
+    { name: 'loader.js', body: '// locked loader\n' },
+    { name: 'player.js', body: '// locked player\n' },
+    { name: 'THIRD-PARTY-LICENSES.txt', body: 'MIT\n' },
+  ]);
+  const lockPath = join(dir, 'tools/figures/player.lock.json');
+  write(lockPath, JSON.stringify({
+    asset: 'figures-player.tar.gz',
+    sha256: sha256(archive),
+    release: 'v1.4.0',
+    repository: 'https://github.com/adopter/praetor-fork',
+  }));
+  const { default: adoptedFigures } = await import(`${pathToFileURL(join(dir, 'tools/figures/astro.mjs')).href}?v=released`);
+  const requested = [];
+  const scripts = [];
+  const integration = adoptedFigures({
+    root: dir,
+    download: async (url) => {
+      requested.push(url);
+      return archive;
+    },
+  });
+  await integration.hooks['astro:config:setup']({
+    config: { base: '/docs/' }, updateConfig: () => {}, injectScript: (...args) => scripts.push(args),
+  });
+  assert.deepEqual(requested, ['https://github.com/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz']);
+  assert.deepEqual(scripts, [['head-inline', loaderScript('/docs/')]]);
+  const site = join(dir, 'dist');
+  await integration.hooks['astro:build:done']({ dir: site, logger: undefined });
+  assert.equal(readFileSync(join(site, 'assets/javascripts/figures/loader.js'), 'utf8'), '// locked loader\n');
+  assert.equal(readFileSync(join(site, 'assets/javascripts/figures/player.js'), 'utf8'), '// locked player\n');
+  assert.equal(readFileSync(join(site, 'assets/javascripts/figures/THIRD-PARTY-LICENSES.txt'), 'utf8'), 'MIT\n');
+  // Boundary: an unreleased lock logs one info message and injects no loader.
+  write(lockPath, JSON.stringify({ asset: 'figures-player.tar.gz', sha256: sha256(archive), release: '' }));
+  const info = [];
+  const unreleasedScripts = [];
+  await adoptedFigures({ root: dir }).hooks['astro:config:setup']({
+    config: { base: '/docs/' }, updateConfig: () => {}, injectScript: (...args) => unreleasedScripts.push(args),
+    logger: { info: (line) => info.push(line) },
+  });
+  assert.deepEqual(unreleasedScripts, []);
+  assert.equal(info.length, 1);
+  assert.match(info[0], /unreleased/);
+  // Negative: an untrusted repository host or SHA-256 mismatch is refused.
+  write(lockPath, JSON.stringify({
+    asset: 'figures-player.tar.gz',
+    sha256: sha256(archive),
+    release: 'v1.4.0',
+    repository: 'https://evil.example/adopter/praetor-fork',
+  }));
+  await assert.rejects(
+    async () => adoptedFigures({ root: dir, download: async () => archive }).hooks['astro:config:setup']({
+      config: {}, updateConfig: () => {}, injectScript: () => {},
+    }),
+    /https:\/\/github\.com only/,
+  );
+  write(lockPath, JSON.stringify({ asset: 'figures-player.tar.gz', sha256: '0'.repeat(64), release: 'v1.4.0' }));
+  await assert.rejects(
+    async () => adoptedFigures({ root: dir, download: async () => archive }).hooks['astro:config:setup']({
+      config: {}, updateConfig: () => {}, injectScript: () => {},
+    }),
+    /SHA-256 mismatch/,
+  );
 }));
 
 test('config setup adds the remark plugin and the head loader for the site\'s base', () => withTempDir((dir) => {

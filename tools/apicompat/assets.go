@@ -176,6 +176,8 @@ var priorDigests = map[string]string{
 	"0be401a70257a7ed289899f211b9f8e6a3b6bf9eede7a56fd02631e9e7638d88": Directory + "/" + GateFile,
 	// The gate before it retried module downloads before comparing API (engine-praetor-api-modfetch-retry-20261022).
 	"b6585e9dad8f57a95c6f2dafa468c70ef531bd42137eba822bd8a5ac3afe00a9": Directory + "/" + GateFile,
+	// The gate before it bounded download retries by the job deadline and skipped test-only requirements.
+	"a7f11ff7dcf942b9f512e40e66461a49c71f85849dc193eb5b8a293ac8e774cd": Directory + "/" + GateFile,
 }
 
 var assetNames = [...]string{GateFile, PlaceholderFile}

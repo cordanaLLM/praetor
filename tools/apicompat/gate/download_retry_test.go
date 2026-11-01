@@ -209,3 +209,92 @@ func TestBuildModule_Boundary_BaseCodeWithoutDownloadRed(t *testing.T) {
 		t.Fatal("base code unexpectedly ran download")
 	}
 }
+
+func writeTestModuleFiles(t *testing.T, dir, gomod, src, testSrc string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"go.mod": gomod, "snap.go": src, "snap_test.go": testSrc} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Positive: test-only go.mod requirements are never prefetched before go list -export.
+func TestBuildModule_Positive_SkipsTestOnlyRequirements(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	fssnapDir := filepath.Join(root, "hw", "fssnap")
+	gomod := "module example.com/hw/fssnap\n\ngo 1.26.0\n\nrequire github.com/stretchr/testify v1.9.0\n"
+	src := "package fssnap\n\nimport \"fmt\"\n\nfunc Name() string { return fmt.Sprint(\"ok\") }\n"
+	testSrc := "package fssnap\n\nimport _ \"github.com/stretchr/testify/assert\"\n"
+	writeTestModuleFiles(t, fssnapDir, gomod, src, testSrc)
+
+	var downloadCalls [][]string
+	var lists int
+	failDownload := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+		if slices.Equal(args[:min(len(args), 2)], []string{"mod", "download"}) {
+			downloadCalls = append(downloadCalls, slices.Clone(args))
+			return errors.New("testify proxy unavailable")
+		}
+		lists++
+		return nil
+	}
+	if err := buildModule(t.Context(), root, "hw/fssnap", io.Discard, failDownload, defaultWait); err != nil {
+		t.Fatalf("buildModule failed on test-only requirement: %v", err)
+	}
+	if len(downloadCalls) != 0 || lists != 1 {
+		t.Fatalf("downloadCalls = %v, lists = %d; want no download calls and 1 list", downloadCalls, lists)
+	}
+
+	mixedGomod := "module example.com/hw/fssnap\n\ngo 1.26.0\n\nrequire (\n\texample.com/needed v1.2.3\n\tgithub.com/stretchr/testify v1.9.0\n)\n"
+	writeTestModuleFiles(t, fssnapDir, mixedGomod, "package fssnap\n\nimport _ \"example.com/needed/sub\"\n", testSrc)
+	recordDownload := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+		if slices.Equal(args[:min(len(args), 2)], []string{"mod", "download"}) {
+			downloadCalls = append(downloadCalls, slices.Clone(args))
+		}
+		return nil
+	}
+	if err := buildModule(t.Context(), root, "hw/fssnap", io.Discard, recordDownload, defaultWait); err != nil {
+		t.Fatalf("buildModule failed on mixed requirements: %v", err)
+	}
+	wantArgs := []string{"mod", "download", "example.com/needed@v1.2.3"}
+	if len(downloadCalls) != 1 || !slices.Equal(downloadCalls[0], wantArgs) {
+		t.Fatalf("downloadCalls = %v, want [%v]", downloadCalls, wantArgs)
+	}
+}
+
+// Boundary: download retries stay within the 60-minute CI job and divide remaining context budget.
+func TestBuildModule_Boundary_RetryLoopBoundedByJobAndContextDeadline(t *testing.T) {
+	t.Parallel()
+	const ciJobTimeout = 60 * time.Minute
+	if runTimeout >= ciJobTimeout {
+		t.Errorf("runTimeout = %v, must be less than %v CI job limit", runTimeout, ciJobTimeout)
+	}
+	maxRetrySpan := downloadAttempts*downloadTimeout + firstBackoff + secondBackoff
+	if maxRetrySpan >= ciJobTimeout {
+		t.Errorf("three stalled download attempts can take %v, exceeding %v CI job limit", maxRetrySpan, ciJobTimeout)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
+	defer cancel()
+	var attempts int
+	stalledRunner := func(runCtx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+		if len(args) >= 2 && args[0] == "mod" && args[1] == "download" {
+			attempts++
+			<-runCtx.Done()
+			return runCtx.Err()
+		}
+		return nil
+	}
+	ctxWait := func(waitCtx context.Context, _ time.Duration) error { return waitCtx.Err() }
+	err := buildModule(ctx, "/mock/root", "stalled/mod", io.Discard, stalledRunner, ctxWait)
+	if err == nil || !strings.Contains(err.Error(), "3 attempts") {
+		t.Fatalf("err = %v, want 3-attempt download error before job deadline", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want all 3 attempts bounded within context deadline", attempts)
+	}
+}

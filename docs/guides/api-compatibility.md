@@ -245,12 +245,16 @@ binary you built.
    `example.com/w/v2` passes from v1 on. Any other change of the module path is compared, and the
    checker reads every package of the earlier path as removed (`isNewMajor`;
    `TestGate_Positive_InPlaceMajorVersionIsANewModule`, `TestGate_Boundary_MajorVersionSuffixes`).
-4. **Comparison.** For each compared module the gate first downloads the module's dependencies
-   (`go mod download` in its directory, up to 3 attempts with 5 s and 15 s waits, each failed attempt
-   named on stderr), so one proxy stream error does not read as a module that does not build; a
-   download that fails all 3 attempts stops the run with status 2, and no `api-compatibility`
-   exception excuses it (`TestBuildModule_Positive_FirstDownloadFailsThenSucceeds`,
+4. **Comparison.** For each compared module the gate first downloads the module's non-test build
+   dependencies (`go mod download` in its directory, skipping test-only `go.mod` requirements not
+   imported by the module's non-test packages, up to 3 attempts bounded by a 5-minute per-attempt
+   timeout and the remaining run deadline with 5 s and 15 s waits, each failed attempt named on
+   stderr), so one proxy stream error does not read as a module that does not build; a download
+   that fails all 3 attempts stops the run with status 2, and no `api-compatibility` exception
+   excuses it (`TestBuildModule_Positive_FirstDownloadFailsThenSucceeds`,
+   `TestBuildModule_Positive_SkipsTestOnlyRequirements`,
    `TestBuildModule_Negative_EveryDownloadFails`,
+   `TestBuildModule_Boundary_RetryLoopBoundedByJobAndContextDeadline`,
    `TestGate_Negative_ExceptionForModulePlusDownloadFailureStillFailsGate` in
    `tools/apicompat/gate/download_retry_test.go`). It then runs `go list -export ./...` at `HEAD`, so a
    module whose packages do not build fails instead of reading as empty (unless a live

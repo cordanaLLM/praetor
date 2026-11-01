@@ -187,6 +187,11 @@ var priorDigests = map[string]string{
 	"bf2646129a0c5923daad5b36fdae6b0d7abd7748e6150a2b846a0f51d09fe0c8": Directory + "/mkdocs_hook.py",
 	// VENDOR.md while lines 33, 123, 128, 135 still named the engine-only player directory and bundle step.
 	"89e498132bbf2b9ec15d91b8043395dfe02c352580b89affe8b4a3d7fe13f454": Directory + "/third_party/interfig/VENDOR.md",
+	// Assets before the release host check, Astro locked-player fetch and unreleased-pin docs.
+	"9387798626f5e7ee522be147d140bbc14a6d42ada1cdc7d49ba719ad58447f20": Directory + "/mkdocs_hook.py",
+	"8db774ed65d587aefeffdae6d2bcc227d9bd3c7a61d01f51bd1580dd1445cdde": Directory + "/astro.mjs",
+	"00a60626eb2d7e232a3aeb831f854ca4f97393570ba6fca07220c1c78930da5f": Directory + "/checks.mjs",
+	"8aa976bb6c60cb167e100b5256002559d86373951d0f6d9435b9750a6bf64ec7": Directory + "/README.md",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts figures.css mkdocs_hook.py astro.mjs serve.mjs eslint.figures.mjs README.md

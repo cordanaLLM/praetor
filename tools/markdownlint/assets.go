@@ -241,6 +241,8 @@ var priorDigests = map[string]string{
 	// package.json and package-lock.json on katex 0.19.0, before the katex 0.19.1 update (#801).
 	"3a0e0be3e0e217bd4aef508347d5fbe1ed89e65c3668a6da761af256c24bd107": Directory + "/package.json",
 	"ff8d70bc3eda4814a2fd5a90b9e56720068f27a1fcfa082117da7f62d0f2c1b6": Directory + "/package-lock.json",
+	// verify.mjs before changedPathsSince used git diff -z and kept deleted paths.
+	"9c1f237ab6c0103e9c1ec4825f2dcce5270cb11d1deb603672c3c1da40e7b6cc": Directory + "/verify.mjs",
 }
 
 var assetNames = [...]string{

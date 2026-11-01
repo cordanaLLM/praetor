@@ -583,6 +583,64 @@ class Hook(unittest.TestCase):
                 "http://example.test/figures-player.tar.gz"
             )
 
+    def test_lock_release_url_restricts_host_and_path_segments(self):
+        self.assertEqual(
+            mkdocs_hook.release_archive_url(
+                {"repository": "https://github.com/adopter/praetor-fork/"},
+                "v1.4.0",
+                "figures-player.tar.gz",
+            ),
+            "https://github.com/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz",
+        )
+        bad_repositories = [
+            "https://evil.example/adopter/praetor-fork",
+            "https://github.com.evil.example/adopter/praetor-fork",
+            "https://github.com/adopter",
+            "https://github.com/adopter/praetor-fork/extra",
+            "adopter",
+            "adopter/praetor-fork/extra",
+            "adopter/..",
+            "../praetor-fork",
+            "adopter/praetor-fork?x=1",
+            "adopter/praetor-fork#frag",
+        ]
+        for repository in bad_repositories:
+            with (
+                self.subTest(repository=repository),
+                self.assertRaises(mkdocs_hook.CheckError),
+            ):
+                mkdocs_hook.release_archive_url(
+                    {"repository": repository},
+                    "v1.4.0",
+                    "figures-player.tar.gz",
+                )
+        bad_segments = [
+            "",
+            ".",
+            "..",
+            "../v1.4.0",
+            "v1.4.0/extra",
+            "v1.4.0\\extra",
+            "v1.4.0?x=1",
+            "v1.4.0#frag",
+            "v1.4.0 space",
+        ]
+        for segment in bad_segments:
+            with (
+                self.subTest(release=segment),
+                self.assertRaises(mkdocs_hook.CheckError),
+            ):
+                mkdocs_hook.release_archive_url({}, segment, "figures-player.tar.gz")
+            with (
+                self.subTest(asset=segment),
+                self.assertRaises(mkdocs_hook.CheckError),
+            ):
+                mkdocs_hook.release_archive_url({}, "v1.4.0", segment)
+        with self.assertRaises(mkdocs_hook.CheckError):
+            mkdocs_hook.download_player_archive(
+                "https://evil.example/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz"
+            )
+
     @staticmethod
     def fake_response(payload: bytes):
         class FakeResponse(io.BytesIO):

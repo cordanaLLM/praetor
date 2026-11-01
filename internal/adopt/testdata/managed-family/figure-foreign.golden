@@ -23,7 +23,7 @@ action create .gitattributes :: Created the managed attribute block that keeps t
 file tools/figures/build.mjs sha256:e4efaac427bc5ea716b2871c3e7f84366c8954a29e6d71e73a696753b592dfbd
 file tools/figures/player.lock.json sha256:49a6183f22f233769a39c7b500d508f07ed2c7231c264f6f459dc25de77507ad
 file tools/figures/third_party/interfig/upstream/LICENSE sha256:01fde0bedf83bdc185065d7af524a61690efe576a67f922eaff3a1280c17b63a
-file tools/figures/README.md sha256:8aa976bb6c60cb167e100b5256002559d86373951d0f6d9435b9750a6bf64ec7
+file tools/figures/README.md sha256:2fc7cf35293505b09e409a37b470c4ac1d5307ec5efcab6b454b5a8a50078d1b
 file .gitattributes "# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/Dockerfile.praetor text eol=lf\ntools/figures/** text eol=lf\ndocs/figures/*.ts text eol=lf\ndocs/assets/figures/* text eol=lf\ntools/figures/third_party/interfig/upstream/** -text\n# END praetor managed attributes\n"
 == disable over a drifted figure asset
 action remove tools/figures/build.mjs :: Removed canonical documentation asset because docs:seo-portal is disabled

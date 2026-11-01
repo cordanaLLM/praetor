@@ -39,15 +39,29 @@
 //
 // Option `root`: the repository root that holds docs/assets/figures/, as a path or a file: URL. By
 // default it is the directory two levels above this file, where build.mjs writes the figures.
-import { dirname, join, resolve } from 'node:path';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gunzipSync } from 'node:zlib';
 import { CheckError, OUT_DIR, ROOT, figureMeta, figureSlug, filesDigest, fillSlots } from './checks.mjs';
-import { FIGURES_URI, PLAYER_URI, basePath, mountFiles, publish, staticHandler } from './serve.mjs';
+import { sha256 } from './core.mjs';
+import { FIGURES_URI, PLAYER_URI, basePath, mountFiles, publish, staticHandler, statOrNull } from './serve.mjs';
 
 export const NAME = 'praetor-figures';
 /** The committed player files beside this module, as the MkDocs hook reads them beside itself. */
 const PLAYER_DIR = fileURLToPath(new URL('./player', import.meta.url));
+const LOCK_FILE = fileURLToPath(new URL('./player.lock.json', import.meta.url));
 const LOADER_URI = `${PLAYER_URI}/loader.js`;
+const PLAYER_ARCHIVE = 'figures-player.tar.gz';
+const CANONICAL_REPOSITORY = 'lusoris/praetor';
+const TRUSTED_RELEASE_ORIGIN = 'https://github.com';
+const REPOSITORY_SLUG = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const RELEASE_SEGMENT = /^[A-Za-z0-9_.-]+$/;
+const EXPECTED_PLAYER_FILES = Object.freeze(['THIRD-PARTY-LICENSES.txt', 'loader.js', 'player.js']);
+const MAX_ARCHIVE_BYTES = 4 * 1024 * 1024;
+const MAX_PLAYER_FILES = 8;
+const DOWNLOAD_TIMEOUT_MS = 30_000;
 /** Markdown nodes one page may hold before the walk stops (HISS-02). */
 export const MAX_NODES = 200_000;
 /** How long the development server waits after the last figure JSON event before it restarts: one rebuild writes every JSON. */
@@ -232,22 +246,183 @@ export function publishFigures(mounts, dir, logger) {
   return { copied, kept };
 }
 
+const hasPlayerFiles = (dir) => {
+  const files = mountFiles(dir);
+  return ['loader.js', 'player.js'].every((name) => files.includes(name));
+};
+
+const svgFallbackWarning = (release) => `figures: no player archive for release ${release}; rendering static SVG figures without interactivity`;
+
+function resolveLockFile(root) {
+  if (statOrNull(LOCK_FILE)?.isFile() || root === undefined || root === null) return LOCK_FILE;
+  const candidate = join(rootPath(root), 'tools/figures/player.lock.json');
+  return statOrNull(candidate)?.isFile() ? candidate : LOCK_FILE;
+}
+
+function readPlayerLock(lockFile) {
+  let data;
+  try {
+    if (statSync(lockFile).size > MAX_ARCHIVE_BYTES) throw new CheckError(`${lockFile} exceeds ${MAX_ARCHIVE_BYTES} bytes`);
+    data = JSON.parse(readFileSync(lockFile, 'utf8'));
+  } catch (error) {
+    if (error instanceof CheckError) throw error;
+    throw new CheckError(`cannot read ${lockFile}: ${error.message}`, { cause: error });
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new CheckError(`${lockFile} does not hold a JSON object`);
+  return data;
+}
+
+const validPathSegment = (value) => RELEASE_SEGMENT.test(value) && value !== '.' && value !== '..';
+
+function releaseSlug(repository) {
+  if (!repository || repository === CANONICAL_REPOSITORY) return CANONICAL_REPOSITORY;
+  const prefix = `${TRUSTED_RELEASE_ORIGIN}/`;
+  if (repository.startsWith(prefix)) return repository.slice(prefix.length).replace(/^\/+|\/+$/g, '');
+  if (repository.includes('://')) {
+    throw new CheckError(`the player archive is fetched from ${TRUSTED_RELEASE_ORIGIN} only, not ${JSON.stringify(repository)}`);
+  }
+  return repository.replace(/^\/+|\/+$/g, '');
+}
+
+export function releaseArchiveUrl(lock, release, asset) {
+  const repository = String(lock?.repository ?? '').trim();
+  const slug = releaseSlug(repository);
+  if (!REPOSITORY_SLUG.test(slug) || slug.split('/').some((part) => part === '.' || part === '..')) {
+    throw new CheckError(`invalid release repository ${JSON.stringify(repository)}`);
+  }
+  if (!validPathSegment(release)) throw new CheckError(`invalid release tag ${JSON.stringify(release)}`);
+  if (!validPathSegment(asset)) throw new CheckError(`invalid release asset ${JSON.stringify(asset)}`);
+  return `${TRUSTED_RELEASE_ORIGIN}/${slug}/releases/download/${release}/${asset}`;
+}
+
+async function downloadPlayerArchive(url) {
+  if (!url.startsWith(`${TRUSTED_RELEASE_ORIGIN}/`)) {
+    throw new CheckError(`the player archive is fetched from ${TRUSTED_RELEASE_ORIGIN} only, not ${JSON.stringify(url)}`);
+  }
+  const response = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const raw = Buffer.from(await response.arrayBuffer());
+  if (raw.length > MAX_ARCHIVE_BYTES) throw new CheckError(`${url} exceeds ${MAX_ARCHIVE_BYTES} bytes`);
+  return raw;
+}
+
+function verifyArchiveSha256(raw, expected, asset) {
+  const actual = sha256(raw);
+  if (!expected || actual !== expected.toLowerCase()) {
+    throw new CheckError(`${asset} SHA-256 mismatch: lock expects ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+}
+
+function tarString(block, start, length) {
+  const slice = block.subarray(start, start + length);
+  const end = slice.indexOf(0);
+  return (end === -1 ? slice : slice.subarray(0, end)).toString('utf8');
+}
+
+const isUnsafeMemberName = (name) => !name || name === '.' || name === '..' || /[/\\]/.test(name);
+
+function validateArchiveMember(name, typeflag, size, seen) {
+  if (isUnsafeMemberName(name)) throw new CheckError(`unsafe archive member path ${JSON.stringify(name)}`);
+  if (typeflag !== 0 && typeflag !== 0x30) throw new CheckError(`archive member ${JSON.stringify(name)} is not a regular file`);
+  if (!EXPECTED_PLAYER_FILES.includes(name)) throw new CheckError(`unexpected archive member ${JSON.stringify(name)}`);
+  if (seen.has(name)) throw new CheckError(`duplicate archive member ${JSON.stringify(name)}`);
+  if (size > MAX_ARCHIVE_BYTES) throw new CheckError(`archive member ${JSON.stringify(name)} exceeds ${MAX_ARCHIVE_BYTES} bytes`);
+}
+
+function parseTarHeader(header) {
+  const prefix = tarString(header, 345, 155);
+  const rawName = tarString(header, 0, 100);
+  const name = prefix ? `${prefix}/${rawName}` : rawName;
+  const size = Number.parseInt(tarString(header, 124, 12).trim(), 8);
+  if (!Number.isInteger(size) || size < 0) throw new CheckError(`invalid player archive: malformed member ${JSON.stringify(name)}`);
+  return { name, typeflag: header[156], size };
+}
+
+function readTarMembers(tar) {
+  if (tar.length === 0 || tar.length % 512 !== 0) throw new CheckError('invalid player archive: truncated tar stream');
+  const extracted = new Map();
+  let offset = 0;
+  for (let index = 0; offset < tar.length; index++) {
+    const header = tar.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    if (index >= MAX_PLAYER_FILES) throw new CheckError(`archive holds more than ${MAX_PLAYER_FILES} members`);
+    const { name, typeflag, size } = parseTarHeader(header);
+    if (offset + 512 + size > tar.length) throw new CheckError(`invalid player archive: truncated member ${JSON.stringify(name)}`);
+    validateArchiveMember(name, typeflag, size, extracted);
+    extracted.set(name, tar.subarray(offset + 512, offset + 512 + size));
+    offset += 512 + Math.ceil(size / 512) * 512;
+  }
+  return extracted;
+}
+
+export function extractPlayerArchive(raw) {
+  let tar;
+  try {
+    tar = gunzipSync(raw, { maxOutputLength: MAX_ARCHIVE_BYTES * MAX_PLAYER_FILES });
+  } catch (error) {
+    throw new CheckError(`invalid player archive: ${error.message}`, { cause: error });
+  }
+  const extracted = readTarMembers(tar);
+  const names = [...extracted.keys()].sort();
+  if (names.length !== EXPECTED_PLAYER_FILES.length || names.some((name, index) => name !== EXPECTED_PLAYER_FILES[index])) {
+    throw new CheckError(`archive members ${JSON.stringify(names)} do not match ${JSON.stringify(EXPECTED_PLAYER_FILES)}`);
+  }
+  const outDir = mkdtempSync(join(tmpdir(), 'praetor-figures-player-'));
+  process.once('exit', () => rmSync(outDir, { recursive: true, force: true }));
+  for (const [name, data] of extracted) writeFileSync(join(outDir, name), data);
+  return outDir;
+}
+
+function resolveLockedPlayer(mounts, lockFile, logger, download = downloadPlayerArchive) {
+  if (!statOrNull(lockFile)?.isFile()) {
+    logger?.warn(svgFallbackWarning(`unknown (${basename(lockFile)} is missing; praetorctl adopt writes it)`));
+    return null;
+  }
+  const lock = readPlayerLock(lockFile);
+  const release = String(lock.release ?? '').trim();
+  if (!release) {
+    // Log unreleased pins at INFO so strict builds do not fail on a warning.
+    logger?.info(svgFallbackWarning('unreleased'));
+    return null;
+  }
+  const asset = String(lock.asset || PLAYER_ARCHIVE).trim();
+  const url = releaseArchiveUrl(lock, release, asset);
+  return Promise.resolve(download(url)).then(
+    (raw) => {
+      verifyArchiveSha256(raw, String(lock.sha256 ?? '').trim(), asset);
+      mounts[1].dir = extractPlayerArchive(raw);
+      return true;
+    },
+    (error) => {
+      if (error instanceof CheckError) throw error;
+      logger?.warn(svgFallbackWarning(`${release} (${error.message})`));
+      return false;
+    },
+  );
+}
+
 /** The integration: `figures()` in the `integrations` list of astro.config.mjs. */
 export default function figures(options = {}) {
   const mounts = figureMounts(options.root);
+  const lockFile = resolveLockFile(options.root);
   return {
     name: NAME,
     hooks: {
-      'astro:config:setup': ({ config, updateConfig, injectScript }) => {
+      'astro:config:setup': ({ config, updateConfig, injectScript, logger }) => {
         const base = config.base ?? '/';
         const figuresDir = mounts[0].dir;
         const plugin = { figuresDir, base: figureBase(base), digest: figuresDigest(figuresDir) };
         addFigurePlugin(config, updateConfig, plugin);
-        // Adoption carries no bundled player (ADR-0021). With no local player the SVG is final.
-        const playerFiles = mountFiles(PLAYER_DIR);
-        if (['loader.js', 'player.js'].every((name) => playerFiles.includes(name))) {
+        // Adopt trees omit local player/ and resolve the release archive from player.lock.json (ADR-0021).
+        if (hasPlayerFiles(mounts[1].dir)) {
           injectScript('head-inline', loaderScript(base));
+          return undefined;
         }
+        const pending = resolveLockedPlayer(mounts, lockFile, logger, options.download);
+        if (!pending) return undefined;
+        return pending.then((ready) => {
+          if (ready) injectScript('head-inline', loaderScript(base));
+        });
       },
       // Astro's development server cuts the site's base path from a request before an
       // integration's middleware sees it (baseMiddleware in astro/dist/vite-plugin-astro-server/base.js),

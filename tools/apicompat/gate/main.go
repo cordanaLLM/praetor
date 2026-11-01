@@ -134,10 +134,11 @@ const (
 	maxExceptions  = 1024
 	exceptionsDate = "2006-01-02"
 
-	runTimeout     = 3 * time.Hour
-	gitTimeout     = 2 * time.Minute
-	installTimeout = 10 * time.Minute
-	moduleTimeout  = 30 * time.Minute
+	runTimeout      = 55 * time.Minute
+	gitTimeout      = 2 * time.Minute
+	installTimeout  = 10 * time.Minute
+	moduleTimeout   = 30 * time.Minute
+	downloadTimeout = 5 * time.Minute
 
 	downloadAttempts = 3
 	firstBackoff     = 5 * time.Second
@@ -959,8 +960,233 @@ func defaultWait(ctx context.Context, d time.Duration) error {
 	}
 }
 
+type modRequirement struct {
+	path     string
+	version  string
+	indirect bool
+}
+
+func parseRequireLine(line string) (modRequirement, bool) {
+	code, comment, hasComment := strings.Cut(line, "//")
+	code = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(code), "require"))
+	fields := strings.Fields(code)
+	if len(fields) != 2 {
+		return modRequirement{}, false
+	}
+	modPath, err := unquotedModulePath(fields[0])
+	if err != nil {
+		return modRequirement{}, false
+	}
+	return modRequirement{path: modPath, version: fields[1], indirect: hasComment && strings.Contains(comment, "indirect")}, true
+}
+
+func isBlockOpen(trimmed, directive string) bool {
+	rest, ok := strings.CutPrefix(trimmed, directive)
+	return ok && strings.TrimSpace(rest) == "("
+}
+
+func hasDirectivePrefix(trimmed, directive string) bool {
+	return strings.HasPrefix(trimmed, directive+" ") || strings.HasPrefix(trimmed, directive+"\t")
+}
+
+func isLocalPath(target string) bool {
+	return strings.HasPrefix(target, "./") || strings.HasPrefix(target, "../") || strings.HasPrefix(target, "/")
+}
+
+func parseLocalReplace(line string) (string, bool) {
+	code, _, _ := strings.Cut(line, "//")
+	before, after, ok := strings.Cut(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(code), "replace")), "=>")
+	if !ok {
+		return "", false
+	}
+	left, right := strings.Fields(before), strings.Fields(after)
+	if len(left) == 0 || len(right) != 1 || !isLocalPath(right[0]) {
+		return "", false
+	}
+	modPath, err := unquotedModulePath(left[0])
+	return modPath, err == nil
+}
+
+type goModScan struct {
+	raw           []modRequirement
+	localReplaced map[string]bool
+	inRequire     bool
+	inReplace     bool
+}
+
+func (s *goModScan) step(trimmed string) {
+	switch {
+	case isBlockOpen(trimmed, "require"):
+		s.inRequire = true
+	case isBlockOpen(trimmed, "replace"):
+		s.inReplace = true
+	case trimmed == ")":
+		s.inRequire, s.inReplace = false, false
+	case s.inReplace || hasDirectivePrefix(trimmed, "replace"):
+		if modPath, ok := parseLocalReplace(trimmed); ok {
+			s.localReplaced[modPath] = true
+		}
+	case s.inRequire || hasDirectivePrefix(trimmed, "require"):
+		if req, ok := parseRequireLine(trimmed); ok {
+			s.raw = append(s.raw, req)
+		}
+	}
+}
+
+func parseGoModRequirements(gomod string) []modRequirement {
+	lines := strings.Split(gomod, "\n")
+	scan := goModScan{localReplaced: make(map[string]bool)}
+	for index := 0; index < len(lines) && index < maxGoModLines && len(scan.raw) < maxImports; index++ {
+		scan.step(strings.TrimSpace(lines[index]))
+	}
+	reqs := make([]modRequirement, 0, len(scan.raw))
+	for index := 0; index < len(scan.raw) && index < maxImports; index++ {
+		if !scan.localReplaced[scan.raw[index].path] {
+			reqs = append(reqs, scan.raw[index])
+		}
+	}
+	return reqs
+}
+
+func hasGoModFile(entries []os.DirEntry) bool {
+	for index := 0; index < len(entries) && index < maxTreeEntries; index++ {
+		if !entries[index].IsDir() && entries[index].Name() == "go.mod" {
+			return true
+		}
+	}
+	return false
+}
+
+func recordNonTestFileImports(fset *token.FileSet, filePath string, imports map[string]bool) {
+	f, err := parser.ParseFile(fset, filePath, nil, parser.ImportsOnly)
+	if err != nil {
+		return
+	}
+	for index := 0; index < len(f.Imports) && index < maxImports; index++ {
+		if val, err := strconv.Unquote(f.Imports[index].Path.Value); err == nil && val != "" {
+			imports[val] = true
+		}
+	}
+}
+
+func appendNonTestDirImports(fset *token.FileSet, dir string, entries []os.DirEntry, queue []string, imports map[string]bool) []string {
+	for index := 0; index < len(entries) && index < maxGoFiles; index++ {
+		entry := entries[index]
+		name := entry.Name()
+		if entry.IsDir() {
+			if !skippedDirectory(name) && len(queue) < maxGoFiles {
+				queue = append(queue, filepath.Join(dir, name))
+			}
+			continue
+		}
+		if strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go") {
+			recordNonTestFileImports(fset, filepath.Join(dir, name), imports)
+		}
+	}
+	return queue
+}
+
+func collectNonTestImports(moduleDir string) (map[string]bool, error) {
+	fset := token.NewFileSet()
+	imports := make(map[string]bool)
+	queue := []string{moduleDir}
+	for seen := 0; len(queue) > 0 && seen < maxGoFiles; seen++ {
+		dir := queue[0]
+		queue = queue[1:]
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return nil, err
+		}
+		if dir != moduleDir && hasGoModFile(entries) {
+			continue
+		}
+		queue = appendNonTestDirImports(fset, dir, entries, queue, imports)
+	}
+	return imports, nil
+}
+
+func isImportedModule(modPath string, imports map[string]bool) bool {
+	for imp := range imports {
+		if imp == modPath || strings.HasPrefix(imp, modPath+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// moduleDownloadArgs selects only non-test module requirements so test-only dependencies cannot block package builds.
+func moduleDownloadArgs(moduleDir string) ([]string, bool) {
+	data, err := os.ReadFile(filepath.Join(moduleDir, "go.mod"))
+	if err != nil {
+		return []string{"mod", "download"}, true
+	}
+	reqs := parseGoModRequirements(string(data))
+	if len(reqs) == 0 {
+		return nil, false
+	}
+	imports, err := collectNonTestImports(moduleDir)
+	if err != nil {
+		return []string{"mod", "download"}, true
+	}
+	var needed []string
+	hasTestOnly := false
+	for index := 0; index < len(reqs) && index < maxImports; index++ {
+		req := reqs[index]
+		if isImportedModule(req.path, imports) {
+			needed = append(needed, req.path+"@"+req.version)
+		} else if !req.indirect {
+			hasTestOnly = true
+		}
+	}
+	if len(needed) == 0 {
+		return nil, false
+	}
+	if !hasTestOnly {
+		return []string{"mod", "download"}, true
+	}
+	return append([]string{"mod", "download"}, needed...), true
+}
+
+func remainingBackoff(attempt int) time.Duration {
+	switch attempt {
+	case 1:
+		return firstBackoff + secondBackoff
+	case 2:
+		return secondBackoff
+	default:
+		return 0
+	}
+}
+
+// downloadAttemptTimeout caps each retry by downloadTimeout and divides any remaining context deadline across attempts.
+func downloadAttemptTimeout(ctx context.Context, attempt int) (time.Duration, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return downloadTimeout, nil
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return 0, context.DeadlineExceeded
+	}
+	if reserve := remainingBackoff(attempt); remaining > reserve*2 {
+		remaining -= reserve
+	}
+	perAttempt := remaining / time.Duration(downloadAttempts-attempt+1)
+	if perAttempt <= 0 {
+		perAttempt = time.Millisecond
+	}
+	return min(downloadTimeout, perAttempt), nil
+}
+
 // downloadModule runs "go mod download" in moduleDir with bounded retries and backoff.
 func downloadModule(ctx context.Context, moduleDir, dir string, stderr io.Writer, run toolRunner, wait waitFunc) error {
+	args, needed := moduleDownloadArgs(moduleDir)
+	if !needed {
+		return nil
+	}
 	var lastErr error
 	for attempt := 1; attempt <= downloadAttempts; attempt++ {
 		if attempt > 1 {
@@ -972,7 +1198,13 @@ func downloadModule(ctx context.Context, moduleDir, dir string, stderr io.Writer
 				return &downloadError{dir: dir, attempts: attempt - 1, err: err}
 			}
 		}
-		err := run(ctx, moduleDir, io.Discard, stderr, "go", "mod", "download")
+		timeout, timeoutErr := downloadAttemptTimeout(ctx, attempt)
+		if timeoutErr != nil {
+			return &downloadError{dir: dir, attempts: attempt - 1, err: timeoutErr}
+		}
+		attemptCtx, cancel := context.WithTimeout(ctx, timeout)
+		err := run(attemptCtx, moduleDir, io.Discard, stderr, "go", args...)
+		cancel()
 		if err == nil {
 			return nil
 		}
@@ -984,10 +1216,7 @@ func downloadModule(ctx context.Context, moduleDir, dir string, stderr io.Writer
 	return &downloadError{dir: dir, attempts: downloadAttempts, err: lastErr}
 }
 
-// buildModule downloads dependencies with bounded retry and builds the module's packages at
-// HEAD in the repository at root. The checker reads a package it cannot type-check as empty
-// without saying so, so a module that does not build would otherwise read as compatible; go
-// list -export builds what the checker loads and writes nothing into the working tree.
+// buildModule verifies that non-test packages type-check so broken packages never read as empty.
 func buildModule(ctx context.Context, root, dir string, stderr io.Writer, run toolRunner, wait waitFunc) error {
 	moduleDir := filepath.Join(root, filepath.FromSlash(dir))
 	if run == nil {

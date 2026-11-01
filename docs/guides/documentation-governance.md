@@ -402,7 +402,7 @@ file the gate styles; any other name, an excluded or missing file included, is
 refused before linting (`namedStyleFiles`).
 
 `node tools/markdownlint/verify.mjs --changed-since <ref>` filters the bounded
-inventory to the paths `git diff --name-only --diff-filter=d <ref>...HEAD`
+inventory to the paths `git diff -z --name-only <ref>...HEAD`
 reports as changed since `<ref>`, then runs style selection, the private-link
 rule, and `markdownlint` on that subset alone (`runChangedSince` in
 `tools/markdownlint/verify.mjs`). Its summary line names `--changed-since`,

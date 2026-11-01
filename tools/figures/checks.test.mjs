@@ -399,6 +399,16 @@ test('site: an unreleased player lock needs no loader, a released one and a loca
   write(lock, JSON.stringify({ asset: 'figures-player.tar.gz', sha256: '0'.repeat(64), release: '' }));
   write(join(dir, 'tools/figures/player/loader.js'), '');
   assert.equal(fixture.check().errors.length, 1, 'a repository with its own player must load it');
+  const astroDir = join(dir, 'astro');
+  const astro = starlightSite(astroDir);
+  write(astro.page, fillSlots(META, '/docs/assets/figures'));
+  const astroLock = join(astroDir, 'tools/figures/player.lock.json');
+  write(astroLock, JSON.stringify({ asset: 'figures-player.tar.gz', sha256: '0'.repeat(64), release: '' }));
+  assert.deepEqual(astro.check('/docs/').errors, [], 'Starlight with an unreleased lock needs no loader');
+  write(astroLock, JSON.stringify({ asset: 'figures-player.tar.gz', sha256: '0'.repeat(64), release: 'v1.2.3' }));
+  assert.equal(astro.check('/docs/').errors.length, 1, 'Starlight with a released lock must load the loader');
+  write(astro.page, `<head>${inlineLoader('/docs/')}</head>${fillSlots(META, '/docs/assets/figures')}`);
+  assert.deepEqual(astro.check('/docs/').errors, [], 'Starlight with a released lock passes once the loader is injected');
 }));
 
 test('site: every figure image must embed the props the player mounts, the static one included', () => withTempDir((dir) => {

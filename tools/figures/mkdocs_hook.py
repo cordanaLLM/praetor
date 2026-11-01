@@ -51,7 +51,10 @@ LOCK_FILE = Path(__file__).with_name("player.lock.json")
 PLAYER_URI = "assets/javascripts/figures"
 LOADER_URI = f"{PLAYER_URI}/loader.js"
 CANONICAL_REPOSITORY = "cordanaLLM/praetor"
-CANONICAL_REPOSITORY_URL = f"https://github.com/{CANONICAL_REPOSITORY}"
+TRUSTED_RELEASE_ORIGIN = "https://github.com"
+CANONICAL_REPOSITORY_URL = f"{TRUSTED_RELEASE_ORIGIN}/{CANONICAL_REPOSITORY}"
+REPOSITORY_SLUG = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+RELEASE_SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 PLAYER_ARCHIVE = "figures-player.tar.gz"
 EXPECTED_PLAYER_FILES = ("loader.js", "player.js", "THIRD-PARTY-LICENSES.txt")
 DOWNLOAD_TIMEOUT_SECONDS = 30
@@ -244,29 +247,46 @@ def read_player_lock(lock_file: Path) -> dict:
     return data
 
 
+def valid_path_segment(value: str) -> bool:
+    """Report whether `value` is a safe single URL path component."""
+    return bool(RELEASE_SEGMENT.match(value)) and value not in {".", ".."}
+
+
 def release_archive_url(lock: dict, release: str, asset: str) -> str:
-    """Build the release download URL for the lock's repository."""
+    """Build the release download URL for the lock's repository on GitHub."""
     repository = str(lock.get("repository") or "").strip()
     if not repository or repository == CANONICAL_REPOSITORY:
-        base = CANONICAL_REPOSITORY_URL.rstrip("/")
-    elif repository.startswith("https://"):
-        base = repository.rstrip("/")
+        slug = CANONICAL_REPOSITORY
+    elif repository.startswith(f"{TRUSTED_RELEASE_ORIGIN}/"):
+        slug = repository.removeprefix(f"{TRUSTED_RELEASE_ORIGIN}/").strip("/")
     elif "://" in repository:
         raise CheckError(
-            f"the player archive is fetched over https only, not {repository!r}"
+            f"the player archive is fetched from {TRUSTED_RELEASE_ORIGIN} only, not {repository!r}"
         )
     else:
-        base = f"https://github.com/{repository.strip('/')}"
-    return f"{base}/releases/download/{release}/{asset}"
+        slug = repository.strip("/")
+    if not REPOSITORY_SLUG.match(slug) or any(
+        part in {".", ".."} for part in slug.split("/")
+    ):
+        raise CheckError(f"invalid release repository {repository!r}")
+    if not valid_path_segment(release):
+        raise CheckError(f"invalid release tag {release!r}")
+    if not valid_path_segment(asset):
+        raise CheckError(f"invalid release asset {asset!r}")
+    return f"{TRUSTED_RELEASE_ORIGIN}/{slug}/releases/download/{release}/{asset}"
 
 
 def download_player_archive(url: str) -> bytes:
     """Fetch the release archive with a timeout and size cap."""
-    if not url.startswith("https://"):
-        raise CheckError(f"the player archive is fetched over https only, not {url!r}")
-    # the https guard above is the only way in, so the URL scheme is fixed
+    if not url.startswith(f"{TRUSTED_RELEASE_ORIGIN}/"):
+        raise CheckError(
+            f"the player archive is fetched from {TRUSTED_RELEASE_ORIGIN} only, not {url!r}"
+        )
+    # the github.com origin guard above is the only way in, so the URL scheme and host are fixed
     # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
-    with urlopen(url, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:  # noqa: S310
+    with urlopen(  # noqa: S310 -- url is restricted to https://github.com/
+        url, timeout=DOWNLOAD_TIMEOUT_SECONDS
+    ) as response:
         raw = response.read(MAX_FILE_BYTES + 1)
     if len(raw) > MAX_FILE_BYTES:
         raise CheckError(f"{url} exceeds {MAX_FILE_BYTES} bytes")
@@ -340,8 +360,7 @@ def locked_player_files(lock_file: Path) -> list[tuple[str, Path]]:
     lock = read_player_lock(lock_file)
     release = str(lock.get("release") or "").strip()
     if not release:
-        # An unreleased pin is the expected state until the engine's first release carries the
-        # archive, so the substitution is stated at INFO: a warning would fail every strict build.
+        # Log unreleased pins at INFO so mkdocs build --strict does not fail on a warning.
         log.info(SVG_FALLBACK_WARNING, "unreleased")
         return []
     asset = str(lock.get("asset") or PLAYER_ARCHIVE).strip()
