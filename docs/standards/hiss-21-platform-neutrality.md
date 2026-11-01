@@ -76,6 +76,13 @@ with the same Go release as the other workflows
 tests the nested module `tools/schemacheck`, which `./...` of the root module does not reach
 (`go -C tools/schemacheck test ./...`; its network checks skip with a stated reason).
 
+The Windows leg runs as two shard jobs, `windows-shard` with `matrix.shard` 1 and 2, whose package
+selections are disjoint and together cover every package; the `windows` job aggregates them under
+the required status name and fails when a shard fails, is cancelled or is skipped
+(`TestPortabilityWindowsShards_*` in `internal/forge`). Every loop that reads the package list stops
+at the workflow-level `PORTABILITY_MAX_PACKAGES` (512; the repository has about 125 packages) and
+fails the step instead of truncating the list.
+
 On a draft pull request no leg runs: the workflow follows the hosted gate shape
 ([workflows Praetor writes and runs](../guides/workflow-triggers.md#workflows-praetor-writes-and-runs)).
 Each leg, and the skip job below, begins with the draft step, which fails the draft with the
