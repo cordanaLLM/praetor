@@ -5,6 +5,7 @@
 package testsupport
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,6 +84,50 @@ func TestGitProbeGuard_MutatingSubcommands(t *testing.T) {
 		if !strings.Contains(findings[0].String(), "testsupport.RunFixtureGit") {
 			t.Fatalf("finding string must name testsupport.RunFixtureGit: %s", findings[0].String())
 		}
+	}
+}
+
+// TestGitProbeGuard_AllowedReadOnlySubcommands verifies every allowed read-only subcommand passes.
+func TestGitProbeGuard_AllowedReadOnlySubcommands(t *testing.T) {
+	for _, subcmd := range readOnlyGitProbeSubcommands {
+		src := []byte(fmt.Sprintf("package sample_test\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, %q)\n}\n", subcmd))
+		findings, err := ScanProbeMutations("sample_test.go", src)
+		if err != nil {
+			t.Fatalf("scan allowed %s: %v", subcmd, err)
+		}
+		if len(findings) != 0 {
+			t.Fatalf("allowed read-only subcommand %q must pass, got %v", subcmd, findings)
+		}
+	}
+}
+
+// TestGitProbeGuard_DisallowedSubcommandsRefused verifies that non-allow-listed subcommands are refused.
+func TestGitProbeGuard_DisallowedSubcommandsRefused(t *testing.T) {
+	for _, subcmd := range []string{"commit", "reset", "checkout", "push", "config --add", "unknown"} {
+		src := []byte(fmt.Sprintf("package sample_test\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, %q)\n}\n", subcmd))
+		findings, err := ScanProbeMutations("sample_test.go", src)
+		if err != nil {
+			t.Fatalf("scan disallowed %s: %v", subcmd, err)
+		}
+		if len(findings) != 1 || findings[0].Subcommand != subcmd {
+			t.Fatalf("subcommand %s: want 1 finding with %q, got %v", subcmd, subcmd, findings)
+		}
+		if !strings.Contains(findings[0].String(), "testsupport.RunFixtureGit") {
+			t.Fatalf("finding string must name testsupport.RunFixtureGit: %s", findings[0].String())
+		}
+		if !strings.Contains(findings[0].String(), subcmd) {
+			t.Fatalf("finding string must name subcommand %q: %s", subcmd, findings[0].String())
+		}
+	}
+
+	// config --add passed as separate arguments: "config", "--add"
+	separateSrc := []byte("package sample_test\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, \"config\", \"--add\")\n}\n")
+	separateFindings, err := ScanProbeMutations("sample_test.go", separateSrc)
+	if err != nil {
+		t.Fatalf("scan separate config --add: %v", err)
+	}
+	if len(separateFindings) != 1 || separateFindings[0].Subcommand != "config --add" {
+		t.Fatalf("separate config --add: want 1 finding with \"config --add\", got %v", separateFindings)
 	}
 }
 

@@ -18,17 +18,37 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// mutatingGitSubcommands lists mutating git subcommands prohibited in util.RunGitProbe.
+// readOnlyGitProbeSubcommands lists the explicit allow-list of read-only git subcommands
+// permitted in util.RunGitProbe (fleet rule: a reader that mirrors another parser uses an
+// allow-list, never a list of unsafe cases; order engine-review-threads-first-20261101).
 // util.RunGitProbe carries a 5 s read-inspection timeout (GitProbeTimeout) that flakes on
 // loaded runners when executing mutations (order engine-agenthook-windows-flake-20261028).
-var mutatingGitSubcommands = []string{"init", "commit", "add", "config"}
+var readOnlyGitProbeSubcommands = []string{
+	"cat-file",
+	"check-attr",
+	"check-ignore",
+	"describe",
+	"diff",
+	"hash-object",
+	"log",
+	"ls-files",
+	"ls-tree",
+	"merge-base",
+	"remote",
+	"rev-list",
+	"rev-parse",
+	"show",
+	"status",
+	"symbolic-ref",
+}
 
 const (
-	maxTrackedTestFiles = 8192
-	maxListingBytes     = 2 << 20
-	maxTestFileBytes    = 2 << 20
-	maxCallArgs         = 64
-	maxGuardFindings    = 256
+	maxTrackedTestFiles    = 8192
+	maxListingBytes        = 2 << 20
+	maxTestFileBytes       = 2 << 20
+	maxCallArgs            = 64
+	maxGuardFindings       = 256
+	maxReadOnlySubcommands = 64
 )
 
 // GitProbeFinding records an invalid mutating call to util.RunGitProbe in test fixtures.
@@ -39,16 +59,16 @@ type GitProbeFinding struct {
 }
 
 func (f GitProbeFinding) String() string {
-	return fmt.Sprintf("%s:%d: util.RunGitProbe called with mutating subcommand %q; use testsupport.RunFixtureGit instead",
+	return fmt.Sprintf("%s:%d: util.RunGitProbe called with disallowed subcommand %q; use testsupport.RunFixtureGit instead",
 		f.File, f.Line, f.Subcommand)
 }
 
-func isMutatingSubcommand(subcmd string) bool {
-	for i, mutating := range mutatingGitSubcommands {
-		if i >= len(mutatingGitSubcommands) {
+func isReadOnlySubcommand(subcmd string) bool {
+	for i, allowed := range readOnlyGitProbeSubcommands {
+		if i >= maxReadOnlySubcommands || i >= len(readOnlyGitProbeSubcommands) {
 			break
 		}
-		if subcmd == mutating {
+		if subcmd == allowed {
 			return true
 		}
 	}
@@ -67,25 +87,40 @@ func isRunGitProbeCall(call *ast.CallExpr) bool {
 	}
 }
 
-func findMutatingSubcommandArg(args []ast.Expr) (string, bool) {
+func extractLiteralString(expr ast.Expr) (string, bool) {
+	lit, ok := expr.(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return "", false
+	}
+	val, err := strconv.Unquote(lit.Value)
+	if err != nil {
+		val = strings.Trim(lit.Value, "\"`")
+	}
+	return strings.TrimSpace(val), true
+}
+
+func findDisallowedSubcommandArg(args []ast.Expr) (string, bool) {
 	if len(args) <= 3 {
 		return "", false
 	}
-	for i, arg := range args[3:] {
-		if i >= maxCallArgs {
-			break
-		}
-		lit, ok := arg.(*ast.BasicLit)
-		if !ok || lit.Kind != token.STRING {
+	callArgs := args[3:]
+	for i := 0; i < len(callArgs) && i < maxCallArgs; i++ {
+		val, ok := extractLiteralString(callArgs[i])
+		if !ok {
 			continue
 		}
-		val, err := strconv.Unquote(lit.Value)
-		if err != nil {
-			val = strings.Trim(lit.Value, "\"`")
+		if strings.HasPrefix(val, "-") {
+			continue
 		}
-		if isMutatingSubcommand(val) {
-			return val, true
+		if val == "config" && i+1 < len(callArgs) {
+			if nextVal, ok := extractLiteralString(callArgs[i+1]); ok && nextVal == "--add" {
+				val = "config --add"
+			}
 		}
+		if isReadOnlySubcommand(val) {
+			return "", false
+		}
+		return val, true
 	}
 	return "", false
 }
@@ -112,7 +147,7 @@ func ScanProbeMutations(filename string, src []byte) ([]GitProbeFinding, error) 
 		if !ok || !isRunGitProbeCall(call) {
 			return true
 		}
-		if subcmd, found := findMutatingSubcommandArg(call.Args); found {
+		if subcmd, found := findDisallowedSubcommandArg(call.Args); found {
 			pos := fset.Position(call.Pos())
 			findings = append(findings, GitProbeFinding{
 				File:       pos.Filename,
@@ -155,7 +190,7 @@ func ScanTrackedTestGitProbes(ctx context.Context, repoRoot string) ([]GitProbeF
 		}
 		findings, err := ScanProbeMutations(entry, src)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan %s: %w", entry, err)
 		}
 		allFindings = append(allFindings, findings...)
 	}
