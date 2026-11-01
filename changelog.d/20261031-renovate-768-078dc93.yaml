@@ -1,0 +1,3 @@
+type: changed
+title: "Dependencies: refresh pip-compile outputs"
+breaking: false
