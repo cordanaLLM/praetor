@@ -628,6 +628,7 @@ func manifestErrorCases() []manifestErrorCase {
 					t.Errorf("restore mode of %s: %v", p, err)
 				}
 			})
+			skipIfFileReadable(t, p)
 		}},
 		{name: "directory as manifest", wantText: ".standards.yaml", setup: func(t *testing.T, dir string) {
 			p := filepath.Join(dir, ".standards.yaml")
@@ -696,4 +697,52 @@ func TestBaselineRecord_PreservesHISS12Entries(t *testing.T) {
 	if b.Infractions[0].RuleID != baseline.BaselineRuleID || b.Infractions[0].Fingerprint != "synth-fp-old" {
 		t.Fatalf("expected HISS-12 entry preserved with synth-fp-old, got: %+v", b.Infractions[0])
 	}
+}
+
+// skipIfFileReadable skips t when path can still be opened for reading despite mode 0 (HISS-21).
+func skipIfFileReadable(t testing.TB, path string) {
+	t.Helper()
+	if f, err := os.Open(path); err == nil {
+		_ = f.Close()
+		t.Skip("file permissions are not enforced on this host (manifest remains readable with mode 0000)")
+	}
+}
+
+func TestSkipIfFileReadable_3D(t *testing.T) {
+	t.Run("readable file causes subtest to skip", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "readable.txt")
+		if err := os.WriteFile(p, []byte("content"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		ran := false
+		t.Run("probe", func(subT *testing.T) {
+			skipIfFileReadable(subT, p)
+			ran = true
+		})
+		if ran {
+			t.Fatal("skipIfFileReadable did not skip execution on readable file")
+		}
+	})
+
+	t.Run("unreadable file does not skip when mode is enforced", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "unreadable.txt")
+		if err := os.WriteFile(p, []byte("content"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(p, 0000); err != nil {
+			t.Skipf("cannot chmod 0000: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(p, 0o600) })
+		if _, err := os.ReadFile(p); err == nil {
+			t.Skip("file permissions are not enforced on this host")
+		}
+		ran := false
+		t.Run("probe", func(subT *testing.T) {
+			skipIfFileReadable(subT, p)
+			ran = true
+		})
+		if !ran {
+			t.Fatal("skipIfFileReadable unexpectedly skipped an unreadable file")
+		}
+	})
 }
