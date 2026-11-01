@@ -138,14 +138,10 @@ func TestInspectStateClientLocalSettings_Boundary(t *testing.T) {
 	if !strings.HasSuffix(upgradedText, adopt.ManagedGitIgnoreBlock()) {
 		t.Fatalf("upgraded .gitignore does not end with the canonical block:\n%s", upgradedText)
 	}
-	// The canonical version comes from the canonical block itself, so a block bump needs no edit here.
-	canonical, okCanonical := adopt.LookupManagedGitIgnoreTail(t.Context(), dir, adopt.ManagedGitIgnoreBlock())
-	if !okCanonical || !canonical.Current {
-		t.Fatalf("canonical block lookup: ok=%v match=%+v, want a current block", okCanonical, canonical)
-	}
+	canonicalVersion := canonicalGitIgnoreVersion(t, dir)
 	matchAfter, okAfter := adopt.LookupManagedGitIgnoreTail(t.Context(), dir, upgradedText)
-	if !okAfter || !matchAfter.Matched || matchAfter.Version != canonical.Version || !matchAfter.Current {
-		t.Fatalf("upgraded block lookup: ok=%v match=%+v, want Matched=true Version=%s Current=true", okAfter, matchAfter, canonical.Version)
+	if !okAfter || !matchAfter.Matched || matchAfter.Version != canonicalVersion || !matchAfter.Current {
+		t.Fatalf("upgraded block lookup: ok=%v match=%+v, want Matched=true Version=%s Current=true", okAfter, matchAfter, canonicalVersion)
 	}
 
 	// Commit adoption changes so working tree is clean before adding client-local settings.
@@ -170,4 +166,15 @@ func TestInspectStateClientLocalSettings_Boundary(t *testing.T) {
 	if !snap.Clean || snap.DirtyCount != 0 {
 		t.Fatalf("upgraded repository with client-local settings must be clean: clean=%v dirty_count=%d", snap.Clean, snap.DirtyCount)
 	}
+}
+
+// canonicalGitIgnoreVersion is the version of the canonical managed block, read from the block
+// itself, so a block bump needs no edit in the tests that compare against it.
+func canonicalGitIgnoreVersion(t *testing.T, dir string) string {
+	t.Helper()
+	canonical, ok := adopt.LookupManagedGitIgnoreTail(t.Context(), dir, adopt.ManagedGitIgnoreBlock())
+	if !ok || !canonical.Current {
+		t.Fatalf("canonical block lookup: ok=%v match=%+v, want a current block", ok, canonical)
+	}
+	return canonical.Version
 }
