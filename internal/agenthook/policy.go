@@ -22,18 +22,27 @@ type denyRule struct {
 	exemptFirst    *regexp.Regexp
 }
 
-// matches applies an optional first-command exemption to each matched line independently.
-// A helper invocation on one line cannot exempt a direct merge on a later line.
+// matches applies an optional first-command exemption to the line holding each match.
+// A helper invocation on one line cannot exempt a direct merge on another line.
 func (r denyRule) matches(command string) bool {
 	if r.exemptFirst == nil {
 		return r.pattern.MatchString(command)
 	}
-	for _, match := range r.pattern.FindAllString(command, len(command)) {
-		if !r.exemptFirst.MatchString(match) {
+	for _, span := range r.pattern.FindAllStringIndex(command, len(command)) {
+		if !r.exemptFirst.MatchString(matchingLine(command, span[0], span[1])) {
 			return true
 		}
 	}
 	return false
+}
+
+// matchingLine returns the line of command that holds command[start:end].
+func matchingLine(command string, start, end int) string {
+	lineStart := strings.LastIndexByte(command[:start], '\n') + 1
+	if nl := strings.IndexByte(command[end:], '\n'); nl >= 0 {
+		return command[lineStart : end+nl]
+	}
+	return command[lineStart:]
 }
 
 // pythonSpace is what `\s` matches in Python's `re` on text. RE2's `\s` is ASCII only and

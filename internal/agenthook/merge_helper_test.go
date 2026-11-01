@@ -5,6 +5,7 @@
 package agenthook
 
 import (
+	"regexp"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -20,6 +21,7 @@ func TestMergeHelper_Negative_DirectMerge(t *testing.T) {
 		"global option": "gh -R o/r pr merge 12", "continued": "gh pr \\\nmerge 12",
 		"quoted mention": `echo 'gh pr merge'`, "empty helper line": "\ngh pr merge 12",
 		"helper on earlier line": "squash_merge.sh 12 sha\ngh pr merge 12",
+		"helper on later line":   "gh pr merge 12\nsquash_merge.sh 12 sha",
 		"similar basename":       `other_squash_merge.sh 'gh pr merge 12'`,
 		"literal basename":       `squash_mergeXsh 'gh pr merge 12'`,
 	} {
@@ -69,6 +71,22 @@ func TestMergeHelper_Boundary_OtherRulesStillApply(t *testing.T) {
 	for _, command := range []string{`squash_merge.sh 'gh pr merge 12 --admin'`, "gh api repos/o/r/pulls/12/merge"} {
 		if got := policy.Command(command); got.Outcome != Deny {
 			t.Errorf("built-in rule bypassed by helper setting: %q: %+v", command, got)
+		}
+	}
+}
+
+func TestMergeHelper_Boundary_ExemptionJudgesMatchingLine(t *testing.T) {
+	rule := mergeHelperRule("/abs/squash_merge.sh")
+	rule.pattern = regexp.MustCompile(`\bgh\s+pr\s+merge\b`)
+	if rule.matches(`squash_merge.sh 12 sha 'gh pr merge 12'`) {
+		t.Fatal("expected helper's own line to be exempted when pattern matches merge substring")
+	}
+	for _, cmd := range []string{
+		"squash_merge.sh 12 sha\ngh pr merge 12",
+		"gh pr merge 12\nsquash_merge.sh 12 sha",
+	} {
+		if !rule.matches(cmd) {
+			t.Fatalf("expected raw merge with helper on another line to match deny rule: %q", cmd)
 		}
 	}
 }
