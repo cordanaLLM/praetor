@@ -412,6 +412,88 @@ def unresolved_relative_to(path, root):
     raise ValueError(f"{os.fspath(path)!r} is not below {os.fspath(root)!r}")
 
 
+STAGE_TIMEOUT_ENV = "PRAETOR_TEST_STAGE_TIMEOUT"
+# Default stage budget in seconds; mirrors TestStageTimeout in internal/gating/deadline.go,
+# the one source of truth (a test compares the two).
+DEFAULT_STAGE_BUDGET = 1200
+DEFAULT_STAGE_BUDGET_STR = "20m"
+
+_DURATION_COMPONENT = re.compile(
+    r"([0-9]+(?:\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h)"
+)
+_FULL_DURATION = re.compile(
+    r"^\+?((?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:ns|us|µs|μs|ms|s|m|h))+$"
+)
+
+_UNIT_SECONDS = {
+    "ns": 1e-9,
+    "us": 1e-6,
+    "µs": 1e-6,
+    "μs": 1e-6,
+    "ms": 1e-3,
+    "s": 1.0,
+    "m": 60.0,
+    "h": 3600.0,
+}
+
+
+class StageBudget(float):
+    """Stage duration budget resolved from PRAETOR_TEST_STAGE_TIMEOUT.
+
+    Mirrors Go's testStageTimeout in internal/gating/deadline.go.
+    """
+
+    raw: str
+
+    def __new__(cls, seconds, raw):
+        obj = super().__new__(cls, seconds)
+        obj.raw = raw
+        return obj
+
+    def __str__(self):
+        return self.raw
+
+    def __repr__(self):
+        return f"StageBudget({super().__repr__()}, {self.raw!r})"
+
+
+def parse_stage_duration(raw):
+    """Parse a Go duration string into seconds (float)."""
+    text = raw.strip()
+    if not _FULL_DURATION.match(text):
+        raise ValueError(f"{STAGE_TIMEOUT_ENV}={raw!r} is not a duration")
+    total = 0.0
+    for idx, match in enumerate(_DURATION_COMPONENT.finditer(text)):
+        if idx >= 64:
+            break
+        val = float(match.group(1))
+        unit = match.group(2)
+        total += val * _UNIT_SECONDS[unit]
+    if total <= 0:
+        raise ValueError(f"{STAGE_TIMEOUT_ENV}={raw!r} is not positive")
+    return total
+
+
+def stage_budget(raw=None, env=None):
+    """Return the stage budget (StageBudget) from PRAETOR_TEST_STAGE_TIMEOUT or default."""
+    if isinstance(raw, StageBudget):
+        return raw
+    if isinstance(raw, (int, float)):
+        if raw <= 0:
+            raise HookError(f"{STAGE_TIMEOUT_ENV}={raw!r} is not positive")
+        return StageBudget(float(raw), f"{raw:g}s")
+    if raw is None:
+        source_env = os.environ if env is None else env
+        raw = source_env.get(STAGE_TIMEOUT_ENV)
+    if raw is None or not str(raw).strip():
+        return StageBudget(DEFAULT_STAGE_BUDGET, DEFAULT_STAGE_BUDGET_STR)
+    try:
+        seconds = parse_stage_duration(str(raw))
+    except ValueError as error:
+        raise HookError(str(error)) from error
+    return StageBudget(seconds, str(raw).strip())
+
+
 class HookBudget:
     """One deadline every process a native hook starts takes its timeout from.
 

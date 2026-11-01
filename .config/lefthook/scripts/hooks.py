@@ -10,7 +10,7 @@ import shutil
 import sys
 
 sys.dont_write_bytecode = True
-from common import HookError, changed, clean_env, git, paths, run, snapshot
+from common import HookError, changed, clean_env, git, paths, run, snapshot, stage_budget
 from checks import (checkpoint_checks, context_changed, file_checks, go_packages, gofmt_check,
                     source_checks)
 from privacy import check_private_history, check_private_index
@@ -300,9 +300,18 @@ def praetorctl_path():
     return os.path.abspath(os.path.join("bin", "praetorctl" + suffix))
 
 def cli(args):
-    run([make_program(), "--always-make", "--no-print-directory", "-s", "hook-cli"],
-        capture=False, timeout=180)
-    run([praetorctl_path(), *args], capture=False, timeout=180)
+    budget = stage_budget()
+    steps = (
+        ("hook-cli", [make_program(), "--always-make", "--no-print-directory", "-s", "hook-cli"]),
+        ("praetorctl", [praetorctl_path(), *args]),
+    )
+    for step, command in steps:
+        try:
+            run(command, capture=False, timeout=budget)
+        except HookError as error:
+            if "timed out after" in str(error) or type(error.__cause__).__name__ == "TimeoutExpired":
+                raise HookError(f"{step} timed out after {budget}: {error}") from error
+            raise
 
 
 def verify_live_state():

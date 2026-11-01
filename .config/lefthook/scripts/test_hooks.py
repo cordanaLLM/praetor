@@ -22,7 +22,7 @@ from unittest import mock
 import checks
 import common
 from common import (HookError, MANAGED_PROCESS_ENV, MAX_PROCESS_ENV_ENTRIES,
-                    clean_env, run, snapshot, stop_process_group)
+                    clean_env, run, snapshot, stage_budget, stop_process_group)
 from checks import (go_packages, source_checks, governance_commands, context_changed,
                     audit_scope, local_package_patterns, checkpoint_checks,
                     semgrep_commands, is_fixture, is_chart_template, file_checks, gofmt_check,
@@ -252,10 +252,10 @@ def run_command(repo, args, data, ok):
         env.pop(key, None)
     # A test command without explicit input must see EOF, not inherit the operator's
     # terminal. Lefthook post hooks otherwise wait on a live TTY until this helper's
-    # 120-second timeout; commands that exercise stdin still receive their payload.
+    # stage budget; commands that exercise stdin still receive their payload.
     stdin = b"" if data is None else data
     result = subprocess.run(args, cwd=repo, env=env, input=stdin, capture_output=True,
-                            timeout=120, check=False)
+                            timeout=stage_budget(), check=False)
     if ok and result.returncode:
         raise AssertionError(result.stdout.decode() + result.stderr.decode())
     return result
@@ -278,7 +278,7 @@ def race_detector_available():
         return False, "CGO_ENABLED=0"
     try:
         enabled = subprocess.run(["go", "env", "CGO_ENABLED"], capture_output=True, text=True,
-                                 timeout=30, check=False).stdout.strip()
+                                 timeout=stage_budget(), check=False).stdout.strip()
     except (OSError, subprocess.TimeoutExpired) as error:
         return False, f"go env unavailable: {error}"
     if enabled == "0":
@@ -288,7 +288,7 @@ def race_detector_available():
     # The compiler go would invoke is what the answer actually depends on.
     try:
         compiler = subprocess.run(["go", "env", "CC"], capture_output=True, text=True,
-                                  timeout=30, check=False).stdout.strip()
+                                  timeout=stage_budget(), check=False).stdout.strip()
     except (OSError, subprocess.TimeoutExpired) as error:
         return False, f"go env unavailable: {error}"
     if not compiler or shutil.which(compiler.split()[0]) is None:
@@ -684,7 +684,7 @@ print("fixture hook self-tests passed")
         shutil.copyfile(self.repo / ".git/index", alternate)
         (self.repo / "data.json").write_text('{"index": "recorded"}\n', newline="\n")
         subprocess.run(["git", "add", "--", "data.json"], cwd=self.repo, check=True,
-                       env=self.hook_env(alternate), capture_output=True, timeout=30)
+                       env=self.hook_env(alternate), capture_output=True, timeout=stage_budget())
         attributes = Path(self.temp.name) / "leak-attributes"
         attributes.write_text("* filter=leak\n", newline="\n")
         smudge = "sed s/^/LEAKED/"
@@ -705,7 +705,7 @@ print("fixture hook self-tests passed")
                 with tempfile.TemporaryDirectory() as control:
                     subprocess.run(["git", "checkout-index", "--all", "--force",
                                     f"--prefix={control}/"], cwd=self.repo, env=env,
-                                   check=True, capture_output=True, timeout=30)
+                                   check=True, capture_output=True, timeout=stage_budget())
                     self.assertTrue((Path(control) / "data.json").read_bytes()
                                     .startswith(b"LEAKED"))
                 with mock.patch.dict(os.environ, env, clear=True), \
@@ -724,7 +724,7 @@ print("fixture hook self-tests passed")
         env = self.hook_env(GIT_CONFIG_GLOBAL=str(persistent), GIT_CONFIG_NOSYSTEM="1")
         with tempfile.TemporaryDirectory() as control:
             subprocess.run(["git", "checkout-index", "--all", "--force", f"--prefix={control}/"],
-                           cwd=self.repo, env=env, check=True, capture_output=True, timeout=30)
+                           cwd=self.repo, env=env, check=True, capture_output=True, timeout=stage_budget())
             self.assertEqual((Path(control) / "data.json").read_bytes(), b'{"line": "lf"}\r\n')
         for ref in (None, "HEAD"):
             with self.subTest(ref=ref), mock.patch.dict(os.environ, env, clear=True), \
@@ -940,13 +940,13 @@ print("fixture hook self-tests passed")
         (self.repo / PRAETORCTL).unlink()
         env_off = {**os.environ, "PATH": "", "PRAETOR_FLEET_CONFIG": str(fleet_off)}
         off_res = subprocess.run([sys.executable, "-B", str(GUARD)], cwd=self.repo, env=env_off,
-                                 input=payload, capture_output=True, timeout=10, check=False)
+                                 input=payload, capture_output=True, timeout=stage_budget(), check=False)
         self.assertEqual(off_res.returncode, 0, off_res.stderr)
         self.assertIn(b"PRAETOR_COMMAND_POLICY_OK", off_res.stdout)
         # Enforcement on, praetorctl absent: refused (fail closed).
         env_absent = {**os.environ, "PATH": "", "PRAETOR_FLEET_CONFIG": str(fleet_on)}
         absent_res = subprocess.run([sys.executable, "-B", str(GUARD)], cwd=self.repo, env=env_absent,
-                                    input=payload, capture_output=True, timeout=10, check=False)
+                                    input=payload, capture_output=True, timeout=stage_budget(), check=False)
         self.assertNotEqual(absent_res.returncode, 0)
         self.assertIn(b"[BLOCKED BY HISS]", absent_res.stderr)
         # Enforcement on, praetorctl present in self.repo: unwrapped make refused, admitted passes.
@@ -955,12 +955,12 @@ print("fixture hook self-tests passed")
         cmd_guard = self.repo / ".config/agent/hooks/command_guard.py"
         refused = subprocess.run([sys.executable, "-B", str(cmd_guard)],
                                  cwd=self.repo, env=env_on, input=payload, capture_output=True,
-                                 timeout=15, check=False)
+                                 timeout=stage_budget(), check=False)
         self.assertEqual(refused.returncode, 2, refused.stderr)
         self.assertIn(b"heavy step needs host admission: make", refused.stderr)
         allowed = subprocess.run([sys.executable, "-B", str(cmd_guard)],
                                  cwd=self.repo, env=env_on, input=admitted, capture_output=True,
-                                 timeout=15, check=False)
+                                 timeout=stage_budget(), check=False)
         self.assertEqual(allowed.returncode, 0, allowed.stderr)
 
     @unittest.skipIf(os.name == "nt", "the stale-binary stand-in is a POSIX shell script")
@@ -982,12 +982,12 @@ print("fixture hook self-tests passed")
         env = {**os.environ, "PATH": str(fresh), "PRAETOR_FLEET_CONFIG": str(fleet_on)}
         for data, code, text in ((payload, 2, b"heavy step needs host admission: make"), (listing, 0, b"")):
             result = subprocess.run([sys.executable, "-B", str(GUARD)], cwd=self.repo, env=env,
-                                    input=data, capture_output=True, timeout=10, check=False)
+                                    input=data, capture_output=True, timeout=stage_budget(), check=False)
             self.assertEqual(result.returncode != 0, code != 0, result.stderr)
             self.assertIn(text, result.stderr)
         env_stale_only = {**os.environ, "PATH": "", "PRAETOR_FLEET_CONFIG": str(fleet_on)}
         result = subprocess.run([sys.executable, "-B", str(GUARD)], cwd=self.repo, env=env_stale_only,
-                                input=listing, capture_output=True, timeout=10, check=False)
+                                input=listing, capture_output=True, timeout=stage_budget(), check=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(b"praetorctl too old", result.stderr)
 
@@ -1444,7 +1444,7 @@ class ScopeAndGuard(unittest.TestCase):
             with mock.patch.dict(os.environ, injected, clear=True):
                 cleaned = clean_env()
             pushed = subprocess.run(["git", "push", "-q", "origin", "main"], cwd=repo,
-                                    env=cleaned, capture_output=True, timeout=30, check=False)
+                                    env=cleaned, capture_output=True, timeout=stage_budget(), check=False)
             self.assertEqual(pushed.returncode, 0, pushed.stdout + pushed.stderr)
             self.assertTrue(command(intended, "git", "show-ref", "--verify",
                                     "refs/heads/main").stdout)
@@ -1906,7 +1906,7 @@ class ScopeAndGuard(unittest.TestCase):
 
     def guard_input(self, data):
         return subprocess.run([sys.executable, str(GUARD)], input=data, capture_output=True,
-                              timeout=10, check=False)
+                              timeout=stage_budget(), check=False)
 
     def test_guard_rejects_missing_or_wrong_json_command(self):
         payloads = [None, [], "git status", {}, {"tool_input": None},
@@ -2093,7 +2093,7 @@ class ScopeAndGuard(unittest.TestCase):
     def test_guard_preserves_argv_and_environment_entry_points(self):
         for args in (("git", "status"), ("--environment",)):
             result = subprocess.run([sys.executable, str(GUARD), *args], input=b"",
-                                    capture_output=True, timeout=10, check=False)
+                                    capture_output=True, timeout=stage_budget(), check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, b"")
 
@@ -2187,7 +2187,7 @@ class ScopeAndGuard(unittest.TestCase):
                   "sys.exit(guard.main())\n")
         started = time.monotonic()
         result = subprocess.run([sys.executable, "-B", "-c", script], input=b'{"cwd":"/"}',
-                                capture_output=True, timeout=20, check=False)
+                                capture_output=True, timeout=stage_budget(), check=False)
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn(b"no answer within 0.3 s; call refused", result.stderr)
         self.assertLess(time.monotonic() - started, 10)
@@ -3463,7 +3463,7 @@ class HookInterpreter(unittest.TestCase):
             env["PATH"] = path
         # The path is relative and the directory is the repository root, as for every hook.
         return subprocess.run([shutil.which("sh") or "sh", LAUNCHER, *args], cwd=ROOT, env=env,
-                              input=data, capture_output=True, timeout=60, check=False)
+                              input=data, capture_output=True, timeout=stage_budget(), check=False)
 
     def test_the_proven_interpreter_runs_the_hook_and_returns_its_status(self):
         result = self.launch("-c", "print(40+2)")
@@ -3754,7 +3754,7 @@ class HookInterpreter(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="praetor-toolchain-") as empty:
             env = dict(os.environ, PATH=empty)
             refused = subprocess.run([*runner, "--require", "python,sh"], env=env, cwd=empty,
-                                     capture_output=True, timeout=120, check=False)
+                                     capture_output=True, timeout=stage_budget(), check=False)
             self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
             self.assertIn(b"python: UNUSABLE: missing dependency: a Python 3.10 or newer "
                           b"interpreter. Tried: python3 (not on PATH); python (not on PATH); "
@@ -3762,7 +3762,7 @@ class HookInterpreter(unittest.TestCase):
             self.assertIn(b"sh: UNUSABLE: sh is not on PATH", refused.stdout)
             self.assertIn(b"required hook tools unusable: python, sh", refused.stderr)
             reported = subprocess.run(runner, env=env, cwd=empty, capture_output=True,
-                                      timeout=120, check=False)
+                                      timeout=stage_budget(), check=False)
             self.assertEqual(reported.returncode, 0, reported.stdout + reported.stderr)
             self.assertIn(b"python: not asserted: missing dependency", reported.stdout)
             self.assertIn(b"make: not asserted: missing dependency: GNU Make", reported.stdout)
@@ -3857,6 +3857,61 @@ class HookMake(unittest.TestCase):
         self.assertRegex(version, r"^\d+(\.\d+)+$")
         self.assertEqual(toolchain.make_program(), argv[0])
         self.assertEqual(toolchain.describe("make", {}), f"{version} ({argv[0]})")
+
+    def test_stage_budget_default_equals_go_deadline_constant(self):
+        # One source of truth: the Python hook stage budget mirrors TestStageTimeout in internal/gating/deadline.go.
+        go_source = (ROOT / "internal/gating/deadline.go").read_text(encoding="utf-8")
+        match = re.search(r"TestStageTimeout\s*=\s*(\d+)\s*\*\s*time\.(Minute|Second|Hour)", go_source)
+        self.assertIsNotNone(match, "TestStageTimeout constant not found in internal/gating/deadline.go")
+        value = int(match.group(1))
+        unit = match.group(2)
+        multiplier = {"Minute": 60, "Second": 1, "Hour": 3600}[unit]
+        go_default_seconds = value * multiplier
+        self.assertEqual(common.DEFAULT_STAGE_BUDGET, go_default_seconds)
+        self.assertEqual(float(common.stage_budget("")), go_default_seconds)
+
+    def test_stage_budget_parses_accepted_forms_and_refuses_invalid(self):
+        self.assertEqual(float(common.stage_budget("30m")), 1800.0)
+        self.assertEqual(float(common.stage_budget("90s")), 90.0)
+        self.assertEqual(float(common.stage_budget("1h30m")), 5400.0)
+        self.assertEqual(float(common.stage_budget("2s")), 2.0)
+        self.assertEqual(float(common.stage_budget("10s")), 10.0)
+        self.assertEqual(float(common.stage_budget("50ms")), 0.05)
+        self.assertEqual(float(common.stage_budget("")), 1200.0)
+        for invalid in ("soon", "0s", "-5m", "10", "30mx"):
+            with self.subTest(invalid=invalid), self.assertRaises(HookError) as cm:
+                common.stage_budget(invalid)
+            self.assertIn("PRAETOR_TEST_STAGE_TIMEOUT", str(cm.exception))
+
+    @unittest.skipIf(os.name == "nt", POSIX_STUB)
+    def test_stage_budget_cli_timeout_and_planted_cases(self):
+        with tempfile.TemporaryDirectory(prefix="praetor-make-stub-") as temp:
+            directory = Path(temp)
+            stub_make = stand_in(
+                directory, "make",
+                'if [ "$1" = "--version" ]; then echo "GNU Make 4.4.1"; exit 0; fi\nsleep 3\n'
+            )
+            stub_praetorctl = stand_in(directory, "praetorctl", "exit 0\n")
+            with mock.patch("hooks.make_program", return_value=str(stub_make)), \
+                    mock.patch("hooks.praetorctl_path", return_value=str(stub_praetorctl)):
+                # PRAETOR_TEST_STAGE_TIMEOUT=2s with a stub make that sleeps 3 s ->
+                # the build step times out and the message names hook-cli and 2s
+                with mock.patch.dict(os.environ, {"PRAETOR_TEST_STAGE_TIMEOUT": "2s"}):
+                    with self.assertRaises(HookError) as cm:
+                        hooks.cli(["state", "audit", "."])
+                    err_msg = str(cm.exception)
+                    self.assertIn("hook-cli", err_msg)
+                    self.assertIn("2s", err_msg)
+
+                # with 10s it passes
+                with mock.patch.dict(os.environ, {"PRAETOR_TEST_STAGE_TIMEOUT": "10s"}):
+                    hooks.cli(["state", "audit", "."])
+
+                # an invalid value (e.g. "soon") refuses naming the variable
+                with mock.patch.dict(os.environ, {"PRAETOR_TEST_STAGE_TIMEOUT": "soon"}):
+                    with self.assertRaises(HookError) as cm:
+                        hooks.cli(["state", "audit", "."])
+                    self.assertIn("PRAETOR_TEST_STAGE_TIMEOUT", str(cm.exception))
 
 
 POLICY_SCRIPTS = ROOT / ".config/lefthook/scripts"

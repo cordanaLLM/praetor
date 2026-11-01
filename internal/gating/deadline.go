@@ -20,6 +20,15 @@ import (
 	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
 )
 
+// TestStageTimeout is the default bound on the race-detector test stage. The effective
+// value comes from testStageTimeout, which lets an operator raise it within a ceiling.
+// It is sized from measured runs (#1419): on a workstation at load 45 to 60 a full race
+// run took 9 to 10 minutes for the engine and 4 to 7 minutes for adopters, and the old
+// 3-minute default refused ordinary pushes there. Twenty minutes is about twice the slowest
+// measured run and two thirds of the ceiling, so an operator can still raise it.
+// One source of truth for the stage timeout default, mirrored by common.stage_budget.
+const TestStageTimeout = 20 * time.Minute
+
 // OtherStagesAllowance is the part of a gate run's deadline granted to every stage except the
 // race-detector tests: describing the tree, prefetch, the HISS scan, the security scanners, the
 // flavor audit and the receipt. The whole-run deadline is the resolved race-stage bound, once per
