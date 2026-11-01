@@ -18,6 +18,8 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// toolingTimeoutProbe records go command invocations across root and tooling modules,
+// timing out the first tooling download to exercise retry handling.
 type toolingTimeoutProbe struct {
 	repoDir         string
 	toolingDir      string
@@ -26,6 +28,8 @@ type toolingTimeoutProbe struct {
 	retryDeadlines  []time.Time
 }
 
+// run executes injected go commands, failing the first tooling download with a timeout
+// and returning recorded command outputs or errors.
 func (p *toolingTimeoutProbe) run(ctx context.Context, dir, _ string, args ...string) (string, error) {
 	if dir == p.repoDir && isGoModSubcommand(args, "verify") {
 		p.rootVerifyCalls++
@@ -43,10 +47,13 @@ func (p *toolingTimeoutProbe) run(ctx context.Context, dir, _ string, args ...st
 	return "", nil
 }
 
+// isGoModSubcommand reports whether args represents a two-element go mod invocation for sub.
 func isGoModSubcommand(args []string, sub string) bool {
 	return len(args) == 2 && args[1] == sub
 }
 
+// failFirstDownloadRunner returns a commandRunner that returns firstErr on the first
+// download invocation and succeeds thereafter, along with a pointer to the call counter.
 func failFirstDownloadRunner(firstOut string, firstErr error) (commandRunner, *int) {
 	var downloadCalls int
 	run := func(_ context.Context, _, _ string, args ...string) (string, error) {
@@ -62,6 +69,8 @@ func failFirstDownloadRunner(firstOut string, firstErr error) (commandRunner, *i
 	return run, &downloadCalls
 }
 
+// assertPassedAfterRetry asserts that prefetch succeeded on its second download attempt
+// and recorded the expected transient failure reason in its report.
 func assertPassedAfterRetry(t *testing.T, rep *PrefetchReport, err error, downloadCalls int, wantReason string) {
 	t.Helper()
 	if err != nil || rep == nil {
@@ -76,6 +85,7 @@ func assertPassedAfterRetry(t *testing.T, rep *PrefetchReport, err error, downlo
 	}
 }
 
+// TestPrefetchRetry_Positive_DownloadTimeoutRetriedOnce plants a transient download timeout on the tooling module and expects a successful retry.
 func TestPrefetchRetry_Positive_DownloadTimeoutRetriedOnce(t *testing.T) {
 	repo, cfg, _ := trackedModuleFixture(t, true)
 	probe := &toolingTimeoutProbe{
@@ -100,6 +110,7 @@ func TestPrefetchRetry_Positive_DownloadTimeoutRetriedOnce(t *testing.T) {
 	}
 }
 
+// TestPrefetchRetry_Positive_TwoModulesEachRetriedOnce plants transient download timeouts across two modules and expects both to recover on retry.
 func TestPrefetchRetry_Positive_TwoModulesEachRetriedOnce(t *testing.T) {
 	repo, cfg, _ := trackedModuleFixture(t, true)
 	toolingDir := filepath.Join(repo, "tooling")
@@ -132,6 +143,7 @@ func TestPrefetchRetry_Positive_TwoModulesEachRetriedOnce(t *testing.T) {
 	}
 }
 
+// TestPrefetchRetry_Negative_TimeoutTwiceFailsNamingBothAttempts plants repeated download timeouts and expects failure after two attempts naming both errors.
 func TestPrefetchRetry_Negative_TimeoutTwiceFailsNamingBothAttempts(t *testing.T) {
 	goDir := newGoModuleDir(t)
 	downloadCalls := 0
@@ -160,6 +172,7 @@ func TestPrefetchRetry_Negative_TimeoutTwiceFailsNamingBothAttempts(t *testing.T
 	}
 }
 
+// TestPrefetchRetry_Negative_NonTransientErrorNotRetried plants a permanent exit error and expects immediate failure without a retry.
 func TestPrefetchRetry_Negative_NonTransientErrorNotRetried(t *testing.T) {
 	goDir := newGoModuleDir(t)
 	nonTransient := errors.New("exit status 1")
@@ -185,6 +198,7 @@ func TestPrefetchRetry_Negative_NonTransientErrorNotRetried(t *testing.T) {
 	}
 }
 
+// TestPrefetchRetry_Boundary_ParentContextCancelledNoRetry plants a cancelled parent context and expects immediate cancellation without retrying.
 func TestPrefetchRetry_Boundary_ParentContextCancelledNoRetry(t *testing.T) {
 	goDir := newGoModuleDir(t)
 
@@ -214,6 +228,8 @@ func TestPrefetchRetry_Boundary_ParentContextCancelledNoRetry(t *testing.T) {
 	}
 }
 
+// killedBySignalExitError produces a genuine SIGKILL *exec.ExitError by running
+// a self-killing shell command, returning the resulting exit error.
 func killedBySignalExitError(t *testing.T) *exec.ExitError {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -232,6 +248,7 @@ func killedBySignalExitError(t *testing.T) *exec.ExitError {
 	return exitErr
 }
 
+// TestPrefetchRetry_Positive_KilledBySignalRetried plants a process SIGKILL exit error on download and expects a successful retry.
 func TestPrefetchRetry_Positive_KilledBySignalRetried(t *testing.T) {
 	goDir := newGoModuleDir(t)
 	exitErr := killedBySignalExitError(t)
@@ -251,6 +268,7 @@ func TestPrefetchRetry_Positive_KilledBySignalRetried(t *testing.T) {
 	}
 }
 
+// TestIsTransientPrefetchError_3D plants 3D error variants and expects exact transient classification across all cases.
 func TestIsTransientPrefetchError_3D(t *testing.T) {
 	exitErr := killedBySignalExitError(t)
 	cases := []struct {

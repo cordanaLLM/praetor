@@ -89,6 +89,8 @@ func prefetchDependencies(ctx context.Context, repoDir string, run commandRunner
 	}, nil
 }
 
+// prefetchModuleOnce runs go mod verify and go mod download for repoDir under
+// DefaultPrefetchTimeout, returning any verification, download, or timeout error.
 func prefetchModuleOnce(ctx context.Context, repoDir string, run commandRunner) error {
 	pCtx, cancel := context.WithTimeout(ctx, DefaultPrefetchTimeout)
 	defer cancel()
@@ -102,6 +104,8 @@ func prefetchModuleOnce(ctx context.Context, repoDir string, run commandRunner) 
 	return nil
 }
 
+// signaledWaitStatus matches process wait status types that report whether
+// a process terminated due to an operating system signal.
 type signaledWaitStatus interface {
 	Signaled() bool
 	Signal() syscall.Signal
@@ -114,6 +118,8 @@ func isTransientPrefetchError(err error) bool {
 	return ok
 }
 
+// transientPrefetchReason inspects err for a deadline exceeded or kill signal,
+// returning the matched reason string and whether the failure was transient.
 func transientPrefetchReason(err error) (string, bool) {
 	if err == nil {
 		return "", false
@@ -127,6 +133,8 @@ func transientPrefetchReason(err error) (string, bool) {
 	return textKillReason(err.Error())
 }
 
+// exitErrorKillReason extracts the signal or 137/143 exit code from an exec.ExitError,
+// returning the kill description and true if matched.
 func exitErrorKillReason(err error) (string, bool) {
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) || exitErr == nil {
@@ -145,6 +153,8 @@ func exitErrorKillReason(err error) (string, bool) {
 	}
 }
 
+// processStateSignalReason inspects an exited process state for SIGKILL or SIGTERM,
+// returning the signal name and true if terminated by either signal.
 func processStateSignalReason(state *os.ProcessState) (string, bool) {
 	if state == nil {
 		return "", false
@@ -171,6 +181,8 @@ var transientKillPhrases = [...]string{
 	"exit status 143",
 }
 
+// textKillReason searches msg for known transient kill phrases, returning
+// the matched phrase and true if found.
 func textKillReason(msg string) (string, bool) {
 	for i := 0; i < len(transientKillPhrases); i++ {
 		if strings.Contains(msg, transientKillPhrases[i]) {
