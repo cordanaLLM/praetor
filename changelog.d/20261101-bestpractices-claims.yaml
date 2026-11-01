@@ -1,0 +1,2 @@
+type: added
+title: Refuse .bestpractices.json claims forbidden by the vendored OpenSSF Best Practices criteria during standardsctl audit

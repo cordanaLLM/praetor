@@ -12,6 +12,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/bestpractices"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
@@ -182,6 +183,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return printRepositoryAudit(adopt.AuditEditorSelection(ctx, manifest, rootDir)) },
 		func() error { return printRepositoryAudit(adopt.AuditRenovateEngineBumps(ctx, rootDir)) },
 		func() error { return printRepositoryAudit(adopt.AuditRustMSRV(ctx, rootDir)) },
+		func() error { return printRepositoryAudit(bestpractices.Audit(ctx, rootDir)) },
 		func() error { return auditLockDigestsContext(ctx, manifest, rootDir, opts.policy.CatalogRoot) },
 		func() error { return auditExceptionsExpiry(ctx, manifest, rootDir, time.Now()) },
 		func() error { return auditBaselineAndInvariants(ctx, opts) },
