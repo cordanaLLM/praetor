@@ -106,8 +106,7 @@ var (
 	// coauthorTrailerRegex matches a Co-authored-by trailer line (case-insensitive, optional colon).
 	coauthorTrailerRegex = regexp.MustCompile(`(?i)^co-authored-by(?::|\s)\s*(.+)$`)
 
-	// generatedFooterRegex matches a line opening with generated or created with/by; it is a
-	// refused footer only when the same line names a tool (bannedCoauthorsRegex).
+	// generatedFooterRegex matches a footer line opening with generated or created with/by.
 	generatedFooterRegex = regexp.MustCompile(`(?i)^(?:<!--\s*|[-*]\s*|[#>\s]*)*(?:generated|created)\s+(?:with|by)\b`)
 )
 
@@ -162,7 +161,7 @@ func commitParagraphs(message string) [][]string {
 }
 
 // commitAttributionErrors inspects message for tool attribution violating fleet rule 1: a
-// line opening with the robot emoji, a generated-with or created-with footer naming a tool,
+// line opening with the robot emoji, a generated-with or created-with footer,
 // and a Co-authored-by trailer in the final paragraph naming a model, tool or bot (the
 // trailer block as git interpret-trailers reads it).
 func commitAttributionErrors(message string) []string {
@@ -183,7 +182,7 @@ func commitAttributionErrors(message string) []string {
 }
 
 // attributionLineErrors refuses footer lines anywhere in message: a robot emoji opening a
-// line, or a generated-with or created-with line that names a tool.
+// line, or a generated-with or created-with footer line.
 func attributionLineErrors(message string) []string {
 	lines := strings.Split(message, "\n")
 	var errs []string
@@ -194,7 +193,7 @@ func attributionLineErrors(message string) []string {
 			continue
 		}
 		emoji := strings.HasPrefix(trimmed, "🤖")
-		footer := generatedFooterRegex.MatchString(trimmed) && bannedCoauthorsRegex.MatchString(trimmed)
+		footer := generatedFooterRegex.MatchString(trimmed)
 		if emoji || footer {
 			errs = appendAttributionError(errs, line)
 		}
