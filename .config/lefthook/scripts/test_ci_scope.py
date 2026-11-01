@@ -97,7 +97,7 @@ class CIScopeTests(unittest.TestCase):
         self.assertIn("example.test/scope/other", result[4])
 
     def test_push_and_dispatch_keep_every_step(self):
-        for event in ("push", "workflow_dispatch"):
+        for event in ("push", "workflow_dispatch", "merge_group"):
             with self.subTest(event=event):
                 result = ci_scope.scope(self.root, event, self.base, "HEAD")
                 self.assertEqual(result[0], "full")
@@ -285,6 +285,19 @@ GO_STUB = r"""go() {
 )
 class WorkflowCommandsTests(unittest.TestCase):
     workflow = Path(__file__).resolve().parents[3] / ".github/workflows/portability.yml"
+
+    def test_review_hold_fails_with_reason_before_work(self):
+        with tempfile.TemporaryDirectory() as temp:
+            summary = Path(temp) / "summary"
+            with self.assertRaisesRegex(HookError, "heavy tier held.*unresolved"):
+                run(
+                    [BASH, "-e", "-c", self.step("Hold heavy tier for review")],
+                    env=dict(os.environ, REASON="1 unresolved review thread(s)",
+                             GITHUB_STEP_SUMMARY=str(summary)),
+                    timeout=30,
+                )
+            self.assertEqual(summary.read_text().strip(),
+                             "heavy tier held: 1 unresolved review thread(s)")
 
     def step_section(self, name):
         workflow_header, jobs = self.workflow.read_text(encoding="utf-8").split(

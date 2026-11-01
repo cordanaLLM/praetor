@@ -538,17 +538,20 @@ func ownDraftHandling(job *workflowJob, work draftHandling) draftHandling {
 // condition and its own first step: GitHub skips a job whose need failed or was skipped unless
 // its condition runs it after one, and a condition can mention a status function without doing
 // so (`!failure() && !cancelled()`, `always() && needs.plan.result == 'success'`), so the check
-// protects by default and reads none.
+// protects by default and reads none outside the separately proven review-hold shape.
 //
-// The exception is the proven opt-in draft skip, its always() aggregate and covered dependents,
-// which the caller settles first (draftProvenSkip, docs/guides/workflow-triggers.md); any other
-// such workflow is declared in the exceptions list (Limits).
+// Exceptions are the proven opt-in draft skip, its always() aggregate and covered dependents,
+// settled first by the caller, and the inert review-hold prefix with an allow-listed job
+// condition (reviewHoldRunsAfterFailure). Other shapes require a declared exception.
 func decideJob(job *workflowJob, work draftHandling, decided map[string]jobDecision) jobDecision {
 	if work == draftProvenSkip {
 		return jobDecision{handling: draftStops}
 	}
 	own := ownDraftHandling(job, work)
 	if own == draftUnreached || own == draftConditionSkip || own == draftCallsIdle {
+		return jobDecision{handling: own}
+	}
+	if own == draftStops && reviewHoldRunsAfterFailure(job) {
 		return jobDecision{handling: own}
 	}
 	if byNeed, held := needDecision(job.NeedIDs(), decided, strings.TrimSpace(job.If) == ""); held {
@@ -580,10 +583,10 @@ func needDecision(needs []string, decided map[string]jobDecision, plain bool) (j
 	return skip, held
 }
 
-// beginsWithDraftStep reports whether the first step of job is the hosted gate's draft step. A
-// job calling a reusable workflow has no steps of its own.
+// beginsWithDraftStep reports whether job starts with a proven draft barrier, permitting the
+// inert review-hold prefix. A reusable workflow call has no steps of its own.
 func beginsWithDraftStep(job *workflowJob) bool {
-	return len(job.Steps) > 0 && ghworkflow.DraftStepFault(&job.Steps[0]) == nil
+	return ghworkflow.DraftStepPosition(job) >= 0
 }
 
 // stepWork says what the steps of job do on a draft: draftStops when its first step is the draft

@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+# SPDX-License-Identifier: EUPL-1.2
+name: Release held heavy tier
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  pull_request_review:
+    types: [submitted, dismissed]
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  pull-requests: read
+  contents: read
+
+concurrency:
+  group: release-heavy-tier
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Pilot only; adoption rollout is a separate change.
+    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout trusted release helper
+        uses: actions/checkout@v7
+        with:
+          # Review events carry a PR ref. Never execute that ref with actions: write.
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Release reviewed heads
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/ci_review_gate.py release

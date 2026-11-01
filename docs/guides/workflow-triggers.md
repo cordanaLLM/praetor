@@ -303,8 +303,10 @@ A finding is one line, and the last line counts them and names both ways out:
   the job after a failed need, as `!failure() && !cancelled()` does, so the audit reports by
   default instead of guessing. That includes the aggregate merge gate that begins with the draft
   step and runs with `if: always()`, which does fail a draft through its failed need. Only the
-  [opt-in draft skip](#the-opt-in-draft-skip) passes through the proven `always()` aggregate;
-  for any other such workflow, declare it in the exceptions list.
+  [opt-in draft skip](#the-opt-in-draft-skip) passes through the proven `always()` aggregate.
+  The [review hold](#review-before-the-heavy-tier) also passes through a separately proven
+  inert hold/draft prefix and an allow-listed `!cancelled()` job condition. For any other
+  such workflow, declare it in the exceptions list.
 - The audit does not read which jobs the ruleset requires, so every job of a need chain is
   reported, not only the required one.
 - A job with a condition of its own that needs a job a `pull_request` run never starts is judged
@@ -317,3 +319,69 @@ A finding is one line, and the last line counts them and names both ways out:
   (`TestEngineRequiredContextsFailOnADraft`).
 - The run budget part of #817 (runs and run-minutes per workflow from the forge) and the check
   for a workflow that re-runs on every base-branch push are not implemented.
+
+## Review before the heavy tier
+
+The pilot changes this repository's `ci.yml` and `portability.yml`; adopter templates retain
+their existing behavior. Jobs keep their display names and concurrency settings.
+
+| Workflow / job | Tier | Reason |
+| :--- | :--- | :--- |
+| Both / `review-gate` | Fast | Read-only review state and bot-check lookup; no toolchain build |
+| CI / `config-validation` | Fast | Release and bot configuration validation |
+| CI / `verify` | Heavy | Full verification, race tests, security scans and coverage; the existing job also contains formatting, lint and selective docs checks |
+| CI / `docs-presets` | Heavy | Adopter fixture builds and browser smoke tests of served documentation |
+| Portability / `harness` (Linux, macOS, Windows) | Heavy | Platform compilation, vet, package tests and harness suites |
+| Portability / `skipped` | Fast | Explains an existing repository opt-in or Renovate skip |
+
+On `pull_request`, `scripts/ci_review_gate.py gate --pr <number> --head <sha>` checks the live
+head and counts every unresolved GraphQL `reviewThreads.isResolved` thread. It also counts
+pending check runs and latest commit statuses matching `BOT_NAMES`: CodeRabbit, Codacy,
+CodeQL and Copilot, matching check names or app slugs. Completed checks, including failed
+checks, are not pending; unresolved findings still hold the job through their threads. A bot
+that publishes no check or status contributes zero; this gate cannot predict a bot that has
+not registered its work yet. Fast checks in separate jobs remain available during the hold.
+The mixed `verify` job waits as a whole, including its embedded light checks.
+
+The helper writes `clear=true|false` and `reason=<text>` to `GITHUB_OUTPUT`. A failed,
+malformed, truncated or over-limit read yields `clear=false` and `gate unreadable: ...`.
+Reads use only `GITHUB_TOKEN`, a 15-second request timeout, a 2 MiB response limit, at most ten
+100-item pages, and a 120-second gate budget. The review job has `checks: read` and
+`statuses: read` as well as contents and pull-request read permissions.
+
+A held heavy job runs on Ubuntu with its original check name. Its first step fails with
+`::error title=heavy tier held::<reason>` and writes `heavy tier held: <reason>` to its step
+summary. It performs no checkout, dependency setup or suite work. Even steps that normally
+continue after a failure require `clear == 'true'`. A failed review-gate job also produces a
+held failure. Draft barriers remain enforced after the inert review-hold step.
+
+Pushes, merge groups and manual dispatches clear the gate without API reads and retain full
+heavy work. Existing repository opt-in, Renovate and draft policies still apply.
+
+`release-heavy-tier.yml` runs every ten minutes, on submitted/dismissed reviews, and by
+manual dispatch. Thread resolution has no Actions event, so the schedule provides unattended
+release after the last thread closes. The workflow reads only trusted default-branch code,
+examines at most 100 open PRs and the newest 100 runs per workflow/head, and identifies a hold
+by the failed `Hold heavy tier for review` step in the latest attempt. It never substitutes an
+older failure for a newer queued or successful run. Once clear, it rechecks the head and run
+attempt and invokes `gh run rerun <run-id>` for the whole run, reevaluating gate outputs.
+A new attempt or an active run prevents duplicate release; ordinary test failures are left
+alone. Release sweeps serialize and have an eight-minute API budget.
+
+After resolving threads, a session can request an immediate release sweep:
+
+```sh
+gh workflow run release-heavy-tier.yml
+```
+
+Scheduled execution depends on the workflow being present on the default branch. The pilot
+release workflow uses only `actions: write`, `pull-requests: read` and `contents: read`; check
+and status endpoints permit public-resource reads with these permissions. Private adoption
+needs explicit read scopes for checks and statuses before rollout; unreadable data stays held.
+See the [Checks API](https://docs.github.com/en/rest/checks/runs#list-check-runs-for-a-git-reference),
+[status API](https://docs.github.com/en/rest/commits/statuses#list-commit-statuses-for-a-reference)
+and [job-attempt API](https://docs.github.com/en/rest/actions/workflow-jobs#list-jobs-for-a-workflow-run).
+
+Offline evidence: `python3 -B scripts/ci_review_gate.py selftest`, the review-hold case in
+`.config/lefthook/scripts/test_ci_scope.py`, and `TestWorkflowHeavyReviewGate` plus its planted
+workflow mutations in `internal/forge/workflow_review_gate_test.go`.

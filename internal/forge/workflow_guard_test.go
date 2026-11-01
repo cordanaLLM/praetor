@@ -220,8 +220,8 @@ func TestPortabilityFollowsTheRepositoryVariable(t *testing.T) {
 		t.Fatalf("parse portability.yml: %v", err)
 	}
 	runs := renovateBranchSkip + " && (" + repositoryGuard(identity) + " || " + portabilityVariable + ")"
-	if got := spec.Jobs["harness"].If; got != runs {
-		t.Errorf("harness condition = %q, want %q", got, runs)
+	if got := spec.Jobs["harness"].If; got != runs+" && !cancelled()" {
+		t.Errorf("harness condition = %q, want %q", got, runs+" && !cancelled()")
 	}
 	if got := spec.Jobs["windows-shard"].If; got != runs {
 		t.Errorf("windows-shard condition = %q, want %q", got, runs)
@@ -313,6 +313,7 @@ type pullRequestRun struct {
 // startsWith ignoring case, and so do the two Renovate facts here.
 func conditionFacts(identity string, run pullRequestRun) *strings.Replacer {
 	return strings.NewReplacer(
+		"!cancelled()", "true",
 		renovateHeadBranch, strconv.FormatBool(strings.HasPrefix(strings.ToLower(run.headRef), "renovate/")),
 		renovateAuthor, strconv.FormatBool(strings.EqualFold(run.author, "renovate[bot]")),
 		repositoryGuard(identity), "true",
@@ -499,6 +500,7 @@ var everyLegConditions = []string{
 
 // runsOnEveryLeg reports whether a step's condition cannot differ between matrix legs.
 func runsOnEveryLeg(step workflowStep, jobID string) bool {
+	step.If = strings.ReplaceAll(step.If, "needs.review-gate.outputs.clear == 'true' && ", "")
 	cond := strings.TrimSpace(step.If)
 	if cond == everyLegConditions[3] {
 		return jobID == "windows-shard"
@@ -509,6 +511,7 @@ func runsOnEveryLeg(step workflowStep, jobID string) bool {
 // runsInPortabilityScope permits only the declared step scope, never a platform condition.
 // Push and dispatch set every flag; PR fixtures exercise each selector branch.
 func runsInPortabilityScope(step workflowStep, jobID, flag string) bool {
+	step.If = strings.ReplaceAll(step.If, "needs.review-gate.outputs.clear == 'true' && ", "")
 	if runsOnEveryLeg(step, jobID) {
 		return true
 	}
