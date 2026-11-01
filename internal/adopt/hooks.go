@@ -371,12 +371,20 @@ func buildLefthookYAMLFor(shape lefthookShape, checkpoint bool) string {
 		"    gate:\n" + lefthookRun(governed(prePushGateArgs))
 }
 
+// maxPrePushRefs bounds the ref updates pre-push merge-check inspects from stdin (HISS-02).
+const maxPrePushRefs = 64
+
 // mergeCheckPrePushCommand reads git pre-push ref lines (<local-ref> <local-oid> <remote-ref>
 // <remote-oid>) from stdin and runs merge-check over each pushed range whose local and remote
 // OIDs are both non-zero; when no pushed range exists on stdin (ref deletion, new branch with
-// all-zero remote OID, or empty stdin), it prints a stated skip reason to stderr.
+// all-zero remote OID, or empty stdin), it prints a stated skip reason to stderr. It counts
+// ref lines and fails closed past maxPrePushRefs.
 func mergeCheckPrePushCommand() string {
-	return "ran=0; while read -r _ loid _ roid; do " +
+	limit := strconv.Itoa(maxPrePushRefs)
+	return "count=0; ran=0; while read -r _ loid _ roid; do " +
+		"count=$((count + 1)); " +
+		"if [ $count -gt " + limit + " ]; then " +
+		"echo merge-check: pushed refs exceed limit " + limit + " >&2; exit 1; fi; " +
 		"if [ x$(echo $loid | tr -d 0) != x ] && [ x$(echo $roid | tr -d 0) != x ]; then " +
 		"ran=1; " + lefthookGovernedCommand("merge-check --range=$roid..$loid") + " || exit $?; " +
 		"fi; done; " +

@@ -195,8 +195,13 @@ func yamlString(v any) string {
 
 func verifyMergeCheckPrePushExecution(t *testing.T) {
 	t.Helper()
-	if os.PathSeparator == '\\' {
-		return
+	verifyMergeCheckPrePushExecutionOn(t, os.PathSeparator == '\\')
+}
+
+func verifyMergeCheckPrePushExecutionOn(t *testing.T, isWindows bool) {
+	t.Helper()
+	if isWindows {
+		t.Skip("merge-check pre-push runner executes POSIX shell scripts; unsupported on Windows (HISS-21)")
 	}
 	dir := t.TempDir()
 	enginePath := filepath.Join(dir, engineLauncherFile)
@@ -222,6 +227,11 @@ func verifyMergeCheckPrePushExecution(t *testing.T) {
 	}
 	t.Setenv("STUB_EXIT", "0")
 
+	verifyMergeCheckPrePushBoundaries(t, dir, runner, oid1, oid2, zero)
+}
+
+func verifyMergeCheckPrePushBoundaries(t *testing.T, dir, runner, oid1, oid2, zero string) {
+	t.Helper()
 	for name, stdin := range map[string]string{
 		"empty":      "",
 		"new branch": "refs/heads/new " + oid1 + " refs/heads/new " + zero + "\n",
@@ -231,5 +241,34 @@ func verifyMergeCheckPrePushExecution(t *testing.T) {
 		if skipErr != nil || !strings.Contains(skipOut, "no pushed commit range on stdin, skipping merge-check") {
 			t.Fatalf("boundary %s: err=%v out=%q", name, skipErr, skipOut)
 		}
+	}
+
+	var atBound strings.Builder
+	for i := 0; i < maxPrePushRefs; i++ {
+		atBound.WriteString("refs/heads/new " + oid1 + " refs/heads/new " + zero + "\n")
+	}
+	if boundOut, boundErr := util.RunCommand(t.Context(), dir, "sh", "-c", runner, "sh", atBound.String()); boundErr != nil || !strings.Contains(boundOut, "no pushed commit range on stdin, skipping merge-check") {
+		t.Fatalf("boundary pushed refs at limit: err=%v out=%q", boundErr, boundOut)
+	}
+
+	var overBound strings.Builder
+	for i := 0; i <= maxPrePushRefs; i++ {
+		overBound.WriteString("refs/heads/new " + oid1 + " refs/heads/new " + zero + "\n")
+	}
+	if overOut, overErr := util.RunCommand(t.Context(), dir, "sh", "-c", runner, "sh", overBound.String()); overErr == nil || !strings.Contains(overOut, "pushed refs exceed limit") {
+		t.Fatalf("negative pushed refs exceeding limit: err=%v out=%q", overErr, overOut)
+	}
+}
+
+// Positive, negative and boundary: verifyMergeCheckPrePushExecutionOn executes on POSIX and skips
+// on Windows with a stated reason (HISS-21).
+func TestVerifyMergeCheckPrePushExecution_WindowsSkipsWithReason(t *testing.T) {
+	skipped := false
+	t.Run("windows-skip", func(t *testing.T) {
+		defer func() { skipped = t.Skipped() }()
+		verifyMergeCheckPrePushExecutionOn(t, true)
+	})
+	if !skipped {
+		t.Fatalf("expected verifyMergeCheckPrePushExecutionOn(t, true) to skip (HISS-21), got silent return")
 	}
 }

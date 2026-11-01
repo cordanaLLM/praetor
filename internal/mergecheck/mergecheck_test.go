@@ -351,3 +351,59 @@ func TestMergeCheck_ConflictResolvedP2_NonConflictingP1Dropped_Finding(t *testin
 	}
 	assertFindingMatch(t, res.Findings[0], "alpha.txt", mergeSHA, p1SHA, p2SHA)
 }
+
+// Positive, negative and boundary: a changed file whose name starts with ':' (e.g. ':!alpha.txt'
+// or ':(glob)beta.txt') uses literal pathspecs in git ls-tree chunk reads; dropped hunks are found
+// and per-hunk resolutions are accepted.
+func TestMergeCheck_ColonPathspec_LiteralTreated(t *testing.T) {
+	dir := initTestRepo(t)
+
+	baseContent := "line 1\nline 2\nline 3\nline 4\nline 5\n"
+	writeFile(t, dir, ":!alpha.txt", baseContent)
+	writeFile(t, dir, ":(glob)beta.txt", baseContent)
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "."},
+		[]string{"commit", "-m", "chore: base commit with colon files"},
+		[]string{"branch", "-M", "main"},
+	)
+
+	// Branch X: edits line 2 of both files
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-x"})
+	writeFile(t, dir, ":!alpha.txt", "line 1\nline 2 mod X\nline 3\nline 4\nline 5\n")
+	writeFile(t, dir, ":(glob)beta.txt", "line 1\nline 2 mod X\nline 3\nline 4\nline 5\n")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "."},
+		[]string{"commit", "-m", "feat: branch X modifications"},
+	)
+	p1SHA := gitRevParse(t, dir, "HEAD")
+
+	// Branch Y: edits line 5 of both files
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-y", "main"})
+	writeFile(t, dir, ":!alpha.txt", "line 1\nline 2\nline 3\nline 4\nline 5 mod Y\n")
+	writeFile(t, dir, ":(glob)beta.txt", "line 1\nline 2\nline 3\nline 4\nline 5 mod Y\n")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "."},
+		[]string{"commit", "-m", "feat: branch Y modifications"},
+	)
+	p2SHA := gitRevParse(t, dir, "HEAD")
+
+	// Merge Y into X: drop hunk on :!alpha.txt (take Y), but keep both hunks on :(glob)beta.txt
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "branch-x"})
+	runGitAllowConflict(t, dir, "merge", "--no-commit", "branch-y")
+	writeFile(t, dir, ":!alpha.txt", "line 1\nline 2\nline 3\nline 4\nline 5 mod Y\n")
+	writeFile(t, dir, ":(glob)beta.txt", "line 1\nline 2 mod X\nline 3\nline 4\nline 5 mod Y\n")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "."},
+		[]string{"commit", "-m", "merge: drop hunk on :!alpha.txt, resolve :(glob)beta.txt"},
+	)
+	mergeSHA := gitRevParse(t, dir, "HEAD")
+
+	res, err := Check(t.Context(), Options{RepoDir: dir, Range: "main..HEAD"})
+	if err != nil {
+		t.Fatalf("Check failed: %v", err)
+	}
+	if len(res.Findings) != 1 {
+		t.Fatalf("expected 1 finding for :!alpha.txt, got %d: %+v", len(res.Findings), res.Findings)
+	}
+	assertFindingMatch(t, res.Findings[0], ":!alpha.txt", mergeSHA, p1SHA, p2SHA)
+}

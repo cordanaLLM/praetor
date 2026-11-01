@@ -213,7 +213,7 @@ func TestMergeCheck_TreeBlobs_ChunksPathsUnderCommandLineBudget(t *testing.T) {
 	script := "#!/bin/sh\n" +
 		"bytes=0\n" +
 		"for arg in \"$@\"; do bytes=$((bytes + ${#arg} + 1)); done\n" +
-		"if [ \"$bytes\" -gt 16500 ]; then echo \"arg list too long: $bytes\" >&2; exit 128; fi\n" +
+		"if [ \"$bytes\" -gt 16600 ]; then echo \"arg list too long: $bytes\" >&2; exit 128; fi\n" +
 		"exec \"" + realGit + "\" \"$@\"\n"
 	if err := os.WriteFile(shimPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)

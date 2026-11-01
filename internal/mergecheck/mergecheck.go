@@ -481,8 +481,8 @@ func chunkPaths(paths []string, budget int) ([][]string, error) {
 func readTreeBlobChunk(ctx context.Context, repoDir, commit string, chunk []string, blobs map[string]string) error {
 	opCtx, cancel := context.WithTimeout(ctx, gitOpTimeout)
 	defer cancel()
-	args := make([]string, 0, len(chunk)+6)
-	args = append(args, "ls-tree", "--full-tree", "-r", "-z", commit, "--")
+	args := make([]string, 0, len(chunk)+7)
+	args = append(args, "--literal-pathspecs", "ls-tree", "--full-tree", "-r", "-z", commit, "--")
 	args = append(args, chunk...)
 	cmdBytes, err := util.RunGitProbe(opCtx, repoDir, util.MaxCommandOutputBytes, args...)
 	if err != nil {
