@@ -1,5 +1,5 @@
 # HISS-11 negative and boundary: digest-pinned base image, multi-stage alias, and scratch pass.
-FROM golang:1.27-alpine@sha256:4a7b9f0e1c2d3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b AS builder
+FROM golang:1.27-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS builder
 FROM builder AS verify
 FROM scratch
 COPY --from=builder /usr/local/go/bin/go /go

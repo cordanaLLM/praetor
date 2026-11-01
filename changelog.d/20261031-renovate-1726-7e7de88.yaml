@@ -1,0 +1,3 @@
+type: changed
+title: "Dependencies: update golang:1.27-alpine docker digest to d200d2d"
+breaking: false
