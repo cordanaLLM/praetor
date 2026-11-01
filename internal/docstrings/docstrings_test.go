@@ -354,3 +354,38 @@ func TestCheck_UnsupportedFileTypeNotRead(t *testing.T) {
 		t.Fatalf("expected extensionless script bin/deploy to be read, got reads: %v", readPaths)
 	}
 }
+
+// TestResolvePrePushBase_RewrittenBranch_3D verifies that a fast-forward push diffs against the
+// old remote head, a force push of rewritten history diffs against the merge base with the
+// default branch (never the stale head, whose diff holds every commit the rebase picked up),
+// and a new branch (zero remote OID) or an unknown remote head diffs against the merge base.
+func TestResolvePrePushBase_RewrittenBranch_3D(t *testing.T) {
+	dir := newDocstringTestRepo(t, map[string]string{"pkg/a.go": "package pkg\n"})
+	mainOID := runGitOut(t, dir, "rev-parse", "HEAD")
+	writeTestFile(t, dir, "pkg/b.go", "package pkg\n")
+	runGitCmd(t, dir, "add", ".")
+	runGitCmd(t, dir, "commit", "-q", "-m", "old branch head")
+	oldHead := runGitOut(t, dir, "rev-parse", "HEAD")
+	writeTestFile(t, dir, "pkg/c.go", "package pkg\n")
+	runGitCmd(t, dir, "add", ".")
+	runGitCmd(t, dir, "commit", "-q", "-m", "fast-forward child")
+	childOID := runGitOut(t, dir, "rev-parse", "HEAD")
+	runGitCmd(t, dir, "reset", "-q", "--hard", mainOID)
+	writeTestFile(t, dir, "pkg/b.go", "package pkg\n\n// B is rewritten.\nfunc B() {}\n")
+	runGitCmd(t, dir, "add", ".")
+	runGitCmd(t, dir, "commit", "-q", "-m", "rewritten branch head")
+	rewritten := runGitOut(t, dir, "rev-parse", "HEAD")
+
+	cases := []struct{ name, local, remote, want string }{
+		{"fast-forward uses the remote head", childOID, oldHead, oldHead},
+		{"rewritten history uses the merge base", rewritten, oldHead, mainOID},
+		{"new branch uses the merge base", rewritten, strings.Repeat("0", 40), mainOID},
+		{"unknown remote head uses the merge base", rewritten, strings.Repeat("d", 40), mainOID},
+	}
+	for _, tc := range cases {
+		got, skip := docstrings.ResolvePrePushBase(t.Context(), dir, "origin", tc.local, tc.remote)
+		if skip != "" || got != tc.want {
+			t.Fatalf("%s: got base %q skip %q, want %q", tc.name, got, skip, tc.want)
+		}
+	}
+}

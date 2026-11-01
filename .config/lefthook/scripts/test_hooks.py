@@ -1225,6 +1225,40 @@ print("fixture hook self-tests passed")
         finally:
             os.chdir(original)
 
+    def test_force_push_of_rewritten_history_scans_against_merge_base(self):
+        """Verify a rebased branch is scanned against the merge base, not its replaced head.
+
+        Diffing against the replaced head counts every commit the rebase picked up from the
+        default branch as this push's work, so the range checks judged code the push did not
+        write (#1741: docstring coverage counted the default branch's new functions).
+        """
+        base = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        self.write("README.md", "# Old branch head\n")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "docs: old branch head")
+        old = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        command(self.repo, "git", "reset", "-q", "--hard", base)
+        self.write("README.md", "# Rewritten branch head\n")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "docs: rewritten branch head")
+        head = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        protocol = f"refs/heads/main {head} refs/heads/main {old}\n"
+        original = Path.cwd()
+        try:
+            os.chdir(self.repo)
+            with mock.patch.dict(os.environ, AUTOCRLF_ENV), \
+                    mock.patch("hooks.sys.stdin", io.StringIO(protocol)), \
+                    mock.patch("hooks.new_branch_base", return_value=base) as merge_base, \
+                    mock.patch("hooks.source_checks", return_value=False) as check, \
+                    mock.patch("hooks.check_refactor_range") as refactors, \
+                    mock.patch("hooks.check_docstring_range") as docstrings:
+                pre_push("origin")
+                merge_base.assert_called_once_with(head, "origin", False)
+                self.assertEqual(check.call_args.kwargs, {"base": base})
+                self.assertEqual(check.call_args.args[1], ["README.md"])
+                refactors.assert_called_once_with(base, head)
+                docstrings.assert_called_once_with(base, head)
+        finally:
+            os.chdir(original)
+
     def test_real_checkpoint_push_builds_and_tests_without_release_receipt(self):
         skip_without_race_detector(self)
         self.write("go.mod", "module example.test/checkpoint\n\ngo 1.27\n")

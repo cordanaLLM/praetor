@@ -142,6 +142,27 @@ def new_branch_base(head, remote, include_checkpoints=False):
     return None
 
 
+def push_base(head, old, remote, include_checkpoints=False):
+    """Return the commit a pushed update is scanned against.
+
+    A fast-forward is scanned against the ref it replaces. A new branch, and a force push of
+    rewritten history (the replaced head is no longer an ancestor of the pushed one), are scanned
+    against the merge base with the remote's default branch: diffing a rebased branch against its
+    replaced head counts every commit the rebase picked up from the default branch as this push's
+    work, and the range checks then judge code the push did not write (#1741). A replaced head
+    that is missing locally is returned unchanged; the caller reports it and scans the full tree.
+    """
+    if set(old) == {"0"}:
+        return new_branch_base(head, remote, include_checkpoints)
+    common = run(["git", "merge-base", old, head], allowed=(0, 1, 128)).decode().strip()
+    if not common or common == old:
+        return old
+    base = new_branch_base(head, remote, include_checkpoints)
+    print(f"Push baseline: {old[:12]} was rewritten; scanning against "
+          f"{base[:12] if base else 'the full tree'}")
+    return base
+
+
 def push_check_mode(destination):
     prefix = "refs/heads/checkpoint/"
     return "checkpoint" if destination.startswith(prefix) and len(destination) > len(prefix) else "strict"
@@ -159,7 +180,7 @@ def pre_push(remote):
     for _, local, destination, old in updates:
         mode = push_check_mode(destination)
         head = git("rev-parse", "--verify", local + "^{commit}").decode().strip()
-        base = old if set(old) != {"0"} else new_branch_base(head, remote, mode == "checkpoint")
+        base = push_base(head, old, remote, mode == "checkpoint")
         if base:
             kind = run(["git", "cat-file", "--batch-check=%(objecttype)"], data=(base + "\n").encode())
             if kind.strip().endswith(b" missing"):

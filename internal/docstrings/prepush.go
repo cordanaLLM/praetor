@@ -110,7 +110,7 @@ func isZeroOID(oid string) bool {
 
 // ResolvePrePushBase resolves the base commit OID for a pushed update or returns a skip reason.
 func ResolvePrePushBase(ctx context.Context, repoDir, remote, localOID, remoteOID string) (string, string) {
-	if !isZeroOID(remoteOID) && commitExistsLocally(ctx, repoDir, remoteOID) {
+	if !isZeroOID(remoteOID) && isAncestorCommit(ctx, repoDir, remoteOID, localOID) {
 		return remoteOID, ""
 	}
 	defaultRef, err := DefaultBaseRef(ctx, repoDir, remote)
@@ -126,10 +126,12 @@ func ResolvePrePushBase(ctx context.Context, repoDir, remote, localOID, remoteOI
 	return strings.TrimSpace(out), ""
 }
 
-// commitExistsLocally reports whether oid is present as a commit object in repoDir.
-func commitExistsLocally(ctx context.Context, repoDir, oid string) bool {
+// isAncestorCommit reports whether ancestor is a local commit reachable from oid. A force push
+// of rewritten history leaves the old remote head unreachable; diffing against it would count
+// every commit the rebase picked up, so the caller falls back to the merge base instead.
+func isAncestorCommit(ctx context.Context, repoDir, ancestor, oid string) bool {
 	gitCtx, cancel := context.WithTimeout(ctx, gitReadTimeout)
 	defer cancel()
-	_, err := util.RunGit(gitCtx, repoDir, "cat-file", "-e", oid+"^{commit}")
+	_, err := util.RunGit(gitCtx, repoDir, "merge-base", "--is-ancestor", ancestor, oid)
 	return err == nil
 }
