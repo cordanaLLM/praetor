@@ -703,11 +703,15 @@ func TestBaselineRecord_PreservesHISS12Entries(t *testing.T) {
 func skipIfFileReadable(t testing.TB, path string) {
 	t.Helper()
 	if f, err := os.Open(path); err == nil {
-		_ = f.Close()
+		if cerr := f.Close(); cerr != nil {
+			t.Fatalf("close readability probe of %s: %v", path, cerr)
+		}
 		t.Skip("file permissions are not enforced on this host (manifest remains readable with mode 0000)")
 	}
 }
 
+// TestSkipIfFileReadable_3D verifies that skipIfFileReadable skips on a file that is still readable
+// and lets the test run on a file whose mode 0000 the host enforces.
 func TestSkipIfFileReadable_3D(t *testing.T) {
 	t.Run("readable file causes subtest to skip", func(t *testing.T) {
 		p := filepath.Join(t.TempDir(), "readable.txt")
@@ -732,7 +736,11 @@ func TestSkipIfFileReadable_3D(t *testing.T) {
 		if err := os.Chmod(p, 0000); err != nil {
 			t.Skipf("cannot chmod 0000: %v", err)
 		}
-		t.Cleanup(func() { _ = os.Chmod(p, 0o600) })
+		t.Cleanup(func() {
+			if err := os.Chmod(p, 0o600); err != nil {
+				t.Errorf("restore mode of %s: %v", p, err)
+			}
+		})
 		if _, err := os.ReadFile(p); err == nil {
 			t.Skip("file permissions are not enforced on this host")
 		}
