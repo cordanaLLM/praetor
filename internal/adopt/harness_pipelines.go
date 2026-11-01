@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -127,4 +129,43 @@ func (s *adoptSession) plannedLefthookOwned(ctx context.Context) (bool, error) {
 	}
 	match := matchCurrentLefthook(existing, shape)
 	return identity.prior || match.exact || (match.found && s.opts.Force), nil
+}
+
+// workingTreeGates detects a Makefile with verify-all and a lefthook.yml in the working tree so
+// the harness legend never writes "no gates" when either exists on disk (order
+// engine-adopt-force-gate-detect-20261027-refinement-20261101).
+func (s *adoptSession) workingTreeGates(ctx context.Context, pipelines hisscatalog.Pipeline, hooks hookActivation) (hisscatalog.Pipeline, error) {
+	var repositoryOwned hisscatalog.Pipeline
+	hasVerify, err := s.workingTreeVerifyAll(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if pipelines&hisscatalog.PipelineVerifyAll == 0 && hasVerify {
+		repositoryOwned |= hisscatalog.PipelineVerifyAll
+	}
+	if hooks == hooksRepositoryOwned {
+		repositoryOwned |= hisscatalog.PipelineLefthook
+	}
+	return repositoryOwned, nil
+}
+
+func (s *adoptSession) workingTreeVerifyAll(ctx context.Context) (bool, error) {
+	if s.verification.Status == verificationPreserved {
+		return true, nil
+	}
+	full, err := repoFile(s.repoPath, makefileName)
+	if err != nil {
+		return false, err
+	}
+	data, exists, err := contextopt.ObserveSnapshot(ctx, full)
+	if err != nil || !exists {
+		return false, err
+	}
+	return makefileHasVerifyAll(data), nil
+}
+
+func makefileHasVerifyAll(data []byte) bool {
+	text, _ := util.NormalizeLineEndings(string(data))
+	text = withoutDocumentationMakefileBlock(text)
+	return mayDefineVerificationTarget(text) && !strings.Contains(text, unavailableVerificationRecipe)
 }
