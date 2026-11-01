@@ -512,8 +512,15 @@ func runGoPrefetch(ctx context.Context, cfg *stageConfig) (string, error) {
 	if cfg.dryRun {
 		return "", skipped("dry run: lockfiles verified; go mod verify and go mod download not run")
 	}
+	retried := false
 	results, err := runGoModules(ctx, cfg, func(moduleCtx context.Context, moduleCfg *stageConfig, module goModule) (string, error) {
-		_, runErr := prefetchDependencies(moduleCtx, module.dir, moduleCfg.goToolchain().run)
+		rep, runErr := prefetchModule(moduleCtx, module.dir, moduleCfg.goToolchain().run, !retried)
+		if rep != nil && rep.Message != "" {
+			retried = true
+		}
+		if rep != nil {
+			return rep.Message, runErr
+		}
 		return "", runErr
 	})
 	if err != nil {
