@@ -147,6 +147,56 @@ func TestValidateBytes_Boundary_EmptyAndWhitespaceJustification(t *testing.T) {
 	assertSingleFinding(t, spacesMet, "static_analysis", "Met", RuleMetJustificationRequired)
 }
 
+func TestValidateBytes_MultiLevelCriterionUsesLevelSpecificRules(t *testing.T) {
+	cat, err := LoadCatalog()
+	if err != nil {
+		t.Fatalf("LoadCatalog() error = %v", err)
+	}
+	claims := []statusClaim{{criterion: "tests_documented_added", status: "Met", validString: true}}
+	active := activeCriteriaForClaims(cat, claims)
+	resolved := active["tests_documented_added"]
+	if resolved.Level != "1" || resolved.Category != "MUST" || !resolved.MetJustificationRequired {
+		t.Fatalf("resolved tests_documented_added = %+v, want level=1 category=MUST met_justification_required=true", resolved)
+	}
+
+	// tests_documented_added is SUGGESTED at level 0 (no justification required) and MUST at level 1
+	// (met_justification_required: true). A claim on it alone must activate level 1 and be judged by level 1.
+	rawSilver := []byte(`{
+  "tests_documented_added_status": "Met"
+}`)
+	assertSingleFinding(t, rawSilver, "tests_documented_added", "Met", RuleMetJustificationRequired)
+
+	// test_invocation is SHOULD at level 0 (no URL required) and MUST at level 2 (met_url_required: true).
+	rawGold := []byte(`{
+  "test_invocation_status": "Met",
+  "test_invocation_justification": "Run make test in the repository root."
+}`)
+	assertSingleFinding(t, rawGold, "test_invocation", "Met", RuleMetURLRequired)
+}
+
+func TestValidateBytes_Negative_MultipleViolationsOnSingleClaim(t *testing.T) {
+	// external_dependencies requires both a non-blank justification and an http(s) URL when Met.
+	raw := []byte(`{
+  "external_dependencies_status": "Met",
+  "external_dependencies_justification": "   "
+}`)
+	report, err := ValidateBytes(t.Context(), raw)
+	if err != nil {
+		t.Fatalf("ValidateBytes() unexpected error: %v", err)
+	}
+	if report.Checked != 1 || len(report.Findings) != 2 {
+		t.Fatalf("report = %+v, want Checked=1 and 2 findings", report)
+	}
+	if report.Findings[0].Rule != RuleMetJustificationRequired || report.Findings[1].Rule != RuleMetURLRequired {
+		t.Fatalf("findings = %+v, want [%s, %s]", report.Findings, RuleMetJustificationRequired, RuleMetURLRequired)
+	}
+
+	naFindings := evaluateNA("custom_na", "", Criterion{NAAllowed: false, NAJustificationRequired: true})
+	if len(naFindings) != 2 || naFindings[0].Rule != RuleNANotAllowed || naFindings[1].Rule != RuleNAJustificationRequired {
+		t.Fatalf("evaluateNA() = %+v, want [%s, %s]", naFindings, RuleNANotAllowed, RuleNAJustificationRequired)
+	}
+}
+
 func TestAudit_Boundary_AbsentPassAndFail(t *testing.T) {
 	root := t.TempDir()
 	line, err := Audit(t.Context(), root)

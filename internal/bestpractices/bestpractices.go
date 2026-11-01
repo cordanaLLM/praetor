@@ -343,9 +343,7 @@ func ValidateBytes(ctx context.Context, raw []byte) (*Report, error) {
 	report := &Report{Checked: len(claims)}
 	for i := 0; i < len(claims) && i < maxObjectMembers; i++ {
 		claim := claims[i]
-		if finding, bad := evaluateClaim(claim, justifications[claim.criterion], criteria); bad {
-			report.Findings = append(report.Findings, finding)
-		}
+		report.Findings = append(report.Findings, evaluateClaim(claim, justifications[claim.criterion], criteria)...)
 	}
 	return report, nil
 }
@@ -403,13 +401,7 @@ func activeCriteriaForClaims(cat *Catalog, claims []statusClaim) map[string]Crit
 	for name, crit := range cat.Criteria {
 		active[name] = crit
 	}
-	hasSilver, hasGold := false, false
-	for i := 0; i < len(claims) && i < maxObjectMembers; i++ {
-		if base, ok := cat.Criteria[claims[i].criterion]; ok {
-			hasSilver = hasSilver || base.Level == "1"
-			hasGold = hasGold || base.Level == "2"
-		}
-	}
+	hasSilver, hasGold := claimLevels(cat, claims)
 	if hasSilver || hasGold {
 		mergeLevelCriteria(active, cat.ByLevel["1"])
 	}
@@ -419,6 +411,24 @@ func activeCriteriaForClaims(cat *Catalog, claims []statusClaim) map[string]Crit
 	return active
 }
 
+func claimLevels(cat *Catalog, claims []statusClaim) (hasSilver, hasGold bool) {
+	for i := 0; i < len(claims) && i < maxObjectMembers; i++ {
+		name := claims[i].criterion
+		if base, ok := cat.Criteria[name]; ok {
+			hasSilver = hasSilver || base.Level == "1"
+			hasGold = hasGold || base.Level == "2"
+		}
+		for level, levelMap := range cat.ByLevel {
+			if _, ok := levelMap[name]; !ok {
+				continue
+			}
+			hasSilver = hasSilver || level == "1"
+			hasGold = hasGold || level == "2"
+		}
+	}
+	return hasSilver, hasGold
+}
+
 func mergeLevelCriteria(dst, levelMap map[string]Criterion) {
 	for name, higher := range levelMap {
 		prev, exists := dst[name]
@@ -426,31 +436,31 @@ func mergeLevelCriteria(dst, levelMap map[string]Criterion) {
 			dst[name] = higher
 			continue
 		}
-		prev.NAAllowed = prev.NAAllowed || higher.NAAllowed
-		prev.NAJustificationRequired = prev.NAJustificationRequired || higher.NAJustificationRequired
-		prev.MetJustificationRequired = prev.MetJustificationRequired || higher.MetJustificationRequired
-		prev.MetURLRequired = prev.MetURLRequired || higher.MetURLRequired
-		dst[name] = prev
+		higher.NAAllowed = prev.NAAllowed || higher.NAAllowed
+		higher.NAJustificationRequired = prev.NAJustificationRequired || higher.NAJustificationRequired
+		higher.MetJustificationRequired = prev.MetJustificationRequired || higher.MetJustificationRequired
+		higher.MetURLRequired = prev.MetURLRequired || higher.MetURLRequired
+		dst[name] = higher
 	}
 }
 
-func evaluateClaim(claim statusClaim, justification string, criteria map[string]Criterion) (Finding, bool) {
+func evaluateClaim(claim statusClaim, justification string, criteria map[string]Criterion) []Finding {
 	spec, known := criteria[claim.criterion]
 	if !known {
-		return Finding{
+		return []Finding{{
 			Criterion: claim.criterion,
 			Status:    claim.status,
 			Rule:      RuleUnknownCriterion,
 			Detail:    "criterion does not exist in criteria.yml or baseline_criteria.yml",
-		}, true
+		}}
 	}
 	if !claim.validString || !isValidStatus(claim.status) {
-		return Finding{
+		return []Finding{{
 			Criterion: claim.criterion,
 			Status:    claim.status,
 			Rule:      RuleInvalidStatus,
 			Detail:    "status must be one of Met, Unmet, N/A, ?",
-		}, true
+		}}
 	}
 	switch claim.status {
 	case "N/A":
@@ -458,48 +468,50 @@ func evaluateClaim(claim statusClaim, justification string, criteria map[string]
 	case "Met":
 		return evaluateMet(claim.criterion, justification, spec)
 	default:
-		return Finding{}, false
+		return nil
 	}
 }
 
-func evaluateNA(criterion, justification string, spec Criterion) (Finding, bool) {
+func evaluateNA(criterion, justification string, spec Criterion) []Finding {
+	var findings []Finding
 	if !spec.NAAllowed {
-		return Finding{
+		findings = append(findings, Finding{
 			Criterion: criterion,
 			Status:    "N/A",
 			Rule:      RuleNANotAllowed,
 			Detail:    "N/A is not allowed when na_allowed is false",
-		}, true
+		})
 	}
 	if spec.NAJustificationRequired && strings.TrimSpace(justification) == "" {
-		return Finding{
+		findings = append(findings, Finding{
 			Criterion: criterion,
 			Status:    "N/A",
 			Rule:      RuleNAJustificationRequired,
 			Detail:    "N/A requires a non-blank justification when na_justification_required is true",
-		}, true
+		})
 	}
-	return Finding{}, false
+	return findings
 }
 
-func evaluateMet(criterion, justification string, spec Criterion) (Finding, bool) {
+func evaluateMet(criterion, justification string, spec Criterion) []Finding {
+	var findings []Finding
 	if spec.MetJustificationRequired && strings.TrimSpace(justification) == "" {
-		return Finding{
+		findings = append(findings, Finding{
 			Criterion: criterion,
 			Status:    "Met",
 			Rule:      RuleMetJustificationRequired,
 			Detail:    "Met requires a non-blank justification when met_justification_required is true",
-		}, true
+		})
 	}
 	if spec.MetURLRequired && !containsHTTPURL(justification) {
-		return Finding{
+		findings = append(findings, Finding{
 			Criterion: criterion,
 			Status:    "Met",
 			Rule:      RuleMetURLRequired,
 			Detail:    "Met requires an http(s) URL in the justification when met_url_required is true",
-		}, true
+		})
 	}
-	return Finding{}, false
+	return findings
 }
 
 func isValidStatus(status string) bool {
@@ -516,7 +528,7 @@ func containsHTTPURL(justification string) bool {
 
 func formatFindings(findings []Finding) string {
 	parts := make([]string, 0, len(findings))
-	for i := 0; i < len(findings) && i < maxObjectMembers; i++ {
+	for i := 0; i < len(findings) && i < maxObjectMembers*2; i++ {
 		parts = append(parts, findings[i].String())
 	}
 	return strings.Join(parts, "; ")
