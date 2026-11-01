@@ -136,11 +136,16 @@ func TestInspectStateClientLocalSettings_Boundary(t *testing.T) {
 	}
 	upgradedText := string(upgraded)
 	if !strings.HasSuffix(upgradedText, adopt.ManagedGitIgnoreBlock()) {
-		t.Fatalf("upgraded .gitignore does not end with canonical v4 block:\n%s", upgradedText)
+		t.Fatalf("upgraded .gitignore does not end with the canonical block:\n%s", upgradedText)
+	}
+	// The canonical version comes from the canonical block itself, so a block bump needs no edit here.
+	canonical, okCanonical := adopt.LookupManagedGitIgnoreTail(t.Context(), dir, adopt.ManagedGitIgnoreBlock())
+	if !okCanonical || !canonical.Current {
+		t.Fatalf("canonical block lookup: ok=%v match=%+v, want a current block", okCanonical, canonical)
 	}
 	matchAfter, okAfter := adopt.LookupManagedGitIgnoreTail(t.Context(), dir, upgradedText)
-	if !okAfter || !matchAfter.Matched || matchAfter.Version != "v4" || !matchAfter.Current {
-		t.Fatalf("upgraded block lookup: ok=%v match=%+v, want Matched=true Version=v4 Current=true", okAfter, matchAfter)
+	if !okAfter || !matchAfter.Matched || matchAfter.Version != canonical.Version || !matchAfter.Current {
+		t.Fatalf("upgraded block lookup: ok=%v match=%+v, want Matched=true Version=%s Current=true", okAfter, matchAfter, canonical.Version)
 	}
 
 	// Commit adoption changes so working tree is clean before adding client-local settings.
