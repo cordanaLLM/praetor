@@ -19,6 +19,7 @@ type OperatorSetting struct {
 	Value string
 	List  []string
 	Argv  [][]string
+	Line  int
 }
 
 var operatorSectionNames = [...]string{"clients", "hooks", "update", "framework", "forge", "topology"}
@@ -77,12 +78,13 @@ func decodeSectionMapping(entry sectionEntry) ([]sectionEntry, []OperatorSetting
 			children = append(children, sectionEntry{value, path})
 		case kindEntry:
 			children = append(children, sectionEntry{value, path})
-			settings = append(settings, OperatorSetting{Path: path})
+			settings = append(settings, OperatorSetting{Path: path, Line: entry.node.Content[i].Line})
 		default:
 			setting, err := decodeSettingValue(value, path, spec)
 			if err != nil {
 				return nil, nil, err
 			}
+			setting.Line = entry.node.Content[i].Line
 			settings = append(settings, setting)
 		}
 	}

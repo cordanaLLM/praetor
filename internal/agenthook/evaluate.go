@@ -187,13 +187,14 @@ func dispatch(ctx context.Context, row Registration, canonical Canonical, root s
 	}
 }
 
-// evaluateCommand runs the built-in command policy and the forge-text foreign-reference
-// guard on canonical.Command, refusing commands that violate either check.
+// evaluateCommand runs the built-in command policy, resolved against the command's working
+// directory, and the forge-text foreign-reference guard on canonical.Command, refusing commands
+// that violate either check.
 func evaluateCommand(ctx context.Context, canonical Canonical, root string, in Invocation) Verdict {
 	if canonical.Command == "" {
 		return Verdict{Outcome: Allow}
 	}
-	if verdict := in.Policy.Command(canonical.Command); verdict.Outcome != Allow {
+	if verdict := in.Policy.CommandIn(ctx, canonical.Command, commandBase(canonical, in.WorkDir)); verdict.Outcome != Allow {
 		return verdict
 	}
 	return evaluateForgeTextRefs(ctx, canonical, root, in)

@@ -1455,10 +1455,12 @@ func TestScanRepo_Negative_MissingExceptionTargetWordingWithFilteredOutPredecess
   - rule: HISS-10
     path: .github/workflows/ci.yml
     reason: build warnings
+    category: A
     expires: %s
   - rule: HISS-19
     path: gone.go
     reason: missing file
+    category: A
     expires: %s
 `, expires, expires)
 	writeStandardsManifest(t, tmp, manifest)

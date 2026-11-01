@@ -171,7 +171,7 @@ var catalog = []Rule{
 		FailureAction: "Exit code 1.",
 		Scope:         "warnings",
 		Directive:     []Clause{{Text: "zero warnings: compiler, linter, format sweeps"}},
-		Adoption:      AdoptedCheck{Check: "`go vet` + `gofmt`", Coverage: "Go only", Trigger: "vet finding", Stages: StagePreCommit, Languages: LanguageGo},
+		Adoption:      AdoptedCheck{Check: "Go `go vet` + `gofmt`; Rust `cargo clippy` + `cargo fmt`", Coverage: "Go and Rust", Trigger: "vet, clippy or format finding", Stages: StagePreCommit, Languages: LanguageGo | LanguageRust},
 	},
 	{
 		ID:            "HISS-11",
@@ -217,7 +217,7 @@ var catalog = []Rule{
 		ID:            "HISS-14",
 		Title:         "Append-Only ABI & Migration Footers",
 		Specification: "Public APIs are append-only. Breaking changes require conventional commit breaking indicator (!) and mandatory Migration: footer.",
-		Enforcement:   "praetorctl forge check-commits in CI, over every commit of a pull request, and praetorctl forge check-message in a commit-msg hook reject a breaking-change marker without a Migration: footer, whatever the language, and a subject that is not a Conventional Commits subject (build, chore, ci, docs, feat, fix, perf, refactor, revert, style or test, an optional scope and !) or one git wrote for a merge or a revert. Where api:public-contract is declared and git tracks a go.mod, the Go API Compatibility workflow (.github/workflows/praetor-api.yml) runs tools/apicompat/gate/main.go, which compares the exported API of every Go module with the base using go-apidiff: before a v1 root release tag it reports an incompatible change, from v1 on it rejects one, and a comparison that did not run fails. No other language's API is compared.",
+		Enforcement:   "praetorctl forge check-commits in CI, over every commit of a pull request, and praetorctl forge check-message in a commit-msg hook reject a breaking-change marker without a Migration: footer, whatever the language, a subject that is not a Conventional Commits subject (build, chore, ci, docs, feat, fix, perf, refactor, revert, style or test, an optional scope and !) or one git wrote for a merge or a revert, and tool attribution trailers or footers (fleet rule 1). Where api:public-contract is declared and git tracks a go.mod, the Go API Compatibility workflow (.github/workflows/praetor-api.yml) runs tools/apicompat/gate/main.go, which compares the exported API of every Go module with the base using go-apidiff: before a v1 root release tag it reports an incompatible change, from v1 on it rejects one, and a comparison that did not run fails. No other language's API is compared.",
 		FailureAction: "PR blocker.",
 		Scope:         "append-only ABI",
 		Directive:     []Clause{{Text: "public API append-only; breaking change = `!` subject + `Migration:` footer"}},

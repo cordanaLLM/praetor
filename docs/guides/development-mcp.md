@@ -481,7 +481,8 @@ exceeds what the workflow files measure
 ([How the audit measures the SLSA level](releasing.md#how-the-audit-measures-the-slsa-level),
 `TestServerAuditRunsTheSupplyChainGate` in `cmd/standards-mcp/audit_policy_test.go`). So is the
 HISS-10 build-warnings gate (`adopt.AuditBuildWarnings`): it fails a workflow lane that compiles
-C, C++, Rust or Go code without its toolchain's warnings-as-errors form, and skips a repository
+C, C++, Rust or Go code without its toolchain's warnings-as-errors form, accepts categorized
+exceptions, and skips a repository
 with no such lane ([Build-warnings gate](build-warnings.md),
 `TestServerAuditRunsTheBuildWarningsGate`).
 
@@ -495,9 +496,12 @@ skipping when `release.e2e` is not declared (`TestReleaseE2EAuditGates_MissingSe
 
 The HISS-18 workflow trigger check is the CLI's own as well (`forge.AuditWorkflowTriggers`, run
 with the manifest's exceptions list). Its findings are `[WARN]` lines and the gate still passes;
-only a workflow it cannot read or a malformed `HISS-18` exceptions entry fails it
+only a workflow it cannot read or a malformed `HISS-18` exceptions entry (including a missing
+category when required by the cutoff rules: `entered >= 2026-10-29`, or `entered` omitted with
+`expires > 2026-11-28`) fails it
 ([Workflow trigger audit](workflow-triggers.md),
-`TestServerAuditRunsTheWorkflowTriggerCheck` in `cmd/standards-mcp/audit_policy_test.go`).
+`TestServerAuditRunsTheWorkflowTriggerCheck` in `cmd/standards-mcp/audit_policy_test.go`,
+`TestValidateExceptionsHISS18CategoryCutoff` in `internal/config/exceptions_expiry_test.go`).
 The MCP audit reads nothing from the forge, so where the CLI reads a reusable workflow of another
 repository at the commit its caller pins, `standards_audit` prints a `[SKIP]` line naming the call
 and that reason (`TestServerAuditSkipsAPinnedCallOfAnotherRepository`).

@@ -48,7 +48,7 @@ func readoptedManifest(t *testing.T, s *adoptSession, manifest string) string {
 // Positive (#1069): a manifest without a HISS-11 entry gets the one a first adoption records,
 // after the entries it already declares, and the manifest writer keeps the rest of the file.
 func TestWithSupplyChainException_Positive_ReadoptionRecordsTheGap(t *testing.T) {
-	linter := config.Exception{Rule: "declared-linters", Tool: "gitleaks", Reason: "r", Expires: "2027-01-11"}
+	linter := config.Exception{Rule: "declared-linters", Tool: "gitleaks", Reason: "r", Category: "A", Expires: "2027-01-11"}
 	got, recorded := gapSession(t, measuredGap()).withSupplyChainException(t.Context(), []config.Exception{linter})
 	if recorded == nil || len(got) != 2 || !reflect.DeepEqual(got[0], linter) || got[1].Rule != config.ExceptionRuleSupplyChain {
 		t.Fatalf("exceptions %+v, recorded %+v; want the linter entry then the HISS-11 entry", got, recorded)
@@ -65,7 +65,7 @@ func TestWithSupplyChainException_Positive_ReadoptionRecordsTheGap(t *testing.T)
 // Negative: an entry the manifest declares stands, renewed or narrowed by hand, and workflows that
 // meet the declared supply chain record nothing.
 func TestWithSupplyChainException_Negative_DeclaredEntryOrNoGap(t *testing.T) {
-	own := config.Exception{Rule: config.ExceptionRuleSupplyChain, Path: ".github/workflows/ship.yml", Reason: "own", Expires: "2026-12-01"}
+	own := config.Exception{Rule: config.ExceptionRuleSupplyChain, Path: ".github/workflows/ship.yml", Reason: "own", Category: "A", Expires: "2026-12-01"}
 	if got, recorded := gapSession(t, measuredGap()).withSupplyChainException(t.Context(), []config.Exception{own}); recorded != nil || len(got) != 1 || !reflect.DeepEqual(got[0], own) {
 		t.Fatalf("declared entry replaced: %+v, %+v", got, recorded)
 	}

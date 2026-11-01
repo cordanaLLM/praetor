@@ -97,3 +97,145 @@ func quoteSubject(subject string) string {
 	}
 	return strconv.Quote(subject)
 }
+
+var (
+	// bannedCoauthorsRegex matches names or emails matching the tool list with word boundaries,
+	// case-insensitively, following fleet rule 1.
+	bannedCoauthorsRegex = regexp.MustCompile(`(?i)\b(?:claude|anthropic|openai|chatgpt|gpt|codex|gemini|copilot|cursor|opencode|antigravity)\b`)
+
+	// coauthorKeyRegex matches a line starting with a Co-authored-by trailer token.
+	coauthorKeyRegex = regexp.MustCompile(`(?i)^co-authored-by(?::|\s)`)
+
+	// coauthorTrailerRegex matches a Co-authored-by trailer line (case-insensitive, optional colon).
+	coauthorTrailerRegex = regexp.MustCompile(`(?i)^co-authored-by(?::|\s)\s*(.+)$`)
+
+	// generatedFooterRegex matches a footer line opening with generated or created with/by.
+	generatedFooterRegex = regexp.MustCompile(`(?i)^(?:<!--\s*|[-*]\s*|[#>\s]*)*(?:generated|created)\s+(?:with|by)\b`)
+)
+
+// isBannedCoauthor reports whether val names a model, coding tool, or bot.
+func isBannedCoauthor(val string) bool {
+	valLower := strings.ToLower(val)
+	if strings.Contains(valLower, "noreply@anthropic.com") {
+		return true
+	}
+	if strings.Contains(valLower, "[bot]") {
+		return true
+	}
+	return bannedCoauthorsRegex.MatchString(val)
+}
+
+// appendAttributionError adds a refusal error for line if not already present in seen.
+func appendAttributionError(errs []string, seen map[string]struct{}, line string) []string {
+	errMsg := fmt.Sprintf("no tool attribution (fleet rule): %s; fix: drop the line", line)
+	if _, exists := seen[errMsg]; exists {
+		return errs
+	}
+	seen[errMsg] = struct{}{}
+	return append(errs, errMsg)
+}
+
+// commitParagraphs splits a commit message into paragraphs of non-empty lines (HISS-02 bounded).
+func commitParagraphs(message string) [][]string {
+	lines := strings.Split(message, "\n")
+	var paragraphs [][]string
+	var current []string
+
+	for i := 0; i < len(lines) && i < maxCommitMessageLines; i++ {
+		line := strings.TrimRight(lines[i], "\r")
+		if strings.TrimSpace(line) == "" {
+			if len(current) > 0 {
+				paragraphs = append(paragraphs, current)
+				current = nil
+			}
+		} else {
+			current = append(current, line)
+		}
+	}
+	if len(current) > 0 {
+		paragraphs = append(paragraphs, current)
+	}
+	return paragraphs
+}
+
+// isTrailerContinuation reports whether line is an indented continuation line that does not
+// begin a new Co-authored-by trailer.
+func isTrailerContinuation(line string) bool {
+	if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+		return false
+	}
+	trimmed := strings.TrimSpace(line)
+	return trimmed != "" && !coauthorKeyRegex.MatchString(trimmed)
+}
+
+// unfoldTrailerParagraph unfolds continuation lines in the final paragraph by joining each
+// indented line onto the preceding line with a single space.
+func unfoldTrailerParagraph(para []string) []string {
+	var unfolded []string
+	for i := 0; i < len(para) && i < maxCommitMessageLines; i++ {
+		line := strings.TrimRight(para[i], "\r")
+		if len(unfolded) > 0 && isTrailerContinuation(line) {
+			last := len(unfolded) - 1
+			unfolded[last] = strings.TrimRight(unfolded[last], " \t") + " " + strings.TrimSpace(line)
+			continue
+		}
+		unfolded = append(unfolded, line)
+	}
+	return unfolded
+}
+
+// commitAttributionErrors inspects message for tool attribution violating fleet rule 1: a
+// line opening with the robot emoji, a generated-with or created-with footer,
+// and a Co-authored-by trailer in the final paragraph naming a model, tool or bot (the
+// trailer block as git interpret-trailers reads it, including folded continuation lines).
+func commitAttributionErrors(message string) []string {
+	if over := commitLinesOverBound(message); over != "" {
+		return []string{over}
+	}
+	seen := make(map[string]struct{})
+	errs := attributionLineErrors(message, seen)
+	paragraphs := commitParagraphs(message)
+	if len(paragraphs) < 2 {
+		return errs
+	}
+	finalPara := unfoldTrailerParagraph(paragraphs[len(paragraphs)-1])
+	for i := 0; i < len(finalPara) && i < maxCommitMessageLines; i++ {
+		line := finalPara[i]
+		m := coauthorTrailerRegex.FindStringSubmatch(strings.TrimSpace(line))
+		if len(m) > 1 && isBannedCoauthor(m[1]) {
+			errs = appendAttributionError(errs, seen, line)
+		}
+	}
+	return errs
+}
+
+// commitLinesOverBound returns the refusal for a message of more than maxCommitMessageLines
+// lines, or "". A stored commit reaches the attribution scan without CleanCommitMessage, and the
+// scan stops at the bound, so a footer past it would otherwise pass unchecked.
+func commitLinesOverBound(message string) string {
+	if strings.Count(strings.TrimSuffix(message, "\n"), "\n") < maxCommitMessageLines {
+		return ""
+	}
+	return fmt.Sprintf("commit message holds more than %d lines; the policy refuses it rather than "+
+		"check its attribution in part", maxCommitMessageLines)
+}
+
+// attributionLineErrors refuses footer lines anywhere in message: a robot emoji opening a
+// line, or a generated-with or created-with footer line.
+func attributionLineErrors(message string, seen map[string]struct{}) []string {
+	lines := strings.Split(message, "\n")
+	var errs []string
+	for i := 0; i < len(lines) && i < maxCommitMessageLines; i++ {
+		line := strings.TrimRight(lines[i], "\r")
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		emoji := strings.HasPrefix(trimmed, "🤖")
+		footer := generatedFooterRegex.MatchString(trimmed)
+		if emoji || footer {
+			errs = appendAttributionError(errs, seen, line)
+		}
+	}
+	return errs
+}

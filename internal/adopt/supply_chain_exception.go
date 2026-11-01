@@ -57,8 +57,9 @@ func (s *adoptSession) supplyChainException(ctx context.Context) *config.Excepti
 // expiry the list allows.
 func newSupplyChainException(gap supplyChainGap, today time.Time) config.Exception {
 	return config.Exception{
-		Rule: config.ExceptionRuleSupplyChain,
-		Path: gap.releaseWorkflow(),
+		Rule:     config.ExceptionRuleSupplyChain,
+		Path:     gap.releaseWorkflow(),
+		Category: "D",
 		Reason: fmt.Sprintf("adoption found the release workflows short of the declared supply chain (%s); raise them as "+
 			"%s in Praetor describes, then remove this entry", gap.summary(), supplyChainGuide),
 		Expires: config.ExceptionDay(today).AddDate(0, 0, config.MaxExceptionDays).Format(config.ExceptionDateLayout),

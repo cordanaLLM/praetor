@@ -23,15 +23,20 @@ func TestValidateExceptionsCategoryCaps(t *testing.T) {
 		{"reason mixed case", "", "CaTeGoRy d, upstream boilerplate", "", "2027-02-18", ""},
 		{"reason D exceeded", "", "category D: gap", "", "2027-02-19", "category D requires expires on or before 2027-02-18 (120 days"},
 		{"field wins", "B", "category D: gap", "", "2026-10-25", "category B"},
-		{"uncategorized 90 days", "", "gap", "", "2027-01-19", ""},
-		{"uncategorized 91 days", "", "gap", "", "2027-01-20", "more than 90 days"},
-		{"embedded category ignored", "", "gap category D", "", "2027-02-18", "more than 90 days"},
-		{"noncategory word ignored", "", "category Debt", "", "2027-02-18", "more than 90 days"},
+		{"uncategorized no entered grace boundary", "", "gap", "", "2026-11-28", ""},
+		{"uncategorized no entered past grace", "", "gap", "", "2026-11-29", "category is required (entered is omitted and expires 2026-11-29 is after 2026-11-28"},
+		{"embedded category ignored", "", "gap category D", "2026-10-20", "2027-02-18", "more than 90 days"},
+		{"noncategory word ignored", "", "category Debt", "2026-10-20", "2027-02-18", "more than 90 days"},
 		{"entered D boundary", "D", "gap", "2026-10-20", "2027-02-17", ""},
 		{"entered D exceeded", "D", "gap", "2026-10-20", "2027-02-18", "category D requires expires on or before 2027-02-17 (120 days"},
 		{"shorter interval", "C", "gap", "2026-10-21", "2026-10-25", ""},
 		{"entered uncategorized", "", "gap", "2026-10-20", "2027-01-18", ""},
 		{"entered uncategorized exceeded", "", "gap", "2026-10-20", "2027-01-19", "more than 90 days"},
+		{"entered before cutoff uncategorized", "", "gap", "2026-10-28", "2027-01-19", ""},
+		{"entered cutoff without category", "", "gap", "2026-10-29", "2026-11-01", "category is required (entered 2026-10-29 is on or after 2026-10-29"},
+		{"entered cutoff with field category", "B", "gap", "2026-10-29", "2026-11-01", ""},
+		{"entered cutoff with B + 4", "B", "gap", "2026-10-29", "2026-11-02", "category B requires expires on or before 2026-11-01 (3 days"},
+		{"entered cutoff with reason prefix category", "", "category B: gap", "2026-10-29", "2026-11-01", ""},
 		{"A stated date", "A", "gap", "2026-10-21", "2027-01-19", ""},
 		{"A beyond 90 days", "A", "gap", "2026-10-21", "2027-01-20", "category A requires expires on or before 2027-01-19 (90 days"},
 		{"A no entered", "A", "gap", "", "2027-01-19", ""},
@@ -64,5 +69,37 @@ func TestExceptionWarningDaysReasonCategory(t *testing.T) {
 	entry.Category = "B"
 	if got := entry.WarningDays(); got != 1 {
 		t.Fatalf("explicit category warning = %d, want 1", got)
+	}
+}
+
+func TestValidateExceptionsHISS18CategoryCutoff(t *testing.T) {
+	today := time.Date(2026, 10, 21, 18, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name, category, entered, expires, want string
+	}{
+		{"positive categorized past cutoff", "A", "2026-10-29", "2026-12-31", ""},
+		{"boundary uncategorized entered before cutoff", "", "2026-10-28", "2027-01-19", ""},
+		{"boundary uncategorized without entered within grace", "", "", "2026-11-28", ""},
+		{"negative uncategorized entered on cutoff", "", "2026-10-29", "2026-11-01", "category is required (entered 2026-10-29 is on or after 2026-10-29"},
+		{"negative uncategorized without entered past grace", "", "", "2026-11-29", "category is required (entered is omitted and expires 2026-11-29 is after 2026-11-28"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := Exception{
+				Rule:     ExceptionRuleWorkflowTriggers,
+				Path:     ".github/workflows/release.yml",
+				Category: tc.category,
+				Entered:  tc.entered,
+				Reason:   "workflow must run on every branch push",
+				Expires:  tc.expires,
+			}
+			err := ValidateExceptions([]Exception{entry}, today)
+			if tc.want == "" && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+				t.Fatalf("ValidateExceptions = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
