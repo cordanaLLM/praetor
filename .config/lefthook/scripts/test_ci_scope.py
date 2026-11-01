@@ -302,8 +302,9 @@ class WorkflowCommandsTests(unittest.TestCase):
                 continue
             if not line.startswith(prefix):
                 break
-            if not line[len(prefix) :].startswith(" "):
-                key, _, value = line[len(prefix) :].partition(":")
+            rest = line.removeprefix(prefix)
+            if not rest.startswith(" "):
+                key, _, value = rest.partition(":")
                 entries[key.strip()] = value.strip().strip("\"'")
         return entries
 
