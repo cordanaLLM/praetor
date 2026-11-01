@@ -40,6 +40,18 @@ var pinnedGitIgnoreBlockVersions = map[string][]string{
 		"/.claude/settings.local.json",
 		"/.standards-receipt.json",
 	},
+	"v5": {
+		".workingdir/",
+		".workingdir2/",
+		"/.standards/worktrees/",
+		"/.agents/mcp_config.json",
+		"/.standards/cache/",
+		"/.claude/settings.local.json",
+		"/.standards-receipt.json",
+		"/.codacy/",
+		".github/instructions/codacy.instructions.md",
+		".cursor/rules/codacy.mdc",
+	},
 }
 
 // Positive: LookupManagedGitIgnoreTail recognizes current and earlier versions across all
@@ -52,9 +64,14 @@ func TestLookupManagedGitIgnoreTail_Positive(t *testing.T) {
 		wantCurrent bool
 		wantVersion string
 	}{
-		"current v4 canonical block": {
-			version:     gitIgnoreBlockVersion{Version: "v4", Rules: pinnedGitIgnoreBlockVersions["v4"]},
+		"current v5 canonical block": {
+			version:     gitIgnoreBlockVersion{Version: "v5", Rules: pinnedGitIgnoreBlockVersions["v5"]},
 			wantCurrent: true,
+			wantVersion: "v5",
+		},
+		"historical v4 receipt block": {
+			version:     gitIgnoreBlockVersion{Version: "v4", Rules: pinnedGitIgnoreBlockVersions["v4"]},
+			wantCurrent: false,
 			wantVersion: "v4",
 		},
 		"historical v3 unanchored block": {
@@ -222,7 +239,7 @@ func assertHistoryTransitions(t *testing.T) {
 	}
 
 	mutatedCanonical := gitIgnoreBlockVersion{
-		Version: "v4",
+		Version: "v5",
 		Rules:   append(slices.Clone(canonicalGitIgnoreBlockVersion.Rules), "/.new-tool-cache/"),
 	}
 	err := checkBlockHistoryTransition(canonicalGitIgnoreBlockVersion, mutatedCanonical, gitIgnoreBlockHistory)
