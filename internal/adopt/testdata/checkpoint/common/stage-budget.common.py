@@ -277,7 +277,7 @@ def _bounded_output(process, timeout, maximum):
 
 
 def _spawn_bounded(args, cwd, env):
-    """Start args in a session of its own, stdin closed and both streams piped."""
+    """Start trusted argv in a session of its own (no shell), stdin closed and streams piped."""
     return subprocess.Popen(
         args,
         cwd=cwd,
@@ -324,10 +324,12 @@ def run_bounded(
         ) from error
 
 
+# Callers pass a fixed program from toolchain.py or bin/praetorctl with validated arguments
+# (enforced by DeclaredPrograms in test_hooks.py).
 def run(
     args, cwd=None, *, data=None, timeout=180, capture=True, env=None, allowed=(0,)
 ):
-    """Execute argv without a shell; preserve failures and bound every process."""
+    """Execute trusted argv without a shell; preserve failures and bound every process."""
     settings = dict(os.environ if env is None else env)
     settings["PYTHONDONTWRITEBYTECODE"] = MANAGED_PROCESS_ENV["PYTHONDONTWRITEBYTECODE"]
     try:
@@ -417,6 +419,8 @@ STAGE_TIMEOUT_ENV = "PRAETOR_TEST_STAGE_TIMEOUT"
 # the one source of truth (a test compares the two).
 DEFAULT_STAGE_BUDGET = 1200
 DEFAULT_STAGE_BUDGET_STR = "20m"
+MAX_DURATION_COMPONENTS = 64
+MAX_DURATION_LENGTH = 1024
 
 _DURATION_COMPONENT = re.compile(
     r"([0-9]+(?:\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h)"
@@ -460,16 +464,22 @@ class StageBudget(float):
 def parse_stage_duration(raw):
     """Parse a Go duration string into seconds (float)."""
     text = raw.strip()
+    if len(text) > MAX_DURATION_LENGTH:
+        raise ValueError(
+            f"{STAGE_TIMEOUT_ENV}={raw!r} exceeds {MAX_DURATION_LENGTH} characters"
+        )
     if not _FULL_DURATION.match(text):
         raise ValueError(f"{STAGE_TIMEOUT_ENV}={raw!r} is not a duration")
     total = 0.0
     for idx, match in enumerate(_DURATION_COMPONENT.finditer(text)):
-        if idx >= 64:
-            break
+        if idx >= MAX_DURATION_COMPONENTS:
+            raise ValueError(
+                f"{STAGE_TIMEOUT_ENV}={raw!r} exceeds {MAX_DURATION_COMPONENTS} duration components"
+            )
         val = float(match.group(1))
         unit = match.group(2)
         total += val * _UNIT_SECONDS[unit]
-    if total <= 0:
+    if total <= 0 or not math.isfinite(total):
         raise ValueError(f"{STAGE_TIMEOUT_ENV}={raw!r} is not positive")
     return total
 
@@ -813,6 +823,7 @@ def _git_common_dir(root, budget):
         cwd=root,
         timeout=budget.timeout(SESSION_GIT_TIMEOUT),
         max_output=SESSION_GIT_OUTPUT,
+        env=clean_env(),
         grace=SESSION_GIT_GRACE,
     )
     return Path(raw.decode().strip()).resolve()
@@ -825,6 +836,7 @@ def _listed_worktrees(root, budget):
         cwd=root,
         timeout=budget.timeout(SESSION_GIT_TIMEOUT),
         max_output=SESSION_INPUT_LIMIT,
+        env=clean_env(),
         grace=SESSION_GIT_GRACE,
     )
     entries, entry = [], {}

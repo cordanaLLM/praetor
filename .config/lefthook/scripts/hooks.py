@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import sys
+import time
 
 sys.dont_write_bytecode = True
 from common import HookError, changed, clean_env, git, paths, run, snapshot, stage_budget
@@ -299,17 +300,31 @@ def praetorctl_path():
     suffix = ".exe" if os.name == "nt" else ""
     return os.path.abspath(os.path.join("bin", "praetorctl" + suffix))
 
+
 def cli(args):
+    """Build and run the repository's own bin/praetorctl under one monotonic stage deadline.
+
+    Runs only the verified GNU Make from toolchain.make_program() with a fixed argv and
+    praetorctl_path() with caller-supplied subcommand arguments.
+    """
     budget = stage_budget()
+    deadline = time.monotonic() + float(budget)
     steps = (
         ("hook-cli", [make_program(), "--always-make", "--no-print-directory", "-s", "hook-cli"]),
         ("praetorctl", [praetorctl_path(), *args]),
     )
     for step, command in steps:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise HookError(f"{step} timed out after {budget}: stage budget spent before step")
         try:
-            run(command, capture=False, timeout=budget)
+            run(command, capture=False, timeout=remaining)
         except HookError as error:
-            if "timed out after" in str(error) or type(error.__cause__).__name__ == "TimeoutExpired":
+            timed_out = (
+                "timed out after" in str(error)
+                or type(error.__cause__).__name__ == "TimeoutExpired"
+            )
+            if timed_out:
                 raise HookError(f"{step} timed out after {budget}: {error}") from error
             raise
 

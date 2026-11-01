@@ -3859,10 +3859,12 @@ class HookMake(unittest.TestCase):
         self.assertEqual(toolchain.describe("make", {}), f"{version} ({argv[0]})")
 
     def test_stage_budget_default_equals_go_deadline_constant(self):
-        # One source of truth: the Python hook stage budget mirrors TestStageTimeout in internal/gating/deadline.go.
+        # One source of truth: Python hook stage budget mirrors TestStageTimeout
+        # in internal/gating/deadline.go.
         go_source = (ROOT / "internal/gating/deadline.go").read_text(encoding="utf-8")
-        match = re.search(r"TestStageTimeout\s*=\s*(\d+)\s*\*\s*time\.(Minute|Second|Hour)", go_source)
-        self.assertIsNotNone(match, "TestStageTimeout constant not found in internal/gating/deadline.go")
+        pattern = r"TestStageTimeout\s*=\s*(\d+)\s*\*\s*time\.(Minute|Second|Hour)"
+        match = re.search(pattern, go_source)
+        self.assertIsNotNone(match, "TestStageTimeout constant not found in deadline.go")
         value = int(match.group(1))
         unit = match.group(2)
         multiplier = {"Minute": 60, "Second": 1, "Hour": 3600}[unit]
@@ -3878,10 +3880,31 @@ class HookMake(unittest.TestCase):
         self.assertEqual(float(common.stage_budget("10s")), 10.0)
         self.assertEqual(float(common.stage_budget("50ms")), 0.05)
         self.assertEqual(float(common.stage_budget("")), 1200.0)
-        for invalid in ("soon", "0s", "-5m", "10", "30mx"):
+        self.assertAlmostEqual(float(common.stage_budget("1ns" * 64)), 64e-9)
+        for invalid in ("soon", "0s", "-5m", "10", "30mx", "1ns" * 64 + "20m", "1s" * 400):
             with self.subTest(invalid=invalid), self.assertRaises(HookError) as cm:
                 common.stage_budget(invalid)
             self.assertIn("PRAETOR_TEST_STAGE_TIMEOUT", str(cm.exception))
+
+    def test_stage_budget_session_git_calls_use_clean_env(self):
+        budget = common.HookBudget(10)
+        dirty = {
+            "GIT_DIR": "/tmp/other-repo/.git",
+            "GIT_WORK_TREE": "/tmp/other-repo",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "core.hooksPath",
+            "GIT_CONFIG_VALUE_0": "/tmp/evil",
+        }
+        with mock.patch.dict(os.environ, dirty, clear=False), \
+                mock.patch("common.run_bounded", return_value=b"/tmp/repo/.git\n") as bounded:
+            common._git_common_dir(Path("/tmp/repo"), budget)
+            common._listed_worktrees(Path("/tmp/repo"), budget)
+        self.assertEqual(bounded.call_count, 2)
+        for call in bounded.call_args_list:
+            env = call.kwargs.get("env")
+            self.assertIsInstance(env, dict)
+            for forbidden in dirty:
+                self.assertNotIn(forbidden, env)
 
     @unittest.skipIf(os.name == "nt", POSIX_STUB)
     def test_stage_budget_cli_timeout_and_planted_cases(self):
@@ -3889,29 +3912,50 @@ class HookMake(unittest.TestCase):
             directory = Path(temp)
             stub_make = stand_in(
                 directory, "make",
-                'if [ "$1" = "--version" ]; then echo "GNU Make 4.4.1"; exit 0; fi\nsleep 3\n'
+                'if [ "$1" = "--version" ]; then echo "GNU Make 4.4.1"; exit 0; fi\nsleep 2\n'
             )
-            stub_praetorctl = stand_in(directory, "praetorctl", "exit 0\n")
+            stub_praetorctl = stand_in(directory, "praetorctl", "sleep 2\n")
             with mock.patch("hooks.make_program", return_value=str(stub_make)), \
                     mock.patch("hooks.praetorctl_path", return_value=str(stub_praetorctl)):
-                # PRAETOR_TEST_STAGE_TIMEOUT=2s with a stub make that sleeps 3 s ->
-                # the build step times out and the message names hook-cli and 2s
-                with mock.patch.dict(os.environ, {"PRAETOR_TEST_STAGE_TIMEOUT": "2s"}):
-                    with self.assertRaises(HookError) as cm:
-                        hooks.cli(["state", "audit", "."])
-                    err_msg = str(cm.exception)
-                    self.assertIn("hook-cli", err_msg)
-                    self.assertIn("2s", err_msg)
+                # PRAETOR_TEST_STAGE_TIMEOUT=1s with a stub make that sleeps 2 s ->
+                # the build step times out and the message names hook-cli and 1s
+                with mock.patch.dict(os.environ, {"PRAETOR_TEST_STAGE_TIMEOUT": "1s"}), \
+                        self.assertRaises(HookError) as cm:
+                    hooks.cli(["state", "audit", "."])
+                err_msg = str(cm.exception)
+                self.assertIn("hook-cli", err_msg)
+                self.assertIn("1s", err_msg)
+
+                # Planted shared-deadline case: 3 s budget with stub make sleeping 2 s and
+                # stub praetorctl sleeping 2 s -> the CLI step times out on the remaining 1 s
+                # (or is refused), naming praetorctl and 3s.
+                with mock.patch.dict(os.environ, {"PRAETOR_TEST_STAGE_TIMEOUT": "3s"}), \
+                        self.assertRaises(HookError) as cm:
+                    hooks.cli(["state", "audit", "."])
+                err_msg = str(cm.exception)
+                self.assertIn("praetorctl", err_msg)
+                self.assertIn("3s", err_msg)
 
                 # with 10s it passes
                 with mock.patch.dict(os.environ, {"PRAETOR_TEST_STAGE_TIMEOUT": "10s"}):
                     hooks.cli(["state", "audit", "."])
 
+                # When the budget is already spent before a step starts, refuse without starting it.
+                with mock.patch.dict(os.environ, {"PRAETOR_TEST_STAGE_TIMEOUT": "3s"}), \
+                        mock.patch("hooks.time.monotonic", side_effect=[100.0, 100.5, 103.5]), \
+                        mock.patch("hooks.run") as run_mock, \
+                        self.assertRaises(HookError) as cm:
+                    hooks.cli(["state", "audit", "."])
+                err_msg = str(cm.exception)
+                self.assertIn("praetorctl", err_msg)
+                self.assertIn("3s", err_msg)
+                self.assertEqual(run_mock.call_count, 1)
+
                 # an invalid value (e.g. "soon") refuses naming the variable
-                with mock.patch.dict(os.environ, {"PRAETOR_TEST_STAGE_TIMEOUT": "soon"}):
-                    with self.assertRaises(HookError) as cm:
-                        hooks.cli(["state", "audit", "."])
-                    self.assertIn("PRAETOR_TEST_STAGE_TIMEOUT", str(cm.exception))
+                with mock.patch.dict(os.environ, {"PRAETOR_TEST_STAGE_TIMEOUT": "soon"}), \
+                        self.assertRaises(HookError) as cm:
+                    hooks.cli(["state", "audit", "."])
+                self.assertIn("PRAETOR_TEST_STAGE_TIMEOUT", str(cm.exception))
 
 
 POLICY_SCRIPTS = ROOT / ".config/lefthook/scripts"
