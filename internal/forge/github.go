@@ -1247,18 +1247,13 @@ func DeclaredForgejoHostFromContext(ctx context.Context) string {
 	return ""
 }
 
-// IsTrustedForgejoHost reports whether host is an explicit allow-listed Forgejo host
-// or matches declaredHost.
+// IsTrustedForgejoHost reports whether host is the repository's declared Forgejo host. A
+// Forgejo token belongs to one instance, so no host is trusted by name: an undeclared host,
+// codeberg.org included, gets no token.
 func IsTrustedForgejoHost(host, declaredHost string) bool {
 	h := normalizeForgeHost(host)
-	if h == "" {
-		return false
-	}
-	if h == "codeberg.org" {
-		return true
-	}
 	decl := normalizeForgeHost(declaredHost)
-	return decl != "" && h == decl
+	return h != "" && decl != "" && h == decl
 }
 
 // normalizeForgeHost strips scheme, port, and trailing dot from host for case-insensitive comparison.

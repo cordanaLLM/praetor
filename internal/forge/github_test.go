@@ -514,16 +514,16 @@ func TestReadPullRequestsByHead_Forgejo_TokenOnlyToDeclaredOrAllowlistedHost(t *
 		t.Fatalf("declared host received auth header %q, want %q", gotDeclaredAuth, "token secret-forgejo-token")
 	}
 
-	// Planted positive: allow-listed host codeberg.org receives token.
-	allowlistedRemote := util.GitRemote{Host: "codeberg.org", Owner: "acme", Repo: "widgets"}
-	if _, err := ReadPullRequestsByHead(ctx, config.ForgeForgejo, allowlistedRemote, "topic"); err != nil {
-		t.Fatalf("allow-listed host lookup: %v", err)
+	// Planted negative: codeberg.org is trusted by no name; undeclared, it gets no token.
+	codebergRemote := util.GitRemote{Host: "codeberg.org", Owner: "acme", Repo: "widgets"}
+	if _, err := ReadPullRequestsByHead(ctx, config.ForgeForgejo, codebergRemote, "topic"); err != nil {
+		t.Fatalf("undeclared codeberg lookup: %v", err)
 	}
 	mu.Lock()
-	gotAllowAuth := lastAuth
+	gotCodebergAuth := lastAuth
 	mu.Unlock()
-	if gotAllowAuth != "token secret-forgejo-token" {
-		t.Fatalf("allow-listed host received auth header %q, want %q", gotAllowAuth, "token secret-forgejo-token")
+	if gotCodebergAuth != "" {
+		t.Fatalf("undeclared codeberg.org received auth header %q, want none", gotCodebergAuth)
 	}
 }
 
