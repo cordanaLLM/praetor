@@ -342,10 +342,23 @@ class WorkflowCommandsTests(unittest.TestCase):
             env.update(self.env_block(section, indent))
         return env
 
+    def declared_keys(self):
+        keys = set()
+        for path in {self.__class__.workflow, self.workflow}:
+            text = path.read_text(encoding="utf-8")
+            for indent in ("", "    ", "        "):
+                marker = f"\n{indent}env:\n"
+                for chunk in ("\n" + text).split(marker)[1:]:
+                    keys.update(self.env_block(f"{indent}env:\n" + chunk, indent))
+        return keys
+
     def run_env(self, root, setup_step, step, fixture):
         """Return one step run's env: workflow, job, step, then runner and fixture values."""
+        inherited = clean_env()
+        for key in self.declared_keys():
+            inherited.pop(key, None)
         return {
-            **clean_env(),
+            **inherited,
             **(self.workflow_env(setup_step) if setup_step else {}),
             **self.workflow_env(step),
             "RUNNER_TEMP": root.as_posix(),
@@ -510,6 +523,13 @@ class WorkflowCommandsTests(unittest.TestCase):
                         packages[:2],
                         env={"PORTABILITY_MAX_PACKAGES": "1"},
                     )
+
+    def test_workflow_job_step_env_precedence_under_ambient_leak(self):
+        with patch.dict(
+            os.environ,
+            {"PORTABILITY_MAX_PACKAGES": "64", "SHELLCHECK_VERSION": "leak"},
+        ):
+            self.test_workflow_job_step_env_precedence_and_override()
 
 
 if __name__ == "__main__":
