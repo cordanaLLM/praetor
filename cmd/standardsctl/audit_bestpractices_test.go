@@ -3,7 +3,12 @@
 
 package main
 
-import "testing"
+import (
+	"go/ast"
+	"path/filepath"
+	"slices"
+	"testing"
+)
 
 func TestAuditBestPracticesClaims_CLI(t *testing.T) {
 	f := newAuditFixture(t)
@@ -27,4 +32,51 @@ func TestAuditBestPracticesClaims_CLI(t *testing.T) {
 		t.Fatalf("audit passed on forbidden N/A claim:\n%s", out)
 	}
 	mustErrContain(t, err, `[FAIL] bestpractices-claims: .bestpractices.json has 1 forbidden claim(s): criterion "description_good" (status "N/A", rule na_not_allowed)`)
+}
+
+// TestAuditRepositoryChecks_CLIAndMCPStayInSync verifies that the CLI audit (runAuditGates) and
+// the MCP standards_audit context group (contextGroupGate) run the same shared repository checks
+// in the same order.
+func TestAuditRepositoryChecks_CLIAndMCPStayInSync(t *testing.T) {
+	want := []string{
+		"adopt.AuditEditorSelection",
+		"adopt.AuditRenovateEngineBumps",
+		"adopt.AuditRustMSRV",
+		"bestpractices.Audit",
+	}
+	cliCalls := selectQualifiedCalls(parseFuncs(t, ".")["runAuditGates"], want)
+	mcpCalls := selectQualifiedCalls(parseFuncs(t, filepath.Join("..", "standards-mcp"))["method:contextGroupGate"], want)
+	if !slices.Equal(cliCalls, want) {
+		t.Fatalf("CLI repository checks = %v, want %v", cliCalls, want)
+	}
+	if !slices.Equal(mcpCalls, want) {
+		t.Fatalf("MCP contextGroupGate repository checks = %v, want %v", mcpCalls, want)
+	}
+}
+
+func selectQualifiedCalls(decl *ast.FuncDecl, targets []string) []string {
+	if decl == nil {
+		return nil
+	}
+	var got []string
+	ast.Inspect(decl, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		pkg, ok := sel.X.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		name := pkg.Name + "." + sel.Sel.Name
+		if slices.Contains(targets, name) {
+			got = append(got, name)
+		}
+		return true
+	})
+	return got
 }

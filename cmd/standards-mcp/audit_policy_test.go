@@ -258,3 +258,22 @@ func TestReleaseE2EAuditGates_MissingSectionSkips(t *testing.T) {
 		t.Fatalf("gate() = %q, %v", line, err)
 	}
 }
+
+func TestServerAuditRunsTheBestPracticesGate(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	expectText(t, "absent .bestpractices.json", callTool(t, srv, "standards_audit", nil),
+		"[SKIP] bestpractices-claims: no .bestpractices.json found; not applicable.")
+
+	writeFixtureFile(t, root, ".bestpractices.json",
+		"{\n  \"test_policy_status\": \"Unmet\",\n  \"test_policy_justification\": \"No automated test suite applies to an organisation profile repository.\"\n}\n")
+	valid := callTool(t, srv, "standards_audit", nil)
+	expectText(t, "valid .bestpractices.json", valid,
+		"[PASS] bestpractices-claims: .bestpractices.json verified (1 criterion claim(s) checked against OpenSSF Best Practices criteria@8b3a2889e3af).")
+	expectText(t, "context sync still runs after bestpractices", valid,
+		"[PASS] Cross-agent context targets verified in sync.")
+	expectText(t, "valid .bestpractices.json passes all gates", valid, auditAllPassed())
+
+	writeFixtureFile(t, root, ".bestpractices.json", "{\n  \"description_good_status\": \"N/A\"\n}\n")
+	expectError(t, "forbidden N/A claim", callTool(t, srv, "standards_audit", nil),
+		`[FAIL] bestpractices-claims: .bestpractices.json has 1 forbidden claim(s): criterion "description_good" (status "N/A", rule na_not_allowed)`)
+}

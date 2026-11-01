@@ -9,6 +9,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/bestpractices"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/flavor"
@@ -127,19 +128,20 @@ func (s *Server) auditGates(p auditPaths, effective *config.EffectivePolicy) []a
 	}, releaseE2EAuditGates(s.rootDir, manifest)...)
 }
 
-// contextGroupGate runs the editor selection, Renovate engine bump, Rust MSRV and context sync
-// checks as one gate, so the gate group's existing summary count stays compatible; each check
-// keeps its own verdict line. Order: engine-fr-rule-checks-20261027.
+// contextGroupGate runs the editor selection, Renovate engine bump, Rust MSRV, bestpractices
+// claims and context sync checks as one gate, so the gate group's existing summary count stays
+// compatible; each check keeps its own verdict line. Order: engine-fr-rule-checks-20261027.
 func (s *Server) contextGroupGate(manifest *config.Manifest, agents string) auditGate {
 	return func(ctx context.Context) (string, error) {
 		checks := []auditGate{
 			func(ctx context.Context) (string, error) { return adopt.AuditEditorSelection(ctx, manifest, s.rootDir) },
 			func(ctx context.Context) (string, error) { return adopt.AuditRenovateEngineBumps(ctx, s.rootDir) },
 			func(ctx context.Context) (string, error) { return adopt.AuditRustMSRV(ctx, s.rootDir) },
+			func(ctx context.Context) (string, error) { return bestpractices.Audit(ctx, s.rootDir) },
 			func(ctx context.Context) (string, error) { return auditContextSync(ctx, manifest, agents, s.rootDir) },
 		}
 		var lines []string
-		for i := 0; i < len(checks) && i < 4; i++ {
+		for i := 0; i < len(checks) && i < 5; i++ {
 			line, err := checks[i](ctx)
 			if err != nil {
 				return "", err
