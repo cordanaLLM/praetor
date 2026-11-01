@@ -638,7 +638,8 @@ func loadRepositoryWorkflows(ctx context.Context, repoPath string) (_ []parsedWo
 	return workflows, aux, nil
 }
 
-// readWorkflowDirEntries reads up to maxReleaseWorkflowFiles entries from a workflows directory root.
+// readWorkflowDirEntries reads up to maxReleaseWorkflowFiles entries from a workflows directory root,
+// sorted by entry name so workflow evaluation does not depend on filesystem directory order.
 func readWorkflowDirEntries(root *os.Root) ([]os.DirEntry, error) {
 	directory, err := root.Open(".")
 	if err != nil {
@@ -652,6 +653,9 @@ func readWorkflowDirEntries(root *os.Root) ([]os.DirEntry, error) {
 	if len(entries) > maxReleaseWorkflowFiles {
 		return nil, fmt.Errorf("workflow inventory exceeds %d files", maxReleaseWorkflowFiles)
 	}
+	slices.SortFunc(entries, func(a, b os.DirEntry) int {
+		return strings.Compare(a.Name(), b.Name())
+	})
 	return entries, nil
 }
 

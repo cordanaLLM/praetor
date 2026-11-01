@@ -426,28 +426,125 @@ func TestAuditTestLevels_Positive_SelfWorkflowRunHealthDoesNotCreateGap(t *testi
 	}
 }
 
-type cancelOnValueContext struct {
-	context.Context
-	cancel context.CancelFunc
-}
+// Planted negative for Finding 3: parseSingleWorkflowEntry must fail closed with context.Canceled when context is cancelled.
+func TestParseSingleWorkflowEntry_Negative_CancelledContextReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	const workflowContent = "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test ./...\n"
+	writeTestRepoFile(t, dir, "ci.yml", workflowContent)
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatalf("open root: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := root.Close(); closeErr != nil {
+			t.Errorf("root.Close: %v", closeErr)
+		}
+	})
 
-func (c *cancelOnValueContext) Value(key any) any {
-	defer c.cancel()
-	return c.Context.Value(key)
-}
-
-// Planted negative for Finding 3: context error while reading workflow entries must fail closed with an error.
-func TestAuditTestLevels_Negative_WorkflowScanContextErrorReturnsError(t *testing.T) {
-	repo := setupGoLibraryTempRepo(t)
-	ctx, cancel := context.WithCancel(t.Context())
-	wrapped := &cancelOnValueContext{
-		Context: ctx,
-		cancel:  cancel,
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatalf("expected workflow entry")
 	}
 
-	_, _, err := loadRepositoryWorkflows(wrapped, repo)
-	if err == nil || (!errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled)) {
-		t.Fatalf("expected context error, got %v", err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, parseErr := parseSingleWorkflowEntry(ctx, root, entries[0])
+	if !errors.Is(parseErr, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", parseErr)
+	}
+}
+
+// Planted negative for Finding 3: parseWorkflowEntries must fail closed with context.Canceled when context is cancelled.
+func TestParseWorkflowEntries_Negative_CancelledContextReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	const workflowContent = "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test ./...\n"
+	writeTestRepoFile(t, dir, "ci.yml", workflowContent)
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatalf("open root: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := root.Close(); closeErr != nil {
+			t.Errorf("root.Close: %v", closeErr)
+		}
+	})
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatalf("expected workflow entry")
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, parseErr := parseWorkflowEntries(ctx, root, entries)
+	if !errors.Is(parseErr, context.Canceled) || !strings.Contains(parseErr.Error(), "scan workflow entries") {
+		t.Fatalf("expected scan workflow entries context.Canceled, got %v", parseErr)
+	}
+}
+
+// createTwoWorkflowRepo sets up a test repository with two workflows created in the requested order.
+func createTwoWorkflowRepo(t *testing.T, createFirstA bool) string {
+	t.Helper()
+	repo := setupGoLibraryTempRepo(t)
+	writeTestRepoFile(t, repo, "client_integration_test.go", "package lib\n\nimport \"testing\"\n\nfunc TestIntegration(t *testing.T) {}\n")
+	if err := os.Remove(filepath.Join(repo, ".github", "workflows", "ci.yml")); err != nil {
+		t.Fatalf("remove default ci.yml: %v", err)
+	}
+	const wfA = "name: A\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test -run TestIntegration ./...\n"
+	const wfZ = "name: Z\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test -run TestIntegration ./...\n"
+	if createFirstA {
+		writeTestRepoFile(t, repo, ".github/workflows/a_workflow.yml", wfA)
+		writeTestRepoFile(t, repo, ".github/workflows/z_workflow.yml", wfZ)
+	} else {
+		writeTestRepoFile(t, repo, ".github/workflows/z_workflow.yml", wfZ)
+		writeTestRepoFile(t, repo, ".github/workflows/a_workflow.yml", wfA)
+	}
+	return repo
+}
+
+// Planted negative and positive for Finding 2: two workflows running the same level, one healthy
+// and one failing, produce the identical deterministic audit result regardless of file creation order.
+func TestAuditTestLevels_WorkflowOrderInvariance_CreationOrderDoesNotAffectResult(t *testing.T) {
+	t.Setenv("GITHUB_REF", "")
+	t.Setenv("GITHUB_HEAD_REF", "")
+	t.Setenv("PRAETOR_RELEASE_PR", "")
+
+	fakeReader := &fakeActionsReader{
+		byWorkflow: map[string]forge.WorkflowRunHistory{
+			"a_workflow.yml": {
+				Known:     true,
+				Total:     1,
+				Completed: []forge.WorkflowRunRecord{{Number: 1, Event: "push", Conclusion: "failure"}},
+			},
+			"z_workflow.yml": {
+				Known:     true,
+				Total:     1,
+				Completed: []forge.WorkflowRunRecord{{Number: 2, Event: "push", Conclusion: "success"}},
+			},
+		},
+	}
+	opts := TestLevelsOptions{FlagRelease: true, Actions: fakeReader, Branch: "main"}
+	repAZ, errAZ := AuditTestLevels(t.Context(), createTwoWorkflowRepo(t, true), nil, opts)
+	repZA, errZA := AuditTestLevels(t.Context(), createTwoWorkflowRepo(t, false), nil, opts)
+	if errAZ == nil || errZA == nil {
+		t.Fatalf("expected audit error on failing workflow, got errAZ=%v, errZA=%v", errAZ, errZA)
+	}
+	if repAZ.Status != repZA.Status {
+		t.Fatalf("status mismatch across creation orders: AZ=%s, ZA=%s", repAZ.Status, repZA.Status)
+	}
+	if repAZ.Detail != repZA.Detail {
+		t.Fatalf("detail mismatch across creation orders: AZ=%q, ZA=%q", repAZ.Detail, repZA.Detail)
+	}
+	if repAZ.Status != TestLevelStatusFail || !strings.Contains(repAZ.Detail, "a_workflow.yml") {
+		t.Fatalf("expected deterministic failure on a_workflow.yml, got status=%s detail=%q", repAZ.Status, repAZ.Detail)
 	}
 }
 
