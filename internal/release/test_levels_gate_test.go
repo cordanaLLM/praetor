@@ -450,3 +450,37 @@ func TestAuditTestLevels_Negative_WorkflowScanContextErrorReturnsError(t *testin
 		t.Fatalf("expected context error, got %v", err)
 	}
 }
+
+// Planted negative for order engine-test-levels-gate-20261027 item 2: an Actions reader that
+// errors must yield a LiveHealth status that explicitly names the underlying error.
+func TestAuditTestLevels_Negative_ActionsReaderErrorNamesReason(t *testing.T) {
+	t.Setenv("GITHUB_REF", "")
+	t.Setenv("GITHUB_HEAD_REF", "")
+	t.Setenv("PRAETOR_RELEASE_PR", "")
+	repo := setupGoLibraryTempRepo(t)
+	writeTestRepoFile(t, repo, "client_integration_test.go", "package lib\n")
+	writeTestRepoFile(t, repo, ".github/workflows/ci.yml",
+		"name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test ./...\n")
+
+	queryErr := errors.New("actions API 503 Service Unavailable")
+	errReader := &fakeActionsReader{err: queryErr}
+
+	line, rep, err := AuditTestLevelsLine(t.Context(), repo, nil, TestLevelsOptions{
+		FlagRelease: true,
+		Actions:     errReader,
+		Branch:      "main",
+	})
+	if err != nil {
+		t.Fatalf("unexpected audit error: %v", err)
+	}
+	wantPrefix := LiveRunHealthUnmeasured + ": "
+	if !strings.HasPrefix(rep.LiveHealth, wantPrefix) {
+		t.Fatalf("expected LiveHealth to start with %q, got %q", wantPrefix, rep.LiveHealth)
+	}
+	if !strings.Contains(rep.LiveHealth, queryErr.Error()) {
+		t.Fatalf("expected LiveHealth %q to contain error %q", rep.LiveHealth, queryErr.Error())
+	}
+	if !strings.Contains(line, queryErr.Error()) {
+		t.Fatalf("expected formatted line %q to contain error %q", line, queryErr.Error())
+	}
+}

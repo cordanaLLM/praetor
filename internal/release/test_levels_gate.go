@@ -785,6 +785,9 @@ func walkRepositoryFilesBounded(repoPath string) ([]string, error) {
 	return files, err
 }
 
+// checkLiveWorkflowHealth queries live workflow run health on branch when opts.Actions
+// is available. It returns LiveRunHealthVerified on success, or LiveRunHealthUnmeasured
+// (with the query error appended if live audit fails) and any workflow findings.
 func checkLiveWorkflowHealth(
 	ctx context.Context,
 	repoPath string,
@@ -799,7 +802,7 @@ func checkLiveWorkflowHealth(
 	}
 	health, err := forge.AuditWorkflowRunHealth(ctx, repoPath, branch, opts.Actions, nil)
 	if err != nil {
-		return LiveRunHealthUnmeasured, nil
+		return LiveRunHealthUnmeasured + ": " + err.Error(), nil
 	}
 	byFile := make(map[string]forge.WorkflowRunFinding, len(health.Findings))
 	for i := 0; i < len(health.Findings) && i < maxReleaseWorkflowFiles; i++ {
