@@ -5,6 +5,7 @@
 package mergecheck
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -356,6 +357,9 @@ func TestMergeCheck_ConflictResolvedP2_NonConflictingP1Dropped_Finding(t *testin
 // or ':(glob)beta.txt') uses literal pathspecs in git ls-tree chunk reads; dropped hunks are found
 // and per-hunk resolutions are accepted.
 func TestMergeCheck_ColonPathspec_LiteralTreated(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("Windows filesystem rejects ':' in file names (HISS-21)")
+	}
 	dir := initTestRepo(t)
 
 	baseContent := "line 1\nline 2\nline 3\nline 4\nline 5\n"

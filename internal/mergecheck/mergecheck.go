@@ -39,14 +39,15 @@ const (
 	maxLsTreeArgBytes = 16 << 10
 )
 
-// Finding records one file whose first-parent work was dropped in a merge commit.
+// Finding records one file whose changes were dropped in a merge commit.
 type Finding struct {
-	MergeSHA string
-	FilePath string
-	Parent1  string
-	Parent2  string
-	Deleted  bool
-	Binary   bool
+	MergeSHA      string
+	FilePath      string
+	Parent1       string
+	Parent2       string
+	Deleted       bool
+	Binary        bool
+	DroppedParent int
 }
 
 // Result records the outcome of inspecting merge commits in a revision range.
@@ -175,8 +176,15 @@ func FormatFinding(f Finding) string {
 	p1Sha12 := shortSHA(f.Parent1)
 	p2Sha12 := shortSHA(f.Parent2)
 	if f.Deleted {
-		return fmt.Sprintf("[FAIL] merge %s: %s dropped first-parent changes (deleted in merge; parents %s, %s)",
-			mSha12, f.FilePath, p1Sha12, p2Sha12)
+		parent := "either-parent"
+		switch f.DroppedParent {
+		case 1:
+			parent = "first-parent"
+		case 2:
+			parent = "second-parent"
+		}
+		return fmt.Sprintf("[FAIL] merge %s: %s dropped %s changes (deleted in merge; parents %s, %s)",
+			mSha12, f.FilePath, parent, p1Sha12, p2Sha12)
 	}
 	if f.Binary {
 		return fmt.Sprintf("[FAIL] merge %s: %s dropped first-parent changes (binary comparison; parents %s, %s)",
@@ -294,13 +302,14 @@ func checkFileHunk(ctx context.Context, file string, blobs *commitBlobs) (*Findi
 	blobP2, okP2 := blobs.p2[file]
 	blobBase, okBase := blobs.base[file]
 
-	if droppedByDeletion(okM, okP1, okP2, okBase, blobP2, blobBase) {
+	if parent, ok := droppedByDeletion(okM, okP1, okP2, okBase, blobP2, blobBase); ok {
 		return &Finding{
-			MergeSHA: blobs.mergeSHA,
-			FilePath: file,
-			Parent1:  blobs.p1SHA,
-			Parent2:  blobs.p2SHA,
-			Deleted:  true,
+			MergeSHA:      blobs.mergeSHA,
+			FilePath:      file,
+			Parent1:       blobs.p1SHA,
+			Parent2:       blobs.p2SHA,
+			Deleted:       true,
+			DroppedParent: parent,
 		}, nil
 	}
 	if !okM || !okP1 || !okP2 || blobM != blobP2 || blobP2 == blobP1 {
@@ -319,14 +328,21 @@ func checkFileHunk(ctx context.Context, file string, blobs *commitBlobs) (*Findi
 	})
 }
 
-func droppedByDeletion(okM, okP1, okP2, okBase bool, blobP2, blobBase string) bool {
+func droppedByDeletion(okM, okP1, okP2, okBase bool, blobP2, blobBase string) (int, bool) {
 	if okM {
-		return false
+		return 0, false
+	}
+	p2Mod := okP2 && (!okBase || blobP2 != blobBase)
+	if okP1 && p2Mod {
+		return 0, true
 	}
 	if okP1 {
-		return true
+		return 1, true
 	}
-	return okP2 && (!okBase || blobP2 != blobBase)
+	if p2Mod {
+		return 2, true
+	}
+	return 0, false
 }
 
 func judgeDroppedHunk(ctx context.Context, h fileHunkContext) (*Finding, error) {
@@ -348,7 +364,7 @@ func judgeDroppedHunk(ctx context.Context, h fileHunkContext) (*Finding, error) 
 	if bytes.Equal(mergedBytes, p2Bytes) {
 		return nil, nil
 	}
-	return &Finding{MergeSHA: h.mergeSHA, FilePath: h.file, Parent1: h.p1, Parent2: h.p2, Binary: false}, nil
+	return &Finding{MergeSHA: h.mergeSHA, FilePath: h.file, Parent1: h.p1, Parent2: h.p2, Binary: false, DroppedParent: 1}, nil
 }
 
 // readSideBlobs reads the first parent's, the second parent's and, when the merge base holds the
@@ -376,7 +392,7 @@ func binaryDropped(h fileHunkContext) *Finding {
 	if !h.okBase || h.blobP2 != h.blobBase {
 		return nil
 	}
-	return &Finding{MergeSHA: h.mergeSHA, FilePath: h.file, Parent1: h.p1, Parent2: h.p2, Binary: true}
+	return &Finding{MergeSHA: h.mergeSHA, FilePath: h.file, Parent1: h.p1, Parent2: h.p2, Binary: true, DroppedParent: 1}
 }
 
 func reconstructMerge(ctx context.Context, repoDir string, p1Bytes, baseBytes, p2Bytes []byte) (merged []byte, isBin bool, err error) {

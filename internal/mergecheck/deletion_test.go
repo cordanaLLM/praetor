@@ -139,4 +139,20 @@ func TestMergeCheck_OneParentDeletedAndMergeDropsOtherContent_Refused(t *testing
 	if !res.Findings[0].Deleted || !res.Findings[1].Deleted {
 		t.Fatalf("expected deleted findings, got %+v", res.Findings)
 	}
+	assertDroppedParentFinding(t, res.Findings, "p1_del.txt", "dropped second-parent changes (deleted in merge;")
+	assertDroppedParentFinding(t, res.Findings, "p2_del.txt", "dropped first-parent changes (deleted in merge;")
+}
+
+func assertDroppedParentFinding(t *testing.T, findings []Finding, path, expected string) {
+	t.Helper()
+	for _, f := range findings {
+		if f.FilePath == path {
+			msg := FormatFinding(f)
+			if !strings.Contains(msg, expected) {
+				t.Errorf("expected %s to contain %q, got %q", path, expected, msg)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing finding for %s", path)
 }
