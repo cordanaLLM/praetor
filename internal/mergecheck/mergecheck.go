@@ -255,7 +255,7 @@ func checkFileHunk(ctx context.Context, repoDir, mergeSHA, p1, p2, file string, 
 	blobP2, okP2 := blobs.p2[file]
 	blobBase, okBase := blobs.base[file]
 
-	if okP1 && !okM {
+	if droppedByDeletion(okM, okP1, okP2, okBase, blobP2, blobBase) {
 		return &Finding{
 			MergeSHA: mergeSHA,
 			FilePath: file,
@@ -264,10 +264,20 @@ func checkFileHunk(ctx context.Context, repoDir, mergeSHA, p1, p2, file string, 
 			Deleted:  true,
 		}, nil
 	}
-	if !okM || !okP2 || blobM != blobP2 || blobP2 == blobP1 {
+	if !okM || !okP1 || !okP2 || blobM != blobP2 || blobP2 == blobP1 {
 		return nil, nil
 	}
 	return judgeDroppedHunk(ctx, repoDir, mergeSHA, p1, p2, file, blobP1, blobP2, blobBase, okBase)
+}
+
+func droppedByDeletion(okM, okP1, okP2, okBase bool, blobP2, blobBase string) bool {
+	if okM {
+		return false
+	}
+	if okP1 {
+		return true
+	}
+	return okP2 && (!okBase || blobP2 != blobBase)
 }
 
 func judgeDroppedHunk(ctx context.Context, repoDir, mergeSHA, p1, p2, file, blobP1, blobP2, blobBase string, okBase bool) (*Finding, error) {
