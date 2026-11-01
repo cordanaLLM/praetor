@@ -802,3 +802,102 @@ func TestAdmission_GitPushHead_Planted_RefspecSourceTagVsBranch(t *testing.T) {
 		t.Fatalf("local-tag source pushes queried the forge %d times, want 0", calls)
 	}
 }
+
+// Planted negative, positive and boundary: `git -c` keys that can redirect or alter the push
+// target (remote.*, remotes.*, url.*, branch.*, push.*, include.*, includeIf.*) are refused
+// before querying the forge, while unrelated `git -c` settings still pass target resolution
+// and undergo the normal terminal-head check.
+func TestAdmission_GitPushHead_Planted_ConfigTargetOverridesRefused(t *testing.T) {
+	ctx := context.Background()
+	repo := defaultAdmissionRepo(t)
+	calls := 0
+	policy := admissionPolicy(t).WithAdmissionPullRequests(repo, func(_ context.Context, target PushTarget) ([]forge.PullRequestHead, error) {
+		calls++
+		if target.Branch == "merged-topic" {
+			return []forge.PullRequestHead{{Number: 42, State: forge.PullRequestStateMerged, HeadBranch: "merged-topic"}}, nil
+		}
+		return nil, nil
+	})
+
+	for _, cmd := range []string{
+		"PRAETOR_ADMIT=git-push git -c remote.origin.url=https://github.com/other/widgets.git push origin merged-topic",
+		"praetorctl admit --label git-push -- git -c remote.origin.url=https://github.com/other/widgets.git push origin main",
+		"PRAETOR_ADMIT=git-push git -c remote.origin.pushurl=https://github.com/other/widgets.git push origin main",
+		"PRAETOR_ADMIT=git-push git -c remote.origin.push=refs/heads/main:refs/heads/other push origin",
+		"PRAETOR_ADMIT=git-push git -c remote.origin.mirror push origin",
+		"PRAETOR_ADMIT=git-push git -c REMOTE.pushDefault=upstream push",
+		"PRAETOR_ADMIT=git-push git -c remotes.group=origin push group main",
+		"PRAETOR_ADMIT=git-push git -c url.https://github.com/other/.insteadOf=https://github.com/acme/ push origin main",
+		"PRAETOR_ADMIT=git-push git -c URL.https://github.com/other/.pushInsteadOf=https://github.com/acme/ push origin main",
+		"PRAETOR_ADMIT=git-push git -c branch.main.remote=upstream push",
+		"PRAETOR_ADMIT=git-push git -c branch.main.pushRemote=upstream push",
+		"PRAETOR_ADMIT=git-push git -c branch.main.merge=refs/heads/other push",
+		"PRAETOR_ADMIT=git-push git -c push.default=matching push",
+		"PRAETOR_ADMIT=git-push git -c push.autoSetupRemote=true push",
+		"PRAETOR_ADMIT=git-push git -c include.path=/tmp/gitconfig push origin main",
+		"PRAETOR_ADMIT=git-push git -c IncludeIf.onbranch:main.path=/tmp/gitconfig push origin main",
+		"PRAETOR_ADMIT=git-push git -c http.lowSpeedLimit=1 -c remote.origin.url=https://github.com/other/widgets.git push origin main",
+	} {
+		requireDeniedContaining(t, cmd, policy.CommandInDir(ctx, repo, cmd),
+			"git push target resolution failed", "overrides the push target")
+	}
+	if calls != 0 {
+		t.Fatalf("push-target -c overrides queried the forge %d times, want 0", calls)
+	}
+
+	for _, cmd := range []string{
+		"PRAETOR_ADMIT=git-push git -c http.lowSpeedLimit=1 push origin main",
+		"PRAETOR_ADMIT=git-push git -c core.sshCommand=ssh push origin main",
+		"praetorctl admit --label git-push -- git -c credential.helper= push origin main",
+	} {
+		if v := policy.CommandInDir(ctx, repo, cmd); v.Outcome != Allow {
+			t.Errorf("%q refused: %s", cmd, v.Reason)
+		}
+	}
+	requireDeniedContaining(t, "benign -c on merged branch still refused by forge check",
+		policy.CommandInDir(ctx, repo, "PRAETOR_ADMIT=git-push git -c http.lowSpeedLimit=1 push origin merged-topic"),
+		"#42", "MERGED", "push to a new branch")
+}
+
+// Planted negative, positive and boundary: wildcard, pattern and negative refspecs are refused
+// during target resolution before any forge query, while explicit branch refspecs still work.
+func TestAdmission_GitPushHead_Planted_WildcardRefspecsRefused(t *testing.T) {
+	ctx := context.Background()
+	repo := defaultAdmissionRepo(t)
+	calls := 0
+	policy := admissionPolicy(t).WithAdmissionPullRequests(repo, func(_ context.Context, target PushTarget) ([]forge.PullRequestHead, error) {
+		calls++
+		if target.Branch == "merged-topic" {
+			return []forge.PullRequestHead{{Number: 42, State: forge.PullRequestStateMerged, HeadBranch: "merged-topic"}}, nil
+		}
+		return nil, nil
+	})
+
+	for _, cmd := range []string{
+		"PRAETOR_ADMIT=git-push git push origin refs/heads/*:refs/heads/*",
+		"praetorctl admit --label git-push -- git push origin refs/heads/*:refs/heads/*",
+		"PRAETOR_ADMIT=git-push git push origin 'refs/heads/*:refs/heads/*'",
+		"PRAETOR_ADMIT=git-push git push origin *:*",
+		"PRAETOR_ADMIT=git-push git push origin '*:*'",
+		"PRAETOR_ADMIT=git-push git push origin *",
+		"PRAETOR_ADMIT=git-push git push origin refs/heads/*",
+		"PRAETOR_ADMIT=git-push git push origin +refs/heads/feat/*:refs/heads/feat/*",
+		"PRAETOR_ADMIT=git-push git push origin refs/heads/feat-?:refs/heads/feat-?",
+		"PRAETOR_ADMIT=git-push git push origin refs/heads/feat-[a-z]:refs/heads/feat-[a-z]",
+		"PRAETOR_ADMIT=git-push git push origin main ^refs/heads/merged-topic",
+		"PRAETOR_ADMIT=git-push git push origin main refs/heads/*:refs/heads/*",
+	} {
+		requireDeniedContaining(t, cmd, policy.CommandInDir(ctx, repo, cmd),
+			"git push target resolution failed", "wildcard git push refspec", "push branches one by one")
+	}
+	if calls != 0 {
+		t.Fatalf("wildcard refspec pushes queried the forge %d times, want 0", calls)
+	}
+
+	if v := policy.CommandInDir(ctx, repo, "PRAETOR_ADMIT=git-push git push origin refs/heads/main:refs/heads/main"); v.Outcome != Allow {
+		t.Fatalf("explicit non-wildcard refspec refused: %s", v.Reason)
+	}
+	requireDeniedContaining(t, "explicit non-wildcard refspec to merged branch",
+		policy.CommandInDir(ctx, repo, "PRAETOR_ADMIT=git-push git push origin refs/heads/merged-topic:refs/heads/merged-topic"),
+		"#42", "MERGED", "push to a new branch")
+}

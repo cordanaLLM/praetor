@@ -559,25 +559,53 @@ func parseGitPushArgs(baseDir string, gitArgs []string) (repoDir string, pushArg
 		repoDir = "."
 	}
 	for i := 0; i < len(gitArgs) && i < admissionMaxWords; i++ {
-		switch gitArgs[i] {
-		case "push":
+		if gitArgs[i] == "push" {
 			return repoDir, gitArgs[i+1:], nil
-		case "-C":
-			if i+1 >= len(gitArgs) {
-				return "", nil, errors.New("git -C requires a directory argument")
-			}
-			repoDir = joinRepoDir(repoDir, gitArgs[i+1])
-			i++
-		case "-c":
-			if i+1 >= len(gitArgs) {
-				return "", nil, errors.New("git -c requires a configuration argument")
-			}
-			i++
-		default:
-			return "", nil, fmt.Errorf("unexpected git argument %q before push", gitArgs[i])
+		}
+		repoDir, i, err = stepGitOptionBeforePush(repoDir, gitArgs, i)
+		if err != nil {
+			return "", nil, err
 		}
 	}
 	return "", nil, errors.New("missing push subcommand")
+}
+
+// stepGitOptionBeforePush consumes a global git flag (-C or -c) preceding the push subcommand.
+func stepGitOptionBeforePush(repoDir string, gitArgs []string, i int) (string, int, error) {
+	switch gitArgs[i] {
+	case "-C":
+		if i+1 >= len(gitArgs) {
+			return "", i, errors.New("git -C requires a directory argument")
+		}
+		return joinRepoDir(repoDir, gitArgs[i+1]), i + 1, nil
+	case "-c":
+		if i+1 >= len(gitArgs) {
+			return "", i, errors.New("git -c requires a configuration argument")
+		}
+		if err := validateGitPushConfigArg(gitArgs[i+1]); err != nil {
+			return "", i, err
+		}
+		return repoDir, i + 1, nil
+	default:
+		return "", i, fmt.Errorf("unexpected git argument %q before push", gitArgs[i])
+	}
+}
+
+// validateGitPushConfigArg refuses `git -c` configuration keys that can redirect or alter
+// the push target (remote, remotes, url, branch, push, include, includeIf).
+func validateGitPushConfigArg(raw string) error {
+	key, _, _ := strings.Cut(strings.TrimSpace(raw), "=")
+	key = strings.TrimSpace(key)
+	if key == "" || strings.ContainsAny(raw, "'\"$") {
+		return fmt.Errorf("git -c %s overrides the push target; configure the repository instead", raw)
+	}
+	section, _, _ := strings.Cut(strings.ToLower(key), ".")
+	switch section {
+	case "remote", "remotes", "url", "branch", "push", "include", "includeif":
+		return fmt.Errorf("git -c %s overrides the push target; configure the repository instead", key)
+	default:
+		return nil
+	}
 }
 
 // joinRepoDir resolves a relative repository path against baseDir.
@@ -825,14 +853,11 @@ func resolveDestinationBranches(ctx context.Context, repoDir string, refspecs []
 // classifyRefspec inspects a git refspec to extract the target branch or skip indicator.
 func classifyRefspec(refspec string) (branch string, skip bool, err error) {
 	spec := strings.TrimPrefix(strings.TrimSpace(refspec), "+")
-	if spec == "" {
-		return "", false, errors.New("empty git push refspec")
+	if err := validatePushRefspec(spec, refspec); err != nil {
+		return "", false, err
 	}
 	src, dst, hasColon := strings.Cut(spec, ":")
 	if hasColon && src == "" {
-		if dst == "" {
-			return "", false, errors.New("empty git push refspec ':'")
-		}
 		return "", true, nil
 	}
 	target := src
@@ -843,6 +868,17 @@ func classifyRefspec(refspec string) (branch string, skip bool, err error) {
 		return "", true, nil
 	}
 	return trimBranchRefPrefix(target, refspec)
+}
+
+// validatePushRefspec rejects empty, wildcard, pattern, or negative git push refspecs.
+func validatePushRefspec(spec, raw string) error {
+	if spec == "" || spec == ":" {
+		return fmt.Errorf("empty git push refspec %q", raw)
+	}
+	if strings.ContainsAny(spec, "*?['\"$") || strings.HasPrefix(spec, "^") {
+		return fmt.Errorf("wildcard git push refspec %q is not supported; push branches one by one", raw)
+	}
+	return nil
 }
 
 // trimBranchRefPrefix strips git ref prefixes (refs/heads/, refs/for/) from the target.
