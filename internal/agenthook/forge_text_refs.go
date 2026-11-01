@@ -194,7 +194,7 @@ func collectGHWriteCalls(command, baseDir string) ([]ghWriteCall, error) {
 		}
 		segWords := fields[start:i]
 		dirStack = pushSubshellLevel(dirStack, countSubshellOpeners(segWords))
-		closers := countSubshellClosers(segWords)
+		closers := min(subshellClosers(segWords, countSubshellClosers(segWords)), max(0, len(dirStack)-1))
 		if closers > 0 {
 			segWords = trimSegmentTrailingParens(segWords, closers)
 		}
@@ -292,6 +292,104 @@ func countSubshellClosers(words []string) int {
 		break
 	}
 	return closers
+}
+
+// subshellClosers discounts unclosed $( command substitutions from trailing parentheses,
+// ensuring command substitutions own their closing paren rather than subshell scopes.
+func subshellClosers(words []string, trailing int) int {
+	if trailing <= 0 || len(words) == 0 {
+		return 0
+	}
+	stopWord, stopIdx := trailingParenOrigin(words, trailing)
+	unclosed := countUnclosedSubstOpenings(words, stopWord, stopIdx)
+	return max(0, trailing-unclosed)
+}
+
+// trailingParenOrigin finds the word index and byte offset where trailing unescaped
+// closing parentheses begin across the tail of words.
+func trailingParenOrigin(words []string, trailing int) (int, int) {
+	remaining := trailing
+	for i := len(words) - 1; i >= 0 && remaining > 0 && i < maxForgeTextWords; i-- {
+		w := words[i]
+		if len(w) == 0 {
+			continue
+		}
+		t := countTrailingParens(w)
+		if t == 0 {
+			break
+		}
+		consume := min(remaining, t)
+		remaining -= consume
+		if remaining == 0 {
+			return i, len(w) - consume
+		}
+	}
+	return 0, 0
+}
+
+// countUnclosedSubstOpenings scans words left to right up to stopWord and stopIdx,
+// returning the number of $( command substitutions still unclosed at that point.
+func countUnclosedSubstOpenings(words []string, stopWord, stopIdx int) int {
+	unclosed := 0
+	var quote byte // 0 outside quotes, '\'' or '"' inside that quote
+	for i := 0; i <= stopWord && i < len(words) && i < maxForgeTextWords; i++ {
+		limit := len(words[i])
+		if i == stopWord {
+			limit = min(limit, stopIdx)
+		}
+		scanWordSubstOpenings(words[i], limit, &unclosed, &quote)
+	}
+	return unclosed
+}
+
+// scanWordSubstOpenings scans word up to limit bytes, updating the unclosed $( count and
+// the quote state: single-quoted text is literal, double-quoted text still opens $(.
+func scanWordSubstOpenings(word string, limit int, unclosed *int, quote *byte) {
+	for j := 0; j < limit && j < len(word); j++ {
+		if *quote == '\'' {
+			if word[j] == '\'' {
+				*quote = 0
+			}
+			continue
+		}
+		j = stepSubstByte(word, j, limit, unclosed, quote)
+	}
+}
+
+// stepSubstByte processes one byte outside single quotes, updating the unclosed $( count,
+// escapes and the quote state, and returns the index of the last byte it consumed.
+func stepSubstByte(word string, j, limit int, unclosed *int, quote *byte) int {
+	c := word[j]
+	if c == '\\' {
+		return j + 1
+	}
+	if c == '"' || c == '\'' {
+		*quote = nextQuoteState(*quote, c)
+		return j
+	}
+	if c == '$' && j+1 < limit && word[j+1] == '(' {
+		*unclosed++
+		return j + 1
+	}
+	if c == ')' && *unclosed > 0 {
+		*unclosed--
+	}
+	return j
+}
+
+// nextQuoteState returns the quote state after quote byte c outside single quotes: a double
+// quote opens or closes double quoting, a single quote opens single quoting only outside it.
+func nextQuoteState(quote, c byte) byte {
+	switch {
+	case c == '"' && quote == 0:
+		return '"'
+	case c == '"':
+		return 0
+	case quote == 0:
+		return '\''
+	default:
+		return quote
+	}
 }
 
 // trimSegmentTrailingParens strips trailing subshell closing parentheses from words.

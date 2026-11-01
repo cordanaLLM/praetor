@@ -113,6 +113,7 @@ func TestForgeTextRefsRefusedPerForm(t *testing.T) {
 		{"owner/repo#N in unquoted here-document on /dev/fd/0", "gh pr comment 9 --body-file /dev/fd/0 <<EOF\nContext:\nSee outside-org/project#54 for background.\nEOF\n", `outside-org/project#54`},
 		{"owner/repo!N in gh api -F body=@file", `gh api -X POST repos/fleet-org/governed-repo/issues/9/comments -F body=@field-body.md`, `outside-org/project!99`},
 		{"owner/repo#N in $(cat <path>)", `gh pr review 14 --comment -b "$(cat cat-body.md)"`, `outside-org/project#204`},
+		{"unquoted owner/repo#N in $(cat <path>)", `gh issue comment 9 --body $(cat cat-body.md)`, `outside-org/project#204`},
 		{"chained cd and gh release edit --notes-file", `cd sub && gh release edit v1.2.0 --notes-file release-notes.md`, `outside-org/project#105`},
 		{"gh release create inline --notes", `gh release create v1.3.0 --title "v1.3.0" --notes "Fixes outside-org/project#301"`, `outside-org/project#301`},
 		{"gh issue close --comment", `gh issue close 5 --comment "Superseded by outside-org/project#310"`, `outside-org/project#310`},
@@ -424,4 +425,109 @@ func TestForgeTextRefsConcatenatedShellFragments(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestForgeTextRefsUnquotedCatSubstRefused verifies that unquoted $(cat file) at the
+// end of a segment is scanned and maintains subshell directory tracking for subsequent commands.
+func TestForgeTextRefsUnquotedCatSubstRefused(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nrepository:\n  owner: repo-owner\n  name: governed-repo\nforge:\n  own_organizations:\n    - fleet-org\n")
+	writeTestFixtureFile(t, filepath.Join(root, "cat-body.md"), "Foreign ref outside-org/project#204\n")
+	writeTestFixtureFile(t, filepath.Join(root, "sub", "cat-body.md"), "Foreign ref outside-org/project#204\n")
+	writeTestFixtureFile(t, filepath.Join(root, "sub", "a.md"), "Clean body\n")
+	writeTestFixtureFile(t, filepath.Join(root, "sub", "b.md"), "Foreign ref outside-org/project#204\n")
+	writeTestFixtureFile(t, filepath.Join(root, "b.md"), "Clean body in root\n")
+
+	cases := []struct {
+		name     string
+		command  string
+		wantSpan string
+	}{
+		{
+			name:     "unquoted cat at segment end refused",
+			command:  `gh issue comment 9 --body $(cat cat-body.md)`,
+			wantSpan: "outside-org/project#204",
+		},
+		{
+			name:     "unquoted cat in subshell refused",
+			command:  `(cd sub && gh issue comment 9 --body $(cat cat-body.md))`,
+			wantSpan: "outside-org/project#204",
+		},
+		{
+			name:     "unquoted cat keeps subshell directory for subsequent calls",
+			command:  `(cd sub && gh issue comment 9 --body $(cat a.md) && gh issue comment 9 --body-file b.md)`,
+			wantSpan: "outside-org/project#204",
+		},
+		{
+			name:     "quoted cat behaves as before",
+			command:  `gh issue comment 9 --body "$(cat cat-body.md)"`,
+			wantSpan: "outside-org/project#204",
+		},
+		{
+			name:     "apostrophe inside double quotes does not hide a later substitution",
+			command:  `(cd sub && gh issue comment 9 --title "it's" --body $(cat a.md) && gh issue comment 9 --body-file b.md)`,
+			wantSpan: "outside-org/project#204",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertForgeTextDenied(t, runPreToolCommand(t, root, tc.command, nil), tc.wantSpan)
+		})
+	}
+}
+
+// TestForgeTextRefsUnquotedCatSubstAccepted verifies that clean files pass when referenced
+// through unquoted $(cat file) substitutions in root and subshell scopes.
+func TestForgeTextRefsUnquotedCatSubstAccepted(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nrepository:\n  owner: repo-owner\n  name: governed-repo\nforge:\n  own_organizations:\n    - fleet-org\n")
+	writeTestFixtureFile(t, filepath.Join(root, "clean.md"), "Clean body with fleet-org/repo#10\n")
+	writeTestFixtureFile(t, filepath.Join(root, "sub", "clean.md"), "Clean body in sub\n")
+	writeTestFixtureFile(t, filepath.Join(root, "sub", "a.md"), "Clean body a\n")
+	writeTestFixtureFile(t, filepath.Join(root, "sub", "b.md"), "Clean body b\n")
+
+	cases := []struct {
+		name    string
+		command string
+	}{
+		{
+			name:    "clean unquoted cat at root",
+			command: `gh issue comment 9 --body $(cat clean.md)`,
+		},
+		{
+			name:    "clean unquoted cat in subshell",
+			command: `(cd sub && gh issue comment 9 --body $(cat clean.md))`,
+		},
+		{
+			name:    "clean unquoted cat chained in subshell",
+			command: `(cd sub && gh issue comment 9 --body $(cat a.md) && gh issue comment 9 --body-file b.md)`,
+		},
+		{
+			name:    "clean quoted cat behaves as before",
+			command: `gh issue comment 9 --body "$(cat clean.md)"`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := runPreToolCommand(t, root, tc.command, nil)
+			if resp.ExitCode != 0 {
+				t.Fatalf("expected allow exit 0, got %d: %q", resp.ExitCode, string(resp.Stderr))
+			}
+		})
+	}
+}
+
+// TestForgeTextRefsUnbalancedSubshellBoundary verifies that unbalanced trailing closing
+// parentheses at root or exceeding subshell depth neither panic nor pop below the root.
+func TestForgeTextRefsUnbalancedSubshellBoundary(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nrepository:\n  owner: repo-owner\n  name: governed-repo\nforge:\n  own_organizations:\n    - fleet-org\n")
+	writeTestFixtureFile(t, filepath.Join(root, "body.md"), "Foreign ref outside-org/project#42\n")
+
+	assertForgeTextDenied(t, runPreToolCommand(t, root, `gh issue comment 9 --body "outside-org/project#42")`, nil), "outside-org/project#42")
+
+	resp := runPreToolCommand(t, root, `gh issue comment 9 --body "Clean note")`, nil)
+	if resp.ExitCode != 0 {
+		t.Fatalf("expected stray paren at root to allow clean command, got %d: %q", resp.ExitCode, string(resp.Stderr))
+	}
+
+	extraResp := runPreToolCommand(t, root, `(cd sub ; true)) ; gh issue comment 9 --body-file body.md`, nil)
+	assertForgeTextDenied(t, extraResp, "outside-org/project#42")
 }
