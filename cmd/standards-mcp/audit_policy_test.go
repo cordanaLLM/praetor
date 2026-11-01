@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 func TestServerAuditEffectiveDeploymentPolicy(t *testing.T) {
@@ -280,7 +282,7 @@ func TestServerAuditRunsTheBestPracticesGate(t *testing.T) {
 
 func TestServerAuditContextGroupGuideContract(t *testing.T) {
 	guidePath := filepath.Join(sourceCheckoutRoot(t), "docs", "guides", "development-mcp.md")
-	data, err := os.ReadFile(guidePath)
+	data, err := readAuditContextGroupGuide(t.Context(), guidePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,6 +324,48 @@ func TestServerAuditContextGroupGuideContract(t *testing.T) {
 			t.Fatalf("%s: got %v, want %q", tc.name, err, tc.wantErr)
 		}
 	}
+}
+
+func TestReadAuditContextGroupGuide_3D(t *testing.T) {
+	guidePath := filepath.Join(sourceCheckoutRoot(t), "docs", "guides", "development-mcp.md")
+
+	// Positive: reading with an active context succeeds and returns guide content.
+	data, err := readAuditContextGroupGuide(t.Context(), guidePath)
+	if err != nil || len(data) == 0 {
+		t.Fatalf("positive: readAuditContextGroupGuide failed: %v", err)
+	}
+
+	// Negative: reading with a canceled context fails with context cancellation.
+	canceledCtx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := readAuditContextGroupGuide(canceledCtx, guidePath); !errors.Is(err, context.Canceled) {
+		t.Fatalf("negative canceled: got %v, want %v", err, context.Canceled)
+	}
+
+	// Boundary: nil context is refused.
+	var nilContext context.Context
+	if _, err := readAuditContextGroupGuide(nilContext, guidePath); err == nil || !strings.Contains(err.Error(), "context is required") {
+		t.Fatalf("boundary nil context: got %v, want context is required error", err)
+	}
+
+	// Boundary: non-existent file returns not exist error.
+	missingPath := filepath.Join(sourceCheckoutRoot(t), "docs", "guides", "nonexistent-guide.md")
+	if _, err := readAuditContextGroupGuide(t.Context(), missingPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("boundary missing file: got %v, want %v", err, os.ErrNotExist)
+	}
+}
+
+func readAuditContextGroupGuide(ctx context.Context, path string) ([]byte, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("read guide: context is required")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	data, err := contextopt.ReadSnapshot(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("read guide %s: %w", path, err)
+	}
+	return data, nil
 }
 
 func checkAuditContextGroupGuide(doc string) error {
