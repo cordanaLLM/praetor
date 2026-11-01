@@ -254,26 +254,80 @@ class CIScopeTests(unittest.TestCase):
 # Windows image). A bare "bash" given to CreateProcess searches System32 before PATH and starts
 # the WSL launcher instead, which has no distribution on the runner; resolve it the way Actions does.
 BASH = shutil.which("bash")
+MAX_WORKFLOW_LINES = 2048
 
 
 @unittest.skipUnless(
     BASH, "no bash on PATH: the workflow's bash steps cannot be replayed on this host"
 )
 class WorkflowCommandsTests(unittest.TestCase):
-    def step(self, name):
-        workflow = (
-            Path(__file__).resolve().parents[3] / ".github/workflows/portability.yml"
+    workflow = Path(__file__).resolve().parents[3] / ".github/workflows/portability.yml"
+
+    def step_section(self, name):
+        workflow_header, jobs = self.workflow.read_text(encoding="utf-8").split(
+            "\njobs:\n", 1
         )
-        text = workflow.read_text(encoding="utf-8").split(
-            "      - name: " + name + "\n", 1
-        )[1]
-        text = text.split("\n      - name:", 1)[0]
+        before_step, step_rest = jobs.split("      - name: " + name + "\n", 1)
+        job_lines = []
+        for line in before_step.rsplit("\n    steps:\n", 1)[0].splitlines()[
+            :MAX_WORKFLOW_LINES
+        ]:
+            if line.startswith("  ") and not line.startswith(("   ", "  #")):
+                job_lines = []
+            job_lines.append(line)
+        step_text = step_rest.split("\n      - name:", 1)[0]
+        return workflow_header, "\n".join(job_lines), step_text
+
+    def step(self, name):
+        _, _, text = self.step_section(name)
         body = text.split("        run: |\n", 1)[1].split("        env:", 1)[0]
         return "\n".join(
-            line[10:] for line in body.splitlines() if line.startswith("          ")
+            line[10:]
+            for line in body.splitlines()[:MAX_WORKFLOW_LINES]
+            if line.startswith("          ")
         )
 
-    def execute(self, temp, step, packages, adopt="false", cli="false", fail="false"):
+    @staticmethod
+    def env_block(section, indent):
+        marker = f"\n{indent}env:\n"
+        if marker not in "\n" + section:
+            return {}
+        prefix = indent + "  "
+        entries = {}
+        for line in ("\n" + section).split(marker, 1)[1].splitlines()[
+            :MAX_WORKFLOW_LINES
+        ]:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if not line.startswith(prefix):
+                break
+            if not line[len(prefix) :].startswith(" "):
+                key, _, value = line[len(prefix) :].partition(":")
+                entries[key.strip()] = value.strip().strip("\"'")
+        return entries
+
+    def workflow_env(self, name):
+        workflow_header, job_header, step_text = self.step_section(name)
+        env = {}
+        for section, indent in (
+            (workflow_header, ""),
+            (job_header, "    "),
+            (step_text, "        "),
+        ):
+            env.update(self.env_block(section, indent))
+        return env
+
+    def execute(
+        self,
+        temp,
+        step,
+        packages,
+        adopt="false",
+        cli="false",
+        fail="false",
+        env=None,
+    ):
         root = Path(temp)
         # LF like ci_scope.py writes it: text mode writes CRLF on Windows, and bash `read -r`
         # would keep the carriage return in each package name.
@@ -301,20 +355,24 @@ class WorkflowCommandsTests(unittest.TestCase):
           esac
         }
         """
-        env = dict(
-            clean_env(),
-            RUNNER_TEMP=root.as_posix(),
-            RUNNER_OS="fixture",
-            PYTHON=sys.executable,
-            ADOPT=adopt,
-            CLI=cli,
-            FAIL_GO=fail,
-        )
-        setup = (
-            self.step("Select Buildable Go Packages")
+        setup_step = (
+            "Select Buildable Go Packages"
             if step in {"Compile Every Package", "Vet Every Package"}
             else ""
         )
+        setup = self.step(setup_step) if setup_step else ""
+        run_env = {
+            **clean_env(),
+            **(self.workflow_env(setup_step) if setup_step else {}),
+            **self.workflow_env(step),
+            "RUNNER_TEMP": root.as_posix(),
+            "RUNNER_OS": "fixture",
+            "PYTHON": sys.executable,
+            "ADOPT": adopt,
+            "CLI": cli,
+            "FAIL_GO": fail,
+            **(env or {}),
+        }
         output = run(
             [
                 BASH,
@@ -324,7 +382,7 @@ class WorkflowCommandsTests(unittest.TestCase):
                 "-c",
                 stub + setup + "\n" + self.step(step),
             ],
-            env=env,
+            env=run_env,
             timeout=30,
         )
         return output.decode(), (root / "calls").read_text().splitlines()
@@ -393,6 +451,60 @@ class WorkflowCommandsTests(unittest.TestCase):
                         self.assertEqual(
                             commands, [command + " example.test/scope/other"]
                         )
+
+    def test_workflow_job_step_env_precedence_and_override(self):
+        packages = [
+            "example.test/scope/a",
+            "example.test/scope/other",
+            "example.test/scope/importer",
+        ]
+        raw = self.workflow.read_text(encoding="utf-8")
+        limit = self.workflow_env("Test Every Package")["PORTABILITY_MAX_PACKAGES"]
+        declared = f'  PORTABILITY_MAX_PACKAGES: "{limit}"\n'
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaisesRegex(HookError, "package count exceeds 1"):
+                self.execute(
+                    temp,
+                    "Compile Every Package",
+                    packages[:2],
+                    env={"PORTABILITY_MAX_PACKAGES": "1"},
+                )
+            fixture = Path(temp) / "portability.yml"
+            with patch.object(self, "workflow", fixture):
+                fixture.write_text(raw.replace(declared, "", 1), encoding="utf-8")
+                with self.assertRaisesRegex(HookError, "PORTABILITY_MAX_PACKAGES"):
+                    self.execute(temp, "Compile Every Package", packages[:1])
+                job_override = (
+                    raw.replace(declared, '  PORTABILITY_MAX_PACKAGES: "1"\n', 1)
+                    .replace(
+                        "  skipped:\n",
+                        '  skipped:\n    env:\n      PORTABILITY_MAX_PACKAGES: "9"\n',
+                        1,
+                    )
+                    .replace(
+                        "  harness:\n",
+                        '  harness:\n    env:\n      PORTABILITY_MAX_PACKAGES: "2"\n',
+                        1,
+                    )
+                )
+                fixture.write_text(job_override, encoding="utf-8")
+                self.execute(temp, "Test Every Package", packages[:2])
+                with self.assertRaisesRegex(HookError, "package count exceeds 2"):
+                    self.execute(temp, "Test Every Package", packages)
+                step_override = job_override.replace(
+                    "        env:\n          ADOPT:",
+                    '        env:\n          PORTABILITY_MAX_PACKAGES: "3"\n          ADOPT:',
+                    1,
+                )
+                fixture.write_text(step_override, encoding="utf-8")
+                self.execute(temp, "Test Every Package", packages)
+                with self.assertRaisesRegex(HookError, "package count exceeds 1"):
+                    self.execute(
+                        temp,
+                        "Test Every Package",
+                        packages[:2],
+                        env={"PORTABILITY_MAX_PACKAGES": "1"},
+                    )
 
 
 if __name__ == "__main__":
