@@ -89,20 +89,19 @@ func TestMergeCheck_OctopusMerge_DroppedHunk(t *testing.T) {
 	if res.MergesCount != 1 {
 		t.Fatalf("expected 1 merge, got %d", res.MergesCount)
 	}
-	if len(res.Findings) == 0 {
-		t.Fatalf("expected findings for dropped hunk in octopus merge")
-	}
-	found := false
-	for i := 0; i < len(res.Findings) && i < maxDiffFiles; i++ {
-		f := res.Findings[i]
-		if f.FilePath == "file1.txt" && f.Parent2 == p3 {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if !hasFindingAgainst(res.Findings, "file1.txt", p3) {
 		t.Errorf("expected finding for file1.txt against parent P3: %+v", res.Findings)
 	}
+}
+
+// hasFindingAgainst reports whether findings name path against the given second parent.
+func hasFindingAgainst(findings []Finding, path, parent string) bool {
+	for i := 0; i < len(findings) && i < maxDiffFiles; i++ {
+		if findings[i].FilePath == path && findings[i].Parent2 == parent {
+			return true
+		}
+	}
+	return false
 }
 
 // Boundary: unrelated histories (no merge base) -> stated line, exit 0.
