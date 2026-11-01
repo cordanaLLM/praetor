@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -442,6 +443,87 @@ func TestListPullRequestsByHead_Boundary(t *testing.T) {
 	heads, err := ParseHeadPullRequests(exact, "topic")
 	if err != nil || len(heads) != HeadPullRequestsPerPage {
 		t.Fatalf("exact page bound = %d, %v", len(heads), err)
+	}
+}
+
+// redirectTransport redirects all HTTP requests to targetURL while preserving request path, query, headers.
+type redirectTransport struct {
+	targetURL *url.URL
+	base      http.RoundTripper
+}
+
+func (rt *redirectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.URL.Scheme = rt.targetURL.Scheme
+	clone.URL.Host = rt.targetURL.Host
+	base := rt.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return base.RoundTrip(clone)
+}
+
+// Planted negative and positive (Finding 2, CWE-522): declared Forgejo host receives FORGEJO_TOKEN,
+// while an undeclared host matching the pattern receives no token.
+func TestReadPullRequestsByHead_Forgejo_TokenOnlyToDeclaredOrAllowlistedHost(t *testing.T) {
+	t.Setenv("FORGEJO_TOKEN", "secret-forgejo-token")
+
+	var (
+		mu       sync.Mutex
+		lastAuth string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		lastAuth = r.Header.Get("Authorization")
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `[]`)
+	}))
+	defer srv.Close()
+
+	srvURL, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testClient := &http.Client{
+		Transport: &redirectTransport{targetURL: srvURL, base: srv.Client().Transport},
+	}
+	ctx := WithHTTPClient(context.Background(), testClient)
+
+	// Planted negative: undeclared host matching pattern receives no token (CWE-522).
+	undeclaredRemote := util.GitRemote{Host: "forgejo.attacker.com", Owner: "acme", Repo: "widgets"}
+	if _, err := ReadPullRequestsByHead(ctx, config.ForgeForgejo, undeclaredRemote, "topic"); err != nil {
+		t.Fatalf("undeclared host lookup: %v", err)
+	}
+	mu.Lock()
+	gotAuth := lastAuth
+	mu.Unlock()
+	if gotAuth != "" {
+		t.Fatalf("undeclared host matching pattern received auth header %q, want none", gotAuth)
+	}
+
+	// Planted positive: declared host receives token.
+	declaredRemote := util.GitRemote{Host: "forgejo.example.org", Owner: "acme", Repo: "widgets"}
+	if _, err := ReadPullRequestsByHead(ctx, config.ForgeForgejo, declaredRemote, "topic", "forgejo.example.org"); err != nil {
+		t.Fatalf("declared host lookup: %v", err)
+	}
+	mu.Lock()
+	gotDeclaredAuth := lastAuth
+	mu.Unlock()
+	if gotDeclaredAuth != "token secret-forgejo-token" {
+		t.Fatalf("declared host received auth header %q, want %q", gotDeclaredAuth, "token secret-forgejo-token")
+	}
+
+	// Planted positive: allow-listed host codeberg.org receives token.
+	allowlistedRemote := util.GitRemote{Host: "codeberg.org", Owner: "acme", Repo: "widgets"}
+	if _, err := ReadPullRequestsByHead(ctx, config.ForgeForgejo, allowlistedRemote, "topic"); err != nil {
+		t.Fatalf("allow-listed host lookup: %v", err)
+	}
+	mu.Lock()
+	gotAllowAuth := lastAuth
+	mu.Unlock()
+	if gotAllowAuth != "token secret-forgejo-token" {
+		t.Fatalf("allow-listed host received auth header %q, want %q", gotAllowAuth, "token secret-forgejo-token")
 	}
 }
 

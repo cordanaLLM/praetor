@@ -189,7 +189,21 @@ func newAdmissionCheck(settings config.AdmissionSettings) (*admissionCheck, erro
 
 // defaultPullRequestHeadReader queries the forge driver for pull requests by head branch.
 func defaultPullRequestHeadReader(ctx context.Context, target PushTarget) ([]forge.PullRequestHead, error) {
-	return forge.ReadPullRequestsByHead(ctx, target.Forge, target.Remote, target.Branch)
+	declaredHost := declaredForgejoHost(ctx, target.RepoDir)
+	return forge.ReadPullRequestsByHead(ctx, target.Forge, target.Remote, target.Branch, declaredHost)
+}
+
+// declaredForgejoHost resolves the repository's declared Forgejo host from origin remote when forge is declared.
+func declaredForgejoHost(ctx context.Context, repoDir string) string {
+	declared, err := declaredManifestForge(repoDir)
+	if err != nil || declared != config.ForgeForgejo {
+		return ""
+	}
+	origin, err := util.ReadOriginRemote(ctx, repoDir)
+	if err != nil {
+		return ""
+	}
+	return origin.Host
 }
 
 // CheckAdmission evaluates command against the admission settings alone

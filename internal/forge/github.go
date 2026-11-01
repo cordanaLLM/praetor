@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -1211,22 +1212,108 @@ func (g *GitHubDriver) fetchHeadPullsPage(ctx context.Context, branch, prefix st
 	return body, nil
 }
 
+type httpClientContextKey struct{}
+
+// WithHTTPClient returns a context that configures the HTTP client used by forge operations.
+func WithHTTPClient(ctx context.Context, client *http.Client) context.Context {
+	return context.WithValue(ctx, httpClientContextKey{}, client)
+}
+
+func httpClientFromContext(ctx context.Context) *http.Client {
+	if ctx == nil {
+		return nil
+	}
+	if client, ok := ctx.Value(httpClientContextKey{}).(*http.Client); ok {
+		return client
+	}
+	return nil
+}
+
+type declaredHostKey struct{}
+
+// WithDeclaredForgejoHost stores the repository's declared Forgejo host in ctx.
+func WithDeclaredForgejoHost(ctx context.Context, host string) context.Context {
+	return context.WithValue(ctx, declaredHostKey{}, normalizeForgeHost(host))
+}
+
+// DeclaredForgejoHostFromContext returns the declared Forgejo host stored in ctx, if any.
+func DeclaredForgejoHostFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if host, ok := ctx.Value(declaredHostKey{}).(string); ok {
+		return host
+	}
+	return ""
+}
+
+// IsTrustedForgejoHost reports whether host is an explicit allow-listed Forgejo host
+// or matches declaredHost.
+func IsTrustedForgejoHost(host, declaredHost string) bool {
+	h := normalizeForgeHost(host)
+	if h == "" {
+		return false
+	}
+	if h == "codeberg.org" {
+		return true
+	}
+	decl := normalizeForgeHost(declaredHost)
+	return decl != "" && h == decl
+}
+
+// normalizeForgeHost strips scheme, port, and trailing dot from host for case-insensitive comparison.
+func normalizeForgeHost(raw string) string {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	if strings.Contains(raw, "://") {
+		if u, err := url.Parse(raw); err == nil {
+			raw = u.Host
+		}
+	}
+	if host, _, err := net.SplitHostPort(raw); err == nil {
+		return strings.TrimSuffix(strings.ToLower(host), ".")
+	}
+	return strings.TrimSuffix(raw, ".")
+}
+
+// resolveForgejoTokenForHost returns FORGEJO_TOKEN or GITEA_TOKEN only if host is trusted;
+// any other host gets no token.
+func resolveForgejoTokenForHost(host, declaredHost string) string {
+	if !IsTrustedForgejoHost(host, declaredHost) {
+		return ""
+	}
+	return resolveForgejoToken()
+}
+
 // ReadPullRequestsByHead queries the forge (GitHub or Forgejo) for up to HeadPullRequestsMaxPages
 // bounded pages of pull requests in any state whose head branch is branch.
-func ReadPullRequestsByHead(ctx context.Context, kind config.Forge, remote util.GitRemote, branch string) ([]PullRequestHead, error) {
+func ReadPullRequestsByHead(ctx context.Context, kind config.Forge, remote util.GitRemote, branch string, declaredHostOpt ...string) ([]PullRequestHead, error) {
 	if ctx == nil {
 		return nil, errors.New("read pull requests by head: context cannot be nil")
 	}
 	ctx, cancel := context.WithTimeout(ctx, defaultHTTPTimeout)
 	defer cancel()
 	endpoint := "https://" + remote.Host
+	if strings.HasPrefix(remote.Host, "http://") || strings.HasPrefix(remote.Host, "https://") {
+		endpoint = remote.Host
+	}
 	switch kind {
 	case config.ForgeGitHub:
 		driver := NewGitHubDriver(util.ResolveAuthTokenContext(ctx, ""), endpoint)
+		if client := httpClientFromContext(ctx); client != nil {
+			driver.HTTPClient = client
+		}
 		driver.SetRepository(remote.Owner, remote.Repo)
 		return driver.ListPullRequestsByHead(ctx, branch)
 	case config.ForgeForgejo:
-		driver := NewGiteaDriver(resolveForgejoToken(), endpoint)
+		declaredHost := DeclaredForgejoHostFromContext(ctx)
+		if len(declaredHostOpt) > 0 && declaredHostOpt[0] != "" {
+			declaredHost = declaredHostOpt[0]
+		}
+		token := resolveForgejoTokenForHost(remote.Host, declaredHost)
+		driver := NewGiteaDriver(token, endpoint)
+		if client := httpClientFromContext(ctx); client != nil {
+			driver.HTTPClient = client
+		}
 		driver.SetRepository(remote.Owner, remote.Repo)
 		return driver.ListPullRequestsByHead(ctx, branch)
 	default:
