@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func snapshotDirectory(t *testing.T, path string) *os.Root {
@@ -170,5 +172,55 @@ func TestOpenDirectoryRejectsALeafSymlinkButAcceptsASymlinkedAncestor(t *testing
 	}
 	if err := viaAncestor.Close(); err != nil {
 		t.Error(err)
+	}
+}
+
+// TestRootSnapshot_OversizedFileSentinel verifies that an oversized file yields an error wrapping
+// util.ErrFileTooLarge.
+func TestRootSnapshot_OversizedFileSentinel(t *testing.T) {
+	dir := contextFixture(t, map[string][]byte{"file": bytes.Repeat([]byte("a"), MaxSourceBytes+1)})
+	root := snapshotDirectory(t, dir)
+	_, err := ReadRootSnapshot(context.Background(), root, "file")
+	if !errors.Is(err, util.ErrFileTooLarge) {
+		t.Fatalf("expected errors.Is(err, util.ErrFileTooLarge), got %v", err)
+	}
+}
+
+// TestRootSnapshot_NonRegularDirectorySentinel verifies that a non-regular source does not wrap
+// util.ErrFileTooLarge and reports that the source must be regular.
+func TestRootSnapshot_NonRegularDirectorySentinel(t *testing.T) {
+	dir := contextFixture(t, map[string][]byte{"sub/file": []byte("text")})
+	root := snapshotDirectory(t, dir)
+	_, err := ReadRootSnapshot(context.Background(), root, "sub")
+	if errors.Is(err, util.ErrFileTooLarge) {
+		t.Fatalf("non-regular directory must not wrap util.ErrFileTooLarge: %v", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "source must be regular") {
+		t.Fatalf("expected 'source must be regular', got %v", err)
+	}
+}
+
+// TestStableCopy_ExceededByteBoundSentinel verifies that reading past limit in stableCopy
+// wraps util.ErrFileTooLarge.
+func TestStableCopy_ExceededByteBoundSentinel(t *testing.T) {
+	dir := contextFixture(t, map[string][]byte{"file": []byte("0123456789")})
+	filePath := filepath.Join(dir, "file")
+	file, err := os.Open(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			t.Error(closeErr)
+		}
+	}()
+	info, err := file.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	_, copyErr := stableCopy(context.Background(), &buf, file, info, 5)
+	if !errors.Is(copyErr, util.ErrFileTooLarge) {
+		t.Fatalf("expected stableCopy over limit to wrap util.ErrFileTooLarge, got %v", copyErr)
 	}
 }
