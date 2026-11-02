@@ -220,3 +220,7 @@ docs/figures/*.ts text eol=lf
 docs/assets/figures/* text eol=lf
 tools/figures/third_party/interfig/upstream/** -text
 # END praetor managed attributes
+
+# Native hook replay corpora require identical checkout bytes on every platform.
+internal/agenthook/testdata/pre-tool/cases.json text eol=lf
+internal/agenthook/testdata/privilege-wrappers.json text eol=lf

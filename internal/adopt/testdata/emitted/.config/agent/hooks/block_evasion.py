@@ -76,9 +76,10 @@ RULES = [
     (r"\blefthook\s+uninstall\b", HISS_REFUSAL),
     (
         r"(?m)^(?:(?:[^\Wg]\w*|g(?:[^\Wh]\w*|h\w+)?)?[^\w\n])*(gh)\b[^\n]*(?:\bpr\s+"
-        r"merge\b[^\n]*(?:\s|[\x22\x27])--admin(?:\s|$|[;&|\x22\x27]|=true\b)|(?:\s|["
-        r"\x22\x27])--admin(?:\s|$|[;&|\x22\x27]|=true\b)[^\n]*\bpr\s+merge\b|\bpr\s+-"
-        r"-admin(?:\s|$|[;&|\x22\x27]|=true\b)[^\n]*\bmerge\b)",
+        r"merge\b[^\n]*(?:\s|[\x22\x27])--admin(?:\s|$|[;&|\x22\x27]|=(?i:t(?:rue)?|1)"
+        r"\b)|(?:\s|[\x22\x27])--admin(?:\s|$|[;&|\x22\x27]|=(?i:t(?:rue)?|1)\b)[^\n]*"
+        r"\bpr\s+merge\b|\bpr\s+--admin(?:\s|$|[;&|\x22\x27]|=(?i:t(?:rue)?|1)\b)[^\n]"
+        r"*\bmerge\b)",
         HISS_REFUSAL,
     ),
     (

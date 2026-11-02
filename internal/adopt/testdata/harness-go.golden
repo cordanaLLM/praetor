@@ -84,7 +84,7 @@ Register follows the audience, then the task label of your brief (`register:` in
 ## Primary Verification Commands
 
 ```bash
-# Fast local test suite
+# Project verification commands; availability and execution unverified
 # Declared commands only; run them before claiming application verification.
 'go' 'build' '-v' './...'
 'go' 'test' '-v' '-race' './...'
