@@ -7,6 +7,7 @@ package agenthook
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/admission"
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -21,6 +23,9 @@ import (
 	"github.com/cordanaLLM/praetor/internal/sentinel"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
+
+// testToday fixes the reference time for driver test fixtures.
+var testToday = time.Date(2026, time.October, 31, 10, 0, 0, 0, time.UTC)
 
 const testGiB = 1 << 30
 
@@ -546,7 +551,7 @@ func TestAdmission_GitPushHead_GitHubAndForgejoLoopback(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		switch r.URL.Path {
 		case "/repos/acme/widgets/pulls":
-			if _, err := io.WriteString(w, `[{"number":77,"state":"closed","merged_at":"2026-10-31T10:00:00Z","head":{"ref":"gh-merged"}}]`); err != nil {
+			if _, err := io.WriteString(w, fmt.Sprintf(`[{"number":77,"state":"closed","merged_at":%q,"head":{"ref":"gh-merged"}}]`, testToday.Format(time.RFC3339))); err != nil {
 				t.Errorf("write github response: %v", err)
 			}
 		case "/api/v1/repos/acme/widgets/pulls":
