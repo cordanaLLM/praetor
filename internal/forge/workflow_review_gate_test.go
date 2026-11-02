@@ -83,7 +83,7 @@ func reviewTierStepsProblem(job *ghworkflow.Job) string {
 func TestWorkflowHeavyReviewGate(t *testing.T) {
 	workflows, _ := engineWorkflows(t)
 	for file, heavy := range map[string][]string{
-		"ci.yml": {"verify", "docs-presets"}, "portability.yml": {"harness"},
+		"ci.yml": {"verify", "docs-presets"}, "portability.yml": {"harness", "windows-shard"},
 	} {
 		for _, problem := range reviewGateFileProblems(file, workflows[file], heavy) {
 			t.Errorf("%s: %s", file, problem)
@@ -109,13 +109,15 @@ func TestWorkflowReviewTrustedHelperPlantedDefects(t *testing.T) {
 	}
 }
 
-// TestWorkflowReviewHelperOnEveryPlatform keeps the offline helper in the shared harness step.
+// TestWorkflowReviewHelperOnEveryPlatform keeps the offline helper in the shared harness and Windows shard steps.
 func TestWorkflowReviewHelperOnEveryPlatform(t *testing.T) {
 	workflows, _ := engineWorkflows(t)
 	spec := parseReviewWorkflow(t, workflows["portability.yml"])
-	harness := spec.Jobs["harness"]
-	if problem := reviewHarnessStepProblem(&harness); problem != "" {
-		t.Fatal(problem)
+	for _, id := range []string{"harness", "windows-shard"} {
+		job := spec.Jobs[id]
+		if problem := reviewHarnessStepProblem(&job); problem != "" {
+			t.Fatalf("%s: %s", id, problem)
+		}
 	}
 }
 
@@ -390,7 +392,7 @@ func TestWorkflowReviewHoldPlantedDefects(t *testing.T) {
 		"skipped hold":    strings.Replace(original, "id: review\n        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true\n        shell: bash", "id: review\n        if: false\n        shell: bash", 1),
 		"passing hold":    strings.Replace(original, "          exit 1\n\n      # The hosted gate's draft step", "          exit 0\n\n      # The hosted gate's draft step", 1),
 		"continued work":  strings.ReplaceAll(original, "(github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft", "github.event.pull_request.draft"),
-		"oversized steps": original + strings.Repeat("      - run: echo noop\n", maxStepsPerJob),
+		"oversized steps": strings.Replace(original, "      - name: Interfig Verify Gate\n", strings.Repeat("      - run: echo noop\n", maxStepsPerJob)+"      - name: Interfig Verify Gate\n", 1),
 	} {
 		if text == original {
 			t.Fatalf("%s: mutation did not apply", name)
@@ -399,6 +401,24 @@ func TestWorkflowReviewHoldPlantedDefects(t *testing.T) {
 		if err != nil || reviewTierProblem(spec, "harness") == "" {
 			t.Errorf("%s: mutation accepted or unparsable: %v", name, err)
 		}
+	}
+}
+
+// TestWorkflowWindowsShardReviewHold requires windows-shard to carry the review-gate hold step and
+// rejects a shard job whose hold step is missing or bypassed.
+func TestWorkflowWindowsShardReviewHold(t *testing.T) {
+	workflows, _ := engineWorkflows(t)
+	spec := parseReviewWorkflow(t, workflows["portability.yml"])
+	if problem := reviewTierProblem(spec, "windows-shard"); problem != "" {
+		t.Fatalf("windows-shard: %s", problem)
+	}
+	shard := spec.Jobs["windows-shard"]
+	withoutHold := shard
+	withoutHold.Steps = append([]ghworkflow.Step(nil), shard.Steps[2:]...)
+	specWithoutHold := spec
+	specWithoutHold.Jobs = map[string]ghworkflow.Job{"windows-shard": withoutHold}
+	if got := reviewTierProblem(specWithoutHold, "windows-shard"); got != "trusted checkout and fresh hold must precede canonical draft barrier" {
+		t.Fatalf("windows-shard missing hold step: got %q, want draft barrier error", got)
 	}
 }
 

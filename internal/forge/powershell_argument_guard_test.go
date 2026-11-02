@@ -26,6 +26,9 @@ const maxArgumentsPerStep = 64
 // windowsLeg reports whether job or one of its matrix legs runs on a Windows image. The leg is
 // identified by its image family, not one label, as in the Markdown gate check.
 func windowsLeg(job workflowJob) bool {
+	if strings.Contains(job.RunsOn.Value, "'windows-") {
+		return true
+	}
 	images := append(matrixOSLegs(job), ghworkflow.RunnerLabels(&job.RunsOn)...)
 	for i := 0; i < len(images) && i < maxMatrixLegs; i++ {
 		if strings.HasPrefix(images[i], "windows-") {

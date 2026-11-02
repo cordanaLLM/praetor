@@ -85,7 +85,7 @@ func coversNeed(spec *workflowSpec, steps []gateStep, needs []string, need strin
 	if guard.renovate && !carriesRenovateBranchSkip(needIf) {
 		return false
 	}
-	if guard.repository != "" && withoutRenovateBranchSkip(needIf) != guard.repository {
+	if guard.repository != "" && withoutTrailingStatus(withoutRenovateBranchSkip(needIf), "!cancelled()") != guard.repository {
 		return false
 	}
 	return failsWhenNeedFails(steps, needs, need)

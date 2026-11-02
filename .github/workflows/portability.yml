@@ -712,9 +712,10 @@ jobs:
           PYTHON: ${{ steps.python.outputs.python-path }}
 
   windows-shard:
+    needs: review-gate
     name: Platform Neutrality (Windows shard ${{ matrix.shard }})
-    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled')"
-    runs-on: windows-2025
+    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled') && !cancelled()"
+    runs-on: ${{ needs.review-gate.outputs.clear == 'true' && 'windows-2025' || 'ubuntu-26.04' }}
     timeout-minutes: 180
     strategy:
       fail-fast: false
@@ -722,6 +723,48 @@ jobs:
         shard: [1, 2]
 
     steps:
+      - name: Checkout trusted review gate
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci_review_gate.py
+          sparse-checkout-cone-mode: false
+          path: .review-gate
+      - name: Hold heavy tier for review
+        id: review
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PLANNED_CLEAR: ${{ needs.review-gate.outputs.clear }}
+        run: |
+          REASON="gate unreadable: no trusted helper on the default branch"
+          if [ -f .review-gate/scripts/ci_review_gate.py ]; then
+            verdict="$(mktemp)"
+            if GITHUB_OUTPUT="$verdict" python3 -I -B .review-gate/scripts/ci_review_gate.py gate --pr "$PR_NUMBER" --head "$PR_HEAD"; then
+              if [ "$PLANNED_CLEAR" = true ] && grep -qx 'clear=true' "$verdict"; then
+                echo "clear=true" >> "$GITHUB_OUTPUT"
+                rm -f "$verdict"
+                exit 0
+              fi
+              REASON="$(sed -n 's/^reason=//p' "$verdict")"
+              if [ "$PLANNED_CLEAR" != true ]; then
+                REASON="$REASON; planner held: rerun required for platform selection"
+              fi
+              REASON="${REASON:-gate unreadable: trusted helper produced no verdict}"
+            else
+              REASON="gate unreadable: trusted helper failed"
+            fi
+            rm -f "$verdict"
+          fi
+          echo "::error title=heavy tier held::$REASON"
+          echo "heavy tier held: $REASON" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
       - name: Stop on a draft pull request
         if: github.event.pull_request.draft == true
         shell: bash
@@ -766,7 +809,7 @@ jobs:
 
       - name: Select Platform Neutrality Scope
         id: scope
-        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true }}
         shell: bash
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}
@@ -777,7 +820,7 @@ jobs:
             --output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY" --packages "$RUNNER_TEMP/portability-packages.txt"
 
       - name: Select Buildable Go Packages
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
           max_packages="${PORTABILITY_MAX_PACKAGES:?}"
@@ -792,7 +835,7 @@ jobs:
           go list -f '{{if or .GoFiles .CgoFiles}}{{.ImportPath}}{{end}}' "${packages[@]}" > "$RUNNER_TEMP/buildable.txt"
 
       - name: Compile Every Package
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
           max_packages="${PORTABILITY_MAX_PACKAGES:?}"
@@ -813,7 +856,7 @@ jobs:
           fi
 
       - name: Vet Every Package
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
           max_packages="${PORTABILITY_MAX_PACKAGES:?}"
@@ -834,14 +877,14 @@ jobs:
           fi
 
       - name: Download And Build Pinned Tools
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
           go mod download -modfile=tools/go/go.mod
           go build -modfile=tools/go/go.mod -o "$RUNNER_TEMP/pinned-tools/" golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec github.com/zricethezav/gitleaks/v8
 
       - name: Test Every Package
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
           adopt=$(go list ./internal/adopt)
@@ -910,7 +953,7 @@ jobs:
           SHARD: ${{ matrix.shard }}
 
       - name: Upload Per-Test Timing
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: go-test-json-Windows-shard${{ matrix.shard }}
@@ -919,22 +962,22 @@ jobs:
           retention-days: 14
 
       - name: Test The Client Schema Oracle Module
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.schemacheck == 'true' && matrix.shard == 2 }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.schemacheck == 'true' && matrix.shard == 2 }}
         run: |
           go -C tools/schemacheck vet ./...
           go -C tools/schemacheck test -timeout 30m ./...
 
       - name: Install Pinned Git Hook Toolchain
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
         run: go install -C tools/lefthook github.com/evilmartians/lefthook/v2
 
       - name: Install Security Scanner
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
         shell: bash
         run: go install -modfile=tools/go/go.mod github.com/securego/gosec/v2/cmd/gosec
 
       - name: Install YAML Linter
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
         shell: bash
         run: >-
           "$PYTHON" -m pip install --disable-pip-version-check --require-hashes
@@ -943,7 +986,7 @@ jobs:
           PYTHON: ${{ steps.python.outputs.python-path }}
 
       - name: Install Shell Linter
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -974,17 +1017,17 @@ jobs:
           fi
 
       - name: Build praetorctl
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && matrix.shard == 2 }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && matrix.shard == 2 }}
         shell: bash
         run: go build -o "bin/praetorctl$(go env GOEXE)" ./cmd/standardsctl
 
       - name: Documentation References
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && matrix.shard == 2 }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && matrix.shard == 2 }}
         shell: bash
         run: '"bin/praetorctl$(go env GOEXE)" docs references --path=.'
 
       - name: Assert Hook Toolchain
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
         shell: bash
         run: '"$PYTHON" -B .config/lefthook/scripts/toolchain.py --require "$REQUIRED"'
         env:
@@ -992,11 +1035,12 @@ jobs:
           REQUIRED: "python,make,git,go,gofmt,gosec,lefthook,sh,shellcheck,yamllint"
 
       - name: Harness Self-Tests
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
         timeout-minutes: 40
         shell: bash
         run: |
           status=0
+          "$PYTHON" -B scripts/ci_review_gate.py selftest || status=$?
           "$PYTHON" -u -B scripts/test_portability_selftest.py || status=$?
           "$PYTHON" -u -B scripts/portability_selftest.py --min-executed "$MIN_EXECUTED" || status=$?
           exit "$status"
@@ -1005,7 +1049,7 @@ jobs:
           MIN_EXECUTED: '10'
 
       - name: Setup Node Toolchain
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && (steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true') && matrix.shard == 2 }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && (steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true') && matrix.shard == 2 }}
         uses: actions/setup-node@v7
         with:
           node-version: '24'
@@ -1015,11 +1059,11 @@ jobs:
             tools/markdownlint/package-lock.json
 
       - name: Markdown Gate Self-Test
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.markdown == 'true' && matrix.shard == 2 }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.markdown == 'true' && matrix.shard == 2 }}
         run: node tools/markdownlint/verify.mjs --self-test
 
       - name: Figure Build Check
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.figures == 'true' && matrix.shard == 2 }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.figures == 'true' && matrix.shard == 2 }}
         shell: bash
         run: |
           npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
@@ -1030,7 +1074,7 @@ jobs:
           node tools/figures/build.mjs sources
 
       - name: Interfig Verify Gate
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.interfig == 'true' && matrix.shard == 2 }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.interfig == 'true' && matrix.shard == 2 }}
         shell: bash
         run: |
           "$PYTHON" -B scripts/test_sync_interfig.py
