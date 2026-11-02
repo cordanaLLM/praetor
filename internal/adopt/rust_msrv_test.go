@@ -239,8 +239,8 @@ func TestRepositoryChecksCancellationAndEngine(t *testing.T) {
 }
 
 func TestRustMSRVSkipBeforeInputBounds(t *testing.T) {
-	const oversizedWorkflowBytes = 70000
-	oversizedWorkflow := strings.Repeat("# padding\n", oversizedWorkflowBytes/10)
+	const oversizedWorkflowBytes = maxVerificationInputBytes + 1
+	oversizedWorkflow := strings.Repeat("#", oversizedWorkflowBytes)
 
 	t.Run("no cargo with oversized workflow skips first", func(t *testing.T) {
 		root := t.TempDir()
@@ -259,6 +259,15 @@ func TestRustMSRVSkipBeforeInputBounds(t *testing.T) {
 		mustWrite(t, filepath.Join(root, "Cargo.toml"), msrvCrate)
 		mustWrite(t, filepath.Join(root, "rust-toolchain"), "1.80\n")
 		line, err := AuditRustMSRV(t.Context(), nil, root)
+		checkRepositoryVerdict(t, line, err, false, "rust-msrv")
+	})
+
+	t.Run("boundary cargo with exact limit workflow passes", func(t *testing.T) {
+		root := t.TempDir()
+		mustWrite(t, filepath.Join(root, "Cargo.toml"), msrvCrate)
+		mustWrite(t, filepath.Join(root, "rust-toolchain"), "1.80\n")
+		mustWrite(t, filepath.Join(root, ".github/workflows/ci.yml"), strings.Repeat("#", maxVerificationInputBytes))
+		line, err := AuditRustMSRV(t.Context(), root)
 		checkRepositoryVerdict(t, line, err, false, "rust-msrv")
 	})
 
