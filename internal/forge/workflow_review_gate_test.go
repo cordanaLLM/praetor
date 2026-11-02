@@ -61,7 +61,16 @@ func reviewTierProblem(spec ghworkflow.Spec, id string) string {
 	if ghworkflow.DraftStepPosition(&job) != 2 {
 		return "trusted checkout and fresh hold must precede canonical draft barrier"
 	}
-	for _, step := range job.Steps[3:] {
+	return reviewTierStepsProblem(&job)
+}
+
+// reviewTierStepsProblem bounds the step scan and requires review clearance on failure-continuing steps.
+func reviewTierStepsProblem(job *ghworkflow.Job) string {
+	if len(job.Steps) > maxStepsPerJob {
+		return "heavy job exceeds max steps"
+	}
+	for i := 3; i < len(job.Steps) && i < maxStepsPerJob; i++ {
+		step := job.Steps[i]
 		if strings.Contains(step.If, "!cancelled()") &&
 			!strings.Contains(step.If, "(github.event_name != 'pull_request' || steps.review.outputs.clear == 'true')") {
 			return "failure-continuing step must require review clearance"
@@ -104,15 +113,101 @@ func TestWorkflowReviewTrustedHelperPlantedDefects(t *testing.T) {
 func TestWorkflowReviewHelperOnEveryPlatform(t *testing.T) {
 	workflows, _ := engineWorkflows(t)
 	spec := parseReviewWorkflow(t, workflows["portability.yml"])
-	for _, step := range spec.Jobs["harness"].Steps {
+	harness := spec.Jobs["harness"]
+	if problem := reviewHarnessStepProblem(&harness); problem != "" {
+		t.Fatal(problem)
+	}
+}
+
+// reviewHarnessStepProblem requires a bounded step list and the review helper selftest step.
+func reviewHarnessStepProblem(job *ghworkflow.Job) string {
+	if len(job.Steps) > maxStepsPerJob {
+		return "harness job exceeds max steps"
+	}
+	for i := 0; i < len(job.Steps) && i < maxStepsPerJob; i++ {
+		step := job.Steps[i]
 		if step.Name == "Harness Self-Tests" {
 			if !strings.Contains(step.Run, `"$PYTHON" -B scripts/ci_review_gate.py selftest || status=$?`) {
-				t.Fatal("review helper selftest missing from every-platform harness")
+				return "review helper selftest missing from every-platform harness"
 			}
-			return
+			return ""
 		}
 	}
-	t.Fatal("harness selftest step missing")
+	return "harness selftest step missing"
+}
+
+// TestWorkflowReviewHelperPlantedDefects rejects missing, mutated or oversized harness steps.
+func TestWorkflowReviewHelperPlantedDefects(t *testing.T) {
+	workflows, _ := engineWorkflows(t)
+	spec := parseReviewWorkflow(t, workflows["portability.yml"])
+	harness := spec.Jobs["harness"]
+	if problem := reviewHarnessStepProblem(&harness); problem != "" {
+		t.Fatalf("portability harness: %s", problem)
+	}
+
+	atBound := harness
+	needed := maxStepsPerJob - len(atBound.Steps)
+	for i := 0; i < needed && i < maxStepsPerJob; i++ {
+		atBound.Steps = append(atBound.Steps, ghworkflow.Step{Name: "noop"})
+	}
+	if problem := reviewHarnessStepProblem(&atBound); problem != "" {
+		t.Fatalf("at-bound harness rejected (%d steps): %s", len(atBound.Steps), problem)
+	}
+
+	overBound := atBound
+	overBound.Steps = append(overBound.Steps, ghworkflow.Step{Name: "overflow"})
+	if got := reviewHarnessStepProblem(&overBound); got != "harness job exceeds max steps" {
+		t.Errorf("oversized harness accepted (%d steps): %q", len(overBound.Steps), got)
+	}
+
+	emptyJob := ghworkflow.Job{Steps: []ghworkflow.Step{{Name: "other"}}}
+	if got := reviewHarnessStepProblem(&emptyJob); got != "harness selftest step missing" {
+		t.Errorf("missing selftest accepted: %q", got)
+	}
+
+	mutatedJob := ghworkflow.Job{Steps: []ghworkflow.Step{{Name: "Harness Self-Tests", Run: "echo bypass"}}}
+	if got := reviewHarnessStepProblem(&mutatedJob); got != "review helper selftest missing from every-platform harness" {
+		t.Errorf("mutated selftest accepted: %q", got)
+	}
+}
+
+// TestWorkflowReviewTierStepsPlantedDefects rejects oversized or unheld continuation steps.
+func TestWorkflowReviewTierStepsPlantedDefects(t *testing.T) {
+	job := ghworkflow.Job{
+		Steps: []ghworkflow.Step{
+			{Name: "step0"},
+			{Name: "step1"},
+			{Name: "step2"},
+			{Name: "step3"},
+		},
+	}
+	if problem := reviewTierStepsProblem(&job); problem != "" {
+		t.Fatalf("positive tier steps rejected: %s", problem)
+	}
+
+	atBound := job
+	needed := maxStepsPerJob - len(atBound.Steps)
+	for i := 0; i < needed && i < maxStepsPerJob; i++ {
+		atBound.Steps = append(atBound.Steps, ghworkflow.Step{Name: "noop"})
+	}
+	if problem := reviewTierStepsProblem(&atBound); problem != "" {
+		t.Fatalf("at-bound tier steps rejected (%d steps): %s", len(atBound.Steps), problem)
+	}
+
+	overBound := atBound
+	overBound.Steps = append(overBound.Steps, ghworkflow.Step{Name: "overflow"})
+	if got := reviewTierStepsProblem(&overBound); got != "heavy job exceeds max steps" {
+		t.Errorf("oversized tier steps accepted (%d steps): %q", len(overBound.Steps), got)
+	}
+
+	unheld := job
+	unheld.Steps = append(unheld.Steps, ghworkflow.Step{
+		Name: "unheld",
+		If:   "!cancelled()",
+	})
+	if got := reviewTierStepsProblem(&unheld); got != "failure-continuing step must require review clearance" {
+		t.Errorf("unheld continuation accepted: %q", got)
+	}
 }
 
 // TestWorkflowReviewPlannerDraftVerdict requires the exact advisory draft verdict in both workflows.
@@ -290,11 +385,12 @@ func TestWorkflowReviewHoldPlantedDefects(t *testing.T) {
 	workflows, _ := engineWorkflows(t)
 	original := string(workflows["portability.yml"])
 	for name, text := range map[string]string{
-		"missing need":   strings.Replace(original, "    needs: review-gate\n", "", 1),
-		"spent platform": strings.Replace(original, "needs.review-gate.outputs.clear == 'true' && matrix.os || 'ubuntu-26.04'", "matrix.os", 1),
-		"skipped hold":   strings.Replace(original, "id: review\n        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true\n        shell: bash", "id: review\n        if: false\n        shell: bash", 1),
-		"passing hold":   strings.Replace(original, "          exit 1\n\n      # The hosted gate's draft step", "          exit 0\n\n      # The hosted gate's draft step", 1),
-		"continued work": strings.ReplaceAll(original, "(github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft", "github.event.pull_request.draft"),
+		"missing need":    strings.Replace(original, "    needs: review-gate\n", "", 1),
+		"spent platform":  strings.Replace(original, "needs.review-gate.outputs.clear == 'true' && matrix.os || 'ubuntu-26.04'", "matrix.os", 1),
+		"skipped hold":    strings.Replace(original, "id: review\n        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true\n        shell: bash", "id: review\n        if: false\n        shell: bash", 1),
+		"passing hold":    strings.Replace(original, "          exit 1\n\n      # The hosted gate's draft step", "          exit 0\n\n      # The hosted gate's draft step", 1),
+		"continued work":  strings.ReplaceAll(original, "(github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft", "github.event.pull_request.draft"),
+		"oversized steps": original + strings.Repeat("      - run: echo noop\n", maxStepsPerJob),
 	} {
 		if text == original {
 			t.Fatalf("%s: mutation did not apply", name)
