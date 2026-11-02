@@ -64,6 +64,7 @@ func TestAdoptHarnessRepositoryOwnedGates(t *testing.T) {
 	}
 }
 
+// adoptLegendFixture scaffolds a temporary repository exercising tc and returns its AGENTS.md harness.
 func adoptLegendFixture(t *testing.T, tc legendGateCase) string {
 	t.Helper()
 	repo := newTestRepo(t, "legend")
@@ -100,6 +101,7 @@ func adoptLegendFixture(t *testing.T, tc legendGateCase) string {
 	return agentsHarness(t, repo)
 }
 
+// assertLegendCellCredit verifies that preserved, declined, or inactive gates are not credited in harness table rows.
 func assertLegendCellCredit(t *testing.T, harness string, tc legendGateCase) {
 	t.Helper()
 	for _, row := range invariantRows(harness) {
@@ -228,6 +230,7 @@ func TestAdoptForcePreservesConfigBandWithoutRegisterBlock(t *testing.T) {
 	assertConfigBandBoundaries(t, got)
 }
 
+// assertConfigBandBoundaries tests empty and malformed config band handling in repositoryConfigBand.
 func assertConfigBandBoundaries(t *testing.T, harness string) {
 	t.Helper()
 	emptyCfg := "<!-- praetor:head -->\n\n<!-- praetor:config -->\n\n<!-- praetor:tail -->\n"
@@ -291,6 +294,7 @@ func TestAdoptTestdataSPDXScan_3D(t *testing.T) {
 	}
 }
 
+// scanTestdataSPDXLicenses walks root up to maxEntries and returns findings for SPDX tags lacking license files.
 func scanTestdataSPDXLicenses(root, licensesDir string, maxEntries int) ([]string, error) {
 	var missing []string
 	count := 0
@@ -318,6 +322,7 @@ func scanTestdataSPDXLicenses(root, licensesDir string, maxEntries int) ([]strin
 	return missing, nil
 }
 
+// unbackedSPDXInText extracts SPDX license identifiers from text that lack corresponding files in licensesDir.
 func unbackedSPDXInText(text, licensesDir string) []string {
 	const tag = "SPDX-" + "License-Identifier:"
 	var missing []string
