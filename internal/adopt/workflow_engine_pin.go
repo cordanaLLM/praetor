@@ -113,7 +113,9 @@ func reconcileWorkflowEnginePin(ctx context.Context, s *adoptSession) error {
 	}
 	head, err := adoptingEngineCommit(ctx, s)
 	if err != nil {
-		return fmt.Errorf("engine pin %s: %w", pins[0], err)
+		s.report.recordSkipped(pins[0].file, fmt.Sprintf("Engine pin %s not evaluated: %v; pin untouched; "+
+			"rerun with --lock-source-root=<engine checkout> using a Git checkout of the adopting engine", pins[0], err))
+		return nil
 	}
 	old, err := resolveWorkflowEngineCommit(ctx, s.opts.LockSourceRoot, pins[0].sha)
 	if err != nil {
@@ -158,7 +160,7 @@ func resolveWorkflowEngineCommit(ctx context.Context, source, ref string) (strin
 	// configuration, so it uses the same bounded runner without those configuration overrides.
 	out, err := util.RunGitBytes(ctx, source, 4096, "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
 	if err != nil {
-		return "", fmt.Errorf("resolve engine commit %s in %s: %w", ref, source, err)
+		return "", fmt.Errorf("resolve engine commit %s in %s: %w", ref, source, util.CommandDiagnostic(err, out.Stderr))
 	}
 	head := strings.TrimSpace(string(out.Stdout))
 	if !fullEngineCommit.MatchString(head) {

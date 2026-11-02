@@ -1790,9 +1790,12 @@ The selected `--lock-source-root` must contain the engine's Git history: adoptio
 running build's revision or release tag selects the adopting commit when available; otherwise
 the source's `HEAD` does. No fetch is performed. Without `--lock-source-root`, adoption leaves
 the pin untouched and reports its `file:line`, declaration and SHA as not evaluated, with the
-instruction to rerun with `--lock-source-root=<engine checkout>`. With a source supplied,
-missing history or a diverged pin stops adoption and names the declaration. Several different
-declared SHA pins stop adoption with every `file:line`, even without a source.
+instruction to rerun with `--lock-source-root=<engine checkout>`. A supplied source that cannot
+resolve the adopting engine commit also leaves the pin untouched: the report names the pin,
+source path and Git error, with the same instruction to select a Git checkout of the engine.
+Validated catalog copies can still supply lock content without Git history. Once the adopting
+commit resolves, missing pin history or a diverged pin stops adoption and names the declaration.
+Several different declared SHA pins stop adoption with every `file:line`, even without a source.
 Repeated declarations of the same SHA move together. The report names each changed file,
 old SHA and new SHA. An identical pin, a tag or branch ref, and a repository without a
 commit pin keep their bytes; absence is reported explicitly. A dry run reports the planned

@@ -145,20 +145,50 @@ func TestAdoptWorkflowPinUsesRunningRevision(t *testing.T) {
 
 func TestAdoptWorkflowPinHistoryFailures(t *testing.T) {
 	source, _, _, _ := pinHistory(t)
-	for _, selected := range []string{t.TempDir(), source} {
-		root := t.TempDir()
-		initTestGit(t, root)
-		rel := ".github/workflows/ci.yml"
-		before := "PRAETOR_COMMIT: " + strings.Repeat("f", 40) + "\n"
-		mustWrite(t, filepath.Join(root, rel), before)
-		s := &adoptSession{repoPath: root, opts: AdoptOptions{LockSourceRoot: selected}, report: &AdoptReport{}}
-		err := reportStaleEnginePin(t.Context(), s)
-		if err == nil || !strings.Contains(err.Error(), rel+":1") {
-			t.Fatalf("unknown source/history not refused by name: %v", err)
-		}
-		if got := mustRead(t, filepath.Join(root, rel)); got != before {
-			t.Fatal("history failure changed pin")
-		}
+	root := t.TempDir()
+	initTestGit(t, root)
+	rel := ".github/workflows/ci.yml"
+	before := "PRAETOR_COMMIT: " + strings.Repeat("f", 40) + "\n"
+	mustWrite(t, filepath.Join(root, rel), before)
+	s := &adoptSession{repoPath: root, opts: AdoptOptions{LockSourceRoot: source}, report: &AdoptReport{}}
+	err := reportStaleEnginePin(t.Context(), s)
+	if err == nil || !strings.Contains(err.Error(), rel+":1") {
+		t.Fatalf("unknown pin history not refused by name: %v", err)
+	}
+	if got := mustRead(t, filepath.Join(root, rel)); got != before {
+		t.Fatal("history failure changed pin")
+	}
+}
+
+func TestAdoptWorkflowPinWithoutResolvableEngineCommit(t *testing.T) {
+	for _, name := range []string{"non-Git catalog", "unborn checkout", "unavailable build revision"} {
+		t.Run(name, func(t *testing.T) {
+			source := newAdoptLockSource(t)
+			engine := buildid.Identity{}
+			switch name {
+			case "unborn checkout":
+				initTestGit(t, source)
+			case "unavailable build revision":
+				pinHistoryAt(t, source)
+				engine.Revision = strings.Repeat("f", 40)
+			}
+			root := t.TempDir()
+			initTestGit(t, root)
+			rel := ".github/workflows/ci.yml"
+			pin := strings.Repeat("a", 40)
+			before := "env:\n  PRAETOR_COMMIT: " + pin + "\n"
+			mustWrite(t, filepath.Join(root, rel), before)
+			report, err := Adopt(t.Context(), AdoptOptions{Path: root, LockSourceRoot: source, Engine: engine, SkipHookActivation: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := mustRead(t, filepath.Join(root, rel)); got != before {
+				t.Fatal("adoption without resolvable engine commit changed workflow")
+			}
+			assertAdoptedLock(t, root)
+			assertPinNotEvaluatedReport(t, report, rel, 2, pin,
+				"resolve engine commit", "in "+source+": exit status 128: ", "Git checkout")
+		})
 	}
 }
 
@@ -214,11 +244,16 @@ func TestAdoptWorkflowPinWithoutSourceKeepsValidLock(t *testing.T) {
 	assertPinNotEvaluatedReport(t, report, rel, 2, pin)
 }
 
-func assertPinNotEvaluatedReport(t *testing.T, report *AdoptReport, rel string, line int, pin string) {
+func assertPinNotEvaluatedReport(t *testing.T, report *AdoptReport, rel string, line int, pin string, details ...string) {
 	t.Helper()
 	declaration := fmt.Sprintf("%s:%d PRAETOR_COMMIT=%s", rel, line, pin)
 	if !hasWarningContaining(report, declaration) {
 		t.Fatalf("pin skip not reported as warning: %v", report.Warnings)
+	}
+	for _, want := range details {
+		if !hasWarningContaining(report, want) {
+			t.Errorf("warnings %v lack pin skip detail %q", report.Warnings, want)
+		}
 	}
 	for _, action := range report.ActionDetails {
 		if action.Path == rel && action.Action == actionSkip && strings.Contains(action.Details, declaration) &&
