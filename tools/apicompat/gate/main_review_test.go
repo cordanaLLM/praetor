@@ -20,6 +20,7 @@ import (
 	"time"
 )
 
+// TestBuildModule_EffectiveBuildSelection verifies build tags, GOOS, and GOARCH filter excluded source files.
 func TestBuildModule_EffectiveBuildSelection(t *testing.T) {
 	t.Setenv("GOOS", "windows")
 	t.Setenv("GOARCH", "arm64")
@@ -49,6 +50,7 @@ func TestBuildModule_EffectiveBuildSelection(t *testing.T) {
 	}
 }
 
+// TestBuildModule_SelectedTaggedImports pins prefetching and build errors for matching build-tagged sources.
 func TestBuildModule_SelectedTaggedImports(t *testing.T) {
 	t.Setenv("GOOS", "windows")
 	t.Setenv("GOARCH", "arm64")
@@ -83,6 +85,7 @@ func TestBuildModule_SelectedTaggedImports(t *testing.T) {
 	}
 }
 
+// TestBuildModule_RejectsInvalidOrOversizedBuildContext pins refusal of invalid or oversized GOFLAGS build configurations.
 func TestBuildModule_RejectsInvalidOrOversizedBuildContext(t *testing.T) {
 	for _, tc := range []struct{ name, flags, diagnostic string }{
 		{"invalid-flags", "-not-a-go-build-flag", "read Go build context"},
@@ -103,6 +106,7 @@ func TestBuildModule_RejectsInvalidOrOversizedBuildContext(t *testing.T) {
 	}
 }
 
+// skipOversizedGoFlags skips tests when environment variable limits prevent setting large GOFLAGS values.
 func skipOversizedGoFlags(t *testing.T, platform, flags string) {
 	t.Helper()
 	if platform == "windows" && len(flags) > 32767 {
@@ -110,6 +114,7 @@ func skipOversizedGoFlags(t *testing.T, platform, flags string) {
 	}
 }
 
+// TestOversizedGoFlagsPlatformSkip verifies skip behavior across platform-specific environment variable size limits.
 func TestOversizedGoFlagsPlatformSkip(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -135,6 +140,7 @@ func TestOversizedGoFlagsPlatformSkip(t *testing.T) {
 	}
 }
 
+// TestEffectiveBuildContext_PreservesContextAndToolErrors pins error wrapping when build context discovery fails.
 func TestEffectiveBuildContext_PreservesContextAndToolErrors(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -153,6 +159,7 @@ func TestEffectiveBuildContext_PreservesContextAndToolErrors(t *testing.T) {
 	}
 }
 
+// assertBuildContextErrors verifies tool errors and parent context states are preserved in return values.
 func assertBuildContextErrors(t *testing.T, want error) {
 	t.Helper()
 	toolErr := errors.New("simulated killed process")
@@ -176,6 +183,7 @@ func assertBuildContextErrors(t *testing.T, want error) {
 	}
 }
 
+// TestBuildModule_WorkspaceBuildContext verifies module builds succeed when running inside a multi-module go.work workspace.
 func TestBuildModule_WorkspaceBuildContext(t *testing.T) {
 	root := t.TempDir()
 	for _, name := range []string{"first", "second"} {
@@ -195,6 +203,7 @@ func TestBuildModule_WorkspaceBuildContext(t *testing.T) {
 	}
 }
 
+// TestBuildModule_ScanErrorsAreBuildErrors pins scan failures returning build errors without running download retries.
 func TestBuildModule_ScanErrorsAreBuildErrors(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{"parse-error", "missing-go-mod", "too-many-lines"} {
@@ -214,6 +223,7 @@ func TestBuildModule_ScanErrorsAreBuildErrors(t *testing.T) {
 	}
 }
 
+// TestCompareEach_ScanFailureExceptions verifies active exceptions excuse scan failures while expired ones fail.
 func TestCompareEach_ScanFailureExceptions(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -244,6 +254,7 @@ func TestCompareEach_ScanFailureExceptions(t *testing.T) {
 	}
 }
 
+// TestBuildModule_OperationTimeoutCaps pins per-attempt timeouts across varying parent context deadlines.
 func TestBuildModule_OperationTimeoutCaps(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -273,6 +284,7 @@ func TestBuildModule_OperationTimeoutCaps(t *testing.T) {
 	}
 }
 
+// assertOperationTimeout checks that attempt context deadlines match operation budgets.
 func assertOperationTimeout(t *testing.T, ctx context.Context, operation string, budget time.Duration) {
 	t.Helper()
 	want := downloadTimeout

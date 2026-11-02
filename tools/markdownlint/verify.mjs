@@ -2333,10 +2333,12 @@ function runGate(root, temporary, settings) {
   return scratchStatus === 0 && lintStatus === 0 ? 0 : scratchStatus > 1 || lintStatus > 1 ? 2 : 1;
 }
 
+// isDocumentationToolPath reports whether relative belongs to the documentation gate tooling.
 function isDocumentationToolPath(relative) {
   return relative.startsWith("tools/markdownlint/") || TOOL_FILES.includes(relative);
 }
 
+// changedTreeFallback checks whether changed paths trigger a full tree lint fallback.
 function changedTreeFallback(paths, ref) {
   for (let index = 0; index < paths.length && index < MAX_TRACKED_ENTRIES; index += 1) {
     const relative = paths[index];
@@ -2470,6 +2472,7 @@ function captureChangedSince(root, temporary, settings, ref) {
   }
 }
 
+// removeFixtureFiles removes tracked fixture files via git rm and returns the commit SHA.
 function removeFixtureFiles(root, files, message) {
   const env = fixtureGitEnv(root);
   command("git", ["rm", "--quiet", "--", ...files], { cwd: root, env });
@@ -2477,6 +2480,7 @@ function removeFixtureFiles(root, files, message) {
   return command("git", ["rev-parse", "HEAD"], { cwd: root, env }).stdout.trim();
 }
 
+// renameFixtureFile moves a tracked fixture file via git mv and returns the commit SHA.
 function renameFixtureFile(root, source, destination, message) {
   const env = fixtureGitEnv(root);
   command("git", ["mv", "--", source, destination], { cwd: root, env });
@@ -2484,6 +2488,7 @@ function renameFixtureFile(root, source, destination, message) {
   return command("git", ["rev-parse", "HEAD"], { cwd: root, env }).stdout.trim();
 }
 
+// changedSincePathEncodingSelfTest verifies diff handling for non-ASCII, quoted, and backslash paths.
 function changedSincePathEncodingSelfTest(root, temporary, base) {
   const nonAscii = commitFixtureFiles(root, { "docs/\u00e9.md": "#Bad non-ASCII heading\n" }, "non-ascii");
   assert.equal(captureChangedSince(root, temporary, DEFAULT_SETTINGS, base).status, 1);
@@ -2504,6 +2509,7 @@ function changedSincePathEncodingSelfTest(root, temporary, base) {
   return head;
 }
 
+// changedSinceFallbackSelfTest verifies full-tree fallback when tool paths or manifests change.
 function changedSinceFallbackSelfTest(root, temporary, base) {
   const toolCommit = commitFixtureFiles(root, {
     "tools/markdownlint/markdownlint-cli2.yaml": "config:\n  default: true\n",

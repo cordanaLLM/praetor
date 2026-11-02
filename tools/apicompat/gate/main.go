@@ -966,6 +966,7 @@ type modRequirement struct {
 	version string
 }
 
+// parseRequireLine extracts module path and version from a single require directive line.
 func parseRequireLine(line string) (modRequirement, bool) {
 	code, _, _ := strings.Cut(line, "//")
 	code = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(code), "require"))
@@ -980,15 +981,18 @@ func parseRequireLine(line string) (modRequirement, bool) {
 	return modRequirement{path: modPath, version: fields[1]}, true
 }
 
+// isBlockOpen reports whether trimmed opens a multiline directive block with a parenthesis.
 func isBlockOpen(trimmed, directive string) bool {
 	rest, ok := strings.CutPrefix(trimmed, directive)
 	return ok && strings.TrimSpace(rest) == "("
 }
 
+// hasDirectivePrefix reports whether trimmed starts with the given go.mod directive name.
 func hasDirectivePrefix(trimmed, directive string) bool {
 	return strings.HasPrefix(trimmed, directive+" ") || strings.HasPrefix(trimmed, directive+"\t")
 }
 
+// isLocalPath reports whether target refers to a local file system directory across platforms.
 func isLocalPath(target string) bool {
 	// Match modfile.IsDirectoryPath across hosts; the shipped gate uses only the standard library.
 	switch {
@@ -1005,6 +1009,7 @@ func isLocalPath(target string) bool {
 	}
 }
 
+// isDrivePath reports whether target begins with a Windows drive letter prefix.
 func isDrivePath(target string) bool {
 	if len(target) < 2 || target[1] != ':' {
 		return false
@@ -1012,6 +1017,7 @@ func isDrivePath(target string) bool {
 	return ('A' <= target[0] && target[0] <= 'Z') || ('a' <= target[0] && target[0] <= 'z')
 }
 
+// parseLocalReplace parses a replace directive line pointing to a local directory path.
 func parseLocalReplace(line string) (string, string, bool) {
 	code, _, _ := strings.Cut(line, "//")
 	before, after, ok := strings.Cut(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(code), "replace")), "=>")
@@ -1040,6 +1046,7 @@ type goModScan struct {
 	inReplace     bool
 }
 
+// step processes a single trimmed line during go.mod requirement and replacement scanning.
 func (s *goModScan) step(trimmed string) {
 	switch {
 	case isBlockOpen(trimmed, "require"):
@@ -1063,6 +1070,7 @@ func (s *goModScan) step(trimmed string) {
 	}
 }
 
+// parseGoModRequirements extracts module requirements excluding locally replaced targets.
 func parseGoModRequirements(gomod string) ([]modRequirement, bool) {
 	lines := strings.Split(gomod, "\n")
 	if len(lines) > maxGoModLines {
@@ -1082,6 +1090,7 @@ func parseGoModRequirements(gomod string) ([]modRequirement, bool) {
 	return reqs, true
 }
 
+// hasGoModFile reports whether the directory entry list contains a regular go.mod file.
 func hasGoModFile(entries []os.DirEntry) bool {
 	for index := 0; index < len(entries) && index < maxTreeEntries; index++ {
 		if !entries[index].IsDir() && entries[index].Name() == "go.mod" {
@@ -1091,6 +1100,7 @@ func hasGoModFile(entries []os.DirEntry) bool {
 	return false
 }
 
+// readBoundedRegularFile reads a regular file up to maxBytes under context cancellation.
 func readBoundedRegularFile(ctx context.Context, filePath string, maxBytes int64) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("read imports file %s: %w", filePath, err)
@@ -1120,6 +1130,7 @@ func readBoundedRegularFile(ctx context.Context, filePath string, maxBytes int64
 	return data, nil
 }
 
+// recordNonTestFileImports parses imports from a single Go source file into the imports set.
 func recordNonTestFileImports(ctx context.Context, fset *token.FileSet, filePath string, imports map[string]bool) error {
 	src, err := readBoundedRegularFile(ctx, filePath, maxDeclBytes)
 	if err != nil {
@@ -1144,6 +1155,7 @@ func recordNonTestFileImports(ctx context.Context, fset *token.FileSet, filePath
 	return nil
 }
 
+// visitNonTestDirEntry inspects a directory entry and records imports for matching Go files.
 func visitNonTestDirEntry(ctx context.Context, buildCtx *build.Context, fset *token.FileSet, dir string, entry os.DirEntry, queue []string, imports map[string]bool) ([]string, error) {
 	name := entry.Name()
 	if entry.IsDir() {
@@ -1168,6 +1180,7 @@ func visitNonTestDirEntry(ctx context.Context, buildCtx *build.Context, fset *to
 	return queue, recordNonTestFileImports(ctx, fset, filepath.Join(dir, name), imports)
 }
 
+// appendNonTestDirImports walks bounded directory entries to collect non-test package imports.
 func appendNonTestDirImports(ctx context.Context, buildCtx *build.Context, fset *token.FileSet, dir string, entries []os.DirEntry, queue []string, imports map[string]bool) ([]string, error) {
 	if len(entries) > maxGoFiles {
 		return nil, fmt.Errorf("directory entries exceed %d: %s", maxGoFiles, dir)
@@ -1207,6 +1220,7 @@ func readNonTestDir(ctx context.Context, dir string) ([]os.DirEntry, error) {
 	return entries, nil
 }
 
+// collectNonTestImports discovers all package import paths imported by non-test Go sources.
 func collectNonTestImports(ctx context.Context, moduleDir string, buildCtx build.Context) (map[string]bool, error) {
 	buildCtx.OpenFile = func(filePath string) (io.ReadCloser, error) {
 		data, err := readBoundedRegularFile(ctx, filePath, maxDeclBytes)
@@ -1266,6 +1280,7 @@ func effectiveBuildContext(ctx context.Context, moduleDir string, run toolRunner
 	return buildCtx, nil
 }
 
+// isImportedModule reports whether any collected import belongs to the module path.
 func isImportedModule(modPath string, imports map[string]bool) bool {
 	for imp := range imports {
 		if imp == modPath || strings.HasPrefix(imp, modPath+"/") {
@@ -1275,6 +1290,7 @@ func isImportedModule(modPath string, imports map[string]bool) bool {
 	return false
 }
 
+// selectImportedRequirements filters requirements down to those imported by non-test sources.
 func selectImportedRequirements(reqs []modRequirement, imports map[string]bool) ([]string, bool) {
 	var needed []string
 	for index := 0; index < len(reqs) && index < maxGoModLines; index++ {
@@ -1311,6 +1327,7 @@ func moduleDownloadArgs(ctx context.Context, moduleDir string) ([]string, bool, 
 	return args, needed, nil
 }
 
+// remainingBackoff returns the cumulative wait time reserved for remaining retry slots.
 func remainingBackoff(attempt int) time.Duration {
 	switch attempt {
 	case 1:
@@ -1322,6 +1339,7 @@ func remainingBackoff(attempt int) time.Duration {
 	}
 }
 
+// downloadBackoff computes the delay before retry attempt respecting remaining deadline.
 func downloadBackoff(ctx context.Context, attempt int) time.Duration {
 	backoff := firstBackoff
 	if attempt > 2 {
@@ -1361,6 +1379,7 @@ func downloadAttemptTimeout(ctx context.Context, attempt int, attemptCap time.Du
 	return min(attemptCap, perAttempt), nil
 }
 
+// retryModuleGo runs a Go command up to downloadAttempts times with backoff and deadline caps.
 func retryModuleGo(ctx context.Context, moduleDir, dir, label string, args []string, attemptCap time.Duration, stderr io.Writer, run toolRunner, wait waitFunc) (int, error) {
 	var lastErr error
 	for attempt := 1; attempt <= downloadAttempts; attempt++ {

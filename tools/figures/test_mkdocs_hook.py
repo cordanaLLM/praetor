@@ -585,6 +585,7 @@ class Hook(unittest.TestCase):
             )
 
     def test_lock_release_url_restricts_host_and_path_segments(self):
+        """Verify release archive URLs restrict host and repository path segments."""
         self.assertEqual(
             mkdocs_hook.release_archive_url(
                 {"repository": "https://github.com/adopter/praetor-fork/"},
@@ -608,6 +609,7 @@ class Hook(unittest.TestCase):
         self._assert_bad_repositories(bad_repositories)
 
     def _assert_bad_repositories(self, bad_repositories):
+        """Assert that invalid repository identifiers raise CheckError."""
         for repository in bad_repositories:
             with (
                 self.subTest(repository=repository),
@@ -620,6 +622,7 @@ class Hook(unittest.TestCase):
                 )
 
     def test_lock_release_url_restricts_release_and_asset_segments(self):
+        """Verify invalid release and asset path segments raise CheckError."""
         bad_segments = [
             "",
             ".",
@@ -644,6 +647,7 @@ class Hook(unittest.TestCase):
                 mkdocs_hook.release_archive_url({}, "v1.4.0", segment)
 
     def test_download_refuses_urls_outside_the_release_origin(self):
+        """Verify player downloads refuse URLs outside the trusted release origin."""
         bad_download_urls = [
             "https://evil.example/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz",
             "https://github.com.evil.example/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz",
@@ -670,11 +674,13 @@ class Hook(unittest.TestCase):
                     mkdocs_hook.download_player_archive(bad_url)
 
     def test_download_carries_no_unused_suppression(self):
+        """Verify mkdocs_hook carries no unused linter or security suppressions."""
         source = (FIGURES / "mkdocs_hook.py").read_text(encoding="utf-8")
         self.assertFalse("noqa: S310" in source, "unused S310 suppression")
         self.assertFalse("nosemgrep:" in source, "unused nosemgrep suppression")
 
     def test_download_revalidates_redirects(self):
+        """Verify player downloads revalidate redirect target hosts and protocols."""
         valid_url = "https://github.com/cordanaLLM/praetor/releases/download/v1.4.0/figures-player.tar.gz"
         good_redirects = [
             "https://objects.githubusercontent.com/github-production-release-asset/123?X-Amz-Signature=abc",
@@ -726,6 +732,7 @@ class Hook(unittest.TestCase):
 
     @staticmethod
     def fake_response(payload: bytes, url: str = ""):
+        """Return a context-managed mock HTTP response wrapping bytes payload."""
         class FakeResponse(io.BytesIO):
             def __enter__(self):
                 return self
@@ -734,6 +741,7 @@ class Hook(unittest.TestCase):
                 self.close()
 
             def geturl(self):
+                """Return the effective response URL."""
                 return url
 
         return FakeResponse(payload)

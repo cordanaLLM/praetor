@@ -213,6 +213,7 @@ func TestBuildModule_Boundary_BaseCodeWithoutDownloadRed(t *testing.T) {
 	}
 }
 
+// writeTestModuleFiles writes go.mod and Go source fixtures into a temporary test directory.
 func writeTestModuleFiles(t *testing.T, dir, gomod, src, testSrc string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -301,6 +302,7 @@ func TestRetryModuleGo_Boundary_RetryLoopBoundedByJobAndContextDeadline(t *testi
 	})
 }
 
+// TestRetryModuleGo_ParentDeadlineStopsFirstAttempt verifies parent deadline stops the first retry attempt.
 func TestRetryModuleGo_ParentDeadlineStopsFirstAttempt(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -322,6 +324,7 @@ func TestRetryModuleGo_ParentDeadlineStopsFirstAttempt(t *testing.T) {
 	})
 }
 
+// TestBuildModule_LocalReplaceVersionSelection verifies local replacement version selection during module build.
 func TestBuildModule_LocalReplaceVersionSelection(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -355,6 +358,7 @@ func TestBuildModule_LocalReplaceVersionSelection(t *testing.T) {
 
 }
 
+// TestGoModRequirements_ReadsPastOldCapAndLateReplace pins requirement parsing beyond old limits with late replacements.
 func TestGoModRequirements_ReadsPastOldCapAndLateReplace(t *testing.T) {
 	t.Parallel()
 	var b strings.Builder
@@ -378,6 +382,7 @@ func TestGoModRequirements_ReadsPastOldCapAndLateReplace(t *testing.T) {
 	}
 }
 
+// retryFixtureRoot sets up a temporary module directory with valid go.mod and Go sources.
 func retryFixtureRoot(t *testing.T, dir string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -387,6 +392,7 @@ func retryFixtureRoot(t *testing.T, dir string) string {
 	return root
 }
 
+// TestBuildModule_RejectsIncompleteScan pins build rejection when source or go.mod files cannot be scanned completely.
 func TestBuildModule_RejectsIncompleteScan(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{"symlink", "parse-error", "oversized-source", "oversized-go-mod", "missing-go-mod", "too-many-lines"} {
@@ -407,6 +413,7 @@ func TestBuildModule_RejectsIncompleteScan(t *testing.T) {
 	}
 }
 
+// plantIncompleteScan creates broken, oversized, or missing module fixtures for scan testing.
 func plantIncompleteScan(t *testing.T, dir, kind string) {
 	t.Helper()
 	file, body := "broken.go", "package mod\nimport (\n"
@@ -433,6 +440,7 @@ func plantIncompleteScan(t *testing.T, dir, kind string) {
 	}
 }
 
+// TestCollectNonTestImports_CancellationAndDirectoryBounds pins context cancellation and per-directory entry bounds.
 func TestCollectNonTestImports_CancellationAndDirectoryBounds(t *testing.T) {
 	t.Parallel()
 	root := retryFixtureRoot(t, "mod")
@@ -458,6 +466,7 @@ func TestCollectNonTestImports_CancellationAndDirectoryBounds(t *testing.T) {
 	}
 }
 
+// TestBuildModule_RetriesGoListExport pins backoff and retries on transient go list export errors.
 func TestBuildModule_RetriesGoListExport(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -495,6 +504,7 @@ func TestBuildModule_RetriesGoListExport(t *testing.T) {
 	}
 }
 
+// TestCollectNonTestImports_TotalDirectoryLimit pins refusal when directory entries exceed the global limit.
 func TestCollectNonTestImports_TotalDirectoryLimit(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -517,6 +527,7 @@ func TestCollectNonTestImports_TotalDirectoryLimit(t *testing.T) {
 	}
 }
 
+// TestBuildModule_SkipsUnimportedIndirectRequirements verifies unimported indirect requirements are skipped during download.
 func TestBuildModule_SkipsUnimportedIndirectRequirements(t *testing.T) {
 	t.Parallel()
 	root := retryFixtureRoot(t, "mod")
@@ -540,6 +551,7 @@ func TestBuildModule_SkipsUnimportedIndirectRequirements(t *testing.T) {
 	}
 }
 
+// TestReadBoundedRegularFile_SourceBoundaryAndCancellation pins size limit enforcement and cancellation during regular file reads.
 func TestReadBoundedRegularFile_SourceBoundaryAndCancellation(t *testing.T) {
 	t.Parallel()
 	file := filepath.Join(t.TempDir(), "source.go")
@@ -561,6 +573,7 @@ func TestReadBoundedRegularFile_SourceBoundaryAndCancellation(t *testing.T) {
 	}
 }
 
+// TestParseLocalReplace_DirectoryBoundaries pins local directory replace target syntax across Unix and Windows path forms.
 func TestParseLocalReplace_DirectoryBoundaries(t *testing.T) {
 	t.Parallel()
 	for _, target := range []string{
@@ -583,6 +596,7 @@ func TestParseLocalReplace_DirectoryBoundaries(t *testing.T) {
 	}
 }
 
+// TestBuildModule_RejectsSymlinkWithoutRequirements pins refusal of symlinked Go sources even when requirements are empty.
 func TestBuildModule_RejectsSymlinkWithoutRequirements(t *testing.T) {
 	t.Parallel()
 	root := retryFixtureRoot(t, "mod")

@@ -345,6 +345,7 @@ test('the Astro player mount holds exactly the committed player files', () => {
 // The integration's hooks
 // ---------------------------------------------------------------------------------------------
 
+/** Sets up an adopter directory fixture and dynamically imports astro.mjs. */
 async function adoptedFiguresModule(dir, lock) {
   const files = ['astro.mjs', 'checks.mjs', 'core.mjs', 'serve.mjs',
     'third_party/interfig/upstream/src/svg.ts', 'third_party/interfig/upstream/src/geometry.ts',
@@ -365,6 +366,7 @@ test('an adopted integration without player files injects no loader', () => with
   assert.deepEqual(scripts, []);
 }));
 
+/** Constructs an in-memory gzipped tar archive from fixture file entries. */
 function buildTarGz(entries, prefix = '') {
   const blocks = [];
   for (const { name, body, typeflag = '0', sizeText } of entries) {
@@ -500,6 +502,7 @@ test('downloadPlayerArchive aborts oversized streaming responses before bufferin
   globalThis.fetch = async (url) => {
     assert.equal(url, 'https://github.com/cordanaLLM/praetor/releases/download/v1.4.0/figures-player.tar.gz');
     const body = new ReadableStream({
+      /** Enqueues mock payload chunks until the size threshold triggers cancellation. */
       pull(controller) {
         pulls += 1;
         if (pulls <= 2) {
@@ -508,6 +511,7 @@ test('downloadPlayerArchive aborts oversized streaming responses before bufferin
         }
         throw new Error('stream was not aborted after exceeding MAX_ARCHIVE_BYTES');
       },
+      /** Records that the stream reader canceled the oversized body. */
       cancel() {
         canceled = true;
       },
@@ -540,6 +544,7 @@ test('downloadPlayerArchive requires bounded streaming and accepts the exact dow
   try {
     globalThis.fetch = async () => ({
       ok: true,
+      /** Mock arrayBuffer accessor ensuring streaming body is used instead of buffering. */
       arrayBuffer: async () => { unboundedReads++; return new ArrayBuffer(0); },
     });
     await assert.rejects(setup, /streaming response body/);
@@ -550,7 +555,9 @@ test('downloadPlayerArchive requires bounded streaming and accepts the exact dow
     }
     let canceled = false;
     globalThis.fetch = async () => new Response(new ReadableStream({
+      /** Asserts that oversized Content-Length is rejected before any chunk is pulled. */
       pull() { assert.fail('oversized Content-Length must reject before reading'); },
+      /** Records cancellation of the oversized Content-Length mock stream. */
       cancel() { canceled = true; },
     }, { highWaterMark: 0 }), { headers: { 'content-length': String(4 * 1024 * 1024 + 1) } });
     await assert.rejects(setup, /exceeds 4194304 bytes/);
@@ -578,6 +585,7 @@ test('an adopted integration with a released player.lock.json injects the loader
   const scripts = [];
   const integration = adoptedFigures({
     root: dir,
+    /** Mock download function recording requested URL and returning test archive. */
     download: async (url) => {
       requested.push(url);
       return archive;

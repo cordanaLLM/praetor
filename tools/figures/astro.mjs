@@ -247,6 +247,7 @@ export function publishFigures(mounts, dir, logger) {
   return { copied, kept };
 }
 
+/** Reports whether dir contains all expected figure player files. */
 const hasPlayerFiles = (dir) => {
   const files = mountFiles(dir);
   return ['loader.js', 'player.js'].every((name) => files.includes(name));
@@ -254,12 +255,14 @@ const hasPlayerFiles = (dir) => {
 
 const svgFallbackWarning = (release) => `figures: no player archive for release ${release}; rendering static SVG figures without interactivity`;
 
+/** Resolves the lock file path from candidate roots or default. */
 function resolveLockFile(root) {
   if (statOrNull(LOCK_FILE)?.isFile() || root === undefined || root === null) return LOCK_FILE;
   const candidate = join(rootPath(root), 'tools/figures/player.lock.json');
   return statOrNull(candidate)?.isFile() ? candidate : LOCK_FILE;
 }
 
+/** Reads and parses the player lock JSON file under size limits. */
 function readPlayerLock(lockFile) {
   let data;
   try {
@@ -275,6 +278,7 @@ function readPlayerLock(lockFile) {
 
 const validPathSegment = (value) => RELEASE_SEGMENT.test(value) && value !== '.' && value !== '..';
 
+/** Extracts and validates the repository slug for release downloads. */
 function releaseSlug(repository) {
   if (!repository || repository === CANONICAL_REPOSITORY) return CANONICAL_REPOSITORY;
   const prefix = `${TRUSTED_RELEASE_ORIGIN}/`;
@@ -285,6 +289,7 @@ function releaseSlug(repository) {
   return repository.replace(/^\/+|\/+$/g, '');
 }
 
+/** Builds the full HTTPS release archive URL from lock metadata. */
 export function releaseArchiveUrl(lock, release, asset) {
   const repository = String(lock?.repository ?? '').trim();
   const slug = releaseSlug(repository);
@@ -296,6 +301,7 @@ export function releaseArchiveUrl(lock, release, asset) {
   return `${TRUSTED_RELEASE_ORIGIN}/${slug}/releases/download/${release}/${asset}`;
 }
 
+/** Streams response chunks up to the maximum archive byte limit. */
 async function readBoundedResponse(response, url) {
   const contentLength = Number(response.headers?.get?.('content-length') ?? 0);
   if (Number.isFinite(contentLength) && contentLength > MAX_ARCHIVE_BYTES) {
@@ -321,6 +327,7 @@ async function readBoundedResponse(response, url) {
   }
 }
 
+/** Downloads the player archive from the trusted release origin. */
 async function downloadPlayerArchive(url) {
   if (!url.startsWith(`${TRUSTED_RELEASE_ORIGIN}/`)) {
     throw new CheckError(`the player archive is fetched from ${TRUSTED_RELEASE_ORIGIN} only, not ${JSON.stringify(url)}`);
@@ -330,6 +337,7 @@ async function downloadPlayerArchive(url) {
   return readBoundedResponse(response, url);
 }
 
+/** Verifies the downloaded archive matches the expected SHA-256 digest. */
 function verifyArchiveSha256(raw, expected, asset) {
   const actual = sha256(raw);
   if (!expected || actual !== expected.toLowerCase()) {
@@ -337,6 +345,7 @@ function verifyArchiveSha256(raw, expected, asset) {
   }
 }
 
+/** Extracts a null-terminated UTF-8 string from a tar header slice. */
 function tarString(block, start, length) {
   const slice = block.subarray(start, start + length);
   const end = slice.indexOf(0);
@@ -345,6 +354,7 @@ function tarString(block, start, length) {
 
 const isUnsafeMemberName = (name) => !name || name === '.' || name === '..' || /[/\\]/.test(name);
 
+/** Validates tar member path, type flag, expected name, and size. */
 function validateArchiveMember(name, typeflag, size, seen) {
   if (isUnsafeMemberName(name)) throw new CheckError(`unsafe archive member path ${JSON.stringify(name)}`);
   if (typeflag !== 0 && typeflag !== 0x30) throw new CheckError(`archive member ${JSON.stringify(name)} is not a regular file`);
@@ -353,6 +363,7 @@ function validateArchiveMember(name, typeflag, size, seen) {
   if (size > MAX_ARCHIVE_BYTES) throw new CheckError(`archive member ${JSON.stringify(name)} exceeds ${MAX_ARCHIVE_BYTES} bytes`);
 }
 
+/** Parses tar header fields into member name, type, and byte size. */
 function parseTarHeader(header) {
   const prefix = tarString(header, 345, 155);
   const rawName = tarString(header, 0, 100);
@@ -362,6 +373,7 @@ function parseTarHeader(header) {
   return { name, typeflag: header[156], size };
 }
 
+/** Extracts tar stream members into an in-memory byte map. */
 function readTarMembers(tar) {
   if (tar.length === 0 || tar.length % 512 !== 0) throw new CheckError('invalid player archive: truncated tar stream');
   const extracted = new Map();
@@ -379,6 +391,7 @@ function readTarMembers(tar) {
   return extracted;
 }
 
+/** Returns the set of temporary player extraction directories with cleanup hook. */
 function extractedPlayerDirs() {
   let dirs = globalThis[EXTRACTED_DIRS_SYMBOL];
   if (!(dirs instanceof Set)) {
@@ -392,6 +405,7 @@ function extractedPlayerDirs() {
   return dirs;
 }
 
+/** Cleans up prior extraction directories and registers the new path. */
 function recordExtractedPlayerDir(outDir) {
   const dirs = extractedPlayerDirs();
   for (const prior of dirs) {
@@ -401,6 +415,7 @@ function recordExtractedPlayerDir(outDir) {
   dirs.add(outDir);
 }
 
+/** Decompresses and extracts the player tarball into a temporary directory. */
 export function extractPlayerArchive(raw) {
   if (raw.byteLength > MAX_ARCHIVE_BYTES) throw new CheckError(`archive exceeds ${MAX_ARCHIVE_BYTES} bytes`);
   let tar;
@@ -420,6 +435,7 @@ export function extractPlayerArchive(raw) {
   return outDir;
 }
 
+/** Fetches, verifies, and mounts the locked release player bundle. */
 function resolveLockedPlayer(mounts, lockFile, logger, download = downloadPlayerArchive) {
   if (!statOrNull(lockFile)?.isFile()) {
     logger?.warn(svgFallbackWarning(`unknown (${basename(lockFile)} is missing; praetorctl adopt writes it)`));

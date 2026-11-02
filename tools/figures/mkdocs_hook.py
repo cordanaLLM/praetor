@@ -311,6 +311,7 @@ class _TrustedRedirectHandler(HTTPRedirectHandler):
     """Revalidate every HTTP redirect target against trusted GitHub release hosts."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
+        """Validate redirect destinations against trusted hosts before delegating."""
         target = urljoin(req.full_url, newurl)
         validate_archive_url(target, TRUSTED_REDIRECT_HOSTS, allow_query=True)
         return super().redirect_request(req, fp, code, msg, headers, target)
