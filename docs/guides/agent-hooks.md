@@ -1214,6 +1214,20 @@ closed at the page ceiling), and refuses when a `MERGED` or `CLOSED` pull reques
 destination branch and no `OPEN` one does, or when target/forge resolution fails
 ([merged and closed pull request heads](admission.md#merged-and-closed-pull-request-heads)).
 
+When resolving push targets, the repository manifest (`.standards.yaml`) is read through the
+confined, size-bounded snapshot reader (`internal/agenthook/admission_manifest.go`:
+`readPushManifest`, calling `contextopt.ReadSnapshot`) under the push-target deadline; a stalled
+filesystem read ends at the deadline and caps outstanding readers to a single worker slot
+(`TestReadPushManifestDeadline` in `internal/agenthook/admission_manifest_test.go`). A manifest
+whose policy fields fail to decode still yields a valid `repository.forge` declaration through a
+forge-only projection (`decodePushManifestForge`), and the decode error is reported as a
+non-blocking notice rather than a refusal (`Verdict.Notice`), so terminal pull request head checks
+remain enforced (`TestAdmissionManifestForgeIndependent` in
+`internal/agenthook/admission_manifest_test.go`). With no usable declaration, a known forge host
+is recognised by its host name (`resolvePushForge` in `internal/agenthook/admission.go`); an
+unknown host is refused (`config.ErrForgeUndeclared`), never assigned a guessed forge
+(`TestPushManifestForgeFallback` in `internal/agenthook/admission_manifest_test.go`).
+
 A command the reader cannot follow (an open quote or here-document, or more than 4096 lines)
 is refused while enforcement is on. `praetorctl admit -- <step>` passes when the inner step
 stays within the job count cap (`floor(cores / hooks.admission.max_jobs_divisor)`, default
@@ -1229,8 +1243,9 @@ check through `praetorctl admission-check` (command text on stdin, exit `0` allo
 settings, and fails closed if `praetorctl` is absent; the adopted interceptor written into
 other repositories does not read operator settings. A heavy step inside a script, or in a
 string handed to `sh -c`, is not seen. `internal/agenthook/admission_test.go`,
-`internal/agenthook/parity_test.go` and `cmd/standardsctl/hook_test.go` replay refused,
-admitted, scoped, job-capped and unreadable commands.
+`internal/agenthook/admission_manifest_test.go`, `internal/agenthook/parity_test.go` and
+`cmd/standardsctl/hook_test.go` replay refused, admitted, scoped, job-capped and unreadable
+commands.
 
 ## Worktree locations
 
