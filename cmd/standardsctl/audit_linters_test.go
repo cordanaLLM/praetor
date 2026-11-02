@@ -77,13 +77,19 @@ jobs:
     steps:
       - run: echo "build"
 `)
-	expires := time.Now().AddDate(0, 0, 14).Format(config.ExceptionDateLayout)
+	// Category A with today's entered date: the entry states its own expiry, so it stays valid on
+	// any run date (an uncategorized entry is bounded by the grace date and would expire).
+	today := time.Now()
+	entered := today.Format(config.ExceptionDateLayout)
+	expires := today.AddDate(0, 0, 14).Format(config.ExceptionDateLayout)
 	manifestContent := fixtureManifest("acme", "widgets", false) + fmt.Sprintf(`exceptions:
   - rule: "declared-linters"
     tool: "gitleaks"
     reason: "scheduled for next quarter"
+    category: "A"
+    entered: %q
     expires: %q
-`, expires)
+`, entered, expires)
 	writeFixtureFile(t, f.dir, ".standards.yaml", manifestContent)
 	out, err = f.audit(t)
 	if err != nil {
