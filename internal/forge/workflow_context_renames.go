@@ -148,3 +148,101 @@ func wrappedStatusContext(rename StatusContextRename, callers []string) bool {
 func contextDifference(left, right []string) []string {
 	return slices.DeleteFunc(slices.Clone(left), func(name string) bool { return slices.Contains(right, name) })
 }
+
+// UnreportedStatusContexts returns the required status contexts declared in root that the
+// default branch does not report yet, either because the fetched default-branch commit does not
+// declare them in a workflow that removed no existing check, or because report shows their
+// workflow is not on the forge default branch yet or has no completed run on it.
+func UnreportedStatusContexts(ctx context.Context, root, commit, repository string, report *WorkflowRunReport, opts ...ContextOption) ([]string, error) {
+	if ctx == nil {
+		return nil, errors.New("unreported status context discovery requires a context")
+	}
+	if !config.ValidRepositoryIdentity(repository) {
+		return nil, fmt.Errorf("unreported status context discovery needs an owner/name repository, got %q", repository)
+	}
+	if commit == "" && report == nil {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, workflowDiscoveryTimeout)
+	defer cancel()
+	after, err := readWorkflowFiles(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	options := newContextOptions(opts)
+	var unreported []string
+	if commit != "" {
+		unreported, err = unreportedContextsAtCommit(ctx, root, commit, repository, after, options)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if report != nil {
+		fromRuns, err := unreportedContextsInRuns(after, repository, report, options)
+		if err != nil {
+			return nil, err
+		}
+		unreported = appendMissing(unreported, fromRuns)
+	}
+	return unreported, nil
+}
+
+func unreportedContextsAtCommit(ctx context.Context, root, commit, repository string, after []workflowFile, options contextOptions) ([]string, error) {
+	before, err := readCommittedWorkflowFiles(ctx, root, commit)
+	if err != nil {
+		return nil, err
+	}
+	committed, err := selectContexts(before, newCalledWorkflows(before), repository, options)
+	if err != nil {
+		return nil, err
+	}
+	oldJobs, err := requiredContextJobs(before, repository, options)
+	if err != nil {
+		return nil, err
+	}
+	newJobs, err := requiredContextJobs(after, repository, options)
+	if err != nil {
+		return nil, err
+	}
+	var unreported []string
+	for i := 0; i < len(after) && i < maxWorkflowFiles; i++ {
+		name := after[i].Name
+		if len(contextDifference(oldJobs[name].names, newJobs[name].names)) > 0 {
+			continue
+		}
+		unreported = appendMissing(unreported, contextDifference(newJobs[name].names, committed))
+	}
+	return unreported, nil
+}
+
+func unreportedContextsInRuns(after []workflowFile, repository string, report *WorkflowRunReport, options contextOptions) ([]string, error) {
+	unreportedWorkflow := make(map[string]bool, len(report.Findings))
+	for i := 0; i < len(report.Findings) && i < maxWorkflowFiles; i++ {
+		if workflowUnreportedOnDefaultBranch(report.Findings[i].Health) {
+			unreportedWorkflow[report.Findings[i].Workflow] = true
+		}
+	}
+	if len(unreportedWorkflow) == 0 {
+		return nil, nil
+	}
+	reportedFiles := make([]workflowFile, 0, len(after))
+	for i := 0; i < len(after) && i < maxWorkflowFiles; i++ {
+		if !unreportedWorkflow[after[i].Name] {
+			reportedFiles = append(reportedFiles, after[i])
+		}
+	}
+	called := newCalledWorkflows(after)
+	declared, err := selectContexts(after, called, repository, options)
+	if err != nil {
+		return nil, err
+	}
+	reported, err := selectContexts(reportedFiles, called, repository, options)
+	if err != nil {
+		return nil, err
+	}
+	return contextDifference(declared, reported), nil
+}
+
+func workflowUnreportedOnDefaultBranch(health WorkflowHealth) bool {
+	return health == WorkflowUnknown || health == WorkflowNeverRun || health == WorkflowNoCompletedRun
+}

@@ -6,6 +6,7 @@ package forge
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -105,5 +106,48 @@ func TestRequiredStatusContextRenames_FileChangeBoundary(t *testing.T) {
 				t.Fatalf("renames = %+v, %v; want %d", got, err, tc.want)
 			}
 		})
+	}
+}
+
+func TestUnreportedStatusContexts(t *testing.T) {
+	var missing context.Context
+	if _, err := UnreportedStatusContexts(missing, t.TempDir(), "HEAD", "acme/widgets", nil); err == nil {
+		t.Fatal("nil context accepted")
+	}
+	if _, err := UnreportedStatusContexts(t.Context(), t.TempDir(), "HEAD", "invalid", nil); err == nil {
+		t.Fatal("invalid repository accepted")
+	}
+	if got, err := UnreportedStatusContexts(t.Context(), t.TempDir(), "", "acme/widgets", nil); err != nil || len(got) != 0 {
+		t.Fatalf("empty commit and nil report = %v, %v; want empty", got, err)
+	}
+
+	root, base := committedWorkflowRepo(t, map[string]string{".github/workflows/ci.yml": prWorkflow("CI")})
+	writeWorkflowFixture(t, root, "codeql.yml", prWorkflow("analyze (python)"))
+	got, err := UnreportedStatusContexts(t.Context(), root, base, "acme/widgets", nil)
+	if err != nil || !slices.Equal(got, []string{"analyze (python)"}) {
+		t.Fatalf("unreported from commit = %v, %v; want [analyze (python)]", got, err)
+	}
+
+	report := &WorkflowRunReport{
+		Branch: "main",
+		Findings: []WorkflowRunFinding{
+			{Workflow: "ci.yml", Health: WorkflowHealthy},
+			{Workflow: "codeql.yml", Health: WorkflowUnknown},
+		},
+	}
+	got, err = UnreportedStatusContexts(t.Context(), root, "", "acme/widgets", report)
+	if err != nil || !slices.Equal(got, []string{"analyze (python)"}) {
+		t.Fatalf("unreported from runs = %v, %v; want [analyze (python)]", got, err)
+	}
+
+	healthy := &WorkflowRunReport{
+		Branch: "main",
+		Findings: []WorkflowRunFinding{
+			{Workflow: "ci.yml", Health: WorkflowHealthy},
+			{Workflow: "codeql.yml", Health: WorkflowHealthy},
+		},
+	}
+	if got, err = UnreportedStatusContexts(t.Context(), root, "", "acme/widgets", healthy); err != nil || len(got) != 0 {
+		t.Fatalf("healthy runs = %v, %v; want empty", got, err)
 	}
 }

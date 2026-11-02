@@ -256,8 +256,14 @@ Nothing is compared, and the audit says why, in four cases:
 | The manifest presence cannot be read, such as `origin/<default branch>` absent from the checkout | `[INFO]` naming the error, and the comparison runs: an unreadable presence never skips it (`TestAuditLiveBranchProtection_Negative_ManifestPresenceErrorDoesNotSkip`). |
 
 The declared status checks come from the checkout's workflows, using the same rendering as
-`plan --remote` and ruleset apply (`auditProtectionTarget`, `liveProtectionTarget`). A new
-required check missing on the forge fails the audit, even before it reaches the default branch
+`plan --remote` and ruleset apply (`auditProtectionTarget`, `liveProtectionTarget`), less any
+declared check that the default branch does not report yet (`forge.UnreportedStatusContexts`):
+either `origin/<default branch>` does not declare it in a workflow that removed no existing
+check, or the workflow-run check (`forge.AuditWorkflowRunHealth`) reports its workflow is not on
+the default branch yet or has no completed run on it
+(`TestAuditLiveBranchProtection_UnreportedDefaultBranchChecks`,
+`TestAuditLiveBranchProtection_Boundary_NoOriginMainForgeReadDecides`). A check that the default
+branch does report and the live protection lacks fails the audit
 (`TestAuditLiveBranchProtection_Negative_NewCheckWithoutRenameFails`).
 
 One pending context rename may pass while the forge still requires its old name. The fetched
