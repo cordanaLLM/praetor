@@ -88,12 +88,14 @@ class CheckpointError(Exception):
 
 
 def _command_timeout(cap):
+    """Return cap bounded by the active thread-local command budget when set."""
     budget = getattr(COMMAND_BUDGET, "active", None)
     return budget.timeout(cap) if budget is not None else cap
 
 
 @contextlib.contextmanager
 def _active_command_budget(deadline):
+    """Install a thread-local HookBudget until deadline for nested Git calls."""
     previous = getattr(COMMAND_BUDGET, "active", None)
     COMMAND_BUDGET.active = HookBudget(max(0, deadline - time.monotonic()))
     try:
@@ -103,6 +105,7 @@ def _active_command_budget(deadline):
 
 
 def _run(argv, root, *, allowed=(0,), network=False, timeout=None, index=None):
+    """Run argv in root under a bounded timeout and sanitized Git environment."""
     env = dict(os.environ)
     for key in (
         "GIT_DIR",
@@ -135,6 +138,7 @@ def _run(argv, root, *, allowed=(0,), network=False, timeout=None, index=None):
 
 
 def _git(root, *args, **kwargs):
+    """Run a bounded git subcommand in root."""
     return _run(["git", *args], root, **kwargs)
 
 
@@ -152,6 +156,7 @@ POLICY_FILE = "checkpoint.json"
 
 
 def _policy_bytes(root):
+    """Read checkpoint.json bytes from root using the safest platform confinement."""
     if DESCRIPTOR_RELATIVE:
         return _policy_bytes_relative(root)
     return _policy_bytes_checked(root)
@@ -245,6 +250,7 @@ def _read_inspected(descriptor, inspected):
 
 
 def _read_policy(stream):
+    """Read and size-check regular policy bytes from an open file stream."""
     info = os.fstat(stream.fileno())
     if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_OUTPUT:
         raise CheckpointError(
@@ -257,6 +263,7 @@ def _read_policy(stream):
 
 
 def _config(root):
+    """Load and validate the repository checkpoint configuration from root."""
     try:
         raw = _policy_bytes(root)
         if raw is None:
@@ -293,6 +300,7 @@ OPTIONAL_CONFIG_FIELDS = frozenset(
 
 
 def _validate_config(value, pairs):
+    """Validate top-level checkpoint configuration keys, types, and policy invariants."""
     if any(len(dict(items)) != len(items) for items in pairs):
         raise CheckpointError("checkpoint configuration contains duplicate keys")
     if (
@@ -317,6 +325,7 @@ def _validate_config(value, pairs):
 
 
 def _validate_thresholds_and_refs(value):
+    """Validate commit thresholds and remote/base ref names."""
     if (
         type(value["commit_after_minutes"]) is not int
         or not 1 <= value["commit_after_minutes"] <= 1440
@@ -335,6 +344,7 @@ def _validate_thresholds_and_refs(value):
 
 
 def _validate_repository(repo, prefixes):
+    """Validate the owner/name repository slug and allowed branch prefixes."""
     if (
         not isinstance(repo, str)
         or repo.count("/") != 1
@@ -357,6 +367,7 @@ def _validate_repository(repo, prefixes):
 
 
 def _validate_review_policy(value):
+    """Validate optional batch-scope and required hosted-check settings."""
     for key in ("enforce_batch_scope", "require_checks"):
         if key in value and type(value[key]) is not bool:
             raise CheckpointError("checkpoint boolean fields must be booleans")
@@ -390,10 +401,12 @@ def _validate_review_policy(value):
 
 
 def _paths(raw):
+    """Decode NUL-delimited Git path output into a set of path strings."""
     return {os.fsdecode(item) for item in raw.split(b"\0") if item}
 
 
 def _public(path):
+    """Return True when path is outside private .workingdir and receipt state."""
     return path not in (
         ".standards-receipt.json",
         ".workingdir",
@@ -405,10 +418,12 @@ NAME_ONLY = ("--name-only", "-z", "--no-renames")
 
 
 def _diff_names(root, *options, timeout=None):
+    """Return the set of paths reported by git diff with WORKTREE_DIFF options."""
     return _paths(_git(root, "diff", *WORKTREE_DIFF, *options, timeout=timeout))
 
 
 def _worktree(root, timeout=None):
+    """Inspect root for changed public paths, staged private files, and merge conflicts."""
     tracked = _diff_names(root, *NAME_ONLY, "--", timeout=timeout)
     untracked = _paths(
         _git(
@@ -787,6 +802,7 @@ def _trusted_gate_executable(executable, paths):
 
 
 def _gate_scratch_pid(resolved, worktree_paths):
+    """Extract the owner PID from a gate scratch worktree path, or None."""
     scratch = _gate_scratch_path(resolved, worktree_paths)
     return (
         int(GATE_SCRATCH_RE.fullmatch(scratch.name)[1]) if scratch is not None else None
@@ -812,6 +828,7 @@ def _live_gate_pid(pid, *, created_ns=None, uid=None, paths=()):
 
 
 def _gate_scratch_state(resolved, worktree_paths):
+    """Return (pid, live) for a gate scratch worktree, or (None, None) when not gate scratch."""
     scratch = _gate_scratch_path(resolved, worktree_paths)
     if scratch is None:
         return None, None
@@ -1198,6 +1215,7 @@ def _add_unfinished_worktrees(root, cfg, result):
 
 
 def _branch(root, timeout=None):
+    """Return the short symbolic branch name for HEAD, or empty string when detached."""
     return (
         _run(
             ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
@@ -1211,10 +1229,12 @@ def _branch(root, timeout=None):
 
 
 def _remote_url(root, remote):
+    """Return the configured URL for remote in root."""
     return _git(root, "remote", "get-url", remote).decode().strip()
 
 
 def _ssh_transport_disabled(url):
+    """Return True when url uses SSH and GIT_SSH_COMMAND points at false."""
     if not (url.startswith("git@") or urlsplit(url).scheme == "ssh"):
         return False
     # A plain split, not shlex: the adopted bundle runs under the owner overlay's Python, which has
@@ -1224,6 +1244,7 @@ def _ssh_transport_disabled(url):
 
 
 def _push_transport_disabled(root, cfg):
+    """Return True when push transport to the configured remote is disabled in this environment."""
     try:
         url = _remote_url(root, cfg["remote"])
     except CheckpointError:
@@ -1241,6 +1262,7 @@ def _push_transport_disabled(root, cfg):
 
 
 def _forge_token_absent():
+    """Return True when neither GH_TOKEN/GITHUB_TOKEN nor gh hosts.yml is present."""
     if os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"):
         return False
     config = os.environ.get("GH_CONFIG_DIR")
@@ -1248,6 +1270,7 @@ def _forge_token_absent():
 
 
 def _detached_job_deferral(root, cfg):
+    """Return the detached-job deferral reason when running in a transportless job lane."""
     label = os.environ.get("PRAETOR_DETACHED_JOB")
     if (
         not label
@@ -1262,6 +1285,7 @@ def _detached_job_deferral(root, cfg):
 
 
 def _validate_remote(url, repository):
+    """Verify the remote URL points to the configured GitHub repository without credentials."""
     owner, name = repository.split("/", 1)
     path = f"/{owner}/{name}"
     if url.startswith("git@github.com:"):
@@ -1285,6 +1309,7 @@ def _validate_remote(url, repository):
 
 
 def _remote_refs(root, cfg, branch):
+    """Query ls-remote for the live OIDs of branch and the configured base ref."""
     branch_ref = f"refs/heads/{branch}"
     base_ref = f"refs/heads/{cfg['base']}"
     lines = (
@@ -1316,6 +1341,7 @@ def _remote_refs(root, cfg, branch):
 
 
 def _branch_publication(root, head, remote_oid):
+    """Compare local head against remote_oid and return publication status and actions."""
     if remote_oid == head:
         return "pushed", []
     if not remote_oid:
@@ -1350,6 +1376,7 @@ def _branch_publication(root, head, remote_oid):
 
 
 def _publication(root, cfg, branch, head, observation=None):
+    """Evaluate branch publication and pull request state against the configured remote."""
     _validate_remote(_remote_url(root, cfg["remote"]), cfg["repository"])
     refs, branch_ref, base_ref = _remote_refs(root, cfg, branch)
     base_oid = refs.get(base_ref)
@@ -1379,6 +1406,7 @@ def _publication(root, cfg, branch, head, observation=None):
 
 
 def _open_pull_requests(root, cfg, branch):
+    """Query gh pr list for open pull requests matching branch and base."""
     fields = "number,url,isDraft,headRefOid,headRefName,baseRefName"
     if cfg.get("require_checks", False):
         fields += ",statusCheckRollup"
@@ -1394,6 +1422,7 @@ def _open_pull_requests(root, cfg, branch):
 
 
 def _pull_request(root, cfg, branch, head, observation=None):
+    """Verify a unique open pull request matches head/base and evaluate required checks."""
     repo = cfg["repository"]
     prs = _open_pull_requests(root, cfg, branch)
     if not isinstance(prs, list) or len(prs) > 1:
@@ -1419,6 +1448,7 @@ def _pull_request(root, cfg, branch, head, observation=None):
 
 
 def _check_run_state(check):
+    """Map a GitHub CheckRun status and conclusion to passed, failed, pending, or skipped."""
     status, conclusion = check.get("status"), check.get("conclusion")
     if not isinstance(status, str) or (
         conclusion is not None and not isinstance(conclusion, str)
@@ -1445,6 +1475,7 @@ def _check_run_state(check):
 
 
 def _check_observation(check):
+    """Extract and validate (name, state) from a CheckRun or StatusContext rollup entry."""
     if not isinstance(check, dict):
         raise CheckpointError("hosted check must be an object")
     if check.get("__typename") == "CheckRun":
@@ -1588,6 +1619,7 @@ def _draft_gate_checks(root, cfg, pr, checks):
 
 
 def _review_state(checks, required, draft_gates=frozenset()):
+    """Summarize check rollup entries into status, counts, and missing checks."""
     if not isinstance(checks, list) or len(checks) >= MAX_CHECKS:
         raise CheckpointError(
             "hosted check coverage is invalid or reaches its observation bound"
@@ -1653,6 +1685,7 @@ def _review_checks(root, pr, cfg, result):
 
 
 def _empty_result(include_paths):
+    """Build the default disabled checkpoint inspection result dictionary."""
     result = {
         "schema_version": 1,
         "enabled": False,
@@ -1673,6 +1706,7 @@ def _empty_result(include_paths):
 
 
 def _observe_worktree(root, cfg, event, include_paths, result, *, require_branch=True):
+    """Observe branch, HEAD, public dirty paths, and local commit-due state for root."""
     result["enabled"] = True
     result["review_status"] = (
         "not_observed" if cfg.get("require_checks", False) else "not_requested"
@@ -1696,6 +1730,7 @@ def _observe_worktree(root, cfg, event, include_paths, result, *, require_branch
 
 
 def _verified_head(root):
+    """Return the verified HEAD commit OID in root, or empty string for an unborn branch."""
     head = (
         _git(root, "rev-parse", "--verify", "--quiet", "HEAD", allowed=(0, 1))
         .decode()
@@ -1707,6 +1742,7 @@ def _verified_head(root):
 
 
 def _commit_due(root, cfg, event, head, public):
+    """Return True when public changes exceed age/file thresholds or stop requires a commit."""
     age = (
         time.time()
         - int(_git(root, "show", "-s", "--format=%ct", "HEAD").decode().strip())
@@ -1721,6 +1757,7 @@ def _commit_due(root, cfg, event, head, public):
 
 
 def _require_checkpoint_branch(branch, cfg):
+    """Raise CheckpointError when branch is detached, protected, or outside allowed prefixes."""
     if not branch:
         raise CheckpointError("checkpoint due on detached HEAD")
     allowed = any(branch.startswith(prefix) for prefix in cfg["branch_prefixes"])
@@ -1729,6 +1766,7 @@ def _require_checkpoint_branch(branch, cfg):
 
 
 def _observe_publication(root, cfg, event, result):
+    """Observe remote branch and pull request publication state on stop events."""
     if event != "stop" or not cfg["publish"] or not result["head"]:
         return
     branch = result["branch"]
@@ -1747,6 +1785,7 @@ def _observe_publication(root, cfg, event, result):
 
 
 def _observe_base(root, cfg, result):
+    """Observe whether a clean checkout of the configured base branch matches its remote."""
     _validate_remote(_remote_url(root, cfg["remote"]), cfg["repository"])
     refs, _, base_ref = _remote_refs(root, cfg, cfg["base"])
     if base_ref not in refs:
@@ -1772,6 +1811,7 @@ def _observe_base(root, cfg, result):
 
 
 def _validate_stability(root, head, public, result):
+    """Ensure branch, HEAD, and clean working tree did not change during observation."""
     if (
         _branch(root) != result["branch"]
         or _git(root, "rev-parse", "--verify", "--quiet", "HEAD", allowed=(0, 1))
@@ -1813,6 +1853,7 @@ def _inspect_enabled_checkpoint(root, cfg, event, include_paths, result):
 
 
 def inspect_checkpoint(root: Path, event: str, include_paths: bool = False) -> dict:
+    """Inspect root for checkpoint and publication readiness on tool or stop events."""
     result = _empty_result(include_paths)
     if event not in {"tool", "stop"}:
         result.update(error="event must be tool or stop", publication_status="error")
@@ -1857,6 +1898,7 @@ def _prepare_native_session(args):
 
 
 def _session_preparation_timeout():
+    """Write a bounded timeout diagnostic to stderr and return exit code 1."""
     try:
         os.write(2, b"checkpoint session: input or preparation timed out\n")
     except OSError:
@@ -1865,6 +1907,7 @@ def _session_preparation_timeout():
 
 
 def main(argv=None):
+    """Parse CLI arguments and run checkpoint inspection or native session preparation."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--event", choices=("tool", "stop"), required=True)
     parser.add_argument("--root", type=Path, default=Path("."))

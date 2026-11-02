@@ -12,6 +12,7 @@ import (
 	"testing"
 )
 
+// TestWrapperOptionArityFindsProtectedPrivilegeCommand verifies that wrapper and launcher option arities match between Go admission and privilege rules.
 func TestWrapperOptionArityFindsProtectedPrivilegeCommand(t *testing.T) {
 	data, err := os.ReadFile("testdata/privilege-wrappers.json")
 	if err != nil {
@@ -44,6 +45,7 @@ func TestWrapperOptionArityFindsProtectedPrivilegeCommand(t *testing.T) {
 	}
 }
 
+// verifyWrapperOptionArity checks that commandAfter and matcher both locate the privilege escalator after wrapper options.
 func verifyWrapperOptionArity(t *testing.T, matcher *regexp.Regexp, wrapper string) {
 	t.Helper()
 	words := strings.Fields(wrapper + " sudo praetorctl conform /srv/dev")

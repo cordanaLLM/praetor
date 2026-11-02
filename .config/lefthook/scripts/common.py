@@ -180,6 +180,7 @@ class _SharedBound:
     """Output two reader threads collect under one byte limit."""
 
     def __init__(self, maximum):
+        """Initialize the shared output buffer with a byte limit."""
         self.maximum = maximum
         self.output = {"stdout": bytearray(), "stderr": bytearray()}
         self.total = 0
@@ -199,12 +200,14 @@ class _SharedBound:
             return True
 
     def finish(self):
+        """Mark one stream reader finished and wake any waiting thread."""
         with self.changed:
             self.finished += 1
             self.changed.notify_all()
 
 
 def _drain(stream, key, bound):
+    """Read from stream into bound until EOF or the shared byte limit is reached."""
     # Every read consumes at least one byte or observes EOF, so maximum + 2 reads is enough.
     try:
         for _ in range(bound.maximum + 2):
@@ -244,6 +247,7 @@ def _bounded_output_threaded(process, timeout, maximum):
 
 
 def _bounded_output(process, timeout, maximum):
+    """Collect stdout and stderr under a shared byte limit and deadline."""
     if os.name == "nt":
         return _bounded_output_threaded(process, timeout, maximum)
     deadline = time.monotonic() + timeout
@@ -360,6 +364,7 @@ def run(
 
 
 def git(*args, cwd=None, env=None):
+    """Run a Git command via run() in the given working directory and environment."""
     return run(["git", *args], cwd=cwd, env=env)
 
 
@@ -424,6 +429,7 @@ class HookBudget:
     """
 
     def __init__(self, seconds):
+        """Set the monotonic expiration deadline from seconds."""
         self.expires = time.monotonic() + seconds
 
     def timeout(self, cap):
@@ -446,6 +452,7 @@ def refuse_after(seconds, refuse):
     """
 
     def expire():
+        """Terminate the process with refuse()'s exit code if still active."""
         code = refuse()
         if code is not None:
             os._exit(code)
@@ -530,10 +537,12 @@ def session_root(root, cwd, budget):
 
 
 def paths(raw):
+    """Decode NUL-separated path bytes into a list of non-empty strings."""
     return [os.fsdecode(item) for item in raw.split(b"\0") if item]
 
 
 def changed(base, head="HEAD"):
+    """Return paths changed between base and head without rename detection."""
     return paths(git("diff", "--name-only", "-z", "--no-renames", base, head, "--"))
 
 
@@ -563,6 +572,7 @@ def index_env():
 
 
 def clean_env():
+    """Return a sanitized process environment stripped of Git repository and config overrides."""
     env = index_env()
     for key in (
         "GIT_DIR",
@@ -688,6 +698,7 @@ def _export_commit(dest, ref, env):
 
 
 def present_files(directory, names):
+    """Return regular files in directory from names, rejecting any symlinks."""
     files = []
     for name in names:
         path = directory / name

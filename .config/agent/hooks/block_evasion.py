@@ -633,6 +633,7 @@ TOPOLOGY_PATTERNS = [
 # character: TestParityRefusalTextWithThePythonGuard compares this guard's full stderr with
 # the engine's for each case, so the two cannot drift apart.
 def scannable(command_str: str) -> bool:
+    """Report whether command_str fits total and per-line character scan bounds."""
     if (
         len(command_str) <= MAX_SCAN_CHARS
         and max(len(line) for line in command_str.split("\n")) <= MAX_SCAN_LINE_CHARS
@@ -703,6 +704,7 @@ def search(pattern, text):
 
 
 def audit_command(command_str: str) -> bool:
+    """Check command_str against evasion, topology, and host admission rules."""
     command_str = join_line_continuations(command_str)
     if not scannable(command_str):
         return False
@@ -744,6 +746,7 @@ def install_manifest_path():
 
 
 def admission_enforce_in_yaml(text: str) -> bool:
+    """Report whether YAML text enables hooks.admission.enforce."""
     hooks_indent = None
     admission_indent = None
     for raw_line in text.splitlines()[:4096]:
@@ -879,6 +882,7 @@ def run_admission_check(binary, command_str, child_env):
 
 
 def check_admission(command_str: str) -> bool:
+    """Delegate heavy-step admission checks to praetorctl when enabled."""
     enforce, isolate_manifest, err = admission_enforcement_state()
     if err:
         sys.stderr.write(err + "\n")
@@ -908,6 +912,7 @@ def check_admission(command_str: str) -> bool:
 
 
 def audit_environment() -> bool:
+    """Refuse Lefthook environment variables that disable or narrow hooks."""
     value = os.environ.get("LEFTHOOK")
     if value in LEFTHOOK_DISABLED:
         sys.stderr.write(
@@ -921,6 +926,7 @@ def audit_environment() -> bool:
 
 
 def read_json_command(stream) -> str:
+    """Extract and validate tool_input.command from a bounded PreToolUse JSON payload."""
     raw = stream.read(MAX_INPUT_BYTES + 1)
     if len(raw) > MAX_INPUT_BYTES:
         raise ValueError(f"hook input exceeds {MAX_INPUT_BYTES} bytes")
@@ -937,6 +943,7 @@ def read_json_command(stream) -> str:
 
 
 def main():
+    """Run the pre-tool command and environment evasion guard."""
     if not audit_environment():
         sys.exit(1)
 

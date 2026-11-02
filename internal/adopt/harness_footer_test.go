@@ -11,6 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
 
+// TestHarnessFooterDoesNotPromiseApplicationTests verifies that unverified verification declarations are labeled as unverified in the harness footer.
 func TestHarnessFooterDoesNotPromiseApplicationTests(t *testing.T) {
 	for _, status := range []string{verificationNotApplicable, verificationPreserved, verificationDeclared, verificationUnavailable} {
 		t.Run(status, func(t *testing.T) {

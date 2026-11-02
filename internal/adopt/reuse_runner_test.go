@@ -16,6 +16,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// TestReuseWorkflowRunsRepositoryRunnerAndPropagatesFailure verifies that the hosted REUSE workflow invokes tools/reuse-lint.sh when present and propagates its exit status.
 func TestReuseWorkflowRunsRepositoryRunnerAndPropagatesFailure(t *testing.T) {
 	workflow := mustReuseWorkflow(t, "main")
 	start := strings.Index(workflow, "          if [ -f tools/reuse-lint.sh ]; then")
@@ -35,6 +36,7 @@ func TestReuseWorkflowRunsRepositoryRunnerAndPropagatesFailure(t *testing.T) {
 	})
 }
 
+// runReuseWorkflowStep executes the rendered REUSE workflow shell block with or without a repository runner script.
 func runReuseWorkflowStep(t *testing.T, script string, runner bool) {
 	t.Helper()
 	bash, err := exec.LookPath("bash")

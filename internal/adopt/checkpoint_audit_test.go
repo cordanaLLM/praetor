@@ -143,6 +143,7 @@ func TestCurrentCheckpointDigests_Boundary_MatchShippedBundle(t *testing.T) {
 	}
 }
 
+// TestAuditCheckpointBundle_SourceRemedy verifies that checkpoint bundle audit remedies name the selected source root or release checkout.
 func TestAuditCheckpointBundle_SourceRemedy(t *testing.T) {
 	source := checkpointAuditRepo(t, map[string]string{
 		checkpointScript:        shippedCheckpointText(t, checkpointScript),

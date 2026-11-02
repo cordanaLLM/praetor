@@ -848,6 +848,7 @@ print("fixture hook self-tests passed")
                 self.assertEqual(target.read_text(), "PRIVATE_SYMLINK_SENTINEL\n")
 
     def test_private_history_commit_bound_and_missing_objects_fail_closed(self):
+        """Verify private history scans fail closed on commit bounds and missing objects."""
         base = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
         heads = []
         for number in range(3):
@@ -1589,6 +1590,7 @@ class ScopeAndGuard(unittest.TestCase):
         self.assertEqual(gate_timeout(b'{"timeout_seconds": 1500}'), 1500 + GATE_LAUNCH_MARGIN)
 
     def test_clean_env_final_bound_is_composable_for_nested_children(self):
+        """Verify clean_env enforces the entry bound after adding managed keys."""
         unmanaged = MAX_PROCESS_ENV_ENTRIES - len(MANAGED_PROCESS_ENV)
         exact = {f"SAFE_{index}": "x" for index in range(unmanaged)}
         with mock.patch.dict(os.environ, exact, clear=True):
@@ -1645,6 +1647,7 @@ class ScopeAndGuard(unittest.TestCase):
         self.assertFalse(is_fixture("mytestdata/a.go"))
 
     def test_gofmt_check_batches_cover_every_file(self):
+        """Verify gofmt_check runs in GOFMT_BATCH-sized batches and covers every file."""
         # Boundary: gofmt runs in GOFMT_BATCH-sized argument lists, so a whole-tree check
         # stays under the Windows command-line limit; a file in the last batch is still named.
         with tempfile.TemporaryDirectory() as directory:
@@ -2112,6 +2115,7 @@ class ScopeAndGuard(unittest.TestCase):
                 self.assertLess(elapsed, GUARD_TIMING_BOUND)
 
     def test_guard_privilege_rule_does_not_prefilter_escaped_executables(self):
+        """Verify the privilege rule runs without a literal prefilter so escaped names match."""
         guard = self.guard_module()
         pattern = guard.BLOCKED_PATTERNS[-1]
         self.assertNotIn(pattern, guard.RULE_PREFILTERS)
@@ -2334,6 +2338,7 @@ class ScopeAndGuard(unittest.TestCase):
                 self.assertEqual(len(gate.call_args.args[0]), 2)
 
     def test_governance_only_push_retains_gate_and_pinned_receipt_verification(self):
+        """Verify governance-only pushes still run gate and pinned receipt verification."""
         with tempfile.TemporaryDirectory(prefix="praetor-receipt-") as temp:
             root = Path(temp)
             (root / ".standards.yaml").write_text("repository: {}\n")
@@ -2663,6 +2668,7 @@ class ScopeAndGuard(unittest.TestCase):
 
     @unittest.skipIf(os.name == "nt", POSIX_STUB)
     def test_prepush_two_tool_modules_scan_one_target_each(self):
+        """Verify Trivy scans each tool module individually and fails on findings."""
         # Order: engine-1629-landing-failed-20261027-0914. Real trivy fs takes one target; the stub
         # refuses more than one the same way, and a finding in either module refuses the push.
         with tempfile.TemporaryDirectory(prefix="praetor-trivy-two-") as temp:
@@ -2695,6 +2701,7 @@ class ScopeAndGuard(unittest.TestCase):
 
     @unittest.skipIf(os.name == "nt", POSIX_STUB)
     def test_prepush_tool_module_trivy_finding_fails(self):
+        """Verify a Trivy vulnerability finding in a tool module fails source_checks."""
         # Order: engine-prepush-trivy-tool-modules-20261027.
         with tempfile.TemporaryDirectory(prefix="praetor-trivy-fail-") as temp:
             root = Path(temp)
@@ -2790,6 +2797,7 @@ class ScopeAndGuard(unittest.TestCase):
         self.assertFalse(hook_sources_changed(["docs/guides/git-hooks.md"]))
 
     def test_prepush_require_hook_lint_tools_fails_closed_when_mismatched_or_absent(self):
+        """Verify require_hook_lint_tools fails closed when a pinned linter is mismatched."""
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             # When suite is absent (e.g. adopted repository), require_hook_lint_tools returns None
@@ -3159,6 +3167,7 @@ exit 1
 
     @unittest.skipUnless(hasattr(os, "killpg"), "Windows has no process group to signal")
     def test_stop_boundaries(self):
+        """Verify process group stop boundaries for SIGINT and SIGTERM."""
         with tempfile.TemporaryDirectory(prefix="praetor-stop-") as temp:
             # A second Ctrl-C during the grace kills the group at once and is not swallowed.
             process = start_cli(self, Path(temp), STUBBORN_CLI)
@@ -3237,6 +3246,7 @@ exit 1
                 self.assertLess(time.monotonic() - started, 10)
 
     def test_sandbox_failure_removes_only_owned_container(self):
+        """Verify sandbox failures force-remove only the container started by the run."""
         calls = []
         def docker(argv, **kwargs):
             calls.append(argv)
@@ -3410,6 +3420,7 @@ class ToolFloors(unittest.TestCase):
                                    "golangci-lint", "run", "--allow-serial-runners", "./pkg"])
 
     def test_golangci_lint_without_pin_fails_with_remedy(self):
+        """Verify golangci_lint_command fails with a remedy when no tool directive exists."""
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             with (
@@ -3743,6 +3754,7 @@ class HookInterpreter(unittest.TestCase):
         self.assertEqual(toolchain.LAUNCHER, LAUNCHER)
 
     def test_the_launcher_and_the_policy_declare_one_candidate_list(self):
+        """Verify python.sh and toolchain.py declare identical Python candidate lists."""
         launcher = (ROOT / LAUNCHER).read_text(encoding="utf-8")
         # The guards sit in the column shfmt -i 2 -ci aligns them to, one space or more away.
         lines = re.findall(r'^if proven (.+); then exec (.+) "\$@"; fi +#$', launcher, re.MULTILINE)
@@ -3822,6 +3834,7 @@ class HookInterpreter(unittest.TestCase):
                 toolchain.python_proof(["python3"])
 
     def test_the_interpreter_on_this_host_proves_itself(self):
+        """Verify the host Python interpreter passes toolchain.python_proof."""
         argv, version = toolchain.python_program()
         self.assertTrue(Path(argv[0]).is_file(), argv)
         self.assertRegex(version, r"^3\.\d+$")
@@ -4018,6 +4031,7 @@ class DeclaredPrograms(unittest.TestCase):
         self.assertEqual(set(toolchain.RESOLVED) & (started | set(toolchain.BY_NAME)), set())
 
     def test_sh_is_the_one_program_the_jobs_start(self):
+        """Verify every Lefthook job and pre-push script invokes sh as its entry point."""
         policy = (ROOT / ".config/lefthook/praetor.yml").read_text(encoding="utf-8")
         runs = re.findall(r"^ +run: (?:>-\n +)?(\S+)", policy, re.MULTILINE)
         runners = re.findall(r"^ +runner: (\S+)$", policy, re.MULTILINE)

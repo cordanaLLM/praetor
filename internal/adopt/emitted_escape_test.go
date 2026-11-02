@@ -10,6 +10,7 @@ import (
 	"testing"
 )
 
+// TestPythonRawLiteralWrapPreservesEscapes verifies that raw Python literal wrapping keeps escape sequences intact.
 func TestPythonRawLiteralWrapPreservesEscapes(t *testing.T) {
 	for _, escape := range []string{`\x60`, `\\`, `\u0060`, `\U00000060`} {
 		t.Run(escape, func(t *testing.T) {
@@ -26,6 +27,7 @@ func TestPythonRawLiteralWrapPreservesEscapes(t *testing.T) {
 	}
 }
 
+// TestEmptyInterceptorPrefiltersUseBlackStableLiteral verifies that empty interceptor prefilters render as a compact dictionary literal.
 func TestEmptyInterceptorPrefiltersUseBlackStableLiteral(t *testing.T) {
 	if got := interceptorPrefilters(); got != "RULE_PREFILTERS = {}\n" {
 		t.Errorf("empty mapping must use Black's compact form: %q", got)

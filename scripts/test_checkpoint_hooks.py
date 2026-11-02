@@ -169,6 +169,7 @@ class LifecycleOutput(unittest.TestCase):
                     self.assertIn("could not be verified", result["hookSpecificOutput"]["additionalContext"])
 
     def test_one_budget_runs_from_the_checkout_lookup_to_the_last_job(self):
+        """Verify one shared HookBudget is passed through checkout lookup, state probe, and checkpoint."""
         budget = ADAPTER.HookBudget(ADAPTER.HOOK_BUDGET)
         with mock.patch.object(ADAPTER, "session_root", return_value=ROOT) as lookup, \
                 mock.patch.object(ADAPTER, "checkpoint", return_value={
@@ -225,6 +226,7 @@ class LifecycleOutput(unittest.TestCase):
                     self.assertEqual(answer["decision"], "block")
 
     def test_missing_execution_marker_and_invalid_input_rejected(self):
+        """Verify missing execution markers and malformed event payloads raise ValueError."""
         with mock.patch.object(ADAPTER, "run_bounded", return_value=b"skipped job exited zero\n"), \
                 self.assertRaisesRegex(ValueError, "execution result"):
             ADAPTER.checkpoint("stop")
@@ -247,6 +249,7 @@ class LifecycleOutput(unittest.TestCase):
 
 class StateResult(unittest.TestCase):
     def test_state_requires_one_positive_execution_result(self):
+        """Verify verify_state accepts one valid state marker and rejects missing or malformed ones."""
         marker = ADAPTER.STATE_MARKER
         valid = marker + '{"schema_version":1,"verified":true}\n'
         with mock.patch.object(ADAPTER, "run_bounded", return_value=valid.encode()) as run:
@@ -720,6 +723,7 @@ class NativeLefthook(unittest.TestCase):
         self.assertEqual(before, self.git("rev-parse", "HEAD"))
 
     def test_scope_passes_out_of_repository_paths_and_cwds_until_a_checkpoint_is_due(self):
+        """Verify out-of-repository paths and working directories pass until a checkpoint is due."""
         outside = Path(tempfile.mkdtemp(prefix="praetor-scope-outside-"))
         self.addCleanup(shutil.rmtree, outside, True)
         memory = str(outside / "memory" / "notes.md")
@@ -1074,6 +1078,7 @@ class NativeLefthook(unittest.TestCase):
 
     @unittest.skipUnless(Path("/proc/self/cmdline").is_file(), "live gate identity requires Linux /proc")
     def test_counterfeit_gate_worktrees_block_here_and_under_other_linked_checkout(self):
+        """Verify untrusted gate executables do not exempt dirty gate scratch worktrees."""
         scratch = self.root / ".workingdir/gate-process"
         scratch.mkdir(parents=True)
         executable = scratch / "praetorctl"
@@ -1109,6 +1114,7 @@ class NativeLefthook(unittest.TestCase):
         self.assertEqual(results[0].returncode, 0)
 
     def test_session_record_byte_bound_preserves_previous_record(self):
+        """Verify oversized session record writes fail closed and preserve the existing record."""
         from common import _write_session_record
         sessions = self.root / ".git/praetor-checkpoint/sessions"
         record = sessions / "0123456789abcdef.json"
@@ -1121,6 +1127,7 @@ class NativeLefthook(unittest.TestCase):
         self.assertEqual(sorted(sessions.iterdir()), [record])
 
     def test_adapter_record_bounds_max_worktrees(self):
+        """Verify session records exceeding MAX_WORKTREES write null for unknown ownership."""
         session_id = "test-session-bound"
         session_hash = ADAPTER.session_hash_for(session_id)
         sessions_dir = self.root / ".git" / "praetor-checkpoint" / "sessions"

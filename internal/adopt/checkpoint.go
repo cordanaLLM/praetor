@@ -63,7 +63,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"2c08cd616a4a2d53bcbdc2a4e3bb8a4fc235a718dd0913c53d95f9943b53eb6c": "stop checkpoint finds recent unnamed worktrees",
 		"d3b85026905c9006b1ddd063550d673db0fd0e46639a499943f8934b79b89192": "checkpoint evaluator passes ruff PLR rules",
 		"80a0a2da3dc2222e12b5c70ab7bc442fae586f1d06d5bdcb0516df3c20a144ca": "stop checkpoint counts session-owned worktrees and ignores gate scratch",
-		"564e744c9e43e9d130a3de196a93f987ca2cada127f0cf801ee1d59c893315f6": "reviewed hook findings",
+		"12370d2f30d08f56e907a53559df4f6957c8e0a8bc8f624f118a2b8cefdf8b38": "reviewed hook findings",
 	},
 	checkpointCommon: {
 		"daf13baf16b776de9a976809a7e064971fd5946ed4508761c229dba0ef4b4e65": "Go hooks share session ownership and verify live gate scratch owners",
@@ -81,7 +81,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"f5e11ef5e868e8799d47d9cf845dbcd5ad7f36f51d2dc34f759993a1dc0c07b2": "clean import order under adopter ruff",
 		"b42948bf8e9281d0e93f69aa3590e974929c9bc3dcfa73c83996f65423b59606": "process signal bound above 1",
 		"dfe0975c01017ee575fdd57ecd28cb8963e253e4ccc698f83e63f3b1b3375a07": "snapshots of killed hooks swept after three hours",
-		"50ca0eb9f96247a622cf47ca6fb9b8ee648ec35c11f6dd6105338a6db6f270a5": "reviewed hook findings",
+		"2a1135c9440a05f77ad3865e1dfc8eddd89d641be2d46eaf82707f2066667f3c": "reviewed hook findings",
 	},
 	checkpointLauncher: {
 		"8b6266ea16912a362c2e26d9a936887ca955ecf68f69744c935f2259d1a2c8dc": "proven interpreter candidates (#339)",

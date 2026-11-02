@@ -5,6 +5,7 @@ package agenthook
 
 import "testing"
 
+// TestAdminMergeBooleanSpellings verifies that all true boolean spellings of gh pr merge --admin are denied while false or non-boolean values are allowed.
 func TestAdminMergeBooleanSpellings(t *testing.T) {
 	for _, value := range []string{"1", "t", "T", "true", "True", "TRUE", "tRuE"} {
 		for _, command := range []string{"gh pr merge 123 --admin=", "gh --admin=", "gh pr --admin="} {

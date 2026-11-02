@@ -19,7 +19,10 @@ SPEC.loader.exec_module(GUARD)
 
 
 class EvasionReplay(unittest.TestCase):
+    """Replay pre-tool evasion rules against the engine corpus and privilege fixtures."""
+
     def test_admin_boolean_spellings(self):
+        """Verify all true boolean spellings of gh pr merge --admin are matched."""
         pattern = next(p for p in GUARD.BLOCKED_PATTERNS if "--admin" in p)
         positions = (
             "gh pr merge 123 --admin={}",
@@ -35,6 +38,7 @@ class EvasionReplay(unittest.TestCase):
                 self.assertFalse(GUARD.search(pattern, positions[0].format(value)))
 
     def test_wrapper_option_arities(self):
+        """Verify wrapper and launcher option arities match privilege escalators."""
         replay = json.loads(
             (ROOT / "internal/agenthook/testdata/privilege-wrappers.json").read_text()
         )
@@ -55,6 +59,7 @@ class EvasionReplay(unittest.TestCase):
                 self.assertFalse(GUARD.search(GUARD.BLOCKED_PATTERNS[-1], command))
 
     def test_engine_corpus(self):
+        """Verify the Python guard agrees with every non-operator engine corpus case."""
         corpus = ROOT / "internal/agenthook/testdata/pre-tool/cases.json"
         cases = json.loads(corpus.read_text())
         for case in cases[:1024]:

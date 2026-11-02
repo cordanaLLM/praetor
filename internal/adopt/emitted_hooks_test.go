@@ -53,6 +53,7 @@ func emittedHookRenderings(t *testing.T) map[string]string {
 	}
 }
 
+// TestEmittedHookFixturesMatchTheRendering verifies that checked-in emitted hook fixtures match the current rendering.
 func TestEmittedHookFixturesMatchTheRendering(t *testing.T) {
 	root, err := os.OpenRoot(filepath.Join("..", ".."))
 	if err != nil {
@@ -367,6 +368,7 @@ func TestLefthookRun(t *testing.T) {
 	}
 }
 
+// TestPyTokenLiterals verifies that wrapped raw Python literals preserve escape boundaries and concatenate back to the source.
 func TestPyTokenLiterals(t *testing.T) {
 	source := `[/\\]\x22` + strings.Repeat(`a\\`, 20)
 	for width := 5; width <= 12; width++ {
