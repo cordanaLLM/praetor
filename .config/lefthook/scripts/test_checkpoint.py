@@ -302,11 +302,11 @@ class CheckpointBudgetRegressions(unittest.TestCase):
         marks = {("MERGED", "a" * 40, "main"), ("MERGED", "b" * 40, "main")}
         with mock.patch.object(checkpoint, "_git", return_value=b"c" * 40), \
                 mock.patch.object(checkpoint, "_content_in_base", return_value=False) as content:
-            self.assertFalse(checkpoint._landed_by_pull_request(Path("/tree"), CONFIG, marks))
+            self.assertFalse(checkpoint._landed_by_pull_request(Path("/tree"), CONFIG, marks, "c" * 40))
         self.assertEqual(content.call_count, 1)
 
     def test_pull_request_application_bounds_every_git_call(self):
-        entry = {"path": "/tree", "branch": "topic"}
+        entry = {"path": "/tree", "branch": "topic", "HEAD": "c" * 40}
         reasons = ["unpublished"]
         marks = {("MERGED", "a" * 40, "main")}
         with mock.patch.object(checkpoint, "run_bounded", return_value=b"c" * 40) as run:
@@ -318,6 +318,65 @@ class CheckpointBudgetRegressions(unittest.TestCase):
             checkpoint._apply_pull_request_states(CONFIG, [(entry, reasons, "landed")],
                                                   {"topic": marks}, time.monotonic() - 1)
             run.assert_not_called()
+
+
+class WorktreeHeadRegressions(unittest.TestCase):
+    def apply_states(self, observed, current, marks):
+        entry = {"path": "/tree", "branch": "topic", "HEAD": observed}
+        reasons = ["1 commit(s) not on any remote"]
+        with mock.patch.object(checkpoint, "_git", return_value=current.encode()) as git_call, \
+                mock.patch.object(checkpoint, "_content_in_base", return_value=False):
+            checkpoint._apply_pull_request_states(CONFIG, [(entry, reasons, "landed")],
+                                                  {"topic": marks}, time.monotonic() + 1)
+        return reasons, git_call
+
+    def test_moved_head_keeps_previously_judged_reasons(self):
+        marks = {("MERGED", "b" * 40, "main")}
+        reasons, calls = self.apply_states("a" * 40, "b" * 40, marks)
+        self.assertEqual(reasons, ["1 commit(s) not on any remote"])
+        self.assertLessEqual(calls.call_count, 1)
+
+    def test_stable_merged_head_can_clear_unpublished_reason(self):
+        marks = {("MERGED", "a" * 40, "main")}
+        reasons, calls = self.apply_states("a" * 40, "a" * 40, marks)
+        self.assertEqual(reasons, [])
+        self.assertEqual(calls.call_count, 1)
+
+    def test_content_checks_share_the_observed_head(self):
+        head = "a" * 40
+        marks = {("MERGED", "b" * 40, "main"), ("MERGED", "c" * 40, "release")}
+        with mock.patch.object(checkpoint, "_git") as git_call, \
+                mock.patch.object(checkpoint, "_content_in_base", return_value=False) as content:
+            self.assertFalse(checkpoint._landed_by_pull_request(Path("/tree"), CONFIG, marks, head))
+        git_call.assert_not_called()
+        self.assertEqual(content.call_count, 2)
+        self.assertTrue(all(call.kwargs["head"] == head for call in content.call_args_list))
+
+    def test_head_move_during_base_check_keeps_previously_judged_reasons(self):
+        observed, moved = "a" * 40, "b" * 40
+        current = [observed]
+        entry = {"path": "/tree", "branch": "topic", "HEAD": observed}
+        reasons = ["1 commit(s) not on any remote"]
+
+        def content(*args, **kwargs):
+            current[0] = moved
+            return True
+
+        with mock.patch.object(checkpoint, "_git", side_effect=lambda *a, **k: current[0].encode()), \
+                mock.patch.object(checkpoint, "_content_in_base", side_effect=content):
+            checkpoint._apply_pull_request_states(CONFIG, [(entry, reasons, "landed")],
+                {"topic": {("MERGED", "c" * 40, "main")}}, time.monotonic() + 1)
+        self.assertEqual(reasons, ["1 commit(s) not on any remote"])
+
+    def test_content_diff_uses_the_observed_head_in_every_git_call(self):
+        head = "a" * 40
+        with mock.patch.object(checkpoint, "_remote_ref_exists", return_value=True), \
+                mock.patch.object(checkpoint, "_git", side_effect=[b"fork", b""]) as calls:
+            self.assertTrue(checkpoint._content_in_base(Path("/tree"), CONFIG, head=head))
+        self.assertEqual(calls.call_count, 2)
+        for call in calls.call_args_list:
+            self.assertEqual(call.args[-1], head)
+            self.assertNotIn("HEAD", call.args)
 
 
 class GateIdentityRegressions(unittest.TestCase):

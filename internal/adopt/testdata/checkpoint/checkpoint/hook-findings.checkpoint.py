@@ -909,7 +909,7 @@ def _public_change_reason(path):
         return [str(error)]
 
 
-def _content_in_base(path, cfg, base=None):
+def _content_in_base(path, cfg, base=None, *, head="HEAD"):
     """Whether the worktree's net change since its merge base is already in the remote base.
 
     A branch that landed through a squash or a train has neither a remote copy of its commits
@@ -921,8 +921,8 @@ def _content_in_base(path, cfg, base=None):
     base_ref = f"refs/remotes/{remote}/{base}"
     if not _remote_ref_exists(path, base_ref):
         return False
-    fork = _git(path, "merge-base", base_ref, "HEAD", timeout=LANDED_CHECK_TIMEOUT)
-    diff = ["diff", "--binary", *WORKTREE_DIFF, fork.decode().strip(), "HEAD"]
+    fork = _git(path, "merge-base", base_ref, head, timeout=LANDED_CHECK_TIMEOUT)
+    diff = ["diff", "--binary", *WORKTREE_DIFF, fork.decode().strip(), head]
     patch = _git(path, *diff, timeout=LANDED_CHECK_TIMEOUT)
     return not patch.strip() or _reverse_applies(path, base_ref, patch)
 
@@ -950,8 +950,8 @@ def _landed(path, cfg):
         return False
 
 
-def _landed_by_pull_request(path, cfg, marks):
-    """Whether a merged pull request carried this HEAD, or put its change into the PR's base.
+def _landed_by_pull_request(path, cfg, marks, head):
+    """Whether a merged pull request carried the observed HEAD or put its change into its base.
 
     Pull requests land on more bases than the configured one (an operations repository lands on
     its role branch), and that base may since have changed the same lines, so no reversed patch
@@ -961,8 +961,7 @@ def _landed_by_pull_request(path, cfg, marks):
     if not merged:
         return False
     try:
-        head = _git(path, "rev-parse", "HEAD", timeout=WORKTREE_COMMAND_TIMEOUT)
-        if head.decode().strip() in {oid for oid, _base in merged}:
+        if head in {oid for oid, _base in merged}:
             return True
         bases = sorted(
             {
@@ -971,7 +970,10 @@ def _landed_by_pull_request(path, cfg, marks):
                 if REF_NAME.fullmatch(base) and ".." not in base and "//" not in base
             }
         )
-        return any(_content_in_base(path, cfg, base) for base in bases[:MAX_WORKTREES])
+        return any(
+            _content_in_base(path, cfg, base, head=head)
+            for base in bases[:MAX_WORKTREES]
+        )
     except (CheckpointError, ValueError, OSError):
         return False
 
@@ -1075,6 +1077,21 @@ def _judge_worktree_candidates(root, cfg, candidates, deadline):
     return records, pr_candidates
 
 
+def _worktree_landed_by_pull_request(entry, cfg, marks):
+    """Judge the listed HEAD, then verify it stayed put before clearing any reasons."""
+    head = entry.get("HEAD", "")
+    if not isinstance(head, str) or not OID.fullmatch(head):
+        return False
+    path = Path(entry["path"])
+    if not _landed_by_pull_request(path, cfg, marks, head):
+        return False
+    try:
+        current = _git(path, "rev-parse", "HEAD", timeout=WORKTREE_COMMAND_TIMEOUT)
+        return current.decode().strip() == head
+    except (CheckpointError, ValueError, OSError):
+        return False
+
+
 def _apply_pull_request_states(cfg, pr_candidates, states, deadline):
     """Judge each candidate by its branch's PR states; return the unverified pushed count.
 
@@ -1088,7 +1105,7 @@ def _apply_pull_request_states(cfg, pr_candidates, states, deadline):
         state = states.get(entry["branch"])
         if kind == "landed":
             with _active_command_budget(deadline):
-                if state and _landed_by_pull_request(Path(entry["path"]), cfg, state):
+                if state and _worktree_landed_by_pull_request(entry, cfg, state):
                     reasons.clear()
         elif state is None or "UNVERIFIED" in state:
             reasons.append("pull request state not verified")
