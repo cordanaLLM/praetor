@@ -641,6 +641,7 @@ func manifestErrorCases() []manifestErrorCase {
 	}
 }
 
+// TestBaselineRecordImageRefs_ManifestError_3D verifies that recording image reference baselines refuses invalid, unreadable, or directory manifests without writing a baseline file.
 func TestBaselineRecordImageRefs_ManifestError_3D(t *testing.T) {
 	for _, tc := range manifestErrorCases() {
 		t.Run(tc.name, func(t *testing.T) {

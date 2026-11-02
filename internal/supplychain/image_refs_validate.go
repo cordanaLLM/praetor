@@ -25,6 +25,7 @@ var (
 	ociTagPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
 )
 
+// newImageRefFinding constructs an ImageRefFinding for an unpinned or unresolvable image reference.
 func newImageRefFinding(file string, line int, ref string, unresolvable bool) ImageRefFinding {
 	trimmed := strings.TrimSpace(ref)
 	return ImageRefFinding{
@@ -37,14 +38,17 @@ func newImageRefFinding(file string, line int, ref string, unresolvable bool) Im
 	}
 }
 
+// hasDigestPin reports whether the container image reference includes a valid sha256 digest pin.
 func hasDigestPin(ref string) bool {
 	return digestPinPattern.MatchString(strings.TrimSpace(ref))
 }
 
+// isUnresolvableImageRef reports whether the reference contains template variables or deployment substitution tokens.
 func isUnresolvableImageRef(ref string) bool {
 	return strings.Contains(ref, "$") || strings.Contains(ref, "{{") || substitutionTokenPattern.MatchString(ref)
 }
 
+// isInvalidRegistryHost reports whether the reference targets an RFC 2606 reserved .invalid domain.
 func isInvalidRegistryHost(ref string) bool {
 	trimmed := strings.TrimPrefix(strings.TrimSpace(ref), "docker://")
 	host, _, ok := strings.Cut(trimmed, "/")
@@ -59,6 +63,7 @@ func isInvalidRegistryHost(ref string) bool {
 	return lower == "invalid" || strings.HasSuffix(lower, ".invalid")
 }
 
+// appendImageRefFinding validates ref and appends a finding if the image is unpinned and not in an invalid host domain.
 func appendImageRefFinding(findings []ImageRefFinding, file string, line int, ref string) []ImageRefFinding {
 	trimmed := strings.TrimSpace(ref)
 	if trimmed == "" || isInvalidRegistryHost(trimmed) || hasDigestPin(trimmed) {
@@ -85,6 +90,7 @@ func isUnpinnedQualifiedImageLiteral(lit string) bool {
 	return ociRepoPattern.MatchString(repo) && ociTagPattern.MatchString(tag)
 }
 
+// isRegistryHost reports whether host conforms to a container registry hostname or host:port address.
 func isRegistryHost(host string) bool {
 	if host == "" {
 		return false
@@ -99,6 +105,7 @@ func isRegistryHost(host string) bool {
 	return strings.Contains(hostname, ".") || hasPort || hostname == "localhost"
 }
 
+// isNumericPort reports whether port consists of 1 to 5 decimal digit characters.
 func isNumericPort(port string) bool {
 	if len(port) == 0 || len(port) > 5 {
 		return false
@@ -111,6 +118,7 @@ func isNumericPort(port string) bool {
 	return true
 }
 
+// isHostnameToken reports whether h is a syntactically valid hostname token.
 func isHostnameToken(h string) bool {
 	if len(h) == 0 || h[0] == '.' || h[0] == '-' || h[len(h)-1] == '.' || h[len(h)-1] == '-' {
 		return false
@@ -123,6 +131,7 @@ func isHostnameToken(h string) bool {
 	return true
 }
 
+// isHostnameByte reports whether byte c is an alphanumeric character, dot, or hyphen.
 func isHostnameByte(c byte) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-'
 }

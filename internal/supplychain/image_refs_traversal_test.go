@@ -17,16 +17,24 @@ type fakeDirEntry struct {
 	isDir bool
 }
 
+// Name returns the directory entry name.
 func (f fakeDirEntry) Name() string { return f.name }
-func (f fakeDirEntry) IsDir() bool  { return f.isDir }
+
+// IsDir reports whether the entry describes a directory.
+func (f fakeDirEntry) IsDir() bool { return f.isDir }
+
+// Type returns the entry file mode type bits.
 func (f fakeDirEntry) Type() os.FileMode {
 	if f.isDir {
 		return os.ModeDir
 	}
 	return 0
 }
+
+// Info returns simulated FileInfo.
 func (f fakeDirEntry) Info() (os.FileInfo, error) { return nil, nil }
 
+// makeFakeEntries generates fake directory entries for limit tests.
 func makeFakeEntries(count int, isDir bool) []os.DirEntry {
 	entries := make([]os.DirEntry, count)
 	for i := 0; i < count && i < maxScannedFiles+10; i++ {
@@ -35,6 +43,7 @@ func makeFakeEntries(count int, isDir bool) []os.DirEntry {
 	return entries
 }
 
+// TestImageRefDirectoryWalk_EntriesLimit_3D verifies entry count limits and boundaries in directory walk.
 func TestImageRefDirectoryWalk_EntriesLimit_3D(t *testing.T) {
 	t.Run("entries exceeding maxScannedFiles returns error", func(t *testing.T) {
 		walk := &imageRefDirectoryWalk{}
@@ -60,6 +69,7 @@ func TestImageRefDirectoryWalk_EntriesLimit_3D(t *testing.T) {
 	})
 }
 
+// TestImageRefDirectoryWalk_DirsLimit_3D verifies subdirectory limits and ignored directory filtering.
 func TestImageRefDirectoryWalk_DirsLimit_3D(t *testing.T) {
 	t.Run("subdirectories reaching limit returns error", func(t *testing.T) {
 		dirs := make([]string, maxScannedFiles)
@@ -94,6 +104,7 @@ func TestImageRefDirectoryWalk_DirsLimit_3D(t *testing.T) {
 	})
 }
 
+// TestIterateScannedFiles_FilesLimit_3D verifies file count limits and file processing during scan iteration.
 func TestIterateScannedFiles_FilesLimit_3D(t *testing.T) {
 	t.Run("files exceeding limit returns error", func(t *testing.T) {
 		files := make([]string, maxScannedFiles+1)
@@ -130,6 +141,7 @@ func TestIterateScannedFiles_FilesLimit_3D(t *testing.T) {
 	})
 }
 
+// TestWalkDirectoryFiles_Positive verifies that walkDirectoryFiles discovers nested files while skipping ignored directories.
 func TestWalkDirectoryFiles_Positive(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "sub", "deep"), 0o755); err != nil {
@@ -162,6 +174,7 @@ func TestWalkDirectoryFiles_Positive(t *testing.T) {
 	}
 }
 
+// TestWalkDirectoryFiles_Negative verifies that walkDirectoryFiles returns an error for a nonexistent directory.
 func TestWalkDirectoryFiles_Negative(t *testing.T) {
 	_, err := walkDirectoryFiles(filepath.Join(t.TempDir(), "nonexistent"))
 	if err == nil {
