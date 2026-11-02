@@ -30,7 +30,7 @@ func fixtureGH(t *testing.T, answer string) forge.GHReviewReader {
 			t.Fatalf("unexpected gh call: %q", args)
 		}
 		query := strings.Join(args, " ")
-		for _, bound := range []string{"reviewThreads(first:100)", "reviews(first:100)", "comments(first:1)", "commits(last:1)", "contexts(first:100)"} {
+		for _, bound := range []string{"reviewThreads(first:100,after:$threadsAfter)", "reviews(first:100,after:$reviewsAfter)", "comments(first:1)", "commits(last:1)", "contexts(first:100,after:$checksAfter)"} {
 			if !strings.Contains(query, bound) {
 				t.Fatalf("query lacks bound %q", bound)
 			}

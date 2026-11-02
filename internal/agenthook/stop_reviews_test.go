@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,7 +17,7 @@ type stopReviewFixture struct {
 	snapshots map[int]forge.ReviewSnapshot
 	numbers   []int
 	err       error
-	reads     int
+	reads     atomic.Int32
 }
 
 // OwnOpen returns the configured fixture pull request numbers.
@@ -29,7 +30,7 @@ func (f *stopReviewFixture) OwnOpen(context.Context, string) ([]int, error) {
 
 // Read increments the read counter and returns the configured mock review snapshot or error.
 func (f *stopReviewFixture) Read(_ context.Context, _ string, number int) (forge.ReviewSnapshot, error) {
-	f.reads++
+	f.reads.Add(1)
 	if snapshot, ok := f.snapshots[number]; ok {
 		return snapshot, f.err
 	}
@@ -134,7 +135,7 @@ func TestStopReviewResolvedErrorAndCache(t *testing.T) {
 	}{
 		{"unresolved", false, nil, Deny, Allow, 2, "main.go:9 by review-bot"},
 		{"resolved", true, nil, Allow, Allow, 1, ""},
-		{"read-error", false, errors.New("fixture unavailable"), Skip, Skip, 1, "skipped: read example/widget#7: fixture unavailable"},
+		{"read-error", false, errors.New("fixture unavailable"), Skip, Skip, 2, "skipped: read example/widget#7: fixture unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := reviewRepositoryFixture(t)
@@ -145,8 +146,8 @@ func TestStopReviewResolvedErrorAndCache(t *testing.T) {
 			first := evaluateStopReviewThreads(t.Context(), root)
 			fixture.snapshot.Threads[0].Resolved = true
 			second := evaluateStopReviewThreads(t.Context(), root)
-			if first.Outcome != tc.first || second.Outcome != tc.second || fixture.reads != tc.reads || !strings.Contains(first.Reason, tc.reason) {
-				t.Fatalf("first=%+v second=%+v reads=%d", first, second, fixture.reads)
+			if first.Outcome != tc.first || second.Outcome != tc.second || fixture.reads.Load() != int32(tc.reads) || !strings.Contains(first.Reason, tc.reason) {
+				t.Fatalf("first=%+v second=%+v reads=%d", first, second, fixture.reads.Load())
 			}
 		})
 	}

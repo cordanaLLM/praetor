@@ -3,9 +3,11 @@ package agenthook
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/forge"
@@ -14,6 +16,7 @@ import (
 
 const stopReviewBudget = 4 * time.Second
 const stopReviewCacheTTL = 2 * time.Minute
+const stopReviewConcurrency = 8
 
 // The factory is replaced by offline tests; runtime uses only the shared forge reader.
 var stopReviewReader = func(root string) forge.ReviewReader { return forge.GHReviewReader{Dir: root} }
@@ -38,6 +41,9 @@ func evaluateStopReviewThreads(ctx context.Context, root string) Verdict {
 		return verdict
 	}
 	verdict := readStopReviews(ctx, stopReviewReader(root), repo, now)
+	if verdict.Outcome == Skip {
+		return verdict // Incomplete reads must retry even when HEAD has not moved.
+	}
 	cache := stopReviewCache{Repository: repo, Head: head, CheckedAt: now, Verdict: verdict}
 	data, err := json.Marshal(cache)
 	if err != nil {
@@ -82,7 +88,7 @@ func loadStopReviewCache(path, repo, head string, now time.Time) (Verdict, bool)
 	}
 	age := now.Sub(cache.CheckedAt)
 	valid := cache.Repository == repo && cache.Head == head && age >= 0 && age < stopReviewCacheTTL
-	if cache.Verdict.Outcome != Allow && cache.Verdict.Outcome != Skip {
+	if cache.Verdict.Outcome != Allow {
 		valid = false
 	}
 	return cache.Verdict, valid
@@ -98,18 +104,46 @@ func readStopReviews(ctx context.Context, reader forge.ReviewReader, repo string
 		return reviewSkip(fmt.Errorf("own pull requests in %s exceed 100", repo))
 	}
 	var denies []Verdict
-	for _, number := range numbers {
-		snapshot, err := reader.Read(ctx, repo, number)
-		if err != nil {
-			return reviewCacheNotice(joinReviewDenies(denies), fmt.Errorf("read %s#%d: %w", repo, number, err))
+	var failures []error
+	for i, result := range readStopReviewBatch(ctx, reader, repo, numbers) {
+		if result.err != nil {
+			failures = append(failures, fmt.Errorf("read %s#%d: %w", repo, numbers[i], result.err))
+			continue
 		}
-		if snapshot.State == "OPEN" {
-			if verdict := stopReviewVerdict(repo, snapshot, now); verdict.Outcome == Deny {
+		if result.snapshot.State == "OPEN" {
+			if verdict := stopReviewVerdict(repo, result.snapshot, now); verdict.Outcome == Deny {
 				denies = append(denies, verdict)
 			}
 		}
 	}
+	if err := errors.Join(failures...); err != nil {
+		return reviewCacheNotice(joinReviewDenies(denies), err)
+	}
 	return joinReviewDenies(denies)
+}
+
+type stopReviewResult struct {
+	snapshot forge.ReviewSnapshot
+	err      error
+}
+
+// readStopReviewBatch joins bounded workers and retains inventory order for deterministic diagnostics.
+func readStopReviewBatch(ctx context.Context, reader forge.ReviewReader, repo string, numbers []int) []stopReviewResult {
+	results := make([]stopReviewResult, len(numbers))
+	var group sync.WaitGroup
+	for worker := 0; worker < min(stopReviewConcurrency, len(numbers)); worker++ {
+		group.Go(func() {
+			for i := worker; i < len(numbers); i += stopReviewConcurrency {
+				if err := ctx.Err(); err != nil {
+					results[i].err = err
+					continue
+				}
+				results[i].snapshot, results[i].err = reader.Read(ctx, repo, numbers[i])
+			}
+		})
+	}
+	group.Wait()
+	return results
 }
 
 // stopReviewVerdict inspects a single pull request snapshot and returns a denial verdict if unresolved threads exist.

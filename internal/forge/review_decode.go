@@ -9,7 +9,12 @@ import (
 
 type reviewConnection[T any] struct {
 	Nodes    []T
-	PageInfo *struct{ HasNextPage bool }
+	PageInfo *reviewPageInfo
+}
+
+type reviewPageInfo struct {
+	HasNextPage bool
+	EndCursor   string
 }
 
 type reviewActor struct{ Login string }
@@ -42,30 +47,35 @@ type reviewCommitRaw struct {
 type reviewPullRaw struct {
 	Number        int
 	State         string
+	HeadRefOID    string
 	ReviewThreads reviewConnection[reviewThreadRaw]
 	Reviews       reviewConnection[reviewRaw]
 	Commits       struct{ Nodes []reviewCommitRaw }
 }
 
-// decodeReviewSnapshot unmarshals a GraphQL response into a ReviewSnapshot for a pull request.
-func decodeReviewSnapshot(data []byte, number int) (ReviewSnapshot, error) {
+// decodeReviewPull validates the envelope and identity before any continuation request.
+func decodeReviewPull(data []byte, number int) (*reviewPullRaw, error) {
 	var envelope graphQLResponse
 	if err := json.Unmarshal(data, &envelope); err != nil {
-		return ReviewSnapshot{}, fmt.Errorf("decode review envelope: %w", err)
+		return nil, fmt.Errorf("decode review envelope: %w", err)
 	}
 	if len(envelope.Errors) > 0 {
-		return ReviewSnapshot{}, fmt.Errorf("GraphQL review read: %s", envelope.Errors[0].Message)
+		return nil, fmt.Errorf("GraphQL review read: %s", envelope.Errors[0].Message)
 	}
 	var result struct {
 		Repository *struct{ PullRequest *reviewPullRaw }
 	}
 	if err := json.Unmarshal(envelope.Data, &result); err != nil {
-		return ReviewSnapshot{}, fmt.Errorf("decode review data: %w", err)
+		return nil, fmt.Errorf("decode review data: %w", err)
 	}
 	if result.Repository == nil || result.Repository.PullRequest == nil {
-		return ReviewSnapshot{}, errors.New("review repository or pull request missing")
+		return nil, errors.New("review repository or pull request missing")
 	}
-	return result.Repository.PullRequest.snapshot(number)
+	pull := result.Repository.PullRequest
+	if pull.Number != number || !validReviewPRState(pull.State) {
+		return nil, errors.New("review pull request identity or state invalid")
+	}
+	return pull, nil
 }
 
 // snapshot converts a raw GraphQL pull request node into a validated ReviewSnapshot.
@@ -103,11 +113,22 @@ func validReviewPRState(state string) bool {
 
 // completeReviewConnection verifies that a paginated GraphQL connection contains complete, non-truncated data.
 func completeReviewConnection[T any](c reviewConnection[T]) error {
+	if err := validateReviewConnection(c, maxReviewPages*reviewPageSize); err != nil {
+		return err
+	}
+	if c.PageInfo.HasNextPage {
+		return errors.New("connection exceeds page bound; refusing incomplete read")
+	}
+	return nil
+}
+
+// validateReviewConnection rejects absent data and counts beyond the caller's scalar bound.
+func validateReviewConnection[T any](c reviewConnection[T], limit int) error {
 	if c.PageInfo == nil || c.Nodes == nil {
 		return errors.New("missing connection data")
 	}
-	if c.PageInfo.HasNextPage || len(c.Nodes) > 100 {
-		return errors.New("connection exceeds first 100 items; refusing incomplete read")
+	if len(c.Nodes) > limit {
+		return errors.New("connection exceeds item bound")
 	}
 	return nil
 }

@@ -107,9 +107,11 @@ func ParseReviewRepository(repo string) (string, string, error) {
 	return owner, name, nil
 }
 
-// Read requests at most 100 threads, 100 reviews and 100 check contexts. Thread
+// Read requests complete connections within ten pages of 100 items each. Thread
 // creation time is the first comment's createdAt: the thread has no such field.
 func (r GHReviewReader) Read(ctx context.Context, repo string, number int) (ReviewSnapshot, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	owner, name, err := ParseReviewRepository(repo)
 	if err != nil {
 		return ReviewSnapshot{}, err
@@ -117,25 +119,30 @@ func (r GHReviewReader) Read(ctx context.Context, repo string, number int) (Revi
 	if number < 1 {
 		return ReviewSnapshot{}, errors.New("review pull request number must be positive")
 	}
-	data, err := r.call(ctx, "api", "graphql", "-f", "query="+reviewReadQuery,
-		"-f", "owner="+owner, "-f", "name="+name, "-F", "number="+strconv.Itoa(number))
+	request := reviewReadRequest{owner: owner, name: name, number: number}
+	pull, err := r.reviewPage(ctx, request, "", "")
 	if err != nil {
 		return ReviewSnapshot{}, fmt.Errorf("read %s#%d: %w", repo, number, err)
 	}
-	result, err := decodeReviewSnapshot(data, number)
+	if err := r.completeReviewPages(ctx, request, pull); err != nil {
+		return ReviewSnapshot{}, fmt.Errorf("read %s#%d: %w", repo, number, err)
+	}
+	result, err := pull.snapshot(number)
 	if err != nil {
 		return ReviewSnapshot{}, fmt.Errorf("read %s#%d: %w", repo, number, err)
 	}
 	return result, nil
 }
 
-const reviewReadQuery = `query($owner:String!,$name:String!,$number:Int!){
- repository(owner:$owner,name:$name){pullRequest(number:$number){number state
- reviewThreads(first:100){pageInfo{hasNextPage} nodes{id isResolved path line
+const reviewReadQuery = `query($owner:String!,$name:String!,$number:Int!,
+ $threadsAfter:String,$reviewsAfter:String,$checksAfter:String,
+ $threads:Boolean!=true,$reviews:Boolean!=true,$checks:Boolean!=true){
+ repository(owner:$owner,name:$name){pullRequest(number:$number){number state headRefOid
+ reviewThreads(first:100,after:$threadsAfter) @include(if:$threads){pageInfo{hasNextPage endCursor} nodes{id isResolved path line
  comments(first:1){nodes{author{login} createdAt}}}}
- reviews(first:100){pageInfo{hasNextPage} nodes{id author{login} state submittedAt}}
- commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){
- pageInfo{hasNextPage} nodes{__typename ... on CheckRun{status conclusion}
+ reviews(first:100,after:$reviewsAfter) @include(if:$reviews){pageInfo{hasNextPage endCursor} nodes{id author{login} state submittedAt}}
+ commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100,after:$checksAfter) @include(if:$checks){
+ pageInfo{hasNextPage endCursor} nodes{__typename ... on CheckRun{status conclusion}
  ... on StatusContext{state}}}}}}}
  }}}
 `

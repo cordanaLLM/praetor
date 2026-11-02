@@ -39,7 +39,7 @@ func TestStopReviewCacheKeyAndTTL(t *testing.T) {
 		hit        bool
 	}{
 		{repo, head, cache.CheckedAt.Add(stopReviewCacheTTL - time.Nanosecond), Allow, true},
-		{repo, head, cache.CheckedAt.Add(stopReviewCacheTTL - time.Nanosecond), Skip, true},
+		{repo, head, cache.CheckedAt.Add(stopReviewCacheTTL - time.Nanosecond), Skip, false},
 		{repo, head, cache.CheckedAt.Add(stopReviewCacheTTL - time.Nanosecond), Deny, false},
 		{repo, head, cache.CheckedAt.Add(stopReviewCacheTTL), Allow, false},
 		{repo, "different-head", cache.CheckedAt, Allow, false},
@@ -56,8 +56,8 @@ func TestStopReviewCacheKeyAndTTL(t *testing.T) {
 	cache.CheckedAt = cache.CheckedAt.Add(-stopReviewCacheTTL)
 	writeStopReviewCache(t, path, cache)
 	evaluateStopReviewThreads(t.Context(), root)
-	if fixture.reads != 2 {
-		t.Fatalf("expired cache avoided fresh read: %d", fixture.reads)
+	if fixture.reads.Load() != 2 {
+		t.Fatalf("expired cache avoided fresh read: %d", fixture.reads.Load())
 	}
 }
 
@@ -102,8 +102,8 @@ func TestStopReviewMalformedCacheForcesRead(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"Outcome":0}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if verdict := evaluateStopReviewThreads(t.Context(), root); verdict.Outcome != Deny || fixture.reads != 1 {
-		t.Fatalf("malformed cache silently allowed: %+v reads=%d", verdict, fixture.reads)
+	if verdict := evaluateStopReviewThreads(t.Context(), root); verdict.Outcome != Deny || fixture.reads.Load() != 1 {
+		t.Fatalf("malformed cache silently allowed: %+v reads=%d", verdict, fixture.reads.Load())
 	}
 	if filepath.Base(path) != "praetor-stop-reviews.json" {
 		t.Fatalf("unexpected cache: %s", path)
