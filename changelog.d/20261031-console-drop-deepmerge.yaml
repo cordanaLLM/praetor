@@ -1,0 +1,2 @@
+type: security
+title: "The console build no longer installs deepmerge 4.3.1 (GHSA-gcqx-w48m-w2h4, no patched release): a pnpm patch gives @sveltejs/vite-plugin-svelte 7.3.1 an option merge that skips __proto__, constructor and prototype keys, an override removes deepmerge from console/pnpm-lock.yaml, and the dated osv-scanner.toml exception that suppressed the advisory until 2026-11-07 is gone"

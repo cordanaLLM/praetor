@@ -1,0 +1,68 @@
+diff --git a/package.json b/package.json
+index f47e18d..1723651 100644
+--- a/package.json
++++ b/package.json
+@@ -36 +35,0 @@
+-    "deepmerge": "^4.3.1",
+diff --git a/src/utils/options.js b/src/utils/options.js
+index 7ab9e64..50d36f5 100644
+--- a/src/utils/options.js
++++ b/src/utils/options.js
+@@ -30 +29,0 @@ import path from 'node:path';
+-import deepmerge from 'deepmerge';
+@@ -179,0 +179,49 @@ export async function preResolveOptions(inlineOptions, viteUserConfig, viteEnv)
++// Keys that would reach or replace a prototype when assigned (GHSA-gcqx-w48m-w2h4: deepmerge
++// 4.3.1 copies an own `__proto__` key into the merged object). Never merged.
++const UNSAFE_MERGE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
++
++/**
++ * deepmerge 4.3.1 semantics for plugin options: arrays are replaced, other objects except
++ * RegExp and Date are cloned and merged key by key; unsafe keys are skipped.
++ * @param {unknown} value
++ * @returns {value is Record<PropertyKey, unknown>}
++ */
++function isMergeableValue(value) {
++	return (
++		value !== null &&
++		typeof value === 'object' &&
++		!Array.isArray(value) &&
++		!(value instanceof RegExp) &&
++		!(value instanceof Date)
++	);
++}
++
++/**
++ * @param {unknown} target
++ * @param {unknown} source
++ * @returns {any}
++ */
++function mergeValue(target, source) {
++	if (!isMergeableValue(source)) {
++		return source;
++	}
++	/** @type {Record<PropertyKey, unknown>} */
++	const merged = {};
++	const base = isMergeableValue(target) ? target : {};
++	for (const object of [base, source]) {
++		const keys = [
++			...Object.keys(object),
++			...Object.getOwnPropertySymbols(object).filter((s) =>
++				Object.prototype.propertyIsEnumerable.call(object, s)
++			)
++		];
++		for (const key of keys) {
++			if (typeof key === 'string' && UNSAFE_MERGE_KEYS.has(key)) {
++				continue;
++			}
++			merged[key] = mergeValue(object === source ? merged[key] : undefined, object[key]);
++		}
++	}
++	return merged;
++}
++
+@@ -189,4 +237 @@ function mergeConfigs(...configs) {
+-		result = deepmerge(result, /** @type {Partial<T>} */ (config), {
+-			// replace arrays
+-			arrayMerge: (target, source) => source ?? target
+-		});
++		result = mergeValue(result, /** @type {Partial<T>} */ (config));
