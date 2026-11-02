@@ -1,6 +1,7 @@
 package adopt
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -341,12 +342,85 @@ func TestGitIgnoreHistory_GuideReferencesHistoryTest_Boundary(t *testing.T) {
 	}
 	text := string(content)
 	claim := "A repository still carrying block v3 or v4 is recognised and re-rendered, not refused"
+	assertGuideClaimReference(t, text, claim, "internal/adopt/gitignore_history_test.go", 250)
+}
+
+// assertGuideClaimReference asserts that claim appears in text and that wantRef appears
+// within windowLen bytes following the start of claim. The window is clamped to len(text)
+// so a claim near the end reports a missing reference rather than panicking on slice bounds.
+func assertGuideClaimReference(t testing.TB, text, claim, wantRef string, windowLen int) {
+	t.Helper()
 	if !strings.Contains(text, claim) {
 		t.Fatalf("state-ledger-integrity.md missing historical compatibility claim: %q", claim)
+		return
 	}
 	idx := strings.Index(text, claim)
-	window := text[idx : idx+250]
-	if !strings.Contains(window, "internal/adopt/gitignore_history_test.go") {
-		t.Fatalf("historical compatibility claim must be followed by gitignore_history_test.go reference, got window: %q", window)
+	end := min(len(text), idx+windowLen)
+	window := text[idx:end]
+	if !strings.Contains(window, wantRef) {
+		t.Fatalf("historical compatibility claim must be followed by %s reference, got window: %q", wantRef, window)
+	}
+}
+
+type testRecorder struct {
+	testing.TB
+	failed  bool
+	message string
+}
+
+func (r *testRecorder) Fatalf(format string, args ...any) {
+	r.failed = true
+	r.message = fmt.Sprintf(format, args...)
+}
+
+// Positive: assertGuideClaimReference succeeds when the reference sits within windowLen,
+// including when the reference sits near the end of text shorter than claim + windowLen.
+func TestGitIgnoreHistory_GuideClaimWindow_Positive(t *testing.T) {
+	claim := "A repository still carrying block v3 or v4 is recognised and re-rendered, not refused"
+	ref := "internal/adopt/gitignore_history_test.go"
+
+	longText := claim + " (`TestLookupManagedGitIgnoreTail_Positive` in " + ref + ")\n" + strings.Repeat("x", 500)
+	assertGuideClaimReference(t, longText, claim, ref, 250)
+
+	shortText := claim + " (" + ref + ")"
+	assertGuideClaimReference(t, shortText, claim, ref, 250)
+}
+
+// Negative: assertGuideClaimReference reports missing reference with Fatalf rather than panicking,
+// both when text continues past windowLen and when text ends within windowLen.
+func TestGitIgnoreHistory_GuideClaimWindow_Negative(t *testing.T) {
+	claim := "A repository still carrying block v3 or v4 is recognised and re-rendered, not refused"
+	ref := "internal/adopt/gitignore_history_test.go"
+
+	recShort := &testRecorder{TB: t}
+	shortMissing := claim + " (reference omitted near end)"
+	assertGuideClaimReference(recShort, shortMissing, claim, ref, 250)
+	if !recShort.failed || !strings.Contains(recShort.message, "must be followed by") {
+		t.Fatalf("expected missing reference report on short text, got failed=%v msg=%q", recShort.failed, recShort.message)
+	}
+
+	recLong := &testRecorder{TB: t}
+	longMissing := claim + " (omitted)\n" + strings.Repeat("x", 500)
+	assertGuideClaimReference(recLong, longMissing, claim, ref, 250)
+	if !recLong.failed || !strings.Contains(recLong.message, "must be followed by") {
+		t.Fatalf("expected missing reference report on long text, got failed=%v msg=%q", recLong.failed, recLong.message)
+	}
+}
+
+// Boundary: text ending exactly at the claim or missing the claim entirely reports failures without panicking.
+func TestGitIgnoreHistory_GuideClaimWindow_Boundary(t *testing.T) {
+	claim := "A repository still carrying block v3 or v4 is recognised and re-rendered, not refused"
+	ref := "internal/adopt/gitignore_history_test.go"
+
+	recExact := &testRecorder{TB: t}
+	assertGuideClaimReference(recExact, claim, claim, ref, 250)
+	if !recExact.failed || !strings.Contains(recExact.message, "must be followed by") {
+		t.Fatalf("expected missing reference report when text ends at claim, got failed=%v msg=%q", recExact.failed, recExact.message)
+	}
+
+	recMissing := &testRecorder{TB: t}
+	assertGuideClaimReference(recMissing, "other guide content without the claim", claim, ref, 250)
+	if !recMissing.failed || !strings.Contains(recMissing.message, "missing historical compatibility claim") {
+		t.Fatalf("expected missing claim report, got failed=%v msg=%q", recMissing.failed, recMissing.message)
 	}
 }
