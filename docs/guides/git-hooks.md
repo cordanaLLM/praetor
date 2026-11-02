@@ -467,6 +467,24 @@ it (`cli`, `refresh` and `refresh_install` in `.config/lefthook/scripts/hooks.py
 strict push runs the `state-audit` target (`source_checks` in `checks.py`). They pass
 `--always-make` and `--no-print-directory`, which are GNU Make options.
 
+Every hook stage that builds or runs the repository's CLI (`pre-commit`, `commit-msg`,
+`pre-push`, `post-commit`) executes under a shared stage budget. By default, the stage
+budget allows 20 minutes (`20m`), configurable through `PRAETOR_TEST_STAGE_TIMEOUT` with
+standard duration units (`30m`, `90s`, `1h30m`). If the total elapsed time exceeds the
+budget during either the `hook-cli` build or CLI command execution, the running process is
+terminated and the hook fails immediately with a descriptive error naming the failing step
+and the configured budget (for example, `hook-cli timed out after 20m: ...`), blocking the
+Git commit or push.
+
+In the implementation, `cli` in `.config/lefthook/scripts/hooks.py` runs `make hook-cli` and
+`bin/praetorctl` under one monotonic deadline resolved by `stage_budget` in
+`.config/lefthook/scripts/common.py`. This mirrors `TestStageTimeout` in
+`internal/gating/deadline.go` as the single source of truth across the gate and hook
+environments. Each step receives only the remaining monotonic budget, and fixture runs in
+`.config/lefthook/scripts/test_hooks.py` reuse the same duration parser and timeout
+bounds (`test_stage_budget_default_equals_go_deadline_constant`,
+`test_stage_budget_cli_timeout_and_planted_cases`).
+
 All four calls take the program from `make_program` (`.config/lefthook/scripts/toolchain.py`).
 It tries `make`, then `gmake`, then `mingw32-make`, skipping a name that is not on `PATH`,
 and uses the first whose `--version` output begins with `GNU Make`. `gmake` is the name GNU
