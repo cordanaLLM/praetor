@@ -154,3 +154,68 @@ func TestForgeManifestMalformedAndUnreadableText(t *testing.T) {
 		assertForgeTextDenied(t, runPreToolCommand(t, root, `gh pr comment 1 --body "https://github.com/outside/project/pull/2"`, nil), "https://github.com/outside/project/pull/2")
 	}
 }
+
+// TestForgeManifestNoticeDedupAndDirCache pins that multiple gh write calls in one directory
+// resolve that directory once and emit a shared manifest finding notice only once.
+func TestForgeManifestNoticeDedupAndDirCache(t *testing.T) {
+	root := repositoryWithManifest(t, brokenForgeManifest)
+	sub := filepath.Join(root, "sub")
+	writeTestFixtureFile(t, filepath.Join(sub, "note.txt"), "ok\n")
+	lookups := 0
+	getenv := func(key string) string {
+		if key == "GITHUB_REPOSITORY" {
+			lookups++
+		}
+		return ""
+	}
+	cmd := `gh pr comment 1 --body "First repair" && gh pr comment 1 --body "Second repair"`
+	resp := runPreToolCommand(t, root, cmd, getenv)
+	if resp.ExitCode != 0 {
+		t.Fatalf("expected allow exit 0, got %d: %q", resp.ExitCode, string(resp.Stderr))
+	}
+	if got := strings.Count(string(resp.Stderr), "manifest finding"); got != 1 {
+		t.Fatalf("expected 1 manifest finding notice, got %d in %q", got, string(resp.Stderr))
+	}
+	if lookups != 1 {
+		t.Fatalf("expected 1 directory resolution for repeated dir, got %d lookups", lookups)
+	}
+	subCmd := `gh pr comment 1 --body "Root note" && (cd sub && gh pr comment 1 --body "Sub note")`
+	subResp := runPreToolCommand(t, root, subCmd, nil)
+	if got := strings.Count(string(subResp.Stderr), "manifest finding"); subResp.ExitCode != 0 || got != 1 {
+		t.Fatalf("expected 1 deduped manifest finding across root and sub, got exit=%d count=%d stderr=%q", subResp.ExitCode, got, string(subResp.Stderr))
+	}
+	denyCmd := `gh pr comment 1 --body "Clean" && gh pr comment 1 --body "outside/project#2"`
+	assertForgeTextDenied(t, runPreToolCommand(t, root, denyCmd, nil), "outside/project#2")
+}
+
+// TestForgeManifestOutsideRepositoryIgnored pins that a command targeting a directory outside
+// any git repository does not load or trust a manifest from that directory.
+func TestForgeManifestOutsideRepositoryIgnored(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nforge:\n  own_organizations: [repo-org]\n")
+	outside := t.TempDir()
+	writeTestFixtureFile(t, filepath.Join(outside, manifestName),
+		"version: 1\nrepository:\n  owner: rogue-owner\n  name: rogue-repo\nforge:\n  own_organizations: [rogue-org]\n")
+	for _, tc := range []struct{ cmd, span string }{
+		{fmt.Sprintf(`cd %q && gh pr comment 1 --body "rogue-org/project#2"`, outside), "rogue-org/project#2"},
+		{fmt.Sprintf(`env -C %q gh pr comment 1 --body "rogue-owner/project#2"`, outside), "rogue-owner/project#2"},
+	} {
+		assertForgeTextDenied(t, runPreToolCommand(t, root, tc.cmd, nil), tc.span)
+	}
+	fleet := filepath.Join(t.TempDir(), "fleet.yaml")
+	writeTestFixtureFile(t, fleet, "forge:\n  own_organizations: [operator-org]\n")
+	getenv := func(key string) string {
+		if key == "PRAETOR_FLEET_CONFIG" {
+			return fleet
+		}
+		return ""
+	}
+	allowCmd := fmt.Sprintf(`cd %q && gh pr comment 1 --body "operator-org/project#2"`, outside)
+	if resp := runPreToolCommand(t, root, allowCmd, getenv); resp.ExitCode != 0 {
+		t.Fatalf("expected operator org to be allowed outside repo, got %d: %q", resp.ExitCode, string(resp.Stderr))
+	}
+	writeTestFixtureFile(t, filepath.Join(outside, manifestName), brokenForgeManifest)
+	plainCmd := fmt.Sprintf(`cd %q && gh pr comment 1 --body "Plain note"`, outside)
+	if resp := runPreToolCommand(t, root, plainCmd, nil); resp.ExitCode != 0 || strings.Contains(string(resp.Stderr), "manifest finding") {
+		t.Fatalf("expected plain note outside repo without manifest finding, got exit=%d stderr=%q", resp.ExitCode, string(resp.Stderr))
+	}
+}

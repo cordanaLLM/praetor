@@ -77,6 +77,15 @@ type ghWriteCall struct {
 	dir     string
 }
 
+// ghDirPolicy holds the resolved trusted organisations, missing-list flag, diagnostic
+// notice and any fatal resolution error cached for a command working directory.
+type ghDirPolicy struct {
+	own       []string
+	noOrgList bool
+	notice    string
+	err       error
+}
+
 // evaluateForgeTextRefs inspects every scoped gh write call in canonical.Command and
 // refuses unreadable text and foreign references. Manifest defects are stated findings,
 // never a refusal of a write containing no active reference.
@@ -94,42 +103,59 @@ func evaluateForgeTextRefs(ctx context.Context, canonical Canonical, root string
 	if len(calls) == 0 {
 		return Verdict{Outcome: Allow}
 	}
+	dirPolicies := make(map[string]ghDirPolicy, len(calls))
 	var notices []string
 	for i := 0; i < len(calls) && i < maxForgeTextSegments; i++ {
-		verdict := judgeResolvedGHWriteCall(ctx, calls[i], in.Getenv)
+		dirPolicy, ok := dirPolicies[calls[i].dir]
+		if !ok {
+			dirPolicy = resolveGHDirPolicy(ctx, calls[i].dir, in.Getenv)
+			dirPolicies[calls[i].dir] = dirPolicy
+		}
+		verdict := judgeResolvedGHWriteCall(ctx, calls[i], dirPolicy)
 		if verdict.Outcome != Allow {
 			return verdict
 		}
-		if verdict.Notice != "" {
-			notices = append(notices, verdict.Notice)
-		}
+		notices = appendUniqueNotice(notices, verdict.Notice)
 	}
 	return Verdict{Outcome: Allow, Notice: strings.Join(notices, "; ")}
 }
 
-// judgeResolvedGHWriteCall uses the directory already tracked by the command reader and the
-// shared repository root resolver, so each write in a multi-worktree command has its own policy.
-// Operator-policy failures deny writes; identity failures retain independently trusted organisations.
-func judgeResolvedGHWriteCall(ctx context.Context, call ghWriteCall, getenv func(string) string) Verdict {
-	root, err := repositoryRoot(ctx, call.dir)
-	if err != nil {
-		return forgeTextDeny(err.Error(), false)
+// appendUniqueNotice appends notice to notices when notice is non-empty and not already present.
+func appendUniqueNotice(notices []string, notice string) []string {
+	if notice == "" || slices.Contains(notices, notice) {
+		return notices
 	}
-	if root == "" {
-		root = call.dir
+	return append(notices, notice)
+}
+
+// resolveGHDirPolicy resolves the repository root and trusted organisations for dir once.
+// Commands outside any git repository keep an empty root so no arbitrary directory manifest is loaded.
+func resolveGHDirPolicy(ctx context.Context, dir string, getenv func(string) string) ghDirPolicy {
+	root, err := repositoryRoot(ctx, dir)
+	if err != nil {
+		return ghDirPolicy{err: err}
 	}
 	own, noOrgList, notice, err := resolveHookOwnOrganizations(ctx, root, getenv)
 	if errors.Is(err, errHookOperatorForgeSettings) {
-		return forgeTextDeny(err.Error(), false)
+		return ghDirPolicy{err: err}
 	}
 	if err != nil {
 		notice = strings.TrimPrefix(notice+"; organisation finding: "+err.Error(), "; ")
 	}
-	verdict := judgeGHWriteCall(ctx, call, own, noOrgList)
+	return ghDirPolicy{own: own, noOrgList: noOrgList, notice: notice}
+}
+
+// judgeResolvedGHWriteCall judges call against the cached directory policy for call.dir.
+// Operator-policy and root-lookup failures deny writes; identity and manifest findings attach as notices.
+func judgeResolvedGHWriteCall(ctx context.Context, call ghWriteCall, dirPolicy ghDirPolicy) Verdict {
+	if dirPolicy.err != nil {
+		return forgeTextDeny(dirPolicy.err.Error(), false)
+	}
+	verdict := judgeGHWriteCall(ctx, call, dirPolicy.own, dirPolicy.noOrgList)
 	if verdict.Outcome == Allow {
-		verdict.Notice = notice
-	} else if notice != "" {
-		verdict.Reason += "\n" + notice
+		verdict.Notice = dirPolicy.notice
+	} else if dirPolicy.notice != "" {
+		verdict.Reason += "\n" + dirPolicy.notice
 	}
 	return verdict
 }
