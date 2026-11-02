@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/state"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // preEditStdin encodes the pre-edit hook payload properly instead of splicing root into a
@@ -253,23 +256,50 @@ func TestRunStopMissingMarkerDeniesAndNoInterpreterBlocksOnce(t *testing.T) {
 	}
 }
 
-// TestRunPostToolEvaluatorTimeout is the H2 boundary case for a checkpoint evaluator that
-// never answers: Run's own outer budget (budgetFor) already bounds this, this test tightens
-// it so the case runs in well under a second instead of postToolBudget's 30s.
+// TestRunPostToolEvaluatorTimeout exercises outer-context termination after the
+// evaluator starts. Explicit cancellation follows the same skip path as a deadline.
 func TestRunPostToolEvaluatorTimeout(t *testing.T) {
 	root := repository(t, true)
 	_, getenv := buildStub(t, "python3")
-	t.Setenv("PRAETOR_STUB_SLEEP_MS", "2000")
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ready := filepath.Join(t.TempDir(), "interpreter-started")
+	t.Setenv("PRAETOR_STUB_READY_PATH", ready)
+	t.Setenv("PRAETOR_STUB_SLEEP_MS", "3600000")
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	start := time.Now()
-	response := Run(ctx, checkpointInvocation(t, "post-tool", root, getenv, []byte(`{}`)))
-	if response.ExitCode != 0 || standardClockOutput(decodeStdout(t, response)) == "" || !strings.Contains(string(response.Stderr), "unavailable") {
-		t.Errorf("a timed-out evaluator must degrade post-tool to a skip: %+v", response)
+	invocation := checkpointInvocation(t, "post-tool", root, getenv, []byte(`{}`))
+	done := make(chan Response, 1)
+	go func() { done <- Run(ctx, invocation) }()
+	awaitCheckpointInterpreter(t, ready, done)
+	cancel()
+	response := <-done
+	if response.ExitCode != 0 || standardClockOutput(decodeStdout(t, response)) == "" ||
+		!strings.Contains(string(response.Stderr), "unavailable") || !strings.Contains(string(response.Stderr), context.Canceled.Error()) {
+		t.Errorf("a cancelled evaluator must degrade post-tool to a skip: %+v", response)
 	}
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Errorf("the outer budget did not bound the call: %s", elapsed)
+}
+
+// awaitCheckpointInterpreter observes process startup before the caller cancels it.
+func awaitCheckpointInterpreter(t *testing.T, ready string, done <-chan Response) {
+	t.Helper()
+	ctx := testsupport.DeadlineContext(t)
+	const poll = 10 * time.Millisecond
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+	for attempt := 0; attempt < int(testsupport.NoBinaryDeadlineBound/poll); attempt++ {
+		if _, err := os.Stat(ready); err == nil {
+			return
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		select {
+		case response := <-done:
+			t.Fatalf("hook returned before evaluator startup: %+v", response)
+		case <-ctx.Done():
+			t.Fatalf("evaluator did not start within test budget: %v", ctx.Err())
+		case <-ticker.C:
+		}
 	}
+	t.Fatal("evaluator startup polling exhausted")
 }
 
 // TestEvaluateStopHonoursStopActiveOnASecondPass exercises evaluateStop directly rather than
