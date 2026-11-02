@@ -15,9 +15,9 @@ const (
 	shellBlank = `[ \t]+`
 	// Tokens exclude command boundaries; quoted option values may contain blanks.
 	privilegeWord = `(?:\x22[^\x22\n]*\x22|\x27[^\x27\n]*\x27|[^ \t\n;&|()\x60\x22\x27]+)`
-	// Values are quoted tokens, non-options or negative integers. The flag trie
-	// below prevents value-taking flags from also parsing as valueless flags.
-	privilegeValue      = `(?:\x22[^\x22\n]*\x22|\x27[^\x27\n]*\x27|[^- \t\n;&|()\x60\x22\x27][^ \t\n;&|()\x60\x22\x27]*|-[0-9]+)`
+	// Required option values are complete shell words, including leading dashes.
+	// The flag trie keeps value-taking flags disjoint from valueless flags.
+	privilegeValue      = privilegeWord
 	privilegeOptionChar = ` \t\n;&|()\x60\x22\x27`
 	privilegeEnd        = `(?:[ \t\r\n;&|()\x60]|$)`
 	// Consume quoted data as complete atoms before looking for command position.
@@ -57,15 +57,21 @@ func privilegeCommandRule() string {
 			option = `(?:` + strings.Join(spec.values, `|`) + `)` + shellBlank + privilegeValue + `|` + option
 		}
 		launcher := shellProgram(name) + `(?:` + shellBlank + `(?:` + option + `))*` + shellBlank
-		if spec.positional > 0 {
-			launcher += privilegeWord + shellBlank
-		}
+		launcher += privilegePositionals(spec)
 		launchers = append(launchers, launcher)
 	}
 	assignment := `[A-Za-z_][A-Za-z0-9_]*=(?:` + privilegeWord + `)?` + shellBlank
 	position := `(?:\A|[\n;&|({!\x60]|\x22` + privilegeDoubleText + `(?:\$\(|\x60))`
 	return `\A` + privilegeData + position + `[ \t]*(?:` + assignment + `|` + strings.Join(launchers, `|`) + `|` + privilegeScriptPrefix() + `|(?:then|do|else|if|while|until)` + shellBlank + `)*` +
 		privilegeInvocation
+}
+
+// privilegePositionals shares the table's optional numeric priority grammar.
+func privilegePositionals(spec wrapperSpec) string {
+	if spec.optionalPriority {
+		return `(?:[0-9]+` + shellBlank + `)?`
+	}
+	return strings.Repeat(privilegeWord+shellBlank, spec.positional)
 }
 
 // privilegeFlagExcept matches an option token except the exact flags taking a

@@ -34,6 +34,21 @@ class EvasionReplay(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertFalse(GUARD.search(pattern, positions[0].format(value)))
 
+    def test_wrapper_option_arities(self):
+        replay = json.loads(
+            (ROOT / "internal/agenthook/testdata/privilege-wrappers.json").read_text()
+        )
+        # Match the privilege rule itself: DEV-01 would otherwise mask missing wrappers.
+        for wrapper in replay["commands"]:
+            for escalator in ("sudo", "doas"):
+                command = f"{wrapper} {escalator} praetorctl conform /srv/dev"
+                with self.subTest(command=command):
+                    self.assertTrue(GUARD.search(GUARD.BLOCKED_PATTERNS[-1], command))
+
+        for command in replay["data_only"]:
+            with self.subTest(data=command):
+                self.assertFalse(GUARD.search(GUARD.BLOCKED_PATTERNS[-1], command))
+
     def test_engine_corpus(self):
         corpus = ROOT / "internal/agenthook/testdata/pre-tool/cases.json"
         cases = json.loads(corpus.read_text())
