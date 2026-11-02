@@ -81,6 +81,55 @@ class SessionModuleTests(unittest.TestCase):
         self.assertEqual(common.prepare_checkpoint_session.__module__, "checkpoint_session")
         self.assertEqual(common.record_tool_worktrees.__module__, "checkpoint_session")
 
+    def test_session_git_calls_use_the_clean_environment(self):
+        # Marker only: no process launch, live environment change or Git configuration.
+        marker = {"SESSION_TEST_MARKER": "clean"}
+        for operation, output in (
+            (sessions._git_common_dir, b"/session-test/common\n"),
+            (sessions._listed_worktrees, b"worktree /session-test/root\0\0"),
+        ):
+            with self.subTest(operation=operation.__name__), mock.patch.object(
+                common, "clean_env", return_value=marker
+            ) as clean, mock.patch.object(common, "run_bounded", return_value=output) as run:
+                operation(Path("/session-test/root"), common.HookBudget(2))
+                clean.assert_called_once_with()
+                self.assertIs(run.call_args.kwargs.get("env"), marker)
+
+    def test_adversarial_session_path_scan_is_bounded(self):
+        # Unmatched quotes force failed quoted alternatives across a full payload.
+        # Isolate the CPU measurement from filesystem work and kill a regressed scan.
+        code = (
+            "import sys, time; sys.path.insert(0, sys.argv[1]); "
+            "import checkpoint_session as s; from unittest import mock; "
+            "rows=[]\n"
+            "for size in (1 << 18, 1 << 19, 1 << 20):\n"
+            " text = '\\\"' + 'a' * (size - 1)\n"
+            " with mock.patch.object(s.Path, 'resolve', side_effect=OSError('planted')):\n"
+            "  start=time.process_time(); result=s._path_matches('/worktree', text); "
+            "rows.append((size, time.process_time()-start, result))\n"
+            "print(rows); assert not any(row[2] for row in rows)\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-B", "-c", code, str(Path(checkpoint.__file__).parent)],
+            capture_output=True, text=True, timeout=5, check=True,
+        )
+        print("session adversarial scan CPU:", result.stdout.strip())
+        # Negative control: this same deadline must kill a planted nested quantifier.
+        planted = code.replace(
+            "rows=[]\n",
+            "rows=[]; print('PLANTED_REGEX', flush=True); "
+            "s.re.finditer=lambda pattern,text: s.re.compile('(a+)+Z').finditer(text)\n",
+        ).replace("(1 << 18, 1 << 19, 1 << 20)", "(64,)")
+        with self.assertRaises(subprocess.TimeoutExpired) as expired:
+            subprocess.run(
+                [sys.executable, "-B", "-c", planted, str(Path(checkpoint.__file__).parent)],
+                capture_output=True, text=True, timeout=1, check=True,
+            )
+        output = expired.exception.output or b""
+        if isinstance(output, bytes):
+            output = output.decode()
+        self.assertIn("PLANTED_REGEX", output)
+
 
 class SessionOwnershipRegressions(unittest.TestCase):
     def setUp(self):

@@ -42,11 +42,12 @@ def session_hash_for(session_id):
 
 def _git_common_dir(root, budget):
     """Resolve repository common Git directory."""
-    from common import run_bounded
+    from common import clean_env, run_bounded
 
     raw = run_bounded(
         ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
         cwd=root,
+        env=clean_env(),
         timeout=budget.timeout(SESSION_GIT_TIMEOUT),
         max_output=SESSION_GIT_OUTPUT,
         grace=SESSION_GIT_GRACE,
@@ -56,11 +57,12 @@ def _git_common_dir(root, budget):
 
 def _listed_worktrees(root, budget):
     """Read bounded NUL-delimited worktree listing."""
-    from common import run_bounded
+    from common import clean_env, run_bounded
 
     raw = run_bounded(
         ["git", "worktree", "list", "--porcelain", "-z"],
         cwd=root,
+        env=clean_env(),
         timeout=budget.timeout(SESSION_GIT_TIMEOUT),
         max_output=SESSION_INPUT_LIMIT,
         grace=SESSION_GIT_GRACE,

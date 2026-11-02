@@ -212,6 +212,10 @@ console/fixtures/* text eol=lf
 # A11Y-CHECK1 test schema bytes and data fixtures remain stable across checkouts.
 internal/flavor/testdata/a11y-matrix/*.json text eol=lf
 
+# Native hook replay corpora require identical checkout bytes on every platform.
+internal/agenthook/testdata/pre-tool/cases.json text eol=lf
+internal/agenthook/testdata/privilege-wrappers.json text eol=lf
+
 # BEGIN praetor managed attributes (praetorctl adopt)
 # praetorctl audit hashes these files; keep their checkout bytes the same on every platform.
 .devcontainer/Dockerfile.praetor text eol=lf
@@ -220,7 +224,3 @@ docs/figures/*.ts text eol=lf
 docs/assets/figures/* text eol=lf
 tools/figures/third_party/interfig/upstream/** -text
 # END praetor managed attributes
-
-# Native hook replay corpora require identical checkout bytes on every platform.
-internal/agenthook/testdata/pre-tool/cases.json text eol=lf
-internal/agenthook/testdata/privilege-wrappers.json text eol=lf
