@@ -179,7 +179,7 @@ func auditProtectionTarget(ctx context.Context, rootDir string, manifest *config
 	renamed, err := forge.RequiredStatusContextRenames(ctx, rootDir, strings.TrimSpace(string(ancestor.Stdout)),
 		target.repository, forge.ForMergeQueue(policy.MergeQueue))
 	if errors.Is(err, forge.ErrCommittedWorkflowAbsent) {
-		return target, []string{fmt.Sprintf("[INFO] Pending status check renames not evaluated: %s (%v); declared checks remain compared.", ref, err)}, nil
+		return target, absentWorkflowNote(ref, err), nil
 	}
 	if err != nil {
 		return protectionTarget{}, nil, fmt.Errorf("discover pending status check renames from %s: %w", ref, err)
@@ -202,24 +202,42 @@ func pendingProtectionRenames(ctx context.Context, rootDir, commit, ref string, 
 	var notes []string
 	if len(renames) > 0 {
 		contexts, err := forge.RequiredStatusContextsAt(ctx, rootDir, commit, target.repository, opts...)
+		if errors.Is(err, forge.ErrCommittedWorkflowAbsent) {
+			return target, absentWorkflowNote(ref, err), nil
+		}
 		if err != nil {
 			return protectionTarget{}, nil, fmt.Errorf("read landed status check renames from %s: %w", ref, err)
 		}
-		for _, rename := range renames {
-			if slices.Contains(contexts, rename.New) {
-				notes = append(notes, fmt.Sprintf("[INFO] Pending status check rename dropped: %q -> %q; %s already declares %q.",
-					rename.Old, rename.New, ref, rename.New))
-				continue
-			}
-			target.renames = append(target.renames, rename)
-		}
+		target.renames, notes = filterUnlandedRenames(ref, renames, contexts)
 	}
 	unreported, err := forge.UnreportedStatusContexts(ctx, rootDir, commit, target.repository, report, opts...)
+	if errors.Is(err, forge.ErrCommittedWorkflowAbsent) {
+		target.renames = nil
+		return target, absentWorkflowNote(ref, err), nil
+	}
 	if err != nil {
 		return protectionTarget{}, nil, fmt.Errorf("read unreported status checks from %s: %w", ref, err)
 	}
 	target, notes = excuseUnreportedChecks(commit, ref, target, unreported, report != nil, notes)
 	return target, notes, nil
+}
+
+func filterUnlandedRenames(ref string, renames []forge.StatusContextRename, contexts []string) ([]forge.StatusContextRename, []string) {
+	var unlanded []forge.StatusContextRename
+	var notes []string
+	for _, rename := range renames {
+		if slices.Contains(contexts, rename.New) {
+			notes = append(notes, fmt.Sprintf("[INFO] Pending status check rename dropped: %q -> %q; %s already declares %q.",
+				rename.Old, rename.New, ref, rename.New))
+			continue
+		}
+		unlanded = append(unlanded, rename)
+	}
+	return unlanded, notes
+}
+
+func absentWorkflowNote(ref string, err error) []string {
+	return []string{fmt.Sprintf("[INFO] Pending status check renames not evaluated: %s (%v); declared checks remain compared.", ref, err)}
 }
 
 func excuseUnreportedChecks(commit, ref string, target protectionTarget, unreported []string, hasRuns bool, notes []string) (protectionTarget, []string) {
