@@ -152,3 +152,14 @@ SPDX-FileCopyrightText = [
   "2026 Lusoris",
 ]
 SPDX-License-Identifier = "BSD-2-Clause-Patent"
+
+# Vendored OpenSSF Best Practices criteria from https://github.com/coreinfrastructure/best-practices-badge
+# at commit 8b3a2889e3af (criteria/criteria.yml and criteria/baseline_criteria.yml).
+[[annotations]]
+path = [
+  "internal/bestpractices/upstream/criteria.yml",
+  "internal/bestpractices/upstream/baseline_criteria.yml",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "The OpenSSF Best Practices Badge Contributors"
+SPDX-License-Identifier = "MIT"

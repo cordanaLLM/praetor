@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 func TestServerAuditEffectiveDeploymentPolicy(t *testing.T) {
@@ -257,4 +259,142 @@ func TestReleaseE2EAuditGates_MissingSectionSkips(t *testing.T) {
 	if err != nil || line != "[SKIP] Release end-to-end evidence not checked: release.e2e not declared." {
 		t.Fatalf("gate() = %q, %v", line, err)
 	}
+}
+
+// TestServerAuditRunsTheBestPracticesGate verifies that standards_audit verifies .bestpractices.json claims or skips when absent.
+func TestServerAuditRunsTheBestPracticesGate(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	expectText(t, "absent .bestpractices.json", callTool(t, srv, "standards_audit", nil),
+		"[SKIP] bestpractices-claims: no .bestpractices.json found; not applicable.")
+
+	writeFixtureFile(t, root, ".bestpractices.json",
+		"{\n  \"test_policy_status\": \"Unmet\",\n  \"test_policy_justification\": \"No automated test suite applies to an organisation profile repository.\"\n}\n")
+	valid := callTool(t, srv, "standards_audit", nil)
+	expectText(t, "valid .bestpractices.json", valid,
+		"[PASS] bestpractices-claims: .bestpractices.json verified (1 criterion claim(s) checked against OpenSSF Best Practices criteria@8b3a2889e3af).")
+	expectText(t, "context sync still runs after bestpractices", valid,
+		"[PASS] Cross-agent context targets verified in sync.")
+	expectText(t, "valid .bestpractices.json passes all gates", valid, auditAllPassed())
+
+	writeFixtureFile(t, root, ".bestpractices.json", "{\n  \"description_good_status\": \"N/A\"\n}\n")
+	expectError(t, "forbidden N/A claim", callTool(t, srv, "standards_audit", nil),
+		`[FAIL] bestpractices-claims: .bestpractices.json has 1 forbidden claim(s): criterion "description_good" (status "N/A", rule na_not_allowed)`)
+}
+
+// TestServerAuditContextGroupGuideContract verifies that development-mcp.md preserves the required context-group check sequence and references.
+func TestServerAuditContextGroupGuideContract(t *testing.T) {
+	guidePath := filepath.Join(sourceCheckoutRoot(t), "docs", "guides", "development-mcp.md")
+	data, err := readAuditContextGroupGuide(t.Context(), guidePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkAuditContextGroupGuide(string(data)); err != nil {
+		t.Fatalf("docs/guides/development-mcp.md context-group contract failed: %v", err)
+	}
+
+	valid := "`editor-selection`, `renovate-engine-bumps`, `rust-msrv` and `bestpractices-claims` " +
+		"(adoption-verification.md#openssf-best-practices-claim-verification) in `internal/adopt/` and `internal/bestpractices/`."
+	if err := checkAuditContextGroupGuide(valid); err != nil {
+		t.Fatalf("positive fixture failed: %v", err)
+	}
+	for _, tc := range []struct {
+		name, doc, wantErr string
+	}{
+		{
+			name:    "negative missing bestpractices-claims",
+			doc:     "`editor-selection`, `renovate-engine-bumps` and `rust-msrv` in `internal/adopt/`.",
+			wantErr: "missing context-group check `bestpractices-claims`",
+		},
+		{
+			name:    "negative missing bestpractices reference",
+			doc:     "`editor-selection`, `renovate-engine-bumps`, `rust-msrv` and `bestpractices-claims` in `internal/adopt/`.",
+			wantErr: "missing guide reference adoption-verification.md#openssf-best-practices-claim-verification",
+		},
+		{
+			name:    "boundary out of execution order",
+			doc:     "`editor-selection`, `bestpractices-claims`, `renovate-engine-bumps` and `rust-msrv` (adoption-verification.md#openssf-best-practices-claim-verification) in `internal/adopt/` and `internal/bestpractices/`.",
+			wantErr: "context-group check `bestpractices-claims` precedes prior check",
+		},
+		{
+			name:    "boundary empty guide",
+			doc:     "",
+			wantErr: "missing context-group check `editor-selection`",
+		},
+	} {
+		err := checkAuditContextGroupGuide(tc.doc)
+		if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+			t.Fatalf("%s: got %v, want %q", tc.name, err, tc.wantErr)
+		}
+	}
+}
+
+// TestReadAuditContextGroupGuide_3D exercises positive, negative canceled, boundary nil, and missing-file reads of the guide.
+func TestReadAuditContextGroupGuide_3D(t *testing.T) {
+	guidePath := filepath.Join(sourceCheckoutRoot(t), "docs", "guides", "development-mcp.md")
+
+	// Positive: reading with an active context succeeds and returns guide content.
+	data, err := readAuditContextGroupGuide(t.Context(), guidePath)
+	if err != nil || len(data) == 0 {
+		t.Fatalf("positive: readAuditContextGroupGuide failed: %v", err)
+	}
+
+	// Negative: reading with a canceled context fails with context cancellation.
+	canceledCtx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := readAuditContextGroupGuide(canceledCtx, guidePath); !errors.Is(err, context.Canceled) {
+		t.Fatalf("negative canceled: got %v, want %v", err, context.Canceled)
+	}
+
+	// Boundary: nil context is refused.
+	var nilContext context.Context
+	if _, err := readAuditContextGroupGuide(nilContext, guidePath); err == nil || !strings.Contains(err.Error(), "context is required") {
+		t.Fatalf("boundary nil context: got %v, want context is required error", err)
+	}
+
+	// Boundary: non-existent file returns not exist error.
+	missingPath := filepath.Join(sourceCheckoutRoot(t), "docs", "guides", "nonexistent-guide.md")
+	if _, err := readAuditContextGroupGuide(t.Context(), missingPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("boundary missing file: got %v, want %v", err, os.ErrNotExist)
+	}
+}
+
+// readAuditContextGroupGuide reads the specified guide file within a bounded timeout.
+func readAuditContextGroupGuide(ctx context.Context, path string) ([]byte, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("read guide: context is required")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	data, err := contextopt.ReadSnapshot(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("read guide %s: %w", path, err)
+	}
+	return data, nil
+}
+
+// checkAuditContextGroupGuide verifies the guide document mentions required checks in order with matching references.
+func checkAuditContextGroupGuide(doc string) error {
+	checks := [4]string{"`editor-selection`", "`renovate-engine-bumps`", "`rust-msrv`", "`bestpractices-claims`"}
+	last := -1
+	for i := 0; i < len(checks); i++ {
+		idx := strings.Index(doc, checks[i])
+		if idx < 0 {
+			return fmt.Errorf("missing context-group check %s", checks[i])
+		}
+		if idx < last {
+			return fmt.Errorf("context-group check %s precedes prior check", checks[i])
+		}
+		last = idx
+	}
+	refs := [3]string{
+		"adoption-verification.md#openssf-best-practices-claim-verification",
+		"`internal/adopt/`",
+		"`internal/bestpractices/`",
+	}
+	for i := 0; i < len(refs); i++ {
+		if !strings.Contains(doc, refs[i]) {
+			return fmt.Errorf("missing guide reference %s", refs[i])
+		}
+	}
+	return nil
 }

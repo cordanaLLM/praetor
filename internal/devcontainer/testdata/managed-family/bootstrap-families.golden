@@ -15,6 +15,8 @@ family "reviewed images" source "internal/devcontainer/reviewed_images.go" direc
   assets ["internal/devcontainer/prior-images.json"]
 family "secrets gate" source "tools/secrets/assets.go" directive "//go:embed gate/main.go gate/rules_gen.go gate/placeholder.go"
   assets ["tools/secrets/gate/main.go" "tools/secrets/gate/rules_gen.go" "tools/secrets/gate/placeholder.go"]
+family "bestpractices criteria" source "internal/bestpractices/bestpractices.go" directive "//go:embed upstream/criteria.yml upstream/baseline_criteria.yml"
+  assets ["internal/bestpractices/upstream/criteria.yml" "internal/bestpractices/upstream/baseline_criteria.yml"]
 asset tools/markdownlint/verify.mjs true <nil>
 name tools/markdownlint/verify.mjs <nil>
 asset tools/markdownlint/package-lock.json true <nil>

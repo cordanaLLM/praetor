@@ -2825,3 +2825,21 @@ explains body wrapping and foreign references.
 `internal/paperclip/rules_markdown_test.go` check each file with
 `testsupport.MarkdownFindings` (`internal/testsupport/markdown.go`), a Go subset of the
 markdownlint rules these generators must hold.
+
+## OpenSSF Best Practices claim verification
+
+When a repository holds `.bestpractices.json` at its root, the `bestpractices-claims` gate in
+`standardsctl audit` (`bestpractices.Audit` in `internal/bestpractices/bestpractices.go`)
+validates every `<criterion>_status` and `<criterion>_justification` pair against the upstream
+OpenSSF Best Practices criteria (`criteria/criteria.yml` and `criteria/baseline_criteria.yml`
+vendored from `github.com/coreinfrastructure/best-practices-badge` at commit `8b3a2889e3af`).
+When `.bestpractices.json` is absent, the gate prints `[SKIP] bestpractices-claims: no .bestpractices.json found; not applicable.`.
+
+The gate refuses six classes of invalid claims (`internal/bestpractices/bestpractices_test.go`):
+
+- `na_not_allowed`: status `N/A` where `na_allowed` is `false` or absent.
+- `na_justification_required`: status `N/A` where `na_justification_required` is `true` and the justification is missing or blank.
+- `met_justification_required`: status `Met` where `met_justification_required` is `true` and the justification is missing or blank.
+- `met_url_required`: status `Met` where `met_url_required` is `true` and the justification holds no `http(s)` URL.
+- `invalid_status`: a status value outside `Met`, `Unmet`, `N/A`, `?`.
+- `unknown_criterion`: a `<criterion>_status` key whose criterion exists in neither upstream file.
