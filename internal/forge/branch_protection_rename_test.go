@@ -6,6 +6,7 @@ package forge
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -149,5 +150,13 @@ func TestUnreportedStatusContexts(t *testing.T) {
 	}
 	if got, err = UnreportedStatusContexts(t.Context(), root, "", "acme/widgets", healthy); err != nil || len(got) != 0 {
 		t.Fatalf("healthy runs = %v, %v; want empty", got, err)
+	}
+}
+
+func TestUnreportedStatusContexts_AbsentObject(t *testing.T) {
+	root, base := committedWorkflowRepo(t, map[string]string{".github/workflows/ci.yml": prWorkflow("CI")})
+	removeLooseObject(t, root, base, ".github/workflows/ci.yml")
+	if got, err := UnreportedStatusContexts(t.Context(), root, base, "acme/widgets", nil); !errors.Is(err, ErrCommittedWorkflowAbsent) || got != nil {
+		t.Fatalf("absent committed workflow = %v, %v; want ErrCommittedWorkflowAbsent", got, err)
 	}
 }

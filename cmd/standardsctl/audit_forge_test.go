@@ -959,14 +959,9 @@ func TestAuditLiveBranchProtection_Boundary_UnpushedDefaultBranchIsNotCompared(t
 	}
 }
 
-// An absent base workflow prevents a rename allowance, without changing declared contexts.
-func TestAuditLiveBranchProtection_Boundary_AbsentDefaultBranchWorkflowIsNamed(t *testing.T) {
-	stub := &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active")}
-	f := protectedFixture(t, false, "", stub)
-	f.commitWorkflows(t, map[string]string{"api.yml": prJobWorkflow("API")})
-	f.recordOriginMain(t)
-	f.commitWorkflows(t, map[string]string{"api.yml": ""})
-	object, err := runFixtureGit(t, f.dir, f.gitEnv, "rev-parse", "origin/main:.github/workflows/api.yml")
+func (f *auditFixture) removeOriginMainWorkflowBlob(t *testing.T, name string) {
+	t.Helper()
+	object, err := runFixtureGit(t, f.dir, f.gitEnv, "rev-parse", "origin/main:.github/workflows/"+name)
 	if err != nil {
 		t.Fatalf("resolve the workflow object: %v (%s)", err, object)
 	}
@@ -978,6 +973,31 @@ func TestAuditLiveBranchProtection_Boundary_AbsentDefaultBranchWorkflowIsNamed(t
 	if err := os.Remove(loose); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func (f *auditFixture) divergeOriginMainWithoutBlob(t *testing.T, headWorkflows map[string]string) {
+	t.Helper()
+	base, err := runFixtureGit(t, f.dir, f.gitEnv, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.commitWorkflows(t, map[string]string{"diverged.yml": prJobWorkflow("Diverged")})
+	f.recordOriginMain(t)
+	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "reset", "--hard", strings.TrimSpace(base)); err != nil {
+		t.Fatalf("reset to base: %v (%s)", err, out)
+	}
+	f.commitWorkflows(t, headWorkflows)
+	f.removeOriginMainWorkflowBlob(t, "diverged.yml")
+}
+
+// An absent base or tip workflow prevents a rename allowance or unreported check exclusion, without changing declared contexts.
+func TestAuditLiveBranchProtection_Boundary_AbsentDefaultBranchWorkflowIsNamed(t *testing.T) {
+	stub := &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active")}
+	f := protectedFixture(t, false, "", stub)
+	f.commitWorkflows(t, map[string]string{"api.yml": prJobWorkflow("API")})
+	f.recordOriginMain(t)
+	f.commitWorkflows(t, map[string]string{"api.yml": ""})
+	f.removeOriginMainWorkflowBlob(t, "api.yml")
 	out, err := f.audit(t)
 	if err != nil {
 		t.Fatalf("an absent default branch workflow failed the audit: %v\n%s", err, out)
@@ -985,6 +1005,38 @@ func TestAuditLiveBranchProtection_Boundary_AbsentDefaultBranchWorkflowIsNamed(t
 	mustContain(t, out, "[INFO] Pending status check renames not evaluated: origin/main (workflow api.yml at commit ",
 		"declared checks remain compared.",
 		"[PASS] Live branch protection of main compared with the forge")
+
+	for _, tc := range []struct {
+		name, missing string
+		base, head    map[string]string
+		live          []string
+	}{
+		{"positive rename tip blob absent", "", map[string]string{"licence.yml": prJobWorkflow("REUSE lint")},
+			map[string]string{"licence.yml": prJobWorkflow("Licence / REUSE lint")}, []string{"CI", "Licence / REUSE lint"}},
+		{"negative rename tip blob grants no window", "missing: Licence / REUSE lint", map[string]string{"licence.yml": prJobWorkflow("REUSE lint")},
+			map[string]string{"licence.yml": prJobWorkflow("Licence / REUSE lint")}, []string{"CI", "REUSE lint"}},
+		{"positive unreported tip blob absent", "", nil,
+			map[string]string{"api.yml": prJobWorkflow("API")}, []string{"CI", "API"}},
+		{"negative unreported tip blob keeps check compared", "missing: API", nil,
+			map[string]string{"api.yml": prJobWorkflow("API")}, []string{"CI"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := protectedFixture(t, false, "", &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), tc.live, "active")})
+			if tc.base != nil {
+				fx.commitWorkflows(t, tc.base)
+			}
+			fx.divergeOriginMainWithoutBlob(t, tc.head)
+			out, err := fx.audit(t)
+			mustContain(t, out, "[INFO] Pending status check renames not evaluated: origin/main (workflow diverged.yml at commit ",
+				"declared checks remain compared.")
+			if tc.missing == "" && err != nil {
+				t.Fatalf("absent tip workflow failed the audit: %v\n%s", err, out)
+			}
+			if tc.missing != "" {
+				mustErrContain(t, err, tc.missing)
+			}
+		})
+	}
 }
 
 // withQueueRuleset adds the live merge queue ruleset over includes (id 2) to rulesets.
