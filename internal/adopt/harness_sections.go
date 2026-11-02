@@ -54,6 +54,7 @@ func repositoryVerifyParagraph(head, harness string) string {
 	return para
 }
 
+// isGeneratedVerifyParagraph reports whether para matches the template text of a generated verify paragraph.
 func isGeneratedVerifyParagraph(para string) bool {
 	return strings.Contains(para, strings.TrimSpace(harnessReceiptLine)) ||
 		strings.HasPrefix(para, "`"+verifyCommand+"` = repository-owned gate;") ||
@@ -61,6 +62,7 @@ func isGeneratedVerifyParagraph(para string) bool {
 		strings.Contains(para, "Ed25519 Exit-0 receipt")
 }
 
+// replaceVerifyParagraph replaces the generated verify paragraph in harness with verifyParagraph.
 func replaceVerifyParagraph(harness, verifyParagraph string) string {
 	if verifyParagraph == "" {
 		return harness
@@ -94,12 +96,14 @@ func repositoryInvariantsSection(head string) (string, bool, error) {
 	return section, true, nil
 }
 
+// isGeneratedInvariantsSection reports whether section matches the markers of a generated invariants section.
 func isGeneratedInvariantsSection(section string) bool {
 	return strings.Contains(section, generatedInvariantsHeader) ||
 		strings.Contains(section, legacyGeneratedInvariantsHeader) ||
 		strings.Contains(section, adoptedCheckLegendPrefix)
 }
 
+// replaceInvariantsSection replaces the invariants section in harness with the provided section.
 func replaceInvariantsSection(harness, section string) string {
 	invStart := strings.Index(harness, hisscatalog.GatedInvariantsHeading)
 	opStart := strings.Index(harness, harnessOperationalHeading)
@@ -139,6 +143,7 @@ func repositoryConfigBand(head, harness string) (string, error) {
 	return spliced, nil
 }
 
+// replaceConfigBand replaces the config band in harness with configBand.
 func replaceConfigBand(harness, configBand string) string {
 	if configBand == "" {
 		return harness

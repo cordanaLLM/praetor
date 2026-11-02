@@ -149,6 +149,7 @@ func (s *adoptSession) workingTreeGates(ctx context.Context, pipelines hisscatal
 	return repositoryOwned, nil
 }
 
+// workingTreeVerifyAll reports whether the working tree defines an active verify-all target.
 func (s *adoptSession) workingTreeVerifyAll(ctx context.Context) (bool, error) {
 	if s.verification.Status == verificationPreserved {
 		return true, nil
@@ -164,6 +165,7 @@ func (s *adoptSession) workingTreeVerifyAll(ctx context.Context) (bool, error) {
 	return makefileHasVerifyAll(data), nil
 }
 
+// makefileHasVerifyAll reports whether the Makefile content defines an active verify-all target.
 func makefileHasVerifyAll(data []byte) bool {
 	text, _ := util.NormalizeLineEndings(string(data))
 	text = withoutDocumentationMakefileBlock(text)
