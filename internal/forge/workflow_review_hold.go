@@ -44,8 +44,9 @@ func reviewPlannerDraftStep(step *workflowStep) bool {
 var reviewHoldRepositoryCondition = regexp.MustCompile(`^\(github\.repository == \(vars\.` +
 	canonicalRepositoryVariable + ` \|\| '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+'\) \|\| vars\.PRAETOR_FORK_PORTABILITY == 'enabled'\) && !cancelled\(\)$`)
 
+// reviewHoldRunsAfterFailure proves a trusted review/draft prefix remains visible after failed needs.
 func reviewHoldRunsAfterFailure(job *workflowJob) bool {
-	if ghworkflow.DraftStepPosition(job) != 1 {
+	if ghworkflow.DraftStepPosition(job) != 2 {
 		return false
 	}
 	condition := withoutRenovateBranchSkip(job.If)

@@ -37,6 +37,8 @@ concurrency:
 
 permissions:
   contents: read
+  checks: read
+  statuses: read
   pull-requests: read
 
 jobs:
@@ -44,6 +46,7 @@ jobs:
     name: Heavy tier review gate
     # Advisory planner: required heavy jobs enforce its outputs, including missing verdicts.
     continue-on-error: true
+    # Linux-only: GitHub API control job; platform behavior tested in every harness leg.
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
@@ -63,11 +66,15 @@ jobs:
           echo "clear=false" >> "$GITHUB_OUTPUT"
           echo "reason=draft pull request" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout review gate
+      - name: Checkout trusted review gate
         if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
         uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+          sparse-checkout: scripts/ci_review_gate.py
+          sparse-checkout-cone-mode: false
+          path: .review-gate
       - name: Evaluate review clearance
         id: review
         if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
@@ -75,7 +82,14 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
-        run: python3 -B scripts/ci_review_gate.py gate --pr "$PR_NUMBER" --head "$PR_HEAD"
+        shell: bash
+        run: |
+          if [ -f .review-gate/scripts/ci_review_gate.py ]; then
+            python3 -I -B .review-gate/scripts/ci_review_gate.py gate --pr "$PR_NUMBER" --head "$PR_HEAD"
+          else
+            echo "clear=false" >> "$GITHUB_OUTPUT"
+            echo "reason=gate unreadable: no trusted helper on the default branch" >> "$GITHUB_OUTPUT"
+          fi
 
   verify:
     needs: review-gate
@@ -101,13 +115,44 @@ jobs:
     timeout-minutes: 75
 
     steps:
+      - name: Checkout trusted review gate
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci_review_gate.py
+          sparse-checkout-cone-mode: false
+          path: .review-gate
       - name: Hold heavy tier for review
-        if: needs.review-gate.outputs.clear != 'true'
+        id: review
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
         shell: bash
         env:
-          REASON: >-
-            ${{ needs.review-gate.outputs.reason || 'gate unreadable: review-gate produced no verdict' }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PLANNED_CLEAR: ${{ needs.review-gate.outputs.clear }}
         run: |
+          REASON="gate unreadable: no trusted helper on the default branch"
+          if [ -f .review-gate/scripts/ci_review_gate.py ]; then
+            verdict="$(mktemp)"
+            if GITHUB_OUTPUT="$verdict" python3 -I -B .review-gate/scripts/ci_review_gate.py gate --pr "$PR_NUMBER" --head "$PR_HEAD"; then
+              if [ "$PLANNED_CLEAR" = true ] && grep -qx 'clear=true' "$verdict"; then
+                echo "clear=true" >> "$GITHUB_OUTPUT"
+                rm -f "$verdict"
+                exit 0
+              fi
+              REASON="$(sed -n 's/^reason=//p' "$verdict")"
+              if [ "$PLANNED_CLEAR" != true ]; then
+                REASON="$REASON; planner held: rerun required for platform selection"
+              fi
+              REASON="${REASON:-gate unreadable: trusted helper produced no verdict}"
+            else
+              REASON="gate unreadable: trusted helper failed"
+            fi
+            rm -f "$verdict"
+          fi
           echo "::error title=heavy tier held::$REASON"
           echo "heavy tier held: $REASON" >> "$GITHUB_STEP_SUMMARY"
           exit 1
@@ -542,13 +587,44 @@ jobs:
       PRESET_SUBPATH_URL: https://docs.example.invalid/preset/
 
     steps:
+      - name: Checkout trusted review gate
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci_review_gate.py
+          sparse-checkout-cone-mode: false
+          path: .review-gate
       - name: Hold heavy tier for review
-        if: needs.review-gate.outputs.clear != 'true'
+        id: review
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
         shell: bash
         env:
-          REASON: >-
-            ${{ needs.review-gate.outputs.reason || 'gate unreadable: review-gate produced no verdict' }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PLANNED_CLEAR: ${{ needs.review-gate.outputs.clear }}
         run: |
+          REASON="gate unreadable: no trusted helper on the default branch"
+          if [ -f .review-gate/scripts/ci_review_gate.py ]; then
+            verdict="$(mktemp)"
+            if GITHUB_OUTPUT="$verdict" python3 -I -B .review-gate/scripts/ci_review_gate.py gate --pr "$PR_NUMBER" --head "$PR_HEAD"; then
+              if [ "$PLANNED_CLEAR" = true ] && grep -qx 'clear=true' "$verdict"; then
+                echo "clear=true" >> "$GITHUB_OUTPUT"
+                rm -f "$verdict"
+                exit 0
+              fi
+              REASON="$(sed -n 's/^reason=//p' "$verdict")"
+              if [ "$PLANNED_CLEAR" != true ]; then
+                REASON="$REASON; planner held: rerun required for platform selection"
+              fi
+              REASON="${REASON:-gate unreadable: trusted helper produced no verdict}"
+            else
+              REASON="gate unreadable: trusted helper failed"
+            fi
+            rm -f "$verdict"
+          fi
           echo "::error title=heavy tier held::$REASON"
           echo "heavy tier held: $REASON" >> "$GITHUB_STEP_SUMMARY"
           exit 1

@@ -22,6 +22,9 @@ from common import HookError, clean_env, run
 
 class CIScopeTests(unittest.TestCase):
     def setUp(self):
+        """Create the offline Go-module and Git fixtures used by scope
+        cases.
+        """
         self.temp = tempfile.TemporaryDirectory(prefix="praetor-ci-scope-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
@@ -33,14 +36,30 @@ class CIScopeTests(unittest.TestCase):
         files = {
             "go.mod": "module example.test/scope\ngo 1.27\n",
             "a/a.go": "package a\nconst Value = 1\n",
-            "importer/importer.go": 'package importer\nimport "example.test/scope/a"\nconst Value = a.Value\n',
+            "importer/importer.go": (
+                'package importer\nimport "example.test/scope/a"\n'
+                "const Value = a.Value\n"
+            ),
             "other/other.go": "package other\n",
             "cmd/standardsctl/main.go": "package main\nfunc main() {}\n",
             "internal/adopt/adopt.go": "package adopt\n",
-            "only/only_test.go": 'package only\nimport "testing"\nfunc TestOnly(t *testing.T) {}\n',
-            "tools/schemacheck/go.mod": "module example.test/schema\ngo 1.27\nrequire example.test/scope v0.0.0\nreplace example.test/scope => ../..\n",
-            "tools/schemacheck/schema.go": 'package schema\nimport "example.test/scope/a"\nconst Value = a.Value\n',
-            "embed/embed.go": 'package embed\nimport _ "embed"\n//go:embed input.txt\nvar Input string\n',
+            "only/only_test.go": (
+                'package only\nimport "testing"\n'
+                "func TestOnly(t *testing.T) {}\n"
+            ),
+            "tools/schemacheck/go.mod": (
+                "module example.test/schema\ngo 1.27\n"
+                "require example.test/scope v0.0.0\n"
+                "replace example.test/scope => ../..\n"
+            ),
+            "tools/schemacheck/schema.go": (
+                'package schema\nimport "example.test/scope/a"\n'
+                "const Value = a.Value\n"
+            ),
+            "embed/embed.go": (
+                'package embed\nimport _ "embed"\n'
+                "//go:embed input.txt\nvar Input string\n"
+            ),
             "embed/input.txt": "input\n",
             "a/testdata/input.txt": "fixture\n",
         }
@@ -51,14 +70,17 @@ class CIScopeTests(unittest.TestCase):
         self.base = self.git("rev-parse", "HEAD").decode().strip()
 
     def write(self, name, text):
+        """Write one fixture path, creating its parent directories."""
         path = self.root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
 
     def git(self, *args):
+        """Run a bounded Git command in the temporary fixture repository."""
         return run(["git", *args], cwd=self.root, env=clean_env(), timeout=30)
 
     def commit(self):
+        """Commit fixture data with a deterministic identity."""
         self.git("add", ".")
         self.git(
             "-c",
@@ -73,11 +95,13 @@ class CIScopeTests(unittest.TestCase):
         )
 
     def changed(self, name, text="changed\n", event="pull_request"):
+        """Commit one fixture edit and evaluate its selected scope."""
         self.write(name, text)
         self.commit()
         return ci_scope.scope(self.root, event, self.base, "HEAD")
 
     def test_go_file_selects_own_package_and_reverse_importers(self):
+        """Verify go file selects own package and reverse importers."""
         mode, count, _, flags, packages = self.changed(
             "a/a.go", "package a\nconst Value = 2\n"
         )
@@ -90,6 +114,7 @@ class CIScopeTests(unittest.TestCase):
         self.assertFalse(flags["harness"])
 
     def test_unmatched_path_runs_full_scope_with_path_reason(self):
+        """Verify unmatched path runs full scope with path reason."""
         result = self.changed("unknown/settings.toml")
         self.assertEqual(result[0], "full")
         self.assertIn("unknown/settings.toml", result[2])
@@ -97,6 +122,7 @@ class CIScopeTests(unittest.TestCase):
         self.assertIn("example.test/scope/other", result[4])
 
     def test_push_and_dispatch_keep_every_step(self):
+        """Verify push and dispatch keep every step."""
         for event in ("push", "workflow_dispatch", "merge_group"):
             with self.subTest(event=event):
                 result = ci_scope.scope(self.root, event, self.base, "HEAD")
@@ -105,18 +131,23 @@ class CIScopeTests(unittest.TestCase):
                 self.assertTrue(all(result[3].values()))
 
     def test_git_failure_reports_full_scope(self):
+        """Verify git failure reports full scope."""
         result = ci_scope.scope(self.root, "pull_request", "absent", "HEAD")
         self.assertEqual(result[0], "full")
         self.assertIn("git diff failed", result[2])
         self.assertIn("count unavailable", result[2])
 
     def test_go_failure_reports_full_scope_and_explicit_pattern(self):
+        """Verify go failure reports full scope and explicit pattern."""
         self.write("a/a.go", "package a\nconst Value = 3\n")
         self.commit()
         with patch(
-            "ci_scope.go_packages", side_effect=HookError("go list fixture failure")
+            "ci_scope.go_packages",
+            side_effect=HookError("go list fixture failure"),
         ):
-            result = ci_scope.scope(self.root, "pull_request", self.base, "HEAD")
+            result = ci_scope.scope(
+                self.root, "pull_request", self.base, "HEAD"
+            )
         self.assertEqual(result[0], "full")
         self.assertIn("Go scope discovery failed", result[2])
         self.assertIn("go list fixture failure", result[2])
@@ -124,14 +155,18 @@ class CIScopeTests(unittest.TestCase):
         self.assertTrue(all(result[3].values()))
 
     def test_zero_files_selects_no_steps(self):
+        """Verify zero files selects no steps."""
         result = ci_scope.scope(self.root, "pull_request", self.base, "HEAD")
         self.assertEqual(result[0:2], ("selected", 0))
         self.assertFalse(any(result[3].values()))
         self.assertEqual(result[4], [])
         self.assertIn("Documentation References: run", ci_scope.report(result))
-        self.assertIn("Test Every Package: skipped; reason:", ci_scope.report(result))
+        self.assertIn(
+            "Test Every Package: skipped; reason:", ci_scope.report(result)
+        )
 
     def test_docs_only_selects_figures(self):
+        """Verify docs only selects figures."""
         result = self.changed("docs/guide.md")
         self.assertEqual(result[0:2], ("selected", 1))
         self.assertEqual(
@@ -140,14 +175,19 @@ class CIScopeTests(unittest.TestCase):
         self.assertEqual(result[4], [])
 
     def test_nested_module_does_not_select_main_module(self):
-        result = self.changed("tools/schemacheck/schema.go", "package schema\n")
+        """Verify nested module does not select main module."""
+        result = self.changed(
+            "tools/schemacheck/schema.go", "package schema\n"
+        )
         self.assertEqual(result[0], "selected")
         self.assertEqual(
-            [name for name, value in result[3].items() if value], ["schemacheck"]
+            [name for name, value in result[3].items() if value],
+            ["schemacheck"],
         )
         self.assertEqual(result[4], [])
 
     def test_go_config_selects_every_package(self):
+        """Verify go config selects every package."""
         result = self.changed(
             "go.mod", "module example.test/scope\ngo 1.27\n// changed\n"
         )
@@ -156,6 +196,7 @@ class CIScopeTests(unittest.TestCase):
         self.assertTrue(all(result[3].values()))
 
     def test_embedded_and_testdata_inputs_reuse_package_selector(self):
+        """Verify embedded and testdata inputs reuse package selector."""
         for name, package in (
             ("embed/input.txt", "embed"),
             ("a/testdata/input.txt", "a"),
@@ -166,9 +207,13 @@ class CIScopeTests(unittest.TestCase):
                 self.assertIn("example.test/scope/" + package, result[4])
 
     def test_step_inputs_and_global_inputs(self):
+        """Verify step inputs and global inputs."""
         for name, expected in (
             ("scripts/sync_interfig.py", {"harness", "interfig"}),
-            ("tools/figures/third_party/interfig/a.ts", {"figures", "interfig"}),
+            (
+                "tools/figures/third_party/interfig/a.ts",
+                {"figures", "interfig"},
+            ),
             ("tools/markdownlint/verify.mjs", {"markdown"}),
             ("README.md", {"figures"}),
             ("changelog.d/change.md", set()),
@@ -178,7 +223,8 @@ class CIScopeTests(unittest.TestCase):
                 result = ci_scope.selected_scope(self.root, [name])
                 self.assertEqual(result[0], "selected")
                 self.assertEqual(
-                    {key for key, value in result[3].items() if value}, expected
+                    {key for key, value in result[3].items() if value},
+                    expected,
                 )
         for name in (
             ".github/workflows/x.yml",
@@ -188,9 +234,12 @@ class CIScopeTests(unittest.TestCase):
             "scripts/portability_selftest.py",
         ):
             with self.subTest(name=name):
-                self.assertEqual(ci_scope.selected_scope(self.root, [name])[0], "full")
+                self.assertEqual(
+                    ci_scope.selected_scope(self.root, [name])[0], "full"
+                )
 
     def test_cli_and_adopt_flags_follow_selected_packages(self):
+        """Verify cli and adopt flags follow selected packages."""
         for name, flag in (
             ("cmd/standardsctl/main.go", "cli"),
             ("internal/adopt/adopt.go", "adopt"),
@@ -203,6 +252,7 @@ class CIScopeTests(unittest.TestCase):
                 self.assertEqual(len(result[4]), 1)
 
     def test_cli_writes_actions_outputs_summary_and_packages(self):
+        """Verify cli writes actions outputs summary and packages."""
         self.changed("a/a.go", "package a\nconst Value = 4\n")
         output, summary, packages = [
             self.root / name for name in ("output", "summary", "packages")
@@ -237,12 +287,14 @@ class CIScopeTests(unittest.TestCase):
             packages.read_text().splitlines(),
             ["example.test/scope/a", "example.test/scope/importer"],
         )
-        # Bytes, not read_text: universal newlines would hide the carriage return that
+        # Bytes, not read_text: universal newlines would hide the carriage
+        # return that
         # bash `read -r` keeps on the Windows leg, where this suite also runs.
         self.assertNotIn(b"\r", packages.read_bytes())
         self.assertNotIn(b"\r", output.read_bytes())
 
     def test_removed_package_selects_full_scope(self):
+        """Verify removed package selects full scope."""
         (self.root / "other/other.go").unlink()
         self.commit()
         result = ci_scope.scope(self.root, "pull_request", self.base, "HEAD")
@@ -250,9 +302,12 @@ class CIScopeTests(unittest.TestCase):
         self.assertIn("other/other.go", result[2])
 
 
-# The workflow's run steps use `shell: bash`, which Actions resolves on PATH (Git Bash on the
-# Windows image). A bare "bash" given to CreateProcess searches System32 before PATH and starts
-# the WSL launcher instead, which has no distribution on the runner; resolve it the way Actions does.
+# The workflow's run steps use `shell: bash`, which Actions resolves on PATH
+# (Git Bash on the
+# Windows image). A bare "bash" given to CreateProcess searches System32 before
+# PATH and starts
+# the WSL launcher instead, which has no distribution on the runner; resolve it
+# the way Actions does.
 BASH = shutil.which("bash")
 MAX_WORKFLOW_LINES = 2048
 
@@ -268,36 +323,70 @@ GO_STUB = r"""go() {
                 ./internal/adopt) echo example.test/scope/internal/adopt ;;
                 ./cmd/standardsctl) echo example.test/scope/cmd/standardsctl ;;
                 -f) shift 2; for package in "$@"; do
-                      if [ "$package" != example.test/scope/only ]; then echo "$package"; fi
+                      if [ "$package" != example.test/scope/only ]; then
+                        echo "$package"
+                      fi
                     done ;;
                 *) printf '%s\n' "$@" ;;
               esac ;;
             test)
               TEST_COUNT=$(( ${TEST_COUNT:-0} + 1 ))
-              if [ "$FAIL_GO" = true ] || { [ "$FAIL_GO" = first ] && [ "$TEST_COUNT" -eq 1 ]; }; then return 9; fi ;;
+              if [ "$FAIL_GO" = true ] ||
+                { [ "$FAIL_GO" = first ] && [ "$TEST_COUNT" -eq 1 ]; }; then
+                return 9
+              fi ;;
           esac
         }
         """
 
 
 @unittest.skipUnless(
-    BASH, "no bash on PATH: the workflow's bash steps cannot be replayed on this host"
+    BASH,
+    "no bash on PATH: "
+    "the workflow's bash steps cannot be replayed on this host",
 )
 class WorkflowCommandsTests(unittest.TestCase):
     workflow = Path(__file__).resolve().parents[3] / ".github/workflows/portability.yml"
 
     def test_review_hold_fails_with_reason_before_work(self):
+        """Replay a fresh held verdict from the trusted helper before any
+        suite work.
+        """
         with tempfile.TemporaryDirectory() as temp:
             summary = Path(temp) / "summary"
-            with self.assertRaisesRegex(HookError, "heavy tier held.*unresolved"):
+            helper = Path(temp) / ".review-gate/scripts/ci_review_gate.py"
+            helper.parent.mkdir(parents=True)
+            helper.write_text(
+                "import os\nfrom pathlib import Path\n"
+                "Path(os.environ['GITHUB_OUTPUT']).write_text("
+                "'clear=false\\nreason=1 unresolved review thread(s)\\n')\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                HookError, "heavy tier held.*unresolved"
+            ):
                 run(
-                    [BASH, "-e", "-c", self.step("Hold heavy tier for review")],
-                    env=dict(os.environ, REASON="1 unresolved review thread(s)",
-                             GITHUB_STEP_SUMMARY=str(summary)),
+                    [
+                        BASH,
+                        "-e",
+                        "-c",
+                        self.step("Hold heavy tier for review"),
+                    ],
+                    cwd=temp,
+                    env=dict(
+                        os.environ,
+                        PLANNED_CLEAR="true",
+                        PR_NUMBER="7",
+                        PR_HEAD="a" * 40,
+                        GITHUB_OUTPUT=str(Path(temp) / "output"),
+                        GITHUB_STEP_SUMMARY=str(summary),
+                    ),
                     timeout=30,
                 )
-            self.assertEqual(summary.read_text().strip(),
-                             "heavy tier held: 1 unresolved review thread(s)")
+            self.assertEqual(
+                summary.read_text().strip(),
+                "heavy tier held: 1 unresolved review thread(s)",
+            )
 
     def step_section(self, name):
         workflow_header, jobs = self.workflow.read_text(encoding="utf-8").split(
@@ -419,12 +508,16 @@ class WorkflowCommandsTests(unittest.TestCase):
         return output.decode(), (root / "calls").read_text().splitlines()
 
     def test_only_selected_partition_runs(self):
+        """Verify only selected partition runs."""
         for package, flag, runs in (
             ("other", "", 1),
             ("internal/adopt", "adopt", 1),
             ("cmd/standardsctl", "cli", 2),
         ):
-            with self.subTest(package=package), tempfile.TemporaryDirectory() as temp:
+            with (
+                self.subTest(package=package),
+                tempfile.TemporaryDirectory() as temp,
+            ):
                 output, calls = self.execute(
                     temp,
                     "Test Every Package",
@@ -435,12 +528,16 @@ class WorkflowCommandsTests(unittest.TestCase):
                 tests = [call for call in calls if call.startswith("test ")]
                 self.assertEqual(len(tests), runs)
                 self.assertTrue(
-                    all("example.test/scope/" + package in call for call in tests)
+                    all(
+                        "example.test/scope/" + package in call
+                        for call in tests
+                    )
                 )
                 self.assertIn("skipped:", output)
                 self.assertTrue(all("./..." not in call for call in tests))
 
     def test_failures_do_not_drop_later_runs(self):
+        """Verify failures do not drop later runs."""
         with tempfile.TemporaryDirectory() as temp:
             with self.assertRaisesRegex(HookError, "exited 9"):
                 self.execute(
@@ -457,6 +554,7 @@ class WorkflowCommandsTests(unittest.TestCase):
             )
 
     def test_build_and_vet_exclude_test_only_packages(self):
+        """Verify build and vet exclude test only packages."""
         for step, command in (
             ("Compile Every Package", "build"),
             ("Vet Every Package", "vet"),
@@ -471,12 +569,15 @@ class WorkflowCommandsTests(unittest.TestCase):
                 ):
                     output, calls = self.execute(temp, step, packages)
                     commands = [
-                        call for call in calls if call.startswith(command + " ")
+                        call
+                        for call in calls
+                        if call.startswith(command + " ")
                     ]
                     if len(packages) == 1:
                         self.assertEqual(commands, [])
                         self.assertIn(
-                            "skipped: selected packages contain tests only", output
+                            "skipped: selected packages contain tests only",
+                            output,
                         )
                     else:
                         self.assertEqual(

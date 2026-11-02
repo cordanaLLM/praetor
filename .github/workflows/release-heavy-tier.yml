@@ -13,6 +13,8 @@ permissions:
   actions: write
   pull-requests: read
   contents: read
+  checks: read
+  statuses: read
 
 concurrency:
   group: release-heavy-tier
@@ -22,6 +24,7 @@ jobs:
   release:
     # Pilot only; adoption rollout is a separate change.
     if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
+    # Linux-only: GitHub API control job; platform behavior tested in every harness leg.
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
@@ -31,6 +34,8 @@ jobs:
           # Review events carry a PR ref. Never execute that ref with actions: write.
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+          sparse-checkout: scripts/ci_review_gate.py
+          sparse-checkout-cone-mode: false
       - name: Release reviewed heads
         env:
           GITHUB_TOKEN: ${{ github.token }}

@@ -45,6 +45,9 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read
+  checks: read
+  statuses: read
 
 env:
   SHELLCHECK_VERSION: v0.11.0
@@ -57,6 +60,7 @@ jobs:
     name: Heavy tier review gate
     # Advisory planner: required heavy jobs enforce its outputs, including missing verdicts.
     continue-on-error: true
+    # Linux-only: GitHub API control job; platform behavior tested in every harness leg.
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
@@ -76,11 +80,15 @@ jobs:
           echo "clear=false" >> "$GITHUB_OUTPUT"
           echo "reason=draft pull request" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout review gate
+      - name: Checkout trusted review gate
         if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
         uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+          sparse-checkout: scripts/ci_review_gate.py
+          sparse-checkout-cone-mode: false
+          path: .review-gate
       - name: Evaluate review clearance
         id: review
         if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
@@ -88,7 +96,14 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
-        run: python3 -B scripts/ci_review_gate.py gate --pr "$PR_NUMBER" --head "$PR_HEAD"
+        shell: bash
+        run: |
+          if [ -f .review-gate/scripts/ci_review_gate.py ]; then
+            python3 -I -B .review-gate/scripts/ci_review_gate.py gate --pr "$PR_NUMBER" --head "$PR_HEAD"
+          else
+            echo "clear=false" >> "$GITHUB_OUTPUT"
+            echo "reason=gate unreadable: no trusted helper on the default branch" >> "$GITHUB_OUTPUT"
+          fi
 
   # Outside the canonical repository the matrix is an operator's choice (#189): the macOS
   # and Windows legs are billed at a multiple on a private repository, and an operational
@@ -175,13 +190,44 @@ jobs:
             name: macOS
 
     steps:
+      - name: Checkout trusted review gate
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci_review_gate.py
+          sparse-checkout-cone-mode: false
+          path: .review-gate
       - name: Hold heavy tier for review
-        if: needs.review-gate.outputs.clear != 'true'
+        id: review
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
         shell: bash
         env:
-          REASON: >-
-            ${{ needs.review-gate.outputs.reason || 'gate unreadable: review-gate produced no verdict' }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PLANNED_CLEAR: ${{ needs.review-gate.outputs.clear }}
         run: |
+          REASON="gate unreadable: no trusted helper on the default branch"
+          if [ -f .review-gate/scripts/ci_review_gate.py ]; then
+            verdict="$(mktemp)"
+            if GITHUB_OUTPUT="$verdict" python3 -I -B .review-gate/scripts/ci_review_gate.py gate --pr "$PR_NUMBER" --head "$PR_HEAD"; then
+              if [ "$PLANNED_CLEAR" = true ] && grep -qx 'clear=true' "$verdict"; then
+                echo "clear=true" >> "$GITHUB_OUTPUT"
+                rm -f "$verdict"
+                exit 0
+              fi
+              REASON="$(sed -n 's/^reason=//p' "$verdict")"
+              if [ "$PLANNED_CLEAR" != true ]; then
+                REASON="$REASON; planner held: rerun required for platform selection"
+              fi
+              REASON="${REASON:-gate unreadable: trusted helper produced no verdict}"
+            else
+              REASON="gate unreadable: trusted helper failed"
+            fi
+            rm -f "$verdict"
+          fi
           echo "::error title=heavy tier held::$REASON"
           echo "heavy tier held: $REASON" >> "$GITHUB_STEP_SUMMARY"
           exit 1
@@ -238,7 +284,7 @@ jobs:
       # through the hook's package selector; push and dispatch retain the full run.
       - name: Select Platform Neutrality Scope
         id: scope
-        if: ${{ !cancelled() && needs.review-gate.outputs.clear == 'true' && github.event.pull_request.draft != true }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true }}
         shell: bash
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}
@@ -249,7 +295,7 @@ jobs:
             --output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY" --packages "$RUNNER_TEMP/portability-packages.txt"
 
       - name: Select Buildable Go Packages
-        if: ${{ !cancelled() && needs.review-gate.outputs.clear == 'true' && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
           max_packages="${PORTABILITY_MAX_PACKAGES:?}"
@@ -267,7 +313,7 @@ jobs:
       # Build before test: a compile error on one OS is the cheapest portability defect to
       # find and the one most likely to be a build-constraint or path-separator mistake.
       - name: Compile Every Package
-        if: ${{ !cancelled() && needs.review-gate.outputs.clear == 'true' && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
           max_packages="${PORTABILITY_MAX_PACKAGES:?}"
@@ -293,7 +339,7 @@ jobs:
       # reproduces exactly that. `!cancelled()` does not alter the job's conclusion: a failed
       # step still fails the leg. It only means one run reports every layer instead of one.
       - name: Vet Every Package
-        if: ${{ !cancelled() && needs.review-gate.outputs.clear == 'true' && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
           max_packages="${PORTABILITY_MAX_PACKAGES:?}"
@@ -323,7 +369,7 @@ jobs:
       # ran out of the same bounds compiling the scanners while the other test binaries ran;
       # building them here, outside any bound, leaves the tests a build cache to hit.
       - name: Download And Build Pinned Tools
-        if: ${{ !cancelled() && needs.review-gate.outputs.clear == 'true' && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
           go mod download -modfile=tools/go/go.mod
@@ -353,7 +399,7 @@ jobs:
       # Windows-specific adopt tests on Windows, so it stays in the first run. Every selected run
       # goes even after a failure; the step fails when any selected run does.
       - name: Test Every Package
-        if: ${{ !cancelled() && needs.review-gate.outputs.clear == 'true' && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
           adopt=$(go list ./internal/adopt)
@@ -425,7 +471,7 @@ jobs:
           PYTHON: ${{ steps.python.outputs.python-path }}
 
       - name: Upload Per-Test Timing
-        if: ${{ !cancelled() && needs.review-gate.outputs.clear == 'true' && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: go-test-json-${{ matrix.name }}
@@ -437,7 +483,7 @@ jobs:
       # client config against the vendored upstream schemas and builds and drives standards-mcp,
       # so it runs on each platform too (HISS-21); its network checks skip with a stated reason.
       - name: Test The Client Schema Oracle Module
-        if: ${{ !cancelled() && needs.review-gate.outputs.clear == 'true' && github.event.pull_request.draft != true && steps.scope.outputs.schemacheck == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.schemacheck == 'true' }}
         run: |
           go -C tools/schemacheck vet ./...
           go -C tools/schemacheck test -timeout 30m ./...
@@ -447,7 +493,7 @@ jobs:
       # a suite that silently degrades because a tool is missing is the failure mode this whole
       # job exists to make visible, and it would be absurd to introduce it here.
       - name: Install Pinned Git Hook Toolchain
-        if: ${{ !cancelled() && needs.review-gate.outputs.clear == 'true' && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
         run: go install -C tools/lefthook github.com/evilmartians/lefthook/v2
 
       # test_security_scope.py fails outright when gosec is absent rather than skipping, which
@@ -462,7 +508,7 @@ jobs:
       # TestPortabilityPassesNoDottedDashArgumentThroughPowerShell keeps such an argument out
       # of the default shell.
       - name: Install Security Scanner
-        if: ${{ !cancelled() && needs.review-gate.outputs.clear == 'true' && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
         shell: bash
         run: go install -modfile=tools/go/go.mod github.com/securego/gosec/v2/cmd/gosec
 
@@ -484,7 +530,7 @@ jobs:
       # yamllint pin (HISS-19). The lock is universal for Python >= 3.10, and it also brings
       # black and flake8, which no hook runs.
       - name: Install YAML Linter
-        if: ${{ !cancelled() && needs.review-gate.outputs.clear == 'true' && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
         shell: bash
         run: >-
           "$PYTHON" -m pip install --disable-pip-version-check --require-hashes
@@ -505,7 +551,7 @@ jobs:
       # reproducible gate (HISS-19, HISS-20). The install directory goes first on PATH so the
       # pin wins over the preinstalled copy.
       - name: Install Shell Linter
-        if: ${{ !cancelled() && needs.review-gate.outputs.clear == 'true' && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -545,7 +591,7 @@ jobs:
           fi
 
       - name: Build praetorctl
-        if: ${{ !cancelled() && needs.review-gate.outputs.clear == 'true' && github.event.pull_request.draft != true }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true }}
         shell: bash
         run: go build -o "bin/praetorctl$(go env GOEXE)" ./cmd/standardsctl
 
@@ -554,7 +600,7 @@ jobs:
       # repository path: the three places a platform difference would make it wrong. The
       # binary built above runs it directly, not through its Makefile target.
       - name: Documentation References
-        if: ${{ !cancelled() && needs.review-gate.outputs.clear == 'true' && github.event.pull_request.draft != true }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true }}
         shell: bash
         run: '"bin/praetorctl$(go env GOEXE)" docs references --path=.'
 
@@ -572,7 +618,7 @@ jobs:
       # tool; one outside --require is reported as not asserted, never silently absent. The
       # table in docs/standards/hiss-21-platform-neutrality.md is rendered from REQUIRED.
       - name: Assert Hook Toolchain
-        if: ${{ !cancelled() && needs.review-gate.outputs.clear == 'true' && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
         shell: bash
         run: '"$PYTHON" -B .config/lefthook/scripts/toolchain.py --require "$REQUIRED"'
         env:
@@ -588,7 +634,7 @@ jobs:
       # than by name: assuming a platform's binary naming is the exact defect this job exists
       # to catch. The hooks they drive resolve their own interpreter, as on any host.
       - name: Harness Self-Tests
-        if: ${{ !cancelled() && needs.review-gate.outputs.clear == 'true' && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
         # 19 green Windows runs: median 21.8 min, p95/max 25.1 min; 40 min = 1.6x p95.
         # The driver's 1800 s suite timeout plus bounded tree cleanup fits inside this bound.
         timeout-minutes: 40
@@ -597,6 +643,7 @@ jobs:
         # suites' own results on that leg; the step fails when either does.
         run: |
           status=0
+          "$PYTHON" -B scripts/ci_review_gate.py selftest || status=$?
           "$PYTHON" -u -B scripts/test_portability_selftest.py || status=$?
           "$PYTHON" -u -B scripts/portability_selftest.py --min-executed "$MIN_EXECUTED" || status=$?
           exit "$status"
@@ -615,7 +662,7 @@ jobs:
       # start the npm batch shim without a shell and runs the npm-cli.js shipped beside node.exe
       # instead; this step is the leg that proves that path works on the platform it exists for.
       - name: Setup Node Toolchain
-        if: ${{ !cancelled() && needs.review-gate.outputs.clear == 'true' && github.event.pull_request.draft != true && (steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true') }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && (steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true') }}
         uses: actions/setup-node@v7
         with:
           node-version: '24'
@@ -625,7 +672,7 @@ jobs:
             tools/markdownlint/package-lock.json
 
       - name: Markdown Gate Self-Test
-        if: ${{ !cancelled() && needs.review-gate.outputs.clear == 'true' && github.event.pull_request.draft != true && steps.scope.outputs.markdown == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.markdown == 'true' }}
         run: node tools/markdownlint/verify.mjs --self-test
 
       # `make docs-figures-check` and the managed `make docs-figures` are verify-all gates, so they
@@ -640,7 +687,7 @@ jobs:
       # at the end of .gitattributes). The Chromium smoke test needs a built site and runs in
       # pages.yml on Linux only.
       - name: Figure Build Check
-        if: ${{ !cancelled() && needs.review-gate.outputs.clear == 'true' && github.event.pull_request.draft != true && steps.scope.outputs.figures == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.figures == 'true' }}
         shell: bash
         run: |
           npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
@@ -655,7 +702,7 @@ jobs:
       # `-text` in .gitattributes so their hashes hold on a Windows checkout, and node expands the
       # quoted test glob itself (docs/standards/hiss-21-platform-neutrality.md).
       - name: Interfig Verify Gate
-        if: ${{ !cancelled() && needs.review-gate.outputs.clear == 'true' && github.event.pull_request.draft != true && steps.scope.outputs.interfig == 'true' }}
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft != true && steps.scope.outputs.interfig == 'true' }}
         shell: bash
         run: |
           "$PYTHON" -B scripts/test_sync_interfig.py

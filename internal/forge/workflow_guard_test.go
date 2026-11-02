@@ -505,7 +505,7 @@ var everyLegConditions = []string{
 
 // runsOnEveryLeg reports whether a step's condition cannot differ between matrix legs.
 func runsOnEveryLeg(step workflowStep, jobID string) bool {
-	step.If = strings.ReplaceAll(step.If, "needs.review-gate.outputs.clear == 'true' && ", "")
+	step.If = strings.ReplaceAll(step.If, "(github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && ", "")
 	cond := strings.TrimSpace(step.If)
 	if cond == everyLegConditions[3] {
 		return jobID == "windows-shard"
@@ -516,7 +516,7 @@ func runsOnEveryLeg(step workflowStep, jobID string) bool {
 // runsInPortabilityScope permits only the declared step scope, never a platform condition.
 // Push and dispatch set every flag; PR fixtures exercise each selector branch.
 func runsInPortabilityScope(step workflowStep, jobID, flag string) bool {
-	step.If = strings.ReplaceAll(step.If, "needs.review-gate.outputs.clear == 'true' && ", "")
+	step.If = strings.ReplaceAll(step.If, "(github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && ", "")
 	if runsOnEveryLeg(step, jobID) {
 		return true
 	}
