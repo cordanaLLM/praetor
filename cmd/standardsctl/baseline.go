@@ -96,6 +96,7 @@ func (mode baselineMode) writesRequested() bool {
 	return mode.record || mode.recordImageRefs || mode.allowIncrease || mode.reason != "" || mode.allowGosecIncrease || mode.gosecReason != ""
 }
 
+// recordImageRefBaselineCmd records floating image reference debt for the repository rooted at path's parent.
 func recordImageRefBaselineCmd(path string, allowIncrease bool, reason string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), baselineScanTimeout)
 	defer cancel()

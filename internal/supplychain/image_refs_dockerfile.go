@@ -9,6 +9,7 @@ import (
 	"strings"
 )
 
+// isDockerfile reports whether the file path matches Dockerfile or Containerfile naming conventions.
 func isDockerfile(slashed string) bool {
 	base := filepath.Base(slashed)
 	lower := strings.ToLower(base)
@@ -18,6 +19,7 @@ func isDockerfile(slashed string) bool {
 		strings.HasSuffix(lower, ".dockerfile") || strings.HasSuffix(lower, ".containerfile")
 }
 
+// collectDockerfileFindings parses FROM instructions in Dockerfile content and returns findings for unpinned images.
 func collectDockerfileFindings(file, content string) []ImageRefFinding {
 	stmts := dockerfileStatements(content)
 	stages := dockerfileStages(stmts)
@@ -32,6 +34,7 @@ func collectDockerfileFindings(file, content string) []ImageRefFinding {
 	return findings
 }
 
+// dockerfileStages collects stage names defined in multi-stage Dockerfile FROM statements.
 func dockerfileStages(stmts []numberedLine) map[string]bool {
 	stages := make(map[string]bool, len(stmts))
 	for i := 0; i < len(stmts) && i < maxFileLines; i++ {
@@ -42,6 +45,7 @@ func dockerfileStages(stmts []numberedLine) map[string]bool {
 	return stages
 }
 
+// dockerfileStatements splits Dockerfile content into logical statements, joining line continuations.
 func dockerfileStatements(content string) []numberedLine {
 	raw := strings.Split(content, "\n")
 	var out []numberedLine
@@ -69,6 +73,7 @@ func dockerfileStatements(content string) []numberedLine {
 	return out
 }
 
+// parseDockerfileFrom parses a Dockerfile FROM statement, returning the base image target and optional stage name.
 func parseDockerfileFrom(stmt string) (target, stage string) {
 	fields := strings.Fields(stripInlineComment(stmt))
 	if len(fields) < 2 || !strings.EqualFold(fields[0], "FROM") {

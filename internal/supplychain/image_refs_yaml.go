@@ -15,17 +15,20 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
+// isYAMLFile reports whether the file path has a .yml or .yaml extension.
 func isYAMLFile(slashed string) bool {
 	ext := strings.ToLower(filepath.Ext(slashed))
 	return ext == ".yml" || ext == ".yaml"
 }
 
+// isWorkflowFile reports whether the path points to a GitHub Actions workflow definition.
 func isWorkflowFile(slashed string) bool {
 	return strings.HasPrefix(slashed, ".github/workflows/") ||
 		strings.Contains(slashed, "/.github/workflows/") ||
 		strings.Contains(slashed, "github-actions/")
 }
 
+// collectYAMLFindings inspects YAML content and returns findings for unpinned container image references.
 func collectYAMLFindings(file, content string) []ImageRefFinding {
 	if isWorkflowFile(file) {
 		return collectWorkflowFindings(file, content)
@@ -38,6 +41,7 @@ func collectYAMLFindings(file, content string) []ImageRefFinding {
 	return findings
 }
 
+// collectWorkflowFindings parses a GitHub Actions workflow document and returns findings for container, service, and action image references.
 func collectWorkflowFindings(file, content string) []ImageRefFinding {
 	spec, err := ghworkflow.Parse([]byte(content))
 	if err != nil {
@@ -57,6 +61,7 @@ func collectWorkflowFindings(file, content string) []ImageRefFinding {
 	return findings
 }
 
+// appendWorkflowContainerFinding checks the container field of a workflow job node and appends unpinned findings.
 func appendWorkflowContainerFinding(findings []ImageRefFinding, file string, container *yaml.Node) []ImageRefFinding {
 	switch container.Kind {
 	case yaml.ScalarNode:
@@ -71,6 +76,7 @@ func appendWorkflowContainerFinding(findings []ImageRefFinding, file string, con
 	return findings
 }
 
+// appendWorkflowServiceFindings checks service definitions in a workflow job node and appends unpinned container findings.
 func appendWorkflowServiceFindings(findings []ImageRefFinding, file string, services *yaml.Node) []ImageRefFinding {
 	if services.Kind != yaml.MappingNode {
 		return findings
@@ -83,6 +89,7 @@ func appendWorkflowServiceFindings(findings []ImageRefFinding, file string, serv
 	return findings
 }
 
+// appendWorkflowStepFindings checks action step uses clauses and appends findings for docker:// references.
 func appendWorkflowStepFindings(findings []ImageRefFinding, file string, steps []ghworkflow.Step) []ImageRefFinding {
 	for i := 0; i < len(steps) && i < maxFileLines; i++ {
 		uses := strings.TrimSpace(steps[i].Uses)
@@ -93,6 +100,7 @@ func appendWorkflowStepFindings(findings []ImageRefFinding, file string, steps [
 	return findings
 }
 
+// extractYAMLImageRef parses an image key from a single YAML line and returns the cleaned scalar reference.
 func extractYAMLImageRef(line string) string {
 	trimmed := strings.TrimSpace(line)
 	if strings.HasPrefix(trimmed, "- ") {
@@ -108,6 +116,7 @@ func extractYAMLImageRef(line string) string {
 	return validYAMLScalarRef(cleanYAMLScalar(rest))
 }
 
+// cleanYAMLScalar strips surrounding quotes and inline comments from a YAML scalar value.
 func cleanYAMLScalar(raw string) string {
 	s := strings.TrimSpace(raw)
 	if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') {
@@ -118,6 +127,7 @@ func cleanYAMLScalar(raw string) string {
 	return strings.Trim(strings.TrimSpace(stripInlineComment(s)), `"'`)
 }
 
+// closingQuoteIndex finds the matching closing quote index in string s, respecting escape characters.
 func closingQuoteIndex(s string) int {
 	quote := s[0]
 	for i := 1; i < len(s) && i < maxFileLines; i++ {
@@ -132,6 +142,7 @@ func closingQuoteIndex(s string) int {
 	return -1
 }
 
+// validYAMLScalarRef validates that a scalar string is not an empty or structural YAML literal.
 func validYAMLScalarRef(val string) string {
 	if val == "" || val == "|" || val == ">" || val == "{}" || val == "[]" || strings.HasSuffix(val, ":") {
 		return ""
@@ -139,6 +150,7 @@ func validYAMLScalarRef(val string) string {
 	return val
 }
 
+// stripInlineComment removes trailing inline comments starting with a space and hash character.
 func stripInlineComment(s string) string {
 	if idx := strings.Index(s, " #"); idx >= 0 {
 		return s[:idx]

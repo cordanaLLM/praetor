@@ -82,10 +82,12 @@ type imageRefDirectoryWalk struct {
 	files []string
 }
 
+// isIgnoredScanDir reports whether a directory name should be skipped during image reference scanning.
 func isIgnoredScanDir(name string) bool {
 	return name == ".git" || name == ".workingdir" || name == "node_modules" || name == "vendor"
 }
 
+// appendEntries filters and appends subdirectories and files to the walk state, enforcing safety limits.
 func (walk *imageRefDirectoryWalk) appendEntries(relDir string, entries []os.DirEntry) error {
 	if len(entries) > maxScannedFiles {
 		return fmt.Errorf("directory %s passed %d entries", relDir, maxScannedFiles)
