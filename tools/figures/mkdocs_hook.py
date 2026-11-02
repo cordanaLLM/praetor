@@ -312,9 +312,7 @@ class _TrustedRedirectHandler(HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         target = urljoin(req.full_url, newurl)
-        validate_archive_url(
-            target, TRUSTED_REDIRECT_HOSTS, allow_query=True
-        )
+        validate_archive_url(target, TRUSTED_REDIRECT_HOSTS, allow_query=True)
         return super().redirect_request(req, fp, code, msg, headers, target)
 
 
@@ -330,9 +328,7 @@ def download_player_archive(url: str) -> bytes:
     with urlopen(url, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
         final_url = getattr(response, "geturl", lambda: "")()
         if final_url:
-            validate_archive_url(
-                final_url, TRUSTED_REDIRECT_HOSTS, allow_query=True
-            )
+            validate_archive_url(final_url, TRUSTED_REDIRECT_HOSTS, allow_query=True)
         raw = response.read(MAX_FILE_BYTES + 1)
     if len(raw) > MAX_FILE_BYTES:
         raise CheckError(f"{url} exceeds {MAX_FILE_BYTES} bytes")

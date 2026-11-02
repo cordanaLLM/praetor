@@ -25,6 +25,7 @@ var lintPriorFixtures = []struct{ family, rel, dir, fixture string }{
 	{"Figure engine", "tools/figures/astro.mjs", filepath.Join("..", "managedasset", "testdata", "prior"), "figures-astro-review-round1.mjs.txt"},
 	{"Figure engine", "tools/figures/astro.mjs", filepath.Join("..", "managedasset", "testdata", "prior"), "figures-astro-review-round2-part1.mjs.txt"},
 	{"Figure engine", "tools/figures/mkdocs_hook.py", filepath.Join("..", "managedasset", "testdata", "prior"), "figures-mkdocs_hook-review-round1.py.txt"},
+	{"Figure engine", "tools/figures/mkdocs_hook.py", filepath.Join("..", "managedasset", "testdata", "prior"), "figures-mkdocs_hook-review-round2-part1.py.txt"},
 	{"Markdown", "tools/markdownlint/verify.mjs", filepath.Join("..", "..", "tools", "markdownlint", "testdata", "prior"), "verify.review-round1.mjs.txt"},
 	{"API compatibility", "tools/apicompat/gate/main.go", filepath.Join("..", "..", "tools", "apicompat", "testdata", "prior"), "api-gate-main.go.txt"},
 	{"API compatibility", "tools/apicompat/gate/main.go", filepath.Join("..", "..", "tools", "apicompat", "testdata", "prior"), "api-gate-main-before-system-packages.go.txt"},

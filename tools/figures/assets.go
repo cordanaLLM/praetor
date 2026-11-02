@@ -198,6 +198,8 @@ var priorDigests = map[string]string{
 	"28c187d2788633dcbe68f5b11c599683f1bc2606696556b4f043cc51dac933f3": Directory + "/astro.mjs",
 	// Outgoing review-round text; fixture: figures-mkdocs_hook-review-round1.py.txt.
 	"84afc44008d4f5432e62dc3739d8fa0b1922ee2ff101195de877741c766e97cc": Directory + "/mkdocs_hook.py",
+	// Outgoing review-round text; fixture: figures-mkdocs_hook-review-round2-part1.py.txt.
+	"8b84933fa5d19f74c6e9d642da60f674ed5bad091267c2691c316476ad9b97eb": Directory + "/mkdocs_hook.py",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts figures.css mkdocs_hook.py astro.mjs serve.mjs eslint.figures.mjs README.md
