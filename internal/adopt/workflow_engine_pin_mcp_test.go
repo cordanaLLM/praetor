@@ -52,6 +52,7 @@ func TestWorkflowEnginePinThroughMCP(t *testing.T) {
 	}
 }
 
+// buildPinMCPServer builds the standards-mcp executable in a temporary test directory.
 func buildPinMCPServer(t *testing.T) string {
 	t.Helper()
 	binary := filepath.Join(t.TempDir(), testsupport.ExecutableName("standards-mcp"))
@@ -65,6 +66,7 @@ func buildPinMCPServer(t *testing.T) string {
 	return binary
 }
 
+// callPinMCP invokes the standards_adopt tool via stdio JSON-RPC against the test MCP server binary.
 func callPinMCP(t *testing.T, binary, root string, args map[string]any) mcp.ToolResult {
 	t.Helper()
 	request, err := json.Marshal(map[string]any{

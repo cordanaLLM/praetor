@@ -17,6 +17,7 @@ type pinManagerFixture struct {
 	MatchStrings, ManagerFilePatterns                                                          []string
 }
 
+// TestRenovateWorkflowPinManager pins reconciliation and idempotency of the Renovate custom regex manager for workflow pins.
 func TestRenovateWorkflowPinManager(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "renovate.json"), "{}\n")
@@ -48,6 +49,7 @@ func TestRenovateWorkflowPinManager(t *testing.T) {
 	}
 }
 
+// assertRenovatePinPatterns verifies regex patterns capture exact commit SHAs and reject comments, branches, or invalid SHAs.
 func assertRenovatePinPatterns(t *testing.T, manager pinManagerFixture) {
 	t.Helper()
 	for i, name := range []string{"PRAETOR_COMMIT", "PRAETOR_REF"} {
@@ -67,6 +69,7 @@ func assertRenovatePinPatterns(t *testing.T, manager pinManagerFixture) {
 	}
 }
 
+// TestRenovatePinManagerBoundaryAndRefusals pins manager array bounds and refusal of malformed customManagers configurations.
 func TestRenovatePinManagerBoundaryAndRefusals(t *testing.T) {
 	input := []byte(`{"customManagers":[` + strings.Repeat(`{},`, maxRenovateRules-2) + `{}]}`)
 	merged, changed, err := mergeRenovatePinManager(input)
@@ -87,6 +90,7 @@ func TestRenovatePinManagerBoundaryAndRefusals(t *testing.T) {
 	}
 }
 
+// TestRenovatePinManagerPreservesAdopterManager pins retention of adopter customManagers when adding the workflow pin manager.
 func TestRenovatePinManagerPreservesAdopterManager(t *testing.T) {
 	own := `{"customType":"regex","managerFilePatterns":["versions.txt"],"matchStrings":["version=(?<currentValue>.*)"],"depNameTemplate":"node","datasourceTemplate":"node-version"}`
 	merged, _, err := mergeRenovatePinManager([]byte(`{"customManagers":[` + own + `]}`))
@@ -104,6 +108,7 @@ func TestRenovatePinManagerPreservesAdopterManager(t *testing.T) {
 	}
 }
 
+// TestRenovatePinManagerDuplicateNamesCollection pins refusal of duplicate managers and verifies error messages name customManagers.
 func TestRenovatePinManagerDuplicateNamesCollection(t *testing.T) {
 	input := `{"customManagers":[{"description":"` + renovatePinDescription + `"},{"description":"` + renovatePinDescription + `"}]}`
 	out, changed, err := mergeRenovatePinManager([]byte(input))
@@ -115,6 +120,7 @@ func TestRenovatePinManagerDuplicateNamesCollection(t *testing.T) {
 	}
 }
 
+// TestRenovatePinManagerDocumentSafety pins refusal of mixed line endings, non-objects, and duplicate members in Renovate JSON.
 func TestRenovatePinManagerDocumentSafety(t *testing.T) {
 	for _, tc := range []struct{ name, input, reason string }{
 		{"mixed endings", "{\r\n\"extends\": []\n}\r\n", "its line endings are mixed"},
@@ -130,6 +136,7 @@ func TestRenovatePinManagerDocumentSafety(t *testing.T) {
 	}
 }
 
+// TestRenovatePinManagerPreservesCRLF pins preservation of CRLF line endings across pin manager reconciliation.
 func TestRenovatePinManagerPreservesCRLF(t *testing.T) {
 	input := []byte("{\r\n  \"customManagers\": []\r\n}\r\n")
 	out, changed, err := mergeRenovatePinManager(input)
@@ -141,6 +148,7 @@ func TestRenovatePinManagerPreservesCRLF(t *testing.T) {
 	}
 }
 
+// TestRenovateEngineDocumentLineEndings pins preservation of LF and CRLF line endings in engine rule configuration.
 func TestRenovateEngineDocumentLineEndings(t *testing.T) {
 	for _, tc := range []struct{ name, input string }{
 		{"LF", "{\n}\n"},
@@ -161,6 +169,7 @@ func TestRenovateEngineDocumentLineEndings(t *testing.T) {
 	}
 }
 
+// TestRenovateEngineRejectsMixedEndings pins refusal of documents with inconsistent mixed line endings.
 func TestRenovateEngineRejectsMixedEndings(t *testing.T) {
 	out, changed, err := mergeRenovateEngineRule(t.Context(), []byte("{\r\n}\n"))
 	if err == nil || !strings.Contains(err.Error(), "its line endings are mixed") || changed || out != nil {

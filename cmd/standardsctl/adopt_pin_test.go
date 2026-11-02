@@ -10,6 +10,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/adopt"
 )
 
+// TestAdoptPinReportOutput pins formatting of reconciled engine pin movements and untouched pin status notes.
 func TestAdoptPinReportOutput(t *testing.T) {
 	old, next := strings.Repeat("a", 40), strings.Repeat("b", 40)
 	report := &adopt.AdoptReport{

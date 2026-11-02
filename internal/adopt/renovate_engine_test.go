@@ -89,6 +89,7 @@ func TestExcludedContextAdoptionAction(t *testing.T) {
 	}
 }
 
+// engineFixtureConfig applies engine rule and pin manager merges to fixture configuration for tests.
 func engineFixtureConfig(t *testing.T, data string) string {
 	t.Helper()
 	next, changed, err := mergeRenovateEngineRule(t.Context(), []byte(data))

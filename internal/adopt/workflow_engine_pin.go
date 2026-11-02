@@ -33,10 +33,12 @@ type workflowEnginePin struct {
 	data             []byte
 }
 
+// String formats the workflow engine pin location, variable name, and SHA target.
 func (p workflowEnginePin) String() string {
 	return fmt.Sprintf("%s:%d %s=%s", p.file, p.line, p.name, p.sha)
 }
 
+// readWorkflowEnginePins scans workflow manifests in .github/workflows for Praetor engine commit declarations.
 func readWorkflowEnginePins(ctx context.Context, s *adoptSession) ([]workflowEnginePin, error) {
 	dir, err := repoFile(s.repoPath, ghworkflow.Dir)
 	if err != nil {
@@ -70,6 +72,7 @@ func readWorkflowEnginePins(ctx context.Context, s *adoptSession) ([]workflowEng
 	return pins, nil
 }
 
+// workflowPinsIn locates PRAETOR_COMMIT and PRAETOR_REF declarations and byte offsets in workflow content.
 func workflowPinsIn(rel string, data []byte) []workflowEnginePin {
 	pins := []workflowEnginePin{}
 	matches := workflowPinDeclaration.FindAllSubmatchIndex(data, -1)
@@ -85,6 +88,7 @@ func workflowPinsIn(rel string, data []byte) []workflowEnginePin {
 	return pins
 }
 
+// reconcileWorkflowEnginePin verifies and advances declared workflow engine commit pins to the adopting commit.
 func reconcileWorkflowEnginePin(ctx context.Context, s *adoptSession) error {
 	ctx, cancel := context.WithTimeout(ctx, defaultTimeout)
 	defer cancel()
@@ -130,6 +134,7 @@ func reconcileWorkflowEnginePin(ctx context.Context, s *adoptSession) error {
 	return publishWorkflowEnginePins(ctx, s, pins, head)
 }
 
+// recordUnevaluatedWorkflowPins records skipped status notes for each unevaluated engine pin declaration.
 func recordUnevaluatedWorkflowPins(s *adoptSession, pins []workflowEnginePin, reason string) {
 	for i := 0; i < len(pins) && i < contextopt.MaxSourceBytes; i++ {
 		s.report.recordSkipped(pins[i].file, fmt.Sprintf("Engine pin %s not evaluated: %s; "+
@@ -137,6 +142,7 @@ func recordUnevaluatedWorkflowPins(s *adoptSession, pins []workflowEnginePin, re
 	}
 }
 
+// singleWorkflowEnginePin ensures all discovered engine pins reference the same commit SHA before advancing.
 func singleWorkflowEnginePin(pins []workflowEnginePin) error {
 	declarations := make([]string, 0, len(pins))
 	different := false
@@ -150,6 +156,7 @@ func singleWorkflowEnginePin(pins []workflowEnginePin) error {
 	return nil
 }
 
+// adoptingEngineCommit determines and resolves the target engine commit from adoption session options.
 func adoptingEngineCommit(ctx context.Context, s *adoptSession) (string, error) {
 	ref := s.opts.Engine.Revision
 	if ref == "" {
@@ -161,6 +168,7 @@ func adoptingEngineCommit(ctx context.Context, s *adoptSession) (string, error) 
 	return resolveWorkflowEngineCommit(ctx, s.opts.LockSourceRoot, ref)
 }
 
+// resolveWorkflowEngineCommit verifies and resolves a Git revision into a full 40-character commit SHA.
 func resolveWorkflowEngineCommit(ctx context.Context, source, ref string) (string, error) {
 	// ResolveGitCommit selects an isolated Git configuration. This path must preserve credential
 	// configuration, so it uses the same bounded runner without those configuration overrides.
@@ -175,6 +183,7 @@ func resolveWorkflowEngineCommit(ctx context.Context, source, ref string) (strin
 	return head, nil
 }
 
+// ancestorWorkflowEnginePin verifies that the existing engine pin is an ancestor of the target adopting commit.
 func ancestorWorkflowEnginePin(ctx context.Context, source string, pin workflowEnginePin, head string) error {
 	_, err := util.RunGitBytes(ctx, source, 4096, "merge-base", "--is-ancestor", pin.sha, head)
 	if err == nil {
@@ -187,6 +196,7 @@ func ancestorWorkflowEnginePin(ctx context.Context, source string, pin workflowE
 	return fmt.Errorf("cannot establish ancestry of engine pin %s against %s: %w", pin, head, err)
 }
 
+// publishWorkflowEnginePins applies updated engine commit SHAs to workflow manifests in place.
 func publishWorkflowEnginePins(ctx context.Context, s *adoptSession, pins []workflowEnginePin, head string) error {
 	// Apply offsets backwards so repeated declarations in one file keep their original positions.
 	updates := make(map[string][]byte)

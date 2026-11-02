@@ -230,6 +230,7 @@ func findDetail(details []adopt.ActionDetail, path string) string {
 	return ""
 }
 
+// printAdoptReport renders the adoption execution summary, engine pin status, and governance pillars.
 func printAdoptReport(rep *adopt.AdoptReport) {
 	fmt.Println("=== Praetor Universal Repository Adoption ===")
 	if rep.DryRun {

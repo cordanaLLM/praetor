@@ -16,6 +16,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// pinGit executes git commands in root configured with a fixture user identity.
 func pinGit(t *testing.T, root string, args ...string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -28,6 +29,7 @@ func pinGit(t *testing.T, root string, args ...string) string {
 	return strings.TrimSpace(string(result.Stdout))
 }
 
+// pinHistory creates a temporary Git repository containing ancestor, head, and diverged commit history.
 func pinHistory(t *testing.T) (root, ancestor, head, diverged string) {
 	t.Helper()
 	root = t.TempDir()
@@ -35,6 +37,7 @@ func pinHistory(t *testing.T) (root, ancestor, head, diverged string) {
 	return root, ancestor, head, diverged
 }
 
+// pinHistoryAt populates an existing repository with ancestor, head, and diverged engine commits.
 func pinHistoryAt(t *testing.T, root string) (ancestor, head, diverged string) {
 	t.Helper()
 	initTestGit(t, root)
@@ -51,6 +54,7 @@ type workflowPinCase struct {
 	dryRun, noSource                         bool
 }
 
+// TestAdoptWorkflowEnginePin3D pins positive, negative, and boundary cases for workflow engine pin reconciliation.
 func TestAdoptWorkflowEnginePin3D(t *testing.T) {
 	source, ancestor, head, diverged := pinHistory(t)
 	cases := []workflowPinCase{
@@ -85,6 +89,7 @@ func TestAdoptWorkflowEnginePin3D(t *testing.T) {
 	}
 }
 
+// checkWorkflowPinCase runs adoption against a test fixture case and asserts expected pin mutations or refusals.
 func checkWorkflowPinCase(t *testing.T, source, head string, tc workflowPinCase) *AdoptReport {
 	t.Helper()
 	root := t.TempDir()
@@ -122,6 +127,7 @@ func checkWorkflowPinCase(t *testing.T, source, head string, tc workflowPinCase)
 	return s.report
 }
 
+// TestAdoptWorkflowPinUsesRunningRevision pins that workflow reconciliation aligns with the running engine revision or release tag.
 func TestAdoptWorkflowPinUsesRunningRevision(t *testing.T) {
 	source, ancestor, head, _ := pinHistory(t)
 	tree := pinGit(t, source, "mktree")
@@ -143,6 +149,7 @@ func TestAdoptWorkflowPinUsesRunningRevision(t *testing.T) {
 	}
 }
 
+// TestAdoptWorkflowPinHistoryFailures pins refusal when workflow pin commit history cannot be resolved in the source checkout.
 func TestAdoptWorkflowPinHistoryFailures(t *testing.T) {
 	source, _, _, _ := pinHistory(t)
 	root := t.TempDir()
@@ -160,6 +167,7 @@ func TestAdoptWorkflowPinHistoryFailures(t *testing.T) {
 	}
 }
 
+// TestAdoptWorkflowPinWithoutResolvableEngineCommit pins that unresolvable engine commits leave pins unevaluated without failing adoption.
 func TestAdoptWorkflowPinWithoutResolvableEngineCommit(t *testing.T) {
 	for _, name := range []string{"non-Git catalog", "unborn checkout", "unavailable build revision"} {
 		t.Run(name, func(t *testing.T) {
@@ -192,6 +200,7 @@ func TestAdoptWorkflowPinWithoutResolvableEngineCommit(t *testing.T) {
 	}
 }
 
+// TestAdoptWorkflowPinIntegration pins end-to-end workflow pin advancement and refusal of diverged pin ancestry during adoption.
 func TestAdoptWorkflowPinIntegration(t *testing.T) {
 	source := newAdoptLockSource(t)
 	ancestor, head, diverged := pinHistoryAt(t, source)
@@ -224,6 +233,7 @@ func TestAdoptWorkflowPinIntegration(t *testing.T) {
 	}
 }
 
+// TestAdoptWorkflowPinWithoutSourceKeepsValidLock pins that omitting lock source leaves existing pins untouched and maintains valid locks.
 func TestAdoptWorkflowPinWithoutSourceKeepsValidLock(t *testing.T) {
 	root := t.TempDir()
 	initTestGit(t, root)
@@ -244,6 +254,7 @@ func TestAdoptWorkflowPinWithoutSourceKeepsValidLock(t *testing.T) {
 	assertPinNotEvaluatedReport(t, report, rel, 2, pin)
 }
 
+// assertPinNotEvaluatedReport asserts that skipped engine pins generate expected warnings and action details.
 func assertPinNotEvaluatedReport(t *testing.T, report *AdoptReport, rel string, line int, pin string, details ...string) {
 	t.Helper()
 	declaration := fmt.Sprintf("%s:%d PRAETOR_COMMIT=%s", rel, line, pin)
@@ -264,6 +275,7 @@ func assertPinNotEvaluatedReport(t *testing.T, report *AdoptReport, rel string, 
 	t.Fatalf("missing named pin skip with source instruction: %+v", report.ActionDetails)
 }
 
+// assertWorkflowPinRefusal verifies that invalid or diverged workflow pins return the expected refusal error.
 func assertWorkflowPinRefusal(t *testing.T, tc workflowPinCase, err error) {
 	t.Helper()
 	if tc.refusal == "" {
@@ -280,6 +292,7 @@ func assertWorkflowPinRefusal(t *testing.T, tc workflowPinCase, err error) {
 	}
 }
 
+// assertPinMoveReport checks that an action detail records the exact SHA transition for a reconciled pin.
 func assertPinMoveReport(t *testing.T, report *AdoptReport, rel, old, head string) {
 	t.Helper()
 	for _, action := range report.ActionDetails {
@@ -290,6 +303,7 @@ func assertPinMoveReport(t *testing.T, report *AdoptReport, rel, old, head strin
 	t.Fatalf("missing pin move report: %+v", report.ActionDetails)
 }
 
+// TestUnevaluatedWorkflowPinsReportEveryDeclaration pins that missing or unresolvable sources record every declared pin as unevaluated.
 func TestUnevaluatedWorkflowPinsReportEveryDeclaration(t *testing.T) {
 	for _, unavailableSource := range []bool{false, true} {
 		t.Run(fmt.Sprintf("unresolvable=%v", unavailableSource), func(t *testing.T) {
@@ -314,6 +328,7 @@ func TestUnevaluatedWorkflowPinsReportEveryDeclaration(t *testing.T) {
 	}
 }
 
+// assertUnevaluatedFiles verifies file contents remain unchanged and declarations are recorded as unevaluated.
 func assertUnevaluatedFiles(t *testing.T, root string, files map[string]string, report *AdoptReport) {
 	t.Helper()
 	for rel, before := range files {
@@ -326,6 +341,7 @@ func assertUnevaluatedFiles(t *testing.T, root string, files map[string]string, 
 	}
 }
 
+// assertUnevaluatedDeclaration verifies that a specific pin declaration is recorded as skipped in the adopt report.
 func assertUnevaluatedDeclaration(t *testing.T, report *AdoptReport, pin workflowEnginePin) {
 	t.Helper()
 	for _, detail := range report.ActionDetails {

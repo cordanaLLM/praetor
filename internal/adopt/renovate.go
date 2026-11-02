@@ -419,10 +419,12 @@ func renovatePackageRules(root clientjson.Object) ([]jsontext.Value, error) {
 	return rules, nil
 }
 
+// findManagedRenovateRule locates the index of the Praetor-managed packageRule by its description.
 func findManagedRenovateRule(rules []jsontext.Value) (int, error) {
 	return findRenovateRule(rules, renovateRuleDescription, "packageRules")
 }
 
+// findRenovateRule locates the unique rule index matching description within a collection or refuses duplicates.
 func findRenovateRule(rules []jsontext.Value, description, collection string) (int, error) {
 	found := -1
 	for index := 0; index < len(rules) && index < maxRenovateRules; index++ {

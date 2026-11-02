@@ -16,6 +16,7 @@ import (
 
 const renovatePinDescription = "praetor workflow engine commit pin: track the engine default branch"
 
+// renderRenovatePinManager constructs the Renovate regex customManager configuration for workflow engine commit pins.
 func renderRenovatePinManager() (jsontext.Value, error) {
 	// Keep this dependency name outside the engine module/repository namespaces disabled by
 	// renovateEngineNames. Updating a workflow pin is independent of managed asset updates.
@@ -37,6 +38,7 @@ func renderRenovatePinManager() (jsontext.Value, error) {
 	return raw, nil
 }
 
+// mergeRenovatePinManager ensures Renovate configuration declares the custom regex manager for workflow engine pins.
 func mergeRenovatePinManager(data []byte) ([]byte, bool, error) {
 	text, crlf, err := normalizeRenovateDocument(data)
 	if err != nil {
@@ -72,6 +74,7 @@ func mergeRenovatePinManager(data []byte) ([]byte, bool, error) {
 	return []byte(util.RestoreLineEndings(string(encoded), crlf)), true, nil
 }
 
+// withRenovatePinManager updates an existing customManager or appends a new workflow pin manager entry.
 func withRenovatePinManager(managers []jsontext.Value, found int, manager jsontext.Value) ([]jsontext.Value, error) {
 	if found >= 0 {
 		managers[found] = manager
@@ -83,6 +86,7 @@ func withRenovatePinManager(managers []jsontext.Value, found int, manager jsonte
 	return append(managers, manager), nil
 }
 
+// readRenovatePinManagers extracts and validates the customManagers array from decoded Renovate JSON.
 func readRenovatePinManagers(root clientjson.Object) ([]jsontext.Value, error) {
 	managers := []jsontext.Value{}
 	if raw, exists := root.Get("customManagers"); exists {
@@ -93,6 +97,7 @@ func readRenovatePinManagers(root clientjson.Object) ([]jsontext.Value, error) {
 	return managers, nil
 }
 
+// encodeRenovatePinManagers serializes the customManagers array back into the root Renovate configuration object.
 func encodeRenovatePinManagers(root clientjson.Object, managers []jsontext.Value) ([]byte, error) {
 	raw, err := json.Marshal(managers)
 	if err != nil {
@@ -105,6 +110,7 @@ func encodeRenovatePinManagers(root clientjson.Object, managers []jsontext.Value
 	return encoded, nil
 }
 
+// renovatePinReport returns an informational summary fragment if the workflow engine pin customManager is present.
 func renovatePinReport(data []byte) string {
 	if strings.Contains(string(data), renovatePinDescription) {
 		return "; workflow engine SHA pins updated by a custom regex manager (git-refs, default branch HEAD)"
