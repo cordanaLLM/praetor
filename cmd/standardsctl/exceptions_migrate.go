@@ -49,7 +49,10 @@ func writeExceptionMigration(ctx context.Context, path string, data []byte) erro
 	if err != nil {
 		return fmt.Errorf("stat migration manifest: %w", err)
 	}
-	if err := util.WriteFileAtomic(path, data, info.Mode().Perm()); err != nil {
+	// Windows reports writable files as 0666; remove shared write bits without
+	// widening the manifest's existing permissions.
+	mode := info.Mode().Perm() &^ 0o022
+	if err := util.WriteFileAtomic(path, data, mode); err != nil {
 		return fmt.Errorf("write exception migration: %w", err)
 	}
 	readback, err := util.ReadConfinedLimited(filepath.Dir(path), filepath.Base(path), int64(len(data))+1)

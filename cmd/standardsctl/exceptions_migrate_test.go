@@ -4,8 +4,12 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +17,64 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 )
+
+// TestWriteExceptionMigrationSafeMode pins removal of shared write bits without widening private permissions.
+func TestWriteExceptionMigrationSafeMode(t *testing.T) {
+	cases := []struct{ mode, want os.FileMode }{
+		{0o666, 0o644}, {0o660, 0o640}, {0o644, 0o644}, {0o600, 0o600},
+	}
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		t.Run(fmt.Sprintf("%04o", tc.mode), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), ".standards.yaml")
+			if err := os.WriteFile(path, []byte("version: 0\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(path, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			assertExceptionMigrationWrite(t, path, tc.want)
+		})
+	}
+}
+
+// assertExceptionMigrationWrite checks migration readback and POSIX permission preservation.
+func assertExceptionMigrationWrite(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := writeExceptionMigration(ctx, path, []byte("version: 1\n")); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "version: 1\n" {
+		t.Fatalf("migration readback: %q, %v", data, err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != want {
+		t.Fatalf("migration mode: %04o, want %04o", info.Mode().Perm(), want)
+	}
+}
+
+// TestWriteExceptionMigrationCanceled pins that cancellation prevents replacement of the original manifest.
+func TestWriteExceptionMigrationCanceled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".standards.yaml")
+	if err := os.WriteFile(path, []byte("version: 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := writeExceptionMigration(ctx, path, []byte("version: 1\n")); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled migration: %v, want context.Canceled", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "version: 0\n" {
+		t.Fatalf("canceled migration changed manifest: %q, %v", data, err)
+	}
+}
 
 // TestExceptionMigrationTerminalControls pins stripping of terminal control characters from migration output.
 func TestExceptionMigrationTerminalControls(t *testing.T) {
