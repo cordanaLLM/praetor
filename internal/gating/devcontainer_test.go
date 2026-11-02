@@ -288,10 +288,13 @@ func devcontainerConfig(t *testing.T, repo string, runtime *fakeRuntime) *stageC
 // HOME in the user cache directory, and the signed stage output names the image.
 func TestGoStagesRunInTheDevcontainer(t *testing.T) {
 	t.Setenv(TestStageTimeoutEnv, "") // the expected command line carries the default bound
+	t.Setenv("CI", "")
+	t.Setenv("GITHUB_ACTIONS", "")
 	repo, resolved := devcontainerRepo(t)
 	runtime := newFakeRuntime("go", "gcc")
 	cfg := devcontainerConfig(t, repo, runtime)
 	home := isolateUserCache(t)
+	executable, wantTest := wantDevcontainerGoTestArgs(t, cfg.goos)
 
 	if err := resolveExecution(t.Context(), cfg); err != nil {
 		t.Fatalf("resolve: %v", err)
@@ -311,10 +314,11 @@ func TestGoStagesRunInTheDevcontainer(t *testing.T) {
 		switch strings.Join(call.args, " ") {
 		case "mod verify":
 			sawVerify = call.workdir == resolved
-		case "test -race -timeout " + TestStageTimeout.String() + " ./...":
+		case wantTest:
 			sawTest = strings.HasPrefix(call.workdir, filepath.Join(resolved, ".standards", "worktrees")+string(filepath.Separator))
-			if !slices.Contains(call.runArgs, "type=bind,src="+resolved+",dst="+resolved) {
-				t.Errorf("the checkout must be mounted at its own path: %q", call.runArgs)
+			if !slices.Contains(call.runArgs, "type=bind,src="+resolved+",dst="+resolved) ||
+				!slices.Contains(call.runArgs, "type=bind,src="+executable+",dst="+executable) {
+				t.Errorf("the checkout and the loopback wrapper must be mounted at their own paths: %q", call.runArgs)
 			}
 			if !slices.Contains(call.runArgs, "HOME="+home) || !slices.Contains(call.runArgs, "type=bind,src="+home+",dst="+home) {
 				t.Errorf("HOME must persist, mounted, in the user cache directory %s: %q", home, call.runArgs)
@@ -335,6 +339,19 @@ func TestGoStagesRunInTheDevcontainer(t *testing.T) {
 	if output := string(cfg.rep.StageOutput()); !strings.Contains(output, "\n"+line+"\n") {
 		t.Errorf("stage output must carry %q:\n%s", line, output)
 	}
+}
+
+func wantDevcontainerGoTestArgs(t *testing.T, goos string) (string, string) {
+	t.Helper()
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("executable: %v", err)
+	}
+	execFlag, _, err := GoTestExec(goos, executable)
+	if err != nil || execFlag == "" {
+		t.Fatalf("go test exec = %q, %v", execFlag, err)
+	}
+	return executable, "test -race -timeout " + TestStageTimeout.String() + " -exec " + execFlag + " ./..."
 }
 
 // Negative: without a plan the stages run on the host, nothing reaches a runtime, and the recorded
