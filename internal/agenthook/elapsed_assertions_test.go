@@ -5,6 +5,7 @@
 package agenthook
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -14,10 +15,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // TestCorrelationElapsedAssertions keeps runner load out of package test verdicts.
 func TestCorrelationElapsedAssertions(t *testing.T) {
+	ctx := testsupport.DeadlineContext(t)
 	paths, err := filepath.Glob("*_test.go")
 	if err != nil || len(paths) == 0 {
 		t.Fatalf("enumerate package tests: %v (%d paths)", err, len(paths))
@@ -25,7 +30,7 @@ func TestCorrelationElapsedAssertions(t *testing.T) {
 	// Exceptions are keyed by file:function and must explain why wall time is required.
 	allow := map[string]string{}
 	for _, path := range paths {
-		findings, err := elapsedAssertions(path, nil, allow)
+		findings, err := elapsedAssertions(ctx, path, nil, allow)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -36,7 +41,14 @@ func TestCorrelationElapsedAssertions(t *testing.T) {
 }
 
 // elapsedAssertions finds ordered elapsed-time comparisons controlling test failures.
-func elapsedAssertions(path string, source any, allow map[string]string) ([]string, error) {
+func elapsedAssertions(ctx context.Context, path string, source any, allow map[string]string) ([]string, error) {
+	if source == nil {
+		raw, err := contextopt.ReadSnapshot(ctx, path)
+		if err != nil {
+			return nil, fmt.Errorf("read timing assertions: %w", err)
+		}
+		source = raw
+	}
 	positions := token.NewFileSet()
 	file, err := parser.ParseFile(positions, path, source, parser.SkipObjectResolution)
 	if err != nil {
@@ -62,19 +74,28 @@ func elapsedAssertions(path string, source any, allow map[string]string) ([]stri
 	return findings, nil
 }
 
+// elapsedBindings tracks local duration deltas and boolean comparison aliases.
+type elapsedBindings struct {
+	deltas      map[string]bool
+	comparisons map[string]bool
+}
+
 // elapsedFailurePositions follows local elapsed aliases, including if initializers.
 func elapsedFailurePositions(body *ast.BlockStmt) []token.Pos {
-	names := map[string]bool{}
+	bindings := elapsedBindings{
+		deltas:      map[string]bool{},
+		comparisons: map[string]bool{},
+	}
 	var positions []token.Pos
 	for node := range ast.Preorder(body) {
-		rememberElapsedBindings(node, names)
+		rememberElapsedBindings(node, bindings)
 		statement, ok := node.(*ast.IfStmt)
 		if !ok {
 			continue
 		}
 		// Preorder yields the if before its initializer.
-		rememberElapsedBindings(statement.Init, names)
-		if elapsedComparison(statement.Cond, names) && (containsTestFailure(statement.Body) || containsTestFailure(statement.Else)) {
+		rememberElapsedBindings(statement.Init, bindings)
+		if elapsedComparison(statement.Cond, bindings) && (containsTestFailure(statement.Body) || containsTestFailure(statement.Else)) {
 			positions = append(positions, statement.Cond.Pos())
 		}
 	}
@@ -82,27 +103,35 @@ func elapsedFailurePositions(body *ast.BlockStmt) []token.Pos {
 }
 
 // rememberElapsedBindings records assignment and declaration aliases without text matching.
-func rememberElapsedBindings(node ast.Node, names map[string]bool) {
+func rememberElapsedBindings(node ast.Node, bindings elapsedBindings) {
 	switch value := node.(type) {
 	case *ast.AssignStmt:
 		for index, expression := range value.Rhs {
 			if index < len(value.Lhs) {
-				rememberElapsedName(value.Lhs[index], expression, names)
+				rememberElapsedName(value.Lhs[index], expression, bindings)
 			}
 		}
 	case *ast.ValueSpec:
 		for index, expression := range value.Values {
 			if index < len(value.Names) {
-				rememberElapsedName(value.Names[index], expression, names)
+				rememberElapsedName(value.Names[index], expression, bindings)
 			}
 		}
 	}
 }
 
-// rememberElapsedName taints a local name when its assigned expression contains a delta.
-func rememberElapsedName(left, right ast.Expr, names map[string]bool) {
-	if name, ok := left.(*ast.Ident); ok && containsElapsed(right, names) {
-		names[name.Name] = true
+// rememberElapsedName taints a local name when its assigned expression contains a delta or comparison.
+func rememberElapsedName(left, right ast.Expr, bindings elapsedBindings) {
+	name, ok := left.(*ast.Ident)
+	if !ok {
+		return
+	}
+	if elapsedComparison(right, bindings) {
+		bindings.comparisons[name.Name] = true
+		return
+	}
+	if containsElapsed(right, bindings.deltas) {
+		bindings.deltas[name.Name] = true
 	}
 }
 
@@ -123,16 +152,19 @@ func containsElapsed(root ast.Node, names map[string]bool) bool {
 	return false
 }
 
-// elapsedComparison covers both operand orders and strict/non-strict inequalities.
-func elapsedComparison(root ast.Node, names map[string]bool) bool {
+// elapsedComparison covers both operand orders, strict/non-strict inequalities and boolean aliases.
+func elapsedComparison(root ast.Node, bindings elapsedBindings) bool {
 	for node := range ast.Preorder(root) {
+		if name, ok := node.(*ast.Ident); ok && bindings.comparisons[name.Name] {
+			return true
+		}
 		comparison, ok := node.(*ast.BinaryExpr)
 		if !ok {
 			continue
 		}
 		switch comparison.Op {
 		case token.LSS, token.LEQ, token.GTR, token.GEQ:
-			if containsElapsed(comparison, names) {
+			if containsElapsed(comparison, bindings.deltas) {
 				return true
 			}
 		}
@@ -155,7 +187,7 @@ func containsTestFailure(root ast.Node) bool {
 			continue
 		}
 		switch selector.Sel.Name {
-		case "Error", "Errorf", "Fatal", "Fatalf":
+		case "Error", "Errorf", "Fail", "FailNow", "Fatal", "Fatalf":
 			return true
 		}
 	}
@@ -164,26 +196,33 @@ func containsTestFailure(root ast.Node) bool {
 
 // TestCorrelationElapsedAssertionsPlanted refuses a real fixture before allowing a reasoned exception.
 func TestCorrelationElapsedAssertionsPlanted(t *testing.T) {
+	ctx := testsupport.DeadlineContext(t)
 	path := filepath.Join("testdata", "elapsed-assertions", "planted_test.go")
-	findings, err := elapsedAssertions(path, nil, nil)
+	findings, err := elapsedAssertions(ctx, path, nil, nil)
 	if err != nil || len(findings) != 1 {
 		t.Fatalf("planted fixture: findings %v, error %v", findings, err)
 	}
 	key := "planted_test.go:TestPlantedElapsedBound"
-	if _, err := elapsedAssertions(path, nil, map[string]string{key: " "}); err == nil {
+	if _, err := elapsedAssertions(ctx, path, nil, map[string]string{key: " "}); err == nil {
 		t.Fatal("blank exception reason accepted")
 	}
-	findings, err = elapsedAssertions(path, nil, map[string]string{key: "fixture demonstrating the forbidden pattern"})
+	findings, err = elapsedAssertions(ctx, path, nil, map[string]string{key: "fixture demonstrating the forbidden pattern"})
 	if err != nil || len(findings) != 0 {
 		t.Fatalf("reasoned exception: findings %v, error %v", findings, err)
 	}
-	if _, err := elapsedAssertions("missing_test.go", nil, nil); !errors.Is(err, os.ErrNotExist) {
+	if _, err := elapsedAssertions(ctx, "missing_test.go", nil, nil); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("unreadable input did not fail closed: %v", err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := elapsedAssertions(canceled, path, nil, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled context did not fail closed: %v", err)
 	}
 }
 
 // TestCorrelationElapsedAssertionShapes pins negative, positive and equality boundary cases.
 func TestCorrelationElapsedAssertionShapes(t *testing.T) {
+	ctx := testsupport.DeadlineContext(t)
 	for _, tc := range []struct {
 		name, body string
 		want       int
@@ -191,22 +230,26 @@ func TestCorrelationElapsedAssertionShapes(t *testing.T) {
 		{"direct", `if time.Since(start) > time.Second { t.Error("slow") }`, 1},
 		{"initializer", `if elapsed := time.Since(start); elapsed >= bound { t.Fatalf("slow") }`, 1},
 		{"alias", `elapsed := time.Since(start); took := elapsed; if took < bound { t.Fatal("early") }`, 1},
+		{"boolean alias", `slow := time.Since(start) > bound; if slow { t.Fatal("slow") }`, 1},
 		{"sub reversed", `var elapsed = end.Sub(start); if bound <= elapsed { t.Errorf("slow") }`, 1},
 		{"compound", `if bad || time.Since(start) > bound { t.Fatal("slow") }`, 1},
 		{"else", `if time.Since(start) < bound {} else { t.Fatal("slow") }`, 1},
+		{"fail", `if time.Since(start) > bound { t.Fail() }`, 1},
+		{"failnow", `if time.Since(start) > bound { t.FailNow() }`, 1},
 		{"logging", `if time.Since(start) > bound { t.Log("slow") }`, 0},
 		{"equality", `if time.Since(start) != bound { t.Fatal("fake clock mismatch") }`, 0},
+		{"equality alias", `mismatch := time.Since(start) != bound; if mismatch { t.Fatal("fake clock mismatch") }`, 0},
 		{"unrelated", `if count > limit { t.Fatal("count") }`, 0},
 		{"literal", "t.Log(`if time.Since(start) > bound { t.Fatal(\"slow\") }`)", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			findings, err := elapsedAssertions("shape_test.go", "package agenthook; func TestShape() {"+tc.body+"}", nil)
+			findings, err := elapsedAssertions(ctx, "shape_test.go", "package agenthook; func TestShape() {"+tc.body+"}", nil)
 			if err != nil || len(findings) != tc.want {
 				t.Fatalf("findings %v, error %v; want %d", findings, err, tc.want)
 			}
 		})
 	}
-	if _, err := elapsedAssertions("invalid_test.go", "not Go", nil); err == nil {
+	if _, err := elapsedAssertions(ctx, "invalid_test.go", "not Go", nil); err == nil {
 		t.Fatal("invalid input did not fail closed")
 	}
 }
