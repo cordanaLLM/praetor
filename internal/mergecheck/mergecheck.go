@@ -255,7 +255,7 @@ func checkParentPair(ctx context.Context, repoDir, mergeSHA, p1, p2 string) ([]F
 	for i := 0; i < len(files) && i < maxDiffFiles; i++ {
 		finding, err := checkFileHunk(ctx, files[i], blobs)
 		if err != nil {
-			return nil, false, err
+			return nil, false, fmt.Errorf("merge %s: file %s: %w", shortSHA(mergeSHA), files[i], err)
 		}
 		if finding != nil {
 			findings = append(findings, *finding)

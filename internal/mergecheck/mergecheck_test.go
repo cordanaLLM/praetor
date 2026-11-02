@@ -5,7 +5,10 @@
 package mergecheck
 
 import (
+	"errors"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -410,4 +413,123 @@ func TestMergeCheck_ColonPathspec_LiteralTreated(t *testing.T) {
 		t.Fatalf("expected 1 finding for :!alpha.txt, got %d: %+v", len(res.Findings), res.Findings)
 	}
 	assertFindingMatch(t, res.Findings[0], ":!alpha.txt", mergeSHA, p1SHA, p2SHA)
+}
+
+// Negative & Boundary: planted hunk check failure (unreadable blob) returns an error naming
+// the merge (short sha) and the file, and errors.As finds *exec.ExitError.
+// Order: engine-1641-open-thread-20261102.
+func TestMergeCheck_PlantedHunkFailure_NamesMergeAndFile(t *testing.T) {
+	dir := initTestRepo(t)
+	writeFile(t, dir, "alpha.txt", "line 1\nline 2\nline 3\nline 4\n")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "alpha.txt"},
+		[]string{"commit", "-m", "chore: base"},
+		[]string{"branch", "-M", "main"},
+	)
+
+	// Branch X
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-x"})
+	writeFile(t, dir, "alpha.txt", "line 1\nline 2 X\nline 3\nline 4\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "alpha.txt"}, []string{"commit", "-m", "feat: X"})
+	p1SHA := gitRevParse(t, dir, "HEAD")
+
+	// Branch Y
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-y", "main"})
+	writeFile(t, dir, "alpha.txt", "line 1\nline 2\nline 3\nline 4 Y\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "alpha.txt"}, []string{"commit", "-m", "feat: Y"})
+
+	// Merge taking Y
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "branch-x"})
+	runGitAllowConflict(t, dir, "merge", "--no-commit", "branch-y")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"checkout", "branch-y", "--", "alpha.txt"},
+		[]string{"add", "alpha.txt"},
+		[]string{"commit", "-m", "merge: taking Y"},
+	)
+	mergeSHA := gitRevParse(t, dir, "HEAD")
+
+	// Plant failure: delete P1 blob object so readBlob fails during checkFileHunk
+	blobP1 := strings.TrimSpace(testsupport.RunFixtureGit(t, dir, []string{"rev-parse", p1SHA + ":alpha.txt"}))
+	blobPath := filepath.Join(dir, ".git", "objects", blobP1[:2], blobP1[2:])
+	if err := os.Remove(blobPath); err != nil {
+		t.Fatalf("remove blob %s: %v", blobP1, err)
+	}
+
+	_, err := Check(t.Context(), Options{RepoDir: dir, Range: "main..HEAD"})
+	if err == nil {
+		t.Fatal("expected error for unreadable blob, got nil")
+	}
+	wantMerge := shortSHA(mergeSHA)
+	if !strings.Contains(err.Error(), "merge "+wantMerge) {
+		t.Fatalf("error text must name merge %s, got: %v", wantMerge, err)
+	}
+	if !strings.Contains(err.Error(), "file alpha.txt") {
+		t.Fatalf("error text must name file alpha.txt, got: %v", err)
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || !errors.Is(err, exitErr) {
+		t.Fatalf("errors.As and errors.Is must find *exec.ExitError, got: %v", err)
+	}
+}
+
+// Boundary: hunk check failure on a nested path ('pkg/sub/beta.txt') verifies that the full
+// relative path and 12-char short SHA are preserved, and checkParentPair returns the wrapped error.
+// Order: engine-1641-open-thread-20261102.
+func TestMergeCheck_PlantedHunkFailure_NestedPath_Boundary(t *testing.T) {
+	dir := initTestRepo(t)
+	nestedPath := filepath.Join("pkg", "sub", "beta.txt")
+	writeFile(t, dir, nestedPath, "line 1\nline 2\nline 3\n")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "."},
+		[]string{"commit", "-m", "chore: base"},
+		[]string{"branch", "-M", "main"},
+	)
+
+	// Branch X
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-x"})
+	writeFile(t, dir, nestedPath, "line 1\nline 2 X\nline 3\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "."}, []string{"commit", "-m", "feat: X"})
+	p1SHA := gitRevParse(t, dir, "HEAD")
+
+	// Branch Y
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-y", "main"})
+	writeFile(t, dir, nestedPath, "line 1\nline 2\nline 3 Y\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "."}, []string{"commit", "-m", "feat: Y"})
+	p2SHA := gitRevParse(t, dir, "HEAD")
+
+	// Merge taking Y
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "branch-x"})
+	runGitAllowConflict(t, dir, "merge", "--no-commit", "branch-y")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"checkout", "branch-y", "--", nestedPath},
+		[]string{"add", "."},
+		[]string{"commit", "-m", "merge: taking Y"},
+	)
+	mergeSHA := gitRevParse(t, dir, "HEAD")
+
+	blobP1 := strings.TrimSpace(testsupport.RunFixtureGit(t, dir, []string{"rev-parse", p1SHA + ":" + filepath.ToSlash(nestedPath)}))
+	blobPath := filepath.Join(dir, ".git", "objects", blobP1[:2], blobP1[2:])
+	if err := os.Remove(blobPath); err != nil {
+		t.Fatalf("remove blob %s: %v", blobP1, err)
+	}
+
+	_, _, err := checkParentPair(t.Context(), dir, mergeSHA, p1SHA, p2SHA)
+	if err == nil {
+		t.Fatal("expected error from checkParentPair, got nil")
+	}
+	wantMerge := shortSHA(mergeSHA)
+	if len(wantMerge) != 12 {
+		t.Fatalf("expected 12-char short SHA, got %q", wantMerge)
+	}
+	if !strings.Contains(err.Error(), "merge "+wantMerge) {
+		t.Fatalf("error must name merge %s, got: %v", wantMerge, err)
+	}
+	wantFile := "file " + filepath.ToSlash(nestedPath)
+	if !strings.Contains(err.Error(), wantFile) {
+		t.Fatalf("error must name %s, got: %v", wantFile, err)
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || !errors.Is(err, exitErr) {
+		t.Fatalf("errors.As and errors.Is must find *exec.ExitError, got: %v", err)
+	}
 }
