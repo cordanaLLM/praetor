@@ -6,6 +6,7 @@ package cifilter_test
 
 import (
 	"context"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -63,15 +64,20 @@ func TestGetChangedLineRanges_Negative(t *testing.T) {
 		t.Fatal("unresolvable base ref must fail")
 	}
 
-	blobOID, err := util.RunGit(ctx, dir, "rev-parse", "HEAD:README.md")
-	if err != nil {
-		t.Fatalf("rev-parse HEAD:README.md: %v", err)
-	}
-	runRepoGit(t, dir, "update-index", "--add", "--cacheinfo", "100644,"+strings.TrimSpace(blobOID)+",tab\tname.go")
-	runRepoGit(t, dir, "commit", "-q", "-m", "add control-byte path")
-	if _, err := cifilter.GetChangedLineRanges(ctx, dir, "main", "HEAD"); err == nil {
-		t.Fatal("quoted diff target line with control byte must return an error instead of being dropped")
-	}
+	t.Run("quoted control-byte target fails closed", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("git for Windows refuses a tab in an index path (update-index: Invalid path), so the quoted control-byte target cannot be planted; the case runs on Linux and macOS (HISS-21)")
+		}
+		blobOID, err := util.RunGit(t.Context(), dir, "rev-parse", "HEAD:README.md")
+		if err != nil {
+			t.Fatalf("rev-parse HEAD:README.md: %v", err)
+		}
+		runRepoGit(t, dir, "update-index", "--add", "--cacheinfo", "100644,"+strings.TrimSpace(blobOID)+",tab\tname.go")
+		runRepoGit(t, dir, "commit", "-q", "-m", "add control-byte path")
+		if _, err := cifilter.GetChangedLineRanges(t.Context(), dir, "main", "HEAD"); err == nil {
+			t.Fatal("quoted diff target line with control byte must return an error instead of being dropped")
+		}
+	})
 }
 
 // TestGetChangedLineRanges_Boundary verifies single-line hunks, worktree diffs, and LineRange.Overlaps boundaries.
