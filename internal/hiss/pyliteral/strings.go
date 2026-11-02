@@ -11,6 +11,14 @@ import (
 
 // Parse decodes one Python text literal at start; formatted expressions become {value}.
 func Parse(text string, start int) (string, int, error) {
+	return (pythonLiteralDecoder{}).parse(text, start)
+}
+
+type pythonLiteralDecoder struct {
+	tolerant bool
+}
+
+func (d pythonLiteralDecoder) parse(text string, start int) (string, int, error) {
 	if start < 0 || start >= len(text) {
 		return "", 0, errors.New("string offset outside Python source")
 	}
@@ -30,16 +38,16 @@ func Parse(text string, start int) (string, int, error) {
 	body := text[bodyStart:bodyEnd]
 	if strings.Contains(prefix, "r") {
 		if strings.Contains(prefix, "f") {
-			value, _, decodeErr := decodePythonFString(body, true)
+			value, _, decodeErr := d.decodePythonFString(body, true)
 			return value, bodyEnd + width, decodeErr
 		}
 		return body, bodyEnd + width, nil
 	}
 	if strings.Contains(prefix, "f") {
-		value, _, decodeErr := decodePythonFString(body, false)
+		value, _, decodeErr := d.decodePythonFString(body, false)
 		return value, bodyEnd + width, decodeErr
 	}
-	decoded, err := decodePythonEscapes(body)
+	decoded, err := d.decodePythonEscapes(body)
 	return decoded, bodyEnd + width, err
 }
 
@@ -61,10 +69,10 @@ func scanPythonStringPrefix(text string, start int) (string, int, error) {
 	return prefix, index, nil
 }
 
-func decodePythonFString(body string, raw bool) (string, int, error) {
+func (d pythonLiteralDecoder) decodePythonFString(body string, raw bool) (string, int, error) {
 	var out strings.Builder
 	for index := 0; index < len(body); {
-		next, err := appendPythonFStringPart(&out, body, index, raw)
+		next, err := d.appendPythonFStringPart(&out, body, index, raw)
 		if err != nil {
 			return "", 0, err
 		}
@@ -73,7 +81,7 @@ func decodePythonFString(body string, raw bool) (string, int, error) {
 	return out.String(), len(body), nil
 }
 
-func appendPythonFStringPart(out *strings.Builder, body string, index int, raw bool) (int, error) {
+func (d pythonLiteralDecoder) appendPythonFStringPart(out *strings.Builder, body string, index int, raw bool) (int, error) {
 	switch body[index] {
 	case '{':
 		return appendPythonFStringOpen(out, body, index)
@@ -84,7 +92,7 @@ func appendPythonFStringPart(out *strings.Builder, body string, index int, raw b
 		}
 		return 0, errors.New("unmatched formatted string brace")
 	default:
-		return appendPythonFStringText(out, body, index, raw)
+		return d.appendPythonFStringText(out, body, index, raw)
 	}
 }
 
@@ -101,21 +109,14 @@ func appendPythonFStringOpen(out *strings.Builder, body string, index int) (int,
 	return end + 1, nil
 }
 
-func appendPythonFStringText(out *strings.Builder, body string, index int, raw bool) (int, error) {
-	start := index
+func (d pythonLiteralDecoder) appendPythonFStringText(out *strings.Builder, body string, index int, raw bool) (int, error) {
 	for index < len(body) && body[index] != '{' && body[index] != '}' {
-		index++
+		next, err := d.appendPythonText(out, body, index, raw)
+		if err != nil {
+			return 0, err
+		}
+		index = next
 	}
-	segment := body[start:index]
-	if raw {
-		out.WriteString(segment)
-		return index, nil
-	}
-	decoded, err := decodePythonEscapes(segment)
-	if err != nil {
-		return 0, err
-	}
-	out.WriteString(decoded)
 	return index, nil
 }
 
@@ -199,24 +200,34 @@ func findPythonStringEnd(text string, start int, quote byte, width int) (int, er
 	return 0, errors.New("unterminated Python string literal")
 }
 
-func decodePythonEscapes(value string) (string, error) {
+func (d pythonLiteralDecoder) decodePythonEscapes(value string) (string, error) {
 	var out strings.Builder
-	for index := 0; index < len(value); index++ {
-		if value[index] != '\\' {
-			out.WriteByte(value[index])
-			continue
-		}
-		if index+1 >= len(value) {
-			return "", errors.New("trailing Python escape")
-		}
-		index++
-		consumed, err := AppendEscape(&out, value[index:])
+	for index := 0; index < len(value); {
+		next, err := d.appendPythonText(&out, value, index, false)
 		if err != nil {
 			return "", err
 		}
-		index += consumed - 1
+		index = next
 	}
 	return out.String(), nil
+}
+
+func (d pythonLiteralDecoder) appendPythonText(out *strings.Builder, value string, index int, raw bool) (int, error) {
+	if raw || value[index] != '\\' {
+		out.WriteByte(value[index])
+		return index + 1, nil
+	}
+	if index+1 >= len(value) {
+		return 0, errors.New("trailing Python escape")
+	}
+	consumed, err := AppendEscape(out, value[index+1:])
+	if err != nil && d.tolerant {
+		consumed = appendTolerantEscape(out, value[index+1:])
+		if consumed > 0 {
+			err = nil
+		}
+	}
+	return index + 1 + consumed, err
 }
 
 // AppendEscape writes one Python escape body and returns the consumed byte count.
