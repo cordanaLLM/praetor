@@ -1,0 +1,2 @@
+type: fixed
+title: Retry a Go module prefetch once when go mod verify or go mod download ends in a transient deadline or signal kill

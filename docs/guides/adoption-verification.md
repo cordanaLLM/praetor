@@ -889,8 +889,15 @@ The rule ignores `testdata/`, `vendor/`, dot-prefixed and underscore-prefixed di
 the result bounded at 64 modules. A larger repository fails closed with `too many tracked Go
 modules`; it is never silently truncated.
 
-Each stage visits modules in discovery order. Prefetch runs `go mod verify` and `go mod download`,
-security runs symbol-level `govulncheck` against the repository-root OpenVEX document and `gosec`,
+Each stage visits modules in discovery order. Prefetch runs `go mod verify` and `go mod download`;
+a module whose first attempt ends in a transient kill (its own per-attempt `DefaultPrefetchTimeout`
+deadline, SIGKILL or SIGTERM, exit status 137 or 143, or a wrapped error whose text holds one of
+these: `context deadline exceeded`, `signal: killed`, `signal: terminated`, `exit status 137`,
+`exit status 143`) runs once more under a fresh window and the stage message names the retry. A
+cancelled or expired caller context is never retried, and a second failure or any other failure
+fails the stage
+([`internal/gating/prefetch.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/prefetch.go)).
+Security runs symbol-level `govulncheck` against the repository-root OpenVEX document and `gosec`,
 and the race stage runs `go test -race ./...` in an isolated worktree for each module. Each
 module's race suite runs in its own memory-bounded user scope (`systemd-run --user --scope`) when
 scopes are available, so the out-of-memory daemon reclaims from the step rather than from the
