@@ -289,3 +289,50 @@ func assertPinMoveReport(t *testing.T, report *AdoptReport, rel, old, head strin
 	}
 	t.Fatalf("missing pin move report: %+v", report.ActionDetails)
 }
+
+func TestUnevaluatedWorkflowPinsReportEveryDeclaration(t *testing.T) {
+	for _, unavailableSource := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unresolvable=%v", unavailableSource), func(t *testing.T) {
+			root := t.TempDir()
+			pin := strings.Repeat("a", 40)
+			files := map[string]string{
+				".github/workflows/ci.yml":     "env:\n  PRAETOR_COMMIT: " + pin + "\n  PRAETOR_REF: " + pin + "\n",
+				".github/workflows/other.yaml": "PRAETOR_REF: " + pin + "\n",
+			}
+			for rel, data := range files {
+				mustWrite(t, filepath.Join(root, rel), data)
+			}
+			s := &adoptSession{repoPath: root, report: &AdoptReport{}}
+			if unavailableSource {
+				s.opts.LockSourceRoot = t.TempDir()
+			}
+			if err := reconcileWorkflowEnginePin(t.Context(), s); err != nil {
+				t.Fatal(err)
+			}
+			assertUnevaluatedFiles(t, root, files, s.report)
+		})
+	}
+}
+
+func assertUnevaluatedFiles(t *testing.T, root string, files map[string]string, report *AdoptReport) {
+	t.Helper()
+	for rel, before := range files {
+		if got := mustRead(t, filepath.Join(root, rel)); got != before {
+			t.Fatal("unevaluated pin was rewritten")
+		}
+		for _, declaration := range workflowPinsIn(rel, []byte(before)) {
+			assertUnevaluatedDeclaration(t, report, declaration)
+		}
+	}
+}
+
+func assertUnevaluatedDeclaration(t *testing.T, report *AdoptReport, pin workflowEnginePin) {
+	t.Helper()
+	for _, detail := range report.ActionDetails {
+		if detail.Path == pin.file && detail.Action == actionSkip && strings.Contains(detail.Details, pin.String()) &&
+			strings.Contains(detail.Details, "not evaluated") && strings.Contains(detail.Details, "--lock-source-root=<engine checkout>") {
+			return
+		}
+	}
+	t.Errorf("missing unevaluated declaration %s: %+v", pin, report.ActionDetails)
+}

@@ -103,3 +103,67 @@ func TestRenovatePinManagerPreservesAdopterManager(t *testing.T) {
 		t.Fatal("adopter manager changed")
 	}
 }
+
+func TestRenovatePinManagerDuplicateNamesCollection(t *testing.T) {
+	input := `{"customManagers":[{"description":"` + renovatePinDescription + `"},{"description":"` + renovatePinDescription + `"}]}`
+	out, changed, err := mergeRenovatePinManager([]byte(input))
+	if err == nil || !strings.Contains(err.Error(), "customManagers holds two entries") || strings.Contains(err.Error(), "packageRules") {
+		t.Fatalf("duplicate manager diagnostic names wrong collection: %v", err)
+	}
+	if changed || out != nil {
+		t.Fatal("duplicate managers produced a rewrite")
+	}
+}
+
+func TestRenovatePinManagerDocumentSafety(t *testing.T) {
+	for _, tc := range []struct{ name, input, reason string }{
+		{"mixed endings", "{\r\n\"extends\": []\n}\r\n", "its line endings are mixed"},
+		{"not object", "[]", "pin manager requires an object"},
+		{"duplicate members", `{"customManagers":[],"customManagers":[]}`, "pin manager requires an object"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, changed, err := mergeRenovatePinManager([]byte(tc.input))
+			if err == nil || !strings.Contains(err.Error(), tc.reason) || changed || out != nil {
+				t.Fatalf("unsafe document not refused without output: changed=%v out=%q err=%v", changed, out, err)
+			}
+		})
+	}
+}
+
+func TestRenovatePinManagerPreservesCRLF(t *testing.T) {
+	input := []byte("{\r\n  \"customManagers\": []\r\n}\r\n")
+	out, changed, err := mergeRenovatePinManager(input)
+	if err != nil || !changed || strings.Contains(strings.ReplaceAll(string(out), "\r\n", ""), "\n") {
+		t.Fatalf("CRLF document not preserved: changed=%v out=%q err=%v", changed, out, err)
+	}
+	if next, changed, err := mergeRenovatePinManager(out); err != nil || changed || string(next) != string(out) {
+		t.Fatalf("CRLF rerun changed bytes: changed=%v err=%v", changed, err)
+	}
+}
+
+func TestRenovateEngineDocumentLineEndings(t *testing.T) {
+	for _, tc := range []struct{ name, input string }{
+		{"LF", "{\n}\n"},
+		{"CRLF", "{\r\n}\r\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, changed, err := mergeRenovateEngineRule(t.Context(), []byte(tc.input))
+			if err != nil || !changed {
+				t.Fatalf("engine document merge failed: changed=%v err=%v", changed, err)
+			}
+			if strings.Contains(tc.input, "\r\n") && strings.Contains(strings.ReplaceAll(string(out), "\r\n", ""), "\n") {
+				t.Fatalf("engine merge lost CRLF: %q", out)
+			}
+			if _, changed, err := mergeRenovateEngineRule(t.Context(), out); err != nil || changed {
+				t.Fatalf("engine rerun changed document: changed=%v err=%v", changed, err)
+			}
+		})
+	}
+}
+
+func TestRenovateEngineRejectsMixedEndings(t *testing.T) {
+	out, changed, err := mergeRenovateEngineRule(t.Context(), []byte("{\r\n}\n"))
+	if err == nil || !strings.Contains(err.Error(), "its line endings are mixed") || changed || out != nil {
+		t.Fatalf("mixed engine document not refused: changed=%v out=%q err=%v", changed, out, err)
+	}
+}

@@ -38,9 +38,9 @@ func renderRenovatePinManager() (jsontext.Value, error) {
 }
 
 func mergeRenovatePinManager(data []byte) ([]byte, bool, error) {
-	text, crlf, err := util.NormalizeLineEndingsStrict(string(data))
+	text, crlf, err := normalizeRenovateDocument(data)
 	if err != nil {
-		return nil, false, renovateUnsafe("its line endings are mixed")
+		return nil, false, err
 	}
 	root, err := clientjson.DecodeObject([]byte(text))
 	if err != nil {
@@ -50,7 +50,7 @@ func mergeRenovatePinManager(data []byte) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	found, err := findRenovateRule(managers, renovatePinDescription)
+	found, err := findRenovateRule(managers, renovatePinDescription, "customManagers")
 	if err != nil {
 		return nil, false, err
 	}

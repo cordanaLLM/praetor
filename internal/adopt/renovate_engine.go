@@ -102,9 +102,9 @@ func mergeRenovateAdoptionRules(ctx context.Context, s *adoptSession, data []byt
 }
 
 func mergeRenovateEngineRule(ctx context.Context, data []byte) ([]byte, bool, error) {
-	text, crlf, err := util.NormalizeLineEndingsStrict(string(data))
+	text, crlf, err := normalizeRenovateDocument(data)
 	if err != nil {
-		return nil, false, renovateUnsafe("its line endings are mixed")
+		return nil, false, err
 	}
 	if err := clientjson.Validate(ctx, []byte(text)); err != nil {
 		return nil, false, renovateUnsafe("engine rule requires strict JSON: %v", err)
@@ -133,7 +133,7 @@ func mergeRenovateEngineRule(ctx context.Context, data []byte) ([]byte, bool, er
 }
 
 func withRenovateEngineRule(rules []jsontext.Value) ([]jsontext.Value, bool, error) {
-	found, err := findRenovateRule(rules, renovateEngineDescription)
+	found, err := findRenovateRule(rules, renovateEngineDescription, "packageRules")
 	if err != nil {
 		return nil, false, err
 	}

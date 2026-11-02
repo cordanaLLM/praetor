@@ -114,6 +114,16 @@ func renovateUnsafe(format string, args ...any) error {
 	return &renovateUnsafeError{reason: fmt.Sprintf(format, args...)}
 }
 
+// normalizeRenovateDocument preserves the adopter's newline style and refuses mixed
+// documents before any merge can discard their original bytes.
+func normalizeRenovateDocument(data []byte) (string, bool, error) {
+	text, crlf, err := util.NormalizeLineEndingsStrict(string(data))
+	if err != nil {
+		return "", false, renovateUnsafe("its line endings are mixed")
+	}
+	return text, crlf, nil
+}
+
 // renovateRule is the packageRules entry adoption owns.
 type renovateRule struct {
 	Description       string   `json:"description"`
@@ -358,9 +368,9 @@ func renovatePublishDetail(managed, declared int) (string, string) {
 // value; the rewritten document is re-indented with two spaces (clientjson.Object.Encode)
 // in data's line-ending style. A *renovateUnsafeError marks a document it will not rewrite.
 func mergeRenovateRule(ctx context.Context, data []byte, paths []string) ([]byte, []string, bool, error) {
-	text, crlf, err := util.NormalizeLineEndingsStrict(string(data))
+	text, crlf, err := normalizeRenovateDocument(data)
 	if err != nil {
-		return nil, nil, false, renovateUnsafe("its line endings are mixed")
+		return nil, nil, false, err
 	}
 	if clientjson.Validate(ctx, []byte(text)) != nil {
 		if err := ctx.Err(); err != nil {
@@ -410,10 +420,10 @@ func renovatePackageRules(root clientjson.Object) ([]jsontext.Value, error) {
 }
 
 func findManagedRenovateRule(rules []jsontext.Value) (int, error) {
-	return findRenovateRule(rules, renovateRuleDescription)
+	return findRenovateRule(rules, renovateRuleDescription, "packageRules")
 }
 
-func findRenovateRule(rules []jsontext.Value, description string) (int, error) {
+func findRenovateRule(rules []jsontext.Value, description, collection string) (int, error) {
 	found := -1
 	for index := 0; index < len(rules) && index < maxRenovateRules; index++ {
 		object, _ := decodeRenovateRule(rules[index])
@@ -422,7 +432,7 @@ func findRenovateRule(rules []jsontext.Value, description string) (int, error) {
 			continue
 		}
 		if found >= 0 {
-			return -1, renovateUnsafe("its packageRules holds two entries described %q", description)
+			return -1, renovateUnsafe("its %s holds two entries described %q", collection, description)
 		}
 		found = index
 	}

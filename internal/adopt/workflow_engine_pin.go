@@ -108,13 +108,12 @@ func reconcileWorkflowEnginePin(ctx context.Context, s *adoptSession) error {
 		return err
 	}
 	if s.opts.LockSourceRoot == "" {
-		s.report.recordSkipped(pins[0].file, fmt.Sprintf("Engine pin %s not evaluated: moving it needs the adopting engine Git source; rerun with --lock-source-root=<engine checkout>", pins[0]))
+		recordUnevaluatedWorkflowPins(s, pins, "moving it needs the adopting engine Git source")
 		return nil
 	}
 	head, err := adoptingEngineCommit(ctx, s)
 	if err != nil {
-		s.report.recordSkipped(pins[0].file, fmt.Sprintf("Engine pin %s not evaluated: %v; pin untouched; "+
-			"rerun with --lock-source-root=<engine checkout> using a Git checkout of the adopting engine", pins[0], err))
+		recordUnevaluatedWorkflowPins(s, pins, err.Error()+"; pin untouched")
 		return nil
 	}
 	old, err := resolveWorkflowEngineCommit(ctx, s.opts.LockSourceRoot, pins[0].sha)
@@ -129,6 +128,13 @@ func reconcileWorkflowEnginePin(ctx context.Context, s *adoptSession) error {
 		return err
 	}
 	return publishWorkflowEnginePins(ctx, s, pins, head)
+}
+
+func recordUnevaluatedWorkflowPins(s *adoptSession, pins []workflowEnginePin, reason string) {
+	for i := 0; i < len(pins) && i < contextopt.MaxSourceBytes; i++ {
+		s.report.recordSkipped(pins[i].file, fmt.Sprintf("Engine pin %s not evaluated: %s; "+
+			"rerun with --lock-source-root=<engine checkout> using a Git checkout of the adopting engine", pins[i], reason))
+	}
 }
 
 func singleWorkflowEnginePin(pins []workflowEnginePin) error {
