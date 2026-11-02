@@ -12,9 +12,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -87,6 +89,7 @@ func TestBuildModule_RejectsInvalidOrOversizedBuildContext(t *testing.T) {
 		{"oversized-context", "-tags=" + strings.Repeat("reviewtag,", maxRecordBytes/9), "go build context exceeds"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			skipOversizedGoFlags(t, runtime.GOOS, tc.flags)
 			t.Setenv("GOFLAGS", tc.flags)
 			tracker := &mockTracker{}
 			err := buildModule(t.Context(), retryFixtureRoot(t, "mod"), "mod", io.Discard, tracker.run, defaultWait)
@@ -97,6 +100,79 @@ func TestBuildModule_RejectsInvalidOrOversizedBuildContext(t *testing.T) {
 				t.Fatalf("invalid configuration ran downloads = %d, lists = %d", tracker.downloads, tracker.lists)
 			}
 		})
+	}
+}
+
+func skipOversizedGoFlags(t *testing.T, platform, flags string) {
+	t.Helper()
+	if platform == "windows" && len(flags) > 32767 {
+		t.Skip("Windows limits a single environment variable to 32,767 characters; oversized GOFLAGS cannot reach the Go build-context check")
+	}
+}
+
+func TestOversizedGoFlagsPlatformSkip(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, platform string
+		size           int
+		skipped        bool
+	}{
+		{"windows-empty", "windows", 0, false},
+		{"windows-limit", "windows", 32767, false},
+		{"windows-over-limit", "windows", 32768, true},
+		{"windows-oversized-context", "windows", maxRecordBytes * 2, true},
+		{"linux-oversized-context", "linux", maxRecordBytes * 2, false},
+		{"darwin-oversized-context", "darwin", maxRecordBytes * 2, false},
+	} {
+		var child *testing.T
+		t.Run(tc.name, func(t *testing.T) {
+			child = t
+			skipOversizedGoFlags(t, tc.platform, strings.Repeat("x", tc.size))
+		})
+		if child.Skipped() != tc.skipped {
+			t.Errorf("%s: skipped = %v, want %v", tc.name, child.Skipped(), tc.skipped)
+		}
+	}
+}
+
+func TestEffectiveBuildContext_PreservesContextAndToolErrors(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		want error
+	}{
+		{"active-parent", nil},
+		{"canceled-parent", context.Canceled},
+		{"deadline-parent", context.DeadlineExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				assertBuildContextErrors(t, tc.want)
+			})
+		})
+	}
+}
+
+func assertBuildContextErrors(t *testing.T, want error) {
+	t.Helper()
+	toolErr := errors.New("simulated killed process")
+	ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
+	defer cancel()
+	runner := func(_ context.Context, _ string, _, _ io.Writer, _ string, _ ...string) error {
+		if errors.Is(want, context.Canceled) {
+			cancel()
+		}
+		if want != nil {
+			<-ctx.Done()
+		}
+		return toolErr
+	}
+	_, err := effectiveBuildContext(ctx, t.TempDir(), runner)
+	if !errors.Is(err, toolErr) || (want != nil && !errors.Is(err, want)) {
+		t.Fatalf("build context error = %v, want tool error and %v", err, want)
+	}
+	if want == nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		t.Fatalf("active parent misclassified: %v", err)
 	}
 }
 

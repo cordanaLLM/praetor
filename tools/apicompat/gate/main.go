@@ -990,8 +990,26 @@ func hasDirectivePrefix(trimmed, directive string) bool {
 }
 
 func isLocalPath(target string) bool {
-	return target == "." || target == ".." || filepath.IsAbs(target) ||
-		strings.HasPrefix(target, "./") || strings.HasPrefix(target, "../")
+	// Match modfile.IsDirectoryPath across hosts; the shipped gate uses only the standard library.
+	switch {
+	case target == ".", target == "..":
+		return true
+	case strings.HasPrefix(target, "/"), strings.HasPrefix(target, `\`):
+		return true
+	case strings.HasPrefix(target, "./"), strings.HasPrefix(target, `.\`):
+		return true
+	case strings.HasPrefix(target, "../"), strings.HasPrefix(target, `..\`):
+		return true
+	default:
+		return isDrivePath(target)
+	}
+}
+
+func isDrivePath(target string) bool {
+	if len(target) < 2 || target[1] != ':' {
+		return false
+	}
+	return ('A' <= target[0] && target[0] <= 'Z') || ('a' <= target[0] && target[0] <= 'z')
 }
 
 func parseLocalReplace(line string) (string, string, bool) {
@@ -1226,7 +1244,7 @@ func collectNonTestImports(ctx context.Context, moduleDir string, buildCtx build
 
 // effectiveBuildContext asks Go to interpret GOFLAGS and platform/toolchain settings.
 // Listing only main modules avoids loading package imports or the dependency graph.
-func effectiveBuildContext(ctx context.Context, moduleDir string) (build.Context, error) {
+func effectiveBuildContext(ctx context.Context, moduleDir string, run toolRunner) (build.Context, error) {
 	const format = `{{define "tags"}}[{{range $i, $v := .}}{{if $i}},{{end}}{{printf "%q" $v}}{{end}}]{{end}}
 {{with context}}{"GOOS":{{printf "%q" .GOOS}},"GOARCH":{{printf "%q" .GOARCH}},
 "Compiler":{{printf "%q" .Compiler}},"CgoEnabled":{{.CgoEnabled}},
@@ -1235,8 +1253,8 @@ func effectiveBuildContext(ctx context.Context, moduleDir string) (build.Context
 	out := &boundedBuffer{limit: maxRecordBytes + 1}
 	diagnostics := &boundedBuffer{limit: maxRecordBytes}
 	var buildCtx build.Context
-	if err := runTool(ctx, moduleDir, out, diagnostics, "go", "list", "-m", "-f", format); err != nil {
-		return buildCtx, fmt.Errorf("read Go build context: %w: %s", err, diagnostics.String())
+	if err := run(ctx, moduleDir, out, diagnostics, "go", "list", "-m", "-f", format); err != nil {
+		return buildCtx, fmt.Errorf("read Go build context: %w: %s", errors.Join(err, ctx.Err()), diagnostics.String())
 	}
 	if len(out.data) > maxRecordBytes {
 		return buildCtx, fmt.Errorf("go build context exceeds %d bytes", maxRecordBytes)
@@ -1281,7 +1299,7 @@ func moduleDownloadArgs(ctx context.Context, moduleDir string) ([]string, bool, 
 	if !ok {
 		return nil, false, fmt.Errorf("module requirements exceed %d lines", maxGoModLines)
 	}
-	buildCtx, err := effectiveBuildContext(ctx, moduleDir)
+	buildCtx, err := effectiveBuildContext(ctx, moduleDir, runTool)
 	if err != nil {
 		return nil, false, err
 	}

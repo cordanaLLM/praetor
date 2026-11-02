@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -269,7 +270,7 @@ func TestBuildModule_Positive_SkipsTestOnlyRequirements(t *testing.T) {
 }
 
 // Boundary: download retries stay within the 60-minute CI job and divide remaining context budget.
-func TestBuildModule_Boundary_RetryLoopBoundedByJobAndContextDeadline(t *testing.T) {
+func TestRetryModuleGo_Boundary_RetryLoopBoundedByJobAndContextDeadline(t *testing.T) {
 	t.Parallel()
 	const ciJobTimeout = 60 * time.Minute
 	if runTimeout >= ciJobTimeout {
@@ -280,48 +281,45 @@ func TestBuildModule_Boundary_RetryLoopBoundedByJobAndContextDeadline(t *testing
 		t.Errorf("three stalled download attempts can take %v, exceeding %v CI job limit", maxRetrySpan, ciJobTimeout)
 	}
 
-	root := retryFixtureRoot(t, "stalled/mod")
-	ctx, cancel := context.WithTimeout(t.Context(), 450*time.Millisecond)
-	defer cancel()
-	var attempts int
-	stalledRunner := func(runCtx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
-		if len(args) >= 2 && args[0] == "mod" && args[1] == "download" {
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		ctx, cancel := context.WithTimeout(t.Context(), 450*time.Millisecond)
+		defer cancel()
+		var attempts int
+		stalledRunner := func(runCtx context.Context, _ string, _, _ io.Writer, _ string, _ ...string) error {
 			attempts++
 			<-runCtx.Done()
 			return runCtx.Err()
 		}
-		return nil
-	}
-	err := buildModule(ctx, root, "stalled/mod", io.Discard, stalledRunner, defaultWait)
-	if err == nil || !strings.Contains(err.Error(), "3 attempts") {
-		t.Fatalf("err = %v, want 3-attempt download error before job deadline", err)
-	}
-	if attempts != 3 {
-		t.Fatalf("attempts = %d, want all 3 attempts bounded within context deadline", attempts)
-	}
+		count, err := retryModuleGo(ctx, "unused", "stalled/mod", "go mod download", []string{"mod", "download"}, downloadTimeout, io.Discard, stalledRunner, defaultWait)
+		if !errors.Is(err, context.DeadlineExceeded) || count != downloadAttempts || attempts != downloadAttempts {
+			t.Fatalf("err = %v, count = %d, attempts = %d; want all 3 timed-out attempts before job deadline", err, count, attempts)
+		}
+		if elapsed := time.Since(start); elapsed > 450*time.Millisecond {
+			t.Fatalf("retry loop took %v, exceeding the 450ms parent budget", elapsed)
+		}
+	})
 }
 
-func TestBuildModule_ParentDeadlineStopsFirstAttempt(t *testing.T) {
+func TestRetryModuleGo_ParentDeadlineStopsFirstAttempt(t *testing.T) {
 	t.Parallel()
-	root := retryFixtureRoot(t, "expired/mod")
-	parentCtx, cancelParent := context.WithTimeout(t.Context(), 40*time.Millisecond)
-	defer cancelParent()
-	var parentAttempts int
-	expireParentRunner := func(runCtx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
-		if len(args) >= 2 && args[0] == "mod" && args[1] == "download" {
+	synctest.Test(t, func(t *testing.T) {
+		parentCtx, cancelParent := context.WithTimeout(t.Context(), 40*time.Millisecond)
+		defer cancelParent()
+		var parentAttempts int
+		expireParentRunner := func(_ context.Context, _ string, _, _ io.Writer, _ string, _ ...string) error {
 			parentAttempts++
 			<-parentCtx.Done()
 			return parentCtx.Err()
 		}
-		return nil
-	}
-	parentErr := buildModule(parentCtx, root, "expired/mod", io.Discard, expireParentRunner, defaultWait)
-	if !errors.Is(parentErr, context.DeadlineExceeded) {
-		t.Fatalf("parentErr = %v, want context.DeadlineExceeded", parentErr)
-	}
-	if parentAttempts != 1 {
-		t.Fatalf("parentAttempts = %d, want 1 when parent context expires during attempt 1", parentAttempts)
-	}
+		count, parentErr := retryModuleGo(parentCtx, "unused", "expired/mod", "go mod download", []string{"mod", "download"}, downloadTimeout, io.Discard, expireParentRunner, defaultWait)
+		if !errors.Is(parentErr, context.DeadlineExceeded) {
+			t.Fatalf("parentErr = %v, want context.DeadlineExceeded", parentErr)
+		}
+		if parentAttempts != 1 || count != 1 {
+			t.Fatalf("parentAttempts = %d, count = %d; want 1 when parent context expires during attempt 1", parentAttempts, count)
+		}
+	})
 }
 
 func TestBuildModule_LocalReplaceVersionSelection(t *testing.T) {
@@ -565,10 +563,19 @@ func TestReadBoundedRegularFile_SourceBoundaryAndCancellation(t *testing.T) {
 
 func TestParseLocalReplace_DirectoryBoundaries(t *testing.T) {
 	t.Parallel()
-	for _, target := range []string{".", "..", "./sibling", "../sibling", filepath.Join(string(filepath.Separator), "sibling")} {
+	for _, target := range []string{
+		".", "..", "./sibling", "../sibling", "/sibling", "/",
+		`.\sibling`, `..\sibling`, `\sibling`, `\`, `\\server\share`,
+		`C:\sibling`, `z:/sibling`, "A:relative", "z:",
+	} {
 		modPath, version, ok := parseLocalReplace("replace example.com/local v1.2.3 => " + target)
 		if !ok || modPath != "example.com/local" || version != "v1.2.3" {
 			t.Errorf("replace target %q = (%q, %q, %v), want local module and version", target, modPath, version, ok)
+		}
+	}
+	for _, target := range []string{"", "sibling", ".hidden", "..hidden", "example.com/remote", "1:relative", ":relative", "c"} {
+		if _, _, ok := parseLocalReplace("replace example.com/local => " + target); ok {
+			t.Errorf("non-directory %q treated as a local directory", target)
 		}
 	}
 	if _, _, ok := parseLocalReplace("replace example.com/local => example.com/remote v1.2.3"); ok {
