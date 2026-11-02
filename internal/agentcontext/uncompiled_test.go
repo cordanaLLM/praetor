@@ -66,6 +66,27 @@ func TestVerifyUncompiledInstructions_Context_Negative(t *testing.T) {
 	}
 }
 
+// Negative: dangling gitlink metadata reports worktree present but Git probe fails; must fail closed.
+func TestVerifyUncompiledInstructions_Context_Negative_DanglingGitlinkFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: nonexistent-target\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files, err := UncompiledInstructionFiles(t.Context(), dir)
+	if err == nil {
+		t.Fatal("expected error on dangling gitlink, got nil")
+	}
+	if files != nil {
+		t.Fatalf("expected nil files on probe error, got %v", files)
+	}
+	if !strings.Contains(err.Error(), "read committable instruction files in") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+	if err := VerifyUncompiledInstructions(t.Context(), dir); err == nil {
+		t.Fatal("VerifyUncompiledInstructions must fail closed on dangling gitlink, got nil")
+	}
+}
+
 // Boundary: ignored files, non-instruction files, and directories outside Git return no findings.
 func TestVerifyUncompiledInstructions_Context_Boundary(t *testing.T) {
 	// 1. Outside a Git repository

@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 )
 
 // Positive and Negative: compile-context --verify detects uncompiled agent instruction files,
@@ -57,5 +59,24 @@ func TestCompileContext_UncompiledInstructions_NegativeAndPositive(t *testing.T)
 	}
 	if out, err := runCompileContextCmd(t, dir, "--verify"); err != nil {
 		t.Fatalf("verify must pass with only compiled hiss-invariants.mdc: %v\n%s", err, out)
+	}
+}
+
+// Negative: dangling gitlink metadata where Git probe fails must fail closed.
+func TestCompileContext_UncompiledInstructions_DanglingGitlinkFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: nonexistent-target\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := agentcontext.VerifyUncompiledInstructions(t.Context(), dir); err == nil {
+		t.Fatal("VerifyUncompiledInstructions must fail closed on dangling gitlink, got nil")
+	}
+}
+
+// Boundary: non-git directory returns nil without error.
+func TestCompileContext_UncompiledInstructions_NonGitDir_Boundary(t *testing.T) {
+	dir := t.TempDir()
+	if err := agentcontext.VerifyUncompiledInstructions(t.Context(), dir); err != nil {
+		t.Fatalf("non-git directory must return nil, got %v", err)
 	}
 }

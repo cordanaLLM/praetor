@@ -1,6 +1,8 @@
 package adopt
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -295,5 +297,56 @@ func TestGitIgnoreRulesImmutability(t *testing.T) {
 	_ = append(v1Copy, "/.appended-rule/")
 	if !slices.Equal(managedIgnoreRules, canonicalBefore) {
 		t.Fatalf("appending to gitIgnoreBlockHistory[0].Rules affected managedIgnoreRules: got %v, want %v", managedIgnoreRules, canonicalBefore)
+	}
+}
+
+// Positive: state-ledger-integrity.md references this test file and TestLookupManagedGitIgnoreTail_Positive.
+func TestGitIgnoreHistory_GuideReferencesHistoryTest_Positive(t *testing.T) {
+	guidePath := filepath.Join("..", "..", "docs", "guides", "state-ledger-integrity.md")
+	content, err := os.ReadFile(guidePath)
+	if err != nil {
+		t.Fatalf("read guide: %v", err)
+	}
+	text := string(content)
+	wantFile := "internal/adopt/gitignore_history_test.go"
+	wantTest := "TestLookupManagedGitIgnoreTail_Positive"
+	if !strings.Contains(text, wantFile) {
+		t.Fatalf("state-ledger-integrity.md must reference %s: missing from text", wantFile)
+	}
+	if !strings.Contains(text, wantTest) {
+		t.Fatalf("state-ledger-integrity.md must reference %s: missing from text", wantTest)
+	}
+}
+
+// Negative: unreferenced or fictitious test files are not cited in the guide.
+func TestGitIgnoreHistory_GuideReferencesHistoryTest_Negative(t *testing.T) {
+	guidePath := filepath.Join("..", "..", "docs", "guides", "state-ledger-integrity.md")
+	content, err := os.ReadFile(guidePath)
+	if err != nil {
+		t.Fatalf("read guide: %v", err)
+	}
+	text := string(content)
+	fictitious := "internal/adopt/fictitious_gitignore_test.go"
+	if strings.Contains(text, fictitious) {
+		t.Fatalf("state-ledger-integrity.md must not reference fictitious file %q", fictitious)
+	}
+}
+
+// Boundary: historical compatibility claims for both block v3 and block v4 are linked.
+func TestGitIgnoreHistory_GuideReferencesHistoryTest_Boundary(t *testing.T) {
+	guidePath := filepath.Join("..", "..", "docs", "guides", "state-ledger-integrity.md")
+	content, err := os.ReadFile(guidePath)
+	if err != nil {
+		t.Fatalf("read guide: %v", err)
+	}
+	text := string(content)
+	claim := "A repository still carrying block v3 or v4 is recognised and re-rendered, not refused"
+	if !strings.Contains(text, claim) {
+		t.Fatalf("state-ledger-integrity.md missing historical compatibility claim: %q", claim)
+	}
+	idx := strings.Index(text, claim)
+	window := text[idx : idx+250]
+	if !strings.Contains(window, "internal/adopt/gitignore_history_test.go") {
+		t.Fatalf("historical compatibility claim must be followed by gitignore_history_test.go reference, got window: %q", window)
 	}
 }

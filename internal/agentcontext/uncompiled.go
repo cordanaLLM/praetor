@@ -42,9 +42,6 @@ func UncompiledInstructionFiles(ctx context.Context, repoPath string) ([]string,
 		"ls-files", "--cached", "--others", "--exclude-standard", "-z", "--",
 		".github/instructions", ".cursor/rules")
 	if err != nil {
-		if util.GitAnsweredNotARepository(result, err) {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("read committable instruction files in %s: %w", repoPath, err)
 	}
 

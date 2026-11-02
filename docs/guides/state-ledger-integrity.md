@@ -93,7 +93,9 @@ it also ignores Codacy editor files (`/.codacy/`, `.github/instructions/codacy.i
 and `.cursor/rules/codacy.mdc`). Without the first rule, `praetorctl state status` counted every
 checkout a client had run in as dirty; `internal/state/client_local_settings_test.go` reports a
 checkout holding only that file as clean and the same checkout without the rule as dirty.
-A repository still carrying block v3 or v4 is recognised and re-rendered, not refused.
+A repository still carrying block v3 or v4 is recognised and re-rendered, not refused
+(`TestLookupManagedGitIgnoreTail_Positive` in
+[`internal/adopt/gitignore_history_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/gitignore_history_test.go)).
 A `.gitignore` that cannot be merged, such as one with an unterminated managed
 block, fails the command. The behaviour is covered by
 [`internal/adopt/private_ignore_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/private_ignore_test.go),
