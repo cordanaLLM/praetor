@@ -45,7 +45,7 @@ type checkpointSource struct {
 // recorded here (checkpoint_prior_test.go).
 var priorCheckpointDigests = map[string]map[string]string{
 	checkpointSessionModule: {
-		"72827e153c15b12035d7f8e9346a4c19b0dfb59af52b292893c973531a36d5ee": "reviewed hook findings",
+		"cf4e7357789c434d56da486e75ac46ab4878a3c3554121c9c1c484378dc44709": "reviewed hook findings",
 	},
 	checkpointScript: {
 		"54130726f2c6830a763a2485b849293d4c014e34c308596cc3e28d5330e6fc3f": "stop checkpoint retries PR listing and collapses failure",
@@ -63,7 +63,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"2c08cd616a4a2d53bcbdc2a4e3bb8a4fc235a718dd0913c53d95f9943b53eb6c": "stop checkpoint finds recent unnamed worktrees",
 		"d3b85026905c9006b1ddd063550d673db0fd0e46639a499943f8934b79b89192": "checkpoint evaluator passes ruff PLR rules",
 		"80a0a2da3dc2222e12b5c70ab7bc442fae586f1d06d5bdcb0516df3c20a144ca": "stop checkpoint counts session-owned worktrees and ignores gate scratch",
-		"02357e28ddf81e7c8586b5f5ac8c827b6b6a7756800fb3f04198d59912bc98cd": "reviewed hook findings",
+		"09d738640d0fb1e4deb0ac20c314a381d2ab559fe6d833c0ee3ab392d246b7a1": "reviewed hook findings",
 	},
 	checkpointCommon: {
 		"daf13baf16b776de9a976809a7e064971fd5946ed4508761c229dba0ef4b4e65": "Go hooks share session ownership and verify live gate scratch owners",

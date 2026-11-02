@@ -245,6 +245,26 @@ class SessionOwnershipRegressions(unittest.TestCase):
                     self.assertRaisesRegex(PermissionError, "cleanup failed"):
                 sessions._write_session_record(self.directory, self.record, set())
 
+    def test_record_writes_expire_only_records_older_than_activity_window(self):
+        now = time.time()
+        records = {}
+        for label, age in (("old", checkpoint.WORKTREE_ACTIVITY_WINDOW + 1),
+                           ("fresh", checkpoint.WORKTREE_ACTIVITY_WINDOW - 1),
+                           ("boundary", checkpoint.WORKTREE_ACTIVITY_WINDOW),
+                           ("locked", checkpoint.WORKTREE_ACTIVITY_WINDOW + 1)):
+            record = self.directory / (sessions.session_hash_for(label) + ".json")
+            record.write_text("[]")
+            os.utime(record, (now - age, now - age))
+            records[label] = record
+        records["locked"].with_suffix(".lock").mkdir()
+        with mock.patch.object(sessions.time, "time", return_value=now):
+            sessions._write_session_record(self.directory, self.record, set())
+        self.assertFalse(records["old"].exists())
+        for label in ("fresh", "boundary", "locked"):
+            self.assertTrue(records[label].exists(), label)
+        self.assertTrue(self.record.exists())
+        self.assertIs(checkpoint.WORKTREE_ACTIVITY_WINDOW, sessions.WORKTREE_ACTIVITY_WINDOW)
+
     def test_overflow_is_unknown_and_stays_unknown(self):
         paths = {str(self.base / str(n)) for n in range(sessions.MAX_WORKTREES + 1)}
         sessions._write_session_record(self.directory, self.record, paths)

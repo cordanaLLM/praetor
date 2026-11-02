@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import tempfile
 import time
 from pathlib import Path
@@ -20,6 +21,10 @@ SESSION_ENV = "PRAETOR_CHECKPOINT_SESSION"
 SESSION_INPUT_LIMIT = 1024 * 1024
 MAX_WORKTREES = 512
 MAX_RECORD_BYTES = 512 * 1024
+MAX_SESSION_RECORDS = 10000
+# One age bound for recent worktree activity and inactive ownership records.
+# Records exactly at this bound remain fresh; only older records expire.
+WORKTREE_ACTIVITY_WINDOW = 24 * 60 * 60
 
 
 def extract_session_id(payload):
@@ -178,6 +183,45 @@ def _write_session_record(sessions_dir, record_file, paths):
     finally:
         if tmp is not None:
             tmp.unlink(missing_ok=True)
+    _prune_session_records(sessions_dir, record_file)
+
+
+def _prune_session_record(record_file, cutoff):
+    """Remove one expired regular record while holding its writer lock."""
+    lock = record_file.with_suffix(".lock")
+    if not _acquire_session_lock(lock):
+        return  # An in-flight writer owns this record; a later write retries cleanup.
+    try:
+        try:
+            info = record_file.lstat()
+        except FileNotFoundError:
+            return  # Another cleanup already removed this record.
+        if stat.S_ISREG(info.st_mode) and info.st_mtime < cutoff:
+            record_file.unlink(missing_ok=True)
+    finally:
+        lock.rmdir()
+
+
+def _prune_session_records(sessions_dir, current_record):
+    """Bound each sweep; age equal to the shared activity window remains fresh."""
+    cutoff = time.time() - WORKTREE_ACTIVITY_WINDOW
+    with os.scandir(sessions_dir) as records:
+        for _ in range(MAX_SESSION_RECORDS):
+            entry = next(records, None)
+            if entry is None:
+                break
+            path = Path(entry.path)
+            if path != current_record and entry.name.endswith(".json"):
+                _prune_session_record(path, cutoff)
+
+
+def _acquire_session_lock(lock):
+    """Share the nonblocking lock primitive between writers and record cleanup."""
+    try:
+        lock.mkdir()
+    except FileExistsError:
+        return False
+    return True
 
 
 @contextlib.contextmanager
@@ -190,12 +234,10 @@ def _session_update_lock(sessions_dir, record_file, budget):
     acquired = False
     for _ in range(501):
         remaining = budget.timeout(0.01)
-        try:
-            lock.mkdir()
+        if _acquire_session_lock(lock):
             acquired = True
             break
-        except FileExistsError:
-            time.sleep(remaining)
+        time.sleep(remaining)
     if not acquired:
         raise HookError("checkpoint session update lock timed out")
     try:

@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from checkpoint_session import _read_session_record
+from checkpoint_session import WORKTREE_ACTIVITY_WINDOW, _read_session_record
 from common import (
     HookBudget,
     HookError,
@@ -38,7 +38,6 @@ OWNERSHIP_UNKNOWN_REASON = "worktree ownership unknown: judged by recent activit
 SESSION_HASH_RE = re.compile(r"^[0-9a-f]{16}$")
 # The hook has no session-start timestamp; recent Git admin-file activity stands in for
 # "created or changed by this session" and deliberately excludes older inventory worktrees.
-WORKTREE_ACTIVITY_WINDOW = 24 * 60 * 60
 WORKTREE_CHECK_BUDGET = 22
 WORKTREE_CHECK_WORKERS = 8
 WORKTREE_COMMAND_TIMEOUT = 1
