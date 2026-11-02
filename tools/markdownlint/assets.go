@@ -243,6 +243,8 @@ var priorDigests = map[string]string{
 	"ff8d70bc3eda4814a2fd5a90b9e56720068f27a1fcfa082117da7f62d0f2c1b6": Directory + "/package-lock.json",
 	// verify.mjs before changedPathsSince used git diff -z and kept deleted paths.
 	"9c1f237ab6c0103e9c1ec4825f2dcce5270cb11d1deb603672c3c1da40e7b6cc": Directory + "/verify.mjs",
+	// Outgoing review-round text; fixture: verify.review-round1.mjs.txt.
+	"87f7cc9faa643eef8a86740b5f57f25ca8d9f2d68b7ebc0394bb63c25f3cdef1": Directory + "/verify.mjs",
 }
 
 var assetNames = [...]string{

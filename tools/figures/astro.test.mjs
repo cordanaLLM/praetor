@@ -345,13 +345,19 @@ test('the Astro player mount holds exactly the committed player files', () => {
 // The integration's hooks
 // ---------------------------------------------------------------------------------------------
 
-test('an adopted integration without player files injects no loader', () => withTempDir(async (dir) => {
-  // Import the shipped modules at an adopter path: no player/ exists beside astro.mjs.
+async function adoptedFiguresModule(dir, lock) {
   const files = ['astro.mjs', 'checks.mjs', 'core.mjs', 'serve.mjs',
     'third_party/interfig/upstream/src/svg.ts', 'third_party/interfig/upstream/src/geometry.ts',
     'third_party/interfig/upstream/src/model.ts'];
   for (const name of files) write(join(dir, 'tools/figures', name), readFileSync(join(ROOT, 'tools/figures', name)));
+  if (lock) write(join(dir, 'tools/figures/player.lock.json'), JSON.stringify(lock));
   const { default: adoptedFigures } = await import(pathToFileURL(join(dir, 'tools/figures/astro.mjs')).href);
+  return adoptedFigures;
+}
+
+test('an adopted integration without player files injects no loader', () => withTempDir(async (dir) => {
+  // Import the shipped modules at an adopter path: no player/ exists beside astro.mjs.
+  const adoptedFigures = await adoptedFiguresModule(dir);
   const scripts = [];
   adoptedFigures().hooks['astro:config:setup']({
     config: { base: '/preset/' }, updateConfig: () => {}, injectScript: (...args) => scripts.push(args),
@@ -414,7 +420,7 @@ test('releaseArchiveUrl covers positive, boundary and negative repository, tag a
   }
 });
 
-test('extractPlayerArchive covers valid archives, rejection cases, boundary limits and single-listener cleanup', async () => {
+test('extractPlayerArchive covers valid archives, rejection cases and boundary limits', async (t) => {
   const validEntries = [
     { name: 'loader.js', body: '// loader\n' },
     { name: 'player.js', body: '// player\n' },
@@ -423,17 +429,6 @@ test('extractPlayerArchive covers valid archives, rejection cases, boundary limi
   const validArchive = buildTarGz(validEntries);
   const firstDir = extractPlayerArchive(validArchive);
   assert.equal(readFileSync(join(firstDir, 'loader.js'), 'utf8'), '// loader\n');
-  const beforeListeners = process.listenerCount('exit');
-  let latestDir = firstDir;
-  for (let i = 0; i < 12; i++) {
-    latestDir = extractPlayerArchive(validArchive);
-  }
-  const { extractPlayerArchive: reloadedExtract } = await import(`${pathToFileURL(join(ROOT, 'tools/figures/astro.mjs')).href}?v=listener-check`);
-  latestDir = reloadedExtract(validArchive);
-  assert.equal(statOrNull(firstDir), null, 'prior extraction directory is cleaned up when replaced');
-  assert.ok(statOrNull(latestDir)?.isDirectory(), 'latest extraction directory exists');
-  assert.ok(process.listenerCount('exit') - beforeListeners <= 1, 'at most one process exit listener is registered');
-  assert.ok(globalThis[Symbol.for('praetor.figures.extractedPlayerDirs')] instanceof Set);
 
   const boundaryArchive = buildTarGz([
     { name: 'loader.js', body: Buffer.alloc(4 * 1024 * 1024) },
@@ -457,22 +452,48 @@ test('extractPlayerArchive covers valid archives, rejection cases, boundary limi
     [buildTarGz(validEntries.slice(0, 2)), /do not match/],
     [buildTarGz([{ name: 'loader.js', body: Buffer.alloc(4 * 1024 * 1024 + 1) }, ...validEntries.slice(1)]), /exceeds 4194304 bytes/],
   ];
-  for (const [archive, pattern] of negative) {
-    assert.throws(() => extractPlayerArchive(archive), pattern);
+  for (const [index, [archive, pattern]] of negative.entries()) {
+    await t.test(`rejection ${index}: ${pattern.source}`, () => {
+      assert.throws(() => extractPlayerArchive(archive), pattern);
+    });
   }
 });
 
+test('extractPlayerArchive enforces the compressed archive byte boundary', () => {
+  const validArchive = buildTarGz([
+    { name: 'loader.js', body: '// loader\n' },
+    { name: 'player.js', body: '// player\n' },
+    { name: 'THIRD-PARTY-LICENSES.txt', body: 'MIT\n' },
+  ]);
+  const exactArchive = Buffer.concat([validArchive, Buffer.alloc(4 * 1024 * 1024 - validArchive.length)]);
+  assert.ok(statOrNull(extractPlayerArchive(exactArchive))?.isDirectory(), 'exact compressed byte limit accepted');
+  assert.throws(() => extractPlayerArchive(Buffer.concat([exactArchive, Buffer.alloc(1)])), /exceeds 4194304 bytes/);
+});
+
+test('extractPlayerArchive reclaims earlier directories with one cleanup listener across module reloads', async () => {
+  const validArchive = buildTarGz([
+    { name: 'loader.js', body: '// loader\n' },
+    { name: 'player.js', body: '// player\n' },
+    { name: 'THIRD-PARTY-LICENSES.txt', body: 'MIT\n' },
+  ]);
+  const firstDir = extractPlayerArchive(validArchive);
+  const beforeListeners = process.listenerCount('exit');
+  let latestDir = firstDir;
+  for (let i = 0; i < 12; i++) {
+    latestDir = extractPlayerArchive(validArchive);
+  }
+  const { extractPlayerArchive: reloadedExtract } = await import(`${pathToFileURL(join(ROOT, 'tools/figures/astro.mjs')).href}?v=listener-check`);
+  latestDir = reloadedExtract(validArchive);
+  assert.equal(statOrNull(firstDir), null, 'prior extraction directory is cleaned up when replaced');
+  assert.ok(statOrNull(latestDir)?.isDirectory(), 'latest extraction directory exists');
+  assert.ok(process.listenerCount('exit') - beforeListeners <= 1, 'at most one process exit listener is registered');
+  assert.ok(globalThis[Symbol.for('praetor.figures.extractedPlayerDirs')] instanceof Set);
+});
+
 test('downloadPlayerArchive aborts oversized streaming responses before buffering the rest of the stream', () => withTempDir(async (dir) => {
-  const files = ['astro.mjs', 'checks.mjs', 'core.mjs', 'serve.mjs',
-    'third_party/interfig/upstream/src/svg.ts', 'third_party/interfig/upstream/src/geometry.ts',
-    'third_party/interfig/upstream/src/model.ts'];
-  for (const name of files) write(join(dir, 'tools/figures', name), readFileSync(join(ROOT, 'tools/figures', name)));
-  write(join(dir, 'tools/figures/player.lock.json'), JSON.stringify({
-    asset: 'figures-player.tar.gz',
-    sha256: 'a'.repeat(64),
-    release: 'v1.4.0',
-  }));
-  const { default: adoptedFigures } = await import(`${pathToFileURL(join(dir, 'tools/figures/astro.mjs')).href}?v=stream-limit`);
+  const adoptedFigures = await adoptedFiguresModule(dir, {
+    asset: 'figures-player.tar.gz', sha256: 'a'.repeat(64), release: 'v1.4.0',
+  });
   const originalFetch = globalThis.fetch;
   let pulls = 0;
   let canceled = false;
@@ -507,11 +528,39 @@ test('downloadPlayerArchive aborts oversized streaming responses before bufferin
   }
 }));
 
+test('downloadPlayerArchive requires bounded streaming and accepts the exact download limit', () => withTempDir(async (dir) => {
+  const adoptedFigures = await adoptedFiguresModule(dir, {
+    asset: 'figures-player.tar.gz', sha256: 'a'.repeat(64), release: 'v1.4.0',
+  });
+  const originalFetch = globalThis.fetch;
+  const setup = () => adoptedFigures({ root: dir }).hooks['astro:config:setup']({
+    config: {}, updateConfig: () => {}, injectScript: () => {},
+  });
+  let unboundedReads = 0;
+  try {
+    globalThis.fetch = async () => ({
+      ok: true,
+      arrayBuffer: async () => { unboundedReads++; return new ArrayBuffer(0); },
+    });
+    await assert.rejects(setup, /streaming response body/);
+    assert.equal(unboundedReads, 0, 'never falls back to buffering an unbounded response');
+    for (const bytes of [0, 4 * 1024 * 1024]) {
+      globalThis.fetch = async () => new Response(new Uint8Array(bytes));
+      await assert.rejects(setup, /SHA-256 mismatch/, `${bytes} bytes pass the download bound`);
+    }
+    let canceled = false;
+    globalThis.fetch = async () => new Response(new ReadableStream({
+      pull() { assert.fail('oversized Content-Length must reject before reading'); },
+      cancel() { canceled = true; },
+    }, { highWaterMark: 0 }), { headers: { 'content-length': String(4 * 1024 * 1024 + 1) } });
+    await assert.rejects(setup, /exceeds 4194304 bytes/);
+    assert.equal(canceled, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}));
+
 test('an adopted integration with a released player.lock.json injects the loader and publishes the locked player', () => withTempDir(async (dir) => {
-  const files = ['astro.mjs', 'checks.mjs', 'core.mjs', 'serve.mjs',
-    'third_party/interfig/upstream/src/svg.ts', 'third_party/interfig/upstream/src/geometry.ts',
-    'third_party/interfig/upstream/src/model.ts'];
-  for (const name of files) write(join(dir, 'tools/figures', name), readFileSync(join(ROOT, 'tools/figures', name)));
   const archive = buildTarGz([
     { name: 'loader.js', body: '// locked loader\n' },
     { name: 'player.js', body: '// locked player\n' },
@@ -524,7 +573,7 @@ test('an adopted integration with a released player.lock.json injects the loader
     release: 'v1.4.0',
     repository: 'https://github.com/adopter/praetor-fork',
   }));
-  const { default: adoptedFigures } = await import(`${pathToFileURL(join(dir, 'tools/figures/astro.mjs')).href}?v=released`);
+  const adoptedFigures = await adoptedFiguresModule(dir);
   const requested = [];
   const scripts = [];
   const integration = adoptedFigures({

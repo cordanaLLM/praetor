@@ -57,7 +57,7 @@ func TestBuildModule_Positive_FirstDownloadFailsThenSucceeds(t *testing.T) {
 		return nil
 	}
 
-	err := buildModule(t.Context(), "/mock/root", "my/mod", &stderr, tracker.run, wait)
+	err := buildModule(t.Context(), retryFixtureRoot(t, "my/mod"), "my/mod", &stderr, tracker.run, wait)
 	if err != nil {
 		t.Fatalf("buildModule failed: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestBuildModule_Negative_EveryDownloadFails(t *testing.T) {
 		return nil
 	}
 
-	err := buildModule(t.Context(), "/mock/root", "pkg/badmod", &stderr, tracker.run, wait)
+	err := buildModule(t.Context(), retryFixtureRoot(t, "pkg/badmod"), "pkg/badmod", &stderr, tracker.run, wait)
 	if err == nil {
 		t.Fatal("buildModule succeeded, want persistent download error")
 	}
@@ -123,7 +123,7 @@ func TestBuildModule_Boundary_CancelDuringWaitReturnsAtOnce(t *testing.T) {
 	}
 
 	start := time.Now()
-	err := buildModule(ctx, "/mock/root", "cancelmod", io.Discard, runner, defaultWait)
+	err := buildModule(ctx, retryFixtureRoot(t, "cancelmod"), "cancelmod", io.Discard, runner, defaultWait)
 	elapsed := time.Since(start)
 
 	if err == nil || !errors.Is(err, context.Canceled) {
@@ -138,7 +138,7 @@ func TestBuildModule_Boundary_CancelDuringWaitReturnsAtOnce(t *testing.T) {
 func TestGate_Negative_ExceptionForModulePlusDownloadFailureStillFailsGate(t *testing.T) {
 	t.Parallel()
 	repo := repository{
-		root:  "/mock/root",
+		root:  retryFixtureRoot(t, "excepted"),
 		today: time.Now().UTC(),
 		exceptions: []exception{
 			{Path: "excepted/go.mod", Reason: "needs libfoo", Expires: "2099-12-31"},
@@ -279,6 +279,7 @@ func TestBuildModule_Boundary_RetryLoopBoundedByJobAndContextDeadline(t *testing
 		t.Errorf("three stalled download attempts can take %v, exceeding %v CI job limit", maxRetrySpan, ciJobTimeout)
 	}
 
+	root := retryFixtureRoot(t, "stalled/mod")
 	ctx, cancel := context.WithTimeout(t.Context(), 450*time.Millisecond)
 	defer cancel()
 	var attempts int
@@ -290,18 +291,18 @@ func TestBuildModule_Boundary_RetryLoopBoundedByJobAndContextDeadline(t *testing
 		}
 		return nil
 	}
-	err := buildModule(ctx, "/mock/root", "stalled/mod", io.Discard, stalledRunner, defaultWait)
+	err := buildModule(ctx, root, "stalled/mod", io.Discard, stalledRunner, defaultWait)
 	if err == nil || !strings.Contains(err.Error(), "3 attempts") {
 		t.Fatalf("err = %v, want 3-attempt download error before job deadline", err)
 	}
 	if attempts != 3 {
 		t.Fatalf("attempts = %d, want all 3 attempts bounded within context deadline", attempts)
 	}
-	assertParentDeadlineStopsFirstAttempt(t)
 }
 
-func assertParentDeadlineStopsFirstAttempt(t *testing.T) {
-	t.Helper()
+func TestBuildModule_ParentDeadlineStopsFirstAttempt(t *testing.T) {
+	t.Parallel()
+	root := retryFixtureRoot(t, "expired/mod")
 	parentCtx, cancelParent := context.WithTimeout(t.Context(), 40*time.Millisecond)
 	defer cancelParent()
 	var parentAttempts int
@@ -313,7 +314,7 @@ func assertParentDeadlineStopsFirstAttempt(t *testing.T) {
 		}
 		return nil
 	}
-	parentErr := buildModule(parentCtx, "/mock/root", "expired/mod", io.Discard, expireParentRunner, defaultWait)
+	parentErr := buildModule(parentCtx, root, "expired/mod", io.Discard, expireParentRunner, defaultWait)
 	if !errors.Is(parentErr, context.DeadlineExceeded) {
 		t.Fatalf("parentErr = %v, want context.DeadlineExceeded", parentErr)
 	}
@@ -322,7 +323,7 @@ func assertParentDeadlineStopsFirstAttempt(t *testing.T) {
 	}
 }
 
-func TestBuildModule_LocalReplaceAndRequirementBounds(t *testing.T) {
+func TestBuildModule_LocalReplaceVersionSelection(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	modDir := filepath.Join(root, "mod")
@@ -353,63 +354,108 @@ func TestBuildModule_LocalReplaceAndRequirementBounds(t *testing.T) {
 		t.Fatalf("download args = %v, want %v", gotArgs, want)
 	}
 
+}
+
+func TestGoModRequirements_ReadsPastOldCapAndLateReplace(t *testing.T) {
+	t.Parallel()
 	var b strings.Builder
-	b.WriteString("module example.com/mod\n\ngo 1.26.0\n\nrequire (\n\texample.com/testonly v1.0.0\n")
-	for i := range maxImports + 5 {
-		fmt.Fprintf(&b, "\texample.com/dep%d v1.0.0 // indirect\n", i)
+	b.WriteString("module example.com/mod\nrequire (\nexample.com/testonly v1.0.0\n")
+	for index := range maxImports + 5 {
+		fmt.Fprintf(&b, "example.com/dep%d v1.0.0 // indirect\n", index)
 	}
-	b.WriteString("\texample.com/late v1.2.3\n)\n")
-	writeTestModuleFiles(t, modDir, b.String(), "package mod\n\nimport _ \"example.com/late\"\n", "package mod\n")
-	gotArgs = nil
-	if err := buildModule(t.Context(), root, "mod", io.Discard, rec, defaultWait); err != nil {
-		t.Fatal(err)
+	b.WriteString("example.com/late v1.2.3\n)\nreplace example.com/dep0 => ../dep0\n")
+	reqs, ok := parseGoModRequirements(b.String())
+	if !ok || len(reqs) != maxImports+6 || reqs[len(reqs)-1].path != "example.com/late" {
+		t.Fatalf("requirements past 256: count = %d, complete = %v; want %d with late replacement", len(reqs), ok, maxImports+6)
 	}
-	wantLate := []string{"mod", "download", "example.com/late@v1.2.3"}
-	if !slices.Equal(gotArgs, wantLate) {
-		t.Fatalf("download args past 256 requirements = %v, want %v", gotArgs, wantLate)
+	if slices.ContainsFunc(reqs, func(req modRequirement) bool { return req.path == "example.com/dep0" }) {
+		t.Fatal("replacement after old cap was ignored")
+	}
+	if _, ok := parseGoModRequirements(strings.Repeat("\n", maxGoModLines-1)); !ok {
+		t.Fatal("exact line limit rejected")
+	}
+	if _, ok := parseGoModRequirements(strings.Repeat("\n", maxGoModLines)); ok {
+		t.Fatal("over-limit go.mod silently accepted")
 	}
 }
 
-func TestBuildModule_SymlinkParseErrorAndCanceledScan(t *testing.T) {
-	t.Parallel()
+func retryFixtureRoot(t *testing.T, dir string) string {
+	t.Helper()
 	root := t.TempDir()
-	modDir := filepath.Join(root, "mod")
-	gomod := "module example.com/mod\n\ngo 1.26.0\n\nrequire (\n\texample.com/needed v1.0.0\n\texample.com/testonly v1.0.0\n)\n"
-	writeTestModuleFiles(t, modDir, gomod, "package mod\n\nimport _ \"example.com/needed\"\n", "package mod\n")
-	if err := os.Symlink(filepath.Join(modDir, "snap.go"), filepath.Join(modDir, "link.go")); err != nil {
-		t.Skipf("symlink unsupported: %v", err)
-	}
-	var gotArgs []string
-	rec := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
-		if slices.Equal(args[:min(len(args), 2)], []string{"mod", "download"}) {
-			gotArgs = slices.Clone(args)
-		}
-		return nil
-	}
-	if err := buildModule(t.Context(), root, "mod", io.Discard, rec, defaultWait); err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(gotArgs, []string{"mod", "download"}) {
-		t.Fatalf("symlink scan fallback args = %v, want full [mod download]", gotArgs)
-	}
-	if err := os.Remove(filepath.Join(modDir, "link.go")); err != nil {
-		t.Fatal(err)
-	}
+	writeTestModuleFiles(t, filepath.Join(root, dir),
+		"module example.com/mod\nrequire example.com/needed v1.0.0\n",
+		"package mod\nimport _ \"example.com/needed\"\n", "package mod\n")
+	return root
+}
 
-	if err := os.WriteFile(filepath.Join(modDir, "broken.go"), []byte("package mod\nimport (\n"), 0o644); err != nil {
+func TestBuildModule_RejectsIncompleteScan(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{"symlink", "parse-error", "oversized-source", "oversized-go-mod", "missing-go-mod", "too-many-lines"} {
+		t.Run(kind, func(t *testing.T) {
+			root := retryFixtureRoot(t, "mod")
+			modDir := filepath.Join(root, "mod")
+			plantIncompleteScan(t, modDir, kind)
+			calls := 0
+			runner := func(context.Context, string, io.Writer, io.Writer, string, ...string) error {
+				calls++
+				return nil
+			}
+			err := buildModule(t.Context(), root, "mod", io.Discard, runner, defaultWait)
+			if err == nil || calls != 0 {
+				t.Fatalf("%s: error = %v, calls = %d; want scan error before any Go command", kind, err, calls)
+			}
+		})
+	}
+}
+
+func plantIncompleteScan(t *testing.T, dir, kind string) {
+	t.Helper()
+	file, body := "broken.go", "package mod\nimport (\n"
+	switch kind {
+	case "symlink":
+		if err := os.Symlink(filepath.Join(dir, "snap.go"), filepath.Join(dir, "link.go")); err != nil {
+			t.Skipf("symlink unsupported: %v", err)
+		}
+		return
+	case "oversized-source":
+		body = strings.Repeat(" ", maxDeclBytes+1)
+	case "oversized-go-mod":
+		file, body = "go.mod", strings.Repeat(" ", maxGoModBytes+1)
+	case "too-many-lines":
+		file, body = "go.mod", strings.Repeat("\n", maxGoModLines+1)
+	case "missing-go-mod":
+		if err := os.Remove(filepath.Join(dir, "go.mod")); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	gotArgs = nil
-	if err := buildModule(t.Context(), root, "mod", io.Discard, rec, defaultWait); err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(gotArgs, []string{"mod", "download"}) {
-		t.Fatalf("parse-error scan fallback args = %v, want full [mod download]", gotArgs)
-	}
-	canceledCtx, cancel := context.WithCancel(t.Context())
+}
+
+func TestCollectNonTestImports_CancellationAndDirectoryBounds(t *testing.T) {
+	t.Parallel()
+	root := retryFixtureRoot(t, "mod")
+	modDir := filepath.Join(root, "mod")
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := collectNonTestImports(canceledCtx, modDir); !errors.Is(err, context.Canceled) {
-		t.Fatalf("collectNonTestImports(canceledCtx) = %v, want context.Canceled", err)
+	if _, err := collectNonTestImports(ctx, t.TempDir()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled scan = %v, want context.Canceled", err)
+	}
+	for index := range maxGoFiles - 3 {
+		if err := os.Mkdir(filepath.Join(modDir, fmt.Sprintf("dir%04d", index)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := collectNonTestImports(t.Context(), modDir); err != nil {
+		t.Fatalf("exact directory entry limit: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(modDir, "overflow"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := collectNonTestImports(t.Context(), modDir); err == nil {
+		t.Fatal("over-limit directory scan silently accepted")
 	}
 }
 
@@ -447,5 +493,97 @@ func TestBuildModule_RetriesGoListExport(t *testing.T) {
 	}
 	if err := buildModule(t.Context(), root, "mod", io.Discard, alwaysFailList, wait); err == nil || !strings.Contains(err.Error(), "its packages do not build at HEAD") {
 		t.Fatalf("buildModule error = %v, want build error after retry limit", err)
+	}
+}
+
+func TestCollectNonTestImports_TotalDirectoryLimit(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for index := range maxGoFiles/2 - 1 {
+		if err := os.MkdirAll(filepath.Join(root, fmt.Sprintf("dir%04d", index), "child"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(root, "last"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := collectNonTestImports(t.Context(), root); err != nil {
+		t.Fatalf("exact total directory limit: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "last", "overflow"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := collectNonTestImports(t.Context(), root); err == nil {
+		t.Fatal("directory limit silently returned partial imports")
+	}
+}
+
+func TestBuildModule_SkipsUnimportedIndirectRequirements(t *testing.T) {
+	t.Parallel()
+	root := retryFixtureRoot(t, "mod")
+	gomod := "module example.com/mod\nrequire (\nexample.com/needed v1.0.0\nexample.com/testonly v1.0.0 // indirect\n)\n"
+	if err := os.WriteFile(filepath.Join(root, "mod", "go.mod"), []byte(gomod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var downloads [][]string
+	runner := func(ctx context.Context, dir string, stdout, stderr io.Writer, name string, args ...string) error {
+		if args[0] == "mod" {
+			downloads = append(downloads, slices.Clone(args))
+		}
+		return nil
+	}
+	if err := buildModule(t.Context(), root, "mod", io.Discard, runner, defaultWait); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"mod", "download", "example.com/needed@v1.0.0"}
+	if len(downloads) != 1 || !slices.Equal(downloads[0], want) {
+		t.Fatalf("download args = %v, want only %v", downloads, want)
+	}
+}
+
+func TestReadBoundedRegularFile_SourceBoundaryAndCancellation(t *testing.T) {
+	t.Parallel()
+	file := filepath.Join(t.TempDir(), "source.go")
+	if err := os.WriteFile(file, []byte("package p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, size := range []int64{10, 11} {
+		if _, err := readBoundedRegularFile(t.Context(), file, size); err != nil {
+			t.Fatalf("size bound %d: %v", size, err)
+		}
+	}
+	if _, err := readBoundedRegularFile(t.Context(), file, 9); err == nil {
+		t.Fatal("source exceeding byte limit accepted")
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := readBoundedRegularFile(ctx, file, 10); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled read = %v, want context.Canceled", err)
+	}
+}
+
+func TestParseLocalReplace_DirectoryBoundaries(t *testing.T) {
+	t.Parallel()
+	for _, target := range []string{".", "..", "./sibling", "../sibling", filepath.Join(string(filepath.Separator), "sibling")} {
+		modPath, version, ok := parseLocalReplace("replace example.com/local v1.2.3 => " + target)
+		if !ok || modPath != "example.com/local" || version != "v1.2.3" {
+			t.Errorf("replace target %q = (%q, %q, %v), want local module and version", target, modPath, version, ok)
+		}
+	}
+	if _, _, ok := parseLocalReplace("replace example.com/local => example.com/remote v1.2.3"); ok {
+		t.Fatal("remote module treated as a local directory")
+	}
+}
+
+func TestBuildModule_RejectsSymlinkWithoutRequirements(t *testing.T) {
+	t.Parallel()
+	root := retryFixtureRoot(t, "mod")
+	dir := filepath.Join(root, "mod")
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/mod\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plantIncompleteScan(t, dir, "symlink")
+	if _, _, err := moduleDownloadArgs(t.Context(), dir); err == nil {
+		t.Fatal("non-regular Go source accepted when requirements are empty")
 	}
 }

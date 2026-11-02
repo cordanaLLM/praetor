@@ -192,6 +192,12 @@ var priorDigests = map[string]string{
 	"8db774ed65d587aefeffdae6d2bcc227d9bd3c7a61d01f51bd1580dd1445cdde": Directory + "/astro.mjs",
 	"00a60626eb2d7e232a3aeb831f854ca4f97393570ba6fca07220c1c78930da5f": Directory + "/checks.mjs",
 	"8aa976bb6c60cb167e100b5256002559d86373951d0f6d9435b9750a6bf64ec7": Directory + "/README.md",
+	// Outgoing review-round text; fixture: figures-astro-review-round1.mjs.txt.
+	"1ff5529c53aa9c7c1514eeea40e2772e7838fd9622d979122eaab75dfb95ef1b": Directory + "/astro.mjs",
+	// Outgoing review-round text; fixture: figures-astro-review-round2-part1.mjs.txt.
+	"28c187d2788633dcbe68f5b11c599683f1bc2606696556b4f043cc51dac933f3": Directory + "/astro.mjs",
+	// Outgoing review-round text; fixture: figures-mkdocs_hook-review-round1.py.txt.
+	"84afc44008d4f5432e62dc3739d8fa0b1922ee2ff101195de877741c766e97cc": Directory + "/mkdocs_hook.py",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts figures.css mkdocs_hook.py astro.mjs serve.mjs eslint.figures.mjs README.md

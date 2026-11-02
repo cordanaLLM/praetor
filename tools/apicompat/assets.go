@@ -178,6 +178,10 @@ var priorDigests = map[string]string{
 	"b6585e9dad8f57a95c6f2dafa468c70ef531bd42137eba822bd8a5ac3afe00a9": Directory + "/" + GateFile,
 	// The gate before it bounded download retries by the job deadline and skipped test-only requirements.
 	"a7f11ff7dcf942b9f512e40e66461a49c71f85849dc193eb5b8a293ac8e774cd": Directory + "/" + GateFile,
+	// Outgoing review-round text; fixture: api-gate-main-review-round1.go.txt.
+	"869763a8882cc4f0b42ca124e65f437c1fa053216c34d55ae0a782eb80bf6674": Directory + "/" + GateFile,
+	// Outgoing review-round text; fixture: api-gate-main-review-round2-part1.go.txt.
+	"e47317524a826cc53a10d79d5585593257550d81a49720deaa8cef15cba9751b": Directory + "/" + GateFile,
 }
 
 var assetNames = [...]string{GateFile, PlaceholderFile}

@@ -303,25 +303,22 @@ async function readBoundedResponse(response, url) {
     throw new CheckError(`${url} exceeds ${MAX_ARCHIVE_BYTES} bytes`);
   }
   const reader = response.body?.getReader?.();
-  if (!reader) {
-    const raw = Buffer.from(await response.arrayBuffer());
-    if (raw.length > MAX_ARCHIVE_BYTES) throw new CheckError(`${url} exceeds ${MAX_ARCHIVE_BYTES} bytes`);
-    return raw;
-  }
+  if (!reader) throw new CheckError(`${url} has no streaming response body`);
   const chunks = [];
   let total = 0;
-  for (let step = 0; step <= MAX_ARCHIVE_BYTES; step++) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    const chunk = Buffer.from(value);
-    total += chunk.length;
-    if (total > MAX_ARCHIVE_BYTES) {
-      await reader.cancel();
-      throw new CheckError(`${url} exceeds ${MAX_ARCHIVE_BYTES} bytes`);
+  try {
+    for (let step = 0; step <= MAX_ARCHIVE_BYTES; step++) {
+      const { done, value } = await reader.read();
+      if (done) return Buffer.concat(chunks, total);
+      total += value.byteLength;
+      if (total > MAX_ARCHIVE_BYTES) throw new CheckError(`${url} exceeds ${MAX_ARCHIVE_BYTES} bytes`);
+      chunks.push(Buffer.from(value));
     }
-    chunks.push(chunk);
+    throw new CheckError(`${url} exceeds the bounded streaming read count`);
+  } finally {
+    await reader.cancel();
+    reader.releaseLock();
   }
-  return Buffer.concat(chunks, total);
 }
 
 async function downloadPlayerArchive(url) {
@@ -405,6 +402,7 @@ function recordExtractedPlayerDir(outDir) {
 }
 
 export function extractPlayerArchive(raw) {
+  if (raw.byteLength > MAX_ARCHIVE_BYTES) throw new CheckError(`archive exceeds ${MAX_ARCHIVE_BYTES} bytes`);
   let tar;
   try {
     tar = gunzipSync(raw, { maxOutputLength: MAX_ARCHIVE_BYTES * MAX_PLAYER_FILES });

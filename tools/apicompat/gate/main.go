@@ -961,13 +961,12 @@ func defaultWait(ctx context.Context, d time.Duration) error {
 }
 
 type modRequirement struct {
-	path     string
-	version  string
-	indirect bool
+	path    string
+	version string
 }
 
 func parseRequireLine(line string) (modRequirement, bool) {
-	code, comment, hasComment := strings.Cut(line, "//")
+	code, _, _ := strings.Cut(line, "//")
 	code = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(code), "require"))
 	fields := strings.Fields(code)
 	if len(fields) != 2 {
@@ -977,7 +976,7 @@ func parseRequireLine(line string) (modRequirement, bool) {
 	if err != nil {
 		return modRequirement{}, false
 	}
-	return modRequirement{path: modPath, version: fields[1], indirect: hasComment && strings.Contains(comment, "indirect")}, true
+	return modRequirement{path: modPath, version: fields[1]}, true
 }
 
 func isBlockOpen(trimmed, directive string) bool {
@@ -990,7 +989,8 @@ func hasDirectivePrefix(trimmed, directive string) bool {
 }
 
 func isLocalPath(target string) bool {
-	return strings.HasPrefix(target, "./") || strings.HasPrefix(target, "../") || strings.HasPrefix(target, "/")
+	return target == "." || target == ".." || filepath.IsAbs(target) ||
+		strings.HasPrefix(target, "./") || strings.HasPrefix(target, "../")
 }
 
 func parseLocalReplace(line string) (string, string, bool) {
@@ -1072,10 +1072,13 @@ func hasGoModFile(entries []os.DirEntry) bool {
 	return false
 }
 
-func readBoundedRegularFile(filePath string, maxBytes int64) ([]byte, error) {
+func readBoundedRegularFile(ctx context.Context, filePath string, maxBytes int64) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("read imports file %s: %w", filePath, err)
+	}
 	info, err := os.Lstat(filePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read imports file %s: %w", filePath, err)
 	}
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("non-regular file: %s", filePath)
@@ -1085,12 +1088,12 @@ func readBoundedRegularFile(filePath string, maxBytes int64) ([]byte, error) {
 	}
 	f, err := os.Open(filePath) // #nosec G304 -- filePath is inside a repository module walk
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read imports file %s: %w", filePath, err)
 	}
 	data, readErr := io.ReadAll(io.LimitReader(f, maxBytes+1))
 	closeErr := f.Close()
-	if err := errors.Join(readErr, closeErr); err != nil {
-		return nil, err
+	if err := errors.Join(readErr, closeErr, ctx.Err()); err != nil {
+		return nil, fmt.Errorf("read imports file %s: %w", filePath, err)
 	}
 	if int64(len(data)) > maxBytes {
 		return nil, fmt.Errorf("file exceeds %d bytes: %s", maxBytes, filePath)
@@ -1098,14 +1101,14 @@ func readBoundedRegularFile(filePath string, maxBytes int64) ([]byte, error) {
 	return data, nil
 }
 
-func recordNonTestFileImports(fset *token.FileSet, filePath string, imports map[string]bool) error {
-	src, err := readBoundedRegularFile(filePath, maxDeclBytes)
+func recordNonTestFileImports(ctx context.Context, fset *token.FileSet, filePath string, imports map[string]bool) error {
+	src, err := readBoundedRegularFile(ctx, filePath, maxDeclBytes)
 	if err != nil {
-		return err
+		return fmt.Errorf("parse imports file %s: %w", filePath, err)
 	}
 	f, err := parser.ParseFile(fset, filePath, src, parser.ImportsOnly)
 	if err != nil {
-		return err
+		return fmt.Errorf("parse imports file %s: %w", filePath, err)
 	}
 	if len(f.Imports) > maxImports {
 		return fmt.Errorf("file imports exceed %d: %s", maxImports, filePath)
@@ -1113,7 +1116,7 @@ func recordNonTestFileImports(fset *token.FileSet, filePath string, imports map[
 	for index := 0; index < len(f.Imports) && index < maxImports; index++ {
 		val, err := strconv.Unquote(f.Imports[index].Path.Value)
 		if err != nil {
-			return err
+			return fmt.Errorf("parse imports file %s: %w", filePath, err)
 		}
 		if val != "" {
 			imports[val] = true
@@ -1122,7 +1125,7 @@ func recordNonTestFileImports(fset *token.FileSet, filePath string, imports map[
 	return nil
 }
 
-func visitNonTestDirEntry(fset *token.FileSet, dir string, entry os.DirEntry, queue []string, imports map[string]bool) ([]string, error) {
+func visitNonTestDirEntry(ctx context.Context, fset *token.FileSet, dir string, entry os.DirEntry, queue []string, imports map[string]bool) ([]string, error) {
 	name := entry.Name()
 	if entry.IsDir() {
 		if skippedDirectory(name) {
@@ -1136,7 +1139,7 @@ func visitNonTestDirEntry(fset *token.FileSet, dir string, entry os.DirEntry, qu
 	if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 		return queue, nil
 	}
-	return queue, recordNonTestFileImports(fset, filepath.Join(dir, name), imports)
+	return queue, recordNonTestFileImports(ctx, fset, filepath.Join(dir, name), imports)
 }
 
 func appendNonTestDirImports(ctx context.Context, fset *token.FileSet, dir string, entries []os.DirEntry, queue []string, imports map[string]bool) ([]string, error) {
@@ -1148,12 +1151,34 @@ func appendNonTestDirImports(ctx context.Context, fset *token.FileSet, dir strin
 			return nil, err
 		}
 		var err error
-		queue, err = visitNonTestDirEntry(fset, dir, entries[index], queue, imports)
+		queue, err = visitNonTestDirEntry(ctx, fset, dir, entries[index], queue, imports)
 		if err != nil {
 			return nil, err
 		}
 	}
 	return queue, nil
+}
+
+// readNonTestDir bounds directory inventory before allocating the full entry set.
+func readNonTestDir(ctx context.Context, dir string) ([]os.DirEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	f, err := os.Open(dir) // #nosec G304 -- dir is inside a repository module walk
+	if err != nil {
+		return nil, fmt.Errorf("open import directory %s: %w", dir, err)
+	}
+	entries, readErr := f.ReadDir(maxGoFiles + 1)
+	if errors.Is(readErr, io.EOF) {
+		readErr = nil
+	}
+	if err := errors.Join(readErr, f.Close(), ctx.Err()); err != nil {
+		return nil, fmt.Errorf("read import directory %s: %w", dir, err)
+	}
+	if len(entries) > maxGoFiles {
+		return nil, fmt.Errorf("directory entries exceed %d: %s", maxGoFiles, dir)
+	}
+	return entries, nil
 }
 
 func collectNonTestImports(ctx context.Context, moduleDir string) (map[string]bool, error) {
@@ -1166,7 +1191,7 @@ func collectNonTestImports(ctx context.Context, moduleDir string) (map[string]bo
 		}
 		dir := queue[0]
 		queue = queue[1:]
-		entries, err := os.ReadDir(dir)
+		entries, err := readNonTestDir(ctx, dir)
 		if err != nil {
 			return nil, err
 		}
@@ -1195,45 +1220,34 @@ func isImportedModule(modPath string, imports map[string]bool) bool {
 
 func selectImportedRequirements(reqs []modRequirement, imports map[string]bool) ([]string, bool) {
 	var needed []string
-	hasTestOnly := false
 	for index := 0; index < len(reqs) && index < maxGoModLines; index++ {
 		req := reqs[index]
 		if isImportedModule(req.path, imports) {
 			needed = append(needed, req.path+"@"+req.version)
-		} else if !req.indirect {
-			hasTestOnly = true
 		}
 	}
 	if len(needed) == 0 {
 		return nil, false
 	}
-	if !hasTestOnly {
-		return []string{"mod", "download"}, true
-	}
 	return append([]string{"mod", "download"}, needed...), true
 }
 
-// moduleDownloadArgs selects only non-test module requirements so test-only dependencies cannot block package builds.
-func moduleDownloadArgs(ctx context.Context, moduleDir string) ([]string, bool) {
-	if ctx.Err() != nil {
-		return nil, false
-	}
-	data, err := readBoundedRegularFile(filepath.Join(moduleDir, "go.mod"), maxGoModBytes)
+// moduleDownloadArgs selects only non-test requirements; incomplete scans fail before any download.
+func moduleDownloadArgs(ctx context.Context, moduleDir string) ([]string, bool, error) {
+	data, err := readBoundedRegularFile(ctx, filepath.Join(moduleDir, "go.mod"), maxGoModBytes)
 	if err != nil {
-		return []string{"mod", "download"}, true
+		return nil, false, fmt.Errorf("read module requirements: %w", err)
 	}
 	reqs, ok := parseGoModRequirements(string(data))
 	if !ok {
-		return []string{"mod", "download"}, true
-	}
-	if len(reqs) == 0 {
-		return nil, false
+		return nil, false, fmt.Errorf("module requirements exceed %d lines", maxGoModLines)
 	}
 	imports, err := collectNonTestImports(ctx, moduleDir)
 	if err != nil {
-		return []string{"mod", "download"}, true
+		return nil, false, fmt.Errorf("scan non-test imports: %w", err)
 	}
-	return selectImportedRequirements(reqs, imports)
+	args, needed := selectImportedRequirements(reqs, imports)
+	return args, needed, nil
 }
 
 func remainingBackoff(attempt int) time.Duration {
@@ -1320,8 +1334,8 @@ func downloadModule(ctx context.Context, moduleDir, dir string, stderr io.Writer
 	if err := ctx.Err(); err != nil {
 		return &downloadError{dir: dir, attempts: 0, err: err}
 	}
-	args, needed := moduleDownloadArgs(ctx, moduleDir)
-	if err := ctx.Err(); err != nil {
+	args, needed, err := moduleDownloadArgs(ctx, moduleDir)
+	if err != nil {
 		return &downloadError{dir: dir, attempts: 0, err: err}
 	}
 	if !needed {

@@ -19,6 +19,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 from urllib.error import HTTPError
+from urllib.request import Request
 
 FIGURES = Path(__file__).resolve().parent
 ROOT = FIGURES.parents[1]
@@ -661,10 +662,12 @@ class Hook(unittest.TestCase):
                 ):
                     mkdocs_hook.download_player_archive(bad_url)
 
-    def test_download_revalidates_redirects_and_carries_no_unused_suppression(self):
+    def test_download_carries_no_unused_suppression(self):
         source = (FIGURES / "mkdocs_hook.py").read_text(encoding="utf-8")
-        self.assertNotIn("noqa: S310", source)
-        self.assertNotIn("nosemgrep:", source)
+        self.assertFalse("noqa: S310" in source, "unused S310 suppression")
+        self.assertFalse("nosemgrep:" in source, "unused nosemgrep suppression")
+
+    def test_download_revalidates_redirects(self):
         valid_url = "https://github.com/cordanaLLM/praetor/releases/download/v1.4.0/figures-player.tar.gz"
         good_redirects = [
             "https://objects.githubusercontent.com/github-production-release-asset/123?X-Amz-Signature=abc",
@@ -682,13 +685,6 @@ class Hook(unittest.TestCase):
         ]
         handler = mkdocs_hook._TrustedRedirectHandler()
 
-        class _Req:
-            full_url = valid_url
-
-            @staticmethod
-            def get_method():
-                return "GET"
-
         for target in good_redirects:
             with self.subTest(good_redirect=target):
                 mkdocs_hook.validate_archive_url(
@@ -696,12 +692,18 @@ class Hook(unittest.TestCase):
                     mkdocs_hook.TRUSTED_REDIRECT_HOSTS,
                     allow_query=True,
                 )
+                redirected = handler.redirect_request(
+                    Request(valid_url), None, 302, "Found", {}, target
+                )
+                self.assertEqual(
+                    redirected.full_url, mkdocs_hook.urljoin(valid_url, target)
+                )
         for target in bad_redirects:
             with (
                 self.subTest(bad_redirect=target),
                 self.assertRaises(mkdocs_hook.CheckError),
             ):
-                handler.redirect_request(_Req(), None, 302, "Found", {}, target)
+                handler.redirect_request(Request(valid_url), None, 302, "Found", {}, target)
             with (
                 self.subTest(redirected_response=target),
                 mock.patch.object(
