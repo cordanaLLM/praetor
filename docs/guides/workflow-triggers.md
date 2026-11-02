@@ -409,7 +409,7 @@ release workflow declares `actions: write`, `pull-requests: read`, `contents: re
 are explicitly Linux-only GitHub API control jobs. The offline helper selftest runs in the
 shared Harness Self-Tests step on every Linux, macOS and Windows leg.
 See the [Checks API](https://docs.github.com/en/rest/checks/runs#list-check-runs-for-a-git-reference),
-[status API](https://docs.github.com/en/rest/commits/statuses#list-commit-statuses-for-a-reference)
+[status API](https://docs.github.com/en/rest/commits/statuses#list-commit-statuses-for-a-reference),
 [whole-run rerun API](https://docs.github.com/en/rest/actions/workflow-runs#re-run-a-workflow)
 and [job-attempt API](https://docs.github.com/en/rest/actions/workflow-jobs#list-jobs-for-a-workflow-run).
 

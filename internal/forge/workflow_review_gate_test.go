@@ -4,6 +4,8 @@
 package forge
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -398,4 +400,73 @@ func reviewReadPermissionsProblem(node yaml.Node) string {
 		}
 	}
 	return ""
+}
+
+// reviewDocsAPILinksProblem verifies that the review gate API link list in the workflow guide
+// separates each intermediate item with a comma.
+func reviewDocsAPILinksProblem(text string) string {
+	links := []string{"[Checks API](", "[status API]("}
+	for i := 0; i < len(links) && i < 2; i++ {
+		link := links[i]
+		idx := strings.Index(text, link)
+		if idx == -1 {
+			return link + " missing"
+		}
+		endIdx := strings.Index(text[idx:], ")")
+		if endIdx == -1 {
+			return link + " malformed"
+		}
+		rest := strings.TrimSpace(text[idx+endIdx+1:])
+		if !strings.HasPrefix(rest, ",") {
+			return link + " missing trailing comma"
+		}
+	}
+	return ""
+}
+
+// TestWorkflowReviewDocsAPILinks verifies that the API link list in docs/guides/workflow-triggers.md
+// correctly separates each link item with a comma.
+func TestWorkflowReviewDocsAPILinks(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(engineRoot, "docs", "guides", "workflow-triggers.md"))
+	if err != nil {
+		t.Fatalf("read workflow triggers guide: %v", err)
+	}
+	if problem := reviewDocsAPILinksProblem(string(data)); problem != "" {
+		t.Fatalf("workflow-triggers.md: %s", problem)
+	}
+	cases := []struct {
+		name string
+		text string
+		want string
+	}{
+		{
+			name: "positive",
+			text: "See the [Checks API](https://example.com/checks),\n[status API](https://example.com/status),\n[whole-run rerun API](https://example.com/rerun)\nand [job-attempt API](https://example.com/jobs).",
+			want: "",
+		},
+		{
+			name: "negative missing status comma",
+			text: "See the [Checks API](https://example.com/checks),\n[status API](https://example.com/status)\n[whole-run rerun API](https://example.com/rerun)\nand [job-attempt API](https://example.com/jobs).",
+			want: "[status API]( missing trailing comma",
+		},
+		{
+			name: "boundary missing checks comma",
+			text: "See the [Checks API](https://example.com/checks)\n[status API](https://example.com/status),\n[whole-run rerun API](https://example.com/rerun)\nand [job-attempt API](https://example.com/jobs).",
+			want: "[Checks API]( missing trailing comma",
+		},
+		{
+			name: "boundary missing link",
+			text: "See the [Checks API](https://example.com/checks),\n[whole-run rerun API](https://example.com/rerun)\nand [job-attempt API](https://example.com/jobs).",
+			want: "[status API]( missing",
+		},
+	}
+	for i := 0; i < len(cases) && i < 10; i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			got := reviewDocsAPILinksProblem(tc.text)
+			if (tc.want == "") != (got == "") || !strings.Contains(got, tc.want) {
+				t.Fatalf("problem = %q, want containing %q", got, tc.want)
+			}
+		})
+	}
 }
