@@ -187,6 +187,7 @@ func auditProtectionTarget(ctx context.Context, rootDir string, manifest *config
 	return pendingProtectionRenames(ctx, rootDir, commit, ref, target, renamed, report)
 }
 
+// firstRunReport returns the first workflow run report in runs, or nil if runs is empty.
 func firstRunReport(runs []*forge.WorkflowRunReport) *forge.WorkflowRunReport {
 	if len(runs) == 0 {
 		return nil
@@ -222,6 +223,7 @@ func pendingProtectionRenames(ctx context.Context, rootDir, commit, ref string, 
 	return target, notes, nil
 }
 
+// filterUnlandedRenames drops renames whose target context is already declared in contexts, returning unlanded renames and advisory notes.
 func filterUnlandedRenames(ref string, renames []forge.StatusContextRename, contexts []string) ([]forge.StatusContextRename, []string) {
 	var unlanded []forge.StatusContextRename
 	var notes []string
@@ -236,10 +238,12 @@ func filterUnlandedRenames(ref string, renames []forge.StatusContextRename, cont
 	return unlanded, notes
 }
 
+// absentWorkflowNote formats an informational note indicating pending status check renames were not evaluated because the workflow file is absent.
 func absentWorkflowNote(ref string, err error) []string {
 	return []string{fmt.Sprintf("[INFO] Pending status check renames not evaluated: %s (%v); declared checks remain compared.", ref, err)}
 }
 
+// excuseUnreportedChecks excludes status checks that ref does not report yet, recording informational notes on target.
 func excuseUnreportedChecks(commit, ref string, target protectionTarget, unreported []string, hasRuns bool, notes []string) (protectionTarget, []string) {
 	if commit == "" && hasRuns {
 		notes = append(notes, fmt.Sprintf("[INFO] Live branch protection of %s: %s is not in this checkout, so status checks are compared with the ones the forge default branch (%s) reports.",
