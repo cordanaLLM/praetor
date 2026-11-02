@@ -104,7 +104,7 @@ func TestHookLauncherCandidatesAreTheOperatorDefault(t *testing.T) {
 
 // hookToolchainGap names why a job does not assert the hook toolchain on every leg before its
 // self-tests, or returns "" when it does.
-func hookToolchainGap(job workflowJob) string {
+func hookToolchainGap(job workflowJob, jobID string) string {
 	if advisoryJob(job.ContinueOnError) {
 		return "job is advisory"
 	}
@@ -114,21 +114,21 @@ func hookToolchainGap(job workflowJob) string {
 		env, readable := stepEnv(step)
 		switch {
 		case strings.Contains(step.Run, hookToolchainCheck):
-			if gap := hookToolchainStepGap(step, env, readable); gap != "" {
+			if gap := hookToolchainStepGap(step, jobID, env, readable); gap != "" {
 				return gap
 			}
 			asserted = true
 		case strings.Contains(step.Run, hookSelfTests):
-			return hookSelfTestGap(step, asserted)
+			return hookSelfTestGap(step, jobID, asserted)
 		}
 	}
 	return "no step runs " + hookSelfTests
 }
 
 // hookToolchainStepGap judges the assertion step itself.
-func hookToolchainStepGap(step workflowStep, env map[string]string, readable bool) string {
+func hookToolchainStepGap(step workflowStep, jobID string, env map[string]string, readable bool) string {
 	switch {
-	case !runsInPortabilityScope(step, "harness"):
+	case !runsInPortabilityScope(step, jobID, "harness"):
 		return "toolchain assertion is conditional: " + step.If
 	case !readable:
 		return "toolchain assertion has no readable env block"
@@ -148,11 +148,11 @@ func hookToolchainStepGap(step workflowStep, env map[string]string, readable boo
 var hookRequiredTools = []string{"python", "make", "sh"}
 
 // hookSelfTestGap judges the self-test step against the assertion before it.
-func hookSelfTestGap(step workflowStep, asserted bool) string {
+func hookSelfTestGap(step workflowStep, jobID string, asserted bool) string {
 	switch {
 	case !asserted:
 		return "self-tests run before the hook toolchain is asserted"
-	case !runsInPortabilityScope(step, "harness"):
+	case !runsInPortabilityScope(step, jobID, "harness"):
 		return "self-tests are conditional: " + step.If
 	}
 	return ""
@@ -179,8 +179,10 @@ func TestPortabilityAssertsTheHookToolchainBeforeTheSelfTests(t *testing.T) {
 	if err := yaml.Unmarshal(workflows["portability.yml"], &spec); err != nil {
 		t.Fatalf("parse portability.yml: %v", err)
 	}
-	if gap := hookToolchainGap(spec.Jobs["harness"]); gap != "" {
-		t.Fatalf("portability harness: %s", gap)
+	for _, jobID := range []string{"harness", "windows-shard"} {
+		if gap := hookToolchainGap(spec.Jobs[jobID], jobID); gap != "" {
+			t.Fatalf("portability %s: %s", jobID, gap)
+		}
 	}
 	every := "${{ !cancelled() }}"
 	check := func(condition, required string) workflowStep {
@@ -201,6 +203,7 @@ func TestPortabilityAssertsTheHookToolchainBeforeTheSelfTests(t *testing.T) {
 		{"negative no self-tests", workflowJob{Steps: []workflowStep{asserted}}, "no step runs"},
 		{"boundary order", workflowJob{Steps: []workflowStep{tests(every), asserted}}, "before the hook toolchain is asserted"},
 		{"boundary os guard", workflowJob{Steps: []workflowStep{check("runner.os != 'Windows'", "python,make,sh"), tests(every)}}, "assertion is conditional"},
+		{"boundary shard in harness", workflowJob{Steps: []workflowStep{check(everyLegConditions[3], "python,make,sh"), tests(every)}}, "assertion is conditional"},
 		{"boundary python not required", workflowJob{Steps: []workflowStep{check(every, "make,sh,yamllint"), tests(every)}}, "does not require python"},
 		{"boundary make not required", workflowJob{Steps: []workflowStep{check(every, "python,sh,yamllint"), tests(every)}}, "does not require make"},
 		{"boundary sh not required", workflowJob{Steps: []workflowStep{check(every, "python,make,yamllint"), tests(every)}}, "does not require sh"},
@@ -209,7 +212,7 @@ func TestPortabilityAssertsTheHookToolchainBeforeTheSelfTests(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := hookToolchainGap(tc.job)
+			got := hookToolchainGap(tc.job, "harness")
 			if (tc.want == "") != (got == "") || !strings.Contains(got, tc.want) {
 				t.Fatalf("gap = %q, want containing %q", got, tc.want)
 			}
