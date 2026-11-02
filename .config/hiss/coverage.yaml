@@ -1132,7 +1132,7 @@ rules:
       - language: python
         state: partial
         runner: hiss
-        mechanism: internal/hiss/test_dates.go, scanPythonFixtureDates; standardsctl audit in local hooks.
+        mechanism: internal/hiss/test_dates_python.go, scanPythonFixtureDates; standardsctl audit in local hooks.
         rationale: >-
           Test strings, including triple-quoted YAML and JSON, refuse literal calendar dates.
           Computed dates, comments and reasoned recorded facts or golden bytes pass. Existing

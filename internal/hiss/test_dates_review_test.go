@@ -106,3 +106,59 @@ func TestFixtureDatesPythonTolerantEscapes(t *testing.T) {
 		})
 	}
 }
+
+func TestFixtureDatePythonCoverageAndGuideReferences(t *testing.T) {
+	for _, tc := range []struct {
+		name, coverage, guide string
+		want                  bool
+	}{
+		{
+			"positive/live-references",
+			"mechanism: internal/hiss/test_dates_python.go, scanPythonFixtureDates; standardsctl audit in local hooks.",
+			"runs HISS-15's clock fixture check in\n`internal/hiss/test_dates.go` (Go) and `internal/hiss/test_dates_python.go`\n(Python).",
+			true,
+		},
+		{
+			"negative/coverage-points-to-go-file",
+			"mechanism: internal/hiss/test_dates.go, scanPythonFixtureDates; standardsctl audit in local hooks.",
+			"runs HISS-15's clock fixture check in\n`internal/hiss/test_dates.go` (Go) and `internal/hiss/test_dates_python.go`\n(Python).",
+			false,
+		},
+		{
+			"negative/guide-omits-python-file",
+			"mechanism: internal/hiss/test_dates_python.go, scanPythonFixtureDates; standardsctl audit in local hooks.",
+			"runs HISS-15's clock fixture check in\n`internal/hiss/test_dates.go`. Python-only source changes also select that audit,",
+			false,
+		},
+		{
+			"boundary/go-mechanism-referenced",
+			"mechanism: internal/hiss/test_dates.go, scanGoFixtureDates; standardsctl audit in local hooks.",
+			"runs HISS-15's clock fixture check in\n`internal/hiss/test_dates.go` (Go) and `internal/hiss/test_dates_python.go`\n(Python).",
+			false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := validPythonDateReferences(tc.coverage, tc.guide); got != tc.want {
+				t.Fatalf("validPythonDateReferences = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	covData, err := os.ReadFile(filepath.Join("..", "..", ".config", "hiss", "coverage.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	guideData, err := os.ReadFile(filepath.Join("..", "..", "docs", "guides", "git-hooks.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !validPythonDateReferences(string(covData), string(guideData)) {
+		t.Fatal("coverage.yaml or git-hooks.md does not locate Python fixture date scanner in internal/hiss/test_dates_python.go")
+	}
+}
+
+func validPythonDateReferences(coverage, guide string) bool {
+	hasCoverage := strings.Contains(coverage, "internal/hiss/test_dates_python.go, scanPythonFixtureDates")
+	hasGuide := strings.Contains(guide, "internal/hiss/test_dates_python.go")
+	return hasCoverage && hasGuide
+}

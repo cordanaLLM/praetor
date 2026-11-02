@@ -222,7 +222,8 @@ separately from Git.
 ## Calendar dates in test fixtures
 
 The local source audit runs HISS-15's clock fixture check in
-`internal/hiss/test_dates.go`. Python-only source changes also select that audit,
+`internal/hiss/test_dates.go` (Go) and `internal/hiss/test_dates_python.go`
+(Python). Python-only source changes also select that audit,
 including files under `scripts/`. It checks Go `*_test.go` files and Python
 `test_*.py`, `*_test.py`, `*_selftest.py` and `selftest.py` files. A calendar date
 inside a quoted string, including a YAML or JSON fixture embedded in that string,
