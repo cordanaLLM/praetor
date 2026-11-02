@@ -533,3 +533,51 @@ func TestMergeCheck_PlantedHunkFailure_NestedPath_Boundary(t *testing.T) {
 		t.Fatalf("errors.As and errors.Is must find *exec.ExitError, got: %v", err)
 	}
 }
+
+// Negative: merge retains one P1 hunk but drops another P1 hunk (blobM != blobP2) -> finding.
+// Order: engine-dropped-hunk-gate-20261027.
+func TestMergeCheck_RetainsOneHunk_DropsAnotherHunk_Finding(t *testing.T) {
+	dir := initTestRepo(t)
+
+	baseContent := "line 1\nline 2\nline 3\nline 4\nline 5\n"
+	writeFile(t, dir, "alpha.txt", baseContent)
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "alpha.txt"},
+		[]string{"commit", "-m", "chore: base"},
+		[]string{"branch", "-M", "main"},
+	)
+
+	// Branch X (P1) edits line 1 and line 5
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-x"})
+	writeFile(t, dir, "alpha.txt", "line 1 P1\nline 2\nline 3\nline 4\nline 5 P1\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "alpha.txt"}, []string{"commit", "-m", "feat: X edits 1 and 5"})
+	p1SHA := gitRevParse(t, dir, "HEAD")
+
+	// Branch Y (P2) edits line 3
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-y", "main"})
+	writeFile(t, dir, "alpha.txt", "line 1\nline 2\nline 3 P2\nline 4\nline 5\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "alpha.txt"}, []string{"commit", "-m", "feat: Y edits 3"})
+	p2SHA := gitRevParse(t, dir, "HEAD")
+
+	// Merge Y into X retaining P1 line 1, keeping P2 line 3, but dropping P1 line 5 (keeps base line 5)
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "branch-x"})
+	testsupport.RunFixtureGit(t, dir, []string{"merge", "--no-commit", "branch-y"})
+	writeFile(t, dir, "alpha.txt", "line 1 P1\nline 2\nline 3 P2\nline 4\nline 5\n")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "alpha.txt"},
+		[]string{"commit", "-m", "merge: keep line 1 P1, drop line 5 P1"},
+	)
+	mergeSHA := gitRevParse(t, dir, "HEAD")
+
+	res, err := Check(t.Context(), Options{RepoDir: dir, Range: "main..HEAD"})
+	if err != nil {
+		t.Fatalf("Check failed: %v", err)
+	}
+	if res.MergesCount != 1 {
+		t.Fatalf("expected 1 merge, got %d", res.MergesCount)
+	}
+	if len(res.Findings) != 1 {
+		t.Fatalf("expected 1 finding for dropped P1 hunk when another hunk is retained, got %d: %+v", len(res.Findings), res.Findings)
+	}
+	assertFindingMatch(t, res.Findings[0], "alpha.txt", mergeSHA, p1SHA, p2SHA)
+}

@@ -37,6 +37,8 @@ const (
 	binaryProbeBytes = 8000
 	// maxLsTreeArgBytes bounds the path argument bytes per git ls-tree call (HISS-02, HISS-21).
 	maxLsTreeArgBytes = 16 << 10
+	// maxMergeBaseBytes bounds git merge-base output (HISS-02; SHA-256 is 65 bytes with newline).
+	maxMergeBaseBytes = 128
 )
 
 // Finding records one file whose changes were dropped in a merge commit.
@@ -82,6 +84,7 @@ type fileHunkContext struct {
 	p1       string
 	p2       string
 	file     string
+	blobM    string
 	blobP1   string
 	blobP2   string
 	blobBase string
@@ -151,7 +154,10 @@ func ResolveDefaultRange(ctx context.Context, repoDir string) (string, error) {
 		}
 	}
 	branch, err := forge.RepositoryDefaultBranch(ctx, repoDir, nil)
-	if err != nil || branch == "" {
+	if err != nil {
+		return "", fmt.Errorf("resolve default branch: %w", err)
+	}
+	if branch == "" {
 		branch = forge.FallbackDefaultBranch
 	}
 	remoteRef := "refs/remotes/origin/" + branch
@@ -312,7 +318,7 @@ func checkFileHunk(ctx context.Context, file string, blobs *commitBlobs) (*Findi
 			DroppedParent: parent,
 		}, nil
 	}
-	if !okM || !okP1 || !okP2 || blobM != blobP2 || blobP2 == blobP1 {
+	if !okM || !okP1 || !okP2 || blobM == blobP1 || blobP2 == blobP1 {
 		return nil, nil
 	}
 	return judgeDroppedHunk(ctx, fileHunkContext{
@@ -321,6 +327,7 @@ func checkFileHunk(ctx context.Context, file string, blobs *commitBlobs) (*Findi
 		p1:       blobs.p1SHA,
 		p2:       blobs.p2SHA,
 		file:     file,
+		blobM:    blobM,
 		blobP1:   blobP1,
 		blobP2:   blobP2,
 		blobBase: blobBase,
@@ -346,42 +353,54 @@ func droppedByDeletion(okM, okP1, okP2, okBase bool, blobP2, blobBase string) (i
 }
 
 func judgeDroppedHunk(ctx context.Context, h fileHunkContext) (*Finding, error) {
-	p1Bytes, p2Bytes, baseBytes, err := readSideBlobs(ctx, h)
+	mBytes, p1Bytes, p2Bytes, baseBytes, err := readHunkBlobs(ctx, h)
 	if err != nil {
 		return nil, err
 	}
-	binary := isBinaryBlob(p1Bytes) || isBinaryBlob(p2Bytes) || isBinaryBlob(baseBytes)
-	var mergedBytes []byte
-	if !binary {
-		mergedBytes, binary, err = reconstructMerge(ctx, h.repoDir, p1Bytes, baseBytes, p2Bytes)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if binary {
+	if anyBinaryBlob(mBytes, p1Bytes, p2Bytes, baseBytes) {
 		return binaryDropped(h), nil
 	}
-	if bytes.Equal(mergedBytes, p2Bytes) {
+	reconstructed, bin, err := mergeFileBlobs(ctx, h.repoDir, "--theirs", p1Bytes, baseBytes, p2Bytes)
+	if err != nil {
+		return nil, err
+	}
+	if bin {
+		return binaryDropped(h), nil
+	}
+	if bytes.Equal(reconstructed, p2Bytes) {
+		return nil, nil
+	}
+	applied, bin, err := mergeFileBlobs(ctx, h.repoDir, "--ours", mBytes, p2Bytes, reconstructed)
+	if err != nil {
+		return nil, err
+	}
+	if bin {
+		return binaryDropped(h), nil
+	}
+	if bytes.Equal(applied, mBytes) {
 		return nil, nil
 	}
 	return &Finding{MergeSHA: h.mergeSHA, FilePath: h.file, Parent1: h.p1, Parent2: h.p2, Binary: false, DroppedParent: 1}, nil
 }
 
-// readSideBlobs reads the first parent's, the second parent's and, when the merge base holds the
+// readHunkBlobs reads the merge's, the first parent's, the second parent's and, when the merge base holds the
 // file, the base's blob; a file the base lacks reads as empty.
-func readSideBlobs(ctx context.Context, h fileHunkContext) (p1, p2, base []byte, err error) {
+func readHunkBlobs(ctx context.Context, h fileHunkContext) (m, p1, p2, base []byte, err error) {
+	if m, err = readBlob(ctx, h.repoDir, h.blobM); err != nil {
+		return nil, nil, nil, nil, err
+	}
 	if p1, err = readBlob(ctx, h.repoDir, h.blobP1); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	if p2, err = readBlob(ctx, h.repoDir, h.blobP2); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	if h.okBase {
 		if base, err = readBlob(ctx, h.repoDir, h.blobBase); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 	}
-	return p1, p2, base, nil
+	return m, p1, p2, base, nil
 }
 
 // binaryDropped judges a binary file the merge took whole from the second parent. A binary merges
@@ -389,13 +408,13 @@ func readSideBlobs(ctx context.Context, h fileHunkContext) (p1, p2, base []byte,
 // hunk. Only a second parent that left the file as the merge base had it turns the take into a
 // revert of the first parent's change.
 func binaryDropped(h fileHunkContext) *Finding {
-	if !h.okBase || h.blobP2 != h.blobBase {
+	if h.blobM != h.blobP2 || !h.okBase || h.blobP2 != h.blobBase {
 		return nil
 	}
 	return &Finding{MergeSHA: h.mergeSHA, FilePath: h.file, Parent1: h.p1, Parent2: h.p2, Binary: true, DroppedParent: 1}
 }
 
-func reconstructMerge(ctx context.Context, repoDir string, p1Bytes, baseBytes, p2Bytes []byte) (merged []byte, isBin bool, err error) {
+func mergeFileBlobs(ctx context.Context, repoDir, conflictFlag string, currentBytes, baseBytes, otherBytes []byte) (merged []byte, isBin bool, err error) {
 	tmpDir, err := os.MkdirTemp("", "mergecheck-blob-*")
 	if err != nil {
 		return nil, false, fmt.Errorf("create temp dir for merge-file: %w", err)
@@ -406,13 +425,13 @@ func reconstructMerge(ctx context.Context, repoDir string, p1Bytes, baseBytes, p
 	baseFile := filepath.Join(tmpDir, "base")
 	otherFile := filepath.Join(tmpDir, "other")
 
-	if err := os.WriteFile(currentFile, p1Bytes, 0o600); err != nil {
+	if err := os.WriteFile(currentFile, currentBytes, 0o600); err != nil {
 		return nil, false, err
 	}
 	if err := os.WriteFile(baseFile, baseBytes, 0o600); err != nil {
 		return nil, false, err
 	}
-	if err := os.WriteFile(otherFile, p2Bytes, 0o600); err != nil {
+	if err := os.WriteFile(otherFile, otherBytes, 0o600); err != nil {
 		return nil, false, err
 	}
 
@@ -420,7 +439,7 @@ func reconstructMerge(ctx context.Context, repoDir string, p1Bytes, baseBytes, p
 	defer cancel()
 
 	cmdBytes, runErr := util.RunGitProbeWithin(opCtx, repoDir, maxBlobBytes, gitOpTimeout,
-		"merge-file", "-p", "--theirs", currentFile, baseFile, otherFile)
+		"merge-file", "-p", conflictFlag, currentFile, baseFile, otherFile)
 	if runErr != nil {
 		if bytes.Contains(bytes.ToLower(cmdBytes.Stderr), []byte("binary")) {
 			return nil, true, nil
@@ -449,6 +468,15 @@ func isBinaryBlob(b []byte) bool {
 		limit = binaryProbeBytes
 	}
 	return bytes.IndexByte(b[:limit], 0) != -1
+}
+
+func anyBinaryBlob(blobs ...[]byte) bool {
+	for i := 0; i < len(blobs); i++ {
+		if isBinaryBlob(blobs[i]) {
+			return true
+		}
+	}
+	return false
 }
 
 func treeBlobs(ctx context.Context, repoDir, commit string, paths []string) (map[string]string, error) {
@@ -547,7 +575,7 @@ func commitParents(ctx context.Context, repoDir, sha string) ([]string, error) {
 func mergeBase(ctx context.Context, repoDir, p1, p2 string) (string, error) {
 	opCtx, cancel := context.WithTimeout(ctx, gitOpTimeout)
 	defer cancel()
-	out, status, err := util.RunGitProbeStatus(opCtx, repoDir, 64, "merge-base", p1, p2)
+	out, status, err := util.RunGitProbeStatus(opCtx, repoDir, maxMergeBaseBytes, "merge-base", p1, p2)
 	if err != nil {
 		return "", err
 	}

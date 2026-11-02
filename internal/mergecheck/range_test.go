@@ -307,3 +307,55 @@ func TestMergeCheck_ResolveDefaultRange_UsesGitHubEventBefore(t *testing.T) {
 		t.Fatalf("with zero GITHUB_EVENT_BEFORE: got (%q, %v), want (\"origin/main..HEAD\", nil)", gotZero, err)
 	}
 }
+
+// Negative: ResolveDefaultRange propagates errors from RepositoryDefaultBranch instead of falling back to main.
+func TestMergeCheck_ResolveDefaultRange_ErrorPropagated(t *testing.T) {
+	dir := initTestRepo(t)
+	writeFile(t, dir, ".standards.yaml", "repository:\n  default_branch: \"invalid branch with spaces\"\n")
+	_, err := ResolveDefaultRange(t.Context(), dir)
+	if err == nil {
+		t.Fatalf("expected error from ResolveDefaultRange on invalid default branch declaration, got nil")
+	}
+	if !strings.Contains(err.Error(), "default_branch") {
+		t.Fatalf("expected error mentioning default_branch, got: %v", err)
+	}
+}
+
+// Positive and Boundary: mergeBase on a SHA-256 repository does not trip the output cap (65 bytes with newline).
+func TestMergeCheck_MergeBase_SHA256Repository(t *testing.T) {
+	dir := t.TempDir()
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"init", "--object-format=sha256", "-q"},
+		[]string{"config", "user.name", "Praetor Test"},
+		[]string{"config", "user.email", "praetor-test@example.com"},
+		[]string{"config", "commit.gpgsign", "false"},
+	)
+	writeFile(t, dir, "a.txt", "base\n")
+	testsupport.RunFixtureGit(t, dir,
+		[]string{"add", "a.txt"},
+		[]string{"commit", "-m", "chore: base"},
+		[]string{"branch", "-M", "main"},
+	)
+	baseSHA := gitRevParse(t, dir, "HEAD")
+	if len(baseSHA) != 64 {
+		t.Fatalf("expected 64-char sha256 hash, got %d chars: %s", len(baseSHA), baseSHA)
+	}
+
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-x"})
+	writeFile(t, dir, "a.txt", "base\nx\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "a.txt"}, []string{"commit", "-m", "feat: x"})
+	p1SHA := gitRevParse(t, dir, "HEAD")
+
+	testsupport.RunFixtureGit(t, dir, []string{"checkout", "-b", "branch-y", "main"})
+	writeFile(t, dir, "a.txt", "base\ny\n")
+	testsupport.RunFixtureGit(t, dir, []string{"add", "a.txt"}, []string{"commit", "-m", "feat: y"})
+	p2SHA := gitRevParse(t, dir, "HEAD")
+
+	gotBase, err := mergeBase(t.Context(), dir, p1SHA, p2SHA)
+	if err != nil {
+		t.Fatalf("mergeBase failed on SHA-256 repository: %v", err)
+	}
+	if gotBase != baseSHA {
+		t.Fatalf("expected merge base %s, got %s", baseSHA, gotBase)
+	}
+}
