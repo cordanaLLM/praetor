@@ -151,7 +151,7 @@ every file and requires yamllint to reject each one, so the rule is proven to be
 | `pre-commit`, `pre-merge-commit` | Audit the live private ledger, then check the exact index for whitespace, conflict markers, Python/JSON syntax, YAML, shell, workflow and Docker lint; Go formatting and vet on changed packages; verify affected generated agent instructions. |
 | `prepare-commit-msg` | Add an instructional comment to a fresh empty message. |
 | `commit-msg` | Verify the live state synchronization after Lefthook restores partially staged worktree files, then apply the commit message policy (`praetorctl forge check-message`: a conventional subject, Git merge/revert subjects accepted, the HISS-14 `Migration:` footer on a breaking change, refusal of tool attribution trailers and footers, and an offline warning for ambiguous closing references; explicit pull request URLs require `Closes-own: <reference>`) and require a DCO sign-off. |
-| `pre-push` | Audit and verify live state before inspecting each actual pushed commit. Run `praetorctl forge refactor-check --base=<base> --head=<head>` over the pushed range for the REF-02 assertion lock; a push without a known base skips it with that reason, and CI checks the pull request range. `checkpoint/*` destinations run file checks, affected Go builds and race tests. Other destinations also require lint, security, vulnerability, governance, flavor and signed-receipt gates. The signed gate runs Go race tests only for the affected packages and reverse dependents; an empty selection records `not_applicable: no affected Go package`. Pushes changing hook sources (`.config/lefthook/scripts/` or `.config/agent/hooks/`) or `scripts/test_emitted_hook_lint.py` run the hash-locked hook lint CI suite (`scripts/test_emitted_hook_lint.py`); tools come from a cached venv built from the hook-lint lock like CI, failing closed if provisioning fails or required pinned tools are absent or mismatched. |
+| `pre-push` | Audit and verify live state before inspecting each actual pushed commit. Run `praetorctl forge refactor-check --base=<base> --head=<head>` over the pushed range for the REF-02 assertion lock and `praetorctl docstrings check --base=<base> --head=<head>` for diff-scoped docstring coverage; a push without a known base skips both with that reason, and CI checks the pull request range. `checkpoint/*` destinations run file checks, affected Go builds and race tests. Other destinations also require lint, security, vulnerability, governance, flavor and signed-receipt gates. The signed gate runs Go race tests only for the affected packages and reverse dependents; an empty selection records `not_applicable: no affected Go package`. Pushes changing hook sources (`.config/lefthook/scripts/` or `.config/agent/hooks/`) or `scripts/test_emitted_hook_lint.py` run the hash-locked hook lint CI suite (`scripts/test_emitted_hook_lint.py`); tools come from a cached venv built from the hook-lint lock like CI, failing closed if provisioning fails or required pinned tools are absent or mismatched. |
 | `post-commit` | Synchronize and read back the private state for the new commit, then print the dedupe cadence reminder when due. Sync failures are reported. |
 | `post-checkout`, `post-merge`, `post-rewrite` | Warm changed module dependencies in an isolated clone, rebuild the local CLI for source changes, verify affected agent outputs, report governance changes. `post-merge` then runs `praetorctl workstation install --if-stale`, which rebuilds a lagging engine install from this checkout on the update branch and otherwise skips silently ([refresh a lagging install](workstation-update.md#refresh-a-lagging-install)). File-only checkouts do nothing. |
 | `pre-rebase` | Check the hook environment before replay begins. |
@@ -770,6 +770,15 @@ packages touched by each refactor commit in a temporary worktree of that commit,
 suite execution to keep the local range check fast. CI runs it with `--run-tests` on pull-request
 ranges. REF-03 public API invariance remains covered by the engine API compatibility gate.
 
+`praetorctl docstrings check [--path=.] [--base=<ref>] [--head=<ref>] [--pre-push] [--threshold=80]`
+reproduces CodeRabbit's diff-scoped docstring coverage pre-merge check locally (`internal/docstrings/docstrings.go`,
+`TestCheck_Positive_PlantedCases`). Every function or method in `internal/hiss`'s scanner inventory
+whose source span overlaps a line added or modified in `git diff -U0` against the merge base is
+counted, exported or unexported and test functions included. The mode (`error`, `warning`, or `off`) and coverage threshold default to
+`reviews.pre_merge_checks.docstrings` in `.coderabbit.yaml` (`error` and `80` when absent): `error` exits
+`1` below threshold, `warning` reports uncovered functions and exits `0`, `off` skips the check, and a read or configuration failure exits `2`. Adopter repositories run the same
+check in `lefthook.yml` `pre-push` via `sh .config/lefthook/engine.sh docstrings check --pre-push` with `use_stdin: true`.
+
 These checks are not re-run per commit:
 
 - `block_evasion.py --environment` (`pre-commit`, `pre-rebase`) inspects the environment of the
@@ -1198,9 +1207,22 @@ selection, failed discovery and readback, and real native-protocol pipe exchange
 
 ## What a push scans, and against what
 
-A push of an existing branch is scanned against the ref it is replacing. A push of a **new**
-branch has no such ref, so the base is the merge-base with the remote's default branch, obtained
-from `git ls-remote --symref <remote> HEAD`.
+A fast-forward push of an existing branch is scanned against the ref it is replacing. A push of a
+**new** branch has no such ref, so the base is the merge-base with the remote's default branch,
+obtained from `git ls-remote --symref <remote> HEAD`. A force push of rewritten history (a rebased
+branch, or an unrelated local root confirmed via `git cat-file -e <old>^{commit}`, whose replaced
+head is not an ancestor of the pushed one) takes the same merge-base, while a replaced head missing
+locally scans the full tree:
+diffing against the replaced head would count every commit the rebase picked up from the default
+branch as this push's work, and the range checks (refactor assertion lock, docstring coverage)
+would judge code the push did not write. The push prints `Push baseline: <old> rewritten; scan base <base>`
+when it does this (`push_base` in `.config/lefthook/scripts/hooks.py`,
+`test_force_push_of_rewritten_history_scans_against_merge_base`). `praetorctl docstrings check
+--pre-push` applies the same rule for adopters, querying `git ls-remote --symref <remote> HEAD`
+first through `DefaultBaseRef` before falling back to `forge.RepositoryDefaultBranch` and bounding
+its stdin read to the command context (`ResolvePrePushBase`, `ParsePrePushStdin`,
+`TestResolvePrePushBase_RewrittenBranch_3D`, `TestDefaultBaseRef_RemoteSymrefOverStaleLocal_3D`,
+`TestParsePrePushStdin_Deadline_3D`).
 
 The remote is asked rather than `refs/remotes/<remote>/HEAD` being trusted. Git writes that
 symref once at clone time and never updates it: it is inherited when a clone is cloned,
