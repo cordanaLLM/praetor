@@ -752,7 +752,7 @@ reported, non-blocking error; AGY gets its allow answer and exit 0 instead. The 
 handback rows and 30 s for `post-return`, so a slow engine still gives its own verdict and a
 late deny stays a deny. Both 5 s probes plus that wait end before the 60 s `post-return`
 rows give up (`TestLauncherTimeoutsOutwaitEngineBudgets`). The `stop` call waits longer
-(`STOP_RUN_TIMEOUT`, 55 s): the engine verifies the ledger (20 s) and then runs the
+(`STOP_RUN_TIMEOUT`, 60 s): the engine reads own PR reviews (4 s), verifies the ledger (20 s), and then runs the
 checkpoint check (30 s), and its client timeout is 90 s (`TestStopLauncherTimeouts`). On a shorter row the client's own
 timeout comes first: 15 s for the dispatch and handback rows, and 30 s for AGY, which
 documents nothing about a timed-out hook. Malformed guard
@@ -1466,12 +1466,38 @@ checkpoint is due; the reason names the repair (`praetorctl state sync .`,
 `internal/agenthook/dialect_agent.go`); a malformed flag reads as false. A repeated pass
 changes the wording of a checkpoint block (`Checkpoint remains incomplete: …`) and turns the
 prose-question deny below into a stated skip. `stop` runs every check on each pass (the
-prose question, the ledger verify, the checkpoint): on the first pass one deny lists each
+prose question, own pull request reviews, the ledger verify, the checkpoint): on the first pass one deny lists each
 failing check, so the single continuation is not spent on the question alone; on the
 repeated pass the question is skipped and what still fails halts the session
 (`TestRunStopQuestionAndDueCheckpointPerClient`). A failing ledger verify does not
 hide the checkpoint: both reasons show on the first pass
 (`TestRunStopStaleLedgerAndDueCheckpointShareOneDeny`).
+
+### Own pull request review check and background wait
+
+`stop` reads the authenticated `gh` user's open pull requests in the origin GitHub repository through the shared reader in `internal/forge/review_reader.go`. An unresolved review thread denies the stop, naming each thread's path, line and author, and directs the session to take that work immediately: fix through a lane, reply with verification evidence, and resolve the thread. No controller order is needed. `evaluateStopReviewThreads` has a four-second budget and caches `Allow` and `Skip` verdicts for two minutes in `praetor-stop-reviews.json` under the worktree's Git directory, keyed by repository and local HEAD; a `Deny` verdict always re-reads so resolving a thread takes effect without a new commit. Read failures produce a stated skip, retained even alongside a deny from another stop check. A cache write failure also remains visible; it does not suppress a known review deny.
+
+The check reaches Claude Code `Stop`, Codex `Stop`, Gemini `AfterAgent`, and agy `Stop` through `dispatch` (`evaluateStop` for the checkpoint-wired clients and the `EventStop` branch for `agy`); see `internal/agenthook/registrations.go` and `internal/agenthook/evaluate.go`. OpenCode currently has no stop registration. Its existing plugin (`internal/clientsetup/opencode_clock.go`) handles message transforms only. The [OpenCode plugin documentation](https://opencode.ai/docs/plugins/#session-events) lists `session.idle` and an event-handler example, but that event is not connected to this evaluator. OpenCode therefore remains a coverage gap for automatic review enforcement; an explicit wait can still read reviews. Documentation checked 2026-11-01.
+
+Between units, run:
+
+```sh
+praetorctl pr wait --repo owner/name --timeout 50m --interval 60s
+```
+
+Omit `--pr` to select the authenticated user's own open pull requests at startup. Repeat `--pr N` to watch named requests, including requests by another author. The selected numbers stay fixed for the wait so a merged or closed request remains observable. A fresh invocation discovers the current own open set. Discovery is capped at 100 requests; overflow is an explicit read failure. Every PR read requests the first 100 review threads, first 100 reviews, first comment per thread, and first 100 check contexts on the latest commit. A connection with another page fails explicitly instead of silently dropping findings. The first comment supplies the thread's author and creation time; file-level threads have line `0`.
+
+Claude Code runs the command through its shell tool with `run_in_background: true` and consumes its completion when review work arrives. Codex, Gemini and agy run it as a blocking call between units. The wait is bounded by `--timeout`; start a fresh wait when the timeout expires and the session still owns open work. A pending or absent check rollup keeps waiting. Checks finish only when every selected PR's individual check contexts are terminal; a failed rollup cannot hide a still-running check.
+
+| Exit | Meaning and text contract |
+| :--- | :--- |
+| `10` | Standing thread: `review owner/name#7: unresolved thread main.go:9 by reviewer (1h0m0s)`; return before waiting. After the baseline: `review owner/name#7: new thread main.go:9 by reviewer (0s)` or `review owner/name#7: new review COMMENTED by reviewer`. Every reviewer is included, people and bots. |
+| `0` | Every selected PR's checks are terminal with no review item: one `checks owner/name#7: SUCCESS` line per PR; the conclusion may also be `FAILURE` or `ERROR`. Empty discovery reports `checks owner/name: no own open pull requests`. |
+| `11` | A selected PR merged or closed: `merged owner/name#7` or `closed owner/name#7`. |
+| `124` | Overall timeout: `timeout owner/name: <cause>`. |
+| `2` | Invalid input or failed read, with the cause named. No failed read counts as clean checks. |
+
+`--json` emits one object with `exit_code` and an `items` array containing those same lines; process exit codes are unchanged. Existing reviews form the baseline. A new review ID, state or submission timestamp wakes the wait, including a pending review that becomes submitted. Review findings take precedence over terminal checks. Tests use offline forge fixtures: `internal/prwait/`, `internal/agenthook/stop_reviews_test.go`, and `cmd/standardsctl/pr_test.go`.
 
 ### Prose-question check
 
