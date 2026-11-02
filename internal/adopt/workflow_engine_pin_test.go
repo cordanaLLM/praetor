@@ -1,0 +1,209 @@
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+// SPDX-License-Identifier: EUPL-1.2
+
+package adopt
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/cordanaLLM/praetor/internal/buildid"
+	"github.com/cordanaLLM/praetor/internal/util"
+)
+
+func pinGit(t *testing.T, root string, args ...string) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	argv := append([]string{"-c", "user.name=Pin fixture", "-c", "user.email=pin@example.invalid"}, args...)
+	result, err := util.RunCommandBytes(ctx, root, requireGit(t), 4096, argv...)
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, result.Stderr)
+	}
+	return strings.TrimSpace(string(result.Stdout))
+}
+
+func pinHistory(t *testing.T) (root, ancestor, head, diverged string) {
+	t.Helper()
+	root = t.TempDir()
+	ancestor, head, diverged = pinHistoryAt(t, root)
+	return root, ancestor, head, diverged
+}
+
+func pinHistoryAt(t *testing.T, root string) (ancestor, head, diverged string) {
+	t.Helper()
+	initTestGit(t, root)
+	tree := pinGit(t, root, "mktree")
+	ancestor = pinGit(t, root, "commit-tree", tree, "-m", "ancestor")
+	head = pinGit(t, root, "commit-tree", tree, "-p", ancestor, "-m", "adopting engine")
+	diverged = pinGit(t, root, "commit-tree", tree, "-p", ancestor, "-m", "diverged engine")
+	pinGit(t, root, "update-ref", "HEAD", head)
+	return ancestor, head, diverged
+}
+
+type workflowPinCase struct {
+	name, declaration, second, want, refusal string
+	dryRun                                   bool
+}
+
+func TestAdoptWorkflowEnginePin3D(t *testing.T) {
+	source, ancestor, head, diverged := pinHistory(t)
+	cases := []workflowPinCase{
+		{name: "stale ancestor", declaration: "PRAETOR_COMMIT: " + ancestor, want: head},
+		{name: "short ref", declaration: "PRAETOR_REF='" + ancestor[:12] + "' # keep", want: head},
+		{name: "diverged", declaration: "PRAETOR_COMMIT: " + diverged, want: diverged, refusal: "not an ancestor"},
+		{name: "different pins", declaration: "PRAETOR_COMMIT: " + ancestor, second: head, want: ancestor, refusal: "several different"},
+		{name: "no pin", declaration: "OTHER: unchanged", want: "OTHER: unchanged"},
+		{name: "same pin", declaration: "PRAETOR_COMMIT: " + head, want: head},
+		{name: "same abbreviated pin", declaration: "PRAETOR_REF: " + head[:12], want: head[:12]},
+		{name: "tag", declaration: "PRAETOR_REF: v1.2.3", want: "v1.2.3"},
+		{name: "branch", declaration: "PRAETOR_REF: main", want: "main"},
+		{name: "invalid commit", declaration: "PRAETOR_COMMIT: abcdef1", want: "abcdef1"},
+		{name: "dry run", declaration: "PRAETOR_COMMIT: " + ancestor, want: ancestor, dryRun: true},
+		{name: "repeated pin", declaration: "PRAETOR_COMMIT: " + ancestor, second: ancestor, want: head},
+		{name: "same file repeated pin", declaration: "PRAETOR_COMMIT: " + ancestor + "\r\n  PRAETOR_REF: " + ancestor, want: head},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			checkWorkflowPinCase(t, source, head, tc)
+		})
+	}
+}
+
+func checkWorkflowPinCase(t *testing.T, source, head string, tc workflowPinCase) {
+	t.Helper()
+	root := t.TempDir()
+	initTestGit(t, root)
+	rel := ".github/workflows/ci.yml"
+	before := "env:\r\n  " + tc.declaration + "\r\n"
+	mustWrite(t, filepath.Join(root, rel), before)
+	if tc.second != "" {
+		mustWrite(t, filepath.Join(root, ".github/workflows/other.yaml"), "PRAETOR_REF: "+tc.second+"\n")
+	}
+	s := &adoptSession{repoPath: root, opts: AdoptOptions{LockSourceRoot: source, DryRun: tc.dryRun}, report: &AdoptReport{}}
+	err := reportStaleEnginePin(t.Context(), s)
+	assertWorkflowPinRefusal(t, tc, err)
+	got := mustRead(t, filepath.Join(root, rel))
+	if !strings.Contains(got, tc.want) {
+		t.Fatalf("pin stayed stale: got %q; want %s", got, tc.want)
+	}
+	if tc.want != head || tc.declaration == "PRAETOR_COMMIT: "+head {
+		if got != before {
+			t.Fatal("unchanged/refused pin was rewritten")
+		}
+		if tc.dryRun {
+			assertPinMoveReport(t, s.report, rel, workflowPinsIn(rel, []byte(before))[0].sha, head)
+		}
+		return
+	}
+	old := workflowPinsIn(rel, []byte(before))[0].sha
+	assertPinMoveReport(t, s.report, rel, old, head)
+	if strings.ReplaceAll(before, old, head) != got {
+		t.Fatal("pin move changed surrounding bytes")
+	}
+	if tc.second != "" && !strings.Contains(mustRead(t, filepath.Join(root, ".github/workflows/other.yaml")), head) {
+		t.Fatal("repeated pin was not moved everywhere")
+	}
+}
+
+func TestAdoptWorkflowPinUsesRunningRevision(t *testing.T) {
+	source, ancestor, head, _ := pinHistory(t)
+	tree := pinGit(t, source, "mktree")
+	newer := pinGit(t, source, "commit-tree", tree, "-p", head, "-m", "source ahead of running build")
+	pinGit(t, source, "update-ref", "HEAD", newer)
+	pinGit(t, source, "update-ref", "refs/tags/v1.2.3", head)
+	for _, identity := range []buildid.Identity{{Revision: head[:12]}, {Release: "v1.2.3"}} {
+		root := t.TempDir()
+		initTestGit(t, root)
+		rel := ".github/workflows/ci.yml"
+		mustWrite(t, filepath.Join(root, rel), "PRAETOR_REF: "+ancestor+"\n")
+		s := &adoptSession{repoPath: root, opts: AdoptOptions{LockSourceRoot: source, Engine: identity}, report: &AdoptReport{}}
+		if err := reportStaleEnginePin(t.Context(), s); err != nil {
+			t.Fatal(err)
+		}
+		if got := mustRead(t, filepath.Join(root, rel)); !strings.Contains(got, head) || strings.Contains(got, newer) {
+			t.Fatalf("pin did not follow the running engine: %s", got)
+		}
+	}
+}
+
+func TestAdoptWorkflowPinHistoryFailures(t *testing.T) {
+	source, _, _, _ := pinHistory(t)
+	for _, selected := range []string{"", t.TempDir(), source} {
+		root := t.TempDir()
+		initTestGit(t, root)
+		rel := ".github/workflows/ci.yml"
+		before := "PRAETOR_COMMIT: " + strings.Repeat("f", 40) + "\n"
+		mustWrite(t, filepath.Join(root, rel), before)
+		s := &adoptSession{repoPath: root, opts: AdoptOptions{LockSourceRoot: selected}, report: &AdoptReport{}}
+		err := reportStaleEnginePin(t.Context(), s)
+		if err == nil || !strings.Contains(err.Error(), rel+":1") {
+			t.Fatalf("unknown source/history not refused by name: %v", err)
+		}
+		if got := mustRead(t, filepath.Join(root, rel)); got != before {
+			t.Fatal("history failure changed pin")
+		}
+	}
+}
+
+func TestAdoptWorkflowPinIntegration(t *testing.T) {
+	source := newAdoptLockSource(t)
+	ancestor, head, diverged := pinHistoryAt(t, source)
+	for _, pin := range []string{ancestor, diverged} {
+		root := t.TempDir()
+		initTestGit(t, root)
+		rel := ".github/workflows/ci.yml"
+		before := "env:\n  PRAETOR_COMMIT: " + pin + "\n"
+		mustWrite(t, filepath.Join(root, rel), before)
+		report, err := Adopt(t.Context(), AdoptOptions{Path: root, LockSourceRoot: source, SkipHookActivation: true})
+		if pin == ancestor {
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertPinMoveReport(t, report, rel, ancestor, head)
+			if got := mustRead(t, filepath.Join(root, rel)); !strings.Contains(got, head) {
+				t.Fatal("adoption did not move the workflow pin")
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), "not an ancestor") {
+			t.Fatalf("diverged adoption not refused: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(root, manifestFile)); !os.IsNotExist(err) {
+			t.Fatalf("refused adoption wrote manifest: %v", err)
+		}
+		if got := mustRead(t, filepath.Join(root, rel)); got != before {
+			t.Fatal("refused adoption changed workflow")
+		}
+	}
+}
+
+func assertWorkflowPinRefusal(t *testing.T, tc workflowPinCase, err error) {
+	t.Helper()
+	if tc.refusal == "" {
+		if err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if err == nil || !strings.Contains(err.Error(), tc.refusal) || !strings.Contains(err.Error(), ".github/workflows/ci.yml:2") {
+		t.Fatalf("refusal must name pin: %v", err)
+	}
+	if tc.second != "" && !strings.Contains(err.Error(), "other.yaml:1") {
+		t.Fatalf("refusal must name both pins: %v", err)
+	}
+}
+
+func assertPinMoveReport(t *testing.T, report *AdoptReport, rel, old, head string) {
+	t.Helper()
+	for _, action := range report.ActionDetails {
+		if action.Path == rel && strings.Contains(action.Details, old) && strings.Contains(action.Details, head) {
+			return
+		}
+	}
+	t.Fatalf("missing pin move report: %+v", report.ActionDetails)
+}

@@ -69,13 +69,16 @@ func newMakeTestRepo(t *testing.T, name string) (string, string) {
 // and that pin's engine cached as a stub. It returns the root, the stub's path and make's path.
 func setupPinnedEngineRepo(t *testing.T, name string) (string, string, string) {
 	t.Helper()
+	// These fixtures exercise launcher routing with a source bundle lacking Git history.
+	// A release pin stays fixed during adoption; SHA advancement has real-history fixtures.
+	const pin = "v1.2.3"
 	root, makePath := newMakeTestRepo(t, name)
 	mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
-	mustWrite(t, filepath.Join(root, ".github", "workflows", "gate.yml"), "env:\n  PRAETOR_REF: "+enginePin+"\n")
+	mustWrite(t, filepath.Join(root, ".github", "workflows", "gate.yml"), "env:\n  PRAETOR_REF: "+pin+"\n")
 
 	cacheDir := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cacheDir)
-	pinDir := filepath.Join(cacheDir, "praetor", "engine", enginePin)
+	pinDir := filepath.Join(cacheDir, "praetor", "engine", pin)
 	if err := os.MkdirAll(pinDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

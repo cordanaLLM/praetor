@@ -331,6 +331,7 @@ func publishRenovateConfig(ctx context.Context, s *adoptSession, rel string, dat
 		action = actionMerge
 		detail += "; engine packages disabled for coordinated adoption updates"
 	}
+	detail += renovatePinReport(merged)
 	s.report.recordReconciledAs(rel, action, detail)
 	return nil
 }

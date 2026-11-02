@@ -244,6 +244,7 @@ func printAdoptReport(rep *adopt.AdoptReport) {
 
 	printDebtSummary(rep)
 	printAdoptedFiles(rep)
+	printAdoptEnginePinStatus(rep)
 	printAdoptPreviews(rep.Previews)
 	printAdoptIssues(rep)
 
@@ -262,6 +263,13 @@ func printAdoptReport(rep *adopt.AdoptReport) {
 		fmt.Println("\nSimulated adoption plan completed. Run without -dry-run to apply.")
 	default:
 		printAppliedOutcome(rep)
+	}
+}
+
+// printAdoptEnginePinStatus makes an absent pin visible without listing it as a written file.
+func printAdoptEnginePinStatus(rep *adopt.AdoptReport) {
+	if detail := findDetail(rep.ActionDetails, ".github/workflows"); detail != "" {
+		fmt.Printf("\nEngine pin: %s\n", detail)
 	}
 }
 

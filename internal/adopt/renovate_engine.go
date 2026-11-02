@@ -94,7 +94,11 @@ func mergeRenovateAdoptionRules(ctx context.Context, s *adoptSession, data []byt
 	if engineChanged {
 		merged = next
 	}
-	return merged, declared, changed || engineChanged, nil
+	next, pinChanged, err := mergeRenovatePinManager(merged)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	return next, declared, changed || engineChanged || pinChanged, nil
 }
 
 func mergeRenovateEngineRule(ctx context.Context, data []byte) ([]byte, bool, error) {

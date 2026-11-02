@@ -586,13 +586,13 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 	if err := preflightSteps(ctx, s, declined); err != nil {
 		return err
 	}
+	if err := reportStaleEnginePin(ctx, s); err != nil {
+		return err
+	}
 	if err := runAdoptStepsChain(ctx, s, steps, declined); err != nil {
 		return err
 	}
 	reportIgnoredWrites(ctx, s)
-	if err := reportStaleEnginePin(ctx, s); err != nil {
-		return err
-	}
 	verifyAgentContext(ctx, s, declined)
 	return nil
 }
