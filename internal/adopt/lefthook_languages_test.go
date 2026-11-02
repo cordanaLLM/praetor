@@ -185,6 +185,7 @@ func TestAdopt_Positive_RenderedLefthookCarriesMergeCheckJob(t *testing.T) {
 	verifyMergeCheckPrePushExecution(t)
 }
 
+// yamlString converts an untyped YAML value to string or returns an empty string.
 func yamlString(v any) string {
 	s, ok := v.(string)
 	if !ok {
@@ -193,11 +194,13 @@ func yamlString(v any) string {
 	return s
 }
 
+// verifyMergeCheckPrePushExecution tests the pre-push runner on the host platform.
 func verifyMergeCheckPrePushExecution(t *testing.T) {
 	t.Helper()
 	verifyMergeCheckPrePushExecutionOn(t, os.PathSeparator == '\\')
 }
 
+// verifyMergeCheckPrePushExecutionOn exercises the pre-push shell script runner or skips on Windows.
 func verifyMergeCheckPrePushExecutionOn(t *testing.T, isWindows bool) {
 	t.Helper()
 	if isWindows {
@@ -230,6 +233,7 @@ func verifyMergeCheckPrePushExecutionOn(t *testing.T, isWindows bool) {
 	verifyMergeCheckPrePushBoundaries(t, dir, runner, oid1, oid2, zero)
 }
 
+// verifyMergeCheckPrePushBoundaries validates boundary conditions for pre-push stdin inputs.
 func verifyMergeCheckPrePushBoundaries(t *testing.T, dir, runner, oid1, oid2, zero string) {
 	t.Helper()
 	for name, stdin := range map[string]string{

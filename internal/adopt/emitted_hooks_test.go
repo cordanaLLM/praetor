@@ -283,6 +283,7 @@ func decodedJob(t *testing.T, decoded map[string]any, hook, job string) map[stri
 	return entry
 }
 
+// injectDecodedJob inserts a job entry into the commands map of a decoded hook section.
 func injectDecodedJob(decoded map[string]any, hook, job string, entry map[string]any) {
 	section, ok := decoded[hook].(map[string]any)
 	if !ok {

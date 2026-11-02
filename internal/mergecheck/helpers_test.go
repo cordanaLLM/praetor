@@ -14,6 +14,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// initTestRepo creates and configures a temporary git repository for merge-check tests.
 func initTestRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -27,6 +28,7 @@ func initTestRepo(t *testing.T) string {
 	return dir
 }
 
+// assertFindingMatch verifies that a Finding matches expected path, merge commit, and parent hashes.
 func assertFindingMatch(t *testing.T, f Finding, expectedPath, expectedMerge, expectedP1, expectedP2 string) {
 	t.Helper()
 	if f.FilePath != expectedPath {
@@ -50,6 +52,7 @@ func assertFindingMatch(t *testing.T, f Finding, expectedPath, expectedMerge, ex
 	}
 }
 
+// writeFile creates parent directories and writes content to a relative path in dir.
 func writeFile(t *testing.T, dir, rel, content string) {
 	t.Helper()
 	path := filepath.Join(dir, filepath.FromSlash(rel))
@@ -61,11 +64,13 @@ func writeFile(t *testing.T, dir, rel, content string) {
 	}
 }
 
+// gitRevParse resolves a git revision string to a full commit object ID.
 func gitRevParse(t *testing.T, dir, ref string) string {
 	t.Helper()
 	return strings.TrimSpace(testsupport.RunFixtureGit(t, dir, []string{"rev-parse", ref}))
 }
 
+// runGitAllowConflict executes a git command in dir, ignoring any expected merge conflict errors.
 func runGitAllowConflict(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	if _, err := util.RunGit(t.Context(), dir, args...); err != nil {

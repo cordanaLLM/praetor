@@ -143,6 +143,7 @@ func TestMergeCheck_OneParentDeletedAndMergeDropsOtherContent_Refused(t *testing
 	assertDroppedParentFinding(t, res.Findings, "p2_del.txt", "dropped first-parent changes (deleted in merge;")
 }
 
+// assertDroppedParentFinding asserts that findings contain a finding for path with expected text.
 func assertDroppedParentFinding(t *testing.T, findings []Finding, path, expected string) {
 	t.Helper()
 	for _, f := range findings {

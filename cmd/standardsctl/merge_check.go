@@ -49,6 +49,7 @@ func runMergeCheck(args []string) error {
 	return emitMergeCheckResult(res)
 }
 
+// emitMergeCheckResult prints findings, notices, and summary status for a merge-check run.
 func emitMergeCheckResult(res *mergecheck.Result) error {
 	if res.MergesCount == 0 {
 		fmt.Printf("merge-check: no merge commits in range %s\n", res.Range)

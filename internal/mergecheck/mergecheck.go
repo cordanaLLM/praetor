@@ -116,6 +116,7 @@ func Check(ctx context.Context, opts Options) (*Result, error) {
 	return runMergeCheck(ctx, repoDir, commitRange, maxMerges)
 }
 
+// runMergeCheck inspects merge commits within commitRange up to maxMerges.
 func runMergeCheck(ctx context.Context, repoDir, commitRange string, maxMerges int) (*Result, error) {
 	merges, err := listMergeCommits(ctx, repoDir, commitRange, maxMerges)
 	if err != nil {
@@ -171,6 +172,7 @@ func ResolveDefaultRange(ctx context.Context, repoDir string) (string, error) {
 	return "origin/" + branch + "..HEAD", nil
 }
 
+// isZeroOID reports whether the given object ID is empty or all zeroes.
 func isZeroOID(oid string) bool {
 	return oid == "" || strings.Trim(oid, "0") == ""
 }
@@ -200,6 +202,7 @@ func FormatFinding(f Finding) string {
 		mSha12, f.FilePath, p1Sha12, p2Sha12)
 }
 
+// shortSHA returns the first 12 characters of a commit hash or the full string if shorter.
 func shortSHA(sha string) string {
 	if len(sha) >= 12 {
 		return sha[:12]
@@ -207,6 +210,7 @@ func shortSHA(sha string) string {
 	return sha
 }
 
+// checkMergeCommit inspects all parent pairs of a merge commit for dropped hunks.
 func checkMergeCommit(ctx context.Context, repoDir, sha string) ([]Finding, []string, error) {
 	parents, err := commitParents(ctx, repoDir, sha)
 	if err != nil {
@@ -238,6 +242,7 @@ func checkMergeCommit(ctx context.Context, repoDir, sha string) ([]Finding, []st
 	return allFindings, allNotices, nil
 }
 
+// checkParentPair verifies that mergeSHA preserved changes made between base and p1 against p2.
 func checkParentPair(ctx context.Context, repoDir, mergeSHA, p1, p2 string) ([]Finding, bool, error) {
 	base, err := mergeBase(ctx, repoDir, p1, p2)
 	if err != nil {
@@ -270,6 +275,7 @@ func checkParentPair(ctx context.Context, repoDir, mergeSHA, p1, p2 string) ([]F
 	return findings, false, nil
 }
 
+// loadBlobsForFiles fetches blob object IDs for files across merge, parents, and base commits.
 func loadBlobsForFiles(ctx context.Context, repoDir, m, p1, p2, base string, files []string) (*commitBlobs, error) {
 	bm, err := treeBlobs(ctx, repoDir, m, files)
 	if err != nil {
@@ -299,6 +305,7 @@ func loadBlobsForFiles(ctx context.Context, repoDir, m, p1, p2, base string, fil
 	}, nil
 }
 
+// checkFileHunk evaluates whether a single file dropped changes in the merge commit.
 func checkFileHunk(ctx context.Context, file string, blobs *commitBlobs) (*Finding, error) {
 	if blobs == nil {
 		return nil, nil
@@ -335,6 +342,7 @@ func checkFileHunk(ctx context.Context, file string, blobs *commitBlobs) (*Findi
 	})
 }
 
+// droppedByDeletion reports which parent's modifications were dropped when a file is absent in the merge.
 func droppedByDeletion(okM, okP1, okP2, okBase bool, blobP2, blobBase string) (int, bool) {
 	if okM {
 		return 0, false
@@ -352,6 +360,7 @@ func droppedByDeletion(okM, okP1, okP2, okBase bool, blobP2, blobBase string) (i
 	return 0, false
 }
 
+// judgeDroppedHunk applies three-way merge reconstruction to determine if a hunk was dropped.
 func judgeDroppedHunk(ctx context.Context, h fileHunkContext) (*Finding, error) {
 	mBytes, p1Bytes, p2Bytes, baseBytes, err := readHunkBlobs(ctx, h)
 	if err != nil {
@@ -414,6 +423,7 @@ func binaryDropped(h fileHunkContext) *Finding {
 	return &Finding{MergeSHA: h.mergeSHA, FilePath: h.file, Parent1: h.p1, Parent2: h.p2, Binary: true, DroppedParent: 1}
 }
 
+// mergeFileBlobs executes git merge-file between three byte buffers in a temporary directory.
 func mergeFileBlobs(ctx context.Context, repoDir, conflictFlag string, currentBytes, baseBytes, otherBytes []byte) (merged []byte, isBin bool, err error) {
 	tmpDir, err := os.MkdirTemp("", "mergecheck-blob-*")
 	if err != nil {
@@ -452,6 +462,7 @@ func mergeFileBlobs(ctx context.Context, repoDir, conflictFlag string, currentBy
 	return cmdBytes.Stdout, false, nil
 }
 
+// readBlob reads raw object contents from git cat-file for the given blob SHA.
 func readBlob(ctx context.Context, repoDir, sha string) ([]byte, error) {
 	opCtx, cancel := context.WithTimeout(ctx, gitOpTimeout)
 	defer cancel()
@@ -462,6 +473,7 @@ func readBlob(ctx context.Context, repoDir, sha string) ([]byte, error) {
 	return cmdBytes.Stdout, nil
 }
 
+// isBinaryBlob checks whether the initial byte slice contains a null byte.
 func isBinaryBlob(b []byte) bool {
 	limit := len(b)
 	if limit > binaryProbeBytes {
@@ -470,6 +482,7 @@ func isBinaryBlob(b []byte) bool {
 	return bytes.IndexByte(b[:limit], 0) != -1
 }
 
+// anyBinaryBlob reports whether any of the supplied byte slices is classified as binary.
 func anyBinaryBlob(blobs ...[]byte) bool {
 	for i := 0; i < len(blobs); i++ {
 		if isBinaryBlob(blobs[i]) {
@@ -479,6 +492,7 @@ func anyBinaryBlob(blobs ...[]byte) bool {
 	return false
 }
 
+// treeBlobs returns a map of file path to blob SHA for the specified commit and paths.
 func treeBlobs(ctx context.Context, repoDir, commit string, paths []string) (map[string]string, error) {
 	blobs := make(map[string]string)
 	if len(paths) == 0 || commit == "" {
@@ -496,6 +510,7 @@ func treeBlobs(ctx context.Context, repoDir, commit string, paths []string) (map
 	return blobs, nil
 }
 
+// chunkPaths splits a list of file paths into chunks bounded by byte size.
 func chunkPaths(paths []string, budget int) ([][]string, error) {
 	if budget <= 0 {
 		budget = maxLsTreeArgBytes
@@ -522,6 +537,7 @@ func chunkPaths(paths []string, budget int) ([][]string, error) {
 	return chunks, nil
 }
 
+// readTreeBlobChunk populates the blobs map by running git ls-tree on a chunk of paths.
 func readTreeBlobChunk(ctx context.Context, repoDir, commit string, chunk []string, blobs map[string]string) error {
 	opCtx, cancel := context.WithTimeout(ctx, gitOpTimeout)
 	defer cancel()
@@ -544,6 +560,7 @@ func readTreeBlobChunk(ctx context.Context, repoDir, commit string, chunk []stri
 	return nil
 }
 
+// listMergeCommits retrieves merge commit hashes within commitRange bounded by maxMerges.
 func listMergeCommits(ctx context.Context, repoDir, commitRange string, maxMerges int) ([]string, error) {
 	opCtx, cancel := context.WithTimeout(ctx, gitOpTimeout)
 	defer cancel()
@@ -558,6 +575,7 @@ func listMergeCommits(ctx context.Context, repoDir, commitRange string, maxMerge
 	return lines, nil
 }
 
+// commitParents returns the parent commit hashes of the specified commit.
 func commitParents(ctx context.Context, repoDir, sha string) ([]string, error) {
 	opCtx, cancel := context.WithTimeout(ctx, gitOpTimeout)
 	defer cancel()
@@ -572,6 +590,7 @@ func commitParents(ctx context.Context, repoDir, sha string) ([]string, error) {
 	return fields[1:], nil
 }
 
+// mergeBase returns the best common ancestor commit between p1 and p2.
 func mergeBase(ctx context.Context, repoDir, p1, p2 string) (string, error) {
 	opCtx, cancel := context.WithTimeout(ctx, gitOpTimeout)
 	defer cancel()
@@ -585,6 +604,7 @@ func mergeBase(ctx context.Context, repoDir, p1, p2 string) (string, error) {
 	return strings.TrimSpace(string(out.Stdout)), nil
 }
 
+// filesChanged lists paths modified between base and p1.
 func filesChanged(ctx context.Context, repoDir, base, p1 string) ([]string, error) {
 	opCtx, cancel := context.WithTimeout(ctx, gitOpTimeout)
 	defer cancel()
@@ -595,6 +615,7 @@ func filesChanged(ctx context.Context, repoDir, base, p1 string) ([]string, erro
 	return parseNullSeparated(cmdBytes.Stdout, maxDiffFiles)
 }
 
+// parseNullSeparated parses null-delimited path strings up to maxItems.
 func parseNullSeparated(raw []byte, maxItems int) ([]string, error) {
 	raw = bytes.TrimRight(raw, "\x00")
 	if len(raw) == 0 {

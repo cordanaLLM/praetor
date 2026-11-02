@@ -235,12 +235,14 @@ func TestMergeCheck_Mutant_BlobComparison(t *testing.T) {
 	}
 }
 
+// writeTestBlob writes content to a temporary file and stores it as a git blob object.
 func writeTestBlob(t *testing.T, dir, content string) string {
 	t.Helper()
 	writeFile(t, dir, "blob.tmp", content)
 	return strings.TrimSpace(testsupport.RunFixtureGit(t, dir, []string{"hash-object", "-w", "blob.tmp"}))
 }
 
+// buildTestCommitBlobs constructs a commitBlobs structure for testing hunk comparisons.
 func buildTestCommitBlobs(dir, file, m, p1, p2, base string) *commitBlobs {
 	cb := &commitBlobs{
 		repoDir:  dir,

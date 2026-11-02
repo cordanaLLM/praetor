@@ -1273,6 +1273,7 @@ print("fixture hook self-tests passed")
             os.chdir(original)
 
     def test_push_refuses_dropped_hunk_merge_and_passes_clean_merge(self):
+        """Verify pre-push refuses merge commits that drop parent hunks and accepts clean merges."""
         # Order: engine-dropped-hunk-gate-20261027.
         alpha_base = "line 1\nline 2\nline 3\nline 4\nline 5\n"
         self.write("alpha.txt", alpha_base)

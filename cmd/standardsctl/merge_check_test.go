@@ -125,6 +125,7 @@ func TestMergeCheckCommand_UnrelatedHistories_StatedLine(t *testing.T) {
 	}
 }
 
+// writeMergeFile writes file content to a relative path in dir during merge-check tests.
 func writeMergeFile(t *testing.T, dir, rel, content string) {
 	t.Helper()
 	path := filepath.Join(dir, filepath.FromSlash(rel))
@@ -171,6 +172,7 @@ func TestMergeCheckCommand_SurplusPositionalRangesRejected(t *testing.T) {
 	}
 }
 
+// makefilePassesMergeCheckRange reports whether the Makefile defines MERGE_CHECK_RANGE logic for CI.
 func makefilePassesMergeCheckRange(makefile string) bool {
 	return strings.Contains(makefile, "MERGE_CHECK_RANGE ?=") &&
 		strings.Contains(makefile, "GITHUB_EVENT_BEFORE") &&
