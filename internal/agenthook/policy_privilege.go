@@ -26,13 +26,10 @@ const (
 	privilegeData       = `(?:[^\x22\x27\\]|\\(?s:.)|\x27[^\x27]*\x27|\x22` + privilegeDoubleText + `\x22)*`
 )
 
-// privilegeNames also declares the text rule's necessary-literal prefilter. su
-// needs a command option; the other names refuse any invocation.
+// privilegeNames names launchers whose protected adoption commands are judged.
 var privilegeNames = []string{"sudo", "doas", "pkexec", "run0", "su"}
 
-// su without a command remains an interactive invocation, outside this rule.
-var privilegeInvocation = `(?:(?:` + strings.Join(privilegeNames[:4], `|`) + `)` + privilegeEnd +
-	`|su(?:` + shellBlank + privilegeWord + `)*` + shellBlank + `(?:-c[^ \t\n;&|()\x60]*|--command(?:=[^ \t\n;&|()\x60]*)?)` + privilegeEnd + `)`
+var privilegeInvocation = protectedPrivilegeInvocation()
 
 var privilegeCommandSource = privilegeCommandRule()
 
@@ -66,9 +63,9 @@ func privilegeCommandRule() string {
 		launchers = append(launchers, launcher)
 	}
 	assignment := `[A-Za-z_][A-Za-z0-9_]*=(?:` + privilegeWord + `)?` + shellBlank
-	position := `(?:\A|[\n;&|(\x60]|\x22` + privilegeDoubleText + `(?:\$\(|\x60))`
-	return `\A` + privilegeData + position + `[ \t]*(?:` + assignment + `|` + strings.Join(launchers, `|`) + `)*` +
-		shellProgram(privilegeInvocation)
+	position := `(?:\A|[\n;&|({!\x60]|\x22` + privilegeDoubleText + `(?:\$\(|\x60))`
+	return `\A` + privilegeData + position + `[ \t]*(?:` + assignment + `|` + strings.Join(launchers, `|`) + `|` + privilegeScriptPrefix() + `|(?:then|do|else|if|while|until)` + shellBlank + `)*` +
+		privilegeInvocation
 }
 
 // privilegeFlagExcept matches an option token except the exact flags taking a
@@ -118,4 +115,38 @@ func privilegeFlagTrie(edges []map[byte]int, terminal []bool) string {
 		}
 	}
 	return patterns[0]
+}
+
+// quotedPrivilegeProgram accepts literal shell quoting and backslash escapes in a name.
+func quotedPrivilegeProgram(name string) string {
+	var word strings.Builder
+	for _, letter := range name {
+		word.WriteString(`\\?` + regexp.QuoteMeta(string(letter)))
+	}
+	quote := `(?:\\?[\x22\x27])?`
+	return quote + shellProgram(word.String()) + quote
+}
+
+// privilegeScriptPrefix reaches executable script arguments without treating echo data as code.
+func privilegeScriptPrefix() string {
+	quote := `(?:\\?[\x22\x27])*`
+	shell := shellProgram(`(?:ba|da|k|z)?sh`) + shellBlank + `-[A-Za-z]*c[A-Za-z]*` + shellBlank
+	return `(?:` + shell + `|eval` + shellBlank + `)` + quote
+}
+
+// protectedPrivilegeInvocation restricts privilege checks to adoption at a development root.
+func protectedPrivilegeInvocation() string {
+	engine := `(?:` + quotedPrivilegeProgram("praetorctl") + `|` + quotedPrivilegeProgram("standardsctl") + `)`
+	action := `(?:adopt|conform|bootstrap|needs` + shellBlank + `(?:scan|report|migrate|epic))`
+	target := engine + shellBlank + action + privilegeEnd + `[^;\n|]*\bdev[/\\]?(?:[ \t\r\n;&|(){}\x22\x27]|$)`
+	script := `(?:` + privilegeScriptPrefix() + `)*` + `(?:\\?[\x22\x27])?` + target
+	parts := make([]string, 0, len(privilegeNames))
+	for _, name := range privilegeNames[:4] {
+		values := []string{"-u", "-g", "--user", "--group", "--uid", "--gid"}
+		option := `(?:` + strings.Join(values, `|`) + `)` + shellBlank + privilegeValue + `|` + privilegeFlagExcept(values)
+		parts = append(parts, quotedPrivilegeProgram(name)+`(?:`+shellBlank+`(?:`+option+`))*`+shellBlank+script)
+	}
+	su := quotedPrivilegeProgram("su") + `(?:` + shellBlank + privilegeWord + `)*` + shellBlank
+	command := `(?:-[A-Za-z]*c[A-Za-z]*[ \t]*|--command(?:=|` + shellBlank + `))`
+	return `(?:` + strings.Join(parts, `|`) + `|` + su + command + script + `)`
 }

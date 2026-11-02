@@ -116,8 +116,8 @@ func (t pyToken) literals(width int) []string {
 }
 
 // pythonLiteralUnits splits text into the smallest pieces a literal may end between. An
-// escaped string escapes each rune on its own; a raw string keeps a backslash with the byte
-// after it, so no raw literal ends in a backslash, which would swallow its closing quote.
+// escaped string escapes each rune on its own; raw escapes stay whole, including
+// hexadecimal digits, so source scanners never see a partial escape at a wrap.
 func pythonLiteralUnits(text string, raw bool) []string {
 	units := make([]string, 0, min(len(text), maxLayoutUnits))
 	if !raw {
@@ -128,13 +128,29 @@ func pythonLiteralUnits(text string, raw bool) []string {
 	}
 	for i := 0; i < len(text) && len(units) < maxLayoutUnits; i++ {
 		if text[i] == '\\' && i+1 < len(text) {
-			units = append(units, text[i:i+2])
-			i++
+			size := rawEscapeSize(text[i+1])
+			end := min(i+size, len(text))
+			units = append(units, text[i:end])
+			i = end - 1
 			continue
 		}
 		units = append(units, text[i:i+1])
 	}
 	return units
+}
+
+// rawEscapeSize includes the backslash and every digit in a numeric escape.
+func rawEscapeSize(kind byte) int {
+	switch kind {
+	case 'x':
+		return 4
+	case 'u':
+		return 6
+	case 'U':
+		return 10
+	default:
+		return 2
+	}
 }
 
 // pythonEscape renders one rune inside a double-quoted Python string literal.

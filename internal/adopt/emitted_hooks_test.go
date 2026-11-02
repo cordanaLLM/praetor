@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/agenthook"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/govuln"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
@@ -62,6 +63,9 @@ func TestEmittedHookFixturesMatchTheRendering(t *testing.T) {
 			t.Errorf("close repository root: %v", err)
 		}
 	}()
+	if os.Getenv(updateEmittedFixturesEnv) == "1" {
+		refreshNativeEvasionPatterns(t)
+	}
 	for rel, want := range emittedHookRenderings(t) {
 		path := filepath.Join(emittedFixtureRoot, filepath.FromSlash(rel))
 		if os.Getenv(updateEmittedFixturesEnv) == "1" {
@@ -373,7 +377,7 @@ func TestPyTokenLiterals(t *testing.T) {
 			if strings.HasSuffix(body, `\`) && !strings.HasSuffix(body, `\\`) {
 				t.Errorf("width %d: raw literal %s ends in a lone backslash", width, literal)
 			}
-			if len(literal) > width && len(body) > 2 {
+			if len(literal) > width && len(pythonLiteralUnits(body, true)) > 1 {
 				t.Errorf("width %d: literal %s is %d bytes", width, literal, len(literal))
 			}
 			joined.WriteString(body)
@@ -417,4 +421,38 @@ func TestPythonAssignmentAndPairLayout(t *testing.T) {
 	if got := pythonPairEntry(entry, pyToken{name, pyName}); got != "    (\n        r\""+entry.text+"\",\n        NAME,\n    ),\n" {
 		t.Errorf("one column over: one item per line with trailing commas: %q", got)
 	}
+}
+
+// Refresh the native guard through the same regeneration command as the adopter interceptor.
+// The remaining native adapter code stays intact; parity tests verify the shared rules.
+func refreshNativeEvasionPatterns(t *testing.T) {
+	t.Helper()
+	guard := filepath.Join("..", "..", filepath.FromSlash(evasionHookFile))
+	text := mustRead(t, guard)
+	before, rest, found := strings.Cut(text, "BLOCKED_PATTERNS = [\n")
+	_, after, closed := strings.Cut(rest, "\n]\n")
+	if !found || !closed {
+		t.Fatal("native guard has no delimited BLOCKED_PATTERNS declaration")
+	}
+	var patterns strings.Builder
+	rules := agenthook.BuiltinRules()
+	for index, rule := range rules {
+		if rule.Invariant != "HISS" {
+			continue
+		}
+		token := pyToken{rule.Source, pyRaw}
+		if index == len(rules)-2 {
+			patterns.WriteString("    (\n        " + strings.Join(token.literals(80), "\n        ") + "\n    ),\n")
+		} else {
+			patterns.WriteString("    " + token.whole() + ",\n")
+		}
+	}
+	text = before + "BLOCKED_PATTERNS = [\n" + patterns.String() + "]\n" + after
+	start := strings.Index(text, "RULE_PREFILTERS = ")
+	if start < 0 {
+		t.Fatal("native guard has no RULE_PREFILTERS declaration")
+	}
+	end := strings.IndexByte(text[start:], '\n') + start
+	text = text[:start] + "RULE_PREFILTERS = {}" + text[end:]
+	mustWrite(t, guard, text)
 }

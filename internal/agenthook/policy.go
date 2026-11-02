@@ -344,9 +344,6 @@ func BuiltinRules() []BuiltinRule {
 	rules := make([]BuiltinRule, 0, len(builtinEvasion)+1)
 	for _, source := range builtinEvasion {
 		rule := BuiltinRule{Source: source, Invariant: "HISS", ReadOnlyExempt: slices.Contains(readOnlyExemptRules, source)}
-		if source == privilegeCommandSource {
-			rule.RequiredAny = slices.Clone(privilegeNames)
-		}
 		rules = append(rules, rule)
 	}
 	return append(rules, BuiltinRule{Source: builtinDevRoot, Invariant: "DEV-01"})

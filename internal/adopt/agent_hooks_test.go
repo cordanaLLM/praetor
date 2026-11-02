@@ -53,8 +53,8 @@ func TestReconcileAgentHooks_PrivilegePolicyPerClient(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := policy.Command("sudo -n true"); got.Outcome != agenthook.Deny {
-			t.Fatalf("%s registered engine permits privilege escalation: %+v", client, got)
+		if got := policy.Command("sudo -n 'praetorctl' adopt /home/adopter/dev"); got.Outcome != agenthook.Deny {
+			t.Fatalf("%s registered engine permits protected adoption through a privilege wrapper: %+v", client, got)
 		}
 	}
 }

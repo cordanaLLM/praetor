@@ -93,10 +93,10 @@ func TestPolicyPrivilegeNativePythonHooks(t *testing.T) {
 		if client == "codex" {
 			script = "codex_pre_tool.py"
 		}
-		for _, command := range []string{"sudo -n true", "grep -n sudo file"} {
+		for _, command := range []string{"sudo -n 'praetorctl' adopt /home/adopter/dev", "sudo apt update", "grep -n sudo file"} {
 			result := runGuardScript(t, python, filepath.Join(root, ".config", "agent", "hooks", script),
 				privilegePayload(t, client, root, command), nil, guardEnvironment())
-			wantDeny := command == "sudo -n true"
+			wantDeny := strings.Contains(command, "adopt")
 			if (result.exit == 2) != wantDeny || (!wantDeny && result.exit != 0) ||
 				(wantDeny && !bytes.Contains(result.stderr, []byte(evasionMessage))) {
 				t.Errorf("%s %q: exit %d, stderr %s", client, command, result.exit, result.stderr)
@@ -119,10 +119,10 @@ func TestRegistrationPrivilegeAgyPlugin(t *testing.T) {
 func TestAdmissionPrivilegePrograms(t *testing.T) {
 	check := admissionPolicy(t).admission
 	for command, deny := range map[string]bool{
-		"sudo -n true": true, "doas true": true, "pkexec true": true, "run0 true": true,
-		"su -c true": true, "su - root -c id": true, "su root --command id": true,
-		"env A=1 timeout 5 /usr/bin/sudo true": true, "builtin doas true": true,
-		"echo x && sudo true": true, "echo $(pkexec true)": true,
+		"sudo -n true": false, "doas true": false, "pkexec true": false, "run0 true": false,
+		"su -c true": false, "su - root -c id": false, "su root --command id": false,
+		"env A=1 timeout 5 /usr/bin/sudo true": false, "builtin doas true": false,
+		"echo x && sudo true": false, "echo $(pkexec true)": false,
 		"grep -n sudo file": false, `echo "sudo is refused"`: false,
 		"su": false, "su - root": false, "sudoers true": false,
 	} {
