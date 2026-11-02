@@ -60,13 +60,30 @@ func TestFixtureDatesHookSelectorRejectsFlavorOnly(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".standards.yaml"), []byte("version: 1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(root, "checks.py")
-	if err := os.WriteFile(path, []byte(mutated), 0o600); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		name, body string
+		want       bool
+	}{
+		{"positive/missing-source-audit", mutated, true},
+		{"negative/syntax-error", "def governance_commands(:\n", false},
+		{"negative/missing-selector", "def other():\n    return []\n", false},
+		{"boundary/unmutated", string(data), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "checks.py")
+			if err := os.WriteFile(path, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			output, runErr := runDateHookSelection(t, path, root)
+			if got := hookSelectorRejectedMissingAudit(runErr); got != tc.want {
+				t.Fatalf("selector rejection = %v (want %v): %v\n%s", got, tc.want, runErr, output)
+			}
+		})
 	}
-	if output, err := runDateHookSelection(t, path, root); err == nil {
-		t.Fatalf("selector accepted flavor audit without source audit: %s", output)
-	}
+}
+
+func hookSelectorRejectedMissingAudit(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "AssertionError: ('scripts/test_dates.py', False, True")
 }
 
 func runDateHookSelection(t *testing.T, source, root string) (string, error) {
