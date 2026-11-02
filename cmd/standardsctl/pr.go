@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/forge"
@@ -29,7 +29,7 @@ func runPRWithReader(args []string, reader forge.ReviewReader, output io.Writer)
 		return flag.ErrHelp
 	}
 	if len(args) == 0 || args[0] != "wait" {
-		return writePRWaitResult(output, slices.Contains(args, "--json"), prwait.Result{Code: 2, Items: []string{prUsage}})
+		return writePRWaitResult(output, prWaitJSONRequested(args), prwait.Result{Code: 2, Items: []string{prUsage}})
 	}
 	fs := flag.NewFlagSet("pr wait", flag.ContinueOnError)
 	options := prwait.Options{}
@@ -50,12 +50,34 @@ func runPRWithReader(args []string, reader forge.ReviewReader, output io.Writer)
 		if errors.Is(err, flag.ErrHelp) {
 			return err
 		}
-		return writePRWaitResult(output, *jsonOutput, prwait.Result{Code: 2, Items: []string{err.Error()}})
+		return writePRWaitResult(output, prWaitJSONRequested(args), prwait.Result{Code: 2, Items: []string{err.Error()}})
 	}
 	if len(rest) > 0 {
 		return writePRWaitResult(output, *jsonOutput, prwait.Result{Code: 2, Items: []string{"pr wait accepts no positional arguments"}})
 	}
 	return writePRWaitResult(output, *jsonOutput, prwait.Wait(rootContext(), reader, options))
+}
+
+func prWaitJSONRequested(args []string) bool {
+	requested := false
+	for i := 0; i < len(args) && i < maxCLIArgs; i++ {
+		arg := args[i]
+		if arg == "--" {
+			break
+		}
+		if arg == "--json" || arg == "-json" {
+			requested = true
+			continue
+		}
+		for _, prefix := range []string{"--json=", "-json="} {
+			if strings.HasPrefix(arg, prefix) {
+				if parsed, err := strconv.ParseBool(strings.TrimPrefix(arg, prefix)); err == nil {
+					requested = parsed
+				}
+			}
+		}
+	}
+	return requested
 }
 
 func writePRWaitResult(output io.Writer, asJSON bool, result prwait.Result) error {

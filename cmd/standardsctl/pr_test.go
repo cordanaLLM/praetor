@@ -75,3 +75,51 @@ func TestPRWaitRegisteredAndHelp(t *testing.T) {
 		}
 	}
 }
+
+func TestPRWaitCLIFlagErrorJSONOutput(t *testing.T) {
+	// Positive: invalid flags before --json or --json=true emit JSON error
+	assertPRWaitJSONError(t, []string{"wait", "--repo", "example/widget", "--bad", "value", "--json"}, "-bad")
+	assertPRWaitJSONError(t, []string{"wait", "--bad", "value", "--json=true"}, "-bad")
+	assertPRWaitJSONError(t, []string{"wait", "--repo", "example/widget", "--interval", "notaduration", "--json"}, "-interval")
+	assertPRWaitJSONError(t, []string{"wait", "--repo", "example/widget", "--pr", "notanumber", "--json"}, "parse --pr")
+
+	// Negative and boundary: explicit --json=false, terminator or missing flag emit text
+	assertPRWaitTextError(t, []string{"wait", "--repo", "example/widget", "--bad", "value", "--json=false"}, "-bad")
+	assertPRWaitTextError(t, []string{"wait", "--repo", "example/widget", "--bad", "value"}, "-bad")
+	assertPRWaitTextError(t, []string{"wait", "--repo", "example/widget", "--bad", "value", "--", "--json"}, "-bad")
+	assertPRWaitTextError(t, []string{"wait", "--repo", "example/widget", "--bad", "value", "--json", "--json=false"}, "-bad")
+}
+
+func assertPRWaitJSONError(t *testing.T, args []string, needle string) {
+	t.Helper()
+	var out bytes.Buffer
+	err := runPRWithReader(args, &prCLIReader{}, &out)
+	var status exitStatusError
+	if !errors.As(err, &status) || status.code != 2 {
+		t.Fatalf("expected exit code 2, got err=%v", err)
+	}
+	var res prwait.Result
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("expected JSON output, got %q: %v", out.String(), err)
+	}
+	if res.Code != 2 || len(res.Items) == 0 || !strings.Contains(res.Items[0], needle) {
+		t.Fatalf("unexpected JSON payload: %+v", res)
+	}
+}
+
+func assertPRWaitTextError(t *testing.T, args []string, needle string) {
+	t.Helper()
+	var out bytes.Buffer
+	err := runPRWithReader(args, &prCLIReader{}, &out)
+	var status exitStatusError
+	if !errors.As(err, &status) || status.code != 2 {
+		t.Fatalf("expected exit code 2, got err=%v", err)
+	}
+	var res prwait.Result
+	if err := json.Unmarshal(out.Bytes(), &res); err == nil && res.Code != 0 {
+		t.Fatalf("expected plain text output, got JSON: %s", out.String())
+	}
+	if !strings.Contains(out.String(), needle) {
+		t.Fatalf("expected text output containing %q, got: %s", needle, out.String())
+	}
+}
