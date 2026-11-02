@@ -181,6 +181,7 @@ class _SharedBound:
     """Output two reader threads collect under one byte limit."""
 
     def __init__(self, maximum):
+        """Initialize shared stream buffers bounded by maximum bytes."""
         self.maximum = maximum
         self.output = {"stdout": bytearray(), "stderr": bytearray()}
         self.total = 0
@@ -200,12 +201,14 @@ class _SharedBound:
             return True
 
     def finish(self):
+        """Record that one stream reader thread has finished draining its descriptor."""
         with self.changed:
             self.finished += 1
             self.changed.notify_all()
 
 
 def _drain(stream, key, bound):
+    """Drain chunks from stream into bound until EOF, error, or byte limit."""
     # Every read consumes at least one byte or observes EOF, so maximum + 2 reads is enough.
     try:
         for _ in range(bound.maximum + 2):
@@ -245,6 +248,7 @@ def _bounded_output_threaded(process, timeout, maximum):
 
 
 def _bounded_output(process, timeout, maximum):
+    """Collect stdout bytes from process bounded by timeout and byte limit."""
     if os.name == "nt":
         return _bounded_output_threaded(process, timeout, maximum)
     deadline = time.monotonic() + timeout
@@ -363,6 +367,7 @@ def run(
 
 
 def git(*args, cwd=None, env=None):
+    """Execute git with args under bounded process execution."""
     return run(["git", *args], cwd=cwd, env=env)
 
 
@@ -450,14 +455,17 @@ class StageBudget(float):
     raw: str
 
     def __new__(cls, seconds, raw):
+        """Construct a StageBudget instance wrapping seconds with raw duration string."""
         obj = super().__new__(cls, seconds)
         obj.raw = raw
         return obj
 
     def __str__(self):
+        """Return the raw duration string representation."""
         return self.raw
 
     def __repr__(self):
+        """Return a string representation suitable for reproducing the instance."""
         return f"StageBudget({super().__repr__()}, {self.raw!r})"
 
 
@@ -517,6 +525,7 @@ class HookBudget:
     """
 
     def __init__(self, seconds):
+        """Initialize remaining budget expiration timestamp from allocated seconds."""
         self.expires = time.monotonic() + seconds
 
     def timeout(self, cap):
@@ -539,6 +548,7 @@ def refuse_after(seconds, refuse):
     """
 
     def expire():
+        """Terminate the process with refusal exit status when timeout elapses."""
         code = refuse()
         if code is not None:
             os._exit(code)
@@ -623,10 +633,12 @@ def session_root(root, cwd, budget):
 
 
 def paths(raw):
+    """Split NUL-delimited byte stream into a list of filesystem decoded paths."""
     return [os.fsdecode(item) for item in raw.split(b"\0") if item]
 
 
 def changed(base, head="HEAD"):
+    """Return paths changed between base and head git revisions."""
     return paths(git("diff", "--name-only", "-z", "--no-renames", base, head, "--"))
 
 
@@ -656,6 +668,7 @@ def index_env():
 
 
 def clean_env():
+    """Return an environment scrubbed of transient Git variables and repository pointers."""
     env = index_env()
     for key in (
         "GIT_DIR",
@@ -781,6 +794,7 @@ def _export_commit(dest, ref, env):
 
 
 def present_files(directory, names):
+    """Filter names to regular files existing under directory, rejecting symlinks."""
     files = []
     for name in names:
         path = directory / name

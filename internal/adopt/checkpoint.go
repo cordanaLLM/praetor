@@ -61,7 +61,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"80a0a2da3dc2222e12b5c70ab7bc442fae586f1d06d5bdcb0516df3c20a144ca": "stop checkpoint counts session-owned worktrees and ignores gate scratch",
 	},
 	checkpointCommon: {
-		"1ef9351e57f2a50e9856f2aa62e76fae6271d950c06226d8072fd5ee1b58eea4": "hook steps and fixtures follow the stage budget",
+		"73c4b40898f484e430821e8f3b12bb23f771ab1761177ea86b3427f8362e2d62": "hook steps and fixtures follow the stage budget",
 		"daf13baf16b776de9a976809a7e064971fd5946ed4508761c229dba0ef4b4e65": "Go hooks share session ownership and verify live gate scratch owners",
 		"61ccf1481d43073ca29aab6c6e6b78cc6f5cb4a86bf1e7603b8b0e01d02f71a9": "platform promotion (#14)",
 		"28ba4c3481f26f90eb48b371d4a757e16e965280ad1352dfad8c412562d19dbd": "Windows gate (#102)",

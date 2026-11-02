@@ -676,6 +676,7 @@ print("fixture hook self-tests passed")
         return {**env, **LOCALE_ENV, **extra}
 
     def test_index_snapshot_exports_the_hook_index_without_command_line_config(self):
+        """Verify index snapshot exports staged bytes without leaking caller command-line configuration."""
         # `git commit -a` and `git commit <path>` run pre-commit with GIT_INDEX_FILE naming
         # index.lock or next-index-*.lock. The export must hold the bytes that commit records,
         # not the stale .git/index, while the caller's -c configuration stays outside it.
@@ -715,6 +716,7 @@ print("fixture hook self-tests passed")
                     self.assertEqual((directory / "README.md").read_bytes(), b"# Fixture\n")
 
     def test_snapshot_pins_autocrlf_against_persistent_configuration(self):
+        """Verify snapshot checkouts pin core.autocrlf=false against persistent Git configuration."""
         # Scrubbing -c configuration leaves the operator's persistent configuration in force,
         # and Git for Windows sets core.autocrlf=true there. Each nested checkout must pin it.
         self.write("data.json", '{"line": "lf"}\n')
@@ -1423,6 +1425,7 @@ class ScopeAndGuard(unittest.TestCase):
                              for key in cleaned), cleaned)
 
     def test_clean_env_keeps_fixture_pushes_inside_their_own_remote(self):
+        """Verify clean_env prevents outer push transport settings from redirecting fixture pushes."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             repo = root / "repo"
@@ -1905,6 +1908,7 @@ class ScopeAndGuard(unittest.TestCase):
             self.assertNotIn(b"PRAETOR_COMMAND_POLICY_OK", result.stdout)
 
     def guard_input(self, data):
+        """Execute the command guard script with raw input bytes under the stage budget."""
         return subprocess.run([sys.executable, str(GUARD)], input=data, capture_output=True,
                               timeout=stage_budget(), check=False)
 
@@ -2091,6 +2095,7 @@ class ScopeAndGuard(unittest.TestCase):
                 self.assertLess(cost(unit), 10 * benign)
 
     def test_guard_preserves_argv_and_environment_entry_points(self):
+        """Verify command guard preserves argv commands and the --environment flag."""
         for args in (("git", "status"), ("--environment",)):
             result = subprocess.run([sys.executable, str(GUARD), *args], input=b"",
                                     capture_output=True, timeout=stage_budget(), check=False)
@@ -3458,6 +3463,7 @@ class HookInterpreter(unittest.TestCase):
     """Every hook starts through one launcher, which proves its interpreter first (#339)."""
 
     def launch(self, *args, path=None, data=b"", **variables):
+        """Invoke the hook launcher shell script with arguments under the stage budget."""
         env = dict(os.environ, **variables)
         if path is not None:
             env["PATH"] = path
@@ -3750,6 +3756,7 @@ class HookInterpreter(unittest.TestCase):
             toolchain.on_path("sh", which=lambda _program: None)
 
     def test_check_exits_nonzero_for_a_required_tool_that_is_unusable(self):
+        """Verify toolchain check exits non-zero when required tools are missing or unusable."""
         runner = [sys.executable, "-B", str(ROOT / ".config/lefthook/scripts/toolchain.py")]
         with tempfile.TemporaryDirectory(prefix="praetor-toolchain-") as empty:
             env = dict(os.environ, PATH=empty)
@@ -3859,6 +3866,7 @@ class HookMake(unittest.TestCase):
         self.assertEqual(toolchain.describe("make", {}), f"{version} ({argv[0]})")
 
     def test_stage_budget_default_equals_go_deadline_constant(self):
+        """Verify default hook stage budget equals Go's TestStageTimeout constant."""
         # One source of truth: Python hook stage budget mirrors TestStageTimeout
         # in internal/gating/deadline.go.
         go_source = (ROOT / "internal/gating/deadline.go").read_text(encoding="utf-8")
@@ -3873,6 +3881,7 @@ class HookMake(unittest.TestCase):
         self.assertEqual(float(common.stage_budget("")), go_default_seconds)
 
     def test_stage_budget_parses_accepted_forms_and_refuses_invalid(self):
+        """Verify stage_budget parses valid Go durations and rejects invalid inputs."""
         self.assertEqual(float(common.stage_budget("30m")), 1800.0)
         self.assertEqual(float(common.stage_budget("90s")), 90.0)
         self.assertEqual(float(common.stage_budget("1h30m")), 5400.0)
@@ -3887,6 +3896,7 @@ class HookMake(unittest.TestCase):
             self.assertIn("PRAETOR_TEST_STAGE_TIMEOUT", str(cm.exception))
 
     def test_stage_budget_session_git_calls_use_clean_env(self):
+        """Verify session git operations executed under a budget use a scrubbed environment."""
         budget = common.HookBudget(10)
         dirty = {
             "GIT_DIR": "/tmp/other-repo/.git",
@@ -3908,6 +3918,7 @@ class HookMake(unittest.TestCase):
 
     @unittest.skipIf(os.name == "nt", POSIX_STUB)
     def test_stage_budget_cli_timeout_and_planted_cases(self):
+        """Verify CLI commands enforce stage budget timeout when steps exceed remaining budget."""
         with tempfile.TemporaryDirectory(prefix="praetor-make-stub-") as temp:
             directory = Path(temp)
             stub_make = stand_in(
