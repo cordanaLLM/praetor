@@ -53,7 +53,9 @@ func TestBaselineRecord_3D_UnchangedDebtKeepsTheFile(t *testing.T) {
 	if out, err := runBaselineCmd(t, f, "--record", "--allow-increase", "--reason=legacy inventory"); err != nil {
 		t.Fatalf("first record: %v\n%s", err, out)
 	}
-	planted := plantStamp(t, f.baselinePath, regexp.MustCompile(`"generated_at": "[^"]*"`) /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */, `"generated_at": "2000-01-01T00:00:00Z"`)
+	planted := plantStamp(t, f.baselinePath, regexp.MustCompile(`"generated_at": "[^"]*"`),
+		/* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */
+		`"generated_at": "2000-01-01T00:00:00Z"`)
 	out, err := runBaselineCmd(t, f, "--record")
 	if err != nil {
 		t.Fatalf("rescan of the same debt: %v\n%s", err, out)
@@ -89,7 +91,9 @@ func TestNeedsScanWrite_3D_UnchangedManifestKeepsTheFile(t *testing.T) {
 		t.Fatalf("an absent manifest must be written: %v\n%s", err, out)
 	}
 	manifest := filepath.Join(repo, needs.NeedsManifestName)
-	planted := plantStamp(t, manifest, regexp.MustCompile(`updated_at: .*`) /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */, "updated_at: 2000-01-01T00:00:00Z")
+	planted := plantStamp(t, manifest, regexp.MustCompile(`updated_at: .*`),
+		/* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */
+		"updated_at: 2000-01-01T00:00:00Z")
 	out, err := write()
 	if err != nil || !strings.Contains(out, "kept the recorded file") {
 		t.Fatalf("an unchanged scan: %v\n%s", err, out)

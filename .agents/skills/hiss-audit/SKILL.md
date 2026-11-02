@@ -21,7 +21,7 @@ When invoked, execute audit in strict order of operations:
    - `HISS-07 (Checked Errors)`: Go unchecked error assignment (`_ =`) and `panic`, Rust `.unwrap()` / `.expect()`, Python bare `except`.
    - `HISS-08 (Static Determinism)`: `gets`, `strcpy`, `sprintf` (C); `eval` / `exec` (Python). Go = `forbidigo` in golangci-lint.
    - `HISS-09 (Safety Proofs)`: `unsafe` block without preceding `// SAFETY:` justification (Go, Rust).
-   - `HISS-15 (Clock Fixtures)`: Go/Python test strings derive dates from test clock; recorded facts and golden bytes require a reasoned `testdate:` annotation.
+   - `HISS-15 (3D Test Discipline, fixture integrity subset)`: Go/Python test strings derive dates from test clock; recorded facts and golden bytes require a reasoned `testdate:` annotation.
 3. **Gates Outside `Scan()`**:
    - `HISS-10 (Zero-Warning Cascade)`: `make lint` (`go vet ./...` + golangci-lint); zero warnings.
    - `HISS-15 (3D Testing)`: every public function has Positive, Negative, Boundary tests. Touched-file clean rule: `standardsctl audit --base=origin/main`.

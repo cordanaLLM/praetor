@@ -166,11 +166,12 @@ func TestAudit_ExpiredBacklogCapEntryFailsTheAudit(t *testing.T) {
 }
 
 func TestAudit_ExceptionsExpiryWarning_Integration(t *testing.T) {
+	today := time.Now()
 	f := newAuditFixture(t)
 	writeFixtureFile(t, f.dir, ".github/workflows/build.yml", fixtureNativeWorkflow(""))
 
 	// Add an exception expiring in 10 days
-	expires := time.Now().AddDate(0, 0, 10).Format(config.ExceptionDateLayout)
+	expires := today.AddDate(0, 0, 10).Format(config.ExceptionDateLayout)
 	entry := fmt.Sprintf("exceptions:\n  - rule: HISS-10\n    path: .github/workflows/build.yml\n    reason: compiler upgrade pending\n    category: A\n    expires: %q\n", expires)
 	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+entry)
 
@@ -184,7 +185,7 @@ func TestAudit_ExceptionsExpiryWarning_Integration(t *testing.T) {
 	)
 
 	// In contrast, an exception expiring in 30 days produces no warning in audit
-	expires30 := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	expires30 := today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
 	entry30 := fmt.Sprintf("exceptions:\n  - rule: HISS-10\n    path: .github/workflows/build.yml\n    reason: compiler upgrade pending\n    category: A\n    expires: %q\n", expires30)
 	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+entry30)
 

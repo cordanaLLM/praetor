@@ -65,9 +65,15 @@ func serveLedgerForge(t *testing.T, pages [][]map[string]any, issues map[int]str
 
 func TestListMergedPullRequests_Positive_MilestoneBeforeLimitSortedByMerge(t *testing.T) {
 	pages := [][]map[string]any{{
-		pullJSON(10, "feat/a", "M1" /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */, "2026-10-03T00:00:00Z", "Closes #1"),
-		pullJSON(11, "feat/b", "M2" /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */, "2026-10-09T00:00:00Z", ""),
-		pullJSON(12, "feat/c", "M1" /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */, "2026-10-05T00:00:00Z", "Fixes #2 and closes #1"),
+		pullJSON(10, "feat/a", "M1",
+			/* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */
+			"2026-10-03T00:00:00Z", "Closes #1"),
+		pullJSON(11, "feat/b", "M2",
+			/* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */
+			"2026-10-09T00:00:00Z", ""),
+		pullJSON(12, "feat/c", "M1",
+			/* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */
+			"2026-10-05T00:00:00Z", "Fixes #2 and closes #1"),
 		pullJSON(13, "feat/d", "M1", "", ""),
 	}}
 	issues := map[int]string{1: /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-09-20T00:00:00Z", 2: /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-09-25T00:00:00Z"}
@@ -104,8 +110,12 @@ func countIssueLookups(fake *fakeForgeServer) int {
 
 func TestListMergedPullRequests_Negative_FetchFailuresAreWarnings(t *testing.T) {
 	pages := [][]map[string]any{{
-		pullJSON(20, "feat/a", "" /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */, "2026-10-03T00:00:00Z", "Closes #404"),
-		pullJSON(21, "feat/b", "" /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */, "2026-10-02T00:00:00Z", "Closes #7"),
+		pullJSON(20, "feat/a", "",
+			/* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */
+			"2026-10-03T00:00:00Z", "Closes #404"),
+		pullJSON(21, "feat/b", "",
+			/* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */
+			"2026-10-02T00:00:00Z", "Closes #7"),
 		{"number": 22, "title": "bad", "created_at": "garbage", "merged_at": /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-10-01T00:00:00Z", "head": map[string]any{"ref": "x"}},
 	}}
 	gh, _ := serveLedgerForge(t, pages, map[int]string{7: "pr"})
@@ -140,7 +150,9 @@ func TestListMergedPullRequests_Negative_ListingErrorFails(t *testing.T) {
 func TestListMergedPullRequests_Boundary_PageCeilingStatesTruncation(t *testing.T) {
 	full := make([]map[string]any, issuesPerPage)
 	for i := range full {
-		full[i] = pullJSON(i+1, fmt.Sprintf("b%d", i), "" /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */, "2026-10-03T00:00:00Z", "")
+		full[i] = pullJSON(i+1, fmt.Sprintf("b%d", i), "",
+			/* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */
+			"2026-10-03T00:00:00Z", "")
 	}
 	pages := make([][]map[string]any, maxIssuePages)
 	for i := range pages {
@@ -166,7 +178,9 @@ func TestListMergedPullRequests_Boundary_IssueLookupCap(t *testing.T) {
 		var page []map[string]any
 		for i := 0; i < issuesPerPage; i++ {
 			n := p*issuesPerPage + i + 1
-			page = append(page, pullJSON(n, fmt.Sprintf("b%d", n), "" /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */, "2026-10-03T00:00:00Z", fmt.Sprintf("Closes #%d", 1000+n)))
+			page = append(page, pullJSON(n, fmt.Sprintf("b%d", n), "",
+				/* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */
+				"2026-10-03T00:00:00Z", fmt.Sprintf("Closes #%d", 1000+n)))
 			issues[1000+n] = /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-09-01T00:00:00Z"
 		}
 		pages = append(pages, page)

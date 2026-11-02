@@ -108,7 +108,9 @@ func TestAuditSite_Positive_StarlightShapedSitemapIndexWithoutRobots(t *testing.
 
 func TestAuditSite_Negative_RequiredTechArticleFieldsFail(t *testing.T) {
 	root := writeSite(t, map[string]string{
-		"a/index.html": page(jsonLD(strings.Replace(siteArticle /* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */, `"2026-09-25"`, `""`, 1))),
+		"a/index.html": page(jsonLD(strings.Replace(siteArticle,
+			/* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */
+			`"2026-09-25"`, `""`, 1))),
 		"b/index.html": page(jsonLD( /* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */ `{"@context":"https://schema.org","@type":"TechArticle","headline":"H","description":"D","dateModified":"2026-09-25"}`)),
 		"sitemap.xml":  siteSitemap,
 	})

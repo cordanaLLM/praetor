@@ -174,17 +174,19 @@ func TestStoreWriteIsAtomic(t *testing.T) {
 func TestCorruptStoreIsRefused(t *testing.T) {
 	valid := /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"version":1,"account":"default","ceilings":{"five_hour":{"ceiling_usd_equivalent":10,"rejected_at":"2026-10-13T10:00:00Z","source_file":"p/s.jsonl","window_reset":"2026-10-13T11:00:00Z","recorded_at":"2026-10-13T12:00:00Z"}}}`
 	cases := map[string]string{
-		"not json":           "not json",
-		"truncated":          valid[:len(valid)/2],
-		"unknown field":      strings.Replace(valid, `"version":1`, `"version":1,"extra":true`, 1),
-		"data after value":   valid + `{}`,
-		"wrong version":      strings.Replace(valid, `"version":1`, `"version":2`, 1),
-		"other account":      strings.Replace(valid, `"account":"default"`, `"account":"other"`, 1),
-		"zero ceiling":       strings.Replace(valid, `"ceiling_usd_equivalent":10`, `"ceiling_usd_equivalent":0`, 1),
-		"negative ceiling":   strings.Replace(valid, `"ceiling_usd_equivalent":10`, `"ceiling_usd_equivalent":-1`, 1),
-		"unknown window":     strings.Replace(valid, `"five_hour"`, `"monthly"`, 1),
-		"no source file":     strings.Replace(valid, `"source_file":"p/s.jsonl"`, `"source_file":""`, 1),
-		"missing timestamp":  strings.Replace(valid /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */, `,"recorded_at":"2026-10-13T12:00:00Z"`, ``, 1),
+		"not json":         "not json",
+		"truncated":        valid[:len(valid)/2],
+		"unknown field":    strings.Replace(valid, `"version":1`, `"version":1,"extra":true`, 1),
+		"data after value": valid + `{}`,
+		"wrong version":    strings.Replace(valid, `"version":1`, `"version":2`, 1),
+		"other account":    strings.Replace(valid, `"account":"default"`, `"account":"other"`, 1),
+		"zero ceiling":     strings.Replace(valid, `"ceiling_usd_equivalent":10`, `"ceiling_usd_equivalent":0`, 1),
+		"negative ceiling": strings.Replace(valid, `"ceiling_usd_equivalent":10`, `"ceiling_usd_equivalent":-1`, 1),
+		"unknown window":   strings.Replace(valid, `"five_hour"`, `"monthly"`, 1),
+		"no source file":   strings.Replace(valid, `"source_file":"p/s.jsonl"`, `"source_file":""`, 1),
+		"missing timestamp": strings.Replace(valid,
+			/* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */
+			`,"recorded_at":"2026-10-13T12:00:00Z"`, ``, 1),
 		"oversized":          valid + strings.Repeat(" ", maxStoreBytes),
 		"ceiling not number": strings.Replace(valid, `"ceiling_usd_equivalent":10`, `"ceiling_usd_equivalent":"10"`, 1),
 	}

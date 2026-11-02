@@ -1016,7 +1016,8 @@ func TestValidateExceptionsDedupeScope(t *testing.T) {
 }
 
 func TestLoadManifestDedupeScopeSchemaRoundTrip(t *testing.T) {
-	expires := ExceptionDay(time.Now()).AddDate(0, 0, 30).Format(ExceptionDateLayout)
+	today := time.Now()
+	expires := ExceptionDay(today).AddDate(0, 0, 30).Format(ExceptionDateLayout)
 	body := fmt.Sprintf(`version: 1
 exceptions:
   - rule: HISS-19
@@ -1049,7 +1050,7 @@ exceptions:
 	if !reflect.DeepEqual(manifest.Exceptions, again.Exceptions) || !strings.Contains(string(rendered), "lines: 10-16") {
 		t.Fatalf("scopes lost on round trip: %s", rendered)
 	}
-	if err := ValidateExceptions(append(again.Exceptions, again.Exceptions[0]), time.Now()); err == nil {
+	if err := ValidateExceptions(append(again.Exceptions, again.Exceptions[0]), today); err == nil {
 		t.Fatal("identical scoped entries must still be refused")
 	}
 }

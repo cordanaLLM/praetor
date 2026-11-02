@@ -243,7 +243,7 @@ read may retain dates. Mark each such literal with its form and concrete reason:
 `/* testdate: fact: recorded release date; parser input, no clock */` immediately
 before a Go string, or `# testdate: golden: exact serialized output; no clock`
 before the Python literal's line. An annotation applies only to that Go literal
-or Python line/spanning literal; it is not a file exemption. An expiry waiver or
+or the first Python literal on the immediately following line (including a spanning literal); it is not a file exemption. A trailing comment never exempts an earlier value, and permission never crosses a Go argument comma. Decoded constant concatenations are checked as values, including Python escapes. Shared pytest fixtures (`conftest.py`, `tests/` and `test/`) are included. An expiry waiver or
 freshness fixture is not a recorded fact.
 
 The positive and negative fixtures under `.config/hiss/testdata/HISS-15/`

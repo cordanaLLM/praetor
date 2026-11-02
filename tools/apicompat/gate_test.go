@@ -103,16 +103,21 @@ type gateHarness struct {
 
 func newGateHarness(t *testing.T) gateHarness {
 	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skipf("git is not installed: %v", err)
-	}
 	source, err := Read(GateFile)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return buildGateHarness(t, string(source))
+}
+
+func buildGateHarness(t *testing.T, source string) gateHarness {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git is not installed: %v", err)
+	}
 	bin := t.TempDir()
 	h := gateHarness{
-		gate:    testsupport.BuildExecutable(t, bin, "gate", string(source)),
+		gate:    testsupport.BuildExecutable(t, bin, "gate", source),
 		checker: testsupport.BuildExecutable(t, bin, "checker", stubCheckerSource),
 		log:     filepath.Join(t.TempDir(), "checker.log"),
 	}

@@ -1176,13 +1176,14 @@ func TestScanRepo_Negative_GroupWithOneMemberInExceptedFileAndOneOutsideFails(t 
 }
 
 func TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation(t *testing.T) {
+	today := time.Now()
 	tmp := t.TempDir()
 	manifest := `exceptions:
   - rule: HISS-19
     path: nonexistent.go
     reason: missing file exception
     category: A
-    expires: ` + time.Now().AddDate(0, 0, 24).Format(config.ExceptionDateLayout) + `
+    expires: ` + today.AddDate(0, 0, 24).Format(config.ExceptionDateLayout) + `
 `
 	writeStandardsManifest(t, tmp, manifest)
 
@@ -1205,7 +1206,7 @@ func TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation(t *testing.T
     path: subpkg.go
     reason: directory target exception
     category: A
-    expires: ` + time.Now().AddDate(0, 0, 24).Format(config.ExceptionDateLayout) + `
+    expires: ` + today.AddDate(0, 0, 24).Format(config.ExceptionDateLayout) + `
 `
 	writeStandardsManifest(t, tmp, dirManifest)
 	_, err = dedupe.ScanRepo(tmp)

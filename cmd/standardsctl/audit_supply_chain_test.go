@@ -107,9 +107,10 @@ func fixtureStatus(t *testing.T, root string, env []string) string {
 // entry the audit fails and names the entry it would accept. Boundary: a profile declaring Level
 // 0 under a facet that raises no supply-chain control has no gap, so adoption records no entry and the audit still passes.
 func TestAdoptThenAuditDeclaresTheSupplyChainGap(t *testing.T) {
-	before := time.Now()
+	today := time.Now()
+	before := today
 	root, adopted := adoptedGoRepository(t)
-	after := time.Now()
+	after := today.AddDate(0, 0, 1)
 	expires := matchExpiry(t, adopted, "exceptions: recorded rule HISS-11 for .github/workflows/release.yml until ",
 		expiryDays(before, after, config.MaxExceptionDays))
 	manifestPath := filepath.Join(root, ".standards.yaml")
@@ -124,13 +125,14 @@ func TestAdoptThenAuditDeclaresTheSupplyChainGap(t *testing.T) {
 		" by the exceptions entry (rule HISS-11, .github/workflows/release.yml)",
 		"SLSA Build Level 3 declared, Level 0 measured", "policy declares SLSA Build Level 3 but the workflows reach Level 0")
 
+	expired := today.AddDate(0, 0, -1).Format(config.ExceptionDateLayout)
 	manifest := readFixtureFile(t, root, ".standards.yaml")
-	writeFixtureFile(t, root, ".standards.yaml", strings.Replace(manifest, `expires: "`+expires+`"`, `expires: "`+time.Now().AddDate(0, 0, -1).Format(config.ExceptionDateLayout)+`"`, 1))
+	writeFixtureFile(t, root, ".standards.yaml", strings.Replace(manifest, `expires: "`+expires+`"`, `expires: "`+expired+`"`, 1))
 	out, err = audit()
 	if err == nil {
 		t.Fatalf("audit passed with an expired HISS-11 exception:\n%s", out)
 	}
-	mustErrContain(t, err, "[FAIL] Supply chain (HISS-11): the exceptions entry (rule HISS-11, .github/workflows/release.yml) expired on "+time.Now().AddDate(0, 0, -1).Format(config.ExceptionDateLayout))
+	mustErrContain(t, err, "[FAIL] Supply chain (HISS-11): the exceptions entry (rule HISS-11, .github/workflows/release.yml) expired on "+expired)
 
 	cut := strings.Index(manifest, "exceptions:")
 	if cut < 0 {

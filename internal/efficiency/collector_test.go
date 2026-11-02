@@ -1072,13 +1072,14 @@ func TestLaneCounts_PositiveAndBoundary(t *testing.T) {
 }
 
 func TestCollector_Positive_OutcomesPopulateUnitAndSummary(t *testing.T) {
+	today := time.Now()
 	dir := t.TempDir()
 	prs := filepath.Join(dir, "prs.json")
 	writeFile(t, prs, []byte(forgeRecords))
 	outcomesPath := filepath.Join(dir, "outcomes.jsonl")
 
 	o1 := router.Outcome{
-		Time:       time.Now().UTC(),
+		Time:       today.UTC(),
 		Task:       "coding",
 		Target:     "claude-3-7-sonnet",
 		Branch:     "feat/x",
@@ -1097,7 +1098,7 @@ func TestCollector_Positive_OutcomesPopulateUnitAndSummary(t *testing.T) {
 		},
 	}
 	o2 := router.Outcome{
-		Time:       time.Now().UTC(),
+		Time:       today.UTC(),
 		Task:       "fast",
 		Target:     "claude-3-5-haiku",
 		Branch:     "feat/z",

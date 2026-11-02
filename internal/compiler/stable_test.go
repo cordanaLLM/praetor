@@ -36,12 +36,16 @@ func TestVerifyStableContext_Positive_LayeredSourcePasses(t *testing.T) {
 // Negative (rule 13): a timestamp planted in the head band is refused; the same text in the
 // tail band is not the head's concern.
 func TestVerifyStableContext_Negative_PlantedTimestampInHeadRefused(t *testing.T) {
-	planted := strings.Replace(layeredSource, "Static rule." /* testdate: golden: exact serialized report/configuration bytes; no clock reads */, "Static rule, built 2026-10-07T12:30:00Z.", 1)
+	planted := strings.Replace(layeredSource, "Static rule.",
+		/* testdate: golden: exact serialized report/configuration bytes; no clock reads */
+		"Static rule, built 2026-10-07T12:30:00Z.", 1)
 	_, err := runStable(t, planted)
 	if err == nil || !strings.Contains(err.Error(), "timestamp") || !strings.Contains(err.Error(), "head line") {
 		t.Fatalf("planted timestamp accepted: %v", err)
 	}
-	inTail := strings.Replace(layeredSource, "Commands." /* testdate: golden: exact serialized report/configuration bytes; no clock reads */, "Commands, built 2026-10-07T12:30:00Z.", 1)
+	inTail := strings.Replace(layeredSource, "Commands.",
+		/* testdate: golden: exact serialized report/configuration bytes; no clock reads */
+		"Commands, built 2026-10-07T12:30:00Z.", 1)
 	if _, err := runStable(t, inTail); err != nil {
 		t.Fatalf("tail text refused: %v", err)
 	}

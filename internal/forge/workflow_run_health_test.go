@@ -156,6 +156,7 @@ func TestAuditWorkflowRunHealth_Boundary_DeclarationsCoverOnlyTheirState(t *test
 // Positive (#1333): valid declaration covers finding (INFO); expired declaration behaves like
 // no declaration (WARN) and names the expiry date. Tested both ways: valid vs expired.
 func TestAuditWorkflowRunHealth_Positive_ValidVsExpiredDeclaration(t *testing.T) {
+	today := time.Now()
 	root := runHealthRepo(t, map[string]string{"failing.yml": "push", "unexercised.yml": "schedule"})
 	reader := &stubActionsReader{histories: map[string]WorkflowRunHistory{
 		"failing.yml":     completedRuns("failure", "failure"),
@@ -163,7 +164,7 @@ func TestAuditWorkflowRunHealth_Positive_ValidVsExpiredDeclaration(t *testing.T)
 	}}
 
 	// Valid (future expiry date): covered, no WARN.
-	future := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	future := today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
 	validPolicy := &config.WorkflowRunsPolicy{Expected: []config.WorkflowRunExpectation{
 		{Workflow: "failing.yml", State: config.WorkflowRunFailing, Reason: "wip step", Expires: future},
 		{Workflow: "unexercised.yml", State: config.WorkflowRunUnexercised, Reason: "no schedule yet", Expires: future},
@@ -184,7 +185,7 @@ func TestAuditWorkflowRunHealth_Positive_ValidVsExpiredDeclaration(t *testing.T)
 	}
 
 	// Expired (past expiry date): behaves like no declaration, warns naming the expiry date.
-	expiredDate := time.Now().AddDate(0, 0, -1).Format(config.ExceptionDateLayout)
+	expiredDate := today.AddDate(0, 0, -1).Format(config.ExceptionDateLayout)
 	expiredPolicy := &config.WorkflowRunsPolicy{Expected: []config.WorkflowRunExpectation{
 		{Workflow: "failing.yml", State: config.WorkflowRunFailing, Reason: "wip step", Expires: expiredDate},
 		{Workflow: "unexercised.yml", State: config.WorkflowRunUnexercised, Reason: "no schedule yet", Expires: expiredDate},

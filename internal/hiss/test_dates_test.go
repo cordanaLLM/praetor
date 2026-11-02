@@ -70,7 +70,7 @@ func assertDateFinding(t *testing.T, v InvariantViolation, name string, lines []
 	if v.LineNumber < 1 || v.LineNumber > len(lines) {
 		t.Fatalf("line outside fixture: %+v", v)
 	}
-	if !fixtureDate.MatchString(lines[v.LineNumber-1]) {
+	if !fixtureDate.MatchString(lines[v.LineNumber-1]) && !strings.Contains(lines[v.LineNumber-1], "date-finding") {
 		t.Errorf("finding does not point at its date: %+v", v)
 	}
 }

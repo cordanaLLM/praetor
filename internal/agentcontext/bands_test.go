@@ -234,10 +234,18 @@ var sha64 = strings.Repeat("0123456789abcdef", 4)
 
 // volatileShapes lists one planted positive per exact shape the scanner flags.
 var volatileShapes = []struct{ kind, line string }{
-	{"timestamp" /* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */, "Built 2026-10-07T12:30:00Z by CI."},
-	{"timestamp" /* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */, "Built 2026-10-07T12:30:00.123+02:00 by CI."},
-	{"timestamp" /* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */, "Built 2026-10-07T12:30:00."},
-	{"timestamp" /* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */, "2026-10-07 12:30:00Z"},
+	{"timestamp",
+		/* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */
+		"Built 2026-10-07T12:30:00Z by CI."},
+	{"timestamp",
+		/* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */
+		"Built 2026-10-07T12:30:00.123+02:00 by CI."},
+	{"timestamp",
+		/* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */
+		"Built 2026-10-07T12:30:00."},
+	{"timestamp",
+		/* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */
+		"2026-10-07 12:30:00Z"},
 	{"digest", "pin sha256:" + sha64},
 	{"digest", "sha256:abcdef012345"},
 	{"absolute path", "see /home/someone/work/file"},
@@ -307,8 +315,12 @@ func TestScanVolatile_Negative_MissedTokens(t *testing.T) {
 		want  string
 	}{
 		{"/tmp/tmp.Xa3bQ9", "absolute path", "/tmp/tmp.Xa3bQ9"},
-		{ /* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */ "Built 2026-10-07T12:30:00.", "timestamp" /* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */, "2026-10-07T12:30:00"},
-		{ /* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */ "2026-10-07 12:30:00Z", "timestamp" /* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */, "2026-10-07 12:30:00Z"},
+		{ /* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */ "Built 2026-10-07T12:30:00.", "timestamp",
+			/* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */
+			"2026-10-07T12:30:00"},
+		{ /* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */ "2026-10-07 12:30:00Z", "timestamp",
+			/* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */
+			"2026-10-07 12:30:00Z"},
 		{"sha256:abcdef012345", "digest", "sha256:abcdef012345"},
 	}
 	for _, c := range cases {

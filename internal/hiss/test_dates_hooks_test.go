@@ -7,8 +7,10 @@ package hiss
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -27,7 +29,8 @@ for name, source_changed, expected in [("scripts/test_dates.py", False, True),
                                       ("docs/guide.md", False, False),
                                       ("a.go", True, True)]:
     commands = namespace["governance_commands"](Path(sys.argv[2]), [name], source_changed)
-    audited = any("audit" in command for command in commands)
+    prefix = [*namespace["CLI"], "audit"]
+    audited = any(command[:len(prefix)] == prefix for command in commands)
     assert audited == expected, (name, audited, expected, commands)
 `
 
@@ -37,7 +40,53 @@ func TestFixtureDatesPythonOnlyHookSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := filepath.Join("..", "..", ".config", "lefthook", "scripts", "checks.py")
-	if output, err := util.RunCommand(t.Context(), "", "python3", "-c", dateHookSelection, source, root); err != nil {
+	if output, err := runDateHookSelection(t, source, root); err != nil {
 		t.Fatalf("Python-only source check selection: %v\n%s", err, output)
+	}
+}
+
+func TestFixtureDatesHookSelectorRejectsFlavorOnly(t *testing.T) {
+	source := filepath.Join("..", "..", ".config", "lefthook", "scripts", "checks.py")
+	data, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Plant loss of the source audit while leaving flavor audit scheduled.
+	mutated := strings.Replace(string(data), `[*CLI, "audit", *scope], `, "", 1)
+	if mutated == string(data) {
+		t.Fatal("source audit mutation did not apply")
+	}
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".standards.yaml"), []byte("version: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "checks.py")
+	if err := os.WriteFile(path, []byte(mutated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := runDateHookSelection(t, path, root); err == nil {
+		t.Fatalf("selector accepted flavor audit without source audit: %s", output)
+	}
+}
+
+func runDateHookSelection(t *testing.T, source, root string) (string, error) {
+	t.Helper()
+	return util.RunCommand(t.Context(), "", testsupport.PythonInterpreter(t), "-c", dateHookSelection, source, root)
+}
+
+func TestFixtureDatesHookSelectionPythonWithoutPython3(t *testing.T) {
+	interpreter := testsupport.PythonInterpreter(t)
+	bin := t.TempDir()
+	if err := os.Symlink(interpreter, filepath.Join(bin, "python")); err != nil {
+		t.Skipf("interpreter alias requires symlink support: %v", err)
+	}
+	t.Setenv("PATH", bin)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".standards.yaml"), []byte("version: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join("..", "..", ".config", "lefthook", "scripts", "checks.py")
+	if output, err := runDateHookSelection(t, source, root); err != nil {
+		t.Fatalf("python-only PATH: %v\n%s", err, output)
 	}
 }

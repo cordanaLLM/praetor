@@ -158,7 +158,9 @@ func assertEfficiencyJSON(t *testing.T, prsPath string) {
 func TestRunEfficiencyTo_Negative_RecordsWithoutLedgerFieldsRefused(t *testing.T) {
 	dir := t.TempDir()
 	for name, records := range map[string]string{
-		"no metric epoch":       strings.Replace(efficiencyRecords /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */, `"metric_epoch": "2026-10-10",`, "", 1),
+		"no metric epoch": strings.Replace(efficiencyRecords,
+			/* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */
+			`"metric_epoch": "2026-10-10",`, "", 1),
 		"no provenance label":   strings.Replace(efficiencyRecords, `"retries": {"value": 0, "provenance": "modeled"}`, `"retries": {"value": 0}`, 1),
 		"vector field omitted":  strings.Replace(efficiencyRecords, `"retries": {"value": 0, "provenance": "modeled"},`, "", 1),
 		"misspelled record key": strings.Replace(efficiencyRecords, `"disposition"`, `"dispositon"`, 1),

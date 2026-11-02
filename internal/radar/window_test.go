@@ -50,7 +50,11 @@ func TestWindow_Negative_InvalidInput(t *testing.T) {
 			t.Errorf("days %d accepted", days)
 		}
 	}
-	for _, value := range []string{"", "yesterday" /* testdate: fact: recorded feed/release date; parser input, no clock comparison */, "2026-10-07 00:00", "07.10.2026" /* testdate: fact: recorded feed/release date; parser input, no clock comparison */, "2026-13-01"} {
+	for _, value := range []string{"", "yesterday",
+		/* testdate: fact: recorded feed/release date; parser input, no clock comparison */
+		"2026-10-07 00:00", "07.10.2026",
+		/* testdate: fact: recorded feed/release date; parser input, no clock comparison */
+		"2026-13-01"} {
 		if _, err := ParseNow(value); err == nil {
 			t.Errorf("ParseNow(%q) accepted", value)
 		}

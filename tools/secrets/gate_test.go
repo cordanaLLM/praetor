@@ -111,6 +111,7 @@ func runGateLifecycleCase(t *testing.T, entries []rules.Entry) (string, int) {
 }
 
 func TestGate_ExceptionsLifecycle_3D(t *testing.T) {
+	today := time.Now()
 	if _, err := exec.LookPath("gitleaks"); err != nil {
 		t.Skip("gitleaks not installed on PATH")
 	}
@@ -124,7 +125,7 @@ func TestGate_ExceptionsLifecycle_3D(t *testing.T) {
 
 	t.Run("dated entry excuses its finding", func(t *testing.T) {
 		entries := []rules.Entry{
-			{Path: "creds.py", RuleID: "generic-api-key", Expires: time.Now().AddDate(0, 0, 14).Format(rules.DateLayout), Reason: "dated test waiver", Category: "A"},
+			{Path: "creds.py", RuleID: "generic-api-key", Expires: today.AddDate(0, 0, 14).Format(rules.DateLayout), Reason: "dated test waiver", Category: "A"},
 		}
 		out, exitCode := runGateLifecycleCase(t, entries)
 		if exitCode != 0 {
@@ -134,7 +135,7 @@ func TestGate_ExceptionsLifecycle_3D(t *testing.T) {
 
 	t.Run("expired entry fails", func(t *testing.T) {
 		entries := []rules.Entry{
-			{Path: "creds.py", RuleID: "generic-api-key", Expires: time.Now().AddDate(0, 0, -17).Format(rules.DateLayout), Reason: "expired test waiver", Category: "A"},
+			{Path: "creds.py", RuleID: "generic-api-key", Expires: today.AddDate(0, 0, -17).Format(rules.DateLayout), Reason: "expired test waiver", Category: "A"},
 		}
 		out, exitCode := runGateLifecycleCase(t, entries)
 		if exitCode != 3 {
@@ -144,7 +145,7 @@ func TestGate_ExceptionsLifecycle_3D(t *testing.T) {
 
 	t.Run("stale entry fails", func(t *testing.T) {
 		entries := []rules.Entry{
-			{Path: "other.py", RuleID: "generic-api-key", Expires: time.Now().AddDate(0, 0, 14).Format(rules.DateLayout), Reason: "stale waiver for other file", Category: "A"},
+			{Path: "other.py", RuleID: "generic-api-key", Expires: today.AddDate(0, 0, 14).Format(rules.DateLayout), Reason: "stale waiver for other file", Category: "A"},
 		}
 		out, exitCode := runGateLifecycleCase(t, entries)
 		if exitCode != 3 {

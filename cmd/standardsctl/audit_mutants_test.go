@@ -46,6 +46,7 @@ func TestAuditMutationExclusions_3D(t *testing.T) {
 }
 
 func TestAuditMutationExclusionsIntegration(t *testing.T) {
+	today := time.Now()
 	f := newAuditFixture(t)
 	writeFixtureFile(t, f.dir, ".cargo/mutants.toml", "exclude_re = [\"legacy\"]\n")
 	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "add", ".cargo/mutants.toml"); err != nil {
@@ -56,13 +57,13 @@ func TestAuditMutationExclusionsIntegration(t *testing.T) {
 		t.Fatalf("full audit without an exception = %v\n%s", err, out)
 	}
 	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+
-		"exceptions:\n  - rule: mutants\n    path: .cargo/mutants.toml\n    reason: legacy generated code\n    expires: "+time.Now().AddDate(0, 0, 120).Format(config.ExceptionDateLayout)+"\n")
+		"exceptions:\n  - rule: mutants\n    path: .cargo/mutants.toml\n    reason: legacy generated code\n    expires: "+today.AddDate(0, 0, 120).Format(config.ExceptionDateLayout)+"\n")
 	out, err = f.audit(t)
 	if err == nil || !strings.Contains(err.Error(), ".cargo/mutants.toml has 1 mutation exclusion(s)") {
 		t.Fatalf("full audit with an uncategorized exception = %v\n%s", err, out)
 	}
 	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+
-		"exceptions:\n  - rule: mutants\n    path: .cargo/mutants.toml\n    category: D\n    entered: "+time.Now().AddDate(0, 0, 0).Format(config.ExceptionDateLayout)+"\n    reason: legacy generated code\n    expires: "+time.Now().AddDate(0, 0, 120).Format(config.ExceptionDateLayout)+"\n")
+		"exceptions:\n  - rule: mutants\n    path: .cargo/mutants.toml\n    category: D\n    entered: "+today.AddDate(0, 0, 0).Format(config.ExceptionDateLayout)+"\n    reason: legacy generated code\n    expires: "+today.AddDate(0, 0, 120).Format(config.ExceptionDateLayout)+"\n")
 	if out, err = f.audit(t); err != nil {
 		t.Fatalf("full audit with categorized exception failed: %v\n%s", err, out)
 	}
@@ -126,7 +127,8 @@ func TestMutationToolConfigExclusionParsers(t *testing.T) {
 }
 
 func TestAuditMutationExceptionRuleRequiresPath(t *testing.T) {
-	err := config.ValidateExceptions([]config.Exception{{Rule: config.ExceptionRuleMutants, Glob: "**/*.toml", Reason: "temporary", Expires: time.Now().AddDate(0, 0, 14).Format(config.ExceptionDateLayout)}}, time.Now())
+	today := time.Now()
+	err := config.ValidateExceptions([]config.Exception{{Rule: config.ExceptionRuleMutants, Glob: "**/*.toml", Reason: "temporary", Expires: today.AddDate(0, 0, 14).Format(config.ExceptionDateLayout)}}, today)
 	if err == nil || !strings.Contains(err.Error(), "one mutation-tool configuration file by path") {
 		t.Fatalf("globbed mutants exception = %v", err)
 	}

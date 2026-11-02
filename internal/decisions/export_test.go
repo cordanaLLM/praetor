@@ -14,7 +14,11 @@ import (
 func TestTransform(t *testing.T) {
 	cases := []struct{ name, input, want string }{
 		{"options heading", "## Considered Options\n\ntext\n", "## Alternatives Considered\n\ntext\n"},
-		{"superseded note" /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */, "## Status\n\nSuperseded by ADR-0012 on 2026-09-26.\n\n## Context" /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */, "## Status\n\nSuperseded\n\n## Status Note\n\nSuperseded by ADR-0012 on 2026-09-26.\n\n## Context"},
+		{"superseded note",
+			/* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */
+			"## Status\n\nSuperseded by ADR-0012 on 2026-09-26.\n\n## Context",
+			/* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */
+			"## Status\n\nSuperseded\n\n## Status Note\n\nSuperseded by ADR-0012 on 2026-09-26.\n\n## Context"},
 		{"bare accepted", "## Status\n\nAccepted\n", "## Status\n\nAccepted\n"},
 		{"no status", "## Context\n\nDecision text\n", "## Context\n\nDecision text\n"},
 		{"proposed note", "## Status\n\nproposed for review\n", "## Status\n\nProposed\n\n## Status Note\n\nproposed for review\n"},

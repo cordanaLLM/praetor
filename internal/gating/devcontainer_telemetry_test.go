@@ -59,7 +59,11 @@ func TestDisableContainerTelemetry_Positive_GoReadsOff(t *testing.T) {
 // Negative: a mode file holding another mode, local or on, with or without its date, is
 // rewritten to off.
 func TestDisableContainerTelemetry_Negative_OtherModeRewritten(t *testing.T) {
-	for _, text := range []string{"local" /* testdate: fact: recorded telemetry mode date; mode parsing, no clock comparison */, "on 2026-01-01\n" /* testdate: fact: recorded telemetry mode date; mode parsing, no clock comparison */, "local 2026-10-17"} {
+	for _, text := range []string{"local",
+		/* testdate: fact: recorded telemetry mode date; mode parsing, no clock comparison */
+		"on 2026-01-01\n",
+		/* testdate: fact: recorded telemetry mode date; mode parsing, no clock comparison */
+		"local 2026-10-17"} {
 		home := t.TempDir()
 		modeFile := filepath.Join(home, filepath.FromSlash(containerTelemetryModeRel))
 		if err := os.MkdirAll(filepath.Dir(modeFile), 0o700); err != nil {

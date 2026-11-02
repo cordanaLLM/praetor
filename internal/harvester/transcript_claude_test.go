@@ -89,7 +89,9 @@ func TestClaudeRejectsMalformedTailBeforeAnyWrites(t *testing.T) {
 		strings.Replace(valid, `"type":"user"`, `"Type":"user"`, 1),
 		strings.Replace(valid, `"uuid":"record-id"`, `"uuid":"one","uuid":"two"`, 1),
 		strings.Replace(valid, `"session-id"`, `"other-session"`, 1),
-		strings.Replace(valid /* testdate: fact: recorded transcript timestamp; ingestion, no clock comparison */, `"2026-09-12T12:00:00.123Z"`, `"bad-time"`, 1),
+		strings.Replace(valid,
+			/* testdate: fact: recorded transcript timestamp; ingestion, no clock comparison */
+			`"2026-09-12T12:00:00.123Z"`, `"bad-time"`, 1),
 		strings.Replace(valid, `"role":"user"`, `"role":"assistant"`, 1),
 		claudeMessageFixture("user", `null`),
 		claudeMessageFixture("user", `[{"type":"text","text":null}]`),

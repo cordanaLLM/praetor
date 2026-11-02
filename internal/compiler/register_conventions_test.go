@@ -152,7 +152,9 @@ func TestRegisterBlockAgreesWithFreshClone(t *testing.T) {
 	if _, err := SyncRegisterBlock(ctx, released, agents, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := changelog.RenderReleaseContext(ctx, released, "1.0.0" /* testdate: golden: exact serialized report/configuration bytes; no clock reads */, "2026-10-01"); err != nil {
+	if err := changelog.RenderReleaseContext(ctx, released, "1.0.0",
+		/* testdate: golden: exact serialized report/configuration bytes; no clock reads */
+		"2026-10-01"); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(readRegisterFixture(t, agents), fragmentClause) {

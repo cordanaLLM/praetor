@@ -1115,12 +1115,18 @@ rules:
       - language: go
         state: partial
         runner: hiss
-        mechanism: internal/hiss/test_dates.go, scanGoFixtureDates; standardsctl audit in local hooks.
+        mechanism: >-
+          internal/hiss/test_dates.go, scanGoFixtureDates; standardsctl audit in local hooks.
+          Independent dimension mechanisms retained: CI step 'Enforce Statement Coverage Floor
+          (HISS-15 coverage gate)' in .github/workflows/ci.yml compares go tool cover -func total
+          with COVERAGE_FLOOR=65 after make verify-all's go test -race -covermode=atomic
+          -coverprofile; praetorctl forge validate-pr requires the checked 3D-testing box.
+          internal/difftest synthesizes tests but does not analyze their dimensions.
         rationale: >-
           Test strings containing calendar dates are refused; dates must come from the test clock.
           positive/date-manifest_test.go replays the expiry that broke main; date-quoted_test.go
-          covers ordinary strings. Computed dates, comments, reasoned recorded facts and golden
-          bytes pass. This is fixture integrity, not proof of test dimensions: untested public
+          covers ordinary strings. Decoded constant concatenations and escaped dates are checked. Computed dates, comments,
+          reasoned recorded facts and golden bytes pass. This is fixture integrity, not proof of test dimensions: untested public
           functions and positive-only tests remain gaps. The separate CI coverage floor and
           forge PR checkbox remain as before and do not prove three dimensions.
       - language: python

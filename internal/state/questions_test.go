@@ -290,7 +290,9 @@ func TestQuestionSidecar_Boundary_BoundIntoStateSync(t *testing.T) {
 		t.Fatalf("fresh sync must verify: %v", err)
 	}
 	path := filepath.Join(root, WorkingDirName, questionMetaName)
-	writeIntegrityFile(t, path /* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */, `{"version":1,"questions":{"Q-001":{"context":"edited","created_at":"2026-09-25T10:00:00Z","resolved_at":"0001-01-01T00:00:00Z"}}}`+"\n")
+	writeIntegrityFile(t, path,
+		/* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */
+		`{"version":1,"questions":{"Q-001":{"context":"edited","created_at":"2026-09-25T10:00:00Z","resolved_at":"0001-01-01T00:00:00Z"}}}`+"\n")
 	if err := VerifyStateSync(t.Context(), root); err == nil {
 		t.Fatal("a question sidecar edit did not stale the sync marker")
 	}

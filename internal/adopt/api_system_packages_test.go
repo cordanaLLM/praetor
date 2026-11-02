@@ -124,14 +124,15 @@ func TestAdoptRefreshesUneditedRenderingsWhenTheManifestChanges(t *testing.T) {
 // the rendered workflow, and an unedited copy refreshes without --force. Negative: the entry
 // reaches the workflow's environment line, so a stale copy would carry the old expiry.
 func TestAdoptRefreshesTheWorkflowWhenOnlyAnExceptionChanges(t *testing.T) {
+	today := time.Now()
 	family := apiManagedFamily(t)
 	s := familySession(t, false)
 	declareAPIPackages(t, s, "")
 	if err := reconcileManagedFamily(t.Context(), s, family); err != nil {
 		t.Fatal(err)
 	}
-	first := time.Now().UTC().AddDate(0, 0, 30).Format(time.DateOnly)
-	renewed := time.Now().UTC().AddDate(0, 0, 60).Format(time.DateOnly)
+	first := today.UTC().AddDate(0, 0, 30).Format(time.DateOnly)
+	renewed := today.UTC().AddDate(0, 0, 60).Format(time.DateOnly)
 	for _, expires := range []string{first, renewed} {
 		before := workflowOf(t, s)
 		declareAPIPackages(t, s, expires)

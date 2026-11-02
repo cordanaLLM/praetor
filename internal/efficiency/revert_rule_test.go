@@ -17,7 +17,9 @@ import (
 func titledRow(number, title, disposition, milestone, merged string) string {
 	row := recordRow(number, "feat/"+number, disposition, labelled("1", "measured"))
 	row = strings.Replace(row, `"title":"Unit `+number+`"`, `"title":"`+title+`"`, 1)
-	return strings.Replace(row /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */, `"merged_at":"2026-10-02T12:00:00Z"`, `"merged_at":"`+merged+`","milestone":"`+milestone+`"`, 1)
+	return strings.Replace(row,
+		/* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */
+		`"merged_at":"2026-10-02T12:00:00Z"`, `"merged_at":"`+merged+`","milestone":"`+milestone+`"`, 1)
 }
 
 func collectTitled(t *testing.T, opts CollectorOptions, rows ...string) *Report {

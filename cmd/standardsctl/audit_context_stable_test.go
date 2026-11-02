@@ -35,7 +35,9 @@ func TestCompileContextVerify_Negative_RefusesVolatileHeadBand(t *testing.T) {
 
 // Positive: the same source without the planted token passes --verify.
 func TestCompileContextVerify_Positive_StableHeadBandPasses(t *testing.T) {
-	dir := compiledFixture(t, strings.Replace(volatileHeadAgents /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */, "Built 2026-10-07T12:30:00Z.", "Static rule.", 1))
+	dir := compiledFixture(t, strings.Replace(volatileHeadAgents,
+		/* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */
+		"Built 2026-10-07T12:30:00Z.", "Static rule.", 1))
 	if out, err := runCompileContextCmd(t, dir, "--verify"); err != nil {
 		t.Fatalf("--verify refused a stable head: %v\n%s", err, out)
 	}

@@ -21,6 +21,7 @@ func fixtureNativeWorkflow(configure string) string {
 // same lane configured with CMAKE_COMPILE_WARNING_AS_ERROR passes, and so does the failing lane
 // while a live HISS-10 entry names its workflow; an expired entry fails it again.
 func TestAuditBuildWarnings_CLI_RequiresWarningsAsErrors(t *testing.T) {
+	today := time.Now()
 	f := newAuditFixture(t)
 	out, err := f.audit(t)
 	if err != nil {
@@ -45,7 +46,7 @@ func TestAuditBuildWarnings_CLI_RequiresWarningsAsErrors(t *testing.T) {
 	mustContain(t, out, "[PASS] Build warnings (HISS-10): 1 build lanes fail on a warning (CMake 1).")
 
 	writeFixtureFile(t, f.dir, ".github/workflows/native.yml", fixtureNativeWorkflow(""))
-	expires := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	expires := today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
 	entry := "exceptions:\n  - rule: HISS-10\n    path: .github/workflows/native.yml\n" +
 		"    reason: the vendored codec warns until upstream lands its fix\n    category: A\n    expires: \"%s\"\n"
 	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+fmt.Sprintf(entry, expires))
@@ -55,9 +56,10 @@ func TestAuditBuildWarnings_CLI_RequiresWarningsAsErrors(t *testing.T) {
 	}
 	mustContain(t, out, "excepted until "+expires+" by the exceptions entry (rule HISS-10, .github/workflows/native.yml)")
 
-	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+fmt.Sprintf(entry, time.Now().AddDate(0, 0, -1).Format(config.ExceptionDateLayout)))
+	expired := today.AddDate(0, 0, -1).Format(config.ExceptionDateLayout)
+	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+fmt.Sprintf(entry, expired))
 	if out, err = f.audit(t); err == nil {
 		t.Fatalf("audit passed with an expired HISS-10 entry:\n%s", out)
 	}
-	mustErrContain(t, err, "the exceptions entry (rule HISS-10, .github/workflows/native.yml) expired on "+time.Now().AddDate(0, 0, -1).Format(config.ExceptionDateLayout))
+	mustErrContain(t, err, "the exceptions entry (rule HISS-10, .github/workflows/native.yml) expired on "+expired)
 }
