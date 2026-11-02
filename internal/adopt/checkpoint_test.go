@@ -16,9 +16,10 @@ import (
 
 // checkpointFixtureTexts are stand-in texts for every file of the checkpoint bundle.
 var checkpointFixtureTexts = map[string]string{
-	checkpointScript:   "#!/usr/bin/env python3\nprint('shared')\n",
-	checkpointCommon:   "class HookError(Exception):\n    pass\n",
-	checkpointLauncher: "#!/bin/sh\nexec python3 \"$@\"\n",
+	checkpointSessionModule: "# shared session ownership module\n",
+	checkpointScript:        "#!/usr/bin/env python3\nprint('shared')\n",
+	checkpointCommon:        "class HookError(Exception):\n    pass\n",
+	checkpointLauncher:      "#!/bin/sh\nexec python3 \"$@\"\n",
 }
 
 // writeCheckpointBundle writes a stand-in for every file of the checkpoint bundle under root.

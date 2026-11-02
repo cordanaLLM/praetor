@@ -24,6 +24,9 @@ func checkpointFixtureDir(rel string) string {
 // never the current one.
 func firstPriorCheckpointText(t *testing.T, rel string) string {
 	t.Helper()
+	if rel == checkpointSessionModule {
+		return shippedCheckpointText(t, rel) // Newly introduced module has no prior release.
+	}
 	return string(readFixtureDir(t, checkpointFixtureDir(rel))["promote-14."+path.Base(rel)])
 }
 

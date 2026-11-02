@@ -49,9 +49,10 @@ func TestAuditCheckpointBundle_Negative_PriorScriptWarns(t *testing.T) {
 	prior := firstPriorCheckpointText(t, checkpointScript)
 	for style, text := range map[string]string{"lf": prior, "crlf": crlfText(prior)} {
 		root := checkpointAuditRepo(t, map[string]string{
-			checkpointScript:   text,
-			checkpointCommon:   shippedCheckpointText(t, checkpointCommon),
-			checkpointLauncher: shippedCheckpointText(t, checkpointLauncher),
+			checkpointScript:        text,
+			checkpointCommon:        shippedCheckpointText(t, checkpointCommon),
+			checkpointLauncher:      shippedCheckpointText(t, checkpointLauncher),
+			checkpointSessionModule: shippedCheckpointText(t, checkpointSessionModule),
 		})
 		lines := auditCheckpointLines(t, root)
 		if len(lines) != 1 {
@@ -72,9 +73,10 @@ func TestAuditCheckpointBundle_Positive_QuietCases(t *testing.T) {
 	prior := firstPriorCheckpointText(t, checkpointScript)
 	cases := map[string]map[string]string{
 		"current": {
-			checkpointScript:   shippedCheckpointText(t, checkpointScript),
-			checkpointCommon:   shippedCheckpointText(t, checkpointCommon),
-			checkpointLauncher: shippedCheckpointText(t, checkpointLauncher),
+			checkpointScript:        shippedCheckpointText(t, checkpointScript),
+			checkpointCommon:        shippedCheckpointText(t, checkpointCommon),
+			checkpointLauncher:      shippedCheckpointText(t, checkpointLauncher),
+			checkpointSessionModule: shippedCheckpointText(t, checkpointSessionModule),
 		},
 		"edited":  {checkpointScript: prior + "# local edit\n"},
 		"missing": {},
@@ -113,7 +115,7 @@ func TestAuditCheckpointBundle_AfterAdoptFromSelectedSource(t *testing.T) {
 	if err != nil || len(lines) != 0 {
 		t.Fatalf("freshly adopted source bundle warned: %q / %v", lines, err)
 	}
-	if lines := auditCheckpointLines(t, repo); len(lines) != len(checkpointBundle) {
+	if lines := auditCheckpointLines(t, repo); len(lines) != len(checkpointBundle)-1 {
 		t.Fatalf("running-release comparison lost stale warnings: %q", lines)
 	}
 	if err := os.Remove(filepath.Join(source, filepath.FromSlash(checkpointCommon))); err != nil {
@@ -143,9 +145,10 @@ func TestCurrentCheckpointDigests_Boundary_MatchShippedBundle(t *testing.T) {
 
 func TestAuditCheckpointBundle_SourceRemedy(t *testing.T) {
 	source := checkpointAuditRepo(t, map[string]string{
-		checkpointScript:   shippedCheckpointText(t, checkpointScript),
-		checkpointCommon:   shippedCheckpointText(t, checkpointCommon),
-		checkpointLauncher: shippedCheckpointText(t, checkpointLauncher),
+		checkpointScript:        shippedCheckpointText(t, checkpointScript),
+		checkpointCommon:        shippedCheckpointText(t, checkpointCommon),
+		checkpointLauncher:      shippedCheckpointText(t, checkpointLauncher),
+		checkpointSessionModule: shippedCheckpointText(t, checkpointSessionModule),
 	})
 	edited := shippedCheckpointText(t, checkpointCommon) + "# local edit\n"
 	commonLF, _ := util.NormalizeLineEndings(shippedCheckpointText(t, checkpointCommon))

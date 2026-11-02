@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	checkpointScript = ".config/lefthook/scripts/checkpoint.py"
-	checkpointCommon = ".config/lefthook/scripts/common.py"
+	checkpointScript        = ".config/lefthook/scripts/checkpoint.py"
+	checkpointCommon        = ".config/lefthook/scripts/common.py"
+	checkpointSessionModule = ".config/lefthook/scripts/checkpoint_session.py"
 	// checkpointLauncher starts the interpreter of the checkpoint jobs. It is the canonical
 	// policy's launcher: it tries a fixed list of candidates and runs the first that answers a
 	// version probe as Python 3 (#339). The generated lefthook.yml calls it by this path
@@ -26,7 +27,7 @@ const (
 
 // checkpointBundle lists the files adoption copies from the verified source root, in the
 // order it installs them.
-var checkpointBundle = []string{checkpointScript, checkpointCommon, checkpointLauncher}
+var checkpointBundle = []string{checkpointScript, checkpointCommon, checkpointLauncher, checkpointSessionModule}
 
 var checkpointBranchPrefixes = []string{"checkpoint/", "audit/", "fix/", "feat/", "chore/", "docs/", "refactor/", "test/", "ci/"}
 
@@ -43,6 +44,9 @@ type checkpointSource struct {
 // TestPriorCheckpointDigests_Boundary_CurrentSourcesRecorded fails until a changed script is
 // recorded here (checkpoint_prior_test.go).
 var priorCheckpointDigests = map[string]map[string]string{
+	checkpointSessionModule: {
+		"58a0ae90c842360fab6100eaebcac933f98d4114b41dfb1a9d7943853dcff9cc": "reviewed hook findings",
+	},
 	checkpointScript: {
 		"54130726f2c6830a763a2485b849293d4c014e34c308596cc3e28d5330e6fc3f": "stop checkpoint retries PR listing and collapses failure",
 		"6295b09a4077a3c3bc6819ecf69b3eb18fe4c3a23d4473d99c880fc3184ce3b5": "stop checkpoint judges landed worktrees by their merged pull request",
@@ -59,6 +63,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"2c08cd616a4a2d53bcbdc2a4e3bb8a4fc235a718dd0913c53d95f9943b53eb6c": "stop checkpoint finds recent unnamed worktrees",
 		"d3b85026905c9006b1ddd063550d673db0fd0e46639a499943f8934b79b89192": "checkpoint evaluator passes ruff PLR rules",
 		"80a0a2da3dc2222e12b5c70ab7bc442fae586f1d06d5bdcb0516df3c20a144ca": "stop checkpoint counts session-owned worktrees and ignores gate scratch",
+		"22e43518b8bf33976d0eba758694ed7380c0af3b17e56cfc591fcb6b9889ea7e": "reviewed hook findings",
 	},
 	checkpointCommon: {
 		"daf13baf16b776de9a976809a7e064971fd5946ed4508761c229dba0ef4b4e65": "Go hooks share session ownership and verify live gate scratch owners",
@@ -76,6 +81,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"f5e11ef5e868e8799d47d9cf845dbcd5ad7f36f51d2dc34f759993a1dc0c07b2": "clean import order under adopter ruff",
 		"b42948bf8e9281d0e93f69aa3590e974929c9bc3dcfa73c83996f65423b59606": "process signal bound above 1",
 		"dfe0975c01017ee575fdd57ecd28cb8963e253e4ccc698f83e63f3b1b3375a07": "snapshots of killed hooks swept after three hours",
+		"50ca0eb9f96247a622cf47ca6fb9b8ee648ec35c11f6dd6105338a6db6f270a5": "reviewed hook findings",
 	},
 	checkpointLauncher: {
 		"8b6266ea16912a362c2e26d9a936887ca955ecf68f69744c935f2259d1a2c8dc": "proven interpreter candidates (#339)",

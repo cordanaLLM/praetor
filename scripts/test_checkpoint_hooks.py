@@ -177,9 +177,9 @@ class LifecycleOutput(unittest.TestCase):
         self.assertIs(lookup.call_args.args[2], budget)
         self.assertIs(self.state_probe.call_args.args[1], budget)
         self.assertIs(observe.call_args.args[2], budget)
-        with mock.patch.object(ADAPTER, "run_bounded", return_value=b"") as run:
-            with self.assertRaises(ValueError):
-                ADAPTER.checkpoint("tool", ROOT, budget)
+        with mock.patch.object(ADAPTER, "run_bounded", return_value=b"") as run, \
+                self.assertRaises(ValueError):
+            ADAPTER.checkpoint("tool", ROOT, budget)
         self.assertLessEqual(run.call_args.kwargs["timeout"], ADAPTER.CHECKPOINT_TIMEOUT)
         self.assertEqual(run.call_args.kwargs["grace"], ADAPTER.JOB_GRACE)
         with self.assertRaisesRegex(ADAPTER.HookError, "budget spent"):
@@ -225,9 +225,9 @@ class LifecycleOutput(unittest.TestCase):
                     self.assertEqual(answer["decision"], "block")
 
     def test_missing_execution_marker_and_invalid_input_rejected(self):
-        with mock.patch.object(ADAPTER, "run_bounded", return_value=b"skipped job exited zero\n"):
-            with self.assertRaisesRegex(ValueError, "execution result"):
-                ADAPTER.checkpoint("stop")
+        with mock.patch.object(ADAPTER, "run_bounded", return_value=b"skipped job exited zero\n"), \
+                self.assertRaisesRegex(ValueError, "execution result"):
+            ADAPTER.checkpoint("stop")
         for payload in ([], {}, {"hook_event_name": "Stop", "stop_hook_active": "yes"}):
             with self.assertRaises(ValueError):
                 ADAPTER.respond(payload)
@@ -257,9 +257,9 @@ class StateResult(unittest.TestCase):
                     (marker + '{"schema_version":true,"verified":true}').encode(),
                     (marker + '{"schema_version":1,"verified":false}').encode(),
                     (marker + '{"schema_version":1,"verified":1}').encode()):
-            with mock.patch.object(ADAPTER, "run_bounded", return_value=raw):
-                with self.assertRaises(ValueError):
-                    ADAPTER.verify_state()
+            with mock.patch.object(ADAPTER, "run_bounded", return_value=raw), \
+                    self.assertRaises(ValueError):
+                ADAPTER.verify_state()
 
 
 class NativeLefthook(unittest.TestCase):
@@ -731,9 +731,9 @@ class NativeLefthook(unittest.TestCase):
                 self.assertEqual(SCOPE.check(payload), 0)
         (self.root / "README.md").write_text("dirty\n")
         for payload in not_due:
-            with self.subTest(due=True, path=payload["tool_input"]["file_path"], cwd=payload["cwd"]):
-                with self.assertRaises(ValueError):
-                    SCOPE.check(payload)
+            with self.subTest(due=True, path=payload["tool_input"]["file_path"], cwd=payload["cwd"]), \
+                    self.assertRaises(ValueError):
+                SCOPE.check(payload)
         (self.root / "README.md").write_text("fixture\n")
         for change in ({"tool_input": {"file_path": ""}}, {"tool_input": {"file_path": "a\x00b"}},
                        {"cwd": "relative"}):
@@ -1073,7 +1073,7 @@ class NativeLefthook(unittest.TestCase):
         self.assertIn(str((other / ".standards/worktrees").resolve()), result.stderr)  # resolved, as above
 
     @unittest.skipUnless(Path("/proc/self/cmdline").is_file(), "live gate identity requires Linux /proc")
-    def test_live_gate_worktrees_skip_here_and_under_other_linked_checkout(self):
+    def test_counterfeit_gate_worktrees_block_here_and_under_other_linked_checkout(self):
         scratch = self.root / ".workingdir/gate-process"
         scratch.mkdir(parents=True)
         executable = scratch / "praetorctl"
@@ -1100,7 +1100,8 @@ class NativeLefthook(unittest.TestCase):
                 gate = self.linked_worktree(parent / f".standards/worktrees/gate-{pid}-1", f"checkpoint/live-{index}")
                 (gate / "README.md").write_text("live gate dirty\n")
             result = self.engine_checkpoint("stop", "live-session")
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn(f"gate owner pid {pid}", result.stderr)
         finally:
             (scratch / "done").write_text("done\n")
             runner.join(timeout=5)
@@ -1113,9 +1114,9 @@ class NativeLefthook(unittest.TestCase):
         record = sessions / "0123456789abcdef.json"
         _write_session_record(sessions, record, {"/existing"})
         previous = record.read_bytes()
-        with mock.patch("common.MAX_RECORD_BYTES", 16):
-            with self.assertRaisesRegex(ValueError, "exceeds byte bound"):
-                _write_session_record(sessions, record, {"/" + "a" * 16})
+        with mock.patch("checkpoint_session.MAX_RECORD_BYTES", 16), \
+                self.assertRaisesRegex(ValueError, "exceeds byte bound"):
+            _write_session_record(sessions, record, {"/" + "a" * 16})
         self.assertEqual(record.read_bytes(), previous)
         self.assertEqual(sorted(sessions.iterdir()), [record])
 
@@ -1127,9 +1128,7 @@ class NativeLefthook(unittest.TestCase):
         many_paths = {f"/path/to/worktree-{i:04d}" for i in range(ADAPTER.MAX_WORKTREES + 50)}
         ADAPTER._write_session_record(sessions_dir, record_file, many_paths)
         data = json.loads(record_file.read_text())
-        self.assertLessEqual(len(data), ADAPTER.MAX_WORKTREES)
-        self.assertEqual(len(data), ADAPTER.MAX_WORKTREES)
-        self.assertEqual(data, sorted(data))
+        self.assertIsNone(data)  # Overflow must never look like complete ownership.
 
 
 if __name__ == "__main__":
