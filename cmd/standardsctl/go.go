@@ -9,20 +9,78 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/govuln"
+	"github.com/cordanaLLM/praetor/internal/sandbox"
 	"github.com/cordanaLLM/praetor/internal/util"
 	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
 )
 
 func runGo(args []string) error {
+	if len(args) > 0 && args[0] == "test" {
+		return runGoTest(args[1:])
+	}
+	if len(args) > 0 && args[0] == "test-exec" {
+		ctx, cancel := commandContext(gating.MaxTestStageTimeout)
+		defer cancel()
+		return agentSandboxResult((sandbox.Runner{}).RunLoopback(ctx, args[1:], os.Stdin, os.Stdout, os.Stderr))
+	}
 	if len(args) != 1 || args[0] != "vet" {
-		return errors.New("usage: praetorctl go vet")
+		return errors.New("usage: praetorctl go vet | test [go test arguments] | test-exec BINARY [arguments]")
 	}
 	return runGoVet()
+}
+
+// runGoTest is the local Makefile seam: the Go tool builds and downloads outside
+// the namespace and invokes this same CLI for each compiled test binary.
+func runGoTest(args []string) error {
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("go test loopback namespace wrapper: %w", err)
+	}
+	execFlag, note, err := gating.GoTestExec(runtime.GOOS, executable)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(os.Stderr, note); err != nil {
+		return err
+	}
+	argv, err := goTestArgs(args, execFlag)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := commandContext(gating.MaxTestStageTimeout)
+	defer cancel()
+	return childExitStatus(util.RunCommandPassthrough(ctx, "", "go", os.Stdin, os.Stdout, os.Stderr, argv...))
+}
+
+func goTestArgs(args []string, execFlag string) ([]string, error) {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-args" || args[i] == "--args" {
+			break
+		}
+		if goExecFlag(args[i]) {
+			return nil, errors.New("go test loopback isolation: -exec is owned by the gate wrapper")
+		}
+	}
+	argv := []string{}
+	if len(args) >= 2 && args[0] == "-C" {
+		argv, args = append(argv, args[:2]...), args[2:]
+	}
+	argv = append(argv, "test")
+	if execFlag != "" {
+		argv = append(argv, "-exec", execFlag)
+	}
+	argv = append(argv, args...)
+	return argv, nil
+}
+
+func goExecFlag(argument string) bool {
+	return argument == "-exec" || argument == "--exec" || strings.HasPrefix(argument, "-exec=") || strings.HasPrefix(argument, "--exec=")
 }
 
 func runGoVet() error {

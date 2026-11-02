@@ -899,7 +899,31 @@ fails the stage
 ([`internal/gating/prefetch.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/prefetch.go)).
 Security runs symbol-level `govulncheck` against the repository-root OpenVEX document and `gosec`,
 and the race stage runs `go test -race ./...` in an isolated worktree for each module. Each
-module's race suite runs in its own memory-bounded user scope (`systemd-run --user --scope`) when
+module's compiled test binaries run through `go test -exec '<current CLI> go test-exec'`
+on local Linux gates. The wrapper reuses `internal/sandbox`'s `NetworkNone` bubblewrap
+namespace policy: its own loopback interface is up, with no other network interface.
+A test's own HTTP client can reach its `httptest` server; workstation processes cannot
+reach that server through host loopback. Compilation and module downloads stay outside
+the namespace; the prefetch stage still fetches modules first. This is network isolation,
+with the caller's filesystem and environment retained for test fixtures.
+
+The engine's Makefile Go test recipes, including fuzz and the schema module, use
+`praetorctl go test` through the source CLI to apply the same `-exec` wrapper. Each
+wrapper uses the exact running engine executable; a devcontainer mounts that executable
+at the same path and must supply bubblewrap and permit user/network namespaces.
+A missing `bwrap`, disabled unprivileged user namespaces or an `EPERM` setup failure
+rejects the gate by facility and cause, for example
+`sandbox unavailable: bwrap user/network namespaces (loopback-only): ... Operation not permitted`.
+There is no host-network retry. macOS and Windows run the tests directly and print
+`Go test loopback isolation skipped: <GOOS> has no Linux network namespaces`.
+CI detection follows the existing hook-audit convention, `CI=true` or
+`GITHUB_ACTIONS=true`: tests keep their existing execution path and print
+`Go test loopback isolation skipped: CI environment; CI execution unchanged`.
+CI workflows are unchanged. Deterministic injected-runner tests cover these paths;
+real namespace cases skip with a reason when the host lacks the facility
+(`internal/gating/test_exec_test.go`, `internal/sandbox/test_exec_test.go`).
+
+Each module's race suite runs in its own memory-bounded user scope (`systemd-run --user --scope`) when
 scopes are available, so the out-of-memory daemon reclaims from the step rather than from the
 caller's session. Defaults are `MemoryHigh=16G`, `MemoryMax=20G`, and `MemorySwapMax=4G`,
 customizable via `PRAETOR_GATE_SCOPE_MEMORY_HIGH`, `PRAETOR_GATE_SCOPE_MEMORY_MAX`, and

@@ -128,11 +128,15 @@ func waitRaceAdmission(ctx context.Context, cfg *stageConfig) error {
 	return nil
 }
 
-func raceTestCommand(module goModule, bound time.Duration, scopeCfg raceScopeConfig, packages []string) (string, []string, string) {
+func raceTestCommand(module goModule, bound time.Duration, scopeCfg raceScopeConfig, packages []string, execFlag string) (string, []string, string) {
 	if packages == nil {
 		packages = []string{"./..."}
 	}
-	argv := append([]string{"go", "test", "-race", "-timeout", bound.String()}, packages...)
+	argv := []string{"go", "test", "-race", "-timeout", bound.String()}
+	if execFlag != "" {
+		argv = append(argv, "-exec", execFlag)
+	}
+	argv = append(argv, packages...)
 	if !scopeCfg.useScope {
 		return argv[0], argv[1:], fmt.Sprintf("race tests ran unscoped: %s", scopeCfg.reason)
 	}
