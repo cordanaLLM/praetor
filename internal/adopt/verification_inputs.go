@@ -58,6 +58,7 @@ func loadVerificationInputsWithLimits(ctx context.Context, path string, requeste
 	return result, err
 }
 
+// walkVerificationInputs traverses the tree at path and captures matching verification files within limits.
 func walkVerificationInputs(ctx context.Context, path string, result *verificationInputs, limits VerificationLimits) error {
 	total := 0
 	return walkVerificationTree(ctx, path, limits, func(rel string, entry fs.DirEntry) error {
@@ -123,6 +124,7 @@ func readVerificationDirectory(ctx context.Context, path string, entryLimit int)
 	return entries, err
 }
 
+// visitVerificationEntry validates directory entry constraints and either enqueues subdirectories or invokes the visitor callback.
 func visitVerificationEntry(ctx context.Context, rel string, entry fs.DirEntry, queue *[]string, limits VerificationLimits, visit func(rel string, entry fs.DirEntry) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
