@@ -314,7 +314,7 @@ class GateIdentityRegressions(unittest.TestCase):
                     self.assertFalse(checkpoint._is_gate_scratch(scratch, {root}))
 
     def test_no_proc_live_gate_is_live_or_unverified(self):
-        for executable, expected in (("/usr/bin/standardsctl", True),
+        for executable, expected in ((str(Path(tempfile.gettempdir()) / "standardsctl"), True),
                                      ("standardsctl", None)):
             ps = f"1000 Mon Nov  2 03:00:00 2026 {executable}\n".encode()
             with self.subTest(executable=executable), mock.patch.object(
@@ -335,6 +335,33 @@ class GateIdentityRegressions(unittest.TestCase):
         expected = (1000, Path("/usr/bin/standardsctl"), ["/usr/bin/standardsctl", "gate"])
         self.assertEqual(identity[1:], expected)
         self.assertTrue(all(call.kwargs["timeout"] <= 1 for call in run.call_args_list))
+
+
+class AbandonedGateAdviceRegressions(unittest.TestCase):
+    def test_gate_recovery_does_not_offer_naming_or_publication(self):
+        for reason in ("gate owner pid 123 is not a live praetorctl gate run",
+                       "gate owner pid 123 identity not verified"):
+            entry = {"path": "/tree/.standards/worktrees/gate-123-1", "branch": "",
+                     "gate_reason": reason}
+            result = {"actions": []}
+            with mock.patch.object(checkpoint, "_unfinished_worktree_records",
+                                   return_value=([(entry, [reason])], "", 0)):
+                checkpoint._add_unfinished_worktrees(Path("/tree"), CONFIG, result)
+            action = result["actions"][0]
+            self.assertIn("verify the owner has stopped", action)
+            self.assertIn("preserve any needed changes", action)
+            self.assertIn("remove the abandoned gate worktree", action)
+            self.assertNotIn("OPEN.md", action)
+            self.assertNotIn("commit, push, PR", action)
+
+    def test_ordinary_worktree_keeps_checkpoint_advice(self):
+        entry = {"path": "/tree/topic", "branch": "topic"}
+        result = {"actions": []}
+        with mock.patch.object(checkpoint, "_unfinished_worktree_records",
+                               return_value=([(entry, ["1 public change(s)"])], "", 0)):
+            checkpoint._add_unfinished_worktrees(Path("/tree"), CONFIG, result)
+        self.assertIn("commit, push, PR", result["actions"][0])
+        self.assertIn("OPEN.md", result["actions"][0])
 
 
 class CheckpointAdapterTests(unittest.TestCase):

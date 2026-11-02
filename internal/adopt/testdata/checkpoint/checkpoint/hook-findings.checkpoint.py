@@ -1136,6 +1136,19 @@ def _unfinished_worktree_records(root, cfg):
     return unfinished, skipped, unverified_pushed
 
 
+def _worktree_recovery_advice(entry):
+    """Gate scratch remains due until its owner is live or the checkout is removed."""
+    if entry.get("gate_reason"):
+        return (
+            "verify the owner has stopped, preserve any needed changes, then "
+            "remove the abandoned gate worktree"
+        )
+    return (
+        "finish it (commit, push, PR) or name it in .workingdir/OPEN.md "
+        "with id, branch, last step, next step"
+    )
+
+
 def _add_unfinished_worktrees(root, cfg, result):
     """Append bounded stop actions for every recent unnamed worktree with unfinished work."""
     if result.get("deferred"):
@@ -1154,13 +1167,12 @@ def _add_unfinished_worktrees(root, cfg, result):
         reason_text = ", ".join(reasons)
         result["actions"].append(
             f"Unfinished worktree {entry['path']} ({entry['branch'] or 'detached'}): "
-            f"{reason_text}; finish it (commit, push, PR) or name it in .workingdir/OPEN.md "
-            "with id, branch, last step, next step"
+            f"{reason_text}; {_worktree_recovery_advice(entry)}"
         )
     more = max(0, len(records) - MAX_WORKTREE_ACTIONS)
     if more:
         result["actions"].append(
-            f"Unfinished worktrees: and {more} more; name them in .workingdir/OPEN.md"
+            f"Unfinished worktrees: and {more} more; inspect their recovery actions"
         )
     if unverified_pushed:
         result["actions"].append(
