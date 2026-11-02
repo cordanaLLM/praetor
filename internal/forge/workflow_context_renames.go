@@ -187,6 +187,7 @@ func UnreportedStatusContexts(ctx context.Context, root, commit, repository stri
 	return unreported, nil
 }
 
+// unreportedContextsAtCommit computes status contexts declared in after that are not yet present in commit.
 func unreportedContextsAtCommit(ctx context.Context, root, commit, repository string, after []workflowFile, options contextOptions) ([]string, error) {
 	before, err := readCommittedWorkflowFiles(ctx, root, commit)
 	if err != nil {
@@ -215,6 +216,7 @@ func unreportedContextsAtCommit(ctx context.Context, root, commit, repository st
 	return unreported, nil
 }
 
+// unreportedContextsInRuns computes status contexts declared in workflows that have not yet reported successful runs on the default branch.
 func unreportedContextsInRuns(after []workflowFile, repository string, report *WorkflowRunReport, options contextOptions) ([]string, error) {
 	unreportedWorkflow := make(map[string]bool, len(report.Findings))
 	for i := 0; i < len(report.Findings) && i < maxWorkflowFiles; i++ {
@@ -243,6 +245,7 @@ func unreportedContextsInRuns(after []workflowFile, repository string, report *W
 	return contextDifference(declared, reported), nil
 }
 
+// workflowUnreportedOnDefaultBranch reports whether a workflow's health status indicates it has not yet reported runs on the default branch.
 func workflowUnreportedOnDefaultBranch(health WorkflowHealth) bool {
 	return health == WorkflowUnknown || health == WorkflowNeverRun || health == WorkflowNoCompletedRun
 }

@@ -673,6 +673,7 @@ func TestAuditLiveBranchProtection_Negative_NewCheckWithoutRenameFails(t *testin
 
 const codeqlMatrixWorkflow = "on:\n  push:\n    branches: [main]\n  pull_request:\njobs:\n  analyze:\n    name: analyze (${{ matrix.language }})\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        language: [python, actions]\n    steps:\n      - run: make\n"
 
+// completedMainRunsPage returns a forge API payload containing one completed successful workflow run on main.
 func completedMainRunsPage() map[string]any {
 	return map[string]any{
 		"total_count": 1,
@@ -745,6 +746,7 @@ func TestAuditLiveBranchProtection_UnreportedDefaultBranchChecks(t *testing.T) {
 	})
 }
 
+// TestAuditLiveBranchProtection_Boundary_NoOriginMainForgeReadDecides pins the boundary where origin/main is missing from the checkout and forge workflow runs decide whether checks are excused.
 func TestAuditLiveBranchProtection_Boundary_NoOriginMainForgeReadDecides(t *testing.T) {
 	unreported := &forgeStub{
 		rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active"),
@@ -959,6 +961,7 @@ func TestAuditLiveBranchProtection_Boundary_UnpushedDefaultBranchIsNotCompared(t
 	}
 }
 
+// removeOriginMainWorkflowBlob removes a git blob object belonging to an origin/main workflow file to simulate missing git objects.
 func (f *auditFixture) removeOriginMainWorkflowBlob(t *testing.T, name string) {
 	t.Helper()
 	object, err := runFixtureGit(t, f.dir, f.gitEnv, "rev-parse", "origin/main:.github/workflows/"+name)
@@ -975,6 +978,7 @@ func (f *auditFixture) removeOriginMainWorkflowBlob(t *testing.T, name string) {
 	}
 }
 
+// divergeOriginMainWithoutBlob sets up origin/main on a diverged commit that references a missing workflow blob.
 func (f *auditFixture) divergeOriginMainWithoutBlob(t *testing.T, headWorkflows map[string]string) {
 	t.Helper()
 	base, err := runFixtureGit(t, f.dir, f.gitEnv, "rev-parse", "HEAD")

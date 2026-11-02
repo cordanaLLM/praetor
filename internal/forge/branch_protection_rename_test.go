@@ -110,6 +110,7 @@ func TestRequiredStatusContextRenames_FileChangeBoundary(t *testing.T) {
 	}
 }
 
+// TestUnreportedStatusContexts pins discovery of unreported status checks from a base commit or workflow run report.
 func TestUnreportedStatusContexts(t *testing.T) {
 	var missing context.Context
 	if _, err := UnreportedStatusContexts(missing, t.TempDir(), "HEAD", "acme/widgets", nil); err == nil {
@@ -153,6 +154,7 @@ func TestUnreportedStatusContexts(t *testing.T) {
 	}
 }
 
+// TestUnreportedStatusContexts_AbsentObject pins error handling when a committed workflow git object is absent.
 func TestUnreportedStatusContexts_AbsentObject(t *testing.T) {
 	root, base := committedWorkflowRepo(t, map[string]string{".github/workflows/ci.yml": prWorkflow("CI")})
 	removeLooseObject(t, root, base, ".github/workflows/ci.yml")
