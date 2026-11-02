@@ -75,6 +75,7 @@ func hookProcess(t *testing.T, dir, arguments string, stdin []byte, extraEnviron
 	return result, -1
 }
 
+// hookRepository initializes a temporary git repository fixture for hook testing.
 func hookRepository(t *testing.T, governed bool) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {

@@ -42,6 +42,7 @@ func TestRepositoryChecksEditorSelection(t *testing.T) {
 	}
 }
 
+// checkGit executes a git command in root for repository check testing.
 func checkGit(t *testing.T, root string, args ...string) {
 	t.Helper()
 	testsupport.RunFixtureGit(t, root, args)

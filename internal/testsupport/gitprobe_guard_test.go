@@ -27,6 +27,7 @@ func TestGitProbeGuard_Repository_ScansTrackedTestFiles(t *testing.T) {
 	}
 }
 
+// writeProbeFixtureFile writes source code to a fixture file within a test directory.
 func writeProbeFixtureFile(t *testing.T, dir, name string, src []byte) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
@@ -36,6 +37,7 @@ func writeProbeFixtureFile(t *testing.T, dir, name string, src []byte) string {
 	return path
 }
 
+// assertSingleFinding verifies that scanning source produces exactly one finding with the expected subcommand.
 func assertSingleFinding(t *testing.T, label, file string, src []byte, wantSubcmd string) {
 	t.Helper()
 	findings, err := ScanProbeMutations(file, src)
@@ -44,6 +46,7 @@ func assertSingleFinding(t *testing.T, label, file string, src []byte, wantSubcm
 	}
 }
 
+// assertNoFindings verifies that scanning source produces zero probe mutation findings.
 func assertNoFindings(t *testing.T, label, file string, src []byte) {
 	t.Helper()
 	findings, err := ScanProbeMutations(file, src)
@@ -155,6 +158,7 @@ func TestGitProbeGuard_Boundaries(t *testing.T) {
 	}
 }
 
+// probeCallSource constructs Go test source code containing a call to RunGitProbe with the given arguments.
 func probeCallSource(pkgExpr string, args ...string) []byte {
 	quoted := make([]string, 0, len(args))
 	for i := 0; i < len(args) && i < maxCallArgs+8; i++ {

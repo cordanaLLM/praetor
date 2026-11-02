@@ -124,11 +124,13 @@ type GitProbeFinding struct {
 	Subcommand string
 }
 
+// String formats the finding as a file, line, and reason summary.
 func (f GitProbeFinding) String() string {
 	return fmt.Sprintf("%s:%d: util.RunGitProbe called with disallowed subcommand %q; use testsupport.RunFixtureGit instead",
 		f.File, f.Line, f.Subcommand)
 }
 
+// isReadOnlySubcommand reports whether subcmd is in the allow-list of read-only git subcommands.
 func isReadOnlySubcommand(subcmd string) bool {
 	for i, allowed := range readOnlyGitProbeSubcommands {
 		if i >= maxReadOnlySubcommands {
@@ -141,6 +143,7 @@ func isReadOnlySubcommand(subcmd string) bool {
 	return false
 }
 
+// utilPackageNames collects package identifiers importing internal util within a parsed AST.
 func utilPackageNames(f *ast.File) map[string]bool {
 	names := map[string]bool{"util": true}
 	for _, spec := range util.GoImportSpecs(f) {
@@ -151,11 +154,13 @@ func utilPackageNames(f *ast.File) map[string]bool {
 	return names
 }
 
+// isUtilImportPath reports whether importPath refers to the praetor internal util package.
 func isUtilImportPath(importPath string) bool {
 	return importPath == "github.com/cordanaLLM/praetor/internal/util" ||
 		strings.HasSuffix(importPath, "/internal/util")
 }
 
+// isRunGitProbeCall reports whether call invokes RunGitProbe from a known util import.
 func isRunGitProbeCall(call *ast.CallExpr, utilNames map[string]bool) bool {
 	switch fn := call.Fun.(type) {
 	case *ast.SelectorExpr:
@@ -168,6 +173,7 @@ func isRunGitProbeCall(call *ast.CallExpr, utilNames map[string]bool) bool {
 	}
 }
 
+// extractLiteralString extracts a literal string value from an AST expression or constant identifier.
 func extractLiteralString(expr ast.Expr) (string, bool) {
 	if ident, ok := expr.(*ast.Ident); ok {
 		expr = resolveConstIdent(ident)
@@ -183,6 +189,7 @@ func extractLiteralString(expr ast.Expr) (string, bool) {
 	return strings.TrimSpace(val), true
 }
 
+// resolveConstIdent returns the defining value expression for a constant identifier when present.
 func resolveConstIdent(ident *ast.Ident) ast.Expr {
 	if ident.Obj == nil || ident.Obj.Kind != ast.Con {
 		return ident
@@ -199,6 +206,7 @@ func resolveConstIdent(ident *ast.Ident) ast.Expr {
 	return ident
 }
 
+// findDisallowedSubcommandArg inspects call arguments to locate any disallowed git subcommand invocation.
 func findDisallowedSubcommandArg(call *ast.CallExpr) (string, bool) {
 	if len(call.Args) <= 3 {
 		return "", false
@@ -225,6 +233,7 @@ func findDisallowedSubcommandArg(call *ast.CallExpr) (string, bool) {
 	return "<missing subcommand>", true
 }
 
+// consumeGlobalGitOption advances past a global git flag or option with its operand in call arguments.
 func consumeGlobalGitOption(val string, i int, callArgs []ast.Expr, hasEllipsis bool) (int, bool) {
 	advance, valid := classifyGlobalGitOption(val)
 	if !valid {
@@ -243,6 +252,7 @@ func consumeGlobalGitOption(val string, i int, callArgs []ast.Expr, hasEllipsis 
 	return next, true
 }
 
+// classifyGlobalGitOption reports the argument count consumed by a recognized global git option.
 func classifyGlobalGitOption(arg string) (int, bool) {
 	if slices.Contains(globalGitOptionsWithOperand, arg) {
 		return 1, true
@@ -259,14 +269,17 @@ func classifyGlobalGitOption(arg string) (int, bool) {
 	return 0, false
 }
 
+// isAttachedShortGlobalOption reports whether an argument is a short git option with an attached value.
 func isAttachedShortGlobalOption(arg string) bool {
 	return len(arg) > 2 && (strings.HasPrefix(arg, "-C") || strings.HasPrefix(arg, "-c"))
 }
 
+// isAttachedLongGlobalOption reports whether an argument is a long git option with an attached operand.
 func isAttachedLongGlobalOption(opt string) bool {
 	return slices.Contains(globalGitOptionsWithOperand, opt) || opt == "--exec-path" || opt == "--list-cmds"
 }
 
+// formatDisallowedConfig formats the config subcommand diagnostic string based on following arguments.
 func formatDisallowedConfig(args []ast.Expr) string {
 	if len(args) > 0 {
 		if nextVal, ok := extractLiteralString(args[0]); ok && nextVal == "--add" {
@@ -276,6 +289,7 @@ func formatDisallowedConfig(args []ast.Expr) string {
 	return "config"
 }
 
+// checkSubcommandInvocation validates a git subcommand and its trailing arguments for mutation hazards.
 func checkSubcommandInvocation(subcmd string, args []ast.Expr, hasEllipsis bool) (string, bool) {
 	if subcmd == "config" {
 		return formatDisallowedConfig(args), true
@@ -298,6 +312,7 @@ func checkSubcommandInvocation(subcmd string, args []ast.Expr, hasEllipsis bool)
 	}
 }
 
+// checkHashObjectArgs verifies that git hash-object arguments do not include write flags or non-literals.
 func checkHashObjectArgs(args []ast.Expr, hasEllipsis bool) (string, bool) {
 	if hasEllipsis {
 		return "hash-object <non-literal>", true
@@ -322,6 +337,7 @@ func checkHashObjectArgs(args []ast.Expr, hasEllipsis bool) (string, bool) {
 	return "", false
 }
 
+// consumeHashObjectOption validates an option for git hash-object and returns the advanced argument index.
 func consumeHashObjectOption(val string, i, total int) (int, bool) {
 	if val == "-t" || val == "--path" {
 		if i+1 >= total {
@@ -333,6 +349,7 @@ func consumeHashObjectOption(val string, i, total int) (int, bool) {
 	return i, allowed
 }
 
+// checkRemoteArgs verifies that git remote arguments only invoke permitted read-only subcommands.
 func checkRemoteArgs(args []ast.Expr, hasEllipsis bool) (string, bool) {
 	if hasEllipsis {
 		return "remote <non-literal>", true
@@ -358,6 +375,7 @@ func checkRemoteArgs(args []ast.Expr, hasEllipsis bool) (string, bool) {
 	}
 }
 
+// skipRemoteVerboseFlags advances past leading verbose flags in git remote argument slices.
 func skipRemoteVerboseFlags(args []ast.Expr) (int, string, bool) {
 	i := 0
 	for ; i < len(args) && i < maxCallArgs; i++ {
@@ -372,6 +390,7 @@ func skipRemoteVerboseFlags(args []ast.Expr) (int, string, bool) {
 	return i, "", false
 }
 
+// checkAllowedSubcommandFlags verifies that subcommand arguments only use allowed flags.
 func checkAllowedSubcommandFlags(prefix string, args []ast.Expr, allowedFlags []string) (string, bool) {
 	for i := 0; i < len(args) && i < maxCallArgs; i++ {
 		val, ok := extractLiteralString(args[i])
@@ -388,6 +407,7 @@ func checkAllowedSubcommandFlags(prefix string, args []ast.Expr, allowedFlags []
 	return "", false
 }
 
+// checkSymbolicRefArgs verifies that git symbolic-ref arguments do not perform mutating ref updates.
 func checkSymbolicRefArgs(args []ast.Expr, hasEllipsis bool) (string, bool) {
 	if hasEllipsis {
 		return "symbolic-ref <non-literal>", true
@@ -415,6 +435,7 @@ func checkSymbolicRefArgs(args []ast.Expr, hasEllipsis bool) (string, bool) {
 	return "", false
 }
 
+// checkSymbolicRefPositional checks positional arguments after a double-dash separator in symbolic-ref calls.
 func checkSymbolicRefPositional(positional []string, rest []ast.Expr) (string, bool) {
 	for i := 0; i < len(rest) && i < maxCallArgs; i++ {
 		val, ok := extractLiteralString(rest[i])
@@ -482,6 +503,7 @@ func ScanTrackedTestGitProbes(ctx context.Context, repoRoot string) ([]GitProbeF
 	return scanTrackedTestListing(repoRoot, out.Stdout)
 }
 
+// scanTrackedTestListing parses a null-delimited test file list and scans each file for probe mutations.
 func scanTrackedTestListing(repoRoot string, listing []byte) ([]GitProbeFinding, error) {
 	trimmed := strings.TrimSuffix(string(listing), "\x00")
 	if trimmed == "" {
@@ -508,6 +530,7 @@ func scanTrackedTestListing(repoRoot string, listing []byte) ([]GitProbeFinding,
 	return allFindings, nil
 }
 
+// scanTrackedTestFile reads a single test file from disk and scans its AST for probe mutations.
 func scanTrackedTestFile(repoRoot, entry string) ([]GitProbeFinding, error) {
 	fullPath := filepath.Join(repoRoot, filepath.FromSlash(entry))
 	src, err := util.ReadFileLimited(fullPath, maxTestFileBytes)
