@@ -658,17 +658,122 @@ func TestAuditLiveBranchProtection_StaleHeadDoesNotProveRename(t *testing.T) {
 	mustErrContain(t, err, "missing: REUSE lint")
 }
 
-// A newly declared requirement without a renamed predecessor remains a real mismatch.
+// A newly declared requirement on the default branch without a renamed predecessor remains a real mismatch.
 func TestAuditLiveBranchProtection_Negative_NewCheckWithoutRenameFails(t *testing.T) {
 	stub := &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active")}
 	f := protectedFixture(t, false, "", stub)
-	f.recordOriginMain(t)
 	f.commitWorkflows(t, map[string]string{"lint.yml": prJobWorkflow("Lint")})
+	f.recordOriginMain(t)
 	out, err := f.audit(t)
 	mustErrContain(t, err, "Required status checks: declared 2, live 1 of 2 required; missing: Lint")
 	if strings.Contains(out, "pending required status check rename") {
 		t.Fatal("an added check was mistaken for a rename")
 	}
+}
+
+const codeqlMatrixWorkflow = "on:\n  push:\n    branches: [main]\n  pull_request:\njobs:\n  analyze:\n    name: analyze (${{ matrix.language }})\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        language: [python, actions]\n    steps:\n      - run: make\n"
+
+func completedMainRunsPage() map[string]any {
+	return map[string]any{
+		"total_count": 1,
+		"workflow_runs": []any{map[string]any{
+			"run_number": 1, "event": "push", "head_branch": "main",
+			"status": "completed", "conclusion": "success",
+			"created_at": "2026-11-02T05:00:00Z", "html_url": "https://forge.test/r/1",
+		}},
+	}
+}
+
+// Positive, negative and boundary: declared required checks whose workflow is not on the default
+// branch yet (or has no run on it) are excused as not compared yet whether proven from origin/main
+// (state A), from the forge default-branch workflow-run read (state B), or without origin/main in
+// the checkout (boundary); a check main reports that the ruleset lacks still fails (negative).
+func TestAuditLiveBranchProtection_UnreportedDefaultBranchChecks(t *testing.T) {
+	t.Run("positive state A origin/main lacks workflow", func(t *testing.T) {
+		stub := &forgeStub{
+			rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active"),
+			runs:     map[string]map[string]any{"ci.yml": completedMainRunsPage()},
+		}
+		f := protectedFixture(t, false, "", stub)
+		f.recordOriginMain(t)
+		f.commitWorkflows(t, map[string]string{"codeql.yml": codeqlMatrixWorkflow})
+		out, err := f.audit(t)
+		if err != nil {
+			t.Fatalf("state A failed the audit: %v\n%s", err, out)
+		}
+		mustContain(t, out,
+			"[INFO] Live branch protection of main: status checks compared with the ones origin/main (",
+			"[INFO] Live branch protection of main: not compared yet, as origin/main does not report them: analyze (python), analyze (actions). Once they are on main, 'praetorctl sync --remote' requires them.",
+			"[PASS] Live branch protection of main compared with the forge")
+	})
+
+	t.Run("positive state B forge default branch lacks workflow", func(t *testing.T) {
+		stub := &forgeStub{
+			rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active"),
+			runs:     map[string]map[string]any{"ci.yml": completedMainRunsPage()},
+		}
+		f := protectedFixture(t, false, "", stub)
+		f.commitWorkflows(t, map[string]string{"codeql.yml": codeqlMatrixWorkflow})
+		f.recordOriginMain(t)
+		out, err := f.audit(t)
+		if err != nil {
+			t.Fatalf("state B failed the audit: %v\n%s", err, out)
+		}
+		mustContain(t, out,
+			"[INFO] Workflow codeql.yml: the forge has no workflow of this file name; it is not on the default branch yet",
+			"[INFO] Live branch protection of main: status checks compared with the ones origin/main (",
+			"[INFO] Live branch protection of main: not compared yet, as origin/main does not report them: analyze (python), analyze (actions). Once they are on main, 'praetorctl sync --remote' requires them.",
+			"[PASS] Live branch protection of main compared with the forge")
+	})
+
+	t.Run("negative reported check missing from ruleset fails", func(t *testing.T) {
+		stub := &forgeStub{
+			rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active"),
+			runs: map[string]map[string]any{
+				"ci.yml":     completedMainRunsPage(),
+				"codeql.yml": completedMainRunsPage(),
+			},
+		}
+		f := protectedFixture(t, false, "", stub)
+		f.commitWorkflows(t, map[string]string{"codeql.yml": codeqlMatrixWorkflow})
+		f.recordOriginMain(t)
+		out, err := f.audit(t)
+		mustErrContain(t, err, "Required status checks: declared 3, live 1 of 3 required; missing: analyze (python), analyze (actions)")
+		if strings.Contains(out, "not compared yet") {
+			t.Fatalf("a check reported on main was excused as not compared yet:\n%s", out)
+		}
+	})
+}
+
+func TestAuditLiveBranchProtection_Boundary_NoOriginMainForgeReadDecides(t *testing.T) {
+	unreported := &forgeStub{
+		rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active"),
+		runs:     map[string]map[string]any{"ci.yml": completedMainRunsPage()},
+	}
+	f := protectedFixture(t, false, "", unreported)
+	f.commitWorkflows(t, map[string]string{"codeql.yml": codeqlMatrixWorkflow})
+	out, err := f.audit(t)
+	if err != nil {
+		t.Fatalf("boundary without origin/main and workflow absent on forge failed: %v\n%s", err, out)
+	}
+	mustContain(t, out,
+		"[INFO] Workflow codeql.yml: the forge has no workflow of this file name; it is not on the default branch yet",
+		"[INFO] Live branch protection of main: origin/main is not in this checkout, so status checks are compared with the ones the forge default branch (main) reports.",
+		"[INFO] Live branch protection of main: not compared yet, as origin/main does not report them: analyze (python), analyze (actions). Once they are on main, 'praetorctl sync --remote' requires them.",
+		"[PASS] Live branch protection of main compared with the forge")
+
+	reported := &forgeStub{
+		rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active"),
+		runs: map[string]map[string]any{
+			"ci.yml":     completedMainRunsPage(),
+			"codeql.yml": completedMainRunsPage(),
+		},
+	}
+	f2 := protectedFixture(t, false, "", reported)
+	f2.commitWorkflows(t, map[string]string{"codeql.yml": codeqlMatrixWorkflow})
+	out, err = f2.audit(t)
+	mustErrContain(t, err, "Required status checks: declared 3, live 1 of 3 required; missing: analyze (python), analyze (actions)")
+	mustContain(t, out, "[INFO] Live branch protection of main: origin/main is not in this checkout, so status checks are compared with the ones the forge default branch (main) reports.")
 }
 
 // A deleted requirement on the fetched base no longer defines the declaration at HEAD.
