@@ -81,6 +81,7 @@ func printUsage() {
 // printCoreCommands lists the repository-scoped commands. The listing is split across two
 // functions to stay inside the HISS-04 statement bound rather than suppressing it.
 func printCoreCommands() {
+	fmt.Println("  pr                 Wait for own pull request reviews or terminal checks")
 	fmt.Println("  init               Scaffold configuration, baseline, and agent context for new repo")
 	fmt.Println("  compile-context    Transpile canonical AGENTS.md to vendor-native formats (< 300 LOC)")
 	fmt.Println("  compile-framework-assets  Write a framework kit's llms.txt, agent rule and starter templates")
@@ -236,6 +237,7 @@ func commandTable() map[string]commandFunc {
 // coreCommandTable holds the repository-scoped commands (see printCoreCommands).
 func coreCommandTable() map[string]commandFunc {
 	return map[string]commandFunc{
+		"pr":                       runPR,
 		"init":                     runInit,
 		"compile-context":          runCompileContext,
 		"compile-framework-assets": runCompileFrameworkAssets,

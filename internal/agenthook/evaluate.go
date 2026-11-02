@@ -10,8 +10,8 @@ import (
 )
 
 // Evaluation budgets (3.3 of the rollout spec), each inside its registration's own timeout
-// (registrations.go). Stop nests two of its own: state verification, then the checkpoint due
-// check; budgetFor sums them for the one outer deadline Run applies.
+// (registrations.go). Stop sums review, state and checkpoint budgets for the outer
+// deadline Run applies; the question check performs no I/O.
 const (
 	preToolBudget        = 10 * time.Second
 	preEditBudget        = 10 * time.Second
@@ -43,7 +43,7 @@ func budgetFor(event Event) time.Duration {
 	case EventPostTool:
 		return postToolBudget
 	case EventStop:
-		return stateVerifyBudget + stopCheckpointBudget
+		return stopReviewBudget + stateVerifyBudget + stopCheckpointBudget
 	case EventEnvironment:
 		return environmentBudget
 	default:
@@ -262,31 +262,41 @@ func evaluatePostTool(ctx context.Context, canonical Canonical, root string, in 
 }
 
 // evaluateStop runs every stop check on each pass: the prose-question check
-// (stop_question.go, no I/O), the state ledger verify and the checkpoint (3.3: a stale or
+// (stop_question.go, no I/O), own PR reviews, the state ledger verify and the checkpoint (3.3: a stale or
 // unverifiable ledger blocks on its own, independent of whether a checkpoint is due). On the
 // first pass one deny lists each failing check, so the single continuation a block-once stop
 // grants is not spent on the question alone. On the repeated pass (StopActive) the question
 // is a stated skip and a still-failing ledger or checkpoint halts, naming what remains.
 // The question's stated skip survives an otherwise clean stop.
 func evaluateStop(ctx context.Context, row Registration, root string, canonical Canonical, in Invocation) Verdict {
+	reviews := evaluateStopReviewThreads(ctx, root)
 	question := evaluateStopQuestion(row, canonical)
 	ledger := evaluateStopLedger(ctx, root, canonical)
 	checkpoint := evaluateStopCheckpoint(ctx, root, canonical, in)
+	checks := []Verdict{question, ledger, checkpoint, reviews}
 	var denies []Verdict
-	for _, v := range []Verdict{question, ledger, checkpoint} {
+	for _, v := range checks {
 		if v.Outcome == Deny {
 			denies = append(denies, v)
 		}
 	}
 	if len(denies) > 0 {
-		return joinStopDenies(denies)
+		return withStopSkips(joinStopDenies(denies), checks)
 	}
-	for _, v := range []Verdict{ledger, checkpoint} {
-		if v.Outcome != Allow {
-			return v
+	return withStopSkips(Verdict{Outcome: Allow}, checks)
+}
+
+// Preserve every stated skip, including a failed review read alongside another deny.
+func withStopSkips(verdict Verdict, checks []Verdict) Verdict {
+	for _, check := range checks {
+		if check.Outcome == Skip {
+			if verdict.Outcome == Allow {
+				verdict.Outcome = Skip
+			}
+			verdict.Reason = strings.TrimSpace(verdict.Reason + " " + check.Reason)
 		}
 	}
-	return question
+	return verdict
 }
 
 // joinStopDenies merges every failing stop check into one deny: the first reason leads and
