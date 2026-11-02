@@ -313,6 +313,18 @@ class GateIdentityRegressions(unittest.TestCase):
                         checkpoint, "_gate_process_identity", return_value=bad, create=True):
                     self.assertFalse(checkpoint._is_gate_scratch(scratch, {root}))
 
+    def test_no_proc_live_gate_is_live_or_unverified(self):
+        for executable, expected in (("/usr/bin/standardsctl", True),
+                                     ("standardsctl", None)):
+            ps = f"1000 Mon Nov  2 03:00:00 2026 {executable}\n".encode()
+            with self.subTest(executable=executable), mock.patch.object(
+                checkpoint, "run_bounded", side_effect=[ps, b"standardsctl gate\n"]
+            ), mock.patch.object(Path, "open", side_effect=FileNotFoundError), \
+                    mock.patch.object(Path, "readlink", side_effect=FileNotFoundError), \
+                    mock.patch.object(checkpoint, "_trusted_gate_executable",
+                                      side_effect=lambda path, paths: path.is_absolute()):
+                self.assertIs(checkpoint._live_gate_pid(123), expected)
+
     def test_proc_unavailable_uses_bounded_platform_process_identity(self):
         ps = b"1000 Mon Nov  2 03:00:00 2026 /usr/bin/standardsctl\n"
         with mock.patch.object(checkpoint, "run_bounded", side_effect=[

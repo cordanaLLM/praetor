@@ -63,7 +63,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"2c08cd616a4a2d53bcbdc2a4e3bb8a4fc235a718dd0913c53d95f9943b53eb6c": "stop checkpoint finds recent unnamed worktrees",
 		"d3b85026905c9006b1ddd063550d673db0fd0e46639a499943f8934b79b89192": "checkpoint evaluator passes ruff PLR rules",
 		"80a0a2da3dc2222e12b5c70ab7bc442fae586f1d06d5bdcb0516df3c20a144ca": "stop checkpoint counts session-owned worktrees and ignores gate scratch",
-		"22e43518b8bf33976d0eba758694ed7380c0af3b17e56cfc591fcb6b9889ea7e": "reviewed hook findings",
+		"63fc2846b42a3eabec586c505476c320d36dac3971e732ac68befd8e7addc2c2": "reviewed hook findings",
 	},
 	checkpointCommon: {
 		"daf13baf16b776de9a976809a7e064971fd5946ed4508761c229dba0ef4b4e65": "Go hooks share session ownership and verify live gate scratch owners",

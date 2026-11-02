@@ -743,7 +743,9 @@ def _gate_process_identity(pid):
     try:
         executable = Path(f"/proc/{pid}/exe").readlink()
     except OSError:
-        pass  # BSD/macOS ps comm supplies the executable path without /proc.
+        # A basename from ps cannot establish which executable owns this PID.
+        if not executable.is_absolute():
+            raise ValueError("gate executable identity unavailable") from None
     return started, int(fields[0]), executable, _gate_process_argv(pid, env)
 
 

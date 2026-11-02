@@ -21,7 +21,7 @@ import (
 // fails until a changed script is recorded in both.
 var currentCheckpointDigests = map[string]string{
 	checkpointSessionModule: "b24356ce3ea35a2e4ef9e52e1b7374e52d5d81dd15494ec3c2ff657348d9a3f2",
-	checkpointScript:        "22e43518b8bf33976d0eba758694ed7380c0af3b17e56cfc591fcb6b9889ea7e",
+	checkpointScript:        "63fc2846b42a3eabec586c505476c320d36dac3971e732ac68befd8e7addc2c2",
 	checkpointCommon:        "50ca0eb9f96247a622cf47ca6fb9b8ee648ec35c11f6dd6105338a6db6f270a5",
 	checkpointLauncher:      "577b85ce8fa4eb90aae8fa84b251ed828315baf5a20f5f249e346b74f49df622",
 }
