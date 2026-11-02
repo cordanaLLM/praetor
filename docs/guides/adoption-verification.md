@@ -2628,15 +2628,17 @@ Its source is
   (`TestAdoptedFor`).
 
   The line above the table names generated gates and any working-tree gates adoption keeps:
-  a preserved or working-tree `make verify-all` target and an existing `lefthook.yml` (generated
-  or repository-owned). Repository-owned gates are marked `(unread)` and earn no adopted-check
-  cell credit; only generated gates earn that credit. `--force` does not change this distinction,
-  and when `AGENTS.md` carries a repository-owned invariant/gate table (outside the generated
-  `Adopted check` table) or repository text in the `<!-- praetor:config -->` band outside the
-  `<!-- praetor:register:start -->` .. `<!-- praetor:register:end -->` markers, `--force` keeps
-  those sections byte-for-byte (`TestAdoptForcePreservesRepositoryOwnedHarness`). The legend
-  says `none:` only when neither `Makefile` `verify-all` nor `lefthook.yml` exists in the
-  working tree or is generated (`TestAdoptHarnessRepositoryOwnedGates`, order
+  a preserved or working-tree `make verify-all` target and an existing or generated `lefthook.yml`
+  (active, `(inactive)` when `lefthook` did not run or hook activation was skipped, or
+  `repository-owned ... (unread)`). Neither `(inactive)` nor `(unread)` gates earn adopted-check
+  cell credit; only active generated gates earn that credit. `--force` does not change this
+  distinction, and when `AGENTS.md` carries a repository-owned invariant/gate table (outside the
+  current or legacy generated invariant table) or repository text in the `<!-- praetor:config -->`
+  band outside the `<!-- praetor:register:start -->` .. `<!-- praetor:register:end -->` markers
+  (including a config band with no register block yet), `--force` keeps those sections
+  byte-for-byte (`TestAdoptForcePreservesRepositoryOwnedHarness`). The legend says `none:` only
+  when neither `Makefile` `verify-all` nor `lefthook.yml` exists in the working tree or is
+  generated (`TestAdoptHarnessRepositoryOwnedGates`, order
   `engine-adopt-force-gate-detect-20261027-refinement-20261101`). A later edit to the `Makefile`
   or `lefthook.yml` is not reflected in the table.
   Rule 5 claims hooks only when lefthook

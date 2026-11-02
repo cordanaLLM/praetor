@@ -310,6 +310,8 @@ func adoptedCheckLegend(facts harnessFacts) string {
 	}
 	if pipelines&hisscatalog.PipelineLefthook != 0 {
 		gates = append(gates, "praetor `"+lefthookFile+"`")
+	} else if facts.hooks == hooksInactive {
+		gates = append(gates, "praetor `"+lefthookFile+"` (inactive)")
 	}
 	if facts.repositoryOwned&hisscatalog.PipelineVerifyAll != 0 {
 		gates = append(gates, "repository-owned `"+verifyCommand+"` (unread)")
