@@ -136,7 +136,7 @@ jobs:
         run: |
           REASON="gate unreadable: no trusted helper on the default branch"
           if [ -f .review-gate/scripts/ci_review_gate.py ]; then
-            PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
+            if command -v python3 >/dev/null 2>&1; then PYTHON=python3; elif command -v python >/dev/null 2>&1; then PYTHON=python; else PYTHON=""; fi
             verdict="$(mktemp)"
             if [ -n "$PYTHON" ] && GITHUB_OUTPUT="$verdict" "$PYTHON" -I -B .review-gate/scripts/ci_review_gate.py gate --pr "$PR_NUMBER" --head "$PR_HEAD"; then
               if [ "$PLANNED_CLEAR" = true ] && grep -qx 'clear=true' "$verdict"; then
@@ -609,7 +609,7 @@ jobs:
         run: |
           REASON="gate unreadable: no trusted helper on the default branch"
           if [ -f .review-gate/scripts/ci_review_gate.py ]; then
-            PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
+            if command -v python3 >/dev/null 2>&1; then PYTHON=python3; elif command -v python >/dev/null 2>&1; then PYTHON=python; else PYTHON=""; fi
             verdict="$(mktemp)"
             if [ -n "$PYTHON" ] && GITHUB_OUTPUT="$verdict" "$PYTHON" -I -B .review-gate/scripts/ci_review_gate.py gate --pr "$PR_NUMBER" --head "$PR_HEAD"; then
               if [ "$PLANNED_CLEAR" = true ] && grep -qx 'clear=true' "$verdict"; then
