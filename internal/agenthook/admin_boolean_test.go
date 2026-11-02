@@ -9,9 +9,10 @@ func TestAdminMergeBooleanSpellings(t *testing.T) {
 	for _, value := range []string{"1", "t", "T", "true", "True", "TRUE", "tRuE"} {
 		for _, command := range []string{"gh pr merge 123 --admin=", "gh --admin=", "gh pr --admin="} {
 			text := command + value
-			if command == "gh --admin=" {
+			switch command {
+			case "gh --admin=":
 				text += " pr merge 123"
-			} else if command == "gh pr --admin=" {
+			case "gh pr --admin=":
 				text += " merge 123"
 			}
 			if got := policy(t).Command(text); got.Outcome != Deny {
