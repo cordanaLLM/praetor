@@ -194,10 +194,14 @@ func evaluateCommand(ctx context.Context, canonical Canonical, root string, in I
 	if canonical.Command == "" {
 		return Verdict{Outcome: Allow}
 	}
-	if verdict := in.Policy.CommandIn(ctx, canonical.Command, commandBase(canonical, in.WorkDir)); verdict.Outcome != Allow {
+	verdict := in.Policy.CommandIn(ctx, canonical.Command, commandBase(canonical, in.WorkDir))
+	if verdict.Outcome != Allow {
 		return verdict
 	}
-	return evaluateForgeTextRefs(ctx, canonical, root, in)
+	if forgeVerdict := evaluateForgeTextRefs(ctx, canonical, root, in); forgeVerdict.Outcome != Allow {
+		return forgeVerdict
+	}
+	return verdict
 }
 
 // noInterpreterVerdict differs per event (3.3): pre-edit and stop fail closed (deny; stop's

@@ -1040,3 +1040,110 @@ func runAgyPreToolWithPolicy(t *testing.T, pol *Policy, workDir string, workspac
 		Getenv: noEnvironment, WorkDir: workDir, Policy: pol,
 	})
 }
+
+const uncategorizedExceptionManifest = `version: 1
+repository:
+  forge: forgejo
+exceptions:
+  - rule: HISS-04
+    path: internal/foo.go
+    reason: legacy complexity pending split
+    expires: "2027-01-01"
+`
+
+// Planted negative, positive and boundary (order engine-push-target-manifest-defect-20261102):
+// a manifest with an exception missing its category does not block push target resolution while
+// still refusing a push to a branch headed by a merged pull request; a malformed manifest falls
+// back to the remote host and reports a non-blocking finding naming the manifest; and a valid
+// manifest declaring forgejo still resolves forgejo.
+func TestAdmission_GitPushHead_Planted_ManifestDefectDoesNotBlock(t *testing.T) {
+	ctx := context.Background()
+	repo := defaultAdmissionRepo(t)
+	manifestFile := filepath.Join(repo, config.ManifestFileName)
+	if err := os.WriteFile(manifestFile, []byte(uncategorizedExceptionManifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotTargets []PushTarget
+	pol := admissionPolicy(t).WithAdmissionPullRequests(repo, func(_ context.Context, target PushTarget) ([]forge.PullRequestHead, error) {
+		gotTargets = append(gotTargets, target)
+		if target.Branch == "merged-topic" {
+			return []forge.PullRequestHead{{Number: 42, State: forge.PullRequestStateMerged, HeadBranch: "merged-topic"}}, nil
+		}
+		return nil, nil
+	})
+
+	for _, cmd := range []string{
+		"PRAETOR_ADMIT=git-push git push -u origin feature-branch",
+		"praetorctl admit --label git-push -- git push -u origin feature-branch",
+	} {
+		v := pol.CommandIn(ctx, cmd, repo)
+		if v.Outcome != Allow || v.Notice != "" {
+			t.Fatalf("%q with uncategorized exception: outcome=%v reason=%q notice=%q", cmd, v.Outcome, v.Reason, v.Notice)
+		}
+	}
+	requireDeniedContaining(t, "uncategorized exception + merged PR branch",
+		pol.CommandIn(ctx, "PRAETOR_ADMIT=git-push git push -u origin merged-topic", repo),
+		"#42", "MERGED", "push to a new branch")
+
+	assertMalformedManifestFallbackAndNotice(t, pol, repo, manifestFile)
+	assertDeclaredForgejoResolution(t, pol, &gotTargets)
+}
+
+// assertMalformedManifestFallbackAndNotice verifies that a malformed .standards.yaml falls back to
+// the remote hostname with a non-blocking notice while still refusing merged pull request heads.
+func assertMalformedManifestFallbackAndNotice(t *testing.T, pol *Policy, repo, manifestFile string) {
+	t.Helper()
+	ctx := t.Context()
+	if err := os.WriteFile(manifestFile, []byte("version: [\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	v := pol.CommandIn(ctx, "PRAETOR_ADMIT=git-push git push -u origin feature-branch", repo)
+	if v.Outcome != Allow || !strings.Contains(v.Notice, config.ManifestFileName) {
+		t.Fatalf("malformed manifest push: outcome=%v reason=%q notice=%q, want Allow with notice naming %s",
+			v.Outcome, v.Reason, v.Notice, config.ManifestFileName)
+	}
+	requireDeniedContaining(t, "malformed manifest + merged PR branch",
+		pol.CommandIn(ctx, "PRAETOR_ADMIT=git-push git push -u origin merged-topic", repo),
+		"#42", "MERGED", "push to a new branch")
+
+	claudePayload := commandPayload(t, map[string]any{
+		"cwd":        repo,
+		"tool_input": map[string]any{"command": "PRAETOR_ADMIT=git-push git push -u origin feature-branch"},
+	})
+	claudeResp := Run(ctx, Invocation{
+		Client: "claude", Event: "pre-tool", Stdin: strings.NewReader(string(claudePayload)),
+		Getenv: noEnvironment, WorkDir: repo, Policy: pol,
+	})
+	if claudeResp.ExitCode != 0 || !strings.Contains(string(claudeResp.Stderr), config.ManifestFileName) {
+		t.Fatalf("claude pre-tool with malformed manifest: exit=%d stderr=%q", claudeResp.ExitCode, claudeResp.Stderr)
+	}
+	agyResp := runAgyPreToolWithPolicy(t, pol, repo, []string{repo}, "PRAETOR_ADMIT=git-push git push -u origin feature-branch")
+	if !agyStdoutAllows(t, "pre-tool", agyResp) || !strings.Contains(string(agyResp.Stdout), config.ManifestFileName) {
+		t.Fatalf("agy pre-tool with malformed manifest: stdout=%q", agyResp.Stdout)
+	}
+}
+
+// assertDeclaredForgejoResolution verifies that a valid .standards.yaml declaring repository.forge:
+// forgejo on a custom host resolves config.ForgeForgejo and its origin host.
+func assertDeclaredForgejoResolution(t *testing.T, pol *Policy, gotTargets *[]PushTarget) {
+	t.Helper()
+	ctx := t.Context()
+	customRepo := t.TempDir()
+	initAdmissionRepo(t, customRepo, "feature-branch", "https://git.example.com/acme/widgets.git")
+	validForgejoManifest := "version: 1\nrepository:\n  forge: forgejo\n"
+	if err := os.WriteFile(filepath.Join(customRepo, config.ManifestFileName), []byte(validForgejoManifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	*gotTargets = nil
+	v := pol.CommandIn(ctx, "PRAETOR_ADMIT=git-push git push -u origin feature-branch", customRepo)
+	if v.Outcome != Allow || v.Notice != "" {
+		t.Fatalf("valid forgejo manifest push: outcome=%v reason=%q notice=%q", v.Outcome, v.Reason, v.Notice)
+	}
+	if len(*gotTargets) != 1 || (*gotTargets)[0].Forge != config.ForgeForgejo {
+		t.Fatalf("valid forgejo manifest resolved %+v, want ForgeForgejo", *gotTargets)
+	}
+	if host := declaredForgejoHost(ctx, customRepo); host != "git.example.com" {
+		t.Fatalf("declaredForgejoHost = %q, want git.example.com", host)
+	}
+}
