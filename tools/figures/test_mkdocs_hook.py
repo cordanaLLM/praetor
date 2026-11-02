@@ -605,6 +605,9 @@ class Hook(unittest.TestCase):
             "adopter/praetor-fork?x=1",
             "adopter/praetor-fork#frag",
         ]
+        self._assert_bad_repositories(bad_repositories)
+
+    def _assert_bad_repositories(self, bad_repositories):
         for repository in bad_repositories:
             with (
                 self.subTest(repository=repository),
@@ -615,6 +618,8 @@ class Hook(unittest.TestCase):
                     "v1.4.0",
                     "figures-player.tar.gz",
                 )
+
+    def test_lock_release_url_restricts_release_and_asset_segments(self):
         bad_segments = [
             "",
             ".",
@@ -637,6 +642,8 @@ class Hook(unittest.TestCase):
                 self.assertRaises(mkdocs_hook.CheckError),
             ):
                 mkdocs_hook.release_archive_url({}, "v1.4.0", segment)
+
+    def test_download_refuses_urls_outside_the_release_origin(self):
         bad_download_urls = [
             "https://evil.example/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz",
             "https://github.com.evil.example/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz",
@@ -703,7 +710,9 @@ class Hook(unittest.TestCase):
                 self.subTest(bad_redirect=target),
                 self.assertRaises(mkdocs_hook.CheckError),
             ):
-                handler.redirect_request(Request(valid_url), None, 302, "Found", {}, target)
+                handler.redirect_request(
+                    Request(valid_url), None, 302, "Found", {}, target
+                )
             with (
                 self.subTest(redirected_response=target),
                 mock.patch.object(
