@@ -165,7 +165,13 @@ func TestExceptionMigrationReasonAndExistingFields(t *testing.T) {
 
 // TestExceptionEnteredBlame pins resolving the entered date and commit source from git blame history.
 func TestExceptionEnteredBlame(t *testing.T) {
-	today := ExceptionDay(time.Now())
+	// Serial: time.Local is process-wide; restore it before other tests run.
+	local := time.Local
+	t.Cleanup(func() { time.Local = local })
+	time.Local = time.FixedZone("plus-one", 3600)
+	// testdate: fact — 2026-11-02 23:30 UTC is November 3 in plus-one.
+	const instant int64 = 1793662200
+	today := ExceptionDay(time.Unix(instant, 0))
 	path := migrationManifest(t, legacyMigrationEntry(5, "migration", today))
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -179,7 +185,14 @@ func TestExceptionEnteredBlame(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	commit, err := util.RunGit(ctx, dir, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit-tree", tree, "-m", "fixture")
+	date := fmt.Sprintf("%d +0000", instant)
+	commitCtx, err := util.WithCommandEnvironment(ctx, util.InheritedEnvironment([]string{
+		"GIT_COMMITTER_DATE=" + date, "GIT_AUTHOR_DATE=" + date,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit, err := util.RunGit(commitCtx, dir, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit-tree", tree, "-m", "fixture")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +203,7 @@ func TestExceptionEnteredBlame(t *testing.T) {
 	if err != nil || len(proposals) != 1 {
 		t.Fatalf("proposals=%+v err=%v", proposals, err)
 	}
-	if proposals[0].Source != "git-blame:"+commit || proposals[0].Entry.Entered != today.Format(ExceptionDateLayout) {
+	if proposals[0].Source != "git-blame:"+commit || proposals[0].Entry.Entered != ExceptionDay(time.Unix(instant, 0)).Format(ExceptionDateLayout) {
 		t.Fatalf("history ignored: %+v", proposals[0])
 	}
 }

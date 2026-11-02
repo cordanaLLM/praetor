@@ -151,7 +151,7 @@ func enteredFromBlame(output string, today time.Time) (string, string) {
 		if stamp, ok := strings.CutPrefix(lines[i], "committer-time "); ok {
 			seconds, err := strconv.ParseInt(stamp, 10, 64)
 			if err == nil {
-				return time.Unix(seconds, 0).UTC().Format(ExceptionDateLayout), "git-blame:" + header[0]
+				return ExceptionDay(time.Unix(seconds, 0)).Format(ExceptionDateLayout), "git-blame:" + header[0]
 			}
 		}
 	}
