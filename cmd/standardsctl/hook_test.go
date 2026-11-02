@@ -258,6 +258,8 @@ func TestHookProcessAdmissionCheck(t *testing.T) {
 	}
 }
 
+// TestHookClaudeIsolatedPushAdmission verifies that unadmitted push commands are refused
+// when isolated push admission is enforced.
 func TestHookClaudeIsolatedPushAdmission(t *testing.T) {
 	settings := config.HookSettings{Admission: config.AdmissionSettings{Enforce: true}}
 	policy, err := agenthook.BuildPolicy(settings)
@@ -271,9 +273,7 @@ func TestHookClaudeIsolatedPushAdmission(t *testing.T) {
 		}, nil
 	}, 32)
 	root := hookRepository(t, true)
-	if _, err := util.RunGitProbe(context.Background(), root, 4096, "remote", "add", "origin", "https://github.com/acme/widgets.git"); err != nil {
-		t.Fatal(err)
-	}
+	testsupport.RunFixtureGit(t, root, []string{"remote", "add", "origin", "https://github.com/acme/widgets.git"})
 	policy.WithAdmissionPullRequests(root, func(context.Context, agenthook.PushTarget) ([]forge.PullRequestHead, error) {
 		return nil, nil
 	})
