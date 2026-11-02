@@ -5,7 +5,9 @@
 package main
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 )
@@ -75,17 +77,18 @@ jobs:
     steps:
       - run: echo "build"
 `)
-	manifestContent := fixtureManifest("acme", "widgets", false) + `exceptions:
+	expires := time.Now().AddDate(0, 0, 14).Format(config.ExceptionDateLayout)
+	manifestContent := fixtureManifest("acme", "widgets", false) + fmt.Sprintf(`exceptions:
   - rule: "declared-linters"
     tool: "gitleaks"
     reason: "scheduled for next quarter"
-    expires: "2026-11-01"
-`
+    expires: %q
+`, expires)
 	writeFixtureFile(t, f.dir, ".standards.yaml", manifestContent)
 	out, err = f.audit(t)
 	if err != nil {
 		t.Fatalf("expected audit pass when gitleaks is excused by exception, got: %v\nOutput: %s", err, out)
 	}
 	mustContain(t, out, "[PASS] Declared linters: 0 declared linters run; 1 excepted:")
-	mustContain(t, out, "gitleaks, excepted until 2026-11-01")
+	mustContain(t, out, "gitleaks, excepted until "+expires)
 }
