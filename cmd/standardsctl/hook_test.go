@@ -13,6 +13,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/agenthook"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/sentinel"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -269,6 +270,12 @@ func TestHookClaudeIsolatedPushAdmission(t *testing.T) {
 		}, nil
 	}, 32)
 	root := hookRepository(t, true)
+	if _, err := util.RunGitProbe(context.Background(), root, 4096, "remote", "add", "origin", "https://github.com/acme/widgets.git"); err != nil {
+		t.Fatal(err)
+	}
+	policy.WithAdmissionPullRequests(root, func(context.Context, agenthook.PushTarget) ([]forge.PullRequestHead, error) {
+		return nil, nil
+	})
 	for _, tc := range []struct {
 		command string
 		exit    int

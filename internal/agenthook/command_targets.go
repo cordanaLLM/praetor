@@ -33,8 +33,9 @@ func resolveCommandRoot(ctx context.Context, root string, canonical Canonical, i
 // commandTargetRoot statically derives targets only when payload governance would skip under
 // governed scope. It reuses forge's shell reader, never executes the command, and recognizes
 // git global -C/--git-dir/--work-tree, leading GIT_DIR/GIT_WORK_TREE assignments, cd/pushd
-// command words and env -C/--chdir. Relative paths use the first nonempty payload workspace,
-// else Invocation.WorkDir; repeated git -C paths chain like Git, including an empty -C.
+// command words and env -C/--chdir. Relative paths use the dialect-provided command directory
+// (Canonical.CommandDir), else Invocation.WorkDir; repeated git -C paths chain like Git,
+// including an empty -C.
 // Git directory options use the final -C directory. Other commands start from the payload
 // directory: this is target discovery, not shell state simulation. One matching outer quote
 // pair is stripped; escapes remain literal, preserving Windows path separators. Remaining
@@ -106,10 +107,8 @@ func governedCommandTarget(ctx context.Context, targets []commandTarget) string 
 }
 
 func commandBase(canonical Canonical, workDir string) string {
-	for i := 0; i < len(canonical.Workspaces) && i < maxWorkspaces; i++ {
-		if canonical.Workspaces[i] != "" {
-			return canonical.Workspaces[i]
-		}
+	if canonical.CommandDir != "" {
+		return canonical.CommandDir
 	}
 	return workDir
 }

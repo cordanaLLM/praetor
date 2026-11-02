@@ -426,7 +426,8 @@ func (p *Policy) Command(command string) Verdict {
 	return p.CommandIn(ctx, command, p.workDir)
 }
 
-// CommandIn judges one proposed command line with the hook's working directory workDir.
+// CommandIn judges one proposed command line with the hook's working directory workDir, which
+// also serves the steps that inspect a repository checkout (such as git push target resolution).
 func (p *Policy) CommandIn(ctx context.Context, command, workDir string) Verdict {
 	if p == nil {
 		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] no command policy is loaded"}
@@ -443,7 +444,7 @@ func (p *Policy) CommandIn(ctx context.Context, command, workDir string) Verdict
 		}
 	}
 	if p.admission != nil {
-		if verdict := p.admission.judge(command); verdict.Outcome != Allow {
+		if verdict := p.admission.judgeInDir(ctx, workDir, command); verdict.Outcome != Allow {
 			return verdict
 		}
 	}
