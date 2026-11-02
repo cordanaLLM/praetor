@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -197,8 +198,11 @@ func defaultPullRequestHeadReader(ctx context.Context, target PushTarget) ([]for
 
 // declaredForgejoHost resolves the repository's declared Forgejo host from origin remote when forge is declared.
 func declaredForgejoHost(ctx context.Context, repoDir string) string {
-	declared, err := declaredManifestForge(repoDir)
-	if err != nil || declared != config.ForgeForgejo {
+	declared, err := declaredManifestForge(ctx, repoDir)
+	if err != nil && declared == "" {
+		return ""
+	}
+	if declared != config.ForgeForgejo {
 		return ""
 	}
 	origin, err := util.ReadOriginRemote(ctx, repoDir)
@@ -273,10 +277,10 @@ func (c *admissionCheck) judgeInDir(ctx context.Context, workDir, command string
 	var notice string
 	for index := 0; index < len(segments) && index < admissionMaxSegments; index++ {
 		reason, segNotice := c.segment(ctx, workDir, strings.Fields(segments[index]))
-		if reason != "" {
-			return Verdict{Outcome: Deny, Reason: reason}
-		}
 		notice = appendLaneNotice(notice, segNotice)
+		if reason != "" {
+			return Verdict{Outcome: Deny, Reason: reason, Notice: notice}
+		}
 	}
 	return Verdict{Outcome: Allow, Notice: notice}
 }
@@ -528,7 +532,7 @@ func resolvePushTargets(ctx context.Context, baseDir string, gitArgs []string) (
 	}
 	remote, forgeKind, notice, err := resolvePushRemoteAndForge(ctx, repoDir, remoteName)
 	if err != nil {
-		return nil, "", false, err
+		return nil, notice, false, err
 	}
 	targets := make([]PushTarget, 0, len(branches))
 	for i := 0; i < len(branches) && i < admissionMaxWords; i++ {
@@ -947,21 +951,27 @@ func resolvePushRemoteAndForge(ctx context.Context, repoDir, remoteName string) 
 	if err != nil {
 		return util.GitRemote{}, "", "", err
 	}
-	forgeKind, notice, err := resolvePushForge(repoDir, remote)
+	forgeKind, notice, err := resolvePushForge(ctx, repoDir, remote)
 	if err != nil {
-		return util.GitRemote{}, "", "", err
+		return util.GitRemote{}, "", notice, err
 	}
 	return remote, forgeKind, notice, nil
 }
 
 // resolvePushForge resolves the forge kind from manifest declaration or remote hostname,
-// falling back to the remote hostname with a non-blocking notice when the manifest cannot be decoded.
-func resolvePushForge(repoDir string, remote util.GitRemote) (config.Forge, string, error) {
-	declared, err := declaredManifestForge(repoDir)
+// retaining usable declarations with a notice when unrelated manifest fields cannot be decoded.
+// An unknown host without a usable declaration is refused rather than assigned a guessed forge.
+func resolvePushForge(ctx context.Context, repoDir string, remote util.GitRemote) (config.Forge, string, error) {
+	declared, err := declaredManifestForge(ctx, repoDir)
 	var notice string
 	if err != nil {
-		notice = fmt.Sprintf("git push target resolution: %v; falling back to remote host %s", err, remote.Host)
-		declared = ""
+		notice = fmt.Sprintf("git push target resolution: %v; using repository.forge declaration %s", err, declared)
+		if declared == "" {
+			notice = fmt.Sprintf("git push target resolution: %v; falling back to remote host %s", err, remote.Host)
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return "", notice, err
+		}
 	}
 	if declared == "" && isForgejoHost(remote.Host) {
 		return config.ForgeForgejo, notice, nil
@@ -971,21 +981,21 @@ func resolvePushForge(repoDir string, remote util.GitRemote) (config.Forge, stri
 }
 
 // declaredManifestForge reads the forge declared in .standards.yaml if present through the
-// structural manifest decoder so policy validation does not block push target resolution.
-func declaredManifestForge(repoDir string) (config.Forge, error) {
+// structural decoder and a forge-only projection so unrelated policy types cannot block it.
+func declaredManifestForge(ctx context.Context, repoDir string) (config.Forge, error) {
 	manifestPath := filepath.Clean(filepath.Join(repoDir, config.ManifestFileName))
-	if !util.FileExists(manifestPath) {
+	data, err := readPushManifest(ctx, manifestPath, contextopt.ReadSnapshot)
+	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
 	}
-	data, err := util.ReadConfinedLimited(filepath.Dir(manifestPath), filepath.Base(manifestPath), contextopt.MaxSourceBytes)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", manifestPath, err)
 	}
-	manifest, err := config.DecodeManifest(data)
+	declared, err := decodePushManifestForge(data)
 	if err != nil {
-		return "", fmt.Errorf("read %s: %w", manifestPath, err)
+		return declared, fmt.Errorf("read %s: %w", manifestPath, err)
 	}
-	return manifest.Repository.Forge, nil
+	return declared, nil
 }
 
 // isForgejoHost checks whether a hostname indicates a Forgejo or Codeberg host.
