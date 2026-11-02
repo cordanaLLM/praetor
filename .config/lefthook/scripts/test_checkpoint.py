@@ -223,6 +223,28 @@ class SessionOwnershipRegressions(unittest.TestCase):
         with mock.patch.dict(os.environ, {checkpoint.SESSION_ENV: self.identity}):
             self.assertIsNone(checkpoint._session_owned_worktrees(self.common))
 
+    def test_malformed_session_records_make_ownership_unknown(self):
+        self.assertIs(checkpoint._read_session_record, sessions._read_session_record)
+        for raw in (b"[", b"\xff", b"[" * 2000 + b"]" * 2000,
+                    b"[" + b"9" * 5000 + b"]",
+                    json.dumps([str(self.base / "bad") + "\0"]).encode()):
+            with self.subTest(raw=raw[:40]):
+                self.record.write_bytes(raw)
+                self.assertIsNone(sessions._read_session_record(self.record))
+                with mock.patch.dict(os.environ, {checkpoint.SESSION_ENV: self.identity}):
+                    self.assertIsNone(checkpoint._session_owned_worktrees(self.common))
+                self.record_path(self.paths[0])
+                self.assertEqual(self.record.read_bytes(), raw)
+
+    def test_failed_session_write_cleans_up_or_reports_cleanup_failure(self):
+        with mock.patch.object(sessions.os, "replace", side_effect=OSError("replace failed")):
+            with self.assertRaisesRegex(OSError, "replace failed"):
+                sessions._write_session_record(self.directory, self.record, set())
+            self.assertEqual(list(self.directory.iterdir()), [])
+            with mock.patch.object(Path, "unlink", side_effect=PermissionError("cleanup failed")), \
+                    self.assertRaisesRegex(PermissionError, "cleanup failed"):
+                sessions._write_session_record(self.directory, self.record, set())
+
     def test_overflow_is_unknown_and_stays_unknown(self):
         paths = {str(self.base / str(n)) for n in range(sessions.MAX_WORKTREES + 1)}
         sessions._write_session_record(self.directory, self.record, paths)

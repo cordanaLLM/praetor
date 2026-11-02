@@ -157,7 +157,7 @@ def _read_session_record(record_file):
         if not all(isinstance(path, str) and Path(path).is_absolute() for path in data):
             return None
         return {str(Path(path).resolve(strict=True)) for path in data}
-    except (OSError, RuntimeError, json.JSONDecodeError, UnicodeDecodeError):
+    except (OSError, RuntimeError, ValueError):
         return None
 
 
@@ -177,10 +177,7 @@ def _write_session_record(sessions_dir, record_file, paths):
         tmp = None
     finally:
         if tmp is not None:
-            try:
-                tmp.unlink(missing_ok=True)
-            except OSError:
-                pass
+            tmp.unlink(missing_ok=True)
 
 
 @contextlib.contextmanager
