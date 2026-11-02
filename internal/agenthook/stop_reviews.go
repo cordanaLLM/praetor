@@ -79,7 +79,7 @@ func loadStopReviewCache(path, repo, head string, now time.Time) (Verdict, bool)
 	}
 	age := now.Sub(cache.CheckedAt)
 	valid := cache.Repository == repo && cache.Head == head && age >= 0 && age < stopReviewCacheTTL
-	if cache.Verdict.Outcome != Allow && cache.Verdict.Outcome != Deny && cache.Verdict.Outcome != Skip {
+	if cache.Verdict.Outcome != Allow && cache.Verdict.Outcome != Skip {
 		valid = false
 	}
 	return cache.Verdict, valid
@@ -109,22 +109,22 @@ func readStopReviews(ctx context.Context, reader forge.ReviewReader, repo string
 }
 
 func stopReviewVerdict(repo string, snapshot forge.ReviewSnapshot, now time.Time) Verdict {
-	count := 0
+	var threads []string
 	oldest := now
 	for _, thread := range snapshot.Threads {
 		if !thread.Resolved {
-			count++
+			threads = append(threads, fmt.Sprintf("%s:%d by %s", thread.Path, thread.Line, thread.Author))
 			if thread.CreatedAt.Before(oldest) {
 				oldest = thread.CreatedAt
 			}
 		}
 	}
-	if count == 0 {
+	if len(threads) == 0 {
 		return Verdict{Outcome: Allow}
 	}
-	return Verdict{Outcome: Deny, Reason: fmt.Sprintf("Own pull request %s#%d has %d unresolved review thread(s), oldest %s: "+
+	return Verdict{Outcome: Deny, Reason: fmt.Sprintf("Own pull request %s#%d has %d unresolved review thread(s), oldest %s (%s): "+
 		"take them as your next unit now: fix through a lane, reply with the evidence, resolve; no controller order is needed.",
-		repo, snapshot.Number, count, forge.ReviewAge(now, oldest))}
+		repo, snapshot.Number, len(threads), forge.ReviewAge(now, oldest), strings.Join(threads, ", "))}
 }
 
 func joinReviewDenies(denies []Verdict) Verdict {

@@ -171,7 +171,7 @@ func dispatch(ctx context.Context, row Registration, canonical Canonical, root s
 	}
 	if !checkpointWired(row.Client) {
 		if row.Event == EventStop {
-			return evaluateStopQuestion(row, canonical)
+			return mergeStopChecks(evaluateStopQuestion(row, canonical), evaluateStopReviewThreads(ctx, root))
 		}
 		return evaluateCommand(ctx, canonical, root, in)
 	}
@@ -273,7 +273,10 @@ func evaluateStop(ctx context.Context, row Registration, root string, canonical 
 	question := evaluateStopQuestion(row, canonical)
 	ledger := evaluateStopLedger(ctx, root, canonical)
 	checkpoint := evaluateStopCheckpoint(ctx, root, canonical, in)
-	checks := []Verdict{question, ledger, checkpoint, reviews}
+	return mergeStopChecks(question, ledger, checkpoint, reviews)
+}
+
+func mergeStopChecks(checks ...Verdict) Verdict {
 	var denies []Verdict
 	for _, v := range checks {
 		if v.Outcome == Deny {

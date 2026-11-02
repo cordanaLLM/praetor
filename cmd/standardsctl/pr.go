@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"time"
 
@@ -14,13 +15,21 @@ import (
 	"github.com/cordanaLLM/praetor/internal/prwait"
 )
 
+const prUsage = "usage: praetorctl pr wait --repo owner/name [--pr N ...] [--timeout 50m] [--interval 60s] [--json]"
+
 func runPR(args []string) error {
 	return runPRWithReader(args, forge.GHReviewReader{}, os.Stdout)
 }
 
 func runPRWithReader(args []string, reader forge.ReviewReader, output io.Writer) error {
+	if len(args) > 0 && isHelpToken(args[0]) {
+		if _, err := fmt.Fprintln(output, prUsage); err != nil {
+			return fmt.Errorf("write pr usage: %w", err)
+		}
+		return flag.ErrHelp
+	}
 	if len(args) == 0 || args[0] != "wait" {
-		return errors.New("usage: praetorctl pr wait --repo owner/name [--pr N ...] [--timeout 50m] [--interval 60s] [--json]")
+		return writePRWaitResult(output, slices.Contains(args, "--json"), prwait.Result{Code: 2, Items: []string{prUsage}})
 	}
 	fs := flag.NewFlagSet("pr wait", flag.ContinueOnError)
 	options := prwait.Options{}

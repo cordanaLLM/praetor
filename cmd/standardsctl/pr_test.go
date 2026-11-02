@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"strings"
 	"testing"
 
@@ -39,6 +40,9 @@ func TestPRWaitCLIFlagsAndJSON(t *testing.T) {
 func TestPRWaitCLITextAndInvalidFlags(t *testing.T) {
 	for _, args := range [][]string{
 		{"wait", "--repo", "example/widget"},
+		{},
+		{"status"},
+		{"status", "--json"},
 		{"wait", "--repo", "example/widget", "--pr", "0"},
 		{"wait", "--repo", "example/widget", "--pr", "invalid"},
 		{"wait", "--repo", "example/widget", "--interval", "0s"},
@@ -53,8 +57,8 @@ func TestPRWaitCLITextAndInvalidFlags(t *testing.T) {
 			continue
 		}
 		var status exitStatusError
-		if !errors.As(err, &status) || status.code != 2 {
-			t.Fatalf("%q: %v", args, err)
+		if !errors.As(err, &status) || status.code != 2 || !strings.Contains(output.String(), "pr") {
+			t.Fatalf("%q: err=%v out=%q", args, err, output.String())
 		}
 	}
 }
@@ -63,8 +67,11 @@ func TestPRWaitRegisteredAndHelp(t *testing.T) {
 	if commandTable()["pr"] == nil {
 		t.Fatal("pr not registered")
 	}
-	err := runPRWithReader([]string{"wait", "--help"}, &prCLIReader{}, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "help requested") {
-		t.Fatalf("help: %v", err)
+	for _, args := range [][]string{{"-h"}, {"--help"}, {"help"}, {"wait", "--help"}} {
+		var output bytes.Buffer
+		err := runPRWithReader(args, &prCLIReader{}, &output)
+		if !errors.Is(err, flag.ErrHelp) {
+			t.Fatalf("help %q: %v", args, err)
+		}
 	}
 }

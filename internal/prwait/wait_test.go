@@ -85,10 +85,10 @@ func TestWaitNewBotReview(t *testing.T) {
 func TestWaitTerminalClosedTimeoutError(t *testing.T) {
 	for _, scenario := range []string{"checks", "merged", "closed", "timeout", "read-error", "discovery-error"} {
 		t.Run(scenario, func(t *testing.T) {
-			reader, options, want := terminalFixture(scenario)
+			reader, options, want, prefix := terminalFixture(scenario)
 			result := Wait(t.Context(), reader, options)
-			if result.Code != want || len(result.Items) != 1 {
-				t.Fatalf("%s: %+v want %d", scenario, result, want)
+			if result.Code != want || len(result.Items) != 1 || !strings.HasPrefix(result.Items[0], prefix) {
+				t.Fatalf("%s: %+v want code=%d prefix=%q", scenario, result, want, prefix)
 			}
 			if strings.HasSuffix(scenario, "error") && !strings.Contains(result.Items[0], "fixture offline") {
 				t.Fatalf("read failure lost cause: %+v", result)
@@ -97,19 +97,19 @@ func TestWaitTerminalClosedTimeoutError(t *testing.T) {
 	}
 }
 
-func terminalFixture(scenario string) (*fixtureReader, Options, int) {
-	snapshot, options, code := pending(), testOptions(), 0
+func terminalFixture(scenario string) (*fixtureReader, Options, int, string) {
+	snapshot, options, code, prefix := pending(), testOptions(), 0, "checks example/widget#7: SUCCESS"
 	switch scenario {
 	case "checks":
 		snapshot.ChecksTerminal, snapshot.ChecksConclusion = true, "SUCCESS"
 	case "merged":
-		snapshot.State, code = "MERGED", 11
+		snapshot.State, code, prefix = "MERGED", 11, "merged example/widget#7"
 	case "closed":
-		snapshot.State, code = "CLOSED", 11
+		snapshot.State, code, prefix = "CLOSED", 11, "closed example/widget#7"
 	case "timeout":
-		options.Timeout, code = time.Millisecond, 124
+		options.Timeout, code, prefix = time.Millisecond, 124, "timeout example/widget:"
 	case "read-error", "discovery-error":
-		code = 2
+		code, prefix = 2, "read example/widget:"
 	}
 	reader := &fixtureReader{steps: []forge.ReviewSnapshot{snapshot}}
 	if scenario == "read-error" {
@@ -118,7 +118,7 @@ func terminalFixture(scenario string) (*fixtureReader, Options, int) {
 	if scenario == "discovery-error" {
 		reader.discoveryErr = errors.New("fixture offline")
 	}
-	return reader, options, code
+	return reader, options, code, prefix
 }
 
 func TestWaitBaselineResolvedAndExplicitScope(t *testing.T) {

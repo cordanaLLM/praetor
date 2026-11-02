@@ -1475,9 +1475,9 @@ hide the checkpoint: both reasons show on the first pass
 
 ### Own pull request review check and background wait
 
-`stop` reads the authenticated `gh` user's open pull requests in the origin GitHub repository through the shared reader in `internal/forge/review_reader.go`. An unresolved review thread denies the stop and directs the session to take that work immediately: fix through a lane, reply with verification evidence, and resolve the thread. No controller order is needed. `evaluateStopReviewThreads` has a four-second budget and caches the verdict for two minutes in `praetor-stop-reviews.json` under the worktree's Git directory, keyed by repository and local HEAD. Read failures produce a stated skip, retained even alongside a deny from another stop check. A cache write failure also remains visible; it does not suppress a known review deny.
+`stop` reads the authenticated `gh` user's open pull requests in the origin GitHub repository through the shared reader in `internal/forge/review_reader.go`. An unresolved review thread denies the stop, naming each thread's path, line and author, and directs the session to take that work immediately: fix through a lane, reply with verification evidence, and resolve the thread. No controller order is needed. `evaluateStopReviewThreads` has a four-second budget and caches `Allow` and `Skip` verdicts for two minutes in `praetor-stop-reviews.json` under the worktree's Git directory, keyed by repository and local HEAD; a `Deny` verdict always re-reads so resolving a thread takes effect without a new commit. Read failures produce a stated skip, retained even alongside a deny from another stop check. A cache write failure also remains visible; it does not suppress a known review deny.
 
-The check reaches Claude Code `Stop`, Codex `Stop`, Gemini `AfterAgent`, and agy `Stop` through `evaluateStop`; see `internal/agenthook/registrations.go`. OpenCode currently has no stop registration. Its existing plugin (`internal/clientsetup/opencode_clock.go`) handles message transforms only. The [OpenCode plugin documentation](https://opencode.ai/docs/plugins/#session-events) lists `session.idle` and an event-handler example, but that event is not connected to this evaluator. OpenCode therefore remains a coverage gap for automatic review enforcement; an explicit wait can still read reviews. Documentation checked 2026-11-01.
+The check reaches Claude Code `Stop`, Codex `Stop`, Gemini `AfterAgent`, and agy `Stop` through `dispatch` (`evaluateStop` for the checkpoint-wired clients and the `EventStop` branch for `agy`); see `internal/agenthook/registrations.go` and `internal/agenthook/evaluate.go`. OpenCode currently has no stop registration. Its existing plugin (`internal/clientsetup/opencode_clock.go`) handles message transforms only. The [OpenCode plugin documentation](https://opencode.ai/docs/plugins/#session-events) lists `session.idle` and an event-handler example, but that event is not connected to this evaluator. OpenCode therefore remains a coverage gap for automatic review enforcement; an explicit wait can still read reviews. Documentation checked 2026-11-01.
 
 Between units, run:
 
@@ -1493,7 +1493,7 @@ Claude Code runs the command through its shell tool with `run_in_background: tru
 | :--- | :--- |
 | `10` | Standing thread: `review owner/name#7: unresolved thread main.go:9 by reviewer (1h0m0s)`; return before waiting. After the baseline: `review owner/name#7: new thread main.go:9 by reviewer (0s)` or `review owner/name#7: new review COMMENTED by reviewer`. Every reviewer is included, people and bots. |
 | `0` | Every selected PR's checks are terminal with no review item: one `checks owner/name#7: SUCCESS` line per PR; the conclusion may also be `FAILURE` or `ERROR`. Empty discovery reports `checks owner/name: no own open pull requests`. |
-| `11` | A selected PR merged or closed: `merged owner/name#7`. |
+| `11` | A selected PR merged or closed: `merged owner/name#7` or `closed owner/name#7`. |
 | `124` | Overall timeout: `timeout owner/name: <cause>`. |
 | `2` | Invalid input or failed read, with the cause named. No failed read counts as clean checks. |
 

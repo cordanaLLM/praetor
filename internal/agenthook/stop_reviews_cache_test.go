@@ -14,8 +14,9 @@ import (
 func TestStopReviewCacheKeyAndTTL(t *testing.T) {
 	root := reviewRepositoryFixture(t)
 	fixture := reviewFixture()
+	fixture.snapshot.Threads[0].Resolved = true
 	installReviewFixture(t, fixture)
-	if verdict := evaluateStopReviewThreads(t.Context(), root); verdict.Outcome != Deny {
+	if verdict := evaluateStopReviewThreads(t.Context(), root); verdict.Outcome != Allow {
 		t.Fatal(verdict)
 	}
 	repo, head, path, err := stopReviewIdentity(t.Context(), root)
@@ -33,29 +34,40 @@ func TestStopReviewCacheKeyAndTTL(t *testing.T) {
 	for _, scenario := range []struct {
 		repo, head string
 		when       time.Time
+		outcome    Outcome
 		hit        bool
 	}{
-		{repo, head, cache.CheckedAt.Add(stopReviewCacheTTL - time.Nanosecond), true},
-		{repo, head, cache.CheckedAt.Add(stopReviewCacheTTL), false},
-		{repo, "different-head", cache.CheckedAt, false},
-		{"different/repository", head, cache.CheckedAt, false},
-		{repo, head, cache.CheckedAt.Add(-time.Nanosecond), false},
+		{repo, head, cache.CheckedAt.Add(stopReviewCacheTTL - time.Nanosecond), Allow, true},
+		{repo, head, cache.CheckedAt.Add(stopReviewCacheTTL - time.Nanosecond), Skip, true},
+		{repo, head, cache.CheckedAt.Add(stopReviewCacheTTL - time.Nanosecond), Deny, false},
+		{repo, head, cache.CheckedAt.Add(stopReviewCacheTTL), Allow, false},
+		{repo, "different-head", cache.CheckedAt, Allow, false},
+		{"different/repository", head, cache.CheckedAt, Allow, false},
+		{repo, head, cache.CheckedAt.Add(-time.Nanosecond), Allow, false},
 	} {
+		cache.Verdict.Outcome = scenario.outcome
+		writeStopReviewCache(t, path, cache)
 		if _, hit := loadStopReviewCache(path, scenario.repo, scenario.head, scenario.when); hit != scenario.hit {
 			t.Fatalf("cache scenario=%+v hit=%t", scenario, hit)
 		}
 	}
+	cache.Verdict.Outcome = Allow
 	cache.CheckedAt = cache.CheckedAt.Add(-stopReviewCacheTTL)
-	expired, err := json.Marshal(cache)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := util.WriteFileAtomic(path, expired, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeStopReviewCache(t, path, cache)
 	evaluateStopReviewThreads(t.Context(), root)
 	if fixture.reads != 2 {
 		t.Fatalf("expired cache avoided fresh read: %d", fixture.reads)
+	}
+}
+
+func writeStopReviewCache(t *testing.T, path string, cache stopReviewCache) {
+	t.Helper()
+	data, err := json.Marshal(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := util.WriteFileAtomic(path, data, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

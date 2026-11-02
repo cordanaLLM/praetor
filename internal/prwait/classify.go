@@ -13,7 +13,11 @@ func classify(repo string, snapshots []forge.ReviewSnapshot, seen map[string]boo
 	terminal := true
 	for _, snapshot := range snapshots {
 		prefix := fmt.Sprintf("%s#%d", repo, snapshot.Number)
-		if snapshot.State == "CLOSED" || snapshot.State == "MERGED" {
+		if snapshot.State == "CLOSED" {
+			closed = append(closed, "closed "+prefix)
+			continue
+		}
+		if snapshot.State == "MERGED" {
 			closed = append(closed, "merged "+prefix)
 			continue
 		}
