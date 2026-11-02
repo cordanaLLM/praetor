@@ -5,6 +5,7 @@ package adopt
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,7 +48,7 @@ func pinHistoryAt(t *testing.T, root string) (ancestor, head, diverged string) {
 
 type workflowPinCase struct {
 	name, declaration, second, want, refusal string
-	dryRun                                   bool
+	dryRun, noSource                         bool
 }
 
 func TestAdoptWorkflowEnginePin3D(t *testing.T) {
@@ -66,15 +67,25 @@ func TestAdoptWorkflowEnginePin3D(t *testing.T) {
 		{name: "dry run", declaration: "PRAETOR_COMMIT: " + ancestor, want: ancestor, dryRun: true},
 		{name: "repeated pin", declaration: "PRAETOR_COMMIT: " + ancestor, second: ancestor, want: head},
 		{name: "same file repeated pin", declaration: "PRAETOR_COMMIT: " + ancestor + "\r\n  PRAETOR_REF: " + ancestor, want: head},
+		{name: "no source", declaration: "PRAETOR_COMMIT: " + ancestor, want: ancestor, noSource: true},
+		{name: "diverged without source", declaration: "PRAETOR_COMMIT: " + diverged, want: diverged, noSource: true},
+		{name: "different pins without source", declaration: "PRAETOR_COMMIT: " + ancestor, second: head, want: ancestor, refusal: "several different", noSource: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			checkWorkflowPinCase(t, source, head, tc)
+			selected := source
+			if tc.noSource {
+				selected = ""
+			}
+			report := checkWorkflowPinCase(t, selected, head, tc)
+			if tc.noSource && tc.refusal == "" {
+				assertPinNotEvaluatedReport(t, report, ".github/workflows/ci.yml", 2, tc.want)
+			}
 		})
 	}
 }
 
-func checkWorkflowPinCase(t *testing.T, source, head string, tc workflowPinCase) {
+func checkWorkflowPinCase(t *testing.T, source, head string, tc workflowPinCase) *AdoptReport {
 	t.Helper()
 	root := t.TempDir()
 	initTestGit(t, root)
@@ -98,7 +109,7 @@ func checkWorkflowPinCase(t *testing.T, source, head string, tc workflowPinCase)
 		if tc.dryRun {
 			assertPinMoveReport(t, s.report, rel, workflowPinsIn(rel, []byte(before))[0].sha, head)
 		}
-		return
+		return s.report
 	}
 	old := workflowPinsIn(rel, []byte(before))[0].sha
 	assertPinMoveReport(t, s.report, rel, old, head)
@@ -108,6 +119,7 @@ func checkWorkflowPinCase(t *testing.T, source, head string, tc workflowPinCase)
 	if tc.second != "" && !strings.Contains(mustRead(t, filepath.Join(root, ".github/workflows/other.yaml")), head) {
 		t.Fatal("repeated pin was not moved everywhere")
 	}
+	return s.report
 }
 
 func TestAdoptWorkflowPinUsesRunningRevision(t *testing.T) {
@@ -133,7 +145,7 @@ func TestAdoptWorkflowPinUsesRunningRevision(t *testing.T) {
 
 func TestAdoptWorkflowPinHistoryFailures(t *testing.T) {
 	source, _, _, _ := pinHistory(t)
-	for _, selected := range []string{"", t.TempDir(), source} {
+	for _, selected := range []string{t.TempDir(), source} {
 		root := t.TempDir()
 		initTestGit(t, root)
 		rel := ".github/workflows/ci.yml"
@@ -180,6 +192,41 @@ func TestAdoptWorkflowPinIntegration(t *testing.T) {
 			t.Fatal("refused adoption changed workflow")
 		}
 	}
+}
+
+func TestAdoptWorkflowPinWithoutSourceKeepsValidLock(t *testing.T) {
+	root := t.TempDir()
+	initTestGit(t, root)
+	if _, err := Adopt(t.Context(), AdoptOptions{Path: root, LockSourceRoot: newAdoptLockSource(t), SkipHookActivation: true}); err != nil {
+		t.Fatal(err)
+	}
+	rel := ".github/workflows/ci.yml"
+	pin := strings.Repeat("a", 40)
+	before := "env:\n  PRAETOR_COMMIT: " + pin + "\n"
+	mustWrite(t, filepath.Join(root, rel), before)
+	report, err := Adopt(t.Context(), AdoptOptions{Path: root, SkipHookActivation: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRead(t, filepath.Join(root, rel)); got != before {
+		t.Fatal("adoption without source changed workflow")
+	}
+	assertPinNotEvaluatedReport(t, report, rel, 2, pin)
+}
+
+func assertPinNotEvaluatedReport(t *testing.T, report *AdoptReport, rel string, line int, pin string) {
+	t.Helper()
+	declaration := fmt.Sprintf("%s:%d PRAETOR_COMMIT=%s", rel, line, pin)
+	if !hasWarningContaining(report, declaration) {
+		t.Fatalf("pin skip not reported as warning: %v", report.Warnings)
+	}
+	for _, action := range report.ActionDetails {
+		if action.Path == rel && action.Action == actionSkip && strings.Contains(action.Details, declaration) &&
+			strings.Contains(action.Details, "not evaluated") && strings.Contains(action.Details, "--lock-source-root=<engine checkout>") {
+			return
+		}
+	}
+	t.Fatalf("missing named pin skip with source instruction: %+v", report.ActionDetails)
 }
 
 func assertWorkflowPinRefusal(t *testing.T, tc workflowPinCase, err error) {

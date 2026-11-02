@@ -108,7 +108,8 @@ func reconcileWorkflowEnginePin(ctx context.Context, s *adoptSession) error {
 		return err
 	}
 	if s.opts.LockSourceRoot == "" {
-		return fmt.Errorf("cannot move engine pin %s: adopting engine Git source (--lock-source-root) required", pins[0])
+		s.report.recordSkipped(pins[0].file, fmt.Sprintf("Engine pin %s not evaluated: moving it needs the adopting engine Git source; rerun with --lock-source-root=<engine checkout>", pins[0]))
+		return nil
 	}
 	head, err := adoptingEngineCommit(ctx, s)
 	if err != nil {

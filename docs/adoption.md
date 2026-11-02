@@ -1788,8 +1788,11 @@ It reads line-leading `PRAETOR_COMMIT` declarations containing a full lowercase 
 The selected `--lock-source-root` must contain the engine's Git history: adoption verifies
 `git merge-base --is-ancestor <pin> <adopting-commit>` locally before changing a pin. The
 running build's revision or release tag selects the adopting commit when available; otherwise
-the source's `HEAD` does. No fetch is performed. Missing history or a diverged pin stops adoption and
-names the declaration; several different declared SHA pins stop it with every `file:line`.
+the source's `HEAD` does. No fetch is performed. Without `--lock-source-root`, adoption leaves
+the pin untouched and reports its `file:line`, declaration and SHA as not evaluated, with the
+instruction to rerun with `--lock-source-root=<engine checkout>`. With a source supplied,
+missing history or a diverged pin stops adoption and names the declaration. Several different
+declared SHA pins stop adoption with every `file:line`, even without a source.
 Repeated declarations of the same SHA move together. The report names each changed file,
 old SHA and new SHA. An identical pin, a tag or branch ref, and a repository without a
 commit pin keep their bytes; absence is reported explicitly. A dry run reports the planned
