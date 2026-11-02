@@ -153,7 +153,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: '@sveltejs/kit'
-      version: 3.1.0
+      version: 3.1.1
       language: typescript
       ecosystem: npm
       capability: ui.framework
@@ -167,14 +167,14 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: '@sveltesentio/realtime'
-      version: 0.7.0
+      version: 0.8.0
       language: typescript
       ecosystem: npm
       capability: ui.external.sveltesentio_realtime
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: '@sveltesentio/ui'
-      version: 0.8.1
+      version: 0.9.0
       language: typescript
       ecosystem: npm
       capability: ui.external.sveltesentio_ui
@@ -195,7 +195,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: '@types/node'
-      version: 26.6.5
+      version: 26.6.6
       language: typescript
       ecosystem: npm
       capability: ui.external.types_node
@@ -258,7 +258,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: svelte
-      version: 5.57.2
+      version: 5.57.3
       language: typescript
       ecosystem: npm
       capability: ui.framework
@@ -286,7 +286,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: typescript-eslint
-      version: 8.72.0
+      version: 8.72.1
       language: typescript
       ecosystem: npm
       capability: ui.external.typescript_eslint
@@ -711,4 +711,4 @@ readiness:
     total_third_party_deps: 86
     covered_deps: 0
     gap_deps: 86
-updated_at: 2026-10-31T01:47:21.746602585Z
+updated_at: 2026-11-02T01:55:48.805642465Z
