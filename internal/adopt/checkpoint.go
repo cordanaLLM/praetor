@@ -45,7 +45,7 @@ type checkpointSource struct {
 // recorded here (checkpoint_prior_test.go).
 var priorCheckpointDigests = map[string]map[string]string{
 	checkpointSessionModule: {
-		"cf4e7357789c434d56da486e75ac46ab4878a3c3554121c9c1c484378dc44709": "reviewed hook findings",
+		"5e0d37675b11c3d5bc1deccc7773adb021f072a8126112ba225e1ec6065b0b0f": "reviewed hook findings",
 	},
 	checkpointScript: {
 		"54130726f2c6830a763a2485b849293d4c014e34c308596cc3e28d5330e6fc3f": "stop checkpoint retries PR listing and collapses failure",

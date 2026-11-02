@@ -25,6 +25,7 @@ MAX_SESSION_RECORDS = 10000
 # One age bound for recent worktree activity and inactive ownership records.
 # Records exactly at this bound remain fresh; only older records expire.
 WORKTREE_ACTIVITY_WINDOW = 24 * 60 * 60
+SESSION_LOCK_STALE_SECONDS = 30
 
 
 def extract_session_id(payload):
@@ -121,32 +122,38 @@ def _extract_tool_info(payload):
     return str(tool_name or ""), tool_input
 
 
-def _path_matches(resolved_path_str, text, cwd=None):
+def _path_matches(resolved_path_str, text, cwd=None, budget=None):
     """Resolve literal tool operands against their working directory, without execution."""
     pattern = r""""[^"\n]*"|'[^'\n]*'|[^\s'";&|<>()]+"""
     tokens = [match.group().strip("\"'") for match in re.finditer(pattern, text)]
+    try:
+        worktree = Path(resolved_path_str).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
     for candidate in [text, *tokens][:SESSION_INPUT_LIMIT]:
+        if budget is not None:
+            budget.timeout(1)
         path = Path(candidate)
         if not path.is_absolute():
             if cwd is None:
                 continue
             path = Path(cwd) / path
         try:
-            path.resolve().relative_to(Path(resolved_path_str).resolve())
+            path.resolve().relative_to(worktree)
             return True
         except (OSError, RuntimeError, ValueError):
             continue
     return False
 
 
-def _is_worktree_touched(resolved, tool_name, tool_input, strings, cwd=None):
+def _is_worktree_touched(resolved, tool_name, tool_input, strings, cwd=None, budget=None):
     """Whether worktree was touched by tool invocation."""
     if tool_name == "EnterWorktree" and isinstance(tool_input, dict):
         target = tool_input.get("name") or tool_input.get("path")
         if isinstance(target, str) and target.strip() in (resolved.name, str(resolved)):
             return True
     path_str = str(resolved)
-    return any(_path_matches(path_str, s, cwd) for s in strings)
+    return any(_path_matches(path_str, s, cwd, budget) for s in strings)
 
 
 def _read_session_record(record_file):
@@ -219,9 +226,20 @@ def _acquire_session_lock(lock):
     """Share the nonblocking lock primitive between writers and record cleanup."""
     try:
         lock.mkdir()
+        return True
     except FileExistsError:
+        try:
+            info = lock.lstat()
+            if (
+                stat.S_ISDIR(info.st_mode)
+                and time.time() - info.st_mtime > SESSION_LOCK_STALE_SECONDS
+            ):
+                lock.rmdir()
+                lock.mkdir()
+                return True
+        except OSError:
+            return False
         return False
-    return True
 
 
 @contextlib.contextmanager
@@ -288,7 +306,7 @@ def record_tool_worktrees(payload, root, budget):
             continue
         if resolved == root:
             continue
-        if _is_worktree_touched(resolved, tool_name, tool_input, strings, cwd):
+        if _is_worktree_touched(resolved, tool_name, tool_input, strings, cwd, budget):
             touched.add(str(resolved))
     _update_session_record(sessions_dir, record_file, touched, budget)
 

@@ -45,6 +45,11 @@ class EvasionReplay(unittest.TestCase):
                 with self.subTest(command=command):
                     self.assertTrue(GUARD.search(GUARD.BLOCKED_PATTERNS[-1], command))
 
+        for launcher in replay.get("launchers", ()):
+            command = f"{launcher} 'praetorctl' adopt /srv/dev"
+            with self.subTest(launcher=command):
+                self.assertTrue(GUARD.search(GUARD.BLOCKED_PATTERNS[-1], command))
+
         for command in replay["data_only"]:
             with self.subTest(data=command):
                 self.assertFalse(GUARD.search(GUARD.BLOCKED_PATTERNS[-1], command))

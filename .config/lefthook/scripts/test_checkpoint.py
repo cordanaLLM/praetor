@@ -273,6 +273,48 @@ class SessionOwnershipRegressions(unittest.TestCase):
             self.record_path(self.paths[0])
             self.assertIsNone(checkpoint._session_owned_worktrees(self.common))
 
+    def test_path_matches_resolves_worktree_once_and_honors_budget(self):
+        calls = []
+        real_resolve = Path.resolve
+
+        def counting_resolve(path, *args, **kwargs):
+            calls.append(str(path))
+            return real_resolve(path, *args, **kwargs)
+
+        text = f"{self.base / 'miss-a'} {self.base / 'miss-b'} {self.paths[0] / 'hit.txt'}"
+        with mock.patch.object(Path, "resolve", autospec=True, side_effect=counting_resolve):
+            self.assertTrue(sessions._path_matches(str(self.paths[0]), text, self.root))
+        self.assertEqual(calls.count(str(self.paths[0])), 1)
+        with self.assertRaisesRegex(common.HookError, "budget spent"):
+            sessions._path_matches(
+                str(self.paths[0]), text, self.root, common.HookBudget(-1)
+            )
+        with mock.patch.object(Path, "resolve", side_effect=OSError("bad worktree")):
+            self.assertFalse(sessions._path_matches(str(self.paths[0]), text, self.root))
+
+    def test_stale_session_lock_is_recovered_and_fresh_lock_blocks(self):
+        now = time.time()
+        lock = self.record.with_suffix(".lock")
+        lock.mkdir()
+        stale_age = getattr(sessions, "SESSION_LOCK_STALE_SECONDS", 30) + 1
+        os.utime(lock, (now - stale_age, now - stale_age))
+        with mock.patch.object(sessions.time, "time", return_value=now):
+            self.record_path(self.paths[0])
+        self.assertEqual(json.loads(self.record.read_text()), [str(self.paths[0])])
+        self.assertFalse(lock.exists())
+        lock.mkdir()
+        boundary_age = getattr(sessions, "SESSION_LOCK_STALE_SECONDS", 30)
+        os.utime(lock, (now - boundary_age, now - boundary_age))
+        with mock.patch.object(sessions.time, "time", return_value=now), mock.patch.object(
+            sessions.time, "sleep"
+        ):
+            self.assertFalse(sessions._acquire_session_lock(lock))
+            with self.assertRaisesRegex(common.HookError, "lock timed out"):
+                sessions.ensure_session_record(
+                    self.root, self.identity, common.HookBudget(10)
+                )
+        lock.rmdir()
+
 
 class CheckpointBudgetRegressions(unittest.TestCase):
     def test_native_preparation_deadline_includes_partial_stdin(self):

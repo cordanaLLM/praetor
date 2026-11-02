@@ -118,6 +118,7 @@ func TestRegistrationPrivilegeAgyPlugin(t *testing.T) {
 // Light escalated commands would pass if escalators were transparent wrappers.
 func TestAdmissionPrivilegePrograms(t *testing.T) {
 	check := admissionPolicy(t).admission
+	denied, allowed := 0, 0
 	for command, deny := range map[string]bool{
 		"sudo -n true": false, "doas true": false, "pkexec true": false, "run0 true": false,
 		"su -c true": false, "su - root -c id": false, "su root --command id": false,
@@ -125,11 +126,26 @@ func TestAdmissionPrivilegePrograms(t *testing.T) {
 		"echo x && sudo true": false, "echo $(pkexec true)": false,
 		"grep -n sudo file": false, `echo "sudo is refused"`: false,
 		"su": false, "su - root": false, "sudoers true": false,
+		"sudo -n praetorctl adopt /home/adopter/dev":                            true,
+		"sudo -p x praetorctl adopt /home/adopter/dev":                          true,
+		"doas -C /etc/doas.conf standardsctl conform /home/adopter/dev":         true,
+		"pkexec --user root standardsctl bootstrap /home/adopter/dev":           true,
+		"run0 --area work standardsctl needs scan /home/adopter/dev":            true,
+		"su root -c praetorctl adopt /home/adopter/dev":                         true,
+		"env A=1 timeout 5 /usr/bin/sudo -n praetorctl adopt /home/adopter/dev": true,
 	} {
+		if deny {
+			denied++
+		} else {
+			allowed++
+		}
 		got := check.judge(command)
 		if (got.Outcome == Deny) != deny || (deny && !strings.Contains(got.Reason, evasionMessage+"; privilege escalation prohibited")) {
 			t.Errorf("%q: %+v, want deny %v", command, got, deny)
 		}
+	}
+	if denied == 0 || allowed == 0 {
+		t.Fatalf("admission privilege table must exercise both deny (%d) and allow (%d) cases", denied, allowed)
 	}
 }
 

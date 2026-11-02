@@ -18,8 +18,9 @@ func TestWrapperOptionArityFindsProtectedPrivilegeCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	var replay struct {
-		Commands []string `json:"commands"`
-		DataOnly []string `json:"data_only"`
+		Commands  []string `json:"commands"`
+		Launchers []string `json:"launchers"`
+		DataOnly  []string `json:"data_only"`
 	}
 	if err := json.Unmarshal(data, &replay); err != nil {
 		t.Fatal(err)
@@ -29,6 +30,12 @@ func TestWrapperOptionArityFindsProtectedPrivilegeCommand(t *testing.T) {
 		t.Run(wrapper, func(t *testing.T) {
 			verifyWrapperOptionArity(t, matcher, wrapper)
 		})
+	}
+	for _, launcher := range replay.Launchers {
+		command := launcher + " 'praetorctl' adopt /srv/dev"
+		if !matcher.MatchString(command) || !privilegeInvocationPattern.MatchString(command) {
+			t.Errorf("protected adoption escaped launcher option rule: %q", command)
+		}
 	}
 	for _, command := range replay.DataOnly {
 		if matcher.MatchString(command) {

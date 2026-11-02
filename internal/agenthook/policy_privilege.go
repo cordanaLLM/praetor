@@ -29,6 +29,24 @@ const (
 // privilegeNames names launchers whose protected adoption commands are judged.
 var privilegeNames = []string{"sudo", "doas", "pkexec", "run0", "su"}
 
+// privilegeLauncherValues lists every option taking a separate value for each privilege
+// launcher (sudo(8), doas(1), pkexec(1), and systemd run0(1)).
+var privilegeLauncherValues = map[string][]string{
+	"sudo": {
+		"-a", "--auth-type", "-C", "--close-from", "-c", "--login-class",
+		"-D", "--chdir", "-g", "--group", "-h", "--host", "-p", "--prompt",
+		"-R", "--chroot", "-r", "--role", "-T", "--command-timeout", "-t", "--type",
+		"-U", "--other-user", "-u", "--user",
+	},
+	"doas":   {"-a", "-C", "-u"},
+	"pkexec": {"--user"},
+	"run0": {
+		"-D", "--chdir", "-g", "--group", "-u", "--user", "--uid", "--gid",
+		"--area", "--background", "--description", "--lightweight", "--machine",
+		"--nice", "--property", "--setenv", "--shell-prompt-prefix", "--slice", "--unit",
+	},
+}
+
 var privilegeInvocation = protectedPrivilegeInvocation()
 
 var privilegeCommandSource = privilegeCommandRule()
@@ -148,7 +166,7 @@ func protectedPrivilegeInvocation() string {
 	script := `(?:` + privilegeScriptPrefix() + `)*` + `(?:\\?[\x22\x27])?` + target
 	parts := make([]string, 0, len(privilegeNames))
 	for _, name := range privilegeNames[:4] {
-		values := []string{"-u", "-g", "--user", "--group", "--uid", "--gid"}
+		values := privilegeLauncherValues[name]
 		option := `(?:` + strings.Join(values, `|`) + `)` + shellBlank + privilegeValue + `|` + privilegeFlagExcept(values)
 		parts = append(parts, quotedPrivilegeProgram(name)+`(?:`+shellBlank+`(?:`+option+`))*`+shellBlank+script)
 	}
