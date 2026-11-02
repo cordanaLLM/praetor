@@ -80,12 +80,14 @@ func ReadCreditManifests(ctx context.Context, root string, credits Credits) (map
 	return manifests, nil
 }
 
+// isManifestPath reports whether rel is a non-third-party package.json file path.
 func isManifestPath(rel string) bool {
 	return strings.HasSuffix(rel, "package.json") &&
 		!strings.HasPrefix(rel, "third_party/") &&
 		!strings.Contains(rel, "/third_party/")
 }
 
+// entryNPMPackages extracts package names from entries with an npm prefix.
 func entryNPMPackages(packages []string) []string {
 	var npmPkgs []string
 	for _, pkg := range packages {
@@ -96,6 +98,7 @@ func entryNPMPackages(packages []string) []string {
 	return npmPkgs
 }
 
+// manifestPinnedDeps returns a flattened map of package names to pinned versions across all manifest dependency groups.
 func manifestPinnedDeps(manifest nodemanifest.Manifest) map[string]string {
 	deps := make(map[string]string)
 	for _, group := range manifest.Groups() {
@@ -106,6 +109,7 @@ func manifestPinnedDeps(manifest nodemanifest.Manifest) map[string]string {
 	return deps
 }
 
+// recordedPackageVersion resolves the expected package version string from a credits detail field.
 func recordedPackageVersion(detail, pkg, entryName string, totalPkgs int) string {
 	if detail == "" {
 		return ""
@@ -136,6 +140,7 @@ func recordedPackageVersion(detail, pkg, entryName string, totalPkgs int) string
 	return ""
 }
 
+// namedVersion extracts a version string explicitly associated with a given package name from detail text.
 func namedVersion(detail, name string) string {
 	pattern := `(?:^|[\s,;(` + "`" + `])` + regexp.QuoteMeta(name) + `[\s@:]+(\d+\.\d+(?:\.\d+)?(?:-[0-9A-Za-z.-]+)?)`
 	re := regexp.MustCompile(pattern)
@@ -146,6 +151,7 @@ func namedVersion(detail, name string) string {
 	return ""
 }
 
+// allVersionsEqual reports whether all version strings in the slice are identical.
 func allVersionsEqual(versions []string) bool {
 	for i := 1; i < len(versions); i++ {
 		if versions[i] != versions[0] {
