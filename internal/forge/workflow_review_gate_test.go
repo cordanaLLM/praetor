@@ -387,12 +387,13 @@ func TestWorkflowReviewHoldPlantedDefects(t *testing.T) {
 	workflows, _ := engineWorkflows(t)
 	original := string(workflows["portability.yml"])
 	for name, text := range map[string]string{
-		"missing need":    strings.Replace(original, "    needs: review-gate\n", "", 1),
-		"spent platform":  strings.Replace(original, "needs.review-gate.outputs.clear == 'true' && matrix.os || 'ubuntu-26.04'", "matrix.os", 1),
-		"skipped hold":    strings.Replace(original, "id: review\n        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true\n        shell: bash", "id: review\n        if: false\n        shell: bash", 1),
-		"passing hold":    strings.Replace(original, "          exit 1\n\n      # The hosted gate's draft step", "          exit 0\n\n      # The hosted gate's draft step", 1),
-		"continued work":  strings.ReplaceAll(original, "(github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft", "github.event.pull_request.draft"),
-		"oversized steps": strings.Replace(original, "      - name: Interfig Verify Gate\n", strings.Repeat("      - run: echo noop\n", maxStepsPerJob)+"      - name: Interfig Verify Gate\n", 1),
+		"missing need":      strings.Replace(original, "    needs: review-gate\n", "", 1),
+		"spent platform":    strings.Replace(original, "needs.review-gate.outputs.clear == 'true' && matrix.os || 'ubuntu-26.04'", "matrix.os", 1),
+		"skipped hold":      strings.Replace(original, "id: review\n        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true\n        shell: bash", "id: review\n        if: false\n        shell: bash", 1),
+		"passing hold":      strings.Replace(original, "          exit 1\n\n      # The hosted gate's draft step", "          exit 0\n\n      # The hosted gate's draft step", 1),
+		"unresolved python": strings.Replace(original, `PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"`, "PYTHON=python3", 1),
+		"continued work":    strings.ReplaceAll(original, "(github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && github.event.pull_request.draft", "github.event.pull_request.draft"),
+		"oversized steps":   strings.Replace(original, "      - name: Interfig Verify Gate\n", strings.Repeat("      - run: echo noop\n", maxStepsPerJob)+"      - name: Interfig Verify Gate\n", 1),
 	} {
 		if text == original {
 			t.Fatalf("%s: mutation did not apply", name)

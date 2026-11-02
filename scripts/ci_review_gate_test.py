@@ -9,6 +9,7 @@ import os
 import secrets
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 import urllib.error
@@ -877,6 +878,7 @@ class WorkflowTests(unittest.TestCase):
         clear=False,
         planned=True,
         workflow="portability.yml",
+        env=None,
     ):
         """Replay shipped shell with a local helper stub and no GitHub API
         calls.
@@ -885,6 +887,14 @@ class WorkflowTests(unittest.TestCase):
             root = Path(temp)
             if trusted:
                 write_trusted_helper(root, clear)
+            base_env = dict(
+                os.environ if env is None else env,
+                PR_NUMBER="7",
+                PR_HEAD="a" * 40,
+                PLANNED_CLEAR=str(planned).lower(),
+                GITHUB_OUTPUT=str(root / "output"),
+                GITHUB_STEP_SUMMARY=str(root / "summary"),
+            )
             result = subprocess.run(
                 [
                     shutil.which("bash"),
@@ -897,14 +907,7 @@ class WorkflowTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 check=False,
-                env=dict(
-                    os.environ,
-                    PR_NUMBER="7",
-                    PR_HEAD="a" * 40,
-                    PLANNED_CLEAR=str(planned).lower(),
-                    GITHUB_OUTPUT=str(root / "output"),
-                    GITHUB_STEP_SUMMARY=str(root / "summary"),
-                ),
+                env=base_env,
             )
             output = (
                 (root / "output").read_text()
@@ -917,6 +920,113 @@ class WorkflowTests(unittest.TestCase):
                 else ""
             )
             return result, output, summary, (root / "called").exists()
+
+    def test_hold_step_resolves_python_fallback_when_python3_missing(self):
+        """Verify Windows hold falls back to python when python3 is absent."""
+        for workflow in ("portability.yml", "ci.yml"):
+            with tempfile.TemporaryDirectory() as temp:
+                toolchain = Path(temp) / "bin"
+                toolchain.mkdir()
+                real_python = (
+                    shutil.which("python3")
+                    or shutil.which("python")
+                    or sys.executable
+                )
+                (toolchain / "python").symlink_to(real_python)
+                for tool in (
+                    "mktemp",
+                    "grep",
+                    "rm",
+                    "sed",
+                    "cat",
+                    "bash",
+                    "sh",
+                ):
+                    loc = shutil.which(tool)
+                    if loc:
+                        (toolchain / tool).symlink_to(loc)
+                env = {"PATH": str(toolchain)}
+                result, output, _, called = self.execute(
+                    gate.HOLD_STEP, clear=True, workflow=workflow, env=env
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(output, "clear=true\n")
+                self.assertTrue(called)
+
+    def test_hold_step_fails_closed_when_no_python_interpreter(self):
+        """Verify hold fails closed when neither python3 nor python is on
+        PATH.
+        """
+        for workflow in ("portability.yml", "ci.yml"):
+            with tempfile.TemporaryDirectory() as temp:
+                toolchain = Path(temp) / "bin"
+                toolchain.mkdir()
+                for tool in (
+                    "mktemp",
+                    "grep",
+                    "rm",
+                    "sed",
+                    "cat",
+                    "bash",
+                    "sh",
+                ):
+                    loc = shutil.which(tool)
+                    if loc:
+                        (toolchain / tool).symlink_to(loc)
+                env = {"PATH": str(toolchain)}
+                result, _, summary, called = self.execute(
+                    gate.HOLD_STEP, clear=True, workflow=workflow, env=env
+                )
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(
+                    "gate unreadable: trusted helper failed", summary
+                )
+                self.assertFalse(called)
+
+    def test_hold_step_prefers_python3_when_both_present(self):
+        """Verify hold step resolves python3 before python."""
+        for workflow in ("portability.yml", "ci.yml"):
+            with tempfile.TemporaryDirectory() as temp:
+                toolchain = Path(temp) / "bin"
+                toolchain.mkdir()
+                chosen = Path(temp) / "chosen"
+                real_python = (
+                    shutil.which("python3")
+                    or shutil.which("python")
+                    or sys.executable
+                )
+                p3 = toolchain / "python3"
+                p3.write_text(
+                    f"#!/bin/sh\necho python3 >> {chosen}\n"
+                    f"exec {real_python} \"$@\"\n"
+                )
+                p3.chmod(0o755)
+                p = toolchain / "python"
+                p.write_text(
+                    f"#!/bin/sh\necho python >> {chosen}\n"
+                    f"exec {real_python} \"$@\"\n"
+                )
+                p.chmod(0o755)
+                for tool in (
+                    "mktemp",
+                    "grep",
+                    "rm",
+                    "sed",
+                    "cat",
+                    "bash",
+                    "sh",
+                ):
+                    loc = shutil.which(tool)
+                    if loc:
+                        (toolchain / tool).symlink_to(loc)
+                env = {"PATH": str(toolchain)}
+                result, output, _, called = self.execute(
+                    gate.HOLD_STEP, clear=True, workflow=workflow, env=env
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(output, "clear=true\n")
+                self.assertEqual(chosen.read_text().strip(), "python3")
+                self.assertTrue(called)
 
     def test_bootstrap_planner_and_hold_use_exact_reason(self):
         """Verify bootstrap planner and hold use exact reason."""

@@ -389,6 +389,7 @@ class WorkflowCommandsTests(unittest.TestCase):
             )
 
     def step_section(self, name):
+        """Extract the header and body text for one workflow step."""
         workflow_header, jobs = self.workflow.read_text(encoding="utf-8").split(
             "\njobs:\n", 1
         )
@@ -404,6 +405,7 @@ class WorkflowCommandsTests(unittest.TestCase):
         return workflow_header, "\n".join(job_lines), step_text
 
     def step(self, name):
+        """Return the script body of one named workflow step."""
         _, _, text = self.step_section(name)
         body = text.split("        run: |\n", 1)[1].split("        env:", 1)[0]
         return "\n".join(
@@ -414,6 +416,7 @@ class WorkflowCommandsTests(unittest.TestCase):
 
     @staticmethod
     def env_block(section, indent):
+        """Parse key-value environment declarations from a YAML section."""
         marker = f"\n{indent}env:\n"
         if marker not in "\n" + section:
             return {}
@@ -434,6 +437,7 @@ class WorkflowCommandsTests(unittest.TestCase):
         return entries
 
     def workflow_env(self, name):
+        """Collect cascading environment variables for a workflow step."""
         workflow_header, job_header, step_text = self.step_section(name)
         env = {}
         for section, indent in (
@@ -445,6 +449,7 @@ class WorkflowCommandsTests(unittest.TestCase):
         return env
 
     def declared_keys(self):
+        """Return all environment keys declared across the workflow."""
         keys = set()
         for path in {self.__class__.workflow, self.workflow}:
             text = path.read_text(encoding="utf-8")
@@ -479,6 +484,7 @@ class WorkflowCommandsTests(unittest.TestCase):
         fail="false",
         env=None,
     ):
+        """Run a workflow step in a temporary fixture environment."""
         root = Path(temp)
         # LF like ci_scope.py writes it: text mode writes CRLF on Windows, and bash `read -r`
         # would keep the carriage return in each package name.
@@ -585,6 +591,7 @@ class WorkflowCommandsTests(unittest.TestCase):
                         )
 
     def test_workflow_job_step_env_precedence_and_override(self):
+        """Verify workflow, job, and step environment precedence."""
         packages = [
             "example.test/scope/a",
             "example.test/scope/other",
@@ -639,6 +646,7 @@ class WorkflowCommandsTests(unittest.TestCase):
                     )
 
     def test_workflow_job_step_env_precedence_under_ambient_leak(self):
+        """Verify environment precedence holds when ambient variables leak."""
         with patch.dict(
             os.environ,
             {"PORTABILITY_MAX_PACKAGES": "64", "SHELLCHECK_VERSION": "leak"},
