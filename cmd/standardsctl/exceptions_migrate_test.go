@@ -4,13 +4,43 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 )
+
+func TestExceptionMigrationTerminalControls(t *testing.T) {
+	for _, value := range []string{"plain", "café", "", "\x00\x08\x09\x1b[2J\x7f\u009b2J\u202e\r\n\xff"} {
+		t.Run(fmt.Sprintf("%q", value), func(t *testing.T) {
+			proposal := config.ExceptionMigration{
+				Entry:  config.Exception{Rule: value, Path: value, Expires: value, Category: value, Entered: value},
+				Source: value, Unresolved: value,
+			}
+			out, err := captureStdout(t, func() error {
+				if got := printExceptionMigrations(value, []config.ExceptionMigration{proposal}); (got > 0) != (value != "") {
+					t.Errorf("unresolved=%d", got)
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			line := strings.TrimSuffix(out, "\n")
+			if strings.ContainsFunc(line, func(r rune) bool { return !unicode.IsGraphic(r) }) {
+				t.Fatalf("terminal controls retained: %q", out)
+			}
+			if strings.Count(out, "\n") != 1 || !strings.Contains(out, "status=") {
+				t.Fatalf("migration status lost: %q", out)
+			}
+			mustContain(t, out, "path=", "rule=", "target=", "expires=", "category=", "entered=", "source=")
+		})
+	}
+}
 
 func TestExceptionsMigrateDryRunAndWrite(t *testing.T) {
 	today := config.ExceptionDay(time.Now())

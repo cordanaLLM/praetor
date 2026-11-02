@@ -32,10 +32,11 @@ const (
 )
 
 var (
-	ghAPIScopedPath    = regexp.MustCompile(`(?i)(?:^|/)(?:issues|pulls|comments)(?:/|$|\?)`)
-	ghWriteWordPattern = regexp.MustCompile(ghWriteWordSource(scopedGHActions))
-	catSubstPattern    = regexp.MustCompile(`\$\(\s*cat(?:\s+--)?\s+([^\s<>|;&)]+)\s*\)`)
-	scopedGHActions    = map[string]map[string]bool{
+	errHookOperatorForgeSettings = errors.New("operator forge settings unavailable")
+	ghAPIScopedPath              = regexp.MustCompile(`(?i)(?:^|/)(?:issues|pulls|comments)(?:/|$|\?)`)
+	ghWriteWordPattern           = regexp.MustCompile(ghWriteWordSource(scopedGHActions))
+	catSubstPattern              = regexp.MustCompile(`\$\(\s*cat(?:\s+--)?\s+([^\s<>|;&)]+)\s*\)`)
+	scopedGHActions              = map[string]map[string]bool{
 		"issue":   {"create": true, "edit": true, "comment": true, "close": true, "reopen": true},
 		"pr":      {"create": true, "edit": true, "comment": true, "review": true, "close": true, "reopen": true, "merge": true},
 		"release": {"create": true, "edit": true},
@@ -108,6 +109,7 @@ func evaluateForgeTextRefs(ctx context.Context, canonical Canonical, root string
 
 // judgeResolvedGHWriteCall uses the directory already tracked by the command reader and the
 // shared repository root resolver, so each write in a multi-worktree command has its own policy.
+// Operator-policy failures deny writes; identity failures retain independently trusted organisations.
 func judgeResolvedGHWriteCall(ctx context.Context, call ghWriteCall, getenv func(string) string) Verdict {
 	root, err := repositoryRoot(ctx, call.dir)
 	if err != nil {
@@ -117,9 +119,11 @@ func judgeResolvedGHWriteCall(ctx context.Context, call ghWriteCall, getenv func
 		root = call.dir
 	}
 	own, noOrgList, notice, err := resolveHookOwnOrganizations(ctx, root, getenv)
+	if errors.Is(err, errHookOperatorForgeSettings) {
+		return forgeTextDeny(err.Error(), false)
+	}
 	if err != nil {
-		own = nil
-		notice += "; organisation finding: " + err.Error()
+		notice = strings.TrimPrefix(notice+"; organisation finding: "+err.Error(), "; ")
 	}
 	verdict := judgeGHWriteCall(ctx, call, own, noOrgList)
 	if verdict.Outcome == Allow {
@@ -169,7 +173,7 @@ func forgeTextDeny(detail string, noOrgList bool) Verdict {
 func resolveHookOwnOrganizations(ctx context.Context, root string, getenv func(string) string) ([]string, bool, string, error) {
 	opForge, err := loadOperatorForgeSettings(ctx, getenv)
 	if err != nil {
-		return nil, false, "", err
+		return nil, false, "", fmt.Errorf("%w: %w", errHookOperatorForgeSettings, err)
 	}
 	manifestPath := ""
 	if root != "" {

@@ -16,6 +16,45 @@ import (
 
 const brokenForgeManifest = "version: 1\nexceptions:\n  - rule: HISS-11\n    path: .github/workflows/release.yml\n    reason: builder migration\n    expires: 2099-01-01\n"
 
+func TestForgeIdentityFailurePreservesTrustedOrganizations(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nforge:\n  own_organizations: [manifest-org]\n")
+	fleet := filepath.Join(t.TempDir(), "fleet.yaml")
+	writeTestFixtureFile(t, fleet, "forge:\n  own_organizations: [operator-org]\n")
+	getenv := func(key string) string {
+		switch key {
+		case "PRAETOR_FLEET_CONFIG":
+			return fleet
+		case "GITHUB_REPOSITORY":
+			return "bad identity"
+		default:
+			return ""
+		}
+	}
+	for _, body := range []string{"operator-org/project#2", "manifest-org/project#2", "Repair ready", "outside/project#2"} {
+		resp := runPreToolCommand(t, root, fmt.Sprintf(`gh pr comment 1 --body "%s"`, body), getenv)
+		wantDenied := strings.HasPrefix(body, "outside/")
+		if (resp.ExitCode != 0) != wantDenied || !strings.Contains(string(resp.Stderr), "GITHUB_REPOSITORY") {
+			t.Errorf("body=%q exit=%d diagnostic=%q", body, resp.ExitCode, resp.Stderr)
+		}
+	}
+}
+
+func TestForgeOperatorPolicyFailureDeniesPlainWrites(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nforge:\n  own_organizations: [manifest-org]\n")
+	for _, content := range []string{"forge: [", "forge:\n  own_organizations: [bad/org]\n"} {
+		fleet := filepath.Join(t.TempDir(), "fleet.yaml")
+		writeTestFixtureFile(t, fleet, content)
+		getenv := func(key string) string {
+			if key == "PRAETOR_FLEET_CONFIG" {
+				return fleet
+			}
+			return ""
+		}
+		resp := runPreToolCommand(t, root, `gh pr comment 1 --body "Repair ready"`, getenv)
+		assertForgeTextDenied(t, resp, "operator")
+	}
+}
+
 func TestForgeManifestDeadlock(t *testing.T) {
 	root := repositoryWithManifest(t, brokenForgeManifest)
 	cases := []struct{ name, command string }{

@@ -286,6 +286,8 @@ The `pre-tool` command evaluator runs `evaluateForgeTextRefs` (`internal/agentho
 
 A manifest that cannot load or validate is a named `manifest finding` in an allowed verdict when the text contains no active reference. Comments, thread replies, PR creation and the merge that repairs the manifest can proceed. Invalid manifests contribute no organisations: references are checked against the independent operator layer and repository identity, and the finding names those trusted sources. Without a valid source, references fail closed; outside references remain refused even with a valid manifest. Unreadable named text and parser limits still refuse the command. Repair legacy exception metadata with [`praetorctl exceptions migrate --write`](clang-tidy-coverage.md#migrate-legacy-exception-metadata); there is no bypass flag. `TestForgeManifestDeadlock`, `TestForgeManifestCommandDirectory`, `TestForgeManifestIndependentSources` and `TestForgeManifestMalformedAndUnreadableText` exercise these cases through the native hook.
 
+An operator-policy load or validation error refuses the write, including plain text (`TestForgeOperatorPolicyFailureDeniesPlainWrites`). A repository-identity error remains a diagnostic while references to organisations independently trusted by the operator layer or a valid manifest remain allowed; outside references remain refused (`TestForgeIdentityFailurePreservesTrustedOrganizations`).
+
 Tests: `TestForgeTextRefsRefusedPerForm`, `TestForgeTextRefsAcceptedCases`, `TestForgeTextRefsBoundaryAndFailClosedCases` and `TestForgeTextRefsOrganizationResolutionCases` in `internal/agenthook/forge_text_refs_test.go`. Order: `engine-forge-text-outside-ref-guard-20261031`.
 
 ## Clock on every prompt

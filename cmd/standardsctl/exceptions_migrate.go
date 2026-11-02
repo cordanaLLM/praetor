@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+	"strconv"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -65,7 +65,6 @@ func writeExceptionMigration(ctx context.Context, path string, data []byte) erro
 
 func printExceptionMigrations(path string, proposals []config.ExceptionMigration) int {
 	unresolved := 0
-	oneLine := strings.NewReplacer("\r", `\r`, "\n", `\n`)
 	for i := 0; i < len(proposals) && i < config.MaxExceptions; i++ {
 		proposal := proposals[i]
 		entry := proposal.Entry
@@ -76,7 +75,8 @@ func printExceptionMigrations(path string, proposals []config.ExceptionMigration
 		}
 		line := fmt.Sprintf("path=%s rule=%s target=%s expires=%s category=%s entered=%s source=%s status=%s",
 			path, entry.Rule, entry.Target(), entry.Expires, entry.Category, entry.Entered, proposal.Source, status)
-		fmt.Println(oneLine.Replace(line))
+		quoted := strconv.QuoteToGraphic(line)
+		fmt.Println(quoted[1 : len(quoted)-1])
 	}
 	return unresolved
 }

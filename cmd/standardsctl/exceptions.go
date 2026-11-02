@@ -36,23 +36,27 @@ func runExceptions(args []string) error {
 	case "migrate":
 		return runExceptionMigration(*manifestPath, *todayStr, *write)
 	case "list":
-		var expiringWithinPtr *int
-		fs.Visit(func(f *flag.Flag) {
-			if f.Name == "expiring-within" {
-				expiringWithinPtr = expiringWithin
-			}
-		})
-		if expiringWithinPtr != nil && *expiringWithinPtr < 0 {
-			return fmt.Errorf("--expiring-within must be non-negative, got %d", *expiringWithinPtr)
-		}
-		today, err := exceptionToday(*todayStr)
-		if err != nil {
-			return err
-		}
-		return handleExceptionsList(*manifestPath, expiringWithinPtr, today)
+		return runExceptionsList(fs, *manifestPath, expiringWithin, *todayStr)
 	default:
 		return fmt.Errorf("unknown exceptions action: %s (supported: list, migrate)", action)
 	}
+}
+
+func runExceptionsList(fs *flag.FlagSet, manifestPath string, expiringWithin *int, todayStr string) error {
+	var expiringWithinPtr *int
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "expiring-within" {
+			expiringWithinPtr = expiringWithin
+		}
+	})
+	if expiringWithinPtr != nil && *expiringWithinPtr < 0 {
+		return fmt.Errorf("--expiring-within must be non-negative, got %d", *expiringWithinPtr)
+	}
+	today, err := exceptionToday(todayStr)
+	if err != nil {
+		return err
+	}
+	return handleExceptionsList(manifestPath, expiringWithinPtr, today)
 }
 
 func exceptionToday(value string) (time.Time, error) {

@@ -25,6 +25,30 @@ func migrationManifest(t *testing.T, entries string) string {
 	return path
 }
 
+func TestExceptionMigrationDecodesLegacyValuesWithoutPolicyValidation(t *testing.T) {
+	today := ExceptionDay(time.Now())
+	for _, days := range []int{0, 91, 121} {
+		path := migrationManifest(t, legacyMigrationEntry(days, "legacy migration", today))
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := DecodeManifest(before); err != nil {
+			t.Fatalf("structural decoder refused legacy values: %v", err)
+		}
+		if _, err := ParseManifest(path, before); (err != nil) != (days > 90) {
+			t.Fatalf("unexpected legacy policy validation for %d days: %v", days, err)
+		}
+		_, proposals, err := PlanExceptionMigration(t.Context(), path, today)
+		if err != nil || len(proposals) != 1 {
+			t.Fatalf("legacy values never reached planning: proposals=%+v err=%v", proposals, err)
+		}
+		if (proposals[0].Unresolved != "") != (days > 120) {
+			t.Fatalf("wrong legacy outcome: %+v", proposals[0])
+		}
+	}
+}
+
 func legacyMigrationEntry(days int, reason string, today time.Time) string {
 	return fmt.Sprintf("  - rule: declared-linters # entry comment\n    tool: semgrep\n    reason: %s\n    expires: %s # expiry comment\n",
 		util.YAMLScalar(reason), today.AddDate(0, 0, days).Format(ExceptionDateLayout))
