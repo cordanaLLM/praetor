@@ -109,6 +109,7 @@ func TestRepositoryChecksCancellationAndEngine(t *testing.T) {
 	}
 }
 
+// TestRustMSRVSkipBeforeInputBounds pins that repositories without Cargo manifests skip before input size bounds are evaluated.
 func TestRustMSRVSkipBeforeInputBounds(t *testing.T) {
 	const oversizedWorkflowBytes = maxVerificationInputBytes + 1
 	oversizedWorkflow := strings.Repeat("#", oversizedWorkflowBytes)
