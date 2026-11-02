@@ -73,11 +73,12 @@ type ghWriteCall struct {
 	raw     string
 	files   []ghTextFile
 	fileErr string
+	dir     string
 }
 
 // evaluateForgeTextRefs inspects every scoped gh write call in canonical.Command and
-// refuses the command when shell parsing fails, trusted organisations cannot be resolved,
-// or any inline text or named file contains a foreign forge reference.
+// refuses unreadable text and foreign references. Manifest defects are stated findings,
+// never a refusal of a write containing no active reference.
 func evaluateForgeTextRefs(ctx context.Context, canonical Canonical, root string, in Invocation) Verdict {
 	ctx, cancel := context.WithTimeout(ctx, forgeTextReadTimeout)
 	defer cancel()
@@ -92,16 +93,41 @@ func evaluateForgeTextRefs(ctx context.Context, canonical Canonical, root string
 	if len(calls) == 0 {
 		return Verdict{Outcome: Allow}
 	}
-	own, noOrgList, err := resolveHookOwnOrganizations(ctx, root, in.Getenv)
+	var notices []string
+	for i := 0; i < len(calls) && i < maxForgeTextSegments; i++ {
+		verdict := judgeResolvedGHWriteCall(ctx, calls[i], in.Getenv)
+		if verdict.Outcome != Allow {
+			return verdict
+		}
+		if verdict.Notice != "" {
+			notices = append(notices, verdict.Notice)
+		}
+	}
+	return Verdict{Outcome: Allow, Notice: strings.Join(notices, "; ")}
+}
+
+// judgeResolvedGHWriteCall uses the directory already tracked by the command reader and the
+// shared repository root resolver, so each write in a multi-worktree command has its own policy.
+func judgeResolvedGHWriteCall(ctx context.Context, call ghWriteCall, getenv func(string) string) Verdict {
+	root, err := repositoryRoot(ctx, call.dir)
 	if err != nil {
 		return forgeTextDeny(err.Error(), false)
 	}
-	for i := 0; i < len(calls) && i < maxForgeTextSegments; i++ {
-		if verdict := judgeGHWriteCall(ctx, calls[i], own, noOrgList); verdict.Outcome != Allow {
-			return verdict
-		}
+	if root == "" {
+		root = call.dir
 	}
-	return Verdict{Outcome: Allow}
+	own, noOrgList, notice, err := resolveHookOwnOrganizations(ctx, root, getenv)
+	if err != nil {
+		own = nil
+		notice += "; organisation finding: " + err.Error()
+	}
+	verdict := judgeGHWriteCall(ctx, call, own, noOrgList)
+	if verdict.Outcome == Allow {
+		verdict.Notice = notice
+	} else if notice != "" {
+		verdict.Reason += "\n" + notice
+	}
+	return verdict
 }
 
 // judgeGHWriteCall checks a single ghWriteCall and its named files against own, refusing
@@ -138,22 +164,28 @@ func forgeTextDeny(detail string, noOrgList bool) Verdict {
 }
 
 // resolveHookOwnOrganizations resolves the trusted forge organisations from operator
-// settings, the repository manifest and repository identity, refusing invalid manifests or settings.
-func resolveHookOwnOrganizations(ctx context.Context, root string, getenv func(string) string) ([]string, bool, error) {
+// settings, the command manifest and repository identity. Invalid manifests contribute only a
+// finding; their organisations are never trusted.
+func resolveHookOwnOrganizations(ctx context.Context, root string, getenv func(string) string) ([]string, bool, string, error) {
 	opForge, err := loadOperatorForgeSettings(ctx, getenv)
 	if err != nil {
-		return nil, false, err
+		return nil, false, "", err
 	}
 	manifestPath := ""
 	if root != "" {
 		manifestPath = filepath.Join(root, manifestName)
 	}
-	own, err := forge.ResolveOwnOrganizations(ctx, root, manifestPath, opForge.OwnOrganizations, getenv)
-	if err != nil {
-		return nil, false, err
+	resolved, err := forge.ResolveOwnOrganizationSources(ctx, root, manifestPath, opForge.OwnOrganizations, getenv)
+	notice := ""
+	if resolved.ManifestProblem != nil {
+		sources := strings.Join(resolved.Sources, ", ")
+		if sources == "" {
+			sources = "none; references fail closed"
+		}
+		notice = forgeTextRefRuleName + ": manifest finding; trusted sources: " + sources + "; " + resolved.ManifestProblem.Error()
 	}
-	noOrgList := len(opForge.OwnOrganizations) == 0 && len(own) <= 1
-	return own, noOrgList, nil
+	noOrgList := len(opForge.OwnOrganizations) == 0 && len(resolved.Organizations) <= 1
+	return resolved.Organizations, noOrgList, notice, err
 }
 
 // loadOperatorForgeSettings loads operator-level forge settings when fleet or workstation
@@ -522,7 +554,7 @@ func parseSegmentGHCall(fullCommand string, words []string, workDir string) (ghW
 	if readsStdin {
 		raw = fullCommand
 	}
-	return ghWriteCall{raw: raw, files: files, fileErr: fileErr}, workDir, true
+	return ghWriteCall{raw: raw, files: files, fileErr: fileErr, dir: cmdDir}, workDir, true
 }
 
 // classifyGHCall identifies the gh subcommand and remaining arguments for a scoped write
