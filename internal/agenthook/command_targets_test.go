@@ -11,6 +11,35 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
+// TestTargetDirectoryTildes pins literal internal and trailing tildes while retaining home expansion and unresolved user prefixes.
+func TestTargetDirectoryTildes(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", base)
+	t.Setenv("USERPROFILE", base)
+	cases := []struct{ value, want string }{
+		{"RUNNER~1", "RUNNER~1"}, {"RUNNER~", "RUNNER~"},
+		{"~", "."}, {"~/RUNNER~1", "RUNNER~1"}, {"~user", ""},
+	}
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		t.Run(tc.value, func(t *testing.T) {
+			if err := os.MkdirAll(filepath.Join(base, tc.value), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			want := ""
+			if tc.want != "" {
+				want = filepath.Join(base, tc.want)
+			}
+			if got := targetDirectory(tc.value, base); got != want {
+				t.Fatalf("targetDirectory(%q) = %q, want %q", tc.value, got, want)
+			}
+		})
+	}
+}
+
 func TestRunGuardsGovernedCommandTargets(t *testing.T) {
 	governed, plain := repository(t, true), repository(t, false)
 	parent := filepath.Dir(governed)

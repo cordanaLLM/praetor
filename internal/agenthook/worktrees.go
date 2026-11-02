@@ -265,7 +265,7 @@ func resolveWorktreeTargetPath(ctx context.Context, rawPath, baseDir string) (st
 	if cleaned == "" {
 		return "", "git worktree add: missing <path>"
 	}
-	if strings.ContainsAny(cleaned, "$`~*?[]{}'\"") {
+	if hasUnresolvedTargetSyntax(cleaned) {
 		return "", fmt.Sprintf("git worktree add: path %q contains unresolved shell syntax", rawPath)
 	}
 	if !filepath.IsAbs(cleaned) {

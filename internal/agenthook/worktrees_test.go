@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/topology"
@@ -18,6 +19,42 @@ import (
 type worktreeFixture struct {
 	devRoot string
 	repoDir string
+}
+
+// TestResolveWorktreeTargetPathTildes pins literal tildes in existing ancestors and new targets while refusing unresolved shell syntax.
+func TestResolveWorktreeTargetPathTildes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(base, "RUNNER~1"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", base)
+	t.Setenv("USERPROFILE", base)
+	cases := []struct{ value, want string }{
+		{"RUNNER~1/new", "RUNNER~1/new"}, {"new~", "new~"},
+		{"~", "."}, {"~/RUNNER~1/new", "RUNNER~1/new"}, {"~user", ""},
+		{"$DIR", ""}, {"`pwd`", ""}, {"*", ""}, {"?", ""},
+		{"[ab]", ""}, {"{a,b}", ""}, {`a'b`, ""}, {`a"b`, ""},
+	}
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		t.Run(tc.value, func(t *testing.T) {
+			got, reason := resolveWorktreeTargetPath(ctx, tc.value, base)
+			if tc.want == "" {
+				if got != "" || !strings.Contains(reason, "unresolved shell syntax") {
+					t.Fatalf("unresolved path accepted: %q, %q", got, reason)
+				}
+				return
+			}
+			if want := filepath.Join(base, tc.want); got != want || reason != "" {
+				t.Fatalf("target %q: %q, %q; want %q", tc.value, got, reason, want)
+			}
+		})
+	}
 }
 
 func newWorktreeFixture(t *testing.T) worktreeFixture {

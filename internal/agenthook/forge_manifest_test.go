@@ -6,6 +6,7 @@ package agenthook
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -108,7 +109,7 @@ func forgeManifestWorktree(t *testing.T, root string) string {
 	tree := git("write-tree")
 	commit := git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit-tree", tree, "-m", "fixture")
 	git("update-ref", "HEAD", commit)
-	worktree := filepath.Join(t.TempDir(), "worktree")
+	worktree := filepath.Join(t.TempDir(), "RUNNER~1")
 	git("worktree", "add", "--detach", worktree, commit)
 	writeTestFixtureFile(t, filepath.Join(worktree, manifestName), "version: 1\nforge:\n  own_organizations: [worktree-org]\n")
 	return worktree
@@ -192,7 +193,10 @@ func TestForgeManifestNoticeDedupAndDirCache(t *testing.T) {
 // any git repository does not load or trust a manifest from that directory.
 func TestForgeManifestOutsideRepositoryIgnored(t *testing.T) {
 	root := repositoryWithManifest(t, "version: 1\nforge:\n  own_organizations: [repo-org]\n")
-	outside := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "RUNNER~1")
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	writeTestFixtureFile(t, filepath.Join(outside, manifestName),
 		"version: 1\nrepository:\n  owner: rogue-owner\n  name: rogue-repo\nforge:\n  own_organizations: [rogue-org]\n")
 	for _, tc := range []struct{ cmd, span string }{
