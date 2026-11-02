@@ -4,6 +4,8 @@
 package adopt
 
 import (
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -238,6 +240,8 @@ func assertConfigBandBoundaries(t *testing.T, harness string) {
 	}
 }
 
+var errSPDXScanCap = errors.New("spdx scan exceeds entry cap")
+
 // TestAdoptTestdataSPDXLicensesBackedByLicenseFiles ensures every SPDX license tag in
 // internal/adopt/testdata resolves to an existing LICENSES/<id>.txt file.
 func TestAdoptTestdataSPDXLicensesBackedByLicenseFiles(t *testing.T) {
@@ -249,27 +253,69 @@ func TestAdoptTestdataSPDXLicensesBackedByLicenseFiles(t *testing.T) {
 	if missing := unbackedSPDXInText(tag+" EUPL-1.2 AND MIT\n", licensesDir); len(missing) != 0 {
 		t.Fatalf("boundary compound check flagged backed licenses: %v", missing)
 	}
+	missing, err := scanTestdataSPDXLicenses("testdata", licensesDir, maxSnapshotEntries)
+	if err != nil {
+		t.Fatalf("walk testdata: %v", err)
+	}
+	for _, m := range missing {
+		t.Error(m)
+	}
+}
+
+// TestAdoptTestdataSPDXScan_3D verifies positive, negative (cap truncation, unbacked license)
+// and boundary (exact limit) behavior of scanTestdataSPDXLicenses.
+func TestAdoptTestdataSPDXScan_3D(t *testing.T) {
+	licensesDir := filepath.Join("..", "..", "LICENSES")
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "a.txt"), "// SPDX-License-Identifier: MIT\n")
+	mustWrite(t, filepath.Join(dir, "b.txt"), "// SPDX-License-Identifier: EUPL-1.2\n")
+
+	missing, err := scanTestdataSPDXLicenses(dir, licensesDir, 2)
+	if err != nil || len(missing) != 0 {
+		t.Fatalf("positive: got missing=%v, err=%v; want empty, nil", missing, err)
+	}
+	if _, err := scanTestdataSPDXLicenses(dir, licensesDir, 1); !errors.Is(err, errSPDXScanCap) {
+		t.Fatalf("negative cap: got err=%v, want %v", err, errSPDXScanCap)
+	}
+
+	badDir := t.TempDir()
+	mustWrite(t, filepath.Join(badDir, "bad.txt"), "// SPDX-License-Identifier: CC-BY-SA-4.0\n")
+	badMissing, err := scanTestdataSPDXLicenses(badDir, licensesDir, 2)
+	if err != nil || len(badMissing) != 1 {
+		t.Fatalf("negative license: got missing=%v, err=%v; want 1 missing, nil err", badMissing, err)
+	}
+
+	emptyDir := t.TempDir()
+	if _, err := scanTestdataSPDXLicenses(emptyDir, licensesDir, 0); err != nil {
+		t.Fatalf("boundary empty: got err=%v, want nil", err)
+	}
+}
+
+func scanTestdataSPDXLicenses(root, licensesDir string, maxEntries int) ([]string, error) {
+	var missing []string
 	count := 0
-	err := filepath.WalkDir("testdata", func(path string, entry fs.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {
 			return err
 		}
 		count++
-		if count > maxSnapshotEntries {
-			return fs.SkipAll
+		if count > maxEntries {
+			return fmt.Errorf("%s exceeds max entries (%d): %w", root, maxEntries, errSPDXScanCap)
 		}
 		data, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return readErr
 		}
-		if missing := unbackedSPDXInText(string(data), licensesDir); len(missing) > 0 {
-			t.Errorf("%s declares SPDX license without LICENSES/<id>.txt: %v", filepath.ToSlash(path), missing)
+		if unbacked := unbackedSPDXInText(string(data), licensesDir); len(unbacked) > 0 {
+			rel := filepath.ToSlash(path)
+			missing = append(missing, fmt.Sprintf("%s declares SPDX license without LICENSES/<id>.txt: %v", rel, unbacked))
 		}
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("walk testdata: %v", err)
+		return missing, err
 	}
+	return missing, nil
 }
 
 func unbackedSPDXInText(text, licensesDir string) []string {
