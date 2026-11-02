@@ -20,7 +20,7 @@ action create .gitignore :: Created ignore rules for build artifacts, private wo
 action create tools/markdownlint/package.json :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/package-lock.json :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/markdownlint-cli2.yaml :: Scaffolded locked Markdown governance asset
-action replace tools/markdownlint/verify.mjs :: Scaffolded locked Markdown governance asset; replaced existing content (-1/+2629 lines, removed "// operator runner"); backup: .workingdir/adopt-backups/<stamp>/tools/markdownlint/verify.mjs
+action replace tools/markdownlint/verify.mjs :: Scaffolded locked Markdown governance asset; replaced existing content (-1/+2630 lines, removed "// operator runner"); backup: .workingdir/adopt-backups/<stamp>/tools/markdownlint/verify.mjs
 action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded locked Markdown governance asset
 action replace .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow; replaced existing content (-1/+59 lines, removed "name: Operator"); backup: .workingdir/adopt-backups/<stamp>/.github/workflows/praetor-docs.yml
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
