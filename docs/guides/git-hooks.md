@@ -495,8 +495,13 @@ the Lefthook job test named above puts stand-ins for all three names first on `P
 Hook stages that build and run the repository's CLI through `cli` (`pre-commit`, `pre-push`,
 `post-commit`) execute under a shared stage budget. In `commit-msg`, only the live-state
 audit runs through `cli`; its subsequent `state sync --verify .` and `forge check-message`
-commands execute under fixed 30-second timeouts rather than the shared stage budget. By
-default, the stage budget allows 20 minutes (`20m`), configurable through
+commands execute under fixed 30-second timeouts rather than the shared stage budget.
+Similarly, when `pre-push` has ref updates, `verify_live_state()` runs the live-state audit
+through `cli` under the shared budget, but its subsequent `state sync --verify .` executes
+under a fixed 30-second timeout. A user who increases `PRAETOR_TEST_STAGE_TIMEOUT` can
+therefore still have a push fail at 30 seconds if live-state verification exceeds that limit.
+The shared stage budget covers the `cli` invocation, not this later verification command.
+By default, the stage budget allows 20 minutes (`20m`), configurable through
 `PRAETOR_TEST_STAGE_TIMEOUT` with standard duration units (`30m`, `90s`, `1h30m`). If the
 total elapsed time exceeds the budget during either the `hook-cli` build or CLI command
 execution, the running process is terminated and the hook fails immediately with a
