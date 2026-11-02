@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go/build"
 	"io"
 	"os"
 	"path/filepath"
@@ -440,7 +441,7 @@ func TestCollectNonTestImports_CancellationAndDirectoryBounds(t *testing.T) {
 	modDir := filepath.Join(root, "mod")
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := collectNonTestImports(ctx, t.TempDir()); !errors.Is(err, context.Canceled) {
+	if _, err := collectNonTestImports(ctx, t.TempDir(), build.Default); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled scan = %v, want context.Canceled", err)
 	}
 	for index := range maxGoFiles - 3 {
@@ -448,13 +449,13 @@ func TestCollectNonTestImports_CancellationAndDirectoryBounds(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := collectNonTestImports(t.Context(), modDir); err != nil {
+	if _, err := collectNonTestImports(t.Context(), modDir, build.Default); err != nil {
 		t.Fatalf("exact directory entry limit: %v", err)
 	}
 	if err := os.Mkdir(filepath.Join(modDir, "overflow"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := collectNonTestImports(t.Context(), modDir); err == nil {
+	if _, err := collectNonTestImports(t.Context(), modDir, build.Default); err == nil {
 		t.Fatal("over-limit directory scan silently accepted")
 	}
 }
@@ -507,13 +508,13 @@ func TestCollectNonTestImports_TotalDirectoryLimit(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, "last"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := collectNonTestImports(t.Context(), root); err != nil {
+	if _, err := collectNonTestImports(t.Context(), root, build.Default); err != nil {
 		t.Fatalf("exact total directory limit: %v", err)
 	}
 	if err := os.Mkdir(filepath.Join(root, "last", "overflow"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := collectNonTestImports(t.Context(), root); err == nil {
+	if _, err := collectNonTestImports(t.Context(), root, build.Default); err == nil {
 		t.Fatal("directory limit silently returned partial imports")
 	}
 }

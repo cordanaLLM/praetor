@@ -74,6 +74,7 @@ import (
 	"flag"
 	"fmt"
 	"go/ast"
+	"go/build"
 	"go/format"
 	"go/parser"
 	"go/token"
@@ -1125,7 +1126,7 @@ func recordNonTestFileImports(ctx context.Context, fset *token.FileSet, filePath
 	return nil
 }
 
-func visitNonTestDirEntry(ctx context.Context, fset *token.FileSet, dir string, entry os.DirEntry, queue []string, imports map[string]bool) ([]string, error) {
+func visitNonTestDirEntry(ctx context.Context, buildCtx *build.Context, fset *token.FileSet, dir string, entry os.DirEntry, queue []string, imports map[string]bool) ([]string, error) {
 	name := entry.Name()
 	if entry.IsDir() {
 		if skippedDirectory(name) {
@@ -1139,10 +1140,17 @@ func visitNonTestDirEntry(ctx context.Context, fset *token.FileSet, dir string, 
 	if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 		return queue, nil
 	}
+	match, err := buildCtx.MatchFile(dir, name)
+	if err != nil {
+		return nil, fmt.Errorf("match imports file %s: %w", filepath.Join(dir, name), err)
+	}
+	if !match {
+		return queue, nil
+	}
 	return queue, recordNonTestFileImports(ctx, fset, filepath.Join(dir, name), imports)
 }
 
-func appendNonTestDirImports(ctx context.Context, fset *token.FileSet, dir string, entries []os.DirEntry, queue []string, imports map[string]bool) ([]string, error) {
+func appendNonTestDirImports(ctx context.Context, buildCtx *build.Context, fset *token.FileSet, dir string, entries []os.DirEntry, queue []string, imports map[string]bool) ([]string, error) {
 	if len(entries) > maxGoFiles {
 		return nil, fmt.Errorf("directory entries exceed %d: %s", maxGoFiles, dir)
 	}
@@ -1151,7 +1159,7 @@ func appendNonTestDirImports(ctx context.Context, fset *token.FileSet, dir strin
 			return nil, err
 		}
 		var err error
-		queue, err = visitNonTestDirEntry(ctx, fset, dir, entries[index], queue, imports)
+		queue, err = visitNonTestDirEntry(ctx, buildCtx, fset, dir, entries[index], queue, imports)
 		if err != nil {
 			return nil, err
 		}
@@ -1181,7 +1189,14 @@ func readNonTestDir(ctx context.Context, dir string) ([]os.DirEntry, error) {
 	return entries, nil
 }
 
-func collectNonTestImports(ctx context.Context, moduleDir string) (map[string]bool, error) {
+func collectNonTestImports(ctx context.Context, moduleDir string, buildCtx build.Context) (map[string]bool, error) {
+	buildCtx.OpenFile = func(filePath string) (io.ReadCloser, error) {
+		data, err := readBoundedRegularFile(ctx, filePath, maxDeclBytes)
+		if err != nil {
+			return nil, err
+		}
+		return io.NopCloser(bytes.NewReader(data)), nil
+	}
 	fset := token.NewFileSet()
 	imports := make(map[string]bool)
 	queue := []string{moduleDir}
@@ -1198,7 +1213,7 @@ func collectNonTestImports(ctx context.Context, moduleDir string) (map[string]bo
 		if dir != moduleDir && hasGoModFile(entries) {
 			continue
 		}
-		queue, err = appendNonTestDirImports(ctx, fset, dir, entries, queue, imports)
+		queue, err = appendNonTestDirImports(ctx, &buildCtx, fset, dir, entries, queue, imports)
 		if err != nil {
 			return nil, err
 		}
@@ -1207,6 +1222,30 @@ func collectNonTestImports(ctx context.Context, moduleDir string) (map[string]bo
 		return nil, fmt.Errorf("module directory count exceeds %d", maxGoFiles)
 	}
 	return imports, nil
+}
+
+// effectiveBuildContext asks Go to interpret GOFLAGS and platform/toolchain settings.
+// Listing only main modules avoids loading package imports or the dependency graph.
+func effectiveBuildContext(ctx context.Context, moduleDir string) (build.Context, error) {
+	const format = `{{define "tags"}}[{{range $i, $v := .}}{{if $i}},{{end}}{{printf "%q" $v}}{{end}}]{{end}}
+{{with context}}{"GOOS":{{printf "%q" .GOOS}},"GOARCH":{{printf "%q" .GOARCH}},
+"Compiler":{{printf "%q" .Compiler}},"CgoEnabled":{{.CgoEnabled}},
+"BuildTags":{{template "tags" .BuildTags}},"ToolTags":{{template "tags" .ToolTags}},
+"ReleaseTags":{{template "tags" .ReleaseTags}}}{{end}}`
+	out := &boundedBuffer{limit: maxRecordBytes + 1}
+	diagnostics := &boundedBuffer{limit: maxRecordBytes}
+	var buildCtx build.Context
+	if err := runTool(ctx, moduleDir, out, diagnostics, "go", "list", "-m", "-f", format); err != nil {
+		return buildCtx, fmt.Errorf("read Go build context: %w: %s", err, diagnostics.String())
+	}
+	if len(out.data) > maxRecordBytes {
+		return buildCtx, fmt.Errorf("go build context exceeds %d bytes", maxRecordBytes)
+	}
+	// A workspace emits the same process-wide context for each main module; read the first.
+	if err := json.NewDecoder(bytes.NewReader(out.data)).Decode(&buildCtx); err != nil {
+		return buildCtx, fmt.Errorf("decode Go build context: %w", err)
+	}
+	return buildCtx, nil
 }
 
 func isImportedModule(modPath string, imports map[string]bool) bool {
@@ -1242,7 +1281,11 @@ func moduleDownloadArgs(ctx context.Context, moduleDir string) ([]string, bool, 
 	if !ok {
 		return nil, false, fmt.Errorf("module requirements exceed %d lines", maxGoModLines)
 	}
-	imports, err := collectNonTestImports(ctx, moduleDir)
+	buildCtx, err := effectiveBuildContext(ctx, moduleDir)
+	if err != nil {
+		return nil, false, err
+	}
+	imports, err := collectNonTestImports(ctx, moduleDir, buildCtx)
 	if err != nil {
 		return nil, false, fmt.Errorf("scan non-test imports: %w", err)
 	}
@@ -1277,14 +1320,14 @@ func downloadBackoff(ctx context.Context, attempt int) time.Duration {
 	return backoff
 }
 
-// downloadAttemptTimeout caps each retry by downloadTimeout and divides any remaining context deadline across attempts.
-func downloadAttemptTimeout(ctx context.Context, attempt int) (time.Duration, error) {
+// downloadAttemptTimeout caps each retry and divides the remaining context deadline across attempts.
+func downloadAttemptTimeout(ctx context.Context, attempt int, attemptCap time.Duration) (time.Duration, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
 	deadline, ok := ctx.Deadline()
 	if !ok {
-		return downloadTimeout, nil
+		return attemptCap, nil
 	}
 	remaining := time.Until(deadline)
 	if remaining <= 0 {
@@ -1297,10 +1340,10 @@ func downloadAttemptTimeout(ctx context.Context, attempt int) (time.Duration, er
 		slots++
 	}
 	perAttempt := max(time.Millisecond, remaining/slots)
-	return min(downloadTimeout, perAttempt), nil
+	return min(attemptCap, perAttempt), nil
 }
 
-func retryModuleGo(ctx context.Context, moduleDir, dir, label string, args []string, stderr io.Writer, run toolRunner, wait waitFunc) (int, error) {
+func retryModuleGo(ctx context.Context, moduleDir, dir, label string, args []string, attemptCap time.Duration, stderr io.Writer, run toolRunner, wait waitFunc) (int, error) {
 	var lastErr error
 	for attempt := 1; attempt <= downloadAttempts; attempt++ {
 		if attempt > 1 {
@@ -1308,7 +1351,7 @@ func retryModuleGo(ctx context.Context, moduleDir, dir, label string, args []str
 				return attempt - 1, err
 			}
 		}
-		timeout, timeoutErr := downloadAttemptTimeout(ctx, attempt)
+		timeout, timeoutErr := downloadAttemptTimeout(ctx, attempt, attemptCap)
 		if timeoutErr != nil {
 			return attempt - 1, timeoutErr
 		}
@@ -1332,17 +1375,20 @@ func retryModuleGo(ctx context.Context, moduleDir, dir, label string, args []str
 // downloadModule runs "go mod download" in moduleDir with bounded retries and backoff.
 func downloadModule(ctx context.Context, moduleDir, dir string, stderr io.Writer, run toolRunner, wait waitFunc) error {
 	if err := ctx.Err(); err != nil {
-		return &downloadError{dir: dir, attempts: 0, err: err}
+		return fmt.Errorf("prepare dependencies of module %s: %w", dir, err)
 	}
 	args, needed, err := moduleDownloadArgs(ctx, moduleDir)
 	if err != nil {
-		return &downloadError{dir: dir, attempts: 0, err: err}
+		return fmt.Errorf("prepare dependencies of module %s: %w", dir, err)
 	}
 	if !needed {
 		return nil
 	}
-	attempts, err := retryModuleGo(ctx, moduleDir, dir, "go mod download", args, stderr, run, wait)
+	attempts, err := retryModuleGo(ctx, moduleDir, dir, "go mod download", args, downloadTimeout, stderr, run, wait)
 	if err != nil {
+		if attempts == 0 {
+			return fmt.Errorf("prepare dependencies of module %s: %w", dir, err)
+		}
 		return &downloadError{dir: dir, attempts: attempts, err: err}
 	}
 	return nil
@@ -1360,7 +1406,7 @@ func buildModule(ctx context.Context, root, dir string, stderr io.Writer, run to
 	if err := downloadModule(ctx, moduleDir, dir, stderr, run, wait); err != nil {
 		return err
 	}
-	if _, err := retryModuleGo(ctx, moduleDir, dir, "go list -export", []string{"list", "-export", "./..."}, stderr, run, wait); err != nil {
+	if _, err := retryModuleGo(ctx, moduleDir, dir, "go list -export", []string{"list", "-export", "./..."}, moduleTimeout, stderr, run, wait); err != nil {
 		return fmt.Errorf("its packages do not build at HEAD, so the checker cannot read them: %w", err)
 	}
 	return nil
