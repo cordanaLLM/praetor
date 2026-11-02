@@ -22,42 +22,63 @@ var semverPattern = regexp.MustCompile(`\b\d+\.\d+(?:\.\d+)?(?:-[0-9A-Za-z.-]+)?
 func CheckCreditPins(credits Credits, manifests map[string][]byte) error {
 	var findings []error
 	for _, entry := range credits.Entries {
-		if entry.Detail == "" {
-			continue
-		}
-		npmPkgs := entryNPMPackages(entry.Packages)
-		if len(npmPkgs) == 0 {
-			continue
-		}
-		for _, rel := range entry.Paths {
-			if !isManifestPath(rel) {
-				continue
-			}
-			data, ok := manifests[rel]
-			if !ok {
-				continue
-			}
-			manifest, err := nodemanifest.ParseManifest(data)
-			if err != nil {
-				findings = append(findings, fmt.Errorf("parse %s: %w", rel, err))
-				continue
-			}
-			pinned := manifestPinnedDeps(manifest)
-			for _, pkg := range npmPkgs {
-				pinVersion, hasPin := pinned[pkg]
-				if !hasPin {
-					continue
-				}
-				cleanPin := strings.TrimLeft(pinVersion, "^~=v")
-				recorded := recordedPackageVersion(entry.Detail, pkg, entry.Name, len(npmPkgs))
-				if recorded != "" && recorded != cleanPin {
-					findings = append(findings, fmt.Errorf("%s: %s pins version %s, but %s records %s",
-						rel, pkg, cleanPin, AcknowledgementsList, recorded))
-				}
-			}
-		}
+		findings = append(findings, checkEntryCreditPins(entry, manifests)...)
 	}
 	return errors.Join(findings...)
+}
+
+// checkEntryCreditPins checks that manifest pins for a single credit entry agree with docs/credits.yaml.
+func checkEntryCreditPins(entry CreditEntry, manifests map[string][]byte) []error {
+	if entry.Detail == "" {
+		return nil
+	}
+	npmPkgs := entryNPMPackages(entry.Packages)
+	if len(npmPkgs) == 0 {
+		return nil
+	}
+	var findings []error
+	for _, rel := range entry.Paths {
+		if !isManifestPath(rel) {
+			continue
+		}
+		data, ok := manifests[rel]
+		if !ok {
+			continue
+		}
+		findings = append(findings, checkManifestPins(entry, rel, data, npmPkgs)...)
+	}
+	return findings
+}
+
+// checkManifestPins checks pinned package versions in a parsed manifest against the credit entry detail.
+func checkManifestPins(entry CreditEntry, rel string, data []byte, npmPkgs []string) []error {
+	manifest, err := nodemanifest.ParseManifest(data)
+	if err != nil {
+		return []error{fmt.Errorf("parse %s: %w", rel, err)}
+	}
+	pinned := manifestPinnedDeps(manifest)
+	var findings []error
+	for _, pkg := range npmPkgs {
+		pinVersion, hasPin := pinned[pkg]
+		if !hasPin {
+			continue
+		}
+		if err := checkPackagePin(entry, rel, pkg, pinVersion, len(npmPkgs)); err != nil {
+			findings = append(findings, err)
+		}
+	}
+	return findings
+}
+
+// checkPackagePin verifies that a single package pin in a manifest matches the credit entry record.
+func checkPackagePin(entry CreditEntry, rel, pkg, pinVersion string, totalPkgs int) error {
+	cleanPin := strings.TrimLeft(pinVersion, "^~=v")
+	recorded := recordedPackageVersion(entry.Detail, pkg, entry.Name, totalPkgs)
+	if recorded != "" && recorded != cleanPin {
+		return fmt.Errorf("%s: %s pins version %s, but %s records %s",
+			rel, pkg, cleanPin, AcknowledgementsList, recorded)
+	}
+	return nil
 }
 
 // ReadCreditManifests reads every package.json path named by the credits list below root.
@@ -118,26 +139,54 @@ func recordedPackageVersion(detail, pkg, entryName string, totalPkgs int) string
 	if len(allVersions) == 0 {
 		return ""
 	}
-	if v := namedVersion(detail, pkg); v != "" {
+	if v := packageNamedVersion(detail, pkg); v != "" {
 		return v
 	}
-	unscoped := pkg
-	if slash := strings.LastIndex(pkg, "/"); slash >= 0 {
-		unscoped = pkg[slash+1:]
-		if v := namedVersion(detail, unscoped); v != "" {
-			return v
-		}
-	}
-	if strings.EqualFold(pkg, entryName) || strings.EqualFold(unscoped, entryName) {
-		leading := semverPattern.FindString(strings.TrimSpace(detail))
-		if strings.HasPrefix(strings.TrimSpace(detail), leading) && leading != "" {
-			return leading
-		}
+	if v := entryLeadingVersion(detail, pkg, entryName); v != "" {
+		return v
 	}
 	if totalPkgs == 1 || allVersionsEqual(allVersions) {
 		return allVersions[0]
 	}
 	return ""
+}
+
+// packageNamedVersion extracts a version named by pkg or unscoped pkg from detail text.
+func packageNamedVersion(detail, pkg string) string {
+	if v := namedVersion(detail, pkg); v != "" {
+		return v
+	}
+	unscoped := unscopedPackage(pkg)
+	if unscoped != pkg {
+		return namedVersion(detail, unscoped)
+	}
+	return ""
+}
+
+// entryLeadingVersion extracts a leading version when the package matches the credit entry name.
+func entryLeadingVersion(detail, pkg, entryName string) string {
+	if !matchesEntryName(pkg, entryName) {
+		return ""
+	}
+	trimmed := strings.TrimSpace(detail)
+	leading := semverPattern.FindString(trimmed)
+	if leading != "" && strings.HasPrefix(trimmed, leading) {
+		return leading
+	}
+	return ""
+}
+
+// matchesEntryName reports whether the package or its unscoped name equals the credit entry name.
+func matchesEntryName(pkg, entryName string) bool {
+	return strings.EqualFold(pkg, entryName) || strings.EqualFold(unscopedPackage(pkg), entryName)
+}
+
+// unscopedPackage returns the package name without its scope prefix.
+func unscopedPackage(pkg string) string {
+	if slash := strings.LastIndex(pkg, "/"); slash >= 0 {
+		return pkg[slash+1:]
+	}
+	return pkg
 }
 
 // namedVersion extracts a version string explicitly associated with a given package name from detail text.
