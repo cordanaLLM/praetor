@@ -11,7 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/mcp"
 )
 
-const mcpTranscriptFixture = `{"step_index":1,"source":"MODEL","type":"MESSAGE","status":"DONE","created_at":"2026-09-12T12:00:00Z","content":"private fixture payload"}` + "\n"
+const mcpTranscriptFixture = /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"step_index":1,"source":"MODEL","type":"MESSAGE","status":"DONE","created_at":"2026-09-12T12:00:00Z","content":"private fixture payload"}` + "\n"
 
 func transcriptMCPReport(t *testing.T, result *mcp.ToolResult) harvester.TranscriptIngestReport {
 	t.Helper()
@@ -95,7 +95,7 @@ func TestTranscriptMCPRejectsInvalidArgumentsAndOutsidePaths(t *testing.T) {
 func TestClaudeTranscriptMCPExplicitFormatAndReplay(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	source := filepath.Join(root, "session.jsonl")
-	body := `{"type":"assistant","uuid":"message-id","sessionId":"session-id","timestamp":"2026-09-12T12:00:00Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hidden"},{"type":"text","text":"private fixture payload"}]}}` + "\n"
+	body := /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"type":"assistant","uuid":"message-id","sessionId":"session-id","timestamp":"2026-09-12T12:00:00Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hidden"},{"type":"text","text":"private fixture payload"}]}}` + "\n"
 	if err := os.WriteFile(source, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -122,8 +122,8 @@ func TestClaudeTranscriptErrorsDoNotEchoPrivateSourceCategories(t *testing.T) {
 	marker := strings.Repeat("SYNTHETIC_PRIVATE_CATEGORY_", 1024)
 	messages := []string{
 		`{"type":"` + marker + `"}`,
-		`{"type":"assistant","uuid":"record","sessionId":"session","timestamp":"2026-09-12T12:00:00Z","message":{"role":"assistant","content":[{"type":"` + marker + `"}]}}`,
-		`{"type":"user","uuid":"record","sessionId":"session","timestamp":"2026-09-12T12:00:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"id","content":[{"type":"` + marker + `"}]}]}}`,
+		/* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"type":"assistant","uuid":"record","sessionId":"session","timestamp":"2026-09-12T12:00:00Z","message":{"role":"assistant","content":[{"type":"` + marker + `"}]}}`,
+		/* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"type":"user","uuid":"record","sessionId":"session","timestamp":"2026-09-12T12:00:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"id","content":[{"type":"` + marker + `"}]}]}}`,
 	}
 	for _, body := range messages {
 		if err := os.WriteFile(filepath.Join(root, "private-session.jsonl"), []byte(body+"\n"), 0o600); err != nil {

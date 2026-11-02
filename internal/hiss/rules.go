@@ -210,7 +210,10 @@ const blockCommentClose = "*/"
 // code, so documenting a counter-example reported it as a live infraction. A gate that
 // punishes explaining the thing it forbids teaches people to stop explaining it.
 type literalStripper struct {
-	syn literalSyntax
+	// Optional observers reuse this lexer for fixture rules without reading comments as strings.
+	literal func(string, int)
+	comment func(string)
+	syn     literalSyntax
 	// fence is the delimiter that closes the span currently open, or empty outside one.
 	fence string
 	// substitutions holds, per open ${...} of a template literal, the depth of the braces the
@@ -239,6 +242,9 @@ func (s *literalStripper) strip(line string) string {
 		}
 		if strings.HasPrefix(line[i:], s.syn.lineComment) {
 			if !s.urlAt(line, i) {
+				if s.comment != nil {
+					s.comment(line[i:])
+				}
 				return b.String()
 			}
 			i += len(s.syn.lineComment)
@@ -266,6 +272,9 @@ func (s *literalStripper) consumeFence(line string, i int) int {
 		return len(line)
 	}
 	end, closed, carried := scanQuoted(line, i, s.fence)
+	if s.literal != nil {
+		s.literal(line[i:end], i)
+	}
 	if closed || (len(s.fence) == 1 && !carried) {
 		s.fence = ""
 	}
@@ -350,6 +359,9 @@ func (s *literalStripper) copyOne(line string, i int, b *strings.Builder) int {
 // break, or, under quotesEndWithLine, was never a string: the quote is dropped as text.
 func (s *literalStripper) skipQuoted(line string, i int) int {
 	end, closed, carried := scanQuoted(line, i+1, line[i:i+1])
+	if s.literal != nil {
+		s.literal(line[i:end], i)
+	}
 	if carried {
 		s.fence = line[i : i+1]
 	}

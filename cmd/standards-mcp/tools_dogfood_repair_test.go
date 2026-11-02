@@ -182,7 +182,7 @@ func TestRepairStatusMCPConsumesTerminalWithoutOptionalCost(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(config.StateDir, "execution.lock"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	started := map[string]any{"version": 1, "execution_key": terminal.ExecutionKey, "source_sha": terminal.SourceSHA, "config_sha256": terminal.ConfigSHA256, "started_at": "2026-09-12T12:00:00Z"}
+	started := map[string]any{"version": 1, "execution_key": terminal.ExecutionKey, "source_sha": terminal.SourceSHA, "config_sha256": terminal.ConfigSHA256, "started_at": /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ "2026-09-12T12:00:00Z"}
 	data, err := json.Marshal(started)
 	if err != nil {
 		t.Fatal(err)

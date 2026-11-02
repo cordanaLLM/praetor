@@ -31,7 +31,7 @@ func interruptedRender(t *testing.T) (string, string, []byte) {
 	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatal(err)
 	}
-	err = RenderReleaseContext(t.Context(), root, "1.2.3", "2026-09-12")
+	err = RenderReleaseContext(t.Context(), root, "1.2.3" /* testdate: fact: recorded release date; changelog parsing, no clock comparison */, "2026-09-12")
 	if chmodErr := os.Chmod(dir, 0o700); chmodErr != nil {
 		t.Fatal(chmodErr)
 	}
@@ -60,7 +60,7 @@ func TestRenderRetryResumesCleanupWithoutDuplicateRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := RenderReleaseContext(t.Context(), root, "1.2.3", "2026-09-12"); err != nil {
+	if err := RenderReleaseContext(t.Context(), root, "1.2.3" /* testdate: fact: recorded release date; changelog parsing, no clock comparison */, "2026-09-12"); err != nil {
 		t.Fatal(err)
 	}
 	assertReleaseCount(t, root, 1)
@@ -72,7 +72,7 @@ func TestRenderRetryResumesCleanupWithoutDuplicateRelease(t *testing.T) {
 	if _, err := os.Stat(newFragment); err != nil {
 		t.Fatalf("recovery removed a later fragment: %v", err)
 	}
-	if err := RenderReleaseContext(t.Context(), root, "1.2.3", "2026-09-12"); err == nil {
+	if err := RenderReleaseContext(t.Context(), root, "1.2.3" /* testdate: fact: recorded release date; changelog parsing, no clock comparison */, "2026-09-12"); err == nil {
 		t.Fatal("new fragments cannot silently republish the same release version")
 	}
 	assertReleaseCount(t, root, 1)
@@ -84,7 +84,7 @@ func TestRenderRetryPreservesChangedFragment(t *testing.T) {
 	if err := os.WriteFile(fragment, changed, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := RenderReleaseContext(t.Context(), root, "1.2.3", "2026-09-12"); err == nil {
+	if err := RenderReleaseContext(t.Context(), root, "1.2.3" /* testdate: fact: recorded release date; changelog parsing, no clock comparison */, "2026-09-12"); err == nil {
 		t.Fatal("changed fragment must stop cleanup")
 	}
 	data, err := os.ReadFile(fragment)
@@ -95,21 +95,21 @@ func TestRenderRetryPreservesChangedFragment(t *testing.T) {
 	if err := os.WriteFile(fragment, before, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := RenderReleaseContext(t.Context(), root, "1.2.3", "2026-09-12"); err != nil {
+	if err := RenderReleaseContext(t.Context(), root, "1.2.3" /* testdate: fact: recorded release date; changelog parsing, no clock comparison */, "2026-09-12"); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestRenderRetryRejectsChangedOutputAndOtherVersion(t *testing.T) {
 	root, fragment, _ := interruptedRender(t)
-	if err := RenderReleaseContext(t.Context(), root, "2.0.0", "2026-09-12"); err == nil {
+	if err := RenderReleaseContext(t.Context(), root, "2.0.0" /* testdate: fact: recorded release date; changelog parsing, no clock comparison */, "2026-09-12"); err == nil {
 		t.Fatal("another version cannot consume pending render")
 	}
 	path := filepath.Join(root, "CHANGELOG.md")
 	if err := os.WriteFile(path, []byte("manually replaced changelog\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := RenderReleaseContext(t.Context(), root, "1.2.3", "2026-09-12"); err == nil {
+	if err := RenderReleaseContext(t.Context(), root, "1.2.3" /* testdate: fact: recorded release date; changelog parsing, no clock comparison */, "2026-09-12"); err == nil {
 		t.Fatal("changed output cannot authorize fragment deletion")
 	}
 	if _, err := os.Stat(fragment); err != nil {
@@ -122,7 +122,7 @@ func TestRenderRetryAcceptsAlreadyCleanedRecordedFragment(t *testing.T) {
 	if err := os.Remove(fragment); err != nil {
 		t.Fatal(err)
 	}
-	if err := RenderReleaseContext(t.Context(), root, "1.2.3", "2026-09-12"); err != nil {
+	if err := RenderReleaseContext(t.Context(), root, "1.2.3" /* testdate: fact: recorded release date; changelog parsing, no clock comparison */, "2026-09-12"); err != nil {
 		t.Fatal(err)
 	}
 	assertReleaseCount(t, root, 1)
@@ -138,7 +138,7 @@ func TestRenderRejectsMultipleYAMLDocumentsBeforeWrites(t *testing.T) {
 	if err := os.WriteFile(fragment, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := RenderReleaseContext(t.Context(), root, "1.2.3", "2026-09-12"); err == nil {
+	if err := RenderReleaseContext(t.Context(), root, "1.2.3" /* testdate: fact: recorded release date; changelog parsing, no clock comparison */, "2026-09-12"); err == nil {
 		t.Fatal("trailing document was silently discarded")
 	}
 	for _, name := range []string{"CHANGELOG.md", renderJournalName} {
@@ -166,7 +166,7 @@ func TestRenderRejectsCancellationAndPreservesHeaderlessContent(t *testing.T) {
 	if err := os.WriteFile(path, []byte("existing freeform notes\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := RenderReleaseContext(t.Context(), root, "1.2.3", "2026-09-12"); err != nil {
+	if err := RenderReleaseContext(t.Context(), root, "1.2.3" /* testdate: fact: recorded release date; changelog parsing, no clock comparison */, "2026-09-12"); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -183,7 +183,7 @@ func TestRenderPendingJournalRejectsMissingFragmentDirectory(t *testing.T) {
 	if err := os.Remove(filepath.Join(root, "changelog.d")); err != nil {
 		t.Fatal(err)
 	}
-	if err := RenderReleaseContext(t.Context(), root, "1.2.3", "2026-09-12"); err == nil {
+	if err := RenderReleaseContext(t.Context(), root, "1.2.3" /* testdate: fact: recorded release date; changelog parsing, no clock comparison */, "2026-09-12"); err == nil {
 		t.Fatal("missing fragment directory falsely completed pending recovery")
 	}
 	if _, err := os.Stat(filepath.Join(root, renderJournalName)); err != nil {

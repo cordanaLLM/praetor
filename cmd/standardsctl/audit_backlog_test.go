@@ -117,10 +117,11 @@ func TestAuditBacklogCaps_BoundedFacet_DefectsException(t *testing.T) {
 
 	// Expired exception: audit fails
 	expiredEx := config.Exception{
-		Rule:    "backlog.caps.defects",
-		Tool:    "backlog",
-		Reason:  "old sprint refactor",
-		Expires: "2020-01-01",
+		Rule:     "backlog.caps.defects",
+		Tool:     "backlog",
+		Reason:   "old sprint refactor",
+		Category: "A",
+		Expires:  time.Now().AddDate(0, 0, -1).Format(config.ExceptionDateLayout),
 	}
 	dirExp, policyExp := backlogFixtureRepo(t, []string{"backlog:bounded"}, []config.Exception{expiredEx}, 21, 0)
 	outExp, errExp := captureStdout(t, func() error {
@@ -130,7 +131,7 @@ func TestAuditBacklogCaps_BoundedFacet_DefectsException(t *testing.T) {
 		t.Fatalf("expired exception must fail, but passed\n%s", outExp)
 	}
 	mustErrContain(t, errExp, "backlog cap defects: 21 items, over the cap of 20")
-	mustErrContain(t, errExp, "expired on 2020-01-01")
+	mustErrContain(t, errExp, "expired on "+time.Now().AddDate(0, 0, -1).Format(config.ExceptionDateLayout))
 }
 
 // TestAuditBacklogCaps_BoundedFacet_TasksBatchAction: facet listed, 60 open tasks: audit passes,
@@ -182,7 +183,7 @@ func TestAuditBacklogCaps_UnknownCategoryExceptionRefused(t *testing.T) {
 // Boundary: an expired entry for a gated category back within its cap still fails the audit,
 // naming the entry, until it is removed.
 func TestAuditBacklogCaps_BoundedFacet_ExpiredExceptionUnderCapFails(t *testing.T) {
-	expired := config.Exception{Rule: "backlog.caps.defects", Tool: "backlog", Reason: "old triage", Expires: "2020-01-01"}
+	expired := config.Exception{Rule: "backlog.caps.defects", Tool: "backlog", Reason: "old triage", Category: "A", Expires: time.Now().AddDate(0, 0, -1).Format(config.ExceptionDateLayout)}
 	dir, policy := backlogFixtureRepo(t, []string{"backlog:bounded"}, []config.Exception{expired}, 5, 10)
 	out, err := captureStdout(t, func() error {
 		return auditBacklogCaps(t.Context(), dir, policy)
@@ -190,7 +191,7 @@ func TestAuditBacklogCaps_BoundedFacet_ExpiredExceptionUnderCapFails(t *testing.
 	if err == nil {
 		t.Fatalf("an expired entry under the cap must fail the audit\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "the exceptions entry (rule backlog.caps.defects, backlog) expired on 2020-01-01") {
+	if !strings.Contains(err.Error(), "the exceptions entry (rule backlog.caps.defects, backlog) expired on "+time.Now().AddDate(0, 0, -1).Format(config.ExceptionDateLayout)) {
 		t.Fatalf("the failure must name the expired entry, got: %v", err)
 	}
 }

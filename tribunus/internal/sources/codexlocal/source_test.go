@@ -23,7 +23,7 @@ func writeSession(t *testing.T, dir, name, body string, modTime time.Time) strin
 	return path
 }
 
-const validLine = `{"timestamp":"2026-09-13T12:56:47.753Z","ordinal":1,"type":"event_msg","payload":{"type":"token_count","info":{},"rate_limits":{"limit_id":"codex","limit_name":null,"primary":{"used_percent":92.0,"window_minutes":10080,"resets_at":1789858494},"secondary":null,"credits":{"has_credits":false,"unlimited":false,"balance":"0"},"plan_type":"pro"}}}`
+const validLine = /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"timestamp":"2026-09-13T12:56:47.753Z","ordinal":1,"type":"event_msg","payload":{"type":"token_count","info":{},"rate_limits":{"limit_id":"codex","limit_name":null,"primary":{"used_percent":92.0,"window_minutes":10080,"resets_at":1789858494},"secondary":null,"credits":{"has_credits":false,"unlimited":false,"balance":"0"},"plan_type":"pro"}}}`
 
 func TestFetch_Positive(t *testing.T) {
 	dir := t.TempDir()
@@ -99,7 +99,7 @@ func TestFetch_Negative(t *testing.T) {
 // than fabricate.
 func TestFetch_Boundary(t *testing.T) {
 	dir := t.TempDir()
-	line := `{"timestamp":"2026-09-13T12:56:47.753Z","ordinal":1,"type":"event_msg","payload":{"rate_limits":{"limit_id":"codex","primary":null,"secondary":null,"plan_type":"pro"}}}`
+	line := /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"timestamp":"2026-09-13T12:56:47.753Z","ordinal":1,"type":"event_msg","payload":{"rate_limits":{"limit_id":"codex","primary":null,"secondary":null,"plan_type":"pro"}}}`
 	writeSession(t, dir, "new.jsonl", line, time.Now())
 
 	res := Fetch(context.Background(), dir)
@@ -116,7 +116,7 @@ func TestFetch_Boundary(t *testing.T) {
 // the last line.
 func TestFetch_SessionEndsWithNullPrimary(t *testing.T) {
 	dir := t.TempDir()
-	nullPrimaryLine := `{"timestamp":"2026-09-13T13:13:28.673Z","ordinal":2,"type":"event_msg","payload":{"rate_limits":{"limit_id":"codex","primary":null,"secondary":null,"plan_type":"pro"}}}`
+	nullPrimaryLine := /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"timestamp":"2026-09-13T13:13:28.673Z","ordinal":2,"type":"event_msg","payload":{"rate_limits":{"limit_id":"codex","primary":null,"secondary":null,"plan_type":"pro"}}}`
 	writeSession(t, dir, "new.jsonl", validLine+"\n"+nullPrimaryLine, time.Now())
 
 	res := Fetch(context.Background(), dir)

@@ -249,6 +249,7 @@ func (goLanguage) name() string { return "go" }
 
 func (goLanguage) scan(src sourceFile, rep *ScanReport, opts ScanOptions) bool {
 	scanGoSource(src.data, src.rel, rep, opts)
+	scanGoFixtureDates(src, rep)
 	return true
 }
 
@@ -278,6 +279,7 @@ func (pythonLanguage) name() string { return "python" }
 
 func (pythonLanguage) scan(src sourceFile, rep *ScanReport, opts ScanOptions) bool {
 	scanPythonLines(src.lines(), src.rel, rep, opts)
+	scanPythonFixtureDates(src, rep)
 	return true
 }
 

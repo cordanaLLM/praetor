@@ -132,7 +132,7 @@ func testExceptionsLifecycle_Unexpired(t *testing.T) {
 			Rule:    config.ExceptionRuleSecrets,
 			Path:    "creds.py",
 			Tool:    "generic-api-key",
-			Expires: "2026-11-01",
+			Expires: testDay.AddDate(0, 0, 14).Format(config.ExceptionDateLayout),
 			Reason:  "temporary test waiver",
 		},
 	})
@@ -150,7 +150,7 @@ func testExceptionsLifecycle_Expired(t *testing.T) {
 			Rule:    config.ExceptionRuleSecrets,
 			Path:    "creds.py",
 			Tool:    "generic-api-key",
-			Expires: "2026-10-01",
+			Expires: testDay.AddDate(0, 0, -17).Format(config.ExceptionDateLayout),
 			Reason:  "expired waiver",
 		},
 	})
@@ -165,7 +165,7 @@ func testExceptionsLifecycle_Unused(t *testing.T) {
 			Rule:    config.ExceptionRuleSecrets,
 			Path:    "other.py",
 			Tool:    "generic-api-key",
-			Expires: "2026-11-01",
+			Expires: testDay.AddDate(0, 0, 14).Format(config.ExceptionDateLayout),
 			Reason:  "waiver for other file",
 		},
 	})
@@ -718,7 +718,7 @@ func TestUnexcusedSecretInfractions(t *testing.T) {
 			Tool:        "generic-api-key",
 			Fingerprint: "fp-excused",
 			Category:    "A",
-			Expires:     "2026-12-31",
+			Expires:     testDay.AddDate(0, 0, 74).Format(config.ExceptionDateLayout),
 			Reason:      "test fixture exception",
 		},
 	})

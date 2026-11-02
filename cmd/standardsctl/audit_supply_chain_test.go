@@ -125,12 +125,12 @@ func TestAdoptThenAuditDeclaresTheSupplyChainGap(t *testing.T) {
 		"SLSA Build Level 3 declared, Level 0 measured", "policy declares SLSA Build Level 3 but the workflows reach Level 0")
 
 	manifest := readFixtureFile(t, root, ".standards.yaml")
-	writeFixtureFile(t, root, ".standards.yaml", strings.Replace(manifest, `expires: "`+expires+`"`, `expires: "2020-01-01"`, 1))
+	writeFixtureFile(t, root, ".standards.yaml", strings.Replace(manifest, `expires: "`+expires+`"`, `expires: "`+time.Now().AddDate(0, 0, -1).Format(config.ExceptionDateLayout)+`"`, 1))
 	out, err = audit()
 	if err == nil {
 		t.Fatalf("audit passed with an expired HISS-11 exception:\n%s", out)
 	}
-	mustErrContain(t, err, "[FAIL] Supply chain (HISS-11): the exceptions entry (rule HISS-11, .github/workflows/release.yml) expired on 2020-01-01")
+	mustErrContain(t, err, "[FAIL] Supply chain (HISS-11): the exceptions entry (rule HISS-11, .github/workflows/release.yml) expired on "+time.Now().AddDate(0, 0, -1).Format(config.ExceptionDateLayout))
 
 	cut := strings.Index(manifest, "exceptions:")
 	if cut < 0 {

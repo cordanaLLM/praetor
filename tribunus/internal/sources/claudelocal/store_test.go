@@ -172,7 +172,7 @@ func TestStoreWriteIsAtomic(t *testing.T) {
 }
 
 func TestCorruptStoreIsRefused(t *testing.T) {
-	valid := `{"version":1,"account":"default","ceilings":{"five_hour":{"ceiling_usd_equivalent":10,"rejected_at":"2026-10-13T10:00:00Z","source_file":"p/s.jsonl","window_reset":"2026-10-13T11:00:00Z","recorded_at":"2026-10-13T12:00:00Z"}}}`
+	valid := /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"version":1,"account":"default","ceilings":{"five_hour":{"ceiling_usd_equivalent":10,"rejected_at":"2026-10-13T10:00:00Z","source_file":"p/s.jsonl","window_reset":"2026-10-13T11:00:00Z","recorded_at":"2026-10-13T12:00:00Z"}}}`
 	cases := map[string]string{
 		"not json":           "not json",
 		"truncated":          valid[:len(valid)/2],
@@ -184,7 +184,7 @@ func TestCorruptStoreIsRefused(t *testing.T) {
 		"negative ceiling":   strings.Replace(valid, `"ceiling_usd_equivalent":10`, `"ceiling_usd_equivalent":-1`, 1),
 		"unknown window":     strings.Replace(valid, `"five_hour"`, `"monthly"`, 1),
 		"no source file":     strings.Replace(valid, `"source_file":"p/s.jsonl"`, `"source_file":""`, 1),
-		"missing timestamp":  strings.Replace(valid, `,"recorded_at":"2026-10-13T12:00:00Z"`, ``, 1),
+		"missing timestamp":  strings.Replace(valid /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */, `,"recorded_at":"2026-10-13T12:00:00Z"`, ``, 1),
 		"oversized":          valid + strings.Repeat(" ", maxStoreBytes),
 		"ceiling not number": strings.Replace(valid, `"ceiling_usd_equivalent":10`, `"ceiling_usd_equivalent":"10"`, 1),
 	}
@@ -242,7 +242,7 @@ func TestStoreOptionsAreChecked(t *testing.T) {
 func TestCountLimitNames(t *testing.T) {
 	dir := t.TempDir()
 	quota := func(limitType, status string) string {
-		return `{"type":"assistant","timestamp":"2026-01-01T00:00:00Z","message":"x","quotaLimits":{"status":"` + status + `","rateLimitType":"` + limitType + `","resetsAt":1}}`
+		return /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"type":"assistant","timestamp":"2026-01-01T00:00:00Z","message":"x","quotaLimits":{"status":"` + status + `","rateLimitType":"` + limitType + `","resetsAt":1}}`
 	}
 	writeLog(t, dir, "p/old.jsonl", fixtureNow.Add(-90*24*time.Hour), quota("five_hour", "rejected"), quota("five_hour", "rejected"))
 	writeLog(t, dir, "p/new.jsonl", fixtureNow, quota("seven_day", "allowed_warning"), quota("Five Hour!", "rejected"),

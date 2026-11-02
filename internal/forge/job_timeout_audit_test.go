@@ -204,7 +204,7 @@ func TestJobTimeout_Exceptions(t *testing.T) {
 	writeWorkflow(t, root, "clean.yml", "on: push\njobs:\n  j:\n    timeout-minutes: 30\n    steps:\n      - run: echo 2\n")
 	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
 	liveEx := []config.Exception{{
-		Rule: config.ExceptionRuleJobTimeout, Path: ".github/workflows/fail.yml", Reason: "waived", Category: "A", Expires: "2026-12-31",
+		Rule: config.ExceptionRuleJobTimeout, Path: ".github/workflows/fail.yml", Reason: "waived", Category: "A", Expires: today.AddDate(0, 0, 74).Format(config.ExceptionDateLayout),
 	}}
 	outLive, err := AuditJobTimeouts(t.Context(), JobTimeoutOptions{
 		Root: root, Today: today, Exceptions: liveEx, OfflineReason: "--offline",
@@ -212,12 +212,12 @@ func TestJobTimeout_Exceptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(outLive, "[PASS] job-timeout: .github/workflows/fail.yml excepted until 2026-12-31: waived") ||
+	if !strings.Contains(outLive, "[PASS] job-timeout: .github/workflows/fail.yml excepted until "+today.AddDate(0, 0, 74).Format(config.ExceptionDateLayout)+": waived") ||
 		strings.Contains(outLive, "[WARN] job-timeout: .github/workflows/fail.yml") {
 		t.Errorf("dated exception must silence finding; got:\n%s", outLive)
 	}
 	expiredEx := []config.Exception{{
-		Rule: config.ExceptionRuleJobTimeout, Path: ".github/workflows/fail.yml", Reason: "waived", Expires: "2026-10-01",
+		Rule: config.ExceptionRuleJobTimeout, Path: ".github/workflows/fail.yml", Reason: "waived", Expires: today.AddDate(0, 0, -17).Format(config.ExceptionDateLayout),
 	}}
 	outExp, err := AuditJobTimeouts(t.Context(), JobTimeoutOptions{
 		Root: root, Today: today, Exceptions: expiredEx, OfflineReason: "--offline",
@@ -229,7 +229,7 @@ func TestJobTimeout_Exceptions(t *testing.T) {
 		t.Errorf("expired exception must not silence finding; got:\n%s", outExp)
 	}
 	staleEx := []config.Exception{{
-		Rule: config.ExceptionRuleJobTimeout, Path: ".github/workflows/clean.yml", Reason: "waived", Category: "A", Expires: "2026-12-31",
+		Rule: config.ExceptionRuleJobTimeout, Path: ".github/workflows/clean.yml", Reason: "waived", Category: "A", Expires: today.AddDate(0, 0, 74).Format(config.ExceptionDateLayout),
 	}}
 	outStale, err := AuditJobTimeouts(t.Context(), JobTimeoutOptions{
 		Root: root, Today: today, Exceptions: staleEx, OfflineReason: "--offline",

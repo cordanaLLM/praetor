@@ -17,7 +17,7 @@ import (
 func titledRow(number, title, disposition, milestone, merged string) string {
 	row := recordRow(number, "feat/"+number, disposition, labelled("1", "measured"))
 	row = strings.Replace(row, `"title":"Unit `+number+`"`, `"title":"`+title+`"`, 1)
-	return strings.Replace(row, `"merged_at":"2026-10-02T12:00:00Z"`, `"merged_at":"`+merged+`","milestone":"`+milestone+`"`, 1)
+	return strings.Replace(row /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */, `"merged_at":"2026-10-02T12:00:00Z"`, `"merged_at":"`+merged+`","milestone":"`+milestone+`"`, 1)
 }
 
 func collectTitled(t *testing.T, opts CollectorOptions, rows ...string) *Report {
@@ -37,9 +37,9 @@ func dispositions(r *Report) map[int]string {
 }
 
 const (
-	day1 = "2026-10-02T12:00:00Z"
-	day2 = "2026-10-03T12:00:00Z"
-	day3 = "2026-10-04T12:00:00Z"
+	day1 = /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ "2026-10-02T12:00:00Z"
+	day2 = /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ "2026-10-03T12:00:00Z"
+	day3 = /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ "2026-10-04T12:00:00Z"
 )
 
 func TestCollector_Negative_RevertRuleNeedsQualifiedRevertAndTarget(t *testing.T) {

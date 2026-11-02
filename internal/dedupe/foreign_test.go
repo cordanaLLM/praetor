@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/dedupe"
@@ -27,14 +26,14 @@ type exceptionScanCase struct {
 
 func TestForeignScan_ExceptionUsage(t *testing.T) {
 	cases := []exceptionScanCase{
-		{"live_both", true, true, "2026-11-18", 1, 1, 0, true},
-		{"live_native_only", true, false, "2026-11-18", 1, 0, 0, true},
-		{"live_foreign_only", false, true, "2026-11-18", 0, 1, 0, true},
-		{"live_neither", false, false, "2026-11-18", 0, 0, 1, false},
-		{"expiry_day_both", true, true, "2026-10-21", 1, 1, 0, true},
-		{"expired_both", true, true, "2026-10-20", 0, 0, 0, false},
-		{"expired_native_only", true, false, "2026-10-20", 0, 0, 0, false},
-		{"expired_foreign_only", false, true, "2026-10-20", 0, 0, 0, true},
+		{"live_both", true, true, foreignFixtureToday.AddDate(0, 0, 28).Format(config.ExceptionDateLayout), 1, 1, 0, true},
+		{"live_native_only", true, false, foreignFixtureToday.AddDate(0, 0, 28).Format(config.ExceptionDateLayout), 1, 0, 0, true},
+		{"live_foreign_only", false, true, foreignFixtureToday.AddDate(0, 0, 28).Format(config.ExceptionDateLayout), 0, 1, 0, true},
+		{"live_neither", false, false, foreignFixtureToday.AddDate(0, 0, 28).Format(config.ExceptionDateLayout), 0, 0, 1, false},
+		{"expiry_day_both", true, true, foreignFixtureToday.AddDate(0, 0, 0).Format(config.ExceptionDateLayout), 1, 1, 0, true},
+		{"expired_both", true, true, foreignFixtureToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout), 0, 0, 0, false},
+		{"expired_native_only", true, false, foreignFixtureToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout), 0, 0, 0, false},
+		{"expired_foreign_only", false, true, foreignFixtureToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout), 0, 0, 0, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -66,7 +65,7 @@ func scanExceptionFixture(t *testing.T, tc exceptionScanCase) *dedupe.DedupeRepo
 	t.Setenv("PRAETOR_TEST_FAKE_JSCPD_REPORT_CONTENT", canned)
 	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
 		RepoPath: root,
-		Today:    time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC),
+		Today:    foreignFixtureToday,
 		Exceptions: []config.Exception{{
 			Rule: config.ExceptionRuleDedupe, Path: path,
 			Reason: "Category D: retained fixture clones", Expires: tc.expires,
@@ -101,7 +100,7 @@ func assertExceptionScanReport(t *testing.T, report *dedupe.DedupeReport, tc exc
 	}
 	assertExceptionFindingCounts(t, report, tc)
 	assertExceptionGroupMetadata(t, wire.ForeignExcepted, tc.expires, false)
-	if tc.expires == "2026-10-20" {
+	if tc.expires == foreignFixtureToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout) {
 		assertExceptionGroupMetadata(t, report.Duplicates, tc.expires, true)
 		assertExceptionGroupMetadata(t, report.ForeignDuplicates, tc.expires, true)
 	}
@@ -161,9 +160,9 @@ func TestForeignScan_ExceptionRootBoundary(t *testing.T) {
 			t.Setenv("PRAETOR_TEST_FAKE_JSCPD_REPORT_CONTENT", canned)
 			report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
 				RepoPath: root, AcrossRoots: []string{other},
-				Today: time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC),
+				Today: foreignFixtureToday,
 				Exceptions: []config.Exception{{Rule: config.ExceptionRuleDedupe, Path: "app.py",
-					Reason: "Category D: main repository clones", Expires: "2026-11-18"}},
+					Reason: "Category D: main repository clones", Expires: foreignFixtureToday.AddDate(0, 0, 28).Format(config.ExceptionDateLayout)}},
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -188,12 +187,12 @@ func TestForeignScan_Negative_ScannedForeignExceptionWithoutDuplicateIsStale(t *
 	t.Setenv("PRAETOR_TEST_FAKE_JSCPD_REPORT_CONTENT", `{"duplicates":[]}`)
 	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
 		RepoPath: root,
-		Today:    time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC),
+		Today:    foreignFixtureToday,
 		Exceptions: []config.Exception{{
 			Rule:    config.ExceptionRuleDedupe,
 			Path:    "interop.c",
 			Reason:  "Category D: C interop",
-			Expires: "2026-11-18",
+			Expires: foreignFixtureToday.AddDate(0, 0, 28).Format(config.ExceptionDateLayout),
 		}},
 	})
 	if err != nil {

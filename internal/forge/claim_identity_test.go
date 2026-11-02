@@ -187,7 +187,7 @@ func TestPlantedNegative_LegacyPlainMarkerCompatibility(t *testing.T) {
 	}
 
 	// Seed with legacy plain marker
-	legacyComment := "<!-- praetor-claim v=1 session=legacy-sess lane=legacy-lane branch=feat/legacy started=2026-10-08T12:00:00Z updated=2026-10-08T12:00:00Z stage=implementing assignee=claim -->\n" +
+	legacyComment := "<!-- praetor-claim v=1 session=legacy-sess lane=legacy-lane branch=feat/legacy started=" + claimEpoch.Format(time.RFC3339) + " updated=" + claimEpoch.Format(time.RFC3339) + " stage=implementing assignee=claim -->\n" +
 		"**Praetor claim** - session `legacy-sess`, lane `legacy-lane`, branch `feat/legacy`\n\n- Stage: implementing\n"
 	f.Comments = []forge.IssueComment{
 		{ID: 10, Author: "operator", Association: "OWNER", Body: legacyComment},

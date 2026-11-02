@@ -32,6 +32,7 @@ signal.signal(signal.SIGTERM, cleanup)
 time.sleep(30)
 '''
 
+# testdate: fact: recorded protocol/history metadata; parsed, no clock comparison
 FAKE_SERVER = r'''
 import json
 import os

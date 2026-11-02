@@ -59,7 +59,7 @@ func TestAdoptRendersTheAPIWorkflowFromTheManifest(t *testing.T) {
 		t.Fatal("a repository without api settings did not get the canonical workflow")
 	}
 	s := familySession(t, false)
-	declareAPIPackages(t, s, time.Now().UTC().AddDate(0, 0, 30).Format("2006-01-02"), "libudev-dev", "libopenal-dev")
+	declareAPIPackages(t, s, time.Now().UTC().AddDate(0, 0, 30).Format(time.DateOnly), "libudev-dev", "libopenal-dev")
 	for run := 0; run < 2; run++ {
 		if err := reconcileManagedFamily(t.Context(), s, family); err != nil {
 			t.Fatal(err)
@@ -130,8 +130,8 @@ func TestAdoptRefreshesTheWorkflowWhenOnlyAnExceptionChanges(t *testing.T) {
 	if err := reconcileManagedFamily(t.Context(), s, family); err != nil {
 		t.Fatal(err)
 	}
-	first := time.Now().UTC().AddDate(0, 0, 30).Format("2006-01-02")
-	renewed := time.Now().UTC().AddDate(0, 0, 60).Format("2006-01-02")
+	first := time.Now().UTC().AddDate(0, 0, 30).Format(time.DateOnly)
+	renewed := time.Now().UTC().AddDate(0, 0, 60).Format(time.DateOnly)
 	for _, expires := range []string{first, renewed} {
 		before := workflowOf(t, s)
 		declareAPIPackages(t, s, expires)

@@ -52,7 +52,7 @@ func TestAuditModelCatalogSkipsWithoutCatalog(t *testing.T) {
 }
 
 func TestAuditModelCatalogPassesFreshCatalogAndUndatedEntries(t *testing.T) {
-	root := writeAuditCatalog(t, auditModelEntry("fresh", `, as_of: "2026-10-01"`)+auditModelEntry("undated", ""))
+	root := writeAuditCatalog(t, auditModelEntry("fresh", `, as_of: "`+auditModelNow.AddDate(0, 0, -8).Format(time.DateOnly)+`"`)+auditModelEntry("undated", ""))
 	out, err := runModelCatalogAudit(t, root)
 	if err != nil || !strings.Contains(out, "[PASS] model catalog") {
 		t.Fatalf("fresh catalog: %q %v", out, err)
@@ -63,7 +63,7 @@ func TestAuditModelCatalogFailsStaleAndPreviewEntries(t *testing.T) {
 	cases := map[string]string{
 		"preview flag": auditModelEntry("flagged", ", preview: true"),
 		"preview name": auditModelEntry("vendor-preview-03-25", ""),
-		"stale entry":  auditModelEntry("old", `, as_of: "2026-04-01"`),
+		"stale entry":  auditModelEntry("old", `, as_of: "`+auditModelNow.AddDate(0, 0, -191).Format(time.DateOnly)+`"`),
 	}
 	for name, models := range cases {
 		out, err := runModelCatalogAudit(t, writeAuditCatalog(t, models))
@@ -77,11 +77,11 @@ func TestAuditModelCatalogFailsStaleAndPreviewEntries(t *testing.T) {
 }
 
 func TestAuditModelCatalogWindowBoundary(t *testing.T) {
-	atWindow := auditModelEntry("edge", `, as_of: "2026-04-12"`)
+	atWindow := auditModelEntry("edge", `, as_of: "`+auditModelNow.AddDate(0, 0, -180).Format(time.DateOnly)+`"`)
 	if _, err := runModelCatalogAudit(t, writeAuditCatalog(t, atWindow)); err != nil {
 		t.Fatalf("an entry exactly at the 180-day window failed: %v", err)
 	}
-	over := auditModelEntry("edge", `, as_of: "2026-04-11"`)
+	over := auditModelEntry("edge", `, as_of: "`+auditModelNow.AddDate(0, 0, -181).Format(time.DateOnly)+`"`)
 	if _, err := runModelCatalogAudit(t, writeAuditCatalog(t, over)); err == nil {
 		t.Fatal("an entry one day past the window passed")
 	}

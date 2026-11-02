@@ -11,7 +11,7 @@ import (
 )
 
 // documentIssue is the issue line vexDoc renders, which the tests below replace.
-const documentIssue = `"timestamp": "2026-10-05T12:00:00Z"`
+var documentIssue = `"timestamp": "` + testNow.AddDate(0, 0, -1).Format(time.DateOnly) + `T12:00:00Z"`
 
 // Positive: a document carrying every field OpenVEX v0.2.0 defines, and the supplier go-vex
 // writes on the document and on a product and subcomponent (pkg/vex Metadata and Component),
@@ -21,16 +21,16 @@ func TestCheck_Positive_EveryOpenVEXAndGoVEXFieldDecodes(t *testing.T) {
 		`"hashes": {"sha-256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}, "supplier": "Example maintainers"`
 	statement := `{"@id": "https://example.com/vex/go#1", "version": 1, ` +
 		`"vulnerability": {"@id": "https://pkg.go.dev/vuln/GO-2022-1059", "name": "GO-2022-1059", "description": "Denial of service", "aliases": ["CVE-2022-32149"]}, ` +
-		`"timestamp": "2026-10-01T00:00:00Z", "last_updated": "2026-10-02T00:00:00Z", ` +
+		`"timestamp": "` + testNow.AddDate(0, 0, -5).Format(time.DateOnly) + `T00:00:00Z", "last_updated": "` + testNow.AddDate(0, 0, -4).Format(time.DateOnly) + `T00:00:00Z", ` +
 		`"products": [{` + component + `, "subcomponents": [{"@id": "pkg:golang/golang.org/x/text@v0.3.7", "supplier": "The Go Authors"}]}], ` +
 		`"status": "not_affected", "supplier": "Example maintainers", "status_notes": "Checked with go list -deps.", ` +
 		`"justification": "vulnerable_code_not_present", "impact_statement": "No package of it is built.", ` +
-		`"action_statement": "None needed.", "action_statement_timestamp": "2026-10-02T00:00:00Z"}`
+		`"action_statement": "None needed.", "action_statement_timestamp": "` + testNow.AddDate(0, 0, -4).Format(time.DateOnly) + `T00:00:00Z"}`
 	document := strings.Replace(vexDoc(statement), documentIssue,
-		documentIssue+`, "last_updated": "2026-10-05T13:00:00Z", "role": "Document Creator", "tooling": "vexctl", "supplier": "Example maintainers"`, 1)
+		documentIssue+`, "last_updated": "`+testNow.AddDate(0, 0, -1).Format(time.DateOnly)+`T13:00:00Z", "role": "Document Creator", "tooling": "vexctl", "supplier": "Example maintainers"`, 1)
 	report, err := check(t, module(t, document), "module")
 	mustPass(t, report, err, 1)
-	if !strings.Contains(report.Lines(true)[0], "reviewed 2026-10-02") {
+	if !strings.Contains(report.Lines(true)[0], "reviewed "+testNow.AddDate(0, 0, -4).Format(time.DateOnly)) {
 		t.Errorf("covered = %q, want the statement's own last_updated as its review", report.Lines(true))
 	}
 }

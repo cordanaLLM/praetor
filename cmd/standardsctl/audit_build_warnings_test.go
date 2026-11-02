@@ -55,9 +55,9 @@ func TestAuditBuildWarnings_CLI_RequiresWarningsAsErrors(t *testing.T) {
 	}
 	mustContain(t, out, "excepted until "+expires+" by the exceptions entry (rule HISS-10, .github/workflows/native.yml)")
 
-	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+fmt.Sprintf(entry, "2020-01-01"))
+	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+fmt.Sprintf(entry, time.Now().AddDate(0, 0, -1).Format(config.ExceptionDateLayout)))
 	if out, err = f.audit(t); err == nil {
 		t.Fatalf("audit passed with an expired HISS-10 entry:\n%s", out)
 	}
-	mustErrContain(t, err, "the exceptions entry (rule HISS-10, .github/workflows/native.yml) expired on 2020-01-01")
+	mustErrContain(t, err, "the exceptions entry (rule HISS-10, .github/workflows/native.yml) expired on "+time.Now().AddDate(0, 0, -1).Format(config.ExceptionDateLayout))
 }

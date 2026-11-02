@@ -234,10 +234,10 @@ var sha64 = strings.Repeat("0123456789abcdef", 4)
 
 // volatileShapes lists one planted positive per exact shape the scanner flags.
 var volatileShapes = []struct{ kind, line string }{
-	{"timestamp", "Built 2026-10-07T12:30:00Z by CI."},
-	{"timestamp", "Built 2026-10-07T12:30:00.123+02:00 by CI."},
-	{"timestamp", "Built 2026-10-07T12:30:00."},
-	{"timestamp", "2026-10-07 12:30:00Z"},
+	{"timestamp" /* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */, "Built 2026-10-07T12:30:00Z by CI."},
+	{"timestamp" /* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */, "Built 2026-10-07T12:30:00.123+02:00 by CI."},
+	{"timestamp" /* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */, "Built 2026-10-07T12:30:00."},
+	{"timestamp" /* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */, "2026-10-07 12:30:00Z"},
 	{"digest", "pin sha256:" + sha64},
 	{"digest", "sha256:abcdef012345"},
 	{"absolute path", "see /home/someone/work/file"},
@@ -260,8 +260,8 @@ var volatileShapes = []struct{ kind, line string }{
 
 // proseLines look like a volatile shape but are not: each must pass the scanner.
 var proseLines = []string{
-	"Rules apply since 2026-10-07.",
-	"Meeting at 2026-10-07 12:30.",
+	/* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */ "Rules apply since 2026-10-07.",
+	/* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */ "Meeting at 2026-10-07 12:30.",
 	"Use `make verify-all`; evidence: <path> sha256:<12 hex> lines:<n>",
 	"Pinned to 0123456789abcdef0123456789abcdef01234567 for good.",
 	"retry count: 3",
@@ -292,7 +292,7 @@ func TestScanVolatilePassesOrdinaryProse(t *testing.T) {
 }
 
 func TestScanVolatileBoundsFindings(t *testing.T) {
-	head := strings.Repeat("at 2026-10-07T12:30:00Z\n", maxVolatileFindings*3)
+	head := strings.Repeat( /* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */ "at 2026-10-07T12:30:00Z\n", maxVolatileFindings*3)
 	if got := len(ScanVolatile(head)); got != maxVolatileFindings {
 		t.Fatalf("findings = %d, want %d", got, maxVolatileFindings)
 	}
@@ -307,8 +307,8 @@ func TestScanVolatile_Negative_MissedTokens(t *testing.T) {
 		want  string
 	}{
 		{"/tmp/tmp.Xa3bQ9", "absolute path", "/tmp/tmp.Xa3bQ9"},
-		{"Built 2026-10-07T12:30:00.", "timestamp", "2026-10-07T12:30:00"},
-		{"2026-10-07 12:30:00Z", "timestamp", "2026-10-07 12:30:00Z"},
+		{ /* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */ "Built 2026-10-07T12:30:00.", "timestamp" /* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */, "2026-10-07T12:30:00"},
+		{ /* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */ "2026-10-07 12:30:00Z", "timestamp" /* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */, "2026-10-07 12:30:00Z"},
 		{"sha256:abcdef012345", "digest", "sha256:abcdef012345"},
 	}
 	for _, c := range cases {

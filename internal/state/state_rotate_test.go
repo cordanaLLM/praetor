@@ -15,7 +15,7 @@ func syntheticLog(count int) string {
 	b.WriteString(defaultStateMD())
 	for i := 0; i < count; i++ {
 		b.WriteString("\n")
-		b.WriteString(stateEntry{Time: fmt.Sprintf("2026-09-01 00:%02d:%02d UTC", i/60%60, i%60), Head: "h",
+		b.WriteString(stateEntry{Time: fmt.Sprintf( /* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */ "2026-09-01 00:%02d:%02d UTC", i/60%60, i%60), Head: "h",
 			Branch: "b", Activity: fmt.Sprintf("entry %d", i)}.render())
 	}
 	return b.String()

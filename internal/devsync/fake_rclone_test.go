@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -187,7 +188,7 @@ func fakeList(dir string) error {
 			return err
 		}
 		rel, err := filepath.Rel(dir, path)
-		entries = append(entries, entry{filepath.ToSlash(rel), info.Size(), info.ModTime().Format("2006-01-02T15:04:05Z07:00")})
+		entries = append(entries, entry{filepath.ToSlash(rel), info.Size(), info.ModTime().Format(time.RFC3339)})
 		return err
 	})
 	if err != nil {

@@ -41,7 +41,7 @@ func TestProbeAliasesRecordsAnswerAndReason(t *testing.T) {
 		t.Fatalf("pinned entry probed or alias missed: %+v", probes)
 	}
 	models := cfg.Tiers["work"].Models
-	if models[0].AliasStatus != AliasAnswers || models[0].AsOf != "2026-10-08" {
+	if models[0].AliasStatus != AliasAnswers || models[0].AsOf != now.AddDate(0, 0, 0).Format(time.DateOnly) {
 		t.Fatalf("answer not recorded: %+v", models[0])
 	}
 	if models[1].AliasStatus != AliasUnanswered || !strings.Contains(models[1].AliasReason, "Invalid model name") || strings.ContainsRune(models[1].AliasReason, 0) {
@@ -253,7 +253,7 @@ func TestAliasValidation(t *testing.T) {
 	}
 	ok := gatewayConfig(aliasModel("a", "light", AliasAnswers, ""), costTaskModel("p", 1, 1))
 	ok.Gateway.KeyEnv = "PRAETOR_GATEWAY_KEY"
-	ok.Tiers["work"].Models[1].AsOf = "2026-10-08"
+	ok.Tiers["work"].Models[1].AsOf = freshnessNow.AddDate(0, 0, 0).Format(time.DateOnly)
 	ok.Governance.CatalogMaxAgeDays = MaxCatalogMaxAgeDays
 	if err := ValidateRoutingConfig(ok); err != nil {
 		t.Fatalf("valid alias catalog refused: %v", err)

@@ -346,7 +346,7 @@ func TestExpiryDays_ExceptionMidnightBoundary(t *testing.T) {
 	before := time.Date(2026, time.October, 19, 23, 59, 59, 0, time.UTC)
 	after := time.Date(2026, time.October, 20, 0, 0, 1, 0, time.UTC)
 	gotBoth := expiryDays(before, after, config.MaxExceptionDays)
-	wantBoth := []string{"2027-01-17", "2027-01-18"}
+	wantBoth := []string{before.AddDate(0, 0, config.MaxExceptionDays).Format(config.ExceptionDateLayout), after.AddDate(0, 0, config.MaxExceptionDays).Format(config.ExceptionDateLayout)}
 	if !slices.Equal(gotBoth, wantBoth) {
 		t.Fatalf("expiryDays across midnight: got %v, want %v", gotBoth, wantBoth)
 	}
@@ -355,7 +355,7 @@ func TestExpiryDays_ExceptionMidnightBoundary(t *testing.T) {
 	sameBefore := time.Date(2026, time.October, 19, 10, 0, 0, 0, time.UTC)
 	sameAfter := time.Date(2026, time.October, 19, 11, 0, 0, 0, time.UTC)
 	gotSingle := expiryDays(sameBefore, sameAfter, config.MaxExceptionDays)
-	wantSingle := []string{"2027-01-17"}
+	wantSingle := []string{sameBefore.AddDate(0, 0, config.MaxExceptionDays).Format(config.ExceptionDateLayout)}
 	if !slices.Equal(gotSingle, wantSingle) {
 		t.Fatalf("expiryDays on same day: got %v, want %v", gotSingle, wantSingle)
 	}

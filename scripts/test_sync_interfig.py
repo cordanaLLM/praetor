@@ -127,6 +127,7 @@ class TreeCase(unittest.TestCase):
         self.vendor = {
             "path_commit": PIN,
             "commit": PIN,
+            # testdate: fact: recorded protocol/history metadata; parsed, no clock comparison
             "fetched": "2026-01-01",
             "license_sha256": sync_interfig.sha256_bytes(LICENSE),
             "include": ["src/a.ts"],

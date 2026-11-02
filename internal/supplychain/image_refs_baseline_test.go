@@ -60,7 +60,7 @@ func TestUnexcusedImageRefInfractions_LiveException(t *testing.T) {
 			Rule:     config.ExceptionRuleSupplyChain,
 			Path:     "Dockerfile",
 			Category: "A",
-			Expires:  "2026-12-31",
+			Expires:  testSupplychainToday.AddDate(0, 0, 63).Format(config.ExceptionDateLayout),
 			Reason:   "planned upgrade",
 		},
 	}
@@ -81,7 +81,7 @@ func TestUnexcusedImageRefInfractions_ExpiredException(t *testing.T) {
 		{
 			Rule:    config.ExceptionRuleSupplyChain,
 			Path:    "Dockerfile",
-			Expires: "2026-01-01",
+			Expires: testSupplychainToday.AddDate(0, 0, -301).Format(config.ExceptionDateLayout),
 			Reason:  "expired exception",
 		},
 	}

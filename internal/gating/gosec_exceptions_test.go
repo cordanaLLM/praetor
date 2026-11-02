@@ -37,7 +37,7 @@ func frozenGosecExceptionsConfig(t *testing.T, entry string, findings bool) *sta
 }
 
 func datedGosecEntry(path, rule string, expires time.Time) string {
-	return fmt.Sprintf("exceptions:\n  - rule: gosec\n    path: %s\n    gosec_rules: [%s]\n    category: D\n    entered: %s\n    expires: %s\n    reason: Pending command execution redesign\n", path, rule, expires.AddDate(0, 0, -120).Format("2006-01-02"), expires.Format("2006-01-02"))
+	return fmt.Sprintf("exceptions:\n  - rule: gosec\n    path: %s\n    gosec_rules: [%s]\n    category: D\n    entered: %s\n    expires: %s\n    reason: Pending command execution redesign\n", path, rule, expires.AddDate(0, 0, -120).Format(time.DateOnly), expires.Format(time.DateOnly))
 }
 
 func TestGosecExceptions_FrozenStage(t *testing.T) {

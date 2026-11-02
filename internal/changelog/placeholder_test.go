@@ -25,7 +25,7 @@ func TestRenderKeepsFragmentDirectory_Positive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := RenderReleaseContext(t.Context(), root, "1.2.3", "2026-09-12"); err != nil {
+	if err := RenderReleaseContext(t.Context(), root, "1.2.3" /* testdate: fact: recorded release date; changelog parsing, no clock comparison */, "2026-09-12"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(fragment); !errors.Is(err, os.ErrNotExist) {
@@ -36,7 +36,7 @@ func TestRenderKeepsFragmentDirectory_Positive(t *testing.T) {
 		t.Fatalf("render left no empty %s: %q, %v", FragmentPlaceholder, data, err)
 	}
 	assertFragmentDirPresent(t, root, true, "fragment directory after a release render")
-	if err := RenderReleaseContext(t.Context(), root, "1.2.4", "2026-09-13"); !errors.Is(err, ErrNoFragments) {
+	if err := RenderReleaseContext(t.Context(), root, "1.2.4" /* testdate: fact: recorded release date; changelog parsing, no clock comparison */, "2026-09-13"); !errors.Is(err, ErrNoFragments) {
 		t.Fatalf("a render of only the placeholder: error = %v, want %v", err, ErrNoFragments)
 	}
 }
@@ -53,7 +53,7 @@ func TestRenderKeepsFragmentDirectory_Boundary(t *testing.T) {
 	if err := os.WriteFile(placeholder, []byte(kept), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := RenderReleaseContext(t.Context(), root, "1.2.3", "2026-09-12"); err != nil {
+	if err := RenderReleaseContext(t.Context(), root, "1.2.3" /* testdate: fact: recorded release date; changelog parsing, no clock comparison */, "2026-09-12"); err != nil {
 		t.Fatal(err)
 	}
 	if data, err := os.ReadFile(placeholder); err != nil || string(data) != kept {
@@ -90,7 +90,7 @@ func TestRenderKeepsFragmentDirectory_Negative(t *testing.T) {
 	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatal(err)
 	}
-	err = RenderReleaseContext(t.Context(), root, "1.2.3", "2026-09-12")
+	err = RenderReleaseContext(t.Context(), root, "1.2.3" /* testdate: fact: recorded release date; changelog parsing, no clock comparison */, "2026-09-12")
 	if chmodErr := os.Chmod(dir, 0o700); chmodErr != nil {
 		t.Fatal(chmodErr)
 	}
@@ -100,7 +100,7 @@ func TestRenderKeepsFragmentDirectory_Negative(t *testing.T) {
 	if _, exists, err := contextopt.ObserveSnapshot(t.Context(), filepath.Join(root, renderJournalName)); err != nil || !exists {
 		t.Fatalf("journal not retained after a failed placeholder: exists=%v err=%v", exists, err)
 	}
-	if err := RenderReleaseContext(t.Context(), root, "1.2.3", "2026-09-12"); err != nil {
+	if err := RenderReleaseContext(t.Context(), root, "1.2.3" /* testdate: fact: recorded release date; changelog parsing, no clock comparison */, "2026-09-12"); err != nil {
 		t.Fatalf("rerun after the placeholder failure: %v", err)
 	}
 	assertReleaseCount(t, root, 1)

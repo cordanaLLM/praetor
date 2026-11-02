@@ -893,7 +893,7 @@ func TestBuildCanonicalPayload_3D(t *testing.T) {
 
 	// Positive: every field appears on its own line, in order.
 	got := BuildCanonicalPayload("v1", "praetorctl gate", 0, ts, "deadbeef", "acme/widget", "hash")
-	want := "v1\npraetorctl gate\n0\n2026-09-12T10:30:00Z\ndeadbeef\nacme/widget\nhash"
+	want := /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ "v1\npraetorctl gate\n0\n2026-09-12T10:30:00Z\ndeadbeef\nacme/widget\nhash"
 	if got != want {
 		t.Errorf("canonical payload =\n%q\nwant\n%q", got, want)
 	}

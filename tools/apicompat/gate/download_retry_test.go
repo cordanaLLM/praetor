@@ -143,7 +143,7 @@ func TestGate_Negative_ExceptionForModulePlusDownloadFailureStillFailsGate(t *te
 		root:  retryFixtureRoot(t, "excepted"),
 		today: time.Now().UTC(),
 		exceptions: []exception{
-			{Path: "excepted/go.mod", Reason: "needs libfoo", Expires: "2099-12-31"},
+			{Path: "excepted/go.mod", Reason: "needs libfoo", Expires: time.Now().UTC().AddDate(0, 0, 30).Format(time.DateOnly)},
 		},
 		runner: func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
 			if len(args) >= 2 && args[0] == "mod" && args[1] == "download" {

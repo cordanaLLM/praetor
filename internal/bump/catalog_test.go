@@ -15,9 +15,9 @@ import (
 
 // testCatalog is a fixed catalog so direction tests do not move when FleetCatalog is refreshed.
 var testCatalog = map[string]CatalogEntry{
-	"example.org/lib":  {Version: "v1.6.0", Verified: "2026-09-26"},
-	"example.org/sync": {Version: "v0.9.0", Verified: "2026-09-26"},
-	"node-lib":         {Version: "^7.0.2", Verified: "2026-09-26"},
+	"example.org/lib":  {Version: "v1.6.0", Verified: time.Date(2026, 9, 26, 15, 4, 5, 0, time.UTC).AddDate(0, 0, 0).Format(time.DateOnly)},
+	"example.org/sync": {Version: "v0.9.0", Verified: time.Date(2026, 9, 26, 15, 4, 5, 0, time.UTC).AddDate(0, 0, 0).Format(time.DateOnly)},
+	"node-lib":         {Version: "^7.0.2", Verified: time.Date(2026, 9, 26, 15, 4, 5, 0, time.UTC).AddDate(0, 0, 0).Format(time.DateOnly)},
 }
 
 func discoveredDep(pkg, current, manifest string) UpgradeCandidate {
@@ -98,7 +98,7 @@ func TestReconcileWithCatalogBoundaries(t *testing.T) {
 }
 
 func TestReconcileWithCatalogUnparseablePinIsUnranked(t *testing.T) {
-	catalog := map[string]CatalogEntry{"node-lib": {Version: "latest", Verified: "2026-09-26"}}
+	catalog := map[string]CatalogEntry{"node-lib": {Version: "latest", Verified: time.Date(2026, 9, 26, 15, 4, 5, 0, time.UTC).AddDate(0, 0, 0).Format(time.DateOnly)}}
 	report := reconcileWithCatalog([]UpgradeCandidate{discoveredDep("node-lib", "1.0.0", "package.json")}, catalog)
 	if len(report.Upgrades) != 0 || len(report.Unranked) != 1 || report.Unranked[0].CatalogVersion != "latest" {
 		t.Fatalf("non-SemVer pin ranked: %+v", report)
@@ -287,10 +287,10 @@ func TestVerifiedWithin(t *testing.T) {
 		name, verified string
 		ok             bool
 	}{
-		{"verified today", "2026-09-26", true},
-		{"exactly at the bound", "2026-06-28", true},
-		{"one day past the bound", "2026-06-27", false},
-		{"in the future", "2026-09-27", false},
+		{"verified today", now.AddDate(0, 0, 0).Format(time.DateOnly), true},
+		{"exactly at the bound", now.AddDate(0, 0, -90).Format(time.DateOnly), true},
+		{"one day past the bound", now.AddDate(0, 0, -91).Format(time.DateOnly), false},
+		{"in the future", now.AddDate(0, 0, 1).Format(time.DateOnly), false},
 		{"not a date", "last week", false},
 		{"empty", "", false},
 	}

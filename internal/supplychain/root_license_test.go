@@ -84,7 +84,7 @@ func TestCheckRootLicensePositive(t *testing.T) {
 		t.Fatalf("a whole-tree default spelled as a union of globs: %+v", report)
 	}
 	kept := withFile(base, "COPYING", "GNU GENERAL PUBLIC LICENSE\n")
-	if report := checkRoot(t, licensedRoot(t, kept), keep("COPYING", "2026-12-31")); len(report.Findings) != 0 || !slices.Equal(report.Kept, []string{"COPYING"}) {
+	if report := checkRoot(t, licensedRoot(t, kept), keep("COPYING", rootLicenseToday.AddDate(0, 0, 85).Format(config.ExceptionDateLayout))); len(report.Findings) != 0 || !slices.Equal(report.Kept, []string{"COPYING"}) {
 		t.Fatalf("an upstream COPYING kept by a live exception: %+v", report)
 	}
 }
@@ -107,8 +107,8 @@ func TestCheckRootLicenseNegative(t *testing.T) {
 		"LICENCE":         {withFile(base, "LICENCE", "x\n"), nil, "LICENCE: a second root licence file"},
 		"LICENSE-MIT":     {withFile(base, "LICENSE-MIT", "x\n"), nil, "LICENSE-MIT: a second root licence file"},
 		"lower case":      {withFile(base, "copying.txt", "x\n"), nil, "copying.txt: a second root licence file"},
-		"expired":         {withFile(base, "COPYING", "x\n"), []config.Exception{keep("COPYING", "2026-10-06")}, "its root-license-notice exception expired on 2026-10-06"},
-		"stale exception": {base, []config.Exception{keep("COPYING", "2026-12-31")}, "exceptions entry COPYING (root-license-notice): keeps no root file"},
+		"expired":         {withFile(base, "COPYING", "x\n"), []config.Exception{keep("COPYING", rootLicenseToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout))}, "its root-license-notice exception expired on " + rootLicenseToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout)},
+		"stale exception": {base, []config.Exception{keep("COPYING", rootLicenseToday.AddDate(0, 0, 85).Format(config.ExceptionDateLayout))}, "exceptions entry COPYING (root-license-notice): keeps no root file"},
 		"union default": {withFile(withFile(withFile(base, ReuseFile, unionDefault), LicensesDir+"/MIT.txt", "MIT License\n"), "LICENSE-MIT", "MIT License\n"),
 			nil, "LICENSE-MIT: a second root licence file"},
 		// Names Licensee, GitHub's licence detection, reads as a licence beyond the REUSE ones.

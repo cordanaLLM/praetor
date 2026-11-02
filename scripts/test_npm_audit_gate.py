@@ -41,7 +41,7 @@ def report(*vias: object) -> str:
 
 def exception(**overrides: object) -> dict:
     entry = {"advisory": BRACES, "package": "braces", "locks": ["tools/markdownlint"],
-             "reason": "only repository-declared globs reach it", "expires": "2026-11-02"}
+             "reason": "only repository-declared globs reach it", "expires": (TODAY + datetime.timedelta(days=30)).isoformat()}
     entry.update(overrides)
     return entry
 
@@ -84,10 +84,10 @@ class FindingTests(GateCase):
 
     def test_boundary_exception_holds_through_its_expiry_day(self) -> None:
         reports, exceptions = {"tools/markdownlint": report(advisory("braces"))}, self.write_exceptions(exception())
-        self.assertEqual(self.run_gate(reports, exceptions, datetime.date(2026, 11, 2))[0], 0)
-        status, lines = self.run_gate(reports, exceptions, datetime.date(2026, 11, 3))
+        self.assertEqual(self.run_gate(reports, exceptions, TODAY + datetime.timedelta(days=30))[0], 0)
+        status, lines = self.run_gate(reports, exceptions, TODAY + datetime.timedelta(days=31))
         self.assertEqual(status, 1)
-        self.assertTrue(any("exception expired on 2026-11-02" in line for line in lines), lines)
+        self.assertTrue(any(f"exception expired on {(TODAY + datetime.timedelta(days=30)).isoformat()}" in line for line in lines), lines)
         self.assertFalse(any("matched no finding" in line for line in lines), lines)
 
     def test_boundary_moderate_and_transitive_entries_are_not_gated(self) -> None:
@@ -161,7 +161,7 @@ class ReadErrorTests(GateCase):
             "advisory id": exception(advisory="CVE-2026-0001"),
             "empty locks": exception(locks=[]),
             "date": exception(expires="next month"),
-            "beyond the cap": exception(expires="2027-01-02"),
+            "beyond the cap": exception(expires=(TODAY + datetime.timedelta(days=91)).isoformat()),
             "blank reason": exception(reason="  "),
         }
         for name, entry in cases.items():

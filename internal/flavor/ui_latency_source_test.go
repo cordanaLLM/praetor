@@ -63,9 +63,9 @@ func TestAuditUIGates_LatencySource_LiveExceptionPasses(t *testing.T) {
 	exc := config.Exception{
 		Rule:     config.ExceptionRuleUILatencySource,
 		Category: "C",
-		Entered:  "2026-10-28",
-		Expires:  "2026-11-03",
-		Reason:   "threshold schema owner cordanaLLM/Aegis-OS M28, parked until 2026-11-03",
+		Entered:  today.AddDate(0, 0, 0).Format(config.ExceptionDateLayout),
+		Expires:  today.AddDate(0, 0, 6).Format(config.ExceptionDateLayout),
+		Reason:   "threshold schema owner cordanaLLM/Aegis-OS M28, parked until " + today.AddDate(0, 0, 6).Format(config.ExceptionDateLayout),
 	}
 	m := &config.Manifest{
 		UI: &config.UIPolicy{
@@ -79,7 +79,7 @@ func TestAuditUIGates_LatencySource_LiveExceptionPasses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AuditUIGatesToday with live exception unexpected error: %v", err)
 	}
-	if !strings.Contains(line, "exception=ui-latency-source (owner cordanaLLM/Aegis-OS, expires 2026-11-03)") {
+	if !strings.Contains(line, "exception=ui-latency-source (owner cordanaLLM/Aegis-OS, expires "+today.AddDate(0, 0, 6).Format(config.ExceptionDateLayout)+")") {
 		t.Fatalf("expected PASS line to name exception details, got: %q", line)
 	}
 }
@@ -90,9 +90,9 @@ func TestAuditUIGates_LatencySource_ExpiredExceptionFails(t *testing.T) {
 	exc := config.Exception{
 		Rule:     config.ExceptionRuleUILatencySource,
 		Category: "C",
-		Entered:  "2026-10-28",
-		Expires:  "2026-11-03",
-		Reason:   "threshold schema owner cordanaLLM/Aegis-OS M28, parked until 2026-11-03",
+		Entered:  afterExpiry.AddDate(0, 0, -7).Format(config.ExceptionDateLayout),
+		Expires:  afterExpiry.AddDate(0, 0, -1).Format(config.ExceptionDateLayout),
+		Reason:   "threshold schema owner cordanaLLM/Aegis-OS M28, parked until " + afterExpiry.AddDate(0, 0, -1).Format(config.ExceptionDateLayout),
 	}
 	m := &config.Manifest{
 		UI: &config.UIPolicy{
@@ -118,8 +118,8 @@ func TestAuditUIGates_LatencySource_ExceptionWithoutOwnerFails(t *testing.T) {
 	exc := config.Exception{
 		Rule:     config.ExceptionRuleUILatencySource,
 		Category: "C",
-		Entered:  "2026-10-28",
-		Expires:  "2026-11-03",
+		Entered:  today.AddDate(0, 0, 0).Format(config.ExceptionDateLayout),
+		Expires:  today.AddDate(0, 0, 6).Format(config.ExceptionDateLayout),
 		Reason:   "category C: temporary waiver without naming supplier",
 	}
 	m := &config.Manifest{

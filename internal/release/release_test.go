@@ -28,9 +28,9 @@ func TestPrepareRelease_Positive(t *testing.T) {
 	}
 
 	opts := ReleaseOptions{
-		RepoPath:   tmpDir,
-		Version:    "v1.2.0",
-		Date:       "2026-09-11",
+		RepoPath: tmpDir,
+		Version:  "v1.2.0",
+		Date:/* testdate: fact: recorded release metadata; parsing and rendering, no clock comparison */ "2026-09-11",
 		SkipVerify: true,
 		SkipClean:  true,
 	}
@@ -132,7 +132,7 @@ func TestPrepareRelease_Negative_NoFragments(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			opts := ReleaseOptions{RepoPath: tmpDir, Version: "v1.2.0", Date: "2026-09-11", SkipVerify: true, SkipClean: true}
+			opts := ReleaseOptions{RepoPath: tmpDir, Version: "v1.2.0", Date: /* testdate: fact: recorded release metadata; parsing and rendering, no clock comparison */ "2026-09-11", SkipVerify: true, SkipClean: true}
 			err := PrepareRelease(context.Background(), opts)
 			if !errors.Is(err, changelog.ErrNoFragments) || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error %v: want ErrNoFragments naming %q", err, tc.want)
@@ -151,7 +151,7 @@ func TestPrepareRelease_Boundary_SecondReleaseWithoutNewFragments(t *testing.T) 
 	if _, err := changelog.CreateFragment(tmpDir, changelog.Fragment{Type: changelog.TypeFixed, Title: "Only fix"}); err != nil {
 		t.Fatal(err)
 	}
-	opts := ReleaseOptions{RepoPath: tmpDir, Version: "v1.2.0", Date: "2026-09-11", SkipVerify: true, SkipClean: true}
+	opts := ReleaseOptions{RepoPath: tmpDir, Version: "v1.2.0", Date: /* testdate: fact: recorded release metadata; parsing and rendering, no clock comparison */ "2026-09-11", SkipVerify: true, SkipClean: true}
 	if err := PrepareRelease(context.Background(), opts); err != nil {
 		t.Fatalf("first release: %v", err)
 	}
@@ -195,7 +195,7 @@ func committedReleaseRepo(t *testing.T) string {
 // Positive: a committed tree passes the clean check and the release renders.
 func TestPrepareRelease_Positive_CleanCommittedTree(t *testing.T) {
 	dir := committedReleaseRepo(t)
-	opts := ReleaseOptions{RepoPath: dir, Version: "v1.2.0", Date: "2026-09-11", SkipVerify: true}
+	opts := ReleaseOptions{RepoPath: dir, Version: "v1.2.0", Date: /* testdate: fact: recorded release metadata; parsing and rendering, no clock comparison */ "2026-09-11", SkipVerify: true}
 	if err := PrepareRelease(t.Context(), opts); err != nil {
 		t.Fatalf("a clean committed tree was refused: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestPrepareRelease_Negative_UntrackedFileHiddenByRepositoryConfig(t *testin
 	if err := os.WriteFile(filepath.Join(dir, "hidden.txt"), []byte("h"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	opts := ReleaseOptions{RepoPath: dir, Version: "v1.2.0", Date: "2026-09-11", SkipVerify: true}
+	opts := ReleaseOptions{RepoPath: dir, Version: "v1.2.0", Date: /* testdate: fact: recorded release metadata; parsing and rendering, no clock comparison */ "2026-09-11", SkipVerify: true}
 	err := PrepareRelease(t.Context(), opts)
 	if err == nil || !strings.Contains(err.Error(), "uncommitted changes: 1 changed path(s) differ from HEAD: ?? hidden.txt") {
 		t.Fatalf("an untracked file hidden by repository config must refuse the release, got %v", err)

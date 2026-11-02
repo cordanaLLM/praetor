@@ -9,7 +9,7 @@ import (
 
 func TestHarvestTranscriptWritesAndReplaysExplicitLocalSource(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "transcript_full.jsonl")
-	body := `{"step_index":1,"source":"MODEL","type":"MESSAGE","status":"DONE","created_at":"2026-09-12T12:00:00Z","content":"fixture"}` + "\n"
+	body := /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"step_index":1,"source":"MODEL","type":"MESSAGE","status":"DONE","created_at":"2026-09-12T12:00:00Z","content":"fixture"}` + "\n"
 	if err := os.WriteFile(source, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestHarvestTranscriptRequiresExplicitPathsAndBounds(t *testing.T) {
 
 func TestHarvestClaudeTranscriptRequiresExplicitFormat(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "session.jsonl")
-	body := `{"type":"user","uuid":"message-id","sessionId":"session-id","timestamp":"2026-09-12T12:00:00Z","message":{"role":"user","content":"private fixture payload"}}` + "\n"
+	body := /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"type":"user","uuid":"message-id","sessionId":"session-id","timestamp":"2026-09-12T12:00:00Z","message":{"role":"user","content":"private fixture payload"}}` + "\n"
 	if err := os.WriteFile(source, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -226,7 +226,7 @@ func TestServerAuditRunsTheBuildWarningsGate(t *testing.T) {
 	expectText(t, "lane with the form", callTool(t, srv, "standards_audit", nil),
 		"[PASS] Build warnings (HISS-10): 1 build lanes fail on a warning (Cargo 1).")
 	writeFixtureFile(t, root, ".github/workflows/ci.yml", fmt.Sprintf(lane, ""))
-	expires := time.Now().AddDate(0, 0, 30).Format("2006-01-02")
+	expires := time.Now().AddDate(0, 0, 30).Format(time.DateOnly)
 	writeFixtureFile(t, root, ".standards.yaml", "version: 1\nrepository:\n  owner: fixture\n  name: repo\nprofiles: [framework]\n"+
 		"facets: []\nexceptions:\n  - rule: HISS-10\n    path: .github/workflows/ci.yml\n    reason: vendored crate warns until upstream lands its fix\n"+
 		"    category: A\n    expires: \""+expires+"\"\n")

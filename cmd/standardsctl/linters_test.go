@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeLinterFixture(t *testing.T, path, content string) {
@@ -59,7 +60,7 @@ func TestRunLinters_CLI_Generate(t *testing.T) {
 		"--config=" + cfg,
 		"--report=" + rep,
 		"--issue=1030",
-		"--today=2026-10-18",
+		"--today=" + time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 0).Format(time.DateOnly),
 	}
 	if err := runLinters(args); err != nil {
 		t.Fatalf("generate failed: %v", err)

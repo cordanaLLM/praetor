@@ -27,7 +27,7 @@ func TestAuditExceptionsExpiry_3D(t *testing.T) {
 				Rule:    "HISS-11",
 				Path:    ".github/workflows/rel.yml",
 				Reason:  "debt due soon",
-				Expires: "2026-10-17", // 7 days left
+				Expires: today.AddDate(0, 0, 7).Format(config.ExceptionDateLayout), // 7 days left
 			},
 		},
 	}
@@ -38,7 +38,7 @@ func TestAuditExceptionsExpiry_3D(t *testing.T) {
 		t.Fatalf("auditExceptionsExpiry failed: %v", err)
 	}
 	mustContain(t, out,
-		"[WARN] Exceptions: the exceptions entry (rule HISS-11, .github/workflows/rel.yml) expires on 2026-10-17 (7 days left): debt due soon",
+		"[WARN] Exceptions: the exceptions entry (rule HISS-11, .github/workflows/rel.yml) expires on "+today.AddDate(0, 0, 7).Format(config.ExceptionDateLayout)+" (7 days left): debt due soon",
 	)
 
 	// Boundary: exactly 14 days, 15 days, 0 days
@@ -48,19 +48,19 @@ func TestAuditExceptionsExpiry_3D(t *testing.T) {
 				Rule:    "HISS-11",
 				Path:    "boundary-14.yml",
 				Reason:  "at 14 days",
-				Expires: "2026-10-24", // 14 days
+				Expires: today.AddDate(0, 0, 14).Format(config.ExceptionDateLayout), // 14 days
 			},
 			{
 				Rule:    "HISS-11",
 				Path:    "boundary-15.yml",
 				Reason:  "at 15 days",
-				Expires: "2026-10-25", // 15 days
+				Expires: today.AddDate(0, 0, 15).Format(config.ExceptionDateLayout), // 15 days
 			},
 			{
 				Rule:    "HISS-11",
 				Path:    "boundary-0.yml",
 				Reason:  "at 0 days",
-				Expires: "2026-10-10", // 0 days
+				Expires: today.AddDate(0, 0, 0).Format(config.ExceptionDateLayout), // 0 days
 			},
 		},
 	}
@@ -71,8 +71,8 @@ func TestAuditExceptionsExpiry_3D(t *testing.T) {
 		t.Fatalf("auditExceptionsExpiry boundary failed: %v", err)
 	}
 	mustContain(t, out,
-		"(rule HISS-11, boundary-14.yml) expires on 2026-10-24 (14 days left): at 14 days",
-		"(rule HISS-11, boundary-0.yml) expires on 2026-10-10 (0 days left): at 0 days",
+		"(rule HISS-11, boundary-14.yml) expires on "+today.AddDate(0, 0, 14).Format(config.ExceptionDateLayout)+" (14 days left): at 14 days",
+		"(rule HISS-11, boundary-0.yml) expires on "+today.AddDate(0, 0, 0).Format(config.ExceptionDateLayout)+" (0 days left): at 0 days",
 	)
 	if strings.Contains(out, "boundary-15.yml") {
 		t.Errorf("output unexpectedly contained boundary-15.yml: %s", out)
@@ -85,13 +85,13 @@ func TestAuditExceptionsExpiry_3D(t *testing.T) {
 				Rule:    "HISS-11",
 				Path:    "expired.yml",
 				Reason:  "already expired",
-				Expires: "2026-10-09", // -1 days
+				Expires: today.AddDate(0, 0, -1).Format(config.ExceptionDateLayout), // -1 days
 			},
 			{
 				Rule:    "HISS-11",
 				Path:    "future.yml",
 				Reason:  "future entry",
-				Expires: "2026-11-09", // 30 days
+				Expires: today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout), // 30 days
 			},
 		},
 	}
@@ -103,7 +103,7 @@ func TestAuditExceptionsExpiry_3D(t *testing.T) {
 	}
 	// The last audit step fails the expired entry by name, and leaves the future one alone.
 	expiredErr := auditExpiredExceptions(manifestNeg, today)
-	if expiredErr == nil || !strings.Contains(expiredErr.Error(), "(rule HISS-11, expired.yml) expired on 2026-10-09 (1 days ago)") ||
+	if expiredErr == nil || !strings.Contains(expiredErr.Error(), "(rule HISS-11, expired.yml) expired on "+today.AddDate(0, 0, -1).Format(config.ExceptionDateLayout)+" (1 days ago)") ||
 		strings.Contains(expiredErr.Error(), "future.yml") {
 		t.Fatalf("an expired entry must fail the last audit step by name, a future one not: %v", expiredErr)
 	}
@@ -132,10 +132,10 @@ func TestAuditExceptionsExpiry_FailsAnExpiredEntryOfEveryRule(t *testing.T) {
 		entry   config.Exception
 		failing bool
 	}{
-		{"an expired backlog cap entry", config.Exception{Rule: config.ExceptionRuleBacklogCapsForgeAlerts, Tool: "backlog", Reason: "alerts triaged", Expires: "2026-10-28"}, true},
-		{"a backlog cap entry expiring today still holds", config.Exception{Rule: config.ExceptionRuleBacklogCapsForgeAlerts, Tool: "backlog", Reason: "alerts triaged", Expires: "2026-10-29"}, false},
-		{"an expired declared-linters entry", config.Exception{Rule: "declared-linters", Tool: "yamllint", Reason: "rules pending", Expires: "2026-10-01"}, true},
-		{"a live path entry", config.Exception{Rule: "HISS-11", Path: "lint.yml", Reason: "pending", Expires: "2026-11-20"}, false},
+		{"an expired backlog cap entry", config.Exception{Rule: config.ExceptionRuleBacklogCapsForgeAlerts, Tool: "backlog", Reason: "alerts triaged", Expires: today.AddDate(0, 0, -1).Format(config.ExceptionDateLayout)}, true},
+		{"a backlog cap entry expiring today still holds", config.Exception{Rule: config.ExceptionRuleBacklogCapsForgeAlerts, Tool: "backlog", Reason: "alerts triaged", Expires: today.AddDate(0, 0, 0).Format(config.ExceptionDateLayout)}, false},
+		{"an expired declared-linters entry", config.Exception{Rule: "declared-linters", Tool: "yamllint", Reason: "rules pending", Expires: today.AddDate(0, 0, -28).Format(config.ExceptionDateLayout)}, true},
+		{"a live path entry", config.Exception{Rule: "HISS-11", Path: "lint.yml", Reason: "pending", Expires: today.AddDate(0, 0, 22).Format(config.ExceptionDateLayout)}, false},
 	} {
 		err := auditExpiredExceptions(&config.Manifest{Exceptions: []config.Exception{tc.entry}}, today)
 		named := err != nil && strings.Contains(err.Error(), "(rule "+tc.entry.Rule+", "+tc.entry.Target()+") expired on "+tc.entry.Expires)
@@ -221,17 +221,17 @@ func TestAuditExceptionsExpiry_CategoryWarningWindows_3D(t *testing.T) {
 
 	t.Run("category C entered today does not warn", func(t *testing.T) {
 		runCategoryWarningCase(t, root, today, config.Exception{
-			Rule: "HISS-11", Path: "cat-c-fresh.yml", Category: "C", Entered: "2026-10-10", Expires: "2026-10-20", Reason: "fresh category C",
+			Rule: "HISS-11", Path: "cat-c-fresh.yml", Category: "C", Entered: today.AddDate(0, 0, 0).Format(config.ExceptionDateLayout), Expires: today.AddDate(0, 0, 10).Format(config.ExceptionDateLayout), Reason: "fresh category C",
 		}, "", "expected no warning for fresh category C entry, got: %s")
 	})
 	t.Run("category C with 5 days left warns", func(t *testing.T) {
 		runCategoryWarningCase(t, root, today, config.Exception{
-			Rule: "HISS-11", Path: "cat-c-5.yml", Category: "C", Entered: "2026-10-05", Expires: "2026-10-15", Reason: "category C 5 days left",
-		}, "(rule HISS-11, cat-c-5.yml) expires on 2026-10-15 (5 days left): category C 5 days left", "")
+			Rule: "HISS-11", Path: "cat-c-5.yml", Category: "C", Entered: today.AddDate(0, 0, -5).Format(config.ExceptionDateLayout), Expires: today.AddDate(0, 0, 5).Format(config.ExceptionDateLayout), Reason: "category C 5 days left",
+		}, "(rule HISS-11, cat-c-5.yml) expires on "+today.AddDate(0, 0, 5).Format(config.ExceptionDateLayout)+" (5 days left): category C 5 days left", "")
 	})
 	t.Run("category C with 6 days left does not warn", func(t *testing.T) {
 		runCategoryWarningCase(t, root, today, config.Exception{
-			Rule: "HISS-11", Path: "cat-c-6.yml", Category: "C", Entered: "2026-10-06", Expires: "2026-10-16", Reason: "category C 6 days left",
+			Rule: "HISS-11", Path: "cat-c-6.yml", Category: "C", Entered: today.AddDate(0, 0, -4).Format(config.ExceptionDateLayout), Expires: today.AddDate(0, 0, 6).Format(config.ExceptionDateLayout), Reason: "category C 6 days left",
 		}, "", "expected no warning for category C entry with 6 days left, got: %s")
 	})
 	t.Run("category D with 3 days left warns", func(t *testing.T) {
@@ -241,17 +241,17 @@ func TestAuditExceptionsExpiry_CategoryWarningWindows_3D(t *testing.T) {
 	})
 	t.Run("category B entered today does not warn", func(t *testing.T) {
 		runCategoryWarningCase(t, root, today, config.Exception{
-			Rule: "HISS-11", Path: "cat-b-fresh.yml", Category: "B", Entered: "2026-10-10", Expires: "2026-10-13", Reason: "fresh category B",
+			Rule: "HISS-11", Path: "cat-b-fresh.yml", Category: "B", Entered: today.AddDate(0, 0, 0).Format(config.ExceptionDateLayout), Expires: today.AddDate(0, 0, 3).Format(config.ExceptionDateLayout), Reason: "fresh category B",
 		}, "", "expected no warning for fresh category B entry, got: %s")
 	})
 	t.Run("category B with 1 day left warns", func(t *testing.T) {
 		runCategoryWarningCase(t, root, today, config.Exception{
-			Rule: "HISS-11", Path: "cat-b-1.yml", Category: "B", Entered: "2026-10-08", Expires: "2026-10-11", Reason: "category B 1 day left",
-		}, "(rule HISS-11, cat-b-1.yml) expires on 2026-10-11 (1 day left): category B 1 day left", "")
+			Rule: "HISS-11", Path: "cat-b-1.yml", Category: "B", Entered: today.AddDate(0, 0, -2).Format(config.ExceptionDateLayout), Expires: today.AddDate(0, 0, 1).Format(config.ExceptionDateLayout), Reason: "category B 1 day left",
+		}, "(rule HISS-11, cat-b-1.yml) expires on "+today.AddDate(0, 0, 1).Format(config.ExceptionDateLayout)+" (1 day left): category B 1 day left", "")
 	})
 	t.Run("uncategorized with 14 days left warns", func(t *testing.T) {
 		runCategoryWarningCase(t, root, today, config.Exception{
-			Rule: "HISS-11", Path: "uncat-14.yml", Expires: "2026-10-24", Reason: "uncategorized 14 days left",
-		}, "(rule HISS-11, uncat-14.yml) expires on 2026-10-24 (14 days left): uncategorized 14 days left", "")
+			Rule: "HISS-11", Path: "uncat-14.yml", Expires: today.AddDate(0, 0, 14).Format(config.ExceptionDateLayout), Reason: "uncategorized 14 days left",
+		}, "(rule HISS-11, uncat-14.yml) expires on "+today.AddDate(0, 0, 14).Format(config.ExceptionDateLayout)+" (14 days left): uncategorized 14 days left", "")
 	})
 }

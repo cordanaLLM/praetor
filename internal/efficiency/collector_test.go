@@ -35,7 +35,7 @@ func (s *stubForge) ListMergedPullRequests(_ context.Context, q forge.MergedPull
 	return s.list, s.err
 }
 
-const forgeRecords = `[
+const forgeRecords = /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `[
  {"number":1,"head_branch":"feat/x","title":"One","milestone":"M1","disposition":"qualified","metric_epoch":"2026-10-10",
   "created_at":"2026-10-01T10:00:00Z","merged_at":"2026-10-04T10:00:00Z",
   "closing_issues":[{"number":10,"created_at":"2026-10-01T00:00:00Z"}],
@@ -383,7 +383,7 @@ func TestCollector_Positive_TranscriptsFeedUnitsWithoutGateway(t *testing.T) {
 func TestCollector_Boundary_ReusedBranchJoinsOnlyTheLatestMergedPR(t *testing.T) {
 	dir := t.TempDir()
 	prs := filepath.Join(dir, "prs.json")
-	writeFile(t, prs, []byte(`[
+	writeFile(t, prs, []byte( /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `[
  {"number":1,"head_branch":"feat/x","title":"PR 1","disposition":"qualified","metric_epoch":"2026-10-10",
   "created_at":"2026-10-01T10:00:00Z","merged_at":"2026-10-02T10:00:00Z",
   "tokens_by_provider":{"value":{},"provenance":"measured"},
@@ -429,7 +429,7 @@ func TestRenderTable_Positive_PrintsNotes(t *testing.T) {
 
 // twoQualifiedOneRevertedRecords is the acceptance fixture of #1132: two qualified units and
 // one reverted unit.
-const twoQualifiedOneRevertedRecords = `[
+const twoQualifiedOneRevertedRecords = /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `[
   {
     "number": 1,
     "head_branch": "feat/first",
@@ -556,7 +556,7 @@ func assertDefectsAndTokens(t *testing.T, ms MilestoneSummary) {
 
 func TestCollector_Positive_ZeroFailureRuleOfThreeBound(t *testing.T) {
 	// Honest edge case: a zero-failure claim prints its n and the rule-of-three bound
-	fixture := `[
+	fixture := /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `[
   {
     "number": 1,
     "head_branch": "feat/a",
@@ -597,7 +597,7 @@ func TestCollector_Positive_ZeroFailureRuleOfThreeBound(t *testing.T) {
 
 func TestCollector_Boundary_ZeroQualifiedUnitsPrintsUndefinedNeverZero(t *testing.T) {
 	// Honest edge case: zero qualified units prints undefined, never 0
-	fixture := `[
+	fixture := /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `[
   {
     "number": 1,
     "head_branch": "feat/rev",
@@ -651,7 +651,7 @@ func TestCollector_Boundary_ZeroQualifiedUnitsPrintsUndefinedNeverZero(t *testin
 
 func TestCollector_Negative_RowWithoutProvenanceRefused(t *testing.T) {
 	// Acceptance: A row without provenance labels is refused.
-	fixture := `[
+	fixture := /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `[
   {
     "number": 1,
     "head_branch": "feat/no-prov",
@@ -678,7 +678,7 @@ func TestCollector_Negative_RowWithoutProvenanceRefused(t *testing.T) {
 }
 
 func TestCollector_Negative_InvalidProvenanceRefused(t *testing.T) {
-	fixture := `[
+	fixture := /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `[
   {
     "number": 1,
     "head_branch": "feat/bad-prov",
@@ -734,7 +734,7 @@ func TestCollector_Negative_MixedMetricEpochsRefused(t *testing.T) {
 	}
 	row2 := row1
 	row2.PullRequestNumber = 2
-	row2.MetricEpoch = "2025-01-01"
+	row2.MetricEpoch = /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ "2025-01-01"
 
 	err := ValidateRows([]UnitReport{row1, row2})
 	if err == nil {
@@ -785,7 +785,7 @@ func TestCollector_Negative_MissingMetricEpochRefusedCollectorPath(t *testing.T)
 
 func TestCollector_Positive_ProbeQualifiedAndRevertedUnitRates(t *testing.T) {
 	// Major 3 probe: 1 qualified + 1 reverted must print '1 of 1 units measured' not '2 of 2'.
-	fixture := `[
+	fixture := /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `[
   {
     "number": 1,
     "head_branch": "feat/qual",
@@ -837,7 +837,7 @@ func TestCollector_Positive_ProbeQualifiedAndRevertedUnitRates(t *testing.T) {
 
 func TestCollector_Positive_RevertRuleMarksOriginalReverted(t *testing.T) {
 	// Major 5 positive: Revert PR marks the original PR as reverted
-	fixture := `[
+	fixture := /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `[
   {
     "number": 10,
     "head_branch": "feat/orig",
@@ -885,7 +885,7 @@ func TestCollector_Positive_RevertRuleMarksOriginalReverted(t *testing.T) {
 
 func TestCollector_Negative_RevertRuleNonMatchingTitle(t *testing.T) {
 	// Major 5 negative: non-revert titles do not change disposition
-	fixture := `[
+	fixture := /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `[
   {
     "number": 20,
     "head_branch": "feat/first",
@@ -929,7 +929,7 @@ func TestCollector_Negative_RevertRuleNonMatchingTitle(t *testing.T) {
 }
 
 // perLaneRecords spreads three units over two lanes.
-const perLaneRecords = `[
+const perLaneRecords = /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `[
   {
     "number": 1,
     "head_branch": "feat/l1",
@@ -1005,7 +1005,7 @@ func TestCollector_Positive_PerLaneAggregation(t *testing.T) {
 
 func TestCollector_Negative_UnmarshalVectorTypeError(t *testing.T) {
 	// Major 6: Vector unmarshal error reporting with context
-	fixture := `[
+	fixture := /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `[
   {
     "number": 1,
     "head_branch": "feat/bad-type",

@@ -488,7 +488,7 @@ func TestSSE_Positive_MessagesFlowOverTheStream(t *testing.T) {
 		t.Fatalf("POST /messages status = %d, want 202", post.StatusCode)
 	}
 	msg := readSSEEvent(t, reader)
-	if msg.name != "message" || !strings.Contains(msg.data, `"protocolVersion":"2024-11-05"`) {
+	if msg.name != "message" || !strings.Contains(msg.data /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */, `"protocolVersion":"2024-11-05"`) {
 		t.Fatalf("message event = %+v, want initialize result", msg)
 	}
 

@@ -417,7 +417,7 @@ func TestOutcomeKeyCoversToolSet(t *testing.T) {
 func TestOutcomeLegacyRecordReadable(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "outcomes.jsonl")
-	legacy := `{"time":"2026-10-08T09:00:00Z","task":"stubs","target":"light","result":"ok","duration_ms":100}` + "\n"
+	legacy := /* testdate: fact: recorded usage/outcome timestamp; decoding, no clock comparison */ `{"time":"2026-10-08T09:00:00Z","task":"stubs","target":"light","result":"ok","duration_ms":100}` + "\n"
 	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -495,11 +495,11 @@ func TestOutcomeMissingEstimateIsNeverZero(t *testing.T) {
 
 func TestReadOutcomesToleratesOnlyRecordsWithoutIdentityFields(t *testing.T) {
 	refused := map[string]string{
-		"junk identity":     `{"time":"2026-10-08T09:00:00Z","task":"stubs","target":"light","result":"ok","identity":{"harness":"h","context_bytes":-5},"identity_key":"junk","actual_cost":1.5}`,
-		"only actual cost":  `{"time":"2026-10-08T09:00:00Z","task":"stubs","target":"light","result":"ok","actual_cost":1.5}`,
-		"only identity key": `{"time":"2026-10-08T09:00:00Z","task":"stubs","target":"light","result":"ok","identity_key":"sha256:00"}`,
-		"only resolved":     `{"time":"2026-10-08T09:00:00Z","task":"stubs","target":"light","result":"ok","resolved_model":"m"}`,
-		"invalid identity":  `{"time":"2026-10-08T09:00:00Z","task":"stubs","target":"light","result":"ok","identity":{"physical_model":"m","harness":"h","harness_version":"1","prompt_digest":"p","context_digest":"c","context_bytes":-5}}`,
+		"junk identity":/* testdate: fact: recorded usage/outcome timestamp; decoding, no clock comparison */ `{"time":"2026-10-08T09:00:00Z","task":"stubs","target":"light","result":"ok","identity":{"harness":"h","context_bytes":-5},"identity_key":"junk","actual_cost":1.5}`,
+		"only actual cost":/* testdate: fact: recorded usage/outcome timestamp; decoding, no clock comparison */ `{"time":"2026-10-08T09:00:00Z","task":"stubs","target":"light","result":"ok","actual_cost":1.5}`,
+		"only identity key":/* testdate: fact: recorded usage/outcome timestamp; decoding, no clock comparison */ `{"time":"2026-10-08T09:00:00Z","task":"stubs","target":"light","result":"ok","identity_key":"sha256:00"}`,
+		"only resolved":/* testdate: fact: recorded usage/outcome timestamp; decoding, no clock comparison */ `{"time":"2026-10-08T09:00:00Z","task":"stubs","target":"light","result":"ok","resolved_model":"m"}`,
+		"invalid identity":/* testdate: fact: recorded usage/outcome timestamp; decoding, no clock comparison */ `{"time":"2026-10-08T09:00:00Z","task":"stubs","target":"light","result":"ok","identity":{"physical_model":"m","harness":"h","harness_version":"1","prompt_digest":"p","context_digest":"c","context_bytes":-5}}`,
 	}
 	for name, line := range refused {
 		path := filepath.Join(t.TempDir(), "outcomes.jsonl")

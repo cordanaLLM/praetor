@@ -14,7 +14,7 @@ func experiment(t *testing.T) Experiment {
 	t.Helper()
 	h := notebook.Digest([]byte("synthetic contract"))
 	id := Identity{Provider: "fixture", Model: "fixture-model", Revision: "v1", AdapterSHA256: h, DatasetSHA256: h, ContractSHA256: h}
-	c := Candidate{ID: "baseline", Prompt: "keep constraints", Identity: id, HeldOut: true, ObservedAt: "2026-09-12T00:00:00Z",
+	c := Candidate{ID: "baseline", Prompt: "keep constraints", Identity: id, HeldOut: true, ObservedAt: /* testdate: fact: recorded report timestamp; serialization, no clock comparison */ "2026-09-12T00:00:00Z",
 		Results: []Observation{{Case: "positive", Quality: .9, CostUSD: .1, LatencyMS: 100, ContractPassed: true}, {Case: "negative", Quality: 1, CostUSD: .1, LatencyMS: 100, ContractPassed: true}}}
 	c.PromptSHA256 = notebook.Digest([]byte(c.Prompt))
 	other := c
@@ -58,7 +58,9 @@ func TestRejectUncomparableEvidence(t *testing.T) {
 	for _, mutate := range []func(*Experiment){
 		func(e *Experiment) { e.Candidates[1].HeldOut = false },
 		func(e *Experiment) { e.Candidates[1].Identity.Revision = "v2" },
-		func(e *Experiment) { e.Candidates[1].ObservedAt = "2020-01-01T00:00:00Z" },
+		func(e *Experiment) {
+			e.Candidates[1].ObservedAt = /* testdate: fact: recorded report timestamp; serialization, no clock comparison */ "2020-01-01T00:00:00Z"
+		},
 		func(e *Experiment) { e.Candidates[1].PromptSHA256 = "wrong" },
 		func(e *Experiment) { e.Candidates[1].Results[1].Case = "different" },
 		func(e *Experiment) { e.Candidates[1].Results[1].Case = "positive" },

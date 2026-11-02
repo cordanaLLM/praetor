@@ -28,8 +28,8 @@ func transcriptFixture(t *testing.T, body string) string {
 }
 
 // Matches the observed original schema; payloads here are deliberately synthetic.
-const transcriptEvent = `{"step_index":7,"source":"MODEL","type":"RUN_COMMAND","status":"DONE","created_at":"2026-09-11T12:00:00Z","content":"fixture tool result","thinking":"private reasoning must not be persisted","tool_calls":[{"name":"run_command","args":{"command":"printf fixture"}}],"exit_code":0}` + "\n"
-const transcriptMetadata = `{"step_index":8,"source":"SYSTEM","type":"CHECKPOINT","status":"DONE","created_at":"2026-09-11T12:00:01Z"}` + "\n"
+const transcriptEvent = /* testdate: fact: recorded transcript timestamp; ingestion, no clock comparison */ `{"step_index":7,"source":"MODEL","type":"RUN_COMMAND","status":"DONE","created_at":"2026-09-11T12:00:00Z","content":"fixture tool result","thinking":"private reasoning must not be persisted","tool_calls":[{"name":"run_command","args":{"command":"printf fixture"}}],"exit_code":0}` + "\n"
+const transcriptMetadata = /* testdate: fact: recorded transcript timestamp; ingestion, no clock comparison */ `{"step_index":8,"source":"SYSTEM","type":"CHECKPOINT","status":"DONE","created_at":"2026-09-11T12:00:01Z"}` + "\n"
 
 func TestIngestTranscriptPreservesEventsAndResumes(t *testing.T) {
 	path := transcriptFixture(t, transcriptEvent+transcriptMetadata+transcriptEvent)
@@ -70,7 +70,7 @@ func TestIngestTranscriptPreservesEventsAndResumes(t *testing.T) {
 	if err := json.Unmarshal(raw, &event); err != nil {
 		t.Fatal(err)
 	}
-	if event.SourceSHA256 != first.Source.SHA256 || event.StepIndex != 7 || len(event.ToolCalls) != 1 || event.CreatedAt != "2026-09-11T12:00:00Z" {
+	if event.SourceSHA256 != first.Source.SHA256 || event.StepIndex != 7 || len(event.ToolCalls) != 1 || event.CreatedAt != /* testdate: fact: recorded transcript timestamp; ingestion, no clock comparison */ "2026-09-11T12:00:00Z" {
 		t.Fatalf("event provenance missing: %+v", event)
 	}
 	assertTranscriptPrivate(t, cache, files)

@@ -425,7 +425,7 @@ func TestMilestone_Boundary_SyncPreservesTrailingLedgerBlocks(t *testing.T) {
 
 	backlogPath := filepath.Join(dir, state.WorkingDirName, BacklogFile)
 	original := "# Project Backlog\n\n## Active Milestones\n\n| # | Title |\n| :- | :- |\n| 1 | old |\n\n" +
-		"### Discharged Tasks [2026-09-01]\n\n- [x] task one\n\n### Discharged Tasks [2026-09-02]\n\n- [x] task two\n"
+		/* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ "### Discharged Tasks [2026-09-01]\n\n- [x] task one\n\n### Discharged Tasks [2026-09-02]\n\n- [x] task two\n"
 	if err := os.WriteFile(backlogPath, []byte(original), 0o600); err != nil {
 		t.Fatalf("seed BACKLOG.md: %v", err)
 	}

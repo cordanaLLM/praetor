@@ -22,11 +22,11 @@ const testCommit = "0123456789abcdef0123456789abcdef01234567"
 func manifestFixture(t *testing.T, fleet, workstation *InstalledDocument) InstallManifest {
 	t.Helper()
 	return InstallManifest{
-		Version: 1, EngineCommit: testCommit, InstalledAt: "2026-09-18T10:00:00Z", BinDir: t.TempDir(),
+		Version: 1, EngineCommit: testCommit, InstalledAt: /* testdate: fact: recorded manifest/lock timestamp; decoding, no clock comparison */ "2026-09-18T10:00:00Z", BinDir: t.TempDir(),
 		Binaries: map[string]InstalledBinary{"praetorctl": {SHA256: strings.Repeat("a", 64)}},
 		Previous: &InstalledPrevious{EngineCommit: testCommit, Backup: t.TempDir()},
 		Settings: InstalledSettings{Fleet: fleet, Workstation: workstation},
-		LastUpdate: &InstallAttempt{At: "2026-09-18T10:05:00+02:00", Target: testCommit, Result: "held",
+		LastUpdate: &InstallAttempt{At: /* testdate: fact: recorded manifest/lock timestamp; decoding, no clock comparison */ "2026-09-18T10:05:00+02:00", Target: testCommit, Result: "held",
 			Reason: "target is not signed"},
 	}
 }

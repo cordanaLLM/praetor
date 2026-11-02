@@ -10,23 +10,23 @@ import (
 )
 
 const legacyStateLog = "# Session State & Active Working Context\n\n## Active Session Overview\n" +
-	"\n### [2026-09-11 17:22:14 UTC] Commit `173c565` on `main`\n- **Activity**: Automated state synchronization\n- **Open Bugs**: 0 | **Pending Questions**: 0\n" +
-	"\n### [2026-09-12 08:00:00 UTC] Commit `0123456789abcdef0123456789abcdef01234567` on `fix/a`\n- **Activity**: Git post-commit synchronization\n" +
+	/* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */ "\n### [2026-09-11 17:22:14 UTC] Commit `173c565` on `main`\n- **Activity**: Automated state synchronization\n- **Open Bugs**: 0 | **Pending Questions**: 0\n" +
+	/* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */ "\n### [2026-09-12 08:00:00 UTC] Commit `0123456789abcdef0123456789abcdef01234567` on `fix/a`\n- **Activity**: Git post-commit synchronization\n" +
 	"- **Tasks**: 130 open, 42 completed | **Open Bugs**: 569 | **Pending Questions**: 4\n- **Git State**: available | **Clean**: false | **Dirty Paths**: 1\n" +
 	"\n<!-- praetor-state:v1 sha256:08ef0524fb3a5a02b855b2934d5f4092792fe5c723dd7332dffb69edfe41e52c -->\n" +
-	"\n### [2026-09-13 09:00:00 UTC] Commit `(unavailable)` on `(not a git worktree)`\n- **Activity**: Ledger   repaired;  see evidence\n" +
+	/* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */ "\n### [2026-09-13 09:00:00 UTC] Commit `(unavailable)` on `(not a git worktree)`\n- **Activity**: Ledger   repaired;  see evidence\n" +
 	"- **Tasks**: 1 open, 0 completed | **Open Bugs**: 2 | **Pending Questions**: 0\n- **Git State**: not_repository | **Clean**: false | **Dirty Paths**: 0\n"
 
 const compactStateLog = "# Session State & Active Working Context\n\n## Active Session Overview\n" +
-	"\n### [2026-09-11 17:22:14 UTC] `173c565` on `main`\n- sync | bugs 0 open | qs 0 pending\n" +
-	"\n### [2026-09-12 08:00:00 UTC] `0123456789abcdef0123456789abcdef01234567` on `fix/a`\n- post-commit sync | tasks 130 open 42 done | bugs 569 open | qs 4 pending | git available dirty 1\n" +
-	"\n### [2026-09-13 09:00:00 UTC] `(unavailable)` on `(not a git worktree)`\n- Ledger repaired; see evidence | tasks 1 open 0 done | bugs 2 open | qs 0 pending | git not_repository dirty 0\n"
+	/* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */ "\n### [2026-09-11 17:22:14 UTC] `173c565` on `main`\n- sync | bugs 0 open | qs 0 pending\n" +
+	/* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */ "\n### [2026-09-12 08:00:00 UTC] `0123456789abcdef0123456789abcdef01234567` on `fix/a`\n- post-commit sync | tasks 130 open 42 done | bugs 569 open | qs 4 pending | git available dirty 1\n" +
+	/* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */ "\n### [2026-09-13 09:00:00 UTC] `(unavailable)` on `(not a git worktree)`\n- Ledger repaired; see evidence | tasks 1 open 0 done | bugs 2 open | qs 0 pending | git not_repository dirty 0\n"
 
 func TestStateEntryRenderTemplate(t *testing.T) {
 	snap := &StateSnapshot{Branch: "main", HeadSHA: "abc1234", GitState: "available", Clean: true,
 		OpenTasks: 3, CompletedTasks: 5, OpenBugs: 2, LastUpdated: time.Date(2026, 9, 18, 6, 21, 57, 0, time.UTC)}
 	got := entryFromSnapshot(snap, "").render()
-	want := "### [2026-09-18 06:21:57 UTC] `abc1234` on `main`\n- sync | tasks 3 open 5 done | bugs 2 open | qs 0 pending | git available clean\n"
+	want := /* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */ "### [2026-09-18 06:21:57 UTC] `abc1234` on `main`\n- sync | tasks 3 open 5 done | bugs 2 open | qs 0 pending | git available clean\n"
 	if got != want {
 		t.Fatalf("template changed:\n got %q\nwant %q", got, want)
 	}

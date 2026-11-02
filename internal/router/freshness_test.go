@@ -19,8 +19,8 @@ func datedModel(id, asOf string, preview bool) ModelDescriptor {
 }
 
 func TestCatalogFindingsWindowBoundary(t *testing.T) {
-	cfg := taskConfig(datedModel("exact", "2026-04-11", false), datedModel("one-over", "2026-04-10", false),
-		datedModel("fresh", "2026-10-01", false), datedModel("undated", "", false), datedModel("future", "2027-01-01", false))
+	cfg := taskConfig(datedModel("exact", freshnessNow.AddDate(0, 0, -180).Format(time.DateOnly), false), datedModel("one-over", freshnessNow.AddDate(0, 0, -181).Format(time.DateOnly), false),
+		datedModel("fresh", freshnessNow.AddDate(0, 0, -7).Format(time.DateOnly), false), datedModel("undated", "", false), datedModel("future", freshnessNow.AddDate(0, 0, 85).Format(time.DateOnly), false))
 	findings := CatalogFindings(cfg, freshnessNow)
 	if len(findings) != 1 || findings[0].Model != "one-over" || !strings.Contains(findings[0].Reason, "181 days old, beyond the 180-day window") {
 		t.Fatalf("window boundary wrong: %v", findings)
@@ -28,8 +28,8 @@ func TestCatalogFindingsWindowBoundary(t *testing.T) {
 }
 
 func TestCatalogFindingsPreviewByFlagAndName(t *testing.T) {
-	cfg := taskConfig(datedModel("flagged", "2026-10-01", true), datedModel("vendor-model-preview-03-25", "2026-10-01", false),
-		datedModel("stable", "2026-10-01", false))
+	cfg := taskConfig(datedModel("flagged", freshnessNow.AddDate(0, 0, -7).Format(time.DateOnly), true), datedModel("vendor-model-preview-03-25", freshnessNow.AddDate(0, 0, -7).Format(time.DateOnly), false),
+		datedModel("stable", freshnessNow.AddDate(0, 0, -7).Format(time.DateOnly), false))
 	findings := CatalogFindings(cfg, freshnessNow)
 	if len(findings) != 2 || findings[0].Model != "flagged" || findings[1].Model != "vendor-model-preview-03-25" {
 		t.Fatalf("preview entries wrong: %v", findings)
@@ -42,7 +42,7 @@ func TestCatalogFindingsPreviewByFlagAndName(t *testing.T) {
 }
 
 func TestCatalogFindingsGovernedWindow(t *testing.T) {
-	cfg := taskConfig(datedModel("old", "2026-10-01", false))
+	cfg := taskConfig(datedModel("old", freshnessNow.AddDate(0, 0, -7).Format(time.DateOnly), false))
 	cfg.Governance.CatalogMaxAgeDays = 3
 	if findings := CatalogFindings(cfg, freshnessNow); len(findings) != 1 || !strings.Contains(findings[0].Reason, "3-day window") {
 		t.Fatalf("declared window ignored: %v", findings)
@@ -53,12 +53,12 @@ func TestCatalogFindingsGovernedWindow(t *testing.T) {
 }
 
 func TestCatalogFindingsReportsStaleAndPreviewTogether(t *testing.T) {
-	cfg := taskConfig(datedModel("both", "2025-01-01", false))
+	cfg := taskConfig(datedModel("both", freshnessNow.AddDate(0, 0, -645).Format(time.DateOnly), false))
 	if findings := CatalogFindings(cfg, freshnessNow); len(findings) != 1 {
 		// Not flagged and not named preview: stale alone.
 		t.Fatalf("findings: %v", findings)
 	}
-	cfg = taskConfig(datedModel("both", "2025-01-01", true))
+	cfg = taskConfig(datedModel("both", freshnessNow.AddDate(0, 0, -645).Format(time.DateOnly), true))
 	if findings := CatalogFindings(cfg, freshnessNow); len(findings) != 2 {
 		t.Fatalf("a stale preview entry needs both findings: %v", findings)
 	}
@@ -73,7 +73,7 @@ func writeCatalogText(t *testing.T, body string) string {
 	return path
 }
 
-const syncAliasCatalog = `version: 1
+var syncAliasCatalog = `version: 1
 gateway:
   address: https://gateway.example.invalid/v1
 lanes:
@@ -86,7 +86,7 @@ tiers:
     models:
       - {id: gw-light, family: openai, provider: gw, alias: light, cost_per_m_in: 0, cost_per_m_out: 0}
       - {id: gw-dead, family: openai, provider: gw, alias: dead, cost_per_m_in: 0, cost_per_m_out: 0}
-      - {id: old-preview, family: google, preview: true, as_of: "2025-01-01", cost_per_m_in: 0, cost_per_m_out: 0}
+      - {id: old-preview, family: google, preview: true, as_of: "` + freshnessNow.AddDate(0, 0, -645).Format(time.DateOnly) + `", cost_per_m_in: 0, cost_per_m_out: 0}
 governance:
   catalog_max_age_days: 90
 `
@@ -106,7 +106,7 @@ func TestSyncProbesAliasesAndReportsStalePreviewEntries(t *testing.T) {
 		reasons = append(reasons, finding.String())
 	}
 	joined := strings.Join(reasons, "\n")
-	if !strings.Contains(joined, "old-preview: marked preview") || !strings.Contains(joined, "old-preview: as_of 2025-01-01") {
+	if !strings.Contains(joined, "old-preview: marked preview") || !strings.Contains(joined, "old-preview: as_of "+freshnessNow.AddDate(0, 0, -645).Format(time.DateOnly)) {
 		t.Fatalf("stale preview entry not reported: %v", reasons)
 	}
 	cfg, err := LoadRoutingConfig(path)
@@ -122,7 +122,7 @@ func assertSyncedAliases(t *testing.T, cfg *RoutingConfig) {
 	for _, model := range cfg.Tiers["lightweight"].Models {
 		byID[model.ID] = model
 	}
-	if byID["gw-light"].AliasStatus != AliasAnswers || byID["gw-light"].AsOf != "2026-10-08" {
+	if byID["gw-light"].AliasStatus != AliasAnswers || byID["gw-light"].AsOf != freshnessNow.AddDate(0, 0, 0).Format(time.DateOnly) {
 		t.Fatalf("answer not persisted: %+v", byID["gw-light"])
 	}
 	if byID["gw-dead"].AliasStatus != AliasUnanswered || !strings.Contains(byID["gw-dead"].AliasReason, "Invalid model name passed") {
@@ -173,11 +173,11 @@ func TestSyncSeedEntriesAreNeverPreviewAndNeverAgeJudged(t *testing.T) {
 
 func TestEntryFindingsIgnoresSeedSourceAsOf(t *testing.T) {
 	far := freshnessNow.AddDate(10, 0, 0)
-	stamped := ModelDescriptor{ID: "seed-with-old-date", Source: SourceSeed, AsOf: "2020-01-01"}
+	stamped := ModelDescriptor{ID: "seed-with-old-date", Source: SourceSeed, AsOf: freshnessNow.AddDate(0, 0, -2472).Format(time.DateOnly)}
 	if got := entryFindings(stamped, far, 24*time.Hour); len(got) != 0 {
 		t.Fatalf("a seed-owned entry carrying an old as_of must not be age-judged: %v", got)
 	}
-	handMade := ModelDescriptor{ID: "hand-made", AsOf: "2020-01-01"}
+	handMade := ModelDescriptor{ID: "hand-made", AsOf: freshnessNow.AddDate(0, 0, -2472).Format(time.DateOnly)}
 	if got := entryFindings(handMade, far, 24*time.Hour); len(got) != 1 {
 		t.Fatalf("a hand-made entry must still be age-judged: %v", got)
 	}

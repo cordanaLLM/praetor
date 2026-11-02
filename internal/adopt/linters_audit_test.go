@@ -252,7 +252,7 @@ func TestAuditDeclaredLinters_ExceptionsLifecycle(t *testing.T) {
 		root := t.TempDir()
 		writeLinterFixtureFile(t, root, ".github/workflows/ci.yml", "name: CI\non: push\njobs:\n  b:\n    runs-on: u\n    steps:\n      - run: echo no\n")
 		exceptions := []config.Exception{
-			{Rule: config.ExceptionRuleDeclaredLinters, Tool: "gitleaks", Reason: "waived temporarily", Expires: "2026-11-01"},
+			{Rule: config.ExceptionRuleDeclaredLinters, Tool: "gitleaks", Reason: "waived temporarily", Expires: testToday.AddDate(0, 0, 20).Format(config.ExceptionDateLayout)},
 		}
 		out, err := AuditDeclaredLinters(ctx, DeclaredLintersOptions{
 			RootDir: root, Policy: policy, Exceptions: exceptions, Today: testToday,
@@ -266,7 +266,7 @@ func TestAuditDeclaredLinters_ExceptionsLifecycle(t *testing.T) {
 		root := t.TempDir()
 		writeLinterFixtureFile(t, root, ".github/workflows/ci.yml", "name: CI\non: push\njobs:\n  b:\n    runs-on: u\n    steps:\n      - run: echo no\n")
 		exceptions := []config.Exception{
-			{Rule: config.ExceptionRuleDeclaredLinters, Tool: "gitleaks", Reason: "expired waiver", Expires: "2026-10-01"},
+			{Rule: config.ExceptionRuleDeclaredLinters, Tool: "gitleaks", Reason: "expired waiver", Expires: testToday.AddDate(0, 0, -11).Format(config.ExceptionDateLayout)},
 		}
 		_, err := AuditDeclaredLinters(ctx, DeclaredLintersOptions{
 			RootDir: root, Policy: policy, Exceptions: exceptions, Today: testToday,
@@ -280,7 +280,7 @@ func TestAuditDeclaredLinters_ExceptionsLifecycle(t *testing.T) {
 		root := t.TempDir()
 		writeLinterFixtureFile(t, root, ".github/workflows/ci.yml", "name: CI\non: push\njobs:\n  b:\n    runs-on: u\n    steps:\n      - run: gitleaks detect --log-opts=\"--full-history --all -m\"\n")
 		exceptions := []config.Exception{
-			{Rule: config.ExceptionRuleDeclaredLinters, Tool: "gitleaks", Reason: "already run", Expires: "2026-11-01"},
+			{Rule: config.ExceptionRuleDeclaredLinters, Tool: "gitleaks", Reason: "already run", Expires: testToday.AddDate(0, 0, 20).Format(config.ExceptionDateLayout)},
 		}
 		_, err := AuditDeclaredLinters(ctx, DeclaredLintersOptions{
 			RootDir: root, Policy: policy, Exceptions: exceptions, Today: testToday,
@@ -513,8 +513,8 @@ func TestAuditDeclaredLinters_Applicability_Present(t *testing.T) {
 		{"checkov", "Dockerfile", "FROM scratch\n"},
 		{"checkov", "images/Containerfile", "FROM scratch\n"},
 		{"checkov", "infra/main.bicep", "param name string\n"},
-		{"checkov", "stack/template.yaml", "AWSTemplateFormatVersion: '2010-09-09'\nResources: {}\n"},
-		{"checkov", "stack/template.json", "{\"AWSTemplateFormatVersion\": \"2010-09-09\"}\n"},
+		{"checkov", "stack/template.yaml", "AWSTemplateFormatVersion: '" + testToday.AddDate(0, 0, -5877).Format(config.ExceptionDateLayout) + "'\nResources: {}\n"},
+		{"checkov", "stack/template.json", "{\"AWSTemplateFormatVersion\": \"" + testToday.AddDate(0, 0, -5877).Format(config.ExceptionDateLayout) + "\"}\n"},
 		{"checkov", "serverless.yml", "service: app\n"},
 	}
 	for _, tc := range cases {

@@ -189,7 +189,7 @@ func TestFrozenReason_Boundary_StatusSpellings(t *testing.T) {
 		rel, content string
 		frozen       bool
 	}{
-		{"docs/adr/0001-a.md", "# A\n\n## Status\n\n**Accepted** — 2026-09-26.\n", true},
+		{"docs/adr/0001-a.md" /* testdate: fact: recorded ADR acceptance date; heading parsing, no clock comparison */, "# A\n\n## Status\n\n**Accepted** — 2026-09-26.\n", true},
 		{"docs/adr/0002-b.md", "# B\r\n\r\n## Status\r\n\r\nSuperseded by ADR-0012\r\n", true},
 		{"docs/adr/0003-c.md", "# C\n\n## Status\n\nProposed\n", true},
 		{"docs/adr/0004-d.md", "# D\n\n## Status\n\nUnderReview\n", false},

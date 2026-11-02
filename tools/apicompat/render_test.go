@@ -84,8 +84,8 @@ func TestRenderWorkflow_Boundary_EmptySettingsKeepTheBytes(t *testing.T) {
 // exactly, whatever characters the reason carries; the line is exempt from yamllint's line length.
 func TestRenderWorkflow_Positive_ExceptionsReachTheGateEnvironment(t *testing.T) {
 	entries := []ModuleException{
-		{Path: "hw/udev/go.mod", Reason: trickyReason, Expires: "2026-12-31"},
-		{Path: "go.mod", Reason: "second", Expires: "2026-11-01"},
+		{Path: "hw/udev/go.mod", Reason: trickyReason, Expires: /* testdate: golden: exact serialized report/configuration bytes; no clock reads */ "2026-12-31"},
+		{Path: "go.mod", Reason: "second", Expires: /* testdate: golden: exact serialized report/configuration bytes; no clock reads */ "2026-11-01"},
 	}
 	rendered := mustRender(t, Settings{Exceptions: entries})
 	var workflow struct {
@@ -135,7 +135,7 @@ func TestRenderWorkflow_Negative_RefusesWhatItCannotRender(t *testing.T) {
 func TestStripSettings_RecognisesOnlyPraetorsRendering(t *testing.T) {
 	settings := Settings{
 		SystemPackages: []string{"libudev-dev", "libvorbis-dev"},
-		Exceptions:     []ModuleException{{Path: "hw/udev/go.mod", Reason: trickyReason, Expires: "2026-12-31"}},
+		Exceptions:     []ModuleException{{Path: "hw/udev/go.mod", Reason: trickyReason, Expires: /* testdate: golden: exact serialized report/configuration bytes; no clock reads */ "2026-12-31"}},
 	}
 	rendered := mustRender(t, settings)
 	if plain, ok := StripSettings(rendered); !ok || plain != Workflow {

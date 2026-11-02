@@ -1039,6 +1039,7 @@ class CheckpointTests(unittest.TestCase):
 
     def test_review_rerun_supersedes_earlier_run_of_same_job(self):
         head, base = self.review_fixture()
+        # testdate: fact: recorded protocol/history metadata; parsed, no clock comparison
         early, late = "2026-10-06T15:14:18Z", "2026-10-06T15:24:47Z"
         cases = (
             ("passing rerun after failure", [self.rerun("FAILURE", early), self.rerun("SUCCESS", late)], "passed"),
@@ -1055,10 +1056,12 @@ class CheckpointTests(unittest.TestCase):
 
     def test_review_rerun_never_hides_another_workflow_or_untimed_run(self):
         head, base = self.review_fixture()
+        # testdate: fact: recorded protocol/history metadata; parsed, no clock comparison
         early, late = "2026-10-06T15:14:18Z", "2026-10-06T15:24:47Z"
         cases = (
             ("other workflow", [self.rerun("FAILURE", early, workflow="Other"), self.rerun("SUCCESS", late)]),
             ("no workflow name", [self.rerun("FAILURE", early, workflow=""), self.rerun("SUCCESS", late)]),
+            # testdate: fact: recorded protocol/history metadata; parsed, no clock comparison
             ("not started", [self.rerun("FAILURE", "0001-01-01T00:00:00Z"), self.rerun("SUCCESS", late)]),
             ("malformed start", [self.rerun("FAILURE", "yesterday"), self.rerun("SUCCESS", late)]),
             ("same start", [self.rerun("FAILURE", late), self.rerun("SUCCESS", late)]),
@@ -1130,6 +1133,7 @@ class CheckpointTests(unittest.TestCase):
         # job name in the same workflow as the draft run that stopped in its draft step. The
         # newest run of the job decides; a failed push run is never read as draft pending.
         head, base = self.review_fixture()
+        # testdate: fact: recorded protocol/history metadata; parsed, no clock comparison
         early, late = "2026-10-07T18:00:01Z", "2026-10-07T18:00:02Z"
         draft_marked = self.check_runs(("gate", [self.DRAFT_NOTE, self.EXIT_NOTE]))
         push_failed = self.check_runs(("gate", [self.DRAFT_NOTE]), ("gate", [self.EXIT_NOTE]))

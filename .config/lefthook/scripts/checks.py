@@ -709,7 +709,9 @@ def governance_commands(directory, names, source, base=None):
         name.startswith((".standards", ".config/", ".agents/", ".claude/", ".codex/",
                          ".gemini/", ".cursor/", ".devcontainer/", ".github/", "templates/"))
         or name in {"lefthook.yml", "README.md"} for name in names)
-    if (directory / ".standards.yaml").exists() and (source or config):
+    # The HISS scanner owns Python test fixture checks too, including scripts-only changes.
+    python_source = any(name.endswith(".py") for name in names)
+    if (directory / ".standards.yaml").exists() and (source or config or python_source):
         scope = audit_scope(directory, names, base)
         commands.extend([[*CLI, "audit", *scope], [*CLI, "flavor", "audit", "."]])
     if (directory / ".workingdir").exists() and any(name.startswith(".workingdir/") for name in names):

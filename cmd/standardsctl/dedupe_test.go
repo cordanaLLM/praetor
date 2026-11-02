@@ -22,7 +22,7 @@ func TestPrintDedupeReport_ForeignExceptionMetadata(t *testing.T) {
 	for _, applicable := range []bool{true, false} {
 		t.Run(fmt.Sprintf("applicable_%v", applicable), func(t *testing.T) {
 			var report dedupe.DedupeReport
-			data := fmt.Sprintf(`{"applicable":%v,"passed":%v,"foreign_scanner":"jscpd 5.4.1",
+			data := fmt.Sprintf( /* testdate: golden: exact serialized report/configuration bytes; no clock reads */ `{"applicable":%v,"passed":%v,"foreign_scanner":"jscpd 5.4.1",
 			"foreign_excepted":[{"language":"python","hash":"fixture","loc":10,
 			"locations":[{"path":"app.py","line":1},{"path":"app.py","line":30}],
 			"exceptions":[{"path":"app.py","reason":"Category D: retained clones","expires":"2026-11-18"}]}]}`,
@@ -34,7 +34,7 @@ func TestPrintDedupeReport_ForeignExceptionMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatalf("excepted foreign report verdict: %v", err)
 			}
-			mustContain(t, out, "Excepted Foreign Duplicate Blocks (1):", "app.py", "excepted until 2026-11-18", "Category D: retained clones")
+			mustContain(t, out, "Excepted Foreign Duplicate Blocks (1):", "app.py" /* testdate: golden: exact serialized report/configuration bytes; no clock reads */, "excepted until 2026-11-18", "Category D: retained clones")
 		})
 	}
 }
@@ -44,14 +44,14 @@ func TestPrintDedupeReport_ExpiredForeignException(t *testing.T) {
 		Applicable: true, Passed: true,
 		ForeignDuplicates: []dedupe.DuplicateGroup{{
 			Language: "python", Hash: "fixture", LOC: 10,
-			Locations: []dedupe.FileLocation{{Path: "app.py", Line: 1, Expired: "2026-10-20"}},
+			Locations: []dedupe.FileLocation{{Path: "app.py", Line: 1, Expired: /* testdate: golden: exact serialized report/configuration bytes; no clock reads */ "2026-10-20"}},
 		}},
 	}
 	out, err := captureStdout(t, func() error { return printDedupeReport("fixture", report) })
 	if err != nil {
 		t.Fatalf("foreign findings remain reported without gating: %v", err)
 	}
-	mustContain(t, out, "Foreign Duplicate Blocks (1, reported, not gated):", "app.py:1", "its HISS-19 exception expired on 2026-10-20")
+	mustContain(t, out, "Foreign Duplicate Blocks (1, reported, not gated):", "app.py:1" /* testdate: golden: exact serialized report/configuration bytes; no clock reads */, "its HISS-19 exception expired on 2026-10-20")
 }
 
 const dedupeSprawlSource = `package sample
@@ -401,7 +401,8 @@ func TestRunDedupeScan_Negative_ExpiredEntryFailsNamingIt(t *testing.T) {
   - rule: HISS-19
     path: zz_generated.deepcopy.go
     reason: generated-style DeepCopyInto clones
-    expires: 2020-01-01
+    category: A
+    expires: ` + time.Now().AddDate(0, 0, -1).Format(config.ExceptionDateLayout) + `
 `
 	writeFixtureFile(t, dir, config.ManifestFileName, manifest)
 
@@ -412,7 +413,7 @@ func TestRunDedupeScan_Negative_ExpiredEntryFailsNamingIt(t *testing.T) {
 	mustContain(t, out,
 		"Duplicate Function Blocks (1):",
 		"zz_generated.deepcopy.go",
-		"(its HISS-19 exception expired on 2020-01-01)",
+		"(its HISS-19 exception expired on "+time.Now().AddDate(0, 0, -1).Format(config.ExceptionDateLayout)+")",
 	)
 }
 

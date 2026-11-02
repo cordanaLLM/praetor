@@ -11,7 +11,7 @@ import (
 
 const (
 	seoFixtureArticle = `<script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle",` +
-		`"headline":"H","description":"D","author":{"name":"cordanaLLM"},"dateModified":"2026-09-25"}</script>`
+		/* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `"headline":"H","description":"D","author":{"name":"cordanaLLM"},"dateModified":"2026-09-25"}</script>`
 	seoFixtureSitemap = `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://example.com/</loc></url></urlset>`
 )
 
@@ -46,7 +46,7 @@ func TestRunSEO_Positive_AuditsABuiltSite(t *testing.T) {
 
 func TestRunSEO_Negative_FindingsFailTheCommand(t *testing.T) {
 	// BUG-974: an empty dateModified fails the audit.
-	dir := seoSite(t, strings.Replace(seoFixtureArticle, `"2026-09-25"`, `""`, 1))
+	dir := seoSite(t, strings.Replace(seoFixtureArticle /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */, `"2026-09-25"`, `""`, 1))
 	stderr, err := captureStderr(t, func() error {
 		_, runErr := captureStdout(t, func() error { return runSEO([]string{"audit", dir}) })
 		return runErr

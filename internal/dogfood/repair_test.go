@@ -132,7 +132,7 @@ func TestRepairBudgetAndUnroutableJobs(t *testing.T) {
 		t.Fatalf("unroutable %+v %v", plan, err)
 	}
 	policy.Task = "ci_debugging"
-	policy.UsagePath = repairTestFile(t, `{"version":1,"captured_at":"2026-09-12T12:00:00Z","models":{"cheap":{"current_rpm":10,"current_tpm":0}}}`)
+	policy.UsagePath = repairTestFile(t /* testdate: fact: recorded transcript/report timestamp; parsing, no clock comparison */, `{"version":1,"captured_at":"2026-09-12T12:00:00Z","models":{"cheap":{"current_rpm":10,"current_tpm":0}}}`)
 	plan, err = PlanRepairs(context.Background(), report, policy)
 	if !errors.Is(err, ErrRepairsBlocked) || plan.Jobs[0].Status != "unroutable" || plan.UsageSHA256 == "" {
 		t.Fatalf("capacity %+v %v", plan, err)

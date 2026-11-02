@@ -407,7 +407,7 @@ func TestClaim_Negative_MalformedAndForeignMarkersIgnored(t *testing.T) {
 		{ID: 5, Association: "NONE", Body: good},
 		{ID: 6, Association: "CONTRIBUTOR", Body: good},
 		{ID: 7, Association: "OWNER", Body: strings.Replace(good, "session="+ghostTag, "session=gh ost", 1)},
-		{ID: 8, Association: "OWNER", Body: strings.Replace(good, "updated=2026-10-08T12:00:00Z", "updated=yesterday", 1)},
+		{ID: 8, Association: "OWNER", Body: strings.Replace(good, "updated="+claimEpoch.Format(time.RFC3339), "updated=yesterday", 1)},
 		{ID: 9, Association: "OWNER", Body: "<!-- praetor-claim"},
 	}
 	f.NextID = 50

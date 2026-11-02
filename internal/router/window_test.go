@@ -87,7 +87,7 @@ func TestWindowAboveStopRefusesAndNamesTheWindow(t *testing.T) {
 	if !errors.Is(err, ErrNoEligibleModel) {
 		t.Fatalf("a window above stop must refuse the dispatch: %v", err)
 	}
-	want := "window claude-code/five_hour (account max-a) stop: used 85.0% >= stop 80.0%, resets 2026-10-13T14:00:00Z, source claude-local age 60s"
+	want := "window claude-code/five_hour (account max-a) stop: used 85.0% >= stop 80.0%, resets " + windowNow.Add(2*time.Hour).Format(time.RFC3339) + ", source claude-local age 60s"
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("refusal must name the window\nwant %q\ngot  %v", want, err)
 	}

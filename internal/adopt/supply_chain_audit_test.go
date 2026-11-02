@@ -225,14 +225,14 @@ func TestAuditSupplyChainPassesADeclaredGap(t *testing.T) {
 		want   []string
 	}{
 		"Level 2 measured, Level 3 declared": {release, supplyChainPolicy(3, false, false),
-			supplyChainEntry(".github/workflows/release.yml", "2026-12-31"),
-			[]string{"declared gap, excepted until 2026-12-31 by the exceptions entry (rule HISS-11, .github/workflows/release.yml): " +
+			supplyChainEntry(".github/workflows/release.yml", supplyChainToday.AddDate(0, 0, 86).Format(config.ExceptionDateLayout)),
+			[]string{"declared gap, excepted until " + supplyChainToday.AddDate(0, 0, 86).Format(config.ExceptionDateLayout) + " by the exceptions entry (rule HISS-11, .github/workflows/release.yml): " +
 				"release provenance not yet built", "policy declares SLSA Build Level 3 but the workflows reach Level 2 (.github/workflows/release.yml)"}},
 		"no provenance workflow yet": {map[string]string{"README.md": "x\n"}, supplyChainPolicy(3, true, true),
-			supplyChainEntry(".github/workflows/release.yml", "2026-12-31"),
+			supplyChainEntry(".github/workflows/release.yml", supplyChainToday.AddDate(0, 0, 86).Format(config.ExceptionDateLayout)),
 			[]string{"reach Level 0", "enforce_cosign", "require_sbom"}},
 		"an entry on its expires day": {release, supplyChainPolicy(3, false, false),
-			supplyChainEntry(".github/workflows/release.yml", "2026-10-06"), []string{"excepted until 2026-10-06"}},
+			supplyChainEntry(".github/workflows/release.yml", supplyChainToday.AddDate(0, 0, 0).Format(config.ExceptionDateLayout)), []string{"excepted until " + supplyChainToday.AddDate(0, 0, 0).Format(config.ExceptionDateLayout)}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -262,17 +262,17 @@ func TestAuditSupplyChainRefusesExpiredStaleAndMalformedEntries(t *testing.T) {
 		entry  config.Exception
 		want   []string
 	}{
-		"an expired entry": {supplyChainPolicy(3, false, false), supplyChainEntry(".github/workflows/release.yml", "2026-10-05"),
-			[]string{"reach Level 2", "the exceptions entry (rule HISS-11, .github/workflows/release.yml) expired on 2026-10-05"}},
-		"an entry for another workflow": {supplyChainPolicy(3, false, false), supplyChainEntry(".github/workflows/publish.yml", "2026-12-31"),
+		"an expired entry": {supplyChainPolicy(3, false, false), supplyChainEntry(".github/workflows/release.yml", supplyChainToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout)),
+			[]string{"reach Level 2", "the exceptions entry (rule HISS-11, .github/workflows/release.yml) expired on " + supplyChainToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout)}},
+		"an entry for another workflow": {supplyChainPolicy(3, false, false), supplyChainEntry(".github/workflows/publish.yml", supplyChainToday.AddDate(0, 0, 86).Format(config.ExceptionDateLayout)),
 			[]string{"for .github/workflows/publish.yml excuse no gap, because the measurement read .github/workflows/release.yml",
 				"no exceptions entry declares the gap above"}},
-		"an entry with no gap to excuse": {supplyChainPolicy(2, false, false), supplyChainEntry(".github/workflows/release.yml", "2026-12-31"),
+		"an entry with no gap to excuse": {supplyChainPolicy(2, false, false), supplyChainEntry(".github/workflows/release.yml", supplyChainToday.AddDate(0, 0, 86).Format(config.ExceptionDateLayout)),
 			[]string{"excuse no gap, because the workflows meet every declaration; remove them"}},
-		"an entry under a policy declaring nothing": {supplyChainPolicy(0, false, false), supplyChainEntry(".github/workflows/release.yml", "2026-12-31"),
+		"an entry under a policy declaring nothing": {supplyChainPolicy(0, false, false), supplyChainEntry(".github/workflows/release.yml", supplyChainToday.AddDate(0, 0, 86).Format(config.ExceptionDateLayout)),
 			[]string{"because the policy declares no supply-chain control"}},
 		"a malformed entry": {supplyChainPolicy(3, false, false),
-			config.Exception{Rule: config.ExceptionRuleSupplyChain, Glob: ".github/workflows/*.yml", Reason: "globbed", Category: "A", Expires: "2026-12-31"},
+			config.Exception{Rule: config.ExceptionRuleSupplyChain, Glob: ".github/workflows/*.yml", Reason: "globbed", Category: "A", Expires: supplyChainToday.AddDate(0, 0, 86).Format(config.ExceptionDateLayout)},
 			[]string{"rule HISS-11 must name one file by path, not a glob"}},
 	}
 	for name, tc := range cases {
@@ -309,7 +309,7 @@ func TestNewSupplyChainExceptionDeclaresTheGap(t *testing.T) {
 			if err := config.ValidateExceptions([]config.Exception{entry}, supplyChainToday); err != nil {
 				t.Fatalf("adoption's entry %+v refused: %v", entry, err)
 			}
-			if entry.Expires != "2027-01-04" || !strings.Contains(entry.Reason, "SLSA Build Level 3 declared") ||
+			if entry.Expires != supplyChainToday.AddDate(0, 0, 90).Format(config.ExceptionDateLayout) || !strings.Contains(entry.Reason, "SLSA Build Level 3 declared") ||
 				!strings.Contains(entry.Reason, supplyChainGuide) {
 				t.Fatalf("entry = %+v; want the latest expiry and a reason naming the gap and the guide", entry)
 			}
@@ -371,17 +371,17 @@ func TestAuditSupplyChainImageRefsBaselineAndExceptions_3D(t *testing.T) {
 		t.Fatalf("expected unpinned Dockerfile image to fail AuditSupplyChain, got: %v", err)
 	}
 
-	liveEntry := supplyChainEntry("Dockerfile", "2026-12-31")
+	liveEntry := supplyChainEntry("Dockerfile", supplyChainToday.AddDate(0, 0, 86).Format(config.ExceptionDateLayout))
 	if out, err := AuditSupplyChain(t.Context(), SupplyChainOptions{
 		Root: root, Policy: policy, Exceptions: []config.Exception{liveEntry}, Today: supplyChainToday,
 	}); err != nil {
 		t.Fatalf("live HISS-11 exception for Dockerfile failed: %v\n%s", err, out)
 	}
 
-	expiredEntry := supplyChainEntry("Dockerfile", "2026-10-05")
+	expiredEntry := supplyChainEntry("Dockerfile", supplyChainToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout))
 	if _, err := AuditSupplyChain(t.Context(), SupplyChainOptions{
 		Root: root, Policy: policy, Exceptions: []config.Exception{expiredEntry}, Today: supplyChainToday,
-	}); err == nil || !strings.Contains(err.Error(), "expired on 2026-10-05") {
+	}); err == nil || !strings.Contains(err.Error(), "expired on "+supplyChainToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout)) {
 		t.Fatalf("expected expired HISS-11 exception for Dockerfile to fail, got: %v", err)
 	}
 

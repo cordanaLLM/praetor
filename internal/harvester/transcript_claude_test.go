@@ -23,7 +23,7 @@ func claudeFixture(t *testing.T, body string) TranscriptIngestOptions {
 }
 
 func claudeMessageFixture(role, content string) string {
-	return `{"type":"` + role + `","uuid":"record-id","parentUuid":"parent-id","sessionId":"session-id","timestamp":"2026-09-12T12:00:00.123Z","message":{"role":"` + role + `","content":` + content + `}}` + "\n"
+	return `{"type":"` + role + /* testdate: fact: recorded transcript timestamp; ingestion, no clock comparison */ `","uuid":"record-id","parentUuid":"parent-id","sessionId":"session-id","timestamp":"2026-09-12T12:00:00.123Z","message":{"role":"` + role + `","content":` + content + `}}` + "\n"
 }
 
 const claudeToolContent = `[{"type":"thinking","thinking":"PRIVATE_THINKING","signature":"PRIVATE_SIGNATURE"},{"type":"text","text":"visible"},{"type":"tool_use","id":"tool-id","name":"shell","input":{"command":"NEVER_EXECUTE"}}]`
@@ -69,7 +69,7 @@ func TestClaudeIngestionPreservesObservationsAndSkipsMetadata(t *testing.T) {
 		if err := json.Unmarshal(raw, &event); err != nil {
 			t.Fatal(err)
 		}
-		if event.SourceFormat != TranscriptFormatClaudeCode || event.RecordUUID != "record-id" || event.ParentUUID != "parent-id" || event.CreatedAt != "2026-09-12T12:00:00.123Z" {
+		if event.SourceFormat != TranscriptFormatClaudeCode || event.RecordUUID != "record-id" || event.ParentUUID != "parent-id" || event.CreatedAt != /* testdate: fact: recorded transcript timestamp; ingestion, no clock comparison */ "2026-09-12T12:00:00.123Z" {
 			t.Fatalf("missing provenance: %+v", event)
 		}
 		if event.Type == "assistant" && (event.Content != "visible" || len(event.ToolCalls) != 1 || event.ToolCalls[0].ID != "tool-id") {
@@ -89,7 +89,7 @@ func TestClaudeRejectsMalformedTailBeforeAnyWrites(t *testing.T) {
 		strings.Replace(valid, `"type":"user"`, `"Type":"user"`, 1),
 		strings.Replace(valid, `"uuid":"record-id"`, `"uuid":"one","uuid":"two"`, 1),
 		strings.Replace(valid, `"session-id"`, `"other-session"`, 1),
-		strings.Replace(valid, `"2026-09-12T12:00:00.123Z"`, `"bad-time"`, 1),
+		strings.Replace(valid /* testdate: fact: recorded transcript timestamp; ingestion, no clock comparison */, `"2026-09-12T12:00:00.123Z"`, `"bad-time"`, 1),
 		strings.Replace(valid, `"role":"user"`, `"role":"assistant"`, 1),
 		claudeMessageFixture("user", `null`),
 		claudeMessageFixture("user", `[{"type":"text","text":null}]`),

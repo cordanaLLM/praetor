@@ -32,10 +32,10 @@ func TestRenderWorkflow_RoundTrip_3D(t *testing.T) {
 
 	entries := []rules.Entry{
 		{
-			Path:    "creds.py",
-			RuleID:  "generic-api-key",
-			Expires: "2026-11-01",
-			Reason:  "test waiver",
+			Path:   "creds.py",
+			RuleID: "generic-api-key",
+			Expires:/* testdate: golden: exact serialized report/configuration bytes; no clock reads */ "2026-11-01",
+			Reason: "test waiver",
 		},
 	}
 
@@ -63,7 +63,7 @@ jobs:
     steps:
       - run: gitleaks detect
 `
-	entries := []rules.Entry{{Path: "a", RuleID: "b", Expires: "2026-11-01", Reason: "c"}}
+	entries := []rules.Entry{{Path: "a", RuleID: "b", Expires: /* testdate: golden: exact serialized report/configuration bytes; no clock reads */ "2026-11-01", Reason: "c"}}
 	_, err := secrets.RenderWorkflow(badWorkflow, entries)
 	if err == nil {
 		t.Fatal("expected error when gate step is missing, got nil")

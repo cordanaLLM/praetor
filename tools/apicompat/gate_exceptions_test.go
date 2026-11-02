@@ -47,8 +47,8 @@ func TestGate_Positive_ExceptedModuleIsReportedNotCompared(t *testing.T) {
 	base := f.widget()
 	f.git("tag", "v1.0.0")
 	head := f.commit("break the build of lib", map[string]string{"lib/lib.go": brokenLib})
-	today := time.Now().UTC().Format("2006-01-02")
-	for _, expires := range []string{"2099-12-31", today} {
+	today := time.Now().UTC().Format(time.DateOnly)
+	for _, expires := range []string{time.Now().UTC().AddDate(0, 0, 30).Format(time.DateOnly), today} {
 		run := h.run(t, f.dir, exceptionsEnvEntry(t, libException(expires)), "-base="+base)
 		if run.status != 0 {
 			t.Fatalf("expires %s: status %d, want 0:\n%s\n%s", expires, run.status, run.stdout, run.stderr)
@@ -61,7 +61,7 @@ func TestGate_Positive_ExceptedModuleIsReportedNotCompared(t *testing.T) {
 		t.Fatalf("checker runs %q, want the root module only, twice", got)
 	}
 	f.commit("repair lib", goModule("lib", "example.com/widget/lib", "lib"))
-	run := h.run(t, f.dir, exceptionsEnvEntry(t, libException("2099-12-31")), "-base="+base)
+	run := h.run(t, f.dir, exceptionsEnvEntry(t, libException(time.Now().UTC().AddDate(0, 0, 30).Format(time.DateOnly))), "-base="+base)
 	requireContains(t, run.stdout, "compatible   lib (example.com/widget/lib)")
 	if got := h.checked(t); len(got) != 4 {
 		t.Fatalf("checker runs %q, want lib compared once its build is repaired", got)
@@ -76,14 +76,14 @@ func TestGate_Negative_ExpiredOrMissingExceptionFails(t *testing.T) {
 	f := newFixture(t, h)
 	base := f.widget()
 	f.commit("break the build of lib", map[string]string{"lib/lib.go": brokenLib})
-	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
+	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format(time.DateOnly)
 	cases := []struct {
 		name string
 		env  []string
 		want string
 	}{
 		{"expired", exceptionsEnvEntry(t, libException(yesterday)), "the exception for lib/go.mod expired on " + yesterday},
-		{"other module", exceptionsEnvEntry(t, ModuleException{Path: "go.mod", Reason: "r", Expires: "2099-12-31"}), "do not build at HEAD"},
+		{"other module", exceptionsEnvEntry(t, ModuleException{Path: "go.mod", Reason: "r", Expires: time.Now().UTC().AddDate(0, 0, 30).Format(time.DateOnly)}), "do not build at HEAD"},
 		{"none", nil, "do not build at HEAD"},
 	}
 	for _, tc := range cases {
@@ -104,9 +104,9 @@ func TestGate_Boundary_DamagedExceptionsFailTheRun(t *testing.T) {
 	f.commit("document", map[string]string{"README.md": "widget\n"})
 	for name, raw := range map[string]string{
 		"not json":      "lib/go.mod",
-		"unknown field": `[{"path":"lib/go.mod","reason":"r","expires":"2099-12-31","glob":"x"}]`,
-		"not a go.mod":  `[{"path":"lib/lib.go","reason":"r","expires":"2099-12-31"}]`,
-		"empty reason":  `[{"path":"lib/go.mod","reason":" ","expires":"2099-12-31"}]`,
+		"unknown field": `[{"path":"lib/go.mod","reason":"r","expires":"` + time.Now().UTC().AddDate(0, 0, 30).Format(time.DateOnly) + `","glob":"x"}]`,
+		"not a go.mod":  `[{"path":"lib/lib.go","reason":"r","expires":"` + time.Now().UTC().AddDate(0, 0, 30).Format(time.DateOnly) + `"}]`,
+		"empty reason":  `[{"path":"lib/go.mod","reason":" ","expires":"` + time.Now().UTC().AddDate(0, 0, 30).Format(time.DateOnly) + `"}]`,
 		"bad date":      `[{"path":"lib/go.mod","reason":"r","expires":"soon"}]`,
 	} {
 		run := h.run(t, f.dir, []string{ExceptionsEnv + "=" + raw}, "-base="+base)

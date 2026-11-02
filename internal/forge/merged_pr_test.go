@@ -88,7 +88,7 @@ func assertReadMergedPullRequests(t *testing.T, jsonContent string) {
 func TestReadMergedPullRequestsFile_Positive(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "merged_prs.json")
-	content := `[{"number": 202, "head_branch": "fix/bug", "title": "Fixed bug", "created_at": "2026-10-01T10:00:00Z", "merged_at": "2026-10-01T12:00:00Z"}]`
+	content := /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ `[{"number": 202, "head_branch": "fix/bug", "title": "Fixed bug", "created_at": "2026-10-01T10:00:00Z", "merged_at": "2026-10-01T12:00:00Z"}]`
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("failed to write test fixture: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestReadMergedPullRequestsFile_Positive(t *testing.T) {
 }
 
 func TestParseGitHubMergedPulls_Positive(t *testing.T) {
-	raw := `[
+	raw := /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ `[
 		{
 			"number": 303,
 			"title": "Add feature",
@@ -314,17 +314,17 @@ func TestMergedPullRequest_EffectiveNumberAndAlias_PositiveBoundary(t *testing.T
 
 func TestParseMergedPullRequests_Negative_StrictShapes(t *testing.T) {
 	for name, input := range map[string]string{
-		"unknown wrapper key":     `{"pull_requests":[{"number":1}]}`,
-		"wrapper beside units":    `{"units":[],"extra":1}`,
-		"missing units":           `{}`,
-		"null units":              `{"units":null}`,
-		"top-level null":          `null`,
-		"misspelled record key":   `[{"number":1,"dispositon":"rejected"}]`,
-		"misspelled key in units": `{"units":[{"number":1,"metric_epoc":"2026-10-10"}]}`,
-		"repeated record key":     `[{"number":1,"number":2}]`,
-		"second document":         `[] []`,
-		"number conflict":         `[{"number":1,"pull_request_number":2}]`,
-		"no number":               `[{"head_branch":"b"}]`,
+		"unknown wrapper key":   `{"pull_requests":[{"number":1}]}`,
+		"wrapper beside units":  `{"units":[],"extra":1}`,
+		"missing units":         `{}`,
+		"null units":            `{"units":null}`,
+		"top-level null":        `null`,
+		"misspelled record key": `[{"number":1,"dispositon":"rejected"}]`,
+		"misspelled key in units":/* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ `{"units":[{"number":1,"metric_epoc":"2026-10-10"}]}`,
+		"repeated record key": `[{"number":1,"number":2}]`,
+		"second document":     `[] []`,
+		"number conflict":     `[{"number":1,"pull_request_number":2}]`,
+		"no number":           `[{"head_branch":"b"}]`,
 	} {
 		prs, err := ParseMergedPullRequests([]byte(input))
 		if err == nil {

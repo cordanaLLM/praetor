@@ -18,7 +18,7 @@ import (
 
 // efficiencyRecords is one records row in the current schema: metric epoch, disposition and
 // every vector field with a provenance label.
-const efficiencyRecords = `[{"number": 1, "head_branch": "feat/main", "title": "Main", "created_at": "2026-10-01T10:00:00Z", "merged_at": "2026-10-01T11:00:00Z",
+const efficiencyRecords = /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `[{"number": 1, "head_branch": "feat/main", "title": "Main", "created_at": "2026-10-01T10:00:00Z", "merged_at": "2026-10-01T11:00:00Z",
   "disposition": "qualified", "metric_epoch": "2026-10-10",
   "tokens_by_provider": {"value": {"anthropic": 10}, "provenance": "measured"},
   "wall_seconds": {"value": 3600, "provenance": "measured"},
@@ -147,7 +147,7 @@ func assertEfficiencyJSON(t *testing.T, prsPath string) {
 	if err := json.Unmarshal(js.Bytes(), &decoded); err != nil || len(decoded.Units) != 1 || decoded.Units[0].IssueToMerge != "not measured" {
 		t.Fatalf("json: %v %s", err, js.String())
 	}
-	if u := decoded.Units[0]; u.MetricEpoch != "2026-10-10" || u.Retries.Provenance != "modeled" {
+	if u := decoded.Units[0]; u.MetricEpoch != /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ "2026-10-10" || u.Retries.Provenance != "modeled" {
 		t.Errorf("unit epoch and provenance must reach the JSON output: %+v", u)
 	}
 	if got := decoded.Summary.Retries.Display; got != "0.00 per qualified unit (total 0 over 1 units / 1 qualified) [modeled 1]" {
@@ -158,7 +158,7 @@ func assertEfficiencyJSON(t *testing.T, prsPath string) {
 func TestRunEfficiencyTo_Negative_RecordsWithoutLedgerFieldsRefused(t *testing.T) {
 	dir := t.TempDir()
 	for name, records := range map[string]string{
-		"no metric epoch":       strings.Replace(efficiencyRecords, `"metric_epoch": "2026-10-10",`, "", 1),
+		"no metric epoch":       strings.Replace(efficiencyRecords /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */, `"metric_epoch": "2026-10-10",`, "", 1),
 		"no provenance label":   strings.Replace(efficiencyRecords, `"retries": {"value": 0, "provenance": "modeled"}`, `"retries": {"value": 0}`, 1),
 		"vector field omitted":  strings.Replace(efficiencyRecords, `"retries": {"value": 0, "provenance": "modeled"},`, "", 1),
 		"misspelled record key": strings.Replace(efficiencyRecords, `"disposition"`, `"dispositon"`, 1),

@@ -37,8 +37,8 @@ func timeoutEntry(name, expires string) config.Exception {
 // Boundary: a live entry passes the workflow and names its reason and expiry.
 func TestAuditTestTimeouts_Boundary_LiveEntryPasses(t *testing.T) {
 	root := triggerRepository(t, map[string]string{"portability.yml": longWorkflow})
-	out, err := auditTimeouts(t, root, timeoutEntry("portability.yml", "2026-10-18"))
-	if err != nil || !strings.Contains(out, "until 2026-10-18") || !strings.Contains(out, "#1381") {
+	out, err := auditTimeouts(t, root, timeoutEntry("portability.yml", timeoutsToday.AddDate(0, 0, 3).Format(config.ExceptionDateLayout)))
+	if err != nil || !strings.Contains(out, "until "+timeoutsToday.AddDate(0, 0, 3).Format(config.ExceptionDateLayout)) || !strings.Contains(out, "#1381") {
 		t.Fatalf("live entry: %q, %v; want the workflow passed with reason and expiry", out, err)
 	}
 }
@@ -46,8 +46,8 @@ func TestAuditTestTimeouts_Boundary_LiveEntryPasses(t *testing.T) {
 // Negative: an expired entry excuses nothing; the failure names the expiry.
 func TestAuditTestTimeouts_Negative_ExpiredEntryFails(t *testing.T) {
 	root := triggerRepository(t, map[string]string{"portability.yml": longWorkflow})
-	_, err := auditTimeouts(t, root, timeoutEntry("portability.yml", "2026-10-14"))
-	if err == nil || !strings.Contains(err.Error(), "expired 2026-10-14") {
+	_, err := auditTimeouts(t, root, timeoutEntry("portability.yml", timeoutsToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout)))
+	if err == nil || !strings.Contains(err.Error(), "expired "+timeoutsToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout)) {
 		t.Fatalf("expired entry: err = %v; want the expiry named", err)
 	}
 }
@@ -56,7 +56,7 @@ func TestAuditTestTimeouts_Negative_ExpiredEntryFails(t *testing.T) {
 // once the timeout is back at the bound.
 func TestAuditTestTimeouts_Negative_StaleEntryFails(t *testing.T) {
 	root := triggerRepository(t, map[string]string{"ci.yml": boundWorkflow})
-	_, err := auditTimeouts(t, root, timeoutEntry("ci.yml", "2026-10-18"))
+	_, err := auditTimeouts(t, root, timeoutEntry("ci.yml", timeoutsToday.AddDate(0, 0, 3).Format(config.ExceptionDateLayout)))
 	if err == nil || !strings.Contains(err.Error(), "excuses nothing") {
 		t.Fatalf("stale entry: err = %v; want it refused", err)
 	}

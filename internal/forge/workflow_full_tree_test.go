@@ -104,13 +104,13 @@ func TestAuditWorkflowTriggers_FullTree_Exceptions(t *testing.T) {
 		Path:     ".github/workflows/exempt.yml",
 		Reason:   "legacy full tree run on pull requests",
 		Category: "A",
-		Expires:  "2026-12-31",
+		Expires:  triggersToday.AddDate(0, 0, 85).Format(config.ExceptionDateLayout),
 	}
 	out := auditTriggers(t, root, entry)
 	if strings.Contains(out, "[WARN] Workflow triggers (HISS-18): .github/workflows/exempt.yml") {
 		t.Fatalf("excepted workflow must not emit WARN:\n%s", out)
 	}
-	if !strings.Contains(out, "[PASS] Workflow triggers (HISS-18): .github/workflows/exempt.yml excepted until 2026-12-31") {
+	if !strings.Contains(out, "[PASS] Workflow triggers (HISS-18): .github/workflows/exempt.yml excepted until "+triggersToday.AddDate(0, 0, 85).Format(config.ExceptionDateLayout)) {
 		t.Fatalf("output lacks PASS excepted line:\n%s", out)
 	}
 }

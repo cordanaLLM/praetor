@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const releaseListing = `[
+const releaseListing = /* testdate: fact: recorded feed/release date; parser input, no clock comparison */ `[
  {"tag_name": "v2.1.0-rc.1", "name": "", "html_url": "https://github.com/example-org/example-project/releases/tag/v2.1.0-rc.1",
   "published_at": "2026-10-04T12:00:00Z", "draft": false, "prerelease": true, "body": "ignored"},
  {"tag_name": "v2.0.0", "name": "Spring", "html_url": "https://github.com/example-org/example-project/releases/tag/v2.0.0",
@@ -63,7 +63,7 @@ func TestParseReleases_Negative_Refusals(t *testing.T) {
 func releases(count int) string {
 	parts := make([]string, count)
 	for i := range parts {
-		parts[i] = fmt.Sprintf(`{"tag_name":"v%d","published_at":"2026-10-01T00:00:00Z"}`, i)
+		parts[i] = fmt.Sprintf( /* testdate: fact: recorded feed/release date; parser input, no clock comparison */ `{"tag_name":"v%d","published_at":"2026-10-01T00:00:00Z"}`, i)
 	}
 	return "[" + strings.Join(parts, ",") + "]"
 }

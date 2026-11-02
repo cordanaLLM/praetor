@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 func sampleConfigContent(handRule, blockRules string) string {
@@ -83,18 +85,9 @@ func writeTempConfigAndReport(t *testing.T, cfgContent string, pairs []LinterPai
 	return cfgPath, repPath
 }
 
-func parseTestDate(t *testing.T, dateStr string) time.Time {
-	t.Helper()
-	parsed, err := time.Parse("2006-01-02", dateStr)
-	if err != nil {
-		t.Fatalf("parse date %s: %v", dateStr, err)
-	}
-	return parsed
-}
-
 func TestStripGolangciConfig_Positive(t *testing.T) {
-	handRule := "      # category A, expires 2026-12-01, #100\n      - path: internal/hand/\n        linters:\n          - forbidigo"
-	block := "      # category C, entered 2026-10-18, expires 2026-10-28, #1030\n      - path: ^internal/a_test\\.go$\n        linters:\n          - gocyclo\n"
+	handRule := "      # category A, expires " + testToday.AddDate(0, 0, 50).Format(config.ExceptionDateLayout) + ", #100\n      - path: internal/hand/\n        linters:\n          - forbidigo"
+	block := "      # category C, entered " + testToday.AddDate(0, 0, 6).Format(config.ExceptionDateLayout) + ", expires " + testToday.AddDate(0, 0, 16).Format(config.ExceptionDateLayout) + ", #1030\n      - path: ^internal/a_test\\.go$\n        linters:\n          - gocyclo\n"
 	cfg := sampleConfigContent(handRule, block)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "in.yml")
@@ -186,7 +179,7 @@ func TestStripGolangciConfig_Boundary(t *testing.T) {
 }
 
 func TestGenerateExceptions_FormatAndOrder_Positive(t *testing.T) {
-	handRule := "      # category A, expires 2026-12-01, #100\n      - path: internal/hand/\n        linters:\n          - forbidigo"
+	handRule := "      # category A, expires " + testToday.AddDate(0, 0, 50).Format(config.ExceptionDateLayout) + ", #100\n      - path: internal/hand/\n        linters:\n          - forbidigo"
 	cfgContent := sampleConfigContent(handRule, "")
 	pairs := []LinterPair{
 		{File: "internal/pkg/b_test.go", Linter: "forbidigo"},
@@ -196,7 +189,7 @@ func TestGenerateExceptions_FormatAndOrder_Positive(t *testing.T) {
 		{File: "internal/pkg/a_test.go", Linter: "funlen", Function: "TestLong"},
 	}
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
-	today := parseTestDate(t, "2026-10-18")
+	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
 
 	var stdout bytes.Buffer
 	res, err := GenerateExceptions(GenerateExceptionsOptions{
@@ -243,7 +236,7 @@ func assertFormattedGeneratedOrder(t *testing.T, cfgPath, handRule string) {
 		"        linters:\n" +
 		"          - gocyclo\n" +
 		"        text: func `TestZeta`\n" +
-		"      # category C, entered 2026-10-18, expires 2026-10-28, #1030\n" +
+		"      # category C, entered " + testToday.AddDate(0, 0, 6).Format(config.ExceptionDateLayout) + ", expires " + testToday.AddDate(0, 0, 16).Format(config.ExceptionDateLayout) + ", #1030\n" +
 		"      - path: ^internal/pkg/b_test\\.go$\n" +
 		"        linters:\n" +
 		"          - forbidigo\n" +
@@ -258,15 +251,15 @@ func assertFormattedGeneratedOrder(t *testing.T, cfgPath, handRule string) {
 }
 
 func TestGenerateExceptions_Ratchet_Positive_LowerCountRenews(t *testing.T) {
-	oldBlock := "      # category C, entered 2026-10-01, expires 2026-10-11, #1030\n" +
+	oldBlock := "      # category C, entered " + testToday.AddDate(0, 0, -11).Format(config.ExceptionDateLayout) + ", expires " + testToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout) + ", #1030\n" +
 		"      - path: ^internal/a_test\\.go$\n" +
 		"        linters:\n" +
 		"          - forbidigo\n" +
-		"      # category C, entered 2026-10-01, expires 2026-10-11, #1030\n" +
+		"      # category C, entered " + testToday.AddDate(0, 0, -11).Format(config.ExceptionDateLayout) + ", expires " + testToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout) + ", #1030\n" +
 		"      - path: ^internal/a_test\\.go$\n" +
 		"        linters:\n" +
 		"          - noctx\n" +
-		"      # category C, entered 2026-10-01, expires 2026-10-11, #1030\n" +
+		"      # category C, entered " + testToday.AddDate(0, 0, -11).Format(config.ExceptionDateLayout) + ", expires " + testToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout) + ", #1030\n" +
 		"      - path: ^internal/b_test\\.go$\n" +
 		"        linters:\n" +
 		"          - forbidigo\n"
@@ -276,7 +269,7 @@ func TestGenerateExceptions_Ratchet_Positive_LowerCountRenews(t *testing.T) {
 		{File: "internal/a_test.go", Linter: "noctx"},
 	}
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
-	today := parseTestDate(t, "2026-10-18")
+	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
 
 	var stdout bytes.Buffer
 	res, err := GenerateExceptions(GenerateExceptionsOptions{
@@ -303,7 +296,7 @@ func TestGenerateExceptions_Ratchet_Positive_LowerCountRenews(t *testing.T) {
 	if strings.Contains(result, "b_test.go") {
 		t.Errorf("clean pair b_test.go was not dropped:\n%s", result)
 	}
-	if !strings.Contains(result, "entered 2026-10-18, expires 2026-10-28") {
+	if !strings.Contains(result, "entered "+today.AddDate(0, 0, 0).Format(config.ExceptionDateLayout)+", expires "+today.AddDate(0, 0, 10).Format(config.ExceptionDateLayout)) {
 		t.Errorf("dates were not renewed:\n%s", result)
 	}
 }
@@ -320,7 +313,7 @@ func TestGenerateExceptions_Ratchet_Negative_NewFindingRefused(t *testing.T) {
 		{File: "internal/b_test.go", Linter: "forbidigo"},
 	}
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
-	today := parseTestDate(t, "2026-10-18")
+	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
 
 	var stderr bytes.Buffer
 	res, err := GenerateExceptions(GenerateExceptionsOptions{
@@ -345,11 +338,11 @@ func TestGenerateExceptions_Ratchet_Negative_NewFindingRefused(t *testing.T) {
 }
 
 func TestGenerateExceptions_Ratchet_Negative_ExpiredRefused(t *testing.T) {
-	block := "      # category C, entered 2026-10-01, expires 2026-10-11, #1030\n" +
+	block := "      # category C, entered " + testToday.AddDate(0, 0, -11).Format(config.ExceptionDateLayout) + ", expires " + testToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout) + ", #1030\n" +
 		"      - path: ^internal/a_test\\.go$\n" +
 		"        linters:\n" +
 		"          - forbidigo\n" +
-		"      # category C, entered 2026-10-01, expires 2026-10-11, #1030\n" +
+		"      # category C, entered " + testToday.AddDate(0, 0, -11).Format(config.ExceptionDateLayout) + ", expires " + testToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout) + ", #1030\n" +
 		"      - path: ^internal/a_test\\.go$\n" +
 		"        linters:\n" +
 		"          - noctx\n"
@@ -359,7 +352,7 @@ func TestGenerateExceptions_Ratchet_Negative_ExpiredRefused(t *testing.T) {
 		{File: "internal/a_test.go", Linter: "noctx"},
 	}
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
-	today := parseTestDate(t, "2026-10-18")
+	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
 
 	var stderr bytes.Buffer
 	res, err := GenerateExceptions(GenerateExceptionsOptions{
@@ -384,11 +377,11 @@ func TestGenerateExceptions_Ratchet_Negative_ExpiredRefused(t *testing.T) {
 }
 
 func TestGenerateExceptions_Ratchet_Boundary_LiveEntriesNoOp(t *testing.T) {
-	block := "      # category C, entered 2026-10-18, expires 2026-10-28, #1030\n" +
+	block := "      # category C, entered " + testToday.AddDate(0, 0, 6).Format(config.ExceptionDateLayout) + ", expires " + testToday.AddDate(0, 0, 16).Format(config.ExceptionDateLayout) + ", #1030\n" +
 		"      - path: ^internal/a_test\\.go$\n" +
 		"        linters:\n" +
 		"          - forbidigo\n" +
-		"      # category C, entered 2026-10-18, expires 2026-10-28, #1030\n" +
+		"      # category C, entered " + testToday.AddDate(0, 0, 6).Format(config.ExceptionDateLayout) + ", expires " + testToday.AddDate(0, 0, 16).Format(config.ExceptionDateLayout) + ", #1030\n" +
 		"      - path: ^internal/a_test\\.go$\n" +
 		"        linters:\n" +
 		"          - noctx\n"
@@ -398,7 +391,7 @@ func TestGenerateExceptions_Ratchet_Boundary_LiveEntriesNoOp(t *testing.T) {
 		{File: "internal/a_test.go", Linter: "noctx"},
 	}
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
-	today := parseTestDate(t, "2026-10-18")
+	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
 
 	var stdout bytes.Buffer
 	res, err := GenerateExceptions(GenerateExceptionsOptions{
@@ -416,7 +409,7 @@ func TestGenerateExceptions_Ratchet_Boundary_LiveEntriesNoOp(t *testing.T) {
 	if res.ExitCode != 0 || res.Written {
 		t.Fatalf("expected exit 0 and no write, got code=%d written=%v", res.ExitCode, res.Written)
 	}
-	expectedMsg := "unchanged: 2 entries live until 2026-10-28"
+	expectedMsg := "unchanged: 2 entries live until " + today.AddDate(0, 0, 10).Format(config.ExceptionDateLayout)
 	if !strings.Contains(res.Message, expectedMsg) {
 		t.Errorf("message mismatch. Want %q, got %q", expectedMsg, res.Message)
 	}
@@ -434,7 +427,7 @@ func TestGenerateExceptions_PlantedGocycloNewFinding(t *testing.T) {
 		{File: "internal/existing_test.go", Linter: "gocyclo", Function: "TestPlantedNewFunc"},
 	}
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
-	today := parseTestDate(t, "2026-10-18")
+	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
 
 	var stderr bytes.Buffer
 	res, err := GenerateExceptions(GenerateExceptionsOptions{
@@ -469,7 +462,7 @@ func TestGenerateExceptions_BaselineShrinkAndHold(t *testing.T) {
 		"        linters:\n" +
 		"          - gocyclo\n" +
 		"        text: func `TestStillOverCap`\n" +
-		"      # category C, entered 2026-10-10, expires 2026-10-20, #1030\n" +
+		"      # category C, entered " + testToday.AddDate(0, 0, -2).Format(config.ExceptionDateLayout) + ", expires " + testToday.AddDate(0, 0, 8).Format(config.ExceptionDateLayout) + ", #1030\n" +
 		"      - path: ^internal/existing_test\\.go$\n" +
 		"        linters:\n" +
 		"          - forbidigo\n"
@@ -479,7 +472,7 @@ func TestGenerateExceptions_BaselineShrinkAndHold(t *testing.T) {
 		{File: "internal/existing_test.go", Linter: "gocyclo", Function: "TestStillOverCap"},
 	}
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
-	today := parseTestDate(t, "2026-10-18")
+	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
 
 	res, err := GenerateExceptions(GenerateExceptionsOptions{
 		ConfigPath: cfgPath, ReportPath: repPath, Issue: 1030, Category: "C", Today: today, Write: true,
@@ -504,7 +497,7 @@ func assertBaselineShrunkAndDatedPreserved(t *testing.T, cfgPath, repPath string
 		t.Errorf("remaining function was dropped:\n%s", text)
 	}
 	// forbidigo count did not drop, so its dates must not advance to 2026-10-18.
-	if !strings.Contains(text, "entered 2026-10-10, expires 2026-10-20") {
+	if !strings.Contains(text, "entered "+testToday.AddDate(0, 0, -2).Format(config.ExceptionDateLayout)+", expires "+testToday.AddDate(0, 0, 8).Format(config.ExceptionDateLayout)) {
 		t.Errorf("dated forbidigo rule dates moved without a lower dated count:\n%s", text)
 	}
 	res2, err := GenerateExceptions(GenerateExceptionsOptions{
@@ -643,7 +636,7 @@ func TestGenerateExceptions_SameLineDifferentLintersYieldsTwoPairs(t *testing.T)
 		ReportPath: repPath,
 		Issue:      1030,
 		Category:   "C",
-		Today:      parseTestDate(t, "2026-10-18"),
+		Today:      time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC),
 		Write:      true,
 		Stdout:     &stdout,
 	})

@@ -172,11 +172,11 @@ func TestAuditPinnedFixturesEOL_Boundary_LiveExceptionSilences(t *testing.T) {
 		Rule:    config.ExceptionRulePlatformNeutrality,
 		Path:    "testdata/sub.srt",
 		Reason:  "legacy subtitle fixture pending migration",
-		Expires: "2026-10-30",
+		Expires: fixturesToday.AddDate(0, 0, 12).Format(config.ExceptionDateLayout),
 	}
 
 	out, err := auditPinned(t, root, ex)
-	if err != nil || !strings.Contains(out, "excepted until 2026-10-30") {
+	if err != nil || !strings.Contains(out, "excepted until "+fixturesToday.AddDate(0, 0, 12).Format(config.ExceptionDateLayout)) {
 		t.Fatalf("AuditPinnedFixturesEOL = %q, %v; want pass with live exception", out, err)
 	}
 }
@@ -196,11 +196,11 @@ func TestAuditPinnedFixturesEOL_Negative_ExpiredExceptionFails(t *testing.T) {
 		Rule:    config.ExceptionRulePlatformNeutrality,
 		Path:    "testdata/sub.srt",
 		Reason:  "legacy subtitle fixture pending migration",
-		Expires: "2026-10-10",
+		Expires: fixturesToday.AddDate(0, 0, -8).Format(config.ExceptionDateLayout),
 	}
 
 	_, err := auditPinned(t, root, ex)
-	if err == nil || !strings.Contains(err.Error(), "expired 2026-10-10") || !strings.Contains(err.Error(), "testdata/sub.srt") {
+	if err == nil || !strings.Contains(err.Error(), "expired "+fixturesToday.AddDate(0, 0, -8).Format(config.ExceptionDateLayout)) || !strings.Contains(err.Error(), "testdata/sub.srt") {
 		t.Fatalf("AuditPinnedFixturesEOL err = %v, want failure naming expired exception", err)
 	}
 }
@@ -248,7 +248,7 @@ func TestAuditPinnedFixturesEOL_Negative_StaleExceptionFails(t *testing.T) {
 		Rule:    config.ExceptionRulePlatformNeutrality,
 		Path:    "testdata/sub.srt",
 		Reason:  "legacy subtitle fixture pending migration",
-		Expires: "2026-10-30",
+		Expires: fixturesToday.AddDate(0, 0, 12).Format(config.ExceptionDateLayout),
 	}
 
 	_, err := auditPinned(t, root, ex)

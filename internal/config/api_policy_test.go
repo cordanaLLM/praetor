@@ -81,34 +81,34 @@ func TestAPIPolicy_Negative_InvalidPackagesFail(t *testing.T) {
 func TestExceptions_APICompatibilityRuleNamesAModule(t *testing.T) {
 	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
 	entry := func(path, glob, reason, expires string) []Exception {
-		return []Exception{{Rule: ExceptionRuleAPICompatibility, Path: path, Glob: glob, Entered: "2026-10-08", Reason: reason, Category: "A", Expires: expires}}
+		return []Exception{{Rule: ExceptionRuleAPICompatibility, Path: path, Glob: glob, Entered: today.AddDate(0, 0, 0).Format(ExceptionDateLayout), Reason: reason, Category: "A", Expires: expires}}
 	}
 	for _, valid := range [][]Exception{
-		entry("go.mod", "", "needs libudev.h", "2026-12-01"),
-		entry("hw/udev/go.mod", "", "needs libudev.h", "2026-12-01"),
-		entry("hw/udev/go.mod", "", "needs libudev.h", "2026-01-01"),
-		entry("a_b/C-d.1/go.mod", "", "needs libudev.h", "2026-12-01"),
+		entry("go.mod", "", "needs libudev.h", today.AddDate(0, 0, 54).Format(ExceptionDateLayout)),
+		entry("hw/udev/go.mod", "", "needs libudev.h", today.AddDate(0, 0, 54).Format(ExceptionDateLayout)),
+		entry("hw/udev/go.mod", "", "needs libudev.h", today.AddDate(0, 0, -280).Format(ExceptionDateLayout)),
+		entry("a_b/C-d.1/go.mod", "", "needs libudev.h", today.AddDate(0, 0, 54).Format(ExceptionDateLayout)),
 	} {
 		if err := ValidateExceptions(valid, today); err != nil {
 			t.Errorf("%+v refused: %v", valid, err)
 		}
 	}
 	for name, invalid := range map[string][]Exception{
-		"glob":        entry("", "hw/**/go.mod", "r", "2026-12-01"),
-		"not go.mod":  entry("hw/udev/udev.go", "", "r", "2026-12-01"),
-		"directory":   entry("hw/udev", "", "r", "2026-12-01"),
-		"lookalike":   entry("hw/mygo.mod", "", "r", "2026-12-01"),
-		"expression":  entry("hw/udev/go.mod", "", "see ${{ secrets.X }}", "2026-12-01"),
-		"path expr":   entry("hw/${{ github.actor }}/go.mod", "", "r", "2026-12-01"),
-		"path space":  entry("hw/a b/go.mod", "", "r", "2026-12-01"),
-		"path quote":  entry("hw/a\"b/go.mod", "", "r", "2026-12-01"),
-		"too far out": entry("hw/udev/go.mod", "", "r", "2027-12-01"),
+		"glob":        entry("", "hw/**/go.mod", "r", today.AddDate(0, 0, 54).Format(ExceptionDateLayout)),
+		"not go.mod":  entry("hw/udev/udev.go", "", "r", today.AddDate(0, 0, 54).Format(ExceptionDateLayout)),
+		"directory":   entry("hw/udev", "", "r", today.AddDate(0, 0, 54).Format(ExceptionDateLayout)),
+		"lookalike":   entry("hw/mygo.mod", "", "r", today.AddDate(0, 0, 54).Format(ExceptionDateLayout)),
+		"expression":  entry("hw/udev/go.mod", "", "see ${{ secrets.X }}", today.AddDate(0, 0, 54).Format(ExceptionDateLayout)),
+		"path expr":   entry("hw/${{ github.actor }}/go.mod", "", "r", today.AddDate(0, 0, 54).Format(ExceptionDateLayout)),
+		"path space":  entry("hw/a b/go.mod", "", "r", today.AddDate(0, 0, 54).Format(ExceptionDateLayout)),
+		"path quote":  entry("hw/a\"b/go.mod", "", "r", today.AddDate(0, 0, 54).Format(ExceptionDateLayout)),
+		"too far out": entry("hw/udev/go.mod", "", "r", today.AddDate(0, 0, 419).Format(ExceptionDateLayout)),
 	} {
 		if err := ValidateExceptions(invalid, today); err == nil {
 			t.Errorf("%s: %+v accepted", name, invalid)
 		}
 	}
-	if err := ValidateExceptions(entry("hw/udev/go.mod", "", "r", "2026-12-01"), today); err != nil {
+	if err := ValidateExceptions(entry("hw/udev/go.mod", "", "r", today.AddDate(0, 0, 54).Format(ExceptionDateLayout)), today); err != nil {
 		t.Fatal(err)
 	}
 }
