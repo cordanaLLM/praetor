@@ -4,17 +4,22 @@
 package adopt
 
 import (
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
 type legendGateCase struct {
-	name, gates        string
-	makefile, lefthook bool
-	decline, force     bool
-	currentHooks       bool
-	currentMakefile    bool
+	name, gates         string
+	makefile, lefthook  bool
+	decline             bool
+	declineMakefileOnly bool
+	skipHooks, force    bool
+	inactiveHooks       bool
+	currentHooks        bool
+	currentMakefile     bool
 }
 
 // TestAdoptHarnessRepositoryOwnedGates replays order engine-adopt-force-gate-detect-20261027:
@@ -22,6 +27,7 @@ type legendGateCase struct {
 func TestAdoptHarnessRepositoryOwnedGates(t *testing.T) {
 	const ownMake = "repository-owned `make verify-all` (unread)"
 	const ownHooks = "repository-owned `lefthook.yml` (unread)"
+	const inactiveHooks = "praetor `lefthook.yml` (inactive)"
 	cases := []legendGateCase{
 		{name: "both forced", makefile: true, lefthook: true, force: true, gates: ownMake + " + " + ownHooks},
 		{name: "both kept", makefile: true, lefthook: true, gates: ownMake + " + " + ownHooks},
@@ -32,6 +38,9 @@ func TestAdoptHarnessRepositoryOwnedGates(t *testing.T) {
 		{name: "existing declined", makefile: true, lefthook: true, decline: true, force: true, gates: ownMake + " + " + ownHooks},
 		{name: "current hooks declined", lefthook: true, currentHooks: true, decline: true, force: true, gates: ownHooks},
 		{name: "current Makefile declined", makefile: true, currentMakefile: true, decline: true, force: true, gates: ownMake},
+		{name: "inactive hooks makefile declined", declineMakefileOnly: true, inactiveHooks: true, force: true, gates: inactiveHooks},
+		{name: "skipped hooks makefile declined", declineMakefileOnly: true, skipHooks: true, force: true, gates: inactiveHooks},
+		{name: "inactive hooks with generated Makefile", inactiveHooks: true, force: true, gates: "generated `make verify-all` + " + inactiveHooks},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -56,7 +65,9 @@ func TestAdoptHarnessRepositoryOwnedGates(t *testing.T) {
 func adoptLegendFixture(t *testing.T, tc legendGateCase) string {
 	t.Helper()
 	repo := newTestRepo(t, "legend")
-	useLefthook(t, lefthookRuns)
+	if !tc.inactiveHooks {
+		useLefthook(t, lefthookRuns)
+	}
 	if tc.makefile {
 		body := "verify-all:\n\t@echo repository gate\n"
 		if tc.currentMakefile {
@@ -71,10 +82,16 @@ func adoptLegendFixture(t *testing.T, tc legendGateCase) string {
 		}
 		mustWrite(t, filepath.Join(repo, lefthookFile), body)
 	}
-	if tc.decline {
+	switch {
+	case tc.decline:
 		mustWrite(t, filepath.Join(repo, manifestFile), "version: 1\nadoption:\n  decline: [makefile, git-hooks]\n")
+	case tc.declineMakefileOnly:
+		mustWrite(t, filepath.Join(repo, manifestFile), "version: 1\nadoption:\n  decline: [makefile]\n")
 	}
-	opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo, Profile: "framework", Force: tc.force}
+	opts := AdoptOptions{
+		LockSourceRoot: newAdoptLockSource(t), Path: repo,
+		Profile: "framework", Force: tc.force, SkipHookActivation: tc.skipHooks,
+	}
 	if _, err := Adopt(t.Context(), opts); err != nil {
 		t.Fatalf("Adopt: %v", err)
 	}
@@ -84,11 +101,11 @@ func adoptLegendFixture(t *testing.T, tc legendGateCase) string {
 func assertLegendCellCredit(t *testing.T, harness string, tc legendGateCase) {
 	t.Helper()
 	for _, row := range invariantRows(harness) {
-		if (tc.makefile || tc.decline) && strings.Contains(row, " in verify-all") {
+		if (tc.makefile || tc.decline || tc.declineMakefileOnly) && strings.Contains(row, " in verify-all") {
 			t.Errorf("repository-owned or declined verify-all credited: %s", row)
 		}
-		if (tc.lefthook || tc.decline) && strings.Contains(row, " in lefthook") {
-			t.Errorf("repository-owned or declined lefthook credited: %s", row)
+		if (tc.lefthook || tc.decline || tc.inactiveHooks || tc.skipHooks) && strings.Contains(row, " in lefthook") {
+			t.Errorf("repository-owned, declined or inactive lefthook credited: %s", row)
 		}
 	}
 }
@@ -145,4 +162,134 @@ func TestAdoptForcePreservesRepositoryOwnedHarness(t *testing.T) {
 	if !strings.Contains(gotNeither, "| Invariant | Rule | Adopted check | On fail |") || !strings.Contains(gotNeither, noGates) {
 		t.Errorf("repository with neither gate must get generated table and no-gates line:\n%s", gotNeither)
 	}
+}
+
+// TestAdoptForceRefreshesLegacyGeneratedInvariantsAndKeepsCustomRows checks that an AGENTS.md
+// carrying the legacy generated invariant header (| Invariant | Rule | Enforcement | On fail |)
+// without an Adopted-check legend is refreshed under --force while keeping custom non-HISS rows.
+func TestAdoptForceRefreshesLegacyGeneratedInvariantsAndKeepsCustomRows(t *testing.T) {
+	const customRow = "| **ACME-01** secrets | never log tokens | review | blocker |"
+	legacy := "# legacy Agent Operating Harness\n\n<!-- praetor:head -->\n\n" +
+		"## Core Directives & Invariants\n\n" +
+		"| Invariant | Rule | Enforcement | On fail |\n" +
+		"| :--- | :--- | :--- | :--- |\n" +
+		"| **HISS-01** control flow | stale rule text | build | immediate build failure |\n" +
+		customRow + "\n\n" +
+		"## Operational Rules\n\n1. **Act on verified state.**\n\n" +
+		"---\n\n# Instructions\nKeep.\n"
+	repo := newTestRepo(t, "legacy-header")
+	useLefthook(t, lefthookRuns)
+	mustWrite(t, filepath.Join(repo, "go.mod"), "module example.com/legacy\n\ngo 1.27\n")
+	mustWrite(t, filepath.Join(repo, agentsFile), legacy)
+	opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo, Profile: "framework", Force: true}
+	if _, err := Adopt(t.Context(), opts); err != nil {
+		t.Fatalf("Adopt --force: %v", err)
+	}
+	got := mustRead(t, filepath.Join(repo, agentsFile))
+	if strings.Contains(got, "| Invariant | Rule | Enforcement | On fail |") || strings.Contains(got, "stale rule text") {
+		t.Errorf("legacy generated invariant table was preserved instead of refreshed:\n%s", got)
+	}
+	if !strings.Contains(got, "| Invariant | Rule | Adopted check | On fail |") || !strings.Contains(got, customRow) {
+		t.Errorf("refreshed table lacks current header or custom row:\n%s", got)
+	}
+}
+
+// TestAdoptForcePreservesConfigBandWithoutRegisterBlock checks that a config band carrying
+// repository overrides without an existing register marker pair receives the generated register
+// section while keeping the repository overrides byte-for-byte.
+func TestAdoptForcePreservesConfigBandWithoutRegisterBlock(t *testing.T) {
+	const override = "Repository social override: keep this line in the config band."
+	fixture := mustRead(t, filepath.Join("testdata", "harness-own-sections.golden"))
+	withoutRegister := strings.Replace(fixture,
+		"## Text Register\n\n<!-- praetor:register:start -->\n"+
+			"Register follows the audience, then the task label of your brief (`register:` in `.standards.yaml`; labels are the router's `target_tasks`).\n"+
+			"<!-- praetor:register:end -->\n\n",
+		override+"\n\n", 1)
+	repo := newTestRepo(t, "cfg-no-register")
+	useLefthook(t, lefthookRuns)
+	mustWrite(t, filepath.Join(repo, "go.mod"), "module example.com/cfg\n\ngo 1.27\n")
+	mustWrite(t, filepath.Join(repo, agentsFile), withoutRegister)
+	opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo, Profile: "framework", Force: true}
+	if _, err := Adopt(t.Context(), opts); err != nil {
+		t.Fatalf("Adopt --force: %v", err)
+	}
+	got := mustRead(t, filepath.Join(repo, agentsFile))
+	if !strings.Contains(got, override) || strings.Count(got, "<!-- praetor:register:start -->") != 1 {
+		t.Errorf("config-band override without register markers was lost or register block not inserted:\n%s", got)
+	}
+	if _, err := Adopt(t.Context(), opts); err != nil {
+		t.Fatalf("second Adopt --force: %v", err)
+	}
+	if again := mustRead(t, filepath.Join(repo, agentsFile)); again != got {
+		t.Errorf("second Adopt --force modified config band:\n%s", again)
+	}
+	assertConfigBandBoundaries(t, got)
+}
+
+func assertConfigBandBoundaries(t *testing.T, harness string) {
+	t.Helper()
+	emptyCfg := "<!-- praetor:head -->\n\n<!-- praetor:config -->\n\n<!-- praetor:tail -->\n"
+	if got, err := repositoryConfigBand(emptyCfg, harness); err != nil || got != "" {
+		t.Errorf("empty config band: got (%q, %v), want empty", got, err)
+	}
+	malformed := "<!-- praetor:head -->\n\n<!-- praetor:config -->\n<!-- praetor:register:start -->\noverride\n<!-- praetor:tail -->\n"
+	if _, err := repositoryConfigBand(malformed, harness); err == nil {
+		t.Error("unterminated register marker in config band: want error, got nil")
+	}
+}
+
+// TestAdoptTestdataSPDXLicensesBackedByLicenseFiles ensures every SPDX license tag in
+// internal/adopt/testdata resolves to an existing LICENSES/<id>.txt file.
+func TestAdoptTestdataSPDXLicensesBackedByLicenseFiles(t *testing.T) {
+	const tag = "SPDX-" + "License-Identifier:"
+	licensesDir := filepath.Join("..", "..", "LICENSES")
+	if missing := unbackedSPDXInText(tag+" CC-BY-SA-4.0\n", licensesDir); len(missing) != 1 || missing[0] != "CC-BY-SA-4.0" {
+		t.Fatalf("negative check failed to flag CC-BY-SA-4.0: %v", missing)
+	}
+	if missing := unbackedSPDXInText(tag+" EUPL-1.2 AND MIT\n", licensesDir); len(missing) != 0 {
+		t.Fatalf("boundary compound check flagged backed licenses: %v", missing)
+	}
+	count := 0
+	err := filepath.WalkDir("testdata", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		count++
+		if count > maxSnapshotEntries {
+			return fs.SkipAll
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if missing := unbackedSPDXInText(string(data), licensesDir); len(missing) > 0 {
+			t.Errorf("%s declares SPDX license without LICENSES/<id>.txt: %v", filepath.ToSlash(path), missing)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk testdata: %v", err)
+	}
+}
+
+func unbackedSPDXInText(text, licensesDir string) []string {
+	const tag = "SPDX-" + "License-Identifier:"
+	var missing []string
+	lines := strings.SplitN(text, "\n", maxHarnessLines)
+	for i := 0; i < len(lines) && i < maxHarnessLines; i++ {
+		_, rest, ok := strings.Cut(lines[i], tag)
+		if !ok {
+			continue
+		}
+		rest = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(rest), "-->"))
+		for _, tok := range strings.Fields(rest) {
+			if tok == "AND" || tok == "OR" || tok == "WITH" || tok == "#" {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(licensesDir, tok+".txt")); err != nil {
+				missing = append(missing, tok)
+			}
+		}
+	}
+	return missing
 }

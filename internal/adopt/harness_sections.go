@@ -21,6 +21,9 @@ const (
 	adoptedCheckLegendPrefix = "Adopted check = "
 	// generatedInvariantsHeader is the header row of the generated invariant table.
 	generatedInvariantsHeader = "| Invariant | Rule | Adopted check | On fail |"
+	// legacyGeneratedInvariantsHeader is the header row earlier adoption versions generated
+	// before the Adopted-check legend and column rename.
+	legacyGeneratedInvariantsHeader = "| Invariant | Rule | Enforcement | On fail |"
 	// harnessOperationalHeading opens the operational rules section after the invariant table.
 	harnessOperationalHeading = "## Operational Rules"
 )
@@ -78,7 +81,7 @@ func repositoryInvariantsSection(head string) (string, bool, error) {
 		return "", false, nil
 	}
 	section := strings.TrimSpace(head[invStart : invStart+opRel])
-	if strings.Contains(section, generatedInvariantsHeader) || strings.Contains(section, adoptedCheckLegendPrefix) {
+	if isGeneratedInvariantsSection(section) {
 		return "", false, nil
 	}
 	rows, err := hisscatalog.InvariantTableRows(section)
@@ -89,6 +92,12 @@ func repositoryInvariantsSection(head string) (string, bool, error) {
 		return "", false, nil
 	}
 	return section, true, nil
+}
+
+func isGeneratedInvariantsSection(section string) bool {
+	return strings.Contains(section, generatedInvariantsHeader) ||
+		strings.Contains(section, legacyGeneratedInvariantsHeader) ||
+		strings.Contains(section, adoptedCheckLegendPrefix)
 }
 
 func replaceInvariantsSection(harness, section string) string {
@@ -110,10 +119,13 @@ func repositoryConfigBand(head, harness string) (string, error) {
 		return "", nil
 	}
 	existingCfg := head[cfgStart:tailStart]
+	if strings.TrimSpace(strings.TrimPrefix(existingCfg, agentcontext.BandConfigMarker)) == "" {
+		return "", nil
+	}
 	generatedCfg := harness[hCfgStart:hTailStart]
 	regStart := strings.Index(generatedCfg, config.RegisterBlockStart)
 	regEnd := strings.Index(generatedCfg, config.RegisterBlockEnd)
-	if regStart < 0 || regEnd < regStart || !strings.Contains(existingCfg, config.RegisterBlockStart) {
+	if regStart < 0 || regEnd < regStart {
 		return "", nil
 	}
 	block := generatedCfg[regStart : regEnd+len(config.RegisterBlockEnd)]
