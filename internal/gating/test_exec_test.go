@@ -32,6 +32,7 @@ func TestGoRaceLoopbackExec(t *testing.T) {
 	}
 }
 
+// TestGoTestNamespacePolicy pins that non-Linux operating systems skip Linux network namespace isolation.
 func TestGoTestNamespacePolicy(t *testing.T) {
 	t.Setenv("CI", "")
 	t.Setenv("GITHUB_ACTIONS", "")
@@ -43,6 +44,7 @@ func TestGoTestNamespacePolicy(t *testing.T) {
 	}
 }
 
+// TestGoTestNamespaceCI pins that CI environments skip namespace isolation without modifying execution.
 func TestGoTestNamespaceCI(t *testing.T) {
 	t.Setenv("CI", "")
 	t.Setenv("GITHUB_ACTIONS", "")
@@ -57,6 +59,7 @@ func TestGoTestNamespaceCI(t *testing.T) {
 	}
 }
 
+// TestGoTestNamespaceWrapperPaths pins quoting and validation of the wrapper executable path.
 func TestGoTestNamespaceWrapperPaths(t *testing.T) {
 	t.Setenv("CI", "")
 	t.Setenv("GITHUB_ACTIONS", "")
@@ -73,6 +76,7 @@ func TestGoTestNamespaceWrapperPaths(t *testing.T) {
 	}
 }
 
+// TestGoRaceNamespaceUnavailableNeverFallsBack pins that namespace errors fail immediately without fallback or retry.
 func TestGoRaceNamespaceUnavailableNeverFallsBack(t *testing.T) {
 	t.Setenv("CI", "")
 	t.Setenv("GITHUB_ACTIONS", "")
@@ -96,6 +100,7 @@ func TestGoRaceNamespaceUnavailableNeverFallsBack(t *testing.T) {
 	}
 }
 
+// TestGoRaceNamespaceExecInsideScope pins that systemd scoped race testing preserves binary network isolation.
 func TestGoRaceNamespaceExecInsideScope(t *testing.T) {
 	t.Setenv("CI", "")
 	t.Setenv("GITHUB_ACTIONS", "")
@@ -116,6 +121,7 @@ func TestGoRaceNamespaceExecInsideScope(t *testing.T) {
 	}
 }
 
+// TestGoNamespaceExecMountedInDevcontainer pins that the test wrapper executable is bind-mounted into devcontainers.
 func TestGoNamespaceExecMountedInDevcontainer(t *testing.T) {
 	t.Setenv("CI", "")
 	t.Setenv("GITHUB_ACTIONS", "")

@@ -89,6 +89,7 @@ func prepareGoRace(ctx context.Context, cfg *stageConfig) (raceScopeConfig, erro
 	return scopeCfg, nil
 }
 
+// runGoRaceCommand executes race-detector tests for a Go module with configured resource scoping and network isolation.
 func runGoRaceCommand(ctx context.Context, cfg *stageConfig, module goModule, dir string, bound time.Duration, scopeCfg raceScopeConfig) (string, error) {
 	run := cfg.goToolchain().run
 	count, err := ModulePackageCount(ctx, run, dir)

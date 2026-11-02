@@ -24,6 +24,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// TestSandboxLoopbackExecArguments pins argument construction for running in a loopback-only network namespace.
 func TestSandboxLoopbackExecArguments(t *testing.T) {
 	command := []string{"/tmp/test binary", "-test.run=Loopback", "argument with spaces"}
 	inv, err := stubRunner("").LoopbackCommand(t.Context(), command)
@@ -37,6 +38,7 @@ func TestSandboxLoopbackExecArguments(t *testing.T) {
 	}
 }
 
+// TestSandboxLoopbackExecUnavailable pins proper rejection when namespaces or bubblewrap are unavailable.
 func TestSandboxLoopbackExecUnavailable(t *testing.T) {
 	_, err := stubRunner("bwrap").LoopbackCommand(t.Context(), []string{"/test"})
 	assertUnavailable(t, err, "bwrap")
@@ -59,6 +61,7 @@ func TestSandboxLoopbackExecUnavailable(t *testing.T) {
 	}
 }
 
+// TestSandboxLoopbackProbeResolvesTrue pins lookup and execution of the probe binary during capability detection.
 func TestSandboxLoopbackProbeResolvesTrue(t *testing.T) {
 	if runtime.GOOS == "linux" {
 		fakeBwrap := filepath.Join(t.TempDir(), "fake-bwrap")
@@ -121,6 +124,7 @@ func TestSandboxLoopbackServerProcess(t *testing.T) {
 	}
 }
 
+// assertLoopbackNamespace asserts that the process preserved UID and GID and has only the loopback network interface active.
 func assertLoopbackNamespace(t *testing.T, wantUID, wantGID string) {
 	t.Helper()
 	if gotUID, gotGID := strconv.Itoa(os.Getuid()), strconv.Itoa(os.Getgid()); gotUID != wantUID || gotGID != wantGID {
@@ -132,6 +136,7 @@ func assertLoopbackNamespace(t *testing.T, wantUID, wantGID string) {
 	}
 }
 
+// loopbackRequest issues an HTTP GET request to verify reachability and expected payload from the test server.
 func loopbackRequest(ctx context.Context, url string) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
@@ -155,6 +160,7 @@ func loopbackRequest(ctx context.Context, url string) error {
 
 type loopbackTestRunner func(context.Context, io.Reader, io.Writer, io.Writer) error
 
+// loopbackServerCommand prepares a runner for the child server test process in either host or isolated mode.
 func loopbackServerCommand(t *testing.T, isolated bool) loopbackTestRunner {
 	t.Helper()
 	executable, err := os.Executable()
@@ -191,6 +197,7 @@ func loopbackServerCommand(t *testing.T, isolated bool) loopbackTestRunner {
 	}
 }
 
+// TestSandboxLoopbackForeignRequest pins that requests from outside an isolated namespace cannot reach its loopback server.
 func TestSandboxLoopbackForeignRequest(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("real loopback isolation requires Linux user/network namespaces")
@@ -204,6 +211,7 @@ func TestSandboxLoopbackPlantedHostNetwork(t *testing.T) {
 	loopbackHostCase(t, loopbackServerCommand(t, false), true)
 }
 
+// loopbackHostCase executes the child server and validates reachability of its loopback endpoint from the host.
 func loopbackHostCase(t *testing.T, run loopbackTestRunner, wantReachable bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)

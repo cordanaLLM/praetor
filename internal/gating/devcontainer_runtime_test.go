@@ -229,6 +229,7 @@ func removeImage(t *testing.T, runtimePath, ref string) {
 	}
 }
 
+// assertDevcontainerRaceCommand checks that race testing in a devcontainer executed under the expected worktree, test flags, and uid.
 func assertDevcontainerRaceCommand(t *testing.T, cfg *stageConfig, lines []string, worktrees string) {
 	t.Helper()
 	execFlag, _, execErr := cfg.goTestExec()

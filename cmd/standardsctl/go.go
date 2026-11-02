@@ -20,6 +20,7 @@ import (
 	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
 )
 
+// runGo dispatches the standardsctl go subcommands for vet, test, or isolated test binary execution.
 func runGo(args []string) error {
 	if len(args) > 0 && args[0] == "test" {
 		return runGoTest(args[1:])
@@ -58,6 +59,7 @@ func runGoTest(args []string) error {
 	return childExitStatus(util.RunCommandPassthrough(ctx, "", "go", os.Stdin, os.Stdout, os.Stderr, argv...))
 }
 
+// goTestArgs constructs the command-line argument slice for go test, inserting the gate -exec wrapper.
 func goTestArgs(args []string, execFlag string) ([]string, error) {
 	for i := 0; i < len(args); i++ {
 		if args[i] == "-args" || args[i] == "--args" {
@@ -79,6 +81,7 @@ func goTestArgs(args []string, execFlag string) ([]string, error) {
 	return argv, nil
 }
 
+// goExecFlag reports whether an argument specifies the go test -exec flag.
 func goExecFlag(argument string) bool {
 	return argument == "-exec" || argument == "--exec" || strings.HasPrefix(argument, "-exec=") || strings.HasPrefix(argument, "--exec=")
 }

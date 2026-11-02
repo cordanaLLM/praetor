@@ -14,6 +14,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/sandbox"
 )
 
+// TestGoTestExecArguments pins argument construction and rejection of manual -exec overrides.
 func TestGoTestExecArguments(t *testing.T) {
 	const wrapper = "'/path with spaces/engine' go test-exec"
 	for _, tc := range []struct {
@@ -37,6 +38,7 @@ func TestGoTestExecArguments(t *testing.T) {
 	}
 }
 
+// TestGoTestExecFailureByName pins exit code and diagnostic handling when namespace facilities are unavailable.
 func TestGoTestExecFailureByName(t *testing.T) {
 	denied := &sandbox.UnavailableError{Facility: "bwrap user/network namespaces (loopback-only)", Cause: errors.New("planted EPERM")}
 	var diagnostic bytes.Buffer
@@ -48,6 +50,7 @@ func TestGoTestExecFailureByName(t *testing.T) {
 	}
 }
 
+// TestGoTestExecMakefileCoverage pins that Makefile test recipes invoke the standardsctl loopback wrapper.
 func TestGoTestExecMakefileCoverage(t *testing.T) {
 	data, err := os.ReadFile("../../Makefile")
 	if err != nil {

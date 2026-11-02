@@ -51,6 +51,7 @@ func (r Runner) LoopbackCommand(ctx context.Context, command []string) (Invocati
 	return Invocation{Path: bwrap, Args: loopbackArguments(command)}, nil
 }
 
+// probeLoopback checks whether bubblewrap user and network namespaces are available.
 func (r Runner) probeLoopback(ctx context.Context, bwrap string) error {
 	if r.ProbeBwrap != nil {
 		return r.ProbeBwrap(ctx)

@@ -341,6 +341,7 @@ func TestGoStagesRunInTheDevcontainer(t *testing.T) {
 	}
 }
 
+// wantDevcontainerGoTestArgs returns the expected executable path and argument string for running go test in a devcontainer.
 func wantDevcontainerGoTestArgs(t *testing.T, goos string) (string, string) {
 	t.Helper()
 	executable, err := os.Executable()

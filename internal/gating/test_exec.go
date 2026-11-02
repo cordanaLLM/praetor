@@ -35,6 +35,7 @@ func GoTestExec(goos, executable string) (string, string, error) {
 	return quote + executable + quote + " go test-exec", "Go test binaries: loopback-only network namespace (sandbox NetworkNone)", nil
 }
 
+// goTestExec resolves the -exec flag for stage test execution, ensuring container mounts if running in a container.
 func (c *stageConfig) goTestExec() (string, string, error) {
 	executable, err := os.Executable()
 	if err != nil {

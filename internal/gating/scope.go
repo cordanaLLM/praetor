@@ -128,6 +128,7 @@ func waitRaceAdmission(ctx context.Context, cfg *stageConfig) error {
 	return nil
 }
 
+// raceTestCommand builds the test execution command line and descriptive message, wrapping in systemd-run if scoped.
 func raceTestCommand(module goModule, bound time.Duration, scopeCfg raceScopeConfig, packages []string, execFlag string) (string, []string, string) {
 	if packages == nil {
 		packages = []string{"./..."}
