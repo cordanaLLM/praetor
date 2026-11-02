@@ -636,19 +636,94 @@ class Hook(unittest.TestCase):
                 self.assertRaises(mkdocs_hook.CheckError),
             ):
                 mkdocs_hook.release_archive_url({}, "v1.4.0", segment)
-        with self.assertRaises(mkdocs_hook.CheckError):
-            mkdocs_hook.download_player_archive(
-                "https://evil.example/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz"
-            )
+        bad_download_urls = [
+            "https://evil.example/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz",
+            "https://github.com.evil.example/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz",
+            "https://github.com@evil.example/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz",
+            "https://github.com:8443/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz",
+            "https://github.com/adopter/praetor-fork/../../etc/passwd",
+            "https://github.com/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz?x=1",
+            "https://github.com/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz#frag",
+            "http://github.com/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz",
+            "ftp://github.com/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+        ]
+        with mock.patch.object(
+            mkdocs_hook,
+            "urlopen",
+            side_effect=AssertionError("urlopen called for invalid URL"),
+        ):
+            for bad_url in bad_download_urls:
+                with (
+                    self.subTest(download_url=bad_url),
+                    self.assertRaises(mkdocs_hook.CheckError),
+                ):
+                    mkdocs_hook.download_player_archive(bad_url)
+
+    def test_download_revalidates_redirects_and_carries_no_unused_suppression(self):
+        source = (FIGURES / "mkdocs_hook.py").read_text(encoding="utf-8")
+        self.assertNotIn("noqa: S310", source)
+        self.assertNotIn("nosemgrep:", source)
+        valid_url = "https://github.com/cordanaLLM/praetor/releases/download/v1.4.0/figures-player.tar.gz"
+        good_redirects = [
+            "https://objects.githubusercontent.com/github-production-release-asset/123?X-Amz-Signature=abc",
+            "https://release-assets.githubusercontent.com/github-production-release-asset/123?sig=1",
+            "/cordanaLLM/praetor/releases/download/v1.4.0/figures-player.tar.gz",
+        ]
+        bad_redirects = [
+            "http://objects.githubusercontent.com/github-production-release-asset/123",
+            "https://evil.example/figures-player.tar.gz",
+            "https://github.com.evil.example/figures-player.tar.gz",
+            "https://objects.githubusercontent.com.evil.example/figures-player.tar.gz",
+            "https://user@objects.githubusercontent.com/figures-player.tar.gz",
+            "https://objects.githubusercontent.com:8443/figures-player.tar.gz",
+            "file:///etc/passwd",
+        ]
+        handler = mkdocs_hook._TrustedRedirectHandler()
+
+        class _Req:
+            full_url = valid_url
+
+            @staticmethod
+            def get_method():
+                return "GET"
+
+        for target in good_redirects:
+            with self.subTest(good_redirect=target):
+                mkdocs_hook.validate_archive_url(
+                    mkdocs_hook.urljoin(valid_url, target),
+                    mkdocs_hook.TRUSTED_REDIRECT_HOSTS,
+                    allow_query=True,
+                )
+        for target in bad_redirects:
+            with (
+                self.subTest(bad_redirect=target),
+                self.assertRaises(mkdocs_hook.CheckError),
+            ):
+                handler.redirect_request(_Req(), None, 302, "Found", {}, target)
+            with (
+                self.subTest(redirected_response=target),
+                mock.patch.object(
+                    mkdocs_hook,
+                    "urlopen",
+                    return_value=self.fake_response(b"ok", target),
+                ),
+                self.assertRaises(mkdocs_hook.CheckError),
+            ):
+                mkdocs_hook.download_player_archive(valid_url)
 
     @staticmethod
-    def fake_response(payload: bytes):
+    def fake_response(payload: bytes, url: str = ""):
         class FakeResponse(io.BytesIO):
             def __enter__(self):
                 return self
 
             def __exit__(self, *args):
                 self.close()
+
+            def geturl(self):
+                return url
 
         return FakeResponse(payload)
 

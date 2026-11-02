@@ -2352,7 +2352,7 @@ function changedTreeFallback(paths, ref) {
 
 // Order: engine-hiss18-emitted-templates-20261027.
 function changedPathsSince(root, ref) {
-  const result = command("git", ["diff", "-z", "--name-only", `${ref}...HEAD`], {
+  const result = command("git", ["diff", "--no-renames", "-z", "--name-only", `${ref}...HEAD`], {
     cwd: root,
     allowFailure: true,
     maxBuffer: MAX_GIT_OUTPUT_BYTES,
@@ -2477,6 +2477,13 @@ function removeFixtureFiles(root, files, message) {
   return command("git", ["rev-parse", "HEAD"], { cwd: root, env }).stdout.trim();
 }
 
+function renameFixtureFile(root, source, destination, message) {
+  const env = fixtureGitEnv(root);
+  command("git", ["mv", "--", source, destination], { cwd: root, env });
+  command("git", ["commit", "--quiet", "-m", message], { cwd: root, env });
+  return command("git", ["rev-parse", "HEAD"], { cwd: root, env }).stdout.trim();
+}
+
 function changedSincePathEncodingSelfTest(root, temporary, base) {
   const nonAscii = commitFixtureFiles(root, { "docs/\u00e9.md": "#Bad non-ASCII heading\n" }, "non-ascii");
   assert.equal(captureChangedSince(root, temporary, DEFAULT_SETTINGS, base).status, 1);
@@ -2514,10 +2521,17 @@ function changedSinceFallbackSelfTest(root, temporary, base) {
   const manifestChanged = captureChangedSince(root, temporary, DEFAULT_SETTINGS, toolDeletedCommit);
   assert.equal(manifestChanged.status, 1);
   assert.match(manifestChanged.stdout, /\.standards\.yaml changed since [0-9a-f]+; linting whole tree/u);
+  const manifestRenamedCommit = renameFixtureFile(root, ".standards.yaml", "archived-standards.yaml", "mv-manifest");
+  const manifestRenamed = captureChangedSince(root, temporary, DEFAULT_SETTINGS, manifestCommit);
+  assert.equal(manifestRenamed.status, 1);
+  assert.match(manifestRenamed.stdout, /\.standards\.yaml changed since [0-9a-f]+; linting whole tree/u);
+  const manifestRestoredCommit = renameFixtureFile(root, "archived-standards.yaml", ".standards.yaml", "restore-manifest");
   removeFixtureFiles(root, [".standards.yaml"], "rm-manifest");
-  const manifestDeleted = captureChangedSince(root, temporary, DEFAULT_SETTINGS, manifestCommit);
+  const manifestDeleted = captureChangedSince(root, temporary, DEFAULT_SETTINGS, manifestRestoredCommit);
   assert.equal(manifestDeleted.status, 1);
   assert.match(manifestDeleted.stdout, /\.standards\.yaml changed since [0-9a-f]+; linting whole tree/u);
+  removeFixtureFiles(root, ["src/index.js"], "cleanup-code");
+  assert.ok(manifestRenamedCommit);
 }
 
 // Order: engine-hiss18-emitted-templates-20261027.

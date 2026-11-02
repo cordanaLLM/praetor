@@ -54,8 +54,9 @@ const PLAYER_DIR = fileURLToPath(new URL('./player', import.meta.url));
 const LOCK_FILE = fileURLToPath(new URL('./player.lock.json', import.meta.url));
 const LOADER_URI = `${PLAYER_URI}/loader.js`;
 const PLAYER_ARCHIVE = 'figures-player.tar.gz';
-const CANONICAL_REPOSITORY = 'lusoris/praetor';
+const CANONICAL_REPOSITORY = 'cordanaLLM/praetor';
 const TRUSTED_RELEASE_ORIGIN = 'https://github.com';
+const EXTRACTED_DIRS_SYMBOL = Symbol.for('praetor.figures.extractedPlayerDirs');
 const REPOSITORY_SLUG = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const RELEASE_SEGMENT = /^[A-Za-z0-9_.-]+$/;
 const EXPECTED_PLAYER_FILES = Object.freeze(['THIRD-PARTY-LICENSES.txt', 'loader.js', 'player.js']);
@@ -295,15 +296,41 @@ export function releaseArchiveUrl(lock, release, asset) {
   return `${TRUSTED_RELEASE_ORIGIN}/${slug}/releases/download/${release}/${asset}`;
 }
 
+async function readBoundedResponse(response, url) {
+  const contentLength = Number(response.headers?.get?.('content-length') ?? 0);
+  if (Number.isFinite(contentLength) && contentLength > MAX_ARCHIVE_BYTES) {
+    await response.body?.cancel?.();
+    throw new CheckError(`${url} exceeds ${MAX_ARCHIVE_BYTES} bytes`);
+  }
+  const reader = response.body?.getReader?.();
+  if (!reader) {
+    const raw = Buffer.from(await response.arrayBuffer());
+    if (raw.length > MAX_ARCHIVE_BYTES) throw new CheckError(`${url} exceeds ${MAX_ARCHIVE_BYTES} bytes`);
+    return raw;
+  }
+  const chunks = [];
+  let total = 0;
+  for (let step = 0; step <= MAX_ARCHIVE_BYTES; step++) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const chunk = Buffer.from(value);
+    total += chunk.length;
+    if (total > MAX_ARCHIVE_BYTES) {
+      await reader.cancel();
+      throw new CheckError(`${url} exceeds ${MAX_ARCHIVE_BYTES} bytes`);
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks, total);
+}
+
 async function downloadPlayerArchive(url) {
   if (!url.startsWith(`${TRUSTED_RELEASE_ORIGIN}/`)) {
     throw new CheckError(`the player archive is fetched from ${TRUSTED_RELEASE_ORIGIN} only, not ${JSON.stringify(url)}`);
   }
   const response = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const raw = Buffer.from(await response.arrayBuffer());
-  if (raw.length > MAX_ARCHIVE_BYTES) throw new CheckError(`${url} exceeds ${MAX_ARCHIVE_BYTES} bytes`);
-  return raw;
+  return readBoundedResponse(response, url);
 }
 
 function verifyArchiveSha256(raw, expected, asset) {
@@ -355,6 +382,28 @@ function readTarMembers(tar) {
   return extracted;
 }
 
+function extractedPlayerDirs() {
+  let dirs = globalThis[EXTRACTED_DIRS_SYMBOL];
+  if (!(dirs instanceof Set)) {
+    dirs = new Set();
+    globalThis[EXTRACTED_DIRS_SYMBOL] = dirs;
+    process.once('exit', () => {
+      for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+      dirs.clear();
+    });
+  }
+  return dirs;
+}
+
+function recordExtractedPlayerDir(outDir) {
+  const dirs = extractedPlayerDirs();
+  for (const prior of dirs) {
+    rmSync(prior, { recursive: true, force: true });
+    dirs.delete(prior);
+  }
+  dirs.add(outDir);
+}
+
 export function extractPlayerArchive(raw) {
   let tar;
   try {
@@ -368,7 +417,7 @@ export function extractPlayerArchive(raw) {
     throw new CheckError(`archive members ${JSON.stringify(names)} do not match ${JSON.stringify(EXPECTED_PLAYER_FILES)}`);
   }
   const outDir = mkdtempSync(join(tmpdir(), 'praetor-figures-player-'));
-  process.once('exit', () => rmSync(outDir, { recursive: true, force: true }));
+  recordExtractedPlayerDir(outDir);
   for (const [name, data] of extracted) writeFileSync(join(outDir, name), data);
   return outDir;
 }

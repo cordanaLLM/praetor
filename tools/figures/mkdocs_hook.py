@@ -40,7 +40,8 @@ import tempfile
 from pathlib import Path
 from typing import NamedTuple
 from urllib.error import URLError
-from urllib.request import urlopen
+from urllib.parse import urljoin, urlsplit
+from urllib.request import HTTPRedirectHandler, build_opener
 
 log = logging.getLogger("mkdocs.plugins.praetor_figures")
 
@@ -51,7 +52,13 @@ LOCK_FILE = Path(__file__).with_name("player.lock.json")
 PLAYER_URI = "assets/javascripts/figures"
 LOADER_URI = f"{PLAYER_URI}/loader.js"
 CANONICAL_REPOSITORY = "cordanaLLM/praetor"
-TRUSTED_RELEASE_ORIGIN = "https://github.com"
+TRUSTED_RELEASE_HOST = "github.com"
+TRUSTED_RELEASE_ORIGIN = f"https://{TRUSTED_RELEASE_HOST}"
+TRUSTED_REDIRECT_HOSTS = (
+    TRUSTED_RELEASE_HOST,
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+)
 CANONICAL_REPOSITORY_URL = f"{TRUSTED_RELEASE_ORIGIN}/{CANONICAL_REPOSITORY}"
 REPOSITORY_SLUG = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 RELEASE_SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -276,17 +283,56 @@ def release_archive_url(lock: dict, release: str, asset: str) -> str:
     return f"{TRUSTED_RELEASE_ORIGIN}/{slug}/releases/download/{release}/{asset}"
 
 
-def download_player_archive(url: str) -> bytes:
-    """Fetch the release archive with a timeout and size cap."""
-    if not url.startswith(f"{TRUSTED_RELEASE_ORIGIN}/"):
+def validate_archive_url(
+    url: str,
+    allowed_hosts: tuple[str, ...] = (TRUSTED_RELEASE_HOST,),
+    *,
+    allow_query: bool = False,
+) -> None:
+    """Require an HTTPS URL on an allowed GitHub host with safe path segments."""
+    parsed = urlsplit(url)
+    host = parsed.hostname or ""
+    parts = parsed.path.split("/")[1:] if parsed.path.startswith("/") else []
+    if (
+        parsed.scheme != "https"
+        or host not in allowed_hosts
+        or parsed.netloc != host
+        or not parts
+        or any(part in {"", ".", ".."} or "\\" in part for part in parts)
+        or parsed.fragment
+        or (parsed.query and not allow_query)
+    ):
         raise CheckError(
             f"the player archive is fetched from {TRUSTED_RELEASE_ORIGIN} only, not {url!r}"
         )
-    # the github.com origin guard above is the only way in, so the URL scheme and host are fixed
-    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
-    with urlopen(  # noqa: S310 -- url is restricted to https://github.com/
-        url, timeout=DOWNLOAD_TIMEOUT_SECONDS
-    ) as response:
+
+
+class _TrustedRedirectHandler(HTTPRedirectHandler):
+    """Revalidate every HTTP redirect target against trusted GitHub release hosts."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        target = urljoin(req.full_url, newurl)
+        validate_archive_url(
+            target, TRUSTED_REDIRECT_HOSTS, allow_query=True
+        )
+        return super().redirect_request(req, fp, code, msg, headers, target)
+
+
+def urlopen(url: str, timeout: int = DOWNLOAD_TIMEOUT_SECONDS):
+    """Open a validated HTTPS release URL with redirect revalidation."""
+    validate_archive_url(url)
+    return build_opener(_TrustedRedirectHandler()).open(url, timeout=timeout)
+
+
+def download_player_archive(url: str) -> bytes:
+    """Fetch the release archive with a timeout and size cap."""
+    validate_archive_url(url)
+    with urlopen(url, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
+        final_url = getattr(response, "geturl", lambda: "")()
+        if final_url:
+            validate_archive_url(
+                final_url, TRUSTED_REDIRECT_HOSTS, allow_query=True
+            )
         raw = response.read(MAX_FILE_BYTES + 1)
     if len(raw) > MAX_FILE_BYTES:
         raise CheckError(f"{url} exceeds {MAX_FILE_BYTES} bytes")

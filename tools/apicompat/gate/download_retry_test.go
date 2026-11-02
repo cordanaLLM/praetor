@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -278,7 +279,7 @@ func TestBuildModule_Boundary_RetryLoopBoundedByJobAndContextDeadline(t *testing
 		t.Errorf("three stalled download attempts can take %v, exceeding %v CI job limit", maxRetrySpan, ciJobTimeout)
 	}
 
-	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 450*time.Millisecond)
 	defer cancel()
 	var attempts int
 	stalledRunner := func(runCtx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
@@ -289,12 +290,162 @@ func TestBuildModule_Boundary_RetryLoopBoundedByJobAndContextDeadline(t *testing
 		}
 		return nil
 	}
-	ctxWait := func(waitCtx context.Context, _ time.Duration) error { return waitCtx.Err() }
-	err := buildModule(ctx, "/mock/root", "stalled/mod", io.Discard, stalledRunner, ctxWait)
+	err := buildModule(ctx, "/mock/root", "stalled/mod", io.Discard, stalledRunner, defaultWait)
 	if err == nil || !strings.Contains(err.Error(), "3 attempts") {
 		t.Fatalf("err = %v, want 3-attempt download error before job deadline", err)
 	}
 	if attempts != 3 {
 		t.Fatalf("attempts = %d, want all 3 attempts bounded within context deadline", attempts)
+	}
+	assertParentDeadlineStopsFirstAttempt(t)
+}
+
+func assertParentDeadlineStopsFirstAttempt(t *testing.T) {
+	t.Helper()
+	parentCtx, cancelParent := context.WithTimeout(t.Context(), 40*time.Millisecond)
+	defer cancelParent()
+	var parentAttempts int
+	expireParentRunner := func(runCtx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+		if len(args) >= 2 && args[0] == "mod" && args[1] == "download" {
+			parentAttempts++
+			<-parentCtx.Done()
+			return parentCtx.Err()
+		}
+		return nil
+	}
+	parentErr := buildModule(parentCtx, "/mock/root", "expired/mod", io.Discard, expireParentRunner, defaultWait)
+	if !errors.Is(parentErr, context.DeadlineExceeded) {
+		t.Fatalf("parentErr = %v, want context.DeadlineExceeded", parentErr)
+	}
+	if parentAttempts != 1 {
+		t.Fatalf("parentAttempts = %d, want 1 when parent context expires during attempt 1", parentAttempts)
+	}
+}
+
+func TestBuildModule_LocalReplaceAndRequirementBounds(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	modDir := filepath.Join(root, "mod")
+	gomod := "module example.com/mod\n\ngo 1.26.0\n\nrequire (\n" +
+		"\texample.com/mismatch v1.2.0\n" +
+		"\texample.com/matched v1.0.0\n" +
+		"\texample.com/unversioned v1.5.0\n" +
+		"\texample.com/testonly v1.0.0\n" +
+		")\n\nreplace (\n" +
+		"\texample.com/mismatch v1.0.0 => ../mismatch\n" +
+		"\texample.com/matched v1.0.0 => ../matched\n" +
+		"\texample.com/unversioned => ../unversioned\n" +
+		")\n"
+	src := "package mod\n\nimport (\n\t_ \"example.com/mismatch\"\n\t_ \"example.com/matched\"\n\t_ \"example.com/unversioned\"\n)\n"
+	writeTestModuleFiles(t, modDir, gomod, src, "package mod\n\nimport _ \"example.com/testonly\"\n")
+	var gotArgs []string
+	rec := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+		if slices.Equal(args[:min(len(args), 2)], []string{"mod", "download"}) {
+			gotArgs = slices.Clone(args)
+		}
+		return nil
+	}
+	if err := buildModule(t.Context(), root, "mod", io.Discard, rec, defaultWait); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"mod", "download", "example.com/mismatch@v1.2.0"}
+	if !slices.Equal(gotArgs, want) {
+		t.Fatalf("download args = %v, want %v", gotArgs, want)
+	}
+
+	var b strings.Builder
+	b.WriteString("module example.com/mod\n\ngo 1.26.0\n\nrequire (\n\texample.com/testonly v1.0.0\n")
+	for i := range maxImports + 5 {
+		fmt.Fprintf(&b, "\texample.com/dep%d v1.0.0 // indirect\n", i)
+	}
+	b.WriteString("\texample.com/late v1.2.3\n)\n")
+	writeTestModuleFiles(t, modDir, b.String(), "package mod\n\nimport _ \"example.com/late\"\n", "package mod\n")
+	gotArgs = nil
+	if err := buildModule(t.Context(), root, "mod", io.Discard, rec, defaultWait); err != nil {
+		t.Fatal(err)
+	}
+	wantLate := []string{"mod", "download", "example.com/late@v1.2.3"}
+	if !slices.Equal(gotArgs, wantLate) {
+		t.Fatalf("download args past 256 requirements = %v, want %v", gotArgs, wantLate)
+	}
+}
+
+func TestBuildModule_SymlinkParseErrorAndCanceledScan(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	modDir := filepath.Join(root, "mod")
+	gomod := "module example.com/mod\n\ngo 1.26.0\n\nrequire (\n\texample.com/needed v1.0.0\n\texample.com/testonly v1.0.0\n)\n"
+	writeTestModuleFiles(t, modDir, gomod, "package mod\n\nimport _ \"example.com/needed\"\n", "package mod\n")
+	if err := os.Symlink(filepath.Join(modDir, "snap.go"), filepath.Join(modDir, "link.go")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	var gotArgs []string
+	rec := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+		if slices.Equal(args[:min(len(args), 2)], []string{"mod", "download"}) {
+			gotArgs = slices.Clone(args)
+		}
+		return nil
+	}
+	if err := buildModule(t.Context(), root, "mod", io.Discard, rec, defaultWait); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(gotArgs, []string{"mod", "download"}) {
+		t.Fatalf("symlink scan fallback args = %v, want full [mod download]", gotArgs)
+	}
+	if err := os.Remove(filepath.Join(modDir, "link.go")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(modDir, "broken.go"), []byte("package mod\nimport (\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gotArgs = nil
+	if err := buildModule(t.Context(), root, "mod", io.Discard, rec, defaultWait); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(gotArgs, []string{"mod", "download"}) {
+		t.Fatalf("parse-error scan fallback args = %v, want full [mod download]", gotArgs)
+	}
+	canceledCtx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := collectNonTestImports(canceledCtx, modDir); !errors.Is(err, context.Canceled) {
+		t.Fatalf("collectNonTestImports(canceledCtx) = %v, want context.Canceled", err)
+	}
+}
+
+func TestBuildModule_RetriesGoListExport(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	modDir := filepath.Join(root, "mod")
+	writeTestModuleFiles(t, modDir, "module example.com/mod\n\ngo 1.26.0\n", "package mod\n", "package mod\n")
+	var lists int
+	var waits []time.Duration
+	flakyList := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+		if len(args) >= 1 && args[0] == "list" {
+			lists++
+			if lists == 1 {
+				return errors.New("transient indirect module proxy timeout")
+			}
+		}
+		return nil
+	}
+	wait := func(ctx context.Context, d time.Duration) error {
+		waits = append(waits, d)
+		return nil
+	}
+	if err := buildModule(t.Context(), root, "mod", io.Discard, flakyList, wait); err != nil {
+		t.Fatalf("buildModule failed on transient go list error: %v", err)
+	}
+	if lists != 2 || !slices.Equal(waits, []time.Duration{5 * time.Second}) {
+		t.Fatalf("lists = %d, waits = %v; want 2 and [5s]", lists, waits)
+	}
+	alwaysFailList := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+		if len(args) >= 1 && args[0] == "list" {
+			return errors.New("compile error")
+		}
+		return nil
+	}
+	if err := buildModule(t.Context(), root, "mod", io.Discard, alwaysFailList, wait); err == nil || !strings.Contains(err.Error(), "its packages do not build at HEAD") {
+		t.Fatalf("buildModule error = %v, want build error after retry limit", err)
 	}
 }

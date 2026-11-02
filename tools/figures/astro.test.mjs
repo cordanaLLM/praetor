@@ -13,8 +13,8 @@ import { pathToFileURL } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { evaluate, markdownToHtml, mdxToJs } from 'satteri';
 import figures, {
-  MAX_NODES, NAME, RESTART_DELAY_MS, addFigurePlugin, figureBase, figureMounts, figuresDigest, loaderScript, publishFigures,
-  remarkFigures, replaceFigures, rootPath, satteriFigures, watchFigures,
+  MAX_NODES, NAME, RESTART_DELAY_MS, addFigurePlugin, extractPlayerArchive, figureBase, figureMounts, figuresDigest,
+  loaderScript, publishFigures, releaseArchiveUrl, remarkFigures, replaceFigures, rootPath, satteriFigures, watchFigures,
 } from './astro.mjs';
 import { PLAYER_DIR } from './bundle.mjs';
 import { ROOT, fillSlots } from './checks.mjs';
@@ -359,21 +359,22 @@ test('an adopted integration without player files injects no loader', () => with
   assert.deepEqual(scripts, []);
 }));
 
-function buildTarGz(entries) {
+function buildTarGz(entries, prefix = '') {
   const blocks = [];
-  for (const { name, body, typeflag = '0' } of entries) {
+  for (const { name, body, typeflag = '0', sizeText } of entries) {
     const data = Buffer.from(body);
     const header = Buffer.alloc(512);
     header.write(name, 0, 100, 'utf8');
     header.write('0000644\0', 100, 8, 'ascii');
     header.write('0000000\0', 108, 8, 'ascii');
     header.write('0000000\0', 116, 8, 'ascii');
-    header.write(`${data.length.toString(8).padStart(11, '0')}\0`, 124, 12, 'ascii');
+    header.write(sizeText ?? `${data.length.toString(8).padStart(11, '0')}\0`, 124, 12, 'ascii');
     header.write('00000000000\0', 136, 12, 'ascii');
     header.write('        ', 148, 8, 'ascii');
-    header[156] = typeflag.charCodeAt(0);
+    header[156] = typeof typeflag === 'number' ? typeflag : typeflag.charCodeAt(0);
     header.write('ustar\0', 257, 6, 'ascii');
     header.write('00', 263, 2, 'ascii');
+    if (prefix) header.write(prefix, 345, 155, 'utf8');
     let sum = 0;
     for (const byte of header) sum += byte;
     header.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148, 8, 'ascii');
@@ -382,6 +383,129 @@ function buildTarGz(entries) {
   blocks.push(Buffer.alloc(1024));
   return gzipSync(Buffer.concat(blocks));
 }
+
+test('releaseArchiveUrl covers positive, boundary and negative repository, tag and asset inputs', () => {
+  const positive = [
+    [{}, 'v1.4.0', 'figures-player.tar.gz', 'https://github.com/cordanaLLM/praetor/releases/download/v1.4.0/figures-player.tar.gz'],
+    [{ repository: 'cordanaLLM/praetor' }, 'v1.4.0', 'figures-player.tar.gz', 'https://github.com/cordanaLLM/praetor/releases/download/v1.4.0/figures-player.tar.gz'],
+    [{ repository: 'adopter/praetor-fork' }, 'v1.4.0-rc.1', 'figures_player.tar.gz', 'https://github.com/adopter/praetor-fork/releases/download/v1.4.0-rc.1/figures_player.tar.gz'],
+    [{ repository: 'https://github.com/adopter/praetor-fork/' }, 'v1', 'a.tgz', 'https://github.com/adopter/praetor-fork/releases/download/v1/a.tgz'],
+  ];
+  for (const [lock, release, asset, want] of positive) {
+    assert.equal(releaseArchiveUrl(lock, release, asset), want);
+  }
+  const negative = [
+    [{ repository: 'http://github.com/adopter/praetor-fork' }, 'v1.4.0', 'figures-player.tar.gz', /https:\/\/github\.com only/],
+    [{ repository: 'https://evil.example/adopter/praetor-fork' }, 'v1.4.0', 'figures-player.tar.gz', /https:\/\/github\.com only/],
+    [{ repository: 'https://github.com.evil.example/adopter/praetor-fork' }, 'v1.4.0', 'figures-player.tar.gz', /https:\/\/github\.com only/],
+    [{ repository: 'adopter' }, 'v1.4.0', 'figures-player.tar.gz', /invalid release repository/],
+    [{ repository: 'adopter/praetor-fork/extra' }, 'v1.4.0', 'figures-player.tar.gz', /invalid release repository/],
+    [{ repository: 'adopter/..' }, 'v1.4.0', 'figures-player.tar.gz', /invalid release repository/],
+    [{ repository: '../praetor-fork' }, 'v1.4.0', 'figures-player.tar.gz', /invalid release repository/],
+    [{}, '', 'figures-player.tar.gz', /invalid release tag/],
+    [{}, '..', 'figures-player.tar.gz', /invalid release tag/],
+    [{}, 'v1.4.0/extra', 'figures-player.tar.gz', /invalid release tag/],
+    [{}, 'v1.4.0', '', /invalid release asset/],
+    [{}, 'v1.4.0', '.', /invalid release asset/],
+    [{}, 'v1.4.0', '../figures-player.tar.gz', /invalid release asset/],
+  ];
+  for (const [lock, release, asset, pattern] of negative) {
+    assert.throws(() => releaseArchiveUrl(lock, release, asset), pattern);
+  }
+});
+
+test('extractPlayerArchive covers valid archives, rejection cases, boundary limits and single-listener cleanup', async () => {
+  const validEntries = [
+    { name: 'loader.js', body: '// loader\n' },
+    { name: 'player.js', body: '// player\n' },
+    { name: 'THIRD-PARTY-LICENSES.txt', body: 'MIT\n' },
+  ];
+  const validArchive = buildTarGz(validEntries);
+  const firstDir = extractPlayerArchive(validArchive);
+  assert.equal(readFileSync(join(firstDir, 'loader.js'), 'utf8'), '// loader\n');
+  const beforeListeners = process.listenerCount('exit');
+  let latestDir = firstDir;
+  for (let i = 0; i < 12; i++) {
+    latestDir = extractPlayerArchive(validArchive);
+  }
+  const { extractPlayerArchive: reloadedExtract } = await import(`${pathToFileURL(join(ROOT, 'tools/figures/astro.mjs')).href}?v=listener-check`);
+  latestDir = reloadedExtract(validArchive);
+  assert.equal(statOrNull(firstDir), null, 'prior extraction directory is cleaned up when replaced');
+  assert.ok(statOrNull(latestDir)?.isDirectory(), 'latest extraction directory exists');
+  assert.ok(process.listenerCount('exit') - beforeListeners <= 1, 'at most one process exit listener is registered');
+  assert.ok(globalThis[Symbol.for('praetor.figures.extractedPlayerDirs')] instanceof Set);
+
+  const boundaryArchive = buildTarGz([
+    { name: 'loader.js', body: Buffer.alloc(4 * 1024 * 1024) },
+    validEntries[1],
+    validEntries[2],
+  ]);
+  const boundaryDir = extractPlayerArchive(boundaryArchive);
+  assert.equal(statOrNull(join(boundaryDir, 'loader.js'))?.size, 4 * 1024 * 1024);
+
+  const negative = [
+    [Buffer.from('not-gzip'), /invalid player archive/],
+    [gzipSync(Buffer.alloc(0)), /truncated tar stream/],
+    [gzipSync(Buffer.from('short')), /truncated tar stream/],
+    [buildTarGz([{ name: 'loader.js', body: 'x', sizeText: 'not-octal\0\0\0' }, ...validEntries.slice(1)]), /malformed member/],
+    [buildTarGz([{ name: 'loader.js', body: 'x', sizeText: `${(2048).toString(8).padStart(11, '0')}\0` }]), /truncated member/],
+    [buildTarGz([{ name: '../loader.js', body: 'x' }, ...validEntries.slice(1)]), /unsafe archive member path/],
+    [buildTarGz([{ name: 'loader.js', body: 'x' }, ...validEntries.slice(1)], 'sub'), /unsafe archive member path/],
+    [buildTarGz([{ name: 'loader.js', body: 'x', typeflag: '2' }, ...validEntries.slice(1)]), /not a regular file/],
+    [buildTarGz([{ name: 'extra.js', body: 'x' }, ...validEntries]), /unexpected archive member/],
+    [buildTarGz([validEntries[0], validEntries[0], validEntries[1], validEntries[2]]), /duplicate archive member/],
+    [buildTarGz(validEntries.slice(0, 2)), /do not match/],
+    [buildTarGz([{ name: 'loader.js', body: Buffer.alloc(4 * 1024 * 1024 + 1) }, ...validEntries.slice(1)]), /exceeds 4194304 bytes/],
+  ];
+  for (const [archive, pattern] of negative) {
+    assert.throws(() => extractPlayerArchive(archive), pattern);
+  }
+});
+
+test('downloadPlayerArchive aborts oversized streaming responses before buffering the rest of the stream', () => withTempDir(async (dir) => {
+  const files = ['astro.mjs', 'checks.mjs', 'core.mjs', 'serve.mjs',
+    'third_party/interfig/upstream/src/svg.ts', 'third_party/interfig/upstream/src/geometry.ts',
+    'third_party/interfig/upstream/src/model.ts'];
+  for (const name of files) write(join(dir, 'tools/figures', name), readFileSync(join(ROOT, 'tools/figures', name)));
+  write(join(dir, 'tools/figures/player.lock.json'), JSON.stringify({
+    asset: 'figures-player.tar.gz',
+    sha256: 'a'.repeat(64),
+    release: 'v1.4.0',
+  }));
+  const { default: adoptedFigures } = await import(`${pathToFileURL(join(dir, 'tools/figures/astro.mjs')).href}?v=stream-limit`);
+  const originalFetch = globalThis.fetch;
+  let pulls = 0;
+  let canceled = false;
+  globalThis.fetch = async (url) => {
+    assert.equal(url, 'https://github.com/cordanaLLM/praetor/releases/download/v1.4.0/figures-player.tar.gz');
+    const body = new ReadableStream({
+      pull(controller) {
+        pulls += 1;
+        if (pulls <= 2) {
+          controller.enqueue(new Uint8Array(3 * 1024 * 1024));
+          return;
+        }
+        throw new Error('stream was not aborted after exceeding MAX_ARCHIVE_BYTES');
+      },
+      cancel() {
+        canceled = true;
+      },
+    }, { highWaterMark: 0 });
+    return new Response(body, { status: 200 });
+  };
+  try {
+    await assert.rejects(
+      async () => adoptedFigures({ root: dir }).hooks['astro:config:setup']({
+        config: {}, updateConfig: () => {}, injectScript: () => {},
+      }),
+      /exceeds 4194304 bytes/,
+    );
+    assert.equal(pulls, 2, 'stopped reading as soon as received bytes exceeded 4 MiB');
+    assert.equal(canceled, true, 'stream was canceled immediately');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}));
 
 test('an adopted integration with a released player.lock.json injects the loader and publishes the locked player', () => withTempDir(async (dir) => {
   const files = ['astro.mjs', 'checks.mjs', 'core.mjs', 'serve.mjs',

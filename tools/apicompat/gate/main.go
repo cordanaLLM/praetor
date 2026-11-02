@@ -993,18 +993,25 @@ func isLocalPath(target string) bool {
 	return strings.HasPrefix(target, "./") || strings.HasPrefix(target, "../") || strings.HasPrefix(target, "/")
 }
 
-func parseLocalReplace(line string) (string, bool) {
+func parseLocalReplace(line string) (string, string, bool) {
 	code, _, _ := strings.Cut(line, "//")
 	before, after, ok := strings.Cut(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(code), "replace")), "=>")
 	if !ok {
-		return "", false
+		return "", "", false
 	}
 	left, right := strings.Fields(before), strings.Fields(after)
-	if len(left) == 0 || len(right) != 1 || !isLocalPath(right[0]) {
-		return "", false
+	if (len(left) != 1 && len(left) != 2) || len(right) != 1 || !isLocalPath(right[0]) {
+		return "", "", false
 	}
 	modPath, err := unquotedModulePath(left[0])
-	return modPath, err == nil
+	if err != nil {
+		return "", "", false
+	}
+	version := ""
+	if len(left) == 2 {
+		version = left[1]
+	}
+	return modPath, version, true
 }
 
 type goModScan struct {
@@ -1023,8 +1030,12 @@ func (s *goModScan) step(trimmed string) {
 	case trimmed == ")":
 		s.inRequire, s.inReplace = false, false
 	case s.inReplace || hasDirectivePrefix(trimmed, "replace"):
-		if modPath, ok := parseLocalReplace(trimmed); ok {
-			s.localReplaced[modPath] = true
+		if modPath, version, ok := parseLocalReplace(trimmed); ok {
+			key := modPath
+			if version != "" {
+				key = modPath + "@" + version
+			}
+			s.localReplaced[key] = true
 		}
 	case s.inRequire || hasDirectivePrefix(trimmed, "require"):
 		if req, ok := parseRequireLine(trimmed); ok {
@@ -1033,19 +1044,23 @@ func (s *goModScan) step(trimmed string) {
 	}
 }
 
-func parseGoModRequirements(gomod string) []modRequirement {
+func parseGoModRequirements(gomod string) ([]modRequirement, bool) {
 	lines := strings.Split(gomod, "\n")
+	if len(lines) > maxGoModLines {
+		return nil, false
+	}
 	scan := goModScan{localReplaced: make(map[string]bool)}
-	for index := 0; index < len(lines) && index < maxGoModLines && len(scan.raw) < maxImports; index++ {
+	for index := 0; index < len(lines) && index < maxGoModLines && len(scan.raw) < maxGoModLines; index++ {
 		scan.step(strings.TrimSpace(lines[index]))
 	}
 	reqs := make([]modRequirement, 0, len(scan.raw))
-	for index := 0; index < len(scan.raw) && index < maxImports; index++ {
-		if !scan.localReplaced[scan.raw[index].path] {
-			reqs = append(reqs, scan.raw[index])
+	for index := 0; index < len(scan.raw) && index < maxGoModLines; index++ {
+		req := scan.raw[index]
+		if !scan.localReplaced[req.path] && !scan.localReplaced[req.path+"@"+req.version] {
+			reqs = append(reqs, req)
 		}
 	}
-	return reqs
+	return reqs, true
 }
 
 func hasGoModFile(entries []os.DirEntry) bool {
@@ -1057,40 +1072,98 @@ func hasGoModFile(entries []os.DirEntry) bool {
 	return false
 }
 
-func recordNonTestFileImports(fset *token.FileSet, filePath string, imports map[string]bool) {
-	f, err := parser.ParseFile(fset, filePath, nil, parser.ImportsOnly)
+func readBoundedRegularFile(filePath string, maxBytes int64) ([]byte, error) {
+	info, err := os.Lstat(filePath)
 	if err != nil {
-		return
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("non-regular file: %s", filePath)
+	}
+	if info.Size() > maxBytes {
+		return nil, fmt.Errorf("file exceeds %d bytes: %s", maxBytes, filePath)
+	}
+	f, err := os.Open(filePath) // #nosec G304 -- filePath is inside a repository module walk
+	if err != nil {
+		return nil, err
+	}
+	data, readErr := io.ReadAll(io.LimitReader(f, maxBytes+1))
+	closeErr := f.Close()
+	if err := errors.Join(readErr, closeErr); err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("file exceeds %d bytes: %s", maxBytes, filePath)
+	}
+	return data, nil
+}
+
+func recordNonTestFileImports(fset *token.FileSet, filePath string, imports map[string]bool) error {
+	src, err := readBoundedRegularFile(filePath, maxDeclBytes)
+	if err != nil {
+		return err
+	}
+	f, err := parser.ParseFile(fset, filePath, src, parser.ImportsOnly)
+	if err != nil {
+		return err
+	}
+	if len(f.Imports) > maxImports {
+		return fmt.Errorf("file imports exceed %d: %s", maxImports, filePath)
 	}
 	for index := 0; index < len(f.Imports) && index < maxImports; index++ {
-		if val, err := strconv.Unquote(f.Imports[index].Path.Value); err == nil && val != "" {
+		val, err := strconv.Unquote(f.Imports[index].Path.Value)
+		if err != nil {
+			return err
+		}
+		if val != "" {
 			imports[val] = true
 		}
 	}
+	return nil
 }
 
-func appendNonTestDirImports(fset *token.FileSet, dir string, entries []os.DirEntry, queue []string, imports map[string]bool) []string {
-	for index := 0; index < len(entries) && index < maxGoFiles; index++ {
-		entry := entries[index]
-		name := entry.Name()
-		if entry.IsDir() {
-			if !skippedDirectory(name) && len(queue) < maxGoFiles {
-				queue = append(queue, filepath.Join(dir, name))
-			}
-			continue
+func visitNonTestDirEntry(fset *token.FileSet, dir string, entry os.DirEntry, queue []string, imports map[string]bool) ([]string, error) {
+	name := entry.Name()
+	if entry.IsDir() {
+		if skippedDirectory(name) {
+			return queue, nil
 		}
-		if strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go") {
-			recordNonTestFileImports(fset, filepath.Join(dir, name), imports)
+		if len(queue) >= maxGoFiles {
+			return nil, fmt.Errorf("directory queue exceeds %d", maxGoFiles)
+		}
+		return append(queue, filepath.Join(dir, name)), nil
+	}
+	if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+		return queue, nil
+	}
+	return queue, recordNonTestFileImports(fset, filepath.Join(dir, name), imports)
+}
+
+func appendNonTestDirImports(ctx context.Context, fset *token.FileSet, dir string, entries []os.DirEntry, queue []string, imports map[string]bool) ([]string, error) {
+	if len(entries) > maxGoFiles {
+		return nil, fmt.Errorf("directory entries exceed %d: %s", maxGoFiles, dir)
+	}
+	for index := 0; index < len(entries) && index < maxGoFiles; index++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		var err error
+		queue, err = visitNonTestDirEntry(fset, dir, entries[index], queue, imports)
+		if err != nil {
+			return nil, err
 		}
 	}
-	return queue
+	return queue, nil
 }
 
-func collectNonTestImports(moduleDir string) (map[string]bool, error) {
+func collectNonTestImports(ctx context.Context, moduleDir string) (map[string]bool, error) {
 	fset := token.NewFileSet()
 	imports := make(map[string]bool)
 	queue := []string{moduleDir}
 	for seen := 0; len(queue) > 0 && seen < maxGoFiles; seen++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		dir := queue[0]
 		queue = queue[1:]
 		entries, err := os.ReadDir(dir)
@@ -1100,7 +1173,13 @@ func collectNonTestImports(moduleDir string) (map[string]bool, error) {
 		if dir != moduleDir && hasGoModFile(entries) {
 			continue
 		}
-		queue = appendNonTestDirImports(fset, dir, entries, queue, imports)
+		queue, err = appendNonTestDirImports(ctx, fset, dir, entries, queue, imports)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(queue) > 0 {
+		return nil, fmt.Errorf("module directory count exceeds %d", maxGoFiles)
 	}
 	return imports, nil
 }
@@ -1114,23 +1193,10 @@ func isImportedModule(modPath string, imports map[string]bool) bool {
 	return false
 }
 
-// moduleDownloadArgs selects only non-test module requirements so test-only dependencies cannot block package builds.
-func moduleDownloadArgs(moduleDir string) ([]string, bool) {
-	data, err := os.ReadFile(filepath.Join(moduleDir, "go.mod"))
-	if err != nil {
-		return []string{"mod", "download"}, true
-	}
-	reqs := parseGoModRequirements(string(data))
-	if len(reqs) == 0 {
-		return nil, false
-	}
-	imports, err := collectNonTestImports(moduleDir)
-	if err != nil {
-		return []string{"mod", "download"}, true
-	}
+func selectImportedRequirements(reqs []modRequirement, imports map[string]bool) ([]string, bool) {
 	var needed []string
 	hasTestOnly := false
-	for index := 0; index < len(reqs) && index < maxImports; index++ {
+	for index := 0; index < len(reqs) && index < maxGoModLines; index++ {
 		req := reqs[index]
 		if isImportedModule(req.path, imports) {
 			needed = append(needed, req.path+"@"+req.version)
@@ -1147,6 +1213,29 @@ func moduleDownloadArgs(moduleDir string) ([]string, bool) {
 	return append([]string{"mod", "download"}, needed...), true
 }
 
+// moduleDownloadArgs selects only non-test module requirements so test-only dependencies cannot block package builds.
+func moduleDownloadArgs(ctx context.Context, moduleDir string) ([]string, bool) {
+	if ctx.Err() != nil {
+		return nil, false
+	}
+	data, err := readBoundedRegularFile(filepath.Join(moduleDir, "go.mod"), maxGoModBytes)
+	if err != nil {
+		return []string{"mod", "download"}, true
+	}
+	reqs, ok := parseGoModRequirements(string(data))
+	if !ok {
+		return []string{"mod", "download"}, true
+	}
+	if len(reqs) == 0 {
+		return nil, false
+	}
+	imports, err := collectNonTestImports(ctx, moduleDir)
+	if err != nil {
+		return []string{"mod", "download"}, true
+	}
+	return selectImportedRequirements(reqs, imports)
+}
+
 func remainingBackoff(attempt int) time.Duration {
 	switch attempt {
 	case 1:
@@ -1156,6 +1245,22 @@ func remainingBackoff(attempt int) time.Duration {
 	default:
 		return 0
 	}
+}
+
+func downloadBackoff(ctx context.Context, attempt int) time.Duration {
+	backoff := firstBackoff
+	if attempt > 2 {
+		backoff = secondBackoff
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return backoff
+	}
+	remaining := time.Until(deadline)
+	if reserve := remainingBackoff(attempt - 1); remaining > 0 && remaining <= reserve*2 {
+		return min(backoff, max(time.Millisecond, remaining/8))
+	}
+	return backoff
 }
 
 // downloadAttemptTimeout caps each retry by downloadTimeout and divides any remaining context deadline across attempts.
@@ -1171,49 +1276,62 @@ func downloadAttemptTimeout(ctx context.Context, attempt int) (time.Duration, er
 	if remaining <= 0 {
 		return 0, context.DeadlineExceeded
 	}
+	slots := time.Duration(downloadAttempts - attempt + 1)
 	if reserve := remainingBackoff(attempt); remaining > reserve*2 {
 		remaining -= reserve
+	} else {
+		slots++
 	}
-	perAttempt := remaining / time.Duration(downloadAttempts-attempt+1)
-	if perAttempt <= 0 {
-		perAttempt = time.Millisecond
-	}
+	perAttempt := max(time.Millisecond, remaining/slots)
 	return min(downloadTimeout, perAttempt), nil
 }
 
-// downloadModule runs "go mod download" in moduleDir with bounded retries and backoff.
-func downloadModule(ctx context.Context, moduleDir, dir string, stderr io.Writer, run toolRunner, wait waitFunc) error {
-	args, needed := moduleDownloadArgs(moduleDir)
-	if !needed {
-		return nil
-	}
+func retryModuleGo(ctx context.Context, moduleDir, dir, label string, args []string, stderr io.Writer, run toolRunner, wait waitFunc) (int, error) {
 	var lastErr error
 	for attempt := 1; attempt <= downloadAttempts; attempt++ {
 		if attempt > 1 {
-			backoff := firstBackoff
-			if attempt > 2 {
-				backoff = secondBackoff
-			}
-			if err := wait(ctx, backoff); err != nil {
-				return &downloadError{dir: dir, attempts: attempt - 1, err: err}
+			if err := wait(ctx, downloadBackoff(ctx, attempt)); err != nil {
+				return attempt - 1, err
 			}
 		}
 		timeout, timeoutErr := downloadAttemptTimeout(ctx, attempt)
 		if timeoutErr != nil {
-			return &downloadError{dir: dir, attempts: attempt - 1, err: timeoutErr}
+			return attempt - 1, timeoutErr
 		}
 		attemptCtx, cancel := context.WithTimeout(ctx, timeout)
 		err := run(attemptCtx, moduleDir, io.Discard, stderr, "go", args...)
 		cancel()
 		if err == nil {
-			return nil
+			return attempt, nil
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return attempt, ctxErr
 		}
 		lastErr = err
-		if _, printErr := fmt.Fprintf(stderr, "go mod download failed for %s (attempt %d of %d): %v\n", dir, attempt, downloadAttempts, err); printErr != nil {
-			return &downloadError{dir: dir, attempts: attempt, err: printErr}
+		if _, printErr := fmt.Fprintf(stderr, "%s failed for %s (attempt %d of %d): %v\n", label, dir, attempt, downloadAttempts, err); printErr != nil {
+			return attempt, printErr
 		}
 	}
-	return &downloadError{dir: dir, attempts: downloadAttempts, err: lastErr}
+	return downloadAttempts, lastErr
+}
+
+// downloadModule runs "go mod download" in moduleDir with bounded retries and backoff.
+func downloadModule(ctx context.Context, moduleDir, dir string, stderr io.Writer, run toolRunner, wait waitFunc) error {
+	if err := ctx.Err(); err != nil {
+		return &downloadError{dir: dir, attempts: 0, err: err}
+	}
+	args, needed := moduleDownloadArgs(ctx, moduleDir)
+	if err := ctx.Err(); err != nil {
+		return &downloadError{dir: dir, attempts: 0, err: err}
+	}
+	if !needed {
+		return nil
+	}
+	attempts, err := retryModuleGo(ctx, moduleDir, dir, "go mod download", args, stderr, run, wait)
+	if err != nil {
+		return &downloadError{dir: dir, attempts: attempts, err: err}
+	}
+	return nil
 }
 
 // buildModule verifies that non-test packages type-check so broken packages never read as empty.
@@ -1228,7 +1346,7 @@ func buildModule(ctx context.Context, root, dir string, stderr io.Writer, run to
 	if err := downloadModule(ctx, moduleDir, dir, stderr, run, wait); err != nil {
 		return err
 	}
-	if err := run(ctx, moduleDir, io.Discard, stderr, "go", "list", "-export", "./..."); err != nil {
+	if _, err := retryModuleGo(ctx, moduleDir, dir, "go list -export", []string{"list", "-export", "./..."}, stderr, run, wait); err != nil {
 		return fmt.Errorf("its packages do not build at HEAD, so the checker cannot read them: %w", err)
 	}
 	return nil
