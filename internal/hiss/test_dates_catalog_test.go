@@ -10,6 +10,7 @@ import (
 	"testing"
 )
 
+// TestFixtureDateCatalogExplainsClockIntegrity pins fixture date catalog explains clock integrity.
 func TestFixtureDateCatalogExplainsClockIntegrity(t *testing.T) {
 	rule, ok := hisscatalog.LookupRule("HISS-15")
 	if !ok || !strings.Contains(rule.Specification, "test clock") || !strings.Contains(rule.Enforcement, "fixture") {

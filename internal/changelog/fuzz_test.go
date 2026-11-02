@@ -7,6 +7,7 @@ import (
 	"testing"
 )
 
+// FuzzChangelogRender fuzzes changelog render.
 func FuzzChangelogRender(f *testing.F) {
 	f.Add("Feature title", "added",
 		/* testdate: fact: recorded release date; changelog parsing, no clock comparison */

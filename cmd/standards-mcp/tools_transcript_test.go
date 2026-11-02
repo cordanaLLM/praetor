@@ -92,6 +92,7 @@ func TestTranscriptMCPRejectsInvalidArgumentsAndOutsidePaths(t *testing.T) {
 	}
 }
 
+// TestClaudeTranscriptMCPExplicitFormatAndReplay pins claude transcript MCP explicit format and replay.
 func TestClaudeTranscriptMCPExplicitFormatAndReplay(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	source := filepath.Join(root, "session.jsonl")
@@ -117,6 +118,7 @@ func TestClaudeTranscriptMCPExplicitFormatAndReplay(t *testing.T) {
 	}
 }
 
+// TestClaudeTranscriptErrorsDoNotEchoPrivateSourceCategories pins claude transcript errors do not echo private source categories.
 func TestClaudeTranscriptErrorsDoNotEchoPrivateSourceCategories(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	marker := strings.Repeat("SYNTHETIC_PRIVATE_CATEGORY_", 1024)

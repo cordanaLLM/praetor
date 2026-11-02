@@ -169,6 +169,7 @@ func fakeCat(path string) error {
 	return errors.Join(err, file.Close())
 }
 
+// fakeList returns a simulated rclone file listing for synchronizer tests.
 func fakeList(dir string) error {
 	if _, err := os.Stat(dir); err != nil {
 		return fakeExit(rcloneDirNotFound)

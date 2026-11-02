@@ -31,6 +31,7 @@ func transcriptFixture(t *testing.T, body string) string {
 const transcriptEvent = /* testdate: fact: recorded transcript timestamp; ingestion, no clock comparison */ `{"step_index":7,"source":"MODEL","type":"RUN_COMMAND","status":"DONE","created_at":"2026-09-11T12:00:00Z","content":"fixture tool result","thinking":"private reasoning must not be persisted","tool_calls":[{"name":"run_command","args":{"command":"printf fixture"}}],"exit_code":0}` + "\n"
 const transcriptMetadata = /* testdate: fact: recorded transcript timestamp; ingestion, no clock comparison */ `{"step_index":8,"source":"SYSTEM","type":"CHECKPOINT","status":"DONE","created_at":"2026-09-11T12:00:01Z"}` + "\n"
 
+// TestIngestTranscriptPreservesEventsAndResumes pins ingest transcript preserves events and resumes.
 func TestIngestTranscriptPreservesEventsAndResumes(t *testing.T) {
 	path := transcriptFixture(t, transcriptEvent+transcriptMetadata+transcriptEvent)
 	cache := filepath.Join(t.TempDir(), "cache")

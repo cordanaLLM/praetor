@@ -391,6 +391,7 @@ func TestClaim_Negative_LabelFailureAbandonsTheComment(t *testing.T) {
 	}
 }
 
+// TestClaim_Negative_MalformedAndForeignMarkersIgnored pins negative malformed and foreign markers ignored for claim.
 func TestClaim_Negative_MalformedAndForeignMarkersIgnored(t *testing.T) {
 	f, clock := forgetest.NewClaimFake(), &deskClock{now: claimEpoch}
 	key := f.Key

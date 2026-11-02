@@ -29,6 +29,7 @@ func fakeProber(answers map[string]error) AliasProber {
 	return func(_ context.Context, _ GatewayConfig, alias string) error { return answers[alias] }
 }
 
+// TestProbeAliasesRecordsAnswerAndReason pins probe aliases records answer and reason.
 func TestProbeAliasesRecordsAnswerAndReason(t *testing.T) {
 	cfg := gatewayConfig(aliasModel("a-light", "light", "", ""), aliasModel("a-dead", "dead", "", ""),
 		aliasModel("a-idle", "idle", AliasAnswers, ""), costTaskModel("pinned", 1, 1))
@@ -229,6 +230,7 @@ func TestTierOnlyRouteRanksByRatesWithoutEstimates(t *testing.T) {
 	}
 }
 
+// TestAliasValidation pins alias validation.
 func TestAliasValidation(t *testing.T) {
 	bad := map[string]func(*RoutingConfig){
 		"provider without alias": func(c *RoutingConfig) { c.Tiers["work"].Models[0].Alias = "" },

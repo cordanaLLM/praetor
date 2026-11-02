@@ -29,6 +29,7 @@ func extractPython(item discoveredInput, text string) ([]Source, error) {
 	return sources, nil
 }
 
+// scanPythonSource scans Python source tokens for caveman text checks.
 func scanPythonSource(item discoveredInput, text string, starts []int, index int) (int, *Source, error) {
 	switch {
 	case text[index] == '#':
@@ -140,6 +141,7 @@ func parsePythonOutput(text string, open int, name string) (string, int, string,
 	return "", 0, "", errors.New("computed output requires an adjacent caveman:not-applicable classification")
 }
 
+// pythonFirstArgument extracts the first argument expression from a Python call.
 func pythonFirstArgument(text string, open int) (string, string, int, error) {
 	state := pythonArgumentScan{argumentEnd: -1}
 	for index := open + 1; index < len(text); index++ {
@@ -218,6 +220,7 @@ func pythonNotApplicable(text string, callEnd int) string {
 	return ""
 }
 
+// parsePythonTemplate parses template expressions in Python source strings.
 func parsePythonTemplate(expression string) (string, bool, error) {
 	parts := splitPythonConcatenation(expression)
 	var out strings.Builder
@@ -244,6 +247,7 @@ func parsePythonTemplate(expression string) (string, bool, error) {
 	return out.String(), static, nil
 }
 
+// parsePythonLiteralSequence extracts concatenated string literals from a Python expression.
 func parsePythonLiteralSequence(expression string) (string, bool, error) {
 	var out strings.Builder
 	index := skipPythonSpace(expression, 0)
@@ -263,6 +267,7 @@ func parsePythonLiteralSequence(expression string) (string, bool, error) {
 	return out.String(), found, nil
 }
 
+// splitPythonConcatenation splits a Python string concatenation into top-level fragments.
 func splitPythonConcatenation(expression string) []string {
 	parts := []string{}
 	start := 0

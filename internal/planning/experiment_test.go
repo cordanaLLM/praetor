@@ -273,6 +273,7 @@ func TestExperimentRenderAndRoundTrip(t *testing.T) {
 	})
 }
 
+// TestSchemaV1Window pins schema v1 window.
 func TestSchemaV1Window(t *testing.T) {
 	v1, err := os.ReadFile("testdata/valid-draft-v1.json")
 	if err != nil {

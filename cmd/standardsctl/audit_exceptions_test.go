@@ -14,6 +14,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
+// TestAuditExceptionsExpiry_3D pins 3D behavior for audit exceptions expiry.
 func TestAuditExceptionsExpiry_3D(t *testing.T) {
 	today := time.Date(2026, time.October, 10, 0, 0, 0, 0, time.UTC)
 	// The entries name files that exist, so only the expiry warning is under test here.
@@ -165,6 +166,7 @@ func TestAudit_ExpiredBacklogCapEntryFailsTheAudit(t *testing.T) {
 	}
 }
 
+// TestAudit_ExceptionsExpiryWarning_Integration pins audit exceptions expiry warning integration.
 func TestAudit_ExceptionsExpiryWarning_Integration(t *testing.T) {
 	today := time.Now()
 	f := newAuditFixture(t)
@@ -214,6 +216,7 @@ func runCategoryWarningCase(t *testing.T, root string, today time.Time, entry co
 	}
 }
 
+// TestAuditExceptionsExpiry_CategoryWarningWindows_3D pins audit exceptions expiry category warning windows 3D.
 func TestAuditExceptionsExpiry_CategoryWarningWindows_3D(t *testing.T) {
 	today := time.Date(2026, time.October, 10, 0, 0, 0, 0, time.UTC)
 	root := exceptionTargetRoot(t, "cat-c-fresh.yml", "cat-c-5.yml", "cat-c-6.yml", "cat-d-3.yml",

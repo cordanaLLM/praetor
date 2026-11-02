@@ -44,6 +44,7 @@ func TestFixtureDatesSampleClockOnce(t *testing.T) {
 	}
 }
 
+// TestFixtureClockReadCounter pins fixture clock read counter.
 func TestFixtureClockReadCounter(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string
@@ -61,6 +62,7 @@ func TestFixtureClockReadCounter(t *testing.T) {
 	}
 }
 
+// fixtureClockReads returns the count of clock reads observed during fixture execution.
 func fixtureClockReads(t *testing.T, source string) map[string]int {
 	t.Helper()
 	file, err := parser.ParseFile(token.NewFileSet(), "clock_test.go", source, 0)
@@ -83,6 +85,7 @@ func fixtureClockReads(t *testing.T, source string) map[string]int {
 	return counts
 }
 
+// isTimeNow checks whether an AST call expression invokes time.Now.
 func isTimeNow(expr ast.Expr) bool {
 	sel, ok := expr.(*ast.SelectorExpr)
 	if !ok {

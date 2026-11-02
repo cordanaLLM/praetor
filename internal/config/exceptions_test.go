@@ -23,6 +23,7 @@ import (
 // exceptionsToday is the fixed day the validator tests judge expiry against.
 var exceptionsToday = time.Date(2026, time.October, 6, 15, 30, 0, 0, time.UTC)
 
+// validException returns a valid configuration exception fixture.
 func validException() Exception {
 	return Exception{
 		Rule: ExceptionRuleClangTidyCoverage, Path: "src/win32/getopt.c",
@@ -188,6 +189,7 @@ func TestValidateExceptionsBoundary(t *testing.T) {
 	}
 }
 
+// TestValidateExceptionsCategories pins validate exceptions categories.
 func TestValidateExceptionsCategories(t *testing.T) {
 	base := Exception{Rule: ExceptionRuleMutants, Path: ".cargo/mutants.toml", Reason: "unsupported generated code", Category: "D", Entered: exceptionsToday.AddDate(0, 0, 10).Format(ExceptionDateLayout), Expires: exceptionsToday.AddDate(0, 0, 130).Format(ExceptionDateLayout)}
 	if err := ValidateExceptions([]Exception{base}, time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)); err != nil {
@@ -218,6 +220,7 @@ func TestValidateExceptionsCategories(t *testing.T) {
 	}
 }
 
+// TestException_Problem pins exception problem.
 func TestException_Problem(t *testing.T) {
 	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
 	base := Exception{Rule: ExceptionRuleDeclaredLinters, Tool: "exclusion", Reason: "#133", Category: "C", Entered: today.AddDate(0, 0, -8).Format(ExceptionDateLayout), Expires: today.AddDate(0, 0, 2).Format(ExceptionDateLayout)}
@@ -230,6 +233,7 @@ func TestException_Problem(t *testing.T) {
 	}
 }
 
+// TestValidateExceptions_HISSRulesAndFunctionScope pins validate exceptions HISS rules and function scope.
 func TestValidateExceptions_HISSRulesAndFunctionScope(t *testing.T) {
 	for _, rule := range hisscatalog.RuleIDs() {
 		entry := Exception{Rule: rule, Path: "src/a.go", Reason: "by design", Expires: exceptionsToday.AddDate(0, 0, 53).Format(ExceptionDateLayout)}
@@ -619,6 +623,7 @@ func TestLoadExceptionsFor_Negative_CanceledContextFails(t *testing.T) {
 	}
 }
 
+// TestExceptionDaysLeft_3D pins 3D behavior for exception days left.
 func TestExceptionDaysLeft_3D(t *testing.T) {
 	today := time.Date(2026, time.October, 10, 0, 0, 0, 0, time.UTC)
 
@@ -650,6 +655,7 @@ func TestExceptionDaysLeft_3D(t *testing.T) {
 	}
 }
 
+// TestExceptionExpiringWithin_3D pins 3D behavior for exception expiring within.
 func TestExceptionExpiringWithin_3D(t *testing.T) {
 	today := time.Date(2026, time.October, 10, 0, 0, 0, 0, time.UTC)
 
@@ -714,6 +720,7 @@ func assertFilteredPaths(t *testing.T, got []Exception, want ...string) {
 	}
 }
 
+// TestFilterExceptionsExpiringWithin_3D pins 3D behavior for filter exceptions expiring within.
 func TestFilterExceptionsExpiringWithin_3D(t *testing.T) {
 	today := time.Date(2026, time.October, 10, 0, 0, 0, 0, time.UTC)
 	entries := []Exception{
@@ -849,6 +856,7 @@ func TestException_WarningDays_3D(t *testing.T) {
 	}
 }
 
+// TestExceptionRuleSecrets_3D pins 3D behavior for exception rule secrets.
 func TestExceptionRuleSecrets_3D(t *testing.T) {
 	valid := Exception{
 		Rule:    ExceptionRuleSecrets,
@@ -1015,6 +1023,7 @@ func TestValidateExceptionsDedupeScope(t *testing.T) {
 	}
 }
 
+// TestLoadManifestDedupeScopeSchemaRoundTrip pins load manifest dedupe scope schema round trip.
 func TestLoadManifestDedupeScopeSchemaRoundTrip(t *testing.T) {
 	today := time.Now()
 	expires := ExceptionDay(today).AddDate(0, 0, 30).Format(ExceptionDateLayout)
@@ -1055,6 +1064,7 @@ exceptions:
 	}
 }
 
+// TestDedupeExceptionForScopedUsage pins dedupe exception for scoped usage.
 func TestDedupeExceptionForScopedUsage(t *testing.T) {
 	entry := validException()
 	entry.Rule, entry.Fingerprint, entry.Lines = ExceptionRuleDedupe, "abcdef12", "10-20"
@@ -1100,6 +1110,7 @@ func TestDedupeExceptionScopeGuards(t *testing.T) {
 	}
 }
 
+// TestException_UILatencySource pins exception UI latency source.
 func TestException_UILatencySource(t *testing.T) {
 	today := time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC)
 	base := Exception{

@@ -11,6 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/adr"
 )
 
+// TestTransform pins transform.
 func TestTransform(t *testing.T) {
 	cases := []struct{ name, input, want string }{
 		{"options heading", "## Considered Options\n\ntext\n", "## Alternatives Considered\n\ntext\n"},

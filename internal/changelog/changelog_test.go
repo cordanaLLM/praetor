@@ -48,6 +48,7 @@ func TestCreateAndLoadFragments_Positive(t *testing.T) {
 	}
 }
 
+// TestRenderRelease_Positive pins positive cases for render release.
 func TestRenderRelease_Positive(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -132,6 +133,7 @@ func TestLoadFragments_Boundary_EmptyOrMissingDir(t *testing.T) {
 	}
 }
 
+// TestRenderRelease_Positive_IssueHashNormalisation pins positive issue hash normalisation for render release.
 func TestRenderRelease_Positive_IssueHashNormalisation(t *testing.T) {
 	tmpDir := t.TempDir()
 

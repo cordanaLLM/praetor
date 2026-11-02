@@ -85,6 +85,7 @@ func assertReadMergedPullRequests(t *testing.T, jsonContent string) {
 	}
 }
 
+// TestReadMergedPullRequestsFile_Positive pins positive cases for read merged pull requests file.
 func TestReadMergedPullRequestsFile_Positive(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "merged_prs.json")
@@ -102,6 +103,7 @@ func TestReadMergedPullRequestsFile_Positive(t *testing.T) {
 	}
 }
 
+// TestParseGitHubMergedPulls_Positive pins positive cases for parse git hub merged pulls.
 func TestParseGitHubMergedPulls_Positive(t *testing.T) {
 	raw := /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ `[
 		{
@@ -312,6 +314,7 @@ func TestMergedPullRequest_EffectiveNumberAndAlias_PositiveBoundary(t *testing.T
 	}
 }
 
+// TestParseMergedPullRequests_Negative_StrictShapes pins negative strict shapes for parse merged pull requests.
 func TestParseMergedPullRequests_Negative_StrictShapes(t *testing.T) {
 	for name, input := range map[string]string{
 		"unknown wrapper key":   `{"pull_requests":[{"number":1}]}`,

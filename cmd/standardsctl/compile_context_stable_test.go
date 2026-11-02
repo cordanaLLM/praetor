@@ -14,6 +14,7 @@ func TestCompileContextVerifyStable_Positive_WarnsOnUnmarkedSource(t *testing.T)
 	mustContain(t, out, "no cache band markers", "<!-- praetor:head -->")
 }
 
+// TestCompileContextVerifyStable_Negative_RefusesVolatileHead pins negative refuses volatile head for compile context verify stable.
 func TestCompileContextVerifyStable_Negative_RefusesVolatileHead(t *testing.T) {
 	dir := newContextFixture(t, false)
 	source := readFixtureFile(t, dir, "AGENTS.md")

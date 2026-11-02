@@ -148,6 +148,7 @@ func assertEditedRenderingsRefused(t *testing.T, plain, withLibs Family, rel str
 	}
 }
 
+// exceptionsManifest creates a test manifest containing exception declarations.
 func exceptionsManifest(path string) *config.Manifest {
 	return &config.Manifest{
 		Exceptions: []config.Exception{{

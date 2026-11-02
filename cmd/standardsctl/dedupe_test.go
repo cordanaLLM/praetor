@@ -18,6 +18,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// TestPrintDedupeReport_ForeignExceptionMetadata pins print dedupe report foreign exception metadata.
 func TestPrintDedupeReport_ForeignExceptionMetadata(t *testing.T) {
 	for _, applicable := range []bool{true, false} {
 		t.Run(fmt.Sprintf("applicable_%v", applicable), func(t *testing.T) {
@@ -41,6 +42,7 @@ func TestPrintDedupeReport_ForeignExceptionMetadata(t *testing.T) {
 	}
 }
 
+// TestPrintDedupeReport_ExpiredForeignException pins print dedupe report expired foreign exception.
 func TestPrintDedupeReport_ExpiredForeignException(t *testing.T) {
 	report := &dedupe.DedupeReport{
 		Applicable: true, Passed: true,
@@ -359,6 +361,7 @@ func (in *Beta) DeepCopyInto(out *Beta) {
 }
 `
 
+// TestRunDedupeScan_Positive_ExceptedDeepCopyClonesPassAndAreListedAsExcepted pins positive excepted deep copy clones pass and are listed as excepted for run dedupe scan.
 func TestRunDedupeScan_Positive_ExceptedDeepCopyClonesPassAndAreListedAsExcepted(t *testing.T) {
 	today := time.Now()
 	dir := dedupeFixtureDir(t, "zz_generated.deepcopy.go", deepCopyGeneratedClonesFixture)
@@ -400,6 +403,7 @@ func TestRunDedupeScan_Negative_DeepCopyClonesWithoutEntryFail(t *testing.T) {
 	)
 }
 
+// TestRunDedupeScan_Negative_ExpiredEntryFailsNamingIt pins negative expired entry fails naming it for run dedupe scan.
 func TestRunDedupeScan_Negative_ExpiredEntryFailsNamingIt(t *testing.T) {
 	today := time.Now()
 	expired := today.AddDate(0, 0, -1).Format(config.ExceptionDateLayout)
@@ -424,6 +428,7 @@ func TestRunDedupeScan_Negative_ExpiredEntryFailsNamingIt(t *testing.T) {
 	)
 }
 
+// TestRunDedupeScan_Negative_MissingExceptionTargetRefusedByValidation pins negative missing exception target refused by validation for run dedupe scan.
 func TestRunDedupeScan_Negative_MissingExceptionTargetRefusedByValidation(t *testing.T) {
 	today := time.Now()
 	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
@@ -444,6 +449,7 @@ func TestRunDedupeScan_Negative_MissingExceptionTargetRefusedByValidation(t *tes
 	mustErrContain(t, err, "exceptions entry nonexistent.go (HISS-19): target file does not exist")
 }
 
+// TestRunDedupeScan_Negative_StaleExceptionFailsNamingIt pins negative stale exception fails naming it for run dedupe scan.
 func TestRunDedupeScan_Negative_StaleExceptionFailsNamingIt(t *testing.T) {
 	today := time.Now()
 	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
@@ -469,6 +475,7 @@ func TestRunDedupeScan_Negative_StaleExceptionFailsNamingIt(t *testing.T) {
 	mustErrContain(t, err, "1 stale exception(s)")
 }
 
+// TestRunDedupeScan_Boundary_UnknownLanguageExceptionNotChecked pins boundary unknown language exception not checked for run dedupe scan.
 func TestRunDedupeScan_Boundary_UnknownLanguageExceptionNotChecked(t *testing.T) {
 	today := time.Now()
 	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
@@ -566,6 +573,7 @@ func TestRunDedupeScan_Negative_UnscannedLanguageExceptionFailsOnForeignSkip(t *
 	}
 }
 
+// TestRunDedupeScan_Negative_MixedExceptionsFailsOnStaleOnly pins negative mixed exceptions fails on stale only for run dedupe scan.
 func TestRunDedupeScan_Negative_MixedExceptionsFailsOnStaleOnly(t *testing.T) {
 	today := time.Now()
 	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
@@ -598,6 +606,7 @@ func TestRunDedupeScan_Negative_MixedExceptionsFailsOnStaleOnly(t *testing.T) {
 	)
 }
 
+// TestRunDedupeScan_Boundary_NoGoWithUnscannedExceptionReturnsNil pins boundary no go with unscanned exception returns nil for run dedupe scan.
 func TestRunDedupeScan_Boundary_NoGoWithUnscannedExceptionReturnsNil(t *testing.T) {
 	today := time.Now()
 	dir := dedupeFixtureDir(t, "README.md", "# not go\n")

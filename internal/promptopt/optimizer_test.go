@@ -10,6 +10,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/notebook"
 )
 
+// experiment constructs a prompt optimization experiment for testing.
 func experiment(t *testing.T, today time.Time) Experiment {
 	t.Helper()
 	h := notebook.Digest([]byte("synthetic contract"))
@@ -26,6 +27,7 @@ func experiment(t *testing.T, today time.Time) Experiment {
 	return Experiment{Format: "praetor-prompt-experiment-v1", Identity: id, BaselineID: c.ID, MinQuality: .8, MaxAgeHours: 24, Candidates: []Candidate{c, other}}
 }
 
+// evaluate runs scoring evaluation on an experiment fixture.
 func evaluate(t *testing.T, e Experiment, today time.Time) (*Selection, error) {
 	t.Helper()
 	raw, err := json.Marshal(e)
@@ -35,6 +37,7 @@ func evaluate(t *testing.T, e Experiment, today time.Time) (*Selection, error) {
 	return Select(context.Background(), raw, today)
 }
 
+// TestSelectMeasuredImprovementAndPreserveBaseline pins select measured improvement and preserve baseline.
 func TestSelectMeasuredImprovementAndPreserveBaseline(t *testing.T) {
 	today := time.Now().UTC().Truncate(time.Second)
 	e := experiment(t, today)
@@ -55,6 +58,7 @@ func TestSelectMeasuredImprovementAndPreserveBaseline(t *testing.T) {
 	}
 }
 
+// TestRejectUncomparableEvidence pins reject uncomparable evidence.
 func TestRejectUncomparableEvidence(t *testing.T) {
 	today := time.Now().UTC().Truncate(time.Second)
 	for _, mutate := range []func(*Experiment){
@@ -78,6 +82,7 @@ func TestRejectUncomparableEvidence(t *testing.T) {
 	}
 }
 
+// TestSelectRequiresExplicitMeasurementsAndFloor pins select requires explicit measurements and floor.
 func TestSelectRequiresExplicitMeasurementsAndFloor(t *testing.T) {
 	today := time.Now().UTC().Truncate(time.Second)
 	raw, err := json.Marshal(experiment(t, today))
@@ -106,6 +111,7 @@ func TestSelectRequiresExplicitMeasurementsAndFloor(t *testing.T) {
 	}
 }
 
+// TestSelectAcceptsExplicitZeroAndFalse pins select accepts explicit zero and false.
 func TestSelectAcceptsExplicitZeroAndFalse(t *testing.T) {
 	today := time.Now().UTC().Truncate(time.Second)
 	e := experiment(t, today)
@@ -124,6 +130,7 @@ func TestSelectAcceptsExplicitZeroAndFalse(t *testing.T) {
 	}
 }
 
+// TestSelectStillRejectsUnknownAndDuplicateFields pins select still rejects unknown and duplicate fields.
 func TestSelectStillRejectsUnknownAndDuplicateFields(t *testing.T) {
 	today := time.Now().UTC().Truncate(time.Second)
 	raw, err := json.Marshal(experiment(t, today))
@@ -143,6 +150,7 @@ func TestSelectStillRejectsUnknownAndDuplicateFields(t *testing.T) {
 	}
 }
 
+// TestExperimentUsesTestClock pins experiment uses test clock.
 func TestExperimentUsesTestClock(t *testing.T) {
 	today := time.Now().UTC().Truncate(time.Second)
 	e := experiment(t, today)
@@ -153,6 +161,7 @@ func TestExperimentUsesTestClock(t *testing.T) {
 	}
 }
 
+// TestSelectEvidenceAgeBoundary pins select evidence age boundary.
 func TestSelectEvidenceAgeBoundary(t *testing.T) {
 	today := time.Now().UTC().Truncate(time.Second)
 	for _, tc := range []struct {

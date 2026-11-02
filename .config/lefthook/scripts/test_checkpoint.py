@@ -1038,6 +1038,7 @@ class CheckpointTests(unittest.TestCase):
                 "status": status, "conclusion": conclusion, "startedAt": started}
 
     def test_review_rerun_supersedes_earlier_run_of_same_job(self):
+        """Verify that a later check run replaces an earlier run of the same job."""
         head, base = self.review_fixture()
         # testdate: fact: recorded protocol/history metadata; parsed, no clock comparison
         early = "2026-10-06T15:14:18Z"
@@ -1057,6 +1058,7 @@ class CheckpointTests(unittest.TestCase):
                 self.assertEqual(result["due"], status != "passed")
 
     def test_review_rerun_never_hides_another_workflow_or_untimed_run(self):
+        """Verify that rerun tracking preserves separate workflows and untimed runs."""
         head, base = self.review_fixture()
         # testdate: fact: recorded protocol/history metadata; parsed, no clock comparison
         early = "2026-10-06T15:14:18Z"
@@ -1138,6 +1140,7 @@ class CheckpointTests(unittest.TestCase):
         self.assertEqual(result["review_status"], "failed", result)
 
     def test_review_checkpoint_push_run_beside_draft_run(self):
+        """Verify review status when push runs and draft runs coexist."""
         # ci.yml runs on a push to checkpoint/** as well as on the branch's draft pull request.
         # The push event carries no pull request, so its run does the work and reports the same
         # job name in the same workflow as the draft run that stopped in its draft step. The

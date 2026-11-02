@@ -8,6 +8,7 @@ import (
 	"testing"
 )
 
+// TestClaudeLimitsPrintsOnlyCounts pins claude limits prints only counts.
 func TestClaudeLimitsPrintsOnlyCounts(t *testing.T) {
 	dir := t.TempDir()
 	secret := "sk-" + "ant-" + strings.Repeat("Q", 30)

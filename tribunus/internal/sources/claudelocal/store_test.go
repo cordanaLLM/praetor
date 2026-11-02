@@ -171,6 +171,7 @@ func TestStoreWriteIsAtomic(t *testing.T) {
 	}
 }
 
+// TestCorruptStoreIsRefused pins corrupt store is refused.
 func TestCorruptStoreIsRefused(t *testing.T) {
 	valid := /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"version":1,"account":"default","ceilings":{"five_hour":{"ceiling_usd_equivalent":10,"rejected_at":"2026-10-13T10:00:00Z","source_file":"p/s.jsonl","window_reset":"2026-10-13T11:00:00Z","recorded_at":"2026-10-13T12:00:00Z"}}}`
 	cases := map[string]string{
@@ -241,6 +242,7 @@ func TestStoreOptionsAreChecked(t *testing.T) {
 	}
 }
 
+// TestCountLimitNames pins count limit names.
 func TestCountLimitNames(t *testing.T) {
 	dir := t.TempDir()
 	quota := func(limitType, status string) string {

@@ -155,6 +155,7 @@ func assertEfficiencyJSON(t *testing.T, prsPath string) {
 	}
 }
 
+// TestRunEfficiencyTo_Negative_RecordsWithoutLedgerFieldsRefused pins negative records without ledger fields refused for run efficiency to.
 func TestRunEfficiencyTo_Negative_RecordsWithoutLedgerFieldsRefused(t *testing.T) {
 	dir := t.TempDir()
 	for name, records := range map[string]string{

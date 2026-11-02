@@ -61,6 +61,7 @@ func TestBugAdversarialConcurrentWriters(t *testing.T) {
 	}
 }
 
+// TestBugAdversarialMetadataContract pins bug adversarial metadata contract.
 func TestBugAdversarialMetadataContract(t *testing.T) {
 	const row = "| `BUG-001` | title | p1 | open | file |  | "
 	const created = /* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */ `"created_at":"2026-09-12T10:00:00Z"`

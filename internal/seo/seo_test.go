@@ -10,6 +10,7 @@ import (
 // 1. POSITIVE TESTS (3D Dimension 1)
 // ============================================================================
 
+// TestTechArticle_Positive pins positive cases for tech article.
 func TestTechArticle_Positive(t *testing.T) {
 	raw := []byte( /* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */ `{
 		"@context": "https://schema.org",
@@ -62,6 +63,7 @@ func TestSoftwareSourceCode_Positive(t *testing.T) {
 	}
 }
 
+// TestValidateJSONLD_AutoDispatch_Positive pins validate auto dispatch positive.
 func TestValidateJSONLD_AutoDispatch_Positive(t *testing.T) {
 	rawArticle := []byte( /* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */ `{
 		"@context": "https://schema.org",
@@ -89,6 +91,7 @@ func TestValidateJSONLD_AutoDispatch_Positive(t *testing.T) {
 	}
 }
 
+// TestSitemapURLSet_Positive pins positive cases for sitemap url set.
 func TestSitemapURLSet_Positive(t *testing.T) {
 	raw := []byte( /* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */ `<?xml version="1.0" encoding="UTF-8"?>
 	<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
@@ -121,6 +124,7 @@ func TestSitemapURLSet_Positive(t *testing.T) {
 	}
 }
 
+// TestSitemapIndex_Positive pins positive cases for sitemap index.
 func TestSitemapIndex_Positive(t *testing.T) {
 	raw := []byte( /* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */ `<?xml version="1.0" encoding="UTF-8"?>
 	<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
@@ -324,6 +328,7 @@ func techArticleWith(author, dateModified string) []byte {
 	return []byte(b.String())
 }
 
+// TestTechArticle_Positive_AuthorShapes pins positive author shapes for tech article.
 func TestTechArticle_Positive_AuthorShapes(t *testing.T) {
 	// Schema.org accepts a name, an object carrying a name, or a list of either.
 	for _, author := range []string{`"cordanaLLM"`, `{"@type":"Organization","name":"cordanaLLM"}`, `["a",{"name":"b"}]`} {
@@ -336,6 +341,7 @@ func TestTechArticle_Positive_AuthorShapes(t *testing.T) {
 	}
 }
 
+// TestTechArticle_Negative_RequiredAuthorAndDateModified pins negative required author and date modified for tech article.
 func TestTechArticle_Negative_RequiredAuthorAndDateModified(t *testing.T) {
 	// BUG-974: the seo-audit skill lists author and dateModified as required TechArticle
 	// fields, and an empty dateModified used to pass because the format check returns early
@@ -374,6 +380,7 @@ func TestTechArticle_Negative_RequiredAuthorAndDateModified(t *testing.T) {
 	}
 }
 
+// TestTechArticle_Boundary_AuthorListCap pins boundary author list cap for tech article.
 func TestTechArticle_Boundary_AuthorListCap(t *testing.T) {
 	names := strings.TrimSuffix(strings.Repeat(`"a",`, maxAuthors), ",")
 	if res, err := ValidateTechArticle(techArticleWith("["+names+"]",

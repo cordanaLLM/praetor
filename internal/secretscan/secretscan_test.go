@@ -126,6 +126,7 @@ func testExceptionsLifecycle_Unexcused(t *testing.T) {
 	}
 }
 
+// testExceptionsLifecycle_Unexpired tests secret scan exception lifecycle with unexpired entries.
 func testExceptionsLifecycle_Unexpired(t *testing.T) {
 	report := checkOrdinaryLeak(t, []config.Exception{
 		{
@@ -144,6 +145,7 @@ func testExceptionsLifecycle_Unexpired(t *testing.T) {
 	}
 }
 
+// testExceptionsLifecycle_Expired tests secret scan exception lifecycle with expired entries.
 func testExceptionsLifecycle_Expired(t *testing.T) {
 	report := checkOrdinaryLeak(t, []config.Exception{
 		{
@@ -159,6 +161,7 @@ func testExceptionsLifecycle_Expired(t *testing.T) {
 	}
 }
 
+// testExceptionsLifecycle_Unused tests secret scan exception lifecycle with unused entries.
 func testExceptionsLifecycle_Unused(t *testing.T) {
 	report := checkOrdinaryLeak(t, []config.Exception{
 		{
@@ -709,6 +712,7 @@ func TestResolveScanner_PlantedMiseUntrustedProof(t *testing.T) {
 	}
 }
 
+// TestUnexcusedSecretInfractions pins unexcused secret infractions.
 func TestUnexcusedSecretInfractions(t *testing.T) {
 	dir := t.TempDir()
 	writeManifest(t, dir, []config.Exception{

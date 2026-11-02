@@ -380,6 +380,7 @@ func TestCollector_Positive_TranscriptsFeedUnitsWithoutGateway(t *testing.T) {
 	}
 }
 
+// TestCollector_Boundary_ReusedBranchJoinsOnlyTheLatestMergedPR pins boundary reused branch joins only the latest merged PR for collector.
 func TestCollector_Boundary_ReusedBranchJoinsOnlyTheLatestMergedPR(t *testing.T) {
 	dir := t.TempDir()
 	prs := filepath.Join(dir, "prs.json")
@@ -554,6 +555,7 @@ func assertDefectsAndTokens(t *testing.T, ms MilestoneSummary) {
 	}
 }
 
+// TestCollector_Positive_ZeroFailureRuleOfThreeBound pins positive zero failure rule of three bound for collector.
 func TestCollector_Positive_ZeroFailureRuleOfThreeBound(t *testing.T) {
 	// Honest edge case: a zero-failure claim prints its n and the rule-of-three bound
 	fixture := /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `[
@@ -595,6 +597,7 @@ func TestCollector_Positive_ZeroFailureRuleOfThreeBound(t *testing.T) {
 	}
 }
 
+// TestCollector_Boundary_ZeroQualifiedUnitsPrintsUndefinedNeverZero pins boundary zero qualified units prints undefined never zero for collector.
 func TestCollector_Boundary_ZeroQualifiedUnitsPrintsUndefinedNeverZero(t *testing.T) {
 	// Honest edge case: zero qualified units prints undefined, never 0
 	fixture := /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `[
@@ -649,6 +652,7 @@ func TestCollector_Boundary_ZeroQualifiedUnitsPrintsUndefinedNeverZero(t *testin
 	}
 }
 
+// TestCollector_Negative_RowWithoutProvenanceRefused pins negative row without provenance refused for collector.
 func TestCollector_Negative_RowWithoutProvenanceRefused(t *testing.T) {
 	// Acceptance: A row without provenance labels is refused.
 	fixture := /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `[
@@ -677,6 +681,7 @@ func TestCollector_Negative_RowWithoutProvenanceRefused(t *testing.T) {
 	}
 }
 
+// TestCollector_Negative_InvalidProvenanceRefused pins negative invalid provenance refused for collector.
 func TestCollector_Negative_InvalidProvenanceRefused(t *testing.T) {
 	fixture := /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `[
   {
@@ -720,6 +725,7 @@ func TestCollector_Negative_MissingMetricEpochRefused(t *testing.T) {
 	}
 }
 
+// TestCollector_Negative_MixedMetricEpochsRefused pins negative mixed metric epochs refused for collector.
 func TestCollector_Negative_MixedMetricEpochsRefused(t *testing.T) {
 	row1 := UnitReport{
 		PullRequestNumber: 1,
@@ -783,6 +789,7 @@ func TestCollector_Negative_MissingMetricEpochRefusedCollectorPath(t *testing.T)
 	}
 }
 
+// TestCollector_Positive_ProbeQualifiedAndRevertedUnitRates pins positive probe qualified and reverted unit rates for collector.
 func TestCollector_Positive_ProbeQualifiedAndRevertedUnitRates(t *testing.T) {
 	// Major 3 probe: 1 qualified + 1 reverted must print '1 of 1 units measured' not '2 of 2'.
 	fixture := /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `[
@@ -835,6 +842,7 @@ func TestCollector_Positive_ProbeQualifiedAndRevertedUnitRates(t *testing.T) {
 	}
 }
 
+// TestCollector_Positive_RevertRuleMarksOriginalReverted pins positive revert rule marks original reverted for collector.
 func TestCollector_Positive_RevertRuleMarksOriginalReverted(t *testing.T) {
 	// Major 5 positive: Revert PR marks the original PR as reverted
 	fixture := /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `[
@@ -883,6 +891,7 @@ func TestCollector_Positive_RevertRuleMarksOriginalReverted(t *testing.T) {
 	}
 }
 
+// TestCollector_Negative_RevertRuleNonMatchingTitle pins negative revert rule non matching title for collector.
 func TestCollector_Negative_RevertRuleNonMatchingTitle(t *testing.T) {
 	// Major 5 negative: non-revert titles do not change disposition
 	fixture := /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `[
@@ -1003,6 +1012,7 @@ func TestCollector_Positive_PerLaneAggregation(t *testing.T) {
 	}
 }
 
+// TestCollector_Negative_UnmarshalVectorTypeError pins negative unmarshal vector type error for collector.
 func TestCollector_Negative_UnmarshalVectorTypeError(t *testing.T) {
 	// Major 6: Vector unmarshal error reporting with context
 	fixture := /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `[
@@ -1071,6 +1081,7 @@ func TestLaneCounts_PositiveAndBoundary(t *testing.T) {
 	}
 }
 
+// TestCollector_Positive_OutcomesPopulateUnitAndSummary pins positive outcomes populate unit and summary for collector.
 func TestCollector_Positive_OutcomesPopulateUnitAndSummary(t *testing.T) {
 	today := time.Now()
 	dir := t.TempDir()

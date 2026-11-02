@@ -106,6 +106,7 @@ func TestAuditSite_Positive_StarlightShapedSitemapIndexWithoutRobots(t *testing.
 	}
 }
 
+// TestAuditSite_Negative_RequiredTechArticleFieldsFail pins negative required tech article fields fail for audit site.
 func TestAuditSite_Negative_RequiredTechArticleFieldsFail(t *testing.T) {
 	root := writeSite(t, map[string]string{
 		"a/index.html": page(jsonLD(strings.Replace(siteArticle,

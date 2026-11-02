@@ -888,6 +888,7 @@ func TestReceipts_Boundary_EmptyOutputAndInvalidKeys(t *testing.T) {
 	}
 }
 
+// TestBuildCanonicalPayload_3D pins 3D behavior for build canonical payload.
 func TestBuildCanonicalPayload_3D(t *testing.T) {
 	ts := time.Date(2026, 9, 12, 10, 30, 0, 0, time.UTC)
 

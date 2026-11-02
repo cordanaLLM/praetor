@@ -20,6 +20,7 @@ jobs:
         run: go run -tags=secretsgate ./tools/secrets/gate
 `
 
+// TestRenderWorkflow_RoundTrip_3D pins render workflow round trip 3D.
 func TestRenderWorkflow_RoundTrip_3D(t *testing.T) {
 	// Empty entries: plain unchanged
 	out, err := secrets.RenderWorkflow(sampleWorkflow, nil)
@@ -56,6 +57,7 @@ func TestRenderWorkflow_RoundTrip_3D(t *testing.T) {
 	}
 }
 
+// TestRenderWorkflow_NegativeMissingMarker pins render workflow negative missing marker.
 func TestRenderWorkflow_NegativeMissingMarker(t *testing.T) {
 	badWorkflow := `name: Security
 jobs:

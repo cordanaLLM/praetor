@@ -439,6 +439,7 @@ func TestSyncPruneRemovesOnlyFlaggedSeedEntries(t *testing.T) {
 	}
 }
 
+// TestSyncCatalogRefreshesDiscoveredLocalAsOfDate pins sync catalog refreshes discovered local as of date.
 func TestSyncCatalogRefreshesDiscoveredLocalAsOfDate(t *testing.T) {
 	day1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	day212 := day1.AddDate(0, 0, 212)

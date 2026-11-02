@@ -97,6 +97,7 @@ func TestReconcileWithCatalogBoundaries(t *testing.T) {
 	}
 }
 
+// TestReconcileWithCatalogUnparseablePinIsUnranked pins reconcile with catalog unparseable pin is unranked.
 func TestReconcileWithCatalogUnparseablePinIsUnranked(t *testing.T) {
 	catalog := map[string]CatalogEntry{"node-lib": {Version: "latest", Verified: time.Date(2026, 9, 26, 15, 4, 5, 0, time.UTC).AddDate(0, 0, 0).Format(time.DateOnly)}}
 	report := reconcileWithCatalog([]UpgradeCandidate{discoveredDep("node-lib", "1.0.0", "package.json")}, catalog)
@@ -280,6 +281,7 @@ func TestRankedVersion_Boundaries(t *testing.T) {
 	}
 }
 
+// TestVerifiedWithin pins verified within.
 func TestVerifiedWithin(t *testing.T) {
 	now := time.Date(2026, 9, 26, 15, 4, 5, 0, time.UTC)
 	bound := 90 * 24 * time.Hour

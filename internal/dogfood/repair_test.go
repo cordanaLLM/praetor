@@ -118,6 +118,7 @@ func TestRepairNoFailuresRequiresRealEvidence(t *testing.T) {
 	}
 }
 
+// TestRepairBudgetAndUnroutableJobs pins repair budget and unroutable jobs.
 func TestRepairBudgetAndUnroutableJobs(t *testing.T) {
 	policy := repairTestPolicy(t)
 	report := repairTestReport(t, 2)

@@ -1016,6 +1016,7 @@ func writeStandardsManifest(t *testing.T, dir string, content string) {
 	}
 }
 
+// setupExceptedDeepCopyFixture populates a test tree containing excepted deep-copy clones.
 func setupExceptedDeepCopyFixture(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
@@ -1034,6 +1035,7 @@ func setupExceptedDeepCopyFixture(t *testing.T) string {
 	return tmp
 }
 
+// assertDeepCopyExceptionEntry verifies that an exception entry matches expected clone targets.
 func assertDeepCopyExceptionEntry(t *testing.T, exc dedupe.ExceptionEntry) {
 	t.Helper()
 	if exc.Path != "zz_generated.deepcopy.go" || exc.Reason != "controller-gen DeepCopyInto clones" || exc.Expires != deepCopyFixtureToday.AddDate(0, 0, 24).Format(config.ExceptionDateLayout) {
@@ -1064,6 +1066,7 @@ func assertExceptedDeepCopyReport(t *testing.T, report *dedupe.DedupeReport) {
 	}
 }
 
+// TestScanRepo_Positive_DeepCopyIntoClonesInExceptedFilePassAndAreListedAsExcepted pins positive deep copy into clones in excepted file pass and are listed as excepted for scan repo.
 func TestScanRepo_Positive_DeepCopyIntoClonesInExceptedFilePassAndAreListedAsExcepted(t *testing.T) {
 	tmp := setupExceptedDeepCopyFixture(t)
 
@@ -1100,6 +1103,7 @@ func TestScanRepo_Negative_DeepCopyIntoClonesWithoutEntryFail(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Negative_ExpiredEntryFailsNamingIt pins negative expired entry fails naming it for scan repo.
 func TestScanRepo_Negative_ExpiredEntryFailsNamingIt(t *testing.T) {
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "zz_generated.deepcopy.go")
@@ -1139,6 +1143,7 @@ func TestScanRepo_Negative_ExpiredEntryFailsNamingIt(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Negative_GroupWithOneMemberInExceptedFileAndOneOutsideFails pins negative group with one member in excepted file and one outside fails for scan repo.
 func TestScanRepo_Negative_GroupWithOneMemberInExceptedFileAndOneOutsideFails(t *testing.T) {
 	tmp := t.TempDir()
 	if err := os.WriteFile(filepath.Join(tmp, "alpha.go"), []byte(deepCopySingleAlphaSource), 0o600); err != nil {
@@ -1175,6 +1180,7 @@ func TestScanRepo_Negative_GroupWithOneMemberInExceptedFileAndOneOutsideFails(t 
 	}
 }
 
+// TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation pins negative entry for missing file is refused by validation for scan repo.
 func TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation(t *testing.T) {
 	today := time.Now()
 	tmp := t.TempDir()
@@ -1230,6 +1236,7 @@ func CleanBeta() int {
 }
 `
 
+// TestScanRepo_Negative_StaleExceptionForCleanFileFails pins negative stale exception for clean file fails for scan repo.
 func TestScanRepo_Negative_StaleExceptionForCleanFileFails(t *testing.T) {
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "clean.go")
@@ -1265,6 +1272,7 @@ func TestScanRepo_Negative_StaleExceptionForCleanFileFails(t *testing.T) {
 	}
 }
 
+// TestScanRepo_CategoryDStaleException pins scan repo category d stale exception.
 func TestScanRepo_CategoryDStaleException(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "clean.go", cleanGoSource)
@@ -1287,6 +1295,7 @@ func TestScanRepo_CategoryDStaleException(t *testing.T) {
 	t.Log("category D entry validates; native scanner reports its unused exception as stale")
 }
 
+// TestScanRepo_Boundary_UnknownLanguageExceptionNotChecked pins boundary unknown language exception not checked for scan repo.
 func TestScanRepo_Boundary_UnknownLanguageExceptionNotChecked(t *testing.T) {
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "clean.go")
@@ -1329,6 +1338,7 @@ func TestScanRepo_Boundary_UnknownLanguageExceptionNotChecked(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Negative_UnusedExceptionWithClonesFailsForUnusedEntry pins negative unused exception with clones fails for unused entry for scan repo.
 func TestScanRepo_Negative_UnusedExceptionWithClonesFailsForUnusedEntry(t *testing.T) {
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "zz_generated.deepcopy.go")
@@ -1375,6 +1385,7 @@ func TestScanRepo_Negative_UnusedExceptionWithClonesFailsForUnusedEntry(t *testi
 	}
 }
 
+// TestScanRepo_Negative_SymlinkExceptionTargetIsRefused pins negative symlink exception target is refused for scan repo.
 func TestScanRepo_Negative_SymlinkExceptionTargetIsRefused(t *testing.T) {
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "real.go")
@@ -1405,6 +1416,7 @@ func TestScanRepo_Negative_SymlinkExceptionTargetIsRefused(t *testing.T) {
 	}
 }
 
+// TestValidateExceptions_Negative_SymlinkAndContextCancellation pins negative symlink and context cancellation for validate exceptions.
 func TestValidateExceptions_Negative_SymlinkAndContextCancellation(t *testing.T) {
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "real.go")
@@ -1485,6 +1497,7 @@ func TestScanRepo_Negative_MissingExceptionTargetWordingWithFilteredOutPredecess
 	}
 }
 
+// TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19 pins negative supplied exceptions filtered to his s19 for scan repo with options.
 func TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19(t *testing.T) {
 	tmp := t.TempDir()
 	sourceA := `package test
@@ -1552,6 +1565,7 @@ func DuplicateHelperB() {
 	}
 }
 
+// TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone pins negative credits exception does not excuse clone for scan repo with options.
 func TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone(t *testing.T) {
 	tmp := t.TempDir()
 	sourceA := `package test
@@ -1823,6 +1837,7 @@ func BetaGit() {
 	}
 }
 
+// TestScanRepo_ScopedExceptions pins scan repo scoped exceptions.
 func TestScanRepo_ScopedExceptions(t *testing.T) {
 	for _, foreign := range []bool{false, true} {
 		t.Run(fmt.Sprintf("foreign=%v", foreign), func(t *testing.T) {
@@ -1926,6 +1941,7 @@ func assertScopedExceptionReport(t *testing.T, report *dedupe.DedupeReport, fore
 	}
 }
 
+// TestScanRepo_ScopedExceptionExpiry pins scan repo scoped exception expiry.
 func TestScanRepo_ScopedExceptionExpiry(t *testing.T) {
 	for _, foreign := range []bool{false, true} {
 		t.Run(fmt.Sprintf("foreign=%v", foreign), func(t *testing.T) {
@@ -1956,6 +1972,7 @@ func TestScanRepo_ScopedExceptionExpiry(t *testing.T) {
 	}
 }
 
+// assertScopedExpiry asserts the expected expiry date on a scoped exception finding.
 func assertScopedExpiry(t *testing.T, groups []dedupe.DuplicateGroup, hash string) {
 	t.Helper()
 	for _, group := range groups {
@@ -1971,6 +1988,7 @@ func assertScopedExpiry(t *testing.T, groups []dedupe.DuplicateGroup, hash strin
 	}
 }
 
+// TestScanRepo_SeparateLineScopesKeepBothEntries pins scan repo separate line scopes keep both entries.
 func TestScanRepo_SeparateLineScopesKeepBothEntries(t *testing.T) {
 	for _, foreign := range []bool{false, true} {
 		t.Run(fmt.Sprintf("foreign=%v", foreign), func(t *testing.T) {
@@ -2011,6 +2029,7 @@ func TestScanRepo_SeparateLineScopesKeepBothEntries(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked pins positive unscanned language exception not checked for scan repo.
 func TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked(t *testing.T) {
 	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
 	root := t.TempDir()
@@ -2049,6 +2068,7 @@ func TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale pins negative go exception without duplicate is stale for scan repo.
 func TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "clean.go", cleanGoSource)
@@ -2081,6 +2101,7 @@ func TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly pins negative mixed exceptions fails on stale only for scan repo.
 func TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly(t *testing.T) {
 	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
 	root := t.TempDir()
@@ -2123,6 +2144,7 @@ func TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Boundary_NotApplicableUnscannedExceptionNotChecked pins boundary not applicable unscanned exception not checked for scan repo.
 func TestScanRepo_Boundary_NotApplicableUnscannedExceptionNotChecked(t *testing.T) {
 	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
 	root := t.TempDir()

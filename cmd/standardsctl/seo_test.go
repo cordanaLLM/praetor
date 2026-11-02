@@ -44,6 +44,7 @@ func TestRunSEO_Positive_AuditsABuiltSite(t *testing.T) {
 	}
 }
 
+// TestRunSEO_Negative_FindingsFailTheCommand pins negative findings fail the command for run SEO.
 func TestRunSEO_Negative_FindingsFailTheCommand(t *testing.T) {
 	// BUG-974: an empty dateModified fails the audit.
 	dir := seoSite(t, strings.Replace(seoFixtureArticle,

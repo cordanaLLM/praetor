@@ -10,6 +10,7 @@ import (
 	"time"
 )
 
+// TestValidateExceptionsCategoryCaps pins validate exceptions category caps.
 func TestValidateExceptionsCategoryCaps(t *testing.T) {
 	today := time.Date(2026, 10, 21, 18, 0, 0, 0, time.UTC)
 	cases := []struct{ name, category, reason, entered, expires, want string }{
@@ -72,6 +73,7 @@ func TestExceptionWarningDaysReasonCategory(t *testing.T) {
 	}
 }
 
+// TestValidateExceptionsHISS18CategoryCutoff pins validate exceptions his s18 category cutoff.
 func TestValidateExceptionsHISS18CategoryCutoff(t *testing.T) {
 	today := time.Date(2026, 10, 21, 18, 0, 0, 0, time.UTC)
 	cases := []struct {

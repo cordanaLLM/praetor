@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+// TestClockContextUsesInjectedLocalTime pins clock context uses injected local time.
 func TestClockContextUsesInjectedLocalTime(t *testing.T) {
 	prior := time.Local
 	time.Local = time.FixedZone("CET", 3600)
@@ -115,6 +116,7 @@ func runClock(t *testing.T, client, event, payload string) Response {
 	return Run(context.Background(), Invocation{Client: client, Event: event, Stdin: strings.NewReader(payload), WorkDir: t.TempDir(), Now: now})
 }
 
+// wantClockLine constructs the expected clock header line for tests.
 func wantClockLine() string {
 	return "clock: " + time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC).In(time.FixedZone("CET", 3600)).Format(time.DateOnly+" 15:04:05 MST") + " (from the system clock; use this, never estimate)"
 }

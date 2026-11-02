@@ -261,6 +261,7 @@ func decodePrintfEscapes(value string) (string, error) {
 	return out.String(), nil
 }
 
+// appendPrintfEscape handles printf escape sequences in shell text.
 func appendPrintfEscape(out *strings.Builder, value string) (int, error) {
 	switch value[0] {
 	case 'e', 'E':

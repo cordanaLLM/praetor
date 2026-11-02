@@ -12,6 +12,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
+// TestAuditMutationExclusions_3D pins 3D behavior for audit mutation exclusions.
 func TestAuditMutationExclusions_3D(t *testing.T) {
 	f := newAuditFixture(t)
 	writeFixtureFile(t, f.dir, ".cargo/mutants.toml", "exclude_re = [\"legacy\"]\nexclude_globs = [\"src/generated/**\"]\n")
@@ -45,6 +46,7 @@ func TestAuditMutationExclusions_3D(t *testing.T) {
 	}
 }
 
+// TestAuditMutationExclusionsIntegration pins audit mutation exclusions integration.
 func TestAuditMutationExclusionsIntegration(t *testing.T) {
 	today := time.Now()
 	f := newAuditFixture(t)
@@ -126,6 +128,7 @@ func TestMutationToolConfigExclusionParsers(t *testing.T) {
 	}
 }
 
+// TestAuditMutationExceptionRuleRequiresPath pins audit mutation exception rule requires path.
 func TestAuditMutationExceptionRuleRequiresPath(t *testing.T) {
 	today := time.Now()
 	err := config.ValidateExceptions([]config.Exception{{Rule: config.ExceptionRuleMutants, Glob: "**/*.toml", Reason: "temporary", Expires: today.AddDate(0, 0, 14).Format(config.ExceptionDateLayout)}}, today)

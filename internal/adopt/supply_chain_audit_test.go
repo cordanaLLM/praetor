@@ -362,6 +362,7 @@ func imageRefFixtureEntries(dir string) []os.DirEntry {
 	return fixtures
 }
 
+// TestAuditSupplyChainImageRefsBaselineAndExceptions_3D pins 3D behavior for audit supply chain image refs baseline and exceptions.
 func TestAuditSupplyChainImageRefsBaselineAndExceptions_3D(t *testing.T) {
 	policy := supplyChainPolicy(0, false, false)
 	floating := map[string]string{"Dockerfile": "FROM golang:1.27-alpine\n"}

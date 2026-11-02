@@ -29,6 +29,7 @@ func TestTrackedFragments_Positive_DecodeUnderStrictSchema(t *testing.T) {
 // maxTrackedFragments bounds the loops over the tracked fragment set (HISS-02).
 const maxTrackedFragments = 4096
 
+// TestTrackedFragments_Positive_RenderIntoCopy pins positive render into copy for tracked fragments.
 func TestTrackedFragments_Positive_RenderIntoCopy(t *testing.T) {
 	root := t.TempDir()
 	copyTrackedChangelog(t, root)

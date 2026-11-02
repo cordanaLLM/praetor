@@ -306,6 +306,7 @@ func TestServer_Positive_RegistrationAndAnnotations(t *testing.T) {
 	}
 }
 
+// TestServer_Positive_ProtocolMethods pins positive protocol methods for server.
 func TestServer_Positive_ProtocolMethods(t *testing.T) {
 	srv, _ := newFixtureServer(t)
 	ctx := context.Background()

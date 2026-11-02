@@ -162,6 +162,7 @@ func TestRepairStatusMCPRejectsSymlinksAndMalformedReports(t *testing.T) {
 	}
 }
 
+// TestRepairStatusMCPConsumesTerminalWithoutOptionalCost pins repair status MCP consumes terminal without optional cost.
 func TestRepairStatusMCPConsumesTerminalWithoutOptionalCost(t *testing.T) {
 	if err := repairrun.ExecutionSupported(); err != nil {
 		t.Skipf("repair execution unavailable on this platform: %v", err)

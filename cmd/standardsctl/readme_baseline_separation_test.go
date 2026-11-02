@@ -41,6 +41,7 @@ func TestPlantedMixedBaselineRefusal(t *testing.T) {
 	}
 }
 
+// plantMigrationBaseline writes a migration baseline fixture to disk.
 func plantMigrationBaseline(t *testing.T, repo string) string {
 	t.Helper()
 	raw := /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"version":2,"repository":"example/adopted","commit_sha":"abc","generated_at":"2026-01-01T00:00:00Z","total_infractions":7,"infractions":[{"rule_id":"HISS-01","anchor":"fn:a","fingerprint":"h1"},{"rule_id":"HISS-07","fingerprint":"h2"},{"rule_id":"G101","fingerprint":"h3"},{"rule_id":"README-01","anchor":"file:x","fingerprint":"r1"},{"rule_id":"README-02","fingerprint":"r2"}]}`
@@ -223,6 +224,7 @@ func assertParityCounts(t *testing.T, verdicts []parityVerdict, audit, verify st
 	}
 }
 
+// checkMigratedMetadata verifies migrated README metadata integrity.
 func checkMigratedMetadata(t *testing.T, b *baseline.Baseline) {
 	t.Helper()
 	if b.Version != 2 || b.CommitSHA != "abc" || b.Repository != "example/adopted" || b.GeneratedAt != /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ "2026-01-01T00:00:00Z" {

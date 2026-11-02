@@ -26,6 +26,7 @@ func gapSession(t *testing.T, entry *config.Exception) *adoptSession {
 // measuredGap is the entry a first adoption records for a repository without a release workflow.
 var readoptToday = time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
 
+// measuredGap calculates supply chain metric gaps for tests.
 func measuredGap() *config.Exception {
 	entry := newSupplyChainException(supplyChainGap{}, readoptToday)
 	return &entry

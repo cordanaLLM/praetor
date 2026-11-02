@@ -11,6 +11,7 @@ import (
 	"testing"
 )
 
+// TestFixtureDatesPytestPaths pins fixture dates pytest paths.
 func TestFixtureDatesPytestPaths(t *testing.T) {
 	for _, name := range []string{"conftest.py", "tests/shared.py", "test/shared.py", "nested/tests/shared.py", "test_date.py", "date_selftest.py", "selftest.py", "src/shared.py"} {
 		t.Run(name, func(t *testing.T) {
@@ -24,6 +25,7 @@ func TestFixtureDatesPytestPaths(t *testing.T) {
 	}
 }
 
+// TestFixtureDatesAnnotationCRLF pins fixture dates annotation CRLF.
 func TestFixtureDatesAnnotationCRLF(t *testing.T) {
 	for _, ending := range []string{"\n", "\r\n"} {
 		t.Run(ending, func(t *testing.T) {
@@ -37,6 +39,7 @@ func TestFixtureDatesAnnotationCRLF(t *testing.T) {
 	}
 }
 
+// TestFixtureDateCoverageRetainsDimensionMechanisms pins fixture date coverage retains dimension mechanisms.
 func TestFixtureDateCoverageRetainsDimensionMechanisms(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", ".config", "hiss", "coverage.yaml"))
 	if err != nil {
@@ -54,6 +57,7 @@ func TestFixtureDateCoverageRetainsDimensionMechanisms(t *testing.T) {
 	}
 }
 
+// TestFixtureDatesPythonTolerantEscapes pins fixture dates python tolerant escapes.
 func TestFixtureDatesPythonTolerantEscapes(t *testing.T) {
 	for _, tc := range []struct {
 		name, body, wantSubstring string
@@ -107,6 +111,7 @@ func TestFixtureDatesPythonTolerantEscapes(t *testing.T) {
 	}
 }
 
+// TestFixtureDatePythonCoverageAndGuideReferences pins fixture date python coverage and guide references.
 func TestFixtureDatePythonCoverageAndGuideReferences(t *testing.T) {
 	for _, tc := range []struct {
 		name, coverage, guide string
@@ -157,6 +162,7 @@ func TestFixtureDatePythonCoverageAndGuideReferences(t *testing.T) {
 	}
 }
 
+// validPythonDateReferences returns fixture date reference strings permitted in tests.
 func validPythonDateReferences(coverage, guide string) bool {
 	hasCoverage := strings.Contains(coverage, "internal/hiss/test_dates_python.go, scanPythonFixtureDates")
 	hasGuide := strings.Contains(guide, "internal/hiss/test_dates_python.go")

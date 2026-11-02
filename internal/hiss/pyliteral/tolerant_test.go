@@ -10,6 +10,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/hiss/pyliteral"
 )
 
+// TestParseTolerant pins parse tolerant.
 func TestParseTolerant(t *testing.T) {
 	for _, tc := range []struct {
 		name, source, want string

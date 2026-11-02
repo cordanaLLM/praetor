@@ -11,6 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/tools/secrets/rules"
 )
 
+// TestCategoryExpiryCaps pins category expiry caps.
 func TestCategoryExpiryCaps(t *testing.T) {
 	cases := []struct{ name, category, entered, expires, want string }{
 		{"A stated", "A", testToday.AddDate(0, 0, 0).Format(rules.DateLayout), testToday.AddDate(0, 0, 90).Format(rules.DateLayout), ""},

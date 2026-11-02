@@ -7,6 +7,7 @@ import (
 	"testing"
 )
 
+// fixture loads or creates test fixture data.
 func fixture(t *testing.T) (Bundle, []byte) {
 	t.Helper()
 	b := Bundle{Format: Format, NotebookID: "fixture", Title: "Plan", Connector: "test",

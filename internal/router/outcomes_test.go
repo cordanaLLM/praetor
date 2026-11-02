@@ -414,6 +414,7 @@ func TestOutcomeKeyCoversToolSet(t *testing.T) {
 	}
 }
 
+// TestOutcomeLegacyRecordReadable pins outcome legacy record readable.
 func TestOutcomeLegacyRecordReadable(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "outcomes.jsonl")
@@ -493,6 +494,7 @@ func TestOutcomeMissingEstimateIsNeverZero(t *testing.T) {
 	}
 }
 
+// TestReadOutcomesToleratesOnlyRecordsWithoutIdentityFields pins read outcomes tolerates only records without identity fields.
 func TestReadOutcomesToleratesOnlyRecordsWithoutIdentityFields(t *testing.T) {
 	refused := map[string]string{
 		"junk identity":/* testdate: fact: recorded usage/outcome timestamp; decoding, no clock comparison */ `{"time":"2026-10-08T09:00:00Z","task":"stubs","target":"light","result":"ok","identity":{"harness":"h","context_bytes":-5},"identity_key":"junk","actual_cost":1.5}`,

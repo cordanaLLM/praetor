@@ -10,6 +10,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/notebook"
 )
 
+// TestNotebookMCPMetadataAndConfinement pins notebook MCP metadata and confinement.
 func TestNotebookMCPMetadataAndConfinement(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	content := "PRIVATE fixture requirement"

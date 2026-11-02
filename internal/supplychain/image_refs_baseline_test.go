@@ -51,6 +51,7 @@ func TestUnexcusedImageRefInfractions_UnresolvableRef(t *testing.T) {
 	}
 }
 
+// TestUnexcusedImageRefInfractions_LiveException pins unexcused image ref infractions live exception.
 func TestUnexcusedImageRefInfractions_LiveException(t *testing.T) {
 	root := fixtureRepo(t, map[string]string{
 		"Dockerfile": "FROM golang:1.27-alpine\n",
@@ -73,6 +74,7 @@ func TestUnexcusedImageRefInfractions_LiveException(t *testing.T) {
 	}
 }
 
+// TestUnexcusedImageRefInfractions_ExpiredException pins unexcused image ref infractions expired exception.
 func TestUnexcusedImageRefInfractions_ExpiredException(t *testing.T) {
 	root := fixtureRepo(t, map[string]string{
 		"Dockerfile": "FROM golang:1.27-alpine\n",

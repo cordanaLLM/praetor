@@ -22,6 +22,7 @@ const compactStateLog = "# Session State & Active Working Context\n\n## Active S
 	/* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */ "\n### [2026-09-12 08:00:00 UTC] `0123456789abcdef0123456789abcdef01234567` on `fix/a`\n- post-commit sync | tasks 130 open 42 done | bugs 569 open | qs 4 pending | git available dirty 1\n" +
 	/* testdate: fact: recorded ledger timestamp; serialization, no clock comparison */ "\n### [2026-09-13 09:00:00 UTC] `(unavailable)` on `(not a git worktree)`\n- Ledger repaired; see evidence | tasks 1 open 0 done | bugs 2 open | qs 0 pending | git not_repository dirty 0\n"
 
+// TestStateEntryRenderTemplate pins state entry render template.
 func TestStateEntryRenderTemplate(t *testing.T) {
 	snap := &StateSnapshot{Branch: "main", HeadSHA: "abc1234", GitState: "available", Clean: true,
 		OpenTasks: 3, CompletedTasks: 5, OpenBugs: 2, LastUpdated: time.Date(2026, 9, 18, 6, 21, 57, 0, time.UTC)}

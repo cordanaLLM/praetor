@@ -11,6 +11,7 @@ import (
 	"testing"
 )
 
+// TestFixtureDatesReplay pins fixture dates replay.
 func TestFixtureDatesReplay(t *testing.T) {
 	for _, language := range []string{"go", "python"} {
 		for _, bucket := range []string{"positive", "negative"} {
@@ -19,6 +20,7 @@ func TestFixtureDatesReplay(t *testing.T) {
 	}
 }
 
+// replayDateBucket replays fixture date test cases for a specific category.
 func replayDateBucket(t *testing.T, language, bucket string) {
 	t.Helper()
 	root := filepath.Join("..", "..", ".config", "hiss", "testdata", "HISS-15", language, bucket)
@@ -62,6 +64,7 @@ func replayDateFixture(t *testing.T, root, name string, reject bool) {
 	}
 }
 
+// assertDateFinding asserts that a scan report contains the expected fixture date finding.
 func assertDateFinding(t *testing.T, v InvariantViolation, name string, lines []string) {
 	t.Helper()
 	if v.FilePath != name || !strings.Contains(v.Message, "derive it from the test clock") {
@@ -93,6 +96,7 @@ func TestFixtureDatesRepository(t *testing.T) {
 	}
 }
 
+// isFixtureDateSource reports whether a path is subject to fixture date verification.
 func isFixtureDateSource(rel string) bool {
 	if strings.Contains("/"+rel, "/testdata/") {
 		return false
@@ -100,6 +104,7 @@ func isFixtureDateSource(rel string) bool {
 	return strings.HasSuffix(rel, "_test.go") || (strings.HasSuffix(rel, ".py") && isPythonTest(rel))
 }
 
+// checkRepositoryTestDates executes fixture date verification across repository files.
 func checkRepositoryTestDates(t *testing.T, root, rel string) {
 	t.Helper()
 	data, err := readBounded(root, rel)

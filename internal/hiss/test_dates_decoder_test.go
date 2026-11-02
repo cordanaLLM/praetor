@@ -11,6 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/hiss/pyliteral"
 )
 
+// TestFixtureDatePythonDecoder pins fixture date python decoder.
 func TestFixtureDatePythonDecoder(t *testing.T) {
 	for _, tc := range []struct {
 		name, source, want string
@@ -40,6 +41,7 @@ func TestFixtureDatePythonDecoder(t *testing.T) {
 	}
 }
 
+// TestFixtureDatePythonDecoderBounds pins fixture date python decoder bounds.
 func TestFixtureDatePythonDecoderBounds(t *testing.T) {
 	for _, index := range []int{-1, 0, 1} {
 		if _, _, err := pyliteral.Parse("", index); err == nil || pyliteral.At("", index) {

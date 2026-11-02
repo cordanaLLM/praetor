@@ -15,6 +15,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// TestPrepareRelease_Positive pins positive cases for prepare release.
 func TestPrepareRelease_Positive(t *testing.T) {
 	tmpDir := t.TempDir()
 

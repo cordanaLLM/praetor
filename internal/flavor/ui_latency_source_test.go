@@ -57,6 +57,7 @@ func TestAuditUIGates_LatencySource_MissingSourceFails(t *testing.T) {
 	}
 }
 
+// TestAuditUIGates_LatencySource_LiveExceptionPasses pins audit UI gates latency source live exception passes.
 func TestAuditUIGates_LatencySource_LiveExceptionPasses(t *testing.T) {
 	dir := setupCompleteUIRepo(t)
 	today := time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC)
@@ -84,6 +85,7 @@ func TestAuditUIGates_LatencySource_LiveExceptionPasses(t *testing.T) {
 	}
 }
 
+// TestAuditUIGates_LatencySource_ExpiredExceptionFails pins audit UI gates latency source expired exception fails.
 func TestAuditUIGates_LatencySource_ExpiredExceptionFails(t *testing.T) {
 	dir := setupCompleteUIRepo(t)
 	afterExpiry := time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
@@ -112,6 +114,7 @@ func TestAuditUIGates_LatencySource_ExpiredExceptionFails(t *testing.T) {
 	}
 }
 
+// TestAuditUIGates_LatencySource_ExceptionWithoutOwnerFails pins audit UI gates latency source exception without owner fails.
 func TestAuditUIGates_LatencySource_ExceptionWithoutOwnerFails(t *testing.T) {
 	dir := setupCompleteUIRepo(t)
 	today := time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC)

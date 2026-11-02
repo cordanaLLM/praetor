@@ -51,6 +51,7 @@ func TestAuditModelCatalogSkipsWithoutCatalog(t *testing.T) {
 	}
 }
 
+// TestAuditModelCatalogPassesFreshCatalogAndUndatedEntries pins audit model catalog passes fresh catalog and undated entries.
 func TestAuditModelCatalogPassesFreshCatalogAndUndatedEntries(t *testing.T) {
 	root := writeAuditCatalog(t, auditModelEntry("fresh", `, as_of: "`+auditModelNow.AddDate(0, 0, -8).Format(time.DateOnly)+`"`)+auditModelEntry("undated", ""))
 	out, err := runModelCatalogAudit(t, root)
@@ -59,6 +60,7 @@ func TestAuditModelCatalogPassesFreshCatalogAndUndatedEntries(t *testing.T) {
 	}
 }
 
+// TestAuditModelCatalogFailsStaleAndPreviewEntries pins audit model catalog fails stale and preview entries.
 func TestAuditModelCatalogFailsStaleAndPreviewEntries(t *testing.T) {
 	cases := map[string]string{
 		"preview flag": auditModelEntry("flagged", ", preview: true"),
@@ -76,6 +78,7 @@ func TestAuditModelCatalogFailsStaleAndPreviewEntries(t *testing.T) {
 	}
 }
 
+// TestAuditModelCatalogWindowBoundary pins audit model catalog window boundary.
 func TestAuditModelCatalogWindowBoundary(t *testing.T) {
 	atWindow := auditModelEntry("edge", `, as_of: "`+auditModelNow.AddDate(0, 0, -180).Format(time.DateOnly)+`"`)
 	if _, err := runModelCatalogAudit(t, writeAuditCatalog(t, atWindow)); err != nil {

@@ -60,6 +60,7 @@ func TestExpiryProblem_3D(t *testing.T) {
 	}
 }
 
+// TestCategoryExpiryProblem_3D pins 3D behavior for category expiry problem.
 func TestCategoryExpiryProblem_3D(t *testing.T) {
 	// Category B: entered 2026-10-18 + 3 days = 2026-10-21
 	entered := testToday.AddDate(0, 0, 0).Format(rules.DateLayout)
@@ -125,6 +126,7 @@ func TestValidateHISS12Target_3D(t *testing.T) {
 	}
 }
 
+// TestJudge_3D pins 3D behavior for judge.
 func TestJudge_3D(t *testing.T) {
 	finding := rules.Finding{
 		File:        "creds.py",

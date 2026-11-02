@@ -7,6 +7,7 @@ import (
 	"testing"
 )
 
+// TestHarvestTranscriptWritesAndReplaysExplicitLocalSource pins harvest transcript writes and replays explicit local source.
 func TestHarvestTranscriptWritesAndReplaysExplicitLocalSource(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "transcript_full.jsonl")
 	body := /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"step_index":1,"source":"MODEL","type":"MESSAGE","status":"DONE","created_at":"2026-09-12T12:00:00Z","content":"fixture"}` + "\n"
@@ -39,6 +40,7 @@ func TestHarvestTranscriptRequiresExplicitPathsAndBounds(t *testing.T) {
 	}
 }
 
+// TestHarvestClaudeTranscriptRequiresExplicitFormat pins harvest claude transcript requires explicit format.
 func TestHarvestClaudeTranscriptRequiresExplicitFormat(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "session.jsonl")
 	body := /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"type":"user","uuid":"message-id","sessionId":"session-id","timestamp":"2026-09-12T12:00:00Z","message":{"role":"user","content":"private fixture payload"}}` + "\n"

@@ -24,6 +24,7 @@ type exceptionScanCase struct {
 	wantPassed  bool
 }
 
+// TestForeignScan_ExceptionUsage pins foreign scan exception usage.
 func TestForeignScan_ExceptionUsage(t *testing.T) {
 	cases := []exceptionScanCase{
 		{"live_both", true, true, foreignFixtureToday.AddDate(0, 0, 28).Format(config.ExceptionDateLayout), 1, 1, 0, true},
@@ -43,6 +44,7 @@ func TestForeignScan_ExceptionUsage(t *testing.T) {
 	}
 }
 
+// scanExceptionFixture creates a foreign exception test fixture and runs dedupe scanning.
 func scanExceptionFixture(t *testing.T, tc exceptionScanCase) *dedupe.DedupeReport {
 	t.Helper()
 	root := t.TempDir()
@@ -77,6 +79,7 @@ func scanExceptionFixture(t *testing.T, tc exceptionScanCase) *dedupe.DedupeRepo
 	return report
 }
 
+// assertExceptionScanReport verifies the findings in a dedupe scan report.
 func assertExceptionScanReport(t *testing.T, report *dedupe.DedupeReport, tc exceptionScanCase) {
 	t.Helper()
 	data, err := json.Marshal(report)
@@ -143,6 +146,7 @@ func assertExceptionGroupMetadata(t *testing.T, groups []dedupe.DuplicateGroup, 
 	}
 }
 
+// TestForeignScan_ExceptionRootBoundary pins foreign scan exception root boundary.
 func TestForeignScan_ExceptionRootBoundary(t *testing.T) {
 	for _, mainPath := range []string{"app.py", "other.py"} {
 		t.Run(mainPath, func(t *testing.T) {
@@ -178,6 +182,7 @@ func TestForeignScan_ExceptionRootBoundary(t *testing.T) {
 	}
 }
 
+// TestForeignScan_Negative_ScannedForeignExceptionWithoutDuplicateIsStale pins negative scanned foreign exception without duplicate is stale for foreign scan.
 func TestForeignScan_Negative_ScannedForeignExceptionWithoutDuplicateIsStale(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "main.go", "package sample\n")

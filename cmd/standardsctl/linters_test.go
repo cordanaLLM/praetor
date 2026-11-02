@@ -47,6 +47,7 @@ func TestRunLinters_CLI_StripConfig(t *testing.T) {
 	}
 }
 
+// TestRunLinters_CLI_Generate pins run linters generate.
 func TestRunLinters_CLI_Generate(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, ".golangci.yml")

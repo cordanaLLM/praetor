@@ -48,6 +48,7 @@ func sequenceLengths(t *testing.T, path string) (revive, exclusions int) {
 	return len(config.Linters.Settings.Revive.Rules), len(config.Linters.Exclusions.Rules)
 }
 
+// generateInto runs linters generation into the specified directory.
 func generateInto(t *testing.T, cfgContent string) (string, error) {
 	t.Helper()
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, []LinterPair{{File: "internal/pkg/a_test.go", Linter: "funlen", Function: "TestOversized"}})

@@ -34,6 +34,7 @@ for name, source_changed, expected in [("scripts/test_dates.py", False, True),
     assert audited == expected, (name, audited, expected, commands)
 `
 
+// TestFixtureDatesPythonOnlyHookSelection pins fixture dates python only hook selection.
 func TestFixtureDatesPythonOnlyHookSelection(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, ".standards.yaml"), []byte("version: 1\n"), 0o600); err != nil {
@@ -45,6 +46,7 @@ func TestFixtureDatesPythonOnlyHookSelection(t *testing.T) {
 	}
 }
 
+// TestFixtureDatesHookSelectorRejectsFlavorOnly pins fixture dates hook selector rejects flavor only.
 func TestFixtureDatesHookSelectorRejectsFlavorOnly(t *testing.T) {
 	source := filepath.Join("..", "..", ".config", "lefthook", "scripts", "checks.py")
 	data, err := os.ReadFile(source)
@@ -82,15 +84,18 @@ func TestFixtureDatesHookSelectorRejectsFlavorOnly(t *testing.T) {
 	}
 }
 
+// hookSelectorRejectedMissingAudit asserts hook rejection when audit steps are missing.
 func hookSelectorRejectedMissingAudit(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "AssertionError: ('scripts/test_dates.py', False, True")
 }
 
+// runDateHookSelection runs hook selector evaluation for date checks.
 func runDateHookSelection(t *testing.T, source, root string) (string, error) {
 	t.Helper()
 	return util.RunCommand(t.Context(), "", testsupport.PythonInterpreter(t), "-c", dateHookSelection, source, root)
 }
 
+// TestFixtureDatesHookSelectionPythonWithoutPython3 pins fixture dates hook selection python without python3.
 func TestFixtureDatesHookSelectionPythonWithoutPython3(t *testing.T) {
 	interpreter := testsupport.PythonInterpreter(t)
 	bin := t.TempDir()

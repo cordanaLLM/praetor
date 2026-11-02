@@ -110,6 +110,7 @@ func runGateLifecycleCase(t *testing.T, entries []rules.Entry) (string, int) {
 	return runGateCLI(t, dir, exceptionsJSON)
 }
 
+// TestGate_ExceptionsLifecycle_3D pins gate exceptions lifecycle 3D.
 func TestGate_ExceptionsLifecycle_3D(t *testing.T) {
 	today := time.Now()
 	if _, err := exec.LookPath("gitleaks"); err != nil {

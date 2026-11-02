@@ -18,6 +18,7 @@ func datedModel(id, asOf string, preview bool) ModelDescriptor {
 	return model
 }
 
+// TestCatalogFindingsWindowBoundary pins catalog findings window boundary.
 func TestCatalogFindingsWindowBoundary(t *testing.T) {
 	cfg := taskConfig(datedModel("exact", freshnessNow.AddDate(0, 0, -180).Format(time.DateOnly), false), datedModel("one-over", freshnessNow.AddDate(0, 0, -181).Format(time.DateOnly), false),
 		datedModel("fresh", freshnessNow.AddDate(0, 0, -7).Format(time.DateOnly), false), datedModel("undated", "", false), datedModel("future", freshnessNow.AddDate(0, 0, 85).Format(time.DateOnly), false))
@@ -27,6 +28,7 @@ func TestCatalogFindingsWindowBoundary(t *testing.T) {
 	}
 }
 
+// TestCatalogFindingsPreviewByFlagAndName pins catalog findings preview by flag and name.
 func TestCatalogFindingsPreviewByFlagAndName(t *testing.T) {
 	cfg := taskConfig(datedModel("flagged", freshnessNow.AddDate(0, 0, -7).Format(time.DateOnly), true), datedModel("vendor-model-preview-03-25", freshnessNow.AddDate(0, 0, -7).Format(time.DateOnly), false),
 		datedModel("stable", freshnessNow.AddDate(0, 0, -7).Format(time.DateOnly), false))
@@ -41,6 +43,7 @@ func TestCatalogFindingsPreviewByFlagAndName(t *testing.T) {
 	}
 }
 
+// TestCatalogFindingsGovernedWindow pins catalog findings governed window.
 func TestCatalogFindingsGovernedWindow(t *testing.T) {
 	cfg := taskConfig(datedModel("old", freshnessNow.AddDate(0, 0, -7).Format(time.DateOnly), false))
 	cfg.Governance.CatalogMaxAgeDays = 3
@@ -52,6 +55,7 @@ func TestCatalogFindingsGovernedWindow(t *testing.T) {
 	}
 }
 
+// TestCatalogFindingsReportsStaleAndPreviewTogether pins catalog findings reports stale and preview together.
 func TestCatalogFindingsReportsStaleAndPreviewTogether(t *testing.T) {
 	cfg := taskConfig(datedModel("both", freshnessNow.AddDate(0, 0, -645).Format(time.DateOnly), false))
 	if findings := CatalogFindings(cfg, freshnessNow); len(findings) != 1 {
@@ -91,6 +95,7 @@ governance:
   catalog_max_age_days: 90
 `
 
+// TestSyncProbesAliasesAndReportsStalePreviewEntries pins sync probes aliases and reports stale preview entries.
 func TestSyncProbesAliasesAndReportsStalePreviewEntries(t *testing.T) {
 	path := writeCatalogText(t, syncAliasCatalog)
 	prober := fakeProber(map[string]error{"dead": errors.New("HTTP 400: Invalid model name passed")})
@@ -116,6 +121,7 @@ func TestSyncProbesAliasesAndReportsStalePreviewEntries(t *testing.T) {
 	assertSyncedAliases(t, cfg)
 }
 
+// assertSyncedAliases verifies that probed aliases match the expected sync outcome.
 func assertSyncedAliases(t *testing.T, cfg *RoutingConfig) {
 	t.Helper()
 	byID := map[string]ModelDescriptor{}
@@ -171,6 +177,7 @@ func TestSyncSeedEntriesAreNeverPreviewAndNeverAgeJudged(t *testing.T) {
 	}
 }
 
+// TestEntryFindingsIgnoresSeedSourceAsOf pins entry findings ignores seed source as of.
 func TestEntryFindingsIgnoresSeedSourceAsOf(t *testing.T) {
 	far := freshnessNow.AddDate(10, 0, 0)
 	stamped := ModelDescriptor{ID: "seed-with-old-date", Source: SourceSeed, AsOf: freshnessNow.AddDate(0, 0, -2472).Format(time.DateOnly)}

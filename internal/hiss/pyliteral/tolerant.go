@@ -23,6 +23,7 @@ var pythonNamedRunes = map[string]rune{
 	"HYPHEN-MINUS": '-', "LINE FEED": '\n', "LF": '\n', "NEW LINE": '\n', "END OF LINE": '\n',
 }
 
+// appendTolerantEscape preserves or escapes unhandled Python escape patterns.
 func appendTolerantEscape(out *strings.Builder, value string) int {
 	if strings.HasPrefix(value, "N{") {
 		if end := strings.IndexByte(value[2:], '}'); end > 0 && !strings.ContainsAny(value[2:2+end], "{\\\r\n") {
@@ -41,6 +42,7 @@ func appendTolerantEscape(out *strings.Builder, value string) int {
 	return 0
 }
 
+// consumeSurrogateOrHighOctal parses Unicode surrogate pairs or high octal values.
 func consumeSurrogateOrHighOctal(value string) int {
 	switch value[0] {
 	case 'u':
@@ -55,6 +57,7 @@ func consumeSurrogateOrHighOctal(value string) int {
 	return 0
 }
 
+// consumeSurrogate checks and skips Unicode surrogate codepoints.
 func consumeSurrogate(value string, digits int) int {
 	if len(value) >= digits+1 {
 		if number, err := strconv.ParseUint(value[1:digits+1], 16, 32); err == nil && number >= 0xD800 && number <= 0xDFFF {
@@ -64,6 +67,7 @@ func consumeSurrogate(value string, digits int) int {
 	return 0
 }
 
+// isOctalByte reports whether a byte is an octal digit.
 func isOctalByte(b byte) bool {
 	return b >= '0' && b <= '7'
 }

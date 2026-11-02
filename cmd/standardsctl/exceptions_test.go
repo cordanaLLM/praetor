@@ -42,6 +42,7 @@ func writeExceptionsManifest(t *testing.T, entries ...config.Exception) string {
 	return manifestPath
 }
 
+// TestExceptionsList_Positive_ListsEntries pins positive lists entries for exceptions list.
 func TestExceptionsList_Positive_ListsEntries(t *testing.T) {
 	today := time.Date(2026, time.October, 10, 0, 0, 0, 0, time.UTC)
 	manifest := writeExceptionsManifest(t,
@@ -85,6 +86,7 @@ func TestExceptionsList_FailsOnAnExpiredEntry(t *testing.T) {
 	}
 }
 
+// TestExceptionsList_Positive_FiltersByExpiringWithin pins positive filters by expiring within for exceptions list.
 func TestExceptionsList_Positive_FiltersByExpiringWithin(t *testing.T) {
 	today := time.Date(2026, time.October, 10, 0, 0, 0, 0, time.UTC)
 	manifest := writeExceptionsManifest(t,
@@ -104,6 +106,7 @@ func TestExceptionsList_Positive_FiltersByExpiringWithin(t *testing.T) {
 	}
 }
 
+// TestExceptionsList_Boundary_ExactDaysAndZero pins boundary exact days and zero for exceptions list.
 func TestExceptionsList_Boundary_ExactDaysAndZero(t *testing.T) {
 	today := time.Date(2026, time.October, 10, 0, 0, 0, 0, time.UTC)
 	manifest := writeExceptionsManifest(t,
@@ -124,6 +127,7 @@ func TestExceptionsList_Boundary_ExactDaysAndZero(t *testing.T) {
 	}
 }
 
+// TestExceptionsList_Boundary_EmptyAndNoMatches pins boundary empty and no matches for exceptions list.
 func TestExceptionsList_Boundary_EmptyAndNoMatches(t *testing.T) {
 	manifest := writeExceptionsManifest(t)
 	out, err := captureStdout(t, func() error {

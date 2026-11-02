@@ -184,6 +184,7 @@ func TestInScope_Negative_RecordsAndOtherFiles(t *testing.T) {
 	}
 }
 
+// TestFrozenReason_Boundary_StatusSpellings pins boundary status spellings for frozen reason.
 func TestFrozenReason_Boundary_StatusSpellings(t *testing.T) {
 	cases := []struct {
 		rel, content string

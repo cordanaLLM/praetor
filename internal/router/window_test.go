@@ -80,6 +80,7 @@ func windowArbiter(t *testing.T, governor *WindowGovernor) *ModelCapacityArbiter
 	return arbiter
 }
 
+// TestWindowAboveStopRefusesAndNamesTheWindow pins window above stop refuses and names the window.
 func TestWindowAboveStopRefusesAndNamesTheWindow(t *testing.T) {
 	cfg := loadWindowCatalog(t, windowCatalog)
 	arbiter := windowArbiter(t, windowGovernor(t, cfg, windowReading(85, time.Minute, 2*time.Hour)))

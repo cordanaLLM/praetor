@@ -33,6 +33,7 @@ func testDateAllowed(comment string) bool {
 	return fixtureDateAllowance.MatchString(strings.TrimSpace(comment))
 }
 
+// scanGoFixtureDates detects hardcoded calendar dates in Go test files.
 func scanGoFixtureDates(src sourceFile, rep *ScanReport) {
 	if !strings.HasSuffix(src.rel, "_test.go") {
 		return
@@ -83,6 +84,7 @@ type fixtureDateValue struct {
 	allowed          bool
 }
 
+// newFixtureDateValue constructs a tracked fixture date text value.
 func newFixtureDateValue(text string, allowed bool) fixtureDateValue {
 	permission := "0"
 	if allowed {
@@ -91,6 +93,7 @@ func newFixtureDateValue(text string, allowed bool) fixtureDateValue {
 	return fixtureDateValue{text: text, permission: strings.Repeat(permission, len(text)), allowed: allowed}
 }
 
+// add combines two fixture date values and their permission masks.
 func (value fixtureDateValue) add(other fixtureDateValue) fixtureDateValue {
 	return fixtureDateValue{
 		text: value.text + other.text, permission: value.permission + other.permission,
@@ -117,6 +120,7 @@ func goDateValues(file *ast.File, allowed map[token.Pos]bool) (map[ast.Node]fixt
 	return e.values, e.merged
 }
 
+// observe evaluates an AST node for literal date values.
 func (e *goDateEvaluator) observe(node ast.Node) {
 	switch n := node.(type) {
 	case *ast.BasicLit:
@@ -135,6 +139,7 @@ func (e *goDateEvaluator) observe(node ast.Node) {
 	}
 }
 
+// literal extracts and records string literals in Go AST nodes.
 func (e *goDateEvaluator) literal(literal *ast.BasicLit) {
 	if literal.Kind != token.STRING {
 		return
@@ -170,10 +175,12 @@ func checkFixtureDateText(value fixtureDateValue, spelling, rel string, line int
 	}
 }
 
+// recordFixtureDate records a HISS-15 finding for an unexcused fixture date.
 func recordFixtureDate(rel string, line int, rep *ScanReport) {
 	recordViolation(rep, "HISS-15", rel, line, "", "literal calendar date in test fixture; derive it from the test clock")
 }
 
+// isPythonTest reports whether a path corresponds to a Python test file.
 func isPythonTest(rel string) bool {
 	name := filepath.Base(rel)
 	return isPythonTestPath(rel) ||

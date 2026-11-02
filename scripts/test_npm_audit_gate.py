@@ -40,6 +40,7 @@ def report(*vias: object) -> str:
 
 
 def exception(**overrides: object) -> dict:
+    """Return a sample advisory exception dictionary for tests."""
     entry = {"advisory": BRACES, "package": "braces", "locks": ["tools/markdownlint"],
              "reason": "only repository-declared globs reach it", "expires": (TODAY + datetime.timedelta(days=30)).isoformat()}
     entry.update(overrides)
@@ -83,6 +84,7 @@ class FindingTests(GateCase):
         self.assertEqual(status, 1)
 
     def test_boundary_exception_holds_through_its_expiry_day(self) -> None:
+        """Verify that an exception remains valid through its exact expiry date."""
         reports, exceptions = {"tools/markdownlint": report(advisory("braces"))}, self.write_exceptions(exception())
         self.assertEqual(self.run_gate(reports, exceptions, TODAY + datetime.timedelta(days=30))[0], 0)
         status, lines = self.run_gate(reports, exceptions, TODAY + datetime.timedelta(days=31))
@@ -156,6 +158,7 @@ class ReadErrorTests(GateCase):
         self.assertEqual(status, 2)
 
     def test_negative_malformed_exceptions_are_read_errors(self) -> None:
+        """Verify that malformed exception records produce read errors."""
         cases = {
             "missing reason": {k: v for k, v in exception().items() if k != "reason"},
             "advisory id": exception(advisory="CVE-2026-0001"),

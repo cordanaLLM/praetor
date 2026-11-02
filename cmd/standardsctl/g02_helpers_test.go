@@ -341,6 +341,7 @@ func matchExpiry(t *testing.T, haystack, prefix string, expiries []string) strin
 	return ""
 }
 
+// TestExpiryDays_ExceptionMidnightBoundary pins expiry days exception midnight boundary.
 func TestExpiryDays_ExceptionMidnightBoundary(t *testing.T) {
 	// Midnight boundary: before 2026-10-19T23:59:59Z and after 2026-10-20T00:00:01Z returns both expiry strings.
 	before := time.Date(2026, time.October, 19, 23, 59, 59, 0, time.UTC)

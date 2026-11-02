@@ -22,12 +22,14 @@ func claudeFixture(t *testing.T, body string) TranscriptIngestOptions {
 	return TranscriptIngestOptions{Format: TranscriptFormatClaudeCode, SourcePath: path, CacheDir: filepath.Join(t.TempDir(), "cache")}
 }
 
+// claudeMessageFixture constructs a synthetic Claude transcript event for ingestion tests.
 func claudeMessageFixture(role, content string) string {
 	return `{"type":"` + role + /* testdate: fact: recorded transcript timestamp; ingestion, no clock comparison */ `","uuid":"record-id","parentUuid":"parent-id","sessionId":"session-id","timestamp":"2026-09-12T12:00:00.123Z","message":{"role":"` + role + `","content":` + content + `}}` + "\n"
 }
 
 const claudeToolContent = `[{"type":"thinking","thinking":"PRIVATE_THINKING","signature":"PRIVATE_SIGNATURE"},{"type":"text","text":"visible"},{"type":"tool_use","id":"tool-id","name":"shell","input":{"command":"NEVER_EXECUTE"}}]`
 
+// TestClaudeIngestionPreservesObservationsAndSkipsMetadata pins claude ingestion preserves observations and skips metadata.
 func TestClaudeIngestionPreservesObservationsAndSkipsMetadata(t *testing.T) {
 	body := `{"type":"queue-operation","sessionId":"session-id","content":"PRIVATE_METADATA"}` + "\n" +
 		claudeMessageFixture("assistant", claudeToolContent) +
@@ -82,6 +84,7 @@ func TestClaudeIngestionPreservesObservationsAndSkipsMetadata(t *testing.T) {
 	assertTranscriptPrivate(t, opts.CacheDir, files)
 }
 
+// TestClaudeRejectsMalformedTailBeforeAnyWrites pins claude rejects malformed tail before any writes.
 func TestClaudeRejectsMalformedTailBeforeAnyWrites(t *testing.T) {
 	valid := claudeMessageFixture("user", `"prompt"`)
 	bad := []string{

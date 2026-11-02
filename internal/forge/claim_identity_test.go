@@ -176,6 +176,7 @@ func TestPlantedNegative_TagGuessingAndPrefixResistance(t *testing.T) {
 	}
 }
 
+// TestPlantedNegative_LegacyPlainMarkerCompatibility pins planted negative legacy plain marker compatibility.
 func TestPlantedNegative_LegacyPlainMarkerCompatibility(t *testing.T) {
 	key := []byte("key-for-legacy-compatibility-123")
 	f, clock := forgetest.NewClaimFake(), &deskClock{now: claimEpoch}

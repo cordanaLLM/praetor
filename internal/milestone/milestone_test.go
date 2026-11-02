@@ -419,6 +419,7 @@ func TestMilestone_Boundary_EmptyAndSelectors(t *testing.T) {
 	}
 }
 
+// TestMilestone_Boundary_SyncPreservesTrailingLedgerBlocks pins boundary sync preserves trailing ledger blocks for milestone.
 func TestMilestone_Boundary_SyncPreservesTrailingLedgerBlocks(t *testing.T) {
 	ctx := context.Background()
 	dir := setupTestDir(t)

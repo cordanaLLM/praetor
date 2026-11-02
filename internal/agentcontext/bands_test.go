@@ -299,6 +299,7 @@ func TestScanVolatilePassesOrdinaryProse(t *testing.T) {
 	}
 }
 
+// TestScanVolatileBoundsFindings pins scan volatile bounds findings.
 func TestScanVolatileBoundsFindings(t *testing.T) {
 	head := strings.Repeat( /* testdate: fact: recorded context text; volatility syntax matching, no clock comparison */ "at 2026-10-07T12:30:00Z\n", maxVolatileFindings*3)
 	if got := len(ScanVolatile(head)); got != maxVolatileFindings {

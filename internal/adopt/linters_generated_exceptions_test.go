@@ -85,6 +85,7 @@ func writeTempConfigAndReport(t *testing.T, cfgContent string, pairs []LinterPai
 	return cfgPath, repPath
 }
 
+// TestStripGolangciConfig_Positive pins positive cases for strip golangci config.
 func TestStripGolangciConfig_Positive(t *testing.T) {
 	handRule := "      # category A, expires " + testToday.AddDate(0, 0, 50).Format(config.ExceptionDateLayout) + ", #100\n      - path: internal/hand/\n        linters:\n          - forbidigo"
 	block := "      # category C, entered " + testToday.AddDate(0, 0, 6).Format(config.ExceptionDateLayout) + ", expires " + testToday.AddDate(0, 0, 16).Format(config.ExceptionDateLayout) + ", #1030\n      - path: ^internal/a_test\\.go$\n        linters:\n          - gocyclo\n"
@@ -178,6 +179,7 @@ func TestStripGolangciConfig_Boundary(t *testing.T) {
 	}
 }
 
+// TestGenerateExceptions_FormatAndOrder_Positive pins generate exceptions format and order positive.
 func TestGenerateExceptions_FormatAndOrder_Positive(t *testing.T) {
 	handRule := "      # category A, expires " + testToday.AddDate(0, 0, 50).Format(config.ExceptionDateLayout) + ", #100\n      - path: internal/hand/\n        linters:\n          - forbidigo"
 	cfgContent := sampleConfigContent(handRule, "")
@@ -211,6 +213,7 @@ func TestGenerateExceptions_FormatAndOrder_Positive(t *testing.T) {
 	assertFormattedGeneratedOrder(t, cfgPath, handRule)
 }
 
+// assertFormattedGeneratedOrder verifies generated exceptions follow canonical ordering.
 func assertFormattedGeneratedOrder(t *testing.T, cfgPath, handRule string) {
 	t.Helper()
 	data, err := os.ReadFile(cfgPath)
@@ -250,6 +253,7 @@ func assertFormattedGeneratedOrder(t *testing.T, cfgPath, handRule string) {
 	}
 }
 
+// TestGenerateExceptions_Ratchet_Positive_LowerCountRenews pins generate exceptions ratchet positive lower count renews.
 func TestGenerateExceptions_Ratchet_Positive_LowerCountRenews(t *testing.T) {
 	oldBlock := "      # category C, entered " + testToday.AddDate(0, 0, -11).Format(config.ExceptionDateLayout) + ", expires " + testToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout) + ", #1030\n" +
 		"      - path: ^internal/a_test\\.go$\n" +
@@ -301,6 +305,7 @@ func TestGenerateExceptions_Ratchet_Positive_LowerCountRenews(t *testing.T) {
 	}
 }
 
+// TestGenerateExceptions_Ratchet_Negative_NewFindingRefused pins generate exceptions ratchet negative new finding refused.
 func TestGenerateExceptions_Ratchet_Negative_NewFindingRefused(t *testing.T) {
 	block := "      # baseline #1030\n" +
 		"      - path: ^internal/a_test\\.go$\n" +
@@ -337,6 +342,7 @@ func TestGenerateExceptions_Ratchet_Negative_NewFindingRefused(t *testing.T) {
 	}
 }
 
+// TestGenerateExceptions_Ratchet_Negative_ExpiredRefused pins generate exceptions ratchet negative expired refused.
 func TestGenerateExceptions_Ratchet_Negative_ExpiredRefused(t *testing.T) {
 	block := "      # category C, entered " + testToday.AddDate(0, 0, -11).Format(config.ExceptionDateLayout) + ", expires " + testToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout) + ", #1030\n" +
 		"      - path: ^internal/a_test\\.go$\n" +
@@ -376,6 +382,7 @@ func TestGenerateExceptions_Ratchet_Negative_ExpiredRefused(t *testing.T) {
 	}
 }
 
+// TestGenerateExceptions_Ratchet_Boundary_LiveEntriesNoOp pins generate exceptions ratchet boundary live entries no op.
 func TestGenerateExceptions_Ratchet_Boundary_LiveEntriesNoOp(t *testing.T) {
 	block := "      # category C, entered " + testToday.AddDate(0, 0, 6).Format(config.ExceptionDateLayout) + ", expires " + testToday.AddDate(0, 0, 16).Format(config.ExceptionDateLayout) + ", #1030\n" +
 		"      - path: ^internal/a_test\\.go$\n" +
@@ -415,6 +422,7 @@ func TestGenerateExceptions_Ratchet_Boundary_LiveEntriesNoOp(t *testing.T) {
 	}
 }
 
+// TestGenerateExceptions_PlantedGocycloNewFinding pins generate exceptions planted gocyclo new finding.
 func TestGenerateExceptions_PlantedGocycloNewFinding(t *testing.T) {
 	block := "      # baseline #1030\n" +
 		"      - path: ^internal/existing_test\\.go$\n" +
@@ -451,6 +459,7 @@ func TestGenerateExceptions_PlantedGocycloNewFinding(t *testing.T) {
 	}
 }
 
+// TestGenerateExceptions_BaselineShrinkAndHold pins generate exceptions baseline shrink and hold.
 func TestGenerateExceptions_BaselineShrinkAndHold(t *testing.T) {
 	block := "      # baseline #1030\n" +
 		"      - path: ^internal/existing_test\\.go$\n" +
@@ -483,6 +492,7 @@ func TestGenerateExceptions_BaselineShrinkAndHold(t *testing.T) {
 	assertBaselineShrunkAndDatedPreserved(t, cfgPath, repPath, today)
 }
 
+// assertBaselineShrunkAndDatedPreserved verifies baseline shrinkage while keeping dated entries.
 func assertBaselineShrunkAndDatedPreserved(t *testing.T, cfgPath, repPath string, today time.Time) {
 	t.Helper()
 	data, err := os.ReadFile(cfgPath)
@@ -621,6 +631,7 @@ func assertSameLineGeneratedConfig(t *testing.T, cfgPath string) {
 	}
 }
 
+// TestGenerateExceptions_SameLineDifferentLintersYieldsTwoPairs pins generate exceptions same line different linters yields two pairs.
 func TestGenerateExceptions_SameLineDifferentLintersYieldsTwoPairs(t *testing.T) {
 	cfgPath, repPath := writeSameLineTestFiles(t)
 

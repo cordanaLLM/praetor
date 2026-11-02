@@ -20,6 +20,7 @@ type pythonDateScanner struct {
 	valueLine, valueStart, valueEnd, nesting int
 }
 
+// scanPythonFixtureDates detects hardcoded calendar dates in Python test files.
 func scanPythonFixtureDates(src sourceFile, rep *ScanReport) {
 	if !isPythonTest(src.rel) {
 		return
@@ -31,6 +32,7 @@ func scanPythonFixtureDates(src sourceFile, rep *ScanReport) {
 	s.flush()
 }
 
+// step processes the next character in a Python source file.
 func (s *pythonDateScanner) step(index int) int {
 	switch {
 	case s.text[index] == '#':
@@ -55,6 +57,7 @@ func (s *pythonDateScanner) step(index int) int {
 	return index + 1
 }
 
+// comment parses comment text and checks for allowance markers.
 func (s *pythonDateScanner) comment(index int) int {
 	end := len(s.text)
 	if offset := strings.IndexByte(s.text[index:], '\n'); offset >= 0 {
@@ -67,6 +70,7 @@ func (s *pythonDateScanner) comment(index int) int {
 	return end
 }
 
+// literal processes Python string literals for fixture dates.
 func (s *pythonDateScanner) literal(index int) int {
 	decoded, end, ok := s.decodeLiteral(index)
 	if !ok {
@@ -91,6 +95,7 @@ func (s *pythonDateScanner) literal(index int) int {
 	return end
 }
 
+// decodeLiteral decodes Python string literals and returns their bounds.
 func (s *pythonDateScanner) decodeLiteral(index int) (string, int, bool) {
 	decoded, end, err := pyliteral.Parse(s.text, index)
 	if err == nil {
@@ -123,6 +128,7 @@ func pythonDateJoin(gap string, nesting int) bool {
 	return true
 }
 
+// flush checks accumulated literal values for date violations.
 func (s *pythonDateScanner) flush() {
 	if s.valueEnd > 0 && !s.value.allowed {
 		checkFixtureDateText(s.value, s.text[s.valueStart:s.valueEnd], s.src.rel, s.valueLine, s.rep)

@@ -101,6 +101,7 @@ type gateHarness struct {
 	env     []string
 }
 
+// newGateHarness constructs an API compatibility gate test harness.
 func newGateHarness(t *testing.T) gateHarness {
 	t.Helper()
 	source, err := Read(GateFile)
@@ -110,6 +111,7 @@ func newGateHarness(t *testing.T) gateHarness {
 	return buildGateHarness(t, string(source))
 }
 
+// buildGateHarness builds an API compatibility test harness environment.
 func buildGateHarness(t *testing.T, source string) gateHarness {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {

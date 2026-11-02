@@ -18,6 +18,7 @@ type pythonLiteralDecoder struct {
 	tolerant bool
 }
 
+// parse decodes a Python string literal starting at the specified index.
 func (d pythonLiteralDecoder) parse(text string, start int) (string, int, error) {
 	if start < 0 || start >= len(text) {
 		return "", 0, errors.New("string offset outside Python source")
@@ -54,6 +55,7 @@ func (d pythonLiteralDecoder) parse(text string, start int) (string, int, error)
 // supportedPythonStringPrefixes are the lower-cased prefixes whose literal decodes to text.
 var supportedPythonStringPrefixes = map[string]bool{"": true, "r": true, "u": true, "f": true, "fr": true, "rf": true}
 
+// scanPythonStringPrefix parses string prefix flags like r, u, b, or f.
 func scanPythonStringPrefix(text string, start int) (string, int, error) {
 	index := start
 	for index < len(text) && index-start < 3 && pythonPrefix(text[index]) {
@@ -69,6 +71,7 @@ func scanPythonStringPrefix(text string, start int) (string, int, error) {
 	return prefix, index, nil
 }
 
+// decodePythonFString decodes Python formatted string literals.
 func (d pythonLiteralDecoder) decodePythonFString(body string, raw bool) (string, int, error) {
 	var out strings.Builder
 	for index := 0; index < len(body); {
@@ -81,6 +84,7 @@ func (d pythonLiteralDecoder) decodePythonFString(body string, raw bool) (string
 	return out.String(), len(body), nil
 }
 
+// appendPythonFStringPart decodes a single f-string component or replacement field.
 func (d pythonLiteralDecoder) appendPythonFStringPart(out *strings.Builder, body string, index int, raw bool) (int, error) {
 	switch body[index] {
 	case '{':
@@ -96,6 +100,7 @@ func (d pythonLiteralDecoder) appendPythonFStringPart(out *strings.Builder, body
 	}
 }
 
+// appendPythonFStringOpen handles escaped opening braces within f-strings.
 func appendPythonFStringOpen(out *strings.Builder, body string, index int) (int, error) {
 	if index+1 < len(body) && body[index+1] == '{' {
 		out.WriteByte('{')
@@ -109,6 +114,7 @@ func appendPythonFStringOpen(out *strings.Builder, body string, index int) (int,
 	return end + 1, nil
 }
 
+// appendPythonFStringText decodes literal text sections within an f-string.
 func (d pythonLiteralDecoder) appendPythonFStringText(out *strings.Builder, body string, index int, raw bool) (int, error) {
 	for index < len(body) && body[index] != '{' && body[index] != '}' {
 		next, err := d.appendPythonText(out, body, index, raw)
@@ -120,6 +126,7 @@ func (d pythonLiteralDecoder) appendPythonFStringText(out *strings.Builder, body
 	return index, nil
 }
 
+// findPythonFExpressionEnd locates the matching closing brace of an f-string expression.
 func findPythonFExpressionEnd(body string, start int) (int, error) {
 	depth := 0
 	for index := start; index < len(body); index++ {
@@ -173,6 +180,7 @@ func Skip(text string, start int) (int, error) {
 	return end + width, nil
 }
 
+// pythonStringDelimiter detects quote characters and quote width.
 func pythonStringDelimiter(text string, index int) (byte, int, error) {
 	if index >= len(text) || (text[index] != '\'' && text[index] != '"') {
 		return 0, 0, errors.New("expected Python string literal")
@@ -184,6 +192,7 @@ func pythonStringDelimiter(text string, index int) (byte, int, error) {
 	return quote, 1, nil
 }
 
+// findPythonStringEnd scans ahead to find the closing quote delimiter.
 func findPythonStringEnd(text string, start int, quote byte, width int) (int, error) {
 	for index := start; index < len(text); index++ {
 		if text[index] == '\\' {
@@ -200,6 +209,7 @@ func findPythonStringEnd(text string, start int, quote byte, width int) (int, er
 	return 0, errors.New("unterminated Python string literal")
 }
 
+// decodePythonEscapes interprets standard Python escape sequences.
 func (d pythonLiteralDecoder) decodePythonEscapes(value string) (string, error) {
 	var out strings.Builder
 	for index := 0; index < len(value); {
@@ -212,6 +222,7 @@ func (d pythonLiteralDecoder) decodePythonEscapes(value string) (string, error) 
 	return out.String(), nil
 }
 
+// appendPythonText appends decoded characters or raw text to the output.
 func (d pythonLiteralDecoder) appendPythonText(out *strings.Builder, value string, index int, raw bool) (int, error) {
 	if raw || value[index] != '\\' {
 		out.WriteByte(value[index])
@@ -263,6 +274,7 @@ func AppendEscape(out *strings.Builder, value string) (int, error) {
 	return 1, nil
 }
 
+// appendPythonHex decodes hexadecimal escape sequences.
 func appendPythonHex(out *strings.Builder, value string, digits int) (int, error) {
 	if len(value) < digits+1 {
 		return 0, errors.New("short Python hexadecimal escape")
@@ -276,6 +288,7 @@ func appendPythonHex(out *strings.Builder, value string, digits int) (int, error
 	return digits + 1, nil
 }
 
+// appendPythonOctal decodes octal escape sequences.
 func appendPythonOctal(out *strings.Builder, value string) (int, error) {
 	length := 1
 	for length < len(value) && length < 3 && value[length] >= '0' && value[length] <= '7' {
@@ -289,6 +302,7 @@ func appendPythonOctal(out *strings.Builder, value string) (int, error) {
 	return length, nil
 }
 
+// pythonPrefix reports whether a byte is a valid Python string literal prefix.
 func pythonPrefix(value byte) bool {
 	return strings.ContainsRune("rRuUbBfF", rune(value))
 }

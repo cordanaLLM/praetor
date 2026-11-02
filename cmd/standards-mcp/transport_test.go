@@ -450,6 +450,7 @@ func readSSEEvent(t *testing.T, reader *bufio.Reader) sseEvent {
 	return ev
 }
 
+// TestSSE_Positive_MessagesFlowOverTheStream pins positive messages flow over the stream for SSE.
 func TestSSE_Positive_MessagesFlowOverTheStream(t *testing.T) {
 	srv, _ := newFixtureServer(t)
 	ctx, cancel := context.WithCancel(context.Background())

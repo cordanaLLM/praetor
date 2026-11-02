@@ -36,6 +36,7 @@ func TestBugSidecarWritersAndMixedForms(t *testing.T) {
 	}
 }
 
+// TestBugSidecarRejectsInvalidMetadata pins bug sidecar rejects invalid metadata.
 func TestBugSidecarRejectsInvalidMetadata(t *testing.T) {
 	row := "| `BUG-001` | title | p1 | open | file |  | " + bugMetadataRef + "\n"
 	cases := map[string]string{

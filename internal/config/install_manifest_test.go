@@ -19,6 +19,7 @@ import (
 
 const testCommit = "0123456789abcdef0123456789abcdef01234567"
 
+// manifestFixture constructs a minimal manifest for installation tests.
 func manifestFixture(t *testing.T, fleet, workstation *InstalledDocument) InstallManifest {
 	t.Helper()
 	return InstallManifest{

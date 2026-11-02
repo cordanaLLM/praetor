@@ -73,6 +73,7 @@ func TestReadSpendLogFile_Positive_LiteLLMFieldsJSONL(t *testing.T) {
 	assertSpendReport(t, r)
 }
 
+// TestReadSpendLogFile_Positive_ArrayAndCSVAgree pins positive array and csv agree for read spend log file.
 func TestReadSpendLogFile_Positive_ArrayAndCSVAgree(t *testing.T) {
 	dir := t.TempDir()
 	rows := strings.Split(strings.TrimSpace(spendJSONL), "\n")

@@ -13,6 +13,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// interruptedRender simulates an interrupted changelog render operation.
 func interruptedRender(t *testing.T) (string, string, []byte) {
 	t.Helper()
 	if blocked, reason := readOnlyDirectoryBlocksRemoval(t); !blocked {
@@ -56,6 +57,7 @@ func assertReleaseCount(t *testing.T, root string, want int) {
 	}
 }
 
+// TestRenderRetryResumesCleanupWithoutDuplicateRelease pins render retry resumes cleanup without duplicate release.
 func TestRenderRetryResumesCleanupWithoutDuplicateRelease(t *testing.T) {
 	root, fragment, _ := interruptedRender(t)
 	newFragment, err := CreateFragment(root, Fragment{Type: TypeAdded, Title: "Work for a later release"})
@@ -84,6 +86,7 @@ func TestRenderRetryResumesCleanupWithoutDuplicateRelease(t *testing.T) {
 	assertReleaseCount(t, root, 1)
 }
 
+// TestRenderRetryPreservesChangedFragment pins render retry preserves changed fragment.
 func TestRenderRetryPreservesChangedFragment(t *testing.T) {
 	root, fragment, before := interruptedRender(t)
 	changed := []byte("type: fixed\ntitle: Changed after publication\n")
@@ -110,6 +113,7 @@ func TestRenderRetryPreservesChangedFragment(t *testing.T) {
 	}
 }
 
+// TestRenderRetryRejectsChangedOutputAndOtherVersion pins render retry rejects changed output and other version.
 func TestRenderRetryRejectsChangedOutputAndOtherVersion(t *testing.T) {
 	root, fragment, _ := interruptedRender(t)
 	if err := RenderReleaseContext(t.Context(), root, "2.0.0",
@@ -131,6 +135,7 @@ func TestRenderRetryRejectsChangedOutputAndOtherVersion(t *testing.T) {
 	}
 }
 
+// TestRenderRetryAcceptsAlreadyCleanedRecordedFragment pins render retry accepts already cleaned recorded fragment.
 func TestRenderRetryAcceptsAlreadyCleanedRecordedFragment(t *testing.T) {
 	root, fragment, _ := interruptedRender(t)
 	if err := os.Remove(fragment); err != nil {
@@ -144,6 +149,7 @@ func TestRenderRetryAcceptsAlreadyCleanedRecordedFragment(t *testing.T) {
 	assertReleaseCount(t, root, 1)
 }
 
+// TestRenderRejectsMultipleYAMLDocumentsBeforeWrites pins render rejects multiple YAML documents before writes.
 func TestRenderRejectsMultipleYAMLDocumentsBeforeWrites(t *testing.T) {
 	root := t.TempDir()
 	fragment, err := CreateFragment(root, Fragment{Type: TypeAdded, Title: "first"})
@@ -170,6 +176,7 @@ func TestRenderRejectsMultipleYAMLDocumentsBeforeWrites(t *testing.T) {
 	}
 }
 
+// TestRenderRejectsCancellationAndPreservesHeaderlessContent pins render rejects cancellation and preserves headerless content.
 func TestRenderRejectsCancellationAndPreservesHeaderlessContent(t *testing.T) {
 	root := t.TempDir()
 	ctx, cancel := context.WithCancel(t.Context())
@@ -195,6 +202,7 @@ func TestRenderRejectsCancellationAndPreservesHeaderlessContent(t *testing.T) {
 	}
 }
 
+// TestRenderPendingJournalRejectsMissingFragmentDirectory pins render pending journal rejects missing fragment directory.
 func TestRenderPendingJournalRejectsMissingFragmentDirectory(t *testing.T) {
 	root, fragment, _ := interruptedRender(t)
 	if err := os.Remove(fragment); err != nil {

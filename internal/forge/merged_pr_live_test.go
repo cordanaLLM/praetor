@@ -22,6 +22,7 @@ func atoiOrFail(t *testing.T, text string) int {
 	return n
 }
 
+// pullJSON marshals pull request test data into JSON format.
 func pullJSON(number int, branch, milestone, merged, body string) map[string]any {
 	pull := map[string]any{
 		"number": number, "title": "t", "body": body, "created_at": /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-10-01T00:00:00Z",
@@ -63,6 +64,7 @@ func serveLedgerForge(t *testing.T, pages [][]map[string]any, issues map[int]str
 	})
 }
 
+// TestListMergedPullRequests_Positive_MilestoneBeforeLimitSortedByMerge pins positive milestone before limit sorted by merge for list merged pull requests.
 func TestListMergedPullRequests_Positive_MilestoneBeforeLimitSortedByMerge(t *testing.T) {
 	pages := [][]map[string]any{{
 		pullJSON(10, "feat/a", "M1",
@@ -108,6 +110,7 @@ func countIssueLookups(fake *fakeForgeServer) int {
 	return lookups
 }
 
+// TestListMergedPullRequests_Negative_FetchFailuresAreWarnings pins negative fetch failures are warnings for list merged pull requests.
 func TestListMergedPullRequests_Negative_FetchFailuresAreWarnings(t *testing.T) {
 	pages := [][]map[string]any{{
 		pullJSON(20, "feat/a", "",
@@ -147,6 +150,7 @@ func TestListMergedPullRequests_Negative_ListingErrorFails(t *testing.T) {
 	}
 }
 
+// TestListMergedPullRequests_Boundary_PageCeilingStatesTruncation pins boundary page ceiling states truncation for list merged pull requests.
 func TestListMergedPullRequests_Boundary_PageCeilingStatesTruncation(t *testing.T) {
 	full := make([]map[string]any, issuesPerPage)
 	for i := range full {
@@ -171,6 +175,7 @@ func TestListMergedPullRequests_Boundary_PageCeilingStatesTruncation(t *testing.
 	}
 }
 
+// TestListMergedPullRequests_Boundary_IssueLookupCap pins boundary issue lookup cap for list merged pull requests.
 func TestListMergedPullRequests_Boundary_IssueLookupCap(t *testing.T) {
 	var pages [][]map[string]any
 	issues := map[int]string{}
@@ -198,6 +203,7 @@ func TestListMergedPullRequests_Boundary_IssueLookupCap(t *testing.T) {
 	}
 }
 
+// TestParseIssueTimes_Positive_Negative_Boundary pins positive negative boundary for parse issue times.
 func TestParseIssueTimes_Positive_Negative_Boundary(t *testing.T) {
 	closed := /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-10-02T00:00:00Z"
 	created, got, err := parseIssueTimes(&ghIssueDetailRaw{CreatedAt: /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-10-01T00:00:00Z", ClosedAt: &closed}, 5)
