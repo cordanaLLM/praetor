@@ -16,7 +16,8 @@ import (
 
 // loopbackArguments reuses NetworkNone's namespace policy, with the caller's
 // filesystem and environment so go test's binary, working directory and fixtures
-// remain available. Bubblewrap brings up the private namespace's sole interface, lo.
+// remain available. Bubblewrap maps the caller's own UID/GID without capabilities
+// and brings up the private namespace's sole interface, lo.
 func loopbackArguments(command []string) []string {
 	args := namespaceArguments(Spec{Network: NetworkNone})
 	args = append(args, "--dev-bind", "/", "/", "--proc", "/proc", "--")
@@ -41,19 +42,27 @@ func (r Runner) LoopbackCommand(ctx context.Context, command []string) (Invocati
 	if err != nil {
 		return Invocation{}, err
 	}
-	check := r.ProbeBwrap
-	if check == nil {
-		check = func(ctx context.Context) error {
-			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			defer cancel()
-			result, err := util.RunCommandBytes(ctx, "", bwrap, 4096, loopbackArguments([]string{"/usr/bin/true"})...)
-			return util.CommandDiagnostic(err, result.Stderr)
+	if err := r.probeLoopback(ctx, bwrap); err != nil {
+		if errors.Is(err, ErrUnavailable) {
+			return Invocation{}, err
 		}
-	}
-	if err := check(ctx); err != nil {
 		return Invocation{}, &UnavailableError{Facility: "bwrap user/network namespaces (loopback-only)", Cause: err}
 	}
 	return Invocation{Path: bwrap, Args: loopbackArguments(command)}, nil
+}
+
+func (r Runner) probeLoopback(ctx context.Context, bwrap string) error {
+	if r.ProbeBwrap != nil {
+		return r.ProbeBwrap(ctx)
+	}
+	probeTarget, err := r.lookup("true")
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	result, err := util.RunCommandBytes(ctx, "", bwrap, 4096, loopbackArguments([]string{probeTarget})...)
+	return util.CommandDiagnostic(err, result.Stderr)
 }
 
 // RunLoopback runs only the compiled test binary in NetworkNone. The caller owns

@@ -13,8 +13,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +59,43 @@ func TestSandboxLoopbackExecUnavailable(t *testing.T) {
 	}
 }
 
+func TestSandboxLoopbackProbeResolvesTrue(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		fakeBwrap := filepath.Join(t.TempDir(), "fake-bwrap")
+		script := "#!/bin/sh\nfor last; do :; done\nif [ \"$last\" != \"/bin/true\" ]; then\n  echo \"probe target = $last, want /bin/true\" >&2\n  exit 1\nfi\n"
+		if err := os.WriteFile(fakeBwrap, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		runner := Runner{GOOS: "linux", Lookup: func(name string) (string, error) {
+			if name == "bwrap" {
+				return fakeBwrap, nil
+			}
+			if name == "true" {
+				return "/bin/true", nil
+			}
+			return "", fmt.Errorf("unexpected lookup %q", name)
+		}}
+		inv, err := runner.LoopbackCommand(t.Context(), []string{"/test"})
+		if err != nil || inv.Path != fakeBwrap {
+			t.Fatalf("LoopbackCommand() inv=%+v error=%v", inv, err)
+		}
+	}
+
+	runner := stubRunner("true")
+	runner.ProbeBwrap = nil
+	_, err := runner.LoopbackCommand(t.Context(), []string{"/test"})
+	assertUnavailable(t, err, "true")
+
+	runner.Lookup = func(name string) (string, error) {
+		if name == "true" {
+			return "bin/true", nil
+		}
+		return "/usr/bin/" + name, nil
+	}
+	_, err = runner.LoopbackCommand(t.Context(), []string{"/test"})
+	assertUnavailable(t, err, "true")
+}
+
 // Re-executed test helper: own HTTP client succeeds before publishing the port.
 func TestSandboxLoopbackServerProcess(t *testing.T) {
 	index := slices.Index(os.Args, "sandbox-loopback-server")
@@ -78,10 +117,18 @@ func TestSandboxLoopbackServerProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	if os.Args[index+1] == "isolated" {
-		interfaces, err := net.Interfaces()
-		if err != nil || len(interfaces) != 1 || interfaces[0].Name != "lo" || interfaces[0].Flags&net.FlagUp == 0 {
-			t.Fatalf("want only lo, up: %+v error=%v", interfaces, err)
-		}
+		assertLoopbackNamespace(t, os.Args[index+2], os.Args[index+3])
+	}
+}
+
+func assertLoopbackNamespace(t *testing.T, wantUID, wantGID string) {
+	t.Helper()
+	if gotUID, gotGID := strconv.Itoa(os.Getuid()), strconv.Itoa(os.Getgid()); gotUID != wantUID || gotGID != wantGID {
+		t.Fatalf("namespace altered caller identity: got uid=%s gid=%s, want uid=%s gid=%s", gotUID, gotGID, wantUID, wantGID)
+	}
+	interfaces, err := net.Interfaces()
+	if err != nil || len(interfaces) != 1 || interfaces[0].Name != "lo" || interfaces[0].Flags&net.FlagUp == 0 {
+		t.Fatalf("want only lo, up: %+v error=%v", interfaces, err)
 	}
 }
 
@@ -118,7 +165,15 @@ func loopbackServerCommand(t *testing.T, isolated bool) loopbackTestRunner {
 	if isolated {
 		mode = "isolated"
 	}
-	command := []string{executable, "-test.run=^TestSandboxLoopbackServerProcess$", "--", "sandbox-loopback-server", mode}
+	command := []string{
+		executable,
+		"-test.run=^TestSandboxLoopbackServerProcess$",
+		"--",
+		"sandbox-loopback-server",
+		mode,
+		strconv.Itoa(os.Getuid()),
+		strconv.Itoa(os.Getgid()),
+	}
 	if !isolated {
 		return func(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) error {
 			return util.RunCommandPassthrough(ctx, "", executable, stdin, stdout, stderr, command[1:]...)
