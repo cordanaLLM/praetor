@@ -284,6 +284,7 @@ type forgeStub struct {
 
 const forgeStubRepo = "/repos/acme/widgets/"
 
+// handler returns an HTTP handler function that routes incoming test requests to stubbed forge endpoints.
 func (s *forgeStub) handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
@@ -333,6 +334,7 @@ func (s *forgeStub) handler() http.HandlerFunc {
 	}
 }
 
+// serveWorkflowRuns serves stubbed GitHub Actions workflow run pages for the given workflow name.
 func (s *forgeStub) serveWorkflowRuns(w http.ResponseWriter, workflow string) {
 	if page, ok := s.runs[workflow]; ok {
 		stubRespond(w, http.StatusOK, page)
