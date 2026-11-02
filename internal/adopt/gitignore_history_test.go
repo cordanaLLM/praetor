@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 // pinnedGitIgnoreBlockVersions pins the exact rules accepted for each version of the
@@ -307,82 +307,54 @@ func TestGitIgnoreRulesImmutability(t *testing.T) {
 
 const guideReadTimeout = 5 * time.Second
 
-// contextReader wraps a reader so Read calls observe context cancellation (HISS-02).
-type contextReader struct {
-	ctx    context.Context
-	reader io.Reader
-}
-
-func (r contextReader) Read(buffer []byte) (int, error) {
-	if err := r.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return r.reader.Read(buffer)
-}
-
-// readGuideWithContext reads path observing ctx cancellation and deadline (HISS-02).
-func readGuideWithContext(ctx context.Context, path string) (data []byte, err error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	// #nosec G304 -- path is a bounded guide file within the repository docs
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { err = errors.Join(err, file.Close()) }()
-
-	return io.ReadAll(contextReader{ctx: ctx, reader: file})
-}
-
 // readGuideWithTimeout reads the guide at path under an explicit context timeout (HISS-02).
 func readGuideWithTimeout(t testing.TB, path string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), guideReadTimeout)
 	defer cancel()
-	content, err := readGuideWithContext(ctx, path)
+	content, err := contextopt.ReadSnapshot(ctx, path)
 	if err != nil {
 		t.Fatalf("read guide with timeout %s: %v", path, err)
 	}
 	return string(content)
 }
 
-// Positive: readGuideWithContext successfully reads the guide when context is active.
+// Positive: contextopt.ReadSnapshot successfully reads the guide when context is active.
 func TestGitIgnoreHistory_ReadGuideWithContext_Positive(t *testing.T) {
 	guidePath := filepath.Join("..", "..", "docs", "guides", "state-ledger-integrity.md")
 	ctx, cancel := context.WithTimeout(t.Context(), guideReadTimeout)
 	defer cancel()
-	data, err := readGuideWithContext(ctx, guidePath)
+	data, err := contextopt.ReadSnapshot(ctx, guidePath)
 	if err != nil {
-		t.Fatalf("readGuideWithContext failed: %v", err)
+		t.Fatalf("read guide with contextopt.ReadSnapshot failed: %v", err)
 	}
 	if len(data) == 0 {
-		t.Fatal("readGuideWithContext returned empty data")
+		t.Fatal("contextopt.ReadSnapshot returned empty data")
 	}
 }
 
-// Negative: readGuideWithContext reports error on nonexistent path or canceled context.
+// Negative: contextopt.ReadSnapshot reports error on nonexistent path or canceled context.
 func TestGitIgnoreHistory_ReadGuideWithContext_Negative(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), guideReadTimeout)
 	defer cancel()
-	if _, err := readGuideWithContext(ctx, filepath.Join("..", "..", "docs", "nonexistent.md")); err == nil {
+	if _, err := contextopt.ReadSnapshot(ctx, filepath.Join("..", "..", "docs", "nonexistent.md")); err == nil {
 		t.Fatal("expected error reading nonexistent file, got nil")
 	}
 
 	canceledCtx, cancelNow := context.WithCancel(t.Context())
 	cancelNow()
 	guidePath := filepath.Join("..", "..", "docs", "guides", "state-ledger-integrity.md")
-	if _, err := readGuideWithContext(canceledCtx, guidePath); !errors.Is(err, context.Canceled) {
+	if _, err := contextopt.ReadSnapshot(canceledCtx, guidePath); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
 
-// Boundary: readGuideWithContext reports DeadlineExceeded when context deadline is in the past.
+// Boundary: contextopt.ReadSnapshot reports DeadlineExceeded when context deadline is in the past.
 func TestGitIgnoreHistory_ReadGuideWithContext_Boundary(t *testing.T) {
 	deadlineCtx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Millisecond))
 	defer cancel()
 	guidePath := filepath.Join("..", "..", "docs", "guides", "state-ledger-integrity.md")
-	if _, err := readGuideWithContext(deadlineCtx, guidePath); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := contextopt.ReadSnapshot(deadlineCtx, guidePath); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected context.DeadlineExceeded, got %v", err)
 	}
 }
