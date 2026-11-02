@@ -65,3 +65,40 @@ func TestDocsGitHooksStageBudget_Boundary_VerifiesFixedThirtySecondTimeoutsDocum
 		t.Errorf("git-hooks.md missing fixed 30-second timeouts for commit-msg commands")
 	}
 }
+
+// Positive: git-hooks.md documents fixed 30s timeout in pre-push verify_live_state and clarifies cli budget scope.
+func TestDocsGitHooksStageBudget_Positive_DocumentsPrePushFixedTimeoutAndCliScope(t *testing.T) {
+	content := readGitHooksGuide(t)
+	mustHave := []string{
+		"when `pre-push` has ref updates",
+		"`verify_live_state()`",
+		"fixed 30-second timeout",
+		"still have a push fail at 30 seconds",
+		"shared stage budget covers the `cli` invocation, not this later verification command",
+	}
+	for _, want := range mustHave {
+		if !strings.Contains(content, want) {
+			t.Errorf("git-hooks.md missing expected pre-push timeout documentation: %q", want)
+		}
+	}
+}
+
+// Negative: git-hooks.md must not state or imply that pre-push live-state verification obeys PRAETOR_TEST_STAGE_TIMEOUT.
+func TestDocsGitHooksStageBudget_Negative_RejectsPrePushVerificationObeysStageTimeout(t *testing.T) {
+	content := readGitHooksGuide(t)
+	forbidden := "pre-push live-state verification obeys PRAETOR_TEST_STAGE_TIMEOUT"
+	if strings.Contains(content, forbidden) {
+		t.Errorf("git-hooks.md contains invalid claim: %q", forbidden)
+	}
+}
+
+// Boundary: verifies pre-push fixed 30-second timeout and 20-minute stage budget boundary descriptions.
+func TestDocsGitHooksStageBudget_Boundary_VerifiesPrePushStageBudgetBoundaries(t *testing.T) {
+	content := readGitHooksGuide(t)
+	if !strings.Contains(content, "push fail at 30 seconds") {
+		t.Errorf("git-hooks.md missing push fail boundary at 30 seconds")
+	}
+	if !strings.Contains(content, "20 minutes (`20m`)") {
+		t.Errorf("git-hooks.md missing 20m budget boundary")
+	}
+}
