@@ -10,6 +10,7 @@ import (
 	"testing"
 )
 
+// TestCatalog_BaselineShapeAndCounts verifies the loaded catalog metadata and criteria control counts.
 func TestCatalog_BaselineShapeAndCounts(t *testing.T) {
 	cat, err := LoadCatalog()
 	if err != nil {
@@ -28,6 +29,7 @@ func TestCatalog_BaselineShapeAndCounts(t *testing.T) {
 	assertCatalogLevelsAndSample(t, cat)
 }
 
+// assertCatalogLevelsAndSample asserts expected criteria levels and sample criteria rule flags.
 func assertCatalogLevelsAndSample(t *testing.T, cat *Catalog) {
 	t.Helper()
 	for _, level := range []string{"0", "1", "2", "baseline-1", "baseline-2", "baseline-3"} {
@@ -45,6 +47,7 @@ func assertCatalogLevelsAndSample(t *testing.T, cat *Catalog) {
 	}
 }
 
+// TestValidateBytes_Positive_GreenClaims tests a valid .bestpractices.json payload with mixed statuses.
 func TestValidateBytes_Positive_GreenClaims(t *testing.T) {
 	// Includes the golusoris/.github shape around line 73 ("test_policy_status": "Unmet" with justification),
 	// Met with URL where met_url_required, N/A with justification where allowed, and project metadata fields.
@@ -81,6 +84,7 @@ func TestValidateBytes_Positive_GreenClaims(t *testing.T) {
 	}
 }
 
+// TestValidateBytes_Negative_Rule1NANotAllowed verifies that N/A is refused for criteria where N/A is forbidden.
 func TestValidateBytes_Negative_Rule1NANotAllowed(t *testing.T) {
 	raw := []byte(`{
   "description_good_status": "N/A",
@@ -89,6 +93,7 @@ func TestValidateBytes_Negative_Rule1NANotAllowed(t *testing.T) {
 	assertSingleFinding(t, raw, "description_good", "N/A", RuleNANotAllowed)
 }
 
+// TestValidateBytes_Negative_Rule2NAJustificationRequired verifies that N/A requires justification when configured.
 func TestValidateBytes_Negative_Rule2NAJustificationRequired(t *testing.T) {
 	raw := []byte(`{
   "documentation_basics_status": "N/A"
@@ -96,6 +101,7 @@ func TestValidateBytes_Negative_Rule2NAJustificationRequired(t *testing.T) {
 	assertSingleFinding(t, raw, "documentation_basics", "N/A", RuleNAJustificationRequired)
 }
 
+// TestValidateBytes_Negative_Rule3MetJustificationRequired verifies that Met requires justification when configured.
 func TestValidateBytes_Negative_Rule3MetJustificationRequired(t *testing.T) {
 	raw := []byte(`{
   "static_analysis_status": "Met"
@@ -103,6 +109,7 @@ func TestValidateBytes_Negative_Rule3MetJustificationRequired(t *testing.T) {
 	assertSingleFinding(t, raw, "static_analysis", "Met", RuleMetJustificationRequired)
 }
 
+// TestValidateBytes_Negative_Rule4MetURLRequired verifies that Met requires a valid URL in justification when configured.
 func TestValidateBytes_Negative_Rule4MetURLRequired(t *testing.T) {
 	raw := []byte(`{
   "contribution_status": "Met",
@@ -111,6 +118,7 @@ func TestValidateBytes_Negative_Rule4MetURLRequired(t *testing.T) {
 	assertSingleFinding(t, raw, "contribution", "Met", RuleMetURLRequired)
 }
 
+// TestValidateBytes_Negative_Rule5InvalidStatus verifies that unsupported status values are refused.
 func TestValidateBytes_Negative_Rule5InvalidStatus(t *testing.T) {
 	raw := []byte(`{
   "floss_license_status": "Yes"
@@ -118,6 +126,7 @@ func TestValidateBytes_Negative_Rule5InvalidStatus(t *testing.T) {
 	assertSingleFinding(t, raw, "floss_license", "Yes", RuleInvalidStatus)
 }
 
+// TestValidateBytes_Negative_Rule6UnknownCriterion verifies that unrecognized criteria keys produce a finding.
 func TestValidateBytes_Negative_Rule6UnknownCriterion(t *testing.T) {
 	raw := []byte(`{
   "nonexistent_criterion_status": "Met"
@@ -125,6 +134,7 @@ func TestValidateBytes_Negative_Rule6UnknownCriterion(t *testing.T) {
 	assertSingleFinding(t, raw, "nonexistent_criterion", "Met", RuleUnknownCriterion)
 }
 
+// TestValidateBytes_Boundary_EmptyAndWhitespaceJustification verifies handling of empty objects and whitespace-only justifications.
 func TestValidateBytes_Boundary_EmptyAndWhitespaceJustification(t *testing.T) {
 	emptyReport, err := ValidateBytes(t.Context(), []byte(`{}`))
 	if err != nil {
@@ -147,6 +157,7 @@ func TestValidateBytes_Boundary_EmptyAndWhitespaceJustification(t *testing.T) {
 	assertSingleFinding(t, spacesMet, "static_analysis", "Met", RuleMetJustificationRequired)
 }
 
+// TestValidateBytes_MultiLevelCriterionUsesLevelSpecificRules verifies that criteria spanning multiple levels apply the active level's requirements.
 func TestValidateBytes_MultiLevelCriterionUsesLevelSpecificRules(t *testing.T) {
 	cat, err := LoadCatalog()
 	if err != nil {
@@ -174,6 +185,7 @@ func TestValidateBytes_MultiLevelCriterionUsesLevelSpecificRules(t *testing.T) {
 	assertSingleFinding(t, rawGold, "test_invocation", "Met", RuleMetURLRequired)
 }
 
+// TestValidateBytes_Negative_MultipleViolationsOnSingleClaim verifies that multiple rule violations on a single claim are all reported.
 func TestValidateBytes_Negative_MultipleViolationsOnSingleClaim(t *testing.T) {
 	// external_dependencies requires both a non-blank justification and an http(s) URL when Met.
 	raw := []byte(`{
@@ -197,6 +209,7 @@ func TestValidateBytes_Negative_MultipleViolationsOnSingleClaim(t *testing.T) {
 	}
 }
 
+// TestAudit_Boundary_AbsentPassAndFail tests Audit with absent, valid, and failing files.
 func TestAudit_Boundary_AbsentPassAndFail(t *testing.T) {
 	root := t.TempDir()
 	line, err := Audit(t.Context(), root)
@@ -217,6 +230,7 @@ func TestAudit_Boundary_AbsentPassAndFail(t *testing.T) {
 	}
 }
 
+// writeBestPracticesFile writes the given content to .bestpractices.json in the test directory.
 func writeBestPracticesFile(t *testing.T, root, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(root, File), []byte(content), 0o600); err != nil {
@@ -224,6 +238,7 @@ func writeBestPracticesFile(t *testing.T, root, content string) {
 	}
 }
 
+// assertSingleFinding verifies that validating raw JSON yields exactly one finding matching expected criterion, status, and rule.
 func assertSingleFinding(t *testing.T, raw []byte, wantCriterion, wantStatus string, wantRule Rule) {
 	t.Helper()
 	report, err := ValidateBytes(t.Context(), raw)

@@ -261,6 +261,7 @@ func TestReleaseE2EAuditGates_MissingSectionSkips(t *testing.T) {
 	}
 }
 
+// TestServerAuditRunsTheBestPracticesGate verifies that standards_audit verifies .bestpractices.json claims or skips when absent.
 func TestServerAuditRunsTheBestPracticesGate(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	expectText(t, "absent .bestpractices.json", callTool(t, srv, "standards_audit", nil),
@@ -280,6 +281,7 @@ func TestServerAuditRunsTheBestPracticesGate(t *testing.T) {
 		`[FAIL] bestpractices-claims: .bestpractices.json has 1 forbidden claim(s): criterion "description_good" (status "N/A", rule na_not_allowed)`)
 }
 
+// TestServerAuditContextGroupGuideContract verifies that development-mcp.md preserves the required context-group check sequence and references.
 func TestServerAuditContextGroupGuideContract(t *testing.T) {
 	guidePath := filepath.Join(sourceCheckoutRoot(t), "docs", "guides", "development-mcp.md")
 	data, err := readAuditContextGroupGuide(t.Context(), guidePath)
@@ -326,6 +328,7 @@ func TestServerAuditContextGroupGuideContract(t *testing.T) {
 	}
 }
 
+// TestReadAuditContextGroupGuide_3D exercises positive, negative canceled, boundary nil, and missing-file reads of the guide.
 func TestReadAuditContextGroupGuide_3D(t *testing.T) {
 	guidePath := filepath.Join(sourceCheckoutRoot(t), "docs", "guides", "development-mcp.md")
 
@@ -355,6 +358,7 @@ func TestReadAuditContextGroupGuide_3D(t *testing.T) {
 	}
 }
 
+// readAuditContextGroupGuide reads the specified guide file within a bounded timeout.
 func readAuditContextGroupGuide(ctx context.Context, path string) ([]byte, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("read guide: context is required")
@@ -368,6 +372,7 @@ func readAuditContextGroupGuide(ctx context.Context, path string) ([]byte, error
 	return data, nil
 }
 
+// checkAuditContextGroupGuide verifies the guide document mentions required checks in order with matching references.
 func checkAuditContextGroupGuide(doc string) error {
 	checks := [4]string{"`editor-selection`", "`renovate-engine-bumps`", "`rust-msrv`", "`bestpractices-claims`"}
 	last := -1

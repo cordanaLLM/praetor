@@ -10,6 +10,7 @@ import (
 	"testing"
 )
 
+// TestAuditBestPracticesClaims_CLI verifies that the standardsctl audit CLI gate handles missing, valid, and invalid .bestpractices.json files.
 func TestAuditBestPracticesClaims_CLI(t *testing.T) {
 	f := newAuditFixture(t)
 	out, err := f.audit(t)
@@ -54,6 +55,7 @@ func TestAuditRepositoryChecks_CLIAndMCPStayInSync(t *testing.T) {
 	}
 }
 
+// selectQualifiedCalls extracts package-qualified function calls from an AST function declaration that match target names.
 func selectQualifiedCalls(decl *ast.FuncDecl, targets []string) []string {
 	if decl == nil {
 		return nil

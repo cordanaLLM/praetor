@@ -23,6 +23,7 @@ type statusClaim struct {
 	validString bool
 }
 
+// extractClaims parses status claims and corresponding justifications from a clientjson object.
 func extractClaims(object clientjson.Object) ([]statusClaim, map[string]string, error) {
 	if len(object) > maxObjectMembers {
 		return nil, nil, fmt.Errorf("%s has %d members (max %d)", File, len(object), maxObjectMembers)
@@ -47,6 +48,7 @@ func extractClaims(object clientjson.Object) ([]statusClaim, map[string]string, 
 	return claims, justifications, nil
 }
 
+// parseStatusMember parses a status claim member into a statusClaim structure.
 func parseStatusMember(member clientjson.Member) statusClaim {
 	criterion := strings.TrimSuffix(member.Name, statusSuffix)
 	var status string
@@ -60,6 +62,7 @@ func parseStatusMember(member clientjson.Member) statusClaim {
 	return statusClaim{criterion: criterion, status: status, validString: true}
 }
 
+// parseJustificationMember parses a justification member value into a string.
 func parseJustificationMember(member clientjson.Member) (string, error) {
 	var text *string
 	if err := json.Unmarshal(member.Value, &text); err != nil {

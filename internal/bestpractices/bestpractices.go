@@ -162,6 +162,7 @@ func ValidateBytes(ctx context.Context, raw []byte) (*Report, error) {
 	return report, nil
 }
 
+// formatFindings formats a slice of findings into a semicolon-separated string.
 func formatFindings(findings []Finding) string {
 	parts := make([]string, 0, len(findings))
 	for i := 0; i < len(findings) && i < maxObjectMembers*2; i++ {

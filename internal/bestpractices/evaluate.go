@@ -11,6 +11,7 @@ import (
 // httpURLPattern matches an http:// or https:// URL containing a dotted host.
 var httpURLPattern = regexp.MustCompile(`https?://[^/\s.]+\.[^\s]+`)
 
+// activeCriteriaForClaims builds an effective criteria map for the given claims, merging higher badge level rules when targeted.
 func activeCriteriaForClaims(cat *Catalog, claims []statusClaim) map[string]Criterion {
 	active := make(map[string]Criterion, len(cat.Criteria))
 	for name, crit := range cat.Criteria {
@@ -26,6 +27,7 @@ func activeCriteriaForClaims(cat *Catalog, claims []statusClaim) map[string]Crit
 	return active
 }
 
+// claimLevels inspects claims to determine whether silver (level 1) or gold (level 2) criteria rules should be activated.
 func claimLevels(cat *Catalog, claims []statusClaim) (hasSilver, hasGold bool) {
 	for i := 0; i < len(claims) && i < maxObjectMembers; i++ {
 		name := claims[i].criterion
@@ -44,6 +46,7 @@ func claimLevels(cat *Catalog, claims []statusClaim) (hasSilver, hasGold bool) {
 	return hasSilver, hasGold
 }
 
+// mergeLevelCriteria merges higher-level criteria rules into the destination map.
 func mergeLevelCriteria(dst, levelMap map[string]Criterion) {
 	for name, higher := range levelMap {
 		prev, exists := dst[name]
@@ -59,6 +62,7 @@ func mergeLevelCriteria(dst, levelMap map[string]Criterion) {
 	}
 }
 
+// evaluateClaim evaluates a single status claim against its criterion specification and returns any findings.
 func evaluateClaim(claim statusClaim, justification string, criteria map[string]Criterion) []Finding {
 	spec, known := criteria[claim.criterion]
 	if !known {
@@ -87,6 +91,7 @@ func evaluateClaim(claim statusClaim, justification string, criteria map[string]
 	}
 }
 
+// evaluateNA checks N/A status requirements including allowance and justification.
 func evaluateNA(criterion, justification string, spec Criterion) []Finding {
 	var findings []Finding
 	if !spec.NAAllowed {
@@ -108,6 +113,7 @@ func evaluateNA(criterion, justification string, spec Criterion) []Finding {
 	return findings
 }
 
+// evaluateMet checks Met status requirements including required justification and URL presence.
 func evaluateMet(criterion, justification string, spec Criterion) []Finding {
 	var findings []Finding
 	if spec.MetJustificationRequired && strings.TrimSpace(justification) == "" {
@@ -129,10 +135,12 @@ func evaluateMet(criterion, justification string, spec Criterion) []Finding {
 	return findings
 }
 
+// isValidStatus reports whether the status string is one of the valid OpenSSF status values.
 func isValidStatus(status string) bool {
 	return status == "Met" || status == "Unmet" || status == "N/A" || status == "?"
 }
 
+// containsHTTPURL reports whether the justification contains a valid http:// or https:// URL.
 func containsHTTPURL(justification string) bool {
 	trimmed := strings.TrimSpace(justification)
 	if trimmed == "" || strings.HasPrefix(trimmed, "// ") {

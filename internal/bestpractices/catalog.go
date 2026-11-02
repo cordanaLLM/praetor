@@ -32,6 +32,7 @@ func LoadCatalog() (*Catalog, error) {
 	return loadCatalogOnce()
 }
 
+// parseEmbeddedCatalog loads and parses criteria from embedded criteria and baseline YAML files.
 func parseEmbeddedCatalog() (*Catalog, error) {
 	metalRaw, err := upstreamFS.ReadFile(embeddedCriteriaPath)
 	if err != nil {
@@ -54,6 +55,7 @@ func parseEmbeddedCatalog() (*Catalog, error) {
 	return cat, nil
 }
 
+// parseCriteriaYAML decodes a criteria YAML document and populates the catalog criteria and metadata.
 func parseCriteriaYAML(cat *Catalog, source string, raw []byte) error {
 	root, err := decodeRootNode(source, raw)
 	if err != nil {
@@ -78,6 +80,7 @@ func parseCriteriaYAML(cat *Catalog, source string, raw []byte) error {
 	return nil
 }
 
+// decodeRootNode unmarshals raw YAML bytes into a root node and validates single document structure.
 func decodeRootNode(source string, raw []byte) (*yaml.Node, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
@@ -89,6 +92,7 @@ func decodeRootNode(source string, raw []byte) (*yaml.Node, error) {
 	return doc.Content[0], nil
 }
 
+// parseLevelNode traverses major groups within a specific criteria level node.
 func parseLevelNode(cat *Catalog, level string, levelNode *yaml.Node) error {
 	if cat.ByLevel[level] == nil {
 		cat.ByLevel[level] = make(map[string]Criterion, 64)
@@ -106,6 +110,7 @@ func parseLevelNode(cat *Catalog, level string, levelNode *yaml.Node) error {
 	return nil
 }
 
+// parseMajorGroup traverses minor groups within a criteria major group node.
 func parseMajorGroup(cat *Catalog, level, major string, majorNode *yaml.Node) error {
 	minors, err := nodeEntries(majorNode, maxMinorGroups, "major group "+major)
 	if err != nil {
@@ -120,6 +125,7 @@ func parseMajorGroup(cat *Catalog, level, major string, majorNode *yaml.Node) er
 	return nil
 }
 
+// parseMinorGroup decodes criterion entries from a minor group node into the catalog.
 func parseMinorGroup(cat *Catalog, level, major, minor string, minorNode *yaml.Node) error {
 	items, err := nodeEntries(minorNode, maxCriteriaPerGroup, "minor group "+minor)
 	if err != nil {
@@ -143,6 +149,7 @@ func parseMinorGroup(cat *Catalog, level, major, minor string, minorNode *yaml.N
 	return nil
 }
 
+// nodeEntries extracts keyed child nodes from mapping or sequence YAML nodes up to a bounded limit.
 func nodeEntries(node *yaml.Node, bound int, label string) ([]keyedNode, error) {
 	switch node.Kind {
 	case yaml.MappingNode:
@@ -154,6 +161,7 @@ func nodeEntries(node *yaml.Node, bound int, label string) ([]keyedNode, error) 
 	}
 }
 
+// mappingEntries extracts key-value pairs from a standard YAML mapping node.
 func mappingEntries(node *yaml.Node, bound int, label string) ([]keyedNode, error) {
 	count := len(node.Content) / 2
 	if count > bound {
@@ -166,6 +174,7 @@ func mappingEntries(node *yaml.Node, bound int, label string) ([]keyedNode, erro
 	return out, nil
 }
 
+// omapEntries extracts ordered key-value pairs from a sequence of single-pair mapping nodes.
 func omapEntries(node *yaml.Node, bound int, label string) ([]keyedNode, error) {
 	if len(node.Content) > bound {
 		return nil, fmt.Errorf("%s: omap sequence has %d entries (max %d)", label, len(node.Content), bound)
