@@ -34,6 +34,14 @@ type msrvDeclaration struct{ file, version string }
 func AuditRustMSRV(ctx context.Context, root string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, contextopt.MaxDuration)
 	defer cancel()
+	// Order: engine-1689-no-cargo-skip-first-20261102: skip before loading inputs when no Cargo.toml exists.
+	cargoCount, err := countCargoManifests(ctx, root)
+	if err != nil {
+		return "", fmt.Errorf("[FAIL] rust-msrv: %w", err)
+	}
+	if cargoCount == 0 {
+		return "[SKIP] rust-msrv: no Cargo.toml found.", nil
+	}
 	inputs, err := loadVerificationInputs(ctx, root)
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] rust-msrv: %w", err)
