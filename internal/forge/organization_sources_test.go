@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+// TestOrganizationSourcesInvalidManifest pins untrusted source exclusion when the repository manifest is invalid.
 func TestOrganizationSourcesInvalidManifest(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".standards.yaml")
 	data := "version: 1\nforge:\n  own_organizations: [untrusted]\nexceptions:\n  - rule: HISS-11\n    path: .github/workflows/release.yml\n    reason: migration\n    expires: 2099-01-01\n"
@@ -38,6 +39,7 @@ func TestOrganizationSourcesInvalidManifest(t *testing.T) {
 	}
 }
 
+// TestOrganizationSourcesMissingAndInvalidIdentity pins behavior when the manifest is missing or the identity string is invalid.
 func TestOrganizationSourcesMissingAndInvalidIdentity(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()

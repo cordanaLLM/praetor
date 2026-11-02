@@ -16,6 +16,7 @@ import (
 	"github.com/cordanaLLM/praetor/tools/secrets/rules"
 )
 
+// migrationManifest writes a temporary test manifest containing the specified exception entries.
 func migrationManifest(t *testing.T, entries string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), ManifestFileName)
@@ -25,6 +26,7 @@ func migrationManifest(t *testing.T, entries string) string {
 	return path
 }
 
+// TestExceptionMigrationDecodesLegacyValuesWithoutPolicyValidation pins decoding of legacy exceptions without failing policy validation.
 func TestExceptionMigrationDecodesLegacyValuesWithoutPolicyValidation(t *testing.T) {
 	today := ExceptionDay(time.Now())
 	for _, days := range []int{0, 91, 121} {
@@ -49,11 +51,13 @@ func TestExceptionMigrationDecodesLegacyValuesWithoutPolicyValidation(t *testing
 	}
 }
 
+// legacyMigrationEntry formats a legacy exception entry with the given duration, reason, and base date.
 func legacyMigrationEntry(days int, reason string, today time.Time) string {
 	return fmt.Sprintf("  - rule: declared-linters # entry comment\n    tool: semgrep\n    reason: %s\n    expires: %s # expiry comment\n",
 		util.YAMLScalar(reason), today.AddDate(0, 0, days).Format(ExceptionDateLayout))
 }
 
+// TestExceptionMigrationCategoryBoundaries pins category assignment boundaries across varied exception durations.
 func TestExceptionMigrationCategoryBoundaries(t *testing.T) {
 	today := ExceptionDay(time.Now())
 	for _, tc := range []struct {
@@ -75,6 +79,7 @@ func TestExceptionMigrationCategoryBoundaries(t *testing.T) {
 	}
 }
 
+// assertMigrationValid verifies that a proposed migration satisfies expiry rules and parses successfully.
 func assertMigrationValid(t *testing.T, path string, data []byte, proposal ExceptionMigration, today time.Time) {
 	t.Helper()
 	if proposal.Unresolved != "" {
@@ -89,6 +94,7 @@ func assertMigrationValid(t *testing.T, path string, data []byte, proposal Excep
 	}
 }
 
+// TestExceptionMigrationPreservesPolicyAndComments pins comment preservation and mapping order during exception migration.
 func TestExceptionMigrationPreservesPolicyAndComments(t *testing.T) {
 	today := ExceptionDay(time.Now())
 	entries := legacyMigrationEntry(91, "category D, rollout", today) + legacyMigrationEntry(121, "too long", today)
@@ -114,6 +120,7 @@ func TestExceptionMigrationPreservesPolicyAndComments(t *testing.T) {
 	}
 }
 
+// TestExceptionMigrationRejectsAmbiguousInput pins error reporting for duplicate keys, multi-document streams, and invalid YAML.
 func TestExceptionMigrationRejectsAmbiguousInput(t *testing.T) {
 	for _, content := range []string{
 		"version: 1\nversion: 1\n", "version: 1\n---\nversion: 1\n",
@@ -130,6 +137,7 @@ func TestExceptionMigrationRejectsAmbiguousInput(t *testing.T) {
 	}
 }
 
+// TestExceptionMigrationReasonAndExistingFields pins handling of category-prefixed reasons and pre-existing lifecycle fields.
 func TestExceptionMigrationReasonAndExistingFields(t *testing.T) {
 	today := ExceptionDay(time.Now())
 	for _, tc := range []struct{ reason, extra, want string }{
@@ -155,6 +163,7 @@ func TestExceptionMigrationReasonAndExistingFields(t *testing.T) {
 	}
 }
 
+// TestExceptionEnteredBlame pins resolving the entered date and commit source from git blame history.
 func TestExceptionEnteredBlame(t *testing.T) {
 	today := ExceptionDay(time.Now())
 	path := migrationManifest(t, legacyMigrationEntry(5, "migration", today))
@@ -186,6 +195,7 @@ func TestExceptionEnteredBlame(t *testing.T) {
 	}
 }
 
+// TestExceptionEnteredBlameFallback pins fallback behavior when blame porcelain output is empty, uncommitted, or malformed.
 func TestExceptionEnteredBlameFallback(t *testing.T) {
 	today := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
 	for _, text := range []string{"", "000000000 1 1 1\ncommitter-time 1", "abc 1 1 1\ncommitter-time bad"} {

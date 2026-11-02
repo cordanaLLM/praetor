@@ -16,6 +16,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// runExceptionMigration plans exception migrations for a manifest, prints proposals, and optionally writes them.
 func runExceptionMigration(path, todayStr string, write bool) error {
 	today, err := exceptionToday(todayStr)
 	if err != nil {
@@ -39,6 +40,7 @@ func runExceptionMigration(path, todayStr string, write bool) error {
 	return nil
 }
 
+// writeExceptionMigration writes migrated manifest data atomically and verifies it via readback.
 func writeExceptionMigration(ctx context.Context, path string, data []byte) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("apply exception migration: %w", err)
@@ -63,6 +65,7 @@ func writeExceptionMigration(ctx context.Context, path string, data []byte) erro
 	return nil
 }
 
+// printExceptionMigrations outputs proposed migrations to stdout and returns the count of unresolved proposals.
 func printExceptionMigrations(path string, proposals []config.ExceptionMigration) int {
 	unresolved := 0
 	for i := 0; i < len(proposals) && i < config.MaxExceptions; i++ {

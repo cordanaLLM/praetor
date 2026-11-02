@@ -14,6 +14,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
+// TestExceptionMigrationTerminalControls pins stripping of terminal control characters from migration output.
 func TestExceptionMigrationTerminalControls(t *testing.T) {
 	for _, value := range []string{"plain", "café", "", "\x00\x08\x09\x1b[2J\x7f\u009b2J\u202e\r\n\xff"} {
 		t.Run(fmt.Sprintf("%q", value), func(t *testing.T) {
@@ -42,6 +43,7 @@ func TestExceptionMigrationTerminalControls(t *testing.T) {
 	}
 }
 
+// TestExceptionsMigrateDryRunAndWrite pins dry-run output and file updates for exception migrations.
 func TestExceptionsMigrateDryRunAndWrite(t *testing.T) {
 	today := config.ExceptionDay(time.Now())
 	expires := today.AddDate(0, 0, 91).Format(config.ExceptionDateLayout)
@@ -76,6 +78,7 @@ func TestExceptionsMigrateDryRunAndWrite(t *testing.T) {
 	}
 }
 
+// TestExceptionsMigrateUnresolved pins error reporting when an exception proposal cannot be resolved.
 func TestExceptionsMigrateUnresolved(t *testing.T) {
 	today := config.ExceptionDay(time.Now())
 	path := writeExceptionsManifest(t,
@@ -99,6 +102,7 @@ func TestExceptionsMigrateUnresolved(t *testing.T) {
 	}
 }
 
+// TestExceptionsMigrateOneLineAndFlags pins single-line rendering of multiline entries and flag validation.
 func TestExceptionsMigrateOneLineAndFlags(t *testing.T) {
 	path := writeExceptionsManifest(t, config.Exception{Rule: "declared-linters", Tool: "semi\ngrep", Reason: "migration", Expires: "bad\ndate"})
 	out, err := captureStdout(t, func() error { return runExceptions([]string{"migrate", "--config=" + path}) })

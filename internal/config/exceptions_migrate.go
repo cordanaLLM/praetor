@@ -59,6 +59,7 @@ func PlanExceptionMigration(ctx context.Context, path string, today time.Time) (
 	return encoded, proposals, nil
 }
 
+// migrateExceptionNodes walks exception YAML nodes and applies proposed migrations to entries lacking category or entered fields.
 func migrateExceptionNodes(ctx context.Context, path string, entries *yaml.Node, today time.Time) ([]ExceptionMigration, error) {
 	var proposals []ExceptionMigration
 	for i := 0; i < len(entries.Content) && i < MaxExceptions; i++ {
@@ -86,6 +87,7 @@ func migrateExceptionNodes(ctx context.Context, path string, entries *yaml.Node,
 	return proposals, nil
 }
 
+// setMigrationScalar updates or appends a key-value scalar pair in a YAML mapping node.
 func setMigrationScalar(node *yaml.Node, key, value string) {
 	if existing := policyMember(node, key); existing != nil {
 		existing.Kind, existing.Tag, existing.Value = yaml.ScalarNode, "!!str", value
@@ -96,6 +98,7 @@ func setMigrationScalar(node *yaml.Node, key, value string) {
 		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
 }
 
+// proposeExceptionMigration determines the entered date and expiration category for an unmigrated exception.
 func proposeExceptionMigration(ctx context.Context, path string, line int, entry Exception, today time.Time) ExceptionMigration {
 	// Keep the source alongside the date; a fallback is always visible in the command output.
 	entered, source := exceptionEntered(ctx, path, line, today)
@@ -114,6 +117,7 @@ func proposeExceptionMigration(ctx context.Context, path string, line int, entry
 	return ExceptionMigration{Entry: entry, Source: source, Unresolved: "no category admits existing expiry"}
 }
 
+// migrationCategories returns known exception categories sorted in ascending order of duration.
 func migrationCategories() []string {
 	categories := []string{"A", "B", "C", "D"}
 	slices.SortFunc(categories, func(a, b string) int {
@@ -124,6 +128,7 @@ func migrationCategories() []string {
 	return categories
 }
 
+// exceptionEntered resolves an exception line's creation date and provenance via git blame or falls back to today.
 func exceptionEntered(ctx context.Context, path string, line int, today time.Time) (string, string) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -135,6 +140,7 @@ func exceptionEntered(ctx context.Context, path string, line int, today time.Tim
 	return enteredFromBlame(string(result.Stdout), today)
 }
 
+// enteredFromBlame extracts the commit date and commit hash from git porcelain blame output.
 func enteredFromBlame(output string, today time.Time) (string, string) {
 	lines := strings.SplitN(output, "\n", 128)
 	header := strings.Fields(lines[0])

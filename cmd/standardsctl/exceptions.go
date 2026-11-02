@@ -42,6 +42,7 @@ func runExceptions(args []string) error {
 	}
 }
 
+// runExceptionsList validates list flags and delegates to handleExceptionsList.
 func runExceptionsList(fs *flag.FlagSet, manifestPath string, expiringWithin *int, todayStr string) error {
 	var expiringWithinPtr *int
 	fs.Visit(func(f *flag.Flag) {
@@ -59,6 +60,7 @@ func runExceptionsList(fs *flag.FlagSet, manifestPath string, expiringWithin *in
 	return handleExceptionsList(manifestPath, expiringWithinPtr, today)
 }
 
+// exceptionToday parses an optional YYYY-MM-DD date or defaults to the current day.
 func exceptionToday(value string) (time.Time, error) {
 	if value == "" {
 		return config.ExceptionDay(time.Now()), nil

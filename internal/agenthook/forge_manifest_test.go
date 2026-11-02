@@ -16,6 +16,7 @@ import (
 
 const brokenForgeManifest = "version: 1\nexceptions:\n  - rule: HISS-11\n    path: .github/workflows/release.yml\n    reason: builder migration\n    expires: 2099-01-01\n"
 
+// TestForgeIdentityFailurePreservesTrustedOrganizations pins that trusted organizations are preserved when repository identity resolution fails.
 func TestForgeIdentityFailurePreservesTrustedOrganizations(t *testing.T) {
 	root := repositoryWithManifest(t, "version: 1\nforge:\n  own_organizations: [manifest-org]\n")
 	fleet := filepath.Join(t.TempDir(), "fleet.yaml")
@@ -39,6 +40,7 @@ func TestForgeIdentityFailurePreservesTrustedOrganizations(t *testing.T) {
 	}
 }
 
+// TestForgeOperatorPolicyFailureDeniesPlainWrites pins that malformed operator policy denies plain forge writes.
 func TestForgeOperatorPolicyFailureDeniesPlainWrites(t *testing.T) {
 	root := repositoryWithManifest(t, "version: 1\nforge:\n  own_organizations: [manifest-org]\n")
 	for _, content := range []string{"forge: [", "forge:\n  own_organizations: [bad/org]\n"} {
@@ -55,6 +57,7 @@ func TestForgeOperatorPolicyFailureDeniesPlainWrites(t *testing.T) {
 	}
 }
 
+// TestForgeManifestDeadlock pins that broken manifests allow repair comments while denying foreign references.
 func TestForgeManifestDeadlock(t *testing.T) {
 	root := repositoryWithManifest(t, brokenForgeManifest)
 	cases := []struct{ name, command string }{
@@ -74,6 +77,7 @@ func TestForgeManifestDeadlock(t *testing.T) {
 	assertForgeTextDenied(t, runPreToolCommand(t, root, `gh pr comment 1 --body "outside/project#2"`, nil), "outside/project#2")
 }
 
+// TestForgeManifestCommandDirectory pins manifest evaluation when commands target a directory outside the repository root.
 func TestForgeManifestCommandDirectory(t *testing.T) {
 	invalid := repositoryWithManifest(t, brokenForgeManifest)
 	valid := forgeManifestWorktree(t, invalid)
@@ -87,6 +91,7 @@ func TestForgeManifestCommandDirectory(t *testing.T) {
 	assertForgeTextDenied(t, runPreToolCommand(t, valid, `gh pr comment 1 --body "outside/project#2"`, nil), "outside/project#2")
 }
 
+// forgeManifestWorktree creates a detached worktree containing a valid manifest for test isolation.
 func forgeManifestWorktree(t *testing.T, root string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -109,6 +114,7 @@ func forgeManifestWorktree(t *testing.T, root string) string {
 	return worktree
 }
 
+// TestForgeManifestIndependentSources pins trusted organization sourcing from git remotes and operator configuration.
 func TestForgeManifestIndependentSources(t *testing.T) {
 	root := repositoryWithManifest(t, brokenForgeManifest+"forge:\n  own_organizations: [untrusted-org]\n")
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -136,6 +142,7 @@ func TestForgeManifestIndependentSources(t *testing.T) {
 	}
 }
 
+// TestForgeManifestMalformedAndUnreadableText pins that malformed manifests and unreadable body files are handled safely.
 func TestForgeManifestMalformedAndUnreadableText(t *testing.T) {
 	for _, manifest := range []string{"version: [", brokenForgeManifest} {
 		root := repositoryWithManifest(t, manifest)

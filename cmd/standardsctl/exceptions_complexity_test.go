@@ -11,6 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
+// TestExceptionsDispatchComplexity pins that functions in exceptions.go satisfy HISS-04 complexity bounds.
 func TestExceptionsDispatchComplexity(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "exceptions.go", nil, 0)
