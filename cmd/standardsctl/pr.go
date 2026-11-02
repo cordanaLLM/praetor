@@ -60,6 +60,31 @@ func runPRWithReader(args []string, reader forge.ReviewReader, output io.Writer)
 	return writePRWaitResult(output, *jsonOutput, prwait.Wait(rootContext(), reader, options))
 }
 
+// prWaitValueFlags names the flags of pr wait that consume a separate value argument.
+var prWaitValueFlags = map[string]bool{
+	"repo":     true,
+	"timeout":  true,
+	"interval": true,
+	"pr":       true,
+}
+
+// isPRWaitValueFlag reports whether flag name accepts a value and is not boolean.
+func isPRWaitValueFlag(name string) bool {
+	return prWaitValueFlags[name]
+}
+
+// parseJSONFlagValue extracts a boolean value from a --json=... argument if present.
+func parseJSONFlagValue(arg string) (bool, bool) {
+	for _, prefix := range []string{"--json=", "-json="} {
+		if strings.HasPrefix(arg, prefix) {
+			if parsed, err := strconv.ParseBool(strings.TrimPrefix(arg, prefix)); err == nil {
+				return parsed, true
+			}
+		}
+	}
+	return false, false
+}
+
 // prWaitJSONRequested inspects command-line arguments to determine whether JSON output was requested.
 func prWaitJSONRequested(args []string) bool {
 	requested := false
@@ -72,11 +97,13 @@ func prWaitJSONRequested(args []string) bool {
 			requested = true
 			continue
 		}
-		for _, prefix := range []string{"--json=", "-json="} {
-			if strings.HasPrefix(arg, prefix) {
-				if parsed, err := strconv.ParseBool(strings.TrimPrefix(arg, prefix)); err == nil {
-					requested = parsed
-				}
+		if parsed, ok := parseJSONFlagValue(arg); ok {
+			requested = parsed
+			continue
+		}
+		if strings.HasPrefix(arg, "-") && !strings.Contains(arg, "=") {
+			if isPRWaitValueFlag(strings.TrimLeft(arg, "-")) {
+				i++
 			}
 		}
 	}

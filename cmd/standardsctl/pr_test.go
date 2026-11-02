@@ -89,12 +89,18 @@ func TestPRWaitCLIFlagErrorJSONOutput(t *testing.T) {
 	assertPRWaitJSONError(t, []string{"wait", "--bad", "value", "--json=true"}, "-bad")
 	assertPRWaitJSONError(t, []string{"wait", "--repo", "example/widget", "--interval", "notaduration", "--json"}, "-interval")
 	assertPRWaitJSONError(t, []string{"wait", "--repo", "example/widget", "--pr", "notanumber", "--json"}, "parse --pr")
+	assertPRWaitJSONError(t, []string{"wait", "--interval", "--", "--json"}, "-interval")
+	assertPRWaitJSONError(t, []string{"wait", "--timeout", "--", "--json"}, "-timeout")
+	assertPRWaitJSONError(t, []string{"wait", "--pr", "--", "--json"}, "parse --pr")
 
 	// Negative and boundary: explicit --json=false, terminator or missing flag emit text
 	assertPRWaitTextError(t, []string{"wait", "--repo", "example/widget", "--bad", "value", "--json=false"}, "-bad")
 	assertPRWaitTextError(t, []string{"wait", "--repo", "example/widget", "--bad", "value"}, "-bad")
 	assertPRWaitTextError(t, []string{"wait", "--repo", "example/widget", "--bad", "value", "--", "--json"}, "-bad")
 	assertPRWaitTextError(t, []string{"wait", "--repo", "example/widget", "--bad", "value", "--json", "--json=false"}, "-bad")
+	assertPRWaitTextError(t, []string{"wait", "--repo", "--json", "--bad"}, "-bad")
+	assertPRWaitTextError(t, []string{"wait", "--repo", "--json=true", "--bad"}, "-bad")
+	assertPRWaitTextError(t, []string{"wait", "--interval", "--", "--json=false"}, "-interval")
 }
 
 // assertPRWaitJSONError verifies that an invalid invocation emits the expected error message in JSON format.
