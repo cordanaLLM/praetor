@@ -276,6 +276,7 @@ func evaluateStop(ctx context.Context, row Registration, root string, canonical 
 	return mergeStopChecks(question, ledger, checkpoint, reviews)
 }
 
+// mergeStopChecks combines multiple stop check verdicts, prioritizing denials while preserving any stated skips.
 func mergeStopChecks(checks ...Verdict) Verdict {
 	var denies []Verdict
 	for _, v := range checks {

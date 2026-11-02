@@ -18,10 +18,12 @@ type fixtureReader struct {
 	requested    []int
 }
 
+// OwnOpen returns the configured mock pull request numbers or discovery error.
 func (f *fixtureReader) OwnOpen(context.Context, string) ([]int, error) {
 	return []int{7}, f.discoveryErr
 }
 
+// Read records the requested pull request number and returns the configured mock snapshot.
 func (f *fixtureReader) Read(ctx context.Context, _ string, number int) (forge.ReviewSnapshot, error) {
 	if _, ok := ctx.Deadline(); !ok {
 		return forge.ReviewSnapshot{}, errors.New("missing read deadline")
@@ -37,18 +39,22 @@ func (f *fixtureReader) Read(ctx context.Context, _ string, number int) (forge.R
 	return snapshot, nil
 }
 
+// pending constructs an open pull request snapshot fixture with pending status checks.
 func pending() forge.ReviewSnapshot {
 	return forge.ReviewSnapshot{Number: 7, State: "OPEN", ChecksConclusion: "PENDING"}
 }
 
+// thread constructs an unresolved review thread fixture.
 func thread() forge.ReviewThread {
 	return forge.ReviewThread{ID: "new-thread", Path: "main.go", Line: 9, Author: "human", CreatedAt: time.Now().Add(-time.Hour)}
 }
 
+// testOptions returns default wait options configured with short intervals for testing.
 func testOptions() Options {
 	return Options{Repository: "example/widget", Timeout: 100 * time.Millisecond, Interval: 2 * time.Millisecond}
 }
 
+// TestWaitStandingThreadDoesNotWait pins that standing unresolved review threads return immediately without waiting.
 func TestWaitStandingThreadDoesNotWait(t *testing.T) {
 	snapshot := pending()
 	snapshot.Threads = []forge.ReviewThread{thread()}
@@ -72,6 +78,7 @@ func TestWaitThreadArrivesOnSecondPoll(t *testing.T) {
 	}
 }
 
+// TestWaitNewBotReview pins that reviews submitted after the baseline trigger immediate wait termination.
 func TestWaitNewBotReview(t *testing.T) {
 	second := pending()
 	second.Reviews = []forge.PullRequestReview{{ID: "bot-review", Author: "new-bot[bot]", State: "COMMENTED", SubmittedAt: time.Now()}}
@@ -82,6 +89,7 @@ func TestWaitNewBotReview(t *testing.T) {
 	}
 }
 
+// TestWaitTerminalClosedTimeoutError pins exit codes and prefix formatting across terminal wait outcomes.
 func TestWaitTerminalClosedTimeoutError(t *testing.T) {
 	for _, scenario := range []string{"checks", "merged", "closed", "timeout", "read-error", "discovery-error"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -97,6 +105,7 @@ func TestWaitTerminalClosedTimeoutError(t *testing.T) {
 	}
 }
 
+// terminalFixture constructs a fixture reader and options for a specific terminal wait scenario.
 func terminalFixture(scenario string) (*fixtureReader, Options, int, string) {
 	snapshot, options, code, prefix := pending(), testOptions(), 0, "checks example/widget#7: SUCCESS"
 	switch scenario {
@@ -121,6 +130,7 @@ func terminalFixture(scenario string) (*fixtureReader, Options, int, string) {
 	return reader, options, code, prefix
 }
 
+// TestWaitBaselineResolvedAndExplicitScope pins that baseline reviews and resolved threads do not trigger review exits.
 func TestWaitBaselineResolvedAndExplicitScope(t *testing.T) {
 	first := pending()
 	resolved := thread()
@@ -138,6 +148,7 @@ func TestWaitBaselineResolvedAndExplicitScope(t *testing.T) {
 	}
 }
 
+// TestWaitInputBoundaries pins input validation rejections for invalid wait options before any forge reads occur.
 func TestWaitInputBoundaries(t *testing.T) {
 	for _, mutate := range []func(*Options){
 		func(o *Options) { o.Repository = "" },
@@ -156,6 +167,7 @@ func TestWaitInputBoundaries(t *testing.T) {
 	}
 }
 
+// TestWaitRequiresEveryNamedPRToFinish pins that wait does not terminate until all named pull requests reach a terminal state.
 func TestWaitRequiresEveryNamedPRToFinish(t *testing.T) {
 	terminal := pending()
 	terminal.ChecksTerminal, terminal.ChecksConclusion = true, "SUCCESS"
@@ -168,6 +180,7 @@ func TestWaitRequiresEveryNamedPRToFinish(t *testing.T) {
 	}
 }
 
+// TestWaitReviewPrecedesTerminalChecks pins that unresolved review threads take precedence over successful terminal checks.
 func TestWaitReviewPrecedesTerminalChecks(t *testing.T) {
 	terminal := pending()
 	terminal.ChecksTerminal, terminal.ChecksConclusion = true, "SUCCESS"

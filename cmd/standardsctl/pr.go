@@ -17,10 +17,12 @@ import (
 
 const prUsage = "usage: praetorctl pr wait --repo owner/name [--pr N ...] [--timeout 50m] [--interval 60s] [--json]"
 
+// runPR dispatches pr subcommands using the default GitHub review reader.
 func runPR(args []string) error {
 	return runPRWithReader(args, forge.GHReviewReader{}, os.Stdout)
 }
 
+// runPRWithReader executes the pr wait subcommand with the provided reader and writer.
 func runPRWithReader(args []string, reader forge.ReviewReader, output io.Writer) error {
 	if len(args) > 0 && isHelpToken(args[0]) {
 		if _, err := fmt.Fprintln(output, prUsage); err != nil {
@@ -58,6 +60,7 @@ func runPRWithReader(args []string, reader forge.ReviewReader, output io.Writer)
 	return writePRWaitResult(output, *jsonOutput, prwait.Wait(rootContext(), reader, options))
 }
 
+// prWaitJSONRequested inspects command-line arguments to determine whether JSON output was requested.
 func prWaitJSONRequested(args []string) bool {
 	requested := false
 	for i := 0; i < len(args) && i < maxCLIArgs; i++ {
@@ -80,6 +83,7 @@ func prWaitJSONRequested(args []string) bool {
 	return requested
 }
 
+// writePRWaitResult emits the wait result in JSON or line-delimited plain text format.
 func writePRWaitResult(output io.Writer, asJSON bool, result prwait.Result) error {
 	if asJSON {
 		if err := json.NewEncoder(output).Encode(result); err != nil {

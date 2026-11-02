@@ -19,6 +19,7 @@ type stopReviewFixture struct {
 	reads     int
 }
 
+// OwnOpen returns the configured fixture pull request numbers.
 func (f *stopReviewFixture) OwnOpen(context.Context, string) ([]int, error) {
 	if len(f.numbers) > 0 {
 		return f.numbers, nil
@@ -26,6 +27,7 @@ func (f *stopReviewFixture) OwnOpen(context.Context, string) ([]int, error) {
 	return []int{7}, nil
 }
 
+// Read increments the read counter and returns the configured mock review snapshot or error.
 func (f *stopReviewFixture) Read(_ context.Context, _ string, number int) (forge.ReviewSnapshot, error) {
 	f.reads++
 	if snapshot, ok := f.snapshots[number]; ok {
@@ -34,12 +36,14 @@ func (f *stopReviewFixture) Read(_ context.Context, _ string, number int) (forge
 	return f.snapshot, f.err
 }
 
+// reviewFixture constructs a mock review fixture containing one unresolved review thread.
 func reviewFixture() *stopReviewFixture {
 	return &stopReviewFixture{snapshot: forge.ReviewSnapshot{Number: 7, State: "OPEN", Threads: []forge.ReviewThread{
 		{ID: "standing", Path: "main.go", Line: 9, Author: "review-bot", CreatedAt: time.Now().Add(-time.Hour)},
 	}}}
 }
 
+// installReviewFixture swaps the package stopReviewReader function for testing and restores it on cleanup.
 func installReviewFixture(t *testing.T, fixture *stopReviewFixture) {
 	t.Helper()
 	previous := stopReviewReader
@@ -47,6 +51,7 @@ func installReviewFixture(t *testing.T, fixture *stopReviewFixture) {
 	t.Cleanup(func() { stopReviewReader = previous })
 }
 
+// reviewRepositoryFixture initializes an empty git repository configured with an origin remote for testing.
 func reviewRepositoryFixture(t *testing.T) string {
 	t.Helper()
 	root := repository(t, true)
@@ -84,6 +89,7 @@ func TestStopIncludesStandingOwnReviewThread(t *testing.T) {
 	}
 }
 
+// TestStopReviewMultiplePullRequestsAndThreads pins deny reporting across multiple open pull requests and unresolved threads.
 func TestStopReviewMultiplePullRequestsAndThreads(t *testing.T) {
 	root := reviewRepositoryFixture(t)
 	now := time.Now()
@@ -116,6 +122,7 @@ func TestStopReviewMultiplePullRequestsAndThreads(t *testing.T) {
 	}
 }
 
+// TestStopReviewResolvedErrorAndCache pins evaluation outcomes, error handling, and cache behavior across resolved states.
 func TestStopReviewResolvedErrorAndCache(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
@@ -145,6 +152,7 @@ func TestStopReviewResolvedErrorAndCache(t *testing.T) {
 	}
 }
 
+// TestStopReviewReadFailureSurvivesOtherDeny pins that review read errors are preserved as skip reasons alongside denials.
 func TestStopReviewReadFailureSurvivesOtherDeny(t *testing.T) {
 	root := reviewRepositoryFixture(t)
 	fixture := reviewFixture()

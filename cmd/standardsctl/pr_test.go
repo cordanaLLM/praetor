@@ -15,12 +15,16 @@ import (
 
 type prCLIReader struct{ requested []int }
 
+// OwnOpen returns a mock list of open pull request numbers for test runs.
 func (r *prCLIReader) OwnOpen(context.Context, string) ([]int, error) { return []int{7}, nil }
+
+// Read records the requested pull request number and returns a mock review snapshot.
 func (r *prCLIReader) Read(_ context.Context, _ string, number int) (forge.ReviewSnapshot, error) {
 	r.requested = append(r.requested, number)
 	return forge.ReviewSnapshot{Number: number, State: "OPEN", ChecksTerminal: true, ChecksConclusion: "SUCCESS"}, nil
 }
 
+// TestPRWaitCLIFlagsAndJSON pins flag parsing and JSON output serialization for the pr wait command.
 func TestPRWaitCLIFlagsAndJSON(t *testing.T) {
 	var output bytes.Buffer
 	reader := &prCLIReader{}
@@ -37,6 +41,7 @@ func TestPRWaitCLIFlagsAndJSON(t *testing.T) {
 	}
 }
 
+// TestPRWaitCLITextAndInvalidFlags pins text output formatting and argument validation for invalid CLI invocations.
 func TestPRWaitCLITextAndInvalidFlags(t *testing.T) {
 	for _, args := range [][]string{
 		{"wait", "--repo", "example/widget"},
@@ -63,6 +68,7 @@ func TestPRWaitCLITextAndInvalidFlags(t *testing.T) {
 	}
 }
 
+// TestPRWaitRegisteredAndHelp pins pr subcommand registration in the command table and help output.
 func TestPRWaitRegisteredAndHelp(t *testing.T) {
 	if commandTable()["pr"] == nil {
 		t.Fatal("pr not registered")
@@ -76,6 +82,7 @@ func TestPRWaitRegisteredAndHelp(t *testing.T) {
 	}
 }
 
+// TestPRWaitCLIFlagErrorJSONOutput pins error reporting in JSON or plain text depending on CLI flags.
 func TestPRWaitCLIFlagErrorJSONOutput(t *testing.T) {
 	// Positive: invalid flags before --json or --json=true emit JSON error
 	assertPRWaitJSONError(t, []string{"wait", "--repo", "example/widget", "--bad", "value", "--json"}, "-bad")
@@ -90,6 +97,7 @@ func TestPRWaitCLIFlagErrorJSONOutput(t *testing.T) {
 	assertPRWaitTextError(t, []string{"wait", "--repo", "example/widget", "--bad", "value", "--json", "--json=false"}, "-bad")
 }
 
+// assertPRWaitJSONError verifies that an invalid invocation emits the expected error message in JSON format.
 func assertPRWaitJSONError(t *testing.T, args []string, needle string) {
 	t.Helper()
 	var out bytes.Buffer
@@ -107,6 +115,7 @@ func assertPRWaitJSONError(t *testing.T, args []string, needle string) {
 	}
 }
 
+// assertPRWaitTextError verifies that an invalid invocation emits the expected error message in plain text.
 func assertPRWaitTextError(t *testing.T, args []string, needle string) {
 	t.Helper()
 	var out bytes.Buffer

@@ -11,6 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// TestStopReviewCacheKeyAndTTL pins cache key matching, expiration TTL, and outcome invalidation rules.
 func TestStopReviewCacheKeyAndTTL(t *testing.T) {
 	root := reviewRepositoryFixture(t)
 	fixture := reviewFixture()
@@ -60,6 +61,7 @@ func TestStopReviewCacheKeyAndTTL(t *testing.T) {
 	}
 }
 
+// writeStopReviewCache serializes and atomically writes a test stopReviewCache entry to disk.
 func writeStopReviewCache(t *testing.T, path string, cache stopReviewCache) {
 	t.Helper()
 	data, err := json.Marshal(cache)
@@ -71,6 +73,7 @@ func writeStopReviewCache(t *testing.T, path string, cache stopReviewCache) {
 	}
 }
 
+// TestStopReviewCacheWriteFailureKeepsDeny pins that a cache write failure does not suppress an active deny verdict.
 func TestStopReviewCacheWriteFailureKeepsDeny(t *testing.T) {
 	root := reviewRepositoryFixture(t)
 	installReviewFixture(t, reviewFixture())
@@ -87,6 +90,7 @@ func TestStopReviewCacheWriteFailureKeepsDeny(t *testing.T) {
 	}
 }
 
+// TestStopReviewMalformedCacheForcesRead pins that corrupted cache files are discarded in favor of a fresh read.
 func TestStopReviewMalformedCacheForcesRead(t *testing.T) {
 	root := reviewRepositoryFixture(t)
 	fixture := reviewFixture()

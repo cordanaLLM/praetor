@@ -8,6 +8,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
+// classify evaluates pull request snapshots to determine wait termination status and result items.
 func classify(repo string, snapshots []forge.ReviewSnapshot, seen map[string]bool, initial bool, now time.Time) Result {
 	var reviews, closed, checks []string
 	terminal := true
@@ -40,6 +41,7 @@ func classify(repo string, snapshots []forge.ReviewSnapshot, seen map[string]boo
 	}
 }
 
+// reviewItems extracts unresolved threads and newly submitted review items for a pull request snapshot.
 func reviewItems(prefix string, snapshot forge.ReviewSnapshot, seen map[string]bool, initial bool, now time.Time) []string {
 	var items []string
 	for _, thread := range snapshot.Threads {

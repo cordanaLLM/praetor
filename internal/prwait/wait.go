@@ -78,6 +78,7 @@ func (o Options) Validate() error {
 	return nil
 }
 
+// selectNumbers returns explicit pull request numbers or discovers own open pull requests.
 func selectNumbers(ctx context.Context, reader forge.ReviewReader, options Options) ([]int, error) {
 	if len(options.Numbers) > 0 {
 		return options.Numbers, nil
@@ -92,6 +93,7 @@ func selectNumbers(ctx context.Context, reader forge.ReviewReader, options Optio
 	return numbers, nil
 }
 
+// readAll fetches review snapshots for the given pull request numbers with a per-request timeout.
 func readAll(ctx context.Context, reader forge.ReviewReader, repo string, numbers []int) ([]forge.ReviewSnapshot, error) {
 	snapshots := make([]forge.ReviewSnapshot, 0, len(numbers))
 	for _, number := range numbers {
@@ -106,10 +108,12 @@ func readAll(ctx context.Context, reader forge.ReviewReader, repo string, number
 	return snapshots, nil
 }
 
+// failure constructs an error Result with exit code 2 and formatted error message.
 func failure(repo string, err error) Result {
 	return Result{Code: 2, Items: []string{"read " + repo + ": " + err.Error()}}
 }
 
+// readFailure constructs a Result for a failed read, distinguishing context timeout from other errors.
 func readFailure(ctx context.Context, repo string, err error) Result {
 	if ctx.Err() != nil {
 		return Result{Code: 124, Items: []string{"timeout " + repo + ": " + ctx.Err().Error()}}
@@ -117,6 +121,7 @@ func readFailure(ctx context.Context, repo string, err error) Result {
 	return failure(repo, err)
 }
 
+// waitInterval pauses for the specified duration or until context cancellation.
 func waitInterval(ctx context.Context, interval time.Duration) error {
 	timer := time.NewTimer(interval)
 	defer timer.Stop()

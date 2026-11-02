@@ -25,6 +25,7 @@ type stopReviewCache struct {
 	Verdict    Verdict
 }
 
+// evaluateStopReviewThreads queries own open pull requests for unresolved review threads and caches the outcome.
 func evaluateStopReviewThreads(ctx context.Context, root string) Verdict {
 	ctx, cancel := context.WithTimeout(ctx, stopReviewBudget)
 	defer cancel()
@@ -48,6 +49,7 @@ func evaluateStopReviewThreads(ctx context.Context, root string) Verdict {
 	return verdict
 }
 
+// stopReviewIdentity resolves the repository, current HEAD commit, and cache file path for review evaluation.
 func stopReviewIdentity(ctx context.Context, root string) (string, string, string, error) {
 	remote, err := util.ReadOriginRemote(ctx, root)
 	if err != nil {
@@ -68,6 +70,7 @@ func stopReviewIdentity(ctx context.Context, root string) (string, string, strin
 		filepath.Join(strings.TrimSpace(gitDir), "praetor-stop-reviews.json"), nil
 }
 
+// loadStopReviewCache retrieves a cached review verdict if it matches the current repository and commit within TTL.
 func loadStopReviewCache(path, repo, head string, now time.Time) (Verdict, bool) {
 	data, err := util.ReadFileLimited(path, 65536)
 	if err != nil {
@@ -85,6 +88,7 @@ func loadStopReviewCache(path, repo, head string, now time.Time) (Verdict, bool)
 	return cache.Verdict, valid
 }
 
+// readStopReviews reads pull request review threads from the forge reader and constructs appropriate denial verdicts.
 func readStopReviews(ctx context.Context, reader forge.ReviewReader, repo string, now time.Time) Verdict {
 	numbers, err := reader.OwnOpen(ctx, repo)
 	if err != nil {
@@ -108,6 +112,7 @@ func readStopReviews(ctx context.Context, reader forge.ReviewReader, repo string
 	return joinReviewDenies(denies)
 }
 
+// stopReviewVerdict inspects a single pull request snapshot and returns a denial verdict if unresolved threads exist.
 func stopReviewVerdict(repo string, snapshot forge.ReviewSnapshot, now time.Time) Verdict {
 	var threads []string
 	oldest := now
@@ -127,6 +132,7 @@ func stopReviewVerdict(repo string, snapshot forge.ReviewSnapshot, now time.Time
 		repo, snapshot.Number, len(threads), forge.ReviewAge(now, oldest), strings.Join(threads, ", "))}
 }
 
+// joinReviewDenies merges multiple review denial verdicts into a single compound denial verdict.
 func joinReviewDenies(denies []Verdict) Verdict {
 	if len(denies) > 0 {
 		return joinStopDenies(denies)
@@ -134,10 +140,12 @@ func joinReviewDenies(denies []Verdict) Verdict {
 	return Verdict{Outcome: Allow}
 }
 
+// reviewSkip returns a skip verdict indicating the review check was skipped due to an error.
 func reviewSkip(err error) Verdict {
 	return Verdict{Outcome: Skip, Reason: "Own pull request review check skipped: " + err.Error()}
 }
 
+// reviewCacheNotice appends a cache write or read error notice to an existing verdict or returns a skip verdict.
 func reviewCacheNotice(verdict Verdict, err error) Verdict {
 	notice := reviewSkip(err)
 	if verdict.Outcome == Deny {

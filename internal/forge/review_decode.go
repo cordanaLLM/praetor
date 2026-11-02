@@ -47,6 +47,7 @@ type reviewPullRaw struct {
 	Commits       struct{ Nodes []reviewCommitRaw }
 }
 
+// decodeReviewSnapshot unmarshals a GraphQL response into a ReviewSnapshot for a pull request.
 func decodeReviewSnapshot(data []byte, number int) (ReviewSnapshot, error) {
 	var envelope graphQLResponse
 	if err := json.Unmarshal(data, &envelope); err != nil {
@@ -67,6 +68,7 @@ func decodeReviewSnapshot(data []byte, number int) (ReviewSnapshot, error) {
 	return result.Repository.PullRequest.snapshot(number)
 }
 
+// snapshot converts a raw GraphQL pull request node into a validated ReviewSnapshot.
 func (p reviewPullRaw) snapshot(number int) (ReviewSnapshot, error) {
 	if p.Number != number || !validReviewPRState(p.State) {
 		return ReviewSnapshot{}, errors.New("review pull request identity or state invalid")
@@ -94,10 +96,12 @@ func (p reviewPullRaw) snapshot(number int) (ReviewSnapshot, error) {
 	return snapshotWithChecks(snapshot, p.Commits.Nodes)
 }
 
+// validReviewPRState reports whether a pull request state string is recognized by GitHub.
 func validReviewPRState(state string) bool {
 	return state == "OPEN" || state == "CLOSED" || state == "MERGED"
 }
 
+// completeReviewConnection verifies that a paginated GraphQL connection contains complete, non-truncated data.
 func completeReviewConnection[T any](c reviewConnection[T]) error {
 	if c.PageInfo == nil || c.Nodes == nil {
 		return errors.New("missing connection data")
@@ -108,6 +112,7 @@ func completeReviewConnection[T any](c reviewConnection[T]) error {
 	return nil
 }
 
+// reviewLogin returns the login username of an actor or "unknown" if missing.
 func reviewLogin(actor *reviewActor) string {
 	if actor == nil || actor.Login == "" {
 		return "unknown"
@@ -115,6 +120,7 @@ func reviewLogin(actor *reviewActor) string {
 	return actor.Login
 }
 
+// decodeReviewThreads parses raw GraphQL review thread nodes into ReviewThread structures.
 func decodeReviewThreads(rows []reviewThreadRaw) ([]ReviewThread, error) {
 	threads := make([]ReviewThread, 0, len(rows))
 	for _, row := range rows {
@@ -131,6 +137,7 @@ func decodeReviewThreads(rows []reviewThreadRaw) ([]ReviewThread, error) {
 	return threads, nil
 }
 
+// snapshotWithChecks inspects head commit status check rollups and updates check conclusions on the snapshot.
 func snapshotWithChecks(snapshot ReviewSnapshot, commits []reviewCommitRaw) (ReviewSnapshot, error) {
 	if snapshot.State != "OPEN" {
 		return snapshot, nil
@@ -160,6 +167,7 @@ func snapshotWithChecks(snapshot ReviewSnapshot, commits []reviewCommitRaw) (Rev
 	return snapshot, nil
 }
 
+// validReviewRollupState reports whether a status check rollup state string is recognized.
 func validReviewRollupState(state string) bool {
 	switch state {
 	case "SUCCESS", "FAILURE", "ERROR", "PENDING", "EXPECTED":
@@ -169,6 +177,7 @@ func validReviewRollupState(state string) bool {
 	}
 }
 
+// reviewCheckTerminal reports whether an individual check run or status context has finished executing.
 func reviewCheckTerminal(check reviewCheckRaw) (bool, error) {
 	switch check.Typename {
 	case "CheckRun":

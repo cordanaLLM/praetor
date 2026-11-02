@@ -19,6 +19,7 @@ const completeReviewFixture = `{"data":{"repository":{"pullRequest":{
  }}}]}
 }}}}`
 
+// fixtureGH constructs a mock GHReviewReader returning the specified answer payload.
 func fixtureGH(t *testing.T, answer string) forge.GHReviewReader {
 	t.Helper()
 	return forge.GHReviewReader{Run: func(ctx context.Context, _ string, args ...string) ([]byte, error) {
@@ -38,6 +39,7 @@ func fixtureGH(t *testing.T, answer string) forge.GHReviewReader {
 	}}
 }
 
+// TestGHReviewReaderCompleteAndThreadFields pins decoding of pull request review threads, comments, and status checks.
 func TestGHReviewReaderCompleteAndThreadFields(t *testing.T) {
 	reader := fixtureGH(t, completeReviewFixture)
 	snapshot, err := reader.Read(t.Context(), "example/widget", 7)
@@ -53,6 +55,7 @@ func TestGHReviewReaderCompleteAndThreadFields(t *testing.T) {
 	}
 }
 
+// TestGHReviewReaderFailsClosed pins error handling on corrupted, truncated, or malformed GraphQL responses.
 func TestGHReviewReaderFailsClosed(t *testing.T) {
 	for _, answer := range []string{
 		`{`, `null`, `{"data":null}`, `{"data":{"repository":null}}`,
@@ -71,6 +74,7 @@ func TestGHReviewReaderFailsClosed(t *testing.T) {
 	}
 }
 
+// TestGHReviewReaderPendingDoesNotFinishOnFailedRollup pins that pending checks are not treated as terminal on rollup failure.
 func TestGHReviewReaderPendingDoesNotFinishOnFailedRollup(t *testing.T) {
 	answer := strings.Replace(completeReviewFixture, `"state":"SUCCESS"`, `"state":"FAILURE"`, 1)
 	answer = strings.Replace(answer, `"status":"COMPLETED"`, `"status":"IN_PROGRESS"`, 1)
@@ -80,6 +84,7 @@ func TestGHReviewReaderPendingDoesNotFinishOnFailedRollup(t *testing.T) {
 	}
 }
 
+// TestGHReviewReaderDiscovery pins open pull request discovery and error handling across varied CLI responses.
 func TestGHReviewReaderDiscovery(t *testing.T) {
 	for _, answer := range []string{`[{"number":7}]`, `[]`, `null`, " \nnull\n", `[{"number":0}]`, `{`} {
 		reader := forge.GHReviewReader{Run: func(ctx context.Context, _ string, args ...string) ([]byte, error) {
@@ -100,6 +105,7 @@ func TestGHReviewReaderDiscovery(t *testing.T) {
 	}
 }
 
+// TestGHReviewReaderCommandError pins error propagation when the underlying gh CLI invocation fails.
 func TestGHReviewReaderCommandError(t *testing.T) {
 	reader := forge.GHReviewReader{Run: func(context.Context, string, ...string) ([]byte, error) {
 		return nil, errors.New("fixture command failed")
@@ -109,6 +115,7 @@ func TestGHReviewReaderCommandError(t *testing.T) {
 	}
 }
 
+// TestReviewRepositoryAndAgeBoundaries pins repository name parsing and relative age formatting boundaries.
 func TestReviewRepositoryAndAgeBoundaries(t *testing.T) {
 	for _, repo := range []string{"", "owner", "owner/name/extra", "../name"} {
 		if _, _, err := forge.ParseReviewRepository(repo); err == nil {

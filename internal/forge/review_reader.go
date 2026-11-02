@@ -53,6 +53,7 @@ type GHReviewReader struct {
 	Run func(context.Context, string, ...string) ([]byte, error)
 }
 
+// call executes a gh CLI subcommand with a bounded timeout and output capture.
 func (r GHReviewReader) call(ctx context.Context, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
