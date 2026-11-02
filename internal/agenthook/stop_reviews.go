@@ -18,8 +18,9 @@ const stopReviewBudget = 4 * time.Second
 const stopReviewCacheTTL = 2 * time.Minute
 const stopReviewConcurrency = 8
 
-// The factory is replaced by offline tests; runtime uses only the shared forge reader.
+// The factories are replaced by offline tests; runtime uses only the shared forge reader and git identity.
 var stopReviewReader = func(root string) forge.ReviewReader { return forge.GHReviewReader{Dir: root} }
+var stopReviewIdentity = resolveStopReviewIdentity
 
 type stopReviewCache struct {
 	Repository string
@@ -55,8 +56,8 @@ func evaluateStopReviewThreads(ctx context.Context, root string) Verdict {
 	return verdict
 }
 
-// stopReviewIdentity resolves the repository, current HEAD commit, and cache file path for review evaluation.
-func stopReviewIdentity(ctx context.Context, root string) (string, string, string, error) {
+// resolveStopReviewIdentity resolves the repository, current HEAD commit, and cache file path for review evaluation.
+func resolveStopReviewIdentity(ctx context.Context, root string) (string, string, string, error) {
 	remote, err := util.ReadOriginRemote(ctx, root)
 	if err != nil {
 		return "", "", "", fmt.Errorf("resolve review repository: %w", err)

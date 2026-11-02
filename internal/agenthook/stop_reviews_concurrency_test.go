@@ -3,6 +3,7 @@ package agenthook
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,15 +14,17 @@ import (
 )
 
 type delayedStopReviews struct {
-	numbers []int
-	delay   time.Duration
-	fail    int
-	deny    int
-	active  atomic.Int32
-	peak    atomic.Int32
-	reads   atomic.Int32
-	mu      sync.Mutex
-	onRead  func()
+	numbers  []int
+	inFlight int32
+	ready    chan struct{}
+	released bool
+	fail     int
+	deny     int
+	active   atomic.Int32
+	peak     atomic.Int32
+	reads    atomic.Int32
+	mu       sync.Mutex
+	onRead   func()
 }
 
 // OwnOpen returns the bounded inventory without contacting the forge.
@@ -29,23 +32,42 @@ func (f *delayedStopReviews) OwnOpen(context.Context, string) ([]int, error) {
 	return f.numbers, nil
 }
 
-// Read models cancellable latency, tracks concurrency and plants a later denial.
-func (f *delayedStopReviews) Read(ctx context.Context, _ string, number int) (forge.ReviewSnapshot, error) {
+// enterRead records an in-flight read and returns the barrier channel when one is configured.
+func (f *delayedStopReviews) enterRead() <-chan struct{} {
 	f.reads.Add(1)
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	active := f.active.Add(1)
 	f.peak.Store(max(f.peak.Load(), active))
-	f.mu.Unlock()
+	if f.inFlight <= 0 {
+		return nil
+	}
+	if f.ready == nil {
+		f.ready = make(chan struct{})
+	}
+	if active >= f.inFlight && !f.released {
+		f.released = true
+		close(f.ready)
+	}
+	return f.ready
+}
+
+// Read blocks until the configured in-flight count is reached or ctx ends, then returns the snapshot.
+func (f *delayedStopReviews) Read(ctx context.Context, _ string, number int) (forge.ReviewSnapshot, error) {
+	ready := f.enterRead()
 	defer f.active.Add(-1)
 	if f.onRead != nil {
 		f.onRead()
 	}
-	timer := time.NewTimer(f.delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return forge.ReviewSnapshot{}, ctx.Err()
-	case <-timer.C:
+	if ready != nil {
+		select {
+		case <-ctx.Done():
+			return forge.ReviewSnapshot{}, ctx.Err()
+		case <-ready:
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return forge.ReviewSnapshot{}, err
 	}
 	if number == f.fail {
 		return forge.ReviewSnapshot{}, errors.New("planted read failure")
@@ -57,21 +79,30 @@ func (f *delayedStopReviews) Read(ctx context.Context, _ string, number int) (fo
 	return snapshot, nil
 }
 
-// installDelayedStopReviews installs an offline reader and restores it after the test.
-func installDelayedStopReviews(t *testing.T, fixture *delayedStopReviews) {
+// installDelayedStopReviews installs an offline reader and synthetic repository identity and restores them after the test.
+func installDelayedStopReviews(t *testing.T, fixture *delayedStopReviews) string {
 	t.Helper()
-	previous := stopReviewReader
+	root := t.TempDir()
+	previousReader := stopReviewReader
+	previousIdentity := stopReviewIdentity
 	stopReviewReader = func(string) forge.ReviewReader { return fixture }
-	t.Cleanup(func() { stopReviewReader = previous })
+	stopReviewIdentity = func(_ context.Context, dir string) (string, string, string, error) {
+		return "example/widget", "fixture-head", filepath.Join(dir, "praetor-stop-reviews.json"), nil
+	}
+	t.Cleanup(func() {
+		stopReviewReader = previousReader
+		stopReviewIdentity = previousIdentity
+	})
+	return root
 }
 
-// TestStopReviewColdCacheLatency plants a late unresolved thread beyond the serial budget.
+// TestStopReviewColdCacheLatency requires all four cold-cache reads to be in flight concurrently to reach the last pull request.
 func TestStopReviewColdCacheLatency(t *testing.T) {
-	root := reviewRepositoryFixture(t)
-	fixture := &delayedStopReviews{numbers: []int{1, 2, 3, 4}, delay: 3 * time.Second, deny: 4}
-	installDelayedStopReviews(t, fixture)
+	fixture := &delayedStopReviews{numbers: []int{1, 2, 3, 4}, inFlight: 4, deny: 4}
+	root := installDelayedStopReviews(t, fixture)
 	verdict := evaluateStopReviewThreads(t.Context(), root)
-	if verdict.Outcome != Deny || !strings.Contains(verdict.Reason, "example/widget#4") {
+	if verdict.Outcome != Deny || !strings.Contains(verdict.Reason, "example/widget#4") ||
+		fixture.reads.Load() != 4 || fixture.peak.Load() != 4 {
 		t.Fatalf("cold cache missed late unresolved thread: %+v; reads=%d peak=%d", verdict, fixture.reads.Load(), fixture.peak.Load())
 	}
 	if fixture.active.Load() != 0 {
@@ -93,7 +124,7 @@ func TestStopReviewReadBoundaries(t *testing.T) {
 		{"error-only", 4, 1, 0, Skip},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fixture := &delayedStopReviews{numbers: make([]int, tc.count), delay: time.Millisecond, fail: tc.fail, deny: tc.deny}
+			fixture := &delayedStopReviews{numbers: make([]int, tc.count), fail: tc.fail, deny: tc.deny}
 			for i := range fixture.numbers {
 				fixture.numbers[i] = i + 1
 			}
@@ -113,14 +144,13 @@ func TestStopReviewReadBoundaries(t *testing.T) {
 
 // TestStopReviewTimeoutRetriesSameHead plants a transient deadline followed by a reachable denial.
 func TestStopReviewTimeoutRetriesSameHead(t *testing.T) {
-	root := reviewRepositoryFixture(t)
-	fixture := &delayedStopReviews{numbers: []int{1}, delay: time.Second, deny: 1}
-	installDelayedStopReviews(t, fixture)
+	fixture := &delayedStopReviews{numbers: []int{1}, deny: 1}
+	root := installDelayedStopReviews(t, fixture)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	fixture.onRead = cancel // Cancel after real local git identity resolution.
+	fixture.onRead = cancel
 	first := evaluateStopReviewThreads(ctx, root)
-	fixture.delay = 0
+	fixture.onRead = nil
 	second := evaluateStopReviewThreads(t.Context(), root)
 	if first.Outcome != Skip || second.Outcome != Deny || fixture.reads.Load() != 2 {
 		t.Fatalf("transient skip cached: first=%+v second=%+v reads=%d", first, second, fixture.reads.Load())
