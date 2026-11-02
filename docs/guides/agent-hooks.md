@@ -1216,8 +1216,10 @@ destination branch and no `OPEN` one does, or when target/forge resolution fails
 
 When resolving push targets, the repository manifest (`.standards.yaml`) is read through the
 confined, size-bounded snapshot reader (`internal/agenthook/admission_manifest.go`:
-`readPushManifest`, calling `contextopt.ReadSnapshot`) under the push-target deadline; a stalled
-filesystem read ends at the deadline and caps outstanding readers to a single worker slot
+`readPushManifest`, calling `contextopt.ReadSnapshot`) under the push-target deadline. Admission
+stops waiting at that deadline and treats the read as failed; a worker stalled in the
+filesystem call can stay blocked until the call returns, and `pushManifestReadSlot` caps such
+outstanding workers at one, so a later read waits for the slot or its own deadline
 (`TestReadPushManifestDeadline` in `internal/agenthook/admission_manifest_test.go`). A manifest
 whose policy fields fail to decode still yields a valid `repository.forge` declaration through a
 forge-only projection (`decodePushManifestForge`), and the decode error is reported as a
