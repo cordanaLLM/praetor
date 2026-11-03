@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -57,16 +58,26 @@ type GHReviewReader struct {
 	Run func(context.Context, string, ...string) ([]byte, error)
 }
 
-// call executes a gh CLI subcommand with a bounded timeout and output capture.
+// call executes a bounded gh read with pacing sleeps disabled and classifies rate limits.
 func (r GHReviewReader) call(ctx context.Context, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if r.Run != nil {
-		return r.Run(ctx, r.Dir, args...)
-	}
-	result, err := util.RunCommandBytes(ctx, r.Dir, "gh", util.MaxCommandOutputBytes, args...)
+	ctx, err := util.WithCommandEnvironment(ctx, util.InheritedEnvironment([]string{"PRAETOR_GH_NOWAIT=1"}))
 	if err != nil {
-		return nil, fmt.Errorf("gh review read: %w: %s", err, util.BodyPreview(result.Stderr))
+		return nil, fmt.Errorf("gh review environment: %w", err)
+	}
+	var result util.CommandBytes
+	if r.Run != nil {
+		result.Stdout, err = r.Run(ctx, r.Dir, args...)
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			result.Stderr = exit.Stderr
+		}
+	} else {
+		result, err = util.RunCommandBytes(ctx, r.Dir, "gh", util.MaxCommandOutputBytes, args...)
+	}
+	if err != nil {
+		return nil, classifyGHError(fmt.Errorf("gh review read: %w: %s", err, util.BodyPreview(result.Stderr)), result.Stderr)
 	}
 	return result.Stdout, nil
 }

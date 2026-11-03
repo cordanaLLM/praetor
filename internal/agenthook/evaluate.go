@@ -293,9 +293,10 @@ func mergeStopChecks(checks ...Verdict) Verdict {
 	return withStopSkips(Verdict{Outcome: Allow}, checks)
 }
 
-// Preserve every stated skip, including a failed review read alongside another deny.
+// withStopSkips preserves every stated skip and notice alongside the combined stop verdict.
 func withStopSkips(verdict Verdict, checks []Verdict) Verdict {
 	for _, check := range checks {
+		verdict.Notice = appendLaneNotice(verdict.Notice, check.Notice)
 		if check.Outcome == Skip {
 			if verdict.Outcome == Allow {
 				verdict.Outcome = Skip

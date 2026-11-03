@@ -3,6 +3,7 @@ package agenthook
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -26,7 +27,7 @@ type stopReviewCache struct {
 	Verdict    Verdict
 }
 
-// evaluateStopReviewThreads queries own open pull requests for unresolved review threads and caches the outcome.
+// evaluateStopReviewThreads checks own reviews and caches completed reads, never a rate-limit deferral.
 func evaluateStopReviewThreads(ctx context.Context, root string) Verdict {
 	ctx, cancel := context.WithTimeout(ctx, stopReviewBudget)
 	defer cancel()
@@ -42,7 +43,7 @@ func evaluateStopReviewThreads(ctx context.Context, root string) Verdict {
 		return verdict
 	}
 	verdict := readStopReviews(ctx, stopReviewReader(root), repo, now)
-	if verdict.Outcome == Skip {
+	if verdict.Outcome == Skip || verdict.Notice != "" {
 		return verdict // Incomplete reads must retry even when HEAD has not moved.
 	}
 	cache := stopReviewCache{Repository: repo, Head: head, CheckedAt: now, Verdict: verdict}
@@ -77,7 +78,7 @@ func resolveStopReviewIdentity(ctx context.Context, root string) (string, string
 		filepath.Join(strings.TrimSpace(gitDir), "praetor-stop-reviews.json"), nil
 }
 
-// loadStopReviewCache retrieves a cached review verdict if it matches the current repository and commit within TTL.
+// loadStopReviewCache reuses only a complete Allow matching repository, commit, and TTL, without notices.
 func loadStopReviewCache(path, repo, head string, now time.Time) (Verdict, bool) {
 	data, err := util.ReadFileLimited(path, 65536)
 	if err != nil {
@@ -89,17 +90,17 @@ func loadStopReviewCache(path, repo, head string, now time.Time) (Verdict, bool)
 	}
 	age := now.Sub(cache.CheckedAt)
 	valid := cache.Repository == repo && cache.Head == head && age >= 0 && age < stopReviewCacheTTL
-	if cache.Verdict.Outcome != Allow {
+	if cache.Verdict.Outcome != Allow || cache.Verdict.Notice != "" {
 		valid = false
 	}
 	return cache.Verdict, valid
 }
 
-// readStopReviews reads pull request review threads from the forge reader and constructs appropriate denial verdicts.
+// readStopReviews denies unresolved or unread reviews, deferring only typed rate-limit failures.
 func readStopReviews(ctx context.Context, reader forge.ReviewReader, repo string, now time.Time) Verdict {
 	numbers, err := reader.OwnOpen(ctx, repo)
 	if err != nil {
-		return Verdict{Outcome: Deny, Reason: fmt.Sprintf("Own pull request review inventory not read in %s: %v", repo, err)}
+		return stopReviewReadFailure(err, fmt.Sprintf("Own pull request review inventory not read in %s: ", repo))
 	}
 	if len(numbers) > forge.MaxReviewPullRequests {
 		return Verdict{Outcome: Deny, Reason: fmt.Sprintf("Own pull request review inventory in %s exceeds 100", repo)}
@@ -107,9 +108,27 @@ func readStopReviews(ctx context.Context, reader forge.ReviewReader, repo string
 	snapshots, batchErr := reader.ReadBatch(ctx, repo, numbers)
 	denies := stopReviewBatchDenies(repo, numbers, snapshots, now)
 	if batchErr != nil {
-		denies = append(denies, Verdict{Outcome: Deny, Reason: "Own pull request review batch failed: " + batchErr.Error()})
+		failure := stopReviewReadFailure(batchErr, "Own pull request review batch failed: ")
+		if failure.Outcome == Allow {
+			return failure
+		}
+		denies = append(denies, failure)
 	}
 	return joinReviewDenies(denies)
+}
+
+// stopReviewReadFailure allows a typed rate-limit deferral with a notice; every other error denies.
+func stopReviewReadFailure(err error, prefix string) Verdict {
+	var limited *forge.ErrRateLimited
+	if !errors.As(err, &limited) {
+		return Verdict{Outcome: Deny, Reason: prefix + err.Error()}
+	}
+	notice := "review inventory deferred: GitHub rate limited: " + limited.Error()
+	if limited.Bucket != "" && limited.Remaining != "" && limited.Limit != "" {
+		notice = fmt.Sprintf("review inventory deferred: %s %s of %s, reset %s",
+			limited.Bucket, limited.Remaining, limited.Limit, limited.Reset)
+	}
+	return Verdict{Outcome: Allow, Notice: notice}
 }
 
 // stopReviewBatchDenies retains known findings and names every missing or invalid snapshot in inventory order.
