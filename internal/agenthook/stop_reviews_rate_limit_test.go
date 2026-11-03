@@ -141,6 +141,57 @@ func assertPartialRateLimitedStopVerdict(t *testing.T, verdict Verdict, outcome 
 	}
 }
 
+// TestStopReviewJoinedRateLimits preserves ordinary failures and known denials beside deferred reads.
+func TestStopReviewJoinedRateLimits(t *testing.T) {
+	limited := fmt.Errorf("read example/widget#8: %w", &forge.ErrRateLimited{Cause: errors.New("paced read")})
+	ordinary := fmt.Errorf("read example/widget#9: %w", errors.New("permission denied"))
+	for _, tc := range []struct {
+		name       string
+		failure    error
+		unresolved bool
+		outcome    Outcome
+		want       string
+	}{
+		{"mixed", errors.Join(limited, ordinary), false, Deny, ordinary.Error()},
+		{"mixed-reversed", errors.Join(ordinary, limited), false, Deny, ordinary.Error()},
+		{"nested-mixed", errors.Join(limited, errors.Join(ordinary)), false, Deny, ordinary.Error()},
+		{"wrapped-mixed", fmt.Errorf("batch context: %w", errors.Join(limited, ordinary)), false, Deny, ordinary.Error()},
+		{"all-limited", errors.Join(limited, limited), false, Allow, ""},
+		{"known-denial", errors.Join(limited, ordinary), true, Deny, "example/widget#7 has 1 unresolved"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := &rateLimitedStopReviews{stopReviewFixture: reviewFixture()}
+			fixture.numbers = []int{7, 8, 9}
+			fixture.snapshot.Threads[0].Resolved = !tc.unresolved
+			fixture.batchSnapshots = map[int]forge.ReviewSnapshot{7: fixture.snapshot}
+			fixture.err = tc.failure
+			verdict := readStopReviews(t.Context(), fixture, "example/widget", time.Now())
+			if verdict.Outcome != tc.outcome || !strings.Contains(verdict.Notice, "review inventory deferred: GitHub rate limited: paced read") ||
+				!strings.Contains(verdict.Reason, tc.want) {
+				t.Fatalf("joined failures lost: %+v", verdict)
+			}
+			if tc.outcome == Allow && verdict.Reason != "" {
+				t.Fatalf("rate-limited batch denied: %+v", verdict)
+			}
+		})
+	}
+}
+
+// TestStopReviewErrorWalkBound refuses oversized joined errors instead of hiding unread failures.
+func TestStopReviewErrorWalkBound(t *testing.T) {
+	failures := make([]error, 4*forge.MaxReviewPullRequests+1)
+	for i := range failures {
+		failures[i] = &forge.ErrRateLimited{Cause: errors.New("paced read")}
+	}
+	fixture := &rateLimitedStopReviews{stopReviewFixture: reviewFixture()}
+	fixture.batchSnapshots = map[int]forge.ReviewSnapshot{}
+	fixture.err = errors.Join(failures...)
+	verdict := readStopReviews(t.Context(), fixture, "example/widget", time.Now())
+	if verdict.Outcome != Deny || !strings.Contains(verdict.Reason, "review error walk exceeds") {
+		t.Fatalf("unclassified failures passed: %+v", verdict)
+	}
+}
+
 // TestStopReviewRateLimitReset distinguishes a known reset from missing reset metadata.
 func TestStopReviewRateLimitReset(t *testing.T) {
 	for _, tc := range []struct{ name, reset, want string }{

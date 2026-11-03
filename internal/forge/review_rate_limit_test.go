@@ -13,6 +13,17 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// TestErrRateLimitedWithoutCause requires a stable diagnostic and a nil unwrap for a zero value.
+func TestErrRateLimitedWithoutCause(t *testing.T) {
+	limited := &ErrRateLimited{}
+	if cause := limited.Unwrap(); cause != nil {
+		t.Fatalf("zero-value cause = %v", cause)
+	}
+	if got := limited.Error(); got != "GitHub read rate limited" {
+		t.Fatalf("zero-value diagnostic = %q", got)
+	}
+}
+
 // TestReviewGHCommandFixture supplies only explicit fixture output and selected nonsecret variables.
 func TestReviewGHCommandFixture(t *testing.T) {
 	if len(os.Args) < 4 || os.Args[len(os.Args)-4] != "--review-fixture" {

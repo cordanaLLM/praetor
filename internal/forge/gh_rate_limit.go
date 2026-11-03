@@ -13,8 +13,11 @@ type ErrRateLimited struct {
 	Cause                           error
 }
 
-// Error preserves the diagnostic that caused the read to be deferred.
+// Error preserves the diagnostic or returns a stable message when no cause is available.
 func (e *ErrRateLimited) Error() string {
+	if e.Cause == nil {
+		return "GitHub read rate limited"
+	}
 	return e.Cause.Error()
 }
 
