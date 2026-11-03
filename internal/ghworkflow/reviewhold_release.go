@@ -8,10 +8,13 @@ const (
 	// reviewHoldReleaseScript locates only the newest PR run on the current head.
 	// Current-attempt jobs supply their check-run annotation IDs; older attempts
 	// must not cause an unrelated failure to be rerun indefinitely.
-	reviewHoldReleaseScript = reviewHoldLibrary + `HOLD_CAUSE='open pull request read failed'
-prs=$(review_pages "repos/$GITHUB_REPOSITORY/pulls?state=open&sort=created&direction=asc" '')
-pr_count=$(jq 'length' <<< "$prs")
-for ((pr_index=0; pr_index<pr_count && pr_index<2000; pr_index++)); do
+	reviewHoldReleaseScript = reviewHoldLibrary + `RELEASE_TITLE='Review hold release read failed'
+trap 'HOLD_TITLE="$RELEASE_TITLE"; review_error' ERR
+# Keep errexit active inside each scan; a conditional function call disables it.
+review_release_pr() (
+  set -Ee
+  trap 'HOLD_TITLE="$RELEASE_TITLE"; HOLD_CAUSE="pull request $PR_NUMBER: $HOLD_CAUSE"; review_error' ERR
+  HOLD_CAUSE="pull request metadata read failed: index $pr_index"
   PR_NUMBER=$(jq -er --argjson i "$pr_index" '.[$i].number' <<< "$prs")
   HEAD_SHA=$(jq -er --argjson i "$pr_index" '.[$i].head.sha' <<< "$prs")
   HOLD_CAUSE="workflow run read failed: pull request $PR_NUMBER"
@@ -19,7 +22,7 @@ for ((pr_index=0; pr_index<pr_count && pr_index<2000; pr_index++)); do
   run=$(jq -c --arg head "$HEAD_SHA" --argjson number "$PR_NUMBER" '
     [.[] | select(.head_sha == $head and .event == "pull_request") |
       select(any(.pull_requests[]; .number == $number))] | max_by(.run_number) // {}' <<< "$runs")
-  if [[ $(jq -r '.status' <<< "$run") != completed || $(jq -r '.conclusion' <<< "$run") != failure ]]; then continue; fi
+  if [[ $(jq -r '.status' <<< "$run") != completed || $(jq -r '.conclusion' <<< "$run") != failure ]]; then exit 0; fi
   run_id=$(jq -er '.id' <<< "$run")
   attempt=$(jq -er '.run_attempt' <<< "$run")
   HOLD_CAUSE="job read failed: run $run_id attempt $attempt"
@@ -37,22 +40,37 @@ for ((pr_index=0; pr_index<pr_count && pr_index<2000; pr_index++)); do
       held=true
     fi
   done
-  if [[ "$held" != true ]]; then continue; fi
+  if [[ "$held" != true ]]; then exit 0; fi
   review_count
   printf 'PR %s: %s\n' "$PR_NUMBER" "$HOLD_CAUSE" >> "$GITHUB_STEP_SUMMARY"
-  if ((REVIEW_THREADS > 0 || REVIEW_PENDING > 0)); then continue; fi
+  if ((REVIEW_THREADS > 0 || REVIEW_PENDING > 0)); then exit 0; fi
   # Revalidate immediately before mutation: another release/manual rerun or a
   # head update during the recount must not rerun an obsolete attempt.
   HOLD_CAUSE="run revalidation failed: $run_id"
   current=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")
-  if [[ $(jq -r '.status' <<< "$current") != completed || $(jq -r '.run_attempt' <<< "$current") != "$attempt" ]]; then continue; fi
+  if [[ $(jq -r '.status' <<< "$current") != completed || $(jq -r '.run_attempt' <<< "$current") != "$attempt" ]]; then exit 0; fi
   HOLD_CAUSE="head revalidation failed: $PR_NUMBER"
   current_pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")
-  if [[ $(jq -r '.head.sha' <<< "$current_pr") != "$HEAD_SHA" || $(jq -r '.state' <<< "$current_pr") != open ]]; then continue; fi
+  if [[ $(jq -r '.head.sha' <<< "$current_pr") != "$HEAD_SHA" || $(jq -r '.state' <<< "$current_pr") != open ]]; then exit 0; fi
   HOLD_CAUSE="rerun failed: $run_id"
   gh run rerun "$run_id" --repo "$GITHUB_REPOSITORY"
   printf 'Released PR %s: run %s attempt %s\n' "$PR_NUMBER" "$run_id" "$attempt" >> "$GITHUB_STEP_SUMMARY"
+)
+HOLD_CAUSE='open pull request read failed'
+prs=$(review_pages "repos/$GITHUB_REPOSITORY/pulls?state=open&sort=created&direction=asc" '')
+pr_count=$(jq 'length' <<< "$prs")
+read_failed=0
+for ((pr_index=0; pr_index<pr_count && pr_index<2000; pr_index++)); do
+  # The child owns its fatal trap; the parent records failure and keeps scanning.
+  trap - ERR
+  set +e
+  review_release_pr
+  pr_status=$?
+  set -e
+  trap 'HOLD_TITLE="$RELEASE_TITLE"; review_error' ERR
+  if ((pr_status != 0)); then read_failed=1; fi
 done
+exit "$read_failed"
 `
 	// reviewHoldReleaseHeader serializes all release events, retaining the token
 	// only in the inline trusted script. No checkout or PR-controlled code runs.
