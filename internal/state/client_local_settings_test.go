@@ -30,6 +30,7 @@ func fixtureGit(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(output))
 }
 
+// initAdoptedFixture initializes an adopted repository fixture with owner-only files.
 func initAdoptedFixture(t *testing.T, dir string) {
 	t.Helper()
 	fixtureGit(t, dir, "init")
@@ -209,6 +210,7 @@ func TestStateLedgerIntegrityGuide_DocumentsCurrentBlockVersion_Boundary(t *test
 	}
 }
 
+// readStateLedgerIntegrityGuide reads the state-ledger-integrity.md guide through os.OpenRoot.
 func readStateLedgerIntegrityGuide(t *testing.T) string {
 	t.Helper()
 	root, err := os.OpenRoot(filepath.Join("..", "..", "docs", "guides"))

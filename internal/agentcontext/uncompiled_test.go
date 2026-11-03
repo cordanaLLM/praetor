@@ -16,6 +16,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
+// writeTestFile writes content to a relative path under dir with owner-only permissions.
 func writeTestFile(t *testing.T, dir, rel, content string) {
 	t.Helper()
 	full := filepath.Join(dir, rel)
