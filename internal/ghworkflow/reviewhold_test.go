@@ -40,7 +40,7 @@ func TestReviewHoldOpenThreadPlanted(t *testing.T) {
 // reviewFixtureStub replaces gh entirely; only jq and Bash execute real parsing.
 const reviewFixtureStub = `#!/usr/bin/env bash
 set -euo pipefail
-jq -cn --args '$ARGS.positional' -- "$@" >> "$FIXTURE_DIR/calls"
+MSYS2_ARG_CONV_EXCL='*' jq --binary -cn --args '$ARGS.positional' -- "$@" >> "$FIXTURE_DIR/calls"
 if [[ "$1 $2" == 'run rerun' ]]; then
   printf '%s\n' "$3" >> "$FIXTURE_DIR/reruns"
   exit 0
@@ -72,7 +72,10 @@ esac
 // reviewFixtures writes a complete clear review and held-run API fixture set.
 func reviewFixtures(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "fixture space")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	files := map[string]string{
 		"threads.json":     `{"data":{"repository":{"pullRequest":{"headRefOid":"head","reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}`,
 		"checks.json":      `{"check_runs":[{"name":"CodeRabbit","status":"completed","app":{"slug":"coderabbitai"}}]}`,
@@ -193,7 +196,7 @@ func reviewReleaseCalls(number string, phase int) [][]string {
 	return append(calls, []string{"run", "rerun", "42", "--repo", "fixture/repo"})
 }
 
-// runReviewScript runs the rendered Bash with a gh stub and the real installed jq.
+// runReviewScript runs an LF file with shared relative paths, avoiding MSYS argv rewriting.
 func runReviewScript(t *testing.T, dir, script string) (string, error) {
 	t.Helper()
 	bash, err := exec.LookPath("bash")
@@ -205,15 +208,20 @@ func runReviewScript(t *testing.T, dir, script string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	environment := append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
-		"FIXTURE_DIR="+dir, "GITHUB_REPOSITORY=fixture/repo", "PR_NUMBER=1", "HEAD_SHA=head",
-		"RUNNER_TEMP="+dir,
-		"GITHUB_STEP_SUMMARY="+filepath.Join(dir, "summary"), "GITHUB_OUTPUT="+filepath.Join(dir, "outputs"))
+	// Native Go -> MSYS -c arguments are globbed and truncated around 8 KiB.
+	// Bash chooses its own PATH syntax; both runtimes share cmd.Dir for files.
+	writeReviewFixture(t, dir, "review-script.sh", "export PATH=\"$PWD:$PATH\"\n"+script)
+	environment := append(os.Environ(),
+		"FIXTURE_DIR=.", "GITHUB_REPOSITORY=fixture/repo", "PR_NUMBER=1", "HEAD_SHA=head",
+		"RUNNER_TEMP=.", "GITHUB_STEP_SUMMARY=summary", "GITHUB_OUTPUT=outputs")
 	ctx, err = util.WithCommandEnvironment(ctx, environment)
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := util.RunCommandBytes(ctx, dir, bash, 1<<20, "-c", script)
+	out, err := util.RunCommandBytes(ctx, dir, bash, 1<<20, "review-script.sh")
+	if err != nil {
+		t.Logf("Bash script: %v; stdout=%s stderr=%s", err, out.Stdout, out.Stderr)
+	}
 	entries, readErr := os.ReadDir(dir)
 	if readErr != nil {
 		t.Fatal(readErr)

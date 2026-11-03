@@ -69,13 +69,13 @@ review_pages() {
   for ((page=1; page<=20; page++)); do
     HOLD_CAUSE="read failed: $endpoint page $page"
     gh api --method GET "$endpoint" -F per_page=100 -F page="$page" > "$dir/response.json"
-    jq -ce --arg key "$key" '
+    jq --binary -ce --arg key "$key" '
       (if $key == "" then . else .[$key] end) |
       if type == "array" then . else error("expected API collection") end' "$dir/response.json" > "$dir/$page.json"
     files+=("$dir/$page.json")
-    count=$(jq 'length' "$dir/$page.json")
+    count=$(jq --binary 'length' "$dir/$page.json")
     if ((count < 100)); then
-      jq -cs 'add // []' "${files[@]}" > "$dir/result.json"
+      jq --binary -cs 'add // []' "${files[@]}" > "$dir/result.json"
       printf '%s\n' "$dir/result.json"
       return
     fi
@@ -94,27 +94,27 @@ review_count() {
     gh api graphql -f query="$REVIEW_QUERY" \
       -f owner="${GITHUB_REPOSITORY%/*}" -f name="${GITHUB_REPOSITORY#*/}" \
       -F number="$PR_NUMBER" -F cursor="${cursor:-null}" > "$data"
-    jq -ce --arg head "$HEAD_SHA" '
+    jq --binary -ce --arg head "$HEAD_SHA" '
       if ((.errors // []) | length) > 0 then error("GraphQL errors") else . end |
       .data.repository.pullRequest |
       if .headRefOid != $head then error("pull request head changed") else .reviewThreads end |
       if (.nodes | type) != "array" or (.pageInfo.hasNextPage | type) != "boolean"
         or any(.nodes[]; (.isResolved | type) != "boolean")
       then error("invalid thread response") else . end' "$data" > "$threads"
-    count=$(jq '[.nodes[] | select(.isResolved == false)] | length' "$threads")
+    count=$(jq --binary '[.nodes[] | select(.isResolved == false)] | length' "$threads")
     REVIEW_THREADS=$((REVIEW_THREADS + count))
-    more=$(jq -r '.pageInfo.hasNextPage' "$threads")
+    more=$(jq --binary -r '.pageInfo.hasNextPage' "$threads")
     if [[ "$more" == false ]]; then break; fi
     HOLD_CAUSE='thread pagination bound reached (20 pages)'
     if ((page == 20)); then review_error; fi
-    cursor=$(jq -er '.pageInfo.endCursor | select(type == "string" and length > 0)' "$threads")
+    cursor=$(jq --binary -er '.pageInfo.endCursor | select(type == "string" and length > 0)' "$threads")
   done
   HOLD_CAUSE='check-run read failed'
   checks=$(review_pages "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?filter=latest" check_runs)
   HOLD_CAUSE='commit-status read failed'
   statuses=$(review_pages "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/statuses" '')
   HOLD_CAUSE='invalid bot check/status response'
-  jq -cn --arg bots "$REVIEW_BOTS" --slurpfile checks "$checks" --slurpfile statuses "$statuses" '
+  jq --binary -cn --arg bots "$REVIEW_BOTS" --slurpfile checks "$checks" --slurpfile statuses "$statuses" '
     $checks[0] as $checks | $statuses[0] as $statuses |
     if any($checks[]; (.name | type) != "string" or (.status | type) != "string")
       or any($statuses[]; (.context | type) != "string" or (.state | type) != "string" or (.id | type) != "number")
@@ -125,8 +125,8 @@ review_count() {
         select(.state == "pending") |
         select(([.context, (.creator.login // "")] | join(" ")) | test($bots; "i")) | .context]
     end' > "$pending"
-  REVIEW_PENDING=$(jq 'length' "$pending")
-  REVIEW_NAMES=$(jq -r 'join(", ")' "$pending")
+  REVIEW_PENDING=$(jq --binary 'length' "$pending")
+  REVIEW_NAMES=$(jq --binary -r 'join(", ")' "$pending")
   HOLD_CAUSE="unresolved threads=$REVIEW_THREADS; pending bot reviews=$REVIEW_PENDING; bots=$REVIEW_NAMES"
 }
 `
