@@ -6,6 +6,8 @@ package supplychain
 
 import (
 	"cmp"
+	"errors"
+	"io"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -44,6 +46,7 @@ func collectYAMLFindings(file, content string) []ImageRefFinding {
 		if ref := extractYAMLImageRef(lines[i]); ref != "" {
 			coveredLines[i+1] = true
 			findings = appendImageRefFinding(findings, file, i+1, ref)
+			lines[i] = maskCoveredTemplateLine(lines[i])
 			continue
 		}
 		if nextLine, ref := extractMultilineYAMLImageRef(lines, i); ref != "" {
@@ -57,7 +60,7 @@ func collectYAMLFindings(file, content string) []ImageRefFinding {
 			findings = appendImageRefFinding(findings, file, i+1, refs[j])
 		}
 	}
-	findings = appendYAMLNodeFindings(findings, file, content, coveredLines)
+	findings = appendYAMLNodeFindings(findings, file, strings.Join(lines, "\n"), coveredLines)
 	slices.SortStableFunc(findings, func(a, b ImageRefFinding) int {
 		return cmp.Compare(a.Line, b.Line)
 	})
@@ -203,14 +206,36 @@ func trimFlowClauseEnd(s string) string {
 	return s
 }
 
-// appendYAMLNodeFindings walks parsed YAML mapping nodes iteratively to catch multiline or nested
-// flow image fields not already covered by single-line extraction (HISS-01, HISS-02).
-func appendYAMLNodeFindings(findings []ImageRefFinding, file, content string, coveredLines map[int]bool) []ImageRefFinding {
-	var root yaml.Node
-	if err := yaml.Unmarshal([]byte(content), &root); err != nil {
-		return findings
+// maskCoveredTemplateLine strips an inline template expression from a single-line image mapping
+// already recorded by the line pass so yaml.NewDecoder can parse the surrounding document.
+func maskCoveredTemplateLine(line string) string {
+	if prefix, _, ok := strings.Cut(line, ":"); ok && strings.Contains(line, "{{") {
+		return prefix + ":"
 	}
-	stack := []*yaml.Node{&root}
+	return line
+}
+
+// appendYAMLNodeFindings decodes every YAML document in content and walks mapping nodes iteratively
+// to catch multiline or nested flow image fields not already covered by single-line extraction,
+// reporting any YAML parse error as an unresolvable finding (HISS-01, HISS-02).
+func appendYAMLNodeFindings(findings []ImageRefFinding, file, content string, coveredLines map[int]bool) []ImageRefFinding {
+	decoder := yaml.NewDecoder(strings.NewReader(content))
+	for doc := 0; doc < maxFileLines; doc++ {
+		var root yaml.Node
+		if err := decoder.Decode(&root); err != nil {
+			if !errors.Is(err, io.EOF) {
+				findings = append(findings, newImageRefFinding(file, 0, err.Error(), true))
+			}
+			return findings
+		}
+		findings = appendYAMLDocumentFindings(findings, file, &root, coveredLines)
+	}
+	return findings
+}
+
+// appendYAMLDocumentFindings walks one parsed YAML document tree iteratively to inspect mapping nodes (HISS-01, HISS-02).
+func appendYAMLDocumentFindings(findings []ImageRefFinding, file string, root *yaml.Node, coveredLines map[int]bool) []ImageRefFinding {
+	stack := []*yaml.Node{root}
 	for steps := 0; len(stack) > 0 && steps < maxFileLines; steps++ {
 		node := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
