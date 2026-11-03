@@ -247,8 +247,7 @@ func pythonPatternList(t *testing.T, name string) []string {
 		"node=next(n for n in tree.body if isinstance(n,ast.Assign) and " +
 		"any(isinstance(t,ast.Name) and t.id==sys.argv[1] for t in n.targets)); " +
 		"print(json.dumps(ast.literal_eval(node.value)))"
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
+	ctx := testsupport.DeadlineContext(t)
 	ctx, err = util.WithCommandStdin(ctx, data)
 	if err != nil {
 		t.Fatal(err)
