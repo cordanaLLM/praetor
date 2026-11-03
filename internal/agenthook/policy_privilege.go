@@ -101,8 +101,9 @@ func privilegeShortValues(values []string) string {
 	return letters.String()
 }
 
-// privilegeOptions keeps separate values, attached values and valueless clusters
-// disjoint so option data cannot also be parsed as the protected command.
+// privilegeOptions also reads long value-option prefixes as taking a value.
+// Prefixes retain the flag reading: getopt_long may resolve them to a valueless
+// option instead. Exact value options stay disjoint to avoid treating data as code.
 func privilegeOptions(values []string) string {
 	longValues := make([]string, 0, len(values))
 	for _, value := range values {
@@ -112,15 +113,35 @@ func privilegeOptions(values []string) string {
 	}
 	long := `--|-` + privilegeFlagExcept(longValues)
 	if len(longValues) > 0 {
-		long = `(?:-` + strings.Join(longValues, `|-`) + `)` + shellBlank + privilegeValue + `|` + long
+		prefixes := privilegeLongPrefixes(longValues)
+		long = `(?:-` + strings.Join(prefixes, `|-`) + `)` + shellBlank + privilegeValue + `|` + long
 	}
-	letters := privilegeShortValues(values)
+	letters := ""
+	for _, letter := range privilegeShortValues(values) {
+		letters += fmt.Sprintf(`\x%02x`, letter)
+	}
 	plain := `[^` + privilegeOptionChar + `\x2d` + letters + `]`
 	short := `-` + plain + `+`
 	if letters != "" {
 		short += `|-` + plain + `*[` + letters + `](?:` + shellBlank + privilegeValue + `|[^` + privilegeOptionChar + `]+)`
 	}
 	return long + `|` + short
+}
+
+// privilegeLongPrefixes includes every nonempty long-name prefix, failing closed
+// even when several value options share a prefix. Hex literals keep abbreviations
+// and option-letter clusters from appearing as misspelled words in emitted text.
+func privilegeLongPrefixes(values []string) []string {
+	var prefixes []string
+	for _, value := range values {
+		encoded := "-"
+		for index := 1; index < len(value); index++ {
+			encoded += fmt.Sprintf(`\x%02x`, value[index])
+			prefixes = append(prefixes, encoded)
+		}
+	}
+	slices.Sort(prefixes)
+	return slices.Compact(prefixes)
 }
 
 // privilegeFlagExcept matches an option token except the exact flags taking a

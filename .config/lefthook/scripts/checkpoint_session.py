@@ -3,6 +3,7 @@
 """Session ownership shared by native hooks and checkpoint callers (Python 3.10+)."""
 
 import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -26,6 +27,9 @@ MAX_SESSION_RECORDS = 10000
 # Records exactly at this bound remain fresh; only older records expire.
 WORKTREE_ACTIVITY_WINDOW = 24 * 60 * 60
 SESSION_LOCK_STALE_SECONDS = 30
+# Transactions stop well before a contender may reclaim their lock. Cleanup is
+# outside the current record's transaction; every mutation rechecks this bound.
+SESSION_LOCK_MAX_HOLD_SECONDS = 5
 
 
 def extract_session_id(payload):
@@ -156,7 +160,7 @@ def _is_worktree_touched(resolved, tool_name, tool_input, strings, cwd=None, bud
     return any(_path_matches(path_str, s, cwd, budget) for s in strings)
 
 
-def _read_session_record(record_file):
+def _read_session_record(record_file, check=None):
     """Preserve resolvable owners; only missing worktrees may be discarded."""
     try:
         with record_file.open("rb") as stream:
@@ -170,6 +174,8 @@ def _read_session_record(record_file):
             return None
         paths = set()
         for path in data[:MAX_WORKTREES]:
+            if check is not None:
+                check()
             try:
                 paths.add(str(Path(path).resolve(strict=True)))
             except FileNotFoundError:
@@ -179,7 +185,7 @@ def _read_session_record(record_file):
         return None
 
 
-def _write_session_record(sessions_dir, record_file, paths):
+def _write_session_record(sessions_dir, record_file, paths, check=None):
     """Atomically write sorted bounded worktree paths to session record."""
     sessions_dir.mkdir(parents=True, exist_ok=True)
     sorted_paths = sorted(paths) if len(paths) <= MAX_WORKTREES else None
@@ -188,21 +194,28 @@ def _write_session_record(sessions_dir, record_file, paths):
         raise ValueError("checkpoint session record exceeds byte bound")
     tmp = None
     try:
+        if check is not None:
+            check()
         with tempfile.NamedTemporaryFile(dir=sessions_dir, delete=False) as handle:
             tmp = Path(handle.name)
             handle.write(payload)
+        if check is not None:
+            check()
         os.replace(tmp, record_file)
         tmp = None
     finally:
         if tmp is not None:
             tmp.unlink(missing_ok=True)
-    _prune_session_records(sessions_dir, record_file)
+    if check is None:
+        _prune_session_records(sessions_dir, record_file)
 
 
-def _prune_session_record(record_file, cutoff):
+def _prune_session_record(record_file, cutoff, budget):
     """Remove one expired regular record while holding its writer lock."""
     lock = record_file.with_suffix(".lock")
-    if not _acquire_session_lock(lock):
+    started = time.monotonic()
+    token = _acquire_session_lock(lock)
+    if not token:
         return  # An in-flight writer owns this record; a later write retries cleanup.
     try:
         try:
@@ -210,16 +223,21 @@ def _prune_session_record(record_file, cutoff):
         except FileNotFoundError:
             return  # Another cleanup already removed this record.
         if stat.S_ISREG(info.st_mode) and info.st_mtime < cutoff:
+            _check_session_lock(lock, token, budget, started)
             record_file.unlink(missing_ok=True)
     finally:
-        lock.rmdir()
+        _release_session_lock(lock, token)
 
 
-def _prune_session_records(sessions_dir, current_record):
+def _prune_session_records(sessions_dir, current_record, budget=None):
     """Bound each sweep; age equal to the shared activity window remains fresh."""
+    from common import HookBudget
+
+    budget = budget if budget is not None else HookBudget(SESSION_LOCK_MAX_HOLD_SECONDS)
     cutoff = time.time() - WORKTREE_ACTIVITY_WINDOW
     with os.scandir(sessions_dir) as records:
         for _ in range(MAX_SESSION_RECORDS):
+            budget.timeout(SESSION_LOCK_MAX_HOLD_SECONDS)
             entry = next(records, None)
             if entry is None:
                 break
@@ -230,27 +248,77 @@ def _prune_session_records(sessions_dir, current_record):
                 except FileNotFoundError:
                     continue  # Another cleanup already removed this entry.
                 if stat.S_ISREG(info.st_mode) and info.st_mtime < cutoff:
-                    _prune_session_record(path, cutoff)
+                    _prune_session_record(path, cutoff, budget)
+
+
+def _reclaim_session_lock(lock):
+    """Atomically claim the observed stale token; another owner has a different name."""
+    try:
+        with os.scandir(lock) as entries:
+            entry = next(entries, None)
+            owner = entry.name if entry is not None else None
+            if next(entries, None) is not None:
+                return False
+        info = lock.lstat()
+        if not stat.S_ISDIR(info.st_mode) or (
+            time.time() - info.st_mtime <= SESSION_LOCK_STALE_SECONDS
+        ):
+            return False
+        if owner is not None:
+            if not owner.startswith("owner-"):
+                return False
+            tombstone = lock.with_name(f"{lock.name}.{owner}.reclaimed")
+            os.rename(lock / owner, tombstone)
+            tombstone.unlink()
+        lock.rmdir()  # Atomic for empty legacy locks too; a new token prevents removal.
+        return True
+    except OSError:
+        return False
 
 
 def _acquire_session_lock(lock):
-    """Share the nonblocking lock primitive between writers and record cleanup."""
-    try:
-        lock.mkdir()
-        return True
-    except FileExistsError:
+    """Return a unique owner token, or None when another writer holds the lock."""
+    token = "owner-" + os.urandom(16).hex()
+    with tempfile.TemporaryDirectory(prefix=f".{lock.name}.", dir=lock.parent) as raw:
+        staged = Path(raw)
+        (staged / token).write_text(token, encoding="ascii")
+        if lock.exists() and not _reclaim_session_lock(lock):
+            return None
         try:
-            info = lock.lstat()
-            if (
-                stat.S_ISDIR(info.st_mode)
-                and time.time() - info.st_mtime > SESSION_LOCK_STALE_SECONDS
-            ):
-                lock.rmdir()
-                lock.mkdir()
-                return True
-        except OSError:
-            return False
-        return False
+            os.rename(staged, lock)  # Publish directory and token together.
+        except OSError as error:
+            if error.errno not in (errno.EEXIST, errno.ENOTEMPTY):
+                raise
+            return None
+    return token
+
+
+def _check_session_lock(lock, token, budget, started):
+    """Refuse work after ownership loss, caller deadline or maximum hold time."""
+    from common import HookError
+
+    budget.timeout(SESSION_LOCK_MAX_HOLD_SECONDS)
+    if time.monotonic() - started >= SESSION_LOCK_MAX_HOLD_SECONDS:
+        raise HookError("checkpoint session lock maximum hold time spent")
+    if not (lock / token).is_file():
+        raise HookError("checkpoint session lock ownership lost")
+
+
+def _release_session_lock(lock, token):
+    """Remove only our token; a replacement owner's nonempty directory survives."""
+    from common import HookError
+
+    try:
+        (lock / token).unlink()
+    except FileNotFoundError as error:
+        raise HookError("checkpoint session lock ownership lost") from error
+    try:
+        lock.rmdir()
+    except FileNotFoundError:
+        pass  # A contender removed the empty directory after our token was removed.
+    except OSError as error:
+        if error.errno not in (errno.EEXIST, errno.ENOTEMPTY):
+            raise
 
 
 @contextlib.contextmanager
@@ -260,30 +328,37 @@ def _session_update_lock(sessions_dir, record_file, budget):
 
     sessions_dir.mkdir(parents=True, exist_ok=True)
     lock = record_file.with_suffix(".lock")
-    acquired = False
+    token = None
     for _ in range(501):
-        remaining = budget.timeout(0.01)
-        if _acquire_session_lock(lock):
-            acquired = True
+        budget.timeout(0.01)
+        started = time.monotonic()
+        token = _acquire_session_lock(lock)
+        if token:
             break
-        time.sleep(remaining)
-    if not acquired:
+        time.sleep(budget.timeout(0.01))
+    if not token:
         raise HookError("checkpoint session update lock timed out")
     try:
-        yield
+        def check():
+            _check_session_lock(lock, token, budget, started)
+
+        check()
+        yield check
+        check()
     finally:
-        lock.rmdir()
+        _release_session_lock(lock, token)
 
 
 def _update_session_record(sessions_dir, record_file, touched, budget):
     """Keep every previously recorded owner when tools and Stop race."""
-    with _session_update_lock(sessions_dir, record_file, budget):
+    with _session_update_lock(sessions_dir, record_file, budget) as check:
         exists = record_file.is_file()
-        existing = _read_session_record(record_file) if exists else set()
+        existing = _read_session_record(record_file, check) if exists else set()
         if existing is None:
             return  # Invalid ownership stays unknown until a fresh session.
         if not exists or touched - existing:
-            _write_session_record(sessions_dir, record_file, existing | touched)
+            _write_session_record(sessions_dir, record_file, existing | touched, check)
+    _prune_session_records(sessions_dir, record_file, budget)
 
 
 def ensure_session_record(root, session_hash, budget):

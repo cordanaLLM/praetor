@@ -21,6 +21,18 @@ SPEC.loader.exec_module(GUARD)
 class EvasionReplay(unittest.TestCase):
     """Replay pre-tool evasion rules against the engine corpus and privilege fixtures."""
 
+    def test_long_option_prefixes(self):
+        """Match either reading of abbreviated value options, preserving real flags."""
+        replay = json.loads(
+            (ROOT / "internal/agenthook/testdata/privilege-wrappers.json").read_text()
+        )
+        for row in replay["option_cases"]:
+            with self.subTest(command=row["command"]):
+                self.assertEqual(
+                    bool(GUARD.search(GUARD.BLOCKED_PATTERNS[-1], row["command"])),
+                    row["blocked"],
+                )
+
     def test_admin_boolean_spellings(self):
         """Verify all true boolean spellings of gh pr merge --admin are matched."""
         pattern = next(p for p in GUARD.BLOCKED_PATTERNS if "--admin" in p)

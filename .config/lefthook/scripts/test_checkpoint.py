@@ -168,12 +168,12 @@ class SessionOwnershipRegressions(unittest.TestCase):
         errors = []
         write = sessions._write_session_record
 
-        def paused(directory, record, paths):
+        def paused(directory, record, paths, check=None):
             """Pause the first writer until the second writer starts."""
             if threading.current_thread().name == "first":
                 first_write.set()
                 self.assertTrue(release.wait(1))
-            write(directory, record, paths)
+            write(directory, record, paths, check)
 
         def call(operation):
             """Run operation and collect any test or hook exceptions."""
