@@ -16,7 +16,31 @@ import (
 	"unicode"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
+
+// TestWriteExceptionMigrationRefusesSymlink pins refusal without changing the link or its in-directory target.
+func TestWriteExceptionMigrationRefusesSymlink(t *testing.T) {
+	ctx := testsupport.DeadlineContext(t)
+	root := t.TempDir()
+	const original = "version: 1\n"
+	target := filepath.Join(root, "target.yaml")
+	if err := util.WriteFileConfined(root, filepath.Base(target), []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, ".standards.yaml")
+	symlinkOrSkip(t, filepath.Base(target), path)
+	if err := writeExceptionMigration(ctx, path, []byte("version: 1\nexceptions: []\n")); err == nil {
+		t.Error("symlinked manifest accepted")
+	}
+	if data, err := util.ReadConfinedLimited(root, filepath.Base(target), 1024); err != nil || string(data) != original {
+		t.Errorf("symlink target changed: %q, %v", data, err)
+	}
+	if link, err := os.Readlink(path); err != nil || link != filepath.Base(target) {
+		t.Errorf("manifest link changed: %q, %v", link, err)
+	}
+}
 
 // TestWriteExceptionMigrationSafeMode pins removal of shared write bits without widening private permissions.
 func TestWriteExceptionMigrationSafeMode(t *testing.T) {
