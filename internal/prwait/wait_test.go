@@ -23,6 +23,11 @@ func (f *fixtureReader) OwnOpen(context.Context, string) ([]int, error) {
 	return []int{7}, f.discoveryErr
 }
 
+// ReadBatch rejects accidental use of the stop-only thread batch in the complete pr-wait reader.
+func (f *fixtureReader) ReadBatch(context.Context, string, []int) (map[int]forge.ReviewSnapshot, error) {
+	return nil, errors.New("pr wait must use complete per-PR Read")
+}
+
 // Read records the requested pull request number and returns the configured mock snapshot.
 func (f *fixtureReader) Read(ctx context.Context, _ string, number int) (forge.ReviewSnapshot, error) {
 	if _, ok := ctx.Deadline(); !ok {

@@ -3,11 +3,9 @@ package agenthook
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/forge"
@@ -16,7 +14,6 @@ import (
 
 const stopReviewBudget = 4 * time.Second
 const stopReviewCacheTTL = 2 * time.Minute
-const stopReviewConcurrency = 8
 
 // The factories are replaced by offline tests; runtime uses only the shared forge reader and git identity.
 var stopReviewReader = func(root string) forge.ReviewReader { return forge.GHReviewReader{Dir: root} }
@@ -35,6 +32,9 @@ func evaluateStopReviewThreads(ctx context.Context, root string) Verdict {
 	defer cancel()
 	repo, head, cachePath, err := stopReviewIdentity(ctx, root)
 	if err != nil {
+		if ctx.Err() != nil {
+			return Verdict{Outcome: Deny, Reason: "Own pull request review state not read within the stop budget: " + err.Error()}
+		}
 		return reviewSkip(err)
 	}
 	now := time.Now()
@@ -99,52 +99,40 @@ func loadStopReviewCache(path, repo, head string, now time.Time) (Verdict, bool)
 func readStopReviews(ctx context.Context, reader forge.ReviewReader, repo string, now time.Time) Verdict {
 	numbers, err := reader.OwnOpen(ctx, repo)
 	if err != nil {
-		return reviewSkip(fmt.Errorf("list own pull requests in %s: %w", repo, err))
+		return Verdict{Outcome: Deny, Reason: fmt.Sprintf("Own pull request review inventory not read in %s: %v", repo, err)}
 	}
 	if len(numbers) > forge.MaxReviewPullRequests {
-		return reviewSkip(fmt.Errorf("own pull requests in %s exceed 100", repo))
+		return Verdict{Outcome: Deny, Reason: fmt.Sprintf("Own pull request review inventory in %s exceeds 100", repo)}
 	}
-	var denies []Verdict
-	var failures []error
-	for i, result := range readStopReviewBatch(ctx, reader, repo, numbers) {
-		if result.err != nil {
-			failures = append(failures, fmt.Errorf("read %s#%d: %w", repo, numbers[i], result.err))
-			continue
-		}
-		if result.snapshot.State == "OPEN" {
-			if verdict := stopReviewVerdict(repo, result.snapshot, now); verdict.Outcome == Deny {
-				denies = append(denies, verdict)
-			}
-		}
-	}
-	if err := errors.Join(failures...); err != nil {
-		return reviewCacheNotice(joinReviewDenies(denies), err)
+	snapshots, batchErr := reader.ReadBatch(ctx, repo, numbers)
+	denies := stopReviewBatchDenies(repo, numbers, snapshots, now)
+	if batchErr != nil {
+		denies = append(denies, Verdict{Outcome: Deny, Reason: "Own pull request review batch failed: " + batchErr.Error()})
 	}
 	return joinReviewDenies(denies)
 }
 
-type stopReviewResult struct {
-	snapshot forge.ReviewSnapshot
-	err      error
-}
-
-// readStopReviewBatch joins bounded workers and retains inventory order for deterministic diagnostics.
-func readStopReviewBatch(ctx context.Context, reader forge.ReviewReader, repo string, numbers []int) []stopReviewResult {
-	results := make([]stopReviewResult, len(numbers))
-	var group sync.WaitGroup
-	for worker := 0; worker < min(stopReviewConcurrency, len(numbers)); worker++ {
-		group.Go(func() {
-			for i := worker; i < len(numbers); i += stopReviewConcurrency {
-				if err := ctx.Err(); err != nil {
-					results[i].err = err
-					continue
-				}
-				results[i].snapshot, results[i].err = reader.Read(ctx, repo, numbers[i])
+// stopReviewBatchDenies retains known findings and names every missing or invalid snapshot in inventory order.
+func stopReviewBatchDenies(repo string, numbers []int, snapshots map[int]forge.ReviewSnapshot, now time.Time) []Verdict {
+	var denies []Verdict
+	var unread []string
+	for _, number := range numbers {
+		snapshot, ok := snapshots[number]
+		if !ok || snapshot.Number != number || !forge.ValidReviewPRState(snapshot.State) {
+			unread = append(unread, fmt.Sprintf("#%d", number))
+			continue
+		}
+		if snapshot.State == "OPEN" {
+			if verdict := stopReviewVerdict(repo, snapshot, now); verdict.Outcome == Deny {
+				denies = append(denies, verdict)
 			}
-		})
+		}
 	}
-	group.Wait()
-	return results
+	if len(unread) > 0 {
+		denies = append(denies, Verdict{Outcome: Deny, Reason: "Own pull request review state not read for " +
+			strings.Join(unread, ", ") + " within the stop budget"})
+	}
+	return denies
 }
 
 // stopReviewVerdict inspects a single pull request snapshot and returns a denial verdict if unresolved threads exist.
