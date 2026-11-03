@@ -42,6 +42,7 @@ const report = {
 	]
 };
 
+/** Runs the planted-failure harness in an isolated temporary root; returns the child process execution result. */
 function runHarness(content: string | null, stale = false): SpawnSyncReturns<string> {
 	const resultsRoot = fileURLToPath(new URL('../test-results/', import.meta.url));
 	mkdirSync(resultsRoot, { recursive: true });
