@@ -460,5 +460,11 @@
   {"name": "privilege-ordinary-279", "allow": true, "payload": {"tool_input": {"command": "run0 true"}}},
   {"name": "privilege-ordinary-280", "allow": true, "payload": {"tool_input": {"command": "su -lc 'id'"}}},
   {"name": "privilege-ordinary-281", "allow": true, "payload": {"tool_input": {"command": "sudo praetorctl adopt /home/adopter/dev/organization/repo"}}},
-  {"name": "privilege-ordinary-282", "allow": true, "payload": {"tool_input": {"command": "echo '\"sudo\" \"praetorctl\" adopt /home/adopter/dev'"}}}
+  {"name": "privilege-ordinary-282", "allow": true, "payload": {"tool_input": {"command": "echo '\"sudo\" \"praetorctl\" adopt /home/adopter/dev'"}}},
+  {"name": "privilege-option-bound-sudo-10", "allow": true, "payload": {"tool_input": {"command": "sudo -n -n -n -n -n -n -n -n -n -n echo harmless"}}},
+  {"name": "privilege-option-bound-sudo-11", "allow": false, "payload": {"tool_input": {"command": "sudo -n -n -n -n -n -n -n -n -n -n -n echo harmless"}}},
+  {"name": "privilege-option-bound-env-10", "allow": true, "payload": {"tool_input": {"command": "env -i -i -i -i -i -i -i -i -i -i echo harmless"}}},
+  {"name": "privilege-option-bound-env-11", "allow": false, "payload": {"tool_input": {"command": "env -i -i -i -i -i -i -i -i -i -i -i echo harmless"}}},
+  {"name": "privilege-option-bound-systemd-run-10", "allow": true, "payload": {"tool_input": {"command": "systemd-run --quiet --quiet --quiet --quiet --quiet --quiet --quiet --quiet --quiet --quiet echo harmless"}}},
+  {"name": "privilege-option-bound-systemd-run-11", "allow": false, "payload": {"tool_input": {"command": "systemd-run --quiet --quiet --quiet --quiet --quiet --quiet --quiet --quiet --quiet --quiet --quiet echo harmless"}}}
 ]

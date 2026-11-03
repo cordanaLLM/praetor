@@ -13,6 +13,9 @@ import (
 
 const (
 	shellBlank = `[ \t]+`
+	// admission.ScopeArgs emits ten options including the final --; its fixture
+	// is the longest real run. Keep it usable while bounding ambiguous prefixes.
+	privilegeOptionLimit = 10
 	// Tokens exclude command boundaries; quoted option values may contain blanks.
 	privilegeWord = `(?:\x22[^\x22\n]*\x22|\x27[^\x27\n]*\x27|[^ \t\n;&|()\x60\x22\x27]+)`
 	// Required option values are complete shell words, including leading dashes.
@@ -51,6 +54,8 @@ var privilegeInvocation = protectedPrivilegeInvocation()
 
 var privilegeCommandSource = privilegeCommandRule()
 
+var privilegeOptionOverflowSource = privilegeOptionOverflowRule()
+
 var privilegeInvocationPattern = regexp.MustCompile(`^` + privilegeInvocation)
 
 // shellProgram matches a command name, optionally reached through a filesystem path.
@@ -62,6 +67,16 @@ func shellProgram(name string) string {
 // whose whole-word search intentionally includes data. Launcher option arities
 // come from admissionWrappers, so the text and act policies share that knowledge.
 func privilegeCommandRule() string {
+	return privilegeCommandPrefix() + privilegeInvocation
+}
+
+// privilegeOptionRun bounds alternatives that can read a prefix as flag or value option.
+func privilegeOptionRun(values []string, minimum, maximum int) string {
+	return fmt.Sprintf(`(?:%s(?:%s)){%d,%d}`, shellBlank, privilegeOptions(values), minimum, maximum)
+}
+
+// privilegeCommandPrefix reaches command positions through bounded wrapper option runs.
+func privilegeCommandPrefix() string {
 	names := make([]string, 0, len(admissionWrappers))
 	for name := range admissionWrappers {
 		names = append(names, name)
@@ -70,15 +85,37 @@ func privilegeCommandRule() string {
 	launchers := make([]string, 0, len(names))
 	for _, name := range names {
 		spec := admissionWrappers[name]
-		option := privilegeOptions(spec.values)
-		launcher := shellProgram(name) + `(?:` + shellBlank + `(?:` + option + `))*` + shellBlank
+		launcher := shellProgram(name) + privilegeOptionRun(spec.values, 0, privilegeOptionLimit) + shellBlank
 		launcher += privilegePositionals(spec)
 		launchers = append(launchers, launcher)
 	}
 	assignment := `[A-Za-z_][A-Za-z0-9_]*=(?:` + privilegeWord + `)?` + shellBlank
 	position := `(?:\A|[\n;&|({!\x60]|\x22` + privilegeDoubleText + `(?:\$\(|\x60))`
-	return `\A` + privilegeData + position + `[ \t]*(?:` + assignment + `|` + strings.Join(launchers, `|`) + `|` + privilegeScriptPrefix() + `|(?:then|do|else|if|while|until)` + shellBlank + `)*` +
-		privilegeInvocation
+	return `\A` + privilegeData + position + `[ \t]*(?:` + assignment + `|` + strings.Join(launchers, `|`) + `|` + privilegeScriptPrefix() + `|(?:then|do|else|if|while|until)` + shellBlank + `)*`
+}
+
+// privilegeOptionOverflowRule refuses excess options independently of protected targets.
+// The named group puts the bound at the front of even a truncated refusal reason.
+func privilegeOptionOverflowRule() string {
+	values := make(map[string][]string, len(admissionWrappers)+len(privilegeLauncherValues))
+	for name, spec := range admissionWrappers {
+		values[name] = spec.values
+	}
+	for name, options := range privilegeLauncherValues {
+		values[name] = options
+	}
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	parts := make([]string, 0, len(names)+1)
+	for _, name := range names {
+		parts = append(parts, quotedPrivilegeProgram(name)+privilegeOptionRun(values[name], privilegeOptionLimit+1, privilegeOptionLimit+1))
+	}
+	// su accepts a username among its options; bound that word run as well.
+	parts = append(parts, quotedPrivilegeProgram("su")+fmt.Sprintf(`(?:%s%s){%d}`, shellBlank, privilegeWord, privilegeOptionLimit+1))
+	return fmt.Sprintf(`(?P<option_run_exceeds_%d>`, privilegeOptionLimit) + privilegeCommandPrefix() + `(?:` + strings.Join(parts, `|`) + `))`
 }
 
 // privilegePositionals shares the table's optional numeric priority grammar.
@@ -219,10 +256,9 @@ func protectedPrivilegeInvocation() string {
 	parts := make([]string, 0, len(privilegeNames))
 	for _, name := range privilegeNames[:4] {
 		values := privilegeLauncherValues[name]
-		option := privilegeOptions(values)
-		parts = append(parts, quotedPrivilegeProgram(name)+`(?:`+shellBlank+`(?:`+option+`))*`+shellBlank+script)
+		parts = append(parts, quotedPrivilegeProgram(name)+privilegeOptionRun(values, 0, privilegeOptionLimit)+shellBlank+script)
 	}
-	su := quotedPrivilegeProgram("su") + `(?:` + shellBlank + privilegeWord + `)*` + shellBlank
+	su := quotedPrivilegeProgram("su") + fmt.Sprintf(`(?:%s%s){0,%d}`, shellBlank, privilegeWord, privilegeOptionLimit) + shellBlank
 	command := `(?:-[A-Za-z]*c[A-Za-z]*[ \t]*|--command(?:=|` + shellBlank + `))`
 	return `(?:` + strings.Join(parts, `|`) + `|` + su + command + script + `)`
 }

@@ -930,7 +930,7 @@ func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
 // is recorded here, so the next release still refreshes it (evasion_prior_test.go).
 var priorEvasionHookDigests = map[string]string{
 	"c563a0d12ad23a5062cd2a2d0355aeea4ba96e98c6a0079fb311909e8764dd18": "shared wrapper option arities and optional chrt priority",
-	"4e3a4cc7bb945bb573d29d5328cc9a1fcb1b8a34ad0fbde21973e7e8ae7e7260": "reviewed hook findings after wrapper and literal boundary changes",
+	"4abfd8004d1992f65918113f61ed05abc613d2400937a514816d871deaeaeeff": "reviewed hook findings after wrapper and literal boundary changes",
 	"1c59fc5ca09bd6d4ca575f37a190e806245d53358adcaaf696e15183ced09401": "admin merge Boolean true spellings",
 	"8149cba1e31703f65de9f9031ef4673d6a9a951a2e27ec35d3acb7ef82d12337": "escape-safe Black-stable hook rendering",
 	"5ab1fef02d7997ce35c8cb638d32ef2c0faa326d844891fbec6bd97a7878893d": "protected adoption privilege commands and shell forms",

@@ -10,7 +10,52 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/admission"
 )
+
+// TestPrivilegeOptionRuns bounds ambiguous option parsing and fails closed beyond it.
+func TestPrivilegeOptionRuns(t *testing.T) {
+	const limit = 10 // admission.ScopeArgs needs ten options, including --.
+	for name, option := range map[string]string{"sudo": "-n", "env": "-i", "systemd-run": "--quiet"} {
+		t.Run(name, func(t *testing.T) {
+			for _, count := range []int{limit, limit + 1} {
+				command := name + strings.Repeat(" "+option, count) + " echo harmless"
+				got := policy(t).Command(command)
+				if (got.Outcome == Deny) != (count > limit) {
+					t.Errorf("%q: %+v", command, got)
+				}
+				if count > limit && !strings.Contains(got.Reason, "option_run_exceeds_10") {
+					t.Errorf("overflow reason omits option bound: %s", got.Reason)
+				}
+			}
+		})
+	}
+	args := admission.ScopeArgs("admit-test", admission.Limits{MemoryHigh: "8G", MemoryMax: "12G", MemorySwapMax: "2G"}, []string{"echo", "harmless"})
+	if got := policy(t).Command("systemd-run " + strings.Join(args, " ")); got.Outcome != Allow {
+		t.Errorf("existing ten-option admission scope refused: %+v", got)
+	}
+}
+
+// TestPrivilegeOptionRepetitionsBounded rejects the formerly unbounded option groups.
+func TestPrivilegeOptionRepetitionsBounded(t *testing.T) {
+	values := make([][]string, 0, len(admissionWrappers)+len(privilegeLauncherValues))
+	for _, spec := range admissionWrappers {
+		values = append(values, spec.values)
+	}
+	for _, options := range privilegeLauncherValues {
+		values = append(values, options)
+	}
+	for _, options := range values {
+		group := `(?:` + shellBlank + `(?:` + privilegeOptions(options) + `))`
+		for _, source := range []string{privilegeCommandSource, privilegeOptionOverflowSource} {
+			if strings.Contains(source, group+`*`) || strings.Contains(source, group+`+`) ||
+				!strings.Contains(source, group+`{`) {
+				t.Fatal("rendered privilege option group lacks finite bound")
+			}
+		}
+	}
+}
 
 // TestPrivilegeLongOptionPrefixes replays ambiguous option readings without executing shell text.
 func TestPrivilegeLongOptionPrefixes(t *testing.T) {

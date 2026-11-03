@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: EUPL-1.2
 """Exercise session locking with temporary files and no external configuration."""
 
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -32,6 +34,29 @@ class OwnedSessionLock(unittest.TestCase):
         now = time.time()
         os.utime(self.lock, (now - age, now - age))
         return now
+
+    def test_sweep_failure_preserves_committed_write(self):
+        """Report cleanup failure without turning committed ownership into failure."""
+        for message in ("hook budget exhausted", "checkpoint session lock ownership lost"):
+            with self.subTest(message=message), mock.patch.object(
+                sessions, "_prune_session_records", side_effect=HookError(message),
+            ), contextlib.redirect_stderr(io.StringIO()) as errors:
+                self.record.unlink(missing_ok=True)
+                sessions._update_session_record(
+                    self.directory, self.record, {str(self.directory)}, HookBudget(2)
+                )
+                self.assertEqual(json.loads(self.record.read_text()), [str(self.directory)])
+                self.assertEqual(len(errors.getvalue().splitlines()), 1)
+                self.assertIn(message, errors.getvalue())
+
+    def test_transaction_release_failure_still_raises(self):
+        """Keep transaction lock errors fatal even when replacement has committed."""
+        with mock.patch.object(
+            sessions, "_release_session_lock", side_effect=HookError("transaction lock lost"),
+        ), self.assertRaisesRegex(HookError, "transaction lock lost"):
+            sessions._update_session_record(
+                self.directory, self.record, {str(self.directory)}, HookBudget(2)
+            )
 
     def test_normal_acquire_names_owner_and_release_removes_lock(self):
         """Publish an owner token and remove it with its lock on normal exit."""

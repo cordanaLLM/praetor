@@ -9,6 +9,7 @@ import json
 import os
 import re
 import stat
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -351,6 +352,8 @@ def _session_update_lock(sessions_dir, record_file, budget):
 
 def _update_session_record(sessions_dir, record_file, touched, budget):
     """Keep every previously recorded owner when tools and Stop race."""
+    from common import HookError
+
     with _session_update_lock(sessions_dir, record_file, budget) as check:
         exists = record_file.is_file()
         existing = _read_session_record(record_file, check) if exists else set()
@@ -358,7 +361,10 @@ def _update_session_record(sessions_dir, record_file, touched, budget):
             return  # Invalid ownership stays unknown until a fresh session.
         if not exists or touched - existing:
             _write_session_record(sessions_dir, record_file, existing | touched, check)
-    _prune_session_records(sessions_dir, record_file, budget)
+    try:
+        _prune_session_records(sessions_dir, record_file, budget)
+    except HookError as error:
+        sys.stderr.write(f"Praetor: checkpoint session cleanup skipped: {error}\n")
 
 
 def ensure_session_record(root, session_hash, budget):
