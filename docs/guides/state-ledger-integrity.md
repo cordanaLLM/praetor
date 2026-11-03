@@ -39,6 +39,10 @@ the same ledgerless directory at once; staged publication means each name is
 either absent or holds its whole template, never a zero-byte file an audit would
 read as a corrupt ledger.
 
+`InitWorkingDirIfAbsentContext` keeps the caller's deadline. A context without a
+deadline gets the 10 s fallback `defaultBootstrapTimeout` (HISS-02), and a
+caller's shorter deadline is never lengthened.
+
 Both forms of `praetorctl state init` then make Git ignore the directory, unless
 the path is not a directory at all. Every other command that writes into the
 ledger, and seeds it on first use, does the same: `state sync`, `state task add`,

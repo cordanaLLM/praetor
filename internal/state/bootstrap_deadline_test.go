@@ -50,6 +50,8 @@ func (tc bootstrapDeadlineCase) run(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
 	if tc.seeded {
+		// a directory needs the owner execute bit; 0700 is least privilege for a directory the test writes into
+		// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission
 		if err := os.Mkdir(filepath.Join(dir, WorkingDirName), 0700); err != nil {
 			t.Fatal(err)
 		}
