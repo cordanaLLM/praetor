@@ -225,7 +225,7 @@ func TestPushManifestReadCancellation(t *testing.T) {
 // TestDeclaredManifestReadConfinement refuses a symlink escaping the manifest's root.
 func TestDeclaredManifestReadConfinement(t *testing.T) {
 	directoryRepo := t.TempDir()
-	if err := os.Mkdir(filepath.Join(directoryRepo, config.ManifestFileName), 0o700); err != nil {
+	if err := os.Mkdir(filepath.Join(directoryRepo, config.ManifestFileName), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := declaredManifestForge(t.Context(), directoryRepo); got != "" || err == nil {
