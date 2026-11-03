@@ -110,7 +110,16 @@ func readScanDirectory(ctx context.Context, root, relDir string) (entries []os.D
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("directory read context: %w", err)
 	}
-	dir, err := os.Open(filepath.Join(root, filepath.FromSlash(relDir)))
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, fmt.Errorf("open root: %w", err)
+	}
+	defer func() { resultErr = errors.Join(resultErr, r.Close()) }()
+	sub := filepath.FromSlash(relDir)
+	if sub == "" {
+		sub = "."
+	}
+	dir, err := r.Open(sub)
 	if err != nil {
 		return nil, fmt.Errorf("open directory: %w", err)
 	}
