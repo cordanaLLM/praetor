@@ -262,6 +262,15 @@ func TestConsoleBriefPinsMatchManifest(t *testing.T) {
 	if tag := "`ui-v" + manifest.Dependencies["@sveltesentio/ui"] + "`"; !strings.Contains(string(brief), tag) {
 		t.Errorf("console/BRIEF.md does not name manifest UI tag %s", tag)
 	}
+	for _, pkg := range []string{"@sveltejs/kit", "svelte", "@sveltejs/adapter-static"} {
+		version, ok := manifest.DevDependencies[pkg]
+		if !ok || version == "" {
+			t.Fatalf("console/package.json has no pin for %s", pkg)
+		}
+		if !namesTerm(string(brief), "`"+pkg+"` "+version, termByte) {
+			t.Errorf("console/BRIEF.md does not name %s at manifest version %s", pkg, version)
+		}
+	}
 }
 
 // Positive: named regular and empty manifests are returned once; unrelated paths are ignored.
@@ -329,5 +338,29 @@ func TestReadCreditManifestsCancelled(t *testing.T) {
 	manifests, err := ReadCreditManifests(ctx, root, credits)
 	if !errors.Is(err, context.Canceled) || manifests != nil {
 		t.Fatalf("cancelled read: manifests=%q, err=%v; want nil map and cancellation", manifests, err)
+	}
+}
+
+// Positive, negative, and boundary cases for isManifestPath: only exact package.json
+// outside third_party directories is an npm manifest.
+func TestIsManifestPath(t *testing.T) {
+	cases := []struct {
+		name string
+		rel  string
+		want bool
+	}{
+		{name: "console/package.json", rel: "console/package.json", want: true},
+		{name: "root package.json", rel: "package.json", want: true},
+		{name: "docs/my-package.json", rel: "docs/my-package.json", want: false},
+		{name: "package.json.bak", rel: "package.json.bak", want: false},
+		{name: "third_party/x/package.json", rel: "third_party/x/package.json", want: false},
+		{name: "empty", rel: "", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isManifestPath(tc.rel); got != tc.want {
+				t.Errorf("isManifestPath(%q) = %v, want %v", tc.rel, got, tc.want)
+			}
+		})
 	}
 }

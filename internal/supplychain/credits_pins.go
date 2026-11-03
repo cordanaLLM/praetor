@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"regexp"
 	"strings"
 
@@ -108,7 +109,7 @@ func ReadCreditManifests(ctx context.Context, root string, credits Credits) (map
 
 // isManifestPath reports whether rel is a non-third-party package.json file path.
 func isManifestPath(rel string) bool {
-	return strings.HasSuffix(rel, "package.json") &&
+	return path.Base(rel) == "package.json" &&
 		!strings.HasPrefix(rel, "third_party/") &&
 		!strings.Contains(rel, "/third_party/")
 }
