@@ -39,6 +39,17 @@ const (
 	BootstrapNestedRepository BootstrapOutcome = "nested-repository"
 )
 
+// defaultBootstrapTimeout preserves the bootstrap budget for callers without a
+// deadline; contextopt.MaxDuration instead bounds each individual snapshot.
+const defaultBootstrapTimeout = 10 * time.Second
+
+// Tests replace these seams to model slow ledger writes with a short budget.
+// Production calls retain the default timeout and the real ledger initializer.
+var (
+	bootstrapFallbackTimeout = defaultBootstrapTimeout
+	bootstrapInitializeFiles = initializeWorkingFiles
+)
+
 // InitWorkingDirIfAbsentContext initializes a private ledger that does not yet
 // exist. Initialization is keyed on the ledger files rather than on the
 // directory alone: another module (milestone, forge, docdistill, dedupe,
@@ -54,12 +65,17 @@ const (
 //
 // The caller must run AuditWorkingDir afterward; this function does not certify
 // state. Failed initialization leaves the partial directory for recovery.
+// Caller deadlines are preserved; only a context without a deadline receives
+// the default bootstrap timeout.
 func InitWorkingDirIfAbsentContext(ctx context.Context, rootPath string) (outcome BootstrapOutcome, err error) {
 	if ctx == nil {
 		return BootstrapUnknown, errors.New("state initialization requires a context")
 	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+	if _, bounded := ctx.Deadline(); !bounded {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, bootstrapFallbackTimeout)
+		defer cancel()
+	}
 	project, err := contextopt.OpenDirectory(ctx, rootPath)
 	if err != nil {
 		return BootstrapUnknown, fmt.Errorf("open project for state bootstrap: %w", err)
@@ -91,13 +107,13 @@ func seedLedgerlessWorkingDir(ctx context.Context, project *os.Root, created boo
 	}
 	defer func() { err = errors.Join(err, working.Close()) }()
 	if created {
-		return BootstrapCreated, initializeWorkingFiles(ctx, working)
+		return BootstrapCreated, bootstrapInitializeFiles(ctx, working)
 	}
 	outcome, err = existingWorkingDirOutcome(working)
 	if err != nil || outcome != BootstrapSeeded {
 		return outcome, err
 	}
-	return BootstrapSeeded, initializeWorkingFiles(ctx, working)
+	return BootstrapSeeded, bootstrapInitializeFiles(ctx, working)
 }
 
 // existingWorkingDirOutcome decides what bootstrap may do to a directory it did
