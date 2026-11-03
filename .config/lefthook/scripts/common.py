@@ -10,7 +10,9 @@ import selectors
 import shutil
 import signal
 import stat
-import subprocess
+
+# Hooks build trusted argv lists; no shell execution.
+import subprocess  # nosec B404
 import sys
 import tempfile
 import threading
@@ -154,7 +156,8 @@ def _await_group_exit(process, grace):
 def _kill_process_tree(process, timeout=KILL_TREE_TIMEOUT):
     """Kill a child and its descendants where no process group exists to signal."""
     try:
-        subprocess.run(
+        # Fixed taskkill argv; only the child PID varies.
+        subprocess.run(  # nosec B603
             ["taskkill", "/F", "/T", "/PID", str(process.pid)],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -282,7 +285,9 @@ def _bounded_output(process, timeout, maximum):
 
 def _spawn_bounded(args, cwd, env):
     """Start trusted argv in a session of its own (no shell), stdin closed and streams piped."""
-    return subprocess.Popen(
+    # Hook callers build argv lists with code-selected programs, never shell strings.
+    # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use-tainted-env-args
+    return subprocess.Popen(  # nosec B603
         args,
         cwd=cwd,
         env=env,
@@ -337,7 +342,9 @@ def run(
     settings = dict(os.environ if env is None else env)
     settings["PYTHONDONTWRITEBYTECODE"] = MANAGED_PROCESS_ENV["PYTHONDONTWRITEBYTECODE"]
     try:
-        with subprocess.Popen(
+        # Hook callers build argv lists with code-selected programs, never shell strings.
+        # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use-tainted-env-args
+        with subprocess.Popen(  # nosec B603
             args,
             cwd=cwd,
             env=settings,
@@ -349,8 +356,7 @@ def run(
             try:
                 stdout, stderr = process.communicate(input=data, timeout=timeout)
             except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
-                # Ctrl-C reached only this process: the child leads a session of its own. It
-                # gets the signal the terminal would have sent it.
+                # Ctrl-C reached only this process; signal the child's isolated session.
                 interrupted = isinstance(error, KeyboardInterrupt)
                 _kill_bounded(process, signal.SIGINT if interrupted else signal.SIGTERM)
                 process.communicate(timeout=5)

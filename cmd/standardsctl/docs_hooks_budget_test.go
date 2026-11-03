@@ -15,8 +15,16 @@ import (
 func readGitHooksGuide(t *testing.T) string {
 	t.Helper()
 	repoRoot := filepath.Join("..", "..")
-	path := filepath.Join(repoRoot, "docs", "guides", "git-hooks.md")
-	data, err := os.ReadFile(path)
+	root, err := os.OpenRoot(repoRoot)
+	if err != nil {
+		t.Fatalf("open repository root: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("close repository root: %v", err)
+		}
+	})
+	data, err := root.ReadFile(filepath.Join("docs", "guides", "git-hooks.md"))
 	if err != nil {
 		t.Fatalf("read git-hooks.md: %v", err)
 	}
