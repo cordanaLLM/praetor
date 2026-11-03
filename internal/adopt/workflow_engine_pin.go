@@ -51,25 +51,38 @@ func readWorkflowEnginePins(ctx context.Context, s *adoptSession) ([]workflowEng
 	if err != nil {
 		return nil, fmt.Errorf("read engine pins in %s: %w", ghworkflow.Dir, err)
 	}
-	if len(entries) > ghworkflow.MaxFiles {
-		return nil, fmt.Errorf("engine pin discovery exceeds %d workflow entries", ghworkflow.MaxFiles)
+	paths, err := workflowEnginePinPaths(entries)
+	if err != nil {
+		return nil, err
 	}
 	pins := []workflowEnginePin{}
-	for i := 0; i < len(entries) && i < ghworkflow.MaxFiles; i++ {
-		rel := ghworkflow.Dir + "/" + entries[i].Name()
-		if entries[i].IsDir() || !ghworkflow.IsWorkflowPath(rel) {
-			continue
-		}
-		data, _, err := observeAdoptionInput(ctx, s, rel)
+	for i := 0; i < len(paths) && i < ghworkflow.MaxFiles; i++ {
+		data, _, err := observeAdoptionInput(ctx, s, paths[i])
 		if err != nil {
 			return nil, err
 		}
-		pins = append(pins, workflowPinsIn(rel, data)...)
+		pins = append(pins, workflowPinsIn(paths[i], data)...)
 		if len(pins) > contextopt.MaxSourceBytes {
 			return nil, fmt.Errorf("engine pin discovery exceeds %d declarations", contextopt.MaxSourceBytes)
 		}
 	}
 	return pins, nil
+}
+
+// workflowEnginePinPaths filters directory entries to workflow manifests under .github/workflows and enforces ghworkflow.MaxFiles.
+func workflowEnginePinPaths(entries []os.DirEntry) ([]string, error) {
+	paths := []string{}
+	for i := 0; i < len(entries) && i < contextopt.MaxSourceBytes; i++ {
+		rel := ghworkflow.Dir + "/" + entries[i].Name()
+		if entries[i].IsDir() || !ghworkflow.IsWorkflowPath(rel) {
+			continue
+		}
+		if len(paths) >= ghworkflow.MaxFiles {
+			return nil, fmt.Errorf("engine pin discovery exceeds %d workflow entries", ghworkflow.MaxFiles)
+		}
+		paths = append(paths, rel)
+	}
+	return paths, nil
 }
 
 // workflowPinsIn locates PRAETOR_COMMIT and PRAETOR_REF declarations and byte offsets in workflow content.

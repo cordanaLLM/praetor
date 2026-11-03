@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/buildid"
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -351,4 +352,36 @@ func assertUnevaluatedDeclaration(t *testing.T, report *AdoptReport, pin workflo
 		}
 	}
 	t.Errorf("missing unevaluated declaration %s: %+v", pin, report.ActionDetails)
+}
+
+// TestWorkflowEnginePinFileBound pins that only workflow files count toward ghworkflow.MaxFiles and one past it is refused.
+func TestWorkflowEnginePinFileBound(t *testing.T) {
+	source, ancestor, head, _ := pinHistory(t)
+	root := t.TempDir()
+	initTestGit(t, root)
+	if err := os.MkdirAll(filepath.Join(root, ".github/workflows/00-dir.yml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(root, ".github/workflows/00-README.md"), "PRAETOR_COMMIT: "+strings.Repeat("b", 40)+"\n")
+	for i := 0; i < ghworkflow.MaxFiles-1; i++ {
+		mustWrite(t, filepath.Join(root, fmt.Sprintf(".github/workflows/w%02d.yml", i)), "name: ci\n")
+	}
+	last := fmt.Sprintf(".github/workflows/w%02d.yaml", ghworkflow.MaxFiles-1)
+	mustWrite(t, filepath.Join(root, last), "PRAETOR_COMMIT: "+ancestor+"\n")
+	s := &adoptSession{repoPath: root, opts: AdoptOptions{LockSourceRoot: source}, report: &AdoptReport{}}
+	if err := reconcileWorkflowEnginePin(t.Context(), s); err != nil {
+		t.Fatalf("at workflow bound with non-workflow entries: %v", err)
+	}
+	if got := mustRead(t, filepath.Join(root, last)); got != "PRAETOR_COMMIT: "+head+"\n" {
+		t.Fatalf("64th workflow pin was not moved: %q", got)
+	}
+	mustWrite(t, filepath.Join(root, last), "PRAETOR_COMMIT: "+ancestor+"\n")
+	mustWrite(t, filepath.Join(root, ".github/workflows/w64.yml"), "name: extra\n")
+	err := reconcileWorkflowEnginePin(t.Context(), &adoptSession{repoPath: root, opts: AdoptOptions{LockSourceRoot: source}, report: &AdoptReport{}})
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("exceeds %d workflow entries", ghworkflow.MaxFiles)) {
+		t.Fatalf("one workflow past bound not refused: %v", err)
+	}
+	if got := mustRead(t, filepath.Join(root, last)); got != "PRAETOR_COMMIT: "+ancestor+"\n" {
+		t.Fatalf("refused bound overflow rewrote pin: %q", got)
+	}
 }
