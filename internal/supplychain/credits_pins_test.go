@@ -325,7 +325,7 @@ func TestReadCreditManifestsBoundary(t *testing.T) {
 // Negative: a directory named package.json is refused with the manifest and credits paths.
 func TestReadCreditManifestsRejectsDirectory(t *testing.T) {
 	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, "package.json"), 0o700); err != nil {
+	if err := os.Mkdir(filepath.Join(root, "package.json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	credits := Credits{Entries: []CreditEntry{{Paths: []string{"package.json"}}}}
