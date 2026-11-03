@@ -3775,6 +3775,114 @@ class HookInterpreter(unittest.TestCase):
             self.assertIn(b"make: not asserted: missing dependency: GNU Make", reported.stdout)
 
 
+class StageBudgetSteps(unittest.TestCase):
+    """Stub every process while exercising shared stage deadlines and timeout failures."""
+
+    def setUp(self):
+        """Isolate hook side effects without invoking gates or changing Git configuration."""
+        stack = self.enterContext(contextlib.ExitStack())
+        self.process = stack.enter_context(mock.patch("hooks.run", return_value=b'{"refreshed":false}'))
+        self.clock = stack.enter_context(mock.patch("hooks.time.monotonic", return_value=100.0))
+        stack.enter_context(mock.patch.dict(os.environ, {"PRAETOR_TEST_STAGE_TIMEOUT": "600s"}))
+        stack.enter_context(mock.patch("hooks.make_program", return_value="stub-make"))
+        stack.enter_context(mock.patch(
+            "hooks.snapshot", side_effect=lambda *args: contextlib.nullcontext(Path("snapshot"))))
+        stack.enter_context(mock.patch("hooks.clean_env", return_value={}))
+        stack.enter_context(mock.patch("hooks.guard"))
+        stack.enter_context(mock.patch("hooks.check_private_index"))
+        stack.enter_context(mock.patch("hooks.audit_live_state"))
+        stack.enter_context(mock.patch("hooks.git", return_value=b"main.go\0"))
+        self.files = stack.enter_context(mock.patch("hooks.file_checks"))
+        stack.enter_context(mock.patch("hooks.go_packages", return_value=["./pkg"]))
+
+    def test_four_call_sites_receive_budget_above_180(self):
+        """Go vet, module download and both hook-cli builds inherit the configured budget."""
+        hooks.pre_commit()
+        hooks.refresh(["go.mod"])
+        hooks.refresh_install()
+        calls = self.process.call_args_list
+        self.assertEqual([call.args[0][:2] for call in calls[:2]],
+                         [["go", "vet"], ["go", "mod"]])
+        self.assertTrue(all(call.args[0][-1] == "hook-cli" for call in calls[2:4]))
+        self.assertEqual([call.kwargs.get("timeout", 180) for call in calls[:4]], [600.0] * 4)
+        self.assertEqual(calls[0].kwargs["cwd"], Path("snapshot"))
+        self.assertEqual(calls[1].kwargs["env"], {})
+        self.assertEqual(calls[4].kwargs["timeout"], hooks.WORKSTATION_REFRESH_TIMEOUT)
+
+    def test_pre_commit_spends_time_before_vet(self):
+        """Snapshot checks consume the pre-commit deadline before vet starts."""
+        self.files.side_effect = lambda *args: setattr(self.clock, "return_value", 350.0)
+        hooks.pre_commit()
+        self.assertEqual(self.process.call_args.kwargs.get("timeout", 180), 350.0)
+
+    def test_refresh_shares_deadline_with_context_cli(self):
+        """Download, build and context verification spend one refresh budget."""
+        self.clock.side_effect = [100.0, 101.0, 250.0, 300.0, 400.0]
+        hooks.refresh(["go.mod", "AGENTS.md"])
+        self.assertEqual([call.kwargs.get("timeout", 180) for call in self.process.call_args_list],
+                         [599.0, 450.0, 400.0, 300.0])
+
+    def test_spent_budget_refuses_each_first_step(self):
+        """At the deadline, refuse every affected entry point without starting a process."""
+        cases = ((hooks.pre_commit, (), "go vet"),
+                 (hooks.refresh, (["go.mod"],), "go mod download"),
+                 (hooks.refresh, (["main.go"],), "hook-cli"),
+                 (hooks.refresh_install, (), "hook-cli"),
+                 (hooks.cli, (["state", "audit", "."],), "hook-cli"))
+        for entry, args, step in cases:
+            with self.subTest(entry=entry.__name__, args=args):
+                self.process.reset_mock()
+                self.clock.side_effect = [100.0, 700.0]
+                message = f"{step} timed out after 600s: stage budget spent before step"
+                with self.assertRaisesRegex(HookError, message):
+                    entry(*args)
+                self.process.assert_not_called()
+
+    def test_refresh_refuses_build_when_download_spends_budget(self):
+        """A successful download cannot grant the following build a fresh deadline."""
+        self.clock.side_effect = [100.0, 101.0, 700.0]
+        with self.assertRaisesRegex(HookError, "hook-cli timed out after 600s"):
+            hooks.refresh(["go.mod"])
+        self.assertEqual(self.process.call_count, 1)
+
+    def test_install_keeps_own_cap_and_remaining_stage_budget(self):
+        """Workstation install uses its own cap or the smaller remaining stage budget."""
+        for now, expected in ((100.0, 330), (500.0, 200.0), (699.5, 0.5)):
+            with self.subTest(now=now):
+                self.process.reset_mock()
+                self.clock.side_effect = [100.0, 100.0, now]
+                hooks.refresh_install()
+                self.assertEqual(self.process.call_args.kwargs["timeout"], expected)
+
+    def test_install_refuses_spent_budget_after_build(self):
+        """A build that exhausts the stage prevents workstation installation."""
+        self.clock.side_effect = [100.0, 101.0, 700.0]
+        with self.assertRaisesRegex(HookError, "workstation install timed out after 600s"):
+            hooks.refresh_install()
+        self.assertEqual(self.process.call_count, 1)
+
+    def test_timeout_errors_keep_step_and_original_budget(self):
+        """Timeout causes retain CLI diagnostics across all entry points; other errors pass through."""
+        timeout = HookError("stub process expired")
+        timeout.__cause__ = subprocess.TimeoutExpired("stub", 600)
+        cases = ((hooks.pre_commit, (), "go vet"),
+                 (hooks.refresh, (["go.mod"],), "go mod download"),
+                 (hooks.refresh, (["main.go"],), "hook-cli"),
+                 (hooks.refresh_install, (), "hook-cli"),
+                 (hooks.cli, (["state", "audit", "."],), "hook-cli"))
+        for entry, args, step in cases:
+            for error in (timeout, HookError("timed out after 1s"), HookError("ordinary failure")):
+                with self.subTest(entry=entry.__name__, error=error):
+                    self.process.side_effect = error
+                    with self.assertRaises(HookError) as caught:
+                        entry(*args)
+                    if error is timeout or "timed out after" in str(error):
+                        self.assertEqual(str(caught.exception), f"{step} timed out after 600s: {error}")
+                        self.assertIs(caught.exception.__cause__, error)
+                    else:
+                        self.assertIs(caught.exception, error)
+
+
 class HookMake(unittest.TestCase):
     """The hooks take GNU Make from fixed candidates, each proven by what it states (#341)."""
 

@@ -508,14 +508,19 @@ execution, the running process is terminated and the hook fails immediately with
 descriptive error naming the failing step and the configured budget (for example,
 `hook-cli timed out after 20m: ...`), blocking the Git commit or push.
 
-In the implementation, `cli` in `.config/lefthook/scripts/hooks.py` runs `make hook-cli` and
-`bin/praetorctl` under one monotonic deadline resolved by `stage_budget` in
+In the implementation, `run_within` in `.config/lefthook/scripts/hooks.py` gives each
+command only the time remaining before its caller's monotonic deadline. `cli` shares that
+deadline between `make hook-cli` and `bin/praetorctl`. The pre-commit live-state audit and
+`go vet` share one deadline, as do the module download, hook-cli build and context verification
+within `refresh`. `refresh_install` shares a deadline between its hook-cli build and workstation
+install; the install also retains its 330-second cap, receiving the smaller of that cap and
+the remaining stage budget. Each invocation resolves its budget through `stage_budget` in
 `.config/lefthook/scripts/common.py`. This mirrors `TestStageTimeout` in
 `internal/gating/deadline.go` as the single source of truth across the gate and hook
 environments. Each step receives only the remaining monotonic budget, and fixture runs in
 `.config/lefthook/scripts/test_hooks.py` reuse the same duration parser and timeout
 bounds (`test_stage_budget_default_equals_go_deadline_constant`,
-`test_stage_budget_cli_timeout_and_planted_cases`).
+`test_stage_budget_cli_timeout_and_planted_cases`, `StageBudgetSteps`).
 
 ## The lefthook.yml adoption writes
 
