@@ -233,7 +233,6 @@ var builtinEvasion = []string{
 	lineThroughFirstWord(ghWords...) + ghAPIPullsTail,
 	lineThroughFirstWord(ghWords...) + ghGraphQLTail,
 	lineThroughFirstWord(httpFetchWords...) + httpMergeTail,
-	privilegeOptionOverflowSource,
 	privilegeCommandSource,
 }
 

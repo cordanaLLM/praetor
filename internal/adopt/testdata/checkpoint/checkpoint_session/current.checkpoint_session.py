@@ -363,7 +363,7 @@ def _update_session_record(sessions_dir, record_file, touched, budget):
             _write_session_record(sessions_dir, record_file, existing | touched, check)
     try:
         _prune_session_records(sessions_dir, record_file, budget)
-    except HookError as error:
+    except (HookError, OSError) as error:
         sys.stderr.write(f"Praetor: checkpoint session cleanup skipped: {error}\n")
 
 

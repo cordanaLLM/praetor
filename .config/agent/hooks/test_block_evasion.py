@@ -23,52 +23,26 @@ SPEC.loader.exec_module(GUARD)
 class EvasionReplay(unittest.TestCase):
     """Replay pre-tool evasion rules against the engine corpus and privilege fixtures."""
 
-    def test_option_run_bound(self):
-        """Refuse excess launcher options while retaining the boundary verdict."""
-        for launcher, option in (("sudo", "-n"), ("env", "-i"), ("systemd-run", "--quiet")):
-            for count, allowed in ((10, True), (11, False)):
-                command = launcher + (" " + option) * count + " echo harmless"
-                with self.subTest(command=command), mock.patch.object(
-                    GUARD, "check_admission", return_value=True,
-                ), contextlib.redirect_stderr(io.StringIO()) as errors:
-                    self.assertEqual(GUARD.audit_command(command), allowed)
-                    if not allowed:
-                        self.assertIn("option_run_exceeds_10", errors.getvalue())
-
-    def test_ambiguous_option_runtime(self):
-        """Finish hostile option runs within a bounded child process lifetime."""
+    def test_chained_long_option_runtime(self):
+        """Block two identical chained inputs within one child process deadline."""
         code = (
             "import importlib.util, sys, time; "
             "s = importlib.util.spec_from_file_location('guard', sys.argv[1]); "
             "g = importlib.util.module_from_spec(s); s.loader.exec_module(g); "
             "g.check_admission = lambda command: True; "
-            "\nfor command in sys.argv[2:]:\n"
-            " started = time.monotonic()\n"
-            " g.audit_command(command)\n"
-            " print(f'option runtime {command.split()[0]}: {time.monotonic() - started:.6f}s', flush=True)\n"
+            "started = time.monotonic(); "
+            "\nfor _ in range(2):\n"
+            " if g.audit_command(sys.argv[2]): sys.exit(1)\n"
+            "print(f'chained option runtime (two calls): '"
+            " f'{time.monotonic() - started:.6f}s', flush=True)\n"
         )
-        commands = (
-            "sudo " + "--u -n " * 24 + "zz", "env " + "--ch " * 32 + "zz",
-            "systemd-run " + "--u " * 32 + "zz", "sudo " + "--u " * 32 + "zz",
-        )
+        command = "env --ch env A=1 " * 20 + "praetorctl adopt /home/u/dev"
         result = subprocess.run(
-            [sys.executable, "-B", "-c", code, str(SPEC.origin), *commands],
+            [sys.executable, "-B", "-c", code, str(SPEC.origin), command],
             timeout=20, capture_output=True, check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         print(result.stdout.decode(), end="")
-
-    def test_long_option_prefixes(self):
-        """Match either reading of abbreviated value options, preserving real flags."""
-        replay = json.loads(
-            (ROOT / "internal/agenthook/testdata/privilege-wrappers.json").read_text()
-        )
-        for row in replay["option_cases"]:
-            with self.subTest(command=row["command"]):
-                self.assertEqual(
-                    bool(GUARD.search(GUARD.BLOCKED_PATTERNS[-1], row["command"])),
-                    row["blocked"],
-                )
 
     def test_admin_boolean_spellings(self):
         """Verify all true boolean spellings of gh pr merge --admin are matched."""

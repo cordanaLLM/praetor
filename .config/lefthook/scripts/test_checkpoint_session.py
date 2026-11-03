@@ -37,9 +37,13 @@ class OwnedSessionLock(unittest.TestCase):
 
     def test_sweep_failure_preserves_committed_write(self):
         """Report cleanup failure without turning committed ownership into failure."""
-        for message in ("hook budget exhausted", "checkpoint session lock ownership lost"):
-            with self.subTest(message=message), mock.patch.object(
-                sessions, "_prune_session_records", side_effect=HookError(message),
+        for error in (
+            HookError("hook budget exhausted"),
+            HookError("checkpoint session lock ownership lost"),
+            OSError("session sweep unavailable"),
+        ):
+            with self.subTest(error=error), mock.patch.object(
+                sessions, "_prune_session_records", side_effect=error,
             ), contextlib.redirect_stderr(io.StringIO()) as errors:
                 self.record.unlink(missing_ok=True)
                 sessions._update_session_record(
@@ -47,7 +51,7 @@ class OwnedSessionLock(unittest.TestCase):
                 )
                 self.assertEqual(json.loads(self.record.read_text()), [str(self.directory)])
                 self.assertEqual(len(errors.getvalue().splitlines()), 1)
-                self.assertIn(message, errors.getvalue())
+                self.assertIn(str(error), errors.getvalue())
 
     def test_transaction_release_failure_still_raises(self):
         """Keep transaction lock errors fatal even when replacement has committed."""

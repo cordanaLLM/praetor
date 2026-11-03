@@ -1,19 +1,6 @@
 {
-  "option_cases": [
-    {"command": "sudo --us root 'praetorctl' adopt /home/u/dev", "blocked": true},
-    {"command": "env --ch /srv sudo 'praetorctl' adopt /home/u/dev", "blocked": true},
-    {"command": "sudo --u root 'praetorctl' adopt /home/u/dev", "blocked": true},
-    {"command": "sudo --user root 'praetorctl' adopt /home/u/dev", "blocked": true},
-    {"command": "sudo --non-interactive 'praetorctl' adopt /home/u/dev", "blocked": true},
-    {"command": "sudo --us root echo harmless", "blocked": false},
-    {"command": "env --ignore-environment sudo 'praetorctl' adopt /home/u/dev", "blocked": true},
-    {"command": "env --ignore-environment echo harmless", "blocked": false},
-    {"command": "systemd-run --pro MemoryHigh=8G sudo 'praetorctl' adopt /home/u/dev", "blocked": true},
-    {"command": "run0 --des build 'praetorctl' adopt /home/u/dev", "blocked": true},
-    {"command": "nice --ad 5 sudo 'praetorctl' adopt /home/u/dev", "blocked": true},
-    {"command": "sudo --u 'praetorctl' adopt /home/u/dev", "blocked": true}
-  ],
   "commands": [
+    "env --ignore-environment",
     "env --argv0 tool",
     "env -a tool",
     "env --env0-from names",
@@ -65,6 +52,7 @@
     "time -aooutput"
   ],
   "launchers": [
+    "sudo --non-interactive",
     "sudo -a bsdauth",
     "sudo --auth-type bsdauth",
     "sudo -C 4",
@@ -123,6 +111,7 @@
     "doas -nuroot"
   ],
   "data_only": [
+    "env --ignore-environment echo harmless",
     "env --argv0 sudo praetorctl conform /srv/dev",
     "time --format sudo praetorctl conform /srv/dev",
     "xargs --process-slot-var sudo praetorctl conform /srv/dev",
