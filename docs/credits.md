@@ -340,7 +340,7 @@ extension (`editors/vscode/package.json`), and the packages the vendored interfi
 | [Playwright](https://github.com/microsoft/playwright) 1.64.1 | Drives the console's accessibility and keyboard tests in Chromium and renders its screenshots | tool, used by CI | Apache-2.0, © Microsoft Corporation |
 | [axe-core](https://github.com/dequelabs/axe-core) 4.14.0 | The accessibility rules engine (WCAG 2.2 AA) of the console's accessibility tests | tool, used by CI | MPL-2.0 |
 | [axe-core Playwright integration](https://github.com/dequelabs/axe-core-npm) 4.14.0 | Runs axe-core inside the console's Playwright tests | tool, used by CI | MPL-2.0 |
-| [ESLint](https://github.com/eslint/eslint) eslint 10.13.0, @eslint/js 10.0.1 | Lints the console's TypeScript and Svelte sources (`pnpm lint`) | tool, used by CI | MIT, © Nicholas C. Zakas |
+| [ESLint](https://github.com/eslint/eslint) eslint 10.14.0, @eslint/js 10.0.1 | Lints the console's TypeScript and Svelte sources (`pnpm lint`) | tool, used by CI | MIT, © Nicholas C. Zakas |
 | [eslint-plugin-svelte](https://github.com/sveltejs/eslint-plugin-svelte) 3.23.1 | ESLint rules for the console's Svelte components | tool, used by CI | MIT, © Yosuke Ota |
 | [typescript-eslint](https://github.com/typescript-eslint/typescript-eslint) 8.72.1 | ESLint rules and parser for the console's TypeScript | tool, used by CI | MIT |
 | [globals](https://github.com/sindresorhus/globals) 17.13.0 | Browser and Node global names for the console's ESLint configuration | tool, used by CI | MIT, © Sindre Sorhus |
