@@ -3,11 +3,11 @@ package planning
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestExperimentValidationPositive(t *testing.T) {
@@ -273,7 +273,7 @@ func TestExperimentRenderAndRoundTrip(t *testing.T) {
 	})
 }
 
-func TestSchemaV1Window(t *testing.T) {
+func TestSchemaVersions(t *testing.T) {
 	v1, err := os.ReadFile("testdata/valid-draft-v1.json")
 	if err != nil {
 		t.Fatal(err)
@@ -282,26 +282,26 @@ func TestSchemaV1Window(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { now = time.Now })
-	now = func() time.Time { return SchemaV1RefusedFrom.Add(-time.Nanosecond) }
-	result, err := Compile(context.Background(), v1)
+	if _, err := Compile(context.Background(), v1); err == nil ||
+		!strings.Contains(err.Error(), "schema_version 1 was refused from 2026-10-25: set schema_version 2") {
+		t.Fatalf("schema_version 1 must be refused with the migration steps, got %v", err)
+	}
+	result, err := Compile(context.Background(), v2)
 	if err != nil {
-		t.Fatalf("schema_version 1 inside the window must compile: %v", err)
+		t.Fatalf("schema_version 2 must compile: %v", err)
 	}
-	report := result.Report(false)
-	if len(report.Deprecations) != 1 || !strings.Contains(report.Deprecations[0], "refused from 2026-10-25") {
-		t.Fatalf("one deprecation line naming the date expected, got %q", report.Deprecations)
+	encoded, err := json.Marshal(result.Report(false))
+	if err != nil {
+		t.Fatal(err)
 	}
-	now = func() time.Time { return SchemaV1RefusedFrom }
-	if _, err := Compile(context.Background(), v1); err == nil || !strings.Contains(err.Error(), "schema_version 1 was refused from 2026-10-25") {
-		t.Fatalf("schema_version 1 at the window end must be refused, got %v", err)
+	if !strings.Contains(string(encoded), `"deprecations":[]`) {
+		t.Fatalf("the report keeps an empty deprecations list, got %s", encoded)
 	}
-	result, err = Compile(context.Background(), v2)
-	if err != nil || len(result.Report(false).Deprecations) != 0 {
-		t.Fatalf("schema_version 2 compiles without deprecations: %v %v", err, result)
-	}
-	v3 := strings.Replace(string(v2), `"schema_version": 2`, `"schema_version": 3`, 1)
-	if _, err := Compile(context.Background(), []byte(v3)); err == nil || !strings.Contains(err.Error(), "schema_version 3 unsupported") {
-		t.Fatalf("an unknown schema version must be refused, got %v", err)
+	for _, version := range []int{0, 3} {
+		draft := strings.Replace(string(v2), `"schema_version": 2`, fmt.Sprintf(`"schema_version": %d`, version), 1)
+		want := fmt.Sprintf("schema_version %d unsupported", version)
+		if _, err := Compile(context.Background(), []byte(draft)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("schema_version %d must be refused, got %v", version, err)
+		}
 	}
 }

@@ -13,8 +13,6 @@ type stepRules struct {
 	requirements, milestones map[string]bool
 	milestoneOrder           []string
 	prerequisites            map[string]map[string]bool
-	// requireExperiment: schema_version 2 requires an experiment block on every implementation step.
-	requireExperiment bool
 }
 
 func validateSteps(ctx context.Context, list []Step, rules stepRules) ([]graphNode, error) {
@@ -30,7 +28,7 @@ func validateSteps(ctx context.Context, list []Step, rules stepRules) ([]graphNo
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if err := validateStep(step, stepIDs, requirements, milestones, links, outputs, rules.requireExperiment); err != nil {
+		if err := validateStep(step, stepIDs, requirements, milestones, links, outputs); err != nil {
 			return nil, err
 		}
 		stepIDs[step.ID], stepMilestones[step.ID], coveredMilestones[step.MilestoneID] = true, step.MilestoneID, true
@@ -99,10 +97,11 @@ func milestonePrerequisites(milestones []Milestone) map[string]map[string]bool {
 	return result
 }
 
-// validateStepExperiment checks step experiment presence and validity.
-func validateStepExperiment(step Step, requireExperiment bool) error {
+// validateStepExperiment checks step experiment presence and validity: schema_version 2 requires an
+// experiment block on every implementation step.
+func validateStepExperiment(step Step) error {
 	if step.Experiment == nil {
-		if requireExperiment && step.Kind == "implementation" {
+		if step.Kind == "implementation" {
 			return fmt.Errorf("step %s: schema_version %d requires experiment.evidence_status on implementation steps", step.ID, SchemaVersion)
 		}
 		return nil
@@ -110,7 +109,7 @@ func validateStepExperiment(step Step, requireExperiment bool) error {
 	return validateExperiment(step.ID, step.Experiment)
 }
 
-func validateStep(step Step, stepIDs, requirements, milestones, links, outputs map[string]bool, requireExperiment bool) error {
+func validateStep(step Step, stepIDs, requirements, milestones, links, outputs map[string]bool) error {
 	if err := validateStepIdentity(step, stepIDs); err != nil {
 		return err
 	}
@@ -133,7 +132,7 @@ func validateStep(step Step, stepIDs, requirements, milestones, links, outputs m
 	if err := validateAcceptance("step "+step.ID, step.Acceptance); err != nil {
 		return err
 	}
-	return validateStepExperiment(step, requireExperiment)
+	return validateStepExperiment(step)
 }
 
 func validateStepIdentity(step Step, seen map[string]bool) error {

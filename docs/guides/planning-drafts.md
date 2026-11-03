@@ -117,15 +117,17 @@ Example step contract for a new claim:
 
 ### Migrating from schema_version 1
 
-`schema_version` 1 drafts still compile until 2026-10-25 (UTC). Until then the
-report's `deprecations` list carries one line naming that date; from that day
-the compiler refuses them. To migrate a draft:
+The compiler refuses `schema_version` 1 drafts with `schema_version 1 was
+refused from 2026-10-25` and the steps below; their compile window ended that
+day (`validateSchemaVersion` in `internal/planning/validate.go`,
+`TestSchemaVersions` in `internal/planning/experiment_test.go`). The report's
+`deprecations` list stays in the contract and is empty. To migrate a draft:
 
 1. Set `"schema_version": 2`.
 2. Add an `experiment` block to every `implementation` step. Use
    `"evidence_status": "established"` with empty fields for work whose outcome is
    not in doubt, and the full contract for a `hypothesis` or `speculative` step.
-3. Compile again; the report's `deprecations` list is empty.
+3. Compile again.
 
 ## MCP
 
