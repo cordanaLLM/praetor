@@ -16,60 +16,69 @@ import (
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
+type bootstrapDeadlineCase struct {
+	name       string
+	seeded     bool
+	shorter    bool
+	noDeadline bool
+	want       BootstrapOutcome
+	wantErr    error
+}
+
 func TestBootstrapDeadlineWithSlowLedgerWrites(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		seeded     bool
-		shorter    bool
-		noDeadline bool
-	}{
-		{name: "longer caller deadline"},
-		{name: "longer caller deadline seeds existing directory", seeded: true},
-		{name: "shorter caller deadline", shorter: true},
-		{name: "no caller deadline", noDeadline: true},
+	for _, tc := range []bootstrapDeadlineCase{
+		{name: "longer caller deadline", want: BootstrapCreated},
+		{name: "longer caller deadline seeds existing directory", seeded: true, want: BootstrapSeeded},
+		{name: "shorter caller deadline", shorter: true, wantErr: context.DeadlineExceeded},
+		{name: "no caller deadline", noDeadline: true, wantErr: context.DeadlineExceeded},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			if tc.seeded {
-				if err := os.Mkdir(filepath.Join(dir, WorkingDirName), 0700); err != nil {
-					t.Fatal(err)
-				}
-			}
-			ctx := testsupport.DeadlineContext(t)
-			if tc.noDeadline {
-				ctx = t.Context()
-			}
-			if tc.shorter {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(ctx, 10*time.Millisecond)
-				defer cancel()
-			}
-			slowBootstrapWrites(t, ctx)
-			outcome, err := InitWorkingDirIfAbsentContext(ctx, dir)
-			if tc.shorter || tc.noDeadline {
-				if !errors.Is(err, context.DeadlineExceeded) {
-					t.Fatalf("blocked writes: outcome=%v, err=%v; want DeadlineExceeded", outcome, err)
-				}
-				return
-			}
-			want := BootstrapCreated
-			if tc.seeded {
-				want = BootstrapSeeded
-			}
-			if err != nil || outcome != want {
-				t.Fatalf("slow bootstrap: outcome=%v, err=%v; want %v", outcome, err, want)
-			}
-			if report, err := AuditWorkingDir(dir); err != nil || !report.Valid {
-				t.Fatalf("slow bootstrap left invalid ledger: %+v, %v", report, err)
-			}
-		})
+		t.Run(tc.name, tc.run)
 	}
+}
+
+func (tc bootstrapDeadlineCase) run(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	if tc.seeded {
+		if err := os.Mkdir(filepath.Join(dir, WorkingDirName), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := tc.callerContext(t)
+	slowBootstrapWrites(ctx, t)
+	outcome, err := InitWorkingDirIfAbsentContext(ctx, dir)
+	if tc.wantErr != nil {
+		if !errors.Is(err, tc.wantErr) {
+			t.Fatalf("blocked writes: outcome=%v, err=%v; want %v", outcome, err, tc.wantErr)
+		}
+		return
+	}
+	if err != nil || outcome != tc.want {
+		t.Fatalf("slow bootstrap: outcome=%v, err=%v; want %v", outcome, err, tc.want)
+	}
+	if report, err := AuditWorkingDirContext(ctx, dir); err != nil || !report.Valid {
+		t.Fatalf("slow bootstrap left invalid ledger: %+v, %v", report, err)
+	}
+}
+
+func (tc bootstrapDeadlineCase) callerContext(t *testing.T) context.Context {
+	t.Helper()
+	if tc.noDeadline {
+		return t.Context()
+	}
+	ctx := testsupport.DeadlineContext(t)
+	if tc.shorter {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 10*time.Millisecond)
+		t.Cleanup(cancel)
+	}
+	return ctx
 }
 
 // slowBootstrapWrites replaces package seams only in serial tests. Its deadline
 // channel delays real ledger writes past the fallback; no elapsed-time assertion
 // or scheduler-dependent sleep decides whether the bootstrap succeeded.
-func slowBootstrapWrites(t *testing.T, caller context.Context) {
+func slowBootstrapWrites(caller context.Context, t *testing.T) {
 	t.Helper()
 	budget, initialize := bootstrapFallbackTimeout, bootstrapInitializeFiles
 	t.Cleanup(func() {

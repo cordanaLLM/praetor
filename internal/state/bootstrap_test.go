@@ -145,7 +145,7 @@ func TestConcurrentBootstrapNeverExposesAPartialLedgerFile(t *testing.T) {
 	// so the test repeats until it is found or the bound is reached.
 	const maxRaceRounds = 256
 	for round := 0; round < maxRaceRounds; round++ {
-		if sighting := watchOneConcurrentBootstrap(t, ctx); sighting != "" {
+		if sighting := watchOneConcurrentBootstrap(ctx, t); sighting != "" {
 			t.Fatalf("round %d: a concurrent reader saw a partial ledger file: %s", round, sighting)
 		}
 	}
@@ -154,7 +154,7 @@ func TestConcurrentBootstrapNeverExposesAPartialLedgerFile(t *testing.T) {
 // watchOneConcurrentBootstrap bootstraps one fresh directory from several goroutines while
 // another goroutine watches the ledger names, and reports the first name it caught holding
 // anything other than its whole template.
-func watchOneConcurrentBootstrap(t *testing.T, ctx context.Context) string {
+func watchOneConcurrentBootstrap(ctx context.Context, t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	working := filepath.Join(dir, WorkingDirName)
@@ -184,7 +184,7 @@ func watchOneConcurrentBootstrap(t *testing.T, ctx context.Context) string {
 			t.Fatalf("concurrent bootstrap failed: %v", err)
 		}
 	}
-	if report, err := AuditWorkingDir(dir); err != nil || !report.Valid {
+	if report, err := AuditWorkingDirContext(ctx, dir); err != nil || !report.Valid {
 		t.Fatalf("concurrent bootstrap left an invalid ledger: %+v, %v", report, err)
 	}
 	return short
