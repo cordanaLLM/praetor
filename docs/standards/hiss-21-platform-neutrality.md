@@ -105,8 +105,10 @@ the workflow also reruns its other jobs. Read failures stop release without reru
 
 The release script is rendered inline by `RenderReviewHoldReleaseWorkflow`; it never checks out
 PR code. Its token has Actions write and pull-request, Checks and commit-status read
-permissions. Review-event tokens on forks may lack write permission; the scheduled workflow on
-the default branch provides the retry path after this workflow lands there. The pilot covers
+permissions. Fork runs with an empty `pull_requests` array match the PR by both head repository
+full name and head SHA; runs with PR associations retain the PR-number match. Review-event tokens
+on forks may lack write permission; the scheduled workflow on the default branch provides the
+retry path after this workflow lands there. The pilot covers
 this platform workflow; adoption rollout can reuse `RenderReviewHoldStep` and the same counter.
 The platform workflow shares its inline script through a YAML anchor to stay within the metadata
 reader size bound. Committed copies are checked against their renderers by `TestReviewHoldRendering`, and

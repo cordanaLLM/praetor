@@ -13,30 +13,37 @@ trap 'HOLD_TITLE="$RELEASE_TITLE"; review_error' ERR
 # Keep errexit active inside each scan; a conditional function call disables it.
 review_release_pr() (
   set -Ee
+  # Only the parent owns cleanup of the directory shared by these serial scans.
+  trap - EXIT
   trap 'HOLD_TITLE="$RELEASE_TITLE"; HOLD_CAUSE="pull request $PR_NUMBER: $HOLD_CAUSE"; review_error' ERR
   HOLD_CAUSE="pull request metadata read failed: index $pr_index"
-  PR_NUMBER=$(jq -er --argjson i "$pr_index" '.[$i].number' <<< "$prs")
-  HEAD_SHA=$(jq -er --argjson i "$pr_index" '.[$i].head.sha' <<< "$prs")
+  PR_NUMBER=$(jq -er --argjson i "$pr_index" '.[$i].number' "$prs")
+  HEAD_SHA=$(jq -er --argjson i "$pr_index" '.[$i].head.sha' "$prs")
+  HEAD_REPO=$(jq -r --argjson i "$pr_index" '.[$i].head.repo.full_name // ""' "$prs")
   HOLD_CAUSE="workflow run read failed: pull request $PR_NUMBER"
   runs=$(review_pages "repos/$GITHUB_REPOSITORY/actions/workflows/portability.yml/runs?event=pull_request&head_sha=$HEAD_SHA" workflow_runs)
-  run=$(jq -c --arg head "$HEAD_SHA" --argjson number "$PR_NUMBER" '
+  run="$REVIEW_TMP/run.json"
+  jq -c --arg head "$HEAD_SHA" --arg repo "$HEAD_REPO" --argjson number "$PR_NUMBER" '
     [.[] | select(.head_sha == $head and .event == "pull_request") |
-      select(any(.pull_requests[]; .number == $number))] | max_by(.run_number) // {}' <<< "$runs")
-  if [[ $(jq -r '.status' <<< "$run") != completed || $(jq -r '.conclusion' <<< "$run") != failure ]]; then exit 0; fi
-  run_id=$(jq -er '.id' <<< "$run")
-  attempt=$(jq -er '.run_attempt' <<< "$run")
+      select(any(.pull_requests[]; .number == $number) or
+        (.pull_requests == [] and $repo != "" and .head_repository.full_name == $repo))] |
+    max_by(.run_number) // {}' "$runs" > "$run"
+  if [[ $(jq -r '.status' "$run") != completed || $(jq -r '.conclusion' "$run") != failure ]]; then exit 0; fi
+  run_id=$(jq -er '.id' "$run")
+  attempt=$(jq -er '.run_attempt' "$run")
   HOLD_CAUSE="job read failed: run $run_id attempt $attempt"
   jobs=$(review_pages "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/attempts/$attempt/jobs" jobs)
-  failed=$(jq -c '[.[] | select(.conclusion == "failure")]' <<< "$jobs")
-  failed_count=$(jq 'length' <<< "$failed")
+  failed="$REVIEW_TMP/failed.json"
+  jq -c '[.[] | select(.conclusion == "failure")]' "$jobs" > "$failed"
+  failed_count=$(jq 'length' "$failed")
   held=false
   for ((job_index=0; job_index<failed_count && job_index<2000; job_index++)); do
-    check_url=$(jq -er --argjson i "$job_index" '.[$i].check_run_url' <<< "$failed")
+    check_url=$(jq -er --argjson i "$job_index" '.[$i].check_run_url' "$failed")
     check_id="${check_url##*/}"
     [[ "$check_id" =~ ^[0-9]+$ ]]
     HOLD_CAUSE="annotation read failed: check $check_id"
     annotations=$(review_pages "repos/$GITHUB_REPOSITORY/check-runs/$check_id/annotations" '')
-    if [[ $(jq --arg title "$HOLD_TITLE" 'any(.[]; .title == $title and .annotation_level == "failure")' <<< "$annotations") == true ]]; then
+    if [[ $(jq --arg title "$HOLD_TITLE" 'any(.[]; .title == $title and .annotation_level == "failure")' "$annotations") == true ]]; then
       held=true
     fi
   done
@@ -47,18 +54,20 @@ review_release_pr() (
   # Revalidate immediately before mutation: another release/manual rerun or a
   # head update during the recount must not rerun an obsolete attempt.
   HOLD_CAUSE="run revalidation failed: $run_id"
-  current=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")
-  if [[ $(jq -r '.status' <<< "$current") != completed || $(jq -r '.run_attempt' <<< "$current") != "$attempt" ]]; then exit 0; fi
+  current="$REVIEW_TMP/current-run.json"
+  gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$current"
+  if [[ $(jq -r '.status' "$current") != completed || $(jq -r '.run_attempt' "$current") != "$attempt" ]]; then exit 0; fi
   HOLD_CAUSE="head revalidation failed: $PR_NUMBER"
-  current_pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")
-  if [[ $(jq -r '.head.sha' <<< "$current_pr") != "$HEAD_SHA" || $(jq -r '.state' <<< "$current_pr") != open ]]; then exit 0; fi
+  current_pr="$REVIEW_TMP/current-pr.json"
+  gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$current_pr"
+  if [[ $(jq -r '.head.sha' "$current_pr") != "$HEAD_SHA" || $(jq -r '.state' "$current_pr") != open ]]; then exit 0; fi
   HOLD_CAUSE="rerun failed: $run_id"
   gh run rerun "$run_id" --repo "$GITHUB_REPOSITORY"
   printf 'Released PR %s: run %s attempt %s\n' "$PR_NUMBER" "$run_id" "$attempt" >> "$GITHUB_STEP_SUMMARY"
 )
 HOLD_CAUSE='open pull request read failed'
 prs=$(review_pages "repos/$GITHUB_REPOSITORY/pulls?state=open&sort=created&direction=asc" '')
-pr_count=$(jq 'length' <<< "$prs")
+pr_count=$(jq 'length' "$prs")
 read_failed=0
 for ((pr_index=0; pr_index<pr_count && pr_index<2000; pr_index++)); do
   # The child owns its fatal trap; the parent records failure and keeps scanning.

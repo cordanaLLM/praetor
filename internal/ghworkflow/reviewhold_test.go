@@ -77,7 +77,7 @@ func reviewFixtures(t *testing.T) string {
 		"threads.json":     `{"data":{"repository":{"pullRequest":{"headRefOid":"head","reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}`,
 		"checks.json":      `{"check_runs":[{"name":"CodeRabbit","status":"completed","app":{"slug":"coderabbitai"}}]}`,
 		"statuses.json":    `[]`,
-		"prs.json":         `[{"number":1,"head":{"sha":"head"}}]`,
+		"prs.json":         `[{"number":1,"head":{"sha":"head","repo":{"full_name":"fixture/fork"}}}]`,
 		"runs.json":        `{"workflow_runs":[{"id":42,"run_number":8,"run_attempt":1,"head_sha":"head","event":"pull_request","status":"completed","conclusion":"failure","pull_requests":[{"number":1}]}]}`,
 		"jobs.json":        `{"jobs":[{"conclusion":"failure","check_run_url":"https://api.github.com/repos/fixture/repo/check-runs/7"}]}`,
 		"annotations.json": `[{"title":"Gate held: review open","annotation_level":"failure"}]`,
@@ -99,6 +99,7 @@ func writeReviewFixture(t *testing.T, dir, name, data string) {
 	}
 }
 
+// writeReviewStub installs the executable gh fixture stub in the sandbox.
 func writeReviewStub(t *testing.T, dir string) {
 	t.Helper()
 	// nosemgrep: go_file-permissions_rule-fileperm, go.lang.correctness.permissions.file_permission.incorrect-default-permission -- the stub is executed through PATH and needs the owner execute bit
@@ -107,6 +108,7 @@ func writeReviewStub(t *testing.T, dir string) {
 	}
 }
 
+// readReviewFixture reads a named fixture through its sandbox root.
 func readReviewFixture(t *testing.T, dir, name string) ([]byte, error) {
 	t.Helper()
 	root, err := os.OpenRoot(dir)
@@ -121,6 +123,7 @@ func readReviewFixture(t *testing.T, dir, name string) ([]byte, error) {
 	return root.ReadFile(name)
 }
 
+// assertReviewCalls compares recorded gh arguments with the expected call sequence.
 func assertReviewCalls(t *testing.T, dir string, want [][]string) {
 	t.Helper()
 	data, err := readReviewFixture(t, dir, "calls")
@@ -140,10 +143,12 @@ func assertReviewCalls(t *testing.T, dir string, want [][]string) {
 	}
 }
 
+// reviewRESTCall builds the expected arguments for one paginated REST request.
 func reviewRESTCall(endpoint string, page int) []string {
 	return []string{"api", "--method", "GET", "repos/fixture/repo/" + endpoint, "-F", "per_page=100", "-F", "page=" + strconv.Itoa(page)}
 }
 
+// reviewCountCalls builds the expected thread, check-run and status request sequence.
 func reviewCountCalls(number string, threadPages, checkPages int, statuses bool) [][]string {
 	var calls [][]string
 	for page := 1; page <= threadPages; page++ {
@@ -202,12 +207,22 @@ func runReviewScript(t *testing.T, dir, script string) (string, error) {
 	defer cancel()
 	environment := append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"FIXTURE_DIR="+dir, "GITHUB_REPOSITORY=fixture/repo", "PR_NUMBER=1", "HEAD_SHA=head",
+		"RUNNER_TEMP="+dir,
 		"GITHUB_STEP_SUMMARY="+filepath.Join(dir, "summary"), "GITHUB_OUTPUT="+filepath.Join(dir, "outputs"))
 	ctx, err = util.WithCommandEnvironment(ctx, environment)
 	if err != nil {
 		t.Fatal(err)
 	}
 	out, err := util.RunCommandBytes(ctx, dir, bash, 1<<20, "-c", script)
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "review-hold.") {
+			t.Errorf("temporary API directory retained after script exit: %s", entry.Name())
+		}
+	}
 	return string(out.Stdout) + string(out.Stderr), err
 }
 
@@ -264,6 +279,11 @@ func TestReviewHoldRelease(t *testing.T) {
 		phase            int
 	}{
 		{"held now clear", "", "", true, 5},
+		{"fork head matches", "runs.json", reviewForkRun("fixture/fork", "head"), true, 5},
+		{"fork repository differs", "runs.json", reviewForkRun("other/fork", "head"), false, 0},
+		{"fork sha differs", "runs.json", reviewForkRun("fixture/fork", "other-head"), false, 0},
+		{"fork repository missing", "runs.json", reviewForkRun("", "head"), false, 0},
+		{"fork association differs", "runs.json", strings.Replace(reviewForkRun("fixture/fork", "head"), `"pull_requests":[]`, `"pull_requests":[{"number":2}]`, 1), false, 0},
 		{"newest run queued", "runs.json", `{"workflow_runs":[{"id":42,"run_number":8,"run_attempt":1,"head_sha":"head","event":"pull_request","status":"completed","conclusion":"failure","pull_requests":[{"number":1}]},{"id":43,"run_number":9,"head_sha":"head","event":"pull_request","status":"queued","pull_requests":[{"number":1}]}]}`, false, 0},
 		{"still open", "threads.json", `{"data":{"repository":{"pullRequest":{"headRefOid":"head","reviewThreads":{"nodes":[{"isResolved":false}],"pageInfo":{"hasNextPage":false}}}}}}`, false, 2},
 		{"still pending bot", "checks.json", `{"check_runs":[{"name":"CodeRabbit","status":"queued"}]}`, false, 2},
@@ -292,6 +312,71 @@ func TestReviewHoldRelease(t *testing.T) {
 				t.Fatalf("reruns=%q want %t; %s", data, tc.rerun, out)
 			}
 		})
+	}
+}
+
+// reviewForkRun builds a failed fork run without a pull-request association.
+func reviewForkRun(repository, sha string) string {
+	return `{"workflow_runs":[{"id":42,"run_number":8,"run_attempt":1,"head_sha":"` + sha +
+		`","head_repository":{"full_name":"` + repository +
+		`"},"event":"pull_request","status":"completed","conclusion":"failure","pull_requests":[]}]}`
+}
+
+// writeLargeReviewFixtures plants API pages exceeding a single argument's byte limit.
+func writeLargeReviewFixtures(t *testing.T, dir string) {
+	t.Helper()
+	padding := strings.Repeat("x", 1536)
+	check := `{"name":"Build","status":"completed","app":{"slug":"build","description":"` + padding + `"}}`
+	writeReviewFixture(t, dir, "checks.json", `{"check_runs":[`+strings.Repeat(check+",", 99)+check+`]}`)
+	writeReviewFixture(t, dir, "checks-next.json", `{"check_runs":[]}`)
+	status := `{"id":1,"context":"Build","state":"success","description":"` + padding + `"}`
+	writeReviewFixture(t, dir, "statuses.json", `[`+strings.Repeat(status+",", 98)+status+`]`)
+}
+
+// TestReviewHoldLargePayload counts oversized API pages without command-line data.
+func TestReviewHoldLargePayload(t *testing.T) {
+	for _, pending := range []bool{false, true} {
+		t.Run(strconv.FormatBool(pending), func(t *testing.T) {
+			dir := reviewFixtures(t)
+			writeLargeReviewFixtures(t, dir)
+			if pending {
+				writeReviewFixture(t, dir, "checks-next.json", `{"check_runs":[{"name":"CodeRabbit","status":"queued"}]}`)
+			}
+			out, err := runReviewScript(t, dir, reviewHoldScript)
+			assertReviewCalls(t, dir, reviewCountCalls("1", 1, 2, true))
+			summary, readErr := readReviewFixture(t, dir, "summary")
+			want := "unresolved threads=0; pending bot reviews=0; bots="
+			if pending {
+				want = "unresolved threads=0; pending bot reviews=1; bots=CodeRabbit"
+			}
+			if readErr != nil || (err != nil) != pending || !strings.Contains(string(summary), want) || strings.Contains(out, "Argument list too long") {
+				t.Fatalf("summary=%s out=%s err=%v read=%v; want %s", summary, out, err, readErr, want)
+			}
+		})
+	}
+}
+
+// TestReviewHoldReleaseLargePayload releases a held run with oversized API responses.
+func TestReviewHoldReleaseLargePayload(t *testing.T) {
+	dir := reviewFixtures(t)
+	writeLargeReviewFixtures(t, dir)
+	padding := `"padding":"` + strings.Repeat("x", 160<<10) + `",`
+	for _, name := range []string{"threads.json", "prs.json", "runs.json", "jobs.json", "annotations.json", "current-run.json", "current-pr.json"} {
+		data, err := readReviewFixture(t, dir, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeReviewFixture(t, dir, name, strings.Replace(string(data), "{", "{"+padding, 1))
+	}
+	out, err := runReviewScript(t, dir, reviewHoldReleaseScript)
+	want := [][]string{reviewRESTCall("pulls?state=open&sort=created&direction=asc", 1)}
+	want = append(want, reviewReleaseCalls("1", 1)...)
+	want = append(want, reviewCountCalls("1", 1, 2, true)...)
+	want = append(want, reviewReleaseCalls("1", 5)[6:]...)
+	assertReviewCalls(t, dir, want)
+	reruns, readErr := readReviewFixture(t, dir, "reruns")
+	if err != nil || readErr != nil || string(reruns) != "42\n" || strings.Contains(out, "::error") {
+		t.Fatalf("reruns=%s out=%s err=%v read=%v", reruns, out, err, readErr)
 	}
 }
 
