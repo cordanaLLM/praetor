@@ -5,9 +5,75 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
+
+// TestReviewPagePassesNonNullVariables checks every required query variable, including defaulted ones.
+func TestReviewPagePassesNonNullVariables(t *testing.T) {
+	header, _, ok := strings.Cut(reviewReadQuery, "{")
+	if !ok {
+		t.Fatal("review query has no declaration header")
+	}
+	declaration := regexp.MustCompile(`\$([_A-Za-z][_0-9A-Za-z]*)\s*:\s*([_A-Za-z][_0-9A-Za-z]*|\[[\s_0-9A-Za-z!\[\]]+\])\s*(!?)`)
+	variables := declaration.FindAllStringSubmatch(header, len(header))
+	if len(variables) == 0 {
+		t.Fatal("review query has no variable declarations")
+	}
+	for _, kind := range []string{"", "threads", "reviews", "checks"} {
+		name := kind
+		if name == "" {
+			name = "first"
+		}
+		t.Run(name, func(t *testing.T) {
+			args := reviewPageArgs(reviewReadRequest{owner: "example", name: "widget", number: 7}, kind, "next")
+			fields := reviewPageFields(args)
+			for _, variable := range variables {
+				if _, passed := fields[variable[1]]; variable[3] == "!" && !passed {
+					t.Errorf("missing non-null variable $%s", variable[1])
+				}
+			}
+		})
+	}
+}
+
+// reviewPageFields reads only field arguments, excluding variable references inside the query body.
+func reviewPageFields(args []string) map[string]string {
+	fields := make(map[string]string)
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-f" || args[i] == "-F" {
+			key, value, ok := strings.Cut(args[i+1], "=")
+			if ok {
+				fields[key] = value
+			}
+			i++
+		}
+	}
+	return fields
+}
+
+// TestReviewPageFirstCallPassesBooleans records the real call boundary's first-page typed fields.
+func TestReviewPageFirstCallPassesBooleans(t *testing.T) {
+	var calls [][]string
+	reader := GHReviewReader{Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		calls = append(calls, slices.Clone(args))
+		return reviewPageFixture(t, "threads", 0, 1, false, ""), nil
+	}}
+	if _, err := reader.Read(t.Context(), "example/widget", 7); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("first-page calls = %d, want 1", len(calls))
+	}
+	for _, connection := range []string{"threads", "reviews", "checks"} {
+		index := slices.Index(calls[0], connection+"=true")
+		if index < 1 || calls[0][index-1] != "-F" {
+			t.Errorf("first call missing -F %s=true", connection)
+		}
+	}
+}
 
 // reviewPageFixture constructs complete envelopes with a selected connection page.
 func reviewPageFixture(t *testing.T, kind string, count, page int, more bool, cursor string) []byte {

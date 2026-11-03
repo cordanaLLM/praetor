@@ -19,19 +19,24 @@ type reviewPageReader func(context.Context, string, string) (*reviewPullRaw, err
 
 // reviewPage reads one selected connection; completed connections are excluded from continuations.
 func (r GHReviewReader) reviewPage(ctx context.Context, request reviewReadRequest, kind, cursor string) (*reviewPullRaw, error) {
-	args := []string{"api", "graphql", "-f", "query=" + reviewReadQuery,
-		"-f", "owner=" + request.owner, "-f", "name=" + request.name, "-F", "number=" + strconv.Itoa(request.number)}
-	if kind != "" {
-		for _, connection := range []string{"threads", "reviews", "checks"} {
-			args = append(args, "-F", connection+"="+strconv.FormatBool(connection == kind))
-		}
-		args = append(args, "-f", kind+"After="+cursor)
-	}
-	data, err := r.call(ctx, args...)
+	data, err := r.call(ctx, reviewPageArgs(request, kind, cursor)...)
 	if err != nil {
 		return nil, fmt.Errorf("read review page: %w", err)
 	}
 	return decodeReviewPull(data, request.number)
+}
+
+// reviewPageArgs builds the exact GraphQL argument vector sent through the reader's call boundary.
+func reviewPageArgs(request reviewReadRequest, kind, cursor string) []string {
+	args := []string{"api", "graphql", "-f", "query=" + reviewReadQuery,
+		"-f", "owner=" + request.owner, "-f", "name=" + request.name, "-F", "number=" + strconv.Itoa(request.number)}
+	for _, connection := range []string{"threads", "reviews", "checks"} {
+		args = append(args, "-F", connection+"="+strconv.FormatBool(kind == "" || connection == kind))
+	}
+	if kind != "" {
+		args = append(args, "-f", kind+"After="+cursor)
+	}
+	return args
 }
 
 // completeReviewPages collects each connection independently before decoding any snapshot.
