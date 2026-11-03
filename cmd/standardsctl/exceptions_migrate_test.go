@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -20,6 +21,77 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// TestWriteExceptionMigrationSourceChanges pins concurrent-edit refusal and exact-byte snapshot acceptance.
+func TestWriteExceptionMigrationSourceChanges(t *testing.T) {
+	for _, name := range []string{"unchanged", "changed", "grown", "shorter", "restored"} {
+		t.Run(name, func(t *testing.T) {
+			path, plan := plannedExceptionMigration(t)
+			current := rewriteExceptionMigrationSource(t, path, plan.Source, name)
+			want := plan.Data
+			err := writeExceptionMigration(t.Context(), path, plan.Data, plan.Source)
+			if name != "unchanged" && name != "restored" {
+				want = current
+				if !errors.Is(err, errExceptionMigrationManifestChanged) || err.Error() != "manifest changed since it was planned; rerun the migration" {
+					t.Errorf("changed manifest: got %v, want source-change error", err)
+				}
+			} else if err != nil {
+				t.Errorf("identical source refused: %v", err)
+			}
+			if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, want) {
+				t.Fatalf("manifest after write: %q, want %q, err=%v", got, want, err)
+			}
+		})
+	}
+}
+
+// plannedExceptionMigration builds a legacy manifest and verifies its migration retains the exact parsed snapshot.
+func plannedExceptionMigration(t *testing.T) (string, config.ExceptionMigrationPlan) {
+	t.Helper()
+	today := config.ExceptionDay(time.Now())
+	path := writeExceptionsManifest(t, config.Exception{Rule: "declared-linters", Tool: "semgrep",
+		Reason: "migration", Expires: today.AddDate(0, 0, 91).Format(config.ExceptionDateLayout)})
+	source, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := config.PlanExceptionMigrationSnapshot(t.Context(), path, today)
+	if err != nil || len(plan.Proposals) != 1 || plan.Proposals[0].Unresolved != "" {
+		t.Fatalf("plan: proposals=%+v err=%v", plan.Proposals, err)
+	}
+	if !bytes.Equal(plan.Source, source) {
+		t.Fatal("plan did not retain exact source bytes")
+	}
+	return path, plan
+}
+
+// rewriteExceptionMigrationSource simulates an edit, optionally restoring the original bytes before applying the plan.
+func rewriteExceptionMigrationSource(t *testing.T, path string, source []byte, name string) []byte {
+	t.Helper()
+	if name == "unchanged" {
+		return source
+	}
+	edited := bytes.Replace(source, []byte("migration"), []byte("different"), 1)
+	switch name {
+	case "grown":
+		edited = append(edited, []byte("# concurrent edit\n")...)
+	case "shorter":
+		edited = edited[:len(edited)-1]
+	}
+	if bytes.Equal(source, edited) {
+		t.Fatal("fixture edit did not change source")
+	}
+	if err := os.WriteFile(path, edited, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if name == "restored" {
+		if err := os.WriteFile(path, source, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return source
+	}
+	return edited
+}
+
 // TestWriteExceptionMigrationRefusesSymlink pins refusal without changing the link or its in-directory target.
 func TestWriteExceptionMigrationRefusesSymlink(t *testing.T) {
 	ctx := testsupport.DeadlineContext(t)
@@ -31,7 +103,7 @@ func TestWriteExceptionMigrationRefusesSymlink(t *testing.T) {
 	}
 	path := filepath.Join(root, ".standards.yaml")
 	symlinkOrSkip(t, filepath.Base(target), path)
-	if err := writeExceptionMigration(ctx, path, []byte("version: 1\nexceptions: []\n")); err == nil {
+	if err := writeExceptionMigration(ctx, path, []byte("version: 1\nexceptions: []\n"), []byte(original)); err == nil {
 		t.Error("symlinked manifest accepted")
 	}
 	if data, err := util.ReadConfinedLimited(root, filepath.Base(target), 1024); err != nil || string(data) != original {
@@ -67,7 +139,7 @@ func assertExceptionMigrationWrite(t *testing.T, path string, want os.FileMode) 
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	if err := writeExceptionMigration(ctx, path, []byte("version: 1\n")); err != nil {
+	if err := writeExceptionMigration(ctx, path, []byte("version: 1\n"), []byte("version: 0\n")); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -91,7 +163,7 @@ func TestWriteExceptionMigrationCanceled(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := writeExceptionMigration(ctx, path, []byte("version: 1\n")); !errors.Is(err, context.Canceled) {
+	if err := writeExceptionMigration(ctx, path, []byte("version: 1\n"), []byte("version: 0\n")); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled migration: %v, want context.Canceled", err)
 	}
 	data, err := os.ReadFile(path)

@@ -25,15 +25,34 @@ type ExceptionMigration struct {
 	Unresolved string
 }
 
+// ExceptionMigrationPlan retains the exact source bytes alongside the proposed manifest and entry migrations.
+type ExceptionMigrationPlan struct {
+	Source    []byte
+	Data      []byte
+	Proposals []ExceptionMigration
+}
+
 // PlanExceptionMigration reads a manifest without requiring its legacy exceptions to validate.
 // It returns a comment-preserving YAML edit and one proposal per entry missing both fields.
 func PlanExceptionMigration(ctx context.Context, path string, today time.Time) ([]byte, []ExceptionMigration, error) {
+	plan, err := PlanExceptionMigrationSnapshot(ctx, path, today)
+	return plan.Data, plan.Proposals, err
+}
+
+// PlanExceptionMigrationSnapshot plans migrations and retains the parsed source for a pre-write comparison.
+func PlanExceptionMigrationSnapshot(ctx context.Context, path string, today time.Time) (ExceptionMigrationPlan, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	data, err := readConfigFile(path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read migration manifest: %w", err)
+		return ExceptionMigrationPlan{}, fmt.Errorf("read migration manifest: %w", err)
 	}
+	encoded, proposals, err := planExceptionMigration(ctx, path, data, today)
+	return ExceptionMigrationPlan{Source: data, Data: encoded, Proposals: proposals}, err
+}
+
+// planExceptionMigration derives a comment-preserving migration from the supplied manifest snapshot.
+func planExceptionMigration(ctx context.Context, path string, data []byte, today time.Time) ([]byte, []ExceptionMigration, error) {
 	if _, err := DecodeManifest(data); err != nil {
 		return nil, nil, fmt.Errorf("decode migration manifest: %w", err)
 	}

@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,9 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// errExceptionMigrationManifestChanged refuses replacement of a manifest edited after planning.
+var errExceptionMigrationManifestChanged = errors.New("manifest changed since it was planned; rerun the migration")
+
 // runExceptionMigration plans exception migrations for a manifest, prints proposals, and optionally writes them.
 func runExceptionMigration(path, todayStr string, write bool) error {
 	today, err := exceptionToday(todayStr)
@@ -24,13 +28,13 @@ func runExceptionMigration(path, todayStr string, write bool) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer cancel()
-	data, proposals, err := config.PlanExceptionMigration(ctx, path, today)
+	plan, err := config.PlanExceptionMigrationSnapshot(ctx, path, today)
 	if err != nil {
 		return fmt.Errorf("plan exception migration: %w", err)
 	}
-	unresolved := printExceptionMigrations(path, proposals)
-	if write && len(proposals) > unresolved {
-		if err := writeExceptionMigration(ctx, path, data); err != nil {
+	unresolved := printExceptionMigrations(path, plan.Proposals)
+	if write && len(plan.Proposals) > unresolved {
+		if err := writeExceptionMigration(ctx, path, plan.Data, plan.Source); err != nil {
 			return err
 		}
 	}
@@ -40,8 +44,8 @@ func runExceptionMigration(path, todayStr string, write bool) error {
 	return nil
 }
 
-// writeExceptionMigration writes migrated manifest data atomically and verifies it via readback.
-func writeExceptionMigration(ctx context.Context, path string, data []byte) error {
+// writeExceptionMigration refuses changed source, writes migrated data atomically, and verifies it via readback.
+func writeExceptionMigration(ctx context.Context, path string, data, source []byte) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("apply exception migration: %w", err)
 	}
@@ -52,6 +56,9 @@ func writeExceptionMigration(ctx context.Context, path string, data []byte) erro
 	// Windows reports writable files as 0666; remove shared write bits without
 	// widening the manifest's existing permissions.
 	mode := info.Mode().Perm() &^ 0o022
+	if err := checkExceptionMigrationSource(path, source); err != nil {
+		return err
+	}
 	if err := util.WriteFileConfined(filepath.Dir(path), filepath.Base(path), data, mode); err != nil {
 		return fmt.Errorf("write exception migration: %w", err)
 	}
@@ -64,6 +71,18 @@ func writeExceptionMigration(ctx context.Context, path string, data []byte) erro
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("verify exception migration: %w", err)
+	}
+	return nil
+}
+
+// checkExceptionMigrationSource compares the current confined manifest with the exact bytes used for planning.
+func checkExceptionMigrationSource(path string, source []byte) error {
+	current, err := util.ReadConfinedLimited(filepath.Dir(path), filepath.Base(path), int64(len(source))+1)
+	if errors.Is(err, util.ErrFileTooLarge) || err == nil && !bytes.Equal(source, current) {
+		return errExceptionMigrationManifestChanged
+	}
+	if err != nil {
+		return fmt.Errorf("reread migration manifest: %w", err)
 	}
 	return nil
 }
