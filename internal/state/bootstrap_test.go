@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 func TestBootstrapCreatesPrivateStateOnce(t *testing.T) {
@@ -137,12 +139,13 @@ func TestConcurrentBootstrapHasOnlyOneCreator(t *testing.T) {
 // and linked into place, so a name that exists holds its whole template.
 // TestConcurrentBootstrapHasOnlyOneCreator cannot catch this: it audits after Wait.
 func TestConcurrentBootstrapNeverExposesAPartialLedgerFile(t *testing.T) {
+	ctx := testsupport.DeadlineContext(t)
 	// maxRaceRounds bounds the search (HISS-02). Against a plain exclusive create the
 	// window is narrow - one round in roughly twelve caught it when this was measured -
 	// so the test repeats until it is found or the bound is reached.
 	const maxRaceRounds = 256
 	for round := 0; round < maxRaceRounds; round++ {
-		if sighting := watchOneConcurrentBootstrap(t); sighting != "" {
+		if sighting := watchOneConcurrentBootstrap(ctx, t); sighting != "" {
 			t.Fatalf("round %d: a concurrent reader saw a partial ledger file: %s", round, sighting)
 		}
 	}
@@ -151,7 +154,7 @@ func TestConcurrentBootstrapNeverExposesAPartialLedgerFile(t *testing.T) {
 // watchOneConcurrentBootstrap bootstraps one fresh directory from several goroutines while
 // another goroutine watches the ledger names, and reports the first name it caught holding
 // anything other than its whole template.
-func watchOneConcurrentBootstrap(t *testing.T) string {
+func watchOneConcurrentBootstrap(ctx context.Context, t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	working := filepath.Join(dir, WorkingDirName)
@@ -170,7 +173,7 @@ func watchOneConcurrentBootstrap(t *testing.T) string {
 	var wg sync.WaitGroup
 	failures := make([]error, 8)
 	for i := range failures {
-		wg.Go(func() { _, failures[i] = InitWorkingDirIfAbsentContext(t.Context(), dir) })
+		wg.Go(func() { _, failures[i] = InitWorkingDirIfAbsentContext(ctx, dir) })
 	}
 	wg.Wait()
 	close(stop)
@@ -181,7 +184,7 @@ func watchOneConcurrentBootstrap(t *testing.T) string {
 			t.Fatalf("concurrent bootstrap failed: %v", err)
 		}
 	}
-	if report, err := AuditWorkingDir(dir); err != nil || !report.Valid {
+	if report, err := AuditWorkingDirContext(ctx, dir); err != nil || !report.Valid {
 		t.Fatalf("concurrent bootstrap left an invalid ledger: %+v, %v", report, err)
 	}
 	return short
