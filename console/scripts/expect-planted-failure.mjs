@@ -47,14 +47,14 @@ function reportArray(value) {
 	if (!Array.isArray(value)) throw new TypeError('Expected an array in planted Playwright report');
 	return value;
 }
-/** Collects results while validating the suite tree. @param {typeof report.suites} suites */
+/** Collects results; permits omitted child arrays, rejects malformed fields. @param {typeof report.suites} suites */
 function results(suites) {
 	const queue = [...reportArray(suites)];
 	const found = [];
 	for (let i = 0; i < queue.length; i++) {
 		const suite = queue[i];
-		queue.push(...reportArray(suite.suites ?? []));
-		for (const spec of reportArray(suite.specs ?? [])) {
+		queue.push(...reportArray(suite.suites === undefined ? [] : suite.suites));
+		for (const spec of reportArray(suite.specs === undefined ? [] : suite.specs)) {
 			for (const test of reportArray(spec.tests)) found.push(...reportArray(test.results));
 		}
 	}
