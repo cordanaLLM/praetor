@@ -20,6 +20,7 @@ import (
 func writeTestFile(t *testing.T, dir, rel, content string) {
 	t.Helper()
 	full := filepath.Join(dir, rel)
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
 	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
 		t.Fatal(err)
 	}

@@ -58,6 +58,7 @@ func TestInspectStateClientLocalSettings_Positive(t *testing.T) {
 	initAdoptedFixture(t, dir)
 
 	claudeLocal := filepath.Join(dir, ".claude", "settings.local.json")
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
 	if err := os.MkdirAll(filepath.Dir(claudeLocal), 0o700); err != nil {
 		t.Fatalf("mkdir .claude: %v", err)
 	}
@@ -80,6 +81,7 @@ func TestInspectStateClientLocalSettings_Negative(t *testing.T) {
 	initAdoptedFixture(t, dir)
 
 	claudeLocal := filepath.Join(dir, ".claude", "settings.local.json")
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
 	if err := os.MkdirAll(filepath.Dir(claudeLocal), 0o700); err != nil {
 		t.Fatalf("mkdir .claude: %v", err)
 	}
@@ -155,6 +157,7 @@ func TestInspectStateClientLocalSettings_Boundary(t *testing.T) {
 		t.Fatalf("init working dir: %v", err)
 	}
 	claudeLocal := filepath.Join(dir, ".claude", "settings.local.json")
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
 	if err := os.MkdirAll(filepath.Dir(claudeLocal), 0o700); err != nil {
 		t.Fatalf("mkdir .claude: %v", err)
 	}
