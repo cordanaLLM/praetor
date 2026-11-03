@@ -247,3 +247,87 @@ func TestReadScanDirectory_BoundedRead_3D(t *testing.T) {
 		t.Fatalf("readScanDirectory allocated %d entries, want at most %d (maxScannedFiles+1)", len(entries), maxScannedFiles+1)
 	}
 }
+
+// setupConfinementFixture creates a directory layout with in-root and outside files.
+func setupConfinementFixture(t *testing.T) (rootDir, outsideDir string) {
+	t.Helper()
+	temp := t.TempDir()
+	rootDir = filepath.Join(temp, "root")
+	outsideDir = filepath.Join(temp, "outside")
+	if err := os.MkdirAll(rootDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outsideDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outsideDir, "secret.txt"), []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	subDir := filepath.Join(rootDir, "inside")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(subDir, "file.txt"), []byte("content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return rootDir, outsideDir
+}
+
+func testInRootSubdirectoryReads(t *testing.T, rootDir string) {
+	t.Helper()
+	entries, err := readScanDirectory(t.Context(), rootDir, "inside")
+	if err != nil {
+		t.Fatalf("expected successful read of in-root subdirectory, got: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "file.txt" {
+		t.Fatalf("unexpected entries for inside: %+v", entries)
+	}
+}
+
+func testEmptyRelDirReadsRoot(t *testing.T, rootDir string) {
+	t.Helper()
+	entries, err := readScanDirectory(t.Context(), rootDir, "")
+	if err != nil {
+		t.Fatalf("expected successful read of empty relDir, got: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "inside" {
+		t.Fatalf("unexpected entries for empty relDir: %+v", entries)
+	}
+}
+
+func testEscapeDotDotRefused(t *testing.T, rootDir string) {
+	t.Helper()
+	if _, err := readScanDirectory(t.Context(), rootDir, "../outside"); err == nil {
+		t.Fatal("expected error for escaping relDir ../outside, got nil")
+	}
+}
+
+func testSymlinkEscapeRefused(t *testing.T, rootDir, outsideDir string) {
+	t.Helper()
+	symlinkPath := filepath.Join(rootDir, "outside_symlink")
+	if err := os.Symlink(outsideDir, symlinkPath); err != nil {
+		t.Skipf("symlinks not supported on this platform: %v", err)
+	}
+	if _, err := readScanDirectory(t.Context(), rootDir, "outside_symlink"); err == nil {
+		t.Fatal("expected error for symlink escaping root, got nil")
+	}
+}
+
+// TestReadScanDirectory_Confinement_3D verifies that reading directories through root confines
+// access within root: in-root subdirectories read successfully, while relative traversal (..)
+// or symlinks escaping the root boundary are refused.
+func TestReadScanDirectory_Confinement_3D(t *testing.T) {
+	rootDir, outsideDir := setupConfinementFixture(t)
+	t.Run("in-root subdirectory reads successfully", func(t *testing.T) {
+		testInRootSubdirectoryReads(t, rootDir)
+	})
+	t.Run("empty relDir reads root directory", func(t *testing.T) {
+		testEmptyRelDirReadsRoot(t, rootDir)
+	})
+	t.Run("relDir escaping root via dot-dot is refused", func(t *testing.T) {
+		testEscapeDotDotRefused(t, rootDir)
+	})
+	t.Run("symlink escaping root is refused", func(t *testing.T) {
+		testSymlinkEscapeRefused(t, rootDir, outsideDir)
+	})
+}
