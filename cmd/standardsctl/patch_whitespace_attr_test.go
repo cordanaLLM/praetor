@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 // Order finding-engine-1730-landing-whitespace-20261031: patch-package files under
@@ -34,7 +36,7 @@ func diffCheckWithRepositoryAttributes(t *testing.T, rel string) (string, error)
 			t.Errorf("close repository root: %v", err)
 		}
 	}()
-	attrs, err := root.ReadFile(".gitattributes")
+	attrs, err := contextopt.ReadRootSnapshot(t.Context(), root, ".gitattributes")
 	if err != nil {
 		t.Fatalf("read repository .gitattributes: %v", err)
 	}
