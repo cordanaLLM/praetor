@@ -7,6 +7,66 @@ import (
 	"testing"
 )
 
+// TestAnalyzeCommit_Boundary_BodyWidth accepts 72 characters, including multibyte runes.
+func TestAnalyzeCommit_Boundary_BodyWidth(t *testing.T) {
+	for name, body := range map[string]string{
+		"ASCII":     "A " + strings.Repeat("x", 70),
+		"multibyte": "界 " + strings.Repeat("界", 70),
+		"CRLF":      "A " + strings.Repeat("x", 70) + "\r\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			analysis, err := AnalyzeCommit("fix: wrap body\n\n" + body)
+			if err != nil || !analysis.Valid {
+				t.Fatalf("72-rune body: %+v, %v", analysis, err)
+			}
+		})
+	}
+}
+
+// TestAnalyzeCommit_Negative_BodyWidth plants overlong prose and checks its line and rune width.
+func TestAnalyzeCommit_Negative_BodyWidth(t *testing.T) {
+	for name, body := range map[string]string{
+		"ASCII":              "A " + strings.Repeat("x", 71),
+		"multibyte":          "界 " + strings.Repeat("界", 71),
+		"after closed fence": "```sh\nignored\n```\nA " + strings.Repeat("x", 71),
+	} {
+		t.Run(name, func(t *testing.T) {
+			analysis, err := AnalyzeCommit("fix: wrap body\n\n" + body)
+			line := strings.Count(body, "\n") + 3
+			want := fmt.Sprintf("body line %d is 73 columns", line)
+			if err != nil || analysis.Valid || len(analysis.Errors) != 1 || !strings.Contains(analysis.Errors[0], want) {
+				t.Fatalf("want %q, got %+v, %v", want, analysis, err)
+			}
+		})
+	}
+}
+
+// TestAnalyzeCommit_Positive_BodyWidthExceptions keeps unwrappable and structured lines intact.
+func TestAnalyzeCommit_Positive_BodyWidthExceptions(t *testing.T) {
+	long := strings.Repeat("long ", 20)
+	for name, message := range map[string]string{
+		"subject":           "fix: " + long,
+		"signoff":           "fix: wrap body\n\nSigned-off-by: " + long + "<person@example.invalid>",
+		"coauthor":          "fix: wrap body\n\nCo-authored-by: " + long + "<person@example.invalid>",
+		"other trailer":     "fix: wrap body\n\nReviewed-by: " + long,
+		"lowercase trailer": "fix: wrap body\n\nreviewed-by: " + long,
+		"backtick fence":    "fix: wrap body\n\n```sh\n" + long + "\n```",
+		"tilde fence":       "fix: wrap body\n\n~~~sh\n" + long + "\n~~~",
+		"longer fence":      "fix: wrap body\n\n````sh\n```\n" + long + "\n````",
+		"URL":               "fix: wrap body\n\nhttps://example.invalid/" + strings.Repeat("x", 80),
+		"path":              "fix: wrap body\n\n./" + strings.Repeat("path/", 20),
+		"command":           "fix: wrap body\n\n./command-" + strings.Repeat("x", 80),
+		"quote":             "fix: wrap body\n\n> " + long,
+	} {
+		t.Run(name, func(t *testing.T) {
+			analysis, err := AnalyzeCommit(message)
+			if err != nil || !analysis.Valid {
+				t.Fatalf("width exception: %+v, %v", analysis, err)
+			}
+		})
+	}
+}
+
 // TestAnalyzeCommit_Positive_ConventionalAndGitGeneratedSubjects (#61): every accepted type, with
 // and without a scope and the breaking marker, and the subjects git writes for a merge and a
 // revert meet the policy.

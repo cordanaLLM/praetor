@@ -5,6 +5,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // The commit message policy (#61). It is the one implementation: the repository's commit-msg hook
@@ -29,6 +32,45 @@ const commitScissors = "# ------------------------ >8 ------------------------"
 
 // maxCommitMessageLines bounds the line scan of one commit message (HISS-02).
 const maxCommitMessageLines = 100000
+
+// maxCommitBodyColumns enforces Fleet rules, Text: commit message bodies wrap at 72 columns.
+const maxCommitBodyColumns = 72
+
+// commitTrailerLineRegex recognises Token: value lines, whose values must remain intact.
+var commitTrailerLineRegex = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*:[ \t]+\S`)
+
+// commitBodyWidthErrors reports overlong body lines using rune widths and one-based line numbers.
+// The first non-empty line is the subject; code fences use the shared Markdown tracker.
+func commitBodyWidthErrors(message string) []string {
+	lines := strings.Split(message, "\n")
+	var errs []string
+	var fence util.MarkdownFence
+	subjectSeen := false
+	for i := 0; i < len(lines) && i < maxCommitMessageLines; i++ {
+		line := strings.TrimSuffix(lines[i], "\r")
+		trimmed := strings.TrimSpace(line)
+		if !subjectSeen {
+			subjectSeen = trimmed != ""
+			continue
+		}
+		if fence.Inside(trimmed) {
+			continue
+		}
+		width := utf8.RuneCountInString(line)
+		if width <= maxCommitBodyColumns || commitBodyWidthExempt(line) {
+			continue
+		}
+		errs = append(errs, fmt.Sprintf("commit body line %d is %d columns; maximum %d (fleet rule)",
+			i+1, width, maxCommitBodyColumns))
+	}
+	return errs
+}
+
+// commitBodyWidthExempt preserves trailers, quoted lines, and single URLs, paths or commands.
+// A whitespace-free token cannot be wrapped without changing its contents.
+func commitBodyWidthExempt(line string) bool {
+	return strings.HasPrefix(line, "> ") || commitTrailerLineRegex.MatchString(line) || len(strings.Fields(line)) <= 1
+}
 
 // CleanCommitMessage returns message as git's default cleanup records it for the policy: without
 // the lines that start with '#', git's comment character, and without the scissors line and
