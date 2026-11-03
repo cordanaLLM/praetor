@@ -284,6 +284,34 @@ func TestBuildModule_OperationTimeoutCaps(t *testing.T) {
 	}
 }
 
+// TestRetryModuleGo_PreparationDelay keeps timeout assertions stable after slow dependency discovery.
+func TestRetryModuleGo_PreparationDelay(t *testing.T) {
+	t.Parallel()
+	for _, delay := range []time.Duration{0, 30 * time.Second, 90 * time.Second} {
+		t.Run(delay.String(), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				const budget = 10 * time.Minute
+				ctx, cancel := context.WithTimeout(t.Context(), budget)
+				defer cancel()
+				time.Sleep(delay)
+				for _, operation := range []string{"mod", "list"} {
+					cap := downloadTimeout
+					if operation == "list" {
+						cap = moduleTimeout
+					}
+					runner := func(attemptCtx context.Context, _ string, _, _ io.Writer, _ string, args ...string) error {
+						assertOperationTimeout(t, attemptCtx, args[0], budget)
+						return nil
+					}
+					if _, err := retryModuleGo(ctx, "unused", "mod", operation, []string{operation}, cap, io.Discard, runner, defaultWait); err != nil {
+						t.Fatal(err)
+					}
+				}
+			})
+		})
+	}
+}
+
 // assertOperationTimeout checks that attempt context deadlines match operation budgets.
 func assertOperationTimeout(t *testing.T, ctx context.Context, operation string, budget time.Duration) {
 	t.Helper()
@@ -291,12 +319,16 @@ func assertOperationTimeout(t *testing.T, ctx context.Context, operation string,
 	if operation == "list" {
 		want = moduleTimeout
 	}
+	tolerance := time.Second
 	if budget == 10*time.Minute {
 		want = (budget - firstBackoff - secondBackoff) / downloadAttempts
+		// Dependency discovery consumes the parent deadline before attempts start.
+		// Keep the wider window below either operation cap (5m and 30m).
+		tolerance = 30 * time.Second
 	}
 	deadline, ok := ctx.Deadline()
 	remaining := time.Until(deadline)
-	if !ok || remaining > want || remaining < want-time.Second {
-		t.Errorf("%s timeout = %v, want (%v, %v]", operation, remaining, want-time.Second, want)
+	if !ok || remaining > want || remaining < want-tolerance {
+		t.Errorf("%s timeout = %v, want [%v, %v]", operation, remaining, want-tolerance, want)
 	}
 }

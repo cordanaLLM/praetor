@@ -1159,7 +1159,7 @@ func recordNonTestFileImports(ctx context.Context, fset *token.FileSet, filePath
 func visitNonTestDirEntry(ctx context.Context, buildCtx *build.Context, fset *token.FileSet, dir string, entry os.DirEntry, queue []string, imports map[string]bool) ([]string, error) {
 	name := entry.Name()
 	if entry.IsDir() {
-		if skippedDirectory(name) {
+		if name == "node_modules" || skippedDirectory(name) {
 			return queue, nil
 		}
 		if len(queue) >= maxGoFiles {

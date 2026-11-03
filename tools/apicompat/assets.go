@@ -188,6 +188,8 @@ var priorDigests = map[string]string{
 	"6c71ce27ceac0d9f6fb438574490ef74a5b31c4bcc35dc48c269d78748e4ffcc": Directory + "/" + GateFile,
 	// Outgoing review-round text; fixture: api-gate-main-review-round5.go.txt.
 	"9127c94ae1aa6b1aeee2f1b42ae0408e68e471adf927ab6aa43282a41f17283f": Directory + "/" + GateFile,
+	// Outgoing review-round text; fixture: api-gate-main-review-round6.go.txt.
+	"a57af7537bc9c1e3b6b6be6be839c991b26562c1daafbaedbad334d9f88d3507": Directory + "/" + GateFile,
 }
 
 var assetNames = [...]string{GateFile, PlaceholderFile}

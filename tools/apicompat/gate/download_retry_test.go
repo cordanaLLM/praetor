@@ -466,6 +466,57 @@ func TestCollectNonTestImports_CancellationAndDirectoryBounds(t *testing.T) {
 	}
 }
 
+// TestCollectNonTestImports_NodeModules excludes only exact dependency-directory names at any depth.
+func TestCollectNonTestImports_NodeModules(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		keep bool
+	}{
+		{"node_modules", false},
+		{"web/node_modules", false},
+		{"node_modules_extra", true},
+		{"other_node_modules", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTestModuleFiles(t, root, "module example.com/mod\n", "package mod\nimport _ \"example.com/keep\"\n", "package mod\n")
+			dir := filepath.Join(root, filepath.FromSlash(tc.name))
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "dependency.go"), []byte("package dependency\nimport _ \"example.com/dependency\"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			imports, err := collectNonTestImports(t.Context(), root, build.Default)
+			if err != nil || !imports["example.com/keep"] || imports["example.com/dependency"] != tc.keep {
+				t.Fatalf("imports = %v, err = %v; want module import retained, dependency retained = %v", imports, err, tc.keep)
+			}
+		})
+	}
+	if skippedDirectory("node_modules") {
+		t.Fatal("import-only exclusion changed tracked-path handling")
+	}
+}
+
+// TestCollectNonTestImports_NodeModulesOverLimit skips oversized dependency trees before inventory.
+func TestCollectNonTestImports_NodeModulesOverLimit(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	dir := filepath.Join(root, "web", "node_modules")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for index := range maxGoFiles + 1 {
+		if err := os.Mkdir(filepath.Join(dir, fmt.Sprintf("package%04d", index)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := collectNonTestImports(t.Context(), root, build.Default); err != nil {
+		t.Fatalf("oversized node_modules must not consume the import scan budget: %v", err)
+	}
+}
+
 // TestBuildModule_RetriesGoListExport pins backoff and retries on transient go list export errors.
 func TestBuildModule_RetriesGoListExport(t *testing.T) {
 	t.Parallel()
