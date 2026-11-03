@@ -13,7 +13,9 @@ const MAX_ROOTS = 16;
 afterEach(() => {
 	if (roots.length > MAX_ROOTS) throw new Error(`Temporary root count exceeds ${MAX_ROOTS}`);
 	for (let i = 0; i < MAX_ROOTS && i < roots.length; i++) {
-		rmSync(roots[i], { recursive: true, force: true });
+		const root = roots[i];
+		if (root === undefined) throw new Error(`Missing temporary root at index ${i}`);
+		rmSync(root, { recursive: true, force: true });
 	}
 	roots.length = 0;
 });
@@ -55,7 +57,8 @@ describe('empty planted proofs', () => {
 	/** Verifies skipped test results cannot serve as planted proof. */
 	it('rejects a report with only skipped results', () => {
 		const skipped = structuredClone(report);
-		const result = skipped.suites[0].specs[0].tests[0].results[0];
+		const result = skipped.suites[0]?.specs[0]?.tests[0]?.results[0];
+		if (result === undefined) throw new Error('Skipped fixture must contain a result');
 		result.status = 'skipped';
 		result.errors = [];
 		const run = runHarness(JSON.stringify(skipped));
@@ -140,6 +143,33 @@ process.exitCode = 1;
 	if (run.error) throw run.error;
 	return run;
 }
+
+/** Covers absent and malformed optional fields beside valid proof. */
+describe('optional planted report fields', () => {
+	it.each(['suites', 'specs'])(
+		'rejects null %s beside valid proof and retains runner diagnostics',
+		/** Verifies null child fields cannot hide beside otherwise valid proof. */
+		(field) => {
+			const malformed = { ...report, suites: [...report.suites, { [field]: null }] };
+			const run = runHarness(JSON.stringify(malformed));
+			expect(run.status).toBe(1);
+			expect(run.stderr).toMatch(
+				/Cannot read or parse planted Playwright report .*planted-results\.json/
+			);
+			expect(run.stderr).toMatch(/stdout first lines: "GitCommitInfo: timeout of 3000ms exceeded/);
+			expect(run.stderr).toMatch(/stderr first lines: "runner diagnostic/);
+			expect(run.stdout).not.toMatch(/Planted proof:/);
+		}
+	);
+
+	/** Verifies omitted optional specs remain valid beside an executed proof. */
+	it('accepts omitted specs beside valid proof', () => {
+		const omitted = { ...report, suites: [...report.suites, { suites: [] }] };
+		const run = runHarness(JSON.stringify(omitted));
+		expect(run.status, run.stderr).toBe(0);
+		expect(run.stdout).toMatch(/Planted proof: Playwright exit 1/);
+	});
+});
 
 describe('expect-planted-failure', () => {
 	it('reads the report file despite non-JSON stdout', () => {
