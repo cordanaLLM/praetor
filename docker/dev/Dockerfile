@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # cordanaLLM/praetor Go development container base
-FROM golang:1.27-alpine@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c
+FROM golang:1.27-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb
 
 LABEL org.opencontainers.image.title="cordanaLLM/praetor dev container" \
       org.opencontainers.image.description="Go development environment for cordanaLLM/praetor" \
@@ -21,7 +21,7 @@ RUN apk update && \
       openssh-client-default=10.3_p1-r1 \
       tar=1.35-r5 \
       gcc=15.2.0-r5 \
-      musl-dev=1.2.6-r2 \
+      musl-dev=1.2.6-r3 \
     && rm -rf /var/cache/apk/*
 
 # Configure non-root user vscode (1000:1000) with passwordless sudo
