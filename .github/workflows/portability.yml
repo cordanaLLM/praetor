@@ -186,10 +186,16 @@ jobs:
           HOLD_TITLE='Gate held: review open'
           HOLD_CAUSE='review read failed'
           review_error() {
-            local message="$HOLD_CAUSE" title="${HOLD_TITLE//':'/'%3A'}"
-            message="${message//'%'/'%25'}"
-            message="${message//$'\r'/'%0D'}"
-            message="${message//$'\n'/'%0A'}"
+            local message="$HOLD_CAUSE" title="$HOLD_TITLE" cr=$'\r' lf=$'\n'
+            # Bash 3.2 preserves quotes inside substitution patterns and replacements.
+            title=${title//%/%25}
+            title=${title//:/%3A}
+            title=${title//,/%2C}
+            title=${title//$cr/%0D}
+            title=${title//$lf/%0A}
+            message=${message//%/%25}
+            message=${message//$cr/%0D}
+            message=${message//$lf/%0A}
             echo "::error title=$title::$message" >&2
             printf '%s\n' "$HOLD_TITLE: $HOLD_CAUSE" >> "$GITHUB_STEP_SUMMARY"
             exit 1
@@ -1090,6 +1096,15 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
+      - name: Stop while review is open
+        id: review-hold
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: *review-hold-script
       - name: Require Every Windows Portability Shard
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
         run: |

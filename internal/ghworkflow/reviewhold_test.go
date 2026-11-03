@@ -390,7 +390,7 @@ func TestReviewHoldRendering(t *testing.T) {
 		t.Fatal("portability workflow exceeds metadata reader byte bound")
 	}
 	text := string(data)
-	if !strings.Contains(text, RenderReviewHoldStep(false)) || !strings.Contains(text, RenderReviewHoldStep(true)) {
+	if strings.Count(text, RenderReviewHoldStep(false)) != 1 || strings.Count(text, RenderReviewHoldStep(true)) != 2 {
 		t.Fatal("portability review steps differ from renderer")
 	}
 	spec, err := Parse(data)
@@ -400,12 +400,21 @@ func TestReviewHoldRendering(t *testing.T) {
 	for _, id := range []string{"harness", "windows-shard"} {
 		assertReviewJob(t, id, spec.Jobs[id])
 	}
+	assertAggregateReviewHold(t, spec.Jobs["windows"])
 	release, err := os.ReadFile("../../.github/workflows/review-hold-release.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(release) != RenderReviewHoldReleaseWorkflow() {
 		t.Fatal("release workflow differs from renderer")
+	}
+}
+
+// assertAggregateReviewHold verifies the shared barrier precedes the aggregate's result check.
+func assertAggregateReviewHold(t *testing.T, job Job) {
+	t.Helper()
+	if len(job.Steps) != 2 || job.Steps[0].Run != reviewHoldScript || job.Steps[0].If != ReviewHoldCondition {
+		t.Fatal("windows aggregate review barrier differs from renderer")
 	}
 }
 

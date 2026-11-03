@@ -43,10 +43,16 @@ GRAPHQL
 HOLD_TITLE='` + ReviewHoldTitle + `'
 HOLD_CAUSE='review read failed'
 review_error() {
-  local message="$HOLD_CAUSE" title="${HOLD_TITLE//':'/'%3A'}"
-  message="${message//'%'/'%25'}"
-  message="${message//$'\r'/'%0D'}"
-  message="${message//$'\n'/'%0A'}"
+  local message="$HOLD_CAUSE" title="$HOLD_TITLE" cr=$'\r' lf=$'\n'
+  # Bash 3.2 preserves quotes inside substitution patterns and replacements.
+  title=${title//%/%25}
+  title=${title//:/%3A}
+  title=${title//,/%2C}
+  title=${title//$cr/%0D}
+  title=${title//$lf/%0A}
+  message=${message//%/%25}
+  message=${message//$cr/%0D}
+  message=${message//$lf/%0A}
   echo "::error title=$title::$message" >&2
   printf '%s\n' "$HOLD_TITLE: $HOLD_CAUSE" >> "$GITHUB_STEP_SUMMARY"
   exit 1
