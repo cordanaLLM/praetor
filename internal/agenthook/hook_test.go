@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
+	"testing/synctest"
 )
 
 var preToolClients = []string{"claude", "codex", "gemini", "lefthook"}
@@ -250,19 +250,32 @@ func TestRunFailsClosedOnMissingCollaborators(t *testing.T) {
 
 func TestRunDeniesWhenStdinNeverCloses(t *testing.T) {
 	root := repository(t, true)
-	reader, writer := io.Pipe()
-	t.Cleanup(func() {
-		if err := writer.Close(); err != nil {
-			t.Error(err)
+	builtin := policy(t)
+	synctest.Test(t, func(t *testing.T) {
+		reader, writer := io.Pipe()
+		defer func() {
+			if err := writer.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan Response, 1)
+		go func() {
+			done <- Run(ctx, Invocation{Client: "claude", Event: "pre-tool", Stdin: reader, Getenv: noEnvironment, WorkDir: root, Policy: builtin})
+		}()
+		synctest.Wait()
+		select {
+		case response := <-done:
+			t.Fatalf("hook returned before cancellation with stdin open: %+v", response)
+		default:
+		}
+		cancel()
+		response := <-done
+		if response.ExitCode != 2 || !strings.Contains(string(response.Stderr), "not delivered in time") {
+			t.Errorf("open stdin held the hook: %+v", response)
 		}
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	start := time.Now()
-	response := Run(ctx, Invocation{Client: "claude", Event: "pre-tool", Stdin: reader, Getenv: noEnvironment, WorkDir: root, Policy: policy(t)})
-	if response.ExitCode != 2 || !strings.Contains(string(response.Stderr), "not delivered in time") || time.Since(start) > 5*time.Second {
-		t.Errorf("open stdin held the hook: %+v after %s", response, time.Since(start))
-	}
 }
 
 // TestUsageListsEveryServedPairOnce pins the list the tracked launcher reads to decide

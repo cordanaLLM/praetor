@@ -44,6 +44,12 @@ import (
 )
 
 func main() {
+	if ready := os.Getenv("PRAETOR_STUB_READY_PATH"); ready != "" {
+		if err := os.WriteFile(ready, nil, 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+	}
 	if ms, err := strconv.Atoi(os.Getenv("PRAETOR_STUB_SLEEP_MS")); err == nil && ms > 0 {
 		time.Sleep(time.Duration(ms) * time.Millisecond)
 	}
