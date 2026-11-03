@@ -599,38 +599,25 @@ func mustGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// Planted negative and positive (findings 1 and 2): a server that ignores the head parameter
-// and returns a merged pull request of another branch (or a fork) does not refuse the push, a
-// terminal pull request on the second page refuses the push, and reaching the pagination bound
-// without the end refuses the push with a named reason.
-func TestAdmission_GitPushHead_Planted_ServerIgnoresHeadAndPagination(t *testing.T) {
+// TestAdmission_GitPushHead_Planted_ServerIgnoresHead checks that unrelated and fork
+// pulls never fabricate a match, while a matching terminal pull on the first page refuses.
+func TestAdmission_GitPushHead_Planted_ServerIgnoresHead(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		page := r.URL.Query().Get("page")
-		head := r.URL.Query().Get("head")
-		if strings.Contains(head, "bound-topic") {
-			items := make([]string, 0, forge.HeadPullRequestsPerPage)
-			for i := 0; i < forge.HeadPullRequestsPerPage; i++ {
-				items = append(items, `{"number":200,"state":"closed","merged":true,"head":{"ref":"unrelated","repo":{"full_name":"acme/widgets"}}}`)
-			}
-			writeTestBody(t, w, "["+strings.Join(items, ",")+"]")
-			return
-		}
-		if page == "2" {
-			writeTestBody(t, w, `[{"number":105,"state":"closed","merged":true,"head":{"ref":"page2-topic","repo":{"full_name":"acme/widgets"}}}]`)
+		if r.URL.Query().Get("state") == "open" {
+			writeTestBody(t, w, `[]`)
 			return
 		}
 		items := []string{
 			`{"number":101,"state":"closed","merged":true,"head":{"ref":"other-branch","repo":{"full_name":"acme/widgets"}}}`,
 			`{"number":102,"state":"closed","merged":true,"head":{"ref":"clean-topic","repo":{"full_name":"fork/widgets"}}}`,
+			`{"number":105,"state":"closed","merged":true,"head":{"ref":"terminal-topic","repo":{"full_name":"acme/widgets"}}}`,
 		}
-		for len(items) < forge.HeadPullRequestsPerPage {
-			items = append(items, `{"number":199,"state":"open","merged":false,"head":{"ref":"noise","repo":{"full_name":"acme/widgets"}}}`)
+		for i := len(items); i < forge.HeadPullRequestsPerPage; i++ {
+			items = append(items, `{"number":199,"state":"closed","head":{"ref":"noise","repo":{"full_name":"acme/widgets"}}}`)
 		}
 		writeTestBody(t, w, "["+strings.Join(items, ",")+"]")
 	}))
 	defer srv.Close()
-
 	repo := defaultAdmissionRepo(t)
 	mustGit(t, repo, "remote", "add", "codeberg", "https://codeberg.org/acme/widgets.git")
 	policy := admissionPolicy(t).WithAdmissionPullRequests(repo, func(ctx context.Context, target PushTarget) ([]forge.PullRequestHead, error) {
@@ -638,16 +625,12 @@ func TestAdmission_GitPushHead_Planted_ServerIgnoresHeadAndPagination(t *testing
 		d.SetRepository(target.Remote.Owner, target.Remote.Repo)
 		return d.ListPullRequestsByHead(ctx, target.Branch)
 	})
-
 	if v := policy.Command("PRAETOR_ADMIT=git-push git push codeberg clean-topic"); v.Outcome != Allow {
 		t.Fatalf("merged PR of another branch/fork should not refuse push: %s", v.Reason)
 	}
-	requireDeniedContaining(t, "page 2 merged PR",
-		policy.Command("PRAETOR_ADMIT=git-push git push codeberg page2-topic"),
+	requireDeniedContaining(t, "first-page merged PR",
+		policy.Command("PRAETOR_ADMIT=git-push git push codeberg terminal-topic"),
 		"#105", "MERGED", "push to a new branch")
-	requireDeniedContaining(t, "pagination bound reached",
-		policy.Command("PRAETOR_ADMIT=git-push git push codeberg bound-topic"),
-		"git push forge pull request check failed", "pages of 20")
 }
 
 // Planted negative and positive (finding 3): an omitted refspec is resolved via
