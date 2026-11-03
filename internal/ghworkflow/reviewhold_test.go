@@ -72,8 +72,8 @@ esac
 // reviewFixtures writes a complete clear review and held-run API fixture set.
 func reviewFixtures(t *testing.T) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "fixture space")
-	if err := os.Mkdir(dir, 0o700); err != nil {
+	dir, err := os.MkdirTemp(t.TempDir(), "fixture space*")
+	if err != nil {
 		t.Fatal(err)
 	}
 	files := map[string]string{
