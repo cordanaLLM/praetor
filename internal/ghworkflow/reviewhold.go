@@ -1,0 +1,146 @@
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+//
+// SPDX-License-Identifier: EUPL-1.2
+
+package ghworkflow
+
+import "strings"
+
+const (
+	// ReviewHoldTitle identifies a refusal that the release workflow may reconsider.
+	ReviewHoldTitle = "Gate held: review open"
+	// ReviewHoldBots is the case-insensitive bot pattern rendered into both scripts.
+	// Match check names/app slugs and status contexts/creator logins, including
+	// CodeRabbit, Codacy Static Code Analysis and sourcery-ai.
+	ReviewHoldBots = "coderabbit|codacy|sourcery"
+	// ReviewHoldQuery is the one paginated thread query used by the barrier and release.
+	ReviewHoldQuery = `query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      headRefOid
+      reviewThreads(first: 100, after: $cursor) {
+        nodes { isResolved }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}`
+	// ReviewHoldCondition runs the barrier only for non-draft pull_request events.
+	ReviewHoldCondition = "github.event_name == 'pull_request' && " + HostedGateNotDraft
+	// ReviewHoldClear guards later steps even when they deliberately run after failure.
+	// Non-PR events do not count reviews; PR reads must explicitly produce clear=true.
+	ReviewHoldClear = "(github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true')"
+	// reviewHoldLibrary is trusted inline Bash: release never checks out pull request code.
+	// Every API collection has a 20-page scalar bound; a full final page fails closed.
+	reviewHoldLibrary = `set -Eeuo pipefail
+REVIEW_BOTS='` + ReviewHoldBots + `'
+REVIEW_QUERY=$(cat <<'GRAPHQL'
+` + ReviewHoldQuery + `
+GRAPHQL
+)
+HOLD_TITLE='` + ReviewHoldTitle + `'
+HOLD_CAUSE='review read failed'
+review_error() {
+  local message="$HOLD_CAUSE" title="${HOLD_TITLE//':'/'%3A'}"
+  message="${message//'%'/'%25'}"
+  message="${message//$'\r'/'%0D'}"
+  message="${message//$'\n'/'%0A'}"
+  echo "::error title=$title::$message" >&2
+  printf '%s\n' "$HOLD_TITLE: $HOLD_CAUSE" >> "$GITHUB_STEP_SUMMARY"
+  exit 1
+}
+trap review_error ERR
+# Return one validated REST collection. Any API/JSON failure reaches the ERR trap.
+review_pages() {
+  local endpoint="$1" key="$2" data items count page result='[]'
+  for ((page=1; page<=20; page++)); do
+    HOLD_CAUSE="read failed: $endpoint page $page"
+    data=$(gh api --method GET "$endpoint" -F per_page=100 -F page="$page")
+    items=$(jq -ce --arg key "$key" '
+      (if $key == "" then . else .[$key] end) |
+      if type == "array" then . else error("expected API collection") end' <<< "$data")
+    result=$(jq -cn --argjson a "$result" --argjson b "$items" '$a + $b')
+    count=$(jq 'length' <<< "$items")
+    if ((count < 100)); then
+      printf '%s\n' "$result"
+      return
+    fi
+  done
+  HOLD_CAUSE="pagination bound reached: $endpoint (20 pages)"
+  review_error
+}
+review_count() {
+  local cursor='' page data threads more count checks statuses pending
+  REVIEW_THREADS=0
+  REVIEW_PENDING=0
+  REVIEW_NAMES=''
+  for ((page=1; page<=20; page++)); do
+    HOLD_CAUSE="thread read failed: pull request $PR_NUMBER page $page"
+    data=$(gh api graphql -f query="$REVIEW_QUERY" \
+      -f owner="${GITHUB_REPOSITORY%/*}" -f name="${GITHUB_REPOSITORY#*/}" \
+      -F number="$PR_NUMBER" -F cursor="${cursor:-null}")
+    threads=$(jq -ce --arg head "$HEAD_SHA" '
+      if ((.errors // []) | length) > 0 then error("GraphQL errors") else . end |
+      .data.repository.pullRequest |
+      if .headRefOid != $head then error("pull request head changed") else .reviewThreads end |
+      if (.nodes | type) != "array" or (.pageInfo.hasNextPage | type) != "boolean"
+        or any(.nodes[]; (.isResolved | type) != "boolean")
+      then error("invalid thread response") else . end' <<< "$data")
+    count=$(jq '[.nodes[] | select(.isResolved == false)] | length' <<< "$threads")
+    REVIEW_THREADS=$((REVIEW_THREADS + count))
+    more=$(jq -r '.pageInfo.hasNextPage' <<< "$threads")
+    if [[ "$more" == false ]]; then break; fi
+    HOLD_CAUSE='thread pagination bound reached (20 pages)'
+    if ((page == 20)); then review_error; fi
+    cursor=$(jq -er '.pageInfo.endCursor | select(type == "string" and length > 0)' <<< "$threads")
+  done
+  HOLD_CAUSE='check-run read failed'
+  checks=$(review_pages "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?filter=latest" check_runs)
+  HOLD_CAUSE='commit-status read failed'
+  statuses=$(review_pages "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/statuses" '')
+  HOLD_CAUSE='invalid bot check/status response'
+  pending=$(jq -cn --arg bots "$REVIEW_BOTS" --argjson checks "$checks" --argjson statuses "$statuses" '
+    if any($checks[]; (.name | type) != "string" or (.status | type) != "string")
+      or any($statuses[]; (.context | type) != "string" or (.state | type) != "string" or (.id | type) != "number")
+    then error("invalid bot response") else
+      [$checks[] | select(.status != "completed") |
+        select(([.name, (.app.slug // "")] | join(" ")) | test($bots; "i")) | .name] +
+      [$statuses | sort_by(.id) | reverse | unique_by(.context) | .[] |
+        select(.state == "pending") |
+        select(([.context, (.creator.login // "")] | join(" ")) | test($bots; "i")) | .context]
+    end')
+  REVIEW_PENDING=$(jq 'length' <<< "$pending")
+  REVIEW_NAMES=$(jq -r 'join(", ")' <<< "$pending")
+  HOLD_CAUSE="unresolved threads=$REVIEW_THREADS; pending bot reviews=$REVIEW_PENDING; bots=$REVIEW_NAMES"
+}
+`
+	// reviewHoldScript refuses heavy work unless both counts have been read and are zero.
+	reviewHoldScript = reviewHoldLibrary + `review_count
+if ((REVIEW_THREADS > 0 || REVIEW_PENDING > 0)); then review_error; fi
+printf 'clear=true\n' >> "$GITHUB_OUTPUT"
+printf '%s\n' "$HOLD_CAUSE" >> "$GITHUB_STEP_SUMMARY"
+`
+)
+
+// RenderReviewHoldStep renders the barrier immediately after HostedGateDraftStep.
+// The first step defines the shared script anchor; reference reuses it in later jobs.
+func RenderReviewHoldStep(reference bool) string {
+	run := "        run: &review-hold-script |\n" + indentReviewScript(reviewHoldScript)
+	if reference {
+		run = "        run: *review-hold-script\n"
+	}
+	return "      - name: Stop while review is open\n" +
+		"        id: review-hold\n" +
+		"        if: " + ReviewHoldCondition + "\n" +
+		"        shell: bash\n" +
+		"        env:\n" +
+		"          GH_TOKEN: ${{ github.token }}\n" +
+		"          PR_NUMBER: ${{ github.event.pull_request.number }}\n" +
+		"          HEAD_SHA: ${{ github.event.pull_request.head.sha }}\n" +
+		run
+}
+
+// indentReviewScript nests shared Bash under a workflow step's literal run scalar.
+func indentReviewScript(script string) string {
+	return "          " + strings.ReplaceAll(strings.TrimSuffix(script, "\n"), "\n", "\n          ") + "\n"
+}

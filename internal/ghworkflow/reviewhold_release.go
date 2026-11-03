@@ -1,0 +1,97 @@
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+//
+// SPDX-License-Identifier: EUPL-1.2
+
+package ghworkflow
+
+const (
+	// reviewHoldReleaseScript locates only the newest PR run on the current head.
+	// Current-attempt jobs supply their check-run annotation IDs; older attempts
+	// must not cause an unrelated failure to be rerun indefinitely.
+	reviewHoldReleaseScript = reviewHoldLibrary + `HOLD_CAUSE='open pull request read failed'
+prs=$(review_pages "repos/$GITHUB_REPOSITORY/pulls?state=open&sort=created&direction=asc" '')
+pr_count=$(jq 'length' <<< "$prs")
+for ((pr_index=0; pr_index<pr_count && pr_index<2000; pr_index++)); do
+  PR_NUMBER=$(jq -er --argjson i "$pr_index" '.[$i].number' <<< "$prs")
+  HEAD_SHA=$(jq -er --argjson i "$pr_index" '.[$i].head.sha' <<< "$prs")
+  HOLD_CAUSE="workflow run read failed: pull request $PR_NUMBER"
+  runs=$(review_pages "repos/$GITHUB_REPOSITORY/actions/workflows/portability.yml/runs?event=pull_request&head_sha=$HEAD_SHA" workflow_runs)
+  run=$(jq -c --arg head "$HEAD_SHA" --argjson number "$PR_NUMBER" '
+    [.[] | select(.head_sha == $head and .event == "pull_request") |
+      select(any(.pull_requests[]; .number == $number))] | max_by(.run_number) // {}' <<< "$runs")
+  if [[ $(jq -r '.status' <<< "$run") != completed || $(jq -r '.conclusion' <<< "$run") != failure ]]; then continue; fi
+  run_id=$(jq -er '.id' <<< "$run")
+  attempt=$(jq -er '.run_attempt' <<< "$run")
+  HOLD_CAUSE="job read failed: run $run_id attempt $attempt"
+  jobs=$(review_pages "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/attempts/$attempt/jobs" jobs)
+  failed=$(jq -c '[.[] | select(.conclusion == "failure")]' <<< "$jobs")
+  failed_count=$(jq 'length' <<< "$failed")
+  held=false
+  for ((job_index=0; job_index<failed_count && job_index<2000; job_index++)); do
+    check_url=$(jq -er --argjson i "$job_index" '.[$i].check_run_url' <<< "$failed")
+    check_id="${check_url##*/}"
+    [[ "$check_id" =~ ^[0-9]+$ ]]
+    HOLD_CAUSE="annotation read failed: check $check_id"
+    annotations=$(review_pages "repos/$GITHUB_REPOSITORY/check-runs/$check_id/annotations" '')
+    if [[ $(jq --arg title "$HOLD_TITLE" 'any(.[]; .title == $title and .annotation_level == "failure")' <<< "$annotations") == true ]]; then
+      held=true
+    fi
+  done
+  if [[ "$held" != true ]]; then continue; fi
+  review_count
+  printf 'PR %s: %s\n' "$PR_NUMBER" "$HOLD_CAUSE" >> "$GITHUB_STEP_SUMMARY"
+  if ((REVIEW_THREADS > 0 || REVIEW_PENDING > 0)); then continue; fi
+  # Revalidate immediately before mutation: another release/manual rerun or a
+  # head update during the recount must not rerun an obsolete attempt.
+  HOLD_CAUSE="run revalidation failed: $run_id"
+  current=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")
+  if [[ $(jq -r '.status' <<< "$current") != completed || $(jq -r '.run_attempt' <<< "$current") != "$attempt" ]]; then continue; fi
+  HOLD_CAUSE="head revalidation failed: $PR_NUMBER"
+  current_pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")
+  if [[ $(jq -r '.head.sha' <<< "$current_pr") != "$HEAD_SHA" || $(jq -r '.state' <<< "$current_pr") != open ]]; then continue; fi
+  HOLD_CAUSE="rerun failed: $run_id"
+  gh run rerun "$run_id" --repo "$GITHUB_REPOSITORY"
+  printf 'Released PR %s: run %s attempt %s\n' "$PR_NUMBER" "$run_id" "$attempt" >> "$GITHUB_STEP_SUMMARY"
+done
+`
+	// reviewHoldReleaseHeader serializes all release events, retaining the token
+	// only in the inline trusted script. No checkout or PR-controlled code runs.
+	reviewHoldReleaseHeader = `# SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+#
+# SPDX-License-Identifier: EUPL-1.2
+# Rendered by internal/ghworkflow.RenderReviewHoldReleaseWorkflow.
+name: Review hold release
+on:
+  pull_request_review:
+    types: [submitted, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+permissions:
+  actions: write
+  pull-requests: read
+  checks: read
+  statuses: read
+concurrency:
+  group: review-hold-release
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - name: Release answered review holds
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+`
+)
+
+// RenderReviewHoldReleaseWorkflow renders the trusted scheduler with the barrier's counter.
+func RenderReviewHoldReleaseWorkflow() string {
+	return reviewHoldReleaseHeader + indentReviewScript(reviewHoldReleaseScript)
+}

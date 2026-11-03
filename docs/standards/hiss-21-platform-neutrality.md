@@ -76,6 +76,43 @@ with the same Go release as the other workflows
 tests the nested module `tools/schemacheck`, which `./...` of the root module does not reach
 (`go -C tools/schemacheck test ./...`; its network checks skip with a stated reason).
 
+### Review hold before heavy work
+
+On `pull_request` events, the Linux and macOS matrix and Windows shards run
+`Stop while review is open` immediately after the draft barrier. The Windows aggregate fails
+when a shard fails, preserving its existing coverage proof. A held leg fails with annotation title **`Gate held: review open`**, writes the unresolved-thread count and pending
+bot check names to its summary, and runs no subsequent matrix step. Every later step carries the
+explicit `steps.review-hold.outputs.clear` condition, including steps that normally run after a
+failure. Push, merge-group and manual runs retain their existing behavior.
+
+`internal/ghworkflow/reviewhold.go` owns the shared GraphQL thread query, Bash counter and
+`ReviewHoldBots` pattern: CodeRabbit, Codacy Static Code Analysis and sourcery-ai, matched without
+case sensitivity through check names/app slugs and status contexts/creator logins. The counter
+reads unresolved threads on the current PR head, unfinished check runs and the latest pending
+commit status per context. API errors, malformed responses, a changed head or a pagination bound
+fail closed with the cause named. Collections accept at most 20 pages of 100 entries; a full last
+REST page holds because exhaustion has not been proved. A bot with no published check or status
+cannot be detected by this counter.
+
+`.github/workflows/review-hold-release.yml` serializes release attempts. It runs on submitted or
+dismissed reviews, created/edited/deleted review comments, manual dispatch and every 15 minutes.
+The schedule recovers thread resolutions, which have no dedicated workflow event. For each open
+PR within the same page bound, it inspects the newest `portability.yml` PR run on that head and
+its current attempt's failed-job annotations. It reruns a completed failed run only when the hold
+title is present and the shared counter now returns zero for both counts. It rechecks the run
+attempt and PR head immediately before rerunning; unrelated failures are left alone. Rerunning
+the workflow also reruns its other jobs. Read failures stop release without rerunning that PR.
+
+The release script is rendered inline by `RenderReviewHoldReleaseWorkflow`; it never checks out
+PR code. Its token has Actions write and pull-request, Checks and commit-status read
+permissions. Review-event tokens on forks may lack write permission; the scheduled workflow on
+the default branch provides the retry path after this workflow lands there. The pilot covers
+this platform workflow; adoption rollout can reuse `RenderReviewHoldStep` and the same counter.
+The platform workflow shares its inline script through a YAML anchor to stay within the metadata
+reader size bound. Committed copies are checked against their renderers by `TestReviewHoldRendering`, and
+`TestReviewHoldCounter` / `TestReviewHoldRelease` execute the actual Bash and jq against API
+fixtures without accessing the forge.
+
 The Windows leg runs as two shard jobs, `windows-shard` with `matrix.shard` 1 and 2.
 "Compile Every Package" and "Vet Every Package" run the full package list on both shard legs.
 Only "Test Every Package" splits the packages, applying an alternating shard filter

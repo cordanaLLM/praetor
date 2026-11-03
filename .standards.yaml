@@ -258,6 +258,8 @@ docs_surfaces:
   - name: "platform neutrality gate"
     paths:
       - ".github/workflows/portability.yml"
+      - ".github/workflows/review-hold-release.yml"
+      - "internal/ghworkflow/reviewhold*.go"
       - "scripts/portability_selftest.py"
     docs:
       - "docs/standards/hiss-21-platform-neutrality.md"
