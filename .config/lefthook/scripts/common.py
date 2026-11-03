@@ -12,7 +12,7 @@ import signal
 import stat
 
 # Hooks build trusted argv lists; no shell execution.
-import subprocess  # nosec B404
+import subprocess  # nosec B404 - argv built in code, no shell
 import sys
 import tempfile
 import threading
@@ -157,7 +157,7 @@ def _kill_process_tree(process, timeout=KILL_TREE_TIMEOUT):
     """Kill a child and its descendants where no process group exists to signal."""
     try:
         # Fixed taskkill argv; only the child PID varies.
-        subprocess.run(  # nosec B603
+        subprocess.run(  # nosec B603 - fixed taskkill argv, no shell
             ["taskkill", "/F", "/T", "/PID", str(process.pid)],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -286,9 +286,8 @@ def _bounded_output(process, timeout, maximum):
 def _spawn_bounded(args, cwd, env):
     """Start trusted argv in a session of its own (no shell), stdin closed and streams piped."""
     # Hook callers build argv lists with code-selected programs, never shell strings.
-    # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use-tainted-env-args
-    return subprocess.Popen(  # nosec B603
-        args,
+    return subprocess.Popen(  # nosec B603 - argv built in code, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv built in code, no shell  # noqa: E501
+        args,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - argv built in code, no shell  # noqa: E501
         cwd=cwd,
         env=env,
         start_new_session=True,
@@ -342,17 +341,17 @@ def run(
     settings = dict(os.environ if env is None else env)
     settings["PYTHONDONTWRITEBYTECODE"] = MANAGED_PROCESS_ENV["PYTHONDONTWRITEBYTECODE"]
     try:
-        # Hook callers build argv lists with code-selected programs, never shell strings.
-        # nosemgrep: dangerous-subprocess-use-audit, dangerous-subprocess-use-tainted-env-args
-        with subprocess.Popen(  # nosec B603
-            args,
-            cwd=cwd,
-            env=settings,
-            start_new_session=True,
-            stdin=subprocess.PIPE if data is not None else None,
-            stdout=subprocess.PIPE if capture else None,
-            stderr=subprocess.PIPE if capture else None,
-        ) as process:
+        with (
+            subprocess.Popen(  # nosec B603 - argv built in code, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv built in code, no shell  # noqa: E501
+                args,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - argv built in code, no shell  # noqa: E501
+                cwd=cwd,
+                env=settings,
+                start_new_session=True,
+                stdin=subprocess.PIPE if data is not None else None,
+                stdout=subprocess.PIPE if capture else None,
+                stderr=subprocess.PIPE if capture else None,
+            ) as process,
+        ):
             try:
                 stdout, stderr = process.communicate(input=data, timeout=timeout)
             except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
@@ -727,7 +726,8 @@ def sweep_stale_snapshots(root=None, now=None):
                 shutil.rmtree(entry, onexc=_writable_retry)
             else:  # Python 3.10 and 3.11 (the hooks' floor) name the callback onerror
                 shutil.rmtree(
-                    entry, onerror=_writable_retry
+                    entry,
+                    onerror=_writable_retry,
                 )  # pylint: disable=deprecated-argument
             removed += 1
     return removed
