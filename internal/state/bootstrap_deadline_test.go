@@ -16,6 +16,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
+// bootstrapDeadlineCase parameterizes table-driven bootstrap deadline tests.
 type bootstrapDeadlineCase struct {
 	name       string
 	seeded     bool
@@ -25,6 +26,11 @@ type bootstrapDeadlineCase struct {
 	wantErr    error
 }
 
+// TestBootstrapDeadlineWithSlowLedgerWrites verifies that ledger bootstrap
+// respects the caller's context deadline when ledger writes stall past the
+// fallback budget. A caller deadline longer than the fallback survives slow
+// ledger writes, a shorter one fails with context.DeadlineExceeded, and a
+// context without one gets the fallback.
 func TestBootstrapDeadlineWithSlowLedgerWrites(t *testing.T) {
 	for _, tc := range []bootstrapDeadlineCase{
 		{name: "longer caller deadline", want: BootstrapCreated},
@@ -36,6 +42,10 @@ func TestBootstrapDeadlineWithSlowLedgerWrites(t *testing.T) {
 	}
 }
 
+// run executes one bootstrap deadline test case against a temporary directory,
+// proving that a caller deadline longer than the fallback survives slow ledger
+// writes, a shorter one fails with context.DeadlineExceeded, and a context
+// without one gets the fallback.
 func (tc bootstrapDeadlineCase) run(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
@@ -61,6 +71,10 @@ func (tc bootstrapDeadlineCase) run(t *testing.T) {
 	}
 }
 
+// callerContext builds the context for the test case, configuring whether a
+// caller deadline longer than the fallback survives slow ledger writes, a
+// shorter one fails with context.DeadlineExceeded, or a context without one
+// gets the fallback.
 func (tc bootstrapDeadlineCase) callerContext(t *testing.T) context.Context {
 	t.Helper()
 	if tc.noDeadline {
