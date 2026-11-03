@@ -115,6 +115,8 @@ const (
 	maxCallArgs            = 64
 	maxGuardFindings       = 256
 	maxReadOnlySubcommands = 64
+	maxDeclSpecs           = 256
+	maxConstDepth          = 8
 )
 
 // GitProbeFinding records an invalid mutating call to util.RunGitProbe in test fixtures.
@@ -194,17 +196,24 @@ func collectDirectRunGitProbeSelectors(f *ast.File, utilNames map[string]bool) m
 	return called
 }
 
+// probeGuard verifies that test fixture git invocations through util.RunGitProbe are strictly read-only.
+type probeGuard struct {
+	utilNames       map[string]bool
+	directSelectors map[*ast.SelectorExpr]bool
+	consts          map[string]ast.Expr
+}
+
 // probeNodeFinding inspects an AST node and returns a disallowed subcommand finding when present.
-func probeNodeFinding(n ast.Node, utilNames map[string]bool, directSelectors map[*ast.SelectorExpr]bool) (token.Pos, string, bool) {
+func (g *probeGuard) probeNodeFinding(n ast.Node) (token.Pos, string, bool) {
 	switch node := n.(type) {
 	case *ast.CallExpr:
-		if !isRunGitProbeCall(node, utilNames) {
+		if !isRunGitProbeCall(node, g.utilNames) {
 			return token.NoPos, "", false
 		}
-		subcmd, found := findDisallowedSubcommandArg(node)
+		subcmd, found := g.findDisallowedSubcommandArg(node)
 		return node.Pos(), subcmd, found
 	case *ast.SelectorExpr:
-		if isRunGitProbeSelector(node, utilNames) && !directSelectors[node] {
+		if isRunGitProbeSelector(node, g.utilNames) && !g.directSelectors[node] {
 			return node.Pos(), "<non-literal>", true
 		}
 		return token.NoPos, "", false
@@ -214,9 +223,9 @@ func probeNodeFinding(n ast.Node, utilNames map[string]bool, directSelectors map
 }
 
 // extractLiteralString extracts a literal string value from an AST expression or constant identifier.
-func extractLiteralString(expr ast.Expr) (string, bool) {
+func (g *probeGuard) extractLiteralString(expr ast.Expr) (string, bool) {
 	if ident, ok := expr.(*ast.Ident); ok {
-		expr = resolveConstIdent(ident)
+		expr = g.resolveConstIdent(ident)
 	}
 	lit, ok := expr.(*ast.BasicLit)
 	if !ok || lit.Kind != token.STRING {
@@ -229,37 +238,90 @@ func extractLiteralString(expr ast.Expr) (string, bool) {
 	return strings.TrimSpace(val), true
 }
 
-// resolveConstIdent returns the defining value expression for a constant identifier when present.
-func resolveConstIdent(ident *ast.Ident) ast.Expr {
-	if ident.Obj == nil || ident.Obj.Kind != ast.Con {
-		return ident
-	}
-	spec, ok := ident.Obj.Decl.(*ast.ValueSpec)
-	if !ok {
-		return ident
-	}
-	for i := 0; i < len(spec.Names) && i < len(spec.Values) && i < maxCallArgs; i++ {
-		if spec.Names[i].Name == ident.Name {
-			return spec.Values[i]
+// resolveConstIdent resolves a constant identifier to its defining expression using collected file constants.
+func (g *probeGuard) resolveConstIdent(ident *ast.Ident) ast.Expr {
+	curr := ast.Expr(ident)
+	for depth := 0; depth < maxConstDepth; depth++ {
+		id, ok := curr.(*ast.Ident)
+		if !ok {
+			break
 		}
+		val, found := g.consts[id.Name]
+		if !found {
+			break
+		}
+		curr = val
 	}
-	return ident
+	return curr
+}
+
+// collectFileConstants extracts constant identifier definitions from file and local declarations.
+func collectFileConstants(f *ast.File) map[string]ast.Expr {
+	consts := make(map[string]ast.Expr)
+	ambiguous := make(map[string]bool)
+	ast.Inspect(f, func(n ast.Node) bool {
+		genDecl, ok := n.(*ast.GenDecl)
+		if !ok || genDecl.Tok != token.CONST {
+			return true
+		}
+		collectGenDeclConstants(genDecl, consts, ambiguous)
+		return true
+	})
+	bound := 0
+	for name := range ambiguous {
+		if bound >= maxDeclSpecs {
+			break
+		}
+		delete(consts, name)
+		bound++
+	}
+	return consts
+}
+
+// collectGenDeclConstants records constant identifier bindings from a const declaration group.
+func collectGenDeclConstants(genDecl *ast.GenDecl, consts map[string]ast.Expr, ambiguous map[string]bool) {
+	var lastValues []ast.Expr
+	for i := 0; i < len(genDecl.Specs) && i < maxDeclSpecs; i++ {
+		valSpec, ok := genDecl.Specs[i].(*ast.ValueSpec)
+		if !ok {
+			continue
+		}
+		values := valSpec.Values
+		if len(values) == 0 {
+			values = lastValues
+		} else {
+			lastValues = values
+		}
+		recordValueSpecConstants(valSpec.Names, values, consts, ambiguous)
+	}
+}
+
+// recordValueSpecConstants maps value specification names to corresponding expressions.
+func recordValueSpecConstants(names []*ast.Ident, values []ast.Expr, consts map[string]ast.Expr, ambiguous map[string]bool) {
+	for j := 0; j < len(names) && j < len(values) && j < maxCallArgs; j++ {
+		name := names[j].Name
+		if _, exists := consts[name]; exists {
+			ambiguous[name] = true
+			continue
+		}
+		consts[name] = values[j]
+	}
 }
 
 // findDisallowedSubcommandArg inspects call arguments to locate any disallowed git subcommand invocation.
-func findDisallowedSubcommandArg(call *ast.CallExpr) (string, bool) {
+func (g *probeGuard) findDisallowedSubcommandArg(call *ast.CallExpr) (string, bool) {
 	if len(call.Args) <= 3 {
 		return "", false
 	}
 	callArgs := call.Args[3:]
 	hasEllipsis := call.Ellipsis.IsValid()
 	for i := 0; i < len(callArgs) && i < maxCallArgs; i++ {
-		val, ok := extractLiteralString(callArgs[i])
+		val, ok := g.extractLiteralString(callArgs[i])
 		if !ok {
 			return "<non-literal>", true
 		}
 		if !strings.HasPrefix(val, "-") {
-			return checkSubcommandInvocation(val, callArgs[i+1:], hasEllipsis)
+			return g.checkSubcommandInvocation(val, callArgs[i+1:], hasEllipsis)
 		}
 		next, valid := consumeGlobalGitOption(val, i, callArgs, hasEllipsis)
 		if !valid {
@@ -320,9 +382,9 @@ func isAttachedLongGlobalOption(opt string) bool {
 }
 
 // formatDisallowedConfig formats the config subcommand diagnostic string based on following arguments.
-func formatDisallowedConfig(args []ast.Expr) string {
+func (g *probeGuard) formatDisallowedConfig(args []ast.Expr) string {
 	if len(args) > 0 {
-		if nextVal, ok := extractLiteralString(args[0]); ok && nextVal == "--add" {
+		if nextVal, ok := g.extractLiteralString(args[0]); ok && nextVal == "--add" {
 			return "config --add"
 		}
 	}
@@ -330,9 +392,9 @@ func formatDisallowedConfig(args []ast.Expr) string {
 }
 
 // checkSubcommandInvocation validates a git subcommand and its trailing arguments for mutation hazards.
-func checkSubcommandInvocation(subcmd string, args []ast.Expr, hasEllipsis bool) (string, bool) {
+func (g *probeGuard) checkSubcommandInvocation(subcmd string, args []ast.Expr, hasEllipsis bool) (string, bool) {
 	if subcmd == "config" {
-		return formatDisallowedConfig(args), true
+		return g.formatDisallowedConfig(args), true
 	}
 	if !isReadOnlySubcommand(subcmd) {
 		return subcmd, true
@@ -342,23 +404,23 @@ func checkSubcommandInvocation(subcmd string, args []ast.Expr, hasEllipsis bool)
 	}
 	switch subcmd {
 	case "hash-object":
-		return checkHashObjectArgs(args, hasEllipsis)
+		return g.checkHashObjectArgs(args, hasEllipsis)
 	case "remote":
-		return checkRemoteArgs(args, hasEllipsis)
+		return g.checkRemoteArgs(args, hasEllipsis)
 	case "symbolic-ref":
-		return checkSymbolicRefArgs(args, hasEllipsis)
+		return g.checkSymbolicRefArgs(args, hasEllipsis)
 	default:
 		return "", false
 	}
 }
 
 // checkHashObjectArgs verifies that git hash-object arguments do not include write flags or non-literals.
-func checkHashObjectArgs(args []ast.Expr, hasEllipsis bool) (string, bool) {
+func (g *probeGuard) checkHashObjectArgs(args []ast.Expr, hasEllipsis bool) (string, bool) {
 	if hasEllipsis {
 		return "hash-object <non-literal>", true
 	}
 	for i := 0; i < len(args) && i < maxCallArgs; i++ {
-		val, ok := extractLiteralString(args[i])
+		val, ok := g.extractLiteralString(args[i])
 		if !ok {
 			return "hash-object <non-literal>", true
 		}
@@ -390,36 +452,36 @@ func consumeHashObjectOption(val string, i, total int) (int, bool) {
 }
 
 // checkRemoteArgs verifies that git remote arguments only invoke permitted read-only subcommands.
-func checkRemoteArgs(args []ast.Expr, hasEllipsis bool) (string, bool) {
+func (g *probeGuard) checkRemoteArgs(args []ast.Expr, hasEllipsis bool) (string, bool) {
 	if hasEllipsis {
 		return "remote <non-literal>", true
 	}
-	i, bad, failed := skipRemoteVerboseFlags(args)
+	i, bad, failed := g.skipRemoteVerboseFlags(args)
 	if failed {
 		return bad, true
 	}
 	if i >= len(args) {
 		return "", false
 	}
-	sub, ok := extractLiteralString(args[i])
+	sub, ok := g.extractLiteralString(args[i])
 	if !ok {
 		return "remote <non-literal>", true
 	}
 	switch sub {
 	case "get-url":
-		return checkAllowedSubcommandFlags("remote get-url", args[i+1:], remoteGetURLFlags)
+		return g.checkAllowedSubcommandFlags("remote get-url", args[i+1:], remoteGetURLFlags)
 	case "show":
-		return checkAllowedSubcommandFlags("remote show", args[i+1:], []string{"-n", "--no-n"})
+		return g.checkAllowedSubcommandFlags("remote show", args[i+1:], []string{"-n", "--no-n"})
 	default:
 		return "remote " + sub, true
 	}
 }
 
 // skipRemoteVerboseFlags advances past leading verbose flags in git remote argument slices.
-func skipRemoteVerboseFlags(args []ast.Expr) (int, string, bool) {
+func (g *probeGuard) skipRemoteVerboseFlags(args []ast.Expr) (int, string, bool) {
 	i := 0
 	for ; i < len(args) && i < maxCallArgs; i++ {
-		val, ok := extractLiteralString(args[i])
+		val, ok := g.extractLiteralString(args[i])
 		if !ok {
 			return i, "remote <non-literal>", true
 		}
@@ -431,9 +493,9 @@ func skipRemoteVerboseFlags(args []ast.Expr) (int, string, bool) {
 }
 
 // checkAllowedSubcommandFlags verifies that subcommand arguments only use allowed flags.
-func checkAllowedSubcommandFlags(prefix string, args []ast.Expr, allowedFlags []string) (string, bool) {
+func (g *probeGuard) checkAllowedSubcommandFlags(prefix string, args []ast.Expr, allowedFlags []string) (string, bool) {
 	for i := 0; i < len(args) && i < maxCallArgs; i++ {
-		val, ok := extractLiteralString(args[i])
+		val, ok := g.extractLiteralString(args[i])
 		if !ok {
 			return prefix + " <non-literal>", true
 		}
@@ -448,18 +510,18 @@ func checkAllowedSubcommandFlags(prefix string, args []ast.Expr, allowedFlags []
 }
 
 // checkSymbolicRefArgs verifies that git symbolic-ref arguments do not perform mutating ref updates.
-func checkSymbolicRefArgs(args []ast.Expr, hasEllipsis bool) (string, bool) {
+func (g *probeGuard) checkSymbolicRefArgs(args []ast.Expr, hasEllipsis bool) (string, bool) {
 	if hasEllipsis {
 		return "symbolic-ref <non-literal>", true
 	}
 	var positional []string
 	for i := 0; i < len(args) && i < maxCallArgs; i++ {
-		val, ok := extractLiteralString(args[i])
+		val, ok := g.extractLiteralString(args[i])
 		if !ok {
 			return "symbolic-ref <non-literal>", true
 		}
 		if val == "--" {
-			return checkSymbolicRefPositional(positional, args[i+1:])
+			return g.checkSymbolicRefPositional(positional, args[i+1:])
 		}
 		if strings.HasPrefix(val, "-") {
 			if !slices.Contains(symbolicRefReadOnlyFlags, val) {
@@ -476,9 +538,9 @@ func checkSymbolicRefArgs(args []ast.Expr, hasEllipsis bool) (string, bool) {
 }
 
 // checkSymbolicRefPositional checks positional arguments after a double-dash separator in symbolic-ref calls.
-func checkSymbolicRefPositional(positional []string, rest []ast.Expr) (string, bool) {
+func (g *probeGuard) checkSymbolicRefPositional(positional []string, rest []ast.Expr) (string, bool) {
 	for i := 0; i < len(rest) && i < maxCallArgs; i++ {
-		val, ok := extractLiteralString(rest[i])
+		val, ok := g.extractLiteralString(rest[i])
 		if !ok {
 			val = "<non-literal>"
 		}
@@ -499,18 +561,22 @@ func ScanProbeMutations(filename string, src []byte) ([]GitProbeFinding, error) 
 		return nil, nil
 	}
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, filename, src, 0)
+	f, err := parser.ParseFile(fset, filename, src, parser.SkipObjectResolution)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", filename, err)
 	}
 	utilNames := utilPackageNames(f)
-	directSelectors := collectDirectRunGitProbeSelectors(f, utilNames)
+	guard := &probeGuard{
+		utilNames:       utilNames,
+		directSelectors: collectDirectRunGitProbeSelectors(f, utilNames),
+		consts:          collectFileConstants(f),
+	}
 	var findings []GitProbeFinding
 	ast.Inspect(f, func(n ast.Node) bool {
 		if len(findings) >= maxGuardFindings {
 			return false
 		}
-		if pos, subcmd, found := probeNodeFinding(n, utilNames, directSelectors); found {
+		if pos, subcmd, found := guard.probeNodeFinding(n); found {
 			loc := fset.Position(pos)
 			findings = append(findings, GitProbeFinding{
 				File:       loc.Filename,

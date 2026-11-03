@@ -337,3 +337,105 @@ func TestGitProbeGuard_TrackedFileBound(t *testing.T) {
 		t.Fatalf("exceeding maxTrackedTestFiles (%d): want error, got err=<nil> findings=%v", maxTrackedTestFiles, findings)
 	}
 }
+
+// TestGitProbeGuard_ConstantDeclarations_Positive covers constant definitions that resolve
+// to allowed read-only subcommands across grouped, multi-spec, inherited, chained, and local forms.
+func TestGitProbeGuard_ConstantDeclarations_Positive(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "grouped const",
+			src:  "package sample_test\n\nconst (\n\tsub = \"rev-parse\"\n)\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, sub, \"HEAD\")\n}\n",
+		},
+		{
+			name: "multi-spec const",
+			src:  "package sample_test\n\nconst a, sub = \"extra\", \"diff\"\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, sub)\n}\n",
+		},
+		{
+			name: "inherited const value",
+			src:  "package sample_test\n\nconst (\n\tfirst = \"cat-file\"\n\tsecond\n)\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, second, \"blob\", \"HEAD\")\n}\n",
+		},
+		{
+			name: "chained const",
+			src:  "package sample_test\n\nconst base = \"ls-files\"\nconst sub = base\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, sub)\n}\n",
+		},
+		{
+			name: "local func const",
+			src:  "package sample_test\n\nfunc f() {\n\tconst sub = \"status\"\n\tutil.RunGitProbe(ctx, dir, 4096, sub)\n}\n",
+		},
+	}
+	for i := 0; i < len(cases) && i < maxCallArgs; i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			assertNoFindings(t, tc.name, "sample_test.go", []byte(tc.src))
+		})
+	}
+}
+
+// TestGitProbeGuard_ConstantDeclarations_Negative covers constant definitions that resolve
+// to disallowed mutating subcommands across grouped, multi-spec, inherited, chained, and local forms.
+func TestGitProbeGuard_ConstantDeclarations_Negative(t *testing.T) {
+	cases := []struct {
+		name       string
+		src        string
+		wantSubcmd string
+	}{
+		{
+			name:       "grouped mutating const",
+			src:        "package sample_test\n\nconst (\n\tsub = \"commit\"\n)\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, sub)\n}\n",
+			wantSubcmd: "commit",
+		},
+		{
+			name:       "multi-spec mutating const",
+			src:        "package sample_test\n\nconst a, sub = \"rev-parse\", \"push\"\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, sub)\n}\n",
+			wantSubcmd: "push",
+		},
+		{
+			name:       "inherited mutating const value",
+			src:        "package sample_test\n\nconst (\n\tfirst = \"checkout\"\n\tsecond\n)\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, second)\n}\n",
+			wantSubcmd: "checkout",
+		},
+		{
+			name:       "chained mutating const",
+			src:        "package sample_test\n\nconst base = \"rebase\"\nconst sub = base\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, sub)\n}\n",
+			wantSubcmd: "rebase",
+		},
+		{
+			name:       "local func mutating const",
+			src:        "package sample_test\n\nfunc f() {\n\tconst sub = \"init\"\n\tutil.RunGitProbe(ctx, dir, 4096, sub)\n}\n",
+			wantSubcmd: "init",
+		},
+	}
+	for i := 0; i < len(cases) && i < maxCallArgs; i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			assertSingleFinding(t, tc.name, "sample_test.go", []byte(tc.src), tc.wantSubcmd)
+		})
+	}
+}
+
+// TestGitProbeGuard_ConstantDeclarations_Boundary covers boundary conditions in constant resolution:
+// non-string constants, empty groups, circular references, and ambiguous redeclarations.
+func TestGitProbeGuard_ConstantDeclarations_Boundary(t *testing.T) {
+	nonStringSrc := []byte("package sample_test\n\nconst sub = 12345\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, sub)\n}\n")
+	assertSingleFinding(t, "non-string const", "nonstring_test.go", nonStringSrc, "<non-literal>")
+
+	emptyGroupSrc := []byte("package sample_test\n\nconst ()\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, \"rev-parse\", \"HEAD\")\n}\n")
+	assertNoFindings(t, "empty const group", "empty_group_test.go", emptyGroupSrc)
+
+	circularSrc := []byte("package sample_test\n\nconst a = b\nconst b = a\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, a)\n}\n")
+	assertSingleFinding(t, "circular const", "circular_test.go", circularSrc, "<non-literal>")
+
+	ambiguousSrc := []byte("package sample_test\n\nfunc f1() {\n\tconst sub = \"init\"\n\tutil.RunGitProbe(ctx, dir, 4096, sub)\n}\n\nfunc f2() {\n\tconst sub = \"rev-parse\"\n\tutil.RunGitProbe(ctx, dir, 4096, sub)\n}\n")
+	findings, err := ScanProbeMutations("ambiguous_test.go", ambiguousSrc)
+	if err != nil || len(findings) != 2 {
+		t.Fatalf("ambiguous consts: want 2 findings, got err=%v findings=%v", err, findings)
+	}
+	for i := 0; i < len(findings) && i < maxCallArgs; i++ {
+		if findings[i].Subcommand != "<non-literal>" {
+			t.Fatalf("ambiguous finding %d: want <non-literal>, got %q", i, findings[i].Subcommand)
+		}
+	}
+}
