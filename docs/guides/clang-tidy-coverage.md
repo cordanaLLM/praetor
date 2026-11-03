@@ -191,6 +191,27 @@ Filter entries due to expire soon by passing `--expiring-within=<days>`
 praetorctl exceptions list --expiring-within=14
 ```
 
+### Migrate legacy exception metadata
+
+Use one command to fill `category` and `entered` on entries missing both fields, including a manifest whose legacy expiry currently fails validation:
+
+```bash
+praetorctl exceptions migrate --config .standards.yaml
+praetorctl exceptions migrate --config .standards.yaml --write
+```
+
+The default is a dry run. `--write` applies resolvable proposals through the shared YAML encoder, preserving comments and mapping order. Entries with either field already populated are left alone. `entered` comes from the entry line's Git blame commit date in UTC; an uncommitted line or unavailable history falls back to today and explicitly names that fallback. `--today YYYY-MM-DD` controls that fallback and the validation date for replay (`PlanExceptionMigration` in `internal/config/exceptions_migrate.go`).
+
+A leading `category X` in `reason` determines the proposal. Otherwise the migration tries categories by increasing interval: B (3 days), C (10), A (stated interval, at most 90), then D (120). Every proposal must pass the engine's `rules.CategoryExpiryProblem` with the existing expiry unchanged. An entry no category admits, or whose reason category cannot admit its expiry, remains unresolved and is never rewritten. The command exits nonzero when any entry is unresolved; `--write` still applies the resolvable entries. `TestExceptionMigrationCategoryBoundaries`, `TestExceptionEnteredBlame`, `TestExceptionsMigrateDryRunAndWrite` and `TestExceptionsMigrateUnresolved` cover these contracts.
+
+Each legacy entry produces one line with manifest path, rule, target (file, glob or tool), existing expiry, proposed category, entered date, provenance and status, for example:
+
+```text
+path=.standards.yaml rule=declared-linters target=semgrep expires=2027-02-01 category=D entered=2026-11-02 source=today (git history unavailable) status=proposed
+```
+
+A broken manifest alone does not refuse a forge write without an active foreign reference; the hook reports the defect as a finding, allowing the repair PR to be created and merged ([hook behaviour](agent-hooks.md#forge-text-foreign-reference-guard)).
+
 The governance audit (`praetorctl audit`) warns before an exception expires: 14 days
 for uncategorized entries (`config.ExceptionExpiryWarningDays`), or a per-category
 window of `min(14, interval/2)` days for categorized entries (category B: 1 day, C: 5 days,

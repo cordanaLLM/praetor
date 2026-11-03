@@ -32,10 +32,11 @@ const (
 )
 
 var (
-	ghAPIScopedPath    = regexp.MustCompile(`(?i)(?:^|/)(?:issues|pulls|comments)(?:/|$|\?)`)
-	ghWriteWordPattern = regexp.MustCompile(ghWriteWordSource(scopedGHActions))
-	catSubstPattern    = regexp.MustCompile(`\$\(\s*cat(?:\s+--)?\s+([^\s<>|;&)]+)\s*\)`)
-	scopedGHActions    = map[string]map[string]bool{
+	errHookOperatorForgeSettings = errors.New("operator forge settings unavailable")
+	ghAPIScopedPath              = regexp.MustCompile(`(?i)(?:^|/)(?:issues|pulls|comments)(?:/|$|\?)`)
+	ghWriteWordPattern           = regexp.MustCompile(ghWriteWordSource(scopedGHActions))
+	catSubstPattern              = regexp.MustCompile(`\$\(\s*cat(?:\s+--)?\s+([^\s<>|;&)]+)\s*\)`)
+	scopedGHActions              = map[string]map[string]bool{
 		"issue":   {"create": true, "edit": true, "comment": true, "close": true, "reopen": true},
 		"pr":      {"create": true, "edit": true, "comment": true, "review": true, "close": true, "reopen": true, "merge": true},
 		"release": {"create": true, "edit": true},
@@ -73,11 +74,21 @@ type ghWriteCall struct {
 	raw     string
 	files   []ghTextFile
 	fileErr string
+	dir     string
+}
+
+// ghDirPolicy holds the resolved trusted organisations, missing-list flag, diagnostic
+// notice and any fatal resolution error cached for a command working directory.
+type ghDirPolicy struct {
+	own       []string
+	noOrgList bool
+	notice    string
+	err       error
 }
 
 // evaluateForgeTextRefs inspects every scoped gh write call in canonical.Command and
-// refuses the command when shell parsing fails, trusted organisations cannot be resolved,
-// or any inline text or named file contains a foreign forge reference.
+// refuses unreadable text and foreign references. Manifest defects are stated findings,
+// never a refusal of a write containing no active reference.
 func evaluateForgeTextRefs(ctx context.Context, canonical Canonical, root string, in Invocation) Verdict {
 	ctx, cancel := context.WithTimeout(ctx, forgeTextReadTimeout)
 	defer cancel()
@@ -92,16 +103,61 @@ func evaluateForgeTextRefs(ctx context.Context, canonical Canonical, root string
 	if len(calls) == 0 {
 		return Verdict{Outcome: Allow}
 	}
-	own, noOrgList, err := resolveHookOwnOrganizations(ctx, root, in.Getenv)
-	if err != nil {
-		return forgeTextDeny(err.Error(), false)
-	}
+	dirPolicies := make(map[string]ghDirPolicy, len(calls))
+	var notices []string
 	for i := 0; i < len(calls) && i < maxForgeTextSegments; i++ {
-		if verdict := judgeGHWriteCall(ctx, calls[i], own, noOrgList); verdict.Outcome != Allow {
+		dirPolicy, ok := dirPolicies[calls[i].dir]
+		if !ok {
+			dirPolicy = resolveGHDirPolicy(ctx, calls[i].dir, in.Getenv)
+			dirPolicies[calls[i].dir] = dirPolicy
+		}
+		verdict := judgeResolvedGHWriteCall(ctx, calls[i], dirPolicy)
+		if verdict.Outcome != Allow {
 			return verdict
 		}
+		notices = appendUniqueNotice(notices, verdict.Notice)
 	}
-	return Verdict{Outcome: Allow}
+	return Verdict{Outcome: Allow, Notice: strings.Join(notices, "; ")}
+}
+
+// appendUniqueNotice appends notice to notices when notice is non-empty and not already present.
+func appendUniqueNotice(notices []string, notice string) []string {
+	if notice == "" || slices.Contains(notices, notice) {
+		return notices
+	}
+	return append(notices, notice)
+}
+
+// resolveGHDirPolicy resolves the repository root and trusted organisations for dir once.
+// Commands outside any git repository keep an empty root so no arbitrary directory manifest is loaded.
+func resolveGHDirPolicy(ctx context.Context, dir string, getenv func(string) string) ghDirPolicy {
+	root, err := repositoryRoot(ctx, dir)
+	if err != nil {
+		return ghDirPolicy{err: err}
+	}
+	own, noOrgList, notice, err := resolveHookOwnOrganizations(ctx, root, getenv)
+	if errors.Is(err, errHookOperatorForgeSettings) {
+		return ghDirPolicy{err: err}
+	}
+	if err != nil {
+		notice = strings.TrimPrefix(notice+"; organisation finding: "+err.Error(), "; ")
+	}
+	return ghDirPolicy{own: own, noOrgList: noOrgList, notice: notice}
+}
+
+// judgeResolvedGHWriteCall judges call against the cached directory policy for call.dir.
+// Operator-policy and root-lookup failures deny writes; identity and manifest findings attach as notices.
+func judgeResolvedGHWriteCall(ctx context.Context, call ghWriteCall, dirPolicy ghDirPolicy) Verdict {
+	if dirPolicy.err != nil {
+		return forgeTextDeny(dirPolicy.err.Error(), false)
+	}
+	verdict := judgeGHWriteCall(ctx, call, dirPolicy.own, dirPolicy.noOrgList)
+	if verdict.Outcome == Allow {
+		verdict.Notice = dirPolicy.notice
+	} else if dirPolicy.notice != "" {
+		verdict.Reason += "\n" + dirPolicy.notice
+	}
+	return verdict
 }
 
 // judgeGHWriteCall checks a single ghWriteCall and its named files against own, refusing
@@ -138,22 +194,28 @@ func forgeTextDeny(detail string, noOrgList bool) Verdict {
 }
 
 // resolveHookOwnOrganizations resolves the trusted forge organisations from operator
-// settings, the repository manifest and repository identity, refusing invalid manifests or settings.
-func resolveHookOwnOrganizations(ctx context.Context, root string, getenv func(string) string) ([]string, bool, error) {
+// settings, the command manifest and repository identity. Invalid manifests contribute only a
+// finding; their organisations are never trusted.
+func resolveHookOwnOrganizations(ctx context.Context, root string, getenv func(string) string) ([]string, bool, string, error) {
 	opForge, err := loadOperatorForgeSettings(ctx, getenv)
 	if err != nil {
-		return nil, false, err
+		return nil, false, "", fmt.Errorf("%w: %w", errHookOperatorForgeSettings, err)
 	}
 	manifestPath := ""
 	if root != "" {
 		manifestPath = filepath.Join(root, manifestName)
 	}
-	own, err := forge.ResolveOwnOrganizations(ctx, root, manifestPath, opForge.OwnOrganizations, getenv)
-	if err != nil {
-		return nil, false, err
+	resolved, err := forge.ResolveOwnOrganizationSources(ctx, root, manifestPath, opForge.OwnOrganizations, getenv)
+	notice := ""
+	if resolved.ManifestProblem != nil {
+		sources := strings.Join(resolved.Sources, ", ")
+		if sources == "" {
+			sources = "none; references fail closed"
+		}
+		notice = forgeTextRefRuleName + ": manifest finding; trusted sources: " + sources + "; " + resolved.ManifestProblem.Error()
 	}
-	noOrgList := len(opForge.OwnOrganizations) == 0 && len(own) <= 1
-	return own, noOrgList, nil
+	noOrgList := len(opForge.OwnOrganizations) == 0 && len(resolved.Organizations) <= 1
+	return resolved.Organizations, noOrgList, notice, err
 }
 
 // loadOperatorForgeSettings loads operator-level forge settings when fleet or workstation
@@ -522,7 +584,7 @@ func parseSegmentGHCall(fullCommand string, words []string, workDir string) (ghW
 	if readsStdin {
 		raw = fullCommand
 	}
-	return ghWriteCall{raw: raw, files: files, fileErr: fileErr}, workDir, true
+	return ghWriteCall{raw: raw, files: files, fileErr: fileErr, dir: cmdDir}, workDir, true
 }
 
 // classifyGHCall identifies the gh subcommand and remaining arguments for a scoped write

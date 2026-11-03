@@ -39,9 +39,10 @@ func resolveCommandRoot(ctx context.Context, root string, canonical Canonical, i
 // Git directory options use the final -C directory. Other commands start from the payload
 // directory: this is target discovery, not shell state simulation. One matching outer quote
 // pair is stripped; escapes remain literal, preserving Windows path separators. Remaining
-// quotes, $, backticks, ~user and other ~ forms, and glob marks are unresolved and ignored;
-// a bare ~ or a leading ~/ resolves to the home directory (homeTarget). A subshell or group
-// opener ahead of the command word, "(cd dir" or "{ cd dir", is read through.
+// quotes, $, backticks, unresolved leading ~ forms, and glob marks are ignored;
+// a bare ~ or a leading ~/ resolves to the home directory (homeTarget), while internal
+// tildes remain literal. A subshell or group opener ahead of the command word,
+// "(cd dir" or "{ cd dir", is read through.
 // Missing paths, non-directories, malformed shell text,
 // and derived Git probe errors are ignored; payload probe errors still fail closed. Exceeding
 // the shared shell reader's field/line bounds fails closed so padding cannot hide operands.
@@ -115,7 +116,7 @@ func commandBase(canonical Canonical, workDir string) string {
 
 func targetDirectory(value, base string) string {
 	value = homeTarget(unquoteTarget(value))
-	if value == "" || strings.ContainsAny(value, "$`~*?[]{}'\"") {
+	if value == "" || hasUnresolvedTargetSyntax(value) {
 		return ""
 	}
 	if !filepath.IsAbs(value) {
@@ -135,9 +136,15 @@ func targetDirectory(value, base string) string {
 	return dir
 }
 
+// hasUnresolvedTargetSyntax rejects substitutions, globs, quotes and unresolved leading
+// tildes after homeTarget expansion; tildes inside a path remain literal.
+func hasUnresolvedTargetSyntax(value string) bool {
+	return strings.HasPrefix(value, "~") || strings.ContainsAny(value, "$`*?[]{}'\"")
+}
+
 // homeTarget expands a bare ~ or a leading ~/ to the user's home directory, as the shell does
-// for the same user the hook runs as. ~user and a ~ anywhere else stay unexpanded, and a home
-// directory that cannot be read leaves the value as it is, so targetDirectory ignores it.
+// for the same user the hook runs as. ~user and internal tildes stay unexpanded. An unavailable
+// home leaves the value unchanged, so hasUnresolvedTargetSyntax rejects the leading tilde.
 func homeTarget(value string) string {
 	if value != "~" && !strings.HasPrefix(value, "~/") {
 		return value

@@ -12,12 +12,13 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
-// runExceptions dispatches the exceptions command and its subcommands (list).
+// runExceptions dispatches listing and the dry-run-first legacy exception migration.
 func runExceptions(args []string) error {
 	fs := flag.NewFlagSet("exceptions", flag.ContinueOnError)
 	manifestPath := fs.String("config", config.ManifestFileName, "Path to .standards.yaml")
 	expiringWithin := fs.Int("expiring-within", -1, "Filter entries expiring within this many days")
 	todayStr := fs.String("today", "", "The date expiry is judged against (YYYY-MM-DD; default: today in UTC)")
+	write := fs.Bool("write", false, "Apply proposed legacy exception category and entered fields (migrate only)")
 
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
@@ -27,30 +28,48 @@ func runExceptions(args []string) error {
 	if len(positional) > 1 {
 		return fmt.Errorf("exceptions accepts at most one action, got %q", positional)
 	}
+	if *write && action != "migrate" {
+		return fmt.Errorf("--write requires exceptions migrate")
+	}
 
 	switch action {
+	case "migrate":
+		return runExceptionMigration(*manifestPath, *todayStr, *write)
 	case "list":
-		var expiringWithinPtr *int
-		fs.Visit(func(f *flag.Flag) {
-			if f.Name == "expiring-within" {
-				expiringWithinPtr = expiringWithin
-			}
-		})
-		if expiringWithinPtr != nil && *expiringWithinPtr < 0 {
-			return fmt.Errorf("--expiring-within must be non-negative, got %d", *expiringWithinPtr)
-		}
-		today := config.ExceptionDay(time.Now())
-		if *todayStr != "" {
-			parsedToday, err := time.Parse(config.ExceptionDateLayout, *todayStr)
-			if err != nil {
-				return fmt.Errorf("--today %q must be a YYYY-MM-DD date: %w", *todayStr, err)
-			}
-			today = config.ExceptionDay(parsedToday)
-		}
-		return handleExceptionsList(*manifestPath, expiringWithinPtr, today)
+		return runExceptionsList(fs, *manifestPath, expiringWithin, *todayStr)
 	default:
-		return fmt.Errorf("unknown exceptions action: %s (supported: list)", action)
+		return fmt.Errorf("unknown exceptions action: %s (supported: list, migrate)", action)
 	}
+}
+
+// runExceptionsList validates list flags and delegates to handleExceptionsList.
+func runExceptionsList(fs *flag.FlagSet, manifestPath string, expiringWithin *int, todayStr string) error {
+	var expiringWithinPtr *int
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "expiring-within" {
+			expiringWithinPtr = expiringWithin
+		}
+	})
+	if expiringWithinPtr != nil && *expiringWithinPtr < 0 {
+		return fmt.Errorf("--expiring-within must be non-negative, got %d", *expiringWithinPtr)
+	}
+	today, err := exceptionToday(todayStr)
+	if err != nil {
+		return err
+	}
+	return handleExceptionsList(manifestPath, expiringWithinPtr, today)
+}
+
+// exceptionToday parses an optional YYYY-MM-DD date or defaults to the current day.
+func exceptionToday(value string) (time.Time, error) {
+	if value == "" {
+		return config.ExceptionDay(time.Now()), nil
+	}
+	parsed, err := time.Parse(config.ExceptionDateLayout, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("--today %q must be a YYYY-MM-DD date: %w", value, err)
+	}
+	return config.ExceptionDay(parsed), nil
 }
 
 // handleExceptionsList loads the manifest and prints the matching exceptions.

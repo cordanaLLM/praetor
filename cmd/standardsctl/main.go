@@ -101,7 +101,7 @@ func printCoreCommands() {
 		"  docstrings         Check diff-scoped docstring coverage against .coderabbit.yaml\n")
 	fmt.Println("  hindsight          Manage local zero-token memory cache and sync with Hindsight server")
 	fmt.Println("  state              Manage .workingdir/ session state, bugs ledger, and questions")
-	fmt.Println("  exceptions         List or inspect declared exceptions")
+	fmt.Println("  exceptions         List declared exceptions or migrate legacy category metadata")
 	fmt.Println("  linters            Manage generated .golangci.yml exclusion rules (strip-config, generate)")
 	fmt.Println("  dedupe             Scan for AST clones, utility sprawl, and cadence enforcement")
 	fmt.Println("  efficiency         Measure and report efficiency ledger across landed pull requests (alias: efficiency-ledger)")
