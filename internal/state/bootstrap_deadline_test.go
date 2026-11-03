@@ -32,6 +32,7 @@ type bootstrapDeadlineCase struct {
 // ledger writes, a shorter one fails with context.DeadlineExceeded, and a
 // context without one gets the fallback.
 func TestBootstrapDeadlineWithSlowLedgerWrites(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []bootstrapDeadlineCase{
 		{name: "longer caller deadline", want: BootstrapCreated},
 		{name: "longer caller deadline seeds existing directory", seeded: true, want: BootstrapSeeded},
@@ -47,6 +48,7 @@ func TestBootstrapDeadlineWithSlowLedgerWrites(t *testing.T) {
 // writes, a shorter one fails with context.DeadlineExceeded, and a context
 // without one gets the fallback.
 func (tc bootstrapDeadlineCase) run(t *testing.T) {
+	t.Parallel()
 	t.Helper()
 	dir := t.TempDir()
 	if tc.seeded {
@@ -57,8 +59,8 @@ func (tc bootstrapDeadlineCase) run(t *testing.T) {
 		}
 	}
 	ctx := tc.callerContext(t)
-	slowBootstrapWrites(ctx, t)
-	outcome, err := InitWorkingDirIfAbsentContext(ctx, dir)
+	deps := slowBootstrapDeps(ctx, t)
+	outcome, err := bootstrapWorkingDir(ctx, dir, deps)
 	if tc.wantErr != nil {
 		if !errors.Is(err, tc.wantErr) {
 			t.Fatalf("blocked writes: outcome=%v, err=%v; want %v", outcome, err, tc.wantErr)
@@ -91,34 +93,32 @@ func (tc bootstrapDeadlineCase) callerContext(t *testing.T) context.Context {
 	return ctx
 }
 
-// slowBootstrapWrites replaces package seams only in serial tests. Its deadline
-// channel delays real ledger writes past the fallback; no elapsed-time assertion
-// or scheduler-dependent sleep decides whether the bootstrap succeeded.
-func slowBootstrapWrites(caller context.Context, t *testing.T) {
+// slowBootstrapDeps builds a bootstrapDeps value whose initialize function delays
+// real ledger writes past the fallback budget; no package globals are modified.
+func slowBootstrapDeps(caller context.Context, t *testing.T) bootstrapDeps {
 	t.Helper()
-	budget, initialize := bootstrapFallbackTimeout, bootstrapInitializeFiles
-	t.Cleanup(func() {
-		bootstrapFallbackTimeout, bootstrapInitializeFiles = budget, initialize
-	})
-	bootstrapFallbackTimeout = 20 * time.Millisecond
+	const fallback = 20 * time.Millisecond
 	parent := testsupport.DeadlineContext(t)
-	bootstrapInitializeFiles = func(ctx context.Context, working *os.Root) error {
-		stalled, cancel := context.WithTimeout(parent, 2*bootstrapFallbackTimeout)
-		defer cancel()
-		select {
-		case <-ctx.Done():
-		case <-stalled.Done():
-		}
-		deadline, bounded := ctx.Deadline()
-		if !bounded {
-			return errors.New("bootstrap writes have no deadline")
-		}
-		if want, ok := caller.Deadline(); ok && !deadline.Equal(want) {
-			return fmt.Errorf("bootstrap deadline %v differs from caller deadline %v", deadline, want)
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		return initialize(ctx, working)
+	return bootstrapDeps{
+		fallback: fallback,
+		initialize: func(ctx context.Context, working *os.Root) error {
+			stalled, cancel := context.WithTimeout(parent, 2*fallback)
+			defer cancel()
+			select {
+			case <-ctx.Done():
+			case <-stalled.Done():
+			}
+			deadline, bounded := ctx.Deadline()
+			if !bounded {
+				return errors.New("bootstrap writes have no deadline")
+			}
+			if want, ok := caller.Deadline(); ok && !deadline.Equal(want) {
+				return fmt.Errorf("bootstrap deadline %v differs from caller deadline %v", deadline, want)
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return initializeWorkingFiles(ctx, working)
+		},
 	}
 }
