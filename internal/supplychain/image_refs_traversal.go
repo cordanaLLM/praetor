@@ -23,7 +23,10 @@ import (
 const imageRefLinkOutside = "link outside the repository, not followed"
 
 // imageRefScanTimeout bounds the overall duration of an image reference repository scan (HISS-02).
-const imageRefScanTimeout = 30 * time.Second
+// The repository pin scan measured 1.49s plain and 13.81s under -race; one minute
+// leaves over 4x race-mode headroom while maxScannedFiles and maxImageRefFileBytes
+// bound the work and imageRefIOTimeout still bounds each read.
+const imageRefScanTimeout = time.Minute
 
 // imageRefIOTimeout bounds individual directory or file read operations during image reference scanning (HISS-02).
 const imageRefIOTimeout = 5 * time.Second
