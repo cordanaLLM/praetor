@@ -5,6 +5,8 @@
 package supplychain
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -111,7 +113,7 @@ func TestIterateScannedFiles_FilesLimit_3D(t *testing.T) {
 		for i := 0; i < len(files) && i < maxScannedFiles+10; i++ {
 			files[i] = fmt.Sprintf("file%d.go", i)
 		}
-		err := iterateScannedFiles(t.TempDir(), files, func(string) bool { return true }, func(string, []byte, error) error {
+		err := iterateScannedFiles(t.Context(), t.TempDir(), files, func(string) bool { return true }, func(string, []byte, error) error {
 			return nil
 		})
 		if err == nil {
@@ -128,7 +130,7 @@ func TestIterateScannedFiles_FilesLimit_3D(t *testing.T) {
 			t.Fatal(err)
 		}
 		visited := 0
-		err := iterateScannedFiles(dir, []string{"a.go"}, func(string) bool { return true }, func(string, []byte, error) error {
+		err := iterateScannedFiles(t.Context(), dir, []string{"a.go"}, func(string) bool { return true }, func(string, []byte, error) error {
 			visited++
 			return nil
 		})
@@ -159,7 +161,7 @@ func TestWalkDirectoryFiles_Positive(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "node_modules", "pkg", "ignored.js"), []byte("c"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	files, err := walkDirectoryFiles(dir)
+	files, err := walkDirectoryFiles(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("unexpected walk error: %v", err)
 	}
@@ -176,8 +178,72 @@ func TestWalkDirectoryFiles_Positive(t *testing.T) {
 
 // TestWalkDirectoryFiles_Negative verifies that walkDirectoryFiles returns an error for a nonexistent directory.
 func TestWalkDirectoryFiles_Negative(t *testing.T) {
-	_, err := walkDirectoryFiles(filepath.Join(t.TempDir(), "nonexistent"))
+	_, err := walkDirectoryFiles(t.Context(), filepath.Join(t.TempDir(), "nonexistent"))
 	if err == nil {
 		t.Fatal("expected error for nonexistent directory, got nil")
+	}
+}
+
+// TestScanImageRefs_ContextCancellation_3D verifies that directory walks and file reads honor context cancellation.
+func TestScanImageRefs_ContextCancellation_3D(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM ubuntu:latest\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "docker-compose.yml"), []byte("services:\n  app:\n    image: redis:7\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("pre-canceled context aborts non-git directory scan", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		_, err := ScanImageRefs(ctx, dir)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled from ScanImageRefs on canceled context, got: %v", err)
+		}
+	})
+
+	t.Run("cancel mid-iteration stops reading remaining candidate files", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		visited := 0
+		err := iterateScannedFiles(ctx, dir, []string{"Dockerfile", "docker-compose.yml"}, ScannedImageRefFile, func(string, []byte, error) error {
+			visited++
+			cancel()
+			return nil
+		})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled on mid-iteration cancel, got: %v", err)
+		}
+		if visited != 1 {
+			t.Fatalf("expected iteration to stop after 1 file, visited %d", visited)
+		}
+	})
+
+	t.Run("active context succeeds on non-git directory scan", func(t *testing.T) {
+		findings, err := ScanImageRefs(t.Context(), dir)
+		if err != nil {
+			t.Fatalf("unexpected error with active context: %v", err)
+		}
+		if len(findings) != 2 {
+			t.Fatalf("expected 2 findings, got %d: %+v", len(findings), findings)
+		}
+	})
+}
+
+// TestReadScanDirectory_BoundedRead_3D verifies that readScanDirectory reads at most maxScannedFiles+1 entries.
+func TestReadScanDirectory_BoundedRead_3D(t *testing.T) {
+	dir := t.TempDir()
+	const extra = 5
+	for i := 0; i < maxScannedFiles+extra; i++ {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%04d.txt", i)), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, err := readScanDirectory(t.Context(), dir, ".")
+	if err != nil {
+		t.Fatalf("readScanDirectory failed: %v", err)
+	}
+	if len(entries) > maxScannedFiles+1 {
+		t.Fatalf("readScanDirectory allocated %d entries, want at most %d (maxScannedFiles+1)", len(entries), maxScannedFiles+1)
 	}
 }

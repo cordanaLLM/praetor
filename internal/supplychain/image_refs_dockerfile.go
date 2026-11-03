@@ -53,8 +53,11 @@ func dockerfileStatements(content string) []numberedLine {
 	var current strings.Builder
 	for i := 0; i < len(raw) && i < maxFileLines; i++ {
 		trimmed := strings.TrimSpace(raw[i])
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
 		if current.Len() == 0 {
-			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			if trimmed == "" {
 				continue
 			}
 			startLine = i + 1

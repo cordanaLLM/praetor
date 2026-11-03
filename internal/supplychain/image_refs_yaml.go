@@ -7,6 +7,7 @@ package supplychain
 import (
 	"cmp"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -14,6 +15,9 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
+
+// yamlFlowImageKey matches an `image:` key preceded by a YAML flow delimiter (`{`, `[`, `,`).
+var yamlFlowImageKey = regexp.MustCompile(`[{\[,]\s*image\s*:`)
 
 // isYAMLFile reports whether the file path has a .yml or .yaml extension.
 func isYAMLFile(slashed string) bool {
@@ -34,10 +38,29 @@ func collectYAMLFindings(file, content string) []ImageRefFinding {
 		return collectWorkflowFindings(file, content)
 	}
 	lines := strings.Split(content, "\n")
+	coveredLines := make(map[int]bool, len(lines))
 	var findings []ImageRefFinding
 	for i := 0; i < len(lines) && i < maxFileLines; i++ {
-		findings = appendImageRefFinding(findings, file, i+1, extractYAMLImageRef(lines[i]))
+		if ref := extractYAMLImageRef(lines[i]); ref != "" {
+			coveredLines[i+1] = true
+			findings = appendImageRefFinding(findings, file, i+1, ref)
+			continue
+		}
+		if nextLine, ref := extractMultilineYAMLImageRef(lines, i); ref != "" {
+			coveredLines[nextLine] = true
+			findings = appendImageRefFinding(findings, file, nextLine, ref)
+			continue
+		}
+		refs := extractYAMLFlowImageRefs(lines[i])
+		for j := 0; j < len(refs) && j < maxLineLiterals; j++ {
+			coveredLines[i+1] = true
+			findings = appendImageRefFinding(findings, file, i+1, refs[j])
+		}
 	}
+	findings = appendYAMLNodeFindings(findings, file, content, coveredLines)
+	slices.SortStableFunc(findings, func(a, b ImageRefFinding) int {
+		return cmp.Compare(a.Line, b.Line)
+	})
 	return findings
 }
 
@@ -114,6 +137,119 @@ func extractYAMLImageRef(line string) string {
 		return ""
 	}
 	return validYAMLScalarRef(cleanYAMLScalar(rest))
+}
+
+// extractYAMLFlowImageRefs extracts scalar image references from flow mappings on a single YAML line.
+func extractYAMLFlowImageRefs(line string) []string {
+	matches := yamlFlowImageKey.FindAllStringIndex(line, maxLineLiterals)
+	var refs []string
+	for i := 0; i < len(matches) && i < maxLineLiterals; i++ {
+		rest := line[matches[i][1]:]
+		if ref := validYAMLScalarRef(cleanYAMLFlowScalar(rest)); ref != "" {
+			refs = append(refs, ref)
+		}
+	}
+	return refs
+}
+
+// extractMultilineYAMLImageRef checks whether lines[idx] is a bare `image:` key whose scalar
+// value sits on the next non-comment line, returning its 1-based line number and reference.
+func extractMultilineYAMLImageRef(lines []string, idx int) (int, string) {
+	trimmed := strings.TrimSpace(stripInlineComment(lines[idx]))
+	trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+	if trimmed != "image:" || idx+1 >= len(lines) {
+		return 0, ""
+	}
+	nextRaw := strings.TrimSpace(stripInlineComment(lines[idx+1]))
+	if nextRaw == "" || strings.HasPrefix(nextRaw, "#") || strings.HasPrefix(nextRaw, "- ") {
+		return 0, ""
+	}
+	if nextRaw[0] != '"' && nextRaw[0] != '\'' && strings.Contains(nextRaw, ": ") {
+		return 0, ""
+	}
+	return idx + 2, validYAMLScalarRef(cleanYAMLScalar(nextRaw))
+}
+
+// cleanYAMLFlowScalar strips quotes, trailing flow delimiters, and inline comments from a flow mapping scalar.
+func cleanYAMLFlowScalar(raw string) string {
+	s := strings.TrimSpace(raw)
+	if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') {
+		if end := closingQuoteIndex(s); end > 0 {
+			return strings.TrimSpace(s[1:end])
+		}
+	}
+	s = trimFlowClauseEnd(stripInlineComment(s))
+	return strings.Trim(strings.TrimSpace(s), `"'`)
+}
+
+// trimFlowClauseEnd truncates an unquoted YAML flow scalar at the first top-level comma or closing delimiter.
+func trimFlowClauseEnd(s string) string {
+	depth := 0
+	for i := 0; i < len(s) && i < maxFileLines; i++ {
+		switch s[i] {
+		case '{', '[':
+			depth++
+		case '}', ']':
+			if depth == 0 {
+				return s[:i]
+			}
+			depth--
+		case ',':
+			if depth == 0 {
+				return s[:i]
+			}
+		}
+	}
+	return s
+}
+
+// appendYAMLNodeFindings walks parsed YAML mapping nodes iteratively to catch multiline or nested
+// flow image fields not already covered by single-line extraction (HISS-01, HISS-02).
+func appendYAMLNodeFindings(findings []ImageRefFinding, file, content string, coveredLines map[int]bool) []ImageRefFinding {
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(content), &root); err != nil {
+		return findings
+	}
+	stack := []*yaml.Node{&root}
+	for steps := 0; len(stack) > 0 && steps < maxFileLines; steps++ {
+		node := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if node == nil {
+			continue
+		}
+		if node.Kind == yaml.MappingNode {
+			findings = appendYAMLMappingImageFindings(findings, file, node, coveredLines)
+		}
+		for i := len(node.Content) - 1; i >= 0 && len(stack) < maxFileLines; i-- {
+			stack = append(stack, node.Content[i])
+		}
+	}
+	return findings
+}
+
+// appendYAMLMappingImageFindings inspects a YAML mapping node for scalar image keys not yet covered on their line.
+func appendYAMLMappingImageFindings(findings []ImageRefFinding, file string, mapping *yaml.Node, coveredLines map[int]bool) []ImageRefFinding {
+	for i := 0; i+1 < len(mapping.Content) && i < maxFileLines; i += 2 {
+		keyNode := mapping.Content[i]
+		valNode := mapping.Content[i+1]
+		if keyNode.Kind != yaml.ScalarNode || keyNode.Value != "image" || !isInspectableYAMLScalar(valNode) {
+			continue
+		}
+		if coveredLines[valNode.Line] {
+			continue
+		}
+		coveredLines[valNode.Line] = true
+		findings = appendImageRefFinding(findings, file, valNode.Line, validYAMLScalarRef(strings.TrimSpace(valNode.Value)))
+	}
+	return findings
+}
+
+// isInspectableYAMLScalar reports whether a YAML node is a non-null, non-block scalar value.
+func isInspectableYAMLScalar(node *yaml.Node) bool {
+	if node == nil || node.Kind != yaml.ScalarNode || node.ShortTag() == "!!null" {
+		return false
+	}
+	return node.Style != yaml.LiteralStyle && node.Style != yaml.FoldedStyle
 }
 
 // cleanYAMLScalar strips surrounding quotes and inline comments from a YAML scalar value.

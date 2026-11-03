@@ -140,3 +140,119 @@ func TestCollectImageRefFindings_UnparseableWorkflowIsUnresolvable(t *testing.T)
 		t.Fatalf("unparseable workflow finding = %+v, want Unresolvable=true on %s with parse error", got[0], file)
 	}
 }
+
+// dockerfileContinuationCommentCases returns 3D test cases for continued Dockerfile FROM instructions with comments.
+func dockerfileContinuationCommentCases(digest string) []imageRefShapeCase {
+	return []imageRefShapeCase{
+		{
+			name: "continued FROM with full-line comments reports unpinned base and resolves stage alias",
+			file: "Dockerfile",
+			body: "FROM \\\n# comment inside continuation\nubuntu:latest AS base\nFROM \\\n  # comment with trailing backslash \\\n  base\n",
+			want: []shapeExpectation{
+				{line: 1, ref: "ubuntu:latest"},
+			},
+		},
+		{
+			name: "continued FROM with full-line comment and digest pin produces no finding",
+			file: "Dockerfile",
+			body: "FROM \\\n# comment\nubuntu:24.04@sha256:" + digest + "\n",
+		},
+		{
+			name: "continued FROM with comments to scratch or incomplete EOF produces no finding",
+			file: "Dockerfile",
+			body: "FROM \\\n# comment 1\n# comment 2\nscratch\nFROM \\\n# trailing comment only\n",
+		},
+	}
+}
+
+// TestCollectImageRefFindings_DockerfileContinuedComments_3D verifies that full-line comments inside
+// continued Dockerfile FROM instructions do not terminate the continuation early.
+func TestCollectImageRefFindings_DockerfileContinuedComments_3D(t *testing.T) {
+	const digest = "4a7b9f0e1c2d3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b"
+	for _, tc := range dockerfileContinuationCommentCases(digest) {
+		t.Run(tc.name, func(t *testing.T) {
+			assertImageRefShapeFindings(t, tc)
+		})
+	}
+}
+
+// devcontainerMultilineCases returns 3D test cases for multiline devcontainer.json image fields.
+func devcontainerMultilineCases(digest string) []imageRefShapeCase {
+	return []imageRefShapeCase{
+		{
+			name: "devcontainer image field split across lines reports finding on value line",
+			file: ".devcontainer/devcontainer.json",
+			body: "{\n  \"name\": \"dev\",\n  \"image\":\n    \"ubuntu:latest\"\n}\n",
+			want: []shapeExpectation{
+				{line: 4, ref: "ubuntu:latest"},
+			},
+		},
+		{
+			name: "devcontainer pinned image field split across lines produces no finding",
+			file: ".devcontainer/devcontainer.json",
+			body: "{\n  \"image\":\n    \"ubuntu:24.04@sha256:" + digest + "\"\n}\n",
+		},
+		{
+			name: "devcontainer multiline image with substitution token is unresolvable",
+			file: ".devcontainer.json",
+			body: "{\n  \"image\" \t\n : \n\t \"@DEVCONTAINER_IMAGE@\"\n}\n",
+			want: []shapeExpectation{
+				{line: 4, ref: "@DEVCONTAINER_IMAGE@", unresolvable: true},
+			},
+		},
+	}
+}
+
+// TestCollectImageRefFindings_DevcontainerMultiline_3D verifies that devcontainer image fields
+// spanning JSON whitespace and newlines are detected with their line numbers preserved.
+func TestCollectImageRefFindings_DevcontainerMultiline_3D(t *testing.T) {
+	const digest = "4a7b9f0e1c2d3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b"
+	for _, tc := range devcontainerMultilineCases(digest) {
+		t.Run(tc.name, func(t *testing.T) {
+			assertImageRefShapeFindings(t, tc)
+		})
+	}
+}
+
+// yamlFlowMappingCases returns 3D test cases for YAML flow mappings and multiline image mappings.
+func yamlFlowMappingCases(digest string) []imageRefShapeCase {
+	return []imageRefShapeCase{
+		{
+			name: "flow mappings and multiline image mappings report unpinned images",
+			file: "deploy/pod.yaml",
+			body: "{image: nginx:latest}\nspec: {container: {image: redis:7}}\ncontainers: [{name: web, image: alpine:3.20}, {name: proxy, image: \"envoy:v1.31\"}]\nmultiline:\n  image:\n    postgres:18\n",
+			want: []shapeExpectation{
+				{line: 1, ref: "nginx:latest"},
+				{line: 2, ref: "redis:7"},
+				{line: 3, ref: "alpine:3.20"},
+				{line: 3, ref: "envoy:v1.31"},
+				{line: 6, ref: "postgres:18"},
+			},
+		},
+		{
+			name: "pinned flow mapping and structured image mapping produce no finding",
+			file: "deploy/values.yaml",
+			body: "{image: nginx:1.27@sha256:" + digest + ", name: image}\nimage:\n  repository: nginx\n  tag: latest\n",
+		},
+		{
+			name: "flow mapping with template or substitution token is unresolvable",
+			file: "deploy/template.yaml",
+			body: "{image: \"${CONTAINER_IMAGE}\"}\nsidecar: {image: {{ .Values.sidecar.image }}}\n",
+			want: []shapeExpectation{
+				{line: 1, ref: "${CONTAINER_IMAGE}", unresolvable: true},
+				{line: 2, ref: "{{ .Values.sidecar.image }}", unresolvable: true},
+			},
+		},
+	}
+}
+
+// TestCollectImageRefFindings_YAMLFlowMappings_3D verifies that YAML flow mappings and multiline
+// image mappings are inspected in non-workflow YAML files.
+func TestCollectImageRefFindings_YAMLFlowMappings_3D(t *testing.T) {
+	const digest = "4a7b9f0e1c2d3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b"
+	for _, tc := range yamlFlowMappingCases(digest) {
+		t.Run(tc.name, func(t *testing.T) {
+			assertImageRefShapeFindings(t, tc)
+		})
+	}
+}

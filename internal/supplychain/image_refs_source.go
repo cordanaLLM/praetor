@@ -11,8 +11,8 @@ import (
 )
 
 var (
-	// devcontainerImageField matches `"image": "..."` in devcontainer.json files.
-	devcontainerImageField = regexp.MustCompile(`"image"\s*:\s*"([^"]+)"`)
+	// devcontainerImageField matches `"image": "..."` across JSON whitespace in devcontainer.json files.
+	devcontainerImageField = regexp.MustCompile(`"image"\s*:\s*"([^"\r\n]+)"`)
 
 	// quotedLiteralPattern matches double-quoted, single-quoted, or backtick string literals.
 	quotedLiteralPattern = regexp.MustCompile(`"([^"\\\n]+)"|'([^'\\\n]+)'|` + "`" + `([^` + "`" + `\n]+)` + "`")
@@ -39,14 +39,15 @@ func isSourceCodeFile(slashed string) bool {
 
 // collectDevcontainerFindings extracts image field values from devcontainer JSON files and returns findings for unpinned references.
 func collectDevcontainerFindings(file, content string) []ImageRefFinding {
-	lines := strings.Split(content, "\n")
+	matches := devcontainerImageField.FindAllStringSubmatchIndex(content, maxFileLines)
 	var findings []ImageRefFinding
-	for i := 0; i < len(lines) && i < maxFileLines; i++ {
-		m := devcontainerImageField.FindStringSubmatch(lines[i])
-		if len(m) < 2 {
+	for i := 0; i < len(matches) && i < maxFileLines; i++ {
+		m := matches[i]
+		if len(m) < 4 || m[2] < 0 || m[3] < 0 {
 			continue
 		}
-		findings = appendImageRefFinding(findings, file, i+1, m[1])
+		line := 1 + strings.Count(content[:m[2]], "\n")
+		findings = appendImageRefFinding(findings, file, line, content[m[2]:m[3]])
 	}
 	return findings
 }

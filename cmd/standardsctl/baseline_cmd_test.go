@@ -615,10 +615,10 @@ func removeIfPresent(t *testing.T, path string, all bool) {
 // unreadable, and a directory where the file belongs.
 func manifestErrorCases() []manifestErrorCase {
 	return []manifestErrorCase{
-		{name: "invalid manifest syntax", wantText: ".standards.yaml", setup: func(t *testing.T, dir string) {
+		{name: "invalid manifest syntax", wantText: "failed to parse manifest at", setup: func(t *testing.T, dir string) {
 			writeFixtureFile(t, dir, ".standards.yaml", "exceptions: [unclosed\n")
 		}},
-		{name: "unreadable manifest file", wantText: ".standards.yaml", setup: func(t *testing.T, dir string) {
+		{name: "unreadable manifest file", wantText: "failed to read manifest at", setup: func(t *testing.T, dir string) {
 			p := writeFixtureFile(t, dir, ".standards.yaml", "exceptions: []\n")
 			if err := os.Chmod(p, 0000); err != nil {
 				t.Skipf("cannot chmod 0000: %v", err)
@@ -630,7 +630,7 @@ func manifestErrorCases() []manifestErrorCase {
 			})
 			skipIfFileReadable(t, p)
 		}},
-		{name: "directory as manifest", wantText: ".standards.yaml", setup: func(t *testing.T, dir string) {
+		{name: "directory as manifest", wantText: "failed to read manifest at", setup: func(t *testing.T, dir string) {
 			p := filepath.Join(dir, ".standards.yaml")
 			removeIfPresent(t, p, false)
 			if err := os.Mkdir(p, 0o755); err != nil {
@@ -657,8 +657,8 @@ func TestBaselineRecordImageRefs_ManifestError_3D(t *testing.T) {
 				t.Fatalf("expected baseline record to fail on manifest error, got success with out:\n%s", out)
 			}
 			errStr := err.Error() + "\n" + out
-			if !strings.Contains(errStr, tc.wantText) {
-				t.Fatalf("error %q does not name manifest %q", errStr, tc.wantText)
+			if !strings.Contains(errStr, tc.wantText) || !strings.Contains(errStr, ".standards.yaml") {
+				t.Fatalf("error %q does not contain manifest loader context %q for .standards.yaml", errStr, tc.wantText)
 			}
 			if _, statErr := os.Stat(f.baselinePath); !os.IsNotExist(statErr) {
 				t.Fatalf("expected no baseline file written at %s, but file exists: %v", f.baselinePath, statErr)
