@@ -91,11 +91,13 @@ def parallel(commands, directory):
 
 
 def text_checks(directory, names):
+    text_files = []
     for name in names:
         path = directory / name
         raw = path.read_bytes()
         if b"\0" in raw:
             continue
+        text_files.append(name)
         text = raw.decode("utf-8", errors="replace")
         if re.search(r"(?m)^(<{7} |={7}$|>{7} )", text):
             raise HookError(f"{name}: unresolved merge marker")
@@ -109,6 +111,21 @@ def text_checks(directory, names):
                 json.loads(raw)
             except (ValueError, UnicodeError) as error:
                 raise HookError(f"{name}: {error}") from error
+    spelling_check(directory, text_files)
+
+
+def spelling_check(directory, names):
+    """Check text with the repository's codespell config, when opted in.
+
+    Vendored hook policies need not enable spelling. Once .codespellrc exists,
+    a missing executable or a failed check refuses the change. Batches keep
+    staged path lists below platform command-line limits, as gofmt_check does.
+    """
+    if not names or not (directory / ".codespellrc").is_file():
+        return
+    for start in range(0, len(names), GOFMT_BATCH):
+        run(["codespell", "--config", ".codespellrc", "--", *names[start:start + GOFMT_BATCH]],
+            cwd=directory, timeout=120)
 
 
 # Go's own convention: a directory with this name holds inputs, never source. is_fixture
@@ -217,6 +234,7 @@ def golangci_lint_command(directory, packages):
 # The harness self-tests a change to the hook policy runs. These suites travel with the
 # policy; the scripts/ suites exist only where the snapshot carries them.
 SELF_TESTS = (".config/lefthook/scripts/test_hooks.py",
+              ".config/lefthook/scripts/test_spelling.py",
               ".config/lefthook/scripts/test_security_scope.py",
               ".config/lefthook/scripts/test_checkpoint.py",
               ".config/lefthook/scripts/test_race_packages.py")

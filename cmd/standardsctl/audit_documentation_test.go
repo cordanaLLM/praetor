@@ -469,7 +469,9 @@ func TestAuditDocumentationGateDeclinedUnreadableIgnoreProbesEveryRoot(t *testin
 		ignore string
 		fails  bool
 	}{
-		"both rules":             {ignore: "# caf\xe9\n/.workingdir/\n/.workingdir2/\n"},
+		// codespell:ignore-next-line caf
+		"both rules": {ignore: "# caf\xe9\n/.workingdir/\n/.workingdir2/\n"},
+		// codespell:ignore-next-line caf
 		"working directory only": {ignore: "# caf\xe9\n/.workingdir/\n", fails: true},
 	} {
 		t.Run(name, func(t *testing.T) {

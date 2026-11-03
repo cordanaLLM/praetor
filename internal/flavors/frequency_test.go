@@ -58,6 +58,7 @@ func TestPlanSelected_Negative_UnknownFrequencyAndFlavorAreRefused(t *testing.T)
 			t.Fatalf("update_frequency %q must be refused at load, got %v", frequency, err)
 		}
 	}
+	// codespell:ignore-next-line egde
 	if got := UnknownFlavors(frequencyConfig(), []string{"edge", "egde", "nightly"}); !slices.Equal(got, []string{"egde", "nightly"}) {
 		t.Fatalf("unknown = %q", got)
 	}

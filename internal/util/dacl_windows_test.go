@@ -89,7 +89,8 @@ func TestOwnerOnlyEntries_3D(t *testing.T) {
 	for sddl, want := range map[string]bool{
 		"D:P(A;;FA;;;" + sid + ")(A;;FA;;;SY)(A;;FA;;;BA)": true,
 		"D:(A;ID;FA;;;" + sid + ")(D;;FA;;;WD)":            true,
-		"D:(A;ID;FA;;;" + sid + ")(A;ID;0x1200a9;;;BU)":    false,
+		// codespell:ignore-next-line bu
+		"D:(A;ID;FA;;;" + sid + ")(A;ID;0x1200a9;;;BU)": false,
 		"D:(A;;FR;;;WD)":      false,
 		"D:NO_ACCESS_CONTROL": false,
 	} {

@@ -406,6 +406,7 @@ func unreadablePytestConfig(t *testing.T, root, rel, kind string) string {
 			t.Skipf("symlinks unavailable: %v", err)
 		}
 	case "latin-1":
+		// codespell:ignore-next-line caf
 		mustWrite(t, path, section+"description = caf\xe9\n")
 	case "oversized":
 		mustWrite(t, path, pytestSectionFixture(rel, maxVerificationInputBytes+1))
@@ -474,6 +475,7 @@ func TestVerificationUnreadablePytestConfigurationIsNotConfiguration(t *testing.
 func TestAdoptWithUnreadableSetupCfgWarnsInsteadOfFailing(t *testing.T) {
 	repoPath := newTestRepo(t, "gotool")
 	mustWrite(t, filepath.Join(repoPath, "go.mod"), "module example.com/gotool\n\ngo 1.27\n")
+	// codespell:ignore-next-line caf
 	mustWrite(t, filepath.Join(repoPath, "setup.cfg"), "[flake8]\nmax-line-length = 100\n# caf\xe9\n")
 	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
 	if err != nil {

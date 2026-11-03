@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+# SPDX-License-Identifier: EUPL-1.2
+
+[codespell]
+check-hidden =
+# Private state, dependencies, generated upstream schemas, byte-sensitive
+# fixtures, dependency locks and the generated changelog archive stay intact.
+skip = .git,.workingdir,node_modules,.venv,__pycache__,vendor,*/vendor/*,vendor/*,
+    */clientschema/upstream/*,internal/clientschema/upstream/*,
+    */testdata/*,testdata/*,*/third_party/*,third_party/*,
+    *.b64,tools/figures/player/player.js,*/tools/figures/player/player.js,
+    *.lock,*-lock.json,pnpm-lock.yaml,go.sum,go.work.sum,CHANGELOG.md
+# Existing identifiers (ancestor, command input, dot-file A, failure result,
+# FROM lines, has static measurement, header error, PR file, render in,
+# session with release, third-party and up-to-date), package names, formats,
+# shader suffixes, timezone names, merchant-of-record acronym and valid variants.
+ignore-words-list = anc,commandin,decorder,devlop,disjointness,dota,edn,failres,
+    froms,hass,headerr,intoto,ist,mor,prfile,ratatui,rcall,
+    re-declared,re-declares,readded,reenabled,renderin,statics,swith,tese,
+    thirdparty,unparseable,uptodate
+# Preserve published URL path components without accepting these in prose.
+# codespell:ignore-next-line fpt,implementors
+uri-ignore-words-list = fpt,implementors

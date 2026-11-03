@@ -186,7 +186,7 @@ func TestSaveSigningKey_Boundary(t *testing.T) {
 	}
 }
 
-// assertStoredSeed fails unless the key file at path holds exactly want's seed.
+// assertStoredSeed fails unless the key file at path holds exactly the expected seed.
 func assertStoredSeed(t *testing.T, path string, want ed25519.PrivateKey) {
 	t.Helper()
 	data, err := os.ReadFile(path) // #nosec G304 -- sandboxed test path under t.TempDir

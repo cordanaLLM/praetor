@@ -9,6 +9,22 @@ themselves, from fixed names, and prove each before they run it
 Install `yamllint`, `shellcheck`, `actionlint` and `hadolint`
 when editing their file types; applicable checks fail if their tool is missing
 or older than its floor ([linter version floors](#linter-version-floors)).
+The engine also checks staged text with `codespell`, using the root `.codespellrc`.
+Install its pinned release with the hash-locked Python tools:
+
+```bash
+python3 -m pip install --require-hashes -r .config/hook-lint/requirements.txt
+codespell --config .codespellrc .
+```
+
+CI runs the same spelling configuration over the tree, including documentation-only
+changes. Generated schemas, vendored code, testdata, dependency locks, encoded source
+bundles, the bundled player and the changelog archive are skipped. The shared ignore
+list contains valid names and identifiers; deliberate malformed test inputs use
+line-local `codespell:ignore` comments. Vendored hook policies enable this check
+when their repository supplies `.codespellrc`; an enabled check fails if codespell
+is missing. Regression coverage: `.config/lefthook/scripts/test_spelling.py`.
+
 Strict source pushes also require `gosec`, `govulncheck` and `semgrep`. Pushes touching nested tool
 modules (`tools/*/go.mod` or `go.sum`) also scan those directories with Trivy at CI severity
 (`HIGH,CRITICAL`), skipping with a stated notice when Trivy is not installed. Golangci-lint runs

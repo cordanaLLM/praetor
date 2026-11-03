@@ -80,6 +80,12 @@ overrides:
 # Declared per-file exceptions (AGENTS.md rule 14): one rule, one file, a reason and an expiry
 # at most 90 days ahead; an expired entry fails its gate like a missing one.
 exceptions:
+  - rule: "codespell"
+    path: "tools/figures/player/player.js"
+    category: "D"
+    reason: "category D: bundled minified third-party player; preserve upstream bytes while checking owned prose and source"
+    entered: "2026-11-04"
+    expires: "2027-03-04"
   - rule: "HISS-11"
     path: ".github/workflows/release-binaries.yml"
     category: "D"

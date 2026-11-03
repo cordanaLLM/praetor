@@ -155,6 +155,7 @@ func TestOperatorSettingsRejectInvalidDocuments(t *testing.T) {
 	root := policyFixture(t, "", "", "")
 	host := t.TempDir()
 	cases := map[string]string{
+		// codespell:ignore-next-line mdoe
 		"misspelled key":        "clients:\n  mdoe: strict\n",
 		"unknown client":        "clients:\n  selected:\n    cursor: {}\n",
 		"interpolation":         "update:\n  remote: \"$ORIGIN\"\n",
@@ -182,8 +183,10 @@ func TestOperatorSettingsRejectInvalidDocuments(t *testing.T) {
 			t.Errorf("%s accepted: %q", name, body)
 		}
 	}
+	// codespell:ignore-next-line mdoe
 	path := writePolicyFile(t, t.TempDir(), "fleet.yaml", "clients:\n  mdoe: strict\n")
 	_, err := LoadEffectivePolicyContext(t.Context(), EffectiveOptions{Root: root, FleetPath: path})
+	// codespell:ignore-next-line mdoe
 	if err == nil || !strings.Contains(err.Error(), `"clients.mdoe"`) {
 		t.Fatalf("a misspelled key must be named: %v", err)
 	}

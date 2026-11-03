@@ -643,6 +643,7 @@ func TestSanitize_Negative_NonLatinProseIsPreserved(t *testing.T) {
 		"\u041f\u0440\u0438\u0432\u0435\u0442, \u043c\u0438\u0440: \u0441\u0438\u0441\u0442\u0435\u043c\u0430 \u0440\u0430\u0431\u043e\u0442\u0430\u0435\u0442.",
 		"\u039a\u03b1\u03bb\u03b7\u03bc\u03ad\u03c1\u03b1 \u03ba\u03cc\u03c3\u03bc\u03b5",
 		"\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u3067\u3059\u3002",
+		// codespell:ignore-next-line caf
 		"caf\u00e9 na\u00efve \u2014 r\u00e9sum\u00e9",
 	} {
 		if HasInjection(prose) {
