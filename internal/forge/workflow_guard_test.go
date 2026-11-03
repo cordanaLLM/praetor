@@ -488,13 +488,13 @@ func markdownGateSelfTestGap(job workflowJob, jobID string) string {
 }
 
 // everyLegConditions are the step conditions that cannot differ between matrix legs: none,
-// !cancelled(), !cancelled() held off a draft pull request (ghworkflow.HostedGateNotDraft),
+// !cancelled(), review-cleared non-draft work (ghworkflow.HostedGateLegReady),
 // and the Windows shard-2 carrier condition.
 var everyLegConditions = []string{
 	"",
 	"${{ !cancelled() }}",
-	"${{ !cancelled() && " + ghworkflow.HostedGateNotDraft + " }}",
-	"${{ !cancelled() && " + ghworkflow.HostedGateNotDraft + " && matrix.shard == 2 }}",
+	"${{ " + ghworkflow.HostedGateLegReady + " }}",
+	"${{ " + ghworkflow.HostedGateLegReady + " && matrix.shard == 2 }}",
 }
 
 // runsOnEveryLeg reports whether a step's condition cannot differ between matrix legs.
@@ -517,7 +517,7 @@ func runsInPortabilityScope(step workflowStep, jobID, flag string) bool {
 		term = "(steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true')"
 	}
 	condition := strings.TrimSpace(step.If)
-	base := "${{ !cancelled() && " + ghworkflow.HostedGateNotDraft + " && " + term
+	base := "${{ " + ghworkflow.HostedGateLegReady + " && " + term
 	if condition == base+" }}" {
 		return true
 	}
@@ -563,7 +563,7 @@ func TestPortabilityReplaysMarkdownGateSelfTestOnEveryLeg(t *testing.T) {
 		{"boundary held off a draft", workflowJob{Steps: []workflowStep{
 			{Uses: node.Uses, If: everyLegConditions[2]}, {Run: markdownGateSelfTest, If: everyLegConditions[2]}}}, ""},
 		{"boundary draft term beside a leg term", workflowJob{Steps: []workflowStep{node,
-			{Run: markdownGateSelfTest, If: "${{ !cancelled() && " + ghworkflow.HostedGateNotDraft + " && runner.os != 'Windows' }}"}}}, "conditional"},
+			{Run: markdownGateSelfTest, If: "${{ " + ghworkflow.HostedGateLegReady + " && runner.os != 'Windows' }}"}}}, "conditional"},
 		{"negative shard condition in harness", workflowJob{Steps: []workflowStep{
 			node, {Run: markdownGateSelfTest, If: everyLegConditions[3]}}}, "conditional"},
 	}
@@ -1007,9 +1007,41 @@ func TestVerifyJobRunsDocsAuditOnRunDocs(t *testing.T) {
 	}
 }
 
+// Heavy legs require review clearance; extra selectors and platform skips remain conditional.
+func TestPortabilityLegReviewHoldConditions(t *testing.T) {
+	ready := ghworkflow.HostedGateLegReady
+	legacy := "!cancelled() && " + ghworkflow.HostedGateNotDraft
+	cases := []struct {
+		name, jobID, condition string
+		every, scope           bool
+	}{
+		{"ready harness", "harness", ready, true, true},
+		{"ready windows", "windows-shard", ready, true, true},
+		{"windows carrier", "windows-shard", ready + " && matrix.shard == 2", true, true},
+		{"harness carrier", "harness", ready + " && matrix.shard == 2", false, false},
+		{"declared scope", "harness", ready + " && steps.scope.outputs.harness == 'true'", false, true},
+		{"extra scope", "harness", ready + " && steps.scope.outputs.harness == 'true' && steps.scope.outputs.go == 'true'", false, false},
+		{"platform skip", "harness", ready + " && runner.os != 'Windows'", false, false},
+		{"missing hold harness", "harness", legacy, false, false},
+		{"missing hold windows", "windows-shard", legacy + " && matrix.shard == 2", false, false},
+		{"missing hold scoped", "harness", legacy + " && steps.scope.outputs.harness == 'true'", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			step := workflowStep{If: "${{ " + tc.condition + " }}"}
+			if got := runsOnEveryLeg(step, tc.jobID); got != tc.every {
+				t.Errorf("runsOnEveryLeg = %v, want %v", got, tc.every)
+			}
+			if got := runsInPortabilityScope(step, tc.jobID, "harness"); got != tc.scope {
+				t.Errorf("runsInPortabilityScope = %v, want %v", got, tc.scope)
+			}
+		})
+	}
+}
+
 // Scope guards accept only the named selector output and still reject platform skips.
 func TestPortabilityScopeConditions(t *testing.T) {
-	prefix := "${{ !cancelled() && " + ghworkflow.HostedGateNotDraft + " && "
+	prefix := "${{ " + ghworkflow.HostedGateLegReady + " && "
 	cases := []struct {
 		jobID           string
 		condition, flag string

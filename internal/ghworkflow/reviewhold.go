@@ -30,6 +30,8 @@ const (
 	// ReviewHoldClear guards later steps even when they deliberately run after failure.
 	// Non-PR events do not count reviews; PR reads must explicitly produce clear=true.
 	ReviewHoldClear = "(github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true')"
+	// HostedGateLegReady guards heavy legs after review clearance, including steps run after failure.
+	HostedGateLegReady = ReviewHoldClear + " && !cancelled() && " + HostedGateNotDraft
 	// reviewHoldLibrary is trusted inline Bash: release never checks out pull request code.
 	// Every API collection has a 20-page scalar bound; a full final page fails closed.
 	reviewHoldLibrary = `set -Eeuo pipefail
