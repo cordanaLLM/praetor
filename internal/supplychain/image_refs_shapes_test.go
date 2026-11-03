@@ -220,7 +220,7 @@ func yamlFlowMappingCases(digest string) []imageRefShapeCase {
 		{
 			name: "flow mappings and multiline image mappings report unpinned images",
 			file: "deploy/pod.yaml",
-			body: "{image: nginx:latest}\nspec: {container: {image: redis:7}}\ncontainers: [{name: web, image: alpine:3.20}, {name: proxy, image: \"envoy:v1.31\"}]\nmultiline:\n  image:\n    postgres:18\n",
+			body: "pod: {image: nginx:latest}\nspec: {container: {image: redis:7}}\ncontainers: [{name: web, image: alpine:3.20}, {name: proxy, image: \"envoy:v1.31\"}]\nmultiline:\n  image:\n    postgres:18\n",
 			want: []shapeExpectation{
 				{line: 1, ref: "nginx:latest"},
 				{line: 2, ref: "redis:7"},
@@ -232,12 +232,12 @@ func yamlFlowMappingCases(digest string) []imageRefShapeCase {
 		{
 			name: "pinned flow mapping and structured image mapping produce no finding",
 			file: "deploy/values.yaml",
-			body: "{image: nginx:1.27@sha256:" + digest + ", name: image}\nimage:\n  repository: nginx\n  tag: latest\n",
+			body: "pod: {image: nginx:1.27@sha256:" + digest + ", name: image}\nimage:\n  repository: nginx\n  tag: latest\n",
 		},
 		{
 			name: "flow mapping with template or substitution token is unresolvable",
 			file: "deploy/template.yaml",
-			body: "{image: \"${CONTAINER_IMAGE}\"}\nsidecar: {image: {{ .Values.sidecar.image }}}\n",
+			body: "pod: {image: \"${CONTAINER_IMAGE}\"}\nsidecar: {image: {{ .Values.sidecar.image }}}\n",
 			want: []shapeExpectation{
 				{line: 1, ref: "${CONTAINER_IMAGE}", unresolvable: true},
 				{line: 2, ref: "{{ .Values.sidecar.image }}", unresolvable: true},
@@ -255,4 +255,45 @@ func TestCollectImageRefFindings_YAMLFlowMappings_3D(t *testing.T) {
 			assertImageRefShapeFindings(t, tc)
 		})
 	}
+}
+
+// yamlMultiDocumentCases returns 3D test cases for multi-document YAML streams separated by ---.
+func yamlMultiDocumentCases(digest string) []imageRefShapeCase {
+	return []imageRefShapeCase{
+		{
+			name: "second and third YAML documents report unpinned quoted image keys",
+			file: "deploy/manifests.yaml",
+			body: "apiVersion: v1\nkind: Service\n---\nspec:\n  \"image\": nginx:latest\n---\nflow: {\"image\": \"redis:7\"}\n",
+			want: []shapeExpectation{
+				{line: 5, ref: "nginx:latest"},
+				{line: 7, ref: "redis:7"},
+			},
+		},
+		{
+			name: "pinned quoted image keys in later YAML documents produce no finding",
+			file: "deploy/pinned-manifests.yaml",
+			body: "apiVersion: v1\nkind: Service\n---\nspec:\n  \"image\": nginx:1.27@sha256:" + digest + "\n  sidecar: {\"image\": \"redis:7@sha256:" + digest + "\"}\n",
+		},
+	}
+}
+
+// TestCollectImageRefFindings_YAMLMultiDocumentAndParseError_3D verifies that all YAML documents in
+// a multi-document stream are decoded and that a malformed YAML document reports an error finding.
+func TestCollectImageRefFindings_YAMLMultiDocumentAndParseError_3D(t *testing.T) {
+	const digest = "4a7b9f0e1c2d3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b"
+	for _, tc := range yamlMultiDocumentCases(digest) {
+		t.Run(tc.name, func(t *testing.T) {
+			assertImageRefShapeFindings(t, tc)
+		})
+	}
+	t.Run("malformed first YAML document reports unresolvable error finding", func(t *testing.T) {
+		const file = "deploy/broken.yaml"
+		got := CollectImageRefFindings(file, "spec: [unclosed\n---\n\"image\": nginx:latest\n")
+		if len(got) != 1 {
+			t.Fatalf("malformed YAML: got %d findings (%+v), want 1", len(got), got)
+		}
+		if !got[0].Unresolvable || got[0].File != file || got[0].Line != 0 || got[0].Reference == "" {
+			t.Fatalf("malformed YAML finding = %+v, want Unresolvable=true Line=0 on %s with parse error", got[0], file)
+		}
+	})
 }
