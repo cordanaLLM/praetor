@@ -443,15 +443,18 @@ func (p *Policy) CommandIn(ctx context.Context, command, workDir string) Verdict
 			return Verdict{Outcome: Deny, Reason: boundReason(rule.prefix + rule.source)}
 		}
 	}
+	verdict := Verdict{Outcome: Allow}
 	if p.admission != nil {
-		if verdict := p.admission.judgeInDir(ctx, workDir, command); verdict.Outcome != Allow {
+		if verdict = p.admission.judgeInDir(ctx, workDir, command); verdict.Outcome != Allow {
 			return verdict
 		}
 	}
 	if p.worktrees != nil {
-		return p.worktrees.judge(ctx, command, workDir)
+		if wtVerdict := p.worktrees.judge(ctx, command, workDir); wtVerdict.Outcome != Allow {
+			return wtVerdict
+		}
 	}
-	return Verdict{Outcome: Allow}
+	return verdict
 }
 
 // containsRequiredLiteral applies the declared prefilter without interpreting literals as regexes.

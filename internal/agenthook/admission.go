@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/admission"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/sentinel"
@@ -126,6 +128,7 @@ type pushJudgement struct {
 	sawSystemdRun bool
 	scopeMissing  []string
 	pushLabel     string
+	notice        string
 }
 
 // PushTarget identifies the repository directory, parsed network remote, forge kind and
@@ -195,8 +198,11 @@ func defaultPullRequestHeadReader(ctx context.Context, target PushTarget) ([]for
 
 // declaredForgejoHost resolves the repository's declared Forgejo host from origin remote when forge is declared.
 func declaredForgejoHost(ctx context.Context, repoDir string) string {
-	declared, err := declaredManifestForge(repoDir)
-	if err != nil || declared != config.ForgeForgejo {
+	declared, err := declaredManifestForge(ctx, repoDir)
+	if err != nil && declared == "" {
+		return ""
+	}
+	if declared != config.ForgeForgejo {
 		return ""
 	}
 	origin, err := util.ReadOriginRemote(ctx, repoDir)
@@ -268,17 +274,20 @@ func (c *admissionCheck) judgeInDir(ctx context.Context, workDir, command string
 	if len(segments) > admissionMaxSegments {
 		return Verdict{Outcome: Deny, Reason: refusal("HISS", fmt.Sprintf("heavy-step check: over %d simple commands; split command", admissionMaxSegments))}
 	}
+	var notice string
 	for index := 0; index < len(segments) && index < admissionMaxSegments; index++ {
-		if reason := c.segment(ctx, workDir, strings.Fields(segments[index])); reason != "" {
-			return Verdict{Outcome: Deny, Reason: reason}
+		reason, segNotice := c.segment(ctx, workDir, strings.Fields(segments[index]))
+		notice = appendLaneNotice(notice, segNotice)
+		if reason != "" {
+			return Verdict{Outcome: Deny, Reason: reason, Notice: notice}
 		}
 	}
-	return Verdict{Outcome: Allow}
+	return Verdict{Outcome: Allow, Notice: notice}
 }
 
 // segment reports whether one simple command is a heavy step, looking through the wrappers
-// before it, or a privilege escalator, and returns the refusal.
-func (c *admissionCheck) segment(ctx context.Context, workDir string, words []string) string {
+// before it, or a privilege escalator, and returns the refusal and any non-blocking notice.
+func (c *admissionCheck) segment(ctx context.Context, workDir string, words []string) (string, string) {
 	words = words[:min(len(words), admissionMaxWords)]
 	i := skipPrelude(words)
 	step := pushJudgement{
@@ -288,22 +297,22 @@ func (c *admissionCheck) segment(ctx context.Context, workDir string, words []st
 	for depth := 0; i < len(words) && depth < admissionMaxWrappers; depth++ {
 		name := commandName(words[i])
 		if privilegeInvocationPattern.MatchString(strings.Join(append([]string{name}, words[i+1:]...), " ")) {
-			return refusal("HISS", evasionMessage+"; privilege escalation prohibited: "+name)
+			return refusal("HISS", evasionMessage+"; privilege escalation prohibited: "+name), ""
 		}
 		if nextStep, isAdmit := admitStep(name, words, i); isAdmit {
 			if nextStep < 0 {
-				return ""
+				return "", ""
 			}
 			step.admitted, i = true, nextStep
 			continue
 		}
 		if shape, ok := c.shape(name, words[i+1:]); ok {
 			step.name, step.shape, step.args = name, shape, words[i+1:]
-			return c.judgeStep(ctx, &step)
+			return c.judgeStep(ctx, &step), step.notice
 		}
 		spec, wrapper := admissionWrappers[name]
 		if !wrapper {
-			return ""
+			return "", ""
 		}
 		next := commandAfter(words, i, spec)
 		if name == "systemd-run" {
@@ -312,7 +321,7 @@ func (c *admissionCheck) segment(ctx context.Context, workDir string, words []st
 		}
 		i = next
 	}
-	return ""
+	return "", ""
 }
 
 // admitStep reports whether the command at i is `praetorctl admit` and, when it is, the index of
@@ -410,7 +419,8 @@ func (c *admissionCheck) judgePushHead(ctx context.Context, step *pushJudgement)
 	if baseDir == "" {
 		baseDir = c.workDir
 	}
-	targets, skip, err := resolvePushTargets(ctx, baseDir, step.args)
+	targets, notice, skip, err := resolvePushTargets(ctx, baseDir, step.args)
+	step.notice = appendLaneNotice(step.notice, notice)
 	if err != nil {
 		return refusal("HISS", fmt.Sprintf("git push target resolution failed for %s: %v; "+
 			"verify repository, remote and branch before pushing (docs/guides/admission.md)", step.shape, err))
@@ -502,26 +512,27 @@ type pushCommandSpec struct {
 	skip        bool
 }
 
-// resolvePushTargets determines the repo directory, destination branches, and forge details for git push.
-func resolvePushTargets(ctx context.Context, baseDir string, gitArgs []string) ([]PushTarget, bool, error) {
+// resolvePushTargets determines the repo directory, destination branches, forge details, and any
+// non-blocking manifest notice for git push.
+func resolvePushTargets(ctx context.Context, baseDir string, gitArgs []string) ([]PushTarget, string, bool, error) {
 	repoDir, pushArgs, err := parseGitPushArgs(baseDir, gitArgs)
 	if err != nil {
-		return nil, false, err
+		return nil, "", false, err
 	}
 	spec, err := parsePushCommand(pushArgs)
 	if err != nil || spec.skip {
-		return nil, spec.skip, err
+		return nil, "", spec.skip, err
 	}
 	remoteName, branches, err := resolvePushBranches(ctx, repoDir, spec)
 	if err != nil {
-		return nil, false, err
+		return nil, "", false, err
 	}
 	if len(branches) == 0 {
-		return nil, true, nil
+		return nil, "", true, nil
 	}
-	remote, forgeKind, err := resolvePushRemoteAndForge(ctx, repoDir, remoteName)
+	remote, forgeKind, notice, err := resolvePushRemoteAndForge(ctx, repoDir, remoteName)
 	if err != nil {
-		return nil, false, err
+		return nil, notice, false, err
 	}
 	targets := make([]PushTarget, 0, len(branches))
 	for i := 0; i < len(branches) && i < admissionMaxWords; i++ {
@@ -532,7 +543,7 @@ func resolvePushTargets(ctx context.Context, baseDir string, gitArgs []string) (
 			Branch:  branches[i],
 		})
 	}
-	return targets, false, nil
+	return targets, notice, false, nil
 }
 
 // resolvePushBranches resolves the remote name and destination branch list for a parsed push command.
@@ -930,45 +941,61 @@ func resolveCurrentBranch(ctx context.Context, repoDir string) (string, error) {
 	return branch, nil
 }
 
-// resolvePushRemoteAndForge identifies the remote network details and target forge kind.
-func resolvePushRemoteAndForge(ctx context.Context, repoDir, remoteName string) (util.GitRemote, config.Forge, error) {
+// resolvePushRemoteAndForge identifies the remote network details, target forge kind, and any
+// non-blocking manifest notice.
+func resolvePushRemoteAndForge(ctx context.Context, repoDir, remoteName string) (util.GitRemote, config.Forge, string, error) {
 	if !util.DirExists(repoDir) {
-		return util.GitRemote{}, "", fmt.Errorf("repository directory %q does not exist", repoDir)
+		return util.GitRemote{}, "", "", fmt.Errorf("repository directory %q does not exist", repoDir)
 	}
 	remote, err := util.ReadGitPushRemote(ctx, repoDir, remoteName)
 	if err != nil {
-		return util.GitRemote{}, "", err
+		return util.GitRemote{}, "", "", err
 	}
-	forgeKind, err := resolvePushForge(repoDir, remote)
+	forgeKind, notice, err := resolvePushForge(ctx, repoDir, remote)
 	if err != nil {
-		return util.GitRemote{}, "", err
+		return util.GitRemote{}, "", notice, err
 	}
-	return remote, forgeKind, nil
+	return remote, forgeKind, notice, nil
 }
 
-// resolvePushForge resolves the forge kind from manifest declaration or remote hostname.
-func resolvePushForge(repoDir string, remote util.GitRemote) (config.Forge, error) {
-	declared, err := declaredManifestForge(repoDir)
+// resolvePushForge resolves the forge kind from manifest declaration or remote hostname,
+// retaining usable declarations with a notice when unrelated manifest fields cannot be decoded.
+// An unknown host without a usable declaration is refused rather than assigned a guessed forge.
+func resolvePushForge(ctx context.Context, repoDir string, remote util.GitRemote) (config.Forge, string, error) {
+	declared, err := declaredManifestForge(ctx, repoDir)
+	var notice string
 	if err != nil {
-		return "", err
+		notice = fmt.Sprintf("git push target resolution: %v; using repository.forge declaration %s", err, declared)
+		if declared == "" {
+			notice = fmt.Sprintf("git push target resolution: %v; falling back to remote host %s", err, remote.Host)
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return "", notice, err
+		}
 	}
 	if declared == "" && isForgejoHost(remote.Host) {
-		return config.ForgeForgejo, nil
+		return config.ForgeForgejo, notice, nil
 	}
-	return config.RepositoryForge(declared, remote.Host)
+	forgeKind, forgeErr := config.RepositoryForge(declared, remote.Host)
+	return forgeKind, notice, forgeErr
 }
 
-// declaredManifestForge reads the forge declared in .standards.yaml if present.
-func declaredManifestForge(repoDir string) (config.Forge, error) {
-	manifestPath := filepath.Join(repoDir, config.ManifestFileName)
-	if !util.FileExists(manifestPath) {
+// declaredManifestForge reads the forge declared in .standards.yaml if present through the
+// structural decoder and a forge-only projection so unrelated policy types cannot block it.
+func declaredManifestForge(ctx context.Context, repoDir string) (config.Forge, error) {
+	manifestPath := filepath.Clean(filepath.Join(repoDir, config.ManifestFileName))
+	data, err := readPushManifest(ctx, manifestPath, contextopt.ReadSnapshot)
+	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
 	}
-	manifest, err := config.LoadManifest(manifestPath)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", manifestPath, err)
 	}
-	return manifest.Repository.Forge, nil
+	declared, err := decodePushManifestForge(data)
+	if err != nil {
+		return declared, fmt.Errorf("read %s: %w", manifestPath, err)
+	}
+	return declared, nil
 }
 
 // isForgejoHost checks whether a hostname indicates a Forgejo or Codeberg host.
