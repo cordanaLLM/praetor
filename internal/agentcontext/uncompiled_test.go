@@ -19,10 +19,10 @@ import (
 func writeTestFile(t *testing.T, dir, rel, content string) {
 	t.Helper()
 	full := filepath.Join(dir, rel)
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -69,7 +69,7 @@ func TestVerifyUncompiledInstructions_Context_Negative(t *testing.T) {
 // Negative: dangling gitlink metadata reports worktree present but Git probe fails; must fail closed.
 func TestVerifyUncompiledInstructions_Context_Negative_DanglingGitlinkFailsClosed(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: nonexistent-target\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: nonexistent-target\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	files, err := UncompiledInstructionFiles(t.Context(), dir)

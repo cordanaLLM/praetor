@@ -65,7 +65,7 @@ func TestCompileContext_UncompiledInstructions_NegativeAndPositive(t *testing.T)
 // Negative: dangling gitlink metadata where Git probe fails must fail closed.
 func TestCompileContext_UncompiledInstructions_DanglingGitlinkFailsClosed(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: nonexistent-target\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: nonexistent-target\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := agentcontext.VerifyUncompiledInstructions(t.Context(), dir); err == nil {

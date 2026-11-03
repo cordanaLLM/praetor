@@ -36,11 +36,11 @@ func initAdoptedFixture(t *testing.T, dir string) {
 	fixtureGit(t, dir, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "init")
 
 	gitignorePath := filepath.Join(dir, ".gitignore")
-	if err := os.WriteFile(gitignorePath, []byte(adopt.ManagedGitIgnoreBlock()), 0o644); err != nil {
+	if err := os.WriteFile(gitignorePath, []byte(adopt.ManagedGitIgnoreBlock()), 0o600); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
 	}
 	trackedFile := filepath.Join(dir, "tracked.txt")
-	if err := os.WriteFile(trackedFile, []byte("tracked\n"), 0o644); err != nil {
+	if err := os.WriteFile(trackedFile, []byte("tracked\n"), 0o600); err != nil {
 		t.Fatalf("write tracked file: %v", err)
 	}
 	fixtureGit(t, dir, "add", ".gitignore", "tracked.txt")
@@ -57,10 +57,10 @@ func TestInspectStateClientLocalSettings_Positive(t *testing.T) {
 	initAdoptedFixture(t, dir)
 
 	claudeLocal := filepath.Join(dir, ".claude", "settings.local.json")
-	if err := os.MkdirAll(filepath.Dir(claudeLocal), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(claudeLocal), 0o700); err != nil {
 		t.Fatalf("mkdir .claude: %v", err)
 	}
-	if err := os.WriteFile(claudeLocal, []byte(`{"permissions":{"allow":["Bash"]}}`+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(claudeLocal, []byte(`{"permissions":{"allow":["Bash"]}}`+"\n"), 0o600); err != nil {
 		t.Fatalf("write settings.local.json: %v", err)
 	}
 
@@ -79,15 +79,15 @@ func TestInspectStateClientLocalSettings_Negative(t *testing.T) {
 	initAdoptedFixture(t, dir)
 
 	claudeLocal := filepath.Join(dir, ".claude", "settings.local.json")
-	if err := os.MkdirAll(filepath.Dir(claudeLocal), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(claudeLocal), 0o700); err != nil {
 		t.Fatalf("mkdir .claude: %v", err)
 	}
-	if err := os.WriteFile(claudeLocal, []byte(`{"permissions":{"allow":["Bash"]}}`+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(claudeLocal, []byte(`{"permissions":{"allow":["Bash"]}}`+"\n"), 0o600); err != nil {
 		t.Fatalf("write settings.local.json: %v", err)
 	}
 
 	trackedFile := filepath.Join(dir, "tracked.txt")
-	if err := os.WriteFile(trackedFile, []byte("modified\n"), 0o644); err != nil {
+	if err := os.WriteFile(trackedFile, []byte("modified\n"), 0o600); err != nil {
 		t.Fatalf("modify tracked file: %v", err)
 	}
 
@@ -108,7 +108,7 @@ func TestInspectStateClientLocalSettings_Boundary(t *testing.T) {
 
 	v3Block := "bin/\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n.workingdir/\n.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n# END praetor private artifacts\n"
 	gitignorePath := filepath.Join(dir, ".gitignore")
-	if err := os.WriteFile(gitignorePath, []byte(v3Block), 0o644); err != nil {
+	if err := os.WriteFile(gitignorePath, []byte(v3Block), 0o600); err != nil {
 		t.Fatalf("write v3 .gitignore: %v", err)
 	}
 	fixtureGit(t, dir, "add", ".gitignore")
@@ -154,10 +154,10 @@ func TestInspectStateClientLocalSettings_Boundary(t *testing.T) {
 		t.Fatalf("init working dir: %v", err)
 	}
 	claudeLocal := filepath.Join(dir, ".claude", "settings.local.json")
-	if err := os.MkdirAll(filepath.Dir(claudeLocal), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(claudeLocal), 0o700); err != nil {
 		t.Fatalf("mkdir .claude: %v", err)
 	}
-	if err := os.WriteFile(claudeLocal, []byte(`{}`+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(claudeLocal, []byte(`{}`+"\n"), 0o600); err != nil {
 		t.Fatalf("write settings.local.json: %v", err)
 	}
 	snap, err := state.InspectState(t.Context(), dir)
@@ -211,8 +211,16 @@ func TestStateLedgerIntegrityGuide_DocumentsCurrentBlockVersion_Boundary(t *test
 
 func readStateLedgerIntegrityGuide(t *testing.T) string {
 	t.Helper()
-	guidePath := filepath.Join("..", "..", "docs", "guides", "state-ledger-integrity.md")
-	content, err := os.ReadFile(guidePath)
+	root, err := os.OpenRoot(filepath.Join("..", "..", "docs", "guides"))
+	if err != nil {
+		t.Fatalf("open guides root: %v", err)
+	}
+	defer func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("close guides root: %v", err)
+		}
+	}()
+	content, err := root.ReadFile("state-ledger-integrity.md")
 	if err != nil {
 		t.Fatalf("read guide: %v", err)
 	}
