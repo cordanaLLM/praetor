@@ -2067,7 +2067,7 @@ entries:
       - "npm:@axe-core/playwright"
   - name: "ESLint"
     url: "https://github.com/eslint/eslint"
-    detail: "eslint 10.13.0, @eslint/js 10.0.1"
+    detail: "eslint 10.14.0, @eslint/js 10.0.1"
     section: "development"
     kind: "tool"
     relation: "used by CI"
