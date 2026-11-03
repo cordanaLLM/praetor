@@ -4,7 +4,10 @@
 
 package ghworkflow
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 const (
 	// ReviewHoldTitle identifies a refusal that the release workflow may reconsider.
@@ -13,6 +16,11 @@ const (
 	// Match check names/app slugs and status contexts/creator logins, including
 	// CodeRabbit, Codacy Static Code Analysis and sourcery-ai.
 	ReviewHoldBots = "coderabbit|codacy|sourcery"
+	// ReviewHoldStepTimeoutMinutes bounds the "Stop while review is open" step.
+	// The barrier queries up to 20 pages per loop across at most 3 API collections
+	// (threads, check runs, statuses) = 60 requests maximum. At 4 seconds per
+	// request, 60 * 4 s = 240 s = 4 minutes.
+	ReviewHoldStepTimeoutMinutes = 4
 	// ReviewHoldQuery is the one paginated thread query used by the barrier and release.
 	ReviewHoldQuery = `query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $name) {
@@ -148,6 +156,7 @@ func RenderReviewHoldStep(reference bool) string {
 	return "      - name: Stop while review is open\n" +
 		"        id: review-hold\n" +
 		"        if: " + ReviewHoldCondition + "\n" +
+		"        timeout-minutes: " + strconv.Itoa(ReviewHoldStepTimeoutMinutes) + "\n" +
 		"        shell: bash\n" +
 		"        env:\n" +
 		"          GH_TOKEN: ${{ github.token }}\n" +

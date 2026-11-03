@@ -6,6 +6,7 @@ package forge
 
 import (
 	"maps"
+	"strconv"
 
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 )
@@ -34,9 +35,13 @@ func reviewHoldExecutionMatches(step, want *workflowStep) bool {
 		step.Uses == "" && step.Run == want.Run && step.Shell == want.Shell && step.ContinueOnError == ""
 }
 
-// reviewHoldOptionsMatch refuses added overrides and compares the renderer's environment values.
+// reviewHoldOptionsMatch refuses added overrides, enforces the required timeout and compares the renderer's environment values.
 func reviewHoldOptionsMatch(step, want *workflowStep) bool {
-	if step.WorkingDirectory != "" || len(step.With) != 0 || step.TimeoutMinutes.Kind != 0 {
+	wantTimeout := strconv.Itoa(ghworkflow.ReviewHoldStepTimeoutMinutes)
+	if step.WorkingDirectory != "" || len(step.With) != 0 ||
+		step.TimeoutMinutes.Kind == 0 ||
+		step.TimeoutMinutes.Value != wantTimeout ||
+		want.TimeoutMinutes.Value != wantTimeout {
 		return false
 	}
 	var gotEnv, wantEnv map[string]string

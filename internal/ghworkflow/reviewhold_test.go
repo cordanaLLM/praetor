@@ -418,6 +418,17 @@ func TestReviewHoldRendering(t *testing.T) {
 	}
 }
 
+// TestReviewHoldStepTimeoutRendered verifies RenderReviewHoldStep emits timeout-minutes.
+func TestReviewHoldStepTimeoutRendered(t *testing.T) {
+	want := "        timeout-minutes: " + strconv.Itoa(ReviewHoldStepTimeoutMinutes) + "\n"
+	if !strings.Contains(RenderReviewHoldStep(false), want) {
+		t.Fatalf("RenderReviewHoldStep(false) does not contain %q", want)
+	}
+	if !strings.Contains(RenderReviewHoldStep(true), want) {
+		t.Fatalf("RenderReviewHoldStep(true) does not contain %q", want)
+	}
+}
+
 // assertAggregateReviewHold verifies the shared barrier precedes the aggregate's result check.
 func assertAggregateReviewHold(t *testing.T, job Job) {
 	t.Helper()

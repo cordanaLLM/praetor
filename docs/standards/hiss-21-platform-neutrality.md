@@ -85,9 +85,13 @@ lander reads it as held. It still fails when a shard fails, is cancelled or is s
 fails with annotation title **`Gate held: review open`**, writes the unresolved-thread count and
 pending bot check names to its summary, and runs no subsequent matrix step. The step escapes the
 title and message without quoted patterns, because macOS runners use `/bin/bash` 3.2, which keeps
-quotes inside `${var//pattern/replacement}`; a static test refuses quoted forms. Every later step
-carries the explicit `steps.review-hold.outputs.clear` condition, including steps that normally run
-after a failure. Push, merge-group and manual runs retain their existing behavior.
+quotes inside `${var//pattern/replacement}`; a static test refuses quoted forms. The step declares an explicit `timeout-minutes: 4` (`ghworkflow.ReviewHoldStepTimeoutMinutes`),
+bounding the runner against stalled API calls: querying up to 20 pages across 3 API collections
+(threads, check runs, statuses) yields at most 60 requests; with a 4-second per-request budget (240 s),
+the step is capped at 4 minutes. Because the installed `gh` CLI provides no client-side HTTP timeout
+configuration, the step timeout serves as the bound. Every later step carries the explicit
+`steps.review-hold.outputs.clear` condition, including steps that normally run after a failure. Push,
+merge-group and manual runs retain their existing behavior.
 
 `internal/ghworkflow/reviewhold.go` owns the shared GraphQL thread query, Bash counter and
 `ReviewHoldBots` pattern: CodeRabbit, Codacy Static Code Analysis and sourcery-ai, matched without

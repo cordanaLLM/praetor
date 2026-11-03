@@ -161,6 +161,7 @@ jobs:
       - name: Stop while review is open
         id: review-hold
         if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+        timeout-minutes: 4
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -768,6 +769,7 @@ jobs:
       - name: Stop while review is open
         id: review-hold
         if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+        timeout-minutes: 4
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1099,6 +1101,7 @@ jobs:
       - name: Stop while review is open
         id: review-hold
         if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+        timeout-minutes: 4
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
