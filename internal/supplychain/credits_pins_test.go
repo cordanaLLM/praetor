@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -235,7 +236,17 @@ func requireCreditPinError(t *testing.T, err error, terms ...string) {
 	}
 }
 
-// Console build instructions must name the component pins and UI tag in the committed manifest.
+// briefPinnedVersion extracts one package's pinned version from the brief text.
+func briefPinnedVersion(brief, pkg string) string {
+	pattern := "`" + regexp.QuoteMeta(pkg) + "`\\s+(" + semverPattern.String() + ")"
+	matches := regexp.MustCompile(pattern).FindStringSubmatch(brief)
+	if len(matches) > 1 {
+		return matches[1]
+	}
+	return ""
+}
+
+// TestConsoleBriefPinsMatchManifest verifies console build instructions name the component pins and UI tag in the committed manifest.
 func TestConsoleBriefPinsMatchManifest(t *testing.T) {
 	root := filepath.Join("..", "..")
 	data, _, err := contextopt.ObserveSnapshotIn(t.Context(), root, "console/package.json")
@@ -250,26 +261,27 @@ func TestConsoleBriefPinsMatchManifest(t *testing.T) {
 	if err != nil || !exists {
 		t.Fatalf("read console/BRIEF.md: exists=%v, err=%v", exists, err)
 	}
-	for _, pkg := range []string{"@sveltesentio/ui", "@sveltesentio/realtime"} {
-		version, ok := manifest.Dependencies[pkg]
+	cases := []struct {
+		pkg  string
+		pins map[string]string
+	}{
+		{"@sveltesentio/ui", manifest.Dependencies},
+		{"@sveltesentio/realtime", manifest.Dependencies},
+		{"@sveltejs/kit", manifest.DevDependencies},
+		{"svelte", manifest.DevDependencies},
+		{"@sveltejs/adapter-static", manifest.DevDependencies},
+	}
+	for _, tc := range cases {
+		version, ok := tc.pins[tc.pkg]
 		if !ok || version == "" {
-			t.Fatalf("console/package.json has no pin for %s", pkg)
+			t.Fatalf("console/package.json has no pin for %s", tc.pkg)
 		}
-		if !namesTerm(string(brief), "`"+pkg+"` "+version, termByte) {
-			t.Errorf("console/BRIEF.md does not name %s at manifest version %s", pkg, version)
+		if got := briefPinnedVersion(string(brief), tc.pkg); got != version {
+			t.Errorf("console/BRIEF.md does not name %s at manifest version %s", tc.pkg, version)
 		}
 	}
 	if tag := "`ui-v" + manifest.Dependencies["@sveltesentio/ui"] + "`"; !strings.Contains(string(brief), tag) {
 		t.Errorf("console/BRIEF.md does not name manifest UI tag %s", tag)
-	}
-	for _, pkg := range []string{"@sveltejs/kit", "svelte", "@sveltejs/adapter-static"} {
-		version, ok := manifest.DevDependencies[pkg]
-		if !ok || version == "" {
-			t.Fatalf("console/package.json has no pin for %s", pkg)
-		}
-		if !namesTerm(string(brief), "`"+pkg+"` "+version, termByte) {
-			t.Errorf("console/BRIEF.md does not name %s at manifest version %s", pkg, version)
-		}
 	}
 }
 
