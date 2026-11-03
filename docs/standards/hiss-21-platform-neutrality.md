@@ -79,11 +79,15 @@ tests the nested module `tools/schemacheck`, which `./...` of the root module do
 ### Review hold before heavy work
 
 On `pull_request` events, the Linux and macOS matrix and Windows shards run
-`Stop while review is open` immediately after the draft barrier. The Windows aggregate fails
-when a shard fails, preserving its existing coverage proof. A held leg fails with annotation title **`Gate held: review open`**, writes the unresolved-thread count and pending
-bot check names to its summary, and runs no subsequent matrix step. Every later step carries the
-explicit `steps.review-hold.outputs.clear` condition, including steps that normally run after a
-failure. Push, merge-group and manual runs retain their existing behavior.
+`Stop while review is open` immediately after the draft barrier. The aggregate job `windows` now
+runs the shared hold step first, so a held run's aggregate fails with the hold title too and the
+lander reads it as held. It still fails when a shard fails, is cancelled or is skipped. A held leg
+fails with annotation title **`Gate held: review open`**, writes the unresolved-thread count and
+pending bot check names to its summary, and runs no subsequent matrix step. The step escapes the
+title and message without quoted patterns, because macOS runners use `/bin/bash` 3.2, which keeps
+quotes inside `${var//pattern/replacement}`; a static test refuses quoted forms. Every later step
+carries the explicit `steps.review-hold.outputs.clear` condition, including steps that normally run
+after a failure. Push, merge-group and manual runs retain their existing behavior.
 
 `internal/ghworkflow/reviewhold.go` owns the shared GraphQL thread query, Bash counter and
 `ReviewHoldBots` pattern: CodeRabbit, Codacy Static Code Analysis and sourcery-ai, matched without
@@ -101,7 +105,9 @@ PR within the same page bound, it inspects the newest `portability.yml` PR run o
 its current attempt's failed-job annotations. It reruns a completed failed run only when the hold
 title is present and the shared counter now returns zero for both counts. It rechecks the run
 attempt and PR head immediately before rerunning; unrelated failures are left alone. Rerunning
-the workflow also reruns its other jobs. Read failures stop release without rerunning that PR.
+the workflow also reruns its other jobs. Each pull request's release scan now runs isolated: a
+read failure fails only that pull request (no rerun for it), prints `Review hold release read failed`
+naming it, the scan continues for the others, and the job exits 1 at the end.
 
 The release script is rendered inline by `RenderReviewHoldReleaseWorkflow`; it never checks out
 PR code. Its token has Actions write and pull-request, Checks and commit-status read
