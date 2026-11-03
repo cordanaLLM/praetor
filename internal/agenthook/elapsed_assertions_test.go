@@ -106,13 +106,25 @@ func elapsedFailurePositions(body *ast.BlockStmt) []token.Pos {
 func rememberElapsedBindings(node ast.Node, bindings elapsedBindings) {
 	switch value := node.(type) {
 	case *ast.AssignStmt:
+		compound := compoundAssignment(value.Tok)
 		for index, left := range value.Lhs {
-			rememberElapsedName(left, assignedExpression(value.Rhs, len(value.Lhs), index), bindings)
+			rememberElapsedName(left, assignedExpression(value.Rhs, len(value.Lhs), index), compound, bindings)
 		}
 	case *ast.ValueSpec:
 		for index, left := range value.Names {
-			rememberElapsedName(left, assignedExpression(value.Values, len(value.Names), index), bindings)
+			rememberElapsedName(left, assignedExpression(value.Values, len(value.Names), index), false, bindings)
 		}
+	}
+}
+
+// compoundAssignment reports whether tok is a read-modify-write assignment operator.
+func compoundAssignment(tok token.Token) bool {
+	switch tok {
+	case token.ADD_ASSIGN, token.SUB_ASSIGN, token.MUL_ASSIGN, token.QUO_ASSIGN, token.REM_ASSIGN,
+		token.AND_ASSIGN, token.OR_ASSIGN, token.XOR_ASSIGN, token.SHL_ASSIGN, token.SHR_ASSIGN, token.AND_NOT_ASSIGN:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -125,9 +137,15 @@ func assignedExpression(expressions []ast.Expr, targets, index int) ast.Expr {
 }
 
 // rememberElapsedName updates a local name's comparison or delta binding from its assigned expression.
-func rememberElapsedName(left, right ast.Expr, bindings elapsedBindings) {
+func rememberElapsedName(left, right ast.Expr, compound bool, bindings elapsedBindings) {
 	name, ok := left.(*ast.Ident)
 	if !ok {
+		return
+	}
+	if compound {
+		if containsElapsed(right, bindings.deltas) {
+			bindings.deltas[name.Name] = true
+		}
 		return
 	}
 	if elapsedComparison(right, bindings) {
@@ -248,6 +266,8 @@ func TestCorrelationElapsedAssertionShapes(t *testing.T) {
 		{"alias cleared", `slow := time.Since(start) > bound; slow = false; if slow { t.Fatal("x") }`, 0},
 		{"alias re-bound", `slow := false; slow = time.Since(start) > bound; if slow { t.Fatal("x") }`, 1},
 		{"delta cleared", `elapsed := time.Since(start); elapsed = 0; if elapsed > bound { t.Fatal("x") }`, 0},
+		{"compound keeps delta", `elapsed := time.Since(start); elapsed -= offset; if elapsed > bound { t.Fatal("x") }`, 1},
+		{"compound adds delta", `var elapsed time.Duration; elapsed += time.Since(start); if elapsed > bound { t.Fatal("x") }`, 1},
 		{"multi-assign cleared", `slow := time.Since(start) > bound; slow, ok := next(); if slow && ok { t.Fatal("x") }`, 0},
 		{"sub reversed", `var elapsed = end.Sub(start); if bound <= elapsed { t.Errorf("slow") }`, 1},
 		{"compound", `if bad || time.Since(start) > bound { t.Fatal("slow") }`, 1},
