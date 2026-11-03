@@ -132,6 +132,9 @@ func TestRustMSRVSkipBeforeInputBounds(t *testing.T) {
 		mustWrite(t, filepath.Join(root, "rust-toolchain"), "1.80\n")
 		line, err := AuditRustMSRV(t.Context(), root)
 		checkRepositoryVerdict(t, line, err, false, "rust-msrv")
+		if !strings.HasPrefix(line, "[PASS]") {
+			t.Fatalf("expected pass verdict, got line=%q", line)
+		}
 	})
 
 	t.Run("boundary cargo with exact limit workflow passes", func(t *testing.T) {
@@ -141,6 +144,9 @@ func TestRustMSRVSkipBeforeInputBounds(t *testing.T) {
 		mustWrite(t, filepath.Join(root, ".github/workflows/ci.yml"), strings.Repeat("#", maxVerificationInputBytes))
 		line, err := AuditRustMSRV(t.Context(), root)
 		checkRepositoryVerdict(t, line, err, false, "rust-msrv")
+		if !strings.HasPrefix(line, "[PASS]") {
+			t.Fatalf("expected pass verdict, got line=%q", line)
+		}
 	})
 
 	t.Run("boundary cargo with oversized workflow reports bound", func(t *testing.T) {
