@@ -15,8 +15,9 @@ import (
 
 type rateLimitedStopReviews struct {
 	*stopReviewFixture
-	ownErr error
-	owns   int
+	ownErr         error
+	owns           int
+	batchSnapshots map[int]forge.ReviewSnapshot
 }
 
 // OwnOpen counts inventory attempts and optionally plants a discovery failure.
@@ -26,6 +27,14 @@ func (f *rateLimitedStopReviews) OwnOpen(ctx context.Context, repo string) ([]in
 		return nil, f.ownErr
 	}
 	return f.stopReviewFixture.OwnOpen(ctx, repo)
+}
+
+// ReadBatch returns planted partial results or delegates complete reads to the shared fixture.
+func (f *rateLimitedStopReviews) ReadBatch(ctx context.Context, repo string, numbers []int) (map[int]forge.ReviewSnapshot, error) {
+	if f.batchSnapshots != nil {
+		return f.batchSnapshots, f.err
+	}
+	return f.stopReviewFixture.ReadBatch(ctx, repo, numbers)
 }
 
 // installRateLimitedStopReviews installs a reader and identity without invoking git or gh.
@@ -64,7 +73,7 @@ func testStopReviewRateLimitedDeferral(t *testing.T, phase string) {
 	root, path := installRateLimitedStopReviews(t, fixture)
 	for range 2 {
 		verdict := evaluateStopReviewThreads(t.Context(), root)
-		if verdict.Outcome != Allow || verdict.Notice != "review inventory deferred: graphql 37 of 100, reset 22:45" {
+		if verdict.Outcome != Allow || verdict.Reason != "" || verdict.Notice != "review inventory deferred: graphql 37 of 100, reset 22:45" {
 			t.Fatalf("paced %s: %+v", phase, verdict)
 		}
 		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
@@ -77,6 +86,76 @@ func testStopReviewRateLimitedDeferral(t *testing.T, phase string) {
 	fixture.ownErr, fixture.err = nil, nil
 	if verdict := evaluateStopReviewThreads(t.Context(), root); verdict.Outcome != Deny {
 		t.Fatalf("unpaced open thread passed: %+v", verdict)
+	}
+}
+
+// TestStopReviewPartialRateLimit preserves known denials, defers unread reviews, and never caches either verdict.
+func TestStopReviewPartialRateLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		resolved bool
+		clean    bool
+		outcome  Outcome
+	}{
+		{"unresolved", false, false, Deny},
+		{"resolved", true, false, Allow},
+		{"clean", false, true, Allow},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := &rateLimitedStopReviews{stopReviewFixture: reviewFixture()}
+			fixture.numbers = []int{7, 8}
+			fixture.snapshot.Threads[0].Resolved = tc.resolved
+			if tc.clean {
+				fixture.snapshot.Threads = nil
+			}
+			fixture.batchSnapshots = map[int]forge.ReviewSnapshot{7: fixture.snapshot}
+			fixture.err = fmt.Errorf("partial read: %w", &forge.ErrRateLimited{
+				Bucket: "graphql", Remaining: "0", Limit: "100", Reset: "22:45", Cause: errors.New("rate limited")})
+			root, path := installRateLimitedStopReviews(t, fixture)
+			for range 2 {
+				verdict := evaluateStopReviewThreads(t.Context(), root)
+				assertPartialRateLimitedStopVerdict(t, verdict, tc.outcome)
+				if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("partial read wrote cache: %v", err)
+				}
+			}
+			if fixture.owns != 2 {
+				t.Fatalf("partial read avoided retry: %d", fixture.owns)
+			}
+		})
+	}
+}
+
+// assertPartialRateLimitedStopVerdict requires known findings and the deferral notice without unread denials.
+func assertPartialRateLimitedStopVerdict(t *testing.T, verdict Verdict, outcome Outcome) {
+	t.Helper()
+	if verdict.Outcome != outcome || verdict.Notice != "review inventory deferred: graphql 0 of 100, reset 22:45" {
+		t.Fatalf("partial read: %+v", verdict)
+	}
+	if outcome == Deny && (!strings.Contains(verdict.Reason, "example/widget#7 has 1 unresolved") ||
+		!strings.Contains(verdict.Reason, "main.go:9 by review-bot")) {
+		t.Fatalf("known thread lost: %+v", verdict)
+	}
+	if strings.Contains(verdict.Reason, "not read") || (outcome == Allow && verdict.Reason != "") {
+		t.Fatalf("unread review not deferred: %+v", verdict)
+	}
+}
+
+// TestStopReviewRateLimitReset distinguishes a known reset from missing reset metadata.
+func TestStopReviewRateLimitReset(t *testing.T) {
+	for _, tc := range []struct{ name, reset, want string }{
+		{"known", "22:45", "reset 22:45"},
+		{"unknown", "", "reset unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := &rateLimitedStopReviews{stopReviewFixture: reviewFixture(), ownErr: &forge.ErrRateLimited{
+				Bucket: "graphql", Remaining: "37", Limit: "100", Reset: tc.reset, Cause: errors.New("rate limited")}}
+			verdict := readStopReviews(t.Context(), fixture, "example/widget", time.Now())
+			if verdict.Outcome != Allow || verdict.Reason != "" ||
+				verdict.Notice != "review inventory deferred: graphql 37 of 100, "+tc.want {
+				t.Fatalf("reset metadata: %+v", verdict)
+			}
+		})
 	}
 }
 

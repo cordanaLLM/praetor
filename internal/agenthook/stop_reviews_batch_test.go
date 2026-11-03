@@ -131,7 +131,7 @@ func TestStopReviewBatchAllClientStopEvents(t *testing.T) {
 	}
 }
 
-// TestStopReviewBatchMissingSnapshotDenies pins fail-closed handling even when a batch omits an error.
+// TestStopReviewBatchMissingSnapshotDenies rejects missing or invalid snapshots without a rate-limit deferral.
 func TestStopReviewBatchMissingSnapshotDenies(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -144,7 +144,7 @@ func TestStopReviewBatchMissingSnapshotDenies(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			denies := stopReviewBatchDenies("example/widget", []int{7, 30}, map[int]forge.ReviewSnapshot{
 				7: batchStopSnapshot(7), 30: tc.snapshot,
-			}, time.Now())
+			}, time.Now(), false)
 			verdict := joinReviewDenies(denies)
 			if verdict.Outcome != Deny || !strings.Contains(verdict.Reason, "example/widget#7 has 1 unresolved") ||
 				!strings.Contains(verdict.Reason, "review state not read for #30 within the stop budget") {

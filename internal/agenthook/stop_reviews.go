@@ -96,7 +96,7 @@ func loadStopReviewCache(path, repo, head string, now time.Time) (Verdict, bool)
 	return cache.Verdict, valid
 }
 
-// readStopReviews denies unresolved or unread reviews, deferring only typed rate-limit failures.
+// readStopReviews retains known denials and defers unread reviews only for typed rate-limit failures.
 func readStopReviews(ctx context.Context, reader forge.ReviewReader, repo string, now time.Time) Verdict {
 	numbers, err := reader.OwnOpen(ctx, repo)
 	if err != nil {
@@ -106,18 +106,15 @@ func readStopReviews(ctx context.Context, reader forge.ReviewReader, repo string
 		return Verdict{Outcome: Deny, Reason: fmt.Sprintf("Own pull request review inventory in %s exceeds 100", repo)}
 	}
 	snapshots, batchErr := reader.ReadBatch(ctx, repo, numbers)
-	denies := stopReviewBatchDenies(repo, numbers, snapshots, now)
+	failure := Verdict{Outcome: Allow}
 	if batchErr != nil {
-		failure := stopReviewReadFailure(batchErr, "Own pull request review batch failed: ")
-		if failure.Outcome == Allow {
-			return failure
-		}
-		denies = append(denies, failure)
+		failure = stopReviewReadFailure(batchErr, "Own pull request review batch failed: ")
 	}
-	return joinReviewDenies(denies)
+	denies := stopReviewBatchDenies(repo, numbers, snapshots, now, failure.Notice != "")
+	return mergeStopChecks(joinReviewDenies(denies), failure)
 }
 
-// stopReviewReadFailure allows a typed rate-limit deferral with a notice; every other error denies.
+// stopReviewReadFailure denies ordinary errors and reports rate-limit metadata with an explicit unknown reset.
 func stopReviewReadFailure(err error, prefix string) Verdict {
 	var limited *forge.ErrRateLimited
 	if !errors.As(err, &limited) {
@@ -125,18 +122,25 @@ func stopReviewReadFailure(err error, prefix string) Verdict {
 	}
 	notice := "review inventory deferred: GitHub rate limited: " + limited.Error()
 	if limited.Bucket != "" && limited.Remaining != "" && limited.Limit != "" {
+		reset := limited.Reset
+		if reset == "" {
+			reset = "unknown"
+		}
 		notice = fmt.Sprintf("review inventory deferred: %s %s of %s, reset %s",
-			limited.Bucket, limited.Remaining, limited.Limit, limited.Reset)
+			limited.Bucket, limited.Remaining, limited.Limit, reset)
 	}
 	return Verdict{Outcome: Allow, Notice: notice}
 }
 
-// stopReviewBatchDenies retains known findings and names every missing or invalid snapshot in inventory order.
-func stopReviewBatchDenies(repo string, numbers []int, snapshots map[int]forge.ReviewSnapshot, now time.Time) []Verdict {
+// stopReviewBatchDenies retains known findings and invalid snapshots, optionally deferring missing snapshots.
+func stopReviewBatchDenies(repo string, numbers []int, snapshots map[int]forge.ReviewSnapshot, now time.Time, deferUnread bool) []Verdict {
 	var denies []Verdict
 	var unread []string
 	for _, number := range numbers {
 		snapshot, ok := snapshots[number]
+		if !ok && deferUnread {
+			continue
+		}
 		if !ok || snapshot.Number != number || !forge.ValidReviewPRState(snapshot.State) {
 			unread = append(unread, fmt.Sprintf("#%d", number))
 			continue
