@@ -29,10 +29,12 @@ type PullRequestReview struct {
 	SubmittedAt       time.Time
 }
 
-// ReviewSnapshot is a complete bounded read, never a partially decoded API answer.
+// ReviewSnapshot retains validated review state. Read fills reviews and checks;
+// ReadBatch fills complete thread state only, for stop-hook evaluation.
 type ReviewSnapshot struct {
 	Number           int
 	State            string
+	HeadRefOID       string
 	Threads          []ReviewThread
 	Reviews          []PullRequestReview
 	ChecksTerminal   bool
@@ -40,8 +42,10 @@ type ReviewSnapshot struct {
 }
 
 // ReviewReader is shared by the background wait and stop evaluator.
+// ReadBatch returns complete thread snapshots by number; absent entries are unread.
 type ReviewReader interface {
 	OwnOpen(context.Context, string) ([]int, error)
+	ReadBatch(context.Context, string, []int) (map[int]ReviewSnapshot, error)
 	Read(context.Context, string, int) (ReviewSnapshot, error)
 }
 

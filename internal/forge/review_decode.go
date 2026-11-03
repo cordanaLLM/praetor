@@ -55,46 +55,46 @@ type reviewPullRaw struct {
 
 // decodeReviewPull validates the envelope and identity before any continuation request.
 func decodeReviewPull(data []byte, number int) (*reviewPullRaw, error) {
-	var envelope graphQLResponse
-	if err := json.Unmarshal(data, &envelope); err != nil {
-		return nil, fmt.Errorf("decode review envelope: %w", err)
-	}
-	if len(envelope.Errors) > 0 {
-		return nil, fmt.Errorf("GraphQL review read: %s", envelope.Errors[0].Message)
-	}
 	var result struct {
 		Repository *struct{ PullRequest *reviewPullRaw }
 	}
-	if err := json.Unmarshal(envelope.Data, &result); err != nil {
-		return nil, fmt.Errorf("decode review data: %w", err)
+	if err := decodeReviewData(data, &result); err != nil {
+		return nil, err
 	}
 	if result.Repository == nil || result.Repository.PullRequest == nil {
 		return nil, errors.New("review repository or pull request missing")
 	}
 	pull := result.Repository.PullRequest
-	if pull.Number != number || !validReviewPRState(pull.State) {
+	if pull.Number != number || !ValidReviewPRState(pull.State) {
 		return nil, errors.New("review pull request identity or state invalid")
 	}
 	return pull, nil
 }
 
+// decodeReviewData rejects malformed and partial GraphQL envelopes before decoding their data.
+func decodeReviewData(data []byte, result any) error {
+	var envelope graphQLResponse
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return fmt.Errorf("decode review envelope: %w", err)
+	}
+	if len(envelope.Errors) > 0 {
+		return fmt.Errorf("GraphQL review read: %s", envelope.Errors[0].Message)
+	}
+	if err := json.Unmarshal(envelope.Data, result); err != nil {
+		return fmt.Errorf("decode review data: %w", err)
+	}
+	return nil
+}
+
 // snapshot converts a raw GraphQL pull request node into a validated ReviewSnapshot.
 func (p reviewPullRaw) snapshot(number int) (ReviewSnapshot, error) {
-	if p.Number != number || !validReviewPRState(p.State) {
-		return ReviewSnapshot{}, errors.New("review pull request identity or state invalid")
-	}
-	if err := completeReviewConnection(p.ReviewThreads); err != nil {
-		return ReviewSnapshot{}, fmt.Errorf("review threads: %w", err)
+	snapshot, err := p.threadSnapshot(number)
+	if err != nil {
+		return ReviewSnapshot{}, err
 	}
 	if err := completeReviewConnection(p.Reviews); err != nil {
 		return ReviewSnapshot{}, fmt.Errorf("reviews: %w", err)
 	}
-	snapshot := ReviewSnapshot{Number: p.Number, State: p.State}
-	threads, err := decodeReviewThreads(p.ReviewThreads.Nodes)
-	if err != nil {
-		return ReviewSnapshot{}, err
-	}
-	snapshot.Threads = threads
 	for _, review := range p.Reviews.Nodes {
 		if review.ID == "" || review.State == "" {
 			return ReviewSnapshot{}, errors.New("review identity or state missing")
@@ -106,8 +106,23 @@ func (p reviewPullRaw) snapshot(number int) (ReviewSnapshot, error) {
 	return snapshotWithChecks(snapshot, p.Commits.Nodes)
 }
 
-// validReviewPRState reports whether a pull request state string is recognized by GitHub.
-func validReviewPRState(state string) bool {
+// threadSnapshot validates a complete thread connection using the shared snapshot and decoder.
+func (p reviewPullRaw) threadSnapshot(number int) (ReviewSnapshot, error) {
+	if p.Number != number || !ValidReviewPRState(p.State) {
+		return ReviewSnapshot{}, errors.New("review pull request identity or state invalid")
+	}
+	if err := completeReviewConnection(p.ReviewThreads); err != nil {
+		return ReviewSnapshot{}, fmt.Errorf("review threads: %w", err)
+	}
+	threads, err := decodeReviewThreads(p.ReviewThreads.Nodes)
+	if err != nil {
+		return ReviewSnapshot{}, err
+	}
+	return ReviewSnapshot{Number: p.Number, State: p.State, HeadRefOID: p.HeadRefOID, Threads: threads}, nil
+}
+
+// ValidReviewPRState reports whether a pull request state string is recognized by GitHub.
+func ValidReviewPRState(state string) bool {
 	return state == "OPEN" || state == "CLOSED" || state == "MERGED"
 }
 

@@ -37,6 +37,19 @@ func (f *stopReviewFixture) Read(_ context.Context, _ string, number int) (forge
 	return f.snapshot, f.err
 }
 
+// ReadBatch supplies configured complete snapshots and retains read counts for cache assertions.
+func (f *stopReviewFixture) ReadBatch(ctx context.Context, repo string, numbers []int) (map[int]forge.ReviewSnapshot, error) {
+	result := make(map[int]forge.ReviewSnapshot, len(numbers))
+	for _, number := range numbers {
+		snapshot, err := f.Read(ctx, repo, number)
+		if err != nil {
+			return result, err
+		}
+		result[number] = snapshot
+	}
+	return result, nil
+}
+
 // reviewFixture constructs a mock review fixture containing one unresolved review thread.
 func reviewFixture() *stopReviewFixture {
 	return &stopReviewFixture{snapshot: forge.ReviewSnapshot{Number: 7, State: "OPEN", Threads: []forge.ReviewThread{
@@ -135,7 +148,7 @@ func TestStopReviewResolvedErrorAndCache(t *testing.T) {
 	}{
 		{"unresolved", false, nil, Deny, Allow, 2, "main.go:9 by review-bot"},
 		{"resolved", true, nil, Allow, Allow, 1, ""},
-		{"read-error", false, errors.New("fixture unavailable"), Skip, Skip, 2, "skipped: read example/widget#7: fixture unavailable"},
+		{"read-error", false, errors.New("fixture unavailable"), Deny, Deny, 2, "review state not read for #7 within the stop budget"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := reviewRepositoryFixture(t)
@@ -153,14 +166,14 @@ func TestStopReviewResolvedErrorAndCache(t *testing.T) {
 	}
 }
 
-// TestStopReviewReadFailureSurvivesOtherDeny pins that review read errors are preserved as skip reasons alongside denials.
+// TestStopReviewReadFailureSurvivesOtherDeny pins that unread PRs remain denials alongside other stop checks.
 func TestStopReviewReadFailureSurvivesOtherDeny(t *testing.T) {
 	root := reviewRepositoryFixture(t)
 	fixture := reviewFixture()
 	fixture.err = errors.New("fixture read denied")
 	installReviewFixture(t, fixture)
 	verdict := evaluateStop(t.Context(), stopRow(t, "claude"), root, Canonical{}, Invocation{Getenv: noEnvironment})
-	if verdict.Outcome != Deny || !strings.Contains(verdict.Reason, "review check skipped:") ||
+	if verdict.Outcome != Deny || !strings.Contains(verdict.Reason, "review state not read for #7 within the stop budget") ||
 		!strings.Contains(verdict.Reason, "fixture read denied") {
 		t.Fatalf("read failure hidden by ledger or checkpoint deny: %+v", verdict)
 	}

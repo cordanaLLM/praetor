@@ -18,6 +18,11 @@ type prCLIReader struct{ requested []int }
 // OwnOpen returns a mock list of open pull request numbers for test runs.
 func (r *prCLIReader) OwnOpen(context.Context, string) ([]int, error) { return []int{7}, nil }
 
+// ReadBatch rejects stop-only batch reads through the pr-wait CLI fixture.
+func (r *prCLIReader) ReadBatch(context.Context, string, []int) (map[int]forge.ReviewSnapshot, error) {
+	return nil, errors.New("pr wait must use complete per-PR Read")
+}
+
 // Read records the requested pull request number and returns a mock review snapshot.
 func (r *prCLIReader) Read(_ context.Context, _ string, number int) (forge.ReviewSnapshot, error) {
 	r.requested = append(r.requested, number)
