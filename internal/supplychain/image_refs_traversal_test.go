@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeDirEntry struct {
@@ -228,6 +229,36 @@ func TestScanImageRefs_ContextCancellation_3D(t *testing.T) {
 			t.Fatalf("expected 2 findings, got %d: %+v", len(findings), findings)
 		}
 	})
+}
+
+// TestIterateScannedFiles_Deadline verifies injected deadlines even for paths skipped by the filter.
+func TestIterateScannedFiles_Deadline(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		budget      time.Duration
+		wantFilters int
+	}{
+		{name: "expired before scan", budget: 0, wantFilters: 0},
+		{name: "expires during scan", budget: time.Second, wantFilters: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			ctx, cancel := context.WithTimeout(t.Context(), tc.budget)
+			defer cancel()
+			filtered := 0
+			err := iterateScannedFiles(ctx, root, []string{"a.go", "b.go"}, func(string) bool {
+				filtered++
+				<-ctx.Done()
+				return false
+			}, func(string, []byte, error) error {
+				t.Fatal("filtered file reached visitor")
+				return nil
+			})
+			if !errors.Is(err, context.DeadlineExceeded) || filtered != tc.wantFilters {
+				t.Fatalf("scan = %v, filtered %d; want DeadlineExceeded, filtered %d", err, filtered, tc.wantFilters)
+			}
+		})
+	}
 }
 
 // TestReadScanDirectory_BoundedRead_3D verifies that readScanDirectory reads at most maxScannedFiles+1 entries.
