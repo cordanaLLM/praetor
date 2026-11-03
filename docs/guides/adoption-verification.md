@@ -573,6 +573,37 @@ projected and linted by the projection and caveman gates, which have no opt-out
 malformed decline entry fails closed. `cmd/standardsctl/audit_agent_definitions_test.go` and
 `internal/compiler/agent_inventory_test.go` pin each case.
 
+### Community health: private security reporting
+
+`praetorctl audit` requires `SECURITY.md` in `.github/`, the repository root, or
+`docs/`, searched in that order. The file must name private vulnerability reporting
+or an actionable security contact (a reporting email, `mailto:` link, or HTTPS
+destination labelled `Security contact:`). A heading or an instruction to contact
+unnamed maintainers is insufficient. A missing file or channel fails with the
+policy filename in the diagnostic.
+
+When the policy names private vulnerability reporting, audit reads the repository
+setting through its existing forge client, with a context timeout and only when
+a token and network are available. An explicit `enabled=false` fails with a
+policy/setting mismatch. Offline mode, a missing token, denied access, and network
+or decoding errors report `private vulnerability reporting setting not read` with
+the reason; they do not fail the local policy check or claim the setting passed.
+The setting read never enables reporting or changes forge configuration.
+
+These checks extend `auditLiveForge` in `cmd/standardsctl/audit_forge.go` through
+`auditSecurityPolicy` in `cmd/standardsctl/audit_security_policy.go`.
+`cmd/standardsctl/audit_security_policy_test.go` covers missing and channel-free
+policies, every supported location, setting mismatches, and offline reporting.
+`internal/forge/security_policy_test.go` covers the bounded read and malformed
+responses against an in-memory transport. The read uses
+[GitHub's private vulnerability reporting endpoint](https://docs.github.com/en/rest/repos/repos#check-if-private-vulnerability-reporting-is-enabled-for-a-repository).
+
+An explicit `security-policy` adoption decline, or the implicit decline for an
+organisation `.github` repository described below, skips this requirement and
+names the setting as not read. Adoption's policy template names the private
+reporting channel; maintainers of an adopting fork must enable that setting or
+replace it with their own private security contact.
+
 ### Organisation `.github` repositories and adoption decline
 
 In an organisation `.github` repository, `CONTRIBUTING.md`, `SECURITY.md` and
@@ -615,7 +646,7 @@ name fails adoption and each of those gates.
 | `actionlint-labels` | none |
 | `contributing` | none |
 | `pull-request-template` | none |
-| `security-policy` | none |
+| `security-policy` | skipped: the community-health policy and private reporting setting checks report the decline |
 | `adr` | none |
 | `readme` | skipped: the README governance block is not required |
 | `reuse-gate` | none |

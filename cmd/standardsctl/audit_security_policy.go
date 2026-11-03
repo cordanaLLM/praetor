@@ -1,0 +1,83 @@
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+//
+// SPDX-License-Identifier: EUPL-1.2
+
+package main
+
+import (
+	"context"
+	"fmt"
+	"regexp"
+	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
+)
+
+// securityContactChannel recognizes an email reporting destination or an HTTPS security
+// contact. A bare heading or an instruction to contact unnamed maintainers is insufficient.
+var securityContactChannel = regexp.MustCompile(`(?im)(?:mailto:|(?:security[ \t]+contact|contact|e-?mail)(?:[ \t]+(?:us|at|to))*[ \t]*:?)[ \t]*<?[a-z0-9.!#$%&'*+/=?^_{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+|security[ \t]+contact[ \t]*:[ \t]*https://[^\s<>]+`)
+
+// auditSecurityPolicy extends community health in the existing audit path. Declined
+// policies keep their existing contract; unread settings are named and never fail offline.
+func auditSecurityPolicy(ctx context.Context, manifest *config.Manifest, root string, live actionsForge) error {
+	decline, err := adopt.AuditDecline(manifest, "security-policy")
+	if err != nil {
+		return fmt.Errorf("[FAIL] Community health: SECURITY.md: %w", err)
+	}
+	if decline.Declined {
+		fmt.Println("[INFO] Community health: SECURITY.md declined; private vulnerability reporting setting not read.")
+		return nil
+	}
+	path, content, err := readSecurityPolicy(ctx, root)
+	if err != nil {
+		return err
+	}
+	text := strings.ToLower(strings.Join(strings.Fields(content), " "))
+	privateReporting := strings.Contains(text, "private vulnerability reporting")
+	if !privateReporting && !securityContactChannel.MatchString(content) {
+		return fmt.Errorf("[FAIL] Community health: %s names no private reporting channel; name private vulnerability reporting or a security contact", path)
+	}
+	fmt.Printf("[PASS] Community health: %s names a private reporting channel.\n", path)
+	if !privateReporting {
+		fmt.Printf("[INFO] %s: private vulnerability reporting setting not read: policy uses a security contact.\n", path)
+		return nil
+	}
+	return auditPrivateVulnerabilityReporting(ctx, path, live)
+}
+
+// readSecurityPolicy reads the first policy in GitHub's community-file search order through
+// the existing bounded, context-aware reader; an unreadable file never becomes an absence.
+func readSecurityPolicy(ctx context.Context, root string) (string, string, error) {
+	paths := [...]string{".github/SECURITY.md", "SECURITY.md", "docs/SECURITY.md"}
+	for i := 0; i < len(paths); i++ {
+		data, exists, err := contextopt.ObserveSnapshotIn(ctx, root, paths[i])
+		if err != nil {
+			return "", "", fmt.Errorf("[FAIL] Community health: read %s: %w", paths[i], err)
+		}
+		if exists {
+			return paths[i], string(data), nil
+		}
+	}
+	return "", "", fmt.Errorf("[FAIL] Community health: SECURITY.md missing; add .github/SECURITY.md, SECURITY.md or docs/SECURITY.md with a private reporting channel")
+}
+
+// auditPrivateVulnerabilityReporting reports unread settings separately from a verified
+// disabled setting, which contradicts a policy directing reporters to that channel.
+func auditPrivateVulnerabilityReporting(ctx context.Context, path string, live actionsForge) error {
+	if live.reporting == nil {
+		fmt.Printf("[SKIP] %s: private vulnerability reporting setting not read: %s\n", path, live.notMade)
+		return nil
+	}
+	enabled, err := live.reporting.PrivateVulnerabilityReporting(ctx)
+	if err != nil {
+		fmt.Printf("[SKIP] %s: private vulnerability reporting setting not read: %v\n", path, err)
+		return nil
+	}
+	if !enabled {
+		return fmt.Errorf("[FAIL] Community health: %s names private vulnerability reporting, but the forge setting is enabled=false (mismatch)", path)
+	}
+	fmt.Printf("[PASS] %s: private vulnerability reporting setting enabled=true.\n", path)
+	return nil
+}

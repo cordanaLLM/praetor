@@ -612,6 +612,8 @@ func buildPullRequestTemplate() string {
 	)
 }
 
+// buildSecurityPolicy renders an actionable private reporting channel without a response-time
+// promise; adoption must produce a policy that the community-health audit can accept.
 func buildSecurityPolicy() string {
 	return markdownDocument(
 		"# Security Policy",
@@ -622,9 +624,9 @@ func buildSecurityPolicy() string {
 		"",
 		"## Reporting a Vulnerability",
 		"",
-		"Please report security vulnerabilities privately to the maintainers rather",
-		"than opening a public issue. Reports are investigated promptly under",
-		"responsible disclosure guidelines.",
+		"Use GitHub's private vulnerability reporting: open this repository's Security",
+		"tab and choose Report a vulnerability. Include the affected version, impact,",
+		"and steps to reproduce. Do not report vulnerabilities in public issues.",
 	)
 }
 
