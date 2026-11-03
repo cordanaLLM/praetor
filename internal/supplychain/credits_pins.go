@@ -56,15 +56,16 @@ func checkManifestPins(entry CreditEntry, rel string, data []byte, npmPkgs []str
 	if err != nil {
 		return []error{fmt.Errorf("parse %s: %w", rel, err)}
 	}
-	pinned := manifestPinnedDeps(manifest)
 	var findings []error
-	for _, pkg := range npmPkgs {
-		pinVersion, hasPin := pinned[pkg]
-		if !hasPin {
-			continue
-		}
-		if err := checkPackagePin(entry, rel, pkg, pinVersion, len(npmPkgs)); err != nil {
-			findings = append(findings, err)
+	for _, group := range manifest.Groups() {
+		for _, pkg := range npmPkgs {
+			pinVersion, hasPin := group[pkg]
+			if !hasPin {
+				continue
+			}
+			if err := checkPackagePin(entry, rel, pkg, pinVersion, len(npmPkgs)); err != nil {
+				findings = append(findings, err)
+			}
 		}
 	}
 	return findings
@@ -74,6 +75,10 @@ func checkManifestPins(entry CreditEntry, rel string, data []byte, npmPkgs []str
 func checkPackagePin(entry CreditEntry, rel, pkg, pinVersion string, totalPkgs int) error {
 	cleanPin := strings.TrimLeft(pinVersion, "^~=v")
 	recorded := recordedPackageVersion(entry.Detail, pkg, entry.Name, totalPkgs)
+	if recorded == "" && semverPattern.MatchString(entry.Detail) {
+		return fmt.Errorf("%s: ambiguous version association for %s in %s detail",
+			rel, pkg, AcknowledgementsList)
+	}
 	if recorded != "" && recorded != cleanPin {
 		return fmt.Errorf("%s: %s pins version %s, but %s records %s",
 			rel, pkg, cleanPin, AcknowledgementsList, recorded)
@@ -117,17 +122,6 @@ func entryNPMPackages(packages []string) []string {
 		}
 	}
 	return npmPkgs
-}
-
-// manifestPinnedDeps returns a flattened map of package names to pinned versions across all manifest dependency groups.
-func manifestPinnedDeps(manifest nodemanifest.Manifest) map[string]string {
-	deps := make(map[string]string)
-	for _, group := range manifest.Groups() {
-		for pkg, ver := range group {
-			deps[pkg] = ver
-		}
-	}
-	return deps
 }
 
 // recordedPackageVersion resolves the expected package version string from a credits detail field.
