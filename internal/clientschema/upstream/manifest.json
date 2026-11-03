@@ -28,9 +28,9 @@
       "kind": "settings",
       "repo": "google-gemini/gemini-cli",
       "pin_kind": "tag",
-      "pin": "v0.65.0",
-      "digest_pin": "v0.65.0",
-      "version": "v0.65.0",
+      "pin": "v0.66.0",
+      "digest_pin": "v0.66.0",
+      "version": "v0.66.0",
       "url_base": "https://raw.githubusercontent.com/google-gemini/gemini-cli/{pin}/",
       "license": "Apache-2.0",
       "copyright": "Google LLC",
@@ -38,7 +38,7 @@
         {
           "path": "gemini/settings.schema.json",
           "upstream": "schemas/settings.schema.json",
-          "sha256": "db05663b581a541d72396c18d80b65b64a192cb5a9c0e052af15ec46699fd398"
+          "sha256": "5517471627bf712c88e7d27ddbf419629df73edad7a676344ede9f2d2379d408"
         }
       ]
     },
@@ -48,9 +48,9 @@
       "kind": "settings",
       "repo": "openai/codex",
       "pin_kind": "tag",
-      "pin": "rust-v0.164.0",
-      "digest_pin": "rust-v0.164.0",
-      "version": "rust-v0.164.0",
+      "pin": "rust-v0.166.0",
+      "digest_pin": "rust-v0.166.0",
+      "version": "rust-v0.166.0",
       "url_base": "https://raw.githubusercontent.com/openai/codex/{pin}/",
       "license": "Apache-2.0",
       "copyright": "OpenAI",
@@ -58,7 +58,7 @@
         {
           "path": "codex/config.schema.json",
           "upstream": "codex-rs/core/config.schema.json",
-          "sha256": "ea611ee3f12a6df314b3e49585015ec6e2ebc7c3f072ccbf63c21306a4cdb5dc"
+          "sha256": "211bec2282459fcd70e4905af948721177b6ec7a03e0df84cd8b7c131006a6ca"
         }
       ]
     },
@@ -68,9 +68,9 @@
       "kind": "hooks",
       "repo": "openai/codex",
       "pin_kind": "tag",
-      "pin": "rust-v0.164.0",
-      "digest_pin": "rust-v0.164.0",
-      "version": "rust-v0.164.0",
+      "pin": "rust-v0.166.0",
+      "digest_pin": "rust-v0.166.0",
+      "version": "rust-v0.166.0",
       "url_base": "https://raw.githubusercontent.com/openai/codex/{pin}/",
       "license": "Apache-2.0",
       "copyright": "OpenAI",
@@ -218,9 +218,9 @@
       "kind": "settings",
       "repo": "anomalyco/opencode",
       "pin_kind": "hosted",
-      "pin": "v2.1.4",
-      "digest_pin": "v2.1.4",
-      "version": "v2.1.4 (hosted copy)",
+      "pin": "v2.2.5",
+      "digest_pin": "v2.2.5",
+      "version": "v2.2.5 (hosted copy)",
       "url_base": "https://opencode.ai/",
       "license": "MIT",
       "copyright": "2025 opencode",
@@ -228,7 +228,7 @@
         {
           "path": "opencode/config.json",
           "upstream": "config.json",
-          "sha256": "ffa4d846f84030315d42ba6449f6ade7ea3bb5de6352485253c7ee6168416b8c"
+          "sha256": "a4e1d9066091cd44b0d769c871835df849487d20958b0a3620585c1e7317a3ca"
         }
       ]
     }

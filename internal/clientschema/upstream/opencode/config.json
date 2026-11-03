@@ -331,9 +331,16 @@
           "additionalProperties": false
         },
         "buffer": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Config.Compaction.Percent"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          ]
         },
         "prune": {
           "type": "boolean",
@@ -539,6 +546,9 @@
           ]
         },
         "schedules": {
+          "type": "boolean"
+        },
+        "artifacts": {
           "type": "boolean"
         },
         "subagent_depth": {
@@ -1974,6 +1984,10 @@
       ],
       "additionalProperties": false
     },
+    "Config.Compaction.Percent": {
+      "type": "string",
+      "pattern": "^([1-9]\\d?(\\.\\d+)?)%$"
+    },
     "Config.CommandEncoded": {
       "type": "object",
       "properties": {
@@ -2128,7 +2142,17 @@
           "type": "string"
         },
         "interval": {
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "auto"
+              ]
+            },
+            {
+              "type": "string"
+            }
+          ]
         },
         "duration": {
           "type": "string"
@@ -2247,11 +2271,43 @@
       "type": "string",
       "pattern": "^[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:[Ee][+-]?\\d+)?(?:ms|s|m|h|d)$"
     },
+    "Provider.CacheWarming": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "interval": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "auto"
+                  ]
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "duration": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
     "Provider.Cache": {
       "type": "object",
       "properties": {
         "ttl": {
           "$ref": "#/$defs/Provider.CacheTTL"
+        },
+        "warming": {
+          "$ref": "#/$defs/Provider.CacheWarming"
         }
       },
       "additionalProperties": false
