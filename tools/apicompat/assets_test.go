@@ -150,10 +150,7 @@ func TestPriorDigests(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := WorkflowFile
-		if strings.HasPrefix(entry.Name(), "api-gate-main") {
-			want = Directory + "/" + GateFile
-		}
+		want := priorTextPath(entry.Name())
 		for _, text := range [][]byte{data, bytes.ReplaceAll(data, []byte("\n"), []byte("\r\n"))} {
 			digest, _, err := util.CanonicalTextDigest(text)
 			if err != nil || digests[digest] != want {
@@ -172,6 +169,20 @@ func TestPriorDigests(t *testing.T) {
 	digests["x"] = WorkflowFile
 	if len(PriorDigests()) != total {
 		t.Fatal("PriorDigests exposed the map for mutation")
+	}
+}
+
+// priorTextPath is the managed path a testdata/prior fixture was shipped at, named by its file
+// name prefix: api-gate-main for the gate program, api-gate-placeholder for its placeholder,
+// anything else for the workflow.
+func priorTextPath(name string) string {
+	switch {
+	case strings.HasPrefix(name, "api-gate-main"):
+		return Directory + "/" + GateFile
+	case strings.HasPrefix(name, "api-gate-placeholder"):
+		return Directory + "/" + PlaceholderFile
+	default:
+		return WorkflowFile
 	}
 }
 

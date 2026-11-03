@@ -121,6 +121,11 @@ var priorPlayerDigests = map[string]map[string]string{
 // ledger line was appended from the text itself. The registry allows 64 entries per family
 // (managedasset.MaxPriorTexts); the family's declaration states what each kind of change costs.
 var priorDigests = map[string]string{
+	// Emitted sources before complete docstring coverage and explained suppressions.
+	"547d4bfe5d1895a907cba6c0aaf4540f3825811838af94c1b6c0e77082acb211": Directory + "/checks.mjs",
+	"8d2a6afce5c8fd2cf0bf0c9457199a19a6fad93868a5f5dd9f9faf32241fe257": Directory + "/astro.mjs",
+	"e4efaac427bc5ea716b2871c3e7f84366c8954a29e6d71e73a696753b592dfbd": Directory + "/build.mjs",
+	"874d4438acdb3f01e93a2c41d6c5cf97371838f17c8dc2c71b8fad9f61bab828": Directory + "/core.mjs",
 	// MkDocs and Astro before SVG fallback omitted the unavailable player loader.
 	"1cf80d7e961b928950a3836fe18175d4985b8705e8135ab4d5b515ad9922f47f": Directory + "/mkdocs_hook.py",
 	"5ebe22430d1dc231c008dca43e3353eb6285f15e32735707064e2e5ed797eb2f": Directory + "/astro.mjs",

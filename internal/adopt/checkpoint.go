@@ -44,6 +44,7 @@ type checkpointSource struct {
 // recorded here (checkpoint_prior_test.go).
 var priorCheckpointDigests = map[string]map[string]string{
 	checkpointScript: {
+		"6d22fbcab1cdd08efcb0975ad0c09cfc46107346365e16a05e06b2ce9b565691": "complete emitted docstrings and explained empty handlers",
 		"54130726f2c6830a763a2485b849293d4c014e34c308596cc3e28d5330e6fc3f": "stop checkpoint retries PR listing and collapses failure",
 		"6295b09a4077a3c3bc6819ecf69b3eb18fe4c3a23d4473d99c880fc3184ce3b5": "stop checkpoint judges landed worktrees by their merged pull request",
 		"a466f3ca69d1f93374ebcf999210d288eeefb4b77c0c13ada09dca2bcb090b55": "Go hooks share session ownership and verify live gate scratch owners",
