@@ -10,6 +10,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/gating"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // runBaselineCmd dispatches the baseline command for the fixture with extra flags.
@@ -624,7 +625,7 @@ func manifestErrorCases() []manifestErrorCase {
 				t.Skipf("cannot chmod 0000: %v", err)
 			}
 			t.Cleanup(func() {
-				if err := os.Chmod(p, 0o644); err != nil {
+				if err := os.Chmod(p, 0o600); err != nil {
 					t.Errorf("restore mode of %s: %v", p, err)
 				}
 			})
@@ -633,7 +634,8 @@ func manifestErrorCases() []manifestErrorCase {
 		{name: "directory as manifest", wantText: "failed to read manifest at", setup: func(t *testing.T, dir string) {
 			p := filepath.Join(dir, ".standards.yaml")
 			removeIfPresent(t, p, false)
-			if err := os.Mkdir(p, 0o755); err != nil {
+			// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission, go_file-permissions_rule-mkdir -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
+			if err := os.Mkdir(p, 0o700); err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { removeIfPresent(t, p, true) })
@@ -703,7 +705,16 @@ func TestBaselineRecord_PreservesHISS12Entries(t *testing.T) {
 // skipIfFileReadable skips t when path can still be opened for reading despite mode 0 (HISS-21).
 func skipIfFileReadable(t testing.TB, path string) {
 	t.Helper()
-	if f, err := os.Open(path); err == nil {
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("open readability root: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("close readability root: %v", err)
+		}
+	})
+	if f, err := root.Open(filepath.Base(path)); err == nil {
 		if cerr := f.Close(); cerr != nil {
 			t.Fatalf("close readability probe of %s: %v", path, cerr)
 		}
@@ -716,7 +727,7 @@ func skipIfFileReadable(t testing.TB, path string) {
 func TestSkipIfFileReadable_3D(t *testing.T) {
 	t.Run("readable file causes subtest to skip", func(t *testing.T) {
 		p := filepath.Join(t.TempDir(), "readable.txt")
-		if err := os.WriteFile(p, []byte("content"), 0o644); err != nil {
+		if err := os.WriteFile(p, []byte("content"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		ran := false
@@ -742,7 +753,7 @@ func TestSkipIfFileReadable_3D(t *testing.T) {
 				t.Errorf("restore mode of %s: %v", p, err)
 			}
 		})
-		if _, err := os.ReadFile(p); err == nil {
+		if _, err := util.ReadConfined(filepath.Dir(p), filepath.Base(p)); err == nil {
 			t.Skip("file permissions are not enforced on this host")
 		}
 		ran := false

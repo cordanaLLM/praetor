@@ -195,13 +195,15 @@ func (walk *imageRefDirectoryWalk) appendEntries(relDir string, entries []os.Dir
 // filter, reading each file confined and limited under ctx, and invoking visit with the file
 // content or read error (HISS-01, HISS-02, HISS-19).
 func iterateScannedFiles(ctx context.Context, root string, files []string, filter func(string) bool, visit func(rel string, content []byte, readErr error) error) error {
+	callerCtx := ctx
 	ctx, cancel := context.WithTimeout(ctx, imageRefScanTimeout)
 	defer cancel()
 	if len(files) > maxScannedFiles {
 		return fmt.Errorf("image scan scope passed %d files", maxScannedFiles)
 	}
 	for i := 0; i < len(files) && i < maxScannedFiles; i++ {
-		if err := ctx.Err(); err != nil {
+		// The caller's Done closes before cancellation reaches its children.
+		if err := cmp.Or(callerCtx.Err(), ctx.Err()); err != nil {
 			return fmt.Errorf("scan files context: %w", err)
 		}
 		rel := files[i]
