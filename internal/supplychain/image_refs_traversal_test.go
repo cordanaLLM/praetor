@@ -147,10 +147,12 @@ func TestIterateScannedFiles_FilesLimit_3D(t *testing.T) {
 // TestWalkDirectoryFiles_Positive verifies that walkDirectoryFiles discovers nested files while skipping ignored directories.
 func TestWalkDirectoryFiles_Positive(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "sub", "deep"), 0o755); err != nil {
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission, go_file-permissions_rule-mkdir -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
+	if err := os.MkdirAll(filepath.Join(dir, "sub", "deep"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, "node_modules", "pkg"), 0o755); err != nil {
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission, go_file-permissions_rule-mkdir -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
+	if err := os.MkdirAll(filepath.Join(dir, "node_modules", "pkg"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "root.txt"), []byte("a"), 0o600); err != nil {
@@ -285,17 +287,20 @@ func setupConfinementFixture(t *testing.T) (rootDir, outsideDir string) {
 	temp := t.TempDir()
 	rootDir = filepath.Join(temp, "root")
 	outsideDir = filepath.Join(temp, "outside")
-	if err := os.MkdirAll(rootDir, 0o755); err != nil {
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission, go_file-permissions_rule-mkdir -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
+	if err := os.MkdirAll(rootDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(outsideDir, 0o755); err != nil {
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission, go_file-permissions_rule-mkdir -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
+	if err := os.MkdirAll(outsideDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(outsideDir, "secret.txt"), []byte("data"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	subDir := filepath.Join(rootDir, "inside")
-	if err := os.MkdirAll(subDir, 0o755); err != nil {
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission, go_file-permissions_rule-mkdir -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
+	if err := os.MkdirAll(subDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(subDir, "file.txt"), []byte("content"), 0o600); err != nil {
