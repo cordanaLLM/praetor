@@ -168,3 +168,43 @@ func validPythonDateReferences(coverage, guide string) bool {
 	hasGuide := strings.Contains(guide, "internal/hiss/test_dates_python.go")
 	return hasCoverage && hasGuide
 }
+
+// TestFixtureDatesPythonFStringExpressions pins fixture dates python fstring expressions.
+func TestFixtureDatesPythonFStringExpressions(t *testing.T) {
+	const wantMsg = "derive it from the test clock"
+	for _, tc := range []struct {
+		name, body, wantSubstring string
+		wantLine                  int
+	}{
+		{"positive/nested-single-quoted-date",
+			/* testdate: fact: scanner counterexample; never compared with a clock */ `expiry = f"{parse('2030-01-01')}"`, wantMsg, 1},
+		{"positive/nested-double-quoted-date",
+			/* testdate: fact: scanner counterexample; never compared with a clock */ `expiry = f'{parse("2030-01-01")}'`, wantMsg, 1},
+		{"positive/nested-concatenated-date", `expiry = f"{parse('2030-' + '01-01')}"`, wantMsg, 1},
+		{"positive/nested-tolerant-escape-date", `expiry = f"{parse('\N{DIGIT TWO}030-01-01')}"`, wantMsg, 1},
+		{"positive/nested-brace-in-literal-with-date",
+			/* testdate: fact: scanner counterexample; never compared with a clock */ `expiry = f"{parse('} 2030-01-01')}"`, wantMsg, 1},
+		{"negative/nested-non-date-literal", `expiry = f"{parse('plain')}"`, "", 0},
+		{"negative/arithmetic-expression-not-literal",
+			/* testdate: fact: scanner counterexample; never compared with a clock */ `expiry = f"{2030-10-10}"`, "", 0},
+		{"negative/multiline-annotated-nested-literal",
+			/* testdate: fact: scanner counterexample; never compared with a clock */ "release = f\"\"\"{parse(\n    # testdate: fact: recorded parser input\n    '2030-01-01'\n)}\"\"\"\n", "", 0},
+		{"boundary/outer-annotation-covers-outer-only",
+			/* testdate: fact: scanner counterexample; never compared with a clock */ "# testdate: fact: outer literal only\nrelease = f\"2030-01-01 {parse('2030-01-02')}\"\n", wantMsg, 2},
+		{"boundary/outer-concat-after-nested-literal", `expiry = f"{parse('plain')} 2030-" + "01-01"`, wantMsg, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rep := newScanReport(MaxInfractionsCap)
+			scanPythonFixtureDates(sourceFile{rel: "test_date.py", data: []byte(tc.body)}, rep)
+			if tc.wantSubstring == "" {
+				if len(rep.Violations) != 0 {
+					t.Fatalf("unexpected violations: %+v", rep.Violations)
+				}
+				return
+			}
+			if len(rep.Violations) != 1 || !strings.Contains(rep.Violations[0].Message, tc.wantSubstring) || rep.Violations[0].LineNumber != tc.wantLine {
+				t.Fatalf("violations = %+v, want 1 at line %d containing %q", rep.Violations, tc.wantLine, tc.wantSubstring)
+			}
+		})
+	}
+}

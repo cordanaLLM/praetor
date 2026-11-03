@@ -8,7 +8,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"go.yaml.in/yaml/v3"
 
@@ -54,7 +53,7 @@ func generateInto(t *testing.T, cfgContent string) (string, error) {
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, []LinterPair{{File: "internal/pkg/a_test.go", Linter: "funlen", Function: "TestOversized"}})
 	_, err := GenerateExceptions(GenerateExceptionsOptions{
 		ConfigPath: cfgPath, ReportPath: repPath, Issue: 1030, Category: "C",
-		Today: time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC), Write: true, Stdout: &strings.Builder{},
+		Today: testToday.AddDate(0, 0, 7), Write: true, Stdout: &strings.Builder{},
 	})
 	return cfgPath, err
 }

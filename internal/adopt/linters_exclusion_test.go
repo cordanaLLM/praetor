@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 )
@@ -495,7 +494,7 @@ linters:
         text: func `+"`TestBeta`"+`
       `+GeneratedExceptionsEnd+`
 `)
-	futureToday := time.Date(2030, 5, 1, 0, 0, 0, 0, time.UTC)
+	futureToday := testToday.AddDate(4, 0, 0)
 	out, err := AuditDeclaredLinters(ctx, DeclaredLintersOptions{
 		RootDir: root,
 		Policy:  singleLinterPolicy("framework", "gocyclo"),

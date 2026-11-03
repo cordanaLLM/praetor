@@ -87,10 +87,75 @@ func fixtureClockReads(t *testing.T, source string) map[string]int {
 
 // isTimeNow checks whether an AST call expression invokes time.Now.
 func isTimeNow(expr ast.Expr) bool {
+	return isTimeCall(expr, "Now")
+}
+
+// isTimeCall checks whether an AST call expression invokes the named time selector.
+func isTimeCall(expr ast.Expr, name string) bool {
 	sel, ok := expr.(*ast.SelectorExpr)
 	if !ok {
 		return false
 	}
 	ident, ok := sel.X.(*ast.Ident)
-	return ok && ident.Name == "time" && sel.Sel.Name == "Now"
+	return ok && ident.Name == "time" && sel.Sel.Name == name
+}
+
+// TestFixtureDatesDeriveFromSharedClock ensures shared-clock test files do not construct separate time.Date values inside functions.
+func TestFixtureDatesDeriveFromSharedClock(t *testing.T) {
+	for _, path := range []string{
+		"internal/adopt/linters_generated_exceptions_test.go",
+		"internal/adopt/linters_generate_insertion_test.go",
+		"internal/adopt/linters_exclusion_test.go",
+	} {
+		data, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, calls := range fixtureTimeDateCalls(t, string(data)) {
+			if calls > 0 {
+				t.Errorf("%s:%s constructs %d separate time.Date value(s); derive from testToday", path, name, calls)
+			}
+		}
+	}
+}
+
+// TestFixtureTimeDateCallCounter pins fixture time.Date call counter.
+func TestFixtureTimeDateCallCounter(t *testing.T) {
+	for _, tc := range []struct {
+		name, source string
+		want         int
+	}{
+		{"negative/derived-from-test-today", "package p\nfunc TestClock() { _ = testToday.AddDate(0, 0, 6) }", 0},
+		{"positive/planted-separate-time-date", "package p\nfunc TestClock() { _ = time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC) }", 1},
+		{"boundary/package-clock-var-ignored", "package p\nvar testToday = time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)\nfunc TestClock() { _ = testToday }", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := fixtureTimeDateCalls(t, tc.source)["TestClock"]; got != tc.want {
+				t.Fatalf("time.Date calls = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// fixtureTimeDateCalls returns the count of time.Date calls inside functions in source.
+func fixtureTimeDateCalls(t *testing.T, source string) map[string]int {
+	t.Helper()
+	file, err := parser.ParseFile(token.NewFileSet(), "clock_test.go", source, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := make(map[string]int)
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		for node := range ast.Preorder(fn) {
+			call, ok := node.(*ast.CallExpr)
+			if ok && isTimeCall(call.Fun, "Date") {
+				counts[fn.Name.Name]++
+			}
+		}
+	}
+	return counts
 }

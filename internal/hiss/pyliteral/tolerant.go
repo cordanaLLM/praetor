@@ -14,7 +14,17 @@ import (
 // and three-digit octals above \377. Unknown names and invalid runes become U+FFFD.
 // Literal boundaries and formatted expressions follow Parse.
 func ParseTolerant(text string, start int) (string, int, error) {
-	return (pythonLiteralDecoder{tolerant: true}).parse(text, start)
+	d := pythonLiteralDecoder{tolerant: true}
+	return d.parse(text, start)
+}
+
+// Expressions returns the byte spans of replacement expressions inside a Python f-string at start.
+func Expressions(text string, start int) [][2]int {
+	d := pythonLiteralDecoder{tolerant: true}
+	if _, _, err := d.parse(text, start); err != nil {
+		return nil
+	}
+	return d.spans
 }
 
 var pythonNamedRunes = map[string]rune{

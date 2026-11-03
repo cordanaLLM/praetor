@@ -14,6 +14,7 @@ type pythonDateScanner struct {
 	src                                      sourceFile
 	rep                                      *ScanReport
 	text                                     string
+	spans                                    [][2]int
 	line, lineStart, depth                   int
 	annotationLine                           int
 	value                                    fixtureDateValue
@@ -25,8 +26,20 @@ func scanPythonFixtureDates(src sourceFile, rep *ScanReport) {
 	if !isPythonTest(src.rel) {
 		return
 	}
-	s := pythonDateScanner{src: src, rep: rep, text: string(src.data), line: 1}
-	for index := 0; index < len(s.text); {
+	text := string(src.data)
+	s := pythonDateScanner{src: src, rep: rep, spans: [][2]int{{0, len(text)}}}
+	for i := 0; i < len(s.spans) && i <= len(text); i++ {
+		s.scanSpan(text, s.spans[i][0], s.spans[i][1])
+	}
+}
+
+// scanSpan scans a source or replacement-expression byte span for fixture dates.
+func (s *pythonDateScanner) scanSpan(text string, start, end int) {
+	s.text = text[:end]
+	s.line = 1 + strings.Count(text[:start], "\n")
+	s.lineStart = strings.LastIndexByte(text[:start], '\n') + 1
+	s.depth, s.annotationLine, s.valueEnd = 0, 0, 0
+	for index := start; index < len(s.text); {
 		index = s.step(index)
 	}
 	s.flush()
@@ -88,6 +101,7 @@ func (s *pythonDateScanner) literal(index int) int {
 		s.value = s.value.add(value)
 	}
 	s.valueEnd, s.nesting = end, s.depth
+	s.spans = append(s.spans, pyliteral.Expressions(s.text[:end], index)...)
 	s.line += strings.Count(s.text[index:end], "\n")
 	if offset := strings.LastIndexByte(s.text[index:end], '\n'); offset >= 0 {
 		s.lineStart = index + offset + 1

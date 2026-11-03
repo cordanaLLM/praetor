@@ -46,7 +46,7 @@ func TestGHReviewReaderCompleteAndThreadFields(t *testing.T) {
 	if err != nil || !snapshot.ChecksTerminal || snapshot.ChecksConclusion != "SUCCESS" {
 		t.Fatalf("complete checks: %+v %v", snapshot, err)
 	}
-	threadJSON := `"reviewThreads":{"nodes":[{"id":"thread","path":"main.go","line":null,"isResolved":false,
+	threadJSON := /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ `"reviewThreads":{"nodes":[{"id":"thread","path":"main.go","line":null,"isResolved":false,
  "comments":{"nodes":[{"author":{"login":"bot[bot]"},"createdAt":"2026-11-01T18:00:00Z"}]}}]`
 	answer := strings.Replace(completeReviewFixture, `"reviewThreads":{"nodes":[]`, threadJSON, 1)
 	snapshot, err = fixtureGH(t, answer).Read(t.Context(), "example/widget", 7)

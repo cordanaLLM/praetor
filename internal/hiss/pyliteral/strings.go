@@ -11,15 +11,18 @@ import (
 
 // Parse decodes one Python text literal at start; formatted expressions become {value}.
 func Parse(text string, start int) (string, int, error) {
-	return (pythonLiteralDecoder{}).parse(text, start)
+	d := pythonLiteralDecoder{}
+	return d.parse(text, start)
 }
 
 type pythonLiteralDecoder struct {
-	tolerant bool
+	tolerant  bool
+	bodyStart int
+	spans     [][2]int
 }
 
 // parse decodes a Python string literal starting at the specified index.
-func (d pythonLiteralDecoder) parse(text string, start int) (string, int, error) {
+func (d *pythonLiteralDecoder) parse(text string, start int) (string, int, error) {
 	if start < 0 || start >= len(text) {
 		return "", 0, errors.New("string offset outside Python source")
 	}
@@ -31,12 +34,12 @@ func (d pythonLiteralDecoder) parse(text string, start int) (string, int, error)
 	if err != nil {
 		return "", 0, err
 	}
-	bodyStart := index + width
-	bodyEnd, err := findPythonStringEnd(text, bodyStart, quote, width)
+	d.bodyStart = index + width
+	bodyEnd, err := findPythonStringEnd(text, d.bodyStart, quote, width)
 	if err != nil {
 		return "", 0, err
 	}
-	body := text[bodyStart:bodyEnd]
+	body := text[d.bodyStart:bodyEnd]
 	if strings.Contains(prefix, "r") {
 		if strings.Contains(prefix, "f") {
 			value, _, decodeErr := d.decodePythonFString(body, true)
@@ -72,7 +75,7 @@ func scanPythonStringPrefix(text string, start int) (string, int, error) {
 }
 
 // decodePythonFString decodes Python formatted string literals.
-func (d pythonLiteralDecoder) decodePythonFString(body string, raw bool) (string, int, error) {
+func (d *pythonLiteralDecoder) decodePythonFString(body string, raw bool) (string, int, error) {
 	var out strings.Builder
 	for index := 0; index < len(body); {
 		next, err := d.appendPythonFStringPart(&out, body, index, raw)
@@ -85,10 +88,10 @@ func (d pythonLiteralDecoder) decodePythonFString(body string, raw bool) (string
 }
 
 // appendPythonFStringPart decodes a single f-string component or replacement field.
-func (d pythonLiteralDecoder) appendPythonFStringPart(out *strings.Builder, body string, index int, raw bool) (int, error) {
+func (d *pythonLiteralDecoder) appendPythonFStringPart(out *strings.Builder, body string, index int, raw bool) (int, error) {
 	switch body[index] {
 	case '{':
-		return appendPythonFStringOpen(out, body, index)
+		return d.appendPythonFStringOpen(out, body, index)
 	case '}':
 		if index+1 < len(body) && body[index+1] == '}' {
 			out.WriteByte('}')
@@ -101,7 +104,7 @@ func (d pythonLiteralDecoder) appendPythonFStringPart(out *strings.Builder, body
 }
 
 // appendPythonFStringOpen handles escaped opening braces within f-strings.
-func appendPythonFStringOpen(out *strings.Builder, body string, index int) (int, error) {
+func (d *pythonLiteralDecoder) appendPythonFStringOpen(out *strings.Builder, body string, index int) (int, error) {
 	if index+1 < len(body) && body[index+1] == '{' {
 		out.WriteByte('{')
 		return index + 2, nil
@@ -110,6 +113,7 @@ func appendPythonFStringOpen(out *strings.Builder, body string, index int) (int,
 	if err != nil {
 		return 0, err
 	}
+	d.spans = append(d.spans, [2]int{d.bodyStart + index + 1, d.bodyStart + end})
 	out.WriteString("{value}")
 	return end + 1, nil
 }
@@ -130,6 +134,14 @@ func (d pythonLiteralDecoder) appendPythonFStringText(out *strings.Builder, body
 func findPythonFExpressionEnd(body string, start int) (int, error) {
 	depth := 0
 	for index := start; index < len(body); index++ {
+		if At(body, index) {
+			end, err := Skip(body, index)
+			if err != nil {
+				return 0, err
+			}
+			index = end - 1
+			continue
+		}
 		if body[index] == '{' {
 			depth++
 			continue

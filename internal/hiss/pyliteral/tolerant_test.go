@@ -5,6 +5,7 @@
 package pyliteral_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/hiss/pyliteral"
@@ -45,6 +46,32 @@ func TestParseTolerant(t *testing.T) {
 			value, end, err := pyliteral.ParseTolerant(tc.source, tc.start)
 			if (err != nil) != tc.bad || !tc.bad && (value != tc.want || end != len(tc.source)) {
 				t.Fatalf("decoded %q, end %d, error %v; want %q, error %t", value, end, err, tc.want, tc.bad)
+			}
+		})
+	}
+}
+
+// TestExpressions pins f-string replacement-expression span extraction.
+func TestExpressions(t *testing.T) {
+	for _, tc := range []struct {
+		name, source string
+		start        int
+		want         []string
+	}{
+		{"positive/single-expression", `f"{parse('x')}"`, 0, []string{`parse('x')`}},
+		{"positive/multiple-and-nested-brace", `f"{a} {parse('}')}"`, 0, []string{`a`, `parse('}')`}},
+		{"negative/plain-string", `"plain {x}"`, 0, nil},
+		{"negative/invalid-fstring", `f"{parse('unterminated)"`, 0, nil},
+		{"boundary/named-and-escaped-braces", `f"\N{DIGIT TWO} {{literal}} {value}"`, 0, []string{`value`}},
+		{"boundary/nonzero-offset", `x = rf"{value}"`, 4, []string{`value`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			for _, span := range pyliteral.Expressions(tc.source, tc.start) {
+				got = append(got, tc.source[span[0]:span[1]])
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("Expressions(%q, %d) = %q, want %q", tc.source, tc.start, got, tc.want)
 			}
 		})
 	}

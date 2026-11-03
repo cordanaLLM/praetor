@@ -191,7 +191,7 @@ func TestGenerateExceptions_FormatAndOrder_Positive(t *testing.T) {
 		{File: "internal/pkg/a_test.go", Linter: "funlen", Function: "TestLong"},
 	}
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
-	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
+	today := testToday.AddDate(0, 0, 6)
 
 	var stdout bytes.Buffer
 	res, err := GenerateExceptions(GenerateExceptionsOptions{
@@ -273,7 +273,7 @@ func TestGenerateExceptions_Ratchet_Positive_LowerCountRenews(t *testing.T) {
 		{File: "internal/a_test.go", Linter: "noctx"},
 	}
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
-	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
+	today := testToday.AddDate(0, 0, 6)
 
 	var stdout bytes.Buffer
 	res, err := GenerateExceptions(GenerateExceptionsOptions{
@@ -318,7 +318,7 @@ func TestGenerateExceptions_Ratchet_Negative_NewFindingRefused(t *testing.T) {
 		{File: "internal/b_test.go", Linter: "forbidigo"},
 	}
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
-	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
+	today := testToday.AddDate(0, 0, 6)
 
 	var stderr bytes.Buffer
 	res, err := GenerateExceptions(GenerateExceptionsOptions{
@@ -358,7 +358,7 @@ func TestGenerateExceptions_Ratchet_Negative_ExpiredRefused(t *testing.T) {
 		{File: "internal/a_test.go", Linter: "noctx"},
 	}
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
-	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
+	today := testToday.AddDate(0, 0, 6)
 
 	var stderr bytes.Buffer
 	res, err := GenerateExceptions(GenerateExceptionsOptions{
@@ -398,7 +398,7 @@ func TestGenerateExceptions_Ratchet_Boundary_LiveEntriesNoOp(t *testing.T) {
 		{File: "internal/a_test.go", Linter: "noctx"},
 	}
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
-	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
+	today := testToday.AddDate(0, 0, 6)
 
 	var stdout bytes.Buffer
 	res, err := GenerateExceptions(GenerateExceptionsOptions{
@@ -435,7 +435,7 @@ func TestGenerateExceptions_PlantedGocycloNewFinding(t *testing.T) {
 		{File: "internal/existing_test.go", Linter: "gocyclo", Function: "TestPlantedNewFunc"},
 	}
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
-	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
+	today := testToday.AddDate(0, 0, 6)
 
 	var stderr bytes.Buffer
 	res, err := GenerateExceptions(GenerateExceptionsOptions{
@@ -481,7 +481,7 @@ func TestGenerateExceptions_BaselineShrinkAndHold(t *testing.T) {
 		{File: "internal/existing_test.go", Linter: "gocyclo", Function: "TestStillOverCap"},
 	}
 	cfgPath, repPath := writeTempConfigAndReport(t, cfgContent, pairs)
-	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
+	today := testToday.AddDate(0, 0, 6)
 
 	res, err := GenerateExceptions(GenerateExceptionsOptions{
 		ConfigPath: cfgPath, ReportPath: repPath, Issue: 1030, Category: "C", Today: today, Write: true,
@@ -647,7 +647,7 @@ func TestGenerateExceptions_SameLineDifferentLintersYieldsTwoPairs(t *testing.T)
 		ReportPath: repPath,
 		Issue:      1030,
 		Category:   "C",
-		Today:      time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC),
+		Today:      testToday.AddDate(0, 0, 6),
 		Write:      true,
 		Stdout:     &stdout,
 	})
@@ -836,4 +836,30 @@ func TestStripGolangciConfig_MissingRunAndIssues_Positive(t *testing.T) {
 	assertMappingScalarValue(t, issuesNode, "max-issues-per-linter", "0")
 	assertMappingScalarValue(t, issuesNode, "max-same-issues", "0")
 	assertMappingScalarValue(t, issuesNode, "uniq-by-line", "false")
+}
+
+// TestGenerateExceptions_DerivesFromTestToday verifies generator tests hold across shifted testToday values.
+func TestGenerateExceptions_DerivesFromTestToday(t *testing.T) {
+	saved := testToday
+	t.Cleanup(func() { testToday = saved })
+	for _, tc := range []struct {
+		name string
+		days int
+	}{
+		{"positive/shifted-forward", 45},
+		{"negative/shifted-backward", -45},
+		{"boundary/unshifted", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testToday = saved.AddDate(0, 0, tc.days)
+			TestGenerateExceptions_FormatAndOrder_Positive(t)
+			TestGenerateExceptions_Ratchet_Positive_LowerCountRenews(t)
+			TestGenerateExceptions_Ratchet_Negative_NewFindingRefused(t)
+			TestGenerateExceptions_Ratchet_Negative_ExpiredRefused(t)
+			TestGenerateExceptions_Ratchet_Boundary_LiveEntriesNoOp(t)
+			TestGenerateExceptions_PlantedGocycloNewFinding(t)
+			TestGenerateExceptions_BaselineShrinkAndHold(t)
+			TestGenerateExceptions_SameLineDifferentLintersYieldsTwoPairs(t)
+		})
+	}
 }
