@@ -1140,27 +1140,29 @@ func headRepoOwner(headRepo *ghPullHeadRepo) string {
 	return strings.TrimSpace(headRepo.Owner.Username)
 }
 
-// collectHeadPullRequests walks up to HeadPullRequestsMaxPages pages of pull requests,
-// filtering client-side to branch and (when carried by the response) owner/repo. It stops
-// on the first short page and fails closed with errPageCeiling if the bound is reached.
-func collectHeadPullRequests(owner, repo, branch string, fetchPage func(page int) ([]byte, error)) ([]PullRequestHead, error) {
-	var all []PullRequestHead
-	for page := 1; page <= HeadPullRequestsMaxPages; page++ {
-		body, err := fetchPage(page)
+// collectHeadPullRequests queries open pulls first, then one newest-first terminal page.
+// Both pages are filtered to the target head; any matching OPEN pull ends the lookup.
+func collectHeadPullRequests(owner, repo, branch string, fetchPage func(state string) ([]byte, error)) ([]PullRequestHead, error) {
+	states := [...]string{"open", "closed"}
+	for i := 0; i < len(states); i++ {
+		body, err := fetchPage(states[i])
 		if err != nil {
 			return nil, err
 		}
-		heads, rawCount, err := parseHeadPullRequestsPage(body, owner, repo, branch)
+		heads, _, err := parseHeadPullRequestsPage(body, owner, repo, branch)
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, heads...)
-		if rawCount < HeadPullRequestsPerPage {
-			return all, nil
+		if states[i] == "closed" {
+			return heads, nil
+		}
+		for j := 0; j < len(heads) && j < HeadPullRequestsPerPage; j++ {
+			if heads[j].State == PullRequestStateOpen {
+				return heads, nil
+			}
 		}
 	}
-	return nil, fmt.Errorf("%w: pull request head listing for %q exceeded %d pages of %d items",
-		errPageCeiling, branch, HeadPullRequestsMaxPages, HeadPullRequestsPerPage)
+	return nil, nil
 }
 
 // pullRequestHeadState normalizes the state of a pull request into OPEN, MERGED, or CLOSED.
@@ -1174,9 +1176,8 @@ func pullRequestHeadState(item ghPullRaw) string {
 	return PullRequestStateClosed
 }
 
-// ListPullRequestsByHead fetches up to HeadPullRequestsMaxPages bounded pages of pull
-// requests (all states) whose head branch is branch from the GitHub REST API, filtering
-// client-side to the target repository and branch.
+// ListPullRequestsByHead queries one open page for branch, then (only without a matching
+// OPEN pull) one closed page ordered newest first, filtering to the target repository.
 func (g *GitHubDriver) ListPullRequestsByHead(ctx context.Context, branch string) ([]PullRequestHead, error) {
 	if ctx == nil {
 		return nil, errors.New("list pull requests by head: context cannot be nil")
@@ -1191,16 +1192,15 @@ func (g *GitHubDriver) ListPullRequestsByHead(ctx context.Context, branch string
 	}
 	ctx, cancel := context.WithTimeout(ctx, defaultHTTPTimeout)
 	defer cancel()
-	prefix := fmt.Sprintf("/repos/%s/%s/pulls?state=all&head=%s&per_page=%d&page=",
-		owner, repo, url.QueryEscape(owner+":"+branch), HeadPullRequestsPerPage)
-	return collectHeadPullRequests(owner, repo, branch, func(page int) ([]byte, error) {
-		return g.fetchHeadPullsPage(ctx, branch, prefix, page)
+	return collectHeadPullRequests(owner, repo, branch, func(state string) ([]byte, error) {
+		path := fmt.Sprintf("/repos/%s/%s/pulls?state=%s&head=%s&sort=created&direction=desc&per_page=%d&page=1",
+			owner, repo, state, url.QueryEscape(owner+":"+branch), HeadPullRequestsPerPage)
+		return g.fetchHeadPullsPage(ctx, branch, path)
 	})
 }
 
-// fetchHeadPullsPage fetches and validates one page of pull requests for branch from GitHub.
-func (g *GitHubDriver) fetchHeadPullsPage(ctx context.Context, branch, prefix string, page int) ([]byte, error) {
-	path := fmt.Sprintf("%s%d", prefix, page)
+// fetchHeadPullsPage fetches and validates the bounded pull request page at path for branch.
+func (g *GitHubDriver) fetchHeadPullsPage(ctx context.Context, branch, path string) ([]byte, error) {
 	body, status, err := g.readRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed listing pull requests for head %q: %w", branch, err)
@@ -1302,8 +1302,8 @@ func resolveForgejoTokenForHost(host, declaredHost string) string {
 	return resolveForgejoToken()
 }
 
-// ReadPullRequestsByHead queries the forge (GitHub or Forgejo) for up to HeadPullRequestsMaxPages
-// bounded pages of pull requests in any state whose head branch is branch.
+// ReadPullRequestsByHead queries one open page for branch, then one newest-first closed
+// page only when no matching OPEN pull was found, through the selected forge driver.
 func ReadPullRequestsByHead(ctx context.Context, kind config.Forge, remote util.GitRemote, branch string, declaredHostOpt ...string) ([]PullRequestHead, error) {
 	if ctx == nil {
 		return nil, errors.New("read pull requests by head: context cannot be nil")
