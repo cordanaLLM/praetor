@@ -70,10 +70,7 @@ func privilegeCommandRule() string {
 	launchers := make([]string, 0, len(names))
 	for _, name := range names {
 		spec := admissionWrappers[name]
-		option := privilegeFlagExcept(spec.values)
-		if len(spec.values) > 0 {
-			option = `(?:` + strings.Join(spec.values, `|`) + `)` + shellBlank + privilegeValue + `|` + option
-		}
+		option := privilegeOptions(spec.values)
 		launcher := shellProgram(name) + `(?:` + shellBlank + `(?:` + option + `))*` + shellBlank
 		launcher += privilegePositionals(spec)
 		launchers = append(launchers, launcher)
@@ -90,6 +87,40 @@ func privilegePositionals(spec wrapperSpec) string {
 		return `(?:[0-9]+` + shellBlank + `)?`
 	}
 	return strings.Repeat(privilegeWord+shellBlank, spec.positional)
+}
+
+// privilegeShortValues lists the short options whose first occurrence consumes the
+// rest of its cluster, or the next word when no attached value remains.
+func privilegeShortValues(values []string) string {
+	var letters strings.Builder
+	for _, value := range values {
+		if len(value) == 2 && value[0] == '-' {
+			letters.WriteByte(value[1])
+		}
+	}
+	return letters.String()
+}
+
+// privilegeOptions keeps separate values, attached values and valueless clusters
+// disjoint so option data cannot also be parsed as the protected command.
+func privilegeOptions(values []string) string {
+	longValues := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.HasPrefix(value, "--") {
+			longValues = append(longValues, value[1:])
+		}
+	}
+	long := `--|-` + privilegeFlagExcept(longValues)
+	if len(longValues) > 0 {
+		long = `(?:-` + strings.Join(longValues, `|-`) + `)` + shellBlank + privilegeValue + `|` + long
+	}
+	letters := privilegeShortValues(values)
+	plain := `[^` + privilegeOptionChar + `\x2d` + letters + `]`
+	short := `-` + plain + `+`
+	if letters != "" {
+		short += `|-` + plain + `*[` + letters + `](?:` + shellBlank + privilegeValue + `|[^` + privilegeOptionChar + `]+)`
+	}
+	return long + `|` + short
 }
 
 // privilegeFlagExcept matches an option token except the exact flags taking a
@@ -167,7 +198,7 @@ func protectedPrivilegeInvocation() string {
 	parts := make([]string, 0, len(privilegeNames))
 	for _, name := range privilegeNames[:4] {
 		values := privilegeLauncherValues[name]
-		option := `(?:` + strings.Join(values, `|`) + `)` + shellBlank + privilegeValue + `|` + privilegeFlagExcept(values)
+		option := privilegeOptions(values)
 		parts = append(parts, quotedPrivilegeProgram(name)+`(?:`+shellBlank+`(?:`+option+`))*`+shellBlank+script)
 	}
 	su := quotedPrivilegeProgram("su") + `(?:` + shellBlank + privilegeWord + `)*` + shellBlank

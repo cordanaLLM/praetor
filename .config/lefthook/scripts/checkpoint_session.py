@@ -157,7 +157,7 @@ def _is_worktree_touched(resolved, tool_name, tool_input, strings, cwd=None, bud
 
 
 def _read_session_record(record_file):
-    """Invalid, incomplete or unresolvable records mean ownership is unknown."""
+    """Preserve resolvable owners; only missing worktrees may be discarded."""
     try:
         with record_file.open("rb") as stream:
             raw = stream.read(MAX_RECORD_BYTES + 1)
@@ -168,7 +168,13 @@ def _read_session_record(record_file):
             return None
         if not all(isinstance(path, str) and Path(path).is_absolute() for path in data):
             return None
-        return {str(Path(path).resolve(strict=True)) for path in data}
+        paths = set()
+        for path in data[:MAX_WORKTREES]:
+            try:
+                paths.add(str(Path(path).resolve(strict=True)))
+            except FileNotFoundError:
+                continue  # Removed worktrees no longer participate in ownership.
+        return paths
     except (OSError, RuntimeError, ValueError):
         return None
 
@@ -219,7 +225,12 @@ def _prune_session_records(sessions_dir, current_record):
                 break
             path = Path(entry.path)
             if path != current_record and entry.name.endswith(".json"):
-                _prune_session_record(path, cutoff)
+                try:
+                    info = entry.stat(follow_symlinks=False)
+                except FileNotFoundError:
+                    continue  # Another cleanup already removed this entry.
+                if stat.S_ISREG(info.st_mode) and info.st_mtime < cutoff:
+                    _prune_session_record(path, cutoff)
 
 
 def _acquire_session_lock(lock):

@@ -235,6 +235,36 @@ class SessionOwnershipRegressions(unittest.TestCase):
         with mock.patch.dict(os.environ, {checkpoint.SESSION_ENV: self.identity}):
             self.assertIsNone(checkpoint._session_owned_worktrees(self.common))
 
+    def test_removed_worktree_preserves_known_ownership_and_updates(self):
+        """Keep live owners and accept tool updates after a recorded worktree disappears."""
+        removed = self.base / "removed"
+        self.record.write_text(json.dumps([str(removed), str(self.paths[0])]))
+        with mock.patch.dict(os.environ, {checkpoint.SESSION_ENV: self.identity}):
+            self.assertEqual(
+                checkpoint._session_owned_worktrees(self.common), {str(self.paths[0])}
+            )
+        self.record_path(self.paths[1])
+        self.assertEqual(json.loads(self.record.read_text()), [str(p) for p in self.paths])
+
+    def test_all_removed_worktrees_mean_known_empty_ownership(self):
+        """Treat an entirely removed set of worktrees as known empty ownership."""
+        self.record.write_text(json.dumps([str(self.base / "removed")]))
+        self.assertEqual(sessions._read_session_record(self.record), set())
+
+    def test_resolution_errors_remain_unknown_with_removed_worktrees(self):
+        """Ignore only missing paths; malformed values and resolution errors stay unknown."""
+        missing = str(self.base / "removed")
+        for value in (None, "relative", str(self.paths[0]) + "\0"):
+            with self.subTest(value=value):
+                self.record.write_text(json.dumps([missing, value]))
+                self.assertIsNone(sessions._read_session_record(self.record))
+        self.record.write_text(json.dumps([str(self.paths[0])]))
+        for error in (PermissionError("denied"), RuntimeError("symlink loop")):
+            with self.subTest(error=error), mock.patch.object(
+                Path, "resolve", side_effect=error
+            ):
+                self.assertIsNone(sessions._read_session_record(self.record))
+
     def test_malformed_session_records_make_ownership_unknown(self):
         """Verify malformed session records report unknown ownership without being overwritten."""
         self.assertIs(checkpoint._read_session_record, sessions._read_session_record)
@@ -279,6 +309,48 @@ class SessionOwnershipRegressions(unittest.TestCase):
             self.assertTrue(records[label].exists(), label)
         self.assertTrue(self.record.exists())
         self.assertIs(checkpoint.WORKTREE_ACTIVITY_WINDOW, sessions.WORKTREE_ACTIVITY_WINDOW)
+
+    def test_pruning_locks_only_expired_regular_candidates(self):
+        """Avoid locks for fresh, exact-boundary, current and nonregular session entries."""
+        now = time.time()
+        records = {}
+        for label, age in (("old", sessions.WORKTREE_ACTIVITY_WINDOW + 1),
+                           ("fresh", sessions.WORKTREE_ACTIVITY_WINDOW - 1),
+                           ("boundary", sessions.WORKTREE_ACTIVITY_WINDOW)):
+            record = self.directory / (label + ".json")
+            record.write_text("[]")
+            os.utime(record, (now - age, now - age))
+            records[label] = record
+        directory = self.directory / "directory.json"
+        directory.mkdir()
+        os.utime(directory, (0, 0))
+        acquire = sessions._acquire_session_lock
+        with mock.patch.object(sessions.time, "time", return_value=now), mock.patch.object(
+            sessions, "_acquire_session_lock", wraps=acquire
+        ) as locked:
+            sessions._write_session_record(self.directory, self.record, set())
+        self.assertEqual(locked.call_args_list, [mock.call(records["old"].with_suffix(".lock"))])
+        self.assertFalse(records["old"].exists())
+        self.assertTrue(records["fresh"].exists())
+        self.assertTrue(records["boundary"].exists())
+        self.assertTrue(directory.is_dir())
+
+    def test_pruning_rechecks_age_after_acquiring_candidate_lock(self):
+        """Preserve a candidate refreshed by a writer between the age check and locking."""
+        old = self.directory / "old.json"
+        old.write_text("[]")
+        os.utime(old, (0, 0))
+        acquire = sessions._acquire_session_lock
+
+        def refresh_then_lock(lock):
+            """Simulate the previous writer refreshing the record before releasing its lock."""
+            os.utime(old, None)
+            return acquire(lock)
+
+        with mock.patch.object(sessions, "_acquire_session_lock", side_effect=refresh_then_lock):
+            sessions._prune_session_records(self.directory, self.record)
+        self.assertTrue(old.exists())
+        self.assertFalse(old.with_suffix(".lock").exists())
 
     def test_overflow_is_unknown_and_stays_unknown(self):
         """Verify overflowing session records remain in the unknown-ownership state."""

@@ -44,7 +44,11 @@
     "systemd-run --property MemoryHigh=8G",
     "env --argv0 -tool",
     "time --output -file",
-    "exec -a -alias"
+    "exec -a -alias",
+    "env -iu NAME",
+    "env -iuNAME",
+    "time -ao output",
+    "time -aooutput"
   ],
   "launchers": [
     "sudo -a bsdauth",
@@ -95,7 +99,14 @@
     "run0 --background 44",
     "run0 --shell-prompt-prefix pfx",
     "run0 --lightweight yes",
-    "run0 --area work"
+    "run0 --area work",
+    "sudo -nu root",
+    "sudo -nEu root",
+    "sudo -nuroot",
+    "sudo -un",
+    "sudo -nu -root",
+    "doas -nu root",
+    "doas -nuroot"
   ],
   "data_only": [
     "env --argv0 sudo praetorctl conform /srv/dev",
@@ -103,6 +114,11 @@
     "xargs --process-slot-var sudo praetorctl conform /srv/dev",
     "exec -a sudo praetorctl conform /srv/dev",
     "sudo -p praetorctl true",
-    "run0 --description praetorctl true"
+    "run0 --description praetorctl true",
+    "sudo -np praetorctl adopt /srv/dev",
+    "sudo -nEp praetorctl adopt /srv/dev",
+    "env -iu sudo praetorctl conform /srv/dev",
+    "time -ao sudo praetorctl conform /srv/dev",
+    "sudo -nu root echo praetorctl adopt /srv/dev"
   ]
 }

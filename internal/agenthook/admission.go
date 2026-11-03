@@ -1172,12 +1172,27 @@ func advanceOptionWord(word string, j int, spec wrapperSpec) (newJ int, done boo
 		return j, true, true
 	}
 	if strings.HasPrefix(word, "-") && len(word) > 1 {
-		if slices.Contains(spec.values, word) {
+		if slices.Contains(spec.values, word) || clusteredSeparateValue(word, spec.values) {
 			j++
 		}
 		return j, false, true
 	}
 	return j, false, false
+}
+
+// clusteredSeparateValue reports whether the first value-taking option in a short
+// cluster consumes the next word instead of the remaining characters.
+func clusteredSeparateValue(word string, values []string) bool {
+	if strings.HasPrefix(word, "--") {
+		return false
+	}
+	letters := privilegeShortValues(values)
+	for i := 1; i < len(word) && i < MaxScanChars; i++ {
+		if strings.ContainsRune(letters, rune(word[i])) {
+			return i == len(word)-1
+		}
+	}
+	return false
 }
 
 // commandAfter returns the index of the command a wrapper at index i runs: past its options,
