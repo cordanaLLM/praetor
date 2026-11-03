@@ -25,7 +25,16 @@ const patchWhitespaceBody = "context line with a trailing space \n \tspace befor
 // over that commit.
 func diffCheckWithRepositoryAttributes(t *testing.T, rel string) (string, error) {
 	t.Helper()
-	attrs, err := os.ReadFile(filepath.Join("..", "..", ".gitattributes"))
+	root, err := os.OpenRoot(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("open repository root: %v", err)
+	}
+	defer func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("close repository root: %v", err)
+		}
+	}()
+	attrs, err := root.ReadFile(".gitattributes")
 	if err != nil {
 		t.Fatalf("read repository .gitattributes: %v", err)
 	}
