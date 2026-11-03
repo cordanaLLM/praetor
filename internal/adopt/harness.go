@@ -70,6 +70,16 @@ const harnessReceiptLine = "Pass = exit 0. Signed Ed25519 Exit-0 receipt only fr
 const repositoryOwnedVerifySummary = "`" + verifyCommand + "` = repository-owned gate; adoption kept it unread + unexecuted. Steps live in `" + makefileName +
 	"`: read there, never restate. Footer commands = project markers only.\n"
 
+// generatedVerifySummary describes the generated repository gate without restating its recipe.
+const generatedVerifySummary = "`" + verifyCommand + "` = repository gate. Steps live in `" + makefileName +
+	"`: read there, never restate; adoption executed none.\n"
+
+// noVerifyTargetSummary directs repositories without a generated makefile to their declared gates.
+const noVerifyTargetSummary = "No `" + verifyCommand + "` target: `makefile` declined in `" + manifestFile + "`. Run gates above + declared build/test commands (footer) directly.\n"
+
+// unavailableVerifySummary explains why a generated target cannot yet verify the project.
+const unavailableVerifySummary = "`" + verifyCommand + "` fails until project build + test commands exist; reasons in footer.\n"
+
 // hasVerifyAll reports whether the repository has a verify-all target after this run: the one
 // adoption generates, or a repository-owned one in the working tree.
 func hasVerifyAll(facts harnessFacts) bool {
@@ -88,11 +98,11 @@ func verificationSummary(facts harnessFacts) string {
 	case plan.Status == verificationPreserved || facts.repositoryOwned&hisscatalog.PipelineVerifyAll != 0:
 		return repositoryOwnedVerifySummary
 	case pipelines&hisscatalog.PipelineVerifyAll == 0:
-		return "No `" + verifyCommand + "` target: `makefile` declined in `" + manifestFile + "`. Run gates above + declared build/test commands (footer) directly.\n"
+		return noVerifyTargetSummary
 	case plan.Status == verificationUnavailable:
-		return "`" + verifyCommand + "` fails until project build + test commands exist; reasons in footer.\n"
+		return unavailableVerifySummary
 	}
-	return "`" + verifyCommand + "` = repository gate. Steps live in `" + makefileName + "`: read there, never restate; adoption executed none.\n"
+	return generatedVerifySummary
 }
 
 const agentHarnessFooterTemplate = harnessFooterHeading + `

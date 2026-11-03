@@ -170,10 +170,12 @@ func TestAdoptForcePreservesRepositoryOwnedHarness(t *testing.T) {
 
 // TestAdoptForceRefreshesLegacyGeneratedInvariantsAndKeepsCustomRows checks that an AGENTS.md
 // carrying the legacy generated invariant header (| Invariant | Rule | Enforcement | On fail |)
-// without an Adopted-check legend is refreshed under --force while keeping custom non-HISS rows.
+// and historical verification prose, without an Adopted-check legend, is refreshed under --force
+// while keeping custom non-HISS rows.
 func TestAdoptForceRefreshesLegacyGeneratedInvariantsAndKeepsCustomRows(t *testing.T) {
 	const customRow = "| **ACME-01** secrets | never log tokens | review | blocker |"
 	legacy := "# legacy Agent Operating Harness\n\n<!-- praetor:head -->\n\n" +
+		harnessTurnEndIntro + "\n```bash\nmake verify-all\n```\n\n" + legacyGeneratedVerifyParagraph + "\n\n" +
 		"## Core Directives & Invariants\n\n" +
 		"| Invariant | Rule | Enforcement | On fail |\n" +
 		"| :--- | :--- | :--- | :--- |\n" +

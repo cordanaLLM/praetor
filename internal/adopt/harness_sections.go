@@ -26,6 +26,10 @@ const (
 	legacyGeneratedInvariantsHeader = "| Invariant | Rule | Enforcement | On fail |"
 	// harnessOperationalHeading opens the operational rules section after the invariant table.
 	harnessOperationalHeading = "## Operational Rules"
+	// legacyGeneratedVerifyParagraph identifies the pre-catalog harness's verification prose
+	// (agentHarnessTemplate before ad374ac58); the shared table header alone proves no ownership.
+	legacyGeneratedVerifyParagraph = "`" + verifyCommand + "` = `praetorctl audit` + `praetorctl compile-context --verify` + repository tests. " +
+		"All pass -> Ed25519 Exit-0 receipt. Fail -> SARIF diagnostic distillation (<= 1500 tokens)."
 )
 
 // repositoryVerifyParagraph returns the repository-owned verify-all paragraph between the
@@ -35,6 +39,11 @@ func repositoryVerifyParagraph(head, harness string) string {
 	if !strings.Contains(harness, repositoryOwnedVerifySummary) {
 		return ""
 	}
+	return stripGeneratedVerifyText(verificationParagraph(head))
+}
+
+// verificationParagraph extracts the text between the turn-end shell block and invariant heading.
+func verificationParagraph(head string) string {
 	intro := strings.Index(head, harnessTurnEndIntro)
 	if intro < 0 {
 		return ""
@@ -47,19 +56,19 @@ func repositoryVerifyParagraph(head, harness string) string {
 	if invRel < 0 {
 		return ""
 	}
-	para := strings.TrimSpace(head[fenceEnd : fenceEnd+invRel])
-	if para == "" || isGeneratedVerifyParagraph(para) {
-		return ""
-	}
-	return para
+	return strings.TrimSpace(head[fenceEnd : fenceEnd+invRel])
 }
 
-// isGeneratedVerifyParagraph reports whether para matches the template text of a generated verify paragraph.
-func isGeneratedVerifyParagraph(para string) bool {
-	return strings.Contains(para, strings.TrimSpace(harnessReceiptLine)) ||
-		strings.HasPrefix(para, "`"+verifyCommand+"` = repository-owned gate;") ||
-		strings.HasPrefix(para, "`"+verifyCommand+"` = repository gate.") ||
-		strings.Contains(para, "Ed25519 Exit-0 receipt")
+// stripGeneratedVerifyText removes exact generated summaries and receipts, retaining owner text.
+func stripGeneratedVerifyText(para string) string {
+	generated := [...]string{
+		repositoryOwnedVerifySummary, generatedVerifySummary, noVerifyTargetSummary,
+		unavailableVerifySummary, harnessReceiptLine, legacyGeneratedVerifyParagraph,
+	}
+	for i := 0; i < len(generated); i++ {
+		para = strings.ReplaceAll(para, strings.TrimSpace(generated[i]), "")
+	}
+	return strings.TrimSpace(para)
 }
 
 // replaceVerifyParagraph replaces the generated verify paragraph in harness with verifyParagraph.
@@ -83,7 +92,7 @@ func repositoryInvariantsSection(head string) (string, bool, error) {
 		return "", false, nil
 	}
 	section := strings.TrimSpace(head[invStart : invStart+opRel])
-	if isGeneratedInvariantsSection(section) {
+	if isGeneratedInvariantsSection(section, head) {
 		return "", false, nil
 	}
 	rows, err := hisscatalog.InvariantTableRows(section)
@@ -96,11 +105,13 @@ func repositoryInvariantsSection(head string) (string, bool, error) {
 	return section, true, nil
 }
 
-// isGeneratedInvariantsSection reports whether section matches the markers of a generated invariants section.
-func isGeneratedInvariantsSection(section string) bool {
+// isGeneratedInvariantsSection recognizes current table markers or a legacy header accompanied
+// by the historical generated verification paragraph; an unmarked table stays repository-owned.
+func isGeneratedInvariantsSection(section, head string) bool {
 	return strings.Contains(section, generatedInvariantsHeader) ||
-		strings.Contains(section, legacyGeneratedInvariantsHeader) ||
-		strings.Contains(section, adoptedCheckLegendPrefix)
+		strings.Contains(section, adoptedCheckLegendPrefix) ||
+		(strings.Contains(section, legacyGeneratedInvariantsHeader) &&
+			strings.Contains(verificationParagraph(head), legacyGeneratedVerifyParagraph))
 }
 
 // replaceInvariantsSection replaces the invariants section in harness with the provided section.
