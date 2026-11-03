@@ -129,12 +129,14 @@ func ScannedFile(rel string) bool {
 
 // ScanRepositoryPins collects every tagged-digest reference the repository owns.
 func ScanRepositoryPins(ctx context.Context, root string) ([]ImagePin, error) {
+	ctx, cancel := context.WithTimeout(ctx, imageRefScanTimeout)
+	defer cancel()
 	files, err := RepositoryFiles(ctx, root)
 	if err != nil {
 		return nil, err
 	}
 	var pins []ImagePin
-	err = iterateScannedFiles(root, files, ScannedFile, func(rel string, content []byte, readErr error) error {
+	err = iterateScannedFiles(ctx, root, files, ScannedFile, func(rel string, content []byte, readErr error) error {
 		if readErr != nil {
 			return readErr
 		}
@@ -163,12 +165,14 @@ func ScannedImageRefFile(rel string) bool {
 
 // ScanImageRefs scans root for container image references lacking an @sha256: digest pin.
 func ScanImageRefs(ctx context.Context, root string) ([]ImageRefFinding, error) {
+	ctx, cancel := context.WithTimeout(ctx, imageRefScanTimeout)
+	defer cancel()
 	files, err := imageRefCandidateFiles(ctx, root)
 	if err != nil {
 		return nil, err
 	}
 	var findings []ImageRefFinding
-	err = iterateScannedFiles(root, files, ScannedImageRefFile, func(rel string, content []byte, readErr error) error {
+	err = iterateScannedFiles(ctx, root, files, ScannedImageRefFile, func(rel string, content []byte, readErr error) error {
 		if errors.Is(readErr, util.ErrPathEscapesRoot) {
 			// A link that leaves root is never followed (confinement); it is reported as not
 			// verified rather than failing the scan or passing silently.
