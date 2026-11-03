@@ -106,21 +106,25 @@ func elapsedFailurePositions(body *ast.BlockStmt) []token.Pos {
 func rememberElapsedBindings(node ast.Node, bindings elapsedBindings) {
 	switch value := node.(type) {
 	case *ast.AssignStmt:
-		for index, expression := range value.Rhs {
-			if index < len(value.Lhs) {
-				rememberElapsedName(value.Lhs[index], expression, bindings)
-			}
+		for index, left := range value.Lhs {
+			rememberElapsedName(left, assignedExpression(value.Rhs, len(value.Lhs), index), bindings)
 		}
 	case *ast.ValueSpec:
-		for index, expression := range value.Values {
-			if index < len(value.Names) {
-				rememberElapsedName(value.Names[index], expression, bindings)
-			}
+		for index, left := range value.Names {
+			rememberElapsedName(left, assignedExpression(value.Values, len(value.Names), index), bindings)
 		}
 	}
 }
 
-// rememberElapsedName taints a local name when its assigned expression contains a delta or comparison.
+// assignedExpression pairs a target slot with its RHS expression when arities match.
+func assignedExpression(expressions []ast.Expr, targets, index int) ast.Expr {
+	if len(expressions) == targets {
+		return expressions[index]
+	}
+	return nil
+}
+
+// rememberElapsedName updates a local name's comparison or delta binding from its assigned expression.
 func rememberElapsedName(left, right ast.Expr, bindings elapsedBindings) {
 	name, ok := left.(*ast.Ident)
 	if !ok {
@@ -128,15 +132,22 @@ func rememberElapsedName(left, right ast.Expr, bindings elapsedBindings) {
 	}
 	if elapsedComparison(right, bindings) {
 		bindings.comparisons[name.Name] = true
+		delete(bindings.deltas, name.Name)
 		return
 	}
+	delete(bindings.comparisons, name.Name)
 	if containsElapsed(right, bindings.deltas) {
 		bindings.deltas[name.Name] = true
+		return
 	}
+	delete(bindings.deltas, name.Name)
 }
 
 // containsElapsed recognises clock deltas and local variables assigned from them.
 func containsElapsed(root ast.Node, names map[string]bool) bool {
+	if root == nil {
+		return false
+	}
 	for node := range ast.Preorder(root) {
 		if name, ok := node.(*ast.Ident); ok && names[name.Name] {
 			return true
@@ -154,6 +165,9 @@ func containsElapsed(root ast.Node, names map[string]bool) bool {
 
 // elapsedComparison covers both operand orders, strict/non-strict inequalities and boolean aliases.
 func elapsedComparison(root ast.Node, bindings elapsedBindings) bool {
+	if root == nil {
+		return false
+	}
 	for node := range ast.Preorder(root) {
 		if name, ok := node.(*ast.Ident); ok && bindings.comparisons[name.Name] {
 			return true
@@ -231,6 +245,10 @@ func TestCorrelationElapsedAssertionShapes(t *testing.T) {
 		{"initializer", `if elapsed := time.Since(start); elapsed >= bound { t.Fatalf("slow") }`, 1},
 		{"alias", `elapsed := time.Since(start); took := elapsed; if took < bound { t.Fatal("early") }`, 1},
 		{"boolean alias", `slow := time.Since(start) > bound; if slow { t.Fatal("slow") }`, 1},
+		{"alias cleared", `slow := time.Since(start) > bound; slow = false; if slow { t.Fatal("x") }`, 0},
+		{"alias re-bound", `slow := false; slow = time.Since(start) > bound; if slow { t.Fatal("x") }`, 1},
+		{"delta cleared", `elapsed := time.Since(start); elapsed = 0; if elapsed > bound { t.Fatal("x") }`, 0},
+		{"multi-assign cleared", `slow := time.Since(start) > bound; slow, ok := next(); if slow && ok { t.Fatal("x") }`, 0},
 		{"sub reversed", `var elapsed = end.Sub(start); if bound <= elapsed { t.Errorf("slow") }`, 1},
 		{"compound", `if bad || time.Since(start) > bound { t.Fatal("slow") }`, 1},
 		{"else", `if time.Since(start) < bound {} else { t.Fatal("slow") }`, 1},
