@@ -6,12 +6,12 @@ package agenthook
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -194,7 +194,7 @@ func TestForgeManifestNoticeDedupAndDirCache(t *testing.T) {
 func TestForgeManifestOutsideRepositoryIgnored(t *testing.T) {
 	root := repositoryWithManifest(t, "version: 1\nforge:\n  own_organizations: [repo-org]\n")
 	outside := filepath.Join(t.TempDir(), "RUNNER~1")
-	if err := os.Mkdir(outside, 0o700); err != nil {
+	if err := util.MkdirAllContext(testsupport.DeadlineContext(t), outside, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	writeTestFixtureFile(t, filepath.Join(outside, manifestName),

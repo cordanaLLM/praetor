@@ -9,11 +9,14 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // TestTargetDirectoryTildes pins literal internal and trailing tildes while retaining home expansion and unresolved user prefixes.
 func TestTargetDirectoryTildes(t *testing.T) {
-	base, err := filepath.EvalSymlinks(t.TempDir())
+	ctx := testsupport.DeadlineContext(t)
+	base, err := util.ResolveExistingPath(ctx, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +29,7 @@ func TestTargetDirectoryTildes(t *testing.T) {
 	for i := 0; i < len(cases); i++ {
 		tc := cases[i]
 		t.Run(tc.value, func(t *testing.T) {
-			if err := os.MkdirAll(filepath.Join(base, tc.value), 0o700); err != nil {
+			if err := util.MkdirAllContext(ctx, filepath.Join(base, tc.value), 0o700); err != nil {
 				t.Fatal(err)
 			}
 			want := ""

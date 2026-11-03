@@ -3,8 +3,25 @@ package util
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 )
+
+// MkdirAllContext creates path and missing parents under the caller's context and permission ceiling.
+// It refuses a nil or cancelled context before creation and checks cancellation afterward.
+// MkdirSecure supplies permission validation, the zero-permission default, and tightening of existing directories.
+func MkdirAllContext(ctx context.Context, path string, perm os.FileMode) error {
+	if ctx == nil {
+		return errors.New("directory creation requires a context")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := MkdirSecure(path, perm); err != nil {
+		return err
+	}
+	return ctx.Err()
+}
 
 // ResolveExistingPath resolves symlinks through the deepest existing ancestor,
 // retaining missing trailing components. It is a bounded discovery operation,

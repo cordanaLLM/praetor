@@ -14,6 +14,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/topology"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 type worktreeFixture struct {
@@ -25,11 +26,11 @@ type worktreeFixture struct {
 func TestResolveWorktreeTargetPathTildes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	base, err := filepath.EvalSymlinks(t.TempDir())
+	base, err := util.ResolveExistingPath(ctx, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(filepath.Join(base, "RUNNER~1"), 0o700); err != nil {
+	if err := util.MkdirAllContext(ctx, filepath.Join(base, "RUNNER~1"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", base)
