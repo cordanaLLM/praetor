@@ -160,6 +160,42 @@ func TestUnknownHostManifestNotice(t *testing.T) {
 	}
 }
 
+// TestForgeManifestPushAdmissionVerdicts plants a broken manifest in a mixed push and
+// forge-write command; both checks must retain their notices and foreign writes must deny.
+func TestForgeManifestPushAdmissionVerdicts(t *testing.T) {
+	repo := t.TempDir()
+	initAdmissionRepo(t, repo, "feature-branch", "https://github.com/acme/widgets.git")
+	writeAdmissionManifest(t, repo, "repository:\n  forge: github\nhooks: false\n")
+	pol := admissionPolicy(t)
+	cases := [...]struct {
+		name, suffix string
+		want         Outcome
+		forgeFinding bool
+	}{
+		{"push only", "", Allow, false},
+		{"repair write", ` && gh pr comment 1 --body "Repair ready"`, Allow, true},
+		{"foreign write", ` && gh pr comment 1 --body "outside/project#2"`, Deny, true},
+	}
+	for i := 0; i < len(cases) && i < 3; i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			command := "PRAETOR_ADMIT=git-push git push origin feature-branch" + tc.suffix
+			v := evaluateCommand(t.Context(), Canonical{Command: command}, repo, Invocation{
+				WorkDir: repo, Policy: pol, Getenv: noEnvironment,
+			})
+			if v.Outcome != tc.want || !strings.Contains(v.Notice, "git push target resolution:") {
+				t.Fatalf("push verdict lost: %+v", v)
+			}
+			if got := strings.Contains(v.Notice+v.Reason, forgeTextRefRuleName+": manifest finding"); got != tc.forgeFinding {
+				t.Fatalf("forge manifest finding=%v, want %v: %+v", got, tc.forgeFinding, v)
+			}
+			if tc.want == Deny && !strings.Contains(v.Reason, "outside/project#2") {
+				t.Fatalf("foreign reference refusal lost: %+v", v)
+			}
+		})
+	}
+}
+
 // TestPushManifestReadCancellation refuses cancelled work before reading or host fallback.
 // A normal read receives an explicit deadline even when its parent has none.
 func TestPushManifestReadCancellation(t *testing.T) {

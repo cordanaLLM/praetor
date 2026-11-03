@@ -198,10 +198,9 @@ func evaluateCommand(ctx context.Context, canonical Canonical, root string, in I
 	if verdict.Outcome != Allow {
 		return verdict
 	}
-	if forgeVerdict := evaluateForgeTextRefs(ctx, canonical, root, in); forgeVerdict.Outcome != Allow {
-		return forgeVerdict
-	}
-	return verdict
+	forgeVerdict := evaluateForgeTextRefs(ctx, canonical, root, in)
+	forgeVerdict.Notice = appendLaneNotice(verdict.Notice, forgeVerdict.Notice)
+	return forgeVerdict
 }
 
 // noInterpreterVerdict differs per event (3.3): pre-edit and stop fail closed (deny; stop's
