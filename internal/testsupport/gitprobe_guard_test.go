@@ -301,6 +301,18 @@ func TestGitProbeGuard_NonLiteralCommand(t *testing.T) {
 
 	constGoodSrc := []byte("package sample_test\n\nconst sub = \"rev-parse\"\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, sub, \"HEAD\")\n}\n")
 	assertNoFindings(t, "const read-only subcommand", "const_good_test.go", constGoodSrc)
+
+	fnValSrc := []byte("package sample_test\n\nfunc f() {\n\tprobe := util.RunGitProbe\n\tprobe(ctx, dir, 4096, \"init\")\n}\n")
+	assertSingleFinding(t, "function value assignment", "fnval_test.go", fnValSrc, "<non-literal>")
+
+	aliasFnValSrc := []byte("package sample_test\n\nimport gitutil \"github.com/cordanaLLM/praetor/internal/util\"\n\nfunc f() {\n\tprobe := gitutil.RunGitProbe\n\tprobe(ctx, dir, 4096, \"init\")\n}\n")
+	assertSingleFinding(t, "aliased function value", "alias_fnval_test.go", aliasFnValSrc, "<non-literal>")
+
+	mixedSrc := []byte("package sample_test\n\nfunc f() {\n\tutil.RunGitProbe(ctx, dir, 4096, \"rev-parse\", \"HEAD\")\n\tprobe := util.RunGitProbe\n\tprobe(ctx, dir, 4096, \"init\")\n}\n")
+	assertSingleFinding(t, "direct read-only plus function value", "mixed_test.go", mixedSrc, "<non-literal>")
+
+	otherFnValSrc := []byte("package sample_test\n\nimport other \"example.com/other\"\n\nfunc f() {\n\tprobe := other.RunGitProbe\n\t_ = probe\n}\n")
+	assertNoFindings(t, "unrelated package function value", "other_fnval_test.go", otherFnValSrc)
 }
 
 // TestGitProbeGuard_TrackedFileBound verifies ScanTrackedTestGitProbes returns an error

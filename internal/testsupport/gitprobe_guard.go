@@ -160,16 +160,56 @@ func isUtilImportPath(importPath string) bool {
 		strings.HasSuffix(importPath, "/internal/util")
 }
 
+// isRunGitProbeSelector reports whether sel refers to RunGitProbe on a known util import.
+func isRunGitProbeSelector(sel *ast.SelectorExpr, utilNames map[string]bool) bool {
+	ident, ok := sel.X.(*ast.Ident)
+	return ok && utilNames[ident.Name] && sel.Sel.Name == "RunGitProbe"
+}
+
 // isRunGitProbeCall reports whether call invokes RunGitProbe from a known util import.
 func isRunGitProbeCall(call *ast.CallExpr, utilNames map[string]bool) bool {
 	switch fn := call.Fun.(type) {
 	case *ast.SelectorExpr:
-		ident, ok := fn.X.(*ast.Ident)
-		return ok && utilNames[ident.Name] && fn.Sel.Name == "RunGitProbe"
+		return isRunGitProbeSelector(fn, utilNames)
 	case *ast.Ident:
 		return fn.Name == "RunGitProbe"
 	default:
 		return false
+	}
+}
+
+// collectDirectRunGitProbeSelectors returns the set of RunGitProbe selectors used directly as call targets.
+func collectDirectRunGitProbeSelectors(f *ast.File, utilNames map[string]bool) map[*ast.SelectorExpr]bool {
+	called := make(map[*ast.SelectorExpr]bool)
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && isRunGitProbeSelector(sel, utilNames) {
+			called[sel] = true
+		}
+		return true
+	})
+	return called
+}
+
+// probeNodeFinding inspects an AST node and returns a disallowed subcommand finding when present.
+func probeNodeFinding(n ast.Node, utilNames map[string]bool, directSelectors map[*ast.SelectorExpr]bool) (token.Pos, string, bool) {
+	switch node := n.(type) {
+	case *ast.CallExpr:
+		if !isRunGitProbeCall(node, utilNames) {
+			return token.NoPos, "", false
+		}
+		subcmd, found := findDisallowedSubcommandArg(node)
+		return node.Pos(), subcmd, found
+	case *ast.SelectorExpr:
+		if isRunGitProbeSelector(node, utilNames) && !directSelectors[node] {
+			return node.Pos(), "<non-literal>", true
+		}
+		return token.NoPos, "", false
+	default:
+		return token.NoPos, "", false
 	}
 }
 
@@ -464,20 +504,17 @@ func ScanProbeMutations(filename string, src []byte) ([]GitProbeFinding, error) 
 		return nil, fmt.Errorf("parse %s: %w", filename, err)
 	}
 	utilNames := utilPackageNames(f)
+	directSelectors := collectDirectRunGitProbeSelectors(f, utilNames)
 	var findings []GitProbeFinding
 	ast.Inspect(f, func(n ast.Node) bool {
 		if len(findings) >= maxGuardFindings {
 			return false
 		}
-		call, ok := n.(*ast.CallExpr)
-		if !ok || !isRunGitProbeCall(call, utilNames) {
-			return true
-		}
-		if subcmd, found := findDisallowedSubcommandArg(call); found {
-			pos := fset.Position(call.Pos())
+		if pos, subcmd, found := probeNodeFinding(n, utilNames, directSelectors); found {
+			loc := fset.Position(pos)
 			findings = append(findings, GitProbeFinding{
-				File:       pos.Filename,
-				Line:       pos.Line,
+				File:       loc.Filename,
+				Line:       loc.Line,
 				Subcommand: subcmd,
 			})
 		}
