@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -140,6 +141,34 @@ func mustRead(t *testing.T, path string) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
+}
+
+// readFixtureFile reads a computed name beneath dir and refuses traversal and escaping links.
+func readFixtureFile(dir, name string) (data []byte, err error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, fmt.Errorf("open fixture root %s: %w", dir, err)
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close fixture root %s: %w", dir, closeErr))
+		}
+	}()
+	data, err = root.ReadFile(name)
+	if err != nil {
+		return nil, fmt.Errorf("read fixture %s in %s: %w", name, dir, err)
+	}
+	return data, nil
+}
+
+// mustReadFixture reads a root-confined fixture as text, failing the test on any I/O error.
+func mustReadFixture(t *testing.T, dir, name string) string {
+	t.Helper()
+	data, err := readFixtureFile(dir, name)
+	if err != nil {
+		t.Fatalf("read fixture %s in %s: %v", name, dir, err)
 	}
 	return string(data)
 }

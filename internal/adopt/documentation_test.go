@@ -128,7 +128,7 @@ func TestAdoptionDocumentationGateRefreshesPriorTexts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for index, entry := range entries {
-		raw, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		raw, err := readFixtureFile(dir, entry.Name())
 		if err != nil {
 			t.Fatal(err)
 		}

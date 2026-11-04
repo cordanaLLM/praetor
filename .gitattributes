@@ -149,6 +149,9 @@ internal/managedasset/testdata/shipped/** text eol=lf
 internal/planning/testdata/** text eol=lf
 .config/hiss/testdata/** text eol=lf
 
+# internal/docstrings/testdata fixtures are pinned by exceptions_test.go; keep LF so autocrlf on Windows does not change their bytes (HISS-21).
+internal/docstrings/testdata/** text eol=lf
+
 # The CRLF fixtures assert that the line-based matchers are not silenced by a Windows
 # checkout. Two attributes are needed and they defend different things.
 #

@@ -162,4 +162,19 @@ func printDocstringsReport(rep *docstrings.Report) {
 		u := rep.Uncovered[i]
 		fmt.Printf("%s:%d %s\n", u.Path, u.Line, u.Name)
 	}
+	printDocstringExceptions(rep.Exceptions)
+}
+
+// printDocstringExceptions names and counts each visible exception disposition.
+func printDocstringExceptions(entries []docstrings.ExceptionEntry) {
+	if len(entries) == 0 {
+		return
+	}
+	counts := make(map[string]int)
+	for i := 0; i < len(entries); i++ {
+		entry := entries[i]
+		counts[entry.Status]++
+		fmt.Printf("Docstring exception %s: %s (category %s, expires %s)\n", entry.Status, entry.Path, entry.Category, entry.Expires)
+	}
+	fmt.Printf("Docstring exceptions: %d excepted, %d expired, %d stale\n", counts["excepted"], counts["expired"], counts["stale"])
 }

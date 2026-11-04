@@ -181,7 +181,7 @@ func TestAuditSupplyChainReplaysTheHISS11Fixtures(t *testing.T) {
 			t.Fatalf("read %s fixtures: %d entries, %v", bucket, len(entries), err)
 		}
 		for i := 0; i < len(entries); i++ {
-			data, err := os.ReadFile(filepath.Join(hiss11Fixtures, bucket, entries[i].Name()))
+			data, err := readFixtureFile(hiss11Fixtures, filepath.Join(bucket, entries[i].Name()))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -334,7 +334,7 @@ func TestAuditSupplyChainReplaysImageRefFixtures(t *testing.T) {
 			entries := imageRefFixtureEntries(dir)
 			for i := 0; i < len(entries); i++ {
 				name := entries[i].Name()
-				data, err := os.ReadFile(filepath.Join(dir, name))
+				data, err := readFixtureFile(rootDir, filepath.Join(lang, bucket, name))
 				if err != nil {
 					t.Fatal(err)
 				}

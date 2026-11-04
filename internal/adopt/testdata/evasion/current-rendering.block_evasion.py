@@ -408,10 +408,11 @@ LEFTHOOK_NARROWING = ("LEFTHOOK_EXCLUDE", "LEFTHOOK_SKIP")
 
 
 class Blocked(Exception):
-    pass
+    """Signal a refused command or invalid hook input with its blocking reason."""
 
 
 def read_payload_command(stream):
+    """Read a bounded PreToolUse JSON payload and return its nonempty shell command."""
     raw = stream.read(MAX_INPUT_BYTES + 1)
     if len(raw) > MAX_INPUT_BYTES:
         raise ValueError("hook input exceeds " + str(MAX_INPUT_BYTES) + " bytes")
@@ -428,6 +429,7 @@ def read_payload_command(stream):
 
 
 def pending_command():
+    """Return the command from arguments or stdin, refusing missing or invalid input."""
     if len(sys.argv) > 1:
         return " ".join(sys.argv[1:])
     if sys.stdin.isatty():
@@ -439,6 +441,7 @@ def pending_command():
 
 
 def check_environment(environ):
+    """Refuse environment settings that disable hooks or narrow their checks."""
     value = environ.get("LEFTHOOK")
     for disabled, refusal in LEFTHOOK_DISABLED:
         if value == disabled:
@@ -449,6 +452,7 @@ def check_environment(environ):
 
 
 def without_read_only_words(command):
+    """Remove exempt read-only command arguments unless a veto construct is present."""
     # The words of git log, head, sed -n and the other read-only commands READ_ONLY_WORDS
     # names, chained after ;, &&, || or |, belong to that command and are dropped, its name
     # kept. A command holding a construct READ_ONLY_VETO names keeps every word.
@@ -458,6 +462,7 @@ def without_read_only_words(command):
 
 
 def join_line_continuations(command):
+    """Replace backslash-newline continuations with spaces for command scanning."""
     # A backslash followed by a newline (LF or CRLF) joins lines without regex backtracking.
     return re.sub(r"\\\r?\n", " ", command)
 
@@ -501,6 +506,7 @@ def search(pattern, text):
 
 
 def check_command(command):
+    """Refuse commands exceeding scan bounds or matching the engine's evasion rules."""
     command = join_line_continuations(command)
     # re backtracks, so a longer command or line could stall this script past the harness's
     # hook timeout. Such a command is refused, never truncated.
@@ -519,6 +525,7 @@ def check_command(command):
 
 
 def main():
+    """Check the environment and pending command, printing a reason on a blocking exit."""
     try:
         check_environment(os.environ)
         check_command(pending_command())

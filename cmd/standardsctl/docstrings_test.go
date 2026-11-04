@@ -14,9 +14,47 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/docstrings"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
+
+// TestDocstringExceptionsOutput verifies that dispositions are counted and named in CLI output.
+func TestDocstringExceptionsOutput(t *testing.T) {
+	original := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Stdout = original })
+	os.Stdout = writer
+	printDocstringsReport(&docstrings.Report{Exceptions: []docstrings.ExceptionEntry{
+		{Path: "live.py", Category: "D", Expires: "2027-03-04", Status: "excepted"},
+		{Path: "expired.py", Category: "C", Expires: "2026-11-03", Status: "expired"},
+		{Path: "stale.py", Category: "B", Expires: "2026-11-05", Status: "stale"},
+	}})
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = original
+	out, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Docstring exception excepted: live.py (category D, expires 2027-03-04)",
+		"Docstring exception expired: expired.py (category C, expires 2026-11-03)",
+		"Docstring exception stale: stale.py (category B, expires 2026-11-05)",
+		"Docstring exceptions: 1 excepted, 1 expired, 1 stale",
+	} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("output missing %q:\n%s", want, out)
+		}
+	}
+}
 
 // initDocstringsFixtureRepo creates a hermetic Git repository with origin/main set to the initial commit.
 func initDocstringsFixtureRepo(t *testing.T, files map[string]string) string {

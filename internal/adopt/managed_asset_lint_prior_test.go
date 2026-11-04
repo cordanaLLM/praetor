@@ -5,7 +5,6 @@
 package adopt
 
 import (
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -46,9 +45,10 @@ func lintPriorFamily(t *testing.T, name string) managedasset.Family {
 	return families[index]
 }
 
+// lintPriorText reads a confined earlier asset and restores its recorded LF line endings.
 func lintPriorText(t *testing.T, dir, fixture string) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(dir, fixture))
+	data, err := readFixtureFile(dir, fixture)
 	if err != nil {
 		t.Fatal(err)
 	}

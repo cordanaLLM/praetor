@@ -72,13 +72,14 @@ type UncoveredFunction struct {
 
 // Report summarizes diff-scoped docstring coverage over a repository range.
 type Report struct {
-	Counted   int                 `json:"counted"`
-	Covered   int                 `json:"covered"`
-	Coverage  float64             `json:"coverage"`
-	Threshold int                 `json:"threshold"`
-	Mode      string              `json:"mode"`
-	Passed    bool                `json:"passed"`
-	Uncovered []UncoveredFunction `json:"uncovered,omitempty"`
+	Counted    int                 `json:"counted"`
+	Covered    int                 `json:"covered"`
+	Coverage   float64             `json:"coverage"`
+	Threshold  int                 `json:"threshold"`
+	Mode       string              `json:"mode"`
+	Passed     bool                `json:"passed"`
+	Uncovered  []UncoveredFunction `json:"uncovered,omitempty"`
+	Exceptions []ExceptionEntry    `json:"exceptions,omitempty"`
 }
 
 // Check evaluates diff-scoped docstring coverage against the merge base.
@@ -149,6 +150,10 @@ func evaluateChangedFiles(ctx context.Context, repoDir, headRef string, cfg Conf
 		finalizeReport(rep)
 		return rep, nil
 	}
+	exceptions, err := loadExceptionRun(ctx, repoDir)
+	if err != nil {
+		return nil, err
+	}
 	paths := make([]string, 0, len(ranges))
 	for rel := range ranges {
 		paths = append(paths, rel)
@@ -161,7 +166,7 @@ func evaluateChangedFiles(ctx context.Context, repoDir, headRef string, cfg Conf
 		if len(fileRanges) == 0 {
 			continue
 		}
-		if err := evaluateSingleFile(ctx, repoDir, headRef, rel, fileRanges, rep); err != nil {
+		if err := evaluateSingleFile(ctx, repoDir, headRef, rel, fileRanges, rep, exceptions); err != nil {
 			return nil, err
 		}
 	}
@@ -170,7 +175,7 @@ func evaluateChangedFiles(ctx context.Context, repoDir, headRef string, cfg Conf
 }
 
 // evaluateSingleFile extracts functions for rel and records coverage for those overlapping fileRanges.
-func evaluateSingleFile(ctx context.Context, repoDir, headRef, rel string, fileRanges []cifilter.LineRange, rep *Report) error {
+func evaluateSingleFile(ctx context.Context, repoDir, headRef, rel string, fileRanges []cifilter.LineRange, rep *Report, exceptions *exceptionRun) error {
 	if !isSupportedPath(rel) {
 		return nil
 	}
@@ -188,7 +193,14 @@ func evaluateSingleFile(ctx context.Context, repoDir, headRef, rel string, fileR
 	if len(functions) == 0 {
 		return nil
 	}
-	recordFunctionCoverage(rel, data, splitSourceLines(data), functions, fileRanges, rep)
+	fileReport := &Report{}
+	recordFunctionCoverage(rel, data, splitSourceLines(data), functions, fileRanges, fileReport)
+	if fileReport.Counted == 0 || exceptions.excuses(rel, data, rep) {
+		return nil
+	}
+	rep.Counted += fileReport.Counted
+	rep.Covered += fileReport.Covered
+	rep.Uncovered = append(rep.Uncovered, fileReport.Uncovered...)
 	return nil
 }
 

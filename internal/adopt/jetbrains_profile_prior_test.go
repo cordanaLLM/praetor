@@ -2,7 +2,6 @@ package adopt
 
 import (
 	"bytes"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,9 +12,10 @@ import (
 
 const jetBrainsProfileFixtures = "testdata/jetbrains-profile"
 
+// jetBrainsProfileFixture reads a generated profile fixture beneath its declared directory.
 func jetBrainsProfileFixture(t *testing.T, name string) []byte {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(jetBrainsProfileFixtures, name))
+	data, err := readFixtureFile(jetBrainsProfileFixtures, name)
 	if err != nil {
 		t.Fatal(err)
 	}

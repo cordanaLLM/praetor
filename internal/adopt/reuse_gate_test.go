@@ -322,7 +322,7 @@ func TestPriorReuseWorkflowDigests_Boundary_CurrentRenderingRecorded(t *testing.
 	}
 	reproduced := map[string]bool{}
 	for _, entry := range entries {
-		text, _, err := util.CanonicalTextDigest([]byte(mustRead(t, filepath.Join("testdata", "reuse-workflow", entry.Name()))))
+		text, _, err := util.CanonicalTextDigest([]byte(mustReadFixture(t, filepath.Join("testdata", "reuse-workflow"), entry.Name())))
 		if err != nil {
 			t.Fatalf("digest %s: %v", entry.Name(), err)
 		}
@@ -767,7 +767,7 @@ func TestAdopt_RefreshesRenovatePinnedReuseWorkflow(t *testing.T) {
 			repoPath := newTestRepo(t, "refresh-renovate-pinned")
 			mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
 			mustWrite(t, filepath.Join(repoPath, supplychain.ReuseFile), "version = 1\n")
-			priorText := mustRead(t, filepath.Join("testdata", "reuse-workflow", fixture))
+			priorText := mustReadFixture(t, filepath.Join("testdata", "reuse-workflow"), fixture)
 			renovatePinnedText := applyRenovateRewrite(priorText)
 			workflowPath := filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))
 			mustWrite(t, workflowPath, renovatePinnedText)
