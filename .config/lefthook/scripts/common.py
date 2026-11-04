@@ -49,6 +49,14 @@ TOOL_RESTORES = {
 }
 
 
+def _shell_quote_path(value):
+    """Quote a restore path for Command Prompt on Windows or the POSIX shell."""
+    text = str(value)
+    if os.name == "nt":
+        return '"' + text + '"'
+    return "'" + text.replace("'", "'\"'\"'") + "'"
+
+
 def missing_tool_line(name, root=None, *, reason=None, floor=None):
     """Name the tool's failure and its restore source, keeping a supplied reason first."""
     template = TOOL_RESTORES.get(name)
@@ -66,7 +74,7 @@ def missing_tool_line(name, root=None, *, reason=None, floor=None):
             "read .config/lefthook/tool-floors.txt and install {name} for your platform"
         )
     quoted = {
-        key: "'" + str(value).replace("'", "'\"'\"'") + "'"
+        key: _shell_quote_path(value)
         for key, value in {
             "module": module,
             "python": sys.executable,
@@ -670,6 +678,7 @@ def clean_env():
 SNAPSHOT_PREFIX = "praetor-hook-"
 SNAPSHOT_STALE_S = 3 * 60 * 60
 MAX_STALE_SNAPSHOTS = 256
+MAX_SNAPSHOT_REFS = 4096
 
 
 def _writable_retry(function, path, _exc):
@@ -739,6 +748,18 @@ def _export_index(dest, env):
     run(["git", "init", "--quiet", str(dest)], env=env)
 
 
+def _snapshot_ref_updates(refs):
+    """Build one Git stdin transaction, refusing remote refs beyond the snapshot bound."""
+    entries = refs.decode().splitlines()
+    if len(entries) > MAX_SNAPSHOT_REFS:
+        raise HookError(f"origin exceeds {MAX_SNAPSHOT_REFS} remote-tracking refs")
+    updates = []
+    for line in entries[:MAX_SNAPSHOT_REFS]:
+        oid, name = line.split()
+        updates.append(f"update {name} {oid}\n")
+    return "".join(updates).encode()
+
+
 def _export_commit(dest, ref, env):
     """Clone this repository into dest with origin and its refs, detached at ref."""
     source = git("rev-parse", "--show-toplevel", env=env).decode().strip()
@@ -757,12 +778,12 @@ def _export_commit(dest, ref, env):
         "refs/remotes/origin/",
         env=env,
     )
+    updates = _snapshot_ref_updates(refs)
     run([*SNAPSHOT_CLONE, source, str(dest)], env=env)
     if origin:
         run(["git", "remote", "add", "origin", origin], cwd=dest, env=env)
-    for line in refs.decode().splitlines():
-        oid, name = line.split()
-        run(["git", "update-ref", name, oid], cwd=dest, env=env)
+    if updates:
+        run(["git", "update-ref", "--stdin"], cwd=dest, env=env, data=updates)
     run(
         ["git", *SNAPSHOT_GIT_CONFIG, "checkout", "--quiet", "--detach", ref],
         cwd=dest,
@@ -812,6 +833,7 @@ def _git_common_dir(root, budget):
     raw = run_bounded(
         ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
         cwd=root,
+        env=clean_env(),
         timeout=budget.timeout(SESSION_GIT_TIMEOUT),
         max_output=SESSION_GIT_OUTPUT,
         grace=SESSION_GIT_GRACE,
@@ -824,6 +846,7 @@ def _listed_worktrees(root, budget):
     raw = run_bounded(
         ["git", "worktree", "list", "--porcelain", "-z"],
         cwd=root,
+        env=clean_env(),
         timeout=budget.timeout(SESSION_GIT_TIMEOUT),
         max_output=SESSION_INPUT_LIMIT,
         grace=SESSION_GIT_GRACE,

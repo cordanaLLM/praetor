@@ -2270,6 +2270,75 @@ class SignaturePublished(unittest.TestCase):
                 self.assertIn("at least 1 published commit(s)", out.getvalue())
 
 
+class SnapshotRefs(unittest.TestCase):
+    """Commit exports restore remote refs in one bounded transaction."""
+
+    def test_remote_refs_are_batched_at_the_limit_and_empty_is_skipped(self):
+        """Zero refs skip updates; the exact limit uses one stdin update."""
+        for count in (0, 2):
+            refs = b"".join(
+                f"{'a' * 40} refs/remotes/origin/branch-{n}\n".encode()
+                for n in range(count)
+            )
+            with (
+                self.subTest(count=count),
+                mock.patch.object(common, "MAX_SNAPSHOT_REFS", 2, create=True),
+                mock.patch("common.git", side_effect=[b"/source\n", refs]),
+                mock.patch("common.run", return_value=b"") as execute,
+            ):
+                common._export_commit(Path("/snapshot"), "HEAD", {})
+                updates = [
+                    call
+                    for call in execute.call_args_list
+                    if call.args[0][:2] == ["git", "update-ref"]
+                ]
+                self.assertEqual(len(updates), int(count > 0))
+                if count:
+                    self.assertEqual(
+                        updates[0].args[0], ["git", "update-ref", "--stdin"]
+                    )
+                    expected = refs.replace(b"a" * 40 + b" ", b"update ")
+                    expected = b"".join(
+                        line + b" " + b"a" * 40 + b"\n"
+                        for line in expected.splitlines()[:2]
+                    )
+                    self.assertEqual(updates[0].kwargs["data"], expected)
+
+    def test_remote_refs_over_the_limit_fail_before_cloning(self):
+        """One ref beyond the bound refuses the export before any mutation."""
+        refs = b"".join(
+            f"{'a' * 40} refs/remotes/origin/branch-{n}\n".encode()
+            for n in range(3)
+        )
+        with (
+            mock.patch.object(common, "MAX_SNAPSHOT_REFS", 2, create=True),
+            mock.patch("common.git", side_effect=[b"/source\n", refs]),
+            mock.patch("common.run", return_value=b"") as execute,
+            self.assertRaisesRegex(HookError, "2 remote-tracking refs"),
+        ):
+            common._export_commit(Path("/snapshot"), "HEAD", {})
+        self.assertEqual(execute.call_count, 1)
+
+    def test_repository_identity_ignores_inherited_git_dir(self):
+        """Inherited repository selection cannot redirect checkpoint identity reads."""
+        with tempfile.TemporaryDirectory() as directory:
+            root, other = (Path(directory) / name for name in ("root", "other"))
+            for repo in (root, other):
+                run(["git", "init", "--quiet", str(repo)])
+            budget = common.HookBudget(10)
+            with mock.patch.dict(os.environ, {"GIT_DIR": str(other / ".git")}):
+                for reader in (common._git_common_dir, common._listed_worktrees):
+                    with self.subTest(reader=reader.__name__):
+                        result = reader(root, budget)
+                        if reader == common._git_common_dir:
+                            self.assertEqual(result, (root / ".git").resolve())
+                        else:
+                            self.assertEqual(
+                                [Path(entry["path"]).resolve() for entry in result],
+                                [root.resolve()],
+                            )
+
+
 class SnapshotSweep(unittest.TestCase):
     """A snapshot directory a killed hook left behind (0.6-0.7 GB each, 2026-10-19) is removed by the
     next snapshot once it is older than SNAPSHOT_STALE_S; fresh ones and other names stay."""
@@ -4597,6 +4666,36 @@ class ToolFloors(unittest.TestCase):
 
 class HookToolRestores(unittest.TestCase):
     """Missing and outdated linters name a usable restore source, including non-Go tools."""
+
+    def test_restore_paths_use_the_platform_shell_quotes(self):
+        """Windows prints double quotes; POSIX preserves spaces and apostrophes."""
+        import shlex
+
+        with tempfile.TemporaryDirectory(prefix="restore path's ") as directory:
+            root = Path(directory)
+            for module in ("tools/lefthook", "tools/go"):
+                path = root / module / "go.mod"
+                path.parent.mkdir(parents=True)
+                path.write_text("module fixture\n", encoding="utf-8")
+            for platform in ("nt", "posix"):
+                for tool in ("lefthook", "gosec", "govulncheck", "yamllint"):
+                    with (
+                        self.subTest(platform=platform, tool=tool),
+                        mock.patch("common.os", wraps=os) as platform_os,
+                    ):
+                        platform_os.name = platform
+                        message = common.missing_tool_line(tool, root)
+                    restore = message.split("Restore: ")[1].split("; read-back:")[0]
+                    path = (
+                        sys.executable
+                        if tool == "yamllint"
+                        else str(root / "tools/lefthook" if tool == "lefthook" else root)
+                    )
+                    if platform == "nt":
+                        self.assertIn('"' + path + '"', restore)
+                        self.assertNotIn("'\"'\"'", restore)
+                    else:
+                        self.assertIn(path, shlex.split(restore))
 
     def _run_tool_command(self, script, args, env, stdin=None):
         """Execute script with given arguments, environment, and optional stdin input."""
