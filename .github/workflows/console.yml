@@ -56,8 +56,10 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
-      - name: Install pinned pnpm
-        run: npm install --global pnpm@10.28.0
+      - name: Enable pnpm from packageManager
+        run: |
+          npm install --global corepack@latest
+          corepack enable pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm lint
