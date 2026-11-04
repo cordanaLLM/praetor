@@ -439,10 +439,11 @@ jobs:
       # exception for it are gone (#1381). operationalsync's identity suite replays only the
       # Windows-specific adopt tests on Windows, so it stays in the first run. Every selected run
       # goes even after a failure; the step fails when any selected run does.
-      # Recorded post-split test times: operationalsync 557 s, adopt 129 s, CLI 1181 s
-      # (runs documented above/below): 31m7s total; 75m leaves ~44m for other packages/builds.
+      # Measured (last 10 green portability.yml runs on main, step "Test Every Package"):
+      # Windows shard 1 max 78 min, mean 49; macOS max 61, mean 47; Linux max 27, mean 19;
+      # Windows shard 2 max 20, mean 14. Bound 120 min is ~1.5 x max, below the 180-minute job bound.
       - name: Test Every Package
-        timeout-minutes: 75
+        timeout-minutes: 120
         if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
@@ -899,10 +900,11 @@ jobs:
           go mod download -modfile=tools/go/go.mod
           go build -modfile=tools/go/go.mod -o "$RUNNER_TEMP/pinned-tools/" golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec github.com/zricethezav/gitleaks/v8
 
-      # Recorded post-split test times: operationalsync 557 s, adopt 129 s, CLI 1181 s
-      # (runs documented above/below): 31m7s total; 75m leaves ~44m for other packages/builds.
+      # Measured (last 10 green portability.yml runs on main, step "Test Every Package"):
+      # Windows shard 1 max 78 min, mean 49; macOS max 61, mean 47; Linux max 27, mean 19;
+      # Windows shard 2 max 20, mean 14. Bound 120 min is ~1.5 x max, below the 180-minute job bound.
       - name: Test Every Package
-        timeout-minutes: 75
+        timeout-minutes: 120
         if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |

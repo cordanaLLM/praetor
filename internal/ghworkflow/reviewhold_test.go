@@ -181,8 +181,8 @@ func TestReviewHoldPackageStepBounds(t *testing.T) {
 			count++
 			bound, err := strconv.Atoi(step.TimeoutMinutes.Value)
 			jobBound, jobErr := strconv.Atoi(job.TimeoutMinutes.Value)
-			if err != nil || jobErr != nil || bound != 75 || bound >= jobBound {
-				t.Errorf("%s: step timeout=%q job timeout=%q; want 75 below job bound", id, step.TimeoutMinutes.Value, job.TimeoutMinutes.Value)
+			if err != nil || jobErr != nil || bound != 120 || bound >= jobBound {
+				t.Errorf("%s: step timeout=%q job timeout=%q; want 120 below job bound", id, step.TimeoutMinutes.Value, job.TimeoutMinutes.Value)
 			}
 		}
 	}
