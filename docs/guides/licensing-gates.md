@@ -43,9 +43,22 @@ Adoption writes two jobs:
 - `.github/workflows/reuse.yml`, whose **REUSE lint** job installs reuse from the hash-pinned
   lock `.config/reuse/requirements.txt` (compiled from `.config/reuse/requirements.in`, reuse
   6.2.0, kept current by the same Renovate pip-compile rule as the hook-lint lock) with
-  `pip install --require-hashes` into a virtual environment and runs `reuse lint`, within
-  `timeout-minutes: 10`. No container action runs and no image is pulled from Docker Hub, whose
-  pull failures once failed an adopter's required check (#1128); `TestEmittedWorkflows_RefuseContainerActions`
+  `pip install --require-hashes` into a virtual environment, within `timeout-minutes: 10`.
+
+  <!-- praetor:docs-references:off an adopter's own file the rendered REUSE job runs when present -->
+
+  If the repository has `tools/reuse-lint.sh`, the job runs it with `bash` and the pinned
+  virtual environment first on `PATH`, preserving the repository's licence coverage checks
+  and propagating failure.
+
+  <!-- praetor:docs-references:on -->
+
+  Without that file it runs the pinned `reuse lint` directly
+  (`renderReuseWorkflowWithRef` in `internal/adopt/reuse_gate.go`,
+  `TestReuseWorkflowRunsRepositoryRunnerAndPropagatesFailure` in
+  `internal/adopt/reuse_runner_test.go`). No container action runs and no image is pulled
+  from Docker Hub, whose pull failures once failed an adopter's required check (#1128);
+  `TestEmittedWorkflows_RefuseContainerActions`
   refuses a container action in any emitted workflow, and `TestReuseRequirementsLockMatchesCommitted`
   keeps the emitted lock equal to the engine's. The job becomes a required status check of the
   branch ruleset adoption renders. `actions/checkout` is pinned by full commit SHA with a version

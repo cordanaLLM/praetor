@@ -824,21 +824,30 @@ text. A command is denied when it
   searching the directory stays allowed);
 - runs `adopt`, `conform`, `bootstrap` or a `needs` scan, report, migration or epic
   against the workstation dev root instead of a leaf repository (DEV-01);
-- runs a privilege escalator at command position: `sudo`, `doas`, `pkexec`,
-  `run0`, or `su` with `-c` / `--command`. There is no allow-list or bypass.
+- runs `praetorctl` or `standardsctl` adoption commands against a development root through
+  `sudo`, `doas`, `pkexec`, `run0`, or `su` with `-c` / `--command`. The protected commands
+  are `adopt`, `conform`, `bootstrap` and `needs scan|report|migrate|epic`.
   The rule covers line starts, shell separators, subshells, substitutions and
   launchers (including `env` assignments, `exec`, `command`, `builtin`, `nohup`,
-  `time`, `nice`, `xargs`, `setsid`, `timeout` with its duration, and `stdbuf`).
+  `time`, `nice`, `xargs`, `setsid`, `timeout` with its duration, and `stdbuf`),
+  quoted or backslash-escaped program names, and shell `-c` or `eval` scripts.
+  For example, `sudo -nu root 'praetorctl' adopt /srv/dev` is refused. Ordinary elevated
+  commands, such as `sudo apt update`, and adoption of a leaf repository below `dev`
+  stay allowed by this rule (`protectedPrivilegeInvocation` in
+  `internal/agenthook/policy_privilege.go`).
   Mentions used as arguments, such as `grep sudo file`, `echo "use sudo"`,
   `/etc/sudoers.d/x`, `SUDO_USER` and `git log --grep=sudo`, stay allowed.
   Bare `su` and `su - root` stay allowed because this rule targets supplied
   commands; interactive sessions are outside this command-shape check.
-  The admission act judge also refuses these programs instead of unwrapping
-  them as launchers. Replay evidence: `TestPolicyPrivilegePerClientHook`,
+  The admission act judge independently refuses the same protected commands
+  (`admissionCheck.segment`). Replay evidence: `TestPolicyPrivilegePerClientHook`,
   `TestPolicyPrivilegeNativePythonHooks`, `TestAdmissionPrivilegePrograms` and
   the `privilege-` fixtures in `internal/agenthook/testdata/pre-tool/cases.json`;
 - merges a pull request past the forge's own merge rules (#1300): `gh pr merge` with
-  `--admin` (or `--admin=true`) in any position, a `gh api` call whose path ends in
+  `--admin`, `--admin=1`, `--admin=t` or `--admin=true` in any position (the `t` and `true`
+  values are case-insensitive; false values and lookalikes such as `trueish` stay allowed by
+  this flag rule, pinned by `TestAdminMergeBooleanSpellings` in
+  `internal/agenthook/admin_boolean_test.go`), a `gh api` call whose path ends in
   `pulls/<n>/merge`, a `gh api graphql` call whose query holds `mergePullRequest`, or
   `curl`/`wget` against an `api.github.com/.../pulls/<n>/merge` URL. Agent sessions act with
   the operator's forge login, which may carry a ruleset bypass; these forms would merge past
@@ -863,8 +872,8 @@ prompt and post-tool registrations in `registrationTable`
 before-tool guard, so this refusal is **not enforced for OpenCode**.
 
 The text screen still scans literal here-document bodies. A quoted here-document
-containing `$(sudo true)` is therefore refused even though the shell would print
-that body without executing a substitution. Ordinary argument and quoted-string
+containing `$(sudo praetorctl adopt /srv/dev)` is therefore refused even though the shell
+would print that body without executing a substitution. Ordinary argument and quoted-string
 mentions above are covered by the replay fixtures; complete shell interpretation
 is outside this text rule.
 
@@ -1167,8 +1176,18 @@ mentions `make` or `git push` is not a heavy step. The code is split into simple
 after any variable assignments and the keywords that may stand before a command (`if`,
 `then`, `do`, `!` and the like). A wrapper command is looked through to the command it runs:
 `env`, `nice`, `ionice`, `timeout`, `nohup`, `time`, `command`, `exec`, `setsid`, `stdbuf`,
-`chrt`, `taskset`, `flock`, `sudo`, `doas`, `xargs` and `systemd-run`, past their options and
+`chrt`, `taskset`, `flock`, `xargs` and `systemd-run`, past their options and
 the values those options take.
+
+Admission and the privilege text rule share wrapper option arities. Clustered short options
+with attached or separate values, such as `time -ao output`, reach the wrapped command;
+option data is not judged as an executable. `chrt --other` needs no numeric priority, and
+the optional `xargs -e`, `-i`, `-l`, `--eof` and `--replace` values do not consume the next
+command word. Long value options are recognized by their full names; abbreviated long
+options remain outside this grammar. The replay is
+`TestWrapperOptionArityFindsProtectedPrivilegeCommand` in
+`internal/agenthook/wrapper_arity_test.go`, using `testdata/privilege-wrappers.json`;
+the shared table is `admissionWrappers` in `internal/agenthook/admission.go`.
 
 The built-in shapes are RE2, matched against the command's words joined by one space, from
 the base name of the command on (`builtinHeavyShapes`):
@@ -1603,18 +1622,24 @@ stop check runs, and no separate switch exists. Fixtures for every case and clie
 `internal/agenthook/stop_question_test.go`.
 
 The Go post-tool and stop hooks reuse the Python adapter's session recorder through
-`checkpoint.py --prepare-session`. The shared helpers in `common.py` hash the
-payload's session ID to the first 16 hexadecimal SHA-256 characters, record touched
-linked worktrees in a bounded, atomically replaced JSON list under the Git common
-directory, and return only that hash. Go passes it as `PRAETOR_CHECKPOINT_SESSION`
+`checkpoint.py --prepare-session`. The shared helpers in `checkpoint_session.py`, exposed
+through `common.py`, hash the payload's session ID to the first 16 hexadecimal SHA-256
+characters, record touched linked worktrees in a bounded, atomically replaced JSON list
+under the Git common directory, and return only that hash. Go passes it as
+`PRAETOR_CHECKPOINT_SESSION`
 to the evaluator; another session's worktree does not block this session's stop.
 Missing session IDs use the named `worktree ownership unknown: judged by recent
-activity` fallback. A preparation failure is reported and blocks stop.
+activity` fallback. A preparation failure is reported and blocks stop. The preparation's
+five-second deadline includes reading stdin, so partial input without EOF fails with
+`checkpoint session: input or preparation timed out`
+(`test_native_preparation_deadline_includes_partial_stdin` in
+`.config/lefthook/scripts/test_checkpoint.py`).
 
 Gate scratch paths beneath any linked checkout of the same repository are skipped
-only when `/proc/<pid>/cmdline` identifies `praetorctl gate` for the PID in
-`.standards/worktrees/gate-<pid>-<n>`. Dead or unverifiable owner PIDs remain
-blocking with an explicit reason, including scratch outside the session record.
+only when executable, UID, process start and command identify a live gate for the PID in
+`.standards/worktrees/gate-<pid>-<n>`; [the Git hooks guide](git-hooks.md) describes the
+identity checks and recovery action. Dead or unverifiable owner PIDs remain blocking with
+an explicit reason, including scratch outside the session record.
 The real Go hook regressions are in `scripts/test_checkpoint_hooks.py`.
 
 ## Platform notes
