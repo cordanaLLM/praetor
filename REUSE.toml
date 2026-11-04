@@ -10,6 +10,17 @@ SPDX-FileCopyrightText = "2026 Lusoris <lusoris@proton.me>"
 SPDX-License-Identifier = "EUPL-1.2"
 
 
+# The console's pnpm patch of deepmerge (console/patches/, GHSA-gcqx-w48m-w2h4) is a diff of
+# MIT-licensed upstream code and keeps its terms. Like the tables below, it must stay after "**".
+[[annotations]]
+path = ["console/patches/**"]
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "2012 James Halliday, Josh Duff, and other contributors",
+  "2026 Lusoris <lusoris@proton.me>",
+]
+SPDX-License-Identifier = "MIT"
+
 # The vendored interfig engine keeps its upstream MIT terms. REUSE 3.3 applies only the
 # last matching annotation table, so this override must stay after the "**" table above;
 # moved before it, the EUPL table would relabel the vendored files and `reuse lint` would
