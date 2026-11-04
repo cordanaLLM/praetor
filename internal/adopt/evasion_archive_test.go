@@ -24,7 +24,7 @@ func assertEvasionArchiveEscapeRejected(t *testing.T, existing bool) {
 	t.Helper()
 	parent := t.TempDir()
 	dir := filepath.Join(parent, "fixtures")
-	if err := os.Mkdir(dir, 0o755); err != nil {
+	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	outside := filepath.Join(parent, "x.block_evasion.py")
@@ -37,7 +37,7 @@ func assertEvasionArchiveEscapeRejected(t *testing.T, existing bool) {
 			t.Errorf("escaping digest %q accepted", digest)
 		}
 	}
-	data, err := os.ReadFile(outside)
+	data, err := readFixtureFile(parent, filepath.Base(outside))
 	if existing {
 		if err != nil || string(data) != previous {
 			t.Errorf("outside archive changed: %q, %v", data, err)
