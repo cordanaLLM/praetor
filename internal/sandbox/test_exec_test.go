@@ -66,6 +66,7 @@ func TestSandboxLoopbackProbeResolvesTrue(t *testing.T) {
 	if runtime.GOOS == "linux" {
 		fakeBwrap := filepath.Join(t.TempDir(), "fake-bwrap")
 		script := "#!/bin/sh\nfor last; do :; done\nif [ \"$last\" != \"/bin/true\" ]; then\n  echo \"probe target = $last, want /bin/true\" >&2\n  exit 1\nfi\n"
+		// nosemgrep: go_file-permissions_rule-fileperm, go.lang.correctness.permissions.file_permission.incorrect-default-permission -- the test executes this stub, so it needs the owner execute bit
 		if err := os.WriteFile(fakeBwrap, []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
