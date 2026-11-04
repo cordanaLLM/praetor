@@ -178,7 +178,7 @@ func TestMergeCheck_SubdirectoryRepoDir_DetectsDroppedHunk(t *testing.T) {
 		[]string{"commit", "-m", "merge: take Y"},
 	)
 	subDir := filepath.Join(dir, "nested", "sub")
-	if err := os.MkdirAll(subDir, 0o755); err != nil {
+	if err := os.MkdirAll(subDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	res, err := Check(t.Context(), Options{RepoDir: subDir, Range: "main..HEAD"})
@@ -215,7 +215,7 @@ func TestMergeCheck_TreeBlobs_ChunksPathsUnderCommandLineBudget(t *testing.T) {
 		"for arg in \"$@\"; do bytes=$((bytes + ${#arg} + 1)); done\n" +
 		"if [ \"$bytes\" -gt 16600 ]; then echo \"arg list too long: $bytes\" >&2; exit 128; fi\n" +
 		"exec \"" + realGit + "\" \"$@\"\n"
-	if err := os.WriteFile(shimPath, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(shimPath, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))

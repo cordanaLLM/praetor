@@ -53,13 +53,22 @@ func emittedHookRenderings(t *testing.T) map[string]string {
 }
 
 func TestEmittedHookFixturesMatchTheRendering(t *testing.T) {
+	root, err := os.OpenRoot(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("open repository root: %v", err)
+	}
+	defer func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("close repository root: %v", err)
+		}
+	}()
 	for rel, want := range emittedHookRenderings(t) {
 		path := filepath.Join(emittedFixtureRoot, filepath.FromSlash(rel))
 		if os.Getenv(updateEmittedFixturesEnv) == "1" {
 			mustWrite(t, path, want)
 			continue
 		}
-		got, err := os.ReadFile(path)
+		got, err := root.ReadFile(filepath.Join("internal", "adopt", path))
 		if err != nil {
 			t.Fatalf("read fixture %s: %v", path, err)
 		}

@@ -56,10 +56,10 @@ func assertFindingMatch(t *testing.T, f Finding, expectedPath, expectedMerge, ex
 func writeFile(t *testing.T, dir, rel, content string) {
 	t.Helper()
 	path := filepath.Join(dir, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

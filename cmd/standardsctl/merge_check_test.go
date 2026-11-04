@@ -129,7 +129,7 @@ func TestMergeCheckCommand_UnrelatedHistories_StatedLine(t *testing.T) {
 func writeMergeFile(t *testing.T, dir, rel, content string) {
 	t.Helper()
 	path := filepath.Join(dir, filepath.FromSlash(rel))
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -184,7 +184,16 @@ func makefilePassesMergeCheckRange(makefile string) bool {
 // default for local use. Negative: the prior plain recipe without MERGE_CHECK_RANGE is refused.
 // Boundary: the all-zero SHA on branch creation is filtered out.
 func TestMergeCheckCommand_MakefilePassesPushedRangeInCI(t *testing.T) {
-	makefileBytes, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
+	root, err := os.OpenRoot(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("open repository root: %v", err)
+	}
+	defer func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("close repository root: %v", err)
+		}
+	}()
+	makefileBytes, err := root.ReadFile("Makefile")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +204,7 @@ func TestMergeCheckCommand_MakefilePassesPushedRangeInCI(t *testing.T) {
 	if makefilePassesMergeCheckRange("merge-check:\n\tgo run ./cmd/standardsctl merge-check\n") {
 		t.Fatalf("prior plain Makefile recipe without MERGE_CHECK_RANGE passed")
 	}
-	workflowBytes, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
+	workflowBytes, err := root.ReadFile(".github/workflows/ci.yml")
 	if err != nil {
 		t.Fatal(err)
 	}

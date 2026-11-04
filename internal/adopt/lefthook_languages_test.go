@@ -208,10 +208,10 @@ func verifyMergeCheckPrePushExecutionOn(t *testing.T, isWindows bool) {
 	}
 	dir := t.TempDir()
 	enginePath := filepath.Join(dir, engineLauncherFile)
-	if err := os.MkdirAll(filepath.Dir(enginePath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(enginePath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(enginePath, []byte("#!/bin/sh\necho \"called:$*\"\nexit \"${STUB_EXIT:-0}\"\n"), 0o755); err != nil {
+	if err := os.WriteFile(enginePath, []byte("#!/bin/sh\necho \"called:$*\"\nexit \"${STUB_EXIT:-0}\"\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	oid1 := strings.Repeat("1", 40)
