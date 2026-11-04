@@ -27,11 +27,12 @@ func repositoryGuard(identity string) string {
 
 // guardHoldsInRepository reports whether a job condition is always true inside the
 // repository named identity: a disjunction that contains the repository guard for exactly
-// that identity, alone or as one parenthesised group before && always()
-// (withoutTrailingAlways). Such a job still reports on every pull request there, so it stays
+// that identity, alone or as one parenthesised group before && always() or && !cancelled().
+// Such a job still reports on every noncancelled pull request there, so it stays
 // a required check context. Any other conjunction or negation is treated as conditional,
 // because its value is not knowable from the file.
 func guardHoldsInRepository(condition, identity string) bool {
+	condition = withoutTrailingStatus(condition, "!cancelled()")
 	return identity != "" && disjunctionContains(withoutTrailingAlways(condition), repositoryGuard(identity))
 }
 
@@ -39,7 +40,14 @@ func guardHoldsInRepository(condition, identity string) bool {
 // parenthesised group (enclosedGroup), returning the group's inner text, or condition
 // unchanged.
 func withoutTrailingAlways(condition string) string {
-	prefix, found := strings.CutSuffix(strings.TrimSpace(condition), " && always()")
+	return withoutTrailingStatus(condition, "always()")
+}
+
+// withoutTrailingStatus removes status only after a complete parenthesised group. Keeping the
+// status explicit lets required checks accept !cancelled() without weakening aggregate proofs,
+// which require always() to cover a failed or cancelled need.
+func withoutTrailingStatus(condition, status string) string {
+	prefix, found := strings.CutSuffix(strings.TrimSpace(condition), " && "+status)
 	if !found {
 		return condition
 	}

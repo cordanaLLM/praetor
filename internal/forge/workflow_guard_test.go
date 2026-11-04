@@ -220,11 +220,11 @@ func TestPortabilityFollowsTheRepositoryVariable(t *testing.T) {
 		t.Fatalf("parse portability.yml: %v", err)
 	}
 	runs := renovateBranchSkip + " && (" + repositoryGuard(identity) + " || " + portabilityVariable + ")"
-	if got := spec.Jobs["harness"].If; got != runs {
-		t.Errorf("harness condition = %q, want %q", got, runs)
+	if got := spec.Jobs["harness"].If; got != runs+" && !cancelled()" {
+		t.Errorf("harness condition = %q, want %q", got, runs+" && !cancelled()")
 	}
-	if got := spec.Jobs["windows-shard"].If; got != runs {
-		t.Errorf("windows-shard condition = %q, want %q", got, runs)
+	if got := spec.Jobs["windows-shard"].If; got != runs+" && !cancelled()" {
+		t.Errorf("windows-shard condition = %q, want %q", got, runs+" && !cancelled()")
 	}
 	if got := spec.Jobs["windows"].If; got != runs+" && always()" {
 		t.Errorf("windows condition = %q, want %q", got, runs+" && always()")
@@ -313,6 +313,7 @@ type pullRequestRun struct {
 // startsWith ignoring case, and so do the two Renovate facts here.
 func conditionFacts(identity string, run pullRequestRun) *strings.Replacer {
 	return strings.NewReplacer(
+		"!cancelled()", "true",
 		renovateHeadBranch, strconv.FormatBool(strings.HasPrefix(strings.ToLower(run.headRef), "renovate/")),
 		renovateAuthor, strconv.FormatBool(strings.EqualFold(run.author, "renovate[bot]")),
 		repositoryGuard(identity), "true",
@@ -442,6 +443,11 @@ func TestRenovateBranchSkipKeepsAJobRequired(t *testing.T) {
 		{"positive guarded disjunction", renovateBranchSkip + " && (" + guard + " || " + portabilityVariable + ")", "acme/engine", true},
 		{"positive schedule leg", renovateBranchSkip + " && (" + scheduleLegPrefix + guard + ")", "", true},
 		{"positive every run", renovateBranchSkip + " && !cancelled()", "", true},
+		{"positive guarded noncancelled run", renovateBranchSkip + " && (" + guard + " || " + portabilityVariable + ") && !cancelled()", "acme/engine", true},
+		{"negative guarded noncancelled fork", renovateBranchSkip + " && (" + guard + " || " + portabilityVariable + ") && !cancelled()", forkIdentity, false},
+		{"negative guarded conditional status", "(" + guard + ") && !failure()", "acme/engine", false},
+		{"negative guarded conditional output", "(" + guard + ") && needs.review-gate.outputs.clear == 'true' && !cancelled()", "acme/engine", false},
+		{"negative ungrouped guard", guard + " || " + portabilityVariable + " && !cancelled()", "acme/engine", false},
 		{"negative conditional rest", renovateBranchSkip + " && needs.plan.outputs.go == 'true'", "", false},
 		{"negative trailing term", guard + " && " + renovateBranchSkip, "acme/engine", false},
 		{"negative head branch alone", "!" + renovateHeadBranch + " && (" + guard + " || " + portabilityVariable + ")", "acme/engine", false},
@@ -499,6 +505,7 @@ var everyLegConditions = []string{
 
 // runsOnEveryLeg reports whether a step's condition cannot differ between matrix legs.
 func runsOnEveryLeg(step workflowStep, jobID string) bool {
+	step.If = strings.ReplaceAll(step.If, "(github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && ", "")
 	cond := strings.TrimSpace(step.If)
 	if cond == everyLegConditions[3] {
 		return jobID == "windows-shard"
@@ -509,6 +516,7 @@ func runsOnEveryLeg(step workflowStep, jobID string) bool {
 // runsInPortabilityScope permits only the declared step scope, never a platform condition.
 // Push and dispatch set every flag; PR fixtures exercise each selector branch.
 func runsInPortabilityScope(step workflowStep, jobID, flag string) bool {
+	step.If = strings.ReplaceAll(step.If, "(github.event_name != 'pull_request' || steps.review.outputs.clear == 'true') && ", "")
 	if runsOnEveryLeg(step, jobID) {
 		return true
 	}

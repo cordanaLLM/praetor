@@ -56,10 +56,11 @@ func draftContextFault(job workflowJob, types []string) error {
 	case len(job.Steps) == 0:
 		return fmt.Errorf("the job has no steps")
 	}
-	if err := ghworkflow.DraftStepFault(&job.Steps[0]); err != nil {
-		return err
+	position := ghworkflow.DraftStepPosition(&job)
+	if position < 0 {
+		return fmt.Errorf("first step is not a proven draft barrier")
 	}
-	for i := 1; i < len(job.Steps) && i < maxStepsPerJob; i++ {
+	for i := position + 1; i < len(job.Steps) && i < maxStepsPerJob; i++ {
 		if runsAfterTheDraftStep(job.Steps[i]) {
 			return fmt.Errorf("step %d (%s) runs after the draft step failed: %s", i+1, job.Steps[i].Name, job.Steps[i].If)
 		}

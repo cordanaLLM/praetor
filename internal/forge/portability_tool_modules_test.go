@@ -76,16 +76,31 @@ func TestPortability_ToolModulesDownloadBeforeTests(t *testing.T) {
 	}
 }
 
+// toolModulesStepHead is the tool modules step from its name line through its shell line, read from
+// the workflow so the planted default-shell case follows the step's current condition.
+func toolModulesStepHead(workflow string) string {
+	start := strings.Index(workflow, toolModulesStep)
+	if start < 0 {
+		return toolModulesStep
+	}
+	end := strings.Index(workflow[start:], "\n        shell: bash")
+	if end < 0 {
+		return toolModulesStep
+	}
+	return workflow[start : start+end+len("\n        shell: bash")]
+}
+
 // Negative: a matrix without the step, with it after the tests, or with another command or
 // shell is refused.
 func TestPortability_Negative_PlantedToolModuleStepsAreRefused(t *testing.T) {
 	workflow := readPortability(t)
+	withShell := toolModulesStepHead(workflow)
 	planted := map[string]string{
 		"no step":       strings.Replace(workflow, toolModulesStep, "- name: Download Something Else", 1),
 		"after tests":   strings.Replace(strings.Replace(workflow, testPackageStep, "- name: TMP", 1), toolModulesStep, testPackageStep, 1),
 		"other command": strings.Replace(workflow, toolModulesRun, "go mod download", 1),
 		"no build":      strings.Replace(workflow, toolBuildRun, "true", 1),
-		"default shell": strings.Replace(workflow, toolModulesStep+"\n        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}\n        shell: bash", toolModulesStep+"\n        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}", 1),
+		"default shell": strings.Replace(workflow, withShell, strings.TrimSuffix(withShell, "\n        shell: bash"), 1),
 	}
 	for name, text := range planted {
 		if text == workflow {

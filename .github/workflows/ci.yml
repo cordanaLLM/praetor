@@ -1,10 +1,10 @@
 name: CI Enforcement
 
 # The hosted gate shape (internal/ghworkflow/hostedgate.go, docs/guides/workflow-triggers.md): a
-# pull request runs on every activity that can change what merges. Every job a pull request starts
-# fails a draft in its first step instead of running its work, and runs once the draft is marked
-# ready (ready_for_review). edited stays: the governance checklist step reads the pull request
-# body, so a body edit is an activity that changes the verdict.
+# pull request runs on every activity that can change what merges. Required jobs fail a draft
+# before work; the advisory review planner emits their held reason without API reads on drafts.
+# Marking the draft ready (ready_for_review) starts a new run. edited stays: the governance
+# checklist step reads the pull request body, so a body edit changes the verdict.
 #
 # A push runs on the protected branches (the default branch and the lts-* branches the ruleset
 # protects) and on checkpoint/** branches: their pre-push policy is lighter because this run is
@@ -24,6 +24,7 @@ on:
     branches:
       - main
       - 'lts-*'
+  workflow_dispatch:
   merge_group:
     types: [checks_requested]
 
@@ -36,10 +37,62 @@ concurrency:
 
 permissions:
   contents: read
+  checks: read
+  statuses: read
   pull-requests: read
 
 jobs:
+  review-gate:
+    name: Heavy tier review gate
+    # Advisory planner: required heavy jobs enforce its outputs, including missing verdicts.
+    continue-on-error: true
+    # Linux-only: GitHub API control job; platform behavior tested in every harness leg.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+      statuses: read
+    outputs:
+      clear: ${{ github.event_name != 'pull_request' && 'true' || steps.draft.outputs.clear || steps.review.outputs.clear }}
+      reason: ${{ steps.draft.outputs.reason || steps.review.outputs.reason }}
+    steps:
+      - name: Hold heavy tier on a draft pull request
+        id: draft
+        if: github.event.pull_request.draft == true
+        shell: bash
+        run: |
+          echo "clear=false" >> "$GITHUB_OUTPUT"
+          echo "reason=draft pull request" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout trusted review gate
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci_review_gate.py
+          sparse-checkout-cone-mode: false
+          path: .review-gate
+      - name: Evaluate review clearance
+        id: review
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          if [ -f .review-gate/scripts/ci_review_gate.py ]; then
+            python3 -I -B .review-gate/scripts/ci_review_gate.py gate --pr "$PR_NUMBER" --head "$PR_HEAD"
+          else
+            echo "clear=false" >> "$GITHUB_OUTPUT"
+            echo "reason=gate unreadable: no trusted helper on the default branch" >> "$GITHUB_OUTPUT"
+          fi
+
   verify:
+    needs: review-gate
     name: Standards & Invariant Verification Gate
     # Skipped on a Renovate pull request, one the Renovate app (renovate[bot]) opened from a
     # renovate/ branch: the update is taken over on a signed-off branch whose own pull request runs
@@ -47,8 +100,8 @@ jobs:
     # person's pull request from a branch named renovate/... runs it. github.head_ref is empty on
     # push, so push runs are unchanged. The skip keeps the check required (renovateBranchSkip in
     # internal/forge/workflow_guard.go).
-    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]')"
-    runs-on: ubuntu-26.04
+    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && !cancelled()"
+    runs-on: ${{ needs.review-gate.outputs.clear == 'true' && 'ubuntu-26.04' || 'ubuntu-26.04' }}
     # Keep a finite bound with headroom for normal runner variance. The job has outgrown its
     # limit three times: at 14-15 minutes it was cancelled during cache cleanup at a 15-minute
     # ceiling (main run 35516836823), at 26-29 minutes on six consecutive pull requests a slow
@@ -62,6 +115,49 @@ jobs:
     timeout-minutes: 75
 
     steps:
+      - name: Checkout trusted review gate
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci_review_gate.py
+          sparse-checkout-cone-mode: false
+          path: .review-gate
+      - name: Hold heavy tier for review
+        id: review
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PLANNED_CLEAR: ${{ needs.review-gate.outputs.clear }}
+        run: |
+          REASON="gate unreadable: no trusted helper on the default branch"
+          if [ -f .review-gate/scripts/ci_review_gate.py ]; then
+            if command -v python3 >/dev/null 2>&1; then PYTHON=python3; elif command -v python >/dev/null 2>&1; then PYTHON=python; else PYTHON=""; fi
+            verdict="$(mktemp)"
+            if [ -n "$PYTHON" ] && GITHUB_OUTPUT="$verdict" "$PYTHON" -I -B .review-gate/scripts/ci_review_gate.py gate --pr "$PR_NUMBER" --head "$PR_HEAD"; then
+              if [ "$PLANNED_CLEAR" = true ] && grep -qx 'clear=true' "$verdict"; then
+                echo "clear=true" >> "$GITHUB_OUTPUT"
+                rm -f "$verdict"
+                exit 0
+              fi
+              REASON="$(sed -n 's/^reason=//p' "$verdict")"
+              if [ "$PLANNED_CLEAR" != true ]; then
+                REASON="$REASON; planner held: rerun required for platform selection"
+              fi
+              REASON="${REASON:-gate unreadable: trusted helper produced no verdict}"
+            else
+              REASON="gate unreadable: trusted helper failed"
+            fi
+            rm -f "$verdict"
+          fi
+          echo "::error title=heavy tier held::$REASON"
+          echo "heavy tier held: $REASON" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
       # The hosted gate's draft step, as ghworkflow.HostedGateDraftStep renders it: on a draft the
       # job fails here with the annotation the checkpoint planner reads as draft pending. Every
       # later step carries no status function, so it is skipped after this failure.
@@ -112,7 +208,7 @@ jobs:
         run: go run ./cmd/standardsctl ci filter --base="${{ steps.base.outputs.base_ref }}" --head=HEAD --env
 
       - name: Setup Node Toolchain
-        if: steps.filter.outputs.skip_heavy_gates != 'true' || steps.filter.outputs.run_docs == 'true' || github.event_name == 'push'
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || steps.filter.outputs.run_docs == 'true' || github.event_name != 'pull_request'
         uses: actions/setup-node@v7
         with:
           node-version: '24'
@@ -126,11 +222,11 @@ jobs:
       # it current); the Makefile runs them through `go tool` from the same file, and the
       # installed binaries serve the hook self-tests that call gosec from PATH.
       - name: Install Security Toolchains (govulncheck & gosec)
-        if: steps.filter.outputs.run_security != 'false' || github.event_name == 'push'
+        if: steps.filter.outputs.run_security != 'false' || github.event_name != 'pull_request'
         run: go install -modfile=tools/go/go.mod golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec
 
       - name: Install Pinned Git Hook Toolchain
-        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name != 'pull_request'
         run: |
           go install -C tools/lefthook github.com/evilmartians/lefthook/v2
           lefthook version
@@ -159,7 +255,7 @@ jobs:
       # own output rather than resolved a second time here: a wheel built against the
       # 24.04 C library must not restore onto 26.04.
       - name: Restore Python Wheel Cache
-        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name != 'pull_request'
         uses: actions/cache@v6
         with:
           path: ~/.cache/pip
@@ -168,7 +264,7 @@ jobs:
             praetor-pip-${{ runner.os }}-${{ steps.gocache.outputs.image }}-py${{ steps.python.outputs.python-version }}-
 
       - name: Install Pinned HISS Rule Test Engine
-        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name != 'pull_request'
         run: |
           python3 -m venv "$RUNNER_TEMP/praetor-semgrep"
           "$RUNNER_TEMP/praetor-semgrep/bin/python" -m pip install -r .config/semgrep/requirements.txt
@@ -179,7 +275,7 @@ jobs:
       # shadow another step's python3; PRAETOR_HOOK_LINT_BIN points the gate at it and makes a
       # missing or mismatched tool fail the gate instead of skipping it.
       - name: Install Pinned Hook Lint Toolchain
-        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name != 'pull_request'
         run: |
           python3 -m venv "$RUNNER_TEMP/praetor-hook-lint"
           "$RUNNER_TEMP/praetor-hook-lint/bin/python" -m pip install --require-hashes -r .config/hook-lint/requirements.txt
@@ -191,11 +287,11 @@ jobs:
           echo "PRAETOR_HOOK_LINT_BIN=$RUNNER_TEMP/praetor-hook-lint/bin" >> "$GITHUB_ENV"
 
       - name: Verify Canonical Skill Command Flags
-        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name != 'pull_request'
         run: PATH="$RUNNER_TEMP/praetor-hook-lint/bin:$PATH" go test ./internal/compiler -run '^TestCanonicalSkillCommandFlags_PositiveToolsPresent$'
 
       - name: Verify Go Formatting (gofmt)
-        if: steps.filter.outputs.run_linters != 'false' || github.event_name == 'push'
+        if: steps.filter.outputs.run_linters != 'false' || github.event_name != 'pull_request'
         # make fmt-check is the one gofmt check (testdata fixtures stay out of scope); the
         # pre-commit hook runs the same check on the staged set.
         run: make fmt-check
@@ -272,7 +368,7 @@ jobs:
         run: python3 -B .config/lefthook/scripts/hooks.py commits "origin/${BASE_REF}"
 
       - name: Verify Cross-Agent Context Synchronization (HISS-16)
-        if: steps.filter.outputs.skip_heavy_gates == 'true' && steps.filter.outputs.run_context_sync != 'false' && github.event_name != 'push'
+        if: steps.filter.outputs.skip_heavy_gates == 'true' && steps.filter.outputs.run_context_sync != 'false' && github.event_name == 'pull_request'
         run: go run ./cmd/standardsctl compile-context --verify
 
       - name: Documentation Integrity Audit
@@ -302,14 +398,14 @@ jobs:
           # only on documentation-only pull requests.
 
       - name: Markdown Documentation Governance
-        if: steps.filter.outputs.run_docs == 'true' && steps.filter.outputs.skip_heavy_gates == 'true' && github.event_name != 'push'
+        if: steps.filter.outputs.run_docs == 'true' && steps.filter.outputs.skip_heavy_gates == 'true' && github.event_name == 'pull_request'
         run: make docs-lint
 
       # BUG-992: a guide naming a removed command, flag or file is drift no diff shows, because
       # the guide itself did not change. Heavy runs reach the same target through verify-all;
       # this step covers the light documentation runs that skip it.
       - name: Documentation References (commands, flags, repository paths)
-        if: steps.filter.outputs.run_docs == 'true' && steps.filter.outputs.skip_heavy_gates == 'true' && github.event_name != 'push'
+        if: steps.filter.outputs.run_docs == 'true' && steps.filter.outputs.skip_heavy_gates == 'true' && github.event_name == 'pull_request'
         run: make docs-references
 
       # docs/credits.yaml, the docs/credits.md page rendered from it, THIRD-PARTY-NOTICES.md and
@@ -318,7 +414,7 @@ jobs:
       # reach those tests through verify-all; this step covers the light runs that skip it, so an
       # edit the credits gate refuses cannot land through a documentation or agent-only pull request.
       - name: Credits and Notices Gate (internal/supplychain)
-        if: steps.filter.outputs.run_docs == 'true' && steps.filter.outputs.skip_heavy_gates == 'true' && github.event_name != 'push'
+        if: steps.filter.outputs.run_docs == 'true' && steps.filter.outputs.skip_heavy_gates == 'true' && github.event_name == 'pull_request'
         run: make credits-check
 
       # #338: how far the committed .devcontainer bundle is behind the source it was cut from.
@@ -328,20 +424,20 @@ jobs:
       # moves the bundle one commit further behind. The checkout above fetches full history,
       # which the commit count needs.
       - name: DevContainer Bundle Freshness
-        if: steps.filter.outputs.skip_heavy_gates == 'true' && github.event_name != 'push'
+        if: steps.filter.outputs.skip_heavy_gates == 'true' && github.event_name == 'pull_request'
         run: make devcontainer-freshness
 
       # Heavy changes use the complete local authority once, including race tests,
       # context, audit, all configured linters, vulnerability and AST security scans.
       # Lightweight changes retain their selective governance checks below.
       - name: Full Verification Harness Gate
-        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name != 'pull_request'
         env:
           TEST_COVERPROFILE: ${{ runner.temp }}/praetor-coverage.out
         run: make verify-all
 
       - name: Enforce Statement Coverage Floor (HISS-15 coverage gate)
-        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name != 'pull_request'
         env:
           TEST_COVERPROFILE: ${{ runner.temp }}/praetor-coverage.out
           # HISS-15 is advertised as a CI coverage gate: the total statement coverage
@@ -363,7 +459,7 @@ jobs:
           }'
 
       - name: Run Repository Governance Audit (HISS Invariants & Rulesets)
-        if: steps.filter.outputs.skip_heavy_gates == 'true' && steps.filter.outputs.run_audit != 'false' && github.event_name != 'push'
+        if: steps.filter.outputs.skip_heavy_gates == 'true' && steps.filter.outputs.run_audit != 'false' && github.event_name == 'pull_request'
         run: go run ./cmd/standardsctl audit
 
       # The growth guards of audit --base (the HISS-13 debt baseline and the lint baseline of #1030)
@@ -379,7 +475,7 @@ jobs:
           go run ./cmd/standardsctl audit --base="$BASE_SHA"
 
       - name: Verify Binary Compilation
-        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name != 'pull_request'
         run: make build
 
   # The release pipeline and the update bot are configured in files that nothing else
@@ -422,7 +518,7 @@ jobs:
           paths: ".goreleaser.yaml renovate.json .github/workflows/ci.yml"
 
       - name: Validate GoReleaser Configuration
-        if: steps.changed.outputs.run == 'true'
+        if: steps.changed.outputs.run == 'true' || github.event_name != 'pull_request'
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
@@ -430,7 +526,7 @@ jobs:
           args: check
 
       - name: Setup Node Toolchain
-        if: steps.changed.outputs.run == 'true'
+        if: steps.changed.outputs.run == 'true' || github.event_name != 'pull_request'
         uses: actions/setup-node@v7
         with:
           node-version: '24'
@@ -447,7 +543,7 @@ jobs:
       # renovate 44.131.1 picked up a dependency npm cannot resolve (#709). npm names no cause
       # for that failure, so a failed install prints the end of npm's debug log.
       - name: Install The Pinned Renovate Validator
-        if: steps.changed.outputs.run == 'true'
+        if: steps.changed.outputs.run == 'true' || github.event_name != 'pull_request'
         env:
           RENOVATE_VERSION: '44.198.0'
         run: |
@@ -457,7 +553,7 @@ jobs:
           fi
 
       - name: Validate Renovate Configuration
-        if: steps.changed.outputs.run == 'true'
+        if: steps.changed.outputs.run == 'true' || github.event_name != 'pull_request'
         run: '"$RUNNER_TEMP/renovate/node_modules/.bin/renovate-config-validator" --strict --no-global renovate.json'
 
   # Both documentation presets ship to adopters, and nothing else builds them: before this
@@ -480,10 +576,11 @@ jobs:
   # the same resolution; the audit is platform-neutral Go whose tests run in the verify
   # job (HISS-21).
   docs-presets:
+    needs: review-gate
     name: Documentation Preset Builds
     # Skipped on a Renovate pull request for the reason the verify job states.
-    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]')"
-    runs-on: ubuntu-26.04
+    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && !cancelled()"
+    runs-on: ${{ needs.review-gate.outputs.clear == 'true' && 'ubuntu-26.04' || 'ubuntu-26.04' }}
     timeout-minutes: 15
     env:
       # Reserved .invalid host (RFC 2606), so no build can reach a real site.
@@ -491,6 +588,49 @@ jobs:
       PRESET_SUBPATH_URL: https://docs.example.invalid/preset/
 
     steps:
+      - name: Checkout trusted review gate
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci_review_gate.py
+          sparse-checkout-cone-mode: false
+          path: .review-gate
+      - name: Hold heavy tier for review
+        id: review
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PLANNED_CLEAR: ${{ needs.review-gate.outputs.clear }}
+        run: |
+          REASON="gate unreadable: no trusted helper on the default branch"
+          if [ -f .review-gate/scripts/ci_review_gate.py ]; then
+            if command -v python3 >/dev/null 2>&1; then PYTHON=python3; elif command -v python >/dev/null 2>&1; then PYTHON=python; else PYTHON=""; fi
+            verdict="$(mktemp)"
+            if [ -n "$PYTHON" ] && GITHUB_OUTPUT="$verdict" "$PYTHON" -I -B .review-gate/scripts/ci_review_gate.py gate --pr "$PR_NUMBER" --head "$PR_HEAD"; then
+              if [ "$PLANNED_CLEAR" = true ] && grep -qx 'clear=true' "$verdict"; then
+                echo "clear=true" >> "$GITHUB_OUTPUT"
+                rm -f "$verdict"
+                exit 0
+              fi
+              REASON="$(sed -n 's/^reason=//p' "$verdict")"
+              if [ "$PLANNED_CLEAR" != true ]; then
+                REASON="$REASON; planner held: rerun required for platform selection"
+              fi
+              REASON="${REASON:-gate unreadable: trusted helper produced no verdict}"
+            else
+              REASON="gate unreadable: trusted helper failed"
+            fi
+            rm -f "$verdict"
+          fi
+          echo "::error title=heavy tier held::$REASON"
+          echo "heavy tier held: $REASON" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
       # The hosted gate's draft step (see the verify job).
       - name: Stop on a draft pull request
         if: github.event.pull_request.draft == true
@@ -518,7 +658,7 @@ jobs:
           paths: "docs/presets .github/workflows/ci.yml internal/seo internal/adopt internal/managedasset tools/markdownlint cmd/standardsctl tools/figures"
 
       - name: Setup Python Toolchain
-        if: steps.changed.outputs.run == 'true'
+        if: steps.changed.outputs.run == 'true' || github.event_name != 'pull_request'
         uses: actions/setup-python@v7
         with:
           python-version: '3.14'
@@ -529,7 +669,7 @@ jobs:
       # lib/modules/manager/pip-compile/common.ts). uv accepts both forms, so only this
       # check notices a lock Renovate would never update.
       - name: Check MkDocs Lock Header Is Renovate-Parseable
-        if: steps.changed.outputs.run == 'true'
+        if: steps.changed.outputs.run == 'true' || github.event_name != 'pull_request'
         run: |
           HEADER=$(sed -n '2s/^#    //p' docs/presets/mkdocs/requirements.txt)
           read -r -a ARGS <<< "$HEADER"
@@ -552,7 +692,7 @@ jobs:
       # cache holds both installs the job runs, tools/figures (the smoke test's playwright) and the
       # Starlight preset, so both locks key it.
       - name: Setup Node Toolchain
-        if: steps.changed.outputs.run == 'true'
+        if: steps.changed.outputs.run == 'true' || github.event_name != 'pull_request'
         uses: actions/setup-node@v7
         with:
           node-version: '24'
@@ -563,14 +703,14 @@ jobs:
 
       - name: Setup Go Toolchain
         id: setup-go
-        if: steps.changed.outputs.run == 'true'
+        if: steps.changed.outputs.run == 'true' || github.event_name != 'pull_request'
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore Go Module And Build Caches
-        if: steps.changed.outputs.run == 'true'
+        if: steps.changed.outputs.run == 'true' || github.event_name != 'pull_request'
         uses: ./.github/actions/go-cache
         with:
           job: docs-presets
@@ -580,7 +720,7 @@ jobs:
       # the playwright pin in tools/figures/package-lock.json, so both are set up once here; the SEO
       # audit reuses the same binary.
       - name: Build praetorctl And Install The Figure Smoke Test
-        if: steps.changed.outputs.run == 'true'
+        if: steps.changed.outputs.run == 'true' || github.event_name != 'pull_request'
         run: |
           go build -o "$RUNNER_TEMP/praetorctl" ./cmd/standardsctl
           npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
@@ -596,7 +736,7 @@ jobs:
       # evidence in the preset's files. A strict build still passes when a ```figure fence does not
       # become a figure, so `site` checks every build.
       - name: Build MkDocs Preset From Its Hashed Lock
-        if: steps.changed.outputs.run == 'true'
+        if: steps.changed.outputs.run == 'true' || github.event_name != 'pull_request'
         run: |
           praetor="$PWD"
           fixture="$RUNNER_TEMP/preset-mkdocs-fixture"
@@ -630,7 +770,7 @@ jobs:
       # without player requests. --expect-svg requires Chromium and checks both motion modes.
       # The engine site in the Pages workflow keeps --require-browser to check player mounts.
       - name: Smoke-Test MkDocs Preset Figures
-        if: steps.changed.outputs.run == 'true'
+        if: steps.changed.outputs.run == 'true' || github.event_name != 'pull_request'
         run: |
           node tools/figures/smoke.mjs --site "$RUNNER_TEMP/preset-mkdocs-root" --expect-svg
           node tools/figures/smoke.mjs --site "$RUNNER_TEMP/preset-mkdocs-subpath" --base /preset/ --expect-svg
@@ -650,7 +790,7 @@ jobs:
       # Adoption carries no bundled player; this unreleased fixture uses the same fallback mode
       # as MkDocs above. smoke.mjs resolves --site against this checkout, so it gets an absolute path.
       - name: Build Starlight Preset In An Adopter Fixture
-        if: steps.changed.outputs.run == 'true'
+        if: steps.changed.outputs.run == 'true' || github.event_name != 'pull_request'
         run: |
           praetor="$PWD"
           fixture="$RUNNER_TEMP/preset-starlight-fixture"
@@ -697,7 +837,7 @@ jobs:
       # for an adopter to replace, so --allow-placeholders; every other finding fails. The
       # builds without DOCS_SITE_URL have no sitemap entries, so they are not audited.
       - name: Audit Preset SEO
-        if: steps.changed.outputs.run == 'true'
+        if: steps.changed.outputs.run == 'true' || github.event_name != 'pull_request'
         run: |
           for build in mkdocs-root mkdocs-subpath starlight-root starlight-subpath; do
             "$RUNNER_TEMP/praetorctl" seo audit --allow-placeholders "$RUNNER_TEMP/preset-$build"
@@ -714,7 +854,7 @@ jobs:
       # failure itself and every caller checks the substitution's status. matches is grep
       # for which status 1, no match, is an empty result; only status 2, an error, fails.
       - name: Check Preset Site URLs
-        if: steps.changed.outputs.run == 'true'
+        if: steps.changed.outputs.run == 'true' || github.event_name != 'pull_request'
         shell: bash
         run: |
           fail() { echo "::error::$1"; exit 1; }
