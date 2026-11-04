@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -505,11 +504,7 @@ func assertScannerRestore(t *testing.T, pinned bool, scanner scannerRestoreCase)
 	}
 	want := scanner.fallback
 	if pinned {
-		prefix := "GOWORK=off "
-		if runtime.GOOS == "windows" {
-			prefix = "set \"GOWORK=off\" && "
-		}
-		want = fmt.Sprintf("%sgo -C %q install %s", prefix, filepath.Join(root, "tools/go"), scanner.pkg)
+		want = flavor.ScannerInstallGuide(root, scanner.binary, scanner.fallback)
 		if strings.Contains(err.Error(), "@latest") {
 			t.Errorf("pinned restore floats: %v", err)
 		}
