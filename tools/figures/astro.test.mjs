@@ -10,10 +10,11 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { gzipSync } from 'node:zlib';
 import { evaluate, markdownToHtml, mdxToJs } from 'satteri';
 import figures, {
-  MAX_NODES, NAME, RESTART_DELAY_MS, addFigurePlugin, figureBase, figureMounts, figuresDigest, loaderScript, publishFigures,
-  remarkFigures, replaceFigures, rootPath, satteriFigures, watchFigures,
+  MAX_NODES, NAME, RESTART_DELAY_MS, addFigurePlugin, extractPlayerArchive, figureBase, figureMounts, figuresDigest,
+  loaderScript, publishFigures, releaseArchiveUrl, remarkFigures, replaceFigures, rootPath, satteriFigures, watchFigures,
 } from './astro.mjs';
 import { PLAYER_DIR } from './bundle.mjs';
 import { ROOT, fillSlots } from './checks.mjs';
@@ -344,18 +345,412 @@ test('the Astro player mount holds exactly the committed player files', () => {
 // The integration's hooks
 // ---------------------------------------------------------------------------------------------
 
-test('an adopted integration without player files injects no loader', () => withTempDir(async (dir) => {
-  // Import the shipped modules at an adopter path: no player/ exists beside astro.mjs.
+/** Sets up an adopter directory fixture and dynamically imports astro.mjs. */
+async function adoptedFiguresModule(dir, lock) {
   const files = ['astro.mjs', 'checks.mjs', 'core.mjs', 'serve.mjs',
     'third_party/interfig/upstream/src/svg.ts', 'third_party/interfig/upstream/src/geometry.ts',
     'third_party/interfig/upstream/src/model.ts'];
   for (const name of files) write(join(dir, 'tools/figures', name), readFileSync(join(ROOT, 'tools/figures', name)));
+  if (lock) write(join(dir, 'tools/figures/player.lock.json'), JSON.stringify(lock));
   const { default: adoptedFigures } = await import(pathToFileURL(join(dir, 'tools/figures/astro.mjs')).href);
+  return adoptedFigures;
+}
+
+test('an adopted integration without player files injects no loader', () => withTempDir(async (dir) => {
+  // Import the shipped modules at an adopter path: no player/ exists beside astro.mjs.
+  const adoptedFigures = await adoptedFiguresModule(dir);
   const scripts = [];
   adoptedFigures().hooks['astro:config:setup']({
     config: { base: '/preset/' }, updateConfig: () => {}, injectScript: (...args) => scripts.push(args),
   });
   assert.deepEqual(scripts, []);
+}));
+
+/** Constructs an in-memory gzipped tar archive from fixture file entries. */
+function buildTarGz(entries, prefix = '') {
+  const blocks = [];
+  for (const { name, body, typeflag = '0', sizeText } of entries) {
+    const data = Buffer.from(body);
+    const header = Buffer.alloc(512);
+    header.write(name, 0, 100, 'utf8');
+    header.write('0000644\0', 100, 8, 'ascii');
+    header.write('0000000\0', 108, 8, 'ascii');
+    header.write('0000000\0', 116, 8, 'ascii');
+    header.write(sizeText ?? `${data.length.toString(8).padStart(11, '0')}\0`, 124, 12, 'ascii');
+    header.write('00000000000\0', 136, 12, 'ascii');
+    header.write('        ', 148, 8, 'ascii');
+    header[156] = typeof typeflag === 'number' ? typeflag : typeflag.charCodeAt(0);
+    header.write('ustar\0', 257, 6, 'ascii');
+    header.write('00', 263, 2, 'ascii');
+    if (prefix) header.write(prefix, 345, 155, 'utf8');
+    let sum = 0;
+    for (const byte of header) sum += byte;
+    header.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148, 8, 'ascii');
+    blocks.push(header, data, Buffer.alloc((512 - (data.length % 512)) % 512));
+  }
+  blocks.push(Buffer.alloc(1024));
+  return gzipSync(Buffer.concat(blocks));
+}
+
+test('releaseArchiveUrl covers positive, boundary and negative repository, tag and asset inputs', () => {
+  const positive = [
+    [{}, 'v1.4.0', 'figures-player.tar.gz', 'https://github.com/cordanaLLM/praetor/releases/download/v1.4.0/figures-player.tar.gz'],
+    [{ repository: 'cordanaLLM/praetor' }, 'v1.4.0', 'figures-player.tar.gz', 'https://github.com/cordanaLLM/praetor/releases/download/v1.4.0/figures-player.tar.gz'],
+    [{ repository: 'adopter/praetor-fork' }, 'v1.4.0-rc.1', 'figures_player.tar.gz', 'https://github.com/adopter/praetor-fork/releases/download/v1.4.0-rc.1/figures_player.tar.gz'],
+    [{ repository: 'https://github.com/adopter/praetor-fork/' }, 'v1', 'a.tgz', 'https://github.com/adopter/praetor-fork/releases/download/v1/a.tgz'],
+  ];
+  for (const [lock, release, asset, want] of positive) {
+    assert.equal(releaseArchiveUrl(lock, release, asset), want);
+  }
+  const negative = [
+    [{ repository: 'http://github.com/adopter/praetor-fork' }, 'v1.4.0', 'figures-player.tar.gz', /https:\/\/github\.com only/],
+    [{ repository: 'https://evil.example/adopter/praetor-fork' }, 'v1.4.0', 'figures-player.tar.gz', /https:\/\/github\.com only/],
+    [{ repository: 'https://github.com.evil.example/adopter/praetor-fork' }, 'v1.4.0', 'figures-player.tar.gz', /https:\/\/github\.com only/],
+    [{ repository: 'adopter' }, 'v1.4.0', 'figures-player.tar.gz', /invalid release repository/],
+    [{ repository: 'adopter/praetor-fork/extra' }, 'v1.4.0', 'figures-player.tar.gz', /invalid release repository/],
+    [{ repository: 'adopter/..' }, 'v1.4.0', 'figures-player.tar.gz', /invalid release repository/],
+    [{ repository: '../praetor-fork' }, 'v1.4.0', 'figures-player.tar.gz', /invalid release repository/],
+    [{}, '', 'figures-player.tar.gz', /invalid release tag/],
+    [{}, '..', 'figures-player.tar.gz', /invalid release tag/],
+    [{}, 'v1.4.0/extra', 'figures-player.tar.gz', /invalid release tag/],
+    [{}, 'v1.4.0', '', /invalid release asset/],
+    [{}, 'v1.4.0', '.', /invalid release asset/],
+    [{}, 'v1.4.0', '../figures-player.tar.gz', /invalid release asset/],
+  ];
+  for (const [lock, release, asset, pattern] of negative) {
+    assert.throws(() => releaseArchiveUrl(lock, release, asset), pattern);
+  }
+});
+
+test('extractPlayerArchive covers valid archives, rejection cases and boundary limits', async (t) => {
+  const validEntries = [
+    { name: 'loader.js', body: '// loader\n' },
+    { name: 'player.js', body: '// player\n' },
+    { name: 'THIRD-PARTY-LICENSES.txt', body: 'MIT\n' },
+  ];
+  const validArchive = buildTarGz(validEntries);
+  const firstDir = extractPlayerArchive(validArchive);
+  assert.equal(readFileSync(join(firstDir, 'loader.js'), 'utf8'), '// loader\n');
+
+  const boundaryArchive = buildTarGz([
+    { name: 'loader.js', body: Buffer.alloc(4 * 1024 * 1024) },
+    validEntries[1],
+    validEntries[2],
+  ]);
+  const boundaryDir = extractPlayerArchive(boundaryArchive);
+  assert.equal(statOrNull(join(boundaryDir, 'loader.js'))?.size, 4 * 1024 * 1024);
+
+  const negative = [
+    [Buffer.from('not-gzip'), /invalid player archive/],
+    [gzipSync(Buffer.alloc(0)), /truncated tar stream/],
+    [gzipSync(Buffer.from('short')), /truncated tar stream/],
+    [buildTarGz([{ name: 'loader.js', body: 'x', sizeText: 'not-octal\0\0\0' }, ...validEntries.slice(1)]), /malformed member/],
+    [buildTarGz([{ name: 'loader.js', body: 'x', sizeText: `${(2048).toString(8).padStart(11, '0')}\0` }]), /truncated member/],
+    [buildTarGz([{ name: '../loader.js', body: 'x' }, ...validEntries.slice(1)]), /unsafe archive member path/],
+    [buildTarGz([{ name: 'loader.js', body: 'x' }, ...validEntries.slice(1)], 'sub'), /unsafe archive member path/],
+    [buildTarGz([{ name: 'loader.js', body: 'x', typeflag: '2' }, ...validEntries.slice(1)]), /not a regular file/],
+    [buildTarGz([{ name: 'extra.js', body: 'x' }, ...validEntries]), /unexpected archive member/],
+    [buildTarGz([validEntries[0], validEntries[0], validEntries[1], validEntries[2]]), /duplicate archive member/],
+    [buildTarGz(validEntries.slice(0, 2)), /do not match/],
+    [buildTarGz([{ name: 'loader.js', body: Buffer.alloc(4 * 1024 * 1024 + 1) }, ...validEntries.slice(1)]), /exceeds 4194304 bytes/],
+  ];
+  for (const [index, [archive, pattern]] of negative.entries()) {
+    await t.test(`rejection ${index}: ${pattern.source}`, () => {
+      assert.throws(() => extractPlayerArchive(archive), pattern);
+    });
+  }
+});
+
+test('extractPlayerArchive enforces the compressed archive byte boundary', () => {
+  const validArchive = buildTarGz([
+    { name: 'loader.js', body: '// loader\n' },
+    { name: 'player.js', body: '// player\n' },
+    { name: 'THIRD-PARTY-LICENSES.txt', body: 'MIT\n' },
+  ]);
+  const exactArchive = Buffer.concat([validArchive, Buffer.alloc(4 * 1024 * 1024 - validArchive.length)]);
+  assert.ok(statOrNull(extractPlayerArchive(exactArchive))?.isDirectory(), 'exact compressed byte limit accepted');
+  assert.throws(() => extractPlayerArchive(Buffer.concat([exactArchive, Buffer.alloc(1)])), /exceeds 4194304 bytes/);
+});
+
+test('extractPlayerArchive reclaims earlier directories with one cleanup listener across module reloads', async () => {
+  const validArchive = buildTarGz([
+    { name: 'loader.js', body: '// loader\n' },
+    { name: 'player.js', body: '// player\n' },
+    { name: 'THIRD-PARTY-LICENSES.txt', body: 'MIT\n' },
+  ]);
+  const firstDir = extractPlayerArchive(validArchive);
+  const beforeListeners = process.listenerCount('exit');
+  let latestDir = firstDir;
+  for (let i = 0; i < 12; i++) {
+    latestDir = extractPlayerArchive(validArchive);
+  }
+  const { extractPlayerArchive: reloadedExtract } = await import(`${pathToFileURL(join(ROOT, 'tools/figures/astro.mjs')).href}?v=listener-check`);
+  latestDir = reloadedExtract(validArchive);
+  assert.equal(statOrNull(firstDir), null, 'prior extraction directory is cleaned up when replaced');
+  assert.ok(statOrNull(latestDir)?.isDirectory(), 'latest extraction directory exists');
+  assert.ok(process.listenerCount('exit') - beforeListeners <= 1, 'at most one process exit listener is registered');
+  assert.ok(globalThis[Symbol.for('praetor.figures.extractedPlayerDirs')] instanceof Set);
+});
+
+test('downloadPlayerArchive aborts oversized streaming responses before buffering the rest of the stream', () => withTempDir(async (dir) => {
+  const adoptedFigures = await adoptedFiguresModule(dir, {
+    asset: 'figures-player.tar.gz', sha256: 'a'.repeat(64), release: 'v1.4.0',
+  });
+  const originalFetch = globalThis.fetch;
+  let pulls = 0;
+  let canceled = false;
+  globalThis.fetch = async (url) => {
+    assert.equal(url, 'https://github.com/cordanaLLM/praetor/releases/download/v1.4.0/figures-player.tar.gz');
+    const body = new ReadableStream({
+      /** Enqueues mock payload chunks until the size threshold triggers cancellation. */
+      pull(controller) {
+        pulls += 1;
+        if (pulls <= 2) {
+          controller.enqueue(new Uint8Array(3 * 1024 * 1024));
+          return;
+        }
+        throw new Error('stream was not aborted after exceeding MAX_ARCHIVE_BYTES');
+      },
+      /** Records that the stream reader canceled the oversized body. */
+      cancel() {
+        canceled = true;
+      },
+    }, { highWaterMark: 0 });
+    return new Response(body, { status: 200 });
+  };
+  try {
+    await assert.rejects(
+      async () => adoptedFigures({ root: dir }).hooks['astro:config:setup']({
+        config: {}, updateConfig: () => {}, injectScript: () => {},
+      }),
+      /exceeds 4194304 bytes/,
+    );
+    assert.equal(pulls, 2, 'stopped reading as soon as received bytes exceeded 4 MiB');
+    assert.equal(canceled, true, 'stream was canceled immediately');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}));
+
+test('downloadPlayerArchive requires bounded streaming and accepts the exact download limit', () => withTempDir(async (dir) => {
+  const adoptedFigures = await adoptedFiguresModule(dir, {
+    asset: 'figures-player.tar.gz', sha256: 'a'.repeat(64), release: 'v1.4.0',
+  });
+  const originalFetch = globalThis.fetch;
+  const setup = () => adoptedFigures({ root: dir }).hooks['astro:config:setup']({
+    config: {}, updateConfig: () => {}, injectScript: () => {},
+  });
+  let unboundedReads = 0;
+  try {
+    globalThis.fetch = async () => ({
+      ok: true,
+      /** Mock arrayBuffer accessor ensuring streaming body is used instead of buffering. */
+      arrayBuffer: async () => { unboundedReads++; return new ArrayBuffer(0); },
+    });
+    await assert.rejects(setup, /streaming response body/);
+    assert.equal(unboundedReads, 0, 'never falls back to buffering an unbounded response');
+    for (const bytes of [0, 4 * 1024 * 1024]) {
+      globalThis.fetch = async () => new Response(new Uint8Array(bytes));
+      await assert.rejects(setup, /SHA-256 mismatch/, `${bytes} bytes pass the download bound`);
+    }
+    let canceled = false;
+    globalThis.fetch = async () => new Response(new ReadableStream({
+      /** Asserts that oversized Content-Length is rejected before any chunk is pulled. */
+      pull() { assert.fail('oversized Content-Length must reject before reading'); },
+      /** Records cancellation of the oversized Content-Length mock stream. */
+      cancel() { canceled = true; },
+    }, { highWaterMark: 0 }), { headers: { 'content-length': String(4 * 1024 * 1024 + 1) } });
+    await assert.rejects(setup, /exceeds 4194304 bytes/);
+    assert.equal(canceled, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}));
+
+/** Runs the adopted downloader against a fetch stub and a correctly locked player archive. */
+async function withRedirectDownload(dir, fetcher, check) {
+  const archive = buildTarGz([
+    { name: 'loader.js', body: '// loader\n' },
+    { name: 'player.js', body: '// player\n' },
+    { name: 'THIRD-PARTY-LICENSES.txt', body: 'MIT\n' },
+  ]);
+  const adoptedFigures = await adoptedFiguresModule(dir, {
+    asset: 'figures-player.tar.gz', sha256: sha256(archive), release: 'v1.4.0',
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (url, options) => fetcher(url, options, archive);
+  const setup = () => adoptedFigures({ root: dir }).hooks['astro:config:setup']({
+    config: {}, updateConfig: () => {}, injectScript: () => {},
+  });
+  try {
+    await check(setup);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+test('downloadPlayerArchive follows allowed release redirects under one timeout and checks the digest', () => withTempDir(async (dir) => {
+  const urls = [releaseArchiveUrl({}, 'v1.4.0', 'figures-player.tar.gz'),
+    'https://github.com/adopter/fork/releases/download/v1/asset',
+    'https://objects.githubusercontent.com/assets/archive',
+    'https://release-assets.githubusercontent.com/assets/archive?signature=signed'];
+  const requested = [];
+  let signal;
+  let corrupt = false;
+  /** Returns manual redirects through each allowed host, then archive bytes. */
+  const fetcher = async (url, options, archive) => {
+    assert.equal(options.redirect, 'manual');
+    signal ??= options.signal;
+    assert.equal(options.signal, signal, 'one AbortSignal across all redirect hops');
+    requested.push(url);
+    const hop = urls.indexOf(url);
+    assert.notEqual(hop, -1);
+    return hop < urls.length - 1
+      ? new Response(null, { status: 302, headers: { location: urls[hop + 1] } })
+      : new Response(corrupt ? Buffer.from('tampered') : archive);
+  };
+  await withRedirectDownload(dir, fetcher, async (setup) => {
+    await setup();
+    assert.deepEqual(requested, urls, 'three redirects reach the boundary successfully');
+    requested.length = 0;
+    signal = undefined;
+    corrupt = true;
+    await assert.rejects(setup, /SHA-256 mismatch/);
+    assert.deepEqual(requested, urls);
+  });
+}));
+
+const refusedRedirects = [
+  ['off-host', 'https://evil.example/assets/archive'],
+  ['host suffix', 'https://github.com.evil.example/assets/archive'],
+  ['http', 'http://github.com/assets/archive'],
+  ['credentials', 'https://user:password@github.com/assets/archive'],
+  ['empty credentials', 'https://@github.com/assets/archive'],
+  ['parent segment', 'https://github.com/assets/../archive'],
+  ['encoded parent segment', 'https://github.com/assets/%2e%2e/archive'],
+  ['dot segment', 'https://github.com/assets/./archive'],
+  ['empty segment', 'https://github.com/assets//archive'],
+  ['empty path', 'https://github.com'],
+  ['port', 'https://github.com:8443/assets/archive'],
+  ['default port', 'https://github.com:443/assets/archive'],
+  ['fragment', 'https://github.com/assets/archive#fragment'],
+  ['empty fragment', 'https://github.com/assets/archive#'],
+  ['backslash', 'https://github.com/assets\\archive'],
+  ['malformed escape', 'https://github.com/assets/%'],
+  ['empty location', ''],
+  ['missing location', null],
+];
+for (const [name, location] of refusedRedirects) {
+  test(`downloadPlayerArchive refuses ${name} redirect naming the URL`, () => withTempDir(async (dir) => {
+    const requested = [];
+    /** Simulates fetch's automatic follow unless the downloader explicitly requests manual mode. */
+    const fetcher = async (url, options, archive) => {
+      requested.push(url);
+      if (options.redirect !== 'manual') {
+        requested.push(location);
+        return new Response(archive);
+      }
+      const headers = location === null ? {} : { location };
+      return new Response(null, { status: 302, headers });
+    };
+    await withRedirectDownload(dir, fetcher, async (setup) => {
+      await assert.rejects(setup, (error) => {
+        assert.equal(error.constructor.name, 'CheckError');
+        assert.ok(error.message.includes(JSON.stringify(location)), error.message);
+        assert.match(error.message, /refused player archive redirect/);
+        return true;
+      });
+      assert.equal(requested.length, 1, 'refused target is never requested');
+    });
+  }));
+}
+
+test('downloadPlayerArchive refuses a redirect chain past the bound naming the URL', () => withTempDir(async (dir) => {
+  const requested = [];
+  /** Keeps redirecting without making any network request. */
+  const fetcher = async (url, options) => {
+    assert.equal(options.redirect, 'manual');
+    requested.push(url);
+    return new Response(null, { status: 307, headers: {
+      location: `https://release-assets.githubusercontent.com/assets/hop-${requested.length}`,
+    } });
+  };
+  await withRedirectDownload(dir, fetcher, async (setup) => {
+    await assert.rejects(setup, (error) => {
+      assert.equal(error.constructor.name, 'CheckError');
+      assert.match(error.message, /redirect limit 3 exceeded/);
+      assert.ok(error.message.includes('https://release-assets.githubusercontent.com/assets/hop-4'));
+      return true;
+    });
+    assert.equal(requested.length, 4, 'initial request plus at most three followed redirects');
+  });
+}));
+
+test('an adopted integration with a released player.lock.json injects the loader and publishes the locked player', () => withTempDir(async (dir) => {
+  const archive = buildTarGz([
+    { name: 'loader.js', body: '// locked loader\n' },
+    { name: 'player.js', body: '// locked player\n' },
+    { name: 'THIRD-PARTY-LICENSES.txt', body: 'MIT\n' },
+  ]);
+  const lockPath = join(dir, 'tools/figures/player.lock.json');
+  write(lockPath, JSON.stringify({
+    asset: 'figures-player.tar.gz',
+    sha256: sha256(archive),
+    release: 'v1.4.0',
+    repository: 'https://github.com/adopter/praetor-fork',
+  }));
+  const adoptedFigures = await adoptedFiguresModule(dir);
+  const requested = [];
+  const scripts = [];
+  const integration = adoptedFigures({
+    root: dir,
+    /** Mock download function recording requested URL and returning test archive. */
+    download: async (url) => {
+      requested.push(url);
+      return archive;
+    },
+  });
+  await integration.hooks['astro:config:setup']({
+    config: { base: '/docs/' }, updateConfig: () => {}, injectScript: (...args) => scripts.push(args),
+  });
+  assert.deepEqual(requested, ['https://github.com/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz']);
+  assert.deepEqual(scripts, [['head-inline', loaderScript('/docs/')]]);
+  const site = join(dir, 'dist');
+  await integration.hooks['astro:build:done']({ dir: site, logger: undefined });
+  assert.equal(readFileSync(join(site, 'assets/javascripts/figures/loader.js'), 'utf8'), '// locked loader\n');
+  assert.equal(readFileSync(join(site, 'assets/javascripts/figures/player.js'), 'utf8'), '// locked player\n');
+  assert.equal(readFileSync(join(site, 'assets/javascripts/figures/THIRD-PARTY-LICENSES.txt'), 'utf8'), 'MIT\n');
+  // Boundary: an unreleased lock logs one info message and injects no loader.
+  write(lockPath, JSON.stringify({ asset: 'figures-player.tar.gz', sha256: sha256(archive), release: '' }));
+  const info = [];
+  const unreleasedScripts = [];
+  await adoptedFigures({ root: dir }).hooks['astro:config:setup']({
+    config: { base: '/docs/' }, updateConfig: () => {}, injectScript: (...args) => unreleasedScripts.push(args),
+    logger: { info: (line) => info.push(line) },
+  });
+  assert.deepEqual(unreleasedScripts, []);
+  assert.equal(info.length, 1);
+  assert.match(info[0], /unreleased/);
+  // Negative: an untrusted repository host or SHA-256 mismatch is refused.
+  write(lockPath, JSON.stringify({
+    asset: 'figures-player.tar.gz',
+    sha256: sha256(archive),
+    release: 'v1.4.0',
+    repository: 'https://evil.example/adopter/praetor-fork',
+  }));
+  await assert.rejects(
+    async () => adoptedFigures({ root: dir, download: async () => archive }).hooks['astro:config:setup']({
+      config: {}, updateConfig: () => {}, injectScript: () => {},
+    }),
+    /https:\/\/github\.com only/,
+  );
+  write(lockPath, JSON.stringify({ asset: 'figures-player.tar.gz', sha256: '0'.repeat(64), release: 'v1.4.0' }));
+  await assert.rejects(
+    async () => adoptedFigures({ root: dir, download: async () => archive }).hooks['astro:config:setup']({
+      config: {}, updateConfig: () => {}, injectScript: () => {},
+    }),
+    /SHA-256 mismatch/,
+  );
 }));
 
 test('config setup adds the remark plugin and the head loader for the site\'s base', () => withTempDir((dir) => {
