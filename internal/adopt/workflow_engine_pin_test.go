@@ -359,6 +359,7 @@ func TestWorkflowEnginePinFileBound(t *testing.T) {
 	source, ancestor, head, _ := pinHistory(t)
 	root := t.TempDir()
 	initTestGit(t, root)
+	// nosemgrep: go_file-permissions_rule-mkdir, go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a fixture directory that only has to exist; its mode is not what this case asserts
 	if err := os.MkdirAll(filepath.Join(root, ".github/workflows/00-dir.yml"), 0o755); err != nil {
 		t.Fatal(err)
 	}
