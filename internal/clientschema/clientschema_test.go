@@ -439,10 +439,11 @@ func TestOnlyTheManifestIsEmbedded(t *testing.T) {
 
 // renovateRule is the part of a package rule of renovate.json the version test reads.
 type renovateRule struct {
-	Files          []string `json:"matchFileNames"`
-	DepNames       []string `json:"matchDepNames"`
-	Versioning     string   `json:"versioning"`
-	ExtractVersion string   `json:"extractVersion"`
+	Files           []string `json:"matchFileNames"`
+	DepNames        []string `json:"matchDepNames"`
+	Versioning      string   `json:"versioning"`
+	ExtractVersion  string   `json:"extractVersion"`
+	AllowedVersions string   `json:"allowedVersions"`
 }
 
 // renovateRules reads the package rules of renovate.json that name the client schema manifest
@@ -505,4 +506,92 @@ func TestRenovateVersioningParsesThePinsItTracks(t *testing.T) {
 			}
 		}
 	}
+}
+
+// effectiveAllowedVersions resolves the allowedVersions for a repository across packageRules
+// the way Renovate does: the last matching rule that sets allowedVersions wins.
+func effectiveAllowedVersions(rules []renovateRule, repo string) string {
+	var effective string
+	for _, rule := range rules {
+		if slices.Contains(rule.DepNames, repo) && rule.AllowedVersions != "" {
+			effective = rule.AllowedVersions
+		}
+	}
+	return effective
+}
+
+// checkManifestAllowedVersions checks that each manifest source's current pin matches
+// its effective allowedVersions regex so Renovate accepts the pin.
+func checkManifestAllowedVersions(t *testing.T, rules []renovateRule, manifest *Manifest) {
+	t.Helper()
+	for _, source := range manifest.Sources {
+		effective := effectiveAllowedVersions(rules, source.Repo)
+		if effective == "" {
+			continue
+		}
+		pattern, isRegex := strings.CutPrefix(effective, "/")
+		if !isRegex || !strings.HasSuffix(pattern, "/") {
+			continue
+		}
+		expression, err := regexp.Compile(strings.TrimSuffix(pattern, "/"))
+		if err != nil {
+			t.Errorf("allowedVersions %q for %s: %v", effective, source.ID, err)
+			continue
+		}
+		if !expression.MatchString(source.Pin) {
+			t.Errorf("allowedVersions %q does not match current pin %q of %s: Renovate would treat the pin as invalid", effective, source.Pin, source.ID)
+		}
+	}
+}
+
+// checkMCPSpecificationHold checks that the effective allowedVersions rule for the
+// MCP specification accepts 2025-11-25 and refuses 2026-07-28, pre-releases, and boundaries.
+func checkMCPSpecificationHold(t *testing.T, rules []renovateRule) {
+	t.Helper()
+	const mcpRepo = "modelcontextprotocol/modelcontextprotocol"
+	mcpEffective := effectiveAllowedVersions(rules, mcpRepo)
+	if mcpEffective == "" {
+		t.Fatalf("no effective allowedVersions resolved for %s", mcpRepo)
+	}
+	pattern, isRegex := strings.CutPrefix(mcpEffective, "/")
+	if !isRegex || !strings.HasSuffix(pattern, "/") {
+		t.Fatalf("effective allowedVersions for %s is not a regex: %q", mcpRepo, mcpEffective)
+	}
+	mcpRegex, err := regexp.Compile(strings.TrimSuffix(pattern, "/"))
+	if err != nil {
+		t.Fatalf("allowedVersions regex %q: %v", mcpEffective, err)
+	}
+	cases := []struct {
+		version string
+		want    bool
+		desc    string
+	}{
+		{version: "2025-11-25", want: true, desc: "positive: current pinned spec version"},
+		{version: "2026-07-28", want: false, desc: "planted: breaking 2026-07-28 protocol release"},
+		{version: "2025-11-25-RC", want: false, desc: "negative: pre-release RC candidate"},
+		{version: "2025-11-26", want: false, desc: "boundary: day after pinned release"},
+		{version: "2025-11-24", want: false, desc: "boundary: day before pinned release"},
+		{version: "v2025-11-25", want: false, desc: "boundary: prefix mismatch"},
+		{version: "2025-11-251", want: false, desc: "boundary: suffix mismatch"},
+	}
+	for _, tc := range cases {
+		if got := mcpRegex.MatchString(tc.version); got != tc.want {
+			t.Errorf("allowedVersions %q for %s with version %q (%s) = %v, want %v",
+				mcpEffective, mcpRepo, tc.version, tc.desc, got, tc.want)
+		}
+	}
+}
+
+// Renovate evaluates packageRules in declaration order, and the last matching rule that sets
+// allowedVersions wins. Any regex allowedVersions must match the source's current pin so Renovate
+// does not treat the pinned version as invalid. For modelcontextprotocol/modelcontextprotocol,
+// the effective rule holds the pin at 2025-11-25: it accepts the pinned specification release,
+// refuses the breaking 2026-07-28 release, and refuses pre-releases and unanchored boundaries.
+func TestRenovateAllowedVersionsMatchCurrentPinsAndHoldMCPSpec(t *testing.T) {
+	rules := renovateRules(t)
+	if len(rules) == 0 {
+		t.Fatal("renovate.json has no package rule for a pinned client schema repository")
+	}
+	checkManifestAllowedVersions(t, rules, loadManifest(t))
+	checkMCPSpecificationHold(t, rules)
 }

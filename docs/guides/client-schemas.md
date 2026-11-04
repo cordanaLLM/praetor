@@ -146,7 +146,12 @@ want a typed payload.
    fixture test naming the missing field.
 
 The MCP source URL contains the specification revision, so `{pin}` stands for the pin in
-`url_base` and `upstream`, and a pin change moves every URL.
+`url_base` and `upstream`, and a pin change moves every URL. A Renovate packageRule holds the
+MCP specification at `2025-11-25`: `2026-07-28` is a protocol break that replaces initialization
+with `server/discover` and drops subscriptions, while Praetor's servers and clients speak
+`2025-11-25`. The hold revisits when a measured client matrix confirms that supported clients
+(Claude Code, Codex, Gemini CLI, Antigravity, opencode, editors) support or negotiate
+`2026-07-28` (#1694).
 
 ## Formats without an upstream schema
 
