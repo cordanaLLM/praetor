@@ -161,7 +161,7 @@ jobs:
       - name: Stop while review is open
         id: review-hold
         if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
-        timeout-minutes: 4
+        timeout-minutes: 15
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -273,8 +273,17 @@ jobs:
             REVIEW_NAMES=$(jq --binary -r 'join(", ")' "$pending")
             HOLD_CAUSE="unresolved threads=$REVIEW_THREADS; pending bot reviews=$REVIEW_PENDING; bots=$REVIEW_NAMES"
           }
-          review_count
-          if ((REVIEW_THREADS > 0 || REVIEW_PENDING > 0)); then review_error; fi
+          review_deadline=$((SECONDS + 600))
+          for ((review_poll=0; review_poll<=20; review_poll++)); do
+            review_count
+            if ((REVIEW_THREADS == 0 && REVIEW_PENDING == 0)); then break; fi
+            review_remaining=$((review_deadline - SECONDS))
+            if ((review_remaining <= 0 || review_poll == 20)); then review_error; fi
+            review_delay=30
+            if ((review_delay > review_remaining)); then review_delay=$review_remaining; fi
+            sleep "$review_delay"
+            if ((SECONDS > review_deadline)); then review_error; fi
+          done
           printf 'clear=true\n' >> "$GITHUB_OUTPUT"
           printf '%s\n' "$HOLD_CAUSE" >> "$GITHUB_STEP_SUMMARY"
 
@@ -430,7 +439,10 @@ jobs:
       # exception for it are gone (#1381). operationalsync's identity suite replays only the
       # Windows-specific adopt tests on Windows, so it stays in the first run. Every selected run
       # goes even after a failure; the step fails when any selected run does.
+      # Recorded post-split test times: operationalsync 557 s, adopt 129 s, CLI 1181 s
+      # (runs documented above/below): 31m7s total; 75m leaves ~44m for other packages/builds.
       - name: Test Every Package
+        timeout-minutes: 75
         if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
@@ -769,7 +781,7 @@ jobs:
       - name: Stop while review is open
         id: review-hold
         if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
-        timeout-minutes: 4
+        timeout-minutes: 15
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -887,7 +899,10 @@ jobs:
           go mod download -modfile=tools/go/go.mod
           go build -modfile=tools/go/go.mod -o "$RUNNER_TEMP/pinned-tools/" golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec github.com/zricethezav/gitleaks/v8
 
+      # Recorded post-split test times: operationalsync 557 s, adopt 129 s, CLI 1181 s
+      # (runs documented above/below): 31m7s total; 75m leaves ~44m for other packages/builds.
       - name: Test Every Package
+        timeout-minutes: 75
         if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
@@ -1101,7 +1116,7 @@ jobs:
       - name: Stop while review is open
         id: review-hold
         if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
-        timeout-minutes: 4
+        timeout-minutes: 15
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

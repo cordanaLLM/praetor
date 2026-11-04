@@ -24,6 +24,173 @@ import (
 // updateReviewHoldWorkflowEnv rewrites the release workflow from its renderer.
 const updateReviewHoldWorkflowEnv = "PRAETOR_UPDATE_REVIEW_HOLD_WORKFLOW"
 
+// reviewCounterScript isolates one snapshot so pagination assertions remain independent of polling.
+const reviewCounterScript = reviewHoldLibrary + `review_count
+if ((REVIEW_THREADS > 0 || REVIEW_PENDING > 0)); then review_error; fi
+printf 'clear=true\n' >> "$GITHUB_OUTPUT"
+printf '%s\n' "$HOLD_CAUSE" >> "$GITHUB_STEP_SUMMARY"
+`
+
+// reviewPollClock advances Bash's clock without sleeping or changing production timing.
+const reviewPollClock = `review_sleeps=0
+sleep() {
+  review_sleeps=$((review_sleeps + 1))
+  printf '%s\n' "$1" >> "$FIXTURE_DIR/sleeps"
+  SECONDS=$((SECONDS + $1))
+  if [[ -f "$FIXTURE_DIR/expired-after-sleep" ]]; then SECONDS=$((SECONDS + 601)); fi
+  if [[ -f "$FIXTURE_DIR/clear-after-sleep" && $review_sleeps -ge $(cat "$FIXTURE_DIR/clear-after-sleep") ]]; then
+    cp "$FIXTURE_DIR/clear-threads.json" "$FIXTURE_DIR/threads.json"
+    cp "$FIXTURE_DIR/clear-checks.json" "$FIXTURE_DIR/checks.json"
+  fi
+}
+`
+
+// TestReviewHoldBoundedWait plants transient and persistent review holds.
+func TestReviewHoldBoundedWait(t *testing.T) {
+	cases := []struct {
+		name                         string
+		clearAfter, polls, snapshots int
+		expired                      bool
+	}{
+		{"clears within wait", 1, 1, 2, false},
+		{"clears at deadline", 20, 20, 21, false},
+		{"stays open", 0, 20, 21, false},
+		{"scheduler overshoots deadline", 1, 1, 1, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := reviewWaitingFixtures(t)
+			if tc.clearAfter > 0 {
+				writeReviewFixture(t, dir, "clear-after-sleep", strconv.Itoa(tc.clearAfter))
+			}
+			if tc.expired {
+				writeReviewFixture(t, dir, "expired-after-sleep", "")
+			}
+			out, err := runReviewScript(t, dir, reviewHoldScript)
+			assertReviewPolls(t, dir, tc.polls, tc.snapshots)
+			assertReviewWaitResult(t, dir, out, err, tc.clearAfter > 0 && !tc.expired)
+		})
+	}
+}
+
+// reviewWaitingFixtures saves clear responses before planting open threads and a pending bot.
+func reviewWaitingFixtures(t *testing.T) string {
+	t.Helper()
+	dir := reviewFixtures(t)
+	for _, name := range []string{"threads", "checks"} {
+		data, err := readReviewFixture(t, dir, name+".json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeReviewFixture(t, dir, "clear-"+name+".json", string(data))
+	}
+	writeReviewFixture(t, dir, "threads.json", `{"data":{"repository":{"pullRequest":{"headRefOid":"head","reviewThreads":{"nodes":[{"isResolved":false}],"pageInfo":{"hasNextPage":false}}}}}}`)
+	writeReviewFixture(t, dir, "checks.json", `{"check_runs":[{"name":"Codacy","status":"in_progress"}]}`)
+	return dir
+}
+
+// assertReviewPolls checks the bounded waits and every paginated counter invocation.
+func assertReviewPolls(t *testing.T, dir string, polls, snapshots int) {
+	t.Helper()
+	sleeps, err := readReviewFixture(t, dir, "sleeps")
+	if err != nil || string(sleeps) != strings.Repeat("30\n", polls) {
+		t.Fatalf("sleeps=%q read=%v; want %d bounded polls", sleeps, err, polls)
+	}
+	var want [][]string
+	for i := 0; i < snapshots; i++ {
+		want = append(want, reviewCountCalls("1", 1, 1, true)...)
+	}
+	assertReviewCalls(t, dir, want)
+}
+
+// assertReviewWaitResult checks clearance output or the original annotated hold cause.
+func assertReviewWaitResult(t *testing.T, dir, out string, runErr error, clears bool) {
+	t.Helper()
+	output, err := readReviewFixture(t, dir, "outputs")
+	if clears {
+		if runErr != nil || err != nil || string(output) != "clear=true\n" {
+			t.Fatalf("output=%q read=%v run=%v out=%s", output, err, runErr, out)
+		}
+		return
+	}
+	if !os.IsNotExist(err) || runErr == nil || !strings.Contains(out, "::error title=Gate held%3A review open::unresolved threads=1; pending bot reviews=1; bots=Codacy") {
+		t.Fatalf("output=%q read=%v run=%v out=%s; want held without clearance", output, err, runErr, out)
+	}
+}
+
+// TestReviewHoldReleaseBusyScheduled rescans busy held runs and releases exactly once.
+func TestReviewHoldReleaseBusyScheduled(t *testing.T) {
+	for _, status := range []string{"in_progress", "queued"} {
+		t.Run(status, func(t *testing.T) {
+			dir := reviewFixtures(t)
+			completed, err := readReviewFixture(t, dir, "runs.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			busy := strings.Replace(string(completed), `"status":"completed","conclusion":"failure"`, `"status":"`+status+`","conclusion":null`, 1)
+			writeReviewFixture(t, dir, "runs.json", busy)
+			assertReviewReleasePass(t, dir, "check_run", "")
+			want := append([][]string{reviewRESTCall("pulls?state=open&sort=created&direction=asc", 1)}, reviewReleaseCalls("1", 0)...)
+			assertReviewCalls(t, dir, want)
+			writeReviewFixture(t, dir, "runs.json", string(completed))
+			assertReviewReleasePass(t, dir, "schedule", "42\n")
+			want = append(want, reviewRESTCall("pulls?state=open&sort=created&direction=asc", 1))
+			want = append(want, reviewReleaseCalls("1", 5)...)
+			assertReviewCalls(t, dir, want)
+			writeReviewFixture(t, dir, "runs.json", busy)
+			assertReviewReleasePass(t, dir, "schedule", "42\n")
+			want = append(want, reviewRESTCall("pulls?state=open&sort=created&direction=asc", 1))
+			want = append(want, reviewReleaseCalls("1", 0)...)
+			assertReviewCalls(t, dir, want)
+		})
+	}
+}
+
+// assertReviewReleasePass checks a real release script invocation against sandbox reruns.
+func assertReviewReleasePass(t *testing.T, dir, event, want string) {
+	t.Helper()
+	out, err := runReviewScript(t, dir, "GITHUB_EVENT_NAME="+event+"\n"+reviewHoldReleaseScript)
+	if err != nil {
+		t.Fatalf("event=%s out=%s err=%v", event, out, err)
+	}
+	data, err := readReviewFixture(t, dir, "reruns")
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if string(data) != want {
+		t.Fatalf("event=%s reruns=%q want=%q", event, data, want)
+	}
+}
+
+// TestReviewHoldPackageStepBounds prevents a package step consuming the entire job budget.
+func TestReviewHoldPackageStepBounds(t *testing.T) {
+	data, err := os.ReadFile("../../.github/workflows/portability.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for id, job := range spec.Jobs {
+		for _, step := range job.Steps {
+			if step.Name != "Test Every Package" {
+				continue
+			}
+			count++
+			bound, err := strconv.Atoi(step.TimeoutMinutes.Value)
+			jobBound, jobErr := strconv.Atoi(job.TimeoutMinutes.Value)
+			if err != nil || jobErr != nil || bound != 75 || bound >= jobBound {
+				t.Errorf("%s: step timeout=%q job timeout=%q; want 75 below job bound", id, step.TimeoutMinutes.Value, job.TimeoutMinutes.Value)
+			}
+		}
+	}
+	if count != 2 {
+		t.Fatalf("package steps=%d; want both harness and Windows shard", count)
+	}
+}
+
 // TestReviewHoldOpenThreadPlanted requires a review barrier before the heavy work can proceed.
 func TestReviewHoldOpenThreadPlanted(t *testing.T) {
 	data, err := os.ReadFile("../../.github/workflows/portability.yml")
@@ -215,6 +382,8 @@ func runReviewScript(t *testing.T, dir, script string) (string, error) {
 	defer cancel()
 	// Native Go -> MSYS -c arguments are globbed and truncated around 8 KiB.
 	// Bash chooses its own PATH syntax; both runtimes share cmd.Dir for files.
+	// All fixture callers, including annotation tests, share a deterministic clock.
+	script = "review_fixture_seconds=0\n" + strings.ReplaceAll(reviewPollClock+script, "SECONDS", "review_fixture_seconds")
 	writeReviewFixture(t, dir, "review-script.sh", "export PATH=\"$PWD:$PATH\"\n"+script)
 	environment := append(os.Environ(),
 		"FIXTURE_DIR=.", "GITHUB_REPOSITORY=fixture/repo", "PR_NUMBER=1", "HEAD_SHA=head",
@@ -262,7 +431,7 @@ func TestReviewHoldCounter(t *testing.T) {
 			if tc.file != "" {
 				writeReviewFixture(t, dir, tc.file, tc.data)
 			}
-			out, err := runReviewScript(t, dir, reviewHoldScript)
+			out, err := runReviewScript(t, dir, reviewCounterScript)
 			threadPages, checkPages, statuses := 1, 1, true
 			switch tc.name {
 			case "read failure", "GraphQL errors", "null response":
@@ -355,7 +524,7 @@ func TestReviewHoldLargePayload(t *testing.T) {
 			if pending {
 				writeReviewFixture(t, dir, "checks-next.json", `{"check_runs":[{"name":"CodeRabbit","status":"queued"}]}`)
 			}
-			out, err := runReviewScript(t, dir, reviewHoldScript)
+			out, err := runReviewScript(t, dir, reviewCounterScript)
 			assertReviewCalls(t, dir, reviewCountCalls("1", 1, 2, true))
 			summary, readErr := readReviewFixture(t, dir, "summary")
 			want := "unresolved threads=0; pending bot reviews=0; bots="
@@ -399,6 +568,7 @@ func TestReviewHoldRendering(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	data = updateReviewHoldPortability(t, data)
 	if len(data) > 64<<10 {
 		t.Fatal("portability workflow exceeds metadata reader byte bound")
 	}
@@ -428,6 +598,28 @@ func TestReviewHoldRendering(t *testing.T) {
 	if string(release) != wantRelease {
 		t.Fatal("release workflow differs from renderer")
 	}
+}
+
+// updateReviewHoldPortability regenerates only rendered barrier steps when explicitly requested.
+func updateReviewHoldPortability(t *testing.T, data []byte) []byte {
+	t.Helper()
+	if os.Getenv(updateReviewHoldWorkflowEnv) != "1" {
+		return data
+	}
+	pattern := regexp.MustCompile(`(?m)^      - name: Stop while review is open\n(?:        .*\n)*`)
+	if matches := pattern.FindAll(data, -1); len(matches) != 3 {
+		t.Fatalf("rendered barrier steps=%d; want 3", len(matches))
+	}
+	index := 0
+	updated := pattern.ReplaceAllStringFunc(string(data), func(string) string {
+		step := RenderReviewHoldStep(index > 0)
+		index++
+		return step
+	})
+	if err := os.WriteFile("../../.github/workflows/portability.yml", []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return []byte(updated)
 }
 
 // TestReviewHoldStepTimeoutRendered verifies RenderReviewHoldStep emits timeout-minutes.
@@ -480,7 +672,7 @@ func TestReviewHoldPagination(t *testing.T) {
 			if tc.next != "" {
 				writeReviewFixture(t, dir, "checks-next.json", tc.next)
 			}
-			out, err := runReviewScript(t, dir, reviewHoldScript)
+			out, err := runReviewScript(t, dir, reviewCounterScript)
 			pages, statuses := 20, false
 			if tc.next != "" {
 				pages, statuses = 2, true
@@ -494,7 +686,7 @@ func TestReviewHoldPagination(t *testing.T) {
 	dir := reviewFixtures(t)
 	writeReviewFixture(t, dir, "threads.json", `{"data":{"repository":{"pullRequest":{"headRefOid":"head","reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":true,"endCursor":"next"}}}}}}`)
 	writeReviewFixture(t, dir, "threads-next.json", `{"data":{"repository":{"pullRequest":{"headRefOid":"head","reviewThreads":{"nodes":[{"isResolved":false}],"pageInfo":{"hasNextPage":false}}}}}}`)
-	out, err := runReviewScript(t, dir, reviewHoldScript)
+	out, err := runReviewScript(t, dir, reviewCounterScript)
 	assertReviewCalls(t, dir, reviewCountCalls("1", 2, 1, true))
 	if err == nil || !strings.Contains(out, "unresolved threads=1") {
 		t.Fatalf("out=%s err=%v", out, err)
