@@ -152,7 +152,8 @@ func contextDifference(left, right []string) []string {
 // UnreportedStatusContexts returns the required status contexts declared in root that the
 // default branch does not report yet, either because the fetched default-branch commit does not
 // declare them in a workflow that removed no existing check, or because report shows their
-// workflow is not on the forge default branch yet or has no completed run on it.
+// workflow is not on the forge default branch yet or has no completed run on it. Positive
+// report evidence overrides absence from a potentially stale fetched commit.
 func UnreportedStatusContexts(ctx context.Context, root, commit, repository string, report *WorkflowRunReport, opts ...ContextOption) ([]string, error) {
 	if ctx == nil {
 		return nil, errors.New("unreported status context discovery requires a context")
@@ -178,11 +179,10 @@ func UnreportedStatusContexts(ctx context.Context, root, commit, repository stri
 		}
 	}
 	if report != nil {
-		fromRuns, err := unreportedContextsInRuns(after, repository, report, options)
+		unreported, err = unreportedContextsInRuns(after, repository, report, options, unreported)
 		if err != nil {
 			return nil, err
 		}
-		unreported = appendMissing(unreported, fromRuns)
 	}
 	return unreported, nil
 }
@@ -216,33 +216,40 @@ func unreportedContextsAtCommit(ctx context.Context, root, commit, repository st
 	return unreported, nil
 }
 
-// unreportedContextsInRuns computes status contexts declared in workflows that have not yet reported successful runs on the default branch.
-func unreportedContextsInRuns(after []workflowFile, repository string, report *WorkflowRunReport, options contextOptions) ([]string, error) {
+// workflowFilesReportedInRuns selects workflows without negative run evidence; positiveOnly
+// additionally requires explicit positive evidence in report.
+func workflowFilesReportedInRuns(after []workflowFile, report *WorkflowRunReport, positiveOnly bool) []workflowFile {
 	unreportedWorkflow := make(map[string]bool, len(report.Findings))
 	for i := 0; i < len(report.Findings) && i < maxWorkflowFiles; i++ {
-		if workflowUnreportedOnDefaultBranch(report.Findings[i].Health) {
-			unreportedWorkflow[report.Findings[i].Workflow] = true
-		}
-	}
-	if len(unreportedWorkflow) == 0 {
-		return nil, nil
+		unreportedWorkflow[report.Findings[i].Workflow] = workflowUnreportedOnDefaultBranch(report.Findings[i].Health)
 	}
 	reportedFiles := make([]workflowFile, 0, len(after))
 	for i := 0; i < len(after) && i < maxWorkflowFiles; i++ {
-		if !unreportedWorkflow[after[i].Name] {
+		unreported, known := unreportedWorkflow[after[i].Name]
+		if !unreported && (!positiveOnly || known) {
 			reportedFiles = append(reportedFiles, after[i])
 		}
 	}
+	return reportedFiles
+}
+
+// unreportedContextsInRuns combines run and commit absence, then removes contexts with
+// explicit positive run evidence so a stale commit cannot excuse reported checks.
+func unreportedContextsInRuns(after []workflowFile, repository string, report *WorkflowRunReport, options contextOptions, fromCommit []string) ([]string, error) {
 	called := newCalledWorkflows(after)
 	declared, err := selectContexts(after, called, repository, options)
 	if err != nil {
 		return nil, err
 	}
-	reported, err := selectContexts(reportedFiles, called, repository, options)
+	reported, err := selectContexts(workflowFilesReportedInRuns(after, report, false), called, repository, options)
 	if err != nil {
 		return nil, err
 	}
-	return contextDifference(declared, reported), nil
+	positive, err := selectContexts(workflowFilesReportedInRuns(after, report, true), called, repository, options)
+	if err != nil {
+		return nil, err
+	}
+	return contextDifference(appendMissing(fromCommit, contextDifference(declared, reported)), positive), nil
 }
 
 // workflowUnreportedOnDefaultBranch reports whether a workflow's health status indicates it has not yet reported runs on the default branch.
