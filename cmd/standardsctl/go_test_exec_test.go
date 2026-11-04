@@ -67,17 +67,73 @@ func TestGoTestExecArguments(t *testing.T) {
 		{[]string{"-timeout=0", "./pkg"}, []string{"test", "-exec", wrapper, "-timeout=0", "./pkg"}, wrapper},
 		{[]string{"-C", "tools/module", "-count=1", "./..."}, []string{"-C", "tools/module", "test", "-exec", wrapper, "-count=1", "./..."}, wrapper},
 		{[]string{"-race", "./..."}, []string{"test", "-race", "./..."}, ""},
-		{[]string{"./pkg", "-args", "-exec=fixture-value"}, []string{"test", "-exec", wrapper, "./pkg", "-args", "-exec=fixture-value"}, wrapper},
+		{[]string{"./pkg", "./other"}, []string{"test", "-exec", wrapper, "./pkg", "./other"}, wrapper},
+		{[]string{"-run", "X", "./pkg"}, []string{"test", "-exec", wrapper, "-run", "X", "./pkg"}, wrapper},
+		{[]string{"-args", "-v"}, []string{"test", "-exec", wrapper, "-args", "-v"}, wrapper},
+		{nil, []string{"test", "-exec", wrapper}, wrapper},
 	} {
 		got, err := goTestArgs(tc.args, tc.exec)
 		if err != nil || !slices.Equal(got, tc.want) {
 			t.Fatalf("args=%q want=%q error=%v", got, tc.want, err)
 		}
 	}
-	for _, args := range [][]string{{"-exec", "env", "./..."}, {"-exec=env", "./..."}, {"--exec", "env", "./..."}, {"--exec=env", "./..."}} {
+	for _, args := range [][]string{{"-exec", "env", "./..."}, {"-exec=env", "./..."}, {"--exec", "env", "./..."}, {"--exec=env", "./..."}, {"./pkg", "-args", "-exec=fixture-value"}} {
 		if _, err := goTestArgs(args, wrapper); err == nil || !strings.Contains(err.Error(), "owned by the gate wrapper") {
 			t.Fatalf("accepted isolation override %q: %v", args, err)
 		}
+	}
+}
+
+// TestGoTestExecRejectsAmbiguousArguments refuses exec-shaped tokens even in value or test argument positions.
+func TestGoTestExecRejectsAmbiguousArguments(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"args as run value", []string{"-run", "-args", "-exec=/bin/true", "./pkg"}},
+		{"double args as run value", []string{"-run", "--args", "--exec=/bin/true", "./pkg"}},
+		{"exec after args", []string{"-args", "-exec", "x"}},
+		{"double exec after args", []string{"-args", "--exec", "x"}},
+		{"joined exec after double args", []string{"--args", "-exec=x"}},
+		{"joined double exec after double args", []string{"--args", "--exec=x"}},
+		{"exec override", []string{"-exec", "x"}},
+		{"joined double exec override", []string{"--exec=x"}},
+		{"exec as run value", []string{"-run", "-exec", "./pkg"}},
+		{"exec without value", []string{"-exec"}},
+		{"exec after args without value", []string{"-args", "-exec"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := goTestArgs(tc.args, "wrapper"); err == nil || !strings.Contains(err.Error(), "owned by the gate wrapper") {
+				t.Fatalf("accepted isolation override %q: %v", tc.args, err)
+			}
+		})
+	}
+}
+
+// TestGoTestExecDirectoryArguments preserves leading directory forms and leaves misplaced or incomplete flags for Go.
+func TestGoTestExecDirectoryArguments(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		args, want []string
+	}{
+		{"separate", []string{"-C", "module dir", "./pkg"}, []string{"-C", "module dir", "test", "-exec", "wrapper", "./pkg"}},
+		{"double separate", []string{"--C", "module dir", "./pkg"}, []string{"--C", "module dir", "test", "-exec", "wrapper", "./pkg"}},
+		{"joined", []string{"-C=module dir", "./pkg"}, []string{"-C=module dir", "test", "-exec", "wrapper", "./pkg"}},
+		{"double joined", []string{"--C=module dir", "./pkg"}, []string{"--C=module dir", "test", "-exec", "wrapper", "./pkg"}},
+		{"missing directory", []string{"-C"}, []string{"test", "-exec", "wrapper", "-C"}},
+		{"double missing directory", []string{"--C"}, []string{"test", "-exec", "wrapper", "--C"}},
+		{"trailing flag", []string{"./pkg", "-C"}, []string{"test", "-exec", "wrapper", "./pkg", "-C"}},
+		{"nonleading separate", []string{"-v", "-C", "dir"}, []string{"test", "-exec", "wrapper", "-v", "-C", "dir"}},
+		{"nonleading double separate", []string{"-v", "--C", "dir"}, []string{"test", "-exec", "wrapper", "-v", "--C", "dir"}},
+		{"nonleading joined", []string{"-v", "-C=dir"}, []string{"test", "-exec", "wrapper", "-v", "-C=dir"}},
+		{"nonleading double joined", []string{"-v", "--C=dir"}, []string{"test", "-exec", "wrapper", "-v", "--C=dir"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := goTestArgs(tc.args, "wrapper")
+			if err != nil || !slices.Equal(got, tc.want) {
+				t.Fatalf("args=%q got=%q want=%q error=%v", tc.args, got, tc.want, err)
+			}
+		})
 	}
 }
 

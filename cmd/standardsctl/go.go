@@ -67,23 +67,32 @@ func runGoTest(args []string) error {
 // goTestArgs constructs the command-line argument slice for go test, inserting the gate -exec wrapper.
 func goTestArgs(args []string, execFlag string) ([]string, error) {
 	for i := 0; i < len(args); i++ {
-		if args[i] == "-args" || args[i] == "--args" {
-			break
-		}
 		if goExecFlag(args[i]) {
 			return nil, errors.New("go test loopback isolation: -exec is owned by the gate wrapper")
 		}
 	}
-	argv := []string{}
-	if len(args) >= 2 && args[0] == "-C" {
-		argv, args = append(argv, args[:2]...), args[2:]
-	}
+	directoryArgs, args := goTestDirectoryArgs(args)
+	argv := append([]string{}, directoryArgs...)
 	argv = append(argv, "test")
 	if execFlag != "" {
 		argv = append(argv, "-exec", execFlag)
 	}
 	argv = append(argv, args...)
 	return argv, nil
+}
+
+// goTestDirectoryArgs splits a complete leading -C flag from the remaining test arguments.
+func goTestDirectoryArgs(args []string) (directoryArgs, testArgs []string) {
+	if len(args) == 0 {
+		return nil, args
+	}
+	if len(args) >= 2 && (args[0] == "-C" || args[0] == "--C") {
+		return args[:2], args[2:]
+	}
+	if strings.HasPrefix(args[0], "-C=") || strings.HasPrefix(args[0], "--C=") {
+		return args[:1], args[1:]
+	}
+	return nil, args
 }
 
 // goExecFlag reports whether an argument specifies the go test -exec flag.
