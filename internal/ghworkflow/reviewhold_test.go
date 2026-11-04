@@ -577,7 +577,18 @@ func TestReviewHoldReleaseTriggersAndCondition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse rendered release workflow: %v", err)
 	}
+	assertReviewReleaseTriggers(t, spec)
+	releaseJob, ok := spec.Jobs["release"]
+	if !ok {
+		t.Fatal("rendered release workflow missing 'release' job")
+	}
+	assertReviewReleaseConditionGuards(t, releaseJob.If)
+	assertReviewReleaseConditionBots(t, releaseJob.If)
+}
 
+// assertReviewReleaseTriggers verifies the check_run and status event declarations.
+func assertReviewReleaseTriggers(t *testing.T, spec Spec) {
+	t.Helper()
 	var on struct {
 		CheckRun struct {
 			Types []string `yaml:"types"`
@@ -607,44 +618,39 @@ func TestReviewHoldReleaseTriggersAndCondition(t *testing.T) {
 	if !hasStatus {
 		t.Errorf("rendered release workflow missing 'status' trigger")
 	}
+}
 
-	releaseJob, ok := spec.Jobs["release"]
-	if !ok {
-		t.Fatal("rendered release workflow missing 'release' job")
+// assertReviewReleaseConditionGuards verifies repository, event and pending guards.
+func assertReviewReleaseConditionGuards(t *testing.T, condition string) {
+	t.Helper()
+	cases := []struct{ term, guard string }{
+		{"github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')", "canonical repository guard"},
+		{"github.event_name != 'check_run'", "check_run disjunction"},
+		{"github.event_name != 'status'", "status disjunction"},
+		{"github.event.state != 'pending'", "status pending check"},
 	}
-	condition := releaseJob.If
+	for _, tc := range cases {
+		if !strings.Contains(condition, tc.term) {
+			t.Errorf("release job if condition missing %s: %q", tc.guard, condition)
+		}
+	}
+}
 
-	if !strings.Contains(condition, "github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')") {
-		t.Errorf("release job if condition missing canonical repository guard: %q", condition)
+// assertReviewReleaseConditionBots verifies every configured bot identity term.
+func assertReviewReleaseConditionBots(t *testing.T, condition string) {
+	t.Helper()
+	cases := []struct{ field, label string }{
+		{"github.event.check_run.name", "check_run name"},
+		{"github.event.check_run.app.slug", "check_run app slug"},
+		{"github.event.context", "status context"},
+		{"github.event.sender.login", "status sender"},
 	}
-	if !strings.Contains(condition, "github.event_name != 'check_run'") {
-		t.Errorf("release job if condition missing check_run disjunction: %q", condition)
-	}
-	if !strings.Contains(condition, "github.event_name != 'status'") {
-		t.Errorf("release job if condition missing status disjunction: %q", condition)
-	}
-	if !strings.Contains(condition, "github.event.state != 'pending'") {
-		t.Errorf("release job if condition missing status pending check: %q", condition)
-	}
-
 	bots := strings.Split(ReviewHoldBots, "|")
 	for _, bot := range bots {
-		checkName := "contains(github.event.check_run.name, '" + bot + "')"
-		checkSlug := "contains(github.event.check_run.app.slug, '" + bot + "')"
-		statusContext := "contains(github.event.context, '" + bot + "')"
-		statusSender := "contains(github.event.sender.login, '" + bot + "')"
-
-		if !strings.Contains(condition, checkName) {
-			t.Errorf("condition missing check_run name match for bot %q", bot)
-		}
-		if !strings.Contains(condition, checkSlug) {
-			t.Errorf("condition missing check_run app slug match for bot %q", bot)
-		}
-		if !strings.Contains(condition, statusContext) {
-			t.Errorf("condition missing status context match for bot %q", bot)
-		}
-		if !strings.Contains(condition, statusSender) {
-			t.Errorf("condition missing status sender match for bot %q", bot)
+		for _, tc := range cases {
+			if !strings.Contains(condition, "contains("+tc.field+", '"+bot+"')") {
+				t.Errorf("condition missing %s match for bot %q", tc.label, bot)
+			}
 		}
 	}
 }
@@ -719,7 +725,18 @@ func TestReviewHoldReleaseJobConditionBoundary(t *testing.T) {
 		t.Fatalf("parse rendered release workflow: %v", err)
 	}
 	condition := spec.Jobs["release"].If
+	conjuncts := reviewReleaseConditionConjuncts(t, condition)
+	canonicalConjunct := conjuncts[0]
+	if canonicalConjunct != "github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')" {
+		t.Errorf("unexpected canonical conjunct: %s", canonicalConjunct)
+	}
+	assertReviewReleaseCheckRunBoundary(t, conjuncts[1])
+	assertReviewReleaseStatusBoundary(t, conjuncts[2])
+}
 
+// reviewReleaseConditionConjuncts requires the rendered condition's three conjuncts.
+func reviewReleaseConditionConjuncts(t *testing.T, condition string) []string {
+	t.Helper()
 	var conjuncts []string
 	prefix := "github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') && "
 	if strings.HasPrefix(condition, prefix) {
@@ -736,82 +753,75 @@ func TestReviewHoldReleaseJobConditionBoundary(t *testing.T) {
 	if len(conjuncts) != 3 {
 		t.Fatalf("condition expected 3 top-level conjuncts, got %d in: %s", len(conjuncts), condition)
 	}
+	return conjuncts
+}
 
-	canonicalConjunct := conjuncts[0]
-	checkRunConjunct := conjuncts[1]
-	statusConjunct := conjuncts[2]
-
-	if canonicalConjunct != "github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')" {
-		t.Errorf("unexpected canonical conjunct: %s", canonicalConjunct)
-	}
-
+// assertReviewReleaseCheckRunBoundary verifies bot and non-bot check_run cases.
+func assertReviewReleaseCheckRunBoundary(t *testing.T, checkRunConjunct string) {
+	t.Helper()
 	if !strings.HasPrefix(checkRunConjunct, "(github.event_name != 'check_run' || (") || !strings.HasSuffix(checkRunConjunct, "))") {
 		t.Fatalf("malformed check_run conjunct: %s", checkRunConjunct)
 	}
 	checkRunBotTerms := strings.TrimPrefix(checkRunConjunct, "(github.event_name != 'check_run' || (")
 	checkRunBotTerms = strings.TrimSuffix(checkRunBotTerms, "))")
 
-	evalCheckRun := func(name, appSlug string) bool {
-		lowerName := strings.ToLower(name)
-		lowerSlug := strings.ToLower(appSlug)
-		for _, term := range strings.Split(checkRunBotTerms, " || ") {
-			for _, bot := range strings.Split(ReviewHoldBots, "|") {
-				if term == "contains(github.event.check_run.name, '"+bot+"')" && strings.Contains(lowerName, bot) {
-					return true
-				}
-				if term == "contains(github.event.check_run.app.slug, '"+bot+"')" && strings.Contains(lowerSlug, bot) {
-					return true
-				}
-			}
+	cases := []struct {
+		name, appSlug, failure string
+		want                   bool
+	}{
+		{"Unit Tests", "github-actions", "boundary check_run for non-bot app unexpectedly passed", false},
+		{"Coverage", "codecov", "boundary check_run for non-bot app unexpectedly passed", false},
+		{"Codacy Static Code Analysis", "codacy-production", "expected review bot check_run to pass", true},
+	}
+	for _, tc := range cases {
+		got := reviewBotTermsMatch(checkRunBotTerms, map[string]string{
+			"github.event.check_run.name": tc.name, "github.event.check_run.app.slug": tc.appSlug,
+		})
+		if got != tc.want {
+			t.Error(tc.failure)
 		}
-		return false
 	}
+}
 
-	if evalCheckRun("Unit Tests", "github-actions") {
-		t.Errorf("boundary check_run for non-bot app unexpectedly passed")
-	}
-	if evalCheckRun("Coverage", "codecov") {
-		t.Errorf("boundary check_run for non-bot app unexpectedly passed")
-	}
-	if !evalCheckRun("Codacy Static Code Analysis", "codacy-production") {
-		t.Errorf("expected review bot check_run to pass")
-	}
-
+// assertReviewReleaseStatusBoundary verifies pending, non-bot and completed statuses.
+func assertReviewReleaseStatusBoundary(t *testing.T, statusConjunct string) {
+	t.Helper()
 	if !strings.HasPrefix(statusConjunct, "(github.event_name != 'status' || (github.event.state != 'pending' && (") || !strings.HasSuffix(statusConjunct, ")))") {
 		t.Fatalf("malformed status conjunct: %s", statusConjunct)
 	}
 	statusBotTerms := strings.TrimPrefix(statusConjunct, "(github.event_name != 'status' || (github.event.state != 'pending' && (")
 	statusBotTerms = strings.TrimSuffix(statusBotTerms, ")))")
 
-	evalStatus := func(state, context, sender string) bool {
-		if state == "pending" {
-			return false
+	cases := []struct {
+		state, context, sender, failure string
+		want                            bool
+	}{
+		{"pending", "codacy", "codacy-bot", "boundary pending status unexpectedly passed", false},
+		{"pending", "sourcery-ai", "sourcery-ai[bot]", "boundary pending status unexpectedly passed", false},
+		{"success", "ci/circleci", "circleci", "boundary non-bot status unexpectedly passed", false},
+		{"success", "codacy/pr", "codacy-bot", "expected review bot completed status to pass", true},
+	}
+	for _, tc := range cases {
+		got := tc.state != "pending" && reviewBotTermsMatch(statusBotTerms, map[string]string{
+			"github.event.context": tc.context, "github.event.sender.login": tc.sender,
+		})
+		if got != tc.want {
+			t.Error(tc.failure)
 		}
-		lowerCtx := strings.ToLower(context)
-		lowerSender := strings.ToLower(sender)
-		for _, term := range strings.Split(statusBotTerms, " || ") {
+	}
+}
+
+// reviewBotTermsMatch evaluates configured bot terms against the supplied event fields.
+func reviewBotTermsMatch(terms string, fields map[string]string) bool {
+	for field, value := range fields {
+		lowerValue := strings.ToLower(value)
+		for _, term := range strings.Split(terms, " || ") {
 			for _, bot := range strings.Split(ReviewHoldBots, "|") {
-				if term == "contains(github.event.context, '"+bot+"')" && strings.Contains(lowerCtx, bot) {
-					return true
-				}
-				if term == "contains(github.event.sender.login, '"+bot+"')" && strings.Contains(lowerSender, bot) {
+				if term == "contains("+field+", '"+bot+"')" && strings.Contains(lowerValue, bot) {
 					return true
 				}
 			}
 		}
-		return false
 	}
-
-	if evalStatus("pending", "codacy", "codacy-bot") {
-		t.Errorf("boundary pending status unexpectedly passed")
-	}
-	if evalStatus("pending", "sourcery-ai", "sourcery-ai[bot]") {
-		t.Errorf("boundary pending status unexpectedly passed")
-	}
-	if evalStatus("success", "ci/circleci", "circleci") {
-		t.Errorf("boundary non-bot status unexpectedly passed")
-	}
-	if !evalStatus("success", "codacy/pr", "codacy-bot") {
-		t.Errorf("expected review bot completed status to pass")
-	}
+	return false
 }
