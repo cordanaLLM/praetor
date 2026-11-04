@@ -23,6 +23,37 @@ import (
 // exceptionsToday is the fixed day the validator tests judge expiry against.
 var exceptionsToday = time.Date(2026, time.October, 6, 15, 30, 0, 0, time.UTC)
 
+// TestDocstringExceptionValidation verifies file-only targets and mandatory SHA-256 prefixes.
+func TestDocstringExceptionValidation(t *testing.T) {
+	cases := []struct {
+		name, fingerprint, glob, lines string
+		valid                          bool
+	}{
+		{"minimum prefix", "abcdef12", "", "", true},
+		{"full hash", strings.Repeat("a", 64), "", "", true},
+		{"uppercase prefix", "ABCDEF12", "", "", true},
+		{"missing fingerprint", "", "", "", false},
+		{"short prefix", "abcdef1", "", "", false},
+		{"long prefix", strings.Repeat("a", 65), "", "", false},
+		{"nonhex prefix", "abcdef1z", "", "", false},
+		{"glob forbidden", "abcdef12", "**/*.py", "", false},
+		{"line scope forbidden", "abcdef12", "", "1-2", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := Exception{Rule: "docstrings", Path: "snapshot.py", Fingerprint: tc.fingerprint,
+				Glob: tc.glob, Lines: tc.lines, Category: "D", Reason: "prior rendering fixture", Expires: "2026-10-06"}
+			if tc.glob != "" {
+				entry.Path = ""
+			}
+			err := ValidateExceptions([]Exception{entry}, exceptionsToday)
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v, error=%v", tc.valid, err)
+			}
+		})
+	}
+}
+
 func validException() Exception {
 	return Exception{
 		Rule: ExceptionRuleClangTidyCoverage, Path: "src/win32/getopt.c",

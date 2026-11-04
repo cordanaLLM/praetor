@@ -68,6 +68,9 @@ const ExceptionRuleReuseAnnotationOrder = "reuse-annotation-order"
 // excuses duplicate blocks in one repository file, optionally scoped by hash or start line.
 const ExceptionRuleDedupe = "HISS-19"
 
+// ExceptionRuleDocstrings names content-pinned, per-file docstring coverage exceptions.
+const ExceptionRuleDocstrings = "docstrings"
+
 // ExceptionRuleSecrets is the rule of the HISS-12 secret scan gate (internal/secretscan): an entry
 // excuses one file by path and one gitleaks rule id by tool, with an optional fingerprint pinning
 // one finding.
@@ -120,7 +123,7 @@ var exceptionRules = append(hisscatalog.RuleIDs(),
 	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits,
 	ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder, ExceptionRuleDeclaredLinters, ExceptionRuleReleaseToken, ExceptionRuleTestTimeout, ExceptionRuleJobTimeout, ExceptionRuleMutants,
 	ExceptionRuleBacklogCapsDefects, ExceptionRuleBacklogCapsTasks, ExceptionRuleBacklogCapsQuestions, ExceptionRuleBacklogCapsForgeAlerts,
-	ExceptionRuleCodespell, ExceptionRuleGosec, ExceptionRuleUILatencySource,
+	ExceptionRuleCodespell, ExceptionRuleGosec, ExceptionRuleUILatencySource, ExceptionRuleDocstrings,
 )
 
 // workflowRuleExamples maps each rule whose entries name one workflow file by path to the
@@ -403,7 +406,7 @@ func (e Exception) problem(today time.Time) string {
 	if problem := e.apiModuleTargetProblem(); problem != "" {
 		return problem
 	}
-	if problem := e.dedupeTargetProblem(); problem != "" {
+	if problem := e.fileScopeProblem(); problem != "" {
 		return problem
 	}
 	if problem := e.scannerExceptionProblem(); problem != "" {
@@ -587,19 +590,18 @@ func (e Exception) rootLicenseTargetProblem() string {
 	return ""
 }
 
-// dedupeTargetProblem checks HISS-19 file targets and optional clone scopes.
-func (e Exception) dedupeTargetProblem() string {
+// fileScopeProblem checks clone scopes and content-pinned docstring file targets.
+func (e Exception) fileScopeProblem() string {
 	if e.Rule != ExceptionRuleDedupe {
 		if e.Lines != "" {
 			return "lines is only valid for rule HISS-19"
 		}
-		return ""
+		return e.docstringsTargetProblem()
 	}
 	if e.Glob != "" {
 		return "rule " + e.Rule + " must name one repository file by path, one entry per file"
 	}
-	if e.Fingerprint != "" && (len(e.Fingerprint) < 8 || len(e.Fingerprint) > 64 ||
-		strings.Trim(e.Fingerprint, "0123456789abcdefABCDEF") != "") {
+	if e.Fingerprint != "" && !validExceptionFingerprint(e.Fingerprint) {
 		return "fingerprint for HISS-19 must be a group hash prefix of 8 to 64 hexadecimal characters"
 	}
 	if e.Lines != "" {
@@ -608,6 +610,25 @@ func (e Exception) dedupeTargetProblem() string {
 		}
 	}
 	return ""
+}
+
+// docstringsTargetProblem requires one file and a content hash prefix for coverage exceptions.
+func (e Exception) docstringsTargetProblem() string {
+	if e.Rule != ExceptionRuleDocstrings {
+		return ""
+	}
+	if e.Glob != "" {
+		return "rule docstrings must name one repository file by path, one entry per file"
+	}
+	if !validExceptionFingerprint(e.Fingerprint) {
+		return "fingerprint for docstrings must be a content hash prefix of 8 to 64 hexadecimal characters"
+	}
+	return ""
+}
+
+// validExceptionFingerprint reports whether value is a SHA-256 prefix of 8 to 64 hex digits.
+func validExceptionFingerprint(value string) bool {
+	return len(value) >= 8 && len(value) <= 64 && strings.Trim(value, "0123456789abcdefABCDEF") == ""
 }
 
 func parseExceptionLines(lines string) (int, int, bool) {
