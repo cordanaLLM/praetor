@@ -8,9 +8,10 @@ from pathlib import Path
 import re
 import shutil
 import sys
+import time
 
 sys.dont_write_bytecode = True
-from common import HookError, changed, clean_env, git, paths, run, snapshot
+from common import HookError, changed, clean_env, git, paths, run, snapshot, stage_budget
 from checks import (checkpoint_checks, context_changed, file_checks, go_packages, gofmt_check,
                     source_checks)
 from privacy import check_private_history, check_private_index
@@ -27,10 +28,13 @@ def guard():
 
 
 def pre_commit():
+    """Check the staged snapshot and vet its Go packages within one stage deadline."""
+    budget = stage_budget()
+    deadline = time.monotonic() + float(budget)
     guard()
     names = paths(git("diff", "--cached", "--name-only", "-z", "--no-renames", "--"))
     check_private_index()
-    audit_live_state()
+    audit_live_state(deadline=deadline, budget=budget)
     git("diff", "--cached", "--check")
     if not names:
         print("Index: no changed files")
@@ -41,7 +45,8 @@ def pre_commit():
         if gofiles:
             packages = go_packages(directory, gofiles)
             if packages:
-                run(["go", "vet", *packages], cwd=directory, env=clean_env(), capture=False)
+                run_within(deadline, budget, "go vet", ["go", "vet", *packages],
+                           cwd=directory, env=clean_env(), capture=False)
     print(f"Index: {len(names)} changed paths checked")
 
 
@@ -299,10 +304,39 @@ def praetorctl_path():
     suffix = ".exe" if os.name == "nt" else ""
     return os.path.abspath(os.path.join("bin", "praetorctl" + suffix))
 
-def cli(args):
-    run([make_program(), "--always-make", "--no-print-directory", "-s", "hook-cli"],
-        capture=False, timeout=180)
-    run([praetorctl_path(), *args], capture=False, timeout=180)
+
+def run_within(deadline, budget, step, command, **settings):
+    """Run a step within the remaining stage budget, preserving any smaller timeout cap."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise HookError(f"{step} timed out after {budget}: stage budget spent before step")
+    timeout = min(settings.pop("timeout", remaining), remaining)
+    try:
+        return run(command, timeout=timeout, **settings)
+    except HookError as error:
+        timed_out = (
+            "timed out after" in str(error)
+            or type(error.__cause__).__name__ == "TimeoutExpired"
+        )
+        if timed_out:
+            raise HookError(f"{step} timed out after {budget}: {error}") from error
+        raise
+
+
+def cli(args, *, deadline=None, budget=None):
+    """Build and run the repository's own bin/praetorctl under one monotonic stage deadline.
+
+    Runs only the verified GNU Make from toolchain.make_program() with a fixed argv and
+    praetorctl_path() with caller-supplied subcommand arguments.
+    """
+    budget = stage_budget() if budget is None else budget
+    deadline = time.monotonic() + float(budget) if deadline is None else deadline
+    steps = (
+        ("hook-cli", [make_program(), "--always-make", "--no-print-directory", "-s", "hook-cli"]),
+        ("praetorctl", [praetorctl_path(), *args]),
+    )
+    for step, command in steps:
+        run_within(deadline, budget, step, command, capture=False)
 
 
 def verify_live_state():
@@ -312,19 +346,25 @@ def verify_live_state():
     print('PRAETOR_STATE_RESULT={"schema_version":1,"verified":true}', flush=True)  # caveman:not-applicable protocol-marker
 
 
-def audit_live_state():
-    cli(["state", "audit", "."])
+def audit_live_state(*, deadline=None, budget=None):
+    """Audit workstation state using the caller's stage deadline when supplied."""
+    cli(["state", "audit", "."], deadline=deadline, budget=budget)
 
 
 def refresh(names):
+    """Share one stage deadline across module download, CLI builds and context verification."""
+    budget = stage_budget()
+    deadline = time.monotonic() + float(budget)
     if any(name in {"go.mod", "go.sum"} for name in names):
         # Module commands may rewrite go.sum, so warm the cache in an isolated clone.
         with snapshot("HEAD") as directory:
-            run(["go", "mod", "download"], cwd=directory, env=clean_env(), capture=False)
+            run_within(deadline, budget, "go mod download", ["go", "mod", "download"],
+                       cwd=directory, env=clean_env(), capture=False)
     if any(name.endswith(".go") or name in {"go.mod", "go.sum"} for name in names):
-        run([make_program(), "--no-print-directory", "-s", "hook-cli"], capture=False)
+        run_within(deadline, budget, "hook-cli",
+                   [make_program(), "--no-print-directory", "-s", "hook-cli"], capture=False)
     if context_changed(names):
-        cli(["compile-context", "--verify"])
+        cli(["compile-context", "--verify"], deadline=deadline, budget=budget)
     if ".standards.yaml" in names:
         print("governance configuration: changed. next: run make audit before next push.")
 
@@ -343,10 +383,16 @@ def refresh_install():
     (`workstation install --if-stale`, internal/workstation/refresh.go): only an existing
     install, only from a checkout of its own module on the update branch, only forward and only
     from a clean tree. A skip prints nothing; a rebuild prints one line.
+    The build and install share a stage deadline; install also retains its own timeout cap.
     """
-    run([make_program(), "--no-print-directory", "-s", "hook-cli"], capture=False)
-    report = json.loads(run([praetorctl_path(), "workstation", "install", "--source", os.getcwd(),
-                             "--if-stale"], timeout=WORKSTATION_REFRESH_TIMEOUT))
+    budget = stage_budget()
+    deadline = time.monotonic() + float(budget)
+    run_within(deadline, budget, "hook-cli",
+               [make_program(), "--no-print-directory", "-s", "hook-cli"], capture=False)
+    report = json.loads(run_within(
+        deadline, budget, "workstation install",
+        [praetorctl_path(), "workstation", "install", "--source", os.getcwd(), "--if-stale"],
+        timeout=WORKSTATION_REFRESH_TIMEOUT))
     if not isinstance(report, dict) or type(report.get("refreshed")) is not bool:
         raise HookError("workstation install --if-stale returned an invalid result")
     if report["refreshed"]:

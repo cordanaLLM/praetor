@@ -467,7 +467,7 @@ it (`cli`, `refresh` and `refresh_install` in `.config/lefthook/scripts/hooks.py
 strict push runs the `state-audit` target (`source_checks` in `checks.py`). They pass
 `--always-make` and `--no-print-directory`, which are GNU Make options.
 
-All four calls take the program from `make_program` (`.config/lefthook/scripts/toolchain.py`).
+All four Make invocations take the program from `make_program` (`.config/lefthook/scripts/toolchain.py`).
 It tries `make`, then `gmake`, then `mingw32-make`, skipping a name that is not on `PATH`,
 and uses the first whose `--version` output begins with `GNU Make`. `gmake` is the name GNU
 Make has where `make` is another make, as on the BSDs; `mingw32-make` is its name on a MinGW
@@ -491,6 +491,36 @@ installs it, each uses the one its image carries
 ([HISS-21](../standards/hiss-21-platform-neutrality.md#the-hook-toolchain-is-declared-and-the-matrix-asserts-it)).
 The `HookMake` cases in `.config/lefthook/scripts/test_hooks.py` cover the resolution, and
 the Lefthook job test named above puts stand-ins for all three names first on `PATH`.
+
+Hook stages that build and run the repository's CLI through `cli` (`pre-commit`, `pre-push`,
+`post-commit`) execute under a shared stage budget. In `commit-msg`, only the live-state
+audit runs through `cli`; its subsequent `state sync --verify .` and `forge check-message`
+commands execute under fixed 30-second timeouts rather than the shared stage budget.
+Similarly, when `pre-push` has ref updates, `verify_live_state()` runs the live-state audit
+through `cli` under the shared budget, but its subsequent `state sync --verify .` executes
+under a fixed 30-second timeout. A user who increases `PRAETOR_TEST_STAGE_TIMEOUT` can
+therefore still have a push fail at 30 seconds if live-state verification exceeds that limit.
+The shared stage budget covers the `cli` invocation, not this later verification command.
+By default, the stage budget allows 20 minutes (`20m`), configurable through
+`PRAETOR_TEST_STAGE_TIMEOUT` with standard duration units (`30m`, `90s`, `1h30m`). If the
+total elapsed time exceeds the budget during either the `hook-cli` build or CLI command
+execution, the running process is terminated and the hook fails immediately with a
+descriptive error naming the failing step and the configured budget (for example,
+`hook-cli timed out after 20m: ...`), blocking the Git commit or push.
+
+In the implementation, `run_within` in `.config/lefthook/scripts/hooks.py` gives each
+command only the time remaining before its caller's monotonic deadline. `cli` shares that
+deadline between `make hook-cli` and `bin/praetorctl`. The pre-commit live-state audit and
+`go vet` share one deadline, as do the module download, hook-cli build and context verification
+within `refresh`. `refresh_install` shares a deadline between its hook-cli build and workstation
+install; the install also retains its 330-second cap, receiving the smaller of that cap and
+the remaining stage budget. Each invocation resolves its budget through `stage_budget` in
+`.config/lefthook/scripts/common.py`. This mirrors `TestStageTimeout` in
+`internal/gating/deadline.go` as the single source of truth across the gate and hook
+environments. Each step receives only the remaining monotonic budget, and fixture runs in
+`.config/lefthook/scripts/test_hooks.py` reuse the same duration parser and timeout
+bounds (`test_stage_budget_default_equals_go_deadline_constant`,
+`test_stage_budget_cli_timeout_and_planted_cases`, `StageBudgetSteps`).
 
 ## The lefthook.yml adoption writes
 

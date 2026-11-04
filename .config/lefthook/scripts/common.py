@@ -10,7 +10,9 @@ import selectors
 import shutil
 import signal
 import stat
-import subprocess
+
+# Hooks build trusted argv lists; no shell execution.
+import subprocess  # nosec B404 - argv built in code, no shell
 import sys
 import tempfile
 import threading
@@ -154,7 +156,8 @@ def _await_group_exit(process, grace):
 def _kill_process_tree(process, timeout=KILL_TREE_TIMEOUT):
     """Kill a child and its descendants where no process group exists to signal."""
     try:
-        subprocess.run(
+        # Fixed taskkill argv; only the child PID varies.
+        subprocess.run(  # nosec B603 - fixed taskkill argv, no shell
             ["taskkill", "/F", "/T", "/PID", str(process.pid)],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -181,6 +184,7 @@ class _SharedBound:
     """Output two reader threads collect under one byte limit."""
 
     def __init__(self, maximum):
+        """Initialize shared stream buffers bounded by maximum bytes."""
         self.maximum = maximum
         self.output = {"stdout": bytearray(), "stderr": bytearray()}
         self.total = 0
@@ -200,12 +204,14 @@ class _SharedBound:
             return True
 
     def finish(self):
+        """Record that one stream reader thread has finished draining its descriptor."""
         with self.changed:
             self.finished += 1
             self.changed.notify_all()
 
 
 def _drain(stream, key, bound):
+    """Drain chunks from stream into bound until EOF, error, or byte limit."""
     # Every read consumes at least one byte or observes EOF, so maximum + 2 reads is enough.
     try:
         for _ in range(bound.maximum + 2):
@@ -245,6 +251,7 @@ def _bounded_output_threaded(process, timeout, maximum):
 
 
 def _bounded_output(process, timeout, maximum):
+    """Collect stdout bytes from process bounded by timeout and byte limit."""
     if os.name == "nt":
         return _bounded_output_threaded(process, timeout, maximum)
     deadline = time.monotonic() + timeout
@@ -277,9 +284,10 @@ def _bounded_output(process, timeout, maximum):
 
 
 def _spawn_bounded(args, cwd, env):
-    """Start args in a session of its own, stdin closed and both streams piped."""
-    return subprocess.Popen(
-        args,
+    """Start trusted argv in a session of its own (no shell), stdin closed and streams piped."""
+    # Hook callers build argv lists with code-selected programs, never shell strings.
+    return subprocess.Popen(  # nosec B603 - argv built in code, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv built in code, no shell  # noqa: E501
+        args,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - argv built in code, no shell  # noqa: E501
         cwd=cwd,
         env=env,
         start_new_session=True,
@@ -324,27 +332,30 @@ def run_bounded(
         ) from error
 
 
+# Callers pass a fixed program from toolchain.py or bin/praetorctl with validated arguments
+# (enforced by DeclaredPrograms in test_hooks.py).
 def run(
     args, cwd=None, *, data=None, timeout=180, capture=True, env=None, allowed=(0,)
 ):
-    """Execute argv without a shell; preserve failures and bound every process."""
+    """Execute trusted argv without a shell; preserve failures and bound every process."""
     settings = dict(os.environ if env is None else env)
     settings["PYTHONDONTWRITEBYTECODE"] = MANAGED_PROCESS_ENV["PYTHONDONTWRITEBYTECODE"]
     try:
-        with subprocess.Popen(
-            args,
-            cwd=cwd,
-            env=settings,
-            start_new_session=True,
-            stdin=subprocess.PIPE if data is not None else None,
-            stdout=subprocess.PIPE if capture else None,
-            stderr=subprocess.PIPE if capture else None,
-        ) as process:
+        with (
+            subprocess.Popen(  # nosec B603 - argv built in code, no shell  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit - argv built in code, no shell  # noqa: E501
+                args,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args - argv built in code, no shell  # noqa: E501
+                cwd=cwd,
+                env=settings,
+                start_new_session=True,
+                stdin=subprocess.PIPE if data is not None else None,
+                stdout=subprocess.PIPE if capture else None,
+                stderr=subprocess.PIPE if capture else None,
+            ) as process,
+        ):
             try:
                 stdout, stderr = process.communicate(input=data, timeout=timeout)
             except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
-                # Ctrl-C reached only this process: the child leads a session of its own. It
-                # gets the signal the terminal would have sent it.
+                # Ctrl-C reached only this process; signal the child's isolated session.
                 interrupted = isinstance(error, KeyboardInterrupt)
                 _kill_bounded(process, signal.SIGINT if interrupted else signal.SIGTERM)
                 process.communicate(timeout=5)
@@ -361,6 +372,7 @@ def run(
 
 
 def git(*args, cwd=None, env=None):
+    """Execute git with args under bounded process execution."""
     return run(["git", *args], cwd=cwd, env=env)
 
 
@@ -412,6 +424,99 @@ def unresolved_relative_to(path, root):
     raise ValueError(f"{os.fspath(path)!r} is not below {os.fspath(root)!r}")
 
 
+STAGE_TIMEOUT_ENV = "PRAETOR_TEST_STAGE_TIMEOUT"
+# Default stage budget in seconds; mirrors TestStageTimeout in internal/gating/deadline.go,
+# the one source of truth (a test compares the two).
+DEFAULT_STAGE_BUDGET = 1200
+DEFAULT_STAGE_BUDGET_STR = "20m"
+MAX_DURATION_COMPONENTS = 64
+MAX_DURATION_LENGTH = 1024
+
+_DURATION_COMPONENT = re.compile(
+    r"([0-9]+(?:\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h)"
+)
+_FULL_DURATION = re.compile(
+    r"^\+?((?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:ns|us|µs|μs|ms|s|m|h))+$"
+)
+
+_UNIT_SECONDS = {
+    "ns": 1e-9,
+    "us": 1e-6,
+    "µs": 1e-6,
+    "μs": 1e-6,
+    "ms": 1e-3,
+    "s": 1.0,
+    "m": 60.0,
+    "h": 3600.0,
+}
+
+
+class StageBudget(float):
+    """Stage duration budget resolved from PRAETOR_TEST_STAGE_TIMEOUT.
+
+    Mirrors Go's testStageTimeout in internal/gating/deadline.go.
+    """
+
+    raw: str
+
+    def __new__(cls, seconds, raw):
+        """Construct a StageBudget instance wrapping seconds with raw duration string."""
+        obj = super().__new__(cls, seconds)
+        obj.raw = raw
+        return obj
+
+    def __str__(self):
+        """Return the raw duration string representation."""
+        return self.raw
+
+    def __repr__(self):
+        """Return a string representation suitable for reproducing the instance."""
+        return f"StageBudget({super().__repr__()}, {self.raw!r})"
+
+
+def parse_stage_duration(raw):
+    """Parse a Go duration string into seconds (float)."""
+    text = raw.strip()
+    if len(text) > MAX_DURATION_LENGTH:
+        raise ValueError(
+            f"{STAGE_TIMEOUT_ENV}={raw!r} exceeds {MAX_DURATION_LENGTH} characters"
+        )
+    if not _FULL_DURATION.match(text):
+        raise ValueError(f"{STAGE_TIMEOUT_ENV}={raw!r} is not a duration")
+    total = 0.0
+    for idx, match in enumerate(_DURATION_COMPONENT.finditer(text)):
+        if idx >= MAX_DURATION_COMPONENTS:
+            raise ValueError(
+                f"{STAGE_TIMEOUT_ENV}={raw!r} exceeds {MAX_DURATION_COMPONENTS} duration components"
+            )
+        val = float(match.group(1))
+        unit = match.group(2)
+        total += val * _UNIT_SECONDS[unit]
+    if total <= 0 or not math.isfinite(total):
+        raise ValueError(f"{STAGE_TIMEOUT_ENV}={raw!r} is not positive")
+    return total
+
+
+def stage_budget(raw=None, env=None):
+    """Return the stage budget (StageBudget) from PRAETOR_TEST_STAGE_TIMEOUT or default."""
+    if isinstance(raw, StageBudget):
+        return raw
+    if isinstance(raw, (int, float)):
+        if raw <= 0:
+            raise HookError(f"{STAGE_TIMEOUT_ENV}={raw!r} is not positive")
+        return StageBudget(float(raw), f"{raw:g}s")
+    if raw is None:
+        source_env = os.environ if env is None else env
+        raw = source_env.get(STAGE_TIMEOUT_ENV)
+    if raw is None or not str(raw).strip():
+        return StageBudget(DEFAULT_STAGE_BUDGET, DEFAULT_STAGE_BUDGET_STR)
+    try:
+        seconds = parse_stage_duration(str(raw))
+    except ValueError as error:
+        raise HookError(str(error)) from error
+    return StageBudget(seconds, str(raw).strip())
+
+
 class HookBudget:
     """One deadline every process a native hook starts takes its timeout from.
 
@@ -425,6 +530,7 @@ class HookBudget:
     """
 
     def __init__(self, seconds):
+        """Initialize remaining budget expiration timestamp from allocated seconds."""
         self.expires = time.monotonic() + seconds
 
     def timeout(self, cap):
@@ -447,6 +553,7 @@ def refuse_after(seconds, refuse):
     """
 
     def expire():
+        """Terminate the process with refusal exit status when timeout elapses."""
         code = refuse()
         if code is not None:
             os._exit(code)
@@ -531,10 +638,12 @@ def session_root(root, cwd, budget):
 
 
 def paths(raw):
+    """Split NUL-delimited byte stream into a list of filesystem decoded paths."""
     return [os.fsdecode(item) for item in raw.split(b"\0") if item]
 
 
 def changed(base, head="HEAD"):
+    """Return paths changed between base and head git revisions."""
     return paths(git("diff", "--name-only", "-z", "--no-renames", base, head, "--"))
 
 
@@ -564,6 +673,7 @@ def index_env():
 
 
 def clean_env():
+    """Return an environment scrubbed of transient Git variables and repository pointers."""
     env = index_env()
     for key in (
         "GIT_DIR",
@@ -616,7 +726,8 @@ def sweep_stale_snapshots(root=None, now=None):
                 shutil.rmtree(entry, onexc=_writable_retry)
             else:  # Python 3.10 and 3.11 (the hooks' floor) name the callback onerror
                 shutil.rmtree(
-                    entry, onerror=_writable_retry
+                    entry,
+                    onerror=_writable_retry,
                 )  # pylint: disable=deprecated-argument
             removed += 1
     return removed
@@ -689,6 +800,7 @@ def _export_commit(dest, ref, env):
 
 
 def present_files(directory, names):
+    """Filter names to regular files existing under directory, rejecting symlinks."""
     files = []
     for name in names:
         path = directory / name
@@ -731,6 +843,7 @@ def _git_common_dir(root, budget):
         cwd=root,
         timeout=budget.timeout(SESSION_GIT_TIMEOUT),
         max_output=SESSION_GIT_OUTPUT,
+        env=clean_env(),
         grace=SESSION_GIT_GRACE,
     )
     return Path(raw.decode().strip()).resolve()
@@ -743,6 +856,7 @@ def _listed_worktrees(root, budget):
         cwd=root,
         timeout=budget.timeout(SESSION_GIT_TIMEOUT),
         max_output=SESSION_INPUT_LIMIT,
+        env=clean_env(),
         grace=SESSION_GIT_GRACE,
     )
     entries, entry = [], {}

@@ -53,8 +53,14 @@ func emittedHookRenderings(t *testing.T) map[string]string {
 }
 
 func TestEmittedHookFixturesMatchTheRendering(t *testing.T) {
+	// The current common.py snapshot follows the source; earlier snapshots retain their bytes.
+	renderings := map[string]string{
+		filepath.Join(checkpointFixtureDir(checkpointCommon), "stage-budget.common.py"): shippedCheckpointText(t, checkpointCommon),
+	}
 	for rel, want := range emittedHookRenderings(t) {
-		path := filepath.Join(emittedFixtureRoot, filepath.FromSlash(rel))
+		renderings[filepath.Join(emittedFixtureRoot, filepath.FromSlash(rel))] = want
+	}
+	for path, want := range renderings {
 		if os.Getenv(updateEmittedFixturesEnv) == "1" {
 			mustWrite(t, path, want)
 			continue
