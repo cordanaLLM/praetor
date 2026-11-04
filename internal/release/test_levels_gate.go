@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -57,6 +58,15 @@ type TestLevelsOptions struct {
 	BaselinePath string
 	Actions      forge.ActionsReader
 	Branch       string
+	Head         string
+}
+
+// levelLiveHealth separates advisory branch health from required release CI evidence.
+type levelLiveHealth struct {
+	Status     string
+	Refusal    string
+	ByWorkflow map[string]forge.WorkflowRunFinding
+	ByLevel    map[string]string
 }
 
 // TestLevelFinding describes a single test level gap and whether it is covered by the baseline.
@@ -396,8 +406,8 @@ func evaluateLevelBindings(
 	if err != nil {
 		return report, err
 	}
-	liveStatus, liveByWorkflow := checkLiveWorkflowHealth(ctx, repoPath, opts)
-	report.LiveHealth = liveStatus
+	live := checkTestLevelLiveHealth(ctx, repoPath, opts, bindings, workflows, auxScripts)
+	report.LiveHealth = live.Status
 
 	baselinedAnchors, err := loadBaselinedLevelAnchors(repoPath, opts.BaselinePath)
 	if err != nil {
@@ -405,7 +415,7 @@ func evaluateLevelBindings(
 	}
 	for i := 0; i < len(bindings) && i < config.MaxReleaseTestLevels; i++ {
 		b := bindings[i]
-		reason, lvlErr := checkSingleLevel(ctx, repoPath, b, files, workflows, auxScripts, liveByWorkflow)
+		reason, lvlErr := checkSingleLevel(ctx, repoPath, b, files, workflows, auxScripts, live)
 		if lvlErr != nil {
 			return report, lvlErr
 		}
@@ -414,6 +424,7 @@ func evaluateLevelBindings(
 		}
 		anchor := fmt.Sprintf("level:%s:%s", b.Profile, b.Level)
 		isBaselined := isLevelAnchorBaselined(b.Profile, b.Level, report.Profiles, baselinedAnchors)
+		isBaselined = isBaselined && live.Refusal == "" && live.ByLevel[b.Level] == ""
 		report.Findings = append(report.Findings, TestLevelFinding{
 			Profile:   b.Profile,
 			Level:     b.Level,
@@ -433,8 +444,11 @@ func checkSingleLevel(
 	files []string,
 	workflows []parsedWorkflowFile,
 	auxScripts string,
-	liveByWorkflow map[string]forge.WorkflowRunFinding,
+	live levelLiveHealth,
 ) (string, error) {
+	if live.Refusal != "" {
+		return live.Refusal, nil
+	}
 	matchedFiles, err := matchFilesForLevel(repoPath, files, b.Spec)
 	if err != nil {
 		return "", err
@@ -445,14 +459,22 @@ func checkSingleLevel(
 	if b.Spec.Pattern != "" && !anyFileMatchesPattern(ctx, repoPath, matchedFiles, b.Spec.Pattern) {
 		return fmt.Sprintf("no matched file satisfies pattern %q", b.Spec.Pattern), nil
 	}
-	wfName, ok := findRunnableWorkflowForLevel(b, workflows, auxScripts)
+	wfName, _, ok := findRunnableWorkflowForLevel(b, workflows, auxScripts)
 	if !ok {
 		return "no runnable workflow job executes this level", nil
 	}
-	if finding, hasLive := liveByWorkflow[wfName]; hasLive && finding.Health != forge.WorkflowHealthy && finding.Health != forge.WorkflowSelf {
-		return fmt.Sprintf("workflow %s run health is %s", wfName, finding.Health), nil
+	return live.levelRefusal(b.Level, wfName), nil
+}
+
+// levelRefusal reports missing release evidence or unhealthy advisory workflow runs for one level.
+func (live levelLiveHealth) levelRefusal(level, workflow string) string {
+	if reason := live.ByLevel[level]; reason != "" {
+		return reason
 	}
-	return "", nil
+	if finding, hasLive := live.ByWorkflow[workflow]; hasLive && finding.Health != forge.WorkflowHealthy && finding.Health != forge.WorkflowSelf {
+		return fmt.Sprintf("workflow %s run health is %s", workflow, finding.Health)
+	}
+	return ""
 }
 
 // matchFilesForLevel returns repository files matching the level's path globs, requiring
@@ -512,32 +534,24 @@ func anyFileMatchesPattern(ctx context.Context, repoPath string, relPaths []stri
 }
 
 // findRunnableWorkflowForLevel inspects workflows to locate a runnable workflow file executing
-// the specified test level binding, returning the workflow filename and whether one was found.
+// the specified test level binding, returning its filename, matched job name, and whether found.
 func findRunnableWorkflowForLevel(
 	b resolvedLevelBinding,
 	workflows []parsedWorkflowFile,
 	auxScripts string,
-) (string, bool) {
+) (string, string, bool) {
 	for i := 0; i < len(workflows) && i < maxReleaseWorkflowFiles; i++ {
 		wf := workflows[i]
-		if workflowRunsLevel(b, wf.Workflow, auxScripts) {
-			return wf.Name, true
+		if job, ok := workflowJobForLevel(b, wf.Workflow, auxScripts); ok {
+			return wf.Name, job, true
 		}
 	}
-	return "", false
+	return "", "", false
 }
 
-// workflowRunsLevel reports whether any runnable job in workflow wf satisfies the execution
-// criteria for test level binding b.
-func workflowRunsLevel(b resolvedLevelBinding, wf ghworkflow.Spec, auxScripts string) bool {
-	if len(wf.Jobs) == 0 {
-		return false
-	}
-	jobIDs := make([]string, 0, len(wf.Jobs))
-	for id := range wf.Jobs {
-		jobIDs = append(jobIDs, id)
-	}
-	slices.Sort(jobIDs)
+// workflowJobForLevel returns the display name (or ID) of the first runnable job matching b.
+func workflowJobForLevel(b resolvedLevelBinding, wf ghworkflow.Spec, auxScripts string) (string, bool) {
+	jobIDs := slices.Sorted(maps.Keys(wf.Jobs))
 	for i := 0; i < len(jobIDs) && i < maxWorkflowJobs; i++ {
 		id := jobIDs[i]
 		job := wf.Jobs[id]
@@ -545,10 +559,13 @@ func workflowRunsLevel(b resolvedLevelBinding, wf ghworkflow.Spec, auxScripts st
 			continue
 		}
 		if jobMatchesLevel(b, id, job, auxScripts) {
-			return true
+			if job.Name != "" {
+				return job.Name, true
+			}
+			return id, true
 		}
 	}
-	return false
+	return "", false
 }
 
 // jobMatchesLevel reports whether workflow job satisfies the job name or run step requirements
@@ -831,6 +848,108 @@ func walkRepositoryFilesBounded(repoPath string) ([]string, error) {
 		return nil
 	})
 	return files, err
+}
+
+// checkTestLevelLiveHealth selects release-commit evidence or the existing branch-health audit.
+func checkTestLevelLiveHealth(
+	ctx context.Context,
+	repoPath string,
+	opts TestLevelsOptions,
+	bindings []resolvedLevelBinding,
+	workflows []parsedWorkflowFile,
+	auxScripts string,
+) levelLiveHealth {
+	if opts.FlagRelease {
+		return checkReleaseLevelHealth(ctx, opts, bindings, workflows, auxScripts)
+	}
+	status, byWorkflow := checkLiveWorkflowHealth(ctx, repoPath, opts)
+	return levelLiveHealth{Status: status + " (default-branch workflow health)", ByWorkflow: byWorkflow}
+}
+
+// checkReleaseLevelHealth requires live evidence for each matched level and refuses all on read errors.
+func checkReleaseLevelHealth(
+	ctx context.Context,
+	opts TestLevelsOptions,
+	bindings []resolvedLevelBinding,
+	workflows []parsedWorkflowFile,
+	auxScripts string,
+) levelLiveHealth {
+	opts.Head = strings.TrimSpace(opts.Head)
+	opts.Branch = strings.TrimSpace(opts.Branch)
+	if opts.Branch == "" {
+		opts.Branch = forge.FallbackDefaultBranch
+	}
+	if opts.Actions == nil {
+		return unmeasuredReleaseCI("no Actions reader")
+	}
+	if opts.Head == "" {
+		return unmeasuredReleaseCI("release Head is empty")
+	}
+	live := levelLiveHealth{
+		Status:  fmt.Sprintf("release commit CI checked for %.12s on %s", opts.Head, opts.Branch),
+		ByLevel: make(map[string]string, len(bindings)),
+	}
+	for i := 0; i < len(bindings) && i < config.MaxReleaseTestLevels; i++ {
+		wf, job, ok := findRunnableWorkflowForLevel(bindings[i], workflows, auxScripts)
+		if !ok {
+			continue
+		}
+		reason, err := checkReleaseLevelRun(ctx, opts, wf, job)
+		if err != nil {
+			return unmeasuredReleaseCI(err.Error())
+		}
+		live.ByLevel[bindings[i].Level] = reason
+	}
+	return live
+}
+
+// unmeasuredReleaseCI makes unavailable live evidence a refusal rather than a static-only pass.
+func unmeasuredReleaseCI(cause string) levelLiveHealth {
+	reason := "did not run in the release CI: " + cause
+	return levelLiveHealth{Status: LiveRunHealthUnmeasured + ": release commit CI: " + cause, Refusal: reason}
+}
+
+// checkReleaseLevelRun checks the newest completed branch run for Head and its matched job.
+func checkReleaseLevelRun(ctx context.Context, opts TestLevelsOptions, workflow, job string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, contextopt.MaxDuration)
+	defer cancel()
+	history, err := opts.Actions.WorkflowRunHistory(ctx, workflow, opts.Branch)
+	if err != nil {
+		return "", fmt.Errorf("read release CI runs of %s: %w", workflow, err)
+	}
+	for i := 0; i < len(history.Completed); i++ {
+		run := history.Completed[i]
+		if run.HeadSHA != opts.Head || run.HeadBranch != opts.Branch || run.Status != "completed" {
+			continue
+		}
+		if run.Conclusion != "success" {
+			return fmt.Sprintf("did not run in the release CI: workflow %s run %d concluded %q", workflow, run.ID, run.Conclusion), nil
+		}
+		jobs, jobsErr := opts.Actions.WorkflowRunJobs(ctx, run.ID)
+		if jobsErr != nil {
+			return "", fmt.Errorf("read release CI jobs of %s run %d: %w", workflow, run.ID, jobsErr)
+		}
+		return releaseJobRefusal(jobs, job, run.ID), nil
+	}
+	return fmt.Sprintf("did not run in the release CI: no run of %s for %.12s", workflow, opts.Head), nil
+}
+
+// releaseJobRefusal requires the matched job to exist and every record of that name to succeed.
+func releaseJobRefusal(jobs []forge.WorkflowJobRecord, name string, runID int64) string {
+	found := false
+	for i := 0; i < len(jobs); i++ {
+		if jobs[i].Name != name {
+			continue
+		}
+		found = true
+		if jobs[i].Conclusion != "success" {
+			return fmt.Sprintf("did not run in the release CI: job %s in run %d concluded %q", name, runID, jobs[i].Conclusion)
+		}
+	}
+	if !found {
+		return fmt.Sprintf("did not run in the release CI: job %s missing from run %d", name, runID)
+	}
+	return ""
 }
 
 // checkLiveWorkflowHealth queries live workflow run health on branch when opts.Actions

@@ -22,11 +22,32 @@ import (
 
 type fakeActionsReader struct {
 	byWorkflow map[string]forge.WorkflowRunHistory
+	jobsByRun  map[int64][]forge.WorkflowJobRecord
 	err        error
+	jobsErr    error
+}
+
+// TestAuditTestLevels_Negative_ReleaseWithoutReader refuses file evidence alone in release mode.
+func TestAuditTestLevels_Negative_ReleaseWithoutReader(t *testing.T) {
+	repo := setupGoLibraryTempRepo(t)
+	writeTestRepoFile(t, repo, "client_integration_test.go", "package lib\n")
+	rep, err := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: true})
+	if err == nil || rep.Status != TestLevelStatusFail || !strings.Contains(rep.Detail, "no Actions reader") {
+		t.Fatalf("release without live access must refuse every level: report=%+v err=%v", rep, err)
+	}
+	if len(rep.Findings) != len(rep.Levels) {
+		t.Fatalf("got %d findings for %d levels", len(rep.Findings), len(rep.Levels))
+	}
 }
 
 // WorkflowRunHistory returns stubbed workflow run history for workflow from the fakeActionsReader receiver.
-func (f *fakeActionsReader) WorkflowRunHistory(_ context.Context, workflow, _ string) (forge.WorkflowRunHistory, error) {
+func (f *fakeActionsReader) WorkflowRunHistory(ctx context.Context, workflow, branch string) (forge.WorkflowRunHistory, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		return forge.WorkflowRunHistory{}, errors.New("history read has no deadline")
+	}
+	if branch != "main" {
+		return forge.WorkflowRunHistory{}, fmt.Errorf("history read branch %q, want main", branch)
+	}
 	if f.err != nil {
 		return forge.WorkflowRunHistory{}, f.err
 	}
@@ -39,8 +60,182 @@ func (f *fakeActionsReader) WorkflowPermissions(context.Context) (forge.LiveWork
 }
 
 // WorkflowRunJobs returns stubbed workflow job records or configured errors.
-func (f *fakeActionsReader) WorkflowRunJobs(context.Context, int64) ([]forge.WorkflowJobRecord, error) {
-	return nil, f.err
+func (f *fakeActionsReader) WorkflowRunJobs(ctx context.Context, runID int64) ([]forge.WorkflowJobRecord, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		return nil, errors.New("jobs read has no deadline")
+	}
+	return f.jobsByRun[runID], errors.Join(f.err, f.jobsErr)
+}
+
+// successfulReleaseLevelOptions supplies completed CI and job evidence for the fixture release commit.
+func successfulReleaseLevelOptions() TestLevelsOptions {
+	const head = "1234567890abcdef1234567890abcdef12345678"
+	return TestLevelsOptions{
+		FlagRelease: true, Head: head, Branch: "main",
+		Actions: &fakeActionsReader{
+			byWorkflow: map[string]forge.WorkflowRunHistory{
+				"ci.yml": {Known: true, Completed: []forge.WorkflowRunRecord{
+					{ID: 42, HeadSHA: head, HeadBranch: "main", Status: "completed", Conclusion: "success"},
+				}},
+			},
+			jobsByRun: map[int64][]forge.WorkflowJobRecord{42: {{Name: "test", Conclusion: "success"}}},
+		},
+	}
+}
+
+// releaseLevelReader extracts the fixture reader while checking the interface assertion.
+func releaseLevelReader(t *testing.T, opts TestLevelsOptions) *fakeActionsReader {
+	t.Helper()
+	reader, ok := opts.Actions.(*fakeActionsReader)
+	if !ok {
+		t.Fatalf("release fixture has Actions reader %T", opts.Actions)
+	}
+	return reader
+}
+
+// assertReleaseCICase verifies the public audit verdict and each level's release-CI refusal.
+func assertReleaseCICase(t *testing.T, opts TestLevelsOptions, want string) {
+	t.Helper()
+	repo := setupGoLibraryTempRepo(t)
+	writeTestRepoFile(t, repo, "client_integration_test.go", "package lib\n")
+	rep, err := AuditTestLevels(t.Context(), repo, nil, opts)
+	if !strings.Contains(rep.LiveHealth, "release commit CI") {
+		t.Fatalf("release path absent from LiveHealth: %q", rep.LiveHealth)
+	}
+	if want == "" {
+		if err != nil || rep.Status != TestLevelStatusPass || len(rep.Findings) != 0 {
+			t.Fatalf("successful release CI refused: report=%+v err=%v", rep, err)
+		}
+		return
+	}
+	assertReleaseCIRefusal(t, rep, err, want)
+}
+
+// assertReleaseCIRefusal verifies that each declared level refuses the named live-evidence gap.
+func assertReleaseCIRefusal(t *testing.T, rep TestLevelsReport, err error, want string) {
+	t.Helper()
+	if err == nil || rep.Status != TestLevelStatusFail || len(rep.Findings) != len(rep.Levels) {
+		t.Fatalf("release CI must refuse every level: report=%+v err=%v", rep, err)
+	}
+	for i := 0; i < len(rep.Findings) && i < config.MaxReleaseTestLevels; i++ {
+		if !strings.Contains(rep.Findings[i].Reason, want) || rep.Findings[i].Baselined {
+			t.Errorf("finding=%+v; want unbaselined reason containing %q", rep.Findings[i], want)
+		}
+	}
+}
+
+// TestAuditTestLevels_ReleaseCommitRuns rejects missing, unrelated, incomplete, or failed CI runs.
+func TestAuditTestLevels_ReleaseCommitRuns(t *testing.T) {
+	cases := []struct {
+		name   string
+		change func(*forge.WorkflowRunHistory)
+		want   string
+	}{
+		{"success", func(*forge.WorkflowRunHistory) {}, ""},
+		{"no run", func(h *forge.WorkflowRunHistory) { h.Completed = nil }, "no run of ci.yml for 1234567890ab"},
+		{"other commit", func(h *forge.WorkflowRunHistory) { h.Completed[0].HeadSHA = "other" }, "no run of ci.yml for 1234567890ab"},
+		{"same prefix", func(h *forge.WorkflowRunHistory) { h.Completed[0].HeadSHA = "1234567890abOTHER" }, "no run of ci.yml for 1234567890ab"},
+		{"other branch", func(h *forge.WorkflowRunHistory) { h.Completed[0].HeadBranch = "other" }, "no run of ci.yml for 1234567890ab"},
+		{"in progress", func(h *forge.WorkflowRunHistory) { h.Completed[0].Status = "in_progress" }, "no run of ci.yml for 1234567890ab"},
+		{"failed run", func(h *forge.WorkflowRunHistory) { h.Completed[0].Conclusion = "failure" }, "run 42 concluded \"failure\""},
+	}
+	for i := 0; i < len(cases); i++ {
+		t.Run(cases[i].name, func(t *testing.T) {
+			opts := successfulReleaseLevelOptions()
+			reader := releaseLevelReader(t, opts)
+			history := reader.byWorkflow["ci.yml"]
+			cases[i].change(&history)
+			reader.byWorkflow["ci.yml"] = history
+			assertReleaseCICase(t, opts, cases[i].want)
+		})
+	}
+}
+
+// TestAuditTestLevels_ReleaseCommitJobs requires the matched job, with a successful conclusion.
+func TestAuditTestLevels_ReleaseCommitJobs(t *testing.T) {
+	cases := []struct {
+		name string
+		jobs []forge.WorkflowJobRecord
+		want string
+	}{
+		{"missing", nil, "job test missing from run 42"},
+		{"unrelated", []forge.WorkflowJobRecord{{Name: "other", Conclusion: "success"}}, "job test missing from run 42"},
+		{"failed", []forge.WorkflowJobRecord{{Name: "test", Conclusion: "failure"}}, "job test in run 42 concluded \"failure\""},
+		{"skipped", []forge.WorkflowJobRecord{{Name: "test", Conclusion: "skipped"}}, "job test in run 42 concluded \"skipped\""},
+		{"unfinished", []forge.WorkflowJobRecord{{Name: "test"}}, "job test in run 42 concluded \"\""},
+		{"duplicate failed", []forge.WorkflowJobRecord{{Name: "test", Conclusion: "success"}, {Name: "test", Conclusion: "failure"}}, "job test in run 42 concluded \"failure\""},
+	}
+	for i := 0; i < len(cases); i++ {
+		t.Run(cases[i].name, func(t *testing.T) {
+			opts := successfulReleaseLevelOptions()
+			reader := releaseLevelReader(t, opts)
+			reader.jobsByRun[42] = cases[i].jobs
+			assertReleaseCICase(t, opts, cases[i].want)
+		})
+	}
+}
+
+// TestAuditTestLevels_ReleaseCommitUnavailable refuses absent inputs and either forge read failure.
+func TestAuditTestLevels_ReleaseCommitUnavailable(t *testing.T) {
+	cases := []struct {
+		name   string
+		change func(*TestLevelsOptions, *fakeActionsReader)
+		want   string
+	}{
+		{"no reader", func(o *TestLevelsOptions, _ *fakeActionsReader) { o.Actions = nil }, "no Actions reader"},
+		{"no head", func(o *TestLevelsOptions, _ *fakeActionsReader) { o.Head = "" }, "release Head is empty"},
+		{"history error", func(_ *TestLevelsOptions, f *fakeActionsReader) { f.err = errors.New("history denied") }, "read release CI runs of ci.yml: history denied"},
+		{"jobs error", func(_ *TestLevelsOptions, f *fakeActionsReader) { f.jobsErr = errors.New("jobs denied") }, "read release CI jobs of ci.yml run 42: jobs denied"},
+	}
+	for i := 0; i < len(cases); i++ {
+		t.Run(cases[i].name, func(t *testing.T) {
+			opts := successfulReleaseLevelOptions()
+			cases[i].change(&opts, releaseLevelReader(t, opts))
+			assertReleaseCICase(t, opts, cases[i].want)
+		})
+	}
+}
+
+// TestAuditTestLevels_ReleaseMatchedJobName binds an explicit job ID to its API display name.
+func TestAuditTestLevels_ReleaseMatchedJobName(t *testing.T) {
+	repo := setupGoLibraryTempRepo(t)
+	writeTestRepoFile(t, repo, "client_integration_test.go", "package lib\n")
+	writeTestRepoFile(t, repo, ".standards.yaml", "version: 1\nprofiles: [library-client]\nrelease:\n  test_levels:\n    unit:\n      paths: ['**/*_test.go']\n      job: unit\n    integration:\n      paths: ['**/*_integration_test.go']\n      job: integration\n")
+	writeTestRepoFile(t, repo, ".github/workflows/ci.yml", "on: push\njobs:\n  unit:\n    name: Unit tests\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test ./...\n  integration:\n    name: Integration tests\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test ./...\n")
+	opts := successfulReleaseLevelOptions()
+	reader := releaseLevelReader(t, opts)
+	reader.jobsByRun[42] = []forge.WorkflowJobRecord{{Name: "Unit tests", Conclusion: "success"}, {Name: "Integration tests", Conclusion: "success"}}
+	rep, err := AuditTestLevels(t.Context(), repo, nil, opts)
+	if err != nil || rep.Status != TestLevelStatusPass {
+		t.Fatalf("explicit job ID with display name refused: report=%+v err=%v", rep, err)
+	}
+	reader.jobsByRun[42] = reader.jobsByRun[42][:1]
+	rep, err = AuditTestLevels(t.Context(), repo, nil, opts)
+	if err == nil || len(rep.Findings) != 1 || rep.Findings[0].Level != "integration" || !strings.Contains(rep.Detail, "job Integration tests missing") {
+		t.Fatalf("another level's successful job must not satisfy integration: report=%+v err=%v", rep, err)
+	}
+}
+
+// TestAuditTestLevels_ReleaseBaselineCannotWaiveLiveEvidence keeps static anchors from hiding CI refusals.
+func TestAuditTestLevels_ReleaseBaselineCannotWaiveLiveEvidence(t *testing.T) {
+	repo := setupGoLibraryTempRepo(t)
+	writeTestRepoFile(t, repo, "client_integration_test.go", "package lib\n")
+	infs := []baseline.Infraction{
+		{RuleID: baseline.ReleaseTestLevelRuleID, FilePath: ".standards.yaml", Anchor: "level:library-client:unit"},
+		{RuleID: baseline.ReleaseTestLevelRuleID, FilePath: ".standards.yaml", Anchor: "level:library-client:integration"},
+	}
+	baseline.AssignFingerprints(infs)
+	if err := baseline.SaveBaseline(filepath.Join(repo, ".standards-baseline.json"), &baseline.Baseline{Version: 1, Infractions: infs}); err != nil {
+		t.Fatalf("save static level anchors: %v", err)
+	}
+	opts := successfulReleaseLevelOptions()
+	reader := releaseLevelReader(t, opts)
+	reader.jobsByRun[42] = nil
+	rep, err := AuditTestLevels(t.Context(), repo, nil, opts)
+	assertReleaseCIRefusal(t, rep, err, "job test missing from run 42")
+	opts.Actions = nil
+	rep, err = AuditTestLevels(t.Context(), repo, nil, opts)
+	assertReleaseCIRefusal(t, rep, err, "no Actions reader")
 }
 
 // writeTestRepoFile creates parent directories and writes content to rel under the root test directory.
@@ -77,7 +272,7 @@ func TestAuditTestLevels_PlantedGoLibraryIntegrationGapAndPass(t *testing.T) {
 	t.Setenv("PRAETOR_RELEASE_PR", "")
 	repo := setupGoLibraryTempRepo(t)
 
-	rep, err := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: true})
+	rep, err := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions())
 	if err == nil || rep.Status != TestLevelStatusFail {
 		t.Fatalf("expected [FAIL] for missing integration test in release context, got %+v, err=%v", rep, err)
 	}
@@ -93,7 +288,7 @@ func TestAuditTestLevels_PlantedGoLibraryIntegrationGapAndPass(t *testing.T) {
 
 	// Add the integration test file; the existing ci.yml job runs go test ./..., so it now passes.
 	writeTestRepoFile(t, repo, "client_integration_test.go", "package lib\n\nimport \"testing\"\n\nfunc TestIntegration(t *testing.T) {}\n")
-	passRep, passErr := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: true})
+	passRep, passErr := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions())
 	if passErr != nil || passRep.Status != TestLevelStatusPass {
 		t.Fatalf("expected [PASS] once integration test file is present, got %+v, err=%v", passRep, passErr)
 	}
@@ -122,7 +317,7 @@ release:
       job: "integration"
 `
 	writeTestRepoFile(t, repo, ".standards.yaml", manifestYAML)
-	rep, err := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: true})
+	rep, err := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions())
 	if err == nil || rep.Status != TestLevelStatusFail || !strings.Contains(rep.Detail, "no runnable workflow job") {
 		t.Fatalf("expected job with if: false to be refused, got %+v, err=%v", rep, err)
 	}
@@ -151,7 +346,7 @@ func TestAuditTestLevels_BaselinedGapPassesAndNewGapBesideItFails(t *testing.T) 
 	}
 
 	// Only integration is missing, and it is baselined -> passes in release context.
-	rep, err := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: true})
+	rep, err := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions())
 	if err != nil || rep.Status != TestLevelStatusPass {
 		t.Fatalf("expected baselined gap to pass, got %+v, err=%v", rep, err)
 	}
@@ -160,7 +355,7 @@ func TestAuditTestLevels_BaselinedGapPassesAndNewGapBesideItFails(t *testing.T) 
 	if err := os.Remove(filepath.Join(repo, "pkg", "client_test.go")); err != nil {
 		t.Fatalf("remove pkg/client_test.go: %v", err)
 	}
-	failRep, failErr := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: true})
+	failRep, failErr := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions())
 	if failErr == nil || failRep.Status != TestLevelStatusFail || !strings.Contains(failRep.Detail, "unit") {
 		t.Fatalf("expected new unbaselined unit gap beside baselined integration gap to fail, got %+v, err=%v", failRep, failErr)
 	}
@@ -212,7 +407,7 @@ func TestAuditTestLevels_Negative_DeclarationDroppingRequiredLevelFailsValidatio
 	// Declaring release.test_levels with only unit drops integration and must fail validation.
 	writeTestRepoFile(t, repo, ".standards.yaml",
 		"version: 1\nprofiles:\n  - framework\nrelease:\n  test_levels:\n    unit:\n      paths:\n        - \"**/*_test.go\"\n")
-	rep, err := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: true})
+	rep, err := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions())
 	if err == nil || rep.Status != TestLevelStatusFail || !strings.Contains(err.Error(), "cannot drop required test level \"integration\"") {
 		t.Fatalf("expected dropping required level to fail validation, got %+v, err=%v", rep, err)
 	}
@@ -235,7 +430,7 @@ func TestAuditTestLevels_Positive_LocalArchetypeLowersRequiredLevels(t *testing.
 	writeTestRepoFile(t, repo, ".config/archetypes/library-client.yaml", local)
 	writeTestRepoFile(t, repo, ".standards.yaml",
 		"version: 1\nprofiles:\n  - library-client\nrelease:\n  test_levels:\n    unit:\n      paths:\n        - \"**/*_test.go\"\n")
-	rep, err := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: true})
+	rep, err := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions())
 	if err != nil && strings.Contains(err.Error(), "cannot drop required test level") {
 		t.Fatalf("local archetype ignored: %v (report %+v)", err, rep)
 	}
@@ -254,7 +449,7 @@ func TestAuditTestLevels_Negative_WorkflowInventoryOverBoundFailsClosed(t *testi
 		writeTestRepoFile(t, repo, fmt.Sprintf(".github/workflows/w%02d.yml", i),
 			"on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test ./...\n")
 	}
-	_, err := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: true})
+	_, err := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions())
 	want := fmt.Sprintf("workflow inventory exceeds %d files", maxReleaseWorkflowFiles)
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("got err=%v, want substring %q", err, want)
@@ -271,8 +466,8 @@ func TestAuditTestLevels_Boundary_OfflineRunHealthAndScheduledDefaultBranchRun(t
 	writeTestRepoFile(t, repo, "client_integration_test.go", "package lib\n")
 
 	// Offline / nil ActionsReader reports live run health unmeasured.
-	line, rep, err := AuditTestLevelsLine(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: true})
-	if err != nil || rep.LiveHealth != LiveRunHealthUnmeasured || !strings.Contains(line, LiveRunHealthUnmeasured) {
+	line, rep, err := AuditTestLevelsLine(t.Context(), repo, nil, TestLevelsOptions{})
+	if err != nil || !strings.HasPrefix(rep.LiveHealth, LiveRunHealthUnmeasured) || !strings.Contains(line, LiveRunHealthUnmeasured) {
 		t.Fatalf("expected %q in output when offline, got line=%q rep=%+v err=%v", LiveRunHealthUnmeasured, line, rep, err)
 	}
 
@@ -289,9 +484,9 @@ func TestAuditTestLevels_Boundary_OfflineRunHealthAndScheduledDefaultBranchRun(t
 		},
 	}
 	liveRep, liveErr := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{
-		FlagRelease: true, Actions: healthyReader, Branch: "main",
+		Actions: healthyReader, Branch: "main",
 	})
-	if liveErr != nil || liveRep.Status != TestLevelStatusPass || liveRep.LiveHealth != LiveRunHealthVerified {
+	if liveErr != nil || liveRep.Status != TestLevelStatusPass || !strings.HasPrefix(liveRep.LiveHealth, LiveRunHealthVerified) {
 		t.Fatalf("expected scheduled workflow with healthy default-branch run to pass, got %+v, err=%v", liveRep, liveErr)
 	}
 }
@@ -319,7 +514,7 @@ func TestAuditTestLevels_Negative_UntrackedFileInGitRepoDoesNotSatisfyLevel(t *t
 
 	// Write an untracked integration test file; it must not satisfy the integration level in a Git repo.
 	writeTestRepoFile(t, repo, "client_integration_test.go", "package lib\n\nimport \"testing\"\n\nfunc TestIntegration(t *testing.T) {}\n")
-	rep, err := AuditTestLevels(ctx, repo, nil, TestLevelsOptions{FlagRelease: true})
+	rep, err := AuditTestLevels(ctx, repo, nil, successfulReleaseLevelOptions())
 	if err == nil || rep.Status != TestLevelStatusFail || !strings.Contains(rep.Detail, "integration") {
 		t.Fatalf("expected untracked integration test file in Git repo to be refused, got %+v, err=%v", rep, err)
 	}
@@ -328,7 +523,7 @@ func TestAuditTestLevels_Negative_UntrackedFileInGitRepoDoesNotSatisfyLevel(t *t
 	if out, gitErr := util.RunGit(ctx, repo, "add", "client_integration_test.go"); gitErr != nil {
 		t.Fatalf("git add: %v\n%s", gitErr, out)
 	}
-	passRep, passErr := AuditTestLevels(ctx, repo, nil, TestLevelsOptions{FlagRelease: true})
+	passRep, passErr := AuditTestLevels(ctx, repo, nil, successfulReleaseLevelOptions())
 	if passErr != nil || passRep.Status != TestLevelStatusPass {
 		t.Fatalf("expected tracked integration test file to pass, got %+v, err=%v", passRep, passErr)
 	}
@@ -407,14 +602,14 @@ func TestAuditTestLevels_Negative_DirectoryGlobMatchedNonTestFileAloneDoesNotSat
 	// Write a non-test file in pkg/integration; default integration paths include **/integration/**
 	writeTestRepoFile(t, repo, "pkg/integration/README.md", "# Integration docs\n")
 
-	rep, err := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: true})
+	rep, err := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions())
 	if err == nil || rep.Status != TestLevelStatusFail || !strings.Contains(rep.Detail, "integration") {
 		t.Fatalf("expected non-test file in integration dir to fail integration level, got rep=%+v, err=%v", rep, err)
 	}
 
 	// Adding a recognizable test file inside pkg/integration now satisfies the level.
 	writeTestRepoFile(t, repo, "pkg/integration/client_test.go", "package lib\n\nimport \"testing\"\n\nfunc TestIntegration(t *testing.T) {}\n")
-	passRep, passErr := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{FlagRelease: true})
+	passRep, passErr := AuditTestLevels(t.Context(), repo, nil, successfulReleaseLevelOptions())
 	if passErr != nil || passRep.Status != TestLevelStatusPass {
 		t.Fatalf("expected recognizable test file in integration dir to pass, got rep=%+v, err=%v", passRep, passErr)
 	}
@@ -440,9 +635,8 @@ func TestAuditTestLevels_Positive_SelfWorkflowRunHealthDoesNotCreateGap(t *testi
 		},
 	}
 	rep, err := AuditTestLevels(t.Context(), repo, nil, TestLevelsOptions{
-		FlagRelease: true,
-		Actions:     fakeReader,
-		Branch:      "main",
+		Actions: fakeReader,
+		Branch:  "main",
 	})
 	if err != nil || rep.Status != TestLevelStatusPass {
 		t.Fatalf("expected self-classified workflow run health to not create gap, got rep=%+v, err=%v", rep, err)
@@ -545,7 +739,7 @@ func TestAuditTestLevels_WorkflowOrderInvariance_CreationOrderDoesNotAffectResul
 			"a_workflow.yml": {
 				Known:     true,
 				Total:     1,
-				Completed: []forge.WorkflowRunRecord{{Number: 1, Event: "push", Conclusion: "failure"}},
+				Completed: []forge.WorkflowRunRecord{{ID: 1, HeadSHA: successfulReleaseLevelOptions().Head, HeadBranch: "main", Status: "completed", Conclusion: "failure"}},
 			},
 			"z_workflow.yml": {
 				Known:     true,
@@ -554,7 +748,8 @@ func TestAuditTestLevels_WorkflowOrderInvariance_CreationOrderDoesNotAffectResul
 			},
 		},
 	}
-	opts := TestLevelsOptions{FlagRelease: true, Actions: fakeReader, Branch: "main"}
+	opts := successfulReleaseLevelOptions()
+	opts.Actions = fakeReader
 	repAZ, errAZ := AuditTestLevels(t.Context(), createTwoWorkflowRepo(t, true), nil, opts)
 	repZA, errZA := AuditTestLevels(t.Context(), createTwoWorkflowRepo(t, false), nil, opts)
 	if errAZ == nil || errZA == nil {
@@ -586,9 +781,8 @@ func TestAuditTestLevels_Negative_ActionsReaderErrorNamesReason(t *testing.T) {
 	errReader := &fakeActionsReader{err: queryErr}
 
 	line, rep, err := AuditTestLevelsLine(t.Context(), repo, nil, TestLevelsOptions{
-		FlagRelease: true,
-		Actions:     errReader,
-		Branch:      "main",
+		Actions: errReader,
+		Branch:  "main",
 	})
 	if err != nil {
 		t.Fatalf("unexpected audit error: %v", err)

@@ -127,7 +127,7 @@ func TestAuditReleaseTestLevels_GateAndAuditWiring(t *testing.T) {
 }
 
 // TestAuditReleaseTestLevels_LiveForgeHealthAndOffline proves that failing live workflow runs
-// are flagged during release audits while offline checks report run health as unmeasured.
+// are refused for the checked-out release commit and offline release checks fail closed.
 func TestAuditReleaseTestLevels_LiveForgeHealthAndOffline(t *testing.T) {
 	f := newAuditFixture(t)
 	writeFixtureFile(t, f.dir, "go.mod", "module example.com/lib\n\ngo 1.25.0\n")
@@ -139,31 +139,35 @@ func TestAuditReleaseTestLevels_LiveForgeHealthAndOffline(t *testing.T) {
 	f.addGitHubOrigin(t)
 	gitCommitAll(t, f.dir, f.gitEnv, "add library tests and scheduled workflow")
 
+	head, headErr := util.ResolveGitCommit(t.Context(), f.dir, "HEAD")
+	if headErr != nil || head == "" {
+		t.Fatalf("resolve fixture HEAD: head=%q err=%v", head, headErr)
+	}
 	serveActions(t, &actionsStub{
 		runs: map[string]map[string]any{
 			"ci.yml": {
 				"total_count": 1,
 				"workflow_runs": []map[string]any{
-					{"run_number": 42, "status": "completed", "conclusion": "failure", "event": "schedule", "html_url": "https://example.invalid/runs/42"},
+					{"id": 42, "run_number": 42, "head_sha": head, "head_branch": "main", "status": "completed", "conclusion": "failure", "event": "schedule", "html_url": "https://example.invalid/runs/42"},
 				},
 			},
 		},
 	})
 
-	// When online in release mode, a failing default-branch workflow run fails the release test levels gate.
+	// A failed run of the checked-out release commit refuses the release.
 	_, relErr := f.audit(t, "--release")
-	if relErr == nil || !strings.Contains(relErr.Error(), "workflow ci.yml run health is failing") {
+	if relErr == nil || !strings.Contains(relErr.Error(), "workflow ci.yml run 42 concluded \"failure\"") {
 		t.Fatalf("expected online --release audit to fail on failing live workflow run, got %v", relErr)
 	}
 
-	// With --offline, live run health is unmeasured and the gate passes.
+	// Offline release mode refuses the missing live Actions reader.
 	offOut, offErr := captureStdout(t, func() error {
 		return auditReleaseTestLevels(t.Context(), &config.Manifest{
 			Repository: config.RepositoryMetadata{Owner: "acme", Name: "widgets"},
 			Profiles:   []string{"framework"},
 		}, f.dir, true, true)
 	})
-	if offErr != nil || !strings.Contains(offOut, "live run health unmeasured") {
-		t.Fatalf("expected --offline release test levels to pass with unmeasured health, got out=%q err=%v", offOut, offErr)
+	if offErr == nil || !strings.Contains(offErr.Error(), "no Actions reader") {
+		t.Fatalf("expected --offline release test levels to refuse missing live access, got out=%q err=%v", offOut, offErr)
 	}
 }
