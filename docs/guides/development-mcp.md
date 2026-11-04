@@ -132,6 +132,13 @@ perform the initialization, discovery, and harmless readback checks. Existing
 projection tests establish serialization and conflict handling; they are not
 live session evidence.
 
+The `standards_adopt` MCP tool pins the engine build the server runs, the same as
+`praetorctl adopt` (`runAdoptTool` in `cmd/standards-mcp/tools_adoption.go`;
+`TestWorkflowEnginePinThroughMCPBuildIdentity` in
+`internal/adopt/workflow_engine_pin_mcp_test.go`). Only a build without an identity
+falls back to `source_root`'s HEAD (`adoptingEngineCommit` in
+`internal/adopt/workflow_engine_pin.go`).
+
 The adoption MCP tool also reconciles accepted AsDecided ADR records into the
 project-scoped MCP registry when applying the `mcp` facet. The generated entries
 use the same registry schema documented in the [decision recall guide](decision-recall.md);
