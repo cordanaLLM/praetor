@@ -1,0 +1,59 @@
+# SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+# SPDX-License-Identifier: EUPL-1.2
+# Original patterns; identifiers retained for Codacy suppression parity.
+rules:
+  - id: go.lang.correctness.permissions.file_permission.incorrect-default-permission
+    languages: [go]
+    severity: ERROR
+    message: >-
+      Use a mode at most 0o600, or put a justified // nosemgrep:
+      go.lang.correctness.permissions.file_permission.incorrect-default-permission -- reason
+      directly above the call when broader fixture permissions are required.
+    patterns:
+      - pattern-either:
+          - pattern: os.WriteFile($PATH, $DATA, $MODE)
+          - pattern: os.OpenFile($PATH, $FLAGS, $MODE)
+          - pattern: os.Chmod($PATH, $MODE)
+          - pattern: os.Mkdir($PATH, $MODE)
+          - pattern: os.MkdirAll($PATH, $MODE)
+      - metavariable-regex:
+          metavariable: $MODE
+          constant-propagation: false
+          regex: '^(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|[0-9][0-9_]*)$'
+      - metavariable-comparison:
+          comparison: $MODE > 384
+
+  - id: go_file-permissions_rule-mkdir
+    languages: [go]
+    severity: ERROR
+    message: >-
+      Use a directory mode at most 0o750, or put a justified
+      // nosemgrep: go_file-permissions_rule-mkdir -- reason directly above the call.
+    patterns:
+      - pattern-either:
+          - pattern: os.Mkdir($PATH, $MODE)
+          - pattern: os.MkdirAll($PATH, $MODE)
+      - metavariable-regex:
+          metavariable: $MODE
+          constant-propagation: false
+          regex: '^(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|[0-9][0-9_]*)$'
+      - metavariable-comparison:
+          comparison: $MODE > 488
+
+  - id: go_file-permissions_rule-fileperm
+    languages: [go]
+    severity: ERROR
+    message: >-
+      Use a file mode at most 0o600, or put a justified
+      // nosemgrep: go_file-permissions_rule-fileperm -- reason directly above the call.
+    patterns:
+      - pattern-either:
+          - pattern: os.WriteFile($PATH, $DATA, $MODE)
+          - pattern: os.OpenFile($PATH, $FLAGS, $MODE)
+          - pattern: os.Chmod($PATH, $MODE)
+      - metavariable-regex:
+          metavariable: $MODE
+          constant-propagation: false
+          regex: '^(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|[0-9][0-9_]*)$'
+      - metavariable-comparison:
+          comparison: $MODE > 384

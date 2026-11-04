@@ -629,7 +629,7 @@ def source_checks(directory, names, gate="all", base=None):
             env=clean_env())
     if gate == "all":
         parallel(governance, directory)
-        parallel(semgrep_commands(directory, names), directory)
+        parallel(semgrep_commands(directory, names, base=base), directory)
     if not packages:
         print("Go gates: no affected packages")
         return run_full_gate(directory, packages) if full_gate else False
@@ -685,21 +685,30 @@ def run_full_gate(directory, packages=None):
     return True
 
 
-def semgrep_commands(directory, names):
+def semgrep_commands(directory, names, base=None):
+    """Keep HISS whole-file checks and compare Go permission findings to the push base."""
     rules = ".config/semgrep/hiss-invariants.yml"
+    permissions = ".config/semgrep/go-permissions.yml"
     # The HISS-20 corpus is input to the rules, not source governed by them: its positive
     # fixtures exist precisely because they violate an invariant, so scanning them blocks
     # every push that touches the corpus. The HISS scanner skips it for the same reason.
     source = [name for name in present_files(directory, names)
               if Path(name).suffix in SEMGREP_SUFFIXES and not is_fixture(name)]
+    go_source = [name for name in source if Path(name).suffix == ".go"]
+    commands = []
     if any(name.startswith(".config/semgrep/") for name in names):
         # A changed rule is judged against the whole tree, and the corpus stays out of that
         # scan too. Naming "." alone dropped the filter above, so every push whose range
         # touched the rules failed on the fixtures written to violate them.
         source = ["--exclude", FIXTURE_DIRECTORY, "."]
     if source and (directory / rules).exists():
-        return [["semgrep", "scan", "--error", "--config", rules, *source]]
-    return []
+        commands.append(["semgrep", "scan", "--error", "--config", rules, *source])
+    if go_source and (directory / permissions).exists():
+        if not base:
+            raise HookError("Go permission scan requires a trusted push baseline; no scan performed")
+        commands.append(["semgrep", "scan", "--error", "--config", permissions,
+                         "--baseline-commit", base, *go_source])
+    return commands
 
 
 def governance_commands(directory, names, source, base=None):
