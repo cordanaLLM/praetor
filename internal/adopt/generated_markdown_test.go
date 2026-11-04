@@ -92,7 +92,7 @@ func TestAdopt_Positive_InstalledSkillsPassDefaultMarkdownlint(t *testing.T) {
 // result above is not a check that finds nothing.
 func TestInstalledSkillLintRefusesThePriorTexts(t *testing.T) {
 	for name, want := range skillLintRules {
-		prior := mustRead(t, filepath.Join(priorSkillFixtures, name, want.prior))
+		prior := mustReadFixture(t, priorSkillFixtures, filepath.Join(name, want.prior))
 		findings := strings.Join(testsupport.MarkdownFindings(prior), "\n")
 		for _, rule := range want.rules {
 			if !strings.Contains(findings, rule) {

@@ -1,7 +1,6 @@
 package adopt
 
 import (
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -23,7 +22,7 @@ const legacyManifest = "version: 1\nrepository:\n  owner: acme\n  name: legacy\n
 // releasedHarness reads the harness files the 462e3f3a release synthesized for acme/legacy.
 func releasedHarness(t *testing.T, name string) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "paperclip", "testdata", "harness-462e3f3a", name))
+	data, err := readFixtureFile(filepath.Join("..", "paperclip", "testdata", "harness-462e3f3a"), name)
 	if err != nil {
 		t.Fatal(err)
 	}

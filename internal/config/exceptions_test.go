@@ -54,6 +54,36 @@ func TestDocstringExceptionValidation(t *testing.T) {
 	}
 }
 
+// TestDocstringExceptionDuplicates keeps docstrings unique per file while preserving group scopes.
+func TestDocstringExceptionDuplicates(t *testing.T) {
+	cases := []struct {
+		name, rule, secondPath string
+		want                   string
+	}{
+		{"same docstrings path", ExceptionRuleDocstrings, "snapshot.py", "exceptions[1] repeats exceptions[0] (rule docstrings, snapshot.py)"},
+		{"different docstrings paths", ExceptionRuleDocstrings, "other.py", ""},
+		{"different HISS-19 fingerprints", ExceptionRuleDedupe, "snapshot.py", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			first := Exception{Rule: tc.rule, Path: "snapshot.py", Fingerprint: "abcdef12",
+				Category: "D", Reason: "prior rendering fixture", Expires: "2026-10-06"}
+			second := first
+			second.Path, second.Fingerprint = tc.secondPath, "12345678"
+			err := ValidateExceptions([]Exception{first, second}, exceptionsToday)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("distinct exceptions refused: %v", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("ValidateExceptions = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func validException() Exception {
 	return Exception{
 		Rule: ExceptionRuleClangTidyCoverage, Path: "src/win32/getopt.c",

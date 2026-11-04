@@ -380,13 +380,21 @@ func ValidateExceptions(entries []Exception, today time.Time) error {
 		if problem := entry.problem(today); problem != "" {
 			return fmt.Errorf("exceptions[%d] %s", index, problem)
 		}
-		key := [7]string{entry.Rule, entry.Path, entry.Glob, entry.Function, entry.Tool, entry.Fingerprint, entry.Lines}
+		key := entry.duplicateKey()
 		if first, repeated := seen[key]; repeated {
 			return fmt.Errorf("exceptions[%d] repeats exceptions[%d] (rule %s, %s)", index, first, entry.Rule, entry.Target())
 		}
 		seen[key] = index
 	}
 	return nil
+}
+
+// duplicateKey identifies docstrings by file and preserves all scopes for other rules.
+func (e Exception) duplicateKey() [7]string {
+	if e.Rule == ExceptionRuleDocstrings {
+		return [7]string{e.Rule, e.Path}
+	}
+	return [7]string{e.Rule, e.Path, e.Glob, e.Function, e.Tool, e.Fingerprint, e.Lines}
 }
 
 // problem names why one entry is refused, or returns "".

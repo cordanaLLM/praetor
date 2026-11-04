@@ -509,8 +509,7 @@ func TestAdopt_Positive_Ship235PriorSkillsRefreshedAndLicensesProjected(t *testi
 	bundle := config.RegisterSkillBundle()
 	for i := 0; i < len(bundle) && i < maxRegisterSkills; i++ {
 		name := bundle[i]
-		fixturePath := filepath.Join(priorSkillFixtures, name, "ship-235.SKILL.md.prior")
-		ship235Text := mustRead(t, fixturePath)
+		ship235Text := mustReadFixture(t, priorSkillFixtures, filepath.Join(name, "ship-235.SKILL.md.prior"))
 		mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(compiler.CanonicalSkillRel(name))), ship235Text)
 	}
 

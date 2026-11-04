@@ -119,7 +119,7 @@ func TestAdoptedHarnessGolden(t *testing.T) {
 					t.Errorf("harness carries %q", word)
 				}
 			}
-			compareHarnessGolden(t, filepath.Join("testdata", "harness-"+p.name+".golden"), harness)
+			compareHarnessGolden(t, "harness-"+p.name+".golden", harness)
 		})
 	}
 }
@@ -139,21 +139,30 @@ func directiveCells(t *testing.T, harness string) string {
 	return strings.Join(cells, "\n")
 }
 
-// compareHarnessGolden compares got with the golden at path, or rewrites it under
+// compareHarnessGolden compares got with the named golden beneath testdata, or rewrites it under
 // -update-harness-golden.
-func compareHarnessGolden(t *testing.T, path, got string) {
+func compareHarnessGolden(t *testing.T, name, got string) {
 	t.Helper()
+	root, err := os.OpenRoot("testdata")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("close golden root: %v", err)
+		}
+	}()
 	if *updateHarnessGolden {
-		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
+		if err := root.WriteFile(name, []byte(got), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		return
 	}
-	want, err := os.ReadFile(path)
+	want, err := root.ReadFile(name)
 	if err != nil {
 		t.Fatalf("read golden (regenerate with -update-harness-golden): %v", err)
 	}
 	if got != strings.ReplaceAll(string(want), "\r\n", "\n") {
-		t.Errorf("harness differs from %s (regenerate with -update-harness-golden after review):\n%s", path, got)
+		t.Errorf("harness differs from testdata/%s (regenerate with -update-harness-golden after review):\n%s", name, got)
 	}
 }

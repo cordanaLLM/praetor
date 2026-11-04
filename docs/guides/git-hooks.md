@@ -778,7 +778,7 @@ counted, exported or unexported and test functions included. The mode (`error`, 
 `reviews.pre_merge_checks.docstrings` in `.coderabbit.yaml` (`error` and `80` when absent): `error` exits
 `1` below threshold, `warning` reports uncovered functions and exits `0`, `off` skips the check, and a read or configuration failure exits `2`. Adopter repositories run the same
 check in `lefthook.yml` `pre-push` via `sh .config/lefthook/engine.sh docstrings check --pre-push` with `use_stdin: true`.
-An `exceptions` entry in `.standards.yaml` with `rule: docstrings`, one file `path`, a SHA-256 `fingerprint` prefix (8–64 hex digits), `category`, and `expires` removes that file's touched declarations from coverage while the entry is live (`internal/docstrings/exceptions.go`, `TestDocstringExceptions`).
+An `exceptions` entry in `.standards.yaml` with `rule: docstrings`, one file `path`, a SHA-256 `fingerprint` prefix (8–64 hex digits), `category`, and `expires` removes that file's touched declarations from coverage while the entry is live (`internal/docstrings/exceptions.go`, `TestDocstringExceptions`). Only one docstrings entry per file is allowed, regardless of fingerprint (`internal/config/exceptions_test.go`, `TestDocstringExceptionDuplicates`).
 Output names and counts excepted, expired, and stale entries with their category and expiry; an expired entry or a fingerprint mismatch leaves the declarations counted, and the expiry day itself remains valid.
 
 These checks are not re-run per commit:

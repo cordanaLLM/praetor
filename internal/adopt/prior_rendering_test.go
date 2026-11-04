@@ -18,7 +18,7 @@ func readFixtureDir(t *testing.T, dir string) map[string][]byte {
 	}
 	fixtures := make(map[string][]byte, len(entries))
 	for _, entry := range entries {
-		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		data, err := readFixtureFile(dir, entry.Name())
 		if err != nil {
 			t.Fatal(err)
 		}

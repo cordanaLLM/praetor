@@ -2,6 +2,8 @@ package adopt
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -27,15 +29,8 @@ func updateEvasionRenderingFixtures(t *testing.T, current string) {
 	previous := mustRead(t, path)
 	if strings.ReplaceAll(previous, "\r\n", "\n") != current {
 		digest := fixtureDigest(t, path, []byte(previous))
-		archive := filepath.Join(priorEvasionFixtures, digest+".block_evasion.py")
-		if existing, err := os.ReadFile(archive); err == nil {
-			if strings.ReplaceAll(string(existing), "\r\n", "\n") != strings.ReplaceAll(previous, "\r\n", "\n") {
-				t.Fatalf("outgoing rendering archive %s differs from its recorded bytes", archive)
-			}
-		} else if os.IsNotExist(err) {
-			mustWrite(t, archive, previous)
-		} else {
-			t.Fatalf("read outgoing rendering archive %s: %v", archive, err)
+		if err := archiveEvasionRendering(priorEvasionFixtures, digest, previous); err != nil {
+			t.Fatal(err)
 		}
 		mustWrite(t, path, current)
 	}
@@ -52,6 +47,33 @@ func updateEvasionRenderingFixtures(t *testing.T, current string) {
 	entry := "\t\"" + digest + "\": \"" + origin + "\",\n"
 	mustWrite(t, "hooks.go", strings.Replace(source, declaration, declaration+entry, 1))
 	priorEvasionHookDigests[digest] = origin
+}
+
+// archiveEvasionRendering preserves outgoing bytes under their digest. Taking the digest
+// separately lets confinement tests exercise names the canonical digest cannot produce.
+func archiveEvasionRendering(dir, digest, previous string) (err error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return fmt.Errorf("open outgoing rendering root %s: %w", dir, err)
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close outgoing rendering root %s: %w", dir, closeErr))
+		}
+	}()
+	archive := digest + ".block_evasion.py"
+	if existing, err := root.ReadFile(archive); err == nil {
+		if strings.ReplaceAll(string(existing), "\r\n", "\n") != strings.ReplaceAll(previous, "\r\n", "\n") {
+			return fmt.Errorf("outgoing rendering archive %s differs from its recorded bytes", archive)
+		}
+	} else if errors.Is(err, os.ErrNotExist) {
+		if err := root.WriteFile(archive, []byte(previous), 0o644); err != nil {
+			return fmt.Errorf("write outgoing rendering archive %s: %w", archive, err)
+		}
+	} else {
+		return fmt.Errorf("read outgoing rendering archive %s: %w", archive, err)
+	}
+	return nil
 }
 
 // adoptEvasionFixture adopts a fresh repository whose interceptor holds existing.
