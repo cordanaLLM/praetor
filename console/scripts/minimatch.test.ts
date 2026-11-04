@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Lusoris <lusoris@proton.me>
 // SPDX-License-Identifier: EUPL-1.2
 // @vitest-environment node
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { ESLint } from 'eslint';
 import { afterEach, expect, test } from 'vitest';
+import { fixtureDeadline, fixtureIO, temporaryFixtures } from './fixtures';
 
 const require = createRequire(import.meta.url);
 const eslintRequire = createRequire(require.resolve('eslint'));
@@ -13,21 +13,31 @@ const typescriptRequire = createRequire(require.resolve('typescript-eslint'));
 const parserRequire = createRequire(typescriptRequire.resolve('@typescript-eslint/parser'));
 const estreeEntry = parserRequire.resolve('@typescript-eslint/typescript-estree');
 const estree = parserRequire('@typescript-eslint/typescript-estree');
-const roots: string[] = [];
+const fixtures = temporaryFixtures('minimatch-');
+const { mkdir, writeFile } = fixtureIO;
 
 afterEach(async () => {
 	estree.clearCaches();
-	for (const root of roots) await rm(root, { recursive: true, force: true });
-	roots.length = 0;
+	await fixtures.cleanup();
 });
 
-/** Creates an isolated temporary directory for test fixtures and tracks it for cleanup. */
-async function fixture(): Promise<string> {
-	await mkdir('test-results', { recursive: true });
-	const root = await mkdtemp(path.resolve('test-results/minimatch-'));
-	roots.push(root);
-	return root;
-}
+test('fixture deadlines reject stalled I/O by operation name', async () => {
+	await expect(
+		fixtureDeadline('planted stalled I/O', () => new Promise<never>(() => {}))
+	).rejects.toThrow('Fixture planted stalled I/O deadline exceeded');
+});
+
+test('fixture root bound refuses concurrent creation and cleanup permits reuse', async () => {
+	const pending = fixtures.create();
+	expect(() => fixtures.create()).toThrow('Fixture root count exceeds 1');
+	const root = await pending;
+	const file = path.join(root, 'boundary.txt');
+	await writeFile(file, 'fixture boundary');
+	expect(await fixtureIO.readFile(file)).toBe('fixture boundary');
+	await fixtures.cleanup();
+	await expect(fixtureIO.readFile(file)).rejects.toThrow('ENOENT');
+	expect(await fixtures.create()).not.toBe(root);
+});
 
 test.each([
 	['eslint', require.resolve('eslint')],
@@ -43,9 +53,9 @@ test.each([
 });
 
 test('ESLint and config-array select nested files and exclude ignored files', async () => {
-	const root = await fixture();
-	await mkdir(path.join(root, 'src/deep'), { recursive: true });
-	await mkdir(path.join(root, 'src/ignored'), { recursive: true });
+	const root = await fixtures.create();
+	await mkdir(path.join(root, 'src/deep'));
+	await mkdir(path.join(root, 'src/ignored'));
 	await writeFile(path.join(root, 'src/deep/keep.js'), 'export const answer = 42;');
 	await writeFile(path.join(root, 'src/ignored/skip.js'), 'const unused = 1;');
 	const eslint = new ESLint({
@@ -65,7 +75,7 @@ test('ESLint and config-array select nested files and exclude ignored files', as
 });
 
 test('typescript-estree matches dot files in allowDefaultProject and rejects other files', async () => {
-	const root = await fixture();
+	const root = await fixtures.create();
 	await writeFile(path.join(root, 'tsconfig.json'), '{"include":["included.ts"]}');
 	await writeFile(path.join(root, 'included.ts'), 'export {};');
 	const options = {
