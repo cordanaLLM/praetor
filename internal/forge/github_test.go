@@ -343,7 +343,7 @@ func TestGitHubDriverUsesDedicatedBoundedClient(t *testing.T) {
 // TestListPullRequestsByHead_GitHub_Positive tests GitHub head pull request listing.
 func TestListPullRequestsByHead_GitHub_Positive(t *testing.T) {
 	ghSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/repos/acme/widgets/pulls" || r.URL.Query().Get("state") != "all" || r.URL.Query().Get("head") != "acme:topic" {
+		if r.URL.Path != "/repos/acme/widgets/pulls" || r.URL.Query().Get("state") != "open" || r.URL.Query().Get("head") != "acme:topic" {
 			t.Errorf("unexpected github request: %s?%s", r.URL.Path, r.URL.RawQuery)
 		}
 		w.WriteHeader(http.StatusOK)
@@ -364,11 +364,15 @@ func TestListPullRequestsByHead_GitHub_Positive(t *testing.T) {
 // TestListPullRequestsByHead_Forgejo_Positive tests Forgejo head pull request listing.
 func TestListPullRequestsByHead_Forgejo_Positive(t *testing.T) {
 	fjSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/repos/acme/widgets/pulls" || r.URL.Query().Get("state") != "all" || r.URL.Query().Get("head") != "topic" {
+		if r.URL.Path != "/api/v1/repos/acme/widgets/pulls" || r.URL.Query().Get("head") != "topic" {
 			t.Errorf("unexpected forgejo request: %s?%s", r.URL.Path, r.URL.RawQuery)
 		}
 		if r.Header.Get("Authorization") != "token fj-tok" {
 			t.Errorf("unexpected forgejo auth header: %q", r.Header.Get("Authorization"))
+		}
+		if r.URL.Query().Get("state") == "open" {
+			writeRulesetJSON(w, http.StatusOK, []map[string]any{})
+			return
 		}
 		w.WriteHeader(http.StatusOK)
 		if _, err := io.WriteString(w, `[{"number":19,"state":"closed","merged":true,"head":{"ref":"topic"}},{"number":20,"state":"closed","merged":false,"head":{"ref":"topic"}}]`); err != nil {
@@ -550,9 +554,8 @@ func TestReadPullRequestsByHead_GitHub_TokenOnlyToGitHubHTTPS(t *testing.T) {
 	}
 }
 
-// Planted negative and positive: a forge that ignores the head query parameter and returns
-// pull requests of other branches or of forks on the same branch name is filtered client-side
-// across pages, keeping only pull requests of the pushed repository and branch.
+// TestListPullRequestsByHead_Planted_ServerIgnoresHeadAndForkFiltered verifies each
+// page is filtered to the pushed repository and branch when the forge ignores head.
 func TestListPullRequestsByHead_Planted_ServerIgnoresHeadAndForkFiltered(t *testing.T) {
 	mergedPR := func(num int, ref, label, fullName, owner string) map[string]any {
 		return map[string]any{
@@ -564,8 +567,12 @@ func TestListPullRequestsByHead_Planted_ServerIgnoresHeadAndForkFiltered(t *test
 		}
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("page") == "2" {
+		if r.URL.Query().Get("state") == "closed" {
 			writeRulesetJSON(w, http.StatusOK, []map[string]any{mergedPR(91, "topic", "acme:topic", "acme/widgets", "acme")})
+			return
+		}
+		if r.URL.Query().Get("page") != "1" {
+			writeRulesetJSON(w, http.StatusOK, []map[string]any{})
 			return
 		}
 		page1 := []map[string]any{
@@ -598,15 +605,15 @@ func TestListPullRequestsByHead_Planted_ServerIgnoresHeadAndForkFiltered(t *test
 			}
 			got, err := tc.list(context.Background(), "topic")
 			if err != nil || len(got) != 1 || got[0].Number != 91 || got[0].State != PullRequestStateMerged {
-				t.Fatalf("expected page-2 same-repo PR #91 for topic, got %+v, err=%v", got, err)
+				t.Fatalf("expected first-page same-repo PR #91 for topic, got %+v, err=%v", got, err)
 			}
 		})
 	}
 }
 
-// Planted negative: reaching the head pull request pagination ceiling without a short page
-// fails closed on both GitHub and Forgejo drivers.
-func TestListPullRequestsByHead_Planted_PageCeilingFailsClosed(t *testing.T) {
+// TestListPullRequestsByHead_Planted_FullUnrelatedPage verifies a full closed page ends
+// the lookup after open results end, without fabricating a terminal head match.
+func TestListPullRequestsByHead_Planted_FullUnrelatedPage(t *testing.T) {
 	fullPage := make([]map[string]any, HeadPullRequestsPerPage)
 	for i := range fullPage {
 		fullPage[i] = map[string]any{
@@ -614,20 +621,24 @@ func TestListPullRequestsByHead_Planted_PageCeilingFailsClosed(t *testing.T) {
 			"head": map[string]any{"ref": "other-branch"},
 		}
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("state") == "open" {
+			writeRulesetJSON(w, http.StatusOK, []map[string]any{})
+			return
+		}
 		writeRulesetJSON(w, http.StatusOK, fullPage)
 	}))
 	defer srv.Close()
 
 	gh := NewGitHubDriver("tok", srv.URL)
 	gh.SetRepository("acme", "widgets")
-	if _, err := gh.ListPullRequestsByHead(context.Background(), "topic"); err == nil || !strings.Contains(err.Error(), "pages of 20") {
-		t.Fatalf("GitHub page ceiling should fail closed with page bound reason, got %v", err)
+	if _, err := gh.ListPullRequestsByHead(context.Background(), "topic"); err != nil {
+		t.Fatalf("GitHub full unrelated page should not fail, got %v", err)
 	}
 
 	fj := NewGiteaDriver("tok", srv.URL)
 	fj.SetRepository("acme", "widgets")
-	if _, err := fj.ListPullRequestsByHead(context.Background(), "topic"); err == nil || !strings.Contains(err.Error(), "pages of 20") {
-		t.Fatalf("Forgejo page ceiling should fail closed with page bound reason, got %v", err)
+	if _, err := fj.ListPullRequestsByHead(context.Background(), "topic"); err != nil {
+		t.Fatalf("Forgejo full unrelated page should not fail, got %v", err)
 	}
 }

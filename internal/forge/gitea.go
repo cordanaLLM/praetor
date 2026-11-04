@@ -146,9 +146,8 @@ func ForgejoAPIBase(endpoint string) string {
 	return base
 }
 
-// ListPullRequestsByHead fetches up to HeadPullRequestsMaxPages bounded pages of pull
-// requests (all states) whose head branch is branch from the Forgejo REST API
-// (/api/v1/repos/{owner}/{repo}/pulls), filtering client-side to gt.Owner/gt.Repo and branch.
+// ListPullRequestsByHead queries bounded open pages for branch, then (only after open
+// results end without a match) one newest-first closed page, filtering to gt.Owner/gt.Repo.
 func (gt *GiteaDriver) ListPullRequestsByHead(ctx context.Context, branch string) ([]PullRequestHead, error) {
 	if ctx == nil {
 		return nil, errors.New("forgejo pull requests by head: context cannot be nil")
@@ -162,14 +161,14 @@ func (gt *GiteaDriver) ListPullRequestsByHead(ctx context.Context, branch string
 	}
 	ctx, cancel := context.WithTimeout(ctx, defaultHTTPTimeout)
 	defer cancel()
-	return collectHeadPullRequests(gt.Owner, gt.Repo, branch, func(page int) ([]byte, error) {
-		return gt.fetchHeadPullsPage(ctx, branch, page)
+	return collectHeadPullRequests(gt.Owner, gt.Repo, branch, func(state string, page int) ([]byte, error) {
+		return gt.fetchHeadPullsPage(ctx, branch, state, page)
 	})
 }
 
-// fetchHeadPullsPage fetches and validates one page of pull requests for branch from Forgejo.
-func (gt *GiteaDriver) fetchHeadPullsPage(ctx context.Context, branch string, page int) ([]byte, error) {
-	body, status, err := gt.fetchHeadPulls(ctx, branch, page)
+// fetchHeadPullsPage fetches and validates the requested bounded page for branch and state.
+func (gt *GiteaDriver) fetchHeadPullsPage(ctx context.Context, branch, state string, page int) ([]byte, error) {
+	body, status, err := gt.fetchHeadPulls(ctx, branch, state, page)
 	if err != nil {
 		return nil, fmt.Errorf("failed listing forgejo pull requests for head %q: %w", branch, err)
 	}
@@ -180,11 +179,13 @@ func (gt *GiteaDriver) fetchHeadPullsPage(ctx context.Context, branch string, pa
 	return body, nil
 }
 
-// fetchHeadPulls fetches the raw JSON body and status code for one page of head branch pulls from Forgejo.
-func (gt *GiteaDriver) fetchHeadPulls(ctx context.Context, branch string, page int) (respBody []byte, statusCode int, err error) {
-	endpoint := fmt.Sprintf("%s/repos/%s/%s/pulls?state=all&head=%s&page=%d&limit=%d",
+// fetchHeadPulls fetches the requested bounded page of head pulls in state from Forgejo.
+// Omitted sort uses newest-created first; the documented enum has no "newest" value.
+// See Forgejo v17.0.1 models/issues/issue_search.go: applySorts default.
+func (gt *GiteaDriver) fetchHeadPulls(ctx context.Context, branch, state string, page int) (respBody []byte, statusCode int, err error) {
+	endpoint := fmt.Sprintf("%s/repos/%s/%s/pulls?state=%s&head=%s&page=%d&limit=%d",
 		ForgejoAPIBase(gt.Endpoint), url.PathEscape(gt.Owner), url.PathEscape(gt.Repo),
-		url.QueryEscape(branch), page, HeadPullRequestsPerPage)
+		state, url.QueryEscape(branch), page, HeadPullRequestsPerPage)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, 0, fmt.Errorf("construct forgejo pull request lookup: %w", err)
