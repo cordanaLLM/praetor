@@ -8,5 +8,5 @@
 
 [[IgnoredVulns]]
 id = "GHSA-gcqx-w48m-w2h4"
-ignoreUntil = 2026-11-07
-reason = "Category C (10 days from 2026-10-28). deepmerge 4.3.1, prototype poisoning in mergeObject (low), no patched release; reached only through @sveltejs/vite-plugin-svelte 7.3.1, a build-time devDependency of console/ (console/pnpm-lock.yaml), never shipped to a browser. Re-check when vite-plugin-svelte drops or bumps deepmerge, or a patched deepmerge appears. Order engine-osv-deepmerge-exception-20261028."
+ignoreUntil = 2026-11-09
+reason = "Category C (10 days from 2026-10-30, renewed from 2026-10-28 after re-check: deepmerge 4.3.1 is still its latest release and @sveltejs/vite-plugin-svelte 7.3.1, still its latest release, still depends on deepmerge ^4.3.1). deepmerge 4.3.1, prototype poisoning in mergeObject (low), no patched release; reached only through @sveltejs/vite-plugin-svelte 7.3.1, a build-time devDependency of console/ (console/pnpm-lock.yaml), never shipped to a browser. Re-check when vite-plugin-svelte drops or bumps deepmerge, or a patched deepmerge appears. Order engine-osv-deepmerge-exception-20261028."
