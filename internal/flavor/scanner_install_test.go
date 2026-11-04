@@ -5,14 +5,16 @@
 package flavor_test
 
 import (
-	"fmt"
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/flavor"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // TestScannerInstallGuide_3D tests absent, invalid and undeclared tools module fallbacks.
@@ -68,7 +70,11 @@ func TestScannerInstallGuide_DeclaredScanners(t *testing.T) {
 	writeSecurityFixture(t, root, map[string]string{"tools/go/go.mod": manifest})
 	for _, scanner := range []string{"govulncheck", "gosec"} {
 		got := flavor.ScannerInstallGuide(root, scanner, "fallback")
-		if !strings.Contains(got, fmt.Sprintf("go -C %q install ", filepath.Dir(pin))) ||
+		quoted := util.QuotePOSIXShellArg(filepath.Dir(pin))
+		if runtime.GOOS == "windows" {
+			quoted = "\"" + filepath.Dir(pin) + "\""
+		}
+		if !strings.Contains(got, "go -C "+quoted+" install ") ||
 			!strings.HasSuffix(got, "/cmd/"+scanner) {
 			t.Errorf("%s pinned install: %s", scanner, got)
 		}
@@ -87,13 +93,49 @@ func TestScannerInstallGuide_Layouts(t *testing.T) {
 				mustWriteFile(t, filepath.Join(root, "go.work"), "go 1.27\nuse .\n")
 			}
 			prefix := "GOWORK=off "
+			quoted := util.QuotePOSIXShellArg(tools)
 			if runtime.GOOS == "windows" {
-				prefix = "set \"GOWORK=off\" && "
+				prefix = "Command Prompt: set \"GOWORK=off\" && "
+				quoted = "\"" + tools + "\""
 			}
-			want := fmt.Sprintf("%sgo -C %q install golang.org/x/vuln/cmd/govulncheck", prefix, tools)
+			want := prefix + "go -C " + quoted + " install golang.org/x/vuln/cmd/govulncheck"
+			if runtime.GOOS == "windows" {
+				want += "\nPowerShell: $env:GOWORK='off'; go -C '" +
+					strings.ReplaceAll(tools, "'", "''") + "' install golang.org/x/vuln/cmd/govulncheck"
+			}
 			if got := flavor.ScannerInstallGuide(root, "govulncheck", "fallback"); got != want {
 				t.Errorf("restore lacks isolated module context: got %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+// TestScannerInstallGuide_Shell keeps command substitutions and apostrophes inert when pasted.
+func TestScannerInstallGuide_Shell(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell execution; Windows command rendering has separate coverage")
+	}
+	directory := t.TempDir()
+	root := filepath.Join(directory, "repo ' $(touch x) `touch y`")
+	writeSecurityFixture(t, root, map[string]string{
+		"tools/go/go.mod": "module fixture\nrequire golang.org/x/vuln v1.0.0\n",
+	})
+	guide := flavor.ScannerInstallGuide(root, "govulncheck", "fallback")
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	result, err := util.RunCommandBytes(ctx, directory, "sh", 4096, "-c",
+		"go() { printf '%s\\n' \"$@\"; }\n"+guide)
+	if err != nil {
+		t.Fatalf("pasted guide: %v; stderr: %s", err, result.Stderr)
+	}
+	want := "-C\n" + filepath.Join(root, "tools", "go") +
+		"\ninstall\ngolang.org/x/vuln/cmd/govulncheck\n"
+	if string(result.Stdout) != want {
+		t.Errorf("pasted argv = %q; want %q", result.Stdout, want)
+	}
+	for _, marker := range []string{"x", "y"} {
+		if _, err := os.Stat(filepath.Join(directory, marker)); !os.IsNotExist(err) {
+			t.Errorf("command substitution marker %s: %v", marker, err)
+		}
 	}
 }

@@ -2324,7 +2324,7 @@ class SnapshotRefs(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root, other = (Path(directory) / name for name in ("root", "other"))
             for repo in (root, other):
-                run(["git", "init", "--quiet", str(repo)])
+                run(["git", "init", "--quiet", str(repo)], env=clean_env())
             budget = common.HookBudget(10)
             with mock.patch.dict(os.environ, {"GIT_DIR": str(other / ".git")}):
                 for reader in (common._git_common_dir, common._listed_worktrees):
