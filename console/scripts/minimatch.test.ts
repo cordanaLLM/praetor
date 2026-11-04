@@ -21,6 +21,7 @@ afterEach(async () => {
 	roots.length = 0;
 });
 
+/** Creates an isolated temporary directory for test fixtures and tracks it for cleanup. */
 async function fixture(): Promise<string> {
 	await mkdir('test-results', { recursive: true });
 	const root = await mkdtemp(path.resolve('test-results/minimatch-'));
