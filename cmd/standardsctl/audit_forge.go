@@ -174,7 +174,9 @@ func auditProtectionTarget(ctx context.Context, rootDir string, manifest *config
 	}
 	ancestor, err := util.RunGitProbe(ctx, rootDir, 128, "merge-base", "HEAD", commit)
 	if err != nil {
-		return target, []string{fmt.Sprintf("[INFO] Pending status check renames not evaluated: no common ancestor of HEAD and %s (%v); declared checks remain compared.", ref, err)}, nil
+		note := fmt.Sprintf("[INFO] Pending status check renames not evaluated: no common ancestor of HEAD and %s (%v).", ref, err)
+		target, notes, pendingErr := pendingProtectionRenames(ctx, rootDir, commit, ref, target, nil, report)
+		return target, append([]string{note}, notes...), pendingErr
 	}
 	renamed, err := forge.RequiredStatusContextRenames(ctx, rootDir, strings.TrimSpace(string(ancestor.Stdout)),
 		target.repository, forge.ForMergeQueue(policy.MergeQueue))
