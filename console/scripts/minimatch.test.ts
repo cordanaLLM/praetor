@@ -49,13 +49,13 @@ test('fixture root bound refuses concurrent creation and cleanup permits reuse',
 /** Verifies cleanup removes a real directory returned after the caller's creation deadline. */
 test('fixture cleanup removes a late mkdtemp directory after the creation deadline', async () => {
 	const lateFixtures = temporaryFixtures('minimatch-late-');
+	const targetFixtures = temporaryFixtures('minimatch-late-');
 	const creation = Promise.withResolvers<string>();
 	const mkdtemp = vi.mocked(fs.mkdtemp).mockReturnValueOnce(creation.promise);
-	let root: string | undefined;
 	try {
 		await expect(lateFixtures.create()).rejects.toThrow('Fixture mkdtemp deadline exceeded');
 		mkdtemp.mockReset();
-		root = await fs.mkdtemp(path.resolve('test-results', 'minimatch-late-'));
+		const root = await targetFixtures.create();
 		const file = path.join(root, 'late.txt');
 		await writeFile(file, 'late creation');
 		const cleanup = lateFixtures.cleanup();
@@ -66,7 +66,7 @@ test('fixture cleanup removes a late mkdtemp directory after the creation deadli
 		await expect(cleanup).resolves.toBeUndefined();
 	} finally {
 		mkdtemp.mockReset();
-		if (root !== undefined) await fixtureIO.rm(root);
+		await targetFixtures.cleanup();
 	}
 });
 
