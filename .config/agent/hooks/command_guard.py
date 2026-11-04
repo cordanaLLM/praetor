@@ -2,14 +2,22 @@
 """Share Lefthook's command policy across compatible native before-tool hooks."""
 
 import json
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / ".config/lefthook/scripts"))
-from common import HookBudget, HookError, SESSION_GIT_GRACE, refuse_after, session_root
+from common import (
+    SESSION_GIT_GRACE,
+    HookBudget,
+    HookError,
+    missing_tool_line,
+    refuse_after,
+    require_tool,
+    session_root,
+)
 
 MAX_INPUT = 1024 * 1024
 MAX_DIAGNOSTIC = 4096
@@ -57,6 +65,11 @@ def check_job(payload: bytes, job: str, marker: bytes) -> int:
 def run_job(payload: bytes, job: str, marker: bytes, budget: HookBudget) -> int:
     """Run the shared job in the session's checkout; exit 2 unless it printed ``marker``."""
     try:
+        require_tool("lefthook")
+    except HookError as error:
+        sys.stderr.write(str(error) + "\n")
+        return 2
+    try:
         cwd = session_root(ROOT, payload_cwd(payload), budget)
         with tempfile.TemporaryFile() as output:
             result = subprocess.run(
@@ -70,6 +83,14 @@ def run_job(payload: bytes, job: str, marker: bytes, budget: HookBudget) -> int:
                 sys.stderr.write("Praetor: shared hook policy rejected this tool call.\n"
                                  + diagnostic.decode(errors="replace"))
                 return 2
+    except FileNotFoundError as error:
+        diagnostic = (
+            missing_tool_line("lefthook")
+            if error.filename == "lefthook"
+            else f"Praetor: shared hook policy unavailable: {error}"
+        )
+        sys.stderr.write(diagnostic + "\n")
+        return 2
     except (HookError, OSError, subprocess.TimeoutExpired) as error:
         sys.stderr.write(f"Praetor: shared hook policy unavailable: {error}\n")
         return 2

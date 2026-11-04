@@ -99,6 +99,8 @@ What this means in practice:
   `test_registered_file_guard_matches_the_checkout_by_identity_not_spelling` in
   `scripts/test_checkpoint_hooks.py`).
 
+When `lefthook` is missing from `PATH`, the command guard and checkpoint adapter refuse the call with exit 2 and name the missing tool: `Praetor: lefthook not found on PATH`. The diagnostic includes `Restore: go -C <repo>/tools/lefthook install github.com/evilmartians/lefthook/v2` and `read-back: lefthook version`; the install uses the pin in `tools/lefthook/go.mod`. If that pin file is absent, the diagnostic names the file to inspect instead. The shared diagnostic lives in `.config/lefthook/scripts/common.py`; `scripts/test_checkpoint_hooks.py` exercises an empty `PATH` and a successful stub.
+
 ## Claude Code cloud sessions
 
 A Claude Code cloud session runs in a fresh VM that ships neither `lefthook` nor `praetorctl`

@@ -11,23 +11,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / ".config/lefthook/scripts"))
 from common import (
-    MAX_WORKTREES as MAX_WORKTREES,
-)
-from common import (
+    MAX_WORKTREES,
     SESSION_ENV,
     HookBudget,
     HookError,
+    _write_session_record,
     prepare_checkpoint_session,
     refuse_after,
+    require_tool,
     run_bounded,
+    session_hash_for,
     session_root,
 )
-from common import (
-    _write_session_record as _write_session_record,
-)
-from common import (
-    session_hash_for as session_hash_for,
-)
+
+__all__ = ["MAX_WORKTREES", "_write_session_record", "session_hash_for"]
 
 LIMIT = 1024 * 1024
 MARKER = "PRAETOR_CHECKPOINT_RESULT="
@@ -53,6 +50,7 @@ ANSWERED = threading.Lock()
 def verify_state(root=ROOT, budget=None):
     """Require a fresh existing ledger; Stop must not silently perform its upkeep."""
     budget = HookBudget(HOOK_BUDGET) if budget is None else budget
+    require_tool("lefthook")
     raw = run_bounded(
         ["lefthook", "run", "agent-state-stop", "--no-tty", "--no-auto-install"],
         cwd=root,
@@ -80,6 +78,7 @@ def verify_state(root=ROOT, budget=None):
 def checkpoint(event, root=ROOT, budget=None, env=None):
     """Require execution of the configured shared job, not just exit zero."""
     budget = HookBudget(HOOK_BUDGET) if budget is None else budget
+    require_tool("lefthook")
     cmd_env = dict(os.environ)
     if env:
         cmd_env.update(env)
@@ -152,7 +151,7 @@ def feedback(name, active, reason):
 def lifecycle_event(payload):
     """Return the validated event name and whether a stop hook already continued once."""
     if not isinstance(payload, dict):
-        raise ValueError("hook input must be an object")
+        raise TypeError("hook input must be an object")
     name = payload.get("hook_event_name")
     if not isinstance(name, str) or name not in EVENTS:
         raise ValueError("expected Stop, PostToolUse, AfterAgent or AfterTool event")
@@ -232,7 +231,7 @@ def overrun(payload):
     """The backstop's response: the event stays unverified, blocking a stop."""
     try:
         name, active = lifecycle_event(payload)
-    except ValueError:
+    except (TypeError, ValueError):
         return None  # respond() rejects this input itself, long before the limit.
     reason = (
         f"Praetor checkpoint adapter gave no answer within {HOOK_LIMIT} s; the "
@@ -247,6 +246,7 @@ def main():
         if not raw or len(raw) > LIMIT:
             raise ValueError("missing or oversized lifecycle input")
         payload = json.loads(raw)
+        require_tool("lefthook")
         backstop = refuse_after(HOOK_LIMIT, lambda: overrun(payload))
         try:
             result = respond(payload, HookBudget(HOOK_BUDGET))
@@ -257,7 +257,7 @@ def main():
                 HOOK_STOP
             )  # The backstop is printing; let it finish and exit.
         return 0
-    except (OSError, ValueError) as error:
+    except (HookError, OSError, TypeError, ValueError) as error:
         print("Praetor checkpoint adapter: " + str(error)[:1000], file=sys.stderr)
         return 2
 
