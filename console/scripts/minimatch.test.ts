@@ -2,10 +2,17 @@
 // SPDX-License-Identifier: EUPL-1.2
 // @vitest-environment node
 import { createRequire } from 'node:module';
+import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { ESLint } from 'eslint';
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 import { fixtureDeadline, fixtureIO, temporaryFixtures } from './fixtures';
+
+/** Keeps filesystem behavior real while allowing deterministic delays of mkdtemp completion. */
+vi.mock('node:fs/promises', async (importOriginal) => {
+	const original = await importOriginal<typeof fs>();
+	return { ...original, mkdtemp: vi.fn(original.mkdtemp) };
+});
 
 const require = createRequire(import.meta.url);
 const eslintRequire = createRequire(require.resolve('eslint'));
@@ -37,6 +44,45 @@ test('fixture root bound refuses concurrent creation and cleanup permits reuse',
 	await fixtures.cleanup();
 	await expect(fixtureIO.readFile(file)).rejects.toThrow('ENOENT');
 	expect(await fixtures.create()).not.toBe(root);
+});
+
+/** Verifies cleanup removes a real directory returned after the caller's creation deadline. */
+test('fixture cleanup removes a late mkdtemp directory after the creation deadline', async () => {
+	const lateFixtures = temporaryFixtures('minimatch-late-');
+	const creation = Promise.withResolvers<string>();
+	const mkdtemp = vi.mocked(fs.mkdtemp).mockReturnValueOnce(creation.promise);
+	let root: string | undefined;
+	try {
+		await expect(lateFixtures.create()).rejects.toThrow('Fixture mkdtemp deadline exceeded');
+		mkdtemp.mockReset();
+		root = await fs.mkdtemp(path.resolve('test-results', 'minimatch-late-'));
+		const file = path.join(root, 'late.txt');
+		await writeFile(file, 'late creation');
+		const cleanup = lateFixtures.cleanup();
+		const outcome = Promise.allSettled([cleanup]);
+		creation.resolve(root);
+		await outcome;
+		await expect(fixtureIO.readFile(file)).rejects.toThrow('ENOENT');
+		await expect(cleanup).resolves.toBeUndefined();
+	} finally {
+		mkdtemp.mockReset();
+		if (root !== undefined) await fixtureIO.rm(root);
+	}
+});
+
+/** Verifies cleanup reports stalled creation by name rather than waiting without a bound. */
+test('fixture cleanup rejects a mkdtemp that never resolves by operation name', async () => {
+	const stalledFixtures = temporaryFixtures('minimatch-stalled-');
+	const creation = Promise.withResolvers<string>();
+	const mkdtemp = vi.mocked(fs.mkdtemp).mockReturnValueOnce(creation.promise);
+	try {
+		await expect(stalledFixtures.create()).rejects.toThrow('Fixture mkdtemp deadline exceeded');
+		await expect(stalledFixtures.cleanup()).rejects.toThrow(
+			'Fixture mkdtemp cleanup deadline exceeded'
+		);
+	} finally {
+		mkdtemp.mockReset();
+	}
 });
 
 test.each([
