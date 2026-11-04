@@ -46,6 +46,7 @@ func runState(args []string) error {
 	return run(args[1:])
 }
 
+// printStateUsage advertises the state commands and the archive's explicit apply mode.
 func printStateUsage() {
 	fmt.Println("Usage: praetorctl state <subcommand> [args]")
 	fmt.Println("\nSubcommands:")
@@ -56,7 +57,8 @@ func printStateUsage() {
 	fmt.Println("  audit [dir|--dir=.]            Audit .workingdir/ for required files and P0 blockers")
 	fmt.Println("  compact [dir|--dir=.]          One-time: rewrite old STATE.md entries compact, drop old markers, resync")
 	fmt.Println("  migrate-bugs [dir|--dir=.]     One-time: move BUGS.md inline metadata to bugs.meta.json, verify, resync")
-	fmt.Println("  task [add|complete|list|archive] Manage active tasks in OPEN.md & BACKLOG.md")
+	fmt.Println("  task archive [dir|--dir=.] [--apply] Preview monthly archives for OPEN.md, BUGS.md and BACKLOG.md; --apply writes")
+	fmt.Println("  task [add|complete|list]       Manage active tasks in OPEN.md")
 	fmt.Println("  bug [add|list|resolve|kind] [args] Manage bugs ledger (BUGS.md)")
 	fmt.Println("  question [add|list|decide]     Manage user questions and decisions (QUESTIONS.md)")
 }
@@ -288,6 +290,7 @@ func bootstrapReport(outcome state.BootstrapOutcome, dir string) string {
 	return fmt.Sprintf("Bootstrap of %s/ in %s reported no outcome", state.WorkingDirName, dir)
 }
 
+// runStateSync reports and enforces live-file caps before recording or verifying state.
 func runStateSync(args []string) error {
 	var logMsg *string
 	var verify *bool
@@ -312,6 +315,9 @@ func runStateSync(args []string) error {
 			return fmt.Errorf("state sync failed: %w", err)
 		}
 	}
+	if err := printStateFileCaps(ctx, dir); err != nil {
+		return fmt.Errorf("state sync file caps: %w", err)
+	}
 	snap, err := state.SyncState(ctx, dir, *logMsg)
 	if err != nil {
 		return fmt.Errorf("state sync failed: %w", err)
@@ -329,6 +335,9 @@ func verifyStateSync(ctx context.Context, dir string, logMsg string, resolveErr 
 	if resolveErr != nil {
 		return fmt.Errorf("state sync --verify: %w", resolveErr)
 	}
+	if err := printStateFileCaps(ctx, dir); err != nil {
+		return fmt.Errorf("state sync --verify file caps: %w", err)
+	}
 	return state.VerifyStateSync(ctx, dir)
 }
 
@@ -345,6 +354,7 @@ func printStateSyncSummary(snap *state.StateSnapshot) {
 	}
 }
 
+// runStateStatus reports read-only state and fails on a live-file cap violation.
 func runStateStatus(args []string) error {
 	var policy config.EffectiveOptions
 	dirFlag, rest, err := stateArgs("state status", args, func(fs *flag.FlagSet) {
@@ -377,7 +387,17 @@ func runStateStatus(args []string) error {
 	fmt.Printf("  Pending Questions: %d\n", snap.PendingQs)
 	fmt.Printf("  Inspected At:      %s\n", snap.LastUpdated.Format(time.RFC3339))
 	printStateBacklogCaps(ctx, dir, policy)
-	return nil
+	return printStateFileCaps(ctx, dir)
+}
+
+// printStateFileCaps prints every live-file measurement even when a cap check fails.
+func printStateFileCaps(ctx context.Context, dir string) error {
+	usage, err := state.CheckStateFileCaps(ctx, dir, false)
+	for i := 0; i < len(usage) && i < 3; i++ {
+		file := usage[i]
+		fmt.Printf("  %s: %d open, %d completed/resolved, %d bytes\n", file.Name, file.Open, file.Completed, file.Bytes)
+	}
+	return err
 }
 
 func runStateCompact(args []string) error {
@@ -715,6 +735,7 @@ func runStateTask(args []string) error {
 	}
 }
 
+// printTaskUsage documents task operations and the archive preview/apply contract.
 func printTaskUsage() error {
 	fmt.Println("Usage: praetorctl state task <action> [args]")
 	fmt.Println("\nActions:")
@@ -723,7 +744,7 @@ func printTaskUsage() error {
 	fmt.Println("                                  the number is the one list prints, and")
 	fmt.Println("                                  ambiguous text is refused, not guessed")
 	fmt.Println("  list [--dir=.]                  List all tasks from OPEN.md")
-	fmt.Println("  archive [--dir=.]               Move completed tasks to BACKLOG.md")
+	fmt.Println("  archive [--dir=.] [--apply]     Preview monthly archives for OPEN.md, BUGS.md and BACKLOG.md; --apply writes")
 	return nil
 }
 
@@ -793,8 +814,12 @@ func runTaskList(args []string) error {
 	return nil
 }
 
+// runTaskArchive previews monthly archives by default; only --apply changes live files.
 func runTaskArchive(args []string) error {
-	dirFlag, rest, err := stateArgs("state task archive", args, nil)
+	var apply *bool
+	dirFlag, rest, err := stateArgs("state task archive", args, func(fs *flag.FlagSet) {
+		apply = fs.Bool("apply", false, "Write monthly archives, then remove completed/resolved live rows")
+	})
 	if err != nil {
 		return err
 	}
@@ -802,16 +827,14 @@ func runTaskArchive(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
 	defer cancel()
 	resolveNotice(ctx, dir)
-	// Outside a Git worktree, or before the first commit, there is no commit to name and the
-	// archive keeps its "local" stamp; a Git read that fails is an error, not that stamp.
-	commitSHA, err := state.RecordedCommit(ctx, dir)
-	if err != nil {
-		return fmt.Errorf("state task archive: %w", err)
+	reports, err := state.ArchiveCompletedTasksContext(ctx, dir, *apply)
+	mode := "dry-run"
+	if *apply {
+		mode = "apply"
 	}
-	count, err := state.ArchiveCompletedTasks(dir, commitSHA)
-	if err != nil {
-		return err
+	for i := 0; i < len(reports) && i < 3; i++ {
+		file := reports[i]
+		fmt.Printf("archive %s %s: %d entries, %d -> %d bytes\n", mode, file.Name, file.Entries, file.BytesBefore, file.BytesAfter)
 	}
-	fmt.Printf("[PASS] Archived %d completed tasks from OPEN.md to BACKLOG.md\n", count)
-	return nil
+	return err
 }

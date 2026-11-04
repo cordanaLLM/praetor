@@ -63,6 +63,9 @@ var syncMarker = regexp.MustCompile(`\n<!-- praetor-state:v1 sha256:([a-f0-9]{64
 // It never initializes, repairs or writes a ledger. Historical entries without
 // a binding must be superseded by an explicit successful SyncState call.
 func VerifyStateSync(ctx context.Context, rootPath string) error {
+	if _, err := CheckStateFileCaps(ctx, rootPath, false); err != nil {
+		return fmt.Errorf("state sync file caps: %w", err)
+	}
 	content, err := contextopt.ReadSnapshot(ctx, filepath.Join(ledgerRoot(ctx, rootPath), WorkingDirName, "STATE.md"))
 	if err != nil {
 		return fmt.Errorf("read state synchronization: %w", err)
@@ -126,7 +129,7 @@ func bindWorkingDirLedgers(ctx context.Context, root string) ([]string, error) {
 // bindWorkingDirSidecars reads and hashes the ledger metadata sidecars.
 func bindWorkingDirSidecars(ctx context.Context, root string) ([]string, error) {
 	var parts []string
-	for _, name := range []string{bugMetaName, questionMetaName} {
+	for _, name := range []string{bugMetaName, questionMetaName, stateFileCapsName} {
 		sidecar, err := bindSidecar(ctx, root, name)
 		if err != nil {
 			return nil, err
@@ -453,7 +456,7 @@ const unbornHead = "(unborn)"
 // RecordedCommit returns the commit a record made at root names: the HEAD SHA, or "" when
 // root is outside a Git worktree or its branch has no commit yet, since neither has a commit
 // to name. A Git read that fails for any other reason (broken metadata, a timeout) is an
-// error, never an empty commit. `state task archive`, `baseline --record` and adoption's
+// error, never an empty commit. `baseline --record` and adoption's
 // baseline all stamp their records through it.
 func RecordedCommit(ctx context.Context, root string) (string, error) {
 	present, err := util.GitWorktreePresent(ctx, root)

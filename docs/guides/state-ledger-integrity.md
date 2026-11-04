@@ -234,18 +234,61 @@ apply there too, naming `BACKLOG.md` (`TestListBacklogTasks_*` in `internal/stat
 The `tasks` [backlog cap](effective-policy.md#backlog-caps) counts the pending rows of both
 ledgers and groups its batch by ledger and heading.
 
-`praetorctl state task archive` moves completed rows to `BACKLOG.md` under a header
-naming the commit they were discharged at. The commit comes from
-`state.RecordedCommit` (`internal/state/sync_binding.go`): the HEAD SHA, or the stamp
-`local` when the directory is outside a Git worktree or its branch has no commit yet,
-so the unborn marker never reaches the ledger. A Git read that fails for any other
-reason, such as broken `.git` metadata, stops the archive with an error and leaves
-`OPEN.md` unchanged. `baseline --record` and adoption stamp a recorded baseline through
-the same function. A new `BACKLOG.md` is created owner-only (0600), like `OPEN.md`.
-Covered by `internal/state/recorded_commit_test.go`, the
-`TestDispatchCommand_StateTaskArchive_*` tests in
-`cmd/standardsctl/standardsctl_test.go` and
-`TestArchiveCompletedTasks_CreatesPrivateBacklog` in `internal/state/tasks_test.go`.
+`praetorctl state task archive` previews completed checkbox rows in `OPEN.md` and
+`BACKLOG.md` and resolved table rows in `BUGS.md`. It prints the entry count and
+bytes before/after for each live file. Add `--apply` to write the previewed moves;
+a default run creates no file and changes no byte.
+
+Records go to `.workingdir/archive/OPEN-YYYY-MM.md`, `BACKLOG-YYYY-MM.md`, or
+`BUGS-YYYY-MM.md`. The month comes from a task's `(completed: YYYY-MM-DD)` marker,
+a bug's `ResolvedAt` metadata, or a date in a legacy bug's Resolution cell.
+An absent or invalid date uses the archive run's UTC month. Live prose, headings,
+fenced examples, and the bug table header stay in place. Each bug archive has its
+own table header; sidecar-form rows carry their metadata inline in the archive,
+so the archive remains readable independently. Archived bug IDs remain reserved
+in `bugs.meta.json` and are never reused by `state bug add`.
+
+All archive snapshots are written before any live rows are removed, through
+`contextopt` compare-and-swap helpers. A failed live replacement may leave records
+in both locations, with an error; it never removes their archive copy. New files
+are owner-only (0600), the archive directory is 0700, and a successful second run
+moves zero records and changes no bytes. Completed OPEN rows no longer enter
+`BACKLOG.md`. See `internal/state/tasks_archive*.go`, `tasks_archive_test.go`, and
+`TestStateTaskArchiveDryRunDefault` in `cmd/standardsctl/state_file_caps_test.go`.
+
+### Live-file caps and ratchet
+
+One measurement path, `state.MeasureLiveStateFiles`, counts open records and actual
+UTF-8 bytes for each live file. Fenced checkbox examples do not count. Every bug
+status other than `resolved` counts as live work. `state status`, `state sync`,
+and `state sync --verify` report these measurements and return a non-zero status
+with a named file/metric when the check fails.
+
+| File | Hard limit after reaching it |
+| :--- | :--- |
+| `OPEN.md` | at most 150 open entries and 65,536 bytes; no completed rows once both limits have been reached |
+| `BACKLOG.md` | at most 50 open entries |
+| `BUGS.md` | no resolved rows after its existing resolved rows have been archived |
+
+The private `.workingdir/state-file-caps.json` file stores version 1 and the
+minimum observed open count, completed/resolved count, and bytes for all three
+files. The first successful `state sync` or archive `--apply` records the initial
+baseline. Existing excess is accepted at that baseline so it can be reduced
+incrementally. Each successful mutating check tightens each recorded dimension
+independently; none increases. Open counts and bytes above their recorded minimum
+fail even below the hard limits. A file that crosses a hard limit downward cannot
+cross it upward again. Resolved bug rows are legacy debt until their baseline
+count reaches zero; after that, leaving one live fails. Status and `--verify`
+never write or reset this baseline. Archive completed work before syncing a
+cleaned ledger; adding work above its recorded count or byte baseline fails.
+
+Exactly 150 open entries and exactly 65,536 bytes pass; 151 entries or 65,537
+bytes fail after the baseline reaches the corresponding limit. Baseline
+metadata is read strictly, rejecting duplicate keys, unknown fields, invalid
+versions, and missing file records. Sync binds the metadata alongside the ledger
+sidecars. The constants live in `internal/state/file_caps.go`; planted boundary,
+regrowth, completed-row, and resolved-row cases live in
+`internal/state/file_caps_test.go`.
 
 The fence tracker is `util.MarkdownFence` in `internal/util/marked_block.go`, the one
 implementation every scanner that follows fences across a whole document drives
@@ -313,7 +356,7 @@ delimited milestone block of `BACKLOG.md` (`internal/milestone/milestone.go`).
 - **BACKLOG.md writes are compare-and-swap.** The milestone block is published with
   `contextopt.ReplaceRootSnapshot` against the bytes it was rendered from: the same
   locked writer (`contextopt.ReplaceSnapshot`) `praetorctl state task archive` uses to
-  append discharged tasks. A write that finds the file changed fails and leaves the
+  publish monthly archives before removing live rows. A write that finds the file changed fails and leaves the
   other writer's bytes. `milestones.json` itself is still written without
   compare-and-swap: a store at its 10,000-entry bound exceeds the 1 MiB snapshot bound
   `ReplaceSnapshot` enforces.
