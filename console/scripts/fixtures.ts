@@ -27,7 +27,9 @@ export async function fixtureDeadline<T>(name: string, operation: () => Promise<
 
 /** Filesystem operations used by fixture tests; cancellation supplements the named deadline. */
 export const fixtureIO = {
-	mkdir: (directory: string) => fixtureDeadline('mkdir', () => mkdir(directory, { recursive: true })),
+	/** Creates fixture parents within the named mkdir deadline. */
+	mkdir: (directory: string) =>
+		fixtureDeadline('mkdir', () => mkdir(directory, { recursive: true })),
 	writeFile: (file: string, data: string) =>
 		fixtureDeadline('writeFile', () =>
 			writeFile(file, data, { signal: AbortSignal.timeout(FIXTURE_IO_DEADLINE_MS) })
@@ -39,28 +41,31 @@ export const fixtureIO = {
 	rm: (target: string) => fixtureDeadline('rm', () => rm(target, { recursive: true, force: true }))
 };
 
-/** Tracks pending creation before yielding, so concurrent calls cannot exceed the scalar bound. */
+/** Tracks raw creation before yielding, preserving late roots and the concurrent creation bound. */
 export function temporaryFixtures(prefix: string) {
 	const roots: Promise<string>[] = [];
 	return {
-		/** Creates up to MAX_FIXTURE_ROOTS roots; throws on limit, I/O failure, or FIXTURE_IO_DEADLINE_MS expiry. */
+		/** Bounds caller creation while retaining the underlying promise for eventual cleanup. */
 		create(): Promise<string> {
 			if (roots.length >= MAX_FIXTURE_ROOTS) {
 				throw new Error(`Fixture root count exceeds ${MAX_FIXTURE_ROOTS}`);
 			}
+			/** Retains the unwrapped mkdtemp result so cleanup can observe late creation. */
 			const root = (async () => {
 				await fixtureIO.mkdir('test-results');
-				return await fixtureDeadline('mkdtemp', () => mkdtemp(path.resolve('test-results', prefix)));
+				return await mkdtemp(path.resolve('test-results', prefix));
 			})();
 			roots.push(root);
-			return root;
+			return fixtureDeadline('mkdtemp', () => root);
 		},
-		/** Removes up to MAX_FIXTURE_ROOTS roots; throws on creation, removal, or FIXTURE_IO_DEADLINE_MS expiry. */
+		/** Bounds cleanup waiting; removal remains attached to raw creation even after a deadline. */
 		async cleanup(): Promise<void> {
 			try {
 				for (let i = 0; i < MAX_FIXTURE_ROOTS && i < roots.length; i++) {
 					const root = roots[i];
-					if (root !== undefined) await fixtureIO.rm(await root);
+					if (root !== undefined) {
+						await fixtureDeadline('mkdtemp cleanup', () => root.then(fixtureIO.rm));
+					}
 				}
 			} finally {
 				roots.length = 0;
