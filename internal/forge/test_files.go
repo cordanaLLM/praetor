@@ -26,6 +26,8 @@ func IsTestFile(root, rel string) bool {
 	return isGoOrPythonTest(base) || isJSTSTest(base) || isCompiledTest(base) || isScriptTest(base)
 }
 
+// isRustTest reports whether a Rust source file at rel in root resides in a test directory
+// or contains a #[cfg(test)] module annotation.
 func isRustTest(root, rel string) bool {
 	if strings.HasPrefix(rel, "tests/") || strings.Contains(rel, "/tests/") {
 		return true

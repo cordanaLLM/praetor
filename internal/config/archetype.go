@@ -122,6 +122,8 @@ func decodeArchetype(ctx context.Context, path string, data []byte) (Archetype, 
 	return archetype, nil
 }
 
+// archetype constructs an Archetype model from the parsed document at path, decoding complexity
+// limits, devcontainer features, and language-specific settings.
 func (d *archetypeDocument) archetype(path string) (Archetype, error) {
 	id := strings.TrimSpace(d.ID)
 	if id == "" {
@@ -250,6 +252,8 @@ var shippedProfileArchetypeYAML = map[string]string{
 	"web-package":        "id: web-package\nrelease_test_levels:\n  - unit\n  - e2e\n  - a11y\n",
 }
 
+// loadProfileArchetype loads the archetype definition for profile from local configuration in
+// root or falls back to shipped embedded catalog YAML definitions.
 func loadProfileArchetype(ctx context.Context, root, profile string) (Archetype, bool, error) {
 	var localArch Archetype
 	foundLocal := false

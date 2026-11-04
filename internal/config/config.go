@@ -509,6 +509,8 @@ func ParseManifest(name string, data []byte) (*Manifest, error) {
 	return parseManifest(name, data)
 }
 
+// parseManifest decodes manifest YAML data from path and validates all schema constraints,
+// returning the parsed Manifest or an error.
 func parseManifest(path string, data []byte) (*Manifest, error) {
 	m, err := DecodeManifest(data)
 	if err != nil {

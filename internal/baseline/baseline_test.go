@@ -257,6 +257,8 @@ func TestNormalizePath_Boundary(t *testing.T) {
 	}
 }
 
+// TestReleaseTestLevelShrinkOnly proves that release test level baseline checks allow shrinking
+// existing anchors but refuse newly introduced anchors even with allow-increase.
 func TestReleaseTestLevelShrinkOnly(t *testing.T) {
 	baseInf := Infraction{
 		RuleID:     ReleaseTestLevelRuleID,

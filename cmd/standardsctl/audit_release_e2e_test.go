@@ -77,6 +77,8 @@ func TestAuditReleaseE2E_FlagAndGate(t *testing.T) {
 	}
 }
 
+// TestAuditReleaseTestLevels_GateAndAuditWiring proves that release test level auditing warns
+// outside release mode, fails on unbaselined gaps with --release, and enforces shrink-only recording.
 func TestAuditReleaseTestLevels_GateAndAuditWiring(t *testing.T) {
 	f := newAuditFixture(t)
 	writeFixtureFile(t, f.dir, "go.mod", "module example.com/lib\n\ngo 1.25.0\n")
@@ -124,6 +126,8 @@ func TestAuditReleaseTestLevels_GateAndAuditWiring(t *testing.T) {
 	}
 }
 
+// TestAuditReleaseTestLevels_LiveForgeHealthAndOffline proves that failing live workflow runs
+// are flagged during release audits while offline checks report run health as unmeasured.
 func TestAuditReleaseTestLevels_LiveForgeHealthAndOffline(t *testing.T) {
 	f := newAuditFixture(t)
 	writeFixtureFile(t, f.dir, "go.mod", "module example.com/lib\n\ngo 1.25.0\n")

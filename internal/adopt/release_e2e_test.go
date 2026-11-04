@@ -90,6 +90,8 @@ func TestAdoptionRender_TagWorkflowAndResolveGitCommitError(t *testing.T) {
 	}
 }
 
+// TestAdoptReconcileReleaseTestLevelsBaseline_RecordsInitialGaps proves that adopt baseline
+// reconciliation captures initial test level gaps and records them into the baseline file.
 func TestAdoptReconcileReleaseTestLevelsBaseline_RecordsInitialGaps(t *testing.T) {
 	repo, headSHA := initAdoptReleaseTestRepo(t)
 	writeOriginRemote(t, repo, "https://github.com/acme/release-lib.git")

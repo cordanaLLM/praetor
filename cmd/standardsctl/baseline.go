@@ -334,6 +334,8 @@ func planFileBaseline(ctx context.Context, root, path string, opts baseline.Reco
 	return plan, nil
 }
 
+// recordFileSnapshot records current findings into the baseline snapshot for path, enforcing
+// gosec guards and verifying carried release test level infractions, returning the new baseline.
 func recordFileSnapshot(
 	ctx context.Context,
 	root, path string,
@@ -351,6 +353,8 @@ func recordFileSnapshot(
 	return next, err
 }
 
+// formatBaselineRecordError formats a baseline recording refusal error with path context and
+// suggests --allow-increase flags when monotonic increases are permitted.
 func formatBaselineRecordError(path string, err error) error {
 	if filepath.Base(path) == gating.GosecBaselineFile || errors.Is(err, baseline.ErrReleaseTestLevelShrinkOnly) {
 		return fmt.Errorf("refusing to record %s: %w", path, err)
@@ -358,6 +362,8 @@ func formatBaselineRecordError(path string, err error) error {
 	return fmt.Errorf("refusing to record %s: %w (pass --allow-increase --reason=<why> to record a deliberate increase)", path, err)
 }
 
+// verifyCarriedReleaseTestLevels verifies that next retains only a subset of release test level
+// anchors committed on the default branch, returning an error if uncommitted anchors are added.
 func verifyCarriedReleaseTestLevels(ctx context.Context, root, file string, previous, next *baseline.Baseline) error {
 	defBase, err := defaultBranchBaseline(ctx, root, file, previous)
 	if err != nil {

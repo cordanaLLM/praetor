@@ -125,6 +125,8 @@ func (p *ReleasePolicy) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
+// unmarshalReleaseTestLevels decodes a YAML mapping node into a map of ReleaseTestLevelSpec
+// definitions, rejecting unknown keys and enforcing size limits.
 func unmarshalReleaseTestLevels(value *yaml.Node) (map[string]ReleaseTestLevelSpec, error) {
 	if value == nil || value.Kind != yaml.MappingNode {
 		return nil, fmt.Errorf("release.test_levels must be a mapping")
@@ -149,6 +151,8 @@ func unmarshalReleaseTestLevels(value *yaml.Node) (map[string]ReleaseTestLevelSp
 	return levels, nil
 }
 
+// unmarshalReleaseTestLevelSpec decodes a YAML node into a ReleaseTestLevelSpec for level,
+// preventing required test levels from being dropped.
 func unmarshalReleaseTestLevelSpec(level string, value *yaml.Node) (ReleaseTestLevelSpec, error) {
 	prefix := "release.test_levels." + level
 	if value == nil || (value.Kind == yaml.ScalarNode && (value.ShortTag() == "!!null" || value.Value == "" || value.Value == "false" || value.Value == "none")) {
@@ -166,6 +170,7 @@ func unmarshalReleaseTestLevelSpec(level string, value *yaml.Node) (ReleaseTestL
 	return spec, nil
 }
 
+// unmarshalField decodes a single field key and YAML node into the ReleaseTestLevelSpec receiver.
 func (s *ReleaseTestLevelSpec) unmarshalField(prefix, key string, val *yaml.Node) error {
 	var err error
 	switch key {
@@ -257,6 +262,8 @@ func (p *ReleasePolicy) ValidateForProfiles(ctx context.Context, root string, pr
 	return nil
 }
 
+// validateReleaseTestLevelsMap validates every ReleaseTestLevelSpec entry in levels against
+// naming and configuration bounds.
 func validateReleaseTestLevelsMap(levels map[string]ReleaseTestLevelSpec) error {
 	if len(levels) == 0 {
 		return nil
@@ -300,6 +307,8 @@ func (s ReleaseTestLevelSpec) Validate(level string) error {
 	return validateReleaseTestLevelField(prefix+".run", s.Run)
 }
 
+// validateReleaseTestLevelPattern checks that a test level regex pattern does not exceed length
+// limits and compiles without errors.
 func validateReleaseTestLevelPattern(prefix, pattern string) error {
 	if pattern == "" {
 		return nil
@@ -314,6 +323,8 @@ func validateReleaseTestLevelPattern(prefix, pattern string) error {
 	return nil
 }
 
+// validateReleaseTestLevelField validates that a string field value is non-blank and within
+// maximum permitted length limits.
 func validateReleaseTestLevelField(field, val string) error {
 	if val == "" {
 		return nil
@@ -342,10 +353,14 @@ func (p *ReleaseE2EPolicy) Validate() error {
 	return validateReleaseE2ESince(p.Since)
 }
 
+// validateReleaseE2EPaths validates release end-to-end file path globs against style rules
+// and duplicate entries.
 func validateReleaseE2EPaths(paths []string) error {
 	return validateReleasePathGlobs(paths, "release.e2e.paths")
 }
 
+// validateReleasePathGlobs verifies that a list of file path globs contains no duplicates,
+// does not exceed maximum count limits, and satisfies style rules.
 func validateReleasePathGlobs(paths []string, field string) error {
 	if len(paths) > MaxReleaseE2EPaths {
 		return fmt.Errorf("%s has %d entries; the maximum is %d",

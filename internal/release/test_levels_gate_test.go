@@ -25,6 +25,7 @@ type fakeActionsReader struct {
 	err        error
 }
 
+// WorkflowRunHistory returns stubbed workflow run history for workflow from the fakeActionsReader receiver.
 func (f *fakeActionsReader) WorkflowRunHistory(_ context.Context, workflow, _ string) (forge.WorkflowRunHistory, error) {
 	if f.err != nil {
 		return forge.WorkflowRunHistory{}, f.err
@@ -32,14 +33,17 @@ func (f *fakeActionsReader) WorkflowRunHistory(_ context.Context, workflow, _ st
 	return f.byWorkflow[workflow], nil
 }
 
+// WorkflowPermissions returns stubbed live workflow permissions or configured errors.
 func (f *fakeActionsReader) WorkflowPermissions(context.Context) (forge.LiveWorkflowPermissions, error) {
 	return forge.LiveWorkflowPermissions{}, f.err
 }
 
+// WorkflowRunJobs returns stubbed workflow job records or configured errors.
 func (f *fakeActionsReader) WorkflowRunJobs(context.Context, int64) ([]forge.WorkflowJobRecord, error) {
 	return nil, f.err
 }
 
+// writeTestRepoFile creates parent directories and writes content to rel under the root test directory.
 func writeTestRepoFile(t *testing.T, root, rel, content string) {
 	t.Helper()
 	full := filepath.Join(root, filepath.FromSlash(rel))
@@ -51,6 +55,7 @@ func writeTestRepoFile(t *testing.T, root, rel, content string) {
 	}
 }
 
+// setupGoLibraryTempRepo initializes a temporary Go library repository with module files, source, tests, and workflows.
 func setupGoLibraryTempRepo(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()
@@ -94,6 +99,8 @@ func TestAuditTestLevels_PlantedGoLibraryIntegrationGapAndPass(t *testing.T) {
 	}
 }
 
+// TestAuditTestLevels_Negative_JobWithIfFalseIsRefused proves that workflow jobs guarded by
+// if: false are treated as non-runnable and refused by test level audits.
 func TestAuditTestLevels_Negative_JobWithIfFalseIsRefused(t *testing.T) {
 	t.Setenv("GITHUB_REF", "")
 	t.Setenv("GITHUB_HEAD_REF", "")
@@ -121,6 +128,8 @@ release:
 	}
 }
 
+// TestAuditTestLevels_BaselinedGapPassesAndNewGapBesideItFails proves that baselined test level
+// gaps pass audits while new unbaselined gaps fail the release gate.
 func TestAuditTestLevels_BaselinedGapPassesAndNewGapBesideItFails(t *testing.T) {
 	t.Setenv("GITHUB_REF", "")
 	t.Setenv("GITHUB_HEAD_REF", "")
@@ -157,6 +166,8 @@ func TestAuditTestLevels_BaselinedGapPassesAndNewGapBesideItFails(t *testing.T) 
 	}
 }
 
+// TestAuditTestLevels_Negative_RecordingBaselineAddingAnchorIsRefused proves that recording
+// baselines refuses newly introduced release test level anchors even with allow-increase.
 func TestAuditTestLevels_Negative_RecordingBaselineAddingAnchorIsRefused(t *testing.T) {
 	existing := []baseline.Infraction{{
 		RuleID:     baseline.ReleaseTestLevelRuleID,
@@ -193,6 +204,8 @@ func TestAuditTestLevels_Negative_RecordingBaselineAddingAnchorIsRefused(t *test
 	}
 }
 
+// TestAuditTestLevels_Negative_DeclarationDroppingRequiredLevelFailsValidation proves that
+// manifest declarations omitting required archetype test levels fail validation.
 func TestAuditTestLevels_Negative_DeclarationDroppingRequiredLevelFailsValidation(t *testing.T) {
 	repo := setupGoLibraryTempRepo(t)
 	// go-library resolves to framework + library-client (which requires unit + integration).
@@ -248,6 +261,8 @@ func TestAuditTestLevels_Negative_WorkflowInventoryOverBoundFailsClosed(t *testi
 	}
 }
 
+// TestAuditTestLevels_Boundary_OfflineRunHealthAndScheduledDefaultBranchRun proves offline
+// audits mark run health unmeasured and scheduled workflows are satisfied by default branch runs.
 func TestAuditTestLevels_Boundary_OfflineRunHealthAndScheduledDefaultBranchRun(t *testing.T) {
 	t.Setenv("GITHUB_REF", "")
 	t.Setenv("GITHUB_HEAD_REF", "")
@@ -281,6 +296,8 @@ func TestAuditTestLevels_Boundary_OfflineRunHealthAndScheduledDefaultBranchRun(t
 	}
 }
 
+// TestAuditTestLevels_Negative_UntrackedFileInGitRepoDoesNotSatisfyLevel proves that untracked
+// files in git repositories do not satisfy release test level path requirements.
 func TestAuditTestLevels_Negative_UntrackedFileInGitRepoDoesNotSatisfyLevel(t *testing.T) {
 	t.Setenv("GITHUB_REF", "")
 	t.Setenv("GITHUB_HEAD_REF", "")
@@ -317,6 +334,8 @@ func TestAuditTestLevels_Negative_UntrackedFileInGitRepoDoesNotSatisfyLevel(t *t
 	}
 }
 
+// TestAuditTestLevels_Negative_FileScanCapOverflowFailsClosed proves that repository file lists
+// exceeding scan bounds fail closed with an error.
 func TestAuditTestLevels_Negative_FileScanCapOverflowFailsClosed(t *testing.T) {
 	origCap := maxRepoScanFiles
 	maxRepoScanFiles = 3
@@ -349,6 +368,8 @@ func TestAuditTestLevels_Negative_FileScanCapOverflowFailsClosed(t *testing.T) {
 	}
 }
 
+// TestAuditTestLevels_Negative_WorkflowDirReadHonorsContextCancellation proves that workflow
+// directory loading halts and returns context.Canceled when cancelled.
 func TestAuditTestLevels_Negative_WorkflowDirReadHonorsContextCancellation(t *testing.T) {
 	repo := setupGoLibraryTempRepo(t)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -360,6 +381,8 @@ func TestAuditTestLevels_Negative_WorkflowDirReadHonorsContextCancellation(t *te
 	}
 }
 
+// TestAuditTestLevels_Negative_SuppliedManifestWithInvalidPolicyFailsValidation proves that
+// supplying an invalid manifest to test level auditing fails validation.
 func TestAuditTestLevels_Negative_SuppliedManifestWithInvalidPolicyFailsValidation(t *testing.T) {
 	repo := setupGoLibraryTempRepo(t)
 	badManifest := &config.Manifest{

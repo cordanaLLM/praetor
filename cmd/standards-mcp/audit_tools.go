@@ -303,6 +303,8 @@ func auditHookConfig(ctx context.Context, manifest *config.Manifest, root string
 	return hooks.Line, err
 }
 
+// releaseE2EAuditGates builds audit gate functions for release end-to-end evidence and
+// release test levels under root, returning them as a slice of auditGate runners.
 func releaseE2EAuditGates(root string, manifest *config.Manifest) []auditGate {
 	var policy *config.ReleasePolicy
 	if manifest != nil {

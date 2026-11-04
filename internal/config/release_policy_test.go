@@ -142,6 +142,8 @@ func TestReleasePolicy_MaxBounds(t *testing.T) {
 	}
 }
 
+// TestReleaseTestLevelsPolicy_Positive proves that valid release test level configurations
+// parse successfully and preserve declared path globs, job names, and patterns.
 func TestReleaseTestLevelsPolicy_Positive(t *testing.T) {
 	manifestYAML := `version: 1
 repository:
@@ -180,6 +182,8 @@ release:
 	}
 }
 
+// TestReleaseTestLevelsPolicy_Negative_DropRequiredLevelFailsValidation proves that dropping
+// required test levels or providing empty paths or invalid regexes fails validation.
 func TestReleaseTestLevelsPolicy_Negative_DropRequiredLevelFailsValidation(t *testing.T) {
 	cases := []struct {
 		name string
@@ -216,6 +220,8 @@ func TestReleaseTestLevelsPolicy_Negative_DropRequiredLevelFailsValidation(t *te
 	}
 }
 
+// TestReleaseTestLevelsPolicy_Boundary_ArchetypeDefaults proves that ProfileReleaseTestLevels
+// supplies expected default test levels across standard archetype profiles.
 func TestReleaseTestLevelsPolicy_Boundary_ArchetypeDefaults(t *testing.T) {
 	byProfile, err := ProfileReleaseTestLevels(t.Context(), "", []string{
 		"app-service", "library-client", "web-package", "native-gpu-systems",

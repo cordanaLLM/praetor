@@ -506,6 +506,8 @@ func (s *adoptSession) reconcileImageRefBaseline(ctx context.Context, full strin
 	return nil
 }
 
+// applyRuleBaselineResult updates adoption reports, debt breakdown, and ratchet counters
+// with the recorded count and updated baseline for ruleID.
 func (s *adoptSession) applyRuleBaselineResult(ruleID string, recorded int, next *baseline.Baseline) {
 	if recorded == 0 || next == nil {
 		return

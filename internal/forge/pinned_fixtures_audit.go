@@ -119,6 +119,8 @@ func listTrackedFiles(ctx context.Context, root string) ([]string, error) {
 	return slices.Compact(tracked), nil
 }
 
+// scanTestFiles scans tracked repository files to identify test files, reads their contents,
+// and extracts hex hash references for fixture matching.
 func scanTestFiles(root string, tracked []string) ([]string, map[string]string, map[string]string, error) {
 	testFiles := make([]string, 0, len(tracked)/4)
 	for i := 0; i < len(tracked) && i < maxTrackedFiles; i++ {
@@ -142,6 +144,8 @@ func scanTestFiles(root string, tracked []string) ([]string, map[string]string, 
 	return testFiles, testContents, pinnedHashes, nil
 }
 
+// findPinnedFixtures finds non-test tracked files that match content or hash fixtures referenced
+// by repository test files.
 func findPinnedFixtures(root string, tracked []string, testFiles []string, testContents map[string]string, pinnedHashes map[string]string) ([]pinnedFixture, error) {
 	var pinned []pinnedFixture
 	for i := 0; i < len(tracked) && i < maxTrackedFiles; i++ {

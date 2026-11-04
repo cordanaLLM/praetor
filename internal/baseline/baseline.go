@@ -332,10 +332,14 @@ func ownsRule(owned []string, rule string) bool {
 	return false
 }
 
+// isAuxiliaryRule reports whether ruleID corresponds to an auxiliary baseline rule such as
+// image references, secrets, or release test levels.
 func isAuxiliaryRule(ruleID string) bool {
 	return ruleID == ImageRefRuleID || ruleID == BaselineRuleID || ruleID == ReleaseTestLevelRuleID
 }
 
+// checkReleaseTestLevelShrinkOnly ensures that recorded release test level infractions only
+// preserve or shrink existing anchors, rejecting added anchors even when increases are allowed.
 func checkReleaseTestLevelShrinkOnly(previous *Baseline, infractions []Infraction, opts RecordOptions) error {
 	existing := make(map[string]bool)
 	for i := 0; i < len(previous.Infractions); i++ {
@@ -362,6 +366,8 @@ func checkReleaseTestLevelShrinkOnly(previous *Baseline, infractions []Infractio
 	return nil
 }
 
+// carriedInfractions returns the subset of infractions from previous that are preserved when
+// recording rules outside the owned set.
 func carriedInfractions(previous []Infraction, owned []string) []Infraction {
 	// The secret scan writer passes every entry it keeps (mergeSecretInfractions); it carries none.
 	if ownsRule(owned, BaselineRuleID) {

@@ -301,6 +301,8 @@ func TestValidRepositoryIdentity(t *testing.T) {
 	}
 }
 
+// TestValidateManifest_3D proves that ValidateManifest passes valid manifests, rejects invalid
+// default branch configurations, and safely accepts nil inputs.
 func TestValidateManifest_3D(t *testing.T) {
 	// Positive: valid manifest passes validation
 	valid := &Manifest{Version: 1}

@@ -132,6 +132,8 @@ func AuditTestLevels(
 	return report, err
 }
 
+// ensureManifest validates an existing manifest or loads and validates .standards.yaml from
+// repoPath, returning an empty manifest if the file does not exist.
 func ensureManifest(repoPath string, manifest *config.Manifest) (*config.Manifest, error) {
 	if manifest != nil {
 		if err := config.ValidateManifest(manifest); err != nil {
@@ -164,6 +166,7 @@ func ResolveRepositoryProfiles(repoPath string, manifest *config.Manifest) ([]st
 	return profiles, nil
 }
 
+// appendUniqueProfile trims and appends profile p to profiles if p is non-empty and not already present.
 func appendUniqueProfile(profiles []string, p string) []string {
 	p = strings.TrimSpace(p)
 	if p != "" && !slices.Contains(profiles, p) {
@@ -172,6 +175,8 @@ func appendUniqueProfile(profiles []string, p string) []string {
 	return profiles
 }
 
+// appendFlavorProfiles looks up flvName in the flavor registry and appends its HISS profile
+// and any secondary implemented profiles to profiles.
 func appendFlavorProfiles(profiles []string, flvName string) []string {
 	flv, err := flavor.Get(flvName)
 	if err != nil || flv == nil {
@@ -186,6 +191,7 @@ func appendFlavorProfiles(profiles []string, flvName string) []string {
 	return profiles
 }
 
+// appendManifestProfiles resolves flavor targets and appends profiles declared in manifest to profiles.
 func appendManifestProfiles(repoPath string, profiles []string, manifest *config.Manifest, resolveFlavor bool) []string {
 	if manifest == nil {
 		return profiles
@@ -201,6 +207,8 @@ func appendManifestProfiles(repoPath string, profiles []string, manifest *config
 	return profiles
 }
 
+// resolveLevelBindings resolves repository archetype profiles and binds required and declared
+// release test levels into evaluated bindings.
 func resolveLevelBindings(
 	ctx context.Context,
 	repoPath string,
@@ -225,6 +233,8 @@ func resolveLevelBindings(
 	return profiles, mergeProfileAndDeclaredLevels(profiles, byProfile, manifest), nil
 }
 
+// mergeProfileAndDeclaredLevels combines profile-default test levels with manifest-declared
+// test level overrides into a deduplicated list of bindings.
 func mergeProfileAndDeclaredLevels(
 	profiles []string,
 	byProfile map[string][]string,
@@ -247,6 +257,8 @@ func mergeProfileAndDeclaredLevels(
 	return appendDeclaredExtraLevels(bindings, seen, profiles, manifest)
 }
 
+// appendDeclaredExtraLevels appends any test levels declared in manifest.Release.TestLevels
+// that were not already bound by archetype profiles.
 func appendDeclaredExtraLevels(
 	bindings []resolvedLevelBinding,
 	seen map[string]bool,
@@ -274,6 +286,8 @@ func appendDeclaredExtraLevels(
 	return bindings
 }
 
+// buildLevelBinding constructs a resolvedLevelBinding for profile and level using default
+// specifications overlaid with any custom manifest configuration.
 func buildLevelBinding(profile, level string, manifest *config.Manifest) resolvedLevelBinding {
 	defSpec, defRuns, defJobs := defaultLevelSpec(level)
 	if manifest != nil && manifest.Release != nil {
@@ -295,6 +309,8 @@ func buildLevelBinding(profile, level string, manifest *config.Manifest) resolve
 	}
 }
 
+// defaultLevelSpec returns the default ReleaseTestLevelSpec, runner patterns, and job names
+// for standard test levels such as unit, integration, and e2e.
 func defaultLevelSpec(level string) (config.ReleaseTestLevelSpec, []string, []string) {
 	switch level {
 	case "unit":
@@ -324,6 +340,8 @@ func defaultLevelSpec(level string) (config.ReleaseTestLevelSpec, []string, []st
 	}
 }
 
+// defaultSpecializedLevelSpec returns default specifications, runner commands, and job names
+// for specialized test levels like load_soak, recovery_restore, a11y, and smoke.
 func defaultSpecializedLevelSpec(level string) (config.ReleaseTestLevelSpec, []string, []string) {
 	switch level {
 	case "load_soak":
@@ -361,6 +379,8 @@ func defaultSpecializedLevelSpec(level string) (config.ReleaseTestLevelSpec, []s
 	}
 }
 
+// evaluateLevelBindings checks each resolved test level binding against tracked repository files,
+// workflow job steps, and live run health, returning a populated TestLevelsReport.
 func evaluateLevelBindings(
 	ctx context.Context,
 	repoPath string,
@@ -472,6 +492,8 @@ func isDirectoryGlob(glob string) bool {
 	return strings.HasSuffix(glob, "/**") || strings.HasSuffix(glob, "/*") || strings.HasSuffix(glob, "/")
 }
 
+// anyFileMatchesPattern reports whether any file in relPaths contains content matching the
+// given regular expression pattern.
 func anyFileMatchesPattern(ctx context.Context, repoPath string, relPaths []string, pattern string) bool {
 	re, err := regexp.Compile(pattern)
 	if err != nil {
@@ -489,6 +511,8 @@ func anyFileMatchesPattern(ctx context.Context, repoPath string, relPaths []stri
 	return false
 }
 
+// findRunnableWorkflowForLevel inspects workflows to locate a runnable workflow file executing
+// the specified test level binding, returning the workflow filename and whether one was found.
 func findRunnableWorkflowForLevel(
 	b resolvedLevelBinding,
 	workflows []parsedWorkflowFile,
@@ -503,6 +527,8 @@ func findRunnableWorkflowForLevel(
 	return "", false
 }
 
+// workflowRunsLevel reports whether any runnable job in workflow wf satisfies the execution
+// criteria for test level binding b.
 func workflowRunsLevel(b resolvedLevelBinding, wf ghworkflow.Spec, auxScripts string) bool {
 	if len(wf.Jobs) == 0 {
 		return false
@@ -525,6 +551,8 @@ func workflowRunsLevel(b resolvedLevelBinding, wf ghworkflow.Spec, auxScripts st
 	return false
 }
 
+// jobMatchesLevel reports whether workflow job satisfies the job name or run step requirements
+// for test level binding b.
 func jobMatchesLevel(b resolvedLevelBinding, jobID string, job ghworkflow.Job, auxScripts string) bool {
 	jobMatch := matchesJobName(jobID, job.Name, b.Spec.Job, b.DefaultJobs)
 	if b.Spec.Job != "" && !jobMatch {
@@ -548,6 +576,8 @@ func jobMatchesLevel(b resolvedLevelBinding, jobID string, job ghworkflow.Job, a
 	return jobMatch
 }
 
+// matchesJobName reports whether jobID or jobName matches the explicit job target or any of
+// the default job name keywords.
 func matchesJobName(jobID, jobName, explicit string, defaults []string) bool {
 	idLower := strings.ToLower(strings.TrimSpace(jobID))
 	nameLower := strings.ToLower(strings.TrimSpace(jobName))
@@ -565,6 +595,8 @@ func matchesJobName(jobID, jobName, explicit string, defaults []string) bool {
 	return false
 }
 
+// runnableStepsText concatenates runnable step commands and uses clauses from job, appending
+// auxiliary scripts when build tool runners are invoked.
 func runnableStepsText(job ghworkflow.Job, auxScripts string) string {
 	var b strings.Builder
 	for i := 0; i < len(job.Steps) && i < 64; i++ {
@@ -591,6 +623,8 @@ func runnableStepsText(job ghworkflow.Job, auxScripts string) string {
 	return b.String()
 }
 
+// invokesAuxBuildRunner reports whether the concatenated steps text invokes common build tools
+// like make or npm package managers.
 func invokesAuxBuildRunner(stepsText string) bool {
 	for _, runner := range []string{"make", "npm ", "pnpm ", "yarn ", "bun "} {
 		if strings.Contains(stepsText, runner) {
@@ -600,6 +634,7 @@ func invokesAuxBuildRunner(stepsText string) bool {
 	return false
 }
 
+// advisoryContinueOnError reports whether raw continue-on-error YAML expressions evaluate to true.
 func advisoryContinueOnError(raw string) bool {
 	trimmed := strings.ToLower(strings.TrimSpace(raw))
 	return trimmed == "true" || strings.Contains(trimmed, "true")
@@ -711,10 +746,13 @@ func isContextDone(ctx context.Context, err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || (ctx != nil && ctx.Err() != nil)
 }
 
+// isYAMLFilename reports whether name has a .yml or .yaml file extension.
 func isYAMLFilename(name string) bool {
 	return strings.HasSuffix(name, ".yml") || strings.HasSuffix(name, ".yaml")
 }
 
+// loadAuxBuildScripts reads auxiliary build configuration files such as Makefile and package.json
+// from repoPath into a concatenated string.
 func loadAuxBuildScripts(ctx context.Context, repoPath string) string {
 	var b strings.Builder
 	for _, name := range []string{"Makefile", "package.json"} {
@@ -727,6 +765,8 @@ func loadAuxBuildScripts(ctx context.Context, repoPath string) string {
 	return b.String()
 }
 
+// listRepositoryFiles returns a list of tracked git files in repoPath, or falls back to a bounded
+// filesystem directory walk when no git repository is present.
 func listRepositoryFiles(ctx context.Context, repoPath string) ([]string, error) {
 	if !util.PathExists(filepath.Join(repoPath, ".git")) {
 		return walkRepositoryFilesBounded(repoPath)
@@ -738,6 +778,8 @@ func listRepositoryFiles(ctx context.Context, repoPath string) ([]string, error)
 	return filterExistingGitFiles(repoPath, string(res.Stdout))
 }
 
+// filterExistingGitFiles parses raw git ls-files output and returns regular files that exist
+// on the local filesystem.
 func filterExistingGitFiles(repoPath, gitOut string) ([]string, error) {
 	trimmed := strings.TrimSpace(gitOut)
 	if trimmed == "" {
@@ -761,6 +803,8 @@ func filterExistingGitFiles(repoPath, gitOut string) ([]string, error) {
 	return files, nil
 }
 
+// walkRepositoryFilesBounded performs a bounded filesystem walk of repoPath, skipping ignored
+// directories and returning relative paths to regular files.
 func walkRepositoryFilesBounded(repoPath string) ([]string, error) {
 	var files []string
 	err := filepath.WalkDir(repoPath, func(path string, d fs.DirEntry, walkErr error) error {
@@ -816,6 +860,8 @@ func checkLiveWorkflowHealth(
 	return LiveRunHealthVerified, byFile
 }
 
+// loadBaselinedLevelAnchors loads infractions from baselinePath and returns a set of all
+// baselined release test level anchors.
 func loadBaselinedLevelAnchors(repoPath, baselinePath string) (map[string]bool, error) {
 	if baselinePath == "" {
 		baselinePath = filepath.Join(repoPath, ".standards-baseline.json")
@@ -834,6 +880,8 @@ func loadBaselinedLevelAnchors(repoPath, baselinePath string) (map[string]bool, 
 	return anchors, nil
 }
 
+// isLevelAnchorBaselined reports whether the test level anchor for profile and level is present
+// in the baselined anchors map under any active profile.
 func isLevelAnchorBaselined(profile, level string, profiles []string, anchors map[string]bool) bool {
 	if anchors[fmt.Sprintf("level:%s:%s", profile, level)] {
 		return true
@@ -846,6 +894,8 @@ func isLevelAnchorBaselined(profile, level string, profiles []string, anchors ma
 	return false
 }
 
+// finalizeTestLevelsReport sets final status and detail strings on report based on unbaselined
+// findings, live health checks, and baselined infractions.
 func finalizeTestLevelsReport(report TestLevelsReport) (TestLevelsReport, error) {
 	var unbaselined []string
 	baselinedCount := 0

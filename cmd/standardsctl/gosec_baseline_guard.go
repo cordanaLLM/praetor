@@ -24,6 +24,8 @@ func gosecDefaultBaseline(ctx context.Context, root string) (*baseline.Baseline,
 	return defaultBranchBaseline(ctx, root, gating.GosecBaselineFile, nil)
 }
 
+// defaultBranchBaseline reads and parses the committed baseline file from the repository's
+// default branch, falling back to the supplied fallback baseline if uncommitted or absent.
 func defaultBranchBaseline(ctx context.Context, root, file string, fallback *baseline.Baseline) (*baseline.Baseline, error) {
 	if fallback != nil && !gitHasCommits(ctx, root) {
 		return fallback, nil
@@ -48,6 +50,8 @@ func defaultBranchBaseline(ctx context.Context, root, file string, fallback *bas
 	return &baseline.Baseline{Absent: true}, nil
 }
 
+// readCommittedBaseline reads the baseline file from the specified git commit tree in root
+// and validates its baseline class, returning an absent baseline if the file does not exist.
 func readCommittedBaseline(ctx context.Context, root, commit, file string) (*baseline.Baseline, error) {
 	top, err := gitTopLevel(ctx, root)
 	if err != nil {
@@ -88,6 +92,8 @@ func guardedGosecRecord(ctx context.Context, root string, previous *baseline.Bas
 	return next, nil
 }
 
+// parseClassBaseline decodes raw JSON baseline data and validates that its declared class
+// matches the expected baseline class for the given filename.
 func parseClassBaseline(file string, data []byte) (*baseline.Baseline, error) {
 	b, err := baseline.ParseBaseline(data)
 	if err != nil {

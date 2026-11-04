@@ -199,6 +199,8 @@ func (s *adoptSession) reconcileReleaseTestLevelsBaseline(
 	return s.recordInitialReleaseTestLevelGaps(ctx, full, snap, infractions)
 }
 
+// loadLatestReleaseBaseline loads the existing baseline from disk if available outside dry runs,
+// returning fallback when the baseline file is missing or unreadable.
 func (s *adoptSession) loadLatestReleaseBaseline(full string, fallback *baseline.Baseline) *baseline.Baseline {
 	if !s.opts.DryRun {
 		if disk, err := baseline.LoadBaseline(full); err == nil && !disk.Absent {
@@ -208,6 +210,8 @@ func (s *adoptSession) loadLatestReleaseBaseline(full string, fallback *baseline
 	return fallback
 }
 
+// hasReleaseTestLevelBaselineEntries reports whether any infraction in infractions matches
+// the release test level rule identifier.
 func hasReleaseTestLevelBaselineEntries(infractions []baseline.Infraction) bool {
 	for i := 0; i < len(infractions); i++ {
 		if infractions[i].RuleID == baseline.ReleaseTestLevelRuleID {
@@ -217,6 +221,8 @@ func hasReleaseTestLevelBaselineEntries(infractions []baseline.Infraction) bool 
 	return false
 }
 
+// scanInitialReleaseTestLevelGaps audits release test levels in the repository and converts any
+// detected findings into baseline infractions for initial baseline recording.
 func (s *adoptSession) scanInitialReleaseTestLevelGaps(
 	ctx context.Context,
 	baselinePath string,
@@ -234,6 +240,8 @@ func (s *adoptSession) scanInitialReleaseTestLevelGaps(
 	return release.TestLevelInfractions(report.Findings), nil
 }
 
+// recordInitialReleaseTestLevelGaps persists initial release test level infractions into the
+// baseline snapshot at full, updating adoption reports and ratchet metadata.
 func (s *adoptSession) recordInitialReleaseTestLevelGaps(
 	ctx context.Context,
 	full string,

@@ -250,6 +250,8 @@ func TestServerAuditRunsTheReleaseTokenGate(t *testing.T) {
 		"[PASS] Release token: 1 release-please step takes token from a GitHub App token step.")
 }
 
+// TestReleaseE2EAuditGates_MissingSectionSkips proves that releaseE2EAuditGates emits a skip
+// gate when release.e2e is omitted, and includes test level warnings when profiles are declared.
 func TestReleaseE2EAuditGates_MissingSectionSkips(t *testing.T) {
 	gates := releaseE2EAuditGates(t.TempDir(), &config.Manifest{})
 	if len(gates) != 1 {
