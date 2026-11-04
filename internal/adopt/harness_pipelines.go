@@ -165,9 +165,11 @@ func (s *adoptSession) workingTreeVerifyAll(ctx context.Context) (bool, error) {
 	return makefileHasVerifyAll(data), nil
 }
 
-// makefileHasVerifyAll reports whether the Makefile content defines an active verify-all target.
+// makefileHasVerifyAll reports whether the Makefile content defines an active verify-all target,
+// ignoring unavailable verification placeholders in recipes belonging to other targets.
 func makefileHasVerifyAll(data []byte) bool {
 	text, _ := util.NormalizeLineEndings(string(data))
 	text = withoutDocumentationMakefileBlock(text)
-	return mayDefineVerificationTarget(text) && !strings.Contains(text, unavailableVerificationRecipe)
+	recipe, _ := util.MakefileTargetRecipe(text, verificationTarget)
+	return mayDefineVerificationTarget(text) && !strings.Contains(recipe, unavailableVerificationRecipe)
 }
