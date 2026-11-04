@@ -56,6 +56,9 @@ const LOADER_URI = `${PLAYER_URI}/loader.js`;
 const PLAYER_ARCHIVE = 'figures-player.tar.gz';
 const CANONICAL_REPOSITORY = 'cordanaLLM/praetor';
 const TRUSTED_RELEASE_ORIGIN = 'https://github.com';
+/** Same release-host policy as mkdocs_hook.py's TRUSTED_REDIRECT_HOSTS (ADR-0021). */
+const TRUSTED_RELEASE_HOSTS = Object.freeze(['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com']);
+const MAX_RELEASE_REDIRECTS = 3;
 const EXTRACTED_DIRS_SYMBOL = Symbol.for('praetor.figures.extractedPlayerDirs');
 const REPOSITORY_SLUG = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const RELEASE_SEGMENT = /^[A-Za-z0-9_.-]+$/;
@@ -327,14 +330,40 @@ async function readBoundedResponse(response, url) {
   }
 }
 
-/** Downloads the player archive from the trusted release origin. */
+/** Validates a redirect before URL parsing can normalize unsafe path segments away. */
+function releaseRedirectUrl(location, from) {
+  try {
+    const match = /^https:\/\/([^/?#]+)(\/[^?#]*)(?:\?[^#]*)?$/.exec(location ?? '');
+    if (!match || !TRUSTED_RELEASE_HOSTS.includes(match[1]) || /[\s\\]/u.test(location)) {
+      throw new Error('expected HTTPS on an allowed release host without a port, credentials or fragment');
+    }
+    const parts = decodeURIComponent(match[2]).slice(1).split('/');
+    if (parts.some((part) => !part || part === '.' || part === '..' || part.includes('\\'))) {
+      throw new Error('unsafe release path segment');
+    }
+    return location;
+  } catch (error) {
+    throw new CheckError(`refused player archive redirect from ${JSON.stringify(from)} to ${JSON.stringify(location)}: ${error.message}`, { cause: error });
+  }
+}
+
+/** Downloads under one timeout, following only bounded, validated release redirects. */
 async function downloadPlayerArchive(url) {
   if (!url.startsWith(`${TRUSTED_RELEASE_ORIGIN}/`)) {
     throw new CheckError(`the player archive is fetched from ${TRUSTED_RELEASE_ORIGIN} only, not ${JSON.stringify(url)}`);
   }
-  const response = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return readBoundedResponse(response, url);
+  const signal = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
+  for (let hop = 0; hop <= MAX_RELEASE_REDIRECTS; hop++) {
+    const response = await fetch(url, { signal, redirect: 'manual' });
+    if (![301, 302, 303, 307, 308].includes(response.status)) {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return readBoundedResponse(response, url);
+    }
+    await response.body?.cancel?.();
+    const next = releaseRedirectUrl(response.headers.get('location'), url);
+    if (hop === MAX_RELEASE_REDIRECTS) throw new CheckError(`player archive redirect limit ${MAX_RELEASE_REDIRECTS} exceeded at ${JSON.stringify(next)}`);
+    url = next;
+  }
 }
 
 /** Verifies the downloaded archive matches the expected SHA-256 digest. */

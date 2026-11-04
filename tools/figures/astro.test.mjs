@@ -567,6 +567,125 @@ test('downloadPlayerArchive requires bounded streaming and accepts the exact dow
   }
 }));
 
+/** Runs the adopted downloader against a fetch stub and a correctly locked player archive. */
+async function withRedirectDownload(dir, fetcher, check) {
+  const archive = buildTarGz([
+    { name: 'loader.js', body: '// loader\n' },
+    { name: 'player.js', body: '// player\n' },
+    { name: 'THIRD-PARTY-LICENSES.txt', body: 'MIT\n' },
+  ]);
+  const adoptedFigures = await adoptedFiguresModule(dir, {
+    asset: 'figures-player.tar.gz', sha256: sha256(archive), release: 'v1.4.0',
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (url, options) => fetcher(url, options, archive);
+  const setup = () => adoptedFigures({ root: dir }).hooks['astro:config:setup']({
+    config: {}, updateConfig: () => {}, injectScript: () => {},
+  });
+  try {
+    await check(setup);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+test('downloadPlayerArchive follows allowed release redirects under one timeout and checks the digest', () => withTempDir(async (dir) => {
+  const urls = [releaseArchiveUrl({}, 'v1.4.0', 'figures-player.tar.gz'),
+    'https://github.com/adopter/fork/releases/download/v1/asset',
+    'https://objects.githubusercontent.com/assets/archive',
+    'https://release-assets.githubusercontent.com/assets/archive?signature=signed'];
+  const requested = [];
+  let signal;
+  let corrupt = false;
+  /** Returns manual redirects through each allowed host, then archive bytes. */
+  const fetcher = async (url, options, archive) => {
+    assert.equal(options.redirect, 'manual');
+    signal ??= options.signal;
+    assert.equal(options.signal, signal, 'one AbortSignal across all redirect hops');
+    requested.push(url);
+    const hop = urls.indexOf(url);
+    assert.notEqual(hop, -1);
+    return hop < urls.length - 1
+      ? new Response(null, { status: 302, headers: { location: urls[hop + 1] } })
+      : new Response(corrupt ? Buffer.from('tampered') : archive);
+  };
+  await withRedirectDownload(dir, fetcher, async (setup) => {
+    await setup();
+    assert.deepEqual(requested, urls, 'three redirects reach the boundary successfully');
+    requested.length = 0;
+    signal = undefined;
+    corrupt = true;
+    await assert.rejects(setup, /SHA-256 mismatch/);
+    assert.deepEqual(requested, urls);
+  });
+}));
+
+const refusedRedirects = [
+  ['off-host', 'https://evil.example/assets/archive'],
+  ['host suffix', 'https://github.com.evil.example/assets/archive'],
+  ['http', 'http://github.com/assets/archive'],
+  ['credentials', 'https://user:password@github.com/assets/archive'],
+  ['empty credentials', 'https://@github.com/assets/archive'],
+  ['parent segment', 'https://github.com/assets/../archive'],
+  ['encoded parent segment', 'https://github.com/assets/%2e%2e/archive'],
+  ['dot segment', 'https://github.com/assets/./archive'],
+  ['empty segment', 'https://github.com/assets//archive'],
+  ['empty path', 'https://github.com'],
+  ['port', 'https://github.com:8443/assets/archive'],
+  ['default port', 'https://github.com:443/assets/archive'],
+  ['fragment', 'https://github.com/assets/archive#fragment'],
+  ['empty fragment', 'https://github.com/assets/archive#'],
+  ['backslash', 'https://github.com/assets\\archive'],
+  ['malformed escape', 'https://github.com/assets/%'],
+  ['empty location', ''],
+  ['missing location', null],
+];
+for (const [name, location] of refusedRedirects) {
+  test(`downloadPlayerArchive refuses ${name} redirect naming the URL`, () => withTempDir(async (dir) => {
+    const requested = [];
+    /** Simulates fetch's automatic follow unless the downloader explicitly requests manual mode. */
+    const fetcher = async (url, options, archive) => {
+      requested.push(url);
+      if (options.redirect !== 'manual') {
+        requested.push(location);
+        return new Response(archive);
+      }
+      const headers = location === null ? {} : { location };
+      return new Response(null, { status: 302, headers });
+    };
+    await withRedirectDownload(dir, fetcher, async (setup) => {
+      await assert.rejects(setup, (error) => {
+        assert.equal(error.constructor.name, 'CheckError');
+        assert.ok(error.message.includes(JSON.stringify(location)), error.message);
+        assert.match(error.message, /refused player archive redirect/);
+        return true;
+      });
+      assert.equal(requested.length, 1, 'refused target is never requested');
+    });
+  }));
+}
+
+test('downloadPlayerArchive refuses a redirect chain past the bound naming the URL', () => withTempDir(async (dir) => {
+  const requested = [];
+  /** Keeps redirecting without making any network request. */
+  const fetcher = async (url, options) => {
+    assert.equal(options.redirect, 'manual');
+    requested.push(url);
+    return new Response(null, { status: 307, headers: {
+      location: `https://release-assets.githubusercontent.com/assets/hop-${requested.length}`,
+    } });
+  };
+  await withRedirectDownload(dir, fetcher, async (setup) => {
+    await assert.rejects(setup, (error) => {
+      assert.equal(error.constructor.name, 'CheckError');
+      assert.match(error.message, /redirect limit 3 exceeded/);
+      assert.ok(error.message.includes('https://release-assets.githubusercontent.com/assets/hop-4'));
+      return true;
+    });
+    assert.equal(requested.length, 4, 'initial request plus at most three followed redirects');
+  });
+}));
+
 test('an adopted integration with a released player.lock.json injects the loader and publishes the locked player', () => withTempDir(async (dir) => {
   const archive = buildTarGz([
     { name: 'loader.js', body: '// locked loader\n' },
