@@ -416,7 +416,8 @@ func TestReviewHoldRendering(t *testing.T) {
 	assertAggregateReviewHold(t, spec.Jobs["windows"])
 	wantRelease := RenderReviewHoldReleaseWorkflow()
 	if os.Getenv(updateReviewHoldWorkflowEnv) == "1" {
-		if err := os.WriteFile("../../.github/workflows/review-hold-release.yml", []byte(wantRelease), 0o644); err != nil {
+		// os.WriteFile keeps the mode of an existing file (the tracked workflow), and git records only the executable bit, so 0600 changes nothing in the tree.
+		if err := os.WriteFile("../../.github/workflows/review-hold-release.yml", []byte(wantRelease), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
