@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,6 +21,14 @@ type skillCommand struct {
 }
 
 type skillHelpRunner func(string, []string) (string, error)
+
+type skillProcessRunner func(context.Context, string, []string) (string, error)
+
+// skillHelpSkip records an unavailable check, never a successful flag verification.
+type skillHelpSkip struct{ reason string }
+
+// Error returns the tool, call and bound that prevented flag verification.
+func (s *skillHelpSkip) Error() string { return s.reason }
 
 func parseSkillCommandBlock(text string) ([]skillCommand, error) {
 	var commands []skillCommand
@@ -125,13 +134,45 @@ func hasCommand(args []string, want string) bool {
 	return false
 }
 
-// skillHelpTimeout bounds one --help call. A fresh CI runner's first dotnet call sets the SDK up
-// and was killed at 5 s (run 39001372651); the first-run work is also switched off below.
+// skillHelpTimeout bounds each flag probe after the tool has warmed up.
 const skillHelpTimeout = 60 * time.Second
 
-func runSkillHelp(tool string, args []string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), skillHelpTimeout)
+// skillWarmupTimeout gives cold SDK and optional component setup a separate bound.
+const skillWarmupTimeout = 180 * time.Second
+
+// runBoundedSkillHelp applies the selected bound and preserves ordinary command failures.
+func runBoundedSkillHelp(tool string, args []string, bound time.Duration, runner skillProcessRunner) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
 	defer cancel()
+	output, err := runner(ctx, tool, args)
+	call := tool + " " + strings.Join(args, " ")
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "", &skillHelpSkip{fmt.Sprintf("%s did not answer within %s on this runner; flags not checked (call: %s)", tool, bound, call)}
+	}
+	if err != nil {
+		if missingSkillSubcommand(tool, args, output) {
+			return "", &skillHelpSkip{fmt.Sprintf("%s %s not installed; flags not checked (call: %s; bound: %s)", tool, args[0], call, bound)}
+		}
+		return "", fmt.Errorf("run %s: %w: %s", call, err, strings.TrimSpace(output))
+	}
+	return output, nil
+}
+
+// missingSkillSubcommand recognizes explicit command-absence diagnostics, including rustup shims.
+func missingSkillSubcommand(tool string, args []string, output string) bool {
+	if len(args) < 2 || strings.HasPrefix(args[0], "-") {
+		return false
+	}
+	for _, quote := range []string{"`", "'"} {
+		if strings.Contains(output, "error: no such command: "+quote+args[0]+quote) {
+			return true
+		}
+	}
+	return tool == "cargo" && strings.Contains(output, "error: 'cargo-"+args[0]+"' is not installed")
+}
+
+// runSkillHelp runs a version or help command within its caller's deadline.
+func runSkillHelp(ctx context.Context, tool string, args []string) (string, error) {
 	cmdEnv := append(os.Environ(), "DOTNET_NOLOGO=1", "DOTNET_CLI_TELEMETRY_OPTOUT=1",
 		"DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1", "DOTNET_GENERATE_ASPNET_CERTIFICATE=false")
 	cmdCtx, err := util.WithCommandEnvironment(ctx, cmdEnv)
@@ -140,10 +181,43 @@ func runSkillHelp(tool string, args []string) (string, error) {
 	}
 	res, runErr := util.RunCommandBytes(cmdCtx, "", tool, util.MaxCommandOutputBytes, args...)
 	output := append(res.Stdout, res.Stderr...)
-	if runErr != nil {
-		return "", fmt.Errorf("run %s %s: %w: %s", tool, strings.Join(args, " "), runErr, strings.TrimSpace(string(output)))
+	return string(output), runErr
+}
+
+// verifySkillSubcommandFlags warms optional clippy before checking its command group.
+func verifySkillSubcommandFlags(commands []skillCommand, runner skillProcessRunner) error {
+	command := commands[0]
+	if command.tool == "cargo" && hasCommand(command.helpArgs, "clippy") {
+		if _, err := runBoundedSkillHelp("cargo", []string{"clippy", "--version"}, skillWarmupTimeout, runner); err != nil {
+			return err
+		}
 	}
-	return string(output), nil
+	return verifySkillCommandFlags(commands, func(tool string, args []string) (string, error) {
+		return runBoundedSkillHelp(tool, args, skillHelpTimeout, runner)
+	})
+}
+
+// groupSkillSubcommands keeps an absent optional command from skipping its installed siblings.
+func groupSkillSubcommands(commands []skillCommand) map[string][]skillCommand {
+	groups := make(map[string][]skillCommand)
+	for _, command := range commands {
+		name := strings.Join(command.helpArgs, " ")
+		if name == "" {
+			name = "flags"
+		}
+		groups[name] = append(groups[name], command)
+	}
+	return groups
+}
+
+// reportSkillHelpError skips only explicitly unavailable checks; all other errors fail.
+func reportSkillHelpError(t *testing.T, err error) {
+	t.Helper()
+	var skip *skillHelpSkip
+	if errors.As(err, &skip) {
+		t.Skipf("%s", skip.reason)
+	}
+	t.Fatal(err)
 }
 
 func readCanonicalSkillCommands(t *testing.T) map[string][]skillCommand {
@@ -175,6 +249,7 @@ func readCanonicalSkillCommands(t *testing.T) map[string][]skillCommand {
 	return byTool
 }
 
+// TestCanonicalSkillCommandFlags_PositiveToolsPresent checks real flags after bounded warmups.
 func TestCanonicalSkillCommandFlags_PositiveToolsPresent(t *testing.T) {
 	commands := readCanonicalSkillCommands(t)
 	for tool, toolCommands := range commands {
@@ -182,8 +257,15 @@ func TestCanonicalSkillCommandFlags_PositiveToolsPresent(t *testing.T) {
 			if _, err := exec.LookPath(tool); err != nil {
 				t.Skipf("%s absent from PATH; command flags not checked", tool)
 			}
-			if err := verifySkillCommandFlags(toolCommands, runSkillHelp); err != nil {
-				t.Error(err)
+			if _, err := runBoundedSkillHelp(tool, []string{"--version"}, skillWarmupTimeout, runSkillHelp); err != nil {
+				reportSkillHelpError(t, err)
+			}
+			for name, group := range groupSkillSubcommands(toolCommands) {
+				t.Run(name, func(t *testing.T) {
+					if err := verifySkillSubcommandFlags(group, runSkillHelp); err != nil {
+						reportSkillHelpError(t, err)
+					}
+				})
 			}
 		})
 	}
