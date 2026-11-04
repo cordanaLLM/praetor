@@ -554,7 +554,7 @@ func TestReadPullRequestsByHead_GitHub_TokenOnlyToGitHubHTTPS(t *testing.T) {
 	}
 }
 
-// TestListPullRequestsByHead_Planted_ServerIgnoresHeadAndForkFiltered verifies each first
+// TestListPullRequestsByHead_Planted_ServerIgnoresHeadAndForkFiltered verifies each
 // page is filtered to the pushed repository and branch when the forge ignores head.
 func TestListPullRequestsByHead_Planted_ServerIgnoresHeadAndForkFiltered(t *testing.T) {
 	mergedPR := func(num int, ref, label, fullName, owner string) map[string]any {
@@ -569,6 +569,10 @@ func TestListPullRequestsByHead_Planted_ServerIgnoresHeadAndForkFiltered(t *test
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("state") == "closed" {
 			writeRulesetJSON(w, http.StatusOK, []map[string]any{mergedPR(91, "topic", "acme:topic", "acme/widgets", "acme")})
+			return
+		}
+		if r.URL.Query().Get("page") != "1" {
+			writeRulesetJSON(w, http.StatusOK, []map[string]any{})
 			return
 		}
 		page1 := []map[string]any{
@@ -607,8 +611,8 @@ func TestListPullRequestsByHead_Planted_ServerIgnoresHeadAndForkFiltered(t *test
 	}
 }
 
-// TestListPullRequestsByHead_Planted_FullUnrelatedPage verifies full pages remain bounded
-// and unrelated pull requests cannot fabricate a terminal head match.
+// TestListPullRequestsByHead_Planted_FullUnrelatedPage verifies a full closed page ends
+// the lookup after open results end, without fabricating a terminal head match.
 func TestListPullRequestsByHead_Planted_FullUnrelatedPage(t *testing.T) {
 	fullPage := make([]map[string]any, HeadPullRequestsPerPage)
 	for i := range fullPage {
@@ -617,7 +621,11 @@ func TestListPullRequestsByHead_Planted_FullUnrelatedPage(t *testing.T) {
 			"head": map[string]any{"ref": "other-branch"},
 		}
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("state") == "open" {
+			writeRulesetJSON(w, http.StatusOK, []map[string]any{})
+			return
+		}
 		writeRulesetJSON(w, http.StatusOK, fullPage)
 	}))
 	defer srv.Close()

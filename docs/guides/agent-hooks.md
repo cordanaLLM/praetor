@@ -1208,10 +1208,14 @@ resolves the repository directory, remote (`util.ReadOriginRemote`, `util.ReadGi
 `util.ParseGitRemote`) and destination branches (`src:dst`, branch name, `HEAD` via
 `git symbolic-ref`, an omitted refspec and remote via `git rev-parse --symbolic-full-name @{push}`,
 or every local branch via bounded `git for-each-ref refs/heads` for `--all` / `--branches`),
-reads up to `forge.HeadPullRequestsMaxPages` bounded pages of pull requests for each head branch
-on GitHub or Forgejo (filtering client-side to the pushed repository and branch and failing
-closed at the page ceiling), and refuses when a `MERGED` or `CLOSED` pull request heads a
-destination branch and no `OPEN` one does, or when target/forge resolution fails
+reads open pull requests first on GitHub or Forgejo, filtering each page to the pushed
+repository and branch. A matching `OPEN` pull request admits immediately; otherwise the
+lookup follows full open pages up to `forge.HeadPullRequestsMaxPages = 5` pages of
+`forge.HeadPullRequestsPerPage = 20` items. A full final open page without a match fails
+closed. Only after open results end on a short page does the lookup query one newest-first
+closed page; a full closed page does not trigger more paging or a ceiling refusal. The hook
+refuses when a `MERGED` or `CLOSED` pull request heads a destination branch and no `OPEN`
+one does, or when target/forge resolution fails
 ([merged and closed pull request heads](admission.md#merged-and-closed-pull-request-heads)).
 
 When resolving push targets, the repository manifest (`.standards.yaml`) is read through the

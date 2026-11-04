@@ -1005,7 +1005,7 @@ const (
 	// HeadPullRequestsPerPage bounds each page of the pull request head lookup used by
 	// git-push admission (HISS-02).
 	HeadPullRequestsPerPage = 20
-	// HeadPullRequestsMaxPages bounds how many pages of pull requests a head lookup scans
+	// HeadPullRequestsMaxPages bounds how many open pages a head lookup scans
 	// before failing closed (HISS-02).
 	HeadPullRequestsMaxPages = 5
 	// MaxHeadPullRequests bounds the total pull requests examined across all pages of a
@@ -1140,29 +1140,44 @@ func headRepoOwner(headRepo *ghPullHeadRepo) string {
 	return strings.TrimSpace(headRepo.Owner.Username)
 }
 
-// collectHeadPullRequests queries open pulls first, then one newest-first terminal page.
-// Both pages are filtered to the target head; any matching OPEN pull ends the lookup.
-func collectHeadPullRequests(owner, repo, branch string, fetchPage func(state string) ([]byte, error)) ([]PullRequestHead, error) {
-	states := [...]string{"open", "closed"}
-	for i := 0; i < len(states); i++ {
-		body, err := fetchPage(states[i])
+// collectHeadPullRequests exhausts bounded open pages before one newest-first closed page.
+// Each page is filtered to the target head; any matching OPEN pull ends the lookup.
+func collectHeadPullRequests(owner, repo, branch string, fetchPage func(state string, page int) ([]byte, error)) ([]PullRequestHead, error) {
+	heads, err := collectOpenHeadPullRequests(owner, repo, branch, fetchPage)
+	if err != nil || len(heads) > 0 {
+		return heads, err
+	}
+	body, err := fetchPage("closed", 1)
+	if err != nil {
+		return nil, err
+	}
+	heads, _, err = parseHeadPullRequestsPage(body, owner, repo, branch)
+	return heads, err
+}
+
+// collectOpenHeadPullRequests walks open pages up to HeadPullRequestsMaxPages, stopping
+// at a matching OPEN pull or a short raw page and failing closed at a full-page ceiling.
+func collectOpenHeadPullRequests(owner, repo, branch string, fetchPage func(state string, page int) ([]byte, error)) ([]PullRequestHead, error) {
+	for page := 1; page <= HeadPullRequestsMaxPages; page++ {
+		body, err := fetchPage("open", page)
 		if err != nil {
 			return nil, err
 		}
-		heads, _, err := parseHeadPullRequestsPage(body, owner, repo, branch)
+		heads, rawCount, err := parseHeadPullRequestsPage(body, owner, repo, branch)
 		if err != nil {
 			return nil, err
-		}
-		if states[i] == "closed" {
-			return heads, nil
 		}
 		for j := 0; j < len(heads) && j < HeadPullRequestsPerPage; j++ {
 			if heads[j].State == PullRequestStateOpen {
 				return heads, nil
 			}
 		}
+		if rawCount < HeadPullRequestsPerPage {
+			return nil, nil
+		}
 	}
-	return nil, nil
+	return nil, fmt.Errorf("%w: open pull request head listing for %q exceeded %d pages of %d items",
+		errPageCeiling, branch, HeadPullRequestsMaxPages, HeadPullRequestsPerPage)
 }
 
 // pullRequestHeadState normalizes the state of a pull request into OPEN, MERGED, or CLOSED.
@@ -1176,8 +1191,8 @@ func pullRequestHeadState(item ghPullRaw) string {
 	return PullRequestStateClosed
 }
 
-// ListPullRequestsByHead queries one open page for branch, then (only without a matching
-// OPEN pull) one closed page ordered newest first, filtering to the target repository.
+// ListPullRequestsByHead queries bounded open pages for branch, then (only after open
+// results end without a match) one newest-first closed page, filtering to the repository.
 func (g *GitHubDriver) ListPullRequestsByHead(ctx context.Context, branch string) ([]PullRequestHead, error) {
 	if ctx == nil {
 		return nil, errors.New("list pull requests by head: context cannot be nil")
@@ -1192,9 +1207,9 @@ func (g *GitHubDriver) ListPullRequestsByHead(ctx context.Context, branch string
 	}
 	ctx, cancel := context.WithTimeout(ctx, defaultHTTPTimeout)
 	defer cancel()
-	return collectHeadPullRequests(owner, repo, branch, func(state string) ([]byte, error) {
-		path := fmt.Sprintf("/repos/%s/%s/pulls?state=%s&head=%s&sort=created&direction=desc&per_page=%d&page=1",
-			owner, repo, state, url.QueryEscape(owner+":"+branch), HeadPullRequestsPerPage)
+	return collectHeadPullRequests(owner, repo, branch, func(state string, page int) ([]byte, error) {
+		path := fmt.Sprintf("/repos/%s/%s/pulls?state=%s&head=%s&sort=created&direction=desc&per_page=%d&page=%d",
+			owner, repo, state, url.QueryEscape(owner+":"+branch), HeadPullRequestsPerPage, page)
 		return g.fetchHeadPullsPage(ctx, branch, path)
 	})
 }
