@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,6 +20,9 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
+
+// updateReviewHoldWorkflowEnv rewrites the release workflow from its renderer.
+const updateReviewHoldWorkflowEnv = "PRAETOR_UPDATE_REVIEW_HOLD_WORKFLOW"
 
 // TestReviewHoldOpenThreadPlanted requires a review barrier before the heavy work can proceed.
 func TestReviewHoldOpenThreadPlanted(t *testing.T) {
@@ -409,11 +414,17 @@ func TestReviewHoldRendering(t *testing.T) {
 		assertReviewJob(t, id, spec.Jobs[id])
 	}
 	assertAggregateReviewHold(t, spec.Jobs["windows"])
+	wantRelease := RenderReviewHoldReleaseWorkflow()
+	if os.Getenv(updateReviewHoldWorkflowEnv) == "1" {
+		if err := os.WriteFile("../../.github/workflows/review-hold-release.yml", []byte(wantRelease), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	release, err := os.ReadFile("../../.github/workflows/review-hold-release.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(release) != RenderReviewHoldReleaseWorkflow() {
+	if string(release) != wantRelease {
 		t.Fatal("release workflow differs from renderer")
 	}
 }
@@ -555,5 +566,252 @@ func TestReviewHoldReleaseIsolatesPRReadFailure(t *testing.T) {
 				t.Fatalf("reruns=%q err=%v; want only PR 2 released; %s", data, err, out)
 			}
 		})
+	}
+}
+
+// TestReviewHoldReleaseTriggersAndCondition verifies the release workflow declares
+// check_run and status triggers and restricts runs to canonical repo and configured bots.
+func TestReviewHoldReleaseTriggersAndCondition(t *testing.T) {
+	rendered := RenderReviewHoldReleaseWorkflow()
+	spec, err := Parse([]byte(rendered))
+	if err != nil {
+		t.Fatalf("parse rendered release workflow: %v", err)
+	}
+
+	var on struct {
+		CheckRun struct {
+			Types []string `yaml:"types"`
+		} `yaml:"check_run"`
+	}
+	if err := spec.On.Decode(&on); err != nil {
+		t.Fatalf("decode on node: %v", err)
+	}
+
+	hasCheckRun := false
+	hasStatus := false
+	for i := 0; i < len(spec.On.Content); i += 2 {
+		switch spec.On.Content[i].Value {
+		case "check_run":
+			hasCheckRun = true
+		case "status":
+			hasStatus = true
+		}
+	}
+
+	if !hasCheckRun {
+		t.Errorf("rendered release workflow missing 'check_run' trigger")
+	}
+	if !slices.Equal(on.CheckRun.Types, []string{"completed"}) {
+		t.Errorf("check_run types = %v, want [completed]", on.CheckRun.Types)
+	}
+	if !hasStatus {
+		t.Errorf("rendered release workflow missing 'status' trigger")
+	}
+
+	releaseJob, ok := spec.Jobs["release"]
+	if !ok {
+		t.Fatal("rendered release workflow missing 'release' job")
+	}
+	condition := releaseJob.If
+
+	if !strings.Contains(condition, "github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')") {
+		t.Errorf("release job if condition missing canonical repository guard: %q", condition)
+	}
+	if !strings.Contains(condition, "github.event_name != 'check_run'") {
+		t.Errorf("release job if condition missing check_run disjunction: %q", condition)
+	}
+	if !strings.Contains(condition, "github.event_name != 'status'") {
+		t.Errorf("release job if condition missing status disjunction: %q", condition)
+	}
+	if !strings.Contains(condition, "github.event.state != 'pending'") {
+		t.Errorf("release job if condition missing status pending check: %q", condition)
+	}
+
+	bots := strings.Split(ReviewHoldBots, "|")
+	for _, bot := range bots {
+		checkName := "contains(github.event.check_run.name, '" + bot + "')"
+		checkSlug := "contains(github.event.check_run.app.slug, '" + bot + "')"
+		statusContext := "contains(github.event.context, '" + bot + "')"
+		statusSender := "contains(github.event.sender.login, '" + bot + "')"
+
+		if !strings.Contains(condition, checkName) {
+			t.Errorf("condition missing check_run name match for bot %q", bot)
+		}
+		if !strings.Contains(condition, checkSlug) {
+			t.Errorf("condition missing check_run app slug match for bot %q", bot)
+		}
+		if !strings.Contains(condition, statusContext) {
+			t.Errorf("condition missing status context match for bot %q", bot)
+		}
+		if !strings.Contains(condition, statusSender) {
+			t.Errorf("condition missing status sender match for bot %q", bot)
+		}
+	}
+}
+
+// TestReviewHoldReleaseConditionAllowedFunctions rejects unsupported expression calls.
+func TestReviewHoldReleaseConditionAllowedFunctions(t *testing.T) {
+	spec, err := Parse([]byte(RenderReviewHoldReleaseWorkflow()))
+	if err != nil {
+		t.Fatalf("parse rendered release workflow: %v", err)
+	}
+	// https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#functions
+	allowed := []string{
+		"always", "cancelled", "case", "contains", "endsWith", "failure", "format",
+		"fromJSON", "hashFiles", "join", "startsWith", "success", "toJSON",
+	}
+	// Ignore quoted literals, including escaped single quotes, before finding calls.
+	literals := regexp.MustCompile(`'(?:[^']|'')*'`)
+	condition := literals.ReplaceAllString(spec.Jobs["release"].If, "''")
+	calls := regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+	matches := calls.FindAllStringSubmatch(condition, -1)
+	if len(matches) == 0 {
+		t.Fatal("rendered release condition contains no function calls")
+	}
+	for _, match := range matches {
+		if !slices.Contains(allowed, match[1]) {
+			t.Errorf("rendered release condition calls unsupported GitHub expression function %q", match[1])
+		}
+	}
+}
+
+// TestReviewHoldReleasePendingThenCompletedBot proves an in-progress bot check run
+// does not trigger a rerun, and completing that check run releases the held run.
+func TestReviewHoldReleasePendingThenCompletedBot(t *testing.T) {
+	dir := reviewFixtures(t)
+	pendingCheck := `{"check_runs":[{"name":"Codacy Static Code Analysis","status":"in_progress","app":{"slug":"codacy-production"}}]}`
+	writeReviewFixture(t, dir, "checks.json", pendingCheck)
+
+	out, err := runReviewScript(t, dir, reviewHoldReleaseScript)
+	if err != nil {
+		t.Fatalf("first run failed: %v\noutput: %s", err, out)
+	}
+	reruns, err := readReviewFixture(t, dir, "reruns")
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if len(reruns) > 0 {
+		t.Fatalf("unexpected rerun while bot pending: %q; output: %s", reruns, out)
+	}
+
+	completedCheck := `{"check_runs":[{"name":"Codacy Static Code Analysis","status":"completed","conclusion":"success","app":{"slug":"codacy-production"}}]}`
+	writeReviewFixture(t, dir, "checks.json", completedCheck)
+
+	out, err = runReviewScript(t, dir, reviewHoldReleaseScript)
+	if err != nil {
+		t.Fatalf("second run failed: %v\noutput: %s", err, out)
+	}
+	reruns, err = readReviewFixture(t, dir, "reruns")
+	if err != nil {
+		t.Fatalf("expected rerun file missing: %v", err)
+	}
+	if string(reruns) != "42\n" {
+		t.Fatalf("reruns = %q, want %q; output: %s", reruns, "42\n", out)
+	}
+}
+
+// TestReviewHoldReleaseJobConditionBoundary asserts that non-bot check runs and pending
+// commit statuses do not satisfy the rendered job condition structure.
+func TestReviewHoldReleaseJobConditionBoundary(t *testing.T) {
+	rendered := RenderReviewHoldReleaseWorkflow()
+	spec, err := Parse([]byte(rendered))
+	if err != nil {
+		t.Fatalf("parse rendered release workflow: %v", err)
+	}
+	condition := spec.Jobs["release"].If
+
+	var conjuncts []string
+	prefix := "github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') && "
+	if strings.HasPrefix(condition, prefix) {
+		conjuncts = append(conjuncts, "github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')")
+		rest := strings.TrimPrefix(condition, prefix)
+		sep := " && (github.event_name != 'status'"
+		idx := strings.Index(rest, sep)
+		if idx >= 0 {
+			conjuncts = append(conjuncts, rest[:idx])
+			conjuncts = append(conjuncts, rest[idx+4:])
+		}
+	}
+
+	if len(conjuncts) != 3 {
+		t.Fatalf("condition expected 3 top-level conjuncts, got %d in: %s", len(conjuncts), condition)
+	}
+
+	canonicalConjunct := conjuncts[0]
+	checkRunConjunct := conjuncts[1]
+	statusConjunct := conjuncts[2]
+
+	if canonicalConjunct != "github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')" {
+		t.Errorf("unexpected canonical conjunct: %s", canonicalConjunct)
+	}
+
+	if !strings.HasPrefix(checkRunConjunct, "(github.event_name != 'check_run' || (") || !strings.HasSuffix(checkRunConjunct, "))") {
+		t.Fatalf("malformed check_run conjunct: %s", checkRunConjunct)
+	}
+	checkRunBotTerms := strings.TrimPrefix(checkRunConjunct, "(github.event_name != 'check_run' || (")
+	checkRunBotTerms = strings.TrimSuffix(checkRunBotTerms, "))")
+
+	evalCheckRun := func(name, appSlug string) bool {
+		lowerName := strings.ToLower(name)
+		lowerSlug := strings.ToLower(appSlug)
+		for _, term := range strings.Split(checkRunBotTerms, " || ") {
+			for _, bot := range strings.Split(ReviewHoldBots, "|") {
+				if term == "contains(github.event.check_run.name, '"+bot+"')" && strings.Contains(lowerName, bot) {
+					return true
+				}
+				if term == "contains(github.event.check_run.app.slug, '"+bot+"')" && strings.Contains(lowerSlug, bot) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	if evalCheckRun("Unit Tests", "github-actions") {
+		t.Errorf("boundary check_run for non-bot app unexpectedly passed")
+	}
+	if evalCheckRun("Coverage", "codecov") {
+		t.Errorf("boundary check_run for non-bot app unexpectedly passed")
+	}
+	if !evalCheckRun("Codacy Static Code Analysis", "codacy-production") {
+		t.Errorf("expected review bot check_run to pass")
+	}
+
+	if !strings.HasPrefix(statusConjunct, "(github.event_name != 'status' || (github.event.state != 'pending' && (") || !strings.HasSuffix(statusConjunct, ")))") {
+		t.Fatalf("malformed status conjunct: %s", statusConjunct)
+	}
+	statusBotTerms := strings.TrimPrefix(statusConjunct, "(github.event_name != 'status' || (github.event.state != 'pending' && (")
+	statusBotTerms = strings.TrimSuffix(statusBotTerms, ")))")
+
+	evalStatus := func(state, context, sender string) bool {
+		if state == "pending" {
+			return false
+		}
+		lowerCtx := strings.ToLower(context)
+		lowerSender := strings.ToLower(sender)
+		for _, term := range strings.Split(statusBotTerms, " || ") {
+			for _, bot := range strings.Split(ReviewHoldBots, "|") {
+				if term == "contains(github.event.context, '"+bot+"')" && strings.Contains(lowerCtx, bot) {
+					return true
+				}
+				if term == "contains(github.event.sender.login, '"+bot+"')" && strings.Contains(lowerSender, bot) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	if evalStatus("pending", "codacy", "codacy-bot") {
+		t.Errorf("boundary pending status unexpectedly passed")
+	}
+	if evalStatus("pending", "sourcery-ai", "sourcery-ai[bot]") {
+		t.Errorf("boundary pending status unexpectedly passed")
+	}
+	if evalStatus("success", "ci/circleci", "circleci") {
+		t.Errorf("boundary non-bot status unexpectedly passed")
+	}
+	if !evalStatus("success", "codacy/pr", "codacy-bot") {
+		t.Errorf("expected review bot completed status to pass")
 	}
 }

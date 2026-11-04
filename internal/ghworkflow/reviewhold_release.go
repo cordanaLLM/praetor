@@ -4,6 +4,10 @@
 
 package ghworkflow
 
+import (
+	"strings"
+)
+
 const (
 	// reviewHoldReleaseScript locates only the newest PR run on the current head.
 	// Current-attempt jobs supply their check-run annotation IDs; older attempts
@@ -81,9 +85,31 @@ for ((pr_index=0; pr_index<pr_count && pr_index<2000; pr_index++)); do
 done
 exit "$read_failed"
 `
-	// reviewHoldReleaseHeader serializes all release events, retaining the token
-	// only in the inline trusted script. No checkout or PR-controlled code runs.
-	reviewHoldReleaseHeader = `# SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+)
+
+// ReviewHoldReleaseCondition renders the release job if: condition restricting execution
+// to canonical repositories and relevant review-bot check_run and status events.
+// GitHub documents contains(): "This function is not case sensitive."
+// https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#contains
+func ReviewHoldReleaseCondition() string {
+	bots := strings.Split(ReviewHoldBots, "|")
+	var checkParts, statusParts []string
+	for _, bot := range bots {
+		checkParts = append(checkParts,
+			"contains(github.event.check_run.name, '"+bot+"') || contains(github.event.check_run.app.slug, '"+bot+"')",
+		)
+		statusParts = append(statusParts,
+			"contains(github.event.context, '"+bot+"') || contains(github.event.sender.login, '"+bot+"')",
+		)
+	}
+	return "github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') && " +
+		"(github.event_name != 'check_run' || (" + strings.Join(checkParts, " || ") + ")) && " +
+		"(github.event_name != 'status' || (github.event.state != 'pending' && (" + strings.Join(statusParts, " || ") + ")))"
+}
+
+// reviewHoldReleaseHeader serializes all release events, retaining the token
+// only in the inline trusted script. No checkout or PR-controlled code runs.
+var reviewHoldReleaseHeader = `# SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
 #
 # SPDX-License-Identifier: EUPL-1.2
 # Rendered by internal/ghworkflow.RenderReviewHoldReleaseWorkflow.
@@ -93,6 +119,9 @@ on:
     types: [submitted, dismissed]
   pull_request_review_comment:
     types: [created, edited, deleted]
+  check_run:
+    types: [completed]
+  status:
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:
@@ -106,7 +135,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   release:
-    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
+    if: ` + ReviewHoldReleaseCondition() + `
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
@@ -116,7 +145,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
 `
-)
 
 // RenderReviewHoldReleaseWorkflow renders the trusted scheduler with the barrier's counter.
 func RenderReviewHoldReleaseWorkflow() string {

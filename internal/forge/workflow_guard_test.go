@@ -59,15 +59,19 @@ func workflowGuardViolations(name string, data []byte, identity string) ([]strin
 }
 
 // confinesToRepository reports whether a condition keeps every unattended run inside the
-// repository: the guard itself, the guard as a further conjunct, or the schedule-leg form
+// repository: the guard itself, the guard as a first or last conjunct without a top-level
+// disjunction, or the schedule-leg form
 // that lets push and pull request verification run everywhere. A workflow that can publish
 // never gets the schedule-leg form: its push leg would publish from any copy. A leading Renovate
 // branch skip only narrows the job further, so the rest of the condition decides.
 func confinesToRepository(condition, identity string, publishes bool) bool {
 	guard := repositoryGuard(identity)
 	condition = withoutRenovateBranchSkip(condition)
-	if condition == guard || strings.HasSuffix(condition, " && "+guard) {
+	if condition == guard {
 		return true
+	}
+	if strings.HasPrefix(condition, guard+" && ") || strings.HasSuffix(condition, " && "+guard) {
+		return !topLevelDisjunction(condition)
 	}
 	return !publishes && condition == scheduleLegPrefix+guard
 }
@@ -161,6 +165,7 @@ func TestVerificationWorkflowsStayUnguarded(t *testing.T) {
 	}
 }
 
+// TestWorkflowGuardViolationsSyntheticShapes verifies guard recognition across synthetic workflow shapes.
 func TestWorkflowGuardViolationsSyntheticShapes(t *testing.T) {
 	guard := repositoryGuard("acme/engine")
 	const head = "permissions:\n  contents: %s\njobs:\n  job:\n    runs-on: ubuntu-latest\n%s"
@@ -169,7 +174,18 @@ func TestWorkflowGuardViolationsSyntheticShapes(t *testing.T) {
 		want                            int
 	}{
 		{"guarded publisher", "on: [push]", "write", "    if: " + guard + "\n", 0},
+		{"guard as first conjunct", "on: [push]", "write", "    if: " + guard + " && github.ref == 'refs/heads/main'\n", 0},
 		{"guard as last conjunct", "on: [push]", "write", "    if: github.ref == 'refs/heads/main' && " + guard + "\n", 0},
+		{"first guard bypassed by top-level disjunction", "on: [push]", "write", "    if: " + guard + " && a || b\n", 1},
+		{"last guard bypassed by top-level disjunction", "on: [push]", "write", "    if: a || b && " + guard + "\n", 1},
+		{"first guard with grouped disjunction", "on: [push]", "write", "    if: " + guard + " && (a || b)\n", 0},
+		{"last guard with grouped disjunction", "on: [push]", "write", "    if: (a || b) && " + guard + "\n", 0},
+		{"first guard with quoted disjunction", "on: [push]", "write", "    if: " + guard + " && contains(github.ref, '||')\n", 0},
+		{"last guard with quoted disjunction", "on: [push]", "write", "    if: github.ref == '||' && " + guard + "\n", 0},
+		{"first guard with escaped quote", "on: [push]", "write", "    if: " + guard + " && github.ref == 'it''s || (main)'\n", 0},
+		{"last guard with escaped quote", "on: [push]", "write", "    if: github.ref == 'it''s || (main)' && " + guard + "\n", 0},
+		{"quoted opening parenthesis cannot hide bypass", "on: [push]", "write", "    if: " + guard + " && github.ref == '(' || b\n", 1},
+		{"quoted closing parenthesis cannot expose grouped disjunction", "on: [push]", "write", "    if: " + guard + " && (github.ref == ')' || b)\n", 0},
 		{"schedule leg form", "on:\n  push:\n  schedule:\n    - cron: '0 4 * * *'", "read", "    if: " + scheduleLegPrefix + guard + "\n", 0},
 		{"read-only push verification", "on: [push, pull_request]", "read", "", 0},
 		{"dispatch-only writer", "on:\n  workflow_dispatch:\n  issue_comment:", "write", "", 0},
@@ -187,6 +203,35 @@ func TestWorkflowGuardViolationsSyntheticShapes(t *testing.T) {
 		if err != nil || len(violations) != tc.want {
 			t.Errorf("%s: violations %v, err %v, want %d", tc.name, violations, err, tc.want)
 		}
+	}
+}
+
+// TestWorkflowGuardTopLevelDisjunction checks grouping, quoted strings and the scan bound.
+func TestWorkflowGuardTopLevelDisjunction(t *testing.T) {
+	cases := []struct {
+		name, expression string
+		want             bool
+	}{
+		{"empty", "", false},
+		{"top-level", "a || b", true},
+		{"nested", "((a || b) && c)", false},
+		{"after group", "(a || b) || c", true},
+		{"quoted", "a == '||'", false},
+		{"escaped quote", "a == 'it''s || (main)'", false},
+		{"after escaped quote", "a == 'it''s (main)' || b", true},
+		{"quoted opening parenthesis", "a == '(' || b", true},
+		{"quoted closing parenthesis", "(a == ')' || b)", false},
+		{"at bound", strings.Repeat("a", maxConditionLength), false},
+		{"operator at bound", strings.Repeat("a", maxConditionLength-2) + "||", true},
+		{"over bound", strings.Repeat("a", maxConditionLength+1), true},
+		{"operator past bound", strings.Repeat("a", maxConditionLength) + "||", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := topLevelDisjunction(tc.expression); got != tc.want {
+				t.Errorf("topLevelDisjunction(%q) = %t, want %t", tc.expression, got, tc.want)
+			}
+		})
 	}
 }
 

@@ -103,15 +103,20 @@ REST page holds because exhaustion has not been proved. A bot with no published 
 cannot be detected by this counter.
 
 `.github/workflows/review-hold-release.yml` serializes release attempts. It runs on submitted or
-dismissed reviews, created/edited/deleted review comments, manual dispatch and every 15 minutes.
-The schedule recovers thread resolutions, which have no dedicated workflow event. For each open
-PR within the same page bound, it inspects the newest `portability.yml` PR run on that head and
-its current attempt's failed-job annotations. It reruns a completed failed run only when the hold
-title is present and the shared counter now returns zero for both counts. It rechecks the run
-attempt and PR head immediately before rerunning; unrelated failures are left alone. Rerunning
-the workflow also reruns its other jobs. Each pull request's release scan now runs isolated: a
-read failure fails only that pull request (no rerun for it), prints `Review hold release read failed`
-naming it, the scan continues for the others, and the job exits 1 at the end.
+dismissed reviews, created/edited/deleted review comments, completed check runs (`check_run: types: [completed]`),
+commit statuses (`status`), manual dispatch and every 15 minutes (`schedule`). A bot finishing emits a
+check run or commit status rather than a review event, so `check_run` and `status` triggers release answered
+review holds as soon as external bots complete without waiting for the next schedule tick. These triggers,
+like schedule and workflow dispatch, run only from the workflow file on the default branch; a pull request
+that adds or changes the release workflow is released by hand (`gh run rerun --failed`) until it lands.
+The job condition restricts runs on `check_run` and `status` events to review bots declared in
+`ReviewHoldBots`, ignoring unrelated checks and pending statuses. For each open PR within the same page
+bound, it inspects the newest `portability.yml` PR run on that head and its current attempt's failed-job
+annotations. It reruns a completed failed run only when the hold title is present and the shared counter
+now returns zero for both counts. It rechecks the run attempt and PR head immediately before rerunning;
+unrelated failures are left alone. Rerunning the workflow also reruns its other jobs. Each pull request's
+release scan now runs isolated: a read failure fails only that pull request (no rerun for it), prints
+`Review hold release read failed` naming it, the scan continues for the others, and the job exits 1 at the end.
 
 The release script is rendered inline by `RenderReviewHoldReleaseWorkflow`; it never checks out
 PR code. Its token has Actions write and pull-request, Checks and commit-status read

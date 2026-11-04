@@ -8,6 +8,9 @@ on:
     types: [submitted, dismissed]
   pull_request_review_comment:
     types: [created, edited, deleted]
+  check_run:
+    types: [completed]
+  status:
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:
@@ -21,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   release:
-    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
+    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') && (github.event_name != 'check_run' || (contains(github.event.check_run.name, 'coderabbit') || contains(github.event.check_run.app.slug, 'coderabbit') || contains(github.event.check_run.name, 'codacy') || contains(github.event.check_run.app.slug, 'codacy') || contains(github.event.check_run.name, 'sourcery') || contains(github.event.check_run.app.slug, 'sourcery'))) && (github.event_name != 'status' || (github.event.state != 'pending' && (contains(github.event.context, 'coderabbit') || contains(github.event.sender.login, 'coderabbit') || contains(github.event.context, 'codacy') || contains(github.event.sender.login, 'codacy') || contains(github.event.context, 'sourcery') || contains(github.event.sender.login, 'sourcery'))))
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:

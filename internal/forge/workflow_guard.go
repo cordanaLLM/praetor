@@ -105,19 +105,30 @@ func withoutRenovateBranchSkip(condition string) string {
 	return rest
 }
 
-// topLevelDisjunction reports whether expression holds a || outside every parenthesised group,
-// such as "a || b" but not "a == (b || c)".
+// topLevelDisjunction reports whether expression holds a || outside parenthesised groups and
+// single-quoted strings, or exceeds maxConditionLength (fail closed). Doubled quotes toggle
+// twice with no intervening character, keeping escaped quotes inside the string.
 func topLevelDisjunction(expression string) bool {
-	for i := 0; i < len(expression); i++ {
-		if expression[i] == '(' {
-			i += len(util.EnclosedParens(expression, i)) + 1
+	depth, quoted := 0, false
+	for i := 0; i < len(expression) && i < maxConditionLength; i++ {
+		if expression[i] == '\'' {
+			quoted = !quoted
+		}
+		if quoted {
 			continue
 		}
-		if strings.HasPrefix(expression[i:], "||") {
-			return true
+		switch expression[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case '|':
+			if depth == 0 && strings.HasPrefix(expression[i:], "||") {
+				return true
+			}
 		}
 	}
-	return false
+	return len(expression) > maxConditionLength
 }
 
 // enclosedGroup returns the inside of expression when one pair of parentheses encloses all of it,
