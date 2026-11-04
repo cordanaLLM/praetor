@@ -685,29 +685,9 @@ func completedMainRunsPage() map[string]any {
 	}
 }
 
-// Positive, negative and boundary: declared required checks whose workflow is not on the default
-// branch yet (or has no run on it) are excused as not compared yet whether proven from origin/main
-// (state A), from the forge default-branch workflow-run read (state B), or without origin/main in
-// the checkout (boundary); a check main reports that the ruleset lacks still fails (negative).
+// TestAuditLiveBranchProtection_UnreportedDefaultBranchChecks excuses workflows absent
+// from the forge default branch, but requires protection for checks already reported there.
 func TestAuditLiveBranchProtection_UnreportedDefaultBranchChecks(t *testing.T) {
-	t.Run("positive state A origin/main lacks workflow", func(t *testing.T) {
-		stub := &forgeStub{
-			rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active"),
-			runs:     map[string]map[string]any{"ci.yml": completedMainRunsPage()},
-		}
-		f := protectedFixture(t, false, "", stub)
-		f.recordOriginMain(t)
-		f.commitWorkflows(t, map[string]string{"codeql.yml": codeqlMatrixWorkflow})
-		out, err := f.audit(t)
-		if err != nil {
-			t.Fatalf("state A failed the audit: %v\n%s", err, out)
-		}
-		mustContain(t, out,
-			"[INFO] Live branch protection of main: status checks compared with the ones origin/main (",
-			"[INFO] Live branch protection of main: not compared yet, as origin/main does not report them: analyze (python), analyze (actions). Once they are on main, 'praetorctl sync --remote' requires them.",
-			"[PASS] Live branch protection of main compared with the forge")
-	})
-
 	t.Run("positive state B forge default branch lacks workflow", func(t *testing.T) {
 		stub := &forgeStub{
 			rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active"),
@@ -744,6 +724,69 @@ func TestAuditLiveBranchProtection_UnreportedDefaultBranchChecks(t *testing.T) {
 			t.Fatalf("a check reported on main was excused as not compared yet:\n%s", out)
 		}
 	})
+}
+
+// TestAuditLiveBranchProtection_StaleOriginMainReportedChecks pins state A: positive forge
+// runs override a stale origin/main that lacks the workflow, exposing missing protection.
+func TestAuditLiveBranchProtection_StaleOriginMainReportedChecks(t *testing.T) {
+	stub := &forgeStub{
+		rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active"),
+		runs: map[string]map[string]any{
+			"ci.yml":     completedMainRunsPage(),
+			"codeql.yml": completedMainRunsPage(),
+		},
+	}
+	f := protectedFixture(t, false, "", stub)
+	f.recordOriginMain(t)
+	f.commitWorkflows(t, map[string]string{"codeql.yml": codeqlMatrixWorkflow})
+	out, err := f.audit(t)
+	mustErrContain(t, err, "Required status checks: declared 3, live 1 of 3 required; missing: analyze (python), analyze (actions)")
+	if strings.Contains(out, "not compared yet") {
+		t.Fatalf("reported checks were excused by stale origin/main:\n%s", out)
+	}
+}
+
+// TestAuditProtectionTarget_CommitOnlyUnreportedChecks preserves commit-only allowances
+// when no forge workflow-run report is available.
+func TestAuditProtectionTarget_CommitOnlyUnreportedChecks(t *testing.T) {
+	f := protectedFixture(t, false, "", &forgeStub{})
+	f.recordOriginMain(t)
+	f.commitWorkflows(t, map[string]string{"codeql.yml": codeqlMatrixWorkflow})
+	manifest, err := config.LoadManifest(f.manifestPath)
+	if err != nil {
+		t.Fatalf("load fixture manifest: %v", err)
+	}
+	target, notes, err := auditProtectionTarget(t.Context(), f.dir, manifest, declaredProtection(false))
+	if err != nil || !slices.Equal(target.contexts, []string{"CI"}) {
+		t.Fatalf("commit-only contexts = %v, %v; want [CI]", target.contexts, err)
+	}
+	mustContain(t, strings.Join(notes, "\n"), "not compared yet, as origin/main does not report them: analyze (python), analyze (actions)")
+}
+
+// TestAuditLiveBranchProtection_NoCommonAncestorUnreportedChecks keeps run evidence when
+// unrelated history prevents rename discovery, while retaining the informational note.
+func TestAuditLiveBranchProtection_NoCommonAncestorUnreportedChecks(t *testing.T) {
+	stub := &forgeStub{
+		rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active"),
+		runs:     map[string]map[string]any{"ci.yml": completedMainRunsPage()},
+	}
+	f := protectedFixture(t, false, "", stub)
+	f.commitWorkflows(t, map[string]string{"codeql.yml": codeqlMatrixWorkflow})
+	commit, err := runFixtureGit(t, f.dir, f.gitEnv, "commit-tree", "HEAD^{tree}", "-m", "unrelated default branch")
+	if err != nil {
+		t.Fatalf("create unrelated default branch: %v (%s)", err, commit)
+	}
+	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "update-ref", "refs/remotes/origin/main", strings.TrimSpace(commit)); err != nil {
+		t.Fatalf("record unrelated origin/main: %v (%s)", err, out)
+	}
+	out, err := f.audit(t)
+	if err != nil {
+		t.Fatalf("unreported checks in unrelated checkout failed: %v\n%s", err, out)
+	}
+	mustContain(t, out,
+		"[INFO] Pending status check renames not evaluated: no common ancestor of HEAD and origin/main",
+		"not compared yet, as origin/main does not report them: analyze (python), analyze (actions)",
+		"[PASS] Live branch protection of main compared with the forge")
 }
 
 // TestAuditLiveBranchProtection_Boundary_NoOriginMainForgeReadDecides pins the boundary where origin/main is missing from the checkout and forge workflow runs decide whether checks are excused.
