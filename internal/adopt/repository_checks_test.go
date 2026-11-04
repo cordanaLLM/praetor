@@ -4,15 +4,13 @@
 package adopt
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
-	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // Order: engine-fr-rule-checks-20261027. Offline planted cases exercise real files and Git.
@@ -44,13 +42,10 @@ func TestRepositoryChecksEditorSelection(t *testing.T) {
 	}
 }
 
+// checkGit executes a git command in root for repository check testing.
 func checkGit(t *testing.T, root string, args ...string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	if _, err := util.RunGitProbe(ctx, root, 64*1024, args...); err != nil {
-		t.Fatal(err)
-	}
+	testsupport.RunFixtureGit(t, root, args)
 }
 
 func checkRepositoryVerdict(t *testing.T, line string, err error, fail bool, gate string) {
