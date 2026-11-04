@@ -14,6 +14,7 @@ import ast
 import contextlib
 import importlib.util
 import io
+import itertools
 import json
 import os
 import re
@@ -817,16 +818,42 @@ class ChildReportsInTheLog(unittest.TestCase):
 # The self-test suites that start every child through run_child, never directly (#809).
 CHILD_SUITES = (Path("scripts/test_checkpoint_hooks.py"),)
 DIRECT_START = re.compile(r"\bsubprocess\b|\bos\.(?:system|popen|spawn\w*|exec\w*)\(")
+MAX_CHILD_AST_NODES = 100_000
+MAX_CHILD_IMPORT_NAMES = 256
+
+
+def child_ast_nodes(text):
+    """Read at most the AST node limit plus one sentinel, refusing oversized trees."""
+    nodes = list(itertools.islice(ast.walk(ast.parse(text)), MAX_CHILD_AST_NODES + 1))
+    if len(nodes) > MAX_CHILD_AST_NODES:
+        raise ValueError("child suite exceeds AST node limit")
+    return nodes
+
+
+def imports_subprocess(node):
+    """Inspect import names under a scalar bound, refusing an oversized import."""
+    if not isinstance(node, (ast.Import, ast.ImportFrom)):
+        return False
+    if len(node.names) > MAX_CHILD_IMPORT_NAMES:
+        raise ValueError("child suite exceeds import name limit")
+    if isinstance(node, ast.ImportFrom):
+        return node.module == "subprocess"
+    return any(
+        alias.name.split(".")[0] == "subprocess"
+        for alias in node.names[:MAX_CHILD_IMPORT_NAMES]
+    )
 
 
 def starts_child(text):
     """Find process imports and calls while allowing inspection of a mocked runner."""
-    for node in ast.walk(ast.parse(text)):
-        if isinstance(node, ast.Import) and any(
-            alias.name.split(".")[0] == "subprocess" for alias in node.names
-        ):
+    for node in child_ast_nodes(text)[:MAX_CHILD_AST_NODES]:
+        if imports_subprocess(node):
             return True
-        if isinstance(node, ast.ImportFrom) and node.module == "subprocess":
+        if (
+            isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
+            and isinstance(node.value, ast.Attribute)
+            and DIRECT_START.search(ast.unparse(node.value) + "(")
+        ):
             return True
         if isinstance(node, ast.Call) and DIRECT_START.search(
             ast.unparse(node.func) + "("
@@ -852,6 +879,8 @@ class ChildSuites(unittest.TestCase):
             "from subprocess import run as start",
             "subprocess.run(argv)",
             "GUARD.subprocess.run(argv)",
+            "spawn = GUARD.subprocess.run\nspawn(argv)",
+            "spawn: object = GUARD.subprocess.run\nspawn(argv)",
             "os.system('x')",
             "os.execv(path, argv)",
             "os.spawnlp(0, 'sh')",
@@ -862,6 +891,20 @@ class ChildSuites(unittest.TestCase):
             'mock.patch.object(GUARD.subprocess, "run", side_effect=error)',
         ):
             self.assertFalse(starts_child(line), line)
+
+    def test_child_ast_node_limit_fails_closed(self):
+        """The node limit accepts its boundary and rejects one extra node."""
+        with mock.patch(__name__ + ".MAX_CHILD_AST_NODES", 2, create=True):
+            self.assertFalse(starts_child("pass"))
+            with self.assertRaisesRegex(ValueError, "AST node limit"):
+                starts_child("pass\npass")
+
+    def test_child_import_name_limit_fails_closed(self):
+        """The import limit accepts its boundary and rejects one extra alias."""
+        with mock.patch(__name__ + ".MAX_CHILD_IMPORT_NAMES", 2, create=True):
+            self.assertFalse(starts_child("import a, b"))
+            with self.assertRaisesRegex(ValueError, "import name limit"):
+                starts_child("import a, b, subprocess")
 
 
 # Rewrites the page's table from its rendering instead of comparing.

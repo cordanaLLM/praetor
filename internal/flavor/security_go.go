@@ -8,6 +8,8 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"runtime"
+	"slices"
 
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/toolpins"
@@ -33,21 +35,34 @@ const GosecInstallGuide = "go install -modfile=" + gomanifest.ToolModuleFile + "
 	" and golang.org/x/tools " + toolpins.XToolsVersion +
 	" or later; a bare go install of gosec builds an x/tools too old for the go1.27.2 export data)"
 
-// ScannerInstallGuide anchors scanner restoration to the repository's tools module when present.
+// ScannerInstallGuide uses the tools module only when it declares the selected scanner.
 func ScannerInstallGuide(repoPath, binary, fallback string) string {
-	if !util.FileExists(filepath.Join(repoPath, gomanifest.ToolModuleFile)) {
-		return fallback
-	}
-	var pkg string
+	var module, pkg string
 	switch binary {
 	case "govulncheck":
-		pkg = govulnToolPackage
+		module, pkg = govulnModule, govulnToolPackage
 	case "gosec":
-		pkg = gosecToolPackage
+		module, pkg = gosecModule, gosecToolPackage
 	default:
 		return fallback
 	}
-	return fmt.Sprintf("go -C %q install -modfile=%s %s", repoPath, gomanifest.ToolModuleFile, pkg)
+	data, err := util.ReadConfinedLimited(repoPath, gomanifest.ToolModuleFile, maxSettingBytes)
+	if err != nil || !gomanifest.DeclaresTool(data, module, pkg) {
+		return fallback
+	}
+	// DeclaresTool also accepts a tool directive without the requirement that selects its version.
+	pinned := slices.ContainsFunc(gomanifest.ParseManifest(data).Requires, func(req gomanifest.Requirement) bool {
+		return req.Path == module
+	})
+	if !pinned {
+		return fallback
+	}
+	toolsDir := filepath.Join(repoPath, filepath.Dir(gomanifest.ToolModuleFile))
+	prefix := "GOWORK=off "
+	if runtime.GOOS == "windows" {
+		prefix = "set \"GOWORK=off\" && "
+	}
+	return fmt.Sprintf("%sgo -C %q install %s", prefix, toolsDir, pkg)
 }
 
 // securityWorkflowFacts selects the install form for the Security Scan workflow. A tools
