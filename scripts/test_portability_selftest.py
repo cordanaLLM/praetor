@@ -820,6 +820,9 @@ CHILD_SUITES = (Path("scripts/test_checkpoint_hooks.py"),)
 DIRECT_START = re.compile(r"\bsubprocess\b|\bos\.(?:system|popen|spawn\w*|exec\w*)\(")
 MAX_CHILD_AST_NODES = 100_000
 MAX_CHILD_IMPORT_NAMES = 256
+SUBPROCESS_START_FUNCTIONS = frozenset({
+    "run", "Popen", "call", "check_call", "check_output", "getoutput", "getstatusoutput",
+})
 
 
 def child_ast_nodes(text):
@@ -844,10 +847,19 @@ def imports_subprocess(node):
     )
 
 
+def subprocess_callable(node):
+    """Recognize process-starting references wherever used, including alias bindings."""
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr in SUBPROCESS_START_FUNCTIONS
+        and bool(DIRECT_START.search(ast.unparse(node) + "("))
+    )
+
+
 def starts_child(text):
-    """Find process imports and calls while allowing inspection of a mocked runner."""
+    """Find process imports, calls and callback references while allowing a mocked module."""
     for node in child_ast_nodes(text)[:MAX_CHILD_AST_NODES]:
-        if imports_subprocess(node):
+        if imports_subprocess(node) or subprocess_callable(node):
             return True
         if (
             isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
@@ -884,13 +896,31 @@ class ChildSuites(unittest.TestCase):
             "os.system('x')",
             "os.execv(path, argv)",
             "os.spawnlp(0, 'sh')",
+            "executor.submit(GUARD.subprocess.run, argv)",
+            "threading.Thread(target=subprocess.run)",
+            "functools.partial(subprocess.Popen, argv)",
+            "executor.submit(GUARD.subprocess.check_output, argv)",
+            "executor.submit(GUARD.subprocess.call, argv)",
+            "executor.submit(GUARD.subprocess.check_call, argv)",
+            "executor.submit(GUARD.subprocess.getoutput, command)",
+            "executor.submit(GUARD.subprocess.getstatusoutput, command)",
+            "spawn = GUARD.subprocess.run\nexecutor.submit(spawn, argv)",
+            "spawn: object = GUARD.subprocess.Popen\nthreading.Thread(target=spawn)",
+            "spawn = GUARD.subprocess.run\nstart = spawn\nfunctools.partial(start, argv)",
         ):
-            self.assertTrue(starts_child(line), line)
+            with self.subTest(line=line):
+                self.assertTrue(starts_child(line), line)
         for line in (
             "result = run_child(argv, timeout=20)",
             'mock.patch.object(GUARD.subprocess, "run", side_effect=error)',
+            'mock.patch.object(GUARD.subprocess, "Popen", side_effect=error)',
+            "executor.submit(run_child, argv)",
+            "threading.Thread(target=run_child)",
+            "functools.partial(run_child, argv)",
+            "inspect(subprocess.PIPE)",
         ):
-            self.assertFalse(starts_child(line), line)
+            with self.subTest(line=line):
+                self.assertFalse(starts_child(line), line)
 
     def test_child_ast_node_limit_fails_closed(self):
         """The node limit accepts its boundary and rejects one extra node."""

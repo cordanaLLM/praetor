@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/toolpins"
@@ -58,11 +59,17 @@ func ScannerInstallGuide(repoPath, binary, fallback string) string {
 		return fallback
 	}
 	toolsDir := filepath.Join(repoPath, filepath.Dir(gomanifest.ToolModuleFile))
-	prefix := "GOWORK=off "
-	if runtime.GOOS == "windows" {
-		prefix = "set \"GOWORK=off\" && "
+	return scannerInstallCommand(toolsDir, pkg, runtime.GOOS)
+}
+
+// scannerInstallCommand renders restore advice for the selected platform's shells.
+func scannerInstallCommand(toolsDir, pkg, goos string) string {
+	if goos == "windows" {
+		return fmt.Sprintf("Command Prompt: set \"GOWORK=off\" && go -C \"%s\" install %s\n"+
+			"PowerShell: $env:GOWORK='off'; go -C '%s' install %s",
+			toolsDir, pkg, strings.ReplaceAll(toolsDir, "'", "''"), pkg)
 	}
-	return fmt.Sprintf("%sgo -C %q install %s", prefix, toolsDir, pkg)
+	return fmt.Sprintf("GOWORK=off go -C %s install %s", util.QuotePOSIXShellArg(toolsDir), pkg)
 }
 
 // securityWorkflowFacts selects the install form for the Security Scan workflow. A tools
