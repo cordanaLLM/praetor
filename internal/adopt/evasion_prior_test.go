@@ -18,6 +18,42 @@ const priorEvasionFixtures = "testdata/evasion"
 // currentEvasionFixture is the fixture holding the current rendering.
 const currentEvasionFixture = "current-rendering.block_evasion.py"
 
+// updateEvasionRenderingFixtures records the current interceptor and preserves its outgoing
+// bytes under their digest. The emitted-fixture update flag also records the new digest in
+// hooks.go, so refreshing emitted fixtures cannot silently drop an adopter's earlier text.
+func updateEvasionRenderingFixtures(t *testing.T, current string) {
+	t.Helper()
+	path := filepath.Join(priorEvasionFixtures, currentEvasionFixture)
+	previous := mustRead(t, path)
+	if strings.ReplaceAll(previous, "\r\n", "\n") != current {
+		digest := fixtureDigest(t, path, []byte(previous))
+		archive := filepath.Join(priorEvasionFixtures, digest+".block_evasion.py")
+		if existing, err := os.ReadFile(archive); err == nil {
+			if strings.ReplaceAll(string(existing), "\r\n", "\n") != strings.ReplaceAll(previous, "\r\n", "\n") {
+				t.Fatalf("outgoing rendering archive %s differs from its recorded bytes", archive)
+			}
+		} else if os.IsNotExist(err) {
+			mustWrite(t, archive, previous)
+		} else {
+			t.Fatalf("read outgoing rendering archive %s: %v", archive, err)
+		}
+		mustWrite(t, path, current)
+	}
+	digest := fixtureDigest(t, "current rendering", []byte(current))
+	if _, recorded := priorEvasionHookDigests[digest]; recorded {
+		return
+	}
+	const declaration = "var priorEvasionHookDigests = map[string]string{\n"
+	source := mustRead(t, "hooks.go")
+	if strings.Count(source, declaration) != 1 {
+		t.Fatal("hooks.go must contain exactly one priorEvasionHookDigests declaration")
+	}
+	const origin = "recorded Python hook rendering"
+	entry := "\t\"" + digest + "\": \"" + origin + "\",\n"
+	mustWrite(t, "hooks.go", strings.Replace(source, declaration, declaration+entry, 1))
+	priorEvasionHookDigests[digest] = origin
+}
+
 // adoptEvasionFixture adopts a fresh repository whose interceptor holds existing.
 func adoptEvasionFixture(t *testing.T, name, existing string, force bool) (string, *AdoptReport) {
 	t.Helper()
@@ -38,8 +74,9 @@ func TestPriorEvasionHookDigests_Positive_ReproducedByFixtures(t *testing.T) {
 }
 
 // Boundary: the current rendering is recorded, so the release that changes it still refreshes
-// it; --force no longer does. After a template or engine rule change, add the new rendering
-// (testdata/emitted holds it) under testdata/evasion and its digest to priorEvasionHookDigests.
+// it; --force no longer does. After a template or engine rule change, regenerate the emitted
+// fixtures with PRAETOR_UPDATE_EMITTED_FIXTURES=1 to preserve the outgoing text and record the
+// new rendering under testdata/evasion and its digest in priorEvasionHookDigests.
 func TestPriorEvasionHookDigests_Boundary_CurrentRenderingRecorded(t *testing.T) {
 	current := []byte(buildBlockEvasionPY())
 	if !isPriorRendering(current, priorEvasionHookDigests) {

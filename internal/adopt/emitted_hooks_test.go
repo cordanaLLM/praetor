@@ -52,7 +52,11 @@ func emittedHookRenderings(t *testing.T) map[string]string {
 	}
 }
 
+// TestEmittedHookFixturesMatchTheRendering keeps committed fixtures equal to adoption's output.
 func TestEmittedHookFixturesMatchTheRendering(t *testing.T) {
+	if os.Getenv(updateEmittedFixturesEnv) == "1" {
+		updateEvasionRenderingFixtures(t, buildBlockEvasionPY())
+	}
 	for rel, want := range emittedHookRenderings(t) {
 		path := filepath.Join(emittedFixtureRoot, filepath.FromSlash(rel))
 		if os.Getenv(updateEmittedFixturesEnv) == "1" {
