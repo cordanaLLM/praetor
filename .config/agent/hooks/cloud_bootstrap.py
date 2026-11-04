@@ -12,16 +12,16 @@ verification is switched off. It never disables a hook: a step that fails is rep
 """
 
 import os
-from pathlib import Path, PurePosixPath
 import re
 import shutil
 import subprocess
 import sys
+from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[3]
-# The module that pins lefthook, and the package it builds; .github/workflows/ci.yml installs from the same module.
-LEFTHOOK_MODULE = "tools/lefthook"
-LEFTHOOK = "github.com/evilmartians/lefthook/v2"
+sys.path.insert(0, str(ROOT / ".config/lefthook/scripts"))
+from common import LEFTHOOK, LEFTHOOK_MODULE
+
 # Claude Code registers this hook with a 600 s timeout (.claude/settings.json). The steps below share
 # BOOTSTRAP_BUDGET, a step that overruns is killed within BOOTSTRAP_STOP, and BOOTSTRAP_LIMIT stays under the
 # registration; scripts/test_checkpoint_hooks.py checks this arithmetic against the registration.

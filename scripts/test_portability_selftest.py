@@ -10,6 +10,7 @@ fail, because that is the state the driver exists to catch. A test proving the d
 passes a healthy suite proves almost nothing on its own.
 """
 
+import ast
 import contextlib
 import importlib.util
 import io
@@ -818,26 +819,48 @@ CHILD_SUITES = (Path("scripts/test_checkpoint_hooks.py"),)
 DIRECT_START = re.compile(r"\bsubprocess\b|\bos\.(?:system|popen|spawn\w*|exec\w*)\(")
 
 
+def starts_child(text):
+    """Find process imports and calls while allowing inspection of a mocked runner."""
+    for node in ast.walk(ast.parse(text)):
+        if isinstance(node, ast.Import) and any(
+            alias.name.split(".")[0] == "subprocess" for alias in node.names
+        ):
+            return True
+        if isinstance(node, ast.ImportFrom) and node.module == "subprocess":
+            return True
+        if isinstance(node, ast.Call) and DIRECT_START.search(
+            ast.unparse(node.func) + "("
+        ):
+            return True
+    return False
+
+
 class ChildSuites(unittest.TestCase):
     def test_every_child_of_an_adopting_suite_starts_through_run_child(self):
         for suite in CHILD_SUITES:
             with self.subTest(suite=suite.as_posix()):
                 self.assertIn(suite, driver.SUITES)
                 text = (ROOT / suite).read_text(encoding="utf-8")
-                self.assertIsNone(
-                    DIRECT_START.search(text), "start the child through run_child"
+                self.assertFalse(
+                    starts_child(text), "start the child through run_child"
                 )
                 self.assertIn("run_child = DRIVER.run_child", text)
         # Negative: the pattern finds each way a suite could start a child past the helper.
         for line in (
             "import subprocess",
+            "from subprocess import run as start",
             "subprocess.run(argv)",
+            "GUARD.subprocess.run(argv)",
             "os.system('x')",
             "os.execv(path, argv)",
             "os.spawnlp(0, 'sh')",
         ):
-            self.assertIsNotNone(DIRECT_START.search(line), line)
-        self.assertIsNone(DIRECT_START.search("result = run_child(argv, timeout=20)"))
+            self.assertTrue(starts_child(line), line)
+        for line in (
+            "result = run_child(argv, timeout=20)",
+            'mock.patch.object(GUARD.subprocess, "run", side_effect=error)',
+        ):
+            self.assertFalse(starts_child(line), line)
 
 
 # Rewrites the page's table from its rendering instead of comparing.

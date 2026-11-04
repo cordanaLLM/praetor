@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Real Lefthook lifecycle integration and bounded native continuation tests."""
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -109,6 +111,105 @@ def adapter_actions(hooks):
             if not engine_row(action)]
 
 
+class MissingHookTools(unittest.TestCase):
+    def test_tool_disappearing_after_lookup_keeps_restore_diagnostic(self):
+        error = FileNotFoundError(2, "No such file or directory", "lefthook")
+        diagnostic = io.StringIO()
+        with (
+            mock.patch.object(GUARD, "require_tool"),
+            mock.patch.object(GUARD, "session_root", return_value=ROOT),
+            mock.patch.object(GUARD.subprocess, "run", side_effect=error),
+            contextlib.redirect_stderr(diagnostic),
+        ):
+            self.assertEqual(GUARD.check(b"{}"), 2)
+        self.assertIn("lefthook not found on PATH", diagnostic.getvalue())
+        self.assertIn("Restore: go -C", diagnostic.getvalue())
+        self.assertNotIn("[Errno 2]", diagnostic.getvalue())
+        with mock.patch("common._spawn_bounded", side_effect=error):
+            for job in (ADAPTER.verify_state, lambda: ADAPTER.checkpoint("tool")):
+                with self.assertRaisesRegex(ADAPTER.HookError, "Restore: go -C"):
+                    job()
+
+    def test_missing_lefthook_fails_closed_with_pinned_restore(self):
+        for script, payload in (
+            ("command_guard.py", {}),
+            ("checkpoint.py", {"hook_event_name": "Stop"}),
+            ("checkpoint.py", {"hook_event_name": "PostToolUse"}),
+        ):
+            with self.subTest(script=script, payload=payload):
+                result = run_child(
+                    [sys.executable, "-B", str(ROOT / ".config/agent/hooks" / script)],
+                    input=json.dumps(payload),
+                    text=True,
+                    capture_output=True,
+                    env={**os.environ, "PATH": ""},
+                    timeout=15,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("lefthook not found on PATH", result.stderr)
+                self.assertIn("Restore: go -C", result.stderr)
+                self.assertIn("tools/lefthook", result.stderr)
+                self.assertIn(
+                    "install github.com/evilmartians/lefthook/v2", result.stderr
+                )
+                self.assertIn("read-back: lefthook version", result.stderr)
+                self.assertNotIn("[Errno 2]", result.stderr)
+
+    def test_missing_lefthook_never_starts_a_shared_job(self):
+        with (
+            mock.patch.dict(os.environ, {"PATH": ""}),
+            mock.patch.object(GUARD, "session_root", return_value=ROOT),
+            mock.patch.object(GUARD.subprocess, "run") as run,
+            mock.patch.object(ADAPTER, "run_bounded") as bounded,
+        ):
+            self.assertEqual(GUARD.check(b"{}"), 2)
+            for job in (ADAPTER.verify_state, lambda: ADAPTER.checkpoint("tool")):
+                with self.assertRaisesRegex(
+                    ADAPTER.HookError, "lefthook not found on PATH"
+                ):
+                    job()
+            run.assert_not_called()
+            bounded.assert_not_called()
+
+    @unittest.skipIf(
+        os.name == "nt", "POSIX executable stub; Windows has no shebang execution"
+    )
+    def test_stub_lefthook_preserves_success_marker(self):
+        with tempfile.TemporaryDirectory(prefix="praetor-hook-tool-") as directory:
+            stub = Path(directory) / "lefthook"
+            stub.write_text(f"#!{sys.executable}\nprint('PRAETOR_COMMAND_POLICY_OK')\n")
+            stub.chmod(0o755)
+            with (
+                mock.patch.dict(os.environ, {"PATH": directory}),
+                mock.patch.object(GUARD, "session_root", return_value=ROOT),
+            ):
+                self.assertEqual(GUARD.check(b"{}"), 0)
+
+    def test_restore_without_pin_names_manifest_and_quotes_spaces(self):
+        from common import missing_tool_line
+
+        with tempfile.TemporaryDirectory(prefix="praetor hook tool ") as directory:
+            root = Path(directory)
+            missing = missing_tool_line("lefthook", root)
+            self.assertIn(str(root / "tools/lefthook/go.mod"), missing)
+            self.assertNotIn("go -C", missing)
+            pin = root / "tools/lefthook/go.mod"
+            pin.parent.mkdir(parents=True)
+            pin.write_text("module fixture\n")
+            import shlex
+
+            restore = (
+                missing_tool_line("lefthook", root)
+                .split("Restore: ")[1]
+                .split("; read-back:")[0]
+            )
+            self.assertEqual(
+                shlex.split(restore),
+                ["go", "-C", str(pin.parent), "install", BOOTSTRAP.LEFTHOOK],
+            )
+
+
 class LifecycleOutput(unittest.TestCase):
     def setUp(self):
         self.state = mock.patch.object(ADAPTER, "verify_state")
@@ -177,9 +278,11 @@ class LifecycleOutput(unittest.TestCase):
         self.assertIs(lookup.call_args.args[2], budget)
         self.assertIs(self.state_probe.call_args.args[1], budget)
         self.assertIs(observe.call_args.args[2], budget)
-        with mock.patch.object(ADAPTER, "run_bounded", return_value=b"") as run:
-            with self.assertRaises(ValueError):
-                ADAPTER.checkpoint("tool", ROOT, budget)
+        with (
+            mock.patch.object(ADAPTER, "run_bounded", return_value=b"") as run,
+            self.assertRaises(ValueError),
+        ):
+            ADAPTER.checkpoint("tool", ROOT, budget)
         self.assertLessEqual(run.call_args.kwargs["timeout"], ADAPTER.CHECKPOINT_TIMEOUT)
         self.assertEqual(run.call_args.kwargs["grace"], ADAPTER.JOB_GRACE)
         with self.assertRaisesRegex(ADAPTER.HookError, "budget spent"):
@@ -225,11 +328,13 @@ class LifecycleOutput(unittest.TestCase):
                     self.assertEqual(answer["decision"], "block")
 
     def test_missing_execution_marker_and_invalid_input_rejected(self):
-        with mock.patch.object(ADAPTER, "run_bounded", return_value=b"skipped job exited zero\n"):
-            with self.assertRaisesRegex(ValueError, "execution result"):
-                ADAPTER.checkpoint("stop")
+        with (
+            mock.patch.object(ADAPTER, "run_bounded", return_value=b"skipped job exited zero\n"),
+            self.assertRaisesRegex(ValueError, "execution result"),
+        ):
+            ADAPTER.checkpoint("stop")
         for payload in ([], {}, {"hook_event_name": "Stop", "stop_hook_active": "yes"}):
-            with self.assertRaises(ValueError):
+            with self.assertRaises(TypeError if isinstance(payload, list) else ValueError):
                 ADAPTER.respond(payload)
 
     def test_process_output_and_time_limits_are_enforced_while_running(self):
@@ -257,9 +362,11 @@ class StateResult(unittest.TestCase):
                     (marker + '{"schema_version":true,"verified":true}').encode(),
                     (marker + '{"schema_version":1,"verified":false}').encode(),
                     (marker + '{"schema_version":1,"verified":1}').encode()):
-            with mock.patch.object(ADAPTER, "run_bounded", return_value=raw):
-                with self.assertRaises(ValueError):
-                    ADAPTER.verify_state()
+            with (
+                mock.patch.object(ADAPTER, "run_bounded", return_value=raw),
+                self.assertRaises(ValueError),
+            ):
+                ADAPTER.verify_state()
 
 
 class NativeLefthook(unittest.TestCase):
@@ -731,9 +838,11 @@ class NativeLefthook(unittest.TestCase):
                 self.assertEqual(SCOPE.check(payload), 0)
         (self.root / "README.md").write_text("dirty\n")
         for payload in not_due:
-            with self.subTest(due=True, path=payload["tool_input"]["file_path"], cwd=payload["cwd"]):
-                with self.assertRaises(ValueError):
-                    SCOPE.check(payload)
+            with (
+                self.subTest(due=True, path=payload["tool_input"]["file_path"], cwd=payload["cwd"]),
+                self.assertRaises(ValueError),
+            ):
+                SCOPE.check(payload)
         (self.root / "README.md").write_text("fixture\n")
         for change in ({"tool_input": {"file_path": ""}}, {"tool_input": {"file_path": "a\x00b"}},
                        {"cwd": "relative"}):
@@ -1113,9 +1222,11 @@ class NativeLefthook(unittest.TestCase):
         record = sessions / "0123456789abcdef.json"
         _write_session_record(sessions, record, {"/existing"})
         previous = record.read_bytes()
-        with mock.patch("common.MAX_RECORD_BYTES", 16):
-            with self.assertRaisesRegex(ValueError, "exceeds byte bound"):
-                _write_session_record(sessions, record, {"/" + "a" * 16})
+        with (
+            mock.patch("common.MAX_RECORD_BYTES", 16),
+            self.assertRaisesRegex(ValueError, "exceeds byte bound"),
+        ):
+            _write_session_record(sessions, record, {"/" + "a" * 16})
         self.assertEqual(record.read_bytes(), previous)
         self.assertEqual(sorted(sessions.iterdir()), [record])
 
