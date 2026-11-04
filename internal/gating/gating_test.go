@@ -473,6 +473,7 @@ func TestExecuteStage_SkipVerdicts(t *testing.T) {
 
 type scannerRestoreCase struct{ binary, pkg, fallback string }
 
+// TestRequireScannerRestore_3D tests requireScanner returns pinned or fallback restore guides.
 func TestRequireScannerRestore_3D(t *testing.T) {
 	for _, pinned := range []bool{true, false} {
 		for _, scanner := range []scannerRestoreCase{
@@ -486,6 +487,7 @@ func TestRequireScannerRestore_3D(t *testing.T) {
 	}
 }
 
+// assertScannerRestore asserts missing scanner errors carry the expected restore command.
 func assertScannerRestore(t *testing.T, pinned bool, scanner scannerRestoreCase) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "repo with spaces")

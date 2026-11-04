@@ -241,6 +241,7 @@ def overrun(payload):
 
 
 def main():
+    """Read lifecycle event from stdin, dispatch hook handler, and return status code."""
     try:
         raw = sys.stdin.buffer.read(LIMIT + 1)
         if not raw or len(raw) > LIMIT:

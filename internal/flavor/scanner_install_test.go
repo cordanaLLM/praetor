@@ -13,6 +13,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/flavor"
 )
 
+// TestScannerInstallGuide_3D tests scanner installation guide fallback and pinned modules.
 func TestScannerInstallGuide_3D(t *testing.T) {
 	root := t.TempDir()
 	const fallback = "existing install advice"

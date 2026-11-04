@@ -113,6 +113,7 @@ def adapter_actions(hooks):
 
 class MissingHookTools(unittest.TestCase):
     def test_tool_disappearing_after_lookup_keeps_restore_diagnostic(self):
+        """Disappearing tool preserves restore diagnostics without leaking raw OS errors."""
         error = FileNotFoundError(2, "No such file or directory", "lefthook")
         diagnostic = io.StringIO()
         with (
@@ -131,6 +132,7 @@ class MissingHookTools(unittest.TestCase):
                     job()
 
     def test_missing_lefthook_fails_closed_with_pinned_restore(self):
+        """Missing lefthook fails closed across hooks and displays pinned restore remedy."""
         for script, payload in (
             ("command_guard.py", {}),
             ("checkpoint.py", {"hook_event_name": "Stop"}),
@@ -157,6 +159,7 @@ class MissingHookTools(unittest.TestCase):
                 self.assertNotIn("[Errno 2]", result.stderr)
 
     def test_missing_lefthook_never_starts_a_shared_job(self):
+        """Missing lefthook halts early without invoking subprocesses or shared jobs."""
         with (
             mock.patch.dict(os.environ, {"PATH": ""}),
             mock.patch.object(GUARD, "session_root", return_value=ROOT),
@@ -176,6 +179,7 @@ class MissingHookTools(unittest.TestCase):
         os.name == "nt", "POSIX executable stub; Windows has no shebang execution"
     )
     def test_stub_lefthook_preserves_success_marker(self):
+        """Executable stub emitting policy success marker satisfies command guard check."""
         with tempfile.TemporaryDirectory(prefix="praetor-hook-tool-") as directory:
             stub = Path(directory) / "lefthook"
             stub.write_text(f"#!{sys.executable}\nprint('PRAETOR_COMMAND_POLICY_OK')\n")
@@ -187,6 +191,7 @@ class MissingHookTools(unittest.TestCase):
                 self.assertEqual(GUARD.check(b"{}"), 0)
 
     def test_restore_without_pin_names_manifest_and_quotes_spaces(self):
+        """Unpinned restore advice names manifest path and properly quotes spaced directories."""
         from common import missing_tool_line
 
         with tempfile.TemporaryDirectory(prefix="praetor hook tool ") as directory:
@@ -270,6 +275,7 @@ class LifecycleOutput(unittest.TestCase):
                     self.assertIn("could not be verified", result["hookSpecificOutput"]["additionalContext"])
 
     def test_one_budget_runs_from_the_checkout_lookup_to_the_last_job(self):
+        """Single hook budget spans checkout lookup through subsequent job invocations."""
         budget = ADAPTER.HookBudget(ADAPTER.HOOK_BUDGET)
         with mock.patch.object(ADAPTER, "session_root", return_value=ROOT) as lookup, \
                 mock.patch.object(ADAPTER, "checkpoint", return_value={
@@ -328,6 +334,7 @@ class LifecycleOutput(unittest.TestCase):
                     self.assertEqual(answer["decision"], "block")
 
     def test_missing_execution_marker_and_invalid_input_rejected(self):
+        """Missing execution markers and malformed input payloads are rejected."""
         with (
             mock.patch.object(ADAPTER, "run_bounded", return_value=b"skipped job exited zero\n"),
             self.assertRaisesRegex(ValueError, "execution result"),
@@ -352,6 +359,7 @@ class LifecycleOutput(unittest.TestCase):
 
 class StateResult(unittest.TestCase):
     def test_state_requires_one_positive_execution_result(self):
+        """State verification demands exactly one positive verified execution result."""
         marker = ADAPTER.STATE_MARKER
         valid = marker + '{"schema_version":1,"verified":true}\n'
         with mock.patch.object(ADAPTER, "run_bounded", return_value=valid.encode()) as run:
@@ -827,6 +835,7 @@ class NativeLefthook(unittest.TestCase):
         self.assertEqual(before, self.git("rev-parse", "HEAD"))
 
     def test_scope_passes_out_of_repository_paths_and_cwds_until_a_checkpoint_is_due(self):
+        """Scope permits external repository paths and working dirs until checkpoint is due."""
         outside = Path(tempfile.mkdtemp(prefix="praetor-scope-outside-"))
         self.addCleanup(shutil.rmtree, outside, True)
         memory = str(outside / "memory" / "notes.md")
@@ -1217,6 +1226,7 @@ class NativeLefthook(unittest.TestCase):
         self.assertEqual(results[0].returncode, 0)
 
     def test_session_record_byte_bound_preserves_previous_record(self):
+        """Oversized session record write is refused and preserves existing record on disk."""
         from common import _write_session_record
         sessions = self.root / ".git/praetor-checkpoint/sessions"
         record = sessions / "0123456789abcdef.json"

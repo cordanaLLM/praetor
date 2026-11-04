@@ -837,6 +837,7 @@ def starts_child(text):
 
 class ChildSuites(unittest.TestCase):
     def test_every_child_of_an_adopting_suite_starts_through_run_child(self):
+        """Child test suites invoke child processes through the shared run_child helper."""
         for suite in CHILD_SUITES:
             with self.subTest(suite=suite.as_posix()):
                 self.assertIn(suite, driver.SUITES)
