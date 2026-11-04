@@ -141,6 +141,8 @@ func provenDraftSkips(spec *workflowSpec) map[string]bool {
 // job it needs, each of which stops a draft in its first step (beginsWithDraftStep). On a draft
 // pull request every covered need fails in that first step and the aggregate fails on that
 // failure, so the aggregate stops the draft without a draft step of its own.
+// A canonical leading review hold skips drafts; the aggregate proof still requires the result
+// steps to fail on the draft failures, and refuses a missing hold when a need is review-aware.
 func provenDraftStepAggregate(spec *workflowSpec, aggregateID string) bool {
 	aggregate := spec.Jobs[aggregateID]
 	needs := aggregate.NeedIDs()

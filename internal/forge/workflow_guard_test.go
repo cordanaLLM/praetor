@@ -59,15 +59,19 @@ func workflowGuardViolations(name string, data []byte, identity string) ([]strin
 }
 
 // confinesToRepository reports whether a condition keeps every unattended run inside the
-// repository: the guard itself, the guard as a further conjunct, or the schedule-leg form
+// repository: the guard itself, the guard as a first or last conjunct without a top-level
+// disjunction, or the schedule-leg form
 // that lets push and pull request verification run everywhere. A workflow that can publish
 // never gets the schedule-leg form: its push leg would publish from any copy. A leading Renovate
 // branch skip only narrows the job further, so the rest of the condition decides.
 func confinesToRepository(condition, identity string, publishes bool) bool {
 	guard := repositoryGuard(identity)
 	condition = withoutRenovateBranchSkip(condition)
-	if condition == guard || strings.HasSuffix(condition, " && "+guard) {
+	if condition == guard {
 		return true
+	}
+	if strings.HasPrefix(condition, guard+" && ") || strings.HasSuffix(condition, " && "+guard) {
+		return !topLevelDisjunction(condition)
 	}
 	return !publishes && condition == scheduleLegPrefix+guard
 }
@@ -161,6 +165,7 @@ func TestVerificationWorkflowsStayUnguarded(t *testing.T) {
 	}
 }
 
+// TestWorkflowGuardViolationsSyntheticShapes verifies guard recognition across synthetic workflow shapes.
 func TestWorkflowGuardViolationsSyntheticShapes(t *testing.T) {
 	guard := repositoryGuard("acme/engine")
 	const head = "permissions:\n  contents: %s\njobs:\n  job:\n    runs-on: ubuntu-latest\n%s"
@@ -169,7 +174,18 @@ func TestWorkflowGuardViolationsSyntheticShapes(t *testing.T) {
 		want                            int
 	}{
 		{"guarded publisher", "on: [push]", "write", "    if: " + guard + "\n", 0},
+		{"guard as first conjunct", "on: [push]", "write", "    if: " + guard + " && github.ref == 'refs/heads/main'\n", 0},
 		{"guard as last conjunct", "on: [push]", "write", "    if: github.ref == 'refs/heads/main' && " + guard + "\n", 0},
+		{"first guard bypassed by top-level disjunction", "on: [push]", "write", "    if: " + guard + " && a || b\n", 1},
+		{"last guard bypassed by top-level disjunction", "on: [push]", "write", "    if: a || b && " + guard + "\n", 1},
+		{"first guard with grouped disjunction", "on: [push]", "write", "    if: " + guard + " && (a || b)\n", 0},
+		{"last guard with grouped disjunction", "on: [push]", "write", "    if: (a || b) && " + guard + "\n", 0},
+		{"first guard with quoted disjunction", "on: [push]", "write", "    if: " + guard + " && contains(github.ref, '||')\n", 0},
+		{"last guard with quoted disjunction", "on: [push]", "write", "    if: github.ref == '||' && " + guard + "\n", 0},
+		{"first guard with escaped quote", "on: [push]", "write", "    if: " + guard + " && github.ref == 'it''s || (main)'\n", 0},
+		{"last guard with escaped quote", "on: [push]", "write", "    if: github.ref == 'it''s || (main)' && " + guard + "\n", 0},
+		{"quoted opening parenthesis cannot hide bypass", "on: [push]", "write", "    if: " + guard + " && github.ref == '(' || b\n", 1},
+		{"quoted closing parenthesis cannot expose grouped disjunction", "on: [push]", "write", "    if: " + guard + " && (github.ref == ')' || b)\n", 0},
 		{"schedule leg form", "on:\n  push:\n  schedule:\n    - cron: '0 4 * * *'", "read", "    if: " + scheduleLegPrefix + guard + "\n", 0},
 		{"read-only push verification", "on: [push, pull_request]", "read", "", 0},
 		{"dispatch-only writer", "on:\n  workflow_dispatch:\n  issue_comment:", "write", "", 0},
@@ -187,6 +203,35 @@ func TestWorkflowGuardViolationsSyntheticShapes(t *testing.T) {
 		if err != nil || len(violations) != tc.want {
 			t.Errorf("%s: violations %v, err %v, want %d", tc.name, violations, err, tc.want)
 		}
+	}
+}
+
+// TestWorkflowGuardTopLevelDisjunction checks grouping, quoted strings and the scan bound.
+func TestWorkflowGuardTopLevelDisjunction(t *testing.T) {
+	cases := []struct {
+		name, expression string
+		want             bool
+	}{
+		{"empty", "", false},
+		{"top-level", "a || b", true},
+		{"nested", "((a || b) && c)", false},
+		{"after group", "(a || b) || c", true},
+		{"quoted", "a == '||'", false},
+		{"escaped quote", "a == 'it''s || (main)'", false},
+		{"after escaped quote", "a == 'it''s (main)' || b", true},
+		{"quoted opening parenthesis", "a == '(' || b", true},
+		{"quoted closing parenthesis", "(a == ')' || b)", false},
+		{"at bound", strings.Repeat("a", maxConditionLength), false},
+		{"operator at bound", strings.Repeat("a", maxConditionLength-2) + "||", true},
+		{"over bound", strings.Repeat("a", maxConditionLength+1), true},
+		{"operator past bound", strings.Repeat("a", maxConditionLength) + "||", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := topLevelDisjunction(tc.expression); got != tc.want {
+				t.Errorf("topLevelDisjunction(%q) = %t, want %t", tc.expression, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -488,13 +533,13 @@ func markdownGateSelfTestGap(job workflowJob, jobID string) string {
 }
 
 // everyLegConditions are the step conditions that cannot differ between matrix legs: none,
-// !cancelled(), !cancelled() held off a draft pull request (ghworkflow.HostedGateNotDraft),
+// !cancelled(), review-cleared non-draft work (ghworkflow.HostedGateLegReady),
 // and the Windows shard-2 carrier condition.
 var everyLegConditions = []string{
 	"",
 	"${{ !cancelled() }}",
-	"${{ !cancelled() && " + ghworkflow.HostedGateNotDraft + " }}",
-	"${{ !cancelled() && " + ghworkflow.HostedGateNotDraft + " && matrix.shard == 2 }}",
+	"${{ " + ghworkflow.HostedGateLegReady + " }}",
+	"${{ " + ghworkflow.HostedGateLegReady + " && matrix.shard == 2 }}",
 }
 
 // runsOnEveryLeg reports whether a step's condition cannot differ between matrix legs.
@@ -517,7 +562,7 @@ func runsInPortabilityScope(step workflowStep, jobID, flag string) bool {
 		term = "(steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true')"
 	}
 	condition := strings.TrimSpace(step.If)
-	base := "${{ !cancelled() && " + ghworkflow.HostedGateNotDraft + " && " + term
+	base := "${{ " + ghworkflow.HostedGateLegReady + " && " + term
 	if condition == base+" }}" {
 		return true
 	}
@@ -563,7 +608,7 @@ func TestPortabilityReplaysMarkdownGateSelfTestOnEveryLeg(t *testing.T) {
 		{"boundary held off a draft", workflowJob{Steps: []workflowStep{
 			{Uses: node.Uses, If: everyLegConditions[2]}, {Run: markdownGateSelfTest, If: everyLegConditions[2]}}}, ""},
 		{"boundary draft term beside a leg term", workflowJob{Steps: []workflowStep{node,
-			{Run: markdownGateSelfTest, If: "${{ !cancelled() && " + ghworkflow.HostedGateNotDraft + " && runner.os != 'Windows' }}"}}}, "conditional"},
+			{Run: markdownGateSelfTest, If: "${{ " + ghworkflow.HostedGateLegReady + " && runner.os != 'Windows' }}"}}}, "conditional"},
 		{"negative shard condition in harness", workflowJob{Steps: []workflowStep{
 			node, {Run: markdownGateSelfTest, If: everyLegConditions[3]}}}, "conditional"},
 	}
@@ -1007,9 +1052,41 @@ func TestVerifyJobRunsDocsAuditOnRunDocs(t *testing.T) {
 	}
 }
 
+// Heavy legs require review clearance; extra selectors and platform skips remain conditional.
+func TestPortabilityLegReviewHoldConditions(t *testing.T) {
+	ready := ghworkflow.HostedGateLegReady
+	legacy := "!cancelled() && " + ghworkflow.HostedGateNotDraft
+	cases := []struct {
+		name, jobID, condition string
+		every, scope           bool
+	}{
+		{"ready harness", "harness", ready, true, true},
+		{"ready windows", "windows-shard", ready, true, true},
+		{"windows carrier", "windows-shard", ready + " && matrix.shard == 2", true, true},
+		{"harness carrier", "harness", ready + " && matrix.shard == 2", false, false},
+		{"declared scope", "harness", ready + " && steps.scope.outputs.harness == 'true'", false, true},
+		{"extra scope", "harness", ready + " && steps.scope.outputs.harness == 'true' && steps.scope.outputs.go == 'true'", false, false},
+		{"platform skip", "harness", ready + " && runner.os != 'Windows'", false, false},
+		{"missing hold harness", "harness", legacy, false, false},
+		{"missing hold windows", "windows-shard", legacy + " && matrix.shard == 2", false, false},
+		{"missing hold scoped", "harness", legacy + " && steps.scope.outputs.harness == 'true'", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			step := workflowStep{If: "${{ " + tc.condition + " }}"}
+			if got := runsOnEveryLeg(step, tc.jobID); got != tc.every {
+				t.Errorf("runsOnEveryLeg = %v, want %v", got, tc.every)
+			}
+			if got := runsInPortabilityScope(step, tc.jobID, "harness"); got != tc.scope {
+				t.Errorf("runsInPortabilityScope = %v, want %v", got, tc.scope)
+			}
+		})
+	}
+}
+
 // Scope guards accept only the named selector output and still reject platform skips.
 func TestPortabilityScopeConditions(t *testing.T) {
-	prefix := "${{ !cancelled() && " + ghworkflow.HostedGateNotDraft + " && "
+	prefix := "${{ " + ghworkflow.HostedGateLegReady + " && "
 	cases := []struct {
 		jobID           string
 		condition, flag string
