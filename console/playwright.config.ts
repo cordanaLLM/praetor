@@ -20,6 +20,9 @@ const projects = (['light', 'dark'] as const).flatMap((colorScheme) =>
 );
 
 export default defineConfig({
+	// Playwright 1.64.1 captureGitInfo: planted proof needs no optional git metadata or fetch.
+	// https://playwright.dev/docs/api/class-testconfig#test-config-capture-git-info
+	captureGitInfo: planted ? { commit: false, diff: false } : undefined,
 	testDir: './tests',
 	outputDir: planted ? 'test-results/planted' : 'test-results/pages',
 	testMatch: planted ? 'planted.spec.ts' : 'accessibility.spec.ts',
