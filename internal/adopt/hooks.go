@@ -929,6 +929,7 @@ func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
 // TestPriorEvasionHookDigests_Boundary_CurrentRenderingRecorded fails until a changed rendering
 // is recorded here, so the next release still refreshes it (evasion_prior_test.go).
 var priorEvasionHookDigests = map[string]string{
+	"07e076c5d6ccdb10b83fdb240d5ce3d04593e3f7e0604d1708df02f3dbaea11f": "parenthesized concatenated literals in collection items",
 	"c563a0d12ad23a5062cd2a2d0355aeea4ba96e98c6a0079fb311909e8764dd18": "shared wrapper option arities and optional chrt priority",
 	"ef071f0735ebb0046eafe5106fee0ae385931e6f5fc48218d21a284111b7e96e": "reviewed hook findings after wrapper and literal boundary changes",
 	"1c59fc5ca09bd6d4ca575f37a190e806245d53358adcaaf696e15183ced09401": "admin merge Boolean true spellings",

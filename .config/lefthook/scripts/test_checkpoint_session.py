@@ -84,11 +84,13 @@ class OwnedSessionLock(unittest.TestCase):
 
     def test_old_holder_cannot_remove_reclaimer_lock(self):
         """Fail the old holder while preserving the replacement owner's token."""
-        with self.assertRaisesRegex(HookError, "lock.*lost"):
-            with sessions._session_update_lock(self.directory, self.record, HookBudget(2)):
-                self.age_lock(sessions.SESSION_LOCK_STALE_SECONDS + 1)
-                self.assertTrue(sessions._acquire_session_lock(self.lock))
-                replacement = list(self.lock.iterdir())
+        with (
+            self.assertRaisesRegex(HookError, "lock.*lost"),
+            sessions._session_update_lock(self.directory, self.record, HookBudget(2)),
+        ):
+            self.age_lock(sessions.SESSION_LOCK_STALE_SECONDS + 1)
+            self.assertTrue(sessions._acquire_session_lock(self.lock))
+            replacement = list(self.lock.iterdir())
         self.assertEqual(list(self.lock.iterdir()), replacement)
         self.assertEqual(len(replacement), 1)
 

@@ -226,13 +226,14 @@ func pythonPairEntry(first, second pyToken) string {
 }
 
 // pythonItemLines renders one item at indent followed by suffix: one line when it fits,
-// otherwise adjacent literals of one line each.
+// otherwise adjacent literals grouped in parentheses to keep collection items unambiguous.
 func pythonItemLines(indent string, item pyToken, suffix string) string {
 	if line := indent + item.whole() + suffix; len(line) <= blackLineLimit || item.kind == pyName {
 		return line + "\n"
 	}
-	literals := item.literals(blackLineLimit - len(indent) - len(suffix))
-	return indent + strings.Join(literals, "\n"+indent) + suffix + "\n"
+	continuation := indent + "    "
+	literals := item.literals(blackLineLimit - len(continuation))
+	return indent + "(\n" + continuation + strings.Join(literals, "\n"+continuation) + "\n" + indent + ")" + suffix + "\n"
 }
 
 // pythonAssignment lays out a module-level NAME = value. A value too long for one line is
