@@ -6,13 +6,54 @@ package main
 import (
 	"bytes"
 	"errors"
+	"go/ast"
+	"go/types"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/sandbox"
 )
+
+// TestGoTestAggregateDeadline prevents the local process from sharing the smaller per-stage bound.
+func TestGoTestAggregateDeadline(t *testing.T) {
+	decl := parseFuncs(t, ".")["runGoTest"]
+	if decl == nil {
+		t.Fatal("runGoTest missing")
+	}
+	contexts := 0
+	ast.Inspect(decl.Body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok || calledName(call) != "commandContext" {
+			return true
+		}
+		contexts++
+		if len(call.Args) != 1 || types.ExprString(call.Args[0]) != "goTestAggregateTimeout" {
+			t.Error("runGoTest context must use goTestAggregateTimeout, not the per-stage bound")
+		}
+		return true
+	})
+	if contexts != 1 {
+		t.Fatalf("runGoTest context calls = %d, want 1", contexts)
+	}
+}
+
+// TestGoTestAggregateTimeoutBoundary keeps aggregate headroom at the gate's override ceiling.
+func TestGoTestAggregateTimeoutBoundary(t *testing.T) {
+	if goTestAggregateTimeout != 2*gating.MaxTestStageTimeout {
+		t.Fatal("aggregate timeout must track twice the shared stage ceiling")
+	}
+	for _, raw := range []string{"", "25m", "30m", "31m", "0s"} {
+		t.Run(raw, func(t *testing.T) {
+			bound := gating.ResolveRunBudget(raw).StageBound
+			if bound <= 0 || bound >= goTestAggregateTimeout {
+				t.Fatalf("stage bound %s must be positive and below aggregate %s", bound, goTestAggregateTimeout)
+			}
+		})
+	}
+}
 
 // TestGoTestExecArguments pins argument construction and rejection of manual -exec overrides.
 func TestGoTestExecArguments(t *testing.T) {
@@ -22,6 +63,8 @@ func TestGoTestExecArguments(t *testing.T) {
 		exec       string
 	}{
 		{[]string{"-race", "./..."}, []string{"test", "-exec", wrapper, "-race", "./..."}, wrapper},
+		{[]string{"-race", "-timeout", "30m", "./..."}, []string{"test", "-exec", wrapper, "-race", "-timeout", "30m", "./..."}, wrapper},
+		{[]string{"-timeout=0", "./pkg"}, []string{"test", "-exec", wrapper, "-timeout=0", "./pkg"}, wrapper},
 		{[]string{"-C", "tools/module", "-count=1", "./..."}, []string{"-C", "tools/module", "test", "-exec", wrapper, "-count=1", "./..."}, wrapper},
 		{[]string{"-race", "./..."}, []string{"test", "-race", "./..."}, ""},
 		{[]string{"./pkg", "-args", "-exec=fixture-value"}, []string{"test", "-exec", wrapper, "./pkg", "-args", "-exec=fixture-value"}, wrapper},

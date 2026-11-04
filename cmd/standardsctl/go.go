@@ -20,6 +20,11 @@ import (
 	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
 )
 
+// goTestAggregateTimeout bounds the local Go process, including builds, downloads
+// and all test binaries. Twice the gate's stage ceiling leaves aggregate headroom
+// even when PRAETOR_TEST_STAGE_TIMEOUT raises the stage to its maximum.
+const goTestAggregateTimeout = 2 * gating.MaxTestStageTimeout
+
 // runGo dispatches the standardsctl go subcommands for vet, test, or isolated test binary execution.
 func runGo(args []string) error {
 	if len(args) > 0 && args[0] == "test" {
@@ -54,7 +59,7 @@ func runGoTest(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := commandContext(gating.MaxTestStageTimeout)
+	ctx, cancel := commandContext(goTestAggregateTimeout)
 	defer cancel()
 	return childExitStatus(util.RunCommandPassthrough(ctx, "", "go", os.Stdin, os.Stdout, os.Stderr, argv...))
 }
