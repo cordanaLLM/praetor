@@ -7,6 +7,11 @@
 	"engines": {
 		"node": ">=24"
 	},
+	"pnpm": {
+		"overrides": {
+			"minimatch": "11.0.4"
+		}
+	},
 	"imports": {
 		"#lib/*": "./src/lib/*"
 	},

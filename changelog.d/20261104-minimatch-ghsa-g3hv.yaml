@@ -1,0 +1,2 @@
+type: security
+title: 'Dependencies: override minimatch to 11.0.4 in the console to fix GHSA-g3hv-75wg-m249'
