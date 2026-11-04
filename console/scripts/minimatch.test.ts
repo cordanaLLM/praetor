@@ -36,7 +36,9 @@ test.each([
 ])('%s resolves a minimatch version patched for GHSA-g3hv-75wg-m249', (_, entry) => {
 	const parentRequire = createRequire(entry);
 	const { version } = parentRequire('minimatch/package.json');
+	const minimatchOverride = require('../package.json').pnpm.overrides.minimatch;
 	const semver = createRequire(estreeEntry)('semver');
+	expect(version).toBe(minimatchOverride);
 	expect(semver.gte(version, '11.0.1')).toBe(true);
 });
 
