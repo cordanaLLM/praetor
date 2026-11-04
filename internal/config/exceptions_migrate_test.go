@@ -144,7 +144,7 @@ func TestExceptionMigrationReasonAndExistingFields(t *testing.T) {
 		{"category C, migration", "", ""},
 		{"CATEGORY D: migration", "", "D"},
 		{"migration", "    category: D\n", "skip"},
-		{"migration", "    entered: 2026-10-28\n", "skip"},
+		{"migration", "    entered: " + today.AddDate(0, 0, -1).Format(ExceptionDateLayout) + "\n", "skip"},
 	} {
 		path := migrationManifest(t, legacyMigrationEntry(91, tc.reason, today)+tc.extra)
 		_, proposals, err := PlanExceptionMigration(t.Context(), path, today)
@@ -210,10 +210,10 @@ func TestExceptionEnteredBlame(t *testing.T) {
 
 // TestExceptionEnteredBlameFallback pins fallback behavior when blame porcelain output is empty, uncommitted, or malformed.
 func TestExceptionEnteredBlameFallback(t *testing.T) {
-	today := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+	today := exceptionsToday
 	for _, text := range []string{"", "000000000 1 1 1\ncommitter-time 1", "abc 1 1 1\ncommitter-time bad"} {
 		entered, source := enteredFromBlame(text, today)
-		if entered != "2026-11-02" || !strings.HasPrefix(source, "today") {
+		if entered != ExceptionDay(today).Format(ExceptionDateLayout) || !strings.HasPrefix(source, "today") {
 			t.Fatalf("unexpected fallback %s %s", entered, source)
 		}
 	}

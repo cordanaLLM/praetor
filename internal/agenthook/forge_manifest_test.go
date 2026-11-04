@@ -15,7 +15,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-const brokenForgeManifest = "version: 1\nexceptions:\n  - rule: HISS-11\n    path: .github/workflows/release.yml\n    reason: builder migration\n    expires: 2099-01-01\n"
+var brokenForgeManifest = "version: 1\nexceptions:\n  - rule: HISS-11\n    path: .github/workflows/release.yml\n    reason: builder migration\n    expires: " + testToday.AddDate(1, 0, 0).Format(time.DateOnly) + "\n"
 
 // TestForgeIdentityFailurePreservesTrustedOrganizations pins that trusted organizations are preserved when repository identity resolution fails.
 func TestForgeIdentityFailurePreservesTrustedOrganizations(t *testing.T) {

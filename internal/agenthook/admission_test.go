@@ -1029,14 +1029,14 @@ func runAgyPreToolWithPolicy(t *testing.T, pol *Policy, workDir string, workspac
 	})
 }
 
-const uncategorizedExceptionManifest = `version: 1
+var uncategorizedExceptionManifest = `version: 1
 repository:
   forge: forgejo
 exceptions:
   - rule: HISS-04
     path: internal/foo.go
     reason: legacy complexity pending split
-    expires: "2027-01-01"
+    expires: "` + testToday.AddDate(0, 0, 62).Format(time.DateOnly) + `"
 `
 
 // Planted negative, positive and boundary (order engine-push-target-manifest-defect-20261102):
