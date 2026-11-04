@@ -208,9 +208,11 @@ func verifyMergeCheckPrePushExecutionOn(t *testing.T, isWindows bool) {
 	}
 	dir := t.TempDir()
 	enginePath := filepath.Join(dir, engineLauncherFile)
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory needs the owner search bit to hold entries
 	if err := os.MkdirAll(filepath.Dir(enginePath), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// nosemgrep: go_file-permissions_rule-fileperm, go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a stub run through PATH needs the owner execute bit
 	if err := os.WriteFile(enginePath, []byte("#!/bin/sh\necho \"called:$*\"\nexit \"${STUB_EXIT:-0}\"\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}

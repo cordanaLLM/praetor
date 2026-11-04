@@ -56,6 +56,7 @@ func assertFindingMatch(t *testing.T, f Finding, expectedPath, expectedMerge, ex
 func writeFile(t *testing.T, dir, rel, content string) {
 	t.Helper()
 	path := filepath.Join(dir, filepath.FromSlash(rel))
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory needs the owner search bit to hold entries
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}

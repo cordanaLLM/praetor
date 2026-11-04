@@ -178,6 +178,7 @@ func TestMergeCheck_SubdirectoryRepoDir_DetectsDroppedHunk(t *testing.T) {
 		[]string{"commit", "-m", "merge: take Y"},
 	)
 	subDir := filepath.Join(dir, "nested", "sub")
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory needs the owner search bit to hold entries
 	if err := os.MkdirAll(subDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -215,6 +216,7 @@ func TestMergeCheck_TreeBlobs_ChunksPathsUnderCommandLineBudget(t *testing.T) {
 		"for arg in \"$@\"; do bytes=$((bytes + ${#arg} + 1)); done\n" +
 		"if [ \"$bytes\" -gt 16600 ]; then echo \"arg list too long: $bytes\" >&2; exit 128; fi\n" +
 		"exec \"" + realGit + "\" \"$@\"\n"
+	// nosemgrep: go_file-permissions_rule-fileperm, go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a stub run through PATH needs the owner execute bit
 	if err := os.WriteFile(shimPath, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
