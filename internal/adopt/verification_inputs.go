@@ -186,14 +186,23 @@ func (v *verificationInputs) captureMarker(ctx context.Context, root, rel string
 }
 
 // readVerificationMarker reads the verification marker at rel when it fits the per-file byte
-// bound and, with total bytes already read, the total byte bound.
+// bound and, with total bytes already read, the total byte bound. A per-file refusal names
+// the manifest key that raises it, or states that the snapshot reader's ceiling is reached.
 func readVerificationMarker(ctx context.Context, root, rel string, total int, limits VerificationLimits) ([]byte, error) {
 	data, err := contextopt.ReadSnapshot(ctx, filepath.Join(root, filepath.FromSlash(rel)))
 	if err != nil {
-		return nil, fmt.Errorf("verification input %s: %w", rel, err)
+		err = fmt.Errorf("verification input %s: %w", rel, err)
+		if errors.Is(err, util.ErrFileTooLarge) {
+			return nil, fileBytesBound.exceeded(int(limits.MaxFileBytes), err)
+		}
+		return nil, err
 	}
 	if int64(len(data)) > limits.MaxFileBytes || int64(total)+int64(len(data)) > limits.MaxTotalBytes {
-		return nil, fmt.Errorf("verification input %s: metadata exceeds byte bounds (file=%d total=%d)", rel, limits.MaxFileBytes, limits.MaxTotalBytes)
+		err := fmt.Errorf("verification input %s: metadata exceeds byte bounds (file=%d total=%d)", rel, limits.MaxFileBytes, limits.MaxTotalBytes)
+		if int64(len(data)) > limits.MaxFileBytes {
+			return nil, fileBytesBound.exceeded(int(limits.MaxFileBytes), err)
+		}
+		return nil, err
 	}
 	return data, nil
 }

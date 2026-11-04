@@ -157,6 +157,13 @@ The native planning defaults and ceilings are adoption's own
 `internal/adopt/verification_limits.go`), so a suite that omits `input_limits`
 plans with the same bounds as `praetorctl adopt`.
 
+For repository adoption, harness language discovery and Rust MSRV auditing, `.standards.yaml`
+also accepts `verification.max_file_bytes`, from 1 to 1048576 bytes, with a 65536-byte default.
+It is optional alongside `max_entries`, `max_files` and `max_depth`; manifest decoding refuses
+values outside that range (`internal/config/verification.go`,
+`TestVerificationPolicy_Negative`, `TestVerificationPolicy_Boundary`). See
+[large repositories](../adoption.md#large-repositories).
+
 A per-file limit cannot exceed its corresponding total. Snapshot hashes stream
 file contents; symlinks record targets without reading linked content. Snapshots
 retain completion status, observed counters, and file/entry failure details.

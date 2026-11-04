@@ -31,10 +31,24 @@ type msrvDeclaration struct{ file, version string }
 
 // AuditRustMSRV requires a pinned minimum or a workflow job building on the declared minimum.
 // This checks repository declarations; it does not execute the workflow or compile Rust.
-func AuditRustMSRV(ctx context.Context, root string) (string, error) {
+// Discovery uses the manifest's verification bounds; an absent or unreadable manifest keeps defaults.
+// One optional requested policy raises bounds for this run, as the Paperclip facts walk does.
+func AuditRustMSRV(ctx context.Context, root string, requested ...*VerificationLimits) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, contextopt.MaxDuration)
 	defer cancel()
-	inputs, err := loadVerificationInputs(ctx, root)
+	if len(requested) > 1 {
+		return "", fmt.Errorf("[FAIL] rust-msrv: expected at most one requested verification policy")
+	}
+	var overrides *VerificationLimits
+	if len(requested) == 1 {
+		overrides = requested[0]
+	}
+	manifest, _ := declaredManifest(ctx, root)
+	limits, err := NormalizeVerificationLimits(ResolveVerificationLimits(manifest.DeclaredVerification(), overrides))
+	if err != nil {
+		return "", fmt.Errorf("[FAIL] rust-msrv: %w", err)
+	}
+	inputs, err := loadVerificationInputsWithLimits(ctx, root, limits)
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] rust-msrv: %w", err)
 	}

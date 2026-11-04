@@ -11,7 +11,83 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
+
+// TestRustMSRVDeclaredFileBytes exercises declared, default and ceiling workflow byte bounds.
+func TestRustMSRVDeclaredFileBytes(t *testing.T) {
+	cases := []struct {
+		name, manifest, want string
+		size                 int
+	}{
+		{"declared larger workflow", "verification:\n  max_file_bytes: 262144\n", "", 70 << 10},
+		{"undeclared larger workflow", "", "declare verification.max_file_bytes in .standards.yaml", 70 << 10},
+		{"default exact", "", "", maxVerificationInputBytes},
+		{"declared exact", "verification:\n  max_file_bytes: 71680\n", "", 70 << 10},
+		{"declared exceeded", "verification:\n  max_file_bytes: 71680\n", "declare verification.max_file_bytes in .standards.yaml", (70 << 10) + 1},
+		{"ceiling exact", fmt.Sprintf("verification:\n  max_file_bytes: %d\n", contextopt.MaxSourceBytes), "", contextopt.MaxSourceBytes},
+		{"ceiling exceeded", fmt.Sprintf("verification:\n  max_file_bytes: %d\n", contextopt.MaxSourceBytes), "max_file_bytes is already at its ceiling 1048576", contextopt.MaxSourceBytes + 1},
+		{"unreadable manifest defaults", "version: [\n", "", maxVerificationInputBytes},
+		{"unreadable manifest larger workflow", "version: [\n", "declare verification.max_file_bytes in .standards.yaml", 70 << 10},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			mustWrite(t, filepath.Join(root, "Cargo.toml"), msrvCrate)
+			if tc.manifest != "" {
+				mustWrite(t, filepath.Join(root, manifestFile), tc.manifest)
+			}
+			workflow := msrvJob + "      - uses: dtolnay/rust-toolchain@1.80\n      - run: cargo check\n"
+			workflow += "#" + strings.Repeat("x", tc.size-len(workflow)-2) + "\n"
+			mustWrite(t, filepath.Join(root, ".github/workflows/msrv.yml"), workflow)
+			line, err := AuditRustMSRV(t.Context(), root)
+			if tc.want != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("AuditRustMSRV = %q, %v; want refusal containing %q", line, err, tc.want)
+				}
+				return
+			}
+			if err != nil || !strings.Contains(line, "[PASS]") || !strings.Contains(line, "msrv.yml job msrv") {
+				t.Fatalf("AuditRustMSRV = %q, %v; want workflow proof", line, err)
+			}
+		})
+	}
+}
+
+// TestRustMSRVRequestedLimits covers default, raised, exact and invalid requested policies.
+func TestRustMSRVRequestedLimits(t *testing.T) {
+	cases := []struct {
+		name      string
+		requested []*VerificationLimits
+		want      string
+	}{
+		{"omitted", nil, "verification discovery exceeds 1 entries"},
+		{"nil", []*VerificationLimits{nil}, "verification discovery exceeds 1 entries"},
+		{"unchanged", []*VerificationLimits{{}}, "verification discovery exceeds 1 entries"},
+		{"raised exact", []*VerificationLimits{{MaxEntries: 3}}, ""},
+		{"raised exceeded", []*VerificationLimits{{MaxEntries: 2}}, "verification discovery exceeds 2 entries"},
+		{"negative", []*VerificationLimits{{MaxEntries: -1}}, "max_entries (--verification-max-entries) must be 1..200000"},
+		{"multiple", []*VerificationLimits{nil, nil}, "expected at most one requested verification policy"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			mustWrite(t, filepath.Join(root, manifestFile), "verification:\n  max_entries: 1\n")
+			mustWrite(t, filepath.Join(root, "Cargo.toml"), msrvCrate)
+			mustWrite(t, filepath.Join(root, "rust-toolchain"), "1.80\n")
+			line, err := AuditRustMSRV(t.Context(), root, tc.requested...)
+			if tc.want != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("AuditRustMSRV = %q, %v; want refusal containing %q", line, err, tc.want)
+				}
+				return
+			}
+			if err != nil || !strings.Contains(line, "[PASS] rust-msrv: Cargo.toml 1.80") {
+				t.Fatalf("AuditRustMSRV = %q, %v; want pinned minimum proof", line, err)
+			}
+		})
+	}
+}
 
 func TestRustMSRVWorkspaceAndBounds(t *testing.T) {
 	cases := []struct {

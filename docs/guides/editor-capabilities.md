@@ -163,6 +163,9 @@ walks at most 65536 files by default (`Options.MaxWorkspaceFiles`, zero selects 
 default, `util.DefaultDiscoveryEntries`). `praetorctl adopt` passes the entry bound its verification walk resolved,
 so `--verification-max-entries`, or `verification.max_entries` in `.standards.yaml`, raises
 this scan too, up to the same 200000 ceiling.
+The verification metadata walk also accepts `verification.max_files`, `verification.max_depth`
+and `verification.max_file_bytes`; the byte bound defaults to 64 KiB and accepts up to 1 MiB
+(`internal/config/verification.go`, `TestVerificationPolicy_Boundary`).
 A bound past the ceiling is refused, and adoption names the flag when the scan
 stops at the bound ([large repositories](../adoption.md#large-repositories);
 `internal/editor/workspace_bound_test.go`,

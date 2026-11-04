@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -16,12 +17,12 @@ import (
 // omits stays zero (undeclared), it survives RenderManifest, and DeclaredVerification returns it;
 // an absent section and a nil manifest declare none.
 func TestVerificationPolicy_Positive(t *testing.T) {
-	m, err := LoadManifest(writeManifest(t, "version: 1\nverification:\n  max_entries: 131072\n  max_depth: 40\n"))
+	m, err := LoadManifest(writeManifest(t, "version: 1\nverification:\n  max_entries: 131072\n  max_depth: 40\n  max_file_bytes: 262144\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := m.DeclaredVerification(); got == nil || *got != (VerificationPolicy{MaxEntries: 131072, MaxDepth: 40}) {
-		t.Fatalf("declared verification = %+v; want max_entries 131072, max_depth 40, max_files undeclared", got)
+	if got := m.DeclaredVerification(); got == nil || *got != (VerificationPolicy{MaxEntries: 131072, MaxDepth: 40, MaxFileBytes: 262144}) {
+		t.Fatalf("declared verification = %+v; want max_entries 131072, max_depth 40, max_file_bytes 262144, max_files undeclared", got)
 	}
 	rendered, err := RenderManifest(m)
 	if err != nil {
@@ -53,6 +54,11 @@ func TestVerificationPolicy_Negative(t *testing.T) {
 		"negative depth":   {"max_depth: -1", "verification.max_depth must be an integer from 1 to 64; got -1"},
 		"entries ceiling+": {fmt.Sprintf("max_entries: %d", util.DiscoveryEntriesCeiling+1), "verification.max_entries must be an integer from 1 to 200000"},
 		"files ceiling+":   {fmt.Sprintf("max_files: %d", util.DiscoveryFilesCeiling+1), "verification.max_files must be an integer from 1 to 512"},
+		"bytes string":     {`max_file_bytes: "262144"`, "verification max_file_bytes must be an integer"},
+		"bytes repeated":   {"max_file_bytes: 1\n  max_file_bytes: 2", `unknown or duplicated verification field "max_file_bytes"`},
+		"bytes zero":       {"max_file_bytes: 0", "verification.max_file_bytes must be an integer from 1 to 1048576; got 0"},
+		"bytes negative":   {"max_file_bytes: -1", "verification.max_file_bytes must be an integer from 1 to 1048576; got -1"},
+		"bytes ceiling+":   {fmt.Sprintf("max_file_bytes: %d", contextopt.MaxSourceBytes+1), "verification.max_file_bytes must be an integer from 1 to 1048576; got 1048577"},
 	}
 	for name, tc := range cases {
 		data := "version: 1\nverification:\n  " + tc.section + "\n"
@@ -71,18 +77,22 @@ func TestVerificationPolicy_Negative(t *testing.T) {
 // TestVerificationPolicy_Boundary: 1 and each ceiling itself are accepted, the ceilings are the
 // ones the flags are held to, and an empty section declares no bound.
 func TestVerificationPolicy_Boundary(t *testing.T) {
-	data := fmt.Sprintf("version: 1\nverification:\n  max_entries: %d\n  max_files: %d\n  max_depth: 1\n",
-		util.DiscoveryEntriesCeiling, util.DiscoveryFilesCeiling)
+	data := fmt.Sprintf("version: 1\nverification:\n  max_entries: %d\n  max_files: %d\n  max_depth: 1\n  max_file_bytes: %d\n",
+		util.DiscoveryEntriesCeiling, util.DiscoveryFilesCeiling, contextopt.MaxSourceBytes)
 	m, err := LoadManifest(writeManifest(t, data))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := VerificationPolicy{MaxEntries: util.DiscoveryEntriesCeiling, MaxFiles: util.DiscoveryFilesCeiling, MaxDepth: 1}
+	want := VerificationPolicy{MaxEntries: util.DiscoveryEntriesCeiling, MaxFiles: util.DiscoveryFilesCeiling, MaxDepth: 1, MaxFileBytes: contextopt.MaxSourceBytes}
 	if *m.Verification != want {
 		t.Fatalf("ceilings = %+v; want %+v", *m.Verification, want)
 	}
 	if _, err := DecodeManifest(fmt.Appendf(nil, "verification:\n  max_depth: %d\n", util.DiscoveryDepthCeiling)); err != nil {
 		t.Fatalf("the depth ceiling itself is refused: %v", err)
+	}
+	minimum, err := DecodeManifest([]byte("verification:\n  max_file_bytes: 1\n"))
+	if err != nil || minimum.Verification == nil || minimum.Verification.MaxFileBytes != 1 {
+		t.Fatalf("the minimum byte bound = %+v, %v; want 1", minimum, err)
 	}
 	empty, err := DecodeManifest([]byte("verification: {}\n"))
 	if err != nil || empty.Verification == nil || *empty.Verification != (VerificationPolicy{}) {
