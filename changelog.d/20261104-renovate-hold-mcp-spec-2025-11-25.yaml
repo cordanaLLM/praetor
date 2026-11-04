@@ -1,0 +1,3 @@
+type: changed
+title: "Hold the vendored MCP specification at 2025-11-25: 2026-07-28 protocol break retires initialization in favor of server/discover with per-request versions, requires resultType, and drops subscriptions while the engine and clients speak 2025-11-25; revisit when a measured client matrix shows Claude Code, Codex, Gemini CLI, Antigravity, opencode and editors support 2026-07-28 (#1694)"
+breaking: false
