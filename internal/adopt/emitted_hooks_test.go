@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/govuln"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
@@ -35,12 +36,17 @@ const updateEmittedFixturesEnv = "PRAETOR_UPDATE_EMITTED_FIXTURES"
 // checkpoint jobs, the superset adopters get; the hosted REUSE gate is the one a repository
 // declaring REUSE gets (reuseWorkflow) for the default branch main; the manifest is the current rendering of the
 // declarations an earlier adoption wrote (renderedPriorManifest); the actionlint configuration
-// is the one adoption creates with the default facets.
+// is the one adoption creates with the default facets. CodeRabbit and the ruleset pin draft
+// review settings through the same fixture update switch.
 func emittedHookRenderings(t *testing.T) map[string]string {
 	t.Helper()
 	reuseWorkflowContent, err := reuseWorkflow(forge.FallbackDefaultBranch)
 	if err != nil {
 		t.Fatalf("render reuseWorkflow: %v", err)
+	}
+	ruleset, err := forge.RenderRepositoryRuleset(forge.FallbackDefaultBranch, config.DefaultPolicy().BranchProtection, nil)
+	if err != nil {
+		t.Fatalf("render emitted ruleset: %v", err)
 	}
 	return map[string]string{
 		lefthookFile:         buildLefthookYAMLFor(lefthookShape{languages: lefthookJobLanguages, reuse: true, toolGovuln: true}, true),
@@ -49,6 +55,8 @@ func emittedHookRenderings(t *testing.T) map[string]string {
 		engineLauncherFile:   engineLauncherScript,
 		manifestFile:         renderedPriorManifest(t),
 		actionlintConfigFile: string(renderActionlintConfig(actionlintManagedFixtureLabels(t))),
+		codeRabbitFile:       codeRabbitConfig,
+		rulesetFile:          string(ruleset),
 	}
 }
 

@@ -139,6 +139,7 @@ var declineContracts = map[string]declineContract{
 	"formatter-ignore":       {audit: DeclineAuditSkipped},
 	"renovate-ignore":        {audit: DeclineAuditNone},
 	"actionlint-labels":      {audit: DeclineAuditNone},
+	"coderabbit":             {audit: DeclineAuditNone},
 	"contributing":           {audit: DeclineAuditNone},
 	"pull-request-template":  {audit: DeclineAuditNone},
 	"security-policy":        {audit: DeclineAuditNone},

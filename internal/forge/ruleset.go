@@ -442,6 +442,7 @@ func validateRulesetInputs(contexts []string) error {
 	return nil
 }
 
+// protectionRules renders protection and automatic draft review without weakening existing rules.
 func protectionRules(policy config.BranchProtectionPolicy, reviewCount int, requireCodeOwner bool) []map[string]any {
 	rules := []map[string]any{{"type": "deletion"}, {"type": "non_fast_forward"}}
 	if policy.EnforceLinearHistory {
@@ -466,6 +467,10 @@ func protectionRules(policy config.BranchProtectionPolicy, reviewCount int, requ
 		prParams["require_extra_approval_for_unattributed_changes"] = *policy.RequireExtraApprovalForUnattributedChanges
 	}
 	rules = append(rules, map[string]any{"type": "pull_request", "parameters": prParams})
+	rules = append(rules, map[string]any{"type": "copilot_code_review", "parameters": map[string]any{
+		"review_draft_pull_requests": true,
+		"review_on_push":             true,
+	}})
 	if policy.MergeQueue && policy.CodeQLDefaultSetup {
 		rules = append(rules, codeScanningRuleOf())
 	}

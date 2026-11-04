@@ -91,7 +91,8 @@ func TestValidateRepositoryRuleset_Boundary(t *testing.T) {
 	reordered := `{"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"required_linear_history"},` +
 		`{"type":"required_signatures"},{"type":"pull_request","parameters":{"required_review_thread_resolution":true,` +
 		`"require_last_push_approval":false,"require_code_owner_review":true,"dismiss_stale_reviews_on_push":true,` +
-		`"required_approving_review_count":1}}],"name":"praetor-main-protection","enforcement":"active","target":"branch",` +
+		`"required_approving_review_count":1}},{"type":"copilot_code_review","parameters":{` +
+		`"review_on_push":true,"review_draft_pull_requests":true}}],"name":"praetor-main-protection","enforcement":"active","target":"branch",` +
 		`"conditions":{"ref_name":{"exclude":[],"include":["refs/heads/main","refs/heads/lts-*"]}}}`
 	if err := ValidateRepositoryRuleset([]byte(reordered), "main", validatePolicy(), nil); err != nil {
 		t.Fatalf("key order differences must validate: %v", err)
