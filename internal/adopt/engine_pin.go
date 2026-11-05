@@ -17,14 +17,17 @@ const toolsModuleFile = "tools/go/go.mod"
 // engineToolPackage is the tool directive that makes toolsModuleFile pin the audit engine.
 const engineToolPackage = gomanifest.EngineModulePath + "/cmd/standardsctl"
 
-// reportStaleEnginePin warns when the tools module pins an audit engine other than the one
-// running the adoption (#1054). The files this run refreshed are that engine's texts; an older
+// reportStaleEnginePin advances an ancestor workflow pin, then warns when the tools module
+// pins an audit engine other than the one running the adoption (#1054). The files this run
+// refreshes are that engine's texts; an older
 // pinned engine does not know them, so CI's audit refuses them ("differs from the locked Praetor
 // asset") until the pin moves. The warning names the file, the pinned version, the running
-// engine and the command that moves the pin with its go.sum. Nothing is checked when the
-// repository has no such tools module, when it pins no engine tool, or when either version
-// identifies no build.
+// engine and the command that moves the pin with its go.sum. The tools-module warning is
+// skipped without such a module or tool pin, or when either version identifies no build.
 func reportStaleEnginePin(ctx context.Context, s *adoptSession) error {
+	if err := reconcileWorkflowEnginePin(ctx, s); err != nil {
+		return err
+	}
 	data, exists, err := contextopt.ObserveSnapshotIn(ctx, s.repoPath, toolsModuleFile)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", toolsModuleFile, err)

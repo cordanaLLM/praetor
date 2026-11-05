@@ -681,7 +681,7 @@ writes any (`TestAdoptionScaffoldTable_MatchesTheStepChain` in
 | `makefile` | `Makefile` with the `verify-all` target |
 | `editors` | `.editorconfig`, `.vscode/`, `.idea/`, `.zed/`, `.helix/`, `.fleet/`, `.nvim.lua`, `lua/`, `.dir-locals.el`, `standards.sublime-project`, `.clang-tidy` where the profile calls for it |
 | `formatter-ignore` | `.prettierignore` entries for managed artifacts, where a formatter is configured |
-| `renovate-ignore` | the managed-file and engine-update suppression rules in an existing Renovate configuration; none is created |
+| `renovate-ignore` | the managed-file and engine-update suppression rules, plus the workflow engine pin custom manager, in an existing Renovate configuration; none is created |
 | `actionlint-labels` | `.github/actionlint.yaml` runner labels |
 | `contributing` | `CONTRIBUTING.md` |
 | `pull-request-template` | `.github/pull_request_template.md` |
@@ -1780,6 +1780,39 @@ Generated locks omit `generated_at`; a lock that sets it still validates. The
 behavior is pinned by `internal/config/lock_test.go`,
 `cmd/standardsctl/lockdigest_test.go`, `cmd/standardsctl/sync_validation_test.go`,
 `internal/adopt/lock_test.go` and `internal/harvester/onboard_safety_test.go`.
+
+Re-adoption advances workflow engine commit pins to the full commit of the adopting engine.
+It reads line-leading `PRAETOR_COMMIT` declarations containing a full lowercase SHA, and
+`PRAETOR_REF` declarations containing a SHA of 7–40 hexadecimal digits, under
+`.github/workflows/*.yml` and `*.yaml`. Both `NAME: value` and `NAME=value` are supported.
+The selected `--lock-source-root` must contain the engine's Git history: adoption verifies
+`git merge-base --is-ancestor <pin> <adopting-commit>` locally before changing a pin. The
+running build's revision or release tag selects the adopting commit when available; otherwise
+the source's `HEAD` does. No fetch is performed. Without `--lock-source-root`, adoption leaves
+the pin untouched and reports its `file:line`, declaration and SHA as not evaluated, with the
+instruction to rerun with `--lock-source-root=<engine checkout>`. A supplied source that cannot
+resolve the adopting engine commit also leaves the pin untouched: the report names the pin,
+source path and Git error, with the same instruction to select a Git checkout of the engine.
+Validated catalog copies can still supply lock content without Git history. Once the adopting
+commit resolves, missing pin history or a diverged pin stops adoption and names the declaration.
+Several different declared SHA pins stop adoption with every `file:line`, even without a source.
+Repeated declarations of the same SHA move together. The report names each changed file,
+old SHA and new SHA. An identical pin, a tag or branch ref, and a repository without a
+commit pin keep their bytes; absence is reported explicitly. A dry run reports the planned
+move without writing it.
+
+For adopters with an existing safely editable Renovate configuration, adoption also merges
+a `customManagers` regex manager for these workflow pins. It uses Renovate's
+[`git-refs` datasource](https://docs.renovatebot.com/modules/datasource/git-refs/) with
+`currentValueTemplate: HEAD` and captures the SHA as `currentDigest`, so the bot can move
+pins to the engine's default branch between adoptions. Its dependency name,
+`praetor-workflow-engine-pin`, sits outside the engine package names disabled for
+coordinated asset updates. Existing custom managers remain in place; no Renovate configuration
+is created when none exists. A repository restricting `enabledManagers` must include
+`custom.regex`; its own package rules must also permit updates to the pin's workflow.
+JSONC, JSON5 and other unsafe configurations retain the existing
+warning-and-preserve behavior. The planted history, refusal, dry-run and manager cases live in
+`internal/adopt/workflow_engine_pin_test.go` and `internal/adopt/renovate_pin_test.go`.
 
 The repository audits also enforce [selected agent-context files](guides/agents-and-clients/index.md#keep-tracked-context-within-the-selected-clients),
 [coordinated engine updates](guides/documentation-governance.md#coordinate-engine-updates)

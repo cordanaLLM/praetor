@@ -117,6 +117,7 @@ func (s *Server) createAdoptTool() (mcp.Tool, error) {
 	return mcp.NewMutatingTool("standards_adopt", "Adopt any codebase into Praetor governance in 1 step", schema, s.runAdoptTool, true, true)
 }
 
+// runAdoptTool adopts a repository using the running server's engine build identity.
 func (s *Server) runAdoptTool(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
 	a, err := s.parseAdoptArgs(args)
 	if err != nil {
@@ -131,6 +132,7 @@ func (s *Server) runAdoptTool(ctx context.Context, args map[string]any) (*mcp.To
 		Profile:              a.profile,
 		Facets:               a.facets,
 		LockSourceRoot:       a.sourceRoot,
+		Engine:               s.opts.Build,
 		DryRun:               a.dryRun,
 		Force:                a.force,
 		RecordBaseline:       a.recordBase,
