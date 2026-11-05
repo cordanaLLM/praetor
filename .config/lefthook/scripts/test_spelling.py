@@ -1,12 +1,12 @@
 """Spelling checks against exported staged bytes, without invoking repository gates."""
 
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 import checks
+import common
 from common import HookError
 
 ENGINE_CONFIG = Path(__file__).resolve().parents[3] / ".codespellrc"
@@ -26,9 +26,7 @@ class StagedSpelling(unittest.TestCase):
 
     def git(self, *args):
         """Execute a git command within the test repository and return captured stdout bytes."""
-        return subprocess.run(
-            ["git", *args], cwd=self.repo, capture_output=True, check=True, timeout=30
-        ).stdout
+        return common.git(*args, cwd=self.repo)
 
     def stage(self, name, text):
         """Write file contents into the test repository and stage the path in the git index."""
