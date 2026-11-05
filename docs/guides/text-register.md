@@ -216,7 +216,11 @@ renders the evidence line with `.workingdir2/evidence/` in place of the default
 (`TestRegisterEvidenceDir_RendersAdopterLine` in
 `internal/config/register_evidence_dir_test.go`). The value is checked when the manifest loads
 (`config.CheckEvidenceDir`); a block is never rendered for a refused value, and the default never
-stands in for one.
+stands in for one. During adoption, preflight reads the `register` section from the planned
+manifest (a manifest snapshot in the context, `observeManifestSnapshot` in
+`internal/config/manifest_snapshot.go`) before `.standards.yaml` is written, and refuses an
+invalid planned manifest as it refuses an invalid file (`TestManifestSnapshotReadersAndIsolation`
+and `TestManifestSnapshotStillValidates` in `internal/config/manifest_snapshot_test.go`).
 
 Every rendered block names that directory, so the repository has to keep it out of Git:
 
