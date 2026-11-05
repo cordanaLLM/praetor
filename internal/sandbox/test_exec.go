@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
+	"path"
 	"runtime"
 	"strconv"
 	"strings"
@@ -114,7 +114,8 @@ func containerSocket(getenv func(string) string, present func(string) bool) stri
 	}
 	candidates := []string{"/var/run/docker.sock"}
 	if dir := getenv("XDG_RUNTIME_DIR"); dir != "" {
-		candidates = append(candidates, filepath.Join(dir, "docker.sock"), filepath.Join(dir, "podman", "podman.sock"))
+		// Unix socket paths: path, not filepath, so a Windows build keeps forward slashes.
+		candidates = append(candidates, path.Join(dir, "docker.sock"), path.Join(dir, "podman", "podman.sock"))
 	}
 	for i := 0; i < len(candidates); i++ {
 		if present(candidates[i]) {
