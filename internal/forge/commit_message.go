@@ -37,14 +37,52 @@ const maxCommitMessageLines = 100000
 const maxCommitBodyColumns = 72
 
 // commitTrailerLineRegex recognises Token: value lines, whose values must remain intact.
-var commitTrailerLineRegex = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*:[ \t]+\S`)
+// It also matches BREAKING CHANGE: footers following Conventional Commits 1.0.0.
+var commitTrailerLineRegex = regexp.MustCompile(`^(?:[A-Za-z0-9][A-Za-z0-9-]*|BREAKING CHANGE):[ \t]+\S`)
+
+// isTrailerOrContinuation reports whether line is a trailer or an allowed continuation line.
+func isTrailerOrContinuation(line string, allowContinuation bool) bool {
+	if commitTrailerLineRegex.MatchString(line) {
+		return true
+	}
+	return allowContinuation && isTrailerContinuation(line)
+}
+
+// commitTrailerBlockRange returns the zero-based line range [start, end] of the trailer block
+// of message, or -1, -1 when it has none. The trailer block is the final paragraph that
+// commitAttributionErrors reads too (commitParagraphs), after the subject paragraph, and only
+// when every line of it is a trailer or an indented continuation line.
+func commitTrailerBlockRange(message string, lines []string) (int, int) {
+	paragraphs := commitParagraphs(message)
+	if len(paragraphs) < 2 {
+		return -1, -1
+	}
+	final := paragraphs[len(paragraphs)-1]
+	for i := 0; i < len(final) && i < maxCommitMessageLines; i++ {
+		if !isTrailerOrContinuation(final[i], i > 0) {
+			return -1, -1
+		}
+	}
+	end := -1
+	for i := min(len(lines), maxCommitMessageLines) - 1; i >= 0; i-- {
+		if strings.TrimSpace(lines[i]) != "" {
+			end = i
+			break
+		}
+	}
+	return end - len(final) + 1, end
+}
 
 // commitBodyWidthErrors reports overlong body lines using rune widths and one-based line numbers.
 // The first non-empty line is the subject; code fences use the shared Markdown tracker.
 func commitBodyWidthErrors(message string) []string {
+	if over := commitLinesOverBound(message, "body width"); over != "" {
+		return []string{over}
+	}
 	lines := strings.Split(message, "\n")
 	var errs []string
 	var fence util.MarkdownFence
+	trailerStart, trailerEnd := commitTrailerBlockRange(message, lines)
 	subjectSeen := false
 	for i := 0; i < len(lines) && i < maxCommitMessageLines; i++ {
 		line := strings.TrimSuffix(lines[i], "\r")
@@ -56,8 +94,9 @@ func commitBodyWidthErrors(message string) []string {
 		if fence.Inside(trimmed) {
 			continue
 		}
+		inTrailerBlock := i >= trailerStart && i <= trailerEnd
 		width := utf8.RuneCountInString(line)
-		if width <= maxCommitBodyColumns || commitBodyWidthExempt(line) {
+		if width <= maxCommitBodyColumns || commitBodyWidthExempt(line, inTrailerBlock) {
 			continue
 		}
 		errs = append(errs, fmt.Sprintf("commit body line %d is %d columns; maximum %d (fleet rule)",
@@ -66,10 +105,13 @@ func commitBodyWidthErrors(message string) []string {
 	return errs
 }
 
-// commitBodyWidthExempt preserves trailers, quoted lines, and single URLs, paths or commands.
+// commitBodyWidthExempt preserves trailers in the trailer block, quoted lines, and single URLs, paths or commands.
 // A whitespace-free token cannot be wrapped without changing its contents.
-func commitBodyWidthExempt(line string) bool {
-	return strings.HasPrefix(line, "> ") || commitTrailerLineRegex.MatchString(line) || len(strings.Fields(line)) <= 1
+func commitBodyWidthExempt(line string, inTrailerBlock bool) bool {
+	if strings.HasPrefix(line, "> ") || len(strings.Fields(line)) <= 1 {
+		return true
+	}
+	return inTrailerBlock && (commitTrailerLineRegex.MatchString(line) || isTrailerContinuation(line))
 }
 
 // CleanCommitMessage returns message as git's default cleanup records it for the policy: without
@@ -231,7 +273,7 @@ func unfoldTrailerParagraph(para []string) []string {
 // and a Co-authored-by trailer in the final paragraph naming a model, tool or bot (the
 // trailer block as git interpret-trailers reads it, including folded continuation lines).
 func commitAttributionErrors(message string) []string {
-	if over := commitLinesOverBound(message); over != "" {
+	if over := commitLinesOverBound(message, "attribution"); over != "" {
 		return []string{over}
 	}
 	seen := make(map[string]struct{})
@@ -252,14 +294,14 @@ func commitAttributionErrors(message string) []string {
 }
 
 // commitLinesOverBound returns the refusal for a message of more than maxCommitMessageLines
-// lines, or "". A stored commit reaches the attribution scan without CleanCommitMessage, and the
-// scan stops at the bound, so a footer past it would otherwise pass unchecked.
-func commitLinesOverBound(message string) string {
+// lines, or "". A stored commit reaches scans without CleanCommitMessage, and the
+// scan stops at the bound, so content past it would otherwise pass unchecked.
+func commitLinesOverBound(message, check string) string {
 	if strings.Count(strings.TrimSuffix(message, "\n"), "\n") < maxCommitMessageLines {
 		return ""
 	}
 	return fmt.Sprintf("commit message holds more than %d lines; the policy refuses it rather than "+
-		"check its attribution in part", maxCommitMessageLines)
+		"check its %s in part", maxCommitMessageLines, check)
 }
 
 // attributionLineErrors refuses footer lines anywhere in message: a robot emoji opening a
