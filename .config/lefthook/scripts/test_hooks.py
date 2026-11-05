@@ -1609,6 +1609,41 @@ class ScopeAndGuard(unittest.TestCase):
             source_checks(ROOT, ["internal/a_test.go"], base="abc123")
         commands.assert_called_once_with(ROOT, ["internal/a_test.go"], base="abc123")
 
+    def test_semgrep_permissions_rule_only_change_validates_configuration(self):
+        """A push changing only the permission rules validates the configuration without Go files."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rules = self.semgrep_tree(root)
+            permissions = ".config/semgrep/go-permissions.yml"
+            commands = semgrep_commands(root, [permissions])
+        self.assertEqual(commands, [
+            ["semgrep", "scan", "--error", "--config", rules, "--exclude", FIXTURE_DIRECTORY, "."],
+            ["semgrep", "validate", permissions],
+        ])
+
+    def test_semgrep_permissions_rule_validation_planted_invalid_config_fails(self):
+        """Execute validation and verify that planted invalid rule syntax fails."""
+        if shutil.which("semgrep") is None:
+            self.skipTest("semgrep absent")
+        permissions = ".config/semgrep/go-permissions.yml"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cfg = root / ".config" / "semgrep"
+            cfg.mkdir(parents=True)
+            # Positive: real permissions config passes validation
+            real_text = (ROOT / permissions).read_text(encoding="utf-8")
+            (cfg / "go-permissions.yml").write_text(real_text, encoding="utf-8")
+            commands = semgrep_commands(root, [permissions])
+            self.assertEqual(commands, [["semgrep", "validate", permissions]])
+            res = subprocess.run(commands[0], cwd=root, capture_output=True, text=True, timeout=30)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            # Planted negative case: invalid rule structure fails semgrep validate
+            (cfg / "go-permissions.yml").write_text(
+                "rules:\n  - id: planted_invalid\n    bad_field: true\n", encoding="utf-8"
+            )
+            res_bad = subprocess.run(commands[0], cwd=root, capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(res_bad.returncode, 0)
+
     def semgrep_fixture_git(self, root, *args):
         """Use bounded local Git plumbing; fixture commits never invoke repository hooks."""
         result = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True,

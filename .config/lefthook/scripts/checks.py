@@ -703,11 +703,14 @@ def semgrep_commands(directory, names, base=None):
         source = ["--exclude", FIXTURE_DIRECTORY, "."]
     if source and (directory / rules).exists():
         commands.append(["semgrep", "scan", "--error", "--config", rules, *source])
-    if go_source and (directory / permissions).exists():
-        if not base:
-            raise HookError("Go permission scan requires a trusted push baseline; no scan performed")
-        commands.append(["semgrep", "scan", "--error", "--config", permissions,
-                         "--baseline-commit", base, *go_source])
+    if (directory / permissions).exists():
+        if go_source:
+            if not base:
+                raise HookError("Go permission scan requires a trusted push baseline; no scan performed")
+            commands.append(["semgrep", "scan", "--error", "--config", permissions,
+                             "--baseline-commit", base, *go_source])
+        elif any(str(name) == permissions for name in names):
+            commands.append(["semgrep", "validate", permissions])
     return commands
 
 

@@ -1344,10 +1344,12 @@ err := os.WriteFile(stub, contents, 0o755)
 ```
 
 For a directory at `0o755`, name the incorrect-default rule and
-`go_file-permissions_rule-mkdir` instead. `test_semgrep_permissions_*` in
+`go_file-permissions_rule-mkdir` instead. A push that modifies only
+`.config/semgrep/go-permissions.yml` schedules `semgrep validate` to check the
+rule configuration. `test_semgrep_permissions_*` in
 `.config/lefthook/scripts/test_hooks.py` covers command construction, baseline forwarding,
-planted violations, suppressions and thresholds using the real engine; matching tests explicitly
-skip when Semgrep is absent.
+planted violations, rule validation, suppressions and thresholds using the real engine;
+matching tests explicitly skip when Semgrep is absent.
 
 ## Which changed files select which checks
 
