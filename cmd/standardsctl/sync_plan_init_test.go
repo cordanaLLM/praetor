@@ -409,6 +409,15 @@ func (s *forgeStub) serveLegacyProtection(w http.ResponseWriter) {
 	}
 }
 
+// withBypassList stores a ruleset as GitHub does: a body written without bypass_actors reads back
+// with an empty list to a caller with write access to the ruleset.
+func withBypassList(body map[string]any) map[string]any {
+	if _, present := body["bypass_actors"]; !present {
+		body["bypass_actors"] = []any{}
+	}
+	return body
+}
+
 func (s *forgeStub) serveRuleset(w http.ResponseWriter, method, rest string, body map[string]any) {
 	id := 0
 	if rest != "" {
@@ -429,11 +438,11 @@ func (s *forgeStub) serveRuleset(w http.ResponseWriter, method, rest string, bod
 	case method == http.MethodPost:
 		id = len(s.rulesets) + 1
 		body["id"] = id
-		s.rulesets[id] = body
+		s.rulesets[id] = withBypassList(body)
 		stubRespond(w, http.StatusCreated, body)
 	default:
 		body["id"] = id
-		s.rulesets[id] = body
+		s.rulesets[id] = withBypassList(body)
 		stubRespond(w, http.StatusOK, body)
 	}
 }
