@@ -771,6 +771,25 @@ before any request. Nothing is written. When a declared property is not enforced
 at zero (`cmd/standardsctl/plan.go`, `TestPlan_Remote_ComparesLiveBranchProtection_Positive`,
 `TestPlan_Remote_ComparesLiveBranchProtection_Negative`).
 
+`--remote` also compares the bypass actors of the live `praetor-main-protection` ruleset with
+those the policy renders: the repository admin role in mode `pull_request` under review mode
+`single_maintainer`, none otherwise (`forge.EvaluateBypassActors`). A missing declared actor, an
+extra live one or a wider bypass mode is `[DRIFT] Bypass actors`. GitHub returns `bypass_actors`
+only to a caller with write access to the ruleset, so a ruleset read without the list reports it
+as unread drift; an unread list never passes. `sync --remote` keeps the bypass actors of a live
+ruleset, so plan names the hand edit on GitHub instead of a command.
+
+A scheduled or CI check of the live ruleset adds `--fail-on-drift`: any drift of a declared
+property or of the bypass actors ends plan with a non-zero exit (`ErrPlanDrift`); the report is the
+same. `--fail-on-drift` needs `--remote` and is refused without it:
+
+```bash
+standardsctl plan --remote --fail-on-drift              # non-zero exit on any live drift
+```
+
+The planted cases, an extra bypass actor, a dropped required status check and an unread bypass
+list, are in `cmd/standardsctl/plan_fail_on_drift_test.go`.
+
 ### Label taxonomy
 
 `praetorctl adopt` and `praetorctl sync` write the same eight-label

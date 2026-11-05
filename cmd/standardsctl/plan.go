@@ -77,6 +77,7 @@ type planFlags struct {
 	catalogRoot string
 	offline     bool
 	remote      bool
+	failOnDrift bool
 	remoteOpts  remoteSyncOptions
 }
 
@@ -86,6 +87,7 @@ func parsePlanFlags(args []string) (planFlags, error) {
 	catalogRoot := fs.String("catalog-root", "", "Root containing pinned .config/archetypes (default: planned root)")
 	offline := fs.Bool("offline", false, offlineFlagUsage)
 	remote := fs.Bool("remote", false, "Also read the branch protection GitHub enforces on the default branch and compare it with the declared policy (read-only; an explicit opt-in)")
+	failOnDrift := fs.Bool("fail-on-drift", false, "With --remote: exit non-zero when GitHub does not enforce a declared branch protection property or the praetor ruleset's bypass actors differ from the declared ones")
 	remoteOpts := addRemoteFlags(fs)
 
 	if _, err := parseInterspersed(fs, args); err != nil {
@@ -97,7 +99,11 @@ func parsePlanFlags(args []string) (planFlags, error) {
 	if *offline && *remote {
 		return planFlags{}, errors.New("plan: --offline skips every forge read and --remote reads live branch protection; pass one of them")
 	}
-	return planFlags{configPath: *configPath, catalogRoot: *catalogRoot, offline: *offline, remote: *remote, remoteOpts: remoteOpts()}, nil
+	if *failOnDrift && !*remote {
+		return planFlags{}, errors.New("plan: --fail-on-drift judges the live branch protection, which only --remote reads")
+	}
+	return planFlags{configPath: *configPath, catalogRoot: *catalogRoot, offline: *offline, remote: *remote,
+		failOnDrift: *failOnDrift, remoteOpts: remoteOpts()}, nil
 }
 
 func runPlan(args []string) error {
@@ -133,7 +139,37 @@ func runPlan(args []string) error {
 	if !flags.remote {
 		return nil
 	}
-	return planRemoteProtection(ctx, filepath.Dir(flags.configPath), manifest, policy.BranchProtection, flags.remoteOpts)
+	return planRemoteProtection(ctx, filepath.Dir(flags.configPath), manifest, policy.BranchProtection, flags.remoteOpts, flags.failOnDrift)
+}
+
+// ErrPlanDrift is the exit status of plan --remote --fail-on-drift when GitHub does not enforce
+// the declared branch protection or the praetor ruleset's bypass actors differ from it.
+var ErrPlanDrift = errors.New("plan --fail-on-drift: the live branch protection drifts from the declared policy")
+
+// liveRulesetReader reads the body of the praetor ruleset for a branch, nil when there is none
+// (forge.GitHubDriver.LiveRuleset).
+type liveRulesetReader interface {
+	LiveRuleset(ctx context.Context, branch string) ([]byte, error)
+}
+
+// planBypassActors compares the bypass actors of the live praetor ruleset with the declared ones
+// and prints the finding; sync --remote keeps live bypass actors, so drift names the hand edit.
+func planBypassActors(ctx context.Context, reader liveRulesetReader, target protectionTarget) (bool, error) {
+	body, err := reader.LiveRuleset(ctx, target.branch)
+	if err != nil {
+		return false, &forgeReadError{err: fmt.Errorf("read the live ruleset of %s: %w", target.branch, err)}
+	}
+	finding, err := forge.EvaluateBypassActors(target.policy, body)
+	if err != nil {
+		return false, err
+	}
+	fmt.Println("    " + formatProtectionFinding(finding))
+	if finding.Verdict != forge.ProtectionDrift {
+		return false, nil
+	}
+	fmt.Printf("    sync --remote keeps the bypass actors of a live ruleset; change those of ruleset %q on GitHub by hand "+
+		"(repository Settings, Rules) if the declared policy is intended\n", forge.RepositoryRulesetName)
+	return true, nil
 }
 
 // planRemoteProtection reads what GitHub enforces on the default branch, from its rulesets and
@@ -141,8 +177,9 @@ func runPlan(args []string) error {
 // sync --remote would require there (remoteStatusContexts). It only reads: the origin remote
 // must name the manifest's repository, as for sync --remote, and nothing is written. Drift is
 // reported with the command that reconciles it; like the local drift above it, it leaves the
-// exit status of this preview at zero.
-func planRemoteProtection(ctx context.Context, rootDir string, manifest *config.Manifest, policy config.BranchProtectionPolicy, remote remoteSyncOptions) error {
+// exit status of this preview at zero unless failOnDrift is set (ErrPlanDrift). The praetor
+// ruleset's bypass actors are compared too (planBypassActors).
+func planRemoteProtection(ctx context.Context, rootDir string, manifest *config.Manifest, policy config.BranchProtectionPolicy, remote remoteSyncOptions, failOnDrift bool) error {
 	token := resolveSyncToken(remote.token)
 	if token == "" {
 		return ErrRemoteTokenMissing
@@ -156,15 +193,27 @@ func planRemoteProtection(ctx context.Context, rootDir string, manifest *config.
 	}
 	gh := forge.NewGitHubDriver(token, remote.endpoint)
 	gh.SetRepository(manifest.Repository.Owner, manifest.Repository.Name)
+	gh.RulesetName = forge.RepositoryRulesetName // the ruleset sync --remote writes; LiveRuleset reads it by name
 	drifted, err := reportLiveProtection(ctx, gh, target, "compared with the declared policy", false)
 	if err != nil {
 		return err
 	}
-	if len(drifted) == 0 {
+	bypassDrift, err := planBypassActors(ctx, gh, target)
+	if err != nil {
+		return err
+	}
+	switch {
+	case len(drifted) == 0 && !bypassDrift:
 		fmt.Println("\nStatus: GitHub enforces every declared branch protection property.")
 		return nil
+	case len(drifted) == 0:
+		fmt.Printf("\n[DRIFT] The bypass actors of ruleset %q on %s differ from the declared ones.\n", forge.RepositoryRulesetName, target.branch)
+	default:
+		fmt.Printf("\n[DRIFT] GitHub does not enforce the declared %s on %s.\n", strings.Join(drifted, ", "), target.branch)
+		fmt.Println("Action: Run 'praetorctl sync --remote' to reconcile branch protection on GitHub.")
 	}
-	fmt.Printf("\n[DRIFT] GitHub does not enforce the declared %s on %s.\n", strings.Join(drifted, ", "), target.branch)
-	fmt.Println("Action: Run 'praetorctl sync --remote' to reconcile branch protection on GitHub.")
+	if failOnDrift {
+		return ErrPlanDrift
+	}
 	return nil
 }
