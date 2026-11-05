@@ -10,20 +10,25 @@ Install `yamllint`, `shellcheck`, `actionlint` and `hadolint`
 when editing their file types; applicable checks fail if their tool is missing
 or older than its floor ([linter version floors](#linter-version-floors)).
 The engine also checks staged text with `codespell`, using the root `.codespellrc`.
-Install its pinned release with the hash-locked Python tools:
+Install its pinned release into an isolated virtual environment with the hash-locked
+Python tools and invoke its `codespell` executable, as CI does:
 
 ```bash
-python3 -m pip install --require-hashes -r .config/hook-lint/requirements.txt
-codespell --config .codespellrc .
+python3 -m venv "$HOME/.local/share/praetor-tools/hook-lint"
+"$HOME/.local/share/praetor-tools/hook-lint/bin/python" -m pip install --require-hashes -r .config/hook-lint/requirements.txt
+mkdir -p "$HOME/.local/bin"
+ln -sfn "$HOME/.local/share/praetor-tools/hook-lint/bin/codespell" "$HOME/.local/bin/codespell"
+"$HOME/.local/share/praetor-tools/hook-lint/bin/codespell" --config .codespellrc .
 ```
 
-CI runs the same spelling configuration over the tree, including documentation-only
+Keep `$HOME/.local/bin` on `PATH` so pre-commit hooks find `codespell`. CI runs the
+same spelling configuration over the tree, including documentation-only
 changes. Generated schemas, vendored code, testdata, dependency locks, encoded source
 bundles, the bundled player and the changelog archive are skipped. The shared ignore
 list contains valid names and identifiers; deliberate malformed test inputs use
 line-local `codespell:ignore` comments. Vendored hook policies enable this check
 when their repository supplies `.codespellrc`; an enabled check fails if codespell
-is missing. Regression coverage: `.config/lefthook/scripts/test_spelling.py`.
+is missing or older than 2.4.3. Regression coverage: `.config/lefthook/scripts/test_spelling.py`.
 
 Strict source pushes also require `gosec`, `govulncheck` and `semgrep`. Pushes touching nested tool
 modules (`tools/*/go.mod` or `go.sum`) also scan those directories with Trivy at CI severity

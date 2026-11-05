@@ -58,6 +58,9 @@ LAUNCHER = ".config/lefthook/python.sh"
 MAKE_CANDIDATES = (("make",), ("gmake",), ("mingw32-make",))
 MAKE_STATED = re.compile(r"\AGNU Make (\d+(?:\.\d+)+)")
 RESOLVED = {"python": PYTHON_CANDIDATES, "make": MAKE_CANDIDATES}
+# codespell 2.4.3 added inline suppressions (codespell:ignore-next-line).
+CODESPELL_FLOOR = "2.4.3"
+CODESPELL_STATED = re.compile(r"\A(\d+(?:\.\d+)+)")
 # Every other program checks.py and hooks.py start, by the name PATH resolves, and sh, which
 # starts every job of praetor.yml and the pre-push script. run (common.py) refuses the hook
 # with the program named when one is missing. The DeclaredPrograms cases of test_hooks.py
@@ -284,6 +287,23 @@ def on_path(tool, which=shutil.which):
     return path
 
 
+def codespell_proof(argv):
+    """Return the codespell version argv states, or fail when unreadable or older than floor."""
+    stated = stated_version([*argv, "--version"], CODESPELL_STATED)
+    if stated is None:
+        raise HookError("codespell --version states no version this policy reads")
+    if below(stated, CODESPELL_FLOOR):
+        raise HookError(f"codespell >= {CODESPELL_FLOOR} is required: "
+                        f"the codespell on PATH is {stated}")
+    return stated
+
+
+def checked_codespell(which=shutil.which):
+    """Return (argv, version) of the codespell on PATH when it meets CODESPELL_FLOOR."""
+    path = on_path("codespell", which=which)
+    return [path], codespell_proof([path])
+
+
 def describe(tool, floors):
     """Return one declared tool's state on this host; a HookError says what is wrong with it."""
     if tool == "python":
@@ -292,6 +312,9 @@ def describe(tool, floors):
     if tool == "make":
         argv, version = resolved_make()
         return f"{version} ({argv[0]})"
+    if tool == "codespell":
+        argv, version = checked_codespell()
+        return f"{version} (floor {CODESPELL_FLOOR})"
     if tool in BY_NAME:
         return on_path(tool)
     version = checked_version(tool, floors)

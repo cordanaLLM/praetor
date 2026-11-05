@@ -164,6 +164,17 @@ class StagedSpelling(unittest.TestCase):
             checks.spelling_check(self.export, names)
         execute.assert_not_called()
 
+    def test_outdated_codespell_is_refused(self):
+        """Negative test proving codespell versions below CODESPELL_FLOOR fail closed before scanning."""
+        (self.export / ".codespellrc").write_text("[codespell]\n", encoding="utf-8")
+        with (
+            mock.patch("toolchain.stated_version", return_value="2.4.1"),
+            mock.patch("checks.run") as execute,
+            self.assertRaisesRegex(HookError, "codespell >= 2.4.3 is required"),
+        ):
+            checks.spelling_check(self.export, ["notes.md"])
+        execute.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

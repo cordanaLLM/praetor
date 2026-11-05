@@ -3739,6 +3739,20 @@ class HookInterpreter(unittest.TestCase):
                              [sys.executable, "-B", "scripts/test_praetor_hook.py"])
             self.assertEqual(len(self_test_commands(root)), len(checks.SELF_TESTS) + 2)
 
+    def test_spelling_self_test_is_gated_on_adopter_codespell_configuration(self):
+        """Self-test commands must gate test_spelling.py on adopter's .codespellrc."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            commands = self_test_commands(root)
+            self.assertNotIn([sys.executable, "-B", ".config/lefthook/scripts/test_spelling.py"],
+                             commands)
+            (root / ".codespellrc").write_text("[codespell]\n", encoding="utf-8")
+            script = root / ".config/lefthook/scripts/test_spelling.py"
+            script.parent.mkdir(parents=True, exist_ok=True)
+            script.write_text("", encoding="utf-8")
+            self.assertIn([sys.executable, "-B", ".config/lefthook/scripts/test_spelling.py"],
+                          self_test_commands(root))
+
     def test_the_probe_answer_decides_not_the_name_or_the_status(self):
         for output, version in ((b"3.14\n", "3.14"), (b"3.10\r\n", "3.10"), (b"3.100\n", "3.100")):
             with self.subTest(output=output), \
@@ -3802,6 +3816,20 @@ class HookInterpreter(unittest.TestCase):
         self.assertEqual(toolchain.on_path("sh", which=installed), "/usr/bin/sh")
         with self.assertRaisesRegex(HookError, "^sh is not on PATH$"):
             toolchain.on_path("sh", which=lambda _program: None)
+
+    def test_codespell_is_described_with_floor_and_refuses_outdated_versions(self):
+        """Tool describe reports codespell floor and rejects versions below CODESPELL_FLOOR."""
+        with (
+            mock.patch("toolchain.on_path", return_value="/usr/bin/codespell"),
+            mock.patch("toolchain.stated_version", return_value="2.4.3"),
+        ):
+            self.assertEqual(toolchain.describe("codespell", {}), "2.4.3 (floor 2.4.3)")
+        with (
+            mock.patch("toolchain.on_path", return_value="/usr/bin/codespell"),
+            mock.patch("toolchain.stated_version", return_value="2.4.1"),
+            self.assertRaisesRegex(HookError, "codespell >= 2.4.3 is required"),
+        ):
+            toolchain.describe("codespell", {})
 
     def test_check_exits_nonzero_for_a_required_tool_that_is_unusable(self):
         runner = [sys.executable, "-B", str(ROOT / ".config/lefthook/scripts/toolchain.py")]
