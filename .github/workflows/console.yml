@@ -57,9 +57,7 @@ jobs:
         with:
           node-version: '24'
       - name: Enable pnpm from packageManager
-        run: |
-          npm install --global corepack@latest
-          corepack enable pnpm
+        run: corepack enable pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm lint
