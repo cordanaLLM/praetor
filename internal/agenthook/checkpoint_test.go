@@ -163,7 +163,7 @@ func TestRunPreEditNoInterpreterDenies(t *testing.T) {
 func syncedRepository(t *testing.T) string {
 	t.Helper()
 	root := repository(t, true)
-	if _, err := state.SyncState(context.Background(), root, "checkpoint test fixture"); err != nil {
+	if _, err := state.SyncState(testsupport.DeadlineContext(t), root, "checkpoint test fixture"); err != nil {
 		t.Fatalf("sync fixture state: %v", err)
 	}
 	return root
@@ -189,7 +189,7 @@ func TestRunStopBlocksOnAnUnresolvedP0Row(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add bug: %v", err)
 	}
-	if _, err := state.SyncState(context.Background(), root, "p0 fixture"); err != nil {
+	if _, err := state.SyncState(testsupport.DeadlineContext(t), root, "p0 fixture"); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	run := func() Response {
@@ -201,7 +201,7 @@ func TestRunStopBlocksOnAnUnresolvedP0Row(t *testing.T) {
 	if err := state.ResolveBug(root, bug.ID, "fixed"); err != nil {
 		t.Fatalf("resolve bug: %v", err)
 	}
-	if _, err := state.SyncState(context.Background(), root, "p0 resolved"); err != nil {
+	if _, err := state.SyncState(testsupport.DeadlineContext(t), root, "p0 resolved"); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	if response := run(); response.ExitCode != 0 {
