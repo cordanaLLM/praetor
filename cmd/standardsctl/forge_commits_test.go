@@ -154,6 +154,22 @@ func TestForgeCheckMessage_Positive_CleansTheHookMessage(t *testing.T) {
 	}
 }
 
+// TestForgeCheckMessage_BodyWidth refuses planted 73-column prose through the hook command.
+func TestForgeCheckMessage_BodyWidth(t *testing.T) {
+	dir := t.TempDir()
+	for _, width := range []int{72, 73} {
+		body := "A " + strings.Repeat("x", width-2)
+		path := writeFixtureFile(t, dir, "COMMIT_EDITMSG", "fix: wrap body\n\n"+body+"\n")
+		err := dispatchCommand("forge", []string{"check-message", "--repo=" + dir, path})
+		if width == 72 && err != nil {
+			t.Fatalf("72-column body: %v", err)
+		}
+		if width == 73 && (err == nil || !strings.Contains(err.Error(), "body line 3 is 73 columns")) {
+			t.Fatalf("73-column body must identify line 3 and width: %v", err)
+		}
+	}
+}
+
 func TestForgeCheckMessage_Positive_BareClosingReferenceWarnsOffline(t *testing.T) {
 	path := writeFixtureFile(t, t.TempDir(), "COMMIT_EDITMSG", "fix(hooks): close the issue\n\nCloses #28\n")
 	out, err := captureStdout(t, func() error {

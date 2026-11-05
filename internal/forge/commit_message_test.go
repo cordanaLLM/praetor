@@ -5,7 +5,80 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
+
+// TestAnalyzeCommit_Boundary_BodyWidth accepts 72 characters, including multibyte runes.
+func TestAnalyzeCommit_Boundary_BodyWidth(t *testing.T) {
+	for name, body := range map[string]string{
+		"ASCII":     "A " + strings.Repeat("x", 70),
+		"multibyte": "界 " + strings.Repeat("界", 70),
+		"CRLF":      "A " + strings.Repeat("x", 70) + "\r\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			analysis, err := AnalyzeCommit("fix: wrap body\n\n" + body)
+			if err != nil || !analysis.Valid {
+				t.Fatalf("72-rune body: %+v, %v", analysis, err)
+			}
+		})
+	}
+}
+
+// TestAnalyzeCommit_Negative_BodyWidth plants overlong prose and checks its line and rune width.
+func TestAnalyzeCommit_Negative_BodyWidth(t *testing.T) {
+	for name, body := range map[string]string{
+		"ASCII":                      "A " + strings.Repeat("x", 71),
+		"multibyte":                  "界 " + strings.Repeat("界", 71),
+		"after closed fence":         "```sh\nignored\n```\nA " + strings.Repeat("x", 71),
+		"middle paragraph with Note": "Note: " + strings.Repeat("x", 67) + "\n\nSigned-off-by: Author <author@example.invalid>",
+	} {
+		t.Run(name, func(t *testing.T) {
+			message := "fix: wrap body\n\n" + body
+			analysis, err := AnalyzeCommit(message)
+			lines := strings.Split(message, "\n")
+			expectedLine := 0
+			for idx := 0; idx < len(lines) && idx < maxCommitMessageLines; idx++ {
+				l := lines[idx]
+				if utf8.RuneCountInString(strings.TrimSuffix(l, "\r")) > maxCommitBodyColumns {
+					expectedLine = idx + 1
+					break
+				}
+			}
+			want := fmt.Sprintf("body line %d is 73 columns", expectedLine)
+			if err != nil || analysis.Valid || len(analysis.Errors) != 1 || !strings.Contains(analysis.Errors[0], want) {
+				t.Fatalf("want %q, got %+v, %v", want, analysis, err)
+			}
+		})
+	}
+}
+
+// TestAnalyzeCommit_Positive_BodyWidthExceptions keeps unwrappable and structured lines intact.
+func TestAnalyzeCommit_Positive_BodyWidthExceptions(t *testing.T) {
+	long := strings.Repeat("long ", 20)
+	for name, message := range map[string]string{
+		"subject":                 "fix: " + long,
+		"signoff":                 "fix: wrap body\n\nSigned-off-by: " + long + "<person@example.invalid>",
+		"coauthor":                "fix: wrap body\n\nCo-authored-by: " + long + "<person@example.invalid>",
+		"other trailer":           "fix: wrap body\n\nReviewed-by: " + long,
+		"lowercase trailer":       "fix: wrap body\n\nreviewed-by: " + long,
+		"breaking change trailer": "fix: wrap body\n\nBREAKING CHANGE: " + long + "\nMigration: see guide",
+		"breaking-change trailer": "fix: wrap body\n\nBREAKING-CHANGE: " + long + "\nMigration: see guide",
+		"backtick fence":          "fix: wrap body\n\n```sh\n" + long + "\n```",
+		"tilde fence":             "fix: wrap body\n\n~~~sh\n" + long + "\n~~~",
+		"longer fence":            "fix: wrap body\n\n````sh\n```\n" + long + "\n````",
+		"URL":                     "fix: wrap body\n\nhttps://example.invalid/" + strings.Repeat("x", 80),
+		"path":                    "fix: wrap body\n\n./" + strings.Repeat("path/", 20),
+		"command":                 "fix: wrap body\n\n./command-" + strings.Repeat("x", 80),
+		"quote":                   "fix: wrap body\n\n> " + long,
+	} {
+		t.Run(name, func(t *testing.T) {
+			analysis, err := AnalyzeCommit(message)
+			if err != nil || !analysis.Valid {
+				t.Fatalf("width exception: %+v, %v", analysis, err)
+			}
+		})
+	}
+}
 
 // TestAnalyzeCommit_Positive_ConventionalAndGitGeneratedSubjects (#61): every accepted type, with
 // and without a scope and the breaking marker, and the subjects git writes for a merge and a
@@ -410,6 +483,22 @@ func TestCommitAttributionErrors_Boundary_LineBound(t *testing.T) {
 	errs := commitAttributionErrors(over)
 	if len(errs) != 1 || !strings.Contains(errs[0], "more than") {
 		t.Fatalf("message of %d lines with a footer past the bound: got %v, want the over-bound refusal",
+			maxCommitMessageLines+1, errs)
+	}
+}
+
+// TestCommitBodyWidthErrors_Boundary_LineBound verifies that a stored message over the line
+// bound is refused outright, so body lines past the bound cannot pass unchecked.
+func TestCommitBodyWidthErrors_Boundary_LineBound(t *testing.T) {
+	filler := strings.Repeat("body line\n", maxCommitMessageLines-2)
+	atBound := "feat(forge): bound\n" + filler + "plain last line"
+	if errs := commitBodyWidthErrors(atBound); len(errs) != 0 {
+		t.Fatalf("message of exactly %d lines: got %v, want no errors", maxCommitMessageLines, errs)
+	}
+	over := "feat(forge): bound\n" + filler + "plain line\n" + strings.Repeat("x", 80)
+	errs := commitBodyWidthErrors(over)
+	if len(errs) != 1 || !strings.Contains(errs[0], "more than") || !strings.Contains(errs[0], "body width") {
+		t.Fatalf("message of %d lines over bound: got %v, want over-bound refusal",
 			maxCommitMessageLines+1, errs)
 	}
 }
