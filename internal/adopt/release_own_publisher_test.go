@@ -91,6 +91,33 @@ func TestOwnReleasePublisherCommands(t *testing.T) {
 	}
 }
 
+// TestOwnReleasePublisherActions covers release actions: actions/create-release always creates a
+// release; GoReleaser publishes when it runs its release command (also its default with no
+// subcommand) and not when it only installs, builds a snapshot, skips publish or runs another
+// subcommand.
+func TestOwnReleasePublisherActions(t *testing.T) {
+	const goreleaser = "      - uses: goreleaser/goreleaser-action@v6\n"
+	cases := []struct{ name, steps, want string }{
+		{"create-release", "      - uses: actions/create-release@v1\n", "FAIL"},
+		{"goreleaser release", goreleaser + "        with:\n          args: release --clean\n", "FAIL"},
+		{"goreleaser default command", goreleaser, "FAIL"},
+		{"goreleaser flags only", goreleaser + "        with:\n          args: --clean\n", "FAIL"},
+		{"goreleaser skips other steps", goreleaser + "        with:\n          args: release --skip=announce,validate\n", "FAIL"},
+		{"goreleaser snapshot", goreleaser + "        with:\n          args: release --snapshot --clean\n", skipReleaseOwnNoPublisher},
+		{"goreleaser skip publish", goreleaser + "        with:\n          args: release --skip=announce,publish\n", skipReleaseOwnNoPublisher},
+		{"goreleaser skip publish separate", goreleaser + "        with:\n          args: release --skip publish\n", skipReleaseOwnNoPublisher},
+		{"goreleaser build", goreleaser + "        with:\n          args: build --single-target\n", skipReleaseOwnNoPublisher},
+		{"goreleaser version", goreleaser + "        with:\n          args: --version\n", skipReleaseOwnNoPublisher},
+		{"goreleaser install only", goreleaser + "        with:\n          install-only: true\n", skipReleaseOwnNoPublisher},
+	}
+	for i := 0; i < len(cases); i++ {
+		tc := cases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			assertOwnReleaseAudit(t, "release-please-config.json", `{"packages":{".":{}}}`, tc.steps, tc.want)
+		})
+	}
+}
+
 // TestOwnReleasePublisherConfigBoundaries covers every known path and malformed settings.
 func TestOwnReleasePublisherConfigBoundaries(t *testing.T) {
 	cases := []struct{ name, path, config, want string }{
