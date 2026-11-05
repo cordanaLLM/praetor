@@ -6,7 +6,6 @@ package gating
 import (
 	"context"
 	"errors"
-	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -121,22 +120,23 @@ func TestGoRaceNamespaceExecInsideScope(t *testing.T) {
 	}
 }
 
-// TestGoNamespaceExecMountedInDevcontainer pins that the test wrapper executable is bind-mounted into devcontainers.
-func TestGoNamespaceExecMountedInDevcontainer(t *testing.T) {
+// TestGoNamespaceExecSkippedInDevcontainer pins the toolchain container path: no -exec wrapper (bubblewrap
+// there has no user namespaces, so it failed every package of the #1816 gate run), the container's own
+// network namespace named as the isolation, and no engine executable mounted for a wrapper. Planted: the
+// earlier rule, -exec plus a mount, fails both checks.
+func TestGoNamespaceExecSkippedInDevcontainer(t *testing.T) {
 	t.Setenv("CI", "")
 	t.Setenv("GITHUB_ACTIONS", "")
 	cfg := &stageConfig{goos: "linux", container: &devcontainerExec{mounts: []string{"/repo"}}}
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
+	execFlag, note, err := cfg.goTestExec()
+	if err != nil || execFlag != "" || note != ContainerTestIsolation {
+		t.Fatalf("container path: exec=%q note=%q error=%v", execFlag, note, err)
 	}
-	for range 2 {
-		execFlag, _, err := cfg.goTestExec()
-		if err != nil || !strings.Contains(execFlag, executable) {
-			t.Fatalf("exec=%q error=%v", execFlag, err)
-		}
+	if !slices.Equal(cfg.container.mounts, []string{"/repo"}) {
+		t.Fatalf("container path mounted a wrapper: %q", cfg.container.mounts)
 	}
-	if !slices.Equal(cfg.container.mounts, []string{"/repo", executable}) {
-		t.Fatalf("wrapper mount missing or duplicated: %q", cfg.container.mounts)
+	host := &stageConfig{goos: "linux"}
+	if execFlag, _, err := host.goTestExec(); err != nil || !strings.Contains(execFlag, " go test-exec") {
+		t.Fatalf("host path lost the wrapper: exec=%q error=%v", execFlag, err)
 	}
 }

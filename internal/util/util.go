@@ -533,7 +533,9 @@ func RunCommand(ctx context.Context, dir string, name string, args ...string) (s
 // withCommandDiagnostic appends a failed command's trimmed, bounded standard error to err.
 func withCommandDiagnostic(err error, stderr []byte) error {
 	diagnostic := strings.TrimSpace(string(stderr))
-	if diagnostic == "" {
+	if err == nil || diagnostic == "" {
+		// A command that succeeded stays a success whatever it printed: pasta warns on stderr
+		// and exits 0, which a nil err wrapped with %w turned into "%!w(<nil>): ..." (#1822 CI).
 		return err
 	}
 	return fmt.Errorf("%w: %s", err, TruncateExcerpt(diagnostic, maxCommandDiagnosticBytes))

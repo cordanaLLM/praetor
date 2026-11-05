@@ -909,8 +909,13 @@ with the caller's filesystem and environment retained for test fixtures.
 
 The engine's Makefile Go test recipes, including fuzz and the schema module, use
 `praetorctl go test` through the source CLI to apply the same `-exec` wrapper. Each
-wrapper uses the exact running engine executable; a devcontainer mounts that executable
-at the same path and must supply bubblewrap and permit user/network namespaces.
+wrapper uses the exact running engine executable. When the race stage runs its Go tests in a
+toolchain container, it passes no `-exec` wrapper and prints `Go test binaries: the toolchain
+container's own network namespace`: the container runs on its runtime's default network, a
+network namespace of its own, so workstation processes cannot reach a test server on its
+loopback, and bubblewrap inside the container has no user namespaces to create
+(`gating.ContainerTestIsolation`; `internal/devcontainer/runargs_network_test.go` fails if the
+container's command line ever chooses a network).
 A missing `bwrap`, disabled unprivileged user namespaces or an `EPERM` setup failure
 rejects the gate by facility and cause, for example
 `sandbox unavailable: bwrap user/network namespaces (loopback-only): ... Operation not permitted`.
@@ -922,6 +927,23 @@ CI detection follows the existing hook-audit convention, `CI=true` or
 CI workflows are unchanged. Deterministic injected-runner tests cover these paths;
 real namespace cases skip with a reason when the host lacks the facility
 (`internal/gating/test_exec_test.go`, `internal/sandbox/test_exec_test.go`).
+
+On a host with a container engine socket (the Unix path in `DOCKER_HOST`,
+`/var/run/docker.sock`, or Docker's or Podman's socket under `XDG_RUNTIME_DIR`), a test binary
+may start a container and dial the host port the engine published for it, as testcontainers
+does for its reaper. Docker draws those ports from the kernel's ephemeral range
+(`/proc/sys/net/ipv4/ip_local_port_range`, read by libnetwork's port allocator); a Podman socket
+is treated the same way. On such a host `pasta` owns the namespace instead
+of bubblewrap: it forwards connects to host-loopback ports of that range out of the namespace
+(`-T <first>-<last>`) and nothing in (`-t none`, `-u none`, `-U none`), maps no address to host
+loopback and configures no route out. Host services on fixed ports stay unreachable. The
+namespace's own ephemeral range moves outside the forwarded one (above it, or below it down to
+1024), so `bind(0)` still finds free ports, and a nested bubblewrap user namespace runs the test
+binary as the caller. A missing `pasta`, or a host range that leaves fewer than 1024 ports for
+the namespace, rejects the gate by facility; there is no fallback to `NetworkNone`, which would
+fail every container test. A set `DOCKER_HOST` alone decides: its `unix://` path when that socket
+exists; any other scheme names an engine whose published ports are not on this host's loopback,
+and the namespace stays `NetworkNone` (`internal/sandbox/test_exec_publish_test.go`).
 
 Each module's race suite runs in its own memory-bounded user scope (`systemd-run --user --scope`) when
 scopes are available, so the out-of-memory daemon reclaims from the step rather than from the

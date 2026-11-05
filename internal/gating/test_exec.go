@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"runtime"
-	"slices"
 	"strings"
 )
 
@@ -32,11 +31,23 @@ func GoTestExec(goos, executable string) (string, string, error) {
 			return "", "", errors.New("go test loopback namespace wrapper: executable path contains both quote types")
 		}
 	}
-	return quote + executable + quote + " go test-exec", "Go test binaries: loopback-only network namespace (sandbox NetworkNone)", nil
+	return quote + executable + quote + " go test-exec", "Go test binaries: loopback-only network namespace (sandbox NetworkNone; with a container engine socket, pasta forwards connects to host ports of the kernel's ephemeral range, where engines publish container ports)", nil
 }
 
-// goTestExec resolves the -exec flag for stage test execution, ensuring container mounts if running in a container.
+// ContainerTestIsolation names the race stage's isolation when its Go tests run in a toolchain
+// container. The container runs on its runtime's default network (devcontainer.Image.RunArgs
+// passes no --network), a network namespace of its own, so workstation processes cannot reach a
+// test server on its loopback. Bubblewrap inside the container could not create a user namespace
+// (EPERM; every package of the #1816 gate run of 2026-11-05 failed closed on it), so the -exec
+// wrapper adds no isolation there and is not used.
+const ContainerTestIsolation = "Go test binaries: the toolchain container's own network namespace (the runtime's default network, never the host's)"
+
+// goTestExec resolves the -exec flag for stage test execution: none in a toolchain container,
+// whose own network namespace isolates the test binaries (ContainerTestIsolation), else GoTestExec.
 func (c *stageConfig) goTestExec() (string, string, error) {
+	if c.container != nil {
+		return "", ContainerTestIsolation, nil
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		return "", "", fmt.Errorf("go test loopback namespace wrapper: %w", err)
@@ -45,16 +56,5 @@ func (c *stageConfig) goTestExec() (string, string, error) {
 	if goos == "" {
 		goos = runtime.GOOS
 	}
-	execFlag, note, err := GoTestExec(goos, executable)
-	if err == nil && execFlag != "" && c.container != nil {
-		// Disposable toolchain containers mount paths at their host locations. Make
-		// this exact engine available to -exec there too; no PATH-selected version.
-		if strings.ContainsAny(executable, ",\n\r") {
-			return "", "", errors.New("go test loopback namespace wrapper: executable path cannot be bind-mounted")
-		}
-		if !slices.Contains(c.container.mounts, executable) {
-			c.container.mounts = append(c.container.mounts, executable)
-		}
-	}
-	return execFlag, note, err
+	return GoTestExec(goos, executable)
 }

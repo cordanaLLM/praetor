@@ -316,9 +316,11 @@ func TestGoStagesRunInTheDevcontainer(t *testing.T) {
 			sawVerify = call.workdir == resolved
 		case wantTest:
 			sawTest = strings.HasPrefix(call.workdir, filepath.Join(resolved, ".standards", "worktrees")+string(filepath.Separator))
-			if !slices.Contains(call.runArgs, "type=bind,src="+resolved+",dst="+resolved) ||
-				!slices.Contains(call.runArgs, "type=bind,src="+executable+",dst="+executable) {
-				t.Errorf("the checkout and the loopback wrapper must be mounted at their own paths: %q", call.runArgs)
+			if !slices.Contains(call.runArgs, "type=bind,src="+resolved+",dst="+resolved) {
+				t.Errorf("the checkout must be mounted at its own path: %q", call.runArgs)
+			}
+			if slices.Contains(call.runArgs, "type=bind,src="+executable+",dst="+executable) {
+				t.Errorf("no -exec wrapper runs in the container, so the engine executable is not mounted: %q", call.runArgs)
 			}
 			if !slices.Contains(call.runArgs, "HOME="+home) || !slices.Contains(call.runArgs, "type=bind,src="+home+",dst="+home) {
 				t.Errorf("HOME must persist, mounted, in the user cache directory %s: %q", home, call.runArgs)
@@ -341,18 +343,16 @@ func TestGoStagesRunInTheDevcontainer(t *testing.T) {
 	}
 }
 
-// wantDevcontainerGoTestArgs returns the expected executable path and argument string for running go test in a devcontainer.
-func wantDevcontainerGoTestArgs(t *testing.T, goos string) (string, string) {
+// wantDevcontainerGoTestArgs returns this test binary's path and the go test arguments the race stage
+// runs in a devcontainer: no -exec wrapper, since the container's own network namespace isolates the
+// test binaries (ContainerTestIsolation).
+func wantDevcontainerGoTestArgs(t *testing.T, _ string) (string, string) {
 	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatalf("executable: %v", err)
 	}
-	execFlag, _, err := GoTestExec(goos, executable)
-	if err != nil || execFlag == "" {
-		t.Fatalf("go test exec = %q, %v", execFlag, err)
-	}
-	return executable, "test -race -timeout " + TestStageTimeout.String() + " -exec " + execFlag + " ./..."
+	return executable, "test -race -timeout " + TestStageTimeout.String() + " ./..."
 }
 
 // Negative: without a plan the stages run on the host, nothing reaches a runtime, and the recorded
