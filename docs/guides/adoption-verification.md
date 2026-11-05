@@ -909,8 +909,13 @@ with the caller's filesystem and environment retained for test fixtures.
 
 The engine's Makefile Go test recipes, including fuzz and the schema module, use
 `praetorctl go test` through the source CLI to apply the same `-exec` wrapper. Each
-wrapper uses the exact running engine executable; a devcontainer mounts that executable
-at the same path and must supply bubblewrap and permit user/network namespaces.
+wrapper uses the exact running engine executable. When the race stage runs its Go tests in a
+toolchain container, it passes no `-exec` wrapper and prints `Go test binaries: the toolchain
+container's own network namespace`: the container runs on its runtime's default network, a
+network namespace of its own, so workstation processes cannot reach a test server on its
+loopback, and bubblewrap inside the container has no user namespaces to create
+(`gating.ContainerTestIsolation`; `internal/devcontainer/runargs_network_test.go` fails if the
+container's command line ever chooses a network).
 A missing `bwrap`, disabled unprivileged user namespaces or an `EPERM` setup failure
 rejects the gate by facility and cause, for example
 `sandbox unavailable: bwrap user/network namespaces (loopback-only): ... Operation not permitted`.
