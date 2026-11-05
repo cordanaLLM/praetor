@@ -74,11 +74,27 @@ func TestEvaluateBypassActors_Boundary(t *testing.T) {
 		actors[i] = fmt.Sprintf(`{"actor_id": %d, "actor_type": "Team", "bypass_mode": "always"}`, i)
 	}
 	_, err := EvaluateBypassActors(singleMaintainer, []byte(`{"bypass_actors": [`+strings.Join(actors, ",")+`]}`))
-	if err == nil || !strings.Contains(err.Error(), "more than 64") {
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("more than %d", maxBypassActors)) {
 		t.Fatalf("an over-bound list: %v", err)
 	}
 	finding, err := EvaluateBypassActors(singleMaintainer, []byte(`{"bypass_actors": [`+strings.Join(actors[:maxBypassActors], ",")+`]}`))
 	if err != nil || finding.Verdict != ProtectionDrift {
 		t.Fatalf("a list at the bound: %+v %v", finding, err)
+	}
+}
+
+// TestBypassActorKeys_Boundary verifies that declared bypass actors exceeding maxBypassActors
+// are rejected with an error rather than silently truncated.
+func TestBypassActorKeys_Boundary(t *testing.T) {
+	actors := make([]map[string]any, maxBypassActors+1)
+	for i := range actors {
+		actors[i] = map[string]any{"actor_id": int64(i), "actor_type": "Team", "bypass_mode": "always"}
+	}
+	if _, err := bypassActorKeys(actors); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("more than %d", maxBypassActors)) {
+		t.Fatalf("an over-bound declared list: %v; want error naming the bound", err)
+	}
+	keys, err := bypassActorKeys(actors[:maxBypassActors])
+	if err != nil || len(keys) != maxBypassActors {
+		t.Fatalf("a declared list at the bound: keys=%v, err=%v", keys, err)
 	}
 }
