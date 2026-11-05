@@ -37,7 +37,8 @@ func TestAnalyzeCommit_Negative_BodyWidth(t *testing.T) {
 			analysis, err := AnalyzeCommit(message)
 			lines := strings.Split(message, "\n")
 			expectedLine := 0
-			for idx, l := range lines {
+			for idx := 0; idx < len(lines) && idx < maxCommitMessageLines; idx++ {
+				l := lines[idx]
 				if utf8.RuneCountInString(strings.TrimSuffix(l, "\r")) > maxCommitBodyColumns {
 					expectedLine = idx + 1
 					break
