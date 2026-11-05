@@ -1208,17 +1208,20 @@ print("fixture hook self-tests passed")
                     mock.patch("hooks.sys.stdin", io.StringIO(protocol)), \
                     mock.patch("hooks.source_checks", return_value=False) as check, \
                     mock.patch("hooks.check_refactor_range") as refactors, \
-                    mock.patch("hooks.check_docstring_range") as docstrings:
+                    mock.patch("hooks.check_docstring_range") as docstrings, \
+                    mock.patch("hooks.check_merge_range") as merges:
                 pre_push("origin")
                 self.assertEqual(check.call_args.kwargs, {"base": base})
                 self.assertEqual(check.call_args.args[1], ["README.md"])
                 refactors.assert_called_once_with(base, head)
                 docstrings.assert_called_once_with(base, head)
+                merges.assert_called_once_with(base, head)
             with mock.patch.dict(os.environ, AUTOCRLF_ENV), \
                     mock.patch("hooks.sys.stdin", io.StringIO(protocol.replace(base, "f" * 40))), \
                     mock.patch("hooks.source_checks", return_value=False) as check, \
                     mock.patch("hooks.check_refactor_range"), \
-                    mock.patch("hooks.check_docstring_range"):
+                    mock.patch("hooks.check_docstring_range"), \
+                    mock.patch("hooks.check_merge_range"):
                 pre_push("origin")
                 self.assertIsNone(check.call_args.kwargs["base"])
                 self.assertIn("lefthook.yml", check.call_args.args[1])
@@ -1253,19 +1256,70 @@ print("fixture hook self-tests passed")
                         mock.patch("hooks.new_branch_base", return_value=base) as merge_base, \
                         mock.patch("hooks.source_checks", return_value=False) as check, \
                         mock.patch("hooks.check_refactor_range") as refactors, \
-                        mock.patch("hooks.check_docstring_range") as docstrings:
+                        mock.patch("hooks.check_docstring_range") as docstrings, \
+                        mock.patch("hooks.check_merge_range") as merges:
                     pre_push("origin")
                     merge_base.assert_called_once_with(head, "origin", False)
                     self.assertEqual(check.call_args.kwargs, {"base": base})
                     self.assertEqual(check.call_args.args[1], ["README.md"])
                     refactors.assert_called_once_with(base, head)
                     docstrings.assert_called_once_with(base, head)
+                    merges.assert_called_once_with(base, head)
             with mock.patch("hooks.new_branch_base") as merge_base:
                 self.assertEqual(hooks.push_base(head, base, "origin"), base)
                 self.assertEqual(hooks.push_base(head, "f" * 40, "origin"), "f" * 40)
                 merge_base.assert_not_called()
         finally:
             os.chdir(original)
+
+    def test_push_refuses_dropped_hunk_merge_and_passes_clean_merge(self):
+        """Verify pre-push refuses merge commits that drop parent hunks and accepts clean merges."""
+        # Order: engine-dropped-hunk-gate-20261027.
+        alpha_base = "line 1\nline 2\nline 3\nline 4\nline 5\n"
+        self.write("alpha.txt", alpha_base)
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "chore: base commit")
+
+        # Set up a bare remote to push to
+        remote = Path(self.temp.name) / "remote.git"
+        command(self.repo, "git", "init", "--bare", "-q", str(remote))
+        command(self.repo, "git", "remote", "add", "origin", str(remote))
+        command(self.repo, "git", "push", "-q", "origin", "main")
+
+        # Branch X: modify line 2
+        command(self.repo, "git", "checkout", "-q", "-b", "branch-x")
+        self.write("alpha.txt", "line 1\nline 2 modified by X\nline 3\nline 4\nline 5\n")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "feat: branch X edit")
+
+        # Branch Y: from main, modify line 5
+        command(self.repo, "git", "checkout", "-q", "-b", "branch-y", "main")
+        self.write("alpha.txt", "line 1\nline 2\nline 3\nline 4\nline 5 modified by Y\n")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "feat: branch Y edit")
+
+        # Merge branch-y into branch-x taking Y whole file (drops X line 2)
+        command(self.repo, "git", "checkout", "-q", "branch-x")
+        run_command(self.repo, ("git", "merge", "--no-commit", "branch-y"), None, False)
+        command(self.repo, "git", "checkout", "branch-y", "--", "alpha.txt")
+        command(self.repo, "git", "add", "alpha.txt")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "feat(test): bad merge taking branch-y whole file")
+
+        # Push branch-x with bad merge: MUST BE REFUSED
+        result = command(self.repo, "git", "push", "origin", "branch-x", ok=False)
+        output = (result.stdout + result.stderr).decode(errors="replace")
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn("alpha.txt", output)
+        self.assertIn("Fix: resolve inside conflict markers, re-merge.", output)
+
+        # Reset merge and resolve keeping both hunks
+        command(self.repo, "git", "reset", "--hard", "HEAD~1")
+        run_command(self.repo, ("git", "merge", "--no-commit", "branch-y"), None, False)
+        self.write("alpha.txt", "line 1\nline 2 modified by X\nline 3\nline 4\nline 5 modified by Y\n")
+        command(self.repo, "git", "add", "alpha.txt")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "feat(test): merge resolved per hunk")
+
+        # Push branch-x with clean merge: MUST PASS
+        result = command(self.repo, "git", "push", "origin", "branch-x", ok=False)
+        output = (result.stdout + result.stderr).decode(errors="replace")
+        self.assertEqual(result.returncode, 0, output)
 
     def test_real_checkpoint_push_builds_and_tests_without_release_receipt(self):
         skip_without_race_detector(self)

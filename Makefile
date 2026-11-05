@@ -457,6 +457,15 @@ hooks-lint:
 	python3 -B scripts/test_emitted_hook_lint.py
 	python3 -B scripts/test_emitted_yaml_lint.py
 
+# Refuse merge commits dropping first-parent work (engine-dropped-hunk-gate-20261027).
+# On a push event in CI, MERGE_CHECK_RANGE (or GITHUB_EVENT_BEFORE when non-zero) checks the
+# pushed range <before>..HEAD; locally an empty MERGE_CHECK_RANGE uses the default range.
+MERGE_CHECK_RANGE ?= $(if $(filter-out 0000000000000000000000000000000000000000,$(GITHUB_EVENT_BEFORE)),$(GITHUB_EVENT_BEFORE)..HEAD,)
+.PHONY: merge-check
+verify-all: merge-check
+merge-check:
+	go run ./cmd/standardsctl merge-check $(if $(MERGE_CHECK_RANGE),--range="$(MERGE_CHECK_RANGE)")
+
 check-staged:
 	$(HOOK_RUNNER) pre-commit
 

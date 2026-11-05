@@ -53,13 +53,22 @@ func emittedHookRenderings(t *testing.T) map[string]string {
 }
 
 func TestEmittedHookFixturesMatchTheRendering(t *testing.T) {
+	root, err := os.OpenRoot(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("open repository root: %v", err)
+	}
+	defer func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("close repository root: %v", err)
+		}
+	}()
 	for rel, want := range emittedHookRenderings(t) {
 		path := filepath.Join(emittedFixtureRoot, filepath.FromSlash(rel))
 		if os.Getenv(updateEmittedFixturesEnv) == "1" {
 			mustWrite(t, path, want)
 			continue
 		}
-		got, err := os.ReadFile(path)
+		got, err := root.ReadFile(filepath.Join("internal", "adopt", path))
 		if err != nil {
 			t.Fatalf("read fixture %s: %v", path, err)
 		}
@@ -117,6 +126,10 @@ func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 			"use_stdin": true,
 			"run":       lefthookGovernedCommand("docstrings check --pre-push"),
 		}
+		injectDecodedJob(prior, "pre-push", "merge-check", map[string]any{
+			"run":       mergeCheckPrePushCommand(),
+			"use_stdin": true,
+		})
 		for _, event := range checkpointEvents(checkpoint) {
 			job := decodedJob(t, prior, "agent-checkpoint-"+event, "checkpoint")
 			arguments := "-B " + checkpointScript + " --event " + event + " --json --marker"
@@ -277,6 +290,19 @@ func decodedJob(t *testing.T, decoded map[string]any, hook, job string) map[stri
 		t.Fatalf("the rendering has no %s job %s", hook, job)
 	}
 	return entry
+}
+
+// injectDecodedJob inserts a job entry into the commands map of a decoded hook section.
+func injectDecodedJob(decoded map[string]any, hook, job string, entry map[string]any) {
+	section, ok := decoded[hook].(map[string]any)
+	if !ok {
+		return
+	}
+	commands, ok := section["commands"].(map[string]any)
+	if !ok {
+		return
+	}
+	commands[job] = entry
 }
 
 // Boundary: every rendering, for every language set, opens with a document start and keeps

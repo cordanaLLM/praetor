@@ -338,6 +338,7 @@ jobs:
         if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
         env:
           TEST_COVERPROFILE: ${{ runner.temp }}/praetor-coverage.out
+          GITHUB_EVENT_BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
         run: make verify-all
 
       - name: Enforce Statement Coverage Floor (HISS-15 coverage gate)
