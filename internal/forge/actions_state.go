@@ -43,6 +43,7 @@ type WorkflowRunRecord struct {
 	Number     int    `json:"run_number"`
 	Event      string `json:"event"`
 	HeadBranch string `json:"head_branch"`
+	HeadSHA    string `json:"head_sha"`
 	Status     string `json:"status"`
 	Conclusion string `json:"conclusion"`
 	CreatedAt  string `json:"created_at"`

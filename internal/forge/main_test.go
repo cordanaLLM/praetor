@@ -15,15 +15,15 @@ import (
 
 var testConfigRoot string
 
-// TestMain keeps the package's tests independent of the CI runner: GitHub Actions sets
-// GITHUB_WORKFLOW_REF, which makes the run-health check skip the named workflow (#1331); a test
-// that wants it sets it with t.Setenv.
+// TestMain keeps the package's tests independent of the CI runner: GitHub Actions sets the
+// variables in testsupport.CIRunnerEnv, and GITHUB_WORKFLOW_REF makes the run-health check skip
+// the named workflow (#1331); a test that wants one sets it with t.Setenv.
 // It points the user configuration directory at a fresh temporary directory across
 // Linux (XDG_CONFIG_HOME/HOME), macOS (HOME), and Windows (AppData/APPDATA) so tests never touch
 // the developer's real configuration or claim keys.
 func TestMain(m *testing.M) {
-	if err := os.Unsetenv("GITHUB_WORKFLOW_REF"); err != nil {
-		fmt.Fprintln(os.Stderr, "unset GITHUB_WORKFLOW_REF:", err)
+	if err := testsupport.UnsetCIRunnerEnv(); err != nil {
+		fmt.Fprintln(os.Stderr, "isolate CI runner environment:", err)
 		os.Exit(2)
 	}
 

@@ -469,6 +469,10 @@ supply_chain:
   enforce_cosign: true
   require_sbom: true
 
+release_test_levels:
+  - "unit"
+  - "integration"
+
 linters:
   - "clang-tidy"
   - "clippy"
@@ -599,7 +603,7 @@ selects it the same way" above describes.
 ### The schema is closed
 
 An archetype accepts exactly the keys `id`, `name`, `description`, `runtime`, `complexity`,
-`memory`, `error_unwraps`, `branch_protection`, `supply_chain`, `linters`,
+`memory`, `error_unwraps`, `branch_protection`, `supply_chain`, `release_test_levels`, `linters`,
 `devcontainer_features` and `backlog`, and inside each section only its documented keys. The
 `backlog` section takes `caps.<category>.max` and `.action` for the categories `defects`,
 `tasks`, `questions` and `forge_alerts`, decoded by the reader the repository and the external
@@ -653,6 +657,10 @@ authors:
   Declare the level the adopters' releases can reach, and 0 for a repository that releases
   nothing. A fresh adoption whose workflows fall short gets a HISS-11 exceptions entry that
   expires in 90 days ([Declaring a gap](releasing.md#declaring-a-gap)).
+- `release_test_levels` is gated: `config.ProfileReleaseTestLevels` resolves the union of required
+  test levels across a repository's flavor and declared profiles, and `release.AuditTestLevels`
+  ([Release test levels gate](release-token.md#release-test-levels-gate-releasetest_levels)) verifies
+  that every required level has tracked test files and an executable workflow job.
 
 `TestShippedManifestMatchesTheSource` (`internal/archetypecoverage/shipped_test.go`) type-checks
 the module's Go source and fails when a key has no entry, when an entry names a key the schema

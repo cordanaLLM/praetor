@@ -497,7 +497,10 @@ unconditional GitHub App token step of the same job, and skips a repository with
 step ([Release token gate](release-token.md), `TestServerAuditRunsTheReleaseTokenGate` in
 `cmd/standards-mcp/audit_policy_test.go`). The release end-to-end evidence gate calls
 `release.AuditE2E` directly (`releaseE2EAuditGates` in `cmd/standards-mcp/audit_tools.go`),
-skipping when `release.e2e` is not declared (`TestReleaseE2EAuditGates_MissingSectionSkips`).
+skipping when `release.e2e` is not declared (`TestReleaseE2EAuditGates_MissingSectionSkips`), and
+runs `release.AuditTestLevelsLine` (`internal/release/test_levels_gate.go`), appending the release
+test levels verdict when required or declared levels apply
+([Release test levels gate](release-token.md#release-test-levels-gate-releasetest_levels)).
 
 The HISS-18 workflow trigger check is the CLI's own as well (`forge.AuditWorkflowTriggers`, run
 with the manifest's exceptions list). Its findings are `[WARN]` lines and the gate still passes;

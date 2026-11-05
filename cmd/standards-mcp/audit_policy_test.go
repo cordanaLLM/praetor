@@ -250,6 +250,8 @@ func TestServerAuditRunsTheReleaseTokenGate(t *testing.T) {
 		"[PASS] Release token: 1 release-please step takes token from a GitHub App token step.")
 }
 
+// TestReleaseE2EAuditGates_MissingSectionSkips proves that releaseE2EAuditGates emits a skip
+// gate when release.e2e is omitted, and includes test level warnings when profiles are declared.
 func TestReleaseE2EAuditGates_MissingSectionSkips(t *testing.T) {
 	gates := releaseE2EAuditGates(t.TempDir(), &config.Manifest{})
 	if len(gates) != 1 {
@@ -258,6 +260,14 @@ func TestReleaseE2EAuditGates_MissingSectionSkips(t *testing.T) {
 	line, err := gates[0](t.Context())
 	if err != nil || line != "[SKIP] Release end-to-end evidence not checked: release.e2e not declared." {
 		t.Fatalf("gate() = %q, %v", line, err)
+	}
+
+	libDir := t.TempDir()
+	writeFixtureFile(t, libDir, "go.mod", "module example.com/lib\n\ngo 1.25.0\n")
+	libGates := releaseE2EAuditGates(libDir, &config.Manifest{Profiles: []string{"library-client"}})
+	libLine, libErr := libGates[0](t.Context())
+	if libErr != nil || !strings.Contains(libLine, "[WARN] Release test levels:") {
+		t.Fatalf("expected MCP release gate to include Release test levels line, got %q, %v", libLine, libErr)
 	}
 }
 

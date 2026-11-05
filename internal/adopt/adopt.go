@@ -938,11 +938,16 @@ func (s *adoptSession) recordFirstBaseline(ctx context.Context, full string) err
 	return s.reconcileRuleBaselines(ctx, full, base)
 }
 
+// reconcileRuleBaselines runs adoption baseline reconciliation for image references, secret
+// scans, and release test levels against base, returning any reconciliation error.
 func (s *adoptSession) reconcileRuleBaselines(ctx context.Context, full string, base *baseline.Baseline) error {
 	if err := s.reconcileImageRefBaseline(ctx, full, base); err != nil {
 		return err
 	}
-	return s.reconcileSecretsBaseline(ctx, full, base)
+	if err := s.reconcileSecretsBaseline(ctx, full, base); err != nil {
+		return err
+	}
+	return s.reconcileReleaseTestLevelsBaseline(ctx, full, base)
 }
 
 // saveBaseline writes base to full; a dry run writes nothing.
