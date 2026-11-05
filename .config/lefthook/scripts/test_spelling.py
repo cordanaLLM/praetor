@@ -89,6 +89,7 @@ class StagedSpelling(unittest.TestCase):
             "pnpm-lock.yaml",
             "go.sum",
             "CHANGELOG.md",
+            "docs/research/dev-rules/catalogue.tsv",
         )
         for name in names:
             # codespell:ignore-next-line occured,seperate
