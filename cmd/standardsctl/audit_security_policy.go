@@ -22,8 +22,10 @@ var securityContactChannel = regexp.MustCompile(`(?im)(?:mailto:|(?:security[ \t
 // affirmativeReporting matches an affirmative instruction to report via private vulnerability reporting.
 var affirmativeReporting = regexp.MustCompile(`(?i)\b(?:use|using|report(?:ed|ing)?|submit(?:ted|ting)?|file|filing|via|through|enable[d]?|choose|navigate|open|visit)\b[^.!?;]*\b(?:github'?s\s+)?private\s+vulnerability\s+reporting\b|\bprivate\s+vulnerability\s+reporting\b[^.!?;]*\b(?:is\s+enabled|form|tab)\b|\bprivate\s+vulnerability\s+reporting\s*:[^.!?;]*\b(?:open|choose|click|navigate|visit|report|use)\b`)
 
-// negatedReporting matches a negation or disability associated with private vulnerability reporting.
-var negatedReporting = regexp.MustCompile(`(?i)\b(?:do\s+not|don'?t|never|cannot|no\b|without|disable[d]?|unsupported|not\s+supported)\b[^.!?;]*\bprivate\s+vulnerability\s+reporting\b|\bprivate\s+vulnerability\s+reporting\b[^.!?;]*\b(?:is\s+(?:not|disabled|unsupported)|disabled|unsupported|not\s+supported)\b`)
+// negatedReporting matches a negation directly governing private vulnerability reporting (at
+// most two words between them, so "do not hesitate to use" stays affirmative),
+// or a statement that the reporting channel is disabled or unavailable.
+var negatedReporting = regexp.MustCompile(`(?i)\b(?:do\s+not|don'?t|never|cannot|no\b|without|not\b|disable[d]?|unsupported|not\s+supported)\b(?:\s+[^\s.!?;,:]+){0,2}\s+(?:github'?s\s+)?private\s+vulnerability\s+reporting\b|\b(?:github'?s\s+)?private\s+vulnerability\s+reporting\b\s+(?:(?:is|are)\s+(?:not(?:\s+supported)?|disabled|unsupported|unavailable)|disabled|unsupported|not\s+supported|unavailable)\b`)
 
 // actionableAdvisoryLink matches a URL or markdown link to GitHub's advisory reporting form.
 var actionableAdvisoryLink = regexp.MustCompile(`(?i)https://github\.com/[^\s/]+/[^\s/]+/security/advisories(?:/new)?|/security/advisories(?:/new)?`)

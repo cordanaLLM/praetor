@@ -1869,6 +1869,7 @@ func TestSplitHarnessTail_Boundary(t *testing.T) {
 
 func TestAdopt_GovernanceTextsScaffolded(t *testing.T) {
 	repoPath := newTestRepo(t, "governance")
+	writeOriginRemote(t, repoPath, "https://github.com/acme/governance.git")
 	mustWrite(t, filepath.Join(repoPath, "README.md"), "# My Awesome Project\nSome description here.\n")
 
 	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "framework"})

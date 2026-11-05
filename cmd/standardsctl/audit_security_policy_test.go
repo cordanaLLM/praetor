@@ -42,6 +42,12 @@ func TestAuditCommunityHealthSecurityPolicyOffline(t *testing.T) {
 		{"non-instructional mention", "SECURITY.md", "We considered private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", true},
 		{"negated with contact", "SECURITY.md", "Do not use private vulnerability reporting. Security contact: security@example.invalid\n", "policy uses a security contact", false},
 		{"confidential issues", "SECURITY.md", "Open a confidential issue in this repository to report vulnerabilities.\n", "policy uses confidential issues", false},
+		{"do not open public issue", "SECURITY.md", "Do not open a public issue, use GitHub private vulnerability reporting.\n", "setting not read: --offline", false},
+		{"do not report in public issues", "SECURITY.md", "Please do not report vulnerabilities in public issues. Instead use private vulnerability reporting.\n", "setting not read: --offline", false},
+		{"disabled for this repository", "SECURITY.md", "Private vulnerability reporting is disabled for this repository.\n", "SECURITY.md names no private reporting channel", true},
+		{"we do not use", "SECURITY.md", "We do not use private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", true},
+		{"do not hesitate", "SECURITY.md", "Please do not hesitate to use private vulnerability reporting.\n", "setting not read: --offline", false},
+		{"do not currently use", "SECURITY.md", "We do not currently use private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

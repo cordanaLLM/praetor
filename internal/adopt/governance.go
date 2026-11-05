@@ -415,36 +415,44 @@ func (s *adoptSession) declaredForge() config.Forge {
 	return ""
 }
 
-// forgeFromHost maps known forge host domains to their forge kind.
-func forgeFromHost(host string) config.Forge {
-	host = strings.ToLower(host)
-	switch {
-	case host == "github.com" || host == "":
-		return config.ForgeGitHub
-	case host == "gitlab.com" || strings.Contains(host, "gitlab"):
-		return config.ForgeGitLab
-	case host == "codeberg.org" || host == "gitea.com" || strings.Contains(host, "forgejo") || strings.Contains(host, "gitea"):
-		return config.ForgeForgejo
-	default:
-		return ""
-	}
-}
-
 // resolveForge resolves the kind of forge for the repository being adopted: the manifest's
-// repository.forge, else resolved from origin remote's host (config.RepositoryForge).
-func (s *adoptSession) resolveForge() config.Forge {
-	if declared := s.declaredForge(); declared != "" {
-		return declared
-	}
-	return forgeFromHost(s.identity.host)
+// repository.forge, else resolved from the origin remote's host (config.RepositoryForge).
+func (s *adoptSession) resolveForge() (config.Forge, error) {
+	return config.RepositoryForge(s.declaredForge(), s.identity.host)
 }
 
+// reconcileSecurityPolicyWithoutChannel handles repositories on forges without a native
+// private reporting channel (such as Forgejo) or repositories where the forge is undeclared.
+// An existing security policy is preserved; otherwise a skip is recorded.
+func reconcileSecurityPolicyWithoutChannel(s *adoptSession, forge config.Forge) error {
+	full, err := repoFile(s.repoPath, securityFile)
+	if err != nil {
+		return err
+	}
+	if fileExists(full) {
+		s.report.recordReconciled(securityFile, "Existing security policy verified present")
+		return nil
+	}
+	reason := fmt.Sprintf("security policy not scaffolded: undeclared forge has no default private vulnerability reporting channel; declare repository.forge or security.contact in %s, or decline security-policy", config.ManifestFileName)
+	if forge != "" {
+		reason = fmt.Sprintf("security policy not scaffolded: forge %q (repository.forge) has no supported private vulnerability reporting channel; declare security.contact in %s or decline security-policy", forge, config.ManifestFileName)
+	}
+	s.report.recordSkipped(securityFile, reason)
+	return nil
+}
+
+// reconcileSecurityPolicy scaffolds SECURITY.md with forge-appropriate private reporting
+// instructions or a declared security contact. Repositories without an actionable private
+// channel preserve an existing policy or record a skip.
 func reconcileSecurityPolicy(ctx context.Context, s *adoptSession) error {
 	if s.declines("security-policy") {
 		return nil
 	}
 	contact := s.securityContact()
-	forge := s.resolveForge()
+	forge, err := s.resolveForge()
+	if err != nil && !errors.Is(err, config.ErrForgeUndeclared) {
+		return err
+	}
 
 	var content string
 	switch {
@@ -455,27 +463,10 @@ func reconcileSecurityPolicy(ctx context.Context, s *adoptSession) error {
 	case forge == config.ForgeGitHub:
 		content = buildSecurityPolicy()
 	default:
-		full, err := repoFile(s.repoPath, securityFile)
-		if err != nil {
-			return err
-		}
-		if !fileExists(full) {
-			forgeName := string(forge)
-			if forgeName == "" {
-				forgeName = s.identity.host
-			}
-			if forgeName == "" {
-				forgeName = "unknown"
-			}
-			s.report.recordSkipped(securityFile, fmt.Sprintf("security policy not scaffolded: forge %s has no supported private vulnerability reporting channel; configure security.contact in %s or decline security-policy",
-				forgeName, config.ManifestFileName))
-			return nil
-		}
-		s.report.recordReconciled(securityFile, "Existing security policy verified present")
-		return nil
+		return reconcileSecurityPolicyWithoutChannel(s, forge)
 	}
 
-	_, err := s.scaffoldFile(ctx, scaffold{
+	_, err = s.scaffoldFile(ctx, scaffold{
 		rel:      securityFile,
 		perm:     filePerm,
 		content:  []byte(content),
