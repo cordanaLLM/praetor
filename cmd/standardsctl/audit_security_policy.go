@@ -71,7 +71,7 @@ func (c policyChannels) matchesForge(path string, forge config.Forge) error {
 	if forge == config.ForgeGitHub && !c.private && !c.contact {
 		return fmt.Errorf("[FAIL] Community health: %s names confidential issues, but repository.forge is %s; name private vulnerability reporting or a security contact", path, forge)
 	}
-	if forge != "" && forge != config.ForgeGitHub && c.private && !c.confidential && !c.contact {
+	if forge != "" && forge != config.ForgeGitHub && c.private {
 		return fmt.Errorf("[FAIL] Community health: %s names GitHub private vulnerability reporting, but repository.forge is %s", path, forge)
 	}
 	return nil
