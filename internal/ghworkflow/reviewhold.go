@@ -146,14 +146,16 @@ review_count() {
 `
 )
 
-// reviewHoldScript polls within a deadline and refuses work unless both counts are zero.
-var reviewHoldScript = reviewHoldLibrary +
-	"review_deadline=$((SECONDS + " + strconv.Itoa(ReviewHoldWaitMinutes*60) + "))\n" +
-	"for ((review_poll=0; review_poll<=" + strconv.Itoa(ReviewHoldWaitMinutes*60/ReviewHoldPollSeconds) + "; review_poll++)); do\n" + `  review_count
+// renderReviewHoldScript formats the barrier script for a given duration and poll interval.
+func renderReviewHoldScript(waitMinutes, pollSeconds int) string {
+	maxPolls := strconv.Itoa(waitMinutes * 60 / pollSeconds)
+	return reviewHoldLibrary +
+		"review_deadline=$((SECONDS + " + strconv.Itoa(waitMinutes*60) + "))\n" +
+		"for ((review_poll=0; review_poll<=" + maxPolls + "; review_poll++)); do\n" + `  review_count
   if ((REVIEW_THREADS == 0 && REVIEW_PENDING == 0)); then break; fi
   review_remaining=$((review_deadline - SECONDS))
-  if ((review_remaining <= 0 || review_poll == ` + strconv.Itoa(ReviewHoldWaitMinutes*60/ReviewHoldPollSeconds) + `)); then review_error; fi
-  review_delay=` + strconv.Itoa(ReviewHoldPollSeconds) + `
+  if ((review_remaining <= 0 || review_poll == ` + maxPolls + `)); then review_error; fi
+  review_delay=` + strconv.Itoa(pollSeconds) + `
   if ((review_delay > review_remaining)); then review_delay=$review_remaining; fi
   sleep "$review_delay"
   if ((SECONDS > review_deadline)); then review_error; fi
@@ -161,6 +163,10 @@ done
 printf 'clear=true\n' >> "$GITHUB_OUTPUT"
 printf '%s\n' "$HOLD_CAUSE" >> "$GITHUB_STEP_SUMMARY"
 `
+}
+
+// reviewHoldScript polls within a deadline and refuses work unless both counts are zero.
+var reviewHoldScript = renderReviewHoldScript(ReviewHoldWaitMinutes, ReviewHoldPollSeconds)
 
 // RenderReviewHoldStep renders the barrier immediately after HostedGateDraftStep.
 // The first step defines the shared script anchor; reference reuses it in later jobs.

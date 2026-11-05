@@ -53,8 +53,8 @@ func TestReviewHoldBoundedWait(t *testing.T) {
 		expired                      bool
 	}{
 		{"clears within wait", 1, 1, 2, false},
-		{"clears at deadline", 20, 20, 21, false},
-		{"stays open", 0, 20, 21, false},
+		{"clears at deadline", 2, 2, 3, false},
+		{"stays open", 0, 2, 3, false},
 		{"scheduler overshoots deadline", 1, 1, 1, true},
 	}
 	for _, tc := range cases {
@@ -66,10 +66,41 @@ func TestReviewHoldBoundedWait(t *testing.T) {
 			if tc.expired {
 				writeReviewFixture(t, dir, "expired-after-sleep", "")
 			}
-			out, err := runReviewScript(t, dir, reviewHoldScript)
+			out, err := runReviewScript(t, dir, renderReviewHoldScript(1, ReviewHoldPollSeconds))
 			assertReviewPolls(t, dir, tc.polls, tc.snapshots)
 			assertReviewWaitResult(t, dir, out, err, tc.clearAfter > 0 && !tc.expired)
 		})
+	}
+}
+
+// TestReviewHoldProductionBounds verifies production constants and rendered timing without execution.
+func TestReviewHoldProductionBounds(t *testing.T) {
+	wantPolls := ReviewHoldWaitMinutes * 60 / ReviewHoldPollSeconds
+	if ReviewHoldWaitMinutes != 10 || ReviewHoldPollSeconds != 30 || wantPolls != 20 {
+		t.Fatalf("production timing mismatch: wait=%d poll=%d polls=%d", ReviewHoldWaitMinutes, ReviewHoldPollSeconds, wantPolls)
+	}
+	wantPatterns := []string{
+		"review_deadline=$((SECONDS + " + strconv.Itoa(ReviewHoldWaitMinutes*60) + "))\n",
+		"for ((review_poll=0; review_poll<=" + strconv.Itoa(wantPolls) + "; review_poll++)); do\n",
+		"review_poll == " + strconv.Itoa(wantPolls),
+		"review_delay=" + strconv.Itoa(ReviewHoldPollSeconds) + "\n",
+	}
+	for _, pattern := range wantPatterns {
+		if !strings.Contains(reviewHoldScript, pattern) {
+			t.Errorf("reviewHoldScript missing %q", pattern)
+		}
+	}
+	assertProductionRendered(t, RenderReviewHoldStep(false), wantPatterns[0], wantPatterns[1], true)
+	// Planted negative: a script rendered with non-production bounds fails detection.
+	assertProductionRendered(t, renderReviewHoldScript(1, ReviewHoldPollSeconds), wantPatterns[0], wantPatterns[1], false)
+}
+
+// assertProductionRendered validates presence or absence of production timing in a script.
+func assertProductionRendered(t *testing.T, script, wantDeadline, wantLoop string, matches bool) {
+	t.Helper()
+	hasPatterns := strings.Contains(script, wantDeadline) && strings.Contains(script, wantLoop)
+	if hasPatterns != matches {
+		t.Errorf("production pattern match=%t; want %t", hasPatterns, matches)
 	}
 }
 
