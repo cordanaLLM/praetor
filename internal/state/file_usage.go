@@ -15,6 +15,7 @@ type LiveStateFileUsage struct {
 	Open      int    `json:"open"`
 	Completed int    `json:"completed"`
 	Bytes     int    `json:"bytes"`
+	Present   bool   `json:"-"`
 }
 
 // liveStateFile holds one validated snapshot and the parser output shared by caps/archive.
@@ -77,6 +78,7 @@ func readLiveStateFile(ctx context.Context, rootPath, name string) (file liveSta
 	if err != nil || !file.exists {
 		return file, err
 	}
+	file.usage.Present = true
 	file.usage.Bytes = len(file.content)
 	if name == bugLedgerName {
 		return measureBugFile(ctx, rootPath, file)
