@@ -101,15 +101,18 @@ func readHostPortRange() (PortRange, error) {
 	return parsePortRange(string(data))
 }
 
-// containerSocket names the first container engine socket present without configuration, as
-// testcontainers finds it (DOCKER_HOST unix path, the system socket, rootless Docker and Podman),
-// or "" when none is: then no test binary can start a container to dial.
+// containerSocket names the container engine socket test binaries reach, as testcontainers finds
+// it, or "" when there is none on this host: a set DOCKER_HOST alone decides (its unix:// path when
+// present; any other scheme is an engine whose published ports are not on this host's loopback),
+// else the first present of the system socket, rootless Docker's and Podman's.
 func containerSocket(getenv func(string) string, present func(string) bool) string {
-	var candidates []string
-	if host := getenv("DOCKER_HOST"); strings.HasPrefix(host, "unix://") {
-		candidates = append(candidates, strings.TrimPrefix(host, "unix://"))
+	if host := getenv("DOCKER_HOST"); host != "" {
+		if path, unix := strings.CutPrefix(host, "unix://"); unix && present(path) {
+			return path
+		}
+		return ""
 	}
-	candidates = append(candidates, "/var/run/docker.sock")
+	candidates := []string{"/var/run/docker.sock"}
 	if dir := getenv("XDG_RUNTIME_DIR"); dir != "" {
 		candidates = append(candidates, filepath.Join(dir, "docker.sock"), filepath.Join(dir, "podman", "podman.sock"))
 	}
@@ -159,17 +162,9 @@ func (r Runner) LoopbackCommand(ctx context.Context, command []string) (Invocati
 	if goos != "linux" {
 		return Invocation{}, &UnavailableError{Facility: "Linux network namespaces", Cause: fmt.Errorf("unsupported OS %s", goos)}
 	}
-	bwrap, err := r.lookup("bwrap")
+	invocation, facility, err := r.testExecInvocation(command)
 	if err != nil {
 		return Invocation{}, err
-	}
-	invocation := Invocation{Path: bwrap, Args: loopbackArguments(command)}
-	facility := "bwrap user/network namespaces (loopback-only)"
-	if socket := r.containerHost(); socket != "" {
-		if invocation, err = r.publishCommand(bwrap, command); err != nil {
-			return Invocation{}, err
-		}
-		facility = "pasta and bwrap namespaces forwarding container ports (container socket " + socket + ")"
 	}
 	if err := r.probeLoopback(ctx, invocation, command); err != nil {
 		if errors.Is(err, ErrUnavailable) {
@@ -178,6 +173,22 @@ func (r Runner) LoopbackCommand(ctx context.Context, command []string) (Invocati
 		return Invocation{}, &UnavailableError{Facility: facility, Cause: err}
 	}
 	return invocation, nil
+}
+
+// testExecInvocation picks the namespace for a test binary and names its facility: NetworkNone
+// under bubblewrap, or pasta forwarding the container publish range when a container engine
+// socket is present (publishCommand).
+func (r Runner) testExecInvocation(command []string) (Invocation, string, error) {
+	bwrap, err := r.lookup("bwrap")
+	if err != nil {
+		return Invocation{}, "", err
+	}
+	socket := r.containerHost()
+	if socket == "" {
+		return Invocation{Path: bwrap, Args: loopbackArguments(command)}, "bwrap user/network namespaces (loopback-only)", nil
+	}
+	invocation, err := r.publishCommand(bwrap, command)
+	return invocation, "pasta and bwrap namespaces forwarding container ports (container socket " + socket + ")", err
 }
 
 // publishCommand is the container engine host's invocation: pasta owns the network namespace and

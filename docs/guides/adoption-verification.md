@@ -941,8 +941,9 @@ namespace's own ephemeral range moves outside the forwarded one (above it, or be
 1024), so `bind(0)` still finds free ports, and a nested bubblewrap user namespace runs the test
 binary as the caller. A missing `pasta`, or a host range that leaves fewer than 1024 ports for
 the namespace, rejects the gate by facility; there is no fallback to `NetworkNone`, which would
-fail every container test. A `tcp://` `DOCKER_HOST` names no local socket and keeps
-`NetworkNone` (`internal/sandbox/test_exec_publish_test.go`).
+fail every container test. A set `DOCKER_HOST` alone decides: its `unix://` path when that socket
+exists; any other scheme names an engine whose published ports are not on this host's loopback,
+and the namespace stays `NetworkNone` (`internal/sandbox/test_exec_publish_test.go`).
 
 Each module's race suite runs in its own memory-bounded user scope (`systemd-run --user --scope`) when
 scopes are available, so the out-of-memory daemon reclaims from the step rather than from the

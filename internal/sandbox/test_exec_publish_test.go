@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -106,32 +107,33 @@ func TestSandboxPublishParseRange(t *testing.T) {
 	}
 }
 
-// TestSandboxPublishContainerSocket pins socket discovery: DOCKER_HOST's unix path first, then the
-// system, rootless Docker and Podman sockets; a TCP DOCKER_HOST and absent sockets name none.
+// TestSandboxPublishContainerSocket pins socket discovery: a set DOCKER_HOST alone decides (its unix
+// path when present, nothing for another scheme or a missing path, even with the system socket
+// present); unset, the system, rootless Docker and Podman sockets in that order.
 func TestSandboxPublishContainerSocket(t *testing.T) {
-	env := map[string]string{"DOCKER_HOST": "unix:///custom/docker.sock", "XDG_RUNTIME_DIR": "/run/user/1000"}
-	getenv := func(name string) string { return env[name] }
 	present := func(paths ...string) func(string) bool {
 		return func(path string) bool { return slices.Contains(paths, path) }
 	}
+	all := []string{"/custom/docker.sock", "/var/run/docker.sock", "/run/user/1000/docker.sock", "/run/user/1000/podman/podman.sock"}
 	cases := []struct {
-		present []string
-		want    string
+		dockerHost string
+		present    []string
+		want       string
 	}{
-		{[]string{"/custom/docker.sock", "/var/run/docker.sock"}, "/custom/docker.sock"},
-		{[]string{"/var/run/docker.sock"}, "/var/run/docker.sock"},
-		{[]string{"/run/user/1000/docker.sock"}, "/run/user/1000/docker.sock"},
-		{[]string{"/run/user/1000/podman/podman.sock"}, "/run/user/1000/podman/podman.sock"},
-		{nil, ""},
+		{"unix:///custom/docker.sock", all, "/custom/docker.sock"},
+		{"unix:///missing/docker.sock", all, ""},
+		{"tcp://127.0.0.1:2375", all, ""},
+		{"ssh://builder", all, ""},
+		{"", all, "/var/run/docker.sock"},
+		{"", []string{"/run/user/1000/docker.sock", "/run/user/1000/podman/podman.sock"}, "/run/user/1000/docker.sock"},
+		{"", []string{"/run/user/1000/podman/podman.sock"}, "/run/user/1000/podman/podman.sock"},
+		{"", nil, ""},
 	}
 	for _, c := range cases {
-		if got := containerSocket(getenv, present(c.present...)); got != c.want {
-			t.Errorf("containerSocket(%q) = %q, want %q", c.present, got, c.want)
+		env := map[string]string{"DOCKER_HOST": c.dockerHost, "XDG_RUNTIME_DIR": "/run/user/1000"}
+		if got := containerSocket(func(name string) string { return env[name] }, present(c.present...)); got != c.want {
+			t.Errorf("DOCKER_HOST=%q present=%q: containerSocket = %q, want %q", c.dockerHost, c.present, got, c.want)
 		}
-	}
-	env["DOCKER_HOST"] = "tcp://127.0.0.1:2375"
-	if got := containerSocket(getenv, present("/custom/docker.sock")); got != "" {
-		t.Errorf("tcp DOCKER_HOST named socket %q", got)
 	}
 }
 
@@ -180,7 +182,8 @@ func hostListener(t *testing.T, port int) (net.Listener, bool) {
 	return ln, true
 }
 
-// publishDial runs the dial helper through runner and returns its output.
+// publishDial runs the dial helper through runner and returns its output. A runner refusing the
+// command fails the test: the caller checked the facilities it needs (publishFacilities).
 func publishDial(t *testing.T, runner Runner, inside, outside int) string {
 	t.Helper()
 	executable, err := os.Executable()
@@ -188,12 +191,6 @@ func publishDial(t *testing.T, runner Runner, inside, outside int) string {
 		t.Fatal(err)
 	}
 	command := []string{executable, "-test.run=^TestSandboxPublishDialProcess$", "--", "sandbox-publish-dial", strconv.Itoa(inside), strconv.Itoa(outside)}
-	if _, err := runner.LoopbackCommand(t.Context(), command); err != nil {
-		if errors.Is(err, ErrUnavailable) {
-			t.Skipf("real namespace case unavailable: %v", err)
-		}
-		t.Fatal(err)
-	}
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	var stdout, stderr strings.Builder
@@ -203,38 +200,55 @@ func publishDial(t *testing.T, runner Runner, inside, outside int) string {
 	return stdout.String()
 }
 
+// publishFacilities skips the real case only when the host lacks a facility the publish path
+// needs: Linux, pasta on PATH, or bubblewrap namespaces (a NetworkNone probe). With those present,
+// any refusal of the publish invocation is a defect and fails the case.
+func publishFacilities(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("the publish namespace needs Linux")
+	}
+	if _, err := (Runner{}).lookup("pasta"); err != nil {
+		t.Skipf("pasta is not installed: %v", err)
+	}
+	if _, err := (Runner{ContainerSocket: noContainer}).LoopbackCommand(t.Context(), []string{"/bin/true"}); err != nil {
+		t.Skipf("bubblewrap namespaces unavailable: %v", err)
+	}
+}
+
 // insideHostPort is a host-loopback listener's port drawn from the kernel's range, as Docker draws
-// published ports; the case skips when the range cannot be read or the kernel drew outside it.
+// published ports.
 func insideHostPort(t *testing.T) int {
 	t.Helper()
 	publish, err := readHostPortRange()
 	if err != nil {
-		t.Skipf("host port range unreadable: %v", err)
+		t.Fatalf("host port range: %v", err)
 	}
 	ln, ok := hostListener(t, 0)
 	if !ok {
 		t.Fatal("host loopback listener on port 0 failed")
 	}
 	addr, isTCP := ln.Addr().(*net.TCPAddr)
-	if !isTCP {
-		t.Fatalf("listener address %v is not TCP", ln.Addr())
-	}
-	if addr.Port < publish.First || addr.Port > publish.Last {
-		t.Skipf("kernel drew port %d outside its range %s", addr.Port, publish)
+	if !isTCP || addr.Port < publish.First || addr.Port > publish.Last {
+		t.Fatalf("port 0 drew %v, outside the kernel's range %s", ln.Addr(), publish)
 	}
 	return addr.Port
 }
 
-// outsideHostPort is a host-loopback listener on a fixed port below the usual range, standing for a
-// workstation service.
+// outsideHostPort is a host-loopback listener on a free fixed port below the kernel's range,
+// standing for a workstation service.
 func outsideHostPort(t *testing.T) int {
 	t.Helper()
-	for p := 21000; p < 21100; p++ {
+	publish, err := readHostPortRange()
+	if err != nil {
+		t.Fatalf("host port range: %v", err)
+	}
+	for p := publish.First - 1; p >= 1024 && p > publish.First-200; p-- {
 		if _, ok := hostListener(t, p); ok {
 			return p
 		}
 	}
-	t.Skip("no free host port in 21000-21099 for the outside service")
+	t.Fatalf("no free host port among the 199 below %d", publish.First)
 	return 0
 }
 
@@ -242,6 +256,7 @@ func outsideHostPort(t *testing.T) int {
 // from the publish range answers, a host service outside it does not. The planted NetworkNone
 // control is the failure #1770 shipped (testcontainers: wait for reaper, connection refused).
 func TestSandboxPublishReachesContainerPorts(t *testing.T) {
+	publishFacilities(t)
 	inside, outside := insideHostPort(t), outsideHostPort(t)
 	socket := func() string { return "/planted/container.sock" }
 	got := publishDial(t, Runner{ContainerSocket: socket}, inside, outside)
