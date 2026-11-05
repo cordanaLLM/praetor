@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -134,4 +135,73 @@ func TestStateFileCapReadOnlyAndCancellation(t *testing.T) {
 		t.Fatal("nil context accepted")
 	}
 	assertIntegrityFile(t, path, before)
+}
+
+// TestStateFileCapPlantedMissingFileAppears proves planted case (a): baseline taken with
+// OPEN.md missing, then OPEN.md appears with 2 open entries -> passes and records 2.
+func TestStateFileCapPlantedMissingFileAppears(t *testing.T) {
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	openPath := filepath.Join(root, WorkingDirName, "OPEN.md")
+	if err := os.Remove(openPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CheckStateFileCaps(t.Context(), root, true); err != nil {
+		t.Fatal(err)
+	}
+	writeIntegrityFile(t, openPath, "- [ ] one\n- [ ] two\n")
+	usage, err := CheckStateFileCaps(t.Context(), root, true)
+	if err != nil {
+		t.Fatalf("OPEN.md appearing after missing baseline rejected: %v", err)
+	}
+	var openUsage LiveStateFileUsage
+	for _, u := range usage {
+		if u.Name == "OPEN.md" {
+			openUsage = u
+			break
+		}
+	}
+	if openUsage.Open != 2 {
+		t.Fatalf("expected 2 open entries recorded, got %d", openUsage.Open)
+	}
+}
+
+// TestStateFileCapPlantedExistingEmptyThenGrows proves planted case (b): baseline
+// recorded from an existing OPEN.md with 0 open, then 2 open -> still fails.
+func TestStateFileCapPlantedExistingEmptyThenGrows(t *testing.T) {
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CheckStateFileCaps(t.Context(), root, true); err != nil {
+		t.Fatal(err)
+	}
+	openPath := filepath.Join(root, WorkingDirName, "OPEN.md")
+	writeIntegrityFile(t, openPath, "- [ ] one\n- [ ] two\n")
+	if _, err := CheckStateFileCaps(t.Context(), root, true); err == nil || !strings.Contains(err.Error(), "open entries 2 exceed ratchet baseline 0") {
+		t.Fatalf("expected ratchet baseline 0 failure, got: %v", err)
+	}
+}
+
+// TestStateFileCapPlantedShrinkThenGrow proves planted case (c): shrink then grow -> fails.
+func TestStateFileCapPlantedShrinkThenGrow(t *testing.T) {
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	openPath := filepath.Join(root, WorkingDirName, "OPEN.md")
+	writeIntegrityFile(t, openPath, "- [ ] one\n- [ ] two\n- [ ] three\n")
+	if _, err := CheckStateFileCaps(t.Context(), root, true); err != nil {
+		t.Fatal(err)
+	}
+	writeIntegrityFile(t, openPath, "- [ ] one\n")
+	if _, err := CheckStateFileCaps(t.Context(), root, true); err != nil {
+		t.Fatalf("shrinking ledger rejected: %v", err)
+	}
+	writeIntegrityFile(t, openPath, "- [ ] one\n- [ ] two\n")
+	if _, err := CheckStateFileCaps(t.Context(), root, true); err == nil || !strings.Contains(err.Error(), "exceed ratchet baseline") {
+		t.Fatalf("growing after shrink accepted: %v", err)
+	}
 }

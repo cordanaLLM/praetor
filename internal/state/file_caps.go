@@ -41,6 +41,9 @@ func CheckStateFileCaps(ctx context.Context, rootPath string, record bool) ([]Li
 	var failures []error
 	for i := 0; i < len(usage) && i < liveStateFileCount; i++ {
 		current := usage[i]
+		if !current.Present {
+			continue
+		}
 		previous, recorded := baseline.Files[current.Name]
 		if !recorded {
 			previous = current
@@ -51,7 +54,7 @@ func CheckStateFileCaps(ctx context.Context, rootPath string, record bool) ([]Li
 	if err := errors.Join(failures...); err != nil {
 		return usage, err
 	}
-	if record {
+	if record && len(baseline.Files) > 0 {
 		return usage, writeStateFileBaseline(ctx, path, baseline, before, exists)
 	}
 	return usage, nil
@@ -68,16 +71,25 @@ func readStateFileBaseline(ctx context.Context, path string) (stateFileBaseline,
 	if err := json.Unmarshal(before, &baseline, json.RejectUnknownMembers(true)); err != nil {
 		return baseline, before, exists, fmt.Errorf("decode %s: %w", stateFileCapsName, err)
 	}
-	if baseline.Version != stateFileCapsVersion || len(baseline.Files) != liveStateFileCount {
-		return baseline, before, exists, fmt.Errorf("%s requires version %d and all live files", stateFileCapsName, stateFileCapsVersion)
+	if baseline.Version != stateFileCapsVersion || len(baseline.Files) == 0 || len(baseline.Files) > liveStateFileCount {
+		return baseline, before, exists, fmt.Errorf("%s requires version %d and 1 to %d live files", stateFileCapsName, stateFileCapsVersion, liveStateFileCount)
 	}
-	for _, name := range liveStateFileNames() {
-		value, ok := baseline.Files[name]
-		if !ok || value.Name != name || !validStateFileBaseline(value) {
+	for name, value := range baseline.Files {
+		if !isLiveStateFileName(name) || value.Name != name || !validStateFileBaseline(value) {
 			return baseline, before, exists, fmt.Errorf("%s: invalid baseline for %s", stateFileCapsName, name)
 		}
 	}
 	return baseline, before, exists, nil
+}
+
+// isLiveStateFileName checks whether name matches one of the pinned live state files.
+func isLiveStateFileName(name string) bool {
+	for _, liveName := range liveStateFileNames() {
+		if name == liveName {
+			return true
+		}
+	}
+	return false
 }
 
 // validStateFileBaseline constrains metadata to the same scalar bounds as its source.
