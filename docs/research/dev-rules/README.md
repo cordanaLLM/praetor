@@ -9,6 +9,8 @@ The research surveys 114 software projects across 20 distinct technical domains,
 ### Batches & Consolidation
 The dataset was gathered across five sequential batches (`r1.tsv` through `r5.tsv`) and consolidated into the canonical dataset [catalogue.tsv](catalogue.tsv). Individual batch files were retired into git history upon consolidation.
 
+Cells that quote another project's SPDX licence identifier line sit between the REUSE ignore markers (start and end), so `reuse lint` does not read the quoted tag as a licence expression of this file.
+
 ### Domains
 The survey spans 20 software domains:
 - Compilers, languages, and runtimes (e.g. CPython, Go, LLVM, Rust, OpenJDK, V8)
