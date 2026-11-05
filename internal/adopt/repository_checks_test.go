@@ -119,7 +119,7 @@ func TestRepositoryChecksRustMSRV(t *testing.T) {
 			if tc.workflow != "" {
 				mustWrite(t, filepath.Join(root, ".github/workflows/msrv.yml"), tc.workflow)
 			}
-			line, err := AuditRustMSRV(t.Context(), root)
+			line, err := AuditRustMSRV(t.Context(), nil, root)
 			checkRepositoryVerdict(t, line, err, tc.fail, "rust-msrv")
 			if !strings.Contains(line+fmt.Sprint(err), tc.want) {
 				t.Fatalf("missing %q: %s %v", tc.want, line, err)

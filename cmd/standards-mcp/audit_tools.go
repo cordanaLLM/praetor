@@ -136,7 +136,7 @@ func (s *Server) contextGroupGate(manifest *config.Manifest, agents string) audi
 		checks := []auditGate{
 			func(ctx context.Context) (string, error) { return adopt.AuditEditorSelection(ctx, manifest, s.rootDir) },
 			func(ctx context.Context) (string, error) { return adopt.AuditRenovateEngineBumps(ctx, s.rootDir) },
-			func(ctx context.Context) (string, error) { return adopt.AuditRustMSRV(ctx, s.rootDir) },
+			func(ctx context.Context) (string, error) { return adopt.AuditRustMSRV(ctx, manifest, s.rootDir) },
 			func(ctx context.Context) (string, error) { return bestpractices.Audit(ctx, s.rootDir) },
 			func(ctx context.Context) (string, error) { return auditContextSync(ctx, manifest, agents, s.rootDir) },
 		}

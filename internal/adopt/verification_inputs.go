@@ -193,7 +193,7 @@ func readVerificationMarker(ctx context.Context, root, rel string, total int, li
 	if err != nil {
 		err = fmt.Errorf("verification input %s: %w", rel, err)
 		if errors.Is(err, util.ErrFileTooLarge) {
-			return nil, fileBytesBound.exceeded(int(limits.MaxFileBytes), err)
+			return nil, fileBytesBound.exceeded(fileBytesBound.ceiling, err)
 		}
 		return nil, err
 	}

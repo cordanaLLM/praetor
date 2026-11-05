@@ -174,6 +174,45 @@ func TestAuditRustMSRV_VerificationFlagRaisesDeclaredBound(t *testing.T) {
 	mustErrContain(t, err, "[FAIL] rust-msrv: verification discovery exceeds 1 entries")
 }
 
+// TestAuditRustMSRV_SelectedManifestLimits verifies that when an audit selects another
+// manifest via --config, its verification limits govern the Rust MSRV gate instead of the root
+// .standards.yaml default or declaration.
+func TestAuditRustMSRV_SelectedManifestLimits(t *testing.T) {
+	f := newAuditFixture(t)
+	// Decline paperclip so the audit focuses on the Rust MSRV gate limits.
+	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+"adoption:\n  decline:\n    - paperclip\n")
+	writeFixtureFile(t, f.dir, "rust-toolchain", "1.80\n")
+
+	// 200,000-byte Cargo.toml: root default (65536) refuses; selected manifest with 262144 admits it.
+	largeCargo := "[package]\nname='fixture'\nversion='0.1.0'\nrust-version='1.80'\n#" + strings.Repeat("x", 200000-80) + "\n"
+	writeFixtureFile(t, f.dir, "Cargo.toml", largeCargo)
+	_, err := f.audit(t)
+	mustErrContain(t, err, "[FAIL] rust-msrv: verification input Cargo.toml: metadata exceeds byte bounds (file=65536")
+
+	// Write custom manifest declaring max_file_bytes: 262144.
+	content := readFixtureFile(t, f.dir, ".standards.yaml") + "\nverification:\n  max_file_bytes: 262144\n"
+	customPath := writeFixtureFile(t, f.dir, "custom.yaml", content)
+	out, err := captureStdout(t, func() error { return dispatchCommand("audit", []string{"--config=" + customPath}) })
+	if err != nil {
+		t.Fatalf("audit with selected manifest declaring 262144 bytes failed: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[PASS] rust-msrv: Cargo.toml 1.80 (pinned channel 1.80)")
+
+	// Stricter selected limit refuses what root admits: 50,000-byte Cargo.toml.
+	midCargo := "[package]\nname='fixture'\nversion='0.1.0'\nrust-version='1.80'\n#" + strings.Repeat("x", 50000-80) + "\n"
+	writeFixtureFile(t, f.dir, "Cargo.toml", midCargo)
+	out, err = f.audit(t)
+	if err != nil {
+		t.Fatalf("root default refused 50000-byte Cargo.toml: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[PASS] rust-msrv: Cargo.toml 1.80 (pinned channel 1.80)")
+
+	stricterContent := readFixtureFile(t, f.dir, ".standards.yaml") + "\nverification:\n  max_file_bytes: 10000\n"
+	stricterPath := writeFixtureFile(t, f.dir, "stricter.yaml", stricterContent)
+	_, err = captureStdout(t, func() error { return dispatchCommand("audit", []string{"--config=" + stricterPath}) })
+	mustErrContain(t, err, "[FAIL] rust-msrv: verification input Cargo.toml: metadata exceeds byte bounds (file=10000")
+}
+
 // withHarnessDirective rewrites the register directive of the fixture's harness.json, from to
 // to, as `praetorctl paperclip harness` writes a harness: rules.md renders the result.
 func withHarnessDirective(t *testing.T, f *auditFixture, from, to string) *paperclip.Harness {

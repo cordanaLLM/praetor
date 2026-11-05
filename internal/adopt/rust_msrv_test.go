@@ -14,6 +14,33 @@ import (
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
+// setupRustMSRVFixture creates a temporary directory with optional Cargo.toml and manifest files.
+func setupRustMSRVFixture(t *testing.T, manifest, cargoTOML string) string {
+	t.Helper()
+	root := t.TempDir()
+	if cargoTOML != "" {
+		mustWrite(t, filepath.Join(root, "Cargo.toml"), cargoTOML)
+	}
+	if manifest != "" {
+		mustWrite(t, filepath.Join(root, manifestFile), manifest)
+	}
+	return root
+}
+
+// assertRustMSRVVerdict asserts that line and err match the expected failure or pass pattern.
+func assertRustMSRVVerdict(t *testing.T, line string, err error, wantErr, wantPass string) {
+	t.Helper()
+	if wantErr != "" {
+		if err == nil || !strings.Contains(err.Error(), wantErr) {
+			t.Fatalf("AuditRustMSRV = %q, %v; want refusal containing %q", line, err, wantErr)
+		}
+		return
+	}
+	if err != nil || !strings.Contains(line, "[PASS]") || (wantPass != "" && !strings.Contains(line, wantPass)) {
+		t.Fatalf("AuditRustMSRV = %q, %v; want proof containing %q", line, err, wantPass)
+	}
+}
+
 // TestRustMSRVDeclaredFileBytes exercises declared, default and ceiling workflow byte bounds.
 func TestRustMSRVDeclaredFileBytes(t *testing.T) {
 	cases := []struct {
@@ -27,29 +54,18 @@ func TestRustMSRVDeclaredFileBytes(t *testing.T) {
 		{"declared exceeded", "verification:\n  max_file_bytes: 71680\n", "declare verification.max_file_bytes in .standards.yaml", (70 << 10) + 1},
 		{"ceiling exact", fmt.Sprintf("verification:\n  max_file_bytes: %d\n", contextopt.MaxSourceBytes), "", contextopt.MaxSourceBytes},
 		{"ceiling exceeded", fmt.Sprintf("verification:\n  max_file_bytes: %d\n", contextopt.MaxSourceBytes), "max_file_bytes is already at its ceiling 1048576", contextopt.MaxSourceBytes + 1},
+		{"undeclared ceiling exceeded", "", "max_file_bytes is already at its ceiling 1048576", contextopt.MaxSourceBytes + 1},
 		{"unreadable manifest defaults", "version: [\n", "", maxVerificationInputBytes},
 		{"unreadable manifest larger workflow", "version: [\n", "declare verification.max_file_bytes in .standards.yaml", 70 << 10},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			mustWrite(t, filepath.Join(root, "Cargo.toml"), msrvCrate)
-			if tc.manifest != "" {
-				mustWrite(t, filepath.Join(root, manifestFile), tc.manifest)
-			}
+			root := setupRustMSRVFixture(t, tc.manifest, msrvCrate)
 			workflow := msrvJob + "      - uses: dtolnay/rust-toolchain@1.80\n      - run: cargo check\n"
 			workflow += "#" + strings.Repeat("x", tc.size-len(workflow)-2) + "\n"
 			mustWrite(t, filepath.Join(root, ".github/workflows/msrv.yml"), workflow)
-			line, err := AuditRustMSRV(t.Context(), root)
-			if tc.want != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.want) {
-					t.Fatalf("AuditRustMSRV = %q, %v; want refusal containing %q", line, err, tc.want)
-				}
-				return
-			}
-			if err != nil || !strings.Contains(line, "[PASS]") || !strings.Contains(line, "msrv.yml job msrv") {
-				t.Fatalf("AuditRustMSRV = %q, %v; want workflow proof", line, err)
-			}
+			line, err := AuditRustMSRV(t.Context(), nil, root)
+			assertRustMSRVVerdict(t, line, err, tc.want, "msrv.yml job msrv")
 		})
 	}
 }
@@ -71,22 +87,43 @@ func TestRustMSRVRequestedLimits(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			mustWrite(t, filepath.Join(root, manifestFile), "verification:\n  max_entries: 1\n")
-			mustWrite(t, filepath.Join(root, "Cargo.toml"), msrvCrate)
+			root := setupRustMSRVFixture(t, "verification:\n  max_entries: 1\n", msrvCrate)
 			mustWrite(t, filepath.Join(root, "rust-toolchain"), "1.80\n")
-			line, err := AuditRustMSRV(t.Context(), root, tc.requested...)
-			if tc.want != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.want) {
-					t.Fatalf("AuditRustMSRV = %q, %v; want refusal containing %q", line, err, tc.want)
-				}
-				return
-			}
-			if err != nil || !strings.Contains(line, "[PASS] rust-msrv: Cargo.toml 1.80") {
-				t.Fatalf("AuditRustMSRV = %q, %v; want pinned minimum proof", line, err)
-			}
+			line, err := AuditRustMSRV(t.Context(), nil, root, tc.requested...)
+			assertRustMSRVVerdict(t, line, err, tc.want, "Cargo.toml 1.80")
 		})
 	}
+}
+
+// TestRustMSRVSelectedManifestLimits verifies that a selected manifest passes its limits to
+// AuditRustMSRV, while nil keeps the root default limits.
+func TestRustMSRVSelectedManifestLimits(t *testing.T) {
+	root := t.TempDir()
+	// Cargo.toml of 200,000 bytes: root default (65536) refuses; manifest with 262144 admits it.
+	largeCargo := "[package]\nname='fixture'\nversion='0.1.0'\nrust-version='1.80'\n#" + strings.Repeat("x", 200000-80) + "\n"
+	mustWrite(t, filepath.Join(root, "Cargo.toml"), largeCargo)
+	mustWrite(t, filepath.Join(root, "rust-toolchain"), "1.80\n")
+
+	line, err := AuditRustMSRV(t.Context(), nil, root)
+	assertRustMSRVVerdict(t, line, err, "metadata exceeds byte bounds (file=65536", "")
+
+	selected := &config.Manifest{
+		Verification: &config.VerificationPolicy{MaxFileBytes: 262144},
+	}
+	line, err = AuditRustMSRV(t.Context(), selected, root)
+	assertRustMSRVVerdict(t, line, err, "", "Cargo.toml 1.80")
+
+	// Stricter selected limit refuses what root admits: 50,000-byte Cargo.toml.
+	midCargo := "[package]\nname='fixture'\nversion='0.1.0'\nrust-version='1.80'\n#" + strings.Repeat("x", 50000-80) + "\n"
+	mustWrite(t, filepath.Join(root, "Cargo.toml"), midCargo)
+	line, err = AuditRustMSRV(t.Context(), nil, root)
+	assertRustMSRVVerdict(t, line, err, "", "Cargo.toml 1.80")
+
+	stricter := &config.Manifest{
+		Verification: &config.VerificationPolicy{MaxFileBytes: 10000},
+	}
+	line, err = AuditRustMSRV(t.Context(), stricter, root)
+	assertRustMSRVVerdict(t, line, err, "metadata exceeds byte bounds (file=10000", "")
 }
 
 func TestRustMSRVWorkspaceAndBounds(t *testing.T) {
@@ -102,13 +139,12 @@ func TestRustMSRVWorkspaceAndBounds(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			mustWrite(t, filepath.Join(root, "Cargo.toml"), tc.root)
+			root := setupRustMSRVFixture(t, "", tc.root)
 			mustWrite(t, filepath.Join(root, "rust-toolchain"), tc.pin+"\n")
 			if tc.member != "" {
 				mustWrite(t, filepath.Join(root, "crates/a/Cargo.toml"), tc.member)
 			}
-			line, err := AuditRustMSRV(t.Context(), root)
+			line, err := AuditRustMSRV(t.Context(), nil, root)
 			checkRepositoryVerdict(t, line, err, tc.fail, "rust-msrv")
 		})
 	}
@@ -117,8 +153,20 @@ func TestRustMSRVWorkspaceAndBounds(t *testing.T) {
 		for i := 0; i <= maxVerificationInputs; i++ {
 			mustWrite(t, filepath.Join(root, fmt.Sprintf("crates/c%d/Cargo.toml", i)), msrvCrate)
 		}
-		line, err := AuditRustMSRV(t.Context(), root)
+		line, err := AuditRustMSRV(t.Context(), nil, root)
 		checkRepositoryVerdict(t, line, err, true, "rust-msrv")
+	})
+	t.Run("manifest 129th unproven rust-version", func(t *testing.T) {
+		root := setupRustMSRVFixture(t, "verification:\n  max_files: 256\n", "")
+		// 129 manifests: first 128 have no rust-version, 129th has unproven rust-version.
+		for i := 0; i < 128; i++ {
+			mustWrite(t, filepath.Join(root, fmt.Sprintf("crates/c%03d/Cargo.toml", i)), fmt.Sprintf("[package]\nname='c%03d'\nversion='0.1.0'\n", i))
+		}
+		mustWrite(t, filepath.Join(root, "crates/c128/Cargo.toml"), "[package]\nname='c128'\nversion='0.1.0'\nrust-version='1.80'\n")
+		line, err := AuditRustMSRV(t.Context(), nil, root)
+		if err == nil || strings.Contains(line, "[PASS]") {
+			t.Fatalf("AuditRustMSRV = %q, %v; want not PASS for unproven 129th manifest", line, err)
+		}
 	})
 }
 
@@ -138,14 +186,13 @@ func TestRustMSRVWorkflowRejectsFalseProofs(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			mustWrite(t, filepath.Join(root, "Cargo.toml"), msrvCrate)
+			root := setupRustMSRVFixture(t, "", msrvCrate)
 			prefix := "      - uses: dtolnay/rust-toolchain@1.80\n"
 			if tc.name == "cargo before install" {
 				prefix = ""
 			}
 			mustWrite(t, filepath.Join(root, ".github/workflows/msrv.yml"), msrvJob+prefix+tc.steps)
-			line, err := AuditRustMSRV(t.Context(), root)
+			line, err := AuditRustMSRV(t.Context(), nil, root)
 			checkRepositoryVerdict(t, line, err, true, "rust-msrv")
 		})
 	}
@@ -158,7 +205,7 @@ func TestRepositoryChecksCancellationAndEngine(t *testing.T) {
 	checks := []func() (string, error){
 		func() (string, error) { return AuditEditorSelection(ctx, &config.Manifest{}, root) },
 		func() (string, error) { return AuditRenovateEngineBumps(ctx, root) },
-		func() (string, error) { return AuditRustMSRV(ctx, root) },
+		func() (string, error) { return AuditRustMSRV(ctx, nil, root) },
 	}
 	for i, check := range checks {
 		t.Run(fmt.Sprint(i), func(t *testing.T) {
@@ -172,7 +219,7 @@ func TestRepositoryChecksCancellationAndEngine(t *testing.T) {
 	for _, check := range []func() (string, error){
 		func() (string, error) { return AuditEditorSelection(t.Context(), manifest, engine) },
 		func() (string, error) { return AuditRenovateEngineBumps(t.Context(), engine) },
-		func() (string, error) { return AuditRustMSRV(t.Context(), engine) },
+		func() (string, error) { return AuditRustMSRV(t.Context(), manifest, engine) },
 	} {
 		line, err := check()
 		if err != nil {
