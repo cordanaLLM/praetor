@@ -47,4 +47,8 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/praetor-reuse"
           "$RUNNER_TEMP/praetor-reuse/bin/python" -m pip install \
             --require-hashes -r .config/reuse/requirements.txt
-          "$RUNNER_TEMP/praetor-reuse/bin/reuse" lint
+          if [ -f tools/reuse-lint.sh ]; then
+            PATH="$RUNNER_TEMP/praetor-reuse/bin:$PATH" bash tools/reuse-lint.sh
+          else
+            "$RUNNER_TEMP/praetor-reuse/bin/reuse" lint
+          fi

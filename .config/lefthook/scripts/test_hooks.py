@@ -7,7 +7,6 @@ import importlib.util
 import io
 import json
 import os
-from pathlib import Path
 import random
 import re
 import shutil
@@ -17,28 +16,66 @@ import sys
 import tempfile
 import time
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import checks
 import common
-from common import (HookError, MANAGED_PROCESS_ENV, MAX_PROCESS_ENV_ENTRIES,
-                    clean_env, run, snapshot, stop_process_group)
-from checks import (go_packages, source_checks, governance_commands, context_changed,
-                    audit_scope, local_package_patterns, checkpoint_checks,
-                    semgrep_commands, is_fixture, is_chart_template, file_checks, gofmt_check,
-                    lint_commands, golangci_lint_command, self_test_commands,
-                    run_full_gate, gate_timeout, FIXTURE_DIRECTORY, GATE_LAUNCH_MARGIN,
-                    GATE_QUERY_TIMEOUT, SEMGREP_LANGUAGE_EXTENSIONS, SEMGREP_SUFFIXES,
-                    tool_module_dirs, trivy_tool_command, TRIVY_SCANNERS, TRIVY_SEVERITY,
-                    hook_sources_changed, require_hook_lint_tools, HOOK_LINT_SUITE,
-                    HOOK_SOURCE_PREFIXES, provision_hook_lint, hook_lint_digest,
-                    hook_lint_cache_root, venv_bin, load_hook_lint, HOOK_LINT_BIN_ENV, Command,
-                    parallel)
 import hooks
-from hooks import push_updates, new_branch_base, pre_push, push_check_mode, prepare_message
-from privacy import check_private_history, check_private_index
 import sandbox
 import toolchain
+from checks import (
+    FIXTURE_DIRECTORY,
+    GATE_LAUNCH_MARGIN,
+    GATE_QUERY_TIMEOUT,
+    HOOK_LINT_BIN_ENV,
+    HOOK_LINT_SUITE,
+    SEMGREP_LANGUAGE_EXTENSIONS,
+    SEMGREP_SUFFIXES,
+    Command,
+    audit_scope,
+    checkpoint_checks,
+    context_changed,
+    file_checks,
+    gate_timeout,
+    go_packages,
+    gofmt_check,
+    golangci_lint_command,
+    governance_commands,
+    hook_lint_cache_root,
+    hook_lint_digest,
+    hook_sources_changed,
+    is_chart_template,
+    is_fixture,
+    lint_commands,
+    load_hook_lint,
+    local_package_patterns,
+    parallel,
+    provision_hook_lint,
+    require_hook_lint_tools,
+    run_full_gate,
+    self_test_commands,
+    semgrep_commands,
+    source_checks,
+    venv_bin,
+)
+from common import (
+    MANAGED_PROCESS_ENV,
+    MAX_PROCESS_ENV_ENTRIES,
+    HookError,
+    clean_env,
+    run,
+    snapshot,
+    stop_process_group,
+)
+from hooks import (
+    new_branch_base,
+    pre_push,
+    prepare_message,
+    push_check_mode,
+    push_updates,
+)
+from privacy import check_private_history, check_private_index
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = Path(".config/lefthook/scripts/hooks.py")
@@ -811,6 +848,7 @@ print("fixture hook self-tests passed")
                 self.assertEqual(target.read_text(), "PRIVATE_SYMLINK_SENTINEL\n")
 
     def test_private_history_commit_bound_and_missing_objects_fail_closed(self):
+        """Verify private history scans fail closed on commit bounds and missing objects."""
         base = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
         heads = []
         for number in range(3):
@@ -826,12 +864,16 @@ print("fixture hook self-tests passed")
                     check_private_history(heads[2], base)
             with self.assertRaises(HookError):
                 check_private_history("f" * 40, base)
-            with mock.patch("privacy.subprocess.run", return_value=subprocess.CompletedProcess([], 2)):
-                with self.assertRaisesRegex(HookError, "inspection failed"):
-                    check_private_index()
-            with mock.patch("privacy.subprocess.run", side_effect=subprocess.TimeoutExpired("git", 60)):
-                with self.assertRaisesRegex(HookError, "inspection failed"):
-                    check_private_index()
+            with (
+                mock.patch('privacy.subprocess.run', return_value=subprocess.CompletedProcess([], 2)),
+                self.assertRaisesRegex(HookError, 'inspection failed'),
+            ):
+                check_private_index()
+            with (
+                mock.patch('privacy.subprocess.run', side_effect=subprocess.TimeoutExpired('git', 60)),
+                self.assertRaisesRegex(HookError, 'inspection failed'),
+            ):
+                check_private_index()
         finally:
             os.chdir(original)
 
@@ -1548,6 +1590,7 @@ class ScopeAndGuard(unittest.TestCase):
         self.assertEqual(gate_timeout(b'{"timeout_seconds": 1500}'), 1500 + GATE_LAUNCH_MARGIN)
 
     def test_clean_env_final_bound_is_composable_for_nested_children(self):
+        """Verify clean_env enforces the entry bound after adding managed keys."""
         unmanaged = MAX_PROCESS_ENV_ENTRIES - len(MANAGED_PROCESS_ENV)
         exact = {f"SAFE_{index}": "x" for index in range(unmanaged)}
         with mock.patch.dict(os.environ, exact, clear=True):
@@ -1559,9 +1602,11 @@ class ScopeAndGuard(unittest.TestCase):
         self.assertEqual(child, parent)
 
         excessive = dict(exact, ONE_TOO_MANY="x")
-        with mock.patch.dict(os.environ, excessive, clear=True):
-            with self.assertRaisesRegex(HookError, "environment exceeds"):
-                clean_env()
+        with (
+            mock.patch.dict(os.environ, excessive, clear=True),
+            self.assertRaisesRegex(HookError, 'environment exceeds'),
+        ):
+            clean_env()
 
     def semgrep_tree(self, root, *files):
         rules = root / ".config" / "semgrep" / "hiss-invariants.yml"
@@ -1602,6 +1647,7 @@ class ScopeAndGuard(unittest.TestCase):
         self.assertFalse(is_fixture("mytestdata/a.go"))
 
     def test_gofmt_check_batches_cover_every_file(self):
+        """Verify gofmt_check runs in GOFMT_BATCH-sized batches and covers every file."""
         # Boundary: gofmt runs in GOFMT_BATCH-sized argument lists, so a whole-tree check
         # stays under the Windows command-line limit; a file in the last batch is still named.
         with tempfile.TemporaryDirectory() as directory:
@@ -1610,9 +1656,12 @@ class ScopeAndGuard(unittest.TestCase):
             for name in names[:-1]:
                 (root / name).write_text("package p\n", encoding="utf-8", newline="\n")
             (root / names[-1]).write_text("package p\nfunc  f(){}\n", encoding="utf-8", newline="\n")
-            with mock.patch("checks.GOFMT_BATCH", 1), mock.patch("checks.run", wraps=run) as runner:
-                with self.assertRaises(HookError) as raised:
-                    gofmt_check(root, names)
+            with (
+                mock.patch('checks.GOFMT_BATCH', 1),
+                mock.patch('checks.run', wraps=run) as runner,
+                self.assertRaises(HookError) as raised,
+            ):
+                gofmt_check(root, names)
             self.assertEqual(runner.call_count, len(names))
             self.assertIn(names[-1], str(raised.exception))
             self.assertNotIn(names[0], str(raised.exception))
@@ -2065,19 +2114,16 @@ class ScopeAndGuard(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertLess(elapsed, GUARD_TIMING_BOUND)
 
-    def test_guard_privilege_prefilter_skips_regex_without_a_literal(self):
+    def test_guard_privilege_rule_does_not_prefilter_escaped_executables(self):
+        """Verify the privilege rule runs without a literal prefilter so escaped names match."""
         guard = self.guard_module()
         pattern = guard.BLOCKED_PATTERNS[-1]
-        with mock.patch.object(guard.re, "search", side_effect=AssertionError("regex ran")):
-            self.assertFalse(guard.search(pattern, "x" * guard.MAX_SCAN_CHARS))
-        for name in ("sudo", "doas", "pkexec", "run0", "su"):
-            with self.subTest(name=name):
-                with mock.patch.object(guard.re, "search", return_value=True) as search:
-                    self.assertTrue(guard.search(pattern, "echo " + name))
-                    search.assert_called_once_with(pattern, "echo " + name)
-        with mock.patch.object(guard.re, "search", return_value=True) as search:
-            self.assertTrue(guard.search("custom", "x"))
-            search.assert_called_once_with("custom", "x")
+        self.assertNotIn(pattern, guard.RULE_PREFILTERS)
+        for text in ("x", r's\udo "praetorctl" adopt /home/adopter/dev'):
+            with self.subTest(text=text), mock.patch.object(
+                    guard.re, "search", return_value=True) as search:
+                self.assertTrue(guard.search(pattern, text))
+                search.assert_called_once_with(pattern, text)
 
     def test_guard_search_answers_like_re_search(self):
         """search() answers re.search for every rule, the option-run rule walked once (#1283)."""
@@ -2292,6 +2338,7 @@ class ScopeAndGuard(unittest.TestCase):
                 self.assertEqual(len(gate.call_args.args[0]), 2)
 
     def test_governance_only_push_retains_gate_and_pinned_receipt_verification(self):
+        """Verify governance-only pushes still run gate and pinned receipt verification."""
         with tempfile.TemporaryDirectory(prefix="praetor-receipt-") as temp:
             root = Path(temp)
             (root / ".standards.yaml").write_text("repository: {}\n")
@@ -2313,9 +2360,12 @@ class ScopeAndGuard(unittest.TestCase):
                 if argv[:5] == ["go", "run", "./cmd/standardsctl", "gate", "verify"]:
                     raise HookError("pin mismatch")
                 return process(argv, **kwargs)
-            with mock.patch("checks.parallel"), mock.patch("checks.run", side_effect=reject_pin):
-                with self.assertRaisesRegex(HookError, "pin mismatch"):
-                    source_checks(root, [".standards.yaml"], base=base)
+            with (
+                mock.patch('checks.parallel'),
+                mock.patch('checks.run', side_effect=reject_pin),
+                self.assertRaisesRegex(HookError, 'pin mismatch'),
+            ):
+                source_checks(root, [".standards.yaml"], base=base)
 
     def test_gate_timeout_reads_the_real_gate_deadline(self):
         # The hook's bound comes from the CLI it runs, so replay the contract through the hook's
@@ -2618,6 +2668,7 @@ class ScopeAndGuard(unittest.TestCase):
 
     @unittest.skipIf(os.name == "nt", POSIX_STUB)
     def test_prepush_two_tool_modules_scan_one_target_each(self):
+        """Verify Trivy scans each tool module individually and fails on findings."""
         # Order: engine-1629-landing-failed-20261027-0914. Real trivy fs takes one target; the stub
         # refuses more than one the same way, and a finding in either module refuses the push.
         with tempfile.TemporaryDirectory(prefix="praetor-trivy-two-") as temp:
@@ -2637,9 +2688,11 @@ class ScopeAndGuard(unittest.TestCase):
                 'exit 0\n',
             )
             shadowed = os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")])
-            with mock.patch.dict(os.environ, {"PATH": shadowed}):
-                with self.assertRaises(HookError) as cm:
-                    source_checks(root, ["tools/lefthook/go.mod", "tools/lint/go.mod"])
+            with (
+                mock.patch.dict(os.environ, {'PATH': shadowed}),
+                self.assertRaises(HookError) as cm,
+            ):
+                source_checks(root, ["tools/lefthook/go.mod", "tools/lint/go.mod"])
             error_msg = str(cm.exception)
             self.assertIn("tools/lint", error_msg)
             self.assertIn("CVE-2026-78669", error_msg)
@@ -2648,6 +2701,7 @@ class ScopeAndGuard(unittest.TestCase):
 
     @unittest.skipIf(os.name == "nt", POSIX_STUB)
     def test_prepush_tool_module_trivy_finding_fails(self):
+        """Verify a Trivy vulnerability finding in a tool module fails source_checks."""
         # Order: engine-prepush-trivy-tool-modules-20261027.
         with tempfile.TemporaryDirectory(prefix="praetor-trivy-fail-") as temp:
             root = Path(temp)
@@ -2660,9 +2714,11 @@ class ScopeAndGuard(unittest.TestCase):
                 'echo "CVE-2026-78669 HIGH in golang.org/x/net" >&2\nexit 1\n',
             )
             shadowed = os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")])
-            with mock.patch.dict(os.environ, {"PATH": shadowed}):
-                with self.assertRaises(HookError) as cm:
-                    source_checks(root, ["tools/lefthook/go.mod"])
+            with (
+                mock.patch.dict(os.environ, {'PATH': shadowed}),
+                self.assertRaises(HookError) as cm,
+            ):
+                source_checks(root, ["tools/lefthook/go.mod"])
             error_msg = str(cm.exception)
             self.assertIn("tools/lefthook", error_msg)
             self.assertIn("CVE-2026-78669", error_msg)
@@ -2741,6 +2797,7 @@ class ScopeAndGuard(unittest.TestCase):
         self.assertFalse(hook_sources_changed(["docs/guides/git-hooks.md"]))
 
     def test_prepush_require_hook_lint_tools_fails_closed_when_mismatched_or_absent(self):
+        """Verify require_hook_lint_tools fails closed when a pinned linter is mismatched."""
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             # When suite is absent (e.g. adopted repository), require_hook_lint_tools returns None
@@ -2752,8 +2809,8 @@ class ScopeAndGuard(unittest.TestCase):
         mock_module.GO_PINNED_TOOLS = ("gofumpt", "shfmt")
         mock_module.toolchain_pins.return_value = {"black": "26.10.1", "flake8": "7.4.1"}
         mock_module.resolve_tool.side_effect = lambda tool, pins, environ=None: (
-            (None, f"{tool} 7.4.1 is pinned but /bin/{tool} reports 7.5.0; install it with: "
-                   "python3 -m pip install --require-hashes -r .config/hook-lint/requirements.txt",
+            (None, (f"{tool} 7.4.1 is pinned but /bin/{tool} reports 7.5.0; install it with: "
+                   "python3 -m pip install --require-hashes -r .config/hook-lint/requirements.txt"),
              False) if tool == "flake8" else (f"/bin/{tool}", None, False)
         )
         with mock.patch("checks.load_hook_lint", return_value=mock_module):
@@ -3069,10 +3126,12 @@ exit 1
         ``taskkill`` is replaced so the assertion is about what was requested; the direct kill
         underneath it still reaps the real child this test started.
         """
-        with mock.patch("common.os", _WithoutProcessGroup()), \
-                mock.patch("common.subprocess.run") as tree:
-            with self.assertRaises(HookError):
-                run([sys.executable, "-c", "import time; time.sleep(10)"], timeout=0.05)
+        with (
+            mock.patch('common.os', _WithoutProcessGroup()),
+            mock.patch('common.subprocess.run') as tree,
+            self.assertRaises(HookError),
+        ):
+            run([sys.executable, "-c", "import time; time.sleep(10)"], timeout=0.05)
         self.assertEqual(tree.call_args.args[0][:3], ["taskkill", "/F", "/T"])
 
     @unittest.skipUnless(hasattr(os, "killpg"), "Windows has no process group; _kill_bounded "
@@ -3108,12 +3167,15 @@ exit 1
 
     @unittest.skipUnless(hasattr(os, "killpg"), "Windows has no process group to signal")
     def test_stop_boundaries(self):
+        """Verify process group stop boundaries for SIGINT and SIGTERM."""
         with tempfile.TemporaryDirectory(prefix="praetor-stop-") as temp:
             # A second Ctrl-C during the grace kills the group at once and is not swallowed.
             process = start_cli(self, Path(temp), STUBBORN_CLI)
-            with mock.patch.object(common.time, "sleep", side_effect=KeyboardInterrupt):
-                with self.assertRaises(KeyboardInterrupt):
-                    stop_process_group(process, signal.SIGINT)
+            with (
+                mock.patch.object(common.time, 'sleep', side_effect=KeyboardInterrupt),
+                self.assertRaises(KeyboardInterrupt),
+            ):
+                stop_process_group(process, signal.SIGINT)
             self.assertEqual(process.wait(timeout=5), -signal.SIGKILL)
             # A group already gone is not an error.
             stop_process_group(process)
@@ -3129,9 +3191,11 @@ exit 1
                 if len(calls) == 1:
                     raise KeyboardInterrupt
                 return real(process, *args, **kwargs)
-            with mock.patch.object(subprocess.Popen, "communicate", interrupted):
-                with self.assertRaises(KeyboardInterrupt):
-                    run([sys.executable, "-c", "import time; time.sleep(10)"])
+            with (
+                mock.patch.object(subprocess.Popen, 'communicate', interrupted),
+                self.assertRaises(KeyboardInterrupt),
+            ):
+                run([sys.executable, "-c", "import time; time.sleep(10)"])
             self.assertEqual(stop.call_args.args[1], signal.SIGINT)
 
     def test_hook_budget_hands_out_what_is_left_and_refuses_once_spent(self):
@@ -3154,11 +3218,13 @@ exit 1
                 common.run_bounded([sys.executable, "-c", STUBBORN_CLI, temp],
                                    timeout=0.5, grace=0.3)
             self.assertLess(time.monotonic() - started, 0.5 + 2 * 0.3 + 1.5)
-        with mock.patch("common.os", _WithoutProcessGroup()), \
-                mock.patch("common.subprocess.run") as tree:
-            with self.assertRaises(HookError):
-                common.run_bounded([sys.executable, "-c", "import time; time.sleep(10)"],
-                                   timeout=0.05, grace=0.3)
+        with (
+            mock.patch('common.os', _WithoutProcessGroup()),
+            mock.patch('common.subprocess.run') as tree,
+            self.assertRaises(HookError),
+        ):
+            common.run_bounded([sys.executable, "-c", "import time; time.sleep(10)"],
+                               timeout=0.05, grace=0.3)
         self.assertEqual(tree.call_args.kwargs["timeout"], 0.3)
 
     def test_refuse_after_answers_for_a_blocked_hook_unless_cancelled_or_answered(self):
@@ -3180,18 +3246,21 @@ exit 1
                 self.assertLess(time.monotonic() - started, 10)
 
     def test_sandbox_failure_removes_only_owned_container(self):
+        """Verify sandbox failures force-remove only the container started by the run."""
         calls = []
         def docker(argv, **kwargs):
             calls.append(argv)
             if argv[:2] == ["docker", "run"]:
                 raise HookError("simulated container timeout")
             return b"owned-container\n" if argv[:2] == ["docker", "ps"] else b""
-        with tempfile.TemporaryDirectory(prefix="praetor-docker-") as temp, \
-                mock.patch("sandbox.git", return_value=b"a" * 40 + b"\n"), \
-                mock.patch("sandbox.snapshot", return_value=contextlib.nullcontext(Path(temp))), \
-                mock.patch("sandbox.run", side_effect=docker):
-            with self.assertRaisesRegex(HookError, "simulated container timeout"):
-                sandbox.main([])
+        with (
+            tempfile.TemporaryDirectory(prefix='praetor-docker-') as temp,
+            mock.patch('sandbox.git', return_value=b'a' * 40 + b'\n'),
+            mock.patch('sandbox.snapshot', return_value=contextlib.nullcontext(Path(temp))),
+            mock.patch('sandbox.run', side_effect=docker),
+            self.assertRaisesRegex(HookError, 'simulated container timeout'),
+        ):
+            sandbox.main([])
         start = next(cmd for cmd in calls if cmd[:2] == ["docker", "run"])
         name = start[start.index("--name") + 1]
         self.assertTrue(name.startswith("praetor-gate-"))
@@ -3351,11 +3420,14 @@ class ToolFloors(unittest.TestCase):
                                    "golangci-lint", "run", "--allow-serial-runners", "./pkg"])
 
     def test_golangci_lint_without_pin_fails_with_remedy(self):
+        """Verify golangci_lint_command fails with a remedy when no tool directive exists."""
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            with mock.patch("checks.run") as run:
-                with self.assertRaisesRegex(HookError, r"golangci-lint.*tools/lint/go.mod"):
-                    golangci_lint_command(root, ["./..."])
+            with (
+                mock.patch('checks.run') as run,
+                self.assertRaisesRegex(HookError, 'golangci-lint.*tools/lint/go.mod'),
+            ):
+                golangci_lint_command(root, ["./..."])
             run.assert_not_called()
 
     def test_floor_lines_parse_with_comments_and_blanks(self):
@@ -3682,9 +3754,10 @@ class HookInterpreter(unittest.TestCase):
         self.assertEqual(toolchain.LAUNCHER, LAUNCHER)
 
     def test_the_launcher_and_the_policy_declare_one_candidate_list(self):
+        """Verify python.sh and toolchain.py declare identical Python candidate lists."""
         launcher = (ROOT / LAUNCHER).read_text(encoding="utf-8")
         # The guards sit in the column shfmt -i 2 -ci aligns them to, one space or more away.
-        lines = re.findall(r'^if proven (.+); then exec (.+) "\$@"; fi +#$', launcher, re.M)
+        lines = re.findall(r'^if proven (.+); then exec (.+) "\$@"; fi +#$', launcher, re.MULTILINE)
         self.assertEqual([tuple(proved.split()) for proved, _ in lines],
                          list(toolchain.PYTHON_CANDIDATES))
         # A candidate is started exactly as it was proven, and nothing else is started.
@@ -3761,10 +3834,11 @@ class HookInterpreter(unittest.TestCase):
                 toolchain.python_proof(["python3"])
 
     def test_the_interpreter_on_this_host_proves_itself(self):
+        """Verify the host Python interpreter passes toolchain.python_proof."""
         argv, version = toolchain.python_program()
         self.assertTrue(Path(argv[0]).is_file(), argv)
         self.assertRegex(version, r"^3\.\d+$")
-        self.assertEqual(toolchain.python_proof([sys.executable]), "%d.%d" % sys.version_info[:2])
+        self.assertEqual(toolchain.python_proof([sys.executable]), f"{sys.version_info.major}.{sys.version_info.minor}")
         with self.assertRaisesRegex(HookError, "praetor-no-such-interpreter"):
             toolchain.python_proof(["praetor-no-such-interpreter"])
 
@@ -3957,9 +4031,10 @@ class DeclaredPrograms(unittest.TestCase):
         self.assertEqual(set(toolchain.RESOLVED) & (started | set(toolchain.BY_NAME)), set())
 
     def test_sh_is_the_one_program_the_jobs_start(self):
+        """Verify every Lefthook job and pre-push script invokes sh as its entry point."""
         policy = (ROOT / ".config/lefthook/praetor.yml").read_text(encoding="utf-8")
-        runs = re.findall(r"^ +run: (?:>-\n +)?(\S+)", policy, re.M)
-        runners = re.findall(r"^ +runner: (\S+)$", policy, re.M)
+        runs = re.findall(r"^ +run: (?:>-\n +)?(\S+)", policy, re.MULTILINE)
+        runners = re.findall(r"^ +runner: (\S+)$", policy, re.MULTILINE)
         self.assertGreater(len(runs), 10)
         self.assertEqual(len(runners), 1)
         self.assertEqual(set(runs) | set(runners), {"sh"})

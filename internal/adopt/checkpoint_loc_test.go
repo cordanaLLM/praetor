@@ -53,7 +53,7 @@ func scanStrict(t *testing.T, files map[string]string) []hiss.InvariantViolation
 func TestVendoredCheckpointSourcesFitStrictAdopterLOC(t *testing.T) {
 	engineRoot := filepath.Join("..", "..")
 	files := map[string]string{evasionHookFile: buildBlockEvasionPY(), engineLauncherFile: engineLauncherScript}
-	for _, name := range []string{checkpointScript, checkpointCommon} {
+	for _, name := range []string{checkpointScript, checkpointCommon, checkpointSessionModule} {
 		body, err := os.ReadFile(filepath.Join(engineRoot, filepath.FromSlash(name)))
 		if err != nil {
 			t.Fatalf("read vendored source %s: %v", name, err)

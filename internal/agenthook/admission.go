@@ -72,32 +72,36 @@ var builtinHeavyShapes = []string{
 // wrapperSpec describes a command that runs another one: the options that take a separate
 // value, and how many positional words precede the command it runs.
 type wrapperSpec struct {
-	values     []string
-	positional int
+	values           []string
+	positional       int
+	optionalPriority bool
 }
 
 // admissionWrappers are the commands looked through to the command they run, so `nice -n 10
 // make` and `systemd-run --user --scope -p MemoryMax=8G -- go test ./...` are judged as make
-// and go test.
+// and go test. Required data arguments follow installed coreutils/findutils
+// --help, util-linux --help, time(1), and Bash help. Optional xargs arguments
+// (-e/-i/-l, --eof/--replace) attach to their option; no following word consumed.
+// chrt's priority is optional and numeric; taskset's mask remains positional.
 var admissionWrappers = map[string]wrapperSpec{
-	"chrt":    {positional: 1},
+	"chrt":    {values: []string{"-T", "--sched-runtime", "-P", "--sched-period", "-D", "--sched-deadline"}, positional: 1, optionalPriority: true},
 	"command": {},
 	"builtin": {},
-	"env":     {values: []string{"-u", "--unset", "-C", "--chdir"}},
+	"env":     {values: []string{"-u", "--unset", "-C", "--chdir", "-a", "--argv0", "--env0-from"}},
 	"exec":    {values: []string{"-a"}},
 	"flock":   {values: []string{"-w", "--timeout", "-E", "--conflict-exit-code"}, positional: 1},
 	"ionice":  {values: []string{"-c", "--class", "-n", "--classdata", "-p", "--pid", "-P", "--pgid", "-u", "--uid"}},
 	"nice":    {values: []string{"-n", "--adjustment"}},
 	"nohup":   {},
 	"setsid":  {},
-	"stdbuf":  {values: []string{"-i", "-o", "-e"}},
+	"stdbuf":  {values: []string{"-i", "--input", "-o", "--output", "-e", "--error"}},
 	"systemd-run": {values: []string{"-p", "--property", "-u", "--unit", "-E", "--setenv", "--slice", "-M", "--machine", "-H", "--host",
 		"--uid", "--gid", "--nice", "--working-directory", "--description"}},
 	"taskset": {positional: 1},
 	"time":    {values: []string{"-f", "--format", "-o", "--output"}},
 	"timeout": {values: []string{"-k", "--kill-after", "-s", "--signal"}, positional: 1},
-	"xargs": {values: []string{"-a", "--arg-file", "-d", "--delimiter", "-E", "-e", "-I", "-i", "-L", "-l", "-n", "--max-args",
-		"-P", "--max-procs", "-s", "--max-chars"}},
+	"xargs": {values: []string{"-a", "--arg-file", "-d", "--delimiter", "-E", "-I", "-L", "--max-lines", "-n", "--max-args",
+		"-P", "--max-procs", "-s", "--max-chars", "--process-slot-var"}},
 }
 
 // admissionPrelude are the shell words that may stand before a command name in one segment.
@@ -105,6 +109,7 @@ var admissionPrelude = []string{"!", "if", "then", "else", "elif", "do", "while"
 
 var (
 	assignmentWord = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+	priorityWord   = regexp.MustCompile(`^[0-9]+$`)
 	labelWord      = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,30}$`)
 	gitPushPattern = regexp.MustCompile(gitPushShape)
 	// segmentSeparators end one simple command: lists, pipes, subshells, groups and command
@@ -1167,12 +1172,27 @@ func advanceOptionWord(word string, j int, spec wrapperSpec) (newJ int, done boo
 		return j, true, true
 	}
 	if strings.HasPrefix(word, "-") && len(word) > 1 {
-		if slices.Contains(spec.values, word) {
+		if slices.Contains(spec.values, word) || clusteredSeparateValue(word, spec.values) {
 			j++
 		}
 		return j, false, true
 	}
 	return j, false, false
+}
+
+// clusteredSeparateValue reports whether the first value-taking option in a short
+// cluster consumes the next word instead of the remaining characters.
+func clusteredSeparateValue(word string, values []string) bool {
+	if strings.HasPrefix(word, "--") {
+		return false
+	}
+	letters := privilegeShortValues(values)
+	for i := 1; i < len(word) && i < MaxScanChars; i++ {
+		if strings.ContainsRune(letters, rune(word[i])) {
+			return i == len(word)-1
+		}
+	}
+	return false
 }
 
 // commandAfter returns the index of the command a wrapper at index i runs: past its options,
@@ -1191,13 +1211,18 @@ func commandAfter(words []string, i int, spec wrapperSpec) int {
 		}
 		switch {
 		case assignmentWord.MatchString(word):
-		case positional > 0:
+		case wrapperPositional(word, positional, spec):
 			positional--
 		default:
 			return j
 		}
 	}
 	return j
+}
+
+// wrapperPositional distinguishes chrt's optional priority from its command name.
+func wrapperPositional(word string, remaining int, spec wrapperSpec) bool {
+	return remaining > 0 && (!spec.optionalPriority || priorityWord.MatchString(word))
 }
 
 // commandName is the base name of a command word, without a Windows .exe suffix.

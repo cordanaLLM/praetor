@@ -93,7 +93,7 @@ func verificationSummary(facts harnessFacts) string {
 
 const agentHarnessFooterTemplate = harnessFooterHeading + `
 
-` + "```bash\n" + `# Fast local test suite
+` + "```bash\n" + `# Project verification commands; availability and execution unverified
 {{ .TestCmd }}
 
 # Recompile and verify cross-agent context outputs

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/agenthook"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/govuln"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
@@ -52,6 +53,7 @@ func emittedHookRenderings(t *testing.T) map[string]string {
 	}
 }
 
+// TestEmittedHookFixturesMatchTheRendering verifies that checked-in emitted hook fixtures match the current rendering.
 func TestEmittedHookFixturesMatchTheRendering(t *testing.T) {
 	root, err := os.OpenRoot(filepath.Join("..", ".."))
 	if err != nil {
@@ -62,6 +64,9 @@ func TestEmittedHookFixturesMatchTheRendering(t *testing.T) {
 			t.Errorf("close repository root: %v", err)
 		}
 	}()
+	if os.Getenv(updateEmittedFixturesEnv) == "1" {
+		refreshNativeEvasionPatterns(t)
+	}
 	for rel, want := range emittedHookRenderings(t) {
 		path := filepath.Join(emittedFixtureRoot, filepath.FromSlash(rel))
 		if os.Getenv(updateEmittedFixturesEnv) == "1" {
@@ -77,6 +82,7 @@ func TestEmittedHookFixturesMatchTheRendering(t *testing.T) {
 				path, updateEmittedFixturesEnv, t.Name())
 		}
 	}
+	compareGolden(t, filepath.Join(priorEvasionFixtures, currentEvasionFixture), buildBlockEvasionPY())
 }
 
 // Positive: folding changes the layout, never a value. Every earlier unfolded rendering
@@ -363,6 +369,7 @@ func TestLefthookRun(t *testing.T) {
 	}
 }
 
+// TestPyTokenLiterals verifies that wrapped raw Python literals preserve escape boundaries and concatenate back to the source.
 func TestPyTokenLiterals(t *testing.T) {
 	source := `[/\\]\x22` + strings.Repeat(`a\\`, 20)
 	for width := 5; width <= 12; width++ {
@@ -373,7 +380,7 @@ func TestPyTokenLiterals(t *testing.T) {
 			if strings.HasSuffix(body, `\`) && !strings.HasSuffix(body, `\\`) {
 				t.Errorf("width %d: raw literal %s ends in a lone backslash", width, literal)
 			}
-			if len(literal) > width && len(body) > 2 {
+			if len(literal) > width && len(pythonLiteralUnits(body, true)) > 1 {
 				t.Errorf("width %d: literal %s is %d bytes", width, literal, len(literal))
 			}
 			joined.WriteString(body)
@@ -393,6 +400,7 @@ func TestPyTokenLiterals(t *testing.T) {
 	}
 }
 
+// TestPythonAssignmentAndPairLayout verifies assignments and pairs at the line width boundary.
 func TestPythonAssignmentAndPairLayout(t *testing.T) {
 	name := "NAME"
 	fits := strings.Repeat("x", blackLineLimit-len(name+` = ""`))
@@ -417,4 +425,101 @@ func TestPythonAssignmentAndPairLayout(t *testing.T) {
 	if got := pythonPairEntry(entry, pyToken{name, pyName}); got != "    (\n        r\""+entry.text+"\",\n        NAME,\n    ),\n" {
 		t.Errorf("one column over: one item per line with trailing commas: %q", got)
 	}
+}
+
+// TestEmittedPairItemsGroupConcatenatedLiterals keeps wrapped tuple items unambiguous to scanners.
+func TestEmittedPairItemsGroupConcatenatedLiterals(t *testing.T) {
+	const indent = "        "
+	for _, kind := range []struct {
+		name string
+		kind pyKind
+	}{{"string", pyString}, {"raw", pyRaw}} {
+		t.Run(kind.name, func(t *testing.T) {
+			empty := pyToken{kind: kind.kind}
+			width := blackLineLimit - len(indent) - len(empty.whole()) - len(",")
+			for _, size := range []struct {
+				name string
+				size int
+			}{{"empty", 0}, {"boundary", width}, {"one_over", width + 1}, {"triple_width", width * 3}} {
+				t.Run(size.name, func(t *testing.T) {
+					item := pyToken{strings.Repeat("x", size.size), kind.kind}
+					assertEmittedPairItemLines(t, indent, item, size.size <= width)
+				})
+			}
+		})
+	}
+	name := pyToken{strings.Repeat("N", blackLineLimit), pyName}
+	if got, want := pythonItemLines(indent, name, ","), indent+name.text+",\n"; got != want {
+		t.Errorf("name split into literals: got %q, want %q", got, want)
+	}
+}
+
+func assertEmittedPairItemLines(t *testing.T, indent string, item pyToken, fits bool) {
+	t.Helper()
+	got := pythonItemLines(indent, item, ",")
+	if fits {
+		if want := indent + item.whole() + ",\n"; got != want {
+			t.Errorf("kind=%v size=%d: got %q, want %q", item.kind, len(item.text), got, want)
+		}
+		return
+	}
+	if !strings.HasPrefix(got, indent+"(\n") || !strings.HasSuffix(got, indent+"),\n") {
+		t.Errorf("kind=%v size=%d: concatenated literals lack parentheses: %q", item.kind, len(item.text), got)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(got, "\n"), "\n") {
+		if len(line) > blackLineLimit {
+			t.Errorf("kind=%v size=%d: line exceeds %d columns: %q", item.kind, len(item.text), blackLineLimit, line)
+		}
+	}
+}
+
+// TestEmittedPairGroupingPreservesPolicy checks all exported policy values and detects a planted rule change.
+func TestEmittedPairGroupingPreservesPolicy(t *testing.T) {
+	python, script := emittedInterceptor(t)
+	current := loadInterceptorModule(t, python, script)
+	before := renderedModule(t, python, mustRead(t, filepath.Join(priorEvasionFixtures, "before-codacy-grouping.block_evasion.py")))
+	if !reflect.DeepEqual(before, current) {
+		t.Fatal("parenthesizing collection items changed the emitted policy values")
+	}
+	if len(current.Rules) == 0 {
+		t.Fatal("policy parity requires at least one rule")
+	}
+	current.Rules[0][0] += "planted"
+	if reflect.DeepEqual(before, current) {
+		t.Fatal("policy comparison missed a planted rule change")
+	}
+}
+
+// Refresh the native guard through the same regeneration command as the adopter interceptor.
+// The remaining native adapter code stays intact; parity tests verify the shared rules.
+func refreshNativeEvasionPatterns(t *testing.T) {
+	t.Helper()
+	guard := filepath.Join("..", "..", filepath.FromSlash(evasionHookFile))
+	text := mustRead(t, guard)
+	before, rest, found := strings.Cut(text, "BLOCKED_PATTERNS = [\n")
+	_, after, closed := strings.Cut(rest, "\n]\n")
+	if !found || !closed {
+		t.Fatal("native guard has no delimited BLOCKED_PATTERNS declaration")
+	}
+	var patterns strings.Builder
+	rules := agenthook.BuiltinRules()
+	for index, rule := range rules {
+		if rule.Invariant != "HISS" {
+			continue
+		}
+		token := pyToken{rule.Source, pyRaw}
+		if index == len(rules)-2 {
+			patterns.WriteString("    (\n        " + strings.Join(token.literals(80), "\n        ") + "\n    ),\n")
+		} else {
+			patterns.WriteString("    " + token.whole() + ",\n")
+		}
+	}
+	text = before + "BLOCKED_PATTERNS = [\n" + patterns.String() + "]\n" + after
+	start := strings.Index(text, "RULE_PREFILTERS = ")
+	if start < 0 {
+		t.Fatal("native guard has no RULE_PREFILTERS declaration")
+	}
+	end := strings.IndexByte(text[start:], '\n') + start
+	text = text[:start] + "RULE_PREFILTERS = {}" + text[end:]
+	mustWrite(t, guard, text)
 }

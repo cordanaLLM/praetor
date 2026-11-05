@@ -53,6 +53,7 @@ const (
 // itself (reuseRenderingBranch). testdata/reuse-workflow reproduces each digest
 // (reuse_gate_test.go).
 var priorReuseWorkflowDigests = map[string]string{
+	"3c2103e2e97f8aa71d3bf1ddc64cdd90db369bb64f189d5702ff659e13490b8a": "repository REUSE runner after hash-pinned install",
 	"544d1a325cf241e5f03e4024176f5e46d50a555e5b82fa99976b1fa1cc600e7d": "reuse 6.x hash-pinned requirements.txt in venv, checkout pinned by commit digest, hosted gate shape",
 	"2401b69ff8a083d79517191e2c5ed6f7ecee4cea7d90f4b7ae07f98c41e91c82": "reuse-action v6 and checkout pinned by commit digest, hosted gate shape with merge_group and concurrency group",
 	"c8b2b85f7d8f3be75dc21737409a7583e159adca329ba91c9578f180ccf17b25": "reuse-action v6, checkout v7, hosted gate shape, default branch main, 10-minute timeout",
@@ -127,7 +128,11 @@ func renderReuseWorkflowWithRef(ref, branch string) string {
 		"          python3 -m venv \"$RUNNER_TEMP/praetor-reuse\"\n" +
 		"          \"$RUNNER_TEMP/praetor-reuse/bin/python\" -m pip install \\\n" +
 		"            --require-hashes -r .config/reuse/requirements.txt\n" +
-		"          \"$RUNNER_TEMP/praetor-reuse/bin/reuse\" lint\n"
+		"          if [ -f tools/reuse-lint.sh ]; then\n" +
+		"            PATH=\"$RUNNER_TEMP/praetor-reuse/bin:$PATH\" bash tools/reuse-lint.sh\n" +
+		"          else\n" +
+		"            \"$RUNNER_TEMP/praetor-reuse/bin/reuse\" lint\n" +
+		"          fi\n"
 }
 
 // reuseWorkflow renders the hosted REUSE gate for the repository's default branch, the branch

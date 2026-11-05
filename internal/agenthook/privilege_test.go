@@ -93,10 +93,10 @@ func TestPolicyPrivilegeNativePythonHooks(t *testing.T) {
 		if client == "codex" {
 			script = "codex_pre_tool.py"
 		}
-		for _, command := range []string{"sudo -n true", "grep -n sudo file"} {
+		for _, command := range []string{"sudo -n 'praetorctl' adopt /home/adopter/dev", "sudo apt update", "grep -n sudo file"} {
 			result := runGuardScript(t, python, filepath.Join(root, ".config", "agent", "hooks", script),
 				privilegePayload(t, client, root, command), nil, guardEnvironment())
-			wantDeny := command == "sudo -n true"
+			wantDeny := strings.Contains(command, "adopt")
 			if (result.exit == 2) != wantDeny || (!wantDeny && result.exit != 0) ||
 				(wantDeny && !bytes.Contains(result.stderr, []byte(evasionMessage))) {
 				t.Errorf("%s %q: exit %d, stderr %s", client, command, result.exit, result.stderr)
@@ -118,18 +118,34 @@ func TestRegistrationPrivilegeAgyPlugin(t *testing.T) {
 // Light escalated commands would pass if escalators were transparent wrappers.
 func TestAdmissionPrivilegePrograms(t *testing.T) {
 	check := admissionPolicy(t).admission
+	denied, allowed := 0, 0
 	for command, deny := range map[string]bool{
-		"sudo -n true": true, "doas true": true, "pkexec true": true, "run0 true": true,
-		"su -c true": true, "su - root -c id": true, "su root --command id": true,
-		"env A=1 timeout 5 /usr/bin/sudo true": true, "builtin doas true": true,
-		"echo x && sudo true": true, "echo $(pkexec true)": true,
+		"sudo -n true": false, "doas true": false, "pkexec true": false, "run0 true": false,
+		"su -c true": false, "su - root -c id": false, "su root --command id": false,
+		"env A=1 timeout 5 /usr/bin/sudo true": false, "builtin doas true": false,
+		"echo x && sudo true": false, "echo $(pkexec true)": false,
 		"grep -n sudo file": false, `echo "sudo is refused"`: false,
 		"su": false, "su - root": false, "sudoers true": false,
+		"sudo -n praetorctl adopt /home/adopter/dev":                            true,
+		"sudo -p x praetorctl adopt /home/adopter/dev":                          true,
+		"doas -C /etc/doas.conf standardsctl conform /home/adopter/dev":         true,
+		"pkexec --user root standardsctl bootstrap /home/adopter/dev":           true,
+		"run0 --area work standardsctl needs scan /home/adopter/dev":            true,
+		"su root -c praetorctl adopt /home/adopter/dev":                         true,
+		"env A=1 timeout 5 /usr/bin/sudo -n praetorctl adopt /home/adopter/dev": true,
 	} {
+		if deny {
+			denied++
+		} else {
+			allowed++
+		}
 		got := check.judge(command)
 		if (got.Outcome == Deny) != deny || (deny && !strings.Contains(got.Reason, evasionMessage+"; privilege escalation prohibited")) {
 			t.Errorf("%q: %+v, want deny %v", command, got, deny)
 		}
+	}
+	if denied == 0 || allowed == 0 {
+		t.Fatalf("admission privilege table must exercise both deny (%d) and allow (%d) cases", denied, allowed)
 	}
 }
 

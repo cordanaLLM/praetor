@@ -3,6 +3,7 @@ package agenthook
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -142,7 +143,7 @@ func refusalCases() []struct {
 		{"dev root", "praetorctl adopt /home/user/dev", []byte(BuiltinRules()[len(builtinEvasion)].RefusalPrefix() + builtinDevRoot + "\n")},
 		{"scan bound exceeded", strings.Repeat("x", MaxScanLineChars+1), []byte(ScanBoundRefusal() + "\n")},
 		{"scan bound exactly", strings.Repeat("x", MaxScanLineChars), nil},
-		{"privilege refusal bounded", "sudo -n true", []byte(boundReason(rulePrefix("HISS", evasionMessage)+privilegeCommandRule()) + "\n")},
+		{"privilege refusal bounded", "sudo -n 'praetorctl' adopt /home/adopter/dev", []byte(boundReason(rulePrefix("HISS", evasionMessage)+privilegeCommandRule()) + "\n")},
 		{"benign", "git status", nil},
 	}
 }
@@ -233,26 +234,31 @@ func TestRefusalDriftFailsOnAChangedWord(t *testing.T) {
 	}
 }
 
-// pythonRawString matches one r"..." entry of a Python list literal.
-var pythonRawString = regexp.MustCompile(`(?m)^\s*r"([^"\n]*)",\s*$`)
-
-// pythonPatternList returns the r"..." entries of the named list in the Python guard.
+// pythonPatternList reads Python string expressions with Python's own literal reader.
+// Parenthesized adjacent literals keep long patterns within adopter line limits.
 func pythonPatternList(t *testing.T, name string) []string {
 	t.Helper()
 	data, err := os.ReadFile(pythonGuard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A Windows checkout under core.autocrlf writes CRLF; the committed blob is LF.
-	text := strings.ReplaceAll(string(data), "\r\n", "\n")
-	_, rest, found := strings.Cut(text, "\n"+name+" = [\n")
-	body, _, closed := strings.Cut(rest, "\n]\n")
-	if !found || !closed {
-		t.Fatalf("%s has no %s list", pythonGuard, name)
+	interpreter := testsupport.PythonInterpreter(t)
+	code := "import ast,json,sys; tree=ast.parse(sys.stdin.read()); " +
+		"node=next(n for n in tree.body if isinstance(n,ast.Assign) and " +
+		"any(isinstance(t,ast.Name) and t.id==sys.argv[1] for t in n.targets)); " +
+		"print(json.dumps(ast.literal_eval(node.value)))"
+	ctx := testsupport.DeadlineContext(t)
+	ctx, err = util.WithCommandStdin(ctx, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := util.RunCommandBytes(ctx, "", interpreter, 1<<20, "-B", "-c", code, name)
+	if err != nil {
+		t.Fatalf("read %s with Python AST: %v: %s", name, err, result.Stderr)
 	}
 	var sources []string
-	for _, match := range pythonRawString.FindAllStringSubmatch(body+"\n", -1) {
-		sources = append(sources, match[1])
+	if err := json.Unmarshal(result.Stdout, &sources); err != nil {
+		t.Fatal(err)
 	}
 	return sources
 }
@@ -277,13 +283,9 @@ func TestPythonGuardCarriesTheRequiredLiterals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	quoted := make([]string, 0, len(privilegeNames))
-	for _, name := range privilegeNames {
-		quoted = append(quoted, strconv.Quote(name))
-	}
-	want := "RULE_PREFILTERS = {BLOCKED_PATTERNS[-1]: (" + strings.Join(quoted, ", ") + ")}"
+	want := "RULE_PREFILTERS = {}"
 	if !strings.Contains(string(data), want) || builtinEvasion[len(builtinEvasion)-1] != privilegeCommandSource {
-		t.Fatal("guard prefilter differs from the Go privilege rule")
+		t.Fatal("escaped executable names must not use a necessary-literal prefilter")
 	}
 }
 

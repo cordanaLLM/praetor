@@ -15,9 +15,9 @@ const (
 	shellBlank = `[ \t]+`
 	// Tokens exclude command boundaries; quoted option values may contain blanks.
 	privilegeWord = `(?:\x22[^\x22\n]*\x22|\x27[^\x27\n]*\x27|[^ \t\n;&|()\x60\x22\x27]+)`
-	// Values are quoted tokens, non-options or negative integers. The flag trie
-	// below prevents value-taking flags from also parsing as valueless flags.
-	privilegeValue      = `(?:\x22[^\x22\n]*\x22|\x27[^\x27\n]*\x27|[^- \t\n;&|()\x60\x22\x27][^ \t\n;&|()\x60\x22\x27]*|-[0-9]+)`
+	// Required option values are complete shell words, including leading dashes.
+	// The flag trie keeps value-taking flags disjoint from valueless flags.
+	privilegeValue      = privilegeWord
 	privilegeOptionChar = ` \t\n;&|()\x60\x22\x27`
 	privilegeEnd        = `(?:[ \t\r\n;&|()\x60]|$)`
 	// Consume quoted data as complete atoms before looking for command position.
@@ -26,13 +26,28 @@ const (
 	privilegeData       = `(?:[^\x22\x27\\]|\\(?s:.)|\x27[^\x27]*\x27|\x22` + privilegeDoubleText + `\x22)*`
 )
 
-// privilegeNames also declares the text rule's necessary-literal prefilter. su
-// needs a command option; the other names refuse any invocation.
+// privilegeNames names launchers whose protected adoption commands are judged.
 var privilegeNames = []string{"sudo", "doas", "pkexec", "run0", "su"}
 
-// su without a command remains an interactive invocation, outside this rule.
-var privilegeInvocation = `(?:(?:` + strings.Join(privilegeNames[:4], `|`) + `)` + privilegeEnd +
-	`|su(?:` + shellBlank + privilegeWord + `)*` + shellBlank + `(?:-c[^ \t\n;&|()\x60]*|--command(?:=[^ \t\n;&|()\x60]*)?)` + privilegeEnd + `)`
+// privilegeLauncherValues lists every option taking a separate value for each privilege
+// launcher (sudo(8), doas(1), pkexec(1), and systemd run0(1)).
+var privilegeLauncherValues = map[string][]string{
+	"sudo": {
+		"-a", "--auth-type", "-C", "--close-from", "-c", "--login-class",
+		"-D", "--chdir", "-g", "--group", "-h", "--host", "-p", "--prompt",
+		"-R", "--chroot", "-r", "--role", "-T", "--command-timeout", "-t", "--type",
+		"-U", "--other-user", "-u", "--user",
+	},
+	"doas":   {"-a", "-C", "-u"},
+	"pkexec": {"--user"},
+	"run0": {
+		"-D", "--chdir", "-g", "--group", "-u", "--user", "--uid", "--gid",
+		"--area", "--background", "--description", "--lightweight", "--machine",
+		"--nice", "--property", "--setenv", "--shell-prompt-prefix", "--slice", "--unit",
+	},
+}
+
+var privilegeInvocation = protectedPrivilegeInvocation()
 
 var privilegeCommandSource = privilegeCommandRule()
 
@@ -47,6 +62,16 @@ func shellProgram(name string) string {
 // whose whole-word search intentionally includes data. Launcher option arities
 // come from admissionWrappers, so the text and act policies share that knowledge.
 func privilegeCommandRule() string {
+	return privilegeCommandPrefix() + privilegeInvocation
+}
+
+// privilegeOptionRun repeats disjoint option alternatives for wrappers and launchers.
+func privilegeOptionRun(values []string) string {
+	return `(?:` + shellBlank + `(?:` + privilegeOptions(values) + `))*`
+}
+
+// privilegeCommandPrefix reaches command positions through wrapper option runs.
+func privilegeCommandPrefix() string {
 	names := make([]string, 0, len(admissionWrappers))
 	for name := range admissionWrappers {
 		names = append(names, name)
@@ -55,20 +80,58 @@ func privilegeCommandRule() string {
 	launchers := make([]string, 0, len(names))
 	for _, name := range names {
 		spec := admissionWrappers[name]
-		option := privilegeFlagExcept(spec.values)
-		if len(spec.values) > 0 {
-			option = `(?:` + strings.Join(spec.values, `|`) + `)` + shellBlank + privilegeValue + `|` + option
-		}
-		launcher := shellProgram(name) + `(?:` + shellBlank + `(?:` + option + `))*` + shellBlank
-		if spec.positional > 0 {
-			launcher += privilegeWord + shellBlank
-		}
+		launcher := shellProgram(name) + privilegeOptionRun(spec.values) + shellBlank
+		launcher += privilegePositionals(spec)
 		launchers = append(launchers, launcher)
 	}
 	assignment := `[A-Za-z_][A-Za-z0-9_]*=(?:` + privilegeWord + `)?` + shellBlank
-	position := `(?:\A|[\n;&|(\x60]|\x22` + privilegeDoubleText + `(?:\$\(|\x60))`
-	return `\A` + privilegeData + position + `[ \t]*(?:` + assignment + `|` + strings.Join(launchers, `|`) + `)*` +
-		shellProgram(privilegeInvocation)
+	position := `(?:\A|[\n;&|({!\x60]|\x22` + privilegeDoubleText + `(?:\$\(|\x60))`
+	return `\A` + privilegeData + position + `[ \t]*(?:` + assignment + `|` + strings.Join(launchers, `|`) + `|` + privilegeScriptPrefix() + `|(?:then|do|else|if|while|until)` + shellBlank + `)*`
+}
+
+// privilegePositionals shares the table's optional numeric priority grammar.
+func privilegePositionals(spec wrapperSpec) string {
+	if spec.optionalPriority {
+		return `(?:[0-9]+` + shellBlank + `)?`
+	}
+	return strings.Repeat(privilegeWord+shellBlank, spec.positional)
+}
+
+// privilegeShortValues lists the short options whose first occurrence consumes the
+// rest of its cluster, or the next word when no attached value remains.
+func privilegeShortValues(values []string) string {
+	var letters strings.Builder
+	for _, value := range values {
+		if len(value) == 2 && value[0] == '-' {
+			letters.WriteByte(value[1])
+		}
+	}
+	return letters.String()
+}
+
+// privilegeOptions shares clustered short options and exact long value options.
+// Exact value options stay disjoint to avoid treating data as code.
+func privilegeOptions(values []string) string {
+	longValues := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.HasPrefix(value, "--") {
+			longValues = append(longValues, value[1:])
+		}
+	}
+	long := `--|-` + privilegeFlagExcept(longValues)
+	if len(longValues) > 0 {
+		long = `(?:-` + strings.Join(longValues, `|-`) + `)` + shellBlank + privilegeValue + `|` + long
+	}
+	letters := ""
+	for _, letter := range privilegeShortValues(values) {
+		letters += fmt.Sprintf(`\x%02x`, letter)
+	}
+	plain := `[^` + privilegeOptionChar + `\x2d` + letters + `]`
+	short := `-` + plain + `+`
+	if letters != "" {
+		short += `|-` + plain + `*[` + letters + `](?:` + shellBlank + privilegeValue + `|[^` + privilegeOptionChar + `]+)`
+	}
+	return long + `|` + short
 }
 
 // privilegeFlagExcept matches an option token except the exact flags taking a
@@ -118,4 +181,37 @@ func privilegeFlagTrie(edges []map[byte]int, terminal []bool) string {
 		}
 	}
 	return patterns[0]
+}
+
+// quotedPrivilegeProgram accepts literal shell quoting and backslash escapes in a name.
+func quotedPrivilegeProgram(name string) string {
+	var word strings.Builder
+	for _, letter := range name {
+		word.WriteString(`\\?` + regexp.QuoteMeta(string(letter)))
+	}
+	quote := `(?:\\?[\x22\x27])?`
+	return quote + shellProgram(word.String()) + quote
+}
+
+// privilegeScriptPrefix reaches executable script arguments without treating echo data as code.
+func privilegeScriptPrefix() string {
+	quote := `(?:\\?[\x22\x27])*`
+	shell := shellProgram(`(?:ba|da|k|z)?sh`) + shellBlank + `-[A-Za-z]*c[A-Za-z]*` + shellBlank
+	return `(?:` + shell + `|eval` + shellBlank + `)` + quote
+}
+
+// protectedPrivilegeInvocation restricts privilege checks to adoption at a development root.
+func protectedPrivilegeInvocation() string {
+	engine := `(?:` + quotedPrivilegeProgram("praetorctl") + `|` + quotedPrivilegeProgram("standardsctl") + `)`
+	action := `(?:adopt|conform|bootstrap|needs` + shellBlank + `(?:scan|report|migrate|epic))`
+	target := engine + shellBlank + action + privilegeEnd + `[^;\n|]*\bdev[/\\]?(?:[ \t\r\n;&|(){}\x22\x27]|$)`
+	script := `(?:` + privilegeScriptPrefix() + `)*` + `(?:\\?[\x22\x27])?` + target
+	parts := make([]string, 0, len(privilegeNames))
+	for _, name := range privilegeNames[:4] {
+		values := privilegeLauncherValues[name]
+		parts = append(parts, quotedPrivilegeProgram(name)+privilegeOptionRun(values)+shellBlank+script)
+	}
+	su := quotedPrivilegeProgram("su") + `(?:` + shellBlank + privilegeWord + `)*` + shellBlank
+	command := `(?:-[A-Za-z]*c[A-Za-z]*[ \t]*|--command(?:=|` + shellBlank + `))`
+	return `(?:` + strings.Join(parts, `|`) + `|` + su + command + script + `)`
 }

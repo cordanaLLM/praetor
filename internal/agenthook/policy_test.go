@@ -100,9 +100,6 @@ func TestBuiltinRules(t *testing.T) {
 	exempt := 0
 	for index, rule := range rules[:len(builtinEvasion)] {
 		want := BuiltinRule{Source: builtinEvasion[index], Invariant: "HISS", ReadOnlyExempt: slices.Contains(readOnlyExemptRules, rule.Source)}
-		if rule.Source == privilegeCommandSource {
-			want.RequiredAny = privilegeNames
-		}
 		if !reflect.DeepEqual(rule, want) {
 			t.Errorf("rule %d: %+v", index, rule)
 		}

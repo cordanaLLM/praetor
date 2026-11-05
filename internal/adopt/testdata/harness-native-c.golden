@@ -84,7 +84,7 @@ Register follows the audience, then the task label of your brief (`register:` in
 ## Primary Verification Commands
 
 ```bash
-# Fast local test suite
+# Project verification commands; availability and execution unverified
 # Project verification unavailable: Select and exercise the project's configured native test/build commands for meson.build; a governance profile cannot select them. A required build or test command is absent; define and exercise the project's verify-all contract.
 exit 1
 

@@ -668,6 +668,9 @@ func interceptorPrefilters() string {
 			entries.WriteString("    RULES[" + strconv.Itoa(index) + "][0]: " + pythonStringTuple(rule.RequiredAny) + ",\n")
 		}
 	}
+	if entries.Len() == 0 {
+		return "RULE_PREFILTERS = {}\n"
+	}
 	return "RULE_PREFILTERS = {\n" + entries.String() + "}\n"
 }
 
@@ -926,6 +929,12 @@ func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
 // TestPriorEvasionHookDigests_Boundary_CurrentRenderingRecorded fails until a changed rendering
 // is recorded here, so the next release still refreshes it (evasion_prior_test.go).
 var priorEvasionHookDigests = map[string]string{
+	"07e076c5d6ccdb10b83fdb240d5ce3d04593e3f7e0604d1708df02f3dbaea11f": "parenthesized concatenated literals in collection items",
+	"c563a0d12ad23a5062cd2a2d0355aeea4ba96e98c6a0079fb311909e8764dd18": "shared wrapper option arities and optional chrt priority",
+	"ef071f0735ebb0046eafe5106fee0ae385931e6f5fc48218d21a284111b7e96e": "reviewed hook findings after wrapper and literal boundary changes",
+	"1c59fc5ca09bd6d4ca575f37a190e806245d53358adcaaf696e15183ced09401": "admin merge Boolean true spellings",
+	"8149cba1e31703f65de9f9031ef4673d6a9a951a2e27ec35d3acb7ef82d12337": "escape-safe Black-stable hook rendering",
+	"5ab1fef02d7997ce35c8cb638d32ef2c0faa326d844891fbec6bd97a7878893d": "protected adoption privilege commands and shell forms",
 	"b43f0818ef78cf285434e865abd9f78529e6064ebb9f4e8ab6ce97ed49637a59": "privilege refusal with shared necessary-literal prefilter",
 	"64fa5045ca8d31b1917383b878a9549960cac8c8b684013369af171f9f2fcd3e": "HISS-16 labels, own pattern list",
 	"15f46f44fcb492f59a63c186196d5be80250af02ac64b51087890094a0087cb5": "HISS labels, own pattern list",

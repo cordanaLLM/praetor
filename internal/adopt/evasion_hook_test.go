@@ -83,8 +83,8 @@ func interceptorRules(t *testing.T, python, script string) [][2]string {
 	return loadInterceptorModule(t, python, script).Rules
 }
 
-// The emitted interceptor carries every declared prefilter from the Go policy
-// without changing any pattern or refusal in the previous unfiltered rendering.
+// The emitted interceptor carries the current Go rules and declared prefilters.
+// Escaped executable names cannot use a necessary plain-name prefilter.
 func TestInterceptorPrefiltersMatchTheGoPolicy(t *testing.T) {
 	python, script := emittedInterceptor(t)
 	want := map[string][]string{}
@@ -94,11 +94,14 @@ func TestInterceptorPrefiltersMatchTheGoPolicy(t *testing.T) {
 		}
 	}
 	current := loadInterceptorModule(t, python, script)
-	previous := renderedModule(t, python, string(readFixtureDir(t, priorEvasionFixtures)["unfiltered-privilege.block_evasion.py"]))
-	if !reflect.DeepEqual(current.Rules, previous.Rules) {
-		t.Fatal("prefilter changed the rule text or refusals")
+	var rules [][2]string
+	for _, rule := range agenthook.BuiltinRules() {
+		rules = append(rules, [2]string{rule.Source, rule.RefusalPrefix()})
 	}
-	if !reflect.DeepEqual(current.Prefilters, want) || len(current.Prefilters) == 0 {
+	if !reflect.DeepEqual(current.Rules, rules) {
+		t.Fatal("rendered patterns or refusals differ from the current Go policy")
+	}
+	if !reflect.DeepEqual(current.Prefilters, want) {
 		t.Errorf("prefilters %v, want %v", current.Prefilters, want)
 	}
 }
@@ -644,7 +647,7 @@ func TestEmittedInterceptorRefusesInTheEngineWords(t *testing.T) {
 		want  string
 	}{
 		{"evasion flag", payload("git push --no-verify"), nil, builtin.Command("git push --no-verify").Reason + "\n"},
-		{"privilege refusal bounded", payload("sudo -n true"), nil, builtin.Command("sudo -n true").Reason + "\n"},
+		{"privilege refusal bounded", payload("sudo -n 'praetorctl' adopt /home/adopter/dev"), nil, builtin.Command("sudo -n 'praetorctl' adopt /home/adopter/dev").Reason + "\n"},
 		{"dev root", payload("praetorctl adopt /srv/dev"), nil, builtin.Command("praetorctl adopt /srv/dev").Reason + "\n"},
 		{"scan bound exceeded", payload(strings.Repeat("x", agenthook.MaxScanLineChars+1)), nil, agenthook.ScanBoundRefusal() + "\n"},
 		{"scan bound exactly", payload(strings.Repeat("x", agenthook.MaxScanLineChars)), nil, ""},

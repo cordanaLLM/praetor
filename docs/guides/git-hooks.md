@@ -55,17 +55,55 @@ the link with `ln -sfn "$PRAETOR_TOOL_DIR/bin/semgrep" "$HOME/.local/bin/semgrep
 
 On stop, `checkpoint.py` also judges the linked worktrees changed in the last 24 hours that the
 stopping session touched (recorded per session from its tool calls; without a session id, every
-recent worktree, and the finding says ownership is unknown). Gate scratch
-(`.standards/worktrees/gate-<pid>-<n>` under any checkout of the repository) is skipped only
-while that pid is a live `praetorctl gate` process, read from `/proc/<pid>/cmdline`; a reused or
-unreadable pid fails closed. Abandoned gate scratch counts whichever session made it, and the
-finding names the dead gate pid. Unfinished work in a judged worktree that
-`.workingdir/OPEN.md` does not name keeps the stop due, and a branch whose change already landed
-in the remote base counts as finished, as does one a merged pull request carried: its exact HEAD,
-or its change in the base that pull request names. The pull request state of the pushed branches comes from
-one repository-wide listing, tried up to three times with a bounded backoff (1 s, then 2 s) inside
-the worktree check budget; a listing that still fails keeps the stop due with one line naming the
-lookup error and the count of pushed branches left unverified, instead of one finding per
+recent worktree, and the finding says ownership is unknown). Relative tool paths resolve
+against the tool's working directory, and concurrent tool updates or stop initialization keep
+previously recorded owners (`test_relative_shell_and_file_paths_are_owned`,
+`test_concurrent_tool_updates_preserve_both_paths` and
+`test_stop_initialization_preserves_the_first_tool_update` in
+`.config/lefthook/scripts/test_checkpoint.py`). The shared recorder is
+`.config/lefthook/scripts/checkpoint_session.py`, exposed through `common.py`.
+Its Git lookups use `common.clean_env`, so inherited repository or index selection cannot
+redirect ownership (`test_session_git_calls_use_the_clean_environment` in `test_checkpoint.py`).
+
+Malformed or overflowing records mean unknown ownership, rather than an empty owned set;
+removed worktrees are discarded while surviving owners remain. Other session records older
+than 24 hours are pruned under their writer locks; records exactly at that age remain.
+Cleanup failure prints `Praetor: checkpoint session cleanup skipped` without failing a
+committed ownership update. These cases are pinned by
+`test_malformed_session_records_make_ownership_unknown`,
+`test_overflow_is_unknown_and_stays_unknown`,
+`test_removed_worktree_preserves_known_ownership_and_updates` and
+`test_record_writes_expire_only_records_older_than_activity_window` in `test_checkpoint.py`,
+and `test_sweep_failure_preserves_committed_write` in
+`.config/lefthook/scripts/test_checkpoint_session.py`.
+
+Session updates retain an owner token throughout the read/merge/write transaction. Losing
+the lock or spending its five-second hold budget refuses the write; locks older than 30
+seconds can be reclaimed without the old holder deleting the new owner's lock
+(`test_lost_lock_refuses_record_write`, `test_maximum_hold_refuses_write_before_stale_age`
+and `test_old_holder_cannot_remove_reclaimer_lock` in `test_checkpoint_session.py`).
+
+Gate scratch (`.standards/worktrees/gate-<pid>-<n>` under any checkout of the repository) is
+skipped only for a verified live gate: the executable must match an installed or checkout
+`praetorctl` or `standardsctl`, the UID must match the scratch owner, and the process must
+have started no later than scratch creation. Process identity uses bounded `ps` calls and `/proc`
+where available; an unverifiable identity keeps stop due. Abandoned scratch counts whichever
+session made it, and its recovery action asks to verify the owner has stopped, preserve needed
+changes, then remove the worktree (`test_gate_identity_binds_executable_uid_and_creation_time`,
+`test_proc_unavailable_uses_bounded_platform_process_identity` and
+`test_gate_recovery_does_not_offer_naming_or_publication` in `test_checkpoint.py`).
+
+Unfinished work in a judged worktree that `.workingdir/OPEN.md` does not name keeps the stop
+due, and a branch whose change already landed in the remote base counts as finished, as does
+one a merged pull request carried: its exact HEAD, or its change in the base that pull request
+names. This decision uses the observed HEAD and keeps the unfinished reasons if HEAD moves
+during the lookup; every Git call shares the
+remaining worktree deadline (`test_head_move_during_base_check_keeps_previously_judged_reasons`
+and `test_pull_request_application_bounds_every_git_call` in `test_checkpoint.py`).
+The pull request state of the pushed branches comes from one repository-wide listing, tried
+up to three times with a bounded backoff (1 s, then 2 s) inside the worktree check budget;
+a listing that still fails keeps the stop due with one line naming the lookup error and the
+count of pushed branches left unverified, instead of one finding per
 worktree. The rules and the naming forms are in the
 [checkpoint cadence guide](checkpoint-cadence.md).
 

@@ -5,18 +5,22 @@ import errno
 import importlib.util
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
+from pathlib import Path
+from typing import ClassVar
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parent))
 import checkpoint
 import common
+
+sessions = common.checkpoint_session
 
 
 CONFIG = {
@@ -72,8 +76,547 @@ def setUpModule():
         os.environ.pop(key, None)
 
 
+class SessionModuleTests(unittest.TestCase):
+    def test_session_implementation_has_a_focused_module(self):
+        """Verify session helpers live in the dedicated checkpoint_session module."""
+        self.assertEqual(common.prepare_checkpoint_session.__module__, "checkpoint_session")
+        self.assertEqual(common.record_tool_worktrees.__module__, "checkpoint_session")
+
+    def test_session_git_calls_use_the_clean_environment(self):
+        """Verify session Git queries run with common.clean_env()."""
+        # Marker only: no process launch, live environment change or Git configuration.
+        marker = {"SESSION_TEST_MARKER": "clean"}
+        for operation, output in (
+            (sessions._git_common_dir, b"/session-test/common\n"),
+            (sessions._listed_worktrees, b"worktree /session-test/root\0\0"),
+        ):
+            with self.subTest(operation=operation.__name__), mock.patch.object(
+                common, "clean_env", return_value=marker
+            ) as clean, mock.patch.object(common, "run_bounded", return_value=output) as run:
+                operation(Path("/session-test/root"), common.HookBudget(2))
+                clean.assert_called_once_with()
+                self.assertIs(run.call_args.kwargs.get("env"), marker)
+
+    def test_adversarial_session_path_scan_is_bounded(self):
+        """Verify adversarial session path scans complete within linear CPU bounds."""
+        # Unmatched quotes force failed quoted alternatives across a full payload.
+        # Isolate the CPU measurement from filesystem work and kill a regressed scan.
+        code = (
+            "import sys, time; sys.path.insert(0, sys.argv[1]); "
+            "import checkpoint_session as s; from unittest import mock; "
+            "rows=[]\n"
+            "for size in (1 << 18, 1 << 19, 1 << 20):\n"
+            " text = '\\\"' + 'a' * (size - 1)\n"
+            " with mock.patch.object(s.Path, 'resolve', side_effect=OSError('planted')):\n"
+            "  start=time.process_time(); result=s._path_matches('/worktree', text); "
+            "rows.append((size, time.process_time()-start, result))\n"
+            "print(rows); assert not any(row[2] for row in rows)\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-B", "-c", code, str(Path(checkpoint.__file__).parent)],
+            capture_output=True, text=True, timeout=5, check=True,
+        )
+        print("session adversarial scan CPU:", result.stdout.strip())
+        # Negative control: this same deadline must kill a planted nested quantifier.
+        planted = code.replace(
+            "rows=[]\n",
+            "rows=[]; print('PLANTED_REGEX', flush=True); "
+            "s.re.finditer=lambda pattern,text: s.re.compile('(a+)+Z').finditer(text)\n",
+        ).replace("(1 << 18, 1 << 19, 1 << 20)", "(64,)")
+        with self.assertRaises(subprocess.TimeoutExpired) as expired:
+            subprocess.run(
+                [sys.executable, "-B", "-c", planted, str(Path(checkpoint.__file__).parent)],
+                capture_output=True, text=True, timeout=1, check=True,
+            )
+        output = expired.exception.output or b""
+        if isinstance(output, bytes):
+            output = output.decode()
+        self.assertIn("PLANTED_REGEX", output)
+
+
+class SessionOwnershipRegressions(unittest.TestCase):
+    def setUp(self):
+        """Create temporary worktrees and session directories for ownership regression tests."""
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name)
+        self.root = self.base / "root"
+        self.root.mkdir()
+        self.paths = [self.base / "one", self.base / "two"]
+        for path in self.paths:
+            path.mkdir()
+        self.common = self.root / ".git"
+        self.directory = self.common / "praetor-checkpoint/sessions"
+        self.directory.mkdir(parents=True)
+        self.identity = sessions.session_hash_for("regression")
+        self.record = self.directory / (self.identity + ".json")
+        self.addCleanup(mock.patch.stopall)
+        mock.patch.object(sessions, "_git_common_dir", return_value=self.common).start()
+        mock.patch.object(sessions, "_listed_worktrees", return_value=[
+            {"path": str(path)} for path in self.paths]).start()
+
+    def record_path(self, path):
+        """Record a single tool worktree touch in the test session record."""
+        payload = {"session_id": "regression", "cwd": str(self.root),
+                   "tool_name": "Bash", "tool_input": {"command": str(path)}}
+        sessions.record_tool_worktrees(payload, self.root, common.HookBudget(2))
+
+    def race_writers(self, initialize):
+        """Exercise concurrent session record writers and assert no updates are lost."""
+        first_write = threading.Event()
+        release = threading.Event()
+        errors = []
+        write = sessions._write_session_record
+
+        def paused(directory, record, paths, check=None):
+            """Pause the first writer until the second writer starts."""
+            if threading.current_thread().name == "first":
+                first_write.set()
+                self.assertTrue(release.wait(1))
+            write(directory, record, paths, check)
+
+        def call(operation):
+            """Run operation and collect any test or hook exceptions."""
+            try:
+                operation()
+            except (
+                AssertionError, OSError, RuntimeError, TypeError, ValueError, common.HookError
+            ) as error:
+                errors.append(error)
+
+        first = (lambda: sessions.ensure_session_record(
+            self.root, self.identity, common.HookBudget(2))) if initialize else (
+                lambda: self.record_path(self.paths[0]))
+        with mock.patch.object(sessions, "_write_session_record", side_effect=paused):
+            a = threading.Thread(target=call, args=(first,), name="first")
+            b = threading.Thread(target=call, args=(lambda: self.record_path(self.paths[1]),))
+            a.start()
+            self.assertTrue(first_write.wait(1))
+            b.start()
+            release.wait(0.05)
+            release.set()
+            a.join(2)
+            b.join(2)
+        self.assertFalse(a.is_alive() or b.is_alive())
+        self.assertEqual(errors, [])
+        expected = self.paths[1:] if initialize else self.paths
+        self.assertEqual(json.loads(self.record.read_text()), [str(p) for p in expected])
+
+    def test_concurrent_tool_updates_preserve_both_paths(self):
+        """Verify concurrent tool worktree updates preserve both recorded paths."""
+        self.record.write_text("[]")
+        self.race_writers(False)
+
+    def test_stop_initialization_preserves_the_first_tool_update(self):
+        """Verify stop session initialization does not overwrite concurrent tool updates."""
+        self.race_writers(True)
+
+    def test_relative_shell_and_file_paths_are_owned(self):
+        """Verify relative shell and file paths resolve against cwd into owned worktrees."""
+        for tool_input in ({"command": "git worktree add ../one"},
+                           {"file_path": "../one/file.txt"},
+                           {"command": "git -C ../one status"}):
+            with self.subTest(tool_input=tool_input):
+                self.record.write_text("[]")
+                sessions.record_tool_worktrees({"session_id": "regression", "cwd": str(self.root),
+                    "tool_name": "Bash", "tool_input": tool_input}, self.root, common.HookBudget(2))
+                self.assertEqual(json.loads(self.record.read_text()), [str(self.paths[0])])
+        self.assertFalse(sessions._path_matches(str(self.paths[0]), "../two", self.root))
+
+    def test_symlink_loop_makes_ownership_unknown(self):
+        """Verify a symlink loop in a session record degrades ownership to unknown."""
+        loop = self.base / "loop"
+        try:
+            loop.symlink_to(loop)
+        except OSError as error:
+            self.skipTest(str(error))
+        self.record.write_text(json.dumps([str(loop)]))
+        self.assertIsNone(sessions._read_session_record(self.record))
+        with mock.patch.dict(os.environ, {checkpoint.SESSION_ENV: self.identity}):
+            self.assertIsNone(checkpoint._session_owned_worktrees(self.common))
+
+    def test_removed_worktree_preserves_known_ownership_and_updates(self):
+        """Keep live owners and accept tool updates after a recorded worktree disappears."""
+        removed = self.base / "removed"
+        self.record.write_text(json.dumps([str(removed), str(self.paths[0])]))
+        with mock.patch.dict(os.environ, {checkpoint.SESSION_ENV: self.identity}):
+            self.assertEqual(
+                checkpoint._session_owned_worktrees(self.common), {str(self.paths[0])}
+            )
+        self.record_path(self.paths[1])
+        self.assertEqual(json.loads(self.record.read_text()), [str(p) for p in self.paths])
+
+    def test_all_removed_worktrees_mean_known_empty_ownership(self):
+        """Treat an entirely removed set of worktrees as known empty ownership."""
+        self.record.write_text(json.dumps([str(self.base / "removed")]))
+        self.assertEqual(sessions._read_session_record(self.record), set())
+
+    def test_resolution_errors_remain_unknown_with_removed_worktrees(self):
+        """Ignore only missing paths; malformed values and resolution errors stay unknown."""
+        missing = str(self.base / "removed")
+        for value in (None, "relative", str(self.paths[0]) + "\0"):
+            with self.subTest(value=value):
+                self.record.write_text(json.dumps([missing, value]))
+                self.assertIsNone(sessions._read_session_record(self.record))
+        self.record.write_text(json.dumps([str(self.paths[0])]))
+        for error in (PermissionError("denied"), RuntimeError("symlink loop")):
+            with self.subTest(error=error), mock.patch.object(
+                Path, "resolve", side_effect=error
+            ):
+                self.assertIsNone(sessions._read_session_record(self.record))
+
+    def test_malformed_session_records_make_ownership_unknown(self):
+        """Verify malformed session records report unknown ownership without being overwritten."""
+        self.assertIs(checkpoint._read_session_record, sessions._read_session_record)
+        for raw in (b"[", b"\xff", b"[" * 2000 + b"]" * 2000,
+                    b"[" + b"9" * 5000 + b"]",
+                    json.dumps([str(self.base / "bad") + "\0"]).encode()):
+            with self.subTest(raw=raw[:40]):
+                self.record.write_bytes(raw)
+                self.assertIsNone(sessions._read_session_record(self.record))
+                with mock.patch.dict(os.environ, {checkpoint.SESSION_ENV: self.identity}):
+                    self.assertIsNone(checkpoint._session_owned_worktrees(self.common))
+                self.record_path(self.paths[0])
+                self.assertEqual(self.record.read_bytes(), raw)
+
+    def test_failed_session_write_cleans_up_or_reports_cleanup_failure(self):
+        """Verify failed session writes remove temporary files or propagate cleanup errors."""
+        with mock.patch.object(sessions.os, "replace", side_effect=OSError("replace failed")):
+            with self.assertRaisesRegex(OSError, "replace failed"):
+                sessions._write_session_record(self.directory, self.record, set())
+            self.assertEqual(list(self.directory.iterdir()), [])
+            with mock.patch.object(Path, "unlink", side_effect=PermissionError("cleanup failed")), \
+                    self.assertRaisesRegex(PermissionError, "cleanup failed"):
+                sessions._write_session_record(self.directory, self.record, set())
+
+    def test_record_writes_expire_only_records_older_than_activity_window(self):
+        """Verify session record writes expire only unlocked records past the activity window."""
+        now = time.time()
+        records = {}
+        for label, age in (("old", checkpoint.WORKTREE_ACTIVITY_WINDOW + 1),
+                           ("fresh", checkpoint.WORKTREE_ACTIVITY_WINDOW - 1),
+                           ("boundary", checkpoint.WORKTREE_ACTIVITY_WINDOW),
+                           ("locked", checkpoint.WORKTREE_ACTIVITY_WINDOW + 1)):
+            record = self.directory / (sessions.session_hash_for(label) + ".json")
+            record.write_text("[]")
+            os.utime(record, (now - age, now - age))
+            records[label] = record
+        records["locked"].with_suffix(".lock").mkdir()
+        with mock.patch.object(sessions.time, "time", return_value=now):
+            sessions._write_session_record(self.directory, self.record, set())
+        self.assertFalse(records["old"].exists())
+        for label in ("fresh", "boundary", "locked"):
+            self.assertTrue(records[label].exists(), label)
+        self.assertTrue(self.record.exists())
+        self.assertIs(checkpoint.WORKTREE_ACTIVITY_WINDOW, sessions.WORKTREE_ACTIVITY_WINDOW)
+
+    def test_pruning_locks_only_expired_regular_candidates(self):
+        """Avoid locks for fresh, exact-boundary, current and nonregular session entries."""
+        now = time.time()
+        records = {}
+        for label, age in (("old", sessions.WORKTREE_ACTIVITY_WINDOW + 1),
+                           ("fresh", sessions.WORKTREE_ACTIVITY_WINDOW - 1),
+                           ("boundary", sessions.WORKTREE_ACTIVITY_WINDOW)):
+            record = self.directory / (label + ".json")
+            record.write_text("[]")
+            os.utime(record, (now - age, now - age))
+            records[label] = record
+        directory = self.directory / "directory.json"
+        directory.mkdir()
+        os.utime(directory, (0, 0))
+        acquire = sessions._acquire_session_lock
+        with mock.patch.object(sessions.time, "time", return_value=now), mock.patch.object(
+            sessions, "_acquire_session_lock", wraps=acquire
+        ) as locked:
+            sessions._write_session_record(self.directory, self.record, set())
+        self.assertEqual(locked.call_args_list, [mock.call(records["old"].with_suffix(".lock"))])
+        self.assertFalse(records["old"].exists())
+        self.assertTrue(records["fresh"].exists())
+        self.assertTrue(records["boundary"].exists())
+        self.assertTrue(directory.is_dir())
+
+    def test_pruning_rechecks_age_after_acquiring_candidate_lock(self):
+        """Preserve a candidate refreshed by a writer between the age check and locking."""
+        old = self.directory / "old.json"
+        old.write_text("[]")
+        os.utime(old, (0, 0))
+        acquire = sessions._acquire_session_lock
+
+        def refresh_then_lock(lock):
+            """Simulate the previous writer refreshing the record before releasing its lock."""
+            os.utime(old, None)
+            return acquire(lock)
+
+        with mock.patch.object(sessions, "_acquire_session_lock", side_effect=refresh_then_lock):
+            sessions._prune_session_records(self.directory, self.record)
+        self.assertTrue(old.exists())
+        self.assertFalse(old.with_suffix(".lock").exists())
+
+    def test_overflow_is_unknown_and_stays_unknown(self):
+        """Verify overflowing session records remain in the unknown-ownership state."""
+        paths = {str(self.base / str(n)) for n in range(sessions.MAX_WORKTREES + 1)}
+        sessions._write_session_record(self.directory, self.record, paths)
+        with mock.patch.dict(os.environ, {checkpoint.SESSION_ENV: self.identity}):
+            self.assertIsNone(checkpoint._session_owned_worktrees(self.common))
+            self.record_path(self.paths[0])
+            self.assertIsNone(checkpoint._session_owned_worktrees(self.common))
+
+    def test_path_matches_resolves_worktree_once_and_honors_budget(self):
+        """Verify _path_matches resolves the worktree root once and respects the hook budget."""
+        calls = []
+        real_resolve = Path.resolve
+
+        def counting_resolve(path, *args, **kwargs):
+            """Record each resolved path before delegating to Path.resolve."""
+            calls.append(str(path))
+            return real_resolve(path, *args, **kwargs)
+
+        text = f"{self.base / 'miss-a'} {self.base / 'miss-b'} {self.paths[0] / 'hit.txt'}"
+        with mock.patch.object(Path, "resolve", autospec=True, side_effect=counting_resolve):
+            self.assertTrue(sessions._path_matches(str(self.paths[0]), text, self.root))
+        self.assertEqual(calls.count(str(self.paths[0])), 1)
+        with self.assertRaisesRegex(common.HookError, "budget spent"):
+            sessions._path_matches(
+                str(self.paths[0]), text, self.root, common.HookBudget(-1)
+            )
+        with mock.patch.object(Path, "resolve", side_effect=OSError("bad worktree")):
+            self.assertFalse(sessions._path_matches(str(self.paths[0]), text, self.root))
+
+    def test_stale_session_lock_is_recovered_and_fresh_lock_blocks(self):
+        """Verify stale session locks are recovered while fresh locks block until timeout."""
+        now = time.time()
+        lock = self.record.with_suffix(".lock")
+        lock.mkdir()
+        stale_age = getattr(sessions, "SESSION_LOCK_STALE_SECONDS", 30) + 1
+        os.utime(lock, (now - stale_age, now - stale_age))
+        with mock.patch.object(sessions.time, "time", return_value=now):
+            self.record_path(self.paths[0])
+        self.assertEqual(json.loads(self.record.read_text()), [str(self.paths[0])])
+        self.assertFalse(lock.exists())
+        lock.mkdir()
+        boundary_age = getattr(sessions, "SESSION_LOCK_STALE_SECONDS", 30)
+        os.utime(lock, (now - boundary_age, now - boundary_age))
+        with mock.patch.object(sessions.time, "time", return_value=now), mock.patch.object(
+            sessions.time, "sleep"
+        ):
+            self.assertFalse(sessions._acquire_session_lock(lock))
+            with self.assertRaisesRegex(common.HookError, "lock timed out"):
+                sessions.ensure_session_record(
+                    self.root, self.identity, common.HookBudget(10)
+                )
+        lock.rmdir()
+
+
+class CheckpointBudgetRegressions(unittest.TestCase):
+    def test_native_preparation_deadline_includes_partial_stdin(self):
+        """Verify native session preparation times out when stdin stalls before EOF."""
+        script = str(Path(checkpoint.__file__).resolve())
+        code = ("import sys; sys.path.insert(0, sys.argv[1]); import checkpoint, common; "
+                "checkpoint.refuse_after = lambda seconds, refuse: "
+                "common.refuse_after(0.15, refuse); "
+                "raise SystemExit(checkpoint.main(['--event', 'stop', '--prepare-session']))")
+        child = subprocess.Popen([sys.executable, "-B", "-c", code, str(Path(script).parent)],
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE)
+        try:
+            child.stdin.write(b'{"session_id":')
+            child.stdin.flush()
+            try:
+                status = child.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                self.fail("native preparation waited for EOF beyond its deadline")
+            self.assertEqual(status, 1)
+            self.assertIn(b"timed out", child.stderr.read(4096))
+        finally:
+            if child.poll() is None:
+                child.kill()
+            child.communicate(timeout=2)
+
+    def test_merged_pull_request_bases_are_checked_once(self):
+        """Verify duplicate target bases in merged PR marks are checked at most once."""
+        marks = {("MERGED", "a" * 40, "main"), ("MERGED", "b" * 40, "main")}
+        with mock.patch.object(checkpoint, "_git", return_value=b"c" * 40), \
+                mock.patch.object(checkpoint, "_content_in_base", return_value=False) as content:
+            self.assertFalse(checkpoint._landed_by_pull_request(Path("/tree"), CONFIG, marks, "c" * 40))
+        self.assertEqual(content.call_count, 1)
+
+    def test_pull_request_application_bounds_every_git_call(self):
+        """Verify PR state application bounds every Git call to the remaining deadline."""
+        entry = {"path": "/tree", "branch": "topic", "HEAD": "c" * 40}
+        reasons = ["unpublished"]
+        marks = {("MERGED", "a" * 40, "main")}
+        with mock.patch.object(checkpoint, "run_bounded", return_value=b"c" * 40) as run:
+            checkpoint._apply_pull_request_states(CONFIG, [(entry, reasons, "landed")],
+                                                  {"topic": marks}, time.monotonic() + 0.1)
+        self.assertTrue(run.called)
+        self.assertLessEqual(max(call.kwargs["timeout"] for call in run.call_args_list), 0.1)
+        with mock.patch.object(checkpoint, "run_bounded") as run:
+            checkpoint._apply_pull_request_states(CONFIG, [(entry, reasons, "landed")],
+                                                  {"topic": marks}, time.monotonic() - 1)
+            run.assert_not_called()
+
+
+class WorktreeHeadRegressions(unittest.TestCase):
+    def apply_states(self, observed, current, marks):
+        """Apply merged PR marks against an observed and current worktree HEAD."""
+        entry = {"path": "/tree", "branch": "topic", "HEAD": observed}
+        reasons = ["1 commit(s) not on any remote"]
+        with mock.patch.object(checkpoint, "_git", return_value=current.encode()) as git_call, \
+                mock.patch.object(checkpoint, "_content_in_base", return_value=False):
+            checkpoint._apply_pull_request_states(CONFIG, [(entry, reasons, "landed")],
+                                                  {"topic": marks}, time.monotonic() + 1)
+        return reasons, git_call
+
+    def test_moved_head_keeps_previously_judged_reasons(self):
+        """Verify a worktree whose HEAD moved keeps its previously judged unfinished reasons."""
+        marks = {("MERGED", "b" * 40, "main")}
+        reasons, calls = self.apply_states("a" * 40, "b" * 40, marks)
+        self.assertEqual(reasons, ["1 commit(s) not on any remote"])
+        self.assertLessEqual(calls.call_count, 1)
+
+    def test_stable_merged_head_can_clear_unpublished_reason(self):
+        """Verify a stable HEAD matching a merged PR clears the unpublished reason."""
+        marks = {("MERGED", "a" * 40, "main")}
+        reasons, calls = self.apply_states("a" * 40, "a" * 40, marks)
+        self.assertEqual(reasons, [])
+        self.assertEqual(calls.call_count, 1)
+
+    def test_content_checks_share_the_observed_head(self):
+        """Verify landed content checks pass the already observed HEAD without re-reading Git."""
+        head = "a" * 40
+        marks = {("MERGED", "b" * 40, "main"), ("MERGED", "c" * 40, "release")}
+        with mock.patch.object(checkpoint, "_git") as git_call, \
+                mock.patch.object(checkpoint, "_content_in_base", return_value=False) as content:
+            self.assertFalse(checkpoint._landed_by_pull_request(Path("/tree"), CONFIG, marks, head))
+        git_call.assert_not_called()
+        self.assertEqual(content.call_count, 2)
+        self.assertTrue(all(call.kwargs["head"] == head for call in content.call_args_list))
+
+    def test_head_move_during_base_check_keeps_previously_judged_reasons(self):
+        """Verify a HEAD move during base content checks preserves the unfinished reasons."""
+        observed, moved = "a" * 40, "b" * 40
+        current = [observed]
+        entry = {"path": "/tree", "branch": "topic", "HEAD": observed}
+        reasons = ["1 commit(s) not on any remote"]
+
+        def content(*args, **kwargs):
+            """Simulate HEAD advancing while _content_in_base is running."""
+            current[0] = moved
+            return True
+
+        with mock.patch.object(checkpoint, "_git", side_effect=lambda *a, **k: current[0].encode()), \
+                mock.patch.object(checkpoint, "_content_in_base", side_effect=content):
+            checkpoint._apply_pull_request_states(CONFIG, [(entry, reasons, "landed")],
+                {"topic": {("MERGED", "c" * 40, "main")}}, time.monotonic() + 1)
+        self.assertEqual(reasons, ["1 commit(s) not on any remote"])
+
+    def test_content_diff_uses_the_observed_head_in_every_git_call(self):
+        """Verify _content_in_base passes the explicit observed head to every Git command."""
+        head = "a" * 40
+        with mock.patch.object(checkpoint, "_remote_ref_exists", return_value=True), \
+                mock.patch.object(checkpoint, "_git", side_effect=[b"fork", b""]) as calls:
+            self.assertTrue(checkpoint._content_in_base(Path("/tree"), CONFIG, head=head))
+        self.assertEqual(calls.call_count, 2)
+        for call in calls.call_args_list:
+            self.assertEqual(call.args[-1], head)
+            self.assertNotIn("HEAD", call.args)
+
+
+class GateIdentityRegressions(unittest.TestCase):
+    def test_spoofed_argv_is_not_a_live_gate(self):
+        """Verify a process spoofing praetorctl gate in argv0 is rejected."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "gate").write_text("import time; time.sleep(3)\n")
+            child = subprocess.Popen(["praetorctl", "gate"], executable=sys.executable, cwd=root,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                self.assertIsNot(checkpoint._live_gate_pid(child.pid), True)
+            finally:
+                child.terminate()
+                child.wait(timeout=2)
+
+    def test_gate_identity_binds_executable_uid_and_creation_time(self):
+        """Verify gate scratch ownership binds executable identity, UID, and creation time."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "bin/standardsctl"
+            binary.parent.mkdir()
+            binary.write_text("trusted engine fixture")
+            created = time.time_ns()
+            scratch = root / ".standards/worktrees" / f"gate-123-{created}"
+            scratch.mkdir(parents=True)
+            uid = scratch.stat().st_uid
+            identity = (created / 1e9 - 2, uid, binary, [str(binary), "gate"])
+            with mock.patch.object(checkpoint, "_gate_process_identity",
+                                   return_value=identity, create=True):
+                self.assertTrue(checkpoint._is_gate_scratch(scratch, {root}))
+            for bad in ((created / 1e9 + 2, uid, binary, [str(binary), "gate"]),
+                        (created / 1e9 - 2, uid + 1, binary, [str(binary), "gate"]),
+                        (created / 1e9 - 2, uid, Path(sys.executable), ["praetorctl", "gate"]),
+                        (created / 1e9 - 2, uid, binary, [str(binary), "audit"])):
+                with self.subTest(identity=bad), mock.patch.object(
+                        checkpoint, "_gate_process_identity", return_value=bad, create=True):
+                    self.assertFalse(checkpoint._is_gate_scratch(scratch, {root}))
+
+    def test_no_proc_live_gate_is_live_or_unverified(self):
+        """Verify _live_gate_pid without /proc requires an absolute trusted executable path."""
+        for executable, expected in ((str(Path(tempfile.gettempdir()) / "standardsctl"), True),
+                                     ("standardsctl", None)):
+            ps = f"1000 Mon Nov  2 03:00:00 2026 {executable}\n".encode()
+            with self.subTest(executable=executable), mock.patch.object(
+                checkpoint, "run_bounded", side_effect=[ps, b"standardsctl gate\n"]
+            ), mock.patch.object(Path, "open", side_effect=FileNotFoundError), \
+                    mock.patch.object(Path, "readlink", side_effect=FileNotFoundError), \
+                    mock.patch.object(checkpoint, "_trusted_gate_executable",
+                                      side_effect=lambda path, paths: path.is_absolute()):
+                self.assertIs(checkpoint._live_gate_pid(123), expected)
+
+    def test_proc_unavailable_uses_bounded_platform_process_identity(self):
+        """Verify _gate_process_identity falls back to bounded ps calls when /proc is unreadable."""
+        ps = b"1000 Mon Nov  2 03:00:00 2026 /usr/bin/standardsctl\n"
+        with mock.patch.object(checkpoint, "run_bounded", side_effect=[
+                ps, b"/usr/bin/standardsctl gate\n"]) as run, \
+                mock.patch.object(Path, "open", side_effect=PermissionError), \
+                mock.patch.object(Path, "readlink", side_effect=PermissionError):
+            identity = checkpoint._gate_process_identity(123)
+        expected = (1000, Path("/usr/bin/standardsctl"), ["/usr/bin/standardsctl", "gate"])
+        self.assertEqual(identity[1:], expected)
+        self.assertTrue(all(call.kwargs["timeout"] <= 1 for call in run.call_args_list))
+
+
+class AbandonedGateAdviceRegressions(unittest.TestCase):
+    def test_gate_recovery_does_not_offer_naming_or_publication(self):
+        """Verify abandoned gate scratch worktrees advise removal rather than OPEN.md or PRs."""
+        for reason in ("gate owner pid 123 is not a live praetorctl gate run",
+                       "gate owner pid 123 identity not verified"):
+            entry = {"path": "/tree/.standards/worktrees/gate-123-1", "branch": "",
+                     "gate_reason": reason}
+            result = {"actions": []}
+            with mock.patch.object(checkpoint, "_unfinished_worktree_records",
+                                   return_value=([(entry, [reason])], "", 0)):
+                checkpoint._add_unfinished_worktrees(Path("/tree"), CONFIG, result)
+            action = result["actions"][0]
+            self.assertIn("verify the owner has stopped", action)
+            self.assertIn("preserve any needed changes", action)
+            self.assertIn("remove the abandoned gate worktree", action)
+            self.assertNotIn("OPEN.md", action)
+            self.assertNotIn("commit, push, PR", action)
+
+    def test_ordinary_worktree_keeps_checkpoint_advice(self):
+        """Verify ordinary unfinished worktrees retain standard commit/push/PR or OPEN.md advice."""
+        entry = {"path": "/tree/topic", "branch": "topic"}
+        result = {"actions": []}
+        with mock.patch.object(checkpoint, "_unfinished_worktree_records",
+                               return_value=([(entry, ["1 public change(s)"])], "", 0)):
+            checkpoint._add_unfinished_worktrees(Path("/tree"), CONFIG, result)
+        self.assertIn("commit, push, PR", result["actions"][0])
+        self.assertIn("OPEN.md", result["actions"][0])
+
+
 class CheckpointAdapterTests(unittest.TestCase):
     def test_deferred_report_is_feedback_without_a_block(self):
+        """Verify deferred checkpoint reports emit non-blocking feedback across client adapters."""
         report = {
             "enabled": True,
             "due": False,
@@ -739,7 +1282,6 @@ class CheckpointTests(unittest.TestCase):
         self.write_config({**CONFIG, "publish": True, "require_pr": False})
         git(self.root, "add", ".")
         git(self.root, "commit", "-q", "-m", "ahead")
-        head = git(self.root, "rev-parse", "HEAD").stdout.decode().strip()
         base = git(self.root, "rev-parse", "HEAD~1").stdout.decode().strip()
         original = checkpoint._run
 
@@ -914,6 +1456,7 @@ class CheckpointTests(unittest.TestCase):
         self.assertIn("error", checkpoint.inspect_checkpoint(self.root, "tool"))
 
     def test_pushed_missing_or_invalid_pr_never_reports_complete(self):
+        """Verify pushed branches with missing or mismatched PRs never report complete."""
         git(self.root, "remote", "add", "origin", "https://github.com/acme/demo.git")
         self.write_config({**CONFIG, "publish": True})
         git(self.root, "add", ".")
@@ -928,7 +1471,8 @@ class CheckpointTests(unittest.TestCase):
                  ([{**valid, "url": "https://example.test/pull/7"}], "error"),
                  ([{**valid, "baseRefName": "wrong"}], "error")]
         for prs, status in cases:
-            def fake(argv, root, **kwargs):
+            def fake(argv, root, prs=prs, **kwargs):
+                """Return stubbed ls-remote and gh pr responses."""
                 if argv[:2] == ["git", "ls-remote"]:
                     return f"{head}\trefs/heads/checkpoint/test\n{base}\trefs/heads/main\n".encode()
                 if argv[:2] == ["gh", "pr"]:
@@ -941,6 +1485,7 @@ class CheckpointTests(unittest.TestCase):
                     self.assertTrue(result["due"])
                     self.assertEqual(result["actions"], [checkpoint.PR_ACTION])
         def denied(argv, root, **kwargs):
+            """Raise an authentication error on ls-remote."""
             if "ls-remote" in argv:
                 raise checkpoint.CheckpointError("authentication failed")
             return original(argv, root, **kwargs)
@@ -948,16 +1493,17 @@ class CheckpointTests(unittest.TestCase):
             self.assertIn("authentication failed", checkpoint.inspect_checkpoint(self.root, "stop")["error"])
 
     def test_remote_ref_and_object_validation(self):
+        """Verify remote ref responses and local commit objects are validated."""
         head = git(self.root, "rev-parse", "HEAD").stdout.decode().strip()
         for raw in (b"malformed\n", f"{head}\trefs/heads/main\n".encode() * 2):
-            with mock.patch.object(checkpoint, "_git", return_value=raw):
-                with self.assertRaises(checkpoint.CheckpointError):
-                    checkpoint._remote_refs(self.root, CONFIG, "checkpoint/test")
+            with mock.patch.object(checkpoint, "_git", return_value=raw), \
+                    self.assertRaises(checkpoint.CheckpointError):
+                checkpoint._remote_refs(self.root, CONFIG, "checkpoint/test")
         with mock.patch.object(checkpoint, "_remote_url", return_value="https://github.com/acme/demo"), \
                 mock.patch.object(checkpoint, "_remote_refs", return_value=(
-                    {"refs/heads/main": "f" * 40}, "refs/heads/checkpoint/test", "refs/heads/main")):
-            with self.assertRaisesRegex(checkpoint.CheckpointError, "fetch the configured remote"):
-                checkpoint._publication(self.root, CONFIG, "checkpoint/test", head)
+                    {"refs/heads/main": "f" * 40}, "refs/heads/checkpoint/test", "refs/heads/main")), \
+                self.assertRaisesRegex(checkpoint.CheckpointError, "fetch the configured remote"):
+            checkpoint._publication(self.root, CONFIG, "checkpoint/test", head)
         self.assertIsNotNone(checkpoint.OID.fullmatch("a" * 64))
         self.assertIsNone(checkpoint.OID.fullmatch("a" * 41))
 
@@ -1069,8 +1615,8 @@ class CheckpointTests(unittest.TestCase):
                 self.assertEqual(result["review_status"], "failed", result)
                 self.assertTrue(result["due"])
 
-    DRAFT_NOTE = {"title": checkpoint.DRAFT_GATE_TITLE, "message": checkpoint.DRAFT_GATE_MESSAGE}
-    EXIT_NOTE = {"title": "", "message": "Process completed with exit code 1."}
+    DRAFT_NOTE: ClassVar[dict] = {"title": checkpoint.DRAFT_GATE_TITLE, "message": checkpoint.DRAFT_GATE_MESSAGE}
+    EXIT_NOTE: ClassVar[dict] = {"title": "", "message": "Process completed with exit code 1."}
 
     @staticmethod
     def check_runs(*runs):
@@ -1214,6 +1760,7 @@ class CheckpointTests(unittest.TestCase):
         self.assertEqual(result["review_status"], "not_requested")
 
     def test_clean_protected_base_observes_live_remote_without_push_advice(self):
+        """Verify protected base branches reconcile with live remote state without push advice."""
         head, base = self.publication_fixture()
         future = self.remote_commit("remote-future", head)
         fork = self.remote_commit("remote-fork", base)
@@ -1223,7 +1770,8 @@ class CheckpointTests(unittest.TestCase):
         cases = ((head, "base_current"), (base, "base_local_ahead"),
                  (future, "base_remote_ahead"), (fork, "base_diverged"))
         for remote, status in cases:
-            def fake(argv, root, **kwargs):
+            def fake(argv, root, remote=remote, **kwargs):
+                """Stub ls-remote for the base branch and forbid gh pr calls."""
                 if argv[:2] == ["git", "ls-remote"]:
                     return f"{remote}\trefs/heads/main\n".encode()
                 if argv[:2] == ["gh", "pr"]:
@@ -1236,6 +1784,7 @@ class CheckpointTests(unittest.TestCase):
                 self.assertNotIn(checkpoint.PUSH_ACTION, result["actions"])
 
     def inspect_with_env(self, **updates):
+        """Run inspect_checkpoint under a sanitized environment with explicit overrides."""
         env = {
             key: value
             for key, value in os.environ.items()
@@ -1246,10 +1795,12 @@ class CheckpointTests(unittest.TestCase):
             return checkpoint.inspect_checkpoint(self.root, "stop")
 
     def prepare_detached_job(self, remote):
+        """Configure origin and dirty a public file for detached-job tests."""
         git(self.root, "remote", "add", "origin", remote)
         (self.root / "public.txt").write_text("change\n")
 
     def test_detached_job_without_ssh_transport_or_forge_token_defers(self):
+        """Verify detached jobs without SSH transport or forge token defer checkpointing."""
         self.prepare_detached_job("git@github.com:acme/demo.git")
         result = self.inspect_with_env(
             PRAETOR_DETACHED_JOB="cheap-lane-7", GIT_SSH_COMMAND="/bin/false"
@@ -1261,6 +1812,7 @@ class CheckpointTests(unittest.TestCase):
         self.assertIn("detached job cheap-lane-7", result["deferral"])
 
     def test_detached_job_defers_on_a_branch_outside_the_checkpoint_prefixes(self):
+        """Verify detached jobs defer even when checked out on a non-checkpoint branch."""
         self.prepare_detached_job("git@github.com:acme/demo.git")
         git(self.root, "switch", "-q", "-c", "job-lane-probe")
         result = self.inspect_with_env(
@@ -1271,6 +1823,7 @@ class CheckpointTests(unittest.TestCase):
         self.assertFalse(result["due"])
 
     def test_same_branch_without_marker_still_refuses(self):
+        """Verify non-checkpoint branches without a detached-job marker still refuse."""
         self.prepare_detached_job("git@github.com:acme/demo.git")
         git(self.root, "switch", "-q", "-c", "job-lane-probe")
         result = self.inspect_with_env(GIT_SSH_COMMAND="/bin/false")
@@ -1278,6 +1831,7 @@ class CheckpointTests(unittest.TestCase):
         self.assertIn("nonallowed branch", result.get("error", ""))
 
     def test_detached_job_with_ssh_transport_keeps_commit_due(self):
+        """Verify detached jobs with working SSH transport keep checkpoints due."""
         self.prepare_detached_job("git@github.com:acme/demo.git")
         result = self.inspect_with_env(PRAETOR_DETACHED_JOB="cheap-lane-7")
         self.assertFalse(result["deferred"])
@@ -1285,6 +1839,7 @@ class CheckpointTests(unittest.TestCase):
         self.assertNotIn("deferral", result)
 
     def test_detached_job_with_forge_token_keeps_commit_due(self):
+        """Verify detached jobs with a forge token keep checkpoints due."""
         self.prepare_detached_job("ssh://git@github.com/acme/demo.git")
         gh_dir = self.root / ".gh"
         gh_dir.mkdir()
@@ -1315,12 +1870,14 @@ class CheckpointTests(unittest.TestCase):
         self.assertFalse(deferred["due"])
 
     def test_no_job_marker_keeps_commit_due_without_publish_access(self):
+        """Verify sessions without a detached-job marker still require local commits."""
         self.prepare_detached_job("git@github.com:acme/demo.git")
         result = self.inspect_with_env(GIT_SSH_COMMAND="/bin/false")
         self.assertFalse(result["deferred"])
         self.assertTrue(result["due"])
 
     def test_git_helper_ignores_environment_git_configuration(self):
+        """Verify the test git helper strips injected GIT_CONFIG_* environment variables."""
         # #1370: GIT_CONFIG_COUNT/KEY/VALUE outrank repository configuration, and a cheap-lane
         # job carries them. Negative: a plain git call under that environment reads the
         # environment's value. Positive: the fixture helper reads the repository's own value.
@@ -1334,6 +1891,7 @@ class CheckpointTests(unittest.TestCase):
         self.assertEqual(helper.stdout.decode().strip(), "store")
 
     def test_detached_job_https_transport_depends_on_credential_helper(self):
+        """Verify HTTPS detached jobs defer only when no credential helper is configured."""
         self.prepare_detached_job("https://github.com/acme/demo.git")
         git(self.root, "config", "credential.helper", "")
         deferred = self.inspect_with_env(
@@ -1358,6 +1916,7 @@ class PolicyRoot(unittest.TestCase):
     """A repository root holding one checkpoint policy, for the tests of its two readers."""
 
     def setUp(self):
+        """Create a temporary repository root with a valid checkpoint.json policy."""
         self.temp = tempfile.TemporaryDirectory(prefix="praetor-policy-")
         self.root = Path(self.temp.name)
         self.agent = self.root / ".config" / "agent"
@@ -1366,6 +1925,7 @@ class PolicyRoot(unittest.TestCase):
         self.policy.write_bytes(json.dumps(CONFIG).encode())
 
     def tearDown(self):
+        """Clean up the temporary repository root."""
         self.temp.cleanup()
 
 
@@ -1385,6 +1945,7 @@ class PolicyDescriptors(PolicyRoot):
         opened, real_open = [], os.open
 
         def counted_open(path, flags, *args, **kwargs):
+            """Track opened file descriptors and inject a failure at fail_at."""
             if len(opened) == fail_at:
                 raise PermissionError(errno.EACCES, "planted failure", os.fspath(path))
             opened.append(real_open(path, flags, *args, **kwargs))
@@ -1414,6 +1975,7 @@ class PolicyDescriptors(PolicyRoot):
         "this platform has no descriptor-relative opens; its reader is the checked one",
     )
     def test_positive_relative_reader_closes_each_component_and_the_policy(self):
+        """Verify _policy_bytes_relative reads the policy and closes every descriptor."""
         result, opened = self.read(checkpoint._policy_bytes_relative)
         self.assertEqual(result, json.dumps(CONFIG).encode())
         self.assertEqual(len(opened), len(checkpoint.POLICY_PARTS) + 2)
@@ -1423,6 +1985,7 @@ class PolicyDescriptors(PolicyRoot):
         "this platform has no descriptor-relative opens; its reader is the checked one",
     )
     def test_negative_a_failing_later_open_closes_every_earlier_descriptor(self):
+        """Verify _policy_bytes_relative closes earlier descriptors when a later open fails."""
         for fail_at in range(1, len(checkpoint.POLICY_PARTS) + 2):
             with self.subTest(fail_at=fail_at):
                 result, opened = self.read(checkpoint._policy_bytes_relative, fail_at=fail_at)
@@ -1430,6 +1993,7 @@ class PolicyDescriptors(PolicyRoot):
                 self.assertEqual(len(opened), fail_at)
 
     def test_boundary_a_policy_that_cannot_be_wrapped_or_found_leaves_nothing_open(self):
+        """Verify missing or directory policy paths leave no open file descriptors."""
         readers = [checkpoint._policy_bytes_checked]
         if checkpoint.DESCRIPTOR_RELATIVE:
             readers.append(checkpoint._policy_bytes_relative)
@@ -1453,9 +2017,11 @@ class CheckedPolicyRead(PolicyRoot):
     """
 
     def test_positive_reads_the_policy_bytes(self):
+        """Verify _policy_bytes_checked returns the raw policy bytes."""
         self.assertEqual(checkpoint._policy_bytes_checked(self.root), json.dumps(CONFIG).encode())
 
     def test_negative_links_and_misplaced_components_are_refused(self):
+        """Verify _policy_bytes_checked refuses symlinked or non-directory path components."""
         outside = self.root / "outside.json"
         outside.write_bytes(json.dumps(CONFIG).encode())
         self.policy.unlink()
@@ -1474,15 +2040,16 @@ class CheckedPolicyRead(PolicyRoot):
             checkpoint._policy_bytes_checked(self.root)
 
     def test_boundary_absence_size_and_replacement(self):
+        """Verify _policy_bytes_checked enforces size limits, replacement checks, and absence."""
         self.policy.write_bytes(b" " * checkpoint.MAX_OUTPUT)
         self.assertEqual(len(checkpoint._policy_bytes_checked(self.root)), checkpoint.MAX_OUTPUT)
         self.policy.write_bytes(b" " * (checkpoint.MAX_OUTPUT + 1))
         with self.assertRaisesRegex(checkpoint.CheckpointError, "regular file"):
             checkpoint._policy_bytes_checked(self.root)
         other = os.stat(self.root)
-        with mock.patch.object(checkpoint.os, "fstat", return_value=other):
-            with self.assertRaisesRegex(checkpoint.CheckpointError, "replaced"):
-                checkpoint._policy_bytes_checked(self.root)
+        with mock.patch.object(checkpoint.os, "fstat", return_value=other), \
+                self.assertRaisesRegex(checkpoint.CheckpointError, "replaced"):
+            checkpoint._policy_bytes_checked(self.root)
         self.policy.unlink()
         self.assertIsNone(checkpoint._policy_bytes_checked(self.root))
         self.assertIsNone(checkpoint._policy_bytes_checked(self.root / "absent"))
@@ -1492,8 +2059,9 @@ class CheckedPolicyRead(PolicyRoot):
 # 2026-10-17) imports, measured inside that image. The checkpoint bundle runs there on adoption,
 # so a stdlib module it lacks (concurrent.futures and queue are two) fails every adopter's hook.
 MINIMAL_PYTHON_MODULES = frozenset(
-    "argparse ast contextlib errno hashlib json math os pathlib re selectors shutil signal stat"
-    " subprocess sys tempfile threading time typing urllib".split()
+    ("argparse", "ast", "contextlib", "errno", "hashlib", "json", "math", "os", "pathlib",
+     "re", "selectors", "shutil", "signal", "stat", "subprocess", "sys", "tempfile",
+     "threading", "time", "typing", "urllib")
 )
 
 
@@ -1502,6 +2070,7 @@ class MinimalPythonBundle(unittest.TestCase):
     in parallel without concurrent.futures."""
 
     def bundle_imports(self, name):
+        """Return external top-level modules imported by a checkpoint bundle script."""
         import ast
 
         tree = ast.parse((Path(__file__).parent / name).read_text())
@@ -1511,15 +2080,17 @@ class MinimalPythonBundle(unittest.TestCase):
                 found |= {alias.name.split(".")[0] for alias in node.names}
             elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
                 found.add(node.module.split(".")[0])
-        return found - {"checkpoint", "common"}
+        return found - {"checkpoint", "common", "checkpoint_session"}
 
     def test_bundle_imports_only_minimal_python_modules(self):
-        for name in ("checkpoint.py", "common.py"):
+        """Verify checkpoint bundle scripts import only python3-minimal stdlib modules."""
+        for name in ("checkpoint.py", "common.py", "checkpoint_session.py"):
             with self.subTest(name=name):
                 extra = self.bundle_imports(name) - MINIMAL_PYTHON_MODULES
                 self.assertFalse(extra, f"{name} imports modules python3-minimal lacks: {sorted(extra)}")
 
     def test_ordered_map_keeps_order_and_bounds_threads(self):
+        """Verify _ordered_map preserves input order and propagates worker errors."""
         seen = []
         lock = __import__("threading").Lock()
 
