@@ -43,8 +43,8 @@ const (
 )
 
 // discoveryBound is one operator-raisable discovery bound: its VerificationLimits field, which is
-// also the key a dogfood suite's input_limits.verification carries, the flag that raises it on the
-// command line, and the ceiling both accept.
+// also the key a dogfood suite's input_limits.verification carries, an optional flag that raises
+// it on the command line, and the ceiling every caller accepts.
 type discoveryBound struct {
 	field   string
 	flag    string
@@ -52,18 +52,24 @@ type discoveryBound struct {
 }
 
 var (
-	entriesBound = discoveryBound{field: "max_entries", flag: VerificationEntriesFlag, ceiling: maxVerificationEntriesCeiling}
-	filesBound   = discoveryBound{field: "max_files", flag: VerificationFilesFlag, ceiling: maxVerificationFilesCeiling}
-	depthBound   = discoveryBound{field: "max_depth", flag: VerificationDepthFlag, ceiling: maxVerificationDepthCeiling}
+	entriesBound   = discoveryBound{field: "max_entries", flag: VerificationEntriesFlag, ceiling: maxVerificationEntriesCeiling}
+	filesBound     = discoveryBound{field: "max_files", flag: VerificationFilesFlag, ceiling: maxVerificationFilesCeiling}
+	depthBound     = discoveryBound{field: "max_depth", flag: VerificationDepthFlag, ceiling: maxVerificationDepthCeiling}
+	fileBytesBound = discoveryBound{field: "max_file_bytes", ceiling: contextopt.MaxSourceBytes}
 )
 
 // exceeded wraps cause, a walk that stopped at limit, with the flag that raises the bound for one
 // run and the manifest key that raises it for every run, the audit's hooks and CI jobs included
 // (config.VerificationPolicy), or says the bound already sits at its ceiling, where no value
 // raises it further (issue #535).
+// A bound without a command-line flag names only its manifest key.
 func (b discoveryBound) exceeded(limit int, cause error) error {
 	if limit >= b.ceiling {
 		return fmt.Errorf("%w; %s is already at its ceiling %d", cause, b.field, b.ceiling)
+	}
+	if b.flag == "" {
+		return fmt.Errorf("%w; declare verification.%s in %s, up to %d, so every run, the audit's hooks and CI included, reads it",
+			cause, b.field, manifestFile, b.ceiling)
 	}
 	return fmt.Errorf("%w; raise %s with --%s, up to %d, or declare verification.%s in %s so every run, "+
 		"the audit's hooks and CI included, reads it", cause, b.field, b.flag, b.ceiling, b.field, manifestFile)
@@ -81,7 +87,10 @@ func ResolveVerificationLimits(declared *config.VerificationPolicy, requested *V
 	}
 	limits := DefaultVerificationLimits()
 	if declared != nil {
-		limits = limits.raisedBy(VerificationLimits{MaxEntries: declared.MaxEntries, MaxFiles: declared.MaxFiles, MaxDepth: declared.MaxDepth})
+		limits = limits.raisedBy(VerificationLimits{
+			MaxEntries: declared.MaxEntries, MaxFiles: declared.MaxFiles,
+			MaxDepth: declared.MaxDepth, MaxFileBytes: int64(declared.MaxFileBytes),
+		})
 	}
 	if requested != nil {
 		limits = limits.raisedBy(*requested)

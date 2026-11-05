@@ -597,8 +597,9 @@ audit report it as drift.
 ### Large repositories
 
 Adoption discovers verification inputs (Makefiles, manifests, scripts) through a bounded
-walk of the target: 65536 directory entries, 128 files and 32 levels of depth by default
-(`util.DefaultDiscoveryEntries` in `internal/util/discovery_bounds.go`). The entry count
+walk of the target: 65536 directory entries, 128 files and 32 levels of depth by default,
+with at most 64 KiB per metadata file and 2 MiB in total
+(`adopt.DefaultVerificationLimits` in `internal/adopt/verification_limits.go`). The entry count
 covers every directory the walk enters. Version-control, dependency, build-output and agent
 scratch directories are skipped by name (`skipVerificationDirectory` in
 `internal/adopt/verification_inputs.go`); generated output under any other name, such as a
@@ -616,7 +617,15 @@ adoption writes run `praetorctl audit` with no flag, and its Paperclip gate walk
 ```yaml
 verification:
   max_entries: 131072 # also max_files, max_depth
+  max_file_bytes: 262144 # larger workflow or build metadata; ceiling 1048576 (1 MiB)
 ```
+
+`verification.max_file_bytes` raises the per-file metadata bound for adoption, harness language
+discovery and Rust MSRV auditing. It has no command-line flag. An exceeded file bound names
+this manifest key and its 1 MiB ceiling; a bound already at the ceiling says so. A total-byte
+refusal retains the separate total bound (`readVerificationMarker` in
+`internal/adopt/verification_inputs.go`, `TestRustMSRVDeclaredFileBytes`). The MSRV audit uses
+the defaults when the manifest is missing or unreadable.
 
 The strict manifest decoder refuses an unknown key, a non-integer value and a value outside
 1..its ceiling, naming the key (`internal/config/verification.go`,

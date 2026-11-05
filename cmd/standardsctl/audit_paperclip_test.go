@@ -130,16 +130,16 @@ func withVerification(t *testing.T, f *auditFixture, section string) {
 }
 
 // TestAuditPaperclip_VerificationBoundFromManifest (#321): the hooks and CI jobs adoption writes
-// run the audit with no --verification-max-* flag, so the Paperclip gate's facts walk reads the
+// run the audit with no --verification-max-* flag, so every verification-input walk reads the
 // bound the manifest's verification section declares. Negative: a declared bound the checkout
-// exceeds fails the gate naming the key, the remedy those runs can take. Positive: a raised
+// exceeds fails whichever gate walks first, naming the key and remedy. Positive: a raised
 // declaration passes with no flag, and a flag still raises a declared bound for its own run.
 // Boundary: a declaration past the ceiling fails the manifest audit naming the key and range.
 func TestAuditPaperclip_VerificationBoundFromManifest(t *testing.T) {
 	f := newAuditFixture(t)
 	withVerification(t, f, "  max_entries: 1\n")
 	_, err := f.audit(t)
-	mustErrContain(t, err, "[FAIL] Paperclip harness facts: detect repository languages: verification discovery exceeds 1 entries")
+	mustErrContain(t, err, "verification discovery exceeds 1 entries")
 	mustErrContain(t, err, "or declare verification.max_entries in .standards.yaml so every run, the audit's hooks and CI included, reads it")
 	if out, err := f.audit(t, "--verification-max-entries=4096"); err != nil {
 		t.Fatalf("a flag raising the declared bound is ignored: %v\n%s", err, out)
@@ -153,6 +153,64 @@ func TestAuditPaperclip_VerificationBoundFromManifest(t *testing.T) {
 	withVerification(t, f, "  max_entries: 200001\n")
 	_, err = f.audit(t)
 	mustErrContain(t, err, "verification.max_entries must be an integer from 1 to 200000; got 200001")
+}
+
+// TestAuditRustMSRV_VerificationFlagRaisesDeclaredBound proves a flag reaches the Rust
+// discovery walk, while the declared bound still applies to the following flag-free run.
+func TestAuditRustMSRV_VerificationFlagRaisesDeclaredBound(t *testing.T) {
+	f := newAuditFixture(t)
+	writeFixtureFile(t, f.dir, "Cargo.toml", "[package]\nname='fixture'\nversion='0.1.0'\nrust-version='1.80'\n")
+	writeFixtureFile(t, f.dir, "rust-toolchain", "1.80\n")
+	withVerification(t, f, "  max_entries: 1\n")
+	_, err := f.audit(t)
+	mustErrContain(t, err, "[FAIL] rust-msrv: verification discovery exceeds 1 entries")
+	mustErrContain(t, err, "declare verification.max_entries in .standards.yaml")
+	out, err := f.audit(t, "--verification-max-entries=4096")
+	if err != nil {
+		t.Fatalf("Rust MSRV ignored the flag raising its declared bound: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[PASS] rust-msrv: Cargo.toml 1.80 (pinned channel 1.80)")
+	_, err = f.audit(t)
+	mustErrContain(t, err, "[FAIL] rust-msrv: verification discovery exceeds 1 entries")
+}
+
+// TestAuditRustMSRV_SelectedManifestLimits verifies that when an audit selects another
+// manifest via --config, its verification limits govern the Rust MSRV gate instead of the root
+// .standards.yaml default or declaration.
+func TestAuditRustMSRV_SelectedManifestLimits(t *testing.T) {
+	f := newAuditFixture(t)
+	// Decline paperclip so the audit focuses on the Rust MSRV gate limits.
+	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+"adoption:\n  decline:\n    - paperclip\n")
+	writeFixtureFile(t, f.dir, "rust-toolchain", "1.80\n")
+
+	// 200,000-byte Cargo.toml: root default (65536) refuses; selected manifest with 262144 admits it.
+	largeCargo := "[package]\nname='fixture'\nversion='0.1.0'\nrust-version='1.80'\n#" + strings.Repeat("x", 200000-80) + "\n"
+	writeFixtureFile(t, f.dir, "Cargo.toml", largeCargo)
+	_, err := f.audit(t)
+	mustErrContain(t, err, "[FAIL] rust-msrv: verification input Cargo.toml: metadata exceeds byte bounds (file=65536")
+
+	// Write custom manifest declaring max_file_bytes: 262144.
+	content := readFixtureFile(t, f.dir, ".standards.yaml") + "\nverification:\n  max_file_bytes: 262144\n"
+	customPath := writeFixtureFile(t, f.dir, "custom.yaml", content)
+	out, err := captureStdout(t, func() error { return dispatchCommand("audit", []string{"--config=" + customPath}) })
+	if err != nil {
+		t.Fatalf("audit with selected manifest declaring 262144 bytes failed: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[PASS] rust-msrv: Cargo.toml 1.80 (pinned channel 1.80)")
+
+	// Stricter selected limit refuses what root admits: 50,000-byte Cargo.toml.
+	midCargo := "[package]\nname='fixture'\nversion='0.1.0'\nrust-version='1.80'\n#" + strings.Repeat("x", 50000-80) + "\n"
+	writeFixtureFile(t, f.dir, "Cargo.toml", midCargo)
+	out, err = f.audit(t)
+	if err != nil {
+		t.Fatalf("root default refused 50000-byte Cargo.toml: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[PASS] rust-msrv: Cargo.toml 1.80 (pinned channel 1.80)")
+
+	stricterContent := readFixtureFile(t, f.dir, ".standards.yaml") + "\nverification:\n  max_file_bytes: 10000\n"
+	stricterPath := writeFixtureFile(t, f.dir, "stricter.yaml", stricterContent)
+	_, err = captureStdout(t, func() error { return dispatchCommand("audit", []string{"--config=" + stricterPath}) })
+	mustErrContain(t, err, "[FAIL] rust-msrv: verification input Cargo.toml: metadata exceeds byte bounds (file=10000")
 }
 
 // withHarnessDirective rewrites the register directive of the fixture's harness.json, from to

@@ -93,6 +93,8 @@ func TestRepositoryChecksRenovate(t *testing.T) {
 const msrvCrate = "[package]\nname = 'fixture'\nversion = '0.1.0'\nrust-version = '1.80'\n"
 const msrvJob = "jobs:\n  msrv:\n    runs-on: ubuntu-latest\n    steps:\n"
 
+// TestRepositoryChecksRustMSRV judges Rust minimum-version proofs: a pinned minimum or a workflow job that builds on
+// it passes, an unproven stable toolchain fails naming Cargo.toml.
 func TestRepositoryChecksRustMSRV(t *testing.T) {
 	cases := []struct {
 		name, cargo, pin, workflow, want string
@@ -119,7 +121,7 @@ func TestRepositoryChecksRustMSRV(t *testing.T) {
 			if tc.workflow != "" {
 				mustWrite(t, filepath.Join(root, ".github/workflows/msrv.yml"), tc.workflow)
 			}
-			line, err := AuditRustMSRV(t.Context(), root)
+			line, err := AuditRustMSRV(t.Context(), nil, root)
 			checkRepositoryVerdict(t, line, err, tc.fail, "rust-msrv")
 			if !strings.Contains(line+fmt.Sprint(err), tc.want) {
 				t.Fatalf("missing %q: %s %v", tc.want, line, err)

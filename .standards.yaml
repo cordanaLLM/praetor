@@ -32,6 +32,10 @@ receipt:
 profiles:
   - "framework"
 
+verification:
+  # portability.yml carries the rendered review-hold script and exceeds 60 KiB.
+  max_file_bytes: 262144
+
 facets:
   - "security:high"
   - "api:public-contract"
