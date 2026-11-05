@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -28,7 +27,7 @@ func LoadRepositoryManifest(ctx context.Context, repoPath string) (*Manifest, er
 	if err != nil {
 		return nil, fmt.Errorf("resolve the adoption manifest: refusing %s: %w", ManifestFileName, err)
 	}
-	data, exists, err := contextopt.ObserveSnapshot(ctx, full)
+	data, exists, err := observeManifestSnapshot(ctx, full)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", ManifestFileName, err)
 	}

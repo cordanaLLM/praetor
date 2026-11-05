@@ -103,7 +103,7 @@ func LintCanonicalSkillFiles(ctx context.Context, rootDir string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	policy, err := config.LoadSkillsPolicy(rootDir)
+	policy, err := config.LoadSkillsPolicyContext(ctx, rootDir)
 	if err != nil {
 		return 0, err
 	}

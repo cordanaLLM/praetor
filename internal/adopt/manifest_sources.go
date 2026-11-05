@@ -39,11 +39,21 @@ func isPriorManifestRendering(data []byte) bool {
 	return err == nil && equivalent
 }
 
-// planExistingManifest adds or re-binds register.sources in an existing manifest and leaves
-// every other declaration as written. A manifest that is exactly an earlier Praetor rendering
-// is re-rendered in the current layout with the same declarations (migratePriorManifest).
+// planExistingManifest repairs adoption exception lifecycle fields and reconciles sources.
+// A manifest that is exactly an earlier Praetor rendering is re-rendered in the current layout
+// with the same declarations (migratePriorManifest).
 func planExistingManifest(ctx context.Context, s *adoptSession, full string, data []byte) (manifestPlan, bool, error) {
-	plan, changed, err := planManifestSources(ctx, s, full, data)
+	updated, proposals, err := adoptionExceptionMigration(ctx, full, data)
+	if err != nil {
+		return manifestPlan{}, false, err
+	}
+	if err := reportUnresolvedAdoptionExceptions(s.report, proposals); err != nil {
+		return manifestPlan{}, false, err
+	}
+	plannedContext := config.WithManifestSnapshot(ctx, full, updated)
+	plan, changed, err := planManifestSources(plannedContext, s, full, updated)
+	plan.note += adoptionExceptionMigrationNote(proposals, s.opts.DryRun)
+	changed = changed || !bytes.Equal(data, updated)
 	if err != nil || !isPriorManifestRendering(data) {
 		return plan, changed, err
 	}
@@ -80,7 +90,7 @@ func migratePriorManifest(ctx context.Context, plan manifestPlan, changed bool) 
 func planManifestSources(ctx context.Context, s *adoptSession, full string, data []byte) (manifestPlan, bool, error) {
 	// An existing manifest is an input: one the config loader rejects fails adoption here
 	// and is never reported as verified present on existence alone (BUG-853).
-	manifest, err := config.LoadManifest(full)
+	manifest, err := config.ParseManifest(full, data)
 	if err != nil {
 		return manifestPlan{}, false, fmt.Errorf("existing %s: %w", manifestFile, err)
 	}

@@ -184,6 +184,7 @@ func newDeclaredLinterException(linter config.DeclaredLinter, today time.Time) c
 		Rule:     config.ExceptionRuleDeclaredLinters,
 		Tool:     linter.Name,
 		Category: "D",
+		Entered:  config.ExceptionDay(today).Format(config.ExceptionDateLayout),
 		Reason:   fmt.Sprintf("adoption scaffolds no CI job for %s declared by %s; run it in a workflow, or remove this entry", linter.Name, linter.Source),
 		Expires:  config.ExceptionDay(today).AddDate(0, 0, config.MaxExceptionDays).Format(config.ExceptionDateLayout),
 	}

@@ -394,7 +394,7 @@ func pinnedSkillProjections(ctx context.Context, rootDir string, dirs []string) 
 	if err != nil {
 		return nil, err
 	}
-	policy, err := config.LoadSkillsPolicy(rootDir)
+	policy, err := config.LoadSkillsPolicyContext(ctx, rootDir)
 	if err != nil {
 		return nil, err
 	}

@@ -8,7 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -42,7 +42,7 @@ func ResolveRepositoryIdentity(ctx context.Context, repo, explicitOwner, default
 	if err := requireIdentityInputs(ctx, repo); err != nil {
 		return "", "", err
 	}
-	owner, name, err = manifestIdentity(repo)
+	owner, name, err = manifestIdentity(ctx, repo)
 	if err != nil {
 		return "", "", err
 	}
@@ -73,7 +73,7 @@ func ResolveRepositoryName(ctx context.Context, repo string) (string, error) {
 	if err := requireIdentityInputs(ctx, repo); err != nil {
 		return "", err
 	}
-	_, name, err := manifestIdentity(repo)
+	_, name, err := manifestIdentity(ctx, repo)
 	if err != nil {
 		return "", err
 	}
@@ -90,10 +90,12 @@ func ResolveRepositoryName(ctx context.Context, repo string) (string, error) {
 // would read the remote of a checkout above it), so it is named through this step only. The
 // errors are ResolveRepositoryName's.
 func ManifestRepositoryName(repo string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	if !util.DirExists(repo) {
 		return "", notRepositoryDirError(repo)
 	}
-	_, name, err := manifestIdentity(repo)
+	_, name, err := manifestIdentity(ctx, repo)
 	if err != nil {
 		return "", err
 	}
@@ -118,21 +120,20 @@ func notRepositoryDirError(repo string) error {
 
 // manifestIdentity reads repository.owner and repository.name from .standards.yaml. A
 // repository without a manifest has neither.
-func manifestIdentity(repo string) (owner, name string, err error) {
-	metadata, err := manifestRepository(repo)
+func manifestIdentity(ctx context.Context, repo string) (owner, name string, err error) {
+	metadata, err := manifestRepository(ctx, repo)
 	return metadata.Owner, metadata.Name, err
 }
 
 // manifestRepository reads the repository block of repo's .standards.yaml through the strict
 // manifest loader. A repository without a manifest declares nothing.
-func manifestRepository(repo string) (RepositoryMetadata, error) {
-	path := filepath.Join(repo, ManifestFileName)
-	if !util.FileExists(path) {
-		return RepositoryMetadata{}, nil
-	}
-	manifest, err := LoadManifest(path)
+func manifestRepository(ctx context.Context, repo string) (RepositoryMetadata, error) {
+	manifest, err := LoadRepositoryManifest(ctx, repo)
 	if err != nil {
 		return RepositoryMetadata{}, fmt.Errorf("resolve repository identity: %w", err)
+	}
+	if manifest == nil {
+		return RepositoryMetadata{}, nil
 	}
 	return manifest.Repository, nil
 }

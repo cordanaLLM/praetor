@@ -38,7 +38,7 @@ func PlannedWorkflows(ctx context.Context, repoPath, profile string) ([]PlannedT
 	if ctx == nil {
 		return nil, errors.New("planned workflows require a context")
 	}
-	name, err := plannedFlavorName(repoPath, profile)
+	name, err := plannedFlavorName(ctx, repoPath, profile)
 	if name == "" {
 		return nil, err
 	}
@@ -77,8 +77,8 @@ func plannedWorkflowBodies(ctx context.Context, repoPath string, items []Templat
 // flavor). A profile with no flavor, none that matches (IsScaffoldSkip), or a pin the root scaffold cannot
 // express (ErrPinNotScaffoldable) yields an empty name and no error, like the skipped flavor
 // step in adoption; any other failure is returned.
-func plannedFlavorName(repoPath, profile string) (string, error) {
-	targets, err := ResolveTargetsForProfile(repoPath, profile)
+func plannedFlavorName(ctx context.Context, repoPath, profile string) (string, error) {
+	targets, err := ResolveTargetsForProfileContext(ctx, repoPath, profile)
 	if err == nil {
 		var name string
 		if name, err = SingleRootFlavor(targets); err == nil {
