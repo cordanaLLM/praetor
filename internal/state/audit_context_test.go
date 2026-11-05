@@ -3,6 +3,8 @@ package state
 import (
 	"context"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // Positive: a live context audits a fresh ledger. Negative: an unresolved P0 row is reported
@@ -10,7 +12,7 @@ import (
 // report.
 func TestAuditWorkingDirContext(t *testing.T) {
 	root := t.TempDir()
-	if _, err := SyncState(context.Background(), root, "audit context fixture"); err != nil {
+	if _, err := SyncState(testsupport.DeadlineContext(t), root, "audit context fixture"); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	report, err := AuditWorkingDirContext(context.Background(), root)

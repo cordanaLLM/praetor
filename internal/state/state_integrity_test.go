@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 func TestStateIntegrityPositivePreservesHistoryAndNonGitRoot(t *testing.T) {
@@ -23,7 +24,7 @@ func TestStateIntegrityPositivePreservesHistoryAndNonGitRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertIntegrityFile(t, path, history)
-	snap, err := SyncState(context.Background(), root, "new activity")
+	snap, err := SyncState(testsupport.DeadlineContext(t), root, "new activity")
 	if err != nil || snap == nil {
 		t.Fatalf("non-Git sync failed: snapshot=%v error=%v", snap, err)
 	}
@@ -53,7 +54,7 @@ func TestStateIntegrityRejectsInvalidExistingLedgerPaths(t *testing.T) {
 				if err := InitWorkingDir(root); err == nil {
 					t.Fatal("initialization accepted an invalid existing ledger")
 				}
-				if _, err := SyncState(context.Background(), root, "must not append"); err == nil {
+				if _, err := SyncState(testsupport.DeadlineContext(t), root, "must not append"); err == nil {
 					t.Fatal("sync accepted an invalid existing ledger")
 				}
 				report, err := AuditWorkingDir(root)
@@ -92,7 +93,7 @@ func TestStateIntegrityTaskReadFailureLeavesHistoryIntact(t *testing.T) {
 	const history = "# Preserve history\n"
 	writeIntegrityFile(t, path, history)
 	writeIntegrityFile(t, filepath.Join(root, WorkingDirName, "OPEN.md"), strings.Repeat("x", 1<<16))
-	_, err := SyncState(context.Background(), root, "must not append")
+	_, err := SyncState(testsupport.DeadlineContext(t), root, "must not append")
 	if err == nil || !strings.Contains(err.Error(), "list tasks") {
 		t.Fatalf("task reader failure not propagated: %v", err)
 	}
@@ -138,7 +139,7 @@ func TestStateIntegrityReadAndAppendByteBoundaries(t *testing.T) {
 	statePath := filepath.Join(root, WorkingDirName, "STATE.md")
 	const history = "# Unchanged state\n"
 	writeIntegrityFile(t, statePath, history)
-	if _, err := SyncState(context.Background(), root, "must not append"); err == nil {
+	if _, err := SyncState(testsupport.DeadlineContext(t), root, "must not append"); err == nil {
 		t.Fatal("sync ignored oversized question ledger")
 	}
 	assertIntegrityFile(t, statePath, history)
@@ -188,7 +189,7 @@ func TestStateIntegrityRootSymlinkFailsBeforeInitialization(t *testing.T) {
 	if _, err := AddBug(link, BugEntry{Title: "must not initialize"}); err == nil {
 		t.Fatal("bug mutation accepted a root symlink")
 	}
-	if _, err := SyncState(context.Background(), link, "must not initialize"); err == nil {
+	if _, err := SyncState(testsupport.DeadlineContext(t), link, "must not initialize"); err == nil {
 		t.Fatal("sync accepted a root symlink")
 	}
 	entries, err := os.ReadDir(outside)
