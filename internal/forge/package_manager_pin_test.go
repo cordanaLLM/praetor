@@ -196,9 +196,8 @@ func TestCheckJobSteps_UnreadableScript(t *testing.T) {
 func TestReadWorkflowFiles_RejectsEscapingSymlink(t *testing.T) {
 	root := t.TempDir()
 	workflowDir := filepath.Join(root, ".github", "workflows")
-	if err := os.MkdirAll(workflowDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	// A plain workflow beside the link creates the folder through the package fixture helper.
+	writeAdoptFixtureFile(t, filepath.Join(workflowDir, "ci.yml"), "name: ci\n")
 	outsideDir := t.TempDir()
 	outsideFile := filepath.Join(outsideDir, "outside.yml")
 	if err := os.WriteFile(outsideFile, []byte("name: escape\n"), 0o600); err != nil {
