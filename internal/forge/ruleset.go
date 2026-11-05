@@ -222,6 +222,10 @@ func RepositoryBranchPolicy(ctx context.Context, repoPath string) (config.Branch
 // Praetor's and nobody edited it: adoption and flavor apply refresh it to current, the rendering
 // they write now, without --force.
 //
+// Beside the current renderer's output from baseline, the map also holds the rendering as Praetor
+// rendered it before the copilot_code_review rule was added (#1825): that ruleset was Praetor's
+// unedited rendering too, so adoption refreshes it to the current rendering with Copilot review.
+//
 // When baseline's default branch is not FallbackDefaultBranch, the map also holds the rendering
 // of the same policy and workflows for FallbackDefaultBranch: every Praetor before it read the
 // default branch rendered main whatever the repository's default branch was, so that file is
@@ -268,9 +272,20 @@ func addPriorBranches(priors map[string]string, baseline RulesetBaseline, curren
 }
 
 // addPriorRuleset adds to priors, under label, the digest of the ruleset baseline's policy and
-// contexts render for branch, unless that rendering is current or cannot be rendered.
+// contexts render for branch, unless that rendering is current or cannot be rendered. It also
+// adds the rendering as Praetor rendered it before the copilot_code_review rule was added (#1825).
 func addPriorRuleset(priors map[string]string, branch string, baseline RulesetBaseline, current []byte, label string) {
-	prior, err := RenderRepositoryRuleset(branch, baseline.Policy, baseline.Contexts)
+	addPriorRendering(priors, current, label, func() ([]byte, error) {
+		return RenderRepositoryRuleset(branch, baseline.Policy, baseline.Contexts)
+	})
+	addPriorRendering(priors, current, label+", before the Copilot code review rule was added", func() ([]byte, error) {
+		return RenderRepositoryRulesetPriorToCopilot(branch, baseline.Policy, baseline.Contexts)
+	})
+}
+
+// addPriorRendering evaluates render and adds its digest to priors if distinct from current.
+func addPriorRendering(priors map[string]string, current []byte, label string, render func() ([]byte, error)) {
+	prior, err := render()
 	if err != nil {
 		return
 	}
@@ -282,6 +297,24 @@ func addPriorRuleset(priors map[string]string, branch string, baseline RulesetBa
 		return
 	}
 	priors[digest] = label
+}
+
+// RenderRepositoryRulesetPriorToCopilot renders the ruleset for branch, policy and contexts as
+// Praetor rendered it before the copilot_code_review rule was added (#1825).
+func RenderRepositoryRulesetPriorToCopilot(branch string, policy config.BranchProtectionPolicy, contexts []string) ([]byte, error) {
+	if !config.ValidBranchName(branch) {
+		return nil, fmt.Errorf("ruleset default branch %q is not a branch name", branch)
+	}
+	doc, err := protectionRuleset(RepositoryRulesetName, RepositoryRulesetRefs(branch), policy, contexts, true)
+	if err != nil {
+		return nil, err
+	}
+	if rules, ok := doc["rules"].([]map[string]any); ok {
+		doc["rules"] = slices.DeleteFunc(rules, func(r map[string]any) bool {
+			return r["type"] == "copilot_code_review"
+		})
+	}
+	return marshalRulesetJSON(doc)
 }
 
 // ErrRulesetDrift reports a committed ruleset whose content differs from the one the declared
