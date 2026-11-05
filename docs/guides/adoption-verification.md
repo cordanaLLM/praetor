@@ -600,9 +600,12 @@ responses against an in-memory transport. The read uses
 
 An explicit `security-policy` adoption decline, or the implicit decline for an
 organisation `.github` repository described below, skips this requirement and
-names the setting as not read. Adoption's policy template names the private
-reporting channel; maintainers of an adopting fork must enable that setting or
-replace it with their own private security contact.
+names the setting as not read. Adoption scaffolds instructions appropriate to the
+resolved forge: GitHub private vulnerability reporting on GitHub, and confidential
+issues on GitLab. Forges without a built-in private channel (such as Forgejo) require
+declaring `security.contact` in `.standards.yaml` or declining `security-policy`.
+Maintainers of an adopting fork may declare `security.contact` to direct reporters to
+a private email address or HTTPS destination across any forge.
 
 ### Organisation `.github` repositories and adoption decline
 

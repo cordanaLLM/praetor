@@ -77,3 +77,38 @@ func TestSecurityPolicy_Boundary_DefaultsAndLengthLimit(t *testing.T) {
 		t.Errorf("%d-byte path loaded", len(longest)+1)
 	}
 }
+
+// TestSecurityPolicy_Contact validates declared security contacts: emails, mailto: URIs,
+// and HTTPS URLs load; invalid forms are refused; nil policies return "".
+func TestSecurityPolicy_Contact(t *testing.T) {
+	var none *SecurityPolicy
+	if none.SecurityContact() != "" {
+		t.Errorf("nil policy contact = %q, want empty", none.SecurityContact())
+	}
+	valid := []string{
+		"security@example.com",
+		"mailto:security@example.com",
+		"https://example.com/security",
+	}
+	for _, contact := range valid {
+		body := "version: 1\nsecurity:\n  contact: \"" + contact + "\"\n"
+		m, err := LoadManifest(writeManifest(t, body))
+		if err != nil {
+			t.Errorf("contact %q refused: %v", contact, err)
+		}
+		if got := m.Security.SecurityContact(); got != contact {
+			t.Errorf("contact %q = %q", contact, got)
+		}
+	}
+	invalid := []string{
+		"not-an-email",
+		"http://insecure.example.com",
+		"contact us privately",
+	}
+	for _, contact := range invalid {
+		body := "version: 1\nsecurity:\n  contact: \"" + contact + "\"\n"
+		if _, err := LoadManifest(writeManifest(t, body)); err == nil || !strings.Contains(err.Error(), "security.contact") {
+			t.Errorf("invalid contact %q loaded: err = %v", contact, err)
+		}
+	}
+}

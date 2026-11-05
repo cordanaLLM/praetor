@@ -37,6 +37,11 @@ func TestAuditCommunityHealthSecurityPolicyOffline(t *testing.T) {
 		{"email instruction", "SECURITY.md", "Email to security@example.invalid.\n", "SECURITY.md", false},
 		{"empty contact", "SECURITY.md", "Security contact:\n", "SECURITY.md names no private reporting channel", true},
 		{"wrapped phrase", "SECURITY.md", "Use PRIVATE vulnerability\nreporting.\n", "setting not read: --offline", false},
+		{"negated phrase", "SECURITY.md", "Do not use private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", true},
+		{"disabled phrase", "SECURITY.md", "Private vulnerability reporting is disabled.\n", "SECURITY.md names no private reporting channel", true},
+		{"non-instructional mention", "SECURITY.md", "We considered private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", true},
+		{"negated with contact", "SECURITY.md", "Do not use private vulnerability reporting. Security contact: security@example.invalid\n", "policy uses a security contact", false},
+		{"confidential issues", "SECURITY.md", "Open a confidential issue in this repository to report vulnerabilities.\n", "policy uses confidential issues", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -157,7 +162,7 @@ func TestAuditCommunityHealthSecurityPolicyPrecedence(t *testing.T) {
 // than treating a policy that cannot be read as absent or falling back to another file.
 func TestAuditCommunityHealthSecurityPolicyReadFailure(t *testing.T) {
 	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, "SECURITY.md"), 0o755); err != nil {
+	if err := os.Mkdir(filepath.Join(root, "SECURITY.md"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := auditSecurityPolicy(t.Context(), &config.Manifest{}, root, actionsForge{}); err == nil ||
@@ -204,5 +209,22 @@ func TestAuditCommunityHealthSecurityPolicyCancelled(t *testing.T) {
 	err := auditSecurityPolicy(ctx, &config.Manifest{}, t.TempDir(), actionsForge{})
 	if err == nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled policy read = %v", err)
+	}
+}
+
+// TestAuditCommunityHealthSecurityPolicyForgeMismatch proves that a non-GitHub repository
+// whose policy specifies GitHub's private vulnerability reporting channel fails the audit.
+func TestAuditCommunityHealthSecurityPolicyForgeMismatch(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureFile(t, root, "SECURITY.md", "Use private vulnerability reporting.\n")
+	manifest := &config.Manifest{
+		Repository: config.RepositoryMetadata{
+			Name:  "widgets",
+			Forge: config.ForgeForgejo,
+		},
+	}
+	err := auditSecurityPolicy(t.Context(), manifest, root, actionsForge{notMade: "--offline"})
+	if err == nil || !strings.Contains(err.Error(), "names GitHub private vulnerability reporting, but repository.forge is forgejo") {
+		t.Fatalf("forge mismatch not rejected: %v", err)
 	}
 }

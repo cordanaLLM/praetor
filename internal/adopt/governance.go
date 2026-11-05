@@ -392,14 +392,93 @@ func reconcilePullRequestTemplate(ctx context.Context, s *adoptSession) error {
 	return err
 }
 
+// securityContact returns the configured security contact from the existing manifest or
+// effective policy, or "" when none is declared.
+func (s *adoptSession) securityContact() string {
+	if s.declared != nil && s.declared.Security != nil && s.declared.Security.Contact != "" {
+		return s.declared.Security.Contact
+	}
+	if s.policy != nil && s.policy.Manifest != nil && s.policy.Manifest.Security != nil && s.policy.Manifest.Security.Contact != "" {
+		return s.policy.Manifest.Security.Contact
+	}
+	return ""
+}
+
+// declaredForge returns repository.forge declared in existing manifest or effective policy.
+func (s *adoptSession) declaredForge() config.Forge {
+	if s.declared != nil && s.declared.Repository.Forge != "" {
+		return s.declared.Repository.Forge
+	}
+	if s.policy != nil && s.policy.Manifest != nil {
+		return s.policy.Manifest.Repository.Forge
+	}
+	return ""
+}
+
+// forgeFromHost maps known forge host domains to their forge kind.
+func forgeFromHost(host string) config.Forge {
+	host = strings.ToLower(host)
+	switch {
+	case host == "github.com" || host == "":
+		return config.ForgeGitHub
+	case host == "gitlab.com" || strings.Contains(host, "gitlab"):
+		return config.ForgeGitLab
+	case host == "codeberg.org" || host == "gitea.com" || strings.Contains(host, "forgejo") || strings.Contains(host, "gitea"):
+		return config.ForgeForgejo
+	default:
+		return ""
+	}
+}
+
+// resolveForge resolves the kind of forge for the repository being adopted: the manifest's
+// repository.forge, else resolved from origin remote's host (config.RepositoryForge).
+func (s *adoptSession) resolveForge() config.Forge {
+	if declared := s.declaredForge(); declared != "" {
+		return declared
+	}
+	return forgeFromHost(s.identity.host)
+}
+
 func reconcileSecurityPolicy(ctx context.Context, s *adoptSession) error {
 	if s.declines("security-policy") {
 		return nil
 	}
+	contact := s.securityContact()
+	forge := s.resolveForge()
+
+	var content string
+	switch {
+	case contact != "":
+		content = buildSecurityContactPolicy(contact)
+	case forge == config.ForgeGitLab:
+		content = buildGitLabSecurityPolicy()
+	case forge == config.ForgeGitHub:
+		content = buildSecurityPolicy()
+	default:
+		full, err := repoFile(s.repoPath, securityFile)
+		if err != nil {
+			return err
+		}
+		if !fileExists(full) {
+			forgeName := string(forge)
+			if forgeName == "" {
+				forgeName = s.identity.host
+			}
+			if forgeName == "" {
+				forgeName = "unknown"
+			}
+			s.report.recordSkipped(securityFile, fmt.Sprintf("security policy not scaffolded: forge %s has no supported private vulnerability reporting channel; configure security.contact in %s or decline security-policy",
+				forgeName, config.ManifestFileName))
+			return nil
+		}
+		s.report.recordReconciled(securityFile, "Existing security policy verified present")
+		return nil
+	}
+
 	_, err := s.scaffoldFile(ctx, scaffold{
 		rel:      securityFile,
 		perm:     filePerm,
-		content:  []byte(buildSecurityPolicy()),
+		content:  []byte(content),
 		created:  "Scaffolded security policy and vulnerability disclosure standards",
 		verified: "Existing security policy verified present",
 	})
@@ -612,8 +691,8 @@ func buildPullRequestTemplate() string {
 	)
 }
 
-// buildSecurityPolicy renders an actionable private reporting channel without a response-time
-// promise; adoption must produce a policy that the community-health audit can accept.
+// buildSecurityPolicy renders GitHub private reporting channel instructions without a
+// response-time promise; adoption must produce a policy that the community-health audit can accept.
 func buildSecurityPolicy() string {
 	return markdownDocument(
 		"# Security Policy",
@@ -627,6 +706,41 @@ func buildSecurityPolicy() string {
 		"Use GitHub's private vulnerability reporting: open this repository's Security",
 		"tab and choose Report a vulnerability. Include the affected version, impact,",
 		"and steps to reproduce. Do not report vulnerabilities in public issues.",
+	)
+}
+
+// buildGitLabSecurityPolicy renders GitLab confidential issue instructions for reporting.
+func buildGitLabSecurityPolicy() string {
+	return markdownDocument(
+		"# Security Policy",
+		"",
+		"## Supported Versions",
+		"",
+		"Only the latest release and current default branch receive security updates.",
+		"",
+		"## Reporting a Vulnerability",
+		"",
+		"Open a confidential issue in this repository: navigate to Issues, choose",
+		"New issue, and check \"This issue is confidential\". Include the affected",
+		"version, impact, and steps to reproduce. Do not report vulnerabilities in",
+		"public issues.",
+	)
+}
+
+// buildSecurityContactPolicy renders instructions directing reporters to a configured contact.
+func buildSecurityContactPolicy(contact string) string {
+	return markdownDocument(
+		"# Security Policy",
+		"",
+		"## Supported Versions",
+		"",
+		"Only the latest release and current default branch receive security updates.",
+		"",
+		"## Reporting a Vulnerability",
+		"",
+		"Report vulnerabilities to the security contact: "+contact+". Include the",
+		"affected version, impact, and steps to reproduce. Do not report vulnerabilities",
+		"in public issues.",
 	)
 }
 

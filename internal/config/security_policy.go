@@ -7,6 +7,7 @@ package config
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -15,12 +16,18 @@ import (
 // the manifest declares no security.go_vex.
 const DefaultGoVEXPath = "security/vex/go.openvex.json"
 
+// securityContactRegex validates that security.contact is an email, mailto: URI, or HTTPS URL.
+var securityContactRegex = regexp.MustCompile(`^(?:(?:mailto:)?[a-zA-Z0-9.!#$%&'*+/=?^_{|}~-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+|https://[^\s<>]+)$`)
+
 // SecurityPolicy is the manifest's security section: settings of the security gates. GoVEX names
 // the OpenVEX document whose not_affected statements cover the advisories govulncheck finds
-// present but not called (internal/govuln). It is repository-only, like Documentation, and stays
-// out of ResolvedPolicy: the document records this repository's own analysis.
+// present but not called (internal/govuln). Contact specifies an actionable reporting channel
+// (email address, mailto:, or HTTPS destination) for repositories without a native private channel.
+// It is repository-only, like Documentation, and stays out of ResolvedPolicy: the document records
+// this repository's own analysis.
 type SecurityPolicy struct {
-	GoVEX string `yaml:"go_vex,omitempty"`
+	GoVEX   string `yaml:"go_vex,omitempty"`
+	Contact string `yaml:"contact,omitempty"`
 }
 
 // GoVEXPath returns the declared OpenVEX document, or DefaultGoVEXPath when the section or the key
@@ -32,15 +39,27 @@ func (p *SecurityPolicy) GoVEXPath() string {
 	return p.GoVEX
 }
 
+// SecurityContact returns the declared security contact, or "" when unset. Safe on a nil policy.
+func (p *SecurityPolicy) SecurityContact() string {
+	if p == nil {
+		return ""
+	}
+	return p.Contact
+}
+
 // validateManifestSecurity holds a declared security.go_vex to the repository path shape every
-// other manifest path takes (ValidRepositoryPath).
+// other manifest path takes (ValidRepositoryPath) and validates any declared security.contact.
 func validateManifestSecurity(m *Manifest) error {
-	if m == nil || m.Security == nil || m.Security.GoVEX == "" {
+	if m == nil || m.Security == nil {
 		return nil
 	}
-	if !ValidRepositoryPath(m.Security.GoVEX) {
+	if m.Security.GoVEX != "" && !ValidRepositoryPath(m.Security.GoVEX) {
 		return fmt.Errorf("security.go_vex %q must be a clean local forward-slash path of at most %d bytes",
 			m.Security.GoVEX, maxRepositoryPath)
+	}
+	if m.Security.Contact != "" && !securityContactRegex.MatchString(m.Security.Contact) {
+		return fmt.Errorf("security.contact %q must be a valid email address, mailto: URI, or https:// URL",
+			m.Security.Contact)
 	}
 	return nil
 }
