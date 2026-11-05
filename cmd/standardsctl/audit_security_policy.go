@@ -22,7 +22,7 @@ var securityContactEmail = regexp.MustCompile(`(?im)(?:mailto:|(?:security[ \t]+
 const maxSecurityContactURLs = 64
 
 // securityContactHTTPS recognizes an HTTPS security contact destination.
-var securityContactHTTPS = regexp.MustCompile(`(?im)security[ \t]+contact[ \t]*:[ \t]*(https://[^\s<>]+)`)
+var securityContactHTTPS = regexp.MustCompile(`(?im)security[ \t]+contact[ \t]*:[ \t]*<?(https://[^\s<>]+)>?`)
 
 // affirmativeReporting matches an affirmative instruction to report via private vulnerability reporting.
 var affirmativeReporting = regexp.MustCompile(`(?i)\b(?:use|using|report(?:ed|ing)?|submit(?:ted|ting)?|file|filing|via|through|enable[d]?|choose|navigate|open|visit)\b[^.!?;]*\b(?:github'?s\s+)?private\s+vulnerability\s+reporting\b|\bprivate\s+vulnerability\s+reporting\b[^.!?;]*\b(?:is\s+enabled|form|tab)\b|\bprivate\s+vulnerability\s+reporting\s*:[^.!?;]*\b(?:open|choose|click|navigate|visit|report|use)\b`)

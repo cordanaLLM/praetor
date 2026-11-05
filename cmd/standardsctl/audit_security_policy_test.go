@@ -58,6 +58,7 @@ func offlinePolicyCases() []securityPolicyTestCase {
 		{"not only", "SECURITY.md", "Report not only via GitHub private vulnerability reporting, but also email.\n", "setting not read: --offline", "", false},
 		{"https contact without host", "SECURITY.md", "Security contact: https:///report\n", "SECURITY.md names no private reporting channel", "", true},
 		{"https contact valid", "SECURITY.md", "Security contact: https://example.invalid/report\n", "SECURITY.md", "", false},
+		{"https contact angle brackets", "SECURITY.md", "Security contact: <https://example.test/security>\n", "SECURITY.md", "", false},
 		{"private reporting by email gitlab", "SECURITY.md", "Use private vulnerability reporting by email. Security contact: security@example.com\n", "policy uses a security contact", config.ForgeGitLab, false},
 		{"github private reporting gitlab", "SECURITY.md", "Use GitHub private vulnerability reporting\n", "names GitHub private vulnerability reporting, but repository.forge is gitlab", config.ForgeGitLab, true},
 		{"bare private reporting undeclared", "SECURITY.md", "Use private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", "", true},
