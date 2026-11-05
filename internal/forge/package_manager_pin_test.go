@@ -5,10 +5,13 @@
 package forge
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -30,11 +33,23 @@ func commandPinsPackageManager(cmd shellCommand) bool {
 		return false
 	}
 	for i := 0; i < len(cmd.args) && i < maxRunScriptFields; i++ {
-		if packageManagerPinPattern.MatchString(cmd.args[i]) {
+		arg := strings.TrimPrefix(cmd.args[i], "--package=")
+		arg = strings.TrimPrefix(arg, "-p=")
+		if packageManagerPinPattern.MatchString(arg) {
 			return true
 		}
 	}
 	return false
+}
+
+// isCompleteExpression reports whether text is enclosed entirely in a single GitHub Actions expression.
+func isCompleteExpression(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "${{") || !strings.HasSuffix(trimmed, "}}") {
+		return false
+	}
+	inner := trimmed[3 : len(trimmed)-2]
+	return strings.TrimSpace(inner) != "" && !strings.Contains(inner, "${{") && !strings.Contains(inner, "}}")
 }
 
 // hardcodedPackageManagerVersion reports a step that overrides the manifest's manager version.
@@ -44,7 +59,7 @@ func hardcodedPackageManagerVersion(step ghworkflow.Step) (bool, error) {
 	if actionPath(step.Uses) == "pnpm/action-setup" {
 		version, set := step.With["version"]
 		text := strings.TrimSpace(fmt.Sprint(version))
-		if set && text != "" && !strings.Contains(text, "${{") {
+		if set && text != "" && !isCompleteExpression(text) {
 			return true, nil
 		}
 	}
@@ -97,7 +112,9 @@ func assertWorkflowReadsPackageManager(t *testing.T, file workflowFile) {
 
 // TestEngineWorkflowsReadPackageManager prevents workflow pins drifting from package.json.
 func TestEngineWorkflowsReadPackageManager(t *testing.T) {
-	files, err := readWorkflowFiles(t.Context(), engineRoot)
+	ctx, cancel := context.WithTimeout(t.Context(), workflowDiscoveryTimeout)
+	defer cancel()
+	files, err := readWorkflowFiles(ctx, engineRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,6 +147,9 @@ var packageManagerStepCases = []struct {
 	{"npx yarn pin", ghworkflow.Step{Run: "npx -y 'yarn@1.22.22'"}, true},
 	{"action string pin", ghworkflow.Step{Uses: "pnpm/action-setup@v4", With: map[string]any{"version": "10.34.9"}}, true},
 	{"action numeric pin", ghworkflow.Step{Uses: "pnpm/action-setup@v4", With: map[string]any{"version": 10}}, true},
+	{"action mixed expression pin", ghworkflow.Step{Uses: "pnpm/action-setup@v4", With: map[string]any{"version": "10.${{ matrix.patch }}"}}, true},
+	{"npm exec package flag pin", ghworkflow.Step{Run: "npm exec --package=pnpm@10.28.0 -- pnpm install"}, true},
+	{"action empty expression pin", ghworkflow.Step{Uses: "pnpm/action-setup@v4", With: map[string]any{"version": "${{}}"}}, true},
 	{"corepack manifest", ghworkflow.Step{Run: "npm install --global corepack@latest\ncorepack enable pnpm"}, false},
 	{"yarn manifest", ghworkflow.Step{Run: "corepack enable yarn\nyarn install --immutable"}, false},
 	{"action manifest", ghworkflow.Step{Uses: "pnpm/action-setup@v4", With: map[string]any{"package_json_file": "console/package.json"}}, false},
@@ -186,9 +206,14 @@ func TestReadWorkflowFiles_RejectsEscapingSymlink(t *testing.T) {
 	}
 	link := filepath.Join(workflowDir, "escape.yml")
 	if err := os.Symlink(outsideFile, link); err != nil {
+		if runtime.GOOS == "windows" && errors.Is(err, os.ErrPermission) {
+			t.Skipf("symlink creation requires privileges or developer mode on Windows: %v", err)
+		}
 		t.Fatal(err)
 	}
-	files, err := readWorkflowFiles(t.Context(), root)
+	ctx, cancel := context.WithTimeout(t.Context(), workflowDiscoveryTimeout)
+	defer cancel()
+	files, err := readWorkflowFiles(ctx, root)
 	if err == nil {
 		t.Fatalf("readWorkflowFiles with escaping symlink succeeded: got %d files", len(files))
 	}
