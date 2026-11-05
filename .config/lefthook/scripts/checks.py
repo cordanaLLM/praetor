@@ -118,15 +118,22 @@ def text_checks(directory, names):
     spelling_check(directory, text_files)
 
 
+# The spelling check caps input to comply with HISS-02 bounded loops and avoid runaway subprocess batches.
+MAX_SPELLING_PATHS = 10000
+
+
 def spelling_check(directory, names):
     """Check text with the repository's codespell config, when opted in.
 
     Vendored hook policies need not enable spelling. Once .codespellrc exists,
     a missing executable or a failed check refuses the change. Batches keep
-    staged path lists below platform command-line limits, as gofmt_check does.
+    staged path lists below platform command-line limits, as gofmt_check does,
+    and staged paths are capped at MAX_SPELLING_PATHS to comply with HISS-02.
     """
     if not names or not (directory / ".codespellrc").is_file():
         return
+    if len(names) > MAX_SPELLING_PATHS:
+        raise HookError(f"spelling check path count exceeds {MAX_SPELLING_PATHS}")
     for start in range(0, len(names), GOFMT_BATCH):
         run(["codespell", "--config", ".codespellrc", "--", *names[start:start + GOFMT_BATCH]],
             cwd=directory, timeout=120)

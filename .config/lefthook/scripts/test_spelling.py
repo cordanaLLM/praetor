@@ -1,14 +1,13 @@
 """Spelling checks against exported staged bytes, without invoking repository gates."""
 
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import checks
 from common import HookError
-
 
 ENGINE_CONFIG = Path(__file__).resolve().parents[3] / ".codespellrc"
 
@@ -130,9 +129,11 @@ class StagedSpelling(unittest.TestCase):
         """Negative test proving configured spelling checks fail closed when the codespell binary is missing from PATH."""
         self.stage("notes.md", "Clean text.\n")
         self.check("notes.md")
-        with mock.patch("common.subprocess.Popen", side_effect=FileNotFoundError("missing")):
-            with self.assertRaisesRegex(HookError, "codespell: missing"):
-                checks.text_checks(self.export, ["notes.md"])
+        with (
+            mock.patch("common.subprocess.Popen", side_effect=FileNotFoundError("missing")),
+            self.assertRaisesRegex(HookError, "codespell: missing"),
+        ):
+            checks.text_checks(self.export, ["notes.md"])
 
     def test_spelling_batches_keep_every_filename_and_stop_on_failure(self):
         """Boundary test proving file lists exceeding batch size partition into batches and halt immediately on failure."""
@@ -143,10 +144,25 @@ class StagedSpelling(unittest.TestCase):
         self.assertEqual(execute.call_count, 2)
         self.assertEqual(execute.call_args_list[0].args[0][4:], names[:-1])
         self.assertEqual(execute.call_args_list[1].args[0][4:], names[-1:])
-        with mock.patch("checks.run", side_effect=HookError("spelling refused")) as execute:
-            with self.assertRaisesRegex(HookError, "spelling refused"):
-                checks.spelling_check(self.export, names)
+        with (
+            mock.patch("checks.run", side_effect=HookError("spelling refused")) as execute,
+            self.assertRaisesRegex(HookError, "spelling refused"),
+        ):
+            checks.spelling_check(self.export, names)
         self.assertEqual(execute.call_count, 1)
+
+    def test_oversized_path_list_is_rejected(self):
+        """Boundary test proving path lists exceeding MAX_SPELLING_PATHS fail closed before execution."""
+        (self.export / ".codespellrc").write_text("[codespell]\n", encoding="utf-8")
+        names = [f"notes_{number}.md" for number in range(checks.MAX_SPELLING_PATHS + 1)]
+        with (
+            mock.patch("checks.run") as execute,
+            self.assertRaisesRegex(
+                HookError, f"spelling check path count exceeds {checks.MAX_SPELLING_PATHS}"
+            ),
+        ):
+            checks.spelling_check(self.export, names)
+        execute.assert_not_called()
 
 
 if __name__ == "__main__":
