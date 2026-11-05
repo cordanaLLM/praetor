@@ -32,22 +32,12 @@ type msrvDeclaration struct{ file, version string }
 
 // AuditRustMSRV requires a pinned minimum or a workflow job building on the declared minimum.
 // This checks repository declarations; it does not execute the workflow or compile Rust.
-// Discovery uses the manifest's verification bounds; a nil manifest keeps the root .standards.yaml or defaults.
+// Discovery uses the manifest's verification bounds; a nil manifest reads the root .standards.yaml, falling back to defaults only when none exists.
 // One optional requested policy raises bounds for this run, as the Paperclip facts walk does.
 func AuditRustMSRV(ctx context.Context, manifest *config.Manifest, root string, requested ...*VerificationLimits) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, contextopt.MaxDuration)
 	defer cancel()
-	if len(requested) > 1 {
-		return "", fmt.Errorf("[FAIL] rust-msrv: expected at most one requested verification policy")
-	}
-	var overrides *VerificationLimits
-	if len(requested) == 1 {
-		overrides = requested[0]
-	}
-	if manifest == nil {
-		manifest, _ = declaredManifest(ctx, root)
-	}
-	limits, err := NormalizeVerificationLimits(ResolveVerificationLimits(manifest.DeclaredVerification(), overrides))
+	limits, err := resolveRustMSRVLimits(ctx, manifest, root, requested)
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] rust-msrv: %w", err)
 	}
@@ -70,6 +60,25 @@ func AuditRustMSRV(ctx context.Context, manifest *config.Manifest, root string, 
 		return "", fmt.Errorf("[FAIL] rust-msrv: %w", err)
 	}
 	return judgeRustMSRV(inputs.files, declarations, proofs, limits.MaxFiles)
+}
+
+// resolveRustMSRVLimits loads the root manifest if omitted and resolves effective verification limits.
+func resolveRustMSRVLimits(ctx context.Context, manifest *config.Manifest, root string, requested []*VerificationLimits) (VerificationLimits, error) {
+	if len(requested) > 1 {
+		return VerificationLimits{}, fmt.Errorf("expected at most one requested verification policy")
+	}
+	var overrides *VerificationLimits
+	if len(requested) == 1 {
+		overrides = requested[0]
+	}
+	if manifest == nil {
+		var err error
+		manifest, err = loadDeclaredManifest(ctx, root)
+		if err != nil {
+			return VerificationLimits{}, err
+		}
+	}
+	return NormalizeVerificationLimits(ResolveVerificationLimits(manifest.DeclaredVerification(), overrides))
 }
 
 // judgeRustMSRV gives the rust-msrv verdict: each declared rust-version needs a pinned toolchain or a workflow proof;

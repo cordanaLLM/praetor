@@ -55,8 +55,8 @@ func TestRustMSRVDeclaredFileBytes(t *testing.T) {
 		{"ceiling exact", fmt.Sprintf("verification:\n  max_file_bytes: %d\n", contextopt.MaxSourceBytes), "", contextopt.MaxSourceBytes},
 		{"ceiling exceeded", fmt.Sprintf("verification:\n  max_file_bytes: %d\n", contextopt.MaxSourceBytes), "max_file_bytes is already at its ceiling 1048576", contextopt.MaxSourceBytes + 1},
 		{"undeclared ceiling exceeded", "", "max_file_bytes is already at its ceiling 1048576", contextopt.MaxSourceBytes + 1},
-		{"unreadable manifest defaults", "version: [\n", "", maxVerificationInputBytes},
-		{"unreadable manifest larger workflow", "version: [\n", "declare verification.max_file_bytes in .standards.yaml", 70 << 10},
+		{"unreadable manifest refused", "version: [\n", "failed to parse manifest at .standards.yaml", maxVerificationInputBytes},
+		{"invalid verification declaration", "verification:\n  max_file_bytes: -1\n", "verification.max_file_bytes must be an integer", maxVerificationInputBytes},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
