@@ -1621,6 +1621,40 @@ class ScopeAndGuard(unittest.TestCase):
             ["semgrep", "validate", permissions],
         ])
 
+    def test_semgrep_permissions_absent_rules_file_is_the_opt_out(self):
+        """A repository without the permission rules file (adoption does not emit it) gets no permission scan."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "internal").mkdir()
+            (root / "internal" / "a.go").write_text("package a\n", encoding="utf-8")
+            commands = semgrep_commands(root, ["internal/a.go"], base="abc123")
+            self.assertFalse(any(".config/semgrep/go-permissions.yml" in command for command in commands))
+
+    def test_semgrep_permissions_rule_file_removed_fails(self):
+        """A push that removes the permission rules file is refused, not read as an opt-out."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            permissions = ".config/semgrep/go-permissions.yml"
+            with self.assertRaisesRegex(HookError, "Go permission rules file removed"):
+                semgrep_commands(root, [permissions])
+
+    def test_file_checks_schedules_self_tests_on_semgrep_policy_change(self):
+        """A change to .config/semgrep/ schedules harness self-tests to replay rule fixtures."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cfg = root / ".config" / "semgrep"
+            cfg.mkdir(parents=True)
+            permissions = ".config/semgrep/go-permissions.yml"
+            (root / permissions).write_text("rules: []\n", encoding="utf-8")
+            with mock.patch("checks.parallel") as scheduled, \
+                    mock.patch("checks.require_floors"), \
+                    mock.patch("checks.self_test_commands", return_value=[["self_test_stub"]]) as self_tests:
+                file_checks(root, [permissions])
+            self_tests.assert_called_once_with(root)
+            scheduled.assert_called_once()
+            commands = scheduled.call_args.args[0]
+            self.assertIn(["self_test_stub"], commands)
+
     def test_semgrep_permissions_rule_validation_planted_invalid_config_fails(self):
         """Execute validation and verify that planted invalid rule syntax fails."""
         if shutil.which("semgrep") is None:
@@ -1680,8 +1714,9 @@ class ScopeAndGuard(unittest.TestCase):
             self.semgrep_fixture_git(root, "add", name)
             scans = semgrep_commands(root, [name], base="HEAD")
             self.assertEqual(len(scans), 2, "the hook must construct a permission scan")
+            env = {**os.environ, "XDG_CONFIG_HOME": str(root)}
             result = subprocess.run([*scans[1], "--json", "--metrics=off", "--disable-version-check"],
-                                    cwd=root, capture_output=True, text=True, timeout=60, check=False)
+                                    cwd=root, env=env, capture_output=True, text=True, timeout=60, check=False)
         self.assertIn(result.returncode, (0, 1), result.stderr)
         self.assertTrue(result.stdout.strip(), f"semgrep returned no JSON: {result.stderr}")
         payload = json.loads(result.stdout)
@@ -1769,8 +1804,8 @@ class ScopeAndGuard(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "internal").mkdir()
-            (root / "internal" / "a.go").write_text("x\n", encoding="utf-8")
-            self.assertEqual(semgrep_commands(root, [".config/semgrep/hiss-invariants.yml", "internal/a.go"]), [])
+            (root / "internal" / "a.py").write_text("x = 1\n", encoding="utf-8")
+            self.assertEqual(semgrep_commands(root, [".config/semgrep/hiss-invariants.yml", "internal/a.py"]), [])
         self.assertTrue(is_fixture("testdata/a.go"))
         self.assertTrue(is_fixture("a\\testdata\\b.go"))
         self.assertFalse(is_fixture("internal/testdatafile.go"))
