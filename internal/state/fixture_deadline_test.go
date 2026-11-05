@@ -20,9 +20,13 @@ import (
 )
 
 // unboundedStateFixture matches a test that hands SyncState or the ledger bootstrap a context
-// without a deadline: the bootstrap then applies its own fallback (defaultBootstrapTimeout), which
-// cut three agenthook fixtures on a loaded Windows runner (#1810).
-var unboundedStateFixture = regexp.MustCompile(`\b(?:state\.)?(?:SyncState|InitWorkingDirIfAbsentContext)\(\s*context\.(?:Background|TODO)\(\)`)
+// without a deadline, under any package name and across line breaks: the bootstrap then applies
+// its own fallback (defaultBootstrapTimeout), which cut three agenthook fixtures on a loaded
+// Windows runner (#1810). A context bound to a variable first is out of reach of this text scan.
+var unboundedStateFixture = regexp.MustCompile(`\b(?:\w+\.)?(?:SyncState|InitWorkingDirIfAbsentContext)\(\s*context\.(?:Background|TODO)\(\)`)
+
+// commentLine matches a line comment, which a scan of calls must not read.
+var commentLine = regexp.MustCompile(`(?m)^[ \t]*//.*$`)
 
 // maxScannedFiles bounds the source walk of TestStateFixturesCarryTheTestDeadline (HISS-02).
 const maxScannedFiles = 20000
@@ -67,17 +71,18 @@ func skipSourceDir(root, path, name string) error {
 	return nil
 }
 
-// unboundedLines returns the 1-based line numbers of path that match unboundedStateFixture.
+// unboundedLines returns the 1-based line numbers of path where an unboundedStateFixture call
+// starts; line comments are blanked first, keeping every offset.
 func unboundedLines(path string) ([]int, error) {
 	data, err := os.ReadFile(path) // #nosec G304 -- paths come from walking the module's own tree
 	if err != nil {
 		return nil, err
 	}
-	var hits []int
-	for no, line := range strings.Split(string(data), "\n") {
-		if unboundedStateFixture.MatchString(line) {
-			hits = append(hits, no+1)
-		}
+	text := commentLine.ReplaceAllStringFunc(string(data), func(c string) string { return strings.Repeat(" ", len(c)) })
+	matches := unboundedStateFixture.FindAllStringIndex(text, maxScannedFiles)
+	hits := make([]int, 0, len(matches))
+	for i := 0; i < len(matches); i++ {
+		hits = append(hits, strings.Count(text[:matches[i][0]], "\n")+1)
 	}
 	return hits, nil
 }
@@ -106,12 +111,14 @@ func TestStateFixturesCarryTheTestDeadline(t *testing.T) {
 	body := "package x\n" +
 		"func a() { state." + call + "Background(), root, \"x\") }\n" +
 		"func b() { " + call + "TODO(), root, \"x\") }\n" +
-		"func c() { state.SyncState(testsupport.DeadlineContext(t), root, \"x\") }\n"
+		"func c() { state.SyncState(testsupport.DeadlineContext(t), root, \"x\") }\n" +
+		"func d() { st.SyncState(\n\t\tcontext.Back" + "ground(), root, \"x\") }\n" +
+		"// state." + call + "Background() in a comment is no call\n"
 	if err := os.WriteFile(filepath.Join(planted, "planted_test.go"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	found, err = unboundedStateFixtures(planted)
-	if err != nil || strings.Join(found, ",") != "planted_test.go:2,planted_test.go:3" {
+	if err != nil || strings.Join(found, ",") != "planted_test.go:2,planted_test.go:3,planted_test.go:5" {
 		t.Fatalf("planted unbounded calls: got %v %v", found, err)
 	}
 }
