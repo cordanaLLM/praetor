@@ -38,7 +38,10 @@ type liveBypassRuleset struct {
 // --remote keeps a live ruleset's bypass actors (mergeRuleset), so this drift is changed on
 // GitHub by hand.
 func EvaluateBypassActors(policy config.BranchProtectionPolicy, liveRuleset []byte) (ProtectionFinding, error) {
-	declared := bypassActorKeys(rulesetBypassActors(policy))
+	declared, err := bypassActorKeys(rulesetBypassActors(policy))
+	if err != nil {
+		return ProtectionFinding{}, err
+	}
 	finding := ProtectionFinding{Property: BypassActorsProperty, Declared: describeBypassActors(declared), Verdict: ProtectionEnforced}
 	if liveRuleset == nil {
 		finding.Live = "no " + RepositoryRulesetName + " ruleset"
@@ -60,7 +63,7 @@ func EvaluateBypassActors(policy config.BranchProtectionPolicy, liveRuleset []by
 		return ProtectionFinding{}, fmt.Errorf("the live ruleset lists %d bypass actors, more than %d", len(actors), maxBypassActors)
 	}
 	live := make([]string, 0, len(actors))
-	for i := 0; i < len(actors); i++ {
+	for i := 0; i < len(actors) && i < maxBypassActors; i++ {
 		live = append(live, bypassActorKey(actors[i].ActorType, actors[i].ActorID, actors[i].BypassMode))
 	}
 	slices.Sort(live)
@@ -71,8 +74,12 @@ func EvaluateBypassActors(policy config.BranchProtectionPolicy, liveRuleset []by
 	return finding, nil
 }
 
-// bypassActorKeys renders rendered bypass actors as sorted comparison keys.
-func bypassActorKeys(actors []map[string]any) []string {
+// bypassActorKeys renders rendered bypass actors as sorted comparison keys, refusing a list
+// over maxBypassActors so drift cannot be hidden by truncation (HISS-02).
+func bypassActorKeys(actors []map[string]any) ([]string, error) {
+	if len(actors) > maxBypassActors {
+		return nil, fmt.Errorf("the declared ruleset lists %d bypass actors, more than %d", len(actors), maxBypassActors)
+	}
 	keys := make([]string, 0, len(actors))
 	for i := 0; i < len(actors) && i < maxBypassActors; i++ {
 		id := "-"
@@ -82,7 +89,7 @@ func bypassActorKeys(actors []map[string]any) []string {
 		keys = append(keys, fmt.Sprint(actors[i]["actor_type"])+" "+id+" "+fmt.Sprint(actors[i]["bypass_mode"]))
 	}
 	slices.Sort(keys)
-	return keys
+	return keys, nil
 }
 
 // bypassActorKey is one live actor as "type id mode", the form bypassActorKeys renders; an actor
