@@ -7,12 +7,15 @@ This directory contains research on development rules, mechanical enforcement to
 The research surveys 114 software projects across 20 distinct technical domains, capturing 1,339 rules.
 
 ### Batches & Consolidation
+
 The dataset was gathered across five sequential batches (`r1.tsv` through `r5.tsv`) and consolidated into the canonical dataset [catalogue.tsv](catalogue.tsv). Individual batch files were retired into git history upon consolidation.
 
-Cells that quote another project's SPDX licence identifier line sit between the REUSE ignore markers (start and end), so `reuse lint` does not read the quoted tag as a licence expression of this file.
+In [catalogue.tsv](catalogue.tsv), cells that quote another project's SPDX licence identifier line wrap that text inline between `REUSE-IgnoreStart` and `REUSE-IgnoreEnd` markers within the TSV cell (rather than standalone lines, preserving single-line TSV records), so `reuse lint` does not read the quoted tag as a licence expression of this file.
 
 ### Domains
+
 The survey spans 20 software domains:
+
 - Compilers, languages, and runtimes (e.g. CPython, Go, LLVM, Rust, OpenJDK, V8)
 - Operating systems and kernels (e.g. Linux kernel, FreeBSD, OpenBSD, illumos, Zephyr, Redox OS)
 - Databases and storage (e.g. PostgreSQL, SQLite, Redis, Valkey, RocksDB, MongoDB, Ceph)
@@ -23,15 +26,17 @@ The survey spans 20 software domains:
 
 *Note: FFmpeg is covered by a dedicated separate research leg.*
 
-### Pinning Rule & Sampling Verification
+### Pinning Rule
+
 Every row records the source URL and revision where the rule was documented:
+
 - **Pinned URLs (`pinned = yes`)**: 1,274 rows (95.1%) reference immutable revision identifiers (git commit SHA or release tag) embedded directly in the `source_url`.
 - **Unpinned URLs (`pinned = no`)**: 65 rows (4.9%) document rules from projects that maintain live, unversioned developer policy portals (e.g. Debian Policy manuals, OpenBSD documentation, or FreeBSD project guides).
-- **Sampling Validation**: A random sample of 12 pinned URLs across distinct domains was verified against live upstream servers via HTTP GET requests. All 12 of 12 sampled URLs returned HTTP 200 OK with the target revision present in the fetched document.
 
 ## Taxonomy & Summary Counts
 
 The 1,339 rules are categorized across 11 functional disciplines:
+
 - **Style** (367 rules, 112 projects): Formatting, indentation, line lengths, naming conventions, and language constructs.
 - **License** (143 rules, 108 projects): SPDX tags, copyright banners, licensing compatibility, and Contributor License Agreements.
 - **Commit** (138 rules, 81 projects): Commit subjects, body wrapping, atomic bisectability, and trailers.
@@ -45,6 +50,7 @@ The 1,339 rules are categorized across 11 functional disciplines:
 - **Release** (23 rules, 23 projects): Changelog fragments, backport targeting, and artifact signing.
 
 These rules consolidate into **42 cross-project rule classes**, mapped against Praetor's own repository in [gap-matrix.md](gap-matrix.md):
+
 - **Covered**: 19 classes
 - **Partial**: 19 classes
 - **Gap**: 3 classes
@@ -55,6 +61,7 @@ Coverage citations were checked against source revision `247ae99da` on 2026-11-0
 ## How to Read the Gap Matrix
 
 The companion document [gap-matrix.md](gap-matrix.md) evaluates Praetor's implementation against each rule class:
+
 - **Class**: The standardized rule concept across projects.
 - **Projects (count)**: The number of projects in the catalogue that hold this rule.
 - **Their mechanical forms**: Concrete tools and configurations observed in peer projects (e.g. `gofmt`, `clang-format`, `towncrier`, `checkpatch.pl`, `libabigail`).
@@ -71,6 +78,7 @@ Gaps and partials are ordered by defect-detection efficiency: defects prevented 
 ## Glossary of Observed Tools
 
 To assist newcomers, key tools and mechanisms referenced in the matrix include:
+
 - `actionlint`: Static checker for GitHub Actions workflow definitions.
 - `changie` / `towncrier`: Utilities that assemble release changelogs from isolated pull-request fragments in a directory.
 - `checkpatch.pl`: Linux kernel script checking patch formatting, commit styles, and common C anti-patterns.
