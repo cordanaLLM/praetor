@@ -242,7 +242,8 @@ func TestAuditReleaseToken_Skip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("AuditReleaseToken = %v; want skip", err)
 		}
-		want := "[SKIP] Release token not checked: no workflow under .github/workflows holds a release-please step."
+		want := "[SKIP] Release token not checked: no workflow under .github/workflows holds a release-please step.\n" +
+			skipReleaseOwnNoConfig
 		if out != want {
 			t.Errorf("output = %q; want %q", out, want)
 		}
@@ -259,7 +260,8 @@ func TestAuditReleaseToken_Skip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("AuditReleaseToken = %v; want skip", err)
 		}
-		want := "[SKIP] Release token not checked: no workflow under .github/workflows holds a release-please step."
+		want := "[SKIP] Release token not checked: no workflow under .github/workflows holds a release-please step.\n" +
+			skipReleaseOwnNoConfig
 		if out != want {
 			t.Errorf("output = %q; want %q", out, want)
 		}
