@@ -235,8 +235,8 @@ func insideHostPort(t *testing.T) int {
 	return addr.Port
 }
 
-// outsideHostPort is a host-loopback listener on a free fixed port below the kernel's range,
-// standing for a workstation service.
+// outsideHostPort is a host-loopback listener on a free fixed port outside the kernel's range,
+// standing for a workstation service: below the range when there is room, else above it.
 func outsideHostPort(t *testing.T) int {
 	t.Helper()
 	publish, err := readHostPortRange()
@@ -248,7 +248,12 @@ func outsideHostPort(t *testing.T) int {
 			return p
 		}
 	}
-	t.Fatalf("no free host port among the 199 below %d", publish.First)
+	for p := publish.Last + 1; p <= 65535 && p < publish.Last+200; p++ {
+		if _, ok := hostListener(t, p); ok {
+			return p
+		}
+	}
+	t.Fatalf("no free host port within 199 ports on either side of %s", publish)
 	return 0
 }
 
