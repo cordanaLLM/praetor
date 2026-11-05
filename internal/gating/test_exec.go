@@ -32,7 +32,7 @@ func GoTestExec(goos, executable string) (string, string, error) {
 			return "", "", errors.New("go test loopback namespace wrapper: executable path contains both quote types")
 		}
 	}
-	return quote + executable + quote + " go test-exec", "Go test binaries: loopback-only network namespace (sandbox NetworkNone)", nil
+	return quote + executable + quote + " go test-exec", "Go test binaries: loopback-only network namespace (sandbox NetworkNone; with a container engine socket, pasta forwards connects to host ports of the kernel's ephemeral range, where engines publish container ports)", nil
 }
 
 // goTestExec resolves the -exec flag for stage test execution, ensuring container mounts if running in a container.

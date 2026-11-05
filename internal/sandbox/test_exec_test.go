@@ -70,7 +70,7 @@ func TestSandboxLoopbackProbeResolvesTrue(t *testing.T) {
 		if err := os.WriteFile(fakeBwrap, []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		runner := Runner{GOOS: "linux", Lookup: func(name string) (string, error) {
+		runner := Runner{GOOS: "linux", ContainerSocket: noContainer, Lookup: func(name string) (string, error) {
 			if name == "bwrap" {
 				return fakeBwrap, nil
 			}
@@ -186,7 +186,8 @@ func loopbackServerCommand(t *testing.T, isolated bool) loopbackTestRunner {
 			return util.RunCommandPassthrough(ctx, "", executable, stdin, stdout, stderr, command[1:]...)
 		}
 	}
-	_, err = (Runner{}).LoopbackCommand(t.Context(), command)
+	runner := Runner{ContainerSocket: noContainer}
+	_, err = runner.LoopbackCommand(t.Context(), command)
 	if errors.Is(err, ErrUnavailable) {
 		t.Skipf("real loopback namespace case unavailable: %v", err)
 	}
@@ -194,7 +195,7 @@ func loopbackServerCommand(t *testing.T, isolated bool) loopbackTestRunner {
 		t.Fatal(err)
 	}
 	return func(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) error {
-		return (Runner{}).RunLoopback(ctx, command, stdin, stdout, stderr)
+		return runner.RunLoopback(ctx, command, stdin, stdout, stderr)
 	}
 }
 
