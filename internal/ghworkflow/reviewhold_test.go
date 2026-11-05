@@ -162,8 +162,9 @@ func assertReviewReleasePass(t *testing.T, dir, event, want string) {
 	}
 }
 
-// TestReviewHoldPackageStepBounds prevents a package step consuming the entire job budget.
-func TestReviewHoldPackageStepBounds(t *testing.T) {
+// loadPortabilityWorkflow reads and parses the repository's portability workflow.
+func loadPortabilityWorkflow(t *testing.T) Spec {
+	t.Helper()
 	data, err := os.ReadFile("../../.github/workflows/portability.yml")
 	if err != nil {
 		t.Fatal(err)
@@ -172,6 +173,12 @@ func TestReviewHoldPackageStepBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return spec
+}
+
+// TestReviewHoldPackageStepBounds prevents a package step consuming the entire job budget.
+func TestReviewHoldPackageStepBounds(t *testing.T) {
+	spec := loadPortabilityWorkflow(t)
 	count := 0
 	for id, job := range spec.Jobs {
 		for _, step := range job.Steps {
@@ -191,16 +198,31 @@ func TestReviewHoldPackageStepBounds(t *testing.T) {
 	}
 }
 
+// TestReviewHoldStepBelowJobTimeout prevents a review barrier outlasting its job timeout.
+func TestReviewHoldStepBelowJobTimeout(t *testing.T) {
+	spec := loadPortabilityWorkflow(t)
+	count := 0
+	for id, job := range spec.Jobs {
+		for _, step := range job.Steps {
+			if step.ID != "review-hold" {
+				continue
+			}
+			count++
+			bound, err := strconv.Atoi(step.TimeoutMinutes.Value)
+			jobBound, jobErr := strconv.Atoi(job.TimeoutMinutes.Value)
+			if err != nil || jobErr != nil || bound >= jobBound {
+				t.Errorf("%s: step timeout=%q job timeout=%q; want step timeout strictly below job timeout", id, step.TimeoutMinutes.Value, job.TimeoutMinutes.Value)
+			}
+		}
+	}
+	if count != 3 {
+		t.Fatalf("review hold steps=%d; want harness, windows-shard and windows aggregate", count)
+	}
+}
+
 // TestReviewHoldOpenThreadPlanted requires a review barrier before the heavy work can proceed.
 func TestReviewHoldOpenThreadPlanted(t *testing.T) {
-	data, err := os.ReadFile("../../.github/workflows/portability.yml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec, err := Parse(data)
-	if err != nil {
-		t.Fatal(err)
-	}
+	spec := loadPortabilityWorkflow(t)
 	for _, id := range []string{"harness", "windows-shard"} {
 		steps := spec.Jobs[id].Steps
 		if len(steps) < 2 || steps[1].Name != "Stop while review is open" {
