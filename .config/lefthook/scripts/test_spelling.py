@@ -131,7 +131,18 @@ class StagedSpelling(unittest.TestCase):
         self.check("notes.md")
         with (
             mock.patch("common.subprocess.Popen", side_effect=FileNotFoundError("missing")),
-            self.assertRaisesRegex(HookError, "codespell: missing"),
+            self.assertRaisesRegex(HookError, r"codespell(?:\.exe)?: missing"),
+        ):
+            checks.text_checks(self.export, ["notes.md"])
+
+    def test_missing_codespell_windows_executable_name_matches(self):
+        """Negative test proving missing codespell error matches Windows .exe executable suffix."""
+        self.stage("notes.md", "Clean text.\n")
+        self.check("notes.md")
+        with (
+            mock.patch("toolchain.on_path", return_value=r"C:\bin\codespell.exe"),
+            mock.patch("common.subprocess.Popen", side_effect=FileNotFoundError("missing")),
+            self.assertRaisesRegex(HookError, r"codespell(?:\.exe)?: missing"),
         ):
             checks.text_checks(self.export, ["notes.md"])
 
