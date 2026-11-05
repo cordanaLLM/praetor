@@ -227,6 +227,7 @@ exceptions:
 	return expiredException
 }
 
+// assertCodespellAuditAndPlanted verifies AuditCodespell rejects unexcused skips and codespell detects planted misspellings in unskipped files.
 func assertCodespellAuditAndPlanted(t *testing.T, repo string, today time.Time, expiredException config.Exception, codespellBin string) {
 	t.Helper()
 	codespellrcPath := filepath.Join(repo, ".codespellrc")

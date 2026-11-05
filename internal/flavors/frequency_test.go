@@ -47,6 +47,7 @@ func TestPlanSelected_Positive_ManualMovesOnlyWhenNamed(t *testing.T) {
 	}
 }
 
+// TestPlanSelected_Negative_UnknownFrequencyAndFlavorAreRefused proves config loading rejects unknown update frequency strings and flavor filtering identifies undeclared flavors.
 func TestPlanSelected_Negative_UnknownFrequencyAndFlavorAreRefused(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "flavors.yaml")
 	for _, frequency := range []string{"weekly", "Manual", "on-push"} {

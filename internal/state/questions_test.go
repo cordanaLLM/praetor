@@ -153,6 +153,7 @@ func TestQuestionLedger_Negative_RejectsInvalidDocuments(t *testing.T) {
 	}
 }
 
+// TestQuestionLedger_Negative_RejectsInvalidSidecar proves question ledger operations reject malformed, schema-invalid, or mismatched JSON sidecar metadata.
 func TestQuestionLedger_Negative_RejectsInvalidSidecar(t *testing.T) {
 	row := defaultQuestionsMD() + "| `Q-001` | q |  | pending |  | " + questionMetadataRef + "\n"
 	record := `{"context":"c","created_at":"2026-09-25T10:00:00Z","resolved_at":"0001-01-01T00:00:00Z"}`

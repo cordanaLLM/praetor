@@ -151,6 +151,7 @@ func TestOperatorSettingsSectionOnlyAndEmptySections(t *testing.T) {
 	}
 }
 
+// TestOperatorSettingsRejectInvalidDocuments proves policy loading rejects invalid operator configuration documents across schema and security edge cases.
 func TestOperatorSettingsRejectInvalidDocuments(t *testing.T) {
 	root := policyFixture(t, "", "", "")
 	host := t.TempDir()

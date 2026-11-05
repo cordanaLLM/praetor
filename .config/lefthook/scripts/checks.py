@@ -91,6 +91,10 @@ def parallel(commands, directory):
 
 
 def text_checks(directory, names):
+    """Scan non-binary files for merge markers and Python or JSON syntax errors.
+
+    Collects all non-binary paths and forwards them to spelling verification.
+    """
     text_files = []
     for name in names:
         path = directory / name

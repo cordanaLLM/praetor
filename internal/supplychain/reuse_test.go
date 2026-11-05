@@ -129,6 +129,7 @@ SPDX-License-Identifier = "MIT"
 	}
 }
 
+// checkAnnotationTablesEscaped verifies TOML escape sequences, literal quotes, and unicode escapes in REUSE annotation path lists are properly unescaped.
 func checkAnnotationTablesEscaped(t *testing.T) {
 	t.Helper()
 	// codespell:ignore-next-line caf
