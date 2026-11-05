@@ -89,6 +89,7 @@ func prepareGoRace(ctx context.Context, cfg *stageConfig) (raceScopeConfig, erro
 	return scopeCfg, nil
 }
 
+// runGoRaceCommand executes race-detector tests for a Go module with configured resource scoping and network isolation.
 func runGoRaceCommand(ctx context.Context, cfg *stageConfig, module goModule, dir string, bound time.Duration, scopeCfg raceScopeConfig) (string, error) {
 	run := cfg.goToolchain().run
 	count, err := ModulePackageCount(ctx, run, dir)
@@ -101,7 +102,12 @@ func runGoRaceCommand(ctx context.Context, cfg *stageConfig, module goModule, di
 	if count == 0 {
 		return NoPackagesNote + ": race tests not run", nil
 	}
-	name, args, msg := raceTestCommand(module, bound, scopeCfg, cfg.racePackages)
+	execFlag, isolation, err := cfg.goTestExec()
+	if err != nil {
+		return "", err
+	}
+	name, args, msg := raceTestCommand(module, bound, scopeCfg, cfg.racePackages, execFlag)
+	msg += "; " + isolation
 	out, err := run(ctx, dir, name, args...)
 	if err == nil {
 		return msg, nil
@@ -109,7 +115,7 @@ func runGoRaceCommand(ctx context.Context, cfg *stageConfig, module goModule, di
 	if cutErr := cutError(ctx, "race-detector tests", bound, "", dir, fmt.Sprintf("%s [%v]", out, err)); cutErr != nil {
 		return "", cutErr
 	}
-	return "", fmt.Errorf("tests failed in %s: %s (%w)", dir, out, err)
+	return "", fmt.Errorf("tests failed in %s (%s): %s (%w)", dir, isolation, out, err)
 }
 
 // An explicit empty Go selection stays visible even in a repository with only other languages.

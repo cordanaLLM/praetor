@@ -122,10 +122,7 @@ func TestRaceStageRunsInARealDevcontainer(t *testing.T) {
 	}
 	lines := strings.Split(string(record), "\n")
 	worktrees := filepath.Join(resolved, ".standards", "worktrees") + string(filepath.Separator)
-	if len(lines) < 3 || !strings.HasPrefix(lines[0], worktrees) || lines[1] != "test -race -timeout "+TestStageTimeout.String()+" ./..." ||
-		lines[2] != strconv.Itoa(os.Getuid()) {
-		t.Errorf("the suite ran as %q; want the stage worktree under %s, go test -race and uid %d", lines, worktrees, os.Getuid())
-	}
+	assertDevcontainerRaceCommand(t, cfg, lines, worktrees)
 
 	image := cfg.container.image
 	releaseDevcontainer(t.Context(), cfg)
@@ -229,5 +226,22 @@ func removeImage(t *testing.T, runtimePath, ref string) {
 	defer cancel()
 	if _, err := util.RunCommand(ctx, t.TempDir(), runtimePath, "image", "rm", "--force", ref); err != nil {
 		t.Logf("remove test image %s: %v", ref, err)
+	}
+}
+
+// assertDevcontainerRaceCommand checks that race testing in a devcontainer executed under the expected worktree, test flags, and uid.
+func assertDevcontainerRaceCommand(t *testing.T, cfg *stageConfig, lines []string, worktrees string) {
+	t.Helper()
+	execFlag, _, execErr := cfg.goTestExec()
+	if execErr != nil {
+		t.Fatal(execErr)
+	}
+	want := "test -race -timeout " + TestStageTimeout.String()
+	if execFlag != "" {
+		want += " -exec " + execFlag
+	}
+	if len(lines) < 3 || !strings.HasPrefix(lines[0], worktrees) || lines[1] != want+" ./..." ||
+		lines[2] != strconv.Itoa(os.Getuid()) {
+		t.Errorf("the suite ran as %q; want the stage worktree under %s, go test -race and uid %d", lines, worktrees, os.Getuid())
 	}
 }

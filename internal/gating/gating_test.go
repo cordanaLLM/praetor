@@ -89,6 +89,9 @@ func newTestConfig(t *testing.T, repoDir string, dryRun bool) (*stageConfig, *[]
 	recorded := &[]recordedCommand{}
 	rep := &PipelineReport{Stages: make([]StageResult, 0, maxStages)}
 	return &stageConfig{
+		// Most stage fixtures model a platform without namespaces; Linux isolation
+		// cases opt in explicitly and inspect -exec through the injected runner.
+		goos:        "darwin",
 		repoDir:     repoDir,
 		dryRun:      dryRun,
 		run:         fakeRunner(recorded, "", nil),
