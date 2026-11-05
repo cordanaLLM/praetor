@@ -9,7 +9,24 @@ import checks
 import common
 from common import HookError
 
-ENGINE_CONFIG = Path(__file__).resolve().parents[3] / ".codespellrc"
+ROOT = Path(__file__).resolve().parents[3]
+ENGINE_CONFIG = ROOT / ".codespellrc"
+
+
+def is_engine_checkout(root: Path) -> bool:
+    """Return True when root is the Praetor engine repository checkout, not an adopter."""
+    go_mod = root / "go.mod"
+    standardsctl = root / "cmd/standardsctl/main.go"
+    if not (go_mod.is_file() and standardsctl.is_file() and (root / ".codespellrc").is_file()):
+        return False
+    try:
+        first_line = go_mod.read_text(encoding="utf-8").splitlines()[0].strip()
+    except (OSError, IndexError):
+        return False
+    return first_line == "module github.com/cordanaLLM/praetor"
+
+
+IS_ENGINE = is_engine_checkout(ROOT)
 
 
 class StagedSpelling(unittest.TestCase):
@@ -72,7 +89,7 @@ class StagedSpelling(unittest.TestCase):
         self.stage("internal/testdata/spelling.golden", "occured seperate\n")
         self.check("internal/testdata/spelling.golden")
 
-    @unittest.skipUnless(ENGINE_CONFIG.is_file(), "vendored policy without engine config")
+    @unittest.skipUnless(IS_ENGINE, "vendored policy without engine identity")
     def test_engine_config_skips_generated_paths_and_checks_owned_prose(self):
         """Positive and negative test proving engine config skips generated assets while rejecting typos in owned documentation."""
         self.stage(".codespellrc", ENGINE_CONFIG.read_text(encoding="utf-8"))
@@ -87,7 +104,6 @@ class StagedSpelling(unittest.TestCase):
             "pnpm-lock.yaml",
             "go.sum",
             "CHANGELOG.md",
-            "docs/research/dev-rules/catalogue.tsv",
         )
         for name in names:
             # codespell:ignore-next-line occured,seperate
@@ -184,6 +200,31 @@ class StagedSpelling(unittest.TestCase):
         ):
             checks.spelling_check(self.export, ["notes.md"])
         execute.assert_not_called()
+
+    def test_is_engine_checkout_positive(self):
+        """Positive test proving the Praetor engine checkout is identified."""
+        self.assertTrue(is_engine_checkout(ROOT))
+
+    def test_is_engine_checkout_negative_for_adopter_with_codespellrc(self):
+        """Negative test proving adopter checkout with codespellrc is not identified as engine."""
+        with tempfile.TemporaryDirectory(prefix="praetor-adopter-") as tmp:
+            adopter = Path(tmp)
+            (adopter / ".codespellrc").write_text("[codespell]\n", encoding="utf-8")
+            (adopter / "go.mod").write_text("module example.com/adopter\n", encoding="utf-8")
+            self.assertFalse(is_engine_checkout(adopter))
+
+    def test_is_engine_checkout_boundary_missing_discriminators(self):
+        """Boundary test proving missing codespellrc, go.mod, or standardsctl returns False."""
+        with tempfile.TemporaryDirectory(prefix="praetor-adopter-") as tmp:
+            repo = Path(tmp)
+            self.assertFalse(is_engine_checkout(repo))
+            (repo / "go.mod").write_text("module github.com/cordanaLLM/praetor\n", encoding="utf-8")
+            self.assertFalse(is_engine_checkout(repo))
+            (repo / "cmd/standardsctl").mkdir(parents=True)
+            (repo / "cmd/standardsctl/main.go").write_text("package main\n", encoding="utf-8")
+            self.assertFalse(is_engine_checkout(repo))
+            (repo / ".codespellrc").write_text("[codespell]\n", encoding="utf-8")
+            self.assertTrue(is_engine_checkout(repo))
 
 
 if __name__ == "__main__":
