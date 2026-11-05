@@ -305,6 +305,7 @@ outside a manifest. None of them ships in the binaries.
 | [Black](https://github.com/psf/black) | Formats the hook sources adoption copies (`.config/hook-lint/requirements.in`) | tool, used by CI | MIT |
 | [Flake8](https://github.com/PyCQA/flake8) | Lints the hook sources adoption copies | tool, used by CI | MIT |
 | [Ruff](https://github.com/astral-sh/ruff) | Lints and format-checks the Python managed assets adoption copies | tool, used by CI | MIT |
+| [codespell](https://github.com/codespell-project/codespell) | Checks the spelling of the engine's own staged text and, in CI, of the repository under `.codespellrc` | tool, used by CI | GPL-2.0-only |
 | [yamllint](https://github.com/adrienverge/yamllint) | Lints the YAML praetor emits and the portability job's YAML | tool, used by CI | GPL-3.0-or-later |
 | [ShellCheck](https://github.com/koalaman/shellcheck) | Lints the shell hooks; the portability job downloads a pinned release | tool, used by CI | GPL-3.0-or-later, the notice of every upstream source file |
 | [Cosign](https://github.com/sigstore/cosign) | Keyless signing and verification | tool, used by CI | Apache-2.0 |
