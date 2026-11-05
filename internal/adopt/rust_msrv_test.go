@@ -126,6 +126,8 @@ func TestRustMSRVSelectedManifestLimits(t *testing.T) {
 	assertRustMSRVVerdict(t, line, err, "metadata exceeds byte bounds (file=10000", "")
 }
 
+// TestRustMSRVWorkspaceAndBounds covers workspace inheritance (inherited minimum passes, an unproven member or a
+// missing inheritance fails) and the manifest bound, including an unproven 129th manifest under max_files 256.
 func TestRustMSRVWorkspaceAndBounds(t *testing.T) {
 	cases := []struct {
 		name, root, member, pin string
@@ -170,6 +172,8 @@ func TestRustMSRVWorkspaceAndBounds(t *testing.T) {
 	})
 }
 
+// TestRustMSRVWorkflowRejectsFalseProofs refuses workflow text that only looks like a minimum-version build: a
+// heredoc, a dead conditional, a changed default toolchain, --ignore-rust-version, an echo or a comment.
 func TestRustMSRVWorkflowRejectsFalseProofs(t *testing.T) {
 	cases := []struct{ name, steps string }{
 		{"heredoc", "      - run: |\n          cat <<EOF\n          cargo check\n          EOF\n"},
@@ -198,6 +202,8 @@ func TestRustMSRVWorkflowRejectsFalseProofs(t *testing.T) {
 	}
 }
 
+// TestRepositoryChecksCancellationAndEngine runs each repository check with a cancelled context and expects a
+// refusal, never a verdict; against the engine's own tree each check returns its verdict without error.
 func TestRepositoryChecksCancellationAndEngine(t *testing.T) {
 	root := t.TempDir()
 	ctx, cancel := context.WithCancel(t.Context())

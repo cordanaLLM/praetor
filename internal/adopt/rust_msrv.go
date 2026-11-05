@@ -72,6 +72,8 @@ func AuditRustMSRV(ctx context.Context, manifest *config.Manifest, root string, 
 	return judgeRustMSRV(inputs.files, declarations, proofs, limits.MaxFiles)
 }
 
+// judgeRustMSRV gives the rust-msrv verdict: each declared rust-version needs a pinned toolchain or a workflow proof;
+// more declarations than twice maxFiles are refused before any verdict.
 func judgeRustMSRV(files map[string][]byte, declarations []msrvDeclaration, proofs map[string]string, maxFiles int) (string, error) {
 	maxDeclarations := maxFiles * 2
 	if len(declarations) > maxDeclarations {
@@ -96,6 +98,8 @@ func judgeRustMSRV(files map[string][]byte, declarations []msrvDeclaration, proo
 	return "[PASS] rust-msrv: " + strings.Join(evidence, "; "), nil
 }
 
+// rustMSRVDeclarations reads the rust-version each discovered Cargo.toml declares or inherits, and refuses a set
+// above maxFiles so no admitted manifest goes unexamined.
 func rustMSRVDeclarations(files map[string][]byte, maxFiles int) ([]msrvDeclaration, int, error) {
 	documents, names, err := rustMSRVDocuments(files)
 	if err != nil {
