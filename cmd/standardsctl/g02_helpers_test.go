@@ -193,7 +193,7 @@ func newAuditFixture(t *testing.T) *auditFixture {
 	recompileFixtureContext(t, dir)
 
 	writeFixtureFile(t, dir, ".config/labels.yaml", "version: 1\nlabels: []\n")
-	writeFixtureFile(t, dir, "SECURITY.md", "Report through private vulnerability reporting.\n")
+	writeFixtureFile(t, dir, "SECURITY.md", "Report through GitHub private vulnerability reporting.\n")
 	writeDeclaredRuleset(t, dir, config.DefaultPolicy().BranchProtection)
 	writeFixtureFile(t, dir, ".paperclip/harness.json", fixtureHarnessJSON)
 	// The text register block sends agent evidence under .workingdir/; audit fails unless Git

@@ -581,8 +581,12 @@ confidential issues (for GitLab or undeclared forges), or an actionable security
 (a reporting email, `mailto:` link, or HTTPS destination with a valid hostname labelled
 `Security contact:`). A heading or an instruction to contact unnamed maintainers is
 insufficient. A missing file or channel fails with the policy filename in the diagnostic.
-The policy channels must match the declared forge: a policy naming GitHub private
-vulnerability reporting fails when `repository.forge` is not GitHub (`names GitHub private vulnerability reporting, but repository.forge is ...`), and a declared GitHub repository
+The policy channels must match the declared forge: recognizing the GitHub private
+vulnerability reporting channel requires a GitHub marker in the policy (the word GitHub,
+the repository Security tab, or an advisory link); the bare phrase without such a marker is
+not recognized as the GitHub channel and passes only through another channel (such as a
+security contact or confidential issues). A policy naming GitHub private vulnerability
+reporting fails when `repository.forge` is not GitHub (`names GitHub private vulnerability reporting, but repository.forge is ...`), and a declared GitHub repository
 must name private vulnerability reporting or a security contact (`names confidential issues, but repository.forge is github`).
 
 When the policy names private vulnerability reporting, audit reads the repository

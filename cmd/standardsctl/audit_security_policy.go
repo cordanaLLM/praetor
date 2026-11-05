@@ -36,6 +36,12 @@ var negatedReporting = regexp.MustCompile(`(?i)\b(?:do\s+not|don'?t|never|cannot
 // actionableAdvisoryLink matches a URL or markdown link to GitHub's advisory reporting form.
 var actionableAdvisoryLink = regexp.MustCompile(`(?i)https://github\.com/[^\s/]+/[^\s/]+/security/advisories(?:/new)?|/security/advisories(?:/new)?`)
 
+// githubWordMarker matches the word GitHub in policy content.
+var githubWordMarker = regexp.MustCompile(`(?i)\bgithub\b`)
+
+// securityTabMarker matches a reference to the repository Security tab.
+var securityTabMarker = regexp.MustCompile(`(?i)\bsecurity\s+tab\b`)
+
 // affirmativeConfidentialIssue matches an affirmative instruction to open a confidential issue.
 var affirmativeConfidentialIssue = regexp.MustCompile(`(?im)\b(?:open|create|submit|file|use)\b[^.!?;]*\bconfidential\s+issue(?:s)?\b|\bconfidential\s+issue(?:s)?\b[^.!?;]*\b(?:in this repository|to report|for security)\b`)
 
@@ -88,13 +94,25 @@ func evaluatePolicyChannels(content string) policyChannels {
 	}
 }
 
+// hasGitHubChannelMarker reports whether policy content names GitHub's reporting channel:
+// the word GitHub, the repository Security tab, or an advisory link (actionableAdvisoryLink).
+func hasGitHubChannelMarker(content string) bool {
+	return githubWordMarker.MatchString(content) ||
+		securityTabMarker.MatchString(content) ||
+		actionableAdvisoryLink.MatchString(content)
+}
+
 // isAffirmativePrivateReporting checks whether the policy contains an affirmative instruction
-// to use private vulnerability reporting or an actionable link to its advisory form.
+// to use private vulnerability reporting and names GitHub's channel (the word GitHub, the
+// repository Security tab, or an actionable advisory link).
 func isAffirmativePrivateReporting(text, content string) bool {
 	if !strings.Contains(text, "private vulnerability reporting") {
 		return false
 	}
 	if negatedReporting.MatchString(text) {
+		return false
+	}
+	if !hasGitHubChannelMarker(content) {
 		return false
 	}
 	return affirmativeReporting.MatchString(text) || actionableAdvisoryLink.MatchString(content)

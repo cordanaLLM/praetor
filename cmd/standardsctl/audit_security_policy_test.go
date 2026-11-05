@@ -18,26 +18,28 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
-// TestAuditCommunityHealthSecurityPolicyOffline plants missing and unusable policies in
-// the existing audit path; offline skips only the setting read, never the local requirement.
-func TestAuditCommunityHealthSecurityPolicyOffline(t *testing.T) {
-	cases := []struct {
-		name, path, content, want string
-		forge                     config.Forge
-		fail                      bool
-	}{
+// securityPolicyTestCase defines one offline policy audit scenario.
+type securityPolicyTestCase struct {
+	name, path, content, want string
+	forge                     config.Forge
+	fail                      bool
+}
+
+// offlinePolicyCases returns the table of offline community-health security policy scenarios.
+func offlinePolicyCases() []securityPolicyTestCase {
+	return []securityPolicyTestCase{
 		{"missing", "", "", "SECURITY.md missing", "", true},
 		{"no channel", "SECURITY.md", "# Security\nReport bugs publicly.\n", "SECURITY.md names no private reporting channel", "", true},
 		{"empty", "SECURITY.md", "", "SECURITY.md names no private reporting channel", "", true},
 		{"vague maintainers", "SECURITY.md", "Report privately to the maintainers.\n", "SECURITY.md names no private reporting channel", "", true},
-		{"root", "SECURITY.md", "Use private vulnerability reporting.\n", "setting not read: --offline", "", false},
-		{"github", ".github/SECURITY.md", "Use private vulnerability reporting.\n", ".github/SECURITY.md", "", false},
-		{"docs", "docs/SECURITY.md", "Use private vulnerability reporting.\n", "docs/SECURITY.md", "", false},
+		{"root", "SECURITY.md", "Use GitHub private vulnerability reporting.\n", "setting not read: --offline", "", false},
+		{"github", ".github/SECURITY.md", "Use GitHub private vulnerability reporting.\n", ".github/SECURITY.md", "", false},
+		{"docs", "docs/SECURITY.md", "Use GitHub private vulnerability reporting.\n", "docs/SECURITY.md", "", false},
 		{"security contact", "SECURITY.md", "Security contact: security@example.invalid\n", "SECURITY.md", "", false},
 		{"mailto", "SECURITY.md", "Report privately to [security](mailto:security@example.invalid).\n", "SECURITY.md", "", false},
 		{"email instruction", "SECURITY.md", "Email to security@example.invalid.\n", "SECURITY.md", "", false},
 		{"empty contact", "SECURITY.md", "Security contact:\n", "SECURITY.md names no private reporting channel", "", true},
-		{"wrapped phrase", "SECURITY.md", "Use PRIVATE vulnerability\nreporting.\n", "setting not read: --offline", "", false},
+		{"wrapped phrase", "SECURITY.md", "Use GitHub PRIVATE vulnerability\nreporting.\n", "setting not read: --offline", "", false},
 		{"negated phrase", "SECURITY.md", "Do not use private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", "", true},
 		{"disabled phrase", "SECURITY.md", "Private vulnerability reporting is disabled.\n", "SECURITY.md names no private reporting channel", "", true},
 		{"non-instructional mention", "SECURITY.md", "We considered private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", "", true},
@@ -45,19 +47,29 @@ func TestAuditCommunityHealthSecurityPolicyOffline(t *testing.T) {
 		{"confidential issues", "SECURITY.md", "Open a confidential issue in this repository to report vulnerabilities.\n", "policy uses confidential issues", "", false},
 		{"confidential issues gitlab", "SECURITY.md", "Open a confidential issue in this repository to report vulnerabilities.\n", "policy uses confidential issues", config.ForgeGitLab, false},
 		{"confidential issues github", "SECURITY.md", "Open a confidential issue in this repository to report vulnerabilities.\n", "names confidential issues, but repository.forge is github", config.ForgeGitHub, true},
-		{"private reporting with contact gitlab", "SECURITY.md", "Use private vulnerability reporting.\nSecurity contact: security@example.invalid\n", "names GitHub private vulnerability reporting, but repository.forge is gitlab", config.ForgeGitLab, true},
+		{"private reporting with contact gitlab", "SECURITY.md", "Use GitHub private vulnerability reporting.\nSecurity contact: security@example.invalid\n", "names GitHub private vulnerability reporting, but repository.forge is gitlab", config.ForgeGitLab, true},
 		{"do not open public issue", "SECURITY.md", "Do not open a public issue, use GitHub private vulnerability reporting.\n", "setting not read: --offline", "", false},
-		{"do not report in public issues", "SECURITY.md", "Please do not report vulnerabilities in public issues. Instead use private vulnerability reporting.\n", "setting not read: --offline", "", false},
+		{"do not report in public issues", "SECURITY.md", "Please do not report vulnerabilities in public issues. Instead use GitHub private vulnerability reporting.\n", "setting not read: --offline", "", false},
 		{"disabled for this repository", "SECURITY.md", "Private vulnerability reporting is disabled for this repository.\n", "SECURITY.md names no private reporting channel", "", true},
 		{"we do not use", "SECURITY.md", "We do not use private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", "", true},
-		{"do not hesitate", "SECURITY.md", "Please do not hesitate to use private vulnerability reporting.\n", "setting not read: --offline", "", false},
+		{"do not hesitate", "SECURITY.md", "Please do not hesitate to use GitHub private vulnerability reporting.\n", "setting not read: --offline", "", false},
 		{"do not currently use", "SECURITY.md", "We do not currently use private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", "", true},
-		{"without delay", "SECURITY.md", "Report without delay via private vulnerability reporting.\n", "setting not read: --offline", "", false},
-		{"not only", "SECURITY.md", "Report not only via private vulnerability reporting, but also email.\n", "setting not read: --offline", "", false},
+		{"without delay", "SECURITY.md", "Report without delay via GitHub private vulnerability reporting.\n", "setting not read: --offline", "", false},
+		{"not only", "SECURITY.md", "Report not only via GitHub private vulnerability reporting, but also email.\n", "setting not read: --offline", "", false},
 		{"https contact without host", "SECURITY.md", "Security contact: https:///report\n", "SECURITY.md names no private reporting channel", "", true},
 		{"https contact valid", "SECURITY.md", "Security contact: https://example.invalid/report\n", "SECURITY.md", "", false},
+		{"private reporting by email gitlab", "SECURITY.md", "Use private vulnerability reporting by email. Security contact: security@example.com\n", "policy uses a security contact", config.ForgeGitLab, false},
+		{"github private reporting gitlab", "SECURITY.md", "Use GitHub private vulnerability reporting\n", "names GitHub private vulnerability reporting, but repository.forge is gitlab", config.ForgeGitLab, true},
+		{"bare private reporting undeclared", "SECURITY.md", "Use private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", "", true},
+		{"security tab marker", "SECURITY.md", "Use private vulnerability reporting: open this repository's Security tab.\n", "setting not read: --offline", "", false},
+		{"advisory link marker", "SECURITY.md", "Report via private vulnerability reporting: https://github.com/acme/widgets/security/advisories/new\n", "setting not read: --offline", "", false},
 	}
-	for _, tc := range cases {
+}
+
+// TestAuditCommunityHealthSecurityPolicyOffline plants missing and unusable policies in
+// the existing audit path; offline skips only the setting read, never the local requirement.
+func TestAuditCommunityHealthSecurityPolicyOffline(t *testing.T) {
+	for _, tc := range offlinePolicyCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			if tc.path != "" {
@@ -108,7 +120,7 @@ func TestAuditCommunityHealthSecuritySetting(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
-			writeFixtureFile(t, root, "SECURITY.md", "Use private vulnerability reporting.\n")
+			writeFixtureFile(t, root, "SECURITY.md", "Use GitHub private vulnerability reporting.\n")
 			out, err := captureStdout(t, func() error {
 				return auditSecurityPolicy(t.Context(), &config.Manifest{}, root, tc.live)
 			})
@@ -164,7 +176,7 @@ func TestAuditCommunityHealthSecuritySettingWiring(t *testing.T) {
 // an unusable .github policy cannot be excused by a valid policy in another location.
 func TestAuditCommunityHealthSecurityPolicyPrecedence(t *testing.T) {
 	root := t.TempDir()
-	writeFixtureFile(t, root, "SECURITY.md", "Use private vulnerability reporting.\n")
+	writeFixtureFile(t, root, "SECURITY.md", "Use GitHub private vulnerability reporting.\n")
 	writeFixtureFile(t, root, ".github/SECURITY.md", "# No channel\n")
 	err := auditSecurityPolicy(t.Context(), &config.Manifest{}, root, actionsForge{notMade: "--offline"})
 	if err == nil || !strings.Contains(err.Error(), ".github/SECURITY.md names no private reporting channel") {
@@ -184,7 +196,7 @@ func TestAuditCommunityHealthSecurityPolicyReadFailure(t *testing.T) {
 		t.Fatalf("directory policy must fail: %v", err)
 	}
 	root = t.TempDir()
-	path := writeFixtureFile(t, t.TempDir(), "policy.md", "Use private vulnerability reporting.\n")
+	path := writeFixtureFile(t, t.TempDir(), "policy.md", "Use GitHub private vulnerability reporting.\n")
 	if err := os.Symlink(path, filepath.Join(root, "SECURITY.md")); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
@@ -234,9 +246,10 @@ func TestAuditCommunityHealthSecurityPolicyForgeMismatch(t *testing.T) {
 		name, content string
 		forge         config.Forge
 	}{
-		{"bare forgejo", "Use private vulnerability reporting.\n", config.ForgeForgejo},
-		{"with contact forgejo", "Use private vulnerability reporting.\nSecurity contact: security@example.invalid\n", config.ForgeForgejo},
-		{"with contact gitlab", "Use private vulnerability reporting.\nSecurity contact: security@example.invalid\n", config.ForgeGitLab},
+		{"bare forgejo", "Use GitHub private vulnerability reporting.\n", config.ForgeForgejo},
+		{"with contact forgejo", "Use GitHub private vulnerability reporting.\nSecurity contact: security@example.invalid\n", config.ForgeForgejo},
+		{"with contact gitlab", "Use GitHub private vulnerability reporting.\nSecurity contact: security@example.invalid\n", config.ForgeGitLab},
+		{"bare gitlab", "Use GitHub private vulnerability reporting.\n", config.ForgeGitLab},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
