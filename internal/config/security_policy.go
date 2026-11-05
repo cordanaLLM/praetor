@@ -6,8 +6,10 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -47,6 +49,21 @@ func (p *SecurityPolicy) SecurityContact() string {
 	return p.Contact
 }
 
+// ValidSecurityContact reports whether contact is a valid email, mailto: URI,
+// or https:// URL with a non-empty hostname.
+func ValidSecurityContact(contact string) bool {
+	if !securityContactRegex.MatchString(contact) {
+		return false
+	}
+	if strings.HasPrefix(contact, "https://") {
+		u, err := url.Parse(contact)
+		if err != nil || u.Hostname() == "" {
+			return false
+		}
+	}
+	return true
+}
+
 // validateManifestSecurity holds a declared security.go_vex to the repository path shape every
 // other manifest path takes (ValidRepositoryPath) and validates any declared security.contact.
 func validateManifestSecurity(m *Manifest) error {
@@ -57,7 +74,7 @@ func validateManifestSecurity(m *Manifest) error {
 		return fmt.Errorf("security.go_vex %q must be a clean local forward-slash path of at most %d bytes",
 			m.Security.GoVEX, maxRepositoryPath)
 	}
-	if m.Security.Contact != "" && !securityContactRegex.MatchString(m.Security.Contact) {
+	if m.Security.Contact != "" && !ValidSecurityContact(m.Security.Contact) {
 		return fmt.Errorf("security.contact %q must be a valid email address, mailto: URI, or https:// URL",
 			m.Security.Contact)
 	}

@@ -78,19 +78,10 @@ func TestSecurityPolicy_Boundary_DefaultsAndLengthLimit(t *testing.T) {
 	}
 }
 
-// TestSecurityPolicy_Contact validates declared security contacts: emails, mailto: URIs,
-// and HTTPS URLs load; invalid forms are refused; nil policies return "".
-func TestSecurityPolicy_Contact(t *testing.T) {
-	var none *SecurityPolicy
-	if none.SecurityContact() != "" {
-		t.Errorf("nil policy contact = %q, want empty", none.SecurityContact())
-	}
-	valid := []string{
-		"security@example.com",
-		"mailto:security@example.com",
-		"https://example.com/security",
-	}
-	for _, contact := range valid {
+// testValidContacts checks that each valid contact string loads and passes validation.
+func testValidContacts(t *testing.T, contacts []string) {
+	t.Helper()
+	for _, contact := range contacts {
 		body := "version: 1\nsecurity:\n  contact: \"" + contact + "\"\n"
 		m, err := LoadManifest(writeManifest(t, body))
 		if err != nil {
@@ -99,16 +90,48 @@ func TestSecurityPolicy_Contact(t *testing.T) {
 		if got := m.Security.SecurityContact(); got != contact {
 			t.Errorf("contact %q = %q", contact, got)
 		}
+		if !ValidSecurityContact(contact) {
+			t.Errorf("ValidSecurityContact(%q) = false, want true", contact)
+		}
 	}
-	invalid := []string{
+}
+
+// testRefusedContacts checks that invalid or boundary contact strings are refused.
+func testRefusedContacts(t *testing.T, contacts []string) {
+	t.Helper()
+	for _, contact := range contacts {
+		body := "version: 1\nsecurity:\n  contact: \"" + contact + "\"\n"
+		if _, err := LoadManifest(writeManifest(t, body)); err == nil || !strings.Contains(err.Error(), "security.contact") {
+			t.Errorf("contact %q loaded: err = %v", contact, err)
+		}
+		if ValidSecurityContact(contact) {
+			t.Errorf("ValidSecurityContact(%q) = true, want false", contact)
+		}
+	}
+}
+
+// TestSecurityPolicy_Contact validates declared security contacts: emails, mailto: URIs,
+// and HTTPS URLs load; invalid forms are refused; nil policies return "".
+func TestSecurityPolicy_Contact(t *testing.T) {
+	var none *SecurityPolicy
+	if none.SecurityContact() != "" {
+		t.Errorf("nil policy contact = %q, want empty", none.SecurityContact())
+	}
+	testValidContacts(t, []string{
+		"security@example.com",
+		"mailto:security@example.com",
+		"https://example.com/security",
+		"https://example.com:8443/security",
+	})
+	testRefusedContacts(t, []string{
 		"not-an-email",
 		"http://insecure.example.com",
 		"contact us privately",
-	}
-	for _, contact := range invalid {
-		body := "version: 1\nsecurity:\n  contact: \"" + contact + "\"\n"
-		if _, err := LoadManifest(writeManifest(t, body)); err == nil || !strings.Contains(err.Error(), "security.contact") {
-			t.Errorf("invalid contact %q loaded: err = %v", contact, err)
-		}
-	}
+	})
+	testRefusedContacts(t, []string{
+		"https:///report",
+		"https://",
+		"https:///",
+		"https://:443/report",
+	})
 }

@@ -424,12 +424,16 @@ func (s *adoptSession) resolveForge() (config.Forge, error) {
 // reconcileSecurityPolicyWithoutChannel handles repositories on forges without a native
 // private reporting channel (such as Forgejo) or repositories where the forge is undeclared.
 // An existing security policy is preserved; otherwise a skip is recorded.
-func reconcileSecurityPolicyWithoutChannel(s *adoptSession, forge config.Forge) error {
+func reconcileSecurityPolicyWithoutChannel(ctx context.Context, s *adoptSession, forge config.Forge) error {
 	full, err := repoFile(s.repoPath, securityFile)
 	if err != nil {
 		return err
 	}
-	if fileExists(full) {
+	_, exists, err := contextopt.ObserveSnapshot(ctx, full)
+	if err != nil {
+		return err
+	}
+	if exists {
 		s.report.recordReconciled(securityFile, "Existing security policy verified present")
 		return nil
 	}
@@ -463,7 +467,7 @@ func reconcileSecurityPolicy(ctx context.Context, s *adoptSession) error {
 	case forge == config.ForgeGitHub:
 		content = buildSecurityPolicy()
 	default:
-		return reconcileSecurityPolicyWithoutChannel(s, forge)
+		return reconcileSecurityPolicyWithoutChannel(ctx, s, forge)
 	}
 
 	_, err = s.scaffoldFile(ctx, scaffold{

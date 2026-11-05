@@ -15,17 +15,23 @@ import (
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
-// securityContactChannel recognizes an email reporting destination or an HTTPS security
-// contact. A bare heading or an instruction to contact unnamed maintainers is insufficient.
-var securityContactChannel = regexp.MustCompile(`(?im)(?:mailto:|(?:security[ \t]+contact|contact|e-?mail)(?:[ \t]+(?:us|at|to))*[ \t]*:?)[ \t]*<?[a-z0-9.!#$%&'*+/=?^_{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+|security[ \t]+contact[ \t]*:[ \t]*https://[^\s<>]+`)
+// securityContactEmail recognizes an email reporting destination or mailto: link.
+var securityContactEmail = regexp.MustCompile(`(?im)(?:mailto:|(?:security[ \t]+contact|contact|e-?mail)(?:[ \t]+(?:us|at|to))*[ \t]*:?)[ \t]*<?[a-z0-9.!#$%&'*+/=?^_{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+`)
+
+// maxSecurityContactURLs bounds the HTTPS contact candidates one policy is read for (HISS-02).
+const maxSecurityContactURLs = 64
+
+// securityContactHTTPS recognizes an HTTPS security contact destination.
+var securityContactHTTPS = regexp.MustCompile(`(?im)security[ \t]+contact[ \t]*:[ \t]*(https://[^\s<>]+)`)
 
 // affirmativeReporting matches an affirmative instruction to report via private vulnerability reporting.
 var affirmativeReporting = regexp.MustCompile(`(?i)\b(?:use|using|report(?:ed|ing)?|submit(?:ted|ting)?|file|filing|via|through|enable[d]?|choose|navigate|open|visit)\b[^.!?;]*\b(?:github'?s\s+)?private\s+vulnerability\s+reporting\b|\bprivate\s+vulnerability\s+reporting\b[^.!?;]*\b(?:is\s+enabled|form|tab)\b|\bprivate\s+vulnerability\s+reporting\s*:[^.!?;]*\b(?:open|choose|click|navigate|visit|report|use)\b`)
 
-// negatedReporting matches a negation directly governing private vulnerability reporting (at
-// most two words between them, so "do not hesitate to use" stays affirmative),
-// or a statement that the reporting channel is disabled or unavailable.
-var negatedReporting = regexp.MustCompile(`(?i)\b(?:do\s+not|don'?t|never|cannot|no\b|without|not\b|disable[d]?|unsupported|not\s+supported)\b(?:\s+[^\s.!?;,:]+){0,2}\s+(?:github'?s\s+)?private\s+vulnerability\s+reporting\b|\b(?:github'?s\s+)?private\s+vulnerability\s+reporting\b\s+(?:(?:is|are)\s+(?:not(?:\s+supported)?|disabled|unsupported|unavailable)|disabled|unsupported|not\s+supported|unavailable)\b`)
+// negatedReporting matches a negation directly governing private vulnerability reporting:
+// at most two words between an auxiliary negation and the phrase (so "do not hesitate to use"
+// stays affirmative), a bare negation directly preceding the phrase, or a statement that the
+// reporting channel is disabled or unavailable.
+var negatedReporting = regexp.MustCompile(`(?i)\b(?:do\s+not|don'?t|never|cannot)\b(?:\s+[^\s.!?;,:]+){0,2}\s+(?:github'?s\s+)?private\s+vulnerability\s+reporting\b|\b(?:no|not|without|disable[d]?|unsupported|not\s+supported)\b\s+(?:github'?s\s+)?private\s+vulnerability\s+reporting\b|\b(?:github'?s\s+)?private\s+vulnerability\s+reporting\b\s+(?:(?:is|are)\s+(?:not(?:\s+supported)?|disabled|unsupported|unavailable)|disabled|unsupported|not\s+supported|unavailable)\b`)
 
 // actionableAdvisoryLink matches a URL or markdown link to GitHub's advisory reporting form.
 var actionableAdvisoryLink = regexp.MustCompile(`(?i)https://github\.com/[^\s/]+/[^\s/]+/security/advisories(?:/new)?|/security/advisories(?:/new)?`)
@@ -45,12 +51,30 @@ func (c policyChannels) hasAny() bool {
 	return c.private || c.confidential || c.contact
 }
 
-// matchesForge reports whether the policy channels are consistent with the declared forge.
-func (c policyChannels) matchesForge(forge config.Forge) bool {
-	if forge == "" || forge == config.ForgeGitHub {
+// hasActionableSecurityContact reports whether content contains an email reporting
+// destination or an HTTPS security contact URL with a non-empty hostname.
+func hasActionableSecurityContact(content string) bool {
+	if securityContactEmail.MatchString(content) {
 		return true
 	}
-	return !c.private || c.confidential || c.contact
+	matches := securityContactHTTPS.FindAllStringSubmatch(content, maxSecurityContactURLs)
+	for i := 0; i < len(matches) && i < maxSecurityContactURLs; i++ {
+		if len(matches[i]) > 1 && config.ValidSecurityContact(matches[i][1]) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesForge reports whether the policy channels are consistent with the declared forge.
+func (c policyChannels) matchesForge(path string, forge config.Forge) error {
+	if forge == config.ForgeGitHub && !c.private && !c.contact {
+		return fmt.Errorf("[FAIL] Community health: %s names confidential issues, but repository.forge is %s; name private vulnerability reporting or a security contact", path, forge)
+	}
+	if forge != "" && forge != config.ForgeGitHub && c.private && !c.confidential && !c.contact {
+		return fmt.Errorf("[FAIL] Community health: %s names GitHub private vulnerability reporting, but repository.forge is %s", path, forge)
+	}
+	return nil
 }
 
 // evaluatePolicyChannels inspects policy content for affirmative private reporting channels.
@@ -60,7 +84,7 @@ func evaluatePolicyChannels(content string) policyChannels {
 	return policyChannels{
 		private:      private,
 		confidential: !private && affirmativeConfidentialIssue.MatchString(content),
-		contact:      securityContactChannel.MatchString(content),
+		contact:      hasActionableSecurityContact(content),
 	}
 }
 
@@ -99,8 +123,8 @@ func auditSecurityPolicy(ctx context.Context, manifest *config.Manifest, root st
 	if manifest != nil {
 		forge = manifest.Repository.Forge
 	}
-	if !channels.matchesForge(forge) {
-		return fmt.Errorf("[FAIL] Community health: %s names GitHub private vulnerability reporting, but repository.forge is %s", path, forge)
+	if err := channels.matchesForge(path, forge); err != nil {
+		return err
 	}
 	fmt.Printf("[PASS] Community health: %s names a private reporting channel.\n", path)
 	if !channels.private {

@@ -576,11 +576,14 @@ malformed decline entry fails closed. `cmd/standardsctl/audit_agent_definitions_
 ### Community health: private security reporting
 
 `praetorctl audit` requires `SECURITY.md` in `.github/`, the repository root, or
-`docs/`, searched in that order. The file must name private vulnerability reporting
-or an actionable security contact (a reporting email, `mailto:` link, or HTTPS
-destination labelled `Security contact:`). A heading or an instruction to contact
-unnamed maintainers is insufficient. A missing file or channel fails with the
-policy filename in the diagnostic.
+`docs/`, searched in that order. The file must name private vulnerability reporting,
+confidential issues (for GitLab or undeclared forges), or an actionable security contact
+(a reporting email, `mailto:` link, or HTTPS destination with a valid hostname labelled
+`Security contact:`). A heading or an instruction to contact unnamed maintainers is
+insufficient. A missing file or channel fails with the policy filename in the diagnostic.
+The policy channels must match the declared forge: a policy naming GitHub private
+vulnerability reporting fails when `repository.forge` is not GitHub (`names GitHub private vulnerability reporting, but repository.forge is ...`), and a declared GitHub repository
+must name private vulnerability reporting or a security contact (`names confidential issues, but repository.forge is github`).
 
 When the policy names private vulnerability reporting, audit reads the repository
 setting through its existing forge client, with a context timeout and only when

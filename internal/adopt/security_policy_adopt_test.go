@@ -5,6 +5,8 @@
 package adopt
 
 import (
+	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -230,5 +232,21 @@ func TestAdoptSecurityPolicy_InvalidDeclaredForge_Error(t *testing.T) {
 	_, err := Adopt(t.Context(), sourceAdoptOptions(t, repo, false))
 	if err == nil || !strings.Contains(err.Error(), "repository.forge") {
 		t.Fatalf("expected error naming repository.forge, got: %v", err)
+	}
+}
+
+// TestAdoptSecurityPolicy_ExistingFileCancelled_Error verifies that a cancelled context
+// during policy observation on an undeclared forge returns an error rather than skipping.
+func TestAdoptSecurityPolicy_ExistingFileCancelled_Error(t *testing.T) {
+	repo := newTestRepo(t, "cancelled-undeclared")
+	writeOriginRemote(t, repo, "https://git.internal.example/acme/cancelled-undeclared.git")
+	mustWrite(t, filepath.Join(repo, "go.mod"), "module example.com/widget\n\ngo 1.27\n")
+	mustWrite(t, filepath.Join(repo, securityFile), "# Security Policy\n")
+	s := &adoptSession{repoPath: repo, report: &AdoptReport{}}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err := reconcileSecurityPolicy(ctx, s)
+	if err == nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled error, got: %v", err)
 	}
 }

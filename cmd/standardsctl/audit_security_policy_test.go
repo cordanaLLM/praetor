@@ -23,31 +23,38 @@ import (
 func TestAuditCommunityHealthSecurityPolicyOffline(t *testing.T) {
 	cases := []struct {
 		name, path, content, want string
+		forge                     config.Forge
 		fail                      bool
 	}{
-		{"missing", "", "", "SECURITY.md missing", true},
-		{"no channel", "SECURITY.md", "# Security\nReport bugs publicly.\n", "SECURITY.md names no private reporting channel", true},
-		{"empty", "SECURITY.md", "", "SECURITY.md names no private reporting channel", true},
-		{"vague maintainers", "SECURITY.md", "Report privately to the maintainers.\n", "SECURITY.md names no private reporting channel", true},
-		{"root", "SECURITY.md", "Use private vulnerability reporting.\n", "setting not read: --offline", false},
-		{"github", ".github/SECURITY.md", "Use private vulnerability reporting.\n", ".github/SECURITY.md", false},
-		{"docs", "docs/SECURITY.md", "Use private vulnerability reporting.\n", "docs/SECURITY.md", false},
-		{"security contact", "SECURITY.md", "Security contact: security@example.invalid\n", "SECURITY.md", false},
-		{"mailto", "SECURITY.md", "Report privately to [security](mailto:security@example.invalid).\n", "SECURITY.md", false},
-		{"email instruction", "SECURITY.md", "Email to security@example.invalid.\n", "SECURITY.md", false},
-		{"empty contact", "SECURITY.md", "Security contact:\n", "SECURITY.md names no private reporting channel", true},
-		{"wrapped phrase", "SECURITY.md", "Use PRIVATE vulnerability\nreporting.\n", "setting not read: --offline", false},
-		{"negated phrase", "SECURITY.md", "Do not use private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", true},
-		{"disabled phrase", "SECURITY.md", "Private vulnerability reporting is disabled.\n", "SECURITY.md names no private reporting channel", true},
-		{"non-instructional mention", "SECURITY.md", "We considered private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", true},
-		{"negated with contact", "SECURITY.md", "Do not use private vulnerability reporting. Security contact: security@example.invalid\n", "policy uses a security contact", false},
-		{"confidential issues", "SECURITY.md", "Open a confidential issue in this repository to report vulnerabilities.\n", "policy uses confidential issues", false},
-		{"do not open public issue", "SECURITY.md", "Do not open a public issue, use GitHub private vulnerability reporting.\n", "setting not read: --offline", false},
-		{"do not report in public issues", "SECURITY.md", "Please do not report vulnerabilities in public issues. Instead use private vulnerability reporting.\n", "setting not read: --offline", false},
-		{"disabled for this repository", "SECURITY.md", "Private vulnerability reporting is disabled for this repository.\n", "SECURITY.md names no private reporting channel", true},
-		{"we do not use", "SECURITY.md", "We do not use private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", true},
-		{"do not hesitate", "SECURITY.md", "Please do not hesitate to use private vulnerability reporting.\n", "setting not read: --offline", false},
-		{"do not currently use", "SECURITY.md", "We do not currently use private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", true},
+		{"missing", "", "", "SECURITY.md missing", "", true},
+		{"no channel", "SECURITY.md", "# Security\nReport bugs publicly.\n", "SECURITY.md names no private reporting channel", "", true},
+		{"empty", "SECURITY.md", "", "SECURITY.md names no private reporting channel", "", true},
+		{"vague maintainers", "SECURITY.md", "Report privately to the maintainers.\n", "SECURITY.md names no private reporting channel", "", true},
+		{"root", "SECURITY.md", "Use private vulnerability reporting.\n", "setting not read: --offline", "", false},
+		{"github", ".github/SECURITY.md", "Use private vulnerability reporting.\n", ".github/SECURITY.md", "", false},
+		{"docs", "docs/SECURITY.md", "Use private vulnerability reporting.\n", "docs/SECURITY.md", "", false},
+		{"security contact", "SECURITY.md", "Security contact: security@example.invalid\n", "SECURITY.md", "", false},
+		{"mailto", "SECURITY.md", "Report privately to [security](mailto:security@example.invalid).\n", "SECURITY.md", "", false},
+		{"email instruction", "SECURITY.md", "Email to security@example.invalid.\n", "SECURITY.md", "", false},
+		{"empty contact", "SECURITY.md", "Security contact:\n", "SECURITY.md names no private reporting channel", "", true},
+		{"wrapped phrase", "SECURITY.md", "Use PRIVATE vulnerability\nreporting.\n", "setting not read: --offline", "", false},
+		{"negated phrase", "SECURITY.md", "Do not use private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", "", true},
+		{"disabled phrase", "SECURITY.md", "Private vulnerability reporting is disabled.\n", "SECURITY.md names no private reporting channel", "", true},
+		{"non-instructional mention", "SECURITY.md", "We considered private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", "", true},
+		{"negated with contact", "SECURITY.md", "Do not use private vulnerability reporting. Security contact: security@example.invalid\n", "policy uses a security contact", "", false},
+		{"confidential issues", "SECURITY.md", "Open a confidential issue in this repository to report vulnerabilities.\n", "policy uses confidential issues", "", false},
+		{"confidential issues gitlab", "SECURITY.md", "Open a confidential issue in this repository to report vulnerabilities.\n", "policy uses confidential issues", config.ForgeGitLab, false},
+		{"confidential issues github", "SECURITY.md", "Open a confidential issue in this repository to report vulnerabilities.\n", "names confidential issues, but repository.forge is github", config.ForgeGitHub, true},
+		{"do not open public issue", "SECURITY.md", "Do not open a public issue, use GitHub private vulnerability reporting.\n", "setting not read: --offline", "", false},
+		{"do not report in public issues", "SECURITY.md", "Please do not report vulnerabilities in public issues. Instead use private vulnerability reporting.\n", "setting not read: --offline", "", false},
+		{"disabled for this repository", "SECURITY.md", "Private vulnerability reporting is disabled for this repository.\n", "SECURITY.md names no private reporting channel", "", true},
+		{"we do not use", "SECURITY.md", "We do not use private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", "", true},
+		{"do not hesitate", "SECURITY.md", "Please do not hesitate to use private vulnerability reporting.\n", "setting not read: --offline", "", false},
+		{"do not currently use", "SECURITY.md", "We do not currently use private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", "", true},
+		{"without delay", "SECURITY.md", "Report without delay via private vulnerability reporting.\n", "setting not read: --offline", "", false},
+		{"not only", "SECURITY.md", "Report not only via private vulnerability reporting, but also email.\n", "setting not read: --offline", "", false},
+		{"https contact without host", "SECURITY.md", "Security contact: https:///report\n", "SECURITY.md names no private reporting channel", "", true},
+		{"https contact valid", "SECURITY.md", "Security contact: https://example.invalid/report\n", "SECURITY.md", "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -55,7 +62,7 @@ func TestAuditCommunityHealthSecurityPolicyOffline(t *testing.T) {
 			if tc.path != "" {
 				writeFixtureFile(t, root, tc.path, tc.content)
 			}
-			manifest := &config.Manifest{Repository: config.RepositoryMetadata{Name: "widgets"}}
+			manifest := &config.Manifest{Repository: config.RepositoryMetadata{Name: "widgets", Forge: tc.forge}}
 			out, err := captureStdout(t, func() error {
 				return auditLiveForge(t.Context(), manifest, root, &config.ResolvedPolicy{}, true)
 			})
