@@ -196,7 +196,7 @@ func TestCheckJobSteps_UnreadableScript(t *testing.T) {
 func TestReadWorkflowFiles_RejectsEscapingSymlink(t *testing.T) {
 	root := t.TempDir()
 	workflowDir := filepath.Join(root, ".github", "workflows")
-	if err := os.MkdirAll(workflowDir, 0o750); err != nil {
+	if err := os.MkdirAll(workflowDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	outsideDir := t.TempDir()
