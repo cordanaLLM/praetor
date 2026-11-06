@@ -7,22 +7,32 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
-// The CLI audit runs the job-timeout gate: a workflow that sets no timeout-minutes emits a warning
-// and passes the audit (warn-only rollout).
-func TestAuditJobTimeouts_CLI_WarnOnlyPasses(t *testing.T) {
+// The CLI audit runs the job-timeout gate with the wall clock: a workflow that sets no
+// timeout-minutes warns and passes the audit before forge.JobTimeoutFailFrom, and fails the audit
+// with a [FAIL] line from that day on. The unit tests in internal/forge pin both sides of the
+// switch with a fixed day; this test checks the CLI wiring on whichever side today falls.
+func TestAuditJobTimeouts_CLI_DatedSwitch(t *testing.T) {
 	f := newAuditFixture(t)
 	writeFixtureFile(t, f.dir, ".github/workflows/job_missing.yml",
 		"on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo 1\n")
 	out, err := f.audit(t)
-	if err != nil {
-		t.Fatalf("audit failed: %v\nOutput: %s", err, out)
+	const finding = "job-timeout: .github/workflows/job_missing.yml:3 job build: declares no timeout-minutes"
+	if time.Now().Before(forge.JobTimeoutFailFrom) {
+		if err != nil {
+			t.Fatalf("audit failed in the warn period: %v\nOutput: %s", err, out)
+		}
+		if !strings.Contains(out, "[WARN] "+finding) || !strings.Contains(out, "[PASS] job-timeout") {
+			t.Fatalf("audit output missing warning or gate pass:\n%s", out)
+		}
+		return
 	}
-	if !strings.Contains(out, "[WARN] job-timeout: .github/workflows/job_missing.yml:3 job build: declares no timeout-minutes") {
-		t.Fatalf("audit output missing warning:\n%s", out)
-	}
-	if !strings.Contains(out, "[PASS] job-timeout") {
-		t.Fatalf("audit output missing gate pass:\n%s", out)
+	if err == nil || !strings.Contains(err.Error()+out, "[FAIL] "+finding) {
+		t.Fatalf("audit must fail with the finding from %s on; err: %v\nOutput: %s",
+			forge.JobTimeoutFailFrom.Format(time.DateOnly), err, out)
 	}
 }
