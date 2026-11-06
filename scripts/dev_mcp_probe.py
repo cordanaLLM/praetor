@@ -454,6 +454,7 @@ FIXTURE_RULESET_PATH = (Path(__file__).resolve().parent.parent
 
 
 def audit_fixture(root):
+    """Write a minimal adopted repository under root for the audit check; return its profile source."""
     source = "id: framework\nname: Framework\n"
     digest = "sha256:" + hashlib.sha256(source.encode()).hexdigest()
     aggregate = hashlib.sha256(("profile:framework=" + digest + "\n").encode()).hexdigest()
