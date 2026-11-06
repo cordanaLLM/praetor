@@ -68,6 +68,7 @@ func (s *adoptSession) measureMissingDeclaredLinters(ctx context.Context, policy
 	return checkMissingWorkflowLinters(ctx, s.repoPath, applicable)
 }
 
+// syncDeclaredLintersExceptions writes category-D exception entries for declared linters missing a CI job.
 func (s *adoptSession) syncDeclaredLintersExceptions(ctx context.Context, full string, missing []config.DeclaredLinter) error {
 	data, err := s.readManifestData(ctx, full)
 	if err != nil || len(data) == 0 {
@@ -184,6 +185,7 @@ func filterExistingExceptions(existing []config.Exception, missingMap map[string
 
 const declaredLinterExceptionReasonPrefix = "adoption scaffolds no CI job for "
 
+// newDeclaredLinterException builds a category-D exception entry for a declared linter with no CI job.
 func newDeclaredLinterException(linter config.DeclaredLinter, today time.Time) config.Exception {
 	return config.Exception{
 		Rule:     config.ExceptionRuleDeclaredLinters,

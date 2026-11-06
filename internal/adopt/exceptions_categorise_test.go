@@ -16,6 +16,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
+// writeTestLockAndCatalog writes a pinned lock and catalog entry for the given profile into the test repository.
 func writeTestLockAndCatalog(t *testing.T, repo, profileID string) {
 	t.Helper()
 	source := fmt.Sprintf("id: %q\nname: %q\n", profileID, profileID)
