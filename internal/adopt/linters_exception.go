@@ -179,6 +179,7 @@ func filterExistingExceptions(existing []config.Exception, missingMap map[string
 	return result, kept, changed
 }
 
+// newDeclaredLinterException builds a category-D exception entry for a declared linter with no CI job.
 func newDeclaredLinterException(linter config.DeclaredLinter, today time.Time) config.Exception {
 	return config.Exception{
 		Rule:     config.ExceptionRuleDeclaredLinters,

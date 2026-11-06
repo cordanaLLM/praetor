@@ -32,6 +32,7 @@ func TestAdoptionExceptionWritersEntered(t *testing.T) {
 	}
 }
 
+// exceptionMigrationSource returns a catalog lock source with a security:high profile for migration tests.
 func exceptionMigrationSource(t *testing.T) string {
 	t.Helper()
 	body := "id: security:high\nname: Security\nsupply_chain:\n  slsa_level: 3\nlinters:\n  - gitleaks\n  - semgrep\n  - trivy\n"
@@ -56,6 +57,7 @@ func TestAdoptExceptionLifecycleFirstAdoption(t *testing.T) {
 	}
 }
 
+// legacyAdoptionEntries returns YAML exception entries in the pre-category format for migration tests.
 func legacyAdoptionEntries(expires string) string {
 	entries := "  - rule: HISS-11\n    path: .github/workflows/release.yml\n    reason: adoption release gap\n    expires: " + expires + "\n"
 	for _, tool := range []string{"gitleaks", "semgrep", "trivy"} {
@@ -64,6 +66,7 @@ func legacyAdoptionEntries(expires string) string {
 	return entries
 }
 
+// legacyAdoptionFixture creates a temporary repository with a legacy manifest containing the given entries.
 func legacyAdoptionFixture(t *testing.T, entries string) (string, string) {
 	t.Helper()
 	repo := newTestRepo(t, "exception-migration")
@@ -101,6 +104,7 @@ func commitExceptionFixture(t *testing.T, repo string) {
 	}
 }
 
+// decodeExceptionFixture decodes a manifest from its YAML string representation and fails the test on error.
 func decodeExceptionFixture(t *testing.T, data string) *config.Manifest {
 	t.Helper()
 	manifest, err := config.DecodeManifest([]byte(data))
@@ -179,6 +183,7 @@ func TestAdoptionExceptionFlavorSnapshot(t *testing.T) {
 	}
 }
 
+// assertMigratedExceptionAudits validates that migrated exceptions pass audit and that the report is clean.
 func assertMigratedExceptionAudits(t *testing.T, repo string, report *AdoptReport, entries []config.Exception) {
 	t.Helper()
 	today := time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC)

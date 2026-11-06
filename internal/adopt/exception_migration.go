@@ -48,6 +48,7 @@ func adoptionManifestSnapshot(ctx context.Context, root string) (string, []byte,
 	return full, updated, proposals, nil
 }
 
+// reportUnresolvedAdoptionExceptions adds a warning per unresolved proposal and returns an error when any exist.
 func reportUnresolvedAdoptionExceptions(report *AdoptReport, proposals []config.ExceptionMigration) error {
 	unresolved := 0
 	for i := 0; i < len(proposals) && i < config.MaxExceptions; i++ {
@@ -64,6 +65,7 @@ func reportUnresolvedAdoptionExceptions(report *AdoptReport, proposals []config.
 	return nil
 }
 
+// adoptionExceptionMigrationNote formats a human-readable note summarising migrated exception entries.
 func adoptionExceptionMigrationNote(proposals []config.ExceptionMigration, dryRun bool) string {
 	verb := "migrated"
 	if dryRun {

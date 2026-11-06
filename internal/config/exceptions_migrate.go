@@ -69,6 +69,7 @@ func PlanExceptionMigrationForRules(ctx context.Context, path string, data []byt
 	})
 }
 
+// planSelectedExceptionMigration plans category and date backfill for exceptions matching the selector.
 func planSelectedExceptionMigration(ctx context.Context, path string, data []byte, today time.Time, selected func(Exception) bool) ([]byte, []ExceptionMigration, error) {
 	if _, err := DecodeManifest(data); err != nil {
 		return nil, nil, fmt.Errorf("decode migration manifest: %w", err)

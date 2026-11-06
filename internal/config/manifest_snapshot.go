@@ -25,6 +25,7 @@ func WithManifestSnapshot(ctx context.Context, path string, data []byte) context
 	return context.WithValue(ctx, manifestSnapshotKey{}, manifestSnapshot{path: filepath.Clean(path), data: bytes.Clone(data)})
 }
 
+// observeManifestSnapshot returns the snapshot data when the path matches the bound snapshot, falling back to the file.
 func observeManifestSnapshot(ctx context.Context, path string) ([]byte, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, fmt.Errorf("observe manifest snapshot: %w", err)

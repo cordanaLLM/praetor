@@ -35,6 +35,7 @@ func TestManifestSnapshotReadersAndIsolation(t *testing.T) {
 	}
 }
 
+// assertSnapshotManifests verifies that both repository and register manifests load from the snapshot context.
 func assertSnapshotManifests(t *testing.T, ctx context.Context, root string) {
 	t.Helper()
 	manifest, err := LoadRepositoryManifest(ctx, root)
@@ -51,6 +52,7 @@ func assertSnapshotManifests(t *testing.T, ctx context.Context, root string) {
 	}
 }
 
+// assertSnapshotPolicyAndIdentity verifies that skills policy, identity and forge resolve from the snapshot context.
 func assertSnapshotPolicyAndIdentity(t *testing.T, ctx context.Context, root string) {
 	t.Helper()
 	if skills, err := LoadSkillsPolicyContext(ctx, root); err != nil || skills == nil {
@@ -64,6 +66,7 @@ func assertSnapshotPolicyAndIdentity(t *testing.T, ctx context.Context, root str
 	}
 }
 
+// TestManifestSnapshotStillValidates verifies that an invalid snapshot is rejected by the repository reader.
 func TestManifestSnapshotStillValidates(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, ManifestFileName)

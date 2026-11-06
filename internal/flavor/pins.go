@@ -80,6 +80,7 @@ func resolveTargetsWith(repoPath string, detect func(string) (string, error)) ([
 	return resolveTargetsWithContext(ctx, repoPath, detect)
 }
 
+// resolveTargetsWithContext loads the manifest and returns pinned targets, falling back to detection.
 func resolveTargetsWithContext(ctx context.Context, repoPath string, detect func(string) (string, error)) ([]Target, error) {
 	manifest, err := config.LoadRepositoryManifest(ctx, repoPath)
 	if err != nil {

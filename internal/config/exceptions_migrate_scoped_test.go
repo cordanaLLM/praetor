@@ -39,6 +39,7 @@ func TestExceptionMigrationForRulesPartialAndScope(t *testing.T) {
 	}
 }
 
+// assertExceptionMigrationFields checks that the first entry gained category and date while the second stayed unchanged.
 func assertExceptionMigrationFields(t *testing.T, entries []Exception, partial, entered string) {
 	t.Helper()
 	entry, other := entries[0], entries[1]
@@ -50,6 +51,7 @@ func assertExceptionMigrationFields(t *testing.T, entries []Exception, partial, 
 	}
 }
 
+// TestExceptionMigrationForRulesEmptySelectionUnchanged verifies that an empty rule selection leaves the manifest unchanged.
 func TestExceptionMigrationForRulesEmptySelectionUnchanged(t *testing.T) {
 	today := ExceptionDay(time.Now())
 	path := migrationManifest(t, legacyMigrationEntry(20, "migration", today))
@@ -63,6 +65,7 @@ func TestExceptionMigrationForRulesEmptySelectionUnchanged(t *testing.T) {
 	}
 }
 
+// TestExceptionMigrationForRulesRefusesInvalidAndCancelled verifies that invalid manifests and cancelled contexts are rejected.
 func TestExceptionMigrationForRulesRefusesInvalidAndCancelled(t *testing.T) {
 	for _, data := range []string{"version: 1\nversion: 1\n", "version: 1\nunknown: true\n"} {
 		if _, _, err := PlanExceptionMigrationForRules(t.Context(), "unused", []byte(data), time.Now(), nil); err == nil {
@@ -76,6 +79,7 @@ func TestExceptionMigrationForRulesRefusesInvalidAndCancelled(t *testing.T) {
 	}
 }
 
+// TestExceptionMigrationForRulesUnresolvedPreservesEntry verifies that an unresolved migration preserves the original entry.
 func TestExceptionMigrationForRulesUnresolvedPreservesEntry(t *testing.T) {
 	today := ExceptionDay(time.Now())
 	path := migrationManifest(t, legacyMigrationEntry(121, "migration", today))
