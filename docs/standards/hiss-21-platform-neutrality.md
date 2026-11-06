@@ -81,16 +81,21 @@ tests the nested module `tools/schemacheck`, which `./...` of the root module do
 On `pull_request` events, the Linux and macOS matrix and Windows shards run
 `Stop while review is open` immediately after the draft barrier. The aggregate job `windows` now
 runs the shared hold step first, so a held run's aggregate fails with the hold title too and the
-lander reads it as held. It still fails when a shard fails, is cancelled or is skipped. A held leg
+lander reads it as held. It still fails when a shard fails, is cancelled or is skipped. A leg
+polls unresolved threads and pending bot reviews every 30 seconds for up to 10 minutes, continuing
+as soon as both counts are zero. If review remains open at the deadline, the leg
 fails with annotation title **`Gate held: review open`**, writes the unresolved-thread count and
 pending bot check names to its summary, and runs no subsequent matrix step. The step escapes the
 title and message without quoted patterns, because macOS runners use `/bin/bash` 3.2, which keeps
-quotes inside `${var//pattern/replacement}`; a static test refuses quoted forms. The step declares an explicit `timeout-minutes: 4` (`ghworkflow.ReviewHoldStepTimeoutMinutes`),
-bounding the runner against stalled API calls: querying up to 20 pages across 3 API collections
-(threads, check runs, statuses) yields at most 60 requests; with a 4-second per-request budget (240 s),
-the step is capped at 4 minutes. Because the installed `gh` CLI provides no client-side HTTP timeout
-configuration, the step timeout serves as the bound. Every later step carries the explicit
-`steps.review-hold.outputs.clear` condition, including steps that normally run after a failure. Push,
+quotes inside `${var//pattern/replacement}`; a static test refuses quoted forms. The step declares an
+explicit `timeout-minutes: 15` (`ghworkflow.ReviewHoldStepTimeoutMinutes`).
+The wall-clock polling deadline permits at most 20 retries after the initial snapshot. Each recount
+retains the 20-page bound across 3 API collections (at most 60 requests); the final recount may
+finish after the polling deadline. A 4-second per-request sizing budget allows 240 seconds for that
+recount, plus 60 seconds for parsing and cleanup: 600 + 240 + 60 = 900 seconds. This budget is not
+a client-side HTTP timeout; the runner step timeout also bounds stalled API calls. Every later step
+carries the explicit `steps.review-hold.outputs.clear` condition, including steps that normally run
+after a failure. Push,
 merge-group and manual runs retain their existing behavior.
 
 `internal/ghworkflow/reviewhold.go` owns the shared GraphQL thread query, Bash counter and

@@ -16,11 +16,17 @@ const (
 	// Match check names/app slugs and status contexts/creator logins, including
 	// CodeRabbit, Codacy Static Code Analysis and sourcery-ai.
 	ReviewHoldBots = "coderabbit|codacy|sourcery"
+	// ReviewHoldPollSeconds spaces review recounts while the barrier is held.
+	ReviewHoldPollSeconds = 30
+	// ReviewHoldWaitMinutes bounds the polling window before retaining a review hold.
+	ReviewHoldWaitMinutes = 10
 	// ReviewHoldStepTimeoutMinutes bounds the "Stop while review is open" step.
-	// The barrier queries up to 20 pages per loop across at most 3 API collections
-	// (threads, check runs, statuses) = 60 requests maximum. At 4 seconds per
-	// request, 60 * 4 s = 240 s = 4 minutes.
-	ReviewHoldStepTimeoutMinutes = 4
+	// A wall-clock deadline limits polling to 10 minutes and at most 20 retries.
+	// Each recount retains 20 pages * 3 collections = 60 requests maximum.
+	// Allow the final recount 60 * 4 s = 240 s, plus 60 s for parsing/cleanup:
+	// 600 + 240 + 60 = 900 s = 15 minutes. The 4 s/request is a sizing budget,
+	// not a gh HTTP timeout; the runner timeout also bounds stalled requests.
+	ReviewHoldStepTimeoutMinutes = 15
 	// ReviewHoldQuery is the one paginated thread query used by the barrier and release.
 	ReviewHoldQuery = `query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $name) {
@@ -138,13 +144,29 @@ review_count() {
   HOLD_CAUSE="unresolved threads=$REVIEW_THREADS; pending bot reviews=$REVIEW_PENDING; bots=$REVIEW_NAMES"
 }
 `
-	// reviewHoldScript refuses heavy work unless both counts have been read and are zero.
-	reviewHoldScript = reviewHoldLibrary + `review_count
-if ((REVIEW_THREADS > 0 || REVIEW_PENDING > 0)); then review_error; fi
+)
+
+// renderReviewHoldScript formats the barrier script for a given duration and poll interval.
+func renderReviewHoldScript(waitMinutes, pollSeconds int) string {
+	maxPolls := strconv.Itoa(waitMinutes * 60 / pollSeconds)
+	return reviewHoldLibrary +
+		"review_deadline=$((SECONDS + " + strconv.Itoa(waitMinutes*60) + "))\n" +
+		"for ((review_poll=0; review_poll<=" + maxPolls + "; review_poll++)); do\n" + `  review_count
+  if ((REVIEW_THREADS == 0 && REVIEW_PENDING == 0)); then break; fi
+  review_remaining=$((review_deadline - SECONDS))
+  if ((review_remaining <= 0 || review_poll == ` + maxPolls + `)); then review_error; fi
+  review_delay=` + strconv.Itoa(pollSeconds) + `
+  if ((review_delay > review_remaining)); then review_delay=$review_remaining; fi
+  sleep "$review_delay"
+  if ((SECONDS > review_deadline)); then review_error; fi
+done
 printf 'clear=true\n' >> "$GITHUB_OUTPUT"
 printf '%s\n' "$HOLD_CAUSE" >> "$GITHUB_STEP_SUMMARY"
 `
-)
+}
+
+// reviewHoldScript polls within a deadline and refuses work unless both counts are zero.
+var reviewHoldScript = renderReviewHoldScript(ReviewHoldWaitMinutes, ReviewHoldPollSeconds)
 
 // RenderReviewHoldStep renders the barrier immediately after HostedGateDraftStep.
 // The first step defines the shared script anchor; reference reuses it in later jobs.

@@ -51,6 +51,7 @@ func TestReviewHoldAnnotationTitle(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			dir := reviewFixtures(t)
 			writeReviewFixture(t, dir, "checks.json", `{"check_runs":[{"name":"CodeRabbit %0D\r\nnext","status":"queued"}]}`)
+			writeReviewFixture(t, dir, "expired-after-sleep", "")
 			out, err := runReviewScript(t, dir, reviewJQMode(t, mode)+spec.Jobs["hold"].Steps[0].Run)
 			assertReviewAnnotation(t, out, err)
 		})
