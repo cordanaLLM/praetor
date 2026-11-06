@@ -62,6 +62,7 @@ func declaredChannelCases() []securityPolicyTestCase {
 		{"confidential prose only", "SECURITY.md", "Open a confidential issue in this repository.\n", "lacks a link to the new-issue form with issue[confidential]=true", config.ForgeGitLab, confidential, true},
 		{"confidential false", "SECURITY.md", "https://gitlab.com/acme/widgets/-/issues/new?issue[confidential]=false\n", "lacks a link to the new-issue form", config.ForgeGitLab, confidential, true},
 		{"contact named", "SECURITY.md", "Write to security@example.invalid.\n", "names the contact channel: the security.contact address security@example.invalid", config.ForgeForgejo, contact, false},
+		{"contact names setting unread", "SECURITY.md", "Write to security@example.invalid.\n", "private vulnerability reporting setting not read: channel contact", config.ForgeForgejo, contact, false},
 		{"contact missing", "SECURITY.md", "Write to other@example.invalid.\n", "lacks the security.contact address security@example.invalid", config.ForgeForgejo, contact, true},
 		{"mailto contact bare address", "SECURITY.md", "Write to security@example.invalid.\n", "names the contact channel", config.ForgeGitHub, declared(config.SecurityChannelContact, "mailto:security@example.invalid"), false},
 		{"https contact", "SECURITY.md", "Report at <https://example.invalid/security>.\n", "names the contact channel", config.ForgeGitLab, declared(config.SecurityChannelContact, "https://example.invalid/security"), false},

@@ -64,6 +64,7 @@ func auditSecurityPolicy(ctx context.Context, manifest *config.Manifest, root st
 	}
 	fmt.Printf("[PASS] Community health: %s names the %s channel: %s.\n", path, choice.Channel, artifact)
 	if choice.Channel != config.SecurityChannelPrivateReporting {
+		fmt.Printf("[INFO] %s: private vulnerability reporting setting not read: channel %s.\n", path, choice.Channel)
 		return nil
 	}
 	return auditPrivateVulnerabilityReporting(ctx, path, live)
