@@ -12,6 +12,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
+// TestStateIntegrityPositivePreservesHistoryAndNonGitRoot checks that a sync keeps the ledger history and works outside a git checkout.
 func TestStateIntegrityPositivePreservesHistoryAndNonGitRoot(t *testing.T) {
 	root := t.TempDir()
 	if err := InitWorkingDir(root); err != nil {
@@ -41,6 +42,7 @@ func TestStateIntegrityPositivePreservesHistoryAndNonGitRoot(t *testing.T) {
 	}
 }
 
+// TestStateIntegrityRejectsInvalidExistingLedgerPaths checks that a ledger file that is a directory, a symlink loop or a dangling link is refused.
 func TestStateIntegrityRejectsInvalidExistingLedgerPaths(t *testing.T) {
 	for _, name := range []string{"STATE.md", "OPEN.md", "BACKLOG.md", "BUGS.md", "QUESTIONS.md"} {
 		for _, kind := range []string{"directory", "loop", "dangling"} {
@@ -84,6 +86,7 @@ func TestStateIntegrityAppendRejectsUnreadableOrMissingHistory(t *testing.T) {
 	}
 }
 
+// TestStateIntegrityTaskReadFailureLeavesHistoryIntact checks that a failed task read leaves the recorded history unchanged.
 func TestStateIntegrityTaskReadFailureLeavesHistoryIntact(t *testing.T) {
 	root := t.TempDir()
 	if err := InitWorkingDir(root); err != nil {
@@ -120,6 +123,7 @@ func TestStateIntegrityReadersRejectInvalidPaths(t *testing.T) {
 	}
 }
 
+// TestStateIntegrityReadAndAppendByteBoundaries checks the read and append size bounds at, below and above the limit.
 func TestStateIntegrityReadAndAppendByteBoundaries(t *testing.T) {
 	root := t.TempDir()
 	if err := InitWorkingDir(root); err != nil {
@@ -175,6 +179,7 @@ func TestStateIntegrityInitRejectsInvalidWorkingDirectory(t *testing.T) {
 	}
 }
 
+// TestStateIntegrityRootSymlinkFailsBeforeInitialization checks that a project root reached through a symlink is refused before anything is written.
 func TestStateIntegrityRootSymlinkFailsBeforeInitialization(t *testing.T) {
 	outside := t.TempDir()
 	link := filepath.Join(t.TempDir(), "linked-project")
