@@ -226,17 +226,18 @@ func TestBuildModule_ScanErrorsAreBuildErrors(t *testing.T) {
 // TestCompareEach_ScanFailureExceptions verifies active exceptions excuse scan failures while expired ones fail.
 func TestCompareEach_ScanFailureExceptions(t *testing.T) {
 	t.Parallel()
+	today := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
 		name, expiry string
 		excused      bool
 	}{
-		{"live", "2026-11-03", true},
-		{"expires-today", "2026-11-02", true},
-		{"expired", "2026-11-01", false},
+		{"live", today.AddDate(0, 0, 1).Format(time.DateOnly), true},
+		{"expires-today", today.Format(time.DateOnly), true},
+		{"expired", today.AddDate(0, 0, -1).Format(time.DateOnly), false},
 		{"absent", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := repository{root: retryFixtureRoot(t, "mod"), today: time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)}
+			repo := repository{root: retryFixtureRoot(t, "mod"), today: today}
 			plantIncompleteScan(t, filepath.Join(repo.root, "mod"), "parse-error")
 			if tc.expiry != "" {
 				repo.exceptions = []exception{{Path: "mod/go.mod", Reason: "known broken build", Expires: tc.expiry}}
