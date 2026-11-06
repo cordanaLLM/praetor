@@ -208,6 +208,7 @@ def pre_push(remote):
         check_refactor_range(base, head)
         check_docstring_range(base, head)
         check_merge_range(base, head)
+        check_commit_message_range(base, head)
         if not names:
             continue
         check_pushed_snapshot(head, base, mode, names)
@@ -252,6 +253,20 @@ def check_merge_range(base, head):
         print("Merge check: skipped, no pushed-range base; CI checks pull request range")
         return
     cli(["merge-check", f"--range={base}..{head}"])
+
+
+def check_commit_message_range(base, head):
+    """Run the commit message policy over the exact outgoing commit range (#1814).
+
+    Without a pushed-range base the range would be the whole history, whose old commits this
+    push did not make, so the check is skipped with that reason; CI checks the pull request
+    range against its base either way.
+    """
+    if not base:
+        print("Commit message check: skipped, no pushed-range base; CI checks pull request range")
+        return
+    run([praetorctl_path(), "forge", "check-commits", f"--base={base}", f"--head={head}"],
+        capture=False, timeout=180)
 
 
 def check_commits(base):

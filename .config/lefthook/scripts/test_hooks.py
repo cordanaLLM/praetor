@@ -233,12 +233,17 @@ def cli_path(repo):
 
 
 def command(repo, *args, data=None, ok=True, maintain_state=True):
+    """Run one command in the fixture repository, syncing Praetor state before a commit or push unless maintain_state is false."""
     # Most fixtures model an agent obeying the sync obligation. Negative state
     # tests opt out and execute the same real hooks against stale/missing state.
     if (maintain_state and args[:2] in (("git", "commit"), ("git", "push"))
             and (repo / PRAETORCTL).is_file()):
         run_command(repo, (cli_path(repo), "state", "sync", "."), None, ok)
-    return run_command(repo, args, data, ok)
+    result = run_command(repo, args, data, ok)
+    if args[:2] == ("git", "init") and "--bare" not in args and (repo / ".git").is_dir():
+        run_command(repo, ("git", "config", "commit.gpgsign", "false"), None, False)
+        run_command(repo, ("git", "config", "tag.gpgsign", "false"), None, False)
+    return result
 
 
 def run_command(repo, args, data, ok):
@@ -318,6 +323,7 @@ class GitHooks(unittest.TestCase):
         self.initialize_repo()
 
     def initialize_repo(self, initial_files=()):
+        """Create the fixture repository: git init on main, a test identity, the hook folders and initial_files."""
         self.repo.mkdir()
         command(self.repo, "git", "init", "-q", "-b", "main")
         command(self.repo, "git", "config", "user.name", "Hook Test")
@@ -326,8 +332,9 @@ class GitHooks(unittest.TestCase):
             shutil.copytree(ROOT / path, self.repo / path)
         shutil.copy(ROOT / "lefthook.yml", self.repo / "lefthook.yml")
         # Fixture policy self-tests are data, not another recursive full suite.
-        (self.repo / ".config/lefthook/scripts/test_hooks.py").write_text(
-            'print("fixture hook self-tests passed")\n', newline="\n")
+        for self_test in ("test_hooks.py", "test_checkpoint.py", "test_security_scope.py", "test_race_packages.py"):
+            (self.repo / f".config/lefthook/scripts/{self_test}").write_text(
+                'print("fixture hook self-tests passed")\n', newline="\n")
         (self.repo / "README.md").write_text("# Fixture\n", newline="\n")
         for name, content in initial_files:
             self.write(name, content, stage=False)
@@ -1320,6 +1327,77 @@ print("fixture hook self-tests passed")
         result = command(self.repo, "git", "push", "origin", "branch-x", ok=False)
         output = (result.stdout + result.stderr).decode(errors="replace")
         self.assertEqual(result.returncode, 0, output)
+
+    def test_push_refuses_commit_message_body_exceeding_72_columns(self):
+        """Verify pre-push enforces 72-column commit body wrapping on the pushed range (#1814)."""
+        remote = Path(self.temp.name) / "remote.git"
+        command(self.repo, "git", "init", "--bare", "-q", str(remote))
+        command(self.repo, "git", "remote", "add", "origin", str(remote))
+        command(self.repo, "git", "push", "-q", "origin", "main")
+
+        command(self.repo, "git", "checkout", "-q", "-b", "topic")
+        self.write("doc1.txt", "doc1\n")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "docs: compliant commit one")
+
+        # Boundary: 72 columns passes
+        line72 = "word " * 14 + "ab"  # 14*5 + 2 = 72 columns
+        msg72 = f"docs: boundary 72 columns\n\n{line72}\n"
+        self.write("doc2.txt", "doc2\n")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", msg72)
+
+        # Range of compliant commits passes
+        result = command(self.repo, "git", "push", "origin", "topic", ok=False)
+        output = (result.stdout + result.stderr).decode(errors="replace")
+        self.assertEqual(result.returncode, 0, output)
+
+        # Boundary: 73 columns is refused; bypass commit-msg with --no-verify
+        line73 = "word " * 14 + "abc"  # 14*5 + 3 = 73 columns
+        msg73 = f"docs: boundary 73 columns\n\n{line73}\n"
+        self.write("doc3.txt", "doc3\n")
+        command(self.repo, "git", "commit", "--no-verify", "-q", "-s", "-m", msg73)
+        bad_73 = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        result = command(self.repo, "git", "push", "origin", "topic", ok=False)
+        output = (result.stdout + result.stderr).decode(errors="replace")
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn(bad_73[:12], output)
+        self.assertIn("73 columns", output)
+
+        # Reset commit so branch is clean
+        command(self.repo, "git", "reset", "--hard", "HEAD~1")
+
+        # Planted defect: 90-column body line in pushed range is refused, output names commit
+        line90 = "word " * 17 + "words"  # 17*5 + 5 = 90 columns
+        msg90 = f"docs: planted 90 columns\n\n{line90}\n"
+        self.write("doc4.txt", "doc4\n")
+        command(self.repo, "git", "commit", "--no-verify", "-q", "-s", "-m", msg90)
+        bad_90 = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+
+        # Add a compliant commit on top to prove the check scans the full range, not only head
+        self.write("doc5.txt", "doc5\n")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "docs: compliant commit after bad")
+
+        result = command(self.repo, "git", "push", "origin", "topic", ok=False)
+        output = (result.stdout + result.stderr).decode(errors="replace")
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn(bad_90[:12], output)
+
+    def test_commit_message_range_uses_exact_base_or_skips_without_one(self):
+        """Verify check_commit_message_range runs with an exact base and skips when absent."""
+        if not hasattr(hooks, "check_commit_message_range"):
+            self.skipTest("check_commit_message_range not present")
+        with mock.patch("hooks.praetorctl_path", return_value="praetorctl"), \
+                mock.patch("hooks.run") as run_cmd:
+            hooks.check_commit_message_range("base-sha", "head-sha")
+        run_cmd.assert_called_once_with(
+            ["praetorctl", "forge", "check-commits", "--base=base-sha", "--head=head-sha"],
+            capture=False, timeout=180,
+        )
+        for base in (None, ""):
+            with self.subTest(base=base), mock.patch("hooks.run") as run_cmd, \
+                    mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                hooks.check_commit_message_range(base, "head-sha")
+            run_cmd.assert_not_called()
+            self.assertIn("Commit message check: skipped, no pushed-range base", out.getvalue())
 
     def test_real_checkpoint_push_builds_and_tests_without_release_receipt(self):
         skip_without_race_detector(self)
