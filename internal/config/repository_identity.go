@@ -126,7 +126,9 @@ func notRepositoryDirError(repo string) error {
 // manifestIdentity reads repository.owner and repository.name from .standards.yaml. A
 // repository without a manifest has neither.
 func manifestIdentity(ctx context.Context, repo string) (owner, name string, err error) {
-	metadata, err := manifestRepository(ctx, repo)
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	metadata, err := manifestRepository(readCtx, repo)
 	return metadata.Owner, metadata.Name, err
 }
 
