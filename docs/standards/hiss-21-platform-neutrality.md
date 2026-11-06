@@ -611,7 +611,11 @@ self-tests 12 to 13), and a slow runner was cancelled at 75 minutes in its last 
 step green, so the job limit went to 120 minutes (#729). On 2026-10-24 a runner about twice as
 slow (median package time x1.96 against the morning run, go test 94 minutes) cancelled main at
 120 minutes in the harness self-tests, every finished step green, so the limit is now 180
-minutes; splitting the leg stays the durable fix (#729).
+minutes; splitting the leg stays the durable fix (#729). On 2026-11-06 the Windows
+suite moved to a dedicated `windows-shard` job and the harness job's slowest leg
+became macOS (p95 76.3 minutes over 15 green main runs). Both jobs now set their
+timeout to twice the measured p95, rounded up (harness 153 minutes, each shard
+163 minutes), excepted above the 120-minute static ceiling in `.standards.yaml`.
 
 **`cmd/standardsctl` in two halves (2026-10-19).** The package ran in the step's main `go test`
 under the same 30-minute bound as every other package, and outgrew it on Windows with no test
