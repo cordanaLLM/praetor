@@ -233,6 +233,7 @@ def cli_path(repo):
 
 
 def command(repo, *args, data=None, ok=True, maintain_state=True):
+    """Run one command in the fixture repository, syncing Praetor state before a commit or push unless maintain_state is false."""
     # Most fixtures model an agent obeying the sync obligation. Negative state
     # tests opt out and execute the same real hooks against stale/missing state.
     if (maintain_state and args[:2] in (("git", "commit"), ("git", "push"))
@@ -322,6 +323,7 @@ class GitHooks(unittest.TestCase):
         self.initialize_repo()
 
     def initialize_repo(self, initial_files=()):
+        """Create the fixture repository: git init on main, a test identity, the hook folders and initial_files."""
         self.repo.mkdir()
         command(self.repo, "git", "init", "-q", "-b", "main")
         command(self.repo, "git", "config", "user.name", "Hook Test")
