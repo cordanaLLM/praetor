@@ -117,6 +117,7 @@ func lifecycleDate(days int) string {
 	return time.Now().AddDate(0, 0, days).Format(time.DateOnly)
 }
 
+// TestGate_ExceptionsLifecycle_3D verifies that 3D-category secret exceptions expire and are enforced by the gate.
 func TestGate_ExceptionsLifecycle_3D(t *testing.T) {
 	if _, err := exec.LookPath("gitleaks"); err != nil {
 		t.Skip("gitleaks not installed on PATH")
