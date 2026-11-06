@@ -6,6 +6,7 @@ package forge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -25,7 +26,15 @@ const (
 	runawayMultiplier    = 4.0
 	cancelRiskMultiplier = 1.25
 	maxWorkflowRuns      = 3
+	jobTimeoutWarn       = "[WARN]"
+	jobTimeoutFail       = "[FAIL]"
 )
+
+// JobTimeoutFailFrom ends the warn-only rollout of the job-timeout gate: findings warn before
+// this day and fail the audit from it on. The operator chose a dated 14-day warn period from
+// 2026-11-06 (decision engine-job-timeouts-fail-mode), so adopters see every finding before it
+// blocks.
+var JobTimeoutFailFrom = time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
 
 // JobTimeoutOptions is what AuditJobTimeouts reads: the repository root, the manifest's
 // exceptions list (the check reads the entries of config.ExceptionRuleJobTimeout), the day
@@ -60,8 +69,12 @@ type workflowRunMetrics struct {
 }
 
 type workflowAuditResult struct {
-	findings        []jobTimeoutFinding
-	infos           []string
+	findings []jobTimeoutFinding
+	infos    []string
+	// staticOnly lists the workflows with a job that passed on the measured path but declares a
+	// value above the static ceiling, so a run without measurements (CI without a forge token, an
+	// offline audit) finds it. An exception that covers such a workflow is in use on both paths.
+	staticOnly      []string
 	measuredCount   int
 	noSuccessCount  int
 	unreadableCount int
@@ -69,6 +82,8 @@ type workflowAuditResult struct {
 }
 
 // AuditJobTimeouts checks workflow jobs for timeout-minutes declarations and duration limits.
+// Before JobTimeoutFailFrom a finding is a [WARN] line and the gate passes; from that day on it
+// is a [FAIL] line and the gate returns every line as its error.
 func AuditJobTimeouts(ctx context.Context, opts JobTimeoutOptions) (string, error) {
 	files, err := readWorkflowFiles(ctx, opts.Root)
 	if err != nil {
@@ -78,33 +93,42 @@ func AuditJobTimeouts(ctx context.Context, opts JobTimeoutOptions) (string, erro
 		files = files[:maxWorkflowFiles]
 	}
 	canMeasure := opts.Reader != nil && opts.OfflineReason == "" && opts.Branch != ""
-	entries := config.ExceptionsFor(opts.Exceptions, config.ExceptionRuleJobTimeout)
-	var allFindings []jobTimeoutFinding
-	var infoLines []string
-	measuredCount, noSuccessCount, unreadableCount := 0, 0, 0
-	var firstReadErr string
+	var total workflowAuditResult
 	for _, file := range files {
 		res, err := auditWorkflowJobTimeouts(ctx, file, opts, canMeasure)
 		if err != nil {
 			return "", err
 		}
-		allFindings = append(allFindings, res.findings...)
-		infoLines = append(infoLines, res.infos...)
-		measuredCount += res.measuredCount
-		noSuccessCount += res.noSuccessCount
-		unreadableCount += res.unreadableCount
-		if firstReadErr == "" && res.readErr != "" {
-			firstReadErr = res.readErr
-		}
+		addWorkflowResult(&total, res)
 	}
-	staticCount := noSuccessCount + unreadableCount
-	pathInfo := formatJobTimeoutPathInfo(canMeasure, opts, measuredCount, staticCount, noSuccessCount, unreadableCount, firstReadErr)
-	var lines []string
-	lines = append(lines, pathInfo)
-	lines = append(lines, infoLines...)
-	lines = append(lines, applyExceptions(allFindings, entries, opts.Today)...)
-	lines = append(lines, "[PASS] "+jobTimeoutGate)
-	return strings.Join(lines, "\n"), nil
+	staticCount := total.noSuccessCount + total.unreadableCount
+	lines := []string{formatJobTimeoutPathInfo(canMeasure, opts, total.measuredCount, staticCount, total.noSuccessCount, total.unreadableCount, total.readErr)}
+	lines = append(lines, total.infos...)
+	failing := !opts.Today.Before(JobTimeoutFailFrom)
+	entries := config.ExceptionsFor(opts.Exceptions, config.ExceptionRuleJobTimeout)
+	judged, findings := applyExceptions(total.findings, total.staticOnly, entries, opts.Today, failing)
+	lines = append(lines, judged...)
+	if findings > 0 && failing {
+		return "", errors.New(strings.Join(lines, "\n"))
+	}
+	if findings > 0 {
+		lines = append(lines, fmt.Sprintf("[INFO] %s: findings warn until %s and fail the audit from that day on",
+			jobTimeoutGate, JobTimeoutFailFrom.Format(time.DateOnly)))
+	}
+	return strings.Join(append(lines, "[PASS] "+jobTimeoutGate), "\n"), nil
+}
+
+// addWorkflowResult adds one workflow's result to total; the first read error is kept.
+func addWorkflowResult(total *workflowAuditResult, res workflowAuditResult) {
+	total.findings = append(total.findings, res.findings...)
+	total.infos = append(total.infos, res.infos...)
+	total.staticOnly = append(total.staticOnly, res.staticOnly...)
+	total.measuredCount += res.measuredCount
+	total.noSuccessCount += res.noSuccessCount
+	total.unreadableCount += res.unreadableCount
+	if total.readErr == "" && res.readErr != "" {
+		total.readErr = res.readErr
+	}
 }
 
 func formatJobTimeoutPathInfo(canMeasure bool, opts JobTimeoutOptions, measured, static, noSuccess, unreadable int, readErr string) string {
@@ -140,6 +164,9 @@ func auditWorkflowJobTimeouts(ctx context.Context, file workflowFile, opts JobTi
 		s, hasS := metrics.slowest[jobID]
 		v := judgeJob(rel, jobID, job, keyLines[jobID], hasS, s)
 		accumulateJobVerdict(&res, v, metrics.hadReadError)
+		if v.isMeasured && v.finding == nil && aboveStaticCeiling(job) && len(res.staticOnly) == 0 {
+			res.staticOnly = []string{rel}
+		}
 	}
 	if res.unreadableCount > 0 {
 		res.readErr = metrics.readErr
@@ -210,6 +237,13 @@ func judgeMeasuredJob(rel string, line int, jobID string, declared int, s float6
 	return jobVerdict{isMeasured: true}
 }
 
+// aboveStaticCeiling reports whether job declares a literal timeout-minutes above the static
+// ceiling, the finding judgeStaticJob makes when no measurement exists.
+func aboveStaticCeiling(job ghworkflow.Job) bool {
+	declared, err := strconv.Atoi(strings.TrimSpace(job.TimeoutMinutes.Value))
+	return err == nil && declared > staticCeilingMinutes
+}
+
 func judgeStaticJob(rel string, line int, jobID string, declared int) jobVerdict {
 	if declared > staticCeilingMinutes {
 		reason := fmt.Sprintf("timeout-minutes %d is above %dm bound", declared, staticCeilingMinutes)
@@ -218,8 +252,32 @@ func judgeStaticJob(rel string, line int, jobID string, declared int) jobVerdict
 	return jobVerdict{isStatic: true}
 }
 
-func applyExceptions(findings []jobTimeoutFinding, entries []config.Exception, today time.Time) []string {
+// applyExceptions returns the judged lines and how many of them are findings: a finding of a
+// workflow without a live exception, or an entry that excuses nothing. failing marks findings
+// [FAIL] instead of [WARN].
+// A workflow in staticOnly without a finding marks its live entry used, so the entry the static
+// path needs is not called stale on the measured path.
+func applyExceptions(findings []jobTimeoutFinding, staticOnly []string, entries []config.Exception, today time.Time, failing bool) ([]string, int) {
+	severity := jobTimeoutWarn
+	if failing {
+		severity = jobTimeoutFail
+	}
 	used := make([]bool, len(entries))
+	byWorkflow, wfOrder := groupFindingsByWorkflow(findings)
+	lines, count := judgeWorkflowFindings(byWorkflow, wfOrder, entries, today, used, severity)
+	lines = append(lines, staticOnlyExceptionLines(staticOnly, byWorkflow, entries, today, used)...)
+	for i := 0; i < len(entries) && i < config.MaxExceptions; i++ {
+		if !used[i] {
+			lines = append(lines, fmt.Sprintf("%s %s: the exceptions entry (rule %s, %s) excuses no finding, because the workflow it names has none; remove it.",
+				severity, jobTimeoutGate, entries[i].Rule, entries[i].Target()))
+			count++
+		}
+	}
+	return lines, count
+}
+
+// groupFindingsByWorkflow groups findings by workflow, keeping the first-seen workflow order.
+func groupFindingsByWorkflow(findings []jobTimeoutFinding) (map[string][]jobTimeoutFinding, []string) {
 	byWorkflow := make(map[string][]jobTimeoutFinding)
 	var wfOrder []string
 	for _, f := range findings {
@@ -228,24 +286,41 @@ func applyExceptions(findings []jobTimeoutFinding, entries []config.Exception, t
 		}
 		byWorkflow[f.Workflow] = append(byWorkflow[f.Workflow], f)
 	}
+	return byWorkflow, wfOrder
+}
+
+// judgeWorkflowFindings prints each workflow's findings at severity unless a live entry excuses
+// the workflow, and counts the printed findings.
+func judgeWorkflowFindings(byWorkflow map[string][]jobTimeoutFinding, wfOrder []string, entries []config.Exception, today time.Time, used []bool, severity string) ([]string, int) {
 	var lines []string
+	count := 0
 	for _, wf := range wfOrder {
-		wFindings := byWorkflow[wf]
 		live, _ := config.ExceptionFor(entries, wf, today, used)
 		if live != nil {
 			lines = append(lines, fmt.Sprintf("[PASS] %s: %s excepted until %s: %s",
 				jobTimeoutGate, wf, live.Expires, live.Reason))
 			continue
 		}
-		for _, f := range wFindings {
-			lines = append(lines, fmt.Sprintf("[WARN] %s: %s:%d job %s: %s",
-				jobTimeoutGate, f.Workflow, f.Line, f.JobID, f.Reason))
+		for _, f := range byWorkflow[wf] {
+			lines = append(lines, fmt.Sprintf("%s %s: %s:%d job %s: %s",
+				severity, jobTimeoutGate, f.Workflow, f.Line, f.JobID, f.Reason))
+			count++
 		}
 	}
-	for i := 0; i < len(entries) && i < config.MaxExceptions; i++ {
-		if !used[i] {
-			lines = append(lines, fmt.Sprintf("[WARN] %s: the exceptions entry (rule %s, %s) excuses no finding, because the workflow it names has none; remove it.",
-				jobTimeoutGate, entries[i].Rule, entries[i].Target()))
+	return lines, count
+}
+
+// staticOnlyExceptionLines marks the live entry of each staticOnly workflow without a finding
+// used and names why it stays.
+func staticOnlyExceptionLines(staticOnly []string, byWorkflow map[string][]jobTimeoutFinding, entries []config.Exception, today time.Time, used []bool) []string {
+	var lines []string
+	for _, wf := range staticOnly {
+		if _, judged := byWorkflow[wf]; judged {
+			continue
+		}
+		if live, _ := config.ExceptionFor(entries, wf, today, used); live != nil {
+			lines = append(lines, fmt.Sprintf("[INFO] %s: %s: the exceptions entry (until %s) covers jobs above the %dm static bound; the measured path finds none",
+				jobTimeoutGate, wf, live.Expires, staticCeilingMinutes))
 		}
 	}
 	return lines
