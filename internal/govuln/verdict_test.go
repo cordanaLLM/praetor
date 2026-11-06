@@ -60,9 +60,9 @@ func TestCheck_Negative_MalformedVEXIsNoVerdict(t *testing.T) {
 		"unknown justify":       {vexDoc(strings.Replace(valid, "vulnerable_code_not_present", "not_reachable", 1)), `justification "not_reachable"`},
 		"no impact":             {vexDoc(strings.Replace(valid, `"impact_statement"`, `"status_notes"`, 1)), "justification and an impact_statement"},
 		"no name":               {vexDoc(strings.Replace(valid, `"name": "GO-2022-1059"`, `"@id": "x"`, 1)), "vulnerability.name is required"},
-		"unknown field":         {vexDoc(strings.Replace(valid, `"status"`, `"expires": "2027-01-01", "status"`, 1)), "unknown field"},
-		"future review":         {vexDoc(notAffected("GO-2022-1059", "vulnerable_code_not_present", "2027-01-01T00:00:00Z")), "lies in the future"},
-		"timestamp not RFC3339": {vexDoc(notAffected("GO-2022-1059", "vulnerable_code_not_present", "2026-10-01")), "no RFC 3339 timestamp"},
+		"unknown field":         {vexDoc(strings.Replace(valid, `"status"`, `"expires": "`+testNow.AddDate(0, 0, 87).Format(time.DateOnly)+`", "status"`, 1)), "unknown field"},
+		"future review":         {vexDoc(notAffected("GO-2022-1059", "vulnerable_code_not_present", testNow.AddDate(0, 0, 87).Format(time.DateOnly)+"T00:00:00Z")), "lies in the future"},
+		"timestamp not RFC3339": {vexDoc(notAffected("GO-2022-1059", "vulnerable_code_not_present", testNow.AddDate(0, 0, -5).Format(time.DateOnly))), "no RFC 3339 timestamp"},
 	}
 	for name, tc := range cases {
 		var calls []call
@@ -89,14 +89,14 @@ func TestCheck_Boundary_ReviewAgeLatestStatementAndCleanScan(t *testing.T) {
 	report, err = Check(t.Context(), Options{Dir: module(t, ""), Run: stubRunner(cleanConfig, nil, &calls), Now: func() time.Time { return testNow }})
 	mustPass(t, report, err, 0)
 
-	affected := `{"vulnerability": {"name": "GO-2022-1059"}, "timestamp": "2026-09-01T00:00:00Z", "status": "affected"}`
-	newer := notAffected("GO-2022-1059", "vulnerable_code_not_present", "2026-10-01T00:00:00Z")
+	affected := `{"vulnerability": {"name": "GO-2022-1059"}, "timestamp": "` + testNow.AddDate(0, 0, -35).Format(time.DateOnly) + `T00:00:00Z", "status": "affected"}`
+	newer := notAffected("GO-2022-1059", "vulnerable_code_not_present", testNow.AddDate(0, 0, -5).Format(time.DateOnly)+"T00:00:00Z")
 	report, err = check(t, module(t, vexDoc(affected, newer)), "module")
 	mustPass(t, report, err, 1)
-	older := notAffected("GO-2022-1059", "vulnerable_code_not_present", "2026-08-01T00:00:00Z")
+	older := notAffected("GO-2022-1059", "vulnerable_code_not_present", testNow.AddDate(0, 0, -66).Format(time.DateOnly)+"T00:00:00Z")
 	report, err = check(t, module(t, vexDoc(affected, older)), "module")
 	mustFail(t, report, err, "the latest statement in security/vex/go.openvex.json says affected")
-	tied := notAffected("GO-2022-1059", "vulnerable_code_not_present", "2026-09-01T00:00:00Z")
+	tied := notAffected("GO-2022-1059", "vulnerable_code_not_present", testNow.AddDate(0, 0, -35).Format(time.DateOnly)+"T00:00:00Z")
 	report, err = check(t, module(t, vexDoc(affected, tied)), "module")
 	mustFail(t, report, err, "two statements in security/vex/go.openvex.json name it with the same review time")
 }

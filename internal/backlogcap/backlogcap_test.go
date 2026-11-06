@@ -14,7 +14,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/state"
 )
 
-const batchDate = "2026-10-07"
+const batchDate = /* testdate: golden: exact serialized report/configuration bytes; no clock reads */ "2026-10-07"
 
 // capPolicy resolves a policy whose repository layer declares caps.
 func capPolicy(t *testing.T, caps config.BacklogCaps) *config.EffectivePolicy {
@@ -130,7 +130,7 @@ func TestBacklogCap_Negative_OneOverTheCapBatchesEveryItemAndGateFails(t *testin
 		t.Fatalf("gate error = %v", err)
 	}
 	written, err := WriteBatches(t.Context(), root, report, batchDate)
-	if err != nil || len(written) != 1 || written[0] != ".workingdir/batches/defects-2026-10-07.md" {
+	if err != nil || len(written) != 1 || written[0] != /* testdate: golden: exact serialized report/configuration bytes; no clock reads */ ".workingdir/batches/defects-2026-10-07.md" {
 		t.Fatalf("written = %v, %v", written, err)
 	}
 	batch := readBatch(t, root, written[0])
@@ -348,7 +348,7 @@ func TestBacklogCap_Positive_TasksCountBacklogWorkstreams(t *testing.T) {
 // heading is counted and reported as a finding.
 func TestBacklogCap_Negative_BacklogRowsAloneTripTheGate(t *testing.T) {
 	root := writeTaskLedgers(t, "## In-Flight Tasks\n",
-		"## Future Workstreams\n- [ ] one\n- [ ] two\n### Discharged Tasks [2026-10-07, commit `local`]\n- [x] done\n- [ ] appended\n")
+		/* testdate: golden: exact serialized report/configuration bytes; no clock reads */ "## Future Workstreams\n- [ ] one\n- [ ] two\n### Discharged Tasks [2026-10-07, commit `local`]\n- [x] done\n- [ ] appended\n")
 	report := evaluate(t, root, config.BacklogCaps{Tasks: config.BacklogCap{Max: 2, Action: config.BacklogGate}})
 	category := &report.Categories[0]
 	if category.Count() != 3 || category.State() != StateOver {

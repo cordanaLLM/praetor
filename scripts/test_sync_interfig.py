@@ -101,6 +101,7 @@ class TreeCase(unittest.TestCase):
     """Builds a scratch repository with a vendored tree and points the module at it."""
 
     def setUp(self):
+        """Prepare scratch repository with vendored tree directories and environment overrides."""
         self.root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.vendor_dir = self.root / "tools" / "figures" / "third_party" / "interfig"
@@ -127,7 +128,10 @@ class TreeCase(unittest.TestCase):
         self.vendor = {
             "path_commit": PIN,
             "commit": PIN,
-            "fetched": "2026-01-01",
+            "fetched": (
+                # testdate: fact: recorded protocol/history metadata; parsed, no clock comparison
+                "2026-01-01"
+            ),
             "license_sha256": sync_interfig.sha256_bytes(LICENSE),
             "include": ["src/a.ts"],
             "exclude": ["demo/", "src/fixtures/"],

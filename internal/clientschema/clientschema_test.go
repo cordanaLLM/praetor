@@ -566,13 +566,13 @@ func checkMCPSpecificationHold(t *testing.T, rules []renovateRule) {
 		want    bool
 		desc    string
 	}{
-		{version: "2025-11-25", want: true, desc: "positive: current pinned spec version"},
-		{version: "2026-07-28", want: false, desc: "planted: breaking 2026-07-28 protocol release"},
-		{version: "2025-11-25-RC", want: false, desc: "negative: pre-release RC candidate"},
-		{version: "2025-11-26", want: false, desc: "boundary: day after pinned release"},
-		{version: "2025-11-24", want: false, desc: "boundary: day before pinned release"},
-		{version: "v2025-11-25", want: false, desc: "boundary: prefix mismatch"},
-		{version: "2025-11-251", want: false, desc: "boundary: suffix mismatch"},
+		{version: /* testdate: fact: MCP protocol version identifier; regex input, no clock */ "2025-11-25", want: true, desc: "positive: current pinned spec version"},
+		{version: /* testdate: fact: MCP protocol version identifier; regex input, no clock */ "2026-07-28", want: false, desc: "planted: a later breaking protocol release"},
+		{version: /* testdate: fact: MCP protocol version identifier; regex input, no clock */ "2025-11-25-RC", want: false, desc: "negative: pre-release RC candidate"},
+		{version: /* testdate: fact: MCP protocol version identifier; regex input, no clock */ "2025-11-26", want: false, desc: "boundary: day after pinned release"},
+		{version: /* testdate: fact: MCP protocol version identifier; regex input, no clock */ "2025-11-24", want: false, desc: "boundary: day before pinned release"},
+		{version: /* testdate: fact: MCP protocol version identifier; regex input, no clock */ "v2025-11-25", want: false, desc: "boundary: prefix mismatch"},
+		{version: /* testdate: fact: MCP protocol version identifier; regex input, no clock */ "2025-11-251", want: false, desc: "boundary: suffix mismatch"},
 	}
 	for _, tc := range cases {
 		if got := mcpRegex.MatchString(tc.version); got != tc.want {

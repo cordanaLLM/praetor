@@ -18,11 +18,12 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// TestPrintDedupeReport_ForeignExceptionMetadata pins print dedupe report foreign exception metadata.
 func TestPrintDedupeReport_ForeignExceptionMetadata(t *testing.T) {
 	for _, applicable := range []bool{true, false} {
 		t.Run(fmt.Sprintf("applicable_%v", applicable), func(t *testing.T) {
 			var report dedupe.DedupeReport
-			data := fmt.Sprintf(`{"applicable":%v,"passed":%v,"foreign_scanner":"jscpd 5.4.1",
+			data := fmt.Sprintf( /* testdate: golden: exact serialized report/configuration bytes; no clock reads */ `{"applicable":%v,"passed":%v,"foreign_scanner":"jscpd 5.4.1",
 			"foreign_excepted":[{"language":"python","hash":"fixture","loc":10,
 			"locations":[{"path":"app.py","line":1},{"path":"app.py","line":30}],
 			"exceptions":[{"path":"app.py","reason":"Category D: retained clones","expires":"2026-11-18"}]}]}`,
@@ -34,24 +35,29 @@ func TestPrintDedupeReport_ForeignExceptionMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatalf("excepted foreign report verdict: %v", err)
 			}
-			mustContain(t, out, "Excepted Foreign Duplicate Blocks (1):", "app.py", "excepted until 2026-11-18", "Category D: retained clones")
+			mustContain(t, out, "Excepted Foreign Duplicate Blocks (1):", "app.py",
+				/* testdate: golden: exact serialized report/configuration bytes; no clock reads */
+				"excepted until 2026-11-18", "Category D: retained clones")
 		})
 	}
 }
 
+// TestPrintDedupeReport_ExpiredForeignException pins print dedupe report expired foreign exception.
 func TestPrintDedupeReport_ExpiredForeignException(t *testing.T) {
 	report := &dedupe.DedupeReport{
 		Applicable: true, Passed: true,
 		ForeignDuplicates: []dedupe.DuplicateGroup{{
 			Language: "python", Hash: "fixture", LOC: 10,
-			Locations: []dedupe.FileLocation{{Path: "app.py", Line: 1, Expired: "2026-10-20"}},
+			Locations: []dedupe.FileLocation{{Path: "app.py", Line: 1, Expired: /* testdate: golden: exact serialized report/configuration bytes; no clock reads */ "2026-10-20"}},
 		}},
 	}
 	out, err := captureStdout(t, func() error { return printDedupeReport("fixture", report) })
 	if err != nil {
 		t.Fatalf("foreign findings remain reported without gating: %v", err)
 	}
-	mustContain(t, out, "Foreign Duplicate Blocks (1, reported, not gated):", "app.py:1", "its HISS-19 exception expired on 2026-10-20")
+	mustContain(t, out, "Foreign Duplicate Blocks (1, reported, not gated):", "app.py:1",
+		/* testdate: golden: exact serialized report/configuration bytes; no clock reads */
+		"its HISS-19 exception expired on 2026-10-20")
 }
 
 const dedupeSprawlSource = `package sample
@@ -355,9 +361,11 @@ func (in *Beta) DeepCopyInto(out *Beta) {
 }
 `
 
+// TestRunDedupeScan_Positive_ExceptedDeepCopyClonesPassAndAreListedAsExcepted pins positive excepted deep copy clones pass and are listed as excepted for run dedupe scan.
 func TestRunDedupeScan_Positive_ExceptedDeepCopyClonesPassAndAreListedAsExcepted(t *testing.T) {
+	today := time.Now()
 	dir := dedupeFixtureDir(t, "zz_generated.deepcopy.go", deepCopyGeneratedClonesFixture)
-	expires := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	expires := today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
 	manifest := fmt.Sprintf(`exceptions:
   - rule: HISS-19
     path: zz_generated.deepcopy.go
@@ -395,13 +403,17 @@ func TestRunDedupeScan_Negative_DeepCopyClonesWithoutEntryFail(t *testing.T) {
 	)
 }
 
+// TestRunDedupeScan_Negative_ExpiredEntryFailsNamingIt pins negative expired entry fails naming it for run dedupe scan.
 func TestRunDedupeScan_Negative_ExpiredEntryFailsNamingIt(t *testing.T) {
+	today := time.Now()
+	expired := today.AddDate(0, 0, -1).Format(config.ExceptionDateLayout)
 	dir := dedupeFixtureDir(t, "zz_generated.deepcopy.go", deepCopyGeneratedClonesFixture)
 	manifest := `exceptions:
   - rule: HISS-19
     path: zz_generated.deepcopy.go
     reason: generated-style DeepCopyInto clones
-    expires: 2020-01-01
+    category: A
+    expires: ` + expired + `
 `
 	writeFixtureFile(t, dir, config.ManifestFileName, manifest)
 
@@ -412,13 +424,15 @@ func TestRunDedupeScan_Negative_ExpiredEntryFailsNamingIt(t *testing.T) {
 	mustContain(t, out,
 		"Duplicate Function Blocks (1):",
 		"zz_generated.deepcopy.go",
-		"(its HISS-19 exception expired on 2020-01-01)",
+		"(its HISS-19 exception expired on "+expired+")",
 	)
 }
 
+// TestRunDedupeScan_Negative_MissingExceptionTargetRefusedByValidation pins negative missing exception target refused by validation for run dedupe scan.
 func TestRunDedupeScan_Negative_MissingExceptionTargetRefusedByValidation(t *testing.T) {
+	today := time.Now()
 	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
-	expires := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	expires := today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
 	manifest := fmt.Sprintf(`exceptions:
   - rule: HISS-19
     path: nonexistent.go
@@ -435,9 +449,11 @@ func TestRunDedupeScan_Negative_MissingExceptionTargetRefusedByValidation(t *tes
 	mustErrContain(t, err, "exceptions entry nonexistent.go (HISS-19): target file does not exist")
 }
 
+// TestRunDedupeScan_Negative_StaleExceptionFailsNamingIt pins negative stale exception fails naming it for run dedupe scan.
 func TestRunDedupeScan_Negative_StaleExceptionFailsNamingIt(t *testing.T) {
+	today := time.Now()
 	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
-	expires := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	expires := today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
 	manifest := fmt.Sprintf(`exceptions:
   - rule: HISS-19
     path: clean.go
@@ -459,10 +475,12 @@ func TestRunDedupeScan_Negative_StaleExceptionFailsNamingIt(t *testing.T) {
 	mustErrContain(t, err, "1 stale exception(s)")
 }
 
+// TestRunDedupeScan_Boundary_UnknownLanguageExceptionNotChecked pins boundary unknown language exception not checked for run dedupe scan.
 func TestRunDedupeScan_Boundary_UnknownLanguageExceptionNotChecked(t *testing.T) {
+	today := time.Now()
 	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
 	writeFixtureFile(t, dir, "README.md", "# Demo\n")
-	expires := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	expires := today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
 	manifest := fmt.Sprintf(`exceptions:
   - rule: HISS-19
     path: README.md
@@ -526,10 +544,11 @@ func TestRunDedupeScan_Positive_GeneratedFilesSkippedArePrinted(t *testing.T) {
 // CLI error) even if the exception is in NotCheckedExceptions.
 // order engine-dedupe-jscpd-skip-fails-closed-20261027
 func TestRunDedupeScan_Negative_UnscannedLanguageExceptionFailsOnForeignSkip(t *testing.T) {
+	today := time.Now()
 	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
 	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
 	writeFixtureFile(t, dir, "interop.c", "int f(void) { return 0; }\n")
-	expires := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	expires := today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
 	manifest := fmt.Sprintf(`exceptions:
   - rule: HISS-19
     path: interop.c
@@ -554,10 +573,12 @@ func TestRunDedupeScan_Negative_UnscannedLanguageExceptionFailsOnForeignSkip(t *
 	}
 }
 
+// TestRunDedupeScan_Negative_MixedExceptionsFailsOnStaleOnly pins negative mixed exceptions fails on stale only for run dedupe scan.
 func TestRunDedupeScan_Negative_MixedExceptionsFailsOnStaleOnly(t *testing.T) {
+	today := time.Now()
 	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
 	writeFixtureFile(t, dir, "README.md", "# docs\n")
-	expires := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	expires := today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
 	manifest := fmt.Sprintf(`exceptions:
   - rule: HISS-19
     path: clean.go
@@ -585,9 +606,11 @@ func TestRunDedupeScan_Negative_MixedExceptionsFailsOnStaleOnly(t *testing.T) {
 	)
 }
 
+// TestRunDedupeScan_Boundary_NoGoWithUnscannedExceptionReturnsNil pins boundary no go with unscanned exception returns nil for run dedupe scan.
 func TestRunDedupeScan_Boundary_NoGoWithUnscannedExceptionReturnsNil(t *testing.T) {
+	today := time.Now()
 	dir := dedupeFixtureDir(t, "README.md", "# not go\n")
-	expires := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	expires := today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
 	manifest := fmt.Sprintf(`exceptions:
   - rule: HISS-19
     path: README.md

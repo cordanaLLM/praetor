@@ -53,7 +53,7 @@ func fixture(t *testing.T, name string) string {
 // vexDocument renders an OpenVEX v0.2.0 document holding statements, issued at testNow less a day.
 func vexDoc(statements ...string) string {
 	return `{"@context": "https://openvex.dev/ns/v0.2.0", "@id": "https://example.com/vex/go", ` +
-		`"author": "Example maintainers", "timestamp": "2026-10-05T12:00:00Z", "version": 1, ` +
+		`"author": "Example maintainers", "timestamp": "` + testNow.AddDate(0, 0, -1).Format(time.DateOnly) + `T12:00:00Z", "version": 1, ` +
 		`"statements": [` + strings.Join(statements, ", ") + `]}`
 }
 
@@ -182,7 +182,7 @@ func TestCheck_Negative_UncalledAdvisoryWithoutStatementFails(t *testing.T) {
 func TestCheck_Positive_NotAffectedStatementCovers(t *testing.T) {
 	cases := map[string]string{
 		"module":  notAffected("GO-2022-1059", "vulnerable_code_not_present", ""),
-		"package": notAffected("GO-2022-1059", "vulnerable_code_not_in_execute_path", "2026-10-01T09:00:00Z"),
+		"package": notAffected("GO-2022-1059", "vulnerable_code_not_in_execute_path", testNow.AddDate(0, 0, -5).Format(time.DateOnly)+"T09:00:00Z"),
 	}
 	for stream, statement := range cases {
 		report, err := check(t, module(t, vexDoc(statement)), stream)
@@ -205,9 +205,9 @@ func TestCheck_Negative_AbsentClaimAndExpiredStatementFail(t *testing.T) {
 	absent := module(t, vexDoc(notAffected("GO-2022-1059", "vulnerable_code_not_present", "")))
 	report, err := check(t, absent, "package")
 	mustFail(t, report, err, "justifies it as vulnerable_code_not_present, which covers a module-level finding only")
-	expired := module(t, vexDoc(notAffected("GO-2022-1059", "vulnerable_code_not_present", "2026-07-01T00:00:00Z")))
+	expired := module(t, vexDoc(notAffected("GO-2022-1059", "vulnerable_code_not_present", testNow.AddDate(0, 0, -97).Format(time.DateOnly)+"T00:00:00Z")))
 	report, err = check(t, expired, "module")
-	mustFail(t, report, err, "was last reviewed 2026-07-01, more than 90 days ago")
+	mustFail(t, report, err, "was last reviewed "+testNow.AddDate(0, 0, -97).Format(time.DateOnly)+", more than 90 days ago")
 }
 
 // modfileCase is one test case for resolveScannerModfile.

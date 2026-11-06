@@ -32,7 +32,7 @@ func hookSettingsManifest(t *testing.T, state string) (string, string) {
 		digest = fmt.Sprintf("%x", sha256.Sum256([]byte("other content\n")))
 	}
 	manifest := config.InstallManifest{
-		Version: 1, EngineCommit: strings.Repeat("a", 40), InstalledAt: "2026-10-28T01:00:00Z", BinDir: dir,
+		Version: 1, EngineCommit: strings.Repeat("a", 40), InstalledAt: /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ "2026-10-28T01:00:00Z", BinDir: dir,
 		Binaries: map[string]config.InstalledBinary{"praetorctl": {SHA256: strings.Repeat("b", 64)}},
 		Settings: config.InstalledSettings{
 			Fleet:       &config.InstalledDocument{Path: fleet, SHA256: digest},

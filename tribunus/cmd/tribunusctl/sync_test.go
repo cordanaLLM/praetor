@@ -59,7 +59,7 @@ func TestWriteSnapshotFile_Negative(t *testing.T) {
 	}
 }
 
-const fixtureRateLimitsLine = `{"timestamp":"2026-09-13T12:56:47.753Z","ordinal":1,"type":"event_msg","payload":{"rate_limits":{"limit_id":"codex","primary":{"used_percent":10.0,"window_minutes":10080,"resets_at":1789858494},"plan_type":"pro"}}}`
+const fixtureRateLimitsLine = /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"timestamp":"2026-09-13T12:56:47.753Z","ordinal":1,"type":"event_msg","payload":{"rate_limits":{"limit_id":"codex","primary":{"used_percent":10.0,"window_minutes":10080,"resets_at":1789858494},"plan_type":"pro"}}}`
 
 // TestRunSync_Positive wires every source to a local fixture (httptest
 // servers and a temp sessions directory) and confirms the written snapshot
@@ -101,7 +101,7 @@ func TestRunSync_Positive(t *testing.T) {
 	}
 
 	claudeDir := t.TempDir()
-	claudeLine := `{"type":"assistant","timestamp":"2026-10-13T09:00:00Z","requestId":"r1","sessionId":"s1","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":10,"output_tokens":5}}}`
+	claudeLine := /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"type":"assistant","timestamp":"2026-10-13T09:00:00Z","requestId":"r1","sessionId":"s1","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":10,"output_tokens":5}}}`
 	if err := os.WriteFile(filepath.Join(claudeDir, "s.jsonl"), []byte(claudeLine), 0o600); err != nil {
 		t.Fatalf("setup claude fixture: %v", err)
 	}

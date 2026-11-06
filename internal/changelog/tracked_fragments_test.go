@@ -29,18 +29,23 @@ func TestTrackedFragments_Positive_DecodeUnderStrictSchema(t *testing.T) {
 // maxTrackedFragments bounds the loops over the tracked fragment set (HISS-02).
 const maxTrackedFragments = 4096
 
+// TestTrackedFragments_Positive_RenderIntoCopy pins positive render into copy for tracked fragments.
 func TestTrackedFragments_Positive_RenderIntoCopy(t *testing.T) {
 	root := t.TempDir()
 	copyTrackedChangelog(t, root)
 
-	if err := RenderReleaseContext(context.Background(), root, "0.0.0-test", "2026-09-18"); err != nil {
+	if err := RenderReleaseContext(context.Background(), root, "0.0.0-test",
+		/* testdate: fact: recorded release date; changelog parsing, no clock comparison */
+		"2026-09-18"); err != nil {
 		t.Fatalf("rendering the tracked fragments failed; `praetorctl release` would too: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "CHANGELOG.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "## [0.0.0-test] - 2026-09-18") {
+	if !strings.Contains(string(data),
+		/* testdate: fact: recorded release date; changelog parsing, no clock comparison */
+		"## [0.0.0-test] - 2026-09-18") {
 		t.Errorf("rendered changelog lacks the release heading:\n%.400s", data)
 	}
 	if strings.Contains(string(data), "(##") {

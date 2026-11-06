@@ -79,13 +79,19 @@ func TestStateStatus_Negative_NoCapOrUnresolvedCaps(t *testing.T) {
 func TestStateBatch_WritesTheBatchOfAnOverCapCategory(t *testing.T) {
 	dir := capsRepository(t, "    defects: {max: 1, action: gate}\n", 2)
 	out, err := captureStdout(t, func() error {
-		return dispatchCommand("state", []string{"batch", dir, "--date=2026-10-07"})
+		return dispatchCommand("state", []string{"batch", dir,
+			/* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */
+			"--date=2026-10-07"})
 	})
 	if err != nil {
 		t.Fatalf("state batch: %v\n%s", err, out)
 	}
-	mustContain(t, out, "[INFO] "+config.NoLockNotice, "Wrote .workingdir/batches/defects-2026-10-07.md")
-	data, err := os.ReadFile(filepath.Join(dir, ".workingdir", "batches", "defects-2026-10-07.md"))
+	mustContain(t, out, "[INFO] "+config.NoLockNotice,
+		/* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */
+		"Wrote .workingdir/batches/defects-2026-10-07.md")
+	data, err := os.ReadFile(filepath.Join(dir, ".workingdir", "batches",
+		/* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */
+		"defects-2026-10-07.md"))
 	if err != nil || !strings.Contains(string(data), "`BUG-001`") || !strings.Contains(string(data), "`BUG-002`") {
 		t.Fatalf("batch file: %v\n%s", err, data)
 	}
@@ -255,13 +261,17 @@ func TestStateBatch_NoLockNoticeNamesTheFleet(t *testing.T) {
 	dir := capsRepository(t, "", 2)
 	fleet := writeFixtureFile(t, t.TempDir(), "fleet.yaml", "backlog:\n  caps:\n    defects: {max: 1, action: batch}\n")
 	out, err := captureStdout(t, func() error {
-		return dispatchCommand("state", []string{"batch", dir, "--date=2026-10-07", "--fleet-config=" + fleet})
+		return dispatchCommand("state", []string{"batch", dir,
+			/* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */
+			"--date=2026-10-07", "--fleet-config=" + fleet})
 	})
 	if err != nil {
 		t.Fatalf("state batch: %v\n%s", err, out)
 	}
 	mustContain(t, out, "[INFO] no .standards.lock: built-in defaults, repository overrides and the fleet policy only",
-		"max 1 set by fleet", "Wrote .workingdir/batches/defects-2026-10-07.md")
+		"max 1 set by fleet",
+		/* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */
+		"Wrote .workingdir/batches/defects-2026-10-07.md")
 	if strings.Contains(out, config.NoLockNotice) {
 		t.Fatalf("the notice contradicts the fleet layer:\n%s", out)
 	}

@@ -17,9 +17,9 @@ func labelled(value, provenance string) string {
 
 // recordRow is one records row; wall overrides the wall_seconds field.
 func recordRow(number, branch, disposition, wall string) string {
-	return `{"number":` + number + `,"head_branch":"` + branch + `","title":"Unit ` + number + `","disposition":"` + disposition + `","metric_epoch":"2026-10-10",` +
-		`"created_at":"2026-10-02T10:00:00Z","merged_at":"2026-10-02T12:00:00Z",` +
-		`"closing_issues":[{"number":1` + number + `,"created_at":"2026-10-02T09:00:00Z"}],` +
+	return `{"number":` + number + `,"head_branch":"` + branch + `","title":"Unit ` + number + `","disposition":"` + disposition + /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `","metric_epoch":"2026-10-10",` +
+		/* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `"created_at":"2026-10-02T10:00:00Z","merged_at":"2026-10-02T12:00:00Z",` +
+		`"closing_issues":[{"number":1` + number + /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `,"created_at":"2026-10-02T09:00:00Z"}],` +
 		`"tokens_by_provider":` + labelled(`{"anthropic":100}`, "measured") + `,"wall_seconds":` + wall + `,` +
 		`"review_rounds":` + labelled("2", "measured") + `,"retries":` + labelled("1", "measured") + `,` +
 		`"operator_minutes":` + labelled("4", "measured") + `,"escaped_defects":` + labelled("0", "measured") + `}`

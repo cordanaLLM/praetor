@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const snapshotPrefix = `{"version":1,"captured_at":"2026-09-12T12:00:00Z","models":`
+const snapshotPrefix = /* testdate: fact: recorded usage/outcome timestamp; decoding, no clock comparison */ `{"version":1,"captured_at":"2026-09-12T12:00:00Z","models":`
 
 func TestUsageSnapshotExplicitObservations(t *testing.T) {
 	body := snapshotPrefix + `{"known":{"current_rpm":0,"current_tpm":20}}}`

@@ -7,10 +7,11 @@ import (
 	"testing"
 )
 
+// fixture loads or creates test fixture data.
 func fixture(t *testing.T) (Bundle, []byte) {
 	t.Helper()
 	b := Bundle{Format: Format, NotebookID: "fixture", Title: "Plan", Connector: "test",
-		CapturedAt: "2026-09-12T00:00:00Z", Coverage: []string{"Synthetic source and note only"},
+		CapturedAt:/* testdate: fact: recorded notebook timestamp; serialization, no clock comparison */ "2026-09-12T00:00:00Z", Coverage: []string{"Synthetic source and note only"},
 		Sources: []Source{{ID: "s1", Title: "Scope", Role: "source", Locator: "fixture:source",
 			Content: "Keep original records. Treat proposals as drafts."}}}
 	b.Sources[0].SHA256 = Digest([]byte(b.Sources[0].Content))

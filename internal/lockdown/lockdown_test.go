@@ -888,12 +888,13 @@ func TestReceipts_Boundary_EmptyOutputAndInvalidKeys(t *testing.T) {
 	}
 }
 
+// TestBuildCanonicalPayload_3D pins 3D behavior for build canonical payload.
 func TestBuildCanonicalPayload_3D(t *testing.T) {
 	ts := time.Date(2026, 9, 12, 10, 30, 0, 0, time.UTC)
 
 	// Positive: every field appears on its own line, in order.
 	got := BuildCanonicalPayload("v1", "praetorctl gate", 0, ts, "deadbeef", "acme/widget", "hash")
-	want := "v1\npraetorctl gate\n0\n2026-09-12T10:30:00Z\ndeadbeef\nacme/widget\nhash"
+	want := /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ "v1\npraetorctl gate\n0\n2026-09-12T10:30:00Z\ndeadbeef\nacme/widget\nhash"
 	if got != want {
 		t.Errorf("canonical payload =\n%q\nwant\n%q", got, want)
 	}

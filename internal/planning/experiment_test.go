@@ -273,6 +273,7 @@ func TestExperimentRenderAndRoundTrip(t *testing.T) {
 	})
 }
 
+// TestSchemaV1Window pins schema v1 window.
 func TestSchemaV1Window(t *testing.T) {
 	v1, err := os.ReadFile("testdata/valid-draft-v1.json")
 	if err != nil {
@@ -289,11 +290,11 @@ func TestSchemaV1Window(t *testing.T) {
 		t.Fatalf("schema_version 1 inside the window must compile: %v", err)
 	}
 	report := result.Report(false)
-	if len(report.Deprecations) != 1 || !strings.Contains(report.Deprecations[0], "refused from 2026-10-25") {
+	if len(report.Deprecations) != 1 || !strings.Contains(report.Deprecations[0], "refused from "+SchemaV1RefusedFrom.Format(time.DateOnly)) {
 		t.Fatalf("one deprecation line naming the date expected, got %q", report.Deprecations)
 	}
 	now = func() time.Time { return SchemaV1RefusedFrom }
-	if _, err := Compile(context.Background(), v1); err == nil || !strings.Contains(err.Error(), "schema_version 1 was refused from 2026-10-25") {
+	if _, err := Compile(context.Background(), v1); err == nil || !strings.Contains(err.Error(), "schema_version 1 was refused from "+SchemaV1RefusedFrom.Format(time.DateOnly)) {
 		t.Fatalf("schema_version 1 at the window end must be refused, got %v", err)
 	}
 	result, err = Compile(context.Background(), v2)

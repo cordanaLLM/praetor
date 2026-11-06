@@ -10,8 +10,9 @@ import (
 // 1. POSITIVE TESTS (3D Dimension 1)
 // ============================================================================
 
+// TestTechArticle_Positive pins positive cases for tech article.
 func TestTechArticle_Positive(t *testing.T) {
-	raw := []byte(`{
+	raw := []byte( /* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */ `{
 		"@context": "https://schema.org",
 		"@type": "TechArticle",
 		"headline": "Deterministic Fleet Governance with HISS",
@@ -62,8 +63,9 @@ func TestSoftwareSourceCode_Positive(t *testing.T) {
 	}
 }
 
+// TestValidateJSONLD_AutoDispatch_Positive pins validate auto dispatch positive.
 func TestValidateJSONLD_AutoDispatch_Positive(t *testing.T) {
-	rawArticle := []byte(`{
+	rawArticle := []byte( /* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */ `{
 		"@context": "https://schema.org",
 		"@type": "TechArticle",
 		"headline": "Title",
@@ -89,8 +91,9 @@ func TestValidateJSONLD_AutoDispatch_Positive(t *testing.T) {
 	}
 }
 
+// TestSitemapURLSet_Positive pins positive cases for sitemap url set.
 func TestSitemapURLSet_Positive(t *testing.T) {
-	raw := []byte(`<?xml version="1.0" encoding="UTF-8"?>
+	raw := []byte( /* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */ `<?xml version="1.0" encoding="UTF-8"?>
 	<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 		<url>
 			<loc>https://docs.example.com/</loc>
@@ -121,8 +124,9 @@ func TestSitemapURLSet_Positive(t *testing.T) {
 	}
 }
 
+// TestSitemapIndex_Positive pins positive cases for sitemap index.
 func TestSitemapIndex_Positive(t *testing.T) {
-	raw := []byte(`<?xml version="1.0" encoding="UTF-8"?>
+	raw := []byte( /* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */ `<?xml version="1.0" encoding="UTF-8"?>
 	<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 		<sitemap>
 			<loc>https://docs.example.com/sitemap-docs.xml</loc>
@@ -324,16 +328,20 @@ func techArticleWith(author, dateModified string) []byte {
 	return []byte(b.String())
 }
 
+// TestTechArticle_Positive_AuthorShapes pins positive author shapes for tech article.
 func TestTechArticle_Positive_AuthorShapes(t *testing.T) {
 	// Schema.org accepts a name, an object carrying a name, or a list of either.
 	for _, author := range []string{`"cordanaLLM"`, `{"@type":"Organization","name":"cordanaLLM"}`, `["a",{"name":"b"}]`} {
-		res, err := ValidateTechArticle(techArticleWith(author, `"2026-09-25T10:00:00Z"`))
+		res, err := ValidateTechArticle(techArticleWith(author,
+			/* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */
+			`"2026-09-25T10:00:00Z"`))
 		if err != nil || !res.Valid {
 			t.Errorf("author %s: err=%v errors=%v", author, err, res.Errors)
 		}
 	}
 }
 
+// TestTechArticle_Negative_RequiredAuthorAndDateModified pins negative required author and date modified for tech article.
 func TestTechArticle_Negative_RequiredAuthorAndDateModified(t *testing.T) {
 	// BUG-974: the seo-audit skill lists author and dateModified as required TechArticle
 	// fields, and an empty dateModified used to pass because the format check returns early
@@ -342,12 +350,24 @@ func TestTechArticle_Negative_RequiredAuthorAndDateModified(t *testing.T) {
 		"missing dateModified": {`"a"`, ``, "dateModified is required"},
 		"empty dateModified":   {`"a"`, `""`, "dateModified is required"},
 		"blank dateModified":   {`"a"`, `"   "`, "dateModified is required"},
-		"missing author":       {``, `"2026-09-25"`, "author is required"},
-		"blank author":         {`"  "`, `"2026-09-25"`, "author is required"},
-		"nameless object":      {`{"@type":"Person"}`, `"2026-09-25"`, "author is required"},
-		"empty author list":    {`[]`, `"2026-09-25"`, "author is required"},
-		"list with a blank":    {`["a",""]`, `"2026-09-25"`, "author is required"},
-		"numeric author":       {`42`, `"2026-09-25"`, "author is required"},
+		"missing author": {``,
+			/* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */
+			`"2026-09-25"`, "author is required"},
+		"blank author": {`"  "`,
+			/* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */
+			`"2026-09-25"`, "author is required"},
+		"nameless object": {`{"@type":"Person"}`,
+			/* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */
+			`"2026-09-25"`, "author is required"},
+		"empty author list": {`[]`,
+			/* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */
+			`"2026-09-25"`, "author is required"},
+		"list with a blank": {`["a",""]`,
+			/* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */
+			`"2026-09-25"`, "author is required"},
+		"numeric author": {`42`,
+			/* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */
+			`"2026-09-25"`, "author is required"},
 	}
 	for name, tc := range cases {
 		res, err := ValidateTechArticle(techArticleWith(tc.author, tc.dateModified))
@@ -360,12 +380,17 @@ func TestTechArticle_Negative_RequiredAuthorAndDateModified(t *testing.T) {
 	}
 }
 
+// TestTechArticle_Boundary_AuthorListCap pins boundary author list cap for tech article.
 func TestTechArticle_Boundary_AuthorListCap(t *testing.T) {
 	names := strings.TrimSuffix(strings.Repeat(`"a",`, maxAuthors), ",")
-	if res, err := ValidateTechArticle(techArticleWith("["+names+"]", `"2026-09-25"`)); err != nil || !res.Valid {
+	if res, err := ValidateTechArticle(techArticleWith("["+names+"]",
+		/* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */
+		`"2026-09-25"`)); err != nil || !res.Valid {
 		t.Fatalf("%d authors: err=%v errors=%v", maxAuthors, err, res.Errors)
 	}
-	res, err := ValidateTechArticle(techArticleWith("["+names+`,"a"]`, `"2026-09-25"`))
+	res, err := ValidateTechArticle(techArticleWith("["+names+`,"a"]`,
+		/* testdate: fact: recorded publication metadata; schema/date parsing, no clock comparison */
+		`"2026-09-25"`))
 	if err != nil || res.Valid {
 		t.Fatalf("%d authors reported valid (err=%v)", maxAuthors+1, err)
 	}

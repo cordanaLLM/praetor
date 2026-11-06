@@ -10,8 +10,10 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/toolpins"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -54,13 +56,14 @@ jobs:
         run: go run -tags=secretsgate ./tools/secrets/gate
 `
 
-const hiss12ExceptionManifest = `version: 1
+var hiss12ExceptionManifest = `version: 1
 exceptions:
   - rule: HISS-12
     path: creds.py
     tool: generic-api-key
     reason: planted test waiver
-    expires: "2026-11-01"
+    category: A
+    expires: "` + time.Now().AddDate(0, 0, 26).Format(config.ExceptionDateLayout) + `"
 `
 
 func setupSecretsGateWorkflowFixture(t *testing.T) (*adoptSession, string, string) {

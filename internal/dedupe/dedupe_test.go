@@ -20,6 +20,9 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+var deepCopyFixtureToday = time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+var foreignFixtureToday = time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)
+
 func TestScanRepo_Positive_DuplicatesAndSprawl(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, tmp, "go.mod", "module github.com/cordanaLLM/praetor\n")
@@ -663,7 +666,7 @@ func TestCadence_Boundary_ThresholdsAndLegacyState(t *testing.T) {
 
 	head := strings.TrimSpace(gitOutput(t, dir, "rev-parse", "HEAD"))
 	count := strings.TrimSpace(gitOutput(t, dir, "rev-list", "--count", "HEAD"))
-	writeFile(t, dir, ".workingdir/cadence.json", `{"last_commit_sha":"`+head+`","last_commit_count":`+count+`,"last_run_at":"2026-01-01T00:00:00Z","threshold":20}`)
+	writeFile(t, dir, ".workingdir/cadence.json", `{"last_commit_sha":"`+head+`","last_commit_count":`+count+ /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `,"last_run_at":"2026-01-01T00:00:00Z","threshold":20}`)
 	status, err := dedupe.CheckCadence(t.Context(), dir, dedupe.CadenceLimits{})
 	if err != nil {
 		t.Fatalf("a state file in the original format must load: %v", err)
@@ -1013,6 +1016,7 @@ func writeStandardsManifest(t *testing.T, dir string, content string) {
 	}
 }
 
+// setupExceptedDeepCopyFixture populates a test tree containing excepted deep-copy clones.
 func setupExceptedDeepCopyFixture(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
@@ -1025,15 +1029,16 @@ func setupExceptedDeepCopyFixture(t *testing.T) string {
   - rule: HISS-19
     path: zz_generated.deepcopy.go
     reason: controller-gen DeepCopyInto clones
-    expires: 2026-11-01
+    expires: ` + deepCopyFixtureToday.AddDate(0, 0, 24).Format(config.ExceptionDateLayout) + `
 `
 	writeStandardsManifest(t, tmp, manifest)
 	return tmp
 }
 
+// assertDeepCopyExceptionEntry verifies that an exception entry matches expected clone targets.
 func assertDeepCopyExceptionEntry(t *testing.T, exc dedupe.ExceptionEntry) {
 	t.Helper()
-	if exc.Path != "zz_generated.deepcopy.go" || exc.Reason != "controller-gen DeepCopyInto clones" || exc.Expires != "2026-11-01" {
+	if exc.Path != "zz_generated.deepcopy.go" || exc.Reason != "controller-gen DeepCopyInto clones" || exc.Expires != deepCopyFixtureToday.AddDate(0, 0, 24).Format(config.ExceptionDateLayout) {
 		t.Fatalf("unexpected exception entry in report: %+v", exc)
 	}
 }
@@ -1061,10 +1066,11 @@ func assertExceptedDeepCopyReport(t *testing.T, report *dedupe.DedupeReport) {
 	}
 }
 
+// TestScanRepo_Positive_DeepCopyIntoClonesInExceptedFilePassAndAreListedAsExcepted pins positive deep copy into clones in excepted file pass and are listed as excepted for scan repo.
 func TestScanRepo_Positive_DeepCopyIntoClonesInExceptedFilePassAndAreListedAsExcepted(t *testing.T) {
 	tmp := setupExceptedDeepCopyFixture(t)
 
-	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	today := deepCopyFixtureToday
 	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
 		RepoPath: tmp,
 		Today:    today,
@@ -1097,6 +1103,7 @@ func TestScanRepo_Negative_DeepCopyIntoClonesWithoutEntryFail(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Negative_ExpiredEntryFailsNamingIt pins negative expired entry fails naming it for scan repo.
 func TestScanRepo_Negative_ExpiredEntryFailsNamingIt(t *testing.T) {
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "zz_generated.deepcopy.go")
@@ -1108,11 +1115,11 @@ func TestScanRepo_Negative_ExpiredEntryFailsNamingIt(t *testing.T) {
   - rule: HISS-19
     path: zz_generated.deepcopy.go
     reason: controller-gen DeepCopyInto clones
-    expires: 2026-09-01
+    expires: ` + deepCopyFixtureToday.AddDate(0, 0, -37).Format(config.ExceptionDateLayout) + `
 `
 	writeStandardsManifest(t, tmp, manifest)
 
-	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	today := deepCopyFixtureToday
 	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
 		RepoPath: tmp,
 		Today:    today,
@@ -1130,12 +1137,13 @@ func TestScanRepo_Negative_ExpiredEntryFailsNamingIt(t *testing.T) {
 		t.Fatalf("expected 0 excepted groups, got %d", len(report.Excepted))
 	}
 	for _, loc := range report.Duplicates[0].Locations {
-		if loc.Expired != "2026-09-01" {
-			t.Errorf("location %s:%d expired = %q, want 2026-09-01", loc.Path, loc.Line, loc.Expired)
+		if loc.Expired != deepCopyFixtureToday.AddDate(0, 0, -37).Format(config.ExceptionDateLayout) {
+			t.Errorf("location %s:%d expired = %q, want "+deepCopyFixtureToday.AddDate(0, 0, -37).Format(config.ExceptionDateLayout), loc.Path, loc.Line, loc.Expired)
 		}
 	}
 }
 
+// TestScanRepo_Negative_GroupWithOneMemberInExceptedFileAndOneOutsideFails pins negative group with one member in excepted file and one outside fails for scan repo.
 func TestScanRepo_Negative_GroupWithOneMemberInExceptedFileAndOneOutsideFails(t *testing.T) {
 	tmp := t.TempDir()
 	if err := os.WriteFile(filepath.Join(tmp, "alpha.go"), []byte(deepCopySingleAlphaSource), 0o600); err != nil {
@@ -1149,11 +1157,11 @@ func TestScanRepo_Negative_GroupWithOneMemberInExceptedFileAndOneOutsideFails(t 
   - rule: HISS-19
     path: alpha.go
     reason: only alpha is excepted
-    expires: 2026-11-01
+    expires: ` + deepCopyFixtureToday.AddDate(0, 0, 24).Format(config.ExceptionDateLayout) + `
 `
 	writeStandardsManifest(t, tmp, manifest)
 
-	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	today := deepCopyFixtureToday
 	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
 		RepoPath: tmp,
 		Today:    today,
@@ -1172,13 +1180,16 @@ func TestScanRepo_Negative_GroupWithOneMemberInExceptedFileAndOneOutsideFails(t 
 	}
 }
 
+// TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation pins negative entry for missing file is refused by validation for scan repo.
 func TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation(t *testing.T) {
+	today := time.Now()
 	tmp := t.TempDir()
 	manifest := `exceptions:
   - rule: HISS-19
     path: nonexistent.go
     reason: missing file exception
-    expires: 2026-11-01
+    category: A
+    expires: ` + today.AddDate(0, 0, 24).Format(config.ExceptionDateLayout) + `
 `
 	writeStandardsManifest(t, tmp, manifest)
 
@@ -1200,7 +1211,8 @@ func TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation(t *testing.T
   - rule: HISS-19
     path: subpkg.go
     reason: directory target exception
-    expires: 2026-11-01
+    category: A
+    expires: ` + today.AddDate(0, 0, 24).Format(config.ExceptionDateLayout) + `
 `
 	writeStandardsManifest(t, tmp, dirManifest)
 	_, err = dedupe.ScanRepo(tmp)
@@ -1224,6 +1236,7 @@ func CleanBeta() int {
 }
 `
 
+// TestScanRepo_Negative_StaleExceptionForCleanFileFails pins negative stale exception for clean file fails for scan repo.
 func TestScanRepo_Negative_StaleExceptionForCleanFileFails(t *testing.T) {
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "clean.go")
@@ -1235,11 +1248,11 @@ func TestScanRepo_Negative_StaleExceptionForCleanFileFails(t *testing.T) {
   - rule: HISS-19
     path: clean.go
     reason: clean file has no clones
-    expires: 2026-11-01
+    expires: ` + deepCopyFixtureToday.AddDate(0, 0, 24).Format(config.ExceptionDateLayout) + `
 `
 	writeStandardsManifest(t, tmp, manifest)
 
-	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	today := deepCopyFixtureToday
 	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
 		RepoPath: tmp,
 		Today:    today,
@@ -1259,6 +1272,7 @@ func TestScanRepo_Negative_StaleExceptionForCleanFileFails(t *testing.T) {
 	}
 }
 
+// TestScanRepo_CategoryDStaleException pins scan repo category d stale exception.
 func TestScanRepo_CategoryDStaleException(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "clean.go", cleanGoSource)
@@ -1266,11 +1280,11 @@ func TestScanRepo_CategoryDStaleException(t *testing.T) {
   - rule: HISS-19
     path: clean.go
     reason: "category D: generated boilerplate"
-    entered: 2026-10-21
-    expires: 2027-02-18
+    entered: `+foreignFixtureToday.AddDate(0, 0, 0).Format(config.ExceptionDateLayout)+`
+    expires: `+foreignFixtureToday.AddDate(0, 0, 120).Format(config.ExceptionDateLayout)+`
 `)
 	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
-		RepoPath: root, Today: time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC),
+		RepoPath: root, Today: foreignFixtureToday,
 	})
 	if err != nil {
 		t.Fatalf("category D entry must validate before the native stale check: %v", err)
@@ -1281,6 +1295,7 @@ func TestScanRepo_CategoryDStaleException(t *testing.T) {
 	t.Log("category D entry validates; native scanner reports its unused exception as stale")
 }
 
+// TestScanRepo_Boundary_UnknownLanguageExceptionNotChecked pins boundary unknown language exception not checked for scan repo.
 func TestScanRepo_Boundary_UnknownLanguageExceptionNotChecked(t *testing.T) {
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "clean.go")
@@ -1296,11 +1311,11 @@ func TestScanRepo_Boundary_UnknownLanguageExceptionNotChecked(t *testing.T) {
   - rule: HISS-19
     path: README.md
     reason: non-Go file cannot have Go clones
-    expires: 2026-11-01
+    expires: ` + deepCopyFixtureToday.AddDate(0, 0, 24).Format(config.ExceptionDateLayout) + `
 `
 	writeStandardsManifest(t, tmp, manifest)
 
-	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	today := deepCopyFixtureToday
 	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
 		RepoPath: tmp,
 		Today:    today,
@@ -1323,6 +1338,7 @@ func TestScanRepo_Boundary_UnknownLanguageExceptionNotChecked(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Negative_UnusedExceptionWithClonesFailsForUnusedEntry pins negative unused exception with clones fails for unused entry for scan repo.
 func TestScanRepo_Negative_UnusedExceptionWithClonesFailsForUnusedEntry(t *testing.T) {
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "zz_generated.deepcopy.go")
@@ -1338,15 +1354,15 @@ func TestScanRepo_Negative_UnusedExceptionWithClonesFailsForUnusedEntry(t *testi
   - rule: HISS-19
     path: zz_generated.deepcopy.go
     reason: generated clones
-    expires: 2026-11-01
+    expires: ` + deepCopyFixtureToday.AddDate(0, 0, 24).Format(config.ExceptionDateLayout) + `
   - rule: HISS-19
     path: clean.go
     reason: clean file has no clones
-    expires: 2026-11-01
+    expires: ` + deepCopyFixtureToday.AddDate(0, 0, 24).Format(config.ExceptionDateLayout) + `
 `
 	writeStandardsManifest(t, tmp, manifest)
 
-	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	today := deepCopyFixtureToday
 	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
 		RepoPath: tmp,
 		Today:    today,
@@ -1369,6 +1385,7 @@ func TestScanRepo_Negative_UnusedExceptionWithClonesFailsForUnusedEntry(t *testi
 	}
 }
 
+// TestScanRepo_Negative_SymlinkExceptionTargetIsRefused pins negative symlink exception target is refused for scan repo.
 func TestScanRepo_Negative_SymlinkExceptionTargetIsRefused(t *testing.T) {
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "real.go")
@@ -1384,7 +1401,8 @@ func TestScanRepo_Negative_SymlinkExceptionTargetIsRefused(t *testing.T) {
   - rule: HISS-19
     path: symlink.go
     reason: symlink target
-    expires: 2026-11-01
+    category: A
+    expires: ` + time.Now().AddDate(0, 0, 24).Format(config.ExceptionDateLayout) + `
 `
 	writeStandardsManifest(t, tmp, manifest)
 
@@ -1398,6 +1416,7 @@ func TestScanRepo_Negative_SymlinkExceptionTargetIsRefused(t *testing.T) {
 	}
 }
 
+// TestValidateExceptions_Negative_SymlinkAndContextCancellation pins negative symlink and context cancellation for validate exceptions.
 func TestValidateExceptions_Negative_SymlinkAndContextCancellation(t *testing.T) {
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "real.go")
@@ -1413,9 +1432,9 @@ func TestValidateExceptions_Negative_SymlinkAndContextCancellation(t *testing.T)
 		Rule:    config.ExceptionRuleDedupe,
 		Path:    "symlink.go",
 		Reason:  "symlink target exception",
-		Expires: "2026-11-01",
+		Expires: deepCopyFixtureToday.AddDate(0, 0, 24).Format(config.ExceptionDateLayout),
 	}
-	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	today := deepCopyFixtureToday
 
 	err := dedupe.ValidateExceptions(t.Context(), tmp, []config.Exception{entry}, today)
 	if err == nil {
@@ -1478,6 +1497,7 @@ func TestScanRepo_Negative_MissingExceptionTargetWordingWithFilteredOutPredecess
 	}
 }
 
+// TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19 pins negative supplied exceptions filtered to his s19 for scan repo with options.
 func TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19(t *testing.T) {
 	tmp := t.TempDir()
 	sourceA := `package test
@@ -1503,7 +1523,7 @@ func DuplicateHelperB() {
 		t.Fatal(err)
 	}
 
-	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	today := deepCopyFixtureToday
 	expires := today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
 	supplied := []config.Exception{
 		{
@@ -1545,6 +1565,7 @@ func DuplicateHelperB() {
 	}
 }
 
+// TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone pins negative credits exception does not excuse clone for scan repo with options.
 func TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone(t *testing.T) {
 	tmp := t.TempDir()
 	sourceA := `package test
@@ -1570,7 +1591,7 @@ func DuplicateHelperB() {
 		t.Fatal(err)
 	}
 
-	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	today := deepCopyFixtureToday
 	expires := today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
 	supplied := []config.Exception{
 		{
@@ -1816,6 +1837,7 @@ func BetaGit() {
 	}
 }
 
+// TestScanRepo_ScopedExceptions pins scan repo scoped exceptions.
 func TestScanRepo_ScopedExceptions(t *testing.T) {
 	for _, foreign := range []bool{false, true} {
 		t.Run(fmt.Sprintf("foreign=%v", foreign), func(t *testing.T) {
@@ -1842,9 +1864,9 @@ func TestScanRepo_ScopedExceptions(t *testing.T) {
 			for _, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {
 					scope := strings.ReplaceAll(tc.scope, "\n", "\n    ")
-					writeStandardsManifest(t, root, fmt.Sprintf("exceptions:\n  - rule: HISS-19\n    path: %s\n    reason: retained clone\n    expires: 2026-11-18\n    %s\n", path, scope))
+					writeStandardsManifest(t, root, fmt.Sprintf("exceptions:\n  - rule: HISS-19\n    path: %s\n    reason: retained clone\n    expires: "+foreignFixtureToday.AddDate(0, 0, 28).Format(config.ExceptionDateLayout)+"\n    %s\n", path, scope))
 					report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
-						RepoPath: root, Today: time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC),
+						RepoPath: root, Today: foreignFixtureToday,
 					})
 					if err != nil {
 						t.Fatal(err)
@@ -1919,6 +1941,7 @@ func assertScopedExceptionReport(t *testing.T, report *dedupe.DedupeReport, fore
 	}
 }
 
+// TestScanRepo_ScopedExceptionExpiry pins scan repo scoped exception expiry.
 func TestScanRepo_ScopedExceptionExpiry(t *testing.T) {
 	for _, foreign := range []bool{false, true} {
 		t.Run(fmt.Sprintf("foreign=%v", foreign), func(t *testing.T) {
@@ -1930,9 +1953,9 @@ func TestScanRepo_ScopedExceptionExpiry(t *testing.T) {
 			}
 			for _, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {
-					writeStandardsManifest(t, root, fmt.Sprintf("exceptions:\n  - rule: HISS-19\n    path: %s\n    reason: expired scoped clone\n    expires: 2026-10-20\n    %s\n", path, tc.scope))
+					writeStandardsManifest(t, root, fmt.Sprintf("exceptions:\n  - rule: HISS-19\n    path: %s\n    reason: expired scoped clone\n    expires: "+foreignFixtureToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout)+"\n    %s\n", path, tc.scope))
 					report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
-						RepoPath: root, Today: time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC),
+						RepoPath: root, Today: foreignFixtureToday,
 					})
 					if err != nil {
 						t.Fatal(err)
@@ -1949,12 +1972,13 @@ func TestScanRepo_ScopedExceptionExpiry(t *testing.T) {
 	}
 }
 
+// assertScopedExpiry asserts the expected expiry date on a scoped exception finding.
 func assertScopedExpiry(t *testing.T, groups []dedupe.DuplicateGroup, hash string) {
 	t.Helper()
 	for _, group := range groups {
 		want := ""
 		if group.Hash == hash {
-			want = "2026-10-20"
+			want = foreignFixtureToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout)
 		}
 		for _, loc := range group.Locations {
 			if loc.Expired != want {
@@ -1964,6 +1988,7 @@ func assertScopedExpiry(t *testing.T, groups []dedupe.DuplicateGroup, hash strin
 	}
 }
 
+// TestScanRepo_SeparateLineScopesKeepBothEntries pins scan repo separate line scopes keep both entries.
 func TestScanRepo_SeparateLineScopesKeepBothEntries(t *testing.T) {
 	for _, foreign := range []bool{false, true} {
 		t.Run(fmt.Sprintf("foreign=%v", foreign), func(t *testing.T) {
@@ -1975,17 +2000,17 @@ func TestScanRepo_SeparateLineScopesKeepBothEntries(t *testing.T) {
     fingerprint: %s
     lines: %d-%d
     reason: first retained copy
-    expires: 2026-11-18
+    expires: `+foreignFixtureToday.AddDate(0, 0, 28).Format(config.ExceptionDateLayout)+`
   - rule: HISS-19
     path: %s
     fingerprint: %s
     lines: %d-%d
     reason: second retained copy
-    expires: 2026-11-18
+    expires: `+foreignFixtureToday.AddDate(0, 0, 28).Format(config.ExceptionDateLayout)+`
 `, path, first.Hash[:8], first.Locations[0].Line, first.Locations[0].Line,
 				path, first.Hash[:8], first.Locations[1].Line, first.Locations[1].Line))
 			report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
-				RepoPath: root, Today: time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC),
+				RepoPath: root, Today: foreignFixtureToday,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -2004,6 +2029,7 @@ func TestScanRepo_SeparateLineScopesKeepBothEntries(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked pins positive unscanned language exception not checked for scan repo.
 func TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked(t *testing.T) {
 	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
 	root := t.TempDir()
@@ -2013,9 +2039,9 @@ func TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked(t *testing.T) {
   - rule: HISS-19
     path: interop.c
     reason: C interop files
-    expires: 2026-11-01
+    expires: `+deepCopyFixtureToday.AddDate(0, 0, 24).Format(config.ExceptionDateLayout)+`
 `)
-	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	today := deepCopyFixtureToday
 	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
 		RepoPath: root,
 		Today:    today,
@@ -2042,6 +2068,7 @@ func TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale pins negative go exception without duplicate is stale for scan repo.
 func TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "clean.go", cleanGoSource)
@@ -2049,9 +2076,9 @@ func TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale(t *testing.T) {
   - rule: HISS-19
     path: clean.go
     reason: unused Go exception
-    expires: 2026-11-01
+    expires: `+deepCopyFixtureToday.AddDate(0, 0, 24).Format(config.ExceptionDateLayout)+`
 `)
-	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	today := deepCopyFixtureToday
 	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
 		RepoPath: root,
 		Today:    today,
@@ -2074,6 +2101,7 @@ func TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly pins negative mixed exceptions fails on stale only for scan repo.
 func TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly(t *testing.T) {
 	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
 	root := t.TempDir()
@@ -2083,13 +2111,13 @@ func TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly(t *testing.T) {
   - rule: HISS-19
     path: clean.go
     reason: unused Go exception
-    expires: 2026-11-01
+    expires: `+deepCopyFixtureToday.AddDate(0, 0, 24).Format(config.ExceptionDateLayout)+`
   - rule: HISS-19
     path: interop.c
     reason: C interop files
-    expires: 2026-11-01
+    expires: `+deepCopyFixtureToday.AddDate(0, 0, 24).Format(config.ExceptionDateLayout)+`
 `)
-	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	today := deepCopyFixtureToday
 	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
 		RepoPath: root,
 		Today:    today,
@@ -2116,6 +2144,7 @@ func TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Boundary_NotApplicableUnscannedExceptionNotChecked pins boundary not applicable unscanned exception not checked for scan repo.
 func TestScanRepo_Boundary_NotApplicableUnscannedExceptionNotChecked(t *testing.T) {
 	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
 	root := t.TempDir()
@@ -2124,9 +2153,9 @@ func TestScanRepo_Boundary_NotApplicableUnscannedExceptionNotChecked(t *testing.
   - rule: HISS-19
     path: interop.c
     reason: C interop files
-    expires: 2026-11-01
+    expires: `+deepCopyFixtureToday.AddDate(0, 0, 24).Format(config.ExceptionDateLayout)+`
 `)
-	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	today := deepCopyFixtureToday
 	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
 		RepoPath: root,
 		Today:    today,

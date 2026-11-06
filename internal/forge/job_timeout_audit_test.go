@@ -164,11 +164,12 @@ func TestJobTimeout_Measured_CancelRiskAndRunaway(t *testing.T) {
 
 // Path naming: offline run prints static-only line with its reason; fake reader run prints measured line with counts.
 func TestJobTimeout_PathNaming(t *testing.T) {
+	today := time.Now()
 	root := t.TempDir()
 	writeWorkflow(t, root, "a.yml", "on: push\njobs:\n  j1:\n    timeout-minutes: 10\n    steps:\n      - run: echo 1\n")
 	writeWorkflow(t, root, "b.yml", "on: push\njobs:\n  j2:\n    timeout-minutes: 10\n    steps:\n      - run: echo 2\n")
 	offlineOut, err := AuditJobTimeouts(t.Context(), JobTimeoutOptions{
-		Root: root, Today: time.Now(), OfflineReason: "--offline",
+		Root: root, Today: today, OfflineReason: "--offline",
 	})
 	if err != nil {
 		t.Fatalf("offline error: %v", err)
@@ -186,7 +187,7 @@ func TestJobTimeout_PathNaming(t *testing.T) {
 		},
 	}
 	measuredOut, err := AuditJobTimeouts(t.Context(), JobTimeoutOptions{
-		Root: root, Today: time.Now(), Reader: reader, Branch: "main",
+		Root: root, Today: today, Reader: reader, Branch: "main",
 	})
 	if err != nil {
 		t.Fatalf("measured error: %v", err)
@@ -204,7 +205,7 @@ func TestJobTimeout_Exceptions(t *testing.T) {
 	writeWorkflow(t, root, "clean.yml", "on: push\njobs:\n  j:\n    timeout-minutes: 30\n    steps:\n      - run: echo 2\n")
 	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
 	liveEx := []config.Exception{{
-		Rule: config.ExceptionRuleJobTimeout, Path: ".github/workflows/fail.yml", Reason: "waived", Category: "A", Expires: "2026-12-31",
+		Rule: config.ExceptionRuleJobTimeout, Path: ".github/workflows/fail.yml", Reason: "waived", Category: "A", Expires: today.AddDate(0, 0, 74).Format(config.ExceptionDateLayout),
 	}}
 	outLive, err := AuditJobTimeouts(t.Context(), JobTimeoutOptions{
 		Root: root, Today: today, Exceptions: liveEx, OfflineReason: "--offline",
@@ -212,12 +213,12 @@ func TestJobTimeout_Exceptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(outLive, "[PASS] job-timeout: .github/workflows/fail.yml excepted until 2026-12-31: waived") ||
+	if !strings.Contains(outLive, "[PASS] job-timeout: .github/workflows/fail.yml excepted until "+today.AddDate(0, 0, 74).Format(config.ExceptionDateLayout)+": waived") ||
 		strings.Contains(outLive, "[WARN] job-timeout: .github/workflows/fail.yml") {
 		t.Errorf("dated exception must silence finding; got:\n%s", outLive)
 	}
 	expiredEx := []config.Exception{{
-		Rule: config.ExceptionRuleJobTimeout, Path: ".github/workflows/fail.yml", Reason: "waived", Expires: "2026-10-01",
+		Rule: config.ExceptionRuleJobTimeout, Path: ".github/workflows/fail.yml", Reason: "waived", Expires: today.AddDate(0, 0, -17).Format(config.ExceptionDateLayout),
 	}}
 	outExp, err := AuditJobTimeouts(t.Context(), JobTimeoutOptions{
 		Root: root, Today: today, Exceptions: expiredEx, OfflineReason: "--offline",
@@ -229,7 +230,7 @@ func TestJobTimeout_Exceptions(t *testing.T) {
 		t.Errorf("expired exception must not silence finding; got:\n%s", outExp)
 	}
 	staleEx := []config.Exception{{
-		Rule: config.ExceptionRuleJobTimeout, Path: ".github/workflows/clean.yml", Reason: "waived", Category: "A", Expires: "2026-12-31",
+		Rule: config.ExceptionRuleJobTimeout, Path: ".github/workflows/clean.yml", Reason: "waived", Category: "A", Expires: today.AddDate(0, 0, 74).Format(config.ExceptionDateLayout),
 	}}
 	outStale, err := AuditJobTimeouts(t.Context(), JobTimeoutOptions{
 		Root: root, Today: today, Exceptions: staleEx, OfflineReason: "--offline",

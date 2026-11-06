@@ -27,9 +27,9 @@ func newServer(t *testing.T, tags, ps string, psStatus int) *httptest.Server {
 	}))
 }
 
-const sampleTags = `{"models":[{"name":"hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M","model":"hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M","modified_at":"2026-08-22T20:09:26Z","size":17395587762,"details":{"parameter_size":"27.3B","quantization_level":"Q4_K_M","context_length":262144},"capabilities":["tools","thinking"]},{"name":"gpt-oss:20b","details":{"parameter_size":"20.9B","quantization_level":"MXFP4","context_length":32768},"capabilities":["completion"]}]}`
+const sampleTags = /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"models":[{"name":"hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M","model":"hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M","modified_at":"2026-08-22T20:09:26Z","size":17395587762,"details":{"parameter_size":"27.3B","quantization_level":"Q4_K_M","context_length":262144},"capabilities":["tools","thinking"]},{"name":"gpt-oss:20b","details":{"parameter_size":"20.9B","quantization_level":"MXFP4","context_length":32768},"capabilities":["completion"]}]}`
 
-const samplePS = `{"models":[{"name":"gpt-oss:20b","size":13000056503,"expires_at":"2026-09-18T19:44:37Z","size_vram":13000056503,"context_length":32768}]}`
+const samplePS = /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"models":[{"name":"gpt-oss:20b","size":13000056503,"expires_at":"2026-09-18T19:44:37Z","size_vram":13000056503,"context_length":32768}]}`
 
 func TestFetch_Positive(t *testing.T) {
 	server := newServer(t, sampleTags, samplePS, http.StatusOK)

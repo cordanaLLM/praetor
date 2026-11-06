@@ -259,7 +259,7 @@ func TestWorkflowRunHistory_Boundary_SecondQuestionWindowAndEscaping(t *testing.
 // Positive: WorkflowRunJobs reads the run's jobs through GET .../actions/runs/{runID}/jobs.
 func TestWorkflowRunJobs_Positive(t *testing.T) {
 	jobs := []map[string]any{
-		{"name": "test", "started_at": "2026-10-18T00:00:00Z", "completed_at": "2026-10-18T00:10:00Z", "conclusion": "success"},
+		{"name": "test", "started_at": /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-10-18T00:00:00Z", "completed_at": /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-10-18T00:10:00Z", "conclusion": "success"},
 	}
 	body := map[string]any{"total_count": 1, "jobs": jobs}
 	gh, fake := runsForge(t, respond(t, http.StatusOK, body))

@@ -21,7 +21,7 @@ var ledgerPRs = []forge.MergedPullRequest{
 
 // Rows use the columns of LiteLLM_SpendLogs: request_id, model, model_group, spend,
 // total_tokens, prompt_tokens, completion_tokens, startTime, request_tags and metadata.
-const spendJSONL = `{"request_id":"r1","call_type":"acompletion","model":"claude-sonnet-4-5","model_group":"","spend":0.5,"total_tokens":1000,"prompt_tokens":900,"completion_tokens":100,"startTime":"2026-10-01T10:00:00Z","request_tags":["branch:feat/a"],"metadata":{}}
+const spendJSONL = /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `{"request_id":"r1","call_type":"acompletion","model":"claude-sonnet-4-5","model_group":"","spend":0.5,"total_tokens":1000,"prompt_tokens":900,"completion_tokens":100,"startTime":"2026-10-01T10:00:00Z","request_tags":["branch:feat/a"],"metadata":{}}
 {"request_id":"r2","model":"qwen-local","model_group":"cordana/coding","spend":0,"total_tokens":0,"prompt_tokens":100,"completion_tokens":50,"startTime":"2026-10-01T10:01:00Z","request_tags":[],"metadata":{"tags":["feat/a"]}}
 {"request_id":"r3","model":"ollama/llama3","model_group":"local","spend":0,"total_tokens":300,"startTime":"2026-10-01T10:02:00Z","request_tags":["pr:2"],"metadata":null}
 {"request_id":"r4","model":"gpt-5-mini","spend":0.02,"total_tokens":50,"request_tags":null,"metadata":"{\"branch\":\"feat/b\"}"}
@@ -73,14 +73,15 @@ func TestReadSpendLogFile_Positive_LiteLLMFieldsJSONL(t *testing.T) {
 	assertSpendReport(t, r)
 }
 
+// TestReadSpendLogFile_Positive_ArrayAndCSVAgree pins positive array and csv agree for read spend log file.
 func TestReadSpendLogFile_Positive_ArrayAndCSVAgree(t *testing.T) {
 	dir := t.TempDir()
 	rows := strings.Split(strings.TrimSpace(spendJSONL), "\n")
 	writeFile(t, filepath.Join(dir, "spend.json"), []byte("["+strings.Join(rows, ",")+"]"))
 	csv := "request_id,model,model_group,spend,total_tokens,prompt_tokens,completion_tokens,startTime,request_tags,metadata\n" +
-		`r1,claude-sonnet-4-5,,0.5,1000,900,100,2026-10-01T10:00:00Z,"[""branch:feat/a""]",{}` + "\n" +
-		`r2,qwen-local,cordana/coding,0,0,100,50,2026-10-01T10:01:00Z,[],"{""tags"": [""feat/a""]}"` + "\n" +
-		`r3,ollama/llama3,local,0,300,,,2026-10-01T10:02:00Z,"[""pr:2""]",` + "\n" +
+		/* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `r1,claude-sonnet-4-5,,0.5,1000,900,100,2026-10-01T10:00:00Z,"[""branch:feat/a""]",{}` + "\n" +
+		/* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `r2,qwen-local,cordana/coding,0,0,100,50,2026-10-01T10:01:00Z,[],"{""tags"": [""feat/a""]}"` + "\n" +
+		/* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ `r3,ollama/llama3,local,0,300,,,2026-10-01T10:02:00Z,"[""pr:2""]",` + "\n" +
 		`r4,gpt-5-mini,,0.02,50,,,,,"{""branch"": ""feat/b""}"` + "\n" +
 		`r5,claude-opus-4-1,,0.25,10,,,,"[""team:x""]",` + "\n" +
 		`r1,claude-sonnet-4-5,,0.5,1000,,,,"[""branch:feat/a""]",` + "\n"

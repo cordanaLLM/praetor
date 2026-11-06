@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const rssFeed = `<?xml version="1.0" encoding="UTF-8"?>
+const rssFeed = /* testdate: fact: recorded feed/release date; parser input, no clock comparison */ `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:media="http://search.yahoo.com/mrss/">
 <channel><title>Example blog</title><link>https://example.org/</link>
 <item><title>First &amp; <![CDATA[best]]></title><link>https://example.org/first</link>
@@ -21,7 +21,7 @@ const rssFeed = `<?xml version="1.0" encoding="UTF-8"?>
 <item><title>No date</title><link>https://example.org/none</link></item>
 </channel></rss>`
 
-const atomFeed = `<?xml version="1.0" encoding="utf-8"?>
+const atomFeed = /* testdate: fact: recorded feed/release date; parser input, no clock comparison */ `<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom"><title>Example releases</title>
 <entry><title type="html">v2.0 &lt;b&gt;bold&lt;/b&gt;</title>
 <link rel="self" href="https://example.org/self"/><link href="https://example.org/v2"/>
@@ -29,7 +29,7 @@ const atomFeed = `<?xml version="1.0" encoding="utf-8"?>
 <entry><title>Only updated</title><link rel="alternate" href="https://example.org/u"/><updated>2026-10-04T00:00:00Z</updated></entry>
 </feed>`
 
-const rdfFeed = `<?xml version="1.0"?>
+const rdfFeed = /* testdate: fact: recorded feed/release date; parser input, no clock comparison */ `<?xml version="1.0"?>
 <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/" xmlns:dc="http://purl.org/dc/elements/1.1/">
 <channel><title>Papers</title></channel>
 <item><title>A paper</title><link>https://example.org/abs/1</link><dc:date>2026-10-05T00:00:00Z</dc:date></item>
@@ -239,8 +239,8 @@ func TestParseFeed_Negative_UnresolvedZones(t *testing.T) {
 		"Thu, 01 Oct 2026 09:30:00 +00:00",
 		"Thursday, 01-Oct-26 09:30:00 GMT",
 		"Thu Oct  1 09:30:00 2026",
-		"2026-10-01T09:30:00",
-		"2026-10-01 09:30:00Z",
+		/* testdate: fact: recorded feed/release date; parser input, no clock comparison */ "2026-10-01T09:30:00",
+		/* testdate: fact: recorded feed/release date; parser input, no clock comparison */ "2026-10-01 09:30:00Z",
 		"1 October 2026",
 	}
 	underHostZones(t, func(t *testing.T) {

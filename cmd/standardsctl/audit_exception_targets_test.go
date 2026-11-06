@@ -33,7 +33,7 @@ func exceptionTargetRoot(t *testing.T, files ...string) string {
 
 // liveEntry is an entry that holds on targetsToday.
 func liveEntry(rule, path, glob string) config.Exception {
-	return config.Exception{Rule: rule, Path: path, Glob: glob, Reason: "debt", Category: "A", Expires: "2026-11-30"}
+	return config.Exception{Rule: rule, Path: path, Glob: glob, Reason: "debt", Category: "A", Expires: targetsToday.AddDate(0, 0, 51).Format(config.ExceptionDateLayout)}
 }
 
 // judgeTargets runs the existence check over entries in root and returns its output and error.
@@ -51,7 +51,7 @@ func TestAuditExceptionTargets_ExistingTargetsPass(t *testing.T) {
 	out, err := judgeTargets(t, root,
 		liveEntry(config.ExceptionRuleBuildWarnings, ".github/workflows/ci.yml", ""),
 		liveEntry(config.ExceptionRuleClangTidyCoverage, "", "src/gen/*.pb.go"),
-		config.Exception{Rule: config.ExceptionRuleDeclaredLinters, Tool: "gitleaks", Reason: "debt", Category: "A", Expires: "2026-11-30"},
+		config.Exception{Rule: config.ExceptionRuleDeclaredLinters, Tool: "gitleaks", Reason: "debt", Category: "A", Expires: targetsToday.AddDate(0, 0, 51).Format(config.ExceptionDateLayout)},
 	)
 	if err != nil {
 		t.Fatalf("existing targets failed: %v\n%s", err, out)
@@ -78,10 +78,10 @@ func TestAuditExceptionTargets_MissingPathFails(t *testing.T) {
 func TestAuditExceptionTargets_Boundaries(t *testing.T) {
 	root := exceptionTargetRoot(t, "src/main.go")
 	expired := liveEntry(config.ExceptionRuleBuildWarnings, ".github/workflows/old.yml", "")
-	expired.Expires = "2026-10-01"
+	expired.Expires = targetsToday.AddDate(0, 0, -9).Format(config.ExceptionDateLayout)
 	_, err := judgeTargets(t, root, expired)
 	mustErrContain(t, err, "(rule HISS-10, .github/workflows/old.yml) names the path .github/workflows/old.yml, which matches no file")
-	mustErrContain(t, err, "The entry also expired on 2026-10-01.")
+	mustErrContain(t, err, "The entry also expired on "+targetsToday.AddDate(0, 0, -9).Format(config.ExceptionDateLayout)+".")
 
 	_, err = judgeTargets(t, root, liveEntry(config.ExceptionRuleClangTidyCoverage, "", "src/gen/*.pb.go"))
 	mustErrContain(t, err, "(rule clang-tidy-coverage, src/gen/*.pb.go) names the glob src/gen/*.pb.go, which matches no file")
@@ -107,13 +107,13 @@ func TestAuditExceptionTargets_PlannedReleaseWorkflow(t *testing.T) {
 		t.Fatalf("the planned release workflow failed while no workflow writes provenance: %v\n%s", err, out)
 	}
 	mustContain(t, out, "[INFO] Exceptions: the exceptions entry (rule HISS-11, .github/workflows/release.yml) names a "+
-		"planned file, not stale", "it holds until 2026-11-30.")
+		"planned file, not stale", "it holds until "+targetsToday.AddDate(0, 0, 51).Format(config.ExceptionDateLayout)+".")
 
 	_, err = judgeTargets(t, root, liveEntry(config.ExceptionRuleSupplyChain, ".github/workflows/other.yml", ""))
 	mustErrContain(t, err, "(rule HISS-11, .github/workflows/other.yml) names the path .github/workflows/other.yml, which matches no file")
 
 	expired := planned
-	expired.Expires = "2026-10-01"
+	expired.Expires = targetsToday.AddDate(0, 0, -9).Format(config.ExceptionDateLayout)
 	out, err = judgeTargets(t, root, expired)
 	if err != nil || strings.Contains(out, "planned file") {
 		t.Fatalf("an expired planned entry is the HISS-11 gate's to fail by its expiry, got (%q, %v)", out, err)

@@ -23,10 +23,11 @@ import (
 // exceptionsToday is the fixed day the validator tests judge expiry against.
 var exceptionsToday = time.Date(2026, time.October, 6, 15, 30, 0, 0, time.UTC)
 
+// validException returns a valid configuration exception fixture.
 func validException() Exception {
 	return Exception{
 		Rule: ExceptionRuleClangTidyCoverage, Path: "src/win32/getopt.c",
-		Reason: "Windows-only translation unit; no lane configures a Windows build yet", Expires: "2026-11-28",
+		Reason: "Windows-only translation unit; no lane configures a Windows build yet", Expires: exceptionsToday.AddDate(0, 0, 53).Format(ExceptionDateLayout),
 	}
 }
 
@@ -100,21 +101,23 @@ func TestValidateExceptionsNegative(t *testing.T) {
 		edit func(*Exception)
 		want string
 	}{
-		"unknown rule":                  {func(e *Exception) { e.Rule = "clang-tidy-coverag" }, `rule "clang-tidy-coverag" is not a rule`},
-		"neither target":                {func(e *Exception) { e.Path = "" }, "exactly one of path and glob"},
-		"both targets":                  {func(e *Exception) { e.Glob = "src/**/*.c" }, "exactly one of path and glob"},
-		"absolute path":                 {func(e *Exception) { e.Path = "/src/a.c" }, "clean repository-relative file path"},
-		"parent path":                   {func(e *Exception) { e.Path = "../a.c" }, "clean repository-relative file path"},
-		"pattern as path":               {func(e *Exception) { e.Path = "src/*.c" }, "without glob characters"},
-		"unclean path":                  {func(e *Exception) { e.Path = "src//a.c" }, "clean repository-relative file path"},
-		"wildcard-only glob":            {func(e *Exception) { e.Path, e.Glob = "", "**/*" }, "must name a path"},
-		"negated glob":                  {func(e *Exception) { e.Path, e.Glob = "", "!src/*.c" }, "repository-relative"},
-		"empty reason":                  {func(e *Exception) { e.Reason = "  " }, "reason must say why"},
-		"multi-line reason":             {func(e *Exception) { e.Reason = "one\ntwo" }, "reason must be one line"},
-		"oversized reason":              {func(e *Exception) { e.Reason = strings.Repeat("r", MaxExceptionReasonBytes+1) }, "exceeds 1024 bytes"},
-		"no date":                       {func(e *Exception) { e.Expires = "next year" }, "must be a YYYY-MM-DD date"},
-		"unpadded date":                 {func(e *Exception) { e.Expires = "2026-12-1" }, "must be a YYYY-MM-DD date"},
-		"too far ahead":                 {func(e *Exception) { e.Category, e.Entered, e.Expires = "A", "2026-10-06", "2027-01-05" }, "category A requires expires on or before 2027-01-04 (90 days after entered 2026-10-06); got 2027-01-05"},
+		"unknown rule":       {func(e *Exception) { e.Rule = "clang-tidy-coverag" }, `rule "clang-tidy-coverag" is not a rule`},
+		"neither target":     {func(e *Exception) { e.Path = "" }, "exactly one of path and glob"},
+		"both targets":       {func(e *Exception) { e.Glob = "src/**/*.c" }, "exactly one of path and glob"},
+		"absolute path":      {func(e *Exception) { e.Path = "/src/a.c" }, "clean repository-relative file path"},
+		"parent path":        {func(e *Exception) { e.Path = "../a.c" }, "clean repository-relative file path"},
+		"pattern as path":    {func(e *Exception) { e.Path = "src/*.c" }, "without glob characters"},
+		"unclean path":       {func(e *Exception) { e.Path = "src//a.c" }, "clean repository-relative file path"},
+		"wildcard-only glob": {func(e *Exception) { e.Path, e.Glob = "", "**/*" }, "must name a path"},
+		"negated glob":       {func(e *Exception) { e.Path, e.Glob = "", "!src/*.c" }, "repository-relative"},
+		"empty reason":       {func(e *Exception) { e.Reason = "  " }, "reason must say why"},
+		"multi-line reason":  {func(e *Exception) { e.Reason = "one\ntwo" }, "reason must be one line"},
+		"oversized reason":   {func(e *Exception) { e.Reason = strings.Repeat("r", MaxExceptionReasonBytes+1) }, "exceeds 1024 bytes"},
+		"no date":            {func(e *Exception) { e.Expires = "next year" }, "must be a YYYY-MM-DD date"},
+		"unpadded date":      {func(e *Exception) { e.Expires = "2026-12-1" }, "must be a YYYY-MM-DD date"},
+		"too far ahead": {func(e *Exception) {
+			e.Category, e.Entered, e.Expires = "A", exceptionsToday.AddDate(0, 0, 0).Format(ExceptionDateLayout), exceptionsToday.AddDate(0, 0, 91).Format(ExceptionDateLayout)
+		}, "category A requires expires on or before " + exceptionsToday.AddDate(0, 0, 90).Format(ExceptionDateLayout) + " (90 days after entered " + exceptionsToday.AddDate(0, 0, 0).Format(ExceptionDateLayout) + "); got " + exceptionsToday.AddDate(0, 0, 91).Format(ExceptionDateLayout)},
 		"missing expiry date":           {func(e *Exception) { e.Expires = "" }, "must be a YYYY-MM-DD date"},
 		"declared-linters without tool": {func(e *Exception) { e.Rule, e.Path, e.Tool = ExceptionRuleDeclaredLinters, "", "" }, "rule declared-linters must name one tool"},
 		"declared-linters with path":    {func(e *Exception) { e.Rule, e.Path, e.Tool = ExceptionRuleDeclaredLinters, "a.go", "gitleaks" }, "rule declared-linters must not set path or glob"},
@@ -140,8 +143,8 @@ func TestValidateExceptionsNegative(t *testing.T) {
 		t.Fatalf("a repeated entry must be refused, got %v", repeated)
 	}
 	for _, manifest := range []string{
-		"version: 1\nexceptions:\n  - rule: \"clang-tidy-coverage\"\n    path: \"a.c\"\n    reason: \"r\"\n    expires: \"2001-01-01\"\n    owner: \"x\"\n",
-		"version: 1\nexceptions:\n  - rule: \"clang-tidy-coverage\"\n    path: \"a.c\"\n    reason: \"r\"\n    category: A\n    expires: \"9999-12-31\"\n",
+		"version: 1\nexceptions:\n  - rule: \"clang-tidy-coverage\"\n    path: \"a.c\"\n    reason: \"r\"\n    expires: \"" + exceptionsToday.AddDate(0, 0, -9409).Format(ExceptionDateLayout) + "\"\n    owner: \"x\"\n",
+		"version: 1\nexceptions:\n  - rule: \"clang-tidy-coverage\"\n    path: \"a.c\"\n    reason: \"r\"\n    category: A\n    expires: \"" + exceptionsToday.AddDate(7973, 2, 25).Format(ExceptionDateLayout) + "\"\n",
 	} {
 		if _, err := LoadManifest(writeManifest(t, manifest)); err == nil {
 			t.Fatalf("LoadManifest accepted a malformed exceptions list:\n%s", manifest)
@@ -153,17 +156,17 @@ func TestValidateExceptionsNegative(t *testing.T) {
 // expired entry is the gate's finding, not a load error); the day boundary follows the caller's
 // calendar day; a list of exactly MaxExceptions entries passes and one more is refused.
 func TestValidateExceptionsBoundary(t *testing.T) {
-	for _, expires := range []string{"2027-01-04", "2026-10-06", "2020-01-01"} {
+	for _, expires := range []string{exceptionsToday.AddDate(0, 0, 90).Format(ExceptionDateLayout), exceptionsToday.AddDate(0, 0, 0).Format(ExceptionDateLayout), exceptionsToday.AddDate(0, 0, -2470).Format(ExceptionDateLayout)} {
 		entry := validException()
 		entry.Category = "A"
-		entry.Entered = "2026-10-06"
+		entry.Entered = exceptionsToday.AddDate(0, 0, 0).Format(ExceptionDateLayout)
 		entry.Expires = expires
 		if err := ValidateExceptions([]Exception{entry}, exceptionsToday); err != nil {
 			t.Fatalf("expires %s refused: %v", expires, err)
 		}
 	}
 	entry := validException()
-	entry.Expires = "2026-10-06"
+	entry.Expires = exceptionsToday.AddDate(0, 0, 0).Format(ExceptionDateLayout)
 	if entry.Expired(exceptionsToday) || entry.Expired(time.Date(2026, time.October, 6, 23, 59, 59, 0, time.UTC)) {
 		t.Fatal("an entry must still hold on its expires day")
 	}
@@ -186,51 +189,54 @@ func TestValidateExceptionsBoundary(t *testing.T) {
 	}
 }
 
+// TestValidateExceptionsCategories pins validate exceptions categories.
 func TestValidateExceptionsCategories(t *testing.T) {
-	base := Exception{Rule: ExceptionRuleMutants, Path: ".cargo/mutants.toml", Reason: "unsupported generated code", Category: "D", Entered: "2026-10-16", Expires: "2027-02-13"}
+	base := Exception{Rule: ExceptionRuleMutants, Path: ".cargo/mutants.toml", Reason: "unsupported generated code", Category: "D", Entered: exceptionsToday.AddDate(0, 0, 10).Format(ExceptionDateLayout), Expires: exceptionsToday.AddDate(0, 0, 130).Format(ExceptionDateLayout)}
 	if err := ValidateExceptions([]Exception{base}, time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("category D exception refused: %v", err)
 	}
 	if err := ValidateExceptions([]Exception{base}, time.Date(2027, 2, 14, 0, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("an expired declaration must remain valid for its owning gate to fail: %v", err)
 	}
-	base.Category, base.Expires = "C", "2026-10-27"
-	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "category C requires expires on or before 2026-10-26") {
+	base.Category, base.Expires = "C", exceptionsToday.AddDate(0, 0, 21).Format(ExceptionDateLayout)
+	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "category C requires expires on or before "+exceptionsToday.AddDate(0, 0, 20).Format(ExceptionDateLayout)) {
 		t.Fatalf("category C with a mismatched expiry = %v", err)
 	}
 	base = validException()
 	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err != nil {
 		t.Fatalf("uncategorized exception changed behavior: %v", err)
 	}
-	base.Category, base.Entered, base.Expires = "A", "2026-10-06", "2027-01-05"
-	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "category A requires expires on or before 2027-01-04 (90 days") {
+	base.Category, base.Entered, base.Expires = "A", exceptionsToday.AddDate(0, 0, 0).Format(ExceptionDateLayout), exceptionsToday.AddDate(0, 0, 91).Format(ExceptionDateLayout)
+	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "category A requires expires on or before "+exceptionsToday.AddDate(0, 0, 90).Format(ExceptionDateLayout)+" (90 days") {
 		t.Fatalf("category A escaped the 90-day cap: %v", err)
 	}
-	base.Expires = "2027-01-04"
+	base.Expires = exceptionsToday.AddDate(0, 0, 90).Format(ExceptionDateLayout)
 	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err != nil {
 		t.Fatalf("category A stated expiry inside 90 days refused: %v", err)
 	}
-	mutantsUncat := Exception{Rule: ExceptionRuleMutants, Path: ".cargo/mutants.toml", Reason: "unsupported generated code", Entered: "2026-10-29", Expires: "2027-01-04"}
+	mutantsUncat := Exception{Rule: ExceptionRuleMutants, Path: ".cargo/mutants.toml", Reason: "unsupported generated code", Entered: exceptionsToday.AddDate(0, 0, 23).Format(ExceptionDateLayout), Expires: exceptionsToday.AddDate(0, 0, 90).Format(ExceptionDateLayout)}
 	if err := ValidateExceptions([]Exception{mutantsUncat}, exceptionsToday); err != nil {
 		t.Fatalf("uncategorized mutants exception refused: %v", err)
 	}
 }
 
+// TestException_Problem pins exception problem.
 func TestException_Problem(t *testing.T) {
 	today := time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
-	base := Exception{Rule: ExceptionRuleDeclaredLinters, Tool: "exclusion", Reason: "#133", Category: "C", Entered: "2026-10-10", Expires: "2026-10-20"}
+	base := Exception{Rule: ExceptionRuleDeclaredLinters, Tool: "exclusion", Reason: "#133", Category: "C", Entered: today.AddDate(0, 0, -8).Format(ExceptionDateLayout), Expires: today.AddDate(0, 0, 2).Format(ExceptionDateLayout)}
 	if prob := base.Problem(today); prob != "" {
 		t.Fatalf("expected valid category C to pass, got: %s", prob)
 	}
-	base.Expires = "2026-10-25"
-	if prob := base.Problem(today); !strings.Contains(prob, "category C requires expires on or before 2026-10-20") {
+	base.Expires = today.AddDate(0, 0, 7).Format(ExceptionDateLayout)
+	if prob := base.Problem(today); !strings.Contains(prob, "category C requires expires on or before "+today.AddDate(0, 0, 2).Format(ExceptionDateLayout)) {
 		t.Fatalf("expected category C interval failure, got: %s", prob)
 	}
 }
 
+// TestValidateExceptions_HISSRulesAndFunctionScope pins validate exceptions HISS rules and function scope.
 func TestValidateExceptions_HISSRulesAndFunctionScope(t *testing.T) {
 	for _, rule := range hisscatalog.RuleIDs() {
-		entry := Exception{Rule: rule, Path: "src/a.go", Reason: "by design", Expires: "2026-11-28"}
+		entry := Exception{Rule: rule, Path: "src/a.go", Reason: "by design", Expires: exceptionsToday.AddDate(0, 0, 53).Format(ExceptionDateLayout)}
 		switch rule {
 		case ExceptionRuleBuildWarnings:
 			entry.Path = ".github/workflows/ci.yml"
@@ -246,7 +252,7 @@ func TestValidateExceptions_HISSRulesAndFunctionScope(t *testing.T) {
 			t.Errorf("registered HISS rule %s refused: %v", rule, err)
 		}
 	}
-	entry := Exception{Rule: "HISS-02", Path: "src/a.go", Function: "NewBrowser", Reason: "browser lifetime", Expires: "2026-11-28"}
+	entry := Exception{Rule: "HISS-02", Path: "src/a.go", Function: "NewBrowser", Reason: "browser lifetime", Expires: exceptionsToday.AddDate(0, 0, 53).Format(ExceptionDateLayout)}
 	if err := ValidateExceptions([]Exception{entry}, exceptionsToday); err != nil {
 		t.Fatalf("function scoped HISS entry refused: %v", err)
 	}
@@ -254,7 +260,7 @@ func TestValidateExceptions_HISSRulesAndFunctionScope(t *testing.T) {
 	if err := ValidateExceptions([]Exception{entry}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "function is only valid for a HISS scanner rule") {
 		t.Fatalf("non-HISS function scope error = %v", err)
 	}
-	entry = Exception{Rule: "HISS-02", Glob: "src/*.go", Function: "NewBrowser", Reason: "browser lifetime", Expires: "2026-11-28"}
+	entry = Exception{Rule: "HISS-02", Glob: "src/*.go", Function: "NewBrowser", Reason: "browser lifetime", Expires: exceptionsToday.AddDate(0, 0, 53).Format(ExceptionDateLayout)}
 	if err := ValidateExceptions([]Exception{entry}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "one file by path") {
 		t.Fatalf("globbed HISS exception error = %v", err)
 	}
@@ -276,7 +282,7 @@ func TestValidateExceptionsWorkflowTarget(t *testing.T) {
 // A release-token entry must name one workflow file: an entry naming a script is refused with the
 // workflow-target message, which names release.yml as the example.
 func TestValidateExceptionsReleaseTokenNamesAWorkflow(t *testing.T) {
-	entry := Exception{Rule: ExceptionRuleReleaseToken, Path: "scripts/release.sh", Reason: "custom release", Expires: "2026-11-28"}
+	entry := Exception{Rule: ExceptionRuleReleaseToken, Path: "scripts/release.sh", Reason: "custom release", Expires: exceptionsToday.AddDate(0, 0, 53).Format(ExceptionDateLayout)}
 	err := ValidateExceptions([]Exception{entry}, exceptionsToday)
 	want := "rule release-token must name one workflow file directly in .github/workflows by path, such as .github/workflows/release.yml"
 	if err == nil || !strings.Contains(err.Error(), want) {
@@ -287,7 +293,7 @@ func TestValidateExceptionsReleaseTokenNamesAWorkflow(t *testing.T) {
 // A test-timeout entry must name one workflow file: an entry naming a script is refused with the
 // workflow-target message, which names portability.yml as the example (#1381).
 func TestValidateExceptionsTestTimeoutNamesAWorkflow(t *testing.T) {
-	entry := Exception{Rule: ExceptionRuleTestTimeout, Path: "scripts/test.sh", Reason: "longer timeout", Expires: "2026-11-28"}
+	entry := Exception{Rule: ExceptionRuleTestTimeout, Path: "scripts/test.sh", Reason: "longer timeout", Expires: exceptionsToday.AddDate(0, 0, 53).Format(ExceptionDateLayout)}
 	err := ValidateExceptions([]Exception{entry}, exceptionsToday)
 	want := "rule test-timeout must name one workflow file directly in .github/workflows by path, such as .github/workflows/portability.yml"
 	if err == nil || !strings.Contains(err.Error(), want) {
@@ -298,7 +304,7 @@ func TestValidateExceptionsTestTimeoutNamesAWorkflow(t *testing.T) {
 // A job-timeout entry must name one workflow file: an entry naming a script is refused with the
 // workflow-target message, which names ci.yml as the example.
 func TestValidateExceptionsJobTimeoutNamesAWorkflow(t *testing.T) {
-	entry := Exception{Rule: ExceptionRuleJobTimeout, Path: "scripts/test.sh", Reason: "longer job timeout", Expires: "2026-11-28"}
+	entry := Exception{Rule: ExceptionRuleJobTimeout, Path: "scripts/test.sh", Reason: "longer job timeout", Expires: exceptionsToday.AddDate(0, 0, 53).Format(ExceptionDateLayout)}
 	err := ValidateExceptions([]Exception{entry}, exceptionsToday)
 	want := "rule job-timeout must name one workflow file directly in .github/workflows by path, such as .github/workflows/ci.yml"
 	if err == nil || !strings.Contains(err.Error(), want) {
@@ -309,7 +315,7 @@ func TestValidateExceptionsJobTimeoutNamesAWorkflow(t *testing.T) {
 // validateWorkflowTarget runs the workflow-target cases for one rule.
 func validateWorkflowTarget(t *testing.T, rule string) {
 	entry := func(target string) Exception {
-		return Exception{Rule: rule, Path: target, Reason: "the workflow falls short of the rule", Expires: "2026-11-28"}
+		return Exception{Rule: rule, Path: target, Reason: "the workflow falls short of the rule", Expires: exceptionsToday.AddDate(0, 0, 53).Format(ExceptionDateLayout)}
 	}
 	for _, target := range []string{".github/workflows/release.yml", ".github/workflows/release-binaries.yaml"} {
 		if err := ValidateExceptions([]Exception{validException(), entry(target)}, exceptionsToday); err != nil {
@@ -349,8 +355,8 @@ func TestExceptionFor(t *testing.T) {
 		return Exception{Rule: ExceptionRuleWorkflowTriggers, Path: path, Reason: "runs everywhere", Category: "A", Expires: expires}
 	}
 	entries := []Exception{
-		entry(ci, "2026-10-05"), entry(".github/workflows/other.yml", "2026-12-31"),
-		entry(ci, "2026-10-06"), entry(ci, "2026-12-31"),
+		entry(ci, exceptionsToday.AddDate(0, 0, -1).Format(ExceptionDateLayout)), entry(".github/workflows/other.yml", exceptionsToday.AddDate(0, 0, 86).Format(ExceptionDateLayout)),
+		entry(ci, exceptionsToday.AddDate(0, 0, 0).Format(ExceptionDateLayout)), entry(ci, exceptionsToday.AddDate(0, 0, 86).Format(ExceptionDateLayout)),
 	}
 	used := make([]bool, len(entries))
 	live, expired := ExceptionFor(entries, ci, exceptionsToday, used)
@@ -500,11 +506,11 @@ func TestValidateClangTidyDataPaths(t *testing.T) {
 // Negative: a glob, or a path below the root, is refused, naming the rule. Boundary: the same
 // root file under the other rule is another entry, not a repeat.
 func TestValidateExceptionsRootLicenseNotice(t *testing.T) {
-	notice := Exception{Rule: ExceptionRuleRootLicenseNotice, Path: "COPYING", Reason: "upstream GPL notice kept verbatim", Expires: "2026-11-28"}
+	notice := Exception{Rule: ExceptionRuleRootLicenseNotice, Path: "COPYING", Reason: "upstream GPL notice kept verbatim", Expires: exceptionsToday.AddDate(0, 0, 53).Format(ExceptionDateLayout)}
 	if err := ValidateExceptions([]Exception{notice}, exceptionsToday); err != nil {
 		t.Fatalf("a root file entry refused: %v", err)
 	}
-	order := Exception{Rule: ExceptionRuleReuseAnnotationOrder, Path: "REUSE.toml", Reason: "4000 vendored globs", Expires: "2026-11-28"}
+	order := Exception{Rule: ExceptionRuleReuseAnnotationOrder, Path: "REUSE.toml", Reason: "4000 vendored globs", Expires: exceptionsToday.AddDate(0, 0, 53).Format(ExceptionDateLayout)}
 	if err := ValidateExceptions([]Exception{order}, exceptionsToday); err != nil {
 		t.Fatalf("a REUSE.toml order entry refused: %v", err)
 	}
@@ -544,7 +550,7 @@ func TestValidateExceptionsDedupeTarget(t *testing.T) {
 		Rule:    ExceptionRuleDedupe,
 		Path:    "api/v1/zz_generated.deepcopy.go",
 		Reason:  "controller-gen repeated DeepCopyInto",
-		Expires: "2026-11-28",
+		Expires: exceptionsToday.AddDate(0, 0, 53).Format(ExceptionDateLayout),
 	}
 	if err := ValidateExceptions([]Exception{entry}, exceptionsToday); err != nil {
 		t.Fatalf("a valid HISS-19 entry was refused: %v", err)
@@ -617,26 +623,27 @@ func TestLoadExceptionsFor_Negative_CanceledContextFails(t *testing.T) {
 	}
 }
 
+// TestExceptionDaysLeft_3D pins 3D behavior for exception days left.
 func TestExceptionDaysLeft_3D(t *testing.T) {
 	today := time.Date(2026, time.October, 10, 0, 0, 0, 0, time.UTC)
 
 	// Positive: future date
-	future := Exception{Expires: "2026-10-24"}
+	future := Exception{Expires: today.AddDate(0, 0, 14).Format(ExceptionDateLayout)}
 	days, err := future.DaysLeft(today)
 	if err != nil || days != 14 {
 		t.Fatalf("future.DaysLeft() = (%d, %v), want (14, nil)", days, err)
 	}
 
 	// Boundary: today, tomorrow, yesterday
-	onToday := Exception{Expires: "2026-10-10"}
+	onToday := Exception{Expires: today.AddDate(0, 0, 0).Format(ExceptionDateLayout)}
 	if days, err := onToday.DaysLeft(today); err != nil || days != 0 {
 		t.Fatalf("onToday.DaysLeft() = (%d, %v), want (0, nil)", days, err)
 	}
-	tomorrow := Exception{Expires: "2026-10-11"}
+	tomorrow := Exception{Expires: today.AddDate(0, 0, 1).Format(ExceptionDateLayout)}
 	if days, err := tomorrow.DaysLeft(today); err != nil || days != 1 {
 		t.Fatalf("tomorrow.DaysLeft() = (%d, %v), want (1, nil)", days, err)
 	}
-	yesterday := Exception{Expires: "2026-10-09"}
+	yesterday := Exception{Expires: today.AddDate(0, 0, -1).Format(ExceptionDateLayout)}
 	if days, err := yesterday.DaysLeft(today); err != nil || days != -1 {
 		t.Fatalf("yesterday.DaysLeft() = (%d, %v), want (-1, nil)", days, err)
 	}
@@ -648,31 +655,32 @@ func TestExceptionDaysLeft_3D(t *testing.T) {
 	}
 }
 
+// TestExceptionExpiringWithin_3D pins 3D behavior for exception expiring within.
 func TestExceptionExpiringWithin_3D(t *testing.T) {
 	today := time.Date(2026, time.October, 10, 0, 0, 0, 0, time.UTC)
 
 	// Positive: within window
-	e7 := Exception{Expires: "2026-10-17"}
+	e7 := Exception{Expires: today.AddDate(0, 0, 7).Format(ExceptionDateLayout)}
 	if !e7.ExpiringWithin(today, 14) {
 		t.Fatal("e7 (7 days left) want ExpiringWithin(14) == true")
 	}
 
 	// Boundary: exactly 14, 15, and 0 days
-	e14 := Exception{Expires: "2026-10-24"}
+	e14 := Exception{Expires: today.AddDate(0, 0, 14).Format(ExceptionDateLayout)}
 	if !e14.ExpiringWithin(today, 14) {
 		t.Fatal("e14 (14 days left) want ExpiringWithin(14) == true")
 	}
-	e15 := Exception{Expires: "2026-10-25"}
+	e15 := Exception{Expires: today.AddDate(0, 0, 15).Format(ExceptionDateLayout)}
 	if e15.ExpiringWithin(today, 14) {
 		t.Fatal("e15 (15 days left) want ExpiringWithin(14) == false")
 	}
-	e0 := Exception{Expires: "2026-10-10"}
+	e0 := Exception{Expires: today.AddDate(0, 0, 0).Format(ExceptionDateLayout)}
 	if !e0.ExpiringWithin(today, 14) {
 		t.Fatal("e0 (0 days left) want ExpiringWithin(14) == true")
 	}
 
 	// Negative: already expired (-1 days) and malformed
-	eExpired := Exception{Expires: "2026-10-09"}
+	eExpired := Exception{Expires: today.AddDate(0, 0, -1).Format(ExceptionDateLayout)}
 	if eExpired.ExpiringWithin(today, 14) {
 		t.Fatal("eExpired (-1 days left) want ExpiringWithin(14) == false")
 	}
@@ -712,13 +720,14 @@ func assertFilteredPaths(t *testing.T, got []Exception, want ...string) {
 	}
 }
 
+// TestFilterExceptionsExpiringWithin_3D pins 3D behavior for filter exceptions expiring within.
 func TestFilterExceptionsExpiringWithin_3D(t *testing.T) {
 	today := time.Date(2026, time.October, 10, 0, 0, 0, 0, time.UTC)
 	entries := []Exception{
-		{Rule: ExceptionRuleSupplyChain, Path: ".github/workflows/a.yml", Expires: "2026-10-15"}, // 5 days
-		{Rule: ExceptionRuleSupplyChain, Path: ".github/workflows/b.yml", Expires: "2026-10-24"}, // 14 days
-		{Rule: ExceptionRuleSupplyChain, Path: ".github/workflows/c.yml", Expires: "2026-10-25"}, // 15 days
-		{Rule: ExceptionRuleSupplyChain, Path: ".github/workflows/d.yml", Expires: "2026-10-09"}, // -1 days (expired)
+		{Rule: ExceptionRuleSupplyChain, Path: ".github/workflows/a.yml", Expires: today.AddDate(0, 0, 5).Format(ExceptionDateLayout)},  // 5 days
+		{Rule: ExceptionRuleSupplyChain, Path: ".github/workflows/b.yml", Expires: today.AddDate(0, 0, 14).Format(ExceptionDateLayout)}, // 14 days
+		{Rule: ExceptionRuleSupplyChain, Path: ".github/workflows/c.yml", Expires: today.AddDate(0, 0, 15).Format(ExceptionDateLayout)}, // 15 days
+		{Rule: ExceptionRuleSupplyChain, Path: ".github/workflows/d.yml", Expires: today.AddDate(0, 0, -1).Format(ExceptionDateLayout)}, // -1 days (expired)
 	}
 
 	t.Run("Positive_Window14", func(t *testing.T) {
@@ -787,52 +796,52 @@ var warningDaysCases = []struct {
 }{
 	{
 		name:     "none",
-		entry:    Exception{Rule: "HISS-11", Expires: "2026-10-24"},
+		entry:    Exception{Rule: "HISS-11", Expires: exceptionsToday.AddDate(0, 0, 18).Format(ExceptionDateLayout)},
 		wantDays: 14,
 	},
 	{
 		name:     "category B",
-		entry:    Exception{Rule: "HISS-11", Category: "B", Entered: "2026-10-01", Expires: "2026-10-04"},
+		entry:    Exception{Rule: "HISS-11", Category: "B", Entered: exceptionsToday.AddDate(0, 0, -5).Format(ExceptionDateLayout), Expires: exceptionsToday.AddDate(0, 0, -2).Format(ExceptionDateLayout)},
 		wantDays: 1,
 	},
 	{
 		name:     "category C",
-		entry:    Exception{Rule: "HISS-11", Category: "C", Entered: "2026-10-01", Expires: "2026-10-11"},
+		entry:    Exception{Rule: "HISS-11", Category: "C", Entered: exceptionsToday.AddDate(0, 0, -5).Format(ExceptionDateLayout), Expires: exceptionsToday.AddDate(0, 0, 5).Format(ExceptionDateLayout)},
 		wantDays: 5,
 	},
 	{
 		name:     "category D",
-		entry:    Exception{Rule: "HISS-11", Category: "D", Entered: "2026-10-01", Expires: "2027-01-29"},
+		entry:    Exception{Rule: "HISS-11", Category: "D", Entered: exceptionsToday.AddDate(0, 0, -5).Format(ExceptionDateLayout), Expires: exceptionsToday.AddDate(0, 0, 115).Format(ExceptionDateLayout)},
 		wantDays: 14,
 	},
 	{
-		name:     "category A entered 2026-10-01 expires 2026-10-11",
-		entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "2026-10-01", Expires: "2026-10-11"},
+		name:     "category A entered " + exceptionsToday.AddDate(0, 0, -5).Format(ExceptionDateLayout) + " expires " + exceptionsToday.AddDate(0, 0, 5).Format(ExceptionDateLayout),
+		entry:    Exception{Rule: "HISS-11", Category: "A", Entered: exceptionsToday.AddDate(0, 0, -5).Format(ExceptionDateLayout), Expires: exceptionsToday.AddDate(0, 0, 5).Format(ExceptionDateLayout)},
 		wantDays: 5,
 	},
 	{
-		name:     "category A entered 2026-10-01 expires 2026-12-30",
-		entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "2026-10-01", Expires: "2026-12-30"},
+		name:     "category A entered " + exceptionsToday.AddDate(0, 0, -5).Format(ExceptionDateLayout) + " expires " + exceptionsToday.AddDate(0, 0, 85).Format(ExceptionDateLayout),
+		entry:    Exception{Rule: "HISS-11", Category: "A", Entered: exceptionsToday.AddDate(0, 0, -5).Format(ExceptionDateLayout), Expires: exceptionsToday.AddDate(0, 0, 85).Format(ExceptionDateLayout)},
 		wantDays: 14,
 	},
 	{
 		name:     "category A unparsable entered",
-		entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "bad-date", Expires: "2026-10-11"},
+		entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "bad-date", Expires: exceptionsToday.AddDate(0, 0, 5).Format(ExceptionDateLayout)},
 		wantDays: 14,
 	},
 	{
 		name:     "category A unparsable expires",
-		entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "2026-10-01", Expires: "bad-date"},
+		entry:    Exception{Rule: "HISS-11", Category: "A", Entered: exceptionsToday.AddDate(0, 0, -5).Format(ExceptionDateLayout), Expires: "bad-date"},
 		wantDays: 14,
 	},
 	{
 		name:     "category A expires before entered",
-		entry:    Exception{Rule: "HISS-11", Category: "A", Entered: "2026-10-11", Expires: "2026-10-01"},
+		entry:    Exception{Rule: "HISS-11", Category: "A", Entered: exceptionsToday.AddDate(0, 0, 5).Format(ExceptionDateLayout), Expires: exceptionsToday.AddDate(0, 0, -5).Format(ExceptionDateLayout)},
 		wantDays: 0,
 	},
 	{
 		name:     "unknown category",
-		entry:    Exception{Rule: "HISS-11", Category: "Z", Entered: "2026-10-01", Expires: "2026-10-11"},
+		entry:    Exception{Rule: "HISS-11", Category: "Z", Entered: exceptionsToday.AddDate(0, 0, -5).Format(ExceptionDateLayout), Expires: exceptionsToday.AddDate(0, 0, 5).Format(ExceptionDateLayout)},
 		wantDays: 14,
 	},
 }
@@ -847,12 +856,13 @@ func TestException_WarningDays_3D(t *testing.T) {
 	}
 }
 
+// TestExceptionRuleSecrets_3D pins 3D behavior for exception rule secrets.
 func TestExceptionRuleSecrets_3D(t *testing.T) {
 	valid := Exception{
 		Rule:    ExceptionRuleSecrets,
 		Path:    "settings.py",
 		Tool:    "generic-api-key",
-		Expires: "2026-11-28",
+		Expires: exceptionsToday.AddDate(0, 0, 53).Format(ExceptionDateLayout),
 		Reason:  "legacy test token",
 	}
 	if err := ValidateExceptions([]Exception{valid}, exceptionsToday); err != nil {
@@ -1013,8 +1023,10 @@ func TestValidateExceptionsDedupeScope(t *testing.T) {
 	}
 }
 
+// TestLoadManifestDedupeScopeSchemaRoundTrip pins load manifest dedupe scope schema round trip.
 func TestLoadManifestDedupeScopeSchemaRoundTrip(t *testing.T) {
-	expires := ExceptionDay(time.Now()).AddDate(0, 0, 30).Format(ExceptionDateLayout)
+	today := time.Now()
+	expires := ExceptionDay(today).AddDate(0, 0, 30).Format(ExceptionDateLayout)
 	body := fmt.Sprintf(`version: 1
 exceptions:
   - rule: HISS-19
@@ -1047,16 +1059,17 @@ exceptions:
 	if !reflect.DeepEqual(manifest.Exceptions, again.Exceptions) || !strings.Contains(string(rendered), "lines: 10-16") {
 		t.Fatalf("scopes lost on round trip: %s", rendered)
 	}
-	if err := ValidateExceptions(append(again.Exceptions, again.Exceptions[0]), time.Now()); err == nil {
+	if err := ValidateExceptions(append(again.Exceptions, again.Exceptions[0]), today); err == nil {
 		t.Fatal("identical scoped entries must still be refused")
 	}
 }
 
+// TestDedupeExceptionForScopedUsage pins dedupe exception for scoped usage.
 func TestDedupeExceptionForScopedUsage(t *testing.T) {
 	entry := validException()
 	entry.Rule, entry.Fingerprint, entry.Lines = ExceptionRuleDedupe, "abcdef12", "10-20"
 	expired, absent, other := entry, entry, entry
-	expired.Expires = "2026-10-05"
+	expired.Expires = exceptionsToday.AddDate(0, 0, -1).Format(ExceptionDateLayout)
 	absent.Fingerprint, other.Path = "12345678", "other.go"
 	entries := []Exception{expired, absent, other, entry}
 	for _, line := range []int{9, 10, 20, 21} {
@@ -1097,14 +1110,15 @@ func TestDedupeExceptionScopeGuards(t *testing.T) {
 	}
 }
 
+// TestException_UILatencySource pins exception UI latency source.
 func TestException_UILatencySource(t *testing.T) {
 	today := time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC)
 	base := Exception{
 		Rule:     ExceptionRuleUILatencySource,
 		Category: "C",
-		Entered:  "2026-10-28",
-		Expires:  "2026-11-03",
-		Reason:   "threshold schema owner cordanaLLM/Aegis-OS M28, parked until 2026-11-03",
+		Entered:  today.AddDate(0, 0, 0).Format(ExceptionDateLayout),
+		Expires:  today.AddDate(0, 0, 6).Format(ExceptionDateLayout),
+		Reason:   "threshold schema owner cordanaLLM/Aegis-OS M28, parked until " + today.AddDate(0, 0, 6).Format(ExceptionDateLayout),
 	}
 	if err := ValidateExceptions([]Exception{base}, today); err != nil {
 		t.Fatalf("valid ui-latency-source exception refused: %v", err)

@@ -27,7 +27,7 @@ func TestReconcileBaseline_Positive_NotRecordingWritesNothing(t *testing.T) {
 // recorded debt is kept and verified, exactly as before.
 func TestReconcileBaseline_Negative_AnExistingBaselineIsKept(t *testing.T) {
 	root := t.TempDir()
-	existing := []byte(`{"version":1,"generated_at":"2026-01-01T00:00:00Z","total_infractions":3,"infractions":[]}`)
+	existing := []byte( /* testdate: fact: recorded upstream attribution/schema date; text matching, no clock comparison */ `{"version":1,"generated_at":"2026-01-01T00:00:00Z","total_infractions":3,"infractions":[]}`)
 	path := filepath.Join(root, baselineFile)
 	if err := os.WriteFile(path, existing, 0o600); err != nil {
 		t.Fatal(err)

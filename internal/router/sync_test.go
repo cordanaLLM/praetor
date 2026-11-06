@@ -439,6 +439,7 @@ func TestSyncPruneRemovesOnlyFlaggedSeedEntries(t *testing.T) {
 	}
 }
 
+// TestSyncCatalogRefreshesDiscoveredLocalAsOfDate pins sync catalog refreshes discovered local as of date.
 func TestSyncCatalogRefreshesDiscoveredLocalAsOfDate(t *testing.T) {
 	day1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	day212 := day1.AddDate(0, 0, 212)
@@ -451,7 +452,7 @@ func TestSyncCatalogRefreshesDiscoveredLocalAsOfDate(t *testing.T) {
 	}
 	cfg := loadSynced(t, path)
 	_, model, ok := findSynced(cfg, "qwen3:8b")
-	if !ok || model.AsOf != "2026-01-01" {
+	if !ok || model.AsOf != day1.Format(time.DateOnly) {
 		t.Fatalf("first discovery: ok=%v model=%+v", ok, model)
 	}
 	opts2 := discoverOpts

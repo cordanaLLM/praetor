@@ -49,7 +49,7 @@ func completedRuns(conclusions ...string) WorkflowRunHistory {
 			event, conclusion = parts[0], parts[1]
 		}
 		runs = append(runs, WorkflowRunRecord{Number: len(conclusions) - i, Event: event, HeadBranch: "main",
-			Status: "completed", Conclusion: conclusion, CreatedAt: "2026-09-27T07:46:55Z", URL: "https://forge.test/run"})
+			Status: "completed", Conclusion: conclusion, CreatedAt: /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-09-27T07:46:55Z", URL: "https://forge.test/run"})
 	}
 	return WorkflowRunHistory{Known: true, Completed: runs}
 }
@@ -108,7 +108,7 @@ func TestAuditWorkflowRunHealth_Negative_FailingStreakAndNeverRun(t *testing.T) 
 	}}
 	report, text := auditRuns(t, root, reader, nil)
 	for _, want := range []string{
-		"[WARN] Workflow build.yml: failing on main, failed runs in a row: 3 (latest: run #4, push, failure, 2026-09-27T07:46:55Z, https://forge.test/run)",
+		/* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "[WARN] Workflow build.yml: failing on main, failed runs in a row: 3 (latest: run #4, push, failure, 2026-09-27T07:46:55Z, https://forge.test/run)",
 		"[WARN] Workflow dispatch.yml: never run; started by repository_dispatch, workflow_dispatch",
 		"[WARN] Workflow runs on main read from the forge: 2 of 3 workflows failing or never run (build.yml, dispatch.yml); reported, not enforced.",
 	} {
@@ -156,6 +156,7 @@ func TestAuditWorkflowRunHealth_Boundary_DeclarationsCoverOnlyTheirState(t *test
 // Positive (#1333): valid declaration covers finding (INFO); expired declaration behaves like
 // no declaration (WARN) and names the expiry date. Tested both ways: valid vs expired.
 func TestAuditWorkflowRunHealth_Positive_ValidVsExpiredDeclaration(t *testing.T) {
+	today := time.Now()
 	root := runHealthRepo(t, map[string]string{"failing.yml": "push", "unexercised.yml": "schedule"})
 	reader := &stubActionsReader{histories: map[string]WorkflowRunHistory{
 		"failing.yml":     completedRuns("failure", "failure"),
@@ -163,7 +164,7 @@ func TestAuditWorkflowRunHealth_Positive_ValidVsExpiredDeclaration(t *testing.T)
 	}}
 
 	// Valid (future expiry date): covered, no WARN.
-	future := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	future := today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
 	validPolicy := &config.WorkflowRunsPolicy{Expected: []config.WorkflowRunExpectation{
 		{Workflow: "failing.yml", State: config.WorkflowRunFailing, Reason: "wip step", Expires: future},
 		{Workflow: "unexercised.yml", State: config.WorkflowRunUnexercised, Reason: "no schedule yet", Expires: future},
@@ -184,7 +185,7 @@ func TestAuditWorkflowRunHealth_Positive_ValidVsExpiredDeclaration(t *testing.T)
 	}
 
 	// Expired (past expiry date): behaves like no declaration, warns naming the expiry date.
-	expiredDate := "2026-10-01"
+	expiredDate := today.AddDate(0, 0, -1).Format(config.ExceptionDateLayout)
 	expiredPolicy := &config.WorkflowRunsPolicy{Expected: []config.WorkflowRunExpectation{
 		{Workflow: "failing.yml", State: config.WorkflowRunFailing, Reason: "wip step", Expires: expiredDate},
 		{Workflow: "unexercised.yml", State: config.WorkflowRunUnexercised, Reason: "no schedule yet", Expires: expiredDate},
@@ -195,7 +196,7 @@ func TestAuditWorkflowRunHealth_Positive_ValidVsExpiredDeclaration(t *testing.T)
 			t.Fatalf("expired finding %s must not be covered and must be unhealthy: %+v", finding.Workflow, finding)
 		}
 	}
-	wantFailing := fmt.Sprintf("[WARN] Workflow failing.yml: failing on main, failed runs in a row: 2 (latest: run #2, push, failure, 2026-09-27T07:46:55Z, https://forge.test/run); the declaration expired on %s", expiredDate)
+	wantFailing := fmt.Sprintf( /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "[WARN] Workflow failing.yml: failing on main, failed runs in a row: 2 (latest: run #2, push, failure, 2026-09-27T07:46:55Z, https://forge.test/run); the declaration expired on %s", expiredDate)
 	wantUnexercised := fmt.Sprintf("[WARN] Workflow unexercised.yml: never run; started by schedule; the declaration expired on %s", expiredDate)
 	if !strings.Contains(text, wantFailing) {
 		t.Fatalf("report lacks expired failing finding %q:\n%s", wantFailing, text)
@@ -231,7 +232,7 @@ func TestAuditWorkflowRunHealth_Positive_AppliesVsStale(t *testing.T) {
 		"build.yml": completedRuns("success"),
 	}}
 	report, text := auditRuns(t, root, healthyReader, policy)
-	want := "[WARN] Workflow build.yml: declared failing, but latest run on main succeeded (latest: run #1, push, success, 2026-09-27T07:46:55Z, https://forge.test/run); the declaration no longer applies"
+	want := /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "[WARN] Workflow build.yml: declared failing, but latest run on main succeeded (latest: run #1, push, success, 2026-09-27T07:46:55Z, https://forge.test/run); the declaration no longer applies"
 	if !strings.Contains(text, want) {
 		t.Fatalf("stale declaration must emit [WARN] line:\n%s", text)
 	}
@@ -291,7 +292,7 @@ func TestAuditWorkflowRunHealth_Boundary_StatesThatSayNothingAboutHealth(t *test
 	root := runHealthRepo(t, map[string]string{
 		"called.yml": "workflow_call", "new.yml": "push", "tag.yml": "push", "gated.yml": "issue_comment",
 	})
-	latest := WorkflowRunRecord{Number: 9, Event: "push", HeadBranch: "v1.0.0", Status: "completed", Conclusion: "success", CreatedAt: "2026-09-20T00:00:00Z"}
+	latest := WorkflowRunRecord{Number: 9, Event: "push", HeadBranch: "v1.0.0", Status: "completed", Conclusion: "success", CreatedAt: /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-09-20T00:00:00Z"}
 	reader := &stubActionsReader{histories: map[string]WorkflowRunHistory{
 		"new.yml":   {},
 		"tag.yml":   {Known: true, Total: 4, Latest: &latest},

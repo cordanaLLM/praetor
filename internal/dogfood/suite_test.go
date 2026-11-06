@@ -14,7 +14,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-const suiteFixtureRecord = `{"step_index":1,"source":"MODEL","type":"MESSAGE","status":"DONE","created_at":"2026-09-12T12:00:00Z","content":"untrusted fixture observation"}`
+const suiteFixtureRecord = /* testdate: fact: recorded transcript/report timestamp; parsing, no clock comparison */ `{"step_index":1,"source":"MODEL","type":"MESSAGE","status":"DONE","created_at":"2026-09-12T12:00:00Z","content":"untrusted fixture observation"}`
 
 func suiteFixture(t *testing.T, content string) SuiteTranscript {
 	t.Helper()

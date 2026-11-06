@@ -60,16 +60,17 @@ func TestExpiryProblem_3D(t *testing.T) {
 	}
 }
 
+// TestCategoryExpiryProblem_3D pins 3D behavior for category expiry problem.
 func TestCategoryExpiryProblem_3D(t *testing.T) {
 	// Category B: entered 2026-10-18 + 3 days = 2026-10-21
-	entered := "2026-10-18"
-	expB := "2026-10-21"
+	entered := testToday.AddDate(0, 0, 0).Format(rules.DateLayout)
+	expB := testToday.AddDate(0, 0, 3).Format(rules.DateLayout)
 	if prob := rules.CategoryExpiryProblem("B", entered, expB, testToday); prob != "" {
 		t.Errorf("expected valid B expiry, got: %s", prob)
 	}
 
 	// Category B mismatch
-	if prob := rules.CategoryExpiryProblem("B", entered, "2026-10-22", testToday); prob == "" {
+	if prob := rules.CategoryExpiryProblem("B", entered, testToday.AddDate(0, 0, 4).Format(rules.DateLayout), testToday); prob == "" {
 		t.Errorf("expected mismatch error on B, got empty")
 	}
 
@@ -125,6 +126,7 @@ func TestValidateHISS12Target_3D(t *testing.T) {
 	}
 }
 
+// TestJudge_3D pins 3D behavior for judge.
 func TestJudge_3D(t *testing.T) {
 	finding := rules.Finding{
 		File:        "creds.py",
@@ -137,7 +139,7 @@ func TestJudge_3D(t *testing.T) {
 		entry := rules.Entry{
 			Path:    "creds.py",
 			RuleID:  "generic-api-key",
-			Expires: "2026-11-01",
+			Expires: testToday.AddDate(0, 0, 14).Format(rules.DateLayout),
 		}
 		res := rules.Judge([]rules.Finding{finding}, []rules.Entry{entry}, "", testToday)
 		if res.Failed() {
@@ -152,7 +154,7 @@ func TestJudge_3D(t *testing.T) {
 		entry := rules.Entry{
 			Path:    "creds.py",
 			RuleID:  "generic-api-key",
-			Expires: "2026-10-01",
+			Expires: testToday.AddDate(0, 0, -17).Format(rules.DateLayout),
 		}
 		res := rules.Judge([]rules.Finding{finding}, []rules.Entry{entry}, "", testToday)
 		if !res.Failed() {
@@ -167,7 +169,7 @@ func TestJudge_3D(t *testing.T) {
 		entry := rules.Entry{
 			Path:    "other.py",
 			RuleID:  "generic-api-key",
-			Expires: "2026-11-01",
+			Expires: testToday.AddDate(0, 0, 14).Format(rules.DateLayout),
 		}
 		res := rules.Judge([]rules.Finding{finding}, []rules.Entry{entry}, "", testToday)
 		if !res.Failed() {

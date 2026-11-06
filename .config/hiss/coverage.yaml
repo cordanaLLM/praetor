@@ -1114,34 +1114,29 @@ rules:
     coverage:
       - language: go
         state: partial
-        runner: forge
+        runner: hiss
         mechanism: >-
-          The CI step 'Enforce Statement Coverage Floor (HISS-15 coverage gate)' in
-          .github/workflows/ci.yml: go tool cover -func total versus COVERAGE_FLOOR=65, fed by make
-          verify-all's go test -race -covermode=atomic -coverprofile. Plus praetorctl forge
-          validate-pr, which rejects a PR body lacking a checked 3D-testing box (self-attestation, not
-          a measurement). internal/difftest SYNTHESIZES 3D tests but analyses none.
+          internal/hiss/test_dates.go, scanGoFixtureDates; standardsctl audit in local hooks.
+          Independent dimension mechanisms retained: CI step 'Enforce Statement Coverage Floor
+          (HISS-15 coverage gate)' in .github/workflows/ci.yml compares go tool cover -func total
+          with COVERAGE_FLOOR=65 after make verify-all's go test -race -covermode=atomic
+          -coverprofile; praetorctl forge validate-pr requires the checked 3D-testing box.
+          internal/difftest synthesizes tests but does not analyze their dimensions.
         rationale: >-
-          Replayed the CI awk logic with real coverage profiles. positive/untested-public-func.go
-          measured 0.0% -> below the 65% floor -> the gate reports it. negative/clamp.go +
-          clamp_test.go (positive, negative and boundary rows in one table) measured 100.0% -> passes,
-          so the gate is not over-strict. The gap pair is the honest limit: gap/double.go is a
-          branchless public function and gap/double_test.go asserts only the happy
+          Test strings containing calendar dates are refused; dates must come from the test clock.
+          positive/date-manifest_test.go replays the expiry that broke main; date-quoted_test.go
+          covers ordinary strings. Decoded constant concatenations and escaped dates are checked. Computed dates, comments,
+          reasoned recorded facts and golden bytes pass. This is fixture integrity, not proof of test dimensions: untested public
+          functions and positive-only tests remain gaps. The separate CI coverage floor and
+          forge PR checkbox remain as before and do not prove three dimensions.
       - language: python
-        state: manual
-        runner: forge
-        mechanism: >-
-          No coverage tool and no dimension check. make verify-all executes the unittest suites under
-          scripts/ and .config/lefthook/scripts/, so a test that exists and fails does gate, but
-          nothing observes a missing test or a missing dimension. The only HISS-15-specific decision
-          for Python is the PR-body checkbox validated by praetorctl forge validate-pr -- a human
-          attestation.
+        state: partial
+        runner: hiss
+        mechanism: internal/hiss/test_dates_python.go, scanPythonFixtureDates; standardsctl audit in local hooks.
         rationale: >-
-          grep for coverage tooling across Makefile, .github/workflows/ and .config/lefthook/ returns
-          only the Go coverprofile and COVERAGE_FLOOR lines; there is no pytest-cov, coverage run,
-          ruff or mypy anywhere. positive/ is empty because no mechanism reports a missing dimension.
-          The gap fixtures are real: untested-public-function.py is a public interface with no test of
-          any dimension, and positive-only-test.py asserts only
+          Test strings, including triple-quoted YAML and JSON, refuse literal calendar dates.
+          Computed dates, comments and reasoned recorded facts or golden bytes pass. Existing
+          gap fixtures retain the absence of a public-interface dimension analyzer.
       - language: typescript
         state: manual
         runner: forge

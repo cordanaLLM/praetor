@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/hiss/pyliteral"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -260,6 +261,7 @@ func decodePrintfEscapes(value string) (string, error) {
 	return out.String(), nil
 }
 
+// appendPrintfEscape handles printf escape sequences in shell text.
 func appendPrintfEscape(out *strings.Builder, value string) (int, error) {
 	switch value[0] {
 	case 'e', 'E':
@@ -270,7 +272,7 @@ func appendPrintfEscape(out *strings.Builder, value string) (int, error) {
 	case '0':
 		return appendPrintfOctal(out, value)
 	default:
-		return appendPythonEscape(out, value)
+		return pyliteral.AppendEscape(out, value)
 	}
 }
 

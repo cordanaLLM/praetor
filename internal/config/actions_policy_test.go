@@ -93,7 +93,7 @@ func TestActionsPolicy_Negative_MalformedDeclarationsFail(t *testing.T) {
 		"missing expires on failing":  actionsManifest("read", "    - workflow: build.yml\n      state: failing\n      reason: r\n"),
 		"invalid expires date":        actionsManifest("read", "    - workflow: build.yml\n      state: failing\n      reason: r\n      expires: not-a-date\n"),
 		"unpadded date":               actionsManifest("read", "    - workflow: build.yml\n      state: failing\n      reason: r\n      expires: 2026-5-1\n"),
-		"expires too far ahead":       actionsManifest("read", "    - workflow: build.yml\n      state: failing\n      reason: r\n      expires: 2099-01-01\n"),
+		"expires too far ahead":       actionsManifest("read", "    - workflow: build.yml\n      state: failing\n      reason: r\n      expires: "+exceptionsToday.AddDate(0, 0, 26385).Format(ExceptionDateLayout)+"\n"),
 		"invalid expires unexercised": actionsManifest("read", "    - workflow: release.yml\n      state: unexercised\n      reason: r\n      expires: invalid\n"),
 	}
 	for name, body := range cases {
@@ -122,15 +122,15 @@ func TestActionsPolicy_Negative_MissingExpiresOnFailingRefused(t *testing.T) {
 // before; unexercised without expires never expires; failing without expires counts as expired.
 func TestActionsPolicy_Boundary_ExpiredMethod(t *testing.T) {
 	today := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
-	failingOnDay := WorkflowRunExpectation{State: WorkflowRunFailing, Expires: "2026-10-14"}
+	failingOnDay := WorkflowRunExpectation{State: WorkflowRunFailing, Expires: today.AddDate(0, 0, 0).Format(ExceptionDateLayout)}
 	if failingOnDay.Expired(today) {
 		t.Fatal("expectation on its expires day must not count as expired")
 	}
-	failingExpired := WorkflowRunExpectation{State: WorkflowRunFailing, Expires: "2026-10-13"}
+	failingExpired := WorkflowRunExpectation{State: WorkflowRunFailing, Expires: today.AddDate(0, 0, -1).Format(ExceptionDateLayout)}
 	if !failingExpired.Expired(today) {
 		t.Fatal("expectation before today must count as expired")
 	}
-	failingFuture := WorkflowRunExpectation{State: WorkflowRunFailing, Expires: "2026-10-15"}
+	failingFuture := WorkflowRunExpectation{State: WorkflowRunFailing, Expires: today.AddDate(0, 0, 1).Format(ExceptionDateLayout)}
 	if failingFuture.Expired(today) {
 		t.Fatal("future expectation must not count as expired")
 	}

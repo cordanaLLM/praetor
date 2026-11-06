@@ -23,7 +23,7 @@ func serveGitHubPulls(t *testing.T, pulls []map[string]any) *forge.GitHubDriver 
 		var payload any = []map[string]any{}
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/repos/acme/widgets/issues/"):
-			payload = map[string]any{"number": 3, "created_at": "2026-10-01T08:00:00Z"}
+			payload = map[string]any{"number": 3, "created_at": /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ "2026-10-01T08:00:00Z"}
 		case r.URL.Path == "/repos/acme/widgets/pulls" && r.URL.Query().Get("page") == "1":
 			payload = pulls
 		}
@@ -42,9 +42,9 @@ func serveGitHubPulls(t *testing.T, pulls []map[string]any) *forge.GitHubDriver 
 // the collector stamps them instead of refusing every live run.
 func TestCollector_Positive_LiveGitHubRowsAreStampedNotRefused(t *testing.T) {
 	gh := serveGitHubPulls(t, []map[string]any{
-		{"number": 7, "title": "Real GitHub PR", "body": "Closes #3", "created_at": "2026-10-01T10:00:00Z",
-			"merged_at": "2026-10-01T12:00:00Z", "head": map[string]any{"ref": "feat/live"}},
-		{"number": 8, "title": "Closed unmerged", "body": "", "created_at": "2026-10-01T10:00:00Z",
+		{"number": 7, "title": "Real GitHub PR", "body": "Closes #3", "created_at": /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ "2026-10-01T10:00:00Z",
+			"merged_at":/* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ "2026-10-01T12:00:00Z", "head": map[string]any{"ref": "feat/live"}},
+		{"number": 8, "title": "Closed unmerged", "body": "", "created_at": /* testdate: fact: recorded forge/spend history; event chronology, no clock comparison */ "2026-10-01T10:00:00Z",
 			"head": map[string]any{"ref": "feat/closed"}},
 	})
 	report, err := NewCollector(CollectorOptions{ForgeDriver: gh}).Collect(context.Background())

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // radarAcceptance is the #818 acceptance fixture internal/radar ships: a registry and one planted
@@ -52,7 +53,7 @@ func TestRadarCommand_Positive_ValidateAndCollect(t *testing.T) {
 	}
 	digestPath := filepath.Join(t.TempDir(), "digest.md")
 	out, err = captureStdout(t, func() error {
-		return dispatchCommand("radar", collectArgs(root, radarAcceptance, "2026-10-07", digestPath))
+		return dispatchCommand("radar", collectArgs(root, radarAcceptance, time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 0).Format(time.DateOnly), digestPath))
 	})
 	if err != nil || !strings.Contains(out, "Read path: planted fixtures in") || !strings.Contains(out, "[PASS] wrote "+digestPath+": 4 items from 3 sources") {
 		t.Fatalf("collect = %q, %v", out, err)
@@ -85,11 +86,11 @@ func TestRadarCommand_Negative_Refusals(t *testing.T) {
 	repo := radarRepo(t)
 	out := filepath.Join(t.TempDir(), "digest.md")
 	for name, args := range map[string][]string{
-		"no fixture":   {"collect", "--path=" + repo, "--now=2026-10-07", "--out=" + out},
-		"no out":       {"collect", "--path=" + repo, "--fixture=" + radarAcceptance, "--now=2026-10-07"},
+		"no fixture":   {"collect", "--path=" + repo, "--now=" + time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 0).Format(time.DateOnly), "--out=" + out},
+		"no out":       {"collect", "--path=" + repo, "--fixture=" + radarAcceptance, "--now=" + time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 0).Format(time.DateOnly)},
 		"no now":       {"collect", "--path=" + repo, "--fixture=" + radarAcceptance, "--out=" + out},
-		"zero days":    {"collect", "--path=" + repo, "--fixture=" + radarAcceptance, "--now=2026-10-07", "--days=0", "--out=" + out},
-		"file fixture": {"collect", "--path=" + repo, "--fixture=" + bad, "--now=2026-10-07", "--out=" + out},
+		"zero days":    {"collect", "--path=" + repo, "--fixture=" + radarAcceptance, "--now=" + time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 0).Format(time.DateOnly), "--days=0", "--out=" + out},
+		"file fixture": {"collect", "--path=" + repo, "--fixture=" + bad, "--now=" + time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 0).Format(time.DateOnly), "--out=" + out},
 		"positional":   {"validate", "--path=" + repo, "extra"},
 		"unknown":      {"publish"},
 	} {
@@ -100,11 +101,11 @@ func TestRadarCommand_Negative_Refusals(t *testing.T) {
 	if _, err := os.Stat(out); !os.IsNotExist(err) {
 		t.Errorf("a refused collect wrote %s: %v", out, err)
 	}
-	absent := collectArgs(repo, filepath.Join(root, "absent"), "2026-10-07", out)
+	absent := collectArgs(repo, filepath.Join(root, "absent"), time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 0).Format(time.DateOnly), out)
 	if err := dispatchCommand("radar", absent); !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), "--fixture") {
 		t.Errorf("missing fixture directory: %v, want the wrapped stat error", err)
 	}
-	err := dispatchCommand("radar", collectArgs(repo, t.TempDir(), "2026-10-07", out))
+	err := dispatchCommand("radar", collectArgs(repo, t.TempDir(), time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 0).Format(time.DateOnly), out))
 	if err == nil || !strings.Contains(err.Error(), "every radar source failed (3 of 3)") {
 		t.Fatalf("all sources failed: %v", err)
 	}
@@ -126,7 +127,9 @@ func TestRadarCommand_Boundary_EmptyAndPartial(t *testing.T) {
 	}
 	repo := radarRepo(t)
 	empty := filepath.Join(t.TempDir(), "empty.md")
-	out, err := captureStdout(t, func() error { return dispatchCommand("radar", collectArgs(repo, radarAcceptance, "2026-11-07", empty)) })
+	out, err := captureStdout(t, func() error {
+		return dispatchCommand("radar", collectArgs(repo, radarAcceptance, time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 31).Format(time.DateOnly), empty))
+	})
 	if info, statErr := os.Stat(empty); err != nil || statErr != nil || info.Size() != 0 || !strings.Contains(out, "wrote an empty digest") {
 		t.Fatalf("unchanged window: %q, %v, %v", out, err, statErr)
 	}
@@ -141,14 +144,18 @@ func TestRadarCommand_Boundary_EmptyAndPartial(t *testing.T) {
 	writeFixtureFile(t, fixture, "example-papers.xml",
 		`<rss><channel><item><title>x</title><pubDate>Thu, 01 Oct 2026 09:30:00 CEST</pubDate></item></channel></rss>`)
 	undated := filepath.Join(t.TempDir(), "undated.md")
-	out, err = captureStdout(t, func() error { return dispatchCommand("radar", collectArgs(repo, fixture, "2026-11-07", undated)) })
+	out, err = captureStdout(t, func() error {
+		return dispatchCommand("radar", collectArgs(repo, fixture, time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 31).Format(time.DateOnly), undated))
+	})
 	if info, statErr := os.Stat(undated); err != nil || statErr != nil || info.Size() != 0 ||
 		!strings.Contains(out, "entries without a readable date, in no window: 1;") {
 		t.Fatalf("undated entry in an unchanged window: %q, %v, %v; want an empty digest and the count on stdout", out, err, statErr)
 	}
 	writeFixtureFile(t, fixture, "example-papers.xml", `<!DOCTYPE rss [<!ENTITY x "boom">]><rss/>`)
 	partial := filepath.Join(t.TempDir(), "partial.md")
-	out, err = captureStdout(t, func() error { return dispatchCommand("radar", collectArgs(repo, fixture, "2026-10-07", partial)) })
+	out, err = captureStdout(t, func() error {
+		return dispatchCommand("radar", collectArgs(repo, fixture, time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC).AddDate(0, 0, 0).Format(time.DateOnly), partial))
+	})
 	if err != nil || !strings.Contains(out, "1 of 3 sources failed and are named in the digest: example-papers") {
 		t.Fatalf("one failing source: %q, %v", out, err)
 	}

@@ -221,7 +221,7 @@ func TestAuditLiveActions_WorkflowRunsAreReportedNotEnforced(t *testing.T) {
 	gitCommitAll(t, f.dir, f.gitEnv, "add a scheduled workflow")
 	run := func(conclusion string, number int) map[string]any {
 		return map[string]any{"run_number": number, "event": "schedule", "head_branch": "main", "status": "completed",
-			"conclusion": conclusion, "created_at": "2026-09-27T02:20:46Z", "html_url": "https://forge.test/r"}
+			"conclusion": conclusion, "created_at": /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ "2026-09-27T02:20:46Z", "html_url": "https://forge.test/r"}
 	}
 	serveActions(t, &actionsStub{runs: map[string]map[string]any{"nightly.yml": {"total_count": 4,
 		"workflow_runs": []any{run("failure", 4), run("failure", 3), run("failure", 2), run("success", 1)}}}})

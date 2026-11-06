@@ -7,7 +7,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/state"
 )
 
-const cliLegacyState = "# Session State\n\n### [2026-09-11 17:22:14 UTC] Commit `173c565` on `main`\n" +
+const cliLegacyState = /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ "# Session State\n\n### [2026-09-11 17:22:14 UTC] Commit `173c565` on `main`\n" +
 	"- **Activity**: Automated state synchronization\n- **Open Bugs**: 0 | **Pending Questions**: 0\n" +
 	"\n<!-- praetor-state:v1 sha256:" + "08ef0524fb3a5a02b855b2934d5f4092792fe5c723dd7332dffb69edfe41e52c" + " -->\n"
 

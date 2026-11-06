@@ -7,7 +7,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/compiler"
 )
 
-const volatileHeadAgents = "# Harness\n\n<!-- praetor:head -->\nBuilt 2026-10-07T12:30:00Z.\n\n<!-- praetor:tail -->\nCommands.\n"
+const volatileHeadAgents = /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ "# Harness\n\n<!-- praetor:head -->\nBuilt 2026-10-07T12:30:00Z.\n\n<!-- praetor:tail -->\nCommands.\n"
 
 // compiledFixtureServer sets up a fixture server with source as AGENTS.md and compiles it
 // in place, so vendor targets are in sync and only the stability gate can refuse it.

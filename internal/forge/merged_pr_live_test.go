@@ -22,9 +22,10 @@ func atoiOrFail(t *testing.T, text string) int {
 	return n
 }
 
+// pullJSON marshals pull request test data into JSON format.
 func pullJSON(number int, branch, milestone, merged, body string) map[string]any {
 	pull := map[string]any{
-		"number": number, "title": "t", "body": body, "created_at": "2026-10-01T00:00:00Z",
+		"number": number, "title": "t", "body": body, "created_at": /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-10-01T00:00:00Z",
 		"head": map[string]any{"ref": branch},
 	}
 	if merged != "" {
@@ -48,9 +49,9 @@ func serveLedgerForge(t *testing.T, pages [][]map[string]any, issues map[int]str
 			case !found:
 				writeJSON(t, w, http.StatusNotFound, map[string]any{"message": "Not Found"})
 			case created == "pr":
-				writeJSON(t, w, http.StatusOK, map[string]any{"number": n, "created_at": "2026-09-01T00:00:00Z", "pull_request": map[string]any{"url": "u"}})
+				writeJSON(t, w, http.StatusOK, map[string]any{"number": n, "created_at": /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-09-01T00:00:00Z", "pull_request": map[string]any{"url": "u"}})
 			default:
-				writeJSON(t, w, http.StatusOK, map[string]any{"number": n, "created_at": created, "closed_at": "2026-10-02T00:00:00Z"})
+				writeJSON(t, w, http.StatusOK, map[string]any{"number": n, "created_at": created, "closed_at": /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-10-02T00:00:00Z"})
 			}
 			return
 		}
@@ -63,14 +64,21 @@ func serveLedgerForge(t *testing.T, pages [][]map[string]any, issues map[int]str
 	})
 }
 
+// TestListMergedPullRequests_Positive_MilestoneBeforeLimitSortedByMerge pins positive milestone before limit sorted by merge for list merged pull requests.
 func TestListMergedPullRequests_Positive_MilestoneBeforeLimitSortedByMerge(t *testing.T) {
 	pages := [][]map[string]any{{
-		pullJSON(10, "feat/a", "M1", "2026-10-03T00:00:00Z", "Closes #1"),
-		pullJSON(11, "feat/b", "M2", "2026-10-09T00:00:00Z", ""),
-		pullJSON(12, "feat/c", "M1", "2026-10-05T00:00:00Z", "Fixes #2 and closes #1"),
+		pullJSON(10, "feat/a", "M1",
+			/* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */
+			"2026-10-03T00:00:00Z", "Closes #1"),
+		pullJSON(11, "feat/b", "M2",
+			/* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */
+			"2026-10-09T00:00:00Z", ""),
+		pullJSON(12, "feat/c", "M1",
+			/* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */
+			"2026-10-05T00:00:00Z", "Fixes #2 and closes #1"),
 		pullJSON(13, "feat/d", "M1", "", ""),
 	}}
-	issues := map[int]string{1: "2026-09-20T00:00:00Z", 2: "2026-09-25T00:00:00Z"}
+	issues := map[int]string{1: /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-09-20T00:00:00Z", 2: /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-09-25T00:00:00Z"}
 	gh, fake := serveLedgerForge(t, pages, issues)
 	list, err := gh.ListMergedPullRequests(context.Background(), MergedPullRequestQuery{Limit: 1, Milestone: "M1"})
 	if err != nil {
@@ -102,11 +110,16 @@ func countIssueLookups(fake *fakeForgeServer) int {
 	return lookups
 }
 
+// TestListMergedPullRequests_Negative_FetchFailuresAreWarnings pins negative fetch failures are warnings for list merged pull requests.
 func TestListMergedPullRequests_Negative_FetchFailuresAreWarnings(t *testing.T) {
 	pages := [][]map[string]any{{
-		pullJSON(20, "feat/a", "", "2026-10-03T00:00:00Z", "Closes #404"),
-		pullJSON(21, "feat/b", "", "2026-10-02T00:00:00Z", "Closes #7"),
-		{"number": 22, "title": "bad", "created_at": "garbage", "merged_at": "2026-10-01T00:00:00Z", "head": map[string]any{"ref": "x"}},
+		pullJSON(20, "feat/a", "",
+			/* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */
+			"2026-10-03T00:00:00Z", "Closes #404"),
+		pullJSON(21, "feat/b", "",
+			/* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */
+			"2026-10-02T00:00:00Z", "Closes #7"),
+		{"number": 22, "title": "bad", "created_at": "garbage", "merged_at": /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-10-01T00:00:00Z", "head": map[string]any{"ref": "x"}},
 	}}
 	gh, _ := serveLedgerForge(t, pages, map[int]string{7: "pr"})
 	list, err := gh.ListMergedPullRequests(context.Background(), MergedPullRequestQuery{})
@@ -137,10 +150,13 @@ func TestListMergedPullRequests_Negative_ListingErrorFails(t *testing.T) {
 	}
 }
 
+// TestListMergedPullRequests_Boundary_PageCeilingStatesTruncation pins boundary page ceiling states truncation for list merged pull requests.
 func TestListMergedPullRequests_Boundary_PageCeilingStatesTruncation(t *testing.T) {
 	full := make([]map[string]any, issuesPerPage)
 	for i := range full {
-		full[i] = pullJSON(i+1, fmt.Sprintf("b%d", i), "", "2026-10-03T00:00:00Z", "")
+		full[i] = pullJSON(i+1, fmt.Sprintf("b%d", i), "",
+			/* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */
+			"2026-10-03T00:00:00Z", "")
 	}
 	pages := make([][]map[string]any, maxIssuePages)
 	for i := range pages {
@@ -159,6 +175,7 @@ func TestListMergedPullRequests_Boundary_PageCeilingStatesTruncation(t *testing.
 	}
 }
 
+// TestListMergedPullRequests_Boundary_IssueLookupCap pins boundary issue lookup cap for list merged pull requests.
 func TestListMergedPullRequests_Boundary_IssueLookupCap(t *testing.T) {
 	var pages [][]map[string]any
 	issues := map[int]string{}
@@ -166,8 +183,10 @@ func TestListMergedPullRequests_Boundary_IssueLookupCap(t *testing.T) {
 		var page []map[string]any
 		for i := 0; i < issuesPerPage; i++ {
 			n := p*issuesPerPage + i + 1
-			page = append(page, pullJSON(n, fmt.Sprintf("b%d", n), "", "2026-10-03T00:00:00Z", fmt.Sprintf("Closes #%d", 1000+n)))
-			issues[1000+n] = "2026-09-01T00:00:00Z"
+			page = append(page, pullJSON(n, fmt.Sprintf("b%d", n), "",
+				/* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */
+				"2026-10-03T00:00:00Z", fmt.Sprintf("Closes #%d", 1000+n)))
+			issues[1000+n] = /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-09-01T00:00:00Z"
 		}
 		pages = append(pages, page)
 	}
@@ -184,21 +203,22 @@ func TestListMergedPullRequests_Boundary_IssueLookupCap(t *testing.T) {
 	}
 }
 
+// TestParseIssueTimes_Positive_Negative_Boundary pins positive negative boundary for parse issue times.
 func TestParseIssueTimes_Positive_Negative_Boundary(t *testing.T) {
-	closed := "2026-10-02T00:00:00Z"
-	created, got, err := parseIssueTimes(&ghIssueDetailRaw{CreatedAt: "2026-10-01T00:00:00Z", ClosedAt: &closed}, 5)
+	closed := /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-10-02T00:00:00Z"
+	created, got, err := parseIssueTimes(&ghIssueDetailRaw{CreatedAt: /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-10-01T00:00:00Z", ClosedAt: &closed}, 5)
 	if err != nil || created.IsZero() || got == nil {
 		t.Fatalf("positive: %v %v %v", created, got, err)
 	}
 	if _, _, err := parseIssueTimes(&ghIssueDetailRaw{CreatedAt: "nope"}, 5); err == nil {
 		t.Error("bad created_at must fail")
 	}
-	if _, _, err := parseIssueTimes(&ghIssueDetailRaw{CreatedAt: "2026-10-01T00:00:00Z", PullRequest: &struct {
+	if _, _, err := parseIssueTimes(&ghIssueDetailRaw{CreatedAt: /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-10-01T00:00:00Z", PullRequest: &struct {
 		URL string `json:"url"`
 	}{URL: "u"}}, 5); err == nil {
 		t.Error("a pull request is not a closing issue")
 	}
-	_, open, err := parseIssueTimes(&ghIssueDetailRaw{CreatedAt: "2026-10-01T00:00:00Z"}, 5)
+	_, open, err := parseIssueTimes(&ghIssueDetailRaw{CreatedAt: /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-10-01T00:00:00Z"}, 5)
 	if err != nil || open != nil {
 		t.Errorf("open issue has no closed_at: %v %v", open, err)
 	}

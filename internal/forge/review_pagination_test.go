@@ -84,7 +84,7 @@ func reviewPageFixture(t *testing.T, kind string, count, page int, more bool, cu
 		switch kind {
 		case "threads":
 			nodes = append(nodes, map[string]any{"id": id, "path": id + ".go", "isResolved": false,
-				"comments": map[string]any{"nodes": []any{map[string]any{"createdAt": "2026-11-01T18:00:00Z"}}}})
+				"comments": map[string]any{"nodes": []any{map[string]any{"createdAt": /* testdate: fact: recorded forge event timestamp; event parsing, no clock comparison */ "2026-11-01T18:00:00Z"}}}})
 		case "reviews":
 			nodes = append(nodes, map[string]any{"id": id, "state": "COMMENTED"})
 		case "checks":

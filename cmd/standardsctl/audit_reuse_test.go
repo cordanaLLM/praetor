@@ -198,19 +198,19 @@ func TestAuditReuseRecords_Bound(t *testing.T) {
 		!strings.Contains(err.Error(), "exceptions entry of rule reuse-annotation-order naming REUSE.toml") {
 		t.Fatalf("no entry: %v", err)
 	}
-	if err := reuseOrderBound([]config.Exception{reuseOrderEntry("2026-10-06")}, bound, reuseOrderToday); err == nil ||
-		!strings.Contains(err.Error(), "its reuse-annotation-order exception expired on 2026-10-06") {
+	if err := reuseOrderBound([]config.Exception{reuseOrderEntry(reuseOrderToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout))}, bound, reuseOrderToday); err == nil ||
+		!strings.Contains(err.Error(), "its reuse-annotation-order exception expired on "+reuseOrderToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout)) {
 		t.Fatalf("expired entry: %v", err)
 	}
 	output, err := captureStdout(t, func() error {
-		return reuseOrderBound([]config.Exception{reuseOrderEntry("2026-12-31")}, bound, reuseOrderToday)
+		return reuseOrderBound([]config.Exception{reuseOrderEntry(reuseOrderToday.AddDate(0, 0, 85).Format(config.ExceptionDateLayout))}, bound, reuseOrderToday)
 	})
 	if err != nil || !strings.Contains(output, "[SKIP] REUSE.toml annotation order not checked") ||
-		!strings.Contains(output, "until 2026-12-31: 4000 vendored file globs") || strings.Contains(output, "[PASS]") {
+		!strings.Contains(output, "until "+reuseOrderToday.AddDate(0, 0, 85).Format(config.ExceptionDateLayout)+": 4000 vendored file globs") || strings.Contains(output, "[PASS]") {
 		t.Fatalf("live entry: %v\n%s", err, output)
 	}
 	correct := "version = 1\n\n[[annotations]]\npath = \"**\"\nSPDX-License-Identifier = \"EUPL-1.2\"\n" + reuseOverrideTable
-	output, err = auditReuseOrder(t, &correct, reuseOrderEntry("2026-12-31"))
+	output, err = auditReuseOrder(t, &correct, reuseOrderEntry(reuseOrderToday.AddDate(0, 0, 85).Format(config.ExceptionDateLayout)))
 	if err == nil || !strings.Contains(err.Error(), "reuse-annotation-order exceptions entries excuse nothing") ||
 		!strings.Contains(output, "exceptions entry REUSE.toml (reuse-annotation-order): the annotation order was checked in full") {
 		t.Fatalf("stale entry: %v\n%s", err, output)
@@ -234,7 +234,7 @@ func TestAuditLicensing_3D(t *testing.T) {
 	writeFixtureFile(t, root, supplychain.RootLicenseFile, "MIT License\n")
 	writeFixtureFile(t, root, "COPYING", "upstream notice\n")
 	kept := &config.Manifest{Exceptions: []config.Exception{{Rule: config.ExceptionRuleRootLicenseNotice, Path: "COPYING",
-		Reason: "upstream notice kept verbatim", Category: "A", Expires: "2026-12-31"}}}
+		Reason: "upstream notice kept verbatim", Category: "A", Expires: today.AddDate(0, 0, 85).Format(config.ExceptionDateLayout)}}}
 	output, err := run(kept, root)
 	if err != nil || !strings.Contains(output, "[PASS] root licence: LICENSE holds the text of LICENSES/MIT.txt; kept upstream notices COPYING.") ||
 		!strings.Contains(output, "[SKIP] REUSE.toml annotation order not checked") {

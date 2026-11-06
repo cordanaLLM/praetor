@@ -26,7 +26,7 @@ func TestAuditLocksTheAPIWorkflowToTheManifestRendering(t *testing.T) {
 			family = candidate
 		}
 	}
-	expires := time.Now().UTC().AddDate(0, 0, 30).Format("2006-01-02")
+	expires := time.Now().UTC().AddDate(0, 0, 30).Format(time.DateOnly)
 	root := t.TempDir()
 	writeFixtureFile(t, root, ".standards.yaml", "version: 1\napi:\n  system_packages:\n    - libudev-dev\n"+
 		"exceptions:\n  - rule: api-compatibility\n    path: hw/go.mod\n    reason: needs a vendor SDK\n    category: A\n    expires: \""+expires+"\"\n")
@@ -81,7 +81,7 @@ func TestAuditLocksTheAPIWorkflowToTheExceptionsAlone(t *testing.T) {
 	writeFixtureFile(t, root, ".standards.yaml", "version: 1\n")
 	writeFamilyFixture(t, root, family, func(text string) string { return text })
 	for _, days := range []int{30, 60} {
-		writeFixtureFile(t, root, ".standards.yaml", entry(time.Now().UTC().AddDate(0, 0, days).Format("2006-01-02")))
+		writeFixtureFile(t, root, ".standards.yaml", entry(time.Now().UTC().AddDate(0, 0, days).Format(time.DateOnly)))
 		if _, err := auditManagedFamily(t.Context(), root, family); err == nil || !strings.Contains(err.Error(), earlier) {
 			t.Fatalf("a workflow rendered before the entry (days %d) passed: %v", days, err)
 		}

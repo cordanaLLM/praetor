@@ -85,7 +85,7 @@ func TestCheckUpstreamCreditsPositive(t *testing.T) {
 			t.Fatalf("%s: %v", relation, err)
 		}
 	}
-	if err := CheckUpstreamCredits(unknownLicenseSources("2026-10-30")); err != nil {
+	if err := CheckUpstreamCredits(unknownLicenseSources(creditsToday.AddDate(0, 0, 23).Format(config.ExceptionDateLayout))); err != nil {
 		t.Fatalf("an excused unknown license: %v", err)
 	}
 	tool := upstreamSources()
@@ -144,12 +144,17 @@ func TestCheckUpstreamCreditsNegative(t *testing.T) {
 			s.Credits.Originals = append(s.Credits.Originals, ".agents/skills/gone/SKILL.md")
 		},
 			"lists .agents/skills/gone/SKILL.md under originals, which is no canonical persona or skill"},
-		"unknown license without an exception": {func(s *UpstreamCreditSources) { *s = unknownLicenseSources("2026-10-30"); s.Exceptions = nil },
+		"unknown license without an exception": {func(s *UpstreamCreditSources) {
+			*s = unknownLicenseSources(creditsToday.AddDate(0, 0, 23).Format(config.ExceptionDateLayout))
+			s.Exceptions = nil
+		},
 			"states license unknown, and no unexpired exceptions entry with rule credits names one of its paths"},
-		"expired exception": {func(s *UpstreamCreditSources) { *s = unknownLicenseSources("2026-10-06") },
-			"exceptions entry package.json (credits) expired on 2026-10-06"},
+		"expired exception": {func(s *UpstreamCreditSources) {
+			*s = unknownLicenseSources(creditsToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout))
+		},
+			"exceptions entry package.json (credits) expired on " + creditsToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout)},
 		"stale exception": {func(s *UpstreamCreditSources) {
-			*s = unknownLicenseSources("2026-10-30")
+			*s = unknownLicenseSources(creditsToday.AddDate(0, 0, 23).Format(config.ExceptionDateLayout))
 			s.Credits.Entries[1].License = "MIT"
 		},
 			"exceptions entry package.json (credits) excuses no entry"},
@@ -168,10 +173,10 @@ func TestCheckUpstreamCreditsNegative(t *testing.T) {
 // carried; a declaration needs exactly one space before the license; and a REUSE.toml past its
 // bound is an error.
 func TestCheckUpstreamCreditsBoundary(t *testing.T) {
-	if err := CheckUpstreamCredits(unknownLicenseSources("2026-10-07")); err != nil {
+	if err := CheckUpstreamCredits(unknownLicenseSources(creditsToday.AddDate(0, 0, 0).Format(config.ExceptionDateLayout))); err != nil {
 		t.Fatalf("an exception on its expires day: %v", err)
 	}
-	if err := CheckUpstreamCredits(unknownLicenseSources("2026-10-06")); err == nil || !strings.Contains(err.Error(), "states license unknown") {
+	if err := CheckUpstreamCredits(unknownLicenseSources(creditsToday.AddDate(0, 0, -1).Format(config.ExceptionDateLayout))); err == nil || !strings.Contains(err.Error(), "states license unknown") {
 		t.Fatalf("an exception the day after it expired: %v", err)
 	}
 	longer := upstreamSources()
@@ -251,7 +256,7 @@ func TestReadUpstreamCreditSources(t *testing.T) {
 	writeRepoFile(t, root, LicensesDir+"/MIT.txt", "MIT License\n")
 	writeRepoFile(t, root, "package.json", `{"name":"x","dependencies":{"left-pad":"1.3.0"}}`)
 	writeRepoFile(t, root, config.ManifestFileName, "version: 1\nexceptions:\n  - rule: credits\n    path: package.json\n    reason: no license in the registry entry\n    category: A\n    expires: \""+
-		config.ExceptionDay(time.Now()).AddDate(0, 0, 30).Format(config.ExceptionDateLayout)+"\"\n  - rule: clang-tidy-coverage\n    path: a.c\n    reason: r\n    expires: \"2020-01-01\"\n")
+		config.ExceptionDay(time.Now()).AddDate(0, 0, 30).Format(config.ExceptionDateLayout)+"\"\n  - rule: clang-tidy-coverage\n    path: a.c\n    reason: r\n    expires: \""+creditsToday.AddDate(0, 0, -2471).Format(config.ExceptionDateLayout)+"\"\n")
 	sources, err := ReadUpstreamCreditSources(context.Background(), root)
 	if err != nil {
 		t.Fatal(err)

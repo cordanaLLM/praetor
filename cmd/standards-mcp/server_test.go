@@ -154,14 +154,14 @@ func newFixtureRepo(t *testing.T) string {
 		".standards.yaml":                   "version: 1\nrepository:\n  owner: \"fixture\"\n  name: \"repo\"\n  forge: \"github\"\nprofiles:\n  - \"framework\"\nfacets: []\n",
 		".standards.lock":                   validAuditLock(t),
 		".config/archetypes/framework.yaml": auditLockSource,
-		".standards-baseline.json":          `{"version":1,"generated_at":"2026-01-01T00:00:00Z","repository":"fixture/repo","commit_sha":"","total_infractions":0,"infractions":[]}` + "\n",
-		".config/labels.yaml":               "labels: []\n",
-		".github/rulesets/main.json":        fixtureRuleset(t),
-		"lefthook.yml":                      "pre-commit:\n  commands: {}\n",
-		".gitignore":                        "/.workingdir/\n",
-		"go.mod":                            "module fixture\n\ngo 1.27\n",
-		"main.go":                           fixtureMainGo,
-		"complex.go":                        fixtureComplexGo,
+		".standards-baseline.json":/* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ `{"version":1,"generated_at":"2026-01-01T00:00:00Z","repository":"fixture/repo","commit_sha":"","total_infractions":0,"infractions":[]}` + "\n",
+		".config/labels.yaml":        "labels: []\n",
+		".github/rulesets/main.json": fixtureRuleset(t),
+		"lefthook.yml":               "pre-commit:\n  commands: {}\n",
+		".gitignore":                 "/.workingdir/\n",
+		"go.mod":                     "module fixture\n\ngo 1.27\n",
+		"main.go":                    fixtureMainGo,
+		"complex.go":                 fixtureComplexGo,
 	}
 	for rel, content := range files {
 		writeFixtureFile(t, root, rel, content)
@@ -306,6 +306,7 @@ func TestServer_Positive_RegistrationAndAnnotations(t *testing.T) {
 	}
 }
 
+// TestServer_Positive_ProtocolMethods pins positive protocol methods for server.
 func TestServer_Positive_ProtocolMethods(t *testing.T) {
 	srv, _ := newFixtureServer(t)
 	ctx := context.Background()
@@ -315,7 +316,7 @@ func TestServer_Positive_ProtocolMethods(t *testing.T) {
 		t.Fatalf("initialize failed: %+v", resp)
 	}
 	resMap, ok := resp.Result.(map[string]any)
-	if !ok || resMap["protocolVersion"] != "2024-11-05" {
+	if !ok || resMap["protocolVersion"] != /* testdate: fact: recorded fixture metadata; parsing or exact text comparison, no clock read */ "2024-11-05" {
 		t.Errorf("unexpected initialize result: %+v", resp.Result)
 	}
 
