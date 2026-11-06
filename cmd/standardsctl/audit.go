@@ -626,7 +626,7 @@ func auditTestTimeouts(ctx context.Context, manifest *config.Manifest, rootDir s
 }
 
 // auditJobTimeouts runs the job-timeout gate (forge.AuditJobTimeouts): every job running steps
-// declares timeout-minutes; findings warn and the gate passes.
+// declares timeout-minutes; findings warn before forge.JobTimeoutFailFrom and fail from that day on.
 func auditJobTimeouts(ctx context.Context, manifest *config.Manifest, rootDir string, offline bool) error {
 	branch, branchErr := forge.RepositoryDefaultBranch(ctx, rootDir, manifest)
 	live := openActionsForge(ctx, rootDir, manifest.Repository, offline)

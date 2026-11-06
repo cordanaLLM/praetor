@@ -116,10 +116,13 @@ jobs:
     # runner about twice as slow (median package time x1.96, go test 94 minutes, the harness
     # self-tests over 21) cancelled main at the 120-minute limit with every finished step green.
     # The leg is a required check, so a limit at that edge cancels a green run and blocks the
-    # pull request; 180 minutes keeps a third over that run, inside the job-timeout gate's
-    # measured window (1.25 to 4 times the slowest green run). Splitting the leg is the durable
-    # fix (#729 tracks the suite's growth).
-    timeout-minutes: 180
+    # pull request. The Windows suite now runs in the windows-shard job below; the slowest leg
+    # left here is macOS, whose p95 over the 15 green main runs before 2026-11-06 was 76.3 minutes
+    # (Linux 36.8). The bound is twice that p95, rounded up, inside the job-timeout gate's measured
+    # window (1.25 to 4 times the slowest green run); it is above the 120-minute static ceiling,
+    # so .standards.yaml carries a job-timeout exception for the static path (#729 tracks the
+    # suite's growth).
+    timeout-minutes: 153
     strategy:
       # One platform failing must never cancel the others. Which platforms are broken is
       # the entire output of this job; cancelling the rest discards it.
@@ -759,7 +762,10 @@ jobs:
     name: Platform Neutrality (Windows shard ${{ matrix.shard }})
     if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled')"
     runs-on: windows-2025
-    timeout-minutes: 180
+    # Twice the p95 of 30 green shard runs on main before 2026-11-06 (81.3 minutes, slowest 86.0),
+    # rounded up; above the 120-minute static ceiling, excepted for the static path in
+    # .standards.yaml like the harness job.
+    timeout-minutes: 163
     strategy:
       fail-fast: false
       matrix:
