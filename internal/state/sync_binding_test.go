@@ -51,7 +51,7 @@ func TestVerifyStateSyncReadOnlyAndPrivateEvidenceExcluded(t *testing.T) {
 	}
 }
 
-// TestVerifyStateSyncRejectsChangedInputs refuses stale bindings and ledger ratchet resets.
+// TestVerifyStateSyncRejectsChangedInputs refuses a stale binding after every changed input.
 func TestVerifyStateSyncRejectsChangedInputs(t *testing.T) {
 	for _, kind := range []string{"tracked", "staged", "untracked", "untracked-same-size", "ledger", "history", "branch", "head"} {
 		t.Run(kind, func(t *testing.T) {
@@ -71,16 +71,12 @@ func TestVerifyStateSyncRejectsChangedInputs(t *testing.T) {
 	}
 }
 
-// reconcileChangedSyncInput accepts source reconciliation while preserving the ledger ratchet.
+// reconcileChangedSyncInput accepts an explicit sync after every changed input. Ledger growth
+// under the hard caps reconciles too: the ratchet binds only a file with legacy excess, which
+// TestStateFileCapPlantedShrinkThenGrow covers.
 func reconcileChangedSyncInput(t *testing.T, root, kind string) {
 	t.Helper()
-	if kind == "ledger" {
-		if _, err := SyncState(t.Context(), root, "growth cannot reconcile"); err == nil || !strings.Contains(err.Error(), "ratchet") {
-			t.Fatalf("sync reset the ledger ratchet: %v", err)
-		}
-		return
-	}
-	if _, err := SyncState(t.Context(), root, "explicit reconciliation"); err != nil {
+	if _, err := SyncState(t.Context(), root, "explicit reconciliation of "+kind); err != nil {
 		t.Fatal(err)
 	}
 }

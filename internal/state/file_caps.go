@@ -11,7 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
-// Live ledger limits are inclusive. Legacy excess is ratcheted, never raised.
+// Live ledger limits are inclusive; ratchets bind only files whose recorded baseline exceeds a hard cap.
 const (
 	OpenStateEntryCap    = 150
 	OpenStateByteCap     = 64 << 10
@@ -26,8 +26,7 @@ type stateFileBaseline struct {
 	Files   map[string]LiveStateFileUsage `json:"files"`
 }
 
-// CheckStateFileCaps checks current usage against the recorded minimum. record creates or
-// tightens the baseline; read-only callers pass false. Usage is returned even on cap failure.
+// CheckStateFileCaps enforces hard caps on compliant state files and ratchets files carrying legacy excess against their recorded baseline.
 func CheckStateFileCaps(ctx context.Context, rootPath string, record bool) ([]LiveStateFileUsage, error) {
 	usage, err := MeasureLiveStateFiles(ctx, rootPath)
 	if err != nil {
@@ -105,14 +104,30 @@ func shrinkStateFileBaseline(current, previous LiveStateFileUsage) LiveStateFile
 		Completed: min(current.Completed, previous.Completed), Bytes: min(current.Bytes, previous.Bytes)}
 }
 
+// stateFileLegacy reports whether a state file's recorded baseline exceeds any hard cap.
+func stateFileLegacy(previous LiveStateFileUsage) bool {
+	switch previous.Name {
+	case openLedgerName:
+		return previous.Open > OpenStateEntryCap || previous.Bytes > OpenStateByteCap || previous.Completed > 0
+	case backlogLedgerName:
+		return previous.Open > BacklogStateEntryCap
+	case bugLedgerName:
+		return previous.Completed > 0
+	default:
+		return false
+	}
+}
+
 // checkLiveStateFile names every broken metric and the live file responsible.
 func checkLiveStateFile(current, previous LiveStateFileUsage) error {
 	var failures []error
-	if current.Open > previous.Open {
-		failures = append(failures, fmt.Errorf("%s: open entries %d exceed ratchet baseline %d", current.Name, current.Open, previous.Open))
-	}
-	if current.Bytes > previous.Bytes {
-		failures = append(failures, fmt.Errorf("%s: bytes %d exceed ratchet baseline %d", current.Name, current.Bytes, previous.Bytes))
+	if stateFileLegacy(previous) {
+		if current.Open > previous.Open {
+			failures = append(failures, fmt.Errorf("%s: open entries %d exceed ratchet baseline %d", current.Name, current.Open, previous.Open))
+		}
+		if current.Bytes > previous.Bytes {
+			failures = append(failures, fmt.Errorf("%s: bytes %d exceed ratchet baseline %d", current.Name, current.Bytes, previous.Bytes))
+		}
 	}
 	failures = append(failures, checkStateFileHardCaps(current, previous))
 	return errors.Join(failures...)

@@ -278,8 +278,8 @@ minimum observed open count, completed/resolved count, and bytes for all three
 files. The first successful `state sync` or archive `--apply` records the initial
 baseline. Existing excess is accepted at that baseline so it can be reduced
 incrementally. Each successful mutating check tightens each recorded dimension
-independently; none increases. Open counts and bytes above their recorded minimum
-fail even below the hard limits. A file that crosses a hard limit downward cannot
+independently; none increases. The ratchet binds only a file whose recorded
+baseline exceeds a hard cap; growth within the hard caps passes. A file that crosses a hard limit downward cannot
 cross it upward again. Resolved bug rows are legacy debt until their baseline
 count reaches zero; after that, leaving one live fails. Status and `--verify`
 never write or reset this baseline. Archive completed work before syncing a

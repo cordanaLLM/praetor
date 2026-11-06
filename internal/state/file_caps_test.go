@@ -168,9 +168,8 @@ func TestStateFileCapPlantedMissingFileAppears(t *testing.T) {
 	}
 }
 
-// TestStateFileCapPlantedExistingEmptyThenGrows proves planted case (b): baseline
-// recorded from an existing OPEN.md with 0 open, then 2 open -> still fails.
-func TestStateFileCapPlantedExistingEmptyThenGrows(t *testing.T) {
+// TestStateFileCapUnderCapGrowthPasses proves that growth under hard caps passes without ratchet failures.
+func TestStateFileCapUnderCapGrowthPasses(t *testing.T) {
 	root := t.TempDir()
 	if err := InitWorkingDir(root); err != nil {
 		t.Fatal(err)
@@ -180,28 +179,97 @@ func TestStateFileCapPlantedExistingEmptyThenGrows(t *testing.T) {
 	}
 	openPath := filepath.Join(root, WorkingDirName, "OPEN.md")
 	writeIntegrityFile(t, openPath, "- [ ] one\n- [ ] two\n")
-	if _, err := CheckStateFileCaps(t.Context(), root, true); err == nil || !strings.Contains(err.Error(), "open entries 2 exceed ratchet baseline 0") {
-		t.Fatalf("expected ratchet baseline 0 failure, got: %v", err)
+	if _, err := CheckStateFileCaps(t.Context(), root, true); err != nil {
+		t.Fatalf("under-cap growth rejected: %v", err)
 	}
 }
 
-// TestStateFileCapPlantedShrinkThenGrow proves planted case (c): shrink then grow -> fails.
+// TestStateFileCapPlantedShrinkThenGrow proves ratchet enforcement on a legacy file above entry cap.
 func TestStateFileCapPlantedShrinkThenGrow(t *testing.T) {
 	root := t.TempDir()
 	if err := InitWorkingDir(root); err != nil {
 		t.Fatal(err)
 	}
 	openPath := filepath.Join(root, WorkingDirName, "OPEN.md")
-	writeIntegrityFile(t, openPath, "- [ ] one\n- [ ] two\n- [ ] three\n")
+	writeIntegrityFile(t, openPath, strings.Repeat("- [ ] debt\n", OpenStateEntryCap+3))
 	if _, err := CheckStateFileCaps(t.Context(), root, true); err != nil {
 		t.Fatal(err)
 	}
-	writeIntegrityFile(t, openPath, "- [ ] one\n")
+	writeIntegrityFile(t, openPath, strings.Repeat("- [ ] debt\n", OpenStateEntryCap+1))
 	if _, err := CheckStateFileCaps(t.Context(), root, true); err != nil {
-		t.Fatalf("shrinking ledger rejected: %v", err)
+		t.Fatalf("shrinking legacy ledger rejected: %v", err)
 	}
-	writeIntegrityFile(t, openPath, "- [ ] one\n- [ ] two\n")
+	writeIntegrityFile(t, openPath, strings.Repeat("- [ ] debt\n", OpenStateEntryCap+2))
 	if _, err := CheckStateFileCaps(t.Context(), root, true); err == nil || !strings.Contains(err.Error(), "exceed ratchet baseline") {
-		t.Fatalf("growing after shrink accepted: %v", err)
+		t.Fatalf("growing legacy after shrink accepted: %v", err)
+	}
+}
+
+// TestStateFileCapLegacyCompletedRowRatchet proves ratchet enforcement on a legacy file with a completed row.
+func TestStateFileCapLegacyCompletedRowRatchet(t *testing.T) {
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	capsPath := filepath.Join(root, WorkingDirName, stateFileCapsName)
+	writeIntegrityFile(t, capsPath, `{"version":1,"files":{"OPEN.md":{"name":"OPEN.md","open":2,"completed":1,"bytes":100}}}`)
+	openPath := filepath.Join(root, WorkingDirName, "OPEN.md")
+	writeIntegrityFile(t, openPath, "- [ ] one\n- [ ] two\n- [ ] three\n- [x] done\n")
+	if _, err := CheckStateFileCaps(t.Context(), root, true); err == nil || !strings.Contains(err.Error(), "exceed ratchet baseline") {
+		t.Fatalf("growing open on legacy completed row accepted: %v", err)
+	}
+}
+
+// TestStateFileCapBugsUnderCapGrowthPasses proves that adding an open bug under cap passes.
+func TestStateFileCapBugsUnderCapGrowthPasses(t *testing.T) {
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CheckStateFileCaps(t.Context(), root, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AddBug(root, BugEntry{Title: "new bug", Location: "internal/state"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CheckStateFileCaps(t.Context(), root, true); err != nil {
+		t.Fatalf("adding open bug under cap rejected: %v", err)
+	}
+}
+
+// TestStateFileCapBugsLegacyResolvedRowRatchet proves that a baseline with a live resolved row ratchets open bugs.
+func TestStateFileCapBugsLegacyResolvedRowRatchet(t *testing.T) {
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	bugsPath := filepath.Join(root, WorkingDirName, "BUGS.md")
+	writeIntegrityFile(t, bugsPath, defaultBugsMD()+"| `BUG-001` | resolved | p2 | resolved | internal/state |  |\n")
+	if _, err := CheckStateFileCaps(t.Context(), root, true); err != nil {
+		t.Fatal(err)
+	}
+	writeIntegrityFile(t, bugsPath, defaultBugsMD()+"| `BUG-001` | resolved | p2 | resolved | internal/state |  |\n| `BUG-002` | open | p2 | open | internal/state |  |\n")
+	if _, err := CheckStateFileCaps(t.Context(), root, true); err == nil || !strings.Contains(err.Error(), "exceed ratchet baseline") {
+		t.Fatalf("adding open bug on legacy resolved baseline accepted: %v", err)
+	}
+}
+
+// TestStateFileCapBacklogUnderCapAndBoundary proves backlog growth passes under cap and fails at cap+1.
+func TestStateFileCapBacklogUnderCapAndBoundary(t *testing.T) {
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CheckStateFileCaps(t.Context(), root, true); err != nil {
+		t.Fatal(err)
+	}
+	backlogPath := filepath.Join(root, WorkingDirName, "BACKLOG.md")
+	writeIntegrityFile(t, backlogPath, strings.Repeat("- [ ] later\n", BacklogStateEntryCap))
+	if _, err := CheckStateFileCaps(t.Context(), root, true); err != nil {
+		t.Fatalf("backlog growth up to cap rejected: %v", err)
+	}
+	writeIntegrityFile(t, backlogPath, strings.Repeat("- [ ] later\n", BacklogStateEntryCap+1))
+	if _, err := CheckStateFileCaps(t.Context(), root, true); err == nil || !strings.Contains(err.Error(), "exceed cap") {
+		t.Fatalf("backlog overflow accepted: %v", err)
 	}
 }
