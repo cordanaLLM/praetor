@@ -542,8 +542,13 @@ is exempt; an expression value (`${{ ... }}`) is reported as not judged, by name
 the static path warns on any declared value above 120 minutes; when the forge is readable, the
 measured path reads up to the latest 3 successful runs on the default branch and warns on a
 declared value below 1.25 x slowest run S (cancel risk) or above max(30, 4 x S) (runaway),
-falling back to the static path for jobs without measurements. During warn-only rollout, findings
-emit `[WARN]` lines and the gate passes, silenced by a dated `job-timeout` exception.
+falling back to the static path for jobs without measurements. Until 2026-11-20
+(`forge.JobTimeoutFailFrom`) findings emit `[WARN]` lines and the gate passes; from that day on
+they emit `[FAIL]` lines and the gate fails the audit (`TestJobTimeout_FailFrom_SwitchBoundary`).
+A dated `job-timeout` exception for the workflow excuses its findings; an entry that excuses
+nothing warns, and fails after the switch. A job above the static ceiling that passes on the
+measured path keeps its workflow's entry in use, because a CI run without a forge token takes the
+static path and needs it (`TestJobTimeout_StaticOnlyExceptionUsedOnBothPaths`).
 
 The context gate inside `standards_audit` also runs the cache-stability check
 (`compiler.VerifyStableContext`, called from `auditContextSync` in
