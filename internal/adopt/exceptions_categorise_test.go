@@ -24,6 +24,37 @@ func writeTestLockAndCatalog(t *testing.T, repo, profileID string) {
 	testsupport.WritePinnedLock(t, repo, profileID, source)
 }
 
+// assertExceptionFields checks that an exception carries the expected category, expires and entered state.
+func assertExceptionFields(t *testing.T, label string, e config.Exception, wantCat, wantExpires string, wantEnteredSet bool) {
+	t.Helper()
+	if e.Category != wantCat {
+		t.Errorf("%s category = %q, want %q", label, e.Category, wantCat)
+	}
+	if wantEnteredSet && e.Entered == "" {
+		t.Errorf("%s entered is empty, want set", label)
+	}
+	if !wantEnteredSet && e.Entered != "" {
+		t.Errorf("%s entered = %q, want empty", label, e.Entered)
+	}
+	if e.Expires != wantExpires {
+		t.Errorf("%s expires = %q, want %q", label, e.Expires, wantExpires)
+	}
+}
+
+// refreshManifest re-reads and decodes the manifest at the given path.
+func refreshManifest(t *testing.T, manifestPath string) *config.Manifest {
+	t.Helper()
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read refreshed manifest: %v", err)
+	}
+	m, err := config.DecodeManifest(data)
+	if err != nil {
+		t.Fatalf("decode refreshed manifest: %v", err)
+	}
+	return m
+}
+
 // 1a: pre-1711 fixture manifest with both example entries, no category: refresh output carries category D and entered on both, expires unchanged; audit of the fixture passes the exception rule.
 func TestAdoptRefresh_CategorisesPre1711OwnedExceptions(t *testing.T) {
 	repoPath := t.TempDir()
@@ -70,31 +101,14 @@ exceptions:
 		t.Fatalf("syncDeclaredLintersExceptions: %v", err)
 	}
 
-	afterData, err := os.ReadFile(manifestPath)
-	if err != nil {
-		t.Fatalf("read refreshed manifest: %v", err)
-	}
-	afterManifest, err := config.DecodeManifest(afterData)
-	if err != nil {
-		t.Fatalf("decode refreshed manifest: %v", err)
-	}
-
+	afterManifest := refreshManifest(t, manifestPath)
 	if len(afterManifest.Exceptions) != 2 {
 		t.Fatalf("expected 2 exceptions, got %d", len(afterManifest.Exceptions))
 	}
-
 	for _, entry := range afterManifest.Exceptions {
-		if entry.Category != "D" {
-			t.Errorf("entry %s:%s category = %q, want D", entry.Rule, entry.Target(), entry.Category)
-		}
-		if entry.Entered == "" {
-			t.Errorf("entry %s:%s entered is empty, want set", entry.Rule, entry.Target())
-		}
-		if entry.Expires != "2027-01-20" {
-			t.Errorf("entry %s:%s expires = %q, want 2027-01-20 (unchanged)", entry.Rule, entry.Target(), entry.Expires)
-		}
+		label := fmt.Sprintf("entry %s:%s", entry.Rule, entry.Target())
+		assertExceptionFields(t, label, entry, "D", "2027-01-20", true)
 	}
-
 	if err := config.ValidateExceptions(afterManifest.Exceptions, today); err != nil {
 		t.Fatalf("refreshed exceptions failed audit: %v", err)
 	}
@@ -133,50 +147,20 @@ exceptions:
 		t.Fatalf("syncDeclaredLintersExceptions: %v", err)
 	}
 
-	afterData, err := os.ReadFile(manifestPath)
-	if err != nil {
-		t.Fatalf("read refreshed manifest: %v", err)
-	}
-	afterManifest, err := config.DecodeManifest(afterData)
-	if err != nil {
-		t.Fatalf("decode refreshed manifest: %v", err)
-	}
-
+	afterManifest := refreshManifest(t, manifestPath)
 	if len(afterManifest.Exceptions) != 2 {
 		t.Fatalf("expected 2 exceptions, got %d", len(afterManifest.Exceptions))
 	}
 
-	owned := afterManifest.Exceptions[0]
-	if owned.Category != "D" {
-		t.Errorf("owned entry %s:%s category = %q, want D", owned.Rule, owned.Target(), owned.Category)
-	}
-	if owned.Entered == "" {
-		t.Errorf("owned entry %s:%s entered is empty, want set", owned.Rule, owned.Target())
-	}
-	if owned.Expires != "2027-01-20" {
-		t.Errorf("owned entry %s:%s expires = %q, want 2027-01-20", owned.Rule, owned.Target(), owned.Expires)
-	}
-
-	handwritten := afterManifest.Exceptions[1]
-	if handwritten.Category != "" {
-		t.Errorf("hand-written entry %s:%s category = %q, want empty (untouched)", handwritten.Rule, handwritten.Target(), handwritten.Category)
-	}
-	if handwritten.Entered != "" {
-		t.Errorf("hand-written entry %s:%s entered = %q, want empty (untouched)", handwritten.Rule, handwritten.Target(), handwritten.Entered)
-	}
-	if handwritten.Expires != "2027-01-20" {
-		t.Errorf("hand-written entry %s:%s expires = %q, want 2027-01-20 (untouched)", handwritten.Rule, handwritten.Target(), handwritten.Expires)
-	}
+	assertExceptionFields(t, "owned", afterManifest.Exceptions[0], "D", "2027-01-20", true)
+	assertExceptionFields(t, "handwritten", afterManifest.Exceptions[1], "", "2027-01-20", false)
 
 	today := time.Now()
-	// Full manifest audit must still fail because the hand-written entry lacks category.
-	err = config.ValidateExceptions(afterManifest.Exceptions, today)
+	err := config.ValidateExceptions(afterManifest.Exceptions, today)
 	if err == nil || !strings.Contains(err.Error(), "category is required") {
 		t.Fatalf("audit expected to fail on hand-written entry with 'category is required', got: %v", err)
 	}
-
-	// Owned entry alone must pass audit once categorised.
-	if err := config.ValidateExceptions([]config.Exception{owned}, today); err != nil {
+	if err := config.ValidateExceptions([]config.Exception{afterManifest.Exceptions[0]}, today); err != nil {
 		t.Fatalf("owned entry alone failed audit: %v", err)
 	}
 }
@@ -243,61 +227,61 @@ exceptions:
 	}
 }
 
-// Unit test: direct coverage of categoriseOwnedExceptions edge cases.
-func TestCategoriseOwnedExceptions_Unit(t *testing.T) {
-	entered := time.Date(2026, 11, 6, 0, 0, 0, 0, time.UTC)
-	expectedDate := "2026-11-06"
+// categoriseFixture returns the reference timestamp shared by the unit tests.
+func categoriseFixture() time.Time {
+	return time.Date(2026, 11, 6, 0, 0, 0, 0, time.UTC)
+}
 
-	// Empty slice returns unchanged, false.
-	got, changed := categoriseOwnedExceptions(nil, entered)
+// TestCategoriseOwnedExceptions_Empty verifies that nil input returns no exceptions and no change.
+func TestCategoriseOwnedExceptions_Empty(t *testing.T) {
+	got, changed := categoriseOwnedExceptions(nil, categoriseFixture())
 	if len(got) != 0 || changed {
-		t.Errorf("empty slice: got len %d, changed %v; want len 0, false", len(got), changed)
+		t.Errorf("got len %d changed %v; want 0 false", len(got), changed)
 	}
+}
 
-	// Already categorised entry is not modified.
-	alreadyCat := config.Exception{
-		Rule:     config.ExceptionRuleSupplyChain,
-		Category: "C",
-		Reason:   supplyChainExceptionReasonPrefix + "(gap)",
-		Expires:  "2026-11-16",
+// TestCategoriseOwnedExceptions_AlreadyCategorised verifies that an exception with a category is left unchanged.
+func TestCategoriseOwnedExceptions_AlreadyCategorised(t *testing.T) {
+	in := config.Exception{
+		Rule: config.ExceptionRuleSupplyChain, Category: "C",
+		Reason: supplyChainExceptionReasonPrefix + "(gap)", Expires: "2026-11-16",
 	}
-	got, changed = categoriseOwnedExceptions([]config.Exception{alreadyCat}, entered)
+	got, changed := categoriseOwnedExceptions([]config.Exception{in}, categoriseFixture())
 	if changed || got[0].Category != "C" {
-		t.Errorf("already categorised entry modified: got category %q, changed %v", got[0].Category, changed)
+		t.Errorf("category %q changed %v; want C false", got[0].Category, changed)
 	}
+}
 
-	// Entry with existing entered date preserves that entered date.
-	withEntered := config.Exception{
-		Rule:    config.ExceptionRuleSupplyChain,
-		Reason:  supplyChainExceptionReasonPrefix + "(gap)",
-		Entered: "2026-09-01",
-		Expires: "2026-12-30",
+// TestCategoriseOwnedExceptions_PreservesExistingEntered verifies that an existing entered date is kept when a category is assigned.
+func TestCategoriseOwnedExceptions_PreservesExistingEntered(t *testing.T) {
+	in := config.Exception{
+		Rule: config.ExceptionRuleSupplyChain, Reason: supplyChainExceptionReasonPrefix + "(gap)",
+		Entered: "2026-09-01", Expires: "2026-12-30",
 	}
-	got, changed = categoriseOwnedExceptions([]config.Exception{withEntered}, entered)
+	got, changed := categoriseOwnedExceptions([]config.Exception{in}, categoriseFixture())
 	if !changed || got[0].Category != "D" || got[0].Entered != "2026-09-01" {
-		t.Errorf("expected category D and preserved entered 2026-09-01, got category %q entered %q", got[0].Category, got[0].Entered)
+		t.Errorf("category %q entered %q changed %v", got[0].Category, got[0].Entered, changed)
 	}
+}
 
-	// Unrelated rule is not modified.
-	unrelated := config.Exception{
-		Rule:    "HISS-10",
-		Reason:  "unrelated",
-		Expires: "2027-01-20",
-	}
-	got, changed = categoriseOwnedExceptions([]config.Exception{unrelated}, entered)
+// TestCategoriseOwnedExceptions_UnrelatedRuleUnchanged verifies that a non-matching rule is not categorised.
+func TestCategoriseOwnedExceptions_UnrelatedRuleUnchanged(t *testing.T) {
+	in := config.Exception{Rule: "HISS-10", Reason: "unrelated", Expires: "2027-01-20"}
+	got, changed := categoriseOwnedExceptions([]config.Exception{in}, categoriseFixture())
 	if changed || got[0].Category != "" {
-		t.Errorf("unrelated entry modified: got category %q, changed %v", got[0].Category, changed)
+		t.Errorf("category %q changed %v; want empty false", got[0].Category, changed)
 	}
+}
 
-	// Declared linters entry gets category D and entered.
-	linter := config.Exception{
-		Rule:    config.ExceptionRuleDeclaredLinters,
-		Tool:    "cppcheck",
+// TestCategoriseOwnedExceptions_DeclaredLinterGetsD verifies that a declared-linter exception receives category D.
+func TestCategoriseOwnedExceptions_DeclaredLinterGetsD(t *testing.T) {
+	in := config.Exception{
+		Rule: config.ExceptionRuleDeclaredLinters, Tool: "cppcheck",
 		Reason:  declaredLinterExceptionReasonPrefix + "cppcheck declared by profile native-gpu-systems",
 		Expires: "2027-01-20",
 	}
-	got, changed = categoriseOwnedExceptions([]config.Exception{linter}, entered)
-	if !changed || got[0].Category != "D" || got[0].Entered != expectedDate {
-		t.Errorf("linter entry: got category %q, entered %q, changed %v", got[0].Category, got[0].Entered, changed)
+	got, changed := categoriseOwnedExceptions([]config.Exception{in}, categoriseFixture())
+	if !changed || got[0].Category != "D" || got[0].Entered != "2026-11-06" {
+		t.Errorf("category %q entered %q changed %v", got[0].Category, got[0].Entered, changed)
 	}
 }
