@@ -28,6 +28,7 @@ type mockTracker struct {
 	failErr   error
 }
 
+// run dispatches the go command to the mock tracker, counting downloads and list calls.
 func (m *mockTracker) run(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
 	if len(args) >= 2 && args[0] == "mod" && args[1] == "download" {
 		m.downloads++
@@ -177,18 +178,22 @@ func TestCompareEach_CancelledContextWithLiveExceptionReturnsFatalError(t *testi
 	}
 }
 
+// isModDownload reports whether args represent a go mod download invocation.
 func isModDownload(args []string) bool {
 	return len(args) >= 2 && args[0] == "mod" && args[1] == "download"
 }
 
+// isGoListModules reports whether args represent a go list -m invocation.
 func isGoListModules(args []string) bool {
 	return len(args) >= 2 && args[0] == "list" && args[1] == "-m"
 }
 
+// isGoListExport reports whether args represent a go list -export invocation.
 func isGoListExport(args []string) bool {
 	return len(args) >= 2 && args[0] == "list" && args[1] == "-export"
 }
 
+// assertCompareEachDownloadError verifies that compareEach returns a download error naming the module and retry count.
 func assertCompareEachDownloadError(t *testing.T, err error) {
 	t.Helper()
 	if err == nil {
@@ -199,6 +204,7 @@ func assertCompareEachDownloadError(t *testing.T, err error) {
 	}
 }
 
+// assertCompareEachDownloadExcused verifies that compareEach excuses the failed download when a live exception covers it.
 func assertCompareEachDownloadExcused(t *testing.T, results []result, err error) {
 	t.Helper()
 	if err != nil {
@@ -209,6 +215,7 @@ func assertCompareEachDownloadExcused(t *testing.T, results []result, err error)
 	}
 }
 
+// failingDownloadRunner is a go command runner that always fails mod download.
 func failingDownloadRunner(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
 	if isModDownload(args) {
 		return errors.New("persistent download error")
@@ -216,6 +223,7 @@ func failingDownloadRunner(ctx context.Context, dir string, stdout, errOut io.Wr
 	return runTool(ctx, dir, stdout, errOut, name, args...)
 }
 
+// runCompareEachDownloadTest exercises compareEach with a persistently failing download runner.
 func runCompareEachDownloadTest(t *testing.T, excepted, wantError bool) {
 	t.Helper()
 	repo := repository{
@@ -245,6 +253,7 @@ func runCompareEachDownloadTest(t *testing.T, excepted, wantError bool) {
 	assertCompareEachDownloadExcused(t, results, err)
 }
 
+// TestCompareEach_DownloadFailureExcusesOrErrors verifies that a persistent download failure is excused by a live exception and errors without one.
 func TestCompareEach_DownloadFailureExcusesOrErrors(t *testing.T) {
 	t.Parallel()
 	t.Run("with-live-exception", func(t *testing.T) {
@@ -255,6 +264,7 @@ func TestCompareEach_DownloadFailureExcusesOrErrors(t *testing.T) {
 	})
 }
 
+// TestDownloadModule_CancelledContextAfterFailedRunReturnsDownloadErrorWithoutRetryMessage verifies that a cancelled context after a failed run reports the download error without a retry note.
 func TestDownloadModule_CancelledContextAfterFailedRunReturnsDownloadErrorWithoutRetryMessage(t *testing.T) {
 	t.Parallel()
 	root := retryFixtureRoot(t, "mod")
@@ -338,6 +348,7 @@ func writeTestModuleFiles(t *testing.T, dir, gomod, src, testSrc string) {
 	}
 }
 
+// assertNoDownloadsAndOneList verifies that no mod download was attempted and exactly one list call was made.
 func assertNoDownloadsAndOneList(t *testing.T, downloadCalls [][]string, lists int) {
 	t.Helper()
 	if len(downloadCalls) != 0 || lists != 1 {
@@ -345,6 +356,7 @@ func assertNoDownloadsAndOneList(t *testing.T, downloadCalls [][]string, lists i
 	}
 }
 
+// assertNeededModuleDownloaded verifies that exactly the needed module was downloaded.
 func assertNeededModuleDownloaded(t *testing.T, downloadCalls [][]string) {
 	t.Helper()
 	wantArgs := []string{"mod", "download", "example.com/needed@v1.2.3"}
@@ -353,6 +365,7 @@ func assertNeededModuleDownloaded(t *testing.T, downloadCalls [][]string) {
 	}
 }
 
+// testBuildModuleSkipsTestOnlyRequirements verifies that buildModule does not download test-only requirements.
 func testBuildModuleSkipsTestOnlyRequirements(t *testing.T) {
 	t.Helper()
 	root := t.TempDir()
@@ -381,6 +394,7 @@ func testBuildModuleSkipsTestOnlyRequirements(t *testing.T) {
 	assertNoDownloadsAndOneList(t, downloadCalls, lists)
 }
 
+// testBuildModuleMixedRequirements verifies that buildModule downloads only non-test requirements.
 func testBuildModuleMixedRequirements(t *testing.T) {
 	t.Helper()
 	root := t.TempDir()
@@ -665,6 +679,7 @@ func TestCollectNonTestImports_NodeModulesOverLimit(t *testing.T) {
 	}
 }
 
+// assertTransientListRetries verifies that a transient list failure was retried once with a 5s backoff.
 func assertTransientListRetries(t *testing.T, lists int, waits []time.Duration) {
 	t.Helper()
 	if lists != 2 || !slices.Equal(waits, []time.Duration{5 * time.Second}) {
@@ -672,6 +687,7 @@ func assertTransientListRetries(t *testing.T, lists int, waits []time.Duration) 
 	}
 }
 
+// assertPersistentListError verifies that a persistent list failure surfaces as a build error.
 func assertPersistentListError(t *testing.T, err error) {
 	t.Helper()
 	if err == nil || !strings.Contains(err.Error(), "its packages do not build at HEAD") {
@@ -679,6 +695,7 @@ func assertPersistentListError(t *testing.T, err error) {
 	}
 }
 
+// testBuildModuleRetriesGoListExportTransient verifies that buildModule retries a transient go list export failure.
 func testBuildModuleRetriesGoListExportTransient(t *testing.T) {
 	t.Helper()
 	root := t.TempDir()
@@ -706,6 +723,7 @@ func testBuildModuleRetriesGoListExportTransient(t *testing.T) {
 	assertTransientListRetries(t, lists, waits)
 }
 
+// testBuildModuleRetriesGoListExportPersistent verifies that buildModule fails after exhausting retries on a persistent go list export error.
 func testBuildModuleRetriesGoListExportPersistent(t *testing.T) {
 	t.Helper()
 	root := t.TempDir()
