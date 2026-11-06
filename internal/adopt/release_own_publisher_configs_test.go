@@ -11,6 +11,7 @@ import (
 	"testing"
 )
 
+// TestOwnReleaseConfigs covers the configuration inventory: none, manifest only, manifest with a configuration, and refused reads.
 func TestOwnReleaseConfigs(t *testing.T) {
 	cases := []struct {
 		name          string

@@ -12,6 +12,7 @@ import (
 	"testing"
 )
 
+// writeWorkflowFile writes one workflow file under .github/workflows of root for a test.
 func writeWorkflowFile(t *testing.T, dir, filename, content string) string {
 	t.Helper()
 	wfDir := filepath.Join(dir, ".github", "workflows")
@@ -25,6 +26,7 @@ func writeWorkflowFile(t *testing.T, dir, filename, content string) string {
 	return dir
 }
 
+// TestMeasureReleasePublishers_Limits covers the file, job, step and argument bounds of the publisher walk.
 func TestMeasureReleasePublishers_Limits(t *testing.T) {
 	t.Run("goreleaser args exceed bound", func(t *testing.T) {
 		dir := t.TempDir()
@@ -116,6 +118,7 @@ jobs:
 	})
 }
 
+// TestMeasureReleasePublishers_Table covers publishing and non-publishing workflows end to end.
 func TestMeasureReleasePublishers_Table(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -241,6 +244,7 @@ on: [
 	}
 }
 
+// TestMeasureReleasePublishers_NilContext checks that a nil context is refused.
 func TestMeasureReleasePublishers_NilContext(t *testing.T) {
 	_, err := MeasureReleasePublishers(nil, ".")
 	if err == nil {

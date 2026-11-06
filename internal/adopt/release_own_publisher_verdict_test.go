@@ -9,6 +9,7 @@ import (
 	"testing"
 )
 
+// TestOwnReleaseVerdict checks that a pass names every publisher and a failure names the configuration to fix.
 func TestOwnReleaseVerdict(t *testing.T) {
 	cases := []struct {
 		name         string

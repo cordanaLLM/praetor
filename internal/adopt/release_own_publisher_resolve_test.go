@@ -9,6 +9,7 @@ import (
 	"testing"
 )
 
+// TestOwnReleaseResolve covers skip-github-release resolution: top level, package overrides, missing keys and malformed JSON.
 func TestOwnReleaseResolve(t *testing.T) {
 	cases := []struct {
 		name       string
