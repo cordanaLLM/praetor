@@ -147,6 +147,8 @@ func formatJobTimeoutPathInfo(canMeasure bool, opts JobTimeoutOptions, measured,
 		jobTimeoutGate, measured, opts.Branch, static)
 }
 
+// auditWorkflowJobTimeouts checks every job in a single workflow file for a timeout-minutes
+// declaration and, when measurements are available, compares it against the observed P95 duration.
 func auditWorkflowJobTimeouts(ctx context.Context, file workflowFile, opts JobTimeoutOptions, canMeasure bool) (workflowAuditResult, error) {
 	spec, err := ghworkflow.Parse(file.Data)
 	if err != nil {
