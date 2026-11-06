@@ -177,59 +177,82 @@ func TestCompareEach_CancelledContextWithLiveExceptionReturnsFatalError(t *testi
 	}
 }
 
+func isModDownload(args []string) bool {
+	return len(args) >= 2 && args[0] == "mod" && args[1] == "download"
+}
+
+func isGoListModules(args []string) bool {
+	return len(args) >= 2 && args[0] == "list" && args[1] == "-m"
+}
+
+func isGoListExport(args []string) bool {
+	return len(args) >= 2 && args[0] == "list" && args[1] == "-export"
+}
+
+func assertCompareEachDownloadError(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("compareEach succeeded, want error when download fails without exception")
+	}
+	if !strings.Contains(err.Error(), "mod") || !strings.Contains(err.Error(), "3 attempts") {
+		t.Errorf("error %q does not name module and attempts", err.Error())
+	}
+}
+
+func assertCompareEachDownloadExcused(t *testing.T, results []result, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("compareEach failed: %v, want live exception to excuse failure", err)
+	}
+	if len(results) != 1 || !strings.Contains(results[0].notCompared, "excepted until 2099-12-31: needs libfoo") {
+		t.Fatalf("results = %+v, want notCompared note with exception", results)
+	}
+}
+
+func failingDownloadRunner(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+	if isModDownload(args) {
+		return errors.New("persistent download error")
+	}
+	return runTool(ctx, dir, stdout, errOut, name, args...)
+}
+
+func runCompareEachDownloadTest(t *testing.T, excepted, wantError bool) {
+	t.Helper()
+	repo := repository{
+		root:   retryFixtureRoot(t, "mod"),
+		today:  time.Now().UTC(),
+		runner: failingDownloadRunner,
+		wait:   func(ctx context.Context, d time.Duration) error { return nil },
+	}
+	if excepted {
+		repo.exceptions = []exception{
+			{Path: "mod/go.mod", Reason: "needs libfoo", Expires: "2099-12-31"},
+		}
+	}
+	plan := modulePlan{
+		compared: []module{
+			{dir: "mod", path: "example.com/mod"},
+		},
+	}
+	stdout := &printer{w: io.Discard}
+	stderr := &printer{w: io.Discard}
+
+	results, err := compareEach(t.Context(), repo, plan, "checker", checkerSites{}, nil, stdout, stderr)
+	if wantError {
+		assertCompareEachDownloadError(t, err)
+		return
+	}
+	assertCompareEachDownloadExcused(t, results, err)
+}
+
 func TestCompareEach_DownloadFailureExcusesOrErrors(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name      string
-		excepted  bool
-		wantError bool
-	}{
-		{name: "with-live-exception", excepted: true, wantError: false},
-		{name: "without-exception", excepted: false, wantError: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			repo := repository{
-				root:  retryFixtureRoot(t, "mod"),
-				today: time.Now().UTC(),
-				runner: func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
-					if len(args) >= 2 && args[0] == "mod" && args[1] == "download" {
-						return errors.New("persistent download error")
-					}
-					return runTool(ctx, dir, stdout, errOut, name, args...)
-				},
-				wait: func(ctx context.Context, d time.Duration) error { return nil },
-			}
-			if tc.excepted {
-				repo.exceptions = []exception{
-					{Path: "mod/go.mod", Reason: "needs libfoo", Expires: "2099-12-31"},
-				}
-			}
-			plan := modulePlan{
-				compared: []module{
-					{dir: "mod", path: "example.com/mod"},
-				},
-			}
-			stdout := &printer{w: io.Discard}
-			stderr := &printer{w: io.Discard}
-
-			results, err := compareEach(t.Context(), repo, plan, "checker", checkerSites{}, nil, stdout, stderr)
-			if tc.wantError {
-				if err == nil {
-					t.Fatalf("compareEach succeeded, want error when download fails without exception")
-				}
-				if !strings.Contains(err.Error(), "mod") || !strings.Contains(err.Error(), "3 attempts") {
-					t.Errorf("error %q does not name module and attempts", err.Error())
-				}
-			} else {
-				if err != nil {
-					t.Fatalf("compareEach failed: %v, want live exception to excuse failure", err)
-				}
-				if len(results) != 1 || !strings.Contains(results[0].notCompared, "excepted until 2099-12-31: needs libfoo") {
-					t.Fatalf("results = %+v, want notCompared note with exception", results)
-				}
-			}
-		})
-	}
+	t.Run("with-live-exception", func(t *testing.T) {
+		runCompareEachDownloadTest(t, true, false)
+	})
+	t.Run("without-exception", func(t *testing.T) {
+		runCompareEachDownloadTest(t, false, true)
+	})
 }
 
 func TestDownloadModule_CancelledContextAfterFailedRunReturnsDownloadErrorWithoutRetryMessage(t *testing.T) {
@@ -315,9 +338,23 @@ func writeTestModuleFiles(t *testing.T, dir, gomod, src, testSrc string) {
 	}
 }
 
-// Positive: test-only go.mod requirements are never prefetched before go list -export.
-func TestBuildModule_Positive_SkipsTestOnlyRequirements(t *testing.T) {
-	t.Parallel()
+func assertNoDownloadsAndOneList(t *testing.T, downloadCalls [][]string, lists int) {
+	t.Helper()
+	if len(downloadCalls) != 0 || lists != 1 {
+		t.Fatalf("downloadCalls = %v, lists = %d; want no download calls and 1 list", downloadCalls, lists)
+	}
+}
+
+func assertNeededModuleDownloaded(t *testing.T, downloadCalls [][]string) {
+	t.Helper()
+	wantArgs := []string{"mod", "download", "example.com/needed@v1.2.3"}
+	if len(downloadCalls) != 1 || !slices.Equal(downloadCalls[0], wantArgs) {
+		t.Fatalf("downloadCalls = %v, want [%v]", downloadCalls, wantArgs)
+	}
+}
+
+func testBuildModuleSkipsTestOnlyRequirements(t *testing.T) {
+	t.Helper()
 	root := t.TempDir()
 	fssnapDir := filepath.Join(root, "hw", "fssnap")
 	gomod := "module example.com/hw/fssnap\n\ngo 1.26.0\n\nrequire github.com/stretchr/testify v1.9.0\n"
@@ -328,10 +365,10 @@ func TestBuildModule_Positive_SkipsTestOnlyRequirements(t *testing.T) {
 	var downloadCalls [][]string
 	var lists int
 	failDownload := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
-		if len(args) >= 2 && args[0] == "list" && args[1] == "-m" {
+		if isGoListModules(args) {
 			return runTool(ctx, dir, stdout, errOut, name, args...)
 		}
-		if slices.Equal(args[:min(len(args), 2)], []string{"mod", "download"}) {
+		if isModDownload(args) {
 			downloadCalls = append(downloadCalls, slices.Clone(args))
 			return errors.New("testify proxy unavailable")
 		}
@@ -341,17 +378,23 @@ func TestBuildModule_Positive_SkipsTestOnlyRequirements(t *testing.T) {
 	if err := buildModule(t.Context(), root, "hw/fssnap", io.Discard, failDownload, defaultWait); err != nil {
 		t.Fatalf("buildModule failed on test-only requirement: %v", err)
 	}
-	if len(downloadCalls) != 0 || lists != 1 {
-		t.Fatalf("downloadCalls = %v, lists = %d; want no download calls and 1 list", downloadCalls, lists)
-	}
+	assertNoDownloadsAndOneList(t, downloadCalls, lists)
+}
 
+func testBuildModuleMixedRequirements(t *testing.T) {
+	t.Helper()
+	root := t.TempDir()
+	fssnapDir := filepath.Join(root, "hw", "fssnap")
 	mixedGomod := "module example.com/hw/fssnap\n\ngo 1.26.0\n\nrequire (\n\texample.com/needed v1.2.3\n\tgithub.com/stretchr/testify v1.9.0\n)\n"
+	testSrc := "package fssnap\n\nimport _ \"github.com/stretchr/testify/assert\"\n"
 	writeTestModuleFiles(t, fssnapDir, mixedGomod, "package fssnap\n\nimport _ \"example.com/needed/sub\"\n", testSrc)
+
+	var downloadCalls [][]string
 	recordDownload := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
-		if len(args) >= 2 && args[0] == "list" && args[1] == "-m" {
+		if isGoListModules(args) {
 			return runTool(ctx, dir, stdout, errOut, name, args...)
 		}
-		if slices.Equal(args[:min(len(args), 2)], []string{"mod", "download"}) {
+		if isModDownload(args) {
 			downloadCalls = append(downloadCalls, slices.Clone(args))
 		}
 		return nil
@@ -359,10 +402,14 @@ func TestBuildModule_Positive_SkipsTestOnlyRequirements(t *testing.T) {
 	if err := buildModule(t.Context(), root, "hw/fssnap", io.Discard, recordDownload, defaultWait); err != nil {
 		t.Fatalf("buildModule failed on mixed requirements: %v", err)
 	}
-	wantArgs := []string{"mod", "download", "example.com/needed@v1.2.3"}
-	if len(downloadCalls) != 1 || !slices.Equal(downloadCalls[0], wantArgs) {
-		t.Fatalf("downloadCalls = %v, want [%v]", downloadCalls, wantArgs)
-	}
+	assertNeededModuleDownloaded(t, downloadCalls)
+}
+
+// Positive: test-only go.mod requirements are never prefetched before go list -export.
+func TestBuildModule_Positive_SkipsTestOnlyRequirements(t *testing.T) {
+	t.Parallel()
+	t.Run("test-only", testBuildModuleSkipsTestOnlyRequirements)
+	t.Run("mixed", testBuildModuleMixedRequirements)
 }
 
 // Boundary: download retries stay within the 60-minute CI job and divide remaining context budget.
@@ -618,16 +665,29 @@ func TestCollectNonTestImports_NodeModulesOverLimit(t *testing.T) {
 	}
 }
 
-// TestBuildModule_RetriesGoListExport pins backoff and retries on transient go list export errors.
-func TestBuildModule_RetriesGoListExport(t *testing.T) {
-	t.Parallel()
+func assertTransientListRetries(t *testing.T, lists int, waits []time.Duration) {
+	t.Helper()
+	if lists != 2 || !slices.Equal(waits, []time.Duration{5 * time.Second}) {
+		t.Fatalf("lists = %d, waits = %v; want 2 and [5s]", lists, waits)
+	}
+}
+
+func assertPersistentListError(t *testing.T, err error) {
+	t.Helper()
+	if err == nil || !strings.Contains(err.Error(), "its packages do not build at HEAD") {
+		t.Fatalf("buildModule error = %v, want build error after retry limit", err)
+	}
+}
+
+func testBuildModuleRetriesGoListExportTransient(t *testing.T) {
+	t.Helper()
 	root := t.TempDir()
 	modDir := filepath.Join(root, "mod")
 	writeTestModuleFiles(t, modDir, "module example.com/mod\n\ngo 1.26.0\n", "package mod\n", "package mod\n")
 	var lists int
 	var waits []time.Duration
 	flakyList := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
-		if len(args) >= 2 && args[0] == "list" && args[1] == "-export" {
+		if isGoListExport(args) {
 			lists++
 			if lists == 1 {
 				return errors.New("transient indirect module proxy timeout")
@@ -643,18 +703,30 @@ func TestBuildModule_RetriesGoListExport(t *testing.T) {
 	if err := buildModule(t.Context(), root, "mod", io.Discard, flakyList, wait); err != nil {
 		t.Fatalf("buildModule failed on transient go list error: %v", err)
 	}
-	if lists != 2 || !slices.Equal(waits, []time.Duration{5 * time.Second}) {
-		t.Fatalf("lists = %d, waits = %v; want 2 and [5s]", lists, waits)
-	}
+	assertTransientListRetries(t, lists, waits)
+}
+
+func testBuildModuleRetriesGoListExportPersistent(t *testing.T) {
+	t.Helper()
+	root := t.TempDir()
+	modDir := filepath.Join(root, "mod")
+	writeTestModuleFiles(t, modDir, "module example.com/mod\n\ngo 1.26.0\n", "package mod\n", "package mod\n")
 	alwaysFailList := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
-		if len(args) >= 2 && args[0] == "list" && args[1] == "-export" {
+		if isGoListExport(args) {
 			return errors.New("compile error")
 		}
 		return runTool(ctx, dir, stdout, errOut, name, args...)
 	}
-	if err := buildModule(t.Context(), root, "mod", io.Discard, alwaysFailList, wait); err == nil || !strings.Contains(err.Error(), "its packages do not build at HEAD") {
-		t.Fatalf("buildModule error = %v, want build error after retry limit", err)
-	}
+	wait := func(ctx context.Context, d time.Duration) error { return nil }
+	err := buildModule(t.Context(), root, "mod", io.Discard, alwaysFailList, wait)
+	assertPersistentListError(t, err)
+}
+
+// TestBuildModule_RetriesGoListExport pins backoff and retries on transient go list export errors.
+func TestBuildModule_RetriesGoListExport(t *testing.T) {
+	t.Parallel()
+	t.Run("transient-retry-succeeds", testBuildModuleRetriesGoListExportTransient)
+	t.Run("persistent-failure-fails", testBuildModuleRetriesGoListExportPersistent)
 }
 
 // TestCollectNonTestImports_TotalDirectoryLimit pins refusal when directory entries exceed the global limit.
