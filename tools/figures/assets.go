@@ -192,6 +192,8 @@ var priorDigests = map[string]string{
 	"bf2646129a0c5923daad5b36fdae6b0d7abd7748e6150a2b846a0f51d09fe0c8": Directory + "/mkdocs_hook.py",
 	// VENDOR.md while lines 33, 123, 128, 135 still named the engine-only player directory and bundle step.
 	"89e498132bbf2b9ec15d91b8043395dfe02c352580b89affe8b4a3d7fe13f454": Directory + "/third_party/interfig/VENDOR.md",
+	// VENDOR.md while the revert sentence still named the engine-only player bundle.
+	"9b6023d769b0afa2e157ce58412390aab9e45c5418c97e7bd00a41bf2f8c112f": Directory + "/third_party/interfig/VENDOR.md",
 	// Assets before the release host check, Astro locked-player fetch and unreleased-pin docs.
 	"9387798626f5e7ee522be147d140bbc14a6d42ada1cdc7d49ba719ad58447f20": Directory + "/mkdocs_hook.py",
 	"8db774ed65d587aefeffdae6d2bcc227d9bd3c7a61d01f51bd1580dd1445cdde": Directory + "/astro.mjs",

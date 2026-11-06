@@ -136,14 +136,6 @@ command when upstream has moved. To update the pin:
    git clean -fd -- tools/figures/third_party/interfig/upstream docs/assets/figures
    ```
 
-   Where the repository builds the figure player (the engine), also restore
-   and clean `tools/figures/player`:
-
-   ```bash
-   git checkout -- tools/figures/player
-   git clean -fd -- tools/figures/player
-   ```
-
 2. Add a new upstream file to the include or exclude list in `vendor.json`
    first, when step 1 stops on one.
 3. Commit the rewritten `upstream/`, `vendor.json`, the regenerated
