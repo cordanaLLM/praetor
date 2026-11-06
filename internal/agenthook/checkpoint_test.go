@@ -201,6 +201,10 @@ func TestRunStopBlocksOnAnUnresolvedP0Row(t *testing.T) {
 	if err := state.ResolveBug(root, bug.ID, "fixed"); err != nil {
 		t.Fatalf("resolve bug: %v", err)
 	}
+	// A resolved row leaves the live BUGS.md before sync (state file caps).
+	if _, err := state.ArchiveCompletedTasksContext(context.Background(), root, true); err != nil {
+		t.Fatalf("archive resolved bug: %v", err)
+	}
 	if _, err := state.SyncState(context.Background(), root, "p0 resolved"); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
