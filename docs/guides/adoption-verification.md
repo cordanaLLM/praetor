@@ -573,6 +573,75 @@ projected and linted by the projection and caveman gates, which have no opt-out
 malformed decline entry fails closed. `cmd/standardsctl/audit_agent_definitions_test.go` and
 `internal/compiler/agent_inventory_test.go` pin each case.
 
+### Community health: private security reporting
+
+`praetorctl audit` requires `SECURITY.md` in `.github/`, the repository root, or
+`docs/`, searched in that order; the first one found is checked. The repository
+declares the private reporting channel the policy names in `.standards.yaml`:
+
+```yaml
+security:
+  channel: private-reporting   # or confidential-issues, or contact
+  contact: security@example.org # required for channel: contact
+```
+
+The audit checks the policy for that channel's concrete artifact and never interprets
+the policy's prose:
+
+| `security.channel` | Forge | Artifact the policy must hold |
+| :--- | :--- | :--- |
+| `private-reporting` | GitHub | a link to the repository's report form, `https://github.com/<owner>/<name>/security/advisories/new`; with `repository.owner` and `repository.name` declared, the link must name that repository |
+| `confidential-issues` | GitLab | a link to the new-issue form with `issue[confidential]=true` (literal or percent-encoded), such as `https://gitlab.com/<namespace>/<project>/-/issues/new?issue[confidential]=true` |
+| `contact` | any | the `security.contact` address verbatim (an email address, `mailto:` URI, or HTTPS URL); for a `mailto:` contact the bare address also counts |
+
+A missing file or a missing artifact fails with the policy filename, the artifact and
+the channel in the diagnostic. Loading the manifest refuses an unknown channel,
+`contact` without `security.contact`, and a forge-native channel on another declared
+`repository.forge`; the audit also refuses a forge-native channel when the origin
+remote resolves to another forge.
+
+**Limit:** the check proves that the policy holds the channel's link or address, not
+what the sentences around it say. A policy that links the report form and tells
+reporters not to use it passes; review the policy text when it changes.
+
+**Migration default:** a repository that declares no `security.channel` is checked as
+`contact` when `security.contact` is set, as `private-reporting` on GitHub, and as
+`confidential-issues` on GitLab. The audit prints the default it applied and the key to
+declare. Any other forge, and a forge that neither `repository.forge` nor the origin
+remote resolves, has no default and fails with `security.channel required`.
+
+When the channel is `private-reporting`, audit reads the repository setting through its
+existing forge client, with a context timeout and only when a token and network are
+available. An explicit `enabled=false` fails with a policy/setting mismatch. Offline
+mode, a missing token, denied access, and network or decoding errors report
+`private vulnerability reporting setting not read` with the reason; they do not fail the
+local policy check or claim the setting passed. The setting read never enables
+reporting or changes forge configuration.
+
+These checks extend `auditLiveForge` in `cmd/standardsctl/audit_forge.go` through
+`auditSecurityPolicy` in `cmd/standardsctl/audit_security_policy.go`; the channel and
+its migration default resolve in `config.ResolveSecurityChannel`
+(`internal/config/security_policy.go`), which adoption uses too.
+`cmd/standardsctl/audit_security_policy_test.go` covers each channel's artifact, a
+policy that refuses private reporting while the declared channel is
+`private-reporting`, every migration default, setting mismatches, and offline
+reporting. `internal/forge/security_policy_test.go` covers the bounded read and
+malformed responses against an in-memory transport. The read uses
+[GitHub's private vulnerability reporting endpoint](https://docs.github.com/en/rest/repos/repos#check-if-private-vulnerability-reporting-is-enabled-for-a-repository);
+the confidential-issue link follows
+[GitLab's prefilled issue URL](https://docs.gitlab.com/user/project/issues/create_issues/).
+
+An explicit `security-policy` adoption decline, or the implicit decline for an
+organisation `.github` repository described below, skips this requirement and names
+the setting as not read. Adoption scaffolds the policy for the same channel the audit
+checks, with its artifact: the report-form link on `private-reporting`, the
+confidential-issue link on `confidential-issues`, and the address on `contact`. The
+links are built from the origin remote's host and path. Without a channel or migration
+default (a forge such as Forgejo, or an undeclared forge), or without the origin remote
+a link needs, adoption preserves an existing `SECURITY.md` or records a skip naming the
+keys to declare (`repository.forge`, `security.channel`, `security.contact`) or the
+`security-policy` decline; it never writes a policy the audit would refuse.
+
 ### Organisation `.github` repositories and adoption decline
 
 In an organisation `.github` repository, `CONTRIBUTING.md`, `SECURITY.md` and
@@ -616,7 +685,7 @@ name fails adoption and each of those gates.
 | `coderabbit` | none |
 | `contributing` | none |
 | `pull-request-template` | none |
-| `security-policy` | none |
+| `security-policy` | skipped: the community-health policy and private reporting setting checks report the decline |
 | `adr` | none |
 | `readme` | skipped: the README governance block is not required |
 | `reuse-gate` | none |
