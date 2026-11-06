@@ -39,12 +39,12 @@
 //
 // Option `root`: the repository root that holds docs/assets/figures/, as a path or a file: URL. By
 // default it is the directory two levels above this file, where build.mjs writes the figures.
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
-import { CheckError, OUT_DIR, ROOT, figureMeta, figureSlug, filesDigest, fillSlots } from './checks.mjs';
+import { CheckError, OUT_DIR, ROOT, UTF8, figureMeta, figureSlug, filesDigest, fillSlots, readBoundedBytes } from './checks.mjs';
 import { sha256 } from './core.mjs';
 import { FIGURES_URI, PLAYER_URI, basePath, mountFiles, publish, staticHandler, statOrNull } from './serve.mjs';
 
@@ -269,11 +269,11 @@ function resolveLockFile(root) {
 }
 
 /** Reads and parses the player lock JSON file under size limits. */
-function readPlayerLock(lockFile) {
+export function readPlayerLock(lockFile) {
   let data;
   try {
-    if (statSync(lockFile).size > MAX_ARCHIVE_BYTES) throw new CheckError(`${lockFile} exceeds ${MAX_ARCHIVE_BYTES} bytes`);
-    data = JSON.parse(readFileSync(lockFile, 'utf8'));
+    const bytes = readBoundedBytes(lockFile, MAX_ARCHIVE_BYTES);
+    data = JSON.parse(UTF8.decode(bytes));
   } catch (error) {
     if (error instanceof CheckError) throw error;
     throw new CheckError(`cannot read ${lockFile}: ${error.message}`, { cause: error });

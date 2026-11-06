@@ -7,6 +7,7 @@
 // and Windows.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -14,7 +15,7 @@ import { gzipSync } from 'node:zlib';
 import { evaluate, markdownToHtml, mdxToJs } from 'satteri';
 import figures, {
   MAX_NODES, NAME, RESTART_DELAY_MS, addFigurePlugin, extractPlayerArchive, figureBase, figureMounts, figuresDigest,
-  loaderScript, publishFigures, releaseArchiveUrl, remarkFigures, replaceFigures, rootPath, satteriFigures, watchFigures,
+  loaderScript, publishFigures, readPlayerLock, releaseArchiveUrl, remarkFigures, replaceFigures, rootPath, satteriFigures, watchFigures,
 } from './astro.mjs';
 import { PLAYER_DIR } from './bundle.mjs';
 import { ROOT, fillSlots } from './checks.mjs';
@@ -752,6 +753,39 @@ test('an adopted integration with a released player.lock.json injects the loader
     /SHA-256 mismatch/,
   );
 }));
+
+test('an adopted integration refuses an oversized player.lock.json naming the archive limit', () => withTempDir(async (dir) => {
+  const lockPath = join(dir, 'tools/figures/player.lock.json');
+  write(lockPath, '{\n' + ' '.repeat(4 * 1024 * 1024 + 1) + '"release": "v1.4.0"\n}\n');
+  const adoptedFigures = await adoptedFiguresModule(dir);
+  await assert.rejects(
+    async () => adoptedFigures({ root: dir }).hooks['astro:config:setup']({
+      config: {}, updateConfig: () => {}, injectScript: () => {},
+    }),
+    /player\.lock\.json exceeds 4194304 bytes/,
+  );
+  assert.throws(
+    () => readPlayerLock(lockPath),
+    /player\.lock\.json exceeds 4194304 bytes/,
+  );
+}));
+
+// A FIFO reports size 0 to a size probe and then delivers more bytes than the limit: the shape of a
+// lock that grows between a stat and the read (CodeQL js/file-system-race). Planted case from the
+// proven patch of the cordanaLLM/20-watts-was-enough session (alert 77 on the adopted copy).
+test('readPlayerLock refuses a lock that grows past the archive limit after a size probe',
+  { skip: process.platform === 'win32' ? 'mkfifo is not available on Windows' : false, timeout: 30_000 },
+  () => withTempDir(async (dir) => {
+    const lockPath = join(dir, 'player.lock.json');
+    const made = spawnSync('mkfifo', [lockPath], { timeout: 5_000 });
+    assert.equal(made.status, 0, `mkfifo failed: ${made.stderr}`);
+    const writer = spawn(process.execPath,
+      ['-e', `try { require('node:fs').writeFileSync(process.argv[1], '{' + ' '.repeat(${4 * 1024 * 1024}) + '}'); } catch {}`, lockPath],
+      { stdio: 'ignore', timeout: 20_000 });
+    const exited = new Promise((resolve) => writer.on('exit', resolve));
+    assert.throws(() => readPlayerLock(lockPath), /player\.lock\.json exceeds 4194304 bytes/);
+    await exited;
+  }));
 
 test('config setup adds the remark plugin and the head loader for the site\'s base', () => withTempDir((dir) => {
   for (const [base, prefix] of [[undefined, '/'], ['/', '/'], ['/docs/', '/docs/'], ['/docs', '/docs/']]) {
