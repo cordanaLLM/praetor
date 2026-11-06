@@ -8,8 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
@@ -71,10 +69,14 @@ func jobPublishesRelease(job ghworkflow.Job) (bool, error) {
 		if ghworkflow.NeverRuns(step.If) {
 			continue
 		}
-		if actionPublishesRelease(step) {
+		publishes, err := actionPublishesRelease(step)
+		if err != nil {
+			return false, fmt.Errorf("step %d: %w", i+1, err)
+		}
+		if publishes {
 			return true, nil
 		}
-		publishes, err := scriptPublishesRelease(step.Run)
+		publishes, err = scriptPublishesRelease(step.Run)
 		if err != nil {
 			return false, fmt.Errorf("step %d: %w", i+1, err)
 		}
@@ -83,91 +85,4 @@ func jobPublishesRelease(job ghworkflow.Job) (bool, error) {
 		}
 	}
 	return false, nil
-}
-
-// scriptPublishesRelease reads actual commands with the shared shell parser without execution.
-func scriptPublishesRelease(script string) (bool, error) {
-	fields, err := scriptFields(script)
-	if err != nil {
-		return false, fmt.Errorf("read release publisher command: %w", err)
-	}
-	commands := scriptCommands(fields)
-	for i := 0; i < len(commands) && i < maxRunScriptFields; i++ {
-		cmd := parseShellCommand(commands[i])
-		if cmd.program == "gh" && ghCommandPublishesRelease(cmd.args) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// ghCommandPublishesRelease recognizes release creation, asset uploads and draft publication.
-func ghCommandPublishesRelease(args []string) bool {
-	if len(args) < 2 || args[0] != "release" {
-		return false
-	}
-	switch args[1] {
-	case "create", "upload":
-		return true
-	case "edit":
-		return flagValue(args[2:], "--draft") == "false"
-	}
-	return false
-}
-
-// releaseActions create or publish a GitHub release whenever they run.
-var releaseActions = []string{
-	"jellysin/release-helper/actions/publish", "softprops/action-gh-release", "ncipollo/release-action", "actions/create-release",
-}
-
-// goreleaserRootFlags are the arguments GoReleaser's root command runs alone instead of release.
-var goreleaserRootFlags = []string{"-h", "--help", "-v", "--version"}
-
-// actionPublishesRelease reports whether step's action creates or publishes a GitHub release.
-func actionPublishesRelease(step ghworkflow.Step) bool {
-	action := actionPath(step.Uses)
-	if slices.Contains(releaseActions, action) {
-		return true
-	}
-	return action == "goreleaser/goreleaser-action" && goreleaserPublishes(step.With)
-}
-
-// goreleaserPublishes reads the install-only and args inputs of goreleaser-action. GoReleaser
-// runs release when no subcommand is given, except for a lone help or version flag, and release
-// publishes unless --snapshot or a --skip list holding publish is set (cmd/root.go
-// shouldPrependRelease and cmd/release.go of goreleaser/goreleaser at 2c336825258e, read
-// 2026-11-05).
-func goreleaserPublishes(with map[string]any) bool {
-	if fmt.Sprint(with["install-only"]) == "true" {
-		return false
-	}
-	var fields []string
-	if args, ok := with["args"].(string); ok {
-		fields = strings.Fields(args)
-	}
-	if len(fields) == 1 && slices.Contains(goreleaserRootFlags, fields[0]) {
-		return false
-	}
-	if len(fields) > 0 && !strings.HasPrefix(fields[0], "-") && fields[0] != "release" {
-		return false
-	}
-	return !goreleaserSkipsPublish(fields)
-}
-
-// goreleaserSkipsPublish reports a --snapshot flag or a --skip list, as =value or as the next
-// argument, that names publish.
-func goreleaserSkipsPublish(fields []string) bool {
-	for i := 0; i < len(fields) && i < maxRunScriptFields; i++ {
-		if fields[i] == "--snapshot" || fields[i] == "--snapshot=true" {
-			return true
-		}
-		value, ok := strings.CutPrefix(fields[i], "--skip=")
-		if !ok && fields[i] == "--skip" && i+1 < len(fields) {
-			value, ok = fields[i+1], true
-		}
-		if ok && slices.Contains(strings.Split(value, ","), "publish") {
-			return true
-		}
-	}
-	return false
 }
