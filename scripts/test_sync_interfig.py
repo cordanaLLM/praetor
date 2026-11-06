@@ -601,6 +601,7 @@ class TestLayout(unittest.TestCase):
         self.assertNotIn('"third_party/interfig/upstream/"', gate)
 
     def test_vendor_recovery_blocks_restore_player_in_engine_block(self):
+        """Vendor recovery blocks carry the engine-only restore step."""
         vendor_md = (sync_interfig.VENDOR_DIR / "VENDOR.md").read_text(encoding="utf-8")
         code_blocks = re.findall(r"```bash\n(.*?)```", vendor_md, flags=re.DOTALL)
         recovery_blocks = [b.strip() for b in code_blocks if "git checkout" in b or "git clean" in b]
