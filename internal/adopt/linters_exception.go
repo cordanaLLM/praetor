@@ -79,7 +79,10 @@ func (s *adoptSession) syncDeclaredLintersExceptions(ctx context.Context, full s
 	}
 	nextExceptions, changed := reconcileLintersExceptionsList(manifest.Exceptions, missing, time.Now())
 	nextExceptions, recorded := s.withSupplyChainException(ctx, nextExceptions)
-	if !changed && recorded == nil {
+	// internal/config's lock struct records no adoption date, so entered falls back to today.
+	var categorised bool
+	nextExceptions, categorised = categoriseOwnedExceptions(nextExceptions, time.Now())
+	if !changed && recorded == nil && !categorised {
 		return nil
 	}
 	if recorded != nil {
@@ -179,12 +182,14 @@ func filterExistingExceptions(existing []config.Exception, missingMap map[string
 	return result, kept, changed
 }
 
+const declaredLinterExceptionReasonPrefix = "adoption scaffolds no CI job for "
+
 func newDeclaredLinterException(linter config.DeclaredLinter, today time.Time) config.Exception {
 	return config.Exception{
 		Rule:     config.ExceptionRuleDeclaredLinters,
 		Tool:     linter.Name,
 		Category: "D",
-		Reason:   fmt.Sprintf("adoption scaffolds no CI job for %s declared by %s; run it in a workflow, or remove this entry", linter.Name, linter.Source),
+		Reason:   fmt.Sprintf("%s%s declared by %s; run it in a workflow, or remove this entry", declaredLinterExceptionReasonPrefix, linter.Name, linter.Source),
 		Expires:  config.ExceptionDay(today).AddDate(0, 0, config.MaxExceptionDays).Format(config.ExceptionDateLayout),
 	}
 }
