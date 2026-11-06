@@ -57,6 +57,11 @@ func ResolveTargets(repoPath string) ([]Target, error) {
 	return resolveTargetsWith(repoPath, Resolve)
 }
 
+// ResolveTargetsContext is ResolveTargets with the caller's context.
+func ResolveTargetsContext(ctx context.Context, repoPath string) ([]Target, error) {
+	return resolveTargetsWithContext(ctx, repoPath, Resolve)
+}
+
 // ResolveTargetsForProfile is ResolveTargets for a caller that has already decided the profile,
 // such as adoption, which records it in the manifest it writes: pins win, else the flavor of
 // profile that matches the repository (ResolveForProfile).
@@ -172,7 +177,7 @@ func AuditTargetsContext(ctx context.Context, repoPath string) ([]*FlavorAuditRe
 	if ctx == nil {
 		return nil, errors.New("audit flavor: context cannot be nil")
 	}
-	targets, err := ResolveTargets(repoPath)
+	targets, err := ResolveTargetsContext(ctx, repoPath)
 	if err != nil {
 		return nil, err
 	}

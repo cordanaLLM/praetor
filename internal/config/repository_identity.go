@@ -92,6 +92,11 @@ func ResolveRepositoryName(ctx context.Context, repo string) (string, error) {
 func ManifestRepositoryName(repo string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	return ManifestRepositoryNameContext(ctx, repo)
+}
+
+// ManifestRepositoryNameContext is ManifestRepositoryName with the caller's context.
+func ManifestRepositoryNameContext(ctx context.Context, repo string) (string, error) {
 	if !util.DirExists(repo) {
 		return "", notRepositoryDirError(repo)
 	}
