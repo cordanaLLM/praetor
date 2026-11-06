@@ -713,7 +713,13 @@ The `asdecided` step and its export and pin-check commands are described in
 
 The `coderabbit` step manages two keys in `.coderabbit.yaml`: it sets
 `reviews.auto_review.drafts: true` and adds `.*` to `reviews.auto_review.base_branches`
-so draft pull requests and stacked branches receive automatic review. An absent file gets a
+so draft pull requests and stacked branches come into the scope of automatic review. Both
+keys widen that scope only: adoption leaves `reviews.auto_review.enabled` as the file sets it,
+and with `enabled: false` CodeRabbit reviews a pull request only when its description carries
+the `description_keyword` or a positive match in `labels` triggers it. The filters `labels`,
+`ignore_title_keywords`, `ignore_usernames` and `auto_pause_after_reviewed_commits` still
+apply to draft and stacked pull requests (CodeRabbit configuration schema v2,
+<https://coderabbit.ai/integrations/schema.v2.json>). An absent file gets a
 YAML language server comment pointing to the CodeRabbit v2 schema. An existing file keeps its
 other keys, comments and base-branch patterns; an unchanged rerun leaves its bytes intact.
 To keep an intentional `drafts: false`, list `coderabbit` under `adoption.decline` in
