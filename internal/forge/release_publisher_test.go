@@ -26,12 +26,19 @@ func writeWorkflowFile(t *testing.T, dir, filename, content string) string {
 	return dir
 }
 
-// TestMeasureReleasePublishers_Limits covers the file, job, step and argument bounds of the publisher walk.
-func TestMeasureReleasePublishers_Limits(t *testing.T) {
-	t.Run("goreleaser args exceed bound", func(t *testing.T) {
-		dir := t.TempDir()
-		args := strings.Repeat("opt ", maxRunScriptFields+1)
-		content := `name: release
+type publisherLimitCase struct {
+	name       string
+	filename   string
+	content    string
+	wantPub    string
+	wantErrSub string
+}
+
+var measureReleasePublishersLimitsCases = []publisherLimitCase{
+	{
+		name:     "goreleaser args exceed bound",
+		filename: "goreleaser.yml",
+		content: `name: release
 on: push
 jobs:
   publish:
@@ -39,44 +46,28 @@ jobs:
     steps:
       - uses: goreleaser/goreleaser-action@v6
         with:
-          args: ` + args + `
-`
-		writeWorkflowFile(t, dir, "goreleaser.yml", content)
-		publishers, err := MeasureReleasePublishers(context.Background(), dir)
-		if err == nil {
-			t.Fatalf("expected error naming bound %d, got nil (publishers: %v)", maxRunScriptFields, publishers)
-		}
-		if !strings.Contains(err.Error(), "4096") {
-			t.Fatalf("expected error naming bound 4096, got %v", err)
-		}
-	})
-
-	t.Run("run script exceeds bound", func(t *testing.T) {
-		dir := t.TempDir()
-		script := strings.Repeat("echo safe\n", maxRunScriptFields) + "gh release create v1\n"
-		content := `name: release
+          args: ` + strings.Repeat("opt ", maxRunScriptFields+1) + `
+`,
+		wantErrSub: "4096",
+	},
+	{
+		name:     "run script exceeds bound",
+		filename: "script.yml",
+		content: `name: release
 on: push
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          ` + strings.ReplaceAll(script, "\n", "\n          ") + `
-`
-		writeWorkflowFile(t, dir, "script.yml", content)
-		publishers, err := MeasureReleasePublishers(context.Background(), dir)
-		if err == nil {
-			t.Fatalf("expected error naming bound %d, got nil (publishers: %v)", maxRunScriptFields, publishers)
-		}
-		if !strings.Contains(err.Error(), "4096") {
-			t.Fatalf("expected error naming bound 4096, got %v", err)
-		}
-	})
-
-	t.Run("boundary exactly maxRunScriptFields args reads last position", func(t *testing.T) {
-		dir := t.TempDir()
-		args := strings.Repeat("--skip=announce ", maxRunScriptFields-1) + "release"
-		content := `name: release
+          ` + strings.ReplaceAll(strings.Repeat("echo safe\n", maxRunScriptFields)+"gh release create v1\n", "\n", "\n          ") + `
+`,
+		wantErrSub: "4096",
+	},
+	{
+		name:     "boundary exactly maxRunScriptFields args reads last position",
+		filename: "goreleaser.yml",
+		content: `name: release
 on: push
 jobs:
   publish:
@@ -84,57 +75,87 @@ jobs:
     steps:
       - uses: goreleaser/goreleaser-action@v6
         with:
-          args: ` + args + `
-`
-		writeWorkflowFile(t, dir, "goreleaser.yml", content)
-		publishers, err := MeasureReleasePublishers(context.Background(), dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(publishers) != 1 || publishers[0] != ".github/workflows/goreleaser.yml" {
-			t.Fatalf("expected [.github/workflows/goreleaser.yml], got %v", publishers)
-		}
-	})
-
-	t.Run("boundary script reads publisher at last position", func(t *testing.T) {
-		dir := t.TempDir()
-		script := strings.Repeat("true;", 2046) + "gh release create v1"
-		content := `name: release
+          args: ` + strings.Repeat("--skip=announce ", maxRunScriptFields-1) + "release" + `
+`,
+		wantPub: ".github/workflows/goreleaser.yml",
+	},
+	{
+		name:     "boundary script reads publisher at last position",
+		filename: "script.yml",
+		content: `name: release
 on: push
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - run: ` + script + `
-`
-		writeWorkflowFile(t, dir, "script.yml", content)
-		publishers, err := MeasureReleasePublishers(context.Background(), dir)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(publishers) != 1 || publishers[0] != ".github/workflows/script.yml" {
-			t.Fatalf("expected [.github/workflows/script.yml], got %v", publishers)
-		}
-	})
+      - run: ` + strings.Repeat("true;", 2046) + "gh release create v1" + `
+`,
+		wantPub: ".github/workflows/script.yml",
+	},
 }
 
-// TestMeasureReleasePublishers_Table covers publishing and non-publishing workflows end to end.
-func TestMeasureReleasePublishers_Table(t *testing.T) {
-	cases := []struct {
-		name       string
-		workflows  map[string]string
-		wantPubs   []string
-		wantErrSub string
-	}{
-		{
-			name:      "no workflows directory",
-			workflows: map[string]string{},
-			wantPubs:  nil,
-		},
-		{
-			name: "non-publishing workflow",
-			workflows: map[string]string{
-				"test.yml": `name: test
+// checkPublisherLimitFail verifies that MeasureReleasePublishers returns an error containing wantErrSub.
+func checkPublisherLimitFail(t *testing.T, err error, wantErrSub string, publishers []string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected error naming bound %d, got nil (publishers: %v)", maxRunScriptFields, publishers)
+	}
+	if !strings.Contains(err.Error(), wantErrSub) {
+		t.Fatalf("expected error naming bound %s, got %v", wantErrSub, err)
+	}
+}
+
+// checkPublisherLimitPass verifies that MeasureReleasePublishers succeeds and returns the expected publisher.
+func checkPublisherLimitPass(t *testing.T, err error, publishers []string, wantPub string) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(publishers) != 1 || publishers[0] != wantPub {
+		t.Fatalf("expected [%s], got %v", wantPub, publishers)
+	}
+}
+
+// runPublisherLimitCase executes one limit boundary test case.
+func runPublisherLimitCase(t *testing.T, tc publisherLimitCase) {
+	t.Helper()
+	dir := t.TempDir()
+	writeWorkflowFile(t, dir, tc.filename, tc.content)
+	publishers, err := MeasureReleasePublishers(context.Background(), dir)
+	if tc.wantErrSub != "" {
+		checkPublisherLimitFail(t, err, tc.wantErrSub, publishers)
+		return
+	}
+	checkPublisherLimitPass(t, err, publishers, tc.wantPub)
+}
+
+// TestMeasureReleasePublishers_Limits covers the file, job, step and argument bounds of the publisher walk.
+func TestMeasureReleasePublishers_Limits(t *testing.T) {
+	for i := 0; i < len(measureReleasePublishersLimitsCases); i++ {
+		tc := measureReleasePublishersLimitsCases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			runPublisherLimitCase(t, tc)
+		})
+	}
+}
+
+type measureReleasePublishersCase struct {
+	name       string
+	workflows  map[string]string
+	wantPubs   []string
+	wantErrSub string
+}
+
+var measureReleasePublishersTableCases = []measureReleasePublishersCase{
+	{
+		name:      "no workflows directory",
+		workflows: map[string]string{},
+		wantPubs:  nil,
+	},
+	{
+		name: "non-publishing workflow",
+		workflows: map[string]string{
+			"test.yml": `name: test
 on: push
 jobs:
   build:
@@ -143,13 +164,13 @@ jobs:
       - uses: actions/checkout@v4
       - run: go test ./...
 `,
-			},
-			wantPubs: nil,
 		},
-		{
-			name: "action publisher",
-			workflows: map[string]string{
-				"publish.yml": `name: publish
+		wantPubs: nil,
+	},
+	{
+		name: "action publisher",
+		workflows: map[string]string{
+			"publish.yml": `name: publish
 on: push
 jobs:
   release:
@@ -157,13 +178,13 @@ jobs:
     steps:
       - uses: softprops/action-gh-release@v2
 `,
-			},
-			wantPubs: []string{".github/workflows/publish.yml"},
 		},
-		{
-			name: "script publisher",
-			workflows: map[string]string{
-				"deploy.yml": `name: deploy
+		wantPubs: []string{".github/workflows/publish.yml"},
+	},
+	{
+		name: "script publisher",
+		workflows: map[string]string{
+			"deploy.yml": `name: deploy
 on: push
 jobs:
   release:
@@ -171,13 +192,13 @@ jobs:
     steps:
       - run: gh release create v1.0.0
 `,
-			},
-			wantPubs: []string{".github/workflows/deploy.yml"},
 		},
-		{
-			name: "never-run job skipped",
-			workflows: map[string]string{
-				"disabled.yml": `name: disabled
+		wantPubs: []string{".github/workflows/deploy.yml"},
+	},
+	{
+		name: "never-run job skipped",
+		workflows: map[string]string{
+			"disabled.yml": `name: disabled
 on: push
 jobs:
   skip:
@@ -186,13 +207,13 @@ jobs:
     steps:
       - run: gh release create v1.0.0
 `,
-			},
-			wantPubs: nil,
 		},
-		{
-			name: "never-run step skipped",
-			workflows: map[string]string{
-				"disabled_step.yml": `name: disabled
+		wantPubs: nil,
+	},
+	{
+		name: "never-run step skipped",
+		workflows: map[string]string{
+			"disabled_step.yml": `name: disabled
 on: push
 jobs:
   run:
@@ -201,52 +222,73 @@ jobs:
       - if: ${{ false }}
         run: gh release create v1.0.0
 `,
-			},
-			wantPubs: nil,
 		},
-		{
-			name: "unparseable workflow yaml",
-			workflows: map[string]string{
-				"broken.yml": `name: broken
+		wantPubs: nil,
+	},
+	{
+		name: "unparseable workflow yaml",
+		workflows: map[string]string{
+			"broken.yml": `name: broken
 on: [
 `,
-			},
-			wantErrSub: "read release publisher",
 		},
-	}
+		wantErrSub: "read release publisher",
+	},
+}
 
-	for i := 0; i < len(cases); i++ {
-		tc := cases[i]
+// checkMeasureReleasePublishersError asserts that MeasureReleasePublishers failed with the expected substring.
+func checkMeasureReleasePublishersError(t *testing.T, err error, wantErrSub string) {
+	t.Helper()
+	if err == nil || !strings.Contains(err.Error(), wantErrSub) {
+		t.Fatalf("expected error containing %q, got: %v", wantErrSub, err)
+	}
+}
+
+// checkMeasureReleasePublishersResults asserts that MeasureReleasePublishers returned the expected list of publishers.
+func checkMeasureReleasePublishersResults(t *testing.T, err error, pubs, wantPubs []string) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(pubs) != len(wantPubs) {
+		t.Fatalf("MeasureReleasePublishers = %v, want %v", pubs, wantPubs)
+	}
+	for j := 0; j < len(pubs); j++ {
+		if pubs[j] != wantPubs[j] {
+			t.Errorf("publisher[%d] = %q, want %q", j, pubs[j], wantPubs[j])
+		}
+	}
+}
+
+// runMeasureReleasePublishersCase executes one workflow directory publisher test case.
+func runMeasureReleasePublishersCase(t *testing.T, tc measureReleasePublishersCase) {
+	t.Helper()
+	dir := t.TempDir()
+	for fname, content := range tc.workflows {
+		writeWorkflowFile(t, dir, fname, content)
+	}
+	pubs, err := MeasureReleasePublishers(context.Background(), dir)
+	if tc.wantErrSub != "" {
+		checkMeasureReleasePublishersError(t, err, tc.wantErrSub)
+		return
+	}
+	checkMeasureReleasePublishersResults(t, err, pubs, tc.wantPubs)
+}
+
+// TestMeasureReleasePublishers_Table covers publishing and non-publishing workflows end to end.
+func TestMeasureReleasePublishers_Table(t *testing.T) {
+	for i := 0; i < len(measureReleasePublishersTableCases); i++ {
+		tc := measureReleasePublishersTableCases[i]
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			for fname, content := range tc.workflows {
-				writeWorkflowFile(t, dir, fname, content)
-			}
-			pubs, err := MeasureReleasePublishers(context.Background(), dir)
-			if tc.wantErrSub != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErrSub) {
-					t.Fatalf("expected error containing %q, got: %v", tc.wantErrSub, err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if len(pubs) != len(tc.wantPubs) {
-				t.Fatalf("MeasureReleasePublishers = %v, want %v", pubs, tc.wantPubs)
-			}
-			for j := 0; j < len(pubs); j++ {
-				if pubs[j] != tc.wantPubs[j] {
-					t.Errorf("publisher[%d] = %q, want %q", j, pubs[j], tc.wantPubs[j])
-				}
-			}
+			runMeasureReleasePublishersCase(t, tc)
 		})
 	}
 }
 
 // TestMeasureReleasePublishers_NilContext checks that a nil context is refused.
 func TestMeasureReleasePublishers_NilContext(t *testing.T) {
-	_, err := MeasureReleasePublishers(nil, ".")
+	var nilContext context.Context
+	_, err := MeasureReleasePublishers(nilContext, ".")
 	if err == nil {
 		t.Fatal("expected error with nil context, got nil")
 	}
