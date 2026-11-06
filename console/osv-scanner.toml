@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+#
+# SPDX-License-Identifier: EUPL-1.2
+
+# OSV-Scanner configuration for console/pnpm-lock.yaml
+# (https://google.github.io/osv-scanner/configuration/). OSV-Scanner applies a config only to
+# the lockfiles in its own folder, so the exceptions for this lockfile live here, not in the
+# repository root. Every entry is a dated exception: ignoreUntil is the entry date plus the
+# interval of its category, and an expired entry no longer suppresses the finding.
+
+[[IgnoredVulns]]
+id = "GHSA-gcqx-w48m-w2h4"
+ignoreUntil = 2026-11-16
+reason = "Category C (10 days from 2026-11-06; first entered 2026-10-28 in the root file, which never covered console/pnpm-lock.yaml). deepmerge 4.3.1, prototype poisoning in mergeObject (low), no patched release (4.3.1 is still the latest and the advisory lists no patched version, re-checked 2026-11-06); reached only through @sveltejs/vite-plugin-svelte 7.3.1 (latest, still requires deepmerge ^4.3.1), a build-time devDependency of console/, never shipped to a browser. The vulnerable path is closed in-tree: console/patches/deepmerge@4.3.1.patch refuses an own __proto__ key (console/pnpm-workspace.yaml), pinned by console/scripts/deepmerge-patch.test.ts. The entry stays only because the scanner matches the version, not the patch. Re-check trigger: a deepmerge release above 4.3.1, a patched version on the advisory, or a vite-plugin-svelte release without deepmerge; then remove entry, patch and test. Order engine-minimatch-reissued-alerts-20261106."

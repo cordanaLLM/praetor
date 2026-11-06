@@ -2,11 +2,9 @@
 #
 # SPDX-License-Identifier: EUPL-1.2
 
-# OSV-Scanner configuration (https://google.github.io/osv-scanner/configuration/).
-# Every entry is a dated exception: ignoreUntil is entry date plus the interval of its
-# category, and an expired entry no longer suppresses the finding.
-
-[[IgnoredVulns]]
-id = "GHSA-gcqx-w48m-w2h4"
-ignoreUntil = 2026-11-10
-reason = "Category C (10 days from 2026-10-31; first entered 2026-10-28). deepmerge 4.3.1, prototype poisoning in mergeObject (low), no patched release (4.3.1 is still the latest, re-checked 2026-10-31); reached only through @sveltejs/vite-plugin-svelte 7.3.1, a build-time devDependency of console/, never shipped to a browser. The vulnerable path is closed in-tree: console/patches/deepmerge@4.3.1.patch refuses an own __proto__ key (console/pnpm-workspace.yaml), pinned by console/scripts/deepmerge-patch.test.ts. The entry stays only because the scanner matches the version, not the patch. Remove entry, patch and test when vite-plugin-svelte stops resolving deepmerge 4.3.1 or a patched deepmerge appears. Order engine-osv-deepmerge-exception-20261028."
+# OSV-Scanner configuration (https://google.github.io/osv-scanner/configuration/) for the
+# lockfiles in the repository root. OSV-Scanner applies a config only to the lockfiles in its
+# own folder and never to child folders, so an exception sits next to the lockfile it covers:
+# console/osv-scanner.toml for console/pnpm-lock.yaml. Every entry is a dated exception:
+# ignoreUntil is the entry date plus the interval of its category, and an expired entry no
+# longer suppresses the finding.
