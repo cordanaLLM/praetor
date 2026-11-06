@@ -220,9 +220,9 @@ func committablePath(rel string) (string, bool) {
 }
 
 // privateByDesign reports whether rel is a path the managed block ignores on purpose: the
-// session ledgers, the gate worktrees, the per-host AGY configuration. A rule with a leading
-// slash names a path from the root; one without (the session ledgers, #1263) names a directory
-// of that name in any directory.
+// session ledgers, the gate worktrees, the per-host AGY configuration, client-local settings,
+// or Codacy editor files. A rule with a leading slash names a path from the root; one without
+// names a directory or file of that name in any directory.
 func privateByDesign(rel string) bool {
 	for i := 0; i < len(managedIgnoreRules); i++ {
 		rule := managedIgnoreRules[i]
