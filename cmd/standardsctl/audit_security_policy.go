@@ -6,120 +6,37 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// securityContactEmail recognizes an email reporting destination or mailto: link.
-var securityContactEmail = regexp.MustCompile(`(?im)(?:mailto:|(?:security[ \t]+contact|contact|e-?mail)(?:[ \t]+(?:us|at|to))*[ \t]*:?)[ \t]*<?[a-z0-9.!#$%&'*+/=?^_{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+`)
+// maxSecurityFormLinks bounds the report-form links one policy is read for (HISS-02).
+const maxSecurityFormLinks = 64
 
-// maxSecurityContactURLs bounds the HTTPS contact candidates one policy is read for (HISS-02).
-const maxSecurityContactURLs = 64
+// securityRemoteTimeout bounds the origin remote read that resolves an undeclared forge (HISS-02).
+const securityRemoteTimeout = 30 * time.Second
 
-// securityContactHTTPS recognizes an HTTPS security contact destination.
-var securityContactHTTPS = regexp.MustCompile(`(?im)security[ \t]+contact[ \t]*:[ \t]*<?(https://[^\s<>]+)>?`)
+// advisoryFormLink matches a link to a GitHub repository's private vulnerability report form and
+// captures the owner/name path in front of /security/advisories/new.
+var advisoryFormLink = regexp.MustCompile(`(?i)https://[^\s/<>()\[\]]+/([^\s/<>()\[\]]+/[^\s/<>()\[\]]+)/security/advisories/new(?:[\s<>()\[\]#?.,;:]|$)`)
 
-// affirmativeReporting matches an affirmative instruction to report via private vulnerability reporting.
-var affirmativeReporting = regexp.MustCompile(`(?i)\b(?:use|using|report(?:ed|ing)?|submit(?:ted|ting)?|file|filing|via|through|enable[d]?|choose|navigate|open|visit)\b[^.!?;]*\b(?:github'?s\s+)?private\s+vulnerability\s+reporting\b|\bprivate\s+vulnerability\s+reporting\b[^.!?;]*\b(?:is\s+enabled|form|tab)\b|\bprivate\s+vulnerability\s+reporting\s*:[^.!?;]*\b(?:open|choose|click|navigate|visit|report|use)\b`)
+// confidentialIssueLink matches a link to a GitLab new-issue form that prefills a confidential
+// issue, the query parameter literal or percent-encoded.
+var confidentialIssueLink = regexp.MustCompile(`(?i)https://[^\s<>()]+/-/issues/new\?[^\s<>()]*issue(?:\[|%5B)confidential(?:\]|%5D)=true`)
 
-// negatedReporting matches a negation directly governing private vulnerability reporting:
-// at most two words between an auxiliary negation and the phrase (so "do not hesitate to use"
-// stays affirmative), a bare negation directly preceding the phrase, or a statement that the
-// reporting channel is disabled or unavailable.
-var negatedReporting = regexp.MustCompile(`(?i)\b(?:do\s+not|don'?t|never|cannot)\b(?:\s+[^\s.!?;,:]+){0,2}\s+(?:github'?s\s+)?private\s+vulnerability\s+reporting\b|\b(?:no|not|without|disable[d]?|unsupported|not\s+supported)\b\s+(?:github'?s\s+)?private\s+vulnerability\s+reporting\b|\b(?:github'?s\s+)?private\s+vulnerability\s+reporting\b\s+(?:(?:is|are)\s+(?:not(?:\s+supported)?|disabled|unsupported|unavailable)|disabled|unsupported|not\s+supported|unavailable)\b`)
-
-// actionableAdvisoryLink matches a URL or markdown link to GitHub's advisory reporting form.
-var actionableAdvisoryLink = regexp.MustCompile(`(?i)https://github\.com/[^\s/]+/[^\s/]+/security/advisories(?:/new)?|/security/advisories(?:/new)?`)
-
-// githubWordMarker matches the word GitHub in policy content.
-var githubWordMarker = regexp.MustCompile(`(?i)\bgithub\b`)
-
-// securityTabMarker matches a reference to the repository Security tab.
-var securityTabMarker = regexp.MustCompile(`(?i)\bsecurity\s+tab\b`)
-
-// affirmativeConfidentialIssue matches an affirmative instruction to open a confidential issue.
-var affirmativeConfidentialIssue = regexp.MustCompile(`(?im)\b(?:open|create|submit|file|use)\b[^.!?;]*\bconfidential\s+issue(?:s)?\b|\bconfidential\s+issue(?:s)?\b[^.!?;]*\b(?:in this repository|to report|for security)\b`)
-
-// policyChannels summarizes the private reporting channels detected in a security policy.
-type policyChannels struct {
-	private      bool
-	confidential bool
-	contact      bool
-}
-
-// hasAny reports whether at least one actionable private reporting channel is present.
-func (c policyChannels) hasAny() bool {
-	return c.private || c.confidential || c.contact
-}
-
-// hasActionableSecurityContact reports whether content contains an email reporting
-// destination or an HTTPS security contact URL with a non-empty hostname.
-func hasActionableSecurityContact(content string) bool {
-	if securityContactEmail.MatchString(content) {
-		return true
-	}
-	matches := securityContactHTTPS.FindAllStringSubmatch(content, maxSecurityContactURLs)
-	for i := 0; i < len(matches) && i < maxSecurityContactURLs; i++ {
-		if len(matches[i]) > 1 && config.ValidSecurityContact(matches[i][1]) {
-			return true
-		}
-	}
-	return false
-}
-
-// matchesForge reports whether the policy channels are consistent with the declared forge.
-func (c policyChannels) matchesForge(path string, forge config.Forge) error {
-	if forge == config.ForgeGitHub && !c.private && !c.contact {
-		return fmt.Errorf("[FAIL] Community health: %s names confidential issues, but repository.forge is %s; name private vulnerability reporting or a security contact", path, forge)
-	}
-	if forge != "" && forge != config.ForgeGitHub && c.private {
-		return fmt.Errorf("[FAIL] Community health: %s names GitHub private vulnerability reporting, but repository.forge is %s", path, forge)
-	}
-	return nil
-}
-
-// evaluatePolicyChannels inspects policy content for affirmative private reporting channels.
-func evaluatePolicyChannels(content string) policyChannels {
-	text := strings.ToLower(strings.Join(strings.Fields(content), " "))
-	private := isAffirmativePrivateReporting(text, content)
-	return policyChannels{
-		private:      private,
-		confidential: !private && affirmativeConfidentialIssue.MatchString(content),
-		contact:      hasActionableSecurityContact(content),
-	}
-}
-
-// hasGitHubChannelMarker reports whether policy content names GitHub's reporting channel:
-// the word GitHub, the repository Security tab, or an advisory link (actionableAdvisoryLink).
-func hasGitHubChannelMarker(content string) bool {
-	return githubWordMarker.MatchString(content) ||
-		securityTabMarker.MatchString(content) ||
-		actionableAdvisoryLink.MatchString(content)
-}
-
-// isAffirmativePrivateReporting checks whether the policy contains an affirmative instruction
-// to use private vulnerability reporting and names GitHub's channel (the word GitHub, the
-// repository Security tab, or an actionable advisory link).
-func isAffirmativePrivateReporting(text, content string) bool {
-	if !strings.Contains(text, "private vulnerability reporting") {
-		return false
-	}
-	if negatedReporting.MatchString(text) {
-		return false
-	}
-	if !hasGitHubChannelMarker(content) {
-		return false
-	}
-	return affirmativeReporting.MatchString(text) || actionableAdvisoryLink.MatchString(content)
-}
-
-// auditSecurityPolicy extends community health in the existing audit path. Declined
-// policies keep their existing contract; unread settings are named and never fail offline.
+// auditSecurityPolicy extends community health in the existing audit path. The policy is checked
+// for the concrete artifact of the channel the repository declares in security.channel, or of the
+// migration default when none is declared (config.ResolveSecurityChannel); its prose is never
+// interpreted. Declined policies keep their existing contract; unread settings are named and never
+// fail offline.
 func auditSecurityPolicy(ctx context.Context, manifest *config.Manifest, root string, live actionsForge) error {
 	decline, err := adopt.AuditDecline(manifest, "security-policy")
 	if err != nil {
@@ -133,27 +50,119 @@ func auditSecurityPolicy(ctx context.Context, manifest *config.Manifest, root st
 	if err != nil {
 		return err
 	}
-	channels := evaluatePolicyChannels(content)
-	if !channels.hasAny() {
-		return fmt.Errorf("[FAIL] Community health: %s names no private reporting channel; name private vulnerability reporting or a security contact", path)
+	choice, err := securityChannelOf(ctx, manifest, root)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Community health: %s: %w", path, err)
 	}
-	forge := config.Forge("")
-	if manifest != nil {
-		forge = manifest.Repository.Forge
+	if !choice.Declared {
+		fmt.Printf("[INFO] Community health: %s undeclared; %s checked as %s (migration default: %s); declare %s in %s.\n",
+			config.SecurityChannelKey, path, choice.Channel, choice.Basis, config.SecurityChannelKey, config.ManifestFileName)
 	}
-	if err := channels.matchesForge(path, forge); err != nil {
-		return err
+	artifact, found := securityChannelArtifact(choice.Channel, content, manifest)
+	if !found {
+		return fmt.Errorf("[FAIL] Community health: %s lacks %s, the artifact of %s %s", path, artifact, config.SecurityChannelKey, choice.Channel)
 	}
-	fmt.Printf("[PASS] Community health: %s names a private reporting channel.\n", path)
-	if !channels.private {
-		channel := "a security contact"
-		if channels.confidential {
-			channel = "confidential issues"
-		}
-		fmt.Printf("[INFO] %s: private vulnerability reporting setting not read: policy uses %s.\n", path, channel)
+	fmt.Printf("[PASS] Community health: %s names the %s channel: %s.\n", path, choice.Channel, artifact)
+	if choice.Channel != config.SecurityChannelPrivateReporting {
 		return nil
 	}
 	return auditPrivateVulnerabilityReporting(ctx, path, live)
+}
+
+// securityChannelOf resolves the channel the policy is checked against: the manifest's
+// security.channel, else the migration default for the repository's forge. A declared
+// forge-native channel on a resolved forge it does not run on is an error.
+func securityChannelOf(ctx context.Context, manifest *config.Manifest, root string) (config.SecurityChannelChoice, error) {
+	var policy *config.SecurityPolicy
+	declared := config.Forge("")
+	if manifest != nil {
+		policy = manifest.Security
+		declared = manifest.Repository.Forge
+	}
+	forge, err := auditedForge(ctx, declared, root)
+	if err != nil {
+		return config.SecurityChannelChoice{}, err
+	}
+	choice, err := config.ResolveSecurityChannel(policy, forge)
+	if err != nil {
+		return choice, err
+	}
+	if want := config.SecurityChannelForge(choice.Channel); want != "" && forge != "" && forge != want {
+		return choice, fmt.Errorf("%s %s runs on forge %s, but the repository's forge is %s", config.SecurityChannelKey, choice.Channel, want, forge)
+	}
+	return choice, nil
+}
+
+// auditedForge is the repository's forge: repository.forge when declared, else the forge the
+// origin remote's host names (config.RepositoryForge), or "" when neither resolves one. A remote
+// read git did not answer is an error, never an unresolved forge.
+func auditedForge(ctx context.Context, declared config.Forge, root string) (config.Forge, error) {
+	if declared != "" {
+		return config.RepositoryForge(declared, "")
+	}
+	readCtx, cancel := context.WithTimeout(ctx, securityRemoteTimeout)
+	defer cancel()
+	remote, err := util.ReadOriginRemote(readCtx, root)
+	if err != nil && !errors.Is(err, util.ErrRepoIdentityUnresolved) {
+		return "", fmt.Errorf("resolve %s: %w", config.ForgeKey, err)
+	}
+	forge, err := config.RepositoryForge("", remote.Host)
+	if errors.Is(err, config.ErrForgeUndeclared) {
+		return "", nil
+	}
+	return forge, err
+}
+
+// securityChannelArtifact names the concrete artifact of channel and reports whether content
+// holds it: the repository's report-form link for private-reporting, a confidential new-issue
+// link for confidential-issues, and the declared address for contact.
+func securityChannelArtifact(channel config.SecurityChannel, content string, manifest *config.Manifest) (string, bool) {
+	switch channel {
+	case config.SecurityChannelPrivateReporting:
+		return advisoryFormArtifact(content, manifest)
+	case config.SecurityChannelConfidentialIssues:
+		return "a link to the new-issue form with issue[confidential]=true (/-/issues/new?issue[confidential]=true)",
+			confidentialIssueLink.MatchString(content)
+	}
+	contact := ""
+	if manifest != nil {
+		contact = manifest.Security.SecurityContact()
+	}
+	return "the security.contact address " + contact, contactNamed(content, contact)
+}
+
+// advisoryFormArtifact reports whether content links the repository's private vulnerability
+// report form. With repository.owner and repository.name declared, the link must name that
+// repository; without them, any report-form link counts.
+func advisoryFormArtifact(content string, manifest *config.Manifest) (string, bool) {
+	coordinate := ""
+	if manifest != nil && manifest.Repository.Owner != "" && manifest.Repository.Name != "" {
+		coordinate = manifest.Repository.Owner + "/" + manifest.Repository.Name
+	}
+	want := "a link to the private vulnerability report form (https://github.com/<owner>/<name>/security/advisories/new)"
+	if coordinate != "" {
+		want = "a link to https://github.com/" + coordinate + "/security/advisories/new"
+	}
+	links := advisoryFormLink.FindAllStringSubmatch(content, maxSecurityFormLinks)
+	for i := 0; i < len(links) && i < maxSecurityFormLinks; i++ {
+		if coordinate == "" || strings.EqualFold(links[i][1], coordinate) {
+			return want, true
+		}
+	}
+	return want, false
+}
+
+// contactNamed reports whether content names the declared contact verbatim; a mailto: contact
+// also counts when its bare address appears.
+func contactNamed(content, contact string) bool {
+	if contact == "" {
+		return false
+	}
+	if strings.Contains(content, contact) {
+		return true
+	}
+	address, isMailto := strings.CutPrefix(contact, "mailto:")
+	return isMailto && address != "" && strings.Contains(content, address)
 }
 
 // readSecurityPolicy reads the first policy in GitHub's community-file search order through
@@ -169,7 +178,7 @@ func readSecurityPolicy(ctx context.Context, root string) (string, string, error
 			return paths[i], string(data), nil
 		}
 	}
-	return "", "", fmt.Errorf("[FAIL] Community health: SECURITY.md missing; add .github/SECURITY.md, SECURITY.md or docs/SECURITY.md with a private reporting channel")
+	return "", "", fmt.Errorf("[FAIL] Community health: SECURITY.md missing; add .github/SECURITY.md, SECURITY.md or docs/SECURITY.md naming the %s channel", config.SecurityChannelKey)
 }
 
 // auditPrivateVulnerabilityReporting reports unread settings separately from a verified

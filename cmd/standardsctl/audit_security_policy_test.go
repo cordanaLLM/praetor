@@ -18,65 +18,87 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
-// securityPolicyTestCase defines one offline policy audit scenario.
+// advisoryLink is the report form of the acme/widgets fixture repository.
+const advisoryLink = "https://github.com/acme/widgets/security/advisories/new"
+
+// confidentialLink is a GitLab confidential new-issue form of the fixture repository.
+const confidentialLink = "https://gitlab.com/acme/widgets/-/issues/new?issue[confidential]=true"
+
+// securityPolicyTestCase defines one offline policy audit scenario: the policy file, the
+// manifest's forge and security section, and the expected output or failure.
 type securityPolicyTestCase struct {
 	name, path, content, want string
 	forge                     config.Forge
+	security                  *config.SecurityPolicy
 	fail                      bool
 }
 
-// offlinePolicyCases returns the table of offline community-health security policy scenarios.
-func offlinePolicyCases() []securityPolicyTestCase {
+// declared returns a security section that declares channel, with contact when given.
+func declared(channel config.SecurityChannel, contact string) *config.SecurityPolicy {
+	return &config.SecurityPolicy{Channel: channel, Contact: contact}
+}
+
+// declaredChannelCases are policies checked against a declared security.channel: the artifact
+// decides, never the prose around it.
+func declaredChannelCases() []securityPolicyTestCase {
+	private := declared(config.SecurityChannelPrivateReporting, "")
+	confidential := declared(config.SecurityChannelConfidentialIssues, "")
+	contact := declared(config.SecurityChannelContact, "security@example.invalid")
 	return []securityPolicyTestCase{
-		{"missing", "", "", "SECURITY.md missing", "", true},
-		{"no channel", "SECURITY.md", "# Security\nReport bugs publicly.\n", "SECURITY.md names no private reporting channel", "", true},
-		{"empty", "SECURITY.md", "", "SECURITY.md names no private reporting channel", "", true},
-		{"vague maintainers", "SECURITY.md", "Report privately to the maintainers.\n", "SECURITY.md names no private reporting channel", "", true},
-		{"root", "SECURITY.md", "Use GitHub private vulnerability reporting.\n", "setting not read: --offline", "", false},
-		{"github", ".github/SECURITY.md", "Use GitHub private vulnerability reporting.\n", ".github/SECURITY.md", "", false},
-		{"docs", "docs/SECURITY.md", "Use GitHub private vulnerability reporting.\n", "docs/SECURITY.md", "", false},
-		{"security contact", "SECURITY.md", "Security contact: security@example.invalid\n", "SECURITY.md", "", false},
-		{"mailto", "SECURITY.md", "Report privately to [security](mailto:security@example.invalid).\n", "SECURITY.md", "", false},
-		{"email instruction", "SECURITY.md", "Email to security@example.invalid.\n", "SECURITY.md", "", false},
-		{"empty contact", "SECURITY.md", "Security contact:\n", "SECURITY.md names no private reporting channel", "", true},
-		{"wrapped phrase", "SECURITY.md", "Use GitHub PRIVATE vulnerability\nreporting.\n", "setting not read: --offline", "", false},
-		{"negated phrase", "SECURITY.md", "Do not use private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", "", true},
-		{"disabled phrase", "SECURITY.md", "Private vulnerability reporting is disabled.\n", "SECURITY.md names no private reporting channel", "", true},
-		{"non-instructional mention", "SECURITY.md", "We considered private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", "", true},
-		{"negated with contact", "SECURITY.md", "Do not use private vulnerability reporting. Security contact: security@example.invalid\n", "policy uses a security contact", "", false},
-		{"confidential issues", "SECURITY.md", "Open a confidential issue in this repository to report vulnerabilities.\n", "policy uses confidential issues", "", false},
-		{"confidential issues gitlab", "SECURITY.md", "Open a confidential issue in this repository to report vulnerabilities.\n", "policy uses confidential issues", config.ForgeGitLab, false},
-		{"confidential issues github", "SECURITY.md", "Open a confidential issue in this repository to report vulnerabilities.\n", "names confidential issues, but repository.forge is github", config.ForgeGitHub, true},
-		{"private reporting with contact gitlab", "SECURITY.md", "Use GitHub private vulnerability reporting.\nSecurity contact: security@example.invalid\n", "names GitHub private vulnerability reporting, but repository.forge is gitlab", config.ForgeGitLab, true},
-		{"do not open public issue", "SECURITY.md", "Do not open a public issue, use GitHub private vulnerability reporting.\n", "setting not read: --offline", "", false},
-		{"do not report in public issues", "SECURITY.md", "Please do not report vulnerabilities in public issues. Instead use GitHub private vulnerability reporting.\n", "setting not read: --offline", "", false},
-		{"disabled for this repository", "SECURITY.md", "Private vulnerability reporting is disabled for this repository.\n", "SECURITY.md names no private reporting channel", "", true},
-		{"we do not use", "SECURITY.md", "We do not use private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", "", true},
-		{"do not hesitate", "SECURITY.md", "Please do not hesitate to use GitHub private vulnerability reporting.\n", "setting not read: --offline", "", false},
-		{"do not currently use", "SECURITY.md", "We do not currently use private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", "", true},
-		{"without delay", "SECURITY.md", "Report without delay via GitHub private vulnerability reporting.\n", "setting not read: --offline", "", false},
-		{"not only", "SECURITY.md", "Report not only via GitHub private vulnerability reporting, but also email.\n", "setting not read: --offline", "", false},
-		{"https contact without host", "SECURITY.md", "Security contact: https:///report\n", "SECURITY.md names no private reporting channel", "", true},
-		{"https contact valid", "SECURITY.md", "Security contact: https://example.invalid/report\n", "SECURITY.md", "", false},
-		{"https contact angle brackets", "SECURITY.md", "Security contact: <https://example.test/security>\n", "SECURITY.md", "", false},
-		{"private reporting by email gitlab", "SECURITY.md", "Use private vulnerability reporting by email. Security contact: security@example.com\n", "policy uses a security contact", config.ForgeGitLab, false},
-		{"github private reporting gitlab", "SECURITY.md", "Use GitHub private vulnerability reporting\n", "names GitHub private vulnerability reporting, but repository.forge is gitlab", config.ForgeGitLab, true},
-		{"bare private reporting undeclared", "SECURITY.md", "Use private vulnerability reporting.\n", "SECURITY.md names no private reporting channel", "", true},
-		{"security tab marker", "SECURITY.md", "Use private vulnerability reporting: open this repository's Security tab.\n", "setting not read: --offline", "", false},
-		{"advisory link marker", "SECURITY.md", "Report via private vulnerability reporting: https://github.com/acme/widgets/security/advisories/new\n", "setting not read: --offline", "", false},
+		{"missing", "", "", "SECURITY.md missing", config.ForgeGitHub, private, true},
+		{"planted refusal of private reporting", "SECURITY.md", "Do not use private vulnerability reporting. Email security@example.invalid.\n",
+			"SECURITY.md lacks a link to " + advisoryLink + ", the artifact of security.channel private-reporting", config.ForgeGitHub, private, true},
+		{"prose without link", "SECURITY.md", "Use GitHub private vulnerability reporting.\n", "lacks a link to " + advisoryLink, config.ForgeGitHub, private, true},
+		{"empty", "SECURITY.md", "", "lacks a link to " + advisoryLink, config.ForgeGitHub, private, true},
+		{"markdown link", "SECURITY.md", "Use the [report form](" + advisoryLink + ").\n", "setting not read: --offline", config.ForgeGitHub, private, false},
+		{"angle-bracket link", ".github/SECURITY.md", "Report: <" + advisoryLink + ">\n", ".github/SECURITY.md names the private-reporting channel", config.ForgeGitHub, private, false},
+		{"bare link at end", "docs/SECURITY.md", "Report at " + advisoryLink, "docs/SECURITY.md names the private-reporting channel", config.ForgeGitHub, private, false},
+		{"owner case differs", "SECURITY.md", "[form](https://github.com/ACME/Widgets/security/advisories/new)\n", "setting not read: --offline", config.ForgeGitHub, private, false},
+		{"other repository link", "SECURITY.md", "[form](https://github.com/acme/gadgets/security/advisories/new)\n", "lacks a link to " + advisoryLink, config.ForgeGitHub, private, true},
+		{"advisories list, not the form", "SECURITY.md", "[advisories](https://github.com/acme/widgets/security/advisories)\n", "lacks a link to " + advisoryLink, config.ForgeGitHub, private, true},
+		{"form path prefix only", "SECURITY.md", "https://github.com/acme/widgets/security/advisories/newer\n", "lacks a link to " + advisoryLink, config.ForgeGitHub, private, true},
+		{"confidential form", "SECURITY.md", "[form](" + confidentialLink + ")\n", "names the confidential-issues channel", config.ForgeGitLab, confidential, false},
+		{"confidential form encoded", "SECURITY.md", "https://gitlab.example.org/g/sub/widgets/-/issues/new?issue%5Bconfidential%5D=true\n", "names the confidential-issues channel", config.ForgeGitLab, confidential, false},
+		{"confidential prose only", "SECURITY.md", "Open a confidential issue in this repository.\n", "lacks a link to the new-issue form with issue[confidential]=true", config.ForgeGitLab, confidential, true},
+		{"confidential false", "SECURITY.md", "https://gitlab.com/acme/widgets/-/issues/new?issue[confidential]=false\n", "lacks a link to the new-issue form", config.ForgeGitLab, confidential, true},
+		{"contact named", "SECURITY.md", "Write to security@example.invalid.\n", "names the contact channel: the security.contact address security@example.invalid", config.ForgeForgejo, contact, false},
+		{"contact missing", "SECURITY.md", "Write to other@example.invalid.\n", "lacks the security.contact address security@example.invalid", config.ForgeForgejo, contact, true},
+		{"mailto contact bare address", "SECURITY.md", "Write to security@example.invalid.\n", "names the contact channel", config.ForgeGitHub, declared(config.SecurityChannelContact, "mailto:security@example.invalid"), false},
+		{"https contact", "SECURITY.md", "Report at <https://example.invalid/security>.\n", "names the contact channel", config.ForgeGitLab, declared(config.SecurityChannelContact, "https://example.invalid/security"), false},
 	}
 }
 
-// TestAuditCommunityHealthSecurityPolicyOffline plants missing and unusable policies in
-// the existing audit path; offline skips only the setting read, never the local requirement.
+// migrationDefaultCases are policies of repositories that declare no security.channel: the
+// migration default applies and the audit names it.
+func migrationDefaultCases() []securityPolicyTestCase {
+	return []securityPolicyTestCase{
+		{"default github", "SECURITY.md", "[form](" + advisoryLink + ")\n", "migration default: forge github", config.ForgeGitHub, nil, false},
+		{"default github without link", "SECURITY.md", "Use GitHub private vulnerability reporting.\n", "lacks a link to " + advisoryLink, config.ForgeGitHub, nil, true},
+		{"default gitlab", "SECURITY.md", "[form](" + confidentialLink + ")\n", "checked as confidential-issues (migration default: forge gitlab)", config.ForgeGitLab, nil, false},
+		{"default contact", "SECURITY.md", "Write to security@example.invalid.\n", "checked as contact (migration default: security.contact is set)", config.ForgeForgejo,
+			&config.SecurityPolicy{Contact: "security@example.invalid"}, false},
+		{"default contact beats forge", "SECURITY.md", "Write to security@example.invalid.\n", "migration default: security.contact is set", config.ForgeGitHub,
+			&config.SecurityPolicy{Contact: "security@example.invalid"}, false},
+		{"no default on forgejo", "SECURITY.md", "Write to security@example.invalid.\n", "security.channel required: forge forgejo has no native private reporting channel", config.ForgeForgejo, nil, true},
+		{"no default on unresolved forge", "SECURITY.md", "[form](" + advisoryLink + ")\n", "security.channel required: an unresolved forge", "", nil, true},
+	}
+}
+
+// TestAuditCommunityHealthSecurityPolicyOffline plants missing policies and policies without
+// their channel's artifact in the existing audit path; offline skips only the setting read,
+// never the local requirement.
 func TestAuditCommunityHealthSecurityPolicyOffline(t *testing.T) {
-	for _, tc := range offlinePolicyCases() {
+	cases := append(declaredChannelCases(), migrationDefaultCases()...)
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			if tc.path != "" {
 				writeFixtureFile(t, root, tc.path, tc.content)
 			}
-			manifest := &config.Manifest{Repository: config.RepositoryMetadata{Name: "widgets", Forge: tc.forge}}
+			manifest := &config.Manifest{
+				Repository: config.RepositoryMetadata{Owner: "acme", Name: "widgets", Forge: tc.forge},
+				Security:   tc.security,
+			}
 			out, err := captureStdout(t, func() error {
 				return auditLiveForge(t.Context(), manifest, root, &config.ResolvedPolicy{}, true)
 			})
@@ -90,6 +112,41 @@ func TestAuditCommunityHealthSecurityPolicyOffline(t *testing.T) {
 				t.Fatalf("audit output lacks %q: %s", tc.want, out)
 			}
 		})
+	}
+}
+
+// TestAuditCommunityHealthSecurityPolicyUndeclaredIdentity accepts any report-form link when
+// the manifest names no repository.owner and repository.name to compare it with.
+func TestAuditCommunityHealthSecurityPolicyUndeclaredIdentity(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureFile(t, root, "SECURITY.md", "[form](https://github.com/someone/else/security/advisories/new)\n")
+	manifest := &config.Manifest{Repository: config.RepositoryMetadata{Forge: config.ForgeGitHub}}
+	out, err := captureStdout(t, func() error {
+		return auditSecurityPolicy(t.Context(), manifest, root, actionsForge{notMade: "--offline"})
+	})
+	if err != nil || !strings.Contains(out, "names the private-reporting channel") {
+		t.Fatalf("report-form link without declared identity = %v, %s", err, out)
+	}
+}
+
+// TestAuditCommunityHealthSecurityPolicyResolvedForge resolves an undeclared forge from the
+// origin remote: github.com takes the private-reporting default, and a declared forge-native
+// channel the resolved forge does not run fails.
+func TestAuditCommunityHealthSecurityPolicyResolvedForge(t *testing.T) {
+	f := newAuditFixture(t)
+	f.addGitHubOrigin(t)
+	writeFixtureFile(t, f.dir, "SECURITY.md", "[form]("+advisoryLink+")\n")
+	manifest := &config.Manifest{Repository: config.RepositoryMetadata{Owner: "acme", Name: "widgets"}}
+	out, err := captureStdout(t, func() error {
+		return auditSecurityPolicy(t.Context(), manifest, f.dir, actionsForge{notMade: "--offline"})
+	})
+	if err != nil || !strings.Contains(out, "migration default: forge github") {
+		t.Fatalf("origin-resolved github default = %v, %s", err, out)
+	}
+	manifest.Security = declared(config.SecurityChannelConfidentialIssues, "")
+	err = auditSecurityPolicy(t.Context(), manifest, f.dir, actionsForge{notMade: "--offline"})
+	if err == nil || !strings.Contains(err.Error(), "security.channel confidential-issues runs on forge gitlab, but the repository's forge is github") {
+		t.Fatalf("confidential-issues on a github.com origin = %v", err)
 	}
 }
 
@@ -121,9 +178,9 @@ func TestAuditCommunityHealthSecuritySetting(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
-			writeFixtureFile(t, root, "SECURITY.md", "Use GitHub private vulnerability reporting.\n")
+			writeFixtureFile(t, root, "SECURITY.md", "[form]("+advisoryLink+")\n")
 			out, err := captureStdout(t, func() error {
-				return auditSecurityPolicy(t.Context(), &config.Manifest{}, root, tc.live)
+				return auditSecurityPolicy(t.Context(), githubManifest(), root, tc.live)
 			})
 			if (err != nil) != tc.fail {
 				t.Fatalf("error = %v, want failure %v", err, tc.fail)
@@ -177,10 +234,10 @@ func TestAuditCommunityHealthSecuritySettingWiring(t *testing.T) {
 // an unusable .github policy cannot be excused by a valid policy in another location.
 func TestAuditCommunityHealthSecurityPolicyPrecedence(t *testing.T) {
 	root := t.TempDir()
-	writeFixtureFile(t, root, "SECURITY.md", "Use GitHub private vulnerability reporting.\n")
+	writeFixtureFile(t, root, "SECURITY.md", "[form]("+advisoryLink+")\n")
 	writeFixtureFile(t, root, ".github/SECURITY.md", "# No channel\n")
-	err := auditSecurityPolicy(t.Context(), &config.Manifest{}, root, actionsForge{notMade: "--offline"})
-	if err == nil || !strings.Contains(err.Error(), ".github/SECURITY.md names no private reporting channel") {
+	err := auditSecurityPolicy(t.Context(), githubManifest(), root, actionsForge{notMade: "--offline"})
+	if err == nil || !strings.Contains(err.Error(), ".github/SECURITY.md lacks a link to "+advisoryLink) {
 		t.Fatalf("first policy must fail even with valid root policy: %v", err)
 	}
 }
@@ -197,7 +254,7 @@ func TestAuditCommunityHealthSecurityPolicyReadFailure(t *testing.T) {
 		t.Fatalf("directory policy must fail: %v", err)
 	}
 	root = t.TempDir()
-	path := writeFixtureFile(t, t.TempDir(), "policy.md", "Use GitHub private vulnerability reporting.\n")
+	path := writeFixtureFile(t, t.TempDir(), "policy.md", "[form]("+advisoryLink+")\n")
 	if err := os.Symlink(path, filepath.Join(root, "SECURITY.md")); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
@@ -239,33 +296,7 @@ func TestAuditCommunityHealthSecurityPolicyCancelled(t *testing.T) {
 	}
 }
 
-// TestAuditCommunityHealthSecurityPolicyForgeMismatch proves that a non-GitHub repository
-// whose policy specifies GitHub's private vulnerability reporting channel fails the audit,
-// even when an actionable security contact is also present.
-func TestAuditCommunityHealthSecurityPolicyForgeMismatch(t *testing.T) {
-	cases := []struct {
-		name, content string
-		forge         config.Forge
-	}{
-		{"bare forgejo", "Use GitHub private vulnerability reporting.\n", config.ForgeForgejo},
-		{"with contact forgejo", "Use GitHub private vulnerability reporting.\nSecurity contact: security@example.invalid\n", config.ForgeForgejo},
-		{"with contact gitlab", "Use GitHub private vulnerability reporting.\nSecurity contact: security@example.invalid\n", config.ForgeGitLab},
-		{"bare gitlab", "Use GitHub private vulnerability reporting.\n", config.ForgeGitLab},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			writeFixtureFile(t, root, "SECURITY.md", tc.content)
-			manifest := &config.Manifest{
-				Repository: config.RepositoryMetadata{
-					Name:  "widgets",
-					Forge: tc.forge,
-				},
-			}
-			err := auditSecurityPolicy(t.Context(), manifest, root, actionsForge{notMade: "--offline"})
-			if err == nil || !strings.Contains(err.Error(), "names GitHub private vulnerability reporting, but repository.forge is "+string(tc.forge)) {
-				t.Fatalf("forge mismatch not rejected for %s: %v", tc.name, err)
-			}
-		})
-	}
+// githubManifest is the acme/widgets fixture manifest on a declared GitHub forge.
+func githubManifest() *config.Manifest {
+	return &config.Manifest{Repository: config.RepositoryMetadata{Owner: "acme", Name: "widgets", Forge: config.ForgeGitHub}}
 }

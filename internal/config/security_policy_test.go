@@ -5,6 +5,7 @@
 package config
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -134,4 +135,78 @@ func TestSecurityPolicy_Contact(t *testing.T) {
 		"https:///",
 		"https://:443/report",
 	})
+}
+
+// channelManifest is a manifest declaring repository.forge and a security section body.
+func channelManifest(forge, security string) string {
+	m := "version: 1\n"
+	if forge != "" {
+		m += "repository:\n  forge: \"" + forge + "\"\n"
+	}
+	return m + "security:\n" + security
+}
+
+// Positive: each declarable security.channel loads on the forge it runs on, and contact on any.
+func TestSecurityChannel_Positive_DeclaredChannelsLoad(t *testing.T) {
+	cases := []struct{ forge, security string }{
+		{"github", "  channel: private-reporting\n"},
+		{"gitlab", "  channel: confidential-issues\n"},
+		{"forgejo", "  channel: contact\n  contact: security@example.invalid\n"},
+		{"", "  channel: private-reporting\n"},
+	}
+	for _, tc := range cases {
+		m, err := LoadManifest(writeManifest(t, channelManifest(tc.forge, tc.security)))
+		if err != nil {
+			t.Fatalf("forge %q, %q: %v", tc.forge, tc.security, err)
+		}
+		choice, err := ResolveSecurityChannel(m.Security, m.Repository.Forge)
+		if err != nil || !choice.Declared || choice.Channel != m.Security.Channel {
+			t.Fatalf("ResolveSecurityChannel = %+v, %v", choice, err)
+		}
+	}
+}
+
+// Negative: an unknown channel, contact without security.contact and a forge-native channel on
+// another declared forge fail the manifest load and name the key.
+func TestSecurityChannel_Negative_BadDeclarationsFail(t *testing.T) {
+	cases := []struct{ forge, security, want string }{
+		{"github", "  channel: email\n", `security.channel "email" unsupported`},
+		{"github", "  channel: contact\n", "security.channel contact requires security.contact"},
+		{"gitlab", "  channel: private-reporting\n", "security.channel private-reporting runs on forge github, but repository.forge is gitlab"},
+		{"forgejo", "  channel: confidential-issues\n", "security.channel confidential-issues runs on forge gitlab, but repository.forge is forgejo"},
+	}
+	for _, tc := range cases {
+		_, err := LoadManifest(writeManifest(t, channelManifest(tc.forge, tc.security)))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("forge %q, %q: error %v, want %q", tc.forge, tc.security, err, tc.want)
+		}
+	}
+}
+
+// Boundary: an undeclared channel takes the migration default (contact first, then the forge's
+// native channel) and a forge without one, or none, wraps ErrSecurityChannelUndeclared; a nil
+// section behaves as an empty one.
+func TestSecurityChannel_Boundary_MigrationDefault(t *testing.T) {
+	contact := &SecurityPolicy{Contact: "security@example.invalid"}
+	cases := []struct {
+		policy *SecurityPolicy
+		forge  Forge
+		want   SecurityChannel
+	}{
+		{nil, ForgeGitHub, SecurityChannelPrivateReporting},
+		{&SecurityPolicy{}, ForgeGitLab, SecurityChannelConfidentialIssues},
+		{contact, ForgeGitHub, SecurityChannelContact},
+		{contact, "", SecurityChannelContact},
+	}
+	for _, tc := range cases {
+		choice, err := ResolveSecurityChannel(tc.policy, tc.forge)
+		if err != nil || choice.Declared || choice.Channel != tc.want || choice.Basis == "" {
+			t.Fatalf("ResolveSecurityChannel(%+v, %q) = %+v, %v; want default %s", tc.policy, tc.forge, choice, err, tc.want)
+		}
+	}
+	for _, forge := range []Forge{ForgeForgejo, ""} {
+		if _, err := ResolveSecurityChannel(nil, forge); !errors.Is(err, ErrSecurityChannelUndeclared) {
+			t.Fatalf("forge %q: error %v, want ErrSecurityChannelUndeclared", forge, err)
+		}
+	}
 }

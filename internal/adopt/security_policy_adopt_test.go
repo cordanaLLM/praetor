@@ -22,8 +22,9 @@ func TestAdoptSecurityPolicy_GitHub_Default(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := mustRead(t, filepath.Join(repo, securityFile))
-	if !strings.Contains(content, "Use GitHub's private vulnerability reporting") {
-		t.Fatalf("expected GitHub reporting instructions, got:\n%s", content)
+	if !strings.Contains(content, "Use GitHub's private vulnerability reporting") ||
+		!strings.Contains(content, "(https://github.com/acme/") || !strings.Contains(content, "/security/advisories/new)") {
+		t.Fatalf("expected GitHub reporting instructions with the report-form link, got:\n%s", content)
 	}
 }
 
@@ -38,8 +39,9 @@ func TestAdoptSecurityPolicy_GitLab_Default(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := mustRead(t, filepath.Join(repo, securityFile))
-	if !strings.Contains(content, "Open a confidential issue in this repository") {
-		t.Fatalf("expected GitLab confidential issue instructions, got:\n%s", content)
+	if !strings.Contains(content, "Open a confidential issue in this repository") ||
+		!strings.Contains(content, "/-/issues/new?issue[confidential]=true)") {
+		t.Fatalf("expected GitLab confidential issue instructions with the form link, got:\n%s", content)
 	}
 }
 
@@ -150,8 +152,9 @@ func TestAdoptSecurityPolicy_DeclaredGitHub(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := mustRead(t, filepath.Join(repo, securityFile))
-	if !strings.Contains(content, "Use GitHub's private vulnerability reporting") {
-		t.Fatalf("expected GitHub reporting instructions, got:\n%s", content)
+	if !strings.Contains(content, "Use GitHub's private vulnerability reporting") ||
+		!strings.Contains(content, "(https://github.com/acme/") || !strings.Contains(content, "/security/advisories/new)") {
+		t.Fatalf("expected GitHub reporting instructions with the report-form link, got:\n%s", content)
 	}
 }
 
@@ -165,8 +168,9 @@ func TestAdoptSecurityPolicy_DeclaredGitLab(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := mustRead(t, filepath.Join(repo, securityFile))
-	if !strings.Contains(content, "Open a confidential issue in this repository") {
-		t.Fatalf("expected GitLab confidential issue instructions, got:\n%s", content)
+	if !strings.Contains(content, "Open a confidential issue in this repository") ||
+		!strings.Contains(content, "/-/issues/new?issue[confidential]=true)") {
+		t.Fatalf("expected GitLab confidential issue instructions with the form link, got:\n%s", content)
 	}
 }
 
@@ -248,5 +252,52 @@ func TestAdoptSecurityPolicy_ExistingFileCancelled_Error(t *testing.T) {
 	err := reconcileSecurityPolicy(ctx, s)
 	if err == nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled error, got: %v", err)
+	}
+}
+
+// TestAdoptSecurityPolicy_DeclaredChannel_Wins proves security.channel picks the template over
+// the forge default: contact on GitHub renders the contact, private-reporting with a contact
+// renders the report-form link.
+func TestAdoptSecurityPolicy_DeclaredChannel_Wins(t *testing.T) {
+	cases := []struct{ name, security, want, absent string }{
+		{"contact on github", "security:\n  channel: contact\n  contact: \"security@example.com\"\n",
+			"Report vulnerabilities to the security contact: security@example.com", "/security/advisories/new"},
+		{"private-reporting with contact", "security:\n  channel: private-reporting\n  contact: \"security@example.com\"\n",
+			"(https://github.com/acme/gh-channel/security/advisories/new)", "security@example.com"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newTestRepo(t, "gh-channel")
+			writeOriginRemote(t, repo, "https://github.com/acme/gh-channel.git")
+			mustWrite(t, filepath.Join(repo, "go.mod"), "module example.com/widget\n\ngo 1.27\n")
+			mustWrite(t, filepath.Join(repo, manifestFile), "version: 1\n"+tc.security)
+			if _, err := Adopt(t.Context(), sourceAdoptOptions(t, repo, false)); err != nil {
+				t.Fatal(err)
+			}
+			content := mustRead(t, filepath.Join(repo, securityFile))
+			if !strings.Contains(content, tc.want) || strings.Contains(content, tc.absent) {
+				t.Fatalf("want %q and no %q, got:\n%s", tc.want, tc.absent, content)
+			}
+		})
+	}
+}
+
+// TestAdoptSecurityPolicy_DeclaredPrivateReporting_NoOrigin_Skip proves a forge-native channel
+// whose report-form link needs the origin remote records a skip naming the remedy instead of
+// writing a policy the audit refuses.
+func TestAdoptSecurityPolicy_DeclaredPrivateReporting_NoOrigin_Skip(t *testing.T) {
+	repo := newTestRepo(t, "no-origin-channel")
+	mustWrite(t, filepath.Join(repo, ".git", "config"), "[core]\n\trepositoryformatversion = 0\n")
+	mustWrite(t, filepath.Join(repo, "go.mod"), "module example.com/widget\n\ngo 1.27\n")
+	mustWrite(t, filepath.Join(repo, manifestFile), "version: 1\nrepository:\n  forge: github\nsecurity:\n  channel: private-reporting\n")
+	report, err := Adopt(t.Context(), sourceAdoptOptions(t, repo, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fileExists(filepath.Join(repo, securityFile)) {
+		t.Fatal("no policy may be written without the repository's report-form link")
+	}
+	if !reportNames(report, securityFile, "no origin remote names its host and path") {
+		t.Fatalf("expected skip reason naming the origin remote: %+v", report.ActionDetails)
 	}
 }
