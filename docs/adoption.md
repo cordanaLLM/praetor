@@ -692,6 +692,7 @@ writes any (`TestAdoptionScaffoldTable_MatchesTheStepChain` in
 | `formatter-ignore` | `.prettierignore` entries for managed artifacts, where a formatter is configured |
 | `renovate-ignore` | the managed-file and engine-update suppression rules, plus the workflow engine pin custom manager, in an existing Renovate configuration; none is created |
 | `actionlint-labels` | `.github/actionlint.yaml` runner labels |
+| `coderabbit` | `.coderabbit.yaml`: `reviews.auto_review.drafts` and `reviews.auto_review.base_branches` |
 | `contributing` | `CONTRIBUTING.md` |
 | `pull-request-template` | `.github/pull_request_template.md` |
 | `security-policy` | `SECURITY.md` |
@@ -700,7 +701,7 @@ writes any (`TestAdoptionScaffoldTable_MatchesTheStepChain` in
 | `readme` | the governance block in an existing `README.md` |
 | `reuse-gate` | `.github/workflows/reuse.yml`, where the root carries `REUSE.toml` or `.reuse/dep5` |
 | `working-dir-and-flavor` | the private `.workingdir/` ledger, the detected flavor's templates ([flavors](guides/onboarding.md#flavors)), and `.gosec.json` whenever git tracks a `go.mod` |
-| `branch-ruleset` | `.github/rulesets/main.json`, the branch ruleset with the required status checks |
+| `branch-ruleset` | `.github/rulesets/main.json`, the branch ruleset with required status checks and automatic Copilot review of drafts and pushes |
 | `labels` | `.config/labels.yaml`, the label taxonomy |
 | `paperclip` | `.paperclip/harness.json` and `.paperclip/rules.md` |
 | `agent-definitions` | `.agents/agents/repo-auditor.md` and `repo-gatekeeper.md`, projected to `.claude/agents/`, `.github/agents/`, `.gemini/agents/` and `.codex/agents/` |
@@ -709,6 +710,29 @@ writes any (`TestAdoptionScaffoldTable_MatchesTheStepChain` in
 
 The `asdecided` step and its export and pin-check commands are described in
 [Decision recall](guides/decision-recall.md).
+
+The `coderabbit` step manages two keys in `.coderabbit.yaml`: it sets
+`reviews.auto_review.drafts: true` and adds `.*` to `reviews.auto_review.base_branches`
+so draft pull requests and stacked branches come into the scope of automatic review. Both
+keys widen that scope only: adoption leaves `reviews.auto_review.enabled` as the file sets it,
+and with `enabled: false` CodeRabbit reviews a pull request only when its description carries
+the `description_keyword` or a positive match in `labels` triggers it. The filters `labels`,
+`ignore_title_keywords`, `ignore_usernames` and `auto_pause_after_reviewed_commits` still
+apply to draft and stacked pull requests (CodeRabbit configuration schema v2,
+<https://coderabbit.ai/integrations/schema.v2.json>). An absent file gets a
+YAML language server comment pointing to the CodeRabbit v2 schema. An existing file keeps its
+other keys, comments and base-branch patterns; an unchanged rerun leaves its bytes intact.
+To keep an intentional `drafts: false`, list `coderabbit` under `adoption.decline` in
+`.standards.yaml`; otherwise adoption enforces the managed keys and reports the update
+(`internal/adopt/coderabbit.go`, `TestAdoptCodeRabbitCreatesAndPreserves`,
+`TestAdoptCodeRabbitDeclined`).
+
+The rendered branch ruleset also carries `copilot_code_review` with
+`review_draft_pull_requests: true` and `review_on_push: true`, alongside its existing
+protection rules (`internal/forge/ruleset.go`, `TestRulesetCopilotReviewsDraftsAndPushes`).
+Heavy workflows stop drafts before their work and include `ready_for_review`, so marking a
+draft ready starts the checks (`TestEmittedDraftWorkflows` and its planted cases in
+`internal/adopt/draft_workflows_test.go`).
 
 The groups with behavior of their own:
 

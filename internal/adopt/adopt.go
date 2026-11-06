@@ -543,6 +543,7 @@ func adoptSteps() []namedStep {
 		{"formatter-ignore", reconcileFormatterIgnore},
 		{"renovate-ignore", reconcileRenovateIgnore},
 		{"actionlint-labels", reconcileActionlintLabels},
+		{"coderabbit", reconcileCodeRabbit},
 		{"contributing", reconcileContributing},
 		{"pull-request-template", reconcilePullRequestTemplate},
 		{"security-policy", reconcileSecurityPolicy},

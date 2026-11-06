@@ -446,46 +446,15 @@ def discovery_checks(client, root):
 
 # The ruleset forge.RenderRepositoryRuleset renders for the default branch protection and a
 # repository without workflows, which the audit fixture is: the audit compares content, so a
-# placeholder no longer passes it. audit_checks restores the fixture's own bytes after
-# removing the file, so this literal exists once.
-FIXTURE_RULESET = {
-  "conditions": {
-    "ref_name": {
-      "exclude": [],
-      "include": [
-        "refs/heads/main",
-        "refs/heads/lts-*"
-      ]
-    }
-  },
-  "enforcement": "active",
-  "name": "praetor-main-protection",
-  "rules": [
-    {
-      "type": "deletion"
-    },
-    {
-      "type": "non_fast_forward"
-    },
-    {
-      "type": "required_linear_history"
-    },
-    {
-      "parameters": {
-        "dismiss_stale_reviews_on_push": True,
-        "require_code_owner_review": True,
-        "require_last_push_approval": False,
-        "required_approving_review_count": 1,
-        "required_review_thread_resolution": True
-      },
-      "type": "pull_request"
-    }
-  ],
-  "target": "branch"
-}
+# placeholder no longer passes it. The emitted adoption fixture holds that rendering and
+# emittedHookRenderings in internal/adopt pins it to the renderer, so a renderer change fails
+# go test before it reaches this probe; a second literal here went stale silently (#1825).
+FIXTURE_RULESET_PATH = (Path(__file__).resolve().parent.parent
+                        / "internal/adopt/testdata/emitted/.github/rulesets/main.json")
 
 
 def audit_fixture(root):
+    """Write a minimal adopted repository under root for the audit check; return its profile source."""
     source = "id: framework\nname: Framework\n"
     digest = "sha256:" + hashlib.sha256(source.encode()).hexdigest()
     aggregate = hashlib.sha256(("profile:framework=" + digest + "\n").encode()).hexdigest()
@@ -496,7 +465,7 @@ def audit_fixture(root):
         ".standards.lock": json.dumps(lock),
         ".config/archetypes/framework.yaml": source,
         ".config/labels.yaml": "version: 1\nlabels:\n  - name: test\n    color: '000000'\n",
-        ".github/rulesets/main.json": json.dumps(FIXTURE_RULESET, indent=2) + "\n",
+        ".github/rulesets/main.json": FIXTURE_RULESET_PATH.read_text(),
         ".standards-baseline.json": '{"version":1,"total_infractions":0,"infractions":[]}\n',
     }
     for relative, content in files.items():

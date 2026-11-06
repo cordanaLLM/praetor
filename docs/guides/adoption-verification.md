@@ -613,6 +613,7 @@ name fails adoption and each of those gates.
 | `formatter-ignore` | skipped by the documentation gate |
 | `renovate-ignore` | none |
 | `actionlint-labels` | none |
+| `coderabbit` | none |
 | `contributing` | none |
 | `pull-request-template` | none |
 | `security-policy` | none |

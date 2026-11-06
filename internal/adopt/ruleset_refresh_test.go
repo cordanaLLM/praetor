@@ -443,6 +443,57 @@ func TestAdopt_Positive_RefreshesTheEarlierMainRulesetOfAMasterRepository(t *tes
 	}
 }
 
+// A ruleset rendered before the Copilot code review rule was added is an earlier Praetor
+// rendering: adoption refreshes it to the current rendering with Copilot without --force, and the
+// audit passes.
+func TestAdopt_Positive_RefreshesTheRulesetRenderedBeforeCopilotReview(t *testing.T) {
+	repo := newTestRepo(t, "pre-copilot-ruleset")
+	data, err := forge.RenderRepositoryRulesetPriorToCopilot("main", config.DefaultPolicy().BranchProtection, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, rulesetFile), string(data))
+	preview := dryRunRulesetPreview(t, repo, false, rulesetFacets...)
+	if preview.Action != PreviewUpdate {
+		t.Fatalf("a pre-copilot ruleset must preview as update, got %+v", preview)
+	}
+	rep := adoptForRuleset(t, repo, false)
+	if warnings := rulesetWarnings(rep); len(warnings) != 0 {
+		t.Fatalf("the pre-copilot ruleset was reported as drift: %v", warnings)
+	}
+	written := readRuleset(t, repo)
+	if !strings.Contains(written, `"copilot_code_review"`) {
+		t.Fatalf("the refreshed ruleset must contain the copilot rule:\n%s", written)
+	}
+	if summary, err := auditAdoptedRuleset(t, repo); err != nil || !strings.HasPrefix(summary, "[PASS]") {
+		t.Fatalf("the audit must pass after refresh of pre-copilot ruleset: %q, %v", summary, err)
+	}
+}
+
+// A pre-copilot ruleset that an operator edited is preserved: kept with a warning, not refreshed.
+func TestAdopt_Negative_EditedPreCopilotRulesetIsKept(t *testing.T) {
+	repo := newTestRepo(t, "edited-pre-copilot")
+	data, err := forge.RenderRepositoryRulesetPriorToCopilot("main", config.DefaultPolicy().BranchProtection, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := strings.Replace(string(data), `"required_approving_review_count": 1`, `"required_approving_review_count": 2`, 1)
+	if edited == string(data) {
+		t.Fatal("planted case changed nothing")
+	}
+	mustWrite(t, filepath.Join(repo, rulesetFile), edited)
+	if preview := dryRunRulesetPreview(t, repo, false, rulesetFacets...); preview.Action != PreviewKeep {
+		t.Fatalf("an edited pre-copilot ruleset must preview as keep, got %+v", preview)
+	}
+	rep := adoptForRuleset(t, repo, false)
+	if len(rulesetWarnings(rep)) != 1 {
+		t.Fatalf("an edited pre-copilot ruleset must be kept with one warning: %v", rep.Warnings)
+	}
+	if got := readRuleset(t, repo); got != edited {
+		t.Fatalf("the edited pre-copilot ruleset was changed without --force: %q", got)
+	}
+}
+
 // A declared custom default branch beats the origin HEAD, and a ruleset edited to protect
 // another branch is the repository's: kept with a warning, not refreshed.
 func TestAdopt_Negative_DeclaredBranchWinsAndAnEditedBranchIsKept(t *testing.T) {

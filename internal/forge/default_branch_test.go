@@ -178,11 +178,11 @@ func TestPriorRulesetDigests_Boundary_TheEarlierMainRenderingIsRecognised(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := PriorRulesetDigests(mainBaseline, legacyCurrent); got != nil {
-		t.Fatalf("a main repository whose rendering is current has no prior rendering, got %v", got)
+	if got := PriorRulesetDigests(mainBaseline, legacyCurrent); len(got) != 1 {
+		t.Fatalf("a main repository whose rendering is current yields its pre-copilot rendering only, got %v", got)
 	}
-	if got := PriorRulesetDigests(mainBaseline, current); len(got) != 1 {
-		t.Fatalf("a main repository has exactly one prior rendering, got %v", got)
+	if got := PriorRulesetDigests(mainBaseline, current); len(got) != 2 {
+		t.Fatalf("a main repository has its pre-run and pre-copilot prior renderings, got %v", got)
 	}
 }
 
