@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -640,5 +641,204 @@ func TestListPullRequestsByHead_Planted_FullUnrelatedPage(t *testing.T) {
 	fj.SetRepository("acme", "widgets")
 	if _, err := fj.ListPullRequestsByHead(context.Background(), "topic"); err != nil {
 		t.Fatalf("Forgejo full unrelated page should not fail, got %v", err)
+	}
+}
+
+// TestReadPullRequestsByHead_HeadPull_TokenLookupOutsideRequestDeadline verifies that a slow
+// token lookup bounded by tokenLookupTimeout does not consume the request deadline allocated
+// for forge API requests.
+func TestReadPullRequestsByHead_HeadPull_TokenLookupOutsideRequestDeadline(t *testing.T) {
+	origTimeout := headPullRequestPageTimeout
+	origResolve := resolveGitHubToken
+	t.Cleanup(func() {
+		headPullRequestPageTimeout = origTimeout
+		resolveGitHubToken = origResolve
+	})
+
+	headPullRequestPageTimeout = 500 * time.Millisecond
+	resolveGitHubToken = func(ctx context.Context, host string) string {
+		select {
+		case <-ctx.Done():
+			return ""
+		case <-time.After(700 * time.Millisecond):
+			return "planted-test-token"
+		}
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeRulesetJSON(w, http.StatusOK, []map[string]any{
+			{
+				"number": 42,
+				"state":  "open",
+				"head": map[string]any{
+					"ref":   "topic",
+					"label": "acme:topic",
+					"repo": map[string]any{
+						"full_name": "acme/widgets",
+						"name":      "widgets",
+						"owner":     map[string]any{"login": "acme"},
+					},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	ctx := WithHTTPClient(context.Background(), srv.Client())
+	remote := util.GitRemote{
+		Host:  srv.URL,
+		Owner: "acme",
+		Repo:  "widgets",
+	}
+
+	prs, err := ReadPullRequestsByHead(ctx, config.ForgeGitHub, remote, "topic")
+	if err != nil {
+		t.Fatalf("expected ReadPullRequestsByHead to succeed, got: %v", err)
+	}
+	if len(prs) != 1 || prs[0].Number != 42 || prs[0].State != PullRequestStateOpen {
+		t.Fatalf("expected 1 matching open PR #42, got %+v", prs)
+	}
+}
+
+// perPageDeadlineFixtures returns a full page of unrelated open PRs and one closed matching PR.
+func perPageDeadlineFixtures() (openUnrelated []map[string]any, closedMatching []map[string]any) {
+	openUnrelated = make([]map[string]any, HeadPullRequestsPerPage)
+	for i := range openUnrelated {
+		openUnrelated[i] = map[string]any{
+			"number": 100 + i,
+			"state":  "open",
+			"head": map[string]any{
+				"ref":   "other-branch",
+				"label": "acme:other-branch",
+				"repo": map[string]any{
+					"full_name": "acme/widgets",
+					"name":      "widgets",
+					"owner":     map[string]any{"login": "acme"},
+				},
+			},
+		}
+	}
+	closedMatching = []map[string]any{
+		{
+			"number":    42,
+			"state":     "closed",
+			"merged":    true,
+			"merged_at": "2026-11-06T10:00:00Z",
+			"head": map[string]any{
+				"ref":   "topic",
+				"label": "acme:topic",
+				"repo": map[string]any{
+					"full_name": "acme/widgets",
+					"name":      "widgets",
+					"owner":     map[string]any{"login": "acme"},
+				},
+			},
+		},
+	}
+	return openUnrelated, closedMatching
+}
+
+// perPageDeadlineHandler returns an HTTP handler that sleeps pageDelay per request and serves the fixture pages.
+func perPageDeadlineHandler(pageDelay time.Duration, openUnrelated, closedMatching []map[string]any) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(pageDelay)
+		state := r.URL.Query().Get("state")
+		page := r.URL.Query().Get("page")
+		switch {
+		case state == "open" && (page == "1" || page == ""):
+			writeRulesetJSON(w, http.StatusOK, openUnrelated)
+		case state == "open" && page == "2":
+			writeRulesetJSON(w, http.StatusOK, []map[string]any{})
+		case state == "closed":
+			writeRulesetJSON(w, http.StatusOK, closedMatching)
+		default:
+			writeRulesetJSON(w, http.StatusOK, []map[string]any{})
+		}
+	})
+}
+
+// TestListPullRequestsByHead_HeadPull_PerPageDeadline verifies each page fetch receives its
+// own deadline so a multi-page walk does not exceed a shared parent deadline.
+func TestListPullRequestsByHead_HeadPull_PerPageDeadline(t *testing.T) {
+	origTimeout := headPullRequestPageTimeout
+	t.Cleanup(func() { headPullRequestPageTimeout = origTimeout })
+
+	pageTimeout := 500 * time.Millisecond
+	headPullRequestPageTimeout = pageTimeout
+	pageDelay := 200 * time.Millisecond // 40% of pageTimeout; three pages need 600 ms, past one shared 500 ms deadline
+
+	openUnrelated, closedMatching := perPageDeadlineFixtures()
+	srv := httptest.NewServer(perPageDeadlineHandler(pageDelay, openUnrelated, closedMatching))
+	defer srv.Close()
+
+	gh := NewGitHubDriver("tok", srv.URL)
+	gh.HTTPClient = srv.Client()
+	gh.SetRepository("acme", "widgets")
+
+	fj := NewGiteaDriver("tok", srv.URL)
+	fj.HTTPClient = srv.Client()
+	fj.SetRepository("acme", "widgets")
+
+	for _, tc := range []struct {
+		name string
+		list func(ctx context.Context, branch string) ([]PullRequestHead, error)
+	}{
+		{"github", gh.ListPullRequestsByHead},
+		{"forgejo", fj.ListPullRequestsByHead},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prs, err := tc.list(context.Background(), "topic")
+			if err != nil {
+				t.Fatalf("%s: expected ListPullRequestsByHead to succeed, got %v", tc.name, err)
+			}
+			if len(prs) != 1 || prs[0].Number != 42 || prs[0].State != PullRequestStateMerged {
+				t.Fatalf("%s: expected 1 matching PR #42, got %+v", tc.name, prs)
+			}
+		})
+	}
+}
+
+// TestListPullRequestsByHead_HeadPull_PageTimeoutExceededNegative verifies that a page fetch
+// slower than the page timeout fails with a deadline exceeded error naming the target head.
+func TestListPullRequestsByHead_HeadPull_PageTimeoutExceededNegative(t *testing.T) {
+	origTimeout := headPullRequestPageTimeout
+	t.Cleanup(func() { headPullRequestPageTimeout = origTimeout })
+
+	pageTimeout := 300 * time.Millisecond
+	headPullRequestPageTimeout = pageTimeout
+
+	slowSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(700 * time.Millisecond)
+		writeRulesetJSON(w, http.StatusOK, []map[string]any{})
+	}))
+	defer slowSrv.Close()
+
+	gh := NewGitHubDriver("tok", slowSrv.URL)
+	gh.HTTPClient = slowSrv.Client()
+	gh.SetRepository("acme", "widgets")
+
+	fj := NewGiteaDriver("tok", slowSrv.URL)
+	fj.HTTPClient = slowSrv.Client()
+	fj.SetRepository("acme", "widgets")
+
+	for _, tc := range []struct {
+		name string
+		list func(ctx context.Context, branch string) ([]PullRequestHead, error)
+	}{
+		{"github", gh.ListPullRequestsByHead},
+		{"forgejo", fj.ListPullRequestsByHead},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tc.list(context.Background(), "topic-branch")
+			if err == nil {
+				t.Fatalf("%s: expected deadline error for slow page, got nil", tc.name)
+			}
+			if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "context deadline exceeded") {
+				t.Fatalf("%s: expected context deadline exceeded error, got: %v", tc.name, err)
+			}
+			if !strings.Contains(err.Error(), "topic-branch") {
+				t.Fatalf("%s: expected error to name the head branch %q, got: %v", tc.name, "topic-branch", err)
+			}
+		})
 	}
 }

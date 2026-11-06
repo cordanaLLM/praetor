@@ -1,0 +1,2 @@
+type: fixed
+title: Forge head lookups give the token lookup and each page their own deadline, so a slow gh auth token no longer fails the pre-push check
