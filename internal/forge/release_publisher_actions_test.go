@@ -11,6 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 )
 
+// TestActionPublishesRelease covers publisher actions and the GoReleaser input rules, including the argument bound.
 func TestActionPublishesRelease(t *testing.T) {
 	cases := []struct {
 		name       string

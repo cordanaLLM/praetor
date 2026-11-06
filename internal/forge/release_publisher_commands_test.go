@@ -9,6 +9,7 @@ import (
 	"testing"
 )
 
+// TestScriptPublishesRelease covers gh release commands in run scripts and the shell reader bound.
 func TestScriptPublishesRelease(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -88,6 +89,7 @@ func TestScriptPublishesRelease(t *testing.T) {
 	}
 }
 
+// TestGhCommandPublishesRelease covers which gh release subcommands publish: create, upload, and edit with --draft=false.
 func TestGhCommandPublishesRelease(t *testing.T) {
 	cases := []struct {
 		name string
