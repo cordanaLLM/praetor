@@ -438,6 +438,7 @@ def require_hook_lint_tools(directory, environ=None):
 
 
 def file_checks(directory, names):
+    """Run formatting, text integrity, linters and policy self-tests on changed files."""
     files = present_files(directory, names)
     if any(name == ".workingdir" or name.startswith(".workingdir/") for name in files):
         raise HookError(PRIVATE_STATE_ERROR)
@@ -451,7 +452,7 @@ def file_checks(directory, names):
                     ".gemini/settings.json", ".agents/plugins/praetor/hooks.json",
                     ".agents/plugins/praetor/praetor_hook.py", "scripts/test_checkpoint_hooks.py",
                     "scripts/test_praetor_hook.py"}
-           or name.startswith((".config/lefthook/", ".config/agent/")) for name in files):
+           or name.startswith((".config/lefthook/", ".config/agent/", ".config/semgrep/")) for name in files):
         commands.extend(self_test_commands(directory))
     if hook_sources_changed(names) and (directory / HOOK_LINT_SUITE).is_file():
         hook_env = {HOOK_LINT_BIN_ENV: str(provision_hook_lint(directory))}
@@ -629,7 +630,7 @@ def source_checks(directory, names, gate="all", base=None):
             env=clean_env())
     if gate == "all":
         parallel(governance, directory)
-        parallel(semgrep_commands(directory, names), directory)
+        parallel(semgrep_commands(directory, names, base=base), directory)
     if not packages:
         print("Go gates: no affected packages")
         return run_full_gate(directory, packages) if full_gate else False
@@ -685,21 +686,40 @@ def run_full_gate(directory, packages=None):
     return True
 
 
-def semgrep_commands(directory, names):
+def semgrep_commands(directory, names, base=None):
+    """Keep HISS whole-file checks and compare Go permission findings to the push base."""
     rules = ".config/semgrep/hiss-invariants.yml"
+    permissions = ".config/semgrep/go-permissions.yml"
     # The HISS-20 corpus is input to the rules, not source governed by them: its positive
     # fixtures exist precisely because they violate an invariant, so scanning them blocks
     # every push that touches the corpus. The HISS scanner skips it for the same reason.
     source = [name for name in present_files(directory, names)
               if Path(name).suffix in SEMGREP_SUFFIXES and not is_fixture(name)]
+    go_source = [name for name in source if Path(name).suffix == ".go"]
+    commands = []
     if any(name.startswith(".config/semgrep/") for name in names):
         # A changed rule is judged against the whole tree, and the corpus stays out of that
         # scan too. Naming "." alone dropped the filter above, so every push whose range
         # touched the rules failed on the fixtures written to violate them.
         source = ["--exclude", FIXTURE_DIRECTORY, "."]
     if source and (directory / rules).exists():
-        return [["semgrep", "scan", "--error", "--config", rules, *source]]
-    return []
+        commands.append(["semgrep", "scan", "--error", "--config", rules, *source])
+    # The rules file is the opt-in, as .codespellrc is for spelling: adoption does not emit it,
+    # so a repository without it has no permission scan. A push that removes it is refused.
+    named = any(str(name) == permissions for name in names)
+    if not (directory / permissions).exists():
+        if named:
+            raise HookError(f"Go permission rules file removed: {permissions}; "
+                            "restore it or remove the permission gate in its own reviewed change")
+        return commands
+    if go_source:
+        if not base:
+            raise HookError("Go permission scan requires a trusted push baseline; no scan performed")
+        commands.append(["semgrep", "scan", "--error", "--config", permissions,
+                         "--baseline-commit", base, *go_source])
+    elif named:
+        commands.append(["semgrep", "validate", permissions])
+    return commands
 
 
 def governance_commands(directory, names, source, base=None):

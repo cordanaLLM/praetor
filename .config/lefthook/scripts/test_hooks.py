@@ -1564,38 +1564,248 @@ class ScopeAndGuard(unittest.TestCase):
                 clean_env()
 
     def semgrep_tree(self, root, *files):
+        """Create both rule configs and a bounded set of source paths for command tests."""
         rules = root / ".config" / "semgrep" / "hiss-invariants.yml"
         rules.parent.mkdir(parents=True)
         rules.write_text("rules: []\n", encoding="utf-8")
-        for name in files:
+        parity = ROOT / ".config/semgrep/go-permissions.yml"
+        (rules.parent / parity.name).write_text(
+            parity.read_text(encoding="utf-8"), encoding="utf-8",
+        )
+        self.assertLessEqual(len(files), 32, "fixture path bound")
+        for name in files[:32]:
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("x\n", encoding="utf-8")
         return ".config/semgrep/hiss-invariants.yml"
 
+    def test_semgrep_permissions_command_uses_baseline_and_keeps_hiss_whole_file(self):
+        """A changed Go test receives a separate parity scan with the caller's base."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rules = self.semgrep_tree(root, "internal/a_test.go")
+            commands = semgrep_commands(root, ["internal/a_test.go"], base="abc123")
+        self.assertEqual(commands, [
+            ["semgrep", "scan", "--error", "--config", rules, "internal/a_test.go"],
+            ["semgrep", "scan", "--error", "--config", ".config/semgrep/go-permissions.yml",
+             "--baseline-commit", "abc123", "internal/a_test.go"],
+        ])
+
+    def test_semgrep_permissions_requires_a_trusted_baseline(self):
+        """Missing history must refuse a scan rather than silently ignore added violations."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.semgrep_tree(root, "internal/a_test.go")
+            with self.assertRaisesRegex(HookError, "permission.*baseline"):
+                semgrep_commands(root, ["internal/a_test.go"])
+
+    def test_semgrep_permissions_source_checks_forwards_existing_base(self):
+        """The push's already computed base reaches command construction unchanged."""
+        with mock.patch("checks.tool_module_check"), \
+                mock.patch("checks.go_packages", return_value=[]), \
+                mock.patch("checks.governance_commands", return_value=[]), \
+                mock.patch("checks.parallel"), \
+                mock.patch("checks.semgrep_commands", return_value=[]) as commands:
+            source_checks(ROOT, ["internal/a_test.go"], base="abc123")
+        commands.assert_called_once_with(ROOT, ["internal/a_test.go"], base="abc123")
+
+    def test_semgrep_permissions_rule_only_change_validates_configuration(self):
+        """A push changing only the permission rules validates the configuration without Go files."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rules = self.semgrep_tree(root)
+            permissions = ".config/semgrep/go-permissions.yml"
+            commands = semgrep_commands(root, [permissions])
+        self.assertEqual(commands, [
+            ["semgrep", "scan", "--error", "--config", rules, "--exclude", FIXTURE_DIRECTORY, "."],
+            ["semgrep", "validate", permissions],
+        ])
+
+    def test_semgrep_permissions_absent_rules_file_is_the_opt_out(self):
+        """A repository without the permission rules file (adoption does not emit it) gets no permission scan."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "internal").mkdir()
+            (root / "internal" / "a.go").write_text("package a\n", encoding="utf-8")
+            commands = semgrep_commands(root, ["internal/a.go"], base="abc123")
+            self.assertFalse(any(".config/semgrep/go-permissions.yml" in command for command in commands))
+
+    def test_semgrep_permissions_rule_file_removed_fails(self):
+        """A push that removes the permission rules file is refused, not read as an opt-out."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            permissions = ".config/semgrep/go-permissions.yml"
+            with self.assertRaisesRegex(HookError, "Go permission rules file removed"):
+                semgrep_commands(root, [permissions])
+
+    def test_file_checks_schedules_self_tests_on_semgrep_policy_change(self):
+        """A change to .config/semgrep/ schedules harness self-tests to replay rule fixtures."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cfg = root / ".config" / "semgrep"
+            cfg.mkdir(parents=True)
+            permissions = ".config/semgrep/go-permissions.yml"
+            (root / permissions).write_text("rules: []\n", encoding="utf-8")
+            with mock.patch("checks.parallel") as scheduled, \
+                    mock.patch("checks.require_floors"), \
+                    mock.patch("checks.self_test_commands", return_value=[["self_test_stub"]]) as self_tests:
+                file_checks(root, [permissions])
+            self_tests.assert_called_once_with(root)
+            scheduled.assert_called_once()
+            commands = scheduled.call_args.args[0]
+            self.assertIn(["self_test_stub"], commands)
+
+    def test_semgrep_permissions_rule_validation_planted_invalid_config_fails(self):
+        """Execute validation and verify that planted invalid rule syntax fails."""
+        if shutil.which("semgrep") is None:
+            self.skipTest("semgrep absent")
+        permissions = ".config/semgrep/go-permissions.yml"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cfg = root / ".config" / "semgrep"
+            cfg.mkdir(parents=True)
+            # Positive: real permissions config passes validation
+            real_text = (ROOT / permissions).read_text(encoding="utf-8")
+            (cfg / "go-permissions.yml").write_text(real_text, encoding="utf-8")
+            commands = semgrep_commands(root, [permissions])
+            self.assertEqual(commands, [["semgrep", "validate", permissions]])
+            res = subprocess.run(commands[0], cwd=root, capture_output=True, text=True, timeout=30)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            # Planted negative case: invalid rule structure fails semgrep validate
+            (cfg / "go-permissions.yml").write_text(
+                "rules:\n  - id: planted_invalid\n    bad_field: true\n", encoding="utf-8"
+            )
+            res_bad = subprocess.run(commands[0], cwd=root, capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(res_bad.returncode, 0)
+
+    def semgrep_fixture_git(self, root, *args):
+        """Use bounded local Git plumbing; fixture commits never invoke repository hooks."""
+        result = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True,
+                                timeout=30, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def semgrep_permission_id(self, finding):
+        """Recognize original ids with or without Semgrep's local-config path prefix."""
+        rules = ("go.lang.correctness.permissions.file_permission.incorrect-default-permission",
+                 "go_file-permissions_rule-mkdir", "go_file-permissions_rule-fileperm")
+        check_id = finding["check_id"]
+        return next((rule for rule in rules[:3]
+                     if check_id == rule or check_id.endswith("." + rule)), check_id)
+
+    def semgrep_permission_scan(self, source, baseline="package fixture\n"):
+        """Run the hook's real parity command against a local committed baseline."""
+        if shutil.which("semgrep") is None:
+            self.skipTest("semgrep absent; real permission matching requires the pinned engine")
+        with tempfile.TemporaryDirectory(prefix="praetor-permissions-") as directory:
+            root = Path(directory)
+            name = "fixture_test.go"
+            self.semgrep_tree(root, name)
+            fixture = root / name
+            fixture.write_text(baseline, encoding="utf-8")
+            self.semgrep_fixture_git(root, "init", "--quiet")
+            self.semgrep_fixture_git(root, "add", ".")
+            tree = self.semgrep_fixture_git(root, "write-tree")
+            commit = self.semgrep_fixture_git(
+                root, "-c", "user.name=Permission Fixture", "-c", "user.email=fixture@example.invalid",
+                "-c", "commit.gpgsign=false", "commit-tree", tree, "-m", "baseline")
+            self.semgrep_fixture_git(root, "update-ref", "HEAD", commit)
+            fixture.write_text(source, encoding="utf-8")
+            self.semgrep_fixture_git(root, "add", name)
+            scans = semgrep_commands(root, [name], base="HEAD")
+            self.assertEqual(len(scans), 2, "the hook must construct a permission scan")
+            env = {**os.environ, "XDG_CONFIG_HOME": str(root)}
+            result = subprocess.run([*scans[1], "--json", "--metrics=off", "--disable-version-check"],
+                                    cwd=root, env=env, capture_output=True, text=True, timeout=60, check=False)
+        self.assertIn(result.returncode, (0, 1), result.stderr)
+        self.assertTrue(result.stdout.strip(), f"semgrep returned no JSON: {result.stderr}")
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload.get("errors", []), [], payload)
+        return result.returncode, payload.get("results", [])
+
+    def test_semgrep_permissions_added_writefile_fails(self):
+        """Plant the executable fixture mode that previously reached Codacy."""
+        source = 'package fixture\nimport "os"\nfunc added() { os.WriteFile("stub", nil, 0o755) }\n'
+        status, findings = self.semgrep_permission_scan(source)
+        self.assertEqual(status, 1)
+        self.assertEqual({self.semgrep_permission_id(item) for item in findings}, {
+            "go.lang.correctness.permissions.file_permission.incorrect-default-permission",
+            "go_file-permissions_rule-fileperm",
+        })
+
+    def test_semgrep_permissions_named_suppression_passes(self):
+        """A justified line above the call suppresses both matching permission ids."""
+        source = ('package fixture\nimport "os"\nfunc added() {\n'
+                  '// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission, '
+                  'go_file-permissions_rule-fileperm -- fixture must execute\n'
+                  'os.WriteFile("stub", nil, 0o755)\n}\n')
+        self.assertEqual(self.semgrep_permission_scan(source), (0, []))
+
+    def test_semgrep_permissions_baseline_ignores_unchanged_violation(self):
+        """An unrelated addition in a touched file does not adopt its historical violation."""
+        baseline = 'package fixture\nimport "os"\nfunc old() { os.WriteFile("stub", nil, 0o755) }\n'
+        self.assertEqual(self.semgrep_permission_scan(baseline + "func added() {}\n", baseline), (0, []))
+
+    def test_semgrep_permissions_thresholds_and_literal_call_forms(self):
+        """Exercise each mode argument, numeric spelling, threshold and nonliteral exclusion."""
+        calls = ('os.WriteFile("p", nil, MODE)', 'os.OpenFile("p", os.O_CREATE, MODE)',
+                 'os.Chmod("p", MODE)', 'os.Mkdir("p", MODE)', 'os.MkdirAll("p", MODE)')
+        modes = ("0o600", "0o601", "0o700", "0o750", "0o755", "0600", "0755",
+                 "384", "385", "0x180", "0x181", "0b110000000", "0b110000001", "0o6_01", "mode")
+        source = ['package fixture', 'import "os"', 'func added(mode os.FileMode) {']
+        expected = {}
+        for call in calls[:5]:
+            for mode in modes[:15]:
+                source.append(call.replace("MODE", mode))
+                value = (int(mode, 8) if mode.startswith("0") and mode.isdecimal()
+                         else int(mode, 0) if mode != "mode" else 0)
+                ids = set()
+                if value > 0o600:
+                    ids.add("go.lang.correctness.permissions.file_permission.incorrect-default-permission")
+                    if "Mkdir" not in call:
+                        ids.add("go_file-permissions_rule-fileperm")
+                if "Mkdir" in call and value > 0o750:
+                    ids.add("go_file-permissions_rule-mkdir")
+                expected[len(source)] = ids
+        source.append("}")
+        status, findings = self.semgrep_permission_scan("\n".join(source) + "\n")
+        self.assertEqual(status, 1)
+        actual = {}
+        self.assertLessEqual(len(findings), 225, "fixture finding bound")
+        for item in findings[:225]:
+            actual.setdefault(item["start"]["line"], set()).add(self.semgrep_permission_id(item))
+        self.assertEqual({line: ids for line, ids in expected.items() if ids}, actual)
+
     def test_semgrep_rule_change_scans_the_tree_without_the_corpus(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             rules = self.semgrep_tree(root, "internal/a.go", ".config/hiss/testdata/HISS-08/c/positive/gets.c")
-            commands = semgrep_commands(root, [rules, "internal/a.go"])
+            commands = semgrep_commands(root, [rules, "internal/a.go"], base="abc123")
         self.assertEqual(commands, [["semgrep", "scan", "--error", "--config", rules,
-                                     "--exclude", FIXTURE_DIRECTORY, "."]])
+                                     "--exclude", FIXTURE_DIRECTORY, "."],
+                                   ["semgrep", "scan", "--error", "--config",
+                                    ".config/semgrep/go-permissions.yml", "--baseline-commit",
+                                    "abc123", "internal/a.go"]])
 
     def test_semgrep_file_scan_names_source_and_never_a_fixture(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             rules = self.semgrep_tree(root, "internal/a.go", "internal/testdata/bad.go", "testdata/bad.py")
-            mixed = semgrep_commands(root, ["internal/a.go", "internal/testdata/bad.go", "testdata/bad.py"])
+            mixed = semgrep_commands(root, ["internal/a.go", "internal/testdata/bad.go", "testdata/bad.py"],
+                                     base="abc123")
             only_fixtures = semgrep_commands(root, ["internal/testdata/bad.go", "testdata/bad.py"])
-        self.assertEqual(mixed, [["semgrep", "scan", "--error", "--config", rules, "internal/a.go"]])
+        self.assertEqual(mixed, [["semgrep", "scan", "--error", "--config", rules, "internal/a.go"],
+                                ["semgrep", "scan", "--error", "--config",
+                                 ".config/semgrep/go-permissions.yml", "--baseline-commit",
+                                 "abc123", "internal/a.go"]])
         self.assertEqual(only_fixtures, [])
 
     def test_semgrep_boundaries_missing_rules_and_lookalike_names(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "internal").mkdir()
-            (root / "internal" / "a.go").write_text("x\n", encoding="utf-8")
-            self.assertEqual(semgrep_commands(root, [".config/semgrep/hiss-invariants.yml", "internal/a.go"]), [])
+            (root / "internal" / "a.py").write_text("x = 1\n", encoding="utf-8")
+            self.assertEqual(semgrep_commands(root, [".config/semgrep/hiss-invariants.yml", "internal/a.py"]), [])
         self.assertTrue(is_fixture("testdata/a.go"))
         self.assertTrue(is_fixture("a\\testdata\\b.go"))
         self.assertFalse(is_fixture("internal/testdatafile.go"))

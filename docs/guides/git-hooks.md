@@ -196,8 +196,8 @@ rejects `{{- if }}` before a single rule can run. The chart's own `Chart.yaml` a
 
 A staged change to `lefthook.yml`, a native client hook file (`.claude/settings.json`,
 `.codex/hooks.json`, `.gemini/settings.json`), the AGY plugin's `hooks.json` or guard copy
-under `.agents/plugins/praetor/`, anything under `.config/lefthook/` or `.config/agent/`, or
-one of the two hook test scripts runs the harness self-tests
+under `.agents/plugins/praetor/`, anything under `.config/lefthook/`, `.config/agent/` or
+`.config/semgrep/`, or one of the two hook test scripts runs the harness self-tests
 (`.config/lefthook/scripts/checks.py`): `lefthook validate`, `test_hooks.py`,
 `test_security_scope.py`, `test_ci_scope.py`, `test_checkpoint.py`, `scripts/test_checkpoint_hooks.py`, and
 `scripts/test_praetor_hook.py`. The last one runs the tracked agent-hook strings through
@@ -1311,6 +1311,46 @@ The semgrep stage has two forms and both apply the exclusion. A per-file scan dr
 from its file list. When a pushed range touches `.config/semgrep/`, the scan widens to the whole
 tree and passes `--exclude testdata` to semgrep instead, because a bare `.` would walk into the
 corpus. Both forms read the directory name from `FIXTURE_DIRECTORY`, so they cannot disagree.
+
+### Go permission parity before push
+
+Strict pre-push checks also run the original patterns in
+`.config/semgrep/go-permissions.yml` on changed Go files, including `_test.go` files:
+
+| Rule id | Calls with an integer literal mode | Refused mode |
+| :--- | :--- | :--- |
+| `go.lang.correctness.permissions.file_permission.incorrect-default-permission` | `os.WriteFile`, `os.OpenFile`, `os.Chmod`, `os.Mkdir`, `os.MkdirAll` | Above `0o600` |
+| `go_file-permissions_rule-mkdir` | `os.Mkdir`, `os.MkdirAll` | Above `0o750` |
+| `go_file-permissions_rule-fileperm` | `os.WriteFile`, `os.OpenFile`, `os.Chmod` | Above `0o600` |
+
+The permission command uses `semgrep scan --error --baseline-commit <base>` with the same
+`push_base()` result already passed through `source_checks()` for the other range checks.
+Semgrep removes findings present in that baseline, so an unchanged historical violation in a
+touched file does not block its push. Decimal, octal, hexadecimal and binary integer literals
+are checked; variable modes and expressions are outside these literal-only rules. Without a
+trusted base the permission scan refuses to run with an explicit error. The rules file is the opt-in:
+adoption does not emit `.config/semgrep/go-permissions.yml`, so a repository without it has no
+permission scan, and a push that removes the file is refused. Fixture paths under `testdata/` retain the exclusion described above.
+
+HISS invariant rules keep their separate whole-file scan, including the whole-tree scan when
+rules change. Applying the permission baseline to HISS would hide existing invariant violations
+in touched source files and weaken that check.
+
+Use the restrictive mode when possible. A fixture that needs broader permissions can put a
+justified suppression directly above the call, naming every matching rule:
+
+```go
+// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission, go_file-permissions_rule-fileperm -- executable fixture stub
+err := os.WriteFile(stub, contents, 0o755)
+```
+
+For a directory at `0o755`, name the incorrect-default rule and
+`go_file-permissions_rule-mkdir` instead. A push that modifies only
+`.config/semgrep/go-permissions.yml` schedules `semgrep validate` to check the
+rule configuration and runs the harness self-tests to replay the permission behavior fixtures.
+`test_semgrep_permissions_*` in `.config/lefthook/scripts/test_hooks.py` covers command
+construction, baseline forwarding, planted violations, rule validation, suppressions and
+thresholds using the real engine; matching tests explicitly skip when Semgrep is absent.
 
 ## Which changed files select which checks
 
