@@ -36,11 +36,11 @@ func (m *mockTracker) run(ctx context.Context, dir string, stdout, errOut io.Wri
 		}
 		return nil
 	}
-	if len(args) >= 1 && args[0] == "list" {
+	if len(args) >= 2 && args[0] == "list" && args[1] == "-export" {
 		m.lists++
 		return nil
 	}
-	return nil
+	return runTool(ctx, dir, stdout, errOut, name, args...)
 }
 
 // Positive: first download fails then succeeds on attempt 2, list runs once, one wait of 5 s.
@@ -121,7 +121,7 @@ func TestBuildModule_Boundary_CancelDuringWaitReturnsAtOnce(t *testing.T) {
 			cancel()
 			return errors.New("initial failure")
 		}
-		return nil
+		return runTool(runCtx, dir, stdout, errOut, name, args...)
 	}
 
 	start := time.Now()
@@ -137,23 +137,23 @@ func TestBuildModule_Boundary_CancelDuringWaitReturnsAtOnce(t *testing.T) {
 }
 
 // Negative: exception for module plus download failure still fails gate.
-func TestGate_Negative_ExceptionForModulePlusDownloadFailureStillFailsGate(t *testing.T) {
+func TestCompareEach_CancelledContextWithLiveExceptionReturnsFatalError(t *testing.T) {
 	t.Parallel()
 	repo := repository{
 		root:  retryFixtureRoot(t, "excepted"),
 		today: time.Now().UTC(),
 		exceptions: []exception{
-			{Path: "excepted/go.mod", Reason: "needs libfoo", Expires: "2099-12-31"},
+			{Path: "excepted/go.mod", Reason: "known broken build", Expires: "2099-12-31"},
 		},
-		runner: func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
-			if len(args) >= 2 && args[0] == "mod" && args[1] == "download" {
-				return errors.New("proxy error")
-			}
-			return nil
-		},
-		wait: func(ctx context.Context, d time.Duration) error {
-			return nil
-		},
+		wait: func(ctx context.Context, d time.Duration) error { return nil },
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	repo.runner = func(runCtx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+		if len(args) >= 1 && args[0] == "list" {
+			cancel()
+			return context.Canceled
+		}
+		return nil
 	}
 	plan := modulePlan{
 		compared: []module{
@@ -163,12 +163,101 @@ func TestGate_Negative_ExceptionForModulePlusDownloadFailureStillFailsGate(t *te
 	stdout := &printer{w: io.Discard}
 	stderr := &printer{w: io.Discard}
 
-	results, err := compareEach(t.Context(), repo, plan, "checker", checkerSites{}, nil, stdout, stderr)
+	results, err := compareEach(ctx, repo, plan, "checker", checkerSites{}, nil, stdout, stderr)
 	if err == nil {
-		t.Fatalf("compareEach succeeded (results = %+v), want failure when download fails even with live exception", results)
+		t.Fatalf("compareEach succeeded (results = %+v), want error when ctx is cancelled during build", results)
 	}
-	if !strings.Contains(err.Error(), "excepted") || !strings.Contains(err.Error(), "3 attempts") {
-		t.Errorf("error %q does not name excepted module and attempts", err.Error())
+	if !strings.Contains(err.Error(), "excepted") {
+		t.Errorf("error %q does not keep module context", err.Error())
+	}
+	for _, res := range results {
+		if res.notCompared != "" {
+			t.Errorf("result has notCompared = %q, want no excuse on cancelled context", res.notCompared)
+		}
+	}
+}
+
+func TestCompareEach_DownloadFailureExcusesOrErrors(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		excepted  bool
+		wantError bool
+	}{
+		{name: "with-live-exception", excepted: true, wantError: false},
+		{name: "without-exception", excepted: false, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := repository{
+				root:  retryFixtureRoot(t, "mod"),
+				today: time.Now().UTC(),
+				runner: func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+					if len(args) >= 2 && args[0] == "mod" && args[1] == "download" {
+						return errors.New("persistent download error")
+					}
+					return runTool(ctx, dir, stdout, errOut, name, args...)
+				},
+				wait: func(ctx context.Context, d time.Duration) error { return nil },
+			}
+			if tc.excepted {
+				repo.exceptions = []exception{
+					{Path: "mod/go.mod", Reason: "needs libfoo", Expires: "2099-12-31"},
+				}
+			}
+			plan := modulePlan{
+				compared: []module{
+					{dir: "mod", path: "example.com/mod"},
+				},
+			}
+			stdout := &printer{w: io.Discard}
+			stderr := &printer{w: io.Discard}
+
+			results, err := compareEach(t.Context(), repo, plan, "checker", checkerSites{}, nil, stdout, stderr)
+			if tc.wantError {
+				if err == nil {
+					t.Fatalf("compareEach succeeded, want error when download fails without exception")
+				}
+				if !strings.Contains(err.Error(), "mod") || !strings.Contains(err.Error(), "3 attempts") {
+					t.Errorf("error %q does not name module and attempts", err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("compareEach failed: %v, want live exception to excuse failure", err)
+				}
+				if len(results) != 1 || !strings.Contains(results[0].notCompared, "excepted until 2099-12-31: needs libfoo") {
+					t.Fatalf("results = %+v, want notCompared note with exception", results)
+				}
+			}
+		})
+	}
+}
+
+func TestDownloadModule_CancelledContextAfterFailedRunReturnsDownloadErrorWithoutRetryMessage(t *testing.T) {
+	t.Parallel()
+	root := retryFixtureRoot(t, "mod")
+	modDir := filepath.Join(root, "mod")
+	ctx, cancel := context.WithCancel(t.Context())
+	runner := func(runCtx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+		if len(args) >= 2 && args[0] == "mod" && args[1] == "download" {
+			cancel()
+			return errors.New("simulated run failure")
+		}
+		return runTool(runCtx, dir, stdout, errOut, name, args...)
+	}
+	var stderr strings.Builder
+	err := downloadModule(ctx, modDir, "mod", &stderr, runner, defaultWait)
+	if err == nil {
+		t.Fatal("downloadModule succeeded, want downloadError")
+	}
+	var dlErr *downloadError
+	if !errors.As(err, &dlErr) {
+		t.Fatalf("err = %v (%T), want *downloadError", err, err)
+	}
+	if dlErr.attempts != 1 {
+		t.Errorf("dlErr.attempts = %d, want 1", dlErr.attempts)
+	}
+	if strings.Contains(stderr.String(), "attempt 1 of 3") {
+		t.Errorf("stderr contains retry message: %q, want none on context cancel", stderr.String())
 	}
 }
 
@@ -239,6 +328,9 @@ func TestBuildModule_Positive_SkipsTestOnlyRequirements(t *testing.T) {
 	var downloadCalls [][]string
 	var lists int
 	failDownload := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+		if len(args) >= 2 && args[0] == "list" && args[1] == "-m" {
+			return runTool(ctx, dir, stdout, errOut, name, args...)
+		}
 		if slices.Equal(args[:min(len(args), 2)], []string{"mod", "download"}) {
 			downloadCalls = append(downloadCalls, slices.Clone(args))
 			return errors.New("testify proxy unavailable")
@@ -256,6 +348,9 @@ func TestBuildModule_Positive_SkipsTestOnlyRequirements(t *testing.T) {
 	mixedGomod := "module example.com/hw/fssnap\n\ngo 1.26.0\n\nrequire (\n\texample.com/needed v1.2.3\n\tgithub.com/stretchr/testify v1.9.0\n)\n"
 	writeTestModuleFiles(t, fssnapDir, mixedGomod, "package fssnap\n\nimport _ \"example.com/needed/sub\"\n", testSrc)
 	recordDownload := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+		if len(args) >= 2 && args[0] == "list" && args[1] == "-m" {
+			return runTool(ctx, dir, stdout, errOut, name, args...)
+		}
 		if slices.Equal(args[:min(len(args), 2)], []string{"mod", "download"}) {
 			downloadCalls = append(downloadCalls, slices.Clone(args))
 		}
@@ -343,6 +438,9 @@ func TestBuildModule_LocalReplaceVersionSelection(t *testing.T) {
 	writeTestModuleFiles(t, modDir, gomod, src, "package mod\n\nimport _ \"example.com/testonly\"\n")
 	var gotArgs []string
 	rec := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+		if len(args) >= 2 && args[0] == "list" && args[1] == "-m" {
+			return runTool(ctx, dir, stdout, errOut, name, args...)
+		}
 		if slices.Equal(args[:min(len(args), 2)], []string{"mod", "download"}) {
 			gotArgs = slices.Clone(args)
 		}
@@ -401,7 +499,10 @@ func TestBuildModule_RejectsIncompleteScan(t *testing.T) {
 			modDir := filepath.Join(root, "mod")
 			plantIncompleteScan(t, modDir, kind)
 			calls := 0
-			runner := func(context.Context, string, io.Writer, io.Writer, string, ...string) error {
+			runner := func(ctx context.Context, dir string, stdout, stderr io.Writer, name string, args ...string) error {
+				if len(args) >= 2 && args[0] == "list" && args[1] == "-m" {
+					return runTool(ctx, dir, stdout, stderr, name, args...)
+				}
 				calls++
 				return nil
 			}
@@ -526,13 +627,14 @@ func TestBuildModule_RetriesGoListExport(t *testing.T) {
 	var lists int
 	var waits []time.Duration
 	flakyList := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
-		if len(args) >= 1 && args[0] == "list" {
+		if len(args) >= 2 && args[0] == "list" && args[1] == "-export" {
 			lists++
 			if lists == 1 {
 				return errors.New("transient indirect module proxy timeout")
 			}
+			return nil
 		}
-		return nil
+		return runTool(ctx, dir, stdout, errOut, name, args...)
 	}
 	wait := func(ctx context.Context, d time.Duration) error {
 		waits = append(waits, d)
@@ -545,10 +647,10 @@ func TestBuildModule_RetriesGoListExport(t *testing.T) {
 		t.Fatalf("lists = %d, waits = %v; want 2 and [5s]", lists, waits)
 	}
 	alwaysFailList := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
-		if len(args) >= 1 && args[0] == "list" {
+		if len(args) >= 2 && args[0] == "list" && args[1] == "-export" {
 			return errors.New("compile error")
 		}
-		return nil
+		return runTool(ctx, dir, stdout, errOut, name, args...)
 	}
 	if err := buildModule(t.Context(), root, "mod", io.Discard, alwaysFailList, wait); err == nil || !strings.Contains(err.Error(), "its packages do not build at HEAD") {
 		t.Fatalf("buildModule error = %v, want build error after retry limit", err)
@@ -588,6 +690,9 @@ func TestBuildModule_SkipsUnimportedIndirectRequirements(t *testing.T) {
 	}
 	var downloads [][]string
 	runner := func(ctx context.Context, dir string, stdout, stderr io.Writer, name string, args ...string) error {
+		if len(args) >= 2 && args[0] == "list" && args[1] == "-m" {
+			return runTool(ctx, dir, stdout, stderr, name, args...)
+		}
 		if args[0] == "mod" {
 			downloads = append(downloads, slices.Clone(args))
 		}
@@ -656,7 +761,26 @@ func TestBuildModule_RejectsSymlinkWithoutRequirements(t *testing.T) {
 		t.Fatal(err)
 	}
 	plantIncompleteScan(t, dir, "symlink")
-	if _, _, err := moduleDownloadArgs(t.Context(), dir); err == nil {
+	if _, _, err := moduleDownloadArgs(t.Context(), dir, nil); err == nil {
 		t.Fatal("non-regular Go source accepted when requirements are empty")
+	}
+}
+
+// TestModuleDownloadArgs_UsesInjectedRunner verifies injected toolRunner is passed to effectiveBuildContext.
+func TestModuleDownloadArgs_UsesInjectedRunner(t *testing.T) {
+	t.Parallel()
+	root := retryFixtureRoot(t, "mod")
+	modDir := filepath.Join(root, "mod")
+	called := false
+	runner := func(ctx context.Context, dir string, stdout, errOut io.Writer, name string, args ...string) error {
+		called = true
+		return runTool(ctx, dir, stdout, errOut, name, args...)
+	}
+	_, _, err := moduleDownloadArgs(t.Context(), modDir, runner)
+	if err != nil {
+		t.Fatalf("moduleDownloadArgs failed: %v", err)
+	}
+	if !called {
+		t.Fatal("moduleDownloadArgs did not invoke injected toolRunner")
 	}
 }

@@ -128,12 +128,20 @@ command when upstream has moved. To update the pin:
    `npm ci --prefix tools/figures --ignore-scripts` and
    `npm --prefix tools/figures run bundle`, which rewrites the player bundle;
    an adopting repository has no bundle step. If any of them fails, revert the
-   update, including a rewritten player bundle. `git clean` removes the new
-   upstream files and figure outputs that `git checkout` leaves behind:
+   update. `git clean` removes the new upstream files and figure outputs that
+   `git checkout` leaves behind:
 
    ```bash
    git checkout -- tools/figures/third_party/interfig docs/assets/figures
    git clean -fd -- tools/figures/third_party/interfig/upstream docs/assets/figures
+   ```
+
+   Where the repository builds the figure player (the engine), also restore
+   and clean `tools/figures/player`:
+
+   ```bash
+   git checkout -- tools/figures/player
+   git clean -fd -- tools/figures/player
    ```
 
 2. Add a new upstream file to the include or exclude list in `vendor.json`

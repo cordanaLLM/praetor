@@ -12,7 +12,7 @@ import {
   declaredHooks, enabledKinds, engineHash, excludedPatterns, expand, fenceBlocks, fences, figureSlug, figureSlugs, filesDigest, fillSlots,
   frontmatterSlug, globRegExp, htmlErrors, isExcluded, kindErrors, markdownPages, pageOutput, patternMatches, portable, quoted,
   refreshMarkers, renderedDiagrams, scanPage, siteConfigs, siteFlavor, siteUrl, sizeErrors, sourceSites, sources, starlightOutput, starlightPages,
-  svgSpecError,
+  svgOnlySite, svgSpecError,
 } from './checks.mjs';
 import { ENGINE_FILES, markup, sha256 } from './core.mjs';
 import { main } from './build.mjs';
@@ -409,6 +409,17 @@ test('site: an unreleased player lock needs no loader, a released one and a loca
   assert.equal(astro.check('/docs/').errors.length, 1, 'Starlight with a released lock must load the loader');
   write(astro.page, `<head>${inlineLoader('/docs/')}</head>${fillSlots(META, '/docs/assets/figures')}`);
   assert.deepEqual(astro.check('/docs/').errors, [], 'Starlight with a released lock passes once the loader is injected');
+}));
+
+test('site: nested configuration below a repository root with unreleased player lock needs no loader', () => withTempDir((dir) => {
+  const nestedDir = join(dir, 'site');
+  const fixture = figureSite(nestedDir);
+  write(fixture.page, fillSlots(META, '../assets/figures'));
+  const lock = join(dir, 'tools/figures/player.lock.json');
+  write(lock, JSON.stringify({ asset: 'figures-player.tar.gz', sha256: '0'.repeat(64), release: '' }));
+  assert.equal(svgOnlySite(fixture.config, dir), true, 'nested config with explicit root should have svgOnly true');
+  assert.deepEqual(checkSite(fixture.config, fixture.docs, fixture.site, undefined, dir).errors, [],
+    'nested site configuration with explicit repository root needs no loader');
 }));
 
 test('site: every figure image must embed the props the player mounts, the static one included', () => withTempDir((dir) => {

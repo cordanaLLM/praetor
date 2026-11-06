@@ -908,15 +908,11 @@ func compareEach(
 		stdout.printf("Comparing %s (%s) from %s to %s\n", target.dir, target.path, short(repo.base), short(repo.head))
 		buildErr := buildModule(ctx, repo.root, target.dir, stderr.w, repo.runner, repo.wait)
 		if buildErr != nil {
-			var dlErr *downloadError
-			if errors.As(buildErr, &dlErr) {
-				return nil, fmt.Errorf("module %s (%s): %w", target.dir, target.path, buildErr)
-			}
-			note, err := excuseBuildFailure(repo, target, buildErr, stderr)
+			excused, err := buildFailureResult(ctx, repo, target, buildErr, stdout, stderr)
 			if err != nil {
 				return nil, err
 			}
-			results = append(results, result{module: target, notCompared: note})
+			results = append(results, excused)
 			continue
 		}
 		incompatible, err := compareModule(ctx, checker, sites.of(target.dir), target, plan.baseModules, plan.headModules, aliases, stdout.w, stderr.w)
@@ -926,6 +922,26 @@ func compareEach(
 		results = append(results, result{module: target, incompatible: incompatible})
 	}
 	return results, nil
+}
+
+// buildFailureResult judges a module whose build failed. A cancelled or expired run and a failed
+// output write stay fatal, so a deadline never turns into an excused module; otherwise a live
+// exception excuses the failure, a download failure included, and no exception fails the run.
+func buildFailureResult(ctx context.Context, repo repository, target module, buildErr error, stdout, stderr *printer) (result, error) {
+	if ctx.Err() != nil || errors.Is(buildErr, context.Canceled) || errors.Is(buildErr, context.DeadlineExceeded) {
+		return result{}, fmt.Errorf("module %s (%s): %w", target.dir, target.path, buildErr)
+	}
+	if stdout.failed != nil || stderr.failed != nil {
+		return result{}, fmt.Errorf("module %s (%s): %w", target.dir, target.path, buildErr)
+	}
+	note, err := excuseBuildFailure(repo, target, buildErr, stderr)
+	if err != nil {
+		return result{}, err
+	}
+	if stderr.failed != nil {
+		return result{}, fmt.Errorf("module %s (%s): %w", target.dir, target.path, stderr.failed)
+	}
+	return result{module: target, notCompared: note}, nil
 }
 
 // toolRunner executes a command in dir with arguments under context.
@@ -1306,7 +1322,7 @@ func selectImportedRequirements(reqs []modRequirement, imports map[string]bool) 
 }
 
 // moduleDownloadArgs selects only non-test requirements; incomplete scans fail before any download.
-func moduleDownloadArgs(ctx context.Context, moduleDir string) ([]string, bool, error) {
+func moduleDownloadArgs(ctx context.Context, moduleDir string, run toolRunner) ([]string, bool, error) {
 	data, err := readBoundedRegularFile(ctx, filepath.Join(moduleDir, "go.mod"), maxGoModBytes)
 	if err != nil {
 		return nil, false, fmt.Errorf("read module requirements: %w", err)
@@ -1315,7 +1331,10 @@ func moduleDownloadArgs(ctx context.Context, moduleDir string) ([]string, bool, 
 	if !ok {
 		return nil, false, fmt.Errorf("module requirements exceed %d lines", maxGoModLines)
 	}
-	buildCtx, err := effectiveBuildContext(ctx, moduleDir, runTool)
+	if run == nil {
+		run = runTool
+	}
+	buildCtx, err := effectiveBuildContext(ctx, moduleDir, run)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1414,7 +1433,10 @@ func downloadModule(ctx context.Context, moduleDir, dir string, stderr io.Writer
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("prepare dependencies of module %s: %w", dir, err)
 	}
-	args, needed, err := moduleDownloadArgs(ctx, moduleDir)
+	if run == nil {
+		run = runTool
+	}
+	args, needed, err := moduleDownloadArgs(ctx, moduleDir, run)
 	if err != nil {
 		return fmt.Errorf("prepare dependencies of module %s: %w", dir, err)
 	}
