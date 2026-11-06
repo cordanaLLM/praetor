@@ -65,7 +65,7 @@ func hostedGateRenderings(t *testing.T, branch string) map[string]string {
 	return renderings
 }
 
-// assertHostedGates fails unless every hosted gate in root holds want's text for its path.
+// assertHostedGates fails unless every hosted gate in root holds the expected text for its path.
 func assertHostedGates(t *testing.T, root string, want map[string]string) {
 	t.Helper()
 	for rel, text := range want {

@@ -14,7 +14,7 @@ import tempfile
 
 from common import HookError, clean_env, paths, present_files, resolved_relative_to, run
 from privacy import PRIVATE_STATE_ERROR
-from toolchain import make_program, require_floors
+from toolchain import checked_codespell, make_program, require_floors
 
 GO_CONFIG = {"go.mod", "go.sum", "go.work", "go.work.sum", "Makefile",
              ".golangci.yml", ".gosec.json"}
@@ -91,11 +91,17 @@ def parallel(commands, directory):
 
 
 def text_checks(directory, names):
+    """Scan non-binary files for merge markers and Python or JSON syntax errors.
+
+    Collects all non-binary paths and forwards them to spelling verification.
+    """
+    text_files = []
     for name in names:
         path = directory / name
         raw = path.read_bytes()
         if b"\0" in raw:
             continue
+        text_files.append(name)
         text = raw.decode("utf-8", errors="replace")
         if re.search(r"(?m)^(<{7} |={7}$|>{7} )", text):
             raise HookError(f"{name}: unresolved merge marker")
@@ -109,6 +115,29 @@ def text_checks(directory, names):
                 json.loads(raw)
             except (ValueError, UnicodeError) as error:
                 raise HookError(f"{name}: {error}") from error
+    spelling_check(directory, text_files)
+
+
+# The spelling check caps input to comply with HISS-02 bounded loops and avoid runaway subprocess batches.
+MAX_SPELLING_PATHS = 10000
+
+
+def spelling_check(directory, names):
+    """Check text with the repository's codespell config, when opted in.
+
+    Vendored hook policies need not enable spelling. Once .codespellrc exists,
+    a missing executable, an outdated version, or a failed check refuses the change.
+    Batches keep staged path lists below platform command-line limits, as gofmt_check
+    does, and staged paths are capped at MAX_SPELLING_PATHS to comply with HISS-02.
+    """
+    if not names or not (directory / ".codespellrc").is_file():
+        return
+    if len(names) > MAX_SPELLING_PATHS:
+        raise HookError(f"spelling check path count exceeds {MAX_SPELLING_PATHS}")
+    checked_codespell()
+    for start in range(0, len(names), GOFMT_BATCH):
+        run(["codespell", "--config", ".codespellrc", "--", *names[start:start + GOFMT_BATCH]],
+            cwd=directory, timeout=120)
 
 
 # Go's own convention: a directory with this name holds inputs, never source. is_fixture
@@ -221,6 +250,7 @@ SELF_TESTS = (".config/lefthook/scripts/test_hooks.py",
               ".config/lefthook/scripts/test_checkpoint.py",
               ".config/lefthook/scripts/test_race_packages.py")
 OPTIONAL_SELF_TESTS = ("scripts/test_checkpoint_hooks.py", "scripts/test_praetor_hook.py")
+SPELLING_SELF_TEST = ".config/lefthook/scripts/test_spelling.py"
 
 
 def self_test_commands(directory):
@@ -228,9 +258,12 @@ def self_test_commands(directory):
 
     Each suite runs under sys.executable: the interpreter .config/lefthook/python.sh resolved
     for this hook, so a suite never runs under a second interpreter named by a command (#339).
+    Spelling self-tests run only when the repository configures codespell (.codespellrc).
     """
-    suites = [*SELF_TESTS,
-              *(name for name in OPTIONAL_SELF_TESTS if (directory / name).exists())]
+    suites = [*SELF_TESTS]
+    if (directory / ".codespellrc").is_file() and (directory / SPELLING_SELF_TEST).is_file():
+        suites.append(SPELLING_SELF_TEST)
+    suites.extend(name for name in OPTIONAL_SELF_TESTS if (directory / name).exists())
     return [["lefthook", "validate"], *([sys.executable, "-B", suite] for suite in suites)]
 
 

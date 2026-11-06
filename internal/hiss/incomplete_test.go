@@ -66,6 +66,7 @@ func TestScanUnparsedHidesViolations(t *testing.T) {
 	}
 
 	// The same file with its package clause corrupted: unparseable, so zero infractions.
+	// codespell:ignore-next-line packag
 	broken := scanDir(t, writeGo(t, "a.go", "packag p\n\nfunc f() {\n\tfor {\n\t}\n"), ScanOptions{})
 	if broken.TotalInfractions != 0 {
 		t.Logf("broken fixture still yielded %d infraction(s); the incompleteness signal is what matters", broken.TotalInfractions)

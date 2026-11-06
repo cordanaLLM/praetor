@@ -153,20 +153,21 @@ func TestQuestionLedger_Negative_RejectsInvalidDocuments(t *testing.T) {
 	}
 }
 
+// TestQuestionLedger_Negative_RejectsInvalidSidecar proves question ledger operations reject malformed, schema-invalid, or mismatched JSON sidecar metadata.
 func TestQuestionLedger_Negative_RejectsInvalidSidecar(t *testing.T) {
 	row := defaultQuestionsMD() + "| `Q-001` | q |  | pending |  | " + questionMetadataRef + "\n"
 	record := `{"context":"c","created_at":"2026-09-25T10:00:00Z","resolved_at":"0001-01-01T00:00:00Z"}`
 	cases := map[string]string{
-		"missing record":  `{"version":1,"questions":{}}`,
-		"bug member":      `{"version":1,"bugs":{"Q-001":` + record + `}}`,
-		"extra member":    `{"version":1,"questions":{"Q-001":` + record + `},"bugs":{}}`,
-		"wrong version":   `{"version":2,"questions":{"Q-001":` + record + `}}`,
-		"bug id":          `{"version":1,"questions":{"BUG-001":` + record + `}}`,
-		"null questions":  `{"version":1,"questions":null}`,
-		"missing field":   `{"version":1,"questions":{"Q-001":{"context":"c","created_at":"2026-09-25T10:00:00Z"}}}`,
-		"nul in context":  `{"version":1,"questions":{"Q-001":{"context":"a\u0000b","created_at":"2026-09-25T10:00:00Z","resolved_at":"0001-01-01T00:00:00Z"}}}`,
-		"duplicate id":    `{"version":1,"questions":{"Q-001":` + record + `,"Q-001":` + record + `}}`,
-		"trailing gabage": `{"version":1,"questions":{}} x`,
+		"missing record":   `{"version":1,"questions":{}}`,
+		"bug member":       `{"version":1,"bugs":{"Q-001":` + record + `}}`,
+		"extra member":     `{"version":1,"questions":{"Q-001":` + record + `},"bugs":{}}`,
+		"wrong version":    `{"version":2,"questions":{"Q-001":` + record + `}}`,
+		"bug id":           `{"version":1,"questions":{"BUG-001":` + record + `}}`,
+		"null questions":   `{"version":1,"questions":null}`,
+		"missing field":    `{"version":1,"questions":{"Q-001":{"context":"c","created_at":"2026-09-25T10:00:00Z"}}}`,
+		"nul in context":   `{"version":1,"questions":{"Q-001":{"context":"a\u0000b","created_at":"2026-09-25T10:00:00Z","resolved_at":"0001-01-01T00:00:00Z"}}}`,
+		"duplicate id":     `{"version":1,"questions":{"Q-001":` + record + `,"Q-001":` + record + `}}`,
+		"trailing garbage": `{"version":1,"questions":{}} x`,
 	}
 	for name, sidecar := range cases {
 		t.Run(name, func(t *testing.T) {

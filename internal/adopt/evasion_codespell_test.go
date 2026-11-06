@@ -9,9 +9,11 @@ import (
 )
 
 // Positive: the emitted block_evasion.py contains no codespell-flagged word fragments
+// codespell:ignore-next-line grap
 // like "grap", and passes codespell cleanly when codespell is installed on PATH.
 func TestBlockEvasionPY_3D_Positive_CodespellClean(t *testing.T) {
 	rendered := buildBlockEvasionPY()
+	// codespell:ignore-next-line grap
 	if strings.Contains(rendered, `r"hql\b`) || strings.Contains(rendered, `grap"`) {
 		t.Fatalf("buildBlockEvasionPY contains word fragment 'grap'/'hql' split across literals")
 	}
@@ -31,7 +33,9 @@ func TestBlockEvasionPY_3D_Positive_CodespellClean(t *testing.T) {
 
 // Negative: verify that a split fragment 'grap' is flagged by codespell or the fragment check.
 func TestBlockEvasionPY_3D_Negative_DetectsWordSplitAcrossLiterals(t *testing.T) {
+	// codespell:ignore-next-line grap
 	sample := `r"grap"\n        r"hql\b"`
+	// codespell:ignore-next-line grap
 	if !strings.Contains(sample, `grap"`) || !strings.Contains(sample, `r"hql\b`) {
 		t.Fatalf("sample must contain split literals")
 	}
@@ -39,6 +43,7 @@ func TestBlockEvasionPY_3D_Negative_DetectsWordSplitAcrossLiterals(t *testing.T)
 	if err != nil {
 		t.Skip("codespell not installed")
 	}
+	// codespell:ignore-next-line grap
 	stdinCtx, err := util.WithCommandStdin(t.Context(), []byte("r\"grap\"\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -47,6 +52,7 @@ func TestBlockEvasionPY_3D_Negative_DetectsWordSplitAcrossLiterals(t *testing.T)
 	if err == nil {
 		t.Fatalf("codespell expected to flag 'grap', but passed: %s", out)
 	}
+	// codespell:ignore-next-line grap
 	if !strings.Contains(err.Error(), "grap") && !strings.Contains(out, "grap") {
 		t.Fatalf("codespell output did not name 'grap': %v %s", err, out)
 	}
@@ -60,6 +66,7 @@ func TestBlockEvasionPY_3D_Boundary_LayoutKeepsWordBoundary(t *testing.T) {
 	}
 	literals := token.literals(79)
 	for i, lit := range literals {
+		// codespell:ignore-next-line grap
 		if strings.Contains(lit, `grap"`) || strings.HasPrefix(lit, `r"hql`) {
 			t.Fatalf("literal %d (%s) splits 'graphql'", i, lit)
 		}

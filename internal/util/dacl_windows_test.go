@@ -84,12 +84,14 @@ func TestPrivateWriters_Boundary_TrackedPermKeepsInheritedDACL(t *testing.T) {
 	requireOwnerOnly(t, path, false)
 }
 
+// TestOwnerOnlyEntries_3D tests ownerOnlyEntries across positive, negative, and boundary SDDL descriptors for access permissions, missing DACLs, and trustee alias matching.
 func TestOwnerOnlyEntries_3D(t *testing.T) {
 	const sid = "S-1-5-21-1-2-3-1001"
 	for sddl, want := range map[string]bool{
 		"D:P(A;;FA;;;" + sid + ")(A;;FA;;;SY)(A;;FA;;;BA)": true,
 		"D:(A;ID;FA;;;" + sid + ")(D;;FA;;;WD)":            true,
-		"D:(A;ID;FA;;;" + sid + ")(A;ID;0x1200a9;;;BU)":    false,
+		// codespell:ignore-next-line bu
+		"D:(A;ID;FA;;;" + sid + ")(A;ID;0x1200a9;;;BU)": false,
 		"D:(A;;FR;;;WD)":      false,
 		"D:NO_ACCESS_CONTROL": false,
 	} {

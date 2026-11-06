@@ -62,7 +62,7 @@ These five candidate improvements retain the initial prioritisation by expected 
 - **Status**: Gap.
 - **Stage**: `pre-commit` (Lefthook) and `CI` (`.github/workflows/ci.yml`).
 - **Proposed check**: Run `typos --config .typos.toml` over staged files.
-- **Planted case**: Add a Markdown file or Go comment containing `occured` or `seperate`. The check must exit with non-zero status and identify the exact file, line, and typo.
+- **Planted case**: Add a Markdown file or Go comment containing `occured` or `seperate`. The check must exit with non-zero status and identify the exact file, line, and typo. <!-- codespell:ignore occured,seperate -->
 
 ### 2. Coordinated Vulnerability Disclosure (`SECURITY.md`)
 

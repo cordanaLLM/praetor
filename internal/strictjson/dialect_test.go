@@ -101,6 +101,7 @@ func TestValidate_Negative_JSONCRefusesWhatItDoesNotAdd(t *testing.T) {
 		{"comma after a colon", `{"a":,}`, jsonc, ErrSyntax},
 		{"comma after the document", `{"a":1},`, jsonc, ErrTrailing},
 		{"comment between two documents", "{} // one\n{}", jsonc, ErrTrailing},
+		// codespell:ignore-next-line ue
 		{"comment splitting a literal", `[tr/**/ue]`, jsonc, ErrSyntax},
 		{"single-quoted string", `{'a':1}`, jsonc, ErrSyntax},
 		{"duplicate key", "{\"a\":1, // first\n\"a\":2}", jsonc, ErrDuplicate},
@@ -201,7 +202,9 @@ func TestBlankJSONC_Boundary_OffsetsAndUntouchedInput(t *testing.T) {
 	if !bytes.Equal(original, kept) {
 		t.Errorf("blankJSONC changed its input to %q", original)
 	}
+	// codespell:ignore-next-line tru
 	commented := Validate([]byte("/* note */ {\"a\":tru}"), jsonc)
+	// codespell:ignore-next-line tru
 	padded := Validate([]byte(strings.Repeat(" ", 11)+"{\"a\":tru}"), base)
 	if !errors.Is(commented, ErrSyntax) || padded == nil || commented.Error() != padded.Error() {
 		t.Errorf("syntax refusal %v differs from %v, the refusal of the same document without its comment", commented, padded)

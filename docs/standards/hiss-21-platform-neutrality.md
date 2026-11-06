@@ -303,6 +303,7 @@ those declarations and the step's `REQUIRED` list:
 | :--- | :--- | :--- |
 | `python` | the first of `python3`, `python`, `py -3` on `PATH` that states Python 3.10 or newer | asserted on every leg |
 | `make` | the first of `make`, `gmake`, `mingw32-make` on `PATH` that states GNU Make | asserted on every leg |
+| `codespell` | found on `PATH` under this name | reported, not asserted |
 | `git` | found on `PATH` under this name | asserted on every leg |
 | `go` | found on `PATH` under this name | asserted on every leg |
 | `gofmt` | found on `PATH` under this name | asserted on every leg |

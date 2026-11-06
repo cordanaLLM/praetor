@@ -227,6 +227,7 @@ exceptions:
 	return expiredException
 }
 
+// assertCodespellAuditAndPlanted verifies AuditCodespell rejects unexcused skips and codespell detects planted misspellings in unskipped files.
 func assertCodespellAuditAndPlanted(t *testing.T, repo string, today time.Time, expiredException config.Exception, codespellBin string) {
 	t.Helper()
 	codespellrcPath := filepath.Join(repo, ".codespellrc")
@@ -250,6 +251,7 @@ func assertCodespellAuditAndPlanted(t *testing.T, repo string, today time.Time, 
 		t.Fatal(err)
 	}
 	readmePath := filepath.Join(repo, "tools", "figures", "README.md")
+	// codespell:ignore-next-line mispelling
 	if err := os.WriteFile(readmePath, []byte("# Figures Engine\nThis text has a mispelling here.\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -258,6 +260,7 @@ func assertCodespellAuditAndPlanted(t *testing.T, repo string, today time.Time, 
 		if plantedErr == nil {
 			t.Fatalf("codespell unexpectedly passed on planted misspelling:\n%s", string(plantedOut))
 		}
+		// codespell:ignore-next-line mispelling
 		if !strings.Contains(string(plantedOut), "mispelling") {
 			t.Fatalf("codespell did not report planted misspelling:\n%s", string(plantedOut))
 		}

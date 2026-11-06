@@ -46,11 +46,13 @@ func TestLoadManifestRegisterPositive(t *testing.T) {
 	}
 }
 
+// TestLoadManifestRegisterNegative proves manifest register parsing rejects invalid enum values, unknown fields, out-of-range bounds, and malformed keys.
 func TestLoadManifestRegisterNegative(t *testing.T) {
 	cases := map[string]struct{ section, want string }{
-		"unknown register":       {"register: {surfaces: {forge: loud}}\n", `unsupported text register "loud"`},
-		"non-string register":    {"register: {surfaces: {forge: 3}}\n", "text register must be a string enum"},
-		"unknown surface":        {"register: {surfaces: {slack: social}}\n", `unknown register surface "slack"`},
+		"unknown register":    {"register: {surfaces: {forge: loud}}\n", `unsupported text register "loud"`},
+		"non-string register": {"register: {surfaces: {forge: 3}}\n", "text register must be a string enum"},
+		"unknown surface":     {"register: {surfaces: {slack: social}}\n", `unknown register surface "slack"`},
+		// codespell:ignore-next-line regsiter
 		"misspelled section":     {"regsiter: {}\n", "regsiter"},
 		"misspelled nested key":  {"register: {surface: {forge: social}}\n", "surface"},
 		"unknown task field":     {"register: {tasks: {ci_debugging: {register: docs, budget: 300}}}\n", `"budget"`},
