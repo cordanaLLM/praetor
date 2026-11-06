@@ -3,10 +3,12 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // capLedger seeds only temporary state and supplies the first ratchet observation.
@@ -271,5 +273,43 @@ func TestStateFileCapBacklogUnderCapAndBoundary(t *testing.T) {
 	writeIntegrityFile(t, backlogPath, strings.Repeat("- [ ] later\n", BacklogStateEntryCap+1))
 	if _, err := CheckStateFileCaps(t.Context(), root, true); err == nil || !strings.Contains(err.Error(), "exceed cap") {
 		t.Fatalf("backlog overflow accepted: %v", err)
+	}
+}
+
+// TestStateFileCapLegacyCompletedRowGrowthRefused proves that growing completed rows above a legacy baseline is refused, while the same count passes.
+func TestStateFileCapLegacyCompletedRowGrowthRefused(t *testing.T) {
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	capsPath := filepath.Join(root, WorkingDirName, stateFileCapsName)
+	writeIntegrityFile(t, capsPath, `{"version":1,"files":{"OPEN.md":{"name":"OPEN.md","open":2,"completed":1,"bytes":100}}}`)
+	openPath := filepath.Join(root, WorkingDirName, "OPEN.md")
+	// Same count of completed rows (1 completed, 2 open) passes.
+	writeIntegrityFile(t, openPath, "- [ ] one\n- [ ] two\n- [x] done\n")
+	if _, err := CheckStateFileCaps(t.Context(), root, true); err != nil {
+		t.Fatalf("same completed count on legacy baseline rejected: %v", err)
+	}
+	// One more completed row (2 completed, 2 open) is refused by the ratchet.
+	writeIntegrityFile(t, openPath, "- [ ] one\n- [ ] two\n- [x] done\n- [x] extra done\n")
+	if _, err := CheckStateFileCaps(t.Context(), root, true); err == nil || !strings.Contains(err.Error(), "completed entries 2 exceed ratchet baseline 1") {
+		t.Fatalf("growing completed rows on legacy baseline accepted: %v", err)
+	}
+}
+
+// TestCheckStateFileCapsExpiredDeadlineReturnsWithoutMeasuring proves that an expired context returns a deadline error without measuring.
+func TestCheckStateFileCapsExpiredDeadlineReturnsWithoutMeasuring(t *testing.T) {
+	root := t.TempDir()
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Hour))
+	defer cancel()
+	usage, err := CheckStateFileCaps(expired, root, false)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded error, got: %v", err)
+	}
+	if strings.Contains(fmt.Sprint(err), "measure") {
+		t.Fatalf("expected error without measuring, got: %v", err)
+	}
+	if len(usage) != 0 {
+		t.Fatalf("expected no usage measurements on expired context, got: %v", usage)
 	}
 }
