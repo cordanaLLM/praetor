@@ -11,7 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
-// Live ledger limits are inclusive; ratchets bind only files whose recorded baseline exceeds a hard cap.
+// Live ledger limits are inclusive; ratchets bind only a file whose recorded baseline exceeds a hard cap or still holds completed rows (OPEN.md completed, BUGS.md resolved), per stateFileLegacy.
 const (
 	OpenStateEntryCap    = 150
 	OpenStateByteCap     = 64 << 10
@@ -26,8 +26,27 @@ type stateFileBaseline struct {
 	Files   map[string]LiveStateFileUsage `json:"files"`
 }
 
-// CheckStateFileCaps enforces hard caps on compliant state files and ratchets files carrying legacy excess against their recorded baseline.
+// boundStateCapsContext refuses a missing or expired context and bounds the measurement with the
+// contextopt deadline (HISS-02), so no file is observed after the caller's deadline.
+func boundStateCapsContext(ctx context.Context) (context.Context, context.CancelFunc, error) {
+	if ctx == nil {
+		return nil, nil, fmt.Errorf("check state file caps requires a context")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	bounded, cancel := context.WithTimeout(ctx, contextopt.MaxDuration)
+	return bounded, cancel, nil
+}
+
+// CheckStateFileCaps enforces hard caps on compliant state files and ratchets files whose recorded baseline exceeds a hard cap or still holds completed rows (OPEN.md completed, BUGS.md resolved), per stateFileLegacy, against their recorded baseline.
 func CheckStateFileCaps(ctx context.Context, rootPath string, record bool) ([]LiveStateFileUsage, error) {
+	ctx, cancel, err := boundStateCapsContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer cancel()
+
 	usage, err := MeasureLiveStateFiles(ctx, rootPath)
 	if err != nil {
 		return nil, err
@@ -125,6 +144,9 @@ func checkLiveStateFile(current, previous LiveStateFileUsage) error {
 		if current.Open > previous.Open {
 			failures = append(failures, fmt.Errorf("%s: open entries %d exceed ratchet baseline %d", current.Name, current.Open, previous.Open))
 		}
+		if current.Completed > previous.Completed {
+			failures = append(failures, fmt.Errorf("%s: completed entries %d exceed ratchet baseline %d", current.Name, current.Completed, previous.Completed))
+		}
 		if current.Bytes > previous.Bytes {
 			failures = append(failures, fmt.Errorf("%s: bytes %d exceed ratchet baseline %d", current.Name, current.Bytes, previous.Bytes))
 		}
@@ -159,7 +181,7 @@ func checkOpenStateFile(current, previous LiveStateFileUsage) error {
 	if previous.Bytes <= OpenStateByteCap && current.Bytes > OpenStateByteCap {
 		failures = append(failures, fmt.Errorf("%s: bytes %d exceed cap %d", current.Name, current.Bytes, OpenStateByteCap))
 	}
-	if previous.Open <= OpenStateEntryCap && previous.Bytes <= OpenStateByteCap && current.Completed > 0 {
+	if previous.Open <= OpenStateEntryCap && previous.Bytes <= OpenStateByteCap && previous.Completed == 0 && current.Completed > 0 {
 		failures = append(failures, fmt.Errorf("%s: %d completed rows remain live; run state task archive --apply", current.Name, current.Completed))
 	}
 	return errors.Join(failures...)

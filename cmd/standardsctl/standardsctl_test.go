@@ -1010,11 +1010,18 @@ func TestDispatchCommand_StateTaskLifecycle(t *testing.T) {
 	if err := dispatchCommand("state", []string{"task", "complete", "wire the gate", "--dir=" + tmpDir}); err != nil {
 		t.Fatalf("state task complete failed: %v", err)
 	}
+	archiveMonth := time.Now().UTC().Format("2006-01")
 	if err := dispatchCommand("state", []string{"task", "archive", "--apply", "--dir=" + tmpDir}); err != nil {
 		t.Fatalf("state task archive failed: %v", err)
 	}
 
-	backlog, err := os.ReadFile(filepath.Join(tmpDir, ".workingdir", "archive", "OPEN-"+time.Now().UTC().Format("2006-01")+".md"))
+	archiveDir := filepath.Join(tmpDir, ".workingdir", "archive")
+	archivePath := filepath.Join(archiveDir, "OPEN-"+archiveMonth+".md")
+	rel, err := filepath.Rel(archiveDir, archivePath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		t.Fatalf("archive path escaped archive directory: %q", rel)
+	}
+	backlog, err := os.ReadFile(archivePath)
 	if err != nil {
 		t.Fatalf("failed reading task archive: %v", err)
 	}

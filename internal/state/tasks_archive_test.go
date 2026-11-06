@@ -43,11 +43,40 @@ func TestTaskArchiveMonthlyAllFiles(t *testing.T) {
 // assertMonthlyArchiveFiles requires every expected month before checking the remaining live text.
 func assertMonthlyArchiveFiles(t *testing.T, dir string) {
 	t.Helper()
+	archiveDir := filepath.Join(dir, "archive")
 	for _, name := range []string{"OPEN-2026-09.md", "BACKLOG-2026-08.md", "BUGS-2026-07.md"} {
-		data, err := os.ReadFile(filepath.Join(dir, "archive", name))
+		validateMonthlyArchiveName(t, name)
+		archivePath := filepath.Join(archiveDir, name)
+		rel, err := filepath.Rel(archiveDir, archivePath)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+			t.Fatalf("archive path %s escaped archive directory %s: %v", archivePath, archiveDir, err)
+		}
+		data, err := os.ReadFile(archivePath)
 		if err != nil || len(data) == 0 {
 			t.Fatalf("monthly archive %s missing: %v", name, err)
 		}
+	}
+}
+
+// validateMonthlyArchiveName validates the archive file name against the monthly format written by tasks_archive.
+func validateMonthlyArchiveName(t *testing.T, name string) {
+	t.Helper()
+	if !strings.HasSuffix(name, ".md") {
+		t.Fatalf("archive file name %q missing .md suffix", name)
+	}
+	base := strings.TrimSuffix(name, ".md")
+	prefix, month, found := strings.Cut(base, "-")
+	if !found {
+		t.Fatalf("archive file name %q missing month separator", name)
+	}
+	validPrefix := prefix == strings.TrimSuffix(openLedgerName, ".md") ||
+		prefix == strings.TrimSuffix(bugLedgerName, ".md") ||
+		prefix == strings.TrimSuffix(backlogLedgerName, ".md")
+	if !validPrefix {
+		t.Fatalf("archive file name %q has unexpected prefix %q", name, prefix)
+	}
+	if _, err := time.Parse(archiveMonthLayout, month); err != nil {
+		t.Fatalf("archive file name %q has invalid month format %q: %v", name, month, err)
 	}
 }
 
@@ -136,6 +165,7 @@ func TestTaskArchiveFailureKeepsAllLiveRows(t *testing.T) {
 	bugs := defaultBugsMD() + "| `BUG-001` | fixed | p2 | resolved | file | 2026-09-12 |\n"
 	writeIntegrityFile(t, filepath.Join(dir, "OPEN.md"), open)
 	writeIntegrityFile(t, filepath.Join(dir, "BUGS.md"), bugs)
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
 	if err := os.MkdirAll(filepath.Join(dir, "archive", "BUGS-2026-09.md"), 0o700); err != nil {
 		t.Fatal(err)
 	}

@@ -276,9 +276,13 @@ files. The first successful `state sync` or archive `--apply` records the initia
 baseline. Existing excess is accepted at that baseline so it can be reduced
 incrementally. Each successful mutating check tightens each recorded dimension
 independently; none increases. The ratchet binds only a file whose recorded
-baseline exceeds a hard cap; growth within the hard caps passes. A file that crosses a hard limit downward cannot
-cross it upward again. Resolved bug rows are legacy debt until their baseline
-count reaches zero; after that, leaving one live fails. Status and `--verify`
+baseline exceeds a hard cap or still holds completed rows (`OPEN.md` completed,
+`BUGS.md` resolved), per `stateFileLegacy` (covered by
+`TestStateFileCapLegacyCompletedRowRatchet` and
+`TestStateFileCapBugsLegacyResolvedRowRatchet`); growth within the hard caps passes.
+A file that crosses a hard limit downward cannot cross it upward again.
+Resolved bug rows are legacy debt until their baseline count reaches zero; after
+that, leaving one live fails. Status and `--verify`
 never write or reset this baseline. Archive completed work before syncing a
 cleaned ledger; adding work above its recorded count or byte baseline fails.
 
