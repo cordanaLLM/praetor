@@ -1400,6 +1400,7 @@ print("fixture hook self-tests passed")
             self.assertIn("Commit message check: skipped, no pushed-range base", out.getvalue())
 
     def test_signature_check_passes_all_signed_commits(self):
+        """All G-status commits pass the signature check."""
         log_output = (
             "aaaa000000000000000000000000000000000000 G\n"
             "bbbb000000000000000000000000000000000000 G\n"
@@ -1415,6 +1416,7 @@ print("fixture hook self-tests passed")
         self.assertIn("verified", out.getvalue())
 
     def test_signature_check_refuses_unsigned_commit(self):
+        """N-status commit raises HookError listing only the bad SHA."""
         log_output = (
             "aaaa000000000000000000000000000000000000 G\n"
             "cccc000000000000000000000000000000000000 N\n"
@@ -1428,6 +1430,7 @@ print("fixture hook self-tests passed")
         self.assertNotIn("aaaa00000000", str(ctx.exception))
 
     def test_signature_check_refuses_unverifiable_key(self):
+        """U-status commit (unknown validity) is refused, not silently accepted."""
         log_output = "dddd000000000000000000000000000000000000 U\n"
         with mock.patch("hooks.run", return_value=b"true\n"), \
                 mock.patch("hooks.git", return_value=log_output.encode()), \
@@ -1437,6 +1440,7 @@ print("fixture hook self-tests passed")
         self.assertIn("unknown validity", str(ctx.exception))
 
     def test_signature_check_skips_without_base(self):
+        """None or empty base skips the check; git log is not called."""
         for base in (None, ""):
             with self.subTest(base=base), \
                     mock.patch("hooks.run", return_value=b"true\n"), \
@@ -1447,6 +1451,7 @@ print("fixture hook self-tests passed")
             self.assertIn("Signature check: skipped, no pushed-range base", out.getvalue())
 
     def test_signature_check_skips_when_gpgsign_disabled(self):
+        """commit.gpgsign=false skips the check entirely."""
         with mock.patch("hooks.run", return_value=b"false\n"), \
                 mock.patch("hooks.git") as git_cmd, \
                 mock.patch("sys.stdout", new_callable=io.StringIO) as out:
@@ -1455,6 +1460,7 @@ print("fixture hook self-tests passed")
         self.assertIn("Signature check: skipped, commit.gpgsign is not true", out.getvalue())
 
     def test_signature_check_skips_when_gpgsign_unset(self):
+        """Unset commit.gpgsign (empty output) skips the check."""
         with mock.patch("hooks.run", return_value=b""), \
                 mock.patch("hooks.git") as git_cmd, \
                 mock.patch("sys.stdout", new_callable=io.StringIO) as out:
