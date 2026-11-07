@@ -14,8 +14,8 @@ The console is the one screen the operator of a Praetor fleet reads: what needs 
 
 ## Stack
 
-- SvelteKit with Svelte 5 runes, `@sveltejs/adapter-static` (prerendered, no server), TypeScript, pnpm with a committed lockfile. Pin exact versions (checked 2026-10-19: `@sveltejs/kit` 3.1.0, `svelte` 5.57.2, `@sveltejs/adapter-static` 4.0.0).
-- Components from `golusoris/sveltesentio` on npm, exact pins: `@sveltesentio/ui` 0.8.0 (tag `ui-v0.8.0`) for controls, `@sveltesentio/realtime` 0.7.0 for live refresh over server-sent events. Read their READMEs and use what they provide before you write a component of your own.
+- SvelteKit with Svelte 5 runes, `@sveltejs/adapter-static` (prerendered, no server), TypeScript, pnpm with a committed lockfile. Pin exact versions (checked 2026-11-03: `@sveltejs/kit` 3.1.1, `svelte` 5.57.3, `@sveltejs/adapter-static` 4.0.1).
+- Components from `golusoris/sveltesentio` on npm, exact pins: `@sveltesentio/ui` 0.9.0 (tag `ui-v0.9.0`) for controls, `@sveltesentio/realtime` 0.8.0 for live refresh over server-sent events. Read their READMEs and use what they provide before you write a component of your own.
 - Look and feel: the design tokens of `cordanaLLM/Aegis-OS` at `ui/concordia-tokens` (`concordia-tokens.css`: colour, type, spacing, the 3 px focus ring), and the visual language of its Forum shell described in that repository's `docs/adr/0004-native-p05-shell-on-gpui.md` (take the look, not the code: that shell is native). Both repositories are public; copy only what you need, keep its licence notice, add the source to `REUSE.toml` and to `docs/credits.yaml` with the upstream commit.
 - Modern, calm, dark and light themes following the system setting with a manual switch; phone first, then wider layouts.
 - No heavy chart library. Small inline SVG is enough.
