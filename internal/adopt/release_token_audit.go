@@ -34,7 +34,24 @@ type ReleaseTokenOptions struct {
 // AuditReleaseToken is the release-token gate shared by the CLI and MCP audits.
 // Every release-please step in .github/workflows must obtain its token from an earlier
 // actions/create-github-app-token step in the same job, rather than using the default workflow token.
+// Repositories with their own release publisher must also disable release-please release creation.
 func AuditReleaseToken(ctx context.Context, opts ReleaseTokenOptions) (string, error) {
+	ownPublisher, err := AuditOwnReleasePublisher(ctx, opts.Root)
+	if err != nil {
+		return "", err
+	}
+	line, err := auditReleaseToken(ctx, opts)
+	if err != nil {
+		return "", err
+	}
+	if ownPublisher != "" {
+		line += "\n" + ownPublisher
+	}
+	return line, nil
+}
+
+// auditReleaseToken judges workflow token provenance independently of release ownership.
+func auditReleaseToken(ctx context.Context, opts ReleaseTokenOptions) (string, error) {
 	if ctx == nil {
 		return "", errors.New("[FAIL] " + releaseTokenGate + ": the audit requires a context")
 	}

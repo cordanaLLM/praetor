@@ -75,6 +75,31 @@ When no workflow invokes `release-please`, the gate skips:
 [SKIP] Release token not checked: no workflow under .github/workflows holds a release-please step.
 ```
 
+## Repository-owned release publisher (`release-own-publisher`)
+
+When a repository builds and publishes its own release assets, set `"skip-github-release": true` in its release-please configuration:
+
+```json
+{
+  "skip-github-release": true,
+  "packages": {
+    ".": {}
+  }
+}
+```
+
+The `release-own-publisher` check runs through `adopt.AuditReleaseToken`, shared by the CLI and MCP audits. Its implementation is [`internal/adopt/release_own_publisher.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/release_own_publisher.go); publisher detection reuses the bounded workflow and shell readers in [`internal/forge/release_publisher.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/forge/release_publisher.go). It checks `release-please-config.json` and `.github/release-please-config.json`; the corresponding `.release-please-manifest.json` paths also identify release-please repositories, but a version manifest alone cannot declare the skip setting.
+
+A publishing workflow has an executable step using `jellysin/release-helper/actions/publish`, `softprops/action-gh-release`, `ncipollo/release-action` or `actions/create-release`, or running `gh release create`, `gh release upload` or `gh release edit --draft=false`. A `goreleaser/goreleaser-action` step publishes when GoReleaser runs its release command: `args` starting with `release`, with only flags, or empty (GoReleaser runs `release` when no subcommand is given). It does not count with `install-only: true`, another subcommand such as `build`, a lone `--version` or `--help`, `--snapshot`, or a `--skip` list that names `publish`. Action references may use any version or commit. Comments, printed commands and steps or jobs with a constant-false condition do not count. Every configured package must resolve `skip-github-release` to `true`: a package value takes precedence over the top-level default, so a package setting of `false` fails even when the default is `true`. Setting it to `true` on every package also passes. Without a publisher or release-please configuration, this check skips with a stated reason. [`internal/adopt/release_own_publisher_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/release_own_publisher_test.go) exercises these cases through the shared audit entry point.
+
+Failures identify the configuration, publishing workflows and corrective setting:
+
+```text
+[FAIL] release-own-publisher: release-please-config.json: package "." does not resolve skip-github-release to true; publishing workflow(s): .github/workflows/release.yml; set "skip-github-release": true at the top level or on every package in release-please-config.json (including package overrides)
+```
+
+This prevents release-please from publishing immediately after its release pull request merges, before the repository's publisher attaches the built and signed assets. With [immutable releases](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases#immutable-releases), publication locks release assets and the tag; the repository's workflow must finish uploading assets to its draft before publishing.
+
 ## Release end-to-end test evidence gate (`release.e2e`)
 
 Both `praetorctl audit` (`cmd/standardsctl/audit_release_e2e.go`) and the MCP tool `standards_audit` (`cmd/standards-mcp/audit_tools.go`) also run the release end-to-end evidence gate (`release.AuditE2E` and `release.Judge` in `internal/release/e2e_gate.go`, order `engine-release-feature-e2e-gate-20261027`).
