@@ -1399,6 +1399,107 @@ print("fixture hook self-tests passed")
             run_cmd.assert_not_called()
             self.assertIn("Commit message check: skipped, no pushed-range base", out.getvalue())
 
+    def test_signature_check_passes_all_signed_commits(self):
+        """All G-status commits pass the signature check."""
+        log_output = (
+            "aaaa000000000000000000000000000000000000 G\n"
+            "bbbb000000000000000000000000000000000000 G\n"
+        )
+        with mock.patch("hooks.run", side_effect=[b"true\n", log_output.encode()]) as run_cmd, \
+                mock.patch("hooks.git", return_value=log_output.encode()) as git_cmd, \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            hooks.check_signature_range("base-sha", "head-sha")
+        git_cmd.assert_called_once_with(
+            "log", f"--max-count={hooks.MAX_SIGNATURE_COMMITS + 1}",
+            "--format=%H %G?", "base-sha..head-sha", "--",
+        )
+        self.assertIn("2 commit(s)", out.getvalue())
+        self.assertIn("verified", out.getvalue())
+
+    def test_signature_check_refuses_unsigned_commit(self):
+        """N-status commit raises HookError listing only the bad SHA."""
+        log_output = (
+            "aaaa000000000000000000000000000000000000 G\n"
+            "cccc000000000000000000000000000000000000 N\n"
+        )
+        with mock.patch("hooks.run", return_value=b"true\n"), \
+                mock.patch("hooks.git", return_value=log_output.encode()), \
+                self.assertRaises(HookError) as ctx:
+            hooks.check_signature_range("base-sha", "head-sha")
+        self.assertIn("cccc00000000", str(ctx.exception))
+        self.assertIn("no signature", str(ctx.exception))
+        self.assertNotIn("aaaa00000000", str(ctx.exception))
+
+    def test_signature_check_refuses_unverifiable_key(self):
+        """U-status commit (unknown validity) is refused, not silently accepted."""
+        log_output = "dddd000000000000000000000000000000000000 U\n"
+        with mock.patch("hooks.run", return_value=b"true\n"), \
+                mock.patch("hooks.git", return_value=log_output.encode()), \
+                self.assertRaises(HookError) as ctx:
+            hooks.check_signature_range("base-sha", "head-sha")
+        self.assertIn("dddd00000000", str(ctx.exception))
+        self.assertIn("unknown validity", str(ctx.exception))
+
+    def test_signature_check_skips_without_base(self):
+        """None or empty base skips the check; git log is not called."""
+        for base in (None, ""):
+            with self.subTest(base=base), \
+                    mock.patch("hooks.run", return_value=b"true\n"), \
+                    mock.patch("hooks.git") as git_cmd, \
+                    mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                hooks.check_signature_range(base, "head-sha")
+            git_cmd.assert_not_called()
+            self.assertIn("Signature check: skipped, no pushed-range base", out.getvalue())
+
+    def test_signature_check_skips_when_gpgsign_disabled(self):
+        """commit.gpgsign=false skips the check entirely."""
+        with mock.patch("hooks.run", return_value=b"false\n"), \
+                mock.patch("hooks.git") as git_cmd, \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            hooks.check_signature_range("base-sha", "head-sha")
+        git_cmd.assert_not_called()
+        self.assertIn("Signature check: skipped, commit.gpgsign not set to true", out.getvalue())
+
+    def test_signature_check_skips_when_gpgsign_unset(self):
+        """Unset commit.gpgsign (empty output) skips the check."""
+        with mock.patch("hooks.run", return_value=b""), \
+                mock.patch("hooks.git") as git_cmd, \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            hooks.check_signature_range("base-sha", "head-sha")
+        git_cmd.assert_not_called()
+        self.assertIn("Signature check: skipped, commit.gpgsign not set to true", out.getvalue())
+
+    def test_signature_check_refuses_range_exceeding_limit(self):
+        """Range with more than MAX_SIGNATURE_COMMITS commits raises HookError."""
+        lines = [f"{i:040x} G" for i in range(hooks.MAX_SIGNATURE_COMMITS + 1)]
+        log_output = "\n".join(lines) + "\n"
+        with mock.patch("hooks.run", return_value=b"true\n"), \
+                mock.patch("hooks.git", return_value=log_output.encode()), \
+                self.assertRaises(HookError) as ctx:
+            hooks.check_signature_range("base-sha", "head-sha")
+        self.assertIn("exceeds", str(ctx.exception))
+        self.assertIn(str(hooks.MAX_SIGNATURE_COMMITS), str(ctx.exception))
+
+    def test_signature_check_accepts_range_at_limit(self):
+        """Exactly MAX_SIGNATURE_COMMITS commits passes without overflow error."""
+        lines = [f"{i:040x} G" for i in range(hooks.MAX_SIGNATURE_COMMITS)]
+        log_output = "\n".join(lines) + "\n"
+        with mock.patch("hooks.run", return_value=b"true\n"), \
+                mock.patch("hooks.git", return_value=log_output.encode()), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            hooks.check_signature_range("base-sha", "head-sha")
+        self.assertIn(f"{hooks.MAX_SIGNATURE_COMMITS} commit(s)", out.getvalue())
+
+    def test_signature_check_refuses_malformed_log_line(self):
+        """Unparseable git log line raises HookError instead of silent skip."""
+        log_output = "aaaa000000000000000000000000000000000000 G\nmalformed-line\n"
+        with mock.patch("hooks.run", return_value=b"true\n"), \
+                mock.patch("hooks.git", return_value=log_output.encode()), \
+                self.assertRaises(HookError) as ctx:
+            hooks.check_signature_range("base-sha", "head-sha")
+        self.assertIn("unparseable", str(ctx.exception))
+        self.assertIn("malformed-line", str(ctx.exception))
+
     def test_real_checkpoint_push_builds_and_tests_without_release_receipt(self):
         skip_without_race_detector(self)
         self.write("go.mod", "module example.test/checkpoint\n\ngo 1.27\n")
