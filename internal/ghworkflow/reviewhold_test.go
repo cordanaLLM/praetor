@@ -1104,6 +1104,38 @@ func TestReviewHoldGateJobConstants(t *testing.T) {
 	}
 }
 
+// Negative: ReviewHoldGateCheck must fail closed — == 'success', not != 'failure'.
+// A != 'failure' check passes when the review-check step is skipped (empty outcome),
+// letting heavy legs run without review clearance.
+func TestReviewHoldGateCheckFailsClosed(t *testing.T) {
+	if strings.Contains(ReviewHoldGateCheck, "!= 'failure'") {
+		t.Fatal("ReviewHoldGateCheck must use == 'success' (fail closed), not != 'failure' (fail open)")
+	}
+	if !strings.Contains(ReviewHoldGateCheck, "== 'success'") {
+		t.Fatal("ReviewHoldGateCheck must check == 'success' so a skipped or errored review-check blocks heavy legs")
+	}
+}
+
+// Negative: ReviewCheckCondition must always run on non-draft PRs so it
+// produces a definitive outcome for the fail-closed gate check.
+func TestReviewCheckConditionAlwaysRuns(t *testing.T) {
+	if strings.Contains(ReviewCheckCondition, "needs.review-gate.result") {
+		t.Fatal("ReviewCheckCondition must not gate on needs.review-gate.result; the step must always run to produce a definitive outcome for the == 'success' gate check")
+	}
+	if !strings.Contains(ReviewCheckCondition, "draft") {
+		t.Fatal("ReviewCheckCondition must still skip on draft PRs")
+	}
+}
+
+// Positive: RenderReviewCheckStep produces a step that exits 0 when review-gate
+// succeeds, so outcome == 'success' and heavy legs run.
+func TestReviewCheckStepExitsZeroOnClear(t *testing.T) {
+	step := RenderReviewCheckStep()
+	if !strings.Contains(step, "exit 0") {
+		t.Fatal("review-check step must exit 0 when review-gate succeeds so that outcome == 'success' lets heavy legs proceed")
+	}
+}
+
 // reviewBotTermsMatch evaluates configured bot terms against the supplied event fields.
 func reviewBotTermsMatch(terms string, fields map[string]string) bool {
 	for field, value := range fields {

@@ -50,12 +50,15 @@ const (
 	HostedGateLegReady = ReviewHoldClear + " && !cancelled() && " + HostedGateNotDraft
 	// ReviewCheckMessage is the annotation and summary body for the review-check step.
 	ReviewCheckMessage = "Heavy tier held while review threads are unresolved or bot reviews are pending. The gate runs automatically when they clear."
-	// ReviewCheckCondition fires the review-check step when the gate did not succeed on a non-draft PR.
-	ReviewCheckCondition = "needs.review-gate.result != 'success' && " + HostedGateNotDraft
+	// ReviewCheckCondition fires the review-check step on every non-draft PR run.
+	// The step always produces a definitive outcome (success or failure) so that
+	// ReviewHoldGateCheck can use == 'success' (fail closed) instead of != 'failure'.
+	ReviewCheckCondition = HostedGateNotDraft
 	// ReviewHoldGateCheck guards heavy matrix legs in the gate-job pattern where a
 	// dedicated review-gate job runs the hold and the matrix legs read its result.
-	// Steps with !cancelled() carry this so they do not run after the gate-check failure.
-	ReviewHoldGateCheck = "steps.review-check.outcome != 'failure'"
+	// Fail closed: if review-check does not run or errors, outcome is not 'success'
+	// and the heavy steps are skipped.
+	ReviewHoldGateCheck = "steps.review-check.outcome == 'success'"
 	// HostedGateGateLegReady guards heavy legs in the gate-job pattern.
 	HostedGateGateLegReady = "!cancelled() && " + HostedGateNotDraft + " && " + ReviewHoldGateCheck
 	// reviewHoldLibrary is trusted inline Bash: release never checks out pull request code.
@@ -197,8 +200,10 @@ func RenderReviewHoldStep(_ bool) string {
 }
 
 // RenderReviewCheckStep renders the gate-check step for heavy matrix legs.
-// The step fires when review-gate did not succeed on a non-draft PR and emits
-// an annotation with a properly escaped title (colons → %3A).
+// The step always runs on non-draft PRs and produces a definitive outcome:
+// exit 0 (success) when review-gate succeeded, exit 1 (failure) with an
+// annotation when it did not. This lets ReviewHoldGateCheck use == 'success'
+// (fail closed).
 func RenderReviewCheckStep() string {
 	escaped := strings.ReplaceAll(ReviewHoldTitle, ":", "%3A")
 	return "      - name: Stop on held review\n" +
@@ -206,10 +211,14 @@ func RenderReviewCheckStep() string {
 		"        if: " + ReviewCheckCondition + "\n" +
 		"        shell: bash\n" +
 		"        env:\n" +
+		"          GATE_RESULT: ${{ needs.review-gate.result }}\n" +
 		"          TITLE: '" + escaped + "'\n" +
 		"          MESSAGE: >-\n" +
 		"            " + ReviewCheckMessage + "\n" +
 		"        run: |\n" +
+		"          if [ \"$GATE_RESULT\" = \"success\" ]; then\n" +
+		"            exit 0\n" +
+		"          fi\n" +
 		"          echo \"::error title=$TITLE::$MESSAGE\"\n" +
 		"          echo \"$MESSAGE\" >> \"$GITHUB_STEP_SUMMARY\"\n" +
 		"          exit 1\n"
