@@ -1,29 +1,20 @@
 // SPDX-FileCopyrightText: 2026 Lusoris <lusoris@proton.me>
 // SPDX-License-Identifier: EUPL-1.2
 // @vitest-environment node
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { build } from 'vite';
 import { afterEach, expect, test } from 'vitest';
 import { LIMIT, measure } from './bundle-budget.mjs';
+import { fixtureIO, temporaryFixtures } from './fixtures';
 
-const roots: string[] = [];
-afterEach(async () => {
-	for (const root of roots) await rm(root, { recursive: true, force: true });
-	roots.length = 0;
-});
-
-async function fixture(): Promise<string> {
-	await mkdir('test-results', { recursive: true });
-	const root = await mkdtemp(path.resolve('test-results/budget-'));
-	roots.push(root);
-	return root;
-}
+const fixtures = temporaryFixtures('budget-');
+const { writeFile, rm } = fixtureIO;
+afterEach(() => fixtures.cleanup());
 
 test('counts modulepreloads, transitive imports and inline JS once; rejects missing modules', async () => {
-	const root = await fixture();
+	const root = await fixtures.create();
 	await writeFile(
 		path.join(root, 'index.html'),
 		'<link rel="modulepreload" href="/entry.js"><script type="module" src="entry.js"></script><script>window.ready = true;</script>'
@@ -39,7 +30,7 @@ test('counts modulepreloads, transitive imports and inline JS once; rejects miss
 });
 
 test('planted overrun: a real fixture build importing a large module fails the budget CLI', async () => {
-	const root = await fixture();
+	const root = await fixtures.create();
 	await writeFile(path.join(root, 'index.html'), '<script type="module" src="/entry.js"></script>');
 	await writeFile(
 		path.join(root, 'entry.js'),
