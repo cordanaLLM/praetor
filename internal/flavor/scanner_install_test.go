@@ -25,7 +25,7 @@ func TestScannerInstallGuide_3D(t *testing.T) {
 		t.Fatalf("absent tools module: %s", got)
 	}
 	pin := filepath.Join(root, "tools/go/go.mod")
-	if err := os.MkdirAll(pin, 0o755); err != nil {
+	if err := os.MkdirAll(pin, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if got := flavor.ScannerInstallGuide(root, "gosec", fallback); got != fallback {
