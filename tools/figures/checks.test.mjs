@@ -12,7 +12,7 @@ import {
   declaredHooks, enabledKinds, engineHash, excludedPatterns, expand, fenceBlocks, fences, figureSlug, figureSlugs, filesDigest, fillSlots,
   frontmatterSlug, globRegExp, htmlErrors, isExcluded, kindErrors, markdownPages, pageOutput, patternMatches, portable, quoted,
   refreshMarkers, renderedDiagrams, scanPage, siteConfigs, siteFlavor, siteUrl, sizeErrors, sourceSites, sources, starlightOutput, starlightPages,
-  svgSpecError,
+  readBoundedBytes, svgSpecError,
 } from './checks.mjs';
 import { ENGINE_FILES, markup, sha256 } from './core.mjs';
 import { main } from './build.mjs';
@@ -949,6 +949,33 @@ test('sources: an unreadable JSON is a usage failure, not a pass', () => withTem
   assert.throws(() => sources(dir), /does not hold a JSON object/);
   write(join(dir, OUT_DIR, 'demo.json'), '{');
   assert.throws(() => sources(dir), /cannot parse/);
+}));
+
+test('readBoundedBytes returns exact bytes at limit, refuses limit + 1 and refuses a missing file', () => withTempDir((dir) => {
+  const exactPath = join(dir, 'exact.txt');
+  const content = 'hello world';
+  write(exactPath, content);
+  const limit = Buffer.byteLength(content);
+
+  const exactBytes = readBoundedBytes(exactPath, limit);
+  assert.equal(exactBytes.toString('utf8'), content);
+  assert.equal(exactBytes.length, limit);
+
+  assert.throws(
+    () => readBoundedBytes(exactPath, limit - 1),
+    (err) => err instanceof CheckError && err.message.includes(`exceeds ${limit - 1} bytes`),
+  );
+
+  const chunked = join(dir, 'chunked.txt');
+  const many = 'x'.repeat(200 * 1024);
+  write(chunked, many);
+  assert.equal(readBoundedBytes(chunked, many.length).length, many.length, 'a file spanning several read chunks is read whole');
+  assert.throws(() => readBoundedBytes(chunked, many.length - 1), /exceeds/);
+
+  assert.throws(
+    () => readBoundedBytes(join(dir, 'missing.txt'), limit),
+    (err) => err instanceof CheckError && err.message.includes('cannot read'),
+  );
 }));
 
 test('sources: editing the wrapper or the checks keeps the figures current', () => withTempDir((dir) => {
