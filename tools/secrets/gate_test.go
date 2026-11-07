@@ -142,7 +142,7 @@ func TestGate_ExceptionsLifecycle_3D(t *testing.T) {
 
 	t.Run("expired entry fails", func(t *testing.T) {
 		entries := []rules.Entry{
-			{Path: "creds.py", RuleID: "generic-api-key", Expires: lifecycleDate(-30), Reason: "expired test waiver"},
+			{Path: "creds.py", RuleID: "generic-api-key", Expires: lifecycleDate(-30), Category: "C", Entered: lifecycleDate(-35), Reason: "expired test waiver"},
 		}
 		out, exitCode := runGateLifecycleCase(t, entries)
 		if exitCode != 3 {
