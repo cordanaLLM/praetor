@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -17,8 +19,11 @@ const lefthookProbeTimeout = 10 * time.Second
 type hookActivation uint8
 
 const (
-	// hooksNone: git-hooks declined, or lefthook.yml is not praetor's rendering.
+	// hooksNone: git-hooks declined and no lefthook.yml exists.
 	hooksNone hookActivation = iota
+	// hooksRepositoryOwned: existing configuration kept without reading its jobs for credit
+	// (order engine-adopt-force-gate-detect-20261027).
+	hooksRepositoryOwned
 	// hooksInactive: praetor's lefthook.yml, but lefthook will not install its hooks here.
 	hooksInactive
 	// hooksLefthook: praetor's lefthook.yml with its hooks installed by lefthook.
@@ -66,11 +71,22 @@ func (s *adoptSession) plannedHookActivation(ctx context.Context) (hookActivatio
 		return hooksNone, fmt.Errorf("resolve adoption.decline for the harness: %w", err)
 	}
 	if declined {
+		_, exists, err := s.readExistingLefthook()
+		if err != nil {
+			return hooksNone, err
+		}
+		if exists {
+			return hooksRepositoryOwned, nil
+		}
 		return hooksNone, nil
 	}
 	owned, err := s.plannedLefthookOwned(ctx)
-	if err != nil || !owned {
+	if err != nil {
 		return hooksNone, err
+	}
+	if !owned {
+		// An absent file is planned as owned; false means an existing file is kept.
+		return hooksRepositoryOwned, nil
 	}
 	if s.opts.SkipHookActivation || !lefthookRunnable(ctx) {
 		return hooksInactive, nil
@@ -113,4 +129,47 @@ func (s *adoptSession) plannedLefthookOwned(ctx context.Context) (bool, error) {
 	}
 	match := matchCurrentLefthook(existing, shape)
 	return identity.prior || match.exact || (match.found && s.opts.Force), nil
+}
+
+// workingTreeGates detects a Makefile with verify-all and a lefthook.yml in the working tree so
+// the harness legend never writes "no gates" when either exists on disk (order
+// engine-adopt-force-gate-detect-20261027-refinement-20261101).
+func (s *adoptSession) workingTreeGates(ctx context.Context, pipelines hisscatalog.Pipeline, hooks hookActivation) (hisscatalog.Pipeline, error) {
+	var repositoryOwned hisscatalog.Pipeline
+	hasVerify, err := s.workingTreeVerifyAll(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if pipelines&hisscatalog.PipelineVerifyAll == 0 && hasVerify {
+		repositoryOwned |= hisscatalog.PipelineVerifyAll
+	}
+	if hooks == hooksRepositoryOwned {
+		repositoryOwned |= hisscatalog.PipelineLefthook
+	}
+	return repositoryOwned, nil
+}
+
+// workingTreeVerifyAll reports whether the working tree defines an active verify-all target.
+func (s *adoptSession) workingTreeVerifyAll(ctx context.Context) (bool, error) {
+	if s.verification.Status == verificationPreserved {
+		return true, nil
+	}
+	full, err := repoFile(s.repoPath, makefileName)
+	if err != nil {
+		return false, err
+	}
+	data, exists, err := contextopt.ObserveSnapshot(ctx, full)
+	if err != nil || !exists {
+		return false, err
+	}
+	return makefileHasVerifyAll(data), nil
+}
+
+// makefileHasVerifyAll reports whether the Makefile content defines an active verify-all target,
+// ignoring unavailable verification placeholders in recipes belonging to other targets.
+func makefileHasVerifyAll(data []byte) bool {
+	text, _ := util.NormalizeLineEndings(string(data))
+	text = withoutDocumentationMakefileBlock(text)
+	recipe, _ := util.MakefileTargetRecipe(text, verificationTarget)
+	return mayDefineVerificationTarget(text) && !strings.Contains(recipe, unavailableVerificationRecipe)
 }

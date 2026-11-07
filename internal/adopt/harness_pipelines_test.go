@@ -245,3 +245,51 @@ func uncredited(row string) bool {
 	}
 	return strings.HasSuffix(row, "| unknown | advisory |") || strings.Contains(row, "| `praetorctl audit` ")
 }
+
+// TestWorkingTreeVerifyAllRecipeOwnership checks repository-owned gates when makefile adoption
+// is declined: another target's placeholder cannot hide verify-all, its own placeholder disables
+// it, and a file without verify-all records no verification gate.
+func TestWorkingTreeVerifyAllRecipeOwnership(t *testing.T) {
+	cases := []struct {
+		name, makefile string
+		want           hisscatalog.Pipeline
+	}{
+		{
+			name:     "placeholder under another target",
+			makefile: "verify-all:\n\t@echo repository gate\n\ntest:\n" + unavailableVerificationRecipe,
+			want:     hisscatalog.PipelineVerifyAll,
+		},
+		{
+			name:     "placeholder inside verify-all",
+			makefile: "verify-all:\n" + unavailableVerificationRecipe,
+		},
+		{
+			name:     "no verify-all target",
+			makefile: "test:\n" + unavailableVerificationRecipe,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &adoptSession{
+				repoPath:     t.TempDir(),
+				verification: &VerificationPlan{Status: verificationUnavailable},
+				declined:     []string{"makefile", "git-hooks"},
+			}
+			mustWrite(t, filepath.Join(s.repoPath, makefileName), tc.makefile)
+			pipelines, hooks, err := s.generatedPipelines(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if pipelines != 0 || hooks != hooksNone {
+				t.Fatalf("declined steps generated pipelines %v, hooks %v", pipelines, hooks)
+			}
+			got, err := s.workingTreeGates(t.Context(), pipelines, hooks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Errorf("repository-owned pipelines = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
