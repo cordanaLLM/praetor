@@ -231,6 +231,32 @@ func TestAuditWorkflowTriggers_NeedSkipWhateverTheCondition(t *testing.T) {
 	}
 }
 
+// A job that needs a held gate, begins with the draft step, and has !cancelled() in its condition
+// stops a draft on its own: !cancelled() lets it run after the held gate and the draft step catches
+// the draft. Without the draft step or without !cancelled() the finding stands.
+func TestAuditWorkflowTriggers_CancelGuardWithDraftStep(t *testing.T) {
+	gate := "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\njobs:\n" +
+		"  gate:\n    runs-on: x\n    steps:\n" + ghworkflow.HostedGateDraftStep + gateRunStep
+	cancelGuardDraft := gate + "  ci:\n    needs: gate\n    if: \"!cancelled()\"\n    runs-on: x\n    steps:\n" +
+		ghworkflow.HostedGateDraftStep + "      - run: make\n"
+	out := auditTriggers(t, triggerRepository(t, map[string]string{"x.yml": cancelGuardDraft}))
+	if strings.Contains(out, "may be skipped on a draft") {
+		t.Errorf("a !cancelled() job with draft step should not be reported as draftNeedSkip:\n%s", out)
+	}
+	noDraft := gate + "  ci:\n    needs: gate\n    if: \"!cancelled()\"\n    runs-on: x\n    steps:\n" +
+		"      - run: make\n"
+	out = auditTriggers(t, triggerRepository(t, map[string]string{"x.yml": noDraft}))
+	if !strings.Contains(out, "may be skipped on a draft") {
+		t.Errorf("a !cancelled() job without draft step should still be reported:\n%s", out)
+	}
+	noCancel := gate + "  ci:\n    needs: gate\n    if: always()\n    runs-on: x\n    steps:\n" +
+		ghworkflow.HostedGateDraftStep + "      - run: make\n"
+	out = auditTriggers(t, triggerRepository(t, map[string]string{"x.yml": noCancel}))
+	if !strings.Contains(out, "may be skipped on a draft") {
+		t.Errorf("an always() job with draft step but no cancel guard should still be reported:\n%s", out)
+	}
+}
+
 // A job calling a reusable workflow of this repository stops a draft only when the callee's jobs,
 // judged with their needs, each stop it. Negative: a callee job that needs another one beginning
 // with the draft step is skipped on a draft and reported as successful, so the caller is

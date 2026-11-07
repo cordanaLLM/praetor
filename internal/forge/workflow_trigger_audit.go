@@ -540,9 +540,14 @@ func ownDraftHandling(job *workflowJob, work draftHandling) draftHandling {
 // so (`!failure() && !cancelled()`, `always() && needs.plan.result == 'success'`), so the check
 // protects by default and reads none.
 //
-// The exception is the proven opt-in draft skip, its always() aggregate and covered dependents,
-// which the caller settles first (draftProvenSkip, docs/guides/workflow-triggers.md); any other
-// such workflow is declared in the exceptions list (Limits).
+// Two exceptions bypass the conservative need judgement:
+//  1. The proven opt-in draft skip, its always() aggregate and covered dependents, which the
+//     caller settles first (draftProvenSkip, docs/guides/workflow-triggers.md).
+//  2. A job that begins with the draft step and has !cancelled() in its condition: the cancel
+//     guard keeps it running after a held need, and the draft step catches the draft (the
+//     gate-job pattern, order fleet-ci-tier-after-bot-review-20261101).
+//
+// Any other such workflow is declared in the exceptions list (Limits).
 func decideJob(job *workflowJob, work draftHandling, decided map[string]jobDecision) jobDecision {
 	if work == draftProvenSkip {
 		return jobDecision{handling: draftStops}
@@ -552,6 +557,9 @@ func decideJob(job *workflowJob, work draftHandling, decided map[string]jobDecis
 		return jobDecision{handling: own}
 	}
 	if byNeed, held := needDecision(job.NeedIDs(), decided, strings.TrimSpace(job.If) == ""); held {
+		if byNeed.handling == draftNeedSkip && own == draftStops && hasLeadingCancelGuard(job.If) {
+			return jobDecision{handling: draftStops}
+		}
 		return byNeed
 	}
 	return jobDecision{handling: own}
@@ -650,6 +658,21 @@ func calleeWork(jobs map[string]workflowJob) draftHandling {
 		}
 	}
 	return result
+}
+
+// hasLeadingCancelGuard reports whether condition carries a leading !cancelled() guard after
+// stripping the renovate branch skip. A leading !cancelled() keeps a job running after a held or
+// skipped need, unlike !failure()&&!cancelled() which prevents running on a failed need.
+func hasLeadingCancelGuard(condition string) bool {
+	trimmed := strings.TrimSpace(condition)
+	if trimmed == "!cancelled()" {
+		return true
+	}
+	rest, found := strings.CutPrefix(trimmed, renovateBranchSkip+" && ")
+	if !found {
+		rest = trimmed
+	}
+	return strings.TrimSpace(rest) == "!cancelled()" || withoutLeadingCancelGuard(strings.TrimSpace(rest)) != strings.TrimSpace(rest)
 }
 
 // reportsSuccessOnDraft reports whether a job with handling h reports success on a draft without
