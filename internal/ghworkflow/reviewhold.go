@@ -48,6 +48,10 @@ const (
 	ReviewHoldClear = "(github.event_name != 'pull_request' && github.event_name != 'pull_request_review' || steps.review-hold.outputs.clear == 'true')"
 	// HostedGateLegReady guards heavy legs after review clearance, including steps run after failure.
 	HostedGateLegReady = ReviewHoldClear + " && !cancelled() && " + HostedGateNotDraft
+	// ReviewCheckMessage is the annotation and summary body for the review-check step.
+	ReviewCheckMessage = "Heavy tier held while review threads are unresolved or bot reviews are pending. The gate runs automatically when they clear."
+	// ReviewCheckCondition fires the review-check step when the gate did not succeed on a non-draft PR.
+	ReviewCheckCondition = "needs.review-gate.result != 'success' && " + HostedGateNotDraft
 	// ReviewHoldGateCheck guards heavy matrix legs in the gate-job pattern where a
 	// dedicated review-gate job runs the hold and the matrix legs read its result.
 	// Steps with !cancelled() carry this so they do not run after the gate-check failure.
