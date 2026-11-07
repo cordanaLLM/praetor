@@ -78,25 +78,9 @@ tests the nested module `tools/schemacheck`, which `./...` of the root module do
 
 ### Review hold before heavy work
 
-On `pull_request` events, the Linux and macOS matrix and Windows shards run
-`Stop while review is open` immediately after the draft barrier. The aggregate job `windows` now
-runs the shared hold step first, so a held run's aggregate fails with the hold title too and the
-lander reads it as held. It still fails when a shard fails, is cancelled or is skipped. A leg
-polls unresolved threads and pending bot reviews every 30 seconds for up to 10 minutes, continuing
-as soon as both counts are zero. If review remains open at the deadline, the leg
-fails with annotation title **`Gate held: review open`**, writes the unresolved-thread count and
-pending bot check names to its summary, and runs no subsequent matrix step. The step escapes the
-title and message without quoted patterns, because macOS runners use `/bin/bash` 3.2, which keeps
-quotes inside `${var//pattern/replacement}`; a static test refuses quoted forms. The step declares an
-explicit `timeout-minutes: 15` (`ghworkflow.ReviewHoldStepTimeoutMinutes`).
-The wall-clock polling deadline permits at most 20 retries after the initial snapshot. Each recount
-retains the 20-page bound across 3 API collections (at most 60 requests); the final recount may
-finish after the polling deadline. A 4-second per-request sizing budget allows 240 seconds for that
-recount, plus 60 seconds for parsing and cleanup: 600 + 240 + 60 = 900 seconds. This budget is not
-a client-side HTTP timeout; the runner step timeout also bounds stalled API calls. Every later step
-carries the explicit `steps.review-hold.outputs.clear` condition, including steps that normally run
-after a failure. Push,
-merge-group and manual runs retain their existing behavior.
+A dedicated `review-gate` job runs the review-hold polling barrier once for the entire workflow. On `pull_request` and `pull_request_review` (submitted, dismissed) events, it polls unresolved threads and pending bot reviews every 30 seconds for up to 10 minutes, continuing as soon as both counts are zero. If review remains open at the deadline, the job fails with annotation title **`Gate held: review open`**, writes the unresolved-thread count and pending bot check names to its summary. The step escapes the title and message without quoted patterns, because macOS runners use `/bin/bash` 3.2, which keeps quotes inside `${var//pattern/replacement}`; a static test refuses quoted forms. The step declares an explicit `timeout-minutes: 15` (`ghworkflow.ReviewHoldStepTimeoutMinutes`). The wall-clock polling deadline permits at most 20 retries after the initial snapshot. Each recount retains the 20-page bound across 3 API collections (at most 60 requests); the final recount may finish after the polling deadline. A 4-second per-request sizing budget allows 240 seconds for that recount, plus 60 seconds for parsing and cleanup: 600 + 240 + 60 = 900 seconds. This budget is not a client-side HTTP timeout; the runner step timeout also bounds stalled API calls.
+
+Matrix legs (harness for Linux/macOS, windows-shard for Windows) depend on `review-gate` through `needs: [review-gate]`. Each carries a step-level gate check: a `review-check` step that always runs on non-draft PRs (`ReviewCheckCondition`), reads `needs.review-gate.result` from an environment variable, exits 0 on success and exits 1 with an annotation on failure. Every heavy step then requires `steps.review-check.outcome == 'success'` (`ReviewHoldGateCheck`, fail closed): a skipped, errored or failed review-check blocks all heavy steps. The `!cancelled()` job-level condition keeps the matrix leg running so it emits the held annotation rather than silently skipping. The `windows` aggregate depends only on `windows-shard` (transitive hold, no direct `review-gate` dependency). Push, merge-group and manual runs retain their existing behavior.
 
 `internal/ghworkflow/reviewhold.go` owns the shared GraphQL thread query, Bash counter and
 `ReviewHoldBots` pattern: CodeRabbit, Codacy Static Code Analysis and sourcery-ai, matched without
@@ -128,8 +112,7 @@ PR code. Its token has Actions write and pull-request, Checks and commit-status 
 permissions. Fork runs with an empty `pull_requests` array match the PR by both head repository
 full name and head SHA; runs with PR associations retain the PR-number match. Review-event tokens
 on forks may lack write permission; the scheduled workflow on the default branch provides the
-retry path after this workflow lands there. The pilot covers
-this platform workflow; adoption rollout can reuse `RenderReviewHoldStep` and the same counter.
+retry path after this workflow lands there. The pilot covers this platform workflow; adoption rollout can reuse `RenderReviewHoldStep`, `RenderReviewCheckStep` and the same counter.
 The platform workflow shares its inline script through a YAML anchor to stay within the metadata
 reader size bound. Committed copies are checked against their renderers by `TestReviewHoldRendering`, and
 `TestReviewHoldCounter` / `TestReviewHoldRelease` execute the actual Bash and jq against API
