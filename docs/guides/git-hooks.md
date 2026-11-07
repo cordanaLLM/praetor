@@ -762,7 +762,7 @@ pull request (`.github/workflows/ci.yml`, the two steps after the documentation 
 | `pre-commit`: whitespace errors and conflict markers (`git diff --cached --check`) | `python3 -B .config/lefthook/scripts/hooks.py commits origin/<base>`, which runs `git log --check` over the range | `CommitRange` in `.config/lefthook/scripts/test_hooks.py` |
 | `pre-commit` and `pre-push`: private `.workingdir` content | the same stage, through `check_private_history` | `CommitRange` |
 | `pre-push`: refuse merge commits dropping first-parent work (Order: engine-dropped-hunk-gate-20261027) | `praetorctl merge-check [--range <a>..<b>]` | `TestMergeCheck_*` |
-| `pre-push`: refuse unsigned or unverifiable commits when `commit.gpgsign` is `true`; fail closed on oversize ranges and unparseable log output | `check_signature_range` in `.config/lefthook/scripts/hooks.py`; forge rulesets cover the merge path | `test_signature_check_*` in `.config/lefthook/scripts/test_hooks.py` |
+| `pre-push`: refuse unsigned or unverifiable commits when `commit.gpgsign` is `true`; fail closed on oversize ranges and unparseable log output | not re-run in CI; the forge ruleset (`main`, `lts-*`) separately requires signed commits on protected branches | `test_signature_check_*` in `.config/lefthook/scripts/test_hooks.py` |
 
 The `refactor:` row checks the preparatory refactoring practice, from Martin Fowler's
 [Preparatory Refactoring](https://martinfowler.com/articles/preparatory-refactoring-example.html)
