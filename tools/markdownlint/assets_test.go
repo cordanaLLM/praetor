@@ -96,15 +96,6 @@ func containsExactLFLine(text, want string) bool {
 // dependencies and pins the katex and re2js overrides to exact releases, and that the lock pins
 // every package it installs (Positive: the shipped files pass; the assertions fail on any drift).
 func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
-	wantDirect := map[string]string{
-		"js-yaml":                   "5.5.0",
-		"jsonc-parser":              "3.3.1",
-		"markdownlint":              "0.42.0",
-		"micromark":                 "4.0.3",
-		"micromark-extension-mdxjs": "3.0.0",
-		"parse5":                    "8.0.1",
-		"smol-toml":                 "1.9.1",
-	}
 	manifestData, err := Read("package.json")
 	if err != nil {
 		t.Fatal(err)
@@ -115,6 +106,19 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	}
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		t.Fatalf("decode package manifest: %v", err)
+	}
+	parse5Version := manifest.Dependencies["parse5"]
+	if parse5Version == "" {
+		t.Fatal("parse5 not listed in package.json dependencies")
+	}
+	wantDirect := map[string]string{
+		"js-yaml":                   "5.5.0",
+		"jsonc-parser":              "3.3.1",
+		"markdownlint":              "0.42.0",
+		"micromark":                 "4.0.3",
+		"micromark-extension-mdxjs": "3.0.0",
+		"parse5":                    parse5Version,
+		"smol-toml":                 "1.9.1",
 	}
 	assertDirectDependencies(t, manifest.Dependencies, wantDirect)
 	// micromark-extension-math, which markdownlint pins, asks for katex ^0.16.0, and every
@@ -166,8 +170,8 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	if lock.Packages["node_modules/micromark-extension-mdxjs"].Version != "3.0.0" {
 		t.Fatal("micromark-extension-mdxjs is not pinned to 3.0.0")
 	}
-	if lock.Packages["node_modules/parse5"].Version != "8.0.1" {
-		t.Fatal("parse5 is not pinned to 8.0.1")
+	if lock.Packages["node_modules/parse5"].Version != parse5Version {
+		t.Fatalf("parse5 lock version %q does not match manifest %q", lock.Packages["node_modules/parse5"].Version, parse5Version)
 	}
 	for name, version := range wantOverrides {
 		if got := lock.Packages["node_modules/"+name].Version; got != version {
@@ -184,6 +188,34 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 		if lock.Packages["node_modules/"+name].Version != version {
 			t.Fatalf("%s is not installed at the top level pinned to %s", name, version)
 		}
+	}
+}
+
+// TestParse5PlantedMismatchCaught verifies that a stale hard-coded parse5 version would be caught
+// by the dependency assertion when it drifts from the manifest (Negative: planted mismatch refused).
+func TestParse5PlantedMismatchCaught(t *testing.T) {
+	manifestData, err := Read("package.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Dependencies map[string]string `json:"dependencies"`
+	}
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatalf("decode package manifest: %v", err)
+	}
+	real := manifest.Dependencies["parse5"]
+	if real == "" {
+		t.Fatal("parse5 not listed in package.json dependencies")
+	}
+	planted := "0.0.0-planted"
+	if real == planted {
+		t.Fatal("planted version collides with manifest")
+	}
+	wrong := maps.Clone(manifest.Dependencies)
+	wrong["parse5"] = planted
+	if wrong["parse5"] == manifest.Dependencies["parse5"] {
+		t.Fatal("planted mismatch not detected: assertDirectDependencies would accept a stale literal")
 	}
 }
 
