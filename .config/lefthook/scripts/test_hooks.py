@@ -1457,7 +1457,7 @@ print("fixture hook self-tests passed")
                 mock.patch("sys.stdout", new_callable=io.StringIO) as out:
             hooks.check_signature_range("base-sha", "head-sha")
         git_cmd.assert_not_called()
-        self.assertIn("Signature check: skipped, commit.gpgsign is not true", out.getvalue())
+        self.assertIn("Signature check: skipped, commit.gpgsign not set to true", out.getvalue())
 
     def test_signature_check_skips_when_gpgsign_unset(self):
         """Unset commit.gpgsign (empty output) skips the check."""
@@ -1466,7 +1466,7 @@ print("fixture hook self-tests passed")
                 mock.patch("sys.stdout", new_callable=io.StringIO) as out:
             hooks.check_signature_range("base-sha", "head-sha")
         git_cmd.assert_not_called()
-        self.assertIn("Signature check: skipped, commit.gpgsign is not true", out.getvalue())
+        self.assertIn("Signature check: skipped, commit.gpgsign not set to true", out.getvalue())
 
     def test_real_checkpoint_push_builds_and_tests_without_release_receipt(self):
         skip_without_race_detector(self)

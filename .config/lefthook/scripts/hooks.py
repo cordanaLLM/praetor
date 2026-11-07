@@ -293,11 +293,11 @@ def check_signature_range(base, head):
         allowed=(0, 1),
     ).decode().strip()
     if gpgsign != "true":
-        print("Signature check: skipped, commit.gpgsign is not true")
+        print("Signature check: skipped, commit.gpgsign not set to true")
         return
     if not base:
         print("Signature check: skipped, no pushed-range base; "
-              "CI and forge rulesets cover the merge path")
+              "CI and forge rulesets cover merge path")
         return
     log = git("log", "--format=%H %G?", f"{base}..{head}", "--").decode()
     lines = log.splitlines()[:MAX_SIGNATURE_COMMITS]
@@ -315,8 +315,8 @@ def check_signature_range(base, head):
             f"Unsigned or unverifiable commits in {base[:12]}..{head[:12]}:\n"
             + "\n".join(bad)
             + "\n\nEvery pushed commit must be signed. "
-            "Configure commit.gpgsign=true and check that "
-            "gpg.ssh.allowedSignersFile (or gpg trust) covers the signing key."
+            "Configure commit.gpgsign=true and verify that "
+            "gpg.ssh.allowedSignersFile (or gpg trust) covers your signing key."
         )
     print(f"Signature check: {len(lines)} commit(s) in "
           f"{base[:12]}..{head[:12]} verified")
