@@ -641,8 +641,7 @@ func TestReviewHoldRendering(t *testing.T) {
 	if len(data) > 64<<10 {
 		t.Fatal("portability workflow exceeds metadata reader byte bound")
 	}
-	text := string(data)
-	if strings.Count(text, RenderReviewHoldStep(false)) != 1 {
+	if strings.Count(string(data), RenderReviewHoldStep(false)) != 1 {
 		t.Fatal("portability review-gate step differs from renderer")
 	}
 	spec, err := Parse(data)
@@ -653,29 +652,20 @@ func TestReviewHoldRendering(t *testing.T) {
 	if len(gate.Steps) < 2 || gate.Steps[1].ID != "review-hold" || gate.Steps[1].Run != reviewHoldScript {
 		t.Fatal("review-gate: barrier step shape differs from renderer")
 	}
-	for _, id := range []string{"harness", "windows-shard"} {
-		job := spec.Jobs[id]
-		if !slices.Contains(job.NeedIDs(), "review-gate") {
-			t.Errorf("%s: needs review-gate dependency missing", id)
-		}
-		found := false
-		for _, step := range job.Steps {
-			if step.ID == "review-check" {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("%s: gate-check step missing", id)
-		}
-	}
+	assertGateLegShape(t, spec, "harness")
+	assertGateLegShape(t, spec, "windows-shard")
 	winJob := spec.Jobs["windows"]
 	if slices.Contains(winJob.NeedIDs(), "review-gate") {
 		t.Error("windows: must not directly need review-gate (transitive through windows-shard)")
 	}
+	assertReleaseWorkflowRendered(t)
+}
+
+// assertReleaseWorkflowRendered verifies the release workflow matches its renderer.
+func assertReleaseWorkflowRendered(t *testing.T) {
+	t.Helper()
 	wantRelease := RenderReviewHoldReleaseWorkflow()
 	if os.Getenv(updateReviewHoldWorkflowEnv) == "1" {
-		// os.WriteFile keeps the mode of an existing file (the tracked workflow), and git records only the executable bit, so 0600 changes nothing in the tree.
 		if err := os.WriteFile("../../.github/workflows/review-hold-release.yml", []byte(wantRelease), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -717,28 +707,22 @@ func TestReviewHoldStepTimeoutRendered(t *testing.T) {
 	}
 }
 
-// assertAggregateReviewHold verifies the shared barrier precedes the aggregate's result check.
-func assertAggregateReviewHold(t *testing.T, job Job) {
+// assertGateLegShape checks that a gate-job leg needs review-gate and has a gate-check step.
+func assertGateLegShape(t *testing.T, spec Spec, id string) {
 	t.Helper()
-	if len(job.Steps) != 2 || job.Steps[0].Run != reviewHoldScript || job.Steps[0].If != ReviewHoldCondition {
-		t.Fatal("windows aggregate review barrier differs from renderer")
+	job := spec.Jobs[id]
+	if !slices.Contains(job.NeedIDs(), "review-gate") {
+		t.Errorf("%s: needs review-gate dependency missing", id)
 	}
-}
-
-// assertReviewJob verifies a rendered barrier and every subsequent step condition.
-func assertReviewJob(t *testing.T, id string, job Job) {
-	t.Helper()
-	if len(job.Steps) < 3 {
-		t.Fatalf("%s: review steps missing", id)
-	}
-	hold := job.Steps[1]
-	if hold.If != ReviewHoldCondition || hold.Shell != "bash" || hold.Run != reviewHoldScript {
-		t.Fatalf("%s: review barrier shape differs", id)
-	}
-	for _, step := range job.Steps[2:] {
-		if !strings.Contains(step.If, ReviewHoldClear) || !strings.Contains(step.If, HostedGateNotDraft) {
-			t.Errorf("%s/%s: missing review/draft guard", id, step.Name)
+	found := false
+	for _, step := range job.Steps {
+		if step.ID == "review-check" {
+			found = true
+			break
 		}
+	}
+	if !found {
+		t.Errorf("%s: gate-check step missing", id)
 	}
 }
 
