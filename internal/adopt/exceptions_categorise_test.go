@@ -84,8 +84,8 @@ exceptions:
 	if err != nil {
 		t.Fatalf("decode pre-manifest: %v", err)
 	}
-	today := time.Now()
-	if err := config.ValidateExceptions(preManifest.Exceptions, today); err == nil {
+	fixedNow := categoriseFixture()
+	if err := config.ValidateExceptions(preManifest.Exceptions, fixedNow); err == nil {
 		t.Fatal("pre-1711 manifest should fail exception validation due to missing category")
 	}
 
@@ -109,7 +109,7 @@ exceptions:
 		label := fmt.Sprintf("entry %s:%s", entry.Rule, entry.Target())
 		assertExceptionFields(t, label, entry, "D", "2027-01-20", true)
 	}
-	if err := config.ValidateExceptions(afterManifest.Exceptions, today); err != nil {
+	if err := config.ValidateExceptions(afterManifest.Exceptions, fixedNow); err != nil {
 		t.Fatalf("refreshed exceptions failed audit: %v", err)
 	}
 }
@@ -155,12 +155,12 @@ exceptions:
 	assertExceptionFields(t, "owned", afterManifest.Exceptions[0], "D", "2027-01-20", true)
 	assertExceptionFields(t, "handwritten", afterManifest.Exceptions[1], "", "2027-01-20", false)
 
-	today := time.Now()
-	err := config.ValidateExceptions(afterManifest.Exceptions, today)
+	fixedNow := categoriseFixture()
+	err := config.ValidateExceptions(afterManifest.Exceptions, fixedNow)
 	if err == nil || !strings.Contains(err.Error(), "category is required") {
 		t.Fatalf("audit expected to fail on hand-written entry with 'category is required', got: %v", err)
 	}
-	if err := config.ValidateExceptions([]config.Exception{afterManifest.Exceptions[0]}, today); err != nil {
+	if err := config.ValidateExceptions([]config.Exception{afterManifest.Exceptions[0]}, fixedNow); err != nil {
 		t.Fatalf("owned entry alone failed audit: %v", err)
 	}
 }
@@ -218,10 +218,10 @@ exceptions:
 		t.Errorf("entry %s:%s expires = %q, want 2028-01-20 (unchanged, not moved)", entry.Rule, entry.Target(), entry.Expires)
 	}
 
-	today := time.Now()
-	// Category D allows 120 days after entered. Expiry in 2028 exceeds 120 days from today.
-	// Audit must still fail on expiry bound even after category D is set.
-	err = config.ValidateExceptions(afterManifest.Exceptions, today)
+	fixedNow := categoriseFixture()
+	// Category D allows 120 days after entered. Expiry in 2028 exceeds 120 days from the
+	// fixture date (2026-11-06). Audit must still fail on expiry bound even after category D is set.
+	err = config.ValidateExceptions(afterManifest.Exceptions, fixedNow)
 	if err == nil || !strings.Contains(err.Error(), "category D requires expires on or before") {
 		t.Fatalf("audit expected to fail with category D expiry bound, got: %v", err)
 	}
