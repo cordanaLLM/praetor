@@ -1118,3 +1118,27 @@ func reviewBotTermsMatch(terms string, fields map[string]string) bool {
 	}
 	return false
 }
+
+// Positive: RenderReviewCheckStep produces a valid YAML step with escaped title.
+func TestReviewCheckStepRendering(t *testing.T) {
+	step := RenderReviewCheckStep()
+	if !strings.Contains(step, "id: review-check") {
+		t.Fatal("missing step id")
+	}
+	if !strings.Contains(step, ReviewCheckCondition) {
+		t.Fatalf("condition mismatch: want %q in step", ReviewCheckCondition)
+	}
+	escaped := strings.ReplaceAll(ReviewHoldTitle, ":", "%3A")
+	if !strings.Contains(step, escaped) {
+		t.Fatalf("want escaped title %q in step", escaped)
+	}
+	if strings.Contains(step, "TITLE: 'Gate held: review open'") {
+		t.Fatal("title must escape colons for GitHub annotation format")
+	}
+	if !strings.Contains(step, ReviewCheckMessage) {
+		t.Fatal("missing message body")
+	}
+	if !strings.Contains(step, "exit 1") {
+		t.Fatal("step must exit non-zero to hold the gate")
+	}
+}

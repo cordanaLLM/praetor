@@ -324,7 +324,7 @@ jobs:
         if: needs.review-gate.result != 'success' && github.event.pull_request.draft != true
         shell: bash
         env:
-          TITLE: 'Gate held: review open'
+          TITLE: 'Gate held%3A review open'
           MESSAGE: >-
             Heavy tier held while review threads are unresolved or bot reviews
             are pending. The gate runs automatically when they clear.
@@ -834,7 +834,7 @@ jobs:
         if: needs.review-gate.result != 'success' && github.event.pull_request.draft != true
         shell: bash
         env:
-          TITLE: 'Gate held: review open'
+          TITLE: 'Gate held%3A review open'
           MESSAGE: >-
             Heavy tier held while review threads are unresolved or bot reviews
             are pending. The gate runs automatically when they clear.

@@ -196,6 +196,25 @@ func RenderReviewHoldStep(_ bool) string {
 		"        run: |\n" + indentReviewScript(reviewHoldScript)
 }
 
+// RenderReviewCheckStep renders the gate-check step for heavy matrix legs.
+// The step fires when review-gate did not succeed on a non-draft PR and emits
+// an annotation with a properly escaped title (colons → %3A).
+func RenderReviewCheckStep() string {
+	escaped := strings.ReplaceAll(ReviewHoldTitle, ":", "%3A")
+	return "      - name: Stop on held review\n" +
+		"        id: review-check\n" +
+		"        if: " + ReviewCheckCondition + "\n" +
+		"        shell: bash\n" +
+		"        env:\n" +
+		"          TITLE: '" + escaped + "'\n" +
+		"          MESSAGE: >-\n" +
+		"            " + ReviewCheckMessage + "\n" +
+		"        run: |\n" +
+		"          echo \"::error title=$TITLE::$MESSAGE\"\n" +
+		"          echo \"$MESSAGE\" >> \"$GITHUB_STEP_SUMMARY\"\n" +
+		"          exit 1\n"
+}
+
 // indentReviewScript nests shared Bash under a workflow step's literal run scalar.
 func indentReviewScript(script string) string {
 	return "          " + strings.ReplaceAll(strings.TrimSuffix(script, "\n"), "\n", "\n          ") + "\n"
