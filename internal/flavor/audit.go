@@ -153,7 +153,7 @@ func AuditFlavorContext(ctx context.Context, repoPath string, targetFlavor strin
 		return nil, fmt.Errorf("audit flavor cancelled: %w", err)
 	}
 	if targetFlavor == "" || targetFlavor == "auto" {
-		resolved, err := resolveAutoTarget(repoPath)
+		resolved, err := resolveAutoTarget(ctx, repoPath)
 		if err != nil {
 			return nil, err
 		}
@@ -205,8 +205,8 @@ func auditFlavorAt(ctx context.Context, rootDir, stackDir string, flv Flavor) (*
 
 // resolveAutoTarget names the one flavor a repository without an explicit target audits
 // against; a repository with several pin targets is refused, since one report cannot cover them.
-func resolveAutoTarget(repoPath string) (string, error) {
-	targets, err := ResolveTargets(repoPath)
+func resolveAutoTarget(ctx context.Context, repoPath string) (string, error) {
+	targets, err := ResolveTargetsContext(ctx, repoPath)
 	if err != nil {
 		return "", err
 	}

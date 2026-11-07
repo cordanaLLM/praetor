@@ -101,8 +101,8 @@ func distillSources(ctx context.Context, repoPath string, sources []distillSourc
 // the distiller could record python-ml for a repository declaring native-gpu-systems, and the
 // statement called the flavor an archetype (BUG-940). A repository no flavor of its profile
 // matches, or whose profile has no flavor, yields no fact rather than a guess.
-func distillFlavorFacts(_ context.Context, repoPath string) ([]MemoryFact, error) {
-	targets, err := flavor.ResolveTargets(repoPath)
+func distillFlavorFacts(ctx context.Context, repoPath string) ([]MemoryFact, error) {
+	targets, err := flavor.ResolveTargetsContext(ctx, repoPath)
 	if flavor.IsNotApplicable(err) || errors.Is(err, flavor.ErrNoProfile) {
 		return nil, nil
 	}

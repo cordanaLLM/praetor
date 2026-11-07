@@ -109,7 +109,7 @@ func ResolveRepositoryForge(ctx context.Context, repo string) (Forge, error) {
 	if err := requireIdentityInputs(ctx, repo); err != nil {
 		return "", err
 	}
-	metadata, err := manifestRepository(repo)
+	metadata, err := manifestRepository(ctx, repo)
 	if err != nil {
 		return "", err
 	}

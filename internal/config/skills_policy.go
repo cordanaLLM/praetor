@@ -5,13 +5,13 @@
 package config
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Bounds for the skills section (HISS-02).
@@ -70,12 +70,15 @@ func (p *SkillsPolicy) UpstreamSkillSourceFor(skillName string) (UpstreamSkillSo
 // LoadSkillsPolicy reads .standards.yaml in rootDir and returns the declared SkillsPolicy.
 // If .standards.yaml does not exist, it returns nil, nil.
 func LoadSkillsPolicy(rootDir string) (*SkillsPolicy, error) {
-	manifestPath := filepath.Join(rootDir, ManifestFileName)
-	manifest, err := LoadManifest(manifestPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return LoadSkillsPolicyContext(ctx, rootDir)
+}
+
+// LoadSkillsPolicyContext reads skills through the repository's validated manifest snapshot.
+func LoadSkillsPolicyContext(ctx context.Context, rootDir string) (*SkillsPolicy, error) {
+	manifest, err := LoadRepositoryManifest(ctx, rootDir)
+	if err != nil || manifest == nil {
 		return nil, err
 	}
 	return manifest.Skills, nil

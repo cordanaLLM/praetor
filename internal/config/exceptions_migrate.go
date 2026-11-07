@@ -53,6 +53,24 @@ func PlanExceptionMigrationSnapshot(ctx context.Context, path string, today time
 
 // planExceptionMigration derives a comment-preserving migration from the supplied manifest snapshot.
 func planExceptionMigration(ctx context.Context, path string, data []byte, today time.Time) ([]byte, []ExceptionMigration, error) {
+	return planSelectedExceptionMigration(ctx, path, data, today, func(entry Exception) bool {
+		return entry.Category == "" && entry.Entered == ""
+	})
+}
+
+// PlanExceptionMigrationForRules plans lifecycle repairs only for the listed rule kinds.
+// Partial metadata is retained; missing fields use the same resolver as the migration command.
+// The caller supplies its observed bytes so the eventual write can compare the same snapshot.
+func PlanExceptionMigrationForRules(ctx context.Context, path string, data []byte, today time.Time, ruleIDs []string) ([]byte, []ExceptionMigration, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	return planSelectedExceptionMigration(ctx, path, data, today, func(entry Exception) bool {
+		return slices.Contains(ruleIDs, entry.Rule) && (entry.Category == "" || entry.Entered == "")
+	})
+}
+
+// planSelectedExceptionMigration plans category and date backfill for exceptions matching the selector.
+func planSelectedExceptionMigration(ctx context.Context, path string, data []byte, today time.Time, selected func(Exception) bool) ([]byte, []ExceptionMigration, error) {
 	if _, err := DecodeManifest(data); err != nil {
 		return nil, nil, fmt.Errorf("decode migration manifest: %w", err)
 	}
@@ -67,7 +85,7 @@ func planExceptionMigration(ctx context.Context, path string, data []byte, today
 	if entries.Kind != yaml.SequenceNode || len(entries.Content) > MaxExceptions {
 		return nil, nil, fmt.Errorf("exceptions must be a sequence of at most %d entries", MaxExceptions)
 	}
-	proposals, err := migrateExceptionNodes(ctx, path, entries, today)
+	proposals, err := migrateExceptionNodes(ctx, path, entries, today, selected)
 	if err != nil || len(proposals) == 0 {
 		return data, proposals, err
 	}
@@ -79,7 +97,7 @@ func planExceptionMigration(ctx context.Context, path string, data []byte, today
 }
 
 // migrateExceptionNodes walks exception YAML nodes and applies proposed migrations to entries lacking category or entered fields.
-func migrateExceptionNodes(ctx context.Context, path string, entries *yaml.Node, today time.Time) ([]ExceptionMigration, error) {
+func migrateExceptionNodes(ctx context.Context, path string, entries *yaml.Node, today time.Time, selected func(Exception) bool) ([]ExceptionMigration, error) {
 	var proposals []ExceptionMigration
 	for i := 0; i < len(entries.Content) && i < MaxExceptions; i++ {
 		if err := ctx.Err(); err != nil {
@@ -90,7 +108,7 @@ func migrateExceptionNodes(ctx context.Context, path string, entries *yaml.Node,
 		if err := node.Decode(&entry); err != nil {
 			return nil, fmt.Errorf("decode exception %d: %w", i, err)
 		}
-		if entry.Category != "" || entry.Entered != "" {
+		if !selected(entry) {
 			continue
 		}
 		proposal := proposeExceptionMigration(ctx, path, node.Line, entry, today)
@@ -120,7 +138,10 @@ func setMigrationScalar(node *yaml.Node, key, value string) {
 // proposeExceptionMigration determines the entered date and expiration category for an unmigrated exception.
 func proposeExceptionMigration(ctx context.Context, path string, line int, entry Exception, today time.Time) ExceptionMigration {
 	// Keep the source alongside the date; a fallback is always visible in the command output.
-	entered, source := exceptionEntered(ctx, path, line, today)
+	entered, source := entry.Entered, "manifest"
+	if entered == "" {
+		entered, source = exceptionEntered(ctx, path, line, today)
+	}
 	entry.Entered = entered
 	category := entry.ExpiryCategory()
 	if category != "" {

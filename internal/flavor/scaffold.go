@@ -100,7 +100,7 @@ func ApplyFlavorWith(ctx context.Context, repoPath string, targetFlavor string, 
 	if err := checkApplyRequest(ctx, opts); err != nil {
 		return nil, err
 	}
-	flv, err := resolveApplyTarget(repoPath, targetFlavor)
+	flv, err := resolveApplyTarget(ctx, repoPath, targetFlavor)
 	if err != nil {
 		return nil, err
 	}
@@ -231,9 +231,9 @@ func flavorIdentity(ctx context.Context, repoPath string) (owner, repoName strin
 // ignored the pin the audit honours. A pin the root scaffold cannot express (a directory-scoped
 // or a second pin) is ErrPinNotScaffoldable. A repository nothing matches is refused, never
 // given a guess.
-func resolveApplyTarget(repoPath, targetFlavor string) (Flavor, error) {
+func resolveApplyTarget(ctx context.Context, repoPath, targetFlavor string) (Flavor, error) {
 	if targetFlavor == "" || targetFlavor == "auto" {
-		targets, err := ResolveTargets(repoPath)
+		targets, err := ResolveTargetsContext(ctx, repoPath)
 		if err != nil {
 			return nil, err
 		}
