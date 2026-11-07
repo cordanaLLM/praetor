@@ -263,19 +263,24 @@ func TestJobTimeout_FailFrom_SwitchBoundary(t *testing.T) {
 		t.Errorf("warn-period output must name the finding and the switch day; got:\n%s", before)
 	}
 	for _, day := range []time.Time{JobTimeoutFailFrom, JobTimeoutFailFrom.AddDate(0, 0, 30)} {
-		_, err := AuditJobTimeouts(t.Context(), JobTimeoutOptions{Root: root, Today: day, OfflineReason: "--offline"})
-		if err == nil || !strings.Contains(err.Error(), "[FAIL] job-timeout: .github/workflows/ci.yml:3 job build: declares no timeout-minutes") {
-			t.Errorf("on %s a job without timeout-minutes must fail the gate; got %v", day.Format(time.DateOnly), err)
-		}
-		if err != nil && !strings.Contains(err.Error(), "[INFO] job-timeout: static path only (--offline)") {
-			t.Errorf("the failure must keep the path line; got %v", err)
-		}
+		assertJobTimeoutFailsOnDay(t, root, day)
 	}
 	clean := t.TempDir()
 	writeWorkflow(t, clean, "ci.yml", "on: push\njobs:\n  build:\n    timeout-minutes: 10\n    steps:\n      - run: echo 1\n")
 	out, err := AuditJobTimeouts(t.Context(), JobTimeoutOptions{Root: clean, Today: JobTimeoutFailFrom, OfflineReason: "--offline"})
 	if err != nil || !strings.HasSuffix(out, "[PASS] job-timeout") || strings.Contains(out, "warn until") {
 		t.Errorf("a clean tree must pass on the switch day without the warn-period line; out:\n%s\nerr: %v", out, err)
+	}
+}
+
+func assertJobTimeoutFailsOnDay(t *testing.T, root string, day time.Time) {
+	t.Helper()
+	_, err := AuditJobTimeouts(t.Context(), JobTimeoutOptions{Root: root, Today: day, OfflineReason: "--offline"})
+	if err == nil || !strings.Contains(err.Error(), "[FAIL] job-timeout: .github/workflows/ci.yml:3 job build: declares no timeout-minutes") {
+		t.Errorf("on %s a job without timeout-minutes must fail the gate; got %v", day.Format(time.DateOnly), err)
+	}
+	if err != nil && !strings.Contains(err.Error(), "[INFO] job-timeout: static path only (--offline)") {
+		t.Errorf("the failure must keep the path line; got %v", err)
 	}
 }
 
