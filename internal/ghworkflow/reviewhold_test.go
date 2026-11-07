@@ -257,7 +257,7 @@ func TestReviewHoldStepBelowJobTimeout(t *testing.T) {
 func TestReviewHoldOpenThreadPlanted(t *testing.T) {
 	spec := loadPortabilityWorkflow(t)
 	gate := spec.Jobs["review-gate"]
-	if len(gate.Steps) < 1 || gate.Steps[0].ID != "review-hold" {
+	if len(gate.Steps) < 2 || gate.Steps[1].ID != "review-hold" {
 		t.Fatal("review-gate: review-hold step missing")
 	}
 	for _, id := range []string{"harness", "windows-shard"} {
@@ -650,10 +650,10 @@ func TestReviewHoldRendering(t *testing.T) {
 		t.Fatal(err)
 	}
 	gate := spec.Jobs["review-gate"]
-	if len(gate.Steps) < 1 || gate.Steps[0].ID != "review-hold" || gate.Steps[0].Run != reviewHoldScript {
+	if len(gate.Steps) < 2 || gate.Steps[1].ID != "review-hold" || gate.Steps[1].Run != reviewHoldScript {
 		t.Fatal("review-gate: barrier step shape differs from renderer")
 	}
-	for _, id := range []string{"harness", "windows-shard", "windows"} {
+	for _, id := range []string{"harness", "windows-shard"} {
 		job := spec.Jobs[id]
 		if !slices.Contains(job.NeedIDs(), "review-gate") {
 			t.Errorf("%s: needs review-gate dependency missing", id)
@@ -668,6 +668,10 @@ func TestReviewHoldRendering(t *testing.T) {
 		if !found {
 			t.Errorf("%s: gate-check step missing", id)
 		}
+	}
+	winJob := spec.Jobs["windows"]
+	if slices.Contains(winJob.NeedIDs(), "review-gate") {
+		t.Error("windows: must not directly need review-gate (transitive through windows-shard)")
 	}
 	wantRelease := RenderReviewHoldReleaseWorkflow()
 	if os.Getenv(updateReviewHoldWorkflowEnv) == "1" {
