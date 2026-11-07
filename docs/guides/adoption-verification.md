@@ -777,14 +777,20 @@ those the policy renders: the repository admin role in mode `pull_request` under
 extra live one or a wider bypass mode is `[DRIFT] Bypass actors`. GitHub returns `bypass_actors`
 only to a caller with write access to the ruleset, so a ruleset read without the list reports it
 as unread drift; an unread list never passes. `sync --remote` keeps the bypass actors of a live
-ruleset, so plan names the hand edit on GitHub instead of a command.
+ruleset, so plan names the hand edit on GitHub instead of a command. When the declared
+`single_maintainer` mode has no live ruleset yet, `sync --remote` creates it with the declared actor;
+plan reports the absence as bypass drift until the ruleset exists.
 
 A scheduled or CI check of the live ruleset adds `--fail-on-drift`: any drift of a declared
-property or of the bypass actors ends plan with a non-zero exit (`ErrPlanDrift`); the report is the
-same. `--fail-on-drift` needs `--remote` and is refused without it:
+protection property or of the bypass actors ends plan with a non-zero exit (`ErrPlanDrift`); the
+report is the same. Actions workflow permissions are not covered by this check.
+`--fail-on-drift` needs `--remote` and is refused without it. The caller must have write access to
+the repository's rulesets (a fine-grained token with Administration write, or a GitHub App
+installation token); the workflow's built-in `GITHUB_TOKEN` cannot read bypass actors, and an unread
+list is treated as drift:
 
 ```bash
-standardsctl plan --remote --fail-on-drift              # non-zero exit on any live drift
+standardsctl plan --remote --fail-on-drift              # non-zero exit on protection or bypass actor drift
 ```
 
 The planted cases, an extra bypass actor, a dropped required status check and an unread bypass
