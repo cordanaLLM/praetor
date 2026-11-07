@@ -787,7 +787,9 @@ report is the same. Actions workflow permissions are not covered by this check.
 `--fail-on-drift` needs `--remote` and is refused without it. The caller must have write access to
 the repository's rulesets (a fine-grained token with Administration write, or a GitHub App
 installation token); the workflow's built-in `GITHUB_TOKEN` cannot read bypass actors, and an unread
-list is treated as drift:
+list is treated as drift. When both `GITHUB_TOKEN` and `GH_TOKEN` are set, `plan` reads
+`GITHUB_TOKEN` first; a less-privileged `GITHUB_TOKEN` therefore shadows a suitable `GH_TOKEN`.
+Set `GITHUB_TOKEN` to the intended credential or unset it when relying on `GH_TOKEN`:
 
 ```bash
 standardsctl plan --remote --fail-on-drift              # non-zero exit on protection or bypass actor drift
