@@ -255,6 +255,12 @@ func TestAuditWorkflowTriggers_CancelGuardWithDraftStep(t *testing.T) {
 	if !strings.Contains(out, "may be skipped on a draft") {
 		t.Errorf("an always() job with draft step but no cancel guard should still be reported:\n%s", out)
 	}
+	needsSuccess := gate + "  ci:\n    needs: gate\n    if: \"!cancelled() && needs.gate.result == 'success'\"\n    runs-on: x\n    steps:\n" +
+		ghworkflow.HostedGateDraftStep + "      - run: make\n"
+	out = auditTriggers(t, triggerRepository(t, map[string]string{"x.yml": needsSuccess}))
+	if !strings.Contains(out, "may be skipped on a draft") {
+		t.Errorf("!cancelled() && needs.gate.result == 'success' checks explicit success and does not run on skipped gate; should still be reported:\n%s", out)
+	}
 }
 
 // A job calling a reusable workflow of this repository stops a draft only when the callee's jobs,

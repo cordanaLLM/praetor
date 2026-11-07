@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -663,6 +664,8 @@ func calleeWork(jobs map[string]workflowJob) draftHandling {
 // hasLeadingCancelGuard reports whether condition carries a leading !cancelled() guard after
 // stripping the renovate branch skip. A leading !cancelled() keeps a job running after a held or
 // skipped need, unlike !failure()&&!cancelled() which prevents running on a failed need.
+// A remainder that checks needs.<name>.result == 'success' rejects: that condition does not run
+// when the need is skipped, so it is not a pure cancel guard.
 func hasLeadingCancelGuard(condition string) bool {
 	trimmed := strings.TrimSpace(condition)
 	if trimmed == "!cancelled()" {
@@ -672,8 +675,21 @@ func hasLeadingCancelGuard(condition string) bool {
 	if !found {
 		rest = trimmed
 	}
-	return strings.TrimSpace(rest) == "!cancelled()" || withoutLeadingCancelGuard(strings.TrimSpace(rest)) != strings.TrimSpace(rest)
+	rest = strings.TrimSpace(rest)
+	if rest == "!cancelled()" {
+		return true
+	}
+	stripped := withoutLeadingCancelGuard(rest)
+	if stripped == rest {
+		return false
+	}
+	if needsResultCheck.MatchString(stripped) {
+		return false
+	}
+	return true
 }
+
+var needsResultCheck = regexp.MustCompile(`needs\.\w+\.result\s*[!=]=`)
 
 // reportsSuccessOnDraft reports whether a job with handling h reports success on a draft without
 // running its work there: a failed first step forgiven by continue-on-error, a condition skip or a
