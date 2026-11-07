@@ -54,7 +54,7 @@ func AddBug(rootPath string, bug BugEntry) (*BugEntry, error) {
 		bug.CreatedAt = time.Now().UTC()
 	}
 	err := updateBugLedger(rootPath, func(doc *bugDocument) (string, error) {
-		id, err := nextBugID(doc.rows)
+		id, err := nextBugID(doc.rows, doc.meta)
 		if err != nil {
 			return "", err
 		}

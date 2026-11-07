@@ -49,13 +49,8 @@ func SyncState(ctx context.Context, rootPath string, sessionSummary string) (*St
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if _, err := ResolveWorkingDir(ctx, rootPath); err != nil {
-		if _, initErr := InitWorkingDirIfAbsentContext(ctx, rootPath); initErr != nil {
-			return nil, initErr
-		}
-		if _, err := ResolveWorkingDir(ctx, rootPath); err != nil {
-			return nil, err
-		}
+	if err := ensureStateSyncLedger(ctx, rootPath); err != nil {
+		return nil, err
 	}
 
 	snap, err := InspectState(ctx, rootPath)
@@ -66,6 +61,12 @@ func SyncState(ctx context.Context, rootPath string, sessionSummary string) (*St
 		return nil, err
 	}
 	lRoot := ledgerRoot(ctx, rootPath)
+	if _, err := bindWorkingDirLedgers(ctx, lRoot); err != nil {
+		return nil, err
+	}
+	if _, err := CheckStateFileCaps(ctx, rootPath, true); err != nil {
+		return nil, fmt.Errorf("state sync file caps: %w", err)
+	}
 	snap.StateHash, err = stateBinding(ctx, lRoot, snap)
 	if err != nil {
 		return nil, err
@@ -74,6 +75,20 @@ func SyncState(ctx context.Context, rootPath string, sessionSummary string) (*St
 		return snap, err
 	}
 	return snap, VerifyStateSync(ctx, rootPath)
+}
+
+// ensureStateSyncLedger seeds an absent ledger but never repairs a partial one.
+func ensureStateSyncLedger(ctx context.Context, rootPath string) error {
+	if _, err := ResolveWorkingDir(ctx, rootPath); err == nil {
+		return nil
+	}
+	if _, err := InitWorkingDirIfAbsentContext(ctx, rootPath); err != nil {
+		return fmt.Errorf("initialize state sync ledger: %w", err)
+	}
+	if _, err := ResolveWorkingDir(ctx, rootPath); err != nil {
+		return fmt.Errorf("resolve state sync ledger: %w", err)
+	}
+	return nil
 }
 
 // InspectState reads Git and ledger state without initialization or log writes.

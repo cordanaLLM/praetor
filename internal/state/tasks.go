@@ -20,7 +20,7 @@ import (
 const maxScannedLines = 200000
 
 // The task ledgers parseLedgerTaskLines reads: OPEN.md holds the in-flight tasks the task
-// commands number, BACKLOG.md the deferred workstreams and the discharged records.
+// commands number, BACKLOG.md the deferred workstreams; archive/ holds discharged records.
 const (
 	openLedgerName    = "OPEN.md"
 	backlogLedgerName = "BACKLOG.md"
@@ -54,7 +54,7 @@ func ListTasksContext(ctx context.Context, rootPath string) ([]TaskItem, error) 
 // ListBacklogTasksContext reads the checkbox rows of BACKLOG.md under the caller's deadline,
 // through the parser OPEN.md is read with: rows inside a code fence are examples, an
 // unterminated fence is an error, and pending and completed rows are numbered alike. The
-// discharged records `state task archive` appends are completed rows. An absent BACKLOG.md
+// historical discharged records are completed rows until archived. An absent BACKLOG.md
 // holds no row.
 func ListBacklogTasksContext(ctx context.Context, rootPath string) ([]TaskItem, error) {
 	return listLedgerTasks(ctx, rootPath, backlogLedgerName)
@@ -158,91 +158,18 @@ func CompleteTask(rootPath, selector string) error {
 	return contextopt.ReplaceSnapshot(ctx, openFile, []byte(strings.Join(lines, "\n")), contextopt.ReplaceOptions{Expected: content, Exists: true, Mode: util.SecureFilePerm})
 }
 
-// ArchiveCompletedTasks moves all completed tasks from OPEN.md to BACKLOG.md.
-func ArchiveCompletedTasks(rootPath, commitSHA string) (int, error) {
+// ArchiveCompletedTasks applies the monthly archive through its context-aware implementation.
+// The legacy commit argument is retained for callers; monthly records preserve their own dates.
+// CLI callers use ArchiveCompletedTasksContext so preview remains the default there.
+func ArchiveCompletedTasks(rootPath, _ string) (int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	openFile := filepath.Join(ledgerRoot(ctx, rootPath), WorkingDirName, "OPEN.md")
-	content, err := contextopt.ReadSnapshot(ctx, openFile)
-	if errors.Is(err, os.ErrNotExist) {
-		return 0, nil
+	reports, err := ArchiveCompletedTasksContext(ctx, rootPath, true)
+	count := 0
+	for i := 0; i < len(reports) && i < liveStateFileCount; i++ {
+		count += reports[i].Entries
 	}
-	if err != nil {
-		return 0, fmt.Errorf("read OPEN.md: %w", err)
-	}
-
-	remainingLines, completedTasks, err := splitCompletedTasks(string(content))
-	if err != nil {
-		return 0, err
-	}
-
-	if len(completedTasks) == 0 {
-		return 0, nil
-	}
-
-	// Preserve completed records in BACKLOG.md before removing them from OPEN.md.
-	// A failed second write can leave duplicates; it must never lose the records.
-	if err := appendCompletedTasks(ctx, rootPath, commitSHA, completedTasks); err != nil {
-		return 0, err
-	}
-	if err := contextopt.ReplaceSnapshot(ctx, openFile, []byte(strings.Join(remainingLines, "\n")), contextopt.ReplaceOptions{Expected: content, Exists: true, Mode: util.SecureFilePerm}); err != nil {
-		return 0, fmt.Errorf("write OPEN.md: %w", err)
-	}
-	return len(completedTasks), nil
-}
-
-// splitCompletedTasks separates archivable rows from the rest of OPEN.md. It
-// resolves rows through the shared numbering authority, so a completed checkbox
-// inside a fenced code block stays where it is instead of being archived.
-func splitCompletedTasks(content string) (remaining, completed []string, err error) {
-	lines := strings.Split(content, "\n")
-	parsed, err := parseTaskLines(lines)
-	if err != nil {
-		return nil, nil, err
-	}
-	archive := make(map[int]bool, len(lines))
-	for _, task := range parsed {
-		if task.completed {
-			archive[task.line] = true
-		}
-	}
-	for i, line := range lines {
-		if archive[i] {
-			completed = append(completed, strings.TrimSpace(line))
-			continue
-		}
-		remaining = append(remaining, line)
-	}
-	return remaining, completed, nil
-}
-
-func appendCompletedTasks(ctx context.Context, rootPath, commitSHA string, completedTasks []string) error {
-	backlogFile := filepath.Join(ledgerRoot(ctx, rootPath), WorkingDirName, "BACKLOG.md")
-	backlogContent, err := contextopt.ReadSnapshot(ctx, backlogFile)
-	expected := append([]byte{}, backlogContent...)
-	exists := !errors.Is(err, os.ErrNotExist)
-	if errors.Is(err, os.ErrNotExist) {
-		backlogContent = []byte(defaultBacklogMD())
-	} else if err != nil {
-		return fmt.Errorf("read BACKLOG.md: %w", err)
-	}
-
-	timeStr := time.Now().UTC().Format("2006-01-02 15:04:05 UTC")
-	shaLabel := commitSHA
-	if shaLabel == "" {
-		shaLabel = "local"
-	}
-
-	archiveHeader := fmt.Sprintf("\n### Discharged Tasks [%s, commit `%s`]\n", timeStr, shaLabel)
-	for _, t := range completedTasks {
-		archiveHeader += fmt.Sprintf("%s\n", t)
-	}
-
-	updatedBacklog := string(backlogContent) + archiveHeader
-	if err := contextopt.ReplaceSnapshot(ctx, backlogFile, []byte(updatedBacklog), contextopt.ReplaceOptions{Expected: expected, Exists: exists, Mode: util.SecureFilePerm}); err != nil {
-		return fmt.Errorf("write BACKLOG.md: %w", err)
-	}
-	return nil
+	return count, err
 }
 
 // maxSelectorCandidates bounds how many ambiguous matches an error message

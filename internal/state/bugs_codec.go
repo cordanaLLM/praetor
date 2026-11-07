@@ -42,10 +42,17 @@ func checkBugID(id string) error {
 	return err
 }
 
-func nextBugID(rows []bugRow) (string, error) {
-	ids := make([]string, 0, len(rows))
-	for _, row := range rows {
-		ids = append(ids, row.bug.ID)
+// nextBugID includes retained sidecar IDs so archiving never makes an ID available again.
+func nextBugID(rows []bugRow, index ledgerMetaIndex) (string, error) {
+	ids := make([]string, 0, len(rows)+len(index))
+	for i := 0; i < len(rows) && i < maxLedgerEntries; i++ {
+		ids = append(ids, rows[i].bug.ID)
+	}
+	if len(index) > maxLedgerEntries {
+		return "", fmt.Errorf("bug ID reservations exceed %d", maxLedgerEntries)
+	}
+	for id := range index {
+		ids = append(ids, id)
 	}
 	return nextLedgerID(bugIDPrefix, ids)
 }
