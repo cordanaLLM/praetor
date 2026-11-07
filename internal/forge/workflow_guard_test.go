@@ -265,11 +265,16 @@ func TestPortabilityFollowsTheRepositoryVariable(t *testing.T) {
 		t.Fatalf("parse portability.yml: %v", err)
 	}
 	runs := renovateBranchSkip + " && (" + repositoryGuard(identity) + " || " + portabilityVariable + ")"
-	if got := spec.Jobs["harness"].If; got != runs {
-		t.Errorf("harness condition = %q, want %q", got, runs)
+	gateRuns := renovateBranchSkip + " && !cancelled() && (" + repositoryGuard(identity) + " || " + portabilityVariable + ")"
+	shardRuns := "!cancelled() && " + runs
+	if got := spec.Jobs["review-gate"].If; got != runs {
+		t.Errorf("review-gate condition = %q, want %q", got, runs)
 	}
-	if got := spec.Jobs["windows-shard"].If; got != runs {
-		t.Errorf("windows-shard condition = %q, want %q", got, runs)
+	if got := spec.Jobs["harness"].If; got != gateRuns {
+		t.Errorf("harness condition = %q, want %q", got, gateRuns)
+	}
+	if got := spec.Jobs["windows-shard"].If; got != shardRuns {
+		t.Errorf("windows-shard condition = %q, want %q", got, shardRuns)
 	}
 	if got := spec.Jobs["windows"].If; got != runs+" && always()" {
 		t.Errorf("windows condition = %q, want %q", got, runs+" && always()")
@@ -286,7 +291,7 @@ func TestPortabilityFollowsTheRepositoryVariable(t *testing.T) {
 // portability stated-reason job runs there because its condition negates the matrix's.
 var renovateSkippingJobs = []string{
 	"ci.yml/docs-presets", "ci.yml/verify", "pages.yml/build",
-	"portability.yml/harness", "portability.yml/windows", "portability.yml/windows-shard",
+	"portability.yml/harness", "portability.yml/review-gate", "portability.yml/windows",
 	"security.yml/security",
 }
 
@@ -341,8 +346,8 @@ func TestRenovateBranchesSkipOnlyTheHeavyPullRequestJobs(t *testing.T) {
 	want := append([]string{"Standards & Invariant Verification Gate", "Documentation Preset Builds",
 		"Release & Bot Configuration Validation", "DCO 1.1 & REUSE Compliance Gate"}, platformNeutralityLegs...)
 	requireContexts(t, "canonical", contexts, append(want, securityScanContext), nil)
-	if canonical, err := workflowContextsIn(workflows["portability.yml"], identity); err != nil || len(canonical) != 3 {
-		t.Errorf("canonical portability contexts = %v, %v; want the three legs", canonical, err)
+	if canonical, err := workflowContextsIn(workflows["portability.yml"], identity); err != nil || len(canonical) != 4 {
+		t.Errorf("canonical portability contexts = %v, %v; want the review gate and three legs", canonical, err)
 	}
 }
 
@@ -364,6 +369,7 @@ func conditionFacts(identity string, run pullRequestRun) *strings.Replacer {
 		portabilityVariable, "false",
 		pullRequestRunTerm, "true",
 		"always()", "true",
+		"!cancelled()", "true",
 	)
 }
 
@@ -533,22 +539,25 @@ func markdownGateSelfTestGap(job workflowJob, jobID string) string {
 }
 
 // everyLegConditions are the step conditions that cannot differ between matrix legs: none,
-// !cancelled(), review-cleared non-draft work (ghworkflow.HostedGateLegReady),
+// !cancelled(), review-cleared non-draft work (ghworkflow.HostedGateLegReady for per-leg
+// review hold, ghworkflow.HostedGateGateLegReady for the gate-job pattern),
 // and the Windows shard-2 carrier condition.
 var everyLegConditions = []string{
 	"",
 	"${{ !cancelled() }}",
 	"${{ " + ghworkflow.HostedGateLegReady + " }}",
 	"${{ " + ghworkflow.HostedGateLegReady + " && matrix.shard == 2 }}",
+	"${{ " + ghworkflow.HostedGateGateLegReady + " }}",
+	"${{ " + ghworkflow.HostedGateGateLegReady + " && matrix.shard == 2 }}",
 }
 
 // runsOnEveryLeg reports whether a step's condition cannot differ between matrix legs.
 func runsOnEveryLeg(step workflowStep, jobID string) bool {
 	cond := strings.TrimSpace(step.If)
-	if cond == everyLegConditions[3] {
+	if cond == everyLegConditions[3] || cond == everyLegConditions[5] {
 		return jobID == "windows-shard"
 	}
-	return slices.Contains(everyLegConditions[:3], cond)
+	return slices.Contains(everyLegConditions[:3], cond) || cond == everyLegConditions[4]
 }
 
 // runsInPortabilityScope permits only the declared step scope, never a platform condition.
@@ -562,12 +571,14 @@ func runsInPortabilityScope(step workflowStep, jobID, flag string) bool {
 		term = "(steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true')"
 	}
 	condition := strings.TrimSpace(step.If)
-	base := "${{ " + ghworkflow.HostedGateLegReady + " && " + term
-	if condition == base+" }}" {
-		return true
-	}
-	if jobID == "windows-shard" && condition == base+" && matrix.shard == 2 }}" {
-		return true
+	for _, ready := range []string{ghworkflow.HostedGateLegReady, ghworkflow.HostedGateGateLegReady} {
+		base := "${{ " + ready + " && " + term
+		if condition == base+" }}" {
+			return true
+		}
+		if jobID == "windows-shard" && condition == base+" && matrix.shard == 2 }}" {
+			return true
+		}
 	}
 	return false
 }
@@ -646,7 +657,7 @@ func TestRepositoryGuardKeepsRequiredContextsOnlyWhereItHolds(t *testing.T) {
 			t.Errorf("identity %q: portability contexts %v, err %v; want none", other, contexts, err)
 		}
 	}
-	if contexts, err := workflowContextsIn(workflows["portability.yml"], identity); err != nil || len(contexts) != 3 {
+	if contexts, err := workflowContextsIn(workflows["portability.yml"], identity); err != nil || len(contexts) != 4 {
 		t.Errorf("canonical portability contexts = %v, %v", contexts, err)
 	}
 }

@@ -96,6 +96,7 @@ func withoutRenovateBranchSkip(condition string) string {
 		return condition
 	}
 	rest = strings.TrimSpace(rest)
+	rest = withoutLeadingCancelGuard(rest)
 	if inner, enclosed := enclosedGroup(rest); enclosed {
 		return inner
 	}
@@ -103,6 +104,16 @@ func withoutRenovateBranchSkip(condition string) string {
 		return condition
 	}
 	return rest
+}
+
+// withoutLeadingCancelGuard strips a leading "!cancelled() && " from a condition rest.
+// The term holds on every non-cancelled run and is transparent to required-context analysis.
+func withoutLeadingCancelGuard(condition string) string {
+	rest, found := strings.CutPrefix(strings.TrimSpace(condition), "!cancelled() && ")
+	if found {
+		return strings.TrimSpace(rest)
+	}
+	return condition
 }
 
 // topLevelDisjunction reports whether expression holds a || outside parenthesised groups and

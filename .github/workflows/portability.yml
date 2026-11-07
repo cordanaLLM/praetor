@@ -115,10 +115,22 @@ jobs:
     name: Review gate
     if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled')"
     runs-on: ubuntu-26.04
-    timeout-minutes: 15
+    timeout-minutes: 16
     outputs:
       clear: ${{ steps.review-hold.outputs.clear }}
     steps:
+      - name: Stop on a draft pull request
+        if: github.event.pull_request.draft == true
+        shell: bash
+        env:
+          TITLE: Gate not run on a draft
+          MESSAGE: >-
+            The gate did not run because the pull request is a draft.
+            It runs when the pull request is marked ready for review.
+        run: |
+          echo "::error title=$TITLE::$MESSAGE"
+          echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
       - name: Stop while review is open
         id: review-hold
         if: (github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && github.event.pull_request.draft != true
@@ -257,7 +269,7 @@ jobs:
     # internal/forge/workflow_guard.go), and on a Renovate pull request no leg reports at all.
     # !cancelled() lets the job run when review-gate fails so it can produce the held
     # annotation on the required status context instead of silently skipping.
-    if: "!cancelled() && !(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled')"
+    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && !cancelled() && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled')"
     runs-on: ${{ matrix.os }}
     # windows-2025 needed 55 to 80 minutes for the whole job in October 2026 (go test 41 to 63,
     # the harness self-tests 12 to 13), against 12 on Linux and 19 on macOS; a slow runner took
@@ -792,6 +804,9 @@ jobs:
   windows-shard:
     name: Platform Neutrality (Windows shard ${{ matrix.shard }})
     needs: [review-gate]
+    # !cancelled() first: the shard is internal (the aggregate is the required context), so the
+    # leading cancel guard keeps it out of the guard analysis chain (reportsOnEveryPullRequest).
+    # It runs after review-gate failure to produce the held annotation on the shard status.
     if: "!cancelled() && !(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled')"
     runs-on: windows-2025
     timeout-minutes: 180

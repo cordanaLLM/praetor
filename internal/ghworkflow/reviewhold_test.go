@@ -246,18 +246,34 @@ func TestReviewHoldStepBelowJobTimeout(t *testing.T) {
 			}
 		}
 	}
-	if count != 3 {
-		t.Fatalf("review hold steps=%d; want harness, windows-shard and windows aggregate", count)
+	if count != 1 {
+		t.Fatalf("review hold steps=%d; want review-gate only", count)
 	}
 }
 
 // TestReviewHoldOpenThreadPlanted requires a review barrier before the heavy work can proceed.
+// In the gate-job pattern, review-gate runs the barrier and heavy jobs read its result through
+// a gate-check step that fails with the held annotation instead of silently skipping.
 func TestReviewHoldOpenThreadPlanted(t *testing.T) {
 	spec := loadPortabilityWorkflow(t)
+	gate := spec.Jobs["review-gate"]
+	if len(gate.Steps) < 1 || gate.Steps[0].ID != "review-hold" {
+		t.Fatal("review-gate: review-hold step missing")
+	}
 	for _, id := range []string{"harness", "windows-shard"} {
-		steps := spec.Jobs[id].Steps
-		if len(steps) < 2 || steps[1].Name != "Stop while review is open" {
-			t.Errorf("%s: planted unresolved thread would reach heavy work: review-hold step missing", id)
+		job := spec.Jobs[id]
+		if !slices.Contains(job.NeedIDs(), "review-gate") {
+			t.Errorf("%s: needs review-gate dependency missing", id)
+		}
+		found := false
+		for _, step := range job.Steps {
+			if step.ID == "review-check" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s: planted unresolved thread would reach heavy work: gate-check step missing", id)
 		}
 	}
 }
@@ -626,17 +642,33 @@ func TestReviewHoldRendering(t *testing.T) {
 		t.Fatal("portability workflow exceeds metadata reader byte bound")
 	}
 	text := string(data)
-	if strings.Count(text, RenderReviewHoldStep(false)) != 1 || strings.Count(text, RenderReviewHoldStep(true)) != 2 {
-		t.Fatal("portability review steps differ from renderer")
+	if strings.Count(text, RenderReviewHoldStep(false)) != 1 {
+		t.Fatal("portability review-gate step differs from renderer")
 	}
 	spec, err := Parse(data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"harness", "windows-shard"} {
-		assertReviewJob(t, id, spec.Jobs[id])
+	gate := spec.Jobs["review-gate"]
+	if len(gate.Steps) < 1 || gate.Steps[0].ID != "review-hold" || gate.Steps[0].Run != reviewHoldScript {
+		t.Fatal("review-gate: barrier step shape differs from renderer")
 	}
-	assertAggregateReviewHold(t, spec.Jobs["windows"])
+	for _, id := range []string{"harness", "windows-shard", "windows"} {
+		job := spec.Jobs[id]
+		if !slices.Contains(job.NeedIDs(), "review-gate") {
+			t.Errorf("%s: needs review-gate dependency missing", id)
+		}
+		found := false
+		for _, step := range job.Steps {
+			if step.ID == "review-check" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s: gate-check step missing", id)
+		}
+	}
 	wantRelease := RenderReviewHoldReleaseWorkflow()
 	if os.Getenv(updateReviewHoldWorkflowEnv) == "1" {
 		// os.WriteFile keeps the mode of an existing file (the tracked workflow), and git records only the executable bit, so 0600 changes nothing in the tree.
@@ -653,22 +685,17 @@ func TestReviewHoldRendering(t *testing.T) {
 	}
 }
 
-// updateReviewHoldPortability regenerates only rendered barrier steps when explicitly requested.
+// updateReviewHoldPortability regenerates only the rendered barrier step when explicitly requested.
 func updateReviewHoldPortability(t *testing.T, data []byte) []byte {
 	t.Helper()
 	if os.Getenv(updateReviewHoldWorkflowEnv) != "1" {
 		return data
 	}
 	pattern := regexp.MustCompile(`(?m)^      - name: Stop while review is open\n(?:        .*\n)*`)
-	if matches := pattern.FindAll(data, -1); len(matches) != 3 {
-		t.Fatalf("rendered barrier steps=%d; want 3", len(matches))
+	if matches := pattern.FindAll(data, -1); len(matches) != 1 {
+		t.Fatalf("rendered barrier steps=%d; want 1 (review-gate only)", len(matches))
 	}
-	index := 0
-	updated := pattern.ReplaceAllStringFunc(string(data), func(string) string {
-		step := RenderReviewHoldStep(index > 0)
-		index++
-		return step
-	})
+	updated := pattern.ReplaceAllString(string(data), RenderReviewHoldStep(false))
 	if err := os.WriteFile("../../.github/workflows/portability.yml", []byte(updated), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1054,6 +1081,38 @@ func assertReviewReleaseStatusBoundary(t *testing.T, statusConjunct string) {
 		if got != tc.want {
 			t.Error(tc.failure)
 		}
+	}
+}
+
+// TestReviewHoldConditionIncludesPullRequestReview proves the review hold
+// barrier fires on pull_request_review events (submitted, dismissed) so a
+// resolved thread or dismissed review triggers a fresh evaluation.
+func TestReviewHoldConditionIncludesPullRequestReview(t *testing.T) {
+	if !strings.Contains(ReviewHoldCondition, "pull_request_review") {
+		t.Fatal("ReviewHoldCondition must include pull_request_review")
+	}
+	if !strings.Contains(ReviewHoldClear, "pull_request_review") {
+		t.Fatal("ReviewHoldClear must exclude pull_request_review from the pass-through")
+	}
+	if !strings.Contains(HostedGateLegReady, "pull_request_review") {
+		t.Fatal("HostedGateLegReady inherits ReviewHoldClear; pull_request_review missing")
+	}
+}
+
+// TestReviewHoldGateJobConstants proves the gate-job pattern constants exist
+// and carry the review-check step outcome guard.
+func TestReviewHoldGateJobConstants(t *testing.T) {
+	if !strings.Contains(ReviewHoldGateCheck, "review-check") {
+		t.Fatal("ReviewHoldGateCheck must reference the review-check step")
+	}
+	if !strings.Contains(HostedGateGateLegReady, ReviewHoldGateCheck) {
+		t.Fatal("HostedGateGateLegReady must include ReviewHoldGateCheck")
+	}
+	if !strings.Contains(HostedGateGateLegReady, "!cancelled()") {
+		t.Fatal("HostedGateGateLegReady must include !cancelled()")
+	}
+	if !strings.Contains(HostedGateGateLegReady, HostedGateNotDraft) {
+		t.Fatal("HostedGateGateLegReady must include HostedGateNotDraft")
 	}
 }
 

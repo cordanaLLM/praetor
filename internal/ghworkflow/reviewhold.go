@@ -39,13 +39,21 @@ const (
     }
   }
 }`
-	// ReviewHoldCondition runs the barrier only for non-draft pull_request events.
-	ReviewHoldCondition = "github.event_name == 'pull_request' && " + HostedGateNotDraft
+	// ReviewHoldCondition runs the barrier on pull_request and pull_request_review events
+	// for non-draft PRs. pull_request_review lets a resolved review thread trigger a fresh
+	// evaluation without waiting for the review-hold-release.yml scheduler.
+	ReviewHoldCondition = "(github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && " + HostedGateNotDraft
 	// ReviewHoldClear guards later steps even when they deliberately run after failure.
 	// Non-PR events do not count reviews; PR reads must explicitly produce clear=true.
-	ReviewHoldClear = "(github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true')"
+	ReviewHoldClear = "(github.event_name != 'pull_request' && github.event_name != 'pull_request_review' || steps.review-hold.outputs.clear == 'true')"
 	// HostedGateLegReady guards heavy legs after review clearance, including steps run after failure.
 	HostedGateLegReady = ReviewHoldClear + " && !cancelled() && " + HostedGateNotDraft
+	// ReviewHoldGateCheck guards heavy matrix legs in the gate-job pattern where a
+	// dedicated review-gate job runs the hold and the matrix legs read its result.
+	// Steps with !cancelled() carry this so they do not run after the gate-check failure.
+	ReviewHoldGateCheck = "steps.review-check.outcome != 'failure'"
+	// HostedGateGateLegReady guards heavy legs in the gate-job pattern.
+	HostedGateGateLegReady = "!cancelled() && " + HostedGateNotDraft + " && " + ReviewHoldGateCheck
 	// reviewHoldLibrary is trusted inline Bash: release never checks out pull request code.
 	// Every API collection has a 20-page scalar bound; a full final page fails closed.
 	reviewHoldLibrary = `set -Eeuo pipefail
@@ -168,13 +176,10 @@ printf '%s\n' "$HOLD_CAUSE" >> "$GITHUB_STEP_SUMMARY"
 // reviewHoldScript polls within a deadline and refuses work unless both counts are zero.
 var reviewHoldScript = renderReviewHoldScript(ReviewHoldWaitMinutes, ReviewHoldPollSeconds)
 
-// RenderReviewHoldStep renders the barrier immediately after HostedGateDraftStep.
-// The first step defines the shared script anchor; reference reuses it in later jobs.
-func RenderReviewHoldStep(reference bool) string {
-	run := "        run: &review-hold-script |\n" + indentReviewScript(reviewHoldScript)
-	if reference {
-		run = "        run: *review-hold-script\n"
-	}
+// RenderReviewHoldStep renders the barrier for a dedicated review-gate job.
+// The reference parameter is retained for signature stability but ignored: the
+// gate-job pattern uses one inline step per workflow with no YAML anchors.
+func RenderReviewHoldStep(_ bool) string {
 	return "      - name: Stop while review is open\n" +
 		"        id: review-hold\n" +
 		"        if: " + ReviewHoldCondition + "\n" +
@@ -184,7 +189,7 @@ func RenderReviewHoldStep(reference bool) string {
 		"          GH_TOKEN: ${{ github.token }}\n" +
 		"          PR_NUMBER: ${{ github.event.pull_request.number }}\n" +
 		"          HEAD_SHA: ${{ github.event.pull_request.head.sha }}\n" +
-		run
+		"        run: |\n" + indentReviewScript(reviewHoldScript)
 }
 
 // indentReviewScript nests shared Bash under a workflow step's literal run scalar.
