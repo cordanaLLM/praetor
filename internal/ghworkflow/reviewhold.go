@@ -40,8 +40,9 @@ const (
   }
 }`
 	// ReviewHoldCondition runs the barrier on pull_request and pull_request_review events
-	// for non-draft PRs. pull_request_review lets a resolved review thread trigger a fresh
-	// evaluation without waiting for the review-hold-release.yml scheduler.
+	// for non-draft PRs. pull_request_review (submitted, dismissed) re-evaluates when a
+	// review lands or is dismissed; resolving a thread fires pull_request_review_thread,
+	// which this workflow does not subscribe to — review-hold-release.yml handles that.
 	ReviewHoldCondition = "(github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && " + HostedGateNotDraft
 	// ReviewHoldClear guards later steps even when they deliberately run after failure.
 	// Non-PR events do not count reviews; PR reads must explicitly produce clear=true.

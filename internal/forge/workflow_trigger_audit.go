@@ -689,7 +689,7 @@ func hasLeadingCancelGuard(condition string) bool {
 	return true
 }
 
-var needsResultCheck = regexp.MustCompile(`needs\.\w+\.result\s*[!=]=`)
+var needsResultCheck = regexp.MustCompile(`needs\.[\w-]+\.result\s*[!=]=`)
 
 // reportsSuccessOnDraft reports whether a job with handling h reports success on a draft without
 // running its work there: a failed first step forgiven by continue-on-error, a condition skip or a
