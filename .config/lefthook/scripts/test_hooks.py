@@ -1410,7 +1410,8 @@ print("fixture hook self-tests passed")
                 mock.patch("sys.stdout", new_callable=io.StringIO) as out:
             hooks.check_signature_range("base-sha", "head-sha")
         git_cmd.assert_called_once_with(
-            "log", "--format=%H %G?", "base-sha..head-sha", "--",
+            "log", f"--max-count={hooks.MAX_SIGNATURE_COMMITS + 1}",
+            "--format=%H %G?", "base-sha..head-sha", "--",
         )
         self.assertIn("2 commit(s)", out.getvalue())
         self.assertIn("verified", out.getvalue())
@@ -1467,6 +1468,37 @@ print("fixture hook self-tests passed")
             hooks.check_signature_range("base-sha", "head-sha")
         git_cmd.assert_not_called()
         self.assertIn("Signature check: skipped, commit.gpgsign not set to true", out.getvalue())
+
+    def test_signature_check_refuses_range_exceeding_limit(self):
+        """Range with more than MAX_SIGNATURE_COMMITS commits raises HookError."""
+        lines = [f"{i:040x} G" for i in range(hooks.MAX_SIGNATURE_COMMITS + 1)]
+        log_output = "\n".join(lines) + "\n"
+        with mock.patch("hooks.run", return_value=b"true\n"), \
+                mock.patch("hooks.git", return_value=log_output.encode()), \
+                self.assertRaises(HookError) as ctx:
+            hooks.check_signature_range("base-sha", "head-sha")
+        self.assertIn("exceeds", str(ctx.exception))
+        self.assertIn(str(hooks.MAX_SIGNATURE_COMMITS), str(ctx.exception))
+
+    def test_signature_check_accepts_range_at_limit(self):
+        """Exactly MAX_SIGNATURE_COMMITS commits passes without overflow error."""
+        lines = [f"{i:040x} G" for i in range(hooks.MAX_SIGNATURE_COMMITS)]
+        log_output = "\n".join(lines) + "\n"
+        with mock.patch("hooks.run", return_value=b"true\n"), \
+                mock.patch("hooks.git", return_value=log_output.encode()), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            hooks.check_signature_range("base-sha", "head-sha")
+        self.assertIn(f"{hooks.MAX_SIGNATURE_COMMITS} commit(s)", out.getvalue())
+
+    def test_signature_check_refuses_malformed_log_line(self):
+        """Unparseable git log line raises HookError instead of silent skip."""
+        log_output = "aaaa000000000000000000000000000000000000 G\nmalformed-line\n"
+        with mock.patch("hooks.run", return_value=b"true\n"), \
+                mock.patch("hooks.git", return_value=log_output.encode()), \
+                self.assertRaises(HookError) as ctx:
+            hooks.check_signature_range("base-sha", "head-sha")
+        self.assertIn("unparseable", str(ctx.exception))
+        self.assertIn("malformed-line", str(ctx.exception))
 
     def test_real_checkpoint_push_builds_and_tests_without_release_receipt(self):
         skip_without_race_detector(self)

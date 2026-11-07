@@ -299,13 +299,22 @@ def check_signature_range(base, head):
         print("Signature check: skipped, no pushed-range base; "
               "CI and forge rulesets cover merge path")
         return
-    log = git("log", "--format=%H %G?", f"{base}..{head}", "--").decode()
-    lines = log.splitlines()[:MAX_SIGNATURE_COMMITS]
+    log = git("log", f"--max-count={MAX_SIGNATURE_COMMITS + 1}",
+              "--format=%H %G?", f"{base}..{head}", "--").decode()
+    lines = log.splitlines()
+    if len(lines) > MAX_SIGNATURE_COMMITS:
+        raise HookError(
+            f"Signature check: range {base[:12]}..{head[:12]} exceeds "
+            f"{MAX_SIGNATURE_COMMITS} commits; refresh remote baseline "
+            "or split push"
+        )
     bad = []
     for line in lines:
         parts = line.split(None, 1)
         if len(parts) != 2:
-            continue
+            raise HookError(
+                f"Signature check: unparseable git log line: {line!r}"
+            )
         sha, status = parts
         if status != SIGNATURE_GOOD:
             label = SIGNATURE_LABELS.get(status, f"unknown status {status!r}")
