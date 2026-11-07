@@ -195,6 +195,8 @@ var priorDigests = map[string]string{
 	"9127c94ae1aa6b1aeee2f1b42ae0408e68e471adf927ab6aa43282a41f17283f": Directory + "/" + GateFile,
 	// Outgoing review-round text; fixture: api-gate-main-review-round6.go.txt.
 	"a57af7537bc9c1e3b6b6be6be839c991b26562c1daafbaedbad334d9f88d3507": Directory + "/" + GateFile,
+	// The draft-skip of the sixty-minute workflow; fixture: praetor-api.sixty-minute-job-draft-skip.yml.
+	"0b93b127b9d26320e4e8566881fed76f6eeaf66724d42cb4c215d3a21b5ee59f": WorkflowFile,
 }
 
 var assetNames = [...]string{GateFile, PlaceholderFile}
