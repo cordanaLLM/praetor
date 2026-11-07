@@ -159,10 +159,10 @@ func (gt *GiteaDriver) ListPullRequestsByHead(ctx context.Context, branch string
 	if err := util.ValidateGitHubRepositoryIdentity(gt.Owner, gt.Repo); err != nil {
 		return nil, fmt.Errorf("forgejo pull requests by head %q: %w", branch, err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, defaultHTTPTimeout)
-	defer cancel()
 	return collectHeadPullRequests(gt.Owner, gt.Repo, branch, func(state string, page int) ([]byte, error) {
-		return gt.fetchHeadPullsPage(ctx, branch, state, page)
+		pageCtx, cancel := context.WithTimeout(ctx, headPullRequestPageTimeout)
+		defer cancel()
+		return gt.fetchHeadPullsPage(pageCtx, branch, state, page)
 	})
 }
 

@@ -1011,7 +1011,19 @@ const (
 	// MaxHeadPullRequests bounds the total pull requests examined across all pages of a
 	// head lookup (HISS-02).
 	MaxHeadPullRequests = HeadPullRequestsPerPage * HeadPullRequestsMaxPages
+	// tokenLookupTimeout bounds ambient forge token lookup (HISS-02): resolving a GitHub
+	// token may invoke `gh auth token` via util.ResolveAuthTokenContext, which can stall when a
+	// host-level pacing wrapper waits for an API budget reset. Token resolution has its own
+	// deadline so it cannot starve the subsequent HTTP request deadline.
+	tokenLookupTimeout = 10 * time.Second
 )
+
+// headPullRequestPageTimeout bounds each individual page fetch during head pull request
+// lookups across both GitHub and Forgejo drivers (HISS-02); package variable for tests.
+var headPullRequestPageTimeout = defaultHTTPTimeout
+
+// resolveGitHubToken resolves the ambient GitHub token for host; package variable for tests.
+var resolveGitHubToken = resolveGitHubTokenForHost
 
 // PullRequestHead state constants.
 const (
@@ -1205,12 +1217,12 @@ func (g *GitHubDriver) ListPullRequestsByHead(ctx context.Context, branch string
 	if err != nil {
 		return nil, fmt.Errorf("list pull requests by head %q: %w", branch, err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, defaultHTTPTimeout)
-	defer cancel()
 	return collectHeadPullRequests(owner, repo, branch, func(state string, page int) ([]byte, error) {
+		pageCtx, cancel := context.WithTimeout(ctx, headPullRequestPageTimeout)
+		defer cancel()
 		path := fmt.Sprintf("/repos/%s/%s/pulls?state=%s&head=%s&sort=created&direction=desc&per_page=%d&page=%d",
 			owner, repo, state, url.QueryEscape(owner+":"+branch), HeadPullRequestsPerPage, page)
-		return g.fetchHeadPullsPage(ctx, branch, path)
+		return g.fetchHeadPullsPage(pageCtx, branch, path)
 	})
 }
 
@@ -1323,15 +1335,15 @@ func ReadPullRequestsByHead(ctx context.Context, kind config.Forge, remote util.
 	if ctx == nil {
 		return nil, errors.New("read pull requests by head: context cannot be nil")
 	}
-	ctx, cancel := context.WithTimeout(ctx, defaultHTTPTimeout)
-	defer cancel()
 	endpoint := "https://" + remote.Host
 	if strings.HasPrefix(remote.Host, "http://") || strings.HasPrefix(remote.Host, "https://") {
 		endpoint = remote.Host
 	}
 	switch kind {
 	case config.ForgeGitHub:
-		token := resolveGitHubTokenForHost(ctx, remote.Host)
+		tokenCtx, cancelToken := context.WithTimeout(ctx, tokenLookupTimeout)
+		token := resolveGitHubToken(tokenCtx, remote.Host)
+		cancelToken()
 		driver := NewGitHubDriver(token, endpoint)
 		if client := httpClientFromContext(ctx); client != nil {
 			driver.HTTPClient = client
