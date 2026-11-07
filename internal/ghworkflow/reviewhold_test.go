@@ -246,18 +246,34 @@ func TestReviewHoldStepBelowJobTimeout(t *testing.T) {
 			}
 		}
 	}
-	if count != 3 {
-		t.Fatalf("review hold steps=%d; want harness, windows-shard and windows aggregate", count)
+	if count != 1 {
+		t.Fatalf("review hold steps=%d; want review-gate only", count)
 	}
 }
 
 // TestReviewHoldOpenThreadPlanted requires a review barrier before the heavy work can proceed.
+// In the gate-job pattern, review-gate runs the barrier and heavy jobs read its result through
+// a gate-check step that fails with the held annotation instead of silently skipping.
 func TestReviewHoldOpenThreadPlanted(t *testing.T) {
 	spec := loadPortabilityWorkflow(t)
+	gate := spec.Jobs["review-gate"]
+	if len(gate.Steps) < 2 || gate.Steps[1].ID != "review-hold" {
+		t.Fatal("review-gate: review-hold step missing")
+	}
 	for _, id := range []string{"harness", "windows-shard"} {
-		steps := spec.Jobs[id].Steps
-		if len(steps) < 2 || steps[1].Name != "Stop while review is open" {
-			t.Errorf("%s: planted unresolved thread would reach heavy work: review-hold step missing", id)
+		job := spec.Jobs[id]
+		if !slices.Contains(job.NeedIDs(), "review-gate") {
+			t.Errorf("%s: needs review-gate dependency missing", id)
+		}
+		found := false
+		for _, step := range job.Steps {
+			if step.ID == "review-check" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s: planted unresolved thread would reach heavy work: gate-check step missing", id)
 		}
 	}
 }
@@ -625,21 +641,31 @@ func TestReviewHoldRendering(t *testing.T) {
 	if len(data) > 64<<10 {
 		t.Fatal("portability workflow exceeds metadata reader byte bound")
 	}
-	text := string(data)
-	if strings.Count(text, RenderReviewHoldStep(false)) != 1 || strings.Count(text, RenderReviewHoldStep(true)) != 2 {
-		t.Fatal("portability review steps differ from renderer")
+	if strings.Count(string(data), RenderReviewHoldStep(false)) != 1 {
+		t.Fatal("portability review-gate step differs from renderer")
 	}
 	spec, err := Parse(data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"harness", "windows-shard"} {
-		assertReviewJob(t, id, spec.Jobs[id])
+	gate := spec.Jobs["review-gate"]
+	if len(gate.Steps) < 2 || gate.Steps[1].ID != "review-hold" || gate.Steps[1].Run != reviewHoldScript {
+		t.Fatal("review-gate: barrier step shape differs from renderer")
 	}
-	assertAggregateReviewHold(t, spec.Jobs["windows"])
+	assertGateLegShape(t, spec, "harness")
+	assertGateLegShape(t, spec, "windows-shard")
+	winJob := spec.Jobs["windows"]
+	if slices.Contains(winJob.NeedIDs(), "review-gate") {
+		t.Error("windows: must not directly need review-gate (transitive through windows-shard)")
+	}
+	assertReleaseWorkflowRendered(t)
+}
+
+// assertReleaseWorkflowRendered verifies the release workflow matches its renderer.
+func assertReleaseWorkflowRendered(t *testing.T) {
+	t.Helper()
 	wantRelease := RenderReviewHoldReleaseWorkflow()
 	if os.Getenv(updateReviewHoldWorkflowEnv) == "1" {
-		// os.WriteFile keeps the mode of an existing file (the tracked workflow), and git records only the executable bit, so 0600 changes nothing in the tree.
 		if err := os.WriteFile("../../.github/workflows/review-hold-release.yml", []byte(wantRelease), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -653,22 +679,17 @@ func TestReviewHoldRendering(t *testing.T) {
 	}
 }
 
-// updateReviewHoldPortability regenerates only rendered barrier steps when explicitly requested.
+// updateReviewHoldPortability regenerates only the rendered barrier step when explicitly requested.
 func updateReviewHoldPortability(t *testing.T, data []byte) []byte {
 	t.Helper()
 	if os.Getenv(updateReviewHoldWorkflowEnv) != "1" {
 		return data
 	}
 	pattern := regexp.MustCompile(`(?m)^      - name: Stop while review is open\n(?:        .*\n)*`)
-	if matches := pattern.FindAll(data, -1); len(matches) != 3 {
-		t.Fatalf("rendered barrier steps=%d; want 3", len(matches))
+	if matches := pattern.FindAll(data, -1); len(matches) != 1 {
+		t.Fatalf("rendered barrier steps=%d; want 1 (review-gate only)", len(matches))
 	}
-	index := 0
-	updated := pattern.ReplaceAllStringFunc(string(data), func(string) string {
-		step := RenderReviewHoldStep(index > 0)
-		index++
-		return step
-	})
+	updated := pattern.ReplaceAllString(string(data), RenderReviewHoldStep(false))
 	if err := os.WriteFile("../../.github/workflows/portability.yml", []byte(updated), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -686,28 +707,22 @@ func TestReviewHoldStepTimeoutRendered(t *testing.T) {
 	}
 }
 
-// assertAggregateReviewHold verifies the shared barrier precedes the aggregate's result check.
-func assertAggregateReviewHold(t *testing.T, job Job) {
+// assertGateLegShape checks that a gate-job leg needs review-gate and has a gate-check step.
+func assertGateLegShape(t *testing.T, spec Spec, id string) {
 	t.Helper()
-	if len(job.Steps) != 2 || job.Steps[0].Run != reviewHoldScript || job.Steps[0].If != ReviewHoldCondition {
-		t.Fatal("windows aggregate review barrier differs from renderer")
+	job := spec.Jobs[id]
+	if !slices.Contains(job.NeedIDs(), "review-gate") {
+		t.Errorf("%s: needs review-gate dependency missing", id)
 	}
-}
-
-// assertReviewJob verifies a rendered barrier and every subsequent step condition.
-func assertReviewJob(t *testing.T, id string, job Job) {
-	t.Helper()
-	if len(job.Steps) < 3 {
-		t.Fatalf("%s: review steps missing", id)
-	}
-	hold := job.Steps[1]
-	if hold.If != ReviewHoldCondition || hold.Shell != "bash" || hold.Run != reviewHoldScript {
-		t.Fatalf("%s: review barrier shape differs", id)
-	}
-	for _, step := range job.Steps[2:] {
-		if !strings.Contains(step.If, ReviewHoldClear) || !strings.Contains(step.If, HostedGateNotDraft) {
-			t.Errorf("%s/%s: missing review/draft guard", id, step.Name)
+	found := false
+	for _, step := range job.Steps {
+		if step.ID == "review-check" {
+			found = true
+			break
 		}
+	}
+	if !found {
+		t.Errorf("%s: gate-check step missing", id)
 	}
 }
 
@@ -1057,6 +1072,70 @@ func assertReviewReleaseStatusBoundary(t *testing.T, statusConjunct string) {
 	}
 }
 
+// TestReviewHoldConditionIncludesPullRequestReview proves the review hold
+// barrier fires on pull_request_review events (submitted, dismissed) so a
+// resolved thread or dismissed review triggers a fresh evaluation.
+func TestReviewHoldConditionIncludesPullRequestReview(t *testing.T) {
+	if !strings.Contains(ReviewHoldCondition, "pull_request_review") {
+		t.Fatal("ReviewHoldCondition must include pull_request_review")
+	}
+	if !strings.Contains(ReviewHoldClear, "pull_request_review") {
+		t.Fatal("ReviewHoldClear must exclude pull_request_review from the pass-through")
+	}
+	if !strings.Contains(HostedGateLegReady, "pull_request_review") {
+		t.Fatal("HostedGateLegReady inherits ReviewHoldClear; pull_request_review missing")
+	}
+}
+
+// TestReviewHoldGateJobConstants proves the gate-job pattern constants exist
+// and carry the review-check step outcome guard.
+func TestReviewHoldGateJobConstants(t *testing.T) {
+	if !strings.Contains(ReviewHoldGateCheck, "review-check") {
+		t.Fatal("ReviewHoldGateCheck must reference the review-check step")
+	}
+	if !strings.Contains(HostedGateGateLegReady, ReviewHoldGateCheck) {
+		t.Fatal("HostedGateGateLegReady must include ReviewHoldGateCheck")
+	}
+	if !strings.Contains(HostedGateGateLegReady, "!cancelled()") {
+		t.Fatal("HostedGateGateLegReady must include !cancelled()")
+	}
+	if !strings.Contains(HostedGateGateLegReady, HostedGateNotDraft) {
+		t.Fatal("HostedGateGateLegReady must include HostedGateNotDraft")
+	}
+}
+
+// Negative: ReviewHoldGateCheck must fail closed — == 'success', not != 'failure'.
+// A != 'failure' check passes when the review-check step is skipped (empty outcome),
+// letting heavy legs run without review clearance.
+func TestReviewHoldGateCheckFailsClosed(t *testing.T) {
+	if strings.Contains(ReviewHoldGateCheck, "!= 'failure'") {
+		t.Fatal("ReviewHoldGateCheck must use == 'success' (fail closed), not != 'failure' (fail open)")
+	}
+	if !strings.Contains(ReviewHoldGateCheck, "== 'success'") {
+		t.Fatal("ReviewHoldGateCheck must check == 'success' so a skipped or errored review-check blocks heavy legs")
+	}
+}
+
+// Negative: ReviewCheckCondition must always run on non-draft PRs so it
+// produces a definitive outcome for the fail-closed gate check.
+func TestReviewCheckConditionAlwaysRuns(t *testing.T) {
+	if strings.Contains(ReviewCheckCondition, "needs.review-gate.result") {
+		t.Fatal("ReviewCheckCondition must not gate on needs.review-gate.result; the step must always run to produce a definitive outcome for the == 'success' gate check")
+	}
+	if !strings.Contains(ReviewCheckCondition, "draft") {
+		t.Fatal("ReviewCheckCondition must still skip on draft PRs")
+	}
+}
+
+// Positive: RenderReviewCheckStep produces a step that exits 0 when review-gate
+// succeeds, so outcome == 'success' and heavy legs run.
+func TestReviewCheckStepExitsZeroOnClear(t *testing.T) {
+	step := RenderReviewCheckStep()
+	if !strings.Contains(step, "exit 0") {
+		t.Fatal("review-check step must exit 0 when review-gate succeeds so that outcome == 'success' lets heavy legs proceed")
+	}
+}
+
 // reviewBotTermsMatch evaluates configured bot terms against the supplied event fields.
 func reviewBotTermsMatch(terms string, fields map[string]string) bool {
 	for field, value := range fields {
@@ -1070,4 +1149,28 @@ func reviewBotTermsMatch(terms string, fields map[string]string) bool {
 		}
 	}
 	return false
+}
+
+// Positive: RenderReviewCheckStep produces a valid YAML step with escaped title.
+func TestReviewCheckStepRendering(t *testing.T) {
+	step := RenderReviewCheckStep()
+	if !strings.Contains(step, "id: review-check") {
+		t.Fatal("missing step id")
+	}
+	if !strings.Contains(step, ReviewCheckCondition) {
+		t.Fatalf("condition mismatch: want %q in step", ReviewCheckCondition)
+	}
+	escaped := strings.ReplaceAll(ReviewHoldTitle, ":", "%3A")
+	if !strings.Contains(step, escaped) {
+		t.Fatalf("want escaped title %q in step", escaped)
+	}
+	if strings.Contains(step, "TITLE: 'Gate held: review open'") {
+		t.Fatal("title must escape colons for GitHub annotation format")
+	}
+	if !strings.Contains(step, ReviewCheckMessage) {
+		t.Fatal("missing message body")
+	}
+	if !strings.Contains(step, "exit 1") {
+		t.Fatal("step must exit non-zero to hold the gate")
+	}
 }

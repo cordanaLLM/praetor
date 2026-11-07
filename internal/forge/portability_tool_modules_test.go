@@ -80,7 +80,7 @@ func TestPortability_ToolModulesDownloadBeforeTests(t *testing.T) {
 // shell is refused.
 func TestPortability_Negative_PlantedToolModuleStepsAreRefused(t *testing.T) {
 	workflow := readPortability(t)
-	condition := "\n        if: ${{ " + ghworkflow.HostedGateLegReady + " && steps.scope.outputs.go == 'true' }}"
+	condition := "\n        if: ${{ " + ghworkflow.HostedGateGateLegReady + " && steps.scope.outputs.go == 'true' }}"
 	planted := map[string]string{
 		"no step":       strings.Replace(workflow, toolModulesStep, "- name: Download Something Else", 1),
 		"after tests":   strings.Replace(strings.Replace(workflow, testPackageStep, "- name: TMP", 1), toolModulesStep, testPackageStep, 1),

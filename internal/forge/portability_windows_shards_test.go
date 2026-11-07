@@ -38,6 +38,7 @@ func portabilityWindowsShardsProblem(raw []byte, identity string) string {
 	wantContexts := []string{
 		"Platform Neutrality (Linux)",
 		"Platform Neutrality (macOS)",
+		"Review gate",
 		"Platform Neutrality (Windows)",
 	}
 	if !slices.Equal(contexts, wantContexts) {

@@ -80,9 +80,11 @@ func provenAggregateNeeds(spec *workflowSpec, job *workflowJob) []string {
 // Renovate skip or repository guard the aggregate is skipped where the guard is false, and a
 // skipped required check passes, so it covers only a need that carries the same skip and guard
 // and so does not run there either. A need that still runs there stays required, or a failure of
-// it would merge.
+// it would merge. A leading !cancelled() on the need's condition is transparent to the guard
+// comparison: it lets the need run on every non-cancelled run, which the aggregate's always()
+// already covers.
 func coversNeed(spec *workflowSpec, steps []gateStep, needs []string, need string, guard aggregateGuard) bool {
-	needIf := spec.Jobs[need].If
+	needIf := withoutLeadingCancelGuard(spec.Jobs[need].If)
 	if guard.renovate && !carriesRenovateBranchSkip(needIf) {
 		return false
 	}

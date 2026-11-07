@@ -13,7 +13,7 @@ import (
 // request of the canonical repository waits for (operator decision 2026-09-28, after all three
 // legs passed on main).
 var platformNeutralityLegs = []string{
-	"Platform Neutrality (Linux)", "Platform Neutrality (macOS)", "Platform Neutrality (Windows)",
+	"Platform Neutrality (Linux)", "Platform Neutrality (macOS)", "Review gate", "Platform Neutrality (Windows)",
 }
 
 // securityScanContext is the security job's check. Its guard is joined to the schedule-leg term,

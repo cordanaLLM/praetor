@@ -39,13 +39,29 @@ const (
     }
   }
 }`
-	// ReviewHoldCondition runs the barrier only for non-draft pull_request events.
-	ReviewHoldCondition = "github.event_name == 'pull_request' && " + HostedGateNotDraft
+	// ReviewHoldCondition runs the barrier on pull_request and pull_request_review events
+	// for non-draft PRs. pull_request_review (submitted, dismissed) re-evaluates when a
+	// review lands or is dismissed; resolving a thread fires pull_request_review_thread,
+	// which this workflow does not subscribe to — review-hold-release.yml handles that.
+	ReviewHoldCondition = "(github.event_name == 'pull_request' || github.event_name == 'pull_request_review') && " + HostedGateNotDraft
 	// ReviewHoldClear guards later steps even when they deliberately run after failure.
 	// Non-PR events do not count reviews; PR reads must explicitly produce clear=true.
-	ReviewHoldClear = "(github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true')"
+	ReviewHoldClear = "(github.event_name != 'pull_request' && github.event_name != 'pull_request_review' || steps.review-hold.outputs.clear == 'true')"
 	// HostedGateLegReady guards heavy legs after review clearance, including steps run after failure.
 	HostedGateLegReady = ReviewHoldClear + " && !cancelled() && " + HostedGateNotDraft
+	// ReviewCheckMessage is the annotation and summary body for the review-check step.
+	ReviewCheckMessage = "Heavy tier held while review threads are unresolved or bot reviews are pending. The gate runs automatically when they clear."
+	// ReviewCheckCondition fires the review-check step on every non-draft PR run.
+	// The step always produces a definitive outcome (success or failure) so that
+	// ReviewHoldGateCheck can use == 'success' (fail closed) instead of != 'failure'.
+	ReviewCheckCondition = HostedGateNotDraft
+	// ReviewHoldGateCheck guards heavy matrix legs in the gate-job pattern where a
+	// dedicated review-gate job runs the hold and the matrix legs read its result.
+	// Fail closed: if review-check does not run or errors, outcome is not 'success'
+	// and the heavy steps are skipped.
+	ReviewHoldGateCheck = "steps.review-check.outcome == 'success'"
+	// HostedGateGateLegReady guards heavy legs in the gate-job pattern.
+	HostedGateGateLegReady = "!cancelled() && " + HostedGateNotDraft + " && " + ReviewHoldGateCheck
 	// reviewHoldLibrary is trusted inline Bash: release never checks out pull request code.
 	// Every API collection has a 20-page scalar bound; a full final page fails closed.
 	reviewHoldLibrary = `set -Eeuo pipefail
@@ -168,13 +184,10 @@ printf '%s\n' "$HOLD_CAUSE" >> "$GITHUB_STEP_SUMMARY"
 // reviewHoldScript polls within a deadline and refuses work unless both counts are zero.
 var reviewHoldScript = renderReviewHoldScript(ReviewHoldWaitMinutes, ReviewHoldPollSeconds)
 
-// RenderReviewHoldStep renders the barrier immediately after HostedGateDraftStep.
-// The first step defines the shared script anchor; reference reuses it in later jobs.
-func RenderReviewHoldStep(reference bool) string {
-	run := "        run: &review-hold-script |\n" + indentReviewScript(reviewHoldScript)
-	if reference {
-		run = "        run: *review-hold-script\n"
-	}
+// RenderReviewHoldStep renders the barrier for a dedicated review-gate job.
+// The reference parameter is retained for signature stability but ignored: the
+// gate-job pattern uses one inline step per workflow with no YAML anchors.
+func RenderReviewHoldStep(_ bool) string {
 	return "      - name: Stop while review is open\n" +
 		"        id: review-hold\n" +
 		"        if: " + ReviewHoldCondition + "\n" +
@@ -184,7 +197,32 @@ func RenderReviewHoldStep(reference bool) string {
 		"          GH_TOKEN: ${{ github.token }}\n" +
 		"          PR_NUMBER: ${{ github.event.pull_request.number }}\n" +
 		"          HEAD_SHA: ${{ github.event.pull_request.head.sha }}\n" +
-		run
+		"        run: |\n" + indentReviewScript(reviewHoldScript)
+}
+
+// RenderReviewCheckStep renders the gate-check step for heavy matrix legs.
+// The step always runs on non-draft PRs and produces a definitive outcome:
+// exit 0 (success) when review-gate succeeded, exit 1 (failure) with an
+// annotation when it did not. This lets ReviewHoldGateCheck use == 'success'
+// (fail closed).
+func RenderReviewCheckStep() string {
+	escaped := strings.ReplaceAll(ReviewHoldTitle, ":", "%3A")
+	return "      - name: Stop on held review\n" +
+		"        id: review-check\n" +
+		"        if: " + ReviewCheckCondition + "\n" +
+		"        shell: bash\n" +
+		"        env:\n" +
+		"          GATE_RESULT: ${{ needs.review-gate.result }}\n" +
+		"          TITLE: '" + escaped + "'\n" +
+		"          MESSAGE: >-\n" +
+		"            " + ReviewCheckMessage + "\n" +
+		"        run: |\n" +
+		"          if [ \"$GATE_RESULT\" = \"success\" ]; then\n" +
+		"            exit 0\n" +
+		"          fi\n" +
+		"          echo \"::error title=$TITLE::$MESSAGE\"\n" +
+		"          echo \"$MESSAGE\" >> \"$GITHUB_STEP_SUMMARY\"\n" +
+		"          exit 1\n"
 }
 
 // indentReviewScript nests shared Bash under a workflow step's literal run scalar.
