@@ -19,6 +19,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 from urllib.error import HTTPError
+from urllib.request import Request
 
 FIGURES = Path(__file__).resolve().parent
 ROOT = FIGURES.parents[1]
@@ -583,14 +584,165 @@ class Hook(unittest.TestCase):
                 "http://example.test/figures-player.tar.gz"
             )
 
+    def test_lock_release_url_restricts_host_and_path_segments(self):
+        """Verify release archive URLs restrict host and repository path segments."""
+        self.assertEqual(
+            mkdocs_hook.release_archive_url(
+                {"repository": "https://github.com/adopter/praetor-fork/"},
+                "v1.4.0",
+                "figures-player.tar.gz",
+            ),
+            "https://github.com/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz",
+        )
+        bad_repositories = [
+            "https://evil.example/adopter/praetor-fork",
+            "https://github.com.evil.example/adopter/praetor-fork",
+            "https://github.com/adopter",
+            "https://github.com/adopter/praetor-fork/extra",
+            "adopter",
+            "adopter/praetor-fork/extra",
+            "adopter/..",
+            "../praetor-fork",
+            "adopter/praetor-fork?x=1",
+            "adopter/praetor-fork#frag",
+        ]
+        self._assert_bad_repositories(bad_repositories)
+
+    def _assert_bad_repositories(self, bad_repositories):
+        """Assert that invalid repository identifiers raise CheckError."""
+        for repository in bad_repositories:
+            with (
+                self.subTest(repository=repository),
+                self.assertRaises(mkdocs_hook.CheckError),
+            ):
+                mkdocs_hook.release_archive_url(
+                    {"repository": repository},
+                    "v1.4.0",
+                    "figures-player.tar.gz",
+                )
+
+    def test_lock_release_url_restricts_release_and_asset_segments(self):
+        """Verify invalid release and asset path segments raise CheckError."""
+        bad_segments = [
+            "",
+            ".",
+            "..",
+            "../v1.4.0",
+            "v1.4.0/extra",
+            "v1.4.0\\extra",
+            "v1.4.0?x=1",
+            "v1.4.0#frag",
+            "v1.4.0 space",
+        ]
+        for segment in bad_segments:
+            with (
+                self.subTest(release=segment),
+                self.assertRaises(mkdocs_hook.CheckError),
+            ):
+                mkdocs_hook.release_archive_url({}, segment, "figures-player.tar.gz")
+            with (
+                self.subTest(asset=segment),
+                self.assertRaises(mkdocs_hook.CheckError),
+            ):
+                mkdocs_hook.release_archive_url({}, "v1.4.0", segment)
+
+    def test_download_refuses_urls_outside_the_release_origin(self):
+        """Verify player downloads refuse URLs outside the trusted release origin."""
+        bad_download_urls = [
+            "https://evil.example/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz",
+            "https://github.com.evil.example/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz",
+            "https://github.com@evil.example/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz",
+            "https://github.com:8443/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz",
+            "https://github.com/adopter/praetor-fork/../../etc/passwd",
+            "https://github.com/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz?x=1",
+            "https://github.com/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz#frag",
+            "http://github.com/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz",
+            "ftp://github.com/adopter/praetor-fork/releases/download/v1.4.0/figures-player.tar.gz",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+        ]
+        with mock.patch.object(
+            mkdocs_hook,
+            "urlopen",
+            side_effect=AssertionError("urlopen called for invalid URL"),
+        ):
+            for bad_url in bad_download_urls:
+                with (
+                    self.subTest(download_url=bad_url),
+                    self.assertRaises(mkdocs_hook.CheckError),
+                ):
+                    mkdocs_hook.download_player_archive(bad_url)
+
+    def test_download_carries_no_unused_suppression(self):
+        """Verify mkdocs_hook carries no unused linter or security suppressions."""
+        source = (FIGURES / "mkdocs_hook.py").read_text(encoding="utf-8")
+        self.assertFalse("noqa: S310" in source, "unused S310 suppression")
+        self.assertFalse("nosemgrep:" in source, "unused nosemgrep suppression")
+
+    def test_download_revalidates_redirects(self):
+        """Verify player downloads revalidate redirect target hosts and protocols."""
+        valid_url = "https://github.com/cordanaLLM/praetor/releases/download/v1.4.0/figures-player.tar.gz"
+        good_redirects = [
+            "https://objects.githubusercontent.com/github-production-release-asset/123?X-Amz-Signature=abc",
+            "https://release-assets.githubusercontent.com/github-production-release-asset/123?sig=1",
+            "/cordanaLLM/praetor/releases/download/v1.4.0/figures-player.tar.gz",
+        ]
+        bad_redirects = [
+            "http://objects.githubusercontent.com/github-production-release-asset/123",
+            "https://evil.example/figures-player.tar.gz",
+            "https://github.com.evil.example/figures-player.tar.gz",
+            "https://objects.githubusercontent.com.evil.example/figures-player.tar.gz",
+            "https://user@objects.githubusercontent.com/figures-player.tar.gz",
+            "https://objects.githubusercontent.com:8443/figures-player.tar.gz",
+            "file:///etc/passwd",
+        ]
+        handler = mkdocs_hook._TrustedRedirectHandler()
+
+        for target in good_redirects:
+            with self.subTest(good_redirect=target):
+                mkdocs_hook.validate_archive_url(
+                    mkdocs_hook.urljoin(valid_url, target),
+                    mkdocs_hook.TRUSTED_REDIRECT_HOSTS,
+                    allow_query=True,
+                )
+                redirected = handler.redirect_request(
+                    Request(valid_url), None, 302, "Found", {}, target
+                )
+                self.assertEqual(
+                    redirected.full_url, mkdocs_hook.urljoin(valid_url, target)
+                )
+        for target in bad_redirects:
+            with (
+                self.subTest(bad_redirect=target),
+                self.assertRaises(mkdocs_hook.CheckError),
+            ):
+                handler.redirect_request(
+                    Request(valid_url), None, 302, "Found", {}, target
+                )
+            with (
+                self.subTest(redirected_response=target),
+                mock.patch.object(
+                    mkdocs_hook,
+                    "urlopen",
+                    return_value=self.fake_response(b"ok", target),
+                ),
+                self.assertRaises(mkdocs_hook.CheckError),
+            ):
+                mkdocs_hook.download_player_archive(valid_url)
+
     @staticmethod
-    def fake_response(payload: bytes):
+    def fake_response(payload: bytes, url: str = ""):
+        """Return a context-managed mock HTTP response wrapping bytes payload."""
         class FakeResponse(io.BytesIO):
             def __enter__(self):
                 return self
 
             def __exit__(self, *args):
                 self.close()
+
+            def geturl(self):
+                """Return the effective response URL."""
+                return url
 
         return FakeResponse(payload)
 

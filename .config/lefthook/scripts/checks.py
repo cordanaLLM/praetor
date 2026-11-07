@@ -14,7 +14,7 @@ import tempfile
 
 from common import HookError, clean_env, paths, present_files, resolved_relative_to, run
 from privacy import PRIVATE_STATE_ERROR
-from toolchain import make_program, require_floors
+from toolchain import checked_codespell, make_program, require_floors
 
 GO_CONFIG = {"go.mod", "go.sum", "go.work", "go.work.sum", "Makefile",
              ".golangci.yml", ".gosec.json"}
@@ -91,11 +91,17 @@ def parallel(commands, directory):
 
 
 def text_checks(directory, names):
+    """Scan non-binary files for merge markers and Python or JSON syntax errors.
+
+    Collects all non-binary paths and forwards them to spelling verification.
+    """
+    text_files = []
     for name in names:
         path = directory / name
         raw = path.read_bytes()
         if b"\0" in raw:
             continue
+        text_files.append(name)
         text = raw.decode("utf-8", errors="replace")
         if re.search(r"(?m)^(<{7} |={7}$|>{7} )", text):
             raise HookError(f"{name}: unresolved merge marker")
@@ -109,6 +115,29 @@ def text_checks(directory, names):
                 json.loads(raw)
             except (ValueError, UnicodeError) as error:
                 raise HookError(f"{name}: {error}") from error
+    spelling_check(directory, text_files)
+
+
+# The spelling check caps input to comply with HISS-02 bounded loops and avoid runaway subprocess batches.
+MAX_SPELLING_PATHS = 10000
+
+
+def spelling_check(directory, names):
+    """Check text with the repository's codespell config, when opted in.
+
+    Vendored hook policies need not enable spelling. Once .codespellrc exists,
+    a missing executable, an outdated version, or a failed check refuses the change.
+    Batches keep staged path lists below platform command-line limits, as gofmt_check
+    does, and staged paths are capped at MAX_SPELLING_PATHS to comply with HISS-02.
+    """
+    if not names or not (directory / ".codespellrc").is_file():
+        return
+    if len(names) > MAX_SPELLING_PATHS:
+        raise HookError(f"spelling check path count exceeds {MAX_SPELLING_PATHS}")
+    checked_codespell()
+    for start in range(0, len(names), GOFMT_BATCH):
+        run(["codespell", "--config", ".codespellrc", "--", *names[start:start + GOFMT_BATCH]],
+            cwd=directory, timeout=120)
 
 
 # Go's own convention: a directory with this name holds inputs, never source. is_fixture
@@ -221,6 +250,7 @@ SELF_TESTS = (".config/lefthook/scripts/test_hooks.py",
               ".config/lefthook/scripts/test_checkpoint.py",
               ".config/lefthook/scripts/test_race_packages.py")
 OPTIONAL_SELF_TESTS = ("scripts/test_checkpoint_hooks.py", "scripts/test_praetor_hook.py")
+SPELLING_SELF_TEST = ".config/lefthook/scripts/test_spelling.py"
 
 
 def self_test_commands(directory):
@@ -228,9 +258,12 @@ def self_test_commands(directory):
 
     Each suite runs under sys.executable: the interpreter .config/lefthook/python.sh resolved
     for this hook, so a suite never runs under a second interpreter named by a command (#339).
+    Spelling self-tests run only when the repository configures codespell (.codespellrc).
     """
-    suites = [*SELF_TESTS,
-              *(name for name in OPTIONAL_SELF_TESTS if (directory / name).exists())]
+    suites = [*SELF_TESTS]
+    if (directory / ".codespellrc").is_file() and (directory / SPELLING_SELF_TEST).is_file():
+        suites.append(SPELLING_SELF_TEST)
+    suites.extend(name for name in OPTIONAL_SELF_TESTS if (directory / name).exists())
     return [["lefthook", "validate"], *([sys.executable, "-B", suite] for suite in suites)]
 
 
@@ -405,6 +438,7 @@ def require_hook_lint_tools(directory, environ=None):
 
 
 def file_checks(directory, names):
+    """Run formatting, text integrity, linters and policy self-tests on changed files."""
     files = present_files(directory, names)
     if any(name == ".workingdir" or name.startswith(".workingdir/") for name in files):
         raise HookError(PRIVATE_STATE_ERROR)
@@ -418,7 +452,7 @@ def file_checks(directory, names):
                     ".gemini/settings.json", ".agents/plugins/praetor/hooks.json",
                     ".agents/plugins/praetor/praetor_hook.py", "scripts/test_checkpoint_hooks.py",
                     "scripts/test_praetor_hook.py"}
-           or name.startswith((".config/lefthook/", ".config/agent/")) for name in files):
+           or name.startswith((".config/lefthook/", ".config/agent/", ".config/semgrep/")) for name in files):
         commands.extend(self_test_commands(directory))
     if hook_sources_changed(names) and (directory / HOOK_LINT_SUITE).is_file():
         hook_env = {HOOK_LINT_BIN_ENV: str(provision_hook_lint(directory))}
@@ -596,7 +630,7 @@ def source_checks(directory, names, gate="all", base=None):
             env=clean_env())
     if gate == "all":
         parallel(governance, directory)
-        parallel(semgrep_commands(directory, names), directory)
+        parallel(semgrep_commands(directory, names, base=base), directory)
     if not packages:
         print("Go gates: no affected packages")
         return run_full_gate(directory, packages) if full_gate else False
@@ -652,21 +686,40 @@ def run_full_gate(directory, packages=None):
     return True
 
 
-def semgrep_commands(directory, names):
+def semgrep_commands(directory, names, base=None):
+    """Keep HISS whole-file checks and compare Go permission findings to the push base."""
     rules = ".config/semgrep/hiss-invariants.yml"
+    permissions = ".config/semgrep/go-permissions.yml"
     # The HISS-20 corpus is input to the rules, not source governed by them: its positive
     # fixtures exist precisely because they violate an invariant, so scanning them blocks
     # every push that touches the corpus. The HISS scanner skips it for the same reason.
     source = [name for name in present_files(directory, names)
               if Path(name).suffix in SEMGREP_SUFFIXES and not is_fixture(name)]
+    go_source = [name for name in source if Path(name).suffix == ".go"]
+    commands = []
     if any(name.startswith(".config/semgrep/") for name in names):
         # A changed rule is judged against the whole tree, and the corpus stays out of that
         # scan too. Naming "." alone dropped the filter above, so every push whose range
         # touched the rules failed on the fixtures written to violate them.
         source = ["--exclude", FIXTURE_DIRECTORY, "."]
     if source and (directory / rules).exists():
-        return [["semgrep", "scan", "--error", "--config", rules, *source]]
-    return []
+        commands.append(["semgrep", "scan", "--error", "--config", rules, *source])
+    # The rules file is the opt-in, as .codespellrc is for spelling: adoption does not emit it,
+    # so a repository without it has no permission scan. A push that removes it is refused.
+    named = any(str(name) == permissions for name in names)
+    if not (directory / permissions).exists():
+        if named:
+            raise HookError(f"Go permission rules file removed: {permissions}; "
+                            "restore it or remove the permission gate in its own reviewed change")
+        return commands
+    if go_source:
+        if not base:
+            raise HookError("Go permission scan requires a trusted push baseline; no scan performed")
+        commands.append(["semgrep", "scan", "--error", "--config", permissions,
+                         "--baseline-commit", base, *go_source])
+    elif named:
+        commands.append(["semgrep", "validate", permissions])
+    return commands
 
 
 def governance_commands(directory, names, source, base=None):

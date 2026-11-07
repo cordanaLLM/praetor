@@ -32,6 +32,23 @@ const claudeLocalSettingsIgnore = "/.claude/settings.local.json"
 // receipt failed `reuse lint` in every adopted repository without a catch-all annotation.
 const gateReceiptIgnore = "/" + util.GateReceiptFile
 
+// codacyCliIgnore is the Codacy CLI directory (/.codacy/) written by the Codacy editor extension.
+// It carries local CLI configs, tools-configs, and logs, is never tracked, and must not leave the
+// working tree dirty in state inspections.
+const codacyCliIgnore = "/.codacy/"
+
+// codacyInstructionsIgnore is the agent instructions file written by the Codacy editor extension
+// for VS Code, Antigravity and other IDEs (.github/instructions/codacy.instructions.md). It is written
+// without a leading slash because the extension checks for a trimmed exact match of the relative path
+// in .gitignore and appends the rule otherwise. Windsurf's .windsurfrules is a compiled file and is not
+// ignored; a Windsurf user sets the editor setting codacy.guardrails.instructionsFile to manual instead.
+const codacyInstructionsIgnore = ".github/instructions/codacy.instructions.md"
+
+// codacyCursorRulesIgnore is the agent rules file written by the Codacy editor extension for Cursor
+// (.cursor/rules/codacy.mdc). It is written without a leading slash because the extension checks for
+// a trimmed exact match of the relative path in .gitignore and appends the rule otherwise.
+const codacyCursorRulesIgnore = ".cursor/rules/codacy.mdc"
+
 const (
 	gitIgnoreManagedBegin = "# BEGIN praetor private artifacts (praetorctl adopt)"
 	gitIgnoreManagedEnd   = "# END praetor private artifacts"
@@ -48,7 +65,8 @@ const workingDirIgnore = state.WorkingDirName + "/"
 // private session ledger and the legacy scratch root, both at every depth, the container for
 // the isolated gate worktrees, whose leftovers would otherwise be scanned as repository
 // content and would keep the tree dirty for receipt minting, the per-host AGY workspace
-// configuration, the standards-mcp output cache, client-local settings (#1389) and the gate receipt.
+// configuration, the standards-mcp output cache, client-local settings (#1389), the gate receipt,
+// and Codacy editor files.
 // Adoption guarantees each in every adopted repository, except that a repository may
 // retire legacyScratchIgnore (keepsLegacyScratch).
 var managedIgnoreRules = []string{
@@ -59,6 +77,9 @@ var managedIgnoreRules = []string{
 	mcpOutputCacheIgnore,
 	claudeLocalSettingsIgnore,
 	gateReceiptIgnore,
+	codacyCliIgnore,
+	codacyInstructionsIgnore,
+	codacyCursorRulesIgnore,
 }
 
 // gitIgnoreBlockVersion identifies an accepted version of the managed .gitignore block.
@@ -69,7 +90,7 @@ type gitIgnoreBlockVersion struct {
 
 // canonicalGitIgnoreBlockVersion is the current canonical version of the managed .gitignore block.
 var canonicalGitIgnoreBlockVersion = gitIgnoreBlockVersion{
-	Version: "v4",
+	Version: "v5",
 	Rules:   managedIgnoreRules,
 }
 
@@ -104,6 +125,18 @@ var gitIgnoreBlockHistory = []gitIgnoreBlockVersion{
 			"/.standards/worktrees/",
 			"/.agents/mcp_config.json",
 			"/.standards/cache/",
+		},
+	},
+	{
+		Version: "v4",
+		Rules: []string{
+			".workingdir/",
+			".workingdir2/",
+			"/.standards/worktrees/",
+			"/.agents/mcp_config.json",
+			"/.standards/cache/",
+			"/.claude/settings.local.json",
+			"/.standards-receipt.json",
 		},
 	},
 }

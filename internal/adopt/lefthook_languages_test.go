@@ -2,12 +2,14 @@ package adopt
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -91,7 +93,7 @@ func TestAdopt_Positive_LefthookJobsFollowDetectedLanguages(t *testing.T) {
 	}
 	for _, tc := range cases {
 		repoPath, rep := adoptMarkedRepo(t, tc.name, tc.markers, "")
-		present := append(append([]string{}, tc.present...), "pre-commit/commands/hiss-audit", "pre-push/commands/secrets", "pre-push/commands/gate")
+		present := append(append([]string{}, tc.present...), "pre-commit/commands/hiss-audit", "pre-push/commands/secrets", "pre-push/commands/docstrings", "pre-push/commands/gate", "pre-push/commands/merge-check")
 		assertJobs(t, tc.name, writtenLefthookJobs(t, repoPath), present, tc.absent)
 		written := mustRead(t, filepath.Join(repoPath, lefthookFile))
 		if !strings.HasPrefix(written, "# Lefthook Configuration "+tc.header+"\n") {
@@ -147,15 +149,132 @@ func TestAdopt_Negative_GoEveryRepositoryRenderingMigratesToCargoJobs(t *testing
 // Boundary: a repository with no detected language keeps every language's jobs, and a repository
 // whose only detected language has no Go/Rust jobs still receives Go jobs for later modules.
 func TestAdopt_Boundary_LefthookJobsForUnknownAndJoblessLanguages(t *testing.T) {
-	every := append(append([]string{"pre-push/commands/secrets"}, goLanguageJobs...), rustLanguageJobs...)
+	every := append(append([]string{"pre-push/commands/secrets", "pre-push/commands/docstrings"}, goLanguageJobs...), rustLanguageJobs...)
 	repoPath, _ := adoptMarkedRepo(t, "no-marker", nil, "")
 	assertJobs(t, "no marker", writtenLefthookJobs(t, repoPath), every, nil)
 	repoPath, rep := adoptMarkedRepo(t, "python-only", map[string]string{"pytest.ini": "[pytest]\n"}, "")
-	assertJobs(t, "python only", writtenLefthookJobs(t, repoPath), append([]string{"pre-commit/commands/context-check", "pre-push/commands/secrets", "pre-push/commands/audit"}, goLanguageJobs...), rustLanguageJobs)
+	assertJobs(t, "python only", writtenLefthookJobs(t, repoPath), append([]string{"pre-commit/commands/context-check", "pre-push/commands/secrets", "pre-push/commands/docstrings", "pre-push/commands/audit"}, goLanguageJobs...), rustLanguageJobs)
 	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); !strings.HasPrefix(got, "# Lefthook Configuration (Go & HISS Governance)\n") {
 		t.Errorf("python only: the header names a language: %q", strings.SplitN(got, "\n", 2)[0])
 	}
 	if !hasAction(rep, lefthookFile, actionCreate) {
 		t.Errorf("python only: lefthook.yml not created: %+v", rep.ActionDetails)
+	}
+}
+
+// Positive (Order: engine-dropped-hunk-gate-20261027): adopted lefthook configuration carries
+// the merge-check pre-push job across all shapes.
+func TestAdopt_Positive_RenderedLefthookCarriesMergeCheckJob(t *testing.T) {
+	for _, languages := range lefthookLanguageSets {
+		for _, checkpoint := range []bool{false, true} {
+			rendering := buildLefthookYAMLFor(lefthookShape{languages: languages}, checkpoint)
+			var parsed map[string]any
+			if err := yaml.Unmarshal([]byte(rendering), &parsed); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			jobs := lefthookJobs(parsed)
+			if !jobs["pre-push/commands/merge-check"] {
+				t.Errorf("languages=%v, checkpoint=%v: lefthook rendering lacks pre-push/commands/merge-check", languages, checkpoint)
+			}
+			mc := decodedJob(t, parsed, "pre-push", "merge-check")
+			if mc["use_stdin"] != true || !strings.Contains(yamlString(mc["run"]), "--range=") {
+				t.Fatalf("languages=%v, checkpoint=%v: merge-check use_stdin=%v run=%v, want use_stdin=true and --range=", languages, checkpoint, mc["use_stdin"], mc["run"])
+			}
+		}
+	}
+	verifyMergeCheckPrePushExecution(t)
+}
+
+// yamlString converts an untyped YAML value to string or returns an empty string.
+func yamlString(v any) string {
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	return s
+}
+
+// verifyMergeCheckPrePushExecution tests the pre-push runner on the host platform.
+func verifyMergeCheckPrePushExecution(t *testing.T) {
+	t.Helper()
+	verifyMergeCheckPrePushExecutionOn(t, os.PathSeparator == '\\')
+}
+
+// verifyMergeCheckPrePushExecutionOn exercises the pre-push shell script runner or skips on Windows.
+func verifyMergeCheckPrePushExecutionOn(t *testing.T, isWindows bool) {
+	t.Helper()
+	if isWindows {
+		t.Skip("merge-check pre-push runner executes POSIX shell scripts; unsupported on Windows (HISS-21)")
+	}
+	dir := t.TempDir()
+	enginePath := filepath.Join(dir, engineLauncherFile)
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory needs the owner search bit to hold entries
+	if err := os.MkdirAll(filepath.Dir(enginePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// nosemgrep: go_file-permissions_rule-fileperm, go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a stub run through PATH needs the owner execute bit
+	if err := os.WriteFile(enginePath, []byte("#!/bin/sh\necho \"called:$*\"\nexit \"${STUB_EXIT:-0}\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	oid1 := strings.Repeat("1", 40)
+	oid2 := strings.Repeat("2", 40)
+	zero := strings.Repeat("0", 40)
+	runner := "printf '%s' \"$1\" | { " + mergeCheckPrePushCommand() + "; } 2>&1"
+
+	out, err := util.RunCommand(t.Context(), dir, "sh", "-c", runner, "sh", "refs/heads/other "+oid1+" refs/heads/main "+oid2+"\n")
+	if err != nil || !strings.Contains(out, "called:merge-check --range="+oid2+".."+oid1) {
+		t.Fatalf("positive pushed range: err=%v out=%q", err, out)
+	}
+
+	t.Setenv("STUB_EXIT", "1")
+	if _, failErr := util.RunCommand(t.Context(), dir, "sh", "-c", runner, "sh", "refs/heads/other "+oid1+" refs/heads/main "+oid2+"\n"); failErr == nil {
+		t.Fatalf("negative failing merge-check: expected non-nil error")
+	}
+	t.Setenv("STUB_EXIT", "0")
+
+	verifyMergeCheckPrePushBoundaries(t, dir, runner, oid1, oid2, zero)
+}
+
+// verifyMergeCheckPrePushBoundaries validates boundary conditions for pre-push stdin inputs.
+func verifyMergeCheckPrePushBoundaries(t *testing.T, dir, runner, oid1, oid2, zero string) {
+	t.Helper()
+	for name, stdin := range map[string]string{
+		"empty":      "",
+		"new branch": "refs/heads/new " + oid1 + " refs/heads/new " + zero + "\n",
+		"delete ref": "refs/heads/old " + zero + " refs/heads/old " + oid2 + "\n",
+	} {
+		skipOut, skipErr := util.RunCommand(t.Context(), dir, "sh", "-c", runner, "sh", stdin)
+		if skipErr != nil || !strings.Contains(skipOut, "no pushed commit range on stdin, skipping merge-check") {
+			t.Fatalf("boundary %s: err=%v out=%q", name, skipErr, skipOut)
+		}
+	}
+
+	var atBound strings.Builder
+	for i := 0; i < maxPrePushRefs; i++ {
+		atBound.WriteString("refs/heads/new " + oid1 + " refs/heads/new " + zero + "\n")
+	}
+	if boundOut, boundErr := util.RunCommand(t.Context(), dir, "sh", "-c", runner, "sh", atBound.String()); boundErr != nil || !strings.Contains(boundOut, "no pushed commit range on stdin, skipping merge-check") {
+		t.Fatalf("boundary pushed refs at limit: err=%v out=%q", boundErr, boundOut)
+	}
+
+	var overBound strings.Builder
+	for i := 0; i <= maxPrePushRefs; i++ {
+		overBound.WriteString("refs/heads/new " + oid1 + " refs/heads/new " + zero + "\n")
+	}
+	if overOut, overErr := util.RunCommand(t.Context(), dir, "sh", "-c", runner, "sh", overBound.String()); overErr == nil || !strings.Contains(overOut, "pushed refs exceed limit") {
+		t.Fatalf("negative pushed refs exceeding limit: err=%v out=%q", overErr, overOut)
+	}
+}
+
+// Positive, negative and boundary: verifyMergeCheckPrePushExecutionOn executes on POSIX and skips
+// on Windows with a stated reason (HISS-21).
+func TestVerifyMergeCheckPrePushExecution_WindowsSkipsWithReason(t *testing.T) {
+	skipped := false
+	t.Run("windows-skip", func(t *testing.T) {
+		defer func() { skipped = t.Skipped() }()
+		verifyMergeCheckPrePushExecutionOn(t, true)
+	})
+	if !skipped {
+		t.Fatalf("expected verifyMergeCheckPrePushExecutionOn(t, true) to skip (HISS-21), got silent return")
 	}
 }

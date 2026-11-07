@@ -89,6 +89,22 @@ type HookSettings struct {
 	CommandPolicy CommandPolicySettings `json:"command_policy"`
 	Python        [][]string            `json:"python"`
 	Admission     AdmissionSettings     `json:"admission,omitzero"`
+	Merge         MergeSettings         `json:"merge,omitzero"`
+	Worktrees     WorktreeSettings      `json:"worktrees,omitzero"`
+}
+
+// MergeSettings names the operator's merge helper. Empty leaves direct merges allowed.
+type MergeSettings struct {
+	Helper string `json:"helper"`
+}
+
+// WorktreeSettings turns on worktree location enforcement for `git worktree add`
+// (order praetor-rules-24h-ops-lesson-checks-20261028): with Enforce set, the pre-tool
+// command policy refuses `git worktree add <path>` unless `<path>` resolves to
+// `<dev root>/worktrees/<repository folder>-<topic>` or `<repository>/.claude/worktrees/<name>`.
+// Off by default: a host opts in.
+type WorktreeSettings struct {
+	Enforce bool `json:"enforce"`
 }
 
 // DefaultAdmissionMaxJobsDivisor is the built-in job-count divisor when admission is enforced

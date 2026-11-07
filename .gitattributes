@@ -159,6 +159,12 @@ internal/planning/testdata/** text eol=lf
 #                      the fixtures, so the rule could never be pinned at all.
 .config/hiss/testdata/**/crlf-* -text whitespace=cr-at-eol
 
+# patch-package files under console/patches carry the upstream package's lines as diff
+# context, trailing spaces and space-before-tab indents included; rewriting them would
+# stop the patch from applying. -whitespace keeps `git diff --check` and the commit hook
+# re-run from refusing those bytes, for these files only.
+console/patches/*.patch -whitespace
+
 # The MkDocs preset's example figure becomes an adopter's docs/figures/ and docs/assets/figures/
 # once the preset is copied into a repository root, and its JSON binds the same hashes as the
 # figures in the managed block below, so it keeps the same LF rule on every platform.

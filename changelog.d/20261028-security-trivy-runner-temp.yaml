@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+#
+# SPDX-License-Identifier: EUPL-1.2
+
+type: fixed
+title: The security workflow downloads the Trivy archive into the runner temporary folder instead of a fixed /tmp path, so concurrent jobs on a self-hosted runner cannot overwrite each other's download.
+breaking: false

@@ -136,7 +136,7 @@ func TestRenovateIgnorePositiveDeclaresManagedFilesOnce(t *testing.T) {
 	if len(managed) != 1 || managed[0].Enabled || !slices.Equal(managed[0].MatchFileNames, withBundleFixturePaths(renovateManagedFixturePaths)) {
 		t.Fatalf("want one disabled rule over the managed files and the generated bundle, got %+v\n%s", managed, first)
 	}
-	if want := []string{"$schema", "extends", "ignorePaths", "packageRules", "prConcurrentLimit"}; !slices.Equal(memberNames(root), want) {
+	if want := []string{"$schema", "extends", "ignorePaths", "packageRules", "prConcurrentLimit", "customManagers"}; !slices.Equal(memberNames(root), want) {
 		t.Fatalf("members %v, want %v", memberNames(root), want)
 	}
 	if limit, _ := root.Get("prConcurrentLimit"); string(limit) != "1.50e1" || len(rules) != 3 ||
@@ -342,7 +342,7 @@ func TestRenovateIgnoreBoundarySkipsTheFamilyOrigin(t *testing.T) {
 		t.Fatalf("adopt: %v", err)
 	}
 	got := mustRead(t, path)
-	if root, managed, rules := renovateTestRules(t, got); len(managed) != 0 || len(rules) != 1 || len(root) != 2 {
+	if root, managed, rules := renovateTestRules(t, got); len(managed) != 0 || len(rules) != 1 || len(root) != 3 {
 		t.Fatalf("family origin kept the managed rule or lost a setting:\n%s", got)
 	}
 	if detail := findActionDetail(report.ActionDetails, "renovate.json"); !strings.Contains(detail, "Removed the Praetor-managed packageRules entry") {

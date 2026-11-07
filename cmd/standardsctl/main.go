@@ -81,6 +81,7 @@ func printUsage() {
 // printCoreCommands lists the repository-scoped commands. The listing is split across two
 // functions to stay inside the HISS-04 statement bound rather than suppressing it.
 func printCoreCommands() {
+	fmt.Println("  pr                 Wait for own pull request reviews or terminal checks")
 	fmt.Println("  init               Scaffold configuration, baseline, and agent context for new repo")
 	fmt.Println("  compile-context    Transpile canonical AGENTS.md to vendor-native formats (< 300 LOC)")
 	fmt.Println("  compile-framework-assets  Write a framework kit's llms.txt, agent rule and starter templates")
@@ -96,10 +97,11 @@ func printCoreCommands() {
 	fmt.Println("  devcontainer       Synthesize, verify, bump the reviewed images of, or check the bundle freshness of .devcontainer/devcontainer.json")
 	fmt.Println("  flavor             Inspect, audit, and scaffold engineering flavors (11 archetypes)")
 	fmt.Println("  flavors            Plan or sync moving version flavor tags (bleeding, latest, lts)")
-	fmt.Println("  docs               Harvest, compress, and audit package documentation sheets")
+	fmt.Print("  docs               Harvest, compress, and audit package documentation sheets\n" +
+		"  docstrings         Check diff-scoped docstring coverage against .coderabbit.yaml\n")
 	fmt.Println("  hindsight          Manage local zero-token memory cache and sync with Hindsight server")
 	fmt.Println("  state              Manage .workingdir/ session state, bugs ledger, and questions")
-	fmt.Println("  exceptions         List or inspect declared exceptions")
+	fmt.Println("  exceptions         List declared exceptions or migrate legacy category metadata")
 	fmt.Println("  linters            Manage generated .golangci.yml exclusion rules (strip-config, generate)")
 	fmt.Println("  dedupe             Scan for AST clones, utility sprawl, and cadence enforcement")
 	fmt.Println("  efficiency         Measure and report efficiency ledger across landed pull requests (alias: efficiency-ledger)")
@@ -114,10 +116,11 @@ func printCoreCommands() {
 	fmt.Println("  adr verify         Replay the machine-checkable clauses of decision records")
 	fmt.Println("  decisions          Export ADR decisions or run the pinned AsDecided MCP server")
 	fmt.Println("  security govuln    Run govulncheck at symbol level and judge its findings against the OpenVEX document")
-	fmt.Println("  go vet            Run go vet ./... in every tracked Go module")
+	fmt.Println("  go                 Run module vet or local tests with loopback namespace isolation")
 	fmt.Println("  seo audit          Audit a built docs site: page-head JSON-LD, sitemaps, robots.txt")
 	fmt.Println("  sentinel           Inspect workstation RAM/disk health and model headroom")
 	fmt.Println("  skills             Fetch, verify, and manage pinned upstream skills (pin-sync, pin-verify)")
+	fmt.Println("  merge-check        Refuse merge commits dropping first-parent work")
 	fmt.Println("  ui                 Export UI gate environment variables from .standards.yaml (env)")
 	fmt.Println("  worktree           Manage isolated ephemeral git worktrees")
 }
@@ -235,6 +238,7 @@ func commandTable() map[string]commandFunc {
 // coreCommandTable holds the repository-scoped commands (see printCoreCommands).
 func coreCommandTable() map[string]commandFunc {
 	return map[string]commandFunc{
+		"pr":                       runPR,
 		"init":                     runInit,
 		"compile-context":          runCompileContext,
 		"compile-framework-assets": runCompileFrameworkAssets,
@@ -253,6 +257,7 @@ func coreCommandTable() map[string]commandFunc {
 		"flavor":                   runFlavor,
 		"flavors":                  runFlavors,
 		"docs":                     runDocs,
+		"docstrings":               runDocstrings,
 		"hindsight":                runHindsight,
 		"state":                    runState,
 		"exceptions":               runExceptions,
@@ -264,6 +269,7 @@ func coreCommandTable() map[string]commandFunc {
 		"models":                   runModels,
 		"operational":              runOperational,
 		"plan":                     runPlan,
+		"merge-check":              runMergeCheck,
 		"radar":                    runRadar,
 		"sync":                     runSync,
 		"security":                 runSecurity,

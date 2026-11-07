@@ -21,7 +21,7 @@ RUN apk update && \
       openssh-client-default=10.3_p1-r1 \
       tar=1.35-r5 \
       gcc=15.2.0-r5 \
-      musl-dev=1.2.6-r2 \
+      musl-dev=1.2.6-r3 \
     && rm -rf /var/cache/apk/*
 
 # Configure non-root user vscode (1000:1000) with passwordless sudo

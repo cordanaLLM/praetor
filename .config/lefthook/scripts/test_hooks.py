@@ -233,12 +233,17 @@ def cli_path(repo):
 
 
 def command(repo, *args, data=None, ok=True, maintain_state=True):
+    """Run one command in the fixture repository, syncing Praetor state before a commit or push unless maintain_state is false."""
     # Most fixtures model an agent obeying the sync obligation. Negative state
     # tests opt out and execute the same real hooks against stale/missing state.
     if (maintain_state and args[:2] in (("git", "commit"), ("git", "push"))
             and (repo / PRAETORCTL).is_file()):
         run_command(repo, (cli_path(repo), "state", "sync", "."), None, ok)
-    return run_command(repo, args, data, ok)
+    result = run_command(repo, args, data, ok)
+    if args[:2] == ("git", "init") and "--bare" not in args and (repo / ".git").is_dir():
+        run_command(repo, ("git", "config", "commit.gpgsign", "false"), None, False)
+        run_command(repo, ("git", "config", "tag.gpgsign", "false"), None, False)
+    return result
 
 
 def run_command(repo, args, data, ok):
@@ -318,6 +323,7 @@ class GitHooks(unittest.TestCase):
         self.initialize_repo()
 
     def initialize_repo(self, initial_files=()):
+        """Create the fixture repository: git init on main, a test identity, the hook folders and initial_files."""
         self.repo.mkdir()
         command(self.repo, "git", "init", "-q", "-b", "main")
         command(self.repo, "git", "config", "user.name", "Hook Test")
@@ -326,8 +332,9 @@ class GitHooks(unittest.TestCase):
             shutil.copytree(ROOT / path, self.repo / path)
         shutil.copy(ROOT / "lefthook.yml", self.repo / "lefthook.yml")
         # Fixture policy self-tests are data, not another recursive full suite.
-        (self.repo / ".config/lefthook/scripts/test_hooks.py").write_text(
-            'print("fixture hook self-tests passed")\n', newline="\n")
+        for self_test in ("test_hooks.py", "test_checkpoint.py", "test_security_scope.py", "test_race_packages.py"):
+            (self.repo / f".config/lefthook/scripts/{self_test}").write_text(
+                'print("fixture hook self-tests passed")\n', newline="\n")
         (self.repo / "README.md").write_text("# Fixture\n", newline="\n")
         for name, content in initial_files:
             self.write(name, content, stage=False)
@@ -1151,6 +1158,20 @@ print("fixture hook self-tests passed")
             run_cli.assert_not_called()
             self.assertIn("Refactor check: skipped, no pushed-range base", out.getvalue())
 
+    def test_docstring_range_uses_exact_base_or_skips_without_one(self):
+        """Verify check_docstring_range runs with an exact base and skips when absent."""
+        with mock.patch("hooks.cli") as run_cli:
+            hooks.check_docstring_range("base-sha", "head-sha")
+        run_cli.assert_called_once_with([
+            "docstrings", "check", "--base=base-sha", "--head=head-sha",
+        ])
+        for base in (None, ""):
+            with self.subTest(base=base), mock.patch("hooks.cli") as run_cli, \
+                    mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                hooks.check_docstring_range(base, "head-sha")
+            run_cli.assert_not_called()
+            self.assertIn("Docstring check: skipped, no pushed-range base", out.getvalue())
+
     def test_real_push_initial_docs_update_new_branch_and_deletion(self):
         remote = Path(self.temp.name) / "remote.git"
         command(self.repo, "git", "init", "--bare", "-q", str(remote))
@@ -1179,6 +1200,7 @@ print("fixture hook self-tests passed")
         self.assertNotEqual(self.hook("pre-push", "origin", data=b"broken\n").returncode, 0)
 
     def test_push_passes_actual_base_to_snapshot_audit(self):
+        """Verify pre_push forwards the resolved base revision to snapshot and range checks."""
         base = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
         self.write("README.md", "# Range audit\n")
         command(self.repo, "git", "commit", "-q", "-s", "-m", "docs: test pushed range")
@@ -1192,20 +1214,190 @@ print("fixture hook self-tests passed")
             with mock.patch.dict(os.environ, AUTOCRLF_ENV), \
                     mock.patch("hooks.sys.stdin", io.StringIO(protocol)), \
                     mock.patch("hooks.source_checks", return_value=False) as check, \
-                    mock.patch("hooks.check_refactor_range") as refactors:
+                    mock.patch("hooks.check_refactor_range") as refactors, \
+                    mock.patch("hooks.check_docstring_range") as docstrings, \
+                    mock.patch("hooks.check_merge_range") as merges:
                 pre_push("origin")
                 self.assertEqual(check.call_args.kwargs, {"base": base})
                 self.assertEqual(check.call_args.args[1], ["README.md"])
                 refactors.assert_called_once_with(base, head)
+                docstrings.assert_called_once_with(base, head)
+                merges.assert_called_once_with(base, head)
             with mock.patch.dict(os.environ, AUTOCRLF_ENV), \
                     mock.patch("hooks.sys.stdin", io.StringIO(protocol.replace(base, "f" * 40))), \
                     mock.patch("hooks.source_checks", return_value=False) as check, \
-                    mock.patch("hooks.check_refactor_range"):
+                    mock.patch("hooks.check_refactor_range"), \
+                    mock.patch("hooks.check_docstring_range"), \
+                    mock.patch("hooks.check_merge_range"):
                 pre_push("origin")
                 self.assertIsNone(check.call_args.kwargs["base"])
                 self.assertIn("lefthook.yml", check.call_args.args[1])
         finally:
             os.chdir(original)
+
+    def test_force_push_of_rewritten_history_scans_against_merge_base(self):
+        """Verify a rebased branch is scanned against the merge base, not its replaced head.
+
+        Diffing against the replaced head counts every commit the rebase picked up from the
+        default branch as this push's work, so the range checks judged code the push did not
+        write (#1741: docstring coverage counted the default branch's new functions).
+        """
+        base = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        self.write("README.md", "# Old branch head\n")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "docs: old branch head")
+        old = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        tree = command(self.repo, "git", "rev-parse", f"{old}^{{tree}}").stdout.decode().strip()
+        orphan = command(self.repo, "git", "commit-tree", tree,
+                         "-m", "docs: unrelated root").stdout.decode().strip()
+        command(self.repo, "git", "reset", "-q", "--hard", base)
+        self.write("README.md", "# Rewritten branch head\n")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "docs: rewritten branch head")
+        head = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        original = Path.cwd()
+        try:
+            os.chdir(self.repo)
+            for replaced in (old, orphan):
+                protocol = f"refs/heads/main {head} refs/heads/main {replaced}\n"
+                with self.subTest(replaced=replaced), mock.patch.dict(os.environ, AUTOCRLF_ENV), \
+                        mock.patch("hooks.sys.stdin", io.StringIO(protocol)), \
+                        mock.patch("hooks.new_branch_base", return_value=base) as merge_base, \
+                        mock.patch("hooks.source_checks", return_value=False) as check, \
+                        mock.patch("hooks.check_refactor_range") as refactors, \
+                        mock.patch("hooks.check_docstring_range") as docstrings, \
+                        mock.patch("hooks.check_merge_range") as merges:
+                    pre_push("origin")
+                    merge_base.assert_called_once_with(head, "origin", False)
+                    self.assertEqual(check.call_args.kwargs, {"base": base})
+                    self.assertEqual(check.call_args.args[1], ["README.md"])
+                    refactors.assert_called_once_with(base, head)
+                    docstrings.assert_called_once_with(base, head)
+                    merges.assert_called_once_with(base, head)
+            with mock.patch("hooks.new_branch_base") as merge_base:
+                self.assertEqual(hooks.push_base(head, base, "origin"), base)
+                self.assertEqual(hooks.push_base(head, "f" * 40, "origin"), "f" * 40)
+                merge_base.assert_not_called()
+        finally:
+            os.chdir(original)
+
+    def test_push_refuses_dropped_hunk_merge_and_passes_clean_merge(self):
+        """Verify pre-push refuses merge commits that drop parent hunks and accepts clean merges."""
+        # Order: engine-dropped-hunk-gate-20261027.
+        alpha_base = "line 1\nline 2\nline 3\nline 4\nline 5\n"
+        self.write("alpha.txt", alpha_base)
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "chore: base commit")
+
+        # Set up a bare remote to push to
+        remote = Path(self.temp.name) / "remote.git"
+        command(self.repo, "git", "init", "--bare", "-q", str(remote))
+        command(self.repo, "git", "remote", "add", "origin", str(remote))
+        command(self.repo, "git", "push", "-q", "origin", "main")
+
+        # Branch X: modify line 2
+        command(self.repo, "git", "checkout", "-q", "-b", "branch-x")
+        self.write("alpha.txt", "line 1\nline 2 modified by X\nline 3\nline 4\nline 5\n")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "feat: branch X edit")
+
+        # Branch Y: from main, modify line 5
+        command(self.repo, "git", "checkout", "-q", "-b", "branch-y", "main")
+        self.write("alpha.txt", "line 1\nline 2\nline 3\nline 4\nline 5 modified by Y\n")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "feat: branch Y edit")
+
+        # Merge branch-y into branch-x taking Y whole file (drops X line 2)
+        command(self.repo, "git", "checkout", "-q", "branch-x")
+        run_command(self.repo, ("git", "merge", "--no-commit", "branch-y"), None, False)
+        command(self.repo, "git", "checkout", "branch-y", "--", "alpha.txt")
+        command(self.repo, "git", "add", "alpha.txt")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "feat(test): bad merge taking branch-y whole file")
+
+        # Push branch-x with bad merge: MUST BE REFUSED
+        result = command(self.repo, "git", "push", "origin", "branch-x", ok=False)
+        output = (result.stdout + result.stderr).decode(errors="replace")
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn("alpha.txt", output)
+        self.assertIn("Fix: resolve inside conflict markers, re-merge.", output)
+
+        # Reset merge and resolve keeping both hunks
+        command(self.repo, "git", "reset", "--hard", "HEAD~1")
+        run_command(self.repo, ("git", "merge", "--no-commit", "branch-y"), None, False)
+        self.write("alpha.txt", "line 1\nline 2 modified by X\nline 3\nline 4\nline 5 modified by Y\n")
+        command(self.repo, "git", "add", "alpha.txt")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "feat(test): merge resolved per hunk")
+
+        # Push branch-x with clean merge: MUST PASS
+        result = command(self.repo, "git", "push", "origin", "branch-x", ok=False)
+        output = (result.stdout + result.stderr).decode(errors="replace")
+        self.assertEqual(result.returncode, 0, output)
+
+    def test_push_refuses_commit_message_body_exceeding_72_columns(self):
+        """Verify pre-push enforces 72-column commit body wrapping on the pushed range (#1814)."""
+        remote = Path(self.temp.name) / "remote.git"
+        command(self.repo, "git", "init", "--bare", "-q", str(remote))
+        command(self.repo, "git", "remote", "add", "origin", str(remote))
+        command(self.repo, "git", "push", "-q", "origin", "main")
+
+        command(self.repo, "git", "checkout", "-q", "-b", "topic")
+        self.write("doc1.txt", "doc1\n")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "docs: compliant commit one")
+
+        # Boundary: 72 columns passes
+        line72 = "word " * 14 + "ab"  # 14*5 + 2 = 72 columns
+        msg72 = f"docs: boundary 72 columns\n\n{line72}\n"
+        self.write("doc2.txt", "doc2\n")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", msg72)
+
+        # Range of compliant commits passes
+        result = command(self.repo, "git", "push", "origin", "topic", ok=False)
+        output = (result.stdout + result.stderr).decode(errors="replace")
+        self.assertEqual(result.returncode, 0, output)
+
+        # Boundary: 73 columns is refused; bypass commit-msg with --no-verify
+        line73 = "word " * 14 + "abc"  # 14*5 + 3 = 73 columns
+        msg73 = f"docs: boundary 73 columns\n\n{line73}\n"
+        self.write("doc3.txt", "doc3\n")
+        command(self.repo, "git", "commit", "--no-verify", "-q", "-s", "-m", msg73)
+        bad_73 = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        result = command(self.repo, "git", "push", "origin", "topic", ok=False)
+        output = (result.stdout + result.stderr).decode(errors="replace")
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn(bad_73[:12], output)
+        self.assertIn("73 columns", output)
+
+        # Reset commit so branch is clean
+        command(self.repo, "git", "reset", "--hard", "HEAD~1")
+
+        # Planted defect: 90-column body line in pushed range is refused, output names commit
+        line90 = "word " * 17 + "words"  # 17*5 + 5 = 90 columns
+        msg90 = f"docs: planted 90 columns\n\n{line90}\n"
+        self.write("doc4.txt", "doc4\n")
+        command(self.repo, "git", "commit", "--no-verify", "-q", "-s", "-m", msg90)
+        bad_90 = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+
+        # Add a compliant commit on top to prove the check scans the full range, not only head
+        self.write("doc5.txt", "doc5\n")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "docs: compliant commit after bad")
+
+        result = command(self.repo, "git", "push", "origin", "topic", ok=False)
+        output = (result.stdout + result.stderr).decode(errors="replace")
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn(bad_90[:12], output)
+
+    def test_commit_message_range_uses_exact_base_or_skips_without_one(self):
+        """Verify check_commit_message_range runs with an exact base and skips when absent."""
+        if not hasattr(hooks, "check_commit_message_range"):
+            self.skipTest("check_commit_message_range not present")
+        with mock.patch("hooks.praetorctl_path", return_value="praetorctl"), \
+                mock.patch("hooks.run") as run_cmd:
+            hooks.check_commit_message_range("base-sha", "head-sha")
+        run_cmd.assert_called_once_with(
+            ["praetorctl", "forge", "check-commits", "--base=base-sha", "--head=head-sha"],
+            capture=False, timeout=180,
+        )
+        for base in (None, ""):
+            with self.subTest(base=base), mock.patch("hooks.run") as run_cmd, \
+                    mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                hooks.check_commit_message_range(base, "head-sha")
+            run_cmd.assert_not_called()
+            self.assertIn("Commit message check: skipped, no pushed-range base", out.getvalue())
 
     def test_real_checkpoint_push_builds_and_tests_without_release_receipt(self):
         skip_without_race_detector(self)
@@ -1248,6 +1440,7 @@ print("fixture hook self-tests passed")
         self.assertFalse((self.repo / ".standards-receipt.json").exists())
 
     def test_push_destination_controls_mode_and_mixed_refs_still_run_strict_checks(self):
+        """Verify pre_push selects checkpoint or strict mode from the destination ref."""
         base = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
         self.write("README.md", "# Checkpoint routing\n")
         command(self.repo, "git", "commit", "-q", "-s", "-m", "docs: test destination policy")
@@ -1260,6 +1453,7 @@ print("fixture hook self-tests passed")
             # Only the destination determines policy; the local branch is irrelevant.
             with mock.patch("hooks.sys.stdin", io.StringIO(strict)), \
                     mock.patch("hooks.check_refactor_range"), \
+                    mock.patch("hooks.check_docstring_range"), \
                     mock.patch("hooks.checkpoint_checks") as wip, \
                     mock.patch("hooks.source_checks", return_value=False) as full:
                 pre_push("origin")
@@ -1271,6 +1465,7 @@ print("fixture hook self-tests passed")
                 with self.subTest(protocol=protocol), \
                         mock.patch("hooks.sys.stdin", io.StringIO(protocol)), \
                         mock.patch("hooks.check_refactor_range"), \
+                        mock.patch("hooks.check_docstring_range"), \
                         mock.patch("hooks.source_checks", side_effect=HookError("strict release rejected")) as full:
                     with self.assertRaisesRegex(HookError, "strict release rejected"):
                         pre_push("origin")
@@ -1278,6 +1473,7 @@ print("fixture hook self-tests passed")
             # File checks are mandatory before either mode's source checks.
             with mock.patch("hooks.sys.stdin", io.StringIO(checkpoint)), \
                     mock.patch("hooks.check_refactor_range"), \
+                    mock.patch("hooks.check_docstring_range"), \
                     mock.patch("hooks.file_checks", side_effect=HookError("invalid snapshot syntax")), \
                     mock.patch("hooks.checkpoint_checks") as wip:
                 with self.assertRaisesRegex(HookError, "invalid snapshot syntax"):
@@ -1446,38 +1642,248 @@ class ScopeAndGuard(unittest.TestCase):
                 clean_env()
 
     def semgrep_tree(self, root, *files):
+        """Create both rule configs and a bounded set of source paths for command tests."""
         rules = root / ".config" / "semgrep" / "hiss-invariants.yml"
         rules.parent.mkdir(parents=True)
         rules.write_text("rules: []\n", encoding="utf-8")
-        for name in files:
+        parity = ROOT / ".config/semgrep/go-permissions.yml"
+        (rules.parent / parity.name).write_text(
+            parity.read_text(encoding="utf-8"), encoding="utf-8",
+        )
+        self.assertLessEqual(len(files), 32, "fixture path bound")
+        for name in files[:32]:
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("x\n", encoding="utf-8")
         return ".config/semgrep/hiss-invariants.yml"
 
+    def test_semgrep_permissions_command_uses_baseline_and_keeps_hiss_whole_file(self):
+        """A changed Go test receives a separate parity scan with the caller's base."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rules = self.semgrep_tree(root, "internal/a_test.go")
+            commands = semgrep_commands(root, ["internal/a_test.go"], base="abc123")
+        self.assertEqual(commands, [
+            ["semgrep", "scan", "--error", "--config", rules, "internal/a_test.go"],
+            ["semgrep", "scan", "--error", "--config", ".config/semgrep/go-permissions.yml",
+             "--baseline-commit", "abc123", "internal/a_test.go"],
+        ])
+
+    def test_semgrep_permissions_requires_a_trusted_baseline(self):
+        """Missing history must refuse a scan rather than silently ignore added violations."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.semgrep_tree(root, "internal/a_test.go")
+            with self.assertRaisesRegex(HookError, "permission.*baseline"):
+                semgrep_commands(root, ["internal/a_test.go"])
+
+    def test_semgrep_permissions_source_checks_forwards_existing_base(self):
+        """The push's already computed base reaches command construction unchanged."""
+        with mock.patch("checks.tool_module_check"), \
+                mock.patch("checks.go_packages", return_value=[]), \
+                mock.patch("checks.governance_commands", return_value=[]), \
+                mock.patch("checks.parallel"), \
+                mock.patch("checks.semgrep_commands", return_value=[]) as commands:
+            source_checks(ROOT, ["internal/a_test.go"], base="abc123")
+        commands.assert_called_once_with(ROOT, ["internal/a_test.go"], base="abc123")
+
+    def test_semgrep_permissions_rule_only_change_validates_configuration(self):
+        """A push changing only the permission rules validates the configuration without Go files."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rules = self.semgrep_tree(root)
+            permissions = ".config/semgrep/go-permissions.yml"
+            commands = semgrep_commands(root, [permissions])
+        self.assertEqual(commands, [
+            ["semgrep", "scan", "--error", "--config", rules, "--exclude", FIXTURE_DIRECTORY, "."],
+            ["semgrep", "validate", permissions],
+        ])
+
+    def test_semgrep_permissions_absent_rules_file_is_the_opt_out(self):
+        """A repository without the permission rules file (adoption does not emit it) gets no permission scan."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "internal").mkdir()
+            (root / "internal" / "a.go").write_text("package a\n", encoding="utf-8")
+            commands = semgrep_commands(root, ["internal/a.go"], base="abc123")
+            self.assertFalse(any(".config/semgrep/go-permissions.yml" in command for command in commands))
+
+    def test_semgrep_permissions_rule_file_removed_fails(self):
+        """A push that removes the permission rules file is refused, not read as an opt-out."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            permissions = ".config/semgrep/go-permissions.yml"
+            with self.assertRaisesRegex(HookError, "Go permission rules file removed"):
+                semgrep_commands(root, [permissions])
+
+    def test_file_checks_schedules_self_tests_on_semgrep_policy_change(self):
+        """A change to .config/semgrep/ schedules harness self-tests to replay rule fixtures."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cfg = root / ".config" / "semgrep"
+            cfg.mkdir(parents=True)
+            permissions = ".config/semgrep/go-permissions.yml"
+            (root / permissions).write_text("rules: []\n", encoding="utf-8")
+            with mock.patch("checks.parallel") as scheduled, \
+                    mock.patch("checks.require_floors"), \
+                    mock.patch("checks.self_test_commands", return_value=[["self_test_stub"]]) as self_tests:
+                file_checks(root, [permissions])
+            self_tests.assert_called_once_with(root)
+            scheduled.assert_called_once()
+            commands = scheduled.call_args.args[0]
+            self.assertIn(["self_test_stub"], commands)
+
+    def test_semgrep_permissions_rule_validation_planted_invalid_config_fails(self):
+        """Execute validation and verify that planted invalid rule syntax fails."""
+        if shutil.which("semgrep") is None:
+            self.skipTest("semgrep absent")
+        permissions = ".config/semgrep/go-permissions.yml"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cfg = root / ".config" / "semgrep"
+            cfg.mkdir(parents=True)
+            # Positive: real permissions config passes validation
+            real_text = (ROOT / permissions).read_text(encoding="utf-8")
+            (cfg / "go-permissions.yml").write_text(real_text, encoding="utf-8")
+            commands = semgrep_commands(root, [permissions])
+            self.assertEqual(commands, [["semgrep", "validate", permissions]])
+            res = subprocess.run(commands[0], cwd=root, capture_output=True, text=True, timeout=30)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            # Planted negative case: invalid rule structure fails semgrep validate
+            (cfg / "go-permissions.yml").write_text(
+                "rules:\n  - id: planted_invalid\n    bad_field: true\n", encoding="utf-8"
+            )
+            res_bad = subprocess.run(commands[0], cwd=root, capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(res_bad.returncode, 0)
+
+    def semgrep_fixture_git(self, root, *args):
+        """Use bounded local Git plumbing; fixture commits never invoke repository hooks."""
+        result = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True,
+                                timeout=30, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def semgrep_permission_id(self, finding):
+        """Recognize original ids with or without Semgrep's local-config path prefix."""
+        rules = ("go.lang.correctness.permissions.file_permission.incorrect-default-permission",
+                 "go_file-permissions_rule-mkdir", "go_file-permissions_rule-fileperm")
+        check_id = finding["check_id"]
+        return next((rule for rule in rules[:3]
+                     if check_id == rule or check_id.endswith("." + rule)), check_id)
+
+    def semgrep_permission_scan(self, source, baseline="package fixture\n"):
+        """Run the hook's real parity command against a local committed baseline."""
+        if shutil.which("semgrep") is None:
+            self.skipTest("semgrep absent; real permission matching requires the pinned engine")
+        with tempfile.TemporaryDirectory(prefix="praetor-permissions-") as directory:
+            root = Path(directory)
+            name = "fixture_test.go"
+            self.semgrep_tree(root, name)
+            fixture = root / name
+            fixture.write_text(baseline, encoding="utf-8")
+            self.semgrep_fixture_git(root, "init", "--quiet")
+            self.semgrep_fixture_git(root, "add", ".")
+            tree = self.semgrep_fixture_git(root, "write-tree")
+            commit = self.semgrep_fixture_git(
+                root, "-c", "user.name=Permission Fixture", "-c", "user.email=fixture@example.invalid",
+                "-c", "commit.gpgsign=false", "commit-tree", tree, "-m", "baseline")
+            self.semgrep_fixture_git(root, "update-ref", "HEAD", commit)
+            fixture.write_text(source, encoding="utf-8")
+            self.semgrep_fixture_git(root, "add", name)
+            scans = semgrep_commands(root, [name], base="HEAD")
+            self.assertEqual(len(scans), 2, "the hook must construct a permission scan")
+            env = {**os.environ, "XDG_CONFIG_HOME": str(root)}
+            result = subprocess.run([*scans[1], "--json", "--metrics=off", "--disable-version-check"],
+                                    cwd=root, env=env, capture_output=True, text=True, timeout=60, check=False)
+        self.assertIn(result.returncode, (0, 1), result.stderr)
+        self.assertTrue(result.stdout.strip(), f"semgrep returned no JSON: {result.stderr}")
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload.get("errors", []), [], payload)
+        return result.returncode, payload.get("results", [])
+
+    def test_semgrep_permissions_added_writefile_fails(self):
+        """Plant the executable fixture mode that previously reached Codacy."""
+        source = 'package fixture\nimport "os"\nfunc added() { os.WriteFile("stub", nil, 0o755) }\n'
+        status, findings = self.semgrep_permission_scan(source)
+        self.assertEqual(status, 1)
+        self.assertEqual({self.semgrep_permission_id(item) for item in findings}, {
+            "go.lang.correctness.permissions.file_permission.incorrect-default-permission",
+            "go_file-permissions_rule-fileperm",
+        })
+
+    def test_semgrep_permissions_named_suppression_passes(self):
+        """A justified line above the call suppresses both matching permission ids."""
+        source = ('package fixture\nimport "os"\nfunc added() {\n'
+                  '// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission, '
+                  'go_file-permissions_rule-fileperm -- fixture must execute\n'
+                  'os.WriteFile("stub", nil, 0o755)\n}\n')
+        self.assertEqual(self.semgrep_permission_scan(source), (0, []))
+
+    def test_semgrep_permissions_baseline_ignores_unchanged_violation(self):
+        """An unrelated addition in a touched file does not adopt its historical violation."""
+        baseline = 'package fixture\nimport "os"\nfunc old() { os.WriteFile("stub", nil, 0o755) }\n'
+        self.assertEqual(self.semgrep_permission_scan(baseline + "func added() {}\n", baseline), (0, []))
+
+    def test_semgrep_permissions_thresholds_and_literal_call_forms(self):
+        """Exercise each mode argument, numeric spelling, threshold and nonliteral exclusion."""
+        calls = ('os.WriteFile("p", nil, MODE)', 'os.OpenFile("p", os.O_CREATE, MODE)',
+                 'os.Chmod("p", MODE)', 'os.Mkdir("p", MODE)', 'os.MkdirAll("p", MODE)')
+        modes = ("0o600", "0o601", "0o700", "0o750", "0o755", "0600", "0755",
+                 "384", "385", "0x180", "0x181", "0b110000000", "0b110000001", "0o6_01", "mode")
+        source = ['package fixture', 'import "os"', 'func added(mode os.FileMode) {']
+        expected = {}
+        for call in calls[:5]:
+            for mode in modes[:15]:
+                source.append(call.replace("MODE", mode))
+                value = (int(mode, 8) if mode.startswith("0") and mode.isdecimal()
+                         else int(mode, 0) if mode != "mode" else 0)
+                ids = set()
+                if value > 0o600:
+                    ids.add("go.lang.correctness.permissions.file_permission.incorrect-default-permission")
+                    if "Mkdir" not in call:
+                        ids.add("go_file-permissions_rule-fileperm")
+                if "Mkdir" in call and value > 0o750:
+                    ids.add("go_file-permissions_rule-mkdir")
+                expected[len(source)] = ids
+        source.append("}")
+        status, findings = self.semgrep_permission_scan("\n".join(source) + "\n")
+        self.assertEqual(status, 1)
+        actual = {}
+        self.assertLessEqual(len(findings), 225, "fixture finding bound")
+        for item in findings[:225]:
+            actual.setdefault(item["start"]["line"], set()).add(self.semgrep_permission_id(item))
+        self.assertEqual({line: ids for line, ids in expected.items() if ids}, actual)
+
     def test_semgrep_rule_change_scans_the_tree_without_the_corpus(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             rules = self.semgrep_tree(root, "internal/a.go", ".config/hiss/testdata/HISS-08/c/positive/gets.c")
-            commands = semgrep_commands(root, [rules, "internal/a.go"])
+            commands = semgrep_commands(root, [rules, "internal/a.go"], base="abc123")
         self.assertEqual(commands, [["semgrep", "scan", "--error", "--config", rules,
-                                     "--exclude", FIXTURE_DIRECTORY, "."]])
+                                     "--exclude", FIXTURE_DIRECTORY, "."],
+                                   ["semgrep", "scan", "--error", "--config",
+                                    ".config/semgrep/go-permissions.yml", "--baseline-commit",
+                                    "abc123", "internal/a.go"]])
 
     def test_semgrep_file_scan_names_source_and_never_a_fixture(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             rules = self.semgrep_tree(root, "internal/a.go", "internal/testdata/bad.go", "testdata/bad.py")
-            mixed = semgrep_commands(root, ["internal/a.go", "internal/testdata/bad.go", "testdata/bad.py"])
+            mixed = semgrep_commands(root, ["internal/a.go", "internal/testdata/bad.go", "testdata/bad.py"],
+                                     base="abc123")
             only_fixtures = semgrep_commands(root, ["internal/testdata/bad.go", "testdata/bad.py"])
-        self.assertEqual(mixed, [["semgrep", "scan", "--error", "--config", rules, "internal/a.go"]])
+        self.assertEqual(mixed, [["semgrep", "scan", "--error", "--config", rules, "internal/a.go"],
+                                ["semgrep", "scan", "--error", "--config",
+                                 ".config/semgrep/go-permissions.yml", "--baseline-commit",
+                                 "abc123", "internal/a.go"]])
         self.assertEqual(only_fixtures, [])
 
     def test_semgrep_boundaries_missing_rules_and_lookalike_names(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "internal").mkdir()
-            (root / "internal" / "a.go").write_text("x\n", encoding="utf-8")
-            self.assertEqual(semgrep_commands(root, [".config/semgrep/hiss-invariants.yml", "internal/a.go"]), [])
+            (root / "internal" / "a.py").write_text("x = 1\n", encoding="utf-8")
+            self.assertEqual(semgrep_commands(root, [".config/semgrep/hiss-invariants.yml", "internal/a.py"]), [])
         self.assertTrue(is_fixture("testdata/a.go"))
         self.assertTrue(is_fixture("a\\testdata\\b.go"))
         self.assertFalse(is_fixture("internal/testdatafile.go"))
@@ -3621,6 +4027,20 @@ class HookInterpreter(unittest.TestCase):
                              [sys.executable, "-B", "scripts/test_praetor_hook.py"])
             self.assertEqual(len(self_test_commands(root)), len(checks.SELF_TESTS) + 2)
 
+    def test_spelling_self_test_is_gated_on_adopter_codespell_configuration(self):
+        """Self-test commands must gate test_spelling.py on adopter's .codespellrc."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            commands = self_test_commands(root)
+            self.assertNotIn([sys.executable, "-B", ".config/lefthook/scripts/test_spelling.py"],
+                             commands)
+            (root / ".codespellrc").write_text("[codespell]\n", encoding="utf-8")
+            script = root / ".config/lefthook/scripts/test_spelling.py"
+            script.parent.mkdir(parents=True, exist_ok=True)
+            script.write_text("", encoding="utf-8")
+            self.assertIn([sys.executable, "-B", ".config/lefthook/scripts/test_spelling.py"],
+                          self_test_commands(root))
+
     def test_the_probe_answer_decides_not_the_name_or_the_status(self):
         for output, version in ((b"3.14\n", "3.14"), (b"3.10\r\n", "3.10"), (b"3.100\n", "3.100")):
             with self.subTest(output=output), \
@@ -3684,6 +4104,20 @@ class HookInterpreter(unittest.TestCase):
         self.assertEqual(toolchain.on_path("sh", which=installed), "/usr/bin/sh")
         with self.assertRaisesRegex(HookError, "^sh is not on PATH$"):
             toolchain.on_path("sh", which=lambda _program: None)
+
+    def test_codespell_is_described_with_floor_and_refuses_outdated_versions(self):
+        """Tool describe reports codespell floor and rejects versions below CODESPELL_FLOOR."""
+        with (
+            mock.patch("toolchain.on_path", return_value="/usr/bin/codespell"),
+            mock.patch("toolchain.stated_version", return_value="2.4.3"),
+        ):
+            self.assertEqual(toolchain.describe("codespell", {}), "2.4.3 (floor 2.4.3)")
+        with (
+            mock.patch("toolchain.on_path", return_value="/usr/bin/codespell"),
+            mock.patch("toolchain.stated_version", return_value="2.4.1"),
+            self.assertRaisesRegex(HookError, "codespell >= 2.4.3 is required"),
+        ):
+            toolchain.describe("codespell", {})
 
     def test_check_exits_nonzero_for_a_required_tool_that_is_unusable(self):
         runner = [sys.executable, "-B", str(ROOT / ".config/lefthook/scripts/toolchain.py")]

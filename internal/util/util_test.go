@@ -442,6 +442,101 @@ func TestReadOriginRemote_Positive_HostAndPath(t *testing.T) {
 	}
 }
 
+func TestReadGitRemote_Positive(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	repo := newHermeticGitRepo(t, "https://github.com/acme/widget.git")
+	if _, err := RunGit(ctx, repo, "remote", "add", "upstream", "git@codeberg.org:fork/widget.git"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadGitRemote(ctx, repo, "upstream")
+	want := GitRemote{Host: "codeberg.org", Path: "fork/widget", Owner: "fork", Repo: "widget"}
+	if err != nil || got != want {
+		t.Fatalf("ReadGitRemote upstream = %+v (err %v), want %+v", got, err, want)
+	}
+}
+
+func TestReadGitRemote_Negative(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	repo := newHermeticGitRepo(t, "https://github.com/acme/widget.git")
+	if _, err := ReadGitRemote(ctx, repo, "nonexistent"); !errors.Is(err, ErrRepoIdentityUnresolved) {
+		t.Fatalf("missing named remote: %v, want ErrRepoIdentityUnresolved", err)
+	}
+	if _, err := ReadGitRemote(ctx, repo, "/local/path/repo.git"); !errors.Is(err, ErrRepoIdentityUnresolved) {
+		t.Fatalf("local path remote: %v, want ErrRepoIdentityUnresolved", err)
+	}
+}
+
+func TestReadGitRemote_Boundary(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	repo := newHermeticGitRepo(t, "https://github.com/acme/widget.git")
+	got, err := ReadGitRemote(ctx, repo, "  ")
+	if err != nil || got.Host != "github.com" || got.Owner != "acme" || got.Repo != "widget" {
+		t.Fatalf("blank remote name did not fall back to origin: %+v, %v", got, err)
+	}
+	direct, err := ReadGitRemote(ctx, repo, "https://codeberg.org/acme/direct.git")
+	if err != nil || direct.Host != "codeberg.org" || direct.Repo != "direct" {
+		t.Fatalf("direct URL remote = %+v, %v", direct, err)
+	}
+}
+
+func TestReadGitPushRemote_Positive(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	repo := newHermeticGitRepo(t, "https://github.com/acme/widget.git")
+	if _, err := RunGit(ctx, repo, "config", "remote.origin.pushurl", "git@codeberg.org:fork/widget.git"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadGitPushRemote(ctx, repo, "origin")
+	want := GitRemote{Host: "codeberg.org", Path: "fork/widget", Owner: "fork", Repo: "widget"}
+	if err != nil || got != want {
+		t.Fatalf("ReadGitPushRemote origin = %+v (err %v), want %+v", got, err, want)
+	}
+	if _, err := RunGit(ctx, repo, "remote", "add", "upstream", "https://github.com/acme/widget.git"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RunGit(ctx, repo, "config", "url.git@codeberg.org:fork/.pushInsteadOf", "https://github.com/acme/"); err != nil {
+		t.Fatal(err)
+	}
+	rewritten, err := ReadGitPushRemote(ctx, repo, "upstream")
+	if err != nil || rewritten != want {
+		t.Fatalf("ReadGitPushRemote pushInsteadOf = %+v (err %v), want %+v", rewritten, err, want)
+	}
+}
+
+func TestReadGitPushRemote_Negative(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	repo := newHermeticGitRepo(t, "https://github.com/acme/widget.git")
+	if _, err := ReadGitPushRemote(ctx, repo, "nonexistent"); !errors.Is(err, ErrRepoIdentityUnresolved) {
+		t.Fatalf("missing named push remote: %v, want ErrRepoIdentityUnresolved", err)
+	}
+	if _, err := ReadGitPushRemote(ctx, repo, "/local/path/repo.git"); !errors.Is(err, ErrRepoIdentityUnresolved) {
+		t.Fatalf("local path push remote: %v, want ErrRepoIdentityUnresolved", err)
+	}
+	cancelled, stop := context.WithCancel(context.Background())
+	stop()
+	if _, err := ReadGitPushRemote(cancelled, repo, "origin"); err == nil || errors.Is(err, ErrRepoIdentityUnresolved) {
+		t.Fatalf("cancelled ReadGitPushRemote = %v, want non-unresolved read error", err)
+	}
+}
+
+func TestReadGitPushRemote_Boundary(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	repo := newHermeticGitRepo(t, "https://github.com/acme/widget.git")
+	got, err := ReadGitPushRemote(ctx, repo, "  ")
+	if err != nil || got.Host != "github.com" || got.Owner != "acme" || got.Repo != "widget" {
+		t.Fatalf("blank push remote name did not fall back to origin: %+v, %v", got, err)
+	}
+	direct, err := ReadGitPushRemote(ctx, repo, "https://codeberg.org/acme/direct.git")
+	if err != nil || direct.Host != "codeberg.org" || direct.Repo != "direct" {
+		t.Fatalf("direct URL push remote = %+v, %v", direct, err)
+	}
+}
+
 // Negative: a local-path or file:// origin says where a copy sits, not which forge
 // repository it is. ReadOriginRemote and ResolveRemoteIdentity refuse it as unresolved and
 // name the non-network cause, while ResolveRepoIdentity keeps reading its last two segments

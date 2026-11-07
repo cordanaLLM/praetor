@@ -13,7 +13,9 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/agenthook"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/sentinel"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -73,6 +75,7 @@ func hookProcess(t *testing.T, dir, arguments string, stdin []byte, extraEnviron
 	return result, -1
 }
 
+// hookRepository initializes a temporary git repository fixture for hook testing.
 func hookRepository(t *testing.T, governed bool) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -82,9 +85,8 @@ func hookRepository(t *testing.T, governed bool) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := util.RunGitProbe(context.Background(), dir, 4096, "init", "-q"); err != nil {
-		t.Fatal(err)
-	}
+	// engine-agenthook-windows-flake-20261028: fixtures init git under fixture bound, not probe bound.
+	testsupport.RunFixtureGit(t, dir, []string{"init", "-q"})
 	if governed {
 		if err := os.WriteFile(filepath.Join(dir, ".standards.yaml"), []byte("version: 1\n"), 0o600); err != nil {
 			t.Fatal(err)
@@ -256,6 +258,8 @@ func TestHookProcessAdmissionCheck(t *testing.T) {
 	}
 }
 
+// TestHookClaudeIsolatedPushAdmission verifies that unadmitted push commands are refused
+// when isolated push admission is enforced.
 func TestHookClaudeIsolatedPushAdmission(t *testing.T) {
 	settings := config.HookSettings{Admission: config.AdmissionSettings{Enforce: true}}
 	policy, err := agenthook.BuildPolicy(settings)
@@ -269,6 +273,10 @@ func TestHookClaudeIsolatedPushAdmission(t *testing.T) {
 		}, nil
 	}, 32)
 	root := hookRepository(t, true)
+	testsupport.RunFixtureGit(t, root, []string{"remote", "add", "origin", "https://github.com/acme/widgets.git"})
+	policy.WithAdmissionPullRequests(root, func(context.Context, agenthook.PushTarget) ([]forge.PullRequestHead, error) {
+		return nil, nil
+	})
 	for _, tc := range []struct {
 		command string
 		exit    int

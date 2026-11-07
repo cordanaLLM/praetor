@@ -183,7 +183,7 @@ func TestAuditReuseRecords_3D(t *testing.T) {
 // on expires.
 func reuseOrderEntry(expires string) config.Exception {
 	return config.Exception{Rule: config.ExceptionRuleReuseAnnotationOrder, Path: supplychain.ReuseFile,
-		Reason: "4000 vendored file globs", Expires: expires}
+		Reason: "4000 vendored file globs", Category: "A", Expires: expires}
 }
 
 // A REUSE.toml whose comparisons pass the step bound is not checked. Negative: without an
@@ -234,7 +234,7 @@ func TestAuditLicensing_3D(t *testing.T) {
 	writeFixtureFile(t, root, supplychain.RootLicenseFile, "MIT License\n")
 	writeFixtureFile(t, root, "COPYING", "upstream notice\n")
 	kept := &config.Manifest{Exceptions: []config.Exception{{Rule: config.ExceptionRuleRootLicenseNotice, Path: "COPYING",
-		Reason: "upstream notice kept verbatim", Expires: "2026-12-31"}}}
+		Reason: "upstream notice kept verbatim", Category: "A", Expires: "2026-12-31"}}}
 	output, err := run(kept, root)
 	if err != nil || !strings.Contains(output, "[PASS] root licence: LICENSE holds the text of LICENSES/MIT.txt; kept upstream notices COPYING.") ||
 		!strings.Contains(output, "[SKIP] REUSE.toml annotation order not checked") {

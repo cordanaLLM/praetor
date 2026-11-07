@@ -39,6 +39,17 @@ const (
 	BootstrapNestedRepository BootstrapOutcome = "nested-repository"
 )
 
+// defaultBootstrapTimeout preserves the bootstrap budget for callers without a
+// deadline; contextopt.MaxDuration instead bounds each individual snapshot.
+const defaultBootstrapTimeout = 10 * time.Second
+
+// bootstrapDeps parameterizes ledger bootstrap dependencies as a value,
+// eliminating mutable package-global state.
+type bootstrapDeps struct {
+	fallback   time.Duration
+	initialize func(context.Context, *os.Root) error
+}
+
 // InitWorkingDirIfAbsentContext initializes a private ledger that does not yet
 // exist. Initialization is keyed on the ledger files rather than on the
 // directory alone: another module (milestone, forge, docdistill, dedupe,
@@ -54,12 +65,25 @@ const (
 //
 // The caller must run AuditWorkingDir afterward; this function does not certify
 // state. Failed initialization leaves the partial directory for recovery.
+// Caller deadlines are preserved; only a context without a deadline receives
+// the default bootstrap timeout.
 func InitWorkingDirIfAbsentContext(ctx context.Context, rootPath string) (outcome BootstrapOutcome, err error) {
+	return bootstrapWorkingDir(ctx, rootPath, bootstrapDeps{
+		fallback:   defaultBootstrapTimeout,
+		initialize: initializeWorkingFiles,
+	})
+}
+
+// bootstrapWorkingDir executes ledger initialization using supplied dependencies.
+func bootstrapWorkingDir(ctx context.Context, rootPath string, deps bootstrapDeps) (outcome BootstrapOutcome, err error) {
 	if ctx == nil {
 		return BootstrapUnknown, errors.New("state initialization requires a context")
 	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+	if _, bounded := ctx.Deadline(); !bounded {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, deps.fallback)
+		defer cancel()
+	}
 	project, err := contextopt.OpenDirectory(ctx, rootPath)
 	if err != nil {
 		return BootstrapUnknown, fmt.Errorf("open project for state bootstrap: %w", err)
@@ -75,7 +99,7 @@ func InitWorkingDirIfAbsentContext(ctx context.Context, rootPath string) (outcom
 	case !seedable:
 		return BootstrapUnseedable, nil
 	}
-	return seedLedgerlessWorkingDir(ctx, project, created)
+	return seedLedgerlessWorkingDir(ctx, project, created, deps.initialize)
 }
 
 // seedLedgerlessWorkingDir writes the default ledger files, but only into a
@@ -84,20 +108,20 @@ func InitWorkingDirIfAbsentContext(ctx context.Context, rootPath string) (outcom
 // corrupted, and repairing it here would hide that from AuditWorkingDir and
 // from SyncState, which must both fail closed on it. The returned outcome
 // distinguishes the directory it seeded from the ledger it refused to touch.
-func seedLedgerlessWorkingDir(ctx context.Context, project *os.Root, created bool) (outcome BootstrapOutcome, err error) {
+func seedLedgerlessWorkingDir(ctx context.Context, project *os.Root, created bool, initialize func(context.Context, *os.Root) error) (outcome BootstrapOutcome, err error) {
 	working, err := openWorkingDirectory(project)
 	if err != nil {
 		return BootstrapUnknown, err
 	}
 	defer func() { err = errors.Join(err, working.Close()) }()
 	if created {
-		return BootstrapCreated, initializeWorkingFiles(ctx, working)
+		return BootstrapCreated, initialize(ctx, working)
 	}
 	outcome, err = existingWorkingDirOutcome(working)
 	if err != nil || outcome != BootstrapSeeded {
 		return outcome, err
 	}
-	return BootstrapSeeded, initializeWorkingFiles(ctx, working)
+	return BootstrapSeeded, initialize(ctx, working)
 }
 
 // existingWorkingDirOutcome decides what bootstrap may do to a directory it did

@@ -76,6 +76,75 @@ with the same Go release as the other workflows
 tests the nested module `tools/schemacheck`, which `./...` of the root module does not reach
 (`go -C tools/schemacheck test ./...`; its network checks skip with a stated reason).
 
+### Review hold before heavy work
+
+On `pull_request` events, the Linux and macOS matrix and Windows shards run
+`Stop while review is open` immediately after the draft barrier. The aggregate job `windows` now
+runs the shared hold step first, so a held run's aggregate fails with the hold title too and the
+lander reads it as held. It still fails when a shard fails, is cancelled or is skipped. A leg
+polls unresolved threads and pending bot reviews every 30 seconds for up to 10 minutes, continuing
+as soon as both counts are zero. If review remains open at the deadline, the leg
+fails with annotation title **`Gate held: review open`**, writes the unresolved-thread count and
+pending bot check names to its summary, and runs no subsequent matrix step. The step escapes the
+title and message without quoted patterns, because macOS runners use `/bin/bash` 3.2, which keeps
+quotes inside `${var//pattern/replacement}`; a static test refuses quoted forms. The step declares an
+explicit `timeout-minutes: 15` (`ghworkflow.ReviewHoldStepTimeoutMinutes`).
+The wall-clock polling deadline permits at most 20 retries after the initial snapshot. Each recount
+retains the 20-page bound across 3 API collections (at most 60 requests); the final recount may
+finish after the polling deadline. A 4-second per-request sizing budget allows 240 seconds for that
+recount, plus 60 seconds for parsing and cleanup: 600 + 240 + 60 = 900 seconds. This budget is not
+a client-side HTTP timeout; the runner step timeout also bounds stalled API calls. Every later step
+carries the explicit `steps.review-hold.outputs.clear` condition, including steps that normally run
+after a failure. Push,
+merge-group and manual runs retain their existing behavior.
+
+`internal/ghworkflow/reviewhold.go` owns the shared GraphQL thread query, Bash counter and
+`ReviewHoldBots` pattern: CodeRabbit, Codacy Static Code Analysis and sourcery-ai, matched without
+case sensitivity through check names/app slugs and status contexts/creator logins. The counter
+reads unresolved threads on the current PR head, unfinished check runs and the latest pending
+commit status per context. API errors, malformed responses, a changed head or a pagination bound
+fail closed with the cause named. Collections accept at most 20 pages of 100 entries; a full last
+REST page holds because exhaustion has not been proved. A bot with no published check or status
+cannot be detected by this counter.
+
+`.github/workflows/review-hold-release.yml` serializes release attempts. It runs on submitted or
+dismissed reviews, created/edited/deleted review comments, completed check runs (`check_run: types: [completed]`),
+commit statuses (`status`), manual dispatch and every 15 minutes (`schedule`). A bot finishing emits a
+check run or commit status rather than a review event, so `check_run` and `status` triggers release answered
+review holds as soon as external bots complete without waiting for the next schedule tick. These triggers,
+like schedule and workflow dispatch, run only from the workflow file on the default branch; a pull request
+that adds or changes the release workflow is released by hand (`gh run rerun --failed`) until it lands.
+The job condition restricts runs on `check_run` and `status` events to review bots declared in
+`ReviewHoldBots`, ignoring unrelated checks and pending statuses. For each open PR within the same page
+bound, it inspects the newest `portability.yml` PR run on that head and its current attempt's failed-job
+annotations. It reruns a completed failed run only when the hold title is present and the shared counter
+now returns zero for both counts. It rechecks the run attempt and PR head immediately before rerunning;
+unrelated failures are left alone. Rerunning the workflow also reruns its other jobs. Each pull request's
+release scan now runs isolated: a read failure fails only that pull request (no rerun for it), prints
+`Review hold release read failed` naming it, the scan continues for the others, and the job exits 1 at the end.
+
+The release script is rendered inline by `RenderReviewHoldReleaseWorkflow`; it never checks out
+PR code. Its token has Actions write and pull-request, Checks and commit-status read
+permissions. Fork runs with an empty `pull_requests` array match the PR by both head repository
+full name and head SHA; runs with PR associations retain the PR-number match. Review-event tokens
+on forks may lack write permission; the scheduled workflow on the default branch provides the
+retry path after this workflow lands there. The pilot covers
+this platform workflow; adoption rollout can reuse `RenderReviewHoldStep` and the same counter.
+The platform workflow shares its inline script through a YAML anchor to stay within the metadata
+reader size bound. Committed copies are checked against their renderers by `TestReviewHoldRendering`, and
+`TestReviewHoldCounter` / `TestReviewHoldRelease` execute the actual Bash and jq against API
+fixtures without accessing the forge.
+
+The Windows leg runs as two shard jobs, `windows-shard` with `matrix.shard` 1 and 2.
+"Compile Every Package" and "Vet Every Package" run the full package list on both shard legs.
+Only "Test Every Package" splits the packages, applying an alternating shard filter
+(`awk` modulo 2 on sorted package names) to the main run and assigning `internal/adopt` and
+`cmd/standardsctl` to shard 1, so the test selections are disjoint and together cover every package.
+The `windows` job aggregates them under the required status name and fails when a shard fails, is
+cancelled or is skipped (`TestPortabilityWindowsShards_*` in `internal/forge`). Every loop that reads
+the package list stops at the workflow-level `PORTABILITY_MAX_PACKAGES` (512; the repository has about
+125 packages) and fails the step instead of truncating the list.
+
 On a draft pull request no leg runs: the workflow follows the hosted gate shape
 ([workflows Praetor writes and runs](../guides/workflow-triggers.md#workflows-praetor-writes-and-runs)).
 Each leg, and the skip job below, begins with the draft step, which fails the draft with the
@@ -234,6 +303,7 @@ those declarations and the step's `REQUIRED` list:
 | :--- | :--- | :--- |
 | `python` | the first of `python3`, `python`, `py -3` on `PATH` that states Python 3.10 or newer | asserted on every leg |
 | `make` | the first of `make`, `gmake`, `mingw32-make` on `PATH` that states GNU Make | asserted on every leg |
+| `codespell` | found on `PATH` under this name | reported, not asserted |
 | `git` | found on `PATH` under this name | asserted on every leg |
 | `go` | found on `PATH` under this name | asserted on every leg |
 | `gofmt` | found on `PATH` under this name | asserted on every leg |

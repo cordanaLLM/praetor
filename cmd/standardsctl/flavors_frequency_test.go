@@ -50,8 +50,10 @@ func TestRunFlavorsSync_Positive_ManualFlavorMovesOnlyWhenNamed(t *testing.T) {
 	}
 }
 
+// TestRunFlavorsSync_Negative_UndeclaredFlavorAndFrequencyRefused proves sync rejects misspelled flavor names and invalid update frequencies without moving tags.
 func TestRunFlavorsSync_Negative_UndeclaredFlavorAndFrequencyRefused(t *testing.T) {
 	f := newManualEdgeFixture(t)
+	// codespell:ignore-next-line egde
 	if out, err := f.sync(t, "--flavor=egde"); err == nil || !strings.Contains(err.Error(), "egde") {
 		t.Fatalf("a misspelled --flavor must fail naming it, got %v\n%s", err, out)
 	}

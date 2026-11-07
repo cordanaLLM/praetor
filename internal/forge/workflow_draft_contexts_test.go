@@ -67,6 +67,22 @@ func draftContextFault(job workflowJob, types []string) error {
 	return nil
 }
 
+// draftJobFault says how job id departs from failing a draft pull request: a proven aggregate that
+// covers every job it needs (provenDraftStepAggregate) fails a draft when each of those jobs does;
+// any other job must fail a draft in its own draft step (draftContextFault).
+func draftJobFault(spec *workflowSpec, id string, types []string) error {
+	job := spec.Jobs[id]
+	if provenDraftStepAggregate(spec, id) {
+		for _, need := range job.NeedIDs() {
+			if err := draftContextFault(spec.Jobs[need], types); err != nil {
+				return fmt.Errorf("needed job %s: %w", need, err)
+			}
+		}
+		return nil
+	}
+	return draftContextFault(job, types)
+}
+
 // draftContextFaults returns, for one workflow document, every context a job reports on every
 // pull request inside identity mapped to how that job departs from failing a draft (nil when it
 // fails a draft as it must). A workflow that does not run on every pull request reports none.
@@ -92,7 +108,7 @@ func draftContextFaults(t *testing.T, data []byte, identity string) map[string]e
 			t.Fatal(err)
 		}
 		for _, context := range contexts {
-			faults[context] = draftContextFault(job, types)
+			faults[context] = draftJobFault(&spec, id, types)
 		}
 	}
 	return faults
@@ -202,5 +218,11 @@ func TestDraftContextFault(t *testing.T) {
 				t.Fatalf("fault = %v, want containing %q", err, tc.want)
 			}
 		})
+	}
+	shardDoc := guardedShardWorkflow("", "always()", shardExitSteps)
+	brokenNeed := strings.Replace(shardDoc, gateRunStep, gateRunStep+"      - name: After\n        if: always()\n        run: make\n", 1)
+	if faults := draftContextFaults(t, []byte(brokenNeed), ""); faults["Platform Neutrality (Windows)"] == nil ||
+		!strings.Contains(faults["Platform Neutrality (Windows)"].Error(), "needed job windows-shard:") {
+		t.Fatalf("aggregate over a need running after draft step: %v", faults)
 	}
 }

@@ -273,8 +273,22 @@ guard by one byte. `TestRegistrationTableMatchesTheTrackedClientFiles` and
    operands fails closed (`internal/agenthook/command_targets.go`). Under `hooks.scope: all`
    a `pre-tool` command outside any repository is judged too, since the command policy
    reads only the command text (`judgedEverywhere`).
-7. **Judge.** The process environment first, then the command policy.
+7. **Judge.** The process environment first, then the command policy, then the forge-text foreign-reference guard ([Forge-text foreign-reference guard](#forge-text-foreign-reference-guard)).
 8. **Encode.** The verdict in the client's dialect.
+
+## Forge-text foreign-reference guard
+
+The `pre-tool` command evaluator runs `evaluateForgeTextRefs` (`internal/agenthook/forge_text_refs.go`, rule `forge-text-foreign-reference`) after the command policy. It applies `forge.ForeignReferenceFindings` (`internal/forge/foreign_references.go`) to every `gh` write call in a proposed shell command before execution so an agent cannot post an active reference (`owner/repo#N`, `owner/repo!N`, `https://github.com/owner/repo/(issues|pull|discussions)/N`) to an organisation outside the trusted list:
+
+- **Scope.** `gh issue` (`create`, `edit`, `comment`, `close`, `reopen`), `gh pr` (`create`, `edit`, `comment`, `review`, `close`, `reopen`, `merge`), `gh release` (`create`, `edit`), and `gh api` calls whose endpoint path names `issues`, `pulls` or `comments` with a write method (`-X`/`--method` other than `GET` or `HEAD`) or field/input flags (`-f`, `--raw-field`, `-F`, `--field`, `--input`). Read-only `gh` commands (`gh pr view`, `gh api` GET/HEAD reads) are ignored.
+- **Text sources.** The command is split into fields with `forge.ShellFields` and into chained commands at `targetCommandSeparator` (`;`, `&`, `&&`, `|`, `||`), tracking the working directory through `cd`, `pushd` and `env -C`/`--chdir` (`internal/agenthook/command_directories.go`). For each scoped `gh` call the hook checks the call's fields joined by spaces (covering inline `--body`/`-b`, `--title`/`-t`, `--subject`/`-t`, `--comment`/`-c`, `--notes`, `-f`/`-F`/`--field`/`--raw-field` arguments and quoted `"$(cat <<'EOF' ...)"` bodies), or the whole command text when the call reads its body from standard input (`-`, `/dev/stdin` or `/dev/fd/0` via `isStdinTarget` on `-F`, `--body-file`, `--notes-file`, `--input` or `-F`/`--field name=@<stdin>`, covering unquoted here-documents). It also reads every file the call names (`--body-file`/`-F <path>` on `issue`/`pr`, `--notes-file`/`-F <path>` on `release`, `--input <path>` and `-F`/`--field name=@<path>` on `api`, and `$(cat <path>)` inside the call) up to 1 MiB (`maxForgeTextFileBytes`, `util.ReadFileLimited`). The guard fails closed on an unreadable named file, a file over 1 MiB (`maxForgeTextFileBytes`), more than `maxForgeTextFiles` (32) named files per `gh` call, more than `maxForgeTextSegments` (256) command segments, more than `maxForgeTextWords` (4096) shell words or any `forge.ErrShellReadLimit` error, or any other `forge.ShellFields` error on a command holding a `gh` write word (`ghWriteWordPattern` in `internal/agenthook/forge_text_refs.go`, `TestForgeTextRefsBoundaryAndFailClosedCases`). Because `collectGHWriteCalls` and `shellFieldsForGH` (`internal/agenthook/forge_text_refs.go`) run on every command that passes the command policy (`evaluateCommand`, `internal/agenthook/evaluate.go`), the segment (`maxForgeTextSegments`) and word (`maxForgeTextWords`, `forge.ErrShellReadLimit`) limits apply to every command the guard reads, even when the command contains no `gh` call (for example, a `git add` with more than 4096 paths is refused; split large commands across smaller calls). Trusted organisations are resolved by `forge.ResolveOwnOrganizationSources` from the active operator layers (`PRAETOR_FLEET_CONFIG`, `PRAETOR_WORKSTATION_CONFIG`), each command directory's git worktree manifest (`forge.own_organizations`), and the repository owner (`GITHUB_REPOSITORY`, the `origin` remote, or a valid manifest's `repository.owner`). Directory tracking reuses `commandBase`, `walkCommandWords` and `repositoryRoot`; a governed session root never selects another worktree's manifest. When no organisation list resolves, only the repository owner counts as own and the refusal states that fact.
+- **Limits.** Every command that passes the command policy is bounded by `maxForgeTextSegments` (256 command segments), `maxForgeTextWords` (4096 shell words) and `forge.ErrShellReadLimit` in `collectGHWriteCalls` and `shellFieldsForGH` (`internal/agenthook/forge_text_refs.go`), and each scoped `gh` call is bounded by `maxForgeTextFiles` (32 named files) and `maxForgeTextFileBytes` (1 MiB per file); a command with no `gh` call that exceeds the segment or word bounds (such as `git add` with over 4096 paths) is refused fail-closed and must be split into smaller commands (`TestForgeTextRefsBoundaryAndFailClosedCases`). Inspection is static over the command string and the files it directly names at hook evaluation time, so text built at run time from shell variables, command substitutions other than `$(cat <path>)` or other files is not seen by the pre-tool hook (`praetorctl forge check-message`, `check-commits` and `validate-pr` still inspect the final text; see [Git hooks](git-hooks.md#forge-text-policy)).
+
+A manifest that cannot load or validate is a named `manifest finding` in an allowed verdict when the text contains no active reference. Comments, thread replies, PR creation and the merge that repairs the manifest can proceed. Invalid manifests contribute no organisations: references are checked against the independent operator layer and repository identity, and the finding names those trusted sources. Without a valid source, references fail closed; outside references remain refused even with a valid manifest. Unreadable named text and parser limits still refuse the command. Repair legacy exception metadata with [`praetorctl exceptions migrate --write`](clang-tidy-coverage.md#migrate-legacy-exception-metadata); there is no bypass flag. `TestForgeManifestDeadlock`, `TestForgeManifestCommandDirectory`, `TestForgeManifestIndependentSources` and `TestForgeManifestMalformedAndUnreadableText` exercise these cases through the native hook.
+
+An operator-policy load or validation error refuses the write, including plain text (`TestForgeOperatorPolicyFailureDeniesPlainWrites`). A repository-identity error remains a diagnostic while references to organisations independently trusted by the operator layer or a valid manifest remain allowed; outside references remain refused (`TestForgeIdentityFailurePreservesTrustedOrganizations`).
+
+Tests: `TestForgeTextRefsRefusedPerForm`, `TestForgeTextRefsAcceptedCases`, `TestForgeTextRefsBoundaryAndFailClosedCases` and `TestForgeTextRefsOrganizationResolutionCases` in `internal/agenthook/forge_text_refs_test.go`. Order: `engine-forge-text-outside-ref-guard-20261031`.
 
 ## Clock on every prompt
 
@@ -742,7 +756,7 @@ reported, non-blocking error; AGY gets its allow answer and exit 0 instead. The 
 handback rows and 30 s for `post-return`, so a slow engine still gives its own verdict and a
 late deny stays a deny. Both 5 s probes plus that wait end before the 60 s `post-return`
 rows give up (`TestLauncherTimeoutsOutwaitEngineBudgets`). The `stop` call waits longer
-(`STOP_RUN_TIMEOUT`, 55 s): the engine verifies the ledger (20 s) and then runs the
+(`STOP_RUN_TIMEOUT`, 60 s): the engine reads own PR reviews (4 s), verifies the ledger (20 s), and then runs the
 checkpoint check (30 s), and its client timeout is 90 s (`TestStopLauncherTimeouts`). On a shorter row the client's own
 timeout comes first: 15 s for the dispatch and handback rows, and 30 s for AGY, which
 documents nothing about a timed-out hook. Malformed guard
@@ -1188,7 +1202,37 @@ worktree-isolated Claude Code session, which refuses git named under a launcher 
 against live memory, swap and load readings, refusing under pressure or when the readings
 cannot be taken; the assignment admits no other shape and no other simple command
 ([worktree-isolated sessions](admission.md#worktree-isolated-sessions)). The refusal of a plain
-`git push` names both forms.
+`git push` names both forms. Every admitted `git push` (`PRAETOR_ADMIT` and `praetorctl admit`
+alike, excluding `--delete`, `:branch` and tag pushes; `--mirror` is refused outright) also
+resolves the repository directory, remote (`util.ReadOriginRemote`, `util.ReadGitRemote`,
+`util.ParseGitRemote`) and destination branches (`src:dst`, branch name, `HEAD` via
+`git symbolic-ref`, an omitted refspec and remote via `git rev-parse --symbolic-full-name @{push}`,
+or every local branch via bounded `git for-each-ref refs/heads` for `--all` / `--branches`),
+reads open pull requests first on GitHub or Forgejo, filtering each page to the pushed
+repository and branch. A matching `OPEN` pull request admits immediately; otherwise the
+lookup follows full open pages up to `forge.HeadPullRequestsMaxPages = 5` pages of
+`forge.HeadPullRequestsPerPage = 20` items. A full final open page without a match fails
+closed. Only after open results end on a short page does the lookup query one newest-first
+closed page; a full closed page does not trigger more paging or a ceiling refusal. The hook
+refuses when a `MERGED` or `CLOSED` pull request heads a destination branch and no `OPEN`
+one does, or when target/forge resolution fails
+([merged and closed pull request heads](admission.md#merged-and-closed-pull-request-heads)).
+
+When resolving push targets, the repository manifest (`.standards.yaml`) is read through the
+confined, size-bounded snapshot reader (`internal/agenthook/admission_manifest.go`:
+`readPushManifest`, calling `contextopt.ReadSnapshot`) under the push-target deadline. Admission
+stops waiting at that deadline and treats the read as failed; a worker stalled in the
+filesystem call can stay blocked until the call returns, and `pushManifestReadSlot` caps such
+outstanding workers at one, so a later read waits for the slot or its own deadline
+(`TestReadPushManifestDeadline` in `internal/agenthook/admission_manifest_test.go`). A manifest
+whose policy fields fail to decode still yields a valid `repository.forge` declaration through a
+forge-only projection (`decodePushManifestForge`), and the decode error is reported as a
+non-blocking notice rather than a refusal (`Verdict.Notice`), so terminal pull request head checks
+remain enforced (`TestAdmissionManifestForgeIndependent` in
+`internal/agenthook/admission_manifest_test.go`). With no usable declaration, a known forge host
+is recognised by its host name (`resolvePushForge` in `internal/agenthook/admission.go`); an
+unknown host is refused (`config.ErrForgeUndeclared`), never assigned a guessed forge
+(`TestPushManifestForgeFallback` in `internal/agenthook/admission_manifest_test.go`).
 
 A command the reader cannot follow (an open quote or here-document, or more than 4096 lines)
 is refused while enforcement is on. `praetorctl admit -- <step>` passes when the inner step
@@ -1205,8 +1249,44 @@ check through `praetorctl admission-check` (command text on stdin, exit `0` allo
 settings, and fails closed if `praetorctl` is absent; the adopted interceptor written into
 other repositories does not read operator settings. A heavy step inside a script, or in a
 string handed to `sh -c`, is not seen. `internal/agenthook/admission_test.go`,
-`internal/agenthook/parity_test.go` and `cmd/standardsctl/hook_test.go` replay refused,
-admitted, scoped, job-capped and unreadable commands.
+`internal/agenthook/admission_manifest_test.go`, `internal/agenthook/parity_test.go` and
+`cmd/standardsctl/hook_test.go` replay refused, admitted, scoped, job-capped and unreadable
+commands.
+
+## Worktree locations
+
+Worktree location enforcement is off by default. A host turns it on with
+`hooks.worktrees.enforce: true` in one of its operator layers
+([operator settings](effective-policy.md#operator-settings)). `praetorctl hook <client>
+pre-tool` then refuses a command holding `git [-C <dir>] worktree add [options] <path>
+[<commit-ish>]` unless `<path>`, resolved against `-C <dir>` or the hook working directory,
+lies in one of two locations (`internal/agenthook/worktrees.go`):
+
+- directly under `<dev root>/worktrees/<repository folder>-<topic>`, where `<dev root>` is
+  resolved through `topology.ResolveDevRootDir` (`$PRAETOR_DEV_ROOT`, else
+  `$PRAETOR_DEV_DIR`, else `<home>/dev`), `<repository folder>` is the base name of the
+  main repository checkout (`topology.RepositoryRoot`, the parent of `topology.GitCommonDir`),
+  and `<topic>` is non-empty; or
+- under `<repository root>/.claude/worktrees/<name>` inside that repository.
+
+Options from `git-worktree(1)` (`-f`/`--force`, `-d`/`--detach`, `--checkout`/`--no-checkout`,
+`--lock`/`--no-lock`, `--reason <string>`, `--orphan`, `-b`/`-B <branch>`,
+`--track`/`--no-track`, `--guess-remote`/`--no-guess-remote`, `-q`/`--quiet`,
+`--relative-paths`/`--no-relative-paths`, and `--`) are accepted before or after `<path>`.
+Other `git worktree` subcommands (`list`, `remove`, `prune`) are untouched. While
+enforcement is on, an unparsable `git worktree add` command (missing `<path>`, unknown
+option, missing option argument, unclosed quote, or more than two positional arguments)
+fails closed with the parse reason, and a location refusal names the resolved `<path>` and
+both allowed forms (`TestWorktrees_Positive_DeclaredDevRootWorktreeAllowed`,
+`TestWorktrees_Negative_OtherRepoPrefixRefused`, `TestWorktrees_Boundary_EmptyTopicRefused`,
+`TestWorktrees_Negative_OutsideWorktreesRefused`,
+`TestWorktrees_Negative_RelativePathResolvedAndRefused`,
+`TestWorktrees_Positive_ClaudeWorktreesAllowed`,
+`TestWorktrees_Positive_GitDashCResolvesAgainstTargetRepo`,
+`TestWorktrees_Positive_OptionsBeforeAndAfterPathParsed`,
+`TestWorktrees_Boundary_NonAddWorktreeSubcommandsUntouched`,
+`TestWorktrees_Negative_UnparsableWorktreeAddFailsClosed` in
+`internal/agenthook/worktrees_test.go`).
 
 ## Record mode
 
@@ -1411,12 +1491,40 @@ checkpoint is due; the reason names the repair (`praetorctl state sync .`,
 `internal/agenthook/dialect_agent.go`); a malformed flag reads as false. A repeated pass
 changes the wording of a checkpoint block (`Checkpoint remains incomplete: …`) and turns the
 prose-question deny below into a stated skip. `stop` runs every check on each pass (the
-prose question, the ledger verify, the checkpoint): on the first pass one deny lists each
+prose question, own pull request reviews, the ledger verify, the checkpoint): on the first pass one deny lists each
 failing check, so the single continuation is not spent on the question alone; on the
 repeated pass the question is skipped and what still fails halts the session
 (`TestRunStopQuestionAndDueCheckpointPerClient`). A failing ledger verify does not
 hide the checkpoint: both reasons show on the first pass
 (`TestRunStopStaleLedgerAndDueCheckpointShareOneDeny`).
+
+### Own pull request review check and background wait
+
+`stop` reads the authenticated `gh` user's open pull requests in the origin GitHub repository in three steps: `OwnOpen` lists, `ReadBatch` reads all in one query, and a truncated thread list falls back to the paginated `Read` for that pull request (`internal/agenthook/stop_reviews.go`, `internal/forge/review_batch.go`). An unresolved review thread denies the stop, naming each thread's path, line and author, and directs the session to take that work immediately: fix through a lane, reply with verification evidence, and resolve the thread. No controller order is needed. `evaluateStopReviewThreads` has a four-second budget and reuses complete `Allow` verdicts without notices for two minutes from `praetor-stop-reviews.json` under the worktree's Git directory, keyed by repository and local HEAD; a `Deny` verdict always re-reads so resolving a thread takes effect without a new commit. A pull request still unread when the budget ends is named in the deny text, "Own pull request review state not read for #N, #M within the stop budget", and is never only listed as skipped (fail closed). A cache write failure also remains visible; it does not suppress a known review deny.
+
+Review reads add `PRAETOR_GH_NOWAIT=1` to the inherited command environment so a pacing wrapper can return immediately rather than sleep past the stop budget. Exit status 75, or stderr containing "API rate limit already exceeded" or "secondary rate limit" (case-insensitive), becomes `forge.ErrRateLimited` at the shared `gh` read boundary. On that typed error from inventory discovery or batch reading, the review check allows the stop with a notice: `review inventory deferred: graphql 37 of 100, reset 22:45`, using the stated bucket, remaining count, limit, and reset. Without budget numbers the notice is `review inventory deferred: GitHub rate limited: <cause>`. The notice survives merging with other stop checks; their denials still block the stop. A deferral is never written to or reused from the review cache, so the next stop reads again at the same HEAD. Every other read error still denies. Regression coverage: `internal/agenthook/stop_reviews_rate_limit_test.go` and `internal/forge/review_rate_limit_test.go`.
+
+The check reaches Claude Code `Stop`, Codex `Stop`, Gemini `AfterAgent`, and agy `Stop` through `dispatch` (`evaluateStop` for the checkpoint-wired clients and the `EventStop` branch for `agy`); see `internal/agenthook/registrations.go` and `internal/agenthook/evaluate.go`. OpenCode currently has no stop registration. Its existing plugin (`internal/clientsetup/opencode_clock.go`) handles message transforms only. The [OpenCode plugin documentation](https://opencode.ai/docs/plugins/#session-events) lists `session.idle` and an event-handler example, but that event is not connected to this evaluator. OpenCode therefore remains a coverage gap for automatic review enforcement; an explicit wait can still read reviews. Documentation checked 2026-11-01.
+
+Between units, run:
+
+```sh
+praetorctl pr wait --repo owner/name --timeout 50m --interval 60s
+```
+
+Omit `--pr` to select the authenticated user's own open pull requests at startup. Repeat `--pr N` to watch named requests, including requests by another author. The selected numbers stay fixed for the wait so a merged or closed request remains observable. A fresh invocation discovers the current own open set. Discovery is capped at 100 requests; overflow is an explicit read failure. Every PR read requests the first 100 review threads, first 100 reviews, first comment per thread, and first 100 check contexts on the latest commit. A connection with another page fails explicitly instead of silently dropping findings. The first comment supplies the thread's author and creation time; file-level threads have line `0`.
+
+Claude Code runs the command through its shell tool with `run_in_background: true` and consumes its completion when review work arrives. Codex, Gemini and agy run it as a blocking call between units. The wait is bounded by `--timeout`; start a fresh wait when the timeout expires and the session still owns open work. A pending or absent check rollup keeps waiting. Checks finish only when every selected PR's individual check contexts are terminal; a failed rollup cannot hide a still-running check.
+
+| Exit | Meaning and text contract |
+| :--- | :--- |
+| `10` | Standing thread: `review owner/name#7: unresolved thread main.go:9 by reviewer (1h0m0s)`; return before waiting. After the baseline: `review owner/name#7: new thread main.go:9 by reviewer (0s)` or `review owner/name#7: new review COMMENTED by reviewer`. Every reviewer is included, people and bots. |
+| `0` | Every selected PR's checks are terminal with no review item: one `checks owner/name#7: SUCCESS` line per PR; the conclusion may also be `FAILURE` or `ERROR`. Empty discovery reports `checks owner/name: no own open pull requests`. |
+| `11` | A selected PR merged or closed: `merged owner/name#7` or `closed owner/name#7`. |
+| `124` | Overall timeout: `timeout owner/name: <cause>`. |
+| `2` | Invalid input or failed read, with the cause named. No failed read counts as clean checks. |
+
+`--json` emits one object with `exit_code` and an `items` array containing those same lines; process exit codes are unchanged. Existing reviews form the baseline. A new review ID, state or submission timestamp wakes the wait, including a pending review that becomes submitted. Review findings take precedence over terminal checks. Tests use offline forge fixtures: `internal/prwait/`, `internal/agenthook/stop_reviews_test.go`, and `cmd/standardsctl/pr_test.go`.
 
 ### Prose-question check
 

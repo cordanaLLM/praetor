@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/bestpractices"
 	"github.com/cordanaLLM/praetor/internal/clientschema"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
@@ -553,6 +554,8 @@ func bootstrapAssetFamilies() ([]bootstrapAssetFamily, error) {
 		name: "reviewed images", source: reviewedImagesSource, directive: priorImagesDirective, assets: []string{PriorImagesFile},
 	}, bootstrapAssetFamily{
 		name: "secrets gate", source: secretsassets.SourceFile, directive: secretsassets.EmbedDirective, assets: secretsassets.AssetPaths(),
+	}, bootstrapAssetFamily{
+		name: "bestpractices criteria", source: bestpractices.SourceFile, directive: bestpractices.EmbedDirective, assets: bestpractices.AssetPaths(),
 	}), nil
 }
 

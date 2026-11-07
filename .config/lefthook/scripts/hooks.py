@@ -142,12 +142,40 @@ def new_branch_base(head, remote, include_checkpoints=False):
     return None
 
 
+def push_base(head, old, remote, include_checkpoints=False):
+    """Return the commit a pushed update is scanned against.
+
+    A fast-forward is scanned against the ref it replaces. A new branch, and a force push of
+    rewritten history (the replaced head is no longer an ancestor of the pushed one, including an
+    unrelated root), are scanned against the merge base with the remote's default branch: diffing
+    a rebased branch against its replaced head counts every commit the rebase picked up from the
+    default branch as this push's work, and the range checks then judge code the push did not
+    write (#1741). A replaced head that is missing locally is returned unchanged; the caller
+    reports it and scans the full tree.
+    """
+    if set(old) == {"0"}:
+        return new_branch_base(head, remote, include_checkpoints)
+    common = run(["git", "merge-base", old, head], allowed=(0, 1, 128)).decode().strip()
+    if common == old:
+        return old
+    if not common:
+        try:
+            run(["git", "cat-file", "-e", old + "^{commit}"])
+        except HookError:
+            return old
+    base = new_branch_base(head, remote, include_checkpoints)
+    print(f"Push baseline: {old[:12]} rewritten; scan base "
+          f"{base[:12] if base else 'full tree'}")
+    return base
+
+
 def push_check_mode(destination):
     prefix = "refs/heads/checkpoint/"
     return "checkpoint" if destination.startswith(prefix) and len(destination) > len(prefix) else "strict"
 
 
 def pre_push(remote):
+    """Verify pushed ref updates before Git sends them to remote."""
     guard()
     updates = push_updates(sys.stdin.read())
     if updates:
@@ -158,7 +186,7 @@ def pre_push(remote):
     for _, local, destination, old in updates:
         mode = push_check_mode(destination)
         head = git("rev-parse", "--verify", local + "^{commit}").decode().strip()
-        base = old if set(old) != {"0"} else new_branch_base(head, remote, mode == "checkpoint")
+        base = push_base(head, old, remote, mode == "checkpoint")
         if base:
             kind = run(["git", "cat-file", "--batch-check=%(objecttype)"], data=(base + "\n").encode())
             if kind.strip().endswith(b" missing"):
@@ -178,6 +206,9 @@ def pre_push(remote):
         print(f"Push scope: {len(names)} file(s) versus "
               f"{base[:12] if base else 'the full tree'}")
         check_refactor_range(base, head)
+        check_docstring_range(base, head)
+        check_merge_range(base, head)
+        check_commit_message_range(base, head)
         if not names:
             continue
         check_pushed_snapshot(head, base, mode, names)
@@ -198,6 +229,44 @@ def check_refactor_range(base, head):
         print("Refactor check: skipped, no pushed-range base; CI checks pull request range")
         return
     cli(["forge", "refactor-check", f"--base={base}", f"--head={head}"])
+
+
+def check_docstring_range(base, head):
+    """Run the diff-scoped docstring coverage check over the exact outgoing commit range.
+
+    Without a pushed-range base the range would be the whole history, whose old functions
+    this push did not touch, so the check is skipped with that reason; CI checks the pull
+    request range against its base either way.
+    """
+    if not base:
+        print("Docstring check: skipped, no pushed-range base; CI checks pull request range")
+        return
+    cli(["docstrings", "check", f"--base={base}", f"--head={head}"])
+
+
+def check_merge_range(base, head):
+    """Refuse merge commits in the pushed range that drop first-parent work.
+
+    Order: engine-dropped-hunk-gate-20261027.
+    """
+    if not base:
+        print("Merge check: skipped, no pushed-range base; CI checks pull request range")
+        return
+    cli(["merge-check", f"--range={base}..{head}"])
+
+
+def check_commit_message_range(base, head):
+    """Run the commit message policy over the exact outgoing commit range (#1814).
+
+    Without a pushed-range base the range would be the whole history, whose old commits this
+    push did not make, so the check is skipped with that reason; CI checks the pull request
+    range against its base either way.
+    """
+    if not base:
+        print("Commit message check: skipped, no pushed-range base; CI checks pull request range")
+        return
+    run([praetorctl_path(), "forge", "check-commits", f"--base={base}", f"--head={head}"],
+        capture=False, timeout=180)
 
 
 def check_commits(base):

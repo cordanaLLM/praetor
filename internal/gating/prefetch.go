@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -25,6 +28,7 @@ type PrefetchReport struct {
 	Skipped              bool          `json:"skipped"`
 	TotalModules         int           `json:"total_modules"`
 	Duration             time.Duration `json:"duration"`
+	Message              string        `json:"message,omitempty"`
 }
 
 // PrefetchDependencies runs go mod verify and pre-downloads modules with an explicit
@@ -48,6 +52,10 @@ func PrefetchDependencies(ctx context.Context, repoDir string) (*PrefetchReport,
 // prefetchDependencies is PrefetchDependencies with the command runner injected, so the gate
 // stage runs the go commands through the same seam as every other stage and a test can prove
 // which of them ran.
+//
+// A first attempt that ends in a transient kill (its deadline, SIGKILL or SIGTERM) runs once
+// more under a fresh DefaultPrefetchTimeout window; the report's Message names the retry. A
+// second failure, or any other failure, is returned as the module's error.
 func prefetchDependencies(ctx context.Context, repoDir string, run commandRunner) (*PrefetchReport, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("prefetch: context cannot be nil")
@@ -57,20 +65,131 @@ func prefetchDependencies(ctx context.Context, repoDir string, run commandRunner
 	}
 
 	start := time.Now()
+	firstErr := prefetchModuleOnce(ctx, repoDir, run)
+	if firstErr == nil {
+		return &PrefetchReport{
+			VerifiedDependencies: true,
+			Duration:             time.Since(start),
+		}, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("prefetch cancelled: %w (%w)", firstErr, err)
+	}
+	reason, ok := transientPrefetchReason(firstErr)
+	if !ok {
+		return nil, firstErr
+	}
+	if secondErr := prefetchModuleOnce(ctx, repoDir, run); secondErr != nil {
+		return nil, fmt.Errorf("%w (second attempt after retry; first attempt: %w)", secondErr, firstErr)
+	}
+	return &PrefetchReport{
+		VerifiedDependencies: true,
+		Duration:             time.Since(start),
+		Message:              fmt.Sprintf("passed after retry (first attempt: %s)", reason),
+	}, nil
+}
+
+// prefetchModuleOnce runs go mod verify and go mod download for repoDir under
+// DefaultPrefetchTimeout, returning any verification, download, or timeout error.
+func prefetchModuleOnce(ctx context.Context, repoDir string, run commandRunner) error {
 	pCtx, cancel := context.WithTimeout(ctx, DefaultPrefetchTimeout)
 	defer cancel()
 
 	if out, err := run(pCtx, repoDir, "go", "mod", "verify"); err != nil {
-		return nil, fmt.Errorf("dependency verification failed: %s (%w)", out, err)
+		return fmt.Errorf("dependency verification failed: %s (%w)", out, err)
 	}
 	if out, err := run(pCtx, repoDir, "go", "mod", "download"); err != nil {
-		return nil, fmt.Errorf("dependency download failed: %s (%w)", out, err)
+		return fmt.Errorf("dependency download failed: %s (%w)", out, err)
 	}
+	return nil
+}
 
-	return &PrefetchReport{
-		VerifiedDependencies: true,
-		Duration:             time.Since(start),
-	}, nil
+// signaledWaitStatus matches process wait status types that report whether
+// a process terminated due to an operating system signal.
+type signaledWaitStatus interface {
+	Signaled() bool
+	Signal() syscall.Signal
+}
+
+// isTransientPrefetchError reports whether a failed module prefetch ended in a transient
+// deadline or signal kill that warrants a single retry under a fresh per-module timeout.
+func isTransientPrefetchError(err error) bool {
+	_, ok := transientPrefetchReason(err)
+	return ok
+}
+
+// transientPrefetchReason inspects err for a deadline exceeded or kill signal,
+// returning the matched reason string and whether the failure was transient.
+func transientPrefetchReason(err error) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded.Error(), true
+	}
+	if reason, ok := exitErrorKillReason(err); ok {
+		return reason, true
+	}
+	return textKillReason(err.Error())
+}
+
+// exitErrorKillReason extracts the signal or 137/143 exit code from an exec.ExitError,
+// returning the kill description and true if matched.
+func exitErrorKillReason(err error) (string, bool) {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr == nil {
+		return "", false
+	}
+	if reason, ok := processStateSignalReason(exitErr.ProcessState); ok {
+		return reason, true
+	}
+	switch exitErr.ExitCode() {
+	case 137:
+		return "exit status 137", true
+	case 143:
+		return "exit status 143", true
+	default:
+		return "", false
+	}
+}
+
+// processStateSignalReason inspects an exited process state for SIGKILL or SIGTERM,
+// returning the signal name and true if terminated by either signal.
+func processStateSignalReason(state *os.ProcessState) (string, bool) {
+	if state == nil {
+		return "", false
+	}
+	ws, ok := state.Sys().(signaledWaitStatus)
+	if !ok || !ws.Signaled() {
+		return "", false
+	}
+	switch ws.Signal() {
+	case syscall.SIGKILL:
+		return "signal: killed", true
+	case syscall.SIGTERM:
+		return "signal: terminated", true
+	default:
+		return "", false
+	}
+}
+
+var transientKillPhrases = [...]string{
+	"context deadline exceeded",
+	"signal: killed",
+	"signal: terminated",
+	"exit status 137",
+	"exit status 143",
+}
+
+// textKillReason searches msg for known transient kill phrases, returning
+// the matched phrase and true if found.
+func textKillReason(msg string) (string, bool) {
+	for i := 0; i < len(transientKillPhrases); i++ {
+		if strings.Contains(msg, transientKillPhrases[i]) {
+			return transientKillPhrases[i], true
+		}
+	}
+	return "", false
 }
 
 // VerifyLockfiles confirms that the standards manifest and lockfile exist and are

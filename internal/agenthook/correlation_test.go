@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -277,9 +278,8 @@ func TestCorrelationStoreProductionLockWaitBound(t *testing.T) {
 	}
 }
 
-// holdCorrelationLock takes the store lock in dir as a live holder would and releases it after
-// hold. The returned channel yields the release's error.
-func holdCorrelationLock(t *testing.T, dir string, hold time.Duration) <-chan error {
+// holdCorrelationLock keeps the store locked until the test explicitly releases it.
+func holdCorrelationLock(t *testing.T, dir string) func() {
 	t.Helper()
 	if err := util.MkdirSecure(dir, util.SecureDirPerm); err != nil {
 		t.Fatal(err)
@@ -288,9 +288,11 @@ func holdCorrelationLock(t *testing.T, dir string, hold time.Duration) <-chan er
 	if err := os.WriteFile(lock, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	released := make(chan error, 1)
-	time.AfterFunc(hold, func() { released <- os.Remove(lock) })
-	return released
+	return func() {
+		if err := os.Remove(lock); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 // newSlowHolderStore creates a store in a temporary directory whose lock wait bound outlasts hold.
@@ -307,58 +309,70 @@ func newSlowHolderStore(t *testing.T, hold time.Duration) (correlationStore, str
 	return store, dir
 }
 
-// reserveSlowHolder reserves a session against store behind a slow holder.
-func reserveSlowHolder(t *testing.T, store correlationStore, hold time.Duration) {
+// measureCorrelationHolderWait orders a reservation behind a signalled holder. The
+// caller runs inside synctest: scheduler and filesystem delays never advance its clock.
+func measureCorrelationHolderWait(t *testing.T, hold, gap time.Duration) (time.Duration, time.Duration) {
 	t.Helper()
+	store, dir := newSlowHolderStore(t, hold)
+	began := time.Now()
+	release := holdCorrelationLock(t, dir)
+	done := make(chan error, 1)
 	resolution := config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent"}
-	if err := store.reserve(t.Context(), "claude", "session", "tool", resolution, ""); err != nil {
-		t.Fatalf("reserve behind a %s holder: %v", hold, err)
-	}
-}
-
-// A holder that keeps the lock past the earlier fixed 400 ms is waited for, not reported as a
-// store that "remained locked", as long as the lock comes free inside the wait bound (#558).
-func TestCorrelationStoreWaitsForASlowHolder(t *testing.T) {
-	const hold = 700 * time.Millisecond
-	store, dir := newSlowHolderStore(t, hold)
-	// Measurement starts before holdCorrelationLock so the hold ends no earlier than began + hold
-	// (engine-flaky-correlation-store-wait-20261026).
-	began := time.Now()
-	released := holdCorrelationLock(t, dir, hold)
-	reserveSlowHolder(t, store, hold)
-	if took := time.Since(began); took < hold {
-		t.Fatalf("reserve took %s and so did not wait for the %s holder", took, hold)
-	}
-	if err := <-released; err != nil {
-		t.Fatal(err)
-	}
-}
-
-// Negative (HISS-20, engine-flaky-correlation-store-wait-20261026): holder start delayed by a
-// fixed gap proves that measuring after hold start records a wait shorter than hold (the defect),
-// while measuring before hold start guarantees the wait covers the full hold duration.
-func TestCorrelationStoreSlowHolderWaitPlantedDelay(t *testing.T) {
-	// gap leaves the old shape 300 ms short of hold, far above the 10 ms lock retry delay and
-	// scheduler noise under -race, so the planted case stays deterministic on a loaded runner.
-	const (
-		hold = 700 * time.Millisecond
-		gap  = 300 * time.Millisecond
-	)
-	store, dir := newSlowHolderStore(t, hold)
-	began := time.Now()
-	released := holdCorrelationLock(t, dir, hold)
-	time.Sleep(gap)
+	go func() {
+		done <- store.reserve(t.Context(), "claude", "session", "tool", resolution, "")
+	}()
+	synctest.Wait()
+	requireCorrelationHolderBlocked(t, done)
+	synctest.Sleep(gap)
 	oldBegan := time.Now()
-	reserveSlowHolder(t, store, hold)
-	if tookOld := time.Since(oldBegan); tookOld >= hold {
-		t.Fatalf("old measurement shape took %s, want < %s with %s delay", tookOld, hold, gap)
+	synctest.Sleep(hold - gap)
+	requireCorrelationHolderBlocked(t, done)
+	release()
+	synctest.Sleep(correlationLockDelay)
+	if err := <-done; err != nil {
+		t.Fatalf("reserve behind the holder: %v", err)
 	}
-	if tookNew := time.Since(began); tookNew < hold {
-		t.Fatalf("reserve took %s and so did not wait for the %s holder", tookNew, hold)
+	return time.Since(oldBegan), time.Since(began)
+}
+
+// requireCorrelationHolderBlocked refuses a waiter that completes before holder release.
+func requireCorrelationHolderBlocked(t *testing.T, done <-chan error) {
+	t.Helper()
+	select {
+	case err := <-done:
+		t.Fatalf("reservation completed before holder release: %v", err)
+	default:
 	}
-	if err := <-released; err != nil {
-		t.Fatal(err)
-	}
+}
+
+// TestCorrelationStoreWaitsForASlowHolder keeps the lock past the old 400ms bound.
+func TestCorrelationStoreWaitsForASlowHolder(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const hold = 700 * time.Millisecond
+		_, took := measureCorrelationHolderWait(t, hold, 0)
+		if took != hold+correlationLockDelay {
+			t.Fatalf("fake-clock wait = %s, want hold plus one retry", took)
+		}
+	})
+}
+
+// TestCorrelationStoreSlowHolderWaitPlantedDelay proves the old measurement omits
+// the planted gap. Exact fake-clock deltas keep the negative case independent of load.
+func TestCorrelationStoreSlowHolderWaitPlantedDelay(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const (
+			hold = 700 * time.Millisecond
+			gap  = 300 * time.Millisecond
+		)
+		old, fixed := measureCorrelationHolderWait(t, hold, gap)
+		want := hold + correlationLockDelay
+		if fixed != want {
+			t.Fatalf("fake-clock wait = %s, want %s", fixed, want)
+		}
+		if old != want-gap || old == want {
+			t.Fatalf("planted old measurement = %s; must omit the %s gap from %s", old, gap, want)
+		}
+	})
 }
 
 // A lock held past the wait bound, or past the caller's deadline, is an error, and the wait
@@ -381,17 +395,15 @@ func TestCorrelationStoreLockWaitEndsAtItsBound(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			released := holdCorrelationLock(t, dir, 600*time.Millisecond)
+			release := holdCorrelationLock(t, dir)
 			store := correlationStore{dir: dir, lockWait: tc.lockWait}
 			ctx, cancel := context.WithTimeout(t.Context(), tc.deadline)
 			defer cancel()
-			// The holder releases at 600 ms, so an error proves the wait ended at its bound.
+			// The holder remains locked until reserve reports its bound or deadline.
 			if err := store.reserve(ctx, "claude", "session", "tool", resolution, ""); !tc.want(err) {
 				t.Fatalf("reserve against a held lock: %v", err)
 			}
-			if err := <-released; err != nil {
-				t.Fatal(err)
-			}
+			release()
 		})
 	}
 }
@@ -405,15 +417,13 @@ func TestCorrelationStoreLockWaitBelowOneDelayTriesOnce(t *testing.T) {
 		t.Fatalf("a free lock was not taken: %v", err)
 	}
 	dir := t.TempDir()
-	released := holdCorrelationLock(t, dir, 300*time.Millisecond)
+	release := holdCorrelationLock(t, dir)
 	held := correlationStore{dir: dir, lockWait: time.Nanosecond}
 	err := held.reserve(t.Context(), "claude", "session", "tool", resolution, "")
 	if err == nil || !strings.Contains(err.Error(), "remained locked") {
 		t.Fatalf("a held lock was not reported: %v", err)
 	}
-	if err := <-released; err != nil {
-		t.Fatal(err)
-	}
+	release()
 	if (correlationStore{}).lockWaitBound() != correlationLockWait {
 		t.Fatalf("an unset lock wait is %s, want %s", (correlationStore{}).lockWaitBound(), correlationLockWait)
 	}

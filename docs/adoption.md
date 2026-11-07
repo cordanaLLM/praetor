@@ -597,8 +597,9 @@ audit report it as drift.
 ### Large repositories
 
 Adoption discovers verification inputs (Makefiles, manifests, scripts) through a bounded
-walk of the target: 65536 directory entries, 128 files and 32 levels of depth by default
-(`util.DefaultDiscoveryEntries` in `internal/util/discovery_bounds.go`). The entry count
+walk of the target: 65536 directory entries, 128 files and 32 levels of depth by default,
+with at most 64 KiB per metadata file and 2 MiB in total
+(`adopt.DefaultVerificationLimits` in `internal/adopt/verification_limits.go`). The entry count
 covers every directory the walk enters. Version-control, dependency, build-output and agent
 scratch directories are skipped by name (`skipVerificationDirectory` in
 `internal/adopt/verification_inputs.go`); generated output under any other name, such as a
@@ -616,7 +617,15 @@ adoption writes run `praetorctl audit` with no flag, and its Paperclip gate walk
 ```yaml
 verification:
   max_entries: 131072 # also max_files, max_depth
+  max_file_bytes: 262144 # larger workflow or build metadata; ceiling 1048576 (1 MiB)
 ```
+
+`verification.max_file_bytes` raises the per-file metadata bound for adoption, harness language
+discovery and Rust MSRV auditing. It has no command-line flag. An exceeded file bound names
+this manifest key and its 1 MiB ceiling; a bound already at the ceiling says so. A total-byte
+refusal retains the separate total bound (`readVerificationMarker` in
+`internal/adopt/verification_inputs.go`, `TestRustMSRVDeclaredFileBytes`). The MSRV audit uses
+the defaults when the manifest is missing or unreadable.
 
 The strict manifest decoder refuses an unknown key, a non-integer value and a value outside
 1..its ceiling, naming the key (`internal/config/verification.go`,
@@ -681,8 +690,9 @@ writes any (`TestAdoptionScaffoldTable_MatchesTheStepChain` in
 | `makefile` | `Makefile` with the `verify-all` target |
 | `editors` | `.editorconfig`, `.vscode/`, `.idea/`, `.zed/`, `.helix/`, `.fleet/`, `.nvim.lua`, `lua/`, `.dir-locals.el`, `standards.sublime-project`, `.clang-tidy` where the profile calls for it |
 | `formatter-ignore` | `.prettierignore` entries for managed artifacts, where a formatter is configured |
-| `renovate-ignore` | the managed-file and engine-update suppression rules in an existing Renovate configuration; none is created |
+| `renovate-ignore` | the managed-file and engine-update suppression rules, plus the workflow engine pin custom manager, in an existing Renovate configuration; none is created |
 | `actionlint-labels` | `.github/actionlint.yaml` runner labels |
+| `coderabbit` | `.coderabbit.yaml`: `reviews.auto_review.drafts` and `reviews.auto_review.base_branches` |
 | `contributing` | `CONTRIBUTING.md` |
 | `pull-request-template` | `.github/pull_request_template.md` |
 | `security-policy` | `SECURITY.md` |
@@ -691,7 +701,7 @@ writes any (`TestAdoptionScaffoldTable_MatchesTheStepChain` in
 | `readme` | the governance block in an existing `README.md` |
 | `reuse-gate` | `.github/workflows/reuse.yml`, where the root carries `REUSE.toml` or `.reuse/dep5` |
 | `working-dir-and-flavor` | the private `.workingdir/` ledger, the detected flavor's templates ([flavors](guides/onboarding.md#flavors)), and `.gosec.json` whenever git tracks a `go.mod` |
-| `branch-ruleset` | `.github/rulesets/main.json`, the branch ruleset with the required status checks |
+| `branch-ruleset` | `.github/rulesets/main.json`, the branch ruleset with required status checks and automatic Copilot review of drafts and pushes |
 | `labels` | `.config/labels.yaml`, the label taxonomy |
 | `paperclip` | `.paperclip/harness.json` and `.paperclip/rules.md` |
 | `agent-definitions` | `.agents/agents/repo-auditor.md` and `repo-gatekeeper.md`, projected to `.claude/agents/`, `.github/agents/`, `.gemini/agents/` and `.codex/agents/` |
@@ -700,6 +710,29 @@ writes any (`TestAdoptionScaffoldTable_MatchesTheStepChain` in
 
 The `asdecided` step and its export and pin-check commands are described in
 [Decision recall](guides/decision-recall.md).
+
+The `coderabbit` step manages two keys in `.coderabbit.yaml`: it sets
+`reviews.auto_review.drafts: true` and adds `.*` to `reviews.auto_review.base_branches`
+so draft pull requests and stacked branches come into the scope of automatic review. Both
+keys widen that scope only: adoption leaves `reviews.auto_review.enabled` as the file sets it,
+and with `enabled: false` CodeRabbit reviews a pull request only when its description carries
+the `description_keyword` or a positive match in `labels` triggers it. The filters `labels`,
+`ignore_title_keywords`, `ignore_usernames` and `auto_pause_after_reviewed_commits` still
+apply to draft and stacked pull requests (CodeRabbit configuration schema v2,
+<https://coderabbit.ai/integrations/schema.v2.json>). An absent file gets a
+YAML language server comment pointing to the CodeRabbit v2 schema. An existing file keeps its
+other keys, comments and base-branch patterns; an unchanged rerun leaves its bytes intact.
+To keep an intentional `drafts: false`, list `coderabbit` under `adoption.decline` in
+`.standards.yaml`; otherwise adoption enforces the managed keys and reports the update
+(`internal/adopt/coderabbit.go`, `TestAdoptCodeRabbitCreatesAndPreserves`,
+`TestAdoptCodeRabbitDeclined`).
+
+The rendered branch ruleset also carries `copilot_code_review` with
+`review_draft_pull_requests: true` and `review_on_push: true`, alongside its existing
+protection rules (`internal/forge/ruleset.go`, `TestRulesetCopilotReviewsDraftsAndPushes`).
+Heavy workflows stop drafts before their work and include `ready_for_review`, so marking a
+draft ready starts the checks (`TestEmittedDraftWorkflows` and its planted cases in
+`internal/adopt/draft_workflows_test.go`).
 
 The groups with behavior of their own:
 
@@ -1780,6 +1813,39 @@ Generated locks omit `generated_at`; a lock that sets it still validates. The
 behavior is pinned by `internal/config/lock_test.go`,
 `cmd/standardsctl/lockdigest_test.go`, `cmd/standardsctl/sync_validation_test.go`,
 `internal/adopt/lock_test.go` and `internal/harvester/onboard_safety_test.go`.
+
+Re-adoption advances workflow engine commit pins to the full commit of the adopting engine.
+It reads line-leading `PRAETOR_COMMIT` declarations containing a full lowercase SHA, and
+`PRAETOR_REF` declarations containing a SHA of 7–40 hexadecimal digits, under
+`.github/workflows/*.yml` and `*.yaml`. Both `NAME: value` and `NAME=value` are supported.
+The selected `--lock-source-root` must contain the engine's Git history: adoption verifies
+`git merge-base --is-ancestor <pin> <adopting-commit>` locally before changing a pin. The
+running build's revision or release tag selects the adopting commit when available; otherwise
+the source's `HEAD` does. No fetch is performed. Without `--lock-source-root`, adoption leaves
+the pin untouched and reports its `file:line`, declaration and SHA as not evaluated, with the
+instruction to rerun with `--lock-source-root=<engine checkout>`. A supplied source that cannot
+resolve the adopting engine commit also leaves the pin untouched: the report names the pin,
+source path and Git error, with the same instruction to select a Git checkout of the engine.
+Validated catalog copies can still supply lock content without Git history. Once the adopting
+commit resolves, missing pin history or a diverged pin stops adoption and names the declaration.
+Several different declared SHA pins stop adoption with every `file:line`, even without a source.
+Repeated declarations of the same SHA move together. The report names each changed file,
+old SHA and new SHA. An identical pin, a tag or branch ref, and a repository without a
+commit pin keep their bytes; absence is reported explicitly. A dry run reports the planned
+move without writing it.
+
+For adopters with an existing safely editable Renovate configuration, adoption also merges
+a `customManagers` regex manager for these workflow pins. It uses Renovate's
+[`git-refs` datasource](https://docs.renovatebot.com/modules/datasource/git-refs/) with
+`currentValueTemplate: HEAD` and captures the SHA as `currentDigest`, so the bot can move
+pins to the engine's default branch between adoptions. Its dependency name,
+`praetor-workflow-engine-pin`, sits outside the engine package names disabled for
+coordinated asset updates. Existing custom managers remain in place; no Renovate configuration
+is created when none exists. A repository restricting `enabledManagers` must include
+`custom.regex`; its own package rules must also permit updates to the pin's workflow.
+JSONC, JSON5 and other unsafe configurations retain the existing
+warning-and-preserve behavior. The planted history, refusal, dry-run and manager cases live in
+`internal/adopt/workflow_engine_pin_test.go` and `internal/adopt/renovate_pin_test.go`.
 
 The repository audits also enforce [selected agent-context files](guides/agents-and-clients/index.md#keep-tracked-context-within-the-selected-clients),
 [coordinated engine updates](guides/documentation-governance.md#coordinate-engine-updates)

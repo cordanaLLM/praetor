@@ -19,8 +19,11 @@ func stubRunner(missing string) Runner {
 		}
 		return "/usr/bin/" + name, nil
 	}, CheckUserManager: func(context.Context) error { return nil },
-		ProbeBwrap: func(context.Context) error { return nil }}
+		ProbeBwrap: func(context.Context) error { return nil }, ContainerSocket: noContainer}
 }
+
+// noContainer pins the go test adapter's NetworkNone mode: no container engine socket.
+func noContainer() string { return "" }
 
 func assertUnavailable(t *testing.T, err error, facility string) {
 	t.Helper()

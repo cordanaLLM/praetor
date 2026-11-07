@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // organisationContainerPattern is an operator topology rule with one generic container name.
@@ -84,9 +84,8 @@ func repository(t *testing.T, governed bool) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := util.RunGitProbe(context.Background(), dir, 4096, "init", "-q"); err != nil {
-		t.Fatalf("git init: %v", err)
-	}
+	// engine-agenthook-windows-flake-20261028: fixtures init git under fixture bound, not probe bound.
+	testsupport.RunFixtureGit(t, dir, []string{"init", "-q"})
 	if governed {
 		if err := os.WriteFile(filepath.Join(dir, manifestName), []byte("version: 1\n"), 0o600); err != nil {
 			t.Fatal(err)

@@ -9,11 +9,13 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // recordedRulesetRequest captures one API call made by the driver.
@@ -335,5 +337,308 @@ func TestGitHubDriverUsesDedicatedBoundedClient(t *testing.T) {
 	gh := NewGitHubDriver("ordinary-token", "http://127.0.0.1")
 	if gh.HTTPClient == nil || gh.HTTPClient.Timeout != defaultHTTPTimeout {
 		t.Fatalf("driver must own a client with its bounded timeout, got %+v", gh.HTTPClient)
+	}
+}
+
+// TestListPullRequestsByHead_GitHub_Positive tests GitHub head pull request listing.
+func TestListPullRequestsByHead_GitHub_Positive(t *testing.T) {
+	ghSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/widgets/pulls" || r.URL.Query().Get("state") != "open" || r.URL.Query().Get("head") != "acme:topic" {
+			t.Errorf("unexpected github request: %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		w.WriteHeader(http.StatusOK)
+		if _, err := io.WriteString(w, `[{"number":42,"state":"closed","merged_at":"2026-10-31T10:00:00Z","head":{"ref":"topic"}},{"number":43,"state":"open","merged_at":null,"head":{"ref":"topic"}},{"number":44,"state":"closed","merged_at":null,"head":{"ref":"other"}}]`); err != nil {
+			t.Errorf("write github response: %v", err)
+		}
+	}))
+	defer ghSrv.Close()
+
+	gh := NewGitHubDriver("tok", ghSrv.URL)
+	gh.SetRepository("acme", "widgets")
+	gotGH, err := gh.ListPullRequestsByHead(context.Background(), "topic")
+	if err != nil || len(gotGH) != 2 || gotGH[0].Number != 42 || gotGH[0].State != PullRequestStateMerged || gotGH[1].State != PullRequestStateOpen {
+		t.Fatalf("GitHub ListPullRequestsByHead = %+v, %v", gotGH, err)
+	}
+}
+
+// TestListPullRequestsByHead_Forgejo_Positive tests Forgejo head pull request listing.
+func TestListPullRequestsByHead_Forgejo_Positive(t *testing.T) {
+	fjSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/repos/acme/widgets/pulls" || r.URL.Query().Get("head") != "topic" {
+			t.Errorf("unexpected forgejo request: %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		if r.Header.Get("Authorization") != "token fj-tok" {
+			t.Errorf("unexpected forgejo auth header: %q", r.Header.Get("Authorization"))
+		}
+		if r.URL.Query().Get("state") == "open" {
+			writeRulesetJSON(w, http.StatusOK, []map[string]any{})
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		if _, err := io.WriteString(w, `[{"number":19,"state":"closed","merged":true,"head":{"ref":"topic"}},{"number":20,"state":"closed","merged":false,"head":{"ref":"topic"}}]`); err != nil {
+			t.Errorf("write forgejo response: %v", err)
+		}
+	}))
+	defer fjSrv.Close()
+
+	fj := NewGiteaDriver("fj-tok", fjSrv.URL)
+	fj.SetRepository("acme", "widgets")
+	gotFJ, err := fj.ListPullRequestsByHead(context.Background(), "topic")
+	if err != nil || len(gotFJ) != 2 || gotFJ[0].State != PullRequestStateMerged || gotFJ[1].State != PullRequestStateClosed {
+		t.Fatalf("Forgejo ListPullRequestsByHead = %+v, %v", gotFJ, err)
+	}
+}
+
+func TestListPullRequestsByHead_Negative(t *testing.T) {
+	errSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		if _, err := io.WriteString(w, "forge down"); err != nil {
+			t.Errorf("write error response: %v", err)
+		}
+	}))
+	defer errSrv.Close()
+
+	gh := NewGitHubDriver("tok", errSrv.URL)
+	gh.SetRepository("acme", "widgets")
+	if _, err := gh.ListPullRequestsByHead(context.Background(), "topic"); err == nil {
+		t.Fatal("GitHub 500 should fail")
+	}
+	if _, err := gh.ListPullRequestsByHead(context.Background(), ""); err == nil {
+		t.Fatal("empty branch should fail")
+	}
+	fj := NewGiteaDriver("tok", errSrv.URL)
+	fj.SetRepository("acme", "widgets")
+	if _, err := fj.ListPullRequestsByHead(context.Background(), "topic"); err == nil {
+		t.Fatal("Forgejo 500 should fail")
+	}
+	if _, err := ParseHeadPullRequests([]byte(`null`), "topic"); err == nil {
+		t.Fatal("null JSON listing should fail")
+	}
+	if _, err := ParseHeadPullRequests([]byte(`[{"number":0,"state":"open","head":{"ref":"topic"}}]`), "topic"); err == nil {
+		t.Fatal("invalid PR number 0 should fail")
+	}
+	if _, err := ReadPullRequestsByHead(context.Background(), config.ForgeGitLab, util.GitRemote{Host: "gitlab.com", Owner: "acme", Repo: "widgets"}, "topic"); err == nil {
+		t.Fatal("unsupported forge should fail")
+	}
+}
+
+func TestListPullRequestsByHead_Boundary(t *testing.T) {
+	if got := ForgejoAPIBase(""); got != "https://codeberg.org/api/v1" {
+		t.Fatalf("empty ForgejoAPIBase = %q", got)
+	}
+	if got := ForgejoAPIBase("https://codeberg.org/api/v1/"); got != "https://codeberg.org/api/v1" {
+		t.Fatalf("already-suffixed ForgejoAPIBase = %q", got)
+	}
+	items := make([]map[string]any, HeadPullRequestsPerPage+1)
+	for i := range items {
+		items[i] = map[string]any{"number": i + 1, "state": "open", "head": map[string]any{"ref": "topic"}}
+	}
+	raw, err := json.Marshal(items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseHeadPullRequests(raw, "topic"); err == nil {
+		t.Fatal("page exceeding HeadPullRequestsPerPage should fail")
+	}
+	exact, err := json.Marshal(items[:HeadPullRequestsPerPage])
+	if err != nil {
+		t.Fatal(err)
+	}
+	heads, err := ParseHeadPullRequests(exact, "topic")
+	if err != nil || len(heads) != HeadPullRequestsPerPage {
+		t.Fatalf("exact page bound = %d, %v", len(heads), err)
+	}
+}
+
+// redirectTransport redirects all HTTP requests to targetURL while preserving request path, query, headers.
+type redirectTransport struct {
+	targetURL *url.URL
+	base      http.RoundTripper
+}
+
+func (rt *redirectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.URL.Scheme = rt.targetURL.Scheme
+	clone.URL.Host = rt.targetURL.Host
+	base := rt.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return base.RoundTrip(clone)
+}
+
+// forgejoAuthProbe returns a context whose HTTP client sends every request to a stub server and
+// a reader of the Authorization header the stub saw last.
+func forgejoAuthProbe(t *testing.T) (context.Context, func() string) {
+	t.Helper()
+	var (
+		mu       sync.Mutex
+		lastAuth string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		lastAuth = r.Header.Get("Authorization")
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		if _, err := io.WriteString(w, `[]`); err != nil {
+			t.Errorf("stub forge write: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	srvURL, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: &redirectTransport{targetURL: srvURL, base: srv.Client().Transport}}
+	read := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return lastAuth
+	}
+	return WithHTTPClient(context.Background(), client), read
+}
+
+// Planted negative and positive (Finding 2, CWE-522): only the declared Forgejo host receives
+// FORGEJO_TOKEN; an undeclared host matching the pattern, codeberg.org included, receives none.
+func TestReadPullRequestsByHead_Forgejo_TokenOnlyToDeclaredOrAllowlistedHost(t *testing.T) {
+	t.Setenv("FORGEJO_TOKEN", "secret-forgejo-token")
+	ctx, lastAuth := forgejoAuthProbe(t)
+	cases := []struct {
+		name, host string
+		declared   []string
+		want       string
+	}{
+		{name: "undeclared host matching the pattern", host: "forgejo.attacker.com", want: ""},
+		{name: "declared host", host: "forgejo.example.org", declared: []string{"forgejo.example.org"}, want: "token secret-forgejo-token"},
+		{name: "http endpoint on declared host", host: "http://forgejo.example.org", declared: []string{"forgejo.example.org"}, want: ""},
+		{name: "undeclared codeberg.org", host: "codeberg.org", want: ""},
+	}
+	for _, tc := range cases {
+		remote := util.GitRemote{Host: tc.host, Owner: "acme", Repo: "widgets"}
+		if _, err := ReadPullRequestsByHead(ctx, config.ForgeForgejo, remote, "topic", tc.declared...); err != nil {
+			t.Fatalf("%s: lookup: %v", tc.name, err)
+		}
+		if got := lastAuth(); got != tc.want {
+			t.Fatalf("%s: auth header %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// Planted negative, positive and boundary (CWE-522): ReadPullRequestsByHead sends the ambient
+// GitHub token only to github.com (or api.github.com) over HTTPS; a non-GitHub host declared as
+// GitHub or an http:// endpoint receives no token.
+func TestReadPullRequestsByHead_GitHub_TokenOnlyToGitHubHTTPS(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "secret-github-token")
+	ctx, lastAuth := forgejoAuthProbe(t)
+	cases := []struct {
+		name, host string
+		declared   []string
+		want       string
+	}{
+		{name: "github.com", host: "github.com", want: "Bearer secret-github-token"},
+		{name: "api.github.com", host: "api.github.com", want: "Bearer secret-github-token"},
+		{name: "https github.com", host: "https://github.com", want: "Bearer secret-github-token"},
+		{name: "non-GitHub host declared as GitHub", host: "ghe.attacker.com", declared: []string{"ghe.attacker.com"}, want: ""},
+		{name: "lookalike host", host: "github.com.attacker.com", want: ""},
+		{name: "http github.com endpoint", host: "http://github.com", want: ""},
+		{name: "http api.github.com endpoint", host: "http://api.github.com", want: ""},
+	}
+	for _, tc := range cases {
+		remote := util.GitRemote{Host: tc.host, Owner: "acme", Repo: "widgets"}
+		if _, err := ReadPullRequestsByHead(ctx, config.ForgeGitHub, remote, "topic", tc.declared...); err != nil {
+			t.Fatalf("%s: lookup: %v", tc.name, err)
+		}
+		if got := lastAuth(); got != tc.want {
+			t.Fatalf("%s: auth header %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestListPullRequestsByHead_Planted_ServerIgnoresHeadAndForkFiltered verifies each
+// page is filtered to the pushed repository and branch when the forge ignores head.
+func TestListPullRequestsByHead_Planted_ServerIgnoresHeadAndForkFiltered(t *testing.T) {
+	mergedPR := func(num int, ref, label, fullName, owner string) map[string]any {
+		return map[string]any{
+			"number": num, "state": "closed", "merged": true, "merged_at": "2026-10-31T10:00:00Z",
+			"head": map[string]any{
+				"ref": ref, "label": label,
+				"repo": map[string]any{"full_name": fullName, "name": "widgets", "owner": map[string]any{"login": owner}},
+			},
+		}
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("state") == "closed" {
+			writeRulesetJSON(w, http.StatusOK, []map[string]any{mergedPR(91, "topic", "acme:topic", "acme/widgets", "acme")})
+			return
+		}
+		if r.URL.Query().Get("page") != "1" {
+			writeRulesetJSON(w, http.StatusOK, []map[string]any{})
+			return
+		}
+		page1 := []map[string]any{
+			mergedPR(10, "other-branch", "acme:other-branch", "acme/widgets", "acme"),
+			mergedPR(11, "topic", "fork-owner:topic", "fork-owner/widgets", "fork-owner"),
+			mergedPR(12, "clean-branch", "fork-owner:clean-branch", "fork-owner/widgets", "fork-owner"),
+		}
+		for len(page1) < HeadPullRequestsPerPage {
+			page1 = append(page1, mergedPR(100+len(page1), "unrelated", "acme:unrelated", "acme/widgets", "acme"))
+		}
+		writeRulesetJSON(w, http.StatusOK, page1)
+	}))
+	defer srv.Close()
+
+	fj := NewGiteaDriver("tok", srv.URL)
+	fj.SetRepository("acme", "widgets")
+	gh := NewGitHubDriver("tok", srv.URL)
+	gh.SetRepository("acme", "widgets")
+
+	for _, tc := range []struct {
+		name string
+		list func(ctx context.Context, branch string) ([]PullRequestHead, error)
+	}{
+		{"forgejo", fj.ListPullRequestsByHead},
+		{"github", gh.ListPullRequestsByHead},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, err := tc.list(context.Background(), "clean-branch"); err != nil || len(got) != 0 {
+				t.Fatalf("expected fork/other-branch PRs filtered for clean-branch, got %+v, err=%v", got, err)
+			}
+			got, err := tc.list(context.Background(), "topic")
+			if err != nil || len(got) != 1 || got[0].Number != 91 || got[0].State != PullRequestStateMerged {
+				t.Fatalf("expected first-page same-repo PR #91 for topic, got %+v, err=%v", got, err)
+			}
+		})
+	}
+}
+
+// TestListPullRequestsByHead_Planted_FullUnrelatedPage verifies a full closed page ends
+// the lookup after open results end, without fabricating a terminal head match.
+func TestListPullRequestsByHead_Planted_FullUnrelatedPage(t *testing.T) {
+	fullPage := make([]map[string]any, HeadPullRequestsPerPage)
+	for i := range fullPage {
+		fullPage[i] = map[string]any{
+			"number": i + 1, "state": "closed", "merged": true, "merged_at": "2026-10-31T10:00:00Z",
+			"head": map[string]any{"ref": "other-branch"},
+		}
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("state") == "open" {
+			writeRulesetJSON(w, http.StatusOK, []map[string]any{})
+			return
+		}
+		writeRulesetJSON(w, http.StatusOK, fullPage)
+	}))
+	defer srv.Close()
+
+	gh := NewGitHubDriver("tok", srv.URL)
+	gh.SetRepository("acme", "widgets")
+	if _, err := gh.ListPullRequestsByHead(context.Background(), "topic"); err != nil {
+		t.Fatalf("GitHub full unrelated page should not fail, got %v", err)
+	}
+
+	fj := NewGiteaDriver("tok", srv.URL)
+	fj.SetRepository("acme", "widgets")
+	if _, err := fj.ListPullRequestsByHead(context.Background(), "topic"); err != nil {
+		t.Fatalf("Forgejo full unrelated page should not fail, got %v", err)
 	}
 }

@@ -151,7 +151,7 @@ func assertEditedRenderingsRefused(t *testing.T, plain, withLibs Family, rel str
 func exceptionsManifest(path string) *config.Manifest {
 	return &config.Manifest{
 		Exceptions: []config.Exception{{
-			Rule: config.ExceptionRuleAPICompatibility, Path: path, Reason: "vendored", Expires: "2027-01-01",
+			Rule: config.ExceptionRuleAPICompatibility, Path: path, Reason: "vendored", Category: "A", Expires: "2027-01-01",
 		}},
 	}
 }

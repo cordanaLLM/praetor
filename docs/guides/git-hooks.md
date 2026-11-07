@@ -9,6 +9,27 @@ themselves, from fixed names, and prove each before they run it
 Install `yamllint`, `shellcheck`, `actionlint` and `hadolint`
 when editing their file types; applicable checks fail if their tool is missing
 or older than its floor ([linter version floors](#linter-version-floors)).
+The engine also checks staged text with `codespell`, using the root `.codespellrc`.
+Install its pinned release into an isolated virtual environment with the hash-locked
+Python tools and invoke its `codespell` executable, as CI does:
+
+```bash
+python3 -m venv "$HOME/.local/share/praetor-tools/hook-lint"
+"$HOME/.local/share/praetor-tools/hook-lint/bin/python" -m pip install --require-hashes -r .config/hook-lint/requirements.txt
+mkdir -p "$HOME/.local/bin"
+ln -sfn "$HOME/.local/share/praetor-tools/hook-lint/bin/codespell" "$HOME/.local/bin/codespell"
+"$HOME/.local/share/praetor-tools/hook-lint/bin/codespell" --config .codespellrc .
+```
+
+Keep `$HOME/.local/bin` on `PATH` so pre-commit hooks find `codespell`. CI runs the
+same spelling configuration over the tree, including documentation-only
+changes. Generated schemas, vendored code, testdata, dependency locks, encoded source
+bundles, the bundled player and the changelog archive are skipped. The shared ignore
+list contains valid names and identifiers; deliberate malformed test inputs use
+line-local `codespell:ignore` comments. Vendored hook policies enable this check
+when their repository supplies `.codespellrc`; an enabled check fails if codespell
+is missing or older than 2.4.3. Regression coverage: `.config/lefthook/scripts/test_spelling.py`.
+
 Strict source pushes also require `gosec`, `govulncheck` and `semgrep`. Pushes touching nested tool
 modules (`tools/*/go.mod` or `go.sum`) also scan those directories with Trivy at CI severity
 (`HIGH,CRITICAL`), skipping with a stated notice when Trivy is not installed. Golangci-lint runs
@@ -150,8 +171,8 @@ every file and requires yamllint to reject each one, so the rule is proven to be
 | --- | --- |
 | `pre-commit`, `pre-merge-commit` | Audit the live private ledger, then check the exact index for whitespace, conflict markers, Python/JSON syntax, YAML, shell, workflow and Docker lint; Go formatting and vet on changed packages; verify affected generated agent instructions. |
 | `prepare-commit-msg` | Add an instructional comment to a fresh empty message. |
-| `commit-msg` | Verify the live state synchronization after Lefthook restores partially staged worktree files, then apply the commit message policy (`praetorctl forge check-message`: a conventional subject, Git merge/revert subjects accepted, the HISS-14 `Migration:` footer on a breaking change, and an offline warning for ambiguous closing references; explicit pull request URLs require `Closes-own: <reference>`) and require a DCO sign-off. |
-| `pre-push` | Audit and verify live state before inspecting each actual pushed commit. Run `praetorctl forge refactor-check --base=<base> --head=<head>` over the pushed range for the REF-02 assertion lock; a push without a known base skips it with that reason, and CI checks the pull request range. `checkpoint/*` destinations run file checks, affected Go builds and race tests. Other destinations also require lint, security, vulnerability, governance, flavor and signed-receipt gates. The signed gate runs Go race tests only for the affected packages and reverse dependents; an empty selection records `not_applicable: no affected Go package`. Pushes changing hook sources (`.config/lefthook/scripts/` or `.config/agent/hooks/`) or `scripts/test_emitted_hook_lint.py` run the hash-locked hook lint CI suite (`scripts/test_emitted_hook_lint.py`); tools come from a cached venv built from the hook-lint lock like CI, failing closed if provisioning fails or required pinned tools are absent or mismatched. |
+| `commit-msg` | Verify the live state synchronization after Lefthook restores partially staged worktree files, then apply the commit message policy (`praetorctl forge check-message`: a conventional subject, Git merge/revert subjects accepted, the HISS-14 `Migration:` footer on a breaking change, refusal of tool attribution trailers and footers, and an offline warning for ambiguous closing references; explicit pull request URLs require `Closes-own: <reference>`) and require a DCO sign-off. |
+| `pre-push` | Audit and verify live state before inspecting each actual pushed commit. Run `praetorctl forge refactor-check --base=<base> --head=<head>` over the pushed range for the REF-02 assertion lock and `praetorctl docstrings check --base=<base> --head=<head>` for diff-scoped docstring coverage; a push without a known base skips both with that reason, and CI checks the pull request range. Run `praetorctl merge-check` over the pushed range to refuse merge commits dropping first-parent work (Order: engine-dropped-hunk-gate-20261027). Run `praetorctl forge check-commits --base=<base> --head=<head>` over the pushed range to enforce the commit message policy (Conventional Commits, Migration footer, and 72-column body line wrapping); a push without a known base skips with that reason. `checkpoint/*` destinations run file checks, affected Go builds and race tests. Other destinations also require lint, security, vulnerability, governance, flavor and signed-receipt gates. The signed gate runs Go race tests only for the affected packages and reverse dependents; an empty selection records `not_applicable: no affected Go package`. Pushes changing hook sources (`.config/lefthook/scripts/` or `.config/agent/hooks/`) or `scripts/test_emitted_hook_lint.py` run the hash-locked hook lint CI suite (`scripts/test_emitted_hook_lint.py`); tools come from a cached venv built from the hook-lint lock like CI, failing closed if provisioning fails or required pinned tools are absent or mismatched. |
 | `post-commit` | Synchronize and read back the private state for the new commit, then print the dedupe cadence reminder when due. Sync failures are reported. |
 | `post-checkout`, `post-merge`, `post-rewrite` | Warm changed module dependencies in an isolated clone, rebuild the local CLI for source changes, verify affected agent outputs, report governance changes. `post-merge` then runs `praetorctl workstation install --if-stale`, which rebuilds a lagging engine install from this checkout on the update branch and otherwise skips silently ([refresh a lagging install](workstation-update.md#refresh-a-lagging-install)). File-only checkouts do nothing. |
 | `pre-rebase` | Check the hook environment before replay begins. |
@@ -175,8 +196,8 @@ rejects `{{- if }}` before a single rule can run. The chart's own `Chart.yaml` a
 
 A staged change to `lefthook.yml`, a native client hook file (`.claude/settings.json`,
 `.codex/hooks.json`, `.gemini/settings.json`), the AGY plugin's `hooks.json` or guard copy
-under `.agents/plugins/praetor/`, anything under `.config/lefthook/` or `.config/agent/`, or
-one of the two hook test scripts runs the harness self-tests
+under `.agents/plugins/praetor/`, anything under `.config/lefthook/`, `.config/agent/` or
+`.config/semgrep/`, or one of the two hook test scripts runs the harness self-tests
 (`.config/lefthook/scripts/checks.py`): `lefthook validate`, `test_hooks.py`,
 `test_security_scope.py`, `test_ci_scope.py`, `test_checkpoint.py`, `scripts/test_checkpoint_hooks.py`, and
 `scripts/test_praetor_hook.py`. The last one runs the tracked agent-hook strings through
@@ -740,6 +761,7 @@ pull request (`.github/workflows/ci.yml`, the two steps after the documentation 
 | `refactor:` commits: REF-02 refuses changed assertion lines or removed test functions; REF-01 runs touched Go package tests at that commit | pre-push runs `praetorctl forge refactor-check --base=<base> --head=<head>` without test execution; CI runs the same range with `--run-tests` | `TestForgeRefactorCheck_*` |
 | `pre-commit`: whitespace errors and conflict markers (`git diff --cached --check`) | `python3 -B .config/lefthook/scripts/hooks.py commits origin/<base>`, which runs `git log --check` over the range | `CommitRange` in `.config/lefthook/scripts/test_hooks.py` |
 | `pre-commit` and `pre-push`: private `.workingdir` content | the same stage, through `check_private_history` | `CommitRange` |
+| `pre-push`: refuse merge commits dropping first-parent work (Order: engine-dropped-hunk-gate-20261027) | `praetorctl merge-check [--range <a>..<b>]` | `TestMergeCheck_*` |
 
 The `refactor:` row checks the preparatory refactoring practice, from Martin Fowler's
 [Preparatory Refactoring](https://martinfowler.com/articles/preparatory-refactoring-example.html)
@@ -753,7 +775,15 @@ The commit-msg hook and CI share one implementation of the message policy, `forg
 message file Git hands it, which first drops what Git removes before it records the message: the
 lines that start with `#`, and the scissors line with everything after it. A message file over
 1 MiB, or of more than 100000 lines before the scissors line, is refused, not checked in part
-(`TestCleanCommitMessage_Boundary_LineBound`).
+(`TestCleanCommitMessage_Boundary_LineBound`). Commit body lines must wrap at 72 columns under the fleet text rule; widths count Unicode characters (runes), not bytes. A refusal names the line number and its width. Subjects, `Token: value` trailers (including `Signed-off-by:` and `Co-authored-by:`), fenced code blocks, lines containing a single URL, path or command without spaces, and quoted lines starting with `>` followed by a space are exempt from the width check. The boundary and exception tests live in `internal/forge/commit_message_test.go`; `TestForgeCheckMessage_BodyWidth` exercises the hook command. Pull request bodies keep each paragraph on one physical line instead.
+
+The policy also enforces the fleet attribution rule:
+it refuses any `Co-authored-by` trailer naming an AI model, coding tool, or bot (`claude`, `anthropic`,
+`openai`, `chatgpt`, `gpt`, `codex`, `gemini`, `copilot`, `cursor`, `opencode`, `antigravity`,
+`noreply@anthropic.com`, or ending in `[bot]`), any `Generated with` or `Created with` footer, and any
+line starting with a robot emoji. Trailers are parsed from the final paragraph following Git
+`interpret-trailers` semantics, so trailer-like lines in middle body paragraphs pass as prose while
+human co-authors remain accepted.
 
 `standardsctl forge refactor-check` uses the same Conventional Commits subject parser as
 `AnalyzeCommit` to select `refactor:` commits. REF-02 checks changed `*_test.go` hunks for
@@ -763,6 +793,30 @@ packages touched by each refactor commit in a temporary worktree of that commit,
 20-minute test timeout; an unavailable or failing test command fails the gate. Pre-push omits
 suite execution to keep the local range check fast. CI runs it with `--run-tests` on pull-request
 ranges. REF-03 public API invariance remains covered by the engine API compatibility gate.
+
+`praetorctl docstrings check [--path=.] [--base=<ref>] [--head=<ref>] [--pre-push] [--threshold=80]`
+reproduces CodeRabbit's diff-scoped docstring coverage pre-merge check locally (`internal/docstrings/docstrings.go`,
+`TestCheck_Positive_PlantedCases`). Every function or method in `internal/hiss`'s scanner inventory
+whose source span overlaps a line added or modified in `git diff -U0` against the merge base is
+counted, exported or unexported and test functions included. The mode (`error`, `warning`, or `off`) and coverage threshold default to
+`reviews.pre_merge_checks.docstrings` in `.coderabbit.yaml` (`error` and `80` when absent): `error` exits
+`1` below threshold, `warning` reports uncovered functions and exits `0`, `off` skips the check, and a read or configuration failure exits `2`. Adopter repositories run the same
+check in `lefthook.yml` `pre-push` via `sh .config/lefthook/engine.sh docstrings check --pre-push` with `use_stdin: true`.
+
+`standardsctl merge-check` (Order: engine-dropped-hunk-gate-20261027) enforces the fleet rule
+requiring per-hunk conflict resolution. It scans merge commits in the pushed range (or
+`origin/<default-branch>..HEAD` in `make verify-all`), reading each merge commit's parents and
+merge-base. If first parent $P_1$ modified a file relative to merge base $B$, the merge commit $M$
+must not drop non-conflicting first-parent hunks in favor of second parent $P_2$'s blob or delete the
+file while $P_1$ preserved it. A three-way merge reconstruction (`git merge-file -p --theirs`) verifies
+whether non-conflicting first-parent work vanished from $M$. A binary file merges by taking one
+side, so it is a finding only when $P_2$ left it as $B$ had it and $M$ took that copy, which reverts
+$P_1$'s change (`TestMergeCheck_BinaryFile_*`). When one parent deletes a file while the other
+parent modifies it, retaining the deletion drops the modifying parent's changes
+(`TestMergeCheck_OneParentDeletedAndMergeDropsOtherContent_Refused`); the finding names whether
+first-parent or second-parent changes were dropped (deletions by both parents pass:
+`TestMergeCheck_BothParentsDeleted_Passes`). Findings refuse push and name the merge
+commit, file, and remedy (`Fix: resolve inside conflict markers, re-merge.`).
 
 These checks are not re-run per commit:
 
@@ -792,7 +846,9 @@ forge:
 
 The list accepts at most 64 valid owners and compares names without case. An absent manifest or origin adds no owners; malformed manifests fail. `check-message` and `check-commits` read the manifest under `--repo`; `validate-pr` reads `--config`. No network access is needed for these two text checks. Bodies above 3,000 lines and reference text above 1 MiB fail rather than being checked in part.
 
-Evidence: `TestForgeText_WrappedParagraph`, `TestForgeText_BodyForeignReferences`, `TestForgeText_BoundaryMarkup`, `TestForgeText_Organizations` and the command tests in `cmd/standardsctl/forge_text_test.go` cover refusals, allowed forms and limits. Order: `engine-fr-rule-checks-20261027`.
+The pre-tool agent hook (`internal/agenthook/forge_text_refs.go`, rule `forge-text-foreign-reference`) applies the same `forge.ForeignReferenceFindings` and `forge.ResolveOwnOrganizations` checks to every `gh` write call in a proposed shell command before execution; see [agent hooks](agent-hooks.md#forge-text-foreign-reference-guard) for its scope, text sources and limits.
+
+Evidence: `TestForgeText_WrappedParagraph`, `TestForgeText_BodyForeignReferences`, `TestForgeText_BoundaryMarkup`, `TestForgeText_Organizations` and the command tests in `cmd/standardsctl/forge_text_test.go`, plus `TestForgeTextRefsRefusedPerForm`, `TestForgeTextRefsAcceptedCases`, `TestForgeTextRefsBoundaryAndFailClosedCases` and `TestForgeTextRefsOrganizationResolutionCases` in `internal/agenthook/forge_text_refs_test.go`, cover refusals, allowed forms and limits. Order: `engine-fr-rule-checks-20261027`, `engine-forge-text-outside-ref-guard-20261031`.
 
 ## Hook files adoption keeps
 
@@ -1190,9 +1246,22 @@ selection, failed discovery and readback, and real native-protocol pipe exchange
 
 ## What a push scans, and against what
 
-A push of an existing branch is scanned against the ref it is replacing. A push of a **new**
-branch has no such ref, so the base is the merge-base with the remote's default branch, obtained
-from `git ls-remote --symref <remote> HEAD`.
+A fast-forward push of an existing branch is scanned against the ref it is replacing. A push of a
+**new** branch has no such ref, so the base is the merge-base with the remote's default branch,
+obtained from `git ls-remote --symref <remote> HEAD`. A force push of rewritten history (a rebased
+branch, or an unrelated local root confirmed via `git cat-file -e <old>^{commit}`, whose replaced
+head is not an ancestor of the pushed one) takes the same merge-base, while a replaced head missing
+locally scans the full tree:
+diffing against the replaced head would count every commit the rebase picked up from the default
+branch as this push's work, and the range checks (refactor assertion lock, docstring coverage)
+would judge code the push did not write. The push prints `Push baseline: <old> rewritten; scan base <base>`
+when it does this (`push_base` in `.config/lefthook/scripts/hooks.py`,
+`test_force_push_of_rewritten_history_scans_against_merge_base`). `praetorctl docstrings check
+--pre-push` applies the same rule for adopters, querying `git ls-remote --symref <remote> HEAD`
+first through `DefaultBaseRef` before falling back to `forge.RepositoryDefaultBranch` and bounding
+its stdin read to the command context (`ResolvePrePushBase`, `ParsePrePushStdin`,
+`TestResolvePrePushBase_RewrittenBranch_3D`, `TestDefaultBaseRef_RemoteSymrefOverStaleLocal_3D`,
+`TestParsePrePushStdin_Deadline_3D`).
 
 The remote is asked rather than `refs/remotes/<remote>/HEAD` being trusted. Git writes that
 symref once at clone time and never updates it: it is inherited when a clone is cloned,
@@ -1242,6 +1311,46 @@ The semgrep stage has two forms and both apply the exclusion. A per-file scan dr
 from its file list. When a pushed range touches `.config/semgrep/`, the scan widens to the whole
 tree and passes `--exclude testdata` to semgrep instead, because a bare `.` would walk into the
 corpus. Both forms read the directory name from `FIXTURE_DIRECTORY`, so they cannot disagree.
+
+### Go permission parity before push
+
+Strict pre-push checks also run the original patterns in
+`.config/semgrep/go-permissions.yml` on changed Go files, including `_test.go` files:
+
+| Rule id | Calls with an integer literal mode | Refused mode |
+| :--- | :--- | :--- |
+| `go.lang.correctness.permissions.file_permission.incorrect-default-permission` | `os.WriteFile`, `os.OpenFile`, `os.Chmod`, `os.Mkdir`, `os.MkdirAll` | Above `0o600` |
+| `go_file-permissions_rule-mkdir` | `os.Mkdir`, `os.MkdirAll` | Above `0o750` |
+| `go_file-permissions_rule-fileperm` | `os.WriteFile`, `os.OpenFile`, `os.Chmod` | Above `0o600` |
+
+The permission command uses `semgrep scan --error --baseline-commit <base>` with the same
+`push_base()` result already passed through `source_checks()` for the other range checks.
+Semgrep removes findings present in that baseline, so an unchanged historical violation in a
+touched file does not block its push. Decimal, octal, hexadecimal and binary integer literals
+are checked; variable modes and expressions are outside these literal-only rules. Without a
+trusted base the permission scan refuses to run with an explicit error. The rules file is the opt-in:
+adoption does not emit `.config/semgrep/go-permissions.yml`, so a repository without it has no
+permission scan, and a push that removes the file is refused. Fixture paths under `testdata/` retain the exclusion described above.
+
+HISS invariant rules keep their separate whole-file scan, including the whole-tree scan when
+rules change. Applying the permission baseline to HISS would hide existing invariant violations
+in touched source files and weaken that check.
+
+Use the restrictive mode when possible. A fixture that needs broader permissions can put a
+justified suppression directly above the call, naming every matching rule:
+
+```go
+// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission, go_file-permissions_rule-fileperm -- executable fixture stub
+err := os.WriteFile(stub, contents, 0o755)
+```
+
+For a directory at `0o755`, name the incorrect-default rule and
+`go_file-permissions_rule-mkdir` instead. A push that modifies only
+`.config/semgrep/go-permissions.yml` schedules `semgrep validate` to check the
+rule configuration and runs the harness self-tests to replay the permission behavior fixtures.
+`test_semgrep_permissions_*` in `.config/lefthook/scripts/test_hooks.py` covers command
+construction, baseline forwarding, planted violations, rule validation, suppressions and
+thresholds using the real engine; matching tests explicitly skip when Semgrep is absent.
 
 ## Which changed files select which checks
 

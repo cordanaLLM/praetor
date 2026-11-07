@@ -117,14 +117,14 @@ audit script passes it, but OpenSSF Scorecard's Vulnerabilities check reports
 every severity in an adopter's copy of the lock. `markdownlint` pins
 `micromark-extension-math` 3.1.0, which asks for `katex` `^0.16.0`, a range with
 no fixed release, so `tools/markdownlint/package.json` sets
-`"overrides": { "katex": "0.19.0" }`. Renovate's npm manager reads the override
+`"overrides": { "katex": "0.19.1" }`. Renovate's npm manager reads the override
 and moves it in the `markdown gate lock` group (`renovate.json`). That rule
 pins only the `dependencies` and `overrides` sections (`matchDepTypes`), so
 `engines.node` stays the range `>=22.12.0` instead of one exact Node release
 (`TestRenovatePinsFamilyManifestsExceptRanges` in
 `internal/managedasset/renovate_test.go`, which reads the rule's file patterns
 with `util.RenovatePatternsCover`, the matcher adoption uses). The floor is
-22.12.0 because `katex` 0.19.0 depends on `commander` 15.0.0, which declares that
+22.12.0 because `katex` 0.19.1 depends on `commander` 15.0.0, which declares that
 engine, and because `mathSelfTest` loads the ES-module-only `micromark` through
 `require`, which Node allows without a flag from 22.12.0 on. The
 `markdownlint` library loads `katex` through the math extension, and
@@ -402,7 +402,7 @@ file the gate styles; any other name, an excluded or missing file included, is
 refused before linting (`namedStyleFiles`).
 
 `node tools/markdownlint/verify.mjs --changed-since <ref>` filters the bounded
-inventory to the paths `git diff --name-only --diff-filter=d <ref>...HEAD`
+inventory to the paths `git diff -z --name-only <ref>...HEAD`
 reports as changed since `<ref>`, then runs style selection, the private-link
 rule, and `markdownlint` on that subset alone (`runChangedSince` in
 `tools/markdownlint/verify.mjs`). Its summary line names `--changed-since`,

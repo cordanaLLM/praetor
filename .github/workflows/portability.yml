@@ -44,6 +44,15 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: read
+  checks: read
+  statuses: read
+
+env:
+  SHELLCHECK_VERSION: v0.11.0
+  # Upper bound on the Go packages one read loop accepts (HISS-02); the repository has about
+  # 125. A loop past it fails the step instead of truncating the list.
+  PORTABILITY_MAX_PACKAGES: "512"
 
 jobs:
   # Outside the canonical repository the matrix is an operator's choice (#189): the macOS
@@ -128,8 +137,6 @@ jobs:
             name: Linux
           - os: macos-26
             name: macOS
-          - os: windows-2025
-            name: Windows
 
     steps:
       # The hosted gate's draft step, as ghworkflow.HostedGateDraftStep renders it: on a draft
@@ -151,13 +158,144 @@ jobs:
           echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
           exit 1
 
+      - name: Stop while review is open
+        id: review-hold
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+        timeout-minutes: 15
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: &review-hold-script |
+          set -Eeuo pipefail
+          REVIEW_BOTS='coderabbit|codacy|sourcery'
+          REVIEW_QUERY=$(cat <<'GRAPHQL'
+          query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+            repository(owner: $owner, name: $name) {
+              pullRequest(number: $number) {
+                headRefOid
+                reviewThreads(first: 100, after: $cursor) {
+                  nodes { isResolved }
+                  pageInfo { hasNextPage endCursor }
+                }
+              }
+            }
+          }
+          GRAPHQL
+          )
+          HOLD_TITLE='Gate held: review open'
+          HOLD_CAUSE='review read failed'
+          review_error() {
+            local message="$HOLD_CAUSE" title="$HOLD_TITLE" cr=$'\r' lf=$'\n'
+            # Bash 3.2 preserves quotes inside substitution patterns and replacements.
+            title=${title//%/%25}
+            title=${title//:/%3A}
+            title=${title//,/%2C}
+            title=${title//$cr/%0D}
+            title=${title//$lf/%0A}
+            message=${message//%/%25}
+            message=${message//$cr/%0D}
+            message=${message//$lf/%0A}
+            echo "::error title=$title::$message" >&2
+            printf '%s\n' "$HOLD_TITLE: $HOLD_CAUSE" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
+          trap review_error ERR
+          HOLD_CAUSE='temporary directory creation failed'
+          REVIEW_TMP=$(mktemp -d "${RUNNER_TEMP:-/tmp}/review-hold.XXXXXXXXXX")
+          trap 'rm -rf -- "$REVIEW_TMP"' EXIT
+          # Return a validated REST collection's file path. API data stays off argv.
+          review_pages() {
+            local endpoint="$1" key="$2" dir count page
+            local -a files=()
+            dir=$(mktemp -d "$REVIEW_TMP/pages.XXXXXXXXXX")
+            for ((page=1; page<=20; page++)); do
+              HOLD_CAUSE="read failed: $endpoint page $page"
+              gh api --method GET "$endpoint" -F per_page=100 -F page="$page" > "$dir/response.json"
+              jq --binary -ce --arg key "$key" '
+                (if $key == "" then . else .[$key] end) |
+                if type == "array" then . else error("expected API collection") end' "$dir/response.json" > "$dir/$page.json"
+              files+=("$dir/$page.json")
+              count=$(jq --binary 'length' "$dir/$page.json")
+              if ((count < 100)); then
+                jq --binary -cs 'add // []' "${files[@]}" > "$dir/result.json"
+                printf '%s\n' "$dir/result.json"
+                return
+              fi
+            done
+            HOLD_CAUSE="pagination bound reached: $endpoint (20 pages)"
+            review_error
+          }
+          review_count() {
+            local cursor='' page more count checks statuses
+            local data="$REVIEW_TMP/thread-response.json" threads="$REVIEW_TMP/threads.json" pending="$REVIEW_TMP/pending.json"
+            REVIEW_THREADS=0
+            REVIEW_PENDING=0
+            REVIEW_NAMES=''
+            for ((page=1; page<=20; page++)); do
+              HOLD_CAUSE="thread read failed: pull request $PR_NUMBER page $page"
+              gh api graphql -f query="$REVIEW_QUERY" \
+                -f owner="${GITHUB_REPOSITORY%/*}" -f name="${GITHUB_REPOSITORY#*/}" \
+                -F number="$PR_NUMBER" -F cursor="${cursor:-null}" > "$data"
+              jq --binary -ce --arg head "$HEAD_SHA" '
+                if ((.errors // []) | length) > 0 then error("GraphQL errors") else . end |
+                .data.repository.pullRequest |
+                if .headRefOid != $head then error("pull request head changed") else .reviewThreads end |
+                if (.nodes | type) != "array" or (.pageInfo.hasNextPage | type) != "boolean"
+                  or any(.nodes[]; (.isResolved | type) != "boolean")
+                then error("invalid thread response") else . end' "$data" > "$threads"
+              count=$(jq --binary '[.nodes[] | select(.isResolved == false)] | length' "$threads")
+              REVIEW_THREADS=$((REVIEW_THREADS + count))
+              more=$(jq --binary -r '.pageInfo.hasNextPage' "$threads")
+              if [[ "$more" == false ]]; then break; fi
+              HOLD_CAUSE='thread pagination bound reached (20 pages)'
+              if ((page == 20)); then review_error; fi
+              cursor=$(jq --binary -er '.pageInfo.endCursor | select(type == "string" and length > 0)' "$threads")
+            done
+            HOLD_CAUSE='check-run read failed'
+            checks=$(review_pages "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?filter=latest" check_runs)
+            HOLD_CAUSE='commit-status read failed'
+            statuses=$(review_pages "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/statuses" '')
+            HOLD_CAUSE='invalid bot check/status response'
+            jq --binary -cn --arg bots "$REVIEW_BOTS" --slurpfile checks "$checks" --slurpfile statuses "$statuses" '
+              $checks[0] as $checks | $statuses[0] as $statuses |
+              if any($checks[]; (.name | type) != "string" or (.status | type) != "string")
+                or any($statuses[]; (.context | type) != "string" or (.state | type) != "string" or (.id | type) != "number")
+              then error("invalid bot response") else
+                [$checks[] | select(.status != "completed") |
+                  select(([.name, (.app.slug // "")] | join(" ")) | test($bots; "i")) | .name] +
+                [$statuses | sort_by(.id) | reverse | unique_by(.context) | .[] |
+                  select(.state == "pending") |
+                  select(([.context, (.creator.login // "")] | join(" ")) | test($bots; "i")) | .context]
+              end' > "$pending"
+            REVIEW_PENDING=$(jq --binary 'length' "$pending")
+            REVIEW_NAMES=$(jq --binary -r 'join(", ")' "$pending")
+            HOLD_CAUSE="unresolved threads=$REVIEW_THREADS; pending bot reviews=$REVIEW_PENDING; bots=$REVIEW_NAMES"
+          }
+          review_deadline=$((SECONDS + 600))
+          for ((review_poll=0; review_poll<=20; review_poll++)); do
+            review_count
+            if ((REVIEW_THREADS == 0 && REVIEW_PENDING == 0)); then break; fi
+            review_remaining=$((review_deadline - SECONDS))
+            if ((review_remaining <= 0 || review_poll == 20)); then review_error; fi
+            review_delay=30
+            if ((review_delay > review_remaining)); then review_delay=$review_remaining; fi
+            sleep "$review_delay"
+            if ((SECONDS > review_deadline)); then review_error; fi
+          done
+          printf 'clear=true\n' >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$HOLD_CAUSE" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Checkout Source Code
+        if: github.event.pull_request.draft != true && (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true')
         uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Setup Go Toolchain
+        if: github.event.pull_request.draft != true && (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true')
         id: setup-go
         uses: actions/setup-go@v7
         with:
@@ -165,16 +303,19 @@ jobs:
           cache: false
 
       - name: Restore Go Module And Build Caches
+        if: github.event.pull_request.draft != true && (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true')
         uses: ./.github/actions/go-cache
         with:
           job: portability
           go-version: ${{ steps.setup-go.outputs.go-version }}
 
       - name: Detect Changed Paths
+        if: github.event.pull_request.draft != true && (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true')
         id: base
         uses: ./.github/actions/changed-paths
 
       - name: Setup Python Toolchain
+        if: github.event.pull_request.draft != true && (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true')
         id: python
         uses: actions/setup-python@v7
         with:
@@ -184,7 +325,7 @@ jobs:
       # through the hook's package selector; push and dispatch retain the full run.
       - name: Select Platform Neutrality Scope
         id: scope
-        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true }}
         shell: bash
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}
@@ -195,23 +336,37 @@ jobs:
             --output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY" --packages "$RUNNER_TEMP/portability-packages.txt"
 
       - name: Select Buildable Go Packages
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
+          max_packages="${PORTABILITY_MAX_PACKAGES:?}"
           packages=()
-          while IFS= read -r package; do packages+=("$package"); done < "$RUNNER_TEMP/portability-packages.txt"
+          while IFS= read -r package; do
+            if [ "${#packages[@]}" -ge "$max_packages" ]; then
+              echo "::error::package count exceeds $max_packages" >&2
+              exit 1
+            fi
+            packages+=("$package")
+          done < "$RUNNER_TEMP/portability-packages.txt"
           # go build rejects test-only packages; use Go's own source-file metadata.
           go list -f '{{if or .GoFiles .CgoFiles}}{{.ImportPath}}{{end}}' "${packages[@]}" > "$RUNNER_TEMP/buildable.txt"
 
       # Build before test: a compile error on one OS is the cheapest portability defect to
       # find and the one most likely to be a build-constraint or path-separator mistake.
       - name: Compile Every Package
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
+          max_packages="${PORTABILITY_MAX_PACKAGES:?}"
           buildable=()
           while IFS= read -r package; do
-            if [ -n "$package" ]; then buildable+=("$package"); fi
+            if [ -n "$package" ]; then
+              if [ "${#buildable[@]}" -ge "$max_packages" ]; then
+                echo "::error::package count exceeds $max_packages" >&2
+                exit 1
+              fi
+              buildable+=("$package")
+            fi
           done < "$RUNNER_TEMP/buildable.txt"
           if [ "${#buildable[@]}" -gt 0 ]; then
             go build "${buildable[@]}"
@@ -225,12 +380,19 @@ jobs:
       # reproduces exactly that. `!cancelled()` does not alter the job's conclusion: a failed
       # step still fails the leg. It only means one run reports every layer instead of one.
       - name: Vet Every Package
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
+          max_packages="${PORTABILITY_MAX_PACKAGES:?}"
           buildable=()
           while IFS= read -r package; do
-            if [ -n "$package" ]; then buildable+=("$package"); fi
+            if [ -n "$package" ]; then
+              if [ "${#buildable[@]}" -ge "$max_packages" ]; then
+                echo "::error::package count exceeds $max_packages" >&2
+                exit 1
+              fi
+              buildable+=("$package")
+            fi
           done < "$RUNNER_TEMP/buildable.txt"
           if [ "${#buildable[@]}" -gt 0 ]; then
             go vet "${buildable[@]}"
@@ -248,7 +410,7 @@ jobs:
       # ran out of the same bounds compiling the scanners while the other test binaries ran;
       # building them here, outside any bound, leaves the tests a build cache to hit.
       - name: Download And Build Pinned Tools
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
           go mod download -modfile=tools/go/go.mod
@@ -277,8 +439,12 @@ jobs:
       # exception for it are gone (#1381). operationalsync's identity suite replays only the
       # Windows-specific adopt tests on Windows, so it stays in the first run. Every selected run
       # goes even after a failure; the step fails when any selected run does.
+      # Measured (last 10 green portability.yml runs on main, step "Test Every Package"):
+      # Windows shard 1 max 78 min, mean 49; macOS max 61, mean 47; Linux max 27, mean 19;
+      # Windows shard 2 max 20, mean 14. Bound 120 min is ~1.5 x max, below the 180-minute job bound.
       - name: Test Every Package
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        timeout-minutes: 120
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         shell: bash
         run: |
           adopt=$(go list ./internal/adopt)
@@ -290,11 +456,24 @@ jobs:
           # every test runs exactly once (internal/forge TestPortability_LongestPackageRunsInHalves).
           cli_half='^Test(Aud|[B-D])'
           # A read loop, not mapfile: macOS runners ship bash 3.2, which has no mapfile.
+          max_packages="${PORTABILITY_MAX_PACKAGES:?}"
           selected=()
-          while IFS= read -r package; do selected+=("$package"); done < "$RUNNER_TEMP/portability-packages.txt"
+          while IFS= read -r package; do
+            if [ "${#selected[@]}" -ge "$max_packages" ]; then
+              echo "::error::package count exceeds $max_packages" >&2
+              exit 1
+            fi
+            selected+=("$package")
+          done < "$RUNNER_TEMP/portability-packages.txt"
           go list "${selected[@]}" > "$RUNNER_TEMP/selected-packages.txt"
           packages=()
-          while IFS= read -r package; do packages+=("$package"); done < <(grep -vxF -e "$adopt" -e "$cli" "$RUNNER_TEMP/selected-packages.txt")
+          while IFS= read -r package; do
+            if [ "${#packages[@]}" -ge "$max_packages" ]; then
+              echo "::error::package count exceeds $max_packages" >&2
+              exit 1
+            fi
+            packages+=("$package")
+          done < <(grep -vxF -e "$adopt" -e "$cli" "$RUNNER_TEMP/selected-packages.txt")
           json="$RUNNER_TEMP/go-test-$RUNNER_OS.json"
           : > "$json"
           show() {
@@ -337,7 +516,7 @@ jobs:
           PYTHON: ${{ steps.python.outputs.python-path }}
 
       - name: Upload Per-Test Timing
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: go-test-json-${{ matrix.name }}
@@ -349,7 +528,7 @@ jobs:
       # client config against the vendored upstream schemas and builds and drives standards-mcp,
       # so it runs on each platform too (HISS-21); its network checks skip with a stated reason.
       - name: Test The Client Schema Oracle Module
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.schemacheck == 'true' }}
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.schemacheck == 'true' }}
         run: |
           go -C tools/schemacheck vet ./...
           go -C tools/schemacheck test -timeout 30m ./...
@@ -359,7 +538,7 @@ jobs:
       # a suite that silently degrades because a tool is missing is the failure mode this whole
       # job exists to make visible, and it would be absurd to introduce it here.
       - name: Install Pinned Git Hook Toolchain
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
         run: go install -C tools/lefthook github.com/evilmartians/lefthook/v2
 
       # test_security_scope.py fails outright when gosec is absent rather than skipping, which
@@ -374,7 +553,7 @@ jobs:
       # TestPortabilityPassesNoDottedDashArgumentThroughPowerShell keeps such an argument out
       # of the default shell.
       - name: Install Security Scanner
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
         shell: bash
         run: go install -modfile=tools/go/go.mod github.com/securego/gosec/v2/cmd/gosec
 
@@ -396,7 +575,7 @@ jobs:
       # yamllint pin (HISS-19). The lock is universal for Python >= 3.10, and it also brings
       # black and flake8, which no hook runs.
       - name: Install YAML Linter
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
         shell: bash
         run: >-
           "$PYTHON" -m pip install --disable-pip-version-check --require-hashes
@@ -417,10 +596,8 @@ jobs:
       # reproducible gate (HISS-19, HISS-20). The install directory goes first on PATH so the
       # pin wins over the preinstalled copy.
       - name: Install Shell Linter
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
         shell: bash
-        env:
-          SHELLCHECK_VERSION: v0.11.0
         run: |
           set -euo pipefail
           mkdir -p "${RUNNER_TEMP}/shellcheck"
@@ -459,7 +636,7 @@ jobs:
           fi
 
       - name: Build praetorctl
-        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true }}
         shell: bash
         run: go build -o "bin/praetorctl$(go env GOEXE)" ./cmd/standardsctl
 
@@ -468,7 +645,7 @@ jobs:
       # repository path: the three places a platform difference would make it wrong. The
       # binary built above runs it directly, not through its Makefile target.
       - name: Documentation References
-        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true }}
         shell: bash
         run: '"bin/praetorctl$(go env GOEXE)" docs references --path=.'
 
@@ -486,7 +663,7 @@ jobs:
       # tool; one outside --require is reported as not asserted, never silently absent. The
       # table in docs/standards/hiss-21-platform-neutrality.md is rendered from REQUIRED.
       - name: Assert Hook Toolchain
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
         shell: bash
         run: '"$PYTHON" -B .config/lefthook/scripts/toolchain.py --require "$REQUIRED"'
         env:
@@ -502,7 +679,7 @@ jobs:
       # than by name: assuming a platform's binary naming is the exact defect this job exists
       # to catch. The hooks they drive resolve their own interpreter, as on any host.
       - name: Harness Self-Tests
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' }}
         # 19 green Windows runs: median 21.8 min, p95/max 25.1 min; 40 min = 1.6x p95.
         # The driver's 1800 s suite timeout plus bounded tree cleanup fits inside this bound.
         timeout-minutes: 40
@@ -529,7 +706,7 @@ jobs:
       # start the npm batch shim without a shell and runs the npm-cli.js shipped beside node.exe
       # instead; this step is the leg that proves that path works on the platform it exists for.
       - name: Setup Node Toolchain
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && (steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true') }}
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && (steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true') }}
         uses: actions/setup-node@v7
         with:
           node-version: '24'
@@ -539,7 +716,7 @@ jobs:
             tools/markdownlint/package-lock.json
 
       - name: Markdown Gate Self-Test
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.markdown == 'true' }}
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.markdown == 'true' }}
         run: node tools/markdownlint/verify.mjs --self-test
 
       # `make docs-figures-check` and the managed `make docs-figures` are verify-all gates, so they
@@ -554,7 +731,7 @@ jobs:
       # at the end of .gitattributes). The Chromium smoke test needs a built site and runs in
       # pages.yml on Linux only.
       - name: Figure Build Check
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.figures == 'true' }}
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.figures == 'true' }}
         shell: bash
         run: |
           npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
@@ -569,7 +746,7 @@ jobs:
       # `-text` in .gitattributes so their hashes hold on a Windows checkout, and node expands the
       # quoted test glob itself (docs/standards/hiss-21-platform-neutrality.md).
       - name: Interfig Verify Gate
-        if: ${{ !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.interfig == 'true' }}
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.interfig == 'true' }}
         shell: bash
         run: |
           "$PYTHON" -B scripts/test_sync_interfig.py
@@ -577,3 +754,379 @@ jobs:
           node --test 'tools/figures/third_party/interfig/upstream/src/*.test.ts'
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}
+
+  windows-shard:
+    name: Platform Neutrality (Windows shard ${{ matrix.shard }})
+    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled')"
+    runs-on: windows-2025
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+
+    steps:
+      - name: Stop on a draft pull request
+        if: github.event.pull_request.draft == true
+        shell: bash
+        env:
+          TITLE: Gate not run on a draft
+          MESSAGE: >-
+            The gate did not run because the pull request is a draft.
+            It runs when the pull request is marked ready for review.
+        run: |
+          echo "::error title=$TITLE::$MESSAGE"
+          echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: Stop while review is open
+        id: review-hold
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+        timeout-minutes: 15
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: *review-hold-script
+
+      - name: Checkout Source Code
+        if: github.event.pull_request.draft != true && (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true')
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Setup Go Toolchain
+        if: github.event.pull_request.draft != true && (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true')
+        id: setup-go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Restore Go Module And Build Caches
+        if: github.event.pull_request.draft != true && (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true')
+        uses: ./.github/actions/go-cache
+        with:
+          job: portability-windows-shard-${{ matrix.shard }}
+          go-version: ${{ steps.setup-go.outputs.go-version }}
+
+      - name: Detect Changed Paths
+        if: github.event.pull_request.draft != true && (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true')
+        id: base
+        uses: ./.github/actions/changed-paths
+
+      - name: Setup Python Toolchain
+        if: github.event.pull_request.draft != true && (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true')
+        id: python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Select Platform Neutrality Scope
+        id: scope
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true }}
+        shell: bash
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ steps.base.outputs.base_ref }}
+        run: |
+          "$PYTHON" -B .config/lefthook/scripts/ci_scope.py --event "$EVENT" --base "$BASE" --head HEAD \
+            --output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY" --packages "$RUNNER_TEMP/portability-packages.txt"
+
+      - name: Select Buildable Go Packages
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        shell: bash
+        run: |
+          max_packages="${PORTABILITY_MAX_PACKAGES:?}"
+          packages=()
+          while IFS= read -r package; do
+            if [ "${#packages[@]}" -ge "$max_packages" ]; then
+              echo "::error::package count exceeds $max_packages" >&2
+              exit 1
+            fi
+            packages+=("$package")
+          done < "$RUNNER_TEMP/portability-packages.txt"
+          go list -f '{{if or .GoFiles .CgoFiles}}{{.ImportPath}}{{end}}' "${packages[@]}" > "$RUNNER_TEMP/buildable.txt"
+
+      - name: Compile Every Package
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        shell: bash
+        run: |
+          max_packages="${PORTABILITY_MAX_PACKAGES:?}"
+          buildable=()
+          while IFS= read -r package; do
+            if [ -n "$package" ]; then
+              if [ "${#buildable[@]}" -ge "$max_packages" ]; then
+                echo "::error::package count exceeds $max_packages" >&2
+                exit 1
+              fi
+              buildable+=("$package")
+            fi
+          done < "$RUNNER_TEMP/buildable.txt"
+          if [ "${#buildable[@]}" -gt 0 ]; then
+            go build "${buildable[@]}"
+          else
+            echo "Compile Every Package skipped: selected packages contain tests only"
+          fi
+
+      - name: Vet Every Package
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        shell: bash
+        run: |
+          max_packages="${PORTABILITY_MAX_PACKAGES:?}"
+          buildable=()
+          while IFS= read -r package; do
+            if [ -n "$package" ]; then
+              if [ "${#buildable[@]}" -ge "$max_packages" ]; then
+                echo "::error::package count exceeds $max_packages" >&2
+                exit 1
+              fi
+              buildable+=("$package")
+            fi
+          done < "$RUNNER_TEMP/buildable.txt"
+          if [ "${#buildable[@]}" -gt 0 ]; then
+            go vet "${buildable[@]}"
+          else
+            echo "Vet Every Package skipped: selected packages contain tests only"
+          fi
+
+      - name: Download And Build Pinned Tools
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        shell: bash
+        run: |
+          go mod download -modfile=tools/go/go.mod
+          go build -modfile=tools/go/go.mod -o "$RUNNER_TEMP/pinned-tools/" golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec github.com/zricethezav/gitleaks/v8
+
+      # Measured (last 10 green portability.yml runs on main, step "Test Every Package"):
+      # Windows shard 1 max 78 min, mean 49; macOS max 61, mean 47; Linux max 27, mean 19;
+      # Windows shard 2 max 20, mean 14. Bound 120 min is ~1.5 x max, below the 180-minute job bound.
+      - name: Test Every Package
+        timeout-minutes: 120
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        shell: bash
+        run: |
+          adopt=$(go list ./internal/adopt)
+          cli=$(go list ./cmd/standardsctl)
+          cli_half='^Test(Aud|[B-D])'
+          max_packages="${PORTABILITY_MAX_PACKAGES:?}"
+          selected=()
+          while IFS= read -r package; do
+            if [ "${#selected[@]}" -ge "$max_packages" ]; then
+              echo "::error::package count exceeds $max_packages" >&2
+              exit 1
+            fi
+            selected+=("$package")
+          done < "$RUNNER_TEMP/portability-packages.txt"
+          go list "${selected[@]}" > "$RUNNER_TEMP/selected-packages.txt"
+          packages=()
+          while IFS= read -r package; do
+            if [ "${#packages[@]}" -ge "$max_packages" ]; then
+              echo "::error::package count exceeds $max_packages" >&2
+              exit 1
+            fi
+            packages+=("$package")
+          done < <(grep -vxF -e "$adopt" -e "$cli" "$RUNNER_TEMP/selected-packages.txt" | LC_ALL=C sort | awk -v shard="$SHARD" 'NR % 2 == (shard % 2)')
+          json="$RUNNER_TEMP/go-test-$RUNNER_OS.json"
+          : > "$json"
+          show() {
+            "$PYTHON" -B -c 'import json, sys
+          sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+          for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
+              try:
+                  event = json.loads(line) if line.startswith("{") else {"Action": "output", "Output": line}
+              except ValueError:
+                  event = {"Action": "output", "Output": line}
+              if event.get("Action") in ("output", "build-output"):
+                  sys.stdout.write(event.get("Output", ""))' "$1"
+            cat "$1" >> "$json"
+          }
+          status=0
+          if [ "${#packages[@]}" -gt 0 ]; then
+            go test -json -timeout 30m "${packages[@]}" > "$RUNNER_TEMP/run-1.json" 2>&1 || status=$?
+            show "$RUNNER_TEMP/run-1.json"
+          else
+            echo "run-1 skipped: no selected packages outside adopt and CLI for shard $SHARD"
+          fi
+          if [ "$SHARD" = 1 ]; then
+            if [ "$ADOPT" = true ]; then
+              go test -json -timeout 30m "$adopt" > "$RUNNER_TEMP/run-2.json" 2>&1 || status=$?
+              show "$RUNNER_TEMP/run-2.json"
+            else
+              echo "run-2 skipped: adopt is not selected"
+            fi
+            if [ "$CLI" = true ]; then
+              go test -json -timeout 30m -run "$cli_half" "$cli" > "$RUNNER_TEMP/run-3.json" 2>&1 || status=$?
+              show "$RUNNER_TEMP/run-3.json"
+              go test -json -timeout 30m -skip "$cli_half" "$cli" > "$RUNNER_TEMP/run-4.json" 2>&1 || status=$?
+              show "$RUNNER_TEMP/run-4.json"
+            else
+              echo "run-3/run-4 skipped: CLI is not selected"
+            fi
+          fi
+          exit "$status"
+        env:
+          ADOPT: ${{ steps.scope.outputs.adopt }}
+          CLI: ${{ steps.scope.outputs.cli }}
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          SHARD: ${{ matrix.shard }}
+
+      - name: Upload Per-Test Timing
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.go == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-test-json-Windows-shard${{ matrix.shard }}
+          path: ${{ runner.temp }}/go-test-${{ runner.os }}.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Test The Client Schema Oracle Module
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.schemacheck == 'true' && matrix.shard == 2 }}
+        run: |
+          go -C tools/schemacheck vet ./...
+          go -C tools/schemacheck test -timeout 30m ./...
+
+      - name: Install Pinned Git Hook Toolchain
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
+        run: go install -C tools/lefthook github.com/evilmartians/lefthook/v2
+
+      - name: Install Security Scanner
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
+        shell: bash
+        run: go install -modfile=tools/go/go.mod github.com/securego/gosec/v2/cmd/gosec
+
+      - name: Install YAML Linter
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
+        shell: bash
+        run: >-
+          "$PYTHON" -m pip install --disable-pip-version-check --require-hashes
+          -r .config/hook-lint/requirements.txt
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+
+      - name: Install Shell Linter
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/shellcheck"
+          base="https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}"
+          case "${RUNNER_OS}" in
+            Windows)
+              curl -fsSL --max-time 300 -o "${RUNNER_TEMP}/shellcheck.zip" "${base}/shellcheck-${SHELLCHECK_VERSION}.zip"
+              if command -v 7z >/dev/null 2>&1; then
+                7z x -y -bso0 -bsp0 -o"${RUNNER_TEMP}/shellcheck" "${RUNNER_TEMP}/shellcheck.zip"
+              else
+                unzip -q -o "${RUNNER_TEMP}/shellcheck.zip" -d "${RUNNER_TEMP}/shellcheck"
+              fi
+              ;;
+            *)
+              if [ "${RUNNER_OS}" = macOS ]; then platform=darwin; else platform=linux; fi
+              machine="$(uname -m)"
+              if [ "${machine}" = arm64 ]; then machine=aarch64; fi
+              curl -fsSL --max-time 300 "${base}/shellcheck-${SHELLCHECK_VERSION}.${platform}.${machine}.tar.xz" \
+                | tar -xJ -C "${RUNNER_TEMP}/shellcheck" --strip-components=1
+              ;;
+          esac
+          echo "${RUNNER_TEMP}/shellcheck" >> "${GITHUB_PATH}"
+          if [ "${RUNNER_OS}" = Windows ]; then
+            "${RUNNER_TEMP}/shellcheck/shellcheck.exe" --version
+          else
+            "${RUNNER_TEMP}/shellcheck/shellcheck" --version
+          fi
+
+      - name: Build praetorctl
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && matrix.shard == 2 }}
+        shell: bash
+        run: go build -o "bin/praetorctl$(go env GOEXE)" ./cmd/standardsctl
+
+      - name: Documentation References
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && matrix.shard == 2 }}
+        shell: bash
+        run: '"bin/praetorctl$(go env GOEXE)" docs references --path=.'
+
+      - name: Assert Hook Toolchain
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
+        shell: bash
+        run: '"$PYTHON" -B .config/lefthook/scripts/toolchain.py --require "$REQUIRED"'
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          REQUIRED: "python,make,git,go,gofmt,gosec,lefthook,sh,shellcheck,yamllint"
+
+      - name: Harness Self-Tests
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.harness == 'true' && matrix.shard == 2 }}
+        timeout-minutes: 40
+        shell: bash
+        run: |
+          status=0
+          "$PYTHON" -u -B scripts/test_portability_selftest.py || status=$?
+          "$PYTHON" -u -B scripts/portability_selftest.py --min-executed "$MIN_EXECUTED" || status=$?
+          exit "$status"
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          MIN_EXECUTED: '10'
+
+      - name: Setup Node Toolchain
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && (steps.scope.outputs.figures == 'true' || steps.scope.outputs.interfig == 'true' || steps.scope.outputs.markdown == 'true') && matrix.shard == 2 }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            tools/figures/package-lock.json
+            tools/markdownlint/package-lock.json
+
+      - name: Markdown Gate Self-Test
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.markdown == 'true' && matrix.shard == 2 }}
+        run: node tools/markdownlint/verify.mjs --self-test
+
+      - name: Figure Build Check
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.figures == 'true' && matrix.shard == 2 }}
+        shell: bash
+        run: |
+          npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
+          npm --prefix tools/figures test
+          npm --prefix tools/figures run typecheck
+          node tools/figures/build.mjs check
+          node tools/figures/bundle.mjs --check
+          node tools/figures/build.mjs sources
+
+      - name: Interfig Verify Gate
+        if: ${{ (github.event_name != 'pull_request' || steps.review-hold.outputs.clear == 'true') && !cancelled() && github.event.pull_request.draft != true && steps.scope.outputs.interfig == 'true' && matrix.shard == 2 }}
+        shell: bash
+        run: |
+          "$PYTHON" -B scripts/test_sync_interfig.py
+          "$PYTHON" -B scripts/sync_interfig.py verify
+          node --test 'tools/figures/third_party/interfig/upstream/src/*.test.ts'
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+
+  # The aggregate carries the same Renovate skip and repository guard as windows-shard before
+  # always(), so provenAggregateNeeds covers the shard matrix and provenDraftStepAggregate proves
+  # draft handling through each shard's leading draft step. Shards are skipped only where the
+  # aggregate's own guard is false, so failing on failure, cancelled or skipped is stricter and
+  # never fires on a normal run.
+  windows:
+    name: Platform Neutrality (Windows)
+    needs: windows-shard
+    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled') && always()"
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - name: Stop while review is open
+        id: review-hold
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+        timeout-minutes: 15
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: *review-hold-script
+      - name: Require Every Windows Portability Shard
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
+        run: |
+          echo "::error::a Windows portability shard failed, was cancelled or was skipped"
+          exit 1

@@ -188,6 +188,7 @@ func TestAuditSharedDeclineGates_3D(t *testing.T) {
 	if hooks, err := AuditGitHookConfig(t.Context(), nil, root); err != nil || hooks.Declined || !strings.HasPrefix(hooks.Line, "[PASS] Git hook configuration") {
 		t.Fatalf("present lefthook.yml: %+v, %v", hooks, err)
 	}
+	// codespell:ignore-next-line lables
 	if _, err := AuditLabelTaxonomy(declineManifest("lables"), root); err == nil {
 		t.Fatal("invalid decline list passed the labels gate")
 	}

@@ -178,3 +178,26 @@ func TestShippedArchetypes_Positive_NoCodeProfilesClaimNoProvenance(t *testing.T
 		}
 	}
 }
+
+// TestShippedArchetypes_Positive_EmbeddedReleaseTestLevelsMatchDiskCatalog verifies that the
+// binary-shipped archetype release_test_levels map stays in sync with .config/archetypes/*.yaml.
+func TestShippedArchetypes_Positive_EmbeddedReleaseTestLevelsMatchDiskCatalog(t *testing.T) {
+	names := shippedProfileNames(t)
+	if len(names) != len(shippedProfileArchetypeYAML) {
+		t.Fatalf("disk catalog has %d profiles, embedded catalog has %d", len(names), len(shippedProfileArchetypeYAML))
+	}
+	for _, name := range names {
+		id := strings.TrimSuffix(name, ".yaml")
+		diskArch, err := decodeArchetype(t.Context(), name, []byte(readShippedProfile(t, name)))
+		if err != nil {
+			t.Fatalf("decode disk %s: %v", name, err)
+		}
+		got, err := ProfileReleaseTestLevels(t.Context(), "", []string{id})
+		if err != nil {
+			t.Fatalf("ProfileReleaseTestLevels(%q): %v", id, err)
+		}
+		if strings.Join(got[id], ",") != strings.Join(diskArch.ReleaseTestLevels, ",") {
+			t.Errorf("%s release_test_levels mismatch: embedded=%v disk=%v", name, got[id], diskArch.ReleaseTestLevels)
+		}
+	}
+}

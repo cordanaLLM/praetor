@@ -1,0 +1,3 @@
+type: added
+title: Gate required release test levels per archetype profile with shrink-only baseline ratcheting (#1733)
+breaking: false

@@ -229,3 +229,98 @@ func sameManifest(ctx context.Context, patched, encoded []byte) bool {
 	}
 	return reflect.DeepEqual(left, right)
 }
+
+// patchYAMLPath extends the shared manifest text editor to a bounded mapping path. The caller
+// keeps the patch only after manifestOutput proves it equals the edited node tree.
+func patchYAMLPath(data []byte, root *yaml.Node, keys []string, value *yaml.Node) ([]byte, bool, error) {
+	text := newManifestText(data)
+	if len(keys) > 4 || len(text.lines) > maxManifestTextLines {
+		return nil, false, nil
+	}
+	unit, boundary := manifestIndentUnit(root), len(text.lines)+1
+	mapping := root
+	for depth := 0; depth < len(keys) && depth < 4; depth++ {
+		if mapping.Kind != yaml.MappingNode || mapping.Style&yaml.FlowStyle != 0 {
+			return nil, false, nil
+		}
+		at := mappingKeyIndex(mapping, keys[depth])
+		if at < 0 {
+			return insertYAMLPath(text, mapping, keys[depth:], value, boundary, depth*unit)
+		}
+		key, old := mapping.Content[at], mapping.Content[at+1]
+		boundary = nextKeyLine(mapping, at, boundary)
+		if depth == len(keys)-1 {
+			patched, ok := patchYAMLLeaf(text, key, old, value, boundary)
+			return []byte(patched), ok, nil
+		}
+		if nullYAMLNode(old) {
+			block, err := yamlPathBlock(keys[depth+1:], value, key.Column-1+unit, text.eol)
+			patched, ok := replaceNullValueLine(text, key, old, block)
+			return []byte(patched), ok && err == nil, err
+		}
+		mapping = old
+	}
+	return nil, false, nil
+}
+
+// insertYAMLPath appends a missing mapping path before the enclosing mapping's boundary.
+func insertYAMLPath(text manifestText, mapping *yaml.Node, keys []string, value *yaml.Node, boundary, indent int) ([]byte, bool, error) {
+	if len(mapping.Content) > 0 {
+		indent = mapping.Content[0].Column - 1
+	}
+	block, err := yamlPathBlock(keys, value, indent, text.eol)
+	if err != nil {
+		return nil, false, err
+	}
+	end := text.blockEnd(boundary)
+	return text.splice(end, end, block), true, nil
+}
+
+// yamlPathBlock renders a bounded chain of mapping keys at indent using the shared encoder.
+func yamlPathBlock(keys []string, value *yaml.Node, indent int, eol string) (string, error) {
+	for i := len(keys) - 1; i >= 0 && i < 4; i-- {
+		parent := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		appendAdoptYAMLMapping(parent, keys[i], value)
+		value = parent
+	}
+	encoded, err := util.EncodeYAMLDocument(value)
+	if err != nil {
+		return "", fmt.Errorf("encode managed YAML path: %w", err)
+	}
+	var block strings.Builder
+	lines := strings.Split(strings.TrimSuffix(strings.TrimPrefix(string(encoded), util.YAMLDocumentStart), "\n"), "\n")
+	for i := 0; i < len(lines) && i < maxManifestTextLines; i++ {
+		block.WriteString(strings.Repeat(" ", indent) + lines[i] + eol)
+	}
+	return block.String(), nil
+}
+
+// patchYAMLLeaf edits a plain scalar token or appends one string to an existing sequence.
+// Other layouts use the shared node encoder, preserving comments and unrelated values.
+func patchYAMLLeaf(text manifestText, key, old, value *yaml.Node, boundary int) (string, bool) {
+	if old.Kind == yaml.SequenceNode && value.Kind == yaml.SequenceNode && len(value.Content) == len(old.Content)+1 {
+		item := util.YAMLScalar(value.Content[len(old.Content)].Value)
+		if old.Style&yaml.FlowStyle != 0 {
+			return extendFlowYAMLSequence(text, old, []string{item})
+		}
+		end := text.blockEnd(boundary)
+		block := strings.Repeat(" ", old.Column-1) + "- " + item + text.eol
+		return string(text.splice(end, end, block)), true
+	}
+	return patchYAMLScalar(text, key, old, value)
+}
+
+// patchYAMLScalar replaces a plain scalar token while retaining its line's spacing and comment.
+func patchYAMLScalar(text manifestText, key, old, value *yaml.Node) (string, bool) {
+	at, column := old.Line-1, old.Column-1
+	if old.Kind != yaml.ScalarNode || value.Kind != yaml.ScalarNode || old.Style != 0 ||
+		old.Line != key.Line || at < 0 || at >= len(text.lines) || column < 0 {
+		return "", false
+	}
+	line := text.lines[at]
+	if column > len(line) || !strings.HasPrefix(line[column:], old.Value) {
+		return "", false
+	}
+	patched := line[:column] + value.Value + line[column+len(old.Value):]
+	return string(text.splice(at, at+1, patched)), true
+}

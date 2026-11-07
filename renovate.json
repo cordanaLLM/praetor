@@ -267,6 +267,12 @@
       "versioning": "loose"
     },
     {
+      "description": "Hold the MCP specification at 2025-11-25: 2026-07-28 is a protocol break that replaces initialization with server/discover, requires resultType, removes tasks and subscriptions, and drops InitializeRequestParams and InitializeResult, while the engine's MCP servers and every client speak 2025-11-25. Revisit when a measured client matrix shows Claude Code, Codex, Gemini CLI, Antigravity, opencode and the editors speak 2026-07-28 or negotiate it; the migration is tracked in #1694 (measure the client matrix, then design, likely serving both revisions by negotiation).",
+      "matchFileNames": ["internal/clientschema/upstream/manifest.json"],
+      "matchDepNames": ["modelcontextprotocol/modelcontextprotocol"],
+      "allowedVersions": "/^2025-11-25$/"
+    },
+    {
       "description": "Hold TypeScript 7 in console until its linters support it: typescript-eslint 8.72.0 peers typescript <6.1.0 and svelte-check 4.7.7 peers ^5 || ^6 (measured 2026-10-25); TypeScript 7.0.2 broke console lint and check on main.",
       "matchFileNames": ["console/package.json"],
       "matchPackageNames": ["typescript"],

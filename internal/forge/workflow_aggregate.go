@@ -53,7 +53,8 @@ type aggregateGuard struct {
 // is no proven aggregate. The proof reads an allow-list of shapes and refuses every other one
 // (aggregateShape): a job that needs at least one job, runs under always() after at most the
 // Renovate skip and a repository guard, is not advisory and has only exit steps and alls-green
-// steps. Its steps must pass when every need succeeded, and a need is covered when they fail
+// steps after an optional canonical review hold. A review-aware need requires that hold.
+// Its result steps must pass when every need succeeded, and a need is covered when they fail
 // whenever that need alone failed or was cancelled (failsWhenNeedFails) and the need carries the
 // aggregate's guards (coversNeed). An aggregate the file cannot prove, such as one that only
 // echoes, covers nothing and stays a required check beside the jobs it needs.
@@ -93,7 +94,8 @@ func coversNeed(spec *workflowSpec, steps []gateStep, needs []string, need strin
 
 // aggregateShape returns the steps of job (gateSteps) and the guards its condition carries before
 // always() (aggregateCondition), or false when job is not an aggregate in the allowed shape: it
-// is not advisory, and every step is an exit step or an alls-green step.
+// is not advisory, and every result step is an exit step or an alls-green step after any
+// canonical review hold required by its needs.
 func aggregateShape(spec *workflowSpec, job *workflowJob) (steps []gateStep, guard aggregateGuard, shaped bool) {
 	guard, always := aggregateCondition(job.If)
 	if !always || advisoryJob(job.ContinueOnError) {
@@ -167,15 +169,20 @@ type gateStep struct {
 	policy    allsGreenPolicy
 }
 
-// gateSteps returns the steps of job as gateSteps, or false when job has no step or has one in
-// neither allowed shape. Any other step is refused rather than taken to pass: a step can change
-// what a later one runs, through $GITHUB_ENV, $GITHUB_PATH or a file it writes.
+// gateSteps returns the result steps of job as gateSteps, or false for an unproven shape.
+// Only the exact rendered review hold may precede the result steps; it either fails first or
+// leaves their execution unchanged. Review-aware needs require that leading annotation barrier.
+// Other steps can change later execution through environment or files and remain refused.
 func gateSteps(spec *workflowSpec, job *workflowJob) ([]gateStep, bool) {
 	if len(job.Steps) == 0 || len(job.Steps) > ghworkflow.MaxStepsPerJob {
 		return nil, false
 	}
+	start, valid := aggregateResultStart(spec, job)
+	if !valid {
+		return nil, false
+	}
 	steps := make([]gateStep, 0, len(job.Steps))
-	for i := 0; i < len(job.Steps) && i < ghworkflow.MaxStepsPerJob; i++ {
+	for i := start; i < len(job.Steps) && i < ghworkflow.MaxStepsPerJob; i++ {
 		step := &job.Steps[i]
 		policy, allsGreen := allsGreenStep(step)
 		if !allsGreen && !exitStep(spec, job, step) {

@@ -57,10 +57,11 @@ func TestUnexcusedImageRefInfractions_LiveException(t *testing.T) {
 	})
 	exceptions := []config.Exception{
 		{
-			Rule:    config.ExceptionRuleSupplyChain,
-			Path:    "Dockerfile",
-			Expires: "2026-12-31",
-			Reason:  "planned upgrade",
+			Rule:     config.ExceptionRuleSupplyChain,
+			Path:     "Dockerfile",
+			Category: "A",
+			Expires:  "2026-12-31",
+			Reason:   "planned upgrade",
 		},
 	}
 	got, err := UnexcusedImageRefInfractions(t.Context(), root, exceptions, testSupplychainToday)

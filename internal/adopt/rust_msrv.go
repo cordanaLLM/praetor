@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -31,14 +32,20 @@ type msrvDeclaration struct{ file, version string }
 
 // AuditRustMSRV requires a pinned minimum or a workflow job building on the declared minimum.
 // This checks repository declarations; it does not execute the workflow or compile Rust.
-func AuditRustMSRV(ctx context.Context, root string) (string, error) {
+// Discovery uses the manifest's verification bounds; a nil manifest reads the root .standards.yaml, falling back to defaults only when none exists.
+// One optional requested policy raises bounds for this run, as the Paperclip facts walk does.
+func AuditRustMSRV(ctx context.Context, manifest *config.Manifest, root string, requested ...*VerificationLimits) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, contextopt.MaxDuration)
 	defer cancel()
-	inputs, err := loadVerificationInputs(ctx, root)
+	limits, err := resolveRustMSRVLimits(ctx, manifest, root, requested)
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] rust-msrv: %w", err)
 	}
-	declarations, count, err := rustMSRVDeclarations(inputs.files)
+	inputs, err := loadVerificationInputsWithLimits(ctx, root, limits)
+	if err != nil {
+		return "", fmt.Errorf("[FAIL] rust-msrv: %w", err)
+	}
+	declarations, count, err := rustMSRVDeclarations(inputs.files, limits.MaxFiles)
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] rust-msrv: %w", err)
 	}
@@ -52,12 +59,37 @@ func AuditRustMSRV(ctx context.Context, root string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] rust-msrv: %w", err)
 	}
-	return judgeRustMSRV(inputs.files, declarations, proofs)
+	return judgeRustMSRV(inputs.files, declarations, proofs, limits.MaxFiles)
 }
 
-func judgeRustMSRV(files map[string][]byte, declarations []msrvDeclaration, proofs map[string]string) (string, error) {
+// resolveRustMSRVLimits loads the root manifest if omitted and resolves effective verification limits.
+func resolveRustMSRVLimits(ctx context.Context, manifest *config.Manifest, root string, requested []*VerificationLimits) (VerificationLimits, error) {
+	if len(requested) > 1 {
+		return VerificationLimits{}, fmt.Errorf("expected at most one requested verification policy")
+	}
+	var overrides *VerificationLimits
+	if len(requested) == 1 {
+		overrides = requested[0]
+	}
+	if manifest == nil {
+		var err error
+		manifest, err = loadDeclaredManifest(ctx, root)
+		if err != nil {
+			return VerificationLimits{}, err
+		}
+	}
+	return NormalizeVerificationLimits(ResolveVerificationLimits(manifest.DeclaredVerification(), overrides))
+}
+
+// judgeRustMSRV gives the rust-msrv verdict: each declared rust-version needs a pinned toolchain or a workflow proof;
+// more declarations than twice maxFiles are refused before any verdict.
+func judgeRustMSRV(files map[string][]byte, declarations []msrvDeclaration, proofs map[string]string, maxFiles int) (string, error) {
+	maxDeclarations := maxFiles * 2
+	if len(declarations) > maxDeclarations {
+		return "", fmt.Errorf("[FAIL] rust-msrv: declarations (%d) exceed processed bound %d", len(declarations), maxDeclarations)
+	}
 	var evidence []string
-	for i := 0; i < len(declarations) && i < maxVerificationInputs*2; i++ {
+	for i := 0; i < len(declarations) && i < maxDeclarations; i++ {
 		declaration := declarations[i]
 		pin, err := rustMSRVPin(files, path.Dir(declaration.file))
 		if err != nil {
@@ -75,13 +107,18 @@ func judgeRustMSRV(files map[string][]byte, declarations []msrvDeclaration, proo
 	return "[PASS] rust-msrv: " + strings.Join(evidence, "; "), nil
 }
 
-func rustMSRVDeclarations(files map[string][]byte) ([]msrvDeclaration, int, error) {
+// rustMSRVDeclarations reads the rust-version each discovered Cargo.toml declares or inherits, and refuses a set
+// above maxFiles so no admitted manifest goes unexamined.
+func rustMSRVDeclarations(files map[string][]byte, maxFiles int) ([]msrvDeclaration, int, error) {
 	documents, names, err := rustMSRVDocuments(files)
 	if err != nil {
 		return nil, 0, err
 	}
+	if len(names) > maxFiles {
+		return nil, len(names), fmt.Errorf("discovered %d Cargo.toml manifests exceed processed bound %d", len(names), maxFiles)
+	}
 	var declarations []msrvDeclaration
-	for i := 0; i < len(names) && i < maxVerificationInputs; i++ {
+	for i := 0; i < len(names) && i < maxFiles; i++ {
 		name := names[i]
 		document := documents[name]
 		version, err := rustMSRVValue(document.Package.RustVersion, name, documents)

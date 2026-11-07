@@ -1,9 +1,16 @@
 package adopt
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 // pinnedGitIgnoreBlockVersions pins the exact rules accepted for each version of the
@@ -40,68 +47,54 @@ var pinnedGitIgnoreBlockVersions = map[string][]string{
 		"/.claude/settings.local.json",
 		"/.standards-receipt.json",
 	},
+	"v5": {
+		".workingdir/",
+		".workingdir2/",
+		"/.standards/worktrees/",
+		"/.agents/mcp_config.json",
+		"/.standards/cache/",
+		"/.claude/settings.local.json",
+		"/.standards-receipt.json",
+		"/.codacy/",
+		".github/instructions/codacy.instructions.md",
+		".cursor/rules/codacy.mdc",
+	},
 }
 
 // Positive: LookupManagedGitIgnoreTail recognizes current and earlier versions across all
 // permutations of legacy scratch retirement and config directory negation, in LF and CRLF.
 func TestLookupManagedGitIgnoreTail_Positive(t *testing.T) {
 	root := t.TempDir()
-
-	for name, tc := range map[string]struct {
-		version     gitIgnoreBlockVersion
-		wantCurrent bool
-		wantVersion string
-	}{
-		"current v4 canonical block": {
-			version:     gitIgnoreBlockVersion{Version: "v4", Rules: pinnedGitIgnoreBlockVersions["v4"]},
-			wantCurrent: true,
-			wantVersion: "v4",
-		},
-		"historical v3 unanchored block": {
-			version:     gitIgnoreBlockVersion{Version: "v3", Rules: pinnedGitIgnoreBlockVersions["v3"]},
-			wantCurrent: false,
-			wantVersion: "v3",
-		},
-		"historical v2 root-anchored block": {
-			version:     gitIgnoreBlockVersion{Version: "v2", Rules: pinnedGitIgnoreBlockVersions["v2"]},
-			wantCurrent: false,
-			wantVersion: "v2",
-		},
-		"historical v1 four-rule block": {
-			version:     gitIgnoreBlockVersion{Version: "v1", Rules: pinnedGitIgnoreBlockVersions["v1"]},
-			wantCurrent: false,
-			wantVersion: "v1",
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
+	for _, version := range []string{"v5", "v4", "v3", "v2", "v1"} {
+		block := gitIgnoreBlockVersion{Version: version, Rules: pinnedGitIgnoreBlockVersions[version]}
+		t.Run(version, func(t *testing.T) {
 			for _, keepLegacy := range []bool{true, false} {
 				for _, negateConfig := range []bool{true, false} {
-					block := tc.version.Render(keepLegacy, negateConfig)
-					text := "dist/\n\n" + block
-
-					match, ok := LookupManagedGitIgnoreTail(t.Context(), root, text)
-					if !ok {
-						t.Fatalf("keepLegacy=%v negateConfig=%v: block not recognized:\n%s", keepLegacy, negateConfig, text)
-					}
-					if match.Current != tc.wantCurrent {
-						t.Fatalf("keepLegacy=%v negateConfig=%v: got Current=%v, want %v", keepLegacy, negateConfig, match.Current, tc.wantCurrent)
-					}
-					if match.Version != tc.wantVersion {
-						t.Fatalf("keepLegacy=%v negateConfig=%v: got Version=%q, want %q", keepLegacy, negateConfig, match.Version, tc.wantVersion)
-					}
-
-					if !HasManagedGitIgnoreTail(t.Context(), root, text) {
-						t.Fatalf("HasManagedGitIgnoreTail returned false for valid block:\n%s", text)
-					}
-
-					crlfText := strings.ReplaceAll(text, "\n", "\r\n")
-					crlfMatch, crlfOk := LookupManagedGitIgnoreTail(t.Context(), root, crlfText)
-					if !crlfOk || crlfMatch.Version != tc.wantVersion {
-						t.Fatalf("CRLF block lookup failed: ok=%v, match=%+v", crlfOk, crlfMatch)
-					}
+					text := "dist/\n\n" + block.Render(keepLegacy, negateConfig)
+					assertManagedGitIgnoreTail(t, root, text, version == "v5", version)
 				}
 			}
 		})
+	}
+}
+
+// assertManagedGitIgnoreTail checks that text ends in a recognised managed block of wantVersion,
+// with LF and with CRLF line ends.
+func assertManagedGitIgnoreTail(t *testing.T, root, text string, wantCurrent bool, wantVersion string) {
+	t.Helper()
+	match, ok := LookupManagedGitIgnoreTail(t.Context(), root, text)
+	if !ok {
+		t.Fatalf("block not recognized:\n%s", text)
+	}
+	if match.Current != wantCurrent || match.Version != wantVersion {
+		t.Fatalf("got Current=%v Version=%q, want %v %q", match.Current, match.Version, wantCurrent, wantVersion)
+	}
+	if !HasManagedGitIgnoreTail(t.Context(), root, text) {
+		t.Fatalf("HasManagedGitIgnoreTail returned false for valid block:\n%s", text)
+	}
+	crlfMatch, crlfOk := LookupManagedGitIgnoreTail(t.Context(), root, strings.ReplaceAll(text, "\n", "\r\n"))
+	if !crlfOk || crlfMatch.Version != wantVersion {
+		t.Fatalf("CRLF block lookup failed: ok=%v, match=%+v", crlfOk, crlfMatch)
 	}
 }
 
@@ -222,7 +215,7 @@ func assertHistoryTransitions(t *testing.T) {
 	}
 
 	mutatedCanonical := gitIgnoreBlockVersion{
-		Version: "v4",
+		Version: "v5",
 		Rules:   append(slices.Clone(canonicalGitIgnoreBlockVersion.Rules), "/.new-tool-cache/"),
 	}
 	err := checkBlockHistoryTransition(canonicalGitIgnoreBlockVersion, mutatedCanonical, gitIgnoreBlockHistory)
@@ -309,5 +302,202 @@ func TestGitIgnoreRulesImmutability(t *testing.T) {
 	_ = append(v1Copy, "/.appended-rule/")
 	if !slices.Equal(managedIgnoreRules, canonicalBefore) {
 		t.Fatalf("appending to gitIgnoreBlockHistory[0].Rules affected managedIgnoreRules: got %v, want %v", managedIgnoreRules, canonicalBefore)
+	}
+}
+
+const guideReadTimeout = 5 * time.Second
+
+// readGuideWithTimeout reads the guide at path under an explicit context timeout (HISS-02).
+func readGuideWithTimeout(t testing.TB, path string) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), guideReadTimeout)
+	defer cancel()
+	content, err := contextopt.ReadSnapshot(ctx, path)
+	if err != nil {
+		t.Fatalf("read guide with timeout %s: %v", path, err)
+	}
+	return string(content)
+}
+
+// Positive: contextopt.ReadSnapshot successfully reads the guide when context is active.
+func TestGitIgnoreHistory_ReadGuideWithContext_Positive(t *testing.T) {
+	guidePath := filepath.Join("..", "..", "docs", "guides", "state-ledger-integrity.md")
+	ctx, cancel := context.WithTimeout(t.Context(), guideReadTimeout)
+	defer cancel()
+	data, err := contextopt.ReadSnapshot(ctx, guidePath)
+	if err != nil {
+		t.Fatalf("read guide with contextopt.ReadSnapshot failed: %v", err)
+	}
+	if len(data) == 0 {
+		t.Fatal("contextopt.ReadSnapshot returned empty data")
+	}
+}
+
+// Negative: contextopt.ReadSnapshot reports error on nonexistent path or canceled context.
+func TestGitIgnoreHistory_ReadGuideWithContext_Negative(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), guideReadTimeout)
+	defer cancel()
+	if _, err := contextopt.ReadSnapshot(ctx, filepath.Join("..", "..", "docs", "nonexistent.md")); err == nil {
+		t.Fatal("expected error reading nonexistent file, got nil")
+	}
+
+	canceledCtx, cancelNow := context.WithCancel(t.Context())
+	cancelNow()
+	guidePath := filepath.Join("..", "..", "docs", "guides", "state-ledger-integrity.md")
+	if _, err := contextopt.ReadSnapshot(canceledCtx, guidePath); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+// Boundary: contextopt.ReadSnapshot reports DeadlineExceeded when context deadline is in the past.
+func TestGitIgnoreHistory_ReadGuideWithContext_Boundary(t *testing.T) {
+	deadlineCtx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Millisecond))
+	defer cancel()
+	guidePath := filepath.Join("..", "..", "docs", "guides", "state-ledger-integrity.md")
+	if _, err := contextopt.ReadSnapshot(deadlineCtx, guidePath); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got %v", err)
+	}
+}
+
+// assertGuideReferencesHistoryTest asserts that text contains references to both wantFile and wantTest.
+func assertGuideReferencesHistoryTest(t testing.TB, text, wantFile, wantTest string) {
+	t.Helper()
+	if !strings.Contains(text, wantFile) {
+		t.Fatalf("state-ledger-integrity.md must reference %s: missing from text", wantFile)
+		return
+	}
+	if !strings.Contains(text, wantTest) {
+		t.Fatalf("state-ledger-integrity.md must reference %s: missing from text", wantTest)
+		return
+	}
+}
+
+// Positive: state-ledger-integrity.md references this test file and TestLookupManagedGitIgnoreTail_Positive.
+func TestGitIgnoreHistory_GuideReferencesHistoryTest_Positive(t *testing.T) {
+	guidePath := filepath.Join("..", "..", "docs", "guides", "state-ledger-integrity.md")
+	text := readGuideWithTimeout(t, guidePath)
+	wantFile := "internal/adopt/gitignore_history_test.go"
+	wantTest := "TestLookupManagedGitIgnoreTail_Positive"
+	assertGuideReferencesHistoryTest(t, text, wantFile, wantTest)
+}
+
+// Negative: unreferenced or fictitious test files are not cited in the guide,
+// and assertGuideReferencesHistoryTest reports missing file or missing test.
+func TestGitIgnoreHistory_GuideReferencesHistoryTest_Negative(t *testing.T) {
+	guidePath := filepath.Join("..", "..", "docs", "guides", "state-ledger-integrity.md")
+	text := readGuideWithTimeout(t, guidePath)
+	fictitious := "internal/adopt/fictitious_gitignore_test.go"
+	if strings.Contains(text, fictitious) {
+		t.Fatalf("state-ledger-integrity.md must not reference fictitious file %q", fictitious)
+	}
+
+	wantFile := "internal/adopt/gitignore_history_test.go"
+	wantTest := "TestLookupManagedGitIgnoreTail_Positive"
+
+	recMissingTest := &testRecorder{TB: t}
+	assertGuideReferencesHistoryTest(recMissingTest, "referencing "+wantFile+" only", wantFile, wantTest)
+	if !recMissingTest.failed || !strings.Contains(recMissingTest.message, wantTest) {
+		t.Fatalf("expected missing test report, got failed=%v msg=%q", recMissingTest.failed, recMissingTest.message)
+	}
+
+	recMissingFile := &testRecorder{TB: t}
+	assertGuideReferencesHistoryTest(recMissingFile, "referencing "+wantTest+" only", wantFile, wantTest)
+	if !recMissingFile.failed || !strings.Contains(recMissingFile.message, wantFile) {
+		t.Fatalf("expected missing file report, got failed=%v msg=%q", recMissingFile.failed, recMissingFile.message)
+	}
+}
+
+// Boundary: historical compatibility claims for both block v3 and block v4 are linked,
+// and assertGuideReferencesHistoryTest reports failure when text is empty.
+func TestGitIgnoreHistory_GuideReferencesHistoryTest_Boundary(t *testing.T) {
+	guidePath := filepath.Join("..", "..", "docs", "guides", "state-ledger-integrity.md")
+	text := readGuideWithTimeout(t, guidePath)
+	claim := "A repository still carrying block v3 or v4 is recognised and re-rendered, not refused"
+	assertGuideClaimReference(t, text, claim, "internal/adopt/gitignore_history_test.go", 250)
+
+	recEmpty := &testRecorder{TB: t}
+	assertGuideReferencesHistoryTest(recEmpty, "", "internal/adopt/gitignore_history_test.go", "TestLookupManagedGitIgnoreTail_Positive")
+	if !recEmpty.failed || !strings.Contains(recEmpty.message, "internal/adopt/gitignore_history_test.go") {
+		t.Fatalf("expected missing file report on empty text, got failed=%v msg=%q", recEmpty.failed, recEmpty.message)
+	}
+}
+
+// assertGuideClaimReference asserts that claim appears in text and that wantRef appears
+// within windowLen bytes following the start of claim. The window is clamped to len(text)
+// so a claim near the end reports a missing reference rather than panicking on slice bounds.
+func assertGuideClaimReference(t testing.TB, text, claim, wantRef string, windowLen int) {
+	t.Helper()
+	if !strings.Contains(text, claim) {
+		t.Fatalf("state-ledger-integrity.md missing historical compatibility claim: %q", claim)
+		return
+	}
+	idx := strings.Index(text, claim)
+	end := min(len(text), idx+windowLen)
+	window := text[idx:end]
+	if !strings.Contains(window, wantRef) {
+		t.Fatalf("historical compatibility claim must be followed by %s reference, got window: %q", wantRef, window)
+	}
+}
+
+type testRecorder struct {
+	testing.TB
+	failed  bool
+	message string
+}
+
+func (r *testRecorder) Fatalf(format string, args ...any) {
+	r.failed = true
+	r.message = fmt.Sprintf(format, args...)
+}
+
+// Positive: assertGuideClaimReference succeeds when the reference sits within windowLen,
+// including when the reference sits near the end of text shorter than claim + windowLen.
+func TestGitIgnoreHistory_GuideClaimWindow_Positive(t *testing.T) {
+	claim := "A repository still carrying block v3 or v4 is recognised and re-rendered, not refused"
+	ref := "internal/adopt/gitignore_history_test.go"
+
+	longText := claim + " (`TestLookupManagedGitIgnoreTail_Positive` in " + ref + ")\n" + strings.Repeat("x", 500)
+	assertGuideClaimReference(t, longText, claim, ref, 250)
+
+	shortText := claim + " (" + ref + ")"
+	assertGuideClaimReference(t, shortText, claim, ref, 250)
+}
+
+// Negative: assertGuideClaimReference reports missing reference with Fatalf rather than panicking,
+// both when text continues past windowLen and when text ends within windowLen.
+func TestGitIgnoreHistory_GuideClaimWindow_Negative(t *testing.T) {
+	claim := "A repository still carrying block v3 or v4 is recognised and re-rendered, not refused"
+	ref := "internal/adopt/gitignore_history_test.go"
+
+	recShort := &testRecorder{TB: t}
+	shortMissing := claim + " (reference omitted near end)"
+	assertGuideClaimReference(recShort, shortMissing, claim, ref, 250)
+	if !recShort.failed || !strings.Contains(recShort.message, "must be followed by") {
+		t.Fatalf("expected missing reference report on short text, got failed=%v msg=%q", recShort.failed, recShort.message)
+	}
+
+	recLong := &testRecorder{TB: t}
+	longMissing := claim + " (omitted)\n" + strings.Repeat("x", 500)
+	assertGuideClaimReference(recLong, longMissing, claim, ref, 250)
+	if !recLong.failed || !strings.Contains(recLong.message, "must be followed by") {
+		t.Fatalf("expected missing reference report on long text, got failed=%v msg=%q", recLong.failed, recLong.message)
+	}
+}
+
+// Boundary: text ending exactly at the claim or missing the claim entirely reports failures without panicking.
+func TestGitIgnoreHistory_GuideClaimWindow_Boundary(t *testing.T) {
+	claim := "A repository still carrying block v3 or v4 is recognised and re-rendered, not refused"
+	ref := "internal/adopt/gitignore_history_test.go"
+
+	recExact := &testRecorder{TB: t}
+	assertGuideClaimReference(recExact, claim, claim, ref, 250)
+	if !recExact.failed || !strings.Contains(recExact.message, "must be followed by") {
+		t.Fatalf("expected missing reference report when text ends at claim, got failed=%v msg=%q", recExact.failed, recExact.message)
+	}
+
+	recMissing := &testRecorder{TB: t}
+	assertGuideClaimReference(recMissing, "other guide content without the claim", claim, ref, 250)
+	if !recMissing.failed || !strings.Contains(recMissing.message, "missing historical compatibility claim") {
+		t.Fatalf("expected missing claim report, got failed=%v msg=%q", recMissing.failed, recMissing.message)
 	}
 }

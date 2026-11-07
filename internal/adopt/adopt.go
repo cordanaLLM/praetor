@@ -543,6 +543,7 @@ func adoptSteps() []namedStep {
 		{"formatter-ignore", reconcileFormatterIgnore},
 		{"renovate-ignore", reconcileRenovateIgnore},
 		{"actionlint-labels", reconcileActionlintLabels},
+		{"coderabbit", reconcileCodeRabbit},
 		{"contributing", reconcileContributing},
 		{"pull-request-template", reconcilePullRequestTemplate},
 		{"security-policy", reconcileSecurityPolicy},
@@ -586,13 +587,13 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 	if err := preflightSteps(ctx, s, declined); err != nil {
 		return err
 	}
+	if err := reportStaleEnginePin(ctx, s); err != nil {
+		return err
+	}
 	if err := runAdoptStepsChain(ctx, s, steps, declined); err != nil {
 		return err
 	}
 	reportIgnoredWrites(ctx, s)
-	if err := reportStaleEnginePin(ctx, s); err != nil {
-		return err
-	}
 	verifyAgentContext(ctx, s, declined)
 	return nil
 }
@@ -938,11 +939,16 @@ func (s *adoptSession) recordFirstBaseline(ctx context.Context, full string) err
 	return s.reconcileRuleBaselines(ctx, full, base)
 }
 
+// reconcileRuleBaselines runs adoption baseline reconciliation for image references, secret
+// scans, and release test levels against base, returning any reconciliation error.
 func (s *adoptSession) reconcileRuleBaselines(ctx context.Context, full string, base *baseline.Baseline) error {
 	if err := s.reconcileImageRefBaseline(ctx, full, base); err != nil {
 		return err
 	}
-	return s.reconcileSecretsBaseline(ctx, full, base)
+	if err := s.reconcileSecretsBaseline(ctx, full, base); err != nil {
+		return err
+	}
+	return s.reconcileReleaseTestLevelsBaseline(ctx, full, base)
 }
 
 // saveBaseline writes base to full; a dry run writes nothing.

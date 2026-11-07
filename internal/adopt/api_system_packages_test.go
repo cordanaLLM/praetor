@@ -32,7 +32,7 @@ func declareAPIPackages(t *testing.T, s *adoptSession, expires string, packages 
 		}
 	}
 	if expires != "" {
-		body += "exceptions:\n  - rule: api-compatibility\n    path: lib/go.mod\n    reason: needs a header the runner lacks\n    expires: \"" + expires + "\"\n"
+		body += "exceptions:\n  - rule: api-compatibility\n    path: lib/go.mod\n    category: D\n    reason: needs a header the runner lacks\n    expires: \"" + expires + "\"\n"
 	}
 	mustWrite(t, filepath.Join(s.repoPath, config.ManifestFileName), body)
 }

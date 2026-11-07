@@ -32,6 +32,10 @@ receipt:
 profiles:
   - "framework"
 
+verification:
+  # portability.yml carries the rendered review-hold script and exceeds 60 KiB.
+  max_file_bytes: 262144
+
 facets:
   - "security:high"
   - "api:public-contract"
@@ -76,8 +80,15 @@ overrides:
 # Declared per-file exceptions (AGENTS.md rule 14): one rule, one file, a reason and an expiry
 # at most 90 days ahead; an expired entry fails its gate like a missing one.
 exceptions:
+  - rule: "codespell"
+    path: "tools/figures/player/player.js"
+    category: "D"
+    reason: "category D: bundled minified third-party player; preserve upstream bytes while checking owned prose and source"
+    entered: "2026-11-04"
+    expires: "2027-03-04"
   - rule: "HISS-11"
     path: ".github/workflows/release-binaries.yml"
+    category: "D"
     reason: "release provenance not yet built by an isolated Level 3 builder; the release job reaches Level 2 (#799)"
     expires: "2027-01-04"
   - rule: "HISS-19"
@@ -116,9 +127,9 @@ register:
   # complete prompt, hook-diagnostic, and MCP runtime inventory selected below;
   # deleting one value or selector fails the gate.
   sources:
-    expected: 286
+    expected: 290
     not_applicable: 142
-    sha256: "sha256:7368594a5a98f3cd2eff8ee0a6876d4d5c07504992ac04a173f58fd1d0d61539"
+    sha256: "sha256:5fbd94399809068efac62906b81167b36490a1c2d165e2fb693d8d760dc44b9c"
     inputs:
       - path: ".paperclip/harness.json"
         surface: prompts
@@ -257,6 +268,8 @@ docs_surfaces:
   - name: "platform neutrality gate"
     paths:
       - ".github/workflows/portability.yml"
+      - ".github/workflows/review-hold-release.yml"
+      - "internal/ghworkflow/reviewhold*.go"
       - "scripts/portability_selftest.py"
     docs:
       - "docs/standards/hiss-21-platform-neutrality.md"

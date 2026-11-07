@@ -120,7 +120,8 @@ func reconcileActionlintLabels(ctx context.Context, s *adoptSession) error {
 		s.report.recordReconciled(rel, "actionlint already accepts the runner labels of the Praetor-managed workflows")
 		return nil
 	}
-	return publishActionlintConfig(ctx, s, rel, data, merged, added)
+	return publishAdoptionMerge(ctx, s, rel, data, merged, "Declared "+strings.Join(added, ", ")+
+		" under self-hosted-runner.labels, runner labels of the Praetor-managed workflows actionlint does not know; every other line is kept")
 }
 
 // actionlintManagedLabels returns the runner labels actionlint does not know that the workflows
@@ -191,9 +192,9 @@ func reportActionlintUnsafe(s *adoptSession, rel string, labels []string, reason
 	return nil
 }
 
-// publishActionlintConfig writes merged over data, bound to the observed bytes, and reports the
-// labels it added. A dry run reports the write it would make.
-func publishActionlintConfig(ctx context.Context, s *adoptSession, rel string, data, merged []byte, added []string) error {
+// publishAdoptionMerge writes merged over the observed bytes and reports details. A dry run
+// records the planned content without writing. Key-level reconcilers share this snapshot guard.
+func publishAdoptionMerge(ctx context.Context, s *adoptSession, rel string, data, merged []byte, details string) error {
 	if !s.opts.DryRun {
 		full, err := repoFile(s.repoPath, rel)
 		if err != nil {
@@ -205,8 +206,7 @@ func publishActionlintConfig(ctx context.Context, s *adoptSession, rel string, d
 		}
 	}
 	s.planDryRunWrite(rel, merged)
-	s.report.recordReconciledAs(rel, actionMerge, "Declared "+strings.Join(added, ", ")+
-		" under self-hosted-runner.labels, runner labels of the Praetor-managed workflows actionlint does not know; every other line is kept")
+	s.report.recordReconciledAs(rel, actionMerge, details)
 	return nil
 }
 
@@ -367,7 +367,7 @@ func patchActionlintLabels(text manifestText, layout actionlintLayout, missing [
 		block := actionlintItems(missing, strings.Repeat(" ", layout.labelsKey.Column-1+unit), "\n")
 		return replaceNullValueLine(text, layout.labelsKey, layout.labels, block)
 	case layout.labels.Style&yaml.FlowStyle != 0:
-		return extendFlowLabels(text, layout, missing)
+		return extendFlowYAMLSequence(text, layout.labels, missing)
 	}
 	boundary := nextKeyLine(layout.root, layout.runnerAt, len(text.lines)+1)
 	end := text.blockEnd(nextKeyLine(layout.runner, layout.labelsAt, boundary))
@@ -403,10 +403,9 @@ func replaceNullValueLine(text manifestText, key, value *yaml.Node, block string
 	return string(text.splice(at, at+1, keyLine+"\n"+block)), true
 }
 
-// extendFlowLabels appends missing inside a flow sequence written on one line, before its
+// extendFlowYAMLSequence appends missing inside a flow sequence written on one line, before its
 // closing bracket and any trailing comment.
-func extendFlowLabels(text manifestText, layout actionlintLayout, missing []string) (string, bool) {
-	labels := layout.labels
+func extendFlowYAMLSequence(text manifestText, labels *yaml.Node, missing []string) (string, bool) {
 	at := labels.Line - 1
 	if at < 0 || at >= len(text.lines) || slices.ContainsFunc(labels.Content, func(entry *yaml.Node) bool { return entry.Line != labels.Line }) {
 		return "", false

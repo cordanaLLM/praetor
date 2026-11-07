@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
@@ -24,6 +26,7 @@ type Archetype struct {
 	Runtime               string
 	Complexity            ComplexityOverride
 	Controls              ArchetypeControls
+	ReleaseTestLevels     []string
 	DevFeaturesByLanguage map[string][]DevContainerFeature
 	Backlog               BacklogCaps
 }
@@ -53,6 +56,7 @@ type archetypeDocument struct {
 	ErrorUnwraps          ErrorUnwrapMode        `yaml:"error_unwraps"`
 	BranchProtection      BranchProtectionPolicy `yaml:"branch_protection"`
 	SupplyChain           SupplyChainPolicy      `yaml:"supply_chain"`
+	ReleaseTestLevels     []string               `yaml:"release_test_levels"`
 	Linters               []string               `yaml:"linters"`
 	DevContainerFeatures  yaml.Node              `yaml:"devcontainer_features"`
 	DevFeaturesByLanguage yaml.Node              `yaml:"devcontainer_features_by_language"`
@@ -118,6 +122,8 @@ func decodeArchetype(ctx context.Context, path string, data []byte) (Archetype, 
 	return archetype, nil
 }
 
+// archetype constructs an Archetype model from the parsed document at path, decoding complexity
+// limits, devcontainer features, and language-specific settings.
 func (d *archetypeDocument) archetype(path string) (Archetype, error) {
 	id := strings.TrimSpace(d.ID)
 	if id == "" {
@@ -142,10 +148,13 @@ func (d *archetypeDocument) archetype(path string) (Archetype, error) {
 	if err := controls.validate(); err != nil {
 		return Archetype{}, err
 	}
+	if err := validatePolicyNames(d.ReleaseTestLevels); err != nil {
+		return Archetype{}, fmt.Errorf("release_test_levels: %w", err)
+	}
 	return Archetype{
 		ID: id, Name: d.Name, Description: d.Description, Runtime: d.Runtime,
-		Complexity: complexity, Controls: controls, DevFeaturesByLanguage: byLanguage,
-		Backlog: d.Backlog.Caps,
+		Complexity: complexity, Controls: controls, ReleaseTestLevels: d.ReleaseTestLevels,
+		DevFeaturesByLanguage: byLanguage, Backlog: d.Backlog.Caps,
 	}, nil
 }
 
@@ -203,4 +212,71 @@ func (c ArchetypeControls) contribution(result *ResolvedPolicy) {
 		refs = append(refs, c.DevFeatures[i].Ref)
 	}
 	result.DevFeatures = refs
+}
+
+// ProfileReleaseTestLevels returns the release_test_levels declared for each profile in
+// .config/archetypes/<profile>.yaml under root, falling back to the shipped catalog when root
+// does not carry that profile file.
+func ProfileReleaseTestLevels(ctx context.Context, root string, profiles []string) (map[string][]string, error) {
+	result := make(map[string][]string, len(profiles))
+	for i := 0; i < len(profiles) && i < maxLockEntries; i++ {
+		profile := strings.TrimSpace(profiles[i])
+		if profile == "" {
+			continue
+		}
+		archetype, ok, err := loadProfileArchetype(ctx, root, profile)
+		if err != nil {
+			return nil, err
+		}
+		if ok && len(archetype.ReleaseTestLevels) > 0 {
+			result[profile] = append([]string(nil), archetype.ReleaseTestLevels...)
+		}
+	}
+	return result, nil
+}
+
+var shippedProfileArchetypeYAML = map[string]string{
+	"app-service":        "id: app-service\nrelease_test_levels:\n  - unit\n  - integration\n  - e2e\n  - load_soak\n  - recovery_restore\n",
+	"closed-private":     "id: closed-private\n",
+	"container-image":    "id: container-image\nrelease_test_levels:\n  - smoke\n",
+	"framework":          "id: framework\n",
+	"gitops-infra":       "id: gitops-infra\nrelease_test_levels:\n  - smoke\n",
+	"library-client":     "id: library-client\nrelease_test_levels:\n  - unit\n  - integration\n",
+	"native-gpu-systems": "id: native-gpu-systems\nrelease_test_levels:\n  - unit\n  - integration\n",
+	"org-health":         "id: org-health\n",
+	"os-image":           "id: os-image\nrelease_test_levels:\n  - smoke\n",
+	"pages-site":         "id: pages-site\n",
+	"planning-artifacts": "id: planning-artifacts\n",
+	"template-seed":      "id: template-seed\n",
+	"upstream-fork":      "id: upstream-fork\n",
+	"web-package":        "id: web-package\nrelease_test_levels:\n  - unit\n  - e2e\n  - a11y\n",
+}
+
+// loadProfileArchetype loads the archetype definition for profile from local configuration in
+// root or falls back to shipped embedded catalog YAML definitions.
+func loadProfileArchetype(ctx context.Context, root, profile string) (Archetype, bool, error) {
+	var localArch Archetype
+	foundLocal := false
+	if root != "" {
+		path := filepath.Join(root, ".config", "archetypes", profile+".yaml")
+		data, err := contextopt.ReadSnapshot(ctx, path)
+		if err == nil {
+			arch, decErr := decodeArchetype(ctx, path, data)
+			if decErr != nil || len(arch.ReleaseTestLevels) > 0 {
+				return arch, decErr == nil, decErr
+			}
+			localArch, foundLocal = arch, true
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return Archetype{}, false, err
+		}
+	}
+	src, ok := shippedProfileArchetypeYAML[profile]
+	if !ok {
+		if foundLocal {
+			return localArch, true, nil
+		}
+		return Archetype{}, false, fmt.Errorf("profile %q: %w", profile, ErrLockSourceMissing)
+	}
+	arch, decErr := decodeArchetype(ctx, profile+".yaml", []byte(src))
+	return arch, decErr == nil, decErr
 }

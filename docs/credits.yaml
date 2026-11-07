@@ -1718,6 +1718,17 @@ entries:
       - ".config/hook-lint/requirements.in"
     packages:
       - "pypi:ruff"
+  - name: "codespell"
+    url: "https://github.com/codespell-project/codespell"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "GPL-2.0-only"
+    use: "Checks the spelling of the engine's own staged text and, in CI, of the repository under `.codespellrc`"
+    paths:
+      - ".config/hook-lint/requirements.in"
+    packages:
+      - "pypi:codespell"
   - name: "yamllint"
     url: "https://github.com/adrienverge/yamllint"
     section: "tooling"

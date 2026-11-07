@@ -26,6 +26,8 @@ clang_tidy:
 exceptions:
   - rule: "clang-tidy-coverage"
     path: "src/win32/getopt.c"
+    category: "D"
+    entered: "2026-10-29"
     reason: "Windows-only unit; no lane configures a Windows build yet"
     expires: "2026-12-31"
 ```
@@ -125,8 +127,8 @@ its file and function is stale and fails the audit (`applyHISSExceptions` in
 | `lines` | Optional for `HISS-19` only: `"START-END"`, positive 1-based inclusive bounds on a clone location's start line. Malformed or reversed ranges are refused. When both `fingerprint` and `lines` are present, both must match. Omit both to retain whole-path dedupe matching; an entry matching no scoped location stays stale. |
 | `tool` | Only and always for `declared-linters` and backlog cap rules: the linter or `backlog` target the entry excuses. Neither sets `path` or `glob`, and no other rule takes `tool` (`config.ValidateExceptions`). |
 | `reason` | One line, at most 1024 bytes. |
-| `expires` | An explicit `YYYY-MM-DD` date. A states its own expiry within the 90-day bound that entries without a category keep; B, C and D allow at most 3, 10 and 120 days. The entry holds through its expiry day. |
-| `category` | The explicit field takes precedence. If omitted, a reason beginning with `category A`, `category B`, `category C` or `category D` supplies the category, case-insensitively. Otherwise the 90-day cap remains. The `mutants`, `codespell` and `ui-latency-source` rules require a category. |
+| `expires` | An explicit `YYYY-MM-DD` date within the category's rectification interval: `B` allows at most 3 days, `C` 10 days, `D` 120 days, and `A` its stated interval up to 90 days (`rules.CategoryDays` in `tools/secrets/rules/rules.go`). Legacy uncategorised entries keep the 90-day bound. The entry holds through its expiry day. |
+| `category` | Rectification category (`A` stated interval up to 90 days, `B` 3 days, `C` 10 days, `D` 120 days). Set `category` explicitly or begin `reason` with `category A`, `category B`, `category C` or `category D` (case-insensitively; the explicit field takes precedence, `Exception.expiryCategory` in `internal/config/exceptions.go`). Every exception with `entered` on or after `2026-10-29` (`rules.CategoryRequiredFrom`, re-exported as `config.CategoryRequiredFrom`), or with `entered` omitted and `expires` after `2026-11-28` (`rules.UncategorizedGraceUntil`, re-exported as `config.UncategorizedGraceUntil`, the D-free grace window so existing short-lived entries run out), must carry a category (`rules.CategoryExpiryProblem`, `TestCategoryExpiryCaps` in `tools/secrets/rules/expiry_test.go`, `TestValidateExceptionsCategoryCaps` in `internal/config/exceptions_expiry_test.go`). Existing uncategorised entries entered before `2026-10-29`, or without `entered` expiring on or before `2026-11-28`, keep the 90-day cap until they expire or are renewed. The `codespell` and `ui-latency-source` rules always require a category (`TestValidateExceptionsCodespell`, `TestException_UILatencySource`), while `mutants` keeps its existing handling (`uncategorizedExceptionExpiryProblem` in `internal/config/exceptions.go`, `TestValidateExceptionsCategories`). |
 | `entered` | Optional `YYYY-MM-DD` date anchoring the expiry cap. When omitted, the cap is measured from today. The maximum expiry is `entered` (or today) plus the applicable interval; an earlier expiry is allowed. |
 
 The `mutants` rule names one tracked mutation-tool configuration by `path`, such as
@@ -188,6 +190,27 @@ Filter entries due to expire soon by passing `--expiring-within=<days>`
 ```bash
 praetorctl exceptions list --expiring-within=14
 ```
+
+### Migrate legacy exception metadata
+
+Use one command to fill `category` and `entered` on entries missing both fields, including a manifest whose legacy expiry currently fails validation:
+
+```bash
+praetorctl exceptions migrate --config .standards.yaml
+praetorctl exceptions migrate --config .standards.yaml --write
+```
+
+The default is a dry run. `--write` applies resolvable proposals through the shared YAML encoder, preserving comments and mapping order. Entries with either field already populated are left alone. `entered` comes from the entry line's Git blame commit date in UTC; an uncommitted line or unavailable history falls back to today and explicitly names that fallback. `--today YYYY-MM-DD` controls that fallback and the validation date for replay (`PlanExceptionMigration` in `internal/config/exceptions_migrate.go`).
+
+A leading `category X` in `reason` determines the proposal. Otherwise the migration tries categories by increasing interval: B (3 days), C (10), A (stated interval, at most 90), then D (120). Every proposal must pass the engine's `rules.CategoryExpiryProblem` with the existing expiry unchanged. An entry no category admits, or whose reason category cannot admit its expiry, remains unresolved and is never rewritten. The command exits nonzero when any entry is unresolved; `--write` still applies the resolvable entries. `TestExceptionMigrationCategoryBoundaries`, `TestExceptionEnteredBlame`, `TestExceptionsMigrateDryRunAndWrite` and `TestExceptionsMigrateUnresolved` cover these contracts.
+
+Each legacy entry produces one line with manifest path, rule, target (file, glob or tool), existing expiry, proposed category, entered date, provenance and status, for example:
+
+```text
+path=.standards.yaml rule=declared-linters target=semgrep expires=2027-02-01 category=D entered=2026-11-02 source=today (git history unavailable) status=proposed
+```
+
+A broken manifest alone does not refuse a forge write without an active foreign reference; the hook reports the defect as a finding, allowing the repair PR to be created and merged ([hook behaviour](agent-hooks.md#forge-text-foreign-reference-guard)).
 
 The governance audit (`praetorctl audit`) warns before an exception expires: 14 days
 for uncategorized entries (`config.ExceptionExpiryWarningDays`), or a per-category

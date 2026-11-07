@@ -415,6 +415,8 @@ func AnalyzeCommit(message string) (*CommitAnalysis, error) {
 	return AnalyzeCommitWithPolicy(ctx, message, ClosingReferencePolicy{})
 }
 
+// AnalyzeCommitWithPolicy checks subject, body width, attribution and migration rules with the
+// caller's closing-reference policy. Body diagnostics retain the message's physical line numbers.
 func AnalyzeCommitWithPolicy(ctx context.Context, message string, closingPolicy ClosingReferencePolicy) (*CommitAnalysis, error) {
 	trimmed := strings.TrimSpace(message)
 	if trimmed == "" {
@@ -428,7 +430,11 @@ func AnalyzeCommitWithPolicy(ctx context.Context, message string, closingPolicy 
 	if reason := commitSubjectError(header); reason != "" {
 		res.Errors = append(res.Errors, reason)
 	}
+	res.Errors = append(res.Errors, commitBodyWidthErrors(message)...)
 	res.Errors = append(res.Errors, ForeignReferenceFindings(message, "commit message", closingPolicy.OwnOrganizations)...)
+	if attrErrors := commitAttributionErrors(trimmed); len(attrErrors) > 0 {
+		res.Errors = append(res.Errors, attrErrors...)
+	}
 	closingErrors, closingWarnings := closingReferenceFindings(ctx, trimmed, "commit message", closingPolicy)
 	res.Errors = append(res.Errors, closingErrors...)
 	res.Warnings = append(res.Warnings, closingWarnings...)

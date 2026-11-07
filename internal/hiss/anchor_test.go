@@ -252,3 +252,50 @@ func Other() {
 		}
 	}
 }
+
+// TestExtractFileFunctions_Positive_AllScannerFamilies verifies that ExtractFileFunctions returns
+// the function inventory across Go, brace, Python, script, and shell scanners.
+func TestExtractFileFunctions_Positive_AllScannerFamilies(t *testing.T) {
+	cases := []struct {
+		rel  string
+		src  string
+		want []FunctionSpan
+	}{
+		{"pkg/a.go", "package p\n\nfunc Alpha() {\n}\n\ntype S struct{}\n\nfunc (s *S) Beta() {\n}\n", []FunctionSpan{
+			{Name: "Alpha", Start: 3, End: 4},
+			{Name: "S.Beta", Start: 8, End: 9},
+		}},
+		{"src/lib.rs", "pub fn compute() {\n    let x = 1;\n}\n", []FunctionSpan{{Name: "compute", Start: 1, End: 3}}},
+		{"app/mod.py", "def run():\n    return 1\n", []FunctionSpan{{Name: "run", Start: 1, End: 2}}},
+		{"web/app.ts", "export function greet() {\n  return 1;\n}\n", []FunctionSpan{{Name: "greet", Start: 1, End: 3}}},
+		{"bin/run.sh", "#!/bin/sh\ndeploy() {\n  echo ok\n}\n", []FunctionSpan{{Name: "deploy", Start: 2, End: 4}}},
+		{"App.java", "class App {\n  void start() {\n  }\n}\n", []FunctionSpan{{Name: "start", Start: 2, End: 3}}},
+	}
+	for _, tc := range cases {
+		got, err := ExtractFileFunctions(tc.rel, []byte(tc.src))
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", tc.rel, err)
+		}
+		if len(got) != len(tc.want) {
+			t.Fatalf("%s: got %+v, want %+v", tc.rel, got, tc.want)
+		}
+		for i := range tc.want {
+			if got[i] != tc.want[i] {
+				t.Errorf("%s[%d]: got %+v, want %+v", tc.rel, i, got[i], tc.want[i])
+			}
+		}
+	}
+}
+
+// TestExtractFileFunctions_NegativeAndBoundary verifies empty, broken, and unsupported inputs.
+func TestExtractFileFunctions_NegativeAndBoundary(t *testing.T) {
+	if got, err := ExtractFileFunctions("a.go", nil); got != nil || err != nil {
+		t.Fatalf("empty data: got %+v, %v, want nil, nil", got, err)
+	}
+	if got, err := ExtractFileFunctions("a.go", []byte("package broken\nfunc (")); err == nil || got != nil {
+		t.Fatalf("invalid Go syntax: got %+v, %v, want nil and parse error", got, err)
+	}
+	if got, err := ExtractFileFunctions("README.md", []byte("# Heading\n")); got != nil || err != nil {
+		t.Fatalf("unsupported markdown: got %+v, %v, want nil, nil", got, err)
+	}
+}

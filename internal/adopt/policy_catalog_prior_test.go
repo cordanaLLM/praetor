@@ -45,6 +45,10 @@ var catalogValuesChangedSinceBUG782 = map[string]bool{
 	"container-image.yaml": true,
 	// library-client now has language-selected linter and DevContainer requirements.
 	"library-client.yaml": true,
+	// #1733: release_test_levels defaults added to archetypes that ship executable artifacts or state.
+	"gitops-infra.yaml":       true,
+	"native-gpu-systems.yaml": true,
+	"os-image.yaml":           true,
 }
 
 // Positive and negative, a deliberate tripwire: the shipped text of every earlier catalog file

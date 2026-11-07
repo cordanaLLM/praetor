@@ -4,13 +4,107 @@
 package forge
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"os"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
+
+// ResolveOwnOrganizations returns the trusted forge organisations from extra, the manifest at
+// manifestPath, and the repository owner from GITHUB_REPOSITORY (via getenv), the origin remote
+// of repo, or the manifest's repository.owner. A missing manifest or origin adds no extra owner;
+// invalid manifests and failed reads are errors.
+func ResolveOwnOrganizations(ctx context.Context, repo, manifestPath string, extra []string, getenv func(string) string) ([]string, error) {
+	resolved, err := ResolveOwnOrganizationSources(ctx, repo, manifestPath, extra, getenv)
+	if resolved.ManifestProblem != nil && !errors.Is(resolved.ManifestProblem, os.ErrNotExist) {
+		return resolved.Organizations, resolved.ManifestProblem
+	}
+	return resolved.Organizations, err
+}
+
+// OrganizationSources records independently trusted policy and a manifest finding. An invalid
+// manifest contributes no organisations; callers deciding writes can still inspect plain text
+// and use the operator layer or repository identity without accepting invalid policy.
+type OrganizationSources struct {
+	Organizations   []string
+	Sources         []string
+	ManifestProblem error
+}
+
+// ResolveOwnOrganizationSources shares the strict resolver's sources, retaining manifest
+// failures as findings. Identity lookup errors remain errors, never trusted policy.
+func ResolveOwnOrganizationSources(ctx context.Context, repo, manifestPath string, extra []string, getenv func(string) string) (OrganizationSources, error) {
+	ctx, cancel := context.WithTimeout(ctx, util.GitProbeTimeout)
+	defer cancel()
+	resolved := OrganizationSources{Organizations: slices.Clone(extra)}
+	if err := ctx.Err(); err != nil {
+		return resolved, fmt.Errorf("resolve organisation sources: %w", err)
+	}
+	if len(extra) > 0 {
+		resolved.Sources = append(resolved.Sources, "operator layer")
+	}
+	var manifest *config.Manifest
+	if manifestPath != "" {
+		var err error
+		manifest, err = config.LoadManifest(manifestPath)
+		if err != nil {
+			resolved.ManifestProblem = err
+		}
+	}
+	if manifest != nil && manifest.Forge != nil {
+		resolved.Organizations = append(resolved.Organizations, manifest.Forge.OwnOrganizations...)
+		resolved.Sources = append(resolved.Sources, "valid manifest")
+	}
+	owner, source, err := resolveReferenceOwner(ctx, repo, manifest, getenv)
+	if err != nil {
+		return resolved, err
+	}
+	if owner != "" {
+		resolved.Organizations = append(resolved.Organizations, owner)
+		resolved.Sources = append(resolved.Sources, source)
+	}
+	return resolved, nil
+}
+
+// resolveReferenceOwner resolves the repository owner from GITHUB_REPOSITORY (via getenv),
+// the origin remote of repo, or manifest.Repository.Owner, refusing malformed
+// GITHUB_REPOSITORY values and unexpected remote-lookup errors.
+func resolveReferenceOwner(ctx context.Context, repo string, manifest *config.Manifest, getenv func(string) string) (string, string, error) {
+	if identity := lookupEnv(getenv, "GITHUB_REPOSITORY"); identity != "" {
+		owner, name, _ := strings.Cut(identity, "/")
+		if err := util.ValidateGitHubRepositoryIdentity(owner, name); err != nil {
+			return "", "", fmt.Errorf("GITHUB_REPOSITORY: %w", err)
+		}
+		return owner, "GITHUB_REPOSITORY", nil
+	}
+	if repo != "" {
+		owner, _, err := util.ResolveRemoteIdentity(ctx, repo)
+		if err == nil {
+			return owner, "git remote owner", nil
+		}
+		if !errors.Is(err, util.ErrRepoIdentityUnresolved) {
+			return "", "", err
+		}
+	}
+	if manifest != nil {
+		return manifest.Repository.Owner, "valid manifest repository.owner", nil
+	}
+	return "", "", nil
+}
+
+// lookupEnv reads key through getenv, returning an empty string when getenv is nil.
+func lookupEnv(getenv func(string) string, key string) string {
+	if getenv == nil {
+		return ""
+	}
+	return getenv(key)
+}
 
 // Order: engine-fr-rule-checks-20261027. Use the closing-reference grammar and decoder.
 var textReferenceRegex = regexp.MustCompile(`(?i)^(` + referencePattern("issues|pulls?|discussions", "[#!]") + `)\b`)

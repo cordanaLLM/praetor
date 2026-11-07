@@ -129,8 +129,10 @@ SPDX-License-Identifier = "MIT"
 	}
 }
 
+// checkAnnotationTablesEscaped verifies TOML escape sequences, literal quotes, and unicode escapes in REUSE annotation path lists are properly unescaped.
 func checkAnnotationTablesEscaped(t *testing.T) {
 	t.Helper()
+	// codespell:ignore-next-line caf
 	escaped := reuseTables(t, "[[annotations]]\npath = [\"a\\\\*\", 'b\\*', \"caf\\u00e9.md\"]\nSPDX-License-Identifier = \"MIT\"\n")
 	if want := []string{`a\*`, `b\*`, "café.md"}; len(escaped) != 1 || !slices.Equal(escaped[0].Paths, want) {
 		t.Fatalf("escaped paths: %+v, want %q", escaped, want)

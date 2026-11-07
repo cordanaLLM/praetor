@@ -176,6 +176,20 @@ var priorDigests = map[string]string{
 	"0be401a70257a7ed289899f211b9f8e6a3b6bf9eede7a56fd02631e9e7638d88": Directory + "/" + GateFile,
 	// The gate before it retried module downloads before comparing API (engine-praetor-api-modfetch-retry-20261022).
 	"b6585e9dad8f57a95c6f2dafa468c70ef531bd42137eba822bd8a5ac3afe00a9": Directory + "/" + GateFile,
+	// The gate before it bounded download retries by the job deadline and skipped test-only requirements.
+	"a7f11ff7dcf942b9f512e40e66461a49c71f85849dc193eb5b8a293ac8e774cd": Directory + "/" + GateFile,
+	// Outgoing review-round text; fixture: api-gate-main-review-round1.go.txt.
+	"869763a8882cc4f0b42ca124e65f437c1fa053216c34d55ae0a782eb80bf6674": Directory + "/" + GateFile,
+	// Outgoing review-round text; fixture: api-gate-main-review-round2-part1.go.txt.
+	"e47317524a826cc53a10d79d5585593257550d81a49720deaa8cef15cba9751b": Directory + "/" + GateFile,
+	// Outgoing review-round text; fixture: api-gate-main-review-round3.go.txt.
+	"74db35a4f67178bb615b0e676cea658c528889e28f5538d9219734f5d8ff66ed": Directory + "/" + GateFile,
+	// Outgoing review-round text; fixture: api-gate-main-review-round4.go.txt.
+	"6c71ce27ceac0d9f6fb438574490ef74a5b31c4bcc35dc48c269d78748e4ffcc": Directory + "/" + GateFile,
+	// Outgoing review-round text; fixture: api-gate-main-review-round5.go.txt.
+	"9127c94ae1aa6b1aeee2f1b42ae0408e68e471adf927ab6aa43282a41f17283f": Directory + "/" + GateFile,
+	// Outgoing review-round text; fixture: api-gate-main-review-round6.go.txt.
+	"a57af7537bc9c1e3b6b6be6be839c991b26562c1daafbaedbad334d9f88d3507": Directory + "/" + GateFile,
 }
 
 var assetNames = [...]string{GateFile, PlaceholderFile}

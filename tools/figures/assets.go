@@ -187,6 +187,25 @@ var priorDigests = map[string]string{
 	"bf2646129a0c5923daad5b36fdae6b0d7abd7748e6150a2b846a0f51d09fe0c8": Directory + "/mkdocs_hook.py",
 	// VENDOR.md while lines 33, 123, 128, 135 still named the engine-only player directory and bundle step.
 	"89e498132bbf2b9ec15d91b8043395dfe02c352580b89affe8b4a3d7fe13f454": Directory + "/third_party/interfig/VENDOR.md",
+	// Assets before the release host check, Astro locked-player fetch and unreleased-pin docs.
+	"9387798626f5e7ee522be147d140bbc14a6d42ada1cdc7d49ba719ad58447f20": Directory + "/mkdocs_hook.py",
+	"8db774ed65d587aefeffdae6d2bcc227d9bd3c7a61d01f51bd1580dd1445cdde": Directory + "/astro.mjs",
+	"00a60626eb2d7e232a3aeb831f854ca4f97393570ba6fca07220c1c78930da5f": Directory + "/checks.mjs",
+	"8aa976bb6c60cb167e100b5256002559d86373951d0f6d9435b9750a6bf64ec7": Directory + "/README.md",
+	// Outgoing review-round text; fixture: figures-astro-review-round1.mjs.txt.
+	"1ff5529c53aa9c7c1514eeea40e2772e7838fd9622d979122eaab75dfb95ef1b": Directory + "/astro.mjs",
+	// Outgoing review-round text; fixture: figures-astro-review-round2-part1.mjs.txt.
+	"28c187d2788633dcbe68f5b11c599683f1bc2606696556b4f043cc51dac933f3": Directory + "/astro.mjs",
+	// Outgoing review-round text; fixture: figures-mkdocs_hook-review-round1.py.txt.
+	"84afc44008d4f5432e62dc3739d8fa0b1922ee2ff101195de877741c766e97cc": Directory + "/mkdocs_hook.py",
+	// Outgoing review-round text; fixture: figures-mkdocs_hook-review-round2-part1.py.txt.
+	"8b84933fa5d19f74c6e9d642da60f674ed5bad091267c2691c316476ad9b97eb": Directory + "/mkdocs_hook.py",
+	// Outgoing review-round text; fixture: figures-astro-review-round2-part2.mjs.txt.
+	"f2ad5050408a1938cfdb646e2389f5aead53a8364606f79932310a082833d4c2": Directory + "/astro.mjs",
+	// Outgoing review-round text; fixture: figures-mkdocs_hook-review-round2-part2.py.txt.
+	"c98a28d2e3a43ca2963d7cbdbf636ad78ed620cc4639c1102bc1c74ee8286cc9": Directory + "/mkdocs_hook.py",
+	// astro.mjs before the player download validated every redirect.
+	"f9d0f2df2922acbe2abd75bf1437fca1264a35a5c2e118beafd6fc2abdbc2f10": Directory + "/astro.mjs",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts figures.css mkdocs_hook.py astro.mjs serve.mjs eslint.figures.mjs README.md

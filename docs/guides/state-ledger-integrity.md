@@ -39,6 +39,10 @@ the same ledgerless directory at once; staged publication means each name is
 either absent or holds its whole template, never a zero-byte file an audit would
 read as a corrupt ledger.
 
+`InitWorkingDirIfAbsentContext` keeps the caller's deadline. A context without a
+deadline gets the 10 s fallback `defaultBootstrapTimeout` (HISS-02), and a
+caller's shorter deadline is never lengthened.
+
 Both forms of `praetorctl state init` then make Git ignore the directory, unless
 the path is not a directory at all. Every other command that writes into the
 ledger, and seeds it on first use, does the same: `state sync`, `state task add`,
@@ -84,11 +88,14 @@ ignores the legacy scratch root `.workingdir2/` (`state.LegacyWorkingDirName`)
 unless the repository retired it
 ([Adoption, audit, and CI](documentation-governance.md#adoption-audit-and-ci)).
 Since block v4 it also ignores `/.claude/settings.local.json`, the per-user settings file
-Claude Code writes on first use, and the gate receipt `/.standards-receipt.json`. Without the
-first rule, `praetorctl state status` counted every checkout a client had run in as dirty;
-`internal/state/client_local_settings_test.go` reports a checkout holding only that file as
-clean and the same checkout without the rule as dirty. A repository still carrying block v3 is
-recognised and re-rendered, not refused.
+Claude Code writes on first use, and the gate receipt `/.standards-receipt.json`. Since block v5
+it also ignores Codacy editor files (`/.codacy/`, `.github/instructions/codacy.instructions.md`,
+and `.cursor/rules/codacy.mdc`). Without the first rule, `praetorctl state status` counted every
+checkout a client had run in as dirty; `internal/state/client_local_settings_test.go` reports a
+checkout holding only that file as clean and the same checkout without the rule as dirty.
+A repository still carrying block v3 or v4 is recognised and re-rendered, not refused
+(`TestLookupManagedGitIgnoreTail_Positive` in
+[`internal/adopt/gitignore_history_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/gitignore_history_test.go)).
 A `.gitignore` that cannot be merged, such as one with an unterminated managed
 block, fails the command. The behaviour is covered by
 [`internal/adopt/private_ignore_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/private_ignore_test.go),

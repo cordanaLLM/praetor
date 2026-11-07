@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -22,10 +23,10 @@ var dottedDashArgument = regexp.MustCompile("(?:^|\\s)(-[^\\s\"'`]*\\.[^\\s\"'`]
 // maxArgumentsPerStep bounds the matches read from one run script (HISS-02).
 const maxArgumentsPerStep = 64
 
-// windowsLeg reports whether one of job's matrix legs runs on a Windows image. The leg is
+// windowsLeg reports whether job or one of its matrix legs runs on a Windows image. The leg is
 // identified by its image family, not one label, as in the Markdown gate check.
 func windowsLeg(job workflowJob) bool {
-	images := matrixOSLegs(job)
+	images := append(matrixOSLegs(job), ghworkflow.RunnerLabels(&job.RunsOn)...)
 	for i := 0; i < len(images) && i < maxMatrixLegs; i++ {
 		if strings.HasPrefix(images[i], "windows-") {
 			return true
@@ -84,13 +85,13 @@ func TestPortabilityPassesNoDottedDashArgumentThroughPowerShell(t *testing.T) {
 	if err := yaml.Unmarshal(workflows["portability.yml"], &portability); err != nil {
 		t.Fatalf("parse portability.yml: %v", err)
 	}
-	harness := portability.Jobs["harness"]
+	winShard := portability.Jobs["windows-shard"]
 	installs := false
-	for i := 0; i < len(harness.Steps) && i < maxStepsPerJob; i++ {
-		installs = installs || strings.Contains(harness.Steps[i].Run, "-modfile=tools/go/go.mod")
+	for i := 0; i < len(winShard.Steps) && i < maxStepsPerJob; i++ {
+		installs = installs || strings.Contains(winShard.Steps[i].Run, "-modfile=tools/go/go.mod")
 	}
-	if !windowsLeg(harness) || !installs {
-		t.Fatalf("portability harness: Windows leg %t, installs from tools/go/go.mod %t", windowsLeg(harness), installs)
+	if !windowsLeg(winShard) || !installs {
+		t.Fatalf("portability windows-shard: Windows leg %t, installs from tools/go/go.mod %t", windowsLeg(winShard), installs)
 	}
 }
 

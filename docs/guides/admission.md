@@ -121,6 +121,32 @@ covered by `TestAdmission_IsolatedPush_*` in `internal/agenthook/admission_test.
 pre-tool payload and exit codes are covered by `TestHookClaudeIsolatedPushAdmission` in
 `cmd/standardsctl/hook_test.go`.
 
+### Merged and closed pull request heads
+
+Every judged `git push` (`PRAETOR_ADMIT=<label> git push ...` and `praetorctl admit ... -- git push ...` alike) also checks that the destination branch is not the head of an already merged or closed pull request (`internal/agenthook/admission.go`: `judgePush`, `judgePushHead`).
+
+The hook resolves:
+
+- the repository directory from the invocation's working directory or `git -C <dir>`;
+- the remote from the named argument (`--repo` or positional remote, or the remote named by `@{push}` when omitted, else `origin` for `--all`) through `util.ReadOriginRemote`, `util.ReadGitRemote` and `util.ParseGitRemote` (`internal/util/util.go`);
+- the destination branch from an explicit refspec destination (`src:dst`, plain branch name, or `HEAD` / `@` resolved to the current branch through `git symbolic-ref --quiet --short HEAD`), from `git rev-parse --symbolic-full-name @{push}` when the refspec is omitted (refusing when Git cannot resolve `@{push}`, such as no upstream, `push.default=nothing`, or a detached `HEAD`), or from `git for-each-ref refs/heads` for `git push --all` / `--branches` (up to `agenthook.MaxPushAllBranches = 32` local branches, refusing above the bound).
+
+`git push --mirror` is refused because it rewrites every branch on the remote; callers push branches one by one instead. Delete pushes (`--delete`, `-d`, `:branch`) and tag pushes (`--tags`, `tag <name>`, `refs/tags/<name>`) are not judged. For branch pushes, the hook checks pull requests in this order under a 15-second context timeout:
+
+1. Query open pull requests for the head branch, starting at `page=1` with a bounded page size of `forge.HeadPullRequestsPerPage = 20`. Filter each page to the pushed repository and branch; any matching `OPEN` pull request admits the push immediately, regardless of the number of closed pull requests on that branch. If no match is found on a full raw page, request the next open page, up to `forge.HeadPullRequestsMaxPages = 5`. A short raw page ends the open results. A full fifth page without a match refuses the push with `open pull request head listing ... exceeded 5 pages of 20 items`; closed pulls are not queried when the open-page bound is reached.
+2. Only after the open results end without a matching open pull request, query the first page of closed pull requests, newest-created first. GitHub uses `state=closed&head={owner}:{branch}&sort=created&direction=desc&per_page=20&page=1`. Forgejo uses `state=closed&head={branch}&page=1&limit=20`, with `sort` omitted to select its newest-created-first default. The first terminal page decides; a full page does not trigger a history walk or a pagination-ceiling refusal.
+3. Filter each response to the destination head branch and, when present, its repository metadata. Prefer the first `MERGED` match over the first `CLOSED` match on the terminal page. No matching pull request admits the push; network, HTTP status and parsing errors refuse it.
+
+The open queries use the same driver parameters with `state=open`. The drivers are `forge.GitHubDriver.ListPullRequestsByHead` and `forge.GiteaDriver.ListPullRequestsByHead`; the reader interface and `PullRequestHead` shape are shared. Query parameters follow the [GitHub pull request API](https://docs.github.com/en/rest/pulls/pulls#list-pull-requests) and [Gitea pull request API](https://docs.gitea.com/api/1.25/operations/repo-list-pull-requests/). Forgejo v17.0.1's [OpenAPI schema](https://codeberg.org/forgejo/forgejo/src/tag/v17.0.1/templates/swagger/v1_json.tmpl) confirms `state`, `head`, `page` and `limit`; its [pull listing](https://codeberg.org/forgejo/forgejo/src/tag/v17.0.1/models/issues/pull_list.go) calls the [default sort implementation](https://codeberg.org/forgejo/forgejo/src/tag/v17.0.1/models/issues/issue_search.go), which orders by creation time descending, then ID descending. Gitea's [default sort](https://github.com/go-gitea/gitea/blob/v1.25.0/models/issues/issue_search.go) uses the same order. These references were checked on 2026-11-04.
+
+When a `MERGED` or `CLOSED` pull request heads the branch and no `OPEN` pull request does, the push is refused naming the pull request number and state and instructing the caller to push to a new branch:
+
+```text
+[BLOCKED BY HISS] git push to branch merged-topic on acme/widgets refused: pull request #42 is MERGED; push to a new branch instead (docs/guides/admission.md)
+```
+
+When the target repository, remote, branch or forge pull request listing cannot be read, the check fails closed with a named refusal (`git push target resolution failed` or `git push forge pull request check failed`). A branch with no pull request or with an `OPEN` pull request passes (`TestAdmission_GitPushHead_*` in `internal/agenthook/admission_test.go`).
+
 ### Scope form and memory refusal
 
 With `hooks.admission.scope_form: true`, the pre-tool hook also accepts a direct

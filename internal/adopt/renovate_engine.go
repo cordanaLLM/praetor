@@ -72,6 +72,7 @@ func AuditRenovateEngineBumps(ctx context.Context, root string) (string, error) 
 	return "[PASS] renovate-engine-bumps: " + rel + " disables engine packages; updates arrive through coordinated adoption.", nil
 }
 
+// mergeRenovateAdoptionRules orchestrates adoption rules, engine bumps disablement, and workflow pin managers into Renovate configuration.
 func mergeRenovateAdoptionRules(ctx context.Context, s *adoptSession, data []byte, paths []string) ([]byte, []string, bool, error) {
 	merged, declared, changed, err := mergeRenovateRule(ctx, data, paths)
 	if err != nil {
@@ -94,13 +95,18 @@ func mergeRenovateAdoptionRules(ctx context.Context, s *adoptSession, data []byt
 	if engineChanged {
 		merged = next
 	}
-	return merged, declared, changed || engineChanged, nil
+	next, pinChanged, err := mergeRenovatePinManager(merged)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	return next, declared, changed || engineChanged || pinChanged, nil
 }
 
+// mergeRenovateEngineRule ensures Renovate configuration disables automatic bumps for Praetor engine packages.
 func mergeRenovateEngineRule(ctx context.Context, data []byte) ([]byte, bool, error) {
-	text, crlf, err := util.NormalizeLineEndingsStrict(string(data))
+	text, crlf, err := normalizeRenovateDocument(data)
 	if err != nil {
-		return nil, false, renovateUnsafe("its line endings are mixed")
+		return nil, false, err
 	}
 	if err := clientjson.Validate(ctx, []byte(text)); err != nil {
 		return nil, false, renovateUnsafe("engine rule requires strict JSON: %v", err)
@@ -128,8 +134,9 @@ func mergeRenovateEngineRule(ctx context.Context, data []byte) ([]byte, bool, er
 	return []byte(util.RestoreLineEndings(string(encoded), crlf)), true, nil
 }
 
+// withRenovateEngineRule appends or updates the packageRule entry that disables engine package updates.
 func withRenovateEngineRule(rules []jsontext.Value) ([]jsontext.Value, bool, error) {
-	found, err := findRenovateRule(rules, renovateEngineDescription)
+	found, err := findRenovateRule(rules, renovateEngineDescription, "packageRules")
 	if err != nil {
 		return nil, false, err
 	}

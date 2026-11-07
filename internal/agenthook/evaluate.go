@@ -10,8 +10,8 @@ import (
 )
 
 // Evaluation budgets (3.3 of the rollout spec), each inside its registration's own timeout
-// (registrations.go). Stop nests two of its own: state verification, then the checkpoint due
-// check; budgetFor sums them for the one outer deadline Run applies.
+// (registrations.go). Stop sums review, state and checkpoint budgets for the outer
+// deadline Run applies; the question check performs no I/O.
 const (
 	preToolBudget        = 10 * time.Second
 	preEditBudget        = 10 * time.Second
@@ -43,7 +43,7 @@ func budgetFor(event Event) time.Duration {
 	case EventPostTool:
 		return postToolBudget
 	case EventStop:
-		return stateVerifyBudget + stopCheckpointBudget
+		return stopReviewBudget + stateVerifyBudget + stopCheckpointBudget
 	case EventEnvironment:
 		return environmentBudget
 	default:
@@ -163,15 +163,17 @@ func checkpointWired(client string) bool {
 	return client == "claude" || client == "codex" || client == "gemini"
 }
 
+// dispatch routes an evaluated hook invocation to the agent-traffic, stop, pre-edit,
+// post-tool or command evaluator for row.Client and row.Event.
 func dispatch(ctx context.Context, row Registration, canonical Canonical, root string, in Invocation) Verdict {
 	if agentTrafficEvent(row.Event) {
 		return evaluateAgentTraffic(ctx, row, canonical, root, in)
 	}
 	if !checkpointWired(row.Client) {
 		if row.Event == EventStop {
-			return evaluateStopQuestion(row, canonical)
+			return mergeStopChecks(evaluateStopQuestion(row, canonical), evaluateStopReviewThreads(ctx, root))
 		}
-		return evaluateCommand(canonical, in)
+		return evaluateCommand(ctx, canonical, root, in)
 	}
 	switch row.Event {
 	case EventPreEdit:
@@ -181,15 +183,24 @@ func dispatch(ctx context.Context, row Registration, canonical Canonical, root s
 	case EventStop:
 		return evaluateStop(ctx, row, root, canonical, in)
 	default:
-		return evaluateCommand(canonical, in)
+		return evaluateCommand(ctx, canonical, root, in)
 	}
 }
 
-func evaluateCommand(canonical Canonical, in Invocation) Verdict {
+// evaluateCommand runs the built-in command policy, resolved against the command's working
+// directory, and the forge-text foreign-reference guard on canonical.Command, refusing commands
+// that violate either check.
+func evaluateCommand(ctx context.Context, canonical Canonical, root string, in Invocation) Verdict {
 	if canonical.Command == "" {
 		return Verdict{Outcome: Allow}
 	}
-	return in.Policy.Command(canonical.Command)
+	verdict := in.Policy.CommandIn(ctx, canonical.Command, commandBase(canonical, in.WorkDir))
+	if verdict.Outcome != Allow {
+		return verdict
+	}
+	forgeVerdict := evaluateForgeTextRefs(ctx, canonical, root, in)
+	forgeVerdict.Notice = appendLaneNotice(verdict.Notice, forgeVerdict.Notice)
+	return forgeVerdict
 }
 
 // noInterpreterVerdict differs per event (3.3): pre-edit and stop fail closed (deny; stop's
@@ -254,31 +265,46 @@ func evaluatePostTool(ctx context.Context, canonical Canonical, root string, in 
 }
 
 // evaluateStop runs every stop check on each pass: the prose-question check
-// (stop_question.go, no I/O), the state ledger verify and the checkpoint (3.3: a stale or
+// (stop_question.go, no I/O), own PR reviews, the state ledger verify and the checkpoint (3.3: a stale or
 // unverifiable ledger blocks on its own, independent of whether a checkpoint is due). On the
 // first pass one deny lists each failing check, so the single continuation a block-once stop
 // grants is not spent on the question alone. On the repeated pass (StopActive) the question
 // is a stated skip and a still-failing ledger or checkpoint halts, naming what remains.
 // The question's stated skip survives an otherwise clean stop.
 func evaluateStop(ctx context.Context, row Registration, root string, canonical Canonical, in Invocation) Verdict {
+	reviews := evaluateStopReviewThreads(ctx, root)
 	question := evaluateStopQuestion(row, canonical)
 	ledger := evaluateStopLedger(ctx, root, canonical)
 	checkpoint := evaluateStopCheckpoint(ctx, root, canonical, in)
+	return mergeStopChecks(question, ledger, checkpoint, reviews)
+}
+
+// mergeStopChecks combines multiple stop check verdicts, prioritizing denials while preserving any stated skips.
+func mergeStopChecks(checks ...Verdict) Verdict {
 	var denies []Verdict
-	for _, v := range []Verdict{question, ledger, checkpoint} {
+	for _, v := range checks {
 		if v.Outcome == Deny {
 			denies = append(denies, v)
 		}
 	}
 	if len(denies) > 0 {
-		return joinStopDenies(denies)
+		return withStopSkips(joinStopDenies(denies), checks)
 	}
-	for _, v := range []Verdict{ledger, checkpoint} {
-		if v.Outcome != Allow {
-			return v
+	return withStopSkips(Verdict{Outcome: Allow}, checks)
+}
+
+// withStopSkips preserves every stated skip and notice alongside the combined stop verdict.
+func withStopSkips(verdict Verdict, checks []Verdict) Verdict {
+	for _, check := range checks {
+		verdict.Notice = appendLaneNotice(verdict.Notice, check.Notice)
+		if check.Outcome == Skip {
+			if verdict.Outcome == Allow {
+				verdict.Outcome = Skip
+			}
+			verdict.Reason = strings.TrimSpace(verdict.Reason + " " + check.Reason)
 		}
 	}
-	return question
+	return verdict
 }
 
 // joinStopDenies merges every failing stop check into one deny: the first reason leads and

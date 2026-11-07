@@ -19,7 +19,9 @@ import (
 // from files this repository holds, as renovatebot/renovate declares them in
 // lib/modules/manager/dockerfile/index.ts and lib/modules/manager/devcontainer/index.ts.
 var renovateImageManagerPatterns = []string{
+	// codespell:ignore-next-line ontainer
 	`(^|/|\.)([Dd]ocker|[Cc]ontainer)file$`,
+	// codespell:ignore-next-line ontainer
 	`(^|/)([Dd]ocker|[Cc]ontainer)file[^/]*$`,
 	`^.devcontainer/devcontainer.json$`,
 	`^.devcontainer.json$`,

@@ -359,21 +359,26 @@ func manifestOutput(ctx context.Context, document *yaml.Node, patched []byte, pa
 // absent. A null register (`register:` with no children, or only commented-out ones) loads
 // as no register policy, so it is replaced by an empty mapping that keeps its comments.
 func manifestRegisterMapping(root *yaml.Node) (*yaml.Node, error) {
-	register, found, err := adoptYAMLMappingValue(root, "register")
+	return ensureAdoptYAMLMapping(root, "register")
+}
+
+// ensureAdoptYAMLMapping finds or creates key's mapping, retaining comments on a null value.
+func ensureAdoptYAMLMapping(root *yaml.Node, key string) (*yaml.Node, error) {
+	register, found, err := adoptYAMLMappingValue(root, key)
 	if err != nil {
 		return nil, err
 	}
 	switch {
 	case !found:
 		register = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-		appendAdoptYAMLMapping(root, "register", register)
+		appendAdoptYAMLMapping(root, key, register)
 	case nullYAMLNode(register):
 		*register = yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", HeadComment: register.HeadComment,
 			LineComment: register.LineComment, FootComment: register.FootComment}
 	}
 	if register.Kind != yaml.MappingNode {
-		return nil, fmt.Errorf("manifest register must be a mapping or null, found %s at line %d",
-			register.ShortTag(), register.Line)
+		return nil, fmt.Errorf("manifest %s must be a mapping or null, found %s at line %d",
+			key, register.ShortTag(), register.Line)
 	}
 	return register, nil
 }

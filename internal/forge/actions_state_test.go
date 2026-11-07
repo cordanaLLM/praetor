@@ -154,6 +154,24 @@ func TestWorkflowRunHistory_Positive_CompletedRunsOnBranch(t *testing.T) {
 	}
 }
 
+// TestWorkflowRunHistory_HeadSHADecodes preserves commit identity from the live runs response.
+func TestWorkflowRunHistory_HeadSHADecodes(t *testing.T) {
+	const head = "1234567890abcdef1234567890abcdef12345678"
+	gh, _ := runsForge(t, respond(t, http.StatusOK, map[string]any{
+		"total_count": 1,
+		"workflow_runs": []map[string]any{{
+			"id": 42, "head_sha": head, "head_branch": "main", "status": "completed", "conclusion": "success",
+		}},
+	}))
+	history, err := gh.WorkflowRunHistory(t.Context(), "ci.yml", "main")
+	if err != nil {
+		t.Fatalf("read release workflow history: %v", err)
+	}
+	if len(history.Completed) != 1 || history.Completed[0].HeadSHA != head {
+		t.Fatalf("head_sha lost while decoding: %+v", history)
+	}
+}
+
 // Negative (#612): 401 and 403 are ErrActionsNotReadable, a server error is another error, a
 // 404 is a workflow the forge does not know, and an empty workflow or branch is refused before
 // any request.

@@ -13,16 +13,47 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 )
 
 // portabilityWorkflow is the engine's platform matrix, read from the repository root.
 var portabilityWorkflow = filepath.Join("..", "..", ".github", "workflows", "portability.yml")
 
-// halvesProblem reports how a workflow step departs from running the package held in the shell
+// halvesProblem reports how a workflow or step departs from running the package held in the shell
 // variable pkg in two halves under the 30-minute bound: one go test with -run "$half", one with
 // -skip "$half" (the same pattern, so every test runs exactly once), and the package left out of
-// the main run. "" when the step holds that shape.
-func halvesProblem(step, pkg, half string) string {
+// the main run. "" when every test-running job holds that shape.
+func halvesProblem(workflow, pkg, half string) string {
+	if spec, err := ghworkflow.Parse([]byte(workflow)); err == nil && len(spec.Jobs) > 0 {
+		for _, jobID := range []string{"harness", "windows-shard"} {
+			job, ok := spec.Jobs[jobID]
+			if !ok {
+				return "missing job " + jobID
+			}
+			step, found := findJobStep(job, "Test Every Package")
+			if !found {
+				return jobID + ": no Test Every Package step"
+			}
+			if problem := stepHalvesProblem(step.Run, pkg, half); problem != "" {
+				return jobID + ": " + problem
+			}
+		}
+		return ""
+	}
+	return stepHalvesProblem(workflow, pkg, half)
+}
+
+func findJobStep(job ghworkflow.Job, name string) (ghworkflow.Step, bool) {
+	for i := 0; i < len(job.Steps) && i < ghworkflow.MaxStepsPerJob; i++ {
+		if job.Steps[i].Name == name {
+			return job.Steps[i], true
+		}
+	}
+	return ghworkflow.Step{}, false
+}
+
+func stepHalvesProblem(step, pkg, half string) string {
 	m := regexp.MustCompile(regexp.QuoteMeta(half) + `='([^']+)'`).FindStringSubmatch(step)
 	if m == nil {
 		return "no " + half + " pattern"

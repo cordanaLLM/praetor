@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -185,22 +186,30 @@ func (g *GitHubDriver) sendRequest(ctx context.Context, method, path string, pay
 	if err := g.Authenticate(ctx); err != nil {
 		return nil, 0, err
 	}
+	return g.readRequest(ctx, method, path, payload)
+}
 
+// readRequest performs an HTTP request and reads the bounded response body.
+func (g *GitHubDriver) readRequest(ctx context.Context, method, path string, payload any) (respBody []byte, statusCode int, err error) {
 	resp, err := g.openRequest(ctx, method, path, payload, "application/vnd.github+json")
 	if err != nil {
 		return nil, 0, err
 	}
 	defer func() {
-		if cerr := resp.Body.Close(); cerr != nil && err == nil {
-			err = fmt.Errorf("close response body (%s %s): %w", method, path, cerr)
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close response body (%s %s): %w", method, path, closeErr))
 		}
 	}()
+	return readBoundedResponseBody(resp.Body, resp.StatusCode)
+}
 
-	data, readErr := io.ReadAll(io.LimitReader(resp.Body, maxHTTPResponseBody))
+// readBoundedResponseBody reads up to maxHTTPResponseBody from body.
+func readBoundedResponseBody(body io.Reader, statusCode int) ([]byte, int, error) {
+	data, readErr := io.ReadAll(io.LimitReader(body, maxHTTPResponseBody))
 	if readErr != nil {
-		return nil, resp.StatusCode, fmt.Errorf("failed reading response body: %w", readErr)
+		return nil, statusCode, fmt.Errorf("failed reading response body: %w", readErr)
 	}
-	return data, resp.StatusCode, nil
+	return data, statusCode, nil
 }
 
 // openRequest shares request construction with anonymous, read-only release access.
@@ -991,18 +1000,367 @@ func (g *GitHubDriver) RemoveLabel(ctx context.Context, number int, label string
 	return nil
 }
 
+// Head pull request lookup pagination bounds (HISS-02).
+const (
+	// HeadPullRequestsPerPage bounds each page of the pull request head lookup used by
+	// git-push admission (HISS-02).
+	HeadPullRequestsPerPage = 20
+	// HeadPullRequestsMaxPages bounds how many open pages a head lookup scans
+	// before failing closed (HISS-02).
+	HeadPullRequestsMaxPages = 5
+	// MaxHeadPullRequests bounds the total pull requests examined across all pages of a
+	// head lookup (HISS-02).
+	MaxHeadPullRequests = HeadPullRequestsPerPage * HeadPullRequestsMaxPages
+)
+
+// PullRequestHead state constants.
+const (
+	PullRequestStateOpen   = "OPEN"
+	PullRequestStateMerged = "MERGED"
+	PullRequestStateClosed = "CLOSED"
+)
+
+// PullRequestHead records the number, normalized state (OPEN, MERGED, CLOSED), and head
+// branch name of a pull request returned by a head-branch query.
+type PullRequestHead struct {
+	Number     int
+	State      string
+	HeadBranch string
+}
+
+type ghPullHeadRepo struct {
+	FullName string `json:"full_name"`
+	Name     string `json:"name"`
+	Owner    *struct {
+		Login    string `json:"login"`
+		Username string `json:"username"`
+	} `json:"owner"`
+}
+
 type ghPullRaw struct {
 	Number    int     `json:"number"`
 	Title     string  `json:"title"`
 	Body      string  `json:"body"`
+	State     string  `json:"state"`
+	Merged    bool    `json:"merged"`
 	CreatedAt string  `json:"created_at"`
 	MergedAt  *string `json:"merged_at"`
 	Head      struct {
-		Ref string `json:"ref"`
+		Ref   string          `json:"ref"`
+		Label string          `json:"label"`
+		Repo  *ghPullHeadRepo `json:"repo"`
 	} `json:"head"`
 	Milestone *struct {
 		Title string `json:"title"`
 	} `json:"milestone"`
+}
+
+// ParseHeadPullRequests decodes one single-page pull request listing (GitHub or Forgejo)
+// and keeps the pull requests whose head branch is branch.
+func ParseHeadPullRequests(body []byte, branch string) ([]PullRequestHead, error) {
+	heads, _, err := parseHeadPullRequestsPage(body, "", "", branch)
+	return heads, err
+}
+
+// parseHeadPullRequestsPage decodes one pull request listing page, returning the pull
+// requests matching owner/repo and branch along with the raw item count on the page.
+func parseHeadPullRequestsPage(body []byte, owner, repo, branch string) ([]PullRequestHead, int, error) {
+	var raw []ghPullRaw
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, 0, fmt.Errorf("failed parsing pull requests list (raw: %q): %w", util.BodyPreview(body), err)
+	}
+	if raw == nil {
+		return nil, 0, errors.New("pull request listing must be an array, not null")
+	}
+	if len(raw) > HeadPullRequestsPerPage {
+		return nil, 0, fmt.Errorf("pull request listing returned %d items, exceeding limit %d", len(raw), HeadPullRequestsPerPage)
+	}
+	heads := make([]PullRequestHead, 0, len(raw))
+	for i := 0; i < len(raw) && i < HeadPullRequestsPerPage; i++ {
+		item := raw[i]
+		if item.Number <= 0 {
+			return nil, 0, errors.New("pull request listing contains an invalid pull request number")
+		}
+		if !headMatchesTarget(item, owner, repo, branch) {
+			continue
+		}
+		heads = append(heads, PullRequestHead{
+			Number:     item.Number,
+			State:      pullRequestHeadState(item),
+			HeadBranch: item.Head.Ref,
+		})
+	}
+	return heads, len(raw), nil
+}
+
+// headMatchesTarget reports whether item's head ref equals branch and its head repository
+// metadata, when present in the forge response, matches owner/repo.
+func headMatchesTarget(item ghPullRaw, owner, repo, branch string) bool {
+	if item.Head.Ref != branch {
+		return false
+	}
+	if owner == "" && repo == "" {
+		return true
+	}
+	if labelOwner, _, hasColon := strings.Cut(strings.TrimSpace(item.Head.Label), ":"); hasColon && labelOwner != "" && owner != "" {
+		if !strings.EqualFold(labelOwner, owner) {
+			return false
+		}
+	}
+	if item.Head.Repo == nil {
+		return true
+	}
+	return headRepoMatches(item.Head.Repo, owner, repo)
+}
+
+// headRepoMatches checks a non-nil pull request head repository block against owner and repo.
+func headRepoMatches(headRepo *ghPullHeadRepo, owner, repo string) bool {
+	if full := strings.TrimSpace(headRepo.FullName); full != "" && owner != "" && repo != "" {
+		if !strings.EqualFold(full, owner+"/"+repo) {
+			return false
+		}
+	}
+	if name := strings.TrimSpace(headRepo.Name); name != "" && repo != "" && !strings.EqualFold(name, repo) {
+		return false
+	}
+	if repoOwner := headRepoOwner(headRepo); repoOwner != "" && owner != "" && !strings.EqualFold(repoOwner, owner) {
+		return false
+	}
+	return true
+}
+
+// headRepoOwner extracts the owner login or username from a pull request head repository block.
+func headRepoOwner(headRepo *ghPullHeadRepo) string {
+	if headRepo == nil || headRepo.Owner == nil {
+		return ""
+	}
+	if login := strings.TrimSpace(headRepo.Owner.Login); login != "" {
+		return login
+	}
+	return strings.TrimSpace(headRepo.Owner.Username)
+}
+
+// collectHeadPullRequests exhausts bounded open pages before one newest-first closed page.
+// Each page is filtered to the target head; any matching OPEN pull ends the lookup.
+func collectHeadPullRequests(owner, repo, branch string, fetchPage func(state string, page int) ([]byte, error)) ([]PullRequestHead, error) {
+	heads, err := collectOpenHeadPullRequests(owner, repo, branch, fetchPage)
+	if err != nil || len(heads) > 0 {
+		return heads, err
+	}
+	body, err := fetchPage("closed", 1)
+	if err != nil {
+		return nil, err
+	}
+	heads, _, err = parseHeadPullRequestsPage(body, owner, repo, branch)
+	return heads, err
+}
+
+// collectOpenHeadPullRequests walks open pages up to HeadPullRequestsMaxPages, stopping
+// at a matching OPEN pull or a short raw page and failing closed at a full-page ceiling.
+func collectOpenHeadPullRequests(owner, repo, branch string, fetchPage func(state string, page int) ([]byte, error)) ([]PullRequestHead, error) {
+	for page := 1; page <= HeadPullRequestsMaxPages; page++ {
+		body, err := fetchPage("open", page)
+		if err != nil {
+			return nil, err
+		}
+		heads, rawCount, err := parseHeadPullRequestsPage(body, owner, repo, branch)
+		if err != nil {
+			return nil, err
+		}
+		for j := 0; j < len(heads) && j < HeadPullRequestsPerPage; j++ {
+			if heads[j].State == PullRequestStateOpen {
+				return heads, nil
+			}
+		}
+		if rawCount < HeadPullRequestsPerPage {
+			return nil, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: open pull request head listing for %q exceeded %d pages of %d items",
+		errPageCeiling, branch, HeadPullRequestsMaxPages, HeadPullRequestsPerPage)
+}
+
+// pullRequestHeadState normalizes the state of a pull request into OPEN, MERGED, or CLOSED.
+func pullRequestHeadState(item ghPullRaw) string {
+	if item.Merged || (item.MergedAt != nil && strings.TrimSpace(*item.MergedAt) != "") {
+		return PullRequestStateMerged
+	}
+	if strings.EqualFold(strings.TrimSpace(item.State), "open") {
+		return PullRequestStateOpen
+	}
+	return PullRequestStateClosed
+}
+
+// ListPullRequestsByHead queries bounded open pages for branch, then (only after open
+// results end without a match) one newest-first closed page, filtering to the repository.
+func (g *GitHubDriver) ListPullRequestsByHead(ctx context.Context, branch string) ([]PullRequestHead, error) {
+	if ctx == nil {
+		return nil, errors.New("list pull requests by head: context cannot be nil")
+	}
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return nil, errors.New("list pull requests by head: branch is required")
+	}
+	owner, repo, err := g.resolveRepository()
+	if err != nil {
+		return nil, fmt.Errorf("list pull requests by head %q: %w", branch, err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, defaultHTTPTimeout)
+	defer cancel()
+	return collectHeadPullRequests(owner, repo, branch, func(state string, page int) ([]byte, error) {
+		path := fmt.Sprintf("/repos/%s/%s/pulls?state=%s&head=%s&sort=created&direction=desc&per_page=%d&page=%d",
+			owner, repo, state, url.QueryEscape(owner+":"+branch), HeadPullRequestsPerPage, page)
+		return g.fetchHeadPullsPage(ctx, branch, path)
+	})
+}
+
+// fetchHeadPullsPage fetches and validates the bounded pull request page at path for branch.
+func (g *GitHubDriver) fetchHeadPullsPage(ctx context.Context, branch, path string) ([]byte, error) {
+	body, status, err := g.readRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed listing pull requests for head %q: %w", branch, err)
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status %d listing pull requests for head %q: %s",
+			status, branch, util.BodyPreview(body))
+	}
+	return body, nil
+}
+
+type httpClientContextKey struct{}
+
+// WithHTTPClient returns a context that configures the HTTP client used by forge operations.
+func WithHTTPClient(ctx context.Context, client *http.Client) context.Context {
+	return context.WithValue(ctx, httpClientContextKey{}, client)
+}
+
+func httpClientFromContext(ctx context.Context) *http.Client {
+	if ctx == nil {
+		return nil
+	}
+	if client, ok := ctx.Value(httpClientContextKey{}).(*http.Client); ok {
+		return client
+	}
+	return nil
+}
+
+type declaredHostKey struct{}
+
+// WithDeclaredForgejoHost stores the repository's declared Forgejo host in ctx.
+func WithDeclaredForgejoHost(ctx context.Context, host string) context.Context {
+	return context.WithValue(ctx, declaredHostKey{}, normalizeForgeHost(host))
+}
+
+// DeclaredForgejoHostFromContext returns the declared Forgejo host stored in ctx, if any.
+func DeclaredForgejoHostFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if host, ok := ctx.Value(declaredHostKey{}).(string); ok {
+		return host
+	}
+	return ""
+}
+
+// IsTrustedForgejoHost reports whether host is the repository's declared Forgejo host. A
+// Forgejo token belongs to one instance, so no host is trusted by name: an undeclared host,
+// codeberg.org included, gets no token.
+func IsTrustedForgejoHost(host, declaredHost string) bool {
+	h := normalizeForgeHost(host)
+	decl := normalizeForgeHost(declaredHost)
+	return h != "" && decl != "" && h == decl
+}
+
+// IsTrustedGitHubHost reports whether host is github.com (or api.github.com) over HTTPS.
+// The ambient GitHub token belongs to github.com, so a repository that declares
+// repository.forge: github for another host or an http:// endpoint gets no token.
+func IsTrustedGitHubHost(host string) bool {
+	h := normalizeForgeHost(host)
+	return h == "github.com" || h == "api.github.com"
+}
+
+// normalizeForgeHost strips an https:// scheme, port, and trailing dot from host for
+// case-insensitive comparison. Any non-HTTPS scheme (such as http://) is rejected.
+func normalizeForgeHost(raw string) string {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	if strings.Contains(raw, "://") {
+		u, err := url.Parse(raw)
+		if err != nil || u.Scheme != "https" {
+			return ""
+		}
+		raw = u.Host
+	}
+	if strings.Contains(raw, "/") {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(raw); err == nil {
+		return strings.TrimSuffix(strings.ToLower(host), ".")
+	}
+	return strings.TrimSuffix(raw, ".")
+}
+
+// resolveGitHubTokenForHost returns the ambient GitHub token only if host is a trusted
+// GitHub host; any other host gets no token.
+func resolveGitHubTokenForHost(ctx context.Context, host string) string {
+	if !IsTrustedGitHubHost(host) {
+		return ""
+	}
+	return util.ResolveAuthTokenContext(ctx, "")
+}
+
+// resolveForgejoTokenForHost returns FORGEJO_TOKEN or GITEA_TOKEN only if host is trusted;
+// any other host gets no token.
+func resolveForgejoTokenForHost(host, declaredHost string) string {
+	if !IsTrustedForgejoHost(host, declaredHost) {
+		return ""
+	}
+	return resolveForgejoToken()
+}
+
+// ReadPullRequestsByHead queries one open page for branch, then one newest-first closed
+// page only when no matching OPEN pull was found, through the selected forge driver.
+func ReadPullRequestsByHead(ctx context.Context, kind config.Forge, remote util.GitRemote, branch string, declaredHostOpt ...string) ([]PullRequestHead, error) {
+	if ctx == nil {
+		return nil, errors.New("read pull requests by head: context cannot be nil")
+	}
+	ctx, cancel := context.WithTimeout(ctx, defaultHTTPTimeout)
+	defer cancel()
+	endpoint := "https://" + remote.Host
+	if strings.HasPrefix(remote.Host, "http://") || strings.HasPrefix(remote.Host, "https://") {
+		endpoint = remote.Host
+	}
+	switch kind {
+	case config.ForgeGitHub:
+		token := resolveGitHubTokenForHost(ctx, remote.Host)
+		driver := NewGitHubDriver(token, endpoint)
+		if client := httpClientFromContext(ctx); client != nil {
+			driver.HTTPClient = client
+		}
+		driver.SetRepository(remote.Owner, remote.Repo)
+		return driver.ListPullRequestsByHead(ctx, branch)
+	case config.ForgeForgejo:
+		declaredHost := DeclaredForgejoHostFromContext(ctx)
+		if len(declaredHostOpt) > 0 && declaredHostOpt[0] != "" {
+			declaredHost = declaredHostOpt[0]
+		}
+		token := resolveForgejoTokenForHost(remote.Host, declaredHost)
+		driver := NewGiteaDriver(token, endpoint)
+		if client := httpClientFromContext(ctx); client != nil {
+			driver.HTTPClient = client
+		}
+		driver.SetRepository(remote.Owner, remote.Repo)
+		return driver.ListPullRequestsByHead(ctx, branch)
+	default:
+		return nil, fmt.Errorf("unsupported forge %q for pull request head lookup on %s", kind, remote.Host)
+	}
+}
+
+// resolveForgejoToken inspects environment variables for Forgejo and Gitea API tokens.
+func resolveForgejoToken() string {
+	if tok := strings.TrimSpace(os.Getenv("FORGEJO_TOKEN")); tok != "" {
+		return tok
+	}
+	return strings.TrimSpace(os.Getenv("GITEA_TOKEN"))
 }
 
 func ghPullToMerged(r ghPullRaw) (MergedPullRequest, error) {

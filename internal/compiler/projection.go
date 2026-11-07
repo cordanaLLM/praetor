@@ -80,16 +80,18 @@ func VerifyCompiledContext(ctx context.Context, w io.Writer, tr *Transpiler, sou
 	return sw.err
 }
 
-// verifyVendorContext checks the text register block, the ignore rule for its evidence directory
-// and the vendor files compiled from source, and returns every failure.
+// verifyVendorContext checks the text register block, the ignore rule for its evidence directory,
+// the vendor files compiled from source, and uncompiled agent instruction files outside AGENTS.md,
+// and returns every failure.
 func verifyVendorContext(ctx context.Context, sw *syncWriter, tr *Transpiler, source, targetDir string) error {
 	registerErr, ignoreErr := verifyRegisterAndEvidence(ctx, source)
 	res, targetsErr := tr.VerifyCompiled(ctx, source, targetDir)
 	if targetsErr == nil {
 		targetsErr = printNotApplicableTargets(sw.w, res)
 	}
+	uncompiledErr := agentcontext.VerifyUncompiledInstructions(ctx, targetDir)
 	const prefix = "context verification failed"
-	return errors.Join(prefixError(prefix, registerErr), prefixError(prefix, ignoreErr), prefixError(prefix, targetsErr))
+	return errors.Join(prefixError(prefix, registerErr), prefixError(prefix, ignoreErr), prefixError(prefix, targetsErr), prefixError(prefix, uncompiledErr))
 }
 
 // verifyRegisterAndEvidence checks the text register block of source against the policy of the

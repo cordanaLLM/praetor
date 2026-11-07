@@ -75,7 +75,7 @@ func check(t *testing.T, root string, lanes []config.ClangTidyLane, exceptions .
 }
 
 func exception(target, expires string) config.Exception {
-	entry := config.Exception{Rule: Rule, Reason: "built only on a platform no lane configures", Expires: expires}
+	entry := config.Exception{Rule: Rule, Reason: "built only on a platform no lane configures", Category: "A", Expires: expires}
 	if strings.ContainsAny(target, "*?[") {
 		entry.Glob = target
 	} else {
@@ -189,7 +189,7 @@ func TestCheck_Negative_UnreadableLaneFailsClosed(t *testing.T) {
 	}
 	invalid := []config.Exception{exception("src/a.c", "2027-06-30")}
 	if _, err := Check(t.Context(), Options{Root: root, Exceptions: invalid, Today: today}); err == nil ||
-		!strings.Contains(err.Error(), "more than 90 days after today") {
+		!strings.Contains(err.Error(), "category A requires expires on or before 2027-01-04 (90 days after today); got 2027-06-30") {
 		t.Fatalf("an exception expiring too far ahead must be refused, got %v", err)
 	}
 	if _, err := Check(t.Context(), Options{Root: t.TempDir(), Today: today}); err == nil {

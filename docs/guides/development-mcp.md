@@ -31,16 +31,21 @@ lockfile, HISS ratchet, context sync, branch protection, supply chain, and workf
 checks. All mutations use disposable
 fixtures. A discovered tool name alone does not prove working behavior.
 
-`standards_audit` also runs the CLI's `editor-selection`, `renovate-engine-bumps` and
-`rust-msrv` checks. Each prints its own verdict inside the context gate group, so the
-existing summary group count stays compatible. The checks refuse tracked context files
-outside `agent_clients`, require engine-update suppression in an existing Renovate
-configuration, and require a pin or workflow build declaration for each Rust minimum.
-They read repository evidence; they do not execute Rust builds. See
+`standards_audit` also runs the CLI's `editor-selection`,
+`renovate-engine-bumps`, `rust-msrv` and `bestpractices-claims` checks. Each
+prints its own verdict inside the context gate group, so the existing summary
+group count stays compatible. The checks refuse tracked context files outside
+`agent_clients`, require engine-update suppression in an existing Renovate
+configuration, require a pin or workflow build declaration for each Rust
+minimum, and validate any root `.bestpractices.json` claims against the vendored
+OpenSSF Best Practices criteria. They read repository evidence; they do not
+execute Rust builds. See
 [selected clients](agents-and-clients/index.md#keep-tracked-context-within-the-selected-clients),
-[engine updates](documentation-governance.md#coordinate-engine-updates) and
-[Rust minima](rust-flavors.md). Shared implementation and planted cases live in
-`internal/adopt/`; MCP wire probes must use a fresh server after edits.
+[engine updates](documentation-governance.md#coordinate-engine-updates),
+[Rust minima](rust-flavors.md) and
+[OpenSSF Best Practices claim verification](adoption-verification.md#openssf-best-practices-claim-verification).
+Shared implementations and planted cases live in `internal/adopt/` and
+`internal/bestpractices/`; MCP wire probes must use a fresh server after edits.
 
 For UI roots, `standards_audit` also calls the CLI's shared
 `flavor.AuditUIGates` implementation. The [shared screen matrix adoption
@@ -126,6 +131,13 @@ exact destination or argv, complete that client's approval/reload flow, and
 perform the initialization, discovery, and harmless readback checks. Existing
 projection tests establish serialization and conflict handling; they are not
 live session evidence.
+
+The `standards_adopt` MCP tool pins the engine build the server runs, the same as
+`praetorctl adopt` (`runAdoptTool` in `cmd/standards-mcp/tools_adoption.go`;
+`TestWorkflowEnginePinThroughMCPBuildIdentity` in
+`internal/adopt/workflow_engine_pin_mcp_test.go`). Only a build without an identity
+falls back to `source_root`'s HEAD (`adoptingEngineCommit` in
+`internal/adopt/workflow_engine_pin.go`).
 
 The adoption MCP tool also reconciles accepted AsDecided ADR records into the
 project-scoped MCP registry when applying the `mcp` facet. The generated entries
@@ -481,7 +493,8 @@ exceeds what the workflow files measure
 ([How the audit measures the SLSA level](releasing.md#how-the-audit-measures-the-slsa-level),
 `TestServerAuditRunsTheSupplyChainGate` in `cmd/standards-mcp/audit_policy_test.go`). So is the
 HISS-10 build-warnings gate (`adopt.AuditBuildWarnings`): it fails a workflow lane that compiles
-C, C++, Rust or Go code without its toolchain's warnings-as-errors form, and skips a repository
+C, C++, Rust or Go code without its toolchain's warnings-as-errors form, accepts categorized
+exceptions, and skips a repository
 with no such lane ([Build-warnings gate](build-warnings.md),
 `TestServerAuditRunsTheBuildWarningsGate`).
 
@@ -491,13 +504,19 @@ unconditional GitHub App token step of the same job, and skips a repository with
 step ([Release token gate](release-token.md), `TestServerAuditRunsTheReleaseTokenGate` in
 `cmd/standards-mcp/audit_policy_test.go`). The release end-to-end evidence gate calls
 `release.AuditE2E` directly (`releaseE2EAuditGates` in `cmd/standards-mcp/audit_tools.go`),
-skipping when `release.e2e` is not declared (`TestReleaseE2EAuditGates_MissingSectionSkips`).
+skipping when `release.e2e` is not declared (`TestReleaseE2EAuditGates_MissingSectionSkips`), and
+runs `release.AuditTestLevelsLine` (`internal/release/test_levels_gate.go`), appending the release
+test levels verdict when required or declared levels apply
+([Release test levels gate](release-token.md#release-test-levels-gate-releasetest_levels)).
 
 The HISS-18 workflow trigger check is the CLI's own as well (`forge.AuditWorkflowTriggers`, run
 with the manifest's exceptions list). Its findings are `[WARN]` lines and the gate still passes;
-only a workflow it cannot read or a malformed `HISS-18` exceptions entry fails it
+only a workflow it cannot read or a malformed `HISS-18` exceptions entry (including a missing
+category when required by the cutoff rules: `entered >= 2026-10-29`, or `entered` omitted with
+`expires > 2026-11-28`) fails it
 ([Workflow trigger audit](workflow-triggers.md),
-`TestServerAuditRunsTheWorkflowTriggerCheck` in `cmd/standards-mcp/audit_policy_test.go`).
+`TestServerAuditRunsTheWorkflowTriggerCheck` in `cmd/standards-mcp/audit_policy_test.go`,
+`TestValidateExceptionsHISS18CategoryCutoff` in `internal/config/exceptions_expiry_test.go`).
 The MCP audit reads nothing from the forge, so where the CLI reads a reusable workflow of another
 repository at the commit its caller pins, `standards_audit` prints a `[SKIP]` line naming the call
 and that reason (`TestServerAuditSkipsAPinnedCallOfAnotherRepository`).

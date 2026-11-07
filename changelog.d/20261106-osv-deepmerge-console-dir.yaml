@@ -1,0 +1,3 @@
+type: security
+title: 'Security: the dated OSV-Scanner exception for deepmerge 4.3.1 (GHSA-gcqx-w48m-w2h4) moves to console/osv-scanner.toml next to console/pnpm-lock.yaml, because OSV-Scanner applies a config only to lockfiles in its own folder; renewed as category C until 2026-11-16 with its re-check trigger'
+breaking: false

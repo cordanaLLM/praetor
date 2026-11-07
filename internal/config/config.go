@@ -509,17 +509,30 @@ func ParseManifest(name string, data []byte) (*Manifest, error) {
 	return parseManifest(name, data)
 }
 
+// parseManifest decodes manifest YAML data from path and validates all schema constraints,
+// returning the parsed Manifest or an error.
 func parseManifest(path string, data []byte) (*Manifest, error) {
 	m, err := DecodeManifest(data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse manifest at %s: %w", path, err)
 	}
-	for i := 0; i < len(manifestValidators); i++ {
-		if err := manifestValidators[i](m); err != nil {
-			return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
-		}
+	if err := ValidateManifest(m); err != nil {
+		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}
 	return m, nil
+}
+
+// ValidateManifest runs the canonical manifest validations against an already-decoded Manifest.
+func ValidateManifest(m *Manifest) error {
+	if m == nil {
+		return nil
+	}
+	for i := 0; i < len(manifestValidators); i++ {
+		if err := manifestValidators[i](m); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // manifestValidators are the policy checks parseManifest applies to a decoded manifest, in order;

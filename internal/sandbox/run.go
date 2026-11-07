@@ -40,6 +40,10 @@ type Runner struct {
 	CheckUserManager func(context.Context) error
 	ProbeBwrap       func(context.Context) error
 	HasLib64         func() bool
+	// ContainerSocket and HostPortRange replace the go test adapter's container engine socket
+	// discovery and procfs port range read (test_exec.go); nil reads the host.
+	ContainerSocket  func() string
+	HostPortRange    func() (PortRange, error)
 	resolverFile     string
 	runtimeDirectory string
 }

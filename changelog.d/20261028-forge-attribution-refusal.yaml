@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+#
+# SPDX-License-Identifier: EUPL-1.2
+
+type: added
+title: Refuse tool attribution trailers and footers in commit message policy
+breaking: false

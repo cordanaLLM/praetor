@@ -613,6 +613,7 @@ name fails adoption and each of those gates.
 | `formatter-ignore` | skipped by the documentation gate |
 | `renovate-ignore` | none |
 | `actionlint-labels` | none |
+| `coderabbit` | none |
 | `contributing` | none |
 | `pull-request-template` | none |
 | `security-policy` | none |
@@ -889,10 +890,63 @@ The rule ignores `testdata/`, `vendor/`, dot-prefixed and underscore-prefixed di
 the result bounded at 64 modules. A larger repository fails closed with `too many tracked Go
 modules`; it is never silently truncated.
 
-Each stage visits modules in discovery order. Prefetch runs `go mod verify` and `go mod download`,
-security runs symbol-level `govulncheck` against the repository-root OpenVEX document and `gosec`,
+Each stage visits modules in discovery order. Prefetch runs `go mod verify` and `go mod download`;
+a module whose first attempt ends in a transient kill (its own per-attempt `DefaultPrefetchTimeout`
+deadline, SIGKILL or SIGTERM, exit status 137 or 143, or a wrapped error whose text holds one of
+these: `context deadline exceeded`, `signal: killed`, `signal: terminated`, `exit status 137`,
+`exit status 143`) runs once more under a fresh window and the stage message names the retry. A
+cancelled or expired caller context is never retried, and a second failure or any other failure
+fails the stage
+([`internal/gating/prefetch.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/prefetch.go)).
+Security runs symbol-level `govulncheck` against the repository-root OpenVEX document and `gosec`,
 and the race stage runs `go test -race ./...` in an isolated worktree for each module. Each
-module's race suite runs in its own memory-bounded user scope (`systemd-run --user --scope`) when
+module's compiled test binaries run through `go test -exec '<current CLI> go test-exec'`
+on local Linux gates. The wrapper reuses `internal/sandbox`'s `NetworkNone` bubblewrap
+namespace policy: its own loopback interface is up, with no other network interface.
+A test's own HTTP client can reach its `httptest` server; workstation processes cannot
+reach that server through host loopback. Compilation and module downloads stay outside
+the namespace; the prefetch stage still fetches modules first. This is network isolation,
+with the caller's filesystem and environment retained for test fixtures.
+
+The engine's Makefile Go test recipes, including fuzz and the schema module, use
+`praetorctl go test` through the source CLI to apply the same `-exec` wrapper. Each
+wrapper uses the exact running engine executable. When the race stage runs its Go tests in a
+toolchain container, it passes no `-exec` wrapper and prints `Go test binaries: the toolchain
+container's own network namespace`: the container runs on its runtime's default network, a
+network namespace of its own, so workstation processes cannot reach a test server on its
+loopback, and bubblewrap inside the container has no user namespaces to create
+(`gating.ContainerTestIsolation`; `internal/devcontainer/runargs_network_test.go` fails if the
+container's command line ever chooses a network).
+A missing `bwrap`, disabled unprivileged user namespaces or an `EPERM` setup failure
+rejects the gate by facility and cause, for example
+`sandbox unavailable: bwrap user/network namespaces (loopback-only): ... Operation not permitted`.
+There is no host-network retry. macOS and Windows run the tests directly and print
+`Go test loopback isolation skipped: <GOOS> has no Linux network namespaces`.
+CI detection follows the existing hook-audit convention, `CI=true` or
+`GITHUB_ACTIONS=true`: tests keep their existing execution path and print
+`Go test loopback isolation skipped: CI environment; CI execution unchanged`.
+CI workflows are unchanged. Deterministic injected-runner tests cover these paths;
+real namespace cases skip with a reason when the host lacks the facility
+(`internal/gating/test_exec_test.go`, `internal/sandbox/test_exec_test.go`).
+
+On a host with a container engine socket (the Unix path in `DOCKER_HOST`,
+`/var/run/docker.sock`, or Docker's or Podman's socket under `XDG_RUNTIME_DIR`), a test binary
+may start a container and dial the host port the engine published for it, as testcontainers
+does for its reaper. Docker draws those ports from the kernel's ephemeral range
+(`/proc/sys/net/ipv4/ip_local_port_range`, read by libnetwork's port allocator); a Podman socket
+is treated the same way. On such a host `pasta` owns the namespace instead
+of bubblewrap: it forwards connects to host-loopback ports of that range out of the namespace
+(`-T <first>-<last>`) and nothing in (`-t none`, `-u none`, `-U none`), maps no address to host
+loopback and configures no route out. Host services on fixed ports stay unreachable. The
+namespace's own ephemeral range moves outside the forwarded one (above it, or below it down to
+1024), so `bind(0)` still finds free ports, and a nested bubblewrap user namespace runs the test
+binary as the caller. A missing `pasta`, or a host range that leaves fewer than 1024 ports for
+the namespace, rejects the gate by facility; there is no fallback to `NetworkNone`, which would
+fail every container test. A set `DOCKER_HOST` alone decides: its `unix://` path when that socket
+exists; any other scheme names an engine whose published ports are not on this host's loopback,
+and the namespace stays `NetworkNone` (`internal/sandbox/test_exec_publish_test.go`).
+
+Each module's race suite runs in its own memory-bounded user scope (`systemd-run --user --scope`) when
 scopes are available, so the out-of-memory daemon reclaims from the step rather than from the
 caller's session. Defaults are `MemoryHigh=16G`, `MemoryMax=20G`, and `MemorySwapMax=4G`,
 customizable via `PRAETOR_GATE_SCOPE_MEMORY_HIGH`, `PRAETOR_GATE_SCOPE_MEMORY_MAX`, and
@@ -2818,3 +2872,21 @@ explains body wrapping and foreign references.
 `internal/paperclip/rules_markdown_test.go` check each file with
 `testsupport.MarkdownFindings` (`internal/testsupport/markdown.go`), a Go subset of the
 markdownlint rules these generators must hold.
+
+## OpenSSF Best Practices claim verification
+
+When a repository holds `.bestpractices.json` at its root, the `bestpractices-claims` gate in
+`standardsctl audit` (`bestpractices.Audit` in `internal/bestpractices/bestpractices.go`)
+validates every `<criterion>_status` and `<criterion>_justification` pair against the upstream
+OpenSSF Best Practices criteria (`criteria/criteria.yml` and `criteria/baseline_criteria.yml`
+vendored from `github.com/coreinfrastructure/best-practices-badge` at commit `8b3a2889e3af`).
+When `.bestpractices.json` is absent, the gate prints `[SKIP] bestpractices-claims: no .bestpractices.json found; not applicable.`.
+
+The gate refuses six classes of invalid claims (`internal/bestpractices/bestpractices_test.go`):
+
+- `na_not_allowed`: status `N/A` where `na_allowed` is `false` or absent.
+- `na_justification_required`: status `N/A` where `na_justification_required` is `true` and the justification is missing or blank.
+- `met_justification_required`: status `Met` where `met_justification_required` is `true` and the justification is missing or blank.
+- `met_url_required`: status `Met` where `met_url_required` is `true` and the justification holds no `http(s)` URL.
+- `invalid_status`: a status value outside `Met`, `Unmet`, `N/A`, `?`.
+- `unknown_criterion`: a `<criterion>_status` key whose criterion exists in neither upstream file.

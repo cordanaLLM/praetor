@@ -121,6 +121,31 @@ func TestPriorRulesetDigests_Positive_FindsTheBaselineRendering(t *testing.T) {
 	}
 }
 
+// TestPriorRulesetDigests_Positive_FindsPreCopilotRendering verifies that the rendering prior to
+// the copilot rule is recognised in either consistent line-ending style.
+func TestPriorRulesetDigests_Positive_FindsPreCopilotRendering(t *testing.T) {
+	for name, tc := range renderingInputCases() {
+		t.Run(name, func(t *testing.T) {
+			legacyData, err := RenderRepositoryRulesetPriorToCopilot("main", tc.policy, tc.contexts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			current, err := RenderRepositoryRuleset("main", tc.policy, append(slices.Clone(tc.contexts), "added"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			prior := PriorRulesetDigests(RulesetBaseline{Policy: tc.policy, Contexts: tc.contexts}, current)
+			if _, known, crlf := util.LookupCanonicalText(legacyData, prior); !known || crlf {
+				t.Fatalf("the pre-copilot baseline rendering is not found (known %v, crlf %v):\n%s", known, crlf, legacyData)
+			}
+			crlfLegacy := bytes.ReplaceAll(legacyData, []byte("\n"), []byte("\r\n"))
+			if _, known, crlf := util.LookupCanonicalText(crlfLegacy, prior); !known || !crlf {
+				t.Fatalf("the CRLF checkout of the pre-copilot baseline rendering is not found (known %v, crlf %v)", known, crlf)
+			}
+		})
+	}
+}
+
 // Nothing is read back from a file: a rendering with one value edited is a rendering under other
 // inputs, and matches no digest, as an operator's own ruleset and a re-laid-out rendering do not.
 func TestPriorRulesetDigests_Negative_ValueEditsMatchNothing(t *testing.T) {
@@ -131,8 +156,8 @@ func TestPriorRulesetDigests_Negative_ValueEditsMatchNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	prior := PriorRulesetDigests(RulesetBaseline{Policy: policy, Contexts: contexts}, current)
-	if len(prior) != 1 {
-		t.Fatalf("the baseline must yield one digest, got %v", prior)
+	if len(prior) != 2 {
+		t.Fatalf("the baseline must yield two digests, got %v", prior)
 	}
 	signed, reviews, stale, linear := policy, policy, policy, policy
 	signed.RequireSignedCommits = true
@@ -170,8 +195,9 @@ func TestPriorRulesetDigests_Negative_ValueEditsMatchNothing(t *testing.T) {
 	}
 }
 
-// A baseline whose rendering is current needs no refresh, in either line-ending style, and one
-// the renderer refuses (a negative review count, a duplicated check) yields no digest.
+// A baseline whose rendering is current yields only its pre-copilot rendering, in either
+// line-ending style, and one the renderer refuses (a negative review count, a duplicated check)
+// yields no digest.
 func TestPriorRulesetDigests_Boundary_CurrentOrUnrenderableBaseline(t *testing.T) {
 	policy := config.DefaultPolicy().BranchProtection
 	current, err := RenderRepositoryRuleset("main", policy, []string{"test"})
@@ -181,8 +207,8 @@ func TestPriorRulesetDigests_Boundary_CurrentOrUnrenderableBaseline(t *testing.T
 	baseline := RulesetBaseline{Policy: policy, Contexts: []string{"test"}}
 	crlfCurrent := bytes.ReplaceAll(current, []byte("\n"), []byte("\r\n"))
 	for name, content := range map[string][]byte{"current": current, "current in CRLF": crlfCurrent} {
-		if prior := PriorRulesetDigests(baseline, content); len(prior) != 0 {
-			t.Errorf("%s: the current rendering must yield no earlier text, got %v", name, prior)
+		if prior := PriorRulesetDigests(baseline, content); len(prior) != 1 {
+			t.Errorf("%s: the current rendering must yield its pre-copilot text only, got %v", name, prior)
 		}
 	}
 	bad := policy

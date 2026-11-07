@@ -24,7 +24,7 @@ Everything the figures need sits in one tree, `tools/figures/`:
 | `player/` | The committed player: `loader.js`, `player.js` and `THIRD-PARTY-LICENSES.txt`, in the engine only. A release carries them as `figures-player.tar.gz`, which adopters fetch ([ADR-0021](../adr/0021-figure-player-as-release-asset.md)). |
 | `types.ts` | The spec type a `docs/figures/<slug>.ts` file checks against. |
 | `mkdocs_hook.py` | The MkDocs hook that renders each `figure` fence and publishes `figures.css` and the player: `player/` in the engine, elsewhere the release archive `player.lock.json` names, fetched over https and checked against its SHA-256. Python standard library and MkDocs only. |
-| `astro.mjs` | The Astro integration for a Starlight site: renders each `figure` code block, loads the loader, and serves and publishes the figure and player files. Node builtins only. |
+| `astro.mjs` | The Astro integration for a Starlight site: renders each `figure` code block, loads the loader, and serves and publishes the figure and player files (`player/` in the engine, or the release archive `player.lock.json` names). Node builtins only. |
 | `serve.mjs` | Serves and copies the figure and player files for `astro.mjs`, and serves a built site for the smoke test. Node builtins only. |
 | `figures.css` | The figure stylesheet, reading Material's theme variables with Starlight's as the fallback. |
 | `third_party/interfig/` | The vendored engine, byte-identical to its pin. |
@@ -318,8 +318,8 @@ export default defineConfig({
   digest of `docs/assets/figures/*.json` (`figuresDigest`), so after `build.mjs build` a warm
   `astro build` renders every page again, and `astro dev` restarts when a figure JSON changes, is
   added or is removed (`watchFigures`).
-- A head script on every page imports `assets/javascripts/figures/loader.js` under the same base.
-- `astro dev` answers the figure files and `player/` from the repository, and `astro build` copies
+- When `player/` exists or `player.lock.json` names a release, a head script on every page imports `assets/javascripts/figures/loader.js` under the same base; an unreleased pin leaves figures as static SVGs.
+- `astro dev` answers the figure and player files (`player/` in the engine, or the verified archive `player.lock.json` names), and `astro build` copies
   them into the built site at `assets/figures/` and `assets/javascripts/figures/`, the paths the
   MkDocs hook uses. A file the built site already holds at one of those paths is kept and reported.
 - `figures({ root })` names the repository root that holds `docs/assets/figures/` when it is not the

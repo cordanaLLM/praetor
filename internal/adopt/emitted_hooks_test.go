@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/govuln"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
@@ -35,12 +36,17 @@ const updateEmittedFixturesEnv = "PRAETOR_UPDATE_EMITTED_FIXTURES"
 // checkpoint jobs, the superset adopters get; the hosted REUSE gate is the one a repository
 // declaring REUSE gets (reuseWorkflow) for the default branch main; the manifest is the current rendering of the
 // declarations an earlier adoption wrote (renderedPriorManifest); the actionlint configuration
-// is the one adoption creates with the default facets.
+// is the one adoption creates with the default facets. CodeRabbit and the ruleset pin draft
+// review settings through the same fixture update switch.
 func emittedHookRenderings(t *testing.T) map[string]string {
 	t.Helper()
 	reuseWorkflowContent, err := reuseWorkflow(forge.FallbackDefaultBranch)
 	if err != nil {
 		t.Fatalf("render reuseWorkflow: %v", err)
+	}
+	ruleset, err := forge.RenderRepositoryRuleset(forge.FallbackDefaultBranch, config.DefaultPolicy().BranchProtection, nil)
+	if err != nil {
+		t.Fatalf("render emitted ruleset: %v", err)
 	}
 	return map[string]string{
 		lefthookFile:         buildLefthookYAMLFor(lefthookShape{languages: lefthookJobLanguages, reuse: true, toolGovuln: true}, true),
@@ -49,17 +55,28 @@ func emittedHookRenderings(t *testing.T) map[string]string {
 		engineLauncherFile:   engineLauncherScript,
 		manifestFile:         renderedPriorManifest(t),
 		actionlintConfigFile: string(renderActionlintConfig(actionlintManagedFixtureLabels(t))),
+		codeRabbitFile:       codeRabbitConfig,
+		rulesetFile:          string(ruleset),
 	}
 }
 
 func TestEmittedHookFixturesMatchTheRendering(t *testing.T) {
+	root, err := os.OpenRoot(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("open repository root: %v", err)
+	}
+	defer func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("close repository root: %v", err)
+		}
+	}()
 	for rel, want := range emittedHookRenderings(t) {
 		path := filepath.Join(emittedFixtureRoot, filepath.FromSlash(rel))
 		if os.Getenv(updateEmittedFixturesEnv) == "1" {
 			mustWrite(t, path, want)
 			continue
 		}
-		got, err := os.ReadFile(path)
+		got, err := root.ReadFile(filepath.Join("internal", "adopt", path))
 		if err != nil {
 			t.Fatalf("read fixture %s: %v", path, err)
 		}
@@ -113,6 +130,14 @@ func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 		decodedCommands(t, prior, "pre-push")["secrets"] = map[string]any{
 			"run": requiredToolGuard("gitleaks", gitleaksInstallHint, lefthookGovernedCommand("security secrets")),
 		}
+		decodedCommands(t, prior, "pre-push")["docstrings"] = map[string]any{
+			"use_stdin": true,
+			"run":       lefthookGovernedCommand("docstrings check --pre-push"),
+		}
+		injectDecodedJob(prior, "pre-push", "merge-check", map[string]any{
+			"run":       mergeCheckPrePushCommand(),
+			"use_stdin": true,
+		})
 		for _, event := range checkpointEvents(checkpoint) {
 			job := decodedJob(t, prior, "agent-checkpoint-"+event, "checkpoint")
 			arguments := "-B " + checkpointScript + " --event " + event + " --json --marker"
@@ -273,6 +298,19 @@ func decodedJob(t *testing.T, decoded map[string]any, hook, job string) map[stri
 		t.Fatalf("the rendering has no %s job %s", hook, job)
 	}
 	return entry
+}
+
+// injectDecodedJob inserts a job entry into the commands map of a decoded hook section.
+func injectDecodedJob(decoded map[string]any, hook, job string, entry map[string]any) {
+	section, ok := decoded[hook].(map[string]any)
+	if !ok {
+		return
+	}
+	commands, ok := section["commands"].(map[string]any)
+	if !ok {
+		return
+	}
+	commands[job] = entry
 }
 
 // Boundary: every rendering, for every language set, opens with a document start and keeps

@@ -120,9 +120,10 @@ func TestAdopted_Boundary_FollowsGeneratedPipelines(t *testing.T) {
 }
 
 // TestAdoptedFor states each check only where it decides the repository's languages. Positive:
-// a Go repository keeps the audit's HISS-09 scan and the lefthook `go vet` row. Negative: a rule
-// with no analogue (HISS-09 in C), a scan that reads none of the languages (HISS-01 in a
-// TypeScript repository, HISS-07 in C) and `go vet` in a Rust crate read not enforced.
+// a Go repository keeps the audit's HISS-09 scan and the pre-commit warning cascade, and a Rust
+// crate keeps the zero-warnings cascade. Negative: a rule with no analogue (HISS-09 in C), a scan
+// that reads none of the languages (HISS-01 in a TypeScript repository, HISS-07 in C) and
+// pre-commit warnings in a Python repository read not enforced.
 // Boundary: unknown languages keep every check as Adopted states it, a language-independent
 // check (HISS-16) holds in every repository, and a mixed Go + TypeScript repository keeps Go's.
 func TestAdoptedFor(t *testing.T) {
@@ -136,12 +137,13 @@ func TestAdoptedFor(t *testing.T) {
 		{"HISS-09", LanguageC, false},
 		{"HISS-01", LanguageOther, false},
 		{"HISS-07", LanguageC, false},
-		{"HISS-10", LanguageRust, false},
 		{"HISS-12", LanguageGo, true},
 		{"HISS-12", LanguageRust, true},
 		{"HISS-12", LanguagePython, true},
 		{"HISS-12", LanguageC, true},
 		{"HISS-12", LanguageOther, true},
+		{"HISS-10", LanguageRust, true},
+		{"HISS-10", LanguagePython, false},
 		{"HISS-16", LanguageOther, true},
 		{"HISS-10", LanguageGo | LanguageOther, true},
 	}

@@ -47,7 +47,7 @@ func TestAuditBuildWarnings_CLI_RequiresWarningsAsErrors(t *testing.T) {
 	writeFixtureFile(t, f.dir, ".github/workflows/native.yml", fixtureNativeWorkflow(""))
 	expires := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
 	entry := "exceptions:\n  - rule: HISS-10\n    path: .github/workflows/native.yml\n" +
-		"    reason: the vendored codec warns until upstream lands its fix\n    expires: \"%s\"\n"
+		"    reason: the vendored codec warns until upstream lands its fix\n    category: A\n    expires: \"%s\"\n"
 	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+fmt.Sprintf(entry, expires))
 	out, err = f.audit(t)
 	if err != nil {

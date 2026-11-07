@@ -12,6 +12,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/bestpractices"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
@@ -57,9 +58,9 @@ type auditOptions struct {
 	baselineKnown   bool
 	// offline skips every forge read; the live forge checks report as not made.
 	offline bool
-	// verification is the --verification-max-* discovery bounds the Paperclip gate reads the
-	// repository's languages under, as adopt and `praetorctl paperclip harness` do; nil raises
-	// none, which keeps the manifest's verification section or the defaults.
+	// verification is the --verification-max-* discovery bounds the Rust MSRV and Paperclip
+	// gates read repository inputs under, as adoption does; nil raises none, which keeps the
+	// manifest's verification section or the defaults through the shared resolver.
 	verification *adopt.VerificationLimits
 
 	// allViolations lists every violation of a ratchet rejection instead of a bounded few (#598).
@@ -181,7 +182,10 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		// Order: engine-fr-rule-checks-20261027; CLI and MCP share these gates.
 		func() error { return printRepositoryAudit(adopt.AuditEditorSelection(ctx, manifest, rootDir)) },
 		func() error { return printRepositoryAudit(adopt.AuditRenovateEngineBumps(ctx, rootDir)) },
-		func() error { return printRepositoryAudit(adopt.AuditRustMSRV(ctx, rootDir)) },
+		func() error {
+			return printRepositoryAudit(adopt.AuditRustMSRV(ctx, manifest, rootDir, opts.verification))
+		},
+		func() error { return printRepositoryAudit(bestpractices.Audit(ctx, rootDir)) },
 		func() error { return auditLockDigestsContext(ctx, manifest, rootDir, opts.policy.CatalogRoot) },
 		func() error { return auditExceptionsExpiry(ctx, manifest, rootDir, time.Now()) },
 		func() error { return auditBaselineAndInvariants(ctx, opts) },
@@ -206,6 +210,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditBuildWarnings(ctx, manifest, rootDir) },
 		func() error { return auditReleaseToken(ctx, manifest, rootDir) },
 		func() error { return auditReleaseE2E(ctx, manifest, rootDir, opts.release) },
+		func() error { return auditReleaseTestLevels(ctx, manifest, rootDir, opts.release, opts.offline) },
 		func() error { return auditDeclaredLinters(ctx, manifest, rootDir, opts.effective, opts.linterLog) },
 		func() error { return auditPaperclipHarness(ctx, manifest, opts) },
 		func() error { return auditCavemanConfiguredSources(ctx, manifest, rootDir) },

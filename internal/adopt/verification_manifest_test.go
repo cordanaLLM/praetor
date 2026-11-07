@@ -36,10 +36,11 @@ func declaredGoRepo(t *testing.T, root string, entries, bound int) string {
 // default.
 func TestResolveVerificationLimits_Positive(t *testing.T) {
 	defaults := DefaultVerificationLimits()
-	declared := &config.VerificationPolicy{MaxEntries: 131072, MaxFiles: 256}
+	declared := &config.VerificationPolicy{MaxEntries: 131072, MaxFiles: 256, MaxFileBytes: 262144}
 	got := ResolveVerificationLimits(declared, nil)
 	want := defaults
 	want.MaxEntries, want.MaxFiles = 131072, 256
+	want.MaxFileBytes = 262144
 	if got == nil || *got != want {
 		t.Fatalf("declared only = %+v; want %+v", got, want)
 	}
@@ -50,6 +51,11 @@ func TestResolveVerificationLimits_Positive(t *testing.T) {
 	}
 	if _, err := NormalizeVerificationLimits(got); err != nil {
 		t.Fatalf("a resolved in-range bound is refused: %v", err)
+	}
+	got = ResolveVerificationLimits(declared, &VerificationLimits{MaxFileBytes: 524288})
+	want.MaxDepth, want.MaxFiles, want.MaxFileBytes = defaults.MaxDepth, 256, 524288
+	if got == nil || *got != want {
+		t.Fatalf("requested bytes over declared = %+v; want %+v", got, want)
 	}
 }
 

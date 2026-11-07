@@ -17,14 +17,14 @@ const docsReferencesCommand = "docs references --path=."
 
 // docsReferencesGap names why a job does not run the documentation reference gate on every
 // leg after building the binary it runs, or returns "" when it does.
-func docsReferencesGap(job workflowJob) string {
+func docsReferencesGap(job workflowJob, jobID string) string {
 	if advisoryJob(job.ContinueOnError) {
 		return "job is advisory"
 	}
 	built := false
 	for i := 0; i < len(job.Steps) && i < maxStepsPerJob; i++ {
 		step := job.Steps[i]
-		if strings.Contains(step.Run, "go build -o \"bin/praetorctl") && runsOnEveryLeg(step) {
+		if strings.Contains(step.Run, "go build -o \"bin/praetorctl") && runsOnEveryLeg(step, jobID) {
 			built = true
 		}
 		if !strings.Contains(step.Run, docsReferencesCommand) {
@@ -33,7 +33,7 @@ func docsReferencesGap(job workflowJob) string {
 		switch {
 		case !built:
 			return "documentation references run before an unconditional praetorctl build"
-		case !runsOnEveryLeg(step):
+		case !runsOnEveryLeg(step, jobID):
 			return "documentation references step is conditional: " + step.If
 		}
 		return ""
@@ -50,8 +50,10 @@ func TestPortabilityRunsDocumentationReferencesOnEveryLeg(t *testing.T) {
 	if err := yaml.Unmarshal(workflows["portability.yml"], &spec); err != nil {
 		t.Fatalf("parse portability.yml: %v", err)
 	}
-	if gap := docsReferencesGap(spec.Jobs["harness"]); gap != "" {
-		t.Fatalf("portability harness: %s", gap)
+	for _, jobID := range []string{"harness", "windows-shard"} {
+		if gap := docsReferencesGap(spec.Jobs[jobID], jobID); gap != "" {
+			t.Fatalf("portability %s: %s", jobID, gap)
+		}
 	}
 	build := workflowStep{Run: `go build -o "bin/praetorctl$(go env GOEXE)" ./cmd/standardsctl`, If: "${{ !cancelled() }}"}
 	check := workflowStep{Run: `"bin/praetorctl$(go env GOEXE)" ` + docsReferencesCommand, If: "${{ !cancelled() }}"}
@@ -64,11 +66,12 @@ func TestPortabilityRunsDocumentationReferencesOnEveryLeg(t *testing.T) {
 		{"negative missing", workflowJob{Steps: []workflowStep{build}}, "no step runs"},
 		{"boundary order", workflowJob{Steps: []workflowStep{check, build}}, "before an unconditional praetorctl build"},
 		{"boundary os guard", workflowJob{Steps: []workflowStep{build, {Run: check.Run, If: "runner.os != 'Windows'"}}}, "conditional"},
+		{"boundary shard in harness", workflowJob{Steps: []workflowStep{build, {Run: check.Run, If: everyLegConditions[3]}}}, "conditional"},
 		{"boundary advisory", workflowJob{ContinueOnError: "true", Steps: []workflowStep{build, check}}, "advisory"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := docsReferencesGap(tc.job)
+			got := docsReferencesGap(tc.job, "harness")
 			if (tc.want == "") != (got == "") || !strings.Contains(got, tc.want) {
 				t.Fatalf("gap = %q, want containing %q", got, tc.want)
 			}

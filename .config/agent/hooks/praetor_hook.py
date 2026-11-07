@@ -54,10 +54,10 @@ PROBE_LIMIT = 64 * 1024
 # this wait end before the longest launcher row (60 s) gives up; a shorter row's client timeout
 # ends that row first. TestLauncherTimeoutsOutwaitEngineBudgets pins both bounds.
 RUN_TIMEOUT = 45
-# The stop row outlasts the others: the engine verifies the state ledger (20 s) and then asks
-# the checkpoint evaluator (30 s) before it answers. The stop client timeout is 90 s, so both
-# probes plus this wait still end before the client gives up. TestStopLauncherTimeouts pins both.
-STOP_RUN_TIMEOUT = 55
+# The stop row outlasts the others: the engine reads own PR reviews (4 s), verifies the
+# state ledger (20 s), then asks the checkpoint evaluator (30 s). Both probes plus this
+# wait still end before the 90 s stop client timeout. TestStopLauncherTimeouts pins both.
+STOP_RUN_TIMEOUT = 60
 # The no-engine stop fallback runs checkpoint.py, whose own backstop answers a hang with a
 # block after HOOK_LIMIT (55 s) plus its stop allowance HOOK_STOP (12 s), counted from the
 # adapter's start. This wait must outlast that, or the launcher kills the adapter first and

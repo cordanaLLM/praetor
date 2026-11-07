@@ -19,6 +19,7 @@ var testConfigRoot string
 // TestMain keeps every test off the operator's own settings: no install manifest and no
 // settings or framework environment variable reaches a command unless a test sets one, and no
 // forge token, so the audit's live Actions checks never ask the real forge.
+// It also clears ambient GitHub Actions runner variables so tests run in isolation from CI.
 // It points the user configuration directory at a fresh temporary directory across
 // Linux (XDG_CONFIG_HOME/HOME), macOS (HOME), and Windows (AppData/APPDATA) so tests never touch
 // the developer's real configuration or claim keys.
@@ -30,7 +31,12 @@ func TestMain(m *testing.M) {
 	installManifestPath = func() (string, error) { return "", nil }
 	resolveActionsToken = func(context.Context) string { return "" }
 	adoptCollaborators = nil
-	for _, name := range []string{config.FleetConfigEnv, config.WorkstationConfigEnv, frameworkDirEnv} {
+	isolatedEnvs := []string{config.FleetConfigEnv, config.WorkstationConfigEnv, frameworkDirEnv}
+	if err := testsupport.UnsetCIRunnerEnv(); err != nil {
+		fmt.Fprintf(os.Stderr, "isolate CI runner environment: %v\n", err)
+		os.Exit(2)
+	}
+	for _, name := range isolatedEnvs {
 		if err := os.Unsetenv(name); err != nil {
 			fmt.Fprintf(os.Stderr, "isolate %s: %v\n", name, err)
 			os.Exit(2)
@@ -150,5 +156,16 @@ func TestOperatorSettingsFlags_BoundaryManifest(t *testing.T) {
 	installManifestPath = func() (string, error) { return "", os.ErrNotExist }
 	if settings, err := defaultOperatorSettingsFlags().load(t.Context()); err != nil || len(settings.Framework.Targets) != 0 {
 		t.Fatalf("no configuration directory = %v; want the built-in defaults", err)
+	}
+}
+
+// TestPackageIsolation_AmbientGitHubEnvCleared proves package isolation: ambient GitHub Actions
+// runner environment variables that would alter audit or test logic (such as GITHUB_WORKFLOW_REF,
+// GITHUB_HEAD_REF, GITHUB_REPOSITORY) are cleared by TestMain unless explicitly set by a test.
+func TestPackageIsolation_AmbientGitHubEnvCleared(t *testing.T) {
+	for _, env := range testsupport.CIRunnerEnv {
+		if val := os.Getenv(env); val != "" {
+			t.Errorf("expected %s to be cleared by TestMain, got %q", env, val)
+		}
 	}
 }

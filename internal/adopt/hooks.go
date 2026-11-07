@@ -234,7 +234,7 @@ func lefthookPreCommitJobs(languages hisscatalog.Language) string {
 }
 
 // lefthookPrePushJobs renders the pre-push jobs of languages: the Go vulnerability gate for Go
-// (govulnGateArgs) and the HISS-12 secrets scan for every language (order engine-hiss-unenforced-checks-20261027).
+// (govulnGateArgs), the HISS-12 secrets scan, and the diff-scoped docstring coverage check for every language.
 func lefthookPrePushJobs(shape lefthookShape) string {
 	jobs := ""
 	if shape.languages&hisscatalog.LanguageGo != 0 {
@@ -247,7 +247,8 @@ func lefthookPrePushJobs(shape lefthookShape) string {
 		jobs += "    security:\n" + lefthookRun(command)
 	}
 	secretsCmd := requiredToolGuard("gitleaks", gitleaksInstallHint, lefthookGovernedCommand("security secrets"))
-	return jobs + "    secrets:\n" + lefthookRun(secretsCmd)
+	docstringsCmd := lefthookGovernedCommand("docstrings check --pre-push")
+	return jobs + "    secrets:\n" + lefthookRun(secretsCmd) + "    docstrings:\n      use_stdin: true\n" + lefthookRun(docstringsCmd)
 }
 
 // reuseLintCommand renders the run line of the reuse-lint job: reuse lint at the release line
@@ -333,7 +334,8 @@ func (shape lefthookShape) otherToolGovuln() lefthookShape {
 // reuse-lint job for a REUSE repository), and with the checkpoint lifecycle jobs when checkpoint
 // is set. It opens with a document start and folds every run line longer than yamllint's default
 // limit (lefthookRun), so an adopter whose hooks lint the whole tree with yamllint's defaults
-// accepts it (BUG-782).
+// accepts it (BUG-782). The pre-push merge-check job refuses merge commits dropping first-parent
+// work (Order: engine-dropped-hunk-gate-20261027).
 func buildLefthookYAMLFor(shape lefthookShape, checkpoint bool) string {
 	governed := lefthookGovernedCommand
 	checkpointJobs := ""
@@ -361,9 +363,32 @@ func buildLefthookYAMLFor(shape lefthookShape, checkpoint bool) string {
 		"  parallel: false\n" +
 		"  commands:\n" +
 		lefthookPrePushJobs(shape) +
+		"    merge-check:\n" +
+		"      use_stdin: true\n" +
+		lefthookRun(mergeCheckPrePushCommand()) +
 		"    flavor-audit:\n" + lefthookRun(governed("flavor audit .")) +
 		"    audit:\n" + lefthookRun(governed(prePushAuditArgs)) +
 		"    gate:\n" + lefthookRun(governed(prePushGateArgs))
+}
+
+// maxPrePushRefs bounds the ref updates pre-push merge-check inspects from stdin (HISS-02).
+const maxPrePushRefs = 64
+
+// mergeCheckPrePushCommand reads git pre-push ref lines (<local-ref> <local-oid> <remote-ref>
+// <remote-oid>) from stdin and runs merge-check over each pushed range whose local and remote
+// OIDs are both non-zero; when no pushed range exists on stdin (ref deletion, new branch with
+// all-zero remote OID, or empty stdin), it prints a stated skip reason to stderr. It counts
+// ref lines and fails closed past maxPrePushRefs.
+func mergeCheckPrePushCommand() string {
+	limit := strconv.Itoa(maxPrePushRefs)
+	return "count=0; ran=0; while read -r _ loid _ roid; do " +
+		"count=$((count + 1)); " +
+		"if [ $count -gt " + limit + " ]; then " +
+		"echo merge-check: pushed refs exceed limit " + limit + " >&2; exit 1; fi; " +
+		"if [ x$(echo $loid | tr -d 0) != x ] && [ x$(echo $roid | tr -d 0) != x ]; then " +
+		"ran=1; " + lefthookGovernedCommand("merge-check --range=$roid..$loid") + " || exit $?; " +
+		"fi; done; " +
+		"if [ $ran = 0 ]; then echo no pushed commit range on stdin, skipping merge-check >&2; fi"
 }
 
 // blockEvasionTemplate is the agent PreToolUse interceptor adoption writes. It is not a git

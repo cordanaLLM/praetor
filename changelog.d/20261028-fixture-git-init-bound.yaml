@@ -1,0 +1,4 @@
+# Order: engine-agenthook-windows-flake-20261028
+type: fixed
+title: Test fixtures initialise Git repositories under fixture bound instead of probe bound
+breaking: false

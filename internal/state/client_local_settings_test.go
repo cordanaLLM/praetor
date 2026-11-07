@@ -5,6 +5,7 @@
 package state_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,17 +30,18 @@ func fixtureGit(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(output))
 }
 
+// initAdoptedFixture initializes an adopted repository fixture with owner-only files.
 func initAdoptedFixture(t *testing.T, dir string) {
 	t.Helper()
 	fixtureGit(t, dir, "init")
 	fixtureGit(t, dir, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "init")
 
 	gitignorePath := filepath.Join(dir, ".gitignore")
-	if err := os.WriteFile(gitignorePath, []byte(adopt.ManagedGitIgnoreBlock()), 0o644); err != nil {
+	if err := os.WriteFile(gitignorePath, []byte(adopt.ManagedGitIgnoreBlock()), 0o600); err != nil {
 		t.Fatalf("write .gitignore: %v", err)
 	}
 	trackedFile := filepath.Join(dir, "tracked.txt")
-	if err := os.WriteFile(trackedFile, []byte("tracked\n"), 0o644); err != nil {
+	if err := os.WriteFile(trackedFile, []byte("tracked\n"), 0o600); err != nil {
 		t.Fatalf("write tracked file: %v", err)
 	}
 	fixtureGit(t, dir, "add", ".gitignore", "tracked.txt")
@@ -56,10 +58,11 @@ func TestInspectStateClientLocalSettings_Positive(t *testing.T) {
 	initAdoptedFixture(t, dir)
 
 	claudeLocal := filepath.Join(dir, ".claude", "settings.local.json")
-	if err := os.MkdirAll(filepath.Dir(claudeLocal), 0o755); err != nil {
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
+	if err := os.MkdirAll(filepath.Dir(claudeLocal), 0o700); err != nil {
 		t.Fatalf("mkdir .claude: %v", err)
 	}
-	if err := os.WriteFile(claudeLocal, []byte(`{"permissions":{"allow":["Bash"]}}`+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(claudeLocal, []byte(`{"permissions":{"allow":["Bash"]}}`+"\n"), 0o600); err != nil {
 		t.Fatalf("write settings.local.json: %v", err)
 	}
 
@@ -78,15 +81,16 @@ func TestInspectStateClientLocalSettings_Negative(t *testing.T) {
 	initAdoptedFixture(t, dir)
 
 	claudeLocal := filepath.Join(dir, ".claude", "settings.local.json")
-	if err := os.MkdirAll(filepath.Dir(claudeLocal), 0o755); err != nil {
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
+	if err := os.MkdirAll(filepath.Dir(claudeLocal), 0o700); err != nil {
 		t.Fatalf("mkdir .claude: %v", err)
 	}
-	if err := os.WriteFile(claudeLocal, []byte(`{"permissions":{"allow":["Bash"]}}`+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(claudeLocal, []byte(`{"permissions":{"allow":["Bash"]}}`+"\n"), 0o600); err != nil {
 		t.Fatalf("write settings.local.json: %v", err)
 	}
 
 	trackedFile := filepath.Join(dir, "tracked.txt")
-	if err := os.WriteFile(trackedFile, []byte("modified\n"), 0o644); err != nil {
+	if err := os.WriteFile(trackedFile, []byte("modified\n"), 0o600); err != nil {
 		t.Fatalf("modify tracked file: %v", err)
 	}
 
@@ -107,7 +111,7 @@ func TestInspectStateClientLocalSettings_Boundary(t *testing.T) {
 
 	v3Block := "bin/\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n.workingdir/\n.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n# END praetor private artifacts\n"
 	gitignorePath := filepath.Join(dir, ".gitignore")
-	if err := os.WriteFile(gitignorePath, []byte(v3Block), 0o644); err != nil {
+	if err := os.WriteFile(gitignorePath, []byte(v3Block), 0o600); err != nil {
 		t.Fatalf("write v3 .gitignore: %v", err)
 	}
 	fixtureGit(t, dir, "add", ".gitignore")
@@ -136,11 +140,12 @@ func TestInspectStateClientLocalSettings_Boundary(t *testing.T) {
 	}
 	upgradedText := string(upgraded)
 	if !strings.HasSuffix(upgradedText, adopt.ManagedGitIgnoreBlock()) {
-		t.Fatalf("upgraded .gitignore does not end with canonical v4 block:\n%s", upgradedText)
+		t.Fatalf("upgraded .gitignore does not end with the canonical block:\n%s", upgradedText)
 	}
+	canonicalVersion := canonicalGitIgnoreVersion(t, dir)
 	matchAfter, okAfter := adopt.LookupManagedGitIgnoreTail(t.Context(), dir, upgradedText)
-	if !okAfter || !matchAfter.Matched || matchAfter.Version != "v4" || !matchAfter.Current {
-		t.Fatalf("upgraded block lookup: ok=%v match=%+v, want Matched=true Version=v4 Current=true", okAfter, matchAfter)
+	if !okAfter || !matchAfter.Matched || matchAfter.Version != canonicalVersion || !matchAfter.Current {
+		t.Fatalf("upgraded block lookup: ok=%v match=%+v, want Matched=true Version=%s Current=true", okAfter, matchAfter, canonicalVersion)
 	}
 
 	// Commit adoption changes so working tree is clean before adding client-local settings.
@@ -152,10 +157,11 @@ func TestInspectStateClientLocalSettings_Boundary(t *testing.T) {
 		t.Fatalf("init working dir: %v", err)
 	}
 	claudeLocal := filepath.Join(dir, ".claude", "settings.local.json")
-	if err := os.MkdirAll(filepath.Dir(claudeLocal), 0o755); err != nil {
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
+	if err := os.MkdirAll(filepath.Dir(claudeLocal), 0o700); err != nil {
 		t.Fatalf("mkdir .claude: %v", err)
 	}
-	if err := os.WriteFile(claudeLocal, []byte(`{}`+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(claudeLocal, []byte(`{}`+"\n"), 0o600); err != nil {
 		t.Fatalf("write settings.local.json: %v", err)
 	}
 	snap, err := state.InspectState(t.Context(), dir)
@@ -165,4 +171,63 @@ func TestInspectStateClientLocalSettings_Boundary(t *testing.T) {
 	if !snap.Clean || snap.DirtyCount != 0 {
 		t.Fatalf("upgraded repository with client-local settings must be clean: clean=%v dirty_count=%d", snap.Clean, snap.DirtyCount)
 	}
+}
+
+// canonicalGitIgnoreVersion is the version of the canonical managed block, read from the block
+// itself, so a block bump needs no edit in the tests that compare against it.
+func canonicalGitIgnoreVersion(t *testing.T, dir string) string {
+	t.Helper()
+	canonical, ok := adopt.LookupManagedGitIgnoreTail(t.Context(), dir, adopt.ManagedGitIgnoreBlock())
+	if !ok || !canonical.Current {
+		t.Fatalf("canonical block lookup: ok=%v match=%+v, want a current block", ok, canonical)
+	}
+	return canonical.Version
+}
+
+// Positive: state-ledger-integrity documentation reflects the current canonical managed block version.
+func TestStateLedgerIntegrityGuide_DocumentsCurrentBlockVersion_Positive(t *testing.T) {
+	content := readStateLedgerIntegrityGuide(t)
+	canonical := canonicalGitIgnoreVersion(t, t.TempDir())
+	wantPhrase := fmt.Sprintf("Since block %s", canonical)
+	if !strings.Contains(content, wantPhrase) {
+		t.Fatalf("state-ledger-integrity.md must document current canonical block (%s): missing %q", canonical, wantPhrase)
+	}
+}
+
+// Negative: an unmanaged or obsolete block version is not documented as current canonical.
+func TestStateLedgerIntegrityGuide_DocumentsCurrentBlockVersion_Negative(t *testing.T) {
+	content := readStateLedgerIntegrityGuide(t)
+	unmanaged := "Since block v99"
+	if strings.Contains(content, unmanaged) {
+		t.Fatalf("state-ledger-integrity.md must not document unmanaged block: found %q", unmanaged)
+	}
+}
+
+// Boundary: all recognized historical block versions remain documented.
+func TestStateLedgerIntegrityGuide_DocumentsCurrentBlockVersion_Boundary(t *testing.T) {
+	content := readStateLedgerIntegrityGuide(t)
+	for _, historical := range []string{"block v3", "block v4"} {
+		if !strings.Contains(content, historical) {
+			t.Fatalf("state-ledger-integrity.md must document historical %s", historical)
+		}
+	}
+}
+
+// readStateLedgerIntegrityGuide reads the state-ledger-integrity.md guide through os.OpenRoot.
+func readStateLedgerIntegrityGuide(t *testing.T) string {
+	t.Helper()
+	root, err := os.OpenRoot(filepath.Join("..", "..", "docs", "guides"))
+	if err != nil {
+		t.Fatalf("open guides root: %v", err)
+	}
+	defer func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("close guides root: %v", err)
+		}
+	}()
+	content, err := root.ReadFile("state-ledger-integrity.md")
+	if err != nil {
+		t.Fatalf("read guide: %v", err)
+	}
+	return string(content)
 }

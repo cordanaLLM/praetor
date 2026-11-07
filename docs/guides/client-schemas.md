@@ -18,11 +18,11 @@ upstream schemas (`TestOnlyTheManifestIsEmbedded`). The types generated from the
 | Client or format | Vendored file | Upstream | Pin | Licence |
 | --- | --- | --- | --- | --- |
 | Claude Code settings | `claude/claude-code-settings.json` | SchemaStore `src/schemas/json/claude-code-settings.json` | commit `92fc4bc` | Apache-2.0 |
-| Gemini CLI settings | `gemini/settings.schema.json` | `google-gemini/gemini-cli` `schemas/settings.schema.json` | `v0.65.0` | Apache-2.0 |
-| Codex config | `codex/config.schema.json` | `openai/codex` `codex-rs/core/config.schema.json` | `rust-v0.164.0` | Apache-2.0 |
-| Codex hook events | `codex/hooks/*.command.{input,output}.schema.json` (23 files) | `openai/codex` `codex-rs/hooks/schema/generated/` | `rust-v0.164.0` | Apache-2.0 |
+| Gemini CLI settings | `gemini/settings.schema.json` | `google-gemini/gemini-cli` `schemas/settings.schema.json` | `v0.66.0` | Apache-2.0 |
+| Codex config | `codex/config.schema.json` | `openai/codex` `codex-rs/core/config.schema.json` | `rust-v0.166.0` | Apache-2.0 |
+| Codex hook events | `codex/hooks/*.command.{input,output}.schema.json` (23 files) | `openai/codex` `codex-rs/hooks/schema/generated/` | `rust-v0.166.0` | Apache-2.0 |
 | MCP protocol | `mcp/schema.json` | `modelcontextprotocol/modelcontextprotocol` `schema/2025-11-25/schema.json` | `2025-11-25` | MIT |
-| opencode config | `opencode/config.json` | `https://opencode.ai/config.json` | hosted copy, release `v2.1.4` | MIT |
+| opencode config | `opencode/config.json` | `https://opencode.ai/config.json` | hosted copy, release `v2.2.5` | MIT |
 
 `clients capabilities` (and the MCP tool `standards_client_capabilities`) reports the pinned
 version and sources per client in a `schema` member, read from the manifest
@@ -146,7 +146,17 @@ want a typed payload.
    fixture test naming the missing field.
 
 The MCP source URL contains the specification revision, so `{pin}` stands for the pin in
-`url_base` and `upstream`, and a pin change moves every URL.
+`url_base` and `upstream`, and a pin change moves every URL. A Renovate packageRule in
+`renovate.json` (`modelcontextprotocol/modelcontextprotocol`) holds the MCP specification at
+`2025-11-25`, pinned by `TestRenovateAllowedVersionsMatchCurrentPinsAndHoldMCPSpec` in
+`internal/clientschema/clientschema_test.go`. The `2026-07-28` revision is a protocol break that
+replaces initialization with `server/discover` and drops subscriptions
+(<https://modelcontextprotocol.io/specification/2026-07-28/changelog>); on that schema,
+`go generate ./internal/clientschema` stops with `typegen: target internal/mcpwire/messages_gen.go: schema has no definition "InitializeRequestParams"`
+(recorded in #1694), while Praetor's servers and clients speak `2025-11-25`. No test measures
+client protocol support yet; the hold revisits when a measured client matrix confirms that
+supported clients (Claude Code, Codex, Gemini CLI, Antigravity, opencode, editors) support or
+negotiate `2026-07-28`, an open measurement step tracked in #1694.
 
 ## Formats without an upstream schema
 

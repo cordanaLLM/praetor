@@ -26,6 +26,10 @@ supply_chain:
   enforce_cosign: true
   require_sbom: true
 
+release_test_levels:
+  - "unit"
+  - "integration"
+
 linters:
   - "clang-tidy"
   - "clippy"

@@ -655,7 +655,7 @@ rules:
           reported: TS7006 'Parameter name implicitly has an any type' and TS18048 'label is possibly
           undefined'. The negative compiled clean. 4/4 gap fixtures compiled clean under the
           repository's options; the SAME compiler reports three of them the moment the hygiene flags
-          are on -- TS6133 for the unused local, TS6133 for the unused paramete
+          are on -- TS6133 for the unused local, TS6133 for the unused parameter
       - language: python
         state: unsupported
         runner: ruff
@@ -1109,7 +1109,7 @@ rules:
           negative/added-exported-prop.svelte -> exit 0. A Svelte component's export let props are a
           public contract, so renaming one is a breaking change; it is undetectable here and also
           fails silently at run time rather than at build time, since a parent passing the removed
-          prop keeps compilin
+          prop keeps compiling
   - id: HISS-15
     coverage:
       - language: go

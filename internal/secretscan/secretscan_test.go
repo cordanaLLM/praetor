@@ -717,6 +717,7 @@ func TestUnexcusedSecretInfractions(t *testing.T) {
 			Path:        "excused.py",
 			Tool:        "generic-api-key",
 			Fingerprint: "fp-excused",
+			Category:    "A",
 			Expires:     "2026-12-31",
 			Reason:      "test fixture exception",
 		},

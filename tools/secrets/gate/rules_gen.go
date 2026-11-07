@@ -21,6 +21,10 @@ import (
 const (
 	// MaxExceptionDays bounds an uncategorized exception.
 	MaxExceptionDays = 90
+	// CategoryRequiredFrom is the YYYY-MM-DD entered date from which every exception requires a category.
+	CategoryRequiredFrom = "2026-10-29"
+	// UncategorizedGraceUntil is the latest YYYY-MM-DD expires date allowed for an exception with neither category nor entered.
+	UncategorizedGraceUntil = "2026-11-28"
 	// DateLayout is the YYYY-MM-DD date format used for entered and expires fields.
 	DateLayout = "2006-01-02"
 	// MaxPathBytes bounds the length of a relative file path.
@@ -117,6 +121,10 @@ func expiryProblem(expires string, base time.Time, reference string) string {
 	if err != nil {
 		return fmt.Sprintf("expires %q must be a YYYY-MM-DD date", expires)
 	}
+	return checkExpiryCap(expires, date, base, reference)
+}
+
+func checkExpiryCap(expires string, date, base time.Time, reference string) string {
 	latest := base.AddDate(0, 0, MaxExceptionDays)
 	if date.After(latest) {
 		return fmt.Sprintf("expires %s is more than %d days after %s; the latest date allowed is %s",
@@ -137,9 +145,29 @@ func CategoryExpiryProblem(category, entered, expires string, today time.Time) s
 		reference = "entered " + entered
 	}
 	if category == "" {
-		return expiryProblem(expires, base, reference)
+		return uncategorizedExpiryProblem(entered, expires, base, reference)
 	}
 	return categorizedExpiryProblem(category, expires, base, reference)
+}
+
+func uncategorizedExpiryProblem(entered, expires string, base time.Time, reference string) string {
+	date, err := time.Parse(DateLayout, expires)
+	if err != nil {
+		return fmt.Sprintf("expires %q must be a YYYY-MM-DD date", expires)
+	}
+	if entered != "" {
+		if entered >= CategoryRequiredFrom {
+			return missingCategoryProblem(fmt.Sprintf("entered %s is on or after %s", entered, CategoryRequiredFrom))
+		}
+	} else if expires > UncategorizedGraceUntil {
+		return missingCategoryProblem(fmt.Sprintf("entered is omitted and expires %s is after %s", expires, UncategorizedGraceUntil))
+	}
+	return checkExpiryCap(expires, date, base, reference)
+}
+
+func missingCategoryProblem(detail string) string {
+	return fmt.Sprintf("category is required (%s; exceptions with entered >= %s or without entered expiring after %s must declare a category): allowed categories are A (stated interval, at most %d days), B (3 days), C (10 days), D (120 days); set category or prefix reason with \"category A|B|C|D\"",
+		detail, CategoryRequiredFrom, UncategorizedGraceUntil, MaxExceptionDays)
 }
 
 func categorizedExpiryProblem(category, expires string, base time.Time, reference string) string {

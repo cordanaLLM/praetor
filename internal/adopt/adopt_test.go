@@ -18,6 +18,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
@@ -2447,6 +2448,10 @@ func TestRulesetMatchesCheckedInFile(t *testing.T) {
 	generated, err := buildRulesetJSON(policy.BranchProtection, contexts)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if os.Getenv(testsupport.GoldenUpdateEnv) == "1" {
+		testsupport.AssertGoldenIn(t, repoRoot, forge.RepositoryRulesetPath, generated)
+		return
 	}
 	var want, got any
 	if err := jsonUnmarshal(checkedIn, &want); err != nil {

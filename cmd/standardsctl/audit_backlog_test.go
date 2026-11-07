@@ -93,10 +93,11 @@ func TestAuditBacklogCaps_BoundedFacet_DefectsCap(t *testing.T) {
 func TestAuditBacklogCaps_BoundedFacet_DefectsException(t *testing.T) {
 	unexpiredDate := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
 	liveEx := config.Exception{
-		Rule:    "backlog.caps.defects",
-		Tool:    "backlog",
-		Reason:  "sprint refactor underway",
-		Expires: unexpiredDate,
+		Rule:     "backlog.caps.defects",
+		Tool:     "backlog",
+		Reason:   "sprint refactor underway",
+		Category: "A",
+		Expires:  unexpiredDate,
 	}
 
 	// Unexpired exception: passes and names the exception and expiry
@@ -163,10 +164,11 @@ func TestAuditBacklogCaps_NoFacet_Uncapped(t *testing.T) {
 // (backlog.caps.bogus) is refused by the validator.
 func TestAuditBacklogCaps_UnknownCategoryExceptionRefused(t *testing.T) {
 	bogusEx := config.Exception{
-		Rule:    "backlog.caps.bogus",
-		Tool:    "backlog",
-		Reason:  "testing unknown category rejection",
-		Expires: time.Now().AddDate(0, 0, 10).Format(config.ExceptionDateLayout),
+		Rule:     "backlog.caps.bogus",
+		Tool:     "backlog",
+		Reason:   "testing unknown category rejection",
+		Category: "A",
+		Expires:  time.Now().AddDate(0, 0, 10).Format(config.ExceptionDateLayout),
 	}
 	err := config.ValidateExceptions([]config.Exception{bogusEx}, time.Now())
 	if err == nil {

@@ -94,6 +94,13 @@ func pastaArguments(s Spec, b Binaries) []string {
 	if len(ports) != 0 {
 		tcp = strings.Join(ports, ",")
 	}
+	return pastaForward(s, b, tcp)
+}
+
+// pastaForward is pasta's argv for one namespace -> host-loopback TCP forward spec (-T): no inbound
+// forwards, no UDP, no host-loopback address mapping. The lane profiles pass explicit ports; the go
+// test adapter passes the container publish range (test_exec.go).
+func pastaForward(s Spec, b Binaries, tcp string) []string {
 	args := []string{b.Pasta, "-t", "none", "-u", "none", "-T", tcp, "-U", "none", "--map-host-loopback", "none"}
 	if s.Network == NetworkEgress {
 		args = append(args, "--config-net")

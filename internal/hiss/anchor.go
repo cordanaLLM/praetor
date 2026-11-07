@@ -3,9 +3,11 @@ package hiss
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path/filepath"
 	"strings"
 )
 
@@ -39,11 +41,66 @@ const (
 	maxNotedFunctions = 1 << 16
 )
 
+// FunctionSpan is one named function or method a language scanner located in a source file,
+// with 1-based inclusive start and end line numbers.
+type FunctionSpan struct {
+	Name  string
+	Start int
+	End   int
+}
+
 // funcSpan is one named function a language scanner located in the file it is reading: the
 // lines its definition spans, both included.
 type funcSpan struct {
 	name       string
 	start, end int
+}
+
+// ExtractFileFunctions returns the function and method spans recorded for rel by the HISS
+// language scanners without running a second parser. It returns a parse error when rel is a
+// Go source file that cannot be parsed, and (nil, nil) for empty or unsupported files.
+func ExtractFileFunctions(rel string, data []byte) ([]FunctionSpan, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	ext := strings.ToLower(filepath.Ext(rel))
+	if ext == ".go" {
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, rel, data, parser.SkipObjectResolution)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", rel, err)
+		}
+		return exportFunctionSpans(extractGoFunctions(fset, file)), nil
+	}
+	src := sourceFile{rel: rel, data: data}
+	rep := newScanReport(MaxInfractionsCap)
+	opts := (ScanOptions{}).withDefaults()
+	idx := scannerIndex(ext)
+	if idx < 0 {
+		idx = claimingScanner(src, ext)
+	}
+	if idx >= 0 {
+		languageScanners[idx].scan(src, rep, opts)
+	} else if ext == ".java" || ext == ".kt" || ext == ".kts" || ext == ".swift" {
+		scanNativeLines(src.lfLines(), src.rel, rep, opts)
+	}
+	return exportFunctionSpans(rep.functions), nil
+}
+
+// exportFunctionSpans converts internal funcSpan records into exported FunctionSpan values.
+func exportFunctionSpans(spans []funcSpan) []FunctionSpan {
+	if len(spans) == 0 {
+		return nil
+	}
+	out := make([]FunctionSpan, len(spans))
+	for i := 0; i < len(spans); i++ {
+		out[i] = FunctionSpan{
+			Name:  spans[i].name,
+			Start: spans[i].start,
+			End:   spans[i].end,
+		}
+	}
+	return out
 }
 
 // appendFunction adds a function a scanner located to those of the file being read, within
