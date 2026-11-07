@@ -52,6 +52,8 @@ func (s *adoptSession) supplyChainException(ctx context.Context) *config.Excepti
 	return s.supplyChain.entry
 }
 
+const supplyChainExceptionReasonPrefix = "adoption found the release workflows short of the declared supply chain "
+
 // newSupplyChainException is the entry adoption records for gap on today: the release workflow
 // the measurement read, a reason naming the gap and the guide that closes it, and the latest
 // expiry the list allows.
@@ -60,8 +62,8 @@ func newSupplyChainException(gap supplyChainGap, today time.Time) config.Excepti
 		Rule:     config.ExceptionRuleSupplyChain,
 		Path:     gap.releaseWorkflow(),
 		Category: "D",
-		Reason: fmt.Sprintf("adoption found the release workflows short of the declared supply chain (%s); raise them as "+
-			"%s in Praetor describes, then remove this entry", gap.summary(), supplyChainGuide),
+		Reason: fmt.Sprintf("%s(%s); raise them as "+
+			"%s in Praetor describes, then remove this entry", supplyChainExceptionReasonPrefix, gap.summary(), supplyChainGuide),
 		Expires: config.ExceptionDay(today).AddDate(0, 0, config.MaxExceptionDays).Format(config.ExceptionDateLayout),
 	}
 }
