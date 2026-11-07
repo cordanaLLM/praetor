@@ -13,7 +13,7 @@
     "markdownlint": "0.42.0",
     "micromark": "4.0.3",
     "micromark-extension-mdxjs": "3.0.0",
-    "parse5": "8.0.1",
+    "parse5": "8.1.0",
     "smol-toml": "1.9.1"
   },
   "overrides": {
