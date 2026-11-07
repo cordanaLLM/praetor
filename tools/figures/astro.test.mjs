@@ -780,7 +780,7 @@ test('readPlayerLock refuses a lock that grows past the archive limit after a si
     const made = spawnSync('mkfifo', [lockPath], { timeout: 5_000 });
     assert.equal(made.status, 0, `mkfifo failed: ${made.stderr}`);
     const writer = spawn(process.execPath,
-      ['-e', `try { require('node:fs').writeFileSync(process.argv[1], '{' + ' '.repeat(${4 * 1024 * 1024}) + '}'); } catch {}`, lockPath],
+      ['--input-type=commonjs', '-e', `try { require('node:fs').writeFileSync(process.argv[1], '{' + ' '.repeat(${4 * 1024 * 1024}) + '}'); } catch {}`, lockPath],
       { stdio: 'ignore', timeout: 20_000 });
     const exited = new Promise((resolve) => writer.on('exit', resolve));
     assert.throws(() => readPlayerLock(lockPath), /player\.lock\.json exceeds 4194304 bytes/);
