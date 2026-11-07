@@ -191,8 +191,8 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	}
 }
 
-// TestParse5PlantedMismatchCaught verifies that a stale hard-coded parse5 version would be caught
-// by the dependency assertion when it drifts from the manifest (Negative: planted mismatch refused).
+// TestParse5PlantedMismatchCaught invokes the dependency validation path with a planted wrong
+// parse5 version and verifies the check rejects it (Negative: planted mismatch refused).
 func TestParse5PlantedMismatchCaught(t *testing.T) {
 	manifestData, err := Read("package.json")
 	if err != nil {
@@ -208,14 +208,10 @@ func TestParse5PlantedMismatchCaught(t *testing.T) {
 	if real == "" {
 		t.Fatal("parse5 not listed in package.json dependencies")
 	}
-	planted := "0.0.0-planted"
-	if real == planted {
-		t.Fatal("planted version collides with manifest")
-	}
-	wrong := maps.Clone(manifest.Dependencies)
-	wrong["parse5"] = planted
-	if wrong["parse5"] == manifest.Dependencies["parse5"] {
-		t.Fatal("planted mismatch not detected: assertDirectDependencies would accept a stale literal")
+	stale := maps.Clone(manifest.Dependencies)
+	stale["parse5"] = "0.0.0-planted"
+	if msg := directDependencyMismatch(manifest.Dependencies, stale); msg == "" {
+		t.Fatal("planted parse5 mismatch not detected by dependency validation")
 	}
 }
 
@@ -272,15 +268,24 @@ func TestPackageLockInstallsNoBraces(t *testing.T) {
 	}
 }
 
-func assertDirectDependencies(t *testing.T, got, want map[string]string) {
-	t.Helper()
+// directDependencyMismatch returns a non-empty message when got and want differ in size or value.
+func directDependencyMismatch(got, want map[string]string) string {
 	if len(got) != len(want) {
-		t.Fatalf("direct dependencies = %v, want %v", got, want)
+		return fmt.Sprintf("direct dependencies = %v, want %v", got, want)
 	}
 	for name, version := range want {
 		if got[name] != version {
-			t.Fatalf("direct dependency %s = %q, want %q", name, got[name], version)
+			return fmt.Sprintf("direct dependency %s = %q, want %q", name, got[name], version)
 		}
+	}
+	return ""
+}
+
+// assertDirectDependencies fails the test when got and want differ.
+func assertDirectDependencies(t *testing.T, got, want map[string]string) {
+	t.Helper()
+	if msg := directDependencyMismatch(got, want); msg != "" {
+		t.Fatal(msg)
 	}
 }
 
