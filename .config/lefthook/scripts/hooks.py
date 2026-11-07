@@ -92,6 +92,23 @@ def push_updates(text):
 # MAX_LS_REMOTE_LINES bounds the remote listing this hook reads (HISS-02).
 MAX_LS_REMOTE_LINES = 64
 
+# git log %G? signature status codes (git-log(1)). G is the only passing status.
+# U (good signature, unknown validity) is refused with an explicit message rather
+# than silently accepted: the allowed-signers file must list the key for a push to
+# succeed, so the fix is always "add the key" or "configure gpg.ssh.allowedSignersFile".
+SIGNATURE_GOOD = "G"
+SIGNATURE_LABELS = {
+    "G": "good (valid)",
+    "B": "bad",
+    "U": "good, unknown validity (key not in allowed signers)",
+    "X": "good, expired signature",
+    "Y": "good, expired key",
+    "R": "good, revoked key",
+    "E": "cannot be checked (missing key)",
+    "N": "no signature",
+}
+MAX_SIGNATURE_COMMITS = 500
+
 
 def remote_default_ref(remote):
     """Return the remote's own default branch ref, or None when it cannot be established.
@@ -209,6 +226,7 @@ def pre_push(remote):
         check_docstring_range(base, head)
         check_merge_range(base, head)
         check_commit_message_range(base, head)
+        check_signature_range(base, head)
         if not names:
             continue
         check_pushed_snapshot(head, base, mode, names)
@@ -253,6 +271,64 @@ def check_merge_range(base, head):
         print("Merge check: skipped, no pushed-range base; CI checks pull request range")
         return
     cli(["merge-check", f"--range={base}..{head}"])
+
+
+def check_signature_range(base, head):
+    """Refuse outgoing commits whose signature is not good.
+
+    Every pushed commit must carry a valid signature (git %G? status "G"). An
+    unsigned or unverifiable commit on a push branch is a single-barrier defect:
+    forge rulesets guard only the default branch, not PR heads.
+
+    The check activates only when commit.gpgsign is true in the repository or
+    user config; repos that have not opted into signing are not blocked (CI and
+    forge rulesets still cover the merge path).
+
+    Without a pushed-range base the range covers the whole history, whose old
+    commits this push did not create, so the check is skipped; CI and forge
+    rulesets cover that path.
+    """
+    gpgsign = run(
+        ["git", "config", "--get", "--type=bool", "commit.gpgsign"],
+        allowed=(0, 1),
+    ).decode().strip()
+    if gpgsign != "true":
+        print("Signature check: skipped, commit.gpgsign not set to true")
+        return
+    if not base:
+        print("Signature check: skipped, no pushed-range base; "
+              "CI and forge rulesets cover merge path")
+        return
+    log = git("log", f"--max-count={MAX_SIGNATURE_COMMITS + 1}",
+              "--format=%H %G?", f"{base}..{head}", "--").decode()
+    lines = log.splitlines()
+    if len(lines) > MAX_SIGNATURE_COMMITS:
+        raise HookError(
+            f"Signature check: range {base[:12]}..{head[:12]} exceeds "
+            f"{MAX_SIGNATURE_COMMITS} commits; refresh remote baseline "
+            "or split push"
+        )
+    bad = []
+    for line in lines:
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            raise HookError(
+                f"Signature check: unparseable git log line: {line!r}"
+            )
+        sha, status = parts
+        if status != SIGNATURE_GOOD:
+            label = SIGNATURE_LABELS.get(status, f"unknown status {status!r}")
+            bad.append(f"  {sha[:12]}  {label}")
+    if bad:
+        raise HookError(
+            f"Unsigned or unverifiable commits in {base[:12]}..{head[:12]}:\n"
+            + "\n".join(bad)
+            + "\n\nEvery pushed commit must be signed. "
+            "Configure commit.gpgsign=true and verify that "
+            "gpg.ssh.allowedSignersFile (or gpg trust) covers your signing key."
+        )
+    print(f"Signature check: {len(lines)} commit(s) in "
+          f"{base[:12]}..{head[:12]} verified")
 
 
 def check_commit_message_range(base, head):
