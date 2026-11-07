@@ -146,7 +146,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: '@sveltejs/adapter-static'
-      version: 4.0.0
+      version: 4.0.1
       language: typescript
       ecosystem: npm
       capability: ui.external.sveltejs_adapter_static
@@ -216,7 +216,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: eslint
-      version: 10.13.0
+      version: 10.14.0
       language: typescript
       ecosystem: npm
       capability: ui.external.eslint
@@ -711,4 +711,4 @@ readiness:
     total_third_party_deps: 86
     covered_deps: 0
     gap_deps: 86
-updated_at: 2026-11-02T01:55:48.805642465Z
+updated_at: 2026-11-02T19:40:52.736941279Z
