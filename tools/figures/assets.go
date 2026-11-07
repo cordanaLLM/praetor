@@ -224,6 +224,8 @@ var priorDigests = map[string]string{
 	"bef335fc666fcb8561473298eb38e1cf3dbfecf678c503100535a2df41ff8bff": Directory + "/checks.mjs",
 	// checks.mjs before its Codacy path-rule suppression comments.
 	"912d4b111b3e2b9025ef8e365f19bf9adb160f86c2595fe6c5cd9dcba0cc9ea0": Directory + "/checks.mjs",
+	// checks.mjs before keepDeadlinesFatal and nested player state.
+	"547d4bfe5d1895a907cba6c0aaf4540f3825811838af94c1b6c0e77082acb211": Directory + "/checks.mjs",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts figures.css mkdocs_hook.py astro.mjs serve.mjs eslint.figures.mjs README.md
