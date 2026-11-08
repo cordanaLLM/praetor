@@ -16,7 +16,7 @@ const (
 	maxPythonIOFromItems = 32
 	maxPythonIOCallArgs  = 128
 	maxPythonIOClauses   = 16
-	maxPythonIOLineBytes = 4096
+	maxPythonIOLineBytes = 65536
 )
 
 type pythonIOName struct {
@@ -41,83 +41,92 @@ type pythonIOScope struct {
 // observePythonIO feeds one stripped line to the HISS-02 I/O check: imports first, then open
 // calls, then new ones.
 func (s *pythonScanner) observePythonIO(code string, lineNum int) {
-	s.io.observeImports(code)
+	dropped := s.io.observeImports(code)
+	for i := 0; i < len(dropped) && i < maxPythonIOTracked; i++ {
+		recordViolation(s.rep, "HISS-02", s.rel, lineNum, "",
+			fmt.Sprintf("Python I/O import binding %s not tracked: more than %d tracked I/O bindings", dropped[i], maxPythonIOTracked))
+	}
 	s.advancePendingPythonIO(code, lineNum)
 	s.scanNewPythonIOCalls(code, lineNum)
 }
 
 // observeImports records the subprocess, urllib.request and requests bindings an import statement
-// on code creates.
-func (s *pythonIOScope) observeImports(code string) {
+// on code creates, returning any local names dropped past maxPythonIOTracked.
+func (s *pythonIOScope) observeImports(code string) []string {
 	if s.fromModule != "" {
-		s.continueFromImport(code)
-		return
+		return s.continueFromImport(code)
 	}
+	var dropped []string
 	clauses := strings.Split(code, ";")
 	for i := 0; i < len(clauses) && i < maxPythonIOClauses; i++ {
 		trimmed := strings.TrimSpace(clauses[i])
 		switch leadingIdent(trimmed) {
 		case "import":
-			s.observePlainImport(strings.TrimSpace(trimmed[len("import"):]))
+			dropped = append(dropped, s.observePlainImport(strings.TrimSpace(trimmed[len("import"):]))...)
 		case "from":
-			s.observeFromImport(strings.TrimSpace(trimmed[len("from"):]))
+			dropped = append(dropped, s.observeFromImport(strings.TrimSpace(trimmed[len("from"):]))...)
 		}
 	}
+	return dropped
 }
 
 // continueFromImport reads the next line of a parenthesised from-import, bounded by
-// maxPythonIOCallLines.
-func (s *pythonIOScope) continueFromImport(code string) {
+// maxPythonIOCallLines, and returns any local names dropped past maxPythonIOTracked.
+func (s *pythonIOScope) continueFromImport(code string) []string {
 	s.fromLines++
 	if closeIdx := strings.IndexByte(code, ')'); closeIdx >= 0 {
-		s.trackFromItems(s.fromModule, code[:closeIdx])
+		dropped := s.trackFromItems(s.fromModule, code[:closeIdx])
 		s.fromModule = ""
 		s.fromLines = 0
-		return
+		return dropped
 	}
-	s.trackFromItems(s.fromModule, code)
+	dropped := s.trackFromItems(s.fromModule, code)
 	if s.fromLines >= maxPythonIOCallLines {
 		s.fromModule = ""
 		s.fromLines = 0
 	}
+	return dropped
 }
 
 // observePlainImport tracks import subprocess, import requests and import urllib.request, aliased
-// or not.
-func (s *pythonIOScope) observePlainImport(rest string) {
+// or not, returning any local names dropped past maxPythonIOTracked.
+func (s *pythonIOScope) observePlainImport(rest string) []string {
+	var dropped []string
 	items := strings.Split(rest, ",")
 	for i := 0; i < len(items) && i < maxPythonIOFromItems; i++ {
 		orig, alias := parsePythonImportItem(items[i])
 		if orig == "subprocess" || orig == "requests" || orig == "urllib.request" {
-			s.addTracked(pythonIOName{local: alias, module: orig})
+			if !s.addTracked(pythonIOName{local: alias, module: orig}) {
+				dropped = append(dropped, alias)
+			}
 		}
 	}
+	return dropped
 }
 
 // observeFromImport tracks the target names a from-import of a tracked module binds, on one line
-// or opening a parenthesised list.
-func (s *pythonIOScope) observeFromImport(rest string) {
+// or opening a parenthesised list, returning any local names dropped past maxPythonIOTracked.
+func (s *pythonIOScope) observeFromImport(rest string) []string {
 	imp := nextIdent(rest, "import", 0)
 	if imp <= 0 {
-		return
+		return nil
 	}
 	mod := strings.TrimSpace(rest[:imp])
 	if !isTrackedPythonIOModule(mod) {
-		return
+		return nil
 	}
 	after := strings.TrimSpace(rest[imp+len("import"):])
 	if !strings.HasPrefix(after, "(") {
-		s.trackFromItems(mod, after)
-		return
+		return s.trackFromItems(mod, after)
 	}
 	body := after[1:]
 	if closeIdx := strings.IndexByte(body, ')'); closeIdx >= 0 {
-		s.trackFromItems(mod, body[:closeIdx])
-		return
+		return s.trackFromItems(mod, body[:closeIdx])
 	}
-	s.trackFromItems(mod, body)
+	dropped := s.trackFromItems(mod, body)
 	s.fromModule = mod
 	s.fromLines = 1
+	return dropped
 }
 
 // isTrackedPythonIOModule reports a module whose from-imports can bind a target call.
@@ -125,15 +134,20 @@ func isTrackedPythonIOModule(mod string) bool {
 	return mod == "subprocess" || mod == "requests" || mod == "urllib" || mod == "urllib.request"
 }
 
-// trackFromItems tracks each comma-separated item of a from-import that names a target.
-func (s *pythonIOScope) trackFromItems(mod, text string) {
+// trackFromItems tracks each comma-separated item of a from-import that names a target, returning
+// any local names dropped past maxPythonIOTracked.
+func (s *pythonIOScope) trackFromItems(mod, text string) []string {
+	var dropped []string
 	items := strings.Split(text, ",")
 	for i := 0; i < len(items) && i < maxPythonIOFromItems; i++ {
 		orig, alias := parsePythonImportItem(items[i])
 		if entry, ok := resolveFromImportItem(mod, orig, alias); ok {
-			s.addTracked(entry)
+			if !s.addTracked(entry) {
+				dropped = append(dropped, entry.local)
+			}
 		}
 	}
+	return dropped
 }
 
 // resolveFromImportItem maps one from-import item to a tracked binding: a module alias or a bare
@@ -165,20 +179,23 @@ func parsePythonImportItem(item string) (string, string) {
 	return trimmed, trimmed
 }
 
-// addTracked records or rebinds a local name, bounded by maxPythonIOTracked.
-func (s *pythonIOScope) addTracked(entry pythonIOName) {
+// addTracked records or rebinds a local name, bounded by maxPythonIOTracked, and reports whether
+// the binding fit within the table.
+func (s *pythonIOScope) addTracked(entry pythonIOName) bool {
 	if entry.local == "" {
-		return
+		return true
 	}
 	for i := 0; i < len(s.tracked) && i < maxPythonIOTracked; i++ {
 		if s.tracked[i].local == entry.local {
 			s.tracked[i] = entry
-			return
+			return true
 		}
 	}
 	if len(s.tracked) < maxPythonIOTracked {
 		s.tracked = append(s.tracked, entry)
+		return true
 	}
+	return false
 }
 
 // pythonIOModuleTarget names the canonical target of fn in module, or empty when fn is no target.
@@ -252,7 +269,8 @@ func (s *pythonScanner) stepPendingPythonIOCall(call *pythonIOCall, code string,
 	return true
 }
 
-// scanNewPythonIOCalls opens a check for each target call whose parenthesis starts on code.
+// scanNewPythonIOCalls opens a check for each target call whose parenthesis starts on code,
+// reporting a line that exceeds maxPythonIOLineBytes.
 func (s *pythonScanner) scanNewPythonIOCalls(code string, lineNum int) {
 	if len(s.io.tracked) == 0 {
 		return
@@ -267,10 +285,14 @@ func (s *pythonScanner) scanNewPythonIOCalls(code string, lineNum int) {
 		}
 		s.openPythonIOCall(canonical, code[i:], lineNum)
 	}
+	if len(code) > maxPythonIOLineBytes {
+		recordViolation(s.rep, "HISS-02", s.rel, lineNum, "",
+			fmt.Sprintf("Python line exceeds %d-byte I/O scan bound: calls past the byte bound are not checked", maxPythonIOLineBytes))
+	}
 }
 
-// openPythonIOCall decides a call that closes on its own line, or keeps it pending, bounded by
-// maxPythonIOPending.
+// openPythonIOCall decides a call that closes on its own line, or keeps it pending, reporting any
+// call opened past maxPythonIOPending.
 func (s *pythonScanner) openPythonIOCall(canonical, tail string, lineNum int) {
 	args, closeIdx := parseCallArgs(tail, 0)
 	if closeIdx < len(tail) {
@@ -283,7 +305,10 @@ func (s *pythonScanner) openPythonIOCall(canonical, tail string, lineNum int) {
 			openLine:  lineNum,
 			text:      tail,
 		})
+		return
 	}
+	recordViolation(s.rep, "HISS-02", s.rel, lineNum, "",
+		fmt.Sprintf("Python %s call not checked: more than %d I/O calls open at once", canonical, maxPythonIOPending))
 }
 
 // resolveCallAtParen names the target called at openParen, or empty for a definition or an

@@ -5,6 +5,7 @@
 package hiss
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -168,4 +169,78 @@ func TestPythonIO_Boundary_UnclosedCallsAndNonCodeLines(t *testing.T) {
 		{"HISS-02", "pkg/eof.py", 2},
 		{"HISS-02", "pkg/eof_comments.py", 2},
 	})
+}
+
+// TestPythonIO_Boundary_PendingCallLimit passes maxPythonIOPending open calls and reports the
+// next call opened while maxPythonIOPending calls are already pending.
+func TestPythonIO_Boundary_PendingCallLimit(t *testing.T) {
+	root := t.TempDir()
+	atLimit := strings.Join([]string{
+		"import subprocess",
+		strings.Repeat("subprocess.run(", maxPythonIOPending) + "cmd",
+		strings.Repeat(", timeout=5)", maxPythonIOPending),
+		"",
+	}, "\n")
+	writeFixture(t, root, "pkg/pending32.py", atLimit)
+
+	overLimit := strings.Join([]string{
+		"import subprocess",
+		strings.Repeat("subprocess.run(", maxPythonIOPending),
+		"subprocess.run(cmd",
+		strings.Repeat(", timeout=5)", maxPythonIOPending+1),
+		"",
+	}, "\n")
+	writeFixture(t, root, "pkg/pending33.py", overLimit)
+
+	rep := scanFixture(t, root, ScanOptions{})
+	assertViolations(t, rep, []expectedViolation{
+		{"HISS-02", "pkg/pending33.py", 3},
+	})
+	if len(rep.Violations) != 1 || !strings.Contains(rep.Violations[0].Message, "more than 32 I/O calls open at once") {
+		t.Fatalf("expected pending-limit message, got %+v", rep.Violations)
+	}
+}
+
+// TestPythonIO_Boundary_LineByteLimit passes a 65536-byte line and reports a 65537-byte line in a
+// file with tracked I/O bindings.
+func TestPythonIO_Boundary_LineByteLimit(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "pkg/line65536.py", "import subprocess\n"+strings.Repeat("a", 65536)+"\n")
+	writeFixture(t, root, "pkg/line65537.py", "import subprocess\n"+strings.Repeat("a", 65537)+"\n")
+	writeFixture(t, root, "pkg/untracked_long.py", strings.Repeat("a", 65537)+"\n")
+
+	rep := scanFixture(t, root, ScanOptions{})
+	assertViolations(t, rep, []expectedViolation{
+		{"HISS-02", "pkg/line65537.py", 2},
+	})
+	if len(rep.Violations) != 1 || !strings.Contains(rep.Violations[0].Message, "65536-byte") {
+		t.Fatalf("expected 65536-byte limit message, got %+v", rep.Violations)
+	}
+}
+
+// TestPythonIO_Boundary_TrackedBindingLimit passes maxPythonIOTracked distinct bindings (including
+// rebinding an existing alias) and reports the 65th binding at its import line.
+func TestPythonIO_Boundary_TrackedBindingLimit(t *testing.T) {
+	root := t.TempDir()
+	lines64 := make([]string, 0, maxPythonIOTracked+2)
+	for i := 0; i < maxPythonIOTracked; i++ {
+		lines64 = append(lines64, fmt.Sprintf("import subprocess as sp%d", i))
+	}
+	lines64 = append(lines64, "import requests as sp0", "")
+	writeFixture(t, root, "pkg/tracked64.py", strings.Join(lines64, "\n"))
+
+	lines65 := make([]string, 0, maxPythonIOTracked+2)
+	for i := 0; i < maxPythonIOTracked; i++ {
+		lines65 = append(lines65, fmt.Sprintf("import subprocess as sp%d", i))
+	}
+	lines65 = append(lines65, "from subprocess import run as r64", "")
+	writeFixture(t, root, "pkg/tracked65.py", strings.Join(lines65, "\n"))
+
+	rep := scanFixture(t, root, ScanOptions{})
+	assertViolations(t, rep, []expectedViolation{
+		{"HISS-02", "pkg/tracked65.py", 65},
+	})
+	if len(rep.Violations) != 1 || !strings.Contains(rep.Violations[0].Message, "more than 64 tracked I/O bindings") {
+		t.Fatalf("expected tracked-binding limit message, got %+v", rep.Violations)
+	}
 }
