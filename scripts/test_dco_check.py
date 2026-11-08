@@ -418,6 +418,7 @@ class DcoCheckTests(unittest.TestCase):
             check=True,
             stdout=subprocess.PIPE,
             env={**os.environ, "GIT_COMMITTER_NAME": "GitHub", "GIT_COMMITTER_EMAIL": "noreply@github.com"},
+            timeout=30,
         )
         merge_commit = git("rev-parse", "HEAD", cwd=self.repository)
 

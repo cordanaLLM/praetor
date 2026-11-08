@@ -1,0 +1,136 @@
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+//
+// SPDX-License-Identifier: EUPL-1.2
+
+package hiss
+
+import (
+	"strings"
+	"testing"
+)
+
+// TestPythonIO_Positive_MissingTimeoutAcrossTargetsAndImports reports every target reached through
+// each import form when no deadline is passed.
+func TestPythonIO_Positive_MissingTimeoutAcrossTargetsAndImports(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "pkg/calls.py", strings.Join([]string{
+		"import os",                         // 1
+		"import subprocess",                 // 2
+		"import subprocess as sp",           // 3
+		"from subprocess import run",        // 4
+		"from subprocess import (",          // 5
+		"    check_call as cc,",             // 6
+		")",                                 // 7
+		"import urllib.request",             // 8
+		"from urllib import request",        // 9
+		"import requests",                   // 10
+		"",                                  // 11
+		"subprocess.run(cmd)",               // 12
+		"sp.check_output(cmd)",              // 13
+		"run(cmd)",                          // 14
+		"cc(cmd)",                           // 15
+		"urllib.request.urlopen(url)",       // 16
+		"request.urlopen(url)",              // 17
+		"requests.get(url)",                 // 18
+		"subprocess.run(",                   // 19
+		"    cmd,",                          // 20
+		"    check=True,",                   // 21
+		")",                                 // 22
+		"subprocess.run(cmd, timeout=None)", // 23
+		`subprocess.run(cmd, env={**os.environ, "A": "1"})`, // 24
+		"run(cmd, env=make(timeout=5))",                     // 25
+		"urllib.request.urlopen(url, None)",                 // 26
+		"urllib.request.urlopen(url, data, None)",           // 27
+		"",
+	}, "\n"))
+
+	rep := scanFixture(t, root, ScanOptions{})
+	assertViolations(t, rep, []expectedViolation{
+		{"HISS-02", "pkg/calls.py", 26},
+		{"HISS-02", "pkg/calls.py", 27},
+		{"HISS-02", "pkg/calls.py", 12},
+		{"HISS-02", "pkg/calls.py", 13},
+		{"HISS-02", "pkg/calls.py", 14},
+		{"HISS-02", "pkg/calls.py", 15},
+		{"HISS-02", "pkg/calls.py", 16},
+		{"HISS-02", "pkg/calls.py", 17},
+		{"HISS-02", "pkg/calls.py", 18},
+		{"HISS-02", "pkg/calls.py", 19},
+		{"HISS-02", "pkg/calls.py", 23},
+		{"HISS-02", "pkg/calls.py", 24},
+		{"HISS-02", "pkg/calls.py", 25},
+	})
+}
+
+// TestPythonIO_Negative_ExplicitDeadlinesUnpacksAndNonTargets passes calls with a deadline,
+// unpacks, definitions, strings, comments and untracked names.
+func TestPythonIO_Negative_ExplicitDeadlinesUnpacksAndNonTargets(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "pkg/clean.py", strings.Join([]string{
+		"import subprocess",
+		"from subprocess import run",
+		"import urllib.request",
+		"import requests",
+		"",
+		"subprocess.run(cmd, timeout=30)",
+		"subprocess.run(",
+		"    cmd,",
+		"    check=True,",
+		"    text=True,",
+		"    timeout=15)",
+		"subprocess.run(cmd, **kwargs)",
+		"def run(args):",
+		"    return args",
+		"obj.run(x)",
+		`MSG = "subprocess.run(cmd)"`,
+		"# subprocess.run(cmd)",
+		`subprocess.run(build(a, (b, c)), label=f"step ({i})", timeout=10)`,
+		"urllib.request.urlopen(url, timeout=5)",
+		"urllib.request.urlopen(url, None, 10)",
+		"requests.post(url, timeout=5)",
+		"",
+	}, "\n"))
+	writeFixture(t, root, "pkg/no_import.py", "def f():\n    run(cmd)\n    get(url)\n")
+
+	if rep := scanFixture(t, root, ScanOptions{}); len(rep.Violations) != 0 {
+		t.Fatalf("explicit timeouts, unpacks and non-targets must pass: %+v", rep.Violations)
+	}
+}
+
+// TestPythonIO_Boundary_LineSpanSameLineAndPerFileAliases checks the 60-line bound, two calls on
+// one line and per-file aliases.
+func TestPythonIO_Boundary_LineSpanSameLineAndPerFileAliases(t *testing.T) {
+	root := t.TempDir()
+	lines60 := make([]string, 0, 62)
+	lines60 = append(lines60, "import subprocess", "subprocess.run(")
+	for i := 0; i < 58; i++ {
+		lines60 = append(lines60, "    arg,")
+	}
+	lines60 = append(lines60, "    timeout=5)")
+	writeFixture(t, root, "pkg/span60.py", strings.Join(lines60, "\n")+"\n")
+
+	lines61 := make([]string, 0, 63)
+	lines61 = append(lines61, "import subprocess", "subprocess.run(")
+	for i := 0; i < 59; i++ {
+		lines61 = append(lines61, "    arg,")
+	}
+	lines61 = append(lines61, "    timeout=5)")
+	writeFixture(t, root, "pkg/span61.py", strings.Join(lines61, "\n")+"\n")
+
+	writeFixture(t, root, "pkg/same_line.py", strings.Join([]string{
+		"import subprocess",
+		"subprocess.run(a, timeout=5); subprocess.run(b)",
+		"",
+	}, "\n"))
+	writeFixture(t, root, "pkg/a_with_alias.py", "from subprocess import run as r\nr(cmd, timeout=5)\n")
+	writeFixture(t, root, "pkg/b_without_alias.py", "r(cmd)\n")
+
+	rep := scanFixture(t, root, ScanOptions{})
+	assertViolations(t, rep, []expectedViolation{
+		{"HISS-02", "pkg/same_line.py", 2},
+		{"HISS-02", "pkg/span61.py", 2},
+	})
+	if len(rep.Violations) >= 2 && !strings.Contains(rep.Violations[1].Message, "60-line") {
+		t.Fatalf("expected 60-line bound message, got %q", rep.Violations[1].Message)
+	}
+}

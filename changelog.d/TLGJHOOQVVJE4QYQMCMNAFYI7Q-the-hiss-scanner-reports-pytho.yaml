@@ -1,0 +1,2 @@
+type: added
+title: The HISS scanner reports Python subprocess, urlopen and requests calls that pass no timeout (HISS-02 I/O deadline), the class review bots raised most often on fleet pull requests

@@ -235,10 +235,18 @@ rules:
           before the brace. The I/O-timeout half has no Rust check.
       - language: python
         state: partial
-        mechanism: internal/hiss rules.go pythonWhileTrue
+        mechanism: internal/hiss rules.go pythonWhileTrue and python_io.go observePythonIO
         rationale: >-
-          while True is reported with arbitrary spacing. Other unbounded shapes such as
-          while 1 and the I/O-timeout half are not decided.
+          while True is reported with arbitrary spacing. Calls to subprocess.run, call,
+          check_call and check_output, urllib.request.urlopen, and requests.get, post, put,
+          patch, delete, head, options and request, reached through a plain, aliased or
+          from-import binding, are reported when they pass no top-level timeout= keyword argument
+          or pass timeout=None, or span more than 60 lines without closing; urlopen's third
+          positional argument counts as its deadline when it is not None; a top-level **kwargs
+          unpack is accepted as undecidable, while a nested unpack such as env={**os.environ} is
+          not. Other unbounded loop shapes such as while 1, and I/O through subprocess.Popen with
+          communicate or wait, requests.Session methods, httpx, aiohttp, socket and other modules
+          are held as gaps.
       - language: javascript
         state: partial
         mechanism: internal/hiss rules.go cFamilyUnboundedLoop, read by script.go checkInvariants
