@@ -368,6 +368,17 @@ func (s *pythonScanner) decidePythonIOCall(canonical string, openLine int, args 
 		fmt.Sprintf("Python %s call passes no timeout=: explicit deadline on every I/O call", canonical))
 }
 
+// finishPythonIO reports every call still open when the file ends, so an unterminated call
+// fails closed instead of passing unseen.
+func (s *pythonScanner) finishPythonIO() {
+	for i := 0; i < len(s.io.pending) && i < maxPythonIOPending; i++ {
+		recordViolation(s.rep, "HISS-02", s.rel, s.io.pending[i].openLine, "",
+			fmt.Sprintf("Python %s call never closes before the end of the file: explicit deadline on every I/O call",
+				s.io.pending[i].canonical))
+	}
+	s.io.pending = nil
+}
+
 // reportPythonIOBound records a call that stays open past maxPythonIOCallLines, failing closed.
 func (s *pythonScanner) reportPythonIOBound(canonical string, openLine int) {
 	recordViolation(s.rep, "HISS-02", s.rel, openLine, "",

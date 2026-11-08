@@ -134,3 +134,38 @@ func TestPythonIO_Boundary_LineSpanSameLineAndPerFileAliases(t *testing.T) {
 		t.Fatalf("expected 60-line bound message, got %q", rep.Violations[1].Message)
 	}
 }
+
+// TestPythonIO_Positive_EveryRequestsVerb reports each requests verb called without a deadline.
+func TestPythonIO_Positive_EveryRequestsVerb(t *testing.T) {
+	root := t.TempDir()
+	verbs := []string{"get", "post", "put", "patch", "delete", "head", "options", "request"}
+	lines := []string{"import requests"}
+	want := make([]expectedViolation, 0, len(verbs))
+	for i, verb := range verbs {
+		lines = append(lines, "requests."+verb+"(url)")
+		want = append(want, expectedViolation{"HISS-02", "pkg/verbs.py", i + 2})
+	}
+	writeFixture(t, root, "pkg/verbs.py", strings.Join(lines, "\n")+"\n")
+	assertViolations(t, scanFixture(t, root, ScanOptions{}), want)
+}
+
+// TestPythonIO_Boundary_UnclosedCallsAndNonCodeLines reports a call still open at the end of the
+// file, with or without trailing comment and blank lines, and counts comment lines toward the
+// 60-line bound.
+func TestPythonIO_Boundary_UnclosedCallsAndNonCodeLines(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "pkg/eof.py", "import subprocess\nsubprocess.run(\n    cmd,\n")
+	writeFixture(t, root, "pkg/eof_comments.py", "import subprocess\nsubprocess.run(\n    cmd,\n# trailing comment\n\n")
+	span := []string{"import subprocess", "subprocess.run("}
+	for i := 0; i < 61; i++ {
+		span = append(span, "    # comment")
+	}
+	span = append(span, "    timeout=5)")
+	writeFixture(t, root, "pkg/comment_span.py", strings.Join(span, "\n")+"\n")
+
+	assertViolations(t, scanFixture(t, root, ScanOptions{}), []expectedViolation{
+		{"HISS-02", "pkg/comment_span.py", 2},
+		{"HISS-02", "pkg/eof.py", 2},
+		{"HISS-02", "pkg/eof_comments.py", 2},
+	})
+}

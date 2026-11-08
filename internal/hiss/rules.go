@@ -746,6 +746,7 @@ func scanPythonLines(lines []string, rel string, rep *ScanReport, opts ScanOptio
 	for idx, line := range lines {
 		s.observe(idx, line)
 	}
+	s.finishPythonIO()
 	s.close(-1)
 }
 

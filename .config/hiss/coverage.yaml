@@ -241,7 +241,8 @@ rules:
           check_call and check_output, urllib.request.urlopen, and requests.get, post, put,
           patch, delete, head, options and request, reached through a plain, aliased or
           from-import binding, are reported when they pass no top-level timeout= keyword argument
-          or pass timeout=None, or span more than 60 lines without closing; urlopen's third
+          or pass timeout=None, or span more than 60 lines or reach the end of the file without
+          closing; urlopen's third
           positional argument counts as its deadline when it is not None; a top-level **kwargs
           unpack is accepted as undecidable, while a nested unpack such as env={**os.environ} is
           not. Other unbounded loop shapes such as while 1, and I/O through subprocess.Popen with
