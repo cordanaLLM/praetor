@@ -165,6 +165,32 @@ closer leaves the count at zero rather than below it.
 `internal/hiss/abort_policy_test.go` and the fixture
 `.config/hiss/testdata/HISS-07/python/negative/wrapped-entry-signature.py` pin the wrapped case.
 
+## Python: HISS-02 I/O deadlines
+
+The Python scanner reports I/O calls that pass no deadline (`observePythonIO` in
+`internal/hiss/python_io.go`). It tracks, per file, the bindings that reach a target:
+`import subprocess`, `import requests` and `import urllib.request`, with or without `as`, and the
+names a `from subprocess`, `from requests`, `from urllib` or `from urllib.request` import binds,
+on one line or in a parenthesised list.
+
+| Targets | Passes | Reported |
+| :--- | :--- | :--- |
+| `subprocess.run`, `call`, `check_call`, `check_output`; `urllib.request.urlopen`; `requests.get`, `post`, `put`, `patch`, `delete`, `head`, `options`, `request` | a top-level `timeout=` that is not `None`; a top-level `**kwargs` unpack (cannot be decided); `urlopen`'s third positional argument | no `timeout=`; `timeout=None`; a `**` unpack nested in another argument, such as `env={**os.environ}` |
+
+The arguments are read from the literal-stripped code, so a `timeout=` inside a string or comment
+does not count. A call is collected across lines up to its closing parenthesis. The check fails
+closed at each of its bounds, and each message names its own bound:
+
+- a call still open after 60 lines, or at the end of the file;
+- more than 32 calls open at once;
+- a line longer than 65536 bytes in a file that binds a target;
+- more than 64 tracked bindings in one file.
+
+`subprocess.Popen` with `communicate` or `wait`, `requests.Session` methods, `httpx`, `aiohttp` and
+`socket` are not decided. `.config/hiss/testdata/HISS-02/python/gap/` keeps one fixture for each,
+and the replay keeps them unreported. The tests in `internal/hiss/python_io_test.go` pin every row
+of the table and every bound.
+
 ## Go: one pass reads a package, not a file
 
 Most matchers decide a line. HISS-01 cannot be decided that way in full: a function that calls
