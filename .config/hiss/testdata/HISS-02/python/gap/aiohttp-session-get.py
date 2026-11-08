@@ -5,6 +5,5 @@ import aiohttp
 
 async def fetch_aiohttp(url):
     """Fetch url through aiohttp.ClientSession.get without a deadline."""
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            return await resp.text()
+    async with aiohttp.ClientSession() as session, session.get(url) as resp:
+        return await resp.text()
