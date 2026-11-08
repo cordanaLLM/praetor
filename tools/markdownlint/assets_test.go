@@ -96,15 +96,6 @@ func containsExactLFLine(text, want string) bool {
 // dependencies and pins the katex and re2js overrides to exact releases, and that the lock pins
 // every package it installs (Positive: the shipped files pass; the assertions fail on any drift).
 func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
-	wantDirect := map[string]string{
-		"js-yaml":                   "5.5.0",
-		"jsonc-parser":              "3.3.1",
-		"markdownlint":              "0.42.0",
-		"micromark":                 "4.0.3",
-		"micromark-extension-mdxjs": "3.0.0",
-		"parse5":                    "8.0.1",
-		"smol-toml":                 "1.9.1",
-	}
 	manifestData, err := Read("package.json")
 	if err != nil {
 		t.Fatal(err)
@@ -115,6 +106,19 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	}
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		t.Fatalf("decode package manifest: %v", err)
+	}
+	parse5Version := manifest.Dependencies["parse5"]
+	if parse5Version == "" {
+		t.Fatal("parse5 not listed in package.json dependencies")
+	}
+	wantDirect := map[string]string{
+		"js-yaml":                   "5.5.0",
+		"jsonc-parser":              "3.3.1",
+		"markdownlint":              "0.42.0",
+		"micromark":                 "4.0.3",
+		"micromark-extension-mdxjs": "3.0.0",
+		"parse5":                    parse5Version,
+		"smol-toml":                 "1.9.1",
 	}
 	assertDirectDependencies(t, manifest.Dependencies, wantDirect)
 	// micromark-extension-math, which markdownlint pins, asks for katex ^0.16.0, and every
@@ -166,8 +170,8 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	if lock.Packages["node_modules/micromark-extension-mdxjs"].Version != "3.0.0" {
 		t.Fatal("micromark-extension-mdxjs is not pinned to 3.0.0")
 	}
-	if lock.Packages["node_modules/parse5"].Version != "8.0.1" {
-		t.Fatal("parse5 is not pinned to 8.0.1")
+	if lock.Packages["node_modules/parse5"].Version != parse5Version {
+		t.Fatalf("parse5 lock version %q does not match manifest %q", lock.Packages["node_modules/parse5"].Version, parse5Version)
 	}
 	for name, version := range wantOverrides {
 		if got := lock.Packages["node_modules/"+name].Version; got != version {
@@ -184,6 +188,30 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 		if lock.Packages["node_modules/"+name].Version != version {
 			t.Fatalf("%s is not installed at the top level pinned to %s", name, version)
 		}
+	}
+}
+
+// TestParse5PlantedMismatchCaught invokes the dependency validation path with a planted wrong
+// parse5 version and verifies the check rejects it (Negative: planted mismatch refused).
+func TestParse5PlantedMismatchCaught(t *testing.T) {
+	manifestData, err := Read("package.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Dependencies map[string]string `json:"dependencies"`
+	}
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatalf("decode package manifest: %v", err)
+	}
+	real := manifest.Dependencies["parse5"]
+	if real == "" {
+		t.Fatal("parse5 not listed in package.json dependencies")
+	}
+	stale := maps.Clone(manifest.Dependencies)
+	stale["parse5"] = "0.0.0-planted"
+	if msg := directDependencyMismatch(manifest.Dependencies, stale); msg == "" {
+		t.Fatal("planted parse5 mismatch not detected by dependency validation")
 	}
 }
 
@@ -240,15 +268,24 @@ func TestPackageLockInstallsNoBraces(t *testing.T) {
 	}
 }
 
-func assertDirectDependencies(t *testing.T, got, want map[string]string) {
-	t.Helper()
+// directDependencyMismatch returns a non-empty message when got and want differ in size or value.
+func directDependencyMismatch(got, want map[string]string) string {
 	if len(got) != len(want) {
-		t.Fatalf("direct dependencies = %v, want %v", got, want)
+		return fmt.Sprintf("direct dependencies = %v, want %v", got, want)
 	}
 	for name, version := range want {
 		if got[name] != version {
-			t.Fatalf("direct dependency %s = %q, want %q", name, got[name], version)
+			return fmt.Sprintf("direct dependency %s = %q, want %q", name, got[name], version)
 		}
+	}
+	return ""
+}
+
+// assertDirectDependencies fails the test when got and want differ.
+func assertDirectDependencies(t *testing.T, got, want map[string]string) {
+	t.Helper()
+	if msg := directDependencyMismatch(got, want); msg != "" {
+		t.Fatal(msg)
 	}
 }
 
