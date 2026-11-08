@@ -734,6 +734,7 @@ type pythonScanner struct {
 	abort        pythonAbortScope
 	joiner       pythonLineJoiner
 	moduleGuards []string
+	io           pythonIOScope
 }
 
 // scanPythonLines tracks a stack of open functions so that nested defs do not end
@@ -745,6 +746,7 @@ func scanPythonLines(lines []string, rel string, rep *ScanReport, opts ScanOptio
 	for idx, line := range lines {
 		s.observe(idx, line)
 	}
+	s.finishPythonIO()
 	s.close(-1)
 }
 
@@ -784,6 +786,7 @@ func (s *pythonScanner) observe(idx int, line string) {
 	s.observeCalls(code, colon, idx+1)
 	s.observePythonGuards(code)
 	s.observePythonSignals(code, idx+1)
+	s.observePythonIO(code, idx+1)
 }
 
 // lineIndent returns the width of line's leading spaces and tabs.

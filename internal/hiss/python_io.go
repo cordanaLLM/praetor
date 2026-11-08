@@ -1,0 +1,533 @@
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+//
+// SPDX-License-Identifier: EUPL-1.2
+
+package hiss
+
+import (
+	"fmt"
+	"strings"
+)
+
+const (
+	maxPythonIOTracked   = 64
+	maxPythonIOPending   = 32
+	maxPythonIOCallLines = 60
+	maxPythonIOFromItems = 32
+	maxPythonIOCallArgs  = 128
+	maxPythonIOClauses   = 16
+	maxPythonIOLineBytes = 65536
+)
+
+type pythonIOName struct {
+	local     string
+	module    string
+	canonical string
+}
+
+type pythonIOCall struct {
+	canonical string
+	openLine  int
+	text      string
+}
+
+type pythonIOScope struct {
+	tracked    []pythonIOName
+	pending    []pythonIOCall
+	fromModule string
+	fromLines  int
+}
+
+// observePythonIO feeds one stripped line to the HISS-02 I/O check: imports first, then open
+// calls, then new ones.
+func (s *pythonScanner) observePythonIO(code string, lineNum int) {
+	violations := s.io.observeImports(code)
+	for i := 0; i < len(violations) && i < maxPythonIOTracked; i++ {
+		recordViolation(s.rep, "HISS-02", s.rel, lineNum, "", violations[i])
+	}
+	s.advancePendingPythonIO(code, lineNum)
+	s.scanNewPythonIOCalls(code, lineNum)
+}
+
+// observeImports records the subprocess, urllib.request and requests bindings an import statement
+// on code creates, returning HISS-02 messages for dropped bindings and skipped import bounds.
+func (s *pythonIOScope) observeImports(code string) []string {
+	if s.fromModule != "" {
+		return s.continueFromImport(code)
+	}
+	var violations []string
+	clauses := strings.Split(code, ";")
+	for i := 0; i < len(clauses) && i < maxPythonIOClauses; i++ {
+		trimmed := strings.TrimSpace(clauses[i])
+		switch leadingIdent(trimmed) {
+		case "import":
+			violations = append(violations, s.observePlainImport(strings.TrimSpace(trimmed[len("import"):]))...)
+		case "from":
+			violations = append(violations, s.observeFromImport(strings.TrimSpace(trimmed[len("from"):]))...)
+		}
+	}
+	if hasSkippedImportClause(clauses) {
+		violations = append(violations,
+			fmt.Sprintf("Python I/O import not tracked: more than %d statements on one line", maxPythonIOClauses))
+	}
+	return violations
+}
+
+// hasSkippedImportClause reports whether any clause at or past maxPythonIOClauses starts with
+// import or from.
+func hasSkippedImportClause(clauses []string) bool {
+	for i := maxPythonIOClauses; i < len(clauses) && i < maxPythonIOLineBytes; i++ {
+		switch leadingIdent(strings.TrimSpace(clauses[i])) {
+		case "import", "from":
+			return true
+		}
+	}
+	return false
+}
+
+// droppedBindingMessage formats the HISS-02 message for a binding dropped past maxPythonIOTracked.
+func droppedBindingMessage(local string) string {
+	return fmt.Sprintf("Python I/O import binding %s not tracked: more than %d tracked I/O bindings", local, maxPythonIOTracked)
+}
+
+// continueFromImport reads the next line of a parenthesised from-import, bounded by
+// maxPythonIOCallLines, and returns HISS-02 messages for dropped bindings and unclosed imports.
+func (s *pythonIOScope) continueFromImport(code string) []string {
+	s.fromLines++
+	if closeIdx := strings.IndexByte(code, ')'); closeIdx >= 0 {
+		violations := s.trackFromItems(s.fromModule, code[:closeIdx])
+		s.fromModule = ""
+		s.fromLines = 0
+		return violations
+	}
+	violations := s.trackFromItems(s.fromModule, code)
+	if s.fromLines >= maxPythonIOCallLines {
+		s.fromModule = ""
+		s.fromLines = 0
+		violations = append(violations,
+			fmt.Sprintf("Python I/O import not tracked: from-import of a tracked module still open after %d lines", maxPythonIOCallLines))
+	}
+	return violations
+}
+
+// observePlainImport tracks import subprocess, import requests and import urllib.request, aliased
+// or not, returning HISS-02 messages for dropped bindings and skipped tracked modules.
+func (s *pythonIOScope) observePlainImport(rest string) []string {
+	var violations []string
+	items := strings.Split(rest, ",")
+	for i := 0; i < len(items) && i < maxPythonIOFromItems; i++ {
+		orig, alias := parsePythonImportItem(items[i])
+		if isPlainTrackedPythonIOModule(orig) {
+			if !s.addTracked(pythonIOName{local: alias, module: orig}) {
+				violations = append(violations, droppedBindingMessage(alias))
+			}
+		}
+	}
+	if hasSkippedPlainImportTarget(items) {
+		violations = append(violations, importItemsBoundMessage())
+	}
+	return violations
+}
+
+// isPlainTrackedPythonIOModule reports a module a plain import statement tracks.
+func isPlainTrackedPythonIOModule(mod string) bool {
+	return mod == "subprocess" || mod == "requests" || mod == "urllib.request"
+}
+
+// hasSkippedPlainImportTarget reports whether any plain-import item at or past maxPythonIOFromItems
+// names a tracked I/O module.
+func hasSkippedPlainImportTarget(items []string) bool {
+	for i := maxPythonIOFromItems; i < len(items) && i < maxPythonIOLineBytes; i++ {
+		orig, _ := parsePythonImportItem(items[i])
+		if isPlainTrackedPythonIOModule(orig) {
+			return true
+		}
+	}
+	return false
+}
+
+// importItemsBoundMessage formats the HISS-02 message for an import of a tracked module with more
+// than maxPythonIOFromItems comma-separated items.
+func importItemsBoundMessage() string {
+	return fmt.Sprintf("Python I/O import not tracked: more than %d names in one import of a tracked module", maxPythonIOFromItems)
+}
+
+// observeFromImport tracks the target names a from-import of a tracked module binds, on one line
+// or opening a parenthesised list, returning HISS-02 messages for dropped bindings.
+func (s *pythonIOScope) observeFromImport(rest string) []string {
+	imp := nextIdent(rest, "import", 0)
+	if imp <= 0 {
+		return nil
+	}
+	mod := strings.TrimSpace(rest[:imp])
+	if !isTrackedPythonIOModule(mod) {
+		return nil
+	}
+	after := strings.TrimSpace(rest[imp+len("import"):])
+	if !strings.HasPrefix(after, "(") {
+		return s.trackFromItems(mod, after)
+	}
+	body := after[1:]
+	if closeIdx := strings.IndexByte(body, ')'); closeIdx >= 0 {
+		return s.trackFromItems(mod, body[:closeIdx])
+	}
+	dropped := s.trackFromItems(mod, body)
+	s.fromModule = mod
+	s.fromLines = 1
+	return dropped
+}
+
+// isTrackedPythonIOModule reports a module whose from-imports can bind a target call.
+func isTrackedPythonIOModule(mod string) bool {
+	return mod == "subprocess" || mod == "requests" || mod == "urllib" || mod == "urllib.request"
+}
+
+// trackFromItems tracks each comma-separated item of a from-import that names a target, returning
+// HISS-02 messages for dropped bindings and item lists exceeding maxPythonIOFromItems.
+func (s *pythonIOScope) trackFromItems(mod, text string) []string {
+	var violations []string
+	items := strings.Split(text, ",")
+	for i := 0; i < len(items) && i < maxPythonIOFromItems; i++ {
+		orig, alias := parsePythonImportItem(items[i])
+		if entry, ok := resolveFromImportItem(mod, orig, alias); ok {
+			if !s.addTracked(entry) {
+				violations = append(violations, droppedBindingMessage(entry.local))
+			}
+		}
+	}
+	if hasSkippedFromImportItem(items) {
+		violations = append(violations, importItemsBoundMessage())
+	}
+	return violations
+}
+
+// hasSkippedFromImportItem reports whether any from-import item at or past maxPythonIOFromItems
+// names an identifier rather than a trailing comma.
+func hasSkippedFromImportItem(items []string) bool {
+	for i := maxPythonIOFromItems; i < len(items) && i < maxPythonIOLineBytes; i++ {
+		if orig, _ := parsePythonImportItem(items[i]); orig != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveFromImportItem maps one from-import item to a tracked binding: a module alias or a bare
+// target name.
+func resolveFromImportItem(mod, orig, alias string) (pythonIOName, bool) {
+	if orig == "" || alias == "" {
+		return pythonIOName{}, false
+	}
+	if mod == "urllib" && orig == "request" {
+		return pythonIOName{local: alias, module: "urllib.request"}, true
+	}
+	if canonical := pythonIOModuleTarget(mod, orig); canonical != "" {
+		return pythonIOName{local: alias, canonical: canonical}, true
+	}
+	return pythonIOName{}, false
+}
+
+// parsePythonImportItem splits an import item into its imported name and the local name it binds.
+func parsePythonImportItem(item string) (string, string) {
+	trimmed := strings.TrimSpace(item)
+	if trimmed == "" {
+		return "", ""
+	}
+	if asIdx := nextIdent(trimmed, "as", 0); asIdx > 0 {
+		orig := strings.TrimSpace(trimmed[:asIdx])
+		alias := leadingIdent(trimmed[asIdx+len("as"):])
+		return orig, alias
+	}
+	return trimmed, trimmed
+}
+
+// addTracked records or rebinds a local name, bounded by maxPythonIOTracked, and reports whether
+// the binding fit within the table.
+func (s *pythonIOScope) addTracked(entry pythonIOName) bool {
+	if entry.local == "" {
+		return true
+	}
+	for i := 0; i < len(s.tracked) && i < maxPythonIOTracked; i++ {
+		if s.tracked[i].local == entry.local {
+			s.tracked[i] = entry
+			return true
+		}
+	}
+	if len(s.tracked) < maxPythonIOTracked {
+		s.tracked = append(s.tracked, entry)
+		return true
+	}
+	return false
+}
+
+// pythonIOModuleTarget names the canonical target of fn in module, or empty when fn is no target.
+func pythonIOModuleTarget(module, fn string) string {
+	switch module {
+	case "subprocess":
+		if isSubprocessIOTarget(fn) {
+			return "subprocess." + fn
+		}
+	case "urllib.request":
+		if fn == "urlopen" {
+			return "urllib.request.urlopen"
+		}
+	case "requests":
+		if isRequestsIOTarget(fn) {
+			return "requests." + fn
+		}
+	}
+	return ""
+}
+
+// isSubprocessIOTarget reports the subprocess functions that accept timeout=.
+func isSubprocessIOTarget(fn string) bool {
+	return fn == "run" || fn == "call" || fn == "check_call" || fn == "check_output"
+}
+
+// isRequestsIOTarget reports the requests verbs that accept timeout=.
+func isRequestsIOTarget(fn string) bool {
+	switch fn {
+	case "get", "post", "put", "patch", "delete", "head", "options", "request":
+		return true
+	default:
+		return false
+	}
+}
+
+// advancePendingPythonIO feeds code to every call still open from earlier lines and keeps those
+// that stay open.
+func (s *pythonScanner) advancePendingPythonIO(code string, lineNum int) {
+	if len(s.io.pending) == 0 {
+		return
+	}
+	kept := s.io.pending[:0]
+	for i := 0; i < len(s.io.pending) && i < maxPythonIOPending; i++ {
+		call := s.io.pending[i]
+		if s.stepPendingPythonIOCall(&call, code, lineNum) {
+			kept = append(kept, call)
+		}
+	}
+	s.io.pending = kept
+}
+
+// stepPendingPythonIOCall appends code to an open call and decides it once it closes, or reports
+// it past the line bound.
+func (s *pythonScanner) stepPendingPythonIOCall(call *pythonIOCall, code string, lineNum int) bool {
+	span := lineNum - call.openLine + 1
+	if span > maxPythonIOCallLines {
+		s.reportPythonIOBound(call.canonical, call.openLine)
+		return false
+	}
+	call.text += " " + code
+	args, closeIdx := parseCallArgs(call.text, 0)
+	if closeIdx < len(call.text) {
+		s.decidePythonIOCall(call.canonical, call.openLine, args)
+		return false
+	}
+	if span >= maxPythonIOCallLines {
+		s.reportPythonIOBound(call.canonical, call.openLine)
+		return false
+	}
+	return true
+}
+
+// scanNewPythonIOCalls opens a check for each target call whose parenthesis starts on code,
+// reporting a line that exceeds maxPythonIOLineBytes.
+func (s *pythonScanner) scanNewPythonIOCalls(code string, lineNum int) {
+	if len(s.io.tracked) == 0 {
+		return
+	}
+	for i := 0; i < len(code) && i < maxPythonIOLineBytes; i++ {
+		if code[i] != '(' {
+			continue
+		}
+		canonical := s.io.resolveCallAtParen(code, i)
+		if canonical == "" {
+			continue
+		}
+		s.openPythonIOCall(canonical, code[i:], lineNum)
+	}
+	if len(code) > maxPythonIOLineBytes {
+		recordViolation(s.rep, "HISS-02", s.rel, lineNum, "",
+			fmt.Sprintf("Python line exceeds %d-byte I/O scan bound: calls past the byte bound are not checked", maxPythonIOLineBytes))
+	}
+}
+
+// openPythonIOCall decides a call that closes on its own line, or keeps it pending, reporting any
+// call opened past maxPythonIOPending.
+func (s *pythonScanner) openPythonIOCall(canonical, tail string, lineNum int) {
+	args, closeIdx := parseCallArgs(tail, 0)
+	if closeIdx < len(tail) {
+		s.decidePythonIOCall(canonical, lineNum, args)
+		return
+	}
+	if len(s.io.pending) < maxPythonIOPending {
+		s.io.pending = append(s.io.pending, pythonIOCall{
+			canonical: canonical,
+			openLine:  lineNum,
+			text:      tail,
+		})
+		return
+	}
+	recordViolation(s.rep, "HISS-02", s.rel, lineNum, "",
+		fmt.Sprintf("Python %s call not checked: more than %d I/O calls open at once", canonical, maxPythonIOPending))
+}
+
+// resolveCallAtParen names the target called at openParen, or empty for a definition or an
+// untracked name.
+func (s *pythonIOScope) resolveCallAtParen(code string, openParen int) string {
+	qual, fnName, fnStart := splitCallBeforeParen(code, openParen)
+	if fnName == "" || isDefAt(code, fnStart) {
+		return ""
+	}
+	if qual == "" {
+		return s.lookupBareTarget(fnName)
+	}
+	return s.lookupQualifiedTarget(qual, fnName)
+}
+
+// splitCallBeforeParen returns the dotted qualifier, the function name and its start before
+// openParen.
+func splitCallBeforeParen(code string, openParen int) (string, string, int) {
+	end := skipSpacesLeft(code, openParen)
+	fnStart := scanIdentLeft(code, end)
+	if fnStart == end {
+		return "", "", 0
+	}
+	beforeFn := skipSpacesLeft(code, fnStart)
+	if beforeFn == 0 || code[beforeFn-1] != '.' {
+		return "", code[fnStart:end], fnStart
+	}
+	qualEnd := skipSpacesLeft(code, beforeFn-1)
+	qualStart := qualEnd
+	for qualStart > 0 && (isIdentByte(code[qualStart-1]) || code[qualStart-1] == '.') {
+		qualStart--
+	}
+	qual := code[qualStart:qualEnd]
+	if qual == "" || qual[0] == '.' {
+		return "", "", 0
+	}
+	return qual, code[fnStart:end], fnStart
+}
+
+// skipSpacesLeft moves pos left over spaces and tabs.
+func skipSpacesLeft(code string, pos int) int {
+	for pos > 0 && (code[pos-1] == ' ' || code[pos-1] == '\t') {
+		pos--
+	}
+	return pos
+}
+
+// scanIdentLeft moves pos left over identifier bytes.
+func scanIdentLeft(code string, pos int) int {
+	for pos > 0 && isIdentByte(code[pos-1]) {
+		pos--
+	}
+	return pos
+}
+
+// lookupBareTarget names the target a bare call of fnName reaches through a from-import.
+func (s *pythonIOScope) lookupBareTarget(fnName string) string {
+	for i := 0; i < len(s.tracked) && i < maxPythonIOTracked; i++ {
+		if s.tracked[i].module == "" && s.tracked[i].local == fnName {
+			return s.tracked[i].canonical
+		}
+	}
+	return ""
+}
+
+// lookupQualifiedTarget names the target qual.fnName reaches through a tracked module alias.
+func (s *pythonIOScope) lookupQualifiedTarget(qual, fnName string) string {
+	for i := 0; i < len(s.tracked) && i < maxPythonIOTracked; i++ {
+		if s.tracked[i].module != "" && s.tracked[i].local == qual {
+			return pythonIOModuleTarget(s.tracked[i].module, fnName)
+		}
+	}
+	return ""
+}
+
+// decidePythonIOCall records a HISS-02 violation for a target call that passes no deadline.
+func (s *pythonScanner) decidePythonIOCall(canonical string, openLine int, args []string) {
+	if hasPythonIOTimeout(args) || hasPositionalURLOpenTimeout(canonical, args) {
+		return
+	}
+	recordViolation(s.rep, "HISS-02", s.rel, openLine, "",
+		fmt.Sprintf("Python %s call passes no timeout=: explicit deadline on every I/O call", canonical))
+}
+
+// finishPythonIO reports every call still open when the file ends, so an unterminated call
+// fails closed instead of passing unseen.
+func (s *pythonScanner) finishPythonIO() {
+	for i := 0; i < len(s.io.pending) && i < maxPythonIOPending; i++ {
+		recordViolation(s.rep, "HISS-02", s.rel, s.io.pending[i].openLine, "",
+			fmt.Sprintf("Python %s call never closes before the end of the file: explicit deadline on every I/O call",
+				s.io.pending[i].canonical))
+	}
+	s.io.pending = nil
+}
+
+// reportPythonIOBound records a call that stays open past maxPythonIOCallLines, failing closed.
+func (s *pythonScanner) reportPythonIOBound(canonical string, openLine int) {
+	recordViolation(s.rep, "HISS-02", s.rel, openLine, "",
+		fmt.Sprintf("Python %s call exceeds 60-line bound without closing: explicit deadline on every I/O call", canonical))
+}
+
+// hasPythonIOTimeout reports a top-level timeout= that is not None, or a top-level ** unpack.
+func hasPythonIOTimeout(args []string) bool {
+	for i := 0; i < len(args) && i < maxPythonIOCallArgs; i++ {
+		if isPythonIOTimeoutArg(args[i]) {
+			return true
+		}
+	}
+	return false
+}
+
+// urlopenTimeoutPosition is the index of urlopen's timeout parameter, urlopen(url, data=None,
+// timeout=...): of the targets it is the only one whose deadline can be passed by position.
+const urlopenTimeoutPosition = 2
+
+// hasPositionalURLOpenTimeout reports an urlopen call whose third argument is positional and not
+// None, the deadline urlopen(url, data, 10) passes without the timeout= keyword.
+func hasPositionalURLOpenTimeout(canonical string, args []string) bool {
+	if canonical != "urllib.request.urlopen" || len(args) <= urlopenTimeoutPosition {
+		return false
+	}
+	for i := 0; i <= urlopenTimeoutPosition; i++ {
+		if isKeywordOrUnpackArg(args[i]) {
+			return false
+		}
+	}
+	val := strings.TrimSpace(args[urlopenTimeoutPosition])
+	return val != "" && val != "None"
+}
+
+// isKeywordOrUnpackArg reports an argument that is not positional: name=value, *args or **kwargs.
+func isKeywordOrUnpackArg(arg string) bool {
+	trimmed := strings.TrimSpace(arg)
+	if strings.HasPrefix(trimmed, "*") {
+		return true
+	}
+	name := leadingIdent(trimmed)
+	if name == "" {
+		return false
+	}
+	rest := strings.TrimSpace(trimmed[len(name):])
+	return strings.HasPrefix(rest, "=") && !strings.HasPrefix(rest, "==")
+}
+
+// isPythonIOTimeoutArg reports one argument that passes a deadline or cannot be decided.
+func isPythonIOTimeoutArg(arg string) bool {
+	trimmed := strings.TrimSpace(arg)
+	if strings.HasPrefix(trimmed, "**") {
+		return len(trimmed) > 2
+	}
+	if leadingIdent(trimmed) != "timeout" {
+		return false
+	}
+	rest := strings.TrimSpace(trimmed[len("timeout"):])
+	if !strings.HasPrefix(rest, "=") || strings.HasPrefix(rest, "==") {
+		return false
+	}
+	val := strings.TrimSpace(rest[1:])
+	return val != "" && val != "None"
+}
