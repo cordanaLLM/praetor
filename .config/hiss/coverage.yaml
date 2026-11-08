@@ -245,7 +245,12 @@ rules:
           closing; urlopen's third
           positional argument counts as its deadline when it is not None; a top-level **kwargs
           unpack is accepted as undecidable, while a nested unpack such as env={**os.environ} is
-          not. Other unbounded loop shapes such as while 1, and I/O through subprocess.Popen with
+          not. The check also fails closed when a file exceeds its tracking or import-parsing
+          bounds: more than 32 open calls at once, a line over 65536 bytes in a file with tracked
+          bindings, more than 64 tracked bindings, more than 16 statements on one line when a
+          skipped statement starts with import or from, more than 32 names in one import of a
+          tracked module, or a parenthesised from-import of a tracked module still open after 60
+          lines. Other unbounded loop shapes such as while 1, and I/O through subprocess.Popen with
           communicate (gap/popen-communicate-no-timeout.py) or wait (gap/popen-wait-no-timeout.py),
           requests.Session methods (gap/requests-session-get-no-timeout.py), httpx
           (gap/httpx-get-no-timeout.py), aiohttp (gap/aiohttp-session-get.py), socket

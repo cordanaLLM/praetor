@@ -244,3 +244,91 @@ func TestPythonIO_Boundary_TrackedBindingLimit(t *testing.T) {
 		t.Fatalf("expected tracked-binding limit message, got %+v", rep.Violations)
 	}
 }
+
+// TestPythonIO_Boundary_ImportClauseLimit passes maxPythonIOClauses semicolon-separated statements
+// on one line (and a 17th statement that is not an import) and reports a skipped import or
+// from-import past maxPythonIOClauses.
+func TestPythonIO_Boundary_ImportClauseLimit(t *testing.T) {
+	root := t.TempDir()
+	prefix15 := strings.Repeat("x = 1; ", maxPythonIOClauses-1)
+	writeFixture(t, root, "pkg/clauses16.py", prefix15+"import subprocess\n")
+	prefix16 := strings.Repeat("x = 1; ", maxPythonIOClauses)
+	writeFixture(t, root, "pkg/clauses17_assign.py", prefix16+"x = 2\n")
+	writeFixture(t, root, "pkg/clauses17_import.py", prefix16+"import subprocess\n")
+	writeFixture(t, root, "pkg/clauses17_from.py", prefix16+"from subprocess import run\n")
+
+	rep := scanFixture(t, root, ScanOptions{})
+	assertViolations(t, rep, []expectedViolation{
+		{"HISS-02", "pkg/clauses17_from.py", 1},
+		{"HISS-02", "pkg/clauses17_import.py", 1},
+	})
+	for _, v := range rep.Violations {
+		if !strings.Contains(v.Message, "more than 16 statements on one line") {
+			t.Fatalf("expected 16-statement limit message, got %+v", rep.Violations)
+		}
+	}
+}
+
+// TestPythonIO_Boundary_ImportItemLimit passes maxPythonIOFromItems names in one import (and 33
+// untracked names) and reports the 33rd name in a tracked from-import or a plain import naming a
+// tracked module past maxPythonIOFromItems.
+func TestPythonIO_Boundary_ImportItemLimit(t *testing.T) {
+	root := t.TempDir()
+	prefix31 := strings.Repeat("a, ", maxPythonIOFromItems-1)
+	writeFixture(t, root, "pkg/plain32.py", "import "+prefix31+"subprocess\n")
+	writeFixture(t, root, "pkg/from32.py", "from subprocess import "+prefix31+"run\n")
+	prefix32 := strings.Repeat("a, ", maxPythonIOFromItems)
+	writeFixture(t, root, "pkg/plain33_untracked.py", "import "+prefix32+"os\n")
+	writeFixture(t, root, "pkg/from33_untracked.py", "from os import "+prefix32+"path\n")
+	writeFixture(t, root, "pkg/plain33_tracked.py", "import "+prefix32+"subprocess\n")
+	writeFixture(t, root, "pkg/from33_tracked.py", "from subprocess import "+prefix32+"run\n")
+
+	rep := scanFixture(t, root, ScanOptions{})
+	assertViolations(t, rep, []expectedViolation{
+		{"HISS-02", "pkg/from33_tracked.py", 1},
+		{"HISS-02", "pkg/plain33_tracked.py", 1},
+	})
+	for _, v := range rep.Violations {
+		if !strings.Contains(v.Message, "more than 32 names in one import") {
+			t.Fatalf("expected 32-name limit message, got %+v", rep.Violations)
+		}
+	}
+}
+
+// TestPythonIO_Boundary_FromImportLineLimit passes a parenthesised from-import that closes on its
+// 60th line (and an untracked 61-line from-import) and reports a tracked from-import still open
+// after maxPythonIOCallLines lines.
+func TestPythonIO_Boundary_FromImportLineLimit(t *testing.T) {
+	root := t.TempDir()
+	lines60 := make([]string, 0, maxPythonIOCallLines+1)
+	lines60 = append(lines60, "from subprocess import (")
+	for i := 0; i < maxPythonIOCallLines-2; i++ {
+		lines60 = append(lines60, "    a,")
+	}
+	lines60 = append(lines60, "    run)", "")
+	writeFixture(t, root, "pkg/from_span60.py", strings.Join(lines60, "\n"))
+
+	untracked61 := make([]string, 0, maxPythonIOCallLines+2)
+	untracked61 = append(untracked61, "from os import (")
+	for i := 0; i < maxPythonIOCallLines-1; i++ {
+		untracked61 = append(untracked61, "    a,")
+	}
+	untracked61 = append(untracked61, "    path)", "")
+	writeFixture(t, root, "pkg/from_span61_untracked.py", strings.Join(untracked61, "\n"))
+
+	lines61 := make([]string, 0, maxPythonIOCallLines+2)
+	lines61 = append(lines61, "from subprocess import (")
+	for i := 0; i < maxPythonIOCallLines-1; i++ {
+		lines61 = append(lines61, "    a,")
+	}
+	lines61 = append(lines61, "    run)", "")
+	writeFixture(t, root, "pkg/from_span61.py", strings.Join(lines61, "\n"))
+
+	rep := scanFixture(t, root, ScanOptions{})
+	assertViolations(t, rep, []expectedViolation{
+		{"HISS-02", "pkg/from_span61.py", 60},
+	})
+	if len(rep.Violations) != 1 || !strings.Contains(rep.Violations[0].Message, "from-import of a tracked module still open after 60 lines") {
+		t.Fatalf("expected 60-line from-import limit message, got %+v", rep.Violations)
+	}
+}

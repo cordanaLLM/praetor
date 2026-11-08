@@ -184,7 +184,10 @@ closed at each of its bounds, and each message names its own bound:
 - a call still open after 60 lines, or at the end of the file;
 - more than 32 calls open at once;
 - a line longer than 65536 bytes in a file that binds a target;
-- more than 64 tracked bindings in one file.
+- more than 64 tracked bindings in one file;
+- more than 16 statements on one line when a skipped statement starts with `import` or `from`;
+- more than 32 names in one import of a tracked module;
+- a parenthesised `from` import of a tracked module still open after 60 lines.
 
 `subprocess.Popen` with `communicate` or `wait`, `requests.Session` methods, `httpx`, `aiohttp` and
 `socket` are not decided. `.config/hiss/testdata/HISS-02/python/gap/` keeps one fixture for each,

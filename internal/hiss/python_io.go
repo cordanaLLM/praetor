@@ -41,71 +41,119 @@ type pythonIOScope struct {
 // observePythonIO feeds one stripped line to the HISS-02 I/O check: imports first, then open
 // calls, then new ones.
 func (s *pythonScanner) observePythonIO(code string, lineNum int) {
-	dropped := s.io.observeImports(code)
-	for i := 0; i < len(dropped) && i < maxPythonIOTracked; i++ {
-		recordViolation(s.rep, "HISS-02", s.rel, lineNum, "",
-			fmt.Sprintf("Python I/O import binding %s not tracked: more than %d tracked I/O bindings", dropped[i], maxPythonIOTracked))
+	violations := s.io.observeImports(code)
+	for i := 0; i < len(violations) && i < maxPythonIOTracked; i++ {
+		recordViolation(s.rep, "HISS-02", s.rel, lineNum, "", violations[i])
 	}
 	s.advancePendingPythonIO(code, lineNum)
 	s.scanNewPythonIOCalls(code, lineNum)
 }
 
 // observeImports records the subprocess, urllib.request and requests bindings an import statement
-// on code creates, returning any local names dropped past maxPythonIOTracked.
+// on code creates, returning HISS-02 messages for dropped bindings and skipped import bounds.
 func (s *pythonIOScope) observeImports(code string) []string {
 	if s.fromModule != "" {
 		return s.continueFromImport(code)
 	}
-	var dropped []string
+	var violations []string
 	clauses := strings.Split(code, ";")
 	for i := 0; i < len(clauses) && i < maxPythonIOClauses; i++ {
 		trimmed := strings.TrimSpace(clauses[i])
 		switch leadingIdent(trimmed) {
 		case "import":
-			dropped = append(dropped, s.observePlainImport(strings.TrimSpace(trimmed[len("import"):]))...)
+			violations = append(violations, s.observePlainImport(strings.TrimSpace(trimmed[len("import"):]))...)
 		case "from":
-			dropped = append(dropped, s.observeFromImport(strings.TrimSpace(trimmed[len("from"):]))...)
+			violations = append(violations, s.observeFromImport(strings.TrimSpace(trimmed[len("from"):]))...)
 		}
 	}
-	return dropped
+	if hasSkippedImportClause(clauses) {
+		violations = append(violations,
+			fmt.Sprintf("Python I/O import not tracked: more than %d statements on one line", maxPythonIOClauses))
+	}
+	return violations
+}
+
+// hasSkippedImportClause reports whether any clause at or past maxPythonIOClauses starts with
+// import or from.
+func hasSkippedImportClause(clauses []string) bool {
+	for i := maxPythonIOClauses; i < len(clauses) && i < maxPythonIOLineBytes; i++ {
+		switch leadingIdent(strings.TrimSpace(clauses[i])) {
+		case "import", "from":
+			return true
+		}
+	}
+	return false
+}
+
+// droppedBindingMessage formats the HISS-02 message for a binding dropped past maxPythonIOTracked.
+func droppedBindingMessage(local string) string {
+	return fmt.Sprintf("Python I/O import binding %s not tracked: more than %d tracked I/O bindings", local, maxPythonIOTracked)
 }
 
 // continueFromImport reads the next line of a parenthesised from-import, bounded by
-// maxPythonIOCallLines, and returns any local names dropped past maxPythonIOTracked.
+// maxPythonIOCallLines, and returns HISS-02 messages for dropped bindings and unclosed imports.
 func (s *pythonIOScope) continueFromImport(code string) []string {
 	s.fromLines++
 	if closeIdx := strings.IndexByte(code, ')'); closeIdx >= 0 {
-		dropped := s.trackFromItems(s.fromModule, code[:closeIdx])
+		violations := s.trackFromItems(s.fromModule, code[:closeIdx])
 		s.fromModule = ""
 		s.fromLines = 0
-		return dropped
+		return violations
 	}
-	dropped := s.trackFromItems(s.fromModule, code)
+	violations := s.trackFromItems(s.fromModule, code)
 	if s.fromLines >= maxPythonIOCallLines {
 		s.fromModule = ""
 		s.fromLines = 0
+		violations = append(violations,
+			fmt.Sprintf("Python I/O import not tracked: from-import of a tracked module still open after %d lines", maxPythonIOCallLines))
 	}
-	return dropped
+	return violations
 }
 
 // observePlainImport tracks import subprocess, import requests and import urllib.request, aliased
-// or not, returning any local names dropped past maxPythonIOTracked.
+// or not, returning HISS-02 messages for dropped bindings and skipped tracked modules.
 func (s *pythonIOScope) observePlainImport(rest string) []string {
-	var dropped []string
+	var violations []string
 	items := strings.Split(rest, ",")
 	for i := 0; i < len(items) && i < maxPythonIOFromItems; i++ {
 		orig, alias := parsePythonImportItem(items[i])
-		if orig == "subprocess" || orig == "requests" || orig == "urllib.request" {
+		if isPlainTrackedPythonIOModule(orig) {
 			if !s.addTracked(pythonIOName{local: alias, module: orig}) {
-				dropped = append(dropped, alias)
+				violations = append(violations, droppedBindingMessage(alias))
 			}
 		}
 	}
-	return dropped
+	if hasSkippedPlainImportTarget(items) {
+		violations = append(violations, importItemsBoundMessage())
+	}
+	return violations
+}
+
+// isPlainTrackedPythonIOModule reports a module a plain import statement tracks.
+func isPlainTrackedPythonIOModule(mod string) bool {
+	return mod == "subprocess" || mod == "requests" || mod == "urllib.request"
+}
+
+// hasSkippedPlainImportTarget reports whether any plain-import item at or past maxPythonIOFromItems
+// names a tracked I/O module.
+func hasSkippedPlainImportTarget(items []string) bool {
+	for i := maxPythonIOFromItems; i < len(items) && i < maxPythonIOLineBytes; i++ {
+		orig, _ := parsePythonImportItem(items[i])
+		if isPlainTrackedPythonIOModule(orig) {
+			return true
+		}
+	}
+	return false
+}
+
+// importItemsBoundMessage formats the HISS-02 message for an import of a tracked module with more
+// than maxPythonIOFromItems comma-separated items.
+func importItemsBoundMessage() string {
+	return fmt.Sprintf("Python I/O import not tracked: more than %d names in one import of a tracked module", maxPythonIOFromItems)
 }
 
 // observeFromImport tracks the target names a from-import of a tracked module binds, on one line
-// or opening a parenthesised list, returning any local names dropped past maxPythonIOTracked.
+// or opening a parenthesised list, returning HISS-02 messages for dropped bindings.
 func (s *pythonIOScope) observeFromImport(rest string) []string {
 	imp := nextIdent(rest, "import", 0)
 	if imp <= 0 {
@@ -135,19 +183,33 @@ func isTrackedPythonIOModule(mod string) bool {
 }
 
 // trackFromItems tracks each comma-separated item of a from-import that names a target, returning
-// any local names dropped past maxPythonIOTracked.
+// HISS-02 messages for dropped bindings and item lists exceeding maxPythonIOFromItems.
 func (s *pythonIOScope) trackFromItems(mod, text string) []string {
-	var dropped []string
+	var violations []string
 	items := strings.Split(text, ",")
 	for i := 0; i < len(items) && i < maxPythonIOFromItems; i++ {
 		orig, alias := parsePythonImportItem(items[i])
 		if entry, ok := resolveFromImportItem(mod, orig, alias); ok {
 			if !s.addTracked(entry) {
-				dropped = append(dropped, entry.local)
+				violations = append(violations, droppedBindingMessage(entry.local))
 			}
 		}
 	}
-	return dropped
+	if hasSkippedFromImportItem(items) {
+		violations = append(violations, importItemsBoundMessage())
+	}
+	return violations
+}
+
+// hasSkippedFromImportItem reports whether any from-import item at or past maxPythonIOFromItems
+// names an identifier rather than a trailing comma.
+func hasSkippedFromImportItem(items []string) bool {
+	for i := maxPythonIOFromItems; i < len(items) && i < maxPythonIOLineBytes; i++ {
+		if orig, _ := parsePythonImportItem(items[i]); orig != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveFromImportItem maps one from-import item to a tracked binding: a module alias or a bare
