@@ -1,0 +1,2 @@
+type: changed
+title: Codacy skips the HISS-20 fixture corpus (.config/hiss/testdata/), whose fixtures must hold the shapes the HISS rules report

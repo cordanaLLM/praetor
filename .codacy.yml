@@ -1,0 +1,17 @@
+---
+# SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+# SPDX-License-Identifier: EUPL-1.2
+#
+# Codacy analysis scope (https://docs.codacy.com/repositories-configure/codacy-configuration-file/).
+# Codacy reads this file from the default branch, and it replaces the ignored-file settings of the
+# Codacy UI.
+#
+# Declared exception: .config/hiss/testdata/ is the HISS-20 fixture corpus, rule input rather than
+# program code. Its positive and gap fixtures must hold the shapes the HISS rules report (a
+# subprocess call without a timeout, an unbounded loop, a banned call), so every analyzer finding
+# there is intended, and rewriting a fixture to satisfy Bandit or Opengrep would remove the shape
+# the rule is tested against. The HISS scanner and the pushed-file semgrep step skip the corpus for
+# the same reason (.config/lefthook/scripts/checks.py, is_fixture).
+# Category D, entered 2026-11-08, expires 2027-03-08: review the scope at expiry.
+exclude_paths:
+  - ".config/hiss/testdata/**"
