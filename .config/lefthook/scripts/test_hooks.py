@@ -18,6 +18,7 @@ import tempfile
 import time
 import unittest
 from unittest import mock
+import yaml
 
 import checks
 import common
@@ -1398,6 +1399,122 @@ print("fixture hook self-tests passed")
                 hooks.check_commit_message_range(base, "head-sha")
             run_cmd.assert_not_called()
             self.assertIn("Commit message check: skipped, no pushed-range base", out.getvalue())
+
+    def test_commit_message_range_skips_published_commits_in_two_remote_fixture(self):
+        """In a two-remote fixture, commits published on upstream are skipped while own commits fail."""
+        origin = Path(self.temp.name) / "origin.git"
+        command(self.repo, "git", "init", "--bare", "-q", "-b", "main", str(origin))
+        command(self.repo, "git", "remote", "add", "origin", str(origin))
+        command(self.repo, "git", "push", "-q", "-u", "origin", "main")
+        base = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+
+        upstream = Path(self.temp.name) / "upstream.git"
+        command(self.repo, "git", "init", "--bare", "-q", "-b", "main", str(upstream))
+        command(self.repo, "git", "remote", "add", "upstream", str(upstream))
+
+        # 1. Upstream commit with 74-column body line (simulating upstream squash commit)
+        body_74 = ("word " * 14) + "abcd"
+        self.write("upstream.txt", "upstream\n")
+        command(
+            self.repo, "git", "commit", "-q", "-s", "--no-verify",
+            "-m", f"feat: upstream squash commit\n\n{body_74}",
+        )
+        upstream_sha = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        command(self.repo, "git", "push", "-q", "-u", "upstream", "main")
+
+        original = Path.cwd()
+        try:
+            os.chdir(self.repo)
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                hooks.check_commit_message_range(base, upstream_sha, remote="origin")
+            output = out.getvalue()
+            self.assertIn(f"Commit message check: skipped {upstream_sha}, published on", output)
+            self.assertIn("upstream", output)
+
+            # 2. Own commit with 74-column body line on top of upstream commit
+            self.write("own.txt", "own\n")
+            command(
+                self.repo, "git", "commit", "-q", "-s", "--no-verify",
+                "-m", f"feat: own commit\n\n{body_74}",
+            )
+            own_sha = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as out_own:
+                with self.assertRaises(HookError):
+                    hooks.check_commit_message_range(base, own_sha, remote="origin")
+            output_own = out_own.getvalue()
+            self.assertIn(f"Commit message check: skipped {upstream_sha}, published on", output_own)
+        finally:
+            os.chdir(original)
+
+    def test_commit_message_range_single_remote_fixture_keeps_existing_behaviour(self):
+        """A single-remote fixture retains today's behaviour: unskipped range checking."""
+        origin = Path(self.temp.name) / "origin.git"
+        command(self.repo, "git", "init", "--bare", "-q", "-b", "main", str(origin))
+        command(self.repo, "git", "remote", "add", "origin", str(origin))
+        command(self.repo, "git", "push", "-q", "-u", "origin", "main")
+        base = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+
+        self.write("valid.txt", "valid\n")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "feat: valid commit\n\nwrapped line")
+        valid_sha = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+
+        original = Path.cwd()
+        try:
+            os.chdir(self.repo)
+            hooks.check_commit_message_range(base, valid_sha, remote="origin")
+
+            body_74 = ("word " * 14) + "abcd"
+            self.write("invalid.txt", "invalid\n")
+            command(
+                self.repo, "git", "commit", "-q", "-s", "--no-verify",
+                "-m", f"feat: invalid commit\n\n{body_74}",
+            )
+            invalid_sha = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+
+            with self.assertRaises(HookError):
+                hooks.check_commit_message_range(base, invalid_sha, remote="origin")
+        finally:
+            os.chdir(original)
+
+    def test_ci_workflow_enforces_commit_message_policy_on_main_push(self):
+        """ci.yml requires forge check-commits on push to main with github.event.before as base."""
+        ci_path = ROOT / ".github" / "workflows" / "ci.yml"
+        self.assertTrue(ci_path.is_file(), f"{ci_path} must exist")
+        ci_data = yaml.safe_load(ci_path.read_text(encoding="utf-8"))
+        steps = ci_data.get("jobs", {}).get("verify", {}).get("steps", [])
+        push_step = None
+        for step in steps:
+            cond = str(step.get("if", ""))
+            run_cmd = str(step.get("run", ""))
+            if ("github.event_name == 'push'" in cond and "refs/heads/main" in cond
+                    and "forge check-commits" in run_cmd):
+                push_step = step
+                break
+        self.assertIsNotNone(push_step, "ci.yml must contain a push-to-main forge check-commits step")
+        run_script = push_step["run"]
+        self.assertIn("github.event.before", run_script)
+        self.assertIn("--base=", run_script)
+        self.assertIn("github.sha", run_script)
+        self.assertIn("0000000000000000000000000000000000000000", run_script)
+
+    def test_forge_check_commits_fails_on_74_column_body_commit(self):
+        """A commit with a 74-column body line fails forge check-commits with non-zero exit."""
+        base = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        body_74 = ("word " * 14) + "abcd"
+        self.write("change.txt", "change\n")
+        command(
+            self.repo, "git", "commit", "-q", "-s", "--no-verify",
+            "-m", f"feat: wide body\n\n{body_74}",
+        )
+        head = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        result = command(
+            self.repo, cli_path(self.repo), "forge", "check-commits",
+            f"--base={base}", f"--head={head}", ok=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        output = (result.stdout + result.stderr).decode(errors="replace")
+        self.assertIn("74 columns; maximum 72", output)
 
     def test_signature_check_passes_all_signed_commits(self):
         """All G-status commits pass the signature check."""

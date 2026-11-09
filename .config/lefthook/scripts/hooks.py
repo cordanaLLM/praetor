@@ -225,7 +225,7 @@ def pre_push(remote):
         check_refactor_range(base, head)
         check_docstring_range(base, head)
         check_merge_range(base, head)
-        check_commit_message_range(base, head)
+        check_commit_message_range(base, head, remote=remote)
         check_signature_range(base, head)
         if not names:
             continue
@@ -331,18 +331,96 @@ def check_signature_range(base, head):
           f"{base[:12]}..{head[:12]} verified")
 
 
-def check_commit_message_range(base, head):
+MAX_COMMIT_MESSAGE_COMMITS = 500
+
+
+def other_push_remotes(remote):
+    """Return all configured remotes other than the push target."""
+    if not remote:
+        return []
+    lines = git("remote").decode().splitlines()
+    return [
+        r.strip()
+        for r in lines[:MAX_COMMIT_MESSAGE_COMMITS]
+        if r.strip() and r.strip() != remote
+    ]
+
+
+def other_remote_refs(remotes):
+    """Return non-HEAD remote-tracking refs for the given remotes."""
+    if not remotes:
+        return []
+    patterns = [f"refs/remotes/{r}" for r in remotes[:MAX_COMMIT_MESSAGE_COMMITS]]
+    output = git("for-each-ref", "--format=%(refname)", *patterns).decode()
+    refs = []
+    for line in output.splitlines()[:MAX_COMMIT_MESSAGE_COMMITS]:
+        ref = line.strip()
+        if ref and not ref.endswith("/HEAD"):
+            refs.append(ref)
+    return refs
+
+
+def published_ref_for_commit(sha, remotes):
+    """Find a remote-tracking ref of other remotes that contains sha."""
+    patterns = [f"refs/remotes/{r}" for r in remotes[:MAX_COMMIT_MESSAGE_COMMITS]]
+    output = git("for-each-ref", "--contains", sha, "--format=%(refname)", *patterns).decode()
+    fallback = None
+    for line in output.splitlines()[:MAX_COMMIT_MESSAGE_COMMITS]:
+        ref = line.strip()
+        if not ref:
+            continue
+        if not ref.endswith("/HEAD"):
+            return ref
+        if fallback is None:
+            fallback = ref
+    return fallback or "unknown"
+
+
+def filter_own_commits(base, head, other_refs):
+    """Return all commits in base..head and the subset not reachable from other_refs."""
+    all_commits = git("rev-list", f"--max-count={MAX_COMMIT_MESSAGE_COMMITS + 1}",
+                      f"{base}..{head}").decode().splitlines()
+    if len(all_commits) > MAX_COMMIT_MESSAGE_COMMITS:
+        raise HookError(
+            f"Commit message check: range {base[:12]}..{head[:12]} exceeds "
+            f"{MAX_COMMIT_MESSAGE_COMMITS} commits; refresh remote baseline or split push"
+        )
+    own_commits = git("rev-list", f"--max-count={MAX_COMMIT_MESSAGE_COMMITS + 1}",
+                      f"{base}..{head}", "--not", *other_refs).decode().splitlines()
+    if len(own_commits) > MAX_COMMIT_MESSAGE_COMMITS:
+        raise HookError(
+            f"Commit message check: range {base[:12]}..{head[:12]} exceeds "
+            f"{MAX_COMMIT_MESSAGE_COMMITS} commits; refresh remote baseline or split push"
+        )
+    return all_commits, own_commits
+
+
+def check_commit_message_range(base, head, remote=None):
     """Run the commit message policy over the exact outgoing commit range (#1814).
 
     Without a pushed-range base the range would be the whole history, whose old commits this
     push did not make, so the check is skipped with that reason; CI checks the pull request
-    range against its base either way.
+    range against its base either way. Commits already published on another remote are skipped
+    so that sync pushes from an upstream repository do not fail on published history.
     """
     if not base:
         print("Commit message check: skipped, no pushed-range base; CI checks pull request range")
         return
-    run([praetorctl_path(), "forge", "check-commits", f"--base={base}", f"--head={head}"],
-        capture=False, timeout=180)
+    other_remotes = other_push_remotes(remote)
+    other_refs = other_remote_refs(other_remotes)
+    if not other_refs:
+        run([praetorctl_path(), "forge", "check-commits", f"--base={base}", f"--head={head}"],
+            capture=False, timeout=180)
+        return
+    all_commits, own_commits = filter_own_commits(base, head, other_refs)
+    own_set = set(own_commits)
+    for sha in all_commits[:MAX_COMMIT_MESSAGE_COMMITS]:
+        if sha not in own_set:
+            ref = published_ref_for_commit(sha, other_remotes)
+            print(f"Commit message check: skipped {sha}, published on {ref}")
+    for sha in own_commits[:MAX_COMMIT_MESSAGE_COMMITS]:
+        run([praetorctl_path(), "forge", "check-commits", f"--base={sha}^", f"--head={sha}"],
+            capture=False, timeout=180)
 
 
 def check_commits(base):
@@ -401,6 +479,7 @@ def praetorctl_path():
     """
     suffix = ".exe" if os.name == "nt" else ""
     return os.path.abspath(os.path.join("bin", "praetorctl" + suffix))
+
 
 def cli(args):
     run([make_program(), "--always-make", "--no-print-directory", "-s", "hook-cli"],

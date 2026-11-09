@@ -270,6 +270,15 @@ jobs:
         if: github.event_name == 'pull_request'
         run: go run ./cmd/standardsctl forge check-commits --base="origin/${{ github.base_ref }}" --head=HEAD
 
+      - name: Enforce Commit Message Policy on Main Push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ] || [ -z "${{ github.event.before }}" ]; then
+            echo "Commit message check: skipped, initial push or no before sha"
+            exit 0
+          fi
+          go run ./cmd/standardsctl forge check-commits --base="${{ github.event.before }}" --head="${{ github.sha }}"
+
       - name: Enforce Preparatory Refactoring Invariance (REF-01/02)
         if: github.event_name == 'pull_request'
         env:
