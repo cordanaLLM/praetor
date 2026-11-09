@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import sys
+import tempfile
 
 sys.dont_write_bytecode = True
 from common import HookError, changed, clean_env, git, paths, run, snapshot
@@ -331,6 +332,8 @@ def check_signature_range(base, head):
           f"{base[:12]}..{head[:12]} verified")
 
 
+# MAX_REMOTES bounds the configured remotes evaluated by the hook (HISS-02).
+MAX_REMOTES = 64
 MAX_COMMIT_MESSAGE_COMMITS = 500
 
 
@@ -341,7 +344,7 @@ def other_push_remotes(remote):
     lines = git("remote").decode().splitlines()
     return [
         r.strip()
-        for r in lines[:MAX_COMMIT_MESSAGE_COMMITS]
+        for r in lines[:MAX_REMOTES]
         if r.strip() and r.strip() != remote
     ]
 
@@ -350,7 +353,7 @@ def other_remote_refs(remotes):
     """Return non-HEAD remote-tracking refs for the given remotes."""
     if not remotes:
         return []
-    patterns = [f"refs/remotes/{r}" for r in remotes[:MAX_COMMIT_MESSAGE_COMMITS]]
+    patterns = [f"refs/remotes/{r}" for r in remotes[:MAX_REMOTES]]
     output = git("for-each-ref", "--format=%(refname)", *patterns).decode()
     refs = []
     for line in output.splitlines()[:MAX_COMMIT_MESSAGE_COMMITS]:
@@ -362,7 +365,7 @@ def other_remote_refs(remotes):
 
 def published_ref_for_commit(sha, remotes):
     """Find a remote-tracking ref of other remotes that contains sha."""
-    patterns = [f"refs/remotes/{r}" for r in remotes[:MAX_COMMIT_MESSAGE_COMMITS]]
+    patterns = [f"refs/remotes/{r}" for r in remotes[:MAX_REMOTES]]
     output = git("for-each-ref", "--contains", sha, "--format=%(refname)", *patterns).decode()
     fallback = None
     for line in output.splitlines()[:MAX_COMMIT_MESSAGE_COMMITS]:
@@ -395,6 +398,18 @@ def filter_own_commits(base, head, other_refs):
     return all_commits, own_commits
 
 
+def check_own_commit_message(sha):
+    """Apply the commit message policy to a single commit without checking its parent range."""
+    raw = git("log", "-1", "--format=%B", sha, "--")
+    with tempfile.NamedTemporaryFile("wb", delete=False) as stream:
+        stream.write(raw)
+        path = stream.name
+    try:
+        run([praetorctl_path(), "forge", "check-message", path], capture=False, timeout=30)
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
 def check_commit_message_range(base, head, remote=None):
     """Run the commit message policy over the exact outgoing commit range (#1814).
 
@@ -419,8 +434,7 @@ def check_commit_message_range(base, head, remote=None):
             ref = published_ref_for_commit(sha, other_remotes)
             print(f"Commit message check: skipped {sha}, published on {ref}")
     for sha in own_commits[:MAX_COMMIT_MESSAGE_COMMITS]:
-        run([praetorctl_path(), "forge", "check-commits", f"--base={sha}^", f"--head={sha}"],
-            capture=False, timeout=180)
+        check_own_commit_message(sha)
 
 
 def check_commits(base):

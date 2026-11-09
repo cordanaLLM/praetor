@@ -1447,6 +1447,81 @@ print("fixture hook self-tests passed")
         finally:
             os.chdir(original)
 
+    def setup_ops_sync_fixture(self):
+        """Set up origin, upstream with a 74-column commit, and return (base, upstream_sha, body_74)."""
+        origin = Path(self.temp.name) / "origin.git"
+        command(self.repo, "git", "init", "--bare", "-q", "-b", "main", str(origin))
+        command(self.repo, "git", "remote", "add", "origin", str(origin))
+        command(self.repo, "git", "push", "-q", "-u", "origin", "main")
+        base = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+
+        upstream = Path(self.temp.name) / "upstream.git"
+        command(self.repo, "git", "init", "--bare", "-q", "-b", "main", str(upstream))
+        command(self.repo, "git", "remote", "add", "upstream", str(upstream))
+
+        # Upstream main branch holds a tip commit with a 74-column body line
+        command(self.repo, "git", "checkout", "-q", "-b", "upstream-main")
+        body_74 = ("word " * 14) + "abcd"
+        self.write("upstream.txt", "upstream\n")
+        command(
+            self.repo, "git", "commit", "-q", "-s", "--no-verify",
+            "-m", f"feat: upstream tip\n\n{body_74}",
+        )
+        upstream_sha = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        command(self.repo, "git", "push", "-q", "-u", "upstream", "upstream-main:main")
+        command(self.repo, "git", "checkout", "-q", "main")
+        return base, upstream_sha, body_74
+
+    def test_commit_message_range_ops_sync_merge_passes_and_skips_upstream_ref(self):
+        """Own merge commit of upstream main passes pre-push check and prints skipped upstream ref."""
+        base, upstream_sha, _ = self.setup_ops_sync_fixture()
+        valid_merge_msg = "Merge branch 'main' of upstream into main\n\nSigned-off-by: Hook Test <hook@example.test>"
+        command(
+            self.repo, "git", "merge", "--no-ff", "-q", "--no-verify",
+            "-m", valid_merge_msg, "upstream/main",
+        )
+        merge_sha = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+
+        original = Path.cwd()
+        try:
+            os.chdir(self.repo)
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                hooks.check_commit_message_range(base, merge_sha, remote="origin")
+            output = out.getvalue()
+            self.assertIn(f"Commit message check: skipped {upstream_sha}, published on", output)
+            self.assertIn("upstream", output)
+        finally:
+            os.chdir(original)
+
+    def test_commit_message_range_ops_sync_merge_with_overlong_message_fails(self):
+        """Own merge commit of upstream main with 74-column body line fails pre-push check."""
+        base, _, body_74 = self.setup_ops_sync_fixture()
+        invalid_merge_msg = (
+            f"Merge branch 'main' of upstream into main\n\n{body_74}\n\n"
+            "Signed-off-by: Hook Test <hook@example.test>"
+        )
+        command(
+            self.repo, "git", "merge", "--no-ff", "-q", "--no-verify",
+            "-m", invalid_merge_msg, "upstream/main",
+        )
+        bad_merge_sha = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+
+        original = Path.cwd()
+        try:
+            os.chdir(self.repo)
+            with self.assertRaises(HookError):
+                hooks.check_commit_message_range(base, bad_merge_sha, remote="origin")
+        finally:
+            os.chdir(original)
+
+    def test_other_push_remotes_bounded_by_max_remotes(self):
+        """Verify other_push_remotes bounds configured remotes at MAX_REMOTES."""
+        self.assertTrue(hasattr(hooks, "MAX_REMOTES"))
+        fake_remotes = b"\n".join(f"remote{i}".encode() for i in range(hooks.MAX_REMOTES + 10))
+        with mock.patch("hooks.git", return_value=fake_remotes):
+            remotes = hooks.other_push_remotes("origin")
+        self.assertEqual(len(remotes), hooks.MAX_REMOTES)
+
     def test_commit_message_range_single_remote_fixture_keeps_existing_behaviour(self):
         """A single-remote fixture retains today's behaviour: unskipped range checking."""
         origin = Path(self.temp.name) / "origin.git"
