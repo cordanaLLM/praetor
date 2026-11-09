@@ -45,6 +45,9 @@ var cachedGoToolchainPaths = sync.OnceValues(func() (goToolchainPaths, error) {
 })
 
 func TestMain(m *testing.M) {
+	if code, served := serveTestExec(os.Args); served {
+		os.Exit(code)
+	}
 	if _, err := cachedGoToolchainPaths(); err != nil {
 		fmt.Fprintf(os.Stderr, "gating test setup: %v\n", err)
 		os.Exit(1)
