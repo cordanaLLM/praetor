@@ -54,8 +54,14 @@ func raceModule(t *testing.T, root, module string) (string, []recordedCommand, e
 	t.Helper()
 	t.Setenv("CI", "")
 	t.Setenv("GITHUB_ACTIONS", "")
+	return raceModuleOn(t, root, module, "linux")
+}
+
+// raceModuleOn is raceModule for the host operating system goos, under the caller's environment.
+func raceModuleOn(t *testing.T, root, module, goos string) (string, []recordedCommand, error) {
+	t.Helper()
 	cfg, recorded := newTestConfig(t, root, false)
-	cfg.goos = "linux"
+	cfg.goos = goos
 	dir := filepath.Join(root, filepath.Dir(filepath.FromSlash(module)))
 	msg, err := runGoRaceCommand(t.Context(), cfg, goModule{file: module, dir: dir}, dir, time.Minute, raceScopeConfig{})
 	return msg, testInvocations(*recorded), err
@@ -104,18 +110,12 @@ func TestGoRaceDeclarationWithoutWrapper(t *testing.T) {
 	for _, host := range []struct{ goos, ci, note string }{{"linux", "true", "CI execution unchanged"}, {"darwin", "", "has no Linux network namespaces"}} {
 		t.Setenv("CI", host.ci)
 		t.Setenv("GITHUB_ACTIONS", "")
-		for _, root := range []string{live, expired} {
-			cfg, recorded := newTestConfig(t, root, false)
-			cfg.goos = host.goos
-			dir := filepath.Join(root, "tools", "needs-root")
-			msg, err := runGoRaceCommand(t.Context(), cfg, goModule{file: netnsModule, dir: dir}, dir, time.Minute, raceScopeConfig{})
-			runs := testInvocations(*recorded)
-			if root == expired && (err == nil || !strings.Contains(err.Error(), "expired") || len(runs) != 0) {
-				t.Fatalf("%s: expired entry did not fail without a wrapper: runs=%+v error=%v", host.goos, runs, err)
-			}
-			if root == live && (err != nil || len(runs) != 1 || slices.Contains(runs[0].args, "-exec") || !strings.Contains(msg, host.note)) {
-				t.Fatalf("%s: live entry changed the wrapper-free path: runs=%+v message=%q error=%v", host.goos, runs, msg, err)
-			}
+		if _, runs, err := raceModuleOn(t, expired, netnsModule, host.goos); err == nil || !strings.Contains(err.Error(), "expired") || len(runs) != 0 {
+			t.Fatalf("%s: expired entry did not fail without a wrapper: runs=%+v error=%v", host.goos, runs, err)
+		}
+		msg, runs, err := raceModuleOn(t, live, netnsModule, host.goos)
+		if err != nil || len(runs) != 1 || slices.Contains(runs[0].args, "-exec") || !strings.Contains(msg, host.note) {
+			t.Fatalf("%s: live entry changed the wrapper-free path: runs=%+v message=%q error=%v", host.goos, runs, msg, err)
 		}
 	}
 }
