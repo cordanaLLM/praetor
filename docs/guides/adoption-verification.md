@@ -973,16 +973,23 @@ wrapped. The production check keeps failing closed; only the test binary's names
 
 The entry names one `go.mod` by path, the module form `api-compatibility` uses, with no glob,
 tool, fingerprint or line range. It requires a category even inside the uncategorized grace
-window, so it always expires with its category's interval. An expired entry fails its module
-before any test binary runs, so neither path stands in for the other, and the audit fails it as
-well. An entry that names no tracked Go module fails the race stage before any module runs, as a
-stale `gosec` entry fails the security stage. Where the wrapper does not apply (CI, a toolchain container, macOS, Windows) the entry
-changes nothing: CI runs every module as before and stays the second barrier. `praetorctl go test`,
-the engine's Makefile seam, does not read the entry.
+window, so it always expires with its category's interval. The race stage reads the entries once
+and judges every module against them. An expired entry fails its module before any test binary
+runs, empty modules and wrapper-free hosts included, so neither path stands in for the other; the
+audit fails it as well. An entry that names no tracked Go module fails the race stage before any
+module runs, as a stale `gosec` entry fails the security stage. Where the wrapper does not apply
+(CI, a toolchain container, macOS, Windows) a live entry changes nothing: CI runs every module as
+before and stays the second barrier. `praetorctl go test`, the engine's Makefile seam, does not
+read the entry.
+
+The wrapper isolates the network only. It keeps the caller's filesystem and environment
+(`testExecTail` binds `/`), so it is no boundary against hostile test code, and an entry does not
+open one. The entry is part of the change under review: a pull request that adds one shows it in
+the diff, and the stage message names it on every run.
 
 `internal/config/go_test_netns_test.go` pins the entry form,
 `internal/gating/test_netns_exception_test.go` pins which modules run wrapped, and
-`internal/gating/test_netns_real_test.go` runs the planted case on real namespaces: a root-owner
+`internal/gating/test_netns_real_test.go` (with its Linux-only identity half) runs the planted case on real namespaces: a root-owner
 fixture test fails under the wrapper without the entry and passes with it, its undeclared sibling
 passes only inside the wrapper, and an expired entry fails. The real case skips with the probe's
 reason on a host without user namespaces.
