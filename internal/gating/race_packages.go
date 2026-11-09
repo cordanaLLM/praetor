@@ -102,7 +102,7 @@ func runGoRaceCommand(ctx context.Context, cfg *stageConfig, module goModule, di
 	if count == 0 {
 		return NoPackagesNote + ": race tests not run", nil
 	}
-	execFlag, isolation, err := cfg.goTestExec()
+	execFlag, isolation, err := cfg.moduleTestExec(ctx, module)
 	if err != nil {
 		return "", err
 	}
