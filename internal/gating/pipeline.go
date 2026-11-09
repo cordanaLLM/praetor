@@ -834,6 +834,9 @@ func runGoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := staleNetnsEntries(ctx, cfg); err != nil {
+		return "", err
+	}
 
 	results, err := runGoModules(ctx, cfg, func(mCtx context.Context, mCfg *stageConfig, module goModule) (string, error) {
 		return runGoTestModule(mCtx, mCfg, module, scopeCfg)
