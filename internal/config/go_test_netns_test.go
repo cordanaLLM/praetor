@@ -51,6 +51,8 @@ func TestValidateExceptionsGoTestNetns(t *testing.T) {
 		{"must name the go.mod of one module", func(e *Exception) { e.Path = "tools/knowledge-retrieval/lifecycle_test.go" }},
 		{"must name the go.mod of one module", func(e *Exception) { e.Path = "notgo.mod" }},
 		{"must name exactly one of path and glob", func(e *Exception) { e.Glob = "tools/*/go.mod" }},
+		// A glob alone passes the shared path-or-glob check; this rule still names one module.
+		{"must name the go.mod of one module", func(e *Exception) { e.Path, e.Glob = "", "tools/*/go.mod" }},
 		{"must not set tool", func(e *Exception) { e.Tool = "bwrap" }},
 		{"and nothing else", func(e *Exception) { e.Fingerprint = "0123456789abcdef" }},
 		{"lines is only valid for rule HISS-19", func(e *Exception) { e.Lines = "1-2" }},

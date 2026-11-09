@@ -16,15 +16,15 @@ package config
 const ExceptionRuleGoTestNetns = "go-test-netns"
 
 // goTestNetnsTargetProblem requires an entry of ExceptionRuleGoTestNetns to name the go.mod of one
-// module by path (the module form the api-compatibility rule uses), with no fingerprint, and a
-// category even inside the uncategorized grace window: the entry removes one defence, so it
-// carries the expiry of its rectification category. Glob, tool and line range are refused by the
-// shared target checks.
+// module by path (the module form the api-compatibility rule uses), with no glob or fingerprint,
+// and a category even inside the uncategorized grace window: the entry removes one defence, so it
+// carries the expiry of its rectification category. Tool and line range are refused by the shared
+// target checks.
 func (e Exception) goTestNetnsTargetProblem() string {
-	if e.Rule != ExceptionRuleGoTestNetns || e.Glob != "" {
+	if e.Rule != ExceptionRuleGoTestNetns {
 		return ""
 	}
-	if !goModFilePath(e.Path) || e.Fingerprint != "" {
+	if e.Glob != "" || !goModFilePath(e.Path) || e.Fingerprint != "" {
 		return "rule " + ExceptionRuleGoTestNetns + " must name the go.mod of one module by path, such as tools/retrieval/go.mod, and nothing else"
 	}
 	if e.expiryCategory() == "" {
