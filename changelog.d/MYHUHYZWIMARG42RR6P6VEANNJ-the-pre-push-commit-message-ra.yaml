@@ -1,0 +1,2 @@
+type: fixed
+title: The pre-push commit message range check skips commits already published on another remote and names each, so a sync push of published history no longer fails on an old over-wide body; own commits are still checked, and CI checks the commit message range of every push to main
