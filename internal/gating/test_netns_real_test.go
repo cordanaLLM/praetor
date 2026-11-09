@@ -11,9 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -119,27 +117,15 @@ func realRaceConfig(t *testing.T, root string) *stageConfig {
 	}
 	cfg, _ := newTestConfig(t, root, false)
 	cfg.goos, cfg.run, cfg.lookPath = "linux", util.RunCommand, exec.LookPath
-	if available, absent, err := raceDetectorAvailable(t.Context(), cfg); err != nil || !available {
-		t.Skipf("race detector unavailable (%s): %v", absent, err)
+	// Only a detector the probe found missing skips; a probe that failed fails the case.
+	available, absent, err := raceDetectorAvailable(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("race detector probe failed: %v", err)
+	}
+	if !available {
+		t.Skipf("race detector unavailable on this host (%s)", absent)
 	}
 	return cfg
-}
-
-// setGateIdentity hands the fixture tests the uid that owns / and the user namespace, as this
-// process sees them.
-func setGateIdentity(t *testing.T) {
-	t.Helper()
-	info, err := os.Stat("/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	userns, nsErr := os.Readlink("/proc/self/ns/user")
-	if !ok || nsErr != nil {
-		t.Fatalf("read gate identity: stat_t=%v namespace error=%v", ok, nsErr)
-	}
-	t.Setenv("PRAETOR_FIXTURE_ROOT_UID", strconv.FormatUint(uint64(stat.Uid), 10))
-	t.Setenv("PRAETOR_FIXTURE_USERNS", userns)
 }
 
 // realRace runs one fixture module's race command for real.
