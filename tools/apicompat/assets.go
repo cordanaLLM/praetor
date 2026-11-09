@@ -129,8 +129,8 @@ jobs:
 // priorDigests maps the SHA-256 of every text an earlier Praetor shipped at one of the family's
 // managed paths, taken with LF line endings, to that path: the family's Prior
 // (internal/managedasset). Adoption refreshes a file holding exactly one of these texts without
-// --force. testdata/prior holds each text (the gate program's start with api-gate-main), and
-// TestPriorDigestsReproduce recomputes every digest from it.
+// --force. testdata/prior holds each text (the gate program's start with api-gate-main, the
+// placeholder's with api-gate-placeholder), and TestPriorDigests recomputes every digest from it.
 // internal/managedasset/testdata/shipped/api-compatibility.sha256 records every text ever
 // shipped, and TestShippedTextLedger fails until each outgoing text is listed here.
 var priorDigests = map[string]string{
