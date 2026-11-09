@@ -104,6 +104,12 @@ class StagedSpelling(unittest.TestCase):
             "pnpm-lock.yaml",
             "go.sum",
             "CHANGELOG.md",
+            # Locks below the root: the hook names each staged path, and a skip glob
+            # without a directory part matches only a root-level file.
+            "console/package-lock.json",
+            "console/pnpm-lock.yaml",
+            "tools/markdownlint/go.sum",
+            "tools/markdownlint/go.work.sum",
         )
         for name in names:
             # codespell:ignore-next-line occured,seperate

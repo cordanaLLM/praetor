@@ -9,7 +9,8 @@ skip = .git,.workingdir,node_modules,.venv,__pycache__,vendor,*/vendor/*,vendor/
     */clientschema/upstream/*,internal/clientschema/upstream/*,
     */testdata/*,testdata/*,*/third_party/*,third_party/*,
     *.b64,tools/figures/player/player.js,*/tools/figures/player/player.js,
-    *.lock,*-lock.json,pnpm-lock.yaml,go.sum,go.work.sum,CHANGELOG.md
+    *.lock,*-lock.json,pnpm-lock.yaml,*/pnpm-lock.yaml,go.sum,*/go.sum,
+    go.work.sum,*/go.work.sum,CHANGELOG.md
 # Existing identifiers (ancestor, command input, dot-file A, failure result,
 # FROM lines, has static measurement, header error, PR file, render in,
 # session with release, third-party and up-to-date), package names, formats,
