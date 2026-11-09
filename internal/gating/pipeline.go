@@ -272,6 +272,9 @@ type stageConfig struct {
 	admissionSleep    func(context.Context, time.Duration) error
 	admissionLog      io.Writer
 	admissionPoll     time.Duration
+	// netnsEntries are the manifest's go-test-netns entries, read once (goTestNetnsEntries).
+	netnsEntries []config.Exception
+	netnsLoaded  bool
 }
 
 func (c *stageConfig) scopesAvailableFunc() func(context.Context) (bool, string) {

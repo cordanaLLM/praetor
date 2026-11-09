@@ -15,16 +15,16 @@ import (
 // moduleTestExec resolves one module's -exec flag and isolation note for its race tests: a live
 // go-test-netns entry naming the module's go.mod (config.ExceptionRuleGoTestNetns) runs its test
 // binaries in the gate's own namespaces where goTestExec would wrap them, and the note names the
-// entry. An expired entry fails the module before any test binary runs, so neither path stands in
-// for the other; every other module gets goTestExec unchanged. Where goTestExec wraps nothing (CI,
-// a toolchain container, a host without Linux namespaces) an entry changes nothing, and the audit
-// fails an expired one (config.ExpiredExceptions).
+// entry. An expired entry fails the module before any test binary runs, wherever the stage runs, so
+// neither path stands in for the other; every other module gets goTestExec unchanged. Where
+// goTestExec wraps nothing (CI, a toolchain container, a host without Linux namespaces) a live
+// entry changes nothing.
 func (c *stageConfig) moduleTestExec(ctx context.Context, module goModule) (string, string, error) {
 	execFlag, isolation, err := c.goTestExec()
-	if err != nil || execFlag == "" {
-		return execFlag, isolation, err
+	if err != nil {
+		return "", "", err
 	}
-	entries, err := loadNetnsEntries(ctx, c.repoDir)
+	entries, err := c.goTestNetnsEntries(ctx)
 	if err != nil {
 		return "", "", err
 	}
@@ -33,19 +33,25 @@ func (c *stageConfig) moduleTestExec(ctx context.Context, module goModule) (stri
 		return "", "", fmt.Errorf("exception %s for %s expired %s (category %s): its tests run neither wrapped nor unwrapped until the entry is renewed or removed",
 			config.ExceptionRuleGoTestNetns, module.file, expired.Expires, expired.ExpiryCategory())
 	}
-	if live == nil {
+	if live == nil || execFlag == "" {
 		return execFlag, isolation, nil
 	}
 	return "", fmt.Sprintf("Go test binaries of %s: the gate's own namespaces, no loopback wrapper (exception %s, category %s, expires %s: %s)",
 		module.file, config.ExceptionRuleGoTestNetns, live.ExpiryCategory(), live.Expires, live.Reason), nil
 }
 
-// loadNetnsEntries reads the go-test-netns entries of the manifest at root.
-func loadNetnsEntries(ctx context.Context, root string) ([]config.Exception, error) {
-	entries, err := config.LoadExceptionsFor(ctx, root, config.ExceptionRuleGoTestNetns)
+// goTestNetnsEntries reads the go-test-netns entries of the repository manifest once per stage
+// configuration, as goModules discovers modules once, so the stale check and every module run
+// judge the same entries.
+func (c *stageConfig) goTestNetnsEntries(ctx context.Context) ([]config.Exception, error) {
+	if c.netnsLoaded {
+		return c.netnsEntries, nil
+	}
+	entries, err := config.LoadExceptionsFor(ctx, c.repoDir, config.ExceptionRuleGoTestNetns)
 	if err != nil {
 		return nil, fmt.Errorf("load %s exceptions: %w", config.ExceptionRuleGoTestNetns, err)
 	}
+	c.netnsEntries, c.netnsLoaded = entries, true
 	return entries, nil
 }
 
@@ -57,7 +63,7 @@ func staleNetnsEntries(ctx context.Context, cfg *stageConfig) error {
 	if err != nil {
 		return err
 	}
-	entries, err := loadNetnsEntries(ctx, cfg.repoDir)
+	entries, err := cfg.goTestNetnsEntries(ctx)
 	if err != nil {
 		return err
 	}
