@@ -314,7 +314,7 @@ dependencies:
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: backrefs
-      version: "8.1"
+      version: "8.2"
       language: python
       ecosystem: pypi
       capability: python.external.backrefs
@@ -335,7 +335,7 @@ dependencies:
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: click
-      version: 8.5.0
+      version: 8.5.1
       language: python
       ecosystem: pypi
       capability: clikit.cli
@@ -391,7 +391,7 @@ dependencies:
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: markdown
-      version: 3.11.2
+      version: 3.11.3
       language: python
       ecosystem: pypi
       capability: python.external.markdown
@@ -468,7 +468,7 @@ dependencies:
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: platformdirs
-      version: 4.14.0
+      version: 4.14.5
       language: python
       ecosystem: pypi
       capability: python.external.platformdirs
@@ -489,7 +489,7 @@ dependencies:
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: python-dateutil
-      version: 3.0.0
+      version: 4.0.0
       language: python
       ecosystem: pypi
       capability: python.external.python_dateutil
@@ -516,13 +516,6 @@ dependencies:
       capability: http.client
       status: gap
       notes: Synchronous HTTP library
-    - package: six
-      version: 1.17.0
-      language: python
-      ecosystem: pypi
-      capability: python.external.six
-      status: gap
-      notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: tzdata
       version: "2026.6"
       language: python
@@ -538,7 +531,7 @@ dependencies:
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: watchdog
-      version: 6.0.0
+      version: 7.1.0
       language: python
       ecosystem: pypi
       capability: python.external.watchdog
@@ -708,7 +701,7 @@ dependencies:
 readiness:
     basis: not-configured
     score: 0
-    total_third_party_deps: 86
+    total_third_party_deps: 85
     covered_deps: 0
-    gap_deps: 86
-updated_at: 2026-11-07T21:20:18.563533382Z
+    gap_deps: 85
+updated_at: 2026-11-09T00:57:44.398827708Z
