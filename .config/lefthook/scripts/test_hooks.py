@@ -1425,11 +1425,7 @@ print("fixture hook self-tests passed")
         original = Path.cwd()
         try:
             os.chdir(self.repo)
-            with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
-                hooks.check_commit_message_range(base, upstream_sha, remote="origin")
-            output = out.getvalue()
-            self.assertIn(f"Commit message check: skipped {upstream_sha}, published on", output)
-            self.assertIn("upstream", output)
+            hooks.check_commit_message_range(base, upstream_sha, remote="origin")
 
             # 2. Own commit with 74-column body line on top of upstream commit
             self.write("own.txt", "own\n")
@@ -1439,11 +1435,8 @@ print("fixture hook self-tests passed")
             )
             own_sha = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
 
-            with mock.patch("sys.stdout", new_callable=io.StringIO) as out_own:
-                with self.assertRaises(HookError):
-                    hooks.check_commit_message_range(base, own_sha, remote="origin")
-            output_own = out_own.getvalue()
-            self.assertIn(f"Commit message check: skipped {upstream_sha}, published on", output_own)
+            with self.assertRaises(HookError):
+                hooks.check_commit_message_range(base, own_sha, remote="origin")
         finally:
             os.chdir(original)
 
@@ -1473,8 +1466,8 @@ print("fixture hook self-tests passed")
         return base, upstream_sha, body_74
 
     def test_commit_message_range_ops_sync_merge_passes_and_skips_upstream_ref(self):
-        """Own merge commit of upstream main passes pre-push check and prints skipped upstream ref."""
-        base, upstream_sha, _ = self.setup_ops_sync_fixture()
+        """Own merge commit of upstream main passes pre-push check and skips upstream ref."""
+        base, _, _ = self.setup_ops_sync_fixture()
         valid_merge_msg = "Merge branch 'main' of upstream into main\n\nSigned-off-by: Hook Test <hook@example.test>"
         command(
             self.repo, "git", "merge", "--no-ff", "-q", "--no-verify",
@@ -1485,11 +1478,7 @@ print("fixture hook self-tests passed")
         original = Path.cwd()
         try:
             os.chdir(self.repo)
-            with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
-                hooks.check_commit_message_range(base, merge_sha, remote="origin")
-            output = out.getvalue()
-            self.assertIn(f"Commit message check: skipped {upstream_sha}, published on", output)
-            self.assertIn("upstream", output)
+            hooks.check_commit_message_range(base, merge_sha, remote="origin")
         finally:
             os.chdir(original)
 
@@ -1514,13 +1503,105 @@ print("fixture hook self-tests passed")
         finally:
             os.chdir(original)
 
-    def test_other_push_remotes_bounded_by_max_remotes(self):
-        """Verify other_push_remotes bounds configured remotes at MAX_REMOTES."""
+    def test_other_push_remotes_bound_exceeded_raises(self):
+        """Verify other_push_remotes raises HookError when configured remotes exceed MAX_REMOTES."""
         self.assertTrue(hasattr(hooks, "MAX_REMOTES"))
         fake_remotes = b"\n".join(f"remote{i}".encode() for i in range(hooks.MAX_REMOTES + 10))
         with mock.patch("hooks.git", return_value=fake_remotes):
-            remotes = hooks.other_push_remotes("origin")
-        self.assertEqual(len(remotes), hooks.MAX_REMOTES)
+            with self.assertRaises(HookError) as ctx:
+                hooks.other_push_remotes("origin")
+            self.assertIn(str(hooks.MAX_REMOTES), str(ctx.exception))
+
+    def test_other_remote_refs_bound_exceeded_raises(self):
+        """Verify other_remote_refs raises HookError when tracking refs exceed bound."""
+        self.assertTrue(hasattr(hooks, "MAX_COMMIT_MESSAGE_COMMITS"))
+        fake_refs = b"\n".join(f"0123456789abcdef0123456789abcdef0123456{i:03d}".encode()
+                               for i in range(hooks.MAX_COMMIT_MESSAGE_COMMITS + 10))
+        with mock.patch("hooks.git", return_value=fake_refs):
+            with self.assertRaises(HookError) as ctx:
+                hooks.other_remote_refs(["origin"])
+            self.assertIn(str(hooks.MAX_COMMIT_MESSAGE_COMMITS), str(ctx.exception))
+
+    def test_other_push_remotes_url_target_excludes_matching_remote(self):
+        """A push to a URL resolves remote.NAME.url/pushurl and drops the matching remote."""
+        target_url = "git@github.com:example/repo.git"
+        config_output = (
+            f"remote.origin.url {target_url}\n"
+            "remote.upstream.url https://github.com/upstream/repo.git\n"
+        ).encode()
+
+        def fake_git(*args, **kwargs):
+            if args[0] == "remote":
+                return b"origin\nupstream\n"
+            if args[0] == "config":
+                return config_output
+            return b""
+
+        with mock.patch("hooks.git", side_effect=fake_git):
+            remotes = hooks.other_push_remotes(target_url)
+        self.assertEqual(remotes, ["upstream"])
+
+    def test_ref_deleted_after_enumeration_still_lets_check_run(self):
+        """A ref deleted after enumeration passes object names so check runs without error."""
+        base, upstream_sha, _ = self.setup_ops_sync_fixture()
+        valid_merge_msg = (
+            "Merge branch 'main' of upstream into main\n\n"
+            "Signed-off-by: Hook Test <hook@example.test>"
+        )
+        command(
+            self.repo, "git", "merge", "--no-ff", "-q", "--no-verify",
+            "-m", valid_merge_msg, "upstream/main",
+        )
+        merge_sha = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+
+        original = Path.cwd()
+        try:
+            os.chdir(self.repo)
+            refs = hooks.other_remote_refs(["upstream"])
+            self.assertIn(upstream_sha, refs)
+            self.assertFalse(any(r.startswith("refs/") for r in refs))
+
+            command(self.repo, "git", "update-ref", "-d", "refs/remotes/upstream/main")
+            with mock.patch("hooks.other_remote_refs", return_value=refs):
+                hooks.check_commit_message_range(base, merge_sha, remote="origin")
+        finally:
+            os.chdir(original)
+
+    def test_stored_commit_comment_line_and_scissors_with_bad_footer_fails(self):
+        """A stored commit with comment line and scissors tail holding bad footer fails validation."""
+        base, _, _ = self.setup_ops_sync_fixture()
+        bad_stored_msg = (
+            "feat: add feature\n\n"
+            "# a comment line\n"
+            "# ------------------------ >8 ------------------------\n"
+            "BREAKING CHANGE: change without migration footer"
+        )
+        self.write("change.txt", "change\n")
+        command(
+            self.repo, "git", "commit", "-q", "-s", "--no-verify",
+            "-m", bad_stored_msg,
+        )
+        head = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+
+        original = Path.cwd()
+        try:
+            os.chdir(self.repo)
+            with self.assertRaises(HookError):
+                hooks.check_commit_message_range(base, head, remote="origin")
+        finally:
+            os.chdir(original)
+
+    def test_check_commit_message_range_carries_one_exclude_per_tracking_ref(self):
+        """check_commit_message_range invokes forge check-commits with one --exclude per tracking ref."""
+        with mock.patch("hooks.other_push_remotes", return_value=["upstream"]), \
+                mock.patch("hooks.other_remote_refs", return_value=["1111111111111111111111111111111111111111",
+                                                                     "2222222222222222222222222222222222222222"]), \
+                mock.patch("hooks.run") as mock_run:
+            hooks.check_commit_message_range("base_sha", "head_sha", remote="origin")
+        self.assertTrue(mock_run.called)
+        called_args = mock_run.call_args[0][0]
+        self.assertIn("--exclude=1111111111111111111111111111111111111111", called_args)
+        self.assertIn("--exclude=2222222222222222222222222222222222222222", called_args)
 
     def test_commit_message_range_single_remote_fixture_keeps_existing_behaviour(self):
         """A single-remote fixture retains today's behaviour: unskipped range checking."""
@@ -1553,7 +1634,7 @@ print("fixture hook self-tests passed")
             os.chdir(original)
 
     def test_ci_workflow_enforces_commit_message_policy_on_main_push(self):
-        """ci.yml requires forge check-commits on push to main with github.event.before as base."""
+        """ci.yml requires forge check-commits on push to main with BEFORE_SHA and --first-parent."""
         ci_path = ROOT / ".github" / "workflows" / "ci.yml"
         self.assertTrue(ci_path.is_file(), f"{ci_path} must exist")
         ci_data = yaml.safe_load(ci_path.read_text(encoding="utf-8"))
@@ -1561,17 +1642,23 @@ print("fixture hook self-tests passed")
         push_step = None
         for step in steps:
             cond = str(step.get("if", ""))
-            run_cmd = str(step.get("run", ""))
+            cmd = str(step.get("run", ""))
             if ("github.event_name == 'push'" in cond and "refs/heads/main" in cond
-                    and "forge check-commits" in run_cmd):
+                    and "forge check-commits" in cmd):
                 push_step = step
                 break
         self.assertIsNotNone(push_step, "ci.yml must contain a push-to-main forge check-commits step")
+        env = push_step.get("env", {})
+        self.assertIn("BEFORE_SHA", env)
+        self.assertIn("github.event.before", env["BEFORE_SHA"])
+        self.assertIn("HEAD_SHA", env)
+        self.assertIn("github.sha", env["HEAD_SHA"])
         run_script = push_step["run"]
-        self.assertIn("github.event.before", run_script)
-        self.assertIn("--base=", run_script)
-        self.assertIn("github.sha", run_script)
+        self.assertIn('--base="$BEFORE_SHA"', run_script)
+        self.assertIn('--head="$HEAD_SHA"', run_script)
+        self.assertIn("--first-parent", run_script)
         self.assertIn("0000000000000000000000000000000000000000", run_script)
+        self.assertIn("force push", run_script)
 
     def test_forge_check_commits_fails_on_74_column_body_commit(self):
         """A commit with a 74-column body line fails forge check-commits with non-zero exit."""

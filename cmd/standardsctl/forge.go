@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,12 +31,14 @@ const (
 	commitFieldSep  = "\x1f"
 )
 
+// printForgeUsage prints the forge subcommands and their flags to standard output.
 func printForgeUsage() {
 	fmt.Println("Usage: standardsctl forge <subcommand> [arguments]")
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  sync-wiki [--output=docs/wiki]        Generate git-backed wiki documentation suite")
 	fmt.Println("  validate-pr <pr-body-file>            Verify HISS checklist and the Ed25519 Exit-0 receipt")
-	fmt.Println("  check-commits --base=<ref> [--head=HEAD]  Enforce the commit message policy on a commit range")
+	fmt.Println("  check-commits --base=<ref> [--head=HEAD] [--exclude=REV] [--first-parent]")
+	fmt.Println("                                        Enforce the commit message policy on a commit range")
 	fmt.Println("  refactor-check --base=<ref> [--head=HEAD] [--run-tests]  Check refactor commits in a range")
 	fmt.Println("  check-message <commit-message-file>   Enforce the commit message policy on one message (commit-msg hook)")
 	fmt.Println("  claims migrate --repo OWNER/NAME --issue N [--issue N ...] [--apply]")
@@ -227,20 +230,34 @@ func reportPRChecklist(res *forge.PRChecklistResult) error {
 	return nil
 }
 
-// commitRange reads the commit messages of base..head through the audited git wrapper.
-func commitRange(ctx context.Context, repoDir, base, head string) ([]string, error) {
-	for _, ref := range []string{base, head} {
-		if err := util.ValidateExecArg(ref); err != nil {
-			return nil, fmt.Errorf("invalid git revision %q: %w", ref, err)
+// parseCommitRangeOpts extracts optional excludes and first-parent settings for commitRange.
+func parseCommitRangeOpts(opts []any) ([]string, bool) {
+	var excludes []string
+	var firstParent bool
+	for _, opt := range opts {
+		switch v := opt.(type) {
+		case []string:
+			excludes = v
+		case bool:
+			firstParent = v
 		}
 	}
-	format := "--format=%H%x1f%B%x00"
-	limit := fmt.Sprintf("--max-count=%d", maxAnalyzedCommits+1)
-	out, err := util.RunGit(ctx, repoDir, "log", limit, format, base+".."+head, "--")
-	if err != nil {
-		return nil, fmt.Errorf("failed reading commit range %s..%s: %w", base, head, err)
+	return excludes, firstParent
+}
+
+// validateCommitRevisions refuses a base, head or exclude revision that is not a safe git argument.
+func validateCommitRevisions(base, head string, excludes []string) error {
+	for _, ref := range append([]string{base, head}, excludes...) {
+		if err := util.ValidateExecArg(ref); err != nil {
+			return fmt.Errorf("invalid git revision %q: %w", ref, err)
+		}
 	}
-	records := strings.Split(out, commitRecordSep)
+	return nil
+}
+
+// parseCommitRecords trims the git-log records into commit messages, refusing a malformed record or a range
+// past the maxAnalyzedCommits bound.
+func parseCommitRecords(records []string) ([]string, error) {
 	messages := make([]string, 0, len(records))
 	for i := 0; i < len(records) && i <= maxAnalyzedCommits; i++ {
 		record := strings.TrimSpace(records[i])
@@ -258,6 +275,65 @@ func commitRange(ctx context.Context, repoDir, base, head string) ([]string, err
 	return messages, nil
 }
 
+// commitRange reads the commit messages of base..head through the audited git wrapper.
+func commitRange(ctx context.Context, repoDir, base, head string, opts ...any) ([]string, error) {
+	excludes, firstParent := parseCommitRangeOpts(opts)
+	if err := validateCommitRevisions(base, head, excludes); err != nil {
+		return nil, err
+	}
+	format := "--format=%H%x1f%B%x00"
+	limit := fmt.Sprintf("--max-count=%d", maxAnalyzedCommits+1)
+	logArgs := []string{"log", limit, format}
+	if firstParent {
+		logArgs = append(logArgs, "--first-parent")
+	}
+	logArgs = append(logArgs, base+".."+head)
+	if len(excludes) > 0 {
+		logArgs = append(logArgs, "--not")
+		logArgs = append(logArgs, excludes...)
+	}
+	logArgs = append(logArgs, "--")
+	out, err := util.RunGit(ctx, repoDir, logArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("failed reading commit range %s..%s: %w", base, head, err)
+	}
+	return parseCommitRecords(strings.Split(out, commitRecordSep))
+}
+
+// reportCheckCommitsLeftOut prints the count of commits left out by excludes or first-parent.
+func reportCheckCommitsLeftOut(ctx context.Context, repoDir, base, head string, checkedCount int) {
+	totalStr, countErr := util.RunGit(ctx, repoDir, "rev-list", "--count",
+		fmt.Sprintf("--max-count=%d", maxAnalyzedCommits+1), base+".."+head, "--")
+	if countErr != nil {
+		return
+	}
+	total, err := strconv.Atoi(strings.TrimSpace(totalStr))
+	if err != nil {
+		return
+	}
+	leftOut := total - checkedCount
+	if leftOut < 0 {
+		leftOut = 0
+	}
+	fmt.Printf("Commit message check: %d commit(s) in %s..%s left out by excludes or first-parent\n", leftOut, base, head)
+}
+
+// checkCommitMessages applies the commit message policy to each message and returns the failure lines, empty when
+// every commit passes.
+func checkCommitMessages(ctx context.Context, messages []string, policy forge.ClosingReferencePolicy) ([]string, error) {
+	var failures []string
+	for i := 0; i < len(messages); i++ {
+		failure, err := commitMessageFailure(ctx, messages[i], policy)
+		if err != nil {
+			return nil, err
+		}
+		if failure != "" {
+			failures = append(failures, failure)
+		}
+	}
+	return failures, nil
+}
+
 // runForgeCheckCommits applies the commit message policy (forge.AnalyzeCommit) to every commit in
 // the range: a Conventional Commits subject, and the HISS-14 Migration: footer on a breaking
 // change. CI runs it over every commit of a pull request, so a commit made with its commit-msg
@@ -270,6 +346,9 @@ func runForgeCheckCommits(ctx context.Context, args []string) error {
 	token := fs.String("token", "", "Forge API token for closing-reference resolution in CI (default: GITHUB_TOKEN, then GH_TOKEN)")
 	endpoint := fs.String("endpoint", "", "Forge API endpoint for closing-reference resolution")
 	prAuthor := fs.String("pr-author", "", "Author login of the pull request being checked (default: GITHUB_EVENT_PATH pull_request.user.login)")
+	var excludes repeatedStringFlag
+	fs.Var(&excludes, "exclude", "Revision to exclude from the analyzed commit range (repeatable)")
+	firstParent := fs.Bool("first-parent", false, "Follow only the first parent commit upon seeing a merge commit")
 	rest, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
@@ -278,10 +357,10 @@ func runForgeCheckCommits(ctx context.Context, args []string) error {
 		return fmt.Errorf("forge check-commits accepts no positional arguments, got %q", rest)
 	}
 	if *base == "" {
-		return errors.New("usage: standardsctl forge check-commits --base=<ref> [--head=HEAD]")
+		return errors.New("usage: standardsctl forge check-commits --base=<ref> [--head=HEAD] [--exclude=REV] [--first-parent]")
 	}
 
-	messages, err := commitRange(ctx, *repoDir, *base, *head)
+	messages, err := commitRange(ctx, *repoDir, *base, *head, []string(excludes), *firstParent)
 	if err != nil {
 		return err
 	}
@@ -290,18 +369,15 @@ func runForgeCheckCommits(ctx context.Context, args []string) error {
 		return err
 	}
 
-	var failures []string
-	for i := 0; i < len(messages); i++ {
-		failure, err := commitMessageFailure(ctx, messages[i], closingPolicy)
-		if err != nil {
-			return err
-		}
-		if failure != "" {
-			failures = append(failures, failure)
-		}
+	failures, err := checkCommitMessages(ctx, messages, closingPolicy)
+	if err != nil {
+		return err
 	}
 
 	fmt.Printf("=== Commit Message Policy: %d commit(s) in %s..%s ===\n", len(messages), *base, *head)
+	if len(excludes) > 0 || *firstParent {
+		reportCheckCommitsLeftOut(ctx, *repoDir, *base, *head, len(messages))
+	}
 	if len(failures) > 0 {
 		return fmt.Errorf("commit message policy violation: %d of %d commit(s) fail, first %s", len(failures), len(messages), failures[0])
 	}

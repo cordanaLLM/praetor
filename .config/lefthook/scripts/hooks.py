@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
 """Git-stage entry points. Use exact index/ref snapshots for blocking checks."""
 
-import os
-import pathlib
 import json
-from pathlib import Path
+import os
 import re
 import shutil
 import sys
-import tempfile
+from pathlib import Path
 
 sys.dont_write_bytecode = True
+
+from checks import (
+    checkpoint_checks,
+    context_changed,
+    file_checks,
+    go_packages,
+    gofmt_check,
+    source_checks,
+)
 from common import HookError, changed, clean_env, git, paths, run, snapshot
-from checks import (checkpoint_checks, context_changed, file_checks, go_packages, gofmt_check,
-                    source_checks)
 from privacy import check_private_history, check_private_index
 from toolchain import make_program
 
@@ -342,72 +347,57 @@ def other_push_remotes(remote):
     if not remote:
         return []
     lines = git("remote").decode().splitlines()
+    if len(lines) > MAX_REMOTES:
+        raise HookError(
+            f"Commit message check: configured remotes exceed {MAX_REMOTES}; clean remote list"
+        )
+    url_remotes = set()
+    try:
+        cfg = git("config", "--get-regexp", r"^remote\..*\.(pushurl|url)$").decode()
+        for entry in cfg.splitlines():
+            parts = entry.strip().split(None, 1)
+            if len(parts) == 2 and parts[1] == remote:
+                key_parts = parts[0].split(".")
+                if len(key_parts) >= 3 and key_parts[0] == "remote":
+                    name = ".".join(key_parts[1:-1])
+                    url_remotes.add(name)
+    except HookError:
+        pass
     return [
         r.strip()
-        for r in lines[:MAX_REMOTES]
-        if r.strip() and r.strip() != remote
+        for r in lines
+        if r.strip() and r.strip() != remote and r.strip() not in url_remotes
     ]
 
 
 def other_remote_refs(remotes):
-    """Return non-HEAD remote-tracking refs for the given remotes."""
+    """Return non-HEAD remote-tracking refs (by object name) for the given remotes."""
     if not remotes:
         return []
-    patterns = [f"refs/remotes/{r}" for r in remotes[:MAX_REMOTES]]
-    output = git("for-each-ref", "--format=%(refname)", *patterns).decode()
+    if len(remotes) > MAX_REMOTES:
+        raise HookError(
+            f"Commit message check: configured remotes exceed {MAX_REMOTES}; clean remote list"
+        )
+    patterns = [f"refs/remotes/{r}" for r in remotes]
+    output = git(
+        "for-each-ref",
+        f"--count={MAX_COMMIT_MESSAGE_COMMITS + 1}",
+        "--format=%(objectname)",
+        *patterns,
+    ).decode()
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if len(lines) > MAX_COMMIT_MESSAGE_COMMITS:
+        raise HookError(
+            f"Commit message check: remote tracking refs exceed {MAX_COMMIT_MESSAGE_COMMITS}; "
+            "refresh remote baseline or split push"
+        )
+    seen = set()
     refs = []
-    for line in output.splitlines()[:MAX_COMMIT_MESSAGE_COMMITS]:
-        ref = line.strip()
-        if ref and not ref.endswith("/HEAD"):
-            refs.append(ref)
+    for obj in lines:
+        if obj not in seen:
+            seen.add(obj)
+            refs.append(obj)
     return refs
-
-
-def published_ref_for_commit(sha, remotes):
-    """Find a remote-tracking ref of other remotes that contains sha."""
-    patterns = [f"refs/remotes/{r}" for r in remotes[:MAX_REMOTES]]
-    output = git("for-each-ref", "--contains", sha, "--format=%(refname)", *patterns).decode()
-    fallback = None
-    for line in output.splitlines()[:MAX_COMMIT_MESSAGE_COMMITS]:
-        ref = line.strip()
-        if not ref:
-            continue
-        if not ref.endswith("/HEAD"):
-            return ref
-        if fallback is None:
-            fallback = ref
-    return fallback or "unknown"
-
-
-def filter_own_commits(base, head, other_refs):
-    """Return all commits in base..head and the subset not reachable from other_refs."""
-    all_commits = git("rev-list", f"--max-count={MAX_COMMIT_MESSAGE_COMMITS + 1}",
-                      f"{base}..{head}").decode().splitlines()
-    if len(all_commits) > MAX_COMMIT_MESSAGE_COMMITS:
-        raise HookError(
-            f"Commit message check: range {base[:12]}..{head[:12]} exceeds "
-            f"{MAX_COMMIT_MESSAGE_COMMITS} commits; refresh remote baseline or split push"
-        )
-    own_commits = git("rev-list", f"--max-count={MAX_COMMIT_MESSAGE_COMMITS + 1}",
-                      f"{base}..{head}", "--not", *other_refs).decode().splitlines()
-    if len(own_commits) > MAX_COMMIT_MESSAGE_COMMITS:
-        raise HookError(
-            f"Commit message check: range {base[:12]}..{head[:12]} exceeds "
-            f"{MAX_COMMIT_MESSAGE_COMMITS} commits; refresh remote baseline or split push"
-        )
-    return all_commits, own_commits
-
-
-def check_own_commit_message(sha):
-    """Apply the commit message policy to a single commit without checking its parent range."""
-    raw = git("log", "-1", "--format=%B", sha, "--")
-    with tempfile.NamedTemporaryFile("wb", delete=False) as stream:
-        stream.write(raw)  # caveman:not-applicable untrusted-passthrough
-        path = stream.name
-    try:
-        run([praetorctl_path(), "forge", "check-message", path], capture=False, timeout=30)
-    finally:
-        Path(path).unlink(missing_ok=True)
 
 
 def check_commit_message_range(base, head, remote=None):
@@ -423,18 +413,10 @@ def check_commit_message_range(base, head, remote=None):
         return
     other_remotes = other_push_remotes(remote)
     other_refs = other_remote_refs(other_remotes)
-    if not other_refs:
-        run([praetorctl_path(), "forge", "check-commits", f"--base={base}", f"--head={head}"],
-            capture=False, timeout=180)
-        return
-    all_commits, own_commits = filter_own_commits(base, head, other_refs)
-    own_set = set(own_commits)
-    for sha in all_commits[:MAX_COMMIT_MESSAGE_COMMITS]:
-        if sha not in own_set:
-            ref = published_ref_for_commit(sha, other_remotes)
-            print(f"Commit message check: skipped {sha}, published on {ref}")
-    for sha in own_commits[:MAX_COMMIT_MESSAGE_COMMITS]:
-        check_own_commit_message(sha)
+    cmd = [praetorctl_path(), "forge", "check-commits", f"--base={base}", f"--head={head}"]
+    for ref in other_refs:
+        cmd.append(f"--exclude={ref}")
+    run(cmd, capture=False, timeout=180)
 
 
 def check_commits(base):

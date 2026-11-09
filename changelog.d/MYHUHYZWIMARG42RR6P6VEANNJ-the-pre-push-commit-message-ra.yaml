@@ -1,2 +1,2 @@
 type: fixed
-title: The pre-push commit message range check skips commits already published on another remote and names each, so a sync push of published history no longer fails on an old over-wide body; own commits are still checked, and CI checks the commit message range of every push to main
+title: The pre-push commit message range check passes published tracking refs as --exclude to praetorctl forge check-commits, so a sync push of published history no longer fails on an old over-wide body; CI enforces commit messages on main pushes with --first-parent to check only the merge or linear commits pushed there
