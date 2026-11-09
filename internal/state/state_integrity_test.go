@@ -9,8 +9,10 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
+// TestStateIntegrityPositivePreservesHistoryAndNonGitRoot checks that a sync keeps the ledger history and works outside a git checkout.
 func TestStateIntegrityPositivePreservesHistoryAndNonGitRoot(t *testing.T) {
 	root := t.TempDir()
 	if err := InitWorkingDir(root); err != nil {
@@ -23,7 +25,7 @@ func TestStateIntegrityPositivePreservesHistoryAndNonGitRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertIntegrityFile(t, path, history)
-	snap, err := SyncState(context.Background(), root, "new activity")
+	snap, err := SyncState(testsupport.DeadlineContext(t), root, "new activity")
 	if err != nil || snap == nil {
 		t.Fatalf("non-Git sync failed: snapshot=%v error=%v", snap, err)
 	}
@@ -40,6 +42,7 @@ func TestStateIntegrityPositivePreservesHistoryAndNonGitRoot(t *testing.T) {
 	}
 }
 
+// TestStateIntegrityRejectsInvalidExistingLedgerPaths checks that a ledger file that is a directory, a symlink loop or a dangling link is refused.
 func TestStateIntegrityRejectsInvalidExistingLedgerPaths(t *testing.T) {
 	for _, name := range []string{"STATE.md", "OPEN.md", "BACKLOG.md", "BUGS.md", "QUESTIONS.md"} {
 		for _, kind := range []string{"directory", "loop", "dangling"} {
@@ -53,7 +56,7 @@ func TestStateIntegrityRejectsInvalidExistingLedgerPaths(t *testing.T) {
 				if err := InitWorkingDir(root); err == nil {
 					t.Fatal("initialization accepted an invalid existing ledger")
 				}
-				if _, err := SyncState(context.Background(), root, "must not append"); err == nil {
+				if _, err := SyncState(testsupport.DeadlineContext(t), root, "must not append"); err == nil {
 					t.Fatal("sync accepted an invalid existing ledger")
 				}
 				report, err := AuditWorkingDir(root)
@@ -83,6 +86,7 @@ func TestStateIntegrityAppendRejectsUnreadableOrMissingHistory(t *testing.T) {
 	}
 }
 
+// TestStateIntegrityTaskReadFailureLeavesHistoryIntact checks that a failed task read leaves the recorded history unchanged.
 func TestStateIntegrityTaskReadFailureLeavesHistoryIntact(t *testing.T) {
 	root := t.TempDir()
 	if err := InitWorkingDir(root); err != nil {
@@ -92,7 +96,7 @@ func TestStateIntegrityTaskReadFailureLeavesHistoryIntact(t *testing.T) {
 	const history = "# Preserve history\n"
 	writeIntegrityFile(t, path, history)
 	writeIntegrityFile(t, filepath.Join(root, WorkingDirName, "OPEN.md"), strings.Repeat("x", 1<<16))
-	_, err := SyncState(context.Background(), root, "must not append")
+	_, err := SyncState(testsupport.DeadlineContext(t), root, "must not append")
 	if err == nil || !strings.Contains(err.Error(), "list tasks") {
 		t.Fatalf("task reader failure not propagated: %v", err)
 	}
@@ -119,6 +123,7 @@ func TestStateIntegrityReadersRejectInvalidPaths(t *testing.T) {
 	}
 }
 
+// TestStateIntegrityReadAndAppendByteBoundaries checks the read and append size bounds at, below and above the limit.
 func TestStateIntegrityReadAndAppendByteBoundaries(t *testing.T) {
 	root := t.TempDir()
 	if err := InitWorkingDir(root); err != nil {
@@ -138,7 +143,7 @@ func TestStateIntegrityReadAndAppendByteBoundaries(t *testing.T) {
 	statePath := filepath.Join(root, WorkingDirName, "STATE.md")
 	const history = "# Unchanged state\n"
 	writeIntegrityFile(t, statePath, history)
-	if _, err := SyncState(context.Background(), root, "must not append"); err == nil {
+	if _, err := SyncState(testsupport.DeadlineContext(t), root, "must not append"); err == nil {
 		t.Fatal("sync ignored oversized question ledger")
 	}
 	assertIntegrityFile(t, statePath, history)
@@ -174,6 +179,7 @@ func TestStateIntegrityInitRejectsInvalidWorkingDirectory(t *testing.T) {
 	}
 }
 
+// TestStateIntegrityRootSymlinkFailsBeforeInitialization checks that a project root reached through a symlink is refused before anything is written.
 func TestStateIntegrityRootSymlinkFailsBeforeInitialization(t *testing.T) {
 	outside := t.TempDir()
 	link := filepath.Join(t.TempDir(), "linked-project")
@@ -188,7 +194,7 @@ func TestStateIntegrityRootSymlinkFailsBeforeInitialization(t *testing.T) {
 	if _, err := AddBug(link, BugEntry{Title: "must not initialize"}); err == nil {
 		t.Fatal("bug mutation accepted a root symlink")
 	}
-	if _, err := SyncState(context.Background(), link, "must not initialize"); err == nil {
+	if _, err := SyncState(testsupport.DeadlineContext(t), link, "must not initialize"); err == nil {
 		t.Fatal("sync accepted a root symlink")
 	}
 	entries, err := os.ReadDir(outside)
