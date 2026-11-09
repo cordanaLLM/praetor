@@ -1,0 +1,49 @@
+name: Prepare release
+on:
+  workflow_dispatch:
+    inputs:
+      #checkov:skip=CKV_GHA_7:tag and commit are validated by release-helper prepare.py approved_version (full SHA, stable semver, ancestor of origin/main)
+      tag:
+        description: Release tag, v followed by the version the release commit records.
+        required: true
+        type: string
+      commit:
+        description: Full SHA of the merged release commit on main.
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+jobs:
+  prepare:
+    name: Tag and draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Create the tag and one unpublished draft
+        uses: jellysin/release-helper/actions/prepare@0c04f543518359a7fc56dfca10ed918ac9919d08 # v1.6.2
+        with:
+          tag: ${{ inputs.tag }}
+          commit: ${{ inputs.commit }}
+          token: ${{ github.token }}
+          changelog-path: CHANGELOG.md
+      - name: Dispatch release workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_TAG"
