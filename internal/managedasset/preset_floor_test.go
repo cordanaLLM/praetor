@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 )
@@ -122,8 +123,11 @@ func branchFloor(pkgName, fullRange, branch string, declaredFloor markdownassets
 // It also returns the highest lower bound across all valid branches in highestBound.
 func packageRequiredFloor(pkgName, spec string, declaredFloor markdownassets.NodeVersion) (best *markdownassets.NodeVersion, highestBound markdownassets.NodeVersion, err error) {
 	branches := strings.Split(spec, "||")
-	n := min(len(branches), maxRangeBranches)
-	for i := 0; i < n; i++ {
+	if len(branches) > maxRangeBranches {
+		return nil, markdownassets.NodeVersion{}, fmt.Errorf("package %s engines.node %q has %d branches, above the check limit %d",
+			pkgName, spec, len(branches), maxRangeBranches)
+	}
+	for i := 0; i < len(branches); i++ {
 		floor, ok, bErr := branchFloor(pkgName, spec, branches[i], declaredFloor)
 		if bErr != nil {
 			return nil, markdownassets.NodeVersion{}, bErr
@@ -197,25 +201,37 @@ func CheckPresetNodeFloor(manifestData, lockData []byte) (*markdownassets.NodeVe
 		return nil, fmt.Errorf("decode preset package-lock.json: %w", err)
 	}
 	keys := lockedPackageNames(lock)
-	var highestLocked markdownassets.NodeVersion
-	var worstViolation *PresetFloorViolation
-	n := min(len(keys), maxLockedPackages)
-	for i := 0; i < n; i++ {
+	if len(keys) > maxLockedPackages {
+		return nil, fmt.Errorf("preset package-lock.json has %d packages, above the check limit %d", len(keys), maxLockedPackages)
+	}
+	var fold presetFloorFold
+	for i := 0; i < len(keys); i++ {
 		req, violation, err := judgeLockedPackage(lock, keys[i], declaredFloor)
 		if err != nil {
 			return nil, err
 		}
-		if violation != nil && (worstViolation == nil || violation.Required.Compare(worstViolation.Required) > 0) {
-			worstViolation = violation
-		}
-		if req != nil && req.Compare(highestLocked) > 0 {
-			highestLocked = *req
-		}
+		fold.add(req, violation)
 	}
-	if worstViolation != nil {
-		return &highestLocked, worstViolation
+	if fold.worst != nil {
+		return &fold.highest, fold.worst
 	}
-	return &highestLocked, nil
+	return &fold.highest, nil
+}
+
+// presetFloorFold accumulates the highest floor locked packages need and the worst violation.
+type presetFloorFold struct {
+	highest markdownassets.NodeVersion
+	worst   *PresetFloorViolation
+}
+
+// add folds one judged package into the accumulator.
+func (f *presetFloorFold) add(req *markdownassets.NodeVersion, violation *PresetFloorViolation) {
+	if violation != nil && (f.worst == nil || violation.Required.Compare(f.worst.Required) > 0) {
+		f.worst = violation
+	}
+	if req != nil && req.Compare(f.highest) > 0 {
+		f.highest = *req
+	}
 }
 
 // openPresetsRoot opens docs/presets as an os.Root, so every preset read stays below it.
@@ -231,6 +247,19 @@ func openPresetsRoot(t *testing.T) *os.Root {
 		}
 	})
 	return root
+}
+
+// presetDirEntries lists the entries of the docs/presets tree and refuses a tree with more than
+// maxPresetScanDirs entries, so no preset goes unchecked.
+func presetDirEntries(presets fs.FS) ([]fs.DirEntry, error) {
+	entries, err := fs.ReadDir(presets, ".")
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) > maxPresetScanDirs {
+		return nil, fmt.Errorf("docs/presets holds %d entries, above the check limit %d", len(entries), maxPresetScanDirs)
+	}
+	return entries, nil
 }
 
 // readPresetFile reads rel below docs/presets; a missing file reports found false, any other
@@ -251,13 +280,12 @@ func readPresetFile(t *testing.T, presets *os.Root, rel string) ([]byte, bool) {
 // that satisfies the highest minimum required across its locked dependency tree.
 func TestPresetNodeFloorMatchesLockedDependencies(t *testing.T) {
 	presets := openPresetsRoot(t)
-	entries, err := fs.ReadDir(presets.FS(), ".")
+	entries, err := presetDirEntries(presets.FS())
 	if err != nil {
 		t.Fatalf("read docs/presets: %v", err)
 	}
 	verified := 0
-	n := min(len(entries), maxPresetScanDirs)
-	for i := 0; i < n; i++ {
+	for i := 0; i < len(entries); i++ {
 		if !entries[i].IsDir() {
 			continue
 		}
@@ -467,4 +495,48 @@ func TestPresetNodeFloorOptionalPlatformBinaries(t *testing.T) {
 	if _, err := CheckPresetNodeFloor(manifest, required); err == nil {
 		t.Fatalf("%s as a required package was skipped by its optional exception", excepted)
 	}
+}
+
+// Boundary: a docs/presets tree with more entries than maxPresetScanDirs is refused naming the
+// bound instead of scanning only the first entries; a tree at the bound is listed whole.
+func TestPresetDirEntriesFailClosed(t *testing.T) {
+	planted := func(n int) fstest.MapFS {
+		tree := fstest.MapFS{}
+		for i := 0; i < n; i++ {
+			tree[fmt.Sprintf("preset%02d/README.md", i)] = &fstest.MapFile{Data: []byte("x")}
+		}
+		return tree
+	}
+	if _, err := presetDirEntries(planted(maxPresetScanDirs + 1)); err == nil || !strings.Contains(err.Error(), fmt.Sprint(maxPresetScanDirs)) {
+		t.Fatalf("a tree of %d presets: err %v, want a refusal naming %d", maxPresetScanDirs+1, err, maxPresetScanDirs)
+	}
+	entries, err := presetDirEntries(planted(maxPresetScanDirs))
+	if err != nil || len(entries) != maxPresetScanDirs {
+		t.Fatalf("a tree at the bound: %d entries, err %v", len(entries), err)
+	}
+}
+
+// Boundary: a range with more branches than maxRangeBranches, or a lock with more packages than
+// maxLockedPackages, fails naming the bound instead of checking only the first entries.
+func TestPresetNodeFloorBoundsFailClosed(t *testing.T) {
+	manifest := []byte(`{"name":"preset","engines":{"node":">=22.23.4"}}`)
+	t.Run("branches", func(t *testing.T) {
+		spec := strings.Repeat(">=1 || ", maxRangeBranches) + ">=1"
+		lock := []byte(fmt.Sprintf(`{"packages": {"": {}, "node_modules/wide": {"engines":{"node":%q}}}}`, spec))
+		_, err := CheckPresetNodeFloor(manifest, lock)
+		if err == nil || !strings.Contains(err.Error(), fmt.Sprint(maxRangeBranches)) {
+			t.Fatalf("a range of %d branches: err %v, want a refusal naming %d", maxRangeBranches+1, err, maxRangeBranches)
+		}
+	})
+	t.Run("packages", func(t *testing.T) {
+		var entries strings.Builder
+		for i := 0; i <= maxLockedPackages; i++ {
+			fmt.Fprintf(&entries, `, "node_modules/p%05d": {}`, i)
+		}
+		lock := []byte(`{"packages": {"": {}` + entries.String() + `}}`)
+		_, err := CheckPresetNodeFloor(manifest, lock)
+		if err == nil || !strings.Contains(err.Error(), fmt.Sprint(maxLockedPackages)) {
+			t.Fatalf("a lock of %d packages: err %v, want a refusal naming %d", maxLockedPackages+1, err, maxLockedPackages)
+		}
+	})
 }
