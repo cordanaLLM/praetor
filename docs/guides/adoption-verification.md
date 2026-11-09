@@ -975,7 +975,8 @@ The entry names one `go.mod` by path, the module form `api-compatibility` uses, 
 tool, fingerprint or line range. It requires a category even inside the uncategorized grace
 window, so it always expires with its category's interval. An expired entry fails its module
 before any test binary runs, so neither path stands in for the other, and the audit fails it as
-well. Where the wrapper does not apply (CI, a toolchain container, macOS, Windows) the entry
+well. An entry that names no tracked Go module fails the race stage before any module runs, as a
+stale `gosec` entry fails the security stage. Where the wrapper does not apply (CI, a toolchain container, macOS, Windows) the entry
 changes nothing: CI runs every module as before and stays the second barrier. `praetorctl go test`,
 the engine's Makefile seam, does not read the entry.
 
