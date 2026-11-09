@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -217,12 +218,40 @@ func CheckPresetNodeFloor(manifestData, lockData []byte) (*markdownassets.NodeVe
 	return &highestLocked, nil
 }
 
+// openPresetsRoot opens docs/presets as an os.Root, so every preset read stays below it.
+func openPresetsRoot(t *testing.T) *os.Root {
+	t.Helper()
+	root, err := os.OpenRoot(filepath.Join("..", "..", "docs", "presets"))
+	if err != nil {
+		t.Fatalf("open docs/presets: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("close docs/presets: %v", err)
+		}
+	})
+	return root
+}
+
+// readPresetFile reads rel below docs/presets; a missing file reports found false, any other
+// read error fails the test.
+func readPresetFile(t *testing.T, presets *os.Root, rel string) ([]byte, bool) {
+	t.Helper()
+	data, err := presets.ReadFile(rel)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false
+	}
+	if err != nil {
+		t.Fatalf("read docs/presets/%s: %v", rel, err)
+	}
+	return data, true
+}
+
 // Positive: each preset package.json with a package-lock.json declares an engines.node floor
 // that satisfies the highest minimum required across its locked dependency tree.
 func TestPresetNodeFloorMatchesLockedDependencies(t *testing.T) {
-	repoRoot := filepath.Clean(filepath.Join("..", ".."))
-	presetsDir := filepath.Join(repoRoot, "docs", "presets")
-	entries, err := os.ReadDir(presetsDir)
+	presets := openPresetsRoot(t)
+	entries, err := fs.ReadDir(presets.FS(), ".")
 	if err != nil {
 		t.Fatalf("read docs/presets: %v", err)
 	}
@@ -232,17 +261,13 @@ func TestPresetNodeFloorMatchesLockedDependencies(t *testing.T) {
 		if !entries[i].IsDir() {
 			continue
 		}
-		presetPath := filepath.Join(presetsDir, entries[i].Name())
-		manifestPath := filepath.Join(presetPath, "package.json")
-		lockPath := filepath.Join(presetPath, "package-lock.json")
-
-		manifestData, err := os.ReadFile(manifestPath)
-		if err != nil {
-			continue // preset has no package.json (e.g. mkdocs)
+		manifestData, found := readPresetFile(t, presets, entries[i].Name()+"/package.json")
+		if !found {
+			continue // preset without package.json (e.g. mkdocs)
 		}
-		lockData, err := os.ReadFile(lockPath)
-		if err != nil {
-			continue // preset has no package-lock.json
+		lockData, found := readPresetFile(t, presets, entries[i].Name()+"/package-lock.json")
+		if !found {
+			continue // preset without package-lock.json
 		}
 
 		highest, err := CheckPresetNodeFloor(manifestData, lockData)
@@ -260,16 +285,15 @@ func TestPresetNodeFloorMatchesLockedDependencies(t *testing.T) {
 // Negative: a planted locked package requiring a newer Node than declared fails, naming
 // both the offending package and its range.
 func TestPresetNodeFloorRejectsHigherLockedDependency(t *testing.T) {
-	repoRoot := filepath.Clean(filepath.Join("..", ".."))
-	starlightDir := filepath.Join(repoRoot, "docs", "presets", "starlight")
-	manifestData, err := os.ReadFile(filepath.Join(starlightDir, "package.json"))
-	if err != nil {
-		t.Fatal(err)
+	presets := openPresetsRoot(t)
+	manifestData, found := readPresetFile(t, presets, "starlight/package.json")
+	if !found {
+		t.Fatal("docs/presets/starlight/package.json is missing")
 	}
 	var lock presetPackageLock
-	lockData, err := os.ReadFile(filepath.Join(starlightDir, "package-lock.json"))
-	if err != nil {
-		t.Fatal(err)
+	lockData, found := readPresetFile(t, presets, "starlight/package-lock.json")
+	if !found {
+		t.Fatal("docs/presets/starlight/package-lock.json is missing")
 	}
 	if err := json.Unmarshal(lockData, &lock); err != nil {
 		t.Fatal(err)
