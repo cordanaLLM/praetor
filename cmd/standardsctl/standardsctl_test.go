@@ -1015,13 +1015,9 @@ func TestDispatchCommand_StateTaskLifecycle(t *testing.T) {
 		t.Fatalf("state task archive failed: %v", err)
 	}
 
+	// The confined read refuses an archive name that leaves the archive directory.
 	archiveDir := filepath.Join(tmpDir, ".workingdir", "archive")
-	archivePath := filepath.Join(archiveDir, "OPEN-"+archiveMonth+".md")
-	rel, err := filepath.Rel(archiveDir, archivePath)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		t.Fatalf("archive path escaped archive directory: %q", rel)
-	}
-	backlog, err := os.ReadFile(archivePath)
+	backlog, err := util.ReadConfinedLimited(archiveDir, "OPEN-"+archiveMonth+".md", 1<<20)
 	if err != nil {
 		t.Fatalf("failed reading task archive: %v", err)
 	}

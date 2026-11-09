@@ -6,7 +6,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
+
+// archiveTestReadLimit bounds each fixture archive read; the archives these tests write are a few hundred bytes.
+const archiveTestReadLimit = 1 << 20
 
 // TestTaskArchiveMonthlyAllFiles moves completed records once, preserving live prose.
 func TestTaskArchiveMonthlyAllFiles(t *testing.T) {
@@ -46,12 +51,8 @@ func assertMonthlyArchiveFiles(t *testing.T, dir string) {
 	archiveDir := filepath.Join(dir, "archive")
 	for _, name := range []string{"OPEN-2026-09.md", "BACKLOG-2026-08.md", "BUGS-2026-07.md"} {
 		validateMonthlyArchiveName(t, name)
-		archivePath := filepath.Join(archiveDir, name)
-		rel, err := filepath.Rel(archiveDir, archivePath)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-			t.Fatalf("archive path %s escaped archive directory %s: %v", archivePath, archiveDir, err)
-		}
-		data, err := os.ReadFile(archivePath)
+		// The confined read refuses a name that leaves the archive directory.
+		data, err := util.ReadConfinedLimited(archiveDir, name, archiveTestReadLimit)
 		if err != nil || len(data) == 0 {
 			t.Fatalf("monthly archive %s missing: %v", name, err)
 		}
