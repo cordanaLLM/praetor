@@ -65,10 +65,25 @@ Before concluding any turn:
 const harnessReceiptLine = "Pass = exit 0. Signed Ed25519 Exit-0 receipt only from `praetorctl gate run`; report no receipt it did not mint. " +
 	"Fail -> SARIF diagnostic distillation (<= 1500 tokens).\n\n"
 
+// repositoryOwnedVerifySummary is the verify-all line the renderer writes when the repository
+// owns its verify-all target and has not supplied its own paragraph in AGENTS.md.
+const repositoryOwnedVerifySummary = "`" + verifyCommand + "` = repository-owned gate; adoption kept it unread + unexecuted. Steps live in `" + makefileName +
+	"`: read there, never restate. Footer commands = project markers only.\n"
+
+// generatedVerifySummary describes the generated repository gate without restating its recipe.
+const generatedVerifySummary = "`" + verifyCommand + "` = repository gate. Steps live in `" + makefileName +
+	"`: read there, never restate; adoption executed none.\n"
+
+// noVerifyTargetSummary directs repositories without a generated makefile to their declared gates.
+const noVerifyTargetSummary = "No `" + verifyCommand + "` target: `makefile` declined in `" + manifestFile + "`. Run gates above + declared build/test commands (footer) directly.\n"
+
+// unavailableVerifySummary explains why a generated target cannot yet verify the project.
+const unavailableVerifySummary = "`" + verifyCommand + "` fails until project build + test commands exist; reasons in footer.\n"
+
 // hasVerifyAll reports whether the repository has a verify-all target after this run: the one
-// adoption generates, or a repository-owned one it preserved.
-func hasVerifyAll(plan *VerificationPlan, pipelines hisscatalog.Pipeline) bool {
-	return plan.Status == verificationPreserved || pipelines&hisscatalog.PipelineVerifyAll != 0
+// adoption generates, or a repository-owned one in the working tree.
+func hasVerifyAll(facts harnessFacts) bool {
+	return facts.plan.Status == verificationPreserved || (facts.pipelines|facts.repositoryOwned)&hisscatalog.PipelineVerifyAll != 0
 }
 
 // verificationSummary describes verify-all as the repository's own gate. Its steps live in the
@@ -80,15 +95,14 @@ func hasVerifyAll(plan *VerificationPlan, pipelines hisscatalog.Pipeline) bool {
 func verificationSummary(facts harnessFacts) string {
 	plan, pipelines := facts.plan, facts.pipelines
 	switch {
-	case plan.Status == verificationPreserved:
-		return "`" + verifyCommand + "` = repository-owned gate; adoption kept it unread + unexecuted. Steps live in `" + makefileName +
-			"`: read there, never restate. Footer commands = project markers only.\n"
+	case plan.Status == verificationPreserved || facts.repositoryOwned&hisscatalog.PipelineVerifyAll != 0:
+		return repositoryOwnedVerifySummary
 	case pipelines&hisscatalog.PipelineVerifyAll == 0:
-		return "No `" + verifyCommand + "` target: `makefile` declined in `" + manifestFile + "`. Run gates above + declared build/test commands (footer) directly.\n"
+		return noVerifyTargetSummary
 	case plan.Status == verificationUnavailable:
-		return "`" + verifyCommand + "` fails until project build + test commands exist; reasons in footer.\n"
+		return unavailableVerifySummary
 	}
-	return "`" + verifyCommand + "` = repository gate. Steps live in `" + makefileName + "`: read there, never restate; adoption executed none.\n"
+	return generatedVerifySummary
 }
 
 const agentHarnessFooterTemplate = harnessFooterHeading + `
@@ -107,16 +121,19 @@ praetorctl audit
 {{ end }}` + "```\n"
 
 // harnessFacts is what one adoption run knows when it renders the harness: the identity for
-// the title, the verification plan, the pipelines the run generates, what the git-hooks step
-// leaves active, and the vendor files compile-context writes under agent_clients. The harness
+// the title, the verification plan, the generated and repository-owned gates, what the git-hooks
+// step leaves active, and the vendor files compile-context writes under agent_clients. The harness
 // states nothing beyond them.
 type harnessFacts struct {
 	// owner is empty when the repository identity is unresolved; the title then names name.
 	owner, name, arch string
 	plan              *VerificationPlan
 	pipelines         hisscatalog.Pipeline
-	hooks             hookActivation
-	targets           []agentcontext.VendorTarget
+	// repositoryOwned names preserved gates without granting table credit
+	// (order engine-adopt-force-gate-detect-20261027).
+	repositoryOwned hisscatalog.Pipeline
+	hooks           hookActivation
+	targets         []agentcontext.VendorTarget
 	// workflows are the CI workflows this run scaffolds, with what each runs (rule 5).
 	workflows []scaffoldedWorkflow
 	// hiss is what the invariant rows depend on: languages and the enforced function length.
@@ -133,7 +150,7 @@ type harnessFacts struct {
 // buildAgentHarness renders the canonical harness, terminated by harnessEndMarker.
 func buildAgentHarness(facts harnessFacts) (string, error) {
 	plan := facts.plan
-	verifyAll := hasVerifyAll(plan, facts.pipelines)
+	verifyAll := hasVerifyAll(facts)
 	tCtx := templates.Context{
 		RepoName:  facts.name,
 		Owner:     facts.owner,
@@ -233,7 +250,7 @@ func foreignInstructions(existing string) string {
 func buildAgentHarnessDirectives(facts harnessFacts) string {
 	var b strings.Builder
 	b.WriteString(hisscatalog.GatedInvariantsHeading + "\n\n")
-	b.WriteString(adoptedCheckLegend(facts.pipelines))
+	b.WriteString(adoptedCheckLegend(facts))
 	b.WriteString("| Invariant | Rule | Adopted check | On fail |\n| :--- | :--- | :--- | :--- |\n")
 	for _, rule := range hisscatalog.Rules() {
 		generated, failure := rule.AdoptedFor(facts.pipelines, facts.hiss)
@@ -293,20 +310,31 @@ func engineScannerEnforcement(rule hisscatalog.Rule, languages hisscatalog.Langu
 	return rule.AuditScanner(hisscatalog.Facts{Languages: languages})
 }
 
-// adoptedCheckLegend names the coverage source and the gates this adoption generated.
-func adoptedCheckLegend(pipelines hisscatalog.Pipeline) string {
-	var generated []string
+// adoptedCheckLegend names generated and repository-owned gates; only the former earn
+// cell credit (order engine-adopt-force-gate-detect-20261027).
+func adoptedCheckLegend(facts harnessFacts) string {
+	pipelines := facts.pipelines
+	var gates []string
 	if pipelines&hisscatalog.PipelineVerifyAll != 0 {
-		generated = append(generated, "generated `"+verifyCommand+"`")
+		gates = append(gates, "generated `"+verifyCommand+"`")
 	}
 	if pipelines&hisscatalog.PipelineLefthook != 0 {
-		generated = append(generated, "praetor `"+lefthookFile+"`")
+		gates = append(gates, "praetor `"+lefthookFile+"`")
+	} else if facts.hooks == hooksInactive {
+		gates = append(gates, "praetor `"+lefthookFile+"` (inactive)")
+	}
+	if facts.repositoryOwned&hisscatalog.PipelineVerifyAll != 0 {
+		gates = append(gates, "repository-owned `"+verifyCommand+"` (unread)")
+	}
+	if facts.repositoryOwned&hisscatalog.PipelineLefthook != 0 {
+		gates = append(gates, "repository-owned `"+lefthookFile+"` (unread)")
 	}
 	source := "none: no generated `" + verifyCommand + "`, no praetor `" + lefthookFile + "`"
-	if len(generated) > 0 {
-		source = strings.Join(generated, " + ")
+	if len(gates) > 0 {
+		source = strings.Join(gates, " + ")
 	}
-	return "Adopted check = coverage state + catalog path; else audit scanner; else `unknown`. Gates = (" + source + "); edits not reflected.\n\n"
+	return "Adopted check = coverage state + catalog path; else audit scanner; else `unknown`. Gates = (" + source +
+		"); edits not reflected. Adopted-check cells credit generated gates only.\n\n"
 }
 
 // transpilerRuleHead opens rule 3 with the files compile-context writes under agent_clients,
@@ -527,6 +555,10 @@ func (s *adoptSession) harnessFacts(ctx context.Context, clients []string) (harn
 	if err != nil {
 		return harnessFacts{}, err
 	}
+	repositoryOwned, err := s.workingTreeGates(ctx, pipelines, hooks)
+	if err != nil {
+		return harnessFacts{}, err
+	}
 	targets, err := agentcontext.VendorTargets(clients)
 	if err != nil {
 		return harnessFacts{}, fmt.Errorf("agent_clients in %s: %w", manifestFile, err)
@@ -550,7 +582,8 @@ func (s *adoptSession) harnessFacts(ctx context.Context, clients []string) (harn
 	owner, name := s.harnessIdentity()
 	return harnessFacts{
 		owner: owner, name: name, arch: s.arch, plan: s.verification, pipelines: pipelines,
-		hooks: hooks, targets: targets, workflows: workflows, hiss: s.hissFacts(), coverage: coverage, register: register,
+		repositoryOwned: repositoryOwned, hooks: hooks,
+		targets: targets, workflows: workflows, hiss: s.hissFacts(), coverage: coverage, register: register,
 	}, nil
 }
 
@@ -773,8 +806,17 @@ func refreshAgentHarness(ctx context.Context, s *adoptSession, found, existing, 
 type harnessAdditions struct {
 	// preamble is the text above the harness start line (harnessStart), as written.
 	preamble string
+	// verifyParagraph is the repository-owned verify-all paragraph when the repository owns the
+	// target and wrote its own wording outside the generated summary+receipt block.
+	verifyParagraph string
+	// invariants is the repository-owned invariant/gate table section when the section carries
+	// rows outside the generated Adopted-check table.
+	invariants string
 	// rows are the invariant rows the repository added (repositoryInvariantRows).
 	rows []hisscatalog.InvariantRow
+	// configBand is the config band (<!-- praetor:config --> .. <!-- praetor:tail -->) with the
+	// updated register block spliced in when the repository keeps text outside the register markers.
+	configBand string
 	// tail is the instructions after the harness boundary, a text register section dropped.
 	tail string
 }
@@ -791,11 +833,29 @@ func splitHarnessAdditions(lf, harness string) (harnessAdditions, bool, error) {
 	if !ok {
 		return harnessAdditions{}, false, nil
 	}
-	rows, err := repositoryInvariantRows(head, harness)
+	invariants, ownTable, err := repositoryInvariantsSection(head)
 	if err != nil {
 		return harnessAdditions{}, false, err
 	}
-	return harnessAdditions{preamble: lf[:start], rows: rows, tail: dropRegisterSection(tail)}, true, nil
+	var rows []hisscatalog.InvariantRow
+	if !ownTable {
+		rows, err = repositoryInvariantRows(head, harness)
+		if err != nil {
+			return harnessAdditions{}, false, err
+		}
+	}
+	configBand, err := repositoryConfigBand(head, harness)
+	if err != nil {
+		return harnessAdditions{}, false, err
+	}
+	return harnessAdditions{
+		preamble:        lf[:start],
+		verifyParagraph: repositoryVerifyParagraph(head, harness),
+		invariants:      invariants,
+		rows:            rows,
+		configBand:      configBand,
+		tail:            dropRegisterSection(tail),
+	}, true, nil
 }
 
 // repositoryInvariantRows returns the rows of head's invariant table the repository added:
@@ -825,13 +885,20 @@ func repositoryInvariantRows(head, harness string) ([]hisscatalog.InvariantRow, 
 	return kept, nil
 }
 
-// join renders the refreshed file: the preamble, harness with the kept rows after its last
-// generated row, then the separator and the tail.
+// join renders the refreshed file: the preamble, harness with repository-owned sections or kept
+// rows spliced in, then the separator and the tail.
 func (a harnessAdditions) join(harness string) (string, error) {
-	body, err := insertInvariantRows(harness, a.rows)
-	if err != nil {
-		return "", err
+	body := replaceVerifyParagraph(harness, a.verifyParagraph)
+	if a.invariants != "" {
+		body = replaceInvariantsSection(body, a.invariants)
+	} else {
+		var err error
+		body, err = insertInvariantRows(body, a.rows)
+		if err != nil {
+			return "", err
+		}
 	}
+	body = replaceConfigBand(body, a.configBand)
 	merged := a.preamble + strings.TrimSpace(body) + "\n"
 	if a.tail != "" {
 		merged += harnessSeparator + "\n" + a.tail + "\n"
@@ -871,6 +938,12 @@ func (a harnessAdditions) describe() string {
 	if a.preamble != "" {
 		kept = append(kept, fmt.Sprintf("preamble (%d lines)", strings.Count(a.preamble, "\n")))
 	}
+	if a.verifyParagraph != "" {
+		kept = append(kept, "repository verify-all paragraph")
+	}
+	if a.invariants != "" {
+		kept = append(kept, "repository invariant table")
+	}
 	if len(a.rows) > 0 {
 		ids := make([]string, 0, len(a.rows))
 		for i := 0; i < len(a.rows) && i < maxDeltaQuotedLines; i++ {
@@ -880,6 +953,9 @@ func (a harnessAdditions) describe() string {
 			ids = append(ids, fmt.Sprintf("%d more", more))
 		}
 		kept = append(kept, fmt.Sprintf("%d repository invariant rows (%s)", len(a.rows), strings.Join(ids, ", ")))
+	}
+	if a.configBand != "" {
+		kept = append(kept, "repository config-band overrides")
 	}
 	if a.tail != "" {
 		kept = append(kept, "repository-specific instructions")

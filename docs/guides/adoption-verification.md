@@ -2465,7 +2465,8 @@ require separate reconciliation; a C# command plan does not imply a configured
 
 ## What the generated harness claims
 
-The `AGENTS.md` harness states only what adoption generated. Its source is
+The `AGENTS.md` harness distinguishes generated checks from repository-owned gates it preserves.
+Its source is
 [`internal/adopt/harness.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/harness.go); the tests are in
 [`internal/adopt/harness_truth_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/harness_truth_test.go).
 
@@ -2488,7 +2489,10 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
   (`TestHarnessSummaryDescribesVerifyAllAsRepositoryGate`). A preserved custom target keeps the
   commands the project markers declare in the report's `verification.declared` list, and the
   harness footer lists them, so `--force` no longer reduces them to `make verify-all`
-  (`TestAdoptForceKeepsOwnerAndDeclaredCommands`).
+  (`TestAdoptForceKeepsOwnerAndDeclaredCommands`). When the repository owns `verify-all` and
+  `AGENTS.md` already carries a custom `verify-all` paragraph outside the generated summary and
+  receipt block, `--force` keeps that paragraph byte-for-byte
+  (`TestAdoptForcePreservesRepositoryOwnedHarness`).
 - **Receipt.** Only `praetorctl gate run` mints an Ed25519 Exit-0 receipt. The harness says so,
   tells agents to report no receipt that command did not mint, and ties none to `verify-all`
   (`TestHarnessMakesNoUnbackedClaims`).
@@ -2623,8 +2627,20 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
   TypeScript repository and the lefthook `go vet` row in a Rust crate are examples
   (`TestAdoptedFor`).
 
-  The line above the table names the pipelines it read and says the cells describe the files as
-  adoption wrote them; a later edit to the `Makefile` or `lefthook.yml` is not reflected there.
+  The line above the table names generated gates and any working-tree gates adoption keeps:
+  a preserved or working-tree `make verify-all` target and an existing or generated `lefthook.yml`
+  (active, `(inactive)` when `lefthook` did not run or hook activation was skipped, or
+  `repository-owned ... (unread)`). Neither `(inactive)` nor `(unread)` gates earn adopted-check
+  cell credit; only active generated gates earn that credit. `--force` does not change this
+  distinction, and when `AGENTS.md` carries a repository-owned invariant/gate table (outside the
+  current or legacy generated invariant table) or repository text in the `<!-- praetor:config -->`
+  band outside the `<!-- praetor:register:start -->` .. `<!-- praetor:register:end -->` markers
+  (including a config band with no register block yet), `--force` keeps those sections
+  byte-for-byte (`TestAdoptForcePreservesRepositoryOwnedHarness`). The legend says `none:` only
+  when neither `Makefile` `verify-all` nor `lefthook.yml` exists in the working tree or is
+  generated (`TestAdoptHarnessRepositoryOwnedGates`, order
+  `engine-adopt-force-gate-detect-20261027-refinement-20261101`). A later edit to the `Makefile`
+  or `lefthook.yml` is not reflected in the table.
   Rule 5 claims hooks only when lefthook
   installs praetor's `lefthook.yml`, and says the file's hooks stay inactive when lefthook did not
   run (`TestHarnessTableFollowsGeneratedPipelines`,
