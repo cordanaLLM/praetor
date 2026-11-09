@@ -10,6 +10,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/gating"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // runBaselineCmd dispatches the baseline command for the fixture with extra flags.
@@ -593,6 +594,81 @@ func TestBaselineRecordImageRefs_3D(t *testing.T) {
 	}
 }
 
+type manifestErrorCase struct {
+	name     string
+	setup    func(t *testing.T, dir string)
+	wantText string
+}
+
+// removeIfPresent removes path, failing the test on any error except a missing path.
+func removeIfPresent(t *testing.T, path string, all bool) {
+	t.Helper()
+	remove := os.Remove
+	if all {
+		remove = os.RemoveAll
+	}
+	if err := remove(path); err != nil && !os.IsNotExist(err) {
+		t.Errorf("remove %s: %v", path, err)
+	}
+}
+
+// manifestErrorCases are the manifest states a baseline record must refuse: unparsable,
+// unreadable, and a directory where the file belongs.
+func manifestErrorCases() []manifestErrorCase {
+	return []manifestErrorCase{
+		{name: "invalid manifest syntax", wantText: "failed to parse manifest at", setup: func(t *testing.T, dir string) {
+			writeFixtureFile(t, dir, ".standards.yaml", "exceptions: [unclosed\n")
+		}},
+		{name: "unreadable manifest file", wantText: "failed to read manifest at", setup: func(t *testing.T, dir string) {
+			p := writeFixtureFile(t, dir, ".standards.yaml", "exceptions: []\n")
+			if err := os.Chmod(p, 0000); err != nil {
+				t.Skipf("cannot chmod 0000: %v", err)
+			}
+			t.Cleanup(func() {
+				if err := os.Chmod(p, 0o600); err != nil {
+					t.Errorf("restore mode of %s: %v", p, err)
+				}
+			})
+			skipIfFileReadable(t, p)
+		}},
+		{name: "directory as manifest", wantText: "failed to read manifest at", setup: func(t *testing.T, dir string) {
+			p := filepath.Join(dir, ".standards.yaml")
+			removeIfPresent(t, p, false)
+			// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission, go_file-permissions_rule-mkdir -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
+			if err := os.Mkdir(p, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { removeIfPresent(t, p, true) })
+		}},
+	}
+}
+
+// TestBaselineRecordImageRefs_ManifestError_3D verifies that recording image reference baselines refuses invalid, unreadable, or directory manifests without writing a baseline file.
+func TestBaselineRecordImageRefs_ManifestError_3D(t *testing.T) {
+	for _, tc := range manifestErrorCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAuditFixture(t)
+			writeFixtureFile(t, f.dir, "Dockerfile", "FROM golang:1.27-alpine\n")
+			gitCommitAll(t, f.dir, f.gitEnv, "unpinned dockerfile")
+			removeIfPresent(t, f.baselinePath, false)
+
+			tc.setup(t, f.dir)
+
+			out, err := runBaselineCmd(t, f, "--record-image-refs", "--allow-increase", "--reason=legacy image tag")
+			if err == nil {
+				t.Fatalf("expected baseline record to fail on manifest error, got success with out:\n%s", out)
+			}
+			errStr := err.Error() + "\n" + out
+			if !strings.Contains(errStr, tc.wantText) || !strings.Contains(errStr, ".standards.yaml") {
+				t.Fatalf("error %q does not contain manifest loader context %q for .standards.yaml", errStr, tc.wantText)
+			}
+			if _, statErr := os.Stat(f.baselinePath); !os.IsNotExist(statErr) {
+				t.Fatalf("expected no baseline file written at %s, but file exists: %v", f.baselinePath, statErr)
+			}
+		})
+	}
+}
+
 // Order engine-hiss-unenforced-checks-20261027: baseline --record retains entries for rules
 // owned by another scanner (HISS-12), carrying them over into the new baseline snapshot.
 func TestBaselineRecord_PreservesHISS12Entries(t *testing.T) {
@@ -624,4 +700,69 @@ func TestBaselineRecord_PreservesHISS12Entries(t *testing.T) {
 	if b.Infractions[0].RuleID != baseline.BaselineRuleID || b.Infractions[0].Fingerprint != "synth-fp-old" {
 		t.Fatalf("expected HISS-12 entry preserved with synth-fp-old, got: %+v", b.Infractions[0])
 	}
+}
+
+// skipIfFileReadable skips t when path can still be opened for reading despite mode 0 (HISS-21).
+func skipIfFileReadable(t testing.TB, path string) {
+	t.Helper()
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("open readability root: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("close readability root: %v", err)
+		}
+	})
+	if f, err := root.Open(filepath.Base(path)); err == nil {
+		if cerr := f.Close(); cerr != nil {
+			t.Fatalf("close readability probe of %s: %v", path, cerr)
+		}
+		t.Skip("file permissions are not enforced on this host (manifest remains readable with mode 0000)")
+	}
+}
+
+// TestSkipIfFileReadable_3D verifies that skipIfFileReadable skips on a file that is still readable
+// and lets the test run on a file whose mode 0000 the host enforces.
+func TestSkipIfFileReadable_3D(t *testing.T) {
+	t.Run("readable file causes subtest to skip", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "readable.txt")
+		if err := os.WriteFile(p, []byte("content"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		ran := false
+		t.Run("probe", func(subT *testing.T) {
+			skipIfFileReadable(subT, p)
+			ran = true
+		})
+		if ran {
+			t.Fatal("skipIfFileReadable did not skip execution on readable file")
+		}
+	})
+
+	t.Run("unreadable file does not skip when mode is enforced", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "unreadable.txt")
+		if err := os.WriteFile(p, []byte("content"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(p, 0000); err != nil {
+			t.Skipf("cannot chmod 0000: %v", err)
+		}
+		t.Cleanup(func() {
+			if err := os.Chmod(p, 0o600); err != nil {
+				t.Errorf("restore mode of %s: %v", p, err)
+			}
+		})
+		if _, err := util.ReadConfined(filepath.Dir(p), filepath.Base(p)); err == nil {
+			t.Skip("file permissions are not enforced on this host")
+		}
+		ran := false
+		t.Run("probe", func(subT *testing.T) {
+			skipIfFileReadable(subT, p)
+			ran = true
+		})
+		if !ran {
+			t.Fatal("skipIfFileReadable unexpectedly skipped an unreadable file")
+		}
+	})
 }
