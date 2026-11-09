@@ -402,7 +402,7 @@ def check_own_commit_message(sha):
     """Apply the commit message policy to a single commit without checking its parent range."""
     raw = git("log", "-1", "--format=%B", sha, "--")
     with tempfile.NamedTemporaryFile("wb", delete=False) as stream:
-        stream.write(raw)
+        stream.write(raw)  # caveman:not-applicable untrusted-passthrough
         path = stream.name
     try:
         run([praetorctl_path(), "forge", "check-message", path], capture=False, timeout=30)
