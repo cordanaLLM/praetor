@@ -352,17 +352,15 @@ def other_push_remotes(remote):
             f"Commit message check: configured remotes exceed {MAX_REMOTES}; clean remote list"
         )
     url_remotes = set()
-    try:
-        cfg = git("config", "--get-regexp", r"^remote\..*\.(pushurl|url)$").decode()
-        for entry in cfg.splitlines():
-            parts = entry.strip().split(None, 1)
-            if len(parts) == 2 and parts[1] == remote:
-                key_parts = parts[0].split(".")
-                if len(key_parts) >= 3 and key_parts[0] == "remote":
-                    name = ".".join(key_parts[1:-1])
-                    url_remotes.add(name)
-    except HookError:
-        pass
+    # git config --get-regexp exits 1 when no remote URL matches; allow only that code so a timeout or other
+    # failure still propagates (no silent fallback). A push made to a repository URL is matched here and dropped.
+    cfg = git("config", "--get-regexp", r"^remote\..*\.(pushurl|url)$", allowed=(0, 1)).decode()
+    for entry in cfg.splitlines():
+        parts = entry.strip().split(None, 1)
+        if len(parts) == 2 and parts[1] == remote:
+            key_parts = parts[0].split(".")
+            if len(key_parts) >= 3 and key_parts[0] == "remote":
+                url_remotes.add(".".join(key_parts[1:-1]))
     return [
         r.strip()
         for r in lines

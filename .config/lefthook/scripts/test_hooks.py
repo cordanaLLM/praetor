@@ -18,7 +18,6 @@ import tempfile
 import time
 import unittest
 from unittest import mock
-import yaml
 
 import checks
 import common
@@ -1635,6 +1634,10 @@ print("fixture hook self-tests passed")
 
     def test_ci_workflow_enforces_commit_message_policy_on_main_push(self):
         """ci.yml requires forge check-commits on push to main with BEFORE_SHA and --first-parent."""
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML not installed in the hook self-test interpreter")
         ci_path = ROOT / ".github" / "workflows" / "ci.yml"
         self.assertTrue(ci_path.is_file(), f"{ci_path} must exist")
         ci_data = yaml.safe_load(ci_path.read_text(encoding="utf-8"))
