@@ -31,7 +31,8 @@ func netnsRepo(t *testing.T, manifest string, modules ...string) string {
 	root := t.TempDir()
 	for _, module := range modules {
 		path := filepath.Join(root, filepath.FromSlash(module))
-		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(path, []byte("module example.test/"+filepath.Base(filepath.Dir(path))+"\n"), 0o600); err != nil {
