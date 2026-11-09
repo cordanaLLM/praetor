@@ -1540,6 +1540,26 @@ print("fixture hook self-tests passed")
             remotes = hooks.other_push_remotes(target_url)
         self.assertEqual(remotes, ["upstream"])
 
+    def test_other_push_remotes_rejects_excess_url_entries(self):
+        """A remote URL config with more entries than the bound is refused (HISS-02), not scanned."""
+        excess = b"\n".join(
+            f"remote.r{i}.url https://host/{i}.git".encode()
+            for i in range(2 * hooks.MAX_REMOTES + 1)
+        )
+
+        def fake_git(*args, **kwargs):
+            """Stub git: one remote, but an over-bound list of URL config entries."""
+            if args[0] == "remote":
+                return b"origin\n"
+            if args[0] == "config":
+                return excess
+            return b""
+
+        with mock.patch("hooks.git", side_effect=fake_git):
+            with self.assertRaises(HookError) as ctx:
+                hooks.other_push_remotes("origin")
+        self.assertIn(str(2 * hooks.MAX_REMOTES), str(ctx.exception))
+
     def test_ref_deleted_after_enumeration_still_lets_check_run(self):
         """A ref deleted after enumeration passes object names so check runs without error."""
         base, upstream_sha, _ = self.setup_ops_sync_fixture()
@@ -1633,35 +1653,36 @@ print("fixture hook self-tests passed")
             os.chdir(original)
 
     def test_ci_workflow_enforces_commit_message_policy_on_main_push(self):
-        """ci.yml requires forge check-commits on push to main with BEFORE_SHA and --first-parent."""
-        try:
-            import yaml
-        except ImportError:
-            self.skipTest("PyYAML not installed in the hook self-test interpreter")
+        """ci.yml requires forge check-commits on push to main with BEFORE_SHA and --first-parent.
+
+        The assertions read the workflow text directly, with no YAML parser, so the self-test interpreter
+        needs no PyYAML and the policy check can neither be skipped nor reported as passing when absent.
+        """
         ci_path = ROOT / ".github" / "workflows" / "ci.yml"
         self.assertTrue(ci_path.is_file(), f"{ci_path} must exist")
-        ci_data = yaml.safe_load(ci_path.read_text(encoding="utf-8"))
-        steps = ci_data.get("jobs", {}).get("verify", {}).get("steps", [])
-        push_step = None
-        for step in steps:
-            cond = str(step.get("if", ""))
-            cmd = str(step.get("run", ""))
-            if ("github.event_name == 'push'" in cond and "refs/heads/main" in cond
-                    and "forge check-commits" in cmd):
-                push_step = step
-                break
-        self.assertIsNotNone(push_step, "ci.yml must contain a push-to-main forge check-commits step")
-        env = push_step.get("env", {})
-        self.assertIn("BEFORE_SHA", env)
-        self.assertIn("github.event.before", env["BEFORE_SHA"])
-        self.assertIn("HEAD_SHA", env)
-        self.assertIn("github.sha", env["HEAD_SHA"])
-        run_script = push_step["run"]
-        self.assertIn('--base="$BEFORE_SHA"', run_script)
-        self.assertIn('--head="$HEAD_SHA"', run_script)
-        self.assertIn("--first-parent", run_script)
-        self.assertIn("0000000000000000000000000000000000000000", run_script)
-        self.assertIn("force push", run_script)
+        text = ci_path.read_text(encoding="utf-8")
+        # Slice the one named push-to-main step from its "- name:" to the next step header, so the fields
+        # below are asserted against that step alone, not anywhere in the workflow.
+        marker = "Enforce Commit Message Policy on Main Push"
+        start = text.find(marker)
+        self.assertNotEqual(start, -1, "ci.yml must contain the push-to-main policy step")
+        step_start = text.rfind("- name:", 0, start)
+        self.assertNotEqual(step_start, -1, "the policy step must be a named workflow step")
+        next_step = text.find("\n      - name:", start)
+        step = text[step_start: next_step if next_step != -1 else len(text)]
+        for needle in (
+            "github.event_name == 'push'",
+            "refs/heads/main",
+            "forge check-commits",
+            "BEFORE_SHA: ${{ github.event.before }}",
+            "HEAD_SHA: ${{ github.sha }}",
+            '--base="$BEFORE_SHA"',
+            '--head="$HEAD_SHA"',
+            "--first-parent",
+            "0000000000000000000000000000000000000000",
+            "force push",
+        ):
+            self.assertIn(needle, step, f"push-to-main policy step must carry {needle!r}")
 
     def test_forge_check_commits_fails_on_74_column_body_commit(self):
         """A commit with a 74-column body line fails forge check-commits with non-zero exit."""
