@@ -53,7 +53,6 @@ capabilities:
         - python.external.pyyaml
         - python.external.pyyaml_env_tag
         - http.client
-        - python.external.six
         - python.external.urllib3
         - python.external.watchdog
         - ui.external.types_react
