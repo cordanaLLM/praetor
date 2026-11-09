@@ -92,3 +92,20 @@ func TestGoRaceExpiredDeclarationFails(t *testing.T) {
 		t.Fatalf("entry expiring today does not hold: runs=%+v error=%v", runs, err)
 	}
 }
+
+// TestGoRaceStaleDeclarationFails pins that an entry naming no tracked Go module fails the race
+// stage before any module runs, as a stale gosec entry fails the security stage, while an entry
+// naming a tracked module passes the same check.
+func TestGoRaceStaleDeclarationFails(t *testing.T) {
+	repo, cfg, recorded := trackedModuleFixture(t, true)
+	writeFile(t, filepath.Join(repo, ".standards.yaml"), netnsManifest("tooling/go.mod", time.Now().AddDate(0, 0, 30)))
+	if _, err := runGoTests(t.Context(), cfg); err != nil {
+		t.Fatalf("entry naming a tracked module refused: %v", err)
+	}
+	writeFile(t, filepath.Join(repo, ".standards.yaml"), netnsManifest("gone/go.mod", time.Now().AddDate(0, 0, 30)))
+	*recorded = nil
+	_, err := runGoTests(t.Context(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "gone/go.mod") || !strings.Contains(err.Error(), "no tracked Go module") || len(testInvocations(*recorded)) != 0 {
+		t.Fatalf("stale entry passed: error=%v runs=%+v", err, testInvocations(*recorded))
+	}
+}
