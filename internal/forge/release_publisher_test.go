@@ -16,11 +16,12 @@ import (
 func writeWorkflowFile(t *testing.T, dir, filename, content string) string {
 	t.Helper()
 	wfDir := filepath.Join(dir, ".github", "workflows")
-	if err := os.MkdirAll(wfDir, 0755); err != nil {
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory the test writes files into needs the owner execute bit; 0o700 is least privilege
+	if err := os.MkdirAll(wfDir, 0o700); err != nil {
 		t.Fatalf("mkdir workflow dir: %v", err)
 	}
 	path := filepath.Join(wfDir, filename)
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write workflow file: %v", err)
 	}
 	return dir
