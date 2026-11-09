@@ -286,21 +286,100 @@ func Read(name string) ([]byte, error) {
 var (
 	numericNodeVersionPattern = regexp.MustCompile(`^v?([0-9]+)(?:\.[0-9]+){0,2}$`)
 	aliasNodeVersionPattern   = regexp.MustCompile(`^(?:lts/(?:\*|-[0-9]+|[a-z]+)|node|latest|current)$`)
-	nodeFloorPattern          = regexp.MustCompile(`^>=([0-9]+)(?:\.[0-9]+)*$`)
+	versionSegmentPattern     = regexp.MustCompile(`^[0-9]+$`)
 )
+
+// NodeVersion represents a numeric Node release or minimum floor (major, minor, patch).
+type NodeVersion struct {
+	Major int
+	Minor int
+	Patch int
+}
+
+// Compare returns -1 if v < other, 0 if v == other, and 1 if v > other.
+func (v NodeVersion) Compare(other NodeVersion) int {
+	if v.Major != other.Major {
+		if v.Major < other.Major {
+			return -1
+		}
+		return 1
+	}
+	if v.Minor != other.Minor {
+		if v.Minor < other.Minor {
+			return -1
+		}
+		return 1
+	}
+	if v.Patch != other.Patch {
+		if v.Patch < other.Patch {
+			return -1
+		}
+		return 1
+	}
+	return 0
+}
+
+// String formats the version as major.minor.patch.
+func (v NodeVersion) String() string {
+	return fmt.Sprintf("%d.%d.%d", v.Major, v.Minor, v.Patch)
+}
+
+// ParseNodeVersion parses a numeric Node version string (X, X.Y, or X.Y.Z) into a NodeVersion.
+func ParseNodeVersion(s string) (NodeVersion, error) {
+	trimmed := strings.TrimPrefix(strings.TrimSpace(s), "v")
+	parts := strings.Split(trimmed, ".")
+	if len(parts) == 0 || len(parts) > 3 || parts[0] == "" {
+		return NodeVersion{}, fmt.Errorf("%q is not a valid Node version", s)
+	}
+	for i := 0; i < len(parts); i++ {
+		if !versionSegmentPattern.MatchString(parts[i]) {
+			return NodeVersion{}, fmt.Errorf("%q segment %q is not numeric", s, parts[i])
+		}
+	}
+	var v NodeVersion
+	var err error
+	v.Major, err = strconv.Atoi(parts[0])
+	if err != nil {
+		return NodeVersion{}, fmt.Errorf("%q major: %w", s, err)
+	}
+	if len(parts) > 1 {
+		v.Minor, err = strconv.Atoi(parts[1])
+		if err != nil {
+			return NodeVersion{}, fmt.Errorf("%q minor: %w", s, err)
+		}
+	}
+	if len(parts) > 2 {
+		v.Patch, err = strconv.Atoi(parts[2])
+		if err != nil {
+			return NodeVersion{}, fmt.Errorf("%q patch: %w", s, err)
+		}
+	}
+	return v, nil
+}
+
+// ParseNodeFloor returns the NodeVersion floor of an engines.node range of the form >=22.12.0.
+// Any other form is an error, so a range this reader does not understand fails the check.
+func ParseNodeFloor(engine string) (NodeVersion, error) {
+	trimmed := strings.TrimSpace(engine)
+	if !strings.HasPrefix(trimmed, ">=") {
+		return NodeVersion{}, fmt.Errorf("engines.node %q is not a minimum like >=22.12.0", engine)
+	}
+	rest := strings.TrimSpace(trimmed[2:])
+	v, err := ParseNodeVersion(rest)
+	if err != nil {
+		return NodeVersion{}, fmt.Errorf("engines.node %q: %w", engine, err)
+	}
+	return v, nil
+}
 
 // parseNodeFloor returns the major of an engines.node range of the form >=22.12.0. Any other form
 // is an error, so a range this reader does not understand fails the check instead of passing it.
 func parseNodeFloor(engine string) (int, error) {
-	matches := nodeFloorPattern.FindStringSubmatch(strings.TrimSpace(engine))
-	if matches == nil {
-		return 0, fmt.Errorf("engines.node %q in %s/package.json is not a minimum like >=22.12.0", engine, Directory)
-	}
-	floor, err := strconv.Atoi(matches[1])
+	v, err := ParseNodeFloor(engine)
 	if err != nil {
-		return 0, fmt.Errorf("engines.node %q in %s/package.json: %w", engine, Directory, err)
+		return 0, fmt.Errorf("%s/package.json: %w", Directory, err)
 	}
-	return floor, nil
+	return v.Major, nil
 }
 
 // nodeFloor returns the lowest Node major the gate's locked install declares it runs on.

@@ -956,6 +956,81 @@ func TestNodeFloorFailsClosed(t *testing.T) {
 	}
 }
 
+// Positive, negative and boundary: ParseNodeFloor reads >= minimums with up to three numeric
+// segments and refuses every other form.
+func TestParseNodeFloorSemver(t *testing.T) {
+	cases := []struct {
+		name      string
+		engine    string
+		wantFloor NodeVersion
+		wantErr   bool
+	}{
+		{name: "semver >=22.23.4", engine: ">=22.23.4", wantFloor: NodeVersion{22, 23, 4}},
+		{name: "two-part >=22.12", engine: ">=22.12", wantFloor: NodeVersion{22, 12, 0}},
+		{name: "single-part >=20", engine: ">=20", wantFloor: NodeVersion{20, 0, 0}},
+		{name: "spaced >= 12.0.0", engine: ">= 12.0.0", wantFloor: NodeVersion{12, 0, 0}},
+		{name: "caret", engine: "^22", wantErr: true},
+		{name: "empty", engine: "", wantErr: true},
+		{name: "non-numeric", engine: ">=x.y", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseNodeFloor(tc.engine)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("ParseNodeFloor(%q) = %s, want error", tc.engine, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseNodeFloor(%q) unexpected error: %v", tc.engine, err)
+			}
+			if got.Compare(tc.wantFloor) != 0 {
+				t.Fatalf("ParseNodeFloor(%q) = %s, want %s", tc.engine, got, tc.wantFloor)
+			}
+		})
+	}
+}
+
+// Negative: ParseNodeFloor's error names no file, so a preset caller is not pointed at the gate's
+// package.json; the gate's own reader adds that path.
+func TestParseNodeFloorErrorOmitsFilePath(t *testing.T) {
+	_, err := ParseNodeFloor("^22")
+	if err == nil {
+		t.Fatal("ParseNodeFloor(^22) expected error, got nil")
+	}
+	if strings.Contains(err.Error(), "package.json") {
+		t.Fatalf("ParseNodeFloor error %q should not name package.json", err.Error())
+	}
+	_, err = parseNodeFloor("^22")
+	if err == nil {
+		t.Fatal("parseNodeFloor(^22) expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), Directory+"/package.json") {
+		t.Fatalf("parseNodeFloor error %q does not contain %s/package.json", err.Error(), Directory)
+	}
+}
+
+// Boundary: Compare orders versions by major, minor and patch, and equal versions compare 0.
+func TestNodeVersionCompare(t *testing.T) {
+	v1 := NodeVersion{22, 12, 0}
+	v2 := NodeVersion{22, 23, 4}
+	v3 := NodeVersion{22, 23, 4}
+	v4 := NodeVersion{23, 0, 0}
+	if v1.Compare(v2) >= 0 {
+		t.Fatalf("%s should be less than %s", v1, v2)
+	}
+	if v2.Compare(v1) <= 0 {
+		t.Fatalf("%s should be greater than %s", v2, v1)
+	}
+	if v2.Compare(v3) != 0 {
+		t.Fatalf("%s should equal %s", v2, v3)
+	}
+	if v4.Compare(v2) <= 0 {
+		t.Fatalf("%s should be greater than %s", v4, v2)
+	}
+}
+
 func setupNodeStepFault(workflowYAML string) string {
 	spec, err := ghworkflow.Parse([]byte(workflowYAML))
 	if err != nil {
