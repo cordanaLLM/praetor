@@ -92,6 +92,12 @@ func prepareGoRace(ctx context.Context, cfg *stageConfig) (raceScopeConfig, erro
 // runGoRaceCommand executes race-detector tests for a Go module with configured resource scoping and network isolation.
 func runGoRaceCommand(ctx context.Context, cfg *stageConfig, module goModule, dir string, bound time.Duration, scopeCfg raceScopeConfig) (string, error) {
 	run := cfg.goToolchain().run
+	// The module's isolation, and so its go-test-netns entry, is judged before the package count:
+	// an expired entry fails an empty module too.
+	execFlag, isolation, err := cfg.moduleTestExec(ctx, module)
+	if err != nil {
+		return "", err
+	}
 	count, err := ModulePackageCount(ctx, run, dir)
 	if err != nil {
 		return "", err
@@ -101,10 +107,6 @@ func runGoRaceCommand(ctx context.Context, cfg *stageConfig, module goModule, di
 	}
 	if count == 0 {
 		return NoPackagesNote + ": race tests not run", nil
-	}
-	execFlag, isolation, err := cfg.moduleTestExec(ctx, module)
-	if err != nil {
-		return "", err
 	}
 	name, args, msg := raceTestCommand(module, bound, scopeCfg, cfg.racePackages, execFlag)
 	msg += "; " + isolation

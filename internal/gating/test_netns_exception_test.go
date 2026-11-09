@@ -4,6 +4,7 @@
 package gating
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -94,17 +95,83 @@ func TestGoRaceExpiredDeclarationFails(t *testing.T) {
 	}
 }
 
+// TestGoRaceDeclarationWithoutWrapper pins the paths where goTestExec wraps nothing (CI on Linux,
+// and a host without Linux namespaces): a live entry leaves the execution and its note unchanged,
+// and an expired entry still fails the module before any test binary runs.
+func TestGoRaceDeclarationWithoutWrapper(t *testing.T) {
+	live := netnsRepo(t, netnsManifest(netnsModule, time.Now().AddDate(0, 0, 30)), netnsModule)
+	expired := netnsRepo(t, netnsManifest(netnsModule, time.Now().AddDate(0, 0, -1)), netnsModule)
+	for _, host := range []struct{ goos, ci, note string }{{"linux", "true", "CI execution unchanged"}, {"darwin", "", "has no Linux network namespaces"}} {
+		t.Setenv("CI", host.ci)
+		t.Setenv("GITHUB_ACTIONS", "")
+		for _, root := range []string{live, expired} {
+			cfg, recorded := newTestConfig(t, root, false)
+			cfg.goos = host.goos
+			dir := filepath.Join(root, "tools", "needs-root")
+			msg, err := runGoRaceCommand(t.Context(), cfg, goModule{file: netnsModule, dir: dir}, dir, time.Minute, raceScopeConfig{})
+			runs := testInvocations(*recorded)
+			if root == expired && (err == nil || !strings.Contains(err.Error(), "expired") || len(runs) != 0) {
+				t.Fatalf("%s: expired entry did not fail without a wrapper: runs=%+v error=%v", host.goos, runs, err)
+			}
+			if root == live && (err != nil || len(runs) != 1 || slices.Contains(runs[0].args, "-exec") || !strings.Contains(msg, host.note)) {
+				t.Fatalf("%s: live entry changed the wrapper-free path: runs=%+v message=%q error=%v", host.goos, runs, msg, err)
+			}
+		}
+	}
+}
+
+// TestGoRaceExpiredDeclarationFailsEmptyModule pins that an expired entry fails its module even
+// when the module holds no Go packages, instead of the stage reporting the module as empty.
+func TestGoRaceExpiredDeclarationFailsEmptyModule(t *testing.T) {
+	t.Setenv("CI", "")
+	t.Setenv("GITHUB_ACTIONS", "")
+	root := netnsRepo(t, netnsManifest(netnsModule, time.Now().AddDate(0, 0, -1)), netnsModule)
+	cfg, recorded := newTestConfig(t, root, false)
+	cfg.goos = "linux"
+	base := cfg.run
+	cfg.run = func(ctx context.Context, dir, name string, args ...string) (string, error) {
+		if name == "go" && len(args) > 0 && args[0] == "list" {
+			return "", nil
+		}
+		return base(ctx, dir, name, args...)
+	}
+	dir := filepath.Join(root, "tools", "needs-root")
+	msg, err := runGoRaceCommand(t.Context(), cfg, goModule{file: netnsModule, dir: dir}, dir, time.Minute, raceScopeConfig{})
+	if err == nil || !strings.Contains(err.Error(), "expired") || len(testInvocations(*recorded)) != 0 {
+		t.Fatalf("expired entry on an empty module passed: message=%q error=%v", msg, err)
+	}
+}
+
+// TestGoRaceNetnsEntriesReadOncePerStage pins that one stage judges every module against the
+// entries it read first: a manifest rewritten after the stale check changes no module's decision.
+func TestGoRaceNetnsEntriesReadOncePerStage(t *testing.T) {
+	t.Setenv("CI", "")
+	t.Setenv("GITHUB_ACTIONS", "")
+	root := netnsRepo(t, netnsManifest(netnsModule, time.Now().AddDate(0, 0, 30)), netnsModule)
+	cfg, _ := newTestConfig(t, root, false)
+	cfg.goos = "linux"
+	cfg.moduleDiscovery = func(context.Context, string) ([]string, error) { return []string{netnsModule}, nil }
+	if err := staleNetnsEntries(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(root, ".standards.yaml"), netnsManifest(netnsModule, time.Now().AddDate(0, 0, -1)))
+	if execFlag, _, err := cfg.moduleTestExec(t.Context(), goModule{file: netnsModule}); err != nil || execFlag != "" {
+		t.Fatalf("module judged against a manifest read after the stale check: exec=%q error=%v", execFlag, err)
+	}
+}
+
 // TestGoRaceStaleDeclarationFails pins that an entry naming no tracked Go module fails the race
 // stage before any module runs, as a stale gosec entry fails the security stage, while an entry
 // naming a tracked module passes the same check.
 func TestGoRaceStaleDeclarationFails(t *testing.T) {
-	repo, cfg, recorded := trackedModuleFixture(t, true)
+	repo, cfg, _ := trackedModuleFixture(t, true)
 	writeFile(t, filepath.Join(repo, ".standards.yaml"), netnsManifest("tooling/go.mod", time.Now().AddDate(0, 0, 30)))
 	if _, err := runGoTests(t.Context(), cfg); err != nil {
 		t.Fatalf("entry naming a tracked module refused: %v", err)
 	}
+	// A stage configuration reads the manifest once, so the stale case is its own stage.
+	repo, cfg, recorded := trackedModuleFixture(t, true)
 	writeFile(t, filepath.Join(repo, ".standards.yaml"), netnsManifest("gone/go.mod", time.Now().AddDate(0, 0, 30)))
-	*recorded = nil
 	_, err := runGoTests(t.Context(), cfg)
 	if err == nil || !strings.Contains(err.Error(), "gone/go.mod") || !strings.Contains(err.Error(), "no tracked Go module") || len(testInvocations(*recorded)) != 0 {
 		t.Fatalf("stale entry passed: error=%v runs=%+v", err, testInvocations(*recorded))
