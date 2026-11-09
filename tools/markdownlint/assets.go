@@ -326,35 +326,23 @@ func (v NodeVersion) String() string {
 
 // ParseNodeVersion parses a numeric Node version string (X, X.Y, or X.Y.Z) into a NodeVersion.
 func ParseNodeVersion(s string) (NodeVersion, error) {
-	trimmed := strings.TrimPrefix(strings.TrimSpace(s), "v")
-	parts := strings.Split(trimmed, ".")
-	if len(parts) == 0 || len(parts) > 3 || parts[0] == "" {
+	parts := strings.Split(strings.TrimPrefix(strings.TrimSpace(s), "v"), ".")
+	if len(parts) > 3 {
 		return NodeVersion{}, fmt.Errorf("%q is not a valid Node version", s)
 	}
-	for i := 0; i < len(parts); i++ {
+	// strings.Split returns at least one part; an empty one fails the numeric check.
+	var segments [3]int
+	for i := 0; i < len(parts) && i < len(segments); i++ {
 		if !versionSegmentPattern.MatchString(parts[i]) {
 			return NodeVersion{}, fmt.Errorf("%q segment %q is not numeric", s, parts[i])
 		}
-	}
-	var v NodeVersion
-	var err error
-	v.Major, err = strconv.Atoi(parts[0])
-	if err != nil {
-		return NodeVersion{}, fmt.Errorf("%q major: %w", s, err)
-	}
-	if len(parts) > 1 {
-		v.Minor, err = strconv.Atoi(parts[1])
+		n, err := strconv.Atoi(parts[i])
 		if err != nil {
-			return NodeVersion{}, fmt.Errorf("%q minor: %w", s, err)
+			return NodeVersion{}, fmt.Errorf("%q segment %q: %w", s, parts[i], err)
 		}
+		segments[i] = n
 	}
-	if len(parts) > 2 {
-		v.Patch, err = strconv.Atoi(parts[2])
-		if err != nil {
-			return NodeVersion{}, fmt.Errorf("%q patch: %w", s, err)
-		}
-	}
-	return v, nil
+	return NodeVersion{Major: segments[0], Minor: segments[1], Patch: segments[2]}, nil
 }
 
 // ParseNodeFloor returns the NodeVersion floor of an engines.node range of the form >=22.12.0.
