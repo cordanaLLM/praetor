@@ -61,6 +61,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"80a0a2da3dc2222e12b5c70ab7bc442fae586f1d06d5bdcb0516df3c20a144ca": "stop checkpoint counts session-owned worktrees and ignores gate scratch",
 	},
 	checkpointCommon: {
+		"12ef141c8cf1857650c9f4653653472278caf24c226371927021618743ca94b5": "pre-push commit message check skips published commits",
 		"daf13baf16b776de9a976809a7e064971fd5946ed4508761c229dba0ef4b4e65": "Go hooks share session ownership and verify live gate scratch owners",
 		"61ccf1481d43073ca29aab6c6e6b78cc6f5cb4a86bf1e7603b8b0e01d02f71a9": "platform promotion (#14)",
 		"28ba4c3481f26f90eb48b371d4a757e16e965280ad1352dfad8c412562d19dbd": "Windows gate (#102)",

@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
 """Git-stage entry points. Use exact index/ref snapshots for blocking checks."""
 
-import os
-import pathlib
 import json
-from pathlib import Path
+import os
 import re
 import shutil
 import sys
+from pathlib import Path
 
 sys.dont_write_bytecode = True
+
+from checks import (
+    checkpoint_checks,
+    context_changed,
+    file_checks,
+    go_packages,
+    gofmt_check,
+    source_checks,
+)
 from common import HookError, changed, clean_env, git, paths, run, snapshot
-from checks import (checkpoint_checks, context_changed, file_checks, go_packages, gofmt_check,
-                    source_checks)
 from privacy import check_private_history, check_private_index
 from toolchain import make_program
 
@@ -225,7 +231,7 @@ def pre_push(remote):
         check_refactor_range(base, head)
         check_docstring_range(base, head)
         check_merge_range(base, head)
-        check_commit_message_range(base, head)
+        check_commit_message_range(base, head, remote=remote)
         check_signature_range(base, head)
         if not names:
             continue
@@ -331,18 +337,91 @@ def check_signature_range(base, head):
           f"{base[:12]}..{head[:12]} verified")
 
 
-def check_commit_message_range(base, head):
+# MAX_REMOTES bounds the configured remotes evaluated by the hook (HISS-02).
+MAX_REMOTES = 64
+MAX_COMMIT_MESSAGE_COMMITS = 500
+
+
+def other_push_remotes(remote):
+    """Return all configured remotes other than the push target."""
+    if not remote:
+        return []
+    lines = git("remote").decode().splitlines()
+    if len(lines) > MAX_REMOTES:
+        raise HookError(
+            f"Commit message check: configured remotes exceed {MAX_REMOTES}; clean remote list"
+        )
+    url_remotes = set()
+    # git config --get-regexp exits 1 when no remote URL matches; allow only that code so a timeout or other
+    # failure still propagates (no silent fallback). A push made to a repository URL is matched here and dropped.
+    cfg = git("config", "--get-regexp", r"^remote\..*\.(pushurl|url)$", allowed=(0, 1)).decode()
+    cfg_entries = cfg.splitlines()
+    # A remote may declare several url and pushurl entries, so the entry count is not bounded by MAX_REMOTES;
+    # bound it in its own right (HISS-02). MAX_REMOTES URLs each for url and pushurl is the generous ceiling.
+    if len(cfg_entries) > 2 * MAX_REMOTES:
+        raise HookError(
+            f"Commit message check: remote URL entries exceed {2 * MAX_REMOTES}; clean remote list"
+        )
+    for entry in cfg_entries:
+        parts = entry.strip().split(None, 1)
+        if len(parts) == 2 and parts[1] == remote:
+            key_parts = parts[0].split(".")
+            if len(key_parts) >= 3 and key_parts[0] == "remote":
+                url_remotes.add(".".join(key_parts[1:-1]))
+    return [
+        r.strip()
+        for r in lines
+        if r.strip() and r.strip() != remote and r.strip() not in url_remotes
+    ]
+
+
+def other_remote_refs(remotes):
+    """Return non-HEAD remote-tracking refs (by object name) for the given remotes."""
+    if not remotes:
+        return []
+    if len(remotes) > MAX_REMOTES:
+        raise HookError(
+            f"Commit message check: configured remotes exceed {MAX_REMOTES}; clean remote list"
+        )
+    patterns = [f"refs/remotes/{r}" for r in remotes]
+    output = git(
+        "for-each-ref",
+        f"--count={MAX_COMMIT_MESSAGE_COMMITS + 1}",
+        "--format=%(objectname)",
+        *patterns,
+    ).decode()
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if len(lines) > MAX_COMMIT_MESSAGE_COMMITS:
+        raise HookError(
+            f"Commit message check: remote tracking refs exceed {MAX_COMMIT_MESSAGE_COMMITS}; "
+            "refresh remote baseline or split push"
+        )
+    seen = set()
+    refs = []
+    for obj in lines:
+        if obj not in seen:
+            seen.add(obj)
+            refs.append(obj)
+    return refs
+
+
+def check_commit_message_range(base, head, remote=None):
     """Run the commit message policy over the exact outgoing commit range (#1814).
 
     Without a pushed-range base the range would be the whole history, whose old commits this
     push did not make, so the check is skipped with that reason; CI checks the pull request
-    range against its base either way.
+    range against its base either way. Commits already published on another remote are skipped
+    so that sync pushes from an upstream repository do not fail on published history.
     """
     if not base:
         print("Commit message check: skipped, no pushed-range base; CI checks pull request range")
         return
-    run([praetorctl_path(), "forge", "check-commits", f"--base={base}", f"--head={head}"],
-        capture=False, timeout=180)
+    other_remotes = other_push_remotes(remote)
+    other_refs = other_remote_refs(other_remotes)
+    cmd = [praetorctl_path(), "forge", "check-commits", f"--base={base}", f"--head={head}"]
+    for ref in other_refs:
+        cmd.append(f"--exclude={ref}")
+    run(cmd, capture=False, timeout=180)
 
 
 def check_commits(base):
@@ -401,6 +480,7 @@ def praetorctl_path():
     """
     suffix = ".exe" if os.name == "nt" else ""
     return os.path.abspath(os.path.join("bin", "praetorctl" + suffix))
+
 
 def cli(args):
     run([make_program(), "--always-make", "--no-print-directory", "-s", "hook-cli"],
