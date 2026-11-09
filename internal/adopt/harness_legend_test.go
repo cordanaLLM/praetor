@@ -272,6 +272,7 @@ func TestAdoptTestdataSPDXLicensesBackedByLicenseFiles(t *testing.T) {
 func TestAdoptTestdataSPDXScan_3D(t *testing.T) {
 	licensesDir := filepath.Join("..", "..", "LICENSES")
 	dir := t.TempDir()
+	// REUSE-IgnoreStart: the strings below hold licence lines as test data, not this file's licence.
 	mustWrite(t, filepath.Join(dir, "a.txt"), "// SPDX-License-Identifier: MIT\n")
 	mustWrite(t, filepath.Join(dir, "b.txt"), "// SPDX-License-Identifier: EUPL-1.2\n")
 
@@ -285,6 +286,7 @@ func TestAdoptTestdataSPDXScan_3D(t *testing.T) {
 
 	badDir := t.TempDir()
 	mustWrite(t, filepath.Join(badDir, "bad.txt"), "// SPDX-License-Identifier: CC-BY-SA-4.0\n")
+	// REUSE-IgnoreEnd
 	badMissing, err := scanTestdataSPDXLicenses(badDir, licensesDir, 2)
 	if err != nil || len(badMissing) != 1 {
 		t.Fatalf("negative license: got missing=%v, err=%v; want 1 missing, nil err", badMissing, err)
