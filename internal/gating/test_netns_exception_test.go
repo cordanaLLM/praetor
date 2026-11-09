@@ -47,8 +47,8 @@ func netnsRepo(t *testing.T, manifest string, modules ...string) string {
 }
 
 // raceModule runs one module's race command against the fixture root with a recording runner on
-// local Linux, and returns the message, the error and the recorded go test invocations.
-func raceModule(t *testing.T, root, module string) (string, error, []recordedCommand) {
+// local Linux, and returns the message, the recorded go test invocations and the error.
+func raceModule(t *testing.T, root, module string) (string, []recordedCommand, error) {
 	t.Helper()
 	t.Setenv("CI", "")
 	t.Setenv("GITHUB_ACTIONS", "")
@@ -56,7 +56,7 @@ func raceModule(t *testing.T, root, module string) (string, error, []recordedCom
 	cfg.goos = "linux"
 	dir := filepath.Join(root, filepath.Dir(filepath.FromSlash(module)))
 	msg, err := runGoRaceCommand(t.Context(), cfg, goModule{file: module, dir: dir}, dir, time.Minute, raceScopeConfig{})
-	return msg, err, testInvocations(*recorded)
+	return msg, testInvocations(*recorded), err
 }
 
 // TestGoRaceDeclaredModuleRunsUnwrapped pins that a live go-test-netns entry runs its module's
@@ -65,14 +65,14 @@ func raceModule(t *testing.T, root, module string) (string, error, []recordedCom
 func TestGoRaceDeclaredModuleRunsUnwrapped(t *testing.T) {
 	const sibling = "tools/sibling/go.mod"
 	root := netnsRepo(t, netnsManifest(netnsModule, time.Now().AddDate(0, 0, 30)), netnsModule, sibling)
-	msg, err, runs := raceModule(t, root, netnsModule)
+	msg, runs, err := raceModule(t, root, netnsModule)
 	if err != nil || len(runs) != 1 || slices.Contains(runs[0].args, "-exec") {
 		t.Fatalf("declared module still wrapped: runs=%+v error=%v", runs, err)
 	}
 	if !strings.Contains(msg, "exception go-test-netns") || !strings.Contains(msg, "category D") {
 		t.Fatalf("message does not name the exception: %q", msg)
 	}
-	msg, err, runs = raceModule(t, root, sibling)
+	msg, runs, err = raceModule(t, root, sibling)
 	if err != nil || len(runs) != 1 || !slices.Contains(runs[0].args, "-exec") || !strings.Contains(msg, "loopback-only network namespace") {
 		t.Fatalf("undeclared sibling lost the wrapper: runs=%+v message=%q error=%v", runs, msg, err)
 	}
@@ -83,12 +83,12 @@ func TestGoRaceDeclaredModuleRunsUnwrapped(t *testing.T) {
 // unwrapped path; an entry expiring today still holds (boundary).
 func TestGoRaceExpiredDeclarationFails(t *testing.T) {
 	expired := netnsRepo(t, netnsManifest(netnsModule, time.Now().AddDate(0, 0, -1)), netnsModule)
-	_, err, runs := raceModule(t, expired, netnsModule)
+	_, runs, err := raceModule(t, expired, netnsModule)
 	if err == nil || len(runs) != 0 || !strings.Contains(err.Error(), "expired") || !strings.Contains(err.Error(), netnsModule) {
 		t.Fatalf("expired entry did not fail its module: runs=%+v error=%v", runs, err)
 	}
 	today := netnsRepo(t, netnsManifest(netnsModule, time.Now()), netnsModule)
-	if _, err, runs := raceModule(t, today, netnsModule); err != nil || len(runs) != 1 || slices.Contains(runs[0].args, "-exec") {
+	if _, runs, err := raceModule(t, today, netnsModule); err != nil || len(runs) != 1 || slices.Contains(runs[0].args, "-exec") {
 		t.Fatalf("entry expiring today does not hold: runs=%+v error=%v", runs, err)
 	}
 }
