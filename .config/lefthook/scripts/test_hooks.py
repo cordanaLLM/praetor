@@ -1803,6 +1803,127 @@ print("fixture hook self-tests passed")
         self.assertIn("unparseable", str(ctx.exception))
         self.assertIn("malformed-line", str(ctx.exception))
 
+    def test_signature_range_skips_published_commits_in_two_remote_fixture(self):
+        """In a two-remote fixture, unverifiable commits published on upstream are skipped while own commits fail."""
+        origin = Path(self.temp.name) / "origin.git"
+        command(self.repo, "git", "init", "--bare", "-q", "-b", "main", str(origin))
+        command(self.repo, "git", "remote", "add", "origin", str(origin))
+        command(self.repo, "git", "push", "-q", "-u", "origin", "main")
+        base = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+
+        upstream = Path(self.temp.name) / "upstream.git"
+        command(self.repo, "git", "init", "--bare", "-q", "-b", "main", str(upstream))
+        command(self.repo, "git", "remote", "add", "upstream", str(upstream))
+
+        # 1. Upstream commit without valid signature (published on upstream remote)
+        self.write("upstream.txt", "upstream\n")
+        command(
+            self.repo, "git", "commit", "-q", "-s", "--no-verify", "--no-gpg-sign",
+            "-m", "feat: upstream commit without signature",
+        )
+        upstream_sha = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+        command(self.repo, "git", "push", "-q", "-u", "upstream", "main")
+
+        def fake_run(args, *r_args, **r_kwargs):
+            """Report commit.gpgsign as true and pass every other command to the real run."""
+            if args[:4] == ["git", "config", "--get", "--type=bool"] and args[4:] == ["commit.gpgsign"]:
+                return b"true\n"
+            return common.run(args, *r_args, **r_kwargs)
+
+        original = Path.cwd()
+        try:
+            os.chdir(self.repo)
+            with mock.patch("hooks.run", side_effect=fake_run):
+                # A commit published on the other remote with an unverifiable signature is left out and passes
+                with io.StringIO() as out, mock.patch("sys.stdout", out):
+                    hooks.check_signature_range(base, upstream_sha, remote="origin")
+                    output = out.getvalue()
+                    self.assertIn("1 published commit(s) in", output)
+                    self.assertIn(upstream_sha, output)
+
+                # 2. Own unsigned commit on top of it still fails naming its sha
+                self.write("own.txt", "own\n")
+                command(
+                    self.repo, "git", "commit", "-q", "-s", "--no-verify", "--no-gpg-sign",
+                    "-m", "feat: own unsigned commit",
+                )
+                own_sha = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+
+                with self.assertRaises(HookError) as ctx:
+                    hooks.check_signature_range(base, own_sha, remote="origin")
+                self.assertIn(own_sha[:12], str(ctx.exception))
+                self.assertNotIn(upstream_sha[:12], str(ctx.exception))
+        finally:
+            os.chdir(original)
+
+    def test_signature_range_single_remote_fixture_refuses_unverifiable_commit(self):
+        """A single-remote fixture retains today's refusal of an unverifiable commit."""
+        origin = Path(self.temp.name) / "origin.git"
+        command(self.repo, "git", "init", "--bare", "-q", "-b", "main", str(origin))
+        command(self.repo, "git", "remote", "add", "origin", str(origin))
+        command(self.repo, "git", "push", "-q", "-u", "origin", "main")
+        base = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+
+        self.write("unverified.txt", "unverified\n")
+        command(
+            self.repo, "git", "commit", "-q", "-s", "--no-verify", "--no-gpg-sign",
+            "-m", "feat: unverified commit",
+        )
+        unverified_sha = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+
+        def fake_run(args, *r_args, **r_kwargs):
+            """Report commit.gpgsign as true and pass every other command to the real run."""
+            if args[:4] == ["git", "config", "--get", "--type=bool"] and args[4:] == ["commit.gpgsign"]:
+                return b"true\n"
+            return common.run(args, *r_args, **r_kwargs)
+
+        original = Path.cwd()
+        try:
+            os.chdir(self.repo)
+            with mock.patch("hooks.run", side_effect=fake_run):
+                with self.assertRaises(HookError) as ctx:
+                    hooks.check_signature_range(base, unverified_sha, remote="origin")
+                self.assertIn(unverified_sha[:12], str(ctx.exception))
+        finally:
+            os.chdir(original)
+
+    def test_signature_range_bound_applies_to_remaining_commits(self):
+        """The range bound MAX_SIGNATURE_COMMITS still applies to the remaining commits."""
+        lines = [f"{i:040x} G" for i in range(hooks.MAX_SIGNATURE_COMMITS + 1)]
+        log_output = "\n".join(lines) + "\n"
+        with mock.patch("hooks.run", return_value=b"true\n"), \
+                mock.patch("hooks.other_push_remotes", return_value=["upstream"]), \
+                mock.patch("hooks.other_remote_refs", return_value=["upstream-sha"]), \
+                mock.patch("hooks.git", side_effect=[
+                    log_output.encode(),
+                    b"600\n",
+                ]), \
+                self.assertRaises(HookError) as ctx:
+            hooks.check_signature_range("base-sha", "head-sha", remote="origin")
+        self.assertIn("exceeds", str(ctx.exception))
+        self.assertIn(str(hooks.MAX_SIGNATURE_COMMITS), str(ctx.exception))
+
+    def test_signature_check_excludes_commits_from_other_remotes(self):
+        """When other remotes exist, their tracking refs are excluded from git log via --not."""
+        log_output = "aaaa000000000000000000000000000000000000 G\n"
+        with mock.patch("hooks.run", return_value=b"true\n"), \
+                mock.patch("hooks.other_push_remotes", return_value=["upstream"]), \
+                mock.patch("hooks.other_remote_refs", return_value=["1111111111111111111111111111111111111111"]), \
+                mock.patch("hooks.git", side_effect=[
+                    log_output.encode(),
+                    b"2\n",
+                ]) as git_cmd, \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            hooks.check_signature_range("base-sha", "head-sha", remote="origin")
+        git_cmd.assert_any_call(
+            "log", f"--max-count={hooks.MAX_SIGNATURE_COMMITS + 1}",
+            "--format=%H %G?", "base-sha..head-sha", "--not",
+            "1111111111111111111111111111111111111111", "--",
+        )
+        self.assertIn("1 published commit(s) in", out.getvalue())
+        self.assertIn("1111111111111111111111111111111111111111", out.getvalue())
+
+
     def test_real_checkpoint_push_builds_and_tests_without_release_receipt(self):
         skip_without_race_detector(self)
         self.write("go.mod", "module example.test/checkpoint\n\ngo 1.27\n")

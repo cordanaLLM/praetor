@@ -232,7 +232,7 @@ def pre_push(remote):
         check_docstring_range(base, head)
         check_merge_range(base, head)
         check_commit_message_range(base, head, remote=remote)
-        check_signature_range(base, head)
+        check_signature_range(base, head, remote=remote)
         if not names:
             continue
         check_pushed_snapshot(head, base, mode, names)
@@ -279,12 +279,34 @@ def check_merge_range(base, head):
     cli(["merge-check", f"--range={base}..{head}"])
 
 
-def check_signature_range(base, head):
+def signature_log_lines(base, head, remote):
+    """Return "<sha> <%G?>" lines for base..head without commits published on other remotes.
+
+    At most MAX_SIGNATURE_COMMITS + 1 lines are read; when other remotes exist, one line names
+    how many published commits were left out and the refs that hold them.
+    """
+    other_refs = other_remote_refs(other_push_remotes(remote))
+    args = [f"--max-count={MAX_SIGNATURE_COMMITS + 1}",
+            "--format=%H %G?", f"{base}..{head}"]
+    if other_refs:
+        args.extend(["--not", *other_refs])
+    args.append("--")
+    lines = git("log", *args).decode().splitlines()
+    if other_refs:
+        total = int(git("rev-list", "--count", f"{base}..{head}", "--").decode().strip())
+        print(f"Signature check: {max(0, total - len(lines))} published commit(s) in "
+              f"{base[:12]}..{head[:12]} left out ({', '.join(other_refs)})")
+    return lines
+
+
+def check_signature_range(base, head, remote=None):
     """Refuse outgoing commits whose signature is not good.
 
     Every pushed commit must carry a valid signature (git %G? status "G"). An
     unsigned or unverifiable commit on a push branch is a single-barrier defect:
-    forge rulesets guard only the default branch, not PR heads.
+    forge rulesets guard only the default branch, not PR heads. Commits already
+    published on another remote are left out so a sync push from an upstream
+    repository is not refused for commits it cannot re-sign.
 
     The check activates only when commit.gpgsign is true in the repository or
     user config; repos that have not opted into signing are not blocked (CI and
@@ -305,9 +327,7 @@ def check_signature_range(base, head):
         print("Signature check: skipped, no pushed-range base; "
               "CI and forge rulesets cover merge path")
         return
-    log = git("log", f"--max-count={MAX_SIGNATURE_COMMITS + 1}",
-              "--format=%H %G?", f"{base}..{head}", "--").decode()
-    lines = log.splitlines()
+    lines = signature_log_lines(base, head, remote)
     if len(lines) > MAX_SIGNATURE_COMMITS:
         raise HookError(
             f"Signature check: range {base[:12]}..{head[:12]} exceeds "
