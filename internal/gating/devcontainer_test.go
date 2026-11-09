@@ -44,6 +44,9 @@ var cachedGoToolchainPaths = sync.OnceValues(func() (goToolchainPaths, error) {
 	return goToolchainPaths{cache: values[0], moduleCache: values[1], path: values[2]}, nil
 })
 
+// TestMain first serves go test-exec when the race command of the real planted case invokes this
+// binary as its wrapper (serveTestExec), then resolves the Go toolchain paths, runs the suite and
+// removes the pinned gosec the ratchet tests build.
 func TestMain(m *testing.M) {
 	if code, served := serveTestExec(os.Args); served {
 		os.Exit(code)
