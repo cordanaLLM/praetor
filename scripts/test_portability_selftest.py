@@ -853,6 +853,20 @@ def imports_subprocess(node):
     )
 
 
+def imports_os_starter(node):
+    """Recognize OS starter imports under a scalar bound, refusing oversized imports."""
+    if not isinstance(node, ast.ImportFrom) or node.module != "os":
+        return False
+    if len(node.names) > MAX_CHILD_IMPORT_NAMES:
+        raise ValueError("child suite exceeds import name limit")
+    return any(
+        alias.name in OS_START_FUNCTIONS
+        or alias.name.startswith(("spawn", "exec"))
+        or alias.name == "*"
+        for alias in node.names[:MAX_CHILD_IMPORT_NAMES]
+    )
+
+
 def subprocess_callable(node):
     """Recognize process-starting references wherever used, including alias bindings."""
     return (
@@ -877,7 +891,7 @@ def starts_child(text):
     nodes = child_ast_nodes(text)[:MAX_CHILD_AST_NODES]
     os_names = {"os"}
     for node in nodes:
-        if imports_subprocess(node):
+        if imports_subprocess(node) or imports_os_starter(node):
             return True
         if isinstance(node, ast.Import):
             os_names.update(
@@ -905,6 +919,13 @@ class ChildSuites(unittest.TestCase):
     def test_os_process_start_references_are_rejected(self):
         """An os process start passed as a callback, partial, alias or binding counts as a direct start."""
         for line in (
+            "from os import system",
+            "from os import execv as e",
+            "from os import *",
+            "from os import system as start\nstart(cmd)",
+            "from os import getpid, posix_spawn",
+            "from os import spawn_custom",
+            "from os import exec_custom",
             "executor.submit(os.system, cmd)",
             "threading.Thread(target=os.execv)",
             "functools.partial(os.spawnlp, 0)",
@@ -924,6 +945,9 @@ class ChildSuites(unittest.TestCase):
     def test_os_non_process_references_are_allowed(self):
         """os attributes that start no process, and other modules' system names, are not starts."""
         for line in (
+            "from os import getpid",
+            "from os import path",
+            "from os.path import join",
             "os.path.join(a, b)",
             'os.environ.get("X")',
             "executor.submit(os.getpid)",
@@ -994,6 +1018,16 @@ class ChildSuites(unittest.TestCase):
             self.assertFalse(starts_child("import a, b"))
             with self.assertRaisesRegex(ValueError, "import name limit"):
                 starts_child("import a, b, subprocess")
+            self.assertFalse(
+                imports_os_starter(ast.parse("from os import getpid, path").body[0])
+            )
+            self.assertTrue(
+                imports_os_starter(ast.parse("from os import getpid, system").body[0])
+            )
+            with self.assertRaisesRegex(ValueError, "import name limit"):
+                imports_os_starter(
+                    ast.parse("from os import getpid, path, system").body[0]
+                )
 
 
 # Rewrites the page's table from its rendering instead of comparing.
