@@ -5,7 +5,7 @@
 // SPDX-License-Identifier: EUPL-1.2
 
 // Command gate is the emitted standalone secrets history scan gate.
-// It executes pinned gitleaks with full history and merge commits (-m), reads
+// It executes pinned gitleaks over a commit range or full history with merge commits (-m), reads
 // HISS-12 exceptions from SECRETS_EXCEPTIONS, and evaluates them with standard-library rules.
 package main
 
@@ -19,9 +19,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
+
+var pullRequestRange = regexp.MustCompile(`^[0-9a-fA-F]{7,40}\.\.[0-9a-fA-F]{7,40}$`)
 
 const (
 	scanTimeout   = 5 * time.Minute
@@ -46,6 +49,14 @@ func runGate(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	repoPath := fs.String("path", ".", "Path to repository root")
 	configPath := fs.String("config", "", "Path to .gitleaks.toml")
+	var commitRange string
+	fs.Func("range", "Pull request commit range: <base>..<head> (7-40 hex each)", func(value string) error {
+		if !pullRequestRange.MatchString(value) {
+			return fmt.Errorf("invalid -range %q: expected <base>..<head> with 7-40 hex characters each", value)
+		}
+		commitRange = value
+		return nil
+	})
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return exitPass
@@ -67,7 +78,7 @@ func runGate(args []string, stdout, stderr io.Writer) int {
 	ctx, cancel := context.WithTimeout(context.Background(), scanTimeout)
 	defer cancel()
 
-	findings, err := executeGitleaks(ctx, *repoPath, cfg)
+	findings, err := executeGitleaks(ctx, *repoPath, cfg, scanLogOptions(commitRange, stdout))
 	if err != nil {
 		fmt.Fprintf(stderr, "secrets gate: %v\n", err)
 		return exitIncomplete
@@ -76,6 +87,16 @@ func runGate(args []string, stdout, stderr io.Writer) int {
 	today := Day(time.Now())
 	result := Judge(findings, entries, *repoPath, today)
 	return reportGateResult(result, stdout, stderr)
+}
+
+func scanLogOptions(commitRange string, stdout io.Writer) string {
+	if commitRange == "" {
+		fmt.Fprintln(stdout, "secrets gate: scanning full history")
+		return logOpts
+	}
+	base, head, _ := strings.Cut(commitRange, "..")
+	fmt.Fprintf(stdout, "secrets gate: scanning pull request range %s..%s\n", base[:min(len(base), 12)], head[:min(len(head), 12)])
+	return commitRange + " -m"
 }
 
 func loadEnvironmentExceptions(today time.Time) ([]Entry, error) {
@@ -104,7 +125,7 @@ func loadEnvironmentExceptions(today time.Time) ([]Entry, error) {
 	return entries, nil
 }
 
-func executeGitleaks(ctx context.Context, dir, cfg string) (findings []Finding, err error) {
+func executeGitleaks(ctx context.Context, dir, cfg, scanOpts string) (findings []Finding, err error) {
 	if _, err := exec.LookPath("gitleaks"); err != nil {
 		return nil, fmt.Errorf("gitleaks not found on PATH: %w", err)
 	}
@@ -120,7 +141,7 @@ func executeGitleaks(ctx context.Context, dir, cfg string) (findings []Finding, 
 
 	cmdArgs := []string{
 		"detect", "--no-banner", "--redact", "--config", cfg,
-		"--log-opts=" + logOpts, "--report-format", "json", "--report-path", reportPath,
+		"--log-opts=" + scanOpts, "--report-format", "json", "--report-path", reportPath,
 	}
 	cmd := exec.CommandContext(ctx, "gitleaks", cmdArgs...)
 	cmd.Dir = dir

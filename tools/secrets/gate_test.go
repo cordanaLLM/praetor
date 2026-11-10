@@ -10,8 +10,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 
@@ -19,14 +21,14 @@ import (
 	"github.com/cordanaLLM/praetor/tools/secrets/rules"
 )
 
-func runGateCLI(t *testing.T, dir string, envExceptions string) (string, int) {
+func runGateCLI(t *testing.T, dir string, envExceptions string, args ...string) (string, int) {
 	t.Helper()
 	ctx, err := util.WithCommandEnvironment(t.Context(), append(os.Environ(), "SECRETS_EXCEPTIONS="+envExceptions))
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := util.RunCommandBytes(ctx, filepath.Join("..", ".."), "go", util.MaxCommandOutputBytes,
-		"run", "-tags=secretsgate", "./tools/secrets/gate", "-path="+dir)
+	cmdArgs := append([]string{"run", "-p", "2", "-tags=secretsgate", "./tools/secrets/gate", "-path=" + dir}, args...)
+	res, err := util.RunCommandBytes(ctx, filepath.Join("..", ".."), "go", util.MaxCommandOutputBytes, cmdArgs...)
 	out := append(res.Stdout, res.Stderr...)
 	exitCode := 0
 	if err != nil {
@@ -45,6 +47,80 @@ func runGateCLI(t *testing.T, dir string, envExceptions string) (string, int) {
 	return string(out), exitCode
 }
 
+func commitGateFile(t *testing.T, dir, name, content string) string {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", name}, {"commit", "--quiet", "-m", "fixture change"}} {
+		if out, err := util.RunGit(t.Context(), dir, args...); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	out, err := util.RunGit(t.Context(), dir, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(out)
+}
+
+func TestGate_PullRequestRange_Planted_3D(t *testing.T) {
+	if _, err := exec.LookPath("gitleaks"); err != nil {
+		t.Skip("gitleaks not installed on PATH")
+	}
+	dir, _ := secrets.BuildOrdinaryLeakRepo(t)
+	base := commitGateFile(t, dir, "creds.py", "clean = 1\n")
+	head := commitGateFile(t, dir, "README.md", "clean pull request\n")
+	want := "secrets gate: scanning pull request range " + base[:12] + ".." + head[:12]
+	if out, code := runGateCLI(t, dir, "", "-range="+base+".."+head); code != 0 || !strings.Contains(out, want) {
+		t.Fatalf("clean range after historical secret: exit %d, want 0 and %q: %s", code, want, out)
+	}
+	if out, code := runGateCLI(t, dir, ""); code != 3 || !strings.Contains(out, "secrets gate: scanning full history") {
+		t.Fatalf("full history: exit %d, want 3 and full history scope: %s", code, out)
+	}
+	leak := commitGateFile(t, dir, "creds.py", "api_key = \""+secrets.PlantedSecret()+"\"\n")
+	if out, code := runGateCLI(t, dir, "", "-range="+head+".."+leak); code != 3 || !strings.Contains(out, leak) {
+		t.Fatalf("secret inside range: exit %d, want 3 naming %s: %s", code, leak, out)
+	}
+}
+
+func TestGate_PullRequestRange_Negative(t *testing.T) {
+	for _, value := range []string{
+		"main..HEAD", "--all", "abc", "a1b2c3d", "a1b2c3d...e4f5a6b", "",
+		"a1b2c3..e4f5a6b", strings.Repeat("a", 41) + "..e4f5a6b", "a1b2c3d..e4f5a6g",
+		"a1b2c3d..e4f5a6b --all", "a1b2c3d..e4f5a6b\n",
+	} {
+		t.Run(value, func(t *testing.T) {
+			out, code := runGateCLI(t, t.TempDir(), "", "-range="+value)
+			if code != 2 || !strings.Contains(out, "-range") || !strings.Contains(out, strconv.Quote(value)) {
+				t.Fatalf("invalid -range=%q: exit %d, want 2 naming flag and value: %s", value, code, out)
+			}
+		})
+	}
+}
+
+func TestGate_PullRequestRange_Boundary(t *testing.T) {
+	if _, err := exec.LookPath("gitleaks"); err != nil {
+		t.Skip("gitleaks not installed on PATH")
+	}
+	dir := secrets.BuildCleanRepo(t)
+	base, err := util.RunGit(t.Context(), dir, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base = strings.TrimSpace(base)
+	head := commitGateFile(t, dir, "README.md", "clean update\n")
+	for _, length := range []int{7, 40} {
+		value := base[:length] + ".." + head[:length]
+		want := "secrets gate: scanning pull request range " + base[:min(length, 12)] + ".." + head[:min(length, 12)]
+		t.Run(value, func(t *testing.T) {
+			if out, code := runGateCLI(t, dir, "", "-range="+value); code != 0 || !strings.Contains(out, want) {
+				t.Fatalf("boundary range: exit %d, want 0 and %q: %s", code, want, out)
+			}
+		})
+	}
+}
+
 func TestGate_PlantedMergeOnly_3D(t *testing.T) {
 	if _, err := exec.LookPath("gitleaks"); err != nil {
 		t.Skip("gitleaks not installed on PATH")
@@ -57,6 +133,13 @@ func TestGate_PlantedMergeOnly_3D(t *testing.T) {
 	}
 	if !strings.Contains(out, mergeHash) {
 		t.Errorf("output missing merge commit hash %s: %s", mergeHash, out)
+	}
+	base, err := util.RunGit(t.Context(), dir, "rev-parse", mergeHash+"^")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, code := runGateCLI(t, dir, "", "-range="+strings.TrimSpace(base)+".."+mergeHash); code != 3 || !strings.Contains(out, mergeHash) {
+		t.Fatalf("merge-only secret in range: exit %d, want 3 naming %s: %s", code, mergeHash, out)
 	}
 }
 
@@ -113,6 +196,8 @@ func TestGate_ExceptionsLifecycle_3D(t *testing.T) {
 	if _, err := exec.LookPath("gitleaks"); err != nil {
 		t.Skip("gitleaks not installed on PATH")
 	}
+	today := time.Now().UTC()
+	entered, expires := today.Format(time.DateOnly), today.AddDate(0, 0, 7).Format(time.DateOnly)
 
 	t.Run("unexcused token is refused", func(t *testing.T) {
 		out, exitCode := runGateLifecycleCase(t, nil)
@@ -123,7 +208,7 @@ func TestGate_ExceptionsLifecycle_3D(t *testing.T) {
 
 	t.Run("dated entry excuses its finding", func(t *testing.T) {
 		entries := []rules.Entry{
-			{Path: "creds.py", RuleID: "generic-api-key", Expires: "2026-11-01", Reason: "dated test waiver"},
+			{Path: "creds.py", RuleID: "generic-api-key", Category: "C", Entered: entered, Expires: expires, Reason: "dated test waiver"},
 		}
 		out, exitCode := runGateLifecycleCase(t, entries)
 		if exitCode != 0 {
@@ -143,7 +228,7 @@ func TestGate_ExceptionsLifecycle_3D(t *testing.T) {
 
 	t.Run("stale entry fails", func(t *testing.T) {
 		entries := []rules.Entry{
-			{Path: "other.py", RuleID: "generic-api-key", Expires: "2026-11-01", Reason: "stale waiver for other file"},
+			{Path: "other.py", RuleID: "generic-api-key", Category: "C", Entered: entered, Expires: expires, Reason: "stale waiver for other file"},
 		}
 		out, exitCode := runGateLifecycleCase(t, entries)
 		if exitCode != 3 {
