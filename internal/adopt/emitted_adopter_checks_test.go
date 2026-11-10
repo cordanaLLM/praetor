@@ -16,10 +16,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/docstrings"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/tools/secrets/rules"
 )
 
 // maxEmittedWalkEntries bounds directory traversal across the emitted adopter tree (HISS-02).
@@ -31,8 +33,47 @@ const maxEmittedWalkEntries = 512
 const maxEmittedFileBytes = 512 * 1024
 
 // maxEmittedTotalBytes bounds the cumulative bytes read across emitted files (HISS-02).
-// Current emitted tree measures 609,296 bytes across scanned source files (746,426 bytes across all emitted files).
+// Current emitted tree measures 643,439 bytes across scanned source files (746,426 bytes across all emitted files).
 const maxEmittedTotalBytes = 2 * 1024 * 1024
+
+// vendoredDocstringExceptionReason preserves pinned upstream bytes until their documentation changes.
+const vendoredDocstringExceptionReason = "category D: vendored interfig upstream source (tools/figures/third_party/interfig/VENDOR.md); upstream bytes stay unedited, so this undocumented function stays until an upstream update documents it"
+
+// vendoredDocstringExceptions names only measured undocumented functions in pinned upstream source.
+var vendoredDocstringExceptions = []config.Exception{
+	{
+		Rule: "docstrings", Path: "tools/figures/third_party/interfig/upstream/src/geometry.ts", Function: "route",
+		Category: "D", Entered: "2026-11-10", Expires: "2027-03-10", Reason: vendoredDocstringExceptionReason,
+	},
+	{
+		Rule: "docstrings", Path: "tools/figures/third_party/interfig/upstream/src/geometry.ts", Function: "other",
+		Category: "D", Entered: "2026-11-10", Expires: "2027-03-10", Reason: vendoredDocstringExceptionReason,
+	},
+	{
+		Rule: "docstrings", Path: "tools/figures/third_party/interfig/upstream/src/model.ts", Function: "toBeat",
+		Category: "D", Entered: "2026-11-10", Expires: "2027-03-10", Reason: vendoredDocstringExceptionReason,
+	},
+	{
+		Rule: "docstrings", Path: "tools/figures/third_party/interfig/upstream/src/svg.ts", Function: "nodeWidth",
+		Category: "D", Entered: "2026-11-10", Expires: "2027-03-10", Reason: vendoredDocstringExceptionReason,
+	},
+	{
+		Rule: "docstrings", Path: "tools/figures/third_party/interfig/upstream/src/svg.ts", Function: "size",
+		Category: "D", Entered: "2026-11-10", Expires: "2027-03-10", Reason: vendoredDocstringExceptionReason,
+	},
+	{
+		Rule: "docstrings", Path: "tools/figures/third_party/interfig/upstream/src/svg.ts", Function: "place",
+		Category: "D", Entered: "2026-11-10", Expires: "2027-03-10", Reason: vendoredDocstringExceptionReason,
+	},
+	{
+		Rule: "docstrings", Path: "tools/figures/third_party/interfig/upstream/src/svg.ts", Function: "toSvg",
+		Category: "D", Entered: "2026-11-10", Expires: "2027-03-10", Reason: vendoredDocstringExceptionReason,
+	},
+	{
+		Rule: "docstrings", Path: "tools/figures/third_party/interfig/upstream/src/svg.ts", Function: "minH",
+		Category: "D", Entered: "2026-11-10", Expires: "2027-03-10", Reason: vendoredDocstringExceptionReason,
+	},
+}
 
 // emittedAdopterTree writes the same renderings pinned by the emitted fixture generator.
 func emittedAdopterTree(t *testing.T) string {
@@ -180,7 +221,7 @@ func (s *emittedDocstringScan) visit(path string, entry fs.DirEntry, walkErr err
 		return fmt.Errorf("emitted walk exceeds %d entries", maxEmittedWalkEntries)
 	}
 	switch filepath.Ext(path) {
-	case ".py", ".js", ".mjs", ".cjs", ".go":
+	case ".py", ".js", ".mjs", ".cjs", ".ts", ".go":
 		if !entry.IsDir() {
 			return s.checkSource(path)
 		}
@@ -188,11 +229,46 @@ func (s *emittedDocstringScan) visit(path string, entry fs.DirEntry, walkErr err
 	return nil
 }
 
-// emittedDocstringFindings checks every Python, JavaScript and Go function, without diff exclusions.
+// emittedDocstringFindings checks every Python, JavaScript, TypeScript and Go function, without diff exclusions.
 func emittedDocstringFindings(root string) ([]string, error) {
 	scan := &emittedDocstringScan{root: root}
 	err := filepath.WalkDir(root, scan.visit)
 	return scan.findings, err
+}
+
+// unexcusedDocstringFindings applies live path/function exceptions and reports invalid or stale entries.
+func unexcusedDocstringFindings(findings []string, exceptions []config.Exception, today time.Time) (unexcused, problems []string) {
+	keys := make([][2]string, len(findings))
+	excused := make(map[[2]string]bool, len(findings))
+	for i, finding := range findings {
+		location, name, _ := strings.Cut(finding, ": undocumented ")
+		path, _, _ := strings.Cut(location, ":")
+		keys[i] = [2]string{filepath.ToSlash(path), name}
+		excused[keys[i]] = false
+	}
+	for _, entry := range exceptions {
+		label := fmt.Sprintf("%s: undocumented %s", entry.Path, entry.Function)
+		if problem := rules.CategoryExpiryProblem(entry.Category, entry.Entered, entry.Expires, today); problem != "" {
+			problems = append(problems, fmt.Sprintf("%s: %s", label, problem))
+			continue
+		}
+		if entry.Expired(today) {
+			problems = append(problems, label+": expired exception")
+			continue
+		}
+		key := [2]string{entry.Path, entry.Function}
+		if _, found := excused[key]; !found {
+			problems = append(problems, label+": stale exception")
+			continue
+		}
+		excused[key] = true
+	}
+	for i, finding := range findings {
+		if !excused[keys[i]] {
+			unexcused = append(unexcused, finding)
+		}
+	}
+	return unexcused, problems
 }
 
 // TestEmittedAdopterDocstrings requires complete coverage of the adoption renderings.
@@ -201,7 +277,8 @@ func TestEmittedAdopterDocstrings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, finding := range findings {
+	unexcused, problems := unexcusedDocstringFindings(findings, vendoredDocstringExceptions, time.Now())
+	for _, finding := range append(unexcused, problems...) {
 		t.Error(finding)
 	}
 }
@@ -211,14 +288,93 @@ func TestEmittedAdopterDocstringsPlanted(t *testing.T) {
 	for _, fixture := range []struct{ path, text string }{
 		{"planted.py", "def planted():\n    pass\n"},
 		{"planted.mjs", "function planted() {}\n"},
+		{"planted.ts", "function planted() {}\n"},
 		{"planted.go", "package planted\nfunc planted() {}\n"},
 	} {
 		t.Run(fixture.path, func(t *testing.T) {
 			root := emittedAdopterTree(t)
 			mustWrite(t, filepath.Join(root, fixture.path), fixture.text)
 			findings, err := emittedDocstringFindings(root)
-			if err != nil || len(findings) != 1 || !strings.Contains(findings[0], "undocumented planted") {
-				t.Fatalf("findings=%v err=%v; want the planted undocumented function", findings, err)
+			unexcused, problems := unexcusedDocstringFindings(findings, vendoredDocstringExceptions, time.Now())
+			for _, problem := range problems {
+				t.Error(problem)
+			}
+			if err != nil || len(unexcused) != 1 || !strings.Contains(unexcused[0], "undocumented planted") {
+				t.Fatalf("findings=%v err=%v; want the planted undocumented function", unexcused, err)
+			}
+		})
+	}
+	t.Run("vendored_svg", func(t *testing.T) {
+		root := emittedAdopterTree(t)
+		rel := "tools/figures/third_party/interfig/upstream/src/svg.ts"
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		mustWrite(t, path, mustRead(t, path)+"\nfunction planted() {}\n")
+		findings, err := emittedDocstringFindings(root)
+		unexcused, problems := unexcusedDocstringFindings(findings, vendoredDocstringExceptions, time.Now())
+		for _, problem := range problems {
+			t.Error(problem)
+		}
+		if err != nil || len(unexcused) != 1 || !strings.HasPrefix(filepath.ToSlash(unexcused[0]), rel+":") ||
+			!strings.HasSuffix(unexcused[0], ": undocumented planted") {
+			t.Fatalf("findings=%v err=%v; want only the planted vendored function", unexcused, err)
+		}
+	})
+}
+
+// TestEmittedAdopterDocstringExceptionsNegative rejects stale, expired and over-cap entries.
+func TestEmittedAdopterDocstringExceptionsNegative(t *testing.T) {
+	today := time.Date(2026, time.November, 10, 12, 0, 0, 0, time.UTC)
+	base := config.Exception{
+		Rule: "docstrings", Path: "vendor.ts", Function: "known", Category: "D",
+		Entered: "2026-11-01", Expires: "2027-02-01", Reason: "category D: test fixture",
+	}
+	for _, fixture := range []struct {
+		name, path, function, expires, problem string
+		extra                                  bool
+		wantUnexcused                          int
+	}{
+		{"stale", "vendor.ts", "absent", "2027-02-01", "stale", true, 0},
+		{"wrong_path", "other.ts", "known", "2027-02-01", "stale", false, 1},
+		{"expired", "vendor.ts", "known", "2026-11-09", "expired", false, 1},
+		{"cap", "vendor.ts", "known", "2027-03-02", "category D", false, 1},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			entry := base
+			entry.Path, entry.Function, entry.Expires = fixture.path, fixture.function, fixture.expires
+			entries := []config.Exception{entry}
+			if fixture.extra {
+				entries = append(entries, base)
+			}
+			unexcused, problems := unexcusedDocstringFindings([]string{"vendor.ts:999: undocumented known"}, entries, today)
+			if len(unexcused) != fixture.wantUnexcused {
+				t.Errorf("unexcused=%v; want %d findings", unexcused, fixture.wantUnexcused)
+			}
+			if len(problems) != 1 {
+				t.Fatalf("problems=%v; want one %s problem", problems, fixture.problem)
+			}
+			want := fmt.Sprintf("%s: undocumented %s", fixture.path, fixture.function)
+			if !strings.Contains(problems[0], want) || !strings.Contains(problems[0], fixture.problem) {
+				t.Errorf("problem=%q; want %q and %q", problems[0], want, fixture.problem)
+			}
+		})
+	}
+}
+
+// TestEmittedAdopterDocstringExceptionsBoundary accepts the expiry day and the category D cap.
+func TestEmittedAdopterDocstringExceptionsBoundary(t *testing.T) {
+	today := time.Date(2026, time.November, 10, 23, 59, 59, 0, time.UTC)
+	for _, fixture := range []struct{ name, expires string }{
+		{"expiry_day", "2026-11-10"},
+		{"120_days", "2027-03-10"},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			entries := []config.Exception{{
+				Rule: "docstrings", Path: "vendor.ts", Function: "known", Category: "D",
+				Entered: "2026-11-10", Expires: fixture.expires, Reason: "category D: test fixture",
+			}}
+			unexcused, problems := unexcusedDocstringFindings([]string{"vendor.ts:999: undocumented known"}, entries, today)
+			if len(unexcused) != 0 || len(problems) != 0 {
+				t.Fatalf("valid boundary rejected: unexcused=%v problems=%v", unexcused, problems)
 			}
 		})
 	}
