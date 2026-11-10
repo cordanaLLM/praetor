@@ -823,6 +823,12 @@ MAX_CHILD_IMPORT_NAMES = 256
 SUBPROCESS_START_FUNCTIONS = frozenset({
     "run", "Popen", "call", "check_call", "check_output", "getoutput", "getstatusoutput",
 })
+OS_START_FUNCTIONS = frozenset({
+    "system", "popen", "spawnl", "spawnle", "spawnlp", "spawnlpe",
+    "spawnv", "spawnve", "spawnvp", "spawnvpe", "execl", "execle",
+    "execlp", "execlpe", "execv", "execve", "execvp", "execvpe",
+    "posix_spawn", "posix_spawnp", "startfile",
+})
 
 
 def child_ast_nodes(text):
@@ -856,10 +862,31 @@ def subprocess_callable(node):
     )
 
 
+def os_callable(node, os_names):
+    """Recognize OS process starters on os and its explicit import aliases."""
+    return (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id in os_names
+        and (node.attr in OS_START_FUNCTIONS or node.attr.startswith(("spawn", "exec")))
+    )
+
+
 def starts_child(text):
     """Find process imports, calls and callback references while allowing a mocked module."""
-    for node in child_ast_nodes(text)[:MAX_CHILD_AST_NODES]:
-        if imports_subprocess(node) or subprocess_callable(node):
+    nodes = child_ast_nodes(text)[:MAX_CHILD_AST_NODES]
+    os_names = {"os"}
+    for node in nodes:
+        if imports_subprocess(node):
+            return True
+        if isinstance(node, ast.Import):
+            os_names.update(
+                alias.asname or alias.name
+                for alias in node.names[:MAX_CHILD_IMPORT_NAMES]
+                if alias.name == "os"
+            )
+    for node in nodes:
+        if subprocess_callable(node) or os_callable(node, os_names):
             return True
         if (
             isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
@@ -875,6 +902,38 @@ def starts_child(text):
 
 
 class ChildSuites(unittest.TestCase):
+    def test_os_process_start_references_are_rejected(self):
+        """An os process start passed as a callback, partial, alias or binding counts as a direct start."""
+        for line in (
+            "executor.submit(os.system, cmd)",
+            "threading.Thread(target=os.execv)",
+            "functools.partial(os.spawnlp, 0)",
+            "import os as o\nexecutor.submit(o.popen, cmd)",
+            "start = os.posix_spawn\nexecutor.submit(start, argv)",
+            "threading.Thread(target=os.posix_spawnp)",
+            "executor.submit(os.startfile, path)",
+            "import os as o\nstart: object = o.execve\nthreading.Thread(target=start)",
+            "import os as o\nfunctools.partial(start := o.spawnv, 0)",
+            "import os as o\no.system(cmd)",
+            "executor.submit(os.spawn_custom, argv)",
+            "executor.submit(os.exec_custom, argv)",
+        ):
+            with self.subTest(line=line):
+                self.assertTrue(starts_child(line), line)
+
+    def test_os_non_process_references_are_allowed(self):
+        """os attributes that start no process, and other modules' system names, are not starts."""
+        for line in (
+            "os.path.join(a, b)",
+            'os.environ.get("X")',
+            "executor.submit(os.getpid)",
+            "import os as o\nexecutor.submit(o.getpid)",
+            "import other as o\nexecutor.submit(o.system, cmd)",
+            "executor.submit(other.os.system, cmd)",
+        ):
+            with self.subTest(line=line):
+                self.assertFalse(starts_child(line), line)
+
     def test_every_child_of_an_adopting_suite_starts_through_run_child(self):
         """Child test suites invoke child processes through the shared run_child helper."""
         for suite in CHILD_SUITES:

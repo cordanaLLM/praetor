@@ -16,6 +16,15 @@ func TestScannerInstallCommand_Shell(t *testing.T) {
 		{"windows apostrophe", "windows", `C:\O'Brien space\tools\go`,
 			"Command Prompt: set \"GOWORK=off\" && go -C \"C:\\O'Brien space\\tools\\go\" install scanner\n" +
 				"PowerShell: $env:GOWORK='off'; go -C 'C:\\O''Brien space\\tools\\go' install scanner"},
+		{"windows percent", "windows", `C:\%USERPROFILE%\tools\go`,
+			"PowerShell: $env:GOWORK='off'; go -C 'C:\\%USERPROFILE%\\tools\\go' install scanner\n" +
+				"The checkout path contains % or !, which cmd.exe expands; only the PowerShell form is given."},
+		{"windows delayed expansion", "windows", `C:\!checkout!\tools\go`,
+			"PowerShell: $env:GOWORK='off'; go -C 'C:\\!checkout!\\tools\\go' install scanner\n" +
+				"The checkout path contains % or !, which cmd.exe expands; only the PowerShell form is given."},
+		{"windows percent apostrophe", "windows", `C:\O'Brien %checkout%\tools\go`,
+			"PowerShell: $env:GOWORK='off'; go -C 'C:\\O''Brien %checkout%\\tools\\go' install scanner\n" +
+				"The checkout path contains % or !, which cmd.exe expands; only the PowerShell form is given."},
 		{"windows substitutions", "windows", "C:\\$(touch x) `touch y`\\tools\\go",
 			"Command Prompt: set \"GOWORK=off\" && go -C \"C:\\$(touch x) `touch y`\\tools\\go\" install scanner\n" +
 				"PowerShell: $env:GOWORK='off'; go -C 'C:\\$(touch x) `touch y`\\tools\\go' install scanner"},

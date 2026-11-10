@@ -65,9 +65,13 @@ func ScannerInstallGuide(repoPath, binary, fallback string) string {
 // scannerInstallCommand renders restore advice for the selected platform's shells.
 func scannerInstallCommand(toolsDir, pkg, goos string) string {
 	if goos == "windows" {
-		return fmt.Sprintf("Command Prompt: set \"GOWORK=off\" && go -C \"%s\" install %s\n"+
-			"PowerShell: $env:GOWORK='off'; go -C '%s' install %s",
-			toolsDir, pkg, strings.ReplaceAll(toolsDir, "'", "''"), pkg)
+		powershell := fmt.Sprintf("PowerShell: $env:GOWORK='off'; go -C '%s' install %s",
+			strings.ReplaceAll(toolsDir, "'", "''"), pkg)
+		if strings.ContainsAny(toolsDir, "%!") {
+			return powershell + "\nThe checkout path contains % or !, which cmd.exe expands; only the PowerShell form is given."
+		}
+		return fmt.Sprintf("Command Prompt: set \"GOWORK=off\" && go -C \"%s\" install %s\n%s",
+			toolsDir, pkg, powershell)
 	}
 	return fmt.Sprintf("GOWORK=off go -C %s install %s", util.QuotePOSIXShellArg(toolsDir), pkg)
 }
