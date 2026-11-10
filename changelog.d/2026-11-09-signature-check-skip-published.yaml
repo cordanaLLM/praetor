@@ -1,0 +1,4 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+# SPDX-License-Identifier: EUPL-1.2
+type: fixed
+title: The pre-push signature check leaves out commits already published on another remote, so a fork syncing upstream main is not refused for the forge's squash merges it cannot re-sign; own commits are still checked.

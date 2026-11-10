@@ -127,9 +127,9 @@ register:
   # complete prompt, hook-diagnostic, and MCP runtime inventory selected below;
   # deleting one value or selector fails the gate.
   sources:
-    expected: 293
+    expected: 295
     not_applicable: 142
-    sha256: "sha256:3790217f2e4eabfdc7df7d3b9d54e89a571c148a07d3c57e1af52a68d3637edf"
+    sha256: "sha256:c9933fbb39a3494d431b80bc7ecd7d4bd818b489c046d28470234c5e710f60f9"
     inputs:
       - path: ".paperclip/harness.json"
         surface: prompts
