@@ -280,21 +280,36 @@ def check_merge_range(base, head):
 
 
 def signature_log_lines(base, head, remote):
-    """Return "<sha> <%G?>" lines for base..head without commits published on other remotes.
+    """Return bounded signature logs, retaining own commits even when published elsewhere.
 
-    At most MAX_SIGNATURE_COMMITS + 1 lines are read; when other remotes exist, one line names
-    how many published commits were left out and the refs that hold them.
+    This clone can re-sign its own commits, not upstream ones. Both logs and the total count
+    stop at MAX_SIGNATURE_COMMITS + 1; a truncated total gives only a lower exclusion bound.
     """
-    other_refs = other_remote_refs(other_push_remotes(remote))
-    args = [f"--max-count={MAX_SIGNATURE_COMMITS + 1}",
-            "--format=%H %G?", f"{base}..{head}"]
-    if other_refs:
-        args.extend(["--not", *other_refs])
-    args.append("--")
-    lines = git("log", *args).decode().splitlines()
-    if other_refs:
-        total = int(git("rev-list", "--count", f"{base}..{head}", "--").decode().strip())
-        print(f"Signature check: {max(0, total - len(lines))} published commit(s) in "
+    limit = f"--max-count={MAX_SIGNATURE_COMMITS + 1}"
+
+    def collect(other_refs):
+        """Collect one snapshot without printing diagnostics from a discarded attempt."""
+        args = [limit, "--format=%H %G?", f"{base}..{head}"]
+        if other_refs:
+            args.extend(["--not", *other_refs])
+        lines = git("log", *args, "--").decode().splitlines()
+        email, total = None, None
+        if other_refs:
+            email = git("config", "--get", "user.email", allowed=(0, 1)).decode().strip()
+            if email:
+                own = git("log", limit, "--fixed-strings", f"--committer=<{email}>",
+                          "--format=%H %G?", f"{base}..{head}", "--").decode().splitlines()
+                lines = list({line.partition(" ")[0]: line for line in [*lines, *own]}.values())
+            if len(lines) <= MAX_SIGNATURE_COMMITS:
+                total = int(git("rev-list", "--count", limit, f"{base}..{head}", "--").decode().strip())
+        return lines, email, total, other_refs
+
+    lines, email, total, other_refs = with_stable_remote_refs(other_push_remotes(remote), collect)
+    if email == "":
+        print("Signature check: user.email unset; own published commits left out with upstream ones")
+    if total is not None:
+        qualifier = "at least " if total > MAX_SIGNATURE_COMMITS else ""
+        print(f"Signature check: {qualifier}{max(0, total - len(lines))} published commit(s) in "
               f"{base[:12]}..{head[:12]} left out ({', '.join(other_refs)})")
     return lines
 
@@ -305,8 +320,8 @@ def check_signature_range(base, head, remote=None):
     Every pushed commit must carry a valid signature (git %G? status "G"). An
     unsigned or unverifiable commit on a push branch is a single-barrier defect:
     forge rulesets guard only the default branch, not PR heads. Commits already
-    published on another remote are left out so a sync push from an upstream
-    repository is not refused for commits it cannot re-sign.
+    published on another remote are left out unless their committer matches local
+    user.email: this clone can re-sign its own commits, not upstream ones.
 
     The check activates only when commit.gpgsign is true in the repository or
     user config; repos that have not opted into signing are not blocked (CI and
@@ -360,6 +375,7 @@ def check_signature_range(base, head, remote=None):
 # MAX_REMOTES bounds the configured remotes evaluated by the hook (HISS-02).
 MAX_REMOTES = 64
 MAX_COMMIT_MESSAGE_COMMITS = 500
+MAX_REF_SNAPSHOT_ATTEMPTS = 3
 
 
 def other_push_remotes(remote):
@@ -425,6 +441,23 @@ def other_remote_refs(remotes):
     return refs
 
 
+def with_stable_remote_refs(remotes, action):
+    """Retry ref-dependent work after a concurrent fetch; preserve only stable results."""
+    for _ in range(MAX_REF_SNAPSHOT_ATTEMPTS):
+        refs = other_remote_refs(remotes)
+        error = None
+        result = None
+        try:
+            result = action(refs)
+        except HookError as exc:
+            error = exc
+        if other_remote_refs(remotes) == refs:
+            if error is not None:
+                raise error
+            return result
+    raise HookError("Remote tracking refs changed during a concurrent fetch; retry the push")
+
+
 def check_commit_message_range(base, head, remote=None):
     """Run the commit message policy over the exact outgoing commit range (#1814).
 
@@ -436,12 +469,14 @@ def check_commit_message_range(base, head, remote=None):
     if not base:
         print("Commit message check: skipped, no pushed-range base; CI checks pull request range")
         return
-    other_remotes = other_push_remotes(remote)
-    other_refs = other_remote_refs(other_remotes)
-    cmd = [praetorctl_path(), "forge", "check-commits", f"--base={base}", f"--head={head}"]
-    for ref in other_refs:
-        cmd.append(f"--exclude={ref}")
-    run(cmd, capture=False, timeout=180)
+    def check(other_refs):
+        """Check commit messages against one remote ref snapshot."""
+        cmd = [praetorctl_path(), "forge", "check-commits", f"--base={base}", f"--head={head}"]
+        for ref in other_refs:
+            cmd.append(f"--exclude={ref}")
+        run(cmd, capture=False, timeout=180)
+
+    with_stable_remote_refs(other_push_remotes(remote), check)
 
 
 def check_commits(base):

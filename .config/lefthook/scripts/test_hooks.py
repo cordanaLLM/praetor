@@ -1818,7 +1818,8 @@ print("fixture hook self-tests passed")
         # 1. Upstream commit without valid signature (published on upstream remote)
         self.write("upstream.txt", "upstream\n")
         command(
-            self.repo, "git", "commit", "-q", "-s", "--no-verify", "--no-gpg-sign",
+            self.repo, "git", "-c", "user.email=upstream@example.test",
+            "commit", "-q", "-s", "--no-verify", "--no-gpg-sign",
             "-m", "feat: upstream commit without signature",
         )
         upstream_sha = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
@@ -1848,6 +1849,7 @@ print("fixture hook self-tests passed")
                     "-m", "feat: own unsigned commit",
                 )
                 own_sha = command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+                command(self.repo, "git", "update-ref", "refs/remotes/upstream/own", own_sha)
 
                 with self.assertRaises(HookError) as ctx:
                     hooks.check_signature_range(base, own_sha, remote="origin")
@@ -1896,6 +1898,7 @@ print("fixture hook self-tests passed")
                 mock.patch("hooks.other_remote_refs", return_value=["upstream-sha"]), \
                 mock.patch("hooks.git", side_effect=[
                     log_output.encode(),
+                    b"",
                     b"600\n",
                 ]), \
                 self.assertRaises(HookError) as ctx:
@@ -1911,6 +1914,7 @@ print("fixture hook self-tests passed")
                 mock.patch("hooks.other_remote_refs", return_value=["1111111111111111111111111111111111111111"]), \
                 mock.patch("hooks.git", side_effect=[
                     log_output.encode(),
+                    b"",
                     b"2\n",
                 ]) as git_cmd, \
                 mock.patch("sys.stdout", new_callable=io.StringIO) as out:
@@ -2023,6 +2027,203 @@ print("fixture hook self-tests passed")
         rewritten = self.hook("post-rewrite", data=f"{base} {tip}\n".encode())
         self.assertEqual(rewritten.returncode, 0, rewritten.stdout + rewritten.stderr)
         self.assertNotEqual(self.hook("post-rewrite", data=b"bad\n").returncode, 0)
+
+
+class SignaturePublished(unittest.TestCase):
+    """Signature and ref regressions without installing hooks or changing process config."""
+
+    @contextlib.contextmanager
+    def signature_fixture(self, lines=b"", own=b"", email=b"local@example.test\n", total=2):
+        """Stub Git's bounded range queries and capture diagnostics and exact arguments."""
+        def fake_git(*args, **kwargs):
+            """Answer the config, log and rev-list calls signature_log_lines makes."""
+            if args[0] == "config":
+                self.assertEqual(args, ("config", "--get", "user.email"))
+                self.assertEqual(kwargs, {"allowed": (0, 1)})
+                return email
+            if args[0] == "log":
+                return own if "--fixed-strings" in args else lines
+            if args[0] == "rev-list":
+                return f"{total}\n".encode()
+            self.fail(f"unexpected git call: {args}")
+
+        with mock.patch("hooks.run", return_value=b"true\n"), \
+                mock.patch("hooks.other_push_remotes", return_value=["upstream"]), \
+                mock.patch("hooks.other_remote_refs", return_value=["published-sha"]), \
+                mock.patch("hooks.git", side_effect=fake_git) as git_cmd, \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            yield out, git_cmd
+
+    def test_signature_own_published_unsigned_commit_refused(self):
+        """A published unsigned commit by the configured committer remains checked."""
+        with self.signature_fixture(own=b"own-sha N\n"), \
+                self.assertRaisesRegex(HookError, "own-sha.*no signature"):
+            hooks.check_signature_range("base", "head", remote="origin")
+
+    def test_signature_other_committer_published_unverifiable_commit_exempt(self):
+        """An upstream commit absent from both queries is excluded exactly once."""
+        with self.signature_fixture(total=1) as (out, git_cmd):
+            hooks.check_signature_range("base", "head", remote="origin")
+        self.assertIn("1 published commit(s)", out.getvalue())
+        self.assertIn("0 commit(s)", out.getvalue())
+        git_cmd.assert_any_call(
+            "log", f"--max-count={hooks.MAX_SIGNATURE_COMMITS + 1}",
+            "--fixed-strings", "--committer=<local@example.test>",
+            "--format=%H %G?", "base..head", "--",
+        )
+
+    def test_signature_unset_email_preserves_exemption_and_reports_identity(self):
+        """Without user.email the old exemption remains visible as an identity limitation."""
+        with self.signature_fixture(email=b"", total=1) as (out, git_cmd):
+            hooks.check_signature_range("base", "head", remote="origin")
+        self.assertEqual(out.getvalue().count("own published commits left out with upstream ones"), 1)
+        self.assertIn("1 published commit(s)", out.getvalue())
+        self.assertEqual(sum(call.args[0] == "log" for call in git_cmd.call_args_list), 1)
+
+    def test_signature_merge_deduplicates_sha_and_preserves_order(self):
+        """Own commits already checked do not inflate the range or disturb log order."""
+        with self.signature_fixture(lines=b"first G\nshared G\n", own=b"shared G\nlast G\n"):
+            self.assertEqual(hooks.signature_log_lines("base", "head", "origin"),
+                             ["first G", "shared G", "last G"])
+
+    def test_signature_large_total_reports_at_least_true_exclusions(self):
+        """A capped total never presents unchecked commits as an exact exclusion count."""
+        with self.signature_fixture(lines=b"checked G\n", total=hooks.MAX_SIGNATURE_COMMITS + 1) as (out, _):
+            hooks.check_signature_range("base", "head", remote="origin")
+        self.assertIn(f"at least {hooks.MAX_SIGNATURE_COMMITS} published commit(s)", out.getvalue())
+
+    def test_signature_total_at_cap_reports_exact_exclusions(self):
+        """A complete count exactly at the cap still gives an exact exclusion count."""
+        with self.signature_fixture(lines=b"checked G\n", total=hooks.MAX_SIGNATURE_COMMITS) as (out, _):
+            hooks.check_signature_range("base", "head", remote="origin")
+        self.assertIn(f"{hooks.MAX_SIGNATURE_COMMITS - 1} published commit(s)", out.getvalue())
+        self.assertNotIn("at least", out.getvalue())
+
+    def test_signature_filtered_over_cap_prints_no_exclusion_count(self):
+        """An incomplete filtered log must fail the cap without claiming exclusions."""
+        lines = "\n".join(f"{i:040x} G" for i in range(hooks.MAX_SIGNATURE_COMMITS + 1)).encode()
+        with self.signature_fixture(lines=lines, total=hooks.MAX_SIGNATURE_COMMITS + 1) as (out, _), \
+                self.assertRaisesRegex(HookError, f"exceeds {hooks.MAX_SIGNATURE_COMMITS} commits"):
+            hooks.check_signature_range("base", "head", remote="origin")
+        self.assertNotIn("published commit(s)", out.getvalue())
+
+    def test_signature_merged_own_commits_enforce_cap(self):
+        """The union, rather than either individual log, is bounded by the cap."""
+        lines = "\n".join(f"{i:040x} G" for i in range(hooks.MAX_SIGNATURE_COMMITS)).encode()
+        with self.signature_fixture(lines=lines, own=b"own N\n") as (out, _), \
+                self.assertRaisesRegex(HookError, f"exceeds {hooks.MAX_SIGNATURE_COMMITS} commits"):
+            hooks.check_signature_range("base", "head", remote="origin")
+        self.assertNotIn("published commit(s)", out.getvalue())
+
+    def test_signature_count_argv_is_bounded(self):
+        """The count has its own max-count bound even when filtering leaves one commit."""
+        with self.signature_fixture(lines=b"checked G\n") as (_, git_cmd):
+            hooks.check_signature_range("base", "head", remote="origin")
+        git_cmd.assert_any_call("rev-list", "--count", f"--max-count={hooks.MAX_SIGNATURE_COMMITS + 1}",
+                                "base..head", "--")
+
+    def test_stable_remote_refs_unchanged_runs_action_once(self):
+        """The unchanged boundary returns the action's result after one comparison."""
+        action = mock.Mock(return_value="result")
+        with mock.patch("hooks.other_remote_refs", return_value=["same"]) as refs:
+            self.assertEqual(hooks.with_stable_remote_refs(["upstream"], action), "result")
+        action.assert_called_once_with(["same"])
+        self.assertEqual(refs.call_args_list, [mock.call(["upstream"])] * 2)
+
+    def test_stable_remote_refs_changes_once_then_retries(self):
+        """A concurrent fetch discards the stale result and checks the new snapshot."""
+        action = mock.Mock(side_effect=["stale", "stable"])
+        with mock.patch("hooks.other_remote_refs", side_effect=[["old"], ["new"], ["new"], ["new"]]):
+            self.assertEqual(hooks.with_stable_remote_refs(["upstream"], action), "stable")
+        self.assertEqual(action.call_args_list, [mock.call(["old"]), mock.call(["new"])])
+
+    def test_stable_remote_refs_continuous_fetch_fails_after_attempt_bound(self):
+        """Continuous changes stop after exactly MAX_REF_SNAPSHOT_ATTEMPTS actions."""
+        attempts = hooks.MAX_REF_SNAPSHOT_ATTEMPTS
+        action = mock.Mock()
+        snapshots = [[str(i)] for i in range(2 * attempts)]
+        with mock.patch("hooks.other_remote_refs", side_effect=snapshots) as refs, \
+                self.assertRaisesRegex(HookError, "concurrent fetch.*retry.*push"):
+            hooks.with_stable_remote_refs(["upstream"], action)
+        self.assertEqual(action.call_count, attempts)
+        self.assertEqual(refs.call_count, 2 * attempts)
+
+    def test_signature_ref_snapshot_retry_checks_newly_published_set(self):
+        """A fetch during signature logging causes the signature query to run again."""
+        with self.signature_fixture(email=b"", total=1) as (out, git_cmd), \
+                mock.patch("hooks.other_remote_refs", side_effect=[["old"], ["new"], ["new"], ["new"]]):
+            hooks.check_signature_range("base", "head", remote="origin")
+        logs = [call.args for call in git_cmd.call_args_list if call.args[0] == "log"]
+        self.assertEqual(len(logs), 2)
+        self.assertIn("old", logs[0])
+        self.assertIn("new", logs[1])
+        self.assertEqual(out.getvalue().count("published commit(s)"), 1)
+
+    def test_commit_message_ref_snapshot_retry_updates_exclusions(self):
+        """Commit message checking uses the same retry with the latest object names."""
+        with mock.patch("hooks.other_push_remotes", return_value=["upstream"]), \
+                mock.patch("hooks.other_remote_refs", side_effect=[["old"], ["new"], ["new"], ["new"]]), \
+                mock.patch("hooks.praetorctl_path", return_value="praetorctl"), \
+                mock.patch("hooks.run") as run_cmd:
+            hooks.check_commit_message_range("base", "head", remote="origin")
+        self.assertEqual(run_cmd.call_args_list, [
+            mock.call(["praetorctl", "forge", "check-commits", "--base=base", "--head=head",
+                       f"--exclude={ref}"], capture=False, timeout=180)
+            for ref in ("old", "new")
+        ])
+
+    def test_commit_message_ref_snapshot_retry_discards_stale_failure(self):
+        """A newly published commit may resolve the failure from the previous snapshot."""
+        with mock.patch("hooks.other_push_remotes", return_value=["upstream"]), \
+                mock.patch("hooks.other_remote_refs", side_effect=[["old"], ["new"], ["new"], ["new"]]), \
+                mock.patch("hooks.praetorctl_path", return_value="praetorctl"), \
+                mock.patch("hooks.run", side_effect=[HookError("stale failure"), b""]) as run_cmd:
+            hooks.check_commit_message_range("base", "head", remote="origin")
+        self.assertEqual(run_cmd.call_count, 2)
+
+    def test_stable_remote_refs_unchanged_failure_propagates(self):
+        """A failure against stable refs is preserved without unnecessary retries."""
+        action = mock.Mock(side_effect=HookError("policy refused"))
+        with mock.patch("hooks.other_remote_refs", return_value=["same"]), \
+                self.assertRaisesRegex(HookError, "policy refused"):
+            hooks.with_stable_remote_refs(["upstream"], action)
+        action.assert_called_once_with(["same"])
+
+    def test_signature_range_published_committer_identity_in_two_remote_fixture(self):
+        """Real Git excludes a longer email but retains a published local committer."""
+        with tempfile.TemporaryDirectory(prefix="signature-published-") as temp:
+            repo = Path(temp)
+
+            def fixture_git(*args, **kwargs):
+                """Run only local Git plumbing, without hooks or process config changes."""
+                return common.git(*args, cwd=repo, **kwargs)
+
+            fixture_git("init", "-q", "-b", "main")
+            fixture_git("config", "user.name", "Signature Test")
+            fixture_git("config", "user.email", "local@example.test")
+            fixture_git("remote", "add", "origin", str(repo / "origin.git"))
+            fixture_git("remote", "add", "upstream", str(repo / "upstream.git"))
+            tree = common.run(["git", "mktree"], cwd=repo, data=b"").decode().strip()
+            base = fixture_git("commit-tree", tree, "--no-gpg-sign", "-m", "base").decode().strip()
+            upstream = fixture_git("-c", "user.email=longerlocal@example.test", "commit-tree", tree,
+                                   "-p", base, "--no-gpg-sign", "-m", "upstream").decode().strip()
+            own = fixture_git("commit-tree", tree, "-p", upstream,
+                              "--no-gpg-sign", "-m", "own").decode().strip()
+            fixture_git("update-ref", "refs/remotes/upstream/main", own)
+            with mock.patch("hooks.git", side_effect=fixture_git), \
+                    mock.patch("hooks.run", return_value=b"true\n"), \
+                    contextlib.redirect_stdout(io.StringIO()) as out:
+                hooks.check_signature_range(base, upstream, remote="origin")
+                self.assertIn("1 published commit(s)", out.getvalue())
+                with self.assertRaisesRegex(HookError, f"{own[:12]}.*no signature") as error:
+                    hooks.check_signature_range(base, own, remote="origin")
+                self.assertNotIn(upstream[:12], str(error.exception))
+                out.truncate(0)
+                out.seek(0)
+                with mock.patch("hooks.MAX_SIGNATURE_COMMITS", 1), \
+                        self.assertRaisesRegex(HookError, f"{own[:12]}.*no signature"):
+                    hooks.check_signature_range(base, own, remote="origin")
+                self.assertIn("at least 1 published commit(s)", out.getvalue())
 
 
 class SnapshotSweep(unittest.TestCase):
