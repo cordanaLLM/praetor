@@ -25,7 +25,8 @@ func TestScannerInstallGuide_3D(t *testing.T) {
 		t.Fatalf("absent tools module: %s", got)
 	}
 	pin := filepath.Join(root, "tools/go/go.mod")
-	if err := os.MkdirAll(pin, 0o750); err != nil {
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a directory needs the owner search bit to hold entries; 0o700 is least privilege
+	if err := os.MkdirAll(pin, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if got := flavor.ScannerInstallGuide(root, "gosec", fallback); got != fallback {
