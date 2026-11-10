@@ -86,12 +86,12 @@ func TestGate_PullRequestEvent_Planted_3D(t *testing.T) {
 	base := commitGateFile(t, dir, "creds.py", "clean = 1\n")
 	head := commitGateFile(t, dir, "README.md", "clean pull request\n")
 	env := gatePullRequestEnvironment(t, base, head)
-	want := "secrets gate: scanning pull request range " + base[:12] + ".." + head[:12]
+	want := "secrets gate: scanning pull request range " + base[:12] + ".." + head[:12] + " within 5m0s"
 	if out, code := runGateCLIEnvironment(t, dir, "", env); code != 0 || !strings.Contains(out, want) {
 		t.Fatalf("clean event range after historical secret: exit %d, want 0 and %q: %s", code, want, out)
 	}
 	pushEnv := append(append([]string{}, env...), "GITHUB_EVENT_NAME=push")
-	if out, code := runGateCLIEnvironment(t, dir, "", pushEnv); code != 3 || !strings.Contains(out, "scanning full history") {
+	if out, code := runGateCLIEnvironment(t, dir, "", pushEnv); code != 3 || !strings.Contains(out, "scanning full history within 10m0s") {
 		t.Fatalf("push event: exit %d, want 3 and full history scope: %s", code, out)
 	}
 	if out, code := runGateCLIEnvironment(t, dir, "", pushEnv, "-range="+base+".."+head); code != 0 || !strings.Contains(out, want) {
@@ -248,7 +248,7 @@ func TestGate_PullRequestRange_Planted_3D(t *testing.T) {
 	dir, _ := secrets.BuildOrdinaryLeakRepo(t)
 	base := commitGateFile(t, dir, "creds.py", "clean = 1\n")
 	head := commitGateFile(t, dir, "README.md", "clean pull request\n")
-	want := "secrets gate: scanning pull request range " + base[:12] + ".." + head[:12]
+	want := "secrets gate: scanning pull request range " + base[:12] + ".." + head[:12] + " within 5m0s"
 	if out, code := runGateCLI(t, dir, "", "-range="+base+".."+head); code != 0 || !strings.Contains(out, want) {
 		t.Fatalf("clean range after historical secret: exit %d, want 0 and %q: %s", code, want, out)
 	}

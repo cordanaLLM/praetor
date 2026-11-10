@@ -27,9 +27,14 @@ import (
 var pullRequestRange = regexp.MustCompile(`^[0-9a-fA-F]{7,40}\.\.[0-9a-fA-F]{7,40}$`)
 
 const (
-	scanTimeout   = 5 * time.Minute
-	defaultConfig = ".gitleaks.toml"
-	maxEventBytes = 4 << 20
+	// rangeScanTimeout bounds a pull request range scan; historyScanTimeout bounds the full-history
+	// scan of pushes, merge_group and schedule. Measured full-history scans on the hosted runner took
+	// 157-284 s and were killed at the former 5-minute bound in 3 of 9 runs (#1865); the secrets step
+	// starts at most 152 s into its 15-minute job, so 10 minutes still ends inside the job.
+	rangeScanTimeout   = 5 * time.Minute
+	historyScanTimeout = 10 * time.Minute
+	defaultConfig      = ".gitleaks.toml"
+	maxEventBytes      = 4 << 20
 	// logOpts reads full history and merge commits (#1237). Order
 	// engine-secretscan-foreign-remote-refs-20261025: read only the repository's
 	// own refs (branches, tags, origin); --all walked refs of other remotes.
@@ -83,7 +88,7 @@ func runGate(args []string, stdout, stderr io.Writer) int {
 		cfg = filepath.Join(*repoPath, defaultConfig)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), scanTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), scanTimeoutFor(commitRange))
 	defer cancel()
 
 	findings, err := executeGitleaks(ctx, *repoPath, cfg, scanLogOptions(commitRange, stdout))
@@ -163,14 +168,23 @@ func readEventPayload(path string) (data []byte, err error) {
 	return data, nil
 }
 
+// scanTimeoutFor returns the scan bound for the scope: the range bound for a pull request range,
+// the larger history bound for a full-history scan.
+func scanTimeoutFor(commitRange string) time.Duration {
+	if commitRange != "" {
+		return rangeScanTimeout
+	}
+	return historyScanTimeout
+}
+
 // scanLogOptions returns the gitleaks --log-opts value for the scope and prints which scope the gate scans.
 func scanLogOptions(commitRange string, stdout io.Writer) string {
 	if commitRange == "" {
-		fmt.Fprintln(stdout, "secrets gate: scanning full history")
+		fmt.Fprintf(stdout, "secrets gate: scanning full history within %s\n", scanTimeoutFor(commitRange))
 		return logOpts
 	}
 	base, head, _ := strings.Cut(commitRange, "..")
-	fmt.Fprintf(stdout, "secrets gate: scanning pull request range %s..%s\n", base[:min(len(base), 12)], head[:min(len(head), 12)])
+	fmt.Fprintf(stdout, "secrets gate: scanning pull request range %s..%s within %s\n", base[:min(len(base), 12)], head[:min(len(head), 12)], scanTimeoutFor(commitRange))
 	return commitRange + " -m"
 }
 
