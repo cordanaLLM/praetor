@@ -251,6 +251,7 @@ func verificationRecipeWith(plan *VerificationPlan, commands [][]string, prefix 
 	return result.String()
 }
 
+// verificationCommand renders argv as one POSIX shell command line, each argument quoted.
 func verificationCommand(argv []string) string {
 	quoted := make([]string, len(argv))
 	for i, arg := range argv {
