@@ -23,7 +23,13 @@ import (
 
 func runGateCLI(t *testing.T, dir string, envExceptions string, args ...string) (string, int) {
 	t.Helper()
-	ctx, err := util.WithCommandEnvironment(t.Context(), append(os.Environ(), "SECRETS_EXCEPTIONS="+envExceptions))
+	return runGateCLIEnvironment(t, dir, envExceptions, nil, args...)
+}
+
+func runGateCLIEnvironment(t *testing.T, dir, envExceptions string, eventEnv []string, args ...string) (string, int) {
+	t.Helper()
+	env := append(os.Environ(), "GITHUB_EVENT_NAME=", "GITHUB_EVENT_PATH=", "SECRETS_EXCEPTIONS="+envExceptions)
+	ctx, err := util.WithCommandEnvironment(t.Context(), append(env, eventEnv...))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,6 +51,164 @@ func runGateCLI(t *testing.T, dir string, envExceptions string, args ...string) 
 		}
 	}
 	return string(out), exitCode
+}
+
+func gateEventFile(t *testing.T, data string) string {
+	t.Helper()
+	name := filepath.Join(t.TempDir(), "event.json")
+	if err := os.WriteFile(name, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return name
+}
+
+func gatePullRequestEnvironment(t *testing.T, base, head string) []string {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{"pull_request": map[string]any{
+		"base": map[string]string{"sha": base}, "head": map[string]string{"sha": head},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return []string{"GITHUB_EVENT_NAME=pull_request", "GITHUB_EVENT_PATH=" + gateEventFile(t, string(data))}
+}
+
+func TestGate_PullRequestEvent_Planted_3D(t *testing.T) {
+	if _, err := exec.LookPath("gitleaks"); err != nil {
+		t.Skip("gitleaks not installed on PATH")
+	}
+	dir, _ := secrets.BuildOrdinaryLeakRepo(t)
+	base := commitGateFile(t, dir, "creds.py", "clean = 1\n")
+	head := commitGateFile(t, dir, "README.md", "clean pull request\n")
+	env := gatePullRequestEnvironment(t, base, head)
+	want := "secrets gate: scanning pull request range " + base[:12] + ".." + head[:12]
+	if out, code := runGateCLIEnvironment(t, dir, "", env); code != 0 || !strings.Contains(out, want) {
+		t.Fatalf("clean event range after historical secret: exit %d, want 0 and %q: %s", code, want, out)
+	}
+	pushEnv := append(append([]string{}, env...), "GITHUB_EVENT_NAME=push")
+	if out, code := runGateCLIEnvironment(t, dir, "", pushEnv); code != 3 || !strings.Contains(out, "scanning full history") {
+		t.Fatalf("push event: exit %d, want 3 and full history scope: %s", code, out)
+	}
+	if out, code := runGateCLIEnvironment(t, dir, "", pushEnv, "-range="+base+".."+head); code != 0 || !strings.Contains(out, want) {
+		t.Fatalf("explicit range wins over push event: exit %d, want 0 and %q: %s", code, want, out)
+	}
+	leak := commitGateFile(t, dir, "creds.py", "api_key = \""+secrets.PlantedSecret()+"\"\n")
+	if out, code := runGateCLIEnvironment(t, dir, "", gatePullRequestEnvironment(t, head, leak)); code != 3 || !strings.Contains(out, leak) {
+		t.Fatalf("secret inside event range: exit %d, want 3 naming %s: %s", code, leak, out)
+	}
+}
+
+func TestGate_PullRequestEvent_Negative(t *testing.T) {
+	valid := strings.Repeat("a", 40)
+	cases := []struct{ name, path, cause string }{
+		{"unset path", "", "GITHUB_EVENT_PATH"},
+		{"missing file", filepath.Join(t.TempDir(), "missing.json"), "GITHUB_EVENT_PATH"},
+		{"non regular file", t.TempDir(), "regular file"},
+		{"invalid JSON", gateEventFile(t, "{"), "JSON"},
+		{"oversized file", gateEventFile(t, strings.Repeat(" ", (4<<20)+1)), "4 MiB"},
+		{"invalid head", gateEventFile(t, `{"pull_request":{"base":{"sha":"`+valid+`"},"head":{"sha":"main"}}}`), "pull_request.head.sha"},
+		{"invalid base", gateEventFile(t, `{"pull_request":{"base":{"sha":"main"},"head":{"sha":"`+valid+`"}}}`), "pull_request.base.sha"},
+		{"missing head", gateEventFile(t, `{"pull_request":{"base":{"sha":"`+valid+`"}}}`), "pull_request.head.sha"},
+		{"missing pull request", gateEventFile(t, `{}`), "pull_request.base.sha"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := []string{"GITHUB_EVENT_NAME=pull_request", "GITHUB_EVENT_PATH=" + tc.path}
+			out, code := runGateCLIEnvironment(t, t.TempDir(), "", env)
+			if code != 2 || !strings.Contains(out, tc.cause) || strings.Contains(out, "scanning full history") {
+				t.Fatalf("invalid event: exit %d, want 2 naming %q without fallback: %s", code, tc.cause, out)
+			}
+		})
+	}
+}
+
+func TestGate_PullRequestEvent_RangeOverridesInvalidEvent(t *testing.T) {
+	if _, err := exec.LookPath("gitleaks"); err != nil {
+		t.Skip("gitleaks not installed on PATH")
+	}
+	dir := secrets.BuildCleanRepo(t)
+	base := commitGateFile(t, dir, "README.md", "base\n")
+	head := commitGateFile(t, dir, "README.md", "head\n")
+	env := []string{"GITHUB_EVENT_NAME=pull_request", "GITHUB_EVENT_PATH=missing.json"}
+	if out, code := runGateCLIEnvironment(t, dir, "", env, "-range="+base+".."+head); code != 0 || !strings.Contains(out, "scanning pull request range") {
+		t.Fatalf("explicit range bypasses invalid event: exit %d, want 0: %s", code, out)
+	}
+}
+
+func TestGate_PullRequestEvent_Boundary(t *testing.T) {
+	if _, err := exec.LookPath("gitleaks"); err != nil {
+		t.Skip("gitleaks not installed on PATH")
+	}
+	dir := secrets.BuildCleanRepo(t)
+	base := commitGateFile(t, dir, "README.md", "base\n")
+	head := commitGateFile(t, dir, "README.md", "head\n")
+	for _, length := range []int{7, 40} {
+		env := gatePullRequestEnvironment(t, base[:length], head[:length])
+		path := strings.TrimPrefix(env[1], "GITHUB_EVENT_PATH=")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data = append(data, strings.Repeat(" ", (4<<20)-len(data))...)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if out, code := runGateCLIEnvironment(t, dir, "", env); code != 0 || !strings.Contains(out, "scanning pull request range") {
+			t.Fatalf("%d-character SHAs and 4 MiB event: exit %d, want 0: %s", length, code, out)
+		}
+	}
+}
+
+func TestGate_RangeExceptionJudgment_3D(t *testing.T) {
+	if _, err := exec.LookPath("gitleaks"); err != nil {
+		t.Skip("gitleaks not installed on PATH")
+	}
+	dir, _ := secrets.BuildOrdinaryLeakRepo(t)
+	base := commitGateFile(t, dir, "creds.py", "clean = 1\n")
+	head := commitGateFile(t, dir, "README.md", "clean pull request\n")
+	today := time.Now().UTC()
+	entry := rules.Entry{Path: "creds.py", RuleID: "generic-api-key", Category: "C",
+		Entered: today.Format(time.DateOnly), Expires: today.AddDate(0, 0, 7).Format(time.DateOnly), Reason: "historical waiver"}
+	data, err := json.Marshal([]rules.Entry{entry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "not judged in a pull request range; the full-history scan on push, merge_group and schedule judges it"
+	if out, code := runGateCLIEnvironment(t, dir, string(data), gatePullRequestEnvironment(t, base, head)); code != 0 || strings.Count(out, want) != 1 || !strings.Contains(out, "path creds.py, rule generic-api-key") {
+		t.Fatalf("historical waiver in event range: exit %d, want 0 and one not-judged line: %s", code, out)
+	}
+	if out, code := runGateCLI(t, dir, string(data), "-range="+base+".."+head); code != 0 || strings.Count(out, want) != 1 {
+		t.Fatalf("historical waiver in explicit range: exit %d, want 0 and one not-judged line: %s", code, out)
+	}
+	if out, code := runGateCLI(t, secrets.BuildCleanRepo(t), string(data)); code != 3 || !strings.Contains(out, "unused exception") {
+		t.Fatalf("unused full-history waiver: exit %d, want 3 naming unused exception: %s", code, out)
+	}
+}
+
+func TestGate_RangeExpiredException(t *testing.T) {
+	if _, err := exec.LookPath("gitleaks"); err != nil {
+		t.Skip("gitleaks not installed on PATH")
+	}
+	dir := secrets.BuildCleanRepo(t)
+	base := commitGateFile(t, dir, "README.md", "base\n")
+	head := commitGateFile(t, dir, "README.md", "head\n")
+	today := time.Now().UTC()
+	entry := rules.Entry{Path: "creds.py", RuleID: "generic-api-key", Category: "C", Reason: "expired historical waiver",
+		Entered: today.AddDate(0, 0, -10).Format(time.DateOnly), Expires: today.AddDate(0, 0, -1).Format(time.DateOnly)}
+	data, err := json.Marshal([]rules.Entry{entry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, code := runGateCLI(t, dir, string(data), "-range="+base+".."+head); code != 3 || !strings.Contains(out, "expired exception") {
+		t.Fatalf("expired range waiver: exit %d, want 3 naming expired exception: %s", code, out)
+	}
+}
+
+func TestGate_RangeInvalidException(t *testing.T) {
+	data := `[{"path":"../outside.py","rule_id":"generic-api-key","expires":"2026-11-01"}]`
+	if out, code := runGateCLI(t, t.TempDir(), data, "-range=abcdef0..abcdef1"); code != 2 || !strings.Contains(out, "invalid exceptions") {
+		t.Fatalf("invalid range exception: exit %d, want 2 naming invalid exceptions: %s", code, out)
+	}
 }
 
 func commitGateFile(t *testing.T, dir, name, content string) string {

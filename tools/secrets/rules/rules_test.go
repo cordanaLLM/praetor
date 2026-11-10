@@ -14,6 +14,49 @@ import (
 
 var testToday = time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
 
+func TestJudgeWithOptions_Unused_3D(t *testing.T) {
+	entry := rules.Entry{Path: "creds.py", RuleID: "generic-api-key", Expires: "2026-11-01"}
+	for _, deferUnused := range []bool{false, true} {
+		res := rules.JudgeWithOptions(nil, []rules.Entry{entry}, "", testToday, rules.JudgeOptions{DeferUnused: deferUnused})
+		if res.Failed() == deferUnused {
+			t.Fatalf("DeferUnused=%v: unexpected failure status: %+v", deferUnused, res)
+		}
+		if deferUnused {
+			if len(res.Unjudged) != 1 || len(res.Stale) != 0 || len(res.StaleIdx) != 0 {
+				t.Fatalf("only unused judgment should be deferred: %+v", res)
+			}
+		} else if len(res.Stale) != 1 || len(res.StaleIdx) != 1 || len(res.Unjudged) != 0 {
+			t.Fatalf("default options must preserve unused judgment: %+v", res)
+		}
+	}
+}
+
+func TestJudgeWithOptions_ExpiredAndBlocking_3D(t *testing.T) {
+	for _, expiry := range []string{"2026-10-17", "invalid"} {
+		entry := rules.Entry{Path: "creds.py", RuleID: "generic-api-key", Expires: expiry}
+		finding := rules.Finding{File: entry.Path, RuleID: entry.RuleID}
+		for _, findings := range [][]rules.Finding{nil, {finding}} {
+			res := rules.JudgeWithOptions(findings, []rules.Entry{entry}, "", testToday, rules.JudgeOptions{DeferUnused: true})
+			if !res.Failed() || len(res.Expired) != 1 || len(res.ExpiredIdx) != 1 || len(res.Blocking) != len(findings) {
+				t.Fatalf("expired or malformed expiry must still fail: %+v", res)
+			}
+		}
+	}
+	res := rules.JudgeWithOptions([]rules.Finding{{File: "unexcused.py", RuleID: "generic-api-key"}}, nil, "", testToday, rules.JudgeOptions{DeferUnused: true})
+	if !res.Failed() || len(res.Blocking) != 1 {
+		t.Fatalf("unexcused range finding must fail: %+v", res)
+	}
+}
+
+func TestJudgeWithOptions_ExpiryBoundary(t *testing.T) {
+	entry := rules.Entry{Path: "creds.py", RuleID: "generic-api-key", Expires: testToday.Format(rules.DateLayout)}
+	finding := rules.Finding{File: entry.Path, RuleID: entry.RuleID}
+	res := rules.JudgeWithOptions([]rules.Finding{finding}, []rules.Entry{entry}, "", testToday, rules.JudgeOptions{DeferUnused: true})
+	if res.Failed() || len(res.Allowed) != 1 || len(res.Unjudged) != 0 {
+		t.Fatalf("matching entry remains live on its expiry date: %+v", res)
+	}
+}
+
 func TestCategoryDays_3D(t *testing.T) {
 	cases := []struct {
 		cat  string
