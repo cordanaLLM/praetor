@@ -80,6 +80,12 @@ overrides:
 # Declared per-file exceptions (AGENTS.md rule 14): one rule, one file, a reason and an expiry
 # at most 90 days ahead; an expired entry fails its gate like a missing one.
 exceptions:
+  - rule: "test-timeout"
+    path: "Makefile"
+    category: "C"
+    reason: "category C: Linux internal/adopt passed under -race in 1508 s and 1583 s but twice hit the 1800 s bound on 2026-11-10 (issue 1381); the separate 1381 speedup unit removes this exception and the 45m invocation"
+    entered: "2026-11-10"
+    expires: "2026-11-20"
   - rule: "codespell"
     path: "tools/figures/player/player.js"
     category: "D"

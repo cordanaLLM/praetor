@@ -295,6 +295,32 @@ func TestValidateExceptionsTestTimeoutNamesAWorkflow(t *testing.T) {
 	}
 }
 
+// Only test-timeout may target the root Makefile; workflow-scoped rules stay confined.
+func TestValidateExceptionsTestTimeoutMakefile(t *testing.T) {
+	for _, tc := range []struct {
+		rule string
+		path string
+		pass bool
+	}{
+		{ExceptionRuleTestTimeout, "Makefile", true},
+		{ExceptionRuleTestTimeout, "README.md", false},
+		{ExceptionRuleTestTimeout, "subdir/Makefile", false},
+		{ExceptionRuleBuildWarnings, "Makefile", false},
+		{ExceptionRuleWorkflowTriggers, "Makefile", false},
+		{ExceptionRuleJobTimeout, "Makefile", false},
+		{ExceptionRuleReleaseToken, "Makefile", false},
+	} {
+		t.Run(tc.rule+"/"+tc.path, func(t *testing.T) {
+			entry := Exception{Rule: tc.rule, Path: tc.path, Reason: "category C: adopt speedup pending (#1381)",
+				Category: "C", Entered: "2026-11-10", Expires: "2026-11-20"}
+			err := ValidateExceptions([]Exception{entry}, time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC))
+			if (err == nil) != tc.pass {
+				t.Fatalf("ValidateExceptions(%s, %s) = %v; want pass %t", tc.rule, tc.path, err, tc.pass)
+			}
+		})
+	}
+}
+
 // A job-timeout entry must name one workflow file: an entry naming a script is refused with the
 // workflow-target message, which names ci.yml as the example.
 func TestValidateExceptionsJobTimeoutNamesAWorkflow(t *testing.T) {

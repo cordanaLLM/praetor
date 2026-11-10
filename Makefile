@@ -17,6 +17,8 @@ STANDARDS_LSP := $(BIN_DIR)/standards-lsp$(EXE_SUFFIX)
 TRIBUNUSCTL := $(BIN_DIR)/tribunusctl$(EXE_SUFFIX)
 # CI obtains coverage from the same race run used by verify-all.
 TEST_COVERPROFILE ?=
+# Expand only for test, and fail if package discovery fails instead of testing a partial list.
+TEST_PACKAGES = $(shell go list -f '{{if ne .ImportPath "github.com/cordanaLLM/praetor/internal/adopt"}}{{.ImportPath}}{{end}}' ./...)$(if $(filter-out 0,$(.SHELLSTATUS)),$(error go list failed while selecting test packages))
 # Only compiled test binaries enter the shared sandbox namespace; the Go tool stays outside.
 GO_TEST := go run "$(CURDIR)/cmd/standardsctl" go test
 
@@ -34,8 +36,15 @@ build:
 
 # -timeout replaces go test's ten-minute default per package: internal/dogfood reached
 # 600 s under -race on the CI runner and panicked mid-suite.
+# Issue 1381: the category C test-timeout exception for Makefile expires 2026-11-20.
+# The separate adopt invocation goes away with the exception when the speedup unit lands.
 test:
-	$(GO_TEST) -v -race -timeout 30m $(if $(TEST_COVERPROFILE),-covermode=atomic -coverprofile="$(TEST_COVERPROFILE)") ./...
+	$(if $(strip $(TEST_PACKAGES)),,$(error go list selected no test packages; refusing to test a partial list))
+	$(GO_TEST) -v -race -timeout 30m $(if $(TEST_COVERPROFILE),-covermode=atomic -coverprofile="$(TEST_COVERPROFILE).rest") $(TEST_PACKAGES)
+	$(GO_TEST) -v -race -timeout 45m $(if $(TEST_COVERPROFILE),-covermode=atomic -coverprofile="$(TEST_COVERPROFILE).adopt") ./internal/adopt/
+ifneq ($(TEST_COVERPROFILE),)
+	awk 'FNR == 1 && NR != 1 { next } { print }' "$(TEST_COVERPROFILE).rest" "$(TEST_COVERPROFILE).adopt" > "$(TEST_COVERPROFILE)"
+endif
 
 stress:
 	$(GO_TEST) -v -race ./internal/stress/...

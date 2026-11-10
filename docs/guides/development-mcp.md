@@ -521,15 +521,20 @@ The MCP audit reads nothing from the forge, so where the CLI reads a reusable wo
 repository at the commit its caller pins, `standards_audit` prints a `[SKIP]` line naming the call
 and that reason (`TestServerAuditSkipsAPinnedCallOfAnotherRepository`).
 
-The test-timeout gate runs right after it (`forge.AuditTestTimeouts`, #1381): a workflow line
-that sets a timeout above the 30-minute per-package bound fails the audit unless a live
-`test-timeout` exceptions entry names the workflow; an expired entry or one that excuses nothing
+The test-timeout gate runs right after it (`forge.AuditTestTimeouts`, #1381): a workflow or root
+`Makefile` line that sets a timeout above the 30-minute per-package bound fails the audit unless a live
+`test-timeout` exceptions entry names that file; an expired entry or one that excuses nothing
 fails too (`TestServerAuditTestTimeoutsLikeTheCLI` in
 `cmd/standards-mcp/audit_test_timeouts_test.go`). The audit summary counts it, so a clean
 fixture reads `passed: 12/12`. A reusable workflow's `-timeout=${{ inputs.<id> }}` is judged by
 that input's `workflow_call` default; an input without a literal default, or a default that is no
 duration, is an unreadable timeout and fails (`TestAuditTestTimeouts_Positive_InputDefaultWithinBound`,
 `TestAuditTestTimeouts_Negative_InputDefaultAboveBound` in `internal/forge/test_timeout_audit_test.go`).
+The Makefile read is bounded and also recognizes `$(GO_TEST)` recipes. Only `test-timeout` entries
+may name the root `Makefile`; other workflow-scoped exceptions still require a workflow path
+(`TestAuditTestTimeouts_Makefile` and `TestAuditTestTimeouts_RepositoryMakefile` in
+`internal/forge/test_timeout_audit_test.go`; `TestValidateExceptionsTestTimeoutMakefile` in
+`internal/config/exceptions_test.go`).
 
 The job-timeout gate runs right beside it (`forge.AuditJobTimeouts`): every job that runs steps
 declares `timeout-minutes`. A reusable workflow call (`uses:` at job level) cannot carry it and

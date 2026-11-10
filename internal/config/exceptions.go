@@ -123,8 +123,8 @@ var exceptionRules = append(hisscatalog.RuleIDs(),
 	ExceptionRuleCodespell, ExceptionRuleGosec, ExceptionRuleUILatencySource,
 )
 
-// workflowRuleExamples maps each rule whose entries name one workflow file by path to the
-// workflow a refusal names as an example.
+// workflowRuleExamples maps workflow-scoped rules to the example workflow a refusal names.
+// The test-timeout rule also permits the root Makefile.
 var workflowRuleExamples = map[string]string{
 	ExceptionRuleBuildWarnings:    "ci.yml",
 	ExceptionRuleWorkflowTriggers: "release.yml",
@@ -638,10 +638,12 @@ func (e Exception) codespellProblem() string {
 	return ""
 }
 
-// workflowTargetProblem requires an entry of a rule in workflowRuleExamples to name one
-// workflow document directly in .github/workflows by path: the release workflow the HISS-11
-// supply-chain gate measured, or the workflow holding the build lanes a HISS-10 entry excuses.
+// workflowTargetProblem requires workflow-scoped entries to name one workflow document
+// directly in .github/workflows. Only test-timeout also accepts the root Makefile.
 func (e Exception) workflowTargetProblem() string {
+	if e.Rule == ExceptionRuleTestTimeout && e.Path == "Makefile" {
+		return ""
+	}
 	example, scoped := workflowRuleExamples[e.Rule]
 	if !scoped || ghworkflow.IsWorkflowPath(e.Path) {
 		return ""
