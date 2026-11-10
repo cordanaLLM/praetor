@@ -60,13 +60,20 @@ def _shell_quote_path(value):
 def _module_restore_template(name, template, root, module):
     """Prefix the restore of a missing tools module before the install command that needs it."""
     if name == "lefthook" and not (module / "go.mod").is_file():
-        return "restore {module_file} via praetorctl adopt; then " + template
-    if (
+        module_file = "tools/lefthook/go.mod"
+    elif (
         "-modfile=tools/go/go.mod" in (template or "")
         and not (root / "tools/go/go.mod").is_file()
     ):
-        return "restore {go_module_file} via praetorctl adopt; then " + template
-    return template
+        module_file = "tools/go/go.mod"
+    else:
+        return template
+    return (
+        f"restore {module_file} from version control (git restore -- {module_file}) "
+        "and run: "
+        + template
+        + "; or install {name} at the floor in .config/lefthook/tool-floors.txt"
+    )
 
 
 def missing_tool_line(name, root=None, *, reason=None, floor=None):
@@ -91,8 +98,6 @@ def missing_tool_line(name, root=None, *, reason=None, floor=None):
         name=name,
         floor=floor,
         root=root,
-        module_file=module / "go.mod",
-        go_module_file=root / "tools/go/go.mod",
         **quoted,
     )
     reason = reason or (

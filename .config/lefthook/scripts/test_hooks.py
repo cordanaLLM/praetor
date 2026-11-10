@@ -4706,7 +4706,7 @@ class ToolFloors(unittest.TestCase):
 class HookToolRestores(unittest.TestCase):
     """Missing and outdated linters name a usable restore source, including non-Go tools."""
 
-    def test_missing_module_names_adoption_before_the_pinned_install(self):
+    def test_restore_missing_module_before_the_pinned_install(self):
         """Absent Go module files need restoration before their pinned install commands."""
         for tool, module, install in (
             ("lefthook", "tools/lefthook/go.mod", "install github.com/evilmartians/lefthook/v2"),
@@ -4716,9 +4716,11 @@ class HookToolRestores(unittest.TestCase):
             with self.subTest(tool=tool), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 message = common.missing_tool_line(tool, root)
-                self.assertIn(f"restore {root / module} via praetorctl adopt", message)
+                self.assertIn(f"restore {module} from version control (git restore -- {module}) and run:", message)
                 self.assertIn(install, message)
-                self.assertLess(message.index("praetorctl adopt"), message.index(install))
+                self.assertLess(message.index("git restore --"), message.index(install))
+                self.assertIn(f"or install {tool} at the floor in .config/lefthook/tool-floors.txt", message)
+                self.assertNotIn("praetorctl adopt", message)
                 self.assertNotIn(f"read {root}", message)
 
     def test_present_modules_keep_the_pinned_install_hints(self):

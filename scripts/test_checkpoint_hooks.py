@@ -197,9 +197,11 @@ class MissingHookTools(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="praetor hook tool ") as directory:
             root = Path(directory)
             missing = missing_tool_line("lefthook", root)
-            self.assertIn(str(root / "tools/lefthook/go.mod"), missing)
-            restore_first = missing.index("via praetorctl adopt; then go -C")
-            self.assertLess(missing.index(str(root / "tools/lefthook/go.mod")), restore_first)
+            self.assertIn("restore tools/lefthook/go.mod from version control "
+                          "(git restore -- tools/lefthook/go.mod) and run:", missing)
+            self.assertLess(missing.index("git restore --"), missing.index("go -C"))
+            self.assertIn("or install lefthook at the floor in .config/lefthook/tool-floors.txt", missing)
+            self.assertNotIn("praetorctl adopt", missing)
             pin = root / "tools/lefthook/go.mod"
             pin.parent.mkdir(parents=True)
             pin.write_text("module fixture\n")
