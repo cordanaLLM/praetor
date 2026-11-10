@@ -2273,6 +2273,45 @@ class SignaturePublished(unittest.TestCase):
 class SnapshotRefs(unittest.TestCase):
     """Commit exports restore remote refs in one bounded transaction."""
 
+    def test_malformed_remote_ref_names_the_line_and_snapshot_bound(self):
+        """Missing and extra fields raise a contextual HookError before a transaction."""
+        for line in ("onlyone", "a b c", ""):
+            with self.subTest(line=line):
+                with self.assertRaises(HookError) as refused:
+                    common._snapshot_ref_updates((line + "\n").encode())
+                message = str(refused.exception)
+                self.assertIn(repr(line), message)
+                self.assertIn("origin", message)
+                self.assertIn(f"{common.MAX_SNAPSHOT_REFS} remote-tracking refs", message)
+
+    def test_malformed_remote_ref_diagnostic_truncates_the_line(self):
+        """A long malformed ref contributes at most its first 200 characters."""
+        line = "x" * 200 + "SECRET_SUFFIX"
+        with self.assertRaises(HookError) as refused:
+            common._snapshot_ref_updates((line + "\n").encode())
+        self.assertIn(repr(line[:200]), str(refused.exception))
+        self.assertNotIn("SECRET_SUFFIX", str(refused.exception))
+
+    def test_well_formed_remote_refs_render_the_transaction(self):
+        """Each two-field ref preserves its name, object ID and input order."""
+        refs = b"a refs/remotes/origin/main\nb refs/remotes/origin/topic\n"
+        self.assertEqual(
+            common._snapshot_ref_updates(refs),
+            b"update refs/remotes/origin/main a\nupdate refs/remotes/origin/topic b\n",
+        )
+
+    def test_remote_ref_transaction_accepts_exactly_the_real_bound(self):
+        """Exactly MAX_SNAPSHOT_REFS lines render without truncation."""
+        refs = b"".join(
+            f"a refs/remotes/origin/branch-{n}\n".encode()
+            for n in range(common.MAX_SNAPSHOT_REFS)
+        )
+        expected = b"".join(
+            f"update refs/remotes/origin/branch-{n} a\n".encode()
+            for n in range(common.MAX_SNAPSHOT_REFS)
+        )
+        self.assertEqual(common._snapshot_ref_updates(refs), expected)
+
     def test_remote_refs_are_batched_at_the_limit_and_empty_is_skipped(self):
         """Zero refs skip updates; the exact limit uses one stdin update."""
         for count in (0, 2):
@@ -4666,6 +4705,41 @@ class ToolFloors(unittest.TestCase):
 
 class HookToolRestores(unittest.TestCase):
     """Missing and outdated linters name a usable restore source, including non-Go tools."""
+
+    def test_missing_module_names_adoption_before_the_pinned_install(self):
+        """Absent Go module files need restoration before their pinned install commands."""
+        for tool, module, install in (
+            ("lefthook", "tools/lefthook/go.mod", "install github.com/evilmartians/lefthook/v2"),
+            ("gosec", "tools/go/go.mod", "install -modfile=tools/go/go.mod github.com/securego/gosec/v2/cmd/gosec"),
+            ("govulncheck", "tools/go/go.mod", "install -modfile=tools/go/go.mod golang.org/x/vuln/cmd/govulncheck"),
+        ):
+            with self.subTest(tool=tool), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                message = common.missing_tool_line(tool, root)
+                self.assertIn(f"restore {root / module} via praetorctl adopt", message)
+                self.assertIn(install, message)
+                self.assertLess(message.index("praetorctl adopt"), message.index(install))
+                self.assertNotIn(f"read {root}", message)
+
+    def test_present_modules_keep_the_pinned_install_hints(self):
+        """Existing modules retain the direct restore command without an adoption step."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for module in ("tools/lefthook", "tools/go"):
+                path = root / module / "go.mod"
+                path.parent.mkdir(parents=True)
+                path.write_text("module fixture\n", encoding="utf-8")
+            quoted_root = common._shell_quote_path(root)
+            quoted_module = common._shell_quote_path(root / "tools/lefthook")
+            for tool, command in (
+                ("lefthook", f"go -C {quoted_module} install github.com/evilmartians/lefthook/v2"),
+                ("gosec", f"go -C {quoted_root} install -modfile=tools/go/go.mod github.com/securego/gosec/v2/cmd/gosec"),
+                ("govulncheck", f"go -C {quoted_root} install -modfile=tools/go/go.mod golang.org/x/vuln/cmd/govulncheck"),
+            ):
+                with self.subTest(tool=tool):
+                    message = common.missing_tool_line(tool, root)
+                    restore = message.split("Restore: ")[1].split("; read-back:")[0]
+                    self.assertEqual(restore, command)
 
     def test_restore_paths_use_the_platform_shell_quotes(self):
         """Windows prints double quotes; POSIX preserves spaces and apostrophes."""

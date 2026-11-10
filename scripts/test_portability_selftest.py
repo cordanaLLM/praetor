@@ -886,33 +886,41 @@ def os_callable(node, os_names):
     )
 
 
+def os_import_aliases(node):
+    """Collect OS module aliases from one import within the checked name bound."""
+    if not isinstance(node, ast.Import):
+        return set()
+    return {
+        alias.asname or alias.name
+        for alias in node.names[:MAX_CHILD_IMPORT_NAMES]
+        if alias.name == "os"
+    }
+
+
+def direct_child_start(node, os_names):
+    """Recognize one process reference, binding or call, allowing any callable AST shape."""
+    if subprocess_callable(node) or os_callable(node, os_names):
+        return True
+    if (
+        isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
+        and isinstance(node.value, ast.Attribute)
+        and DIRECT_START.search(ast.unparse(node.value) + "(")
+    ):
+        return True
+    return isinstance(node, ast.Call) and bool(
+        DIRECT_START.search(ast.unparse(node.func) + "(")
+    )
+
+
 def starts_child(text):
     """Find process imports, calls and callback references while allowing a mocked module."""
-    nodes = child_ast_nodes(text)[:MAX_CHILD_AST_NODES]
+    nodes = child_ast_nodes(text)
     os_names = {"os"}
     for node in nodes:
         if imports_subprocess(node) or imports_os_starter(node):
             return True
-        if isinstance(node, ast.Import):
-            os_names.update(
-                alias.asname or alias.name
-                for alias in node.names[:MAX_CHILD_IMPORT_NAMES]
-                if alias.name == "os"
-            )
-    for node in nodes:
-        if subprocess_callable(node) or os_callable(node, os_names):
-            return True
-        if (
-            isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
-            and isinstance(node.value, ast.Attribute)
-            and DIRECT_START.search(ast.unparse(node.value) + "(")
-        ):
-            return True
-        if isinstance(node, ast.Call) and DIRECT_START.search(
-            ast.unparse(node.func) + "("
-        ):
-            return True
-    return False
+        os_names.update(os_import_aliases(node))
+    return any(direct_child_start(node, os_names) for node in nodes)
 
 
 class ChildSuites(unittest.TestCase):

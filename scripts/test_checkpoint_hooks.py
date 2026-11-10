@@ -191,14 +191,15 @@ class MissingHookTools(unittest.TestCase):
                 self.assertEqual(GUARD.check(b"{}"), 0)
 
     def test_restore_without_pin_names_manifest_and_quotes_spaces(self):
-        """Unpinned restore advice names manifest path and properly quotes spaced directories."""
+        """Unpinned advice restores the manifest before the install and quotes spaced paths."""
         from common import missing_tool_line
 
         with tempfile.TemporaryDirectory(prefix="praetor hook tool ") as directory:
             root = Path(directory)
             missing = missing_tool_line("lefthook", root)
             self.assertIn(str(root / "tools/lefthook/go.mod"), missing)
-            self.assertNotIn("go -C", missing)
+            restore_first = missing.index("via praetorctl adopt; then go -C")
+            self.assertLess(missing.index(str(root / "tools/lefthook/go.mod")), restore_first)
             pin = root / "tools/lefthook/go.mod"
             pin.parent.mkdir(parents=True)
             pin.write_text("module fixture\n")

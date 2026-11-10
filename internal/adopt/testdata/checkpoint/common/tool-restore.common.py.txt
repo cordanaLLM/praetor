@@ -57,18 +57,24 @@ def _shell_quote_path(value):
     return "'" + text.replace("'", "'\"'\"'") + "'"
 
 
+def _module_restore_template(name, template, root, module):
+    """Prefix the restore of a missing tools module before the install command that needs it."""
+    if name == "lefthook" and not (module / "go.mod").is_file():
+        return "restore {module_file} via praetorctl adopt; then " + template
+    if (
+        "-modfile=tools/go/go.mod" in (template or "")
+        and not (root / "tools/go/go.mod").is_file()
+    ):
+        return "restore {go_module_file} via praetorctl adopt; then " + template
+    return template
+
+
 def missing_tool_line(name, root=None, *, reason=None, floor=None):
     """Name the tool's failure and its restore source, keeping a supplied reason first."""
     template = TOOL_RESTORES.get(name)
     root = Path(__file__).resolve().parents[3] if root is None else Path(root)
     module = root / LEFTHOOK_MODULE
-    if name == "lefthook" and not (module / "go.mod").is_file():
-        template = "read {root}/tools/lefthook/go.mod for the pinned install command"
-    if (
-        "-modfile=tools/go/go.mod" in (template or "")
-        and not (root / "tools/go/go.mod").is_file()
-    ):
-        template = "read {root}/tools/go/go.mod for the pinned install command"
+    template = _module_restore_template(name, template, root, module)
     if template is None or ("{floor}" in template and floor is None):
         template = (
             "read .config/lefthook/tool-floors.txt and install {name} for your platform"
@@ -85,6 +91,8 @@ def missing_tool_line(name, root=None, *, reason=None, floor=None):
         name=name,
         floor=floor,
         root=root,
+        module_file=module / "go.mod",
+        go_module_file=root / "tools/go/go.mod",
         **quoted,
     )
     reason = reason or (
@@ -746,7 +754,13 @@ def _snapshot_ref_updates(refs):
         raise HookError(f"origin exceeds {MAX_SNAPSHOT_REFS} remote-tracking refs")
     updates = []
     for line in entries[:MAX_SNAPSHOT_REFS]:
-        oid, name = line.split()
+        fields = line.split(maxsplit=2)
+        if len(fields) != 2:
+            raise HookError(
+                f"origin snapshot (limit {MAX_SNAPSHOT_REFS} remote-tracking refs): "
+                f"malformed ref line {line[:200]!r}"
+            )
+        oid, name = fields
         updates.append(f"update {name} {oid}\n")
     return "".join(updates).encode()
 
