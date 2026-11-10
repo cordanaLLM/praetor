@@ -114,6 +114,9 @@ jobs:
 // every digest from it. internal/managedasset/testdata/shipped/markdown.sha256 records every
 // text ever shipped, and TestShippedTextLedger fails until each outgoing text is listed here.
 var priorDigests = map[string]string{
+	// Emitted sources before complete docstring coverage and explained suppressions.
+	"73e9ab35cc5c4807c2bdb791602237e7312bc0b9fe0f1cc8633f07bd09f9f979": Directory + "/verify.mjs",
+	"fb31a8195e6d0527fb908ec3a259e0171dba40fd237bf59197f739c6079763fb": Directory + "/no-private-scratch-links.mjs",
 	"4df1894780cf41670c59b4b1eace88218168f7dbed8ee0f219156fc8af20c038": WorkflowFile, // the workflow before its concurrency group
 	"cfb5618d1eab4e02b7a61ed884f629030266546aa6d583845ef3354eb6f12c3c": WorkflowFile, // the draft skip workflow before its concurrency group
 	// The first documentation gate: ubuntu-latest, checkout and setup-node v4.

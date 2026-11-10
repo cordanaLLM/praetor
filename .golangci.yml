@@ -4885,11 +4885,6 @@ linters:
       # baseline #1030
       - path: ^tools/apicompat/assets_test\.go$
         linters:
-          - gocognit
-        text: func `TestPriorDigests`
-      # baseline #1030
-      - path: ^tools/apicompat/assets_test\.go$
-        linters:
           - gocyclo
         text: func `TestPriorDigests`
       # baseline #1030

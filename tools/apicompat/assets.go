@@ -129,11 +129,14 @@ jobs:
 // priorDigests maps the SHA-256 of every text an earlier Praetor shipped at one of the family's
 // managed paths, taken with LF line endings, to that path: the family's Prior
 // (internal/managedasset). Adoption refreshes a file holding exactly one of these texts without
-// --force. testdata/prior holds each text (the gate program's start with api-gate-main), and
-// TestPriorDigests recomputes every digest from it.
+// --force. testdata/prior holds each text (the gate program's start with api-gate-main, the
+// placeholder's with api-gate-placeholder), and TestPriorDigests recomputes every digest from it.
 // internal/managedasset/testdata/shipped/api-compatibility.sha256 records every text ever
 // shipped, and TestShippedTextLedger fails until each outgoing text is listed here.
 var priorDigests = map[string]string{
+	// Emitted sources before complete docstring coverage and explained suppressions.
+	"15b167386b61a6d0a993ce661d49c3a4ce02d4cf2e244fdc0382420d05b2a8f5": Directory + "/" + GateFile,
+	"c52e0e4e59a015a7907ed8042e1cca1d83c15d44c6c1fb6e78c06ec7893ec7cb": Directory + "/" + PlaceholderFile,
 	"f68c08bc7e6001290ade191d6838d17c6458669a3511492692e971b67333ad83": WorkflowFile, // the workflow before its concurrency group
 	"12d6d77464b18617aa0e1001a05c7850b76641c5205447e70f1b0e72ff630ebb": WorkflowFile, // the draft skip workflow before its concurrency group
 	// The gate before it accepted identical type aliases across packages (engine-apicompat-alias-identical).

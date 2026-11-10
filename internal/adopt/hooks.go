@@ -455,6 +455,7 @@ class Blocked(Exception):
 
 
 def read_payload_command(stream):
+    """Read one bounded tool-call payload and require a shell command."""
     raw = stream.read(MAX_INPUT_BYTES + 1)
     if len(raw) > MAX_INPUT_BYTES:
         raise ValueError("hook input exceeds " + str(MAX_INPUT_BYTES) + " bytes")
@@ -471,6 +472,7 @@ def read_payload_command(stream):
 
 
 def pending_command():
+    """Select the pending command from arguments or standard input."""
     if len(sys.argv) > 1:
         return " ".join(sys.argv[1:])
     if sys.stdin.isatty():
@@ -482,6 +484,7 @@ def pending_command():
 
 
 def check_environment(environ):
+    """Reject environment settings that bypass the configured checks."""
     value = environ.get("LEFTHOOK")
     for disabled, refusal in LEFTHOOK_DISABLED:
         if value == disabled:
@@ -492,6 +495,7 @@ def check_environment(environ):
 
 
 def without_read_only_words(command):
+    """Remove read-only command words before judging exempt policy rules."""
     # The words of git log, head, sed -n and the other read-only commands READ_ONLY_WORDS
     # names, chained after ;, &&, || or |, belong to that command and are dropped, its name
     # kept. A command holding a construct READ_ONLY_VETO names keeps every word.
@@ -501,6 +505,7 @@ def without_read_only_words(command):
 
 
 def join_line_continuations(command):
+    """Normalize shell line continuations before matching policy rules."""
     # A backslash followed by a newline (LF or CRLF) joins lines without regex backtracking.
     return re.sub(r"\\\r?\n", " ", command)
 
@@ -544,6 +549,7 @@ def search(pattern, text):
 
 
 def check_command(command):
+    """Reject oversized commands and commands matching the evasion policy."""
     command = join_line_continuations(command)
     # re backtracks, so a longer command or line could stall this script past the harness's
     # hook timeout. Such a command is refused, never truncated.
@@ -562,6 +568,7 @@ def check_command(command):
 
 
 def main():
+    """Validate the pending tool call and exit with the harness refusal status."""
     try:
         check_environment(os.environ)
         check_command(pending_command())
@@ -926,6 +933,7 @@ func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
 // TestPriorEvasionHookDigests_Boundary_CurrentRenderingRecorded fails until a changed rendering
 // is recorded here, so the next release still refreshes it (evasion_prior_test.go).
 var priorEvasionHookDigests = map[string]string{
+	"3f2ab8c180c95fc84bcbafa58b563586126b689d2251424bf433f0f0206b6333": "complete emitted function docstrings",
 	"b43f0818ef78cf285434e865abd9f78529e6064ebb9f4e8ab6ce97ed49637a59": "privilege refusal with shared necessary-literal prefilter",
 	"64fa5045ca8d31b1917383b878a9549960cac8c8b684013369af171f9f2fcd3e": "HISS-16 labels, own pattern list",
 	"15f46f44fcb492f59a63c186196d5be80250af02ac64b51087890094a0087cb5": "HISS labels, own pattern list",

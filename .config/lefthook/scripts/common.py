@@ -181,6 +181,7 @@ class _SharedBound:
     """Output two reader threads collect under one byte limit."""
 
     def __init__(self, maximum):
+        """Initialize the shared output buffers and reader synchronization state."""
         self.maximum = maximum
         self.output = {"stdout": bytearray(), "stderr": bytearray()}
         self.total = 0
@@ -200,12 +201,14 @@ class _SharedBound:
             return True
 
     def finish(self):
+        """Record a completed reader and wake the output collector."""
         with self.changed:
             self.finished += 1
             self.changed.notify_all()
 
 
 def _drain(stream, key, bound):
+    """Drain one process stream into the shared bounded output buffer."""
     # Every read consumes at least one byte or observes EOF, so maximum + 2 reads is enough.
     try:
         for _ in range(bound.maximum + 2):
@@ -245,6 +248,7 @@ def _bounded_output_threaded(process, timeout, maximum):
 
 
 def _bounded_output(process, timeout, maximum):
+    """Collect process output within a shared byte limit and deadline."""
     if os.name == "nt":
         return _bounded_output_threaded(process, timeout, maximum)
     deadline = time.monotonic() + timeout
@@ -426,6 +430,7 @@ class HookBudget:
     """
 
     def __init__(self, seconds):
+        """Set the monotonic deadline shared by this hook's commands."""
         self.expires = time.monotonic() + seconds
 
     def timeout(self, cap):
@@ -448,6 +453,7 @@ def refuse_after(seconds, refuse):
     """
 
     def expire():
+        """Refuse the hook when its wall-clock watchdog expires."""
         code = refuse()
         if code is not None:
             os._exit(code)
@@ -532,10 +538,12 @@ def session_root(root, cwd, budget):
 
 
 def paths(raw):
+    """Decode nonempty filesystem paths from NUL-separated Git output."""
     return [os.fsdecode(item) for item in raw.split(b"\0") if item]
 
 
 def changed(base, head="HEAD"):
+    """List paths changed between the selected Git revisions."""
     return paths(git("diff", "--name-only", "-z", "--no-renames", base, head, "--"))
 
 
@@ -565,6 +573,7 @@ def index_env():
 
 
 def clean_env():
+    """Remove inherited repository selection from the hook's index environment."""
     env = index_env()
     for key in (
         "GIT_DIR",
@@ -690,6 +699,7 @@ def _export_commit(dest, ref, env):
 
 
 def present_files(directory, names):
+    """Select existing regular files while refusing changed symbolic links."""
     files = []
     for name in names:
         path = directory / name
@@ -836,6 +846,7 @@ def _read_session_record(record_file):
         if isinstance(data, list):
             return {str(Path(p).resolve()) for p in data if isinstance(p, str)}
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        # Missing or malformed optional session records contribute no worktree paths.
         pass
     return set()
 
@@ -859,6 +870,7 @@ def _write_session_record(sessions_dir, record_file, paths):
             try:
                 tmp.unlink(missing_ok=True)
             except OSError:
+                # Best-effort cleanup must preserve the original atomic-write failure.
                 pass
 
 

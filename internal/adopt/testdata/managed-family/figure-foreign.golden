@@ -20,7 +20,7 @@ action create tools/figures/third_party/interfig/upstream/LICENSE :: Scaffolded 
 action create tools/figures/README.md :: Scaffolded locked figure engine asset
 action create tools/figures/player.lock.json :: Scaffolded locked figure engine asset
 action create .gitattributes :: Created the managed attribute block that keeps the files audit compares byte for byte unconverted
-file tools/figures/build.mjs sha256:e4efaac427bc5ea716b2871c3e7f84366c8954a29e6d71e73a696753b592dfbd
+file tools/figures/build.mjs sha256:931a9fef46ca205b3720ce087de065ddde26902253cfda245e73d9b5b74f2fe6
 file tools/figures/player.lock.json sha256:49a6183f22f233769a39c7b500d508f07ed2c7231c264f6f459dc25de77507ad
 file tools/figures/third_party/interfig/upstream/LICENSE sha256:01fde0bedf83bdc185065d7af524a61690efe576a67f922eaff3a1280c17b63a
 file tools/figures/README.md sha256:2fc7cf35293505b09e409a37b470c4ac1d5307ec5efcab6b454b5a8a50078d1b

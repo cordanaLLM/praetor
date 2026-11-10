@@ -44,6 +44,7 @@ type checkpointSource struct {
 // recorded here (checkpoint_prior_test.go).
 var priorCheckpointDigests = map[string]map[string]string{
 	checkpointScript: {
+		"6d22fbcab1cdd08efcb0975ad0c09cfc46107346365e16a05e06b2ce9b565691": "complete emitted docstrings and explained empty handlers",
 		"54130726f2c6830a763a2485b849293d4c014e34c308596cc3e28d5330e6fc3f": "stop checkpoint retries PR listing and collapses failure",
 		"6295b09a4077a3c3bc6819ecf69b3eb18fe4c3a23d4473d99c880fc3184ce3b5": "stop checkpoint judges landed worktrees by their merged pull request",
 		"a466f3ca69d1f93374ebcf999210d288eeefb4b77c0c13ada09dca2bcb090b55": "Go hooks share session ownership and verify live gate scratch owners",
@@ -61,6 +62,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"80a0a2da3dc2222e12b5c70ab7bc442fae586f1d06d5bdcb0516df3c20a144ca": "stop checkpoint counts session-owned worktrees and ignores gate scratch",
 	},
 	checkpointCommon: {
+		"385b25fdbb89d0d8a4d1e6ee2a3dbf570e2a058c8c308a2363aaf77b0871b7b1": "complete emitted docstrings and explained empty handlers",
 		"12ef141c8cf1857650c9f4653653472278caf24c226371927021618743ca94b5": "pre-push commit message check skips published commits",
 		"daf13baf16b776de9a976809a7e064971fd5946ed4508761c229dba0ef4b4e65": "Go hooks share session ownership and verify live gate scratch owners",
 		"61ccf1481d43073ca29aab6c6e6b78cc6f5cb4a86bf1e7603b8b0e01d02f71a9": "platform promotion (#14)",
