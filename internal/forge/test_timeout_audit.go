@@ -62,7 +62,10 @@ func AuditTestTimeouts(ctx context.Context, opts TestTimeoutOptions) (string, er
 	var findings, excepted []string
 	for _, file := range files {
 		rel := file.Name
-		long := longTimeouts(rel, string(file.Data), timeoutInputDefaults(file.Data))
+		long, err := fileTimeouts(file)
+		if err != nil {
+			return "", err
+		}
 		if len(long) == 0 {
 			continue
 		}
@@ -85,6 +88,43 @@ func AuditTestTimeouts(ctx context.Context, opts TestTimeoutOptions) (string, er
 		return "", errors.New(strings.Join(findings, "\n"))
 	}
 	return strings.Join(append(excepted, "[PASS] test-timeout"), "\n"), nil
+}
+
+// fileTimeouts returns the long go test timeouts of one audited file: the root Makefile by joined
+// logical lines, a workflow line by line with its input defaults.
+func fileTimeouts(file workflowFile) ([]string, error) {
+	if file.Name == "Makefile" {
+		return makefileTimeouts(string(file.Data))
+	}
+	return longTimeouts(file.Name, string(file.Data), timeoutInputDefaults(file.Data)), nil
+}
+
+// makefileTimeouts joins continued physical lines and retains their first line number.
+func makefileTimeouts(text string) ([]string, error) {
+	lines := strings.Split(text, "\n")
+	var out []string
+	var logical strings.Builder
+	start := 0
+	continued := false
+	for n := 0; n < len(lines) && n < maxTimeoutWorkflowLines; n++ {
+		if !continued {
+			start = n
+		}
+		line := strings.TrimSuffix(lines[n], "\r")
+		continued = strings.HasSuffix(line, "\\")
+		if continued {
+			logical.WriteString(strings.TrimSuffix(line, "\\"))
+			logical.WriteByte(' ')
+			if n+1 >= len(lines) || (n+2 == len(lines) && lines[n+1] == "") || n+1 >= maxTimeoutWorkflowLines {
+				return nil, fmt.Errorf("[FAIL] %s: Makefile:%d has an unfinished continuation", testTimeoutGate, n+1)
+			}
+			continue
+		}
+		logical.WriteString(line)
+		out = append(out, checkGoTestTimeouts("Makefile", start, logical.String(), nil)...)
+		logical.Reset()
+	}
+	return out, nil
 }
 
 // readTestTimeoutFiles retains workflow paths and adds the optional root Makefile through the

@@ -192,6 +192,9 @@ func TestAuditTestTimeouts_Makefile(t *testing.T) {
 		{"live entry", "$(GO_TEST) -race -timeout 45m ./internal/adopt/", []config.Exception{entry}, "", "Makefile excepted until 2026-10-25"},
 		{"expired entry", "$(GO_TEST) -race -timeout 45m ./internal/adopt/", []config.Exception{expired}, "Makefile expired 2026-10-14", ""},
 		{"boundary", "$(GO_TEST) -race -timeout 30m ./...", nil, "", "[PASS] test-timeout"},
+		{"continued without entry", "$(GO_TEST) -v -race \\\n  -timeout 45m ./internal/adopt/", nil, "Makefile:2 sets 45m", ""},
+		{"continued live entry", "$(GO_TEST) -v -race \\\n  -timeout 45m ./internal/adopt/", []config.Exception{entry}, "", "Makefile excepted until 2026-10-25"},
+		{"continued boundary", "$(GO_TEST) -v -race \\\n  -timeout 30m ./...", nil, "", "[PASS] test-timeout"},
 		{"stale entry", "$(GO_TEST) -race -timeout 30m ./...", []config.Exception{entry}, "Makefile excuses nothing", ""},
 		{"workflow entry cannot excuse Makefile", "go test -timeout 45m ./internal/adopt/", []config.Exception{timeoutEntry("ci.yml", "2026-10-18")}, "Makefile:2 sets 45m", ""},
 	} {
@@ -211,6 +214,19 @@ func TestAuditTestTimeouts_Makefile(t *testing.T) {
 				t.Fatalf("AuditTestTimeouts = %q, %v; want %q", out, err, tc.wantOut)
 			}
 		})
+	}
+}
+
+// TestAuditTestTimeouts_MakefileDanglingContinuation refuses a Makefile whose last line ends in a
+// continuation, naming that line.
+func TestAuditTestTimeouts_MakefileDanglingContinuation(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Makefile"), []byte("test:\n\t$(GO_TEST) -race \\"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := auditTimeouts(t, root)
+	if err == nil || !strings.Contains(err.Error(), "Makefile:2") {
+		t.Fatalf("dangling continuation: %v; want Makefile:2 refused", err)
 	}
 }
 

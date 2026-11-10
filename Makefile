@@ -40,10 +40,17 @@ build:
 # The separate adopt invocation goes away with the exception when the speedup unit lands.
 test:
 	$(if $(strip $(TEST_PACKAGES)),,$(error go list selected no test packages; refusing to test a partial list))
-	$(GO_TEST) -v -race -timeout 30m $(if $(TEST_COVERPROFILE),-covermode=atomic -coverprofile="$(TEST_COVERPROFILE).rest") $(TEST_PACKAGES)
-	$(GO_TEST) -v -race -timeout 45m $(if $(TEST_COVERPROFILE),-covermode=atomic -coverprofile="$(TEST_COVERPROFILE).adopt") ./internal/adopt/
 ifneq ($(TEST_COVERPROFILE),)
-	awk 'FNR == 1 && NR != 1 { next } { print }' "$(TEST_COVERPROFILE).rest" "$(TEST_COVERPROFILE).adopt" > "$(TEST_COVERPROFILE)"
+	set -e; dir=$$(mktemp -d); tmp=; \
+		trap 'rm -rf "$$dir"; if [ -n "$$tmp" ]; then rm -f "$$tmp"; fi' 0; \
+		tmp=$$(mktemp "$(TEST_COVERPROFILE).XXXXXX"); \
+		$(GO_TEST) -v -race -timeout 30m -covermode=atomic -coverprofile="$$dir/rest" $(TEST_PACKAGES); \
+		$(GO_TEST) -v -race -timeout 45m -covermode=atomic -coverprofile="$$dir/adopt" ./internal/adopt/; \
+		awk 'FNR == 1 && NR != 1 { next } { print }' "$$dir/rest" "$$dir/adopt" > "$$tmp"; \
+		mv -f "$$tmp" "$(TEST_COVERPROFILE)"
+else
+	$(GO_TEST) -v -race -timeout 30m $(TEST_PACKAGES)
+	$(GO_TEST) -v -race -timeout 45m ./internal/adopt/
 endif
 
 stress:
