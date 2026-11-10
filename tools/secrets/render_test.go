@@ -14,6 +14,7 @@ import (
 	"github.com/cordanaLLM/praetor/tools/secrets/rules"
 )
 
+// RenderWorkflow and StripSettings still work on the unchanged emitted workflow with one HISS-12 exception.
 func TestRenderWorkflow_EmittedSecretsExceptionsCompatibility(t *testing.T) {
 	path := filepath.Join("..", "..", "templates", "testdata", "rendered", "go", "security-go.yml", "fallback.yml")
 	plain, err := os.ReadFile(path)

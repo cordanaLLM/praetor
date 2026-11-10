@@ -281,6 +281,7 @@ func JudgeWithOptions(findings []Finding, entries []Entry, dir string, today tim
 	return result
 }
 
+// judgeEntries marks expired entries and, unless opts.DeferUnused, entries that excused no finding.
 func judgeEntries(result *Result, entries []Entry, used []bool, today time.Time, opts JudgeOptions) {
 	for eIdx := 0; eIdx < len(entries) && eIdx < MaxJudgedEntries; eIdx++ {
 		if entries[eIdx].Expired(today) {

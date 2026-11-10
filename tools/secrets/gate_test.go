@@ -21,11 +21,13 @@ import (
 	"github.com/cordanaLLM/praetor/tools/secrets/rules"
 )
 
+// runGateCLI runs the gate in dir with the given SECRETS_EXCEPTIONS and no GitHub event, returning output and exit code.
 func runGateCLI(t *testing.T, dir string, envExceptions string, args ...string) (string, int) {
 	t.Helper()
 	return runGateCLIEnvironment(t, dir, envExceptions, nil, args...)
 }
 
+// runGateCLIEnvironment runs the gate in dir with extra environment variables and arguments, returning output and exit code.
 func runGateCLIEnvironment(t *testing.T, dir, envExceptions string, eventEnv []string, args ...string) (string, int) {
 	t.Helper()
 	env := append(os.Environ(), "GITHUB_EVENT_NAME=", "GITHUB_EVENT_PATH=", "SECRETS_EXCEPTIONS="+envExceptions)
@@ -53,6 +55,7 @@ func runGateCLIEnvironment(t *testing.T, dir, envExceptions string, eventEnv []s
 	return string(out), exitCode
 }
 
+// gateEventFile writes a pull_request event payload with the given base and head shas and returns its path.
 func gateEventFile(t *testing.T, data string) string {
 	t.Helper()
 	name := filepath.Join(t.TempDir(), "event.json")
@@ -62,6 +65,7 @@ func gateEventFile(t *testing.T, data string) string {
 	return name
 }
 
+// gatePullRequestEnvironment returns the GitHub variables of a pull_request event whose payload is at path.
 func gatePullRequestEnvironment(t *testing.T, base, head string) []string {
 	t.Helper()
 	data, err := json.Marshal(map[string]any{"pull_request": map[string]any{
@@ -73,6 +77,7 @@ func gatePullRequestEnvironment(t *testing.T, base, head string) []string {
 	return []string{"GITHUB_EVENT_NAME=pull_request", "GITHUB_EVENT_PATH=" + gateEventFile(t, string(data))}
 }
 
+// A pull_request event scans only base..head: an older secret passes, a secret inside the range fails, a push event still scans full history.
 func TestGate_PullRequestEvent_Planted_3D(t *testing.T) {
 	if _, err := exec.LookPath("gitleaks"); err != nil {
 		t.Skip("gitleaks not installed on PATH")
@@ -98,6 +103,7 @@ func TestGate_PullRequestEvent_Planted_3D(t *testing.T) {
 	}
 }
 
+// A pull_request event with a missing, malformed, oversized or non-regular payload, or an invalid sha, exits 2 naming the cause and never scans full history.
 func TestGate_PullRequestEvent_Negative(t *testing.T) {
 	valid := strings.Repeat("a", 40)
 	cases := []struct{ name, path, cause string }{
@@ -122,6 +128,7 @@ func TestGate_PullRequestEvent_Negative(t *testing.T) {
 	}
 }
 
+// An explicit -range wins over the event, so an invalid payload is not read.
 func TestGate_PullRequestEvent_RangeOverridesInvalidEvent(t *testing.T) {
 	if _, err := exec.LookPath("gitleaks"); err != nil {
 		t.Skip("gitleaks not installed on PATH")
@@ -135,6 +142,7 @@ func TestGate_PullRequestEvent_RangeOverridesInvalidEvent(t *testing.T) {
 	}
 }
 
+// Seven- and forty-character shas and a payload of exactly 4 MiB are accepted.
 func TestGate_PullRequestEvent_Boundary(t *testing.T) {
 	if _, err := exec.LookPath("gitleaks"); err != nil {
 		t.Skip("gitleaks not installed on PATH")
@@ -159,6 +167,7 @@ func TestGate_PullRequestEvent_Boundary(t *testing.T) {
 	}
 }
 
+// A range scan leaves an exception that matched nothing to the full-history scan; full history still fails it as unused.
 func TestGate_RangeExceptionJudgment_3D(t *testing.T) {
 	if _, err := exec.LookPath("gitleaks"); err != nil {
 		t.Skip("gitleaks not installed on PATH")
@@ -185,6 +194,7 @@ func TestGate_RangeExceptionJudgment_3D(t *testing.T) {
 	}
 }
 
+// An expired exception fails a range scan as it fails a full-history scan.
 func TestGate_RangeExpiredException(t *testing.T) {
 	if _, err := exec.LookPath("gitleaks"); err != nil {
 		t.Skip("gitleaks not installed on PATH")
@@ -204,6 +214,7 @@ func TestGate_RangeExpiredException(t *testing.T) {
 	}
 }
 
+// An invalid exception entry stops a range scan with exit 2 before gitleaks runs.
 func TestGate_RangeInvalidException(t *testing.T) {
 	data := `[{"path":"../outside.py","rule_id":"generic-api-key","expires":"2026-11-01"}]`
 	if out, code := runGateCLI(t, t.TempDir(), data, "-range=abcdef0..abcdef1"); code != 2 || !strings.Contains(out, "invalid exceptions") {
@@ -211,6 +222,7 @@ func TestGate_RangeInvalidException(t *testing.T) {
 	}
 }
 
+// commitGateFile writes name with content in dir, commits it and returns the commit sha.
 func commitGateFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
@@ -228,6 +240,7 @@ func commitGateFile(t *testing.T, dir, name, content string) string {
 	return strings.TrimSpace(out)
 }
 
+// An explicit -range scans only those commits: an older secret passes, a secret inside the range fails.
 func TestGate_PullRequestRange_Planted_3D(t *testing.T) {
 	if _, err := exec.LookPath("gitleaks"); err != nil {
 		t.Skip("gitleaks not installed on PATH")
@@ -248,6 +261,7 @@ func TestGate_PullRequestRange_Planted_3D(t *testing.T) {
 	}
 }
 
+// A -range that is not two 7-40 hex shas joined by two dots exits 2 naming the flag and value.
 func TestGate_PullRequestRange_Negative(t *testing.T) {
 	for _, value := range []string{
 		"main..HEAD", "--all", "abc", "a1b2c3d", "a1b2c3d...e4f5a6b", "",
@@ -263,6 +277,7 @@ func TestGate_PullRequestRange_Negative(t *testing.T) {
 	}
 }
 
+// A -range with seven- and forty-character sides is accepted.
 func TestGate_PullRequestRange_Boundary(t *testing.T) {
 	if _, err := exec.LookPath("gitleaks"); err != nil {
 		t.Skip("gitleaks not installed on PATH")
@@ -285,6 +300,7 @@ func TestGate_PullRequestRange_Boundary(t *testing.T) {
 	}
 }
 
+// A secret added only in a merge commit is found by the full-history scan (#1237).
 func TestGate_PlantedMergeOnly_3D(t *testing.T) {
 	if _, err := exec.LookPath("gitleaks"); err != nil {
 		t.Skip("gitleaks not installed on PATH")
@@ -356,6 +372,7 @@ func runGateLifecycleCase(t *testing.T, entries []rules.Entry) (string, int) {
 	return runGateCLI(t, dir, exceptionsJSON)
 }
 
+// Live, stale and expired exceptions pass, fail as unused and fail as expired; dates are relative to the test day (#1886).
 func TestGate_ExceptionsLifecycle_3D(t *testing.T) {
 	if _, err := exec.LookPath("gitleaks"); err != nil {
 		t.Skip("gitleaks not installed on PATH")

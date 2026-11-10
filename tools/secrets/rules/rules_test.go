@@ -14,6 +14,7 @@ import (
 
 var testToday = time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC)
 
+// DeferUnused moves an unmatched entry to Unjudged; without it the entry is stale as before.
 func TestJudgeWithOptions_Unused_3D(t *testing.T) {
 	entry := rules.Entry{Path: "creds.py", RuleID: "generic-api-key", Expires: "2026-11-01"}
 	for _, deferUnused := range []bool{false, true} {
@@ -31,6 +32,7 @@ func TestJudgeWithOptions_Unused_3D(t *testing.T) {
 	}
 }
 
+// DeferUnused never hides an expired entry or an unexcused finding.
 func TestJudgeWithOptions_ExpiredAndBlocking_3D(t *testing.T) {
 	for _, expiry := range []string{"2026-10-17", "invalid"} {
 		entry := rules.Entry{Path: "creds.py", RuleID: "generic-api-key", Expires: expiry}
@@ -48,6 +50,7 @@ func TestJudgeWithOptions_ExpiredAndBlocking_3D(t *testing.T) {
 	}
 }
 
+// A matching entry still holds on its expiry day under DeferUnused.
 func TestJudgeWithOptions_ExpiryBoundary(t *testing.T) {
 	entry := rules.Entry{Path: "creds.py", RuleID: "generic-api-key", Expires: testToday.Format(rules.DateLayout)}
 	finding := rules.Finding{File: entry.Path, RuleID: entry.RuleID}
