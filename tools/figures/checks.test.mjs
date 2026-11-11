@@ -7,6 +7,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { cpSync, mkdirSync, readFileSync, symlinkSync, unlinkSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import {
   CheckError, EXPECTED_FENCE, MAX_LINES, OUT_DIR, ROOT, STARLIGHT_SUFFIXES, astroKinds, checkSite, configError, declaredFences,
   declaredHooks, enabledKinds, engineHash, excludedPatterns, expand, fenceBlocks, fences, figureSlug, figureSlugs, filesDigest, fillSlots,
@@ -976,6 +978,26 @@ test('readBoundedBytes returns exact bytes at limit, refuses limit + 1 and refus
     () => readBoundedBytes(join(dir, 'missing.txt'), limit),
     (err) => err instanceof CheckError && err.message.includes('cannot read'),
   );
+}));
+
+test('readBoundedBytes refuses a FIFO without blocking', { timeout: 5000 }, (t) => withTempDir((dir) => {
+  const fifo = join(dir, 'lock.fifo');
+  const made = spawnSync('mkfifo', [fifo]);
+  if (made.error?.code === 'ENOENT') {
+    t.skip('mkfifo is unavailable on this platform');
+    return;
+  }
+  assert.equal(made.status, 0, made.stderr?.toString());
+  const moduleUrl = pathToFileURL(join(ROOT, 'tools/figures/checks.mjs')).href;
+  const script = `import { CheckError, readBoundedBytes } from ${JSON.stringify(moduleUrl)};
+    try { readBoundedBytes(process.argv[1], 64); process.exitCode = 1; }
+    catch (error) {
+      if (!(error instanceof CheckError) || !error.message.includes(process.argv[1]) ||
+          !error.message.includes('not a regular file')) process.exitCode = 1;
+    }`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script, fifo], { timeout: 2000 });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr?.toString());
 }));
 
 test('sources: editing the wrapper or the checks keeps the figures current', () => withTempDir((dir) => {

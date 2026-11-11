@@ -771,9 +771,11 @@ test('an adopted integration refuses an oversized player.lock.json naming the ar
 }));
 
 // A FIFO reports size 0 to a size probe and then delivers more bytes than the limit: the shape of a
-// lock that grows between a stat and the read (CodeQL js/file-system-race). Planted case from the
-// proven patch of the cordanaLLM/20-watts-was-enough session (alert 77 on the adopted copy).
-test('readPlayerLock refuses a lock that grows past the archive limit after a size probe',
+// lock that grows between a stat and the read (CodeQL js/file-system-race; planted case from the
+// proven patch of the cordanaLLM/20-watts-was-enough session, alert 77 on the adopted copy). The
+// read now opens without blocking and refuses anything but a regular file before reading, so the
+// FIFO is refused outright; a regular file that grows stays bounded by the bytes actually read.
+test('readPlayerLock refuses a FIFO lock before reading it',
   { skip: process.platform === 'win32' ? 'mkfifo is not available on Windows' : false, timeout: 30_000 },
   () => withTempDir(async (dir) => {
     const lockPath = join(dir, 'player.lock.json');
@@ -783,7 +785,8 @@ test('readPlayerLock refuses a lock that grows past the archive limit after a si
       ['--input-type=commonjs', '-e', `try { require('node:fs').writeFileSync(process.argv[1], '{' + ' '.repeat(${4 * 1024 * 1024}) + '}'); } catch {}`, lockPath],
       { stdio: 'ignore', timeout: 20_000 });
     const exited = new Promise((resolve) => writer.on('exit', resolve));
-    assert.throws(() => readPlayerLock(lockPath), /player\.lock\.json exceeds 4194304 bytes/);
+    assert.throws(() => readPlayerLock(lockPath), /player\.lock\.json is not a regular file/);
+    writer.kill();
     await exited;
   }));
 

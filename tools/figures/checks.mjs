@@ -46,7 +46,7 @@
 // anchors a pattern at docs_dir, a trailing slash matches directories only, and `*`, `?` and `[...]`
 // (negated with `!` or `^`) match within one path component. It refuses a leading `!`, `**` and `\`
 // instead of guessing.
-import { closeSync, openSync, readSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ENGINE_FILES, SLOTS, SPEC_CLOSE, SPEC_OPEN, escapeHtml, markup, sha256 } from './core.mjs';
@@ -187,11 +187,12 @@ function inside(base, target) {
 export function readBoundedBytes(path, limit) {
   let fd;
   try {
-    fd = openSync(path, 'r');
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
   } catch (error) {
     throw new CheckError(`cannot read ${path}: ${error.message}`);
   }
   try {
+    if (!fstatSync(fd).isFile()) throw new CheckError(`${path} is not a regular file`);
     const chunks = [];
     let total = 0;
     let ended = false;
