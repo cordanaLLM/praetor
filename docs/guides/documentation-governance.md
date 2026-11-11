@@ -131,6 +131,16 @@ engine, and because `mathSelfTest` loads the ES-module-only `micromark` through
 `mathSelfTest` in
 `tools/markdownlint/verify.mjs` lints a fixture of inline and block math and
 renders it through the overridden `katex` (`make docs-lint-test`).
+Documentation presets declaring a package lock define their own runtime floors
+beside the markdown gate. `docs/presets/starlight/package.json` declares
+`engines.node: ">=22.23.4"` because `astro` 7.4.7 and its core dependencies
+demand that release. `TestPresetNodeFloorMatchesLockedDependencies` in
+`internal/managedasset/preset_floor_test.go` verifies that each preset manifest
+declares a Node floor at or above the highest minimum among its locked packages.
+A range form other than `>=`, `^` or a bare version fails the test, as does a
+package whose range admits no release at the declared floor. Optional platform
+binaries are checked like the rest; the one exception, sharp's 32-bit Windows
+binary, is named with its reason in `optionalPlatformExceptions`.
 Because audit locks the lock byte for byte, an adopter cannot patch it: a fix
 ships as a new Praetor text, and a plain `praetorctl adopt` replaces an
 unedited earlier lock, `package.json` and `verify.mjs` without `--force`
