@@ -303,18 +303,16 @@ func appendFindings(report *Report, ruleID, lang, bucket string, results []fixtu
 }
 
 // fsDirectoryAbsent distinguishes an absent fixture directory from a regular file or other failure.
-func fsDirectoryAbsent(fsys fs.FS, dir string, err error) bool {
-	if dir == "" || !errors.Is(err, fs.ErrNotExist) {
+func fsDirectoryAbsent(ctx context.Context, fsys fs.FS, dir string, err error) bool {
+	if ctx.Err() != nil || dir == "" || !errors.Is(err, fs.ErrNotExist) {
 		return false
 	}
-	current := slashpath.Clean(dir)
+	cleanDir := slashpath.Clean(dir)
+	current := cleanDir
 	for i := 0; i < 16; i++ {
-		info, statErr := fs.Stat(fsys, current)
-		if statErr == nil {
-			return info.IsDir() && current != slashpath.Clean(dir)
-		}
-		if !errors.Is(statErr, fs.ErrNotExist) {
-			return false
+		absent, decided := probeAncestorAbsent(ctx, fsys, current, cleanDir)
+		if decided {
+			return absent
 		}
 		parent := slashpath.Dir(current)
 		if parent == current || parent == "." {
@@ -322,7 +320,19 @@ func fsDirectoryAbsent(fsys fs.FS, dir string, err error) bool {
 		}
 		current = parent
 	}
-	return true
+	return ctx.Err() == nil
+}
+
+// probeAncestorAbsent stats one ancestor of cleanDir and reports (absent, true) when decided.
+func probeAncestorAbsent(ctx context.Context, fsys fs.FS, current, cleanDir string) (bool, bool) {
+	info, statErr := contextopt.StatFS(ctx, fsys, current)
+	if statErr == nil {
+		return ctx.Err() == nil && info.IsDir() && current != cleanDir, true
+	}
+	if ctx.Err() != nil || !errors.Is(statErr, fs.ErrNotExist) {
+		return false, true
+	}
+	return false, false
 }
 
 // replayBucket scans every fixture in one bucket and reports whether the rule fired on it.
@@ -331,14 +341,17 @@ func fsDirectoryAbsent(fsys fs.FS, dir string, err error) bool {
 // the fixtures are staged as (hiss.FixturePath).
 func replayBucket(ctx context.Context, fsys fs.FS, base, bucket, ruleID string, report *Report) ([]fixtureResult, error) {
 	dir := slashpath.Join(base, bucket)
-	staged := fixtureStage{ruleID: ruleID, language: slashpath.Base(base)}
-	entries, err := fs.ReadDir(fsys, dir)
+	entries, err := contextopt.ReadDirFS(ctx, fsys, dir)
 	if err != nil {
-		if fsDirectoryAbsent(fsys, dir, err) {
-			return nil, nil
+		if fsDirectoryAbsent(ctx, fsys, dir, err) {
+			return nil, ctx.Err()
 		}
 		return nil, fmt.Errorf("read fixtures %s: %w", dir, err)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("read fixtures %s: %w", dir, err)
+	}
+	staged := fixtureStage{ruleID: ruleID, language: slashpath.Base(base)}
 	results := make([]fixtureResult, 0, len(entries))
 	for i := 0; i < len(entries) && i < maxFixturesPerBucket; i++ {
 		if entries[i].IsDir() {
@@ -389,6 +402,9 @@ func (stage fixtureStage) reported(ctx context.Context, fsys fs.FS, dir, name st
 	rep, scanErr := hiss.Scan(ctx, tmp, hiss.ScanOptions{})
 	if scanErr != nil {
 		return result, fmt.Errorf("scan fixture %s: %w", name, scanErr)
+	}
+	if err := rep.CompletionError(); err != nil {
+		return result, fmt.Errorf("scan fixture %s: %w", name, err)
 	}
 	result.detected = rep.Breakdown[stage.ruleID] > 0
 	result.measured = measuresRule(rep.Complexity.Measurements, stage.ruleID)

@@ -1161,3 +1161,23 @@ func TestException_UILatencySource(t *testing.T) {
 		t.Fatalf("foreign path must be refused, got: %v", err)
 	}
 }
+
+// TestValidateExceptions_HISS03ScannerRule verifies that HISS-03 and HISS-05 are treated as
+// HISS scanner rules for path-only targeting and optional function scoping.
+func TestValidateExceptions_HISS03ScannerRule(t *testing.T) {
+	for _, rule := range []string{"HISS-03", "HISS-05"} {
+		byPath := Exception{Rule: rule, Path: "internal/sim/tick.go", Reason: "warmup arena", Expires: "2026-11-28"}
+		if err := ValidateExceptions([]Exception{byPath}, exceptionsToday); err != nil {
+			t.Fatalf("%s path exception refused: %v", rule, err)
+		}
+		byFunc := byPath
+		byFunc.Function = "Tick"
+		if err := ValidateExceptions([]Exception{byFunc}, exceptionsToday); err != nil {
+			t.Fatalf("%s function-scoped exception refused: %v", rule, err)
+		}
+		byGlob := Exception{Rule: rule, Glob: "internal/sim/*.go", Reason: "warmup arena", Expires: "2026-11-28"}
+		if err := ValidateExceptions([]Exception{byGlob}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "one file by path") {
+			t.Fatalf("%s glob exception = %v, want path-only refusal", rule, err)
+		}
+	}
+}

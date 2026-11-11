@@ -4,11 +4,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
 
 	praetor "github.com/cordanaLLM/praetor"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
 
@@ -476,5 +478,49 @@ func TestVerifyFS_Negative_PlantedBrokenClaimFails(t *testing.T) {
 	}
 	if len(report.Findings) == 0 || !strings.Contains(report.Findings[0].Detail, "not reported") {
 		t.Fatalf("expected finding stating fixture went unreported, got: %+v", report.Findings)
+	}
+}
+
+// TestScannerRuleIDs_MatchesCoverageGoScannerClaims pins hisscatalog.ScannerRuleIDs to the
+// rule IDs whose Go coverage claims in .config/hiss/coverage.yaml are replayed by internal/hiss.
+func TestScannerRuleIDs_MatchesCoverageGoScannerClaims(t *testing.T) {
+	catalog, err := LoadCatalog(t.Context(), filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("load coverage catalog: %v", err)
+	}
+	var want []string
+	for i := 0; i < len(catalog.Rules); i++ {
+		rule := &catalog.Rules[i]
+		for j := 0; j < len(rule.Coverage); j++ {
+			if rule.Coverage[j].Language == "go" && rule.Coverage[j].ReplayedHere() {
+				want = append(want, rule.ID)
+				break
+			}
+		}
+	}
+	slices.Sort(want)
+	got := hisscatalog.ScannerRuleIDs()
+	if !slices.Equal(got, want) {
+		t.Fatalf("hisscatalog.ScannerRuleIDs() = %v, want Go scanner claims %v", got, want)
+	}
+}
+
+// TestVerifyFS_Negative_IncompleteFixtureScanFails proves that a fixture whose scan leaves
+// unparsed or truncated scope fails replay naming the fixture rather than counting as clean.
+func TestVerifyFS_Negative_IncompleteFixtureScanFails(t *testing.T) {
+	fsys := fstest.MapFS{
+		FixtureDir + "/HISS-01/go/positive/recursion.go": &fstest.MapFile{
+			Data: []byte(recursiveGo),
+		},
+		FixtureDir + "/HISS-01/go/negative/broken.go": &fstest.MapFile{
+			Data: []byte("package p\nfunc (\n"),
+		},
+	}
+	_, err := VerifyFS(t.Context(), fsys, catalogFor("HISS-01", "go", StatePartial))
+	if err == nil {
+		t.Fatal("VerifyFS succeeded on unparseable negative fixture, want incomplete scan error")
+	}
+	if !strings.Contains(err.Error(), "broken.go") || !errors.Is(err, hiss.ErrScanIncomplete) {
+		t.Fatalf("VerifyFS err = %v, want broken.go wrapping hiss.ErrScanIncomplete", err)
 	}
 }

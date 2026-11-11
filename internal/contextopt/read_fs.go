@@ -13,38 +13,69 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-type fsReadResult struct {
-	data []byte
-	err  error
+type fsOpResult[T any] struct {
+	value T
+	err   error
+}
+
+// runFS runs fn on a worker goroutine and returns promptly when ctx ends, even if the
+// underlying filesystem operation blocks.
+func runFS[T any](ctx context.Context, verb, name string, fsys fs.FS, fn func() (T, error)) (T, error) {
+	var zero T
+	if ctx == nil {
+		return zero, fmt.Errorf("%s %s: context is required", verb, name)
+	}
+	if err := ctx.Err(); err != nil {
+		return zero, fmt.Errorf("%s %s: %w", verb, name, err)
+	}
+	if fsys == nil {
+		return zero, fmt.Errorf("%s %s: filesystem is required", verb, name)
+	}
+	result := make(chan fsOpResult[T], 1)
+	go func() {
+		value, err := fn()
+		result <- fsOpResult[T]{value: value, err: err}
+	}()
+	select {
+	case <-ctx.Done():
+		return zero, fmt.Errorf("%s %s: %w", verb, name, ctx.Err())
+	case r := <-result:
+		if err := ctx.Err(); err != nil {
+			return zero, fmt.Errorf("%s %s: %w", verb, name, err)
+		}
+		if r.err != nil {
+			return zero, fmt.Errorf("%s %s: %w", verb, name, r.err)
+		}
+		return r.value, nil
+	}
 }
 
 // ReadFS reads at most limit bytes from fsys, refusing a longer file. Cancellation
 // returns promptly even if Open, Read or Close blocks. An uncooperative filesystem
 // can retain the worker until its operation returns; the worker closes an opened file.
 func ReadFS(ctx context.Context, fsys fs.FS, name string, limit int) ([]byte, error) {
-	if ctx == nil {
-		return nil, fmt.Errorf("read %s: context is required", name)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("read %s: %w", name, err)
-	}
 	if limit < 0 || limit > int(^uint(0)>>1)-101 {
 		return nil, fmt.Errorf("read %s: invalid byte limit", name)
 	}
-	result := make(chan fsReadResult, 1)
-	go func() { data, err := readFS(ctx, fsys, name, limit); result <- fsReadResult{data, err} }()
-	select {
-	case <-ctx.Done():
-		return nil, fmt.Errorf("read %s: %w", name, ctx.Err())
-	case r := <-result:
-		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("read %s: %w", name, err)
-		}
-		if r.err != nil {
-			return nil, fmt.Errorf("read %s: %w", name, r.err)
-		}
-		return r.data, nil
-	}
+	return runFS(ctx, "read", name, fsys, func() ([]byte, error) {
+		return readFS(ctx, fsys, name, limit)
+	})
+}
+
+// ReadDirFS reads the named directory from fsys and returns promptly when ctx ends,
+// even if ReadDir or Open blocks on an uncooperative filesystem.
+func ReadDirFS(ctx context.Context, fsys fs.FS, name string) ([]fs.DirEntry, error) {
+	return runFS(ctx, "read dir", name, fsys, func() ([]fs.DirEntry, error) {
+		return fs.ReadDir(fsys, name)
+	})
+}
+
+// StatFS stats the named file in fsys and returns promptly when ctx ends, even if Stat
+// or Open blocks on an uncooperative filesystem.
+func StatFS(ctx context.Context, fsys fs.FS, name string) (fs.FileInfo, error) {
+	return runFS(ctx, "stat", name, fsys, func() (fs.FileInfo, error) {
+		return fs.Stat(fsys, name)
+	})
 }
 
 // readFS owns the opened file and checks cancellation between bounded reads.

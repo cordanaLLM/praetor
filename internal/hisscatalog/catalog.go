@@ -41,6 +41,9 @@ type Rule struct {
 	// The zero value means adoption generates none, and every surface must say the rule is not
 	// enforced rather than borrow praetor's own mechanism (BUG-804).
 	Adoption AdoptedCheck
+	// Scanner reports whether the internal/hiss scanner decides or measures this invariant,
+	// which governs scanner-scoped manifest exceptions (config.ValidateExceptions).
+	Scanner bool
 }
 
 // hiss04Specification lists HISS-04's caps. Its function length is the audit ceiling itself
@@ -71,6 +74,7 @@ var catalog = []Rule{
 				Text: hiss.CleanupGotoRule() + " (declared exception); audit reports every other `goto`"},
 		},
 		Adoption: auditCheck(scannedLanguages, "Go `goto`, recursion + plain-function call cycles; Rust, Python direct recursion; C `goto`"),
+		Scanner:  true,
 	},
 	{
 		ID:            "HISS-02",
@@ -84,6 +88,7 @@ var catalog = []Rule{
 			{Languages: LanguageGo, Text: "I/O takes `context.Context` deadline"},
 		},
 		Adoption: auditCheck(scannedLanguages, "unbounded loop shapes in Go, C, Rust, Python; I/O deadlines unchecked"),
+		Scanner:  true,
 	},
 	{
 		ID:            "HISS-03",
@@ -94,6 +99,7 @@ var catalog = []Rule{
 		Scope:         "memory",
 		Directive:     []Clause{{Languages: LanguageGo | LanguageRust | LanguageC, Text: "zero heap allocation in hot simulation/tick loops"}},
 		Adoption:      auditCheck(LanguageGo, "Go only: //hiss:hot functions need a testing.AllocsPerRun test asserting zero; unmarked code unchecked; Rust, C unchecked"),
+		Scanner:       true,
 	},
 	{
 		ID:            "HISS-04",
@@ -107,6 +113,7 @@ var catalog = []Rule{
 			{Text: "func LOC <=", FuncLOC: true},
 		},
 		Adoption: auditCheck(scannedLanguages, "function length only; other caps need repository linter"),
+		Scanner:  true,
 	},
 	{
 		ID:            "HISS-05",
@@ -117,6 +124,7 @@ var catalog = []Rule{
 		Scope:         "scoping",
 		Directive:     []Clause{{Text: "declare every identifier in smallest lexical scope serving it"}},
 		Adoption:      auditCheck(LanguageGo, "Go only: function-top locals with side-effect-free, order-independent literal/constant initializers used only inside one nested block; other languages unchecked"),
+		Scanner:       true,
 	},
 	{
 		ID:            "HISS-06",
@@ -127,6 +135,7 @@ var catalog = []Rule{
 		Scope:         "concurrency",
 		Directive:     []Clause{{Text: "explicit scalar upper bound on every worker pool + concurrent fan-out"}},
 		Adoption:      auditCheck(LanguageGo, "Go only: go statement per loop iteration without semaphore, token channel, constant bound or //hiss:bound; other languages unchecked"),
+		Scanner:       true,
 	},
 	{
 		ID:            "HISS-07",
@@ -141,6 +150,7 @@ var catalog = []Rule{
 			{Languages: LanguageRust, Text: "zero `.unwrap()` / `.expect()` outside tests"},
 		},
 		Adoption: auditCheck(LanguageGo|LanguageRust|LanguagePython, "partial in Go, Rust, Python"),
+		Scanner:  true,
 	},
 	{
 		ID:            "HISS-08",
@@ -155,6 +165,7 @@ var catalog = []Rule{
 			{Text: "a process signal's target is bounded above 1 (`killpg`, `kill(-pid)`, Go `syscall.Kill`)"},
 		},
 		Adoption: auditCheck(LanguageC|LanguagePython|LanguageGo, "C banned calls, Python `eval` / `exec`, Go `syscall.Kill` / `unix.Kill`"),
+		Scanner:  true,
 	},
 	{
 		ID:            "HISS-09",
@@ -165,6 +176,7 @@ var catalog = []Rule{
 		Scope:         "reference safety",
 		Directive:     []Clause{{Languages: LanguageGo | LanguageRust, Text: "`// SAFETY:` proof before every `unsafe` block"}},
 		Adoption:      auditCheck(LanguageGo|LanguageRust, "Go, Rust `unsafe` without proof; C, Python unchecked"),
+		Scanner:       true,
 	},
 	{
 		ID:            "HISS-10",
@@ -318,12 +330,12 @@ func RuleIDs() []string {
 	return ids
 }
 
-// ScannerRuleIDs returns the HISS rules whose enforcement registry assigns decisions to the
-// internal scanner. The enforcement field is the catalog's existing source for that distinction.
+// ScannerRuleIDs returns the HISS rules whose catalog metadata marks the internal/hiss
+// scanner as a deciding mechanism.
 func ScannerRuleIDs() []string {
 	ids := make([]string, 0, len(catalog))
 	for i := 0; i < len(catalog); i++ {
-		if strings.Contains(catalog[i].Enforcement, "internal/hiss scanner") {
+		if catalog[i].Scanner {
 			ids = append(ids, catalog[i].ID)
 		}
 	}

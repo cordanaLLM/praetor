@@ -101,3 +101,59 @@ func TestReplayReadControlAndCatalogBoundary(t *testing.T) {
 		t.Fatalf("fixture replay: %+v, %v", report, err)
 	}
 }
+
+type blockedReadDirFS struct {
+	fstest.MapFS
+	started chan struct{}
+	release chan struct{}
+}
+
+func (f blockedReadDirFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	select {
+	case f.started <- struct{}{}:
+	default:
+	}
+	<-f.release
+	return fs.ReadDir(f.MapFS, name)
+}
+
+// TestReplayContextBoundsReadDirAndAbsentProbe verifies that VerifyFS honors a cancelled
+// context before accepting an absent bucket and returns on deadline when ReadDir blocks.
+func TestReplayContextBoundsReadDirAndAbsentProbe(t *testing.T) {
+	t.Run("cancelled_before_absent_bucket", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := VerifyFS(ctx, fstest.MapFS{}, catalogFor("HISS-01", "go", StatePartial))
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("VerifyFS with cancelled ctx on absent bucket = %v, want context.Canceled", err)
+		}
+	})
+	t.Run("blocked_readdir_deadline", func(t *testing.T) {
+		f := blockedReadDirFS{
+			MapFS:   fstest.MapFS{},
+			started: make(chan struct{}, 1),
+			release: make(chan struct{}),
+		}
+		defer close(f.release)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+		defer cancel()
+		done := make(chan error, 1)
+		go func() {
+			_, err := VerifyFS(ctx, f, catalogFor("HISS-01", "go", StatePartial))
+			done <- err
+		}()
+		select {
+		case <-f.started:
+		case <-time.After(time.Second):
+			t.Fatal("ReadDir did not start")
+		}
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("VerifyFS on blocked ReadDir = %v, want context.DeadlineExceeded", err)
+			}
+		case <-time.After(250 * time.Millisecond):
+			t.Fatal("blocked ReadDir ignored context deadline")
+		}
+	})
+}
