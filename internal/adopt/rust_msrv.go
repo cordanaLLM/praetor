@@ -42,7 +42,7 @@ func AuditRustMSRV(ctx context.Context, manifest *config.Manifest, root string, 
 		return "", fmt.Errorf("[FAIL] rust-msrv: %w", err)
 	}
 	// Order: engine-1689-no-cargo-skip-first-20261102: skip before loading inputs when no Cargo.toml exists.
-	cargoCount, err := countCargoManifests(ctx, root)
+	cargoCount, err := countCargoManifests(ctx, root, limits)
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] rust-msrv: %w", err)
 	}
