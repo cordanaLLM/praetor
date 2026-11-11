@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	scanTimeout   = 5 * time.Minute
+	scanTimeout   = 12 * time.Minute // full history of every ref; see secretscan.ScanTimeout
 	defaultConfig = ".gitleaks.toml"
 	// logOpts reads full history and merge commits (#1237). Order
 	// engine-secretscan-foreign-remote-refs-20261025: read only the repository's
