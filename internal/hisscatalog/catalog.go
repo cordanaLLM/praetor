@@ -89,10 +89,11 @@ var catalog = []Rule{
 		ID:            "HISS-03",
 		Title:         "Zero Frame Malloc",
 		Specification: "Hot simulation and frame loops must maintain zero dynamic heap allocations: ΔHeapAlloc_tick = 0.",
-		Enforcement:   "NOT ENFORCED. No allocation benchmark gate exists in this repository.",
-		FailureAction: "None today; the rule is advisory until a check is attached.",
+		Enforcement:   "Go only: //hiss:hot functions need a testing.AllocsPerRun test asserting zero; unmarked code unchecked; Rust, C unchecked",
+		FailureAction: "Build sweep blocker.",
 		Scope:         "memory",
 		Directive:     []Clause{{Languages: LanguageGo | LanguageRust | LanguageC, Text: "zero heap allocation in hot simulation/tick loops"}},
+		Adoption:      auditCheck(LanguageGo, "Go only: //hiss:hot functions need a testing.AllocsPerRun test asserting zero; unmarked code unchecked; Rust, C unchecked"),
 	},
 	{
 		ID:            "HISS-04",
@@ -111,19 +112,21 @@ var catalog = []Rule{
 		ID:            "HISS-05",
 		Title:         "Variable Scoping",
 		Specification: "Identifiers are declared in the smallest lexical scope that serves them.",
-		Enforcement:   "NOT ENFORCED. No executable check exists in this repository, and no configured linter decides this rule.",
-		FailureAction: "None today; the rule is advisory until a check is attached.",
+		Enforcement:   "The internal/hiss Go scanner reports function-top var and short-declaration locals used only inside one nested block (including its header), with no initializer or only literals, proven constant identifiers, or composite literals with literal/constant keys and values. Calls, receives, indexes, unproven selectors, variable reads, function literals and method values are excluded. Address-taken, closure-captured and potentially loop-mutated locals are exempt: assignments, compound writes, increments/decrements, element/field writes, delete/clear, address passing and method calls can carry state between iterations, including nested loops, conditions and post statements. Fully reset locals conservatively stay exempt without dominance proof. Read-only loop uses and plain if/switch writes remain candidates; nested declarations and other languages are unchecked. Replayed by 'praetorctl hiss coverage --verify'.",
+		FailureAction: "New findings fail the audit HISS-13 debt ratchet.",
 		Scope:         "scoping",
 		Directive:     []Clause{{Text: "declare every identifier in smallest lexical scope serving it"}},
+		Adoption:      auditCheck(LanguageGo, "Go only: function-top locals with side-effect-free, order-independent literal/constant initializers used only inside one nested block; other languages unchecked"),
 	},
 	{
 		ID:            "HISS-06",
 		Title:         "Bounded Concurrency",
 		Specification: "Worker pools and concurrent fan-out carry an explicit scalar upper bound.",
-		Enforcement:   "NOT ENFORCED for the axiom. The race detector cannot observe an unbounded pool: a lock-order inversion or an unbounded but race-free fan-out produces no data race. 'go test -race' runs, but it does not decide this rule.",
-		FailureAction: "None today; the rule is advisory until a check is attached.",
+		Enforcement:   "The internal/hiss scanner (Go only: go statement per loop iteration without errgroup SetLimit, semaphore, token channel, constant bound or //hiss:bound; other languages unchecked).",
+		FailureAction: "Pre-commit and CI blocker.",
 		Scope:         "concurrency",
 		Directive:     []Clause{{Text: "explicit scalar upper bound on every worker pool + concurrent fan-out"}},
+		Adoption:      auditCheck(LanguageGo, "Go only: go statement per loop iteration without errgroup SetLimit, semaphore, token channel, constant bound or //hiss:bound; other languages unchecked"),
 	},
 	{
 		ID:            "HISS-07",
@@ -217,8 +220,9 @@ var catalog = []Rule{
 		ID:            "HISS-14",
 		Title:         "Append-Only ABI & Migration Footers",
 		Specification: "Public APIs are append-only. Breaking changes require conventional commit breaking indicator (!) and mandatory Migration: footer.",
-		Enforcement:   "praetorctl forge check-commits in CI, over every commit of a pull request, and praetorctl forge check-message in a commit-msg hook reject a breaking-change marker without a Migration: footer, whatever the language, a subject that is not a Conventional Commits subject (build, chore, ci, docs, feat, fix, perf, refactor, revert, style or test, an optional scope and !) or one git wrote for a merge or a revert, and tool attribution trailers or footers (fleet rule 1). Where api:public-contract is declared and git tracks a go.mod, the Go API Compatibility workflow (.github/workflows/praetor-api.yml) runs tools/apicompat/gate/main.go, which compares the exported API of every Go module with the base using go-apidiff: before a v1 root release tag it reports an incompatible change, from v1 on it rejects one, and a comparison that did not run fails. No other language's API is compared.",
+		Enforcement:   "praetorctl forge check-commits in CI, over every commit of a pull request, and praetorctl forge check-message in a commit-msg hook reject a breaking-change marker without a Migration: footer, whatever the language, a subject that is not a Conventional Commits subject (build, chore, ci, docs, feat, fix, perf, refactor, revert, style or test, an optional scope and !) or one git wrote for a merge or a revert, and tool attribution trailers or footers (fleet rule 1). Adoption installs the same message policy in Lefthook commit-msg and pre-push; failures block commits and pushes, respectively. Where api:public-contract is declared and git tracks a go.mod, the Go API Compatibility workflow (.github/workflows/praetor-api.yml) runs tools/apicompat/gate/main.go, which compares the exported API of every Go module with the base using go-apidiff: before a v1 root release tag it reports an incompatible change, from v1 on it rejects one, and a comparison that did not run fails. No other language's API is compared.",
 		FailureAction: "PR blocker.",
+		Adoption:      AdoptedCheck{Check: "`praetorctl forge check-message` + `praetorctl forge check-commits`", Coverage: "commit subject, breaking marker, Migration footer; Go API diff only where api:public-contract and praetor-api.yml", Trigger: "policy violation", Stages: StageCommitMsg | StagePrePush},
 		Scope:         "append-only ABI",
 		Directive:     []Clause{{Text: "public API append-only; breaking change = `!` subject + `Migration:` footer"}},
 	},
@@ -273,10 +277,16 @@ var catalog = []Rule{
 		ID:            "HISS-20",
 		Title:         "Replayable Enforcement Evidence",
 		Specification: "Every rule carries fixtures replayed in both directions: a claim of enforcement must report each of its positive fixtures, and a claim of absence must leave its gap fixtures undetected. A coverage claim is reproducible, never asserted.",
-		Enforcement:   "'praetorctl hiss coverage --verify', run inside verify-all against '.config/hiss/coverage.yaml'.",
+		Enforcement:   "'praetorctl hiss coverage --verify' against '.config/hiss/coverage.yaml', or 'praetorctl hiss coverage --verify --embedded' for the engine corpus.",
 		FailureAction: "Verification gate rejection.",
 		Scope:         "replayable evidence",
 		Directive:     []Clause{{Text: "every enforcement claim backed by fixtures replayed both directions"}},
+		Adoption: AdoptedCheck{
+			Check:    "`praetorctl hiss coverage --verify --embedded` (engine corpus replay)",
+			Coverage: "the pinned engine's own claims; adopter-specific rules have no corpus",
+			Trigger:  "contradiction",
+			Stages:   StageVerifyAll,
+		},
 	},
 	{
 		ID:            "HISS-21",
@@ -435,8 +445,8 @@ func SplitInvariantRow(line string) (InvariantRow, bool) {
 // trimmed cells. It reports false when rest does not close with a pipe or holds no cell.
 func splitTableCells(rest string) ([]string, bool) {
 	var cells []string
-	start, escaped := 0, false
-	for i := 0; i < len(rest); i++ {
+	start := 0
+	for i, escaped := 0, false; i < len(rest); i++ {
 		switch {
 		case escaped:
 			escaped = false
@@ -463,12 +473,8 @@ func InvariantTableRows(agentsMD string) ([]InvariantRow, error) {
 	if len(lines) > maxGatedTableLines {
 		return nil, fmt.Errorf("%w: %d lines, limit %d", ErrGatedTableTooLong, len(lines), maxGatedTableLines)
 	}
-	var (
-		rows      []InvariantRow
-		fence     util.MarkdownFence
-		inSection bool
-	)
-	for i := 0; i < len(lines) && i < maxGatedTableLines; i++ {
+	var rows []InvariantRow
+	for i, fence, inSection := 0, (util.MarkdownFence{}), false; i < len(lines) && i < maxGatedTableLines; i++ {
 		line := strings.TrimSpace(lines[i])
 		if fence.Inside(line) {
 			continue

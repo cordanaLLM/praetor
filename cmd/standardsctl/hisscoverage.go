@@ -5,8 +5,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
+	"os"
 	"time"
 
+	praetor "github.com/cordanaLLM/praetor"
 	"github.com/cordanaLLM/praetor/internal/hisscoverage"
 )
 
@@ -24,10 +27,11 @@ func runHissCoverage(args []string) error {
 	syncTitles := fs.Bool("sync-titles", false,
 		"Rewrite each rule title that differs from the HISS catalog to the catalog's text; a dry run unless --write is given")
 	write := fs.Bool("write", false, "With --sync-titles, rewrite "+hisscoverage.CatalogFile+" in place")
+	embedded := fs.Bool("embedded", false, "Replay the embedded fixture corpus and catalog compiled into the engine binary")
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
-	if err := checkCoverageModes(*verify, *syncTitles, *write); err != nil {
+	if err := checkCoverageFlags(fs, *embedded, *verify, *syncTitles, *write); err != nil {
 		return err
 	}
 
@@ -37,13 +41,8 @@ func runHissCoverage(args []string) error {
 		return syncCoverageTitles(ctx, *root, *write)
 	}
 
-	catalog, err := hisscoverage.LoadCatalog(ctx, *root)
+	fsys, catalog, err := loadCoverageTarget(ctx, *root, *embedded)
 	if err != nil {
-		if errors.Is(err, hisscoverage.ErrCatalogAbsent) {
-			fmt.Printf("=== HISS Coverage: not declared ===\n")
-			fmt.Printf("  No catalog at %s; enforcement evidence is undeclared for every invariant.\n",
-				hisscoverage.CatalogFile)
-		}
 		return err
 	}
 
@@ -52,7 +51,42 @@ func runHissCoverage(args []string) error {
 	if !*verify {
 		return nil
 	}
-	return verifyCoverage(ctx, *root, catalog)
+	return verifyCoverage(ctx, fsys, catalog, *embedded)
+}
+
+// checkCoverageFlags checks combinations of coverage flags.
+func checkCoverageFlags(fs *flag.FlagSet, embedded, verify, syncTitles, write bool) error {
+	var pathSet bool
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "path" {
+			pathSet = true
+		}
+	})
+	if embedded && pathSet {
+		return errors.New("hiss coverage: --embedded refuses --path; embedded replay uses the compiled-in corpus")
+	}
+	if embedded && syncTitles {
+		return errors.New("hiss coverage: --embedded cannot be combined with --sync-titles")
+	}
+	return checkCoverageModes(verify, syncTitles, write)
+}
+
+// loadCoverageTarget resolves the target filesystem and loads the coverage catalog.
+func loadCoverageTarget(ctx context.Context, root string, embedded bool) (fs.FS, *hisscoverage.Catalog, error) {
+	if embedded {
+		cat, err := hisscoverage.LoadCatalogFS(ctx, praetor.EmbeddedCorpus)
+		return praetor.EmbeddedCorpus, cat, err
+	}
+	cat, err := hisscoverage.LoadCatalog(ctx, root)
+	if err != nil {
+		if errors.Is(err, hisscoverage.ErrCatalogAbsent) {
+			fmt.Printf("=== HISS Coverage: not declared ===\n")
+			fmt.Printf("  No catalog at %s; enforcement evidence is undeclared for every invariant.\n",
+				hisscoverage.CatalogFile)
+		}
+		return nil, nil, err
+	}
+	return os.DirFS(root), cat, nil
 }
 
 // checkCoverageModes refuses a flag combination naming two runs: --write belongs to
@@ -145,8 +179,8 @@ func printRuleCoverage(catalog *hisscoverage.Catalog, id string) {
 }
 
 // verifyCoverage replays the corpus and fails when the evidence contradicts a claim.
-func verifyCoverage(ctx context.Context, root string, catalog *hisscoverage.Catalog) error {
-	report, err := hisscoverage.Verify(ctx, root, catalog)
+func verifyCoverage(ctx context.Context, fsys fs.FS, catalog *hisscoverage.Catalog, embedded bool) error {
+	report, err := hisscoverage.VerifyFS(ctx, fsys, catalog)
 	if err != nil {
 		return err
 	}
@@ -154,8 +188,12 @@ func verifyCoverage(ctx context.Context, root string, catalog *hisscoverage.Cata
 	if !report.Passed() {
 		return failContradictedCoverage(report)
 	}
-	fmt.Printf("\n[PASS] %d claim(s) checked against %d fixture(s) (%d replayed here, %d attributed elsewhere); every claim holds.\n",
-		report.Claims, report.Fixtures, report.Claims-len(report.Delegated), len(report.Delegated))
+	versionSuffix := ""
+	if embedded {
+		versionSuffix = fmt.Sprintf(" (engine %s)", buildVersion())
+	}
+	fmt.Printf("\n[PASS] %d claim(s) checked against %d fixture(s) (%d replayed here, %d attributed elsewhere)%s; every claim holds.\n",
+		report.Claims, report.Fixtures, report.Claims-len(report.Delegated), len(report.Delegated), versionSuffix)
 	return nil
 }
 
@@ -190,7 +228,8 @@ func failContradictedCoverage(report *hisscoverage.Report) error {
 func printHissUsage() {
 	fmt.Println("Usage: praetorctl hiss <subcommand> [args]")
 	fmt.Println("\nSubcommands:")
-	fmt.Println("  coverage [--path=.] [--verify]    Report declared HISS enforcement evidence; --verify replays the fixture corpus")
+	fmt.Println("  coverage [--path=.] [--verify] [--embedded]")
+	fmt.Println("                                    Report declared HISS enforcement evidence; --verify replays the fixture corpus")
 	fmt.Println("  coverage --sync-titles [--write]  Rewrite rule titles that differ from the HISS catalog; a dry run unless --write")
 }
 

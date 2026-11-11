@@ -54,8 +54,8 @@ rules:
 			t.Errorf("forced harness inlines the mechanism %q", prose)
 		}
 	}
-	if rowFor(t, harness, "HISS-05") == "" || !strings.Contains(rowFor(t, harness, "HISS-05"), "unknown") {
-		t.Errorf("unclaimed, unscanned HISS-05 must render unknown: %s", rowFor(t, harness, "HISS-05"))
+	if row := rowFor(t, harness, "HISS-05"); !strings.Contains(row, "praetorctl audit` HISS scan") {
+		t.Errorf("engine-scanned HISS-05 must name its scanner without a local claim: %s", row)
 	}
 }
 
@@ -70,7 +70,7 @@ func TestAdoptWithoutCoverageRendersEngineOrUnknown(t *testing.T) {
 	if row := rowFor(t, harness, "HISS-01"); !strings.Contains(row, "praetorctl audit` HISS scan") {
 		t.Errorf("engine-scanned rule must name its scanner: %s", row)
 	}
-	if row := rowFor(t, harness, "HISS-05"); !strings.Contains(row, "unknown") {
+	if row := rowFor(t, harness, "HISS-18"); !strings.Contains(row, "unknown") {
 		t.Errorf("unscanned rule must render unknown: %s", row)
 	}
 	if strings.Contains(harness, "not enforced") {

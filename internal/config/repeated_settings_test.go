@@ -300,8 +300,7 @@ func TestRepeatedSettings_Boundary_HostLayersIgnored(t *testing.T) {
 func TestRepeatedSettings_Boundary_NilContext(t *testing.T) {
 	root := t.TempDir()
 	opts := EffectiveOptions{Root: root}
-	var noContext context.Context
-	if _, err := RepeatedSettingsContext(noContext, opts); err == nil {
+	if _, err := RepeatedSettingsContext(context.Context(nil), opts); err == nil {
 		t.Fatal("want error for nil context, got nil")
 	}
 }

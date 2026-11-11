@@ -44,8 +44,7 @@ func TestForgeCheckCommits_PlantedOffendingCommit(t *testing.T) {
 func TestForgeCheckMessage_PlantedOffendingMessage(t *testing.T) {
 	dir := t.TempDir()
 	msgFile := filepath.Join(dir, "COMMIT_EDITMSG")
-	content := "feat: add feature\n\nCo-authored-by: GitHub Copilot\n"
-	if err := os.WriteFile(msgFile, []byte(content), 0600); err != nil {
+	if err := os.WriteFile(msgFile, []byte("feat: add feature\n\nCo-authored-by: GitHub Copilot\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 

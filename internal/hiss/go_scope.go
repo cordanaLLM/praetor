@@ -7,6 +7,7 @@ package hiss
 import (
 	"go/ast"
 	"go/token"
+	"slices"
 )
 
 // goScope answers, during one walk of Go source, whether a name is bound at the node the walk
@@ -35,6 +36,8 @@ import (
 type goScope struct {
 	frames  []scopeFrame
 	visible map[string]int
+	// nodes is inspect's ancestor stack; consumers can distinguish names from references.
+	nodes []ast.Node
 	// steps counts the nodes inspect has visited, so a caller can prove one walk per function
 	// (TestCallGraphScansCallsInLinearTime) without timing it.
 	steps int
@@ -42,8 +45,76 @@ type goScope struct {
 
 // scopeFrame is one open scope: the node whose extent it covers and the names bound in it.
 type scopeFrame struct {
-	node  ast.Node
-	names []string
+	node     ast.Node
+	names    []string
+	bindings map[string]*ast.Ident
+}
+
+// resolve returns the declaration visible at this point, without go/types or imports.
+func (s *goScope) resolve(name string) *ast.Ident {
+	for i := len(s.frames) - 1; i >= 0; i-- {
+		if ident := s.frames[i].bindings[name]; ident != nil {
+			return ident
+		}
+	}
+	return nil
+}
+
+// reference excludes declarations, selector members and labels. A := left operand
+// is a write only when that binding already exists in the current declaration scope.
+func (s *goScope) reference(id *ast.Ident) bool {
+	switch p := s.nodes[len(s.nodes)-1].(type) {
+	case *ast.AssignStmt:
+		return s.assignmentReference(id, p)
+	case *ast.ValueSpec:
+		return !slices.Contains(p.Names, id)
+	case *ast.Field:
+		return !slices.Contains(p.Names, id)
+	case *ast.SelectorExpr:
+		return p.Sel != id
+	case *ast.TypeSpec:
+		return p.Name != id
+	case *ast.LabeledStmt:
+		return p.Label != id
+	case *ast.BranchStmt:
+		return p.Label != id
+	case *ast.RangeStmt:
+		return rangeReference(id, p)
+	}
+	return true
+}
+
+func (s *goScope) assignmentReference(id *ast.Ident, p *ast.AssignStmt) bool {
+	return p.Tok != token.DEFINE || !slices.Contains(p.Lhs, ast.Expr(id)) || s.local(id.Name) != nil
+}
+
+func rangeReference(id *ast.Ident, p *ast.RangeStmt) bool {
+	return p.Tok != token.DEFINE || (p.Key != id && p.Value != id)
+}
+
+// local returns a binding in the current declaration scope. Function parameters and
+// results share the body's declaration scope for short variable redeclarations.
+func (s *goScope) local(name string) *ast.Ident {
+	last := len(s.frames) - 1
+	if last < 0 {
+		return nil
+	}
+	if ident := s.frames[last].bindings[name]; ident != nil {
+		return ident
+	}
+	if last > 0 {
+		var body *ast.BlockStmt
+		switch fn := s.frames[last-1].node.(type) {
+		case *ast.FuncDecl:
+			body = fn.Body
+		case *ast.FuncLit:
+			body = fn.Body
+		}
+		if body != nil && body == s.frames[last].node {
+			return s.frames[last-1].bindings[name]
+		}
+	}
+	return nil
 }
 
 // binds reports whether a binding of name is in scope at the node the walk has reached.
@@ -120,21 +191,20 @@ func (s *goScope) leave(n ast.Node) {
 // children and its bindings. So is a node deeper than maxNodeStack (HISS-02); in a scanned file
 // that depth also truncates the scanner's own walk, which records the file as a lower bound.
 func (s *goScope) inspect(root ast.Node, visit func(ast.Node) bool) {
-	var stack []ast.Node
 	ast.Inspect(root, func(n ast.Node) bool {
 		if n == nil {
-			if last := len(stack) - 1; last >= 0 {
-				s.leave(stack[last])
-				stack = stack[:last]
+			if last := len(s.nodes) - 1; last >= 0 {
+				s.leave(s.nodes[last])
+				s.nodes = s.nodes[:last]
 			}
 			return true
 		}
-		if len(stack) >= maxNodeStack || !visit(n) {
+		if len(s.nodes) >= maxNodeStack || !visit(n) {
 			return false
 		}
 		s.steps++
 		s.enter(n)
-		stack = append(stack, n)
+		s.nodes = append(s.nodes, n)
 		return true
 	})
 }
@@ -230,9 +300,16 @@ func (s *goScope) declare(ident *ast.Ident) {
 	if last < 0 || ident == nil || ident.Name == "_" {
 		return
 	}
+	if s.local(ident.Name) != nil {
+		return
+	}
 	if s.visible == nil {
 		s.visible = make(map[string]int)
 	}
+	if s.frames[last].bindings == nil {
+		s.frames[last].bindings = make(map[string]*ast.Ident)
+	}
+	s.frames[last].bindings[ident.Name] = ident
 	s.visible[ident.Name]++
 	s.frames[last].names = append(s.frames[last].names, ident.Name)
 }

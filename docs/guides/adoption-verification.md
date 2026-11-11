@@ -2373,6 +2373,17 @@ rows and the instructions below it
 ([adoption](../adoption.md#what-adoption-reads-before-it-writes)).
 Malformed or oversized command metadata now fails before any adoption writes.
 
+Adopted HISS-14 message checks run at two local stages when adoption installs its generated Lefthook configuration:
+
+| Stage | Command through the pinned engine launcher | Failure action |
+| --- | --- | --- |
+| `commit-msg` | `praetorctl forge check-message {1}` | Blocks a commit with an invalid subject or a breaking marker without a `Migration:` footer. |
+| `pre-push` | `praetorctl forge check-commits --pre-push` | Blocks a push if any commit in the resolved range violates the same policy. |
+
+The pre-push script job (`.lefthook/pre-push/praetor-commit-policy.sh`) runs even when Lefthook reports no pushed files, including empty commits and histories whose file changes cancel out. It uses the same engine launcher as the command jobs. The pre-push mode checks `base..HEAD`, using `git merge-base` with the branch's upstream. Without an upstream, it uses the existing default-branch resolver (`repository.default_branch`, the recorded origin HEAD, then `main`), preferring the local `origin` tracking ref over the local branch. It performs no fetch. Detached HEAD, a missing or unrelated base, and an empty range fail with a diagnostic rather than claiming that commits were checked. CI retains its explicit `--base=<ref> --head=<ref>` interface. These jobs share the message policy in `internal/forge/commit_message.go`; they do not compare APIs. Go API comparison remains conditional on `api:public-contract` and `.github/workflows/praetor-api.yml`.
+
+The parsed-job and upgrade tests are in `internal/adopt/lefthook_commit_policy_test.go`; range and refusal cases are in `cmd/standardsctl/forge_push_test.go`. Re-adoption upgrades recognized older generated configurations through the same reconciliation path as other jobs. A custom `commit-msg` section keeps the whole repository-owned configuration intact, including under `--force`, and the report names missing generated jobs.
+
 `lefthook.yml` follows the same rule (`internal/adopt/lefthook_identity.go`):
 
 - An exact earlier Praetor rendering is replaced by the current one and activated,
@@ -2632,7 +2643,8 @@ Its source is
   checks rather than overstate it. A row reads `not enforced` where the check decides none of the
   repository's languages or the rule has no analogue there. HISS-09 in a C engine, HISS-01 in a
   TypeScript repository and the lefthook `go vet` row in a Rust crate are examples
-  (`TestAdoptedFor`).
+  (`TestAdoptedFor`). HISS-20 credits the engine's own replayable coverage claims
+  (`praetorctl hiss coverage --verify --embedded`) in generated `verify-all`.
 
   The line above the table names generated gates and any working-tree gates adoption keeps:
   a preserved or working-tree `make verify-all` target and an existing or generated `lefthook.yml`

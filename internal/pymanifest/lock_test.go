@@ -28,8 +28,7 @@ mkdocs-material==9.8.0 \
 // Positive: every exact pin the lock holds, spelled with other separators or case, with extras
 // and a comment, or held under one of several marker-split versions, is no finding.
 func TestUnlockedPins_Positive_HeldPinsPass(t *testing.T) {
-	in := "Mkdocs_Material[imaging]==9.8.0  # theme\nmarkdown==3.11\n"
-	if got := UnlockedPins(in, lockFixture); len(got) != 0 {
+	if got := UnlockedPins("Mkdocs_Material[imaging]==9.8.0  # theme\nmarkdown==3.11\n", lockFixture); len(got) != 0 {
 		t.Fatalf("UnlockedPins = %q, want none", got)
 	}
 }
@@ -37,9 +36,7 @@ func TestUnlockedPins_Positive_HeldPinsPass(t *testing.T) {
 // Negative (#1697): a pin the lock holds at another version, or not at all, is named in the
 // order requirements.in lists it.
 func TestUnlockedPins_Negative_DriftNamed(t *testing.T) {
-	in := "mkdocs-material==9.8.1\nmkdocs==1.6.1\nmarkdown==3.11\n"
-	want := []string{"mkdocs-material==9.8.1", "mkdocs==1.6.1"}
-	if got := UnlockedPins(in, lockFixture); !slices.Equal(got, want) {
+	if got, want := UnlockedPins("mkdocs-material==9.8.1\nmkdocs==1.6.1\nmarkdown==3.11\n", lockFixture), []string{"mkdocs-material==9.8.1", "mkdocs==1.6.1"}; !slices.Equal(got, want) {
 		t.Fatalf("UnlockedPins = %q, want %q", got, want)
 	}
 }
@@ -47,8 +44,7 @@ func TestUnlockedPins_Negative_DriftNamed(t *testing.T) {
 // Boundary: ranges, arbitrary equality, bare names, options, comments and a hash line carry no
 // exact pin, so they are not compared, and an empty lock holds nothing.
 func TestUnlockedPins_Boundary_OnlyExactPinsCompared(t *testing.T) {
-	in := "mkdocs>=1.6\nmkdocs-material===9.8.0\npymdown-extensions\n-r base.in\n# mkdocs==9\n--hash=sha256:dddd\n"
-	if got := UnlockedPins(in, lockFixture); len(got) != 0 {
+	if got := UnlockedPins("mkdocs>=1.6\nmkdocs-material===9.8.0\npymdown-extensions\n-r base.in\n# mkdocs==9\n--hash=sha256:dddd\n", lockFixture); len(got) != 0 {
 		t.Fatalf("UnlockedPins = %q, want none", got)
 	}
 	if got := UnlockedPins("mkdocs==1.6.1\n", ""); !slices.Equal(got, []string{"mkdocs==1.6.1"}) {

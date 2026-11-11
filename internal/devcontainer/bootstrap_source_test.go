@@ -48,7 +48,7 @@ func TestBootstrapSourceExcludesGoTestSurface(t *testing.T) {
 	for _, file := range files {
 		names = append(names, file.Name)
 	}
-	want := []string{
+	if want := []string{
 		"LICENSE",
 		"cmd/standardsctl/main.go",
 		"go.mod",
@@ -57,8 +57,7 @@ func TestBootstrapSourceExcludesGoTestSurface(t *testing.T) {
 		"internal/x/testdata.go",
 		"internal/x/x.go",
 		"internal/x/x_test_helper.go",
-	}
-	if !reflect.DeepEqual(names, want) {
+	}; !reflect.DeepEqual(names, want) {
 		t.Fatalf("captured set = %q, want %q", names, want)
 	}
 }
@@ -209,5 +208,27 @@ func TestRepositoryBootstrapSourceKeepsHeadroom(t *testing.T) {
 		if bound.used*100 > bound.limit*bootstrapHeadroomPercent {
 			t.Errorf("%s use %d of %d, past the %d%% headroom threshold; shrink the capture before the cap fails every bootstrap", bound.name, bound.used, bound.limit, bootstrapHeadroomPercent)
 		}
+	}
+}
+
+// The compiled asset inventory is independent of the source being captured. Filename
+// validation must reuse it rather than enumerate the embedded corpus for every member.
+func TestBootstrapSourceRulesReuseAssetInventory(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		rules sourceRules
+	}{{"capture", captureRules}, {"archive", archiveRules}} {
+		t.Run(tc.name, func(t *testing.T) {
+			var err error
+			allocations := testing.AllocsPerRun(3, func() {
+				err = validateBootstrapSourceKind("internal/example/example.go", tc.rules)
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if allocations != 0 {
+				t.Fatalf("filename validation rebuilt the asset inventory: %.0f allocations, want 0", allocations)
+			}
+		})
 	}
 }

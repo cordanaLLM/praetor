@@ -356,7 +356,7 @@ func isPriorGeneratedMakefile(data string, plan *VerificationPlan) bool {
 	data = withoutDocumentationMakefileBlock(data)
 	priorWithInclude := buildMakefileWith(plan, priorVerificationRecipePrefix)
 	priorWithoutInclude := buildMakefileLegacy(plan, priorVerificationRecipePrefix, true)
-	return (data == priorWithInclude || data == priorWithoutInclude) && data != buildMakefile(plan)
+	return (data == priorWithInclude || data == priorWithoutInclude || data == priorCoverageMakefile(plan)) && data != buildMakefile(plan)
 }
 
 // isPlaceholderVerificationMakefile reports whether data is exactly the placeholder Makefile
@@ -375,10 +375,12 @@ func isPlaceholderVerificationMakefile(data string, plan *VerificationPlan) bool
 	placeholder := &VerificationPlan{Status: verificationUnavailable}
 	notApplicablePlaceholder := &VerificationPlan{Status: verificationNotApplicable}
 	return data == buildMakefile(placeholder) ||
+		data == priorCoverageMakefile(placeholder) ||
 		data == priorSourceGateMakefile(placeholder) ||
 		data == priorPathResolvedMakefile(placeholder) ||
 		data == priorSecretsGateMakefile(placeholder) ||
-		data == buildMakefile(notApplicablePlaceholder)
+		data == buildMakefile(notApplicablePlaceholder) ||
+		data == priorCoverageMakefile(notApplicablePlaceholder)
 }
 
 // isReplaceableVerificationMakefile reports whether data is earlier Praetor output that adoption
@@ -404,6 +406,7 @@ func isReplaceableVerificationMakefile(data string, plan *VerificationPlan) bool
 func matchesReplaceableMakefile(stripped string, plan *VerificationPlan) bool {
 	return isLegacyVerificationMakefile(stripped) ||
 		isPriorGeneratedMakefile(stripped, plan) ||
+		stripped == priorCoverageMakefile(plan) ||
 		stripped == priorSourceGateMakefile(plan) ||
 		stripped == priorPathResolvedMakefile(plan) ||
 		stripped == priorSecretsGateMakefile(plan) ||
@@ -477,7 +480,7 @@ func appendVerificationTargets(existing string, plan *VerificationPlan) (string,
 		uiPhony = " ui-gates"
 	}
 	result.WriteString("\n# Praetor declared verification; existing project recipes remain unchanged.\n" +
-		util.MakefileCLIVariable + ".PHONY: verify-all" + uiPhony + "\nverify-all:" + uiPrereq + "\n\t@$(PRAETORCTL) compile-context --verify\n\t@$(PRAETORCTL) caveman check --configured-sources\n\t@$(PRAETORCTL) audit\n")
+		util.MakefileCLIVariable + ".PHONY: verify-all" + uiPhony + "\nverify-all:" + uiPrereq + "\n\t@$(PRAETORCTL) compile-context --verify\n\t@$(PRAETORCTL) caveman check --configured-sources\n\t@$(PRAETORCTL) hiss coverage --verify --embedded\n\t@$(PRAETORCTL) audit\n")
 	// One recipe for the build and test commands together: rendered once for each, an
 	// unavailable plan wrote its failing pair twice (#594).
 	result.WriteString(verificationRecipe(plan, plan.commands()))

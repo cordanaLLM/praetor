@@ -1,0 +1,19 @@
+A hot function whose test measures allocations but does not assert zero.
+
+-- frame.go --
+package positive
+
+//hiss:hot rendering frame loop
+func Frame() {}
+
+-- frame_test.go --
+package positive
+
+import "testing"
+
+func TestFrame(t *testing.T) {
+	allocs := testing.AllocsPerRun(100, func() {
+		Frame()
+	})
+	_ = allocs
+}

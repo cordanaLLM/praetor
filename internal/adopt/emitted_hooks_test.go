@@ -49,14 +49,15 @@ func emittedHookRenderings(t *testing.T) map[string]string {
 		t.Fatalf("render emitted ruleset: %v", err)
 	}
 	return map[string]string{
-		lefthookFile:         buildLefthookYAMLFor(lefthookShape{languages: lefthookJobLanguages, reuse: true, toolGovuln: true}, true),
-		reuseWorkflowFile:    reuseWorkflowContent,
-		evasionHookFile:      buildBlockEvasionPY(),
-		engineLauncherFile:   engineLauncherScript,
-		manifestFile:         renderedPriorManifest(t),
-		actionlintConfigFile: string(renderActionlintConfig(actionlintManagedFixtureLabels(t))),
-		codeRabbitFile:       codeRabbitConfig,
-		rulesetFile:          string(ruleset),
+		commitPolicyScriptFile: buildCommitPolicyScript(),
+		lefthookFile:           buildLefthookYAMLFor(lefthookShape{languages: lefthookJobLanguages, reuse: true, toolGovuln: true}, true),
+		reuseWorkflowFile:      reuseWorkflowContent,
+		evasionHookFile:        buildBlockEvasionPY(),
+		engineLauncherFile:     engineLauncherScript,
+		manifestFile:           renderedPriorManifest(t),
+		actionlintConfigFile:   string(renderActionlintConfig(actionlintManagedFixtureLabels(t))),
+		codeRabbitFile:         codeRabbitConfig,
+		rulesetFile:            string(ruleset),
 	}
 }
 
@@ -150,6 +151,8 @@ func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 			}
 			job["run"] = lefthookPythonCommand(arguments)
 		}
+		// Commit-policy jobs were added later; their parsed commands have a separate test.
+		omitCommitPolicyJobs(t, current)
 		if !reflect.DeepEqual(prior, current) {
 			t.Errorf("checkpoint=%v: the current rendering changed a value of %s", checkpoint, name)
 		}

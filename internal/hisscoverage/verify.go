@@ -6,13 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	slashpath "path"
 	"path/filepath"
 	"sort"
 
-	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/hiss"
-	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -46,9 +46,14 @@ var ErrCatalogAbsent = errors.New("hisscoverage: no coverage catalog")
 // ErrClaimUnsupported reports a claim the corpus contradicts.
 var ErrClaimUnsupported = errors.New("hisscoverage: declared coverage is not supported by its fixtures")
 
-// LoadCatalog reads and validates the declared enforcement evidence.
+// LoadCatalog reads and validates the declared enforcement evidence below rootDir.
 func LoadCatalog(ctx context.Context, rootDir string) (*Catalog, error) {
-	data, err := readCatalogFile(ctx, rootDir)
+	return LoadCatalogFS(ctx, dirFS(rootDir))
+}
+
+// LoadCatalogFS reads and validates the declared enforcement evidence from fsys.
+func LoadCatalogFS(ctx context.Context, fsys fs.FS) (*Catalog, error) {
+	data, err := readCatalogFS(ctx, fsys)
 	if err != nil {
 		return nil, err
 	}
@@ -57,10 +62,17 @@ func LoadCatalog(ctx context.Context, rootDir string) (*Catalog, error) {
 
 // readCatalogFile reads the coverage file below rootDir, bounded by maxCatalogBytes.
 func readCatalogFile(ctx context.Context, rootDir string) ([]byte, error) {
-	path := filepath.Join(rootDir, filepath.FromSlash(CatalogFile))
-	data, err := contextopt.ReadSnapshot(ctx, path)
+	return readCatalogFS(ctx, dirFS(rootDir))
+}
+
+// readCatalogFS reads the coverage file from fsys, bounded by maxCatalogBytes.
+func readCatalogFS(ctx context.Context, fsys fs.FS) ([]byte, error) {
+	if ctx != nil && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	data, err := fs.ReadFile(fsys, CatalogFile)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("%w at %s", ErrCatalogAbsent, CatalogFile)
 		}
 		return nil, fmt.Errorf("read coverage catalog: %w", err)
@@ -69,6 +81,14 @@ func readCatalogFile(ctx context.Context, rootDir string) ([]byte, error) {
 		return nil, fmt.Errorf("coverage catalog exceeds %d bytes", maxCatalogBytes)
 	}
 	return data, nil
+}
+
+// dirFS returns an fs.FS for the given directory path.
+func dirFS(root string) fs.FS {
+	if root == "" {
+		return os.DirFS(".")
+	}
+	return os.DirFS(root)
 }
 
 // parseCatalog decodes and validates the text of a coverage file.
@@ -144,6 +164,11 @@ func (r *Report) Passed() bool {
 // gains coverage, the gap fixture it was supposed to miss now fires and the catalog must be
 // updated to say so.
 func Verify(ctx context.Context, rootDir string, catalog *Catalog) (*Report, error) {
+	return VerifyFS(ctx, dirFS(rootDir), catalog)
+}
+
+// VerifyFS replays the fixture corpus from fsys and reports every claim the corpus contradicts.
+func VerifyFS(ctx context.Context, fsys fs.FS, catalog *Catalog) (*Report, error) {
 	if ctx == nil {
 		return nil, errors.New("hisscoverage: verify requires a context")
 	}
@@ -154,7 +179,7 @@ func Verify(ctx context.Context, rootDir string, catalog *Catalog) (*Report, err
 	for i := 0; i < len(catalog.Rules); i++ {
 		rule := &catalog.Rules[i]
 		for j := 0; j < len(rule.Coverage); j++ {
-			if err := verifyClaim(ctx, rootDir, rule.ID, &rule.Coverage[j], report); err != nil {
+			if err := verifyClaim(ctx, fsys, rule.ID, &rule.Coverage[j], report); err != nil {
 				return nil, err
 			}
 		}
@@ -166,17 +191,17 @@ func Verify(ctx context.Context, rootDir string, catalog *Catalog) (*Report, err
 }
 
 // verifyClaim replays one rule/language claim against its fixture buckets.
-func verifyClaim(ctx context.Context, rootDir, ruleID string, cov *Coverage, report *Report) error {
+func verifyClaim(ctx context.Context, fsys fs.FS, ruleID string, cov *Coverage, report *Report) error {
 	report.Claims++
-	base := filepath.Join(rootDir, filepath.FromSlash(FixtureDir), ruleID, cov.Language)
-	if err := verifyMeasured(ctx, base, ruleID, cov, report); err != nil {
+	base := slashpath.Join(FixtureDir, ruleID, cov.Language)
+	if err := verifyMeasured(ctx, fsys, base, ruleID, cov, report); err != nil {
 		return err
 	}
 	if !cov.ReplayedHere() {
-		return verifyDelegatedClaim(ctx, base, ruleID, cov, report)
+		return verifyDelegatedClaim(ctx, fsys, base, ruleID, cov, report)
 	}
 
-	positives, err := replayBucket(ctx, base, bucketPositive, ruleID, report)
+	positives, err := replayBucket(ctx, fsys, base, bucketPositive, ruleID, report)
 	if err != nil {
 		return err
 	}
@@ -192,7 +217,7 @@ func verifyClaim(ctx context.Context, rootDir, ruleID string, cov *Coverage, rep
 			"declared "+string(cov.State)+" yet the fixture is reported; the catalog understates coverage")
 	}
 
-	negatives, err := replayBucket(ctx, base, bucketNegative, ruleID, report)
+	negatives, err := replayBucket(ctx, fsys, base, bucketNegative, ruleID, report)
 	if err != nil {
 		return err
 	}
@@ -201,7 +226,7 @@ func verifyClaim(ctx context.Context, rootDir, ruleID string, cov *Coverage, rep
 	appendFindings(report, ruleID, cov.Language, bucketNegative, negatives, measured,
 		"legitimate code is measured over a limit; the measurement over-matches")
 
-	gaps, err := replayBucket(ctx, base, bucketGap, ruleID, report)
+	gaps, err := replayBucket(ctx, fsys, base, bucketGap, ruleID, report)
 	if err != nil {
 		return err
 	}
@@ -215,8 +240,8 @@ func verifyClaim(ctx context.Context, rootDir, ruleID string, cov *Coverage, rep
 // so a measurement that starts to enforce fails too. Together with the negative bucket, whose
 // fixtures sit exactly at the limits and must yield no measurement, this pins the limits
 // from both sides.
-func verifyMeasured(ctx context.Context, base, ruleID string, cov *Coverage, report *Report) error {
-	results, err := replayBucket(ctx, base, bucketMeasured, ruleID, report)
+func verifyMeasured(ctx context.Context, fsys fs.FS, base, ruleID string, cov *Coverage, report *Report) error {
+	results, err := replayBucket(ctx, fsys, base, bucketMeasured, ruleID, report)
 	if err != nil {
 		return err
 	}
@@ -238,11 +263,11 @@ func verifyMeasured(ctx context.Context, base, ruleID string, cov *Coverage, rep
 // The delegation itself is recorded so a reader can see which claims this gate proves and
 // which it only attributes. An unreplayed claim that passes silently would be indistinguishable
 // from a verified one, which is the state this whole mechanism replaced.
-func verifyDelegatedClaim(ctx context.Context, base, ruleID string, cov *Coverage, report *Report) error {
+func verifyDelegatedClaim(ctx context.Context, fsys fs.FS, base, ruleID string, cov *Coverage, report *Report) error {
 	report.Delegated = append(report.Delegated,
 		fmt.Sprintf("%s/%s is decided by %s, not replayed here", ruleID, cov.Language, cov.Runner))
 	for _, bucket := range []string{bucketPositive, bucketNegative, bucketGap} {
-		results, err := replayBucket(ctx, base, bucket, ruleID, report)
+		results, err := replayBucket(ctx, fsys, base, bucket, ruleID, report)
 		if err != nil {
 			return err
 		}
@@ -278,16 +303,39 @@ func appendFindings(report *Report, ruleID, lang, bucket string, results []fixtu
 	}
 }
 
+// fsDirectoryAbsent distinguishes an absent fixture directory from a regular file or other failure.
+func fsDirectoryAbsent(fsys fs.FS, dir string, err error) bool {
+	if dir == "" || !errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+	current := slashpath.Clean(dir)
+	for i := 0; i < 16; i++ {
+		info, statErr := fs.Stat(fsys, current)
+		if statErr == nil {
+			return info.IsDir() && current != slashpath.Clean(dir)
+		}
+		if !errors.Is(statErr, fs.ErrNotExist) {
+			return false
+		}
+		parent := slashpath.Dir(current)
+		if parent == current || parent == "." {
+			break
+		}
+		current = parent
+	}
+	return true
+}
+
 // replayBucket scans every fixture in one bucket and reports whether the rule fired on it.
 // An absent bucket is not an error: a claim may legitimately have no negative or gap case.
 // base is the claim's directory, <FixtureDir>/<rule>/<language>, so its name is the language
 // the fixtures are staged as (hiss.FixturePath).
-func replayBucket(ctx context.Context, base, bucket, ruleID string, report *Report) ([]fixtureResult, error) {
-	dir := filepath.Join(base, bucket)
-	staged := fixtureStage{ruleID: ruleID, language: filepath.Base(base)}
-	entries, err := os.ReadDir(dir)
+func replayBucket(ctx context.Context, fsys fs.FS, base, bucket, ruleID string, report *Report) ([]fixtureResult, error) {
+	dir := slashpath.Join(base, bucket)
+	staged := fixtureStage{ruleID: ruleID, language: slashpath.Base(base)}
+	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
-		if util.DirectoryAbsent(dir, err) {
+		if fsDirectoryAbsent(fsys, dir, err) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("read fixtures %s: %w", dir, err)
@@ -297,7 +345,7 @@ func replayBucket(ctx context.Context, base, bucket, ruleID string, report *Repo
 		if entries[i].IsDir() {
 			continue
 		}
-		result, err := staged.reported(ctx, dir, entries[i].Name())
+		result, err := staged.reported(ctx, fsys, dir, entries[i].Name())
 		if err != nil {
 			return nil, err
 		}
@@ -322,9 +370,9 @@ type fixtureStage struct {
 // rest of its bucket. It is staged where the scan reads its language (hiss.FixturePath): a
 // GitHub Actions workflow in .github/workflows, any other fixture at the root. An archive
 // fixture (archive.go) is staged as the files it holds, each at its own path.
-func (stage fixtureStage) reported(ctx context.Context, dir, name string) (result fixtureResult, err error) {
+func (stage fixtureStage) reported(ctx context.Context, fsys fs.FS, dir, name string) (result fixtureResult, err error) {
 	result.name = name
-	data, err := contextopt.ReadSnapshot(ctx, filepath.Join(dir, name))
+	data, err := fs.ReadFile(fsys, slashpath.Join(dir, name))
 	if err != nil {
 		return result, fmt.Errorf("read fixture %s: %w", name, err)
 	}

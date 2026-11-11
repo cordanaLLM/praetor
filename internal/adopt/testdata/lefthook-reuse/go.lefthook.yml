@@ -36,6 +36,11 @@ pre-commit:
     hiss-audit:
       run: sh .config/lefthook/engine.sh audit --offline
 
+commit-msg:
+  commands:
+    message-policy:
+      run: sh .config/lefthook/engine.sh forge check-message {1}
+
 post-commit:
   commands:
     state-sync:
@@ -46,6 +51,9 @@ post-commit:
 
 pre-push:
   parallel: false
+  scripts:
+    praetor-commit-policy.sh:
+      runner: sh
   commands:
     security:
       run: >-

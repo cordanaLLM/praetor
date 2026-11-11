@@ -1,0 +1,21 @@
+A hot function tested for zero allocations in an internal test package.
+
+-- tick.go --
+package negative
+
+//hiss:hot physics integration step
+func Step() {}
+
+-- tick_test.go --
+package negative
+
+import "testing"
+
+func TestStepAllocations(t *testing.T) {
+	allocs := testing.AllocsPerRun(100, func() {
+		Step()
+	})
+	if allocs != 0 {
+		t.Fatalf("expected 0 allocations, got %v", allocs)
+	}
+}

@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+#
+# SPDX-License-Identifier: EUPL-1.2
+
+type: added
+title: Enforce HISS-14 commit messages and pushed commit ranges in adopted repositories
+breaking: false

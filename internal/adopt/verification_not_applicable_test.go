@@ -76,7 +76,7 @@ func assertNotApplicableReport(t *testing.T, rep *AdoptReport, wantReason string
 func assertNotApplicableMakefile(t *testing.T, root, wantReason string) {
 	t.Helper()
 	makefile := mustRead(t, filepath.Join(root, makefileName))
-	for _, target := range []string{"compile-context-verify", "caveman-sources", "audit", "test"} {
+	for _, target := range []string{"compile-context-verify", "caveman-sources", "hiss-coverage", "audit", "test"} {
 		if !strings.Contains(makefile, "verify-all:") || !strings.Contains(makefile, target) {
 			t.Fatalf("Makefile verify-all must include %s:\n%s", target, makefile)
 		}
@@ -122,7 +122,7 @@ func assertNotApplicableExecution(t *testing.T, root, makePath string) {
 		t.Fatalf("make verify-all failed: %v\noutput:\n%s", err, out)
 	}
 	calls := mustRead(t, filepath.Join(root, "calls"))
-	if calls != "compile-context --verify\ncaveman check --configured-sources\naudit\nsecurity secrets\n" {
+	if calls != "compile-context --verify\ncaveman check --configured-sources\nhiss coverage --verify --embedded\naudit\nsecurity secrets\n" {
 		t.Fatalf("make verify-all calls = %q", calls)
 	}
 	if !strings.Contains(out, "build: not applicable") || !strings.Contains(out, "test: not applicable") {

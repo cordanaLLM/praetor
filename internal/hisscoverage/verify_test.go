@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
+	praetor "github.com/cordanaLLM/praetor"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
 
@@ -234,8 +236,7 @@ func TestLoadCatalogRejectsUnknownField(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatalf("create config dir: %v", err)
 	}
-	body := "version: 1\nrules:\n  - id: HISS-01\n    title: t\n    covrage:\n      - language: go\n"
-	if err := os.WriteFile(filepath.Join(dir, "coverage.yaml"), []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "coverage.yaml"), []byte("version: 1\nrules:\n  - id: HISS-01\n    title: t\n    covrage:\n      - language: go\n"), 0o600); err != nil {
 		t.Fatalf("write catalog: %v", err)
 	}
 
@@ -431,5 +432,47 @@ func TestValidateTitleComparisonIsExact(t *testing.T) {
 	}
 	if got := unknown.Rules[0].CatalogTitle(); got != "Declared Only" {
 		t.Fatalf("CatalogTitle() of an unregistered rule = %q, want the declared title", got)
+	}
+}
+
+func TestVerifyFS_Positive_EmbeddedCorpusPasses(t *testing.T) {
+	catalog, err := LoadCatalogFS(t.Context(), praetor.EmbeddedCorpus)
+	if err != nil {
+		t.Fatalf("load embedded catalog: %v", err)
+	}
+	report, err := VerifyFS(t.Context(), praetor.EmbeddedCorpus, catalog)
+	if err != nil {
+		t.Fatalf("verify embedded corpus: %v", err)
+	}
+	if !report.Passed() {
+		t.Fatalf("embedded corpus claims must hold: %+v", report.Findings)
+	}
+	if report.Claims == 0 {
+		t.Fatal("expected at least one claim in embedded corpus")
+	}
+}
+
+func TestVerifyFS_Negative_PlantedBrokenClaimFails(t *testing.T) {
+	fsys := fstest.MapFS{
+		CatalogFile: &fstest.MapFile{
+			Data: []byte("version: 1\nrules:\n  - id: HISS-01\n    coverage:\n      - language: go\n        state: enforced\n        mechanism: internal/hiss\n        rationale: measured\n"),
+		},
+		FixtureDir + "/HISS-01/go/positive/recursion.go": &fstest.MapFile{
+			Data: []byte(cleanGo),
+		},
+	}
+	catalog, err := LoadCatalogFS(t.Context(), fsys)
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
+	}
+	report, err := VerifyFS(t.Context(), fsys, catalog)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if report.Passed() {
+		t.Fatal("planted clean fixture under enforced claim must fail verification")
+	}
+	if len(report.Findings) == 0 || !strings.Contains(report.Findings[0].Detail, "not reported") {
+		t.Fatalf("expected finding stating fixture went unreported, got: %+v", report.Findings)
 	}
 }

@@ -440,8 +440,8 @@ func mergeFileSpans(spans []rawFileSpan, partners map[spanRangeKey]struct{}) []r
 
 	merged := make([]rawFileSpan, 0, n)
 	cur := spans[0]
-	first := 0 // spans[first:i] are the raw spans merged into cur
-	for i := 1; i < n && i < maxDuplicatePairs; i++ {
+	// spans[first:i] are the raw spans merged into cur.
+	for i, first := 1, 0; i < n && i < maxDuplicatePairs; i++ {
 		next := spans[i]
 		if next.start <= cur.end+1 && !partnerOfAny(partners, spans[first:i], next) {
 			if next.end > cur.end {

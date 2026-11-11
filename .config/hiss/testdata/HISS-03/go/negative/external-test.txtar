@@ -1,0 +1,25 @@
+A hot function tested for zero allocations from an external test package.
+
+-- audio.go --
+package audio
+
+//hiss:hot audio sample processing buffer
+func ProcessAudio() {}
+
+-- audio_test.go --
+package audio_test
+
+import (
+	"testing"
+
+	"example.com/audio"
+)
+
+func TestProcessAudioAllocations(t *testing.T) {
+	allocs := testing.AllocsPerRun(100, func() {
+		audio.ProcessAudio()
+	})
+	if allocs > 0 {
+		t.Fatalf("expected 0 allocations, got %v", allocs)
+	}
+}

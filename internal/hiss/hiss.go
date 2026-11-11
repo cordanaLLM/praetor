@@ -23,7 +23,8 @@ const (
 	// ceiling config.AuditMaxFuncLOC, adoption's legacy-debt scan and the editor, language
 	// server and MCP inspection fallbacks all derive from it, so none can drift (BUG-309).
 	DefaultMaxFuncLOC = 60
-	MaxInfractionsCap = 10000
+	// MaxInfractionsCap bounds reports, including function-top scoping debt in large trees.
+	MaxInfractionsCap = 100000
 	// DefaultScanTimeout bounds a scan whose caller context carries no deadline (HISS-02).
 	DefaultScanTimeout = 30 * time.Second
 	// MaxScanFileSize bounds the bytes read from any single source file. Larger files
@@ -143,7 +144,19 @@ func (r *ScanReport) Incomplete() bool {
 	return r.Truncated || r.Skips.Unparsed > 0
 }
 
-// Scan audits repository source code against HISS-01, HISS-02, HISS-04, HISS-07,
+// CompletionError refuses to certify partial syntax or a bounded-away part of the
+// scan. The truncation sentinel remains distinct for callers that diagnose bounds.
+func (r *ScanReport) CompletionError() error {
+	if r != nil && r.Truncated {
+		return ErrScanTruncated
+	}
+	if r.Incomplete() {
+		return ErrScanIncomplete
+	}
+	return nil
+}
+
+// Scan audits repository source code against HISS-01, HISS-02, HISS-04, HISS-05, HISS-07,
 // HISS-08 and HISS-09.
 //
 // HISS-02: the walk always runs under a deadline (ScanOptions.Timeout, the caller's

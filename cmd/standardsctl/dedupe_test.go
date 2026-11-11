@@ -306,8 +306,7 @@ func TestRunDedupeScan_Boundary_JSONKeepsTheVerdict(t *testing.T) {
 	if !strings.Contains(out, `"sprawl_items"`) {
 		t.Errorf("the failing report must still be printed as JSON:\n%s", out)
 	}
-	missing := "-dir-that-does-not-exist"
-	if err := runDedupeScan([]string{"--", missing}); err == nil || !strings.Contains(err.Error(), missing) {
+	if err := runDedupeScan([]string{"--", "-dir-that-does-not-exist"}); err == nil || !strings.Contains(err.Error(), "-dir-that-does-not-exist") {
 		t.Errorf(`a path after "--" must be read as the directory, got %v`, err)
 	}
 }

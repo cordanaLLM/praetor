@@ -52,6 +52,20 @@ Hot simulation loops and rendering ticks (e.g. 60Hz/120Hz pipelines) must mainta
 $$\Delta \text{HeapAlloc}_{\text{tick}} = 0$$
 Memory must be pre-allocated during subsystem initialization. Any dynamic heap allocation detected during a frame loop causes immediate test failure.
 
+#### Go Declaration Grammar & Verification Contract
+
+The static scanner cannot identify hot simulation loops without an explicit declaration. Hot paths declare their allocation invariant through their doc comment:
+
+```go
+//hiss:hot <reason>
+func Step() { ... }
+```
+
+- **Marker Grammar:** `//hiss:hot <reason>`. An explanatory reason is mandatory; a bare `//hiss:hot` marker is reported as a rule finding. Markers placed on non-function declarations (`const`, `var`, `type`) are invalid and reported with a stated finding while remaining ignored for test requirements.
+- **Verification Test Shape:** For each marked function or method, `_test.go` files in the same package directory (internal or external test package) must contain a call to `testing.AllocsPerRun(n, f)` where $n > 0$ and the function literal calls the marked function (as an identifier or selector).
+- **Zero Assertion:** The measurement result must be compared against 0 in an `if` statement (`if allocs != 0` or `if allocs > 0`) whose body fails the test via `t.Fatal`, `t.Fatalf`, `t.Error`, or `t.Errorf`.
+- **Language Scope:** Go only. Unmarked code is unchecked. Rust and C implementations are unchecked.
+
 ### HISS-04: Complexity Bounds & Modular Sizing
 
 Functions must remain strictly bounded in complexity and scope:
@@ -71,7 +85,11 @@ Identifiers must be declared in the smallest lexical scope that serves them:
 
 - Narrow lexical scoping prevents accidental variable shadowing and state leakage.
 - Variables should be declared immediately before their first use.
-- Status: advisory until an executable AST scope analyzer is attached.
+- The Go audit scanner checks `var` and `:=` locals declared directly in a function's body. A local with at least one use is reported when every read and write lies inside one nested `if`, `for`, `range`, `switch`, `select`, or plain block. Headers and case clauses count as part of their enclosing statement; deeper uses name the outermost child containing them. Findings identify the function, variable, declaration line, and target block kind and line.
+- Only side-effect-free, order-independent initializers are candidates: `var x T` without a value, basic literals (including parentheses and constant unary signs/operators), proven constant identifiers, and composite literals whose elements, keys, and values recursively meet that allow-list. Every initializer in a multi-name declaration must pass. Calls (including conversions), receives, indexes, variable reads, unproven selectors, function literals, and method values are excluded. In particular, `err := f()` followed by `if err != nil` is not a finding; `buf := []byte{}` used read-only in a loop and `n := 0` used only in an `if` are candidates.
+- Any read or write outside that child keeps the declaration, including a later assignment, blank use, or an accumulator read after a loop. Parameters and named results are excluded. Address-taking and closure capture conservatively keep a declaration even inside the child block.
+- Loop-carried state is exempt: assignment (including `op=`, `++`/`--`, element or field writes), `delete`/`clear`, passing storage by address, or a method call on a local can change what a later iteration reads. This also covers nested loops, loop conditions and post statements; method receivers cannot be proven read-only from syntax. Fully reinitialised locals conservatively stay exempt because this scanner does not prove that a reset dominates every read. Read-only loop uses remain findings; mutation in a plain `if` or `switch` without a loop does not gain this exemption. Findings state the address, capture and loop-mutation exemptions.
+- Coverage is partial: constant proof uses local declarations, package declarations in the same file, and unshadowed `true`/`false`; unresolved names, imported selectors, and unproven field keys are skipped. Initializer proof is bounded to 1,024 expression nodes per declaration. Nested declarations (including shadowing chains), closure-only uses inside a child block, and other languages remain unchecked. Declaration identity reuses the Go scope model (`internal/hiss/go_scope.go`); `.config/hiss/testdata/HISS-05/go/` replay through `praetorctl hiss coverage --verify`. Adopted Go repositories receive this check through `praetorctl audit`; new findings fail the HISS-13 ratchet.
 
 ### HISS-06: Bounded Concurrency
 
@@ -79,7 +97,25 @@ Worker pools, concurrent routines, and parallel fan-out must declare an explicit
 
 - Goroutine pools and thread spawning must specify a maximum concurrency capacity.
 - Unbounded queue workers or unbounded concurrency patterns are banned.
-- Status: advisory; race-detector tests verify absence of data races but do not verify pool bounds.
+- **Go enforcement (`internal/hiss/go_fanout.go`):** any `go` statement inside a `for` or `range`
+  body (directly, or inside a `func` literal invoked in that loop) is reported across production,
+  generated, and `_test.go` files unless the enclosing function bounds it by one of five shapes:
+  1. **Bounded `errgroup.Group`:** an `errgroup.Group` or `*errgroup.Group` with a `SetLimit` call
+     on the same group before the loop (`g.SetLimit(n)` with positive `n`).
+  2. **Weighted semaphore:** a `semaphore.Weighted` `Acquire` (or `TryAcquire`) call inside the
+     loop body before the `go` statement.
+  3. **Buffered token channel:** a send on a buffered channel (`make(chan T, cap)`) inside the loop
+     body before the `go` statement with a matching receive (`<-ch`) in the goroutine (deferred or
+     at the end of the goroutine body).
+  4. **Static loop bound:** a `range` over a fixed-length array type (`[N]T` or `[...]T`) or a
+     constant-bounded counter loop (`for i := 0; i < constN; i++` where `constN` is a constant
+     expression).
+  5. **Allow-listed worker pool (`//hiss:bound`):** a worker pool loop over a constant or an
+     explicit `int` variable named in a `//hiss:bound <var><=<bound> <reason>` (or
+     `//hiss:bound <var>=<bound> <reason>`) comment immediately above the loop stating the bound
+     value and justification.
+- Other languages remain unchecked by the scanner; `go test -race` verifies absence of data races
+  on executed paths but does not prove pool bounds.
 
 ---
 
@@ -295,6 +331,7 @@ One behavior has exactly one implementation:
 A claim of coverage is reproducible, never merely asserted:
 
 - Every enforcement claim in `.config/hiss/coverage.yaml` is replayed against a fixture corpus by `praetorctl hiss coverage --verify`, run inside `verify-all`.
+- For adopted repositories that pin the engine binary without carrying the engine's fixture tree, `praetorctl hiss coverage --verify --embedded` replays every claim against the binary's own compiled-in coverage catalog and corpus, proving on the adopter's host that the pinned engine version detects what it claims.
 - The check runs in both directions: a claim of enforcement must reproduce each of its positive fixtures, and a claim of absence must leave its gap fixtures undetected.
 - A rule that silently *gains* coverage fails the gate exactly as one that silently loses it, so the catalog cannot drift in either direction undetected.
 - The coverage catalog may only declare evidence for a rule the HISS rule catalog defines ([`internal/hisscatalog/catalog.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hisscatalog/catalog.go)); an unregistered identifier fails `Catalog.Validate` (`TestValidateRefusesUnregisteredRule`). A coverage entry takes its name from that catalog too, and `praetorctl hiss coverage` prints the catalog's name for every rule. `title:` may be omitted; a title that differs from the catalog's is a `[WARN]` line naming the catalog's current text, never a failure (`TestValidateWarnsOnADriftedTitle`, `TestRunHissCoverage_Negative_DriftedTitleWarnsWithTheCatalogText`), so a catalog retitle does not break a repository that repeats the earlier text. `praetorctl hiss coverage --sync-titles` lists each stale title as a dry run, and `--sync-titles --write` rewrites them in place, changing only each title's value (`SyncTitles` in `internal/hisscoverage/titles.go`; `TestRunHissCoverage_Positive_SyncTitlesFixesElevenDriftedTitles`). The HISS rule catalog also feeds `standards_explain_rule`, the generated wiki's HISS matrix and the invariant table of every adopted `AGENTS.md`, so all of them name the same 21 rules.
