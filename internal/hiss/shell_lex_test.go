@@ -20,6 +20,10 @@ func TestSplitHereDocs(t *testing.T) {
 	if strings.Contains(code, "reviewer") {
 		t.Fatalf("body leaked into code: %q", code)
 	}
+}
+
+// TestSplitHereDocsBounds checks paired targets and rejects inputs over reader bounds.
+func TestSplitHereDocsBounds(t *testing.T) {
 	_, paired, err := SplitHereDocs("cat > first <<A; tee second <<B\none\nA\ntwo\nB\n")
 	if err != nil || len(paired) != 2 || paired[0].Target != "first" || paired[1].Target != "second" {
 		t.Fatalf("paired targets: %#v, %v", paired, err)
