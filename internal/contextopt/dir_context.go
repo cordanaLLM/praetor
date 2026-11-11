@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: EUPL-1.2
 
-package testsupport
+package contextopt
 
 import (
 	"context"
@@ -11,8 +11,6 @@ import (
 	"io"
 	"os"
 	"sort"
-
-	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 // StatContext checks cancellation on both sides of a filesystem stat.
@@ -35,7 +33,7 @@ func ReadDirContext(ctx context.Context, path string, limit int) (entries []os.D
 	if ctx == nil || limit < 1 {
 		return nil, errors.New("context and positive entry limit required")
 	}
-	root, err := contextopt.OpenDirectory(ctx, path)
+	root, err := OpenDirectory(ctx, path)
 	if err != nil {
 		return nil, err
 	}

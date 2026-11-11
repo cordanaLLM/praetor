@@ -22,7 +22,7 @@ func TestInitWorkingDirContext(t *testing.T) {
 	if err := InitWorkingDirContext(cancelled, dir); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected cancelled initialization: %v", err)
 	}
-	if _, err := testsupport.StatContext(testsupport.DeadlineContext(t), filepath.Join(dir, WorkingDirName)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := contextopt.StatContext(testsupport.DeadlineContext(t), filepath.Join(dir, WorkingDirName)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("cancelled initialization wrote working directory: %v", err)
 	}
 	var absent context.Context

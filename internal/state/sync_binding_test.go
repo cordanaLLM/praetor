@@ -152,7 +152,7 @@ func TestStateSyncMissingLedgerDoesNotRepairExistingDirectory(t *testing.T) {
 	if _, err := SyncState(t.Context(), root, "must not repair"); err == nil {
 		t.Fatal("sync silently repaired an incomplete existing ledger")
 	}
-	if _, err := testsupport.StatContext(testsupport.DeadlineContext(t), path); !os.IsNotExist(err) {
+	if _, err := contextopt.StatContext(testsupport.DeadlineContext(t), path); !os.IsNotExist(err) {
 		t.Fatalf("missing ledger was recreated: %v", err)
 	}
 }
@@ -206,7 +206,7 @@ func TestStateSyncRejectsConfiguredFilterBeforeExecution(t *testing.T) {
 	if _, err := SyncState(t.Context(), root, "must not run filter"); err == nil {
 		t.Fatal("configured filter accepted")
 	}
-	if _, err := testsupport.StatContext(testsupport.DeadlineContext(t), marker); !os.IsNotExist(err) {
+	if _, err := contextopt.StatContext(testsupport.DeadlineContext(t), marker); !os.IsNotExist(err) {
 		t.Fatalf("Git filter executed: %v", err)
 	}
 }

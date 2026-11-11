@@ -520,7 +520,7 @@ func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
 	if !errors.Is(err, util.ErrRepoIdentityUnresolved) {
 		t.Fatalf("paperclip harness without an identity = %v, want ErrRepoIdentityUnresolved", err)
 	}
-	if _, statErr := testsupport.StatContext(testsupport.DeadlineContext(t), filepath.Join(unidentified, ".paperclip")); !errors.Is(statErr, os.ErrNotExist) {
+	if _, statErr := contextopt.StatContext(testsupport.DeadlineContext(t), filepath.Join(unidentified, ".paperclip")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("paperclip harness without an identity wrote .paperclip: %v", statErr)
 	}
 
@@ -644,7 +644,7 @@ func TestDispatchCommand_NeedsFleet(t *testing.T) {
 	if err := dispatchCommand("needs", []string{"epic", "--path=" + repo, "--framework=" + framework, "--output=" + epicOut}); err != nil {
 		t.Fatalf("needs epic failed: %v", err)
 	}
-	if _, err := testsupport.StatContext(testsupport.DeadlineContext(t), epicOut); err != nil {
+	if _, err := contextopt.StatContext(testsupport.DeadlineContext(t), epicOut); err != nil {
 		t.Fatalf("expected the epic to be written: %v", err)
 	}
 }
@@ -880,7 +880,7 @@ func TestDispatchCommand_ProjectCachedStatusDoesNotResolveAuth(t *testing.T) {
 	if err := dispatchCommand("project", []string{"status", "--dir", dir}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := testsupport.StatContext(testsupport.DeadlineContext(t), marker); !os.IsNotExist(err) {
+	if _, err := contextopt.StatContext(testsupport.DeadlineContext(t), marker); !os.IsNotExist(err) {
 		t.Fatalf("cached status resolved credentials: %v", err)
 	}
 	if after := readStateFixtureDeadline(t, dir, ".workingdir/project.json"); before != after {
@@ -987,7 +987,7 @@ func TestDispatchCommand_StateStatusRequiresWorkingDir(t *testing.T) {
 	if err := dispatchCommand("state", []string{"status", tmpDir}); err == nil {
 		t.Fatal("expected state status to fail when .workingdir is absent")
 	}
-	if _, err := testsupport.StatContext(testsupport.DeadlineContext(t), filepath.Join(tmpDir, ".workingdir")); !os.IsNotExist(err) {
+	if _, err := contextopt.StatContext(testsupport.DeadlineContext(t), filepath.Join(tmpDir, ".workingdir")); !os.IsNotExist(err) {
 		t.Errorf("state status scaffolded .workingdir instead of reporting the error")
 	}
 }
@@ -1068,7 +1068,7 @@ func TestDispatchCommand_StateDirFlagIsNotADirectoryName(t *testing.T) {
 		t.Errorf("expected the resolution in the target ledger, got:\n%s", bugs)
 	}
 	// The literal flag must never become a directory name in the working directory.
-	if _, statErr := testsupport.StatContext(testsupport.DeadlineContext(t), "--dir="+tmpDir); statErr == nil {
+	if _, statErr := contextopt.StatContext(testsupport.DeadlineContext(t), "--dir="+tmpDir); statErr == nil {
 		t.Errorf("a stray '--dir=...' directory was created")
 	}
 
@@ -1098,7 +1098,7 @@ func TestDispatchCommand_TopologyAuditReportsStrayFiles(t *testing.T) {
 	if err := dispatchCommand("topology", []string{"clean", tmpDir, "--dry-run=false"}); err != nil {
 		t.Fatalf("topology clean failed: %v", err)
 	}
-	if _, statErr := testsupport.StatContext(testsupport.DeadlineContext(t), stray); !os.IsNotExist(statErr) {
+	if _, statErr := contextopt.StatContext(testsupport.DeadlineContext(t), stray); !os.IsNotExist(statErr) {
 		t.Errorf("--dry-run=false after the positional dev root was ignored; %s still exists", stray)
 	}
 
@@ -1357,7 +1357,7 @@ func TestDispatchCommand_AdoptAllMissingNeverFallsBackToCwd(t *testing.T) {
 	if !strings.Contains(out, "Batch Repository Adoption") {
 		t.Errorf("unexpected batch adoption output:\n%s", out)
 	}
-	entries, readErr := testsupport.ReadDirContext(testsupport.DeadlineContext(t), devDir, 10000)
+	entries, readErr := contextopt.ReadDirContext(testsupport.DeadlineContext(t), devDir, 10000)
 	if readErr != nil {
 		t.Fatalf("failed reading the scan root: %v", readErr)
 	}
@@ -1477,7 +1477,7 @@ func TestDispatchCommand_StateTaskArchive_Negative(t *testing.T) {
 	})
 	mustErrContain(t, err, "state task archive")
 	mustContain(t, readStateFixtureDeadline(t, broken, ".workingdir/OPEN.md"), "- [x] kept task")
-	if _, statErr := testsupport.StatContext(testsupport.DeadlineContext(t), filepath.Join(filepath.Dir(open), "BACKLOG.md")); !os.IsNotExist(statErr) {
+	if _, statErr := contextopt.StatContext(testsupport.DeadlineContext(t), filepath.Join(filepath.Dir(open), "BACKLOG.md")); !os.IsNotExist(statErr) {
 		t.Fatalf("failed archive still wrote BACKLOG.md: %v", statErr)
 	}
 }

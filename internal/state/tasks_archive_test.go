@@ -103,7 +103,7 @@ func taskArchiveFixtureFiles(t *testing.T, root string) map[string]string {
 	dir := filepath.Join(root, WorkingDirName)
 	files := map[string]string{}
 	for _, folder := range []string{dir, filepath.Join(dir, "archive")} {
-		entries, err := testsupport.ReadDirContext(testsupport.DeadlineContext(t), folder, maxScannedLines)
+		entries, err := contextopt.ReadDirContext(testsupport.DeadlineContext(t), folder, maxScannedLines)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -198,7 +198,7 @@ func TestTaskArchiveFallbackAndFences(t *testing.T) {
 	if strings.Count(archive, "- [x] delivered") != 2 {
 		t.Fatal("identical records collapsed")
 	}
-	if _, err := testsupport.StatContext(testsupport.DeadlineContext(t), filepath.Join(dir, "archive", "OPEN-2026-11.md")); err != nil {
+	if _, err := contextopt.StatContext(testsupport.DeadlineContext(t), filepath.Join(dir, "archive", "OPEN-2026-11.md")); err != nil {
 		t.Fatal(err)
 	}
 	assertTaskArchiveNoChange(t, root)
