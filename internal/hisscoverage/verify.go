@@ -12,7 +12,9 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -67,22 +69,15 @@ func readCatalogFile(ctx context.Context, rootDir string) ([]byte, error) {
 
 // readCatalogFS reads the coverage file from fsys, bounded by maxCatalogBytes.
 func readCatalogFS(ctx context.Context, fsys fs.FS) ([]byte, error) {
-	if ctx != nil && ctx.Err() != nil {
-		return nil, ctx.Err()
+	data, err := contextopt.ReadFS(ctx, fsys, CatalogFile, maxCatalogBytes)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("%w at %s", ErrCatalogAbsent, CatalogFile)
 	}
-	file, err := fsys.Open(CatalogFile)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("%w at %s", ErrCatalogAbsent, CatalogFile)
-		}
-		return nil, fmt.Errorf("read coverage catalog: %w", err)
-	}
-	data, readErr := io.ReadAll(io.LimitReader(file, maxCatalogBytes+1))
-	if err := errors.Join(readErr, file.Close()); err != nil {
-		return nil, fmt.Errorf("read coverage catalog: %w", err)
-	}
-	if len(data) > maxCatalogBytes {
+	if errors.Is(err, util.ErrFileTooLarge) {
 		return nil, fmt.Errorf("coverage catalog exceeds %d bytes", maxCatalogBytes)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read coverage catalog: %w", err)
 	}
 	return data, nil
 }
@@ -376,7 +371,7 @@ type fixtureStage struct {
 // fixture (archive.go) is staged as the files it holds, each at its own path.
 func (stage fixtureStage) reported(ctx context.Context, fsys fs.FS, dir, name string) (result fixtureResult, err error) {
 	result.name = name
-	data, err := fs.ReadFile(fsys, slashpath.Join(dir, name))
+	data, err := contextopt.ReadFS(ctx, fsys, slashpath.Join(dir, name), hiss.MaxScanFileSize)
 	if err != nil {
 		return result, fmt.Errorf("read fixture %s: %w", name, err)
 	}
