@@ -19,6 +19,7 @@ import (
 // RenderWorkflow and StripSettings still work on the unchanged emitted workflow with one HISS-12 exception.
 func TestRenderWorkflow_EmittedSecretsExceptionsCompatibility(t *testing.T) {
 	path := filepath.Join("..", "..", "templates", "testdata", "rendered", "go", "security-go.yml", "fallback.yml")
+	// nosemgrep: go_filesystem_rule-fileread -- path is a fixed fixture path under templates/testdata, not input
 	plain, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

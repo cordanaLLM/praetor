@@ -172,6 +172,7 @@ func readEventPayload(path string) (data []byte, err error) {
 	if !info.Mode().IsRegular() {
 		return nil, errors.New("event read requires a regular file")
 	}
+	// nosemgrep: go_filesystem_rule-fileread -- GITHUB_EVENT_PATH is the runner's payload file; Lstat refused symlinks and non-regular files above and SameFile checks the opened file below
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open event file: %w", err)

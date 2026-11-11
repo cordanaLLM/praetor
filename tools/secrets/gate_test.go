@@ -165,6 +165,7 @@ func TestGate_PullRequestEvent_Boundary(t *testing.T) {
 	for _, length := range []int{7, 40} {
 		env := gatePullRequestEnvironment(t, base[:length], head[:length])
 		path := strings.TrimPrefix(env[1], "GITHUB_EVENT_PATH=")
+		// nosemgrep: go_filesystem_rule-fileread -- path is the payload this test wrote under t.TempDir
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
