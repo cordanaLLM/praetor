@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
@@ -1152,13 +1153,15 @@ func TestAuditLiveCodeQLDefaultSetupUnreadProtection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	live := openActionsForge(t.Context(), f.dir, manifest.Repository, false)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	live := openActionsForge(ctx, f.dir, manifest.Repository, false)
 	live.codeQL = codeQLConfiguredReader{}
 	for _, declared := range []bool{false, true} {
 		policy := config.DefaultPolicy()
 		policy.BranchProtection.CodeQLDefaultSetup = declared
 		out, auditErr := captureStdout(t, func() error {
-			return auditLiveBranchProtection(t.Context(), manifest, f.dir, policy, live)
+			return auditLiveBranchProtection(ctx, manifest, f.dir, policy, live)
 		})
 		mustContain(t, out, "[SKIP] Live branch protection not compared with the forge")
 		if declared && auditErr != nil {

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -344,7 +345,9 @@ func TestCodeScanningForbiddenIncludesMessage(t *testing.T) {
 	defer server.Close()
 	driver := NewGitHubDriver("stub-token", server.URL)
 	driver.SetRepository("acme", "widgets")
-	_, err := driver.CodeQLDefaultSetupState(t.Context())
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	_, err := driver.CodeQLDefaultSetupState(ctx)
 	if err == nil || !strings.Contains(err.Error(), "HTTP 403") || !strings.Contains(err.Error(), "secondary rate limit") {
 		t.Fatalf("error = %v, want HTTP 403 and response message", err)
 	}
