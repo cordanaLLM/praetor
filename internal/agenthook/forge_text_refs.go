@@ -9,11 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -69,7 +67,6 @@ func ghWriteWordSource(actions map[string]map[string]bool) string {
 type ghTextFile struct {
 	label    string
 	resolved string
-	word     string
 }
 
 // ghWriteCall holds the raw command text, resolved file arguments and any file-collection
@@ -80,7 +77,6 @@ type ghWriteCall struct {
 	fileErr string
 	dir     string
 	bodies  []hiss.HereDoc
-	waivers map[string]bool
 }
 
 // ghDirPolicy holds the resolved trusted organisations, missing-list flag, diagnostic
@@ -196,9 +192,6 @@ func judgeGHWriteCall(ctx context.Context, call ghWriteCall, own []string, noOrg
 	for i := 0; i < len(call.files) && i < maxForgeTextFiles; i++ {
 		text, err := readForgeTextFile(ctx, call.files[i].resolved)
 		if err != nil {
-			if errors.Is(err, os.ErrNotExist) && call.waivers[call.files[i].word] {
-				continue
-			}
 			return forgeTextDeny(fmt.Sprintf("cannot read file %s: %v", call.files[i].label, err), noOrgList)
 		}
 		if findings := forge.ForeignReferenceFindings(text, call.files[i].label, own); len(findings) > 0 {
@@ -266,12 +259,11 @@ func loadOperatorForgeSettings(ctx context.Context, getenv func(string) string) 
 // collectGHWriteCalls splits command into shell segments, tracks working-directory changes
 // per subshell level and returns every scoped gh write call, refusing commands exceeding limits.
 func collectGHWriteCalls(command, baseDir string) ([]ghWriteCall, error) {
-	fields, docs, err := markedHereDocFields(command)
+	fields, err := shellFieldsForGH(command)
 	if err != nil {
 		return nil, err
 	}
 	var calls []ghWriteCall
-	var candidates []heredocCandidate
 	dirStack := []string{baseDir}
 	start, segments := 0, 0
 	for i := 0; i <= len(fields) && i <= maxForgeTextWords; i++ {
@@ -282,7 +274,7 @@ func collectGHWriteCalls(command, baseDir string) ([]ghWriteCall, error) {
 		if segments > maxForgeTextSegments {
 			return nil, fmt.Errorf("command exceeds %d command segments", maxForgeTextSegments)
 		}
-		segWords, owned := heredocSegment(fields[start:i], docs)
+		segWords := fields[start:i]
 		dirStack = pushSubshellLevel(dirStack, countSubshellOpeners(segWords))
 		closers := min(subshellClosers(segWords, countSubshellClosers(segWords)), max(0, len(dirStack)-1))
 		if closers > 0 {
@@ -290,10 +282,6 @@ func collectGHWriteCalls(command, baseDir string) ([]ghWriteCall, error) {
 		}
 		dir := dirStack[len(dirStack)-1]
 		call, nextDir, ok := parseSegmentGHCall(command, segWords, dir)
-		if ok {
-			call.waivers = heredocWaivers(candidates, segWords, call.dir)
-		}
-		candidates = updateHeredocCandidates(candidates, segWords, owned, dir)
 		dirStack[len(dirStack)-1] = nextDir
 		if ok {
 			calls = append(calls, call)
@@ -302,16 +290,6 @@ func collectGHWriteCalls(command, baseDir string) ([]ghWriteCall, error) {
 		start = i + 1
 	}
 	return calls, nil
-}
-
-// markedHereDocFields prepares shell fields and ordered here-document markers.
-func markedHereDocFields(command string) ([]string, []hiss.HereDoc, error) {
-	marked, docs, err := hiss.SplitHereDocsMarked(command)
-	if err != nil {
-		return nil, nil, err
-	}
-	fields, err := shellFieldsForGH(marked)
-	return fields, docs, err
 }
 
 // pushSubshellLevel duplicates the top working directory on stack for each opened subshell level.
@@ -886,7 +864,7 @@ func resolveGHTextFile(rawPath, workDir string) (ghTextFile, bool) {
 	if label != resolved {
 		label = fmt.Sprintf("%s (%s)", cleaned, resolved)
 	}
-	return ghTextFile{label: label, resolved: resolved, word: unquoteShellWord(strings.TrimSpace(rawPath))}, true
+	return ghTextFile{label: label, resolved: resolved}, true
 }
 
 // readForgeTextFile reads up to maxForgeTextFileBytes from path within forgeTextReadTimeout,
@@ -907,105 +885,16 @@ func readForgeTextFile(ctx context.Context, path string) (string, error) {
 	return string(data), nil
 }
 
-// heredocCandidate records a preceding safe write and its directory.
-type heredocCandidate struct{ word, dir string }
-
-// hasHiddenGHWrite detects write-shaped raw data, including continuations.
+// hasHiddenGHWrite detects write-shaped data after shell continuations are joined.
 func hasHiddenGHWrite(docs []hiss.HereDoc) bool {
 	for i := 0; i < len(docs) && i < maxForgeTextWords; i++ {
-		if docs[i].Data() && ghWriteWordPattern.MatchString(docs[i].Text) {
+		joined := strings.ReplaceAll(docs[i].Text, "\\\r\n", "")
+		joined = strings.ReplaceAll(joined, "\\\n", "")
+		if docs[i].Data() && ghWriteWordPattern.MatchString(joined) {
 			return true
 		}
 	}
 	return false
-}
-
-// heredocSegment associates ordered lexer markers with their shell segment.
-func heredocSegment(words []string, docs []hiss.HereDoc) ([]string, []hiss.HereDoc) {
-	var clean []string
-	var owned []hiss.HereDoc
-	for i := 0; i < len(words) && i < maxForgeTextWords; i++ {
-		if suffix, ok := strings.CutPrefix(words[i], hiss.HereDocMarkerPrefix); ok {
-			index, err := strconv.Atoi(suffix)
-			if err == nil && index >= 0 && index < len(docs) {
-				owned = append(owned, docs[index])
-			}
-		} else {
-			clean = append(clean, words[i])
-		}
-	}
-	return clean, owned
-}
-
-// updateHeredocCandidates invalidates touched targets and adds this segment's writes.
-func updateHeredocCandidates(old []heredocCandidate, words []string, docs []hiss.HereDoc, dir string) []heredocCandidate {
-	var next []heredocCandidate
-	command, args, _, _, _ := walkCommandWords(words, dir)
-	if (command == "cd" || command == "pushd") && (len(args) == 0 || targetDirectory(args[0], dir) == "") {
-		old = nil
-	}
-	for i := 0; i < len(old) && i < maxForgeTextWords; i++ {
-		if !heredocTouched(old[i].word, words) {
-			next = append(next, old[i])
-		}
-	}
-	for i := 0; i < len(docs) && i < maxForgeTextWords; i++ {
-		if docs[i].SafeWrite {
-			next = append(next, heredocCandidate{unquoteShellWord(docs[i].Target), dir})
-		}
-	}
-	return next
-}
-
-var heredocVariable = regexp.MustCompile(`\$\{?([a-zA-Z_][a-zA-Z0-9_]*)\}?`)
-
-// heredocTouched conservatively detects target references and variable mutations.
-func heredocTouched(target string, words []string) bool {
-	vars := heredocVariable.FindAllStringSubmatch(target, maxForgeTextWords)
-	command, _, _, _, _ := walkCommandWords(words, "")
-	for i := 0; i < len(words) && i < maxForgeTextWords; i++ {
-		word := unquoteShellWord(words[i])
-		if strings.Contains(word, target) {
-			return true
-		}
-		if heredocVariableChanged(word, command, vars) {
-			return true
-		}
-	}
-	return false
-}
-
-// heredocVariableChanged detects assignments and shell variable mutation commands.
-func heredocVariableChanged(word, command string, vars [][]string) bool {
-	for i := 0; i < len(vars) && i < maxForgeTextWords; i++ {
-		name := vars[i][1]
-		if strings.HasPrefix(word, name+"=") {
-			return true
-		}
-		if word == name && (command == "export" || command == "unset" || command == "read") {
-			return true
-		}
-	}
-	return false
-}
-
-// heredocWaivers selects untouched preceding writes in the same directory.
-func heredocWaivers(candidates []heredocCandidate, words []string, dir string) map[string]bool {
-	out := make(map[string]bool)
-	prefix := words
-	for i := 0; i < len(words) && i < maxForgeTextWords; i++ {
-		if commandName(words[i]) == "gh" {
-			prefix = words[:i]
-			break
-		}
-	}
-	for i := 0; i < len(candidates) && i < maxForgeTextWords; i++ {
-		c := candidates[i]
-		if c.dir == dir && !heredocTouched(c.word, prefix) {
-			out[c.word] = true
-		}
-	}
-	return out
 }
 
 // heredocFinding returns the first foreign reference in the supplied bodies.
