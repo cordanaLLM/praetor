@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -66,6 +68,7 @@ func ghWriteWordSource(actions map[string]map[string]bool) string {
 type ghTextFile struct {
 	label    string
 	resolved string
+	word     string
 }
 
 // ghWriteCall holds the raw command text, resolved file arguments and any file-collection
@@ -75,6 +78,7 @@ type ghWriteCall struct {
 	files   []ghTextFile
 	fileErr string
 	dir     string
+	bodies  []hiss.HereDoc
 }
 
 // ghDirPolicy holds the resolved trusted organisations, missing-list flag, diagnostic
@@ -102,6 +106,13 @@ func evaluateForgeTextRefs(ctx context.Context, canonical Canonical, root string
 	}
 	if len(calls) == 0 {
 		return Verdict{Outcome: Allow}
+	}
+	_, bodies, err := hiss.SplitHereDocs(canonical.Command)
+	if err != nil {
+		return forgeTextDeny("shell reader: "+err.Error(), false)
+	}
+	for i := 0; i < len(calls) && i < maxForgeTextSegments; i++ {
+		calls[i].bodies = bodies
 	}
 	dirPolicies := make(map[string]ghDirPolicy, len(calls))
 	var notices []string
@@ -163,6 +174,9 @@ func judgeResolvedGHWriteCall(ctx context.Context, call ghWriteCall, dirPolicy g
 // judgeGHWriteCall checks a single ghWriteCall and its named files against own, refusing
 // file collection errors, unreadable or oversized files, and foreign forge references.
 func judgeGHWriteCall(ctx context.Context, call ghWriteCall, own []string, noOrgList bool) Verdict {
+	if finding := heredocFinding(call.bodies, own); finding != "" {
+		return forgeTextDeny(finding, noOrgList)
+	}
 	if call.fileErr != "" {
 		return forgeTextDeny(call.fileErr, noOrgList)
 	}
@@ -172,6 +186,9 @@ func judgeGHWriteCall(ctx context.Context, call ghWriteCall, own []string, noOrg
 	for i := 0; i < len(call.files) && i < maxForgeTextFiles; i++ {
 		text, err := readForgeTextFile(ctx, call.files[i].resolved)
 		if err != nil {
+			if errors.Is(err, os.ErrNotExist) && heredocWritesFile(call.bodies, call.files[i].word) {
+				continue
+			}
 			return forgeTextDeny(fmt.Sprintf("cannot read file %s: %v", call.files[i].label, err), noOrgList)
 		}
 		if findings := forge.ForeignReferenceFindings(text, call.files[i].label, own); len(findings) > 0 {
@@ -843,7 +860,7 @@ func resolveGHTextFile(rawPath, workDir string) (ghTextFile, bool) {
 	if label != resolved {
 		label = fmt.Sprintf("%s (%s)", cleaned, resolved)
 	}
-	return ghTextFile{label: label, resolved: resolved}, true
+	return ghTextFile{label: label, resolved: resolved, word: unquoteShellWord(strings.TrimSpace(rawPath))}, true
 }
 
 // readForgeTextFile reads up to maxForgeTextFileBytes from path within forgeTextReadTimeout,
@@ -862,4 +879,24 @@ func readForgeTextFile(ctx context.Context, path string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// heredocWritesFile reports a literal output target matching the file argument.
+func heredocWritesFile(bodies []hiss.HereDoc, word string) bool {
+	for i := 0; i < len(bodies) && i < maxForgeTextWords; i++ {
+		if bodies[i].Target != "" && unquoteShellWord(bodies[i].Target) == word {
+			return true
+		}
+	}
+	return false
+}
+
+// heredocFinding returns the first foreign reference in the supplied bodies.
+func heredocFinding(bodies []hiss.HereDoc, own []string) string {
+	for i := 0; i < len(bodies) && i < maxForgeTextWords; i++ {
+		if findings := forge.ForeignReferenceFindings(bodies[i].Text, "here-document", own); len(findings) > 0 {
+			return findings[0]
+		}
+	}
+	return ""
 }

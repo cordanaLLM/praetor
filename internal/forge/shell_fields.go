@@ -19,7 +19,11 @@ var ErrShellReadLimit = errors.New("run script exceeds shell reader limit")
 // The forge's shellWords/parseShellCommand readers consume these same fields. More than
 // maxRunScriptFields fields or an unclosed quote is an error, never a partial result.
 func ShellFields(script string) ([]string, error) {
-	script, err := util.StripHashComments(strings.ReplaceAll(script, "\r\n", "\n"))
+	script, _, err := hiss.SplitHereDocs(script)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrShellReadLimit, err)
+	}
+	script, err = util.StripHashComments(strings.ReplaceAll(script, "\r\n", "\n"))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrShellReadLimit, err)
 	}
@@ -74,10 +78,14 @@ func (r *shellFieldReader) step(script string, i int) int {
 	return i
 }
 
+// operator emits a shell separator, collapsing consecutive newline separators.
 func (r *shellFieldReader) operator(script string, i int) int {
 	r.word(script, i)
 	op := string(script[i])
 	if op == "\n" {
+		if len(r.fields) > 0 && r.fields[len(r.fields)-1] == ";" {
+			return i
+		}
 		op = ";"
 	} else if (op == "&" || op == "|") && i+1 < len(script) && script[i+1] == script[i] {
 		i++
