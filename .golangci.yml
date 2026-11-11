@@ -130,16 +130,6 @@ linters:
           - forbidigo
       # praetor:generated-exceptions begin (praetorctl linters exceptions; never edit by hand)
       # baseline #1030
-      - path: ^cmd/standards-lsp/fuzz_test\.go$
-        linters:
-          - gocognit
-        text: func `FuzzLSPHandleMessage`
-      # baseline #1030
-      - path: ^cmd/standards-lsp/fuzz_test\.go$
-        linters:
-          - gocyclo
-        text: func `FuzzLSPHandleMessage`
-      # baseline #1030
       - path: ^cmd/standards-lsp/server_test\.go$
         linters:
           - gocognit
@@ -1164,11 +1154,6 @@ linters:
         linters:
           - gocyclo
         text: func `TestManagedAttributes_Boundary_OnlyRulesOnThePinnedFileConflict`
-      # baseline #1030
-      - path: ^internal/adopt/gitignore_history_test\.go$
-        linters:
-          - gocognit
-        text: func `TestLookupManagedGitIgnoreTail_Positive`
       # baseline #1030
       - path: ^internal/adopt/gitignore_history_test\.go$
         linters:
