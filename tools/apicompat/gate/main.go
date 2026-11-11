@@ -1705,6 +1705,9 @@ func verifyChecker(ctx context.Context, checker string, stderr io.Writer) (err e
 	return verifyCanary(ctx, checker, filepath.Join(dir, "repo"), filepath.Join(dir, "no-hooks"), stderr)
 }
 
+// verifyCanary commits the canary repository under repo with hooks disabled through the hooks
+// folder and fails unless the checker reports the canary's removed exported function as
+// incompatible.
 func verifyCanary(ctx context.Context, checker, repo, hooks string, stderr io.Writer) error {
 	if base, head, checkErr := commitCanary(ctx, repo, hooks); checkErr != nil {
 		return fmt.Errorf("create the canary repository: %w", checkErr)
