@@ -17,8 +17,16 @@ func TestSplitHereDocs(t *testing.T) {
 	if docs[0].Text != "A \nreviewer's\n" || docs[0].Target != "'$D/body'" || docs[1].Text != "\ttwo\n" || docs[1].Target != "other" {
 		t.Fatalf("bodies: %#v", docs)
 	}
-	if strings.Contains(code, "reviewer") {
-		t.Fatalf("body leaked into code: %q", code)
+	if !strings.Contains(code, "reviewer s") || !strings.Contains(code, "\ttwo") {
+		t.Fatalf("data body missing from code: %q", code)
+	}
+}
+
+// TestSplitHereDocsBodyQuotes checks data neutralization and verbatim code bodies.
+func TestSplitHereDocsBodyQuotes(t *testing.T) {
+	code, docs, err := SplitHereDocs("cat <<A\nit's \"quoted\" `x` \\y $(z)\nA\nbash <<B\necho \"quoted\"\nB\n")
+	if err != nil || len(docs) != 2 || !strings.Contains(code, "it s  quoted   x   y   z)") || !strings.Contains(code, `echo "quoted"`) {
+		t.Fatalf("body transformation: %q %#v %v", code, docs, err)
 	}
 }
 
