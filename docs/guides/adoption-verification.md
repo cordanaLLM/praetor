@@ -916,6 +916,12 @@ reach that server through host loopback. Compilation and module downloads stay o
 the namespace; the prefetch stage still fetches modules first. This is network isolation,
 with the caller's filesystem and environment retained for test fixtures.
 
+The wrapper reserves the sandbox init's start tick while each test binary runs and retains released
+reservations for at least six seconds after that tick, so concurrent
+sandboxes of the same user using the same runtime directory do not share the parent identity used
+by testcontainers-go. The reservation does not coordinate different runtime directories or different
+users sharing a rootful container engine.
+
 The engine's Makefile Go test recipes, including fuzz and the schema module, use
 `praetorctl go test` through the source CLI to apply the same `-exec` wrapper. Each
 wrapper uses the exact running engine executable. When the race stage runs its Go tests in a

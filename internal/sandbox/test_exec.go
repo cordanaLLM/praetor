@@ -238,7 +238,11 @@ func (r Runner) RunLoopback(ctx context.Context, command []string, stdin io.Read
 	if err != nil {
 		return err
 	}
-	if err := util.RunCommandPassthrough(ctx, "", invocation.Path, stdin, stdout, stderr, invocation.Args...); err != nil {
+	sh, err := r.lookup("sh")
+	if err != nil {
+		return err
+	}
+	if err := runSession(ctx, invocation, sh, command, stdin, stdout, stderr); err != nil {
 		return fmt.Errorf("go test loopback namespace: %w", err)
 	}
 	return nil

@@ -1,0 +1,201 @@
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+// SPDX-License-Identifier: EUPL-1.2
+
+package sandbox
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
+)
+
+const sessionTickHold uint64 = 600
+
+type sessionReservation struct {
+	Owner    int  `json:"owner"`
+	Released bool `json:"released"`
+}
+
+// Session reservations coordinate sandboxes of one user, not a rootful engine shared by users.
+func reserveSessionTick(ctx context.Context, path string, tick uint64, owner int) (bool, error) {
+	return updateSessionRegistry(ctx, path, tick, owner, false)
+}
+
+func updateSessionRegistry(ctx context.Context, path string, tick uint64, owner int, remove bool) (ok bool, resultErr error) {
+	return updateSessionRegistryWithClock(ctx, path, tick, owner, remove, currentSessionTick)
+}
+
+func updateSessionRegistryWithClock(ctx context.Context, path string, tick uint64, owner int, remove bool, clock func() (uint64, error)) (ok bool, resultErr error) {
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return false, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, root.Close()) }()
+	release, err := sessionLock(ctx, root, filepath.Base(path)+".lock")
+	if err != nil {
+		return false, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, release()) }()
+	entries, err := readSessionRegistry(path)
+	if err != nil {
+		return false, err
+	}
+	now, err := clock()
+	if err != nil {
+		return false, err
+	}
+	if err = pruneSessionRegistry(entries, now); err != nil {
+		return false, err
+	}
+	key := strconv.FormatUint(tick, 10)
+	if remove {
+		if entry, found := entries[key]; found && entry.Owner == owner {
+			entry.Released = true
+			entries[key] = entry
+		}
+	} else if _, found := entries[key]; found {
+		return false, nil
+	} else {
+		entries[key] = sessionReservation{Owner: owner}
+	}
+	if err = writeSessionRegistry(path, entries); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func readSessionRegistry(path string) (map[string]sessionReservation, error) {
+	entries := map[string]sessionReservation{}
+	data, err := util.ReadFileLimited(path, 65536)
+	if errors.Is(err, os.ErrNotExist) {
+		return entries, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read session registry: %w", err)
+	}
+	var raw map[string]struct {
+		Owner    *int  `json:"owner"`
+		Released *bool `json:"released"`
+	}
+	if err = json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("invalid session registry: %w", err)
+	}
+	if raw == nil {
+		return nil, errors.New("invalid null session registry")
+	}
+	for key, value := range raw {
+		if value.Owner == nil || value.Released == nil {
+			return nil, fmt.Errorf("invalid session registry entry %q", key)
+		}
+		entries[key] = sessionReservation{Owner: *value.Owner, Released: *value.Released}
+	}
+	return entries, nil
+}
+func currentSessionTick() (uint64, error) {
+	data, err := util.ReadFileLimited("/proc/uptime", 128)
+	if err != nil {
+		return 0, fmt.Errorf("read session uptime: %w", err)
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) != 2 {
+		return 0, errors.New("invalid session uptime")
+	}
+	parts := strings.Split(fields[0], ".")
+	if len(parts) != 2 || len(parts[1]) != 2 {
+		return 0, errors.New("invalid session uptime")
+	}
+	seconds, err := strconv.ParseUint(parts[0], 10, 64)
+	if err != nil || seconds > (^uint64(0)-99)/100 {
+		return 0, errors.New("invalid session uptime seconds")
+	}
+	fraction, err := strconv.ParseUint(parts[1], 10, 64)
+	if err != nil || fraction > 99 {
+		return 0, errors.New("invalid session uptime fraction")
+	}
+	return seconds*100 + fraction, nil
+}
+
+func pruneSessionRegistry(entries map[string]sessionReservation, now uint64) error {
+	for key, entry := range entries {
+		tick, err := strconv.ParseUint(key, 10, 64)
+		if err != nil || strconv.FormatUint(tick, 10) != key || entry.Owner <= 0 {
+			return fmt.Errorf("invalid session registry entry %q", key)
+		}
+		if now <= tick || now-tick <= sessionTickHold {
+			continue
+		}
+		if entry.Released {
+			delete(entries, key)
+			continue
+		}
+		_, err = os.Stat(filepath.Join("/proc", strconv.Itoa(entry.Owner)))
+		if errors.Is(err, os.ErrNotExist) {
+			delete(entries, key)
+		} else if err != nil {
+			return fmt.Errorf("session owner: %w", err)
+		}
+	}
+	return nil
+}
+func writeSessionRegistry(path string, entries map[string]sessionReservation) (resultErr error) {
+	data, err := json.Marshal(entries)
+	if err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(filepath.Dir(path), ".session-registry-")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := os.Remove(temp.Name()); err != nil && !errors.Is(err, os.ErrNotExist) {
+			resultErr = errors.Join(resultErr, err)
+		}
+	}()
+	_, writeErr := temp.Write(data)
+	closeErr := temp.Close()
+	if err = errors.Join(writeErr, closeErr); err != nil {
+		return err
+	}
+	return os.Rename(temp.Name(), path)
+}
+
+func sessionLock(ctx context.Context, root *os.Root, name string) (func() error, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return sessionLockWithWait(ctx, root, name, sessionWait)
+}
+
+func sessionLockWithWait(ctx context.Context, root *os.Root, name string, wait func(context.Context) error) (func() error, error) {
+	for i := 0; i < 500; i++ {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("session registry lock: %w", err)
+		}
+		release, busy, err := util.LockPrivateFile(root, name, os.O_RDWR|os.O_CREATE, "session registry")
+		if err != nil {
+			return nil, err
+		}
+		if !busy {
+			return release, nil
+		}
+		if err := wait(ctx); err != nil {
+			return nil, fmt.Errorf("session registry lock: %w", err)
+		}
+	}
+	return nil, errors.New("session registry lock: wait limit exceeded")
+}
+func sessionWait(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(10 * time.Millisecond):
+		return nil
+	}
+}
