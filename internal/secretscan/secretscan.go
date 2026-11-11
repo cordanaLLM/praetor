@@ -27,8 +27,11 @@ import (
 const maxReportBytes = 256 << 20
 
 const (
-	// ScanTimeout bounds one gitleaks run (HISS-02).
-	ScanTimeout = 5 * time.Minute
+	// ScanTimeout bounds one gitleaks run (HISS-02). The scan reads the full history of every
+	// branch, tag and origin ref (LogOpts), so it grows with the repository: this repository's CI
+	// scan took 3m39s on 2026-11-10 and ran past the earlier five-minute bound on 2026-11-11 with
+	// the tool already built. Twelve minutes keeps the Standards job inside its 75-minute limit.
+	ScanTimeout = 12 * time.Minute
 	// DefaultScanner is the default binary Check invokes.
 	DefaultScanner = "gitleaks"
 	// DefaultConfig is the repository-relative gitleaks configuration file.
