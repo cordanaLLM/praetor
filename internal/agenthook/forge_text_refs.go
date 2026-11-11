@@ -884,7 +884,7 @@ func readForgeTextFile(ctx context.Context, path string) (string, error) {
 // heredocWritesFile reports a literal output target matching the file argument.
 func heredocWritesFile(bodies []hiss.HereDoc, word string) bool {
 	for i := 0; i < len(bodies) && i < maxForgeTextWords; i++ {
-		if bodies[i].Target != "" && unquoteShellWord(bodies[i].Target) == word {
+		if bodies[i].Data() && bodies[i].Target != "" && unquoteShellWord(bodies[i].Target) == word {
 			return true
 		}
 	}
@@ -894,7 +894,7 @@ func heredocWritesFile(bodies []hiss.HereDoc, word string) bool {
 // heredocFinding returns the first foreign reference in the supplied bodies.
 func heredocFinding(bodies []hiss.HereDoc, own []string) string {
 	for i := 0; i < len(bodies) && i < maxForgeTextWords; i++ {
-		if findings := forge.ForeignReferenceFindings(bodies[i].Text, "here-document", own); len(findings) > 0 {
+		if findings := forge.ForeignReferenceFindings(bodies[i].Text, "here-document", own); bodies[i].Data() && len(findings) > 0 {
 			return findings[0]
 		}
 	}

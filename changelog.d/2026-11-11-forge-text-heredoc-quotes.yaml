@@ -1,4 +1,4 @@
 # SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
 # SPDX-License-Identifier: EUPL-1.2
 type: fixed
-title: Forge-text guard reads here-document bodies as text without treating their apostrophes as shell quotes.
+title: Forge-text guard distinguishes data here-documents from shell-fed commands when screening references.

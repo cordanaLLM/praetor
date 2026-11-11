@@ -7,11 +7,17 @@ import (
 	"testing"
 )
 
+// TestShellFields checks shell words and code or data here-documents.
 func TestShellFields(t *testing.T) {
 	for _, tc := range []struct {
 		name, script string
 		want         []string
 	}{
+		{"shell heredoc code", "bash <<'EOF'\ngh pr view 1\nEOF", []string{"bash", ";", "gh", "pr", "view", "1", ";"}},
+		{"cat heredoc data", "cat <<'EOF'\nreviewer's\nEOF", []string{"cat", ";"}},
+		{"assignment cat data", "FOO=1 cat > out.md <<'EOF'\nreviewer's\nEOF", []string{"FOO=1", "cat", ">", "out.md", ";"}},
+		{"absolute cat data", "/usr/bin/cat <<'EOF'\nreviewer's\nEOF", []string{"/usr/bin/cat", ";"}},
+		{"sudo tee code", "sudo tee out.md <<'EOF'\ngh pr view 1\nEOF", []string{"sudo", "tee", "out.md", ";", "gh", "pr", "view", "1", ";"}},
 		{"heredoc", "cat <<'EOF'\nreviewer's note\nEOF\ngh pr view 1", []string{"cat", ";", "gh", "pr", "view", "1"}},
 		{"two heredocs", "cat <<A <<-B\none\nA\n\ttwo\n\tB\n", []string{"cat", ";"}},
 		{"delimiter trailing space", "cat <<EOF\nEOF \nreviewer's\nEOF\n", []string{"cat", ";"}},
@@ -36,6 +42,7 @@ func TestShellFields(t *testing.T) {
 	}
 }
 
+// TestShellFieldsBoundaries rejects oversized and malformed scripts.
 func TestShellFieldsBoundaries(t *testing.T) {
 	if got, err := ShellFields(strings.Repeat("x ", maxRunScriptFields)); err != nil || len(got) != maxRunScriptFields {
 		t.Fatalf("at bound: %d fields, %v", len(got), err)
@@ -43,6 +50,7 @@ func TestShellFieldsBoundaries(t *testing.T) {
 	for _, script := range []string{
 		strings.Repeat("x ", maxRunScriptFields) + "x",
 		strings.Repeat("x ", maxRunScriptFields+1), `git -C "unclosed`, "cat <<EOF\nmissing\n", `cat <<<'it's'`,
+		"bash <<EOF\nreviewer's\nEOF\n",
 	} {
 		if got, err := ShellFields(script); err == nil || got != nil {
 			t.Errorf("unreadable script accepted: %d fields, %v", len(got), err)

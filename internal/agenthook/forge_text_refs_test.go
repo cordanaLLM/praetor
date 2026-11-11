@@ -106,6 +106,9 @@ func TestForgeTextRefsRefusedPerForm(t *testing.T) {
 		{"heredoc variable file foreign", "D=.\ncat > $D/body.md <<'EOF'\nreviewer's outside-org/project#43\nEOF\ngh pr comment 9 --body-file $D/body.md", "outside-org/project#43"},
 		{"heredoc tabs foreign", "gh pr comment 9 --body-file - <<-'EOF'\n\treviewer's outside-org/project#44\n\tEOF\n", "outside-org/project#44"},
 		{"heredoc double quoted foreign", "gh pr comment 9 --body-file - <<\"EOF\"\nreviewer's outside-org/project#45\nEOF\n", "outside-org/project#45"},
+		{"gh write inside a sh heredoc", "sh <<EOF\ngh pr comment 9 --body \"See outside-org/project#48\"\nEOF\n", "outside-org/project#48"},
+		{"gh write inside a cat heredoc piped to bash", "cat <<'EOF' | bash\ngh pr comment 9 --body \"See outside-org/project#47\"\nEOF\n", "outside-org/project#47"},
+		{"gh write inside a heredoc script then run", "cat > run.sh <<'EOF'\ngh pr comment 9 --body \"See outside-org/project#48\"\nEOF\nbash run.sh\n", "outside-org/project#48"},
 		{"gh write inside a bash heredoc", "bash <<'EOF'\ngh pr comment 9 --body \"See outside-org/project#46\"\nEOF\n", "outside-org/project#46"},
 		{"heredoc written file foreign", "cat > body.md <<'EOF'\nreviewer's outside-org/project#42\nEOF\ngh pr comment 9 --body-file body.md", "outside-org/project#42"},
 		{"inline owner/repo#N in --body", `gh issue create --title "Bug report" --body "Reproduces outside-org/project#42 on Linux"`, `outside-org/project#42`},
@@ -148,6 +151,8 @@ func TestForgeTextRefsAcceptedCases(t *testing.T) {
 		name    string
 		command string
 	}{
+		{name: "python heredoc apostrophe without gh", command: "python3 - <<'EOF'\nreviewer's\nEOF\n"},
+		{name: "assignment heredoc written file apostrophe", command: "FOO=1 cat > body.md <<'EOF'\nreviewer's note\nEOF\ngh pr comment 9 --body-file body.md"},
 		{name: "heredoc written file apostrophe", command: "cat > body.md <<'EOF'\nreviewer's note\nEOF\ncd . && gh pr comment 9 --body-file body.md"},
 		{name: "heredoc variable file apostrophe", command: "D=.\ncat > $D/body.md <<'EOF'\nreviewer's note\nEOF\ngh pr comment 9 --body-file $D/body.md"},
 		{name: "heredoc strip tabs", command: "gh pr comment 9 --body-file - <<-'EOF'\n\treviewer's note\n\tEOF\n"},
