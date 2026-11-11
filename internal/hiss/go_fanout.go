@@ -41,7 +41,7 @@ func (g *goScanner) checkGoFanout(goStmt *ast.GoStmt) {
 		return
 	}
 	facts := g.collectFanoutFacts(fnRoot)
-	if g.hasGoStmtLimiter(fnRoot, loops, goStmt, &facts) {
+	if g.hasGoStmtLimiter(loops, goStmt, &facts) {
 		return
 	}
 	for i := 0; i < len(loops); i++ {
@@ -61,7 +61,7 @@ func fanoutFindingMessage(fnName string, line int) string {
 		fnName = "func literal"
 	}
 	return fmt.Sprintf(
-		"Function %s (line %d) launches a goroutine per loop iteration without a visible scalar bound; bound concurrency with errgroup.Group.SetLimit, semaphore.Weighted.Acquire, a buffered token channel, a constant/array loop bound, or //hiss:bound",
+		"Function %s (line %d) launches a goroutine per loop iteration without a visible scalar bound; bound concurrency with semaphore.Weighted.Acquire, a buffered token channel, a constant/array loop bound, or //hiss:bound",
 		fnName, line,
 	)
 }
@@ -542,50 +542,12 @@ func isPositiveBoundArg(expr ast.Expr) bool {
 	return true
 }
 
-// hasGoStmtLimiter checks bounds (a) errgroup SetLimit, (b) semaphore Acquire, and (c) buffered
-// token channel send/receive for goStmt.
-func (g *goScanner) hasGoStmtLimiter(fnRoot ast.Node, loops []ast.Stmt, goStmt *ast.GoStmt, facts *fanoutFacts) bool {
-	outer := loops[len(loops)-1]
-	if hasErrgroupSetLimit(fnRoot, outer.Pos(), facts) {
-		return true
-	}
+// hasGoStmtLimiter checks semaphore and token-channel bounds for a raw go statement.
+func (g *goScanner) hasGoStmtLimiter(loops []ast.Stmt, goStmt *ast.GoStmt, facts *fanoutFacts) bool {
 	if hasSemaphoreAcquireInLoops(loops, goStmt.Pos(), facts) {
 		return true
 	}
 	return hasTokenChannelBound(loops, goStmt, facts)
-}
-
-// hasErrgroupSetLimit reports whether an errgroup.Group in fnRoot calls SetLimit before loopPos.
-func hasErrgroupSetLimit(fnRoot ast.Node, loopPos token.Pos, facts *fanoutFacts) bool {
-	found := false
-	steps := 0
-	ast.Inspect(fnRoot, func(n ast.Node) bool {
-		if n == nil || found || steps >= maxNodeStack {
-			return false
-		}
-		steps++
-		call, ok := n.(*ast.CallExpr)
-		if ok && call.Pos() < loopPos && isErrgroupSetLimitCall(call, facts) {
-			found = true
-			return false
-		}
-		return true
-	})
-	return found
-}
-
-// isErrgroupSetLimitCall reports whether call invokes SetLimit with a positive bound on a known
-// errgroup.Group variable.
-func isErrgroupSetLimitCall(call *ast.CallExpr, facts *fanoutFacts) bool {
-	if len(call.Args) != 1 || call.Ellipsis.IsValid() {
-		return false
-	}
-	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "SetLimit" {
-		return false
-	}
-	recv, ok := receiverBaseIdent(sel.X)
-	return ok && facts.errgroups[recv] && isPositiveBoundArg(call.Args[0])
 }
 
 // receiverBaseIdent unwraps parens and unary &/* to return the receiver identifier name.

@@ -39,3 +39,7 @@ func TestNarrowScopeLoopReadOnly(t *testing.T) {
 		t.Run(name, func(t *testing.T) { assertNarrowScope(t, body, 1) })
 	}
 }
+
+func TestNarrowScopeLoopCallArgumentsMayMutate(t *testing.T) {
+	assertNarrowScope(t, "func F(xs []int) { seen := map[int]bool{}; for _, x := range xs { if seen[x] { continue }; mark(seen, x) } }", 0)
+}

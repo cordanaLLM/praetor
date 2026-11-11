@@ -122,11 +122,11 @@ var catalog = []Rule{
 		ID:            "HISS-06",
 		Title:         "Bounded Concurrency",
 		Specification: "Worker pools and concurrent fan-out carry an explicit scalar upper bound.",
-		Enforcement:   "The internal/hiss scanner (Go only: go statement per loop iteration without errgroup SetLimit, semaphore, token channel, constant bound or //hiss:bound; other languages unchecked).",
+		Enforcement:   "The internal/hiss scanner (Go only: go statement per loop iteration without semaphore, token channel, constant bound or //hiss:bound; other languages unchecked).",
 		FailureAction: "Pre-commit and CI blocker.",
 		Scope:         "concurrency",
 		Directive:     []Clause{{Text: "explicit scalar upper bound on every worker pool + concurrent fan-out"}},
-		Adoption:      auditCheck(LanguageGo, "Go only: go statement per loop iteration without errgroup SetLimit, semaphore, token channel, constant bound or //hiss:bound; other languages unchecked"),
+		Adoption:      auditCheck(LanguageGo, "Go only: go statement per loop iteration without semaphore, token channel, constant bound or //hiss:bound; other languages unchecked"),
 	},
 	{
 		ID:            "HISS-07",

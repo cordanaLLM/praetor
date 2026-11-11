@@ -31,6 +31,24 @@ func keepNarrowState(scope *goScope, n ast.Node, locals map[*ast.Ident]*narrowLo
 		}
 	case *ast.CallExpr:
 		keepNarrowExpr(scope, narrowCallMutation(stmt), locals)
+		if !narrowReadOnlyBuiltin(stmt) {
+			for _, arg := range stmt.Args {
+				keepNarrowExpr(scope, arg, locals)
+			}
+		}
+	}
+}
+
+func narrowReadOnlyBuiltin(call *ast.CallExpr) bool {
+	fn, ok := ast.Unparen(call.Fun).(*ast.Ident)
+	if !ok {
+		return false
+	}
+	switch fn.Name {
+	case "len", "cap", "print", "println":
+		return true
+	default:
+		return false
 	}
 }
 

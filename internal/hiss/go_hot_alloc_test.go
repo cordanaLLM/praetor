@@ -199,3 +199,16 @@ func TestCheckHotAllocations_Boundary_ParseErrorNotSkipped(t *testing.T) {
 		t.Fatal("checkDirHotAlloc on malformed Go source succeeded, want parse error")
 	}
 }
+
+func TestHotAllocFinishUnreadableFileIncomplete(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "unreadable.go")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rep := newScanReport(10)
+	(goLanguage{}).finish(context.Background(), rep, dir, []string{path})
+	if !rep.Incomplete() {
+		t.Fatal("unreadable hot-allocation source left report complete")
+	}
+}

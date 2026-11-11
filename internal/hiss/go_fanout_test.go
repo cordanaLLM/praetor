@@ -248,7 +248,7 @@ g, _ := errgroup.WithContext(ctx)
 g.SetLimit(8)
 for _, item := range items {
 	v := item
-	go func() { work(v) }()
+	g.Go(func() error { work(v); return nil })
 }
 return g.Wait()
 }
@@ -390,7 +390,7 @@ var g errgroup.Group
 g.SetLimit(limit)
 for _, item := range items {
 	v := item
-	go func() { work(v) }()
+	g.Go(func() error { work(v); return nil })
 }
 return g.Wait()
 }
@@ -491,10 +491,24 @@ func assertFanoutFinding(t *testing.T, src, rel string, line int, fn string) {
 	if found.Symbol != fn {
 		t.Errorf("symbol = %q, want %q", found.Symbol, fn)
 	}
-	for _, needle := range []string{fn, "errgroup.Group.SetLimit", "semaphore.Weighted.Acquire",
+	for _, needle := range []string{fn, "semaphore.Weighted.Acquire",
 		"buffered token channel", "constant/array loop bound", "//hiss:bound"} {
 		if !strings.Contains(found.Message, needle) {
 			t.Errorf("message %q missing %q", found.Message, needle)
 		}
+	}
+}
+
+func TestGoFanoutSetLimitDoesNotBoundRawGo(t *testing.T) {
+	src := `package p
+import "golang.org/x/sync/errgroup"
+func Run(items []int) {
+ var g errgroup.Group
+ g.SetLimit(8)
+ for range items { go work() }
+}`
+	rep := scanGoSnippet(src, "fanout.go")
+	if rep.Breakdown["HISS-06"] == 0 {
+		t.Fatal("SetLimit must not exempt raw go statements")
 	}
 }

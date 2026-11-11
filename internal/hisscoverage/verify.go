@@ -70,11 +70,15 @@ func readCatalogFS(ctx context.Context, fsys fs.FS) ([]byte, error) {
 	if ctx != nil && ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	data, err := fs.ReadFile(fsys, CatalogFile)
+	file, err := fsys.Open(CatalogFile)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("%w at %s", ErrCatalogAbsent, CatalogFile)
 		}
+		return nil, fmt.Errorf("read coverage catalog: %w", err)
+	}
+	data, readErr := io.ReadAll(io.LimitReader(file, maxCatalogBytes+1))
+	if err := errors.Join(readErr, file.Close()); err != nil {
 		return nil, fmt.Errorf("read coverage catalog: %w", err)
 	}
 	if len(data) > maxCatalogBytes {
