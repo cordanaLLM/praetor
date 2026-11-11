@@ -449,7 +449,8 @@ func (s *hereDocSplit) line(raw string) error {
 		s.lexer.line(line)
 		if len(s.lexer.bodies) == before {
 			index := len(s.docs) - before
-			s.bodies[index].WriteString(raw)
+			body := &s.bodies[index]
+			body.WriteString(raw)
 			if s.docs[index].Data() {
 				s.code.WriteString(blankHereDocData(line))
 			} else {
