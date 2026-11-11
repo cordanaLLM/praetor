@@ -5,6 +5,9 @@
 package forge
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -169,5 +172,102 @@ func TestAuditTestTimeouts_Boundary_InputWithoutDefaultUnreadable(t *testing.T) 
 	wf := reusableTimeoutWorkflow("      test-timeout:\n        type: string\n        default: 30m\n")
 	if out, err := auditTimeouts(t, triggerRepository(t, map[string]string{"ci-go.yml": wf})); err != nil {
 		t.Fatalf("default at the bound = %q, %v; want a pass", out, err)
+	}
+}
+
+// Makefile recipes obey the workflow bound, including the GO_TEST sandbox wrapper.
+func TestAuditTestTimeouts_Makefile(t *testing.T) {
+	entry := config.Exception{Rule: config.ExceptionRuleTestTimeout, Path: "Makefile",
+		Category: "C", Entered: "2026-10-15", Expires: "2026-10-25", Reason: "category C: adopt speedup pending (#1381)"}
+	expired := entry
+	expired.Expires = "2026-10-14"
+	for _, tc := range []struct {
+		name    string
+		command string
+		entries []config.Exception
+		wantErr string
+		wantOut string
+	}{
+		{"no entry", "go test -race -timeout 45m ./internal/adopt/", nil, "Makefile:2 sets 45m", ""},
+		{"wrapper without entry", "$(GO_TEST) -race -timeout 45m ./internal/adopt/", nil, "Makefile:2 sets 45m", ""},
+		{"live entry", "$(GO_TEST) -race -timeout 45m ./internal/adopt/", []config.Exception{entry}, "", "Makefile excepted until 2026-10-25"},
+		{"expired entry", "$(GO_TEST) -race -timeout 45m ./internal/adopt/", []config.Exception{expired}, "Makefile expired 2026-10-14", ""},
+		{"boundary", "$(GO_TEST) -race -timeout 30m ./...", nil, "", "[PASS] test-timeout"},
+		{"continued without entry", "$(GO_TEST) -v -race \\\n  -timeout 45m ./internal/adopt/", nil, "Makefile:2 sets 45m", ""},
+		{"continued live entry", "$(GO_TEST) -v -race \\\n  -timeout 45m ./internal/adopt/", []config.Exception{entry}, "", "Makefile excepted until 2026-10-25"},
+		{"continued boundary", "$(GO_TEST) -v -race \\\n  -timeout 30m ./...", nil, "", "[PASS] test-timeout"},
+		{"stale entry", "$(GO_TEST) -race -timeout 30m ./...", []config.Exception{entry}, "Makefile excuses nothing", ""},
+		{"workflow entry cannot excuse Makefile", "go test -timeout 45m ./internal/adopt/", []config.Exception{timeoutEntry("ci.yml", "2026-10-18")}, "Makefile:2 sets 45m", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "Makefile"), []byte("test:\n\t"+tc.command+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			out, err := auditTimeouts(t, root, tc.entries...)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("AuditTestTimeouts = %q, %v; want %q", out, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || !strings.Contains(out, tc.wantOut) {
+				t.Fatalf("AuditTestTimeouts = %q, %v; want %q", out, err, tc.wantOut)
+			}
+		})
+	}
+}
+
+// TestAuditTestTimeouts_MakefileDanglingContinuation refuses a Makefile whose last line ends in a
+// continuation, naming that line.
+func TestAuditTestTimeouts_MakefileDanglingContinuation(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Makefile"), []byte("test:\n\t$(GO_TEST) -race \\"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := auditTimeouts(t, root)
+	if err == nil || !strings.Contains(err.Error(), "Makefile:2") {
+		t.Fatalf("dangling continuation: %v; want Makefile:2 refused", err)
+	}
+}
+
+// TestAuditTestTimeouts_ScanBound accepts a Makefile of exactly the line bound and refuses a Makefile
+// or a workflow one line over it, so no line goes unaudited.
+func TestAuditTestTimeouts_ScanBound(t *testing.T) {
+	body := func(lines int) string { return "test:\n" + strings.Repeat("\t@true\n", lines-1) }
+	atBound := t.TempDir()
+	if err := os.WriteFile(filepath.Join(atBound, "Makefile"), []byte(body(maxTimeoutWorkflowLines)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := auditTimeouts(t, atBound); err != nil {
+		t.Fatalf("Makefile at the %d-line bound: %q, %v; want a pass", maxTimeoutWorkflowLines, out, err)
+	}
+	over := t.TempDir()
+	if err := os.WriteFile(filepath.Join(over, "Makefile"), []byte(body(maxTimeoutWorkflowLines+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("above the %d-line scan bound", maxTimeoutWorkflowLines)
+	if _, err := auditTimeouts(t, over); err == nil || !strings.Contains(err.Error(), "Makefile has") || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Makefile over the bound: %v; want it refused naming the bound", err)
+	}
+	workflow := "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test ./...\n" +
+		strings.Repeat("#\n", maxTimeoutWorkflowLines)
+	if _, err := auditTimeouts(t, triggerRepository(t, map[string]string{"long.yml": workflow})); err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("workflow over the bound: %v; want it refused naming the bound", err)
+	}
+}
+
+// The checked-in recipe and declaration must exercise the same audit as adopter files.
+func TestAuditTestTimeouts_RepositoryMakefile(t *testing.T) {
+	root := filepath.Join("..", "..")
+	manifest, err := config.LoadManifest(filepath.Join(root, config.ManifestFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Pin the declaration's entry day; expiry itself is exercised by the negative fixture.
+	today := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	out, err := AuditTestTimeouts(t.Context(), TestTimeoutOptions{Root: root, Exceptions: manifest.Exceptions, Today: today})
+	if err != nil || !strings.Contains(out, "Makefile excepted until 2026-11-20") || !strings.Contains(out, "1381") {
+		t.Fatalf("repository timeout audit = %q, %v; want the dated Makefile exception", out, err)
 	}
 }

@@ -8,11 +8,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"go.yaml.in/yaml/v3"
 )
@@ -20,12 +23,12 @@ import (
 // testTimeoutGate names the check in its lines.
 const testTimeoutGate = "test-timeout"
 
-// testTimeoutBoundMinutes is the go test timeout every workflow keeps per package (#1381).
+// testTimeoutBoundMinutes is the go test timeout workflows and Makefile keep per package (#1381).
 const testTimeoutBoundMinutes = 30
 
 var (
-	// goTestCommand matches a go command invoking the test subcommand.
-	goTestCommand = regexp.MustCompile(`\bgo(?:\.exe)?\s+[^;&|]*\btest\b`)
+	// goTestCommand also recognizes the Makefile's sandboxed GO_TEST command.
+	goTestCommand = regexp.MustCompile(`\bgo(?:\.exe)?\s+[^;&|]*\btest\b|\$\(GO_TEST\)`)
 	// goTimeoutFlag matches a -timeout or --timeout flag on a command line; its value is a whole
 	// ${{ ... }} expression, spaces included, or a word.
 	goTimeoutFlag = regexp.MustCompile(`(?:^|[\s;&|])--?timeout(?:=|\s+)["']?(\$\{\{[^}]*\}\}|[^"'\s;&|]+)["']?`)
@@ -47,10 +50,10 @@ type TestTimeoutOptions struct {
 	Today      time.Time
 }
 
-// AuditTestTimeouts is the test-timeout gate: a workflow line that sets a timeout above the
-// per-package bound fails, naming the workflow, the line and the value.
+// AuditTestTimeouts checks workflow and root Makefile lines against the per-package timeout
+// bound, naming the file, line and value of each timeout without a live exception.
 func AuditTestTimeouts(ctx context.Context, opts TestTimeoutOptions) (string, error) {
-	files, err := readWorkflowFiles(ctx, opts.Root)
+	files, err := readTestTimeoutFiles(ctx, opts.Root)
 	if err != nil {
 		return "", err
 	}
@@ -58,8 +61,11 @@ func AuditTestTimeouts(ctx context.Context, opts TestTimeoutOptions) (string, er
 	used := make([]bool, len(entries))
 	var findings, excepted []string
 	for _, file := range files {
-		rel := ghworkflow.Dir + "/" + file.Name
-		long := longTimeouts(rel, string(file.Data), timeoutInputDefaults(file.Data))
+		rel := file.Name
+		long, err := fileTimeouts(file)
+		if err != nil {
+			return "", err
+		}
 		if len(long) == 0 {
 			continue
 		}
@@ -75,13 +81,87 @@ func AuditTestTimeouts(ctx context.Context, opts TestTimeoutOptions) (string, er
 	}
 	for i, entry := range entries {
 		if !used[i] {
-			findings = append(findings, fmt.Sprintf("[FAIL] %s: the exceptions entry for %s excuses nothing, because the workflow keeps the bound; remove it", testTimeoutGate, entry.Target()))
+			findings = append(findings, fmt.Sprintf("[FAIL] %s: the exceptions entry for %s excuses nothing, because the file keeps the bound; remove it", testTimeoutGate, entry.Target()))
 		}
 	}
 	if len(findings) > 0 {
 		return "", errors.New(strings.Join(findings, "\n"))
 	}
 	return strings.Join(append(excepted, "[PASS] test-timeout"), "\n"), nil
+}
+
+// fileTimeouts returns the long go test timeouts of one audited file: the root Makefile by joined
+// logical lines, a workflow line by line with its input defaults.
+func fileTimeouts(file workflowFile) ([]string, error) {
+	if lines := physicalLines(string(file.Data)); lines > maxTimeoutWorkflowLines {
+		return nil, fmt.Errorf("[FAIL] %s: %s has %d lines, above the %d-line scan bound; lines past it would not be audited",
+			testTimeoutGate, file.Name, lines, maxTimeoutWorkflowLines)
+	}
+	if file.Name == "Makefile" {
+		return makefileTimeouts(string(file.Data))
+	}
+	return longTimeouts(file.Name, string(file.Data), timeoutInputDefaults(file.Data)), nil
+}
+
+// physicalLines counts the lines of text; a final newline ends the last line instead of starting
+// an empty one, so a file of exactly the bound with a trailing newline stays within it.
+func physicalLines(text string) int {
+	if text == "" {
+		return 0
+	}
+	lines := strings.Count(text, "\n")
+	if !strings.HasSuffix(text, "\n") {
+		lines++
+	}
+	return lines
+}
+
+// makefileTimeouts joins continued physical lines and retains their first line number.
+func makefileTimeouts(text string) ([]string, error) {
+	lines := strings.Split(text, "\n")
+	var out []string
+	var logical strings.Builder
+	start := 0
+	continued := false
+	for n := 0; n < len(lines) && n < maxTimeoutWorkflowLines; n++ {
+		if !continued {
+			start = n
+		}
+		line := strings.TrimSuffix(lines[n], "\r")
+		continued = strings.HasSuffix(line, "\\")
+		if continued {
+			logical.WriteString(strings.TrimSuffix(line, "\\"))
+			logical.WriteByte(' ')
+			if n+1 >= len(lines) || (n+2 == len(lines) && lines[n+1] == "") || n+1 >= maxTimeoutWorkflowLines {
+				return nil, fmt.Errorf("[FAIL] %s: Makefile:%d has an unfinished continuation", testTimeoutGate, n+1)
+			}
+			continue
+		}
+		logical.WriteString(line)
+		out = append(out, checkGoTestTimeouts("Makefile", start, logical.String(), nil)...)
+		logical.Reset()
+	}
+	return out, nil
+}
+
+// readTestTimeoutFiles retains workflow paths and adds the optional root Makefile through the
+// same bounded, symlink-resistant snapshot reader used for repository source files.
+func readTestTimeoutFiles(ctx context.Context, root string) ([]workflowFile, error) {
+	files, err := readWorkflowFiles(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	for i := 0; i < len(files) && i < maxWorkflowFiles; i++ {
+		files[i].Name = ghworkflow.Dir + "/" + files[i].Name
+	}
+	data, err := contextopt.ReadSnapshot(ctx, filepath.Join(root, "Makefile"))
+	if errors.Is(err, os.ErrNotExist) {
+		return files, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("test-timeout Makefile: %w", err)
+	}
+	return append(files, workflowFile{Name: "Makefile", Data: data}), nil
 }
 
 // timeoutInputDefaults returns the literal workflow_call input defaults of a workflow
