@@ -47,8 +47,8 @@ const (
 	// default (isReviewedPin). Earlier defaults are in prior-images.json
 	// (reviewed_images.go).
 	//
-	// Reviewed at docker.io/library/golang:1.27-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb
-	DefaultBuilderImage = "docker.io/library/golang@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb"
+	// Reviewed at docker.io/library/golang:1.27-alpine@sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523
+	DefaultBuilderImage = "docker.io/library/golang@sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523"
 	// The 26.04 tag drops the hyphen the 24.04 and earlier tags carried: that repository
 	// publishes "ubuntu26.04", and "ubuntu-26.04" is not a tag on it.
 	//
