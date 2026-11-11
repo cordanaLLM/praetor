@@ -32,7 +32,7 @@ func TestCheckBPFLicenses_PlantedCases(t *testing.T) {
 
 func testBPFProgEUPLOnlyCase(t *testing.T, declared string) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "prog.bpf.c"), []byte("// SPDX-FileCopyrightText: 2026 example-holder <holder@example.invalid>\n// SPDX-License-Identifier: EUPL-1.2\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "prog.bpf.c"), []byte("// SPDX-FileCopyrightText: 2026 example-holder <holder@example.invalid>\n// SPDX-License-Identifier: EUPL-1.2\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rep, err := CheckBPFLicenses(t.Context(), BPFLicenseOptions{Root: root, DeclaredHolder: declared})
@@ -49,7 +49,7 @@ func testBPFProgEUPLOnlyCase(t *testing.T, declared string) {
 
 func testBPFProgDualCase(t *testing.T, declared string) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "prog.bpf.c"), []byte("// SPDX-FileCopyrightText: 2026 example-holder <holder@example.invalid>\n// SPDX-License-Identifier: EUPL-1.2 OR GPL-2.0-only\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "prog.bpf.c"), []byte("// SPDX-FileCopyrightText: 2026 example-holder <holder@example.invalid>\n// SPDX-License-Identifier: EUPL-1.2 OR GPL-2.0-only\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rep, err := CheckBPFLicenses(t.Context(), BPFLicenseOptions{Root: root, DeclaredHolder: declared})
@@ -65,7 +65,7 @@ func testBPFCProbeEUPLOnlyCase(t *testing.T, declared string) {
 	root := t.TempDir()
 	code := "// SPDX-FileCopyrightText: 2026 example-holder <holder@example.invalid>\n// SPDX-License-Identifier: EUPL-1.2\n" +
 		"#include \"vmlinux.h\"\nSEC(\"tracepoint/syscalls/sys_enter_open\")\nint test(void) { return 0; }\n"
-	if err := os.WriteFile(filepath.Join(root, "probe.c"), []byte(code), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "probe.c"), []byte(code), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rep, err := CheckBPFLicenses(t.Context(), BPFLicenseOptions{Root: root, DeclaredHolder: declared})
@@ -82,7 +82,7 @@ func testBPFCProbeEUPLOnlyCase(t *testing.T, declared string) {
 
 func testBPFMainGPLCase(t *testing.T, declared string) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "main.c"), []byte("// SPDX-FileCopyrightText: 2026 example-holder <holder@example.invalid>\n// SPDX-License-Identifier: GPL-2.0-only\nint main(void) { return 0; }\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "main.c"), []byte("// SPDX-FileCopyrightText: 2026 example-holder <holder@example.invalid>\n// SPDX-License-Identifier: GPL-2.0-only\nint main(void) { return 0; }\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rep, err := CheckBPFLicenses(t.Context(), BPFLicenseOptions{Root: root, DeclaredHolder: declared})
@@ -101,14 +101,15 @@ func testBPFVendoredGPLCase(t *testing.T, declared string) {
 	root := t.TempDir()
 	reuseText := "version = 1\n\n[[annotations]]\npath = [\"third_party/upstream/**\"]\n" +
 		"SPDX-FileCopyrightText = \"2025 Upstream Author\"\nSPDX-License-Identifier = \"GPL-2.0-only\"\n"
-	if err := os.WriteFile(filepath.Join(root, ReuseFile), []byte(reuseText), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ReuseFile), []byte(reuseText), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	codePath := filepath.Join(root, "third_party", "upstream", "lib.c")
-	if err := os.MkdirAll(filepath.Dir(codePath), 0o755); err != nil {
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a test directory needs its execute bit; 0o750 is the directory rule's bound
+	if err := os.MkdirAll(filepath.Dir(codePath), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(codePath, []byte("// SPDX-FileCopyrightText: 2025 Upstream Author\n// SPDX-License-Identifier: GPL-2.0-only\n"), 0o644); err != nil {
+	if err := os.WriteFile(codePath, []byte("// SPDX-FileCopyrightText: 2025 Upstream Author\n// SPDX-License-Identifier: GPL-2.0-only\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rep, err := CheckBPFLicenses(t.Context(), BPFLicenseOptions{Root: root, DeclaredHolder: declared})
@@ -124,7 +125,7 @@ func testOversizeNonBPFPassCase(t *testing.T, declared string) {
 	root := t.TempDir()
 	header := "// License: MIT\nconsole.log('scalar');\n"
 	content := header + strings.Repeat("x", int(hiss.MaxScanFileSize)+1024-len(header))
-	if err := os.WriteFile(filepath.Join(root, "scalar.js"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "scalar.js"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rep, err := CheckBPFLicenses(t.Context(), BPFLicenseOptions{Root: root, DeclaredHolder: declared})
@@ -140,7 +141,7 @@ func testOversizeBPFMissingLicenseCase(t *testing.T, declared string) {
 	root := t.TempDir()
 	header := "// SPDX-FileCopyrightText: 2026 example-holder <holder@example.invalid>\n// SPDX-License-Identifier: EUPL-1.2\n"
 	content := header + strings.Repeat("x", int(hiss.MaxScanFileSize)+1024-len(header))
-	if err := os.WriteFile(filepath.Join(root, "prog.bpf.c"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "prog.bpf.c"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rep, err := CheckBPFLicenses(t.Context(), BPFLicenseOptions{Root: root, DeclaredHolder: declared})
@@ -159,7 +160,7 @@ func testOversizeOwnFileGPLCase(t *testing.T, declared string) {
 	root := t.TempDir()
 	header := "// SPDX-FileCopyrightText: 2026 example-holder <holder@example.invalid>\n// SPDX-License-Identifier: GPL-2.0-only\n"
 	content := header + strings.Repeat("x", int(hiss.MaxScanFileSize)+1024-len(header))
-	if err := os.WriteFile(filepath.Join(root, "main.c"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "main.c"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rep, err := CheckBPFLicenses(t.Context(), BPFLicenseOptions{Root: root, DeclaredHolder: declared})
@@ -178,7 +179,7 @@ func testExactLimitBPFCase(t *testing.T, declared string) {
 	root := t.TempDir()
 	header := "// SPDX-FileCopyrightText: 2026 example-holder <holder@example.invalid>\n// SPDX-License-Identifier: EUPL-1.2 OR GPL-2.0-only\n"
 	content := header + strings.Repeat("x", int(hiss.MaxScanFileSize)-len(header))
-	if err := os.WriteFile(filepath.Join(root, "exact.bpf.c"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "exact.bpf.c"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rep, err := CheckBPFLicenses(t.Context(), BPFLicenseOptions{Root: root, DeclaredHolder: declared})
@@ -194,7 +195,7 @@ func testExactLimitGPLCase(t *testing.T, declared string) {
 	root := t.TempDir()
 	header := "// SPDX-FileCopyrightText: 2026 example-holder <holder@example.invalid>\n// SPDX-License-Identifier: GPL-2.0-only\n"
 	content := header + strings.Repeat("x", int(hiss.MaxScanFileSize)-len(header))
-	if err := os.WriteFile(filepath.Join(root, "exact.c"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "exact.c"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rep, err := CheckBPFLicenses(t.Context(), BPFLicenseOptions{Root: root, DeclaredHolder: declared})

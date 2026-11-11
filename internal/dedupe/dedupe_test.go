@@ -34,7 +34,7 @@ func ProcessDataA(x int) int {
 	fmt.Println("step 4")
 	return x * 2
 }
-`), 0644); err != nil {
+`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(tmp, "b.go"), []byte(`package test
@@ -46,7 +46,7 @@ func ProcessDataB(x int) int {
 	fmt.Println("step 4")
 	return x * 2
 }
-`), 0644); err != nil {
+`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(tmp, "c.go"), []byte(`package test
@@ -54,7 +54,7 @@ import "os/exec"
 func CallGit() {
 	_ = exec.Command("git", "status")
 }
-`), 0644); err != nil {
+`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -289,10 +289,10 @@ func TestScanRepo_Boundary_SmallFunctionsIgnored(t *testing.T) {
 	tmp := t.TempDir()
 	// Trivial 2-line functions should not trigger duplicate detection
 
-	if err := os.WriteFile(filepath.Join(tmp, "a.go"), []byte("package test\nfunc GetA() int {\n\treturn 1\n}\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, "a.go"), []byte("package test\nfunc GetA() int {\n\treturn 1\n}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmp, "b.go"), []byte("package test\nfunc GetB() int {\n\treturn 1\n}\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, "b.go"), []byte("package test\nfunc GetB() int {\n\treturn 1\n}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -701,10 +701,11 @@ func example(value int) int {
 func writeFile(t *testing.T, dir, path, content string) {
 	t.Helper()
 	full := filepath.Join(dir, path)
-	if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a test directory needs its execute bit; 0o750 is the directory rule's bound
+	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -1187,7 +1188,8 @@ func TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation(t *testing.T
 	}
 
 	// Boundary: non-regular file (directory) as target is refused.
-	if err := os.Mkdir(filepath.Join(tmp, "subpkg.go"), 0o755); err != nil {
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a test directory needs its execute bit; 0o750 is the directory rule's bound
+	if err := os.Mkdir(filepath.Join(tmp, "subpkg.go"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	dirManifest := `exceptions:

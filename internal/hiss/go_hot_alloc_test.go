@@ -17,6 +17,7 @@ func scanHotSources(t *testing.T, sources map[string]string) []InvariantViolatio
 	dir := t.TempDir()
 	for name, body := range sources {
 		path := filepath.Join(dir, filepath.FromSlash(name))
+		// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a test directory needs its execute bit; 0o750 is the directory rule's bound
 		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 			t.Fatal(err)
 		}
