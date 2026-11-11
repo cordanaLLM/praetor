@@ -62,6 +62,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"80a0a2da3dc2222e12b5c70ab7bc442fae586f1d06d5bdcb0516df3c20a144ca": "stop checkpoint counts session-owned worktrees and ignores gate scratch",
 	},
 	checkpointCommon: {
+		"a8d89c11f41cb3a5ca6497e84ec5dd66e38cb83c9916b56f0985f9fd8a9d854f": "missing hook tools name their restore command",
 		"385b25fdbb89d0d8a4d1e6ee2a3dbf570e2a058c8c308a2363aaf77b0871b7b1": "complete emitted docstrings and explained empty handlers",
 		"12ef141c8cf1857650c9f4653653472278caf24c226371927021618743ca94b5": "pre-push commit message check skips published commits",
 		"daf13baf16b776de9a976809a7e064971fd5946ed4508761c229dba0ef4b4e65": "Go hooks share session ownership and verify live gate scratch owners",
