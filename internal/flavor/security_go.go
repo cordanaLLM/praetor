@@ -7,6 +7,10 @@ package flavor
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/toolpins"
@@ -31,6 +35,46 @@ const GosecInstallGuide = "go install -modfile=" + gomanifest.ToolModuleFile + "
 	" (the tools module requires " + gosecModule + " " + toolpins.GosecVersion +
 	" and golang.org/x/tools " + toolpins.XToolsVersion +
 	" or later; a bare go install of gosec builds an x/tools too old for the go1.27.2 export data)"
+
+// ScannerInstallGuide uses the tools module only when it declares the selected scanner.
+func ScannerInstallGuide(repoPath, binary, fallback string) string {
+	var module, pkg string
+	switch binary {
+	case "govulncheck":
+		module, pkg = govulnModule, govulnToolPackage
+	case "gosec":
+		module, pkg = gosecModule, gosecToolPackage
+	default:
+		return fallback
+	}
+	data, err := util.ReadConfinedLimited(repoPath, gomanifest.ToolModuleFile, maxSettingBytes)
+	if err != nil || !gomanifest.DeclaresTool(data, module, pkg) {
+		return fallback
+	}
+	// DeclaresTool also accepts a tool directive without the requirement that selects its version.
+	pinned := slices.ContainsFunc(gomanifest.ParseManifest(data).Requires, func(req gomanifest.Requirement) bool {
+		return req.Path == module
+	})
+	if !pinned {
+		return fallback
+	}
+	toolsDir := filepath.Join(repoPath, filepath.Dir(gomanifest.ToolModuleFile))
+	return scannerInstallCommand(toolsDir, pkg, runtime.GOOS)
+}
+
+// scannerInstallCommand renders restore advice for the selected platform's shells.
+func scannerInstallCommand(toolsDir, pkg, goos string) string {
+	if goos == "windows" {
+		powershell := fmt.Sprintf("PowerShell: $env:GOWORK='off'; go -C '%s' install %s",
+			strings.ReplaceAll(toolsDir, "'", "''"), pkg)
+		if strings.ContainsAny(toolsDir, "%!") {
+			return powershell + "\nThe checkout path contains % or !, which cmd.exe expands; only the PowerShell form is given."
+		}
+		return fmt.Sprintf("Command Prompt: set \"GOWORK=off\" && go -C \"%s\" install %s\n%s",
+			toolsDir, pkg, powershell)
+	}
+	return fmt.Sprintf("GOWORK=off go -C %s install %s", util.QuotePOSIXShellArg(toolsDir), pkg)
+}
 
 // securityWorkflowFacts selects the install form for the Security Scan workflow. A tools
 // module that declares all scanners remains the adopter's version source; every other repository

@@ -7,6 +7,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/editor"
 	"github.com/cordanaLLM/praetor/internal/flavor"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // VerificationPlan declares selected project commands, never an execution result.
@@ -250,10 +251,11 @@ func verificationRecipeWith(plan *VerificationPlan, commands [][]string, prefix 
 	return result.String()
 }
 
+// verificationCommand renders argv as one POSIX shell command line, each argument quoted.
 func verificationCommand(argv []string) string {
 	quoted := make([]string, len(argv))
 	for i, arg := range argv {
-		quoted[i] = "'" + strings.ReplaceAll(arg, "'", "'\\''") + "'"
+		quoted[i] = util.QuotePOSIXShellArg(arg)
 	}
 	return strings.Join(quoted, " ")
 }

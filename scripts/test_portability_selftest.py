@@ -10,9 +10,11 @@ fail, because that is the state the driver exists to catch. A test proving the d
 passes a healthy suite proves almost nothing on its own.
 """
 
+import ast
 import contextlib
 import importlib.util
 import io
+import itertools
 import json
 import os
 import re
@@ -816,28 +818,224 @@ class ChildReportsInTheLog(unittest.TestCase):
 # The self-test suites that start every child through run_child, never directly (#809).
 CHILD_SUITES = (Path("scripts/test_checkpoint_hooks.py"),)
 DIRECT_START = re.compile(r"\bsubprocess\b|\bos\.(?:system|popen|spawn\w*|exec\w*)\(")
+MAX_CHILD_AST_NODES = 100_000
+MAX_CHILD_IMPORT_NAMES = 256
+SUBPROCESS_START_FUNCTIONS = frozenset({
+    "run", "Popen", "call", "check_call", "check_output", "getoutput", "getstatusoutput",
+})
+OS_START_FUNCTIONS = frozenset({
+    "system", "popen", "spawnl", "spawnle", "spawnlp", "spawnlpe",
+    "spawnv", "spawnve", "spawnvp", "spawnvpe", "execl", "execle",
+    "execlp", "execlpe", "execv", "execve", "execvp", "execvpe",
+    "posix_spawn", "posix_spawnp", "startfile",
+})
+
+
+def child_ast_nodes(text):
+    """Read at most the AST node limit plus one sentinel, refusing oversized trees."""
+    nodes = list(itertools.islice(ast.walk(ast.parse(text)), MAX_CHILD_AST_NODES + 1))
+    if len(nodes) > MAX_CHILD_AST_NODES:
+        raise ValueError("child suite exceeds AST node limit")
+    return nodes
+
+
+def imports_subprocess(node):
+    """Inspect import names under a scalar bound, refusing an oversized import."""
+    if not isinstance(node, (ast.Import, ast.ImportFrom)):
+        return False
+    if len(node.names) > MAX_CHILD_IMPORT_NAMES:
+        raise ValueError("child suite exceeds import name limit")
+    if isinstance(node, ast.ImportFrom):
+        return node.module == "subprocess"
+    return any(
+        alias.name.split(".")[0] == "subprocess"
+        for alias in node.names[:MAX_CHILD_IMPORT_NAMES]
+    )
+
+
+def imports_os_starter(node):
+    """Recognize OS starter imports under a scalar bound, refusing oversized imports."""
+    if not isinstance(node, ast.ImportFrom) or node.module != "os":
+        return False
+    if len(node.names) > MAX_CHILD_IMPORT_NAMES:
+        raise ValueError("child suite exceeds import name limit")
+    return any(
+        alias.name in OS_START_FUNCTIONS
+        or alias.name.startswith(("spawn", "exec"))
+        or alias.name == "*"
+        for alias in node.names[:MAX_CHILD_IMPORT_NAMES]
+    )
+
+
+def subprocess_callable(node):
+    """Recognize process-starting references wherever used, including alias bindings."""
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr in SUBPROCESS_START_FUNCTIONS
+        and bool(DIRECT_START.search(ast.unparse(node) + "("))
+    )
+
+
+def os_callable(node, os_names):
+    """Recognize OS process starters on os and its explicit import aliases."""
+    return (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id in os_names
+        and (node.attr in OS_START_FUNCTIONS or node.attr.startswith(("spawn", "exec")))
+    )
+
+
+def os_import_aliases(node):
+    """Collect OS module aliases from one import within the checked name bound."""
+    if not isinstance(node, ast.Import):
+        return set()
+    return {
+        alias.asname or alias.name
+        for alias in node.names[:MAX_CHILD_IMPORT_NAMES]
+        if alias.name == "os"
+    }
+
+
+def direct_child_start(node, os_names):
+    """Recognize one process reference, binding or call, allowing any callable AST shape."""
+    if subprocess_callable(node) or os_callable(node, os_names):
+        return True
+    if (
+        isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
+        and isinstance(node.value, ast.Attribute)
+        and DIRECT_START.search(ast.unparse(node.value) + "(")
+    ):
+        return True
+    return isinstance(node, ast.Call) and bool(
+        DIRECT_START.search(ast.unparse(node.func) + "(")
+    )
+
+
+def starts_child(text):
+    """Find process imports, calls and callback references while allowing a mocked module."""
+    nodes = child_ast_nodes(text)
+    os_names = {"os"}
+    for node in nodes:
+        if imports_subprocess(node) or imports_os_starter(node):
+            return True
+        os_names.update(os_import_aliases(node))
+    return any(direct_child_start(node, os_names) for node in nodes)
 
 
 class ChildSuites(unittest.TestCase):
+    def test_os_process_start_references_are_rejected(self):
+        """An os process start passed as a callback, partial, alias or binding counts as a direct start."""
+        for line in (
+            "from os import system",
+            "from os import execv as e",
+            "from os import *",
+            "from os import system as start\nstart(cmd)",
+            "from os import getpid, posix_spawn",
+            "from os import spawn_custom",
+            "from os import exec_custom",
+            "executor.submit(os.system, cmd)",
+            "threading.Thread(target=os.execv)",
+            "functools.partial(os.spawnlp, 0)",
+            "import os as o\nexecutor.submit(o.popen, cmd)",
+            "start = os.posix_spawn\nexecutor.submit(start, argv)",
+            "threading.Thread(target=os.posix_spawnp)",
+            "executor.submit(os.startfile, path)",
+            "import os as o\nstart: object = o.execve\nthreading.Thread(target=start)",
+            "import os as o\nfunctools.partial(start := o.spawnv, 0)",
+            "import os as o\no.system(cmd)",
+            "executor.submit(os.spawn_custom, argv)",
+            "executor.submit(os.exec_custom, argv)",
+        ):
+            with self.subTest(line=line):
+                self.assertTrue(starts_child(line), line)
+
+    def test_os_non_process_references_are_allowed(self):
+        """os attributes that start no process, and other modules' system names, are not starts."""
+        for line in (
+            "from os import getpid",
+            "from os import path",
+            "from os.path import join",
+            "os.path.join(a, b)",
+            'os.environ.get("X")',
+            "executor.submit(os.getpid)",
+            "import os as o\nexecutor.submit(o.getpid)",
+            "import other as o\nexecutor.submit(o.system, cmd)",
+            "executor.submit(other.os.system, cmd)",
+        ):
+            with self.subTest(line=line):
+                self.assertFalse(starts_child(line), line)
+
     def test_every_child_of_an_adopting_suite_starts_through_run_child(self):
+        """Child test suites invoke child processes through the shared run_child helper."""
         for suite in CHILD_SUITES:
             with self.subTest(suite=suite.as_posix()):
                 self.assertIn(suite, driver.SUITES)
                 text = (ROOT / suite).read_text(encoding="utf-8")
-                self.assertIsNone(
-                    DIRECT_START.search(text), "start the child through run_child"
+                self.assertFalse(
+                    starts_child(text), "start the child through run_child"
                 )
                 self.assertIn("run_child = DRIVER.run_child", text)
         # Negative: the pattern finds each way a suite could start a child past the helper.
         for line in (
             "import subprocess",
+            "from subprocess import run as start",
             "subprocess.run(argv)",
+            "GUARD.subprocess.run(argv)",
+            "spawn = GUARD.subprocess.run\nspawn(argv)",
+            "spawn: object = GUARD.subprocess.run\nspawn(argv)",
             "os.system('x')",
             "os.execv(path, argv)",
             "os.spawnlp(0, 'sh')",
+            "executor.submit(GUARD.subprocess.run, argv)",
+            "threading.Thread(target=subprocess.run)",
+            "functools.partial(subprocess.Popen, argv)",
+            "executor.submit(GUARD.subprocess.check_output, argv)",
+            "executor.submit(GUARD.subprocess.call, argv)",
+            "executor.submit(GUARD.subprocess.check_call, argv)",
+            "executor.submit(GUARD.subprocess.getoutput, command)",
+            "executor.submit(GUARD.subprocess.getstatusoutput, command)",
+            "spawn = GUARD.subprocess.run\nexecutor.submit(spawn, argv)",
+            "spawn: object = GUARD.subprocess.Popen\nthreading.Thread(target=spawn)",
+            "spawn = GUARD.subprocess.run\nstart = spawn\nfunctools.partial(start, argv)",
         ):
-            self.assertIsNotNone(DIRECT_START.search(line), line)
-        self.assertIsNone(DIRECT_START.search("result = run_child(argv, timeout=20)"))
+            with self.subTest(line=line):
+                self.assertTrue(starts_child(line), line)
+        for line in (
+            "result = run_child(argv, timeout=20)",
+            'mock.patch.object(GUARD.subprocess, "run", side_effect=error)',
+            'mock.patch.object(GUARD.subprocess, "Popen", side_effect=error)',
+            "executor.submit(run_child, argv)",
+            "threading.Thread(target=run_child)",
+            "functools.partial(run_child, argv)",
+            "inspect(subprocess.PIPE)",
+        ):
+            with self.subTest(line=line):
+                self.assertFalse(starts_child(line), line)
+
+    def test_child_ast_node_limit_fails_closed(self):
+        """The node limit accepts its boundary and rejects one extra node."""
+        with mock.patch(__name__ + ".MAX_CHILD_AST_NODES", 2, create=True):
+            self.assertFalse(starts_child("pass"))
+            with self.assertRaisesRegex(ValueError, "AST node limit"):
+                starts_child("pass\npass")
+
+    def test_child_import_name_limit_fails_closed(self):
+        """The import limit accepts its boundary and rejects one extra alias."""
+        with mock.patch(__name__ + ".MAX_CHILD_IMPORT_NAMES", 2, create=True):
+            self.assertFalse(starts_child("import a, b"))
+            with self.assertRaisesRegex(ValueError, "import name limit"):
+                starts_child("import a, b, subprocess")
+            self.assertFalse(
+                imports_os_starter(ast.parse("from os import getpid, path").body[0])
+            )
+            self.assertTrue(
+                imports_os_starter(ast.parse("from os import getpid, system").body[0])
+            )
+            with self.assertRaisesRegex(ValueError, "import name limit"):
+                imports_os_starter(
+                    ast.parse("from os import getpid, path, system").body[0]
+                )
 
 
 # Rewrites the page's table from its rendering instead of comparing.

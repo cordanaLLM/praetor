@@ -22,6 +22,97 @@ class HookError(Exception):
     """An actionable local gate failure."""
 
 
+# The bootstrap and failure diagnostics use the same repository-owned Lefthook pin.
+LEFTHOOK_MODULE = "tools/lefthook"
+LEFTHOOK = "github.com/evilmartians/lefthook/v2"
+# Versions come from tool-floors.txt; Go tools retain their repository-owned pins.
+TOOL_RESTORES = {
+    "actionlint": "go install github.com/rhysd/actionlint/cmd/actionlint@v{floor}",
+    "yamllint": "{python} -m pip install --require-hashes -r .config/hook-lint/requirements.txt",
+    "shellcheck": (
+        "download shellcheck v{floor} for your platform from "
+        "https://github.com/koalaman/shellcheck/releases"
+    ),
+    "hadolint": (
+        "install hadolint from a system package or "
+        "https://github.com/hadolint/hadolint/releases"
+    ),
+    "lefthook": "go -C {module} install " + LEFTHOOK,
+    "gosec": (
+        "go -C {root_q} install -modfile=tools/go/go.mod "
+        "github.com/securego/gosec/v2/cmd/gosec"
+    ),
+    "govulncheck": (
+        "go -C {root_q} install -modfile=tools/go/go.mod "
+        "golang.org/x/vuln/cmd/govulncheck"
+    ),
+}
+
+
+def _shell_quote_path(value):
+    """Quote a restore path for Command Prompt on Windows or the POSIX shell."""
+    text = str(value)
+    if os.name == "nt":
+        return '"' + text + '"'
+    return "'" + text.replace("'", "'\"'\"'") + "'"
+
+
+def _module_restore_template(name, template, root, module):
+    """Prefix the restore of a missing tools module before the install command that needs it."""
+    if name == "lefthook" and not (module / "go.mod").is_file():
+        module_file = "tools/lefthook/go.mod"
+    elif (
+        "-modfile=tools/go/go.mod" in (template or "")
+        and not (root / "tools/go/go.mod").is_file()
+    ):
+        module_file = "tools/go/go.mod"
+    else:
+        return template
+    return (
+        f"restore {module_file} from version control (git restore -- {module_file}) "
+        "and run: "
+        + template
+        + "; or install {name} at the floor in .config/lefthook/tool-floors.txt"
+    )
+
+
+def missing_tool_line(name, root=None, *, reason=None, floor=None):
+    """Name the tool's failure and its restore source, keeping a supplied reason first."""
+    template = TOOL_RESTORES.get(name)
+    root = Path(__file__).resolve().parents[3] if root is None else Path(root)
+    module = root / LEFTHOOK_MODULE
+    template = _module_restore_template(name, template, root, module)
+    if template is None or ("{floor}" in template and floor is None):
+        template = (
+            "read .config/lefthook/tool-floors.txt and install {name} for your platform"
+        )
+    quoted = {
+        key: _shell_quote_path(value)
+        for key, value in {
+            "module": module,
+            "python": sys.executable,
+            "root_q": root,
+        }.items()
+    }
+    restore = template.format(
+        name=name,
+        floor=floor,
+        root=root,
+        **quoted,
+    )
+    reason = reason or (
+        f"Praetor: {name} not found on PATH; shared hook policy cannot run, call refused"
+    )
+    version = "version" if name == "lefthook" else "--version"
+    return f"{reason}. Restore: {restore}; read-back: {name} {version}"
+
+
+def require_tool(name):
+    """Fail before starting a shared job when its tool is unavailable."""
+    if shutil.which(name) is None:
+        raise HookError(missing_tool_line(name))
+
+
 KILL_TREE_TIMEOUT = 10
 # The praetor CLI runs each git or go command in a process group of its own. Asked to stop by a
 # catchable signal, it forwards that signal to each command's group, waits up to its
@@ -323,6 +414,8 @@ def run_bounded(
                 )
             return stdout
     except (OSError, subprocess.TimeoutExpired) as error:
+        if isinstance(error, FileNotFoundError) and error.filename == "lefthook":
+            raise HookError(missing_tool_line("lefthook")) from error
         raise HookError(
             f"{args[0]} checkpoint process failed ({type(error).__name__})"
         ) from error
@@ -598,6 +691,7 @@ def clean_env():
 SNAPSHOT_PREFIX = "praetor-hook-"
 SNAPSHOT_STALE_S = 3 * 60 * 60
 MAX_STALE_SNAPSHOTS = 256
+MAX_SNAPSHOT_REFS = 4096
 
 
 def _writable_retry(function, path, _exc):
@@ -667,6 +761,24 @@ def _export_index(dest, env):
     run(["git", "init", "--quiet", str(dest)], env=env)
 
 
+def _snapshot_ref_updates(refs):
+    """Build one Git stdin transaction, refusing remote refs beyond the snapshot bound."""
+    entries = refs.decode().splitlines()
+    if len(entries) > MAX_SNAPSHOT_REFS:
+        raise HookError(f"origin exceeds {MAX_SNAPSHOT_REFS} remote-tracking refs")
+    updates = []
+    for line in entries[:MAX_SNAPSHOT_REFS]:
+        fields = line.split(maxsplit=2)
+        if len(fields) != 2:
+            raise HookError(
+                f"origin snapshot (limit {MAX_SNAPSHOT_REFS} remote-tracking refs): "
+                f"malformed ref line {line[:200]!r}"
+            )
+        oid, name = fields
+        updates.append(f"update {name} {oid}\n")
+    return "".join(updates).encode()
+
+
 def _export_commit(dest, ref, env):
     """Clone this repository into dest with origin and its refs, detached at ref."""
     source = git("rev-parse", "--show-toplevel", env=env).decode().strip()
@@ -685,12 +797,12 @@ def _export_commit(dest, ref, env):
         "refs/remotes/origin/",
         env=env,
     )
+    updates = _snapshot_ref_updates(refs)
     run([*SNAPSHOT_CLONE, source, str(dest)], env=env)
     if origin:
         run(["git", "remote", "add", "origin", origin], cwd=dest, env=env)
-    for line in refs.decode().splitlines():
-        oid, name = line.split()
-        run(["git", "update-ref", name, oid], cwd=dest, env=env)
+    if updates:
+        run(["git", "update-ref", "--stdin"], cwd=dest, env=env, data=updates)
     run(
         ["git", *SNAPSHOT_GIT_CONFIG, "checkout", "--quiet", "--detach", ref],
         cwd=dest,
@@ -740,6 +852,7 @@ def _git_common_dir(root, budget):
     raw = run_bounded(
         ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
         cwd=root,
+        env=clean_env(),
         timeout=budget.timeout(SESSION_GIT_TIMEOUT),
         max_output=SESSION_GIT_OUTPUT,
         grace=SESSION_GIT_GRACE,
@@ -752,6 +865,7 @@ def _listed_worktrees(root, budget):
     raw = run_bounded(
         ["git", "worktree", "list", "--porcelain", "-z"],
         cwd=root,
+        env=clean_env(),
         timeout=budget.timeout(SESSION_GIT_TIMEOUT),
         max_output=SESSION_INPUT_LIMIT,
         grace=SESSION_GIT_GRACE,
