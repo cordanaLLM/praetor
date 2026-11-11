@@ -5,8 +5,10 @@
 package secrets_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -29,6 +31,22 @@ func TestRenderWorkflow_EmittedSecretsExceptionsCompatibility(t *testing.T) {
 	}
 	if strings.Count(rendered, "        env:\n") != strings.Count(string(plain), "        env:\n")+1 || strings.Count(rendered, secrets.ExceptionsEnv) != 1 {
 		t.Fatal("expected one added exceptions environment in the unchanged gate step")
+	}
+	_, tail, found := strings.Cut(rendered, secrets.ExceptionsEnv+": ")
+	if !found {
+		t.Fatal("missing exceptions payload")
+	}
+	quoted, _, _ := strings.Cut(tail, "\n")
+	var payload string
+	if err := json.Unmarshal([]byte(quoted), &payload); err != nil {
+		t.Fatal(err)
+	}
+	var decoded []rules.Entry
+	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(decoded, entries) {
+		t.Fatalf("decoded exceptions: got %+v, want %+v", decoded, entries)
 	}
 	stripped, ok := secrets.StripSettings(rendered)
 	if !ok || stripped != string(plain) {

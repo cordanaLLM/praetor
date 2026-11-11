@@ -39,7 +39,7 @@ func TestJudgeWithOptions_ExpiredAndBlocking_3D(t *testing.T) {
 		finding := rules.Finding{File: entry.Path, RuleID: entry.RuleID}
 		for _, findings := range [][]rules.Finding{nil, {finding}} {
 			res := rules.JudgeWithOptions(findings, []rules.Entry{entry}, "", testToday, rules.JudgeOptions{DeferUnused: true})
-			if !res.Failed() || len(res.Expired) != 1 || len(res.ExpiredIdx) != 1 || len(res.Blocking) != len(findings) {
+			if !res.Failed() || len(res.Expired) != 1 || len(res.ExpiredIdx) != 1 || len(res.Blocking) != len(findings) || len(res.Unjudged) != 0 {
 				t.Fatalf("expired or malformed expiry must still fail: %+v", res)
 			}
 		}

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -30,7 +31,7 @@ func runGateCLI(t *testing.T, dir string, envExceptions string, args ...string) 
 // runGateCLIEnvironment runs the gate in dir with extra environment variables and arguments, returning output and exit code.
 func runGateCLIEnvironment(t *testing.T, dir, envExceptions string, eventEnv []string, args ...string) (string, int) {
 	t.Helper()
-	env := append(os.Environ(), "GITHUB_EVENT_NAME=", "GITHUB_EVENT_PATH=", "SECRETS_EXCEPTIONS="+envExceptions)
+	env := isolatedGateEnvironment(envExceptions)
 	ctx, err := util.WithCommandEnvironment(t.Context(), append(env, eventEnv...))
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +54,18 @@ func runGateCLIEnvironment(t *testing.T, dir, envExceptions string, eventEnv []s
 		}
 	}
 	return string(out), exitCode
+}
+
+// isolatedGateEnvironment removes inherited gate inputs before adding the requested exceptions.
+func isolatedGateEnvironment(exceptions string) []string {
+	var env []string
+	for _, item := range os.Environ() {
+		key, _, _ := strings.Cut(item, "=")
+		if key != "GITHUB_EVENT_NAME" && key != "GITHUB_EVENT_PATH" && key != "SECRETS_EXCEPTIONS" {
+			env = append(env, item)
+		}
+	}
+	return append(env, "SECRETS_EXCEPTIONS="+exceptions)
 }
 
 // gateEventFile writes a pull_request event payload with the given base and head shas and returns its path.
@@ -209,7 +222,7 @@ func TestGate_RangeExpiredException(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, code := runGateCLI(t, dir, string(data), "-range="+base+".."+head); code != 3 || !strings.Contains(out, "expired exception") {
+	if out, code := runGateCLI(t, dir, string(data), "-range="+base+".."+head); code != 3 || !strings.Contains(out, "expired exception") || strings.Contains(out, "not judged") {
 		t.Fatalf("expired range waiver: exit %d, want 3 naming expired exception: %s", code, out)
 	}
 }
@@ -411,9 +424,13 @@ func TestGate_ExceptionsLifecycle_3D(t *testing.T) {
 		entries := []rules.Entry{
 			{Path: "other.py", RuleID: "generic-api-key", Category: "C", Entered: entered, Expires: expires, Reason: "stale waiver for other file"},
 		}
-		out, exitCode := runGateLifecycleCase(t, entries)
-		if exitCode != 3 {
-			t.Fatalf("expected exit code 3 for stale entry, got %d: %s", exitCode, out)
+		data, err := json.Marshal(entries)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, exitCode := runGateCLI(t, secrets.BuildCleanRepo(t), string(data))
+		if exitCode != 3 || !strings.Contains(out, "excuses no finding") {
+			t.Fatalf("expected exit code 3 and stale entry, got %d: %s", exitCode, out)
 		}
 	})
 }
@@ -442,4 +459,72 @@ func TestGate_RefScoping_3D(t *testing.T) {
 			t.Errorf("output missing leak commit hash %s: %s", leakHash, out)
 		}
 	})
+}
+
+// TestGate_EventPathSymlink rejects a symbolic link even when its target is a valid event.
+func TestGate_EventPathSymlink(t *testing.T) {
+	path := gateEventFile(t, `{"pull_request":{"base":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"head":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}`)
+	link := filepath.Join(t.TempDir(), "event-link")
+	if err := os.Symlink(path, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	out, code := runGateCLIEnvironment(t, t.TempDir(), "", []string{"GITHUB_EVENT_NAME=pull_request", "GITHUB_EVENT_PATH=" + link})
+	if code != 2 || !strings.Contains(out, "GITHUB_EVENT_PATH") || !strings.Contains(out, "symlink") {
+		t.Fatalf("symlink: exit %d: %s", code, out)
+	}
+}
+
+// TestGate_ParentEventIsolation verifies that inherited event variables do not alter full-history scans.
+func TestGate_ParentEventIsolation(t *testing.T) {
+	if _, err := exec.LookPath("gitleaks"); err != nil {
+		t.Skip("gitleaks unavailable")
+	}
+	t.Setenv("GITHUB_EVENT_NAME", "pull_request")
+	t.Setenv("GITHUB_EVENT_PATH", filepath.Join(t.TempDir(), "missing"))
+	out, code := runGateCLI(t, secrets.BuildCleanRepo(t), "")
+	if code != 0 || !strings.Contains(out, "zero secret findings in history") {
+		t.Fatalf("inherited event: exit %d: %s", code, out)
+	}
+}
+
+// TestGate_MissingRangeCommit requires a diagnostic for an unavailable commit.
+func TestGate_MissingRangeCommit(t *testing.T) {
+	dir := secrets.BuildCleanRepo(t)
+	base, err := util.RunGit(t.Context(), dir, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing := strings.Repeat("f", 40)
+	out, code := runGateCLI(t, dir, "", "-range="+strings.TrimSpace(base)+".."+missing)
+	if code != 2 || !strings.Contains(out, missing) || !strings.Contains(out, "fetch-depth") {
+		t.Fatalf("missing commit: exit %d: %s", code, out)
+	}
+}
+
+// TestGate_EventPipeRejectsPromptly ensures a named pipe cannot block event processing.
+func TestGate_EventPipeRejectsPromptly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "event-pipe")
+	if err := syscall.Mkfifo(path, 0600); err != nil {
+		t.Skipf("FIFO unavailable: %v", err)
+	}
+	start := time.Now()
+	out, code := runGateCLIEnvironment(t, t.TempDir(), "", []string{"GITHUB_EVENT_NAME=pull_request", "GITHUB_EVENT_PATH=" + path})
+	if code != 2 || !strings.Contains(out, "GITHUB_EVENT_PATH") || time.Since(start) > 30*time.Second {
+		t.Fatalf("pipe: exit %d: %s", code, out)
+	}
+}
+
+// TestGate_RangePassSummary identifies the scope of a clean scan.
+func TestGate_RangePassSummary(t *testing.T) {
+	if _, err := exec.LookPath("gitleaks"); err != nil {
+		t.Skip("gitleaks unavailable")
+	}
+	dir := secrets.BuildCleanRepo(t)
+	base := commitGateFile(t, dir, "README.md", "base\n")
+	head := commitGateFile(t, dir, "README.md", "head\n")
+	out, code := runGateCLI(t, dir, "", "-range="+base+".."+head)
+	want := "zero secret findings in pull request range " + base[:12] + ".." + head[:12]
+	if code != 0 || !strings.Contains(out, want) {
+		t.Fatalf("range summary: exit %d, want %s: %s", code, want, out)
+	}
 }

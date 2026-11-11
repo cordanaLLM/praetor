@@ -35,6 +35,7 @@ const (
 	historyScanTimeout = 10 * time.Minute
 	defaultConfig      = ".gitleaks.toml"
 	maxEventBytes      = 4 << 20
+	eventReadTimeout   = 30 * time.Second
 	// logOpts reads full history and merge commits (#1237). Order
 	// engine-secretscan-foreign-remote-refs-20261025: read only the repository's
 	// own refs (branches, tags, origin); --all walked refs of other remotes.
@@ -71,7 +72,13 @@ func runGate(args []string, stdout, stderr io.Writer) int {
 		}
 		return exitIncomplete
 	}
-	commitRange, err := resolveCommitRange(commitRange)
+	scope := commitRange
+	if scope == "" && os.Getenv("GITHUB_EVENT_NAME") == "pull_request" {
+		scope = "event"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), scanTimeoutFor(scope))
+	defer cancel()
+	commitRange, err := resolveCommitRange(ctx, commitRange)
 	if err != nil {
 		fmt.Fprintf(stderr, "secrets gate: %v\n", err)
 		return exitIncomplete
@@ -88,9 +95,10 @@ func runGate(args []string, stdout, stderr io.Writer) int {
 		cfg = filepath.Join(*repoPath, defaultConfig)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), scanTimeoutFor(commitRange))
-	defer cancel()
-
+	if err := verifyRangeCommits(ctx, *repoPath, commitRange); err != nil {
+		fmt.Fprintf(stderr, "secrets gate: %v\n", err)
+		return exitIncomplete
+	}
 	findings, err := executeGitleaks(ctx, *repoPath, cfg, scanLogOptions(commitRange, stdout))
 	if err != nil {
 		fmt.Fprintf(stderr, "secrets gate: %v\n", err)
@@ -99,15 +107,15 @@ func runGate(args []string, stdout, stderr io.Writer) int {
 
 	today := Day(time.Now())
 	result := JudgeWithOptions(findings, entries, *repoPath, today, JudgeOptions{DeferUnused: commitRange != ""})
-	return reportGateResult(result, stdout, stderr)
+	return reportGateResult(result, commitRange, stdout, stderr)
 }
 
 // resolveCommitRange returns the explicit -range, or on a pull_request event the base..head range read from GITHUB_EVENT_PATH; other events scan full history.
-func resolveCommitRange(explicit string) (string, error) {
+func resolveCommitRange(ctx context.Context, explicit string) (string, error) {
 	if explicit != "" || os.Getenv("GITHUB_EVENT_NAME") != "pull_request" {
 		return explicit, nil
 	}
-	data, err := readEventPayload(os.Getenv("GITHUB_EVENT_PATH"))
+	data, err := readEventPayloadWithinDeadline(ctx, os.Getenv("GITHUB_EVENT_PATH"))
 	if err != nil {
 		return "", fmt.Errorf("GITHUB_EVENT_PATH: %w", err)
 	}
@@ -134,28 +142,49 @@ func resolveCommitRange(explicit string) (string, error) {
 	return base + ".." + head, nil
 }
 
+// readEventPayloadWithinDeadline bounds event file operations even when the filesystem blocks.
+func readEventPayloadWithinDeadline(ctx context.Context, path string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, eventReadTimeout)
+	defer cancel()
+	type payloadResult struct {
+		data []byte
+		err  error
+	}
+	result := make(chan payloadResult, 1)
+	go func() { data, err := readEventPayload(path); result <- payloadResult{data, err} }()
+	select {
+	case res := <-result:
+		return res.data, res.err
+	case <-ctx.Done():
+		return nil, fmt.Errorf("payload read deadline: %w", ctx.Err())
+	}
+}
+
 // readEventPayload reads the event payload, refusing a missing, non-regular or oversized file.
 func readEventPayload(path string) (data []byte, err error) {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, fmt.Errorf("stat event file: %w", err)
 	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("event path must not be a symlink")
+	}
 	if !info.Mode().IsRegular() {
-		return nil, errors.New("event must be a regular file")
+		return nil, errors.New("event read requires a regular file")
 	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open event file: %w", err)
 	}
 	defer func() { err = errors.Join(err, file.Close()) }()
-	info, err = file.Stat()
+	openedInfo, err := file.Stat()
 	if err != nil {
 		return nil, fmt.Errorf("stat opened event file: %w", err)
 	}
-	if !info.Mode().IsRegular() {
-		return nil, errors.New("event must be a regular file")
+	if !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
+		return nil, errors.New("event must be the same regular file")
 	}
-	if info.Size() > maxEventBytes {
+	if openedInfo.Size() > maxEventBytes {
 		return nil, errors.New("event exceeds 4 MiB limit")
 	}
 	data, err = io.ReadAll(io.LimitReader(file, maxEventBytes+1))
@@ -215,6 +244,22 @@ func loadEnvironmentExceptions(today time.Time) ([]Entry, error) {
 	return entries, nil
 }
 
+// verifyRangeCommits requires both range endpoints to resolve to commits in the checkout.
+func verifyRangeCommits(ctx context.Context, dir, commitRange string) error {
+	if commitRange == "" {
+		return nil
+	}
+	base, head, _ := strings.Cut(commitRange, "..")
+	for _, sha := range []string{base, head} {
+		cmd := exec.CommandContext(ctx, "git", "cat-file", "-e", sha+"^{commit}")
+		cmd.Dir = dir
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("commit %s unavailable (checkout needs fetch-depth 0 or that commit): %w", sha, err)
+		}
+	}
+	return nil
+}
+
 // executeGitleaks runs gitleaks under ctx over the scope and returns the findings of its JSON report.
 func executeGitleaks(ctx context.Context, dir, cfg, scanOpts string) (findings []Finding, err error) {
 	if _, err := exec.LookPath("gitleaks"); err != nil {
@@ -268,14 +313,14 @@ func parseGateReport(data []byte, runErr error, out []byte) ([]Finding, error) {
 }
 
 // reportGateResult prints the judgment and returns the gate exit code.
-func reportGateResult(res Result, stdout, stderr io.Writer) int {
+func reportGateResult(res Result, commitRange string, stdout, stderr io.Writer) int {
 	reportUnjudgedEntries(res.Unjudged, stdout)
 	for i := 0; i < len(res.Allowed) && i < MaxJudgedFindings; i++ {
 		f := res.Allowed[i]
 		fmt.Fprintf(stdout, "secrets: allowed: commit %s: %s:%d [%s] (%s)\n", f.Commit, f.File, f.StartLine, f.RuleID, f.Fingerprint)
 	}
 	if !res.Failed() {
-		summary := formatGatePassSummary(len(res.Allowed))
+		summary := formatGatePassSummary(len(res.Allowed), commitRange)
 		fmt.Fprintf(stdout, "secrets: PASS: %s\n", summary)
 		return exitPass
 	}
@@ -304,8 +349,12 @@ func reportUnjudgedEntries(entries []Entry, stdout io.Writer) {
 }
 
 // formatGatePassSummary renders the passing summary line.
-func formatGatePassSummary(allowedCount int) string {
+func formatGatePassSummary(allowedCount int, commitRange string) string {
 	if allowedCount == 0 {
+		if commitRange != "" {
+			base, head, _ := strings.Cut(commitRange, "..")
+			return fmt.Sprintf("zero secret findings in pull request range %s..%s", base[:min(len(base), 12)], head[:min(len(head), 12)])
+		}
 		return "zero secret findings in history"
 	}
 	return fmt.Sprintf("zero blocking secret findings (%d allowed by unexpired exceptions)", allowedCount)

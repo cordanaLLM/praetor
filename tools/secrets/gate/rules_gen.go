@@ -293,9 +293,9 @@ func judgeEntries(result *Result, entries []Entry, used []bool, today time.Time,
 			result.ExpiredIdx = append(result.ExpiredIdx, eIdx)
 		}
 		if !used[eIdx] {
-			if opts.DeferUnused {
+			if opts.DeferUnused && !entries[eIdx].Expired(today) {
 				result.Unjudged = append(result.Unjudged, entries[eIdx])
-			} else {
+			} else if !opts.DeferUnused {
 				result.Stale = append(result.Stale, entries[eIdx])
 				result.StaleIdx = append(result.StaleIdx, eIdx)
 			}
