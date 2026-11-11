@@ -200,9 +200,12 @@ GO_SECURITY_TOOL := go tool -modfile=$(CURDIR)/tools/go/go.mod
 # HISS-12 declares "zero credentials in Git history" and gitleaks as its mechanism, but
 # gitleaks appeared only in the archetypes this engine scaffolds INTO other repositories:
 # the invariant was enforced on adopters and never on praetor itself. It scans history, not
-# just the working tree, which is what the axiom actually claims. Measured on this
-# repository: 234 commits, 23 MB, 2.5s, zero findings -- cheap enough to be unconditional.
+# just the working tree, which is what the axiom actually claims. The scan runs under
+# secretscan.ScanTimeout (5 minutes); main CI took 3m39s on 2026-11-10. The first line builds
+# the pinned gitleaks outside that bound: a new Go toolchain starts with a cold build cache,
+# and its download and compile pushed the #1905 scan past the deadline.
 secrets:
+	$(GO_SECURITY_TOOL) gitleaks version >/dev/null
 	go run ./cmd/standardsctl security secrets -- $(GO_SECURITY_TOOL) gitleaks
 
 # The Go vulnerability gate (internal/govuln) runs the pinned govulncheck at symbol level and judges
