@@ -222,6 +222,224 @@ for i := 0; i < n; i++ {
 		line: 8,
 		fn:   "TestGeneratedFanout",
 	},
+	{
+		name: "shadowed_semaphore_binding",
+		rel:  "shadowed_semaphore.go",
+		src: `package p
+import ("context"; "golang.org/x/sync/semaphore")
+type gate struct{}
+func (gate) Acquire(context.Context, int64) error { return nil }
+func work(string) {}
+func ShadowedSemaphore(ctx context.Context, items []string) error {
+	sem := semaphore.NewWeighted(4)
+	_ = sem
+	{
+		sem := gate{}
+		for _, item := range items {
+			if err := sem.Acquire(ctx, 1); err != nil {
+				return err
+			}
+			go work(item)
+		}
+	}
+	return nil
+}
+`,
+		line: 15,
+		fn:   "ShadowedSemaphore",
+	},
+	{
+		name: "shadowed_array_binding",
+		rel:  "shadowed_array.go",
+		src: `package p
+func work(string) {}
+func ShadowedArray(arr []string) {
+	for _, item := range arr {
+		arr := [4]int{}
+		_ = arr
+		go work(item)
+	}
+}
+`,
+		line: 7,
+		fn:   "ShadowedArray",
+	},
+	{
+		name: "limiter_per_iteration_token_chan",
+		rel:  "limiter_per_iteration.go",
+		src: `package p
+func work(string) {}
+func LimiterPerIteration(items []string) {
+	for _, item := range items {
+		tokens := make(chan struct{}, 4)
+		tokens <- struct{}{}
+		v := item
+		go func() {
+			defer func() { <-tokens }()
+			work(v)
+		}()
+	}
+}
+`,
+		line: 8,
+		fn:   "LimiterPerIteration",
+	},
+	{
+		name: "limiter_per_iteration_semaphore",
+		rel:  "sem_per_iteration.go",
+		src: `package p
+import ("context"; "golang.org/x/sync/semaphore")
+func work(string) {}
+func SemPerIteration(ctx context.Context, items []string) error {
+	for _, item := range items {
+		sem := semaphore.NewWeighted(4)
+		if err := sem.Acquire(ctx, 1); err != nil {
+			return err
+		}
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+	return nil
+}
+`,
+		line: 11,
+		fn:   "SemPerIteration",
+	},
+	{
+		name: "tryacquire_ignored_expr",
+		rel:  "tryacquire_ignored.go",
+		src: `package p
+import "golang.org/x/sync/semaphore"
+func work(string) {}
+func TryAcquireIgnored(items []string) {
+	sem := semaphore.NewWeighted(4)
+	for _, item := range items {
+		sem.TryAcquire(1)
+		go work(item)
+	}
+}
+`,
+		line: 8,
+		fn:   "TryAcquireIgnored",
+	},
+	{
+		name: "tryacquire_discarded_blank",
+		rel:  "tryacquire_blank.go",
+		src: `package p
+import "golang.org/x/sync/semaphore"
+func work(string) {}
+func TryAcquireBlank(items []string) {
+	sem := semaphore.NewWeighted(4)
+	for _, item := range items {
+		_ = sem.TryAcquire(1)
+		go work(item)
+	}
+}
+`,
+		line: 8,
+		fn:   "TryAcquireBlank",
+	},
+	{
+		name: "conditional_semaphore_acquire",
+		rel:  "conditional_acquire.go",
+		src: `package p
+import ("context"; "golang.org/x/sync/semaphore")
+func work(string) {}
+func ConditionalAcquire(ctx context.Context, items []string, cond bool) error {
+	sem := semaphore.NewWeighted(4)
+	for _, item := range items {
+		if cond {
+			if err := sem.Acquire(ctx, 1); err != nil {
+				return err
+			}
+		}
+		go work(item)
+	}
+	return nil
+}
+`,
+		line: 12,
+		fn:   "ConditionalAcquire",
+	},
+	{
+		name: "acquire_non_terminating_err_branch",
+		rel:  "acquire_non_terminating.go",
+		src: `package p
+import ("context"; "golang.org/x/sync/semaphore")
+func logErr(error) {}
+func work(string) {}
+func AcquireNonTerminating(ctx context.Context, items []string) {
+	sem := semaphore.NewWeighted(4)
+	for _, item := range items {
+		if err := sem.Acquire(ctx, 1); err != nil {
+			logErr(err)
+		}
+		go work(item)
+	}
+}
+`,
+		line: 11,
+		fn:   "AcquireNonTerminating",
+	},
+	{
+		name: "counter_zero_step",
+		rel:  "counter_zero_step.go",
+		src: `package p
+func work(int) {}
+func CounterZeroStep() {
+	for i := 0; i < 8; i += 0 {
+		go work(i)
+	}
+}
+`,
+		line: 5,
+		fn:   "CounterZeroStep",
+	},
+	{
+		name: "counter_wrong_direction",
+		rel:  "counter_wrong_direction.go",
+		src: `package p
+func work(int) {}
+func CounterWrongDirection() {
+	for i := 0; i < 8; i -= 1 {
+		go work(i)
+	}
+}
+`,
+		line: 5,
+		fn:   "CounterWrongDirection",
+	},
+	{
+		name: "counter_flipped_wrong_direction",
+		rel:  "counter_flipped_wrong.go",
+		src: `package p
+func work(int) {}
+func CounterFlippedWrong() {
+	for i := 0; 8 > i; i-- {
+		go work(i)
+	}
+}
+`,
+		line: 5,
+		fn:   "CounterFlippedWrong",
+	},
+	{
+		name: "counter_neq_non_unit_step",
+		rel:  "counter_neq_step_two.go",
+		src: `package p
+func work(int) {}
+func CounterNeqStepTwo() {
+	for i := 0; i != 7; i += 2 {
+		go work(i)
+	}
+}
+`,
+		line: 5,
+		fn:   "CounterNeqStepTwo",
+	},
 }
 
 // TestGoFanout_Positive_UnboundedShapesReported checks that unbounded worker shapes produce findings.
@@ -275,6 +493,110 @@ for _, item := range items {
 	}()
 }
 return nil
+}
+`,
+	},
+	{
+		name: "semaphore_dominating_acquire_and_checked_tryacquire",
+		src: `package p
+import (
+"context"
+"testing"
+"golang.org/x/sync/semaphore"
+)
+func work(string) {}
+func RunTryAcquireContinue(items []string) {
+	sem := semaphore.NewWeighted(4)
+	for _, item := range items {
+		if !sem.TryAcquire(1) {
+			continue
+		}
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+}
+func RunTryAcquireIfBody(items []string) {
+	sem := semaphore.NewWeighted(4)
+	for _, item := range items {
+		v := item
+		if sem.TryAcquire(1) {
+			go func() {
+				defer sem.Release(1)
+				work(v)
+			}()
+		}
+	}
+}
+func RunAcquireIfErrNilBody(ctx context.Context, items []string) {
+	sem := semaphore.NewWeighted(4)
+	for _, item := range items {
+		v := item
+		if err := sem.Acquire(ctx, 1); err == nil {
+			go func() {
+				defer sem.Release(1)
+				work(v)
+			}()
+		}
+	}
+}
+func RunAcquireDirectCond(ctx context.Context, items []string) {
+	sem := semaphore.NewWeighted(4)
+	for _, item := range items {
+		if sem.Acquire(ctx, 1) != nil {
+			break
+		}
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+}
+func RunAcquireFatal(t *testing.T, items []string) {
+	sem := semaphore.NewWeighted(4)
+	for _, item := range items {
+		if !sem.TryAcquire(1) {
+			t.Fatal("saturated")
+		}
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+}
+`,
+	},
+	{
+		name: "counter_steps_toward_bound_variants",
+		src: `package p
+const step = 2
+func work(int) {}
+func RunCounterSteps() {
+	for i := 0; i < 8; i += 2 {
+		go work(i)
+	}
+	for i := 0; i <= 8; i += step {
+		go work(i)
+	}
+	for i := 8; i > 0; i -= 2 {
+		go work(i)
+	}
+	for i := 8; i >= 1; i-- {
+		go work(i)
+	}
+	for i := 0; 8 > i; i++ {
+		go work(i)
+	}
+	for i := 8; 0 < i; i-- {
+		go work(i)
+	}
+	for i := 0; i != 8; i++ {
+		go work(i)
+	}
 }
 `,
 	},

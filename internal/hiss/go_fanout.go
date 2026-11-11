@@ -8,19 +8,74 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"strconv"
 	"strings"
 )
 
 // fanoutFacts holds the per-file and per-function declarations used to decide whether a go
 // statement inside a loop body carries a visible scalar concurrency bound (HISS-06).
+//
+// Array, channel, semaphore and errgroup facts record the declaring identifier's token.Pos.
+// Because the scanner parses with parser.SkipObjectResolution (ast.Object is deprecated), a
+// name declared more than once in one function body (or shadowing a file-level declaration)
+// carries no array, channel, semaphore or errgroup fact at all: as a conservative stand-in for
+// lexical resolution without ast.Object, a shadowed limiter makes the go statement reported,
+// never exempt.
 type fanoutFacts struct {
 	consts     map[string]bool
-	arrays     map[string]bool
+	posConsts  map[string]bool
+	arrays     map[string]token.Pos
 	ints       map[string]bool
-	errgroups  map[string]bool
-	semaphores map[string]bool
-	tokenChans map[string]bool
+	errgroups  map[string]token.Pos
+	semaphores map[string]token.Pos
+	tokenChans map[string]token.Pos
 	hissBounds map[int]string
+	loops      []ast.Stmt
+	fnRoot     ast.Node
+	goPos      token.Pos
+}
+
+// validBoundDecl reports whether declPos is valid, precedes goPos when declared inside fnRoot,
+// and lies outside every enclosing loop in loops.
+func (f *fanoutFacts) validBoundDecl(declPos token.Pos) bool {
+	if !declPos.IsValid() {
+		return false
+	}
+	if f.fnRoot != nil && f.fnRoot.Pos() <= declPos && declPos < f.fnRoot.End() && declPos >= f.goPos {
+		return false
+	}
+	for i := 0; i < len(f.loops); i++ {
+		if f.loops[i].Pos() <= declPos && declPos < f.loops[i].End() {
+			return false
+		}
+	}
+	return true
+}
+
+// isArray reports whether name resolves to an unshadowed fixed array declared outside loops.
+func (f *fanoutFacts) isArray(name string) bool {
+	return f.validBoundDecl(f.arrays[name])
+}
+
+// isSemaphore reports whether name resolves to an unshadowed semaphore declared outside loops.
+func (f *fanoutFacts) isSemaphore(name string) bool {
+	return f.validBoundDecl(f.semaphores[name])
+}
+
+// isTokenChan reports whether name resolves to an unshadowed buffered channel declared outside loops.
+func (f *fanoutFacts) isTokenChan(name string) bool {
+	return f.validBoundDecl(f.tokenChans[name])
+}
+
+// clearName removes all tracked facts for name when a local declaration shadows or redeclares it.
+func (f *fanoutFacts) clearName(name string) {
+	delete(f.consts, name)
+	delete(f.posConsts, name)
+	delete(f.arrays, name)
+	delete(f.ints, name)
+	delete(f.errgroups, name)
+	delete(f.semaphores, name)
+	delete(f.tokenChans, name)
 }
 
 // checkGoFanoutNode dispatches HISS-06 bounded-concurrency checks when the walk reaches a go
@@ -33,19 +88,16 @@ func (g *goScanner) checkGoFanoutNode(n ast.Node) {
 	g.checkGoFanout(goStmt)
 }
 
-// checkGoFanout reports a go statement inside a for or range body when the enclosing function
-// shows none of the five HISS-06 concurrency bounds.
+// checkGoFanout reports a go statement inside a for or range body when any enclosing loop lacks
+// a HISS-06 concurrency bound.
 func (g *goScanner) checkGoFanout(goStmt *ast.GoStmt) {
 	loops, fnRoot := g.enclosingFanoutLoops()
 	if len(loops) == 0 || fnRoot == nil {
 		return
 	}
-	facts := g.collectFanoutFacts(fnRoot)
-	if g.hasGoStmtLimiter(loops, goStmt, &facts) {
-		return
-	}
+	facts := g.collectFanoutFacts(fnRoot, loops, goStmt.Pos())
 	for i := 0; i < len(loops); i++ {
-		if !g.isLoopBounded(loops[i], &facts) {
+		if !g.isLoopBounded(loops[i], &facts) && !g.hasGoStmtLimiter(loops[:i+1], goStmt, &facts) {
 			fnName := g.enclosingFunctionName()
 			line := g.line(goStmt.Pos())
 			g.record("HISS-06", goStmt.Pos(), fnName, fanoutFindingMessage(fnName, line))
@@ -100,32 +152,39 @@ func loopBody(n ast.Node) *ast.BlockStmt {
 }
 
 // collectFanoutFacts gathers file-level and function-level declarations for HISS-06.
-func (g *goScanner) collectFanoutFacts(fnRoot ast.Node) fanoutFacts {
+func (g *goScanner) collectFanoutFacts(fnRoot ast.Node, loops []ast.Stmt, goPos token.Pos) fanoutFacts {
 	facts := fanoutFacts{
 		consts:     make(map[string]bool),
-		arrays:     make(map[string]bool),
+		posConsts:  make(map[string]bool),
+		arrays:     make(map[string]token.Pos),
 		ints:       make(map[string]bool),
-		errgroups:  make(map[string]bool),
-		semaphores: make(map[string]bool),
-		tokenChans: make(map[string]bool),
+		errgroups:  make(map[string]token.Pos),
+		semaphores: make(map[string]token.Pos),
+		tokenChans: make(map[string]token.Pos),
 		hissBounds: hissBoundComments(g.fset, g.file),
+		loops:      loops,
+		fnRoot:     fnRoot,
+		goPos:      goPos,
 	}
-	g.collectFileFanoutFacts(&facts)
-	g.collectFuncFanoutFacts(fnRoot, &facts)
+	fileDecls := g.collectFileFanoutFacts(&facts)
+	g.collectFuncFanoutFacts(fnRoot, fileDecls, &facts)
 	return facts
 }
 
-// collectFileFanoutFacts records package-level constants and array variables declared in the
-// file.
-func (g *goScanner) collectFileFanoutFacts(facts *fanoutFacts) {
+// collectFileFanoutFacts records package-level constants and variables declared in the file and
+// returns the declaration counts of package-level value and type names.
+func (g *goScanner) collectFileFanoutFacts(facts *fanoutFacts) map[string]int {
+	fileDecls := make(map[string]int)
 	if g.file == nil {
-		return
+		return fileDecls
 	}
 	for i := 0; i < len(g.file.Decls); i++ {
 		if gen, ok := g.file.Decls[i].(*ast.GenDecl); ok {
+			countGenDeclSpecs(gen, fileDecls)
 			g.recordGenDeclFacts(gen, facts)
 		}
 	}
+	return fileDecls
 }
 
 // recordGenDeclFacts records const and var specifications from one declaration group.
@@ -136,7 +195,7 @@ func (g *goScanner) recordGenDeclFacts(gen *ast.GenDecl, facts *fanoutFacts) {
 			continue
 		}
 		if gen.Tok == token.CONST {
-			markSpecIdents(spec.Names, facts.consts)
+			recordConstSpecFacts(spec, i, facts)
 			continue
 		}
 		if gen.Tok == token.VAR {
@@ -145,29 +204,58 @@ func (g *goScanner) recordGenDeclFacts(gen *ast.GenDecl, facts *fanoutFacts) {
 	}
 }
 
-// recordValueSpecFacts classifies a var ValueSpec into arrays, errgroups, semaphores, ints or
-// buffered token channels.
-func (g *goScanner) recordValueSpecFacts(spec *ast.ValueSpec, facts *fanoutFacts) {
-	unmarkSpecIdents(spec.Names, facts.consts)
-	if isArrayValueSpec(spec) {
-		markSpecIdents(spec.Names, facts.arrays)
-	}
-	if g.isErrgroupSpec(spec) {
-		markSpecIdents(spec.Names, facts.errgroups)
-	}
-	if g.isSemaphoreSpec(spec) {
-		markSpecIdents(spec.Names, facts.semaphores)
-	}
-	if isIntValueSpec(spec) {
-		markSpecIdents(spec.Names, facts.ints)
-	}
-	if isBufferedChanSpec(spec) {
-		markSpecIdents(spec.Names, facts.tokenChans)
+// recordConstSpecFacts marks declared constants and tracks which ones can serve as positive steps.
+func recordConstSpecFacts(spec *ast.ValueSpec, specIndex int, facts *fanoutFacts) {
+	for i := 0; i < len(spec.Names); i++ {
+		ident := spec.Names[i]
+		if ident == nil || ident.Name == "_" {
+			continue
+		}
+		facts.consts[ident.Name] = true
+		if isPositiveConstSpecValue(spec, i, specIndex) {
+			facts.posConsts[ident.Name] = true
+		}
 	}
 }
 
-// markSpecIdents sets target[name] = true for each non-blank identifier in names.
-func markSpecIdents(names []*ast.Ident, target map[string]bool) {
+// isPositiveConstSpecValue reports whether the i-th name of a const ValueSpec can represent a
+// nonzero positive integer step.
+func isPositiveConstSpecValue(spec *ast.ValueSpec, idx, specIndex int) bool {
+	if len(spec.Values) == 0 {
+		return specIndex > 0
+	}
+	if idx >= len(spec.Values) {
+		return false
+	}
+	val := ast.Unparen(spec.Values[idx])
+	if ident, ok := val.(*ast.Ident); ok && ident.Name == "iota" {
+		return specIndex > 0
+	}
+	return isPositiveBoundArg(val)
+}
+
+// recordValueSpecFacts classifies a var ValueSpec into arrays, errgroups, semaphores, ints or
+// buffered token channels.
+func (g *goScanner) recordValueSpecFacts(spec *ast.ValueSpec, facts *fanoutFacts) {
+	if isArrayValueSpec(spec) {
+		markSpecPos(spec.Names, facts.arrays)
+	}
+	if g.isErrgroupSpec(spec) {
+		markSpecPos(spec.Names, facts.errgroups)
+	}
+	if g.isSemaphoreSpec(spec) {
+		markSpecPos(spec.Names, facts.semaphores)
+	}
+	if isIntValueSpec(spec) {
+		markSpecBool(spec.Names, facts.ints)
+	}
+	if isBufferedChanSpec(spec) {
+		markSpecPos(spec.Names, facts.tokenChans)
+	}
+}
+
+// markSpecBool sets target[name] = true for each non-blank identifier in names.
+func markSpecBool(names []*ast.Ident, target map[string]bool) {
 	for i := 0; i < len(names); i++ {
 		if names[i] != nil && names[i].Name != "_" {
 			target[names[i].Name] = true
@@ -175,87 +263,175 @@ func markSpecIdents(names []*ast.Ident, target map[string]bool) {
 	}
 }
 
-// unmarkSpecIdents removes shadowed names from target.
-func unmarkSpecIdents(names []*ast.Ident, target map[string]bool) {
+// markSpecPos records each non-blank identifier's declaring token.Pos in target.
+func markSpecPos(names []*ast.Ident, target map[string]token.Pos) {
 	for i := 0; i < len(names); i++ {
-		if names[i] != nil {
-			delete(target, names[i].Name)
+		if names[i] != nil && names[i].Name != "_" {
+			target[names[i].Name] = names[i].Pos()
 		}
 	}
 }
 
-// collectFuncFanoutFacts walks the enclosing function to record parameters and local bindings.
-func (g *goScanner) collectFuncFanoutFacts(fnRoot ast.Node, facts *fanoutFacts) {
-	g.recordFuncRootParams(fnRoot, facts)
+// collectFuncFanoutFacts walks fnRoot to record parameters and local bindings, then drops any
+// name declared more than once across fnRoot or shadowing a file-level binding.
+func (g *goScanner) collectFuncFanoutFacts(fnRoot ast.Node, fileDecls map[string]int, facts *fanoutFacts) {
+	localDecls := countFuncDecls(fnRoot)
+	for name := range localDecls {
+		facts.clearName(name)
+	}
 	steps := 0
 	ast.Inspect(fnRoot, func(n ast.Node) bool {
 		if n == nil || steps >= maxNodeStack {
 			return false
 		}
 		steps++
-		switch node := n.(type) {
-		case *ast.GenDecl:
-			g.recordGenDeclFacts(node, facts)
-		case *ast.AssignStmt:
-			g.recordAssignFacts(node, facts)
-		case *ast.FuncLit:
-			if node.Type != nil {
-				g.recordFieldListFacts(node.Type.Params, facts)
-			}
-		}
+		g.recordFuncNodeFacts(n, facts)
 		return true
 	})
-}
-
-// recordFuncRootParams records receiver and parameter types of the enclosing function root.
-func (g *goScanner) recordFuncRootParams(fnRoot ast.Node, facts *fanoutFacts) {
-	switch fn := fnRoot.(type) {
-	case *ast.FuncDecl:
-		g.recordFieldListFacts(fn.Recv, facts)
-		if fn.Type != nil {
-			g.recordFieldListFacts(fn.Type.Params, facts)
-		}
-	case *ast.FuncLit:
-		if fn.Type != nil {
-			g.recordFieldListFacts(fn.Type.Params, facts)
+	for name, count := range localDecls {
+		if count+fileDecls[name] > 1 {
+			facts.clearName(name)
 		}
 	}
 }
 
-// recordFieldListFacts classifies each field in a receiver or parameter list.
+// recordFuncNodeFacts records fan-out facts contributed by one AST node inside fnRoot.
+func (g *goScanner) recordFuncNodeFacts(n ast.Node, facts *fanoutFacts) {
+	switch node := n.(type) {
+	case *ast.FuncDecl:
+		g.recordFieldListFacts(node.Recv, facts)
+		g.recordSignatureFacts(node.Type, facts)
+	case *ast.FuncLit:
+		g.recordSignatureFacts(node.Type, facts)
+	case *ast.GenDecl:
+		g.recordGenDeclFacts(node, facts)
+	case *ast.AssignStmt:
+		g.recordAssignFacts(node, facts)
+	}
+}
+
+// recordSignatureFacts records parameter and named-result types of a function signature.
+func (g *goScanner) recordSignatureFacts(ft *ast.FuncType, facts *fanoutFacts) {
+	if ft == nil {
+		return
+	}
+	g.recordFieldListFacts(ft.Params, facts)
+	g.recordFieldListFacts(ft.Results, facts)
+}
+
+// countFuncDecls counts how many times each non-blank identifier is declared inside fnRoot.
+func countFuncDecls(fnRoot ast.Node) map[string]int {
+	counts := make(map[string]int)
+	steps := 0
+	ast.Inspect(fnRoot, func(n ast.Node) bool {
+		if n == nil || steps >= maxNodeStack {
+			return false
+		}
+		steps++
+		countNodeDecls(n, counts)
+		return true
+	})
+	return counts
+}
+
+// countNodeDecls increments counts for each identifier declared directly by n.
+func countNodeDecls(n ast.Node, counts map[string]int) {
+	switch node := n.(type) {
+	case *ast.FuncDecl:
+		countFieldListDecls(node.Recv, counts)
+		countFuncTypeDecls(node.Type, counts)
+	case *ast.FuncLit:
+		countFuncTypeDecls(node.Type, counts)
+	case *ast.GenDecl:
+		countGenDeclSpecs(node, counts)
+	case *ast.AssignStmt:
+		if node.Tok == token.DEFINE {
+			countExprIdentDecls(node.Lhs, counts)
+		}
+	case *ast.RangeStmt:
+		if node.Tok == token.DEFINE {
+			countExprIdentDecls([]ast.Expr{node.Key, node.Value}, counts)
+		}
+	}
+}
+
+// countFuncTypeDecls counts type parameter, parameter and named-result declarations.
+func countFuncTypeDecls(ft *ast.FuncType, counts map[string]int) {
+	if ft == nil {
+		return
+	}
+	countFieldListDecls(ft.TypeParams, counts)
+	countFieldListDecls(ft.Params, counts)
+	countFieldListDecls(ft.Results, counts)
+}
+
+// countFieldListDecls counts every named field identifier in list.
+func countFieldListDecls(list *ast.FieldList, counts map[string]int) {
+	if list == nil {
+		return
+	}
+	for i := 0; i < len(list.List); i++ {
+		countIdentListDecls(list.List[i].Names, counts)
+	}
+}
+
+// countGenDeclSpecs counts value and type declarations in gen.
+func countGenDeclSpecs(gen *ast.GenDecl, counts map[string]int) {
+	for i := 0; i < len(gen.Specs); i++ {
+		switch spec := gen.Specs[i].(type) {
+		case *ast.ValueSpec:
+			countIdentListDecls(spec.Names, counts)
+		case *ast.TypeSpec:
+			countIdentDecl(spec.Name, counts)
+		}
+	}
+}
+
+// countExprIdentDecls counts non-blank *ast.Ident nodes in exprs.
+func countExprIdentDecls(exprs []ast.Expr, counts map[string]int) {
+	for i := 0; i < len(exprs); i++ {
+		if ident, ok := exprs[i].(*ast.Ident); ok {
+			countIdentDecl(ident, counts)
+		}
+	}
+}
+
+// countIdentListDecls counts non-blank identifiers in idents.
+func countIdentListDecls(idents []*ast.Ident, counts map[string]int) {
+	for i := 0; i < len(idents); i++ {
+		countIdentDecl(idents[i], counts)
+	}
+}
+
+// countIdentDecl increments counts for one non-blank identifier.
+func countIdentDecl(ident *ast.Ident, counts map[string]int) {
+	if ident != nil && ident.Name != "_" {
+		counts[ident.Name]++
+	}
+}
+
+// recordFieldListFacts classifies each field in a receiver, parameter or result list.
 func (g *goScanner) recordFieldListFacts(list *ast.FieldList, facts *fanoutFacts) {
 	if list == nil {
 		return
 	}
 	for i := 0; i < len(list.List); i++ {
 		field := list.List[i]
-		unmarkSpecIdents(field.Names, facts.consts)
 		g.classifyFieldType(field.Type, field.Names, facts)
 	}
 }
 
-// classifyFieldType records the declared type category of a parameter or receiver field.
+// classifyFieldType records the declared type category of a parameter, result or receiver field.
 func (g *goScanner) classifyFieldType(expr ast.Expr, names []*ast.Ident, facts *fanoutFacts) {
 	switch {
 	case isFixedArrayOrPtrType(expr):
-		markSpecIdents(names, facts.arrays)
+		markSpecPos(names, facts.arrays)
 	case g.isErrgroupType(expr):
-		markSpecIdents(names, facts.errgroups)
+		markSpecPos(names, facts.errgroups)
 	case g.isSemaphoreType(expr):
-		markSpecIdents(names, facts.semaphores)
+		markSpecPos(names, facts.semaphores)
 	case isIntTypeExpr(expr):
-		markSpecIdents(names, facts.ints)
-	}
-}
-
-// recordErrgroupAssignment marks the LHS identifier as an errgroup if the assignment is errgroup.WithContext.
-func (g *goScanner) recordErrgroupAssignment(assign *ast.AssignStmt, facts *fanoutFacts) {
-	if len(assign.Rhs) != 1 || !g.isErrgroupWithContextCall(assign.Rhs[0]) {
-		return
-	}
-	if ident, ok := assign.Lhs[0].(*ast.Ident); ok && ident.Name != "_" {
-		delete(facts.consts, ident.Name)
-		facts.errgroups[ident.Name] = true
+		markSpecBool(names, facts.ints)
 	}
 }
 
@@ -264,35 +440,65 @@ func (g *goScanner) recordAssignFacts(assign *ast.AssignStmt, facts *fanoutFacts
 	if len(assign.Lhs) == 0 || len(assign.Rhs) == 0 {
 		return
 	}
-	g.recordErrgroupAssignment(assign, facts)
 	isDefine := assign.Tok == token.DEFINE
+	if assign.Tok != token.DEFINE && assign.Tok != token.ASSIGN {
+		return
+	}
 	limit := min(len(assign.Lhs), len(assign.Rhs))
 	for i := 0; i < limit; i++ {
 		ident, ok := assign.Lhs[i].(*ast.Ident)
 		if !ok || ident.Name == "_" {
 			continue
 		}
-		if isDefine {
-			delete(facts.consts, ident.Name)
-		}
-		g.classifyAssignedValue(ident.Name, assign.Rhs[i], isDefine, facts)
+		g.classifyAssignedValue(ident, assign.Rhs[i], isDefine, facts)
+	}
+	if !isDefine && len(assign.Lhs) > len(assign.Rhs) {
+		clearTrailingAssignedIdents(assign.Lhs[limit:], facts)
 	}
 }
 
-// classifyAssignedValue records the RHS category assigned to name.
-func (g *goScanner) classifyAssignedValue(name string, rhs ast.Expr, defined bool, facts *fanoutFacts) {
+// clearTrailingAssignedIdents clears limiter facts on extra LHS names of a multi-value plain assignment.
+func clearTrailingAssignedIdents(lhs []ast.Expr, facts *fanoutFacts) {
+	for i := 0; i < len(lhs); i++ {
+		if ident, ok := lhs[i].(*ast.Ident); ok && ident.Name != "_" {
+			delete(facts.errgroups, ident.Name)
+			delete(facts.semaphores, ident.Name)
+			delete(facts.tokenChans, ident.Name)
+		}
+	}
+}
+
+// classifyAssignedValue records or invalidates the RHS category assigned to ident.
+func (g *goScanner) classifyAssignedValue(ident *ast.Ident, rhs ast.Expr, defined bool, facts *fanoutFacts) {
+	name, pos := ident.Name, ident.Pos()
 	switch {
 	case isFixedArrayValue(rhs):
-		facts.arrays[name] = true
+		recordBoundPos(facts.arrays, name, pos, facts)
 	case g.isErrgroupValue(rhs):
-		facts.errgroups[name] = true
+		recordBoundPos(facts.errgroups, name, pos, facts)
 	case g.isSemaphoreValue(rhs):
-		facts.semaphores[name] = true
+		recordBoundPos(facts.semaphores, name, pos, facts)
 	case isBufferedChanMake(rhs):
-		facts.tokenChans[name] = true
-	case defined && isIntCandidateValue(rhs):
-		facts.ints[name] = true
+		recordBoundPos(facts.tokenChans, name, pos, facts)
+	default:
+		if defined && isIntCandidateValue(rhs) {
+			facts.ints[name] = true
+		}
+		if !defined {
+			delete(facts.errgroups, name)
+			delete(facts.semaphores, name)
+			delete(facts.tokenChans, name)
+		}
 	}
+}
+
+// recordBoundPos stores pos for name unless an earlier write already placed name inside an
+// enclosing loop, so a post-loop reassignment cannot mask an in-loop limiter allocation.
+func recordBoundPos(target map[string]token.Pos, name string, pos token.Pos, facts *fanoutFacts) {
+	if prev, exists := target[name]; exists && !facts.validBoundDecl(prev) {
+		return
+	}
+	target[name] = pos
 }
 
 // isArrayValueSpec reports whether a var specification declares or initializes a fixed array.
@@ -537,14 +743,15 @@ func isPositiveBoundArg(expr ast.Expr) bool {
 		return false
 	}
 	if lit, ok := expr.(*ast.BasicLit); ok && lit.Kind == token.INT {
-		return lit.Value != "0"
+		val, err := strconv.ParseUint(lit.Value, 0, 64)
+		return err == nil && val > 0
 	}
 	return true
 }
 
-// hasGoStmtLimiter checks semaphore and token-channel bounds for a raw go statement.
+// hasGoStmtLimiter checks semaphore and token-channel bounds for a raw go statement across loops.
 func (g *goScanner) hasGoStmtLimiter(loops []ast.Stmt, goStmt *ast.GoStmt, facts *fanoutFacts) bool {
-	if hasSemaphoreAcquireInLoops(loops, goStmt.Pos(), facts) {
+	if g.hasSemaphoreAcquireInLoops(loops, goStmt, facts) {
 		return true
 	}
 	return hasTokenChannelBound(loops, goStmt, facts)
@@ -571,58 +778,363 @@ func receiverBaseIdent(expr ast.Expr) (string, bool) {
 	return "", false
 }
 
-// hasSemaphoreAcquireInLoops reports whether any enclosing loop body calls Acquire or
-// TryAcquire on a semaphore.Weighted before goPos.
-func hasSemaphoreAcquireInLoops(loops []ast.Stmt, goPos token.Pos, facts *fanoutFacts) bool {
+// hasSemaphoreAcquireInLoops reports whether any loop in loops structurally dominates goStmt
+// with a verified semaphore acquisition.
+func (g *goScanner) hasSemaphoreAcquireInLoops(loops []ast.Stmt, goStmt *ast.GoStmt, facts *fanoutFacts) bool {
 	for i := 0; i < len(loops); i++ {
-		if bodyHasSemaphoreAcquire(loopBody(loops[i]), goPos, facts) {
+		if g.loopDominatesWithSemaphore(loopBody(loops[i]), goStmt, facts) {
 			return true
 		}
 	}
 	return false
 }
 
-// bodyHasSemaphoreAcquire walks one loop body (excluding nested go statements) for a semaphore
-// Acquire call before goPos.
-func bodyHasSemaphoreAcquire(body *ast.BlockStmt, goPos token.Pos, facts *fanoutFacts) bool {
-	if body == nil {
+// loopDominatesWithSemaphore walks the ancestor chain on g.stack from body to goStmt and reports
+// whether a successful semaphore acquisition dominates goStmt.
+func (g *goScanner) loopDominatesWithSemaphore(body *ast.BlockStmt, goStmt *ast.GoStmt, facts *fanoutFacts) bool {
+	start := g.stackNodeIndex(body)
+	if start < 0 {
 		return false
 	}
-	found := false
-	steps := 0
-	ast.Inspect(body, func(n ast.Node) bool {
-		if n == nil || found || steps >= maxNodeStack {
-			return false
+	for idx := start; idx < len(g.stack); idx++ {
+		nextNode := ast.Node(goStmt)
+		if idx+1 < len(g.stack) {
+			nextNode = g.stack[idx+1]
 		}
-		steps++
-		if _, isGo := n.(*ast.GoStmt); isGo {
-			return false
+		if g.stackFrameAcquires(g.stack[idx], nextNode, goStmt.Pos(), facts) {
+			return true
 		}
-		if call, ok := n.(*ast.CallExpr); ok && call.Pos() < goPos && isSemaphoreAcquireCall(call, facts) {
-			found = true
-			return false
-		}
-		return true
-	})
-	return found
+	}
+	return false
 }
 
-// isSemaphoreAcquireCall reports whether call invokes Acquire or TryAcquire on a tracked
-// semaphore.Weighted variable.
-func isSemaphoreAcquireCall(call *ast.CallExpr, facts *fanoutFacts) bool {
-	if len(call.Args) == 0 {
+// stackNodeIndex returns the index of target on g.stack, or -1 if absent.
+func (g *goScanner) stackNodeIndex(target ast.Node) int {
+	if target == nil {
+		return -1
+	}
+	for i := len(g.stack) - 1; i >= 0; i-- {
+		if g.stack[i] == target {
+			return i
+		}
+	}
+	return -1
+}
+
+// stackFrameAcquires checks one ancestor node on the path from the loop body to goStmt.
+func (g *goScanner) stackFrameAcquires(frame, nextNode ast.Node, goPos token.Pos, facts *fanoutFacts) bool {
+	switch node := frame.(type) {
+	case *ast.BlockStmt:
+		return g.stmtsAcquireBefore(node.List, goPos, facts)
+	case *ast.CaseClause:
+		return g.stmtsAcquireBefore(node.Body, goPos, facts)
+	case *ast.CommClause:
+		return g.stmtsAcquireBefore(node.Body, goPos, facts)
+	case *ast.IfStmt:
+		return nextNode == node.Body && ifBodyAcquiresSemaphore(node, facts)
+	default:
+		return false
+	}
+}
+
+// stmtsAcquireBefore reports whether any statement preceding goPos in stmts dominates subsequent
+// statements with a successful semaphore acquisition.
+func (g *goScanner) stmtsAcquireBefore(stmts []ast.Stmt, goPos token.Pos, facts *fanoutFacts) bool {
+	for i := 0; i < len(stmts); i++ {
+		if stmts[i].End() > goPos {
+			return false
+		}
+		if g.stmtDominatesWithAcquire(stmts[i], facts) {
+			return true
+		}
+	}
+	return false
+}
+
+// stmtDominatesWithAcquire reports whether stmt acquires a tracked semaphore on every path that
+// falls through stmt to later statements in the same block.
+func (g *goScanner) stmtDominatesWithAcquire(stmt ast.Stmt, facts *fanoutFacts) bool {
+	if labeled, ok := stmt.(*ast.LabeledStmt); ok {
+		stmt = labeled.Stmt
+	}
+	switch s := stmt.(type) {
+	case *ast.ExprStmt:
+		return isSemaphoreMethodCall(s.X, "Acquire", facts)
+	case *ast.AssignStmt:
+		return len(s.Lhs) == 1 && len(s.Rhs) == 1 && isSemaphoreMethodCall(s.Rhs[0], "Acquire", facts)
+	case *ast.IfStmt:
+		return g.ifGuardDominatesWithAcquire(s, facts)
+	default:
+		return false
+	}
+}
+
+// ifGuardDominatesWithAcquire checks `if err := sem.Acquire(...); err != nil { <terminates> }`,
+// `if sem.Acquire(...) != nil { <terminates> }`, and `if !sem.TryAcquire(n) { <terminates> }`.
+func (g *goScanner) ifGuardDominatesWithAcquire(ifStmt *ast.IfStmt, facts *fanoutFacts) bool {
+	if !g.blockTerminates(ifStmt.Body) {
+		return false
+	}
+	if ifStmt.Init != nil {
+		if errName, ok := assignSemaphoreCallIdent(ifStmt.Init, "Acquire", facts); ok {
+			return isIdentNilComparison(ifStmt.Cond, errName, token.NEQ)
+		}
+		if okName, ok := assignSemaphoreCallIdent(ifStmt.Init, "TryAcquire", facts); ok {
+			return isNegatedBoolIdent(ifStmt.Cond, okName)
+		}
+		return false
+	}
+	if isAcquireNilComparison(ifStmt.Cond, token.NEQ, facts) {
+		return true
+	}
+	return isNegatedTryAcquire(ifStmt.Cond, facts)
+}
+
+// ifBodyAcquiresSemaphore checks whether entering ifStmt.Body proves a successful acquisition:
+// `if sem.TryAcquire(n) { ... }` or `if err := sem.Acquire(...); err == nil { ... }`.
+func ifBodyAcquiresSemaphore(ifStmt *ast.IfStmt, facts *fanoutFacts) bool {
+	if ifStmt.Init != nil {
+		if errName, ok := assignSemaphoreCallIdent(ifStmt.Init, "Acquire", facts); ok {
+			return isIdentNilComparison(ifStmt.Cond, errName, token.EQL)
+		}
+		if okName, ok := assignSemaphoreCallIdent(ifStmt.Init, "TryAcquire", facts); ok {
+			return isPositiveBoolIdent(ifStmt.Cond, okName)
+		}
+		return false
+	}
+	if isAcquireNilComparison(ifStmt.Cond, token.EQL, facts) {
+		return true
+	}
+	return isPositiveTryAcquire(ifStmt.Cond, facts)
+}
+
+// assignSemaphoreCallIdent extracts the non-blank LHS variable bound to sem.<method>(...) in initStmt.
+func assignSemaphoreCallIdent(initStmt ast.Stmt, method string, facts *fanoutFacts) (string, bool) {
+	assign, ok := initStmt.(*ast.AssignStmt)
+	if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+		return "", false
+	}
+	ident, ok := assign.Lhs[0].(*ast.Ident)
+	if !ok || ident.Name == "_" || !isSemaphoreMethodCall(assign.Rhs[0], method, facts) {
+		return "", false
+	}
+	return ident.Name, true
+}
+
+// isIdentNilComparison reports whether cond compares name against nil with op (== or !=).
+func isIdentNilComparison(cond ast.Expr, name string, op token.Token) bool {
+	bin, ok := ast.Unparen(cond).(*ast.BinaryExpr)
+	if !ok || bin.Op != op {
+		return false
+	}
+	return (isNamedIdent(bin.X, name) && isNamedIdent(bin.Y, "nil")) ||
+		(isNamedIdent(bin.X, "nil") && isNamedIdent(bin.Y, name))
+}
+
+// isAcquireNilComparison reports whether cond compares sem.Acquire(...) against nil with op.
+func isAcquireNilComparison(cond ast.Expr, op token.Token, facts *fanoutFacts) bool {
+	bin, ok := ast.Unparen(cond).(*ast.BinaryExpr)
+	if !ok || bin.Op != op {
+		return false
+	}
+	return (isSemaphoreMethodCall(bin.X, "Acquire", facts) && isNamedIdent(bin.Y, "nil")) ||
+		(isNamedIdent(bin.X, "nil") && isSemaphoreMethodCall(bin.Y, "Acquire", facts))
+}
+
+// isNegatedTryAcquire reports whether cond is `!sem.TryAcquire(n)` or `sem.TryAcquire(n) == false`.
+func isNegatedTryAcquire(cond ast.Expr, facts *fanoutFacts) bool {
+	cond = ast.Unparen(cond)
+	if u, ok := cond.(*ast.UnaryExpr); ok && u.Op == token.NOT {
+		return isSemaphoreMethodCall(u.X, "TryAcquire", facts)
+	}
+	bin, ok := cond.(*ast.BinaryExpr)
+	if !ok || bin.Op != token.EQL {
+		return false
+	}
+	return (isSemaphoreMethodCall(bin.X, "TryAcquire", facts) && isNamedIdent(bin.Y, "false")) ||
+		(isNamedIdent(bin.X, "false") && isSemaphoreMethodCall(bin.Y, "TryAcquire", facts))
+}
+
+// isPositiveTryAcquire reports whether cond is `sem.TryAcquire(n)` or `sem.TryAcquire(n) == true`.
+func isPositiveTryAcquire(cond ast.Expr, facts *fanoutFacts) bool {
+	cond = ast.Unparen(cond)
+	if isSemaphoreMethodCall(cond, "TryAcquire", facts) {
+		return true
+	}
+	bin, ok := cond.(*ast.BinaryExpr)
+	if !ok || bin.Op != token.EQL {
+		return false
+	}
+	return (isSemaphoreMethodCall(bin.X, "TryAcquire", facts) && isNamedIdent(bin.Y, "true")) ||
+		(isNamedIdent(bin.X, "true") && isSemaphoreMethodCall(bin.Y, "TryAcquire", facts))
+}
+
+// isNegatedBoolIdent reports whether cond is `!name` or `name == false`.
+func isNegatedBoolIdent(cond ast.Expr, name string) bool {
+	cond = ast.Unparen(cond)
+	if u, ok := cond.(*ast.UnaryExpr); ok && u.Op == token.NOT {
+		return isNamedIdent(u.X, name)
+	}
+	bin, ok := cond.(*ast.BinaryExpr)
+	if !ok || bin.Op != token.EQL {
+		return false
+	}
+	return (isNamedIdent(bin.X, name) && isNamedIdent(bin.Y, "false")) ||
+		(isNamedIdent(bin.X, "false") && isNamedIdent(bin.Y, name))
+}
+
+// isPositiveBoolIdent reports whether cond is `name` or `name == true`.
+func isPositiveBoolIdent(cond ast.Expr, name string) bool {
+	cond = ast.Unparen(cond)
+	if isNamedIdent(cond, name) {
+		return true
+	}
+	bin, ok := cond.(*ast.BinaryExpr)
+	if !ok || bin.Op != token.EQL {
+		return false
+	}
+	return (isNamedIdent(bin.X, name) && isNamedIdent(bin.Y, "true")) ||
+		(isNamedIdent(bin.X, "true") && isNamedIdent(bin.Y, name))
+}
+
+// isNamedIdent reports whether expr unwraps to an *ast.Ident with Name == want.
+func isNamedIdent(expr ast.Expr, want string) bool {
+	ident, ok := ast.Unparen(expr).(*ast.Ident)
+	return ok && ident.Name == want
+}
+
+// isSemaphoreMethodCall reports whether expr calls method ("Acquire" or "TryAcquire") with a
+// positive weight on an unshadowed semaphore.Weighted declared outside the enclosing loops.
+func isSemaphoreMethodCall(expr ast.Expr, method string, facts *fanoutFacts) bool {
+	call, ok := ast.Unparen(expr).(*ast.CallExpr)
+	if !ok || call.Ellipsis.IsValid() {
+		return false
+	}
+	if !validSemaphoreArgs(method, call.Args) {
 		return false
 	}
 	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
-	if !ok || (sel.Sel.Name != "Acquire" && sel.Sel.Name != "TryAcquire") {
+	if !ok || sel.Sel.Name != method {
 		return false
 	}
 	recv, ok := receiverBaseIdent(sel.X)
-	return ok && facts.semaphores[recv]
+	return ok && facts.isSemaphore(recv)
 }
 
-// hasTokenChannelBound reports whether a buffered token channel is sent to in the loop body
-// before goStmt and received from in the goroutine (deferred or at the end of its body).
+// validSemaphoreArgs checks the argument count and positive weight for Acquire and TryAcquire.
+func validSemaphoreArgs(method string, args []ast.Expr) bool {
+	switch method {
+	case "Acquire":
+		return len(args) == 2 && isPositiveBoundArg(args[1])
+	case "TryAcquire":
+		return len(args) == 1 && isPositiveBoundArg(args[0])
+	default:
+		return false
+	}
+}
+
+// maxTermDepth bounds the iterative branch-termination proof stack (HISS-02).
+const maxTermDepth = 16
+
+// blockTerminates reports whether block unconditionally exits the current loop iteration, loop,
+// or function via return, break, continue, panic, os.Exit or a testing/log Fatal call. Iterative (HISS-01).
+func (g *goScanner) blockTerminates(block *ast.BlockStmt) bool {
+	if block == nil {
+		return false
+	}
+	todo := []ast.Stmt{block}
+	for steps := 0; len(todo) > 0; steps++ {
+		if steps >= maxTermDepth {
+			return false
+		}
+		cur := todo[len(todo)-1]
+		todo = todo[:len(todo)-1]
+		var ok bool
+		todo, ok = g.expandTerminatingStmt(cur, todo)
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// expandTerminatingStmt checks one statement on the termination worklist or pushes sub-branches.
+func (g *goScanner) expandTerminatingStmt(stmt ast.Stmt, todo []ast.Stmt) ([]ast.Stmt, bool) {
+	switch s := stmt.(type) {
+	case *ast.BlockStmt:
+		return g.expandTerminatingBlock(s, todo)
+	case *ast.IfStmt:
+		if s.Else == nil {
+			return nil, false
+		}
+		return append(todo, s.Body, s.Else), true
+	case *ast.LabeledStmt:
+		return append(todo, s.Stmt), true
+	default:
+		return todo, g.isLeafTerminator(s)
+	}
+}
+
+// expandTerminatingBlock succeeds when any statement in b is a leaf terminator, or pushes the
+// final statement onto todo.
+func (g *goScanner) expandTerminatingBlock(b *ast.BlockStmt, todo []ast.Stmt) ([]ast.Stmt, bool) {
+	if b == nil || len(b.List) == 0 {
+		return nil, false
+	}
+	for i := 0; i < len(b.List); i++ {
+		if g.isLeafTerminator(b.List[i]) {
+			return todo, true
+		}
+	}
+	return append(todo, b.List[len(b.List)-1]), true
+}
+
+// isLeafTerminator reports whether stmt directly terminates control flow (return, break,
+// continue, panic, os.Exit, or *.Fatal/Fatalf/Fatalln/FailNow).
+func (g *goScanner) isLeafTerminator(stmt ast.Stmt) bool {
+	switch s := stmt.(type) {
+	case *ast.ReturnStmt:
+		return true
+	case *ast.BranchStmt:
+		return s.Tok == token.BREAK || s.Tok == token.CONTINUE
+	case *ast.ExprStmt:
+		return g.isTerminatingCall(s.X)
+	default:
+		return false
+	}
+}
+
+// isTerminatingCall recognizes panic, os.Exit, and receiver Fatal/Fatalf/Fatalln/FailNow calls.
+func (g *goScanner) isTerminatingCall(expr ast.Expr) bool {
+	call, ok := ast.Unparen(expr).(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	if ident, ok := ast.Unparen(call.Fun).(*ast.Ident); ok {
+		return ident.Name == "panic" && len(call.Args) == 1
+	}
+	if g.matchesPkgSelector(call.Fun, "os", "os", "Exit") {
+		return len(call.Args) == 1
+	}
+	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	if _, ok := receiverBaseIdent(sel.X); !ok {
+		return false
+	}
+	switch sel.Sel.Name {
+	case "FailNow":
+		return len(call.Args) == 0
+	case "Fatal", "Fatalf", "Fatalln":
+		return len(call.Args) >= 1
+	default:
+		return false
+	}
+}
+
+// hasTokenChannelBound reports whether a buffered token channel declared outside the enclosing
+// loops is sent to before goStmt and received from in the goroutine (deferred or at body end).
 func hasTokenChannelBound(loops []ast.Stmt, goStmt *ast.GoStmt, facts *fanoutFacts) bool {
 	lit, ok := ast.Unparen(goStmt.Call.Fun).(*ast.FuncLit)
 	if !ok || lit.Body == nil || len(lit.Body.List) == 0 {
@@ -665,7 +1177,7 @@ func appendLoopTokenSends(sent []string, body *ast.BlockStmt, goPos token.Pos, f
 		if !ok || send.Pos() >= goPos {
 			return true
 		}
-		if ident, ok := ast.Unparen(send.Chan).(*ast.Ident); ok && facts.tokenChans[ident.Name] {
+		if ident, ok := ast.Unparen(send.Chan).(*ast.Ident); ok && facts.isTokenChan(ident.Name) {
 			sent = append(sent, ident.Name)
 		}
 		return true
@@ -727,7 +1239,8 @@ func (g *goScanner) isLoopBounded(loop ast.Stmt, facts *fanoutFacts) bool {
 	return ok && isHissBoundLoop(loop, target, facts)
 }
 
-// isArrayRangeExpr reports whether a range expression has a fixed array type.
+// isArrayRangeExpr reports whether a range expression has an unshadowed fixed array type declared
+// outside the enclosing loops.
 func isArrayRangeExpr(expr ast.Expr, facts *fanoutFacts) bool {
 	if isFixedArrayValue(expr) {
 		return true
@@ -736,18 +1249,30 @@ func isArrayRangeExpr(expr ast.Expr, facts *fanoutFacts) bool {
 		return true
 	}
 	name, ok := receiverBaseIdent(expr)
-	return ok && facts.arrays[name]
+	return ok && facts.isArray(name)
 }
 
-// isConstCounterLoop reports whether loop is a counter loop bounded by a constant expression.
+// counterStepInfo describes a loop counter's direction (+1 or -1) and whether its magnitude is 1.
+type counterStepInfo struct {
+	dir  int
+	unit bool
+}
+
+// isConstCounterLoop reports whether loop is a counter loop bounded by a constant expression with
+// a nonzero constant step advancing toward that bound.
 func isConstCounterLoop(loop *ast.ForStmt, facts *fanoutFacts) bool {
-	counter, ok := counterInitVar(loop.Init, facts)
-	if !ok || !counterUpdatedInPost(loop.Post, counter) {
+	counter, initExpr, ok := counterInit(loop.Init, facts)
+	if !ok {
+		return false
+	}
+	step, ok := counterStep(loop.Post, counter, facts)
+	if !ok {
 		return false
 	}
 	conjuncts := condConjuncts(loop.Cond)
 	for i := 0; i < len(conjuncts); i++ {
-		if bound, ok := counterCondBound(conjuncts[i], counter); ok && isConstBoundExpr(bound, facts) {
+		bound, op, ok := counterCondBound(conjuncts[i], counter)
+		if ok && isConstBoundExpr(bound, facts) && stepApproachesBound(op, step, initExpr, bound) {
 			return true
 		}
 	}
@@ -774,33 +1299,34 @@ func condConjuncts(cond ast.Expr) []ast.Expr {
 	return terms
 }
 
-// counterInitVar returns the loop variable initialized in initStmt when its initial value is a
-// constant expression.
-func counterInitVar(initStmt ast.Stmt, facts *fanoutFacts) (string, bool) {
+// counterInit returns the loop variable initialized in initStmt and its initial expression when
+// initialized to a constant expression.
+func counterInit(initStmt ast.Stmt, facts *fanoutFacts) (string, ast.Expr, bool) {
 	assign, ok := initStmt.(*ast.AssignStmt)
 	if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
-		return "", false
+		return "", nil, false
 	}
 	ident, ok := assign.Lhs[0].(*ast.Ident)
 	if !ok || ident.Name == "_" || !isConstBoundExpr(assign.Rhs[0], facts) {
-		return "", false
+		return "", nil, false
 	}
-	return ident.Name, true
+	return ident.Name, assign.Rhs[0], true
 }
 
-// counterCondBound returns the bound expression compared against counter in cond.
-func counterCondBound(cond ast.Expr, counter string) (ast.Expr, bool) {
+// counterCondBound returns the bound expression and counter-on-left relational operator when cond
+// compares counter against a bound, flipping the operator when counter sits on the right.
+func counterCondBound(cond ast.Expr, counter string) (ast.Expr, token.Token, bool) {
 	bin, ok := ast.Unparen(cond).(*ast.BinaryExpr)
 	if !ok || !isCounterComparisonOp(bin.Op) {
-		return nil, false
+		return nil, token.ILLEGAL, false
 	}
 	if left, ok := ast.Unparen(bin.X).(*ast.Ident); ok && left.Name == counter {
-		return bin.Y, true
+		return bin.Y, bin.Op, true
 	}
 	if right, ok := ast.Unparen(bin.Y).(*ast.Ident); ok && right.Name == counter {
-		return bin.X, true
+		return bin.X, flipComparisonOp(bin.Op), true
 	}
-	return nil, false
+	return nil, token.ILLEGAL, false
 }
 
 // isCounterComparisonOp reports whether op is a relational operator bounding a counter loop.
@@ -813,21 +1339,134 @@ func isCounterComparisonOp(op token.Token) bool {
 	}
 }
 
-// counterUpdatedInPost reports whether postStmt increments or decrements counter.
-func counterUpdatedInPost(postStmt ast.Stmt, counter string) bool {
+// flipComparisonOp reverses a relational operator when the loop counter is on the right-hand side.
+func flipComparisonOp(op token.Token) token.Token {
+	switch op {
+	case token.LSS:
+		return token.GTR
+	case token.LEQ:
+		return token.GEQ
+	case token.GTR:
+		return token.LSS
+	case token.GEQ:
+		return token.LEQ
+	default:
+		return op
+	}
+}
+
+// counterStep extracts the direction and unit-step flag of postStmt when it updates counter by
+// ++/-- or +=/-= with a positive integer literal or declared constant.
+func counterStep(postStmt ast.Stmt, counter string, facts *fanoutFacts) (counterStepInfo, bool) {
 	switch post := postStmt.(type) {
 	case *ast.IncDecStmt:
-		ident, ok := ast.Unparen(post.X).(*ast.Ident)
-		return ok && ident.Name == counter
+		if !isNamedIdent(post.X, counter) {
+			return counterStepInfo{}, false
+		}
+		if post.Tok == token.INC {
+			return counterStepInfo{dir: 1, unit: true}, true
+		}
+		if post.Tok == token.DEC {
+			return counterStepInfo{dir: -1, unit: true}, true
+		}
+		return counterStepInfo{}, false
 	case *ast.AssignStmt:
-		if len(post.Lhs) != 1 || (post.Tok != token.ADD_ASSIGN && post.Tok != token.SUB_ASSIGN) {
+		return assignCounterStep(post, counter, facts)
+	default:
+		return counterStepInfo{}, false
+	}
+}
+
+// assignCounterStep extracts the step direction of a += or -= post statement on counter.
+func assignCounterStep(post *ast.AssignStmt, counter string, facts *fanoutFacts) (counterStepInfo, bool) {
+	if len(post.Lhs) != 1 || len(post.Rhs) != 1 {
+		return counterStepInfo{}, false
+	}
+	if post.Tok != token.ADD_ASSIGN && post.Tok != token.SUB_ASSIGN {
+		return counterStepInfo{}, false
+	}
+	if !isNamedIdent(post.Lhs[0], counter) || !isPositiveConstStep(post.Rhs[0], facts) {
+		return counterStepInfo{}, false
+	}
+	if post.Tok == token.SUB_ASSIGN {
+		return counterStepInfo{dir: -1, unit: false}, true
+	}
+	return counterStepInfo{dir: 1, unit: false}, true
+}
+
+// isPositiveConstStep reports whether expr is a positive integer literal or declared positive
+// constant.
+func isPositiveConstStep(expr ast.Expr, facts *fanoutFacts) bool {
+	if expr == nil {
+		return false
+	}
+	expr = ast.Unparen(expr)
+	if u, ok := expr.(*ast.UnaryExpr); ok && u.Op == token.ADD {
+		expr = ast.Unparen(u.X)
+	}
+	switch x := expr.(type) {
+	case *ast.BasicLit:
+		if x.Kind != token.INT {
 			return false
 		}
-		ident, ok := ast.Unparen(post.Lhs[0]).(*ast.Ident)
-		return ok && ident.Name == counter
+		val, err := strconv.ParseUint(x.Value, 0, 64)
+		return err == nil && val > 0
+	case *ast.Ident:
+		return facts.posConsts[x.Name]
 	default:
 		return false
 	}
+}
+
+// stepApproachesBound reports whether step advances toward bound under op (with counter on the
+// left). != accepts only ++ or -- (unit step) and rejects literal bounds in the opposite direction.
+func stepApproachesBound(op token.Token, step counterStepInfo, initExpr, boundExpr ast.Expr) bool {
+	switch op {
+	case token.LSS, token.LEQ:
+		return step.dir > 0
+	case token.GTR, token.GEQ:
+		return step.dir < 0
+	case token.NEQ:
+		if !step.unit {
+			return false
+		}
+		initVal, okInit := signedIntLiteral(initExpr)
+		boundVal, okBound := signedIntLiteral(boundExpr)
+		if !okInit || !okBound || initVal == boundVal {
+			return true
+		}
+		if initVal < boundVal {
+			return step.dir > 0
+		}
+		return step.dir < 0
+	default:
+		return false
+	}
+}
+
+// signedIntLiteral parses a plain or +/- signed integer literal into an int64.
+func signedIntLiteral(expr ast.Expr) (int64, bool) {
+	if expr == nil {
+		return 0, false
+	}
+	expr = ast.Unparen(expr)
+	neg := false
+	if u, ok := expr.(*ast.UnaryExpr); ok && (u.Op == token.SUB || u.Op == token.ADD) {
+		neg = u.Op == token.SUB
+		expr = ast.Unparen(u.X)
+	}
+	lit, ok := expr.(*ast.BasicLit)
+	if !ok || lit.Kind != token.INT {
+		return 0, false
+	}
+	val, err := strconv.ParseInt(lit.Value, 0, 64)
+	if err != nil {
+		return 0, false
+	}
+	if neg {
+		return -val, true
+	}
+	return val, true
 }
 
 // isConstBoundExpr reports whether expr is a constant integer expression (literal, declared
@@ -903,20 +1542,26 @@ func (g *goScanner) loopHissBound(loop ast.Stmt, facts *fanoutFacts) (string, bo
 func isHissBoundLoop(loop ast.Stmt, target string, facts *fanoutFacts) bool {
 	switch l := loop.(type) {
 	case *ast.ForStmt:
-		if isConstCounterLoop(l, facts) {
-			return true
-		}
-		counter, ok := counterInitVar(l.Init, facts)
-		if !ok || !counterUpdatedInPost(l.Post, counter) {
-			return false
-		}
-		bound, ok := counterCondBound(l.Cond, counter)
-		return ok && matchesHissBoundTarget(bound, target, facts)
+		return isConstCounterLoop(l, facts) || isTargetCounterLoop(l, target, facts)
 	case *ast.RangeStmt:
 		return matchesHissBoundTarget(l.X, target, facts)
 	default:
 		return false
 	}
+}
+
+// isTargetCounterLoop reports whether loop advances a constant-initialized counter toward target.
+func isTargetCounterLoop(loop *ast.ForStmt, target string, facts *fanoutFacts) bool {
+	counter, initExpr, ok := counterInit(loop.Init, facts)
+	if !ok {
+		return false
+	}
+	step, ok := counterStep(loop.Post, counter, facts)
+	if !ok {
+		return false
+	}
+	bound, op, ok := counterCondBound(loop.Cond, counter)
+	return ok && matchesHissBoundTarget(bound, target, facts) && stepApproachesBound(op, step, initExpr, bound)
 }
 
 // matchesHissBoundTarget reports whether expr is a constant or the explicit int variable named
