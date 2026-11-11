@@ -519,9 +519,11 @@ fields:
       it fails to decode. The consumers read it from the .standards.yaml
       override.
     consumers:
-      - func: internal/forge.protectionRules
+      - func: internal/forge.GitHubDriver.ReconcileProtectionReport
         kind: acts
-        effect: renders the code_scanning rule next to a declared queue
+        effect: >-
+          drops live CodeQL default setup contexts from the merged ruleset only
+          under a declared queue
       - func: internal/forge.RenderRulesetForRepository
         kind: acts
         effect: >-
@@ -625,13 +627,23 @@ fields:
       - func: internal/forge.protectionRules
         kind: acts
         effect: >-
-          renders a code_scanning rule for CodeQL under a merge queue, where
-          default setup reports no status context for a merge group
+          renders a code_scanning rule for CodeQL whether or not a merge queue
+          is declared
       - func: internal/forge.protectionDocument
         kind: acts
         effect: >-
           drops the CodeQL default setup contexts from the required checks
           under a merge queue
+      - func: internal/forge.PriorRulesetDigests
+        kind: acts
+        effect: >-
+          accepts the rendering from before the key was declared as a prior, so
+          an unedited ruleset refreshes
+      - func: cmd/standardsctl.liveCodeQLDefaultSetupVerdict
+        kind: reports
+        effect: >-
+          fails the audit when GitHub's default setup state and the declaration
+          disagree
   - key: supply_chain.slsa_level
     go: [SupplyChainPolicy.SLSALevel]
     state: consumed
