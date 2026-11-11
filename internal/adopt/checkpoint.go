@@ -82,6 +82,8 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"dfe0975c01017ee575fdd57ecd28cb8963e253e4ccc698f83e63f3b1b3375a07": "snapshots of killed hooks swept after three hours",
 	},
 	checkpointLauncher: {
+		"9557cc1a4b4441bd551e273f4c9e16378fb88e750b8ed4156ffeacbe43c1f38a": "prefer untracked worktree virtualenvs",
+		"3d5840f0699e48b9c584037b6dc9c316203d00a2d8f81d2f50bdecf6b008d6a4": "adopter checkout virtualenv (ffmpeg patches #264)",
 		"8b6266ea16912a362c2e26d9a936887ca955ecf68f69744c935f2259d1a2c8dc": "proven interpreter candidates (#339)",
 		"28f19d46625ce26a3eeafd16d88abbc7fda68f46c677bcb6566cf8dc6c70f8fd": "drop Git repository selection before starting interpreter",
 		"577b85ce8fa4eb90aae8fa84b251ed828315baf5a20f5f249e346b74f49df622": "guards aligned as shfmt -i 2 -ci writes them",

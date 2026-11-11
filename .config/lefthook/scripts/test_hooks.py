@@ -4881,6 +4881,65 @@ class HookToolRestores(unittest.TestCase):
         self.assertIn("Restore: read .config/lefthook/tool-floors.txt", str(refused.exception))
 
 
+@unittest.skipIf(os.name == "nt", POSIX_STUB)
+class LauncherWorktree(unittest.TestCase):
+    """Exercise virtualenv selection in real linked Git worktrees."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="praetor-launcher-worktree-")
+        self.addCleanup(self.temp.cleanup)
+        base = Path(self.temp.name)
+        self.main = base / "main"
+        self.main.mkdir()
+        command(self.main, "git", "init", "-q", "-b", "main")
+        command(self.main, "git", "config", "user.name", "Fixture")
+        command(self.main, "git", "config", "user.email", "fixture@example.test")
+        command(self.main, "git", "commit", "-q", "--allow-empty", "-m", "initial")
+        self.worktree = base / "linked"
+        command(self.main, "git", "worktree", "add", "-q", "-b", "linked", str(self.worktree))
+        self.bin = base / "bin"
+        self.bin.mkdir()
+        (self.bin / "git").symlink_to(shutil.which("git"))
+
+    def launch(self):
+        env = dict(os.environ, PATH=str(self.bin))
+        return subprocess.run([shutil.which("sh") or "sh", str(ROOT / LAUNCHER), "hook.py"],
+                              cwd=self.worktree, env=env, capture_output=True, timeout=60,
+                              check=False)
+
+    def venv(self, root):
+        return interpreter_stand_in(root / ".venv/bin", "python3", "3.13\\n")
+
+    def test_launcher_uses_main_worktree_venv(self):
+        candidate = self.venv(self.main)
+        result = self.launch()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
+
+    def test_launcher_refuses_tracked_main_worktree_venv(self):
+        self.venv(self.main)
+        command(self.main, "git", "add", "-f", ".venv/bin/python3")
+        command(self.main, "git", "commit", "-q", "-m", "track interpreter")
+        candidate = interpreter_stand_in(self.bin, "python3", "3.13\\n")
+        result = self.launch()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
+
+    def test_launcher_reports_missing_venv_candidates(self):
+        result = self.launch()
+        self.assertEqual(result.returncode, 127, result.stderr)
+        for candidate in (self.worktree / ".venv/bin/python3", self.main / ".venv/bin/python3"):
+            self.assertIn(str(candidate).encode(), result.stderr)
+        self.assertIn(b"python3, python, py -3", result.stderr)
+
+    def test_launcher_prefers_checkout_venv(self):
+        self.venv(self.main)
+        candidate = self.venv(self.worktree)
+        result = self.launch()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.decode().strip(), f"stub:{candidate}:1:hook.py")
+
+
 class HookInterpreter(unittest.TestCase):
     """Every hook starts through one launcher, which proves its interpreter first (#339)."""
 
@@ -5063,7 +5122,8 @@ class HookInterpreter(unittest.TestCase):
                          list(toolchain.PYTHON_CANDIDATES))
         # A candidate is started exactly as it was proven, and nothing else is started.
         self.assertEqual([proved for proved, _ in lines], [started for _, started in lines])
-        self.assertEqual(len(re.findall(r"\bexec\b", launcher)), len(lines))
+        self.assertEqual(len(re.findall(r"\bexec\b", launcher)), len(lines) + 1)
+        self.assertIn('exec "$venv" "$@"', launcher)
         quoted_probe = re.escape("'" + toolchain.PYTHON_PROBE + "'")
         self.assertRegex(launcher, rf"\nprobe={quoted_probe} +#\n")
         major, minor = toolchain.PYTHON_FLOOR.split(".")

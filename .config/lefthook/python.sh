@@ -9,6 +9,9 @@
 # order, the same one the operator setting hooks.python defaults to
 # (internal/config/operator_sections.go) and scripts/toolchain.py declares.
 #
+# Try the checkout's untracked virtualenv first, then the main worktree's.
+# A tracked virtualenv can contain a fake interpreter and is never trusted.
+#
 # A candidate is trusted only once it has proven itself: it runs the probe and
 # must state Python 3 at or above the floor. A name on PATH proves nothing.
 # Windows puts python.exe and python3.exe there as Microsoft Store aliases,
@@ -56,6 +59,28 @@ proven() {                                                      #
   esac                                                          #
   [ "$minor" -ge "$floor" ]                                     #
 }                                                               #
+#
+# Check Git's index before trusting an interpreter inside a virtualenv.
+venv_candidate() {                                                                           #
+  venv="$1/.venv/bin/python3"                                                                #
+  directory=$1                                                                               #
+  shift                                                                                      #
+  if tracked=$(git -C "$directory" ls-files -- .venv 2>/dev/null) && [ -z "$tracked" ]; then #
+    if proven "$venv"; then                                                                  #
+      exec "$venv" "$@"                                                                      #
+    fi                                                                                       #
+  fi                                                                                         #
+}                                                                                            #
+#
+root=$(git rev-parse --show-toplevel 2>/dev/null) || root=''                               #
+if [ -n "$root" ]; then                                                                    #
+  venv_candidate "$root" "$@"                                                              #
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || common='' #
+  main=${common%/.git}                                                                     #
+  if [ "$main" != "$common" ] && [ "$main" != "$root" ]; then                              #
+    venv_candidate "$main" "$@"                                                            #
+  fi                                                                                       #
+fi                                                                                         #
 #
 if proven python3; then exec python3 "$@"; fi                                          #
 if proven python; then exec python "$@"; fi                                            #
