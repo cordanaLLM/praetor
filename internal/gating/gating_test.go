@@ -522,7 +522,7 @@ func TestRunSecurityStage_3D(t *testing.T) {
 	ctx := context.Background()
 
 	// Positive: both scanners present, gosec invoked with the pinned configuration and
-	// no exclusions.
+	// generated files excluded because they are not reviewable source.
 	goDir := newGoModuleDir(t)
 	writeFile(t, filepath.Join(goDir, GosecConfigFile), "{\"global\":{}}\n")
 	cfg, recorded := newTestConfig(t, goDir, false)
@@ -543,11 +543,11 @@ func TestRunSecurityStage_3D(t *testing.T) {
 		t.Fatalf("expected package listing, govulncheck and gosec to run, recorded %+v", *recorded)
 	}
 	gosecArgs := strings.Join((*recorded)[2].args, " ")
-	if (*recorded)[2].name != "gosec" || gosecArgs != "-fmt=json -conf "+GosecConfigFile+" ." {
+	if (*recorded)[2].name != "gosec" || gosecArgs != "-fmt=json -exclude-generated -conf "+GosecConfigFile+" ." {
 		t.Errorf("unexpected gosec invocation: %s %s", (*recorded)[2].name, gosecArgs)
 	}
-	if strings.Contains(gosecArgs, "-exclude") {
-		t.Errorf("gosec must run with zero exclusions, got: %s", gosecArgs)
+	if strings.Contains(gosecArgs, "-exclude=") {
+		t.Errorf("gosec must not exclude security rules, got: %s", gosecArgs)
 	}
 
 	// Negative: a missing scanner fails the stage instead of passing with nothing run.

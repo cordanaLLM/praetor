@@ -3,7 +3,7 @@
 The Security stage rejects gosec findings unless an existing baseline or a live, per-file
 exception covers them. Resolve each finding by fixing the code, adding a justified
 `#nosec Gxxx -- reason` comment at its line, or declaring a dated exception in `.standards.yaml`.
-The scanner configuration stays `.gosec.json`; exceptions do not change its enabled rules.
+The scanner configuration stays `.gosec.json`; exceptions do not change its enabled rules. The security stage passes `-exclude-generated` to gosec, excluding files with the standard generated-code header.
 
 ## Record an existing baseline
 

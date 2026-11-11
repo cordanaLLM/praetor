@@ -902,6 +902,8 @@ func judgeLocation(loc *FileLocation, mainRoot, hash string, exceptions []config
 	return live
 }
 
+// calculateScore deducts 100 times the number of findings divided by scanned functions;
+// the denominator is at least one and the score is bounded to 0..100.
 func calculateScore(report *DedupeReport) {
 	// A score over an empty set is not a result. This detector reads Go sources only, so on a
 	// TypeScript, Rust or Python repository it scanned nothing -- and reporting 100% and
@@ -917,7 +919,7 @@ func calculateScore(report *DedupeReport) {
 		report.Passed = false
 		return
 	}
-	deduction := float64(len(report.Duplicates)*15 + len(report.SprawlItems)*5)
+	deduction := 100 * float64(len(report.Duplicates)+len(report.SprawlItems)) / float64(max(1, report.TotalFuncsScanned))
 	score := 100.0 - deduction
 	if score < 0.0 {
 		score = 0.0

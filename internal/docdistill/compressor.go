@@ -14,6 +14,7 @@ import (
 	"unicode"
 
 	"github.com/cordanaLLM/praetor/internal/caveman"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 var (
@@ -87,6 +88,7 @@ var minTokenBudget = int(math.Ceil(float64(len(strings.Fields(truncationNotice))
 //
 // A sheet within budget is returned whole. Otherwise whole lines are kept while they fit,
 // the first line that does not is cut at a word boundary, and truncationNotice is appended.
+// If the cut falls inside a fenced block, the entire block is omitted.
 // Cutting by line rather than joining every word keeps each kept line's markdown, so a
 // quoted line stays quoted. The notice's words are reserved before any content is kept, so
 // the estimate of the result, which is what the doc reports, never exceeds the budget.
@@ -110,12 +112,29 @@ func fitTokenBudget(rawMD string, budget int) (string, int) {
 		kept = append(kept, lines[i])
 		allowance -= len(words)
 	}
-	body := strings.TrimRight(strings.Join(kept, "\n"), "\n")
+	body := strings.TrimRight(strings.Join(trimUnclosedFence(kept), "\n"), "\n")
 	truncated := truncationNotice + "\n"
 	if body != "" {
 		truncated = body + "\n\n" + truncated
 	}
 	return truncated, caveman.EstimateTokens(truncated)
+}
+
+// trimUnclosedFence removes the last block if the retained lines end inside it.
+func trimUnclosedFence(lines []string) []string {
+	var fence util.MarkdownFence
+	start := 0
+	for i, line := range lines {
+		wasOpen := fence.Open()
+		fence.Inside(strings.TrimSpace(line))
+		if !wasOpen && fence.Open() {
+			start = i
+		}
+	}
+	if fence.Open() {
+		return lines[:start]
+	}
+	return lines
 }
 
 func stripBoilerplate(text string) string {

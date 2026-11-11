@@ -1,0 +1,4 @@
+# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>
+# SPDX-License-Identifier: EUPL-1.2
+type: fixed
+title: Exclude generated files from gosec, scale dedupe scores by scan size, and keep distilled fences balanced.
