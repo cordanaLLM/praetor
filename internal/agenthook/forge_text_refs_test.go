@@ -102,6 +102,17 @@ func TestForgeTextRefsRefusedPerForm(t *testing.T) {
 	writeRefusedFormFixtures(t, root)
 
 	cases := []struct{ name, command, wantSpan string }{
+		{"substitution in data", "cat <<EOF\nreviewer's note $(gh pr comment 9 --body \"outside-org/project#42\")\nEOF", "outside-org/project#42"},
+		{"continued pipe write", "cat <<'EOF' | bash\ngh \\\npr comment 9 --body \"See outside-org/project#50\"\nEOF", "outside-org/project#50"},
+		{"printf before later heredoc", "printf '%s' 'outside-org/project#47' > missing-body.md; gh pr comment 9 --body-file missing-body.md; cat > missing-body.md <<'EOF'\nsafe\nEOF", "missing-body.md"},
+		{"heredoc after write", "gh pr comment 9 --body-file missing-body.md; cat > missing-body.md <<'EOF'\nsafe\nEOF", "missing-body.md"},
+		{"overwrite heredoc", "cat > missing-body.md <<'EOF'\nsafe\nEOF\necho x > missing-body.md\ngh pr comment 9 --body-file missing-body.md", "missing-body.md"},
+		{"append heredoc", "cat >> missing-body.md <<'EOF'\nsafe\nEOF\ngh pr comment 9 --body-file missing-body.md", "missing-body.md"},
+		{"directory changed", "cat > missing-body.md <<'EOF'\nsafe\nEOF\ncd other\ngh pr comment 9 --body-file missing-body.md", "missing-body.md"},
+		{"read variable with option", "D=a\ncat > $D/missing-body.md <<'EOF'\nsafe\nEOF\nread -r D\ngh pr comment 9 --body-file $D/missing-body.md", "missing-body.md"},
+		{"tee append", "tee -a missing-body.md <<'EOF'\nsafe\nEOF\ngh pr comment 9 --body-file missing-body.md", "missing-body.md"},
+		{"existing directory changed", "cat > missing-body.md <<'EOF'\nsafe\nEOF\ncd sub\ngh pr comment 9 --body-file missing-body.md", "missing-body.md"},
+		{"variable changed", "D=a\ncat > $D/missing-body.md <<'EOF'\nsafe\nEOF\nD=c\ngh pr comment 9 --body-file $D/missing-body.md", "missing-body.md"},
 		{"unrelated heredoc foreign", "cat <<EOF\noutside-org/project#47\nEOF\ngh pr comment 9 --body safe", "outside-org/project#47"},
 		{"heredoc variable file foreign", "D=.\ncat > $D/body.md <<'EOF'\nreviewer's outside-org/project#43\nEOF\ngh pr comment 9 --body-file $D/body.md", "outside-org/project#43"},
 		{"heredoc tabs foreign", "gh pr comment 9 --body-file - <<-'EOF'\n\treviewer's outside-org/project#44\n\tEOF\n", "outside-org/project#44"},
@@ -152,6 +163,7 @@ func TestForgeTextRefsAcceptedCases(t *testing.T) {
 		name    string
 		command string
 	}{
+		{name: "absolute cat target", command: "/usr/bin/cat > missing-body.md <<'EOF'\nsafe\nEOF\ngh pr comment 9 --body-file missing-body.md"},
 		{name: "python heredoc apostrophe without gh", command: "python3 - <<'EOF'\nreviewer's\nEOF\n"},
 		{name: "assignment heredoc written file apostrophe", command: "FOO=1 cat > body.md <<'EOF'\nreviewer's note\nEOF\ngh pr comment 9 --body-file body.md"},
 		{name: "heredoc written file apostrophe", command: "cat > body.md <<'EOF'\nreviewer's note\nEOF\ncd . && gh pr comment 9 --body-file body.md"},
@@ -203,6 +215,15 @@ func TestForgeTextRefsAcceptedCases(t *testing.T) {
 	}
 }
 
+// TestForgeTextRefsDataProse permits write-shaped prose without foreign references.
+func TestForgeTextRefsDataProse(t *testing.T) {
+	root := repositoryWithManifest(t, "version: 1\nrepository:\n  owner: repo-owner\n  name: governed-repo\n")
+	response := runPreToolCommand(t, root, "cat <<'EOF'\nmention gh pr comment in prose\nEOF\ngh pr comment 9 --body safe", nil)
+	if response.ExitCode != 0 {
+		t.Fatalf("expected allow: %s", response.Stderr)
+	}
+}
+
 // TestForgeTextRefsBoundaryAndFailClosedCases verifies that unreadable files, shell reader
 // errors on gh writes, and exceeded file, segment or word bounds fail closed.
 func TestForgeTextRefsBoundaryAndFailClosedCases(t *testing.T) {
@@ -213,6 +234,8 @@ func TestForgeTextRefsBoundaryAndFailClosedCases(t *testing.T) {
 		wantPath string
 	}{
 		{"unterminated heredoc", "gh pr comment 9 --body-file - <<'EOF'\ntext\n", "unterminated"},
+		{"reserved heredoc marker", "printf x > body.md PRAETOR_HEREDOC_MARKER_0; gh pr comment 9 --body-file body.md; cat > body.md <<'EOF'\nsafe\nEOF\n", "reserved here-document marker"},
+		{"reserved heredoc marker across a continuation", "printf x > body.md PRAETOR_HEREDOC_\\\nMARKER_0; gh pr comment 9 --body-file body.md; cat > body.md <<'EOF'\nsafe\nEOF\n", "reserved here-document marker"},
 		{"unresolved heredoc path", "cat > $D/body.md <<'EOF'\ntext\nEOF\ngh pr comment 9 --body-file $D/other.md", "$D/other.md"},
 		{"unreadable --body-file", `gh issue create --title "Title" --body-file missing-body.md`, "missing-body.md"},
 		{"unreadable gh api --input", `gh api repos/fleet-org/governed-repo/issues/1/comments --input absent.json`, "absent.json"},

@@ -390,23 +390,21 @@ func (l *shellLexer) arith(text string, i int, frame *shellFrame, b *strings.Bui
 
 // HereDoc contains a body, its command word and its literal output target, if recognized.
 type HereDoc struct {
-	Text    string
-	Target  string
-	Command string
+	Text      string
+	Target    string
+	Command   string
+	SafeWrite bool
 }
 
 // Data reports whether the owning command reads the here-document as data.
 func (h HereDoc) Data() bool {
-	word := h.Command
-	if strings.HasPrefix(word, "/") {
-		word = word[strings.LastIndex(word, "/")+1:]
-	}
+	word := hereDocBase(h.Command)
 	return word == "cat" || word == "tee" || word == "gh"
 }
 
 var hereDocCommand = regexp.MustCompile(`^\s*(?:[a-zA-Z_][a-zA-Z0-9_]*=(?:'[^']*'|"[^"]*"|\\.|[^\s;&|<>])*\s+)*([^\s;&|<>()]+)`)
 
-var hereDocTarget = regexp.MustCompile(`^\s*(?:cat\s*(?:>>|>)\s*|tee\s+)((?:'[^']*'|"[^"]*"|\\.|[^\s;&|<>])+?)\s*(?:[;&|()]|$)`)
+var hereDocTarget = regexp.MustCompile(`^\s*(?:(>)\s*|(?:\s+))((?:'[^']*'|"[^"]*"|\\.|[^\s;&|<>])+?)\s*$`)
 
 // hereDocSplit accumulates the lexer's bounded body and code output.
 type hereDocSplit struct {
@@ -414,20 +412,49 @@ type hereDocSplit struct {
 	code   strings.Builder
 	docs   []HereDoc
 	bodies []strings.Builder
+	marked bool
 }
 
-// SplitHereDocs removes redirects and preserves body lines, blanking data-body quotes.
-// Bodies are read by shellLexer, with the same delimiter and nesting bounds as the scanner.
+// SplitHereDocs removes redirects and data bodies while retaining code bodies.
 func SplitHereDocs(script string) (string, []HereDoc, error) {
-	lines := strings.SplitAfter(script, "\n")
-	if len(lines) > 100001 {
-		return "", nil, fmt.Errorf("here-document reader exceeds line limit")
+	return splitHereDocs(script, false)
+}
+
+// HereDocMarkerPrefix starts the word SplitHereDocsMarked inserts at each here-document redirect;
+// a command that holds it itself, after continuations are joined, is refused so no segment can claim
+// another segment's here-document.
+const HereDocMarkerPrefix = "PRAETOR_HEREDOC_MARKER_"
+
+// SplitHereDocsMarked inserts ordered markers at redirects for segment association. The marker check
+// joins backslash-newline continuations first, as forge.ShellFields does before it splits words.
+func SplitHereDocsMarked(script string) (string, []HereDoc, error) {
+	joined := strings.ReplaceAll(strings.ReplaceAll(script, "\r\n", "\n"), "\\\n", "")
+	if strings.Contains(joined, HereDocMarkerPrefix) {
+		return "", nil, fmt.Errorf("reserved here-document marker")
 	}
-	var split hereDocSplit
-	for i := 0; i < len(lines) && i < 100001; i++ {
-		if err := split.line(lines[i]); err != nil {
+	return splitHereDocs(script, true)
+}
+
+// splitHereDocs reads bounded physical lines without materializing a line slice.
+func splitHereDocs(script string, marked bool) (string, []HereDoc, error) {
+	if len(script) > 1<<20 {
+		return "", nil, fmt.Errorf("here-document reader exceeds byte limit")
+	}
+	split := hereDocSplit{marked: marked}
+	for i := 0; len(script) > 0 && i < 100001; i++ {
+		if i == 100000 {
+			return "", nil, fmt.Errorf("here-document reader exceeds line limit")
+		}
+		end := strings.IndexByte(script, '\n')
+		if end < 0 {
+			end = len(script)
+		} else {
+			end++
+		}
+		if err := split.line(script[:end]); err != nil {
 			return "", nil, err
 		}
+		script = script[end:]
 	}
 	if len(split.lexer.bodies) > 0 {
 		return "", nil, fmt.Errorf("unterminated here-document")
@@ -451,9 +478,7 @@ func (s *hereDocSplit) line(raw string) error {
 			index := len(s.docs) - before
 			body := &s.bodies[index]
 			body.WriteString(raw)
-			if s.docs[index].Data() {
-				s.code.WriteString(blankHereDocData(line))
-			} else {
+			if !s.docs[index].Data() {
 				s.code.WriteString(line)
 			}
 		}
@@ -464,20 +489,6 @@ func (s *hereDocSplit) line(raw string) error {
 		s.code.WriteByte('\n')
 	}
 	return nil
-}
-
-// blankHereDocData preserves words while neutralizing quotes and command substitutions.
-func blankHereDocData(line string) string {
-	body := []byte(line)
-	for i := 0; i < len(body) && i < maxHereDocLineBytes; i++ {
-		if body[i] == '$' && i+1 < len(body) && body[i+1] == '(' {
-			body[i], body[i+1] = ' ', ' '
-			i++
-		} else if strings.ContainsRune("'\"`\\", rune(body[i])) {
-			body[i] = ' '
-		}
-	}
-	return string(body)
 }
 
 // codeLine removes lexer-recognized redirects and records their output target.
@@ -495,13 +506,16 @@ func (s *hereDocSplit) codeLine(line string) error {
 	for i := 0; i < len(s.lexer.spans) && i < maxShellHeredocs; i++ {
 		span := s.lexer.spans[i]
 		filtered.WriteString(line[pos:span[0]])
+		if s.marked {
+			fmt.Fprintf(&filtered, " %s%d ", HereDocMarkerPrefix, len(s.docs)+i)
+		}
 		pos = span[1]
 	}
 	filtered.WriteString(line[pos:])
 	text := filtered.String()
 	for i := 0; i < len(s.lexer.spans) && i < maxShellHeredocs; i++ {
-		command, target := hereDocOutputTarget(line, s.lexer.spans, i)
-		s.docs = append(s.docs, HereDoc{Command: command, Target: target})
+		command, target, safe := hereDocOutputTarget(line, s.lexer.spans, i)
+		s.docs = append(s.docs, HereDoc{Command: command, Target: target, SafeWrite: safe})
 		s.bodies = append(s.bodies, strings.Builder{})
 	}
 	s.code.WriteString(text)
@@ -509,7 +523,7 @@ func (s *hereDocSplit) codeLine(line string) error {
 }
 
 // hereDocOutputTarget finds the command word and target in the redirect's simple command.
-func hereDocOutputTarget(line string, spans [][2]int, index int) (string, string) {
+func hereDocOutputTarget(line string, spans [][2]int, index int) (string, string, bool) {
 	start, end := 0, len(line)
 	var quote QuoteStepper
 	for i := 0; i < len(line) && i < maxHereDocLineBytes; i++ {
@@ -537,16 +551,31 @@ func hereDocOutputTarget(line string, spans [][2]int, index int) (string, string
 	return hereDocCommandAndTarget(command.String())
 }
 
-// hereDocCommandAndTarget extracts a literal command word and supported output target.
-func hereDocCommandAndTarget(text string) (string, string) {
+// hereDocBase normalizes an absolute command name for data and target detection.
+func hereDocBase(word string) string {
+	if i := strings.LastIndex(word, "/"); i >= 0 {
+		return word[i+1:]
+	}
+	return word
+}
+
+// hereDocCommandAndTarget extracts supported truncating output targets.
+func hereDocCommandAndTarget(text string) (string, string, bool) {
 	word := hereDocCommand.FindStringSubmatchIndex(text)
 	if len(word) < 4 {
-		return "", ""
+		return "", "", false
 	}
 	name := text[word[2]:word[3]]
-	match := hereDocTarget.FindStringSubmatch(text[word[2]:])
-	if len(match) > 1 {
-		return name, match[1]
+	base := hereDocBase(name)
+	match := hereDocTarget.FindStringSubmatch(text[word[3]:])
+	if len(match) < 3 {
+		return name, "", false
 	}
-	return name, ""
+	if base == "cat" && match[1] == ">" {
+		return name, match[2], true
+	}
+	if base == "tee" && match[1] == "" && !strings.HasPrefix(match[2], "-") {
+		return name, match[2], true
+	}
+	return name, "", false
 }

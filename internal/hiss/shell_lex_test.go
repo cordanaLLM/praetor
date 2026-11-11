@@ -17,15 +17,15 @@ func TestSplitHereDocs(t *testing.T) {
 	if docs[0].Text != "A \nreviewer's\n" || docs[0].Target != "'$D/body'" || docs[1].Text != "\ttwo\n" || docs[1].Target != "other" {
 		t.Fatalf("bodies: %#v", docs)
 	}
-	if !strings.Contains(code, "reviewer s") || !strings.Contains(code, "\ttwo") {
-		t.Fatalf("data body missing from code: %q", code)
+	if strings.Contains(code, "reviewer") || strings.Contains(code, "\ttwo") {
+		t.Fatalf("data body present in code: %q", code)
 	}
 }
 
-// TestSplitHereDocsBodyQuotes checks data neutralization and verbatim code bodies.
+// TestSplitHereDocsBodyQuotes checks data removal and verbatim code bodies.
 func TestSplitHereDocsBodyQuotes(t *testing.T) {
 	code, docs, err := SplitHereDocs("cat <<A\nit's \"quoted\" `x` \\y $(z)\nA\nbash <<B\necho \"quoted\"\nB\n")
-	if err != nil || len(docs) != 2 || !strings.Contains(code, "it s  quoted   x   y   z)") || !strings.Contains(code, `echo "quoted"`) {
+	if err != nil || len(docs) != 2 || strings.Contains(code, "quoted   x") || !strings.Contains(code, `echo "quoted"`) {
 		t.Fatalf("body transformation: %q %#v %v", code, docs, err)
 	}
 }
@@ -36,9 +36,9 @@ func TestSplitHereDocsBounds(t *testing.T) {
 	if err != nil || len(paired) != 2 || paired[0].Target != "first" || paired[1].Target != "second" {
 		t.Fatalf("paired targets: %#v, %v", paired, err)
 	}
-	for _, input := range []string{"cat <<EOF\nmissing\n", strings.Repeat("cat <<X\na\nX\n", maxShellHeredocs+1)} {
+	for _, input := range []string{strings.Repeat("x", 1<<19) + "\n" + strings.Repeat("x", 1<<19), "cat <<EOF\nmissing\n", strings.Repeat("cat <<X\na\nX\n", maxShellHeredocs+1)} {
 		if _, _, err := SplitHereDocs(input); err == nil {
-			t.Errorf("accepted invalid input: %q", input)
+			t.Errorf("accepted invalid input of %d bytes", len(input))
 		}
 	}
 }
