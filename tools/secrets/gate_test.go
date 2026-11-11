@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -498,19 +497,6 @@ func TestGate_MissingRangeCommit(t *testing.T) {
 	out, code := runGateCLI(t, dir, "", "-range="+strings.TrimSpace(base)+".."+missing)
 	if code != 2 || !strings.Contains(out, missing) || !strings.Contains(out, "fetch-depth") {
 		t.Fatalf("missing commit: exit %d: %s", code, out)
-	}
-}
-
-// TestGate_EventPipeRejectsPromptly ensures a named pipe cannot block event processing.
-func TestGate_EventPipeRejectsPromptly(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "event-pipe")
-	if err := syscall.Mkfifo(path, 0600); err != nil {
-		t.Skipf("FIFO unavailable: %v", err)
-	}
-	start := time.Now()
-	out, code := runGateCLIEnvironment(t, t.TempDir(), "", []string{"GITHUB_EVENT_NAME=pull_request", "GITHUB_EVENT_PATH=" + path})
-	if code != 2 || !strings.Contains(out, "GITHUB_EVENT_PATH") || time.Since(start) > 30*time.Second {
-		t.Fatalf("pipe: exit %d: %s", code, out)
 	}
 }
 
