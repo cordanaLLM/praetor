@@ -1423,6 +1423,7 @@ func retryModuleGo(ctx context.Context, moduleDir, dir, label string, args []str
 		}
 		attemptCtx, cancel := context.WithTimeout(ctx, timeout)
 		err := run(attemptCtx, moduleDir, io.Discard, stderr, "go", args...)
+		attemptErr := attemptCtx.Err()
 		cancel()
 		if err == nil {
 			return attempt, nil
@@ -1430,7 +1431,7 @@ func retryModuleGo(ctx context.Context, moduleDir, dir, label string, args []str
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return attempt, ctxErr
 		}
-		lastErr = err
+		lastErr = errors.Join(err, attemptErr)
 		if _, printErr := fmt.Fprintf(stderr, "%s failed for %s (attempt %d of %d): %v\n", label, dir, attempt, downloadAttempts, err); printErr != nil {
 			return attempt, printErr
 		}
@@ -1952,14 +1953,19 @@ func short(commit string) string {
 
 // runTool runs name args in dir under moduleTimeout.
 func runTool(ctx context.Context, dir string, stdout, stderr io.Writer, name string, args ...string) error {
-	ctx, cancel := context.WithTimeout(ctx, moduleTimeout)
+	return runToolWithTimeout(ctx, dir, stdout, stderr, moduleTimeout, name, args...)
+}
+
+// runToolWithTimeout executes a command with the supplied timeout.
+func runToolWithTimeout(ctx context.Context, dir string, stdout, stderr io.Writer, timeout time.Duration, name string, args ...string) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	// #nosec G204 -- callers pass the go or git command and fixed arguments; no shell runs.
 	command := exec.CommandContext(ctx, name, args...)
 	command.Dir = dir
 	command.Stdout, command.Stderr = stdout, stderr
 	if err := command.Run(); err != nil {
-		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), errors.Join(err, ctx.Err()))
 	}
 	return nil
 }

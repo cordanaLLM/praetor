@@ -874,3 +874,48 @@ func TestModuleDownloadArgs_UsesInjectedRunner(t *testing.T) {
 		t.Fatal("moduleDownloadArgs did not invoke injected toolRunner")
 	}
 }
+
+// TestDeadlineChild is a subprocess used to exercise an actual killed process.
+func TestDeadlineChild(t *testing.T) {
+	if len(os.Args) > 0 && os.Args[len(os.Args)-1] == "deadline-child" {
+		time.Sleep(10 * time.Second)
+	}
+}
+
+// TestRunToolDeadlineFatal verifies a subprocess timeout cannot be excused.
+func TestRunToolDeadlineFatal(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := t.Context()
+	err = runToolWithTimeout(parent, t.TempDir(), io.Discard, io.Discard, 100*time.Millisecond, executable, "-test.run=^TestDeadlineChild$", "--", "deadline-child")
+	if parent.Err() != nil {
+		t.Fatalf("parent context ended: %v", parent.Err())
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("runTool error = %v, want context.DeadlineExceeded", err)
+	}
+	repo := repository{today: time.Now().UTC(), exceptions: []exception{{Path: "mod/go.mod", Reason: "known failure", Expires: "2099-12-31"}}}
+	target := module{dir: "mod", path: "example.com/mod"}
+	_, fatal := buildFailureResult(parent, repo, target, err, &printer{w: io.Discard}, &printer{w: io.Discard})
+	if !errors.Is(fatal, context.DeadlineExceeded) {
+		t.Errorf("buildFailureResult error = %v, want fatal deadline", fatal)
+	}
+}
+
+// TestRetryModuleGoAttemptDeadlines preserves each expired attempt's context error.
+func TestRetryModuleGoAttemptDeadlines(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		parent := t.Context()
+		run := func(ctx context.Context, _ string, _, _ io.Writer, _ string, _ ...string) error {
+			<-ctx.Done()
+			return errors.New("signal: killed")
+		}
+		wait := func(context.Context, time.Duration) error { return nil }
+		count, err := retryModuleGo(parent, "unused", "mod", "download", nil, time.Millisecond, io.Discard, run, wait)
+		if parent.Err() != nil || count != downloadAttempts || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("parent = %v, attempts = %d, error = %v; want live parent, all attempts and deadline", parent.Err(), count, err)
+		}
+	})
+}

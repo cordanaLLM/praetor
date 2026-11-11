@@ -134,6 +134,8 @@ jobs:
 // internal/managedasset/testdata/shipped/api-compatibility.sha256 records every text ever
 // shipped, and TestShippedTextLedger fails until each outgoing text is listed here.
 var priorDigests = map[string]string{
+	// The gate before subprocess and retry deadlines remained fatal.
+	"c9c220c4f615f44bbb6c60ecd239e8d5de83927e75e1c98b8ac1cd7635c31600": Directory + "/" + GateFile,
 	// Emitted sources before complete docstring coverage and explained suppressions.
 	"15b167386b61a6d0a993ce661d49c3a4ce02d4cf2e244fdc0382420d05b2a8f5": Directory + "/" + GateFile,
 	"c52e0e4e59a015a7907ed8042e1cca1d83c15d44c6c1fb6e78c06ec7893ec7cb": Directory + "/" + PlaceholderFile,
