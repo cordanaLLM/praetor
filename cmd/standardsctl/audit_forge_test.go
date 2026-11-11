@@ -1144,3 +1144,28 @@ func TestAuditLiveCodeQLDefaultSetupWiring(t *testing.T) {
 	mustErrContain(t, err, "overrides.branch_protection.codeql_default_setup: true")
 	mustErrContain(t, err, "main")
 }
+
+// TestAuditLiveCodeQLDefaultSetupUnreadProtection checks CodeQL despite a failed protection read.
+func TestAuditLiveCodeQLDefaultSetupUnreadProtection(t *testing.T) {
+	f := protectedFixture(t, false, "", &forgeStub{rulesStatus: 403})
+	manifest, err := config.LoadManifest(f.manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := openActionsForge(t.Context(), f.dir, manifest.Repository, false)
+	live.codeQL = codeQLConfiguredReader{}
+	for _, declared := range []bool{false, true} {
+		policy := config.DefaultPolicy()
+		policy.BranchProtection.CodeQLDefaultSetup = declared
+		out, auditErr := captureStdout(t, func() error {
+			return auditLiveBranchProtection(t.Context(), manifest, f.dir, policy, live)
+		})
+		mustContain(t, out, "[SKIP] Live branch protection not compared with the forge")
+		if declared && auditErr != nil {
+			t.Fatalf("declared: %v", auditErr)
+		}
+		if !declared {
+			mustErrContain(t, auditErr, "[FAIL] main: CodeQL default setup is configured")
+		}
+	}
+}

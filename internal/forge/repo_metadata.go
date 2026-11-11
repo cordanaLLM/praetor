@@ -182,7 +182,7 @@ func (g *GitHubDriver) CodeQLDefaultSetupState(ctx context.Context) (string, err
 		return "", fmt.Errorf("read CodeQL default setup: %w", err)
 	}
 	if status != http.StatusOK {
-		return "", fmt.Errorf("read CodeQL default setup: HTTP %d", status)
+		return "", fmt.Errorf("read CodeQL default setup: HTTP %d: %s", status, util.BodyPreview(body))
 	}
 	var result struct {
 		State string `json:"state"`

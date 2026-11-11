@@ -152,7 +152,7 @@ func auditLiveBranchProtection(ctx context.Context, manifest *config.Manifest, r
 	switch {
 	case errors.As(err, &unread):
 		fmt.Printf("[SKIP] Live branch protection not compared with the forge: %v\n", err)
-		return nil
+		return liveCodeQLDefaultSetupVerdict(ctx, target, live.codeQL)
 	case err != nil:
 		return fmt.Errorf("[FAIL] Live branch protection audit failed: %w", err)
 	}

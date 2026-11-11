@@ -245,6 +245,10 @@ func PriorRulesetDigests(baseline RulesetBaseline, current []byte) map[string]st
 		queued.Policy.MergeQueue = true
 		queued.Contexts = baseline.QueuedContexts
 		addPriorBranches(priors, queued, current, "the ruleset of the repository's policy before it removed its merge queue")
+		if queued.Policy.CodeQLDefaultSetup {
+			queued.Policy.CodeQLDefaultSetup = false
+			addPriorBranches(priors, queued, current, "the ruleset before it removed the queue and declared CodeQL default setup")
+		}
 	}
 	if !baseline.Policy.MergeQueue && baseline.Policy.CodeQLDefaultSetup {
 		previous := baseline

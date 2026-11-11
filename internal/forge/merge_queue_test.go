@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -328,5 +330,50 @@ func TestCodeScanningPriorAcceptsExistingSetupWhenQueueAdded(t *testing.T) {
 	baseline := RulesetBaseline{Branch: "main", Policy: policy, Contexts: []string{"Build"}, UnqueuedContexts: []string{"Build", "CodeQL"}}
 	if _, known, _ := util.LookupCanonicalText(old, PriorRulesetDigests(baseline, current)); !known {
 		t.Fatal("the prior CodeQL rendering was not recognised when adding a queue")
+	}
+}
+
+// TestCodeScanningForbiddenIncludesMessage preserves the forge's explanation of a denied read.
+func TestCodeScanningForbiddenIncludesMessage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		if _, err := w.Write([]byte(`{"message":"secondary rate limit"}`)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	defer server.Close()
+	driver := NewGitHubDriver("stub-token", server.URL)
+	driver.SetRepository("acme", "widgets")
+	_, err := driver.CodeQLDefaultSetupState(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "HTTP 403") || !strings.Contains(err.Error(), "secondary rate limit") {
+		t.Fatalf("error = %v, want HTTP 403 and response message", err)
+	}
+}
+
+// TestCodeScanningPriorQueueRemovedAndSetupDeclared preserves the earlier queued rendering.
+func TestCodeScanningPriorQueueRemovedAndSetupDeclared(t *testing.T) {
+	policy := config.BranchProtectionPolicy{EnforceLinearHistory: true, RequiredApprovingReviewers: 1, CodeQLDefaultSetup: true}
+	queued := policy
+	queued.MergeQueue, queued.CodeQLDefaultSetup = true, false
+	onDisk, err := RenderRepositoryRuleset("main", queued, []string{"Build"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := RenderRepositoryRuleset("main", policy, []string{"Build", "Docs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := RulesetBaseline{Branch: "main", Policy: policy, Contexts: []string{"Build", "Docs"}, QueuedContexts: []string{"Build"}, queuedRead: true}
+	priors := PriorRulesetDigests(baseline, current)
+	if _, known, _ := util.LookupCanonicalText(onDisk, priors); !known {
+		t.Error("earlier queued rendering is not a prior")
+	}
+	queued.RequiredApprovingReviewers = 3
+	edited, err := RenderRepositoryRuleset("main", queued, []string{"Build"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, known, _ := util.LookupCanonicalText(edited, priors); known {
+		t.Error("edited rendering matched a prior")
 	}
 }
