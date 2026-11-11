@@ -10,8 +10,10 @@ import (
 )
 
 // FuzzLSPHandleMessage feeds arbitrary bytes (capped at 64 KiB) to a fresh server per input and
-// requires HandleMessage to return a JSON-RPC parse error for invalid JSON and a well-formed
-// response frame otherwise, never an error of its own.
+// requires HandleMessage to return a JSON-RPC parse error for invalid JSON, never an error of its
+// own, and for valid JSON a well-formed frame whenever it answers: a request with an id gets a
+// response unless it names a method the server handles as a notification, and a notification
+// gets none required.
 func FuzzLSPHandleMessage(f *testing.F) {
 	f.Add([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}`))
 	f.Add([]byte(`{"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"position":{"line":0,"character":0}}}`))
@@ -41,6 +43,7 @@ func FuzzLSPHandleMessage(f *testing.F) {
 			return
 		}
 		assertResponseFrame(t, resp)
+		assertRequestAnswered(t, data, resp)
 		assertNotifications(t, notifs)
 	})
 }
@@ -53,7 +56,8 @@ func assertParseError(t *testing.T, resp *JSONRPCResponse) {
 	}
 }
 
-// assertResponseFrame checks that a response, when present, is a well-formed JSON-RPC frame.
+// assertResponseFrame checks that a response, when present, is a well-formed JSON-RPC frame:
+// version 2.0, a top-level id member (null allowed) and exactly one top-level result or error.
 func assertResponseFrame(t *testing.T, resp *JSONRPCResponse) {
 	t.Helper()
 	if resp == nil {
@@ -62,14 +66,45 @@ func assertResponseFrame(t *testing.T, resp *JSONRPCResponse) {
 	if resp.JSONRPC != "2.0" {
 		t.Fatalf("response without jsonrpc version: %+v", resp)
 	}
-	wire, mErr := json.Marshal(resp)
-	if mErr != nil || !bytes.Contains(wire, []byte(`"id":`)) {
-		t.Fatalf("response frame must carry an id: %s err=%v", wire, mErr)
+	wire, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("response frame does not marshal: %v", err)
 	}
-	hasError := bytes.Contains(wire, []byte(`"error":`))
-	hasResult := bytes.Contains(wire, []byte(`"result":`))
-	if (resp.Error != nil) != hasError || (resp.Error != nil) == hasResult {
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(wire, &members); err != nil {
+		t.Fatalf("response frame is not a JSON object: %s err=%v", wire, err)
+	}
+	if _, ok := members["id"]; !ok {
+		t.Fatalf("response frame must carry a top-level id: %s", wire)
+	}
+	_, hasError := members["error"]
+	_, hasResult := members["result"]
+	if hasError == hasResult || hasError != (resp.Error != nil) {
 		t.Fatalf("frame must carry exactly one of result/error: %s", wire)
+	}
+}
+
+// notificationMethods are the methods the server handles as notifications: it sends no
+// response for them, even when a client attaches an id.
+var notificationMethods = map[string]bool{
+	"initialized":            true,
+	"exit":                   true,
+	"textDocument/didOpen":   true,
+	"textDocument/didChange": true,
+	"textDocument/didSave":   true,
+	"textDocument/didClose":  true,
+}
+
+// assertRequestAnswered requires a response for a request that carries a non-null id and names a
+// method outside notificationMethods.
+func assertRequestAnswered(t *testing.T, data []byte, resp *JSONRPCResponse) {
+	t.Helper()
+	var req JSONRPCRequest
+	if json.Unmarshal(data, &req) != nil || req.ID == nil || notificationMethods[req.Method] {
+		return
+	}
+	if resp == nil {
+		t.Fatalf("request %q with id %v got no response", req.Method, req.ID)
 	}
 }
 
