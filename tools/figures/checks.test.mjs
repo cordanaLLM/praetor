@@ -982,7 +982,7 @@ test('readBoundedBytes returns exact bytes at limit, refuses limit + 1 and refus
 
 test('readBoundedBytes refuses a FIFO without blocking', { timeout: 5000 }, (t) => withTempDir((dir) => {
   const fifo = join(dir, 'lock.fifo');
-  const made = spawnSync('mkfifo', [fifo]);
+  const made = spawnSync('mkfifo', [fifo], { timeout: 2000 });
   if (made.error?.code === 'ENOENT') {
     t.skip('mkfifo is unavailable on this platform');
     return;
