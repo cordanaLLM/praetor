@@ -2378,7 +2378,7 @@ Adopted HISS-14 message checks run at two local stages when adoption installs it
 | Stage | Command through the pinned engine launcher | Failure action |
 | --- | --- | --- |
 | `commit-msg` | `praetorctl forge check-message {1}` | Blocks a commit with an invalid subject or a breaking marker without a `Migration:` footer. |
-| `pre-push` | `praetorctl forge check-commits --pre-push` | Blocks a push if any commit in the resolved range violates the same policy. |
+| `pre-push` | `praetorctl forge check-commits --pre-push --remote=<remote>` | Blocks a push if any commit the push adds to `<remote>` (git passes the remote name as the hook's first argument) violates the same policy. |
 
 The pre-push script job (`.lefthook/pre-push/praetor-commit-policy.sh`) runs even when Lefthook reports no pushed files, including empty commits and histories whose file changes cancel out. It uses the same engine launcher as the command jobs. The pre-push mode checks `base..HEAD`, using `git merge-base` with the branch's upstream. Without an upstream, it uses the existing default-branch resolver (`repository.default_branch`, the recorded origin HEAD, then `main`), preferring the local `origin` tracking ref over the local branch. It performs no fetch. Detached HEAD, a missing or unrelated base, and an empty range fail with a diagnostic rather than claiming that commits were checked. CI retains its explicit `--base=<ref> --head=<ref>` interface. These jobs share the message policy in `internal/forge/commit_message.go`; they do not compare APIs. Go API comparison remains conditional on `api:public-contract` and `.github/workflows/praetor-api.yml`.
 

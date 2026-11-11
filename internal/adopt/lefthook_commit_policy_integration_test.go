@@ -45,12 +45,12 @@ func TestLefthookCommitPolicy_Negative_EmptyDiffStillRuns(t *testing.T) {
 	mustWrite(t, filepath.Join(repo, filepath.FromSlash(commitPolicyScriptFile)), buildCommitPolicyScript())
 	for _, code := range []int{0, 19} {
 		recordingStub(t, stubs, util.PraetorCLI, log, code)
-		out, err := util.RunCommand(ctx, repo, lefthook, "run", "pre-push", "--job", commitPolicyScriptName, "--no-auto-install")
+		out, err := util.RunCommand(ctx, repo, lefthook, "run", "pre-push", "--job", commitPolicyScriptName, "--no-auto-install", "origin", "https://example.invalid/r.git")
 		if (err == nil) != (code == 0) {
 			t.Fatalf("empty-diff script exit with policy code %d: %v\n%s", code, err, out)
 		}
 	}
-	want := util.PraetorCLI + " forge check-commits --pre-push\n"
+	want := util.PraetorCLI + " forge check-commits --pre-push --remote=origin\n"
 	if got := mustRead(t, log); got != want+want {
 		t.Fatalf("empty-diff script calls = %q", got)
 	}

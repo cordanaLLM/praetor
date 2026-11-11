@@ -24,7 +24,7 @@ func buildCommitPolicyScript() string {
 	return "#!/bin/sh\n# SPDX-FileCopyrightText: 2026 Lusoris <lusoris@pm.me>\n" +
 		"# SPDX-License-Identifier: EUPL-1.2\n" +
 		"set -eu\n" +
-		"exec " + lefthookGovernedCommand("forge check-commits --pre-push") + "\n"
+		"exec " + lefthookGovernedCommand("forge check-commits --pre-push --remote=\"$1\"") + "\n"
 }
 
 // REUSE-IgnoreEnd
@@ -41,7 +41,7 @@ func reconcileCommitPolicyScript(ctx context.Context, s *adoptSession) error {
 		rel: commitPolicyScriptFile, perm: filePerm, content: []byte(content),
 		created:  "Installed pre-push commit policy script; checks commits even with an empty file diff",
 		verified: "Existing pre-push commit policy script verified present",
-		prior:    map[string]string{digest: "pre-push commit policy"},
+		prior:    map[string]string{digest: "pre-push commit policy", priorCommitPolicyScriptDigest: "pre-push commit policy before remote"},
 	})
 	if err != nil {
 		return err

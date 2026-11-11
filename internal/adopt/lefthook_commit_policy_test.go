@@ -169,11 +169,11 @@ func TestCommitPolicyScript_PositiveNegativeBoundary(t *testing.T) {
 	mustWrite(t, filepath.Join(work, filepath.FromSlash(commitPolicyScriptFile)), buildCommitPolicyScript())
 	for _, code := range []int{0, 17} {
 		recordingStub(t, stubs, util.PraetorCLI, log, code)
-		if out, got := runHookLine(t, "sh", "sh "+commitPolicyScriptFile, stubs, work); got != code {
+		if out, got := runHookLine(t, "sh", "sh "+commitPolicyScriptFile+" origin https://example.invalid/r.git", stubs, work); got != code {
 			t.Fatalf("policy script exit %d, want %d: %s", got, code, out)
 		}
 	}
-	want := strings.Repeat(util.PraetorCLI+" forge check-commits --pre-push\n", 2)
+	want := strings.Repeat(util.PraetorCLI+" forge check-commits --pre-push --remote=origin\n", 2)
 	if got := mustRead(t, log); got != want {
 		t.Fatalf("script arguments = %q, want %q", got, want)
 	}

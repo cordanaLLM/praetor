@@ -22,6 +22,9 @@ const (
 	maxReportedJobs = 5
 )
 
+// priorCommitPolicyScriptDigest identifies the generated pre-push script before remote scoping.
+const priorCommitPolicyScriptDigest = "5cb5ea9820fbabebe81af433919b3aee77eaf232ea36be834f8b41e03e63910c"
+
 // priorLefthookDigests are the digests (priorRendering) of every lefthook.yml Praetor generated
 // before the current template, keyed to what produced them. Like isLegacyVerificationMakefile,
 // only these texts are recognised, in either consistent line-ending style: adoption migrates

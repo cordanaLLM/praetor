@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -37,7 +38,7 @@ func printForgeUsage() {
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  sync-wiki [--output=docs/wiki]        Generate git-backed wiki documentation suite")
 	fmt.Println("  validate-pr <pr-body-file>            Verify HISS checklist and the Ed25519 Exit-0 receipt")
-	fmt.Println("  check-commits (--base=<ref> | --pre-push) [--head=HEAD] [--exclude=REV] [--first-parent]")
+	fmt.Println("  check-commits (--base=<ref> | --pre-push --remote=<name>) [--head=HEAD] [--exclude=REV] [--first-parent]")
 	fmt.Println("                                        Enforce the commit message policy on a commit range")
 	fmt.Println("  refactor-check --base=<ref> [--head=HEAD] [--run-tests]  Check refactor commits in a range")
 	fmt.Println("  check-message <commit-message-file>   Enforce the commit message policy on one message (commit-msg hook)")
@@ -292,12 +293,17 @@ func commitRange(ctx context.Context, repoDir, base, head string, opts ...any) (
 		logArgs = append(logArgs, "--first-parent")
 	}
 	if base == "" {
-		logArgs = append(logArgs, head, "--not", "--remotes")
+		logArgs = append(logArgs, head)
+		for _, opt := range opts {
+			if remote, ok := opt.(string); ok && remote != "" {
+				logArgs = append(logArgs, "--not", "--remotes="+remote)
+			}
+		}
 	} else {
 		logArgs = append(logArgs, base+".."+head)
 	}
 	if len(excludes) > 0 {
-		if base != "" {
+		if base != "" || !slices.Contains(logArgs, "--not") {
 			logArgs = append(logArgs, "--not")
 		}
 		logArgs = append(logArgs, excludes...)
@@ -352,6 +358,7 @@ func runForgeCheckCommits(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("forge check-commits", flag.ContinueOnError)
 	base := fs.String("base", "", "Base revision of the range to analyze (required unless --pre-push)")
 	prePush := fs.Bool("pre-push", false, "Check branch updates read from git pre-push stdin")
+	remote := fs.String("remote", "", "Push destination remote name (required with --pre-push)")
 	head := fs.String("head", "HEAD", "Head revision of the range to analyze")
 	repoDir := fs.String("repo", ".", "Repository directory")
 	token := fs.String("token", "", "Forge API token for closing-reference resolution in CI (default: GITHUB_TOKEN, then GH_TOKEN)")
@@ -367,7 +374,7 @@ func runForgeCheckCommits(ctx context.Context, args []string) error {
 	if len(rest) != 0 {
 		return fmt.Errorf("forge check-commits accepts no positional arguments, got %q", rest)
 	}
-	messages, err := forgeCheckCommitInput(ctx, *repoDir, *base, *head, *prePush, []string(excludes), *firstParent)
+	messages, err := forgeCheckCommitInput(ctx, *repoDir, *base, *head, *prePush, *remote, []string(excludes), *firstParent)
 	if err != nil {
 		return err
 	}

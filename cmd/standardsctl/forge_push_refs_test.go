@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-func pushInput(t *testing.T, dir, input string) (string, error) {
+func pushInput(t *testing.T, dir, input string, remote ...string) (string, error) {
 	t.Helper()
 	f, err := os.CreateTemp(t.TempDir(), "stdin")
 	if err != nil {
@@ -31,7 +31,12 @@ func pushInput(t *testing.T, dir, input string) (string, error) {
 			t.Error(err)
 		}
 	}()
-	return captureStdout(t, func() error { return runForge([]string{"check-commits", "--pre-push", "--repo=" + dir}) })
+	args := []string{"check-commits", "--pre-push", "--repo=" + dir}
+	if remote == nil {
+		remote = []string{"--remote=origin"}
+	}
+	args = append(args, remote...)
+	return captureStdout(t, func() error { return runForge(args) })
 }
 
 func pushOID(t *testing.T, dir string, env []string, ref string) string {
