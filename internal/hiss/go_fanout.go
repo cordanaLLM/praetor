@@ -24,6 +24,7 @@ import (
 type fanoutFacts struct {
 	consts        map[string]bool
 	posConsts     map[string]bool
+	redeclared    map[string]bool
 	arrays        map[string]token.Pos
 	nonZeroArrays map[string]token.Pos
 	ints          map[string]bool
@@ -86,9 +87,10 @@ func (f *fanoutFacts) clearName(name string) {
 	delete(f.tokenChans, name)
 }
 
-// inspectBounded walks root up to maxNodeStack AST nodes, marking ScanReport.Truncated and
-// returning false when the bound stops the traversal before completion.
-func (g *goScanner) inspectBounded(root ast.Node, visit func(ast.Node) bool) bool {
+// inspectBounded walks root up to maxNodeStack AST nodes and returns false when the bound stops
+// the traversal before completion. The bound is local to the inspected subtree and does not mark
+// the repository-wide ScanReport truncated.
+func (*goScanner) inspectBounded(root ast.Node, visit func(ast.Node) bool) bool {
 	if root == nil {
 		return true
 	}
@@ -105,11 +107,7 @@ func (g *goScanner) inspectBounded(root ast.Node, visit func(ast.Node) bool) boo
 		steps++
 		return visit(n)
 	})
-	if truncated {
-		g.rep.Truncated = true
-		return false
-	}
-	return true
+	return !truncated
 }
 
 // checkGoFanoutNode dispatches HISS-06 bounded-concurrency checks when the walk reaches a go
@@ -122,8 +120,8 @@ func (g *goScanner) checkGoFanoutNode(n ast.Node) {
 	g.checkGoFanout(goStmt)
 }
 
-// checkGoFanout reports a go statement inside a for or range body when any bounded AST walk
-// truncates or any enclosing loop lacks a HISS-06 concurrency bound.
+// checkGoFanout reports a go statement inside a for or range body when the enclosing function's
+// fact or declaration walk hits maxNodeStack or any enclosing loop lacks a HISS-06 concurrency bound.
 func (g *goScanner) checkGoFanout(goStmt *ast.GoStmt) {
 	loops, fnRoot := g.enclosingFanoutLoops()
 	if len(loops) == 0 || fnRoot == nil {
@@ -131,7 +129,7 @@ func (g *goScanner) checkGoFanout(goStmt *ast.GoStmt) {
 	}
 	facts, ok := g.collectFanoutFacts(fnRoot, loops, goStmt.Pos())
 	if !ok {
-		g.recordFanoutViolation(goStmt)
+		g.recordFanoutBoundExceeded(goStmt)
 		return
 	}
 	for i := 0; i < len(loops); i++ {
@@ -140,6 +138,13 @@ func (g *goScanner) checkGoFanout(goStmt *ast.GoStmt) {
 			return
 		}
 	}
+}
+
+// recordFanoutBoundExceeded records a local HISS-06 diagnostic naming maxNodeStack when a
+// function's declaration or fact walk exceeds the HISS-06 analysis bound.
+func (g *goScanner) recordFanoutBoundExceeded(goStmt *ast.GoStmt) {
+	g.record("HISS-06", goStmt.Pos(), g.enclosingFunctionName(),
+		fmt.Sprintf("fan-out bound not provable: function exceeds the HISS-06 analysis bound of %d nodes", maxNodeStack))
 }
 
 // recordFanoutViolation records a HISS-06 diagnostic on goStmt.
@@ -200,6 +205,7 @@ func (g *goScanner) collectFanoutFacts(fnRoot ast.Node, loops []ast.Stmt, goPos 
 	facts := fanoutFacts{
 		consts:        make(map[string]bool),
 		posConsts:     make(map[string]bool),
+		redeclared:    make(map[string]bool),
 		arrays:        make(map[string]token.Pos),
 		nonZeroArrays: make(map[string]token.Pos),
 		ints:          make(map[string]bool),
@@ -267,7 +273,7 @@ func recordConstSpecFacts(spec *ast.ValueSpec, specIndex int, iotaActive bool, f
 	}
 	for i := 0; i < len(spec.Names); i++ {
 		ident := spec.Names[i]
-		if ident == nil || ident.Name == "_" {
+		if ident == nil || ident.Name == "_" || facts.redeclared[ident.Name] {
 			continue
 		}
 		facts.consts[ident.Name] = true
@@ -339,10 +345,10 @@ func (g *goScanner) recordSpecLimiterFact(name string, pos token.Pos, typ, val a
 	case g.isErrgroupType(typ) || g.isErrgroupValue(val):
 		recordBoundPos(facts.errgroups, name, pos, facts)
 		return true
-	case g.isSemaphoreType(typ) || g.isSemaphoreValue(val):
+	case (val == nil && g.isSemaphoreType(typ)) || g.isSemaphoreValue(val, g.line(pos), facts):
 		recordBoundPos(facts.semaphores, name, pos, facts)
 		return true
-	case isBufferedChanMake(val):
+	case g.isBufferedChanMake(val, g.line(pos), facts):
 		recordBoundPos(facts.tokenChans, name, pos, facts)
 		return true
 	default:
@@ -362,20 +368,21 @@ func (g *goScanner) collectFuncFanoutFacts(fnRoot ast.Node, fileDecls map[string
 	if !ok {
 		return false
 	}
-	for name := range localDecls {
+	for name, count := range localDecls {
 		facts.clearName(name)
+		if count+fileDecls[name] > 1 {
+			facts.redeclared[name] = true
+		}
 	}
+	facts.lenRedeclared = localDecls["len"]+fileDecls["len"] > 0
 	if !g.inspectBounded(fnRoot, func(n ast.Node) bool {
 		g.recordFuncNodeFacts(n, facts)
 		return true
 	}) {
 		return false
 	}
-	facts.lenRedeclared = localDecls["len"]+fileDecls["len"] > 0
-	for name, count := range localDecls {
-		if count+fileDecls[name] > 1 {
-			facts.clearName(name)
-		}
+	for name := range facts.redeclared {
+		facts.clearName(name)
 	}
 	return true
 }
@@ -555,9 +562,9 @@ func (g *goScanner) classifyAssignedValue(ident *ast.Ident, rhs ast.Expr, define
 		}
 	case g.isErrgroupValue(rhs):
 		recordBoundPos(facts.errgroups, name, pos, facts)
-	case g.isSemaphoreValue(rhs):
+	case g.isSemaphoreValue(rhs, g.line(pos), facts):
 		recordBoundPos(facts.semaphores, name, pos, facts)
-	case isBufferedChanMake(rhs):
+	case g.isBufferedChanMake(rhs, g.line(pos), facts):
 		recordBoundPos(facts.tokenChans, name, pos, facts)
 	default:
 		if defined && isIntCandidateValue(rhs) {
@@ -721,9 +728,9 @@ func (g *goScanner) isSemaphoreType(expr ast.Expr) bool {
 	return g.matchesPkgType(expr, "golang.org/x/sync/semaphore", "semaphore", "Weighted")
 }
 
-// isSemaphoreValue reports whether expr constructs a *semaphore.Weighted via NewWeighted or
-// composite literal.
-func (g *goScanner) isSemaphoreValue(expr ast.Expr) bool {
+// isSemaphoreValue reports whether expr constructs a *semaphore.Weighted via NewWeighted with a
+// bounded weight (isConstBoundExpr or //hiss:bound on declLine) or via composite literal.
+func (g *goScanner) isSemaphoreValue(expr ast.Expr, declLine int, facts *fanoutFacts) bool {
 	if expr == nil {
 		return false
 	}
@@ -735,7 +742,9 @@ func (g *goScanner) isSemaphoreValue(expr ast.Expr) bool {
 	case *ast.CompositeLit:
 		return g.isSemaphoreType(x.Type)
 	case *ast.CallExpr:
-		return g.matchesPkgSelector(x.Fun, "golang.org/x/sync/semaphore", "semaphore", "NewWeighted")
+		return len(x.Args) == 1 && !x.Ellipsis.IsValid() &&
+			g.matchesPkgSelector(x.Fun, "golang.org/x/sync/semaphore", "semaphore", "NewWeighted") &&
+			g.isNonZeroChanCap(x.Args[0], declLine, facts)
 	default:
 		return false
 	}
@@ -777,8 +786,8 @@ func (g *goScanner) matchesPkgSelector(expr ast.Expr, importPath, defaultPkg, sy
 	}
 }
 
-// isBufferedChanMake reports whether expr is make(chan T, cap) with a non-zero capacity argument.
-func isBufferedChanMake(expr ast.Expr) bool {
+// isBufferedChanMake reports whether expr is make(chan T, cap) with a bounded non-zero capacity.
+func (g *goScanner) isBufferedChanMake(expr ast.Expr, declLine int, facts *fanoutFacts) bool {
 	call, ok := ast.Unparen(expr).(*ast.CallExpr)
 	if !ok || len(call.Args) != 2 || call.Ellipsis.IsValid() {
 		return false
@@ -788,23 +797,28 @@ func isBufferedChanMake(expr ast.Expr) bool {
 		return false
 	}
 	_, isChan := ast.Unparen(call.Args[0]).(*ast.ChanType)
-	return isChan && isNonZeroChanCap(call.Args[1])
+	return isChan && g.isNonZeroChanCap(call.Args[1], declLine, facts)
 }
 
-// isNonZeroChanCap reports whether a channel capacity argument is not a zero or negative literal.
-func isNonZeroChanCap(expr ast.Expr) bool {
-	if expr == nil {
+// isNonZeroChanCap reports whether a channel capacity or semaphore weight argument is non-zero,
+// non-negative, and proven bounded by isConstBoundExpr or a //hiss:bound comment on declLine.
+func (g *goScanner) isNonZeroChanCap(expr ast.Expr, declLine int, facts *fanoutFacts) bool {
+	if expr == nil || isNonPositiveCapLiteral(expr) {
 		return false
 	}
-	expr = ast.Unparen(expr)
-	if u, ok := expr.(*ast.UnaryExpr); ok && u.Op == token.SUB {
-		return false
+	if facts != nil && facts.hissBounds[declLine] != "" {
+		return true
 	}
-	if lit, ok := expr.(*ast.BasicLit); ok && lit.Kind == token.INT {
-		val, err := strconv.ParseUint(lit.Value, 0, 64)
-		return err == nil && val > 0
+	return g.isConstBoundExpr(expr, facts)
+}
+
+// isNonPositiveCapLiteral reports whether expr is a zero or negative integer literal or unary negation.
+func isNonPositiveCapLiteral(expr ast.Expr) bool {
+	if val, ok := signedIntLiteral(expr); ok {
+		return val <= 0
 	}
-	return true
+	u, ok := ast.Unparen(expr).(*ast.UnaryExpr)
+	return ok && u.Op == token.SUB
 }
 
 // isPositiveWeight reports whether expr is a proven positive semaphore weight: a positive integer
@@ -867,6 +881,7 @@ func receiverBaseIdent(expr ast.Expr) (string, bool) {
 type dominatingStep struct {
 	loopBody *ast.BlockStmt
 	stmt     ast.Stmt
+	nextStmt ast.Stmt
 	ifBody   *ast.IfStmt
 	endPos   token.Pos
 }
@@ -915,11 +930,25 @@ func stackFrameDominates(body *ast.BlockStmt, frame, nextNode ast.Node, goPos to
 	}
 	stmts := frameStmtList(frame)
 	for i := 0; i < len(stmts) && stmts[i].End() <= goPos; i++ {
-		if accept(dominatingStep{loopBody: body, stmt: unwrapLabeledStmt(stmts[i]), endPos: stmts[i].End()}) {
+		if accept(dominatingStep{
+			loopBody: body,
+			stmt:     unwrapLabeledStmt(stmts[i]),
+			nextStmt: dominatingNextStmt(stmts, i, goPos),
+			endPos:   stmts[i].End(),
+		}) {
 			return true
 		}
 	}
 	return false
+}
+
+// dominatingNextStmt returns the unwrapped statement immediately following stmts[idx] when it also
+// completes at or before goPos.
+func dominatingNextStmt(stmts []ast.Stmt, idx int, goPos token.Pos) ast.Stmt {
+	if idx+1 >= len(stmts) || stmts[idx+1].End() > goPos {
+		return nil
+	}
+	return unwrapLabeledStmt(stmts[idx+1])
 }
 
 // frameStmtList returns the statement slice of a block, switch case or select comm clause.
@@ -965,8 +994,9 @@ func (g *goScanner) hasSemaphoreAcquireInLoops(loops []ast.Stmt, goStmt *ast.GoS
 		if !ok {
 			return false
 		}
-		return !g.hasReleaseBetween(step.loopBody, sem, step.endPos, goStmt.Pos()) &&
-			g.goroutineReleasesSemaphore(goStmt, sem, facts)
+		return !g.hasReleaseBetween(step.loopBody, step.endPos, goStmt.Pos(), func(n ast.Node) bool {
+			return isSemaphoreReleaseSelector(n, sem)
+		}) && g.goroutineReleasesSemaphore(goStmt, sem, facts)
 	})
 }
 
@@ -975,18 +1005,18 @@ func (g *goScanner) stepAcquiresSemaphore(step dominatingStep, facts *fanoutFact
 	if step.ifBody != nil {
 		return ifBodyAcquiresSemaphore(step.ifBody, facts)
 	}
-	return g.stmtDominatesWithAcquire(step.stmt, facts)
+	return g.stmtDominatesWithAcquire(step.stmt, step.nextStmt, facts)
 }
 
-// hasReleaseBetween reports whether body mentions sem.Release in [from, to) before the launch or
-// hits maxNodeStack before completing the scan.
-func (g *goScanner) hasReleaseBetween(body *ast.BlockStmt, sem string, from, to token.Pos) bool {
+// hasReleaseBetween reports whether any node in body overlapping [from, to) satisfies match before
+// the launch or hits maxNodeStack before completing the scan.
+func (g *goScanner) hasReleaseBetween(body *ast.BlockStmt, from, to token.Pos, match func(ast.Node) bool) bool {
 	found := false
 	complete := g.inspectBounded(body, func(n ast.Node) bool {
 		if found || n.Pos() >= to || n.End() <= from {
 			return false
 		}
-		if isSemaphoreReleaseSelector(n, sem, from, to) {
+		if n.Pos() >= from && match(n) {
 			found = true
 			return false
 		}
@@ -995,10 +1025,10 @@ func (g *goScanner) hasReleaseBetween(body *ast.BlockStmt, sem string, from, to 
 	return found || !complete
 }
 
-// isSemaphoreReleaseSelector reports whether n is a sem.Release selector inside [from, to).
-func isSemaphoreReleaseSelector(n ast.Node, sem string, from, to token.Pos) bool {
+// isSemaphoreReleaseSelector reports whether n is a sem.Release selector.
+func isSemaphoreReleaseSelector(n ast.Node, sem string) bool {
 	sel, ok := n.(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "Release" || sel.Pos() < from || sel.Pos() >= to {
+	if !ok || sel.Sel.Name != "Release" {
 		return false
 	}
 	recv, ok := receiverBaseIdent(sel.X)
@@ -1058,22 +1088,34 @@ func isConditionalOrAsyncNode(n ast.Node) bool {
 	}
 }
 
-// stmtDominatesWithAcquire returns the acquired semaphore name when stmt acquires a tracked
-// semaphore on every path that falls through stmt.
-func (g *goScanner) stmtDominatesWithAcquire(stmt ast.Stmt, facts *fanoutFacts) (string, bool) {
+// stmtDominatesWithAcquire returns the acquired semaphore name when stmt (paired with nextStmt in
+// the same block for split assignments) acquires a tracked semaphore on every fallthrough path.
+func (g *goScanner) stmtDominatesWithAcquire(stmt, nextStmt ast.Stmt, facts *fanoutFacts) (string, bool) {
 	switch s := stmt.(type) {
-	case *ast.ExprStmt:
-		return semaphoreMethodCallTarget(s.X, "Acquire", facts)
 	case *ast.AssignStmt:
-		if len(s.Lhs) != 1 || len(s.Rhs) != 1 {
-			return "", false
-		}
-		return semaphoreMethodCallTarget(s.Rhs[0], "Acquire", facts)
+		return g.splitAcquireDominates(s, nextStmt, facts)
 	case *ast.IfStmt:
 		return g.ifGuardDominatesWithAcquire(s, facts)
 	default:
 		return "", false
 	}
+}
+
+// splitAcquireDominates matches `err := sem.Acquire(ctx, n)` (or `=`) when nextStmt in the same
+// block is `if err != nil { <terminates> }` on that error identifier.
+func (g *goScanner) splitAcquireDominates(assign *ast.AssignStmt, nextStmt ast.Stmt, facts *fanoutFacts) (string, bool) {
+	errName, sem, ok := assignSemaphoreCallIdent(assign, "Acquire", facts)
+	if !ok {
+		return "", false
+	}
+	guard, ok := nextStmt.(*ast.IfStmt)
+	if !ok || guard.Init != nil || !isIdentNilComparison(guard.Cond, errName, token.NEQ) {
+		return "", false
+	}
+	if !g.blockTerminates(guard.Body) {
+		return "", false
+	}
+	return sem, true
 }
 
 // ifGuardDominatesWithAcquire checks `if err := sem.Acquire(...); err != nil { <terminates> }`,
@@ -1118,7 +1160,7 @@ func initGuardSemaphoreTarget(ifStmt *ast.IfStmt, facts *fanoutFacts, nilOp toke
 // sem.<method>(...) in initStmt.
 func assignSemaphoreCallIdent(initStmt ast.Stmt, method string, facts *fanoutFacts) (string, string, bool) {
 	assign, ok := initStmt.(*ast.AssignStmt)
-	if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+	if !ok || (assign.Tok != token.DEFINE && assign.Tok != token.ASSIGN) || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
 		return "", "", false
 	}
 	ident, ok := assign.Lhs[0].(*ast.Ident)
@@ -1413,17 +1455,32 @@ func testingParamShadowedAt(fn *ast.FuncDecl, param string, pos token.Pos) bool 
 }
 
 // hasTokenChannelBound reports whether a dominating send on a buffered token channel declared
-// outside the enclosing loops is paired with a deferred or final-statement receive in goStmt.
+// outside the enclosing loops stays unreceived before goStmt and is paired with a deferred or
+// final-statement receive in goStmt.
 func (g *goScanner) hasTokenChannelBound(loops []ast.Stmt, goStmt *ast.GoStmt, facts *fanoutFacts) bool {
 	return g.walkDominatingSteps(loops, goStmt, func(step dominatingStep) bool {
 		ch, ok := stepSendsToken(step, facts)
-		if !ok {
+		if !ok || g.hasReleaseBetween(step.loopBody, step.endPos, goStmt.Pos(), func(n ast.Node) bool {
+			return isTokenChanReceive(n, ch)
+		}) {
 			return false
 		}
 		return goroutineBodyCleanup(goStmt, func(node ast.Node) bool {
 			return g.nodeReceivesFromChan(node, ch)
 		})
 	})
+}
+
+// isTokenChanReceive reports whether n receives from ch via <-ch or range ch.
+func isTokenChanReceive(n ast.Node, ch string) bool {
+	switch x := n.(type) {
+	case *ast.UnaryExpr:
+		return x.Op == token.ARROW && isNamedIdent(x.X, ch)
+	case *ast.RangeStmt:
+		return isNamedIdent(x.X, ch)
+	default:
+		return false
+	}
 }
 
 // stepSendsToken extracts the buffered token channel name when step is a dominating channel send.
@@ -1742,7 +1799,7 @@ func isPositiveConstStep(expr ast.Expr, facts *fanoutFacts) bool {
 }
 
 // stepApproachesBound reports whether step advances toward bound under op (with counter on the
-// left). != accepts only ++ or -- (unit step) and rejects literal bounds in the opposite direction.
+// left). != requires integer-literal endpoints and a unit step (++ or --) not moving away.
 func stepApproachesBound(op token.Token, step counterStepInfo, initExpr, boundExpr ast.Expr) bool {
 	switch op {
 	case token.LSS, token.LEQ:
@@ -1750,21 +1807,30 @@ func stepApproachesBound(op token.Token, step counterStepInfo, initExpr, boundEx
 	case token.GTR, token.GEQ:
 		return step.dir < 0
 	case token.NEQ:
-		if !step.unit {
-			return false
-		}
-		initVal, okInit := signedIntLiteral(initExpr)
-		boundVal, okBound := signedIntLiteral(boundExpr)
-		if !okInit || !okBound || initVal == boundVal {
-			return true
-		}
-		if initVal < boundVal {
-			return step.dir > 0
-		}
-		return step.dir < 0
+		return neqStepApproachesLiteralBound(step, initExpr, boundExpr)
 	default:
 		return false
 	}
+}
+
+// neqStepApproachesLiteralBound checks != counter termination: both endpoints must be integer
+// literals read by signedIntLiteral, and a unit step must not move away from the bound.
+func neqStepApproachesLiteralBound(step counterStepInfo, initExpr, boundExpr ast.Expr) bool {
+	if !step.unit {
+		return false
+	}
+	initVal, okInit := signedIntLiteral(initExpr)
+	boundVal, okBound := signedIntLiteral(boundExpr)
+	if !okInit || !okBound {
+		return false
+	}
+	if initVal == boundVal {
+		return true
+	}
+	if initVal < boundVal {
+		return step.dir > 0
+	}
+	return step.dir < 0
 }
 
 // signedIntLiteral parses a plain or +/- signed integer literal into an int64.

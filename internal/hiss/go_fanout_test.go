@@ -5,6 +5,8 @@
 package hiss
 
 import (
+	"context"
+	"fmt"
 	"go/parser"
 	"go/token"
 	"os"
@@ -705,6 +707,211 @@ func CounterAddressTaken() {
 		line: 7,
 		fn:   "CounterAddressTaken",
 	},
+	{
+		name: "len_sized_chan_limiter",
+		rel:  "len_chan.go",
+		src: `package p
+func work(string) {}
+func LenSizedChan(items []string) {
+	tokens := make(chan struct{}, len(items))
+	for _, item := range items {
+		tokens <- struct{}{}
+		v := item
+		go func() {
+			defer func() { <-tokens }()
+			work(v)
+		}()
+	}
+}
+`,
+		line: 8,
+		fn:   "LenSizedChan",
+	},
+	{
+		name: "len_sized_semaphore",
+		rel:  "len_sem.go",
+		src: `package p
+import ("context"; "golang.org/x/sync/semaphore")
+func work(string) {}
+func LenSizedSem(ctx context.Context, items []string) error {
+	sem := semaphore.NewWeighted(int64(len(items)))
+	for _, item := range items {
+		if err := sem.Acquire(ctx, 1); err != nil {
+			return err
+		}
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+	return nil
+}
+`,
+		line: 11,
+		fn:   "LenSizedSem",
+	},
+	{
+		name: "numcpu_sized_chan_limiter",
+		rel:  "numcpu_chan.go",
+		src: `package p
+import "runtime"
+func work(string) {}
+func NumCPUChan(items []string) {
+	tokens := make(chan struct{}, runtime.NumCPU())
+	for _, item := range items {
+		tokens <- struct{}{}
+		v := item
+		go func() {
+			defer func() { <-tokens }()
+			work(v)
+		}()
+	}
+}
+`,
+		line: 9,
+		fn:   "NumCPUChan",
+	},
+	{
+		name: "acquire_unchecked",
+		rel:  "acquire_unchecked.go",
+		src: `package p
+import ("context"; "golang.org/x/sync/semaphore")
+func work(string) {}
+func AcquireUnchecked(ctx context.Context, items []string) {
+	sem := semaphore.NewWeighted(4)
+	for _, item := range items {
+		sem.Acquire(ctx, 1)
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+}
+`,
+		line: 9,
+		fn:   "AcquireUnchecked",
+	},
+	{
+		name: "acquire_assigned_unchecked",
+		rel:  "acquire_assigned_unchecked.go",
+		src: `package p
+import ("context"; "golang.org/x/sync/semaphore")
+func logErr(error) {}
+func work(string) {}
+func AcquireAssignedUnchecked(ctx context.Context, items []string) {
+	sem := semaphore.NewWeighted(4)
+	for _, item := range items {
+		err := sem.Acquire(ctx, 1)
+		logErr(err)
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+}
+`,
+		line: 11,
+		fn:   "AcquireAssignedUnchecked",
+	},
+	{
+		name: "acquire_blank",
+		rel:  "acquire_blank.go",
+		src: `package p
+import ("context"; "golang.org/x/sync/semaphore")
+func work(string) {}
+func AcquireBlank(ctx context.Context, items []string) {
+	sem := semaphore.NewWeighted(4)
+	for _, item := range items {
+		_ = sem.Acquire(ctx, 1)
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+}
+`,
+		line: 9,
+		fn:   "AcquireBlank",
+	},
+	{
+		name: "acquire_split_wrong_err_name",
+		rel:  "acquire_wrong_err.go",
+		src: `package p
+import ("context"; "golang.org/x/sync/semaphore")
+func work(string) {}
+func AcquireWrongErr(ctx context.Context, items []string, other error) error {
+	sem := semaphore.NewWeighted(4)
+	for _, item := range items {
+		err := sem.Acquire(ctx, 1)
+		if other != nil {
+			return err
+		}
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+	return nil
+}
+`,
+		line: 12,
+		fn:   "AcquireWrongErr",
+	},
+	{
+		name: "token_received_before_launch",
+		rel:  "token_received.go",
+		src: `package p
+func work(string) {}
+func TokenReceivedBeforeLaunch(items []string) {
+	tokens := make(chan struct{}, 4)
+	for _, item := range items {
+		tokens <- struct{}{}
+		<-tokens
+		v := item
+		go func() {
+			defer func() { <-tokens }()
+			work(v)
+		}()
+	}
+}
+`,
+		line: 9,
+		fn:   "TokenReceivedBeforeLaunch",
+	},
+	{
+		name: "counter_neq_const_name_bound",
+		rel:  "counter_neq_const.go",
+		src: `package p
+const limit = 8
+func work(int) {}
+func CounterNeqConstBound() {
+	for i := 0; i != limit; i++ {
+		go work(i)
+	}
+}
+`,
+		line: 6,
+		fn:   "CounterNeqConstBound",
+	},
+	{
+		name: "counter_neq_call_start",
+		rel:  "counter_neq_call_start.go",
+		src: `package p
+func work(int) {}
+func CounterNeqCallStart(slots [4]int) {
+	for i := len(slots); i != 8; i++ {
+		go work(i)
+	}
+}
+`,
+		line: 5,
+		fn:   "CounterNeqCallStart",
+	},
 }
 
 // TestGoFanout_Positive_UnboundedShapesReported checks that unbounded worker shapes produce findings.
@@ -860,6 +1067,12 @@ func RunCounterSteps() {
 		go work(i)
 	}
 	for i := 0; i != 8; i++ {
+		go work(i)
+	}
+	for i := 4; i != 4; i++ {
+		go work(i)
+	}
+	for i := 0; i != -4; i-- {
 		go work(i)
 	}
 }
@@ -1054,6 +1267,58 @@ func RunCounterElementAddr(arr [8]int) {
 `,
 	},
 	{
+		name: "hiss_bound_variable_sized_limiters_and_split_acquire",
+		src: `package p
+import (
+"context"
+"golang.org/x/sync/semaphore"
+)
+func work(string) {}
+func RunBoundChanLimiter(items []string, limit int) {
+	tokens := make(chan struct{}, limit) //hiss:bound limit<=8 validated by caller config
+	for _, item := range items {
+		tokens <- struct{}{}
+		v := item
+		go func() {
+			defer func() { <-tokens }()
+			work(v)
+		}()
+	}
+}
+func RunBoundSemLimiter(ctx context.Context, items []string, limit int) error {
+	sem := semaphore.NewWeighted(int64(limit)) //hiss:bound limit<=8 validated by caller config
+	for _, item := range items {
+		err := sem.Acquire(ctx, 1)
+		if err != nil {
+			return err
+		}
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+	return nil
+}
+func RunSplitPlainAssignAcquire(ctx context.Context, items []string) error {
+	sem := semaphore.NewWeighted(4)
+	var err error
+	for _, item := range items {
+		err = sem.Acquire(ctx, 1)
+		if err != nil {
+			return err
+		}
+		v := item
+		go func() {
+			defer sem.Release(1)
+			work(v)
+		}()
+	}
+	return nil
+}
+`,
+	},
+	{
 		name: "gap_caller_variable_bound_and_numcpu_pool",
 		src: `package p
 import (
@@ -1070,16 +1335,14 @@ for _, item := range items {
 }
 return g.Wait()
 }
-func GapNumCPU(items []string) {
-tokens := make(chan struct{}, runtime.NumCPU())
+func GapNumCPU(items []string) error {
+var g errgroup.Group
+g.SetLimit(runtime.NumCPU())
 for _, item := range items {
-	tokens <- struct{}{}
 	v := item
-	go func() {
-		defer func() { <-tokens }()
-		work(v)
-	}()
+	g.Go(func() error { work(v); return nil })
 }
+return g.Wait()
 }
 `,
 	},
@@ -1189,9 +1452,9 @@ func Run(items []int) {
 	}
 }
 
-// TestGoFanout_Boundary_FactWalkTruncatedReportsAndMarksTruncated verifies that when a function's
-// AST walk exceeds maxNodeStack, the launch receives no exemption and ScanReport.Truncated is set.
-func TestGoFanout_Boundary_FactWalkTruncatedReportsAndMarksTruncated(t *testing.T) {
+// buildOversizedFanoutSource constructs a Go source file whose OversizedBody exceeds maxNodeStack
+// and contains two loop go statements followed by a small unbounded function.
+func buildOversizedFanoutSource() string {
 	var b strings.Builder
 	b.WriteString("package p\nimport (\"context\"; \"golang.org/x/sync/semaphore\")\nfunc work(string) {}\n")
 	b.WriteString("func OversizedBody(ctx context.Context, items []string) error {\n")
@@ -1201,12 +1464,62 @@ func TestGoFanout_Boundary_FactWalkTruncatedReportsAndMarksTruncated(t *testing.
 	}
 	b.WriteString("\t_ = n\n\tfor _, item := range items {\n")
 	b.WriteString("\t\tif err := sem.Acquire(ctx, 1); err != nil { return err }\n")
-	b.WriteString("\t\tv := item\n\t\tgo func() { defer sem.Release(1); work(v) }()\n\t}\n\treturn nil\n}\n")
-	rep := scanGoSnippet(b.String(), "oversized.go")
-	if !rep.Truncated || !rep.Incomplete() {
-		t.Fatalf("Truncated=%v Incomplete=%v, want both true", rep.Truncated, rep.Incomplete())
+	b.WriteString("\t\tv := item\n\t\tgo func() { defer sem.Release(1); work(v) }()\n")
+	b.WriteString("\t\tgo work(v)\n\t}\n\treturn nil\n}\n")
+	b.WriteString("func LaterSmall(items []string) {\n\tfor _, item := range items {\n\t\tgo work(item)\n\t}\n}\n")
+	return b.String()
+}
+
+// TestGoFanout_Boundary_FactWalkTruncatedReportsAndMarksTruncated verifies that when a function's
+// AST walk exceeds maxNodeStack, every loop go statement in that function is reported locally with
+// the analysis-bound message while ScanReport.Truncated stays false so later functions and files scan.
+func TestGoFanout_Boundary_FactWalkTruncatedReportsAndMarksTruncated(t *testing.T) {
+	dir := writeOversizedFanoutFixtureTree(t)
+	rep, err := Scan(context.Background(), dir, ScanOptions{})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
 	}
-	if got := rep.Breakdown["HISS-06"]; got != 1 {
-		t.Fatalf("Breakdown[HISS-06] = %d, want 1 when fact walk hits maxNodeStack", got)
+	if rep.Truncated || rep.Incomplete() {
+		t.Fatalf("Truncated=%v Incomplete=%v, want both false", rep.Truncated, rep.Incomplete())
+	}
+	if got := rep.Breakdown["HISS-06"]; got != 4 {
+		t.Fatalf("Breakdown[HISS-06] = %d, want 4 (2 in OversizedBody + LaterSmall + Tail); violations=%+v", got, rep.Violations)
+	}
+	assertOversizedBoundViolations(t, rep)
+}
+
+// writeOversizedFanoutFixtureTree writes the oversized function file and a lexicographically later
+// file into a temporary directory for Scan.
+func writeOversizedFanoutFixtureTree(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a_oversized.go"), []byte(buildOversizedFanoutSource()), 0o600); err != nil {
+		t.Fatalf("write a_oversized.go: %v", err)
+	}
+	const laterFile = "package p\nfunc Tail(items []string) {\n\tfor _, item := range items {\n\t\tgo work(item)\n\t}\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "z_tail.go"), []byte(laterFile), 0o600); err != nil {
+		t.Fatalf("write z_tail.go: %v", err)
+	}
+	return dir
+}
+
+// assertOversizedBoundViolations checks that OversizedBody emits two HISS-06 findings naming the
+// maxNodeStack analysis bound.
+func assertOversizedBoundViolations(t *testing.T, rep *ScanReport) {
+	t.Helper()
+	wantMsg := fmt.Sprintf("fan-out bound not provable: function exceeds the HISS-06 analysis bound of %d nodes", maxNodeStack)
+	boundHits := 0
+	for i := 0; i < len(rep.Violations); i++ {
+		v := rep.Violations[i]
+		if v.RuleID != "HISS-06" || v.Symbol != "OversizedBody" {
+			continue
+		}
+		boundHits++
+		if v.Message != wantMsg {
+			t.Errorf("OversizedBody message = %q, want %q", v.Message, wantMsg)
+		}
+	}
+	if boundHits != 2 {
+		t.Fatalf("OversizedBody HISS-06 findings = %d, want 2", boundHits)
 	}
 }

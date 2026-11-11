@@ -1,20 +1,25 @@
 package p
 
-import "runtime"
+import (
+	"runtime"
 
-// process demonstrates a CPU-count worker bound, which remains a detection gap.
+	"golang.org/x/sync/errgroup"
+)
+
+// process demonstrates an errgroup worker pool whose runtime.NumCPU() limit is not statically constant.
 func process(string) {}
 
-// GapNumCPUPool sizes a token channel by runtime.NumCPU() without a //hiss:bound comment; the
-// channel capacity depends on the host rather than a static scalar constant.
-func GapNumCPUPool(items []string) {
-	tokens := make(chan struct{}, runtime.NumCPU())
+// GapNumCPUPool launches goroutines through errgroup.Group.Go under a runtime.NumCPU() limit
+// rather than a raw go statement, which the per-function *ast.GoStmt check does not inspect.
+func GapNumCPUPool(items []string) error {
+	var g errgroup.Group
+	g.SetLimit(runtime.NumCPU())
 	for _, item := range items {
-		tokens <- struct{}{}
 		v := item
-		go func() {
-			defer func() { <-tokens }()
+		g.Go(func() error {
 			process(v)
-		}()
+			return nil
+		})
 	}
+	return g.Wait()
 }
