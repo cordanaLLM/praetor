@@ -246,13 +246,22 @@ func PriorRulesetDigests(baseline RulesetBaseline, current []byte) map[string]st
 		queued.Contexts = baseline.QueuedContexts
 		addPriorBranches(priors, queued, current, "the ruleset of the repository's policy before it removed its merge queue")
 	}
+	if !baseline.Policy.MergeQueue && baseline.Policy.CodeQLDefaultSetup {
+		previous := baseline
+		previous.Policy.CodeQLDefaultSetup = false
+		addPriorBranches(priors, previous, current, "the ruleset before CodeQL default setup was declared")
+	}
 	if baseline.Policy.MergeQueue {
 		// The policy is read after the operator declared the queue, so the ruleset on disk is
 		// still the queue-less one: it is Praetor's too, and the run that adds the queue refreshes it.
 		unqueued := baseline
-		unqueued.Policy.MergeQueue, unqueued.Policy.CodeQLDefaultSetup = false, false
+		unqueued.Policy.MergeQueue = false
 		unqueued.Contexts = baseline.UnqueuedContexts
 		addPriorBranches(priors, unqueued, current, "the ruleset of the repository's policy before it declared a merge queue")
+		if unqueued.Policy.CodeQLDefaultSetup {
+			unqueued.Policy.CodeQLDefaultSetup = false
+			addPriorBranches(priors, unqueued, current, "the ruleset before it declared the queue and CodeQL default setup")
+		}
 	}
 	if len(priors) == 0 {
 		return nil
@@ -432,7 +441,7 @@ func protectionDocument(name string, refs []string, policy config.BranchProtecti
 		return nil, err
 	}
 	rules := protectionRules(policy, reviewCount, requireCodeOwner)
-	if policy.MergeQueue && policy.CodeQLDefaultSetup {
+	if dropQueuedCodeQLContexts(policy.MergeQueue, policy.CodeQLDefaultSetup) {
 		contexts = slices.DeleteFunc(slices.Clone(contexts), IsDefaultSetupContext)
 	}
 	if len(contexts) > 0 {
@@ -504,8 +513,13 @@ func protectionRules(policy config.BranchProtectionPolicy, reviewCount int, requ
 		"review_draft_pull_requests": true,
 		"review_on_push":             true,
 	}})
-	if policy.MergeQueue && policy.CodeQLDefaultSetup {
+	if policy.CodeQLDefaultSetup {
 		rules = append(rules, codeScanningRuleOf())
 	}
 	return rules
+}
+
+// dropQueuedCodeQLContexts reports when default setup contexts cannot run on merge groups.
+func dropQueuedCodeQLContexts(queue, scanning bool) bool {
+	return queue && scanning
 }

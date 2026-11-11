@@ -168,6 +168,31 @@ func (g *GitHubDriver) RepositoryVisibility(ctx context.Context) (string, error)
 	return live.Visibility, nil
 }
 
+// CodeQLDefaultSetupState reads GitHub's CodeQL default setup state for the repository.
+func (g *GitHubDriver) CodeQLDefaultSetupState(ctx context.Context) (string, error) {
+	if err := g.Authenticate(ctx); err != nil {
+		return "", err
+	}
+	path, err := g.repoPath("code-scanning/default-setup")
+	if err != nil {
+		return "", fmt.Errorf("read CodeQL default setup: %w", err)
+	}
+	body, status, err := g.sendRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return "", fmt.Errorf("read CodeQL default setup: %w", err)
+	}
+	if status != http.StatusOK {
+		return "", fmt.Errorf("read CodeQL default setup: HTTP %d", status)
+	}
+	var result struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("decode CodeQL default setup: %w", err)
+	}
+	return result.State, nil
+}
+
 // getRepositoryMetadata reads the repository object.
 func (g *GitHubDriver) getRepositoryMetadata(ctx context.Context) (ghRepositoryMetadata, error) {
 	var live ghRepositoryMetadata

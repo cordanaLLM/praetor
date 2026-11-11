@@ -47,10 +47,10 @@ func normalizeRuleset(doc map[string]any) (map[string]any, error) {
 // stricter is returned as lowered (loweredParameters) or kept (keptParameters) for sync
 // --remote to report. The live ruleset keeps its bypass actors, other conditions, every ref
 // it includes, every status check context it requires (less the CodeQL default setup contexts
-// a merge group never reports, when desired carries a code_scanning rule), and every rule and
+// a merge group never reports, when the policy declares a queue and desired carries a code_scanning rule), and every rule and
 // rule parameter praetor does not render. Removing any of those from a live ruleset is a
 // deliberate manual change.
-func mergeRuleset(live, desired map[string]any) (map[string]any, []LoweredParameter, []KeptParameter, error) {
+func mergeRuleset(live, desired map[string]any, queue bool) (map[string]any, []LoweredParameter, []KeptParameter, error) {
 	merged := map[string]any{"name": desired["name"], "target": desired["target"], "enforcement": desired["enforcement"]}
 	if actors, present := live["bypass_actors"]; present {
 		merged["bypass_actors"] = actors
@@ -60,7 +60,7 @@ func mergeRuleset(live, desired map[string]any) (map[string]any, []LoweredParame
 		return nil, nil, nil, err
 	}
 	merged["conditions"] = conditions
-	rules, lowered, kept, err := mergeRules(live["rules"], desired["rules"])
+	rules, lowered, kept, err := mergeRules(live["rules"], desired["rules"], queue)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -108,7 +108,7 @@ func mergeConditions(liveRaw, desiredRaw any) (map[string]any, error) {
 // mergeRules merges each desired rule into the live rule of the same type and keeps every
 // other live rule, in the live order after the desired ones. It also returns the rendered
 // parameters the merge lowered and those whose stricter live values were kept.
-func mergeRules(liveRaw, desiredRaw any) ([]any, []LoweredParameter, []KeptParameter, error) {
+func mergeRules(liveRaw, desiredRaw any, queue bool) ([]any, []LoweredParameter, []KeptParameter, error) {
 	live, err := objectList(liveRaw, "rules", maxRulesetRules)
 	if err != nil {
 		return nil, nil, nil, err
@@ -126,7 +126,7 @@ func mergeRules(liveRaw, desiredRaw any) ([]any, []LoweredParameter, []KeptParam
 			merged.rules = append(merged.rules, live[i])
 		}
 	}
-	if hasRuleType(desired, codeScanningRule) {
+	if dropQueuedCodeQLContexts(queue, hasRuleType(desired, codeScanningRule)) {
 		dropDefaultSetupChecks(merged.rules)
 	}
 	if len(merged.rules) > maxRulesetRules {
