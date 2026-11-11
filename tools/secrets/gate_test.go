@@ -533,6 +533,7 @@ func TestGate_RangeError(t *testing.T) {
 	if strings.HasSuffix(strings.ToLower(executable), ".exe") {
 		name += ".exe"
 	}
+	// nosemgrep: go_file-permissions_rule-fileperm, go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a stub gitleaks run through PATH needs the owner execute bit
 	if err := os.WriteFile(filepath.Join(dir, name), data, 0o700); err != nil {
 		t.Fatal(err)
 	}
