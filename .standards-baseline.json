@@ -1,10 +1,10 @@
 {
   "version": 1,
-  "generated_at": "2026-10-31T02:08:34Z",
+  "generated_at": "2026-11-11T17:30:49Z",
   "repository": "cordanaLLM/praetor",
-  "commit_sha": "a19ef7279b00efd950a8726b2e8041e5354d0c1e",
-  "total_infractions": 862,
-  "increase_rationale": "Record existing debt exposed by the Train B HISS-05 and HISS-06 scanner additions relative to origin/main; exclude loop-mutated state and retain only the findings replayed by the corrected scanner.",
+  "commit_sha": "82732d3bf54f8a71611bb2957bc22cba9e87324a",
+  "total_infractions": 912,
+  "increase_rationale": "HISS-05 narrow-scope check of this train reports code that reached main after the baseline was recorded at a19ef7279 (2026-10-31); recorded at the tip rebased on b20c89472",
   "infractions": [
     {
       "rule_id": "HISS-05",
@@ -41,6 +41,33 @@
       "message": "TestLSP_Boundary_BoundedLoopAndEmptyChange: 'boundedLoop' line 689; declare in if block line 690 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestLSP_Boundary_BoundedLoopAndEmptyChange",
       "fingerprint": "cmd/standards-lsp/server_test.go:HISS-05:fn:TestLSP_Boundary_BoundedLoopAndEmptyChange#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "cmd/standards-mcp/audit_policy_test.go",
+      "line_number": 359,
+      "symbol": "TestReadAuditContextGroupGuide_3D",
+      "message": "TestReadAuditContextGroupGuide_3D: 'nilContext' line 359; declare in if block line 360 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestReadAuditContextGroupGuide_3D",
+      "fingerprint": "cmd/standards-mcp/audit_policy_test.go:HISS-05:fn:TestReadAuditContextGroupGuide_3D#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "cmd/standards-mcp/audit_policy_test.go",
+      "line_number": 387,
+      "symbol": "checkAuditContextGroupGuide",
+      "message": "checkAuditContextGroupGuide: 'checks' line 387; declare in for block line 389 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:checkAuditContextGroupGuide",
+      "fingerprint": "cmd/standards-mcp/audit_policy_test.go:HISS-05:fn:checkAuditContextGroupGuide#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "cmd/standards-mcp/audit_policy_test.go",
+      "line_number": 399,
+      "symbol": "checkAuditContextGroupGuide",
+      "message": "checkAuditContextGroupGuide: 'refs' line 399; declare in for block line 404 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:checkAuditContextGroupGuide",
+      "fingerprint": "cmd/standards-mcp/audit_policy_test.go:HISS-05:fn:checkAuditContextGroupGuide#2"
     },
     {
       "rule_id": "HISS-05",
@@ -395,10 +422,19 @@
     },
     {
       "rule_id": "HISS-05",
+      "file_path": "cmd/standardsctl/exceptions_migrate_test.go",
+      "line_number": 119,
+      "symbol": "TestWriteExceptionMigrationSafeMode",
+      "message": "TestWriteExceptionMigrationSafeMode: 'cases' line 119; declare in for block line 122 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestWriteExceptionMigrationSafeMode",
+      "fingerprint": "cmd/standardsctl/exceptions_migrate_test.go:HISS-05:fn:TestWriteExceptionMigrationSafeMode#1"
+    },
+    {
+      "rule_id": "HISS-05",
       "file_path": "cmd/standardsctl/flavors_frequency_test.go",
-      "line_number": 77,
+      "line_number": 79,
       "symbol": "TestRunFlavorsPlan_Boundary_ReportsFrequencyAndStability",
-      "message": "TestRunFlavorsPlan_Boundary_ReportsFrequencyAndStability: 'undeclared' line 77; declare in if block line 78 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestRunFlavorsPlan_Boundary_ReportsFrequencyAndStability: 'undeclared' line 79; declare in if block line 80 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestRunFlavorsPlan_Boundary_ReportsFrequencyAndStability",
       "fingerprint": "cmd/standardsctl/flavors_frequency_test.go:HISS-05:fn:TestRunFlavorsPlan_Boundary_ReportsFrequencyAndStability#1"
     },
@@ -441,18 +477,18 @@
     {
       "rule_id": "HISS-05",
       "file_path": "cmd/standardsctl/hook_test.go",
-      "line_number": 176,
+      "line_number": 178,
       "symbol": "TestHookProcessClaudeHandbackGateAcrossProcesses",
-      "message": "TestHookProcessClaudeHandbackGateAcrossProcesses: 'validReturn' line 176; declare in range block line 187 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestHookProcessClaudeHandbackGateAcrossProcesses: 'validReturn' line 178; declare in range block line 189 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestHookProcessClaudeHandbackGateAcrossProcesses",
       "fingerprint": "cmd/standardsctl/hook_test.go:HISS-05:fn:TestHookProcessClaudeHandbackGateAcrossProcesses#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "cmd/standardsctl/hook_test.go",
-      "line_number": 177,
+      "line_number": 179,
       "symbol": "TestHookProcessClaudeHandbackGateAcrossProcesses",
-      "message": "TestHookProcessClaudeHandbackGateAcrossProcesses: 'proseReturn' line 177; declare in range block line 187 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestHookProcessClaudeHandbackGateAcrossProcesses: 'proseReturn' line 179; declare in range block line 189 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestHookProcessClaudeHandbackGateAcrossProcesses",
       "fingerprint": "cmd/standardsctl/hook_test.go:HISS-05:fn:TestHookProcessClaudeHandbackGateAcrossProcesses#2"
     },
@@ -683,6 +719,24 @@
     },
     {
       "rule_id": "HISS-05",
+      "file_path": "internal/adopt/coderabbit_test.go",
+      "line_number": 98,
+      "symbol": "TestCodeRabbitBoundaryLayouts",
+      "message": "TestCodeRabbitBoundaryLayouts: 'cases' line 98; declare in for block line 107 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestCodeRabbitBoundaryLayouts",
+      "fingerprint": "internal/adopt/coderabbit_test.go:HISS-05:fn:TestCodeRabbitBoundaryLayouts#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/adopt/coderabbit_test.go",
+      "line_number": 128,
+      "symbol": "TestCodeRabbitNegativeRefusesUnsafeYAML",
+      "message": "TestCodeRabbitNegativeRefusesUnsafeYAML: 'cases' line 128; declare in for block line 137 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestCodeRabbitNegativeRefusesUnsafeYAML",
+      "fingerprint": "internal/adopt/coderabbit_test.go:HISS-05:fn:TestCodeRabbitNegativeRefusesUnsafeYAML#1"
+    },
+    {
+      "rule_id": "HISS-05",
       "file_path": "internal/adopt/codespell_test.go",
       "line_number": 99,
       "symbol": "setupCodespellFixture",
@@ -693,9 +747,9 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/adopt/codespell_test.go",
-      "line_number": 286,
+      "line_number": 289,
       "symbol": "TestCodespell_DoesNotProposeFigurePlayerExceptions",
-      "message": "TestCodespell_DoesNotProposeFigurePlayerExceptions: 'manifestContent' line 286; declare in if block line 287 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestCodespell_DoesNotProposeFigurePlayerExceptions: 'manifestContent' line 289; declare in if block line 290 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestCodespell_DoesNotProposeFigurePlayerExceptions",
       "fingerprint": "internal/adopt/codespell_test.go:HISS-05:fn:TestCodespell_DoesNotProposeFigurePlayerExceptions#1"
     },
@@ -729,18 +783,18 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/adopt/engine_makefile_test.go",
-      "line_number": 228,
+      "line_number": 231,
       "symbol": "TestEngineMakefile_Boundary_PlaceholderCaseBehavesAsOnMain",
-      "message": "TestEngineMakefile_Boundary_PlaceholderCaseBehavesAsOnMain: 'wantReason' line 228; declare in if block line 229 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestEngineMakefile_Boundary_PlaceholderCaseBehavesAsOnMain: 'wantReason' line 231; declare in if block line 232 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestEngineMakefile_Boundary_PlaceholderCaseBehavesAsOnMain",
       "fingerprint": "internal/adopt/engine_makefile_test.go:HISS-05:fn:TestEngineMakefile_Boundary_PlaceholderCaseBehavesAsOnMain#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/adopt/evasion_codespell_test.go",
-      "line_number": 34,
+      "line_number": 37,
       "symbol": "TestBlockEvasionPY_3D_Negative_DetectsWordSplitAcrossLiterals",
-      "message": "TestBlockEvasionPY_3D_Negative_DetectsWordSplitAcrossLiterals: 'sample' line 34; declare in if block line 35 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestBlockEvasionPY_3D_Negative_DetectsWordSplitAcrossLiterals: 'sample' line 37; declare in if block line 39 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestBlockEvasionPY_3D_Negative_DetectsWordSplitAcrossLiterals",
       "fingerprint": "internal/adopt/evasion_codespell_test.go:HISS-05:fn:TestBlockEvasionPY_3D_Negative_DetectsWordSplitAcrossLiterals#1"
     },
@@ -800,6 +854,33 @@
     },
     {
       "rule_id": "HISS-05",
+      "file_path": "internal/adopt/gitignore_codacy_test.go",
+      "line_number": 67,
+      "symbol": "TestCodacyGitCheckIgnore_Positive",
+      "message": "TestCodacyGitCheckIgnore_Positive: 'ignored' line 67; declare in for block line 73 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestCodacyGitCheckIgnore_Positive",
+      "fingerprint": "internal/adopt/gitignore_codacy_test.go:HISS-05:fn:TestCodacyGitCheckIgnore_Positive#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/adopt/gitignore_codacy_test.go",
+      "line_number": 79,
+      "symbol": "TestCodacyGitCheckIgnore_Positive",
+      "message": "TestCodacyGitCheckIgnore_Positive: 'notIgnored' line 79; declare in for block line 83 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestCodacyGitCheckIgnore_Positive",
+      "fingerprint": "internal/adopt/gitignore_codacy_test.go:HISS-05:fn:TestCodacyGitCheckIgnore_Positive#2"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/adopt/gitignore_history_test.go",
+      "line_number": 389,
+      "symbol": "TestGitIgnoreHistory_GuideReferencesHistoryTest_Negative",
+      "message": "TestGitIgnoreHistory_GuideReferencesHistoryTest_Negative: 'fictitious' line 389; declare in if block line 390 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestGitIgnoreHistory_GuideReferencesHistoryTest_Negative",
+      "fingerprint": "internal/adopt/gitignore_history_test.go:HISS-05:fn:TestGitIgnoreHistory_GuideReferencesHistoryTest_Negative#1"
+    },
+    {
+      "rule_id": "HISS-05",
       "file_path": "internal/adopt/gitignore_rules_test.go",
       "line_number": 111,
       "symbol": "assertGateWorktreeIgnored",
@@ -824,6 +905,24 @@
       "message": "TestCleanupGotoExceptionReachesTheAudit: 'cases' line 211; declare in range block line 222 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestCleanupGotoExceptionReachesTheAudit",
       "fingerprint": "internal/adopt/harness_exception_test.go:HISS-05:fn:TestCleanupGotoExceptionReachesTheAudit#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/adopt/harness_legend_test.go",
+      "line_number": 238,
+      "symbol": "assertConfigBandBoundaries",
+      "message": "assertConfigBandBoundaries: 'emptyCfg' line 238; declare in if block line 239 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:assertConfigBandBoundaries",
+      "fingerprint": "internal/adopt/harness_legend_test.go:HISS-05:fn:assertConfigBandBoundaries#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/adopt/harness_legend_test.go",
+      "line_number": 242,
+      "symbol": "assertConfigBandBoundaries",
+      "message": "assertConfigBandBoundaries: 'malformed' line 242; declare in if block line 243 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:assertConfigBandBoundaries",
+      "fingerprint": "internal/adopt/harness_legend_test.go:HISS-05:fn:assertConfigBandBoundaries#2"
     },
     {
       "rule_id": "HISS-05",
@@ -891,63 +990,63 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/adopt/linters_generated_exceptions_test.go",
-      "line_number": 305,
+      "line_number": 341,
       "symbol": "TestGenerateExceptions_Ratchet_Negative_NewFindingRefused",
-      "message": "TestGenerateExceptions_Ratchet_Negative_NewFindingRefused: 'expectedMsg' line 305; declare in if block line 306 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestGenerateExceptions_Ratchet_Negative_NewFindingRefused: 'expectedMsg' line 341; declare in if block line 342 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestGenerateExceptions_Ratchet_Negative_NewFindingRefused",
       "fingerprint": "internal/adopt/linters_generated_exceptions_test.go:HISS-05:fn:TestGenerateExceptions_Ratchet_Negative_NewFindingRefused#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/adopt/linters_generated_exceptions_test.go",
-      "line_number": 344,
+      "line_number": 380,
       "symbol": "TestGenerateExceptions_Ratchet_Negative_ExpiredRefused",
-      "message": "TestGenerateExceptions_Ratchet_Negative_ExpiredRefused: 'expectedMsg' line 344; declare in if block line 345 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestGenerateExceptions_Ratchet_Negative_ExpiredRefused: 'expectedMsg' line 380; declare in if block line 381 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestGenerateExceptions_Ratchet_Negative_ExpiredRefused",
       "fingerprint": "internal/adopt/linters_generated_exceptions_test.go:HISS-05:fn:TestGenerateExceptions_Ratchet_Negative_ExpiredRefused#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/adopt/linters_generated_exceptions_test.go",
-      "line_number": 383,
+      "line_number": 419,
       "symbol": "TestGenerateExceptions_Ratchet_Boundary_LiveEntriesNoOp",
-      "message": "TestGenerateExceptions_Ratchet_Boundary_LiveEntriesNoOp: 'expectedMsg' line 383; declare in if block line 384 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestGenerateExceptions_Ratchet_Boundary_LiveEntriesNoOp: 'expectedMsg' line 419; declare in if block line 420 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestGenerateExceptions_Ratchet_Boundary_LiveEntriesNoOp",
       "fingerprint": "internal/adopt/linters_generated_exceptions_test.go:HISS-05:fn:TestGenerateExceptions_Ratchet_Boundary_LiveEntriesNoOp#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/adopt/linters_generated_exceptions_test.go",
-      "line_number": 431,
-      "symbol": "writeSameLineTestFiles",
-      "message": "writeSameLineTestFiles: 'repJSON' line 431; declare in if block line 438 (address-taken, captured and loop-mutated locals exempt)",
-      "anchor": "fn:writeSameLineTestFiles",
-      "fingerprint": "internal/adopt/linters_generated_exceptions_test.go:HISS-05:fn:writeSameLineTestFiles#1"
+      "line_number": 455,
+      "symbol": "TestGenerateExceptions_PlantedGocycloNewFinding",
+      "message": "TestGenerateExceptions_PlantedGocycloNewFinding: 'want' line 455; declare in if block line 456 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestGenerateExceptions_PlantedGocycloNewFinding",
+      "fingerprint": "internal/adopt/linters_generated_exceptions_test.go:HISS-05:fn:TestGenerateExceptions_PlantedGocycloNewFinding#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/adopt/linters_generated_exceptions_test.go",
-      "line_number": 563,
+      "line_number": 724,
       "symbol": "TestStripGolangciConfig_FlowStyleAndDuplicateKeys_Positive",
-      "message": "TestStripGolangciConfig_FlowStyleAndDuplicateKeys_Positive: 'content' line 563; declare in if block line 564 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestStripGolangciConfig_FlowStyleAndDuplicateKeys_Positive: 'content' line 724; declare in if block line 725 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestStripGolangciConfig_FlowStyleAndDuplicateKeys_Positive",
       "fingerprint": "internal/adopt/linters_generated_exceptions_test.go:HISS-05:fn:TestStripGolangciConfig_FlowStyleAndDuplicateKeys_Positive#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/adopt/linters_generated_exceptions_test.go",
-      "line_number": 608,
+      "line_number": 769,
       "symbol": "TestStripGolangciConfig_CommentDoesNotBlockKeys_Positive",
-      "message": "TestStripGolangciConfig_CommentDoesNotBlockKeys_Positive: 'content' line 608; declare in if block line 609 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestStripGolangciConfig_CommentDoesNotBlockKeys_Positive: 'content' line 769; declare in if block line 770 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestStripGolangciConfig_CommentDoesNotBlockKeys_Positive",
       "fingerprint": "internal/adopt/linters_generated_exceptions_test.go:HISS-05:fn:TestStripGolangciConfig_CommentDoesNotBlockKeys_Positive#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/adopt/linters_generated_exceptions_test.go",
-      "line_number": 640,
+      "line_number": 801,
       "symbol": "TestStripGolangciConfig_MissingRunAndIssues_Positive",
-      "message": "TestStripGolangciConfig_MissingRunAndIssues_Positive: 'content' line 640; declare in if block line 641 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestStripGolangciConfig_MissingRunAndIssues_Positive: 'content' line 801; declare in if block line 802 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestStripGolangciConfig_MissingRunAndIssues_Positive",
       "fingerprint": "internal/adopt/linters_generated_exceptions_test.go:HISS-05:fn:TestStripGolangciConfig_MissingRunAndIssues_Positive#1"
     },
@@ -1008,9 +1107,9 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/adopt/policy_catalog_prior_test.go",
-      "line_number": 232,
+      "line_number": 236,
       "symbol": "TestAdoptDoesNotRepinAnEarlierCatalogToChangedValues",
-      "message": "TestAdoptDoesNotRepinAnEarlierCatalogToChangedValues: 'cases' line 232; declare in range block line 236 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestAdoptDoesNotRepinAnEarlierCatalogToChangedValues: 'cases' line 236; declare in range block line 240 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestAdoptDoesNotRepinAnEarlierCatalogToChangedValues",
       "fingerprint": "internal/adopt/policy_catalog_prior_test.go:HISS-05:fn:TestAdoptDoesNotRepinAnEarlierCatalogToChangedValues#1"
     },
@@ -1043,6 +1142,24 @@
     },
     {
       "rule_id": "HISS-05",
+      "file_path": "internal/adopt/release_own_publisher_test.go",
+      "line_number": 123,
+      "symbol": "TestOwnReleasePublisherConfigBoundaries",
+      "message": "TestOwnReleasePublisherConfigBoundaries: 'cases' line 123; declare in for block line 137 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestOwnReleasePublisherConfigBoundaries",
+      "fingerprint": "internal/adopt/release_own_publisher_test.go:HISS-05:fn:TestOwnReleasePublisherConfigBoundaries#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/adopt/release_own_publisher_test.go",
+      "line_number": 147,
+      "symbol": "TestOwnReleasePublisherWorkflowBoundaries",
+      "message": "TestOwnReleasePublisherWorkflowBoundaries: 'cases' line 147; declare in for block line 152 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestOwnReleasePublisherWorkflowBoundaries",
+      "fingerprint": "internal/adopt/release_own_publisher_test.go:HISS-05:fn:TestOwnReleasePublisherWorkflowBoundaries#1"
+    },
+    {
+      "rule_id": "HISS-05",
       "file_path": "internal/adopt/release_token_audit_test.go",
       "line_number": 107,
       "symbol": "TestAuditReleaseToken_Passing",
@@ -1062,27 +1179,27 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/adopt/release_token_audit_test.go",
-      "line_number": 315,
+      "line_number": 317,
       "symbol": "TestAuditReleaseToken_PassCount_BothExcepted",
-      "message": "TestAuditReleaseToken_PassCount_BothExcepted: 'want' line 315; declare in if block line 316 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestAuditReleaseToken_PassCount_BothExcepted: 'want' line 317; declare in if block line 318 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestAuditReleaseToken_PassCount_BothExcepted",
       "fingerprint": "internal/adopt/release_token_audit_test.go:HISS-05:fn:TestAuditReleaseToken_PassCount_BothExcepted#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/adopt/release_token_audit_test.go",
-      "line_number": 336,
+      "line_number": 338,
       "symbol": "TestAuditReleaseToken_PassCount_PartialExcepted",
-      "message": "TestAuditReleaseToken_PassCount_PartialExcepted: 'want' line 336; declare in if block line 337 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestAuditReleaseToken_PassCount_PartialExcepted: 'want' line 338; declare in if block line 339 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestAuditReleaseToken_PassCount_PartialExcepted",
       "fingerprint": "internal/adopt/release_token_audit_test.go:HISS-05:fn:TestAuditReleaseToken_PassCount_PartialExcepted#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/adopt/release_token_audit_test.go",
-      "line_number": 354,
+      "line_number": 356,
       "symbol": "TestAuditReleaseToken_PassCount_SingularBoundary",
-      "message": "TestAuditReleaseToken_PassCount_SingularBoundary: 'want' line 354; declare in if block line 355 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestAuditReleaseToken_PassCount_SingularBoundary: 'want' line 356; declare in if block line 357 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestAuditReleaseToken_PassCount_SingularBoundary",
       "fingerprint": "internal/adopt/release_token_audit_test.go:HISS-05:fn:TestAuditReleaseToken_PassCount_SingularBoundary#1"
     },
@@ -1107,9 +1224,9 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/adopt/repository_checks_test.go",
-      "line_number": 72,
+      "line_number": 67,
       "symbol": "TestRepositoryChecksRenovate",
-      "message": "TestRepositoryChecksRenovate: 'cases' line 72; declare in range block line 80 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestRepositoryChecksRenovate: 'cases' line 67; declare in range block line 75 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestRepositoryChecksRenovate",
       "fingerprint": "internal/adopt/repository_checks_test.go:HISS-05:fn:TestRepositoryChecksRenovate#1"
     },
@@ -1134,9 +1251,9 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/adopt/rust_msrv_test.go",
-      "line_number": 50,
+      "line_number": 178,
       "symbol": "TestRustMSRVWorkflowRejectsFalseProofs",
-      "message": "TestRustMSRVWorkflowRejectsFalseProofs: 'cases' line 50; declare in range block line 63 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestRustMSRVWorkflowRejectsFalseProofs: 'cases' line 178; declare in range block line 191 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestRustMSRVWorkflowRejectsFalseProofs",
       "fingerprint": "internal/adopt/rust_msrv_test.go:HISS-05:fn:TestRustMSRVWorkflowRejectsFalseProofs#1"
     },
@@ -1170,9 +1287,9 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/adopt/verification_pillar_test.go",
-      "line_number": 431,
+      "line_number": 432,
       "symbol": "TestVerificationUnreadablePytestConfigurationIsNotConfiguration",
-      "message": "TestVerificationUnreadablePytestConfigurationIsNotConfiguration: 'projects' line 431; declare in range block line 435 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestVerificationUnreadablePytestConfigurationIsNotConfiguration: 'projects' line 432; declare in range block line 436 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestVerificationUnreadablePytestConfigurationIsNotConfiguration",
       "fingerprint": "internal/adopt/verification_pillar_test.go:HISS-05:fn:TestVerificationUnreadablePytestConfigurationIsNotConfiguration#1"
     },
@@ -1385,12 +1502,39 @@
     },
     {
       "rule_id": "HISS-05",
+      "file_path": "internal/agenthook/admission_manifest_test.go",
+      "line_number": 27,
+      "symbol": "TestAdmissionManifestForgeIndependent",
+      "message": "TestAdmissionManifestForgeIndependent: 'policies' line 27; declare in for block line 28 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestAdmissionManifestForgeIndependent",
+      "fingerprint": "internal/agenthook/admission_manifest_test.go:HISS-05:fn:TestAdmissionManifestForgeIndependent#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/agenthook/admission_test.go",
+      "line_number": 1117,
+      "symbol": "assertDeclaredForgejoResolution",
+      "message": "assertDeclaredForgejoResolution: 'validForgejoManifest' line 1117; declare in if block line 1118 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:assertDeclaredForgejoResolution",
+      "fingerprint": "internal/agenthook/admission_test.go:HISS-05:fn:assertDeclaredForgejoResolution#1"
+    },
+    {
+      "rule_id": "HISS-05",
       "file_path": "internal/agenthook/checkpoint_test.go",
-      "line_number": 225,
+      "line_number": 228,
       "symbol": "TestRunStopFailedScriptIncludesStderr",
-      "message": "TestRunStopFailedScriptIncludesStderr: 'want' line 225; declare in if block line 226 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestRunStopFailedScriptIncludesStderr: 'want' line 228; declare in if block line 229 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestRunStopFailedScriptIncludesStderr",
       "fingerprint": "internal/agenthook/checkpoint_test.go:HISS-05:fn:TestRunStopFailedScriptIncludesStderr#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/agenthook/claude_usage_test.go",
+      "line_number": 114,
+      "symbol": "TestReadClaudeBashCommands",
+      "message": "TestReadClaudeBashCommands: 'want' line 114; declare in if block line 115 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestReadClaudeBashCommands",
+      "fingerprint": "internal/agenthook/claude_usage_test.go:HISS-05:fn:TestReadClaudeBashCommands#1"
     },
     {
       "rule_id": "HISS-05",
@@ -1403,12 +1547,57 @@
     },
     {
       "rule_id": "HISS-05",
+      "file_path": "internal/agenthook/command_targets_test.go",
+      "line_number": 25,
+      "symbol": "TestTargetDirectoryTildes",
+      "message": "TestTargetDirectoryTildes: 'cases' line 25; declare in for block line 29 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestTargetDirectoryTildes",
+      "fingerprint": "internal/agenthook/command_targets_test.go:HISS-05:fn:TestTargetDirectoryTildes#1"
+    },
+    {
+      "rule_id": "HISS-05",
       "file_path": "internal/agenthook/dispatch_gate_test.go",
       "line_number": 75,
       "symbol": "TestDispatchGateRegistered_Negative",
       "message": "TestDispatchGateRegistered_Negative: 'nilContext' line 75; declare in if block line 76 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestDispatchGateRegistered_Negative",
       "fingerprint": "internal/agenthook/dispatch_gate_test.go:HISS-05:fn:TestDispatchGateRegistered_Negative#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/agenthook/elapsed_assertions_test.go",
+      "line_number": 31,
+      "symbol": "TestCorrelationElapsedAssertions",
+      "message": "TestCorrelationElapsedAssertions: 'allow' line 31; declare in range block line 32 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestCorrelationElapsedAssertions",
+      "fingerprint": "internal/agenthook/elapsed_assertions_test.go:HISS-05:fn:TestCorrelationElapsedAssertions#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/agenthook/forge_manifest_test.go",
+      "line_number": 64,
+      "symbol": "TestForgeManifestDeadlock",
+      "message": "TestForgeManifestDeadlock: 'cases' line 64; declare in range block line 70 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestForgeManifestDeadlock",
+      "fingerprint": "internal/agenthook/forge_manifest_test.go:HISS-05:fn:TestForgeManifestDeadlock#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/agenthook/forge_text_refs_test.go",
+      "line_number": 104,
+      "symbol": "TestForgeTextRefsRefusedPerForm",
+      "message": "TestForgeTextRefsRefusedPerForm: 'cases' line 104; declare in range block line 127 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestForgeTextRefsRefusedPerForm",
+      "fingerprint": "internal/agenthook/forge_text_refs_test.go:HISS-05:fn:TestForgeTextRefsRefusedPerForm#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/agenthook/forge_text_refs_test.go",
+      "line_number": 193,
+      "symbol": "TestForgeTextRefsBoundaryAndFailClosedCases",
+      "message": "TestForgeTextRefsBoundaryAndFailClosedCases: 'unreadableCases' line 193; declare in range block line 203 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestForgeTextRefsBoundaryAndFailClosedCases",
+      "fingerprint": "internal/agenthook/forge_text_refs_test.go:HISS-05:fn:TestForgeTextRefsBoundaryAndFailClosedCases#1"
     },
     {
       "rule_id": "HISS-05",
@@ -1436,6 +1625,15 @@
       "message": "TestEvaluateStopQuestionNamesTheClientTool: 'want' line 106; declare in range block line 107 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestEvaluateStopQuestionNamesTheClientTool",
       "fingerprint": "internal/agenthook/stop_question_test.go:HISS-05:fn:TestEvaluateStopQuestionNamesTheClientTool#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/agenthook/worktrees_test.go",
+      "line_number": 38,
+      "symbol": "TestResolveWorktreeTargetPathTildes",
+      "message": "TestResolveWorktreeTargetPathTildes: 'cases' line 38; declare in for block line 44 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestResolveWorktreeTargetPathTildes",
+      "fingerprint": "internal/agenthook/worktrees_test.go:HISS-05:fn:TestResolveWorktreeTargetPathTildes#1"
     },
     {
       "rule_id": "HISS-05",
@@ -1503,9 +1701,9 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/baseline/baseline_test.go",
-      "line_number": 243,
+      "line_number": 244,
       "symbol": "TestNormalizePath_Boundary",
-      "message": "TestNormalizePath_Boundary: 'cases' line 243; declare in range block line 252 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestNormalizePath_Boundary: 'cases' line 244; declare in range block line 253 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestNormalizePath_Boundary",
       "fingerprint": "internal/baseline/baseline_test.go:HISS-05:fn:TestNormalizePath_Boundary#1"
     },
@@ -2034,18 +2232,18 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/cavemansource/extract_test.go",
-      "line_number": 328,
+      "line_number": 329,
       "symbol": "TestExtractGoMCPRuntimeRejectsBuilderBypasses",
-      "message": "TestExtractGoMCPRuntimeRejectsBuilderBypasses: 'fixtures' line 328; declare in range block line 337 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestExtractGoMCPRuntimeRejectsBuilderBypasses: 'fixtures' line 329; declare in range block line 338 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestExtractGoMCPRuntimeRejectsBuilderBypasses",
       "fingerprint": "internal/cavemansource/extract_test.go:HISS-05:fn:TestExtractGoMCPRuntimeRejectsBuilderBypasses#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/cavemansource/extract_test.go",
-      "line_number": 1078,
+      "line_number": 1079,
       "symbol": "TestExtractGoMCPRuntimeRejectsTransportBypasses",
-      "message": "TestExtractGoMCPRuntimeRejectsTransportBypasses: 'fixtures' line 1078; declare in range block line 1084 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestExtractGoMCPRuntimeRejectsTransportBypasses: 'fixtures' line 1079; declare in range block line 1085 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestExtractGoMCPRuntimeRejectsTransportBypasses",
       "fingerprint": "internal/cavemansource/extract_test.go:HISS-05:fn:TestExtractGoMCPRuntimeRejectsTransportBypasses#1"
     },
@@ -2447,6 +2645,15 @@
     },
     {
       "rule_id": "HISS-05",
+      "file_path": "internal/compiler/skill_help_test.go",
+      "line_number": 43,
+      "symbol": "assertSkillHelpDeadlineAfterWarmup",
+      "message": "assertSkillHelpDeadlineAfterWarmup: 'want' line 43; declare in if block line 44 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:assertSkillHelpDeadlineAfterWarmup",
+      "fingerprint": "internal/compiler/skill_help_test.go:HISS-05:fn:assertSkillHelpDeadlineAfterWarmup#1"
+    },
+    {
+      "rule_id": "HISS-05",
       "file_path": "internal/compiler/skill_projection_test.go",
       "line_number": 123,
       "symbol": "TestCheckShippedSkillReferences_Positive_PraetorBundleIsClean",
@@ -2727,9 +2934,9 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/config/operator_sections_test.go",
-      "line_number": 194,
+      "line_number": 198,
       "symbol": "TestOperatorSettingsLaterLayerCannotLoosen",
-      "message": "TestOperatorSettingsLaterLayerCannotLoosen: 'cases' line 194; declare in range block line 202 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestOperatorSettingsLaterLayerCannotLoosen: 'cases' line 198; declare in range block line 206 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestOperatorSettingsLaterLayerCannotLoosen",
       "fingerprint": "internal/config/operator_sections_test.go:HISS-05:fn:TestOperatorSettingsLaterLayerCannotLoosen#1"
     },
@@ -2808,18 +3015,18 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/config/register_test.go",
-      "line_number": 50,
+      "line_number": 51,
       "symbol": "TestLoadManifestRegisterNegative",
-      "message": "TestLoadManifestRegisterNegative: 'cases' line 50; declare in range block line 70 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestLoadManifestRegisterNegative: 'cases' line 51; declare in range block line 72 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestLoadManifestRegisterNegative",
       "fingerprint": "internal/config/register_test.go:HISS-05:fn:TestLoadManifestRegisterNegative#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/config/register_test.go",
-      "line_number": 115,
+      "line_number": 117,
       "symbol": "TestEffectiveRegister",
-      "message": "TestEffectiveRegister: 'absent' line 115; declare in if block line 116 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestEffectiveRegister: 'absent' line 117; declare in if block line 118 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestEffectiveRegister",
       "fingerprint": "internal/config/register_test.go:HISS-05:fn:TestEffectiveRegister#1"
     },
@@ -2849,6 +3056,15 @@
       "message": "TestReleasePolicy_DefaultPathsBoundary: 'nilPolicy' line 54; declare in if block line 65 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestReleasePolicy_DefaultPathsBoundary",
       "fingerprint": "internal/config/release_policy_test.go:HISS-05:fn:TestReleasePolicy_DefaultPathsBoundary#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/config/release_policy_test.go",
+      "line_number": 268,
+      "symbol": "TestReleaseTestLevelsPolicy_Boundary_DropCheckRunsOnProfilesNotOnParse",
+      "message": "TestReleaseTestLevelsPolicy_Boundary_DropCheckRunsOnProfilesNotOnParse: 'want' line 268; declare in if block line 269 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestReleaseTestLevelsPolicy_Boundary_DropCheckRunsOnProfilesNotOnParse",
+      "fingerprint": "internal/config/release_policy_test.go:HISS-05:fn:TestReleaseTestLevelsPolicy_Boundary_DropCheckRunsOnProfilesNotOnParse#1"
     },
     {
       "rule_id": "HISS-05",
@@ -2988,18 +3204,18 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/config/verification_test.go",
-      "line_number": 38,
+      "line_number": 39,
       "symbol": "TestVerificationPolicy_Positive",
-      "message": "TestVerificationPolicy_Positive: 'none' line 38; declare in if block line 39 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestVerificationPolicy_Positive: 'none' line 39; declare in if block line 40 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestVerificationPolicy_Positive",
       "fingerprint": "internal/config/verification_test.go:HISS-05:fn:TestVerificationPolicy_Positive#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/contextopt/artifacts_snapshot_test.go",
-      "line_number": 83,
+      "line_number": 85,
       "symbol": "TestRootSnapshotRejectsNilAndCanceledContexts",
-      "message": "TestRootSnapshotRejectsNilAndCanceledContexts: 'absentContext' line 83; declare in if block line 84 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestRootSnapshotRejectsNilAndCanceledContexts: 'absentContext' line 85; declare in if block line 86 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestRootSnapshotRejectsNilAndCanceledContexts",
       "fingerprint": "internal/contextopt/artifacts_snapshot_test.go:HISS-05:fn:TestRootSnapshotRejectsNilAndCanceledContexts#1"
     },
@@ -3717,9 +3933,9 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/flavors/frequency_test.go",
-      "line_number": 81,
+      "line_number": 83,
       "symbol": "TestPlanSelected_Boundary_HeldBeatsUnresolvedAndBlankIsAutomatic",
-      "message": "TestPlanSelected_Boundary_HeldBeatsUnresolvedAndBlankIsAutomatic: 'body' line 81; declare in if block line 82 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestPlanSelected_Boundary_HeldBeatsUnresolvedAndBlankIsAutomatic: 'body' line 83; declare in if block line 84 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestPlanSelected_Boundary_HeldBeatsUnresolvedAndBlankIsAutomatic",
       "fingerprint": "internal/flavors/frequency_test.go:HISS-05:fn:TestPlanSelected_Boundary_HeldBeatsUnresolvedAndBlankIsAutomatic#1"
     },
@@ -4067,6 +4283,15 @@
     },
     {
       "rule_id": "HISS-05",
+      "file_path": "internal/forge/organization_sources_test.go",
+      "line_number": 18,
+      "symbol": "TestOrganizationSourcesInvalidManifest",
+      "message": "TestOrganizationSourcesInvalidManifest: 'data' line 18; declare in if block line 19 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestOrganizationSourcesInvalidManifest",
+      "fingerprint": "internal/forge/organization_sources_test.go:HISS-05:fn:TestOrganizationSourcesInvalidManifest#1"
+    },
+    {
+      "rule_id": "HISS-05",
       "file_path": "internal/forge/planning_sync_test.go",
       "line_number": 182,
       "symbol": "TestTickTaskLines_3D",
@@ -4082,6 +4307,15 @@
       "message": "TestPlanningSync_Boundary_WriteCap: 'want' line 379; declare in if block line 380 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestPlanningSync_Boundary_WriteCap",
       "fingerprint": "internal/forge/planning_sync_test.go:HISS-05:fn:TestPlanningSync_Boundary_WriteCap#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/forge/portability_windows_shards_test.go",
+      "line_number": 38,
+      "symbol": "portabilityWindowsShardsProblem",
+      "message": "portabilityWindowsShardsProblem: 'wantContexts' line 38; declare in if block line 44 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:portabilityWindowsShardsProblem",
+      "fingerprint": "internal/forge/portability_windows_shards_test.go:HISS-05:fn:portabilityWindowsShardsProblem#1"
     },
     {
       "rule_id": "HISS-05",
@@ -4136,6 +4370,15 @@
       "message": "TestGitHubDriver_ReusableWorkflowAt: 'refused' line 59; declare in range block line 64 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestGitHubDriver_ReusableWorkflowAt",
       "fingerprint": "internal/forge/reusable_workflow_reader_test.go:HISS-05:fn:TestGitHubDriver_ReusableWorkflowAt#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/forge/review_pagination_test.go",
+      "line_number": 257,
+      "symbol": "brokenReviewContinuation",
+      "message": "brokenReviewContinuation: 'replacements' line 257; declare in if block line 264 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:brokenReviewContinuation",
+      "fingerprint": "internal/forge/review_pagination_test.go:HISS-05:fn:brokenReviewContinuation#1"
     },
     {
       "rule_id": "HISS-05",
@@ -4374,27 +4617,27 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/forge/workflow_guard_test.go",
-      "line_number": 88,
+      "line_number": 92,
       "symbol": "startsUnattended",
-      "message": "startsUnattended: 'attended' line 88; declare in for block line 90 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "startsUnattended: 'attended' line 92; declare in for block line 94 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:startsUnattended",
       "fingerprint": "internal/forge/workflow_guard_test.go:HISS-05:fn:startsUnattended#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/forge/workflow_guard_test.go",
-      "line_number": 365,
+      "line_number": 425,
       "symbol": "TestRenovateSkipRequiresTheRenovateAuthor",
-      "message": "TestRenovateSkipRequiresTheRenovateAuthor: 'cases' line 365; declare in range block line 378 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestRenovateSkipRequiresTheRenovateAuthor: 'cases' line 425; declare in range block line 438 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestRenovateSkipRequiresTheRenovateAuthor",
       "fingerprint": "internal/forge/workflow_guard_test.go:HISS-05:fn:TestRenovateSkipRequiresTheRenovateAuthor#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/forge/workflow_guard_test.go",
-      "line_number": 565,
+      "line_number": 643,
       "symbol": "TestRepositoryGuardKeepsRequiredContextsOnlyWhereItHolds",
-      "message": "TestRepositoryGuardKeepsRequiredContextsOnlyWhereItHolds: 'want' line 565; declare in range block line 567 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestRepositoryGuardKeepsRequiredContextsOnlyWhereItHolds: 'want' line 643; declare in range block line 645 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestRepositoryGuardKeepsRequiredContextsOnlyWhereItHolds",
       "fingerprint": "internal/forge/workflow_guard_test.go:HISS-05:fn:TestRepositoryGuardKeepsRequiredContextsOnlyWhereItHolds#1"
     },
@@ -4742,6 +4985,15 @@
     },
     {
       "rule_id": "HISS-05",
+      "file_path": "internal/gating/prefetch_retry_test.go",
+      "line_number": 101,
+      "symbol": "TestPrefetchRetry_Positive_DownloadTimeoutRetriedOnce",
+      "message": "TestPrefetchRetry_Positive_DownloadTimeoutRetriedOnce: 'wantSub' line 101; declare in if block line 102 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestPrefetchRetry_Positive_DownloadTimeoutRetriedOnce",
+      "fingerprint": "internal/gating/prefetch_retry_test.go:HISS-05:fn:TestPrefetchRetry_Positive_DownloadTimeoutRetriedOnce#1"
+    },
+    {
+      "rule_id": "HISS-05",
       "file_path": "internal/gating/receipt_key_test.go",
       "line_number": 109,
       "symbol": "TestRunReceiptStage_Boundary_PinnedKeyResolution",
@@ -4779,9 +5031,9 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/ghworkflow/ghworkflow_test.go",
-      "line_number": 240,
+      "line_number": 243,
       "symbol": "TestEnvValue",
-      "message": "TestEnvValue: 'cases' line 240; declare in range block line 252 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestEnvValue: 'cases' line 243; declare in range block line 255 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestEnvValue",
       "fingerprint": "internal/ghworkflow/ghworkflow_test.go:HISS-05:fn:TestEnvValue#1"
     },
@@ -4811,6 +5063,96 @@
       "message": "TestUnwrapExpression: 'cases' line 310; declare in range block line 321 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestUnwrapExpression",
       "fingerprint": "internal/ghworkflow/hostedgate_test.go:HISS-05:fn:TestUnwrapExpression#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/ghworkflow/reviewhold_test.go",
+      "line_number": 50,
+      "symbol": "TestReviewHoldBoundedWait",
+      "message": "TestReviewHoldBoundedWait: 'cases' line 50; declare in range block line 60 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestReviewHoldBoundedWait",
+      "fingerprint": "internal/ghworkflow/reviewhold_test.go:HISS-05:fn:TestReviewHoldBoundedWait#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/ghworkflow/reviewhold_test.go",
+      "line_number": 320,
+      "symbol": "reviewFixtures",
+      "message": "reviewFixtures: 'files' line 320; declare in range block line 332 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:reviewFixtures",
+      "fingerprint": "internal/ghworkflow/reviewhold_test.go:HISS-05:fn:reviewFixtures#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/ghworkflow/reviewhold_test.go",
+      "line_number": 482,
+      "symbol": "TestReviewHoldCounter",
+      "message": "TestReviewHoldCounter: 'cases' line 482; declare in range block line 497 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestReviewHoldCounter",
+      "fingerprint": "internal/ghworkflow/reviewhold_test.go:HISS-05:fn:TestReviewHoldCounter#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/ghworkflow/reviewhold_test.go",
+      "line_number": 799,
+      "symbol": "TestReviewHoldReleaseIsolatesPRReadFailure",
+      "message": "TestReviewHoldReleaseIsolatesPRReadFailure: 'cases' line 799; declare in range block line 812 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestReviewHoldReleaseIsolatesPRReadFailure",
+      "fingerprint": "internal/ghworkflow/reviewhold_test.go:HISS-05:fn:TestReviewHoldReleaseIsolatesPRReadFailure#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/ghworkflow/reviewhold_test.go",
+      "line_number": 887,
+      "symbol": "assertReviewReleaseConditionGuards",
+      "message": "assertReviewReleaseConditionGuards: 'cases' line 887; declare in range block line 893 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:assertReviewReleaseConditionGuards",
+      "fingerprint": "internal/ghworkflow/reviewhold_test.go:HISS-05:fn:assertReviewReleaseConditionGuards#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/ghworkflow/reviewhold_test.go",
+      "line_number": 903,
+      "symbol": "assertReviewReleaseConditionBots",
+      "message": "assertReviewReleaseConditionBots: 'cases' line 903; declare in range block line 910 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:assertReviewReleaseConditionBots",
+      "fingerprint": "internal/ghworkflow/reviewhold_test.go:HISS-05:fn:assertReviewReleaseConditionBots#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/ghworkflow/reviewhold_test.go",
+      "line_number": 926,
+      "symbol": "TestReviewHoldReleaseConditionAllowedFunctions",
+      "message": "TestReviewHoldReleaseConditionAllowedFunctions: 'allowed' line 926; declare in range block line 938 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestReviewHoldReleaseConditionAllowedFunctions",
+      "fingerprint": "internal/ghworkflow/reviewhold_test.go:HISS-05:fn:TestReviewHoldReleaseConditionAllowedFunctions#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/ghworkflow/reviewhold_test.go",
+      "line_number": 1002,
+      "symbol": "reviewReleaseConditionConjuncts",
+      "message": "reviewReleaseConditionConjuncts: 'prefix' line 1002; declare in if block line 1003 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:reviewReleaseConditionConjuncts",
+      "fingerprint": "internal/ghworkflow/reviewhold_test.go:HISS-05:fn:reviewReleaseConditionConjuncts#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/ghworkflow/reviewhold_test.go",
+      "line_number": 1029,
+      "symbol": "assertReviewReleaseCheckRunBoundary",
+      "message": "assertReviewReleaseCheckRunBoundary: 'cases' line 1029; declare in range block line 1037 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:assertReviewReleaseCheckRunBoundary",
+      "fingerprint": "internal/ghworkflow/reviewhold_test.go:HISS-05:fn:assertReviewReleaseCheckRunBoundary#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/ghworkflow/reviewhold_test.go",
+      "line_number": 1056,
+      "symbol": "assertReviewReleaseStatusBoundary",
+      "message": "assertReviewReleaseStatusBoundary: 'cases' line 1056; declare in range block line 1065 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:assertReviewReleaseStatusBoundary",
+      "fingerprint": "internal/ghworkflow/reviewhold_test.go:HISS-05:fn:assertReviewReleaseStatusBoundary#1"
     },
     {
       "rule_id": "HISS-05",
@@ -5472,9 +5814,9 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/lockdown/lockdown_test.go",
-      "line_number": 655,
+      "line_number": 656,
       "symbol": "TestSanitize_Negative_NonLatinProseIsPreserved",
-      "message": "TestSanitize_Negative_NonLatinProseIsPreserved: 'mixed' line 655; declare in if block line 656 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestSanitize_Negative_NonLatinProseIsPreserved: 'mixed' line 656; declare in if block line 657 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestSanitize_Negative_NonLatinProseIsPreserved",
       "fingerprint": "internal/lockdown/lockdown_test.go:HISS-05:fn:TestSanitize_Negative_NonLatinProseIsPreserved#1"
     },
@@ -5733,9 +6075,9 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/needs/framework_evidence_test.go",
-      "line_number": 172,
+      "line_number": 180,
       "symbol": "TestFrameworkEmptyContextIsRejected",
-      "message": "TestFrameworkEmptyContextIsRejected: 'absent' line 172; declare in if block line 173 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestFrameworkEmptyContextIsRejected: 'absent' line 180; declare in if block line 181 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestFrameworkEmptyContextIsRejected",
       "fingerprint": "internal/needs/framework_evidence_test.go:HISS-05:fn:TestFrameworkEmptyContextIsRejected#1"
     },
@@ -6425,6 +6767,24 @@
     },
     {
       "rule_id": "HISS-05",
+      "file_path": "internal/sandbox/test_exec_publish_test.go",
+      "line_number": 76,
+      "symbol": "TestSandboxPublishPrivateRange",
+      "message": "TestSandboxPublishPrivateRange: 'cases' line 76; declare in range block line 90 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestSandboxPublishPrivateRange",
+      "fingerprint": "internal/sandbox/test_exec_publish_test.go:HISS-05:fn:TestSandboxPublishPrivateRange#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/sandbox/test_exec_test.go",
+      "line_number": 119,
+      "symbol": "TestSandboxLoopbackServerProcess",
+      "message": "TestSandboxLoopbackServerProcess: 'stop' line 119; declare in if block line 120 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestSandboxLoopbackServerProcess",
+      "fingerprint": "internal/sandbox/test_exec_test.go:HISS-05:fn:TestSandboxLoopbackServerProcess#1"
+    },
+    {
+      "rule_id": "HISS-05",
       "file_path": "internal/semver/semver_test.go",
       "line_number": 7,
       "symbol": "TestCutOperator_Positive_SplitsEveryComparator",
@@ -6489,9 +6849,9 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/state/bootstrap_test.go",
-      "line_number": 75,
+      "line_number": 77,
       "symbol": "TestBootstrapRejectsCanceledAndInvalidRoots",
-      "message": "TestBootstrapRejectsCanceledAndInvalidRoots: 'absent' line 75; declare in if block line 76 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestBootstrapRejectsCanceledAndInvalidRoots: 'absent' line 77; declare in if block line 78 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestBootstrapRejectsCanceledAndInvalidRoots",
       "fingerprint": "internal/state/bootstrap_test.go:HISS-05:fn:TestBootstrapRejectsCanceledAndInvalidRoots#1"
     },
@@ -6530,6 +6890,15 @@
       "message": "TestMigrateBugMetadataRefusesMismatchAndStaleLedger: 'missing' line 115; declare in if block line 116 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestMigrateBugMetadataRefusesMismatchAndStaleLedger",
       "fingerprint": "internal/state/bugs_migrate_test.go:HISS-05:fn:TestMigrateBugMetadataRefusesMismatchAndStaleLedger#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/state/client_local_settings_test.go",
+      "line_number": 200,
+      "symbol": "TestStateLedgerIntegrityGuide_DocumentsCurrentBlockVersion_Negative",
+      "message": "TestStateLedgerIntegrityGuide_DocumentsCurrentBlockVersion_Negative: 'unmanaged' line 200; declare in if block line 201 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestStateLedgerIntegrityGuide_DocumentsCurrentBlockVersion_Negative",
+      "fingerprint": "internal/state/client_local_settings_test.go:HISS-05:fn:TestStateLedgerIntegrityGuide_DocumentsCurrentBlockVersion_Negative#1"
     },
     {
       "rule_id": "HISS-05",
@@ -6795,9 +7164,9 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/supplychain/image_refs.go",
-      "line_number": 110,
+      "line_number": 90,
       "symbol": "NormalizeImage",
-      "message": "NormalizeImage: 'prefixes' line 110; declare in for block line 111 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "NormalizeImage: 'prefixes' line 90; declare in for block line 91 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:NormalizeImage",
       "fingerprint": "internal/supplychain/image_refs.go:HISS-05:fn:NormalizeImage#1"
     },
@@ -6845,6 +7214,33 @@
       "message": "TestGenerateCycloneDX_Positive_ReplaceDirectiveAppliesToComponent: 'content' line 82; declare in if block line 83 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestGenerateCycloneDX_Positive_ReplaceDirectiveAppliesToComponent",
       "fingerprint": "internal/supplychain/supplychain_test.go:HISS-05:fn:TestGenerateCycloneDX_Positive_ReplaceDirectiveAppliesToComponent#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/testsupport/gitprobe_guard_test.go",
+      "line_number": 174,
+      "symbol": "TestGitProbeGuard_WriteInvocationsOfReadOnlySubcommands",
+      "message": "TestGitProbeGuard_WriteInvocationsOfReadOnlySubcommands: 'disallowed' line 174; declare in for block line 191 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestGitProbeGuard_WriteInvocationsOfReadOnlySubcommands",
+      "fingerprint": "internal/testsupport/gitprobe_guard_test.go:HISS-05:fn:TestGitProbeGuard_WriteInvocationsOfReadOnlySubcommands#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/testsupport/gitprobe_guard_test.go",
+      "line_number": 199,
+      "symbol": "TestGitProbeGuard_WriteInvocationsOfReadOnlySubcommands",
+      "message": "TestGitProbeGuard_WriteInvocationsOfReadOnlySubcommands: 'allowed' line 199; declare in for block line 207 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestGitProbeGuard_WriteInvocationsOfReadOnlySubcommands",
+      "fingerprint": "internal/testsupport/gitprobe_guard_test.go:HISS-05:fn:TestGitProbeGuard_WriteInvocationsOfReadOnlySubcommands#2"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "internal/testsupport/gitprobe_guard_test.go",
+      "line_number": 238,
+      "symbol": "TestGitProbeGuard_GlobalOptions",
+      "message": "TestGitProbeGuard_GlobalOptions: 'disallowed' line 238; declare in for block line 252 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestGitProbeGuard_GlobalOptions",
+      "fingerprint": "internal/testsupport/gitprobe_guard_test.go:HISS-05:fn:TestGitProbeGuard_GlobalOptions#1"
     },
     {
       "rule_id": "HISS-05",
@@ -7389,18 +7785,18 @@
     {
       "rule_id": "HISS-05",
       "file_path": "internal/util/util_test.go",
-      "line_number": 701,
+      "line_number": 796,
       "symbol": "TestResolveAuthToken_Precedence",
-      "message": "TestResolveAuthToken_Precedence: 'script' line 701; declare in if block line 702 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestResolveAuthToken_Precedence: 'script' line 796; declare in if block line 797 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestResolveAuthToken_Precedence",
       "fingerprint": "internal/util/util_test.go:HISS-05:fn:TestResolveAuthToken_Precedence#1"
     },
     {
       "rule_id": "HISS-05",
       "file_path": "internal/util/util_test.go",
-      "line_number": 738,
+      "line_number": 833,
       "symbol": "TestResolveAuthTokenContext_Positive_IgnoresStandardError",
-      "message": "TestResolveAuthTokenContext_Positive_IgnoresStandardError: 'script' line 738; declare in if block line 739 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestResolveAuthTokenContext_Positive_IgnoresStandardError: 'script' line 833; declare in if block line 834 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestResolveAuthTokenContext_Positive_IgnoresStandardError",
       "fingerprint": "internal/util/util_test.go:HISS-05:fn:TestResolveAuthTokenContext_Positive_IgnoresStandardError#1"
     },
@@ -7578,11 +7974,65 @@
     {
       "rule_id": "HISS-05",
       "file_path": "tools/apicompat/gate/download_retry_test.go",
-      "line_number": 69,
+      "line_number": 72,
       "symbol": "TestBuildModule_Positive_FirstDownloadFailsThenSucceeds",
-      "message": "TestBuildModule_Positive_FirstDownloadFailsThenSucceeds: 'wantMsg' line 69; declare in if block line 70 (address-taken, captured and loop-mutated locals exempt)",
+      "message": "TestBuildModule_Positive_FirstDownloadFailsThenSucceeds: 'wantMsg' line 72; declare in if block line 73 (address-taken, captured and loop-mutated locals exempt)",
       "anchor": "fn:TestBuildModule_Positive_FirstDownloadFailsThenSucceeds",
       "fingerprint": "tools/apicompat/gate/download_retry_test.go:HISS-05:fn:TestBuildModule_Positive_FirstDownloadFailsThenSucceeds#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "tools/apicompat/gate/download_retry_test.go",
+      "line_number": 267,
+      "symbol": "TestBuildModule_Positive_SkipsTestOnlyRequirements",
+      "message": "TestBuildModule_Positive_SkipsTestOnlyRequirements: 'wantArgs' line 267; declare in if block line 268 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestBuildModule_Positive_SkipsTestOnlyRequirements",
+      "fingerprint": "tools/apicompat/gate/download_retry_test.go:HISS-05:fn:TestBuildModule_Positive_SkipsTestOnlyRequirements#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "tools/apicompat/gate/download_retry_test.go",
+      "line_number": 354,
+      "symbol": "TestBuildModule_LocalReplaceVersionSelection",
+      "message": "TestBuildModule_LocalReplaceVersionSelection: 'want' line 354; declare in if block line 355 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestBuildModule_LocalReplaceVersionSelection",
+      "fingerprint": "tools/apicompat/gate/download_retry_test.go:HISS-05:fn:TestBuildModule_LocalReplaceVersionSelection#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "tools/apicompat/gate/download_retry_test.go",
+      "line_number": 585,
+      "symbol": "TestBuildModule_SkipsUnimportedIndirectRequirements",
+      "message": "TestBuildModule_SkipsUnimportedIndirectRequirements: 'gomod' line 585; declare in if block line 586 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestBuildModule_SkipsUnimportedIndirectRequirements",
+      "fingerprint": "tools/apicompat/gate/download_retry_test.go:HISS-05:fn:TestBuildModule_SkipsUnimportedIndirectRequirements#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "tools/apicompat/gate/download_retry_test.go",
+      "line_number": 599,
+      "symbol": "TestBuildModule_SkipsUnimportedIndirectRequirements",
+      "message": "TestBuildModule_SkipsUnimportedIndirectRequirements: 'want' line 599; declare in if block line 600 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestBuildModule_SkipsUnimportedIndirectRequirements",
+      "fingerprint": "tools/apicompat/gate/download_retry_test.go:HISS-05:fn:TestBuildModule_SkipsUnimportedIndirectRequirements#2"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "tools/apicompat/gate/main_review_test.go",
+      "line_number": 62,
+      "symbol": "TestBuildModule_SelectedTaggedImports",
+      "message": "TestBuildModule_SelectedTaggedImports: 'source' line 62; declare in if block line 63 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestBuildModule_SelectedTaggedImports",
+      "fingerprint": "tools/apicompat/gate/main_review_test.go:HISS-05:fn:TestBuildModule_SelectedTaggedImports#1"
+    },
+    {
+      "rule_id": "HISS-05",
+      "file_path": "tools/apicompat/gate/main_review_test.go",
+      "line_number": 76,
+      "symbol": "TestBuildModule_SelectedTaggedImports",
+      "message": "TestBuildModule_SelectedTaggedImports: 'want' line 76; declare in if block line 77 (address-taken, captured and loop-mutated locals exempt)",
+      "anchor": "fn:TestBuildModule_SelectedTaggedImports",
+      "fingerprint": "tools/apicompat/gate/main_review_test.go:HISS-05:fn:TestBuildModule_SelectedTaggedImports#2"
     },
     {
       "rule_id": "HISS-05",

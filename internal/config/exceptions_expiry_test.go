@@ -74,7 +74,7 @@ func TestExceptionWarningDaysReasonCategory(t *testing.T) {
 
 func TestValidateExceptionsHISS18CategoryCutoff(t *testing.T) {
 	today := time.Date(2026, 10, 21, 18, 0, 0, 0, time.UTC)
-	cases := []struct {
+	for _, tc := range []struct {
 		name, category, entered, expires, want string
 	}{
 		{"positive categorized past cutoff", "A", "2026-10-29", "2026-12-31", ""},
@@ -82,8 +82,7 @@ func TestValidateExceptionsHISS18CategoryCutoff(t *testing.T) {
 		{"boundary uncategorized without entered within grace", "", "", "2026-11-28", ""},
 		{"negative uncategorized entered on cutoff", "", "2026-10-29", "2026-11-01", "category is required (entered 2026-10-29 is on or after 2026-10-29"},
 		{"negative uncategorized without entered past grace", "", "", "2026-11-29", "category is required (entered is omitted and expires 2026-11-29 is after 2026-11-28"},
-	}
-	for _, tc := range cases {
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			entry := Exception{
 				Rule:     ExceptionRuleWorkflowTriggers,
