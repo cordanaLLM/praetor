@@ -14,6 +14,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// TestInitWorkingDirContext uses cancelled, nil, and valid contexts and requires initialization to reject invalid contexts without writing and create a readable ledger for the valid one.
 func TestInitWorkingDirContext(t *testing.T) {
 	dir := t.TempDir()
 	cancelled, cancel := context.WithCancel(t.Context())
@@ -36,6 +37,7 @@ func TestInitWorkingDirContext(t *testing.T) {
 	}
 }
 
+// TestArchiveCompletedTasksPreservesOpenWhenBacklogUnreadable plants a completed task and an unreadable backlog and requires archiving to fail without losing the open ledger.
 func TestArchiveCompletedTasksPreservesOpenWhenBacklogUnreadable(t *testing.T) {
 	dir := t.TempDir()
 	if err := InitWorkingDir(dir); err != nil {

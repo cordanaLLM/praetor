@@ -386,6 +386,7 @@ func TestDispatchCommand_EditorsAndFlavors(t *testing.T) {
 	mustContain(t, out, "Release Flavor Reconciler", "flavors sync")
 }
 
+// TestEditorsGenerateReportsCreatedMergedAndPresent plants an existing editor setting and requires generation to report creation, merging, and already-present files while preserving that setting.
 func TestEditorsGenerateReportsCreatedMergedAndPresent(t *testing.T) {
 	root := t.TempDir()
 	out, err := captureStdout(t, func() error { return runEditors([]string{"generate", "--path=" + root}) })
@@ -447,6 +448,7 @@ func TestEditorsVerifyReportsPreservedNonJSONAsUnverified(t *testing.T) {
 	mustContain(t, out, "[PRESERVED] [universal] .editorconfig", "[UNVERIFIED] 1 existing human-owned file(s)")
 }
 
+// TestEditorsRejectDuplicateJSONKeysWithoutWriting plants duplicate editor settings and requires verification and generation to reject them without changing the file.
 func TestEditorsRejectDuplicateJSONKeysWithoutWriting(t *testing.T) {
 	root := t.TempDir()
 	if _, err := captureStdout(t, func() error { return runEditors([]string{"generate", "--path=" + root}) }); err != nil {
@@ -501,6 +503,7 @@ func TestDispatchCommand_AdoptPlanSyncInitHelp(t *testing.T) {
 	}
 }
 
+// TestDispatchCommand_PaperclipAndAdopt plants identified and unidentified repositories and requires Paperclip and adoption commands to honor identity, argument forms, and invalid flags.
 func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
 	tmpDir := newAuditFixture(t).dir
 	paperclipDir := t.TempDir()
@@ -619,6 +622,7 @@ func TestDispatchCommand_IssueReconcile(t *testing.T) {
 	}
 }
 
+// TestDispatchCommand_NeedsFleet plants a fixture fleet and framework and requires needs requests and epic generation to use them successfully.
 func TestDispatchCommand_NeedsFleet(t *testing.T) {
 	// Needs requests and epic against fixture repositories and an explicit framework.
 	fleet := t.TempDir()
@@ -670,6 +674,7 @@ targets:
 	}
 }
 
+// TestDispatchCommand_StateSubcommands initializes a temporary ledger and requires the state commands to manage its entries, record a sync log, and reject an invalid subcommand.
 func TestDispatchCommand_StateSubcommands(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -849,6 +854,7 @@ func TestDispatchCommand_MilestoneDirectoryFlags(t *testing.T) {
 	mustContain(t, out, "Closed:      1")
 }
 
+// TestDispatchCommand_ProjectCachedStatusDoesNotResolveAuth plants a local project cache and a marker executable and requires status to leave the cache unchanged without invoking authentication.
 func TestDispatchCommand_ProjectCachedStatusDoesNotResolveAuth(t *testing.T) {
 	dir, bin := t.TempDir(), t.TempDir()
 	t.Setenv("PATH", bin)
@@ -922,6 +928,7 @@ func TestDispatchCommand_CISubcommands(t *testing.T) {
 // state: sync logs, status is read-only, --dir is a flag everywhere
 // =========================================================================
 
+// TestDispatchCommand_StateSyncRecordsLogAfterPositional initializes a temporary ledger and requires a log flag following the directory to be recorded in state.
 func TestDispatchCommand_StateSyncRecordsLogAfterPositional(t *testing.T) {
 	tmpDir := t.TempDir()
 	if err := dispatchCommand("state", []string{"init", tmpDir}); err != nil {
@@ -943,6 +950,7 @@ func TestDispatchCommand_StateSyncRecordsLogAfterPositional(t *testing.T) {
 	}
 }
 
+// TestDispatchCommand_StateStatusDoesNotMutateLedger initializes a temporary ledger and requires status to report its contents without changing it.
 func TestDispatchCommand_StateStatusDoesNotMutateLedger(t *testing.T) {
 	tmpDir := t.TempDir()
 	if err := dispatchCommand("state", []string{"init", tmpDir}); err != nil {
@@ -973,6 +981,7 @@ func TestDispatchCommand_StateStatusDoesNotMutateLedger(t *testing.T) {
 	}
 }
 
+// TestDispatchCommand_StateStatusRequiresWorkingDir uses a directory without a ledger and requires status to fail without creating one.
 func TestDispatchCommand_StateStatusRequiresWorkingDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	if err := dispatchCommand("state", []string{"status", tmpDir}); err == nil {
@@ -1036,6 +1045,7 @@ func TestDispatchCommand_StateTaskLifecycle(t *testing.T) {
 	}
 }
 
+// TestDispatchCommand_StateDirFlagIsNotADirectoryName plants a ledger bug and requires a trailing directory flag to target its resolution without creating a stray directory.
 func TestDispatchCommand_StateDirFlagIsNotADirectoryName(t *testing.T) {
 	tmpDir := t.TempDir()
 	if err := dispatchCommand("state", []string{"init", tmpDir}); err != nil {
@@ -1072,6 +1082,7 @@ func TestDispatchCommand_StateDirFlagIsNotADirectoryName(t *testing.T) {
 // topology: no hard-coded dev root, flags honoured after a positional
 // =========================================================================
 
+// TestDispatchCommand_TopologyAuditReportsStrayFiles plants a stray governance file and requires audit to report it and cleaning to remove it when the trailing flag enables changes.
 func TestDispatchCommand_TopologyAuditReportsStrayFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	stray := filepath.Join(tmpDir, "CLAUDE.md")
@@ -1326,6 +1337,7 @@ func TestResolveHomeSubdir_3D(t *testing.T) {
 	}
 }
 
+// TestDispatchCommand_AdoptAllMissingNeverFallsBackToCwd removes the home directory from the fixture environment and requires adoption to fail unless an explicit scan root is provided.
 func TestDispatchCommand_AdoptAllMissingNeverFallsBackToCwd(t *testing.T) {
 	// Negative: an unset HOME must fail loudly instead of scanning ./dev.
 	isolateDevRootEnv(t)

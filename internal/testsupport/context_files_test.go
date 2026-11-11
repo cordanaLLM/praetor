@@ -12,6 +12,7 @@ import (
 	"testing"
 )
 
+// TestContextFiles plants two files and requires sorted, bounded directory reads and correct results for present and missing paths.
 func TestContextFiles(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"b", "a"} {
@@ -35,6 +36,7 @@ func TestContextFiles(t *testing.T) {
 	}
 }
 
+// TestContextFilesCancellation uses a cancelled context and a zero entry limit and requires directory reads and stat calls to reject those invalid conditions.
 func TestContextFilesCancellation(t *testing.T) {
 	dir := t.TempDir()
 	ctx := DeadlineContext(t)

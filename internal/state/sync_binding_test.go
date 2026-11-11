@@ -35,6 +35,7 @@ func syncFixtureAt(t *testing.T, root string) string {
 	return root
 }
 
+// TestVerifyStateSyncReadOnlyAndPrivateEvidenceExcluded plants oversized private evidence and requires verification to ignore it while leaving the synced ledger unchanged.
 func TestVerifyStateSyncReadOnlyAndPrivateEvidenceExcluded(t *testing.T) {
 	root := syncFixture(t)
 	path := filepath.Join(root, WorkingDirName, "STATE.md")
@@ -141,6 +142,7 @@ func changeSyncInput(t *testing.T, root, kind string) {
 	}
 }
 
+// TestStateSyncMissingLedgerDoesNotRepairExistingDirectory removes a ledger file and requires sync to fail without silently recreating it.
 func TestStateSyncMissingLedgerDoesNotRepairExistingDirectory(t *testing.T) {
 	root := syncFixture(t)
 	path := filepath.Join(root, WorkingDirName, "BACKLOG.md")
@@ -195,6 +197,7 @@ func TestStateSyncUntrackedByteBound(t *testing.T) {
 	}
 }
 
+// TestStateSyncRejectsConfiguredFilterBeforeExecution plants a selected Git filter with a marker and requires sync to reject it before execution.
 func TestStateSyncRejectsConfiguredFilterBeforeExecution(t *testing.T) {
 	root := syncFixture(t)
 	marker := filepath.Join(root, "filter-executed")
