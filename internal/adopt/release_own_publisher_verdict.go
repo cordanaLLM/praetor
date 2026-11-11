@@ -20,7 +20,7 @@ func judgeOwnReleaseConfigs(configs map[string][]byte, publishers []string) (str
 		form, err := resolveOwnReleasePackages(configs[name])
 		if err != nil {
 			fixPath := strings.Replace(name, ".release-please-manifest.json", "release-please-config.json", 1)
-			return "", fmt.Errorf("[FAIL] %s: %s: %w; publishing workflow(s): %s; set \"skip-github-release\": true at the top level or on every package in %s (including package overrides)",
+			return "", fmt.Errorf("[FAIL] %s: %s: %w; publishing workflow(s): %s; set \"skip-github-release\": true, or both \"draft\": true and \"force-tag-creation\": true, at the top level or on every package in %s (including package overrides)",
 				releaseOwnPublisherRule, name, err, strings.Join(publishers, ", "), fixPath)
 		}
 		lines = append(lines, fmt.Sprintf("[PASS] %s: %s: every package hands release creation to the own publisher (%s); publishing workflow(s): %s.",

@@ -68,7 +68,7 @@ var ownReleaseVerdictCases = []struct {
 		wantFailSubs: []string{
 			"[FAIL] release-own-publisher:",
 			"publishing workflow(s): .github/workflows/publish.yml",
-			"set \"skip-github-release\": true at the top level or on every package in release-please-config.json",
+			"set \"skip-github-release\": true, or both \"draft\": true and \"force-tag-creation\": true, at the top level or on every package in release-please-config.json",
 		},
 	},
 	{
@@ -82,6 +82,20 @@ var ownReleaseVerdictCases = []struct {
 		wantFailSubs: []string{
 			"[FAIL] release-own-publisher:",
 			"in .github/release-please-config.json",
+		},
+	},
+	{
+		name: "draft without force names both accepted forms",
+		configs: map[string][]byte{
+			"release-please-config.json": []byte(`{"draft":true,"packages":{".":{}}}`),
+		},
+		publishers: []string{
+			".github/workflows/publish.yml",
+		},
+		wantFailSubs: []string{
+			"[FAIL] release-own-publisher:",
+			"draft true but force-tag-creation not true",
+			"set \"skip-github-release\": true, or both \"draft\": true and \"force-tag-creation\": true,",
 		},
 	},
 	{
