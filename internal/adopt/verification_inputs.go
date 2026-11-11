@@ -89,13 +89,13 @@ func walkVerificationTree(ctx context.Context, path string, limits VerificationL
 	return nil
 }
 
-// countCargoManifests counts Cargo.toml files within the bounded walk without reading file contents.
+// countCargoManifests counts Cargo.toml files within the bounded walk under limits, the bounds
+// the later input walk uses, without reading file contents.
 // Order: engine-1689-no-cargo-skip-first-20261102.
-func countCargoManifests(ctx context.Context, path string) (int, error) {
+func countCargoManifests(ctx context.Context, path string, limits VerificationLimits) (int, error) {
 	if ctx == nil {
 		return 0, errors.New("context is required")
 	}
-	limits := DefaultVerificationLimits()
 	count := 0
 	err := walkVerificationTree(ctx, path, limits, func(rel string, entry fs.DirEntry) error {
 		if filepath.Base(rel) == "Cargo.toml" {
