@@ -9,6 +9,9 @@ import (
 	"time"
 )
 
+// FuzzLSPHandleMessage feeds arbitrary bytes (capped at 64 KiB) to a fresh server per input and
+// requires HandleMessage to return a JSON-RPC parse error for invalid JSON and a well-formed
+// response frame otherwise, never an error of its own.
 func FuzzLSPHandleMessage(f *testing.F) {
 	f.Add([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}`))
 	f.Add([]byte(`{"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"position":{"line":0,"character":0}}}`))
