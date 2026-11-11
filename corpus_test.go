@@ -105,8 +105,7 @@ func TestEmbeddedCorpus_Negative_PlantedMissingFixtureFails(t *testing.T) {
 	planted := fstest.MapFS{
 		root + "/HISS-01/go/positive/case.go": &fstest.MapFile{Data: []byte("package p")},
 	}
-	disk := []string{"HISS-01/go/positive/case.go", "HISS-20/go/gap/.hidden_fixture"}
-	if err := checkCorpusInventory(disk, collectFSFiles(t, planted, root)); err == nil {
+	if err := checkCorpusInventory([]string{"HISS-01/go/positive/case.go", "HISS-20/go/gap/.hidden_fixture"}, collectFSFiles(t, planted, root)); err == nil {
 		t.Fatal("inventory accepted an embedded filesystem missing the planted fixture")
 	}
 }

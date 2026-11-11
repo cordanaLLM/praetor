@@ -58,6 +58,7 @@ pre-push:
   scripts:
     praetor-commit-policy.sh:
       runner: sh
+      use_stdin: true
   commands:
     secrets:
       run: >-

@@ -51,7 +51,7 @@ func (f blockedFS) ReadFile(name string) ([]byte, error) {
 
 func TestReplayReadCancellation(t *testing.T) {
 	const fixture = ".config/hiss/testdata/HISS-01/go/positive/recursion.go"
-	for _, name := range []string{CatalogFile, fixture} {
+	for _, name := range [...]string{CatalogFile, fixture} {
 		t.Run(name, func(t *testing.T) {
 			f := blockedFS{MapFS: fstest.MapFS{name: &fstest.MapFile{Data: []byte(recursiveGo)}}, target: name, started: make(chan struct{}, 1), release: make(chan struct{})}
 			defer close(f.release)

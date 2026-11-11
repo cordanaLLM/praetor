@@ -221,6 +221,7 @@ func TestCheckHotAllocations_Boundary_ParseErrorNotSkipped(t *testing.T) {
 func TestHotAllocFinishUnreadableFileIncomplete(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "unreadable.go")
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a test directory needs its execute bit; 0o750 is the directory rule's bound
 	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
