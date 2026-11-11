@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/admission"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -123,7 +124,7 @@ const sessionAttempts = 16
 
 // runSession launches a session with bounded retries so start-tick collisions cannot reuse an identity.
 func runSession(ctx context.Context, inv Invocation, sh string, command []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	return retrySession(ctx, func() (bool, error) { return runSessionAttempt(ctx, inv, sh, command, stdin, stdout, stderr) }, waitSessionRetry)
+	return retrySession(ctx, func() (bool, error) { return runSessionAttempt(ctx, inv, sh, command, stdin, stdout, stderr) }, admission.SleepContext)
 }
 
 // retrySession retries collisions up to sixteen attempts with jitter and stops on cancellation or other errors.
@@ -151,18 +152,6 @@ func retrySession(ctx context.Context, attempt func() (bool, error), wait func(c
 		}
 	}
 	return fmt.Errorf("session identity collision: %d attempts exhausted", sessionAttempts)
-}
-
-// waitSessionRetry waits for the retry delay or cancellation so collision retries remain interruptible.
-func waitSessionRetry(ctx context.Context, delay time.Duration) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
 }
 
 // runSessionAttempt reserves the sandbox start tick before releasing its handshake and marks it released after the process exits.
