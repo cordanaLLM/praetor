@@ -181,7 +181,13 @@ func (s *Server) HandleMessage(ctx context.Context, raw []byte) (*JSONRPCRespons
 		}, nil, nil
 	}
 
-	return s.dispatchRequest(ctx, req)
+	resp, notifs, err := s.dispatchRequest(ctx, req)
+	if err == nil && resp == nil && req.ID != nil {
+		// JSON-RPC 2.0 exempts only notifications, which carry no id, from a reply: a request that
+		// carries one for a method the server handles as a notification still gets a null result.
+		resp = &JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: nil}
+	}
+	return resp, notifs, err
 }
 
 func (s *Server) dispatchRequest(ctx context.Context, req JSONRPCRequest) (*JSONRPCResponse, []JSONRPCNotification, error) {
@@ -375,6 +381,7 @@ func (s *Server) handleDidOpen(ctx context.Context, paramsRaw json.RawMessage) (
 	return s.publishDiagnosticsFor(ctx, params.TextDocument.URI, params.TextDocument.Text, params.TextDocument.Version)
 }
 
+// handleDidChange applies the latest full document change or rejects missing changes.
 func (s *Server) handleDidChange(ctx context.Context, paramsRaw json.RawMessage) ([]JSONRPCNotification, error) {
 	var params struct {
 		TextDocument struct {
@@ -387,6 +394,9 @@ func (s *Server) handleDidChange(ctx context.Context, paramsRaw json.RawMessage)
 	}
 	if err := json.Unmarshal(paramsRaw, &params); err != nil {
 		return nil, fmt.Errorf("invalid didChange params: %w", err)
+	}
+	if params.ContentChanges == nil {
+		return nil, errors.New("invalid didChange params: missing contentChanges")
 	}
 	if len(params.ContentChanges) == 0 {
 		return nil, nil
