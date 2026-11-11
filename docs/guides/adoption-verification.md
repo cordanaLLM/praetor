@@ -1938,14 +1938,16 @@ The executable cases live in `internal/gating/race_packages_test.go`,
 ### The race stage's bound, and what firing it means
 
 The race-detector stage is bounded, because an unbounded stage is how a gate hangs instead of
-failing (HISS-02). The default is 20 minutes, and `PRAETOR_TEST_STAGE_TIMEOUT` raises it up to a
-30-minute ceiling. The default rests on measured runs (#1419): on a workstation at load 45 to 60 a
-full race run took 9 to 10 minutes for the engine and 4 to 7 minutes for adopted repositories, and
-the earlier 3-minute default refused ordinary pushes there. Twenty minutes is about twice the
-slowest of those runs and leaves room under the ceiling (`TestTestStageTimeoutDefaultCoversTheMeasuredRuns`
-in `internal/gating/race_bound_test.go`). A suite that blocks forever is still stopped at the
-bound and reported as the bound firing, at the default and at a raised value
-(`TestTestStageCutsAHungSuiteAtTheDefaultAndARaisedBound`). The stage passes the same bound to `go test -race -timeout`, so every package
+failing (HISS-02). The default is 20 minutes (`TestStageTimeout` in `internal/gating/deadline.go`),
+and `PRAETOR_TEST_STAGE_TIMEOUT` raises it up to a 30-minute ceiling. The default rests on measured runs
+(#1419): on a workstation at load 45 to 60 a full race run took 9 to 10 minutes for the engine and 4 to 7
+minutes for adopted repositories, and the earlier 3-minute default refused ordinary pushes there.
+Twenty minutes is about twice the slowest of those runs and leaves room under the ceiling
+(`TestTestStageTimeoutDefaultCoversTheMeasuredRuns` in `internal/gating/race_bound_test.go`).
+The same default is shared with the Git hook environment (`stage_budget` in
+`.config/lefthook/scripts/common.py`), which mirrors `TestStageTimeout` as the single source of truth.
+A suite that blocks forever is still stopped at the bound and reported as the bound firing, at the
+default and at a raised value (`TestTestStageCutsAHungSuiteAtTheDefaultAndARaisedBound`). The stage passes the same bound to `go test -race -timeout`, so every package
 binary may use the whole stage budget; go test's own default of ten minutes per package would
 otherwise panic a slow package mid-suite while the stage still had budget left
 (`TestRunTestStage_3D` in `internal/gating/gating_test.go` pins the command line).
