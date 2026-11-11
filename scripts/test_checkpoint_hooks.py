@@ -151,7 +151,7 @@ class MissingHookTools(unittest.TestCase):
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                 self.assertIn("lefthook not found on PATH", result.stderr)
                 self.assertIn("Restore: go -C", result.stderr)
-                self.assertIn("tools/lefthook", result.stderr)
+                self.assertIn(os.path.join("tools", "lefthook"), result.stderr)
                 self.assertIn(
                     "install github.com/evilmartians/lefthook/v2", result.stderr
                 )
