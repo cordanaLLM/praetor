@@ -81,6 +81,14 @@ type Result struct {
 	Expired    []Entry
 	StaleIdx   []int
 	ExpiredIdx []int
+	Unjudged   []Entry
+}
+
+// JudgeOptions controls judgments that require complete history.
+type JudgeOptions struct {
+	// DeferUnused leaves unmatched entries for a later full-history scan to judge.
+	// Expiry and blocking findings are always judged.
+	DeferUnused bool
 }
 
 // Failed reports whether any finding is blocking or any exception is stale or expired.
@@ -257,6 +265,11 @@ func NormalizeFindingPath(filePath, repoDir string) string {
 
 // Judge classifies findings against exceptions on today.
 func Judge(findings []Finding, entries []Entry, dir string, today time.Time) Result {
+	return JudgeWithOptions(findings, entries, dir, today, JudgeOptions{})
+}
+
+// JudgeWithOptions classifies findings, optionally deferring unused-entry judgment.
+func JudgeWithOptions(findings []Finding, entries []Entry, dir string, today time.Time, opts JudgeOptions) Result {
 	result := Result{}
 	used := make([]bool, len(entries))
 	for fIdx := 0; fIdx < len(findings) && fIdx < MaxJudgedFindings; fIdx++ {
@@ -268,17 +281,26 @@ func Judge(findings []Finding, entries []Entry, dir string, today time.Time) Res
 			result.Blocking = append(result.Blocking, f)
 		}
 	}
+	judgeEntries(&result, entries, used, today, opts)
+	return result
+}
+
+// judgeEntries marks expired entries and, unless opts.DeferUnused, entries that excused no finding.
+func judgeEntries(result *Result, entries []Entry, used []bool, today time.Time, opts JudgeOptions) {
 	for eIdx := 0; eIdx < len(entries) && eIdx < MaxJudgedEntries; eIdx++ {
 		if entries[eIdx].Expired(today) {
 			result.Expired = append(result.Expired, entries[eIdx])
 			result.ExpiredIdx = append(result.ExpiredIdx, eIdx)
 		}
 		if !used[eIdx] {
-			result.Stale = append(result.Stale, entries[eIdx])
-			result.StaleIdx = append(result.StaleIdx, eIdx)
+			if opts.DeferUnused && !entries[eIdx].Expired(today) {
+				result.Unjudged = append(result.Unjudged, entries[eIdx])
+			} else if !opts.DeferUnused {
+				result.Stale = append(result.Stale, entries[eIdx])
+				result.StaleIdx = append(result.StaleIdx, eIdx)
+			}
 		}
 	}
-	return result
 }
 
 func matchFinding(rel, ruleID, fingerprint string, entries []Entry, today time.Time, used []bool) bool {

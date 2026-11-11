@@ -5,12 +5,55 @@
 package secrets_test
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/tools/secrets"
 	"github.com/cordanaLLM/praetor/tools/secrets/rules"
 )
+
+// RenderWorkflow and StripSettings still work on the unchanged emitted workflow with one HISS-12 exception.
+func TestRenderWorkflow_EmittedSecretsExceptionsCompatibility(t *testing.T) {
+	path := filepath.Join("..", "..", "templates", "testdata", "rendered", "go", "security-go.yml", "fallback.yml")
+	// nosemgrep: go_filesystem_rule-fileread -- path is a fixed fixture path under templates/testdata, not input
+	plain, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := []rules.Entry{{Path: "creds.py", RuleID: "generic-api-key", Category: "C",
+		Entered: "2026-11-10", Expires: "2026-11-20", Reason: "renderer compatibility fixture"}}
+	rendered, err := secrets.RenderWorkflow(string(plain), entries)
+	if err != nil {
+		t.Fatalf("emitted fallback must accept HISS-12 exceptions: %v", err)
+	}
+	if strings.Count(rendered, "        env:\n") != strings.Count(string(plain), "        env:\n")+1 || strings.Count(rendered, secrets.ExceptionsEnv) != 1 {
+		t.Fatal("expected one added exceptions environment in the unchanged gate step")
+	}
+	_, tail, found := strings.Cut(rendered, secrets.ExceptionsEnv+": ")
+	if !found {
+		t.Fatal("missing exceptions payload")
+	}
+	quoted, _, _ := strings.Cut(tail, "\n")
+	var payload string
+	if err := json.Unmarshal([]byte(quoted), &payload); err != nil {
+		t.Fatal(err)
+	}
+	var decoded []rules.Entry
+	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(decoded, entries) {
+		t.Fatalf("decoded exceptions: got %+v, want %+v", decoded, entries)
+	}
+	stripped, ok := secrets.StripSettings(rendered)
+	if !ok || stripped != string(plain) {
+		t.Fatal("emitted workflow exceptions must round-trip to the unchanged golden")
+	}
+}
 
 const sampleWorkflow = `name: Security
 jobs:
