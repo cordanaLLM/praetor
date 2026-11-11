@@ -41,6 +41,7 @@ func narrowInitializers(fn *ast.FuncDecl, file *ast.File) map[ast.Node]bool {
 	return movable
 }
 
+// narrowPackageNames records package bindings so only proven constants qualify as movable initializers.
 func narrowPackageNames(file *ast.File) map[string]bool {
 	names := map[string]bool{"true": true, "false": true}
 	if file == nil {
@@ -63,6 +64,7 @@ func narrowPackageNames(file *ast.File) map[string]bool {
 	return names
 }
 
+// narrowSpecNames extracts declared names so the initializer proof can classify their bindings.
 func narrowSpecNames(spec ast.Spec) []*ast.Ident {
 	switch s := spec.(type) {
 	case *ast.ValueSpec:
@@ -113,6 +115,7 @@ func (p *narrowProof) parts(expr ast.Expr) ([]ast.Expr, bool) {
 	return nil, false
 }
 
+// narrowConstantUnary decides whether a unary expression is a movable constant initializer.
 func narrowConstantUnary(op token.Token) bool {
 	switch op {
 	case token.ADD, token.SUB, token.XOR, token.NOT:

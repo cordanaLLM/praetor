@@ -2,6 +2,7 @@ package p
 
 import "golang.org/x/sync/errgroup"
 
+// process demonstrates a caller-provided fanout bound, which remains a detection gap.
 func process(string) {}
 
 // GapCallerVariableBound passes a caller variable to SetLimit; without interprocedural constant

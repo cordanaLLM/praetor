@@ -4,6 +4,7 @@
 
 package p
 
+// First demonstrates a captured local, which is conservatively exempt from narrowing.
 func First(b bool) {
 	x := 1
 	_ = func() { println(x) }

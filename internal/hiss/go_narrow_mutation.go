@@ -34,6 +34,7 @@ func keepNarrowState(scope *goScope, n ast.Node, locals map[*ast.Ident]*narrowLo
 	}
 }
 
+// keepNarrowAssignment preserves locals whose assignments can affect loop state.
 func keepNarrowAssignment(scope *goScope, stmt *ast.AssignStmt, locals map[*ast.Ident]*narrowLocal) {
 	for _, lhs := range stmt.Lhs {
 		if id, ok := lhs.(*ast.Ident); ok && stmt.Tok == token.DEFINE && scope.local(id.Name) == nil {
@@ -43,6 +44,7 @@ func keepNarrowAssignment(scope *goScope, stmt *ast.AssignStmt, locals map[*ast.
 	}
 }
 
+// narrowCallMutation identifies calls that may mutate a local used in a loop.
 func narrowCallMutation(call *ast.CallExpr) ast.Expr {
 	switch fn := ast.Unparen(call.Fun).(type) {
 	case *ast.SelectorExpr:
@@ -76,6 +78,7 @@ func narrowInLoop(scope *goScope, n ast.Node) bool {
 	return false
 }
 
+// keepNarrowExpr preserves candidates referenced by a potentially mutating expression.
 func keepNarrowExpr(scope *goScope, expr ast.Expr, locals map[*ast.Ident]*narrowLocal) {
 	if id := narrowStorageRoot(expr); id != nil {
 		if local := locals[scope.resolve(id.Name)]; local != nil {

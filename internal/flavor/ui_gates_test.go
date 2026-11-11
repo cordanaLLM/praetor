@@ -110,6 +110,7 @@ func TestAuditUIGates_Negative_ThresholdAndDependencyPin(t *testing.T) {
 	}
 }
 
+// TestValidateUISpecTexts_Negative checks that invalid UI specification text is rejected.
 func TestValidateUISpecTexts_Negative(t *testing.T) {
 	if err := flavor.ValidateUIA11ySpecText("import AxeBuilder from '@axe-core/playwright';\nconst tags = ['wcag2a'];\n"); err == nil || !strings.Contains(err.Error(), "wcag22aa") {
 		t.Fatalf("ValidateUIA11ySpecText missing tags err = %v, want wcag22aa", err)

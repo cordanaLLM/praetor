@@ -6,6 +6,7 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
+// process demonstrates a semaphore-bounded fanout, which should be accepted.
 func process(string) {}
 
 // BoundedBySemaphore acquires a weighted semaphore inside the loop before launching each goroutine.

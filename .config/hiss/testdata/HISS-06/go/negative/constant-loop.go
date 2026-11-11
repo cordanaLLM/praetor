@@ -2,6 +2,7 @@ package p
 
 const maxWorkers = 4
 
+// process demonstrates a constant-bounded worker loop, which should be accepted.
 func process(int) {}
 
 // BoundedByConstantAndArray launches goroutines from a constant-bounded counter loop and a

@@ -125,6 +125,7 @@ func TestScanReportIncompleteNilIsIncomplete(t *testing.T) {
 	}
 }
 
+// TestScanReportCompletionError checks that incomplete scans expose their completion error.
 func TestScanReportCompletionError(t *testing.T) {
 	cases := []struct {
 		name   string

@@ -224,6 +224,7 @@ for i := 0; i < n; i++ {
 	},
 }
 
+// TestGoFanout_Positive_UnboundedShapesReported checks that unbounded worker shapes produce findings.
 func TestGoFanout_Positive_UnboundedShapesReported(t *testing.T) {
 	for _, tc := range unboundedFanoutShapes {
 		t.Run(tc.name, func(t *testing.T) { assertFanoutFinding(t, tc.src, tc.rel, tc.line, tc.fn) })
@@ -408,6 +409,7 @@ for _, item := range items {
 	},
 }
 
+// TestGoFanout_Negative_AcceptedBoundsPass checks that recognized worker bounds do not produce findings.
 func TestGoFanout_Negative_AcceptedBoundsPass(t *testing.T) {
 	for _, tc := range acceptedFanoutBounds {
 		t.Run(tc.name, func(t *testing.T) {
@@ -419,6 +421,7 @@ func TestGoFanout_Negative_AcceptedBoundsPass(t *testing.T) {
 	}
 }
 
+// TestGoFanout_Boundary_EmptyAndParseErrorFiles checks fanout scanning on empty and invalid source files.
 func TestGoFanout_Boundary_EmptyAndParseErrorFiles(t *testing.T) {
 	emptyRep := scanGoSnippet("", "empty.go")
 	if emptyRep.Skips.Unparsed != 1 || !emptyRep.Incomplete() {
@@ -438,6 +441,7 @@ func TestGoFanout_Boundary_EmptyAndParseErrorFiles(t *testing.T) {
 	}
 }
 
+// TestGoFanout_Boundary_OwnComplexityWithinHISS04 checks that the fanout implementation stays within the complexity limits it enforces.
 func TestGoFanout_Boundary_OwnComplexityWithinHISS04(t *testing.T) {
 	path := filepath.Join("go_fanout.go")
 	data, err := os.ReadFile(path)

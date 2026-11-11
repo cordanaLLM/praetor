@@ -9,6 +9,7 @@ import (
 	"testing"
 )
 
+// TestAdoptedCommitPolicy_Positive_BothStages checks that the adopted commit policy covers both hook stages.
 func TestAdoptedCommitPolicy_Positive_BothStages(t *testing.T) {
 	rule, ok := LookupRule("HISS-14")
 	if !ok {
@@ -30,6 +31,7 @@ func TestAdoptedCommitPolicy_Positive_BothStages(t *testing.T) {
 	}
 }
 
+// TestAdoptedCommitPolicy_Negative_UninstalledHooks checks that missing installed hooks are reported.
 func TestAdoptedCommitPolicy_Negative_UninstalledHooks(t *testing.T) {
 	rule, _ := LookupRule("HISS-14")
 	for _, pipeline := range []Pipeline{PipelineVerifyAll, 0} {
@@ -39,6 +41,7 @@ func TestAdoptedCommitPolicy_Negative_UninstalledHooks(t *testing.T) {
 	}
 }
 
+// TestAdoptedCommitPolicy_Boundary_LanguageAndOrder checks policy detection across supported languages and hook ordering.
 func TestAdoptedCommitPolicy_Boundary_LanguageAndOrder(t *testing.T) {
 	rule, _ := LookupRule("HISS-14")
 	check, _ := rule.AdoptedFor(PipelineLefthook, Facts{Languages: LanguageOther})

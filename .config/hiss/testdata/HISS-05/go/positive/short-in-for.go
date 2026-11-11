@@ -4,6 +4,7 @@
 
 package p
 
+// First demonstrates a short declaration used only in a loop, which can be narrowed.
 func First() {
 	x := 1
 	for i := 0; i < 2; i++ {

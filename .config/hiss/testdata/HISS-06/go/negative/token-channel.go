@@ -1,5 +1,6 @@
 package p
 
+// process demonstrates a token-channel worker bound, which should be accepted.
 func process(string) {}
 
 // BoundedByTokenChannel sends on a buffered token channel before launching each goroutine and

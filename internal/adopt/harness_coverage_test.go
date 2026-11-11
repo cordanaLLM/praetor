@@ -11,6 +11,7 @@ import (
 	"testing"
 )
 
+// TestAdoptForceRendersCoverageClaims checks that forced adoption renders the declared coverage claims.
 func TestAdoptForceRendersCoverageClaims(t *testing.T) {
 	repo := newTestRepo(t, "widget")
 	mustWrite(t, filepath.Join(repo, "go.mod"), "module example.com/widget\n\ngo 1.27\n")
@@ -59,6 +60,7 @@ rules:
 	}
 }
 
+// TestAdoptWithoutCoverageRendersEngineOrUnknown checks the rendered harness when coverage data is unavailable.
 func TestAdoptWithoutCoverageRendersEngineOrUnknown(t *testing.T) {
 	repo := newTestRepo(t, "widget")
 	mustWrite(t, filepath.Join(repo, "go.mod"), "module example.com/widget\n\ngo 1.27\n")

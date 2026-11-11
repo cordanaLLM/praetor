@@ -9,6 +9,7 @@ import (
 	"testing"
 )
 
+// TestAuditNarrowScope checks that the audit reports movable declarations under the scope rule.
 func TestAuditNarrowScope(t *testing.T) {
 	for _, tc := range []struct {
 		name, body, failure string

@@ -132,6 +132,7 @@ func TestScreenMatrixFileStaysWithinRoot(t *testing.T) {
 	}
 }
 
+// TestScreenMatrixReferenceStrings checks accepted screen matrix references and pinned forms.
 func TestScreenMatrixReferenceStrings(t *testing.T) {
 	for _, tc := range []struct {
 		content string

@@ -3,6 +3,7 @@
 
 package p
 
+// Nested demonstrates state mutated by nested loops, which must retain its scope.
 func Nested(xs []int) {
 	n := 0
 	if len(xs) > 0 {

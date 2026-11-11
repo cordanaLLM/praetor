@@ -20,6 +20,7 @@ func assertNarrowScope(t *testing.T, body string, want int) *ScanReport {
 	return rep
 }
 
+// TestNarrowScopePositive checks that locals confined to a child block produce findings.
 func TestNarrowScopePositive(t *testing.T) {
 	for name, body := range map[string]string{
 		"var if":        "func F(b bool) { var x int; if b { println(x) } }",
@@ -41,6 +42,7 @@ func TestNarrowScopePositive(t *testing.T) {
 	}
 }
 
+// TestNarrowScopeNegative checks that locals needing wider scope do not produce findings.
 func TestNarrowScopeNegative(t *testing.T) {
 	for name, body := range map[string]string{
 		"siblings":               "func F(b bool) { x := 1; if b { println(x) }; if !b { println(x) } }",
@@ -66,6 +68,7 @@ func TestNarrowScopeNegative(t *testing.T) {
 	}
 }
 
+// TestNarrowScopeBoundary checks edge cases in deciding which declarations can move.
 func TestNarrowScopeBoundary(t *testing.T) {
 	for name, body := range map[string]string{
 		"empty": "func F() {}", "no body": "func F()", "package local": "var x int; func F(b bool) { if b { println(x) } }",
@@ -86,6 +89,7 @@ func TestNarrowScopeBoundary(t *testing.T) {
 	}
 }
 
+// TestNarrowScopeDeclarationGroups checks that grouped declarations are handled without changing their evaluation order.
 func TestNarrowScopeDeclarationGroups(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string
@@ -100,6 +104,7 @@ func TestNarrowScopeDeclarationGroups(t *testing.T) {
 	}
 }
 
+// TestNarrowScopeMovableInitializers checks which initializer shapes can move safely into a child block.
 func TestNarrowScopeMovableInitializers(t *testing.T) {
 	for name, body := range map[string]string{
 		"zero in if":        "func F(b bool) { n := 0; if b { println(n) } }",
@@ -119,6 +124,7 @@ func TestNarrowScopeMovableInitializers(t *testing.T) {
 	}
 }
 
+// TestNarrowScopeOrderedInitializers checks that initializers with ordering effects stay in place.
 func TestNarrowScopeOrderedInitializers(t *testing.T) {
 	for name, body := range map[string]string{
 		"if error idiom": "func f() error { return nil }; func F() { err := f(); if err != nil { println(err) } }",
@@ -145,6 +151,7 @@ func TestNarrowScopeOrderedInitializers(t *testing.T) {
 	}
 }
 
+// TestNarrowScopeInitializerBoundaries checks the expression worklist limit at and around its bound.
 func TestNarrowScopeInitializerBoundaries(t *testing.T) {
 	for _, tc := range []struct{ elements, want int }{
 		{0, 1}, {maxNodeStack - 1, 1}, {maxNodeStack, 0},
@@ -154,6 +161,7 @@ func TestNarrowScopeInitializerBoundaries(t *testing.T) {
 	}
 }
 
+// TestNarrowScopeFixtures replays positive, negative and gap fixtures to preserve their expected findings.
 func TestNarrowScopeFixtures(t *testing.T) {
 	root := filepath.Join("..", "..", ".config", "hiss", "testdata", "HISS-05", "go")
 	for _, bucket := range []struct {

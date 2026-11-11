@@ -435,6 +435,7 @@ func TestValidateTitleComparisonIsExact(t *testing.T) {
 	}
 }
 
+// TestVerifyFS_Positive_EmbeddedCorpusPasses replays the embedded corpus so broken declared coverage is detected.
 func TestVerifyFS_Positive_EmbeddedCorpusPasses(t *testing.T) {
 	catalog, err := LoadCatalogFS(t.Context(), praetor.EmbeddedCorpus)
 	if err != nil {
@@ -452,6 +453,7 @@ func TestVerifyFS_Positive_EmbeddedCorpusPasses(t *testing.T) {
 	}
 }
 
+// TestVerifyFS_Negative_PlantedBrokenClaimFails plants a false coverage claim to prove replay rejects it.
 func TestVerifyFS_Negative_PlantedBrokenClaimFails(t *testing.T) {
 	fsys := fstest.MapFS{
 		CatalogFile: &fstest.MapFile{

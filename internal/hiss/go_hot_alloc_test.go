@@ -176,6 +176,7 @@ func runHotAllocTestCase(t *testing.T, tc hotAllocTestCase) {
 	}
 }
 
+// TestGoHotAlloc_Table replays positive, negative and boundary cases for hot-path allocation checks.
 func TestGoHotAlloc_Table(t *testing.T) {
 	for _, tc := range hotAllocTestCases() {
 		t.Run(tc.name, func(t *testing.T) {
@@ -184,6 +185,7 @@ func TestGoHotAlloc_Table(t *testing.T) {
 	}
 }
 
+// TestCheckHotAllocations_Boundary_ParseErrorNotSkipped checks that an invalid source file fails the allocation scan instead of being skipped.
 func TestCheckHotAllocations_Boundary_ParseErrorNotSkipped(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.go")

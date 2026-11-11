@@ -3,6 +3,7 @@
 
 package p
 
+// Number demonstrates a counter carried across iterations, which must retain its scope.
 func Number(xs []string) {
 	n := 0
 	for _, x := range xs {

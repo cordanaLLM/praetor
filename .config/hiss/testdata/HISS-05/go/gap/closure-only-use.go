@@ -4,6 +4,7 @@
 
 package p
 
+// First demonstrates a local used only by a closure, which remains a known scope-analysis gap.
 func First(b bool) {
 	x := 1
 	if b {

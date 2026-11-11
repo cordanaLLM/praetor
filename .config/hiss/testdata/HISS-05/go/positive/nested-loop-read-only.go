@@ -3,6 +3,7 @@
 
 package p
 
+// Nested demonstrates a read-only local confined to nested loops, which can be narrowed.
 func Nested(xs []int) {
 	n := 1
 	for _, x := range xs {

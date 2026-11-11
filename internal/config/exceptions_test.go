@@ -704,6 +704,7 @@ func TestExceptionExpiringWithin_3D(t *testing.T) {
 	}
 }
 
+// TestFormatDaysLeft_Cases checks the display of remaining and expired exception durations.
 func TestFormatDaysLeft_Cases(t *testing.T) {
 	for _, tc := range []struct {
 		days int

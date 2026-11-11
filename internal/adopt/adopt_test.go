@@ -227,6 +227,7 @@ func contains(list []string, item string) bool {
 // Positive 3D Tests
 // =========================================================================
 
+// TestAdopt_Positive_Greenfield checks that adoption creates the expected harness in a new repository.
 func TestAdopt_Positive_Greenfield(t *testing.T) {
 	repoPath := newTestRepo(t, "new-service")
 	mustWrite(t, filepath.Join(repoPath, "go.mod"), "module github.com/test/service\n")
@@ -1044,6 +1045,7 @@ func TestDetectState_Negative_NonexistentPath(t *testing.T) {
 	}
 }
 
+// TestResolveArchetype_Markers checks that repository markers select the appropriate archetype.
 func TestResolveArchetype_Markers(t *testing.T) {
 	for _, tc := range []struct {
 		filename string
@@ -1571,6 +1573,7 @@ func TestAdopt_ExistingAgentsMDMerged(t *testing.T) {
 	}
 }
 
+// TestAdopt_AgentsMD_ForcePreservesCustomInstructions checks that forced adoption retains custom agent instructions.
 func TestAdopt_AgentsMD_ForcePreservesCustomInstructions(t *testing.T) {
 	for name, initial := range map[string]string{
 		"legacy-separator":           "<!-- markdownlint-disable -->\n# old Agent Operating Harness\n\n## Core Directives & Invariants\nold table\n\n---\n\n# Custom Repo Instructions\nDon't touch this proprietary text!\n",
@@ -2393,6 +2396,7 @@ func requiredStatusContexts(repoPath string) ([]string, error) {
 	return forge.RequiredStatusContexts(context.Background(), repoPath)
 }
 
+// TestRequiredStatusContexts_WorkflowTriggers checks that required status contexts account for workflow triggers.
 func TestRequiredStatusContexts_WorkflowTriggers(t *testing.T) {
 	repoPath := t.TempDir()
 	wf := filepath.Join(repoPath, ".github", "workflows")

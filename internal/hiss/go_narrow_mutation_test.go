@@ -5,6 +5,7 @@ package hiss
 
 import "testing"
 
+// TestNarrowScopeLoopMutations checks that state mutated across loop iterations retains its scope.
 func TestNarrowScopeLoopMutations(t *testing.T) {
 	for name, body := range map[string]string{
 		"assignment":           "func F() { n := 0; for i := 0; i < 2; i++ { println(n); n = i } }",
@@ -25,6 +26,7 @@ func TestNarrowScopeLoopMutations(t *testing.T) {
 	}
 }
 
+// TestNarrowScopeLoopReadOnly checks that read-only loop uses do not prevent narrowing.
 func TestNarrowScopeLoopReadOnly(t *testing.T) {
 	for name, body := range map[string]string{
 		"literal":            "func F() { n := 1; for i := 0; i < 2; i++ { println(n) } }",

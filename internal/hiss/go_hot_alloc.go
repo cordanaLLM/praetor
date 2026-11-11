@@ -34,6 +34,7 @@ type hotPathFunction struct {
 	isBare bool
 }
 
+// checkHotAllocations checks marked hot paths across directories so missing allocation tests are reported.
 func checkHotAllocations(ctx context.Context, rep *ScanReport, root string, paths []string) error {
 	byDir, dirs := groupFilesByDir(paths)
 	for i := 0; i < len(dirs) && i < maxHotAllocFiles; i++ {
@@ -48,6 +49,7 @@ func checkHotAllocations(ctx context.Context, rep *ScanReport, root string, path
 	return nil
 }
 
+// groupFilesByDir groups source paths by directory and sorts the groups for deterministic scanning.
 func groupFilesByDir(paths []string) (map[string][]string, []string) {
 	byDir := make(map[string][]string)
 	for i := 0; i < len(paths) && i < maxHotAllocFiles; i++ {
@@ -62,6 +64,7 @@ func groupFilesByDir(paths []string) (map[string][]string, []string) {
 	return byDir, dirs
 }
 
+// checkDirHotAlloc matches marked production functions against zero-allocation tests in their directory.
 func checkDirHotAlloc(rep *ScanReport, root string, files []string) error {
 	var prodFiles, testFiles []string
 	for i := 0; i < len(files) && i < maxHotAllocFiles; i++ {
@@ -87,6 +90,7 @@ func checkDirHotAlloc(rep *ScanReport, root string, files []string) error {
 	return nil
 }
 
+// reportMissingHotTests reports bare markers and marked functions without a matching zero-allocation test.
 func reportMissingHotTests(rep *ScanReport, targets []hotPathFunction, tests []string) {
 	testMap := make(map[string]bool, len(tests))
 	for i := 0; i < len(tests) && i < maxHotAllocFiles; i++ {
@@ -106,6 +110,7 @@ func reportMissingHotTests(rep *ScanReport, targets []hotPathFunction, tests []s
 	}
 }
 
+// collectHotTargets parses production files and collects marked functions for allocation checks.
 func collectHotTargets(fset *token.FileSet, root string, prodFiles []string, rep *ScanReport) ([]hotPathFunction, error) {
 	var targets []hotPathFunction
 	for i := 0; i < len(prodFiles) && i < maxHotAllocFiles; i++ {
@@ -122,6 +127,7 @@ func collectHotTargets(fset *token.FileSet, root string, prodFiles []string, rep
 	return targets, nil
 }
 
+// collectFileHotFunctions collects marked declarations and reports markers attached to other syntax.
 func collectFileHotFunctions(fset *token.FileSet, file *ast.File, rel string, rep *ScanReport) []hotPathFunction {
 	funcDocs := make(map[*ast.CommentGroup]bool)
 	var targets []hotPathFunction
@@ -148,6 +154,7 @@ func collectFileHotFunctions(fset *token.FileSet, file *ast.File, rel string, re
 	return targets
 }
 
+// checkNonFunctionMarkers reports hot markers outside function documentation because they cannot identify a target.
 func checkNonFunctionMarkers(fset *token.FileSet, file *ast.File, rel string, funcDocs map[*ast.CommentGroup]bool, rep *ScanReport) {
 	for i := 0; i < len(file.Comments) && i < maxDocComments; i++ {
 		cg := file.Comments[i]
@@ -166,6 +173,7 @@ func checkNonFunctionMarkers(fset *token.FileSet, file *ast.File, rel string, fu
 	}
 }
 
+// parseDocCommentHot finds a hot marker in a documentation group and identifies a missing reason.
 func parseDocCommentHot(cg *ast.CommentGroup) (bool, bool) {
 	if cg == nil {
 		return false, false
@@ -181,6 +189,7 @@ func parseDocCommentHot(cg *ast.CommentGroup) (bool, bool) {
 	return false, false
 }
 
+// parseHotCommentLine recognizes a hot marker and extracts its reason without accepting a longer tag.
 func parseHotCommentLine(line string) (bool, string, bool) {
 	trimmed := strings.TrimSpace(line)
 	trimmed = strings.TrimPrefix(trimmed, "//")
@@ -203,6 +212,7 @@ func parseHotCommentLine(line string) (bool, string, bool) {
 	return true, rest, false
 }
 
+// funcDeclSymbol derives a function name and receiver-qualified symbol for findings.
 func funcDeclSymbol(fn *ast.FuncDecl) (string, string) {
 	name := fn.Name.Name
 	if fn.Recv == nil || len(fn.Recv.List) == 0 {
@@ -220,6 +230,7 @@ func funcDeclSymbol(fn *ast.FuncDecl) (string, string) {
 	return name, name
 }
 
+// findZeroAllocTests collects functions covered by zero-allocation assertions in test files.
 func findZeroAllocTests(fset *token.FileSet, testFiles []string) ([]string, error) {
 	var results []string
 	for i := 0; i < len(testFiles) && i < maxHotAllocFiles; i++ {
@@ -232,6 +243,7 @@ func findZeroAllocTests(fset *token.FileSet, testFiles []string) ([]string, erro
 	return results, nil
 }
 
+// findZeroAllocTestsInFile walks a parsed test file to find zero-allocation assertions.
 func findZeroAllocTestsInFile(file *ast.File) []string {
 	var tested []string
 	ast.Inspect(file, func(n ast.Node) bool {
@@ -245,6 +257,7 @@ func findZeroAllocTestsInFile(file *ast.File) []string {
 	return tested
 }
 
+// inspectBlockForAllocTests examines statements for allocation tests and their assertions.
 func inspectBlockForAllocTests(block *ast.BlockStmt) []string {
 	var tested []string
 	stmts := block.List
@@ -261,6 +274,7 @@ func inspectBlockForAllocTests(block *ast.BlockStmt) []string {
 	return tested
 }
 
+// checkAssignAllocTest recognizes an allocation measurement assigned for a later assertion.
 func checkAssignAllocTest(stmts []ast.Stmt, idx int, assign *ast.AssignStmt) []string {
 	if len(assign.Lhs) == 0 || len(assign.Rhs) == 0 {
 		return nil
@@ -283,6 +297,7 @@ func checkAssignAllocTest(stmts []ast.Stmt, idx int, assign *ast.AssignStmt) []s
 	return nil
 }
 
+// checkDeclAllocTest recognizes an allocation measurement declared for a later assertion.
 func checkDeclAllocTest(stmts []ast.Stmt, idx int, declStmt *ast.DeclStmt) []string {
 	gen, ok := declStmt.Decl.(*ast.GenDecl)
 	if !ok || gen.Tok != token.VAR {
@@ -305,6 +320,7 @@ func checkDeclAllocTest(stmts []ast.Stmt, idx int, declStmt *ast.DeclStmt) []str
 	return nil
 }
 
+// checkIfInitAllocTest recognizes an allocation measurement in an if initializer.
 func checkIfInitAllocTest(ifStmt *ast.IfStmt) []string {
 	assign, ok := ifStmt.Init.(*ast.AssignStmt)
 	if !ok || len(assign.Lhs) == 0 || len(assign.Rhs) == 0 {
@@ -325,6 +341,7 @@ func checkIfInitAllocTest(ifStmt *ast.IfStmt) []string {
 	return nil
 }
 
+// checkIfCondAllocTest recognizes an allocation measurement used directly in an if condition.
 func checkIfCondAllocTest(ifStmt *ast.IfStmt) []string {
 	bin, ok := unwrapCond(ifStmt.Cond).(*ast.BinaryExpr)
 	if !ok {
@@ -341,6 +358,7 @@ func checkIfCondAllocTest(ifStmt *ast.IfStmt) []string {
 	return nil
 }
 
+// checkIfAllocTest checks whether an if statement establishes a zero-allocation assertion.
 func checkIfAllocTest(ifStmt *ast.IfStmt) []string {
 	if !bodyFailsTest(ifStmt.Body) {
 		return nil
@@ -351,6 +369,7 @@ func checkIfAllocTest(ifStmt *ast.IfStmt) []string {
 	return checkIfCondAllocTest(ifStmt)
 }
 
+// hasZeroAssertion looks for a failure assertion when a measured allocation count is nonzero.
 func hasZeroAssertion(stmts []ast.Stmt, varName string, call *ast.CallExpr) bool {
 	found := false
 	for i := 0; i < len(stmts) && i < maxHotAllocStmts && !found; i++ {
@@ -370,6 +389,7 @@ func hasZeroAssertion(stmts []ast.Stmt, varName string, call *ast.CallExpr) bool
 	return found
 }
 
+// isZeroCondition recognizes a condition comparing an allocation count with zero.
 func isZeroCondition(cond ast.Expr, varName string, call *ast.CallExpr) bool {
 	bin, ok := unwrapCond(cond).(*ast.BinaryExpr)
 	if !ok {
@@ -388,6 +408,7 @@ func isZeroCondition(cond ast.Expr, varName string, call *ast.CallExpr) bool {
 	}
 }
 
+// unwrapCond removes enclosing parentheses before inspecting a condition.
 func unwrapCond(expr ast.Expr) ast.Expr {
 	for i := 0; i < maxDocLines; i++ {
 		if paren, ok := expr.(*ast.ParenExpr); ok {
@@ -399,6 +420,7 @@ func unwrapCond(expr ast.Expr) ast.Expr {
 	return expr
 }
 
+// isZeroLiteral recognizes a literal zero used in an allocation assertion.
 func isZeroLiteral(expr ast.Expr) bool {
 	for i := 0; i < maxDocLines; i++ {
 		expr = unwrapCond(expr)
@@ -415,6 +437,7 @@ func isZeroLiteral(expr ast.Expr) bool {
 	return false
 }
 
+// isMatchingAllocs matches an allocation measurement to the identifier under test.
 func isMatchingAllocs(expr ast.Expr, varName string, call *ast.CallExpr) bool {
 	expr = unwrapCond(expr)
 	if varName != "" {
@@ -428,6 +451,7 @@ func isMatchingAllocs(expr ast.Expr, varName string, call *ast.CallExpr) bool {
 	return false
 }
 
+// bodyFailsTest checks whether a branch contains a test failure call.
 func bodyFailsTest(body *ast.BlockStmt) bool {
 	if body == nil {
 		return false
@@ -446,6 +470,7 @@ func bodyFailsTest(body *ast.BlockStmt) bool {
 	return found
 }
 
+// callFailsTest recognizes calls that fail the current test.
 func callFailsTest(c *ast.CallExpr) bool {
 	sel, ok := c.Fun.(*ast.SelectorExpr)
 	if !ok {
@@ -459,6 +484,7 @@ func callFailsTest(c *ast.CallExpr) bool {
 	}
 }
 
+// checkAllocsCall extracts target calls from a valid testing.AllocsPerRun measurement.
 func checkAllocsCall(call *ast.CallExpr) ([]string, bool) {
 	if call == nil || len(call.Args) < 2 {
 		return nil, false
@@ -476,6 +502,7 @@ func checkAllocsCall(call *ast.CallExpr) ([]string, bool) {
 	return targets, true
 }
 
+// isAllocsPerRunIdent recognizes an AllocsPerRun selector or identifier for allocation checks.
 func isAllocsPerRunIdent(fun ast.Expr) bool {
 	fun = unwrapCond(fun)
 	if sel, ok := fun.(*ast.SelectorExpr); ok {
@@ -487,6 +514,7 @@ func isAllocsPerRunIdent(fun ast.Expr) bool {
 	return false
 }
 
+// isValidRunsArg checks the measurement count before accepting an allocation test.
 func isValidRunsArg(arg ast.Expr) bool {
 	arg = unwrapCond(arg)
 	if lit, ok := arg.(*ast.BasicLit); ok && lit.Kind == token.INT {
@@ -498,6 +526,7 @@ func isValidRunsArg(arg ast.Expr) bool {
 	return true
 }
 
+// extractCallees identifies the function or calls passed to an allocation measurement.
 func extractCallees(arg ast.Expr) []string {
 	var callees []string
 	if id, ok := unwrapCallee(arg); ok {
@@ -515,6 +544,7 @@ func extractCallees(arg ast.Expr) []string {
 	return callees
 }
 
+// unwrapCallee removes wrappers from a callee expression before identifying its target.
 func unwrapCallee(fun ast.Expr) (string, bool) {
 	fun = unwrapCond(fun)
 	if idx, ok := fun.(*ast.IndexExpr); ok {

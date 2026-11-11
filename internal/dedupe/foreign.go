@@ -426,6 +426,7 @@ func collectSpansAndPartners(dups []rawJscpdDuplicate, roots []rootMapping, isCr
 	return spansByFile, partners
 }
 
+// mergeFileSpans merges overlapping file spans before duplicate coverage is calculated.
 func mergeFileSpans(spans []rawFileSpan, partners map[spanRangeKey]struct{}) []rawFileSpan {
 	n := len(spans)
 	if n <= 1 {

@@ -59,6 +59,7 @@ func (g *goScanner) checkNarrowScope(fn *ast.FuncDecl) {
 	}
 }
 
+// functionTopLocals collects function-level locals whose initializers can move to a narrower block.
 func functionTopLocals(body *ast.BlockStmt, movable map[ast.Node]bool) []narrowLocal {
 	var locals []narrowLocal
 	for i := 0; i < len(body.List); i++ {
@@ -74,6 +75,7 @@ func functionTopLocals(body *ast.BlockStmt, movable map[ast.Node]bool) []narrowL
 	return locals
 }
 
+// appendShortLocals adds named short-declaration locals as candidates for scope narrowing.
 func appendShortLocals(locals []narrowLocal, lhs []ast.Expr) []narrowLocal {
 	for i := 0; i < len(lhs); i++ {
 		if id, ok := lhs[i].(*ast.Ident); ok && id.Name != "_" {
@@ -83,6 +85,7 @@ func appendShortLocals(locals []narrowLocal, lhs []ast.Expr) []narrowLocal {
 	return locals
 }
 
+// appendVarLocals adds movable variable declarations as candidates for scope narrowing.
 func appendVarLocals(locals []narrowLocal, stmt *ast.DeclStmt, movable map[ast.Node]bool) []narrowLocal {
 	gen, ok := stmt.Decl.(*ast.GenDecl)
 	if !ok || gen.Tok != token.VAR {
@@ -100,6 +103,7 @@ func appendVarLocals(locals []narrowLocal, stmt *ast.DeclStmt, movable map[ast.N
 	return locals
 }
 
+// trackNarrowUse tracks each local reference and keeps declarations used across child blocks.
 func trackNarrowUse(scope *goScope, n ast.Node, locals map[*ast.Ident]*narrowLocal) {
 	keepNarrowState(scope, n, locals)
 	id, ok := n.(*ast.Ident)
@@ -131,6 +135,7 @@ func narrowUseBlock(scope *goScope) ast.Node {
 	return scope.frames[2].node
 }
 
+// narrowBlockKind names a child block for a scope-narrowing diagnostic.
 func narrowBlockKind(n ast.Node) string {
 	switch n.(type) {
 	case *ast.IfStmt:

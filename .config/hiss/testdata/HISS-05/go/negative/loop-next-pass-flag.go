@@ -3,6 +3,7 @@
 
 package p
 
+// Skip demonstrates a flag carried to the next iteration, which must retain its scope.
 func Skip(xs []string) {
 	skip := false
 	for _, x := range xs {

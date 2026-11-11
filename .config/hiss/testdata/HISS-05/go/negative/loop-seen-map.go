@@ -3,6 +3,7 @@
 
 package p
 
+// Seen demonstrates a map mutated across iterations, which must retain its scope.
 func Seen(xs []string) {
 	seen := map[string]bool{}
 	for _, x := range xs {

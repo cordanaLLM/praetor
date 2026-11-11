@@ -2,6 +2,7 @@ package p
 
 import "runtime"
 
+// process demonstrates a CPU-count worker bound, which remains a detection gap.
 func process(string) {}
 
 // GapNumCPUPool sizes a token channel by runtime.NumCPU() without a //hiss:bound comment; the

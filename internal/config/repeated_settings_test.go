@@ -297,6 +297,7 @@ func TestRepeatedSettings_Boundary_HostLayersIgnored(t *testing.T) {
 	}
 }
 
+// TestRepeatedSettings_Boundary_NilContext checks how repeated-settings validation handles a nil context.
 func TestRepeatedSettings_Boundary_NilContext(t *testing.T) {
 	root := t.TempDir()
 	opts := EffectiveOptions{Root: root}

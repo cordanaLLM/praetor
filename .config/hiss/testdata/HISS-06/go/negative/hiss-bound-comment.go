@@ -1,5 +1,6 @@
 package p
 
+// worker supplies the task called by the explicitly bounded worker pool.
 func worker(int, <-chan string) {}
 
 // BoundedWorkerPool uses an explicit int bound documented by a //hiss:bound directive.

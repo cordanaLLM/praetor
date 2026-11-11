@@ -4,6 +4,7 @@
 
 package p
 
+// First demonstrates an address-taken local, which must remain outside the child block.
 func First(b bool) {
 	x := 1
 	if b {

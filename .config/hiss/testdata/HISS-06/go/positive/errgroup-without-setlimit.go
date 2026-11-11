@@ -2,6 +2,7 @@ package p
 
 import "golang.org/x/sync/errgroup"
 
+// process demonstrates an errgroup without a limit, which should be reported.
 func process(string) {}
 
 // FanoutWithoutSetLimit declares an errgroup.Group without calling SetLimit before the loop.

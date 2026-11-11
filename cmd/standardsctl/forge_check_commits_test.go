@@ -41,6 +41,7 @@ func TestForgeCheckCommits_PlantedOffendingCommit(t *testing.T) {
 	}
 }
 
+// TestForgeCheckMessage_PlantedOffendingMessage checks that the message policy rejects an intentionally invalid commit message.
 func TestForgeCheckMessage_PlantedOffendingMessage(t *testing.T) {
 	dir := t.TempDir()
 	msgFile := filepath.Join(dir, "COMMIT_EDITMSG")

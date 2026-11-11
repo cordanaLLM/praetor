@@ -176,6 +176,7 @@ func TestCommitPolicyScript_PositiveNegativeBoundary(t *testing.T) {
 	}
 }
 
+// TestAdoptCommitPolicy_Negative_CustomScriptPreserved checks that adoption preserves an existing custom commit policy script.
 func TestAdoptCommitPolicy_Negative_CustomScriptPreserved(t *testing.T) {
 	for _, force := range []bool{false, true} {
 		repo := newTestRepo(t, "custom-policy-script")

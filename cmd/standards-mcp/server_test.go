@@ -474,6 +474,7 @@ func TestServer_Negative_NewServerRoot(t *testing.T) {
 
 // ---- explain_rule ------------------------------------------------------------------------------
 
+// TestServer_Positive_ExplainRuleCoversDocumentedInvariants checks that the server can explain every documented invariant.
 func TestServer_Positive_ExplainRuleCoversDocumentedInvariants(t *testing.T) {
 	srv, _ := newFixtureServer(t)
 

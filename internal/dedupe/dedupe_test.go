@@ -20,6 +20,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// TestScanRepo_Positive_DuplicatesAndSprawl checks that duplicate functions and utility sprawl appear in the repository report.
 func TestScanRepo_Positive_DuplicatesAndSprawl(t *testing.T) {
 	tmp := t.TempDir()
 	writeFile(t, tmp, "go.mod", "module github.com/cordanaLLM/praetor\n")
@@ -283,6 +284,7 @@ func TestScanRepo_Negative_FailsWithoutReport(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Boundary_SmallFunctionsIgnored checks that trivial functions do not create duplicate findings.
 func TestScanRepo_Boundary_SmallFunctionsIgnored(t *testing.T) {
 	tmp := t.TempDir()
 	// Trivial 2-line functions should not trigger duplicate detection
@@ -761,6 +763,7 @@ func TestScanRepoRejectsIncompleteSources(t *testing.T) {
 	}
 }
 
+// TestScanRepoContextAndRootErrors checks that cancellation and invalid roots surface as scan errors.
 func TestScanRepoContextAndRootErrors(t *testing.T) {
 	dir := t.TempDir()
 	cancelled, cancel := context.WithCancel(t.Context())
@@ -1164,6 +1167,7 @@ func TestScanRepo_Negative_GroupWithOneMemberInExceptedFileAndOneOutsideFails(t 
 	}
 }
 
+// TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation checks that an exception cannot name a file that does not exist.
 func TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation(t *testing.T) {
 	tmp := t.TempDir()
 	manifest := `exceptions:
@@ -1213,6 +1217,7 @@ func CleanBeta() int {
 }
 `
 
+// TestScanRepo_Negative_StaleExceptionForCleanFileFails checks that a clean file cannot retain an unused exception.
 func TestScanRepo_Negative_StaleExceptionForCleanFileFails(t *testing.T) {
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "clean.go")
@@ -1269,6 +1274,7 @@ func TestScanRepo_CategoryDStaleException(t *testing.T) {
 	t.Log("category D entry validates; native scanner reports its unused exception as stale")
 }
 
+// TestScanRepo_Boundary_UnknownLanguageExceptionNotChecked checks how an exception for an unsupported language is handled.
 func TestScanRepo_Boundary_UnknownLanguageExceptionNotChecked(t *testing.T) {
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "clean.go")
@@ -1310,6 +1316,7 @@ func TestScanRepo_Boundary_UnknownLanguageExceptionNotChecked(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Negative_UnusedExceptionWithClonesFailsForUnusedEntry checks that an unused exception fails even when other clones exist.
 func TestScanRepo_Negative_UnusedExceptionWithClonesFailsForUnusedEntry(t *testing.T) {
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "zz_generated.deepcopy.go")
@@ -1355,6 +1362,7 @@ func TestScanRepo_Negative_UnusedExceptionWithClonesFailsForUnusedEntry(t *testi
 	}
 }
 
+// TestScanRepo_Negative_SymlinkExceptionTargetIsRefused checks that an exception cannot point through a symlink.
 func TestScanRepo_Negative_SymlinkExceptionTargetIsRefused(t *testing.T) {
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "real.go")
@@ -1383,6 +1391,7 @@ func TestScanRepo_Negative_SymlinkExceptionTargetIsRefused(t *testing.T) {
 	}
 }
 
+// TestValidateExceptions_Negative_SymlinkAndContextCancellation checks that exception validation rejects symlinks and respects cancellation.
 func TestValidateExceptions_Negative_SymlinkAndContextCancellation(t *testing.T) {
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "real.go")
@@ -1419,6 +1428,7 @@ func TestValidateExceptions_Negative_SymlinkAndContextCancellation(t *testing.T)
 	}
 }
 
+// TestScanRepo_Negative_MalformedManifestWrapsLoadExceptionsError checks that a malformed manifest returns the underlying exception-loading error.
 func TestScanRepo_Negative_MalformedManifestWrapsLoadExceptionsError(t *testing.T) {
 	tmp := t.TempDir()
 	writeStandardsManifest(t, tmp, ": invalid yaml")
@@ -1431,6 +1441,7 @@ func TestScanRepo_Negative_MalformedManifestWrapsLoadExceptionsError(t *testing.
 	}
 }
 
+// TestScanRepo_Negative_MissingExceptionTargetWordingWithFilteredOutPredecessor checks the missing-target diagnostic when an earlier exception is filtered out.
 func TestScanRepo_Negative_MissingExceptionTargetWordingWithFilteredOutPredecessor(t *testing.T) {
 	tmp := t.TempDir()
 	expires := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
@@ -1460,6 +1471,7 @@ func TestScanRepo_Negative_MissingExceptionTargetWordingWithFilteredOutPredecess
 	}
 }
 
+// TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19 checks that supplied exceptions for other rules do not suppress duplicate findings.
 func TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19(t *testing.T) {
 	tmp := t.TempDir()
 	if err := os.WriteFile(filepath.Join(tmp, "cloneA.go"), []byte(`package test
@@ -1525,6 +1537,7 @@ func DuplicateHelperB() {
 	}
 }
 
+// TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone checks that a credits exception cannot suppress a duplicate finding.
 func TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone(t *testing.T) {
 	tmp := t.TempDir()
 	if err := os.WriteFile(filepath.Join(tmp, "cloneA.go"), []byte(`package test
@@ -1982,6 +1995,7 @@ func TestScanRepo_SeparateLineScopesKeepBothEntries(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked checks that a language outside the scanner is not judged as a stale exception.
 func TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked(t *testing.T) {
 	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
 	root := t.TempDir()
@@ -2019,6 +2033,7 @@ func TestScanRepo_Positive_UnscannedLanguageExceptionNotChecked(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale checks that an exception for a Go file without a clone is rejected as stale.
 func TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "clean.go", cleanGoSource)
@@ -2050,6 +2065,7 @@ func TestScanRepo_Negative_GoExceptionWithoutDuplicateIsStale(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly checks that valid exceptions do not hide a stale entry.
 func TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly(t *testing.T) {
 	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
 	root := t.TempDir()
@@ -2090,6 +2106,7 @@ func TestScanRepo_Negative_MixedExceptionsFailsOnStaleOnly(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Boundary_NotApplicableUnscannedExceptionNotChecked checks the not-applicable case for a language the scanner does not inspect.
 func TestScanRepo_Boundary_NotApplicableUnscannedExceptionNotChecked(t *testing.T) {
 	t.Setenv("PRAETOR_JSCPD_BIN", "/nonexistent/jscpd")
 	root := t.TempDir()

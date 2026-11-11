@@ -26,6 +26,7 @@ func pushGit(t *testing.T, dir string, env []string, args ...string) {
 	}
 }
 
+// TestForgePrePush_Positive_UpstreamAndFirstPush checks both an existing upstream and a first push so each can select a commit range.
 func TestForgePrePush_Positive_UpstreamAndFirstPush(t *testing.T) {
 	for _, upstream := range []bool{false, true} {
 		t.Run(map[bool]string{false: "first-push", true: "upstream"}[upstream], func(t *testing.T) {
@@ -51,6 +52,7 @@ func TestForgePrePush_Positive_UpstreamAndFirstPush(t *testing.T) {
 	}
 }
 
+// TestForgePrePush_Negative_DetachedMissingAndEmpty checks that detached, missing and empty branch states cannot produce an unsafe push range.
 func TestForgePrePush_Negative_DetachedMissingAndEmpty(t *testing.T) {
 	for _, tc := range []struct {
 		name, want string
@@ -71,6 +73,7 @@ func TestForgePrePush_Negative_DetachedMissingAndEmpty(t *testing.T) {
 	}
 }
 
+// TestForgePrePush_Boundary_DeclaredDefaultAndExplicitRange checks range selection with a declared default branch and an explicit range.
 func TestForgePrePush_Boundary_DeclaredDefaultAndExplicitRange(t *testing.T) {
 	dir, env := pushFixture(t)
 	pushGit(t, dir, env, "branch", "-m", "main", "trunk")
@@ -89,6 +92,7 @@ func TestForgePrePush_Boundary_DeclaredDefaultAndExplicitRange(t *testing.T) {
 	}
 }
 
+// TestForgePrePush_Negative_MissingConfiguredUpstream checks that an absent configured upstream is reported instead of silently ignored.
 func TestForgePrePush_Negative_MissingConfiguredUpstream(t *testing.T) {
 	dir, env := pushFixture(t)
 	pushGit(t, dir, env, "remote", "add", "origin", "https://example.invalid/repo.git")
@@ -101,6 +105,7 @@ func TestForgePrePush_Negative_MissingConfiguredUpstream(t *testing.T) {
 	}
 }
 
+// TestForgePrePush_Boundary_RecordedRemoteDefaultPreferred checks that the recorded remote default determines the first-push base.
 func TestForgePrePush_Boundary_RecordedRemoteDefaultPreferred(t *testing.T) {
 	dir, env := pushFixture(t)
 	pushGit(t, dir, env, "branch", "-m", "main", "trunk")
@@ -116,6 +121,7 @@ func TestForgePrePush_Boundary_RecordedRemoteDefaultPreferred(t *testing.T) {
 	}
 }
 
+// TestForgeCheckMessage_PlantedMigration checks migration footer enforcement against intentionally breaking commit messages.
 func TestForgeCheckMessage_PlantedMigration(t *testing.T) {
 	for _, tc := range []struct {
 		message string

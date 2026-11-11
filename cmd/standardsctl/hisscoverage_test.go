@@ -156,6 +156,7 @@ func TestRunHiss_Boundary_NoArgsPrintsUsageAndSucceeds(t *testing.T) {
 	mustContain(t, out, "Usage: praetorctl hiss")
 }
 
+// TestRunHissCoverage_Positive_EmbeddedReplayPasses checks that the compiled corpus can be replayed without a local fixture tree.
 func TestRunHissCoverage_Positive_EmbeddedReplayPasses(t *testing.T) {
 	out, err := runCoverage(t, "--verify", "--embedded")
 	if err != nil {
@@ -196,11 +197,13 @@ func TestRunHissCoverage_Negative_EmbeddedCorpusDrift(t *testing.T) {
 	mustContain(t, out, "HISS-01", "direct-recursion.go", "but the fixture is not reported")
 }
 
+// TestRunHissCoverage_Negative_EmbeddedWithCombinedPathRefused checks that an embedded replay rejects a conflicting filesystem path.
 func TestRunHissCoverage_Negative_EmbeddedWithCombinedPathRefused(t *testing.T) {
 	_, err := runCoverage(t, "--verify", "--embedded", "--path=.")
 	mustErrContain(t, err, "hiss coverage: --embedded refuses --path")
 }
 
+// TestRunHissCoverage_Negative_EmbeddedWithSyncTitlesRefused checks that an embedded replay cannot rewrite catalog titles.
 func TestRunHissCoverage_Negative_EmbeddedWithSyncTitlesRefused(t *testing.T) {
 	_, err := runCoverage(t, "--embedded", "--sync-titles")
 	mustErrContain(t, err, "--embedded cannot be combined with --sync-titles")

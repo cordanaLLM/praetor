@@ -4,6 +4,7 @@
 
 package p
 
+// First demonstrates an error-handling initializer whose call must remain in order.
 func First() {
 	err := f()
 	if err != nil {
@@ -11,4 +12,5 @@ func First() {
 	}
 }
 
+// f supplies the error-producing call used by the fixture.
 func f() error { return nil }

@@ -2,6 +2,7 @@ package p
 
 import "golang.org/x/sync/errgroup"
 
+// process demonstrates an errgroup with an explicit limit, which should be accepted.
 func process(string) {}
 
 // BoundedByErrgroup caps concurrent goroutines with errgroup.Group.SetLimit before the loop.

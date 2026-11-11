@@ -10,6 +10,7 @@ import (
 	"time"
 )
 
+// TestValidateExceptionsCategoryCaps checks the permitted expiry limits for each exception category.
 func TestValidateExceptionsCategoryCaps(t *testing.T) {
 	today := time.Date(2026, 10, 21, 18, 0, 0, 0, time.UTC)
 	for _, tc := range []struct{ name, category, reason, entered, expires, want string }{

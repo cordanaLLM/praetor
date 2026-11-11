@@ -4,6 +4,7 @@
 
 package p
 
+// First demonstrates a variable used only in an if block, which can be narrowed.
 func First(b bool) {
 	var x int
 	if b {

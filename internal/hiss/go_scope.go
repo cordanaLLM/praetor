@@ -88,6 +88,7 @@ func (s *goScope) assignmentReference(id *ast.Ident, p *ast.AssignStmt) bool {
 	return p.Tok != token.DEFINE || !slices.Contains(p.Lhs, ast.Expr(id)) || s.local(id.Name) != nil
 }
 
+// rangeReference classifies range expressions so scope tracking resolves their references.
 func rangeReference(id *ast.Ident, p *ast.RangeStmt) bool {
 	return p.Tok != token.DEFINE || (p.Key != id && p.Value != id)
 }
