@@ -416,7 +416,7 @@ type hereDocSplit struct {
 	bodies []strings.Builder
 }
 
-// SplitHereDocs removes redirects and data bodies, preserving code bodies and line breaks.
+// SplitHereDocs removes redirects and preserves body lines, blanking data-body quotes.
 // Bodies are read by shellLexer, with the same delimiter and nesting bounds as the scanner.
 func SplitHereDocs(script string) (string, []HereDoc, error) {
 	lines := strings.SplitAfter(script, "\n")
@@ -450,7 +450,9 @@ func (s *hereDocSplit) line(raw string) error {
 		if len(s.lexer.bodies) == before {
 			index := len(s.docs) - before
 			s.bodies[index].WriteString(raw)
-			if !s.docs[index].Data() {
+			if s.docs[index].Data() {
+				s.code.WriteString(blankHereDocData(line))
+			} else {
 				s.code.WriteString(line)
 			}
 		}
@@ -461,6 +463,20 @@ func (s *hereDocSplit) line(raw string) error {
 		s.code.WriteByte('\n')
 	}
 	return nil
+}
+
+// blankHereDocData preserves words while neutralizing quotes and command substitutions.
+func blankHereDocData(line string) string {
+	body := []byte(line)
+	for i := 0; i < len(body) && i < maxHereDocLineBytes; i++ {
+		if body[i] == '$' && i+1 < len(body) && body[i+1] == '(' {
+			body[i], body[i+1] = ' ', ' '
+			i++
+		} else if strings.ContainsRune("'\"`\\", rune(body[i])) {
+			body[i] = ' '
+		}
+	}
+	return string(body)
 }
 
 // codeLine removes lexer-recognized redirects and records their output target.
