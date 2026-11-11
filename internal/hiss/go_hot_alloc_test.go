@@ -6,9 +6,11 @@ package hiss
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -212,7 +214,7 @@ func TestCheckHotAllocations_Boundary_ParseErrorNotSkipped(t *testing.T) {
 		t.Fatal(err)
 	}
 	rep := newScanReport(10)
-	err := checkDirHotAlloc(rep, dir, []string{path})
+	err := checkDirHotAlloc(context.Background(), rep, dir, []string{path})
 	if err == nil {
 		t.Fatal("checkDirHotAlloc on malformed Go source succeeded, want parse error")
 	}
@@ -229,5 +231,194 @@ func TestHotAllocFinishUnreadableFileIncomplete(t *testing.T) {
 	(goLanguage{}).finish(context.Background(), rep, dir, []string{path})
 	if !rep.Incomplete() {
 		t.Fatal("unreadable hot-allocation source left report complete")
+	}
+}
+
+type stepCancelCtx struct {
+	context.Context
+	cancel      context.CancelFunc
+	calls       atomic.Int32
+	cancelAfter int32
+}
+
+func (c *stepCancelCtx) Err() error {
+	if c.calls.Add(1) >= c.cancelAfter {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+// TestCheckHotAllocations_Negative_SecondPassHonorsContext verifies that both second-pass
+// file parses (collectHotTargets and findZeroAllocTests) read under ctx and propagate cancellation.
+func TestCheckHotAllocations_Negative_SecondPassHonorsContext(t *testing.T) {
+	dir := t.TempDir()
+	hotPath := filepath.Join(dir, "hot.go")
+	testPath := filepath.Join(dir, "hot_test.go")
+	if err := os.WriteFile(hotPath, []byte("package p\n\n//hiss:hot tick\nfunc Tick() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(testPath, []byte("package p\n\nimport \"testing\"\n\nfunc TestTick(t *testing.T) {\n\tif a := testing.AllocsPerRun(10, func() { Tick() }); a != 0 { t.Fatal(a) }\n}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name        string
+		cancelAfter int32
+	}{
+		{"collectHotTargets", 2},
+		{"findZeroAllocTests", 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inner, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ctx := &stepCancelCtx{Context: inner, cancel: cancel, cancelAfter: tc.cancelAfter}
+			rep := newScanReport(10)
+			err := checkHotAllocations(ctx, rep, dir, []string{hotPath, testPath})
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("checkHotAllocations err = %v, want context.Canceled", err)
+			}
+		})
+	}
+}
+
+func hotAllocAliasCases() []hotAllocTestCase {
+	const hotSrc = "package p\n\n//hiss:hot step\nfunc Step() {}\n"
+	return []hotAllocTestCase{
+		{
+			name: "aliased *tt.T credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport tt \"testing\"\n\nfunc TestStep(t *tt.T) {\n\tallocs := tt.AllocsPerRun(100, func() { Step() })\n\tif allocs != 0 { t.Fatalf(\"allocs: %v\", allocs) }\n}\n",
+			},
+			wantCount: 0,
+		},
+		{
+			name: "aliased *bench.B and bench.TB credited",
+			sources: map[string]string{
+				"hot.go":      "package p\n\n//hiss:hot step\nfunc Step() {}\n\n//hiss:hot tick\nfunc Tick() {}\n",
+				"hot_test.go": "package p\n\nimport bench \"testing\"\n\nfunc BenchmarkStep(b *bench.B) {\n\tif a := bench.AllocsPerRun(10, func() { Step() }); a != 0 { b.Fatal(a) }\n}\nfunc checkTick(tb bench.TB) {\n\tif a := bench.AllocsPerRun(10, func() { Tick() }); a != 0 { tb.Fatal(a) }\n}\n",
+			},
+			wantCount: 0,
+		},
+		{
+			name: "dot import binds no testing qualifier",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport . \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tallocs := AllocsPerRun(100, func() { Step() })\n\tif allocs != 0 { t.Fatal(allocs) }\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "blank import binds no testing qualifier",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport _ \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tif allocs != 0 { t.Fatal(allocs) }\n}\n",
+			},
+			wantCount: 1,
+		},
+	}
+}
+
+// TestGoHotAlloc_AliasedTestingImport verifies per-file local bindings to import "testing".
+func TestGoHotAlloc_AliasedTestingImport(t *testing.T) {
+	for _, tc := range hotAllocAliasCases() {
+		t.Run(tc.name, func(t *testing.T) { runHotAllocTestCase(t, tc) })
+	}
+}
+
+func hotAllocBindingCases() []hotAllocTestCase {
+	const hotSrc = "package p\n\n//hiss:hot step\nfunc Step() {}\n"
+	return []hotAllocTestCase{
+		{
+			name: "reassigned before assertion",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tallocs = 0\n\tif allocs != 0 { t.Fatalf(\"allocs: %v\", allocs) }\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "compound assign before assertion",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tallocs -= allocs\n\tif allocs != 0 { t.Fatalf(\"allocs: %v\", allocs) }\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "nested short declaration shadows binding",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\t_ = allocs\n\t{\n\t\tallocs := 0\n\t\tif allocs != 0 { t.Fatalf(\"allocs: %v\", allocs) }\n\t}\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "if init declaration shadows binding",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\t_ = allocs\n\tif allocs := 0; allocs != 0 { t.Fatalf(\"allocs: %v\", allocs) }\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "control plain measurement then assertion",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tother := 1\n\t_ = other\n\tif allocs != 0 { t.Fatalf(\"allocs: %v\", allocs) }\n}\n",
+			},
+			wantCount: 0,
+		},
+	}
+}
+
+// TestGoHotAlloc_ReassignedOrShadowedAllocs verifies assertions after reassignment or shadowing are not credited.
+func TestGoHotAlloc_ReassignedOrShadowedAllocs(t *testing.T) {
+	for _, tc := range hotAllocBindingCases() {
+		t.Run(tc.name, func(t *testing.T) { runHotAllocTestCase(t, tc) })
+	}
+}
+
+func hotAllocZeroLiteralCases() []hotAllocTestCase {
+	const hotSrc = "package p\n\n//hiss:hot step\nfunc Step() {}\n"
+	return []hotAllocTestCase{
+		{
+			name: "call budget(0) not literal zero",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc budget(v float64) float64 { return v + 4 }\nfunc TestStep(t *testing.T) {\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tif allocs != budget(0) { t.Fatal(allocs) }\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "qualified call pkg.F(0) not literal zero",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport (\n\t\"math\"\n\t\"testing\"\n)\n\nfunc TestStep(t *testing.T) {\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tif allocs != math.Abs(0) { t.Fatal(allocs) }\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "named type conversion not literal zero",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\ntype budget float64\nfunc TestStep(t *testing.T) {\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tif allocs != float64(budget(0)) { t.Fatal(allocs) }\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "control float64(0) credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tif allocs != float64(0) { t.Fatal(allocs) }\n}\n",
+			},
+			wantCount: 0,
+		},
+	}
+}
+
+// TestGoHotAlloc_ZeroLiteralUnwrap verifies only predeclared numeric conversions unwrap around zero.
+func TestGoHotAlloc_ZeroLiteralUnwrap(t *testing.T) {
+	for _, tc := range hotAllocZeroLiteralCases() {
+		t.Run(tc.name, func(t *testing.T) { runHotAllocTestCase(t, tc) })
 	}
 }
