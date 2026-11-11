@@ -5,6 +5,7 @@
 package praetor
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 // maxFilesWalked bounds the tree walk for HISS-02.
@@ -80,9 +82,8 @@ func TestEmbeddedCorpus_Positive_TreeEqualsEmbedded(t *testing.T) {
 	if len(diskFiles) == 0 {
 		t.Fatal("disk corpus has zero files")
 	}
-	if !slices.Equal(diskFiles, embedFiles) {
-		t.Fatalf("embedded fixture list differs from disk tree: got %d files, disk has %d files",
-			len(embedFiles), len(diskFiles))
+	if err := checkCorpusInventory(diskFiles, embedFiles); err != nil {
+		t.Fatal(err)
 	}
 	// Also check coverage.yaml is embedded.
 	if _, err := fs.Stat(EmbeddedCorpus, ".config/hiss/coverage.yaml"); err != nil {
@@ -90,28 +91,22 @@ func TestEmbeddedCorpus_Positive_TreeEqualsEmbedded(t *testing.T) {
 	}
 }
 
-// diffLists returns elements present in want but absent in got.
-func diffLists(want, got []string) []string {
-	var missing []string
-	set := make(map[string]struct{}, len(got))
-	for _, g := range got {
-		set[g] = struct{}{}
+// checkCorpusInventory compares the embedded inventory to its disk source.
+func checkCorpusInventory(disk, embedded []string) error {
+	if !slices.Equal(disk, embedded) {
+		return fmt.Errorf("embedded fixture list differs from disk tree: got %d files, disk has %d files", len(embedded), len(disk))
 	}
-	for _, w := range want {
-		if _, ok := set[w]; !ok {
-			missing = append(missing, w)
-		}
-	}
-	return missing
+	return nil
 }
 
-// TestEmbeddedCorpus_Negative_PlantedMissingFixtureFails ensures missing tree items are caught.
+// TestEmbeddedCorpus_Negative_PlantedMissingFixtureFails exercises the same comparison as the positive test.
 func TestEmbeddedCorpus_Negative_PlantedMissingFixtureFails(t *testing.T) {
-	tree := []string{"HISS-01/go/positive/case.go", "HISS-20/go/gap/.hidden_fixture"}
-	embedded := []string{"HISS-01/go/positive/case.go"} // excludes .hidden_fixture
-
-	missing := diffLists(tree, embedded)
-	if len(missing) != 1 || missing[0] != "HISS-20/go/gap/.hidden_fixture" {
-		t.Fatalf("expected missing planted fixture to be detected, got: %v", missing)
+	root := ".config/hiss/testdata"
+	planted := fstest.MapFS{
+		root + "/HISS-01/go/positive/case.go": &fstest.MapFile{Data: []byte("package p")},
+	}
+	disk := []string{"HISS-01/go/positive/case.go", "HISS-20/go/gap/.hidden_fixture"}
+	if err := checkCorpusInventory(disk, collectFSFiles(t, planted, root)); err == nil {
+		t.Fatal("inventory accepted an embedded filesystem missing the planted fixture")
 	}
 }
