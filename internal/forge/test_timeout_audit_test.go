@@ -5,6 +5,7 @@
 package forge
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -227,6 +228,32 @@ func TestAuditTestTimeouts_MakefileDanglingContinuation(t *testing.T) {
 	_, err := auditTimeouts(t, root)
 	if err == nil || !strings.Contains(err.Error(), "Makefile:2") {
 		t.Fatalf("dangling continuation: %v; want Makefile:2 refused", err)
+	}
+}
+
+// TestAuditTestTimeouts_ScanBound accepts a Makefile of exactly the line bound and refuses a Makefile
+// or a workflow one line over it, so no line goes unaudited.
+func TestAuditTestTimeouts_ScanBound(t *testing.T) {
+	body := func(lines int) string { return "test:\n" + strings.Repeat("\t@true\n", lines-1) }
+	atBound := t.TempDir()
+	if err := os.WriteFile(filepath.Join(atBound, "Makefile"), []byte(body(maxTimeoutWorkflowLines)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := auditTimeouts(t, atBound); err != nil {
+		t.Fatalf("Makefile at the %d-line bound: %q, %v; want a pass", maxTimeoutWorkflowLines, out, err)
+	}
+	over := t.TempDir()
+	if err := os.WriteFile(filepath.Join(over, "Makefile"), []byte(body(maxTimeoutWorkflowLines+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("above the %d-line scan bound", maxTimeoutWorkflowLines)
+	if _, err := auditTimeouts(t, over); err == nil || !strings.Contains(err.Error(), "Makefile has") || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Makefile over the bound: %v; want it refused naming the bound", err)
+	}
+	workflow := "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test ./...\n" +
+		strings.Repeat("#\n", maxTimeoutWorkflowLines)
+	if _, err := auditTimeouts(t, triggerRepository(t, map[string]string{"long.yml": workflow})); err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("workflow over the bound: %v; want it refused naming the bound", err)
 	}
 }
 

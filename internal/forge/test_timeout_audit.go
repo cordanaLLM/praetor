@@ -93,10 +93,27 @@ func AuditTestTimeouts(ctx context.Context, opts TestTimeoutOptions) (string, er
 // fileTimeouts returns the long go test timeouts of one audited file: the root Makefile by joined
 // logical lines, a workflow line by line with its input defaults.
 func fileTimeouts(file workflowFile) ([]string, error) {
+	if lines := physicalLines(string(file.Data)); lines > maxTimeoutWorkflowLines {
+		return nil, fmt.Errorf("[FAIL] %s: %s has %d lines, above the %d-line scan bound; lines past it would not be audited",
+			testTimeoutGate, file.Name, lines, maxTimeoutWorkflowLines)
+	}
 	if file.Name == "Makefile" {
 		return makefileTimeouts(string(file.Data))
 	}
 	return longTimeouts(file.Name, string(file.Data), timeoutInputDefaults(file.Data)), nil
+}
+
+// physicalLines counts the lines of text; a final newline ends the last line instead of starting
+// an empty one, so a file of exactly the bound with a trailing newline stays within it.
+func physicalLines(text string) int {
+	if text == "" {
+		return 0
+	}
+	lines := strings.Count(text, "\n")
+	if !strings.HasSuffix(text, "\n") {
+		lines++
+	}
+	return lines
 }
 
 // makefileTimeouts joins continued physical lines and retains their first line number.
