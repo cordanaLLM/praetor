@@ -4,7 +4,6 @@
 package adopt
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -20,16 +19,16 @@ func TestHarnessCatalogDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	ids := hisscatalog.RuleIDs()
+	rowIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		rowIDs = append(rowIDs, row.ID)
+	}
 	t.Run("current", func(t *testing.T) {
-		if err := compareHarnessCatalog(rows, ids); err != nil {
-			t.Fatal(err)
-		}
+		assertCatalogIDs(t, ids, rowIDs, nil, nil)
 	})
 	t.Run("missing", func(t *testing.T) {
 		added := append(slices.Clone(ids), "HISS-999")
-		if err := compareHarnessCatalog(rows, added); err == nil || !strings.Contains(err.Error(), "missing HISS-999") {
-			t.Fatalf("expected missing HISS-999, got %v", err)
-		}
+		assertCatalogIDs(t, added, rowIDs, []string{"HISS-999"}, nil)
 	})
 	t.Run("extra", func(t *testing.T) {
 		extraTable := strings.Replace(harness, hisscatalog.GatedInvariantsHeading, hisscatalog.GatedInvariantsHeading+"\n\n| **ACME-999** extra | rule | check | fail |", 1)
@@ -37,54 +36,29 @@ func TestHarnessCatalogDrift(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := compareHarnessCatalog(extra, ids); err == nil || !strings.Contains(err.Error(), "extra ACME-999") {
-			t.Fatalf("expected extra ACME-999, got %v", err)
+		extraIDs := make([]string, 0, len(extra))
+		for _, row := range extra {
+			extraIDs = append(extraIDs, row.ID)
 		}
+		assertCatalogIDs(t, ids, extraIDs, nil, []string{"ACME-999"})
 	})
 	t.Run("duplicate", func(t *testing.T) {
-		duplicate := append(slices.Clone(rows), rows[0])
-		if err := compareHarnessCatalog(duplicate, ids); err == nil || !strings.Contains(err.Error(), "duplicate "+rows[0].ID) {
-			t.Fatalf("expected duplicate %s, got %v", rows[0].ID, err)
-		}
+		duplicate := append(slices.Clone(rowIDs), "HISS-01")
+		assertCatalogIDs(t, ids, duplicate, nil, []string{"HISS-01"})
 	})
 	t.Run("order", func(t *testing.T) {
-		reversed := slices.Clone(rows)
+		reversed := slices.Clone(rowIDs)
 		slices.Reverse(reversed)
-		if err := compareHarnessCatalog(reversed, ids); err != nil {
-			t.Fatal(err)
-		}
+		assertCatalogIDs(t, ids, reversed, nil, nil)
 	})
 }
 
-// compareHarnessCatalog compares the IDs of the rendered rows with the expected catalog.
-func compareHarnessCatalog(rows []hisscatalog.InvariantRow, ids []string) error {
-	counts := make(map[string]int, len(rows))
-	for _, row := range rows {
-		counts[row.ID]++
+// assertCatalogIDs fails the test unless hisscatalog.CompareIDs reports exactly the wanted
+// missing and invented IDs for actual against canonical.
+func assertCatalogIDs(t *testing.T, canonical, actual, wantMissing, wantInvented []string) {
+	t.Helper()
+	missing, invented := hisscatalog.CompareIDs(canonical, actual)
+	if !slices.Equal(missing, wantMissing) || !slices.Equal(invented, wantInvented) {
+		t.Fatalf("missing %v, invented %v; want missing %v, invented %v", missing, invented, wantMissing, wantInvented)
 	}
-	var problems []string
-	for _, id := range ids {
-		if counts[id] == 0 {
-			problems = append(problems, "missing "+id)
-		}
-		delete(counts, id)
-	}
-	for _, row := range rows {
-		if counts[row.ID] > 0 {
-			problems = append(problems, "extra "+row.ID)
-			delete(counts, row.ID)
-		}
-	}
-	seen := make(map[string]bool, len(rows))
-	for _, row := range rows {
-		if seen[row.ID] {
-			problems = append(problems, "duplicate "+row.ID)
-		}
-		seen[row.ID] = true
-	}
-	if len(problems) == 0 {
-		return nil
-	}
-	slices.Sort(problems)
-	return fmt.Errorf("invariant table: %s", strings.Join(problems, ", "))
 }
