@@ -280,6 +280,7 @@ func TestCheckHotAllocations_Negative_SecondPassHonorsContext(t *testing.T) {
 	}
 }
 
+// hotAllocAliasCases builds test cases exercising aliased, dot and blank testing imports.
 func hotAllocAliasCases() []hotAllocTestCase {
 	const hotSrc = "package p\n\n//hiss:hot step\nfunc Step() {}\n"
 	return []hotAllocTestCase{
@@ -295,7 +296,7 @@ func hotAllocAliasCases() []hotAllocTestCase {
 			name: "aliased *bench.B and bench.TB credited",
 			sources: map[string]string{
 				"hot.go":      "package p\n\n//hiss:hot step\nfunc Step() {}\n\n//hiss:hot tick\nfunc Tick() {}\n",
-				"hot_test.go": "package p\n\nimport bench \"testing\"\n\nfunc BenchmarkStep(b *bench.B) {\n\tif a := bench.AllocsPerRun(10, func() { Step() }); a != 0 { b.Fatal(a) }\n}\nfunc checkTick(tb bench.TB) {\n\tif a := bench.AllocsPerRun(10, func() { Tick() }); a != 0 { tb.Fatal(a) }\n}\n",
+				"hot_test.go": "package p\n\nimport bench \"testing\"\n\nfunc BenchmarkStep(b *bench.B) {\n\tif a := bench.AllocsPerRun(10, func() { Step() }); a != 0 { b.Fatal(a) }\n\tcheckTick(b)\n}\nfunc checkTick(tb bench.TB) {\n\tif a := bench.AllocsPerRun(10, func() { Tick() }); a != 0 { tb.Fatal(a) }\n}\n",
 			},
 			wantCount: 0,
 		},
@@ -419,6 +420,132 @@ func hotAllocZeroLiteralCases() []hotAllocTestCase {
 // TestGoHotAlloc_ZeroLiteralUnwrap verifies only predeclared numeric conversions unwrap around zero.
 func TestGoHotAlloc_ZeroLiteralUnwrap(t *testing.T) {
 	for _, tc := range hotAllocZeroLiteralCases() {
+		t.Run(tc.name, func(t *testing.T) { runHotAllocTestCase(t, tc) })
+	}
+}
+
+// hotAllocEntryNegativeCases builds cases where assertions sit outside reachable test entries.
+func hotAllocEntryNegativeCases(hotSrc string) []hotAllocTestCase {
+	return []hotAllocTestCase{
+		{
+			name: "uncalled helper with *testing.T not credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc checkStep(t *testing.T) {\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tif allocs != 0 { t.Fatalf(\"allocs: %v\", allocs) }\n}\n",
+			},
+			wantCount: 1,
+			wantSub:   "has no testing.AllocsPerRun test asserting zero allocations",
+		},
+		{
+			name: "lower-case suffix on Test prefix not an entry point",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc Teststep(t *testing.T) {\n\tif a := testing.AllocsPerRun(10, func() { Step() }); a != 0 { t.Fatal(a) }\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "method named TestHot not in reach set",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\ntype suite struct{}\nfunc (suite) TestStep(t *testing.T) {\n\tif a := testing.AllocsPerRun(10, func() { Step() }); a != 0 { t.Fatal(a) }\n}\n",
+			},
+			wantCount: 1,
+		},
+	}
+}
+
+// hotAllocEntryControlCases builds reachable helper and entry-point control cases.
+func hotAllocEntryControlCases(hotSrc string) []hotAllocTestCase {
+	return []hotAllocTestCase{
+		{
+			name: "control helper called from TestHot credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc checkStep(t *testing.T) {\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tif allocs != 0 { t.Fatalf(\"allocs: %v\", allocs) }\n}\nfunc TestHot(t *testing.T) { checkStep(t) }\n",
+			},
+			wantCount: 0,
+		},
+		{
+			name: "control two-hop helper chain across package files credited",
+			sources: map[string]string{
+				"hot.go":         hotSrc,
+				"helper_test.go": "package p\n\nimport \"testing\"\n\nfunc leafStep(tb testing.TB) {\n\tif a := testing.AllocsPerRun(10, func() { Step() }); a != 0 { tb.Fatal(a) }\n}\nfunc midStep(t *testing.T) { leafStep(t) }\n",
+				"hot_test.go":    "package p\n\nimport \"testing\"\n\nfunc TestHot(t *testing.T) { midStep(t) }\n",
+			},
+			wantCount: 0,
+		},
+		{
+			name: "control BenchmarkHot entry credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc BenchmarkHot(b *testing.B) {\n\tif a := testing.AllocsPerRun(10, func() { Step() }); a != 0 { b.Fatal(a) }\n}\n",
+			},
+			wantCount: 0,
+		},
+		{
+			name: "control FuzzHot entry credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc FuzzHot(f *testing.F) {\n\tif a := testing.AllocsPerRun(10, func() { Step() }); a != 0 { f.Fatal(a) }\n}\n",
+			},
+			wantCount: 0,
+		},
+	}
+}
+
+// TestGoHotAlloc_EntryReachability verifies only Go test entry points and reachable helpers earn credit.
+func TestGoHotAlloc_EntryReachability(t *testing.T) {
+	const hotSrc = "package p\n\n//hiss:hot step\nfunc Step() {}\n"
+	cases := append(hotAllocEntryNegativeCases(hotSrc), hotAllocEntryControlCases(hotSrc)...)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) { runHotAllocTestCase(t, tc) })
+	}
+}
+
+// hotAllocFuncLitCases builds uncalled-closure negative cases and invoked-literal controls.
+func hotAllocFuncLitCases() []hotAllocTestCase {
+	const hotSrc = "package p\n\n//hiss:hot step\nfunc Step() {}\n"
+	return []hotAllocTestCase{
+		{
+			name: "assertion inside uncalled func literal variable not credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tcheck := func() {\n\t\tif allocs != 0 { t.Fatalf(\"allocs: %v\", allocs) }\n\t}\n\t_ = check\n}\n",
+			},
+			wantCount: 1,
+			wantSub:   "has no testing.AllocsPerRun test asserting zero allocations",
+		},
+		{
+			name: "full check inside uncalled func literal variable not credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tcheck := func() {\n\t\tif a := testing.AllocsPerRun(100, func() { Step() }); a != 0 { t.Fatal(a) }\n\t}\n\t_ = check\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "control immediately invoked func literal credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\tfunc() {\n\t\tif allocs != 0 { t.Fatalf(\"allocs: %v\", allocs) }\n\t}()\n}\n",
+			},
+			wantCount: 0,
+		},
+		{
+			name: "control t.Run subtest literal credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tt.Run(\"zero\", func(t *testing.T) {\n\t\tallocs := testing.AllocsPerRun(100, func() { Step() })\n\t\tif allocs != 0 { t.Fatalf(\"allocs: %v\", allocs) }\n\t})\n}\n",
+			},
+			wantCount: 0,
+		},
+	}
+}
+
+// TestGoHotAlloc_FuncLitInvocation verifies uncalled function literals earn no allocation credit.
+func TestGoHotAlloc_FuncLitInvocation(t *testing.T) {
+	for _, tc := range hotAllocFuncLitCases() {
 		t.Run(tc.name, func(t *testing.T) { runHotAllocTestCase(t, tc) })
 	}
 }

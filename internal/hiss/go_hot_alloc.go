@@ -12,9 +12,12 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -264,23 +267,45 @@ func funcDeclSymbol(fn *ast.FuncDecl) (string, string) {
 	return name, name
 }
 
-// findZeroAllocTests collects functions covered by zero-allocation assertions in test files.
+// findZeroAllocTests collects functions covered by zero-allocation assertions in reachable test functions.
 func findZeroAllocTests(ctx context.Context, fset *token.FileSet, root string, testFiles []string) ([]string, error) {
-	var results []string
+	byPkg := make(map[string][]*ast.File)
+	var pkgs []string
 	for i := 0; i < len(testFiles) && i < maxHotAllocFiles; i++ {
 		file, _, err := parseHotFile(ctx, fset, root, testFiles[i])
 		if err != nil {
 			return nil, fmt.Errorf("parse test %s: %w", testFiles[i], err)
 		}
-		results = append(results, findZeroAllocTestsInFile(file)...)
+		pkg := file.Name.Name
+		if _, seen := byPkg[pkg]; !seen {
+			pkgs = append(pkgs, pkg)
+		}
+		byPkg[pkg] = append(byPkg[pkg], file)
+	}
+	var results []string
+	for i := 0; i < len(pkgs) && i < maxHotAllocFiles; i++ {
+		results = append(results, findZeroAllocTestsInPackage(byPkg[pkgs[i]])...)
 	}
 	return results, nil
 }
 
-// hotTestContext carries file import bindings and the enclosing function's test parameter.
+// hotTestContext carries file import bindings, active testing parameters and invoked literals.
 type hotTestContext struct {
-	imports   GoImports
-	testParam string
+	imports     GoImports
+	testParams  []string
+	invokedLits map[*ast.FuncLit][]string
+}
+
+// withParams returns a copy of ctx with params as the active testing parameter names.
+func (ctx hotTestContext) withParams(params []string) hotTestContext {
+	ctx.testParams = params
+	return ctx
+}
+
+type hotTestFunc struct {
+	decl  *ast.FuncDecl
+	ctx   hotTestContext
+	entry bool
 }
 
 // firstParamName returns the first non-blank identifier in names, or "" when none is bound.
@@ -295,11 +320,19 @@ func firstParamName(names []*ast.Ident) string {
 
 // hotTestingParam finds the first named testing parameter accepted by allocation assertions.
 func hotTestingParam(fn *ast.FuncDecl, imports GoImports) string {
-	if fn.Type.Params == nil {
+	if fn == nil {
 		return ""
 	}
-	for i := 0; i < len(fn.Type.Params.List) && i < maxHotAllocDecls; i++ {
-		field := fn.Type.Params.List[i]
+	return funcTypeTestingParam(fn.Type, imports)
+}
+
+// funcTypeTestingParam finds the first named testing parameter in a function signature.
+func funcTypeTestingParam(ft *ast.FuncType, imports GoImports) string {
+	if ft == nil || ft.Params == nil {
+		return ""
+	}
+	for i := 0; i < len(ft.Params.List) && i < maxHotAllocDecls; i++ {
+		field := ft.Params.List[i]
 		if name := firstParamName(field.Names); name != "" && isHotTestingType(field.Type, imports) {
 			return name
 		}
@@ -307,41 +340,370 @@ func hotTestingParam(fn *ast.FuncDecl, imports GoImports) string {
 	return ""
 }
 
-// isHotTestingType recognizes *T, *B and TB qualified by a local import name bound to "testing".
+// isHotTestingType recognizes *T, *B, *F and TB qualified by a local import name bound to "testing".
 func isHotTestingType(expr ast.Expr, imports GoImports) bool {
-	pointer := false
-	if star, ok := expr.(*ast.StarExpr); ok {
-		expr = star.X
-		pointer = true
-	}
-	sel, ok := expr.(*ast.SelectorExpr)
+	return isTestingPtrType(expr, imports, "T") ||
+		isTestingPtrType(expr, imports, "B") ||
+		isTestingPtrType(expr, imports, "F") ||
+		isTestingNamedType(expr, imports, "TB")
+}
+
+// isTestingPtrType reports whether expr is a pointer to a named type imported from "testing".
+func isTestingPtrType(expr ast.Expr, imports GoImports, typeName string) bool {
+	star, ok := unwrapCond(expr).(*ast.StarExpr)
 	if !ok {
 		return false
 	}
-	pkg, ok := sel.X.(*ast.Ident)
-	if !ok || !imports.Binds(pkg.Name, "testing") {
-		return false
-	}
-	return (pointer && (sel.Sel.Name == "T" || sel.Sel.Name == "B")) || (!pointer && sel.Sel.Name == "TB")
+	return isTestingNamedType(star.X, imports, typeName)
 }
 
-// findZeroAllocTestsInFile walks function bodies with their testing parameter and imports.
-func findZeroAllocTestsInFile(file *ast.File) []string {
+// isTestingNamedType reports whether expr selects typeName from an import bound to "testing".
+func isTestingNamedType(expr ast.Expr, imports GoImports, typeName string) bool {
+	sel, ok := unwrapCond(expr).(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != typeName {
+		return false
+	}
+	pkg, ok := unwrapCond(sel.X).(*ast.Ident)
+	return ok && imports.Binds(pkg.Name, "testing")
+}
+
+// isHotTestEntry recognizes Test*, Benchmark* and Fuzz* entry points accepted by go test.
+func isHotTestEntry(fn *ast.FuncDecl, imports GoImports) bool {
+	wantType := entryTestingTypeName(fn.Name.Name)
+	if wantType == "" || !hasEntrySignatureShape(fn.Type) {
+		return false
+	}
+	return isTestingPtrType(fn.Type.Params.List[0].Type, imports, wantType)
+}
+
+// entryTestingTypeName maps a Go test entry-point name to its required testing pointer type.
+func entryTestingTypeName(name string) string {
+	if name == "TestMain" {
+		return ""
+	}
+	switch {
+	case hasTestEntryPrefix(name, "Test"):
+		return "T"
+	case hasTestEntryPrefix(name, "Benchmark"):
+		return "B"
+	case hasTestEntryPrefix(name, "Fuzz"):
+		return "F"
+	default:
+		return ""
+	}
+}
+
+// hasTestEntryPrefix reports whether name starts with prefix and has no lower-case next rune.
+func hasTestEntryPrefix(name, prefix string) bool {
+	if !strings.HasPrefix(name, prefix) {
+		return false
+	}
+	rest := name[len(prefix):]
+	if rest == "" {
+		return true
+	}
+	r, _ := utf8.DecodeRuneInString(rest)
+	return !unicode.IsLower(r)
+}
+
+// hasEntrySignatureShape checks that ft has one parameter, no type parameters and no results.
+func hasEntrySignatureShape(ft *ast.FuncType) bool {
+	if ft == nil || ft.Params == nil || len(ft.Params.List) != 1 || len(ft.Params.List[0].Names) > 1 {
+		return false
+	}
+	return (ft.TypeParams == nil || len(ft.TypeParams.List) == 0) &&
+		(ft.Results == nil || len(ft.Results.List) == 0)
+}
+
+// findZeroAllocTestsInPackage credits assertions in package test entry points and helpers they reach.
+func findZeroAllocTestsInPackage(files []*ast.File) []string {
+	funcs, byName := indexHotTestFuncs(files)
+	reachable := reachableHotTestFuncs(funcs, byName)
 	var tested []string
+	for i := 0; i < len(reachable) && i < maxHotAllocDecls; i++ {
+		fn := funcs[reachable[i]]
+		if len(fn.ctx.testParams) > 0 {
+			tested = append(tested, inspectFuncForAllocTests(fn.decl.Body, fn.ctx)...)
+		}
+	}
+	return tested
+}
+
+// indexHotTestFuncs collects non-method test entry points and testing-parameter helpers in files.
+func indexHotTestFuncs(files []*ast.File) ([]hotTestFunc, map[string][]int) {
+	var funcs []hotTestFunc
+	byName := make(map[string][]int)
+	for i := 0; i < len(files) && i < maxHotAllocFiles; i++ {
+		funcs = appendFileHotTestFuncs(files[i], funcs, byName)
+	}
+	return funcs, byName
+}
+
+// candidateHotTestDecl returns decl as a plain function with a body; methods stay out of the
+// reach set because go test never enters them and plain-name helper calls cannot target them.
+func candidateHotTestDecl(decl ast.Decl) (*ast.FuncDecl, bool) {
+	fn, ok := decl.(*ast.FuncDecl)
+	if !ok || fn.Recv != nil || fn.Body == nil || fn.Name == nil {
+		return nil, false
+	}
+	return fn, true
+}
+
+// appendFileHotTestFuncs indexes one test file's entry points and helpers into funcs and byName.
+func appendFileHotTestFuncs(file *ast.File, funcs []hotTestFunc, byName map[string][]int) []hotTestFunc {
 	imports := FileImports(file)
-	for i := 0; i < len(file.Decls) && i < maxHotAllocDecls; i++ {
-		fn, ok := file.Decls[i].(*ast.FuncDecl)
-		if !ok || fn.Body == nil {
+	for i := 0; i < len(file.Decls) && i < maxHotAllocDecls && len(funcs) < maxHotAllocDecls; i++ {
+		fn, ok := candidateHotTestDecl(file.Decls[i])
+		if !ok {
 			continue
 		}
-		ctx := hotTestContext{imports: imports, testParam: hotTestingParam(fn, imports)}
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			if block, ok := n.(*ast.BlockStmt); ok {
-				tested = append(tested, inspectBlockForAllocTests(block, ctx)...)
-			}
-			return true
-		})
+		entry := isHotTestEntry(fn, imports)
+		param := hotTestingParam(fn, imports)
+		if !entry && param == "" {
+			continue
+		}
+		var params []string
+		if param != "" {
+			params = []string{param}
+		}
+		ctx := hotTestContext{
+			imports:     imports,
+			testParams:  params,
+			invokedLits: collectInvokedFuncLits(fn.Body, imports, params),
+		}
+		idx := len(funcs)
+		funcs = append(funcs, hotTestFunc{decl: fn, ctx: ctx, entry: entry})
+		byName[fn.Name.Name] = append(byName[fn.Name.Name], idx)
 	}
+	return funcs
+}
+
+// reachableHotTestFuncs traverses plain-name helper calls breadth-first from package entry points.
+func reachableHotTestFuncs(funcs []hotTestFunc, byName map[string][]int) []int {
+	visited := make([]bool, len(funcs))
+	queue := make([]int, 0, len(funcs))
+	for i := 0; i < len(funcs) && i < maxHotAllocDecls; i++ {
+		if funcs[i].entry {
+			visited[i] = true
+			queue = append(queue, i)
+		}
+	}
+	for head := 0; head < len(queue) && head < maxHotAllocDecls; head++ {
+		cur := funcs[queue[head]]
+		callees := plainHelperCalls(cur.decl, cur.ctx.invokedLits)
+		queue = enqueueHotHelpers(callees, byName, visited, queue)
+	}
+	return queue
+}
+
+// enqueueHotHelpers appends unvisited helper indices for callees within maxHotAllocDecls.
+func enqueueHotHelpers(callees []string, byName map[string][]int, visited []bool, queue []int) []int {
+	for i := 0; i < len(callees) && i < maxHotAllocDecls; i++ {
+		targets := byName[callees[i]]
+		for j := 0; j < len(targets) && len(queue) < maxHotAllocDecls; j++ {
+			idx := targets[j]
+			if !visited[idx] {
+				visited[idx] = true
+				queue = append(queue, idx)
+			}
+		}
+	}
+	return queue
+}
+
+// plainHelperCalls returns unshadowed plain-name callees reached from fn outside uncalled literals.
+func plainHelperCalls(fn *ast.FuncDecl, invoked map[*ast.FuncLit][]string) []string {
+	var scope goScope
+	var callees []string
+	seen := make(map[string]bool)
+	scope.inspect(fn, func(n ast.Node) bool {
+		if lit, ok := n.(*ast.FuncLit); ok {
+			_, ok = invoked[lit]
+			return ok
+		}
+		call, ok := n.(*ast.CallExpr)
+		if !ok || len(callees) >= maxHotAllocDecls {
+			return true
+		}
+		ident, ok := stripTypeArgs(call.Fun).(*ast.Ident)
+		if ok && !scope.binds(ident.Name) && !seen[ident.Name] {
+			seen[ident.Name] = true
+			callees = append(callees, ident.Name)
+		}
+		return true
+	})
+	return callees
+}
+
+type litParamStack struct {
+	invoked    map[*ast.FuncLit][]string
+	stack      []ast.Node
+	paramStack [][]string
+}
+
+// newLitParamStack initializes a stack tracking active testing parameters across invoked literals.
+func newLitParamStack(ctx hotTestContext) litParamStack {
+	return litParamStack{
+		invoked:    ctx.invokedLits,
+		paramStack: [][]string{ctx.testParams},
+	}
+}
+
+// params returns the testing parameter names active at the current traversal depth.
+func (s *litParamStack) params() []string {
+	return s.paramStack[len(s.paramStack)-1]
+}
+
+// full reports whether the traversal stack has reached maxNodeStack.
+func (s *litParamStack) full() bool {
+	return len(s.stack) >= maxNodeStack
+}
+
+// push enters node n, refusing uncalled function literals so their bodies are skipped.
+func (s *litParamStack) push(n ast.Node) bool {
+	if lit, ok := n.(*ast.FuncLit); ok {
+		params, ok := s.invoked[lit]
+		if !ok {
+			return false
+		}
+		s.paramStack = append(s.paramStack, params)
+	}
+	s.stack = append(s.stack, n)
+	return true
+}
+
+// pop exits the most recently pushed AST node on a post-order nil callback.
+func (s *litParamStack) pop() {
+	last := len(s.stack) - 1
+	if last < 0 {
+		return
+	}
+	if _, isLit := s.stack[last].(*ast.FuncLit); isLit {
+		s.paramStack = s.paramStack[:len(s.paramStack)-1]
+	}
+	s.stack = s.stack[:last]
+}
+
+type invokedLitCollector struct {
+	imports GoImports
+	frames  litParamStack
+}
+
+// collectInvokedFuncLits maps each immediately invoked or t.Run/b.Run function literal
+// reachable from body to the testing parameter names active inside that literal.
+func collectInvokedFuncLits(body *ast.BlockStmt, imports GoImports, rootParams []string) map[*ast.FuncLit][]string {
+	if body == nil {
+		return nil
+	}
+	invoked := make(map[*ast.FuncLit][]string)
+	c := invokedLitCollector{
+		imports: imports,
+		frames: litParamStack{
+			invoked:    invoked,
+			paramStack: [][]string{rootParams},
+		},
+	}
+	ast.Inspect(body, c.visit)
+	return invoked
+}
+
+// visit records invoked function literals in pre-order and skips uncalled literal bodies.
+func (c *invokedLitCollector) visit(n ast.Node) bool {
+	if n == nil {
+		c.frames.pop()
+		return true
+	}
+	if c.frames.full() {
+		return false
+	}
+	if call, ok := n.(*ast.CallExpr); ok {
+		c.recordCall(call, c.frames.params())
+	}
+	return c.frames.push(n)
+}
+
+// recordCall marks an immediately invoked literal or t.Run/b.Run callback as invoked.
+func (c *invokedLitCollector) recordCall(call *ast.CallExpr, curParams []string) {
+	if lit, ok := unwrapCond(call.Fun).(*ast.FuncLit); ok {
+		c.frames.invoked[lit] = extendTestingParams(lit.Type, c.imports, curParams)
+		return
+	}
+	if lit, params, ok := subtestRunLit(call, c.imports, curParams); ok {
+		c.frames.invoked[lit] = params
+	}
+}
+
+// filterShadowedParams retains testing parameter names not redeclared by ft.
+func filterShadowedParams(ft *ast.FuncType, params []string) []string {
+	var kept []string
+	for i := 0; i < len(params) && i < maxHotAllocDecls; i++ {
+		if !funcTypeNamesVar(ft, params[i]) {
+			kept = append(kept, params[i])
+		}
+	}
+	return kept
+}
+
+// extendTestingParams computes active testing parameters inside a literal signature ft.
+func extendTestingParams(ft *ast.FuncType, imports GoImports, curParams []string) []string {
+	next := filterShadowedParams(ft, curParams)
+	if param := funcTypeTestingParam(ft, imports); param != "" && !slices.Contains(next, param) {
+		next = append(next, param)
+	}
+	return next
+}
+
+// isRunMethodOnParam reports whether fun selects Run on one of curParams.
+func isRunMethodOnParam(fun ast.Expr, curParams []string) bool {
+	sel, ok := unwrapCond(fun).(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Run" {
+		return false
+	}
+	recv, ok := unwrapCond(sel.X).(*ast.Ident)
+	return ok && slices.Contains(curParams, recv.Name)
+}
+
+// isSubtestLitType checks that ft is a single-parameter *testing.T or *testing.B callback.
+func isSubtestLitType(ft *ast.FuncType, imports GoImports) bool {
+	if !hasEntrySignatureShape(ft) {
+		return false
+	}
+	paramType := ft.Params.List[0].Type
+	return isTestingPtrType(paramType, imports, "T") || isTestingPtrType(paramType, imports, "B")
+}
+
+// subtestRunLit recognizes t.Run and b.Run subtest literals on active testing parameters.
+func subtestRunLit(call *ast.CallExpr, imports GoImports, curParams []string) (*ast.FuncLit, []string, bool) {
+	if len(curParams) == 0 || len(call.Args) != 2 || call.Ellipsis.IsValid() {
+		return nil, nil, false
+	}
+	if !isRunMethodOnParam(call.Fun, curParams) {
+		return nil, nil, false
+	}
+	lit, ok := unwrapCond(call.Args[1]).(*ast.FuncLit)
+	if !ok || !isSubtestLitType(lit.Type, imports) {
+		return nil, nil, false
+	}
+	return lit, extendTestingParams(lit.Type, imports, curParams), true
+}
+
+// inspectFuncForAllocTests walks blocks outside uncalled function literals for allocation tests.
+func inspectFuncForAllocTests(body *ast.BlockStmt, ctx hotTestContext) []string {
+	var tested []string
+	frames := newLitParamStack(ctx)
+	ast.Inspect(body, func(n ast.Node) bool {
+		if n == nil {
+			frames.pop()
+			return true
+		}
+		if frames.full() || !frames.push(n) {
+			return false
+		}
+		if block, ok := n.(*ast.BlockStmt); ok {
+			tested = append(tested, inspectBlockForAllocTests(block, ctx.withParams(frames.params()))...)
+		}
+		return true
+	})
 	return tested
 }
 
@@ -379,7 +741,7 @@ func checkAssignAllocTest(stmts []ast.Stmt, idx int, assign *ast.AssignStmt, ctx
 	if !ok || id.Name == "_" {
 		return nil
 	}
-	if hasZeroAssertion(stmts[idx+1:], id.Name, nil, ctx.testParam) {
+	if hasZeroAssertion(stmts[idx+1:], id.Name, nil, ctx) {
 		return targets
 	}
 	return nil
@@ -412,7 +774,7 @@ func checkValueSpecAllocTest(stmts []ast.Stmt, idx int, spec *ast.ValueSpec, ctx
 		return nil
 	}
 	targets, valid := checkAllocsCall(call, ctx)
-	if valid && hasZeroAssertion(stmts[idx+1:], spec.Names[0].Name, nil, ctx.testParam) {
+	if valid && hasZeroAssertion(stmts[idx+1:], spec.Names[0].Name, nil, ctx) {
 		return targets
 	}
 	return nil
@@ -458,7 +820,7 @@ func checkIfCondAllocTest(ifStmt *ast.IfStmt, ctx hotTestContext) []string {
 
 // checkIfAllocTest checks whether an if statement establishes a zero-allocation assertion.
 func checkIfAllocTest(ifStmt *ast.IfStmt, ctx hotTestContext) []string {
-	if !bodyFailsTest(ifStmt.Body, ctx.testParam) {
+	if !bodyFailsTest(ifStmt.Body, ctx) {
 		return nil
 	}
 	if targets := checkIfInitAllocTest(ifStmt, ctx); len(targets) > 0 {
@@ -468,46 +830,65 @@ func checkIfAllocTest(ifStmt *ast.IfStmt, ctx hotTestContext) []string {
 }
 
 type zeroAssertionWalk struct {
-	varName   string
-	call      *ast.CallExpr
-	testParam string
-	found     bool
-	stopped   bool
+	varName string
+	call    *ast.CallExpr
+	ctx     hotTestContext
+	frames  litParamStack
+	found   bool
+	stopped bool
 }
 
 // hasZeroAssertion looks for a failure assertion while the measured allocation binding still holds.
-func hasZeroAssertion(stmts []ast.Stmt, varName string, call *ast.CallExpr, testParam string) bool {
+func hasZeroAssertion(stmts []ast.Stmt, varName string, call *ast.CallExpr, ctx hotTestContext) bool {
 	if varName == "_" {
 		return false
 	}
-	w := zeroAssertionWalk{varName: varName, call: call, testParam: testParam}
+	w := zeroAssertionWalk{
+		varName: varName,
+		call:    call,
+		ctx:     ctx,
+		frames:  newLitParamStack(ctx),
+	}
 	for i := 0; i < len(stmts) && i < maxHotAllocStmts && !w.found && !w.stopped; i++ {
 		ast.Inspect(stmts[i], w.visit)
 	}
 	return w.found
 }
 
-// visit inspects one AST node in source order, halting when the binding is reassigned or shadowed.
+// visit inspects one AST node in source order, skipping uncalled literals and halting on rebinding.
 func (w *zeroAssertionWalk) visit(n ast.Node) bool {
-	if w.found || w.stopped || n == nil {
+	if n == nil {
+		w.frames.pop()
+		return true
+	}
+	if w.found || w.stopped || w.frames.full() {
+		return false
+	}
+	if lit, ok := n.(*ast.FuncLit); ok && funcTypeNamesVar(lit.Type, w.varName) {
 		return false
 	}
 	if ifStmt, ok := n.(*ast.IfStmt); ok {
-		if rebindsHotVar(ifStmt.Init, w.varName) {
-			w.stopped = true
-			return false
-		}
-		if isZeroCondition(ifStmt.Cond, w.varName, w.call) && bodyFailsTest(ifStmt.Body, w.testParam) {
-			w.found = true
-			return false
-		}
-		return true
+		return w.visitIf(ifStmt)
 	}
 	if rebindsHotVar(n, w.varName) {
 		w.stopped = true
 		return false
 	}
-	return true
+	return w.frames.push(n)
+}
+
+// visitIf checks one if statement for a rebinding initializer or a zero-allocation failure branch.
+func (w *zeroAssertionWalk) visitIf(ifStmt *ast.IfStmt) bool {
+	if rebindsHotVar(ifStmt.Init, w.varName) {
+		w.stopped = true
+		return false
+	}
+	curCtx := w.ctx.withParams(w.frames.params())
+	if isZeroCondition(ifStmt.Cond, w.varName, w.call) && bodyFailsTest(ifStmt.Body, curCtx) {
+		w.found = true
+		return false
+	}
+	return w.frames.push(ifStmt)
 }
 
 // rebindsHotVar reports whether node assigns to or redeclares varName.
@@ -678,33 +1059,38 @@ func isMatchingAllocs(expr ast.Expr, varName string, call *ast.CallExpr) bool {
 	return false
 }
 
-// bodyFailsTest checks whether a branch contains a test failure call.
-func bodyFailsTest(body *ast.BlockStmt, testParam string) bool {
+// bodyFailsTest checks whether a branch contains a test failure call outside uncalled literals.
+func bodyFailsTest(body *ast.BlockStmt, ctx hotTestContext) bool {
 	if body == nil {
 		return false
 	}
 	found := false
+	frames := newLitParamStack(ctx)
 	ast.Inspect(body, func(n ast.Node) bool {
-		if found || n == nil {
+		if n == nil {
+			frames.pop()
+			return true
+		}
+		if found || frames.full() {
 			return false
 		}
-		if call, ok := n.(*ast.CallExpr); ok && callFailsTest(call, testParam) {
+		if call, ok := n.(*ast.CallExpr); ok && callFailsTest(call, frames.params()) {
 			found = true
 			return false
 		}
-		return true
+		return frames.push(n)
 	})
 	return found
 }
 
-// callFailsTest recognizes calls that fail the current test.
-func callFailsTest(c *ast.CallExpr, testParam string) bool {
+// callFailsTest recognizes calls that fail the current test through an active testing parameter.
+func callFailsTest(c *ast.CallExpr, testParams []string) bool {
 	sel, ok := c.Fun.(*ast.SelectorExpr)
-	if !ok || testParam == "" {
+	if !ok || len(testParams) == 0 {
 		return false
 	}
 	receiver, ok := sel.X.(*ast.Ident)
-	if !ok || receiver.Name != testParam {
+	if !ok || !slices.Contains(testParams, receiver.Name) {
 		return false
 	}
 	switch sel.Sel.Name {

@@ -107,30 +107,37 @@ func (f blockedDirStatFS) Stat(name string) (fs.FileInfo, error) {
 	return fs.Stat(f.MapFS, name)
 }
 
-// TestReadDirFSAndStatFS_3D covers positive, negative and cancellation boundary cases for ReadDirFS and StatFS.
-func TestReadDirFSAndStatFS_3D(t *testing.T) {
+// TestReadDirFS_3D covers positive, negative and cancellation boundary cases for ReadDirFS.
+func TestReadDirFS_3D(t *testing.T) {
 	fsys := fstest.MapFS{"dir/a.txt": &fstest.MapFile{Data: []byte("ok")}}
 	entries, err := ReadDirFS(context.Background(), fsys, "dir")
 	if err != nil || len(entries) != 1 || entries[0].Name() != "a.txt" {
 		t.Fatalf("ReadDirFS positive: %v, %v", entries, err)
 	}
+	if _, err := ReadDirFS(context.Background(), fsys, "absent"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("ReadDirFS missing: %v", err)
+	}
+	t.Run("readdir", func(t *testing.T) {
+		assertBlockedFSOpCancels(t, "readdir")
+	})
+}
+
+// TestStatFS_3D covers positive, negative and cancellation boundary cases for StatFS.
+func TestStatFS_3D(t *testing.T) {
+	fsys := fstest.MapFS{"dir/a.txt": &fstest.MapFile{Data: []byte("ok")}}
 	info, err := StatFS(context.Background(), fsys, "dir/a.txt")
 	if err != nil || info.IsDir() || info.Size() != 2 {
 		t.Fatalf("StatFS positive: %v, %v", info, err)
 	}
-	if _, err := ReadDirFS(context.Background(), fsys, "absent"); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("ReadDirFS missing: %v", err)
-	}
 	if _, err := StatFS(context.Background(), nil, "dir"); err == nil || !strings.Contains(err.Error(), "filesystem is required") {
 		t.Fatalf("StatFS nil fsys: %v", err)
 	}
-	for _, op := range []string{"readdir", "stat"} {
-		t.Run(op, func(t *testing.T) {
-			assertBlockedFSOpCancels(t, op)
-		})
-	}
+	t.Run("stat", func(t *testing.T) {
+		assertBlockedFSOpCancels(t, "stat")
+	})
 }
 
+// assertBlockedFSOpCancels verifies that ReadDirFS or StatFS returns promptly on cancellation.
 func assertBlockedFSOpCancels(t *testing.T, op string) {
 	t.Helper()
 	b := blockedDirStatFS{
