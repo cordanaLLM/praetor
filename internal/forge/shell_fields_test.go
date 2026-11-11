@@ -12,6 +12,9 @@ func TestShellFields(t *testing.T) {
 		name, script string
 		want         []string
 	}{
+		{"heredoc", "cat <<'EOF'\nreviewer's note\nEOF\ngh pr view 1", []string{"cat", ";", "gh", "pr", "view", "1"}},
+		{"two heredocs", "cat <<A <<-B\none\nA\n\ttwo\n\tB\n", []string{"cat", ";"}},
+		{"delimiter trailing space", "cat <<EOF\nEOF \nreviewer's\nEOF\n", []string{"cat", ";"}},
 		{"operators", "cd x;git status&&cd y||true|cat\nfalse", []string{"cd", "x", ";", "git", "status", "&&", "cd", "y", "||", "true", "|", "cat", ";", "false"}},
 		{"quotes", `git -C "a  b; c" -c 'key=x|y' status`, []string{"git", "-C", `"a  b; c"`, "-c", "'key=x|y'", "status"}},
 		{"comments", "git status # cd hidden\ncd real", []string{"git", "status", ";", "cd", "real"}},
@@ -39,7 +42,7 @@ func TestShellFieldsBoundaries(t *testing.T) {
 	}
 	for _, script := range []string{
 		strings.Repeat("x ", maxRunScriptFields) + "x",
-		strings.Repeat("x ", maxRunScriptFields+1), `git -C "unclosed`,
+		strings.Repeat("x ", maxRunScriptFields+1), `git -C "unclosed`, "cat <<EOF\nmissing\n", `cat <<<'it's'`,
 	} {
 		if got, err := ShellFields(script); err == nil || got != nil {
 			t.Errorf("unreadable script accepted: %d fields, %v", len(got), err)
