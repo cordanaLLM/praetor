@@ -19,6 +19,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/builder"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/harvester"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
@@ -402,7 +403,7 @@ func TestEditorsGenerateReportsCreatedMergedAndPresent(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustContain(t, out, "1 merged", "[MERGED] [vscode] .vscode/settings.json")
-	settings, err := os.ReadFile(settingsPath)
+	settings, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), settingsPath)
 	if err != nil || !strings.Contains(string(settings), `"editor.fontSize": 42`) {
 		t.Fatalf("merge report lost the existing setting: %s %v", settings, err)
 	}
@@ -462,7 +463,7 @@ func TestEditorsRejectDuplicateJSONKeysWithoutWriting(t *testing.T) {
 	if _, err := captureStdout(t, func() error { return runEditors([]string{"generate", "--path=" + root}) }); err == nil || !strings.Contains(err.Error(), "duplicate") {
 		t.Fatalf("generate accepted duplicate JSON keys: %v", err)
 	}
-	if after, err := os.ReadFile(settingsPath); err != nil || string(after) != duplicate {
+	if after, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), settingsPath); err != nil || string(after) != duplicate {
 		t.Fatalf("rejected generation changed the file: %s %v", after, err)
 	}
 }
@@ -516,7 +517,7 @@ func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
 	if !errors.Is(err, util.ErrRepoIdentityUnresolved) {
 		t.Fatalf("paperclip harness without an identity = %v, want ErrRepoIdentityUnresolved", err)
 	}
-	if _, statErr := os.Stat(filepath.Join(unidentified, ".paperclip")); !errors.Is(statErr, os.ErrNotExist) {
+	if _, statErr := testsupport.StatContext(testsupport.DeadlineContext(t), filepath.Join(unidentified, ".paperclip")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("paperclip harness without an identity wrote .paperclip: %v", statErr)
 	}
 
@@ -639,7 +640,7 @@ func TestDispatchCommand_NeedsFleet(t *testing.T) {
 	if err := dispatchCommand("needs", []string{"epic", "--path=" + repo, "--framework=" + framework, "--output=" + epicOut}); err != nil {
 		t.Fatalf("needs epic failed: %v", err)
 	}
-	if _, err := os.Stat(epicOut); err != nil {
+	if _, err := testsupport.StatContext(testsupport.DeadlineContext(t), epicOut); err != nil {
 		t.Fatalf("expected the epic to be written: %v", err)
 	}
 }
@@ -703,7 +704,7 @@ func TestDispatchCommand_StateSubcommands(t *testing.T) {
 	if err := dispatchCommand("state", []string{"sync", "--log=test execution", tmpDir}); err != nil {
 		t.Fatalf("state sync failed: %v", err)
 	}
-	if got := readFixtureFile(t, tmpDir, ".workingdir/STATE.md"); !strings.Contains(got, "test execution") {
+	if got := readStateFixtureDeadline(t, tmpDir, ".workingdir/STATE.md"); !strings.Contains(got, "test execution") {
 		t.Fatalf("expected the --log message in STATE.md, got:\n%s", got)
 	}
 	if err := dispatchCommand("state", []string{"audit", tmpDir}); err != nil {
@@ -863,7 +864,7 @@ func TestDispatchCommand_ProjectCachedStatusDoesNotResolveAuth(t *testing.T) {
 	if strings.Contains(out, "[PASS]") {
 		t.Fatalf("local cache write claimed remote success: %s", out)
 	}
-	before := readFixtureFile(t, dir, ".workingdir/project.json")
+	before := readStateFixtureDeadline(t, dir, ".workingdir/project.json")
 	marker := filepath.Join(bin, "called")
 	t.Setenv("PRAETOR_TEST_GH_MARKER", marker)
 	script := "#!/bin/sh\nprintf called > \"$PRAETOR_TEST_GH_MARKER\"\nexit 1\n"
@@ -873,10 +874,10 @@ func TestDispatchCommand_ProjectCachedStatusDoesNotResolveAuth(t *testing.T) {
 	if err := dispatchCommand("project", []string{"status", "--dir", dir}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+	if _, err := testsupport.StatContext(testsupport.DeadlineContext(t), marker); !os.IsNotExist(err) {
 		t.Fatalf("cached status resolved credentials: %v", err)
 	}
-	if after := readFixtureFile(t, dir, ".workingdir/project.json"); before != after {
+	if after := readStateFixtureDeadline(t, dir, ".workingdir/project.json"); before != after {
 		t.Fatal("cached status rewrote the cache")
 	}
 }
@@ -933,7 +934,7 @@ func TestDispatchCommand_StateSyncRecordsLogAfterPositional(t *testing.T) {
 	}
 
 	stateMD := filepath.Join(tmpDir, ".workingdir", "STATE.md")
-	content, err := os.ReadFile(stateMD)
+	content, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), stateMD)
 	if err != nil {
 		t.Fatalf("failed reading STATE.md: %v", err)
 	}
@@ -948,7 +949,7 @@ func TestDispatchCommand_StateStatusDoesNotMutateLedger(t *testing.T) {
 		t.Fatalf("state init failed: %v", err)
 	}
 	stateMD := filepath.Join(tmpDir, ".workingdir", "STATE.md")
-	before, err := os.ReadFile(stateMD)
+	before, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), stateMD)
 	if err != nil {
 		t.Fatalf("failed reading STATE.md: %v", err)
 	}
@@ -963,7 +964,7 @@ func TestDispatchCommand_StateStatusDoesNotMutateLedger(t *testing.T) {
 		t.Errorf("unexpected state status output:\n%s", out)
 	}
 
-	after, err := os.ReadFile(stateMD)
+	after, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), stateMD)
 	if err != nil {
 		t.Fatalf("failed re-reading STATE.md: %v", err)
 	}
@@ -977,7 +978,7 @@ func TestDispatchCommand_StateStatusRequiresWorkingDir(t *testing.T) {
 	if err := dispatchCommand("state", []string{"status", tmpDir}); err == nil {
 		t.Fatal("expected state status to fail when .workingdir is absent")
 	}
-	if _, err := os.Stat(filepath.Join(tmpDir, ".workingdir")); !os.IsNotExist(err) {
+	if _, err := testsupport.StatContext(testsupport.DeadlineContext(t), filepath.Join(tmpDir, ".workingdir")); !os.IsNotExist(err) {
 		t.Errorf("state status scaffolded .workingdir instead of reporting the error")
 	}
 }
@@ -1017,7 +1018,7 @@ func TestDispatchCommand_StateTaskLifecycle(t *testing.T) {
 
 	// The confined read refuses an archive name that leaves the archive directory.
 	archiveDir := filepath.Join(tmpDir, ".workingdir", "archive")
-	backlog, err := util.ReadConfinedLimited(archiveDir, "OPEN-"+archiveMonth+".md", 1<<20)
+	backlog, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), filepath.Join(archiveDir, "OPEN-"+archiveMonth+".md"))
 	if err != nil {
 		t.Fatalf("failed reading task archive: %v", err)
 	}
@@ -1049,7 +1050,7 @@ func TestDispatchCommand_StateDirFlagIsNotADirectoryName(t *testing.T) {
 		t.Fatalf("state bug resolve failed: %v", err)
 	}
 
-	bugs, err := os.ReadFile(filepath.Join(tmpDir, ".workingdir", "BUGS.md"))
+	bugs, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), filepath.Join(tmpDir, ".workingdir", "BUGS.md"))
 	if err != nil {
 		t.Fatalf("failed reading BUGS.md: %v", err)
 	}
@@ -1057,7 +1058,7 @@ func TestDispatchCommand_StateDirFlagIsNotADirectoryName(t *testing.T) {
 		t.Errorf("expected the resolution in the target ledger, got:\n%s", bugs)
 	}
 	// The literal flag must never become a directory name in the working directory.
-	if _, statErr := os.Stat("--dir=" + tmpDir); statErr == nil {
+	if _, statErr := testsupport.StatContext(testsupport.DeadlineContext(t), "--dir="+tmpDir); statErr == nil {
 		t.Errorf("a stray '--dir=...' directory was created")
 	}
 
@@ -1086,7 +1087,7 @@ func TestDispatchCommand_TopologyAuditReportsStrayFiles(t *testing.T) {
 	if err := dispatchCommand("topology", []string{"clean", tmpDir, "--dry-run=false"}); err != nil {
 		t.Fatalf("topology clean failed: %v", err)
 	}
-	if _, statErr := os.Stat(stray); !os.IsNotExist(statErr) {
+	if _, statErr := testsupport.StatContext(testsupport.DeadlineContext(t), stray); !os.IsNotExist(statErr) {
 		t.Errorf("--dry-run=false after the positional dev root was ignored; %s still exists", stray)
 	}
 
@@ -1344,7 +1345,7 @@ func TestDispatchCommand_AdoptAllMissingNeverFallsBackToCwd(t *testing.T) {
 	if !strings.Contains(out, "Batch Repository Adoption") {
 		t.Errorf("unexpected batch adoption output:\n%s", out)
 	}
-	entries, readErr := os.ReadDir(devDir)
+	entries, readErr := testsupport.ReadDirContext(testsupport.DeadlineContext(t), devDir, 10000)
 	if readErr != nil {
 		t.Fatalf("failed reading the scan root: %v", readErr)
 	}
@@ -1431,7 +1432,7 @@ func TestDispatchCommand_StateTaskArchive_Positive(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustContain(t, out, "archive apply OPEN.md: 1 entries", "bytes")
-	archive := readFixtureFile(t, dir, ".workingdir/archive/OPEN-2026-09.md")
+	archive := readStateFixtureDeadline(t, dir, ".workingdir/archive/OPEN-2026-09.md")
 	mustContain(t, archive, "done task 1")
 }
 
@@ -1463,8 +1464,8 @@ func TestDispatchCommand_StateTaskArchive_Negative(t *testing.T) {
 		return dispatchCommand("state", []string{"task", "archive", "--apply", "--dir=" + broken})
 	})
 	mustErrContain(t, err, "state task archive")
-	mustContain(t, readFixtureFile(t, broken, ".workingdir/OPEN.md"), "- [x] kept task")
-	if _, statErr := os.Stat(filepath.Join(filepath.Dir(open), "BACKLOG.md")); !os.IsNotExist(statErr) {
+	mustContain(t, readStateFixtureDeadline(t, broken, ".workingdir/OPEN.md"), "- [x] kept task")
+	if _, statErr := testsupport.StatContext(testsupport.DeadlineContext(t), filepath.Join(filepath.Dir(open), "BACKLOG.md")); !os.IsNotExist(statErr) {
 		t.Fatalf("failed archive still wrote BACKLOG.md: %v", statErr)
 	}
 }
@@ -1496,6 +1497,16 @@ func TestDispatchCommand_StateTaskArchive_Boundary(t *testing.T) {
 		}
 		mustContain(t, out, "archive apply OPEN.md: 1 entries")
 		path := ".workingdir/archive/OPEN-" + time.Now().UTC().Format("2006-01") + ".md"
-		mustContain(t, readFixtureFile(t, root, path), "done task 2")
+		mustContain(t, readStateFixtureDeadline(t, root, path), "done task 2")
 	}
+}
+
+// readStateFixtureDeadline reads state fixtures within the test deadline.
+func readStateFixtureDeadline(t *testing.T, dir, rel string) string {
+	t.Helper()
+	data, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), filepath.Join(dir, rel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }

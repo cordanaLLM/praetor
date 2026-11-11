@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -20,7 +21,7 @@ func TestInitWorkingDirContext(t *testing.T) {
 	if err := InitWorkingDirContext(cancelled, dir); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected cancelled initialization: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, WorkingDirName)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := testsupport.StatContext(testsupport.DeadlineContext(t), filepath.Join(dir, WorkingDirName)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("cancelled initialization wrote working directory: %v", err)
 	}
 	var absent context.Context
@@ -55,7 +56,7 @@ func TestArchiveCompletedTasksPreservesOpenWhenBacklogUnreadable(t *testing.T) {
 	if count, err := ArchiveCompletedTasks(dir, "fixture"); err == nil || count != 0 {
 		t.Fatalf("unreadable backlog should fail: %d, %v", count, err)
 	}
-	content, err := os.ReadFile(open)
+	content, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), open)
 	if err != nil || string(content) != original {
 		t.Fatalf("archive lost OPEN content: %q, %v", content, err)
 	}
@@ -105,7 +106,7 @@ func TestTasks_Positive_Lifecycle(t *testing.T) {
 func verifyTaskArchived(t *testing.T, tempDir, expectedTask string) {
 	t.Helper()
 	backlogPath := filepath.Join(tempDir, WorkingDirName, "archive", "OPEN-"+time.Now().UTC().Format(archiveMonthLayout)+".md")
-	content, err := os.ReadFile(backlogPath)
+	content, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), backlogPath)
 	if err != nil {
 		t.Fatalf("read monthly task archive failed: %v", err)
 	}

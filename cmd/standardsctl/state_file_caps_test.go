@@ -41,7 +41,7 @@ func TestStateTaskArchiveDryRunDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := readFixtureFile(t, root, ".workingdir/OPEN.md"); got != done {
+	if got := readStateFixtureDeadline(t, root, ".workingdir/OPEN.md"); got != done {
 		t.Errorf("dry run changed OPEN.md: %q", got)
 	}
 	if !strings.Contains(out, "dry-run") || !strings.Contains(out, "OPEN.md: 1") || !strings.Contains(out, "bytes") {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -37,7 +38,7 @@ func syncFixtureAt(t *testing.T, root string) string {
 func TestVerifyStateSyncReadOnlyAndPrivateEvidenceExcluded(t *testing.T) {
 	root := syncFixture(t)
 	path := filepath.Join(root, WorkingDirName, "STATE.md")
-	before, err := os.ReadFile(path)
+	before, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +150,7 @@ func TestStateSyncMissingLedgerDoesNotRepairExistingDirectory(t *testing.T) {
 	if _, err := SyncState(t.Context(), root, "must not repair"); err == nil {
 		t.Fatal("sync silently repaired an incomplete existing ledger")
 	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
+	if _, err := testsupport.StatContext(testsupport.DeadlineContext(t), path); !os.IsNotExist(err) {
 		t.Fatalf("missing ledger was recreated: %v", err)
 	}
 }
@@ -202,7 +203,7 @@ func TestStateSyncRejectsConfiguredFilterBeforeExecution(t *testing.T) {
 	if _, err := SyncState(t.Context(), root, "must not run filter"); err == nil {
 		t.Fatal("configured filter accepted")
 	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+	if _, err := testsupport.StatContext(testsupport.DeadlineContext(t), marker); !os.IsNotExist(err) {
 		t.Fatalf("Git filter executed: %v", err)
 	}
 }

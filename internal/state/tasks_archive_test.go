@@ -7,11 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
-
-// archiveTestReadLimit bounds each fixture archive read; the archives these tests write are a few hundred bytes.
-const archiveTestReadLimit = 1 << 20
 
 // TestTaskArchiveMonthlyAllFiles moves completed records once, preserving live prose.
 func TestTaskArchiveMonthlyAllFiles(t *testing.T) {
@@ -33,13 +31,13 @@ func TestTaskArchiveMonthlyAllFiles(t *testing.T) {
 		t.Fatalf("archive = %d, %v; want three records", count, err)
 	}
 	assertMonthlyArchiveFiles(t, dir)
-	if got := readLedgerFile(t, filepath.Join(dir, "OPEN.md")); got != "# Open\n- [ ] pending\n" {
+	if got := readArchiveFixture(t, filepath.Join(dir, "OPEN.md")); got != "# Open\n- [ ] pending\n" {
 		t.Fatalf("live OPEN changed unrelated content: %q", got)
 	}
-	if got := readLedgerFile(t, filepath.Join(dir, "BACKLOG.md")); got != "# Later\n- [ ] deferred\n" {
+	if got := readArchiveFixture(t, filepath.Join(dir, "BACKLOG.md")); got != "# Later\n- [ ] deferred\n" {
 		t.Fatalf("live BACKLOG changed unrelated content: %q", got)
 	}
-	if got := readLedgerFile(t, filepath.Join(dir, "BUGS.md")); !strings.Contains(got, bugTableHeader) || strings.Contains(got, "BUG-001") {
+	if got := readArchiveFixture(t, filepath.Join(dir, "BUGS.md")); !strings.Contains(got, bugTableHeader) || strings.Contains(got, "BUG-001") {
 		t.Fatalf("live BUGS lost header or retained resolved row: %q", got)
 	}
 	assertTaskArchiveNoChange(t, root)
@@ -52,7 +50,7 @@ func assertMonthlyArchiveFiles(t *testing.T, dir string) {
 	for _, name := range []string{"OPEN-2026-09.md", "BACKLOG-2026-08.md", "BUGS-2026-07.md"} {
 		validateMonthlyArchiveName(t, name)
 		// The confined read refuses a name that leaves the archive directory.
-		data, err := util.ReadConfinedLimited(archiveDir, name, archiveTestReadLimit)
+		data, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), filepath.Join(archiveDir, name))
 		if err != nil || len(data) == 0 {
 			t.Fatalf("monthly archive %s missing: %v", name, err)
 		}
@@ -105,14 +103,14 @@ func taskArchiveFixtureFiles(t *testing.T, root string) map[string]string {
 	dir := filepath.Join(root, WorkingDirName)
 	files := map[string]string{}
 	for _, folder := range []string{dir, filepath.Join(dir, "archive")} {
-		entries, err := os.ReadDir(folder)
+		entries, err := testsupport.ReadDirContext(testsupport.DeadlineContext(t), folder, maxScannedLines)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for i := 0; i < len(entries) && i < maxScannedLines; i++ {
 			if !entries[i].IsDir() {
 				path := filepath.Join(folder, entries[i].Name())
-				files[path] = readLedgerFile(t, path)
+				files[path] = readArchiveFixture(t, path)
 			}
 		}
 	}
@@ -141,7 +139,7 @@ func TestTaskArchiveBugMetadataAndReservedIDs(t *testing.T) {
 	if _, err := ArchiveCompletedTasks(root, "fixture"); err != nil {
 		t.Fatal(err)
 	}
-	archive := readLedgerFile(t, filepath.Join(dir, "archive", "BUGS-2025-08.md"))
+	archive := readArchiveFixture(t, filepath.Join(dir, "archive", "BUGS-2025-08.md"))
 	entries, err := ParseBugsMarkdownStrict(archive)
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("archive lost sidecar metadata: %+v, %v", entries, err)
@@ -173,9 +171,9 @@ func TestTaskArchiveFailureKeepsAllLiveRows(t *testing.T) {
 	if _, err := ArchiveCompletedTasks(root, "fixture"); err == nil {
 		t.Fatal("archive destination directory accepted")
 	}
-	assertIntegrityFile(t, filepath.Join(dir, "OPEN.md"), open)
-	assertIntegrityFile(t, filepath.Join(dir, "BUGS.md"), bugs)
-	if got := readLedgerFile(t, filepath.Join(dir, "archive", "OPEN-2026-09.md")); !strings.Contains(got, "keep me") {
+	assertArchiveFixture(t, filepath.Join(dir, "OPEN.md"), open)
+	assertArchiveFixture(t, filepath.Join(dir, "BUGS.md"), bugs)
+	if got := readArchiveFixture(t, filepath.Join(dir, "archive", "OPEN-2026-09.md")); !strings.Contains(got, "keep me") {
 		t.Fatal("first archive not preserved on later failure")
 	}
 }
@@ -195,13 +193,31 @@ func TestTaskArchiveFallbackAndFences(t *testing.T) {
 	if err != nil || reports[0].Entries != 1 || reports[2].Entries != 2 {
 		t.Fatalf("fallback archive = %+v, %v", reports, err)
 	}
-	assertIntegrityFile(t, filepath.Join(dir, "OPEN.md"), examples)
-	archive := readLedgerFile(t, filepath.Join(dir, "archive", "BACKLOG-2026-11.md"))
+	assertArchiveFixture(t, filepath.Join(dir, "OPEN.md"), examples)
+	archive := readArchiveFixture(t, filepath.Join(dir, "archive", "BACKLOG-2026-11.md"))
 	if strings.Count(archive, "- [x] delivered") != 2 {
 		t.Fatal("identical records collapsed")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "archive", "OPEN-2026-11.md")); err != nil {
+	if _, err := testsupport.StatContext(testsupport.DeadlineContext(t), filepath.Join(dir, "archive", "OPEN-2026-11.md")); err != nil {
 		t.Fatal(err)
 	}
 	assertTaskArchiveNoChange(t, root)
+}
+
+// readArchiveFixture reads a bounded state fixture under the test deadline.
+func readArchiveFixture(t *testing.T, path string) string {
+	t.Helper()
+	data, err := contextopt.ReadSnapshot(testsupport.DeadlineContext(t), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// assertArchiveFixture checks a state fixture under the test deadline.
+func assertArchiveFixture(t *testing.T, path, expected string) {
+	t.Helper()
+	if got := readArchiveFixture(t, path); got != expected {
+		t.Fatalf("history changed: got %q, want %q", got, expected)
+	}
 }

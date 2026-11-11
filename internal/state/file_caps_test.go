@@ -111,7 +111,7 @@ func TestStateFileCapMetadataFailsClosed(t *testing.T) {
 			if _, err := CheckStateFileCaps(t.Context(), root, true); err == nil {
 				t.Fatal("corrupt baseline accepted")
 			}
-			assertIntegrityFile(t, path, bad)
+			assertArchiveFixture(t, path, bad)
 		})
 	}
 }
@@ -120,13 +120,13 @@ func TestStateFileCapMetadataFailsClosed(t *testing.T) {
 func TestStateFileCapReadOnlyAndCancellation(t *testing.T) {
 	root := capLedger(t, "OPEN.md", "- [ ] a\n")
 	path := filepath.Join(root, WorkingDirName, stateFileCapsName)
-	before := readLedgerFile(t, path)
+	before := readArchiveFixture(t, path)
 	writeIntegrityFile(t, filepath.Join(root, WorkingDirName, "OPEN.md"), "")
 	usage, err := CheckStateFileCaps(t.Context(), root, false)
 	if err != nil || len(usage) != 3 || usage[0].Bytes != 0 || usage[0].Open != 0 {
 		t.Fatalf("read-only measurement = %+v, %v", usage, err)
 	}
-	assertIntegrityFile(t, path, before)
+	assertArchiveFixture(t, path, before)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	if _, err := CheckStateFileCaps(ctx, root, true); !errors.Is(err, context.Canceled) {
@@ -136,7 +136,7 @@ func TestStateFileCapReadOnlyAndCancellation(t *testing.T) {
 	if _, err := CheckStateFileCaps(absent, root, true); err == nil {
 		t.Fatal("nil context accepted")
 	}
-	assertIntegrityFile(t, path, before)
+	assertArchiveFixture(t, path, before)
 }
 
 // TestStateFileCapPlantedMissingFileAppears proves planted case (a): baseline taken with
