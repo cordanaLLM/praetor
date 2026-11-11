@@ -95,11 +95,7 @@ func runGate(args []string, stdout, stderr io.Writer) int {
 		cfg = filepath.Join(*repoPath, defaultConfig)
 	}
 
-	if err := verifyRangeCommits(ctx, *repoPath, commitRange); err != nil {
-		fmt.Fprintf(stderr, "secrets gate: %v\n", err)
-		return exitIncomplete
-	}
-	findings, err := executeGitleaks(ctx, *repoPath, cfg, scanLogOptions(commitRange, stdout))
+	findings, err := executeGitleaks(ctx, *repoPath, cfg, scanLogOptions(commitRange, stdout), commitRange)
 	if err != nil {
 		fmt.Fprintf(stderr, "secrets gate: %v\n", err)
 		return exitIncomplete
@@ -245,24 +241,8 @@ func loadEnvironmentExceptions(today time.Time) ([]Entry, error) {
 	return entries, nil
 }
 
-// verifyRangeCommits requires both range endpoints to resolve to commits in the checkout.
-func verifyRangeCommits(ctx context.Context, dir, commitRange string) error {
-	if commitRange == "" {
-		return nil
-	}
-	base, head, _ := strings.Cut(commitRange, "..")
-	for _, sha := range []string{base, head} {
-		cmd := exec.CommandContext(ctx, "git", "cat-file", "-e", sha+"^{commit}")
-		cmd.Dir = dir
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("commit %s unavailable (checkout needs fetch-depth 0 or that commit): %w", sha, err)
-		}
-	}
-	return nil
-}
-
 // executeGitleaks runs gitleaks under ctx over the scope and returns the findings of its JSON report.
-func executeGitleaks(ctx context.Context, dir, cfg, scanOpts string) (findings []Finding, err error) {
+func executeGitleaks(ctx context.Context, dir, cfg, scanOpts, commitRange string) (findings []Finding, err error) {
 	if _, err := exec.LookPath("gitleaks"); err != nil {
 		return nil, fmt.Errorf("gitleaks not found on PATH: %w", err)
 	}
@@ -282,7 +262,11 @@ func executeGitleaks(ctx context.Context, dir, cfg, scanOpts string) (findings [
 	}
 	cmd := exec.CommandContext(ctx, "gitleaks", cmdArgs...)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	out, runErr := cmd.CombinedOutput()
+	if rangeErr := missingRangeError(commitRange, out); rangeErr != nil {
+		return nil, rangeErr
+	}
 
 	data, readErr := os.ReadFile(reportPath)
 	if readErr != nil {
@@ -292,6 +276,26 @@ func executeGitleaks(ctx context.Context, dir, cfg, scanOpts string) (findings [
 		return nil, fmt.Errorf("read gitleaks report: %w", readErr)
 	}
 	return parseGateReport(data, runErr, out)
+}
+
+// rangeUnreadMarkers mean a range scan read no commits: git's range diagnostic (gitleaks runs under
+// LC_ALL=C, so git prints it in English), and gitleaks' own English log lines for a git error and for an
+// empty scan, which do not depend on git's locale. gitleaks exits 0 in that case, and a pull request
+// range always holds at least one commit, so each marker means the scan is incomplete.
+var rangeUnreadMarkers = []string{"Invalid revision range", `error="stderr is not empty"`, "INF 0 commits scanned."}
+
+// missingRangeError reports a range scan that read no commits, including when gitleaks exits successfully.
+func missingRangeError(commitRange string, out []byte) error {
+	if commitRange == "" {
+		return nil
+	}
+	text := string(out)
+	for i := 0; i < len(rangeUnreadMarkers); i++ {
+		if strings.Contains(text, rangeUnreadMarkers[i]) {
+			return fmt.Errorf("commits in range %s unavailable (checkout needs fetch-depth 0 or those commits)", commitRange)
+		}
+	}
+	return nil
 }
 
 // parseGateReport decodes a gitleaks report, treating a failed run without a report as incomplete.

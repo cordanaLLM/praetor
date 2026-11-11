@@ -489,6 +489,9 @@ func TestGate_ParentEventIsolation(t *testing.T) {
 
 // TestGate_MissingRangeCommit requires a diagnostic for an unavailable commit.
 func TestGate_MissingRangeCommit(t *testing.T) {
+	if _, err := exec.LookPath("gitleaks"); err != nil {
+		t.Skip("gitleaks unavailable")
+	}
 	dir := secrets.BuildCleanRepo(t)
 	base, err := util.RunGit(t.Context(), dir, "rev-parse", "HEAD")
 	if err != nil {
@@ -498,6 +501,62 @@ func TestGate_MissingRangeCommit(t *testing.T) {
 	out, code := runGateCLI(t, dir, "", "-range="+strings.TrimSpace(base)+".."+missing)
 	if code != 2 || !strings.Contains(out, missing) || !strings.Contains(out, "fetch-depth") {
 		t.Fatalf("missing commit: exit %d: %s", code, out)
+	}
+}
+
+// TestMain makes the copied test executable act as a controlled gitleaks failure.
+func TestMain(m *testing.M) {
+	if os.Getenv("SECRETS_GATE_FAKE_GITLEAKS") == "1" && strings.HasPrefix(filepath.Base(os.Args[0]), "gitleaks") {
+		if _, err := os.Stderr.WriteString(os.Getenv("SECRETS_GATE_FAKE_OUTPUT")); err != nil {
+			os.Exit(2)
+		}
+		if os.Getenv("SECRETS_GATE_FAKE_EXIT") == "0" {
+			os.Exit(0)
+		}
+		os.Exit(1)
+	}
+	os.Exit(m.Run())
+}
+
+// TestGate_RangeError maps only the verified Git revision error for a range.
+func TestGate_RangeError(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	name := "gitleaks"
+	if strings.HasSuffix(strings.ToLower(executable), ".exe") {
+		name += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), data, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("SECRETS_GATE_FAKE_GITLEAKS", "1")
+	base, head := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	for _, tc := range []struct{ name, output, exit, want string }{
+		{"revision", "fatal: Invalid revision range", "1", "fetch-depth"},
+		{"localized git error, gitleaks exit 0", "ERR [git] fatal: Ungueltiger Revisionsbereich\nERR error=\"stderr is not empty\"\nINF 0 commits scanned.\n", "0", "fetch-depth"},
+		{"zero commits, gitleaks exit 0", "INF 0 commits scanned.\nINF no leaks found\n", "0", "fetch-depth"},
+		{"unrelated", "configuration error", "1", "gitleaks did not complete"},
+		{"empty", "", "1", "gitleaks did not complete"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SECRETS_GATE_FAKE_OUTPUT", tc.output)
+			t.Setenv("SECRETS_GATE_FAKE_EXIT", tc.exit)
+			out, code := runGateCLI(t, t.TempDir(), "", "-range="+base+".."+head)
+			if code != 2 || !strings.Contains(out, tc.want) {
+				t.Fatalf("exit %d, want 2 and %q: %s", code, tc.want, out)
+			}
+			if tc.name == "revision" && (!strings.Contains(out, base) || !strings.Contains(out, head)) {
+				t.Fatalf("range endpoints missing: %s", out)
+			}
+		})
 	}
 }
 
