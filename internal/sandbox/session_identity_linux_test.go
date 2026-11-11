@@ -88,6 +88,7 @@ func TestSessionChildrenWalk(t *testing.T) {
 		{"11/task/11/children", "12"}, {"12/status", "Name: init\nNSpid:\t12\t2\t1\n"}, {"12/task/12/children", ""},
 	} {
 		path := filepath.Join(root, item.path)
+		// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a fake /proc directory needs the owner search bit to hold entries
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -181,6 +182,7 @@ func TestSessionHandshakeWithFakeSandbox(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", dir)
 	fake := filepath.Join(dir, "sandbox")
 	script := "#!/bin/sh\nprintf '{\"child-pid\":%s}\\n' \"$$\" >&3\ndd bs=1 count=1 <&4 >/dev/null 2>/dev/null || exit 1\nprintf released\n"
+	// nosemgrep: go_file-permissions_rule-fileperm, go.lang.correctness.permissions.file_permission.incorrect-default-permission -- the fake sandbox script runs through PATH and needs the owner execute bit
 	if err := os.WriteFile(fake, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -197,6 +199,7 @@ func TestSessionHandshakeWithFakeSandbox(t *testing.T) {
 func TestSessionStartTickReader(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "123")
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a fake /proc/<pid> directory needs the owner search bit to hold entries
 	if err := os.Mkdir(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
