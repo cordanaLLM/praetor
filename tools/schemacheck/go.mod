@@ -2,6 +2,8 @@ module github.com/cordanaLLM/praetor/tools/schemacheck
 
 go 1.27
 
+toolchain go1.27.4
+
 require (
 	github.com/cordanaLLM/praetor v0.0.0
 	github.com/pelletier/go-toml/v2 v2.4.3
