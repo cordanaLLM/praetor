@@ -6,11 +6,15 @@ package hiss
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
+	"go/scanner"
 	"go/token"
+	"io/fs"
 	"os"
+	slashpath "path"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -20,6 +24,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -43,7 +48,10 @@ type hotPathFunction struct {
 
 // checkHotAllocations checks marked hot paths across directories so missing allocation tests are reported.
 func checkHotAllocations(ctx context.Context, rep *ScanReport, root string, paths []string) error {
-	byDir, dirs := groupFilesByDir(paths)
+	byDir, dirs := groupFilesByDir(paths, rep)
+	if len(dirs) > maxHotAllocFiles {
+		rep.Truncated = true
+	}
 	for i := 0; i < len(dirs) && i < maxHotAllocFiles; i++ {
 		if err := ctx.Err(); err != nil {
 			rep.Truncated = true
@@ -52,15 +60,28 @@ func checkHotAllocations(ctx context.Context, rep *ScanReport, root string, path
 		if err := checkDirHotAlloc(ctx, rep, root, byDir[dirs[i]]); err != nil {
 			if ctx.Err() != nil {
 				rep.Truncated = true
+				return err
 			}
-			return err
+			recordHotDirSkip(rep, err)
 		}
 	}
 	return nil
 }
 
+// recordHotDirSkip records a directory check failure as an unparsed skip without double-counting pass-one syntax errors.
+func recordHotDirSkip(rep *ScanReport, err error) {
+	var parseErr scanner.ErrorList
+	if errors.As(err, &parseErr) && rep.Coverage != nil && rep.Coverage.FilesRead > 0 && rep.Skips.Unparsed > 0 {
+		return
+	}
+	rep.Skips.Unparsed++
+}
+
 // groupFilesByDir groups source paths by directory and sorts the groups for deterministic scanning.
-func groupFilesByDir(paths []string) (map[string][]string, []string) {
+func groupFilesByDir(paths []string, rep *ScanReport) (map[string][]string, []string) {
+	if len(paths) > maxHotAllocFiles {
+		rep.Truncated = true
+	}
 	byDir := make(map[string][]string)
 	for i := 0; i < len(paths) && i < maxHotAllocFiles; i++ {
 		dir := filepath.Dir(paths[i])
@@ -74,8 +95,21 @@ func groupFilesByDir(paths []string) (map[string][]string, []string) {
 	return byDir, dirs
 }
 
+type hotDirScope struct {
+	root     string
+	dir      string
+	prodPkgs map[string]bool
+	rep      *ScanReport
+}
+
 // checkDirHotAlloc matches marked production functions against zero-allocation tests in their directory.
 func checkDirHotAlloc(ctx context.Context, rep *ScanReport, root string, files []string) error {
+	if len(files) == 0 {
+		return nil
+	}
+	if len(files) > maxHotAllocFiles {
+		rep.Truncated = true
+	}
 	var prodFiles, testFiles []string
 	for i := 0; i < len(files) && i < maxHotAllocFiles; i++ {
 		if strings.HasSuffix(files[i], "_test.go") {
@@ -85,14 +119,15 @@ func checkDirHotAlloc(ctx context.Context, rep *ScanReport, root string, files [
 		}
 	}
 	fset := token.NewFileSet()
-	targets, err := collectHotTargets(ctx, fset, root, prodFiles, rep)
+	targets, prodPkgs, err := collectHotTargets(ctx, fset, root, prodFiles, rep)
 	if err != nil {
 		return err
 	}
 	if len(targets) == 0 {
 		return nil
 	}
-	tests, err := findZeroAllocTests(ctx, fset, root, testFiles)
+	scope := hotDirScope{root: root, dir: filepath.Dir(files[0]), prodPkgs: prodPkgs, rep: rep}
+	tests, err := findZeroAllocTests(ctx, fset, scope, testFiles)
 	if err != nil {
 		return err
 	}
@@ -145,21 +180,31 @@ func parseHotFile(ctx context.Context, fset *token.FileSet, root, filePath strin
 	return file, filepath.ToSlash(rel), nil
 }
 
-// collectHotTargets parses production files under ctx and collects marked functions for allocation checks.
-func collectHotTargets(ctx context.Context, fset *token.FileSet, root string, prodFiles []string, rep *ScanReport) ([]hotPathFunction, error) {
+// collectHotTargets parses production files under ctx and collects marked functions and declared package names.
+func collectHotTargets(ctx context.Context, fset *token.FileSet, root string, prodFiles []string, rep *ScanReport) ([]hotPathFunction, map[string]bool, error) {
+	if len(prodFiles) > maxHotAllocFiles {
+		rep.Truncated = true
+	}
 	var targets []hotPathFunction
+	prodPkgs := make(map[string]bool)
 	for i := 0; i < len(prodFiles) && i < maxHotAllocFiles; i++ {
 		file, rel, err := parseHotFile(ctx, fset, root, prodFiles[i])
 		if err != nil {
-			return nil, fmt.Errorf("parse %s: %w", prodFiles[i], err)
+			return nil, nil, fmt.Errorf("parse %s: %w", prodFiles[i], err)
+		}
+		if file.Name != nil && file.Name.Name != "" {
+			prodPkgs[file.Name.Name] = true
 		}
 		targets = append(targets, collectFileHotFunctions(fset, file, rel, rep)...)
 	}
-	return targets, nil
+	return targets, prodPkgs, nil
 }
 
 // collectFileHotFunctions collects marked declarations and reports markers attached to other syntax.
 func collectFileHotFunctions(fset *token.FileSet, file *ast.File, rel string, rep *ScanReport) []hotPathFunction {
+	if len(file.Decls) > maxHotAllocDecls {
+		rep.Truncated = true
+	}
 	funcDocs := make(map[*ast.CommentGroup]bool)
 	var targets []hotPathFunction
 	for i := 0; i < len(file.Decls) && i < maxHotAllocDecls; i++ {
@@ -268,11 +313,14 @@ func funcDeclSymbol(fn *ast.FuncDecl) (string, string) {
 }
 
 // findZeroAllocTests collects functions covered by zero-allocation assertions in reachable test functions.
-func findZeroAllocTests(ctx context.Context, fset *token.FileSet, root string, testFiles []string) ([]string, error) {
+func findZeroAllocTests(ctx context.Context, fset *token.FileSet, scope hotDirScope, testFiles []string) ([]string, error) {
+	if len(testFiles) > maxHotAllocFiles {
+		scope.rep.Truncated = true
+	}
 	byPkg := make(map[string][]*ast.File)
 	var pkgs []string
 	for i := 0; i < len(testFiles) && i < maxHotAllocFiles; i++ {
-		file, _, err := parseHotFile(ctx, fset, root, testFiles[i])
+		file, _, err := parseHotFile(ctx, fset, scope.root, testFiles[i])
 		if err != nil {
 			return nil, fmt.Errorf("parse test %s: %w", testFiles[i], err)
 		}
@@ -282,16 +330,112 @@ func findZeroAllocTests(ctx context.Context, fset *token.FileSet, root string, t
 		}
 		byPkg[pkg] = append(byPkg[pkg], file)
 	}
+	prodImport, err := externalProdImport(ctx, scope, pkgs)
+	if err != nil {
+		return nil, err
+	}
+	if len(pkgs) > maxHotAllocFiles {
+		scope.rep.Truncated = true
+	}
 	var results []string
 	for i := 0; i < len(pkgs) && i < maxHotAllocFiles; i++ {
-		results = append(results, findZeroAllocTestsInPackage(byPkg[pkgs[i]])...)
+		pkgImport := ""
+		if isExternalTestPkg(pkgs[i], scope.prodPkgs) {
+			pkgImport = prodImport
+		}
+		results = append(results, findZeroAllocTestsInPackage(byPkg[pkgs[i]], pkgImport, scope.rep)...)
 	}
 	return results, nil
 }
 
-// hotTestContext carries file import bindings, active testing parameters and invoked literals.
+// isExternalTestPkg reports whether pkg is an external _test package for one of prodPkgs.
+func isExternalTestPkg(pkg string, prodPkgs map[string]bool) bool {
+	base, ok := strings.CutSuffix(pkg, "_test")
+	return ok && base != "" && prodPkgs[base]
+}
+
+// externalProdImport resolves the production package import path when pkgs includes an external test package.
+func externalProdImport(ctx context.Context, scope hotDirScope, pkgs []string) (string, error) {
+	for i := 0; i < len(pkgs) && i < maxHotAllocFiles; i++ {
+		if isExternalTestPkg(pkgs[i], scope.prodPkgs) {
+			return resolveHotProdImport(ctx, scope.root, scope.dir)
+		}
+	}
+	return "", nil
+}
+
+// slashDirWithinRoot returns dir's slash-separated path relative to root when confined inside root.
+func slashDirWithinRoot(root, dir string) (string, bool) {
+	relDir, err := filepath.Rel(root, dir)
+	if err != nil {
+		return "", false
+	}
+	if _, err := util.ConfinePath(root, relDir); err != nil {
+		return "", false
+	}
+	return filepath.ToSlash(relDir), true
+}
+
+// resolveHotProdImport derives dir's Go import path from the nearest go.mod at or above dir within root.
+// If go.mod cannot be read or declares no module, it returns "" so qualified calls fail closed.
+func resolveHotProdImport(ctx context.Context, root, dir string) (string, error) {
+	slashDir, ok := slashDirWithinRoot(root, dir)
+	if !ok {
+		return "", nil
+	}
+	at := slashDir
+	for depth := 0; depth < maxModuleDepth; depth++ {
+		modPath, stop := readHotModuleManifest(ctx, root, at)
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		if stop {
+			if modPath == "" {
+				return "", nil
+			}
+			return joinHotModuleImport(modPath, at, slashDir), nil
+		}
+		if at == "." {
+			break
+		}
+		at = slashpath.Dir(at)
+	}
+	return "", nil
+}
+
+// readHotModuleManifest reads modDir/go.mod under ctx and maxModuleManifestBytes.
+// stop is false only when no go.mod exists at modDir; any read error or empty module fails closed.
+func readHotModuleManifest(ctx context.Context, root, modDir string) (string, bool) {
+	manifestRel := slashpath.Join(modDir, "go.mod")
+	if _, err := util.ConfinePath(root, filepath.FromSlash(manifestRel)); err != nil {
+		return "", true
+	}
+	data, err := contextopt.ReadFS(ctx, os.DirFS(root), manifestRel, maxModuleManifestBytes)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) && ctx.Err() == nil {
+			return "", false
+		}
+		return "", true
+	}
+	return gomanifest.ParseManifest(data).Module, true
+}
+
+// joinHotModuleImport joins module path modPath with pkgDir relative to modDir.
+func joinHotModuleImport(modPath, modDir, pkgDir string) string {
+	modPath = strings.TrimSuffix(modPath, "/")
+	if pkgDir == modDir {
+		return modPath
+	}
+	if modDir == "." {
+		return modPath + "/" + pkgDir
+	}
+	return modPath + "/" + strings.TrimPrefix(pkgDir, modDir+"/")
+}
+
+// hotTestContext carries file import bindings, external production import path, active testing parameters and invoked literals.
 type hotTestContext struct {
 	imports     GoImports
+	prodImport  string
 	testParams  []string
 	invokedLits map[*ast.FuncLit][]string
 }
@@ -416,8 +560,8 @@ func hasEntrySignatureShape(ft *ast.FuncType) bool {
 }
 
 // findZeroAllocTestsInPackage credits assertions in package test entry points and helpers they reach.
-func findZeroAllocTestsInPackage(files []*ast.File) []string {
-	funcs, byName := indexHotTestFuncs(files)
+func findZeroAllocTestsInPackage(files []*ast.File, prodImport string, rep *ScanReport) []string {
+	funcs, byName := indexHotTestFuncs(files, prodImport, rep)
 	reachable := reachableHotTestFuncs(funcs, byName)
 	var tested []string
 	for i := 0; i < len(reachable) && i < maxHotAllocDecls; i++ {
@@ -430,11 +574,14 @@ func findZeroAllocTestsInPackage(files []*ast.File) []string {
 }
 
 // indexHotTestFuncs collects non-method test entry points and testing-parameter helpers in files.
-func indexHotTestFuncs(files []*ast.File) ([]hotTestFunc, map[string][]int) {
+func indexHotTestFuncs(files []*ast.File, prodImport string, rep *ScanReport) ([]hotTestFunc, map[string][]int) {
+	if len(files) > maxHotAllocFiles {
+		rep.Truncated = true
+	}
 	var funcs []hotTestFunc
 	byName := make(map[string][]int)
 	for i := 0; i < len(files) && i < maxHotAllocFiles; i++ {
-		funcs = appendFileHotTestFuncs(files[i], funcs, byName)
+		funcs = appendFileHotTestFuncs(files[i], prodImport, funcs, byName, rep)
 	}
 	return funcs, byName
 }
@@ -449,31 +596,48 @@ func candidateHotTestDecl(decl ast.Decl) (*ast.FuncDecl, bool) {
 	return fn, true
 }
 
+// buildHotTestFunc builds a hotTestFunc when decl is a test entry point or testing-parameter helper.
+func buildHotTestFunc(decl ast.Decl, imports GoImports, prodImport string) (hotTestFunc, bool) {
+	fn, ok := candidateHotTestDecl(decl)
+	if !ok {
+		return hotTestFunc{}, false
+	}
+	entry := isHotTestEntry(fn, imports)
+	param := hotTestingParam(fn, imports)
+	if !entry && param == "" {
+		return hotTestFunc{}, false
+	}
+	var params []string
+	if param != "" {
+		params = []string{param}
+	}
+	ctx := hotTestContext{
+		imports:     imports,
+		prodImport:  prodImport,
+		testParams:  params,
+		invokedLits: collectInvokedFuncLits(fn.Body, imports, params),
+	}
+	return hotTestFunc{decl: fn, ctx: ctx, entry: entry}, true
+}
+
 // appendFileHotTestFuncs indexes one test file's entry points and helpers into funcs and byName.
-func appendFileHotTestFuncs(file *ast.File, funcs []hotTestFunc, byName map[string][]int) []hotTestFunc {
+func appendFileHotTestFuncs(file *ast.File, prodImport string, funcs []hotTestFunc, byName map[string][]int, rep *ScanReport) []hotTestFunc {
 	imports := FileImports(file)
-	for i := 0; i < len(file.Decls) && i < maxHotAllocDecls && len(funcs) < maxHotAllocDecls; i++ {
-		fn, ok := candidateHotTestDecl(file.Decls[i])
+	if len(file.Decls) > maxHotAllocDecls {
+		rep.Truncated = true
+	}
+	for i := 0; i < len(file.Decls) && i < maxHotAllocDecls; i++ {
+		tf, ok := buildHotTestFunc(file.Decls[i], imports, prodImport)
 		if !ok {
 			continue
 		}
-		entry := isHotTestEntry(fn, imports)
-		param := hotTestingParam(fn, imports)
-		if !entry && param == "" {
-			continue
-		}
-		var params []string
-		if param != "" {
-			params = []string{param}
-		}
-		ctx := hotTestContext{
-			imports:     imports,
-			testParams:  params,
-			invokedLits: collectInvokedFuncLits(fn.Body, imports, params),
+		if len(funcs) >= maxHotAllocDecls {
+			rep.Truncated = true
+			return funcs
 		}
 		idx := len(funcs)
-		funcs = append(funcs, hotTestFunc{decl: fn, ctx: ctx, entry: entry})
-		byName[fn.Name.Name] = append(byName[fn.Name.Name], idx)
+		funcs = append(funcs, tf)
+		byName[tf.decl.Name.Name] = append(byName[tf.decl.Name.Name], idx)
 	}
 	return funcs
 }
@@ -1106,53 +1270,64 @@ func checkAllocsCall(call *ast.CallExpr, ctx hotTestContext) ([]string, bool) {
 	if call == nil || len(call.Args) < 2 {
 		return nil, false
 	}
-	if !isAllocsPerRunIdent(call.Fun) {
+	if !isAllocsPerRunIdent(call.Fun, ctx.imports) {
 		return nil, false
 	}
 	if !isValidRunsArg(call.Args[0]) {
 		return nil, false
 	}
-	targets := extractCallees(call.Args[1], ctx.imports)
+	targets := extractCallees(call.Args[1], ctx.imports, ctx.prodImport)
 	if len(targets) == 0 {
 		return nil, false
 	}
 	return targets, true
 }
 
-// isAllocsPerRunIdent recognizes an AllocsPerRun selector or identifier for allocation checks.
-func isAllocsPerRunIdent(fun ast.Expr) bool {
+// isAllocsPerRunIdent reports whether fun resolves to testing.AllocsPerRun through imports.
+func isAllocsPerRunIdent(fun ast.Expr, imports GoImports) bool {
 	fun = unwrapCond(fun)
 	if sel, ok := fun.(*ast.SelectorExpr); ok {
-		return sel.Sel.Name == "AllocsPerRun"
+		return isTestingNamedType(sel, imports, "AllocsPerRun")
 	}
 	if id, ok := fun.(*ast.Ident); ok {
-		return id.Name == "AllocsPerRun"
+		return id.Name == "AllocsPerRun" && imports.DotImports("testing")
 	}
 	return false
 }
 
 // isValidRunsArg checks the measurement count before accepting an allocation test.
 func isValidRunsArg(arg ast.Expr) bool {
-	arg = unwrapCond(arg)
-	if lit, ok := arg.(*ast.BasicLit); ok && lit.Kind == token.INT {
-		val, err := strconv.Atoi(lit.Value)
-		if err == nil && val <= 0 {
+	for i := 0; i < maxDocLines; i++ {
+		arg = unwrapCond(arg)
+		un, ok := arg.(*ast.UnaryExpr)
+		if !ok {
+			break
+		}
+		if un.Op == token.SUB {
 			return false
 		}
+		if un.Op != token.ADD {
+			break
+		}
+		arg = un.X
+	}
+	if lit, ok := arg.(*ast.BasicLit); ok && lit.Kind == token.INT {
+		val, err := strconv.ParseInt(lit.Value, 0, 64)
+		return err == nil && val > 0
 	}
 	return true
 }
 
 // extractCallees identifies the function or calls passed to an allocation measurement.
-func extractCallees(arg ast.Expr, imports GoImports) []string {
+func extractCallees(arg ast.Expr, imports GoImports, prodImport string) []string {
 	var callees []string
-	if id, ok := unwrapCallee(arg, imports); ok {
+	if id, ok := unwrapCallee(arg, imports, prodImport); ok {
 		callees = append(callees, id)
 		return callees
 	}
 	ast.Inspect(arg, func(n ast.Node) bool {
 		if call, ok := n.(*ast.CallExpr); ok {
-			if name, ok := unwrapCallee(call.Fun, imports); ok {
+			if name, ok := unwrapCallee(call.Fun, imports, prodImport); ok {
 				callees = append(callees, name)
 			}
 		}
@@ -1162,25 +1337,25 @@ func extractCallees(arg ast.Expr, imports GoImports) []string {
 }
 
 // unwrapCallee removes wrappers from a callee expression before identifying its target.
-func unwrapCallee(fun ast.Expr, imports GoImports) (string, bool) {
-	fun = unwrapCond(fun)
-	if idx, ok := fun.(*ast.IndexExpr); ok {
-		fun = idx.X
-	}
-	if idxList, ok := fun.(*ast.IndexListExpr); ok {
-		fun = idxList.X
-	}
-	fun = unwrapCond(fun)
+// Package-qualified calls fail closed when go.mod cannot be read (prodImport == "") or inside
+// internal test packages, crediting a local function only when the qualifier binds prodImport.
+func unwrapCallee(fun ast.Expr, imports GoImports, prodImport string) (string, bool) {
+	fun = stripTypeArgs(fun)
 	if id, ok := fun.(*ast.Ident); ok {
 		return "func:" + id.Name, true
 	}
-	if sel, ok := fun.(*ast.SelectorExpr); ok {
-		if id, ok := sel.X.(*ast.Ident); ok {
-			if _, isPkg := imports.Path(id.Name); isPkg {
+	sel, ok := fun.(*ast.SelectorExpr)
+	if !ok {
+		return "", false
+	}
+	if id, ok := unwrapCond(sel.X).(*ast.Ident); ok {
+		if importPath, isPkg := imports.Path(id.Name); isPkg {
+			// Fail closed when go.mod cannot be read (prodImport == ""): a qualified call credits nothing local.
+			if prodImport != "" && importPath == prodImport {
 				return "func:" + sel.Sel.Name, true
 			}
+			return "pkg:" + importPath + "." + sel.Sel.Name, true
 		}
-		return "method:" + sel.Sel.Name, true
 	}
-	return "", false
+	return "method:" + sel.Sel.Name, true
 }

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -117,6 +118,7 @@ func hotAllocNegativeCases() []hotAllocTestCase {
 		{
 			name: "negative: external test with > 0",
 			sources: map[string]string{
+				"go.mod":      "module example.com/p\n\ngo 1.27\n",
 				"hot.go":      "package p\n\n//hiss:hot audio loop\nfunc Audio() {}\n",
 				"hot_test.go": "package p_test\n\nimport (\n\t\"testing\"\n\t\"example.com/p\"\n)\n\nfunc TestAudio(t *testing.T) {\n\tallocs := testing.AllocsPerRun(100, func() { p.Audio() })\n\tif allocs > 0 {\n\t\tt.Fatalf(\"allocs: %v\", allocs)\n\t}\n}\n",
 			},
@@ -546,6 +548,374 @@ func hotAllocFuncLitCases() []hotAllocTestCase {
 // TestGoHotAlloc_FuncLitInvocation verifies uncalled function literals earn no allocation credit.
 func TestGoHotAlloc_FuncLitInvocation(t *testing.T) {
 	for _, tc := range hotAllocFuncLitCases() {
+		t.Run(tc.name, func(t *testing.T) { runHotAllocTestCase(t, tc) })
+	}
+}
+
+const (
+	maxSyntheticHotPaths = maxHotAllocFiles + 2
+	maxSyntheticHotDecls = maxHotAllocDecls + 2
+)
+
+// buildSyntheticHotPaths creates n synthetic _test.go paths in one or n directories.
+func buildSyntheticHotPaths(root string, n int, separateDirs bool) []string {
+	paths := make([]string, 0, n)
+	for i := 0; i < n && i < maxSyntheticHotPaths; i++ {
+		idx := strconv.Itoa(i)
+		if separateDirs {
+			paths = append(paths, filepath.Join(root, "d"+idx, "x_test.go"))
+		} else {
+			paths = append(paths, filepath.Join(root, "f"+idx+"_test.go"))
+		}
+	}
+	return paths
+}
+
+// buildRepeatedGoFuncs builds a Go file with prefix and count trivial functions starting at offset.
+func buildRepeatedGoFuncs(prefix, fnPrefix, sig string, offset, count int) string {
+	var b strings.Builder
+	b.WriteString(prefix)
+	for i := 0; i < count && i < maxSyntheticHotDecls; i++ {
+		b.WriteString("func ")
+		b.WriteString(fnPrefix)
+		b.WriteString(strconv.Itoa(offset + i))
+		b.WriteString(sig)
+		b.WriteString(" {}\n")
+	}
+	return b.String()
+}
+
+// TestGoHotAlloc_CapTruncation_PathsAndDirs verifies file and directory caps mark Truncated only past the limit.
+func TestGoHotAlloc_CapTruncation_PathsAndDirs(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct {
+		name         string
+		count        int
+		separateDirs bool
+		wantTrunc    bool
+	}{
+		{"paths at cap", maxHotAllocFiles, false, false},
+		{"paths over cap", maxHotAllocFiles + 1, false, true},
+		{"dirs at cap", maxHotAllocFiles, true, false},
+		{"dirs over cap", maxHotAllocFiles + 1, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rep := newScanReport(10)
+			paths := buildSyntheticHotPaths(root, tc.count, tc.separateDirs)
+			if err := checkHotAllocations(context.Background(), rep, root, paths); err != nil {
+				t.Fatalf("checkHotAllocations err = %v", err)
+			}
+			if rep.Truncated != tc.wantTrunc {
+				t.Fatalf("rep.Truncated = %v, want %v", rep.Truncated, tc.wantTrunc)
+			}
+		})
+	}
+}
+
+// runHotAllocSourcesReport writes sources to a temporary root and runs checkHotAllocations directly.
+func runHotAllocSourcesReport(t *testing.T, sources map[string]string) *ScanReport {
+	t.Helper()
+	root := t.TempDir()
+	paths := make([]string, 0, len(sources))
+	for name, body := range sources {
+		p := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, p)
+	}
+	rep := newScanReport(10)
+	if err := checkHotAllocations(context.Background(), rep, root, paths); err != nil {
+		t.Fatalf("checkHotAllocations err = %v", err)
+	}
+	return rep
+}
+
+// TestGoHotAlloc_CapTruncation_DeclsAndTestFuncs verifies declaration and test-function caps mark Truncated only when dropping input.
+func TestGoHotAlloc_CapTruncation_DeclsAndTestFuncs(t *testing.T) {
+	const hotFile = "package p\n\n//hiss:hot tick\nfunc Tick() {}\n"
+	const testHdr = "package p\n\nimport \"testing\"\n\n"
+	const tickTest = "func TestTick(t *testing.T) {\n\tif a := testing.AllocsPerRun(10, func() { Tick() }); a != 0 { t.Fatal(a) }\n}\n"
+	half := maxHotAllocDecls / 2
+	for _, tc := range []struct {
+		name      string
+		sources   map[string]string
+		wantTrunc bool
+	}{
+		{"prod decls at cap", map[string]string{"p.go": buildRepeatedGoFuncs("package p\n\n", "F", "()", 0, maxHotAllocDecls)}, false},
+		{"prod decls over cap", map[string]string{"p.go": buildRepeatedGoFuncs("package p\n\n", "F", "()", 0, maxHotAllocDecls+1)}, true},
+		{"test decls at cap", map[string]string{"hot.go": hotFile, "a_test.go": buildRepeatedGoFuncs(testHdr+tickTest, "TestF", "(t *testing.T)", 0, maxHotAllocDecls-2)}, false},
+		{"test decls over cap", map[string]string{"hot.go": hotFile, "a_test.go": buildRepeatedGoFuncs(testHdr+tickTest, "TestF", "(t *testing.T)", 0, maxHotAllocDecls-1)}, true},
+		{"test funcs across files at cap", map[string]string{
+			"hot.go":    hotFile,
+			"a_test.go": buildRepeatedGoFuncs(testHdr+tickTest, "TestA", "(t *testing.T)", 0, half-1),
+			"b_test.go": buildRepeatedGoFuncs(testHdr, "TestB", "(t *testing.T)", 0, half) + "func plainHelper() {}\n",
+		}, false},
+		{"test funcs across files over cap", map[string]string{
+			"hot.go":    hotFile,
+			"a_test.go": buildRepeatedGoFuncs(testHdr+tickTest, "TestA", "(t *testing.T)", 0, half),
+			"b_test.go": buildRepeatedGoFuncs(testHdr, "TestB", "(t *testing.T)", 0, half),
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rep := runHotAllocSourcesReport(t, tc.sources)
+			if rep.Truncated != tc.wantTrunc {
+				t.Fatalf("rep.Truncated = %v, want %v", rep.Truncated, tc.wantTrunc)
+			}
+		})
+	}
+}
+
+// countHotViolationsInFile counts HISS-03 violations recorded against wantFile.
+func countHotViolationsInFile(rep *ScanReport, wantFile string) int {
+	count := 0
+	for i := 0; i < len(rep.Violations) && i < maxHotAllocFiles; i++ {
+		if rep.Violations[i].RuleID == hotAllocRuleID && rep.Violations[i].FilePath == wantFile {
+			count++
+		}
+	}
+	return count
+}
+
+// writeUnreadableFirstDirTree builds two sibling directories where a/hot_test.go cannot be read as a file.
+func writeUnreadableFirstDirTree(t *testing.T) (string, []string) {
+	t.Helper()
+	root := t.TempDir()
+	aDir := filepath.Join(root, "a")
+	bDir := filepath.Join(root, "b")
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a test directory needs its execute bit; 0o750 is the directory rule's bound
+	if err := os.MkdirAll(filepath.Join(aDir, "hot_test.go"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a test directory needs its execute bit; 0o750 is the directory rule's bound
+	if err := os.MkdirAll(bDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	aHot := filepath.Join(aDir, "hot.go")
+	bHot := filepath.Join(bDir, "hot.go")
+	if err := os.WriteFile(aHot, []byte("package a\n\n//hiss:hot tick\nfunc Tick() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bHot, []byte("package b\n\n//hiss:hot step\nfunc Step() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return root, []string{aHot, filepath.Join(aDir, "hot_test.go"), bHot}
+}
+
+// TestGoHotAlloc_DirErrorContinuesToLaterDirs verifies one directory failure marks the report incomplete while later directories still report HISS-03.
+func TestGoHotAlloc_DirErrorContinuesToLaterDirs(t *testing.T) {
+	t.Run("unparsable test file in first dir via Scan", func(t *testing.T) {
+		violations := scanHotSourcesIncomplete(t, map[string]string{
+			"a/hot.go":      "package a\n\n//hiss:hot tick\nfunc Tick() {}\n",
+			"a/hot_test.go": "package a\nfunc TestBroken( {",
+			"b/hot.go":      "package b\n\n//hiss:hot step\nfunc Step() {}\n",
+		}, "b/hot.go")
+		if violations != 1 {
+			t.Fatalf("b/hot.go HISS-03 violations = %d, want 1", violations)
+		}
+	})
+	t.Run("unreadable test file in first dir via checkHotAllocations", func(t *testing.T) {
+		root, paths := writeUnreadableFirstDirTree(t)
+		rep := newScanReport(10)
+		if err := checkHotAllocations(context.Background(), rep, root, paths); err != nil {
+			t.Fatalf("checkHotAllocations err = %v, want nil", err)
+		}
+		if !rep.Incomplete() || rep.CompletionError() == nil {
+			t.Fatalf("expected incomplete report after unreadable dir, got skips=%+v", rep.Skips)
+		}
+		if got := countHotViolationsInFile(rep, "b/hot.go"); got != 1 {
+			t.Fatalf("b/hot.go HISS-03 violations = %d, want 1", got)
+		}
+	})
+}
+
+// scanHotSourcesIncomplete runs Scan on sources, asserts the report is incomplete, and counts HISS-03 findings in wantFile.
+func scanHotSourcesIncomplete(t *testing.T, sources map[string]string, wantFile string) int {
+	t.Helper()
+	dir := t.TempDir()
+	for name, body := range sources {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission -- a test directory needs its execute bit; 0o750 is the directory rule's bound
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rep, err := Scan(context.Background(), dir, ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.Incomplete() || rep.CompletionError() == nil {
+		t.Fatalf("expected incomplete report, got skips=%+v", rep.Skips)
+	}
+	return countHotViolationsInFile(rep, wantFile)
+}
+
+// hotAllocIdentResolutionCases builds cases resolving AllocsPerRun against testing imports.
+func hotAllocIdentResolutionCases() []hotAllocTestCase {
+	const hotSrc = "package p\n\n//hiss:hot step\nfunc Step() {}\n"
+	return []hotAllocTestCase{
+		{
+			name: "local AllocsPerRun function not credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc AllocsPerRun(n int, f func()) float64 { f(); return 0 }\nfunc TestStep(t *testing.T) {\n\tif a := AllocsPerRun(100, func() { Step() }); a != 0 { t.Fatal(a) }\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "unrelated package AllocsPerRun selector not credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport (\n\t\"testing\"\n\t\"example.com/other\"\n)\n\nfunc TestStep(t *testing.T) {\n\tif a := other.AllocsPerRun(100, func() { Step() }); a != 0 { t.Fatal(a) }\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "aliased tt.AllocsPerRun credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport tt \"testing\"\n\nfunc TestStep(t *tt.T) {\n\tif a := tt.AllocsPerRun(100, func() { Step() }); a != 0 { t.Fatal(a) }\n}\n",
+			},
+			wantCount: 0,
+		},
+		{
+			name: "dot-imported testing AllocsPerRun credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport (\n\t\"testing\"\n\t. \"testing\"\n)\n\nfunc TestStep(t *testing.T) {\n\tif a := AllocsPerRun(100, func() { Step() }); a != 0 { t.Fatal(a) }\n}\n",
+			},
+			wantCount: 0,
+		},
+	}
+}
+
+// TestGoHotAlloc_AllocsPerRunImportResolution verifies only testing.AllocsPerRun counts as a measurement.
+func TestGoHotAlloc_AllocsPerRunImportResolution(t *testing.T) {
+	for _, tc := range hotAllocIdentResolutionCases() {
+		t.Run(tc.name, func(t *testing.T) { runHotAllocTestCase(t, tc) })
+	}
+}
+
+// hotAllocRunsArgCases builds negative and positive measurement-count cases for AllocsPerRun.
+func hotAllocRunsArgCases() []hotAllocTestCase {
+	const hotSrc = "package p\n\n//hiss:hot step\nfunc Step() {}\n"
+	return []hotAllocTestCase{
+		{
+			name: "runs -1 not credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tif a := testing.AllocsPerRun(-1, func() { Step() }); a != 0 { t.Fatal(a) }\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "parenthesized unary minus (-n) not credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tn := 10\n\tif a := testing.AllocsPerRun((-n), func() { Step() }); a != 0 { t.Fatal(a) }\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "runs 0 not credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tif a := testing.AllocsPerRun(0, func() { Step() }); a != 0 { t.Fatal(a) }\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "runs 0x0 not credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tif a := testing.AllocsPerRun(0x0, func() { Step() }); a != 0 { t.Fatal(a) }\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "overflowing integer literal not credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tif a := testing.AllocsPerRun(99999999999999999999999999999, func() { Step() }); a != 0 { t.Fatal(a) }\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "control runs 100 credited",
+			sources: map[string]string{
+				"hot.go":      hotSrc,
+				"hot_test.go": "package p\n\nimport \"testing\"\n\nfunc TestStep(t *testing.T) {\n\tif a := testing.AllocsPerRun(100, func() { Step() }); a != 0 { t.Fatal(a) }\n}\n",
+			},
+			wantCount: 0,
+		},
+	}
+}
+
+// TestGoHotAlloc_RunsArgValidation verifies non-positive, unary-minus and unparsable run counts are rejected.
+func TestGoHotAlloc_RunsArgValidation(t *testing.T) {
+	for _, tc := range hotAllocRunsArgCases() {
+		t.Run(tc.name, func(t *testing.T) { runHotAllocTestCase(t, tc) })
+	}
+}
+
+// hotAllocQualifiedCalleeCases builds external and internal package-qualified callee cases.
+func hotAllocQualifiedCalleeCases() []hotAllocTestCase {
+	const subHot = "package sub\n\n//hiss:hot step\nfunc Step() {}\n"
+	const goMod = "module example.com/mod\n\ngo 1.27\n"
+	return []hotAllocTestCase{
+		{
+			name: "external test calling unrelated otherpkg.Step not credited",
+			sources: map[string]string{
+				"go.mod":          goMod,
+				"sub/hot.go":      subHot,
+				"sub/hot_test.go": "package sub_test\n\nimport (\n\t\"testing\"\n\totherpkg \"example.com/other\"\n)\n\nfunc TestStep(t *testing.T) {\n\tif a := testing.AllocsPerRun(100, func() { otherpkg.Step() }); a != 0 { t.Fatal(a) }\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "external test calling same-basename foreign import not credited",
+			sources: map[string]string{
+				"go.mod":          goMod,
+				"sub/hot.go":      subHot,
+				"sub/hot_test.go": "package sub_test\n\nimport (\n\t\"testing\"\n\t\"other.com/sub\"\n)\n\nfunc TestStep(t *testing.T) {\n\tif a := testing.AllocsPerRun(100, func() { sub.Step() }); a != 0 { t.Fatal(a) }\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "internal test calling package-qualified Step not credited",
+			sources: map[string]string{
+				"go.mod":          goMod,
+				"sub/hot.go":      subHot,
+				"sub/hot_test.go": "package sub\n\nimport (\n\t\"testing\"\n\tprodpkg \"example.com/mod/sub\"\n)\n\nfunc TestStep(t *testing.T) {\n\tif a := testing.AllocsPerRun(100, func() { prodpkg.Step() }); a != 0 { t.Fatal(a) }\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "external test without go.mod fails closed",
+			sources: map[string]string{
+				"sub/hot.go":      subHot,
+				"sub/hot_test.go": "package sub_test\n\nimport (\n\t\"testing\"\n\t\"example.com/mod/sub\"\n)\n\nfunc TestStep(t *testing.T) {\n\tif a := testing.AllocsPerRun(100, func() { sub.Step() }); a != 0 { t.Fatal(a) }\n}\n",
+			},
+			wantCount: 1,
+		},
+		{
+			name: "control external test calling prodpkg.Step credited",
+			sources: map[string]string{
+				"go.mod":          goMod,
+				"sub/hot.go":      subHot,
+				"sub/hot_test.go": "package sub_test\n\nimport (\n\t\"testing\"\n\tprodpkg \"example.com/mod/sub\"\n)\n\nfunc TestStep(t *testing.T) {\n\tif a := testing.AllocsPerRun(100, func() { prodpkg.Step() }); a != 0 { t.Fatal(a) }\n}\n",
+			},
+			wantCount: 0,
+		},
+	}
+}
+
+// TestGoHotAlloc_QualifiedCalleeResolution verifies package-qualified calls credit local functions only via the production import path in external tests.
+func TestGoHotAlloc_QualifiedCalleeResolution(t *testing.T) {
+	for _, tc := range hotAllocQualifiedCalleeCases() {
 		t.Run(tc.name, func(t *testing.T) { runHotAllocTestCase(t, tc) })
 	}
 }
