@@ -1003,13 +1003,17 @@ func (s *adoptSession) activateGitHooks(ctx context.Context, lefthookWritten boo
 		return s.planHookActivation(hookPath)
 	}
 	installed := fileExists(hookPath)
-	if _, err := util.RunCommand(ctx, s.repoPath, "lefthook", "install"); err == nil {
+	_, installErr := util.RunCommand(ctx, s.repoPath, "lefthook", "install")
+	if installErr == nil {
 		if !fileExists(hookPath) {
 			s.report.addError("git hooks: lefthook install completed but %s was not created", hookPath)
 			return nil
 		}
 		s.recordLefthookInstall(hookPath, installed)
 		return nil
+	}
+	if lefthookRunnable(ctx) {
+		s.report.addError("git hooks: lefthook install failed: %v; harness credits commit-msg message policy and pre-push commit policy; repair lefthook and rerun adopt", installErr)
 	}
 	return s.installFallbackHook(hookPath)
 }
