@@ -24,6 +24,7 @@ import (
 
 const fifoOpener = `exec 3>"$1" 4<"$2"; shift 2; exec "$@"`
 
+// sessionInvocation wraps the sandbox invocation with FIFO descriptors and adds the pasta PID file when needed to identify the host process.
 func sessionInvocation(inv Invocation, sh, info, block, pidfile string, command []string) (Invocation, bool, error) {
 	args := slices.Clone(inv.Args)
 	end := len(args) - len(command) - 1
@@ -50,6 +51,7 @@ type sessionFiles struct {
 	info, block        *os.File
 }
 
+// newSessionFiles creates private handshake FIFOs and registry paths, cleaning up partial setup on failure.
 func newSessionFiles() (result *sessionFiles, resultErr error) {
 	root := os.Getenv("XDG_RUNTIME_DIR")
 	if root == "" {
@@ -83,6 +85,8 @@ func newSessionFiles() (result *sessionFiles, resultErr error) {
 	s.info, s.block = files[0], files[1]
 	return s, nil
 }
+
+// closeSessionFiles closes any opened handshake files and combines errors so partial setup can be cleaned up.
 func closeSessionFiles(files [2]*os.File) error {
 	var result error
 	for _, file := range files {
@@ -93,10 +97,12 @@ func closeSessionFiles(files [2]*os.File) error {
 	return result
 }
 
+// close closes the handshake files and removes their directory so each launch releases its resources.
 func (s *sessionFiles) close() error {
 	return errors.Join(s.info.Close(), s.block.Close(), removeSessionDir(s.dir))
 }
 
+// removeSessionDir removes the known session files and directory without recursively deleting unrelated paths.
 func removeSessionDir(dir string) (resultErr error) {
 	root, err := os.OpenRoot(filepath.Dir(dir))
 	if err != nil {
@@ -115,9 +121,12 @@ func removeSessionDir(dir string) (resultErr error) {
 
 const sessionAttempts = 16
 
+// runSession launches a session with bounded retries so start-tick collisions cannot reuse an identity.
 func runSession(ctx context.Context, inv Invocation, sh string, command []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	return retrySession(ctx, func() (bool, error) { return runSessionAttempt(ctx, inv, sh, command, stdin, stdout, stderr) }, waitSessionRetry)
 }
+
+// retrySession retries collisions up to sixteen attempts with jitter and stops on cancellation or other errors.
 func retrySession(ctx context.Context, attempt func() (bool, error), wait func(context.Context, time.Duration) error) error {
 	for i := 0; i < sessionAttempts; i++ {
 		if err := ctx.Err(); err != nil {
@@ -143,6 +152,8 @@ func retrySession(ctx context.Context, attempt func() (bool, error), wait func(c
 	}
 	return fmt.Errorf("session identity collision: %d attempts exhausted", sessionAttempts)
 }
+
+// waitSessionRetry waits for the retry delay or cancellation so collision retries remain interruptible.
 func waitSessionRetry(ctx context.Context, delay time.Duration) error {
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
@@ -154,6 +165,7 @@ func waitSessionRetry(ctx context.Context, delay time.Duration) error {
 	}
 }
 
+// runSessionAttempt reserves the sandbox start tick before releasing its handshake and marks it released after the process exits.
 func runSessionAttempt(ctx context.Context, inv Invocation, sh string, command []string, stdin io.Reader, stdout, stderr io.Writer) (collision bool, resultErr error) {
 	files, err := newSessionFiles()
 	if err != nil {
@@ -199,6 +211,7 @@ func runSessionAttempt(ctx context.Context, inv Invocation, sh string, command [
 	return false, <-done
 }
 
+// sessionTick resolves the sandbox child to a host PID when needed and reads its start tick for reservation.
 func sessionTick(ctx context.Context, files *sessionFiles, container bool, done chan error) (uint64, error) {
 	child, err := readSessionInfo(ctx, files.info, done)
 	if err != nil {
@@ -212,6 +225,8 @@ func sessionTick(ctx context.Context, files *sessionFiles, container bool, done 
 	}
 	return procStartTick("/proc", child)
 }
+
+// readSessionInfo reads bounded handshake data and waits at most 500 times for a valid child PID.
 func readSessionInfo(ctx context.Context, file *os.File, done chan error) (int, error) {
 	data := make([]byte, 0, 4096)
 	buf := make([]byte, 4096)
@@ -242,6 +257,8 @@ func readSessionInfo(ctx context.Context, file *os.File, done chan error) (int, 
 	}
 	return 0, errors.New("bwrap session info: wait limit exceeded")
 }
+
+// waitSessionInfo waits for handshake data while detecting cancellation or premature sandbox exit.
 func waitSessionInfo(ctx context.Context, done chan error) error {
 	select {
 	case <-ctx.Done():
@@ -257,6 +274,7 @@ func waitSessionInfo(ctx context.Context, done chan error) error {
 	}
 }
 
+// hostSessionPID waits for the pasta PID file with a bounded retry count and resolves the namespace child to a host PID.
 func hostSessionPID(ctx context.Context, pidfile string, target int) (int, error) {
 	for i := 0; i < 500; i++ {
 		data, err := util.ReadFileLimited(pidfile, 64)
@@ -279,6 +297,7 @@ func hostSessionPID(ctx context.Context, pidfile string, target int) (int, error
 	return 0, errors.New("pasta pid: wait limit exceeded")
 }
 
+// findSessionInit walks at most three process-tree levels to find the init matching the reported namespace PID.
 func findSessionInit(root string, parent, target int) (int, error) {
 	current := []int{parent}
 	for depth := 0; depth < 3; depth++ {
@@ -299,6 +318,8 @@ func findSessionInit(root string, parent, target int) (int, error) {
 	}
 	return 0, fmt.Errorf("session children walk: no NSpid match for %d", target)
 }
+
+// sessionChildrenLevel collects one process-tree level and rejects more than 64 children to bound the walk.
 func sessionChildrenLevel(root string, current []int) ([]int, error) {
 	next := []int{}
 	for _, pid := range current {
@@ -313,6 +334,8 @@ func sessionChildrenLevel(root string, current []int) ([]int, error) {
 	}
 	return next, nil
 }
+
+// sessionPIDMatches checks namespace PID fields for the reported child and its init without accepting unrelated processes.
 func sessionPIDMatches(root string, pid, target int) (bool, error) {
 	data, err := util.ReadFileLimited(filepath.Join(root, strconv.Itoa(pid), "status"), 65536)
 	if err != nil {
@@ -329,6 +352,7 @@ func sessionPIDMatches(root string, pid, target int) (bool, error) {
 	return false, nil
 }
 
+// procChildren reads task children with limits on tasks, input size, and child count to bound process discovery.
 func procChildren(root string, pid int) ([]int, error) {
 	task := filepath.Join(root, strconv.Itoa(pid), "task")
 	dirs, err := os.ReadDir(task)
@@ -357,6 +381,8 @@ func procChildren(root string, pid int) ([]int, error) {
 	}
 	return children, nil
 }
+
+// procStartTick extracts the start tick from a bounded proc stat record and rejects malformed or missing data.
 func procStartTick(root string, pid int) (uint64, error) {
 	data, err := util.ReadFileLimited(filepath.Join(root, strconv.Itoa(pid), "stat"), 65536)
 	if err != nil {

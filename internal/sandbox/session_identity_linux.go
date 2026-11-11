@@ -29,10 +29,12 @@ func reserveSessionTick(ctx context.Context, path string, tick uint64, owner int
 	return updateSessionRegistry(ctx, path, tick, owner, false)
 }
 
+// updateSessionRegistry updates a reservation using the system clock so stale ticks can be pruned before reuse.
 func updateSessionRegistry(ctx context.Context, path string, tick uint64, owner int, remove bool) (ok bool, resultErr error) {
 	return updateSessionRegistryWithClock(ctx, path, tick, owner, remove, currentSessionTick)
 }
 
+// updateSessionRegistryWithClock serializes registry updates and holds released ticks to prevent identity reuse during the retention window.
 func updateSessionRegistryWithClock(ctx context.Context, path string, tick uint64, owner int, remove bool, clock func() (uint64, error)) (ok bool, resultErr error) {
 	root, err := os.OpenRoot(filepath.Dir(path))
 	if err != nil {
@@ -72,6 +74,7 @@ func updateSessionRegistryWithClock(ctx context.Context, path string, tick uint6
 	return true, nil
 }
 
+// readSessionRegistry loads a size-limited registry and rejects malformed entries so reservations are not silently lost.
 func readSessionRegistry(path string) (map[string]sessionReservation, error) {
 	entries := map[string]sessionReservation{}
 	data, err := util.ReadFileLimited(path, 65536)
@@ -99,6 +102,8 @@ func readSessionRegistry(path string) (map[string]sessionReservation, error) {
 	}
 	return entries, nil
 }
+
+// currentSessionTick reads uptime in hundredths of a second and rejects malformed or overflowing values used for retention.
 func currentSessionTick() (uint64, error) {
 	data, err := util.ReadFileLimited("/proc/uptime", 128)
 	if err != nil {
@@ -123,6 +128,7 @@ func currentSessionTick() (uint64, error) {
 	return seconds*100 + fraction, nil
 }
 
+// pruneSessionRegistry removes expired released or dead-owner entries while preserving recent ticks and live owners.
 func pruneSessionRegistry(entries map[string]sessionReservation, now uint64) error {
 	for key, entry := range entries {
 		tick, err := strconv.ParseUint(key, 10, 64)
@@ -145,6 +151,8 @@ func pruneSessionRegistry(entries map[string]sessionReservation, now uint64) err
 	}
 	return nil
 }
+
+// writeSessionRegistry replaces the registry through a temporary file so readers do not observe a partial update.
 func writeSessionRegistry(path string, entries map[string]sessionReservation) (resultErr error) {
 	data, err := json.Marshal(entries)
 	if err != nil {
@@ -167,12 +175,14 @@ func writeSessionRegistry(path string, entries map[string]sessionReservation) (r
 	return os.Rename(temp.Name(), path)
 }
 
+// sessionLock acquires the registry lock with a five-second deadline to bound contention.
 func sessionLock(ctx context.Context, root *os.Root, name string) (func() error, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return sessionLockWithWait(ctx, root, name, sessionWait)
 }
 
+// sessionLockWithWait retries a busy registry lock at most 500 times and respects cancellation to bound waiting.
 func sessionLockWithWait(ctx context.Context, root *os.Root, name string, wait func(context.Context) error) (func() error, error) {
 	for i := 0; i < 500; i++ {
 		if err := ctx.Err(); err != nil {
@@ -191,6 +201,8 @@ func sessionLockWithWait(ctx context.Context, root *os.Root, name string, wait f
 	}
 	return nil, errors.New("session registry lock: wait limit exceeded")
 }
+
+// sessionWait waits between lock attempts or returns on cancellation to avoid busy polling.
 func sessionWait(ctx context.Context) error {
 	select {
 	case <-ctx.Done():

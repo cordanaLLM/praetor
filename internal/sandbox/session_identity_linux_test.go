@@ -18,6 +18,7 @@ import (
 	"testing"
 )
 
+// TestSessionReservationCollision plants a duplicate tick reservation and requires the second live launch to be refused.
 func TestSessionReservationCollision(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry")
 	ok, err := reserveSessionTick(t.Context(), path, 42, os.Getpid())
@@ -33,6 +34,7 @@ func TestSessionReservationCollision(t *testing.T) {
 	}
 }
 
+// TestSessionReservationStaleAndReadError plants a dead owner and malformed registry and requires stale reclamation and invalid data rejection.
 func TestSessionReservationStaleAndReadError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry")
 	if err := os.WriteFile(path, []byte(`{"42":{"owner":2147483647,"released":false}}`), 0600); err != nil {
@@ -50,6 +52,7 @@ func TestSessionReservationStaleAndReadError(t *testing.T) {
 	}
 }
 
+// TestSessionReservationLockDeadline holds the registry lock and requires a competing reservation to honor its deadline.
 func TestSessionReservationLockDeadline(t *testing.T) {
 	dir := t.TempDir()
 	root, err := os.OpenRoot(dir)
@@ -77,6 +80,7 @@ func TestSessionReservationLockDeadline(t *testing.T) {
 	}
 }
 
+// TestSessionChildrenWalk plants a process tree with namespace IDs and requires the matching init or an error for a missing match.
 func TestSessionChildrenWalk(t *testing.T) {
 	root := t.TempDir()
 	for _, item := range []struct{ path, data string }{
@@ -100,11 +104,14 @@ func TestSessionChildrenWalk(t *testing.T) {
 	}
 }
 
+// TestSessionInvocationArguments exercises direct and container invocations and requires both handshake layouts to be valid.
 func TestSessionInvocationArguments(t *testing.T) {
 	for _, container := range []bool{false, true} {
 		t.Run(strconv.FormatBool(container), func(t *testing.T) { checkSessionInvocation(t, container) })
 	}
 }
+
+// checkSessionInvocation builds an invocation for the selected mode and requires its FIFO arguments and container PID option.
 func checkSessionInvocation(t *testing.T, container bool) {
 	t.Helper()
 	command := []string{"/test", "--flag"}
@@ -137,6 +144,7 @@ func checkSessionInvocation(t *testing.T, container bool) {
 	}
 }
 
+// TestSessionLogicalLaunchRetries plants tick collisions and requires a successful retry or failure after sixteen attempts.
 func TestSessionLogicalLaunchRetries(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry")
 	ctx := t.Context()
@@ -167,6 +175,7 @@ func TestSessionLogicalLaunchRetries(t *testing.T) {
 	}
 }
 
+// TestSessionHandshakeWithFakeSandbox plants a fake sandbox and requires the FIFO handshake to release it after reservation.
 func TestSessionHandshakeWithFakeSandbox(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_RUNTIME_DIR", dir)
@@ -184,6 +193,7 @@ func TestSessionHandshakeWithFakeSandbox(t *testing.T) {
 	}
 }
 
+// TestSessionStartTickReader plants a stat record with nested parentheses and requires its tick while rejecting a missing record.
 func TestSessionStartTickReader(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "123")
@@ -203,6 +213,7 @@ func TestSessionStartTickReader(t *testing.T) {
 	}
 }
 
+// TestSessionReleasedTickHeld plants a released reservation and requires it to remain unavailable through the 600-tick boundary.
 func TestSessionReleasedTickHeld(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry")
 	ctx := t.Context()
@@ -230,6 +241,7 @@ func TestSessionReleasedTickHeld(t *testing.T) {
 	}
 }
 
+// checkSessionReservation checks a reservation result and requires the expected outcome without an error.
 func checkSessionReservation(t *testing.T, got bool, err error, want bool) {
 	t.Helper()
 	if err != nil || got != want {
@@ -237,6 +249,7 @@ func checkSessionReservation(t *testing.T, got bool, err error, want bool) {
 	}
 }
 
+// TestSessionRetryBeyondFourCollisions plants repeated collisions and requires jittered retries through success and the sixteen-attempt limit.
 func TestSessionRetryBeyondFourCollisions(t *testing.T) {
 	count, waits := 0, 0
 	waiter := func(_ context.Context, delay time.Duration) error {
