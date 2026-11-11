@@ -48,6 +48,44 @@ func auditPinned(t *testing.T, root string, entries ...config.Exception) (string
 	})
 }
 
+func TestAuditPinnedFixturesEOL_EmptyHashIsNotPinned(t *testing.T) {
+	root := initPinnedRepo(t, map[string]string{
+		"empty.txt":    "",
+		"hash_test.go": "package main\nconst emptySHA = \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"\n",
+	})
+	out, err := auditPinned(t, root)
+	if err != nil || !strings.Contains(out, "[PASS]") {
+		t.Fatalf("empty hash fixture = %q, %v; want pass", out, err)
+	}
+}
+
+func TestAuditPinnedFixturesEOL_EmptyNamedPathIsNotPinned(t *testing.T) {
+	root := initPinnedRepo(t, map[string]string{
+		"testdata/empty.txt": "",
+		"path_test.go":       "package main\nconst fixture = \"testdata/empty.txt\"\n",
+	})
+	out, err := auditPinned(t, root)
+	if err != nil || !strings.Contains(out, "[PASS]") {
+		t.Fatalf("empty named fixture = %q, %v; want pass", out, err)
+	}
+}
+
+func TestAuditPinnedFixturesEOL_NonEmptyHashRemainsPinned(t *testing.T) {
+	for _, content := range []string{"x", "non-empty fixture\n"} {
+		t.Run(fmt.Sprintf("bytes_%d", len(content)), func(t *testing.T) {
+			sum := sha256.Sum256([]byte(content))
+			root := initPinnedRepo(t, map[string]string{
+				"sample.txt":   content,
+				"hash_test.go": fmt.Sprintf("package main\nconst expected = %q\n", hex.EncodeToString(sum[:])),
+			})
+			_, err := auditPinned(t, root)
+			if err == nil || !strings.Contains(err.Error(), "sample.txt") || !strings.Contains(err.Error(), "hash_test.go") {
+				t.Fatalf("non-empty hash fixture: got %v; want finding naming fixture and test", err)
+			}
+		})
+	}
+}
+
 // Negative planted red: testdata/sub.srt, a Go test pinning its sha256, no attribute ->
 // one finding naming the file and the test.
 func TestAuditPinnedFixturesEOL_Negative_PlantedRed(t *testing.T) {

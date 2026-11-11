@@ -160,9 +160,13 @@ func findPinnedFixtures(root string, tracked []string, testFiles []string, testC
 	return pinned, nil
 }
 
+// matchFixture excludes empty files, which have no line endings a checkout can convert.
 func matchFixture(root, f string, testFiles []string, testContents map[string]string, pinnedHashes map[string]string) (pinnedFixture, bool) {
 	data, err := util.ReadFileLimited(filepath.Join(root, f), maxFixtureFileReadBytes)
 	if err == nil {
+		if len(data) == 0 {
+			return pinnedFixture{}, false
+		}
 		sum := sha256.Sum256(data)
 		h := hex.EncodeToString(sum[:])
 		if test, ok := pinnedHashes[h]; ok {
