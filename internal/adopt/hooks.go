@@ -366,7 +366,7 @@ func buildLefthookYAMLFor(shape lefthookShape, checkpoint bool) string {
 		"pre-push:\n" +
 		"  parallel: false\n" +
 		"  scripts:\n" +
-		"    " + commitPolicyScriptName + ":\n      runner: sh\n" +
+		"    " + commitPolicyScriptName + ":\n      runner: sh\n      use_stdin: true\n" +
 		"  commands:\n" +
 		lefthookPrePushJobs(shape) +
 		"    merge-check:\n" +

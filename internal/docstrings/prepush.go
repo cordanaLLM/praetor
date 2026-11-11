@@ -113,6 +113,31 @@ func ParsePrePushStdin(ctx context.Context, r io.Reader) ([]PrePushUpdate, error
 	return updates, nil
 }
 
+// PrePushCommitRange describes the commits introduced by one pushed branch.
+// A new ref excludes commits reachable from any remote-tracking ref.
+type PrePushCommitRange struct {
+	LocalOID  string
+	RemoteOID string
+	NewRef    bool
+}
+
+// ReadPrePushCommitRanges validates git hook input and returns branch ranges to inspect.
+func ReadPrePushCommitRanges(ctx context.Context, r io.Reader) ([]PrePushCommitRange, error) {
+	updates, err := ParsePrePushStdin(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	ranges := make([]PrePushCommitRange, 0, len(updates))
+	for i := 0; i < len(updates); i++ {
+		u := updates[i]
+		if strings.HasPrefix(u.RemoteRef, "refs/tags/") {
+			continue
+		}
+		ranges = append(ranges, PrePushCommitRange{LocalOID: u.LocalOID, RemoteOID: u.RemoteOID, NewRef: isZeroOID(u.RemoteOID)})
+	}
+	return ranges, nil
+}
+
 // readPrePushBytes reads at most maxPrePushBytes+1 bytes from r while obeying ctx's deadline.
 func readPrePushBytes(ctx context.Context, r io.Reader) ([]byte, error) {
 	if ctx == nil {

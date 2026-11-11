@@ -36,7 +36,7 @@ func assertPriorWithSecrets(t *testing.T, shape lefthookShape) {
 		body := buildLefthookYAMLFor(shape, checkpoint)
 		body = strings.Replace(body, "commit-msg:\n  commands:\n    message-policy:\n"+
 			lefthookRun(lefthookGovernedCommand("forge check-message {1}"))+"\n", "", 1)
-		body = strings.Replace(body, "  scripts:\n    "+commitPolicyScriptName+":\n      runner: sh\n", "", 1)
+		body = strings.Replace(body, "  scripts:\n    "+commitPolicyScriptName+":\n      runner: sh\n      use_stdin: true\n", "", 1)
 		name := fmt.Sprintf("secrets-before-policy-%d-%t-%t-%t.lefthook.yml", shape.languages, shape.reuse, shape.toolGovuln, checkpoint)
 		path := filepath.Join(priorLefthookFixtures, name)
 		if os.Getenv(updateEmittedFixturesEnv) == "1" {
@@ -78,7 +78,10 @@ func TestLefthookCommitPolicy_Positive_ParsedJobs(t *testing.T) {
 		for _, checkpoint := range []bool{false, true} {
 			var decoded map[string]struct {
 				Commands map[string]struct{ Run string }
-				Scripts  map[string]struct{ Runner string }
+				Scripts  map[string]struct {
+					Runner   string
+					UseStdin bool `yaml:"use_stdin"`
+				}
 			}
 			body := buildLefthookYAMLFor(lefthookShape{languages: languages}, checkpoint)
 			if err := yaml.Unmarshal([]byte(body), &decoded); err != nil {
@@ -190,5 +193,52 @@ func TestAdoptCommitPolicy_Negative_CustomScriptPreserved(t *testing.T) {
 		if got := mustRead(t, path); got != custom {
 			t.Fatal("custom script overwritten")
 		}
+	}
+}
+
+// TestCommitPolicyPriorStdin records every rendering preceding stdin delivery.
+func TestCommitPolicyPriorStdin(t *testing.T) {
+	for _, languages := range lefthookLanguageSets {
+		for _, reuse := range []bool{false, true} {
+			for _, tool := range []bool{false, true} {
+				if tool && languages&hisscatalog.LanguageGo == 0 {
+					continue
+				}
+				assertCommitPolicyPriorStdin(t, lefthookShape{languages: languages, reuse: reuse, toolGovuln: tool})
+			}
+		}
+	}
+}
+
+func assertCommitPolicyPriorStdin(t *testing.T, shape lefthookShape) {
+	t.Helper()
+	for _, checkpoint := range []bool{false, true} {
+		body := strings.Replace(buildLefthookYAMLFor(shape, checkpoint), "    "+commitPolicyScriptName+":\n      runner: sh\n      use_stdin: true\n", "    "+commitPolicyScriptName+":\n      runner: sh\n", 1)
+		name := fmt.Sprintf("commit-policy-before-stdin-%d-%t-%t-%t.lefthook.yml", shape.languages, shape.reuse, shape.toolGovuln, checkpoint)
+		path := filepath.Join(priorLefthookFixtures, name)
+		if os.Getenv(updateEmittedFixturesEnv) == "1" {
+			mustWrite(t, path, body)
+		}
+		if mustRead(t, path) != body {
+			t.Fatalf("prior fixture differs: %s", name)
+		}
+		if !isPriorLefthookConfig([]byte(body)) {
+			t.Errorf("unrecognized prior: %s %s", fixtureDigest(t, name, []byte(body)), name)
+		}
+	}
+}
+
+// TestCommitPolicyStdin asserts that the script receives git's input.
+func TestCommitPolicyStdin(t *testing.T) {
+	var decoded map[string]struct {
+		Scripts map[string]struct {
+			UseStdin bool `yaml:"use_stdin"`
+		}
+	}
+	if err := yaml.Unmarshal([]byte(buildLefthookYAML()), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !decoded["pre-push"].Scripts[commitPolicyScriptName].UseStdin {
+		t.Fatal("commit policy script must receive stdin")
 	}
 }
